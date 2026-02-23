@@ -1,0 +1,28 @@
+{
+  "name": "antseed-provider-echo",
+  "version": "0.1.0",
+  "description": "Template for building a Antseed provider plugin",
+  "type": "module",
+  "engines": { "node": ">=20.0.0" },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "verify": "tsx scripts/verify.ts"
+  },
+  "peerDependencies": {
+    "antseed-node": ">=0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "antseed-node": "*",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.0"
+  }
+}
