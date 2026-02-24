@@ -1,0 +1,24 @@
+{
+  "name": "@antseed/provider-local-llm",
+  "version": "0.1.0",
+  "description": "Local LLM provider plugin for Antseed",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "prebuild": "rm -rf dist",
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@antseed/provider-core": "file:../../provider-core"
+  },
+  "peerDependencies": {
+    "@antseed/node": ">=0.1.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0",
+    "@antseed/node": "file:../../node"
+  }
+}
