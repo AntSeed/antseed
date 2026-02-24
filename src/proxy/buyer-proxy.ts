@@ -470,6 +470,29 @@ export class BuyerProxy {
     return peers
   }
 
+  private _formatPeerSelectionDiagnostics(peers: PeerInfo[]): string {
+    if (peers.length === 0) {
+      return 'No peers discovered.'
+    }
+
+    const summarize = (peer: PeerInfo): string => {
+      const providers = peer.providers
+        .map((provider) => provider.trim())
+        .filter((provider) => provider.length > 0)
+      const trust = Number.isFinite(peer.trustScore) ? String(peer.trustScore) : 'n/a'
+      const rep = Number.isFinite(peer.reputationScore) ? String(peer.reputationScore) : 'n/a'
+      const onChain = Number.isFinite(peer.onChainReputation) ? String(peer.onChainReputation) : 'n/a'
+      const input = Number.isFinite(peer.defaultInputUsdPerMillion) ? String(peer.defaultInputUsdPerMillion) : 'n/a'
+      const output = Number.isFinite(peer.defaultOutputUsdPerMillion) ? String(peer.defaultOutputUsdPerMillion) : 'n/a'
+
+      return `${peer.peerId.slice(0, 8)} providers=[${providers.join(',') || 'none'}] trust=${trust} rep=${rep} onchain=${onChain} in=${input} out=${output}`
+    }
+
+    const samples = peers.slice(0, 5).map((peer) => summarize(peer)).join(' | ')
+    const suffix = peers.length > 5 ? ` (+${peers.length - 5} more)` : ''
+    return `Discovered ${peers.length} peer(s): ${samples}${suffix}`
+  }
+
   private async _handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const method = req.method ?? 'GET'
     const path = req.url ?? '/'
@@ -519,9 +542,10 @@ export class BuyerProxy {
       : peers[0] ?? null
 
     if (!selectedPeer) {
-      log('Router could not select a peer')
+      const diagnostics = this._formatPeerSelectionDiagnostics(peers)
+      log('Router could not select a peer.', diagnostics)
       res.writeHead(502, { 'content-type': 'text/plain' })
-      res.end('Router could not select a suitable peer')
+      res.end(`Router could not select a suitable peer. ${diagnostics}`)
       return
     }
 
