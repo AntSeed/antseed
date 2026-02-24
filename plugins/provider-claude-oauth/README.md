@@ -1,4 +1,4 @@
-# @anthropic/provider-claude-oauth
+# @antseed/provider-claude-oauth
 
 Third-party Anthropic Claude provider plugin with OAuth authentication for Antseed.
 
