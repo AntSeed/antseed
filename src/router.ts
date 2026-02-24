@@ -71,9 +71,11 @@ export class LocalProxyRouter implements Router {
 
     for (const peer of peers) {
       // Reputation filter
-      const reputation = this._effectiveReputation(peer);
-      if (reputation < this._minReputation) {
-        continue;
+      if (this._hasReputation(peer)) {
+        const reputation = this._effectiveReputation(peer);
+        if (reputation < this._minReputation) {
+          continue;
+        }
       }
 
       // Cooldown filter
@@ -156,6 +158,19 @@ export class LocalProxyRouter implements Router {
     return p.trustScore ?? p.reputationScore ?? 0;
   }
 
+  private _hasReputation(p: PeerInfo): boolean {
+    if (this._isFiniteNonNegative(p.onChainReputation)) {
+      const sessionCount = this._isFiniteNonNegative(p.onChainSessionCount) ? p.onChainSessionCount : undefined;
+      const disputeCount = this._isFiniteNonNegative(p.onChainDisputeCount) ? p.onChainDisputeCount : undefined;
+      if (sessionCount !== undefined || disputeCount !== undefined) {
+        return (sessionCount ?? 0) > 0 || (disputeCount ?? 0) > 0;
+      }
+      return true;
+    }
+
+    return this._isFiniteNonNegative(p.trustScore) || this._isFiniteNonNegative(p.reputationScore);
+  }
+
   private _extractRequestedModel(req: SerializedHttpRequest): string | null {
     const contentType = req.headers['content-type'] ?? req.headers['Content-Type'] ?? '';
     if (!contentType.toLowerCase().includes('application/json')) {
@@ -175,14 +190,18 @@ export class LocalProxyRouter implements Router {
   }
 
   private _selectProviderForPeer(peer: PeerInfo): { provider: string; rank: number } | null {
+    const availableProviders = peer.providers
+      .map((provider) => provider.trim())
+      .filter((provider) => provider.length > 0);
+
     if (this._preferredProviders.length === 0) {
-      const provider = peer.providers[0];
+      const provider = availableProviders[0];
       return provider ? { provider, rank: Number.MAX_SAFE_INTEGER } : null;
     }
 
     for (let i = 0; i < this._preferredProviders.length; i++) {
       const preferred = this._preferredProviders[i]!;
-      if (peer.providers.includes(preferred)) {
+      if (availableProviders.includes(preferred)) {
         return { provider: preferred, rank: i };
       }
     }

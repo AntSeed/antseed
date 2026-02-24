@@ -210,6 +210,45 @@ describe('LocalProxyRouter', () => {
     expect(selected?.peerId).toBe(highRep.peerId);
   });
 
+  it('keeps peers eligible when reputation fields are missing', () => {
+    const router = new LocalProxyRouter();
+    const unrated = makePeer({
+      peerId: '1'.repeat(64) as PeerInfo['peerId'],
+      reputationScore: undefined,
+      trustScore: undefined,
+      onChainReputation: undefined,
+    });
+
+    const selected = router.selectPeer(makeRequest(), [unrated]);
+    expect(selected?.peerId).toBe(unrated.peerId);
+  });
+
+  it('treats on-chain zero reputation with zero sessions as unrated', () => {
+    const router = new LocalProxyRouter();
+    const newSeller = makePeer({
+      peerId: '3'.repeat(64) as PeerInfo['peerId'],
+      trustScore: 0,
+      reputationScore: undefined,
+      onChainReputation: 0,
+      onChainSessionCount: 0,
+      onChainDisputeCount: 0,
+    });
+
+    const selected = router.selectPeer(makeRequest(), [newSeller]);
+    expect(selected?.peerId).toBe(newSeller.peerId);
+  });
+
+  it('ignores empty provider entries when selecting a peer provider', () => {
+    const router = new LocalProxyRouter();
+    const malformedProviders = makePeer({
+      peerId: '1'.repeat(64) as PeerInfo['peerId'],
+      providers: ['', 'anthropic'],
+    });
+
+    const selected = router.selectPeer(makeRequest(), [malformedProviders]);
+    expect(selected?.peerId).toBe(malformedProviders.peerId);
+  });
+
   it('returns null when no peers are available', () => {
     const router = new LocalProxyRouter();
     expect(router.selectPeer(makeRequest(), [])).toBeNull();
