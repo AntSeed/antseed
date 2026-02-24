@@ -16,7 +16,7 @@ export class DefaultRouter implements Router {
 
   selectPeer(_req: SerializedHttpRequest, peers: PeerInfo[]): PeerInfo | null {
     const eligible = peers.filter(
-      (p) => (p.trustScore ?? p.reputationScore ?? 0) >= this._minReputation
+      (p) => !this._hasReputation(p) || this._effectiveReputation(p) >= this._minReputation
     );
     if (eligible.length === 0) return null;
 
@@ -25,8 +25,8 @@ export class DefaultRouter implements Router {
       const priceB = b.defaultInputUsdPerMillion ?? Infinity;
       if (priceA !== priceB) return priceA - priceB;
       // Prefer higher trust scores (descending)
-      const trustA = a.trustScore ?? a.reputationScore ?? 0;
-      const trustB = b.trustScore ?? b.reputationScore ?? 0;
+      const trustA = this._effectiveReputation(a);
+      const trustB = this._effectiveReputation(b);
       if (trustA !== trustB) return trustB - trustA;
       const latA = this._latencyMap.get(a.peerId) ?? Infinity;
       const latB = this._latencyMap.get(b.peerId) ?? Infinity;
@@ -41,5 +41,35 @@ export class DefaultRouter implements Router {
       const prev = this._latencyMap.get(peer.peerId) ?? result.latencyMs;
       this._latencyMap.set(peer.peerId, prev * 0.7 + result.latencyMs * 0.3);
     }
+  }
+
+  private _effectiveReputation(peer: PeerInfo): number {
+    if (this._isFiniteNonNegative(peer.onChainReputation)) {
+      return peer.onChainReputation;
+    }
+    if (this._isFiniteNonNegative(peer.trustScore)) {
+      return peer.trustScore;
+    }
+    if (this._isFiniteNonNegative(peer.reputationScore)) {
+      return peer.reputationScore;
+    }
+    return 0;
+  }
+
+  private _hasReputation(peer: PeerInfo): boolean {
+    if (this._isFiniteNonNegative(peer.onChainReputation)) {
+      const sessionCount = this._isFiniteNonNegative(peer.onChainSessionCount) ? peer.onChainSessionCount : undefined;
+      const disputeCount = this._isFiniteNonNegative(peer.onChainDisputeCount) ? peer.onChainDisputeCount : undefined;
+      if (sessionCount !== undefined || disputeCount !== undefined) {
+        return (sessionCount ?? 0) > 0 || (disputeCount ?? 0) > 0;
+      }
+      return true;
+    }
+
+    return this._isFiniteNonNegative(peer.trustScore) || this._isFiniteNonNegative(peer.reputationScore);
+  }
+
+  private _isFiniteNonNegative(value: number | undefined): value is number {
+    return typeof value === 'number' && Number.isFinite(value) && value >= 0;
   }
 }

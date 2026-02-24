@@ -56,11 +56,44 @@ describe('DefaultRouter', () => {
       expect(router.selectPeer(dummyReq, [lowRep])).toBeNull();
     });
 
-    it('should treat missing reputationScore as 0', () => {
+    it('should keep peers eligible when reputation is missing', () => {
       const router = new DefaultRouter();
       const peer = makePeer({ reputationScore: undefined });
-      // 0 < 50 (default min), so should be null
-      expect(router.selectPeer(dummyReq, [peer])).toBeNull();
+      expect(router.selectPeer(dummyReq, [peer])).not.toBeNull();
+    });
+
+    it('should enforce minReputation for explicit on-chain reputation', () => {
+      const router = new DefaultRouter({ minReputation: 50 });
+      const lowOnChain = makePeer({
+        peerId: 'a'.repeat(64) as any,
+        reputationScore: undefined,
+        trustScore: undefined,
+        onChainReputation: 25,
+      });
+      const highOnChain = makePeer({
+        peerId: 'b'.repeat(64) as any,
+        reputationScore: undefined,
+        trustScore: undefined,
+        onChainReputation: 90,
+      });
+
+      const selected = router.selectPeer(dummyReq, [lowOnChain, highOnChain]);
+      expect(selected?.peerId).toBe('b'.repeat(64));
+    });
+
+    it('should treat on-chain zero reputation with zero sessions as unrated', () => {
+      const router = new DefaultRouter({ minReputation: 50 });
+      const newSeller = makePeer({
+        peerId: 'a'.repeat(64) as any,
+        reputationScore: undefined,
+        trustScore: 0,
+        onChainReputation: 0,
+        onChainSessionCount: 0,
+        onChainDisputeCount: 0,
+      });
+
+      const selected = router.selectPeer(dummyReq, [newSeller]);
+      expect(selected?.peerId).toBe('a'.repeat(64));
     });
 
     it('should treat missing defaultInputUsdPerMillion as Infinity', () => {
