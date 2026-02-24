@@ -1,4 +1,4 @@
-import type { AntseedProviderPlugin } from 'antseed-node';
+import type { AntseedProviderPlugin } from '@antseed/node';
 import { EchoProvider } from './provider.js';
 
 /**

@@ -36,8 +36,8 @@ antseed seed --provider echo
 Replace `EchoProvider` in `src/provider.ts` with your real inference logic:
 
 ```ts
-import type { Provider } from 'antseed-node';
-import type { SerializedHttpRequest, SerializedHttpResponse } from 'antseed-node/types';
+import type { Provider } from '@antseed/node';
+import type { SerializedHttpRequest, SerializedHttpResponse } from '@antseed/node/types';
 
 export class MyProvider implements Provider {
   readonly name = 'my-provider';
@@ -75,8 +75,8 @@ export class MyProvider implements Provider {
 Then declare config keys in `src/index.ts`:
 
 ```ts
-configKeys: [
-  { key: 'MY_API_KEY', description: 'API key', required: true, secret: true },
+configSchema: [
+  { key: 'MY_API_KEY', label: 'API Key', type: 'secret', required: true, description: 'API key' },
 ],
 ```
 
@@ -122,11 +122,12 @@ npm run verify
 | `displayName` | `string` | Human-readable label |
 | `version` | `string` | Semantic version (e.g. `'1.0.0'`) |
 | `description` | `string` | Short description of the plugin |
-| `configKeys` | `PluginConfigKey[]` | Env vars to read |
+| `configSchema` | `ConfigField[]` | Plugin configuration fields |
 | `createProvider(config)` | `Provider \| Promise<Provider>` | Factory |
 
 ## Links
 
-- [antseed-node source](https://github.com/antseed/antseed-marketplace/tree/main/node)
-- [Provider interface](https://github.com/antseed/antseed-marketplace/tree/main/node/src/interfaces/seller-provider.ts)
-- [Official Anthropic provider](https://github.com/antseed/antseed-marketplace/tree/main/provider-anthropic)
+- [@antseed/node source](https://github.com/AntSeed/node)
+- [Provider interface](https://github.com/AntSeed/node/tree/main/src/interfaces/seller-provider.ts)
+- [Official Anthropic provider](https://github.com/AntSeed/provider-anthropic)
+- [Official Claude Code provider](https://github.com/AntSeed/provider-claude-code)

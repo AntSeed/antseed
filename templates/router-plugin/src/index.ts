@@ -1,4 +1,4 @@
-import type { AntseedRouterPlugin } from 'antseed-node';
+import type { AntseedRouterPlugin } from '@antseed/node';
 import { LowestLatencyRouter } from './router.js';
 
 /**

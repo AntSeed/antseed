@@ -2,7 +2,7 @@
 
 This document specifies the bilateral payment protocol for the Antseed Network, covering settlement, session lifecycle, disputes, crypto escrow, and balance tracking using Base/EVM.
 
-> **Implementation status (2026-02-22):** On-chain bilateral USDC escrow settlement is implemented in `antseed-node` and `AntseedEscrow.sol` on Base.
+> **Implementation status (2026-02-22):** On-chain bilateral USDC escrow settlement is implemented in `@antseed/node` and `AntseedEscrow.sol` on Base.
 
 ## 1. Settlement
 

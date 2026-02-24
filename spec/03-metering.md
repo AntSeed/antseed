@@ -2,7 +2,7 @@
 
 This document specifies the metering protocol: how token usage is estimated, receipts are generated and verified, sessions are tracked, and usage data is stored and aggregated.
 
-Source modules (all in `antseed-node`):
+Source modules (all in `@antseed/node`):
 - `src/metering/token-counter.ts`
 - `src/types/metering.ts`
 - `src/metering/receipt-generator.ts`

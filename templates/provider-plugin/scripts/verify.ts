@@ -7,7 +7,7 @@
  *  3. handleRequest returns a valid SerializedHttpResponse
  *  4. getCapacity returns the correct shape
  */
-import type { AntseedProviderPlugin } from 'antseed-node';
+import type { AntseedProviderPlugin } from '@antseed/node';
 import plugin from '../src/index.js';
 
 let passed = 0;

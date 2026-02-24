@@ -36,8 +36,8 @@ antseed connect --router lowest-latency
 Replace `LowestLatencyRouter` in `src/router.ts` with your own selection strategy:
 
 ```ts
-import type { Router } from 'antseed-node';
-import type { PeerInfo, SerializedHttpRequest } from 'antseed-node/types';
+import type { Router } from '@antseed/node';
+import type { PeerInfo, SerializedHttpRequest } from '@antseed/node/types';
 
 export class CheapestRouter implements Router {
   selectPeer(_req: SerializedHttpRequest, peers: PeerInfo[]): PeerInfo | null {
@@ -59,10 +59,10 @@ Then update `src/index.ts` to use the new class and adjust `name`, `displayName`
 
 ## DefaultRouter
 
-`antseed-node` ships a built-in router that filters by minimum reputation score and sorts by price:
+`@antseed/node` ships a built-in router that filters by minimum reputation score and sorts by price:
 
 ```ts
-import { DefaultRouter } from 'antseed-node';
+import { DefaultRouter } from '@antseed/node';
 const router = new DefaultRouter({ minReputation: 70 }); // default is 50
 ```
 
@@ -105,16 +105,16 @@ interface Router {
 | Property | Type | Description |
 |---|---|---|
 | `type` | `'router'` | Must be `'router'` |
-| `name` | `string` | Short ID, e.g. `'claude-code'` |
+| `name` | `string` | Short ID, e.g. `'local-proxy'` |
 | `displayName` | `string` | Human-readable label |
 | `version` | `string` | Semantic version (e.g. `'1.0.0'`) |
 | `description` | `string` | Short description of the plugin |
-| `configKeys` | `PluginConfigKey[]` | Env vars to read |
+| `configSchema` | `ConfigField[]` | Plugin configuration fields |
 | `createRouter(config)` | `Router \| Promise<Router>` | Factory |
 
 ## Links
 
-- [antseed-node source](https://github.com/antseed/antseed-marketplace/tree/main/node)
-- [Router interface](https://github.com/antseed/antseed-marketplace/tree/main/node/src/interfaces/buyer-router.ts)
-- [Official Claude Code router](https://github.com/antseed/antseed-marketplace/tree/main/router-claude-code)
+- [@antseed/node source](https://github.com/AntSeed/node)
+- [Router interface](https://github.com/AntSeed/node/tree/main/src/interfaces/buyer-router.ts)
+- [Official local proxy router](https://github.com/AntSeed/router-local-proxy)
 - [Provider plugin template](../provider-plugin/)

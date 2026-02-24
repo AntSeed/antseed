@@ -19,10 +19,10 @@ Antseed Network is a decentralized peer-to-peer inference marketplace that enabl
 Install the CLI globally:
 
 ```bash
-npm install -g antseed-cli
+npm install -g @antseed/cli
 antseed init         # install official plugins
 antseed seed --provider anthropic   # sell Anthropic API capacity
-antseed connect --router claude-code  # buy capacity via Claude Code
+antseed connect --router local-proxy  # buy capacity via local proxy
 ```
 
 ## Plugin Ecosystem
@@ -48,6 +48,11 @@ cd my-router && npm install && npm run verify
 
 ## Links
 
-- [antseed-node](https://npmjs.com/package/antseed-node) — Protocol SDK
-- [antseed-provider-anthropic](https://npmjs.com/package/antseed-provider-anthropic) — Official Anthropic provider
-- [antseed-router-claude-code](https://npmjs.com/package/antseed-router-claude-code) — Official Claude Code / Aider router
+- [@antseed/node](https://npmjs.com/package/@antseed/node) — Protocol SDK
+- [@antseed/cli](https://npmjs.com/package/@antseed/cli) — CLI tools
+- [@antseed/provider-anthropic](https://npmjs.com/package/@antseed/provider-anthropic) — Anthropic provider (API key)
+- [@antseed/provider-claude-code](https://npmjs.com/package/@antseed/provider-claude-code) — Claude Code provider (keychain)
+- [@antseed/provider-openrouter](https://npmjs.com/package/@antseed/provider-openrouter) — OpenRouter provider
+- [@antseed/provider-local-llm](https://npmjs.com/package/@antseed/provider-local-llm) — Local LLM provider
+- [@antseed/router-local-proxy](https://npmjs.com/package/@antseed/router-local-proxy) — Local proxy router (Claude Code, Codex)
+- [@antseed/router-local-chat](https://npmjs.com/package/@antseed/router-local-chat) — Desktop chat router

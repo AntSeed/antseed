@@ -1,6 +1,6 @@
-// Note: if working from source, build antseed-node first (npm run build in the node/ directory).
-import type { Provider } from 'antseed-node';
-import type { SerializedHttpRequest, SerializedHttpResponse } from 'antseed-node/types';
+// Note: if working from source, build @antseed/node first (npm run build in the node/ directory).
+import type { Provider } from '@antseed/node';
+import type { SerializedHttpRequest, SerializedHttpResponse } from '@antseed/node/types';
 
 /**
  * EchoProvider — a minimal Provider that echoes the request back.

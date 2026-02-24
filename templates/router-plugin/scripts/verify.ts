@@ -7,7 +7,7 @@
  *  3. selectPeer returns null for empty peer list, a peer for non-empty
  *  4. onResult completes without error
  */
-import type { AntseedRouterPlugin } from 'antseed-node';
+import type { AntseedRouterPlugin } from '@antseed/node';
 import plugin from '../src/index.js';
 
 let passed = 0;
