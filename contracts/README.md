@@ -9,7 +9,7 @@
 
 ## ABI Compatibility
 
-The contract exposes the runtime methods expected by `EscrowClient`:
+The contract exposes the runtime methods expected by `BaseEscrowClient`:
 
 - `deposit(bytes32 sessionId, address seller, uint256 amount)`
 - `release(bytes32 sessionId)`
@@ -54,21 +54,18 @@ solc --optimize --bin --abi node/contracts/AntseedEscrow.sol -o node/contracts/o
 
 ## Deploy (TypeScript Helper)
 
-Use `deployEscrowContract` from `node/src/payments/crypto/deploy.ts` with compiled bytecode:
+Deploy the compiled contract using ethers.js or your preferred toolchain. The constructor expects `(address usdcToken, address initialArbiter)`.
+
+For programmatic deployment, use `BaseEscrowClient` from `@antseed/node`:
 
 ```ts
-import { deployEscrowContract } from '@antseed/node/payments';
+import { BaseEscrowClient } from '@antseed/node';
 
-const result = await deployEscrowContract({
+const client = new BaseEscrowClient({
   rpcUrl: process.env.RPC_URL!,
-  privateKey: process.env.DEPLOYER_PRIVATE_KEY!,
+  contractAddress: deployedAddress,
   usdcAddress: process.env.USDC_ADDRESS!,
-  bytecode: process.env.ESCROW_BYTECODE!, // from compiler output
-  arbiterAddress: process.env.ARBITER_ADDRESS,
-  confirmations: 1,
 });
-
-console.log(result.contractAddress, result.deployTxHash);
 ```
 
 ## End-to-End Integration Test
@@ -77,7 +74,7 @@ A full on-chain test lives in:
 
 - `node/tests/escrow-contract.integration.test.ts`
 
-It compiles `AntseedEscrow.sol` + `MockUSDC.sol`, starts a local Anvil chain, deploys the contract via `deployEscrowContract`, and exercises:
+It compiles `AntseedEscrow.sol` + `MockUSDC.sol`, starts a local Anvil chain, deploys the contract, and exercises:
 
 - `deposit -> release`
 - `deposit -> dispute -> arbiter refund`

@@ -123,11 +123,11 @@ interface NodeConfig {
 
 When `payments.enabled=true` in seller mode:
 
-1. A per-buyer session channel is created (`PaymentChannelManager`).
-2. If `crypto.autoFundEscrow=true`, escrow is funded on-chain at session start.
+1. A per-buyer payment session is created via `BuyerPaymentManager`.
+2. Escrow is funded on-chain at session start.
 3. Usage receipts are generated during request handling.
-4. On idle/session finalization, `SettlementService` computes cost from receipt cents and settles on-chain via:
-   - `EscrowClient.settle(sessionId, sellerAmount, platformAmount)`
+4. On idle/session finalization, `calculateSettlement` computes cost from receipts and settles on-chain via:
+   - `BaseEscrowClient.settle(sessionId, sellerAmount, platformAmount)`
 5. Any unused escrow is refunded to the buyer by contract logic in the same settlement transaction.
 
 Minimal crypto config:
@@ -169,7 +169,7 @@ import type {
   AntseedPlugin,
   AntseedProviderPlugin,
   AntseedRouterPlugin,
-  PluginConfigKey,
+  ConfigField,
 } from '@antseed/node';
 
 // Identity & P2P
@@ -185,8 +185,8 @@ import type { PeerMetadata, ProviderAnnouncement } from '@antseed/node';
 // Metering & Payments
 import { MeteringStorage } from '@antseed/node';
 import { BalanceManager } from '@antseed/node';
-import { PaymentChannelManager, SettlementService } from '@antseed/node/payments';
-import { EscrowClient, deployEscrowContract } from '@antseed/node';
+import { BuyerPaymentManager, calculateSettlement } from '@antseed/node/payments';
+import { BaseEscrowClient } from '@antseed/node';
 
 // Routing & Proxy
 import { ProxyMux } from '@antseed/node';
@@ -322,11 +322,11 @@ const plugin: AntseedProviderPlugin = {
   version: '1.0.0',
   type: 'provider',
   description: 'Sells My LLM capacity on the Antseed Network',
-  configKeys: [
-    { key: 'MY_API_KEY', description: 'API key for My LLM', required: true, secret: true },
-    { key: 'MY_MODELS', description: 'Comma-separated model list', required: false },
-    { key: 'MY_INPUT_USD_PER_MILLION', description: 'Input price in USD per 1M tokens', required: false },
-    { key: 'MY_OUTPUT_USD_PER_MILLION', description: 'Output price in USD per 1M tokens', required: false },
+  configSchema: [
+    { key: 'MY_API_KEY', label: 'API Key', type: 'secret', required: true, description: 'API key for My LLM' },
+    { key: 'MY_MODELS', label: 'Models', type: 'string[]', required: false, description: 'Comma-separated model list' },
+    { key: 'MY_INPUT_USD_PER_MILLION', label: 'Input Price', type: 'number', required: false, description: 'Input price in USD per 1M tokens' },
+    { key: 'MY_OUTPUT_USD_PER_MILLION', label: 'Output Price', type: 'number', required: false, description: 'Output price in USD per 1M tokens' },
   ],
   createProvider(config: Record<string, string>) {
     const apiKey = config['MY_API_KEY'] ?? '';
@@ -372,8 +372,8 @@ const plugin: AntseedRouterPlugin = {
   version: '1.0.0',
   type: 'router',
   description: 'Always routes to the cheapest available peer',
-  configKeys: [
-    { key: 'MAX_INPUT_USD_PER_MILLION', description: 'Maximum input price in USD per 1M tokens', required: false },
+  configSchema: [
+    { key: 'MAX_INPUT_USD_PER_MILLION', label: 'Max Input Price', type: 'number', required: false, description: 'Maximum input price in USD per 1M tokens' },
   ],
   createRouter(config: Record<string, string>) {
     const maxInput = parseFloat(config['MAX_INPUT_USD_PER_MILLION'] ?? 'Infinity');
@@ -390,14 +390,16 @@ The Antseed plugin system uses a simple contract:
 
 1. **Provider plugins** (`AntseedProviderPlugin`) export a default object with `type: 'provider'` and a `createProvider(config)` factory.
 2. **Router plugins** (`AntseedRouterPlugin`) export a default object with `type: 'router'` and a `createRouter(config)` factory.
-3. Both plugin types declare their configuration via `configKeys`, an array of `PluginConfigKey` objects:
+3. Both plugin types declare their configuration via `configSchema`, an array of `ConfigField` objects:
 
 ```ts
-interface PluginConfigKey {
+interface ConfigField {
   key: string;          // Environment variable name
-  description: string;  // Human-readable description
-  required: boolean;    // Whether the key must be set
-  secret?: boolean;     // If true, the value is masked in CLI output
+  label: string;        // Human-readable label
+  type: 'string' | 'number' | 'boolean' | 'secret' | 'string[]';
+  required?: boolean;   // Whether the key must be set
+  default?: unknown;    // Default value
+  description?: string; // Description shown in CLI
 }
 ```
 
@@ -406,4 +408,4 @@ The CLI reads these keys from environment variables and passes them as a `Record
 ## Links
 
 - [npm](https://www.npmjs.com/package/@antseed/node)
-- [GitHub](https://github.com/antseed/@antseed/node)
+- [GitHub](https://github.com/AntSeed/node)
