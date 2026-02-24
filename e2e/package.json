@@ -1,0 +1,21 @@
+{
+  "name": "@antseed/e2e",
+  "version": "0.1.0",
+  "description": "End-to-end tests for the Antseed Network",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "flow:local-chain": "node ./scripts/local-chain-full-flow.mjs"
+  },
+  "dependencies": {
+    "@antseed/node": "file:../node",
+    "antseed-provider-anthropic": "file:../provider-anthropic",
+    "antseed-router-claude-code": "file:../router-claude-code"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.3.0",
+    "vitest": "^1.2.0"
+  }
+}
