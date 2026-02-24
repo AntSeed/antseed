@@ -111,6 +111,8 @@ const DEFAULT_CHAT_MODEL = 'claude-sonnet-4-20250514';
 const DEFAULT_MAX_TOKENS = 4096;
 const PROXY_PROVIDER_ID = 'antseed-proxy';
 const PROXY_RUNTIME_API_KEY = 'antseed-local-proxy';
+const CHAT_SYSTEM_PROMPT_ENV = 'ANTSEED_CHAT_SYSTEM_PROMPT';
+const CHAT_SYSTEM_PROMPT_FILE_ENV = 'ANTSEED_CHAT_SYSTEM_PROMPT_FILE';
 
 function normalizeTokenCount(value: unknown): number {
   const parsed = Number(value);
@@ -623,6 +625,43 @@ async function resolveProxyPort(configPath: string): Promise<number> {
   }
 
   return DEFAULT_PROXY_PORT;
+}
+
+function normalizePromptText(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+async function resolveSystemPrompt(configPath: string): Promise<string | undefined> {
+  const fromEnv = normalizePromptText(process.env[CHAT_SYSTEM_PROMPT_ENV]);
+  if (fromEnv) {
+    return fromEnv;
+  }
+
+  const promptPath = normalizePromptText(process.env[CHAT_SYSTEM_PROMPT_FILE_ENV]);
+  if (promptPath) {
+    try {
+      const fileText = await readFile(path.resolve(promptPath), 'utf8');
+      const normalized = normalizePromptText(fileText);
+      if (normalized) {
+        return normalized;
+      }
+    } catch {
+      // Ignore invalid prompt files and continue to config fallback.
+    }
+  }
+
+  try {
+    const parsed = JSON.parse(await readFile(configPath, 'utf8')) as {
+      buyer?: { chatSystemPrompt?: unknown };
+    };
+    return normalizePromptText(parsed.buyer?.chatSystemPrompt);
+  } catch {
+    return undefined;
+  }
 }
 
 function extractToolCallFromPartial(
@@ -1289,6 +1328,10 @@ export function registerPiChatHandlers({
 
     await session.setModel(proxyModel);
     session.agent.sessionId = conversationId;
+    const systemPrompt = await resolveSystemPrompt(configPath);
+    if (systemPrompt) {
+      session.agent.setSystemPrompt(systemPrompt);
+    }
 
     const existingUserMessages = session.messages.filter((message) => message.role === 'user').length;
     if (existingUserMessages === 0 && (!session.sessionName || session.sessionName.trim().length === 0)) {
