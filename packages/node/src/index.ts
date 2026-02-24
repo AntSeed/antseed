@@ -1,0 +1,61 @@
+// Main facade
+export { AntseedNode, type NodeConfig, type BuyerPaymentConfig, type NodePaymentsConfig } from './node.js';
+export type { Provider, TaskRequest, TaskEvent, SkillRequest, SkillResponse } from './interfaces/seller-provider.js';
+export type { Router } from './interfaces/buyer-router.js';
+
+// Types (re-export everything)
+export * from './types/index.js';
+
+// Submodule re-exports (commonly used)
+export { loadOrCreateIdentity, type Identity } from './p2p/identity.js';
+export { DHTNode, DEFAULT_DHT_CONFIG } from './discovery/dht-node.js';
+export { OFFICIAL_BOOTSTRAP_NODES, mergeBootstrapNodes, toBootstrapConfig } from './discovery/bootstrap.js';
+export { type PeerMetadata, type ProviderAnnouncement } from './discovery/peer-metadata.js';
+export { MetadataServer, type MetadataServerConfig } from './discovery/metadata-server.js';
+export { MeteringStorage } from './metering/storage.js';
+export { BalanceManager } from './payments/balance-manager.js';
+export { BaseEscrowClient, type BaseEscrowConfig } from './payments/evm/escrow-client.js';
+export { identityToEvmWallet, identityToEvmAddress } from './payments/evm/keypair.js';
+export { NatTraversal, type NatMapping, type NatTraversalResult } from './p2p/nat-traversal.js';
+export { BuyerPaymentManager } from './payments/buyer-payment-manager.js';
+export type { BuyerSessionState, BuyerSessionStatus } from './payments/buyer-payment-manager.js';
+export { ProxyMux } from './proxy/proxy-mux.js';
+export { resolveProvider } from './proxy/provider-detection.js';
+export { DefaultRouter, type DefaultRouterConfig } from './routing/default-router.js';
+
+export type { AntseedPlugin, AntseedProviderPlugin, AntseedRouterPlugin, PluginConfigKey, ConfigField } from './interfaces/plugin.js'
+export { ProfileManager } from './discovery/profile-manager.js';
+export type { PeerProfile, ProfileCapability } from './types/peer-profile.js';
+
+// Reputation
+export { TrustScoreEngine } from './reputation/trust-engine.js';
+export { UptimeTracker } from './reputation/uptime-tracker.js';
+export { computeTrustScore, DEFAULT_TRUST_WEIGHTS } from './reputation/trust-score.js';
+export type { TrustScore, TrustComponents } from './reputation/trust-score.js';
+export type { UptimeWindow, PeerUptimeRecord } from './reputation/uptime-tracker.js';
+export { ReportManager } from './reputation/report-manager.js';
+export type { PeerReport, ReportReason, ReportEvidence, ReportStatus } from './types/report.js';
+export { RatingManager } from './reputation/rating-manager.js';
+export type { PeerRating, RatingDimension, AggregateRating } from './types/rating.js';
+
+// Profile search
+export { ProfileSearchIndex } from './discovery/profile-search.js';
+export type { ProfileSearchQuery, ProfileSearchResult } from './discovery/profile-search.js';
+
+// Plugin config & loading
+export { encryptValue, decryptValue, deriveMachineKey, generateSalt } from './config/encryption.js'
+export {
+  loadPluginConfig,
+  savePluginConfig,
+  addInstance,
+  removeInstance,
+  getInstance,
+  getInstances,
+  updateInstanceConfig,
+} from './config/plugin-config-manager.js'
+export {
+  loadPluginModule,
+  loadAllPlugins,
+  type LoadedProvider,
+  type LoadedRouter,
+} from './config/plugin-loader.js'

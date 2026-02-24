@@ -1,0 +1,1698 @@
+import { EventEmitter } from "node:events";
+import { createHash, randomUUID } from "node:crypto";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
+import type { Identity } from "./p2p/identity.js";
+import { loadOrCreateIdentity } from "./p2p/identity.js";
+import type { PeerId } from "./types/peer.js";
+import type { PeerInfo } from "./types/peer.js";
+import type { SerializedHttpRequest, SerializedHttpResponse } from "./types/http.js";
+import type { ConnectionConfig } from "./types/connection.js";
+import type { MeteringEvent, SessionMetrics } from "./types/metering.js";
+import { MeteringStorage } from "./metering/storage.js";
+import { ReceiptGenerator } from "./metering/receipt-generator.js";
+import { ConnectionState } from "./types/connection.js";
+import {
+  DHTNode,
+  DEFAULT_DHT_CONFIG,
+  type DHTNodeConfig,
+} from "./discovery/dht-node.js";
+import { toBootstrapConfig, OFFICIAL_BOOTSTRAP_NODES } from "./discovery/bootstrap.js";
+import {
+  ConnectionManager,
+  PeerConnection,
+} from "./p2p/connection-manager.js";
+import {
+  PeerAnnouncer,
+  type AnnouncerConfig,
+} from "./discovery/announcer.js";
+import {
+  PeerLookup,
+  DEFAULT_LOOKUP_CONFIG,
+  type LookupConfig,
+  type LookupResult,
+} from "./discovery/peer-lookup.js";
+import { HttpMetadataResolver } from "./discovery/http-metadata-resolver.js";
+import { ProxyMux } from "./proxy/proxy-mux.js";
+import { PaymentMux } from "./p2p/payment-mux.js";
+import { FrameDecoder } from "./p2p/message-protocol.js";
+import type { Provider, TaskRequest, TaskEvent, SkillRequest, SkillResponse } from "./interfaces/seller-provider.js";
+import type { Router } from "./interfaces/buyer-router.js";
+import { NatTraversal } from "./p2p/nat-traversal.js";
+import { signUtf8Ed25519 } from "./p2p/identity.js";
+import { verifyMessage, getBytes } from "ethers";
+import {
+  BalanceManager,
+  type PaymentConfig,
+  type PaymentMethod,
+  BaseEscrowClient,
+  identityToEvmWallet,
+  buildLockMessageHash,
+  buildReceiptMessage,
+  buildAckMessage,
+  signMessageEd25519,
+  verifyMessageEd25519,
+} from "./payments/index.js";
+import type {
+  SessionLockAuthPayload,
+  BuyerAckPayload,
+  SessionEndPayload,
+  TopUpAuthPayload,
+} from "./types/protocol.js";
+import { hexToBytes, bytesToHex } from "./utils/hex.js";
+import { debugLog, debugWarn } from "./utils/debug.js";
+import { BuyerPaymentManager, type BuyerPaymentConfig } from "./payments/buyer-payment-manager.js";
+import { identityToEvmAddress } from "./payments/evm/keypair.js";
+
+export type { Provider, TaskRequest, TaskEvent, SkillRequest, SkillResponse };
+export type { Router };
+export type { BuyerPaymentConfig };
+
+export interface NodePaymentsConfig {
+  /** Enable seller-side payment channels and automatic settlement. */
+  enabled?: boolean;
+  /** Payment method used for settlement. Default: "crypto" */
+  paymentMethod?: PaymentMethod;
+  /** Platform fee rate in [0,1]. Default: 0.05 */
+  platformFeeRate?: number;
+  /** Idle time before a session is finalized and settled. Default: 30000ms */
+  settlementIdleMs?: number;
+  /** Default escrow amount in USDC units. Default: "1" */
+  defaultEscrowAmountUSDC?: string;
+  /** Optional seller wallet address for auto-funded escrow deposit. */
+  sellerWalletAddress?: string;
+  /** Settlement backend configuration (crypto). */
+  paymentConfig?: PaymentConfig | null;
+  /** Base JSON-RPC URL (e.g. http://127.0.0.1:8545 for anvil) */
+  rpcUrl?: string;
+  /** Deployed AntseedEscrow contract address */
+  contractAddress?: string;
+  /** USDC token contract address */
+  usdcAddress?: string;
+}
+
+export interface NodeConfig {
+  role: 'seller' | 'buyer';
+  dataDir?: string;           // Default: ~/.antseed
+  dhtPort?: number;           // Default: 6881 for seller, 0 for buyer
+  signalingPort?: number;     // Default: 6882 for seller
+  bootstrapNodes?: Array<{ host: string; port: number }>;
+  requestTimeoutMs?: number;  // Default: 30000
+  /** Allow private/loopback IPs in DHT lookups. Default: false. Set true for local testing. */
+  allowPrivateIPs?: boolean;
+  /** Optional seller-side payment runtime wiring. */
+  payments?: NodePaymentsConfig;
+}
+
+interface SellerSessionState {
+  sessionId: string;
+  sessionIdBytes: Uint8Array;
+  startedAt: number;
+  lastActivityAt: number;
+  totalRequests: number;
+  totalTokens: number;
+  totalLatencyMs: number;
+  totalCostCents: number;
+  provider: string;
+
+  // --- Bilateral payment state ---
+  lockCommitted: boolean;
+  lockedAmount: bigint;
+  runningTotal: bigint;
+  ackedRequestCount: number;
+  lastAckedTotal: bigint;
+  awaitingAck: boolean;
+  buyerEvmAddress: string | null;
+
+  // Legacy fields
+  channelId?: string;
+  settling?: boolean;
+}
+
+export interface SellerSessionSnapshot {
+  sessionId: string;
+  buyerPeerId: string;
+  provider: string;
+  startedAt: number;
+  lastActivityAt: number;
+  totalRequests: number;
+  totalTokens: number;
+  avgLatencyMs: number;
+  settling: boolean;
+  lockCommitted: boolean;
+  lockedAmountUSDC: string;
+  runningTotalUSDC: string;
+  ackedRequestCount: number;
+}
+
+export class AntseedNode extends EventEmitter {
+  private _config: NodeConfig;
+  private _identity: Identity | null = null;
+  private _dht: DHTNode | null = null;
+  private _connectionManager: ConnectionManager | null = null;
+  private _providers: Provider[] = [];
+  private _router: Router | null = null;
+  private _started = false;
+  private _announcer: PeerAnnouncer | null = null;
+  private _peerLookup: PeerLookup | null = null;
+  private _muxes = new Map<PeerId, ProxyMux>();
+  private _decoders = new Map<PeerId, FrameDecoder>();
+  private _nat: NatTraversal | null = null;
+  private _metering: MeteringStorage | null = null;
+  private _receiptGenerator: ReceiptGenerator | null = null;
+  private _balanceManager: BalanceManager | null = null;
+  private _escrowClient: BaseEscrowClient | null = null;
+  private _paymentMuxes = new Map<PeerId, PaymentMux>();
+  /** Per-buyer session tracking: buyerPeerId → seller session state */
+  private _sessions = new Map<string, SellerSessionState>();
+  private _settlementTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Buyer-side payment manager (initialized when buyer has payment config). */
+  private _buyerPaymentManager: BuyerPaymentManager | null = null;
+  /** Tracks which seller peers the buyer has already initiated a lock for. */
+  private _buyerLockedPeers = new Set<string>();
+
+  constructor(config: NodeConfig) {
+    super();
+    this._config = config;
+  }
+
+  get peerId(): string | null {
+    return this._identity?.peerId ?? null;
+  }
+
+  get identity(): Identity | null {
+    return this._identity;
+  }
+
+  registerProvider(provider: Provider): void {
+    this._providers.push(provider);
+  }
+
+  setRouter(router: Router): void {
+    this._router = router;
+  }
+
+  get router(): Router | null {
+    return this._router;
+  }
+
+  /** Buyer-side payment manager (null if payments not enabled or not in buyer mode). */
+  get buyerPaymentManager(): BuyerPaymentManager | null {
+    return this._buyerPaymentManager;
+  }
+
+  /** Actual DHT port after binding (0 means not started). */
+  get dhtPort(): number {
+    return this._dht?.getPort() ?? 0;
+  }
+
+  /** Actual signaling/connection port after binding (0 means not started). */
+  get signalingPort(): number {
+    return this._connectionManager?.getListeningPort() ?? 0;
+  }
+
+  /**
+   * Active seller sessions currently tracked in-memory.
+   * Includes open sessions before they are finalized/settled.
+   */
+  getActiveSellerSessions(): SellerSessionSnapshot[] {
+    const snapshots: SellerSessionSnapshot[] = [];
+    for (const [buyerPeerId, session] of this._sessions.entries()) {
+      snapshots.push({
+        sessionId: session.sessionId,
+        buyerPeerId,
+        provider: session.provider,
+        startedAt: session.startedAt,
+        lastActivityAt: session.lastActivityAt,
+        totalRequests: session.totalRequests,
+        totalTokens: session.totalTokens,
+        avgLatencyMs: session.totalRequests > 0 ? session.totalLatencyMs / session.totalRequests : 0,
+        settling: Boolean(session.settling),
+        lockCommitted: session.lockCommitted,
+        lockedAmountUSDC: session.lockedAmount.toString(),
+        runningTotalUSDC: session.runningTotal.toString(),
+        ackedRequestCount: session.ackedRequestCount,
+      });
+    }
+    return snapshots;
+  }
+
+  /** Number of active in-memory seller sessions that are not currently settling. */
+  getActiveSellerSessionCount(): number {
+    let count = 0;
+    for (const session of this._sessions.values()) {
+      if (!session.settling) {
+        count += 1;
+      }
+    }
+    return count;
+  }
+
+  async start(): Promise<void> {
+    if (this._started) {
+      throw new Error("Node already started");
+    }
+
+    const dataDir = this._config.dataDir ?? join(homedir(), ".antseed");
+
+    // Load or create identity
+    this._identity = await loadOrCreateIdentity(dataDir);
+    debugLog(`[Node] Identity loaded: ${this._identity.peerId.slice(0, 12)}...`);
+
+    // Determine bootstrap nodes
+    const bootstrapNodes = this._config.bootstrapNodes ?? toBootstrapConfig(OFFICIAL_BOOTSTRAP_NODES);
+    debugLog(`[Node] Starting as ${this._config.role} with ${bootstrapNodes.length} bootstrap node(s)`);
+
+    if (this._config.role === "seller") {
+      await this._startSeller(bootstrapNodes);
+    } else {
+      await this._startBuyer(bootstrapNodes);
+    }
+
+    this._started = true;
+    debugLog(`[Node] Started successfully`);
+    this.emit("started");
+  }
+
+  async stop(): Promise<void> {
+    if (!this._started) {
+      return;
+    }
+
+    // End all active buyer payment sessions before shutdown
+    await this._endAllBuyerSessions();
+
+    await this._finalizeAllSessions("node-stop");
+
+    for (const timer of this._settlementTimers.values()) {
+      clearTimeout(timer);
+    }
+    this._settlementTimers.clear();
+
+    // Remove NAT port mappings
+    if (this._nat) {
+      await this._nat.cleanup();
+      this._nat = null;
+    }
+
+    // Stop announcer
+    if (this._announcer) {
+      this._announcer.stopPeriodicAnnounce();
+      this._announcer = null;
+    }
+
+    // Close all proxy muxes
+    this._muxes.clear();
+    this._paymentMuxes.clear();
+    this._decoders.clear();
+
+    // Close all connections
+    if (this._connectionManager) {
+      this._connectionManager.closeAll();
+      this._connectionManager = null;
+    }
+
+    // Stop DHT
+    if (this._dht) {
+      await this._dht.stop();
+      this._dht = null;
+    }
+
+    if (this._balanceManager) {
+      try {
+        const dataDir = this._config.dataDir ?? join(homedir(), ".antseed");
+        await this._balanceManager.save(join(dataDir, "payments"));
+      } catch (err) {
+        debugWarn(`[Node] Failed to persist payment balances: ${err instanceof Error ? err.message : err}`);
+      }
+    }
+
+    if (this._metering) {
+      try {
+        this._metering.close();
+      } catch {
+        // ignore close errors
+      }
+      this._metering = null;
+    }
+
+    this._peerLookup = null;
+    this._receiptGenerator = null;
+    this._balanceManager = null;
+    this._escrowClient = null;
+    this._buyerPaymentManager = null;
+    this._buyerLockedPeers.clear();
+    this._started = false;
+    this.emit("stopped");
+  }
+
+  async discoverPeers(model?: string): Promise<PeerInfo[]> {
+    if (!this._peerLookup) {
+      throw new Error("Node not started or not in buyer mode");
+    }
+
+    // If a model is specified, search by model across known provider topics.
+    // Otherwise search for a generic topic. The PeerLookup uses provider names,
+    // so without a model we search broadly.
+    const searchTerm = model ?? "*";
+    debugLog(`[Node] Discovering peers (search: "${searchTerm}")...`);
+    const results = await this._peerLookup.findSellers(searchTerm);
+    debugLog(`[Node] DHT returned ${results.length} result(s)`);
+
+    // Deduplicate by peerId (DHT can return the same peer from multiple topic lookups)
+    const seen = new Set<string>();
+    const peers: PeerInfo[] = [];
+    for (const r of results) {
+      const p = this._lookupResultToPeerInfo(r);
+      if (!seen.has(p.peerId)) {
+        seen.add(p.peerId);
+        peers.push(p);
+      }
+    }
+    // Optional reputation verification: replace claimed data with verified on-chain data
+    if (this._escrowClient) {
+      for (const p of peers) {
+        if (p.evmAddress && p.onChainReputation !== undefined) {
+          try {
+            const rep = await this._escrowClient.getReputation(p.evmAddress);
+            p.onChainReputation = rep.weightedAverage;
+            p.onChainSessionCount = rep.sessionCount;
+            p.onChainDisputeCount = rep.disputeCount;
+            p.trustScore = rep.weightedAverage;
+          } catch {
+            // Use claimed data if verification fails
+          }
+        }
+      }
+    }
+
+    for (const p of peers) {
+      debugLog(`[Node]   peer ${p.peerId.slice(0, 12)}... providers=[${p.providers.join(",")}] addr=${p.publicAddress ?? "?"}`);
+    }
+    return peers;
+  }
+
+  async sendRequest(peer: PeerInfo, req: SerializedHttpRequest): Promise<SerializedHttpResponse> {
+    if (!req.requestId || typeof req.requestId !== "string") {
+      throw new Error("requestId must be a non-empty string");
+    }
+    if (!this._connectionManager || !this._identity) {
+      throw new Error("Node not started");
+    }
+
+    debugLog(`[Node] sendRequest ${req.method} ${req.path} → peer ${peer.peerId.slice(0, 12)}... (reqId=${req.requestId.slice(0, 8)})`);
+
+    const conn = await this._getOrCreateConnection(peer);
+    debugLog(`[Node] Connection to ${peer.peerId.slice(0, 12)}... state=${conn.state}`);
+    const mux = this._getOrCreateMux(peer.peerId, conn);
+
+    // Buyer-side: initiate lock and wait for confirmation on first request to a new peer
+    if (this._buyerPaymentManager && !this._buyerLockedPeers.has(peer.peerId)) {
+      await this._initiateBuyerLock(peer, conn);
+    }
+
+    const startTime = Date.now();
+    return new Promise<SerializedHttpResponse>((resolve, reject) => {
+      const timeoutMs = this._config.requestTimeoutMs ?? 30_000;
+      const timeout = setTimeout(() => {
+        debugWarn(`[Node] Request ${req.requestId.slice(0, 8)} timed out after ${timeoutMs}ms`);
+        mux.cancelProxyRequest(req.requestId);
+        reject(new Error(`Request ${req.requestId} timed out`));
+      }, timeoutMs);
+
+      mux.sendProxyRequest(
+        req,
+        (response: SerializedHttpResponse) => {
+          clearTimeout(timeout);
+          debugLog(`[Node] Response for ${req.requestId.slice(0, 8)}: status=${response.statusCode} (${Date.now() - startTime}ms, ${response.body.length}b)`);
+          resolve(response);
+        },
+        (_chunk) => {
+          // Chunks are handled by the response handler for now
+        },
+      );
+    });
+  }
+
+  async *sendTask(peer: PeerInfo, task: TaskRequest): AsyncIterable<TaskEvent> {
+    const req: SerializedHttpRequest = {
+      requestId: task.taskId,
+      method: "POST",
+      path: "/v1/task",
+      headers: {
+        "content-type": "application/json",
+        "x-antseed-capability": "task",
+      },
+      body: new TextEncoder().encode(JSON.stringify(task)),
+    };
+
+    const response = await this.sendRequest(peer, req);
+    const bodyText = new TextDecoder().decode(response.body);
+    const parsed = JSON.parse(bodyText) as TaskEvent | TaskEvent[];
+    if (Array.isArray(parsed)) {
+      for (const event of parsed) {
+        yield event;
+      }
+    } else {
+      yield parsed;
+    }
+  }
+
+  async sendSkill(peer: PeerInfo, skill: SkillRequest): Promise<SkillResponse> {
+    const req: SerializedHttpRequest = {
+      requestId: skill.skillId,
+      method: "POST",
+      path: "/v1/skill",
+      headers: {
+        "content-type": "application/json",
+        "x-antseed-capability": "skill",
+      },
+      body: new TextEncoder().encode(JSON.stringify(skill)),
+    };
+
+    const response = await this.sendRequest(peer, req);
+    const bodyText = new TextDecoder().decode(response.body);
+    return JSON.parse(bodyText) as SkillResponse;
+  }
+
+  private _createDHTConfig(port: number, bootstrapNodes: Array<{ host: string; port: number }>): DHTNodeConfig {
+    return {
+      peerId: this._identity!.peerId,
+      port,
+      bootstrapNodes,
+      reannounceIntervalMs: DEFAULT_DHT_CONFIG.reannounceIntervalMs,
+      operationTimeoutMs: DEFAULT_DHT_CONFIG.operationTimeoutMs,
+      allowPrivateIPs: this._config.allowPrivateIPs,
+    };
+  }
+
+  private _wireConnection(conn: PeerConnection, peerId: PeerId): void {
+    const decoder = new FrameDecoder();
+    conn.on("message", (data: Uint8Array) => {
+      const frames = decoder.feed(data);
+      const proxyMux = this._muxes.get(peerId);
+      const paymentMux = this._paymentMuxes.get(peerId);
+      for (const frame of frames) {
+        if (paymentMux && PaymentMux.isPaymentMessage(frame.type)) {
+          paymentMux.handleFrame(frame).catch((err) => {
+            const message = err instanceof Error ? err.message : String(err);
+            debugWarn(`[Node] Failed to handle payment frame from ${peerId.slice(0, 12)}...: ${message}`);
+          });
+        } else if (proxyMux) {
+          proxyMux.handleFrame(frame).catch((err) => {
+            const message = err instanceof Error ? err.message : String(err);
+            debugWarn(`[Node] Failed to handle frame from ${peerId.slice(0, 12)}...: ${message}`);
+            conn.fail(err instanceof Error ? err : new Error(message));
+          });
+        }
+      }
+    });
+
+    this._decoders.set(peerId, decoder);
+
+    conn.on("stateChange", (state: ConnectionState) => {
+      if (state === ConnectionState.Closed || state === ConnectionState.Failed) {
+        this._muxes.delete(peerId);
+        this._paymentMuxes.delete(peerId);
+        this._decoders.delete(peerId);
+        // Handle buyer disconnect (ghost scenario)
+        void this._finalizeSession(peerId, "disconnect");
+      }
+    });
+  }
+
+  private async _startSeller(bootstrapNodes: Array<{ host: string; port: number }>): Promise<void> {
+    const identity = this._identity!;
+    const dhtPort = this._config.dhtPort ?? 6881;
+    const signalingPort = this._config.signalingPort ?? 6882;
+    debugLog(`[Node] Starting seller — DHT port=${dhtPort}, signaling port=${signalingPort}`);
+
+    // Initialize metering storage
+    const dataDir = this._config.dataDir ?? join(homedir(), ".antseed");
+    try {
+      this._metering = new MeteringStorage(join(dataDir, "metering.db"));
+      debugLog("[Node] Metering storage initialized");
+    } catch (err) {
+      debugWarn(`[Node] Metering storage unavailable: ${err instanceof Error ? err.message : err}`);
+    }
+
+    if (this._metering) {
+      this._receiptGenerator = new ReceiptGenerator({
+        peerId: identity.peerId,
+        sign: (message: string) => signUtf8Ed25519(identity.privateKey, message),
+      });
+    }
+
+    await this._initializePayments(dataDir);
+
+    // Start DHT
+    this._dht = new DHTNode(this._createDHTConfig(dhtPort, bootstrapNodes));
+    await this._dht.start();
+
+    // Create ConnectionManager and start listening
+    this._connectionManager = new ConnectionManager();
+    this._connectionManager.setLocalIdentity(identity);
+    await this._connectionManager.startListening({
+      peerId: identity.peerId,
+      port: signalingPort,
+      host: "0.0.0.0",
+    });
+
+    // Resolve actual bound port (important when port 0 is used for OS-assigned)
+    const actualSignalingPort = this._connectionManager.getListeningPort() ?? signalingPort;
+    const actualDhtPort = this._dht.getPort();
+
+    // NAT traversal: automatically map ports via UPnP/NAT-PMP
+    this._nat = new NatTraversal();
+    const natResult = await this._nat.mapPorts([
+      { port: actualSignalingPort, protocol: "TCP" },
+      { port: actualDhtPort, protocol: "UDP" },
+    ]);
+
+    if (natResult.success) {
+      this.emit("nat:mapped", natResult);
+    } else {
+      debugWarn("[NAT] UPnP/NAT-PMP mapping failed — seller may not be reachable from the internet");
+      debugWarn("[NAT] Ensure port forwarding is configured manually, or peers on the same LAN can still connect");
+      this.emit("nat:failed");
+    }
+
+    // Set up announcer for providers
+    if (this._providers.length > 0) {
+      const announcerConfig: AnnouncerConfig = {
+        identity,
+        dht: this._dht,
+        providers: this._providers.map((p) => ({
+          provider: p.name,
+          models: p.models,
+          maxConcurrency: p.maxConcurrency,
+        })),
+        region: "unknown",
+        pricing: new Map(
+          this._providers.map((p) => [
+            p.name,
+            {
+              defaults: {
+                inputUsdPerMillion: p.pricing.defaults.inputUsdPerMillion,
+                outputUsdPerMillion: p.pricing.defaults.outputUsdPerMillion,
+              },
+              ...(p.pricing.models ? { models: { ...p.pricing.models } } : {}),
+            },
+          ]),
+        ),
+        reannounceIntervalMs: DEFAULT_DHT_CONFIG.reannounceIntervalMs,
+        signalingPort: actualSignalingPort,
+      };
+      this._announcer = new PeerAnnouncer(announcerConfig);
+      this._announcer.startPeriodicAnnounce();
+
+      // Serve metadata on the signaling port (HTTP requests are auto-detected)
+      this._connectionManager!.setMetadataProvider(
+        () => this._announcer?.getLatestMetadata() ?? null,
+      );
+    }
+
+    // Listen for incoming connections
+    this._connectionManager.on("connection", (conn: PeerConnection) => {
+      this._handleIncomingConnection(conn);
+    });
+
+    debugLog(`[Node] Seller ready — announcing ${this._providers.length} provider(s)`);
+  }
+
+  private async _startBuyer(bootstrapNodes: Array<{ host: string; port: number }>): Promise<void> {
+    const identity = this._identity!;
+    const dhtPort = this._config.dhtPort ?? 0;
+    debugLog(`[Node] Starting buyer — DHT port=${dhtPort}`);
+
+    // Start DHT with ephemeral port
+    this._dht = new DHTNode(this._createDHTConfig(dhtPort, bootstrapNodes));
+    await this._dht.start();
+
+    // Create ConnectionManager for outbound connections
+    this._connectionManager = new ConnectionManager();
+    this._connectionManager.setLocalIdentity(identity);
+
+    // Create PeerLookup with HttpMetadataResolver
+    const metadataResolver = new HttpMetadataResolver();
+    const lookupConfig: LookupConfig = {
+      dht: this._dht,
+      metadataResolver,
+      requireValidSignature: DEFAULT_LOOKUP_CONFIG.requireValidSignature,
+      allowStaleMetadata: DEFAULT_LOOKUP_CONFIG.allowStaleMetadata,
+      maxAnnouncementAgeMs: DEFAULT_LOOKUP_CONFIG.maxAnnouncementAgeMs,
+      maxResults: DEFAULT_LOOKUP_CONFIG.maxResults,
+    };
+    this._peerLookup = new PeerLookup(lookupConfig);
+
+    // Initialize buyer-side payment manager if payments config is provided
+    const payments = this._config.payments;
+    if (payments?.enabled && payments.rpcUrl && payments.contractAddress && payments.usdcAddress) {
+      const buyerPaymentConfig: BuyerPaymentConfig = {
+        defaultLockAmountUSDC: payments.defaultEscrowAmountUSDC ?? "1000000",
+        rpcUrl: payments.rpcUrl,
+        contractAddress: payments.contractAddress,
+        usdcAddress: payments.usdcAddress,
+      };
+      this._buyerPaymentManager = new BuyerPaymentManager(identity, buyerPaymentConfig);
+      debugLog(`[Node] Buyer payment manager initialized (wallet=${identityToEvmAddress(identity).slice(0, 10)}...)`);
+    }
+
+    debugLog(`[Node] Buyer ready — DHT running on port ${this._dht!.getPort()}`);
+  }
+
+  private _handleIncomingConnection(conn: PeerConnection): void {
+    debugLog(`[Node] Incoming connection from ${conn.remotePeerId.slice(0, 12)}...`);
+    const buyerPeerId = conn.remotePeerId;
+    const mux = new ProxyMux(conn);
+
+    // Create PaymentMux alongside ProxyMux (seller-side)
+    const paymentMux = new PaymentMux(conn);
+    paymentMux.onSessionLockAuth((payload) => {
+      void this._handleSessionLockAuth(buyerPeerId, payload, paymentMux);
+    });
+    paymentMux.onBuyerAck((payload) => {
+      void this._handleBuyerAck(buyerPeerId, payload);
+    });
+    paymentMux.onSessionEnd((payload) => {
+      void this._handleSessionEnd(buyerPeerId, payload);
+    });
+    paymentMux.onTopUpAuth((payload) => {
+      void this._handleTopUpAuth(buyerPeerId, payload);
+    });
+    this._paymentMuxes.set(buyerPeerId, paymentMux);
+
+    // Register the ProxyMux request handler that routes to providers
+    mux.onProxyRequest(async (request: SerializedHttpRequest) => {
+      debugLog(`[Node] Seller received request: ${request.method} ${request.path} (reqId=${request.requestId.slice(0, 8)})`);
+
+      // Reject with 402 if lock not committed and escrow client is configured
+      const session = this._sessions.get(buyerPeerId);
+      if (this._escrowClient && (!session || !session.lockCommitted)) {
+        debugWarn(`[Node] Rejecting request from ${buyerPeerId.slice(0, 12)}... — lock not committed`);
+        mux.sendProxyResponse({
+          requestId: request.requestId,
+          statusCode: 402,
+          headers: { "content-type": "text/plain" },
+          body: new TextEncoder().encode("Payment required: session lock not committed"),
+        });
+        return;
+      }
+
+      const provider = this._providers.find((p) =>
+        p.models.some((m) => request.path.includes(m)) || this._providers.length === 1
+      );
+
+      if (!provider) {
+        debugWarn(`[Node] No matching provider for ${request.path}`);
+        mux.sendProxyResponse({
+          requestId: request.requestId,
+          statusCode: 502,
+          headers: { "content-type": "text/plain" },
+          body: new TextEncoder().encode("No matching provider"),
+        });
+        return;
+      }
+
+      // Track active seller session at request start so runtime state reflects
+      // in-flight work immediately (not only after metering persistence).
+      this._getOrCreateSellerSession(buyerPeerId, provider.name);
+
+      debugLog(`[Node] Routing to provider "${provider.name}"`);
+      const startTime = Date.now();
+      let statusCode = 500;
+      let responseBody: Uint8Array = new Uint8Array(0);
+      try {
+        const response = await this._executeProviderRequest(provider, request);
+        statusCode = response.statusCode;
+        responseBody = response.body;
+        debugLog(`[Node] Provider responded: status=${statusCode} (${Date.now() - startTime}ms, ${responseBody.length}b)`);
+        mux.sendProxyResponse(response);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Internal error";
+        debugWarn(`[Node] Provider error after ${Date.now() - startTime}ms: ${message}`);
+        responseBody = new TextEncoder().encode(message);
+        mux.sendProxyResponse({
+          requestId: request.requestId,
+          statusCode: 500,
+          headers: { "content-type": "text/plain" },
+          body: responseBody,
+        });
+      }
+
+      // Record metering
+      const latencyMs = Date.now() - startTime;
+      const requestPricing = this._resolveProviderPricing(provider, request);
+      await this._recordMetering(
+        buyerPeerId,
+        provider.name,
+        requestPricing,
+        request,
+        statusCode,
+        latencyMs,
+        request.body.length,
+        responseBody.length,
+      );
+
+      // Generate bilateral receipt after each request if lock committed (Task 3)
+      const currentSession = this._sessions.get(buyerPeerId);
+      if (currentSession?.lockCommitted) {
+        await this._sendBilateralReceipt(buyerPeerId, currentSession, requestPricing, responseBody, paymentMux);
+      }
+    });
+
+    this._muxes.set(buyerPeerId, mux);
+    this._wireConnection(conn, buyerPeerId);
+    this.emit("connection", conn);
+  }
+
+  private async _executeProviderRequest(
+    provider: Provider,
+    request: SerializedHttpRequest,
+  ): Promise<SerializedHttpResponse> {
+    const capability = request.headers["x-antseed-capability"]?.toLowerCase();
+    const isTask = capability === "task" || request.path === "/v1/task";
+    const isSkill = capability === "skill" || request.path === "/v1/skill";
+
+    if (isSkill) {
+      if (!provider.handleSkill) {
+        return {
+          requestId: request.requestId,
+          statusCode: 501,
+          headers: { "content-type": "application/json" },
+          body: new TextEncoder().encode(JSON.stringify({ error: "Provider does not support skill capability" })),
+        };
+      }
+
+      const parsed = this._parseJsonBody(request.body);
+      if (!parsed || typeof parsed !== "object") {
+        return {
+          requestId: request.requestId,
+          statusCode: 400,
+          headers: { "content-type": "application/json" },
+          body: new TextEncoder().encode(JSON.stringify({ error: "Invalid skill payload" })),
+        };
+      }
+
+      const raw = parsed as Record<string, unknown>;
+      const skillReq: SkillRequest = {
+        skillId: typeof raw["skillId"] === "string" ? raw["skillId"] : request.requestId,
+        capability: typeof raw["capability"] === "string" ? raw["capability"] as SkillRequest["capability"] : "skill",
+        input: raw["input"] ?? {},
+        inputSchema: (raw["inputSchema"] && typeof raw["inputSchema"] === "object")
+          ? raw["inputSchema"] as Record<string, unknown>
+          : undefined,
+      };
+
+      const skillResponse = await provider.handleSkill(skillReq);
+      return {
+        requestId: request.requestId,
+        statusCode: 200,
+        headers: { "content-type": "application/json" },
+        body: new TextEncoder().encode(JSON.stringify(skillResponse)),
+      };
+    }
+
+    if (isTask) {
+      if (!provider.handleTask) {
+        return {
+          requestId: request.requestId,
+          statusCode: 501,
+          headers: { "content-type": "application/json" },
+          body: new TextEncoder().encode(JSON.stringify({ error: "Provider does not support task capability" })),
+        };
+      }
+
+      const parsed = this._parseJsonBody(request.body);
+      if (!parsed || typeof parsed !== "object") {
+        return {
+          requestId: request.requestId,
+          statusCode: 400,
+          headers: { "content-type": "application/json" },
+          body: new TextEncoder().encode(JSON.stringify({ error: "Invalid task payload" })),
+        };
+      }
+
+      const raw = parsed as Record<string, unknown>;
+      const taskReq: TaskRequest = {
+        taskId: typeof raw["taskId"] === "string" ? raw["taskId"] : request.requestId,
+        capability: typeof raw["capability"] === "string" ? raw["capability"] as TaskRequest["capability"] : "agent",
+        input: raw["input"] ?? {},
+        metadata: (raw["metadata"] && typeof raw["metadata"] === "object")
+          ? raw["metadata"] as Record<string, unknown>
+          : undefined,
+      };
+
+      const events: TaskEvent[] = [];
+      for await (const event of provider.handleTask(taskReq)) {
+        events.push(event);
+      }
+
+      const payload: TaskEvent | TaskEvent[] = events.length <= 1
+        ? (events[0] ?? {
+          taskId: taskReq.taskId,
+          type: "final",
+          data: {},
+          timestamp: Date.now(),
+        })
+        : events;
+
+      return {
+        requestId: request.requestId,
+        statusCode: 200,
+        headers: { "content-type": "application/json" },
+        body: new TextEncoder().encode(JSON.stringify(payload)),
+      };
+    }
+
+    return provider.handleRequest(request);
+  }
+
+  private _parseJsonBody(body: Uint8Array): unknown | null {
+    try {
+      return JSON.parse(new TextDecoder().decode(body)) as unknown;
+    } catch {
+      return null;
+    }
+  }
+
+  private _extractRequestedModel(request: SerializedHttpRequest): string | null {
+    const contentType = request.headers["content-type"] ?? request.headers["Content-Type"] ?? "";
+    if (!contentType.toLowerCase().includes("application/json")) {
+      return null;
+    }
+    const parsed = this._parseJsonBody(request.body);
+    if (!parsed || typeof parsed !== "object") {
+      return null;
+    }
+    const model = (parsed as Record<string, unknown>)["model"];
+    if (typeof model !== "string" || model.trim().length === 0) {
+      return null;
+    }
+    return model.trim();
+  }
+
+  private _resolveProviderPricing(
+    provider: Provider,
+    request: SerializedHttpRequest,
+  ): { inputUsdPerMillion: number; outputUsdPerMillion: number } {
+    const requestedModel = this._extractRequestedModel(request);
+    if (requestedModel) {
+      const modelPricing = provider.pricing.models?.[requestedModel];
+      if (modelPricing) {
+        return modelPricing;
+      }
+    }
+    return provider.pricing.defaults;
+  }
+
+  private _getOrCreateSellerSession(
+    buyerPeerId: string,
+    providerName: string,
+  ): SellerSessionState | null {
+    if (!this._identity) {
+      return null;
+    }
+
+    let session = this._sessions.get(buyerPeerId);
+    if (!session) {
+      const now = Date.now();
+      const sessionId = randomUUID();
+      // Generate 32-byte sessionIdBytes from UUID for on-chain use
+      const sessionIdBytes = createHash("sha256").update(sessionId).digest();
+      session = {
+        sessionId,
+        sessionIdBytes: new Uint8Array(sessionIdBytes),
+        startedAt: now,
+        lastActivityAt: now,
+        totalRequests: 0,
+        totalTokens: 0,
+        totalLatencyMs: 0,
+        totalCostCents: 0,
+        provider: providerName,
+        lockCommitted: false,
+        lockedAmount: 0n,
+        runningTotal: 0n,
+        ackedRequestCount: 0,
+        lastAckedTotal: 0n,
+        awaitingAck: false,
+        buyerEvmAddress: null,
+      };
+      this._sessions.set(buyerPeerId, session);
+    }
+
+    session.provider = providerName;
+    session.lastActivityAt = Date.now();
+    this._emitSellerSessionUpdated(buyerPeerId, session);
+
+    return session;
+  }
+
+  private _emitSellerSessionUpdated(buyerPeerId: string, session: SellerSessionState): void {
+    this.emit("session:updated", {
+      buyerPeerId,
+      sessionId: session.sessionId,
+      provider: session.provider,
+      startedAt: session.startedAt,
+      lastActivityAt: session.lastActivityAt,
+      totalRequests: session.totalRequests,
+      totalTokens: session.totalTokens,
+      avgLatencyMs: session.totalRequests > 0 ? session.totalLatencyMs / session.totalRequests : 0,
+      settling: Boolean(session.settling),
+    });
+  }
+
+  /** Estimate tokens from byte lengths (rough: ~4 chars per token). */
+  private _estimateTokens(inputBytes: number, outputBytes: number) {
+    const inputTokens = Math.max(1, Math.round(inputBytes / 4));
+    const outputTokens = Math.max(1, Math.round(outputBytes / 4));
+    return { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens };
+  }
+
+  private async _recordMetering(
+    buyerPeerId: string,
+    providerName: string,
+    providerPricingUsdPerMillion: { inputUsdPerMillion: number; outputUsdPerMillion: number },
+    request: SerializedHttpRequest,
+    statusCode: number,
+    latencyMs: number,
+    inputBytes: number,
+    outputBytes: number,
+  ): Promise<void> {
+    if (!this._identity) return;
+
+    const sellerPeerId = this._identity.peerId;
+    const isSSE = request.headers["accept"]?.includes("text/event-stream") ?? false;
+    const tokens = this._estimateTokens(inputBytes, outputBytes);
+
+    // Get or create session for this buyer
+    const session = this._getOrCreateSellerSession(buyerPeerId, providerName);
+    if (!session) return;
+
+    session.totalRequests++;
+    session.totalTokens += tokens.totalTokens;
+    session.totalLatencyMs += latencyMs;
+    session.provider = providerName;
+    session.lastActivityAt = Date.now();
+    this._emitSellerSessionUpdated(buyerPeerId, session);
+
+    const metering = this._metering;
+    if (!metering) {
+      this._scheduleSettlementTimer(buyerPeerId);
+      return;
+    }
+
+    // Record metering event
+    const event: MeteringEvent = {
+      eventId: randomUUID(),
+      sessionId: session.sessionId,
+      timestamp: Date.now(),
+      provider: providerName,
+      sellerPeerId,
+      buyerPeerId,
+      tokens: { ...tokens, method: "content-length", confidence: "low" },
+      latencyMs,
+      statusCode,
+      wasStreaming: isSSE,
+    };
+
+    try {
+      metering.insertEvent(event);
+    } catch (err) {
+      debugWarn(`[Node] Failed to record metering event: ${err instanceof Error ? err.message : err}`);
+    }
+
+    if (this._receiptGenerator) {
+      const estimatedCostUsd =
+        (tokens.inputTokens * providerPricingUsdPerMillion.inputUsdPerMillion +
+          tokens.outputTokens * providerPricingUsdPerMillion.outputUsdPerMillion) /
+        1_000_000;
+      const effectiveUsdPerThousandTokens =
+        tokens.totalTokens > 0 ? (estimatedCostUsd / tokens.totalTokens) * 1000 : 0;
+      // Receipt unit pricing uses USD cents per 1,000 tokens.
+      const unitPriceCentsPerThousandTokens = Math.max(0, effectiveUsdPerThousandTokens * 100);
+      const receipt = this._receiptGenerator.generate(
+        session.sessionId,
+        event.eventId,
+        providerName,
+        buyerPeerId,
+        event.tokens,
+        unitPriceCentsPerThousandTokens,
+      );
+      try {
+        metering.insertReceipt(receipt);
+        session.totalCostCents += receipt.costCents;
+      } catch (err) {
+        debugWarn(`[Node] Failed to record usage receipt: ${err instanceof Error ? err.message : err}`);
+      }
+    }
+
+    // Upsert session
+    const sessionMetrics: SessionMetrics = {
+      sessionId: session.sessionId,
+      sellerPeerId,
+      buyerPeerId,
+      provider: providerName,
+      startedAt: session.startedAt,
+      endedAt: null,
+      totalRequests: session.totalRequests,
+      totalTokens: session.totalTokens,
+      totalCostCents: session.totalCostCents,
+      avgLatencyMs: session.totalLatencyMs / session.totalRequests,
+      peerSwitches: 0,
+      disputedReceipts: 0,
+    };
+
+    try {
+      metering.upsertSession(sessionMetrics);
+    } catch (err) {
+      debugWarn(`[Node] Failed to upsert session: ${err instanceof Error ? err.message : err}`);
+    }
+
+    this._scheduleSettlementTimer(buyerPeerId);
+  }
+
+  private async _initializePayments(dataDir: string): Promise<void> {
+    const payments = this._config.payments;
+    if (!payments || !payments.enabled) {
+      return;
+    }
+
+    // Initialize BaseEscrowClient if Base config is provided
+    if (payments.rpcUrl && payments.contractAddress && payments.usdcAddress) {
+      this._escrowClient = new BaseEscrowClient({
+        rpcUrl: payments.rpcUrl,
+        contractAddress: payments.contractAddress,
+        usdcAddress: payments.usdcAddress,
+      });
+      debugLog(`[Node] BaseEscrowClient initialized (contract=${payments.contractAddress.slice(0, 10)}...)`);
+    }
+
+    if (!this._metering) {
+      debugWarn("[Node] Payments enabled but metering storage is unavailable; skipping balance manager wiring");
+      return;
+    }
+
+    const paymentsDir = join(dataDir, "payments");
+    this._balanceManager = new BalanceManager();
+    await this._balanceManager.load(paymentsDir).catch((err) => {
+      debugWarn(`[Node] Failed to load payment balances: ${err instanceof Error ? err.message : err}`);
+    });
+  }
+
+  private _scheduleSettlementTimer(buyerPeerId: string): void {
+    const existing = this._settlementTimers.get(buyerPeerId);
+    if (existing) {
+      clearTimeout(existing);
+    }
+
+    const idleMs = this._config.payments?.settlementIdleMs ?? 30_000;
+    const timer = setTimeout(() => {
+      void this._finalizeSession(buyerPeerId, "idle-timeout");
+    }, idleMs);
+
+    if (typeof (timer as { unref?: () => void }).unref === "function") {
+      (timer as { unref: () => void }).unref();
+    }
+
+    this._settlementTimers.set(buyerPeerId, timer);
+  }
+
+  private async _finalizeSession(buyerPeerId: string, reason: string): Promise<void> {
+    const session = this._sessions.get(buyerPeerId);
+    if (!session || session.settling) {
+      return;
+    }
+    session.settling = true;
+
+    const timer = this._settlementTimers.get(buyerPeerId);
+    if (timer) {
+      clearTimeout(timer);
+      this._settlementTimers.delete(buyerPeerId);
+    }
+
+    // Bilateral-aware disconnect handling (ghost scenario - Task 7)
+    if (session.lockCommitted && this._escrowClient && this._identity && reason === "disconnect") {
+      const sellerWallet = identityToEvmWallet(this._identity);
+      const sessionIdHex = "0x" + bytesToHex(session.sessionIdBytes);
+
+      try {
+        if (session.lastAckedTotal > 0n) {
+          // Buyer acked some work — open dispute with last acked total
+          debugLog(`[Node] Ghost buyer — opening dispute with lastAckedTotal=${session.lastAckedTotal}`);
+          await this._escrowClient.openDispute(sellerWallet, sessionIdHex, session.lastAckedTotal);
+        } else if (session.runningTotal > 0n) {
+          // No acks but work was done — open dispute with running total
+          debugLog(`[Node] Ghost buyer — opening dispute with runningTotal=${session.runningTotal}`);
+          await this._escrowClient.openDispute(sellerWallet, sessionIdHex, session.runningTotal);
+        } else {
+          // No work done — lock expires after 1 hour automatically
+          debugLog(`[Node] Ghost buyer — no work done, lock will expire`);
+        }
+      } catch (err) {
+        debugWarn(`[Node] Failed to handle ghost buyer for session ${session.sessionId}: ${err instanceof Error ? err.message : err}`);
+      }
+
+      this._sessions.delete(buyerPeerId);
+      this.emit("session:finalized", {
+        buyerPeerId,
+        sessionId: session.sessionId,
+        reason: "ghost-disconnect",
+      });
+      return;
+    }
+
+    if (!this._metering || !this._identity) {
+      this._sessions.delete(buyerPeerId);
+      return;
+    }
+
+    const now = Date.now();
+    const baseMetrics: SessionMetrics = {
+      sessionId: session.sessionId,
+      sellerPeerId: this._identity.peerId,
+      buyerPeerId,
+      provider: session.provider,
+      startedAt: session.startedAt,
+      endedAt: now,
+      totalRequests: session.totalRequests,
+      totalTokens: session.totalTokens,
+      totalCostCents: session.totalCostCents,
+      avgLatencyMs: session.totalRequests > 0 ? session.totalLatencyMs / session.totalRequests : 0,
+      peerSwitches: 0,
+      disputedReceipts: 0,
+    };
+
+    try {
+      this._metering.upsertSession(baseMetrics);
+      this._sessions.delete(buyerPeerId);
+      this.emit("session:finalized", {
+        buyerPeerId,
+        sessionId: session.sessionId,
+        reason,
+      });
+    } catch (err) {
+      session.settling = false;
+      debugWarn(`[Node] Failed to finalize session ${session.sessionId}: ${err instanceof Error ? err.message : err}`);
+      const retry = setTimeout(() => {
+        void this._finalizeSession(buyerPeerId, "retry");
+      }, 10_000);
+      if (typeof (retry as { unref?: () => void }).unref === "function") {
+        (retry as { unref: () => void }).unref();
+      }
+      this._settlementTimers.set(buyerPeerId, retry);
+    }
+  }
+
+  private async _finalizeAllSessions(reason: string): Promise<void> {
+    if (this._sessions.size === 0) return;
+    const buyers = [...this._sessions.keys()];
+    await Promise.allSettled(
+      buyers.map((buyerPeerId) => this._finalizeSession(buyerPeerId, reason)),
+    );
+  }
+
+  private async _getOrCreateConnection(peer: PeerInfo): Promise<PeerConnection> {
+    if (!this._connectionManager || !this._identity) {
+      throw new Error("Node not started");
+    }
+
+    const existing = this._connectionManager.getConnection(peer.peerId);
+    if (
+      existing &&
+      existing.state !== ConnectionState.Closed &&
+      existing.state !== ConnectionState.Failed
+    ) {
+      debugLog(`[Node] Reusing existing connection to ${peer.peerId.slice(0, 12)}... (state=${existing.state})`);
+      // If still connecting, wait for it to reach Open or Authenticated
+      if (existing.state === ConnectionState.Connecting) {
+        debugLog(`[Node] Waiting for connection to open...`);
+        await new Promise<void>((resolve, reject) => {
+          const onState = (state: ConnectionState): void => {
+            if (state === ConnectionState.Open || state === ConnectionState.Authenticated) {
+              existing.off("stateChange", onState);
+              resolve();
+            } else if (state === ConnectionState.Failed || state === ConnectionState.Closed) {
+              existing.off("stateChange", onState);
+              reject(new Error(`Connection to ${peer.peerId} failed`));
+            }
+          };
+          existing.on("stateChange", onState);
+        });
+      }
+      return existing;
+    }
+
+    // Register the peer endpoint so ConnectionManager can resolve it
+    if (peer.publicAddress) {
+      const parts = peer.publicAddress.split(":");
+      const host = parts[0]!;
+      const port = parseInt(parts[1] ?? "6882", 10);
+      this._connectionManager.registerPeerEndpoint(peer.peerId, { host, port });
+      debugLog(`[Node] Connecting to ${peer.peerId.slice(0, 12)}... at ${host}:${port}`);
+    } else {
+      debugWarn(`[Node] Peer ${peer.peerId.slice(0, 12)}... has no public address`);
+    }
+
+    const connConfig: ConnectionConfig = {
+      remotePeerId: peer.peerId,
+      isInitiator: true,
+    };
+
+    const conn = this._connectionManager.createConnection(connConfig);
+
+    // Wait for connection to open
+    await new Promise<void>((resolve, reject) => {
+      const onState = (state: ConnectionState): void => {
+        debugLog(`[Node] Connection state: ${state}`);
+        if (state === ConnectionState.Open || state === ConnectionState.Authenticated) {
+          conn.off("stateChange", onState);
+          resolve();
+        } else if (state === ConnectionState.Failed || state === ConnectionState.Closed) {
+          conn.off("stateChange", onState);
+          reject(new Error(`Connection to ${peer.peerId} failed`));
+        }
+      };
+      conn.on("stateChange", onState);
+    });
+
+    debugLog(`[Node] Connected to ${peer.peerId.slice(0, 12)}...`);
+    this._wireConnection(conn, peer.peerId);
+    return conn;
+  }
+
+  private _getOrCreateMux(peerId: PeerId, conn: PeerConnection): ProxyMux {
+    const existing = this._muxes.get(peerId);
+    if (existing) {
+      return existing;
+    }
+
+    const mux = new ProxyMux(conn);
+    this._muxes.set(peerId, mux);
+    return mux;
+  }
+
+  // ── Seller-side bilateral payment handlers ─────────────────────
+
+  /**
+   * Handle SessionLockAuth from buyer (Task 2).
+   * Recovers buyer address, commits lock on-chain, initializes bilateral state.
+   */
+  private async _handleSessionLockAuth(
+    buyerPeerId: string,
+    payload: SessionLockAuthPayload,
+    paymentMux: PaymentMux,
+  ): Promise<void> {
+    if (!this._identity || !this._escrowClient) {
+      paymentMux.sendSessionLockReject({
+        sessionId: payload.sessionId,
+        reason: "Escrow client not configured",
+      });
+      return;
+    }
+
+    try {
+      const sellerWallet = identityToEvmWallet(this._identity);
+      const lockedAmount = BigInt(payload.lockedAmount);
+
+      // Recover buyer address from ECDSA signature
+      const lockMsgHash = buildLockMessageHash(payload.sessionId, sellerWallet.address, lockedAmount);
+      const buyerEvmAddress = verifyMessage(getBytes(lockMsgHash), payload.buyerSig);
+
+      // Submit commit_lock on-chain
+      const txHash = await this._escrowClient.commitLock(
+        sellerWallet,
+        buyerEvmAddress,
+        payload.sessionId,
+        lockedAmount,
+        payload.buyerSig,
+      );
+
+      // Initialize or update bilateral session state
+      let session: SellerSessionState | null | undefined = this._sessions.get(buyerPeerId);
+      if (!session) {
+        session = this._getOrCreateSellerSession(buyerPeerId, this._providers[0]?.name ?? "unknown");
+      }
+      if (session) {
+        // Override sessionId with the one from the lock auth (buyer-chosen)
+        session.sessionId = payload.sessionId;
+        session.sessionIdBytes = hexToBytes(payload.sessionId.replace(/^0x/, ""));
+        session.lockCommitted = true;
+        session.lockedAmount = lockedAmount;
+        session.runningTotal = 0n;
+        session.ackedRequestCount = 0;
+        session.lastAckedTotal = 0n;
+        session.awaitingAck = false;
+        session.buyerEvmAddress = buyerEvmAddress;
+      }
+
+      debugLog(`[Node] Lock committed for buyer ${buyerPeerId.slice(0, 12)}... amount=${lockedAmount} tx=${txHash.slice(0, 12)}...`);
+
+      paymentMux.sendSessionLockConfirm({
+        sessionId: payload.sessionId,
+        txSignature: txHash,
+      });
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      debugWarn(`[Node] Failed to commit lock for ${buyerPeerId.slice(0, 12)}...: ${reason}`);
+      paymentMux.sendSessionLockReject({
+        sessionId: payload.sessionId,
+        reason,
+      });
+    }
+  }
+
+  /**
+   * Generate and send a bilateral receipt after processing a request (Task 3).
+   */
+  private async _sendBilateralReceipt(
+    _buyerPeerId: string,
+    session: SellerSessionState,
+    providerPricingUsdPerMillion: { inputUsdPerMillion: number; outputUsdPerMillion: number },
+    responseBody: Uint8Array,
+    paymentMux: PaymentMux,
+  ): Promise<void> {
+    if (!this._identity) return;
+
+    // Calculate incremental cost in USDC base units (6 decimals)
+    // Estimate tokens from response body size
+    const tokens = this._estimateTokens(0, responseBody.length);
+    const costUSD =
+      (tokens.inputTokens * providerPricingUsdPerMillion.inputUsdPerMillion +
+        tokens.outputTokens * providerPricingUsdPerMillion.outputUsdPerMillion) /
+      1_000_000;
+    const costBaseUnits = BigInt(Math.round(costUSD * 1_000_000));
+
+    // Update running total
+    session.runningTotal += costBaseUnits;
+
+    // SHA-256 hash of response body for proof of work
+    const responseHash = createHash("sha256").update(responseBody).digest();
+
+    // Build receipt message and sign with Ed25519
+    const receiptMsg = buildReceiptMessage(
+      session.sessionIdBytes,
+      session.runningTotal,
+      session.totalRequests,
+      new Uint8Array(responseHash),
+    );
+    const sellerSig = await signMessageEd25519(this._identity, receiptMsg);
+
+    paymentMux.sendSellerReceipt({
+      sessionId: session.sessionId,
+      runningTotal: session.runningTotal.toString(),
+      requestCount: session.totalRequests,
+      responseHash: bytesToHex(new Uint8Array(responseHash)),
+      sellerSig: bytesToHex(sellerSig),
+    });
+
+    session.awaitingAck = true;
+
+    // Send TopUpRequest if running total > 80% of locked amount
+    if (session.lockedAmount > 0n && session.runningTotal * 100n > session.lockedAmount * 80n) {
+      const additionalAmount = session.lockedAmount; // Request same amount again
+      paymentMux.sendTopUpRequest({
+        sessionId: session.sessionId,
+        additionalAmount: additionalAmount.toString(),
+        currentRunningTotal: session.runningTotal.toString(),
+        currentLockedAmount: session.lockedAmount.toString(),
+      });
+      debugLog(`[Node] TopUpRequest sent for session ${session.sessionId.slice(0, 8)}... (running=${session.runningTotal}, locked=${session.lockedAmount})`);
+    }
+  }
+
+  /**
+   * Handle BuyerAck (Task 4).
+   * Verifies buyer's Ed25519 ack signature and updates session state.
+   */
+  private async _handleBuyerAck(buyerPeerId: string, payload: BuyerAckPayload): Promise<void> {
+    const session = this._sessions.get(buyerPeerId);
+    if (!session || !session.lockCommitted) {
+      debugWarn(`[Node] Received BuyerAck for unknown/uncommitted session from ${buyerPeerId.slice(0, 12)}...`);
+      return;
+    }
+
+    try {
+      // Verify buyer's Ed25519 ack signature
+      const buyerPublicKey = hexToBytes(buyerPeerId);
+      const ackMsg = buildAckMessage(
+        session.sessionIdBytes,
+        BigInt(payload.runningTotal),
+        payload.requestCount,
+      );
+      const sigBytes = hexToBytes(payload.buyerSig);
+      const valid = await verifyMessageEd25519(buyerPublicKey, sigBytes, ackMsg);
+
+      if (!valid) {
+        debugWarn(`[Node] Invalid BuyerAck signature from ${buyerPeerId.slice(0, 12)}...`);
+        return;
+      }
+
+      session.ackedRequestCount = payload.requestCount;
+      session.lastAckedTotal = BigInt(payload.runningTotal);
+      session.awaitingAck = false;
+
+      debugLog(`[Node] BuyerAck received: requestCount=${payload.requestCount} runningTotal=${payload.runningTotal}`);
+    } catch (err) {
+      debugWarn(`[Node] Failed to process BuyerAck: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
+  /**
+   * Handle SessionEnd from buyer (Task 5).
+   * Submits settlement on-chain and cleans up.
+   */
+  private async _handleSessionEnd(buyerPeerId: string, payload: SessionEndPayload): Promise<void> {
+    const session = this._sessions.get(buyerPeerId);
+    if (!session || !session.lockCommitted) {
+      debugWarn(`[Node] Received SessionEnd for unknown/uncommitted session from ${buyerPeerId.slice(0, 12)}...`);
+      return;
+    }
+
+    if (!this._identity || !this._escrowClient) {
+      debugWarn(`[Node] Cannot process SessionEnd — escrow client not available`);
+      return;
+    }
+
+    try {
+      const sellerWallet = identityToEvmWallet(this._identity);
+      const sessionIdHex = "0x" + bytesToHex(session.sessionIdBytes);
+
+      // Submit settlement on-chain with buyer's ECDSA signature and score
+      const txHash = await this._escrowClient.settle(
+        sellerWallet,
+        sessionIdHex,
+        BigInt(payload.runningTotal),
+        payload.score,
+        payload.buyerSig,
+      );
+
+      debugLog(`[Node] Session settled on-chain: ${session.sessionId.slice(0, 8)}... tx=${txHash.slice(0, 12)}... score=${payload.score}`);
+
+      // Clean up session
+      this._sessions.delete(buyerPeerId);
+      const timer = this._settlementTimers.get(buyerPeerId);
+      if (timer) {
+        clearTimeout(timer);
+        this._settlementTimers.delete(buyerPeerId);
+      }
+
+      this.emit("session:settled", {
+        buyerPeerId,
+        sessionId: session.sessionId,
+        runningTotal: payload.runningTotal,
+        score: payload.score,
+        txHash,
+      });
+    } catch (err) {
+      debugWarn(`[Node] Failed to settle session ${session.sessionId}: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
+  /**
+   * Handle TopUpAuth from buyer (Task 6).
+   * Calls extendLock on-chain and updates session.
+   */
+  private async _handleTopUpAuth(buyerPeerId: string, payload: TopUpAuthPayload): Promise<void> {
+    const session = this._sessions.get(buyerPeerId);
+    if (!session || !session.lockCommitted) {
+      debugWarn(`[Node] Received TopUpAuth for unknown/uncommitted session from ${buyerPeerId.slice(0, 12)}...`);
+      return;
+    }
+
+    if (!this._identity || !this._escrowClient) {
+      debugWarn(`[Node] Cannot process TopUpAuth — escrow client not available`);
+      return;
+    }
+
+    try {
+      const sellerWallet = identityToEvmWallet(this._identity);
+      const sessionIdHex = "0x" + bytesToHex(session.sessionIdBytes);
+      const additionalAmount = BigInt(payload.additionalAmount);
+
+      const txHash = await this._escrowClient.extendLock(
+        sellerWallet,
+        sessionIdHex,
+        additionalAmount,
+        payload.buyerSig,
+      );
+
+      session.lockedAmount += additionalAmount;
+      debugLog(`[Node] TopUp committed: session=${session.sessionId.slice(0, 8)}... additional=${additionalAmount} newTotal=${session.lockedAmount} tx=${txHash.slice(0, 12)}...`);
+    } catch (err) {
+      debugWarn(`[Node] Failed to extend lock for session ${session.sessionId}: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
+  // ── Buyer-side payment helpers ─────────────────────────────────
+
+  /**
+   * Create a PaymentMux for a buyer-side outbound connection and register
+   * buyer-side handlers (lock confirm, lock reject, seller receipt, top-up request).
+   */
+  private _getOrCreateBuyerPaymentMux(peerId: PeerId, conn: PeerConnection): PaymentMux {
+    const existing = this._paymentMuxes.get(peerId);
+    if (existing) return existing;
+
+    const pmux = new PaymentMux(conn);
+    this._paymentMuxes.set(peerId, pmux);
+
+    const bpm = this._buyerPaymentManager;
+    if (!bpm) return pmux;
+
+    pmux.onSessionLockConfirm((payload) => {
+      bpm.handleLockConfirm(peerId, payload);
+    });
+
+    pmux.onSessionLockReject((payload) => {
+      bpm.handleLockReject(peerId, payload);
+    });
+
+    pmux.onSellerReceipt((receipt) => {
+      void bpm.handleSellerReceipt(peerId, receipt, pmux);
+    });
+
+    pmux.onTopUpRequest((request) => {
+      void bpm.handleTopUpRequest(peerId, request, pmux);
+    });
+
+    return pmux;
+  }
+
+  /**
+   * Initiate a lock with a seller peer. Creates PaymentMux, signs lock auth,
+   * and waits for confirmation before returning.
+   */
+  private async _initiateBuyerLock(peer: PeerInfo, conn: PeerConnection): Promise<void> {
+    const bpm = this._buyerPaymentManager;
+    if (!bpm) return;
+
+    // Mark as locked so we don't re-initiate
+    this._buyerLockedPeers.add(peer.peerId);
+
+    const pmux = this._getOrCreateBuyerPaymentMux(peer.peerId, conn);
+
+    // Determine seller EVM address — prefer from peer metadata
+    const sellerEvmAddress = peer.evmAddress ?? "";
+    if (!sellerEvmAddress) {
+      debugWarn(`[Node] Seller ${peer.peerId.slice(0, 12)}... has no EVM address; skipping lock initiation`);
+      return;
+    }
+
+    try {
+      await bpm.initiateLock(peer.peerId, sellerEvmAddress, pmux);
+      debugLog(`[Node] Lock initiated for seller ${peer.peerId.slice(0, 12)}..., waiting for confirmation...`);
+
+      // Wait for lock confirmation (polls every 200ms, 30s timeout)
+      await this._waitForLockConfirmation(peer.peerId);
+      debugLog(`[Node] Lock confirmed for seller ${peer.peerId.slice(0, 12)}...`);
+    } catch (err) {
+      debugWarn(`[Node] Lock initiation/confirmation failed for ${peer.peerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
+      // Remove from locked set so next request can retry
+      this._buyerLockedPeers.delete(peer.peerId);
+    }
+  }
+
+  /**
+   * Poll until the lock for a seller is confirmed or rejected.
+   * Polls every 200ms with a 30-second timeout.
+   */
+  private async _waitForLockConfirmation(sellerPeerId: string): Promise<void> {
+    const bpm = this._buyerPaymentManager;
+    if (!bpm) return;
+
+    const pollIntervalMs = 200;
+    const timeoutMs = 30_000;
+    const deadline = Date.now() + timeoutMs;
+
+    while (Date.now() < deadline) {
+      if (bpm.isLockConfirmed(sellerPeerId)) {
+        return;
+      }
+      if (bpm.isLockRejected(sellerPeerId)) {
+        throw new Error(`Lock rejected by seller ${sellerPeerId.slice(0, 12)}...`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    }
+
+    throw new Error(`Lock confirmation timed out for seller ${sellerPeerId.slice(0, 12)}... (${timeoutMs}ms)`);
+  }
+
+  /**
+   * End all active buyer payment sessions (called during shutdown).
+   */
+  private async _endAllBuyerSessions(): Promise<void> {
+    const bpm = this._buyerPaymentManager;
+    if (!bpm) return;
+
+    const sessions = bpm.getActiveSessions();
+    if (sessions.length === 0) return;
+
+    debugLog(`[Node] Ending ${sessions.length} buyer payment session(s)...`);
+    await Promise.allSettled(
+      sessions.map((session) => {
+        const pmux = this._paymentMuxes.get(session.sellerPeerId as PeerId);
+        if (pmux) {
+          return bpm.endSession(session.sellerPeerId, pmux, 80);
+        }
+        return Promise.resolve();
+      }),
+    );
+  }
+
+  private _lookupResultToPeerInfo(result: LookupResult): PeerInfo {
+    const providers = result.metadata.providers.map((p) => p.provider);
+    const firstProvider = result.metadata.providers[0];
+    const providerPricingEntries = Object.fromEntries(
+      result.metadata.providers.map((p) => [
+        p.provider,
+        {
+          defaults: {
+            inputUsdPerMillion: p.defaultPricing.inputUsdPerMillion,
+            outputUsdPerMillion: p.defaultPricing.outputUsdPerMillion,
+          },
+          ...(p.modelPricing ? { models: { ...p.modelPricing } } : {}),
+        },
+      ]),
+    );
+    const hasProviderPricing = Object.keys(providerPricingEntries).length > 0;
+
+    return {
+      peerId: result.metadata.peerId,
+      lastSeen: result.metadata.timestamp,
+      providers,
+      publicAddress: `${result.host}:${result.port}`,
+      ...(hasProviderPricing ? { providerPricing: providerPricingEntries } : {}),
+      defaultInputUsdPerMillion: firstProvider?.defaultPricing.inputUsdPerMillion,
+      defaultOutputUsdPerMillion: firstProvider?.defaultPricing.outputUsdPerMillion,
+      maxConcurrency: firstProvider?.maxConcurrency,
+      currentLoad: firstProvider?.currentLoad,
+      evmAddress: result.metadata.evmAddress,
+      onChainReputation: result.metadata.onChainReputation,
+      onChainSessionCount: result.metadata.onChainSessionCount,
+      onChainDisputeCount: result.metadata.onChainDisputeCount,
+      trustScore: result.metadata.onChainReputation,
+    };
+  }
+}

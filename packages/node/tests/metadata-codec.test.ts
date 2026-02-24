@@ -1,0 +1,165 @@
+import { describe, it, expect } from 'vitest';
+import { encodeMetadata, decodeMetadata, encodeMetadataForSigning } from '../src/discovery/metadata-codec.js';
+import type { PeerMetadata } from '../src/discovery/peer-metadata.js';
+
+function makeMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
+  return {
+    peerId: 'a'.repeat(64) as any,
+    version: 2,
+    providers: [
+      {
+        provider: 'anthropic',
+        models: ['claude-3-opus', 'claude-3-sonnet'],
+        defaultPricing: {
+          inputUsdPerMillion: 15,
+          outputUsdPerMillion: 75,
+        },
+        modelPricing: {
+          'claude-3-opus': {
+            inputUsdPerMillion: 18,
+            outputUsdPerMillion: 90,
+          },
+        },
+        maxConcurrency: 10,
+        currentLoad: 3,
+      },
+    ],
+    region: 'us-east-1',
+    timestamp: 1700000000000,
+    signature: 'b'.repeat(128),
+    ...overrides,
+  };
+}
+
+describe('encodeMetadata / decodeMetadata', () => {
+  it('should round-trip a basic metadata object', () => {
+    const original = makeMetadata();
+    const encoded = encodeMetadata(original);
+    const decoded = decodeMetadata(encoded);
+
+    expect(decoded.version).toBe(original.version);
+    expect(decoded.peerId).toBe(original.peerId);
+    expect(decoded.region).toBe(original.region);
+    expect(decoded.timestamp).toBe(original.timestamp);
+    expect(decoded.signature).toBe(original.signature);
+    expect(decoded.providers).toHaveLength(1);
+    expect(decoded.providers[0]!.provider).toBe('anthropic');
+    expect(decoded.providers[0]!.models).toEqual(['claude-3-opus', 'claude-3-sonnet']);
+    expect(decoded.providers[0]!.maxConcurrency).toBe(10);
+    expect(decoded.providers[0]!.currentLoad).toBe(3);
+  });
+
+  it('should handle float32 precision for prices', () => {
+    const original = makeMetadata();
+    const encoded = encodeMetadata(original);
+    const decoded = decodeMetadata(encoded);
+    // Float32 has limited precision — allow small delta
+    expect(decoded.providers[0]!.defaultPricing.inputUsdPerMillion).toBeCloseTo(15, 3);
+    expect(decoded.providers[0]!.defaultPricing.outputUsdPerMillion).toBeCloseTo(75, 3);
+    expect(decoded.providers[0]!.modelPricing?.['claude-3-opus']?.inputUsdPerMillion).toBeCloseTo(18, 3);
+    expect(decoded.providers[0]!.modelPricing?.['claude-3-opus']?.outputUsdPerMillion).toBeCloseTo(90, 3);
+  });
+
+  it('should round-trip multiple providers', () => {
+    const original = makeMetadata({
+      providers: [
+        {
+          provider: 'openai',
+          models: ['gpt-4'],
+          defaultPricing: {
+            inputUsdPerMillion: 10,
+            outputUsdPerMillion: 30,
+          },
+          maxConcurrency: 5,
+          currentLoad: 0,
+        },
+        {
+          provider: 'anthropic',
+          models: ['claude-3-haiku'],
+          defaultPricing: {
+            inputUsdPerMillion: 1,
+            outputUsdPerMillion: 5,
+          },
+          modelPricing: {
+            'claude-3-haiku': {
+              inputUsdPerMillion: 0.9,
+              outputUsdPerMillion: 4.5,
+            },
+          },
+          maxConcurrency: 20,
+          currentLoad: 10,
+        },
+      ],
+    });
+    const decoded = decodeMetadata(encodeMetadata(original));
+    expect(decoded.providers).toHaveLength(2);
+    expect(decoded.providers[0]!.provider).toBe('openai');
+    expect(decoded.providers[1]!.provider).toBe('anthropic');
+  });
+
+  it('should round-trip zero providers', () => {
+    const original = makeMetadata({ providers: [] });
+    const decoded = decodeMetadata(encodeMetadata(original));
+    expect(decoded.providers).toHaveLength(0);
+  });
+
+  it('should round-trip empty models list', () => {
+    const original = makeMetadata({
+      providers: [
+        {
+          provider: 'test',
+          models: [],
+          defaultPricing: {
+            inputUsdPerMillion: 0,
+            outputUsdPerMillion: 0,
+          },
+          maxConcurrency: 1,
+          currentLoad: 0,
+        },
+      ],
+    });
+    const decoded = decodeMetadata(encodeMetadata(original));
+    expect(decoded.providers[0]!.models).toEqual([]);
+  });
+
+  it('should decode offerings and optional trailer fields after v2 provider pricing payload', () => {
+    const original = makeMetadata({
+      offerings: [
+        {
+          capability: 'skill',
+          name: 'summarize',
+          description: 'Summarize text',
+          pricing: { unit: 'request', pricePerUnit: 0.1, currency: 'USD' },
+          models: ['claude-3-sonnet'],
+        },
+      ],
+      evmAddress: '0x1111111111111111111111111111111111111111',
+      onChainReputation: 88,
+      onChainSessionCount: 123,
+      onChainDisputeCount: 2,
+    });
+    const decoded = decodeMetadata(encodeMetadata(original));
+    expect(decoded.offerings?.[0]?.name).toBe('summarize');
+    expect(decoded.evmAddress).toBe('0x1111111111111111111111111111111111111111');
+    expect(decoded.onChainReputation).toBe(88);
+    expect(decoded.onChainSessionCount).toBe(123);
+    expect(decoded.onChainDisputeCount).toBe(2);
+  });
+});
+
+describe('encodeMetadataForSigning', () => {
+  it('should produce a shorter buffer than encodeMetadata (no signature)', () => {
+    const metadata = makeMetadata();
+    const forSigning = encodeMetadataForSigning(metadata);
+    const full = encodeMetadata(metadata);
+    // Full includes 64 bytes of signature
+    expect(full.length).toBe(forSigning.length + 64);
+  });
+
+  it('should produce deterministic output for the same input', () => {
+    const metadata = makeMetadata();
+    const a = encodeMetadataForSigning(metadata);
+    const b = encodeMetadataForSigning(metadata);
+    expect(a).toEqual(b);
+  });
+});
