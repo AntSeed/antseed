@@ -1,6 +1,13 @@
 // Main facade
-export { AntseedNode, type NodeConfig, type BuyerPaymentConfig, type NodePaymentsConfig } from './node.js';
-export type { Provider, TaskRequest, TaskEvent, SkillRequest, SkillResponse } from './interfaces/seller-provider.js';
+export {
+  AntseedNode,
+  type NodeConfig,
+  type BuyerPaymentConfig,
+  type NodePaymentsConfig,
+  type RequestStreamCallbacks,
+  type RequestStreamResponseMetadata,
+} from './node.js';
+export type { Provider, ProviderStreamCallbacks, TaskRequest, TaskEvent, SkillRequest, SkillResponse } from './interfaces/seller-provider.js';
 export type { Router } from './interfaces/buyer-router.js';
 
 // Types (re-export everything)

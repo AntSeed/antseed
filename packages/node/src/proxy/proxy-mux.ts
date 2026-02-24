@@ -9,13 +9,17 @@ import {
   encodeHttpResponseChunk,
   decodeHttpResponseChunk,
 } from "./request-codec.js";
+import { ANTSEED_STREAMING_RESPONSE_HEADER } from "../types/http.js";
 import type {
   SerializedHttpRequest,
   SerializedHttpResponse,
   SerializedHttpResponseChunk,
 } from "../types/http.js";
 
-type ResponseHandler = (response: SerializedHttpResponse) => void;
+type ResponseHandler = (
+  response: SerializedHttpResponse,
+  metadata: { streamingStart: boolean }
+) => void;
 type ChunkHandler = (chunk: SerializedHttpResponseChunk) => void;
 type RequestHandler = (request: SerializedHttpRequest) => void | Promise<void>;
 
@@ -109,13 +113,16 @@ export class ProxyMux {
           break;
         }
         case MessageType.HttpResponse: {
-          // Buyer side: complete response from seller
+          // Buyer side: response from seller (start frame for streams).
           const response = decodeHttpResponse(frame.payload);
           const handler = this._responseHandlers.get(response.requestId);
           if (handler) {
-            this._responseHandlers.delete(response.requestId);
-            this._chunkHandlers.delete(response.requestId);
-            handler(response);
+            const streamingStart = response.headers[ANTSEED_STREAMING_RESPONSE_HEADER] === '1';
+            if (!streamingStart) {
+              this._responseHandlers.delete(response.requestId);
+              this._chunkHandlers.delete(response.requestId);
+            }
+            handler(response, { streamingStart });
           }
           break;
         }
@@ -146,7 +153,7 @@ export class ProxyMux {
           if (errorHandler) {
             this._responseHandlers.delete(errorResponse.requestId);
             this._chunkHandlers.delete(errorResponse.requestId);
-            errorHandler(errorResponse);
+            errorHandler(errorResponse, { streamingStart: false });
           }
           break;
         }

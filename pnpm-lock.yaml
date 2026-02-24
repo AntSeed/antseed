@@ -75,6 +75,9 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@antseed/node':
+        specifier: workspace:*
+        version: link:../../packages/node
       '@fastify/cors':
         specifier: ^10.0.0
         version: 10.1.0
@@ -90,18 +93,51 @@ importers:
       '@mariozechner/pi-coding-agent':
         specifier: ^0.54.2
         version: 0.54.2(bufferutil@4.1.0)(utf-8-validate@5.0.10)(ws@8.18.3(bufferutil@4.1.0)(utf-8-validate@5.0.10))(zod@3.25.76)
+      '@noble/ed25519':
+        specifier: ^2.1.0
+        version: 2.3.0
+      '@silentbot1/nat-api':
+        specifier: ^0.4.9
+        version: 0.4.9
       '@walletconnect/ethereum-provider':
         specifier: ^2.17.0
         version: 2.23.6(@types/react@18.3.28)(bufferutil@4.1.0)(encoding@0.1.13)(react@18.3.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76)
       antseed-dashboard:
         specifier: workspace:*
         version: link:../dashboard
+      better-sqlite3:
+        specifier: ^12.6.2
+        version: 12.6.2
+      bittorrent-dht:
+        specifier: ^11.0.11
+        version: 11.0.11
+      chalk:
+        specifier: ^5.6.2
+        version: 5.6.2
+      cli-table3:
+        specifier: ^0.6.5
+        version: 0.6.5
+      commander:
+        specifier: ^14.0.3
+        version: 14.0.3
+      dotenv:
+        specifier: ^16.6.1
+        version: 16.6.1
       ethers:
         specifier: ^6.13.0
         version: 6.16.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)
       fastify:
         specifier: ^5.7.4
         version: 5.7.4
+      node-datachannel:
+        specifier: ^0.7.0
+        version: 0.7.0
+      open:
+        specifier: ^11.0.0
+        version: 11.0.0
+      ora:
+        specifier: ^9.3.0
+        version: 9.3.0
       qrcode:
         specifier: ^1.5.4
         version: 1.5.4

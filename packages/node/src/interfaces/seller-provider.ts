@@ -1,4 +1,4 @@
-import type { SerializedHttpRequest, SerializedHttpResponse } from '../types/http.js';
+import type { SerializedHttpRequest, SerializedHttpResponse, SerializedHttpResponseChunk } from '../types/http.js';
 import type { ProviderCapability } from '../types/capability.js';
 
 export interface ProviderTokenPricingUsdPerMillion {
@@ -36,6 +36,18 @@ export interface Provider {
    */
   handleRequest(req: SerializedHttpRequest): Promise<SerializedHttpResponse>;
 
+  /**
+   * Optional streaming request handler. Implementations should call
+   * `callbacks.onResponseStart` once, then `callbacks.onResponseChunk`
+   * zero or more times (including a final `done=true` chunk).
+   *
+   * Must resolve with the complete reconstructed response body.
+   */
+  handleRequestStream?(
+    req: SerializedHttpRequest,
+    callbacks: ProviderStreamCallbacks,
+  ): Promise<SerializedHttpResponse>;
+
   /** Optional startup hook — validate credentials, warm caches, etc. */
   init?(): Promise<void>;
 
@@ -50,6 +62,11 @@ export interface Provider {
 
   /** Handle a one-shot skill request. */
   handleSkill?(skill: SkillRequest): Promise<SkillResponse>;
+}
+
+export interface ProviderStreamCallbacks {
+  onResponseStart: (response: SerializedHttpResponse) => void;
+  onResponseChunk: (chunk: SerializedHttpResponseChunk) => void;
 }
 
 export interface TaskRequest {

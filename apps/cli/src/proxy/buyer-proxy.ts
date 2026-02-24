@@ -4,7 +4,13 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import type { AntseedNode } from '@antseed/node'
-import type { PeerInfo, SerializedHttpRequest } from '@antseed/node'
+import type {
+  PeerInfo,
+  RequestStreamResponseMetadata,
+  SerializedHttpRequest,
+  SerializedHttpResponse,
+  SerializedHttpResponseChunk,
+} from '@antseed/node'
 
 export interface BuyerProxyConfig {
   port: number
@@ -344,6 +350,42 @@ function attachAntseedTelemetryHeaders(
   return headers
 }
 
+function attachStreamingAntseedHeaders(
+  upstreamHeaders: Record<string, string>,
+  selectedPeer: PeerInfo,
+  requestId: string,
+): Record<string, string> {
+  const headers: Record<string, string> = { ...upstreamHeaders }
+  headers['x-antseed-request-id'] = requestId
+  headers['x-antseed-peer-id'] = selectedPeer.peerId
+  if (selectedPeer.publicAddress) {
+    headers['x-antseed-peer-address'] = selectedPeer.publicAddress
+  }
+  if (selectedPeer.providers.length > 0) {
+    headers['x-antseed-peer-providers'] = selectedPeer.providers.join(',')
+  }
+  return headers
+}
+
+function requestWantsStreaming(headers: Record<string, string>, body: Uint8Array): boolean {
+  const accept = (headers['accept'] ?? headers['Accept'] ?? '').toLowerCase()
+  if (accept.includes('text/event-stream')) {
+    return true
+  }
+
+  const contentType = (headers['content-type'] ?? headers['Content-Type'] ?? '').toLowerCase()
+  if (!contentType.includes('application/json') || body.length === 0) {
+    return false
+  }
+
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>
+    return parsed.stream === true
+  } catch {
+    return false
+  }
+}
+
 /**
  * Local HTTP proxy that forwards requests to P2P sellers.
  *
@@ -552,34 +594,88 @@ export class BuyerProxy {
     log(`Routing to peer ${selectedPeer.peerId.slice(0, 12)}...`)
 
     // Forward through P2P
+    const wantsStreaming = requestWantsStreaming(headers, serializedReq.body)
     const startTime = Date.now()
     try {
-      const response = await this._node.sendRequest(selectedPeer, serializedReq)
-      const latencyMs = Date.now() - startTime
-
-      log(`Response: ${response.statusCode} (${latencyMs}ms, ${response.body.length} bytes)`)
-
-      const telemetry = computeResponseTelemetry(serializedReq, response.headers, response.body, selectedPeer)
-      const responseHeaders = attachAntseedTelemetryHeaders(
-        response.headers,
-        selectedPeer,
-        telemetry,
-        serializedReq.requestId,
-        latencyMs,
-      )
-
-      // Report result to router for learning
-      if (router) {
-        router.onResult(selectedPeer, {
-          success: response.statusCode < 500,
-          latencyMs,
-          tokens: telemetry.usage.totalTokens,
+      if (wantsStreaming) {
+        let streamed = false
+        const response = await this._node.sendRequestStream(selectedPeer, serializedReq, {
+          onResponseStart: (startResponse: SerializedHttpResponse, metadata: RequestStreamResponseMetadata) => {
+            if (!metadata.streaming) return
+            streamed = true
+            const streamingHeaders = attachStreamingAntseedHeaders(
+              startResponse.headers,
+              selectedPeer,
+              serializedReq.requestId,
+            )
+            res.writeHead(startResponse.statusCode, streamingHeaders)
+            if (startResponse.body.length > 0) {
+              res.write(Buffer.from(startResponse.body))
+            }
+          },
+          onResponseChunk: (chunk: SerializedHttpResponseChunk) => {
+            if (!streamed) return
+            if (chunk.data.length > 0) {
+              res.write(Buffer.from(chunk.data))
+            }
+          },
         })
-      }
 
-      // Forward response headers and body to the HTTP client
-      res.writeHead(response.statusCode, responseHeaders)
-      res.end(Buffer.from(response.body))
+        const latencyMs = Date.now() - startTime
+        log(`Response: ${response.statusCode} (${latencyMs}ms, ${response.body.length} bytes)`)
+
+        const telemetry = computeResponseTelemetry(serializedReq, response.headers, response.body, selectedPeer)
+        if (router) {
+          router.onResult(selectedPeer, {
+            success: response.statusCode < 500,
+            latencyMs,
+            tokens: telemetry.usage.totalTokens,
+          })
+        }
+
+        if (streamed) {
+          if (!res.writableEnded) {
+            res.end()
+          }
+        } else {
+          const responseHeaders = attachAntseedTelemetryHeaders(
+            response.headers,
+            selectedPeer,
+            telemetry,
+            serializedReq.requestId,
+            latencyMs,
+          )
+          res.writeHead(response.statusCode, responseHeaders)
+          res.end(Buffer.from(response.body))
+        }
+      } else {
+        const response = await this._node.sendRequest(selectedPeer, serializedReq)
+        const latencyMs = Date.now() - startTime
+
+        log(`Response: ${response.statusCode} (${latencyMs}ms, ${response.body.length} bytes)`)
+
+        const telemetry = computeResponseTelemetry(serializedReq, response.headers, response.body, selectedPeer)
+        const responseHeaders = attachAntseedTelemetryHeaders(
+          response.headers,
+          selectedPeer,
+          telemetry,
+          serializedReq.requestId,
+          latencyMs,
+        )
+
+        // Report result to router for learning
+        if (router) {
+          router.onResult(selectedPeer, {
+            success: response.statusCode < 500,
+            latencyMs,
+            tokens: telemetry.usage.totalTokens,
+          })
+        }
+
+        // Forward response headers and body to the HTTP client
+        res.writeHead(response.statusCode, responseHeaders)
+        res.end(Buffer.from(response.body))
+      }
     } catch (err) {
       const latencyMs = Date.now() - startTime
       const message = err instanceof Error ? err.message : String(err)
@@ -597,8 +693,12 @@ export class BuyerProxy {
       this._cachedPeers = []
       this._cacheTimestamp = 0
 
-      res.writeHead(502, { 'content-type': 'text/plain' })
-      res.end(`P2P request failed: ${message}`)
+      if (!res.headersSent) {
+        res.writeHead(502, { 'content-type': 'text/plain' })
+        res.end(`P2P request failed: ${message}`)
+      } else if (!res.writableEnded) {
+        res.end()
+      }
     }
   }
 }

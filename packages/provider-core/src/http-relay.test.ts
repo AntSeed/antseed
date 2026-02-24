@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { HttpRelay, type RelayConfig, type RelayCallbacks } from './http-relay.js';
-import type { SerializedHttpRequest, SerializedHttpResponse } from '@antseed/node';
+import type { SerializedHttpRequest, SerializedHttpResponse, SerializedHttpResponseChunk } from '@antseed/node';
 
 function makeRequest(overrides?: Partial<SerializedHttpRequest>): SerializedHttpRequest {
   return {
@@ -219,7 +219,7 @@ describe('HttpRelay', () => {
     expect(body.error).toContain('Connection refused');
   });
 
-  it('accumulates SSE response into complete body', async () => {
+  it('forwards SSE as response-start plus chunks', async () => {
     const sseChunks = [
       'event: message\ndata: {"text":"Hello"}\n\n',
       'event: message\ndata: {"text":"World"}\n\n',
@@ -239,8 +239,10 @@ describe('HttpRelay', () => {
     }));
 
     const responses: SerializedHttpResponse[] = [];
+    const responseChunks: SerializedHttpResponseChunk[] = [];
     const callbacks: RelayCallbacks = {
       onResponse: (res) => responses.push(res),
+      onResponseChunk: (chunk) => responseChunks.push(chunk),
     };
 
     const relay = new HttpRelay(makeConfig(), callbacks);
@@ -248,7 +250,19 @@ describe('HttpRelay', () => {
 
     expect(responses).toHaveLength(1);
     expect(responses[0]!.statusCode).toBe(200);
-    const bodyText = new TextDecoder().decode(responses[0]!.body);
+    expect(responses[0]!.headers['x-antseed-streaming']).toBe('1');
+    expect(responses[0]!.body.length).toBe(0);
+
+    expect(responseChunks).toHaveLength(3);
+    expect(responseChunks[0]!.done).toBe(false);
+    expect(responseChunks[1]!.done).toBe(false);
+    expect(responseChunks[2]!.done).toBe(true);
+
+    const bodyText = new TextDecoder().decode(Buffer.concat(
+      responseChunks
+        .filter((chunk) => chunk.data.length > 0)
+        .map((chunk) => Buffer.from(chunk.data))
+    ));
     expect(bodyText).toContain('Hello');
     expect(bodyText).toContain('World');
   });

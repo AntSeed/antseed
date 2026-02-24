@@ -1,3 +1,5 @@
+export const ANTSEED_STREAMING_RESPONSE_HEADER = 'x-antseed-streaming';
+
 export interface SerializedHttpRequest {
   requestId: string;
   method: string;

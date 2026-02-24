@@ -1,7 +1,8 @@
 import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export type RuntimeMode = 'seed' | 'connect' | 'dashboard';
 
@@ -46,6 +47,7 @@ const DEFAULT_CONFIG_PATH = join(homedir(), '.antseed', 'config.json');
 const DESKTOP_DATA_ROOT = join(homedir(), '.antseed-desktop');
 const DESKTOP_SEED_DATA_DIR = join(DESKTOP_DATA_ROOT, 'seed');
 const DESKTOP_CONNECT_DATA_DIR = join(DESKTOP_DATA_ROOT, 'connect');
+const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
 
 function normalizeProviderIdentifier(value: string | undefined): string {
   const raw = (value ?? 'anthropic').trim().toLowerCase();
@@ -123,12 +125,55 @@ function resolveCliCommand(): string {
     return envCommand;
   }
 
-  const localCli = resolve(process.cwd(), ...LOCAL_CLI_BIN_RELATIVE);
+  const localCli = resolveLocalCliPath();
   if (existsSync(localCli)) {
     return localCli;
   }
 
+  // Packaged app: CLI dist copied into Resources/cli-dist/ via extraResources
+  if (typeof process.resourcesPath === 'string') {
+    const bundledCli = join(process.resourcesPath, 'cli-dist', 'cli', 'index.js');
+    if (existsSync(bundledCli)) {
+      return bundledCli;
+    }
+  }
+
   return DEFAULT_CLI_COMMAND;
+}
+
+function resolveLocalCliPath(): string {
+  const candidates = [
+    // Desktop package cwd (apps/desktop).
+    resolve(process.cwd(), ...LOCAL_CLI_BIN_RELATIVE),
+    // Monorepo root cwd.
+    resolve(process.cwd(), 'apps', 'cli', 'dist', 'cli', 'index.js'),
+    // Built desktop main script directory (apps/desktop/dist/main).
+    resolve(MODULE_DIR, '..', '..', '..', 'cli', 'dist', 'cli', 'index.js'),
+  ];
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return candidates[0]!;
+}
+
+/**
+ * Build NODE_PATH so that a child process spawned from the packaged app
+ * can resolve modules from the unpacked node_modules directory.
+ */
+function resolveChildNodePath(): string {
+  const paths: string[] = [];
+  if (typeof process.resourcesPath === 'string') {
+    // electron-builder unpacks node_modules here when asarUnpack includes them
+    const unpacked = join(process.resourcesPath, 'app.asar.unpacked', 'node_modules');
+    if (existsSync(unpacked)) {
+      paths.push(unpacked);
+    }
+  }
+  return paths.join(':');
 }
 
 function detectNodeArch(nodeBinary: string): string | null {
@@ -244,7 +289,7 @@ type CliExecution = {
 
 function resolveCliExecution(): CliExecution {
   const cliCommand = resolveCliCommand();
-  const localCliPath = resolve(process.cwd(), ...LOCAL_CLI_BIN_RELATIVE);
+  const localCliPath = resolveLocalCliPath();
   const useLocalCliScript = existsSync(localCliPath) && resolve(cliCommand) === localCliPath;
   const executable = useLocalCliScript ? resolveNodeBinary(process.arch) : cliCommand;
   const executableArgsPrefix = useLocalCliScript ? [localCliPath] : [];
@@ -334,6 +379,10 @@ export class ProcessManager {
       }
     }
     delete childEnv['ELECTRON_RUN_AS_NODE'];
+    const extraNodePath = resolveChildNodePath();
+    if (extraNodePath) {
+      childEnv['NODE_PATH'] = extraNodePath + (childEnv['NODE_PATH'] ? `:${childEnv['NODE_PATH']}` : '');
+    }
 
     const child = spawn(executable, executableArgs, {
       cwd: process.cwd(),
@@ -408,6 +457,10 @@ export class ProcessManager {
 
     const childEnv = { ...process.env };
     delete childEnv['ELECTRON_RUN_AS_NODE'];
+    const extraNodePath = resolveChildNodePath();
+    if (extraNodePath) {
+      childEnv['NODE_PATH'] = extraNodePath + (childEnv['NODE_PATH'] ? `:${childEnv['NODE_PATH']}` : '');
+    }
 
     this.onLog(mode, 'system', `Running command: ${executableArgs.join(' ')}`);
 

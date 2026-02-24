@@ -18,9 +18,13 @@ extraMetadata:
 
 asar: true
 asarUnpack:
-  - "node_modules/better-sqlite3/**"
-  - "node_modules/keytar/**"
-  - "node_modules/node-datachannel/**"
+  - "node_modules/**"
+
+extraResources:
+  - from: cli-dist/
+    to: cli-dist/
+    filter:
+      - "**/*"
 
 afterPack: ./scripts/after-pack.js
 

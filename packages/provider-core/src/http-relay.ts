@@ -1,5 +1,6 @@
 import type { TokenProvider } from '@antseed/node';
 import type { SerializedHttpRequest, SerializedHttpResponse, SerializedHttpResponseChunk } from '@antseed/node';
+import { ANTSEED_STREAMING_RESPONSE_HEADER } from '@antseed/node';
 import { swapAuthHeader, validateRequestModel } from './auth-swap.js';
 
 /** Hop-by-hop headers that must not be forwarded. */
@@ -133,38 +134,39 @@ export class HttpRelay {
       });
 
       if (isSSE && fetchResponse.body) {
-        // Accumulate SSE body and send as a complete response so that
-        // upstream response headers (request-id, usage metadata, etc.)
-        // are preserved for the buyer.
-        const reader = fetchResponse.body.getReader();
-        const chunks: Uint8Array[] = [];
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            chunks.push(value);
-          }
-        } catch (err) {
-          chunks.push(
-            new TextEncoder().encode(
-              `event: error\ndata: ${err instanceof Error ? err.message : 'stream error'}\n\n`
-            ),
-          );
-        }
-
-        const totalLength = chunks.reduce((sum, c) => sum + c.length, 0);
-        const body = new Uint8Array(totalLength);
-        let offset = 0;
-        for (const c of chunks) {
-          body.set(c, offset);
-          offset += c.length;
-        }
-
+        responseHeaders[ANTSEED_STREAMING_RESPONSE_HEADER] = '1';
         this._callbacks.onResponse({
           requestId: request.requestId,
           statusCode: fetchResponse.status,
           headers: responseHeaders,
-          body,
+          body: new Uint8Array(0),
+        });
+
+        const reader = fetchResponse.body.getReader();
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            this._callbacks.onResponseChunk?.({
+              requestId: request.requestId,
+              data: value,
+              done: false,
+            });
+          }
+        } catch (err) {
+          this._callbacks.onResponseChunk?.({
+            requestId: request.requestId,
+            data: new TextEncoder().encode(
+              `event: error\ndata: ${err instanceof Error ? err.message : 'stream error'}\n\n`
+            ),
+            done: false,
+          });
+        }
+
+        this._callbacks.onResponseChunk?.({
+          requestId: request.requestId,
+          data: new Uint8Array(0),
+          done: true,
         });
       } else {
         // Complete response

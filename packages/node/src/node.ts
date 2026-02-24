@@ -7,7 +7,12 @@ import type { Identity } from "./p2p/identity.js";
 import { loadOrCreateIdentity } from "./p2p/identity.js";
 import type { PeerId } from "./types/peer.js";
 import type { PeerInfo } from "./types/peer.js";
-import type { SerializedHttpRequest, SerializedHttpResponse } from "./types/http.js";
+import {
+  ANTSEED_STREAMING_RESPONSE_HEADER,
+  type SerializedHttpRequest,
+  type SerializedHttpResponse,
+  type SerializedHttpResponseChunk,
+} from "./types/http.js";
 import type { ConnectionConfig } from "./types/connection.js";
 import type { MeteringEvent, SessionMetrics } from "./types/metering.js";
 import { MeteringStorage } from "./metering/storage.js";
@@ -37,7 +42,14 @@ import { HttpMetadataResolver } from "./discovery/http-metadata-resolver.js";
 import { ProxyMux } from "./proxy/proxy-mux.js";
 import { PaymentMux } from "./p2p/payment-mux.js";
 import { FrameDecoder } from "./p2p/message-protocol.js";
-import type { Provider, TaskRequest, TaskEvent, SkillRequest, SkillResponse } from "./interfaces/seller-provider.js";
+import type {
+  Provider,
+  ProviderStreamCallbacks,
+  TaskRequest,
+  TaskEvent,
+  SkillRequest,
+  SkillResponse,
+} from "./interfaces/seller-provider.js";
 import type { Router } from "./interfaces/buyer-router.js";
 import { NatTraversal } from "./p2p/nat-traversal.js";
 import { signUtf8Ed25519 } from "./p2p/identity.js";
@@ -65,7 +77,7 @@ import { debugLog, debugWarn } from "./utils/debug.js";
 import { BuyerPaymentManager, type BuyerPaymentConfig } from "./payments/buyer-payment-manager.js";
 import { identityToEvmAddress } from "./payments/evm/keypair.js";
 
-export type { Provider, TaskRequest, TaskEvent, SkillRequest, SkillResponse };
+export type { Provider, ProviderStreamCallbacks, TaskRequest, TaskEvent, SkillRequest, SkillResponse };
 export type { Router };
 export type { BuyerPaymentConfig };
 
@@ -144,6 +156,18 @@ export interface SellerSessionSnapshot {
   lockedAmountUSDC: string;
   runningTotalUSDC: string;
   ackedRequestCount: number;
+}
+
+export interface RequestStreamResponseMetadata {
+  streaming: boolean;
+}
+
+export interface RequestStreamCallbacks {
+  onResponseStart?: (
+    response: SerializedHttpResponse,
+    metadata: RequestStreamResponseMetadata,
+  ) => void;
+  onResponseChunk?: (chunk: SerializedHttpResponseChunk) => void;
 }
 
 export class AntseedNode extends EventEmitter {
@@ -394,6 +418,22 @@ export class AntseedNode extends EventEmitter {
   }
 
   async sendRequest(peer: PeerInfo, req: SerializedHttpRequest): Promise<SerializedHttpResponse> {
+    return this._sendRequestInternal(peer, req);
+  }
+
+  async sendRequestStream(
+    peer: PeerInfo,
+    req: SerializedHttpRequest,
+    callbacks: RequestStreamCallbacks,
+  ): Promise<SerializedHttpResponse> {
+    return this._sendRequestInternal(peer, req, callbacks);
+  }
+
+  private async _sendRequestInternal(
+    peer: PeerInfo,
+    req: SerializedHttpRequest,
+    callbacks?: RequestStreamCallbacks,
+  ): Promise<SerializedHttpResponse> {
     if (!req.requestId || typeof req.requestId !== "string") {
       throw new Error("requestId must be a non-empty string");
     }
@@ -401,7 +441,8 @@ export class AntseedNode extends EventEmitter {
       throw new Error("Node not started");
     }
 
-    debugLog(`[Node] sendRequest ${req.method} ${req.path} → peer ${peer.peerId.slice(0, 12)}... (reqId=${req.requestId.slice(0, 8)})`);
+    const opName = callbacks ? "sendRequestStream" : "sendRequest";
+    debugLog(`[Node] ${opName} ${req.method} ${req.path} → peer ${peer.peerId.slice(0, 12)}... (reqId=${req.requestId.slice(0, 8)})`);
 
     const conn = await this._getOrCreateConnection(peer);
     debugLog(`[Node] Connection to ${peer.peerId.slice(0, 12)}... state=${conn.state}`);
@@ -415,21 +456,67 @@ export class AntseedNode extends EventEmitter {
     const startTime = Date.now();
     return new Promise<SerializedHttpResponse>((resolve, reject) => {
       const timeoutMs = this._config.requestTimeoutMs ?? 30_000;
+      let settled = false;
+      let streamStarted = false;
+      let streamStartResponse: SerializedHttpResponse | null = null;
+      const streamChunks: Uint8Array[] = [];
       const timeout = setTimeout(() => {
+        if (settled) return;
+        settled = true;
         debugWarn(`[Node] Request ${req.requestId.slice(0, 8)} timed out after ${timeoutMs}ms`);
         mux.cancelProxyRequest(req.requestId);
         reject(new Error(`Request ${req.requestId} timed out`));
       }, timeoutMs);
 
+      const finish = (response: SerializedHttpResponse): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        const cleaned = this._stripStreamingHeader(response);
+        debugLog(`[Node] Response for ${req.requestId.slice(0, 8)}: status=${cleaned.statusCode} (${Date.now() - startTime}ms, ${cleaned.body.length}b)`);
+        resolve(cleaned);
+      };
+
+      const fail = (error: Error): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        reject(error);
+      };
+
       mux.sendProxyRequest(
         req,
-        (response: SerializedHttpResponse) => {
-          clearTimeout(timeout);
-          debugLog(`[Node] Response for ${req.requestId.slice(0, 8)}: status=${response.statusCode} (${Date.now() - startTime}ms, ${response.body.length}b)`);
-          resolve(response);
+        (response: SerializedHttpResponse, metadata) => {
+          if (metadata.streamingStart) {
+            streamStarted = true;
+            streamStartResponse = this._stripStreamingHeader(response);
+            callbacks?.onResponseStart?.(streamStartResponse, { streaming: true });
+            return;
+          }
+
+          callbacks?.onResponseStart?.(this._stripStreamingHeader(response), { streaming: false });
+          finish(response);
         },
-        (_chunk) => {
-          // Chunks are handled by the response handler for now
+        (chunk) => {
+          if (!streamStarted) return;
+
+          callbacks?.onResponseChunk?.(chunk);
+
+          if (chunk.data.length > 0) {
+            streamChunks.push(chunk.data);
+          }
+
+          if (!chunk.done) return;
+
+          if (!streamStartResponse) {
+            fail(new Error(`Stream ${req.requestId} ended before response start`));
+            return;
+          }
+
+          finish({
+            ...streamStartResponse,
+            body: concatChunks(streamChunks),
+          });
         },
       );
     });
@@ -723,22 +810,49 @@ export class AntseedNode extends EventEmitter {
       const startTime = Date.now();
       let statusCode = 500;
       let responseBody: Uint8Array = new Uint8Array(0);
+      let streamedResponseStarted = false;
       try {
-        const response = await this._executeProviderRequest(provider, request);
+        const response = await this._executeProviderRequest(provider, request, {
+          onResponseStart: (streamResponseStart) => {
+            streamedResponseStarted = true;
+            statusCode = streamResponseStart.statusCode;
+            mux.sendProxyResponse(streamResponseStart);
+          },
+          onResponseChunk: (chunk) => {
+            if (!streamedResponseStarted) return;
+            mux.sendProxyChunk(chunk);
+          },
+        });
         statusCode = response.statusCode;
         responseBody = response.body;
         debugLog(`[Node] Provider responded: status=${statusCode} (${Date.now() - startTime}ms, ${responseBody.length}b)`);
-        mux.sendProxyResponse(response);
+        if (!streamedResponseStarted) {
+          mux.sendProxyResponse(response);
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : "Internal error";
         debugWarn(`[Node] Provider error after ${Date.now() - startTime}ms: ${message}`);
         responseBody = new TextEncoder().encode(message);
-        mux.sendProxyResponse({
-          requestId: request.requestId,
-          statusCode: 500,
-          headers: { "content-type": "text/plain" },
-          body: responseBody,
-        });
+        if (streamedResponseStarted) {
+          mux.sendProxyChunk({
+            requestId: request.requestId,
+            data: new TextEncoder().encode(`event: error\ndata: ${message}\n\n`),
+            done: false,
+          });
+          mux.sendProxyChunk({
+            requestId: request.requestId,
+            data: new Uint8Array(0),
+            done: true,
+          });
+        } else {
+          statusCode = 500;
+          mux.sendProxyResponse({
+            requestId: request.requestId,
+            statusCode: 500,
+            headers: { "content-type": "text/plain" },
+            body: responseBody,
+          });
+        }
       }
 
       // Record metering
@@ -770,6 +884,7 @@ export class AntseedNode extends EventEmitter {
   private async _executeProviderRequest(
     provider: Provider,
     request: SerializedHttpRequest,
+    streamCallbacks?: ProviderStreamCallbacks,
   ): Promise<SerializedHttpResponse> {
     const capability = request.headers["x-antseed-capability"]?.toLowerCase();
     const isTask = capability === "task" || request.path === "/v1/task";
@@ -866,7 +981,24 @@ export class AntseedNode extends EventEmitter {
       };
     }
 
+    if (streamCallbacks && provider.handleRequestStream) {
+      return provider.handleRequestStream(request, streamCallbacks);
+    }
+
     return provider.handleRequest(request);
+  }
+
+  private _stripStreamingHeader(response: SerializedHttpResponse): SerializedHttpResponse {
+    if (response.headers[ANTSEED_STREAMING_RESPONSE_HEADER] !== "1") {
+      return response;
+    }
+
+    const headers = { ...response.headers };
+    delete headers[ANTSEED_STREAMING_RESPONSE_HEADER];
+    return {
+      ...response,
+      headers,
+    };
   }
 
   private _parseJsonBody(body: Uint8Array): unknown | null {
@@ -1695,4 +1827,18 @@ export class AntseedNode extends EventEmitter {
       trustScore: result.metadata.onChainReputation,
     };
   }
+}
+
+function concatChunks(chunks: Uint8Array[]): Uint8Array {
+  if (chunks.length === 0) return new Uint8Array(0);
+  if (chunks.length === 1) return chunks[0]!;
+
+  const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const output = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    output.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return output;
 }
