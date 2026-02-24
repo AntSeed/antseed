@@ -1,0 +1,217 @@
+import { describe, it, expect } from 'vitest';
+import type { PeerInfo, SerializedHttpRequest } from '@antseed/node';
+import { LocalProxyRouter } from './router.js';
+
+function makePeer(overrides?: Partial<PeerInfo>): PeerInfo {
+  return {
+    peerId: 'a'.repeat(64) as PeerInfo['peerId'],
+    lastSeen: Date.now(),
+    providers: ['anthropic'],
+    reputationScore: 80,
+    trustScore: 80,
+    defaultInputUsdPerMillion: 10,
+    defaultOutputUsdPerMillion: 10,
+    providerPricing: {
+      anthropic: {
+        defaults: {
+          inputUsdPerMillion: 10,
+          outputUsdPerMillion: 10,
+        },
+      },
+    },
+    maxConcurrency: 10,
+    currentLoad: 1,
+    ...overrides,
+  };
+}
+
+function makeRequest(model?: string): SerializedHttpRequest {
+  const payload = model ? { model } : { messages: [{ role: 'user', content: 'hi' }] };
+  return {
+    requestId: 'req-1',
+    method: 'POST',
+    path: '/v1/messages',
+    headers: { 'content-type': 'application/json' },
+    body: new TextEncoder().encode(JSON.stringify(payload)),
+  };
+}
+
+describe('LocalProxyRouter', () => {
+  it('enforces ordered provider preferences even when lower-ranked provider is cheaper', () => {
+    const router = new LocalProxyRouter({
+      preferredProviders: ['anthropic', 'openai'],
+      maxPricing: {
+        defaults: { inputUsdPerMillion: 1_000, outputUsdPerMillion: 1_000 },
+      },
+    });
+
+    const preferredButExpensive = makePeer({
+      peerId: '1'.repeat(64) as PeerInfo['peerId'],
+      providers: ['anthropic'],
+      providerPricing: {
+        anthropic: {
+          defaults: { inputUsdPerMillion: 100, outputUsdPerMillion: 100 },
+        },
+      },
+      defaultInputUsdPerMillion: 100,
+      defaultOutputUsdPerMillion: 100,
+    });
+    const cheaperLowerRank = makePeer({
+      peerId: '2'.repeat(64) as PeerInfo['peerId'],
+      providers: ['openai'],
+      providerPricing: {
+        openai: {
+          defaults: { inputUsdPerMillion: 1, outputUsdPerMillion: 1 },
+        },
+      },
+      defaultInputUsdPerMillion: 1,
+      defaultOutputUsdPerMillion: 1,
+    });
+
+    const selected = router.selectPeer(makeRequest('claude-sonnet-4-5-20250929'), [cheaperLowerRank, preferredButExpensive]);
+    expect(selected?.peerId).toBe(preferredButExpensive.peerId);
+  });
+
+  it('rejects peers when output price exceeds buyer max even if input is within max', () => {
+    const router = new LocalProxyRouter({
+      maxPricing: {
+        defaults: { inputUsdPerMillion: 50, outputUsdPerMillion: 10 },
+      },
+    });
+
+    const overpricedOutputPeer = makePeer({
+      peerId: '1'.repeat(64) as PeerInfo['peerId'],
+      providerPricing: {
+        anthropic: {
+          defaults: { inputUsdPerMillion: 5, outputUsdPerMillion: 20 },
+        },
+      },
+      defaultInputUsdPerMillion: 5,
+      defaultOutputUsdPerMillion: 20,
+    });
+
+    expect(router.selectPeer(makeRequest('claude-sonnet-4-5-20250929'), [overpricedOutputPeer])).toBeNull();
+  });
+
+  it('uses model-specific seller offer pricing when request model is present', () => {
+    const router = new LocalProxyRouter({
+      maxPricing: {
+        defaults: { inputUsdPerMillion: 1_000, outputUsdPerMillion: 1_000 },
+      },
+    });
+
+    const peerA = makePeer({
+      peerId: '1'.repeat(64) as PeerInfo['peerId'],
+      providerPricing: {
+        anthropic: {
+          defaults: { inputUsdPerMillion: 10, outputUsdPerMillion: 10 },
+          models: {
+            'model-a': { inputUsdPerMillion: 90, outputUsdPerMillion: 90 },
+          },
+        },
+      },
+      defaultInputUsdPerMillion: 10,
+      defaultOutputUsdPerMillion: 10,
+    });
+    const peerB = makePeer({
+      peerId: '2'.repeat(64) as PeerInfo['peerId'],
+      providerPricing: {
+        anthropic: {
+          defaults: { inputUsdPerMillion: 20, outputUsdPerMillion: 20 },
+          models: {
+            'model-a': { inputUsdPerMillion: 5, outputUsdPerMillion: 5 },
+          },
+        },
+      },
+      defaultInputUsdPerMillion: 20,
+      defaultOutputUsdPerMillion: 20,
+    });
+
+    const selected = router.selectPeer(makeRequest('model-a'), [peerA, peerB]);
+    expect(selected?.peerId).toBe(peerB.peerId);
+  });
+
+  it('falls back to provider defaults when request model is absent', () => {
+    const router = new LocalProxyRouter({
+      maxPricing: {
+        defaults: { inputUsdPerMillion: 1_000, outputUsdPerMillion: 1_000 },
+      },
+    });
+
+    const expensiveDefault = makePeer({
+      peerId: '1'.repeat(64) as PeerInfo['peerId'],
+      providerPricing: {
+        anthropic: {
+          defaults: { inputUsdPerMillion: 40, outputUsdPerMillion: 40 },
+          models: {
+            'model-a': { inputUsdPerMillion: 1, outputUsdPerMillion: 1 },
+          },
+        },
+      },
+      defaultInputUsdPerMillion: 40,
+      defaultOutputUsdPerMillion: 40,
+    });
+    const cheapDefault = makePeer({
+      peerId: '2'.repeat(64) as PeerInfo['peerId'],
+      providerPricing: {
+        anthropic: {
+          defaults: { inputUsdPerMillion: 5, outputUsdPerMillion: 5 },
+        },
+      },
+      defaultInputUsdPerMillion: 5,
+      defaultOutputUsdPerMillion: 5,
+    });
+
+    const selected = router.selectPeer(makeRequest(undefined), [expensiveDefault, cheapDefault]);
+    expect(selected?.peerId).toBe(cheapDefault.peerId);
+  });
+
+  it('puts peers on cooldown after failure threshold and re-allows them later', () => {
+    let now = 1_000_000;
+    const router = new LocalProxyRouter({
+      maxFailures: 2,
+      failureCooldownMs: 500,
+      now: () => now,
+    });
+
+    const flaky = makePeer({ peerId: '1'.repeat(64) as PeerInfo['peerId'], lastSeen: now });
+    const fallback = makePeer({ peerId: 'f'.repeat(64) as PeerInfo['peerId'], lastSeen: now });
+
+    router.onResult(flaky, { success: false, latencyMs: 300, tokens: 0 });
+    router.onResult(flaky, { success: false, latencyMs: 300, tokens: 0 });
+
+    // Flaky is cooling down; fallback should be selected.
+    expect(router.selectPeer(makeRequest(), [flaky, fallback])?.peerId).toBe(fallback.peerId);
+
+    now += 501;
+    // Cooldown expired; flaky is allowed again, but still penalized by reliability history.
+    expect(router.selectPeer(makeRequest(), [flaky, fallback])?.peerId).toBe(fallback.peerId);
+    // It should still be selectable when no alternatives exist.
+    expect(router.selectPeer(makeRequest(), [flaky])?.peerId).toBe(flaky.peerId);
+  });
+
+  it('filters out peers below minimum reputation', () => {
+    const router = new LocalProxyRouter({
+      minReputation: 70,
+    });
+
+    const lowRep = makePeer({
+      peerId: '1'.repeat(64) as PeerInfo['peerId'],
+      reputationScore: 40,
+      trustScore: 40,
+    });
+    const highRep = makePeer({
+      peerId: '2'.repeat(64) as PeerInfo['peerId'],
+      reputationScore: 90,
+      trustScore: 90,
+    });
+
+    const selected = router.selectPeer(makeRequest(), [lowRep, highRep]);
+    expect(selected?.peerId).toBe(highRep.peerId);
+  });
+
+  it('returns null when no peers are available', () => {
+    const router = new LocalProxyRouter();
+    expect(router.selectPeer(makeRequest(), [])).toBeNull();
+  });
+});
