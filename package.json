@@ -1,0 +1,27 @@
+{
+  "name": "@antseed/router-local-chat",
+  "version": "0.1.0",
+  "description": "Antseed local chat router plugin — latency-prioritized for desktop",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": { "import": "./dist/index.js", "types": "./dist/index.d.ts" }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@antseed/router-core": "file:../../router-core"
+  },
+  "peerDependencies": {
+    "@antseed/node": ">=0.1.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0",
+    "@antseed/node": "file:../../node"
+  }
+}
