@@ -8,10 +8,11 @@
   "scripts": {
     "prebuild": "rm -rf dist",
     "build": "tsc",
-    "test": "vitest run"
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@antseed/provider-core": "file:../../provider-core"
+    "@antseed/provider-core": "workspace:*"
   },
   "peerDependencies": {
     "@antseed/node": ">=0.1.0"
@@ -19,6 +20,6 @@
   "devDependencies": {
     "typescript": "^5.5.0",
     "vitest": "^2.0.0",
-    "@antseed/node": "file:../../node"
+    "@antseed/node": "workspace:*"
   }
 }

@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+pnpm-debug.log*
+
+# OS
+.DS_Store
+
+# Test coverage
+coverage/
+
+# TypeScript incremental
+*.tsbuildinfo
+
+# Antseed data
+.antseed/
+
+# Runtime native module markers
+.runtime-native-meta.json

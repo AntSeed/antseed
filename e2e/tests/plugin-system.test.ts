@@ -9,12 +9,12 @@ import type {
   PluginConfigKey,
 } from '@antseed/node';
 
-// Import actual plugin packages (antseed-e2e depends on them via file: refs)
-import providerPlugin from 'antseed-provider-anthropic';
-import routerPlugin, { TOOL_HINTS } from 'antseed-router-claude-code';
+// Import actual plugin packages (workspace deps)
+import providerPlugin from '@antseed/provider-anthropic';
+import routerPlugin, { TOOL_HINTS } from '@antseed/router-local-proxy';
 
 // Import registry directly from CLI source (vitest can resolve .ts)
-import { TRUSTED_PLUGINS, type TrustedPlugin } from '../../cli/src/plugins/registry.js';
+import { TRUSTED_PLUGINS, type TrustedPlugin } from '../../apps/cli/src/plugins/registry.js';
 
 // ---------------------------------------------------------------------------
 // Helper: buildPluginConfig (mirrors antseed-cli/src/plugins/loader.ts)
@@ -214,12 +214,12 @@ describe('Plugin Registry', () => {
     expect(anthropic!.type).toBe('provider');
   });
 
-  it('has claude-code as a trusted router', () => {
-    const claudeCode = TRUSTED_PLUGINS.find(
-      (p: TrustedPlugin) => p.name === 'claude-code',
+  it('has local-proxy as a trusted router', () => {
+    const localProxy = TRUSTED_PLUGINS.find(
+      (p: TrustedPlugin) => p.name === 'local-proxy',
     );
-    expect(claudeCode).toBeDefined();
-    expect(claudeCode!.type).toBe('router');
+    expect(localProxy).toBeDefined();
+    expect(localProxy!.type).toBe('router');
   });
 
   it('all trusted plugins have required fields (name, type, package, description)', () => {
@@ -233,9 +233,9 @@ describe('Plugin Registry', () => {
 });
 
 // ---------------------------------------------------------------------------
-// antseed-provider-anthropic plugin shape
+// @antseed/provider-anthropic plugin shape
 // ---------------------------------------------------------------------------
-describe('antseed-provider-anthropic plugin shape', () => {
+describe('@antseed/provider-anthropic plugin shape', () => {
   it('satisfies AntseedProviderPlugin interface', () => {
     const plugin = providerPlugin as AntseedProviderPlugin;
     expect(plugin.name).toBe('anthropic');
@@ -249,14 +249,13 @@ describe('antseed-provider-anthropic plugin shape', () => {
     expect(providerPlugin.type).toBe('provider');
   });
 
-  it('exports configKeys array', () => {
-    expect(Array.isArray(providerPlugin.configKeys)).toBe(true);
-    expect(providerPlugin.configKeys!.length).toBeGreaterThan(0);
+  it('exports configSchema array', () => {
+    expect(Array.isArray(providerPlugin.configSchema)).toBe(true);
+    expect(providerPlugin.configSchema!.length).toBeGreaterThan(0);
 
-    for (const key of providerPlugin.configKeys!) {
-      expect(key.key).toBeTruthy();
-      expect(key.description).toBeTruthy();
-      expect(typeof key.required).toBe('boolean');
+    for (const field of providerPlugin.configSchema!) {
+      expect(field.key).toBeTruthy();
+      expect(field.description).toBeTruthy();
     }
   });
 
@@ -278,12 +277,12 @@ describe('antseed-provider-anthropic plugin shape', () => {
 });
 
 // ---------------------------------------------------------------------------
-// antseed-router-claude-code plugin shape
+// @antseed/router-local-proxy plugin shape
 // ---------------------------------------------------------------------------
-describe('antseed-router-claude-code plugin shape', () => {
+describe('@antseed/router-local-proxy plugin shape', () => {
   it('satisfies AntseedRouterPlugin interface', () => {
     const plugin = routerPlugin as AntseedRouterPlugin;
-    expect(plugin.name).toBe('claude-code');
+    expect(plugin.name).toBe('local-proxy');
     expect(plugin.displayName).toBeTruthy();
     expect(plugin.version).toBeTruthy();
     expect(plugin.description).toBeTruthy();

@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const desktopDir = path.resolve(__dirname, '..');
-const repoRoot = path.resolve(desktopDir, '..');
+const repoRoot = path.resolve(desktopDir, '..', '..');
 const markerPath = path.resolve(desktopDir, '.runtime-native-meta.json');
 const runtimeInfo = {
   nodeExec: process.execPath,
@@ -20,14 +20,14 @@ const runtimeInfo = {
 const moduleChecks = [
   {
     label: 'better-sqlite3',
-    packageDir: path.resolve(repoRoot, 'node'),
-    packageJson: path.resolve(repoRoot, 'node', 'package.json'),
+    packageDir: path.resolve(repoRoot, 'packages', 'node'),
+    packageJson: path.resolve(repoRoot, 'packages', 'node', 'package.json'),
     moduleName: 'better-sqlite3',
   },
   {
     label: 'keytar',
-    packageDir: path.resolve(repoRoot, 'provider-anthropic'),
-    packageJson: path.resolve(repoRoot, 'provider-anthropic', 'package.json'),
+    packageDir: path.resolve(repoRoot, 'plugins', 'provider-anthropic'),
+    packageJson: path.resolve(repoRoot, 'plugins', 'provider-anthropic', 'package.json'),
     moduleName: 'keytar',
   },
 ];

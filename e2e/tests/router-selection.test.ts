@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { PeerInfo, SerializedHttpRequest } from '@antseed/node';
-import { ClaudeCodeRouter } from '../../router-claude-code/src/router.js';
+import { LocalProxyRouter as ClaudeCodeRouter } from '../../plugins/router-local-proxy/src/router.js';
 
 function makePeer(overrides?: Partial<PeerInfo>): PeerInfo {
   return {

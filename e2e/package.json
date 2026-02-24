@@ -9,9 +9,10 @@
     "flow:local-chain": "node ./scripts/local-chain-full-flow.mjs"
   },
   "dependencies": {
-    "@antseed/node": "file:../node",
-    "antseed-provider-anthropic": "file:../provider-anthropic",
-    "antseed-router-claude-code": "file:../router-claude-code"
+    "@antseed/node": "workspace:*",
+    "@antseed/provider-anthropic": "workspace:*",
+    "@antseed/provider-core": "workspace:*",
+    "@antseed/router-local-proxy": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import { getGlobalOptions } from './types.js';
 import { loadConfig } from '../../config/loader.js';
 import { AntseedNode } from '@antseed/node';
-import { DHTNode, DEFAULT_DHT_CONFIG } from '@antseed/node/discovery';
+import { DHTNode } from '@antseed/node/discovery';
 import { toPeerId } from '@antseed/node';
 import { parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery';
 import { setupShutdownHandler } from '../shutdown.js';

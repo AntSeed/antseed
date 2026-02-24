@@ -30,7 +30,7 @@ function generatePackageJson(opts: PluginScaffoldOptions): string {
         '@antseed/node': '>=0.1.0',
       },
       devDependencies: {
-        '@antseed/node': 'file:../../node',
+        '@antseed/node': 'workspace:*',
         '@types/node': '^20.11.0',
         typescript: '^5.3.0',
       },
@@ -115,7 +115,7 @@ export function createProvider(config: Record<string, string>): Provider {
 `
 }
 
-function generateRouterTs(opts: PluginScaffoldOptions): string {
+function generateRouterTs(_opts: PluginScaffoldOptions): string {
   return `import type { Router, PeerInfo, SerializedHttpRequest } from '@antseed/node'
 
 export function createRouter(config: Record<string, string>): Router {
