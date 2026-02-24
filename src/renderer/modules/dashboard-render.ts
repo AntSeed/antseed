@@ -598,12 +598,6 @@ export function initDashboardRenderModule({
     setText(elements.ovUptime, uptime);
     setText(elements.ovPeersCount, formatInt(peers.length));
 
-    if (activeSessions > 0 && uiState.lastActiveSessions === 0) {
-      if (getActiveView() === 'overview') {
-        setActiveView('sessions');
-        appendSystemLog('Active session detected. Switched to Sessions view.');
-      }
-    }
     uiState.lastActiveSessions = activeSessions;
 
     setBadgeTone(

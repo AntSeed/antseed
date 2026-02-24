@@ -5,14 +5,6 @@ export function initChatModule({
   setBadgeTone,
   appendSystemLog,
 }: any) {
-  const toolIcons: Record<string, string> = {
-    bash: '⚡',
-    read_file: '📄',
-    write_file: '✏️',
-    list_directory: '📁',
-    search_files: '🔍',
-    grep: '🔎',
-  };
   const myrmecochoryPhrases = [
     'Myrmecochory scouting for the right peer',
     'Myrmecochory optimizing route and cost',
@@ -299,6 +291,106 @@ export function initChatModule({
     return html;
   }
 
+  function toToolDisplayName(name) {
+    const raw = String(name || 'tool').trim();
+    if (!raw) return 'Tool';
+    return raw
+      .split(/[_\-\s]+/)
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(' ');
+  }
+
+  function compactInlineText(value, maxLength = 72) {
+    const normalized = String(value || '').replace(/\s+/g, ' ').trim();
+    if (!normalized) return '';
+    if (normalized.length <= maxLength) return normalized;
+    return `${normalized.slice(0, maxLength - 1)}...`;
+  }
+
+  function extractPrimaryToolInput(name, input) {
+    if (!input || typeof input !== 'object') {
+      return '';
+    }
+
+    const rawName = String(name || '').trim().toLowerCase();
+    const payload = input as Record<string, unknown>;
+
+    const preferredKeys = rawName === 'bash'
+      ? ['command', 'cmd', 'script', 'args']
+      : rawName === 'read_file'
+        ? ['path', 'filePath', 'file', 'target']
+        : rawName === 'write_file'
+          ? ['path', 'filePath', 'file', 'target']
+          : rawName === 'list_directory'
+            ? ['path', 'directory', 'dir']
+            : rawName === 'search_files'
+              ? ['query', 'pattern', 'path']
+              : rawName === 'grep'
+                ? ['pattern', 'query', 'path']
+                : ['command', 'cmd', 'path', 'query', 'pattern', 'target', 'file'];
+
+    for (const key of preferredKeys) {
+      const value = payload[key];
+      if (typeof value === 'string' && value.trim().length > 0) {
+        return compactInlineText(value);
+      }
+      if (Array.isArray(value) && value.length > 0) {
+        const rendered = compactInlineText(value.map((entry) => String(entry)).join(' '));
+        if (rendered.length > 0) {
+          return rendered;
+        }
+      }
+      if ((typeof value === 'number' || typeof value === 'boolean') && Number.isFinite(Number(value))) {
+        return String(value);
+      }
+    }
+
+    for (const value of Object.values(payload)) {
+      if (typeof value === 'string' && value.trim().length > 0) {
+        return compactInlineText(value);
+      }
+    }
+
+    return '';
+  }
+
+  function formatToolExecutionLabel(name, input) {
+    const toolName = toToolDisplayName(name);
+    const summary = extractPrimaryToolInput(name, input);
+    return summary.length > 0 ? `${toolName} (${summary})` : toolName;
+  }
+
+  function renderToolExecutionRow({
+    name,
+    input = undefined,
+    status = 'success',
+    output = '',
+    showOutput = false,
+    isError = false,
+    toolId = '',
+  }) {
+    const safeStatus = status === 'running' || status === 'error' ? status : 'success';
+    const statusLabel = safeStatus === 'running' ? 'Running' : safeStatus === 'error' ? 'Error' : 'Done';
+    const label = formatToolExecutionLabel(name, input);
+    const outputClass = isError ? 'tool-inline-output error' : 'tool-inline-output';
+    const hasOutput = showOutput && String(output).trim().length > 0;
+    const outputHtml = hasOutput
+      ? `<div class="${outputClass}">${escapeHtml(String(output))}</div>`
+      : `<div class="${outputClass}" style="display:none"></div>`;
+
+    return `
+      <div class="tool-inline" data-tool-id="${escapeHtml(String(toolId || ''))}" data-tool-name="${escapeHtml(String(name || 'tool'))}">
+        <div class="tool-inline-row">
+          <span class="tool-inline-dot ${safeStatus}"></span>
+          <span class="tool-inline-label">${escapeHtml(label)}</span>
+          <span class="tool-inline-status ${safeStatus}">${statusLabel}</span>
+        </div>
+        ${outputHtml}
+      </div>
+    `;
+  }
+
   function renderContentBlocks(blocks) {
     if (!Array.isArray(blocks)) return renderMarkdown(String(blocks));
 
@@ -322,33 +414,26 @@ export function initChatModule({
           break;
           }
         case 'tool_use': {
-          const icon = (toolIcons as Record<string, string>)[String(block.name)] || '🔧';
-          const inputJson = JSON.stringify(block.input, null, 2);
-          html += `<div class="tool-block" data-tool-id="${escapeHtml(block.id)}">`;
-          html += '<div class="tool-block-header" onclick="this.parentElement.classList.toggle(\'open\')">';
-          html += '<span class="tool-block-triangle">▶</span>';
-          html += `<span class="tool-block-icon">${icon}</span>`;
-          html += `<span class="tool-block-name">${escapeHtml(block.name)}</span>`;
-          html += '<span class="tool-block-status success">Done</span>';
-          html += '</div>';
-          html += '<div class="tool-block-body">';
-          html += `<div class="tool-block-input">${escapeHtml(inputJson)}</div>`;
-          html += '</div></div>';
+          html += renderToolExecutionRow({
+            name: block.name,
+            input: block.input,
+            status: 'success',
+            toolId: block.id,
+          });
           break;
         }
         case 'tool_result': {
           const outputText = block.content || '';
-          const truncated = outputText.length > 2000 ? outputText.slice(0, 2000) + '\n... (truncated)' : outputText;
-          html += '<div class="tool-block">';
-          html += '<div class="tool-block-header" onclick="this.parentElement.classList.toggle(\'open\')">';
-          html += '<span class="tool-block-triangle">▶</span>';
-          html += '<span class="tool-block-icon">📋</span>';
-          html += '<span class="tool-block-name">Result</span>';
-          html += `<span class="tool-block-status ${block.is_error ? 'error' : 'success'}">${block.is_error ? 'Error' : 'Success'}</span>`;
-          html += '</div>';
-          html += '<div class="tool-block-body">';
-          html += `<div class="tool-block-output${block.is_error ? ' error' : ''}">${escapeHtml(truncated)}</div>`;
-          html += '</div></div>';
+          const truncated = outputText.length > 600 ? `${outputText.slice(0, 600)}\n... (truncated)` : outputText;
+          if (block.is_error) {
+            html += renderToolExecutionRow({
+              name: 'result',
+              status: 'error',
+              output: truncated,
+              showOutput: true,
+              isError: true,
+            });
+          }
           break;
         }
       }
@@ -834,12 +919,16 @@ export function initChatModule({
           streamingBubble.appendChild(thinkDiv);
           scrollChatToBottom();
         } else if (data.blockType === 'tool_use') {
-          const icon = (toolIcons as Record<string, string>)[String(data.toolName)] || '🔧';
-          const toolDiv = document.createElement('div');
-          toolDiv.className = 'tool-block';
-          toolDiv.id = `stream-tool-${data.toolId}`;
-          toolDiv.innerHTML = `<div class="tool-block-header" onclick="this.parentElement.classList.toggle('open')"><span class="tool-block-triangle">▶</span><span class="tool-block-icon">${icon}</span><span class="tool-block-name">${escapeHtml(data.toolName || '')}</span><span class="tool-block-status running"><span class="tool-spinner"></span></span></div><div class="tool-block-body"><div class="tool-block-input">Preparing...</div></div>`;
-          streamingBubble.appendChild(toolDiv);
+          streamingBubble.insertAdjacentHTML('beforeend', renderToolExecutionRow({
+            name: data.toolName,
+            status: 'running',
+            toolId: data.toolId,
+          }));
+          const toolDiv = streamingBubble.lastElementChild as HTMLElement | null;
+          if (toolDiv) {
+            toolDiv.id = `stream-tool-${data.toolId}`;
+            toolDiv.dataset.toolName = String(data.toolName || 'tool');
+          }
           scrollChatToBottom();
         }
       });
@@ -886,8 +975,9 @@ export function initChatModule({
         } else if (data.blockType === 'tool_use' && data.input) {
           const toolBlock = streamingBubble.querySelector(`#stream-tool-${data.toolId}`);
           if (toolBlock) {
-            const inputDiv = toolBlock.querySelector('.tool-block-input');
-            if (inputDiv) inputDiv.textContent = JSON.stringify(data.input, null, 2);
+            const labelEl = toolBlock.querySelector('.tool-inline-label');
+            const toolName = (toolBlock as HTMLElement).dataset.toolName || 'tool';
+            if (labelEl) labelEl.textContent = formatToolExecutionLabel(toolName, data.input);
           }
         }
       });
@@ -899,13 +989,23 @@ export function initChatModule({
 
         const toolBlock = streamingBubble.querySelector(`#stream-tool-${data.toolUseId}`);
         if (toolBlock) {
-          const statusEl = toolBlock.querySelector('.tool-block-status');
-          if (statusEl) {
-            statusEl.className = 'tool-block-status running';
-            statusEl.innerHTML = '<span class="tool-spinner"></span> Running';
+          (toolBlock as HTMLElement).dataset.toolName = String(data.name || (toolBlock as HTMLElement).dataset.toolName || 'tool');
+          const dotEl = toolBlock.querySelector('.tool-inline-dot');
+          if (dotEl) {
+            dotEl.className = 'tool-inline-dot running';
           }
-          const inputDiv = toolBlock.querySelector('.tool-block-input');
-          if (inputDiv) inputDiv.textContent = JSON.stringify(data.input, null, 2);
+          const statusEl = toolBlock.querySelector('.tool-inline-status');
+          if (statusEl) {
+            statusEl.className = 'tool-inline-status running';
+            statusEl.textContent = 'Running';
+          }
+          const labelEl = toolBlock.querySelector('.tool-inline-label');
+          if (labelEl) {
+            labelEl.textContent = formatToolExecutionLabel(
+              data.name || (toolBlock as HTMLElement).dataset.toolName || 'tool',
+              data.input,
+            );
+          }
         }
       });
     }
@@ -916,18 +1016,21 @@ export function initChatModule({
 
         const toolBlock = streamingBubble.querySelector(`#stream-tool-${data.toolUseId}`);
         if (toolBlock) {
-          const statusEl = toolBlock.querySelector('.tool-block-status');
+          const dotEl = toolBlock.querySelector('.tool-inline-dot');
+          if (dotEl) {
+            dotEl.className = `tool-inline-dot ${data.isError ? 'error' : 'success'}`;
+          }
+          const statusEl = toolBlock.querySelector('.tool-inline-status');
           if (statusEl) {
-            statusEl.className = `tool-block-status ${data.isError ? 'error' : 'success'}`;
+            statusEl.className = `tool-inline-status ${data.isError ? 'error' : 'success'}`;
             statusEl.textContent = data.isError ? 'Error' : 'Done';
           }
-          const bodyEl = toolBlock.querySelector('.tool-block-body');
-          if (bodyEl) {
+          const outputEl = toolBlock.querySelector('.tool-inline-output') as HTMLElement | null;
+          if (outputEl && data.isError) {
             const truncated = data.output.length > 2000 ? data.output.slice(0, 2000) + '\n... (truncated)' : data.output;
-            const outputDiv = document.createElement('div');
-            outputDiv.className = `tool-block-output${data.isError ? ' error' : ''}`;
-            outputDiv.textContent = truncated;
-            bodyEl.appendChild(outputDiv);
+            outputEl.textContent = truncated;
+            outputEl.style.display = '';
+            outputEl.className = `tool-inline-output${data.isError ? ' error' : ''}`;
           }
         }
         scrollChatToBottom();

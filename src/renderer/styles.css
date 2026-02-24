@@ -1658,106 +1658,90 @@ select.form-input {
   background: var(--bg-primary);
 }
 
-/* Tool blocks */
-.tool-block {
-  margin: 6px 0;
+/* Inline tool executions */
+.tool-inline {
+  margin: 5px 0;
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: 6px;
+  background: rgba(var(--accent-rgb), 0.06);
   overflow: hidden;
 }
 
-.tool-block-header {
+.tool-inline-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
-  background: var(--bg-surface);
-  cursor: pointer;
+  gap: 8px;
+  padding: 6px 10px;
+  min-height: 28px;
+}
+
+.tool-inline-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 8px;
+  background: var(--text-muted);
+}
+
+.tool-inline-dot.running {
+  background: var(--accent-blue);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.14);
+}
+
+.tool-inline-dot.success {
+  background: var(--accent-green);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.12);
+}
+
+.tool-inline-dot.error {
+  background: var(--danger);
+  box-shadow: 0 0 0 3px rgba(var(--danger-rgb), 0.12);
+}
+
+.tool-inline-label {
+  font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--text-secondary);
-  user-select: none;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.tool-block-header:hover {
-  background: var(--bg-hover);
-}
-
-.tool-block-triangle {
-  font-size: 8px;
-  transition: transform 0.15s;
+.tool-inline-status {
+  margin-left: auto;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
   color: var(--text-muted);
 }
 
-.tool-block.open .tool-block-triangle {
-  transform: rotate(90deg);
-}
-
-.tool-block-icon {
-  font-size: 14px;
-}
-
-.tool-block-name {
-  font-weight: 600;
-  color: var(--text-primary);
-  font-family: var(--font-mono);
-  font-size: 11px;
-}
-
-.tool-block-status {
-  margin-left: auto;
-  font-size: 9px;
-  padding: 2px 6px;
-  border-radius: 10px;
-  font-weight: 600;
-}
-
-.tool-block-status.running {
-  background: rgba(var(--accent-rgb), 0.18);
+.tool-inline-status.running {
   color: var(--accent-blue);
 }
 
-.tool-block-status.success {
-  background: rgba(var(--accent-rgb), 0.16);
+.tool-inline-status.success {
   color: var(--accent-green);
 }
 
-.tool-block-status.error {
-  background: rgba(var(--danger-rgb), 0.18);
+.tool-inline-status.error {
   color: var(--danger);
 }
 
-.tool-block-body {
-  display: none;
-  padding: 8px 10px;
+.tool-inline-output {
   border-top: 1px solid var(--border);
+  padding: 7px 10px 8px;
   font-family: var(--font-mono);
   font-size: 10px;
-  line-height: 1.4;
-  color: var(--text-secondary);
-  max-height: 300px;
-  overflow-y: auto;
+  line-height: 1.35;
   white-space: pre-wrap;
   word-break: break-word;
+  color: var(--text-secondary);
   background: var(--bg-primary);
 }
 
-.tool-block.open .tool-block-body {
-  display: block;
-}
-
-.tool-block-input {
-  color: var(--text-muted);
-  margin-bottom: 6px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid var(--border);
-}
-
-.tool-block-output {
-  color: var(--text-primary);
-}
-
-.tool-block-output.error {
-  color: var(--accent);
+.tool-inline-output.error {
+  color: var(--danger);
 }
 
 /* Tool spinner */
