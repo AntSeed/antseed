@@ -4,7 +4,7 @@
 [![Node.js](https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen.svg)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.3+-blue.svg)](https://www.typescriptlang.org/)
 
-Core protocol SDK for the Antseed Network -- a peer-to-peer inference marketplace. Sellers expose LLM capacity, buyers discover sellers via DHT and send requests over encrypted P2P connections.
+Core protocol SDK for AntSeed -- a peer-to-peer AI services network. Sellers expose AI capacity, buyers discover sellers via DHT and send requests over encrypted P2P connections.
 
 ## Installation
 

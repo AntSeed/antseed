@@ -1,6 +1,6 @@
 # Antseed Network
 
-Antseed Network is a decentralized peer-to-peer inference marketplace that enables direct connections between AI model sellers and buyers. It eliminates intermediary platforms by providing protocol-level discovery, metering, and payment settlement.
+AntSeed is a peer-to-peer AI services network that enables direct connections between AI service providers and buyers. It eliminates intermediary platforms by providing protocol-level discovery, metering, and payment settlement.
 
 ## Repository Structure
 

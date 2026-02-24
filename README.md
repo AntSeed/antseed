@@ -1,6 +1,6 @@
 # AntSeed
 
-A peer-to-peer inference marketplace. Sellers expose idle LLM capacity, buyers discover sellers via DHT and route requests through encrypted P2P connections.
+A peer-to-peer AI services network. Sellers expose AI capacity, buyers discover sellers via DHT and route requests through encrypted P2P connections.
 
 ## How It Works
 

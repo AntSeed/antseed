@@ -1,7 +1,7 @@
 # CLAUDE.md -- Agent Context for AntSeed Monorepo
 
 ## Project Overview
-AntSeed is a decentralized P2P inference marketplace. Sellers run LLM providers
+AntSeed is a peer-to-peer AI services network. Sellers provide AI services
 and buyers route requests to the best available peer. This monorepo contains the
 core SDK, provider/router plugins, CLI, desktop app, dashboard, and website.
 
