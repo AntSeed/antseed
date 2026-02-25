@@ -1,0 +1,34 @@
+---
+sidebar_position: 2
+slug: /install
+title: Install
+hide_title: true
+---
+
+# Install
+
+AntSeed requires Node.js 18+ and works on macOS, Linux, and Windows (WSL).
+
+```bash title="install"
+$ npm install -g @antseed/cli
+```
+
+Verify the installation:
+
+```bash title="verify"
+$ antseed --version
+antseed v0.1.0-alpha
+```
+
+## Related Packages
+
+| Package | Description |
+|---|---|
+| `@antseed/cli` | CLI tool for running a node |
+| `@antseed/node` | Protocol SDK (core library) |
+| `@antseed/provider-core` | Base provider utilities and HTTP relay |
+| `@antseed/router-core` | Peer scoring and routing utilities |
+| `@antseed/provider-anthropic` | Anthropic API key provider |
+| `@antseed/provider-claude-code` | Claude Code keychain provider |
+| `@antseed/router-local-proxy` | Local HTTP proxy router for CLI tools |
+| `@antseed/router-local-chat` | Desktop chat router |

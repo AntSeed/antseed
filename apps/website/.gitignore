@@ -4,6 +4,8 @@ node_modules/
 # Build outputs
 dist/
 dist-web/
+build/
+.docusaurus/
 coverage/
 *.tsbuildinfo
 

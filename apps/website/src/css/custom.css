@@ -1,0 +1,377 @@
+/* AntSeed Docusaurus Theme - Dark Mode Only */
+
+html[data-theme='dark'] {
+  --ifm-color-primary: #3dffa2;
+  --ifm-color-primary-dark: #2ecc82;
+  --ifm-color-primary-darker: #24b873;
+  --ifm-color-primary-darkest: #1a9e5f;
+  --ifm-color-primary-light: #6affba;
+  --ifm-color-primary-lighter: #85ffc8;
+  --ifm-color-primary-lightest: #a8ffd6;
+
+  --ifm-navbar-height: 73px;
+  --ifm-background-color: #0a0e14;
+  --ifm-background-surface-color: #0a0e14;
+  --ifm-navbar-background-color: transparent;
+  --ifm-footer-background-color: #0a0e14;
+
+  --ifm-font-family-base: 'Space Grotesk', system-ui, -apple-system, sans-serif;
+  --ifm-font-family-monospace: 'JetBrains Mono', 'Fira Code', monospace;
+  --ifm-heading-font-family: 'Space Grotesk', system-ui, -apple-system, sans-serif;
+
+  --ifm-code-background: #161B22;
+  --ifm-code-border-radius: 4px;
+  --ifm-code-padding-horizontal: 6px;
+  --ifm-code-padding-vertical: 2px;
+  --ifm-code-font-size: 12px;
+
+  --ifm-color-emphasis-300: #21262D;
+  --ifm-font-color-base: #e6edf3;
+  --ifm-font-color-secondary: #8b949e;
+  --ifm-heading-font-weight: 700;
+
+  --ifm-hr-border-color: rgba(61, 255, 162, 0.07);
+  --ifm-toc-border-color: rgba(61, 255, 162, 0.07);
+  --ifm-table-border-color: rgba(61, 255, 162, 0.04);
+
+  --docusaurus-highlighted-code-line-bg: rgba(61, 255, 162, 0.08);
+}
+
+/* =============================================
+   Custom Navbar — override Docusaurus defaults
+   ============================================= */
+nav.navbar {
+  box-shadow: none !important;
+  --ifm-navbar-background-color: transparent;
+  --ifm-navbar-shadow: none;
+}
+
+/* =============================================
+   Custom Navbar hover states
+   ============================================= */
+.custom-nav-link:hover {
+  color: #e6edf3 !important;
+}
+
+.custom-nav-github:hover {
+  border-color: rgba(61, 255, 162, 0.3) !important;
+  color: #e6edf3 !important;
+}
+
+/* =============================================
+   Custom Footer hover states
+   ============================================= */
+.custom-footer-link:hover {
+  color: #e6edf3 !important;
+}
+
+/* Push doc content below fixed navbar */
+[class*='docsWrapper'] {
+  padding-top: var(--ifm-navbar-height);
+}
+
+/* =============================================
+   Sidebar — match original flat, non-collapsible style
+   ============================================= */
+
+/* Sidebar container width to match original (w-52 = 208px) */
+aside.theme-doc-sidebar-container {
+  border-right: 1px solid rgba(61, 255, 162, 0.07) !important;
+  --doc-sidebar-width: 208px !important;
+}
+
+/* Sidebar items */
+.menu__link {
+  font-size: 13px;
+  border-radius: 6px;
+  padding: 6px 12px;
+  margin: 0 4px;
+  color: #8b949e;
+}
+
+.menu__link:hover {
+  color: #e6edf3;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* Active sidebar item — green bg + green text */
+.menu__link--active:not(.menu__link--sublist) {
+  background: rgba(61, 255, 162, 0.1);
+  color: #3dffa2;
+  font-weight: 400;
+}
+
+/* Category heading labels — small, uppercase, muted */
+.theme-doc-sidebar-item-category > .menu__list-item-collapsible > .menu__link,
+.menu__link--sublist {
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #484F58;
+  padding: 6px 12px;
+  margin: 12px 4px 4px;
+  cursor: default;
+}
+
+.theme-doc-sidebar-item-category > .menu__list-item-collapsible > .menu__link:hover,
+.menu__link--sublist:hover {
+  background: transparent;
+  color: #484F58;
+}
+
+/* Hide collapse arrows since categories are non-collapsible */
+.menu__caret,
+.menu__link--sublist-caret::after {
+  display: none !important;
+}
+
+/* Remove extra padding from nested category lists */
+.menu__list .menu__list {
+  padding-left: 0;
+}
+
+/* =============================================
+   Doc page content — match original sizing
+   ============================================= */
+
+/* Remove auto-centering from doc content container */
+.docMainContainer_namt .container,
+[class*='docMainContainer'] .container {
+  margin-left: 0 !important;
+  max-width: 100% !important;
+}
+
+/* Content area max-width to match original (~600px text + padding) */
+.theme-doc-markdown {
+  max-width: 768px;
+  padding: 24px;
+}
+
+/* Hide breadcrumbs */
+.theme-doc-breadcrumbs {
+  display: none;
+}
+
+/* Hide right-side TOC */
+.col.col--3 {
+  display: none;
+}
+
+/* Make doc content column fill space */
+.col[class*='docItemCol'] {
+  max-width: 100% !important;
+  flex: 1 !important;
+}
+
+/* Doc page title — the first h1/h2 */
+.markdown h1 {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 18px;
+  font-weight: 700;
+  color: rgba(230, 237, 243, 0.8);
+  margin-bottom: 12px;
+}
+
+.markdown h1::before {
+  content: '# ';
+  opacity: 0.4;
+}
+
+.markdown h2 {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px;
+  font-weight: 700;
+  color: rgba(230, 237, 243, 0.8);
+  margin-top: 32px;
+  margin-bottom: 12px;
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.markdown h2::before {
+  content: '## ';
+  opacity: 0.4;
+}
+
+.markdown h3 {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  font-weight: 700;
+  color: rgba(230, 237, 243, 0.6);
+  margin-top: 24px;
+  margin-bottom: 8px;
+}
+
+.markdown h3::before {
+  content: '### ';
+  opacity: 0.4;
+}
+
+.markdown p {
+  font-size: 14px;
+  line-height: 1.8;
+  color: #8b949e;
+  margin-bottom: 12px;
+}
+
+.markdown strong {
+  color: rgba(230, 237, 243, 0.7);
+}
+
+.markdown code {
+  color: rgba(61, 255, 162, 0.7);
+  background: #161B22;
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.markdown table {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  width: 100%;
+  display: table;
+}
+
+.markdown table th {
+  color: #8b949e;
+  font-weight: 500;
+  background: transparent;
+}
+
+.markdown table td {
+  color: #484F58;
+}
+
+.markdown table tr {
+  border-bottom-color: rgba(61, 255, 162, 0.04);
+  background: transparent !important;
+}
+
+.markdown table thead tr {
+  border-bottom-color: #21262D;
+}
+
+/* =============================================
+   Code blocks
+   ============================================= */
+.prism-code {
+  font-size: 12px !important;
+}
+
+div[class*='codeBlockTitle'] {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: rgba(61, 255, 162, 0.5);
+  background: #0a0e14;
+  border-bottom: 1px solid rgba(61, 255, 162, 0.07);
+}
+
+div[class*='codeBlockContent'] {
+  background: #0a0e14 !important;
+}
+
+pre {
+  background: #0a0e14 !important;
+}
+
+/* =============================================
+   Pagination — keep but style to match theme
+   ============================================= */
+.pagination-nav__link {
+  border-color: rgba(61, 255, 162, 0.07);
+  background: transparent;
+}
+
+.pagination-nav__link:hover {
+  border-color: rgba(61, 255, 162, 0.3);
+}
+
+.pagination-nav__sublabel {
+  color: #484F58;
+}
+
+.pagination-nav__label {
+  color: #8b949e;
+}
+
+/* =============================================
+   Table of contents (right side — hidden)
+   ============================================= */
+.table-of-contents__link--active {
+  color: #3dffa2;
+}
+
+/* =============================================
+   Scrollbar
+   ============================================= */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0a0e14;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #21262D;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #484F58;
+}
+
+/* Selection */
+::selection {
+  background-color: rgba(61, 255, 162, 0.25);
+  color: #fff;
+}
+
+/* =============================================
+   Landing page animations
+   ============================================= */
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-12px); }
+}
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-float {
+  animation: float 6s ease-in-out infinite;
+}
+
+.animate-fade-up-1 { animation: fadeUp 0.8s ease forwards 0.3s; }
+.animate-fade-up-2 { animation: fadeUp 0.8s ease forwards 0.5s; }
+.animate-fade-up-3 { animation: fadeUp 0.8s ease forwards 0.7s; }
+.animate-fade-up-4 { animation: fadeUp 0.8s ease forwards 0.9s; }
+.animate-fade-up-5 { animation: fadeUp 0.8s ease forwards 1.1s; }
+
+/* Scroll reveal */
+.reveal {
+  opacity: 0;
+  transform: translateY(30px);
+  transition: opacity 0.8s ease, transform 0.8s ease;
+}
+
+.reveal.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* =============================================
+   Responsive
+   ============================================= */
+@media (max-width: 640px) {
+  .custom-nav-github {
+    display: none;
+  }
+}
