@@ -1,9 +1,11 @@
 {
   "name": "@antseed/provider-core",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Shared provider infrastructure for Antseed plugins",
   "type": "module",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {

@@ -1,9 +1,11 @@
 {
   "name": "@antseed/provider-claude-oauth",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Third-party Anthropic Claude provider with OAuth authentication",
   "type": "module",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {

@@ -23,7 +23,7 @@ const program = new Command();
 program
   .name('antseed')
   .description('P2P network for AI services')
-  .version('0.1.1')
+  .version('0.1.2')
   .option('-c, --config <path>', 'path to config file', '~/.antseed/config.json')
   .option('--data-dir <path>', 'path to node identity/state directory', '~/.antseed')
   .option('-v, --verbose', 'enable verbose logging', false);

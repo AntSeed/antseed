@@ -1,13 +1,18 @@
 {
   "name": "@antseed/router-local-proxy",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Antseed local proxy router plugin — Claude Code, Aider, Continue.dev",
   "type": "module",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
-    ".": { "import": "./dist/index.js", "types": "./dist/index.d.ts" }
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
   },
   "scripts": {
     "build": "tsc",
