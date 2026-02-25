@@ -536,7 +536,16 @@ export class BuyerProxy {
       this._cachedPeers = peers
       this._cacheTimestamp = now
       log(`Found ${peers.length} peer(s)`)
+      return peers
     }
+
+    // DHT returned nothing — fall back to stale cached peers if available.
+    // The peer may still be reachable even if the DHT announcement expired.
+    if (this._cachedPeers.length > 0) {
+      log(`DHT returned 0 peers, reusing ${this._cachedPeers.length} stale cached peer(s)`)
+      return this._cachedPeers
+    }
+
     return peers
   }
 

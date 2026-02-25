@@ -804,8 +804,11 @@ export class AntseedNode extends EventEmitter {
         return;
       }
 
+      const requestedModel = this._extractRequestedModel(request);
       const provider = this._providers.find((p) =>
-        p.models.some((m) => request.path.includes(m)) || this._providers.length === 1
+        p.models.length === 0
+        || (requestedModel && p.models.includes(requestedModel))
+        || this._providers.length === 1
       );
 
       if (!provider) {
