@@ -22,7 +22,7 @@ const program = new Command();
 
 program
   .name('antseed')
-  .description('P2P marketplace for reselling idle LLM plan capacity')
+  .description('P2P network for AI services')
   .version('0.1.0')
   .option('-c, --config <path>', 'path to config file', '~/.antseed/config.json')
   .option('--data-dir <path>', 'path to node identity/state directory', '~/.antseed')
