@@ -9,6 +9,10 @@ hide_title: true
 
 Provider plugins expose AI services to the network. They advertise models, capabilities, Skills, and pricing via the DHT, and handle incoming requests from buyers.
 
+:::warning Provider Compliance
+AntSeed is designed for providers who build differentiated services — such as TEE-secured inference, domain-specific skills or agents, fine-tuned models, or managed product experiences. Simply reselling raw API access or subscription credentials is not the intended use and may violate your upstream provider's terms of service. Providers are solely responsible for complying with their upstream API provider's terms.
+:::
+
 ## Provider Interface
 
 ```typescript title="provider interface"

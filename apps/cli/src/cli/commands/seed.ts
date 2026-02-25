@@ -107,7 +107,7 @@ export function buildSellerPluginRuntimeEnv(
 export function registerSeedCommand(program: Command): void {
   program
     .command('seed')
-    .description('Start seeding your idle LLM capacity to the P2P network')
+    .description('Start providing AI services on the P2P network')
     .option('--provider <name>', 'provider plugin name (e.g., anthropic)')
     .option('--instance <id>', 'use a configured plugin instance by ID')
     .option('-r, --reserve <number>', 'runtime-only reserve floor override (does not write config file)', parseFloat)

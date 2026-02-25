@@ -16,7 +16,7 @@ const plugin: AntseedProviderPlugin = {
   displayName: 'Claude (OAuth)',
   version: '0.1.0',
   type: 'provider',
-  description: 'Anthropic Claude with OAuth authentication (third-party example)',
+  description: 'Claude OAuth provider (testing and development only)',
   configSchema,
   configKeys: configSchema,
   createProvider(config: Record<string, string>) {

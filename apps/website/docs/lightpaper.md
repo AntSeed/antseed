@@ -19,7 +19,7 @@ The problem takes on a new dimension with AI agents. An agent can technically sw
 
 ## AntSeed
 
-AntSeed is a communication protocol for peer-to-peer AI services. Anyone can provide AI services — from raw model inference to skilled agents and agentic workflows — and anyone can consume them, directly, with no company in the middle.
+AntSeed is a communication protocol for peer-to-peer AI services. Anyone can provide AI services — from model inference to skilled agents and agentic workflows — and anyone can consume them, directly, with no company in the middle.
 
 The protocol serves three markets that build on each other: commodity inference, where providers compete on price to serve the same models; skilled inference, where providers compete on outcomes and reputation for specialized capabilities; and agent-to-agent commerce, where autonomous machines discover, evaluate, and pay for AI services without human involvement.
 
@@ -33,7 +33,7 @@ Every seller on the network declares at least one Skill — a modular package of
 
 AntSeed is one protocol that naturally supports three use cases. Each builds on the one before it. All three share the same discovery, routing, reputation, and settlement mechanisms.
 
-**1. Commodity Inference.** A seller has a model or an API access. A buyer needs an AI service. They trade directly. No platform in the middle. Price set by open competition: when dozens of sellers offer the same model, margins compress toward zero and the buyer pays near-cost. The supply is immediately diverse — wholesale API resellers, self-hosted GPU operators, inference farms, edge providers, and privacy nodes all competing on price, speed, and reliability.
+**1. Commodity Inference.** A seller has a model or value-added AI service. A buyer needs inference. They trade directly. No platform in the middle. Price set by open competition: when dozens of sellers offer the same model, margins compress toward zero and the buyer pays near-cost. The supply is immediately diverse — self-hosted GPU operators, TEE-secured inference providers, inference farms, edge providers, and privacy nodes all competing on price, speed, and reliability.
 
 **2. Differentiated AI Services.** Same protocol, but the seller equips their model with Skills — modular packages of domain expertise and workflows. A Skill transforms a general-purpose model into a specialist. The buyer does not care what is inside. They care about the result and the reputation. The network becomes a directory of Skilled AI Services: search by capability, sort by reputation, get a result.
 
@@ -69,9 +69,9 @@ And for humans who want a store: white-label providers can build polished produc
 
 The protocol is provider-agnostic. It does not care how a seller fulfills a request. It cares that a response came back, the receipt verified, and quality was consistent.
 
-**Skilled Inference.** Anyone with API access on a frontier model service can offer a specialized agent to the network. Zero hardware investment. Everyone in the world is a potential provider.
+**Skilled Inference.** Anyone with API access on a frontier model service can build a differentiated product on top — domain-specific skills, agent workflows, TEE-secured inference, or managed experiences — and offer it to the network. The value is in what you build on top, not the raw API access itself.
 
-**Self-hosted operators.** A gamer with a GPU, a developer with a Mac Mini running open-weight models. No terms-of-service issues. Cost basis is electricity and hardware depreciation.
+**Self-hosted operators.** A gamer with a GPU, a developer with a Mac Mini running open-weight models. No terms-of-service concerns. Cost basis is electricity and hardware depreciation.
 
 **Privacy providers** run inference inside Trusted Execution Environments where not even the operator can see prompts. **Custom model operators** serve use cases that cannot exist on centralized platforms. **Inference farms and edge operators** provide always-on capacity — farms set the global floor price, edge nodes offer sub-100ms latency at premium rates.
 
@@ -81,7 +81,7 @@ The protocol is provider-agnostic. It does not care how a seller fulfills a requ
 
 **Builders and agents seeking better output.** Skilled inference, improved prompting, specialized workflows.
 
-**Agents in underserved markets.** Frontier model access at competitive rates where subscriptions are unaffordable or payment methods are not accepted.
+**Agents in underserved markets.** Frontier model access at competitive rates where direct API access is limited or payment methods are not accepted.
 
 **Privacy-sensitive organizations.** Law firms, healthcare, finance, journalists who cannot use cloud AI due to confidentiality. TEE-verified providers open this market.
 
@@ -110,3 +110,9 @@ The protocol is provider-agnostic. It does not care how a seller fulfills a requ
 **Phase 1 — The Protocol.** Peer-to-peer protocol goes live. Skilled inference and self-hosted inference serve builders and agents. Settlement and reputation operational. Differentiated services follow with capability-based discovery and per-capability reputation. Agent-to-agent commerce emerges as autonomous agents use the network for inference and for hiring other agents.
 
 **Phase 2 — Price Index & Derivatives.** Every verified transaction is a price data point. Aggregated across thousands of sessions, these produce the AntSeed Compute Index — a real-time, market-driven reference price for AI services. Futures contracts on the Compute Index let startups hedge AI costs and providers sell forward capacity.
+
+## Provider Compliance
+
+AntSeed is infrastructure — a neutral transport layer. It is designed for providers who build differentiated services on top of AI APIs, not for raw resale of API keys or subscription credentials.
+
+Providers are solely responsible for complying with their upstream API provider's terms of service. Subscription-based access (e.g., Claude Pro/Team plans) may not be resold — subscription-based provider plugins are included for local testing and development only. Providers should monetize by adding genuine value: running inference inside Trusted Execution Environments, packaging domain-specific skills and agent workflows, serving fine-tuned or self-hosted models, or building managed product experiences.

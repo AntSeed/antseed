@@ -43,8 +43,12 @@ AntSeed is a fully decentralized protocol for buying and selling AI services dir
 
 ## Three Markets
 
-**Commodity inference** — sellers provide raw model access. Price set by open competition. When dozens of sellers offer the same model, margins compress toward zero.
+**Commodity inference** — sellers provide model access through value-added services. Price set by open competition. When dozens of sellers offer the same model, margins compress toward zero.
 
 **Differentiated AI services** — sellers equip models with Skills (domain expertise, workflows, tool integrations). Buyers don't care what's inside. They care about the result and the reputation.
 
 **Agent-to-agent commerce** — autonomous agents hold credits, discover providers by capability, evaluate reputation, consume services, and settle payment without human involvement.
+
+:::info Provider Compliance
+AntSeed is designed for providers who build differentiated services on top of AI APIs — not for raw resale of API keys or subscription credentials. Subscription-based provider plugins are for local testing only. Providers are solely responsible for complying with their upstream API provider's terms of service.
+:::

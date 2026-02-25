@@ -7,7 +7,7 @@ hide_title: true
 
 # Getting Started
 
-AntSeed is a communication protocol for peer-to-peer AI services. Anyone can provide AI services — from raw model inference to skilled agents and agentic workflows — and anyone can consume them, directly, with no company in the middle.
+AntSeed is a communication protocol for peer-to-peer AI services. Anyone can provide AI services — from model inference to skilled agents and agentic workflows — and anyone can consume them, directly, with no company in the middle.
 
 The protocol serves three markets that build on each other:
 
@@ -28,6 +28,10 @@ Sellers announce available Skills, models, pricing, and capacity. Buyers discove
 Every seller on the network declares at least one Skill — a modular package of instructions and expertise that defines what they deliver. Skills are what buyers search for, what reputation accrues to, and what agents understand how to discover and evaluate.
 
 The protocol does not care what happens between request and response. A seller might be proxying through their own frontier model API access, running an open model on a GPU in their garage, or operating a multi-step agent with internet access and tool integrations. To the protocol, these are all the same: a request went in, a response came out, both confirmed, peer to peer, settlement happened.
+
+## Provider Compliance
+
+AntSeed is designed for providers who add value on top of AI APIs — not for raw resale of API keys or subscription credentials. Providers should build differentiated services: TEE-secured inference, domain-specific skills, agent workflows, fine-tuned models, or managed product experiences. Subscription-based provider plugins (e.g., `provider-claude-code`) are for local testing only. Providers are responsible for complying with their upstream API provider's terms of service.
 
 ## Protocol Layers
 

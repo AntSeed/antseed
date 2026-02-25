@@ -25,6 +25,10 @@ Your node identity is an Ed25519 keypair. The private key seed is stored as 64 h
 
 To sell on the network, configure a provider plugin and declare your Skills. The provider handles the actual AI service — the protocol handles discovery, metering, and payments.
 
+:::warning Provider Compliance
+AntSeed is designed for providers who build differentiated services — such as TEE-secured inference, domain-specific skills, agent workflows, or managed product experiences. Simply reselling raw API access or subscription credentials is not the intended use and may violate your upstream provider's terms of service. Subscription-based plugins (`claude-code`, `claude-oauth`) are for local testing only.
+:::
+
 ```bash title="seed"
 $ antseed seed --provider anthropic
 Announcing on DHT: antseed:anthropic
@@ -66,7 +70,7 @@ Provider plugins authenticate with their upstream AI service. Credentials are st
 | Provider | Auth Method |
 |---|---|
 | `anthropic` | API key via ANTHROPIC_API_KEY env var |
-| `claude-code` | OAuth tokens from Claude Code keychain (automatic) |
-| `claude-oauth` | OAuth access/refresh token pair |
+| `claude-code` | OAuth tokens from Claude Code keychain (automatic) — **testing only** |
+| `claude-oauth` | OAuth access/refresh token pair — **testing only** |
 | `openrouter` | API key via OPENROUTER_API_KEY env var |
 | `local-llm` | No auth needed (local Ollama/llama.cpp) |

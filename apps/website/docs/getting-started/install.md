@@ -7,7 +7,7 @@ hide_title: true
 
 # Install
 
-AntSeed requires Node.js 18+ and works on macOS, Linux, and Windows (WSL).
+AntSeed requires Node.js 20+ and works on macOS, Linux, and Windows (WSL).
 
 ```bash title="install"
 $ npm install -g @antseed/cli
@@ -17,7 +17,7 @@ Verify the installation:
 
 ```bash title="verify"
 $ antseed --version
-antseed v0.1.0-alpha
+antseed v0.1.1
 ```
 
 ## Related Packages
