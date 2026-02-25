@@ -47,7 +47,7 @@ const plugin: AntseedProviderPlugin = {
   displayName: 'Anthropic',
   version: '0.1.0',
   type: 'provider',
-  description: 'Sell Anthropic API capacity using an API key',
+  description: 'Provide Anthropic API capacity using an API key',
   configSchema: [
     { key: 'ANTHROPIC_API_KEY', label: 'API Key', type: 'secret', required: true, description: 'Anthropic API key' },
     { key: 'ANTSEED_INPUT_USD_PER_MILLION', label: 'Input Price', type: 'number', required: false, default: 10, description: 'Input price in USD per 1M tokens' },

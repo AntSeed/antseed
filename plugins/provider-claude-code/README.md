@@ -1,6 +1,8 @@
 # @antseed/provider-claude-code
 
-Sell Claude capacity on the Antseed P2P network using Claude Code keychain credentials. No API key needed -- reads OAuth tokens directly from the macOS keychain.
+> **Testing and development only.** This plugin reads credentials from your personal Claude Code subscription. Reselling subscription-based access violates Anthropic's Terms of Service and is not permitted. Use this plugin only for local development, testing, and demo purposes. For production use, see `@antseed/provider-anthropic` with a commercial API key.
+
+Connect to the Anthropic API using Claude Code keychain credentials for local testing and development. No API key needed -- reads OAuth tokens directly from the macOS keychain.
 
 ## Installation
 

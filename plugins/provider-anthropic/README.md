@@ -1,6 +1,8 @@
 # @antseed/provider-anthropic
 
-Sell Anthropic API capacity on the Antseed P2P network using an API key.
+Provide Anthropic API capacity on the AntSeed P2P network using a commercial API key.
+
+> **Important:** Simply reselling raw API access without adding value may violate your API provider's terms of service. AntSeed is designed for providers who build differentiated services on top of API access — for example, running inference inside a Trusted Execution Environment (TEE), packaging domain-specific skills or agents, fine-tuned models, or offering a managed product experience. Always review your API provider's usage policies before offering capacity on the network.
 
 ## Installation
 

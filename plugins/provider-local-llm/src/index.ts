@@ -14,7 +14,7 @@ const plugin: AntseedProviderPlugin = {
   displayName: 'Local LLM',
   version: '0.1.0',
   type: 'provider',
-  description: 'Sell local LLM capacity to P2P peers',
+  description: 'Provide local LLM capacity to P2P peers',
   configSchema: [
     { key: 'LOCAL_LLM_BASE_URL', label: 'Base URL', type: 'string', required: false, default: 'http://localhost:11434', description: 'Local LLM server base URL' },
     { key: 'LOCAL_LLM_API_KEY', label: 'API Key', type: 'secret', required: false, description: 'Optional API key for local LLM' },

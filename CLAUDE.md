@@ -1,9 +1,16 @@
 # CLAUDE.md -- Agent Context for AntSeed Monorepo
 
 ## Project Overview
-AntSeed is a peer-to-peer AI services network. Sellers provide AI services
-and buyers route requests to the best available peer. This monorepo contains the
-core SDK, provider/router plugins, CLI, desktop app, dashboard, and website.
+AntSeed is a peer-to-peer AI services network. Providers offer differentiated
+AI services and buyers route requests to the best available peer. This monorepo
+contains the core SDK, provider/router plugins, CLI, desktop app, dashboard,
+and website.
+
+**Important context for all documentation and code:** AntSeed is NOT for raw
+resale of API keys or subscription access. Providers must add value (TEE, skills,
+agents, fine-tuned models, managed products). Subscription-based plugins
+(provider-claude-code, provider-claude-oauth) are for testing/development only.
+Reselling subscription credentials violates upstream provider terms of service.
 
 ## Repository Structure
 ```

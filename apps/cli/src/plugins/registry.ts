@@ -9,25 +9,25 @@ export const TRUSTED_PLUGINS: TrustedPlugin[] = [
   {
     name: 'anthropic',
     type: 'provider',
-    description: 'Sell Anthropic API capacity (API key)',
+    description: 'Anthropic API provider (API key)',
     package: '@antseed/provider-anthropic',
   },
   {
     name: 'claude-code',
     type: 'provider',
-    description: 'Sell Claude capacity via Claude Code keychain',
+    description: 'Claude Code keychain provider (testing only)',
     package: '@antseed/provider-claude-code',
   },
   {
     name: 'openrouter',
     type: 'provider',
-    description: 'Sell via OpenRouter (multi-model)',
+    description: 'OpenRouter multi-model provider (API key)',
     package: '@antseed/provider-openrouter',
   },
   {
     name: 'local-llm',
     type: 'provider',
-    description: 'Sell local LLM capacity (Ollama, llama.cpp)',
+    description: 'Local LLM provider (Ollama, llama.cpp)',
     package: '@antseed/provider-local-llm',
   },
   {

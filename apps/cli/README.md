@@ -1,13 +1,15 @@
 # Antseed CLI + Dashboard
 
-Command-line interface and web dashboard for the Antseed Network -- a P2P marketplace for reselling idle LLM plan capacity.
+Command-line interface and web dashboard for the AntSeed Network — a P2P network for AI services.
+
+> **Important:** AntSeed is designed for providers who build differentiated services on top of AI APIs — such as TEE-secured inference, domain-specific skills and agents, fine-tuned models, or managed product experiences. Simply reselling raw API access or subscription credentials is not the intended use and may violate your upstream provider's terms of service. Subscription-based plugins (`provider-claude-code`, `provider-claude-oauth`) are for testing and development only.
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
 | `antseed init` | Install trusted provider and router plugins |
-| `antseed seed` | Start seeding your idle LLM capacity to the P2P network |
+| `antseed seed` | Start providing AI services on the P2P network |
 | `antseed connect` | Start the buyer proxy and connect to sellers |
 | `antseed plugin add <pkg>` | Install a provider or router plugin from npm |
 | `antseed plugin remove <name>` | Remove an installed plugin |

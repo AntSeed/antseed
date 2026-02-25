@@ -1,8 +1,8 @@
 # @antseed/provider-claude-oauth
 
-Third-party Anthropic Claude provider plugin with OAuth authentication for Antseed.
+> **Testing and development only.** This plugin uses OAuth credentials from a personal Claude subscription. Reselling subscription-based access violates Anthropic's Terms of Service and is not permitted. Use this plugin only for local development, testing, and demo purposes.
 
-This plugin demonstrates how a third-party developer can build, test, and publish an Antseed provider plugin using `@antseed/provider-core`.
+Third-party Anthropic Claude provider plugin with OAuth authentication for Antseed. This plugin demonstrates how a third-party developer can build, test, and publish an Antseed provider plugin using `@antseed/provider-core`.
 
 ## How to Create a Plugin
 

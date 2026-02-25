@@ -1,10 +1,20 @@
-# Join AntSeed as a Provider (Seller)
+# Join AntSeed as a Provider
 
-Help the user set up an AntSeed node to sell their idle AI plan capacity on the peer-to-peer network. Walk them through installation, initialization, provider configuration, pricing, and starting the seeder.
+Help the user set up an AntSeed node to provide AI services on the peer-to-peer network. Walk them through installation, initialization, provider configuration, pricing, and starting the seeder.
+
+## Terms of Use — Read First
+
+> **AntSeed is designed for providers who add value on top of AI APIs — not for raw resale of API keys or subscription access.**
+>
+> Acceptable use cases include: running inference inside a Trusted Execution Environment (TEE), packaging domain-specific skills or agent workflows, serving fine-tuned or self-hosted models, or building a managed product experience.
+>
+> **Subscription-based plugins (`provider-claude-code`, `provider-claude-oauth`) are for local testing and development only.** Reselling personal subscription credentials (e.g., Claude Pro/Team plans) violates Anthropic's Terms of Service and is not permitted.
+>
+> Always review your upstream API provider's usage policies before offering capacity on the network. AntSeed provides the infrastructure; compliance with third-party terms is the provider's responsibility.
 
 ## Overview
 
-A **provider** (seller) shares their existing AI API access (Anthropic, OpenRouter, local LLMs, etc.) with the AntSeed network. Buyers pay per-token in USDC. The provider runs a seeder daemon that announces availability on the DHT and handles incoming inference requests.
+A **provider** offers AI services (Anthropic, OpenRouter, local LLMs, etc.) on the AntSeed network. Buyers pay per-token in USDC. The provider runs a seeder daemon that announces availability on the DHT and handles incoming inference requests.
 
 ## Step 1: Install the CLI
 
@@ -33,15 +43,15 @@ antseed init --auth-type apikey --api-key <KEY>
 
 ## Step 3: Configure provider credentials
 
-Ask the user which AI provider they want to sell capacity for:
+Ask the user which AI provider they want to use:
 
-| Provider | Plugin | Auth |
-|---|---|---|
-| Anthropic | `@antseed/provider-anthropic` | API key (`x-api-key`) |
-| Claude Code | `@antseed/provider-claude-code` | Auto-loaded from keychain |
-| Claude OAuth | `@antseed/provider-claude-oauth` | OAuth token pair |
-| OpenRouter | `@antseed/provider-openrouter` | API key |
-| Local LLM | `@antseed/provider-local-llm` | None (Ollama/llama.cpp) |
+| Provider | Plugin | Auth | Notes |
+|---|---|---|---|
+| Anthropic | `@antseed/provider-anthropic` | API key (`x-api-key`) | Commercial API key required |
+| OpenRouter | `@antseed/provider-openrouter` | API key | Commercial API key required |
+| Local LLM | `@antseed/provider-local-llm` | None (Ollama/llama.cpp) | Self-hosted, no restrictions |
+| Claude Code | `@antseed/provider-claude-code` | Auto-loaded from keychain | **Testing only** — not for production |
+| Claude OAuth | `@antseed/provider-claude-oauth` | OAuth token pair | **Testing only** — not for production |
 
 For API key providers:
 
@@ -85,7 +95,7 @@ Also configure capacity limits:
 # Max simultaneous buyer sessions
 antseed config seller set maxConcurrentBuyers 5
 
-# Messages to reserve for yourself before selling
+# Messages to reserve for yourself
 antseed config seller set reserveFloor 10
 ```
 

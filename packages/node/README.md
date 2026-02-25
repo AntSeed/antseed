@@ -4,7 +4,9 @@
 [![Node.js](https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen.svg)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.3+-blue.svg)](https://www.typescriptlang.org/)
 
-Core protocol SDK for AntSeed -- a peer-to-peer AI services network. Sellers expose AI capacity, buyers discover sellers via DHT and send requests over encrypted P2P connections.
+Core protocol SDK for AntSeed — a peer-to-peer AI services network. Providers offer AI services, buyers discover providers via DHT and send requests over encrypted P2P connections.
+
+> **Important:** AntSeed is designed for providers who build differentiated services on top of AI APIs — such as TEE-secured inference, domain-specific skills and agents, fine-tuned models, or managed product experiences. Simply reselling raw API access or subscription credentials is not the intended use and may violate your upstream provider's terms of service.
 
 ## Installation
 
@@ -14,9 +16,9 @@ npm install @antseed/node
 
 ## Quick Start
 
-### Seller Mode
+### Provider Mode
 
-A seller node announces its capacity on the DHT and serves inference requests from buyers.
+A provider node announces its capacity on the DHT and serves inference requests from buyers.
 
 ```ts
 import { AntseedNode } from '@antseed/node';
@@ -207,7 +209,7 @@ import { BalanceManager } from '@antseed/node/payments';
 
 ## Provider Interface
 
-Implement `Provider` to expose any LLM backend as a seller on the network.
+Implement `Provider` to expose any LLM backend as a provider on the network.
 
 ```ts
 interface Provider {
@@ -321,7 +323,7 @@ const plugin: AntseedProviderPlugin = {
   displayName: 'My Provider',
   version: '1.0.0',
   type: 'provider',
-  description: 'Sells My LLM capacity on the Antseed Network',
+  description: 'Provides My LLM capacity on the Antseed Network',
   configSchema: [
     { key: 'MY_API_KEY', label: 'API Key', type: 'secret', required: true, description: 'API key for My LLM' },
     { key: 'MY_MODELS', label: 'Models', type: 'string[]', required: false, description: 'Comma-separated model list' },

@@ -11,8 +11,8 @@ AntSeed is a peer-to-peer AI services network that enables direct connections be
   - [03-metering.md](spec/03-metering.md) — Token estimation and usage receipts
   - [04-payments.md](spec/04-payments.md) — Settlement, escrow, and disputes
   - [05-reputation.md](spec/05-reputation.md) — Trust scoring and attestations
-- [templates/provider-plugin/](templates/provider-plugin/) — Starter template for building a provider plugin (sell AI capacity)
-- [templates/router-plugin/](templates/router-plugin/) — Starter template for building a router plugin (buy AI capacity)
+- [templates/provider-plugin/](templates/provider-plugin/) — Starter template for building a provider plugin (offer AI services)
+- [templates/router-plugin/](templates/router-plugin/) — Starter template for building a router plugin (consume AI services)
 
 ## Getting Started
 
@@ -21,8 +21,8 @@ Install the CLI globally:
 ```bash
 npm install -g @antseed/cli
 antseed init         # install official plugins
-antseed seed --provider anthropic   # sell Anthropic API capacity
-antseed connect --router local-proxy  # buy capacity via local proxy
+antseed seed --provider anthropic   # provide AI services
+antseed connect --router local-proxy  # consume via local proxy
 ```
 
 ## Plugin Ecosystem
@@ -31,13 +31,13 @@ Antseed is extensible. Any developer can publish a plugin to npm:
 
 | Plugin type | Purpose | Command |
 |---|---|---|
-| Provider plugin | Connect an upstream AI API and sell capacity | `antseed seed --provider <name>` |
+| Provider plugin | Connect an upstream AI API and offer services | `antseed seed --provider <name>` |
 | Router plugin | Select peers and proxy requests for a client tool | `antseed connect --router <name>` |
 
 Use the templates in this directory as a starting point:
 
 ```bash
-# Provider plugin (sell capacity)
+# Provider plugin (offer services)
 cp -r templates/provider-plugin my-provider
 cd my-provider && npm install && npm run verify
 
@@ -51,7 +51,7 @@ cd my-router && npm install && npm run verify
 - [@antseed/node](https://npmjs.com/package/@antseed/node) — Protocol SDK
 - [@antseed/cli](https://npmjs.com/package/@antseed/cli) — CLI tools
 - [@antseed/provider-anthropic](https://npmjs.com/package/@antseed/provider-anthropic) — Anthropic provider (API key)
-- [@antseed/provider-claude-code](https://npmjs.com/package/@antseed/provider-claude-code) — Claude Code provider (keychain)
+- [@antseed/provider-claude-code](https://npmjs.com/package/@antseed/provider-claude-code) — Claude Code provider (keychain, testing only)
 - [@antseed/provider-openrouter](https://npmjs.com/package/@antseed/provider-openrouter) — OpenRouter provider
 - [@antseed/provider-local-llm](https://npmjs.com/package/@antseed/provider-local-llm) — Local LLM provider
 - [@antseed/router-local-proxy](https://npmjs.com/package/@antseed/router-local-proxy) — Local proxy router (Claude Code, Codex)

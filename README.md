@@ -1,12 +1,16 @@
 # AntSeed
 
-A peer-to-peer AI services network. Sellers expose AI capacity, buyers discover sellers via DHT and route requests through encrypted P2P connections.
+A peer-to-peer AI services network. Providers offer AI services, buyers discover providers via DHT and route requests through encrypted P2P connections.
 
 ## How It Works
 
-**Sellers** run a provider plugin that connects to an upstream LLM API (Anthropic, OpenRouter, local Ollama, etc.) and announce capacity on the DHT network.
+**Providers** run a provider plugin that connects to an upstream LLM API (Anthropic, OpenRouter, local Ollama, etc.) and announce capacity on the DHT network.
 
-**Buyers** run a router plugin that discovers sellers, scores them on price/latency/reputation, and proxies requests through a local HTTP endpoint that drop-in replaces `ANTHROPIC_BASE_URL` or `OPENAI_BASE_URL`.
+**Buyers** run a router plugin that discovers providers, scores them on price/latency/reputation, and proxies requests through a local HTTP endpoint that drop-in replaces `ANTHROPIC_BASE_URL` or `OPENAI_BASE_URL`.
+
+## Terms of Use
+
+AntSeed is infrastructure for building differentiated AI services — not for raw resale of API keys or subscription access. Providers are expected to add value through domain-specific skills, agent workflows, Trusted Execution Environments (TEEs), fine-tuned models, or other product differentiation. Reselling personal subscription credentials (e.g., Claude Pro/Team plans) violates the upstream provider's terms of service and is not permitted. Always review your API provider's usage policies before offering capacity on the network. Subscription-based provider plugins (e.g., `provider-claude-code`, `provider-claude-oauth`) are provided for local testing and development only.
 
 ## Quick Start
 
@@ -17,7 +21,7 @@ pnpm install
 # Build everything
 pnpm run build
 
-# Start selling (uses Claude Code keychain credentials)
+# Start providing (local testing with Claude Code keychain)
 node apps/cli/dist/cli/index.js seed --provider claude-code
 
 # Start buying (local proxy on port 8377)
@@ -29,7 +33,7 @@ Or install globally:
 ```bash
 npm install -g @antseed/cli
 antseed init          # Install trusted plugins
-antseed seed          # Start selling
+antseed seed          # Start providing
 antseed connect       # Start buying
 ```
 

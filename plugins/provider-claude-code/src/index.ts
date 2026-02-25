@@ -15,7 +15,7 @@ const plugin: AntseedProviderPlugin = {
   displayName: 'Claude Code',
   version: '0.1.0',
   type: 'provider',
-  description: 'Sell Claude capacity using Claude Code keychain credentials',
+  description: 'Claude Code keychain provider (testing and development only)',
   configSchema: [
     { key: 'ANTSEED_INPUT_USD_PER_MILLION', label: 'Input Price', type: 'number', required: false, default: 10, description: 'Input price in USD per 1M tokens' },
     { key: 'ANTSEED_OUTPUT_USD_PER_MILLION', label: 'Output Price', type: 'number', required: false, default: 10, description: 'Output price in USD per 1M tokens' },

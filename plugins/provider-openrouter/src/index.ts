@@ -47,7 +47,7 @@ const plugin: AntseedProviderPlugin = {
   displayName: 'OpenRouter',
   version: '0.1.0',
   type: 'provider',
-  description: 'Sell OpenRouter API capacity to P2P peers',
+  description: 'Provide OpenRouter API capacity to P2P peers',
   configSchema: [
     { key: 'OPENROUTER_API_KEY', label: 'API Key', type: 'secret', required: true, description: 'OpenRouter API key' },
     { key: 'ANTSEED_INPUT_USD_PER_MILLION', label: 'Input Price', type: 'number', required: false, default: 10, description: 'Input price in USD per 1M tokens' },
