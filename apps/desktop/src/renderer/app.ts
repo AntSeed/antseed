@@ -1,4 +1,3 @@
-import { initWalletModule } from './modules/wallet';
 import { initChatModule } from './modules/chat';
 import { initSettingsModule } from './modules/settings';
 import { initRuntimeModule } from './modules/runtime';
@@ -70,7 +69,7 @@ const uiState: AnyRecord = {
   chatConversations: [],
   chatMessages: [],
   chatSending: false,
-  appMode: 'seeder',
+  appMode: 'connect',
   installedPlugins: new Set<string>(),
   pluginHints: {
     provider: null,
@@ -87,6 +86,14 @@ function setText(el: any, value: string): void {
   if (el) {
     el.textContent = value;
   }
+}
+
+function isProxyPortOccupiedMessage(value: unknown): boolean {
+  const message = safeString(value, '').toLowerCase();
+  if (!message) {
+    return false;
+  }
+  return message.includes('eaddrinuse') || message.includes('address already in use');
 }
 
 function safeNumber(value, fallback = 0) {
@@ -445,13 +452,10 @@ function updatePluginHintFromLog(event) {
 }
 
 function renderPluginSetupState() {
-  const expectedProvider = uiState.pluginHints.provider || expectedProviderPluginPackage();
   const expectedRouter = uiState.pluginHints.router || expectedRouterPluginPackage();
 
-  const installedProvider = uiState.installedPlugins.has(expectedProvider);
   const installedRouter = uiState.installedPlugins.has(expectedRouter);
   const missing: string[] = [];
-  if (!installedProvider) missing.push(expectedProvider);
   if (!installedRouter) missing.push(expectedRouter);
 
   if (elements.pluginSetupStatus) {
@@ -460,13 +464,6 @@ function renderPluginSetupState() {
     } else {
       elements.pluginSetupStatus.textContent = `Missing plugin${missing.length > 1 ? 's' : ''}: ${missing.join(', ')}`;
     }
-  }
-
-  if (elements.installSeedPluginBtn) {
-    elements.installSeedPluginBtn.textContent = installedProvider
-      ? `Seller Ready (${expectedProvider})`
-      : `Install ${expectedProvider}`;
-    elements.installSeedPluginBtn.disabled = uiState.pluginInstallBusy || installedProvider || !bridge?.pluginsInstall;
   }
 
   if (elements.installConnectPluginBtn) {
@@ -521,6 +518,7 @@ const elements = {
   seedBadge: byId('seedBadge'),
   connectBadge: byId('connectBadge'),
   runtimeSummary: byId('runtimeSummary'),
+  connectWarning: byId('connectWarning'),
   daemonState: byId('daemonState'),
   logs: byId('logs'),
 
@@ -638,17 +636,28 @@ const elements = {
   cfgPaymentMethod: byId('cfgPaymentMethod'),
 };
 
+function setConnectWarning(message: string | null): void {
+  if (!elements.connectWarning) return;
+  const text = safeString(message, '').trim();
+  if (!text) {
+    elements.connectWarning.textContent = '';
+    elements.connectWarning.hidden = true;
+    return;
+  }
+  elements.connectWarning.textContent = text;
+  elements.connectWarning.hidden = false;
+}
+
 const navButtons = Array.from(document.querySelectorAll<HTMLElement>('.sidebar-btn[data-view]'));
 const views = Array.from(document.querySelectorAll<HTMLElement>('.view'));
 
-const TOOLBAR_VIEWS = new Set(['overview', 'desktop']);
+const TOOLBAR_VIEWS = new Set<string>();
 
 const {
   setActiveView,
   getActiveView,
   setAppMode,
   initNavigation,
-  getSavedAppMode,
 } = initNavigationModule({
   uiState,
   navButtons,
@@ -728,36 +737,43 @@ function bindAction(buttonId, action, options = { refreshAfter: true }) {
         await refreshAll();
       }
     } catch (err) {
-      appendSystemLog(`Action failed: ${err instanceof Error ? err.message : String(err)}`);
+      const message = err instanceof Error ? err.message : String(err);
+      if ((buttonId === 'connectStartBtn' || buttonId === 'startAllBtn') && isProxyPortOccupiedMessage(message)) {
+        setConnectWarning('Buyer proxy port is already in use. Stop the conflicting process or change `buyer.proxyPort` in config.');
+      }
+      appendSystemLog(`Action failed: ${message}`);
     } finally {
       button.disabled = false;
     }
   });
 }
 
-async function waitForSeederReady(timeoutMs = 12000) {
-  if (!bridge?.getState) {
-    return false;
+async function ensureConnectRuntimeStarted() {
+  if (!bridge?.start) {
+    return;
+  }
+  if (isModeRunning('connect')) {
+    return;
   }
 
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const snapshot = await bridge.getState();
-      const daemon = safeObject(snapshot?.daemonState);
-      const daemonState = safeObject(daemon?.state);
-      const mode = safeString(daemonState?.state, '');
-      if (mode === 'seeding') {
-        return true;
-      }
-    } catch {
-      // Ignore transient bridge polling errors while waiting.
+  try {
+    await bridge.start({
+      mode: 'connect',
+      router: normalizeRouterRuntime(elements.connectRouter?.value),
+    });
+    setConnectWarning(null);
+    appendSystemLog('Buyer runtime auto-started for local proxy chat.');
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const normalized = message.toLowerCase();
+    if (normalized.includes('already running')) {
+      return;
     }
-
-    await new Promise((resolve) => setTimeout(resolve, 450));
+    if (isProxyPortOccupiedMessage(message)) {
+      setConnectWarning('Buyer proxy port is already in use. Stop the conflicting process or change `buyer.proxyPort` in config.');
+    }
+    appendSystemLog(`Buyer auto-start failed: ${message}`);
   }
-
-  return false;
 }
 
 function bindControls() {
@@ -777,12 +793,6 @@ function bindControls() {
 
   bindAction('connectStartBtn', async () => {
     uiState.pluginHints.router = null;
-    if (isModeRunning('seed')) {
-      const ready = await waitForSeederReady(10000);
-      if (!ready) {
-        appendSystemLog('Seeder is still warming up; buyer may not discover the local seller immediately.');
-      }
-    }
     await bridge.start({
       mode: 'connect',
       router: normalizeRouterRuntime(elements.connectRouter?.value),
@@ -800,38 +810,18 @@ function bindControls() {
   });
 
   bindAction('startAllBtn', async () => {
-    let startedSeed = false;
-    if (!isModeRunning('seed')) {
-      saveSeedAuthPrefs();
-      await bridge.start({
-        mode: 'seed',
-        provider: normalizeProviderRuntime(elements.seedProvider?.value),
-        env: buildSeedRuntimeEnv(),
-      });
-      startedSeed = true;
-    }
-
-    if (startedSeed) {
-      const ready = await waitForSeederReady(12000);
-      if (!ready) {
-        appendSystemLog('Seeder startup is taking longer than expected; buyer may not discover it immediately.');
-      }
-    }
-
     if (!isModeRunning('connect')) {
       await bridge.start({
         mode: 'connect',
         router: normalizeRouterRuntime(elements.connectRouter?.value),
       });
+      setConnectWarning(null);
     }
   });
 
   bindAction('stopAllBtn', async () => {
     if (isModeRunning('connect')) {
       await bridge.stop('connect');
-    }
-    if (isModeRunning('seed')) {
-      await bridge.stop('seed');
     }
   });
 
@@ -879,6 +869,9 @@ function initializeBridge() {
 
   bridge.onLog((event) => {
     updatePluginHintFromLog(event);
+    if (event.mode === 'connect' && isProxyPortOccupiedMessage(event.line)) {
+      setConnectWarning('Buyer proxy port is already in use. Stop the conflicting process or change `buyer.proxyPort` in config.');
+    }
     appendLog(event);
     renderPluginSetupState();
   });
@@ -886,6 +879,9 @@ function initializeBridge() {
   bridge.onState((processes) => {
     const wasDashboardRunning = uiState.dashboardRunning;
     renderProcesses(processes);
+    if (isModeRunning('connect', processes)) {
+      setConnectWarning(null);
+    }
 
     if (isModeRunning('seed', processes)) {
       uiState.pluginHints.provider = null;
@@ -916,7 +912,11 @@ function initializeBridge() {
     });
   }
 
-  void refreshAll();
+  void (async () => {
+    await refreshAll();
+    await ensureConnectRuntimeStarted();
+    await refreshAll();
+  })();
   void refreshPluginInventory().catch((err) => {
     const message = err instanceof Error ? err.message : String(err);
     appendSystemLog(`Plugin inventory refresh failed: ${message}`);
@@ -975,17 +975,7 @@ const {
   populateSettingsForm,
 });
 
-const { refreshWalletInfo } = initWalletModule({
-  bridge,
-  elements,
-  uiState,
-  getDashboardPort,
-  setText,
-  setBadgeTone,
-  safeString,
-  formatMoney,
-  getWalletActionResult,
-});
+const refreshWalletInfo = async () => {};
 
 const { refreshChatConversations, refreshChatProxyStatus } = initChatModule({
   bridge,
@@ -1019,11 +1009,8 @@ function initPeriodToggle() {
 }
 
 initNavigation();
-setActiveView('overview');
-
-// Restore persisted app mode
-const savedMode = getSavedAppMode();
-setAppMode(savedMode === 'connect' ? 'connect' : 'seeder');
+setActiveView('chat');
+setAppMode('connect');
 
 renderPluginSetupState();
 initSeedAuthControls();

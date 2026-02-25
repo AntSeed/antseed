@@ -110,6 +110,17 @@ select {
   font-size: 11px;
 }
 
+.sidebar-warning {
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(var(--danger-rgb), 0.3);
+  background: rgba(var(--danger-rgb), 0.14);
+  color: var(--danger);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 /* Mode switcher */
 .mode-switcher {
   display: flex;
@@ -158,6 +169,21 @@ select {
   padding: 12px 8px;
   flex: 1;
   overflow-y: auto;
+}
+
+.sidebar-nav-label {
+  padding: 8px 12px 6px;
+  color: var(--text-muted);
+  font-size: 10px;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.sidebar-nav-divider {
+  height: 1px;
+  margin: 8px 12px;
+  background: var(--border);
 }
 
 .sidebar-btn {
@@ -579,6 +605,10 @@ button:disabled {
 
 .panel-grid.two-col {
   grid-template-columns: 1fr 1fr;
+}
+
+.panel-span-full {
+  grid-column: 1 / -1;
 }
 
 .panel {
@@ -1843,6 +1873,11 @@ select.form-input {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 6px;
+  }
+
+  .sidebar-nav-label,
+  .sidebar-nav-divider {
+    grid-column: 1 / -1;
   }
 
   .main-content {

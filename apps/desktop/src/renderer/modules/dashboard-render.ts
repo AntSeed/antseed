@@ -525,12 +525,12 @@ export function initDashboardRenderModule({
     setText(elements.earningsMessage, message);
     setText(elements.configMessage, message);
 
-    setText(elements.ovNodeState, 'idle');
+    setText(elements.ovNodeState, 'offline');
     setText(elements.ovPeers, '0');
     setText(elements.ovSessions, '0');
     setText(elements.ovEarnings, '$0.00');
     setText(elements.ovDhtHealth, 'Down');
-    setText(elements.ovUptime, '0s');
+    setText(elements.ovUptime, '-');
     setText(elements.ovPeersCount, '0');
 
     renderOverviewPeers([]);
@@ -581,35 +581,34 @@ export function initDashboardRenderModule({
     const daemonSessionDetails = safeArray(daemonStateRoot?.activeSessionDetails);
     const daemonDetailsCount = daemonSessionDetails.length;
 
-    const nodeState = safeString(statusPayload?.state, 'idle');
+    const buyerRuntimeState = isModeRunning('connect') ? 'connected' : 'offline';
     const activeSessions = Math.max(
       safeNumber(statusPayload?.activeSessions, safeNumber(sessionsPayload?.total, 0)),
       daemonActiveSessions,
       daemonDetailsCount,
     );
     const earningsToday = earningsPayload?.today ?? statusPayload?.earningsToday ?? '0';
-    const uptime = safeString(statusPayload?.uptime, '0s');
+    const proxyPort = safeNumber(statusPayload?.proxyPort, 0);
 
-    setText(elements.ovNodeState, nodeState);
+    setText(elements.ovNodeState, buyerRuntimeState);
     setText(elements.ovPeers, formatInt(peers.length));
     setText(elements.ovSessions, formatInt(activeSessions));
     setText(elements.ovEarnings, formatMoney(earningsToday));
     setText(elements.ovDhtHealth, dht.label);
-    setText(elements.ovUptime, uptime);
+    setText(elements.ovUptime, proxyPort > 0 ? String(proxyPort) : '-');
     setText(elements.ovPeersCount, formatInt(peers.length));
 
     uiState.lastActiveSessions = activeSessions;
 
     setBadgeTone(
       elements.overviewBadge,
-      nodeState === 'idle' && !isModeRunning('seed') && !isModeRunning('connect') ? 'idle' : dht.tone,
-      `${nodeState.toUpperCase()} • DHT ${dht.label}`,
+      buyerRuntimeState === 'offline' ? 'idle' : dht.tone,
+      `${buyerRuntimeState.toUpperCase()} • DHT ${dht.label}`,
     );
 
     renderOverviewPeers(peers);
 
     const capacityPercent = safeNumber(statusPayload?.capacityUsedPercent, 0);
-    const proxyPort = safeNumber(statusPayload?.proxyPort, 0);
     renderCapacityRing(capacityPercent, proxyPort, activeSessions, peers.length, stats.dhtNodeCount);
 
     if (results.earnings.ok) {
@@ -743,7 +742,21 @@ export function initDashboardRenderModule({
     }
 
     if (results.status.ok) {
-      setText(elements.connectionStatus, JSON.stringify(statusPayload, null, 2));
+      const buyerStatus = {
+        buyerRuntime: buyerRuntimeState,
+        proxyPort: proxyPort > 0 ? proxyPort : null,
+        activeSessions,
+        peerCount: peers.length,
+        dht: {
+          health: dht.label,
+          healthy: Boolean(stats.dhtHealthy),
+          nodeCount: safeNumber(stats.dhtNodeCount, 0),
+          lastScanAt: stats.lastScanAt,
+          lookupSuccessRate: safeNumber(stats.lookupSuccessRate, 0),
+          averageLookupLatencyMs: safeNumber(stats.averageLookupLatencyMs, 0),
+        },
+      };
+      setText(elements.connectionStatus, JSON.stringify(buyerStatus, null, 2));
     } else {
       setText(elements.connectionStatus, `Unable to load status: ${results.status.error ?? 'unknown error'}`);
     }
@@ -764,13 +777,14 @@ export function initDashboardRenderModule({
       .filter((item) => typeof item === 'string' && item.trim().length > 0);
 
     const notes = [
+      `Buyer runtime: ${buyerRuntimeState}`,
+      `Proxy port: ${proxyPort > 0 ? proxyPort : 'not available'}`,
+      `Active sessions: ${formatInt(activeSessions)}`,
       `DHT health: ${dht.label}`,
       `DHT nodes: ${formatInt(stats.dhtNodeCount)}`,
       `Lookup success: ${formatPercent(stats.lookupSuccessRate * 100)}`,
       `Avg lookup latency: ${formatLatency(stats.averageLookupLatencyMs)}`,
       `Last scan: ${formatRelativeTime(stats.lastScanAt)}`,
-      `Capacity used: ${formatPercent(statusPayload?.capacityUsedPercent)}`,
-      `Daemon alive: ${Boolean(statusPayload?.daemonAlive)}`,
     ];
 
     if (safeString(stats.healthReason, '').length > 0) {

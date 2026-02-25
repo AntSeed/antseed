@@ -111,14 +111,12 @@ export function initRuntimeModule({
   }
 
   function renderRuntimeSummary(processes: RuntimeProcessState[]): void {
-    const running = processes
-      .filter((proc) => proc.running && proc.mode !== 'dashboard')
-      .map((proc) => proc.mode);
-    if (running.length === 0) {
+    const buyerRunning = processes.some((proc) => proc.running && proc.mode === 'connect');
+    if (!buyerRunning) {
       setText(elements.runtimeSummary, 'No active services');
       return;
     }
-    setText(elements.runtimeSummary, `Active: ${running.join(', ')}`);
+    setText(elements.runtimeSummary, 'Buyer runtime connected');
   }
 
   function renderProcesses(processes: RuntimeProcessState[]): void {

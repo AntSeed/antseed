@@ -677,7 +677,7 @@ export function initChatModule({
       <div class="chat-welcome">
         <div class="chat-welcome-title">AntSeed AI Chat</div>
         <div class="chat-welcome-subtitle">Send messages through the P2P marketplace to inference providers.</div>
-        <div class="chat-welcome-subtitle">Start the Buyer runtime and create a new conversation to begin.</div>
+        <div class="chat-welcome-subtitle">Buyer runtime auto-connects to the local proxy. Create a new conversation to begin.</div>
       </div>`;
       return;
     }

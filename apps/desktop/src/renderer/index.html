@@ -18,19 +18,20 @@
           </div>
           <p class="sidebar-version">Desktop Runtime Console</p>
           <p id="runtimeSummary" class="sidebar-status">No active services</p>
+          <p id="connectWarning" class="sidebar-warning" hidden></p>
         </div>
 
         <ul class="sidebar-nav" role="tablist" aria-label="Dashboard Views">
-          <li class="sidebar-nav-label">Network Overview</li>
-          <li data-mode="connect"><button class="sidebar-btn active" data-view="overview" role="tab">Overview</button></li>
-          <li data-mode="connect"><button class="sidebar-btn" data-view="peers" role="tab">Peers</button></li>
-          <li data-mode="connect"><button class="sidebar-btn" data-view="sessions" role="tab">Sessions</button></li>
-          <li data-mode="connect"><button class="sidebar-btn" data-view="connection" role="tab">Connection</button></li>
-          <li data-mode="connect"><button class="sidebar-btn" data-view="config" role="tab">Settings</button></li>
-          <li data-mode="connect"><button class="sidebar-btn" data-view="desktop" role="tab">Desktop</button></li>
-          <li class="sidebar-nav-divider" aria-hidden="true"></li>
           <li class="sidebar-nav-label">Chat Interface</li>
-          <li data-mode="connect"><button class="sidebar-btn sidebar-btn-chat" data-view="chat" role="tab">AI Chat</button></li>
+          <li data-mode="connect"><button class="sidebar-btn active" data-view="chat" role="tab">AI Chat</button></li>
+          <li class="sidebar-nav-divider" aria-hidden="true"></li>
+          <li class="sidebar-nav-label">Network Overview</li>
+          <li data-mode="connect"><button class="sidebar-btn" data-view="overview" role="tab">Overview</button></li>
+          <li data-mode="connect"><button class="sidebar-btn" data-view="peers" role="tab">Peers</button></li>
+          <li data-mode="seeder"><button class="sidebar-btn" data-view="sessions" role="tab">Sessions</button></li>
+          <li data-mode="seeder"><button class="sidebar-btn" data-view="connection" role="tab">Connection</button></li>
+          <li data-mode="seeder"><button class="sidebar-btn" data-view="config" role="tab">Settings</button></li>
+          <li data-mode="connect"><button class="sidebar-btn" data-view="desktop" role="tab">Logs</button></li>
         </ul>
 
         <div class="sidebar-footer">
@@ -42,7 +43,7 @@
       </aside>
 
       <main class="main-content">
-        <section class="runtime-toolbar">
+        <section class="runtime-toolbar" data-mode="seeder">
           <div class="toolbar-header">
             <h2>Buyer Runtime</h2>
             <div class="toolbar-actions">
@@ -79,7 +80,7 @@
         </section>
 
         <section class="view-host">
-          <section id="view-overview" class="view active" role="tabpanel">
+          <section id="view-overview" class="view" role="tabpanel">
             <div class="page-header">
               <h2>Overview</h2>
               <div id="overviewBadge" class="connection-badge badge-idle">Idle</div>
@@ -87,33 +88,29 @@
 
             <div class="stat-grid">
               <div class="stat-card">
-                <p class="stat-label">Node State</p>
+                <p class="stat-label">Buyer Runtime</p>
                 <p id="ovNodeState" class="stat-value">idle</p>
               </div>
               <div class="stat-card">
                 <p class="stat-label">Active Peers</p>
                 <p id="ovPeers" class="stat-value">0</p>
               </div>
-              <div id="ovSessionsCard" class="stat-card" data-mode="connect">
+              <div id="ovSessionsCard" class="stat-card" data-mode="seeder">
                 <p class="stat-label">Active Sessions</p>
                 <p id="ovSessions" class="stat-value">0</p>
-              </div>
-              <div class="stat-card" data-mode="seeder">
-                <p class="stat-label">Earnings Today</p>
-                <p id="ovEarnings" class="stat-value">$0.00</p>
               </div>
               <div class="stat-card">
                 <p class="stat-label">DHT Health</p>
                 <p id="ovDhtHealth" class="stat-value">Down</p>
               </div>
               <div class="stat-card">
-                <p class="stat-label">Uptime</p>
-                <p id="ovUptime" class="stat-value">0s</p>
+                <p class="stat-label">Proxy Port</p>
+                <p id="ovUptime" class="stat-value">-</p>
               </div>
             </div>
 
             <div class="panel-grid two-col">
-              <article class="panel">
+              <article class="panel panel-span-full" data-mode="connect">
                 <div class="panel-head">
                   <h3>Top Peers</h3>
                   <span id="ovPeersCount" class="panel-count">0</span>
@@ -134,7 +131,7 @@
                 </div>
               </article>
 
-              <article class="panel">
+              <article class="panel" data-mode="seeder">
                 <div class="panel-head">
                   <h3>Capacity & Earnings</h3>
                 </div>
@@ -354,7 +351,7 @@
             </div>
           </section>
 
-          <section id="view-chat" class="view" role="tabpanel">
+          <section id="view-chat" class="view active" role="tabpanel">
             <div class="page-header">
               <h2>AI Chat</h2>
               <div class="page-header-right">
@@ -495,15 +492,12 @@
 
           <section id="view-desktop" class="view" role="tabpanel">
             <div class="page-header">
-              <h2>Desktop Diagnostics</h2>
-              <div id="desktopMeta" class="connection-badge badge-idle">local state</div>
+              <h2>Logs</h2>
+              <div id="desktopMeta" class="connection-badge badge-idle">live stream</div>
             </div>
 
-            <div class="panel-grid two-col">
-              <article class="panel">
-                <div class="panel-head"><h3>Daemon State Snapshot</h3></div>
-                <pre id="daemonState">No daemon state file found yet.</pre>
-              </article>
+            <pre id="daemonState" hidden></pre>
+            <div class="panel-grid">
               <article class="panel">
                 <div class="panel-head"><h3>Runtime Logs</h3></div>
                 <div id="logs" class="logs" aria-live="polite"></div>
