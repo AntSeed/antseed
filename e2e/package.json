@@ -1,5 +1,6 @@
 {
   "name": "@antseed/e2e",
+  "private": true,
   "version": "0.1.0",
   "description": "End-to-end tests for the Antseed Network",
   "type": "module",

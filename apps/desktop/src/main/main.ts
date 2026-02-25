@@ -17,7 +17,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { createConnection } from 'node:net';
-import { createDashboardServer, type DashboardConfig, type DashboardServer } from 'antseed-dashboard';
+import { createDashboardServer, type DashboardConfig, type DashboardServer } from '@antseed/dashboard';
 import {
   ProcessManager,
   type RuntimeMode,

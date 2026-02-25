@@ -18,22 +18,19 @@
           </div>
           <p class="sidebar-version">Desktop Runtime Console</p>
           <p id="runtimeSummary" class="sidebar-status">No active services</p>
-          <div class="mode-switcher">
-            <button id="modeSwitchSeeder" class="mode-btn active" data-appmode="seeder">Seeder</button>
-            <button id="modeSwitchConnect" class="mode-btn" data-appmode="connect">Connect</button>
-          </div>
         </div>
 
         <ul class="sidebar-nav" role="tablist" aria-label="Dashboard Views">
-          <li data-mode="both"><button class="sidebar-btn active" data-view="overview" role="tab">Overview</button></li>
-          <li data-mode="both"><button class="sidebar-btn" data-view="peers" role="tab">Peers</button></li>
+          <li class="sidebar-nav-label">Network Overview</li>
+          <li data-mode="connect"><button class="sidebar-btn active" data-view="overview" role="tab">Overview</button></li>
+          <li data-mode="connect"><button class="sidebar-btn" data-view="peers" role="tab">Peers</button></li>
           <li data-mode="connect"><button class="sidebar-btn" data-view="sessions" role="tab">Sessions</button></li>
-          <li data-mode="seeder"><button class="sidebar-btn" data-view="earnings" role="tab">Earnings</button></li>
-          <li data-mode="both"><button class="sidebar-btn" data-view="wallet" role="tab">Wallet</button></li>
-          <li data-mode="connect"><button class="sidebar-btn" data-view="chat" role="tab">Chat</button></li>
-          <li data-mode="both"><button class="sidebar-btn" data-view="connection" role="tab">Connection</button></li>
-          <li data-mode="both"><button class="sidebar-btn" data-view="config" role="tab">Settings</button></li>
-          <li data-mode="both"><button class="sidebar-btn" data-view="desktop" role="tab">Desktop</button></li>
+          <li data-mode="connect"><button class="sidebar-btn" data-view="connection" role="tab">Connection</button></li>
+          <li data-mode="connect"><button class="sidebar-btn" data-view="config" role="tab">Settings</button></li>
+          <li data-mode="connect"><button class="sidebar-btn" data-view="desktop" role="tab">Desktop</button></li>
+          <li class="sidebar-nav-divider" aria-hidden="true"></li>
+          <li class="sidebar-nav-label">Chat Interface</li>
+          <li data-mode="connect"><button class="sidebar-btn sidebar-btn-chat" data-view="chat" role="tab">AI Chat</button></li>
         </ul>
 
         <div class="sidebar-footer">
@@ -47,10 +44,10 @@
       <main class="main-content">
         <section class="runtime-toolbar">
           <div class="toolbar-header">
-            <h2>Desktop Controls</h2>
+            <h2>Buyer Runtime</h2>
             <div class="toolbar-actions">
-              <button id="startAllBtn">Start All</button>
-              <button id="stopAllBtn" class="danger">Stop All</button>
+              <button id="startAllBtn">Start Connect</button>
+              <button id="stopAllBtn" class="danger">Stop Connect</button>
               <button id="scanNetworkBtn" class="secondary">Scan DHT</button>
               <button id="refreshBtn" class="secondary">Refresh</button>
               <button id="clearLogsBtn" class="danger">Clear Logs</button>
@@ -58,25 +55,6 @@
           </div>
 
           <div class="runtime-grid">
-            <article class="control-card" data-mode="seeder">
-              <h3>Seller Runtime</h3>
-              <label>Provider<input id="seedProvider" value="anthropic" /></label>
-              <label>
-                Auth Type
-                <select id="seedAuthType">
-                  <option value="apikey">API Key</option>
-                  <option value="claude-code">Claude Code</option>
-                  <option value="oauth">OAuth Token</option>
-                </select>
-              </label>
-              <label id="seedAuthValueLabel">API Key<input id="seedAuthValue" type="password" placeholder="Paste API key" autocomplete="off" /></label>
-              <div class="row">
-                <button id="seedStartBtn">Start</button>
-                <button id="seedStopBtn" class="danger">Stop</button>
-              </div>
-              <p id="seedState" class="state status-stopped">Unknown</p>
-            </article>
-
             <article class="control-card" data-mode="connect">
               <h3>Buyer Runtime</h3>
               <label>Router<input id="connectRouter" value="local-proxy" /></label>
@@ -95,7 +73,6 @@
             </div>
             <p id="pluginSetupStatus" class="plugin-setup-status">Checking plugin availability...</p>
             <div class="plugin-setup-actions">
-              <button id="installSeedPluginBtn" class="secondary">Install Seller Plugin</button>
               <button id="installConnectPluginBtn" class="secondary">Install Buyer Plugin</button>
             </div>
           </article>
@@ -256,7 +233,7 @@
             </div>
           </section>
 
-          <section id="view-earnings" class="view" role="tabpanel">
+          <section id="view-earnings" class="view" role="tabpanel" data-mode="seeder">
             <div class="page-header">
               <h2>Earnings</h2>
               <div class="page-header-right">
@@ -288,7 +265,7 @@
             </div>
           </section>
 
-          <section id="view-wallet" class="view" role="tabpanel">
+          <section id="view-wallet" class="view" role="tabpanel" data-mode="seeder">
             <div class="page-header">
               <h2>Wallet</h2>
               <div id="walletMeta" class="connection-badge badge-idle">Not connected</div>
@@ -412,7 +389,7 @@
                   <div class="chat-welcome">
                     <div class="chat-welcome-title">AntSeed AI Chat</div>
                     <div class="chat-welcome-subtitle">Send messages through the P2P marketplace to inference providers.</div>
-                    <div class="chat-welcome-subtitle">Start the Buyer runtime and create a new conversation to begin.</div>
+                    <div class="chat-welcome-subtitle">Buyer runtime auto-connects to the local proxy. Create a new conversation to begin.</div>
                   </div>
                 </div>
                 <div id="chatStreamingIndicator" class="chat-streaming-indicator">

@@ -4,8 +4,8 @@ import ora from 'ora';
 import open from 'open';
 import { getGlobalOptions } from './types.js';
 import { loadConfig } from '../../config/loader.js';
-import { createDashboardServer } from 'antseed-dashboard';
-import type { DashboardServer } from 'antseed-dashboard';
+import { createDashboardServer } from '@antseed/dashboard';
+import type { DashboardServer } from '@antseed/dashboard';
 import { setupShutdownHandler } from '../shutdown.js';
 
 const DEFAULT_DASHBOARD_PORT = 3117;

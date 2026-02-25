@@ -1,8 +1,9 @@
 {
   "name": "@antseed/router-local-chat",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Antseed local chat router plugin — latency-prioritized for desktop",
   "type": "module",
+  "files": ["dist"],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {

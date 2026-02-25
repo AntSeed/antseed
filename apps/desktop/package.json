@@ -39,7 +39,7 @@
     "@noble/ed25519": "^2.1.0",
     "@silentbot1/nat-api": "^0.4.9",
     "@walletconnect/ethereum-provider": "^2.17.0",
-    "antseed-dashboard": "workspace:*",
+    "@antseed/dashboard": "workspace:*",
     "better-sqlite3": "^12.6.2",
     "bittorrent-dht": "^11.0.11",
     "chalk": "^5.6.2",
