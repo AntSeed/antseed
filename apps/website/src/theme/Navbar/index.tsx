@@ -80,7 +80,7 @@ export default function Navbar(): JSX.Element {
         top: 0,
         width: '100%',
         zIndex: 100,
-        padding: '20px 56px',
+        padding: 'clamp(16px, 4vw, 20px) clamp(16px, 4vw, 56px)',
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'center',
