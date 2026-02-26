@@ -22,7 +22,7 @@ Ask the user what kind of version bump they want:
 Use pnpm to bump all workspace package versions in a single command. **Never edit each package.json manually.**
 
 ```bash
-# Bump all 12 publishable packages at once
+# Bump all 11 publishable packages at once
 pnpm -r --filter './packages/*' --filter './plugins/*' --filter '@antseed/dashboard' --filter '@antseed/cli' exec npm version <patch|minor|major> --no-git-tag-version
 ```
 
@@ -59,7 +59,7 @@ Verify in the output:
 pnpm -r publish --no-git-checks --access public
 ```
 
-All 12 public packages publish in dependency order. If a package version already exists on npm, pnpm skips it gracefully.
+All 11 public packages publish in dependency order. If a package version already exists on npm, pnpm skips it gracefully.
 
 ### 6. Verify installation
 
@@ -96,7 +96,7 @@ chore: bump all packages to v<NEW_VERSION>
 tier0: @antseed/node
 tier1: @antseed/provider-core, @antseed/router-core
 tier2: provider-anthropic, provider-claude-code, provider-claude-oauth,
-       provider-openrouter, provider-local-llm, router-local-chat, router-local-proxy
+       provider-openai, provider-local-llm, router-local
 tier3: @antseed/dashboard
 tier4: @antseed/cli
 ```
