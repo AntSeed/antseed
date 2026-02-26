@@ -6,6 +6,8 @@ import {
   buildBuyerRuntimeOverridesFromFlags,
   buildBuyerBootstrapEntries,
   buildRouterRuntimeEnvFromBuyerConfig,
+  parseHostPort,
+  parseTorSocksProxy,
 } from './connect.js';
 
 test('connect runtime overrides are runtime-only and win over env/config', () => {
@@ -66,4 +68,30 @@ test('connect bootstrap entries respect explicit configured nodes', () => {
   const entries = buildBuyerBootstrapEntries(['10.0.0.2:6881'], 6889);
   assert.equal(entries[0], '127.0.0.1:6889');
   assert.deepEqual(entries.slice(1), ['10.0.0.2:6881']);
+});
+
+test('connect parses tor socks proxy host:port', () => {
+  const parsed = parseTorSocksProxy('127.0.0.1:9050');
+  assert.deepEqual(parsed, { host: '127.0.0.1', port: 9050 });
+});
+
+test('connect rejects invalid tor socks proxy values', () => {
+  assert.equal(parseTorSocksProxy(''), null);
+  assert.equal(parseTorSocksProxy('127.0.0.1'), null);
+  assert.equal(parseTorSocksProxy('127.0.0.1:0'), null);
+});
+
+test('connect parseHostPort supports bracketed IPv6', () => {
+  const parsed = parseHostPort('[::1]:9050');
+  assert.deepEqual(parsed, { host: '::1', port: 9050 });
+});
+
+test('connect parseHostPort rejects malformed bracketed IPv6 endpoint', () => {
+  const parsed = parseHostPort('[::1:9050');
+  assert.equal(parsed, null);
+});
+
+test('connect parseTorSocksProxy supports bracketed IPv6 host', () => {
+  const parsed = parseTorSocksProxy('[::1]:9050');
+  assert.deepEqual(parsed, { host: '::1', port: 9050 });
 });

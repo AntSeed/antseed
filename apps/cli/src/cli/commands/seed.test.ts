@@ -5,6 +5,7 @@ import { resolveEffectiveSellerConfig } from '../../config/effective.js';
 import {
   buildSellerRuntimeOverridesFromFlags,
   buildSellerPluginRuntimeEnv,
+  parseTorOnionEndpoint,
 } from './seed.js';
 
 test('seed runtime overrides are runtime-only and win over env/config', () => {
@@ -67,4 +68,37 @@ test('seed maps effective seller pricing into provider runtime keys', () => {
   }>;
   assert.equal(models['claude-sonnet-4-5-20250929']?.inputUsdPerMillion, 18);
   assert.equal(models['claude-sonnet-4-5-20250929']?.outputUsdPerMillion, 42);
+});
+
+test('seed parses tor onion endpoint with fallback port', () => {
+  const parsed = parseTorOnionEndpoint('abcdefghijklmnop.onion', 80);
+  assert.deepEqual(parsed, { host: 'abcdefghijklmnop.onion', port: 80 });
+});
+
+test('seed parses tor onion endpoint with explicit port', () => {
+  const parsed = parseTorOnionEndpoint('abcdefghijklmnop.onion:443', 80);
+  assert.deepEqual(parsed, { host: 'abcdefghijklmnop.onion', port: 443 });
+});
+
+test('seed rejects invalid tor onion endpoint host', () => {
+  const parsed = parseTorOnionEndpoint('example.com:443', 80);
+  assert.equal(parsed, null);
+});
+
+test('seed rejects invalid tor onion endpoint port', () => {
+  const parsed = parseTorOnionEndpoint('abcdefghijklmnop.onion:99999', 80);
+  assert.equal(parsed, null);
+});
+
+test('seed parses uppercase onion host and normalizes to lowercase', () => {
+  const parsed = parseTorOnionEndpoint('ABCDEFGHIJKLMNOP.onion:443', 80);
+  assert.deepEqual(parsed, { host: 'abcdefghijklmnop.onion', port: 443 });
+});
+
+test('seed parses v3 onion endpoint with fallback port', () => {
+  const parsed = parseTorOnionEndpoint('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion', 8080);
+  assert.deepEqual(parsed, {
+    host: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion',
+    port: 8080,
+  });
 });

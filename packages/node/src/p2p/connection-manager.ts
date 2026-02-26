@@ -33,6 +33,16 @@ export interface PeerEndpoint {
   port: number;
 }
 
+export interface SocksProxyConfig {
+  host: string;
+  port: number;
+}
+
+export interface ConnectionManagerOptions {
+  forceTcp?: boolean;
+  socksProxy?: SocksProxyConfig;
+}
+
 type TransportMode = "webrtc" | "tcp";
 type InitialWireMessage =
   | {
@@ -60,6 +70,116 @@ const DATA_CHANNEL_LABEL = "antseed-data";
 const LINE_SEPARATOR = "\n";
 const INITIAL_LINE_TIMEOUT_MS = 10_000;
 const MAX_INITIAL_LINE_BYTES = 8 * 1024;
+
+function buildSocksConnectRequest(host: string, port: number): Buffer {
+  const ipVersion = net.isIP(host);
+  if (ipVersion === 4) {
+    const octets = host.split(".").map((part) => Number.parseInt(part, 10));
+    const payload = Buffer.alloc(4 + 4 + 2);
+    payload[0] = 0x05; // SOCKS5
+    payload[1] = 0x01; // CONNECT
+    payload[2] = 0x00; // reserved
+    payload[3] = 0x01; // IPv4
+    for (let i = 0; i < 4; i++) {
+      payload[4 + i] = octets[i] ?? 0;
+    }
+    payload.writeUInt16BE(port, 8);
+    return payload;
+  }
+
+  if (ipVersion === 6) {
+    const payload = Buffer.alloc(4 + 16 + 2);
+    payload[0] = 0x05;
+    payload[1] = 0x01;
+    payload[2] = 0x00;
+    payload[3] = 0x04; // IPv6
+    const segments = host.split(":");
+    const expanded: string[] = [];
+    let emptyIndex = -1;
+    for (let i = 0; i < segments.length; i++) {
+      if (segments[i] === "" && emptyIndex < 0) {
+        emptyIndex = i;
+      }
+    }
+    if (emptyIndex >= 0) {
+      const missing = 8 - (segments.length - 1);
+      for (let i = 0; i < segments.length; i++) {
+        if (i === emptyIndex) {
+          for (let j = 0; j < missing; j++) expanded.push("0");
+        } else if (segments[i] !== "") {
+          expanded.push(segments[i]!);
+        }
+      }
+    } else {
+      expanded.push(...segments);
+    }
+    for (let i = 0; i < 8; i++) {
+      const value = Number.parseInt(expanded[i] ?? "0", 16);
+      payload.writeUInt16BE(Number.isFinite(value) ? value : 0, 4 + i * 2);
+    }
+    payload.writeUInt16BE(port, 20);
+    return payload;
+  }
+
+  const hostBytes = Buffer.from(host, "utf8");
+  if (hostBytes.length === 0 || hostBytes.length > 255) {
+    throw new Error(`Invalid SOCKS target host "${host}"`);
+  }
+  const payload = Buffer.alloc(4 + 1 + hostBytes.length + 2);
+  payload[0] = 0x05;
+  payload[1] = 0x01;
+  payload[2] = 0x00;
+  payload[3] = 0x03; // domain name
+  payload[4] = hostBytes.length;
+  hostBytes.copy(payload, 5);
+  payload.writeUInt16BE(port, 5 + hostBytes.length);
+  return payload;
+}
+
+function createSocketReader(socket: Socket): { readExact: (bytes: number) => Promise<Buffer> } {
+  let buffer = Buffer.alloc(0);
+  return {
+    readExact: (bytes: number): Promise<Buffer> =>
+      new Promise<Buffer>((resolve, reject) => {
+        if (buffer.length >= bytes) {
+          const out = buffer.subarray(0, bytes);
+          buffer = buffer.subarray(bytes);
+          resolve(out);
+          return;
+        }
+
+        const onData = (chunk: Buffer): void => {
+          buffer = Buffer.concat([buffer, chunk]);
+          if (buffer.length >= bytes) {
+            cleanup();
+            const out = buffer.subarray(0, bytes);
+            buffer = buffer.subarray(bytes);
+            resolve(out);
+          }
+        };
+
+        const onError = (err: Error): void => {
+          cleanup();
+          reject(err);
+        };
+
+        const onClose = (): void => {
+          cleanup();
+          reject(new Error("SOCKET_CLOSED"));
+        };
+
+        const cleanup = (): void => {
+          socket.off("data", onData);
+          socket.off("error", onError);
+          socket.off("close", onClose);
+        };
+
+        socket.on("data", onData);
+        socket.once("error", onError);
+        socket.once("close", onClose);
+      }),
+  };
+}
 
 /** Represents a single P2P connection. */
 export class PeerConnection extends EventEmitter {
@@ -263,25 +383,27 @@ export class ConnectionManager extends EventEmitter {
   private _listenPort: number | null = null;
   private _server: net.Server | null = null;
   private _transportMode: TransportMode;
+  private _socksProxy: SocksProxyConfig | null;
   private _metadataProvider: (() => object | null) | null = null;
   private _ipConnectionCounts = new Map<string, number>();
   private readonly _introReplayGuard = new NonceReplayGuard();
   private static _knownEndpoints = new Map<PeerId, PeerEndpoint>();
   private static _detectedTransportMode: TransportMode | null = null;
 
-  constructor(iceConfig?: IceConfig) {
+  constructor(iceConfig?: IceConfig, options?: ConnectionManagerOptions) {
     super();
     this._iceConfig = iceConfig ?? getDefaultIceConfig();
-    this._transportMode = ConnectionManager._detectTransportMode();
+    this._transportMode = options?.forceTcp ? "tcp" : ConnectionManager._detectTransportMode();
+    this._socksProxy = options?.socksProxy ?? null;
   }
 
-  static async init(iceConfig?: IceConfig): Promise<ConnectionManager> {
+  static async init(iceConfig?: IceConfig, options?: ConnectionManagerOptions): Promise<ConnectionManager> {
     try {
       await loadNodeDatachannel();
     } catch {
       // node-datachannel not available — TCP fallback will be used
     }
-    return new ConnectionManager(iceConfig);
+    return new ConnectionManager(iceConfig, options);
   }
 
   get iceConfig(): IceConfig {
@@ -457,56 +579,61 @@ export class ConnectionManager extends EventEmitter {
     conn: PeerConnection,
     endpoint: PeerEndpoint,
   ): void {
-    const signalingSocket = net.connect({ host: endpoint.host, port: endpoint.port });
-    conn.attachSignalingSocket(signalingSocket);
+    void this._openOutboundSocket(endpoint)
+      .then((signalingSocket) => {
+        conn.attachSignalingSocket(signalingSocket);
 
-    let rtc: NativeRtcPeerConnection | null = null;
-    const pendingSignals: SignalingMessage[] = [];
+        let rtc: NativeRtcPeerConnection | null = null;
+        const pendingSignals: SignalingMessage[] = [];
 
-    this._attachSignalingParser(
-      signalingSocket,
-      (msg) => {
-        if (!rtc) {
-          pendingSignals.push(msg);
-          return;
+        this._attachSignalingParser(
+          signalingSocket,
+          (msg) => {
+            if (!rtc) {
+              pendingSignals.push(msg);
+              return;
+            }
+            this._applySignalToRtc(rtc, msg, conn);
+          },
+          (err) => conn.fail(err),
+          "",
+        );
+
+        this._sendLine(signalingSocket, {
+          type: "hello",
+          auth: buildConnectionAuthEnvelope(
+            "hello",
+            this._localPeerId!,
+            this._localPrivateKey!,
+          ),
+        });
+
+        rtc = this._createRtcPeer(config.remotePeerId);
+        conn.attachRtcPeer(rtc);
+        this._wireRtcPeer(conn, rtc, signalingSocket, true);
+
+        for (const signal of pendingSignals) {
+          this._applySignalToRtc(rtc, signal, conn);
         }
-        this._applySignalToRtc(rtc, msg, conn);
-      },
-      (err) => conn.fail(err),
-      "",
-    );
+        pendingSignals.length = 0;
 
-    signalingSocket.once("connect", () => {
-      this._sendLine(signalingSocket, {
-        type: "hello",
-        auth: buildConnectionAuthEnvelope(
-          "hello",
-          this._localPeerId!,
-          this._localPrivateKey!,
-        ),
+        signalingSocket.on("error", (err: Error) => {
+          if (conn.state === ConnectionState.Connecting) {
+            conn.fail(err);
+          }
+        });
+
+        signalingSocket.on("close", () => {
+          if (conn.state === ConnectionState.Connecting) {
+            conn.fail(new Error(`Signaling socket closed before connection to ${config.remotePeerId} opened`));
+          }
+        });
+      })
+      .catch((err: Error) => {
+        if (conn.state === ConnectionState.Connecting) {
+          conn.fail(err);
+        }
       });
-
-      rtc = this._createRtcPeer(config.remotePeerId);
-      conn.attachRtcPeer(rtc);
-      this._wireRtcPeer(conn, rtc, signalingSocket, true);
-
-      for (const signal of pendingSignals) {
-        this._applySignalToRtc(rtc, signal, conn);
-      }
-      pendingSignals.length = 0;
-    });
-
-    signalingSocket.on("error", (err: Error) => {
-      if (conn.state === ConnectionState.Connecting) {
-        conn.fail(err);
-      }
-    });
-
-    signalingSocket.on("close", () => {
-      if (conn.state === ConnectionState.Connecting) {
-        conn.fail(new Error(`Signaling socket closed before connection to ${config.remotePeerId} opened`));
-      }
-    });
   }
 
   private _createTcpConnection(
@@ -514,31 +641,97 @@ export class ConnectionManager extends EventEmitter {
     conn: PeerConnection,
     endpoint: PeerEndpoint,
   ): void {
-    const socket = net.connect({ host: endpoint.host, port: endpoint.port });
+    void this._openOutboundSocket(endpoint)
+      .then((socket) => {
+        this._sendLine(socket, {
+          type: "intro",
+          auth: buildConnectionAuthEnvelope(
+            "intro",
+            this._localPeerId!,
+            this._localPrivateKey!,
+          ),
+        });
+        conn.attachRawSocket(socket);
 
-    socket.once("connect", () => {
-      this._sendLine(socket, {
-        type: "intro",
-        auth: buildConnectionAuthEnvelope(
-          "intro",
-          this._localPeerId!,
-          this._localPrivateKey!,
-        ),
+        socket.on("error", (err: Error) => {
+          if (conn.state === ConnectionState.Connecting) {
+            conn.fail(err);
+          }
+        });
+
+        socket.on("close", () => {
+          if (conn.state === ConnectionState.Connecting) {
+            conn.fail(new Error(`TCP socket closed before connection to ${config.remotePeerId} opened`));
+          }
+        });
+      })
+      .catch((err: Error) => {
+        if (conn.state === ConnectionState.Connecting) {
+          conn.fail(err);
+        }
       });
-      conn.attachRawSocket(socket);
-    });
+  }
 
-    socket.on("error", (err: Error) => {
-      if (conn.state === ConnectionState.Connecting) {
-        conn.fail(err);
-      }
-    });
+  private async _openOutboundSocket(endpoint: PeerEndpoint): Promise<Socket> {
+    if (!this._socksProxy) {
+      return this._openDirectSocket(endpoint.host, endpoint.port);
+    }
+    return this._openSocketViaSocksProxy(endpoint);
+  }
 
-    socket.on("close", () => {
-      if (conn.state === ConnectionState.Connecting) {
-        conn.fail(new Error(`TCP socket closed before connection to ${config.remotePeerId} opened`));
-      }
+  private _openDirectSocket(host: string, port: number): Promise<Socket> {
+    return new Promise<Socket>((resolve, reject) => {
+      const socket = net.connect({ host, port });
+      const onError = (err: Error): void => {
+        socket.off("connect", onConnect);
+        reject(err);
+      };
+      const onConnect = (): void => {
+        socket.off("error", onError);
+        resolve(socket);
+      };
+      socket.once("error", onError);
+      socket.once("connect", onConnect);
     });
+  }
+
+  private async _openSocketViaSocksProxy(endpoint: PeerEndpoint): Promise<Socket> {
+    const proxy = this._socksProxy!;
+    const socket = await this._openDirectSocket(proxy.host, proxy.port);
+    const reader = createSocketReader(socket);
+
+    socket.write(Buffer.from([0x05, 0x01, 0x00])); // SOCKS5 + 1 auth method + no-auth
+    const greeting = await reader.readExact(2);
+    if (greeting[0] !== 0x05 || greeting[1] !== 0x00) {
+      socket.destroy();
+      throw new Error("SOCKS5 proxy does not support no-auth mode");
+    }
+
+    socket.write(buildSocksConnectRequest(endpoint.host, endpoint.port));
+    const responseHead = await reader.readExact(4);
+    if (responseHead[0] !== 0x05) {
+      socket.destroy();
+      throw new Error("Invalid SOCKS5 response version");
+    }
+    if (responseHead[1] !== 0x00) {
+      socket.destroy();
+      throw new Error(`SOCKS5 connect failed with code ${String(responseHead[1])}`);
+    }
+
+    const atyp = responseHead[3];
+    if (atyp === 0x01) {
+      await reader.readExact(4 + 2); // IPv4 + port
+    } else if (atyp === 0x03) {
+      const domainLen = (await reader.readExact(1))[0] ?? 0;
+      await reader.readExact(domainLen + 2); // domain + port
+    } else if (atyp === 0x04) {
+      await reader.readExact(16 + 2); // IPv6 + port
+    } else {
+      socket.destroy();
+      throw new Error("Unsupported SOCKS5 address type");
+    }
+
+    return socket;
   }
 
   private _handleInboundSocket(socket: Socket): void {

@@ -16,6 +16,7 @@ import { resolveEffectiveSellerConfig, type SellerRuntimeOverrides } from '../..
 import type { SellerCLIConfig } from '../../config/types.js'
 
 const STATE_FILE = join(homedir(), '.antseed', 'daemon.state.json')
+const ONION_HOST_RE = /^([a-z2-7]{16}|[a-z2-7]{56})\.onion$/
 
 /** Map config file provider entry to env-style key/value pairs for the plugin. */
 function providerConfigToEnv(p: CLIProviderConfig): Record<string, string> {
@@ -31,6 +32,52 @@ function parseOptionalBoolEnv(value: string | undefined): boolean | null {
   if (['1', 'true', 'yes', 'on'].includes(normalized)) return true
   if (['0', 'false', 'no', 'off'].includes(normalized)) return false
   return null
+}
+
+function parseHostPort(rawValue: string): { host: string; port: number } | null {
+  const raw = rawValue.trim()
+  if (raw.length === 0) return null
+
+  if (raw.startsWith('[')) {
+    const end = raw.indexOf(']')
+    if (end <= 1) return null
+    const host = raw.slice(1, end).trim()
+    const portPart = raw.slice(end + 1)
+    if (!portPart.startsWith(':')) return null
+    const port = Number.parseInt(portPart.slice(1), 10)
+    if (!Number.isInteger(port) || port < 1 || port > 65535) return null
+    return { host, port }
+  }
+
+  const sep = raw.lastIndexOf(':')
+  if (sep <= 0) return null
+  const host = raw.slice(0, sep).trim()
+  const port = Number.parseInt(raw.slice(sep + 1), 10)
+  if (host.length === 0 || !Number.isInteger(port) || port < 1 || port > 65535) return null
+  return { host, port }
+}
+
+export function parseTorOnionEndpoint(rawValue: string | undefined, fallbackPort: number): { host: string; port: number } | null {
+  if (!rawValue) return null
+  const raw = rawValue.trim().toLowerCase()
+  if (raw.length === 0) return null
+
+  let host = raw
+  let port = fallbackPort
+  const sep = raw.lastIndexOf(':')
+  if (sep > 0) {
+    const maybeHost = raw.slice(0, sep).trim()
+    const maybePort = Number.parseInt(raw.slice(sep + 1), 10)
+    if (maybeHost.length === 0 || !Number.isInteger(maybePort) || maybePort < 1 || maybePort > 65535) {
+      return null
+    }
+    host = maybeHost
+    port = maybePort
+  }
+
+  if (!ONION_HOST_RE.test(host)) return null
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return null
+  return { host, port }
 }
 
 async function isRpcReachable(rpcUrl: string, timeoutMs = 1500): Promise<boolean> {
@@ -110,6 +157,8 @@ export function registerSeedCommand(program: Command): void {
     .description('Start providing AI services on the P2P network')
     .option('--provider <name>', 'provider plugin name (e.g., anthropic)')
     .option('--instance <id>', 'use a configured plugin instance by ID')
+    .option('--tor', 'enable tor mode guardrails (loopback listener, no DHT/NAT, forced TCP)')
+    .option('--tor-onion <hostOrHostPort>', 'tor hidden-service endpoint for buyers (.onion or .onion:port)')
     .option('-r, --reserve <number>', 'runtime-only reserve floor override (does not write config file)', parseFloat)
     .option('--input-usd-per-million <number>', 'runtime-only input pricing override in USD per 1M tokens', parseFloat)
     .option('--output-usd-per-million <number>', 'runtime-only output pricing override in USD per 1M tokens', parseFloat)
@@ -223,6 +272,26 @@ export function registerSeedCommand(program: Command): void {
       }
 
       const providerName = options.provider as string | undefined ?? provider.name ?? 'unknown'
+      const torEnabled = (options.tor as boolean | undefined) === true || config.network.tor?.enabled === true
+      const torSocksRaw = process.env['ANTSEED_TOR_SOCKS'] ?? config.network.tor?.socksProxy
+      const torSocks = torSocksRaw ? parseHostPort(torSocksRaw) : null
+      const torOnionRaw = (options.torOnion as string | undefined)
+        ?? (
+          config.network.tor?.onionAddress
+            ? `${config.network.tor.onionAddress}${config.network.tor?.onionPort ? `:${config.network.tor.onionPort}` : ''}`
+            : undefined
+        )
+      const torOnion = parseTorOnionEndpoint(torOnionRaw, config.network.tor?.onionPort ?? 80)
+
+      if (torEnabled && torSocksRaw && !torSocks) {
+        console.error(chalk.red(`Invalid tor SOCKS proxy "${torSocksRaw}". Expected host:port.`))
+        process.exit(1)
+      }
+      if (torEnabled && torOnionRaw && !torOnion) {
+        console.error(chalk.red(`Invalid tor onion endpoint "${torOnionRaw}". Expected .onion or .onion:port.`))
+        process.exit(1)
+      }
+
       const runtimeProviderPricing = buildSellerPluginRuntimeEnv(effectiveSellerConfig, providerName)
       const runtimeInputUsdPerMillion = Number.parseFloat(runtimeProviderPricing['ANTSEED_INPUT_USD_PER_MILLION'] ?? '')
       const runtimeOutputUsdPerMillion = Number.parseFloat(runtimeProviderPricing['ANTSEED_OUTPUT_USD_PER_MILLION'] ?? '')
@@ -262,6 +331,11 @@ export function registerSeedCommand(program: Command): void {
       )
       console.log(chalk.dim(`  reserve floor: ${effectiveSellerConfig.reserveFloor}`))
       console.log(chalk.dim(`  max concurrent buyers: ${effectiveSellerConfig.maxConcurrentBuyers}`))
+      if (torEnabled) {
+        console.log(chalk.dim('  tor mode: enabled'))
+        console.log(chalk.dim(`  tor socks: ${torSocks ? `${torSocks.host}:${torSocks.port}` : '(none configured)'}`))
+        console.log(chalk.dim(`  tor onion: ${torOnion ? `${torOnion.host}:${torOnion.port}` : '(not configured)'}`))
+      }
       console.log('')
 
       const nodeSpinner = ora('Starting seeding daemon...').start()
@@ -279,6 +353,16 @@ export function registerSeedCommand(program: Command): void {
           sellerWalletAddress,
           paymentConfig,
         },
+        ...(torEnabled
+          ? {
+              tor: {
+                enabled: true,
+                ...(torSocks ? { socksProxy: torSocks } : {}),
+                ...(torOnion ? { onionAddress: torOnion.host, onionPort: torOnion.port } : {}),
+                allowDirectFallback: config.network.tor?.allowDirectFallback === true,
+              },
+            }
+          : {}),
       })
 
       node.registerProvider(provider)
@@ -289,6 +373,14 @@ export function registerSeedCommand(program: Command): void {
         console.log(chalk.dim(`  Peer ID: ${node.peerId ?? 'unknown'}`))
         console.log(chalk.dim(`  DHT port: ${node.dhtPort}`))
         console.log(chalk.dim(`  Signaling port: ${node.signalingPort}`))
+        if (torEnabled && torOnion && node.peerId) {
+          const peerHint = `${node.peerId}@${torOnion.host}:${torOnion.port}`
+          console.log(chalk.dim(`  Tor hidden service: ${torOnion.host}:${torOnion.port}`))
+          console.log(chalk.dim(`  Share with buyers: antseed connect --tor --tor-peer ${peerHint}`))
+        } else if (torEnabled && !torOnion) {
+          console.log(chalk.yellow('  Tor mode is enabled, but no onion endpoint is configured.'))
+          console.log(chalk.dim('  Set network.tor.onionAddress (and optional onionPort) or pass --tor-onion.'))
+        }
       } catch (err) {
         nodeSpinner.fail(chalk.red(`Failed to start seeding: ${(err as Error).message}`))
         process.exit(1)
@@ -375,6 +467,9 @@ export function registerSeedCommand(program: Command): void {
           peerId: node.peerId,
           dhtPort: node.dhtPort,
           signalingPort: node.signalingPort,
+          torMode: torEnabled,
+          torOnionAddress: torOnion ? `${torOnion.host}:${torOnion.port}` : null,
+          torPeerHint: torOnion && node.peerId ? `${node.peerId}@${torOnion.host}:${torOnion.port}` : null,
           provider: providerName,
           defaultInputUsdPerMillion: Number.isFinite(runtimeInputUsdPerMillion) ? runtimeInputUsdPerMillion : undefined,
           defaultOutputUsdPerMillion: Number.isFinite(runtimeOutputUsdPerMillion) ? runtimeOutputUsdPerMillion : undefined,

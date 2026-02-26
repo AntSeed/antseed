@@ -4,6 +4,8 @@ import type {
   TokenPricingUsdPerMillion,
 } from './types.js';
 
+const ONION_HOST_RE = /^([a-z2-7]{16}|[a-z2-7]{56})\.onion$/;
+
 function validatePricingLeaf(
   path: string,
   value: TokenPricingUsdPerMillion,
@@ -62,6 +64,66 @@ export function validateConfig(config: AntseedConfig): string[] {
 
   if (!Number.isFinite(config.seller.reserveFloor) || config.seller.reserveFloor < 0) {
     errors.push('seller.reserveFloor must be a non-negative finite number');
+  }
+
+  const tor = config.network.tor;
+  if (tor) {
+    if (tor.socksProxy !== undefined) {
+      if (typeof tor.socksProxy !== 'string' || tor.socksProxy.trim().length === 0) {
+        errors.push('network.tor.socksProxy must be a non-empty host:port string');
+      } else {
+        const raw = tor.socksProxy.trim();
+        const sep = raw.lastIndexOf(':');
+        const host = sep > 0 ? raw.slice(0, sep).trim() : '';
+        const port = sep > 0 ? Number.parseInt(raw.slice(sep + 1), 10) : Number.NaN;
+        if (host.length === 0 || !Number.isInteger(port) || port < 1 || port > 65535) {
+          errors.push('network.tor.socksProxy must use host:port with port in range 1-65535');
+        }
+      }
+    }
+
+    if (tor.manualPeers !== undefined) {
+      if (!Array.isArray(tor.manualPeers)) {
+        errors.push('network.tor.manualPeers must be an array of strings');
+      } else {
+        for (const [index, entry] of tor.manualPeers.entries()) {
+          if (typeof entry !== 'string' || entry.trim().length === 0) {
+            errors.push(`network.tor.manualPeers[${index}] must be a non-empty string`);
+            continue;
+          }
+          const raw = entry.trim();
+          const endpoint = raw.includes('@') ? raw.slice(raw.indexOf('@') + 1) : raw;
+          const sep = endpoint.lastIndexOf(':');
+          const host = sep > 0 ? endpoint.slice(0, sep).trim() : '';
+          const port = sep > 0 ? Number.parseInt(endpoint.slice(sep + 1), 10) : Number.NaN;
+          if (host.length === 0 || !Number.isInteger(port) || port < 1 || port > 65535) {
+            errors.push(`network.tor.manualPeers[${index}] must be in [peerId@]host:port format`);
+            continue;
+          }
+          if (tor.enabled === true && host.toLowerCase().endsWith('.onion') && !raw.includes('@')) {
+            errors.push(`network.tor.manualPeers[${index}] onion peer must include peerId@host:port`);
+          }
+        }
+      }
+    }
+
+    if (tor.onionAddress !== undefined) {
+      if (typeof tor.onionAddress !== 'string' || tor.onionAddress.trim().length === 0) {
+        errors.push('network.tor.onionAddress must be a non-empty .onion hostname');
+      } else if (!ONION_HOST_RE.test(tor.onionAddress.trim().toLowerCase())) {
+        errors.push('network.tor.onionAddress must be a valid v2/v3 .onion hostname');
+      }
+    }
+
+    if (tor.onionPort !== undefined) {
+      if (!Number.isInteger(tor.onionPort) || tor.onionPort < 1 || tor.onionPort > 65535) {
+        errors.push('network.tor.onionPort must be an integer in range 1-65535');
+      }
+    }
+
+    if (tor.onionPort !== undefined && tor.onionAddress === undefined) {
+      errors.push('network.tor.onionPort requires network.tor.onionAddress');
+    }
   }
 
   return errors;

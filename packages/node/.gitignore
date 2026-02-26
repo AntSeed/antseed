@@ -7,6 +7,11 @@ dist-web/
 coverage/
 *.tsbuildinfo
 
+# Foundry artifacts
+cache/
+out/
+contracts/out/
+
 # Environment
 .env
 .env.*

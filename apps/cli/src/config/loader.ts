@@ -186,6 +186,40 @@ function mergeBuyerConfig(
   };
 }
 
+function mergeNetworkConfig(
+  defaults: AntseedConfig['network'],
+  value: unknown
+): AntseedConfig['network'] {
+  if (!isRecord(value)) {
+    return {
+      bootstrapNodes: [...defaults.bootstrapNodes],
+      ...(defaults.tor ? { tor: { ...defaults.tor, manualPeers: [...(defaults.tor.manualPeers ?? [])] } } : {}),
+    };
+  }
+
+  const torValue = isRecord(value['tor']) ? value['tor'] : undefined;
+  return {
+    bootstrapNodes: Array.isArray(value['bootstrapNodes'])
+      ? value['bootstrapNodes'].filter((entry): entry is string => typeof entry === 'string')
+      : [...defaults.bootstrapNodes],
+    ...(defaults.tor || torValue
+      ? {
+          tor: {
+            ...(defaults.tor ? { ...defaults.tor, manualPeers: [...(defaults.tor.manualPeers ?? [])] } : {}),
+            ...(torValue ? torValue : {}),
+            ...(torValue && Array.isArray(torValue['manualPeers'])
+              ? {
+                  manualPeers: torValue['manualPeers'].filter(
+                    (entry): entry is string => typeof entry === 'string'
+                  ),
+                }
+              : {}),
+          },
+        }
+      : {}),
+  };
+}
+
 /**
  * Load configuration from a JSON file.
  * Returns default configuration if the file does not exist.
@@ -228,8 +262,7 @@ export async function loadConfig(configPath: string): Promise<AntseedConfig> {
       ...(isRecord(parsed['payments']) ? parsed['payments'] : {}),
     },
     network: {
-      ...defaults.network,
-      ...(isRecord(parsed['network']) ? parsed['network'] : {}),
+      ...mergeNetworkConfig(defaults.network, parsed['network']),
     },
     providers: Array.isArray(parsed['providers'])
       ? (parsed['providers'] as AntseedConfig['providers'])

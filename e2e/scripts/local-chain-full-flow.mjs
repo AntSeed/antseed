@@ -2,7 +2,7 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -31,7 +31,7 @@ const FUND_ETH = process.env.FLOW_FUND_ETH ?? "2ether";
 
 const scriptDir = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = resolve(scriptDir, "..", "..");
-const contractsDir = resolve(repoRoot, "contracts");
+const contractsDir = resolve(repoRoot, "packages", "node");
 
 function logStep(message) {
   console.log(`\n[flow] ${message}`);
@@ -245,15 +245,30 @@ async function main() {
     await waitForRpcReady(RPC_URL);
     logStep(`anvil ready at ${RPC_URL}`);
 
+    const deployerAddress = runCommand("cast", [
+      "wallet",
+      "address",
+      "--private-key",
+      DEPLOYER_PRIVATE_KEY,
+    ]).trim();
+
     logStep("building contracts with forge");
-    runCommand("forge", ["build"], { cwd: contractsDir });
+    runCommand(
+      "forge",
+      ["build", "--root", ".", "--contracts", "contracts", "--out", "contracts/out"],
+      { cwd: contractsDir }
+    );
 
     logStep("deploying MockUSDC");
     const mockDeployOutput = runCommand(
       "forge",
       [
         "create",
-        "test/mocks/MockUSDC.sol:MockUSDC",
+        "contracts/MockUSDC.sol:MockUSDC",
+        "--root",
+        ".",
+        "--contracts",
+        "contracts",
         "--rpc-url",
         RPC_URL,
         "--private-key",
@@ -270,7 +285,11 @@ async function main() {
       "forge",
       [
         "create",
-        "src/AntseedEscrow.sol:AntseedEscrow",
+        "contracts/AntseedEscrow.sol:AntseedEscrow",
+        "--root",
+        ".",
+        "--contracts",
+        "contracts",
         "--rpc-url",
         RPC_URL,
         "--private-key",
@@ -278,6 +297,7 @@ async function main() {
         "--broadcast",
         "--constructor-args",
         usdcAddress,
+        deployerAddress,
       ],
       { cwd: contractsDir }
     );
@@ -302,7 +322,7 @@ async function main() {
 
     const sellerProvider = new MockAnthropicProvider();
 
-    logStep("starting seller node with payments enabled");
+    logStep("starting seller node");
     sellerNode = new AntseedNode({
       role: "seller",
       dataDir: sellerDataDir,
@@ -310,16 +330,6 @@ async function main() {
       signalingPort: 0,
       bootstrapNodes: bootstrapConfig,
       allowPrivateIPs: true,
-      payments: {
-        enabled: true,
-        paymentMethod: "crypto",
-        settlementIdleMs: 5_000,
-        defaultEscrowAmountUSDC: "1000000",
-        platformFeeRate: 0.05,
-        rpcUrl: RPC_URL,
-        contractAddress: escrowAddress,
-        usdcAddress,
-      },
     });
     sellerNode.registerProvider(sellerProvider);
     await sellerNode.start();
@@ -330,23 +340,13 @@ async function main() {
     const sellerAddress = identityToEvmAddress(sellerNode.identity);
     logStep(`seller peer=${sellerNode.peerId} evm=${sellerAddress}`);
 
-    logStep("starting buyer node with payments enabled");
+    logStep("starting buyer node");
     buyerNode = new AntseedNode({
       role: "buyer",
       dataDir: buyerDataDir,
       dhtPort: 0,
       bootstrapNodes: bootstrapConfig,
       allowPrivateIPs: true,
-      payments: {
-        enabled: true,
-        paymentMethod: "crypto",
-        settlementIdleMs: 5_000,
-        defaultEscrowAmountUSDC: "1000000",
-        platformFeeRate: 0.05,
-        rpcUrl: RPC_URL,
-        contractAddress: escrowAddress,
-        usdcAddress,
-      },
     });
     await buyerNode.start();
 
@@ -369,11 +369,11 @@ async function main() {
       FUND_ETH,
     ]);
 
-    logStep(`minting ${USDC_MINT_AMOUNT} base units of USDC to buyer`);
+    logStep(`minting ${USDC_MINT_AMOUNT} base units of USDC to deployer escrow account`);
     castSend([
       usdcAddress,
       "mint(address,uint256)",
-      buyerAddress,
+      deployerAddress,
       USDC_MINT_AMOUNT.toString(),
     ]);
 
@@ -414,28 +414,6 @@ async function main() {
       );
     }
 
-    const bpm = buyerNode.buyerPaymentManager;
-    if (!bpm) {
-      throw new Error("buyer payment manager was not initialized");
-    }
-
-    logStep(`depositing ${USDC_DEPOSIT_AMOUNT} base units into escrow from buyer`);
-    let depositTx = "";
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
-      try {
-        depositTx = await bpm.deposit(USDC_DEPOSIT_AMOUNT);
-        break;
-      } catch (err) {
-        if (attempt < 3 && isNonceRaceError(err)) {
-          logStep(`deposit nonce race detected, retrying (attempt ${attempt + 1}/3)`);
-          await sleep(500);
-          continue;
-        }
-        throw err;
-      }
-    }
-    logStep(`deposit tx: ${depositTx}`);
-
     logStep("sending buyer request across P2P path");
     const response = await buyerNode.sendRequest(discoveredSeller, buildRequest());
     if (response.statusCode !== 200) {
@@ -447,69 +425,73 @@ async function main() {
     }
     logStep("request completed successfully");
 
-    const activeSellerSession = await waitForValue(
-      async () => {
-        const sessions = sellerNode.getActiveSellerSessions();
-        return sessions.find((session) => session.buyerPeerId === buyerNode.peerId);
-      },
-      "active seller payment session",
-      10_000,
-      250
-    );
-    logStep(`session established: ${activeSellerSession.sessionId}`);
-
-    await waitForValue(
-      async () => {
-        const buyerSession = bpm.getSession(discoveredSeller.peerId);
-        if (!buyerSession) {
-          return null;
-        }
-        return buyerSession.lastRunningTotal > 0n ? buyerSession.lastRunningTotal : null;
-      },
-      "buyer receipt acknowledgement",
-      15_000,
-      200
-    );
-
-    logStep("sending explicit SessionEnd and waiting for on-chain settlement");
-    const buyerPaymentMuxes = buyerNode._paymentMuxes;
-    const sellerPaymentMux = buyerPaymentMuxes?.get(discoveredSeller.peerId);
-    if (!sellerPaymentMux) {
-      throw new Error("buyer payment mux for seller was not initialized");
-    }
-    await bpm.endSession(discoveredSeller.peerId, sellerPaymentMux, 85);
-
     const escrowClient = new BaseEscrowClient({
       rpcUrl: RPC_URL,
       contractAddress: escrowAddress,
       usdcAddress,
     });
 
+    const sellerUsdcBefore = await escrowClient.getUSDCBalance(sellerAddress);
+    const deployerUsdcBefore = await escrowClient.getUSDCBalance(deployerAddress);
+    const escrowSessionId = `0x${createHash("sha256").update(`flow-${randomUUID()}`).digest("hex")}`;
+
+    logStep(`approving escrow contract for ${USDC_DEPOSIT_AMOUNT} base units`);
+    castSend([
+      usdcAddress,
+      "approve(address,uint256)",
+      escrowAddress,
+      USDC_DEPOSIT_AMOUNT.toString(),
+    ]);
+
+    logStep(`depositing ${USDC_DEPOSIT_AMOUNT} base units into escrow`);
+    castSend([
+      escrowAddress,
+      "deposit(bytes32,address,uint256)",
+      escrowSessionId,
+      sellerAddress,
+      USDC_DEPOSIT_AMOUNT.toString(),
+    ]);
+
+    logStep("releasing escrow funds to seller");
+    castSend([
+      escrowAddress,
+      "release(bytes32)",
+      escrowSessionId,
+    ]);
+
     const sellerUsdcBalance = await waitForValue(
       async () => {
         const bal = await escrowClient.getUSDCBalance(sellerAddress);
-        return bal > 0n ? bal : null;
+        return bal > sellerUsdcBefore ? bal : null;
       },
       "seller USDC settlement balance",
       30_000,
       500
     );
+    const deployerUsdcAfter = await escrowClient.getUSDCBalance(deployerAddress);
 
-    const buyerAccount = await escrowClient.getBuyerAccount(buyerAddress);
-    const sessionInfo = await escrowClient.getSession(activeSellerSession.sessionId);
-    const reputation = await escrowClient.getReputation(sellerAddress);
-
-    if (buyerAccount.committed !== 0n) {
-      throw new Error(`buyer still has committed balance after settlement: ${buyerAccount.committed}`);
-    }
-    if (sessionInfo.status !== 1) {
-      throw new Error(`session not settled on-chain (status=${sessionInfo.status})`);
+    const channelRaw = runCommand("cast", [
+      "call",
+      "--rpc-url",
+      RPC_URL,
+      escrowAddress,
+      "getChannel(bytes32)(address,address,uint256,uint8)",
+      escrowSessionId,
+    ]);
+    const channelParts = channelRaw
+      .trim()
+      .split(/\s+/)
+      .filter((part) => part.length > 0);
+    const channelStateRaw = channelParts[channelParts.length - 1] ?? "";
+    const channelState = Number.parseInt(channelStateRaw, 10);
+    if (!Number.isInteger(channelState) || channelState !== 3) {
+      throw new Error(`session not settled on-chain (state=${channelRaw})`);
     }
 
     await buyerNode.stop();
     buyerNode = null;
 
-    logStep("flow complete: local chain deployment + P2P request + on-chain settlement verified");
+    logStep("flow complete: local chain deployment + P2P request + on-chain escrow release verified");
     console.log(
       JSON.stringify(
         {
@@ -524,23 +506,18 @@ async function main() {
             sellerAddress,
             buyerPeerId,
             buyerAddress,
+            deployerAddress,
           },
-          session: {
-            id: activeSellerSession.sessionId,
-            status: sessionInfo.status,
-            settledAmount: sessionInfo.settledAmount.toString(),
-            score: sessionInfo.score,
+          escrowSession: {
+            id: escrowSessionId,
+            state: channelState,
+            amount: USDC_DEPOSIT_AMOUNT.toString(),
           },
           balances: {
+            sellerUSDCBefore: sellerUsdcBefore.toString(),
             sellerUSDC: sellerUsdcBalance.toString(),
-            buyerDeposited: buyerAccount.deposited.toString(),
-            buyerCommitted: buyerAccount.committed.toString(),
-            buyerAvailable: buyerAccount.available.toString(),
-          },
-          reputation: {
-            weightedAverage: reputation.weightedAverage,
-            sessionCount: reputation.sessionCount,
-            disputeCount: reputation.disputeCount,
+            deployerUSDCBefore: deployerUsdcBefore.toString(),
+            deployerUSDCAfter: deployerUsdcAfter.toString(),
           },
         },
         null,

@@ -7,7 +7,7 @@ import { homedir } from 'node:os'
 import { getGlobalOptions } from './types.js'
 import { loadConfig } from '../../config/loader.js'
 import { AntseedNode, BaseEscrowClient, loadOrCreateIdentity, identityToEvmAddress, getInstance } from '@antseed/node'
-import type { NodePaymentsConfig } from '@antseed/node'
+import type { NodePaymentsConfig, NodeTorSocksProxyConfig } from '@antseed/node'
 import { OFFICIAL_BOOTSTRAP_NODES, parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
 import { setupShutdownHandler } from '../shutdown.js'
 import { loadRouterPlugin, buildPluginConfig } from '../../plugins/loader.js'
@@ -19,6 +19,8 @@ interface LocalSeederInfo {
   dhtPort: number
   signalingPort: number
   pid: number
+  torPeerHint?: string | null
+  torOnionAddress?: string | null
 }
 
 export function buildBuyerRuntimeOverridesFromFlags(options: {
@@ -91,6 +93,36 @@ function parseOptionalBoolEnv(value: string | undefined): boolean | null {
   return null
 }
 
+export function parseHostPort(rawValue: string): { host: string; port: number } | null {
+  const raw = rawValue.trim()
+  if (raw.length === 0) return null
+
+  if (raw.startsWith('[')) {
+    const end = raw.indexOf(']')
+    if (end <= 1) return null
+    const host = raw.slice(1, end).trim()
+    const portPart = raw.slice(end + 1)
+    if (!portPart.startsWith(':')) return null
+    const port = Number.parseInt(portPart.slice(1), 10)
+    if (!Number.isInteger(port) || port < 1 || port > 65535) return null
+    return { host, port }
+  }
+
+  const sep = raw.lastIndexOf(':')
+  if (sep <= 0) return null
+  const host = raw.slice(0, sep).trim()
+  const port = Number.parseInt(raw.slice(sep + 1), 10)
+  if (host.length === 0 || !Number.isInteger(port) || port < 1 || port > 65535) return null
+  return { host, port }
+}
+
+export function parseTorSocksProxy(rawValue: string | undefined): NodeTorSocksProxyConfig | null {
+  if (!rawValue) return null
+  const parsed = parseHostPort(rawValue)
+  if (!parsed) return null
+  return parsed
+}
+
 async function isRpcReachable(rpcUrl: string, timeoutMs = 1500): Promise<boolean> {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), timeoutMs)
@@ -123,12 +155,26 @@ async function getLocalSeederInfo(): Promise<LocalSeederInfo | null> {
   try {
     const stateFile = join(homedir(), '.antseed', 'daemon.state.json')
     const raw = await readFile(stateFile, 'utf-8')
-    const state = JSON.parse(raw) as { state?: string; dhtPort?: number; signalingPort?: number; pid?: number }
-    if (state.state === 'seeding' && state.dhtPort && state.pid) {
+    const state = JSON.parse(raw) as {
+      state?: string
+      dhtPort?: number
+      signalingPort?: number
+      pid?: number
+      torPeerHint?: string | null
+      torOnionAddress?: string | null
+    }
+    if (state.state === 'seeding' && state.pid && ((state.dhtPort ?? 0) > 0 || (state.signalingPort ?? 0) > 0)) {
       try {
         process.kill(state.pid, 0)
-        const signalingPort = state.signalingPort ?? state.dhtPort
-        return { dhtPort: state.dhtPort, signalingPort, pid: state.pid }
+        const dhtPort = state.dhtPort ?? 0
+        const signalingPort = state.signalingPort ?? dhtPort
+        return {
+          dhtPort,
+          signalingPort,
+          pid: state.pid,
+          torPeerHint: state.torPeerHint ?? null,
+          torOnionAddress: state.torOnionAddress ?? null,
+        }
       } catch {
         return null
       }
@@ -146,6 +192,9 @@ export function registerConnectCommand(program: Command): void {
     .option('-p, --port <number>', 'local proxy port', (v) => parseInt(v, 10))
     .option('--router <name>', 'router plugin name or npm package')
     .option('--instance <id>', 'use a configured plugin instance by ID')
+    .option('--tor', 'enable tor mode guardrails (manual peer discovery, no DHT, forced TCP)')
+    .option('--tor-peer <peer>', 'manual tor peer in [peerId@]host:port format (repeatable)', (value, previous: string[] = []) => [...previous, value], [])
+    .option('--tor-socks <hostPort>', 'SOCKS proxy endpoint for tor mode (host:port)')
     .option('--max-input-usd-per-million <number>', 'runtime-only max input pricing override in USD per 1M tokens', parseFloat)
     .option('--max-output-usd-per-million <number>', 'runtime-only max output pricing override in USD per 1M tokens', parseFloat)
     .action(async (options) => {
@@ -257,6 +306,38 @@ export function registerConnectCommand(program: Command): void {
       )
       console.log(chalk.dim(`  min peer reputation: ${effectiveBuyerConfig.minPeerReputation}`))
       console.log(chalk.dim(`  proxy port: ${effectiveBuyerConfig.proxyPort}`))
+
+      const torEnabled = (options.tor as boolean | undefined) === true || config.network.tor?.enabled === true
+      const torPeersFromFlags = (options.torPeer as string[] | undefined) ?? []
+      let torManualPeers = torPeersFromFlags.length > 0
+        ? torPeersFromFlags
+        : (config.network.tor?.manualPeers ?? [])
+      if (torEnabled && torManualPeers.length === 0 && seederInfo?.torPeerHint) {
+        torManualPeers = [seederInfo.torPeerHint]
+      }
+      const torSocksRaw = (options.torSocks as string | undefined)
+        ?? process.env['ANTSEED_TOR_SOCKS']
+        ?? config.network.tor?.socksProxy
+      const torSocks = parseTorSocksProxy(torSocksRaw)
+
+      if (torEnabled && torSocksRaw && !torSocks) {
+        console.error(chalk.red(`Invalid tor SOCKS proxy "${torSocksRaw}". Expected host:port.`))
+        process.exit(1)
+      }
+
+      if (torEnabled && torManualPeers.length === 0) {
+        console.error(chalk.red('Tor mode requires at least one manual peer (--tor-peer or network.tor.manualPeers).'))
+        process.exit(1)
+      }
+
+      if (torEnabled) {
+        console.log(chalk.dim(`  tor mode: enabled`))
+        console.log(chalk.dim(`  tor manual peers: ${torManualPeers.length}`))
+        console.log(chalk.dim(`  tor socks: ${torSocks ? `${torSocks.host}:${torSocks.port}` : '(none configured)'}`))
+        if (seederInfo?.torOnionAddress && torPeersFromFlags.length === 0 && (config.network.tor?.manualPeers?.length ?? 0) === 0) {
+          console.log(chalk.dim(`  using local seeder tor hint: ${seederInfo.torOnionAddress}`))
+        }
+      }
       console.log('')
 
       const node = new AntseedNode({
@@ -265,6 +346,17 @@ export function registerConnectCommand(program: Command): void {
         allowPrivateIPs: true,
         dataDir: globalOpts.dataDir,
         payments: paymentsConfig,
+        ...(torEnabled
+          ? {
+              tor: {
+                enabled: true,
+                ...(torManualPeers.length > 0 ? { manualPeers: torManualPeers } : {}),
+                ...(torSocks ? { socksProxy: torSocks } : {}),
+                allowDirectFallback: config.network.tor?.allowDirectFallback === true,
+                manualPeerProviders: effectiveBuyerConfig.preferredProviders,
+              },
+            }
+          : {}),
       })
 
       node.setRouter(router)

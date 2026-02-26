@@ -17,11 +17,11 @@ npm run test:watch  # Watch mode
 Run a complete local payment + networking flow (no external API keys):
 
 1. Start a local Anvil chain
-2. Build and deploy `MockUSDC` + `AntseedEscrow` with Foundry
+2. Build and deploy `MockUSDC` + `AntseedEscrow` with Foundry from `packages/node/contracts`
 3. Start isolated local DHT bootstrap + seller + buyer nodes
-4. Mint/fund buyer + seller wallets
-5. Buyer deposits escrow, sends a real P2P request, then triggers settlement
-6. Verify on-chain settled state, balances, and reputation updates
+4. Mint/fund wallets and send a real P2P request across buyer/seller nodes
+5. Execute on-chain escrow approve/deposit/release cycle
+6. Verify on-chain channel state and token balances
 
 ```bash
 npm run flow:local-chain
@@ -38,7 +38,7 @@ Optional environment overrides:
 - `FLOW_FUND_ETH` (default: `2ether`)
 - `ANVIL_HOST` / `ANVIL_PORT` (override host/port Anvil binds to; defaults derived from `RPC_URL`)
 
-On success, the script prints a JSON summary with deployed contract addresses, peer IDs, session status, balances, and reputation.
+On success, the script prints a JSON summary with deployed contract addresses, peer IDs, escrow session state, and balances.
 
 ## Test Suites
 

@@ -10,7 +10,7 @@ import { promisify } from 'node:util';
 const execFile = promisify(execFileCallback);
 const currentDir = fileURLToPath(new URL('.', import.meta.url));
 const repoRoot = resolve(currentDir, '..', '..');
-const cliDir = resolve(repoRoot, 'cli');
+const cliDir = resolve(repoRoot, 'apps', 'cli');
 const cliEntry = resolve(cliDir, 'dist', 'cli', 'index.js');
 
 const baselineConfig = {
@@ -51,7 +51,12 @@ async function ensureCliBuilt(): Promise<void> {
   try {
     await access(cliEntry, fsConstants.R_OK);
   } catch {
-    await execFile('npm', ['run', 'build'], { cwd: cliDir });
+    const packageManagerExec = process.env['npm_execpath'];
+    if (packageManagerExec && packageManagerExec.length > 0) {
+      await execFile(process.execPath, [packageManagerExec, 'run', 'build'], { cwd: cliDir });
+      return;
+    }
+    await execFile('pnpm', ['run', 'build'], { cwd: cliDir });
   }
 }
 

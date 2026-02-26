@@ -104,6 +104,28 @@ export interface NodePaymentsConfig {
   usdcAddress?: string;
 }
 
+export interface NodeTorSocksProxyConfig {
+  host: string;
+  port: number;
+}
+
+export interface NodeTorConfig {
+  /** Enable Tor guardrails mode (loopback listener, no DHT/NAT, forced TCP). */
+  enabled?: boolean;
+  /** Optional SOCKS5 proxy for outbound dialing (required for .onion endpoints). */
+  socksProxy?: NodeTorSocksProxyConfig;
+  /** Optional seller hidden-service hostname that buyers should use (.onion). */
+  onionAddress?: string;
+  /** Optional seller hidden-service public port (default: signaling listener port). */
+  onionPort?: number;
+  /** Manual peer endpoints used by buyers in tor mode. Format: [peerId@]host:port */
+  manualPeers?: string[];
+  /** Fallback provider names for manual peers when signed metadata is unavailable. */
+  manualPeerProviders?: string[];
+  /** Allow non-.onion manual peers in tor mode. Default: false. */
+  allowDirectFallback?: boolean;
+}
+
 export interface NodeConfig {
   role: 'seller' | 'buyer';
   dataDir?: string;           // Default: ~/.antseed
@@ -115,6 +137,8 @@ export interface NodeConfig {
   allowPrivateIPs?: boolean;
   /** Optional seller-side payment runtime wiring. */
   payments?: NodePaymentsConfig;
+  /** Optional Tor mode guardrails and manual discovery settings. */
+  tor?: NodeTorConfig;
 }
 
 interface SellerSessionState {
@@ -195,6 +219,7 @@ export class AntseedNode extends EventEmitter {
   private _buyerPaymentManager: BuyerPaymentManager | null = null;
   /** Tracks which seller peers the buyer has already initiated a lock for. */
   private _buyerLockedPeers = new Set<string>();
+  private _torManualPeers: Array<{ raw: string; peerId?: PeerId; host: string; port: number }> = [];
 
   constructor(config: NodeConfig) {
     super();
@@ -372,6 +397,10 @@ export class AntseedNode extends EventEmitter {
   }
 
   async discoverPeers(model?: string): Promise<PeerInfo[]> {
+    if (this._isTorMode()) {
+      return this._discoverTorManualPeers();
+    }
+
     if (!this._peerLookup) {
       throw new Error("Node not started or not in buyer mode");
     }
@@ -630,7 +659,16 @@ export class AntseedNode extends EventEmitter {
     const identity = this._identity!;
     const dhtPort = this._config.dhtPort ?? 6881;
     const signalingPort = this._config.signalingPort ?? 6882;
-    debugLog(`[Node] Starting seller — DHT port=${dhtPort}, signaling port=${signalingPort}`);
+    const torMode = this._isTorMode();
+    const onionAddress = this._config.tor?.onionAddress?.trim().toLowerCase();
+    const configuredOnionPort = this._config.tor?.onionPort;
+    if (torMode && onionAddress && !isOnionHost(onionAddress)) {
+      throw new Error(`Invalid tor.onionAddress "${this._config.tor?.onionAddress}". Expected .onion hostname`);
+    }
+    if (torMode && configuredOnionPort !== undefined && (!Number.isInteger(configuredOnionPort) || configuredOnionPort < 1 || configuredOnionPort > 65535)) {
+      throw new Error(`Invalid tor.onionPort "${String(configuredOnionPort)}". Expected integer 1-65535`);
+    }
+    debugLog(`[Node] Starting seller — DHT port=${dhtPort}, signaling port=${signalingPort}, tor=${torMode ? "on" : "off"}`);
 
     // Initialize metering storage
     const dataDir = this._config.dataDir ?? join(homedir(), ".antseed");
@@ -650,43 +688,53 @@ export class AntseedNode extends EventEmitter {
 
     await this._initializePayments(dataDir);
 
-    // Start DHT
-    this._dht = new DHTNode(this._createDHTConfig(dhtPort, bootstrapNodes));
-    await this._dht.start();
+    if (!torMode) {
+      // Start DHT
+      this._dht = new DHTNode(this._createDHTConfig(dhtPort, bootstrapNodes));
+      await this._dht.start();
+    }
 
     // Create ConnectionManager and start listening
-    this._connectionManager = new ConnectionManager();
+    this._connectionManager = new ConnectionManager(undefined, {
+      forceTcp: torMode,
+      ...(this._config.tor?.socksProxy ? { socksProxy: this._config.tor.socksProxy } : {}),
+    });
     this._connectionManager.setLocalIdentity(identity);
     await this._connectionManager.startListening({
       peerId: identity.peerId,
       port: signalingPort,
-      host: "0.0.0.0",
+      host: torMode ? "127.0.0.1" : "0.0.0.0",
     });
 
     // Resolve actual bound port (important when port 0 is used for OS-assigned)
     const actualSignalingPort = this._connectionManager.getListeningPort() ?? signalingPort;
-    const actualDhtPort = this._dht.getPort();
+    if (!torMode) {
+      const actualDhtPort = this._dht!.getPort();
 
-    // NAT traversal: automatically map ports via UPnP/NAT-PMP
-    this._nat = new NatTraversal();
-    const natResult = await this._nat.mapPorts([
-      { port: actualSignalingPort, protocol: "TCP" },
-      { port: actualDhtPort, protocol: "UDP" },
-    ]);
+      // NAT traversal: automatically map ports via UPnP/NAT-PMP
+      this._nat = new NatTraversal();
+      const natResult = await this._nat.mapPorts([
+        { port: actualSignalingPort, protocol: "TCP" },
+        { port: actualDhtPort, protocol: "UDP" },
+      ]);
 
-    if (natResult.success) {
-      this.emit("nat:mapped", natResult);
-    } else {
-      debugWarn("[NAT] UPnP/NAT-PMP mapping failed — seller may not be reachable from the internet");
-      debugWarn("[NAT] Ensure port forwarding is configured manually, or peers on the same LAN can still connect");
-      this.emit("nat:failed");
+      if (natResult.success) {
+        this.emit("nat:mapped", natResult);
+      } else {
+        debugWarn("[NAT] UPnP/NAT-PMP mapping failed — seller may not be reachable from the internet");
+        debugWarn("[NAT] Ensure port forwarding is configured manually, or peers on the same LAN can still connect");
+        this.emit("nat:failed");
+      }
     }
 
     // Set up announcer for providers
     if (this._providers.length > 0) {
+      const announceDht = torMode
+        ? ({ announce: async () => undefined } as unknown as DHTNode)
+        : this._dht!;
       const announcerConfig: AnnouncerConfig = {
         identity,
-        dht: this._dht,
+        dht: announceDht,
         providers: this._providers.map((p) => ({
           provider: p.name,
           models: p.models,
@@ -709,7 +757,11 @@ export class AntseedNode extends EventEmitter {
         signalingPort: actualSignalingPort,
       };
       this._announcer = new PeerAnnouncer(announcerConfig);
-      this._announcer.startPeriodicAnnounce();
+      if (torMode) {
+        await this._announcer.announce();
+      } else {
+        this._announcer.startPeriodicAnnounce();
+      }
 
       // Serve metadata on the signaling port (HTTP requests are auto-detected)
       this._connectionManager!.setMetadataProvider(
@@ -722,13 +774,86 @@ export class AntseedNode extends EventEmitter {
       this._handleIncomingConnection(conn);
     });
 
-    debugLog(`[Node] Seller ready — announcing ${this._providers.length} provider(s)`);
+    if (torMode) {
+      if (onionAddress) {
+        const onionPort = configuredOnionPort ?? actualSignalingPort;
+        const manualPeer = `${identity.peerId}@${onionAddress}:${onionPort}`;
+        this.emit("tor:ready", {
+          peerId: identity.peerId,
+          onionAddress,
+          onionPort,
+          manualPeer,
+        });
+        debugLog(`[Node] Tor hidden-service endpoint ${onionAddress}:${onionPort}`);
+        debugLog(`[Node] Tor peer hint ${manualPeer}`);
+      } else {
+        debugWarn("[Node] Tor mode is enabled but tor.onionAddress is not set. Buyers must be given manual peer endpoints separately.");
+      }
+    }
+
+    debugLog(
+      torMode
+        ? `[Node] Seller ready in tor mode — providers=${this._providers.length}, listener=${actualSignalingPort}`
+        : `[Node] Seller ready — announcing ${this._providers.length} provider(s)`,
+    );
   }
 
   private async _startBuyer(bootstrapNodes: Array<{ host: string; port: number }>): Promise<void> {
     const identity = this._identity!;
+    const torMode = this._isTorMode();
     const dhtPort = this._config.dhtPort ?? 0;
-    debugLog(`[Node] Starting buyer — DHT port=${dhtPort}`);
+    debugLog(`[Node] Starting buyer — DHT port=${dhtPort}, tor=${torMode ? "on" : "off"}`);
+
+    if (torMode) {
+      // Create ConnectionManager for outbound connections (forced TCP in tor mode)
+      this._connectionManager = new ConnectionManager(undefined, {
+        forceTcp: true,
+        ...(this._config.tor?.socksProxy ? { socksProxy: this._config.tor.socksProxy } : {}),
+      });
+      this._connectionManager.setLocalIdentity(identity);
+
+      this._torManualPeers = this._parseTorManualPeers(this._config.tor?.manualPeers ?? []);
+      if (this._torManualPeers.length === 0) {
+        throw new Error("Tor mode requires at least one manual peer endpoint (tor.manualPeers)");
+      }
+
+      const hasOnionPeer = this._torManualPeers.some((entry) => isOnionHost(entry.host));
+      if (hasOnionPeer && !this._config.tor?.socksProxy) {
+        throw new Error("Tor mode with .onion peers requires tor.socksProxy");
+      }
+
+      const onionWithoutPeerId = this._torManualPeers.find((entry) => isOnionHost(entry.host) && !entry.peerId);
+      if (onionWithoutPeerId) {
+        throw new Error(
+          `Tor mode requires peerId@host:port for .onion peers. Invalid peer: ${onionWithoutPeerId.raw}`,
+        );
+      }
+
+      if (!this._config.tor?.allowDirectFallback) {
+        const nonOnion = this._torManualPeers.find((entry) => !isOnionHost(entry.host));
+        if (nonOnion) {
+          throw new Error(
+            `Tor mode only allows .onion manual peers by default. Invalid peer: ${nonOnion.raw}. Set tor.allowDirectFallback=true to override.`,
+          );
+        }
+      }
+
+      // Initialize buyer-side payment manager if payments config is provided
+      const payments = this._config.payments;
+      if (payments?.enabled && payments.rpcUrl && payments.contractAddress && payments.usdcAddress) {
+        const buyerPaymentConfig: BuyerPaymentConfig = {
+          defaultLockAmountUSDC: payments.defaultEscrowAmountUSDC ?? "1000000",
+          rpcUrl: payments.rpcUrl,
+          contractAddress: payments.contractAddress,
+          usdcAddress: payments.usdcAddress,
+        };
+        this._buyerPaymentManager = new BuyerPaymentManager(identity, buyerPaymentConfig);
+        debugLog(`[Node] Buyer payment manager initialized (wallet=${identityToEvmAddress(identity).slice(0, 10)}...)`);
+      }
+
+      debugLog(`[Node] Buyer ready in tor mode — manual peers=${this._torManualPeers.length}`);
+      return;
+    }
 
     // Start DHT with ephemeral port
     this._dht = new DHTNode(this._createDHTConfig(dhtPort, bootstrapNodes));
@@ -1844,6 +1969,118 @@ export class AntseedNode extends EventEmitter {
       trustScore: result.metadata.onChainReputation,
     };
   }
+
+  private _isTorMode(): boolean {
+    return this._config.tor?.enabled === true;
+  }
+
+  private _parseTorManualPeers(entries: string[]): Array<{ raw: string; peerId?: PeerId; host: string; port: number }> {
+    const parsed: Array<{ raw: string; peerId?: PeerId; host: string; port: number }> = [];
+    for (const entry of entries) {
+      const raw = entry.trim();
+      if (raw.length === 0) continue;
+
+      const atIndex = raw.indexOf("@");
+      const peerPart = atIndex >= 0 ? raw.slice(0, atIndex) : "";
+      const endpointPart = atIndex >= 0 ? raw.slice(atIndex + 1) : raw;
+      const endpoint = parseHostPort(endpointPart);
+      if (!endpoint) {
+        throw new Error(`Invalid tor manual peer entry "${entry}". Expected [peerId@]host:port`);
+      }
+
+      let peerId: PeerId | undefined;
+      if (peerPart.length > 0) {
+        if (!/^[0-9a-f]{64}$/i.test(peerPart)) {
+          throw new Error(`Invalid tor manual peer id in "${entry}". Expected 64 hex chars`);
+        }
+        peerId = peerPart.toLowerCase() as PeerId;
+      }
+
+      parsed.push({
+        raw,
+        ...(peerId ? { peerId } : {}),
+        host: endpoint.host,
+        port: endpoint.port,
+      });
+    }
+    return parsed;
+  }
+
+  private async _discoverTorManualPeers(): Promise<PeerInfo[]> {
+    if (!this._started) {
+      throw new Error("Node not started");
+    }
+    if (this._torManualPeers.length === 0) {
+      throw new Error("No tor manual peers configured");
+    }
+
+    const fallbackProviders = (this._config.tor?.manualPeerProviders ?? [
+      "anthropic",
+      "openai",
+      "claude-code",
+      "claude-oauth",
+      "openrouter",
+      "local-llm",
+    ])
+      .map((provider) => provider.trim().toLowerCase())
+      .filter((provider) => provider.length > 0);
+
+    const metadataResolver = new HttpMetadataResolver();
+    const peers: PeerInfo[] = [];
+    const seenPeerIds = new Set<string>();
+
+    for (const endpoint of this._torManualPeers) {
+      // HttpMetadataResolver does not route through SOCKS in phase 1.
+      // Skip metadata fetch for onion endpoints and rely on manual peer fallback data.
+      const canFetchMetadata = !isOnionHost(endpoint.host);
+      if (canFetchMetadata) {
+        const metadata = await metadataResolver.resolve({ host: endpoint.host, port: endpoint.port });
+        if (metadata) {
+          if (endpoint.peerId && endpoint.peerId !== metadata.peerId) {
+            debugWarn(
+              `[Node] Tor manual peer ${endpoint.raw} metadata peerId mismatch (expected=${endpoint.peerId.slice(0, 12)}..., got=${metadata.peerId.slice(0, 12)}...)`,
+            );
+            continue;
+          } else {
+            const fromMetadata = this._lookupResultToPeerInfo({
+              metadata,
+              host: endpoint.host,
+              port: endpoint.port,
+            });
+            if (!seenPeerIds.has(fromMetadata.peerId)) {
+              seenPeerIds.add(fromMetadata.peerId);
+              peers.push(fromMetadata);
+            }
+            continue;
+          }
+        }
+      }
+
+      const syntheticPeerId = endpoint.peerId ?? (
+        createHash("sha256")
+          .update(`${endpoint.host}:${endpoint.port}`)
+          .digest("hex")
+          .slice(0, 64) as PeerId
+      );
+
+      if (!seenPeerIds.has(syntheticPeerId)) {
+        seenPeerIds.add(syntheticPeerId);
+        peers.push({
+          peerId: syntheticPeerId,
+          lastSeen: Date.now(),
+          providers: fallbackProviders.length > 0 ? fallbackProviders : ["anthropic"],
+          publicAddress: `${endpoint.host}:${endpoint.port}`,
+          defaultInputUsdPerMillion: 0,
+          defaultOutputUsdPerMillion: 0,
+        });
+      }
+    }
+
+    for (const peer of peers) {
+      debugLog(`[Node] Tor peer ${peer.peerId.slice(0, 12)}... providers=[${peer.providers.join(",")}] addr=${peer.publicAddress ?? "?"}`);
+    }
+    return peers;
+  }
 }
 
 function concatChunks(chunks: Uint8Array[]): Uint8Array {
@@ -1858,4 +2095,33 @@ function concatChunks(chunks: Uint8Array[]): Uint8Array {
     offset += chunk.length;
   }
   return output;
+}
+
+function parseHostPort(value: string): { host: string; port: number } | null {
+  const raw = value.trim();
+  if (raw.length === 0) return null;
+
+  if (raw.startsWith("[")) {
+    const end = raw.indexOf("]");
+    if (end <= 1) return null;
+    const host = raw.slice(1, end).trim().toLowerCase();
+    const portPart = raw.slice(end + 1);
+    if (!portPart.startsWith(":")) return null;
+    const port = Number.parseInt(portPart.slice(1), 10);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
+    if (host.length === 0) return null;
+    return { host, port };
+  }
+
+  const lastColon = raw.lastIndexOf(":");
+  if (lastColon <= 0) return null;
+  const host = raw.slice(0, lastColon).trim().toLowerCase();
+  const port = Number.parseInt(raw.slice(lastColon + 1), 10);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
+  if (host.length === 0) return null;
+  return { host, port };
+}
+
+function isOnionHost(host: string): boolean {
+  return host.trim().toLowerCase().endsWith(".onion");
 }

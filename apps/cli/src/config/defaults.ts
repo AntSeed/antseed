@@ -44,6 +44,12 @@ export function createDefaultConfig(): AntseedConfig {
     },
     network: {
       bootstrapNodes: [],
+      tor: {
+        enabled: false,
+        manualPeers: [],
+        socksProxy: '127.0.0.1:9050',
+        allowDirectFallback: false,
+      },
     },
   };
 }

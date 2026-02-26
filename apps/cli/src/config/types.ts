@@ -107,6 +107,21 @@ export interface PaymentsCLIConfig {
 export interface NetworkCLIConfig {
   /** Additional bootstrap nodes for DHT discovery (host:port pairs) */
   bootstrapNodes: string[];
+  /** Optional tor-mode guardrails and manual discovery configuration. */
+  tor?: {
+    /** Enable tor mode guardrails. */
+    enabled?: boolean;
+    /** Manual peer endpoints in [peerId@]host:port format. */
+    manualPeers?: string[];
+    /** SOCKS proxy endpoint in host:port format (for .onion dialing). */
+    socksProxy?: string;
+    /** Seller hidden-service hostname (must end with .onion). */
+    onionAddress?: string;
+    /** Seller hidden-service public port exposed on the onion service. */
+    onionPort?: number;
+    /** Allow non-.onion manual peers in tor mode. */
+    allowDirectFallback?: boolean;
+  };
 }
 
 /**

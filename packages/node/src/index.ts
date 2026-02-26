@@ -4,6 +4,8 @@ export {
   type NodeConfig,
   type BuyerPaymentConfig,
   type NodePaymentsConfig,
+  type NodeTorConfig,
+  type NodeTorSocksProxyConfig,
   type RequestStreamCallbacks,
   type RequestStreamResponseMetadata,
 } from './node.js';
