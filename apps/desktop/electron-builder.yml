@@ -41,10 +41,10 @@ mac:
   icon: assets/antseed-dock-icon.png
   identity: "Shahaf Antwarg (H3M5BXXQR2)"
   hardenedRuntime: true
+  gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
-  notarize:
-    teamId: H3M5BXXQR2
+  notarize: true
   target:
     - target: dmg
       arch:
