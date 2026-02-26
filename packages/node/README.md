@@ -34,6 +34,9 @@ const myProvider: Provider = {
       outputUsdPerMillion: 10,
     },
   },
+  modelCategories: {
+    'my-model-v1': ['coding', 'privacy'],
+  },
   maxConcurrency: 10,
   async handleRequest(req: SerializedHttpRequest): Promise<SerializedHttpResponse> {
     // Forward the request to your LLM backend and return the response
@@ -96,6 +99,7 @@ if (peers.length > 0) {
 ```ts
 interface NodeConfig {
   role: 'seller' | 'buyer';
+  displayName?: string;       // Optional human-readable name announced in metadata
   dataDir?: string;           // Default: ~/.antseed
   dhtPort?: number;           // Default: 6881 for seller, 0 (OS-assigned) for buyer
   signalingPort?: number;     // Default: 6882 for seller
@@ -115,6 +119,7 @@ interface NodeConfig {
 | Option | Default | Description |
 |---|---|---|
 | `role` | (required) | `'seller'` to serve requests, `'buyer'` to consume them |
+| `displayName` | unset | Optional node label included in discovery metadata |
 | `dataDir` | `~/.antseed` | Directory for identity keys, metering DB, and config |
 | `dhtPort` | `6881` / `0` | UDP port for DHT. Seller defaults to 6881, buyer uses OS-assigned |
 | `signalingPort` | `6882` | TCP port for P2P signaling and incoming connections (seller only) |
@@ -224,6 +229,9 @@ interface Provider {
     defaults: { inputUsdPerMillion: number; outputUsdPerMillion: number };
     models?: Record<string, { inputUsdPerMillion: number; outputUsdPerMillion: number }>;
   };
+
+  /** Optional per-model discovery tags (e.g., coding/privacy/legal) */
+  modelCategories?: Record<string, string[]>;
 
   /** Maximum concurrent requests this provider can handle */
   maxConcurrency: number;

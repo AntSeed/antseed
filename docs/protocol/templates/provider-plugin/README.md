@@ -50,6 +50,7 @@ export class MyProvider implements Provider {
       outputUsdPerMillion: 2,
     },
   };
+  readonly modelCategories = { 'my-model-v1': ['coding'] };
   readonly maxConcurrency = 10;
 
   private _current = 0;
@@ -111,6 +112,7 @@ npm run verify
 | `pricing.defaults.inputUsdPerMillion` | `number` | Default input pricing in USD per 1M tokens |
 | `pricing.defaults.outputUsdPerMillion` | `number` | Default output pricing in USD per 1M tokens |
 | `pricing.models?` | `Record<string, { inputUsdPerMillion; outputUsdPerMillion }>` | Optional per-model pricing overrides |
+| `modelCategories?` | `Record<string, string[]>` | Optional per-model discovery tags (e.g. `coding`, `privacy`) |
 | `maxConcurrency` | `number` | Max concurrent requests |
 | `handleRequest(req)` | `Promise<SerializedHttpResponse>` | Handle an inference request |
 | `getCapacity()` | `{ current: number; max: number }` | Current / max concurrency |

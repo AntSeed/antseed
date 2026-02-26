@@ -72,10 +72,13 @@ Initialize a new config:
 antseed config init
 ```
 
-Pricing is configured in USD per 1M tokens with role-specific defaults and optional provider/model overrides:
+Pricing is configured in USD per 1M tokens with role-specific defaults and optional provider/model overrides. You can also set node `displayName` and optional per-model category tags announced in discovery metadata:
 
 ```json
 {
+  "identity": {
+    "displayName": "Acme Inference - us-east-1"
+  },
   "seller": {
     "pricing": {
       "defaults": {
@@ -92,6 +95,11 @@ Pricing is configured in USD per 1M tokens with role-specific defaults and optio
           }
         }
       }
+    },
+    "modelCategories": {
+      "anthropic": {
+        "claude-sonnet-4-5-20250929": ["coding", "privacy"]
+      }
     }
   },
   "buyer": {
@@ -106,15 +114,23 @@ Pricing is configured in USD per 1M tokens with role-specific defaults and optio
 }
 ```
 
+Model categories are normalized to lowercase tags. Recommended tags include: `privacy`, `legal`, `uncensored`, `coding`, `finance`, `tee` (custom tags are also allowed).
+
 Role-first config examples:
 
 ```bash
+# Identity / metadata display name
+antseed config set identity.displayName "Acme Inference - us-east-1"
+
 # Seller defaults
 antseed config seller set pricing.defaults.inputUsdPerMillion 12
 antseed config seller set pricing.defaults.outputUsdPerMillion 36
 
 # Seller per-model override for a provider
 antseed config seller set pricing.providers.anthropic.models '{"claude-sonnet-4-5-20250929":{"inputUsdPerMillion":14,"outputUsdPerMillion":42}}'
+
+# Seller per-model category tags announced in metadata
+antseed config seller set modelCategories.anthropic.claude-sonnet-4-5-20250929 '["coding","legal"]'
 
 # Buyer preferences and max pricing
 antseed config buyer set preferredProviders '["anthropic","openai"]'

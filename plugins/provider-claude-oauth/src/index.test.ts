@@ -7,7 +7,7 @@ describe('provider-claude-oauth plugin manifest', () => {
     expect(plugin.displayName).toBe('Claude (OAuth)');
     expect(plugin.version).toBe('0.1.0');
     expect(plugin.type).toBe('provider');
-    expect(plugin.description).toBe('Anthropic Claude with OAuth authentication (third-party example)');
+    expect(plugin.description).toBe('Claude OAuth provider (testing and development only)');
   });
 
   it('exposes configSchema with required fields', () => {

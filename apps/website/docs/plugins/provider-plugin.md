@@ -7,7 +7,7 @@ hide_title: true
 
 # Provider Plugin
 
-Provider plugins expose AI services to the network. They advertise models, capabilities, Skills, and pricing via the DHT, and handle incoming requests from buyers.
+Provider plugins expose AI services to the network. They advertise models, pricing, optional model categories, capabilities, and Skills via discovery metadata, and handle incoming requests from buyers.
 
 :::warning Provider Compliance
 AntSeed is designed for providers who build differentiated services — such as TEE-secured inference, domain-specific skills or agents, fine-tuned models, or managed product experiences. Simply reselling raw API access or subscription credentials is not the intended use and may violate your upstream provider's terms of service. Providers are solely responsible for complying with their upstream API provider's terms.
@@ -29,6 +29,7 @@ interface Provider {
       outputUsdPerMillion: number
     }>
   }
+  modelCategories?: Record<string, string[]>
   maxConcurrency: number
   capabilities?: ProviderCapability[]
 
@@ -62,6 +63,9 @@ export default {
       outputUsdPerMillion: 15
     }
   },
+  modelCategories: {
+    "claude-sonnet-4-6": ["coding", "privacy"]
+  },
   maxConcurrency: 5,
 
   getCapacity: () => ({ current: 0, max: 10 }),
@@ -83,6 +87,8 @@ export default {
   }
 } satisfies Provider
 ```
+
+`modelCategories` is optional and is announced in peer metadata for discovery filtering. Recommended tags include `privacy`, `legal`, `uncensored`, `coding`, `finance`, and `tee` (custom tags are allowed).
 
 ## Peer Offering
 

@@ -60,7 +60,7 @@ Custom bootstrap nodes can be supplied and are merged (deduplicated by `host:por
 **Source:** `node/src/discovery/peer-metadata.ts`
 
 ```
-METADATA_VERSION = 2
+METADATA_VERSION = 3
 ```
 
 ### Data Structures
@@ -70,7 +70,8 @@ METADATA_VERSION = 2
 | Field       | Type                    | Description                             |
 |-------------|-------------------------|-----------------------------------------|
 | peerId      | PeerId (string)         | 64 hex chars (32-byte Ed25519 public key) |
-| version     | number                  | Must equal `METADATA_VERSION` (2)       |
+| version     | number                  | Must equal `METADATA_VERSION` (3)       |
+| displayName | string                  | Optional human-readable node label      |
 | providers   | ProviderAnnouncement[]  | List of provider offerings              |
 | region      | string                  | Geographic region identifier            |
 | timestamp   | number                  | Unix epoch milliseconds                 |
@@ -84,6 +85,7 @@ METADATA_VERSION = 2
 | models           | string[] | List of model identifiers                                    |
 | defaultPricing   | object   | Default `{ inputUsdPerMillion, outputUsdPerMillion }`       |
 | modelPricing     | object   | Optional per-model map `{ [model]: { inputUsdPerMillion, outputUsdPerMillion } }` |
+| modelCategories  | object   | Optional per-model map `{ [model]: string[] }` with lowercase tags |
 | maxConcurrency   | number   | Maximum concurrent requests (>= 1)                           |
 | currentLoad      | number   | Current number of active requests                            |
 
@@ -117,8 +119,25 @@ Per provider (repeated providerCount times):
     [model      : N bytes  UTF-8  ]
     [inputUsdPerMillion  : 4 bytes  float32 big-endian ]
     [outputUsdPerMillion : 4 bytes  float32 big-endian ]
+  [modelCategoryCount         : 1 byte   uint8 ]      // v3+
+  Per model category entry (repeated modelCategoryCount times):
+    [modelLen   : 1 byte   uint8 ]
+    [model      : N bytes  UTF-8  ]
+    [categoryCount : 1 byte uint8 ]
+    Per category (repeated categoryCount times):
+      [categoryLen : 1 byte uint8 ]
+      [category    : N bytes UTF-8 ]
   [maxConcurrency: 2 bytes  uint16  big-endian ]
   [currentLoad   : 2 bytes  uint16  big-endian ]
+
+Post-provider sections:
+  [displayNameFlag:1]                             // v3+
+  if displayNameFlag == 1:
+    [displayNameLen:1][displayName:N]
+  [offeringCount:2]                               // uint16
+  [offeringEntries...]
+  [evmAddressFlag:1] + [evmAddress:20 if present]
+  [onChainReputationFlag:1] + [reputationData:10 if present]
 
 Trailer:
   [signature     : 64 bytes        ]   // Ed25519 signature
@@ -137,16 +156,24 @@ The body (everything except the trailing 64-byte signature) is the data that is 
 | MAX_MODELS_PER_PROVIDER   | 20    | Maximum models per provider entry           |
 | MAX_MODEL_NAME_LENGTH     | 64    | Maximum model name length in characters     |
 | MAX_REGION_LENGTH         | 32    | Maximum region string length in characters  |
+| MAX_DISPLAY_NAME_LENGTH   | 64    | Maximum display name length in characters   |
+| MAX_MODEL_CATEGORIES_PER_MODEL | 8 | Maximum categories per model               |
+| MAX_MODEL_CATEGORY_LENGTH | 32    | Maximum category length in characters       |
 
 Additional validation rules enforced by `validateMetadata()`:
 
-- `version` must equal `METADATA_VERSION` (2).
+- `version` must equal `METADATA_VERSION` (3).
 - `peerId` must be exactly 64 lowercase hex characters.
 - `region` must not be empty.
+- `displayName` is optional, but when present it must be non-empty and <= 64 chars.
 - `timestamp` must be a positive finite number.
 - At least one provider must be present.
 - `defaultPricing.inputUsdPerMillion` and `defaultPricing.outputUsdPerMillion` must be non-negative.
 - Each `modelPricing[model].inputUsdPerMillion` and `modelPricing[model].outputUsdPerMillion` (if present) must be non-negative.
+- `modelCategories` (if present) must reference models listed in `providers[].models`.
+- Each category must be lowercase alphanumeric or hyphen: `^[a-z0-9][a-z0-9-]*$`.
+- Categories must be non-empty, unique per model, and within per-model/per-tag limits above.
+- Recommended category tags: `privacy`, `legal`, `uncensored`, `coding`, `finance`, `tee` (not enforced; custom tags allowed).
 - `maxConcurrency` must be at least 1.
 - `currentLoad` must be non-negative and must not exceed `maxConcurrency`.
 - `signature` must be exactly 128 lowercase hex characters (64 bytes).
@@ -222,7 +249,7 @@ The `PeerLookup` class orchestrates the full discovery flow:
 The `PeerAnnouncer` class handles the seller-side announcement lifecycle:
 
 1. Build a `PeerMetadata` object from the configured providers, current pricing, current load, and region.
-2. Set `version` to `METADATA_VERSION` (2) and `timestamp` to `Date.now()`.
+2. Set `version` to `METADATA_VERSION` (3) and `timestamp` to `Date.now()`.
 3. Encode the body (without signature) via `encodeMetadataForSigning()`.
 4. Sign the body with the seller's Ed25519 private key.
 5. For each provider in the metadata, compute `infoHash = SHA1("antseed:" + lowercase(provider))` and announce on the DHT at the configured signaling port.

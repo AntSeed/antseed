@@ -23,6 +23,7 @@ const provider = new BaseProvider({
   name: 'my-provider',
   models: ['model-a', 'model-b'],
   pricing: { defaults: { inputUsdPerMillion: 10, outputUsdPerMillion: 10 } },
+  modelCategories: { 'model-a': ['coding'] },
   relay: {
     baseUrl: 'https://api.example.com',
     authHeaderName: 'Authorization',

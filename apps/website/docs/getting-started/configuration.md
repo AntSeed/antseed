@@ -19,7 +19,8 @@ Ready to connect
 
 ## Identity
 
-Your node identity is an Ed25519 keypair. The private key seed is stored as 64 hex characters in `~/.antseed/identity.key` with `0600` permissions. Your PeerId is the hex-encoded 32-byte public key (64 lowercase hex characters).
+Your node identity is an Ed25519 keypair. The private key seed is stored as 64 hex characters in `~/.antseed/identity.key` with `0600` permissions. Your PeerId is the hex-encoded 32-byte public key (64 lowercase hex characters).  
+Set `identity.displayName` in config to control the human-readable name announced in peer metadata.
 
 ## Selling AI Services
 
@@ -57,11 +58,39 @@ Configuration is stored at `~/.antseed/config.json`. Key sections:
 |---|---|
 | `identity` | Display name and wallet address |
 | `providers` | Configured provider API keys and endpoints |
-| `seller` | Reserve floor, max concurrent buyers, pricing, enabled providers |
+| `seller` | Reserve floor, max concurrent buyers, pricing, enabled providers, model category tags |
 | `buyer` | Preferred providers, max pricing, min peer reputation, proxy port |
 | `payments` | Payment method, platform fee rate, chain config (Base) |
 | `network` | Bootstrap nodes |
 | `plugins` | Installed plugin packages |
+
+## Metadata Fields
+
+Use config to control metadata advertised to buyers:
+
+```json title="config example"
+{
+  "identity": {
+    "displayName": "Acme Inference - us-east-1"
+  },
+  "seller": {
+    "modelCategories": {
+      "anthropic": {
+        "claude-sonnet-4-5-20250929": ["coding", "privacy"]
+      }
+    }
+  }
+}
+```
+
+- `identity.displayName`: optional node label shown in browse/discovery results.
+- `seller.modelCategories`: optional provider/model -> tag array map announced in peer metadata.
+- Recommended category tags: `privacy`, `legal`, `uncensored`, `coding`, `finance`, `tee` (custom tags are allowed).
+
+```bash title="set metadata fields"
+antseed config set identity.displayName "Acme Inference - us-east-1"
+antseed config seller set modelCategories.anthropic.claude-sonnet-4-5-20250929 '["coding","privacy"]'
+```
 
 ## Authentication
 

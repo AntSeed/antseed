@@ -32,19 +32,19 @@ Sellers announce themselves under a topic derived from their provider name. The 
 
 ## Metadata Endpoint
 
-Each seller runs an HTTP server exposing `GET /metadata` which returns JSON-serialized `PeerMetadata` including capabilities and Skills. The metadata URL is constructed as `http://{host}:{port + 1}/metadata`.
+Each seller runs an HTTP server exposing `GET /metadata` which returns JSON-serialized `PeerMetadata` with pricing, capacity, and optional metadata tags.  
+By default, metadata is fetched from `http://{host}:{port}/metadata` (`metadataPortOffset = 0`).
 
 ## PeerMetadata
 
 ```json title="metadata structure"
 {
   "peerId": "a1b2c3d4...64 hex chars",
-  "version": 2,
+  "version": 3,
+  "displayName": "Acme Inference - us-east-1",
   "providers": [{
     "provider": "anthropic",
     "models": ["claude-sonnet-4-6", "claude-haiku-4-5"],
-    "capabilities": ["inference", "skill", "agent"],
-    "skills": ["legal-research", "security-audit"],
     "defaultPricing": {
       "inputUsdPerMillion": 3,
       "outputUsdPerMillion": 15
@@ -52,6 +52,9 @@ Each seller runs an HTTP server exposing `GET /metadata` which returns JSON-seri
     "modelPricing": {
       "claude-sonnet-4-6": { "inputUsdPerMillion": 3, "outputUsdPerMillion": 15 },
       "claude-haiku-4-5": { "inputUsdPerMillion": 1, "outputUsdPerMillion": 5 }
+    },
+    "modelCategories": {
+      "claude-sonnet-4-6": ["coding", "privacy"]
     },
     "maxConcurrency": 5,
     "currentLoad": 2
@@ -61,6 +64,8 @@ Each seller runs an HTTP server exposing `GET /metadata` which returns JSON-seri
   "signature": "ed25519...128 hex chars"
 }
 ```
+
+Recommended category tags: `privacy`, `legal`, `uncensored`, `coding`, `finance`, `tee` (custom tags are allowed).
 
 ## Peer Scoring
 
