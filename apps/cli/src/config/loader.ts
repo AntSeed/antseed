@@ -134,6 +134,51 @@ function mergeHierarchicalPricing(
   };
 }
 
+function cloneSellerModelCategories(
+  categories: AntseedConfig['seller']['modelCategories'] | undefined
+): AntseedConfig['seller']['modelCategories'] | undefined {
+  if (!categories) return undefined;
+  const out: NonNullable<AntseedConfig['seller']['modelCategories']> = {};
+  for (const [provider, models] of Object.entries(categories)) {
+    out[provider] = Object.fromEntries(
+      Object.entries(models).map(([model, tags]) => [model, [...tags]])
+    );
+  }
+  return out;
+}
+
+function mergeSellerModelCategories(
+  defaults: AntseedConfig['seller']['modelCategories'] | undefined,
+  value: unknown
+): AntseedConfig['seller']['modelCategories'] | undefined {
+  const out = cloneSellerModelCategories(defaults) ?? {};
+  if (!isRecord(value)) {
+    return Object.keys(out).length > 0 ? out : undefined;
+  }
+
+  for (const [provider, rawProvider] of Object.entries(value)) {
+    if (!isRecord(rawProvider)) continue;
+    const nextModels: Record<string, string[]> = {
+      ...(out[provider] ?? {}),
+    };
+    for (const [model, rawCategories] of Object.entries(rawProvider)) {
+      if (!Array.isArray(rawCategories)) continue;
+      const normalizedCategories = rawCategories
+        .filter((entry): entry is string => typeof entry === 'string')
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0);
+      if (normalizedCategories.length > 0) {
+        nextModels[model] = normalizedCategories;
+      }
+    }
+    if (Object.keys(nextModels).length > 0) {
+      out[provider] = nextModels;
+    }
+  }
+
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 function mergeSellerConfig(
   defaults: AntseedConfig['seller'],
   value: unknown
@@ -144,8 +189,11 @@ function mergeSellerConfig(
       maxConcurrentBuyers: defaults.maxConcurrentBuyers,
       enabledProviders: [...defaults.enabledProviders],
       pricing: mergeHierarchicalPricing(defaults.pricing, undefined),
+      ...(defaults.modelCategories ? { modelCategories: cloneSellerModelCategories(defaults.modelCategories) } : {}),
     };
   }
+  const mergedModelCategories = mergeSellerModelCategories(defaults.modelCategories, value['modelCategories']);
+
   return {
     reserveFloor: typeof value['reserveFloor'] === 'number'
       ? value['reserveFloor']
@@ -157,6 +205,7 @@ function mergeSellerConfig(
       ? value['enabledProviders'].filter((entry): entry is string => typeof entry === 'string')
       : [...defaults.enabledProviders],
     pricing: mergeHierarchicalPricing(defaults.pricing, value['pricing']),
+    ...(mergedModelCategories ? { modelCategories: mergedModelCategories } : {}),
   };
 }
 

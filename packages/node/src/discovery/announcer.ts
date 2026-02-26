@@ -17,8 +17,10 @@ export interface AnnouncerConfig {
   providers: Array<{
     provider: string;
     models: string[];
+    modelCategories?: Record<string, string[]>;
     maxConcurrency: number;
   }>;
+  displayName?: string;
   region: string;
   pricing: Map<
     string,
@@ -46,95 +48,18 @@ export class PeerAnnouncer {
   }
 
   async announce(): Promise<void> {
-    const providers: ProviderAnnouncement[] = this.config.providers.map((p) => {
-      const pricing = this.config.pricing.get(p.provider) ?? {
-        defaults: {
-          inputUsdPerMillion: 0,
-          outputUsdPerMillion: 0,
-        },
-      };
-      return {
-        provider: p.provider,
-        models: p.models,
-        defaultPricing: pricing.defaults,
-        ...(pricing.models ? { modelPricing: pricing.models } : {}),
-        maxConcurrency: p.maxConcurrency,
-        currentLoad: this.loadMap.get(p.provider) ?? 0,
-      };
-    });
-
-    const metadata: PeerMetadata = {
-      peerId: this.config.identity.peerId,
-      version: METADATA_VERSION,
-      providers,
-      ...(this.config.offerings && this.config.offerings.length > 0
-        ? { offerings: this.config.offerings }
-        : {}),
-      ...(this.config.stakeAmountUSDC != null
-        ? { stakeAmountUSDC: this.config.stakeAmountUSDC }
-        : {}),
-      ...(this.config.trustScore != null
-        ? { trustScore: this.config.trustScore }
-        : {}),
-      region: this.config.region,
-      timestamp: Date.now(),
-      signature: "",
-    };
-
-    // Populate EVM address and on-chain reputation if escrow client is available
-    if (this.config.escrowClient) {
-      try {
-        const evmAddress = identityToEvmAddress(this.config.identity);
-        metadata.evmAddress = evmAddress;
-        const reputation = await this.config.escrowClient.getReputation(evmAddress);
-        metadata.onChainReputation = reputation.weightedAverage;
-        metadata.onChainSessionCount = reputation.sessionCount;
-        metadata.onChainDisputeCount = reputation.disputeCount;
-      } catch {
-        // Silently continue without reputation data
-      }
-    }
-
-    // Sign metadata
-    const dataToSign = encodeMetadataForSigning(metadata);
-    const signature = await signData(
-      this.config.identity.privateKey,
-      dataToSign
-    );
-    metadata.signature = bytesToHex(signature);
+    const metadata = await this._buildSignedMetadata(true);
     this._latestMetadata = metadata;
 
-    // Announce under each provider topic (continue on failure)
-    for (const p of providers) {
-      try {
-        const topic = providerTopic(p.provider);
-        const infoHash = topicToInfoHash(topic);
-        await this.config.dht.announce(infoHash, this.config.signalingPort);
-      } catch {
-        // DHT may not have peers yet — will retry on next cycle
-      }
-    }
+    await this._announceTopics(metadata.providers);
+  }
 
-    // Also announce under the wildcard topic for generic discovery
-    try {
-      const wildcardInfoHash = topicToInfoHash(providerTopic("*"));
-      await this.config.dht.announce(wildcardInfoHash, this.config.signalingPort);
-    } catch {
-      // DHT may not have peers yet — will retry on next cycle
-    }
-
-    // Announce under each capability topic
-    if (this.config.offerings) {
-      for (const offering of this.config.offerings) {
-        try {
-          const topic = capabilityTopic(offering.capability, offering.name);
-          const infoHash = topicToInfoHash(topic);
-          await this.config.dht.announce(infoHash, this.config.signalingPort);
-        } catch {
-          // DHT may not have peers yet — will retry on next cycle
-        }
-      }
-    }
+  /**
+   * Refresh signed metadata snapshot without announcing to DHT.
+   * Useful for high-frequency fields like current provider load.
+   */
+  async refreshMetadata(): Promise<void> {
+    this._latestMetadata = await this._buildSignedMetadata(false);
   }
 
   startPeriodicAnnounce(): void {
@@ -165,5 +90,128 @@ export class PeerAnnouncer {
 
   getLatestMetadata(): PeerMetadata | null {
     return this._latestMetadata;
+  }
+
+  private async _buildSignedMetadata(includeOnChainReputation = true): Promise<PeerMetadata> {
+    const providers: ProviderAnnouncement[] = this.config.providers.map((p) => {
+      const pricing = this.config.pricing.get(p.provider) ?? {
+        defaults: {
+          inputUsdPerMillion: 0,
+          outputUsdPerMillion: 0,
+        },
+      };
+      const providerAnnouncement: ProviderAnnouncement = {
+        provider: p.provider,
+        models: p.models,
+        defaultPricing: pricing.defaults,
+        maxConcurrency: p.maxConcurrency,
+        currentLoad: this.loadMap.get(p.provider) ?? 0,
+      };
+      if (pricing.models) {
+        providerAnnouncement.modelPricing = pricing.models;
+      }
+      const normalizedModelCategories = this._normalizeModelCategories(p.modelCategories, p.models);
+      if (normalizedModelCategories) {
+        providerAnnouncement.modelCategories = normalizedModelCategories;
+      }
+      return providerAnnouncement;
+    });
+
+    const metadata: PeerMetadata = {
+      peerId: this.config.identity.peerId,
+      version: METADATA_VERSION,
+      ...(this.config.displayName ? { displayName: this.config.displayName } : {}),
+      providers,
+      region: this.config.region,
+      timestamp: Date.now(),
+      signature: "",
+    };
+    if (this.config.offerings && this.config.offerings.length > 0) {
+      metadata.offerings = this.config.offerings;
+    }
+    if (this.config.stakeAmountUSDC != null) {
+      metadata.stakeAmountUSDC = this.config.stakeAmountUSDC;
+    }
+    if (this.config.trustScore != null) {
+      metadata.trustScore = this.config.trustScore;
+    }
+
+    if (this.config.escrowClient) {
+      const evmAddress = identityToEvmAddress(this.config.identity);
+      metadata.evmAddress = evmAddress;
+
+      if (includeOnChainReputation) {
+        try {
+          const reputation = await this.config.escrowClient.getReputation(evmAddress);
+          metadata.onChainReputation = reputation.weightedAverage;
+          metadata.onChainSessionCount = reputation.sessionCount;
+          metadata.onChainDisputeCount = reputation.disputeCount;
+        } catch {
+          // Silently continue without reputation data
+        }
+      } else if (this._latestMetadata) {
+        metadata.onChainReputation = this._latestMetadata.onChainReputation;
+        metadata.onChainSessionCount = this._latestMetadata.onChainSessionCount;
+        metadata.onChainDisputeCount = this._latestMetadata.onChainDisputeCount;
+      }
+    }
+
+    const dataToSign = encodeMetadataForSigning(metadata);
+    const signature = await signData(this.config.identity.privateKey, dataToSign);
+    metadata.signature = bytesToHex(signature);
+    return metadata;
+  }
+
+  private async _announceTopics(providers: ProviderAnnouncement[]): Promise<void> {
+    for (const p of providers) {
+      await this._tryAnnounceTopic(providerTopic(p.provider));
+    }
+
+    await this._tryAnnounceTopic(providerTopic("*"));
+
+    if (this.config.offerings) {
+      for (const offering of this.config.offerings) {
+        await this._tryAnnounceTopic(capabilityTopic(offering.capability, offering.name));
+      }
+    }
+  }
+
+  private async _tryAnnounceTopic(topic: string): Promise<void> {
+    try {
+      const infoHash = topicToInfoHash(topic);
+      await this.config.dht.announce(infoHash, this.config.signalingPort);
+    } catch {
+      // DHT may not have peers yet — will retry on next cycle
+    }
+  }
+
+  private _normalizeModelCategories(
+    modelCategories: Record<string, string[]> | undefined,
+    supportedModels: string[],
+  ): Record<string, string[]> | undefined {
+    if (!modelCategories) {
+      return undefined;
+    }
+
+    const supportedModelSet = new Set(supportedModels);
+    const normalized: Record<string, string[]> = {};
+    for (const [model, categories] of Object.entries(modelCategories)) {
+      if (!supportedModelSet.has(model)) {
+        continue;
+      }
+      const deduped = Array.from(
+        new Set(
+          categories
+            .map((category) => category.trim().toLowerCase())
+            .filter((category) => category.length > 0),
+        ),
+      );
+      if (deduped.length === 0) {
+        continue;
+      }
+      normalized[model] = deduped;
+    }
+
+    return Object.keys(normalized).length > 0 ? normalized : undefined;
   }
 }

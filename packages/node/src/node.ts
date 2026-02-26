@@ -106,6 +106,7 @@ export interface NodePaymentsConfig {
 
 export interface NodeConfig {
   role: 'seller' | 'buyer';
+  displayName?: string;
   dataDir?: string;           // Default: ~/.antseed
   dhtPort?: number;           // Default: 6881 for seller, 0 for buyer
   signalingPort?: number;     // Default: 6882 for seller
@@ -175,6 +176,7 @@ export interface RequestStreamCallbacks {
 }
 
 export class AntseedNode extends EventEmitter {
+  private static readonly _METADATA_REFRESH_DEBOUNCE_MS = 200;
   private _config: NodeConfig;
   private _identity: Identity | null = null;
   private _dht: DHTNode | null = null;
@@ -192,6 +194,8 @@ export class AntseedNode extends EventEmitter {
   private _balanceManager: BalanceManager | null = null;
   private _escrowClient: BaseEscrowClient | null = null;
   private _paymentMuxes = new Map<PeerId, PaymentMux>();
+  private _providerLoadCounts = new Map<string, number>();
+  private _metadataRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   /** Per-buyer session tracking: buyerPeerId → seller session state */
   private _sessions = new Map<string, SellerSessionState>();
   private _settlementTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -317,6 +321,11 @@ export class AntseedNode extends EventEmitter {
       clearTimeout(timer);
     }
     this._settlementTimers.clear();
+    if (this._metadataRefreshTimer) {
+      clearTimeout(this._metadataRefreshTimer);
+      this._metadataRefreshTimer = null;
+    }
+    this._providerLoadCounts.clear();
 
     // Remove NAT port mappings
     if (this._nat) {
@@ -726,8 +735,10 @@ export class AntseedNode extends EventEmitter {
         providers: this._providers.map((p) => ({
           provider: p.name,
           models: p.models,
+          ...(p.modelCategories ? { modelCategories: { ...p.modelCategories } } : {}),
           maxConcurrency: p.maxConcurrency,
         })),
+        ...(this._config.displayName ? { displayName: this._config.displayName } : {}),
         region: "unknown",
         pricing: new Map(
           this._providers.map((p) => [
@@ -867,68 +878,73 @@ export class AntseedNode extends EventEmitter {
       let statusCode = 500;
       let responseBody: Uint8Array = new Uint8Array(0);
       let streamedResponseStarted = false;
+      this._adjustProviderLoad(provider.name, 1);
       try {
-        const response = await this._executeProviderRequest(provider, request, {
-          onResponseStart: (streamResponseStart) => {
-            streamedResponseStarted = true;
-            statusCode = streamResponseStart.statusCode;
-            mux.sendProxyResponse(streamResponseStart);
-          },
-          onResponseChunk: (chunk) => {
-            if (!streamedResponseStarted) return;
-            mux.sendProxyChunk(chunk);
-          },
-        });
-        statusCode = response.statusCode;
-        responseBody = response.body;
-        debugLog(`[Node] Provider responded: status=${statusCode} (${Date.now() - startTime}ms, ${responseBody.length}b)`);
-        if (!streamedResponseStarted) {
-          mux.sendProxyResponse(response);
+        try {
+          const response = await this._executeProviderRequest(provider, request, {
+            onResponseStart: (streamResponseStart) => {
+              streamedResponseStarted = true;
+              statusCode = streamResponseStart.statusCode;
+              mux.sendProxyResponse(streamResponseStart);
+            },
+            onResponseChunk: (chunk) => {
+              if (!streamedResponseStarted) return;
+              mux.sendProxyChunk(chunk);
+            },
+          });
+          statusCode = response.statusCode;
+          responseBody = response.body;
+          debugLog(`[Node] Provider responded: status=${statusCode} (${Date.now() - startTime}ms, ${responseBody.length}b)`);
+          if (!streamedResponseStarted) {
+            mux.sendProxyResponse(response);
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "Internal error";
+          debugWarn(`[Node] Provider error after ${Date.now() - startTime}ms: ${message}`);
+          responseBody = new TextEncoder().encode(message);
+          if (streamedResponseStarted) {
+            mux.sendProxyChunk({
+              requestId: request.requestId,
+              data: new TextEncoder().encode(`event: error\ndata: ${message}\n\n`),
+              done: false,
+            });
+            mux.sendProxyChunk({
+              requestId: request.requestId,
+              data: new Uint8Array(0),
+              done: true,
+            });
+          } else {
+            statusCode = 500;
+            mux.sendProxyResponse({
+              requestId: request.requestId,
+              statusCode: 500,
+              headers: { "content-type": "text/plain" },
+              body: responseBody,
+            });
+          }
         }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Internal error";
-        debugWarn(`[Node] Provider error after ${Date.now() - startTime}ms: ${message}`);
-        responseBody = new TextEncoder().encode(message);
-        if (streamedResponseStarted) {
-          mux.sendProxyChunk({
-            requestId: request.requestId,
-            data: new TextEncoder().encode(`event: error\ndata: ${message}\n\n`),
-            done: false,
-          });
-          mux.sendProxyChunk({
-            requestId: request.requestId,
-            data: new Uint8Array(0),
-            done: true,
-          });
-        } else {
-          statusCode = 500;
-          mux.sendProxyResponse({
-            requestId: request.requestId,
-            statusCode: 500,
-            headers: { "content-type": "text/plain" },
-            body: responseBody,
-          });
+
+        // Record metering
+        const latencyMs = Date.now() - startTime;
+        const requestPricing = this._resolveProviderPricing(provider, request);
+        await this._recordMetering(
+          buyerPeerId,
+          provider.name,
+          requestPricing,
+          request,
+          statusCode,
+          latencyMs,
+          request.body.length,
+          responseBody.length,
+        );
+
+        // Generate bilateral receipt after each request if lock committed (Task 3)
+        const currentSession = this._sessions.get(buyerPeerId);
+        if (currentSession?.lockCommitted) {
+          await this._sendBilateralReceipt(buyerPeerId, currentSession, requestPricing, responseBody, paymentMux);
         }
-      }
-
-      // Record metering
-      const latencyMs = Date.now() - startTime;
-      const requestPricing = this._resolveProviderPricing(provider, request);
-      await this._recordMetering(
-        buyerPeerId,
-        provider.name,
-        requestPricing,
-        request,
-        statusCode,
-        latencyMs,
-        request.body.length,
-        responseBody.length,
-      );
-
-      // Generate bilateral receipt after each request if lock committed (Task 3)
-      const currentSession = this._sessions.get(buyerPeerId);
-      if (currentSession?.lockCommitted) {
-        await this._sendBilateralReceipt(buyerPeerId, currentSession, requestPricing, responseBody, paymentMux);
+      } finally {
+        this._adjustProviderLoad(provider.name, -1);
       }
     });
 
@@ -1852,26 +1868,39 @@ export class AntseedNode extends EventEmitter {
   private _lookupResultToPeerInfo(result: LookupResult): PeerInfo {
     const providers = result.metadata.providers.map((p) => p.provider);
     const firstProvider = result.metadata.providers[0];
-    const providerPricingEntries = Object.fromEntries(
-      result.metadata.providers.map((p) => [
-        p.provider,
-        {
-          defaults: {
-            inputUsdPerMillion: p.defaultPricing.inputUsdPerMillion,
-            outputUsdPerMillion: p.defaultPricing.outputUsdPerMillion,
-          },
-          ...(p.modelPricing ? { models: { ...p.modelPricing } } : {}),
+    const providerPricingEntries: NonNullable<PeerInfo["providerPricing"]> = {};
+    const providerModelCategoryEntries: NonNullable<PeerInfo["providerModelCategories"]> = {};
+
+    for (const providerAnnouncement of result.metadata.providers) {
+      providerPricingEntries[providerAnnouncement.provider] = {
+        defaults: {
+          inputUsdPerMillion: providerAnnouncement.defaultPricing.inputUsdPerMillion,
+          outputUsdPerMillion: providerAnnouncement.defaultPricing.outputUsdPerMillion,
         },
-      ]),
-    );
+        ...(providerAnnouncement.modelPricing ? { models: { ...providerAnnouncement.modelPricing } } : {}),
+      };
+
+      if (providerAnnouncement.modelCategories && Object.keys(providerAnnouncement.modelCategories).length > 0) {
+        providerModelCategoryEntries[providerAnnouncement.provider] = {
+          models: Object.fromEntries(
+            Object.entries(providerAnnouncement.modelCategories)
+              .map(([model, categories]) => [model, [...categories]]),
+          ),
+        };
+      }
+    }
+
     const hasProviderPricing = Object.keys(providerPricingEntries).length > 0;
+    const hasProviderModelCategories = Object.keys(providerModelCategoryEntries).length > 0;
 
     return {
       peerId: result.metadata.peerId,
+      displayName: result.metadata.displayName,
       lastSeen: result.metadata.timestamp,
       providers,
       publicAddress: `${result.host}:${result.port}`,
       ...(hasProviderPricing ? { providerPricing: providerPricingEntries } : {}),
+      ...(hasProviderModelCategories ? { providerModelCategories: providerModelCategoryEntries } : {}),
       defaultInputUsdPerMillion: firstProvider?.defaultPricing.inputUsdPerMillion,
       defaultOutputUsdPerMillion: firstProvider?.defaultPricing.outputUsdPerMillion,
       maxConcurrency: firstProvider?.maxConcurrency,
@@ -1882,6 +1911,38 @@ export class AntseedNode extends EventEmitter {
       onChainDisputeCount: result.metadata.onChainDisputeCount,
       trustScore: result.metadata.onChainReputation,
     };
+  }
+
+  private _adjustProviderLoad(providerName: string, delta: number): void {
+    const nextLoad = Math.max(0, (this._providerLoadCounts.get(providerName) ?? 0) + delta);
+    this._providerLoadCounts.set(providerName, nextLoad);
+
+    if (!this._announcer) return;
+    this._announcer.updateLoad(providerName, nextLoad);
+    this._scheduleMetadataRefresh();
+  }
+
+  private _scheduleMetadataRefresh(): void {
+    if (!this._announcer || this._metadataRefreshTimer) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      this._metadataRefreshTimer = null;
+      const announcer = this._announcer;
+      if (!announcer) return;
+      void announcer.refreshMetadata().catch((err) => {
+        debugWarn(`[Node] Failed to refresh metadata snapshot: ${err instanceof Error ? err.message : err}`);
+      });
+    }, AntseedNode._METADATA_REFRESH_DEBOUNCE_MS);
+    this._metadataRefreshTimer = timer;
+    this._unrefTimer(timer);
+  }
+
+  private _unrefTimer(timer: ReturnType<typeof setTimeout>): void {
+    if (typeof (timer as { unref?: () => void }).unref === "function") {
+      (timer as { unref: () => void }).unref();
+    }
   }
 }
 

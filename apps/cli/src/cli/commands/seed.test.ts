@@ -55,6 +55,11 @@ test('seed maps effective seller pricing into provider runtime keys', () => {
       },
     },
   };
+  config.seller.modelCategories = {
+    anthropic: {
+      'claude-sonnet-4-5-20250929': ['coding', 'legal'],
+    },
+  };
 
   const runtimeEnv = buildSellerPluginRuntimeEnv(config.seller, 'anthropic');
   assert.equal(runtimeEnv['ANTSEED_INPUT_USD_PER_MILLION'], '15');
@@ -67,4 +72,7 @@ test('seed maps effective seller pricing into provider runtime keys', () => {
   }>;
   assert.equal(models['claude-sonnet-4-5-20250929']?.inputUsdPerMillion, 18);
   assert.equal(models['claude-sonnet-4-5-20250929']?.outputUsdPerMillion, 42);
+
+  const categories = JSON.parse(runtimeEnv['ANTSEED_MODEL_CATEGORIES_JSON'] ?? '{}') as Record<string, string[]>;
+  assert.deepEqual(categories['claude-sonnet-4-5-20250929'], ['coding', 'legal']);
 });

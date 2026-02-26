@@ -1,12 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { encodeMetadata, decodeMetadata } from '../src/discovery/metadata-codec.js';
-import type { PeerMetadata } from '../src/discovery/peer-metadata.js';
+import { METADATA_VERSION, type PeerMetadata } from '../src/discovery/peer-metadata.js';
 import type { PeerInfo } from '../src/types/peer.js';
 
 function makeMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
   return {
     peerId: 'a'.repeat(64) as any,
-    version: 2,
+    version: METADATA_VERSION,
     providers: [
       {
         provider: 'anthropic',

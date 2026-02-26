@@ -17,7 +17,7 @@ export * from './types/index.js';
 export { loadOrCreateIdentity, type Identity } from './p2p/identity.js';
 export { DHTNode, DEFAULT_DHT_CONFIG } from './discovery/dht-node.js';
 export { OFFICIAL_BOOTSTRAP_NODES, mergeBootstrapNodes, toBootstrapConfig } from './discovery/bootstrap.js';
-export { type PeerMetadata, type ProviderAnnouncement } from './discovery/peer-metadata.js';
+export { WELL_KNOWN_MODEL_CATEGORIES, type PeerMetadata, type ProviderAnnouncement } from './discovery/peer-metadata.js';
 export { MetadataServer, type MetadataServerConfig } from './discovery/metadata-server.js';
 export { MeteringStorage } from './metering/storage.js';
 export { BalanceManager } from './payments/balance-manager.js';
