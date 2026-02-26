@@ -14,7 +14,7 @@ export interface BuyerMaxPricingConfig {
   }>;
 }
 
-export interface LocalProxyRouterConfig {
+export interface LocalRouterConfig {
   preferredProviders?: string[];
   minReputation?: number;
   maxPricing?: BuyerMaxPricingConfig;
@@ -25,7 +25,7 @@ export interface LocalProxyRouterConfig {
   now?: () => number;
 }
 
-export class LocalProxyRouter implements Router {
+export class LocalRouter implements Router {
   private readonly _preferredProviders: string[];
   private readonly _minReputation: number;
   private readonly _maxPricing: BuyerMaxPricingConfig;
@@ -35,7 +35,7 @@ export class LocalProxyRouter implements Router {
   private readonly _weights: Partial<ScoringWeights> | undefined;
   private readonly _metrics: PeerMetricsTracker;
 
-  constructor(config?: LocalProxyRouterConfig) {
+  constructor(config?: LocalRouterConfig) {
     this._preferredProviders = (config?.preferredProviders ?? [])
       .map((provider) => provider.trim())
       .filter((provider) => provider.length > 0);

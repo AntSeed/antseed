@@ -1,6 +1,6 @@
 import type { AntseedRouterPlugin } from '@antseed/node';
 import { WELL_KNOWN_TOOL_HINTS, formatToolHints } from '@antseed/router-core';
-import { LocalProxyRouter, type BuyerMaxPricingConfig } from './router.js';
+import { LocalRouter, type BuyerMaxPricingConfig } from './router.js';
 
 function parseCsvProviders(raw: string | undefined): string[] | undefined {
   if (!raw) return undefined;
@@ -118,11 +118,11 @@ function parseMaxPricingJson(raw: string | undefined): BuyerMaxPricingConfig | u
 }
 
 const plugin: AntseedRouterPlugin = {
-  name: 'local-proxy',
-  displayName: 'Local Proxy',
+  name: 'local',
+  displayName: 'Local Router',
   version: '0.1.0',
   type: 'router',
-  description: 'Local proxy router for Claude Code, Aider, Continue.dev, OpenAI Codex',
+  description: 'Local router for Claude Code, Aider, Continue.dev, OpenAI Codex',
   configSchema: [
     { key: 'ANTSEED_MIN_REPUTATION', label: 'Min Reputation', type: 'number', required: false, default: 50, description: 'Min peer reputation 0-100' },
     { key: 'ANTSEED_PREFERRED_PROVIDERS', label: 'Preferred Providers', type: 'string[]', required: false, description: 'Ordered preferred providers' },
@@ -150,7 +150,7 @@ const plugin: AntseedRouterPlugin = {
     if (maxPeerStalenessMs !== undefined && Number.isNaN(maxPeerStalenessMs)) {
       throw new Error('ANTSEED_MAX_PEER_STALENESS_MS must be a valid number');
     }
-    return new LocalProxyRouter({
+    return new LocalRouter({
       preferredProviders,
       minReputation,
       maxPricing,

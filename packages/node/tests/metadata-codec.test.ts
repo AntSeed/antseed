@@ -206,7 +206,7 @@ describe('encodeMetadata / decodeMetadata', () => {
       version: 3,
       providers: [
         {
-          provider: 'openrouter',
+          provider: 'openai',
           models: ['model-a'],
           defaultPricing: {
             inputUsdPerMillion: 1,

@@ -19,10 +19,10 @@ export const TRUSTED_PLUGINS: TrustedPlugin[] = [
     package: '@antseed/provider-claude-code',
   },
   {
-    name: 'openrouter',
+    name: 'openai',
     type: 'provider',
-    description: 'OpenRouter multi-model provider (API key)',
-    package: '@antseed/provider-openrouter',
+    description: 'OpenAI-compatible provider (OpenAI, Together, OpenRouter, API key)',
+    package: '@antseed/provider-openai',
   },
   {
     name: 'local-llm',
@@ -31,15 +31,9 @@ export const TRUSTED_PLUGINS: TrustedPlugin[] = [
     package: '@antseed/provider-local-llm',
   },
   {
-    name: 'local-proxy',
+    name: 'local',
     type: 'router',
-    description: 'Local HTTP proxy for Claude Code, Aider, Codex',
-    package: '@antseed/router-local-proxy',
-  },
-  {
-    name: 'local-chat',
-    type: 'router',
-    description: 'Local desktop chat router',
-    package: '@antseed/router-local-chat',
+    description: 'Local router for Claude Code, Aider, Codex',
+    package: '@antseed/router-local',
   },
 ]

@@ -13,7 +13,7 @@
     "@antseed/node": "workspace:*",
     "@antseed/provider-anthropic": "workspace:*",
     "@antseed/provider-core": "workspace:*",
-    "@antseed/router-local-proxy": "workspace:*"
+    "@antseed/router-local": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

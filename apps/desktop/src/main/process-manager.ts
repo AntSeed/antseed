@@ -56,8 +56,8 @@ function normalizeProviderIdentifier(value: string | undefined): string {
   if (raw === '@antseed/provider-anthropic' || raw === 'antseed-provider-anthropic') {
     return 'anthropic';
   }
-  if (raw === '@antseed/provider-openrouter' || raw === 'antseed-provider-openrouter') {
-    return 'openrouter';
+  if (raw === '@antseed/provider-openai' || raw === 'antseed-provider-openai') {
+    return 'openai';
   }
   if (raw === '@antseed/provider-local-llm' || raw === 'antseed-provider-local-llm') {
     return 'local-llm';
@@ -73,22 +73,16 @@ function normalizeProviderIdentifier(value: string | undefined): string {
 }
 
 function normalizeRouterIdentifier(value: string | undefined): string {
-  const raw = (value ?? 'local-proxy').trim().toLowerCase();
-  if (!raw) return 'local-proxy';
+  const raw = (value ?? 'local').trim().toLowerCase();
+  if (!raw) return 'local';
 
   if (
     raw === 'claude-code'
-    || raw === '@antseed/router-local-proxy'
-    || raw === 'antseed-router-local-proxy'
+    || raw === '@antseed/router-local'
+    || raw === 'antseed-router-local'
     || raw === 'antseed-router-claude-code'
   ) {
-    return 'local-proxy';
-  }
-  if (
-    raw === '@antseed/router-local-chat'
-    || raw === 'antseed-router-local-chat'
-  ) {
-    return 'local-chat';
+    return 'local';
   }
 
   return raw;

@@ -2,7 +2,7 @@ import type { SerializedHttpRequest, SerializedHttpResponse } from '../types/htt
 import type { ModelApiProtocol } from '../types/model-api.js';
 
 const ANTHROPIC_PROVIDER_NAMES = new Set(['anthropic', 'claude-code', 'claude-oauth']);
-const OPENAI_CHAT_PROVIDER_NAMES = new Set(['openai', 'openrouter', 'local-llm']);
+const OPENAI_CHAT_PROVIDER_NAMES = new Set(['openai', 'local-llm']);
 
 export interface TargetProtocolSelection {
   targetProtocol: ModelApiProtocol;

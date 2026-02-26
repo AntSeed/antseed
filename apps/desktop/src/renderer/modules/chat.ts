@@ -169,21 +169,14 @@ export function initChatModule({
 
   function normalizeRouterLabel(routerRaw) {
     const raw = String(routerRaw || '').trim().toLowerCase();
-    if (!raw) return 'local-proxy';
+    if (!raw) return 'local';
     if (
       raw === 'claude-code'
-      || raw === '@antseed/router-local-proxy'
-      || raw === 'antseed-router-local-proxy'
-      || raw === 'router-local-proxy'
+      || raw === '@antseed/router-local'
+      || raw === 'antseed-router-local'
+      || raw === 'router-local'
     ) {
-      return 'local-proxy';
-    }
-    if (
-      raw === '@antseed/router-local-chat'
-      || raw === 'antseed-router-local-chat'
-      || raw === 'router-local-chat'
-    ) {
-      return 'local-chat';
+      return 'local';
     }
     return raw;
   }

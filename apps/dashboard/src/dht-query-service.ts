@@ -41,7 +41,6 @@ const DEFAULT_DISCOVERY_PROVIDERS = [
   'google',
   'claude-code',
   'claude-oauth',
-  'openrouter',
   'local-llm',
 ];
 const PROVIDER_ALIAS_MAP: Record<string, string> = {
@@ -51,8 +50,8 @@ const PROVIDER_ALIAS_MAP: Record<string, string> = {
   'antseed-provider-claude-code': 'claude-code',
   '@antseed/provider-claude-oauth': 'claude-oauth',
   'antseed-provider-claude-oauth': 'claude-oauth',
-  '@antseed/provider-openrouter': 'openrouter',
-  'antseed-provider-openrouter': 'openrouter',
+  '@antseed/provider-openai': 'openai',
+  'antseed-provider-openai': 'openai',
   '@antseed/provider-local-llm': 'local-llm',
   'antseed-provider-local-llm': 'local-llm',
 };

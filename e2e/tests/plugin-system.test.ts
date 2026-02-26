@@ -9,9 +9,9 @@ import type {
   PluginConfigKey,
 } from '@antseed/node';
 
-// Import actual plugin packages (workspace deps)
-import providerPlugin from '@antseed/provider-anthropic';
-import routerPlugin, { TOOL_HINTS } from '@antseed/router-local-proxy';
+// Import official plugin sources from the monorepo workspace
+import providerPlugin from '../../plugins/provider-anthropic/src/index.js';
+import routerPlugin, { TOOL_HINTS } from '../../plugins/router-local/src/index.js';
 
 // Import registry directly from CLI source (vitest can resolve .ts)
 import { TRUSTED_PLUGINS, type TrustedPlugin } from '../../apps/cli/src/plugins/registry.js';
@@ -214,9 +214,9 @@ describe('Plugin Registry', () => {
     expect(anthropic!.type).toBe('provider');
   });
 
-  it('has local-proxy as a trusted router', () => {
+  it('has local as a trusted router', () => {
     const localProxy = TRUSTED_PLUGINS.find(
-      (p: TrustedPlugin) => p.name === 'local-proxy',
+      (p: TrustedPlugin) => p.name === 'local',
     );
     expect(localProxy).toBeDefined();
     expect(localProxy!.type).toBe('router');
@@ -277,12 +277,12 @@ describe('@antseed/provider-anthropic plugin shape', () => {
 });
 
 // ---------------------------------------------------------------------------
-// @antseed/router-local-proxy plugin shape
+// @antseed/router-local plugin shape
 // ---------------------------------------------------------------------------
-describe('@antseed/router-local-proxy plugin shape', () => {
+describe('@antseed/router-local plugin shape', () => {
   it('satisfies AntseedRouterPlugin interface', () => {
     const plugin = routerPlugin as AntseedRouterPlugin;
-    expect(plugin.name).toBe('local-proxy');
+    expect(plugin.name).toBe('local');
     expect(plugin.displayName).toBeTruthy();
     expect(plugin.version).toBeTruthy();
     expect(plugin.description).toBeTruthy();

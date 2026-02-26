@@ -132,34 +132,31 @@ const DEFAULT_PLUGINS_PACKAGE_JSON = path.join(DEFAULT_PLUGINS_DIR, 'package.jso
 const SAFE_PLUGIN_PACKAGE_PATTERN = /^(@?[a-z0-9][a-z0-9._-]*)(\/[a-z0-9][a-z0-9._-]*)?$/i;
 const PLUGIN_PACKAGE_ALIAS_MAP: Record<string, string> = {
   anthropic: '@antseed/provider-anthropic',
-  openrouter: '@antseed/provider-openrouter',
+  openai: '@antseed/provider-openai',
   'local-llm': '@antseed/provider-local-llm',
   'provider-anthropic': '@antseed/provider-anthropic',
-  'provider-openrouter': '@antseed/provider-openrouter',
+  'provider-openai': '@antseed/provider-openai',
   'provider-local-llm': '@antseed/provider-local-llm',
   'antseed-provider-anthropic': '@antseed/provider-anthropic',
-  'antseed-provider-openrouter': '@antseed/provider-openrouter',
+  'antseed-provider-openai': '@antseed/provider-openai',
   'antseed-provider-local-llm': '@antseed/provider-local-llm',
   'claude-code': '@antseed/provider-claude-code',
   'provider-claude-code': '@antseed/provider-claude-code',
   'antseed-provider-claude-code': '@antseed/provider-claude-code',
   'claude-oauth': '@antseed/provider-claude-oauth',
   'provider-claude-oauth': '@antseed/provider-claude-oauth',
-  'local-proxy': '@antseed/router-local-proxy',
-  'local-chat': '@antseed/router-local-chat',
-  'router-local-proxy': '@antseed/router-local-proxy',
-  'router-local-chat': '@antseed/router-local-chat',
-  'antseed-router-claude-code': '@antseed/router-local-proxy',
-  'antseed-router-local-proxy': '@antseed/router-local-proxy',
-  'antseed-router-local-chat': '@antseed/router-local-chat',
+  'local': '@antseed/router-local',
+  'router-local': '@antseed/router-local',
+  'antseed-router-claude-code': '@antseed/router-local',
+  'antseed-router-local': '@antseed/router-local',
 };
 const SCOPED_TO_LEGACY_PLUGIN_PACKAGE_MAP: Record<string, string> = {
   '@antseed/provider-anthropic': 'antseed-provider-anthropic',
-  '@antseed/provider-openrouter': 'antseed-provider-openrouter',
+  '@antseed/provider-openai': 'antseed-provider-openai',
   '@antseed/provider-local-llm': 'antseed-provider-local-llm',
-  '@antseed/provider-claude-code': 'antseed-provider-anthropic',
-  '@antseed/router-local-proxy': 'antseed-router-claude-code',
-  '@antseed/router-local-chat': 'antseed-router-local-chat',
+  '@antseed/provider-claude-code': 'antseed-provider-claude-code',
+  '@antseed/provider-claude-oauth': 'antseed-provider-claude-oauth',
+  '@antseed/router-local': 'antseed-router-local',
 };
 
 function resolveActiveConfigPath(): string {
@@ -445,7 +442,7 @@ function defaultDashboardConfig(): DashboardConfig {
       },
     },
     buyer: {
-      preferredProviders: ['anthropic', 'openai', 'claude-code', 'claude-oauth', 'openrouter', 'local-llm'],
+      preferredProviders: ['anthropic', 'openai', 'claude-code', 'claude-oauth', 'local-llm'],
       maxPricing: {
         defaults: {
           inputUsdPerMillion: 100,

@@ -12,17 +12,17 @@ const DEFAULT_DASHBOARD_PORT = 3117;
 const POLL_INTERVAL_MS = 5000;
 const SEED_AUTH_PREFS_KEY = 'antseed-seed-auth-prefs';
 const DEFAULT_PROVIDER_RUNTIME = 'anthropic';
-const DEFAULT_ROUTER_RUNTIME = 'local-proxy';
+const DEFAULT_ROUTER_RUNTIME = 'local';
 
 const PROVIDER_PACKAGE_ALIASES: Record<string, string> = {
   anthropic: '@antseed/provider-anthropic',
-  openrouter: '@antseed/provider-openrouter',
+  openai: '@antseed/provider-openai',
   'local-llm': '@antseed/provider-local-llm',
   'provider-anthropic': '@antseed/provider-anthropic',
-  'provider-openrouter': '@antseed/provider-openrouter',
+  'provider-openai': '@antseed/provider-openai',
   'provider-local-llm': '@antseed/provider-local-llm',
   'antseed-provider-anthropic': '@antseed/provider-anthropic',
-  'antseed-provider-openrouter': '@antseed/provider-openrouter',
+  'antseed-provider-openai': '@antseed/provider-openai',
   'antseed-provider-local-llm': '@antseed/provider-local-llm',
   'claude-code': '@antseed/provider-claude-code',
   'provider-claude-code': '@antseed/provider-claude-code',
@@ -32,21 +32,17 @@ const PROVIDER_PACKAGE_ALIASES: Record<string, string> = {
   'provider-claude-oauth': '@antseed/provider-claude-oauth',
   '@antseed/provider-claude-oauth': '@antseed/provider-claude-oauth',
   '@antseed/provider-anthropic': '@antseed/provider-anthropic',
-  '@antseed/provider-openrouter': '@antseed/provider-openrouter',
+  '@antseed/provider-openai': '@antseed/provider-openai',
   '@antseed/provider-local-llm': '@antseed/provider-local-llm',
 };
 
 const ROUTER_PACKAGE_ALIASES: Record<string, string> = {
-  'local-proxy': '@antseed/router-local-proxy',
-  'claude-code': '@antseed/router-local-proxy',
-  'local-chat': '@antseed/router-local-chat',
-  'router-local-proxy': '@antseed/router-local-proxy',
-  'router-local-chat': '@antseed/router-local-chat',
-  'antseed-router-claude-code': '@antseed/router-local-proxy',
-  'antseed-router-local-proxy': '@antseed/router-local-proxy',
-  'antseed-router-local-chat': '@antseed/router-local-chat',
-  '@antseed/router-local-proxy': '@antseed/router-local-proxy',
-  '@antseed/router-local-chat': '@antseed/router-local-chat',
+  'local': '@antseed/router-local',
+  'claude-code': '@antseed/router-local',
+  'router-local': '@antseed/router-local',
+  'antseed-router-claude-code': '@antseed/router-local',
+  'antseed-router-local': '@antseed/router-local',
+  '@antseed/router-local': '@antseed/router-local',
 };
 
 const uiState: AnyRecord = {
@@ -381,7 +377,7 @@ function normalizeProviderRuntime(value) {
   const raw = safeString(value, DEFAULT_PROVIDER_RUNTIME).trim().toLowerCase();
   if (!raw) return DEFAULT_PROVIDER_RUNTIME;
   if (raw === '@antseed/provider-anthropic' || raw === 'antseed-provider-anthropic') return 'anthropic';
-  if (raw === '@antseed/provider-openrouter' || raw === 'antseed-provider-openrouter') return 'openrouter';
+  if (raw === '@antseed/provider-openai' || raw === 'antseed-provider-openai') return 'openai';
   if (raw === '@antseed/provider-local-llm' || raw === 'antseed-provider-local-llm') return 'local-llm';
   if (raw === '@antseed/provider-claude-code' || raw === 'antseed-provider-claude-code') return 'claude-code';
   if (raw === '@antseed/provider-claude-oauth') return 'claude-oauth';
@@ -393,14 +389,11 @@ function normalizeRouterRuntime(value) {
   if (!raw) return DEFAULT_ROUTER_RUNTIME;
   if (
     raw === 'claude-code'
-    || raw === '@antseed/router-local-proxy'
+    || raw === '@antseed/router-local'
     || raw === 'antseed-router-claude-code'
-    || raw === 'antseed-router-local-proxy'
+    || raw === 'antseed-router-local'
   ) {
-    return 'local-proxy';
-  }
-  if (raw === '@antseed/router-local-chat' || raw === 'antseed-router-local-chat') {
-    return 'local-chat';
+    return 'local';
   }
   return raw;
 }

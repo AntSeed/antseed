@@ -2,7 +2,7 @@
  * Plugin instance configuration stored in ~/.antseed/config.json.
  */
 export interface PluginInstanceConfig {
-  /** Unique instance ID (e.g., "my-anthropic", "cheap-openrouter") */
+  /** Unique instance ID (e.g., "my-anthropic", "cheap-openai") */
   id: string
   /** npm package name (e.g., "@antseed/provider-anthropic") */
   package: string

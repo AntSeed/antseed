@@ -113,7 +113,7 @@ describe('inferProviderDefaultModelApiProtocols', () => {
   });
 
   it('infers openai-style providers', () => {
-    expect(inferProviderDefaultModelApiProtocols('openrouter')).toEqual(['openai-chat-completions']);
+    expect(inferProviderDefaultModelApiProtocols('openai')).toEqual(['openai-chat-completions']);
   });
 });
 

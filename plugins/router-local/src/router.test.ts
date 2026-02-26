@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { PeerInfo, SerializedHttpRequest } from '@antseed/node';
-import { LocalProxyRouter } from './router.js';
+import { LocalRouter } from './router.js';
 
 function makePeer(overrides?: Partial<PeerInfo>): PeerInfo {
   return {
@@ -36,9 +36,9 @@ function makeRequest(model?: string): SerializedHttpRequest {
   };
 }
 
-describe('LocalProxyRouter', () => {
+describe('LocalRouter', () => {
   it('enforces ordered provider preferences even when lower-ranked provider is cheaper', () => {
-    const router = new LocalProxyRouter({
+    const router = new LocalRouter({
       preferredProviders: ['anthropic', 'openai'],
       maxPricing: {
         defaults: { inputUsdPerMillion: 1_000, outputUsdPerMillion: 1_000 },
@@ -73,7 +73,7 @@ describe('LocalProxyRouter', () => {
   });
 
   it('rejects peers when output price exceeds buyer max even if input is within max', () => {
-    const router = new LocalProxyRouter({
+    const router = new LocalRouter({
       maxPricing: {
         defaults: { inputUsdPerMillion: 50, outputUsdPerMillion: 10 },
       },
@@ -94,7 +94,7 @@ describe('LocalProxyRouter', () => {
   });
 
   it('uses model-specific seller offer pricing when request model is present', () => {
-    const router = new LocalProxyRouter({
+    const router = new LocalRouter({
       maxPricing: {
         defaults: { inputUsdPerMillion: 1_000, outputUsdPerMillion: 1_000 },
       },
@@ -132,7 +132,7 @@ describe('LocalProxyRouter', () => {
   });
 
   it('falls back to provider defaults when request model is absent', () => {
-    const router = new LocalProxyRouter({
+    const router = new LocalRouter({
       maxPricing: {
         defaults: { inputUsdPerMillion: 1_000, outputUsdPerMillion: 1_000 },
       },
@@ -168,7 +168,7 @@ describe('LocalProxyRouter', () => {
 
   it('puts peers on cooldown after failure threshold and re-allows them later', () => {
     let now = 1_000_000;
-    const router = new LocalProxyRouter({
+    const router = new LocalRouter({
       maxFailures: 2,
       failureCooldownMs: 500,
       now: () => now,
@@ -191,7 +191,7 @@ describe('LocalProxyRouter', () => {
   });
 
   it('filters out peers below minimum reputation', () => {
-    const router = new LocalProxyRouter({
+    const router = new LocalRouter({
       minReputation: 70,
     });
 
@@ -211,7 +211,7 @@ describe('LocalProxyRouter', () => {
   });
 
   it('keeps peers eligible when reputation fields are missing', () => {
-    const router = new LocalProxyRouter();
+    const router = new LocalRouter();
     const unrated = makePeer({
       peerId: '1'.repeat(64) as PeerInfo['peerId'],
       reputationScore: undefined,
@@ -224,7 +224,7 @@ describe('LocalProxyRouter', () => {
   });
 
   it('treats on-chain zero reputation with zero sessions as unrated', () => {
-    const router = new LocalProxyRouter();
+    const router = new LocalRouter();
     const newSeller = makePeer({
       peerId: '3'.repeat(64) as PeerInfo['peerId'],
       trustScore: 0,
@@ -239,7 +239,7 @@ describe('LocalProxyRouter', () => {
   });
 
   it('ignores empty provider entries when selecting a peer provider', () => {
-    const router = new LocalProxyRouter();
+    const router = new LocalRouter();
     const malformedProviders = makePeer({
       peerId: '1'.repeat(64) as PeerInfo['peerId'],
       providers: ['', 'anthropic'],
@@ -250,7 +250,7 @@ describe('LocalProxyRouter', () => {
   });
 
   it('returns null when no peers are available', () => {
-    const router = new LocalProxyRouter();
+    const router = new LocalRouter();
     expect(router.selectPeer(makeRequest(), [])).toBeNull();
   });
 });

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { PeerInfo, SerializedHttpRequest } from '@antseed/node';
-import { LocalProxyRouter as ClaudeCodeRouter } from '../../plugins/router-local-proxy/src/router.js';
+import { LocalRouter } from '../../plugins/router-local/src/router.js';
 
 function makePeer(overrides?: Partial<PeerInfo>): PeerInfo {
   return {
@@ -33,10 +33,10 @@ const dummyReq: SerializedHttpRequest = {
   body: new Uint8Array(),
 };
 
-describe('ClaudeCodeRouter peer selection hardening', () => {
+describe('LocalRouter peer selection hardening', () => {
   it('prefers fresher peers when other signals are equal', () => {
     let now = 1_000_000;
-    const router = new ClaudeCodeRouter({
+    const router = new LocalRouter({
       now: () => now,
       maxPeerStalenessMs: 1_000,
     });
@@ -50,7 +50,7 @@ describe('ClaudeCodeRouter peer selection hardening', () => {
 
   it('places unstable peers on cooldown and then re-allows them after cooldown', () => {
     let now = 2_000_000;
-    const router = new ClaudeCodeRouter({
+    const router = new LocalRouter({
       maxFailures: 2,
       failureCooldownMs: 1_000,
       now: () => now,
@@ -71,7 +71,7 @@ describe('ClaudeCodeRouter peer selection hardening', () => {
   });
 
   it('uses deterministic tie-breaking for equal-scored peers', () => {
-    const router = new ClaudeCodeRouter();
+    const router = new LocalRouter();
     const lowIdPeer = makePeer({ peerId: '1'.repeat(64) as any, lastSeen: 1_000_000 });
     const highIdPeer = makePeer({ peerId: 'f'.repeat(64) as any, lastSeen: 1_000_000 });
 
@@ -80,7 +80,7 @@ describe('ClaudeCodeRouter peer selection hardening', () => {
   });
 
   it('falls back to provider defaults for unknown model instead of rejecting peer', () => {
-    const router = new ClaudeCodeRouter({
+    const router = new LocalRouter({
       maxPricing: {
         defaults: {
           inputUsdPerMillion: 20,

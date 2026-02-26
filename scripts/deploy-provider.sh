@@ -5,8 +5,10 @@ set -euo pipefail
 #
 # Examples:
 #   ./scripts/deploy-provider.sh --host 1.2.3.4 \
-#     --provider openrouter \
-#     --api-key sk-or-... \
+#     --provider openai \
+#     --api-key sk-... \
+#     --provider-flavor openrouter \
+#     --base-url https://openrouter.ai/api \
 #     --models moonshotai/kimi-k2.5 \
 #     --upstream-provider Together
 #
@@ -25,6 +27,8 @@ PROVIDER=""
 API_KEY=""
 MODELS=""
 UPSTREAM_PROVIDER=""
+PROVIDER_FLAVOR=""
+BASE_URL=""
 INPUT_PRICE=""
 OUTPUT_PRICE=""
 MAX_CONCURRENCY=""
@@ -37,7 +41,7 @@ Usage: $0 --host <ip> --provider <name> --api-key <key> [options]
 
 Required:
   --host <ip>                  Server IP or hostname
-  --provider <name>            Provider plugin (openrouter, anthropic, local-llm)
+  --provider <name>            Provider plugin (openai, anthropic, local-llm)
   --api-key <key>              API key for the provider
 
 Options:
@@ -45,6 +49,8 @@ Options:
   --user <user>                SSH user (default: ec2-user)
   --service <name>             systemd service name (default: antseed-provider)
   --models <list>              Comma-separated model allow-list
+  --provider-flavor <name>     OpenAI provider flavor (e.g. generic, openrouter)
+  --base-url <url>             OpenAI-compatible upstream base URL
   --upstream-provider <name>   OpenRouter upstream provider (e.g. Together, DeepInfra)
   --input-price <n>            Input price USD per 1M tokens (default: 10)
   --output-price <n>           Output price USD per 1M tokens (default: 10)
@@ -64,6 +70,8 @@ while [[ $# -gt 0 ]]; do
     --provider) PROVIDER="$2"; shift 2 ;;
     --api-key) API_KEY="$2"; shift 2 ;;
     --models) MODELS="$2"; shift 2 ;;
+    --provider-flavor) PROVIDER_FLAVOR="$2"; shift 2 ;;
+    --base-url) BASE_URL="$2"; shift 2 ;;
     --upstream-provider) UPSTREAM_PROVIDER="$2"; shift 2 ;;
     --input-price) INPUT_PRICE="$2"; shift 2 ;;
     --output-price) OUTPUT_PRICE="$2"; shift 2 ;;
@@ -90,7 +98,7 @@ SSH_CMD="ssh -i $SSH_KEY $SSH_OPTS $SSH_USER@$HOST"
 
 # Map provider name to npm package and env var for the API key
 case "$PROVIDER" in
-  openrouter) PLUGIN_PKG="@antseed/provider-openrouter"; API_KEY_ENV="OPENROUTER_API_KEY" ;;
+  openai)     PLUGIN_PKG="@antseed/provider-openai"; API_KEY_ENV="OPENAI_API_KEY" ;;
   anthropic)  PLUGIN_PKG="@antseed/provider-anthropic";  API_KEY_ENV="ANTHROPIC_API_KEY" ;;
   local-llm)  PLUGIN_PKG="@antseed/provider-local-llm";  API_KEY_ENV="" ;;
   "")         PLUGIN_PKG=""; API_KEY_ENV="" ;;
@@ -130,8 +138,14 @@ else
     ENV_LINES="$ENV_LINES\nEnvironment=\"${API_KEY_ENV}=${API_KEY}\""
   [ -n "$MODELS" ] && \
     ENV_LINES="$ENV_LINES\nEnvironment=\"ANTSEED_ALLOWED_MODELS=${MODELS}\""
-  [ -n "$UPSTREAM_PROVIDER" ] && \
-    ENV_LINES="$ENV_LINES\nEnvironment=\"OPENROUTER_PROVIDER=${UPSTREAM_PROVIDER}\""
+  if [ "$PROVIDER" = "openai" ]; then
+    [ -n "$PROVIDER_FLAVOR" ] && \
+      ENV_LINES="$ENV_LINES\nEnvironment=\"OPENAI_PROVIDER_FLAVOR=${PROVIDER_FLAVOR}\""
+    [ -n "$BASE_URL" ] && \
+      ENV_LINES="$ENV_LINES\nEnvironment=\"OPENAI_BASE_URL=${BASE_URL}\""
+    [ -n "$UPSTREAM_PROVIDER" ] && \
+      ENV_LINES="$ENV_LINES\nEnvironment=\"OPENAI_UPSTREAM_PROVIDER=${UPSTREAM_PROVIDER}\""
+  fi
   [ -n "$INPUT_PRICE" ] && \
     ENV_LINES="$ENV_LINES\nEnvironment=\"ANTSEED_INPUT_USD_PER_MILLION=${INPUT_PRICE}\""
   [ -n "$OUTPUT_PRICE" ] && \

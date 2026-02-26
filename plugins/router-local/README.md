@@ -1,17 +1,17 @@
-# @antseed/router-local-proxy
+# @antseed/router-local
 
-Local HTTP proxy router for AI coding tools. Drop-in replacement for `ANTHROPIC_BASE_URL` or `OPENAI_BASE_URL` that routes requests through the Antseed P2P network.
+Local router for AI coding tools. Drop-in replacement for `ANTHROPIC_BASE_URL` or `OPENAI_BASE_URL` that routes requests through the Antseed P2P network.
 
 ## Installation
 
 ```bash
-antseed plugin add @antseed/router-local-proxy
+antseed plugin add @antseed/router-local
 ```
 
 ## Usage
 
 ```bash
-antseed connect --router local-proxy
+antseed connect --router local
 
 # Then configure your tools:
 export ANTHROPIC_BASE_URL=http://localhost:8377

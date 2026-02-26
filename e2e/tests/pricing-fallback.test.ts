@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { PeerInfo, SerializedHttpRequest } from '@antseed/node';
-import { LocalProxyRouter as ClaudeCodeRouter } from '../../plugins/router-local-proxy/src/router.js';
+import { LocalRouter } from '../../plugins/router-local/src/router.js';
 
 function makeRequest(model: string): SerializedHttpRequest {
   return {
@@ -40,7 +40,7 @@ function makePeer(overrides?: Partial<PeerInfo>): PeerInfo {
 
 describe('pricing fallback hierarchy', () => {
   it('uses model -> provider default -> peer default fallback order and enforces input/output max checks', () => {
-    const router = new ClaudeCodeRouter({
+    const router = new LocalRouter({
       preferredProviders: ['anthropic'],
       maxPricing: {
         defaults: {

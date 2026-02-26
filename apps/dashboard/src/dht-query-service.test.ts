@@ -53,20 +53,20 @@ test('discovery providers include buyer preferred and known defaults', () => {
 
   assert.ok(providers.includes('claude-code'));
   assert.ok(providers.includes('anthropic'));
-  assert.ok(providers.includes('openrouter'));
+  assert.ok(providers.includes('openai'));
 });
 
 test('discovery providers normalize package aliases and dedupe', () => {
   const providers = resolveDiscoveryProviders({
     seller: { enabledProviders: ['@antseed/provider-claude-code', 'claude-code'] },
-    buyer: { preferredProviders: ['antseed-provider-openrouter', 'openrouter'] },
+    buyer: { preferredProviders: ['antseed-provider-openai', 'openai'] },
   } as any);
 
   const claudeCodeCount = providers.filter((p) => p === 'claude-code').length;
-  const openrouterCount = providers.filter((p) => p === 'openrouter').length;
+  const openaiCount = providers.filter((p) => p === 'openai').length;
 
   assert.equal(claudeCodeCount, 1);
-  assert.equal(openrouterCount, 1);
+  assert.equal(openaiCount, 1);
 });
 
 test('network peer providers prefer metadata providers over topic inference', () => {
@@ -92,9 +92,9 @@ test('network peer providers prefer metadata providers over topic inference', ()
 test('network peer providers fallback accumulates inferred topics when metadata is unavailable', () => {
   const providers = resolveNetworkPeerProviders(
     null,
-    ['@antseed/provider-openrouter'],
-    'openrouter',
+    ['@antseed/provider-openai'],
+    'openai',
   );
 
-  assert.deepEqual(providers, ['openrouter']);
+  assert.deepEqual(providers, ['openai']);
 });
