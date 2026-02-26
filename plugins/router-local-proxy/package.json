@@ -1,6 +1,6 @@
 {
   "name": "@antseed/router-local-proxy",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Antseed local proxy router plugin — Claude Code, Aider, Continue.dev",
   "type": "module",
   "files": [
