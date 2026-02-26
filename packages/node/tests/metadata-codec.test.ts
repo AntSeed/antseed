@@ -1,11 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { encodeMetadata, decodeMetadata, encodeMetadataForSigning } from '../src/discovery/metadata-codec.js';
-import type { PeerMetadata } from '../src/discovery/peer-metadata.js';
+import { METADATA_VERSION, type PeerMetadata } from '../src/discovery/peer-metadata.js';
 
 function makeMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
   return {
     peerId: 'a'.repeat(64) as any,
-    version: 2,
+    version: METADATA_VERSION,
     providers: [
       {
         provider: 'anthropic',
@@ -122,6 +122,30 @@ describe('encodeMetadata / decodeMetadata', () => {
     expect(decoded.providers[0]!.models).toEqual([]);
   });
 
+  it('should round-trip display name and model categories', () => {
+    const original = makeMetadata({
+      displayName: 'Node A',
+      providers: [
+        {
+          provider: 'anthropic',
+          models: ['claude-3-opus'],
+          defaultPricing: {
+            inputUsdPerMillion: 15,
+            outputUsdPerMillion: 75,
+          },
+          modelCategories: {
+            'claude-3-opus': ['privacy', 'coding'],
+          },
+          maxConcurrency: 10,
+          currentLoad: 3,
+        },
+      ],
+    });
+    const decoded = decodeMetadata(encodeMetadata(original));
+    expect(decoded.displayName).toBe('Node A');
+    expect(decoded.providers[0]!.modelCategories?.['claude-3-opus']).toEqual(['coding', 'privacy']);
+  });
+
   it('should decode offerings and optional trailer fields after v2 provider pricing payload', () => {
     const original = makeMetadata({
       offerings: [
@@ -144,6 +168,32 @@ describe('encodeMetadata / decodeMetadata', () => {
     expect(decoded.onChainReputation).toBe(88);
     expect(decoded.onChainSessionCount).toBe(123);
     expect(decoded.onChainDisputeCount).toBe(2);
+  });
+
+  it('should retain backward-compatible binary layout for metadata version 2', () => {
+    const v2 = makeMetadata({
+      version: 2,
+      displayName: 'legacy',
+      providers: [
+        {
+          provider: 'anthropic',
+          models: ['claude-3-opus'],
+          defaultPricing: {
+            inputUsdPerMillion: 15,
+            outputUsdPerMillion: 75,
+          },
+          modelCategories: {
+            'claude-3-opus': ['coding'],
+          },
+          maxConcurrency: 10,
+          currentLoad: 3,
+        },
+      ],
+    });
+    const decoded = decodeMetadata(encodeMetadata(v2));
+    expect(decoded.version).toBe(2);
+    expect(decoded.displayName).toBeUndefined();
+    expect(decoded.providers[0]!.modelCategories).toBeUndefined();
   });
 });
 

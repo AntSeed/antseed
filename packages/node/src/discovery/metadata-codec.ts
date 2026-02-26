@@ -3,6 +3,8 @@ import type { PeerOffering } from "../types/capability.js";
 import { hexToBytes, bytesToHex } from "../utils/hex.js";
 import { toPeerId } from "../types/peer.js";
 
+const MODEL_CATEGORIES_METADATA_VERSION = 3;
+
 /**
  * Encode metadata into binary format:
  * [version:1][peerId:32][regionLen:1][region:N][timestamp:8 BigUint64][providerCount:1]
@@ -10,8 +12,12 @@ import { toPeerId } from "../types/peer.js";
  *   [providerLen:1][provider:N][modelCount:1][models...]
  *   [defaultInputPrice:4][defaultOutputPrice:4]
  *   [modelPricingCount:1][modelPricingEntries...]
+ *   [modelCategoryCount:1][modelCategoryEntries...] (v3+ only)
  *   [maxConcurrency:2][currentLoad:2]
  * modelPricingEntry: [modelLen:1][model:N][inputPrice:4][outputPrice:4]
+ * modelCategoryEntry(v3+): [modelLen:1][model:N][categoryCount:1][categories...]
+ * category(v3+): [categoryLen:1][category:N]
+ * [displayNameFlag:1][displayNameLen:1][displayName:N] (v3+ only)
  * [signature:64]
  */
 export function encodeMetadata(metadata: PeerMetadata): Uint8Array {
@@ -33,6 +39,7 @@ export function encodeMetadataForSigning(metadata: PeerMetadata): Uint8Array {
 
 function encodeBody(metadata: PeerMetadata): Uint8Array {
   const parts: Uint8Array[] = [];
+  const hasModelCategoryExtensions = metadata.version >= MODEL_CATEGORIES_METADATA_VERSION;
 
   // version: 1 byte
   parts.push(new Uint8Array([metadata.version]));
@@ -99,6 +106,35 @@ function encodeBody(metadata: PeerMetadata): Uint8Array {
       parts.push(new Uint8Array(modelOutputBuf));
     }
 
+    if (hasModelCategoryExtensions) {
+      const modelCategoryEntries = Object.entries(p.modelCategories ?? {})
+        .map(([modelName, categories]) => {
+          const normalizedCategories = Array.from(
+            new Set(
+              categories
+                .map((category) => category.trim().toLowerCase())
+                .filter((category) => category.length > 0),
+            ),
+          ).sort();
+          return [modelName, normalizedCategories] as const;
+        })
+        .filter(([, categories]) => categories.length > 0)
+        .sort(([a], [b]) => a.localeCompare(b));
+
+      parts.push(new Uint8Array([modelCategoryEntries.length]));
+      for (const [modelName, categories] of modelCategoryEntries) {
+        const modelNameBytes = new TextEncoder().encode(modelName);
+        parts.push(new Uint8Array([modelNameBytes.length]));
+        parts.push(modelNameBytes);
+        parts.push(new Uint8Array([categories.length]));
+        for (const category of categories) {
+          const categoryBytes = new TextEncoder().encode(category);
+          parts.push(new Uint8Array([categoryBytes.length]));
+          parts.push(categoryBytes);
+        }
+      }
+    }
+
     // maxConcurrency: 2 bytes (uint16)
     const maxConcBuf = new ArrayBuffer(2);
     new DataView(maxConcBuf).setUint16(0, p.maxConcurrency, false);
@@ -108,6 +144,18 @@ function encodeBody(metadata: PeerMetadata): Uint8Array {
     const loadBuf = new ArrayBuffer(2);
     new DataView(loadBuf).setUint16(0, p.currentLoad, false);
     parts.push(new Uint8Array(loadBuf));
+  }
+
+  if (hasModelCategoryExtensions) {
+    const displayName = metadata.displayName?.trim();
+    if (displayName && displayName.length > 0) {
+      const displayNameBytes = new TextEncoder().encode(displayName);
+      parts.push(new Uint8Array([1]));
+      parts.push(new Uint8Array([displayNameBytes.length]));
+      parts.push(displayNameBytes);
+    } else {
+      parts.push(new Uint8Array([0]));
+    }
   }
 
   // offerings
@@ -204,6 +252,7 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
   // version: 1 byte
   checkBounds(offset, 1, data.length);
   const version = data[offset]!;
+  const hasModelCategoryExtensions = version >= MODEL_CATEGORIES_METADATA_VERSION;
   offset += 1;
 
   // peerId: 32 bytes
@@ -299,6 +348,39 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
       };
     }
 
+    let modelCategories: Record<string, string[]> | undefined;
+    if (hasModelCategoryExtensions) {
+      checkBounds(offset, 1, data.length);
+      const modelCategoryCount = data[offset]!;
+      offset += 1;
+      if (modelCategoryCount > 0) {
+        modelCategories = {};
+        for (let j = 0; j < modelCategoryCount; j++) {
+          checkBounds(offset, 1, data.length);
+          const categorizedModelLen = data[offset]!;
+          offset += 1;
+          checkBounds(offset, categorizedModelLen, data.length);
+          const categorizedModelName = new TextDecoder().decode(data.slice(offset, offset + categorizedModelLen));
+          offset += categorizedModelLen;
+
+          checkBounds(offset, 1, data.length);
+          const categoryCount = data[offset]!;
+          offset += 1;
+          const categories: string[] = [];
+          for (let k = 0; k < categoryCount; k++) {
+            checkBounds(offset, 1, data.length);
+            const categoryLen = data[offset]!;
+            offset += 1;
+            checkBounds(offset, categoryLen, data.length);
+            const category = new TextDecoder().decode(data.slice(offset, offset + categoryLen));
+            offset += categoryLen;
+            categories.push(category);
+          }
+          modelCategories[categorizedModelName] = categories;
+        }
+      }
+    }
+
     // maxConcurrency: 2 bytes uint16
     checkBounds(offset, 2, data.length);
     const maxConcView = new DataView(data.buffer, data.byteOffset + offset, 2);
@@ -319,9 +401,25 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
         outputUsdPerMillion: defaultOutputUsdPerMillion,
       },
       ...(modelPricingCount > 0 ? { modelPricing } : {}),
+      ...(modelCategories && Object.keys(modelCategories).length > 0 ? { modelCategories } : {}),
       maxConcurrency,
       currentLoad,
     });
+  }
+
+  let displayName: string | undefined;
+  if (hasModelCategoryExtensions) {
+    checkBounds(offset, 1, data.length - 64);
+    const displayNameFlag = data[offset]!;
+    offset += 1;
+    if (displayNameFlag === 1) {
+      checkBounds(offset, 1, data.length - 64);
+      const displayNameLen = data[offset]!;
+      offset += 1;
+      checkBounds(offset, displayNameLen, data.length - 64);
+      displayName = new TextDecoder().decode(data.slice(offset, offset + displayNameLen));
+      offset += displayNameLen;
+    }
   }
 
   // offerings (optional — present if there are remaining bytes before the 64-byte signature)
@@ -440,6 +538,7 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
   return {
     peerId: toPeerId(peerId),
     version,
+    ...(displayName ? { displayName } : {}),
     providers,
     ...(offerings && offerings.length > 0 ? { offerings } : {}),
     ...(evmAddress !== undefined ? { evmAddress } : {}),

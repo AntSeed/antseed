@@ -2,12 +2,12 @@ import { describe, it, expect, vi } from 'vitest';
 import { PeerLookup, type LookupConfig } from '../src/discovery/peer-lookup.js';
 import type { DHTNode } from '../src/discovery/dht-node.js';
 import type { MetadataResolver, PeerEndpoint } from '../src/discovery/metadata-resolver.js';
-import type { PeerMetadata } from '../src/discovery/peer-metadata.js';
+import { METADATA_VERSION, type PeerMetadata } from '../src/discovery/peer-metadata.js';
 
 function buildMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
   return {
     peerId: 'a'.repeat(64) as any,
-    version: 2,
+    version: METADATA_VERSION,
     providers: [
       {
         provider: 'anthropic',

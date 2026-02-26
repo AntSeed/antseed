@@ -28,6 +28,9 @@ export interface Provider {
   /** Seller pricing in USD per 1M tokens (defaults + optional per-model overrides). */
   pricing: ProviderPricing;
 
+  /** Optional model category tags used for discovery metadata. */
+  modelCategories?: Record<string, string[]>;
+
   /** Maximum concurrent requests this provider can handle */
   maxConcurrency: number;
 

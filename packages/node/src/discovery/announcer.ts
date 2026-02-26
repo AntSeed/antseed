@@ -17,8 +17,10 @@ export interface AnnouncerConfig {
   providers: Array<{
     provider: string;
     models: string[];
+    modelCategories?: Record<string, string[]>;
     maxConcurrency: number;
   }>;
+  displayName?: string;
   region: string;
   pricing: Map<
     string,
@@ -108,12 +110,17 @@ export class PeerAnnouncer {
       if (pricing.models) {
         providerAnnouncement.modelPricing = pricing.models;
       }
+      const normalizedModelCategories = this._normalizeModelCategories(p.modelCategories, p.models);
+      if (normalizedModelCategories) {
+        providerAnnouncement.modelCategories = normalizedModelCategories;
+      }
       return providerAnnouncement;
     });
 
     const metadata: PeerMetadata = {
       peerId: this.config.identity.peerId,
       version: METADATA_VERSION,
+      ...(this.config.displayName ? { displayName: this.config.displayName } : {}),
       providers,
       region: this.config.region,
       timestamp: Date.now(),
@@ -176,5 +183,35 @@ export class PeerAnnouncer {
     } catch {
       // DHT may not have peers yet — will retry on next cycle
     }
+  }
+
+  private _normalizeModelCategories(
+    modelCategories: Record<string, string[]> | undefined,
+    supportedModels: string[],
+  ): Record<string, string[]> | undefined {
+    if (!modelCategories) {
+      return undefined;
+    }
+
+    const supportedModelSet = new Set(supportedModels);
+    const normalized: Record<string, string[]> = {};
+    for (const [model, categories] of Object.entries(modelCategories)) {
+      if (!supportedModelSet.has(model)) {
+        continue;
+      }
+      const deduped = Array.from(
+        new Set(
+          categories
+            .map((category) => category.trim().toLowerCase())
+            .filter((category) => category.length > 0),
+        ),
+      );
+      if (deduped.length === 0) {
+        continue;
+      }
+      normalized[model] = deduped;
+    }
+
+    return Object.keys(normalized).length > 0 ? normalized : undefined;
   }
 }

@@ -93,6 +93,7 @@ export function buildSellerPluginRuntimeEnv(
   const providerPricing = sellerConfig.pricing.providers?.[providerName]
   const effectiveDefaults = providerPricing?.defaults ?? sellerConfig.pricing.defaults
   const modelPricing = providerPricing?.models
+  const modelCategories = sellerConfig.modelCategories?.[providerName]
   const runtimeEnv: Record<string, string> = {
     ANTSEED_INPUT_USD_PER_MILLION: String(effectiveDefaults.inputUsdPerMillion),
     ANTSEED_OUTPUT_USD_PER_MILLION: String(effectiveDefaults.outputUsdPerMillion),
@@ -101,7 +102,68 @@ export function buildSellerPluginRuntimeEnv(
   if (modelPricing && Object.keys(modelPricing).length > 0) {
     runtimeEnv['ANTSEED_MODEL_PRICING_JSON'] = JSON.stringify(modelPricing)
   }
+  if (modelCategories && Object.keys(modelCategories).length > 0) {
+    runtimeEnv['ANTSEED_MODEL_CATEGORIES_JSON'] = JSON.stringify(modelCategories)
+  }
   return runtimeEnv
+}
+
+function parseRuntimeModelPricingJson(
+  raw: string | undefined,
+): Record<string, { inputUsdPerMillion: number; outputUsdPerMillion: number }> | undefined {
+  if (!raw) {
+    return undefined
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return undefined
+    }
+    const out: Record<string, { inputUsdPerMillion: number; outputUsdPerMillion: number }> = {}
+    for (const [model, pricing] of Object.entries(parsed as Record<string, unknown>)) {
+      if (!pricing || typeof pricing !== 'object' || Array.isArray(pricing)) continue
+      const input = Number((pricing as Record<string, unknown>)['inputUsdPerMillion'])
+      const output = Number((pricing as Record<string, unknown>)['outputUsdPerMillion'])
+      if (Number.isFinite(input) && Number.isFinite(output)) {
+        out[model] = { inputUsdPerMillion: input, outputUsdPerMillion: output }
+      }
+    }
+    return Object.keys(out).length > 0 ? out : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function parseRuntimeModelCategoriesJson(raw: string | undefined): Record<string, string[]> | undefined {
+  if (!raw) {
+    return undefined
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return undefined
+    }
+    const out: Record<string, string[]> = {}
+    for (const [model, categoriesRaw] of Object.entries(parsed as Record<string, unknown>)) {
+      if (!Array.isArray(categoriesRaw)) continue
+      const categories = Array.from(
+        new Set(
+          categoriesRaw
+            .filter((entry): entry is string => typeof entry === 'string')
+            .map((entry) => entry.trim().toLowerCase())
+            .filter((entry) => entry.length > 0)
+        )
+      )
+      if (categories.length > 0) {
+        out[model] = categories
+      }
+    }
+    return Object.keys(out).length > 0 ? out : undefined
+  } catch {
+    return undefined
+  }
 }
 
 export function registerSeedCommand(program: Command): void {
@@ -226,27 +288,10 @@ export function registerSeedCommand(program: Command): void {
       const runtimeProviderPricing = buildSellerPluginRuntimeEnv(effectiveSellerConfig, providerName)
       const runtimeInputUsdPerMillion = Number.parseFloat(runtimeProviderPricing['ANTSEED_INPUT_USD_PER_MILLION'] ?? '')
       const runtimeOutputUsdPerMillion = Number.parseFloat(runtimeProviderPricing['ANTSEED_OUTPUT_USD_PER_MILLION'] ?? '')
-      let runtimeModelPricing: Record<string, { inputUsdPerMillion: number; outputUsdPerMillion: number }> | undefined
-      if (runtimeProviderPricing['ANTSEED_MODEL_PRICING_JSON']) {
-        try {
-          const parsed = JSON.parse(runtimeProviderPricing['ANTSEED_MODEL_PRICING_JSON']) as unknown
-          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-            const out: Record<string, { inputUsdPerMillion: number; outputUsdPerMillion: number }> = {}
-            for (const [model, pricing] of Object.entries(parsed as Record<string, unknown>)) {
-              if (!pricing || typeof pricing !== 'object' || Array.isArray(pricing)) continue
-              const input = Number((pricing as Record<string, unknown>)['inputUsdPerMillion'])
-              const output = Number((pricing as Record<string, unknown>)['outputUsdPerMillion'])
-              if (Number.isFinite(input) && Number.isFinite(output)) {
-                out[model] = { inputUsdPerMillion: input, outputUsdPerMillion: output }
-              }
-            }
-            if (Object.keys(out).length > 0) {
-              runtimeModelPricing = out
-            }
-          }
-        } catch {
-          // Ignore malformed model pricing; fallback defaults are still emitted.
-        }
+      const runtimeModelPricing = parseRuntimeModelPricingJson(runtimeProviderPricing['ANTSEED_MODEL_PRICING_JSON'])
+      const runtimeModelCategories = parseRuntimeModelCategoriesJson(runtimeProviderPricing['ANTSEED_MODEL_CATEGORIES_JSON'])
+      if (runtimeModelCategories) {
+        provider.modelCategories = runtimeModelCategories
       }
       console.log(chalk.bold('Effective seller settings:'))
       console.log(chalk.dim(`  provider: ${providerName}`))
@@ -268,6 +313,7 @@ export function registerSeedCommand(program: Command): void {
 
       const node = new AntseedNode({
         role: 'seller',
+        displayName: config.identity.displayName,
         bootstrapNodes,
         dataDir: globalOpts.dataDir,
         payments: {
@@ -387,6 +433,15 @@ export function registerSeedCommand(program: Command): void {
               ...(runtimeModelPricing ? { models: runtimeModelPricing } : {}),
             },
           },
+          ...(runtimeModelCategories
+            ? {
+                providerModelCategories: {
+                  [providerName]: {
+                    models: runtimeModelCategories,
+                  },
+                },
+              }
+            : {}),
           startedAt,
           // Fields the dashboard reads
           peerCount: 0,

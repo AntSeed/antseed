@@ -93,3 +93,44 @@ test('loadConfig throws explicit validation error for incomplete model pricing',
     }
   );
 });
+
+test('loadConfig merges seller model categories per provider/model', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      seller: {
+        modelCategories: {
+          anthropic: {
+            'claude-sonnet-4-5-20250929': ['coding', 'legal'],
+          },
+        },
+      },
+    }),
+    async (configPath) => {
+      const config = await loadConfig(configPath);
+      assert.deepEqual(
+        config.seller.modelCategories?.anthropic?.['claude-sonnet-4-5-20250929'],
+        ['coding', 'legal']
+      );
+    }
+  );
+});
+
+test('loadConfig rejects invalid seller model category values', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      seller: {
+        modelCategories: {
+          anthropic: {
+            'claude-sonnet-4-5-20250929': ['Bad Value'],
+          },
+        },
+      },
+    }),
+    async (configPath) => {
+      await assert.rejects(
+        async () => loadConfig(configPath),
+        /seller\.modelCategories\.anthropic\.claude-sonnet-4-5-20250929/
+      );
+    }
+  );
+});

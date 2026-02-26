@@ -6,13 +6,15 @@ import {
   MAX_MODELS_PER_PROVIDER,
   MAX_MODEL_NAME_LENGTH,
   MAX_REGION_LENGTH,
+  MAX_DISPLAY_NAME_LENGTH,
+  MAX_MODEL_CATEGORY_LENGTH,
 } from '../src/discovery/metadata-validator.js';
-import type { PeerMetadata } from '../src/discovery/peer-metadata.js';
+import { METADATA_VERSION, type PeerMetadata } from '../src/discovery/peer-metadata.js';
 
 function validMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
   return {
     peerId: 'a'.repeat(64) as any,
-    version: 2,
+    version: METADATA_VERSION,
     providers: [
       {
         provider: 'anthropic',
@@ -247,6 +249,58 @@ describe('validateMetadata', () => {
   it('should reject signature with uppercase hex', () => {
     const errors = validateMetadata(validMetadata({ signature: 'B'.repeat(128) }));
     expect(errors.some((e) => e.field === 'signature')).toBe(true);
+  });
+
+  it('should reject empty displayName when present', () => {
+    const errors = validateMetadata(validMetadata({ displayName: '   ' }));
+    expect(errors.some((e) => e.field === 'displayName')).toBe(true);
+  });
+
+  it('should reject too long displayName', () => {
+    const errors = validateMetadata(validMetadata({ displayName: 'x'.repeat(MAX_DISPLAY_NAME_LENGTH + 1) }));
+    expect(errors.some((e) => e.field === 'displayName')).toBe(true);
+  });
+
+  it('should reject categories for a model not listed by provider', () => {
+    const errors = validateMetadata(validMetadata({
+      providers: [
+        {
+          provider: 'test',
+          models: ['m1'],
+          defaultPricing: {
+            inputUsdPerMillion: 1,
+            outputUsdPerMillion: 1,
+          },
+          modelCategories: {
+            m2: ['privacy'],
+          },
+          maxConcurrency: 1,
+          currentLoad: 0,
+        },
+      ],
+    }));
+    expect(errors.some((e) => e.field.includes('modelCategories.m2'))).toBe(true);
+  });
+
+  it('should reject invalid model category value', () => {
+    const errors = validateMetadata(validMetadata({
+      providers: [
+        {
+          provider: 'test',
+          models: ['m1'],
+          defaultPricing: {
+            inputUsdPerMillion: 1,
+            outputUsdPerMillion: 1,
+          },
+          modelCategories: {
+            m1: [`${'x'.repeat(MAX_MODEL_CATEGORY_LENGTH)}!`],
+          },
+          maxConcurrency: 1,
+          currentLoad: 0,
+        },
+      ],
+    }));
+    expect(errors.some((e) => e.field.includes('modelCategories.m1'))).toBe(true);
   });
 });
 

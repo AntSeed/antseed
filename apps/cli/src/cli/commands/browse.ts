@@ -68,6 +68,7 @@ export function registerBrowseCommand(program: Command): void {
         // Display peers in a table
         const table = new Table({
           head: [
+            chalk.bold('Name'),
             chalk.bold('Peer ID'),
             chalk.bold('Providers'),
             chalk.bold('Input $/1M'),
@@ -75,7 +76,7 @@ export function registerBrowseCommand(program: Command): void {
             chalk.bold('Reputation'),
             chalk.bold('Load'),
           ],
-          colWidths: [16, 18, 14, 14, 12, 10],
+          colWidths: [18, 16, 18, 14, 14, 12, 10],
         });
 
         for (const peer of peers) {
@@ -88,6 +89,7 @@ export function registerBrowseCommand(program: Command): void {
             : chalk.dim('n/a');
 
           table.push([
+            peer.displayName ?? chalk.dim('n/a'),
             chalk.dim(peer.peerId.slice(0, 12) + '...'),
             peer.providers.join(', '),
             peer.defaultInputUsdPerMillion !== undefined

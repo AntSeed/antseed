@@ -51,6 +51,13 @@ export interface HierarchicalPricingConfig {
 }
 
 /**
+ * Optional provider/model category tags for metadata discovery.
+ */
+export interface SellerModelCategoryConfig {
+  [provider: string]: Record<string, string[]>;
+}
+
+/**
  * Seller-specific configuration within the Antseed config.
  */
 export interface SellerCLIConfig {
@@ -62,6 +69,8 @@ export interface SellerCLIConfig {
   enabledProviders: string[];
   /** Seller offer pricing rules in USD per 1M tokens */
   pricing: HierarchicalPricingConfig;
+  /** Optional provider/model category tags announced in peer metadata */
+  modelCategories?: SellerModelCategoryConfig;
 }
 
 /**

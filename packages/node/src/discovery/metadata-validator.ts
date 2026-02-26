@@ -7,6 +7,10 @@ export const MAX_PROVIDERS = 10;
 export const MAX_MODELS_PER_PROVIDER = 20;
 export const MAX_MODEL_NAME_LENGTH = 64;
 export const MAX_REGION_LENGTH = 32;
+export const MAX_DISPLAY_NAME_LENGTH = 64;
+export const MAX_MODEL_CATEGORIES_PER_MODEL = 8;
+export const MAX_MODEL_CATEGORY_LENGTH = 32;
+const MODEL_CATEGORY_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 
 export interface ValidationError {
   field: string;
@@ -43,6 +47,20 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
       field: "region",
       message: `Region length ${metadata.region.length} exceeds max ${MAX_REGION_LENGTH}`,
     });
+  }
+
+  if (metadata.displayName !== undefined) {
+    if (metadata.displayName.trim().length === 0) {
+      errors.push({
+        field: "displayName",
+        message: "Display name must not be empty when provided",
+      });
+    } else if (metadata.displayName.length > MAX_DISPLAY_NAME_LENGTH) {
+      errors.push({
+        field: "displayName",
+        message: `Display name length ${metadata.displayName.length} exceeds max ${MAX_DISPLAY_NAME_LENGTH}`,
+      });
+    }
   }
 
   // timestamp
@@ -117,6 +135,61 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
             field: `providers[${i}].modelPricing.${modelName}.outputUsdPerMillion`,
             message: "Model output price must be a non-negative finite number",
           });
+        }
+      }
+    }
+
+    if (p.modelCategories !== undefined) {
+      for (const [modelName, categories] of Object.entries(p.modelCategories)) {
+        if (!p.models.includes(modelName)) {
+          errors.push({
+            field: `providers[${i}].modelCategories.${modelName}`,
+            message: "Model categories must reference a model listed in providers[].models",
+          });
+        }
+        if (!Array.isArray(categories) || categories.length === 0) {
+          errors.push({
+            field: `providers[${i}].modelCategories.${modelName}`,
+            message: "Model categories must be a non-empty string array",
+          });
+          continue;
+        }
+        if (categories.length > MAX_MODEL_CATEGORIES_PER_MODEL) {
+          errors.push({
+            field: `providers[${i}].modelCategories.${modelName}`,
+            message: `Model category count ${categories.length} exceeds max ${MAX_MODEL_CATEGORIES_PER_MODEL}`,
+          });
+        }
+        const deduped = new Set<string>();
+        for (let j = 0; j < categories.length; j++) {
+          const category = categories[j];
+          if (typeof category !== "string" || category.trim().length === 0) {
+            errors.push({
+              field: `providers[${i}].modelCategories.${modelName}[${j}]`,
+              message: "Model category must be a non-empty string",
+            });
+            continue;
+          }
+          const normalized = category.trim().toLowerCase();
+          if (normalized.length > MAX_MODEL_CATEGORY_LENGTH) {
+            errors.push({
+              field: `providers[${i}].modelCategories.${modelName}[${j}]`,
+              message: `Model category length ${normalized.length} exceeds max ${MAX_MODEL_CATEGORY_LENGTH}`,
+            });
+          }
+          if (!MODEL_CATEGORY_PATTERN.test(normalized)) {
+            errors.push({
+              field: `providers[${i}].modelCategories.${modelName}[${j}]`,
+              message: "Model category must use lowercase letters, digits, or hyphen",
+            });
+          }
+          if (deduped.has(normalized)) {
+            errors.push({
+              field: `providers[${i}].modelCategories.${modelName}[${j}]`,
+              message: "Model category values must be unique per model",
+            });
+          }
+          deduped.add(normalized);
         }
       }
     }

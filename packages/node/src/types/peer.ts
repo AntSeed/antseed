@@ -25,6 +25,10 @@ export interface ProviderPricingMatrixEntry {
   models?: Record<string, TokenPricingUsdPerMillion>;
 }
 
+export interface ProviderModelCategoryMatrixEntry {
+  models: Record<string, string[]>;
+}
+
 /** Information about a known peer. */
 export interface PeerInfo {
   /** Unique peer identifier (Ed25519 public key hex). */
@@ -41,6 +45,8 @@ export interface PeerInfo {
   reputationScore?: number;
   /** Provider/model-aware pricing map announced by seller. */
   providerPricing?: Record<string, ProviderPricingMatrixEntry>;
+  /** Provider/model category tags announced by seller. */
+  providerModelCategories?: Record<string, ProviderModelCategoryMatrixEntry>;
   /** Deterministic fallback default input price (USD per 1M tokens). */
   defaultInputUsdPerMillion?: number;
   /** Deterministic fallback default output price (USD per 1M tokens). */

@@ -106,6 +106,7 @@ export interface NodePaymentsConfig {
 
 export interface NodeConfig {
   role: 'seller' | 'buyer';
+  displayName?: string;
   dataDir?: string;           // Default: ~/.antseed
   dhtPort?: number;           // Default: 6881 for seller, 0 for buyer
   signalingPort?: number;     // Default: 6882 for seller
@@ -734,8 +735,10 @@ export class AntseedNode extends EventEmitter {
         providers: this._providers.map((p) => ({
           provider: p.name,
           models: p.models,
+          ...(p.modelCategories ? { modelCategories: { ...p.modelCategories } } : {}),
           maxConcurrency: p.maxConcurrency,
         })),
+        ...(this._config.displayName ? { displayName: this._config.displayName } : {}),
         region: "unknown",
         pricing: new Map(
           this._providers.map((p) => [
@@ -1865,26 +1868,39 @@ export class AntseedNode extends EventEmitter {
   private _lookupResultToPeerInfo(result: LookupResult): PeerInfo {
     const providers = result.metadata.providers.map((p) => p.provider);
     const firstProvider = result.metadata.providers[0];
-    const providerPricingEntries = Object.fromEntries(
-      result.metadata.providers.map((p) => [
-        p.provider,
-        {
-          defaults: {
-            inputUsdPerMillion: p.defaultPricing.inputUsdPerMillion,
-            outputUsdPerMillion: p.defaultPricing.outputUsdPerMillion,
-          },
-          ...(p.modelPricing ? { models: { ...p.modelPricing } } : {}),
+    const providerPricingEntries: NonNullable<PeerInfo["providerPricing"]> = {};
+    const providerModelCategoryEntries: NonNullable<PeerInfo["providerModelCategories"]> = {};
+
+    for (const providerAnnouncement of result.metadata.providers) {
+      providerPricingEntries[providerAnnouncement.provider] = {
+        defaults: {
+          inputUsdPerMillion: providerAnnouncement.defaultPricing.inputUsdPerMillion,
+          outputUsdPerMillion: providerAnnouncement.defaultPricing.outputUsdPerMillion,
         },
-      ]),
-    );
+        ...(providerAnnouncement.modelPricing ? { models: { ...providerAnnouncement.modelPricing } } : {}),
+      };
+
+      if (providerAnnouncement.modelCategories && Object.keys(providerAnnouncement.modelCategories).length > 0) {
+        providerModelCategoryEntries[providerAnnouncement.provider] = {
+          models: Object.fromEntries(
+            Object.entries(providerAnnouncement.modelCategories)
+              .map(([model, categories]) => [model, [...categories]]),
+          ),
+        };
+      }
+    }
+
     const hasProviderPricing = Object.keys(providerPricingEntries).length > 0;
+    const hasProviderModelCategories = Object.keys(providerModelCategoryEntries).length > 0;
 
     return {
       peerId: result.metadata.peerId,
+      displayName: result.metadata.displayName,
       lastSeen: result.metadata.timestamp,
       providers,
       publicAddress: `${result.host}:${result.port}`,
       ...(hasProviderPricing ? { providerPricing: providerPricingEntries } : {}),
+      ...(hasProviderModelCategories ? { providerModelCategories: providerModelCategoryEntries } : {}),
       defaultInputUsdPerMillion: firstProvider?.defaultPricing.inputUsdPerMillion,
       defaultOutputUsdPerMillion: firstProvider?.defaultPricing.outputUsdPerMillion,
       maxConcurrency: firstProvider?.maxConcurrency,
