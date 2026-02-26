@@ -1,0 +1,906 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AntSeed — Brand Guidelines</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Space+Grotesk:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --dark: #0a0e14;
+    --dark-surface: #0f1319;
+    --dark-card: #141a22;
+    --mint: #3dffa2;
+    --mint-dim: rgba(61, 255, 162, 0.08);
+    --mint-border: rgba(61, 255, 162, 0.15);
+    --mint-glow: rgba(61, 255, 162, 0.04);
+    --amber: #ffb13d;
+    --cyan: #3dcfff;
+    --red: #ff3d5a;
+    --white: #e6edf3;
+    --grey: #8b949e;
+    --grey-dim: #484f58;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--dark);
+    color: var(--white);
+    font-family: 'Space Grotesk', sans-serif;
+    line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ——— Layout ——— */
+  .container { max-width: 1100px; margin: 0 auto; padding: 0 40px; }
+
+  section {
+    padding: 100px 0;
+    border-bottom: 1px solid var(--mint-border);
+    position: relative;
+  }
+  section:last-child { border-bottom: none; }
+
+  /* ——— Typography ——— */
+  h1 {
+    font-size: 56px;
+    font-weight: 800;
+    letter-spacing: -1px;
+    line-height: 1.1;
+    margin-bottom: 16px;
+  }
+  h1 span { color: var(--mint); }
+
+  h2 {
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 5px;
+    text-transform: uppercase;
+    color: var(--mint);
+    margin-bottom: 48px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  h3 {
+    font-size: 24px;
+    font-weight: 700;
+    margin-bottom: 12px;
+    color: var(--white);
+  }
+
+  p {
+    color: var(--grey);
+    font-size: 16px;
+    line-height: 1.8;
+    max-width: 700px;
+  }
+
+  .mono {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    letter-spacing: 0.5px;
+  }
+
+  /* ——— Hero ——— */
+  .hero {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .hero::before {
+    content: '';
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 800px; height: 800px;
+    background: radial-gradient(circle, var(--mint-glow) 0%, transparent 60%);
+    pointer-events: none;
+  }
+
+  .hero-tagline {
+    font-size: 18px;
+    color: var(--grey);
+    font-weight: 300;
+    margin-bottom: 40px;
+  }
+
+  .hero-meta {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--grey-dim);
+    letter-spacing: 3px;
+    text-transform: uppercase;
+  }
+
+  /* ——— Grid helpers ——— */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 32px; }
+  .grid-4 { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 24px; }
+
+  /* ——— Color swatches ——— */
+  .swatch {
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid var(--mint-border);
+  }
+  .swatch-color {
+    height: 140px;
+    display: flex;
+    align-items: flex-end;
+    padding: 16px;
+  }
+  .swatch-info {
+    padding: 16px;
+    background: var(--dark-card);
+  }
+  .swatch-name {
+    font-weight: 700;
+    font-size: 15px;
+    margin-bottom: 6px;
+  }
+  .swatch-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--grey);
+    line-height: 1.8;
+  }
+
+  /* ——— Cards ——— */
+  .card {
+    background: var(--dark-card);
+    border: 1px solid var(--mint-border);
+    border-radius: 8px;
+    padding: 32px;
+  }
+  .card h3 { font-size: 18px; margin-bottom: 8px; }
+  .card p { font-size: 14px; }
+
+  /* ——— Logo display ——— */
+  .logo-display {
+    background: var(--dark-surface);
+    border: 1px solid var(--mint-border);
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 60px;
+    position: relative;
+  }
+
+  .logo-display.dark-bg { background: var(--dark); }
+  .logo-display.light-bg { background: #f0f2f5; }
+
+  .logo-display svg { filter: drop-shadow(0 0 40px rgba(61, 255, 162, 0.08)); }
+
+  .logo-label {
+    position: absolute;
+    bottom: 12px;
+    right: 16px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 2px;
+    color: var(--grey-dim);
+    text-transform: uppercase;
+  }
+
+  /* ——— Ant SVG Mark ——— */
+  .ant-mark-large { display: flex; justify-content: center; margin-bottom: 40px; }
+
+  /* ——— Wordmark display ——— */
+  .wordmark {
+    font-size: 48px;
+    font-weight: 800;
+    letter-spacing: 3px;
+    text-align: center;
+  }
+  .wordmark .ant { color: var(--white); }
+  .wordmark .seed { color: var(--mint); }
+
+  /* ——— Typography specimens ——— */
+  .type-specimen {
+    background: var(--dark-card);
+    border: 1px solid var(--mint-border);
+    border-radius: 8px;
+    padding: 40px;
+    margin-bottom: 24px;
+  }
+  .type-name {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--mint);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-bottom: 16px;
+  }
+  .type-sample-large {
+    font-size: 42px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    margin-bottom: 12px;
+  }
+  .type-sample-body {
+    font-size: 16px;
+    color: var(--grey);
+    line-height: 1.8;
+  }
+  .type-sample-mono {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    color: var(--grey);
+    line-height: 2;
+  }
+
+  /* ——— Do / Don't ——— */
+  .do-dont { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; margin-top: 40px; }
+  .do-box, .dont-box {
+    border-radius: 8px;
+    padding: 32px;
+    border: 1px solid;
+  }
+  .do-box {
+    border-color: var(--mint);
+    background: rgba(61, 255, 162, 0.03);
+  }
+  .dont-box {
+    border-color: var(--red);
+    background: rgba(255, 61, 90, 0.03);
+  }
+  .do-box .label { color: var(--mint); }
+  .dont-box .label { color: var(--red); }
+  .label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-bottom: 16px;
+    font-weight: 700;
+  }
+  .do-dont li {
+    font-size: 14px;
+    color: var(--grey);
+    margin-bottom: 8px;
+    list-style: none;
+    padding-left: 20px;
+    position: relative;
+  }
+  .do-box li::before { content: '✓'; position: absolute; left: 0; color: var(--mint); }
+  .dont-box li::before { content: '✗'; position: absolute; left: 0; color: var(--red); }
+
+  /* ——— Origin story ——— */
+  .origin-quote {
+    font-size: 28px;
+    font-weight: 300;
+    line-height: 1.6;
+    color: var(--white);
+    border-left: 3px solid var(--mint);
+    padding-left: 32px;
+    margin: 40px 0;
+    max-width: 800px;
+  }
+  .origin-quote em { color: var(--mint); font-style: normal; }
+
+  /* ——— Voice & tone ——— */
+  .tone-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin-top: 32px; }
+  .tone-card {
+    background: var(--dark-card);
+    border: 1px solid var(--mint-border);
+    border-radius: 8px;
+    padding: 28px;
+  }
+  .tone-card h4 {
+    font-size: 16px;
+    margin-bottom: 8px;
+    color: var(--mint);
+  }
+  .tone-card p { font-size: 13px; color: var(--grey); }
+
+  /* ——— Spacing / clearspace ——— */
+  .clearspace-demo {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 60px;
+    background: var(--dark-surface);
+    border: 1px solid var(--mint-border);
+    border-radius: 12px;
+    position: relative;
+  }
+  .clearspace-demo .guide {
+    position: absolute;
+    border: 1px dashed rgba(61, 255, 162, 0.2);
+  }
+
+  /* ——— Section number ——— */
+  .section-num {
+    position: absolute;
+    top: 100px;
+    right: 40px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 80px;
+    font-weight: 800;
+    color: rgba(61, 255, 162, 0.04);
+    line-height: 1;
+    pointer-events: none;
+  }
+
+  /* ——— Code blocks ——— */
+  code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    background: var(--dark-surface);
+    padding: 2px 8px;
+    border-radius: 4px;
+    color: var(--mint);
+  }
+
+  .code-block {
+    background: var(--dark-surface);
+    border: 1px solid var(--mint-border);
+    border-radius: 8px;
+    padding: 24px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    color: var(--grey);
+    line-height: 2;
+    overflow-x: auto;
+    margin: 24px 0;
+  }
+
+  /* ——— Divider ——— */
+  .divider {
+    width: 60px;
+    height: 2px;
+    background: var(--mint);
+    opacity: 0.3;
+    margin: 32px 0;
+  }
+
+  /* ——— Table of contents ——— */
+  .toc {
+    display: flex;
+    gap: 32px;
+    flex-wrap: wrap;
+    margin-top: 32px;
+  }
+  .toc a {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--grey);
+    text-decoration: none;
+    letter-spacing: 1px;
+    padding: 8px 16px;
+    border: 1px solid var(--mint-border);
+    border-radius: 4px;
+    transition: all 0.2s;
+  }
+  .toc a:hover {
+    color: var(--mint);
+    border-color: var(--mint);
+    background: var(--mint-dim);
+  }
+
+  /* ——— Responsive ——— */
+  @media (max-width: 768px) {
+    .container { padding: 0 24px; }
+    h1 { font-size: 36px; }
+    .grid-2, .grid-3, .grid-4, .do-dont, .tone-grid { grid-template-columns: 1fr; }
+    section { padding: 60px 0; }
+    .section-num { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ════════════════════ HERO ════════════════════ -->
+<section class="hero">
+  <div class="container">
+    <div class="hero-meta">Brand Guidelines — v1.0 · February 2026</div>
+    <div style="height: 32px"></div>
+    <h1>ANT<span>SEED</span></h1>
+    <p class="hero-tagline">A Peer-to-Peer AI Services Network</p>
+    <div class="divider"></div>
+    <p>This document defines the visual identity, voice, and usage guidelines for AntSeed. Follow these standards to ensure consistent brand expression across all touchpoints.</p>
+
+    <div class="toc">
+      <a href="#origin">01 Origin</a>
+      <a href="#logo">02 Logo</a>
+      <a href="#color">03 Color</a>
+      <a href="#typography">04 Typography</a>
+      <a href="#voice">05 Voice</a>
+      <a href="#usage">06 Usage</a>
+      <a href="#assets">07 Assets</a>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════ 01 ORIGIN ════════════════════ -->
+<section id="origin">
+  <div class="container">
+    <span class="section-num">01</span>
+    <h2>01 · Origin Story</h2>
+    <h3>Myrmecochory</h3>
+    <p style="margin-bottom: 24px;">The brand draws from a process in nature called <strong style="color: var(--white)">myrmecochory</strong> — seed dispersal by ants. Plants produce seeds with nutrient-rich coatings called elaiosomes. Ants carry these seeds to their nests, eat the coating, and discard the seed in fertile ground. The seed grows. Everyone profits. No one controls.</p>
+
+    <div class="origin-quote">
+      In nature, ants don't own the seeds they carry. They don't control where the plant grows. They simply <em>move value to where it's needed</em> — and the whole ecosystem thrives.
+    </div>
+
+    <p>AntSeed works the same way. Providers seed AI services onto an open network. Consumers discover and consume them. The protocol routes value. No company sits in the middle extracting rent.</p>
+
+    <div class="divider"></div>
+
+    <div class="grid-3" style="margin-top: 40px;">
+      <div class="card">
+        <h3>The Seed</h3>
+        <p>An AI service — inference, a skilled agent, a workflow. Anything a provider offers to the network.</p>
+      </div>
+      <div class="card">
+        <h3>The Ant</h3>
+        <p>The protocol. It discovers, routes, and settles. It carries value without owning it.</p>
+      </div>
+      <div class="card">
+        <h3>The Colony</h3>
+        <p>The network of peers. No queen. No hierarchy. Collective intelligence through individual action.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════ 02 LOGO ════════════════════ -->
+<section id="logo">
+  <div class="container">
+    <span class="section-num">02</span>
+    <h2>02 · Logo System</h2>
+    <p style="margin-bottom: 48px;">The AntSeed logo consists of two elements: the <strong style="color: var(--white)">Ant Mark</strong> (a top-down stylized ant silhouette) and the <strong style="color: var(--white)">Wordmark</strong>. They can be used together or independently.</p>
+
+    <!-- Primary lockup -->
+    <h3>Primary Lockup</h3>
+    <div class="logo-display dark-bg" style="flex-direction: column; gap: 24px; margin-bottom: 32px;">
+      <svg width="80" height="96" viewBox="0 0 80 80" fill="none">
+        <ellipse cx="40" cy="22" rx="5" ry="5.5" fill="#3dffa2" opacity="0.9"/>
+        <ellipse cx="40" cy="36" rx="7" ry="8" fill="#3dffa2"/>
+        <ellipse cx="40" cy="55" rx="9" ry="12" fill="#3dffa2" opacity="0.9"/>
+        <line x1="37" y1="17" x2="28" y2="6" stroke="#3dffa2" stroke-width="1.5" stroke-linecap="round" opacity="0.7"/>
+        <line x1="43" y1="17" x2="52" y2="6" stroke="#3dffa2" stroke-width="1.5" stroke-linecap="round" opacity="0.7"/>
+        <circle cx="28" cy="6" r="2.5" fill="#3dffa2" opacity="0.6"/>
+        <circle cx="52" cy="6" r="2.5" fill="#3dffa2" opacity="0.6"/>
+        <line x1="34" y1="30" x2="18" y2="22" stroke="#3dffa2" stroke-width="1.3" stroke-linecap="round" opacity="0.5"/>
+        <line x1="46" y1="30" x2="62" y2="22" stroke="#3dffa2" stroke-width="1.3" stroke-linecap="round" opacity="0.5"/>
+        <circle cx="18" cy="22" r="2.5" fill="#3dffa2" opacity="0.5"/>
+        <circle cx="62" cy="22" r="2.5" fill="#3dffa2" opacity="0.5"/>
+        <line x1="33" y1="38" x2="14" y2="40" stroke="#3dffa2" stroke-width="1.3" stroke-linecap="round" opacity="0.5"/>
+        <line x1="47" y1="38" x2="66" y2="40" stroke="#3dffa2" stroke-width="1.3" stroke-linecap="round" opacity="0.5"/>
+        <circle cx="14" cy="40" r="2.5" fill="#3dffa2" opacity="0.5"/>
+        <circle cx="66" cy="40" r="2.5" fill="#3dffa2" opacity="0.5"/>
+        <line x1="34" y1="52" x2="16" y2="60" stroke="#3dffa2" stroke-width="1.3" stroke-linecap="round" opacity="0.5"/>
+        <line x1="46" y1="52" x2="64" y2="60" stroke="#3dffa2" stroke-width="1.3" stroke-linecap="round" opacity="0.5"/>
+        <circle cx="16" cy="60" r="2.5" fill="#3dffa2" opacity="0.5"/>
+        <circle cx="64" cy="60" r="2.5" fill="#3dffa2" opacity="0.5"/>
+        <!-- Faint mesh connecting leg tips -->
+        <line x1="18" y1="22" x2="14" y2="40" stroke="#3dffa2" stroke-width="0.7" opacity="0.15"/>
+        <line x1="62" y1="22" x2="66" y2="40" stroke="#3dffa2" stroke-width="0.7" opacity="0.15"/>
+        <line x1="14" y1="40" x2="16" y2="60" stroke="#3dffa2" stroke-width="0.7" opacity="0.15"/>
+        <line x1="66" y1="40" x2="64" y2="60" stroke="#3dffa2" stroke-width="0.7" opacity="0.15"/>
+      </svg>
+      <div class="wordmark"><span class="ant">ANT</span><span class="seed">SEED</span></div>
+      <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--grey); letter-spacing: 3px; text-transform: uppercase;">A Peer-to-Peer AI Services Network</div>
+      <div class="logo-label">Primary lockup · dark background</div>
+    </div>
+
+    <!-- Ant mark anatomy -->
+    <h3 style="margin-top: 48px;">Ant Mark Anatomy</h3>
+    <p style="margin-bottom: 24px;">Top-down view. Three ellipses (head, thorax, abdomen) form a seed-like body. Six legs extend to dots representing network nodes. Faint mesh lines between nodes suggest connectivity. Antennae with bulb tips represent discovery/sensing.</p>
+
+    <div class="grid-2" style="margin-top: 32px;">
+      <div class="logo-display dark-bg" style="min-height: 260px;">
+        <svg width="120" height="130" viewBox="0 0 80 80" fill="none">
+          <ellipse cx="40" cy="22" rx="5" ry="5.5" fill="#3dffa2" opacity="0.9"/>
+          <ellipse cx="40" cy="36" rx="7" ry="8" fill="#3dffa2"/>
+          <ellipse cx="40" cy="55" rx="9" ry="12" fill="#3dffa2" opacity="0.9"/>
+          <line x1="37" y1="17" x2="28" y2="6" stroke="#3dffa2" stroke-width="1.5" stroke-linecap="round" opacity="0.7"/>
+          <line x1="43" y1="17" x2="52" y2="6" stroke="#3dffa2" stroke-width="1.5" stroke-linecap="round" opacity="0.7"/>
+          <circle cx="28" cy="6" r="2.5" fill="#3dffa2" opacity="0.6"/>
+          <circle cx="52" cy="6" r="2.5" fill="#3dffa2" opacity="0.6"/>
+          <line x1="34" y1="30" x2="18" y2="22" stroke="#3dffa2" stroke-width="1.3" stroke-linecap="round" opacity="0.5"/>
+          <line x1="46" y1="30" x2="62" y2="22" stroke="#3dffa2" stroke-width="1.3" stroke-linecap="round" opacity="0.5"/>
+          <circle cx="18" cy="22" r="2.5" fill="#3dffa2" opacity="0.5"/>
+          <circle cx="62" cy="22" r="2.5" fill="#3dffa2" opacity="0.5"/>
+          <line x1="33" y1="38" x2="14" y2="40" stroke="#3dffa2" stroke-width="1.3" stroke-linecap="round" opacity="0.5"/>
+          <line x1="47" y1="38" x2="66" y2="40" stroke="#3dffa2" stroke-width="1.3" stroke-linecap="round" opacity="0.5"/>
+          <circle cx="14" cy="40" r="2.5" fill="#3dffa2" opacity="0.5"/>
+          <circle cx="66" cy="40" r="2.5" fill="#3dffa2" opacity="0.5"/>
+          <line x1="34" y1="52" x2="16" y2="60" stroke="#3dffa2" stroke-width="1.3" stroke-linecap="round" opacity="0.5"/>
+          <line x1="46" y1="52" x2="64" y2="60" stroke="#3dffa2" stroke-width="1.3" stroke-linecap="round" opacity="0.5"/>
+          <circle cx="16" cy="60" r="2.5" fill="#3dffa2" opacity="0.5"/>
+          <circle cx="64" cy="60" r="2.5" fill="#3dffa2" opacity="0.5"/>
+          <line x1="18" y1="22" x2="14" y2="40" stroke="#3dffa2" stroke-width="0.7" opacity="0.15"/>
+          <line x1="62" y1="22" x2="66" y2="40" stroke="#3dffa2" stroke-width="0.7" opacity="0.15"/>
+          <line x1="14" y1="40" x2="16" y2="60" stroke="#3dffa2" stroke-width="0.7" opacity="0.15"/>
+          <line x1="66" y1="40" x2="64" y2="60" stroke="#3dffa2" stroke-width="0.7" opacity="0.15"/>
+        </svg>
+        <div class="logo-label">Mint on dark</div>
+      </div>
+      <div class="logo-display light-bg" style="min-height: 260px;">
+        <svg width="120" height="130" viewBox="0 0 80 80" fill="none">
+          <ellipse cx="40" cy="22" rx="5" ry="5.5" fill="#0a0e14" opacity="0.9"/>
+          <ellipse cx="40" cy="36" rx="7" ry="8" fill="#0a0e14"/>
+          <ellipse cx="40" cy="55" rx="9" ry="12" fill="#0a0e14" opacity="0.9"/>
+          <line x1="37" y1="17" x2="28" y2="6" stroke="#0a0e14" stroke-width="1.5" stroke-linecap="round" opacity="0.7"/>
+          <line x1="43" y1="17" x2="52" y2="6" stroke="#0a0e14" stroke-width="1.5" stroke-linecap="round" opacity="0.7"/>
+          <circle cx="28" cy="6" r="2.5" fill="#0a0e14" opacity="0.6"/>
+          <circle cx="52" cy="6" r="2.5" fill="#0a0e14" opacity="0.6"/>
+          <line x1="34" y1="30" x2="18" y2="22" stroke="#0a0e14" stroke-width="1.3" stroke-linecap="round" opacity="0.5"/>
+          <line x1="46" y1="30" x2="62" y2="22" stroke="#0a0e14" stroke-width="1.3" stroke-linecap="round" opacity="0.5"/>
+          <circle cx="18" cy="22" r="2.5" fill="#0a0e14" opacity="0.5"/>
+          <circle cx="62" cy="22" r="2.5" fill="#0a0e14" opacity="0.5"/>
+          <line x1="33" y1="38" x2="14" y2="40" stroke="#0a0e14" stroke-width="1.3" stroke-linecap="round" opacity="0.5"/>
+          <line x1="47" y1="38" x2="66" y2="40" stroke="#0a0e14" stroke-width="1.3" stroke-linecap="round" opacity="0.5"/>
+          <circle cx="14" cy="40" r="2.5" fill="#0a0e14" opacity="0.5"/>
+          <circle cx="66" cy="40" r="2.5" fill="#0a0e14" opacity="0.5"/>
+          <line x1="34" y1="52" x2="16" y2="60" stroke="#0a0e14" stroke-width="1.3" stroke-linecap="round" opacity="0.5"/>
+          <line x1="46" y1="52" x2="64" y2="60" stroke="#0a0e14" stroke-width="1.3" stroke-linecap="round" opacity="0.5"/>
+          <circle cx="16" cy="60" r="2.5" fill="#0a0e14" opacity="0.5"/>
+          <circle cx="64" cy="60" r="2.5" fill="#0a0e14" opacity="0.5"/>
+          <line x1="18" y1="22" x2="14" y2="40" stroke="#0a0e14" stroke-width="0.7" opacity="0.15"/>
+          <line x1="62" y1="22" x2="66" y2="40" stroke="#0a0e14" stroke-width="0.7" opacity="0.15"/>
+          <line x1="14" y1="40" x2="16" y2="60" stroke="#0a0e14" stroke-width="0.7" opacity="0.15"/>
+          <line x1="66" y1="40" x2="64" y2="60" stroke="#0a0e14" stroke-width="0.7" opacity="0.15"/>
+        </svg>
+        <div class="logo-label" style="color: #999;">Dark on light</div>
+      </div>
+    </div>
+
+    <!-- Wordmark -->
+    <h3 style="margin-top: 48px;">Wordmark</h3>
+    <p style="margin-bottom: 24px;">Set in Space Grotesk, weight 800. "ANT" in white, "SEED" in mint. No space between. Always uppercase.</p>
+
+    <div class="logo-display dark-bg" style="margin-bottom: 16px;">
+      <div class="wordmark" style="font-size: 64px;"><span class="ant">ANT</span><span class="seed">SEED</span></div>
+      <div class="logo-label">Wordmark · dark</div>
+    </div>
+
+    <!-- Minimum size -->
+    <h3 style="margin-top: 48px;">Minimum Size</h3>
+    <p style="margin-bottom: 24px;">The ant mark should never be displayed smaller than 24×24px. The wordmark should never be smaller than 80px wide.</p>
+
+    <div class="grid-3">
+      <div class="card" style="text-align: center;">
+        <svg width="24" height="28" viewBox="0 0 80 80" fill="none">
+          <ellipse cx="40" cy="22" rx="5" ry="5.5" fill="#3dffa2" opacity="0.9"/>
+          <ellipse cx="40" cy="36" rx="7" ry="8" fill="#3dffa2"/>
+          <ellipse cx="40" cy="55" rx="9" ry="12" fill="#3dffa2" opacity="0.9"/>
+        </svg>
+        <div class="mono" style="color: var(--grey); margin-top: 12px;">24px min</div>
+      </div>
+      <div class="card" style="text-align: center;">
+        <svg width="40" height="48" viewBox="0 0 80 80" fill="none">
+          <ellipse cx="40" cy="22" rx="5" ry="5.5" fill="#3dffa2" opacity="0.9"/>
+          <ellipse cx="40" cy="36" rx="7" ry="8" fill="#3dffa2"/>
+          <ellipse cx="40" cy="55" rx="9" ry="12" fill="#3dffa2" opacity="0.9"/>
+          <line x1="37" y1="17" x2="28" y2="6" stroke="#3dffa2" stroke-width="1.5" stroke-linecap="round" opacity="0.7"/>
+          <line x1="43" y1="17" x2="52" y2="6" stroke="#3dffa2" stroke-width="1.5" stroke-linecap="round" opacity="0.7"/>
+          <circle cx="28" cy="6" r="2.5" fill="#3dffa2" opacity="0.6"/>
+          <circle cx="52" cy="6" r="2.5" fill="#3dffa2" opacity="0.6"/>
+        </svg>
+        <div class="mono" style="color: var(--grey); margin-top: 12px;">40px preferred</div>
+      </div>
+      <div class="card" style="text-align: center;">
+        <div style="font-family: 'Space Grotesk'; font-size: 18px; font-weight: 800; letter-spacing: 1px;"><span style="color: var(--white)">ANT</span><span style="color: var(--mint)">SEED</span></div>
+        <div class="mono" style="color: var(--grey); margin-top: 12px;">80px min width</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════ 03 COLOR ════════════════════ -->
+<section id="color">
+  <div class="container">
+    <span class="section-num">03</span>
+    <h2>03 · Color Palette</h2>
+    <p style="margin-bottom: 48px;">The palette is dark-first, built for terminal and developer interfaces. Mint is the primary accent — used sparingly for emphasis, interactive elements, and the logo.</p>
+
+    <h3>Primary</h3>
+    <div class="grid-4" style="margin-bottom: 48px;">
+      <div class="swatch">
+        <div class="swatch-color" style="background: #0a0e14;"></div>
+        <div class="swatch-info">
+          <div class="swatch-name">Dark</div>
+          <div class="swatch-value">#0a0e14<br>rgb(10, 14, 20)</div>
+        </div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-color" style="background: #3dffa2;"></div>
+        <div class="swatch-info">
+          <div class="swatch-name">Mint</div>
+          <div class="swatch-value">#3dffa2<br>rgb(61, 255, 162)</div>
+        </div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-color" style="background: #e6edf3;"></div>
+        <div class="swatch-info">
+          <div class="swatch-name">White</div>
+          <div class="swatch-value">#e6edf3<br>rgb(230, 237, 243)</div>
+        </div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-color" style="background: #8b949e;"></div>
+        <div class="swatch-info">
+          <div class="swatch-name">Grey</div>
+          <div class="swatch-value">#8b949e<br>rgb(139, 148, 158)</div>
+        </div>
+      </div>
+    </div>
+
+    <h3>Accent</h3>
+    <div class="grid-4">
+      <div class="swatch">
+        <div class="swatch-color" style="background: #ffb13d;"></div>
+        <div class="swatch-info">
+          <div class="swatch-name">Amber</div>
+          <div class="swatch-value">#ffb13d<br>Warnings, Bitcoin refs</div>
+        </div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-color" style="background: #3dcfff;"></div>
+        <div class="swatch-info">
+          <div class="swatch-name">Cyan</div>
+          <div class="swatch-value">#3dcfff<br>Info, secondary accent</div>
+        </div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-color" style="background: #ff3d5a;"></div>
+        <div class="swatch-info">
+          <div class="swatch-name">Red</div>
+          <div class="swatch-value">#ff3d5a<br>Errors, restrictions</div>
+        </div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-color" style="background: #141a22;"></div>
+        <div class="swatch-info">
+          <div class="swatch-name">Card</div>
+          <div class="swatch-value">#141a22<br>Elevated surfaces</div>
+        </div>
+      </div>
+    </div>
+
+    <h3 style="margin-top: 48px;">Usage Ratios</h3>
+    <div style="display: flex; height: 48px; border-radius: 8px; overflow: hidden; margin-top: 16px; border: 1px solid var(--mint-border);">
+      <div style="flex: 70; background: #0a0e14; display: flex; align-items: center; justify-content: center;" title="Dark 70%">
+        <span class="mono" style="color: var(--grey-dim); font-size: 11px;">70%</span>
+      </div>
+      <div style="flex: 10; background: #e6edf3; display: flex; align-items: center; justify-content: center;" title="White 10%">
+        <span class="mono" style="color: #0a0e14; font-size: 11px;">10%</span>
+      </div>
+      <div style="flex: 10; background: #8b949e; display: flex; align-items: center; justify-content: center;" title="Grey 10%">
+        <span class="mono" style="color: #0a0e14; font-size: 11px;">10%</span>
+      </div>
+      <div style="flex: 5; background: #3dffa2; display: flex; align-items: center; justify-content: center;" title="Mint 5%">
+        <span class="mono" style="color: #0a0e14; font-size: 11px;">5%</span>
+      </div>
+      <div style="flex: 5; background: linear-gradient(90deg, #ffb13d, #3dcfff); display: flex; align-items: center; justify-content: center;" title="Accents 5%">
+        <span class="mono" style="color: #0a0e14; font-size: 11px;">5%</span>
+      </div>
+    </div>
+    <p style="margin-top: 12px; font-size: 13px;">Mint should always feel scarce and intentional — never overwhelming.</p>
+  </div>
+</section>
+
+<!-- ════════════════════ 04 TYPOGRAPHY ════════════════════ -->
+<section id="typography">
+  <div class="container">
+    <span class="section-num">04</span>
+    <h2>04 · Typography</h2>
+    <p style="margin-bottom: 48px;">Two typefaces. No exceptions.</p>
+
+    <div class="type-specimen">
+      <div class="type-name">Display & Headlines — Space Grotesk</div>
+      <div class="type-sample-large">Everyone profits. No one controls.</div>
+      <div class="type-sample-body" style="margin-top: 16px;">
+        Weights: 300 (light) · 400 (regular) · 500 (medium) · 600 (semi) · 700 (bold) · 800 (extra bold)
+      </div>
+      <div style="margin-top: 16px; font-size: 28px; font-weight: 300; color: var(--grey); letter-spacing: -0.5px;">
+        The quick brown fox jumps over the lazy dog
+      </div>
+    </div>
+
+    <div class="type-specimen">
+      <div class="type-name">Code, Data & Labels — JetBrains Mono</div>
+      <div class="type-sample-mono">
+        provider.serve("llama-4-scout", { accept: ["USDC", "ANT"] })<br>
+        buyer.discover({ capability: "legal-research", minRating: 4.5 })<br>
+        escrow.settle({ amount: "0.0023", currency: "USDC" })
+      </div>
+    </div>
+
+    <h3 style="margin-top: 48px;">Type Scale</h3>
+    <div style="margin-top: 24px;">
+      <div style="font-size: 56px; font-weight: 800; letter-spacing: -1px; margin-bottom: 8px;">Heading 1 <span class="mono" style="font-size: 12px; color: var(--grey);">56px / 800</span></div>
+      <div style="font-size: 36px; font-weight: 700; letter-spacing: -0.5px; margin-bottom: 8px;">Heading 2 <span class="mono" style="font-size: 12px; color: var(--grey);">36px / 700</span></div>
+      <div style="font-size: 24px; font-weight: 700; margin-bottom: 8px;">Heading 3 <span class="mono" style="font-size: 12px; color: var(--grey);">24px / 700</span></div>
+      <div style="font-size: 18px; font-weight: 500; margin-bottom: 8px; color: var(--grey);">Body Large <span class="mono" style="font-size: 12px;">18px / 500</span></div>
+      <div style="font-size: 16px; color: var(--grey); margin-bottom: 8px;">Body <span class="mono" style="font-size: 12px;">16px / 400</span></div>
+      <div style="font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--grey); margin-bottom: 8px;">Monospace <span style="font-size: 12px;">13px / 400</span></div>
+      <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--grey-dim); letter-spacing: 3px; text-transform: uppercase;">Label <span style="letter-spacing: 0;">11px / 500 / caps</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════ 05 VOICE ════════════════════ -->
+<section id="voice">
+  <div class="container">
+    <span class="section-num">05</span>
+    <h2>05 · Voice & Tone</h2>
+    <p style="margin-bottom: 32px;">AntSeed speaks like a builder — technical but not academic, confident but not arrogant. We explain complex things simply and let the work speak.</p>
+
+    <div class="tone-grid">
+      <div class="tone-card">
+        <h4>Builder, Not Marketer</h4>
+        <p>We show code, not pitch decks. We ship, then talk about it. Technical credibility comes first.</p>
+      </div>
+      <div class="tone-card">
+        <h4>Clear, Not Clever</h4>
+        <p>"Peer-to-peer AI inference" not "democratizing the future of intelligence." Say what it does.</p>
+      </div>
+      <div class="tone-card">
+        <h4>Confident, Not Loud</h4>
+        <p>We state facts. We don't hype. "The protocol routes 10K requests/sec" not "BLAZING FAST!!!"</p>
+      </div>
+      <div class="tone-card">
+        <h4>Inclusive, Not Exclusive</h4>
+        <p>"Anyone can seed" — we build for the widest possible participation. No gatekeeping.</p>
+      </div>
+      <div class="tone-card">
+        <h4>Open Source Native</h4>
+        <p>GitHub over Medium. README over whitepaper. Commits over announcements. Show your work.</p>
+      </div>
+      <div class="tone-card">
+        <h4>P2P Philosophy</h4>
+        <p>"Everyone profits. No one controls." This is the north star. Every piece of writing should feel like it came from the colony, not a CEO.</p>
+      </div>
+    </div>
+
+    <div class="do-dont">
+      <div class="do-box">
+        <div class="label">Do write</div>
+        <ul>
+          <li>"AntSeed is a P2P protocol for AI services"</li>
+          <li>"Plug in any LLM on one side, any agent on the other"</li>
+          <li>"Providers compete on price and reputation"</li>
+          <li>"Everyone profits. No one controls."</li>
+          <li>"Seed your services. Consume from the colony."</li>
+        </ul>
+      </div>
+      <div class="dont-box">
+        <div class="label">Don't write</div>
+        <ul>
+          <li>"Revolutionizing AI with blockchain synergy"</li>
+          <li>"The Uber of AI inference"</li>
+          <li>"Disrupting Big Tech's monopoly"</li>
+          <li>"Web3-powered next-gen AI platform"</li>
+          <li>"Join our community of innovators!"</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════ 06 USAGE ════════════════════ -->
+<section id="usage">
+  <div class="container">
+    <span class="section-num">06</span>
+    <h2>06 · Usage Rules</h2>
+
+    <div class="do-dont">
+      <div class="do-box">
+        <div class="label">Do</div>
+        <ul>
+          <li>Use on dark backgrounds (#0a0e14 preferred)</li>
+          <li>Maintain clear space equal to the ant mark height</li>
+          <li>Use the mint ant mark on dark backgrounds</li>
+          <li>Use the dark ant mark on light backgrounds</li>
+          <li>Keep the wordmark always in uppercase</li>
+          <li>Use "ANT" in white/dark, "SEED" in mint/dark</li>
+        </ul>
+      </div>
+      <div class="dont-box">
+        <div class="label">Don't</div>
+        <ul>
+          <li>Place on busy or photographic backgrounds</li>
+          <li>Rotate, skew, or distort the mark</li>
+          <li>Change the color split in the wordmark</li>
+          <li>Add effects like drop shadows or gradients</li>
+          <li>Use the mint mark on light backgrounds</li>
+          <li>Write "Antseed", "antSeed", or "ANTSEED" as one color</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3 style="margin-top: 48px;">Naming Conventions</h3>
+    <div class="code-block">
+Brand name:         AntSeed (camelCase, always capitalized A and S)<br>
+In code/CLI:        antseed (all lowercase)<br>
+Twitter/social:     @AntSeedAI<br>
+Domain:             antseed.com<br>
+GitHub org:         github.com/AntSeed<br>
+Token:              ANT (all caps)<br>
+Protocol ref:       "the AntSeed protocol" or "the AntSeed network"<br>
+Tagline:            "A Peer-to-Peer AI Services Network"<br>
+Motto:              "Everyone profits. No one controls."
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════ 07 ASSETS ════════════════════ -->
+<section id="assets">
+  <div class="container">
+    <span class="section-num">07</span>
+    <h2>07 · Asset Inventory</h2>
+    <p style="margin-bottom: 40px;">All brand assets are available in the AntSeed monorepo under <code>brand/</code>.</p>
+
+    <div class="grid-2">
+      <div class="card">
+        <h3>Logo Files</h3>
+        <div class="mono" style="color: var(--grey); line-height: 2.2; margin-top: 12px;">
+          ant-mark-mint.svg<br>
+          ant-mark-dark.svg<br>
+          ant-mark-white.svg<br>
+          wordmark-dark-bg.svg<br>
+          wordmark-light-bg.svg<br>
+          lockup-dark-bg.svg<br>
+          lockup-light-bg.svg
+        </div>
+      </div>
+      <div class="card">
+        <h3>Social Assets</h3>
+        <div class="mono" style="color: var(--grey); line-height: 2.2; margin-top: 12px;">
+          AntSeed_PFP_400x400.jpg<br>
+          AntSeed_Banner_1500x500.jpg<br>
+          og-image-1200x630.png<br>
+          favicon-32x32.png<br>
+          apple-touch-icon-180.png
+        </div>
+      </div>
+      <div class="card">
+        <h3>Color Tokens</h3>
+        <div class="mono" style="color: var(--grey); line-height: 2.2; margin-top: 12px;">
+          colors.css (CSS custom properties)<br>
+          colors.json (design tokens)<br>
+          tailwind.config.js (Tailwind preset)
+        </div>
+      </div>
+      <div class="card">
+        <h3>Templates</h3>
+        <div class="mono" style="color: var(--grey); line-height: 2.2; margin-top: 12px;">
+          presentation-template.key<br>
+          doc-template.md<br>
+          social-card-template.fig
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════ FOOTER ════════════════════ -->
+<section style="padding: 60px 0; border-top: 1px solid var(--mint-border);">
+  <div class="container" style="text-align: center;">
+    <svg width="40" height="48" viewBox="0 0 80 80" fill="none" style="margin-bottom: 20px; opacity: 0.3;">
+      <ellipse cx="40" cy="22" rx="5" ry="5.5" fill="#3dffa2"/>
+      <ellipse cx="40" cy="36" rx="7" ry="8" fill="#3dffa2"/>
+      <ellipse cx="40" cy="55" rx="9" ry="12" fill="#3dffa2"/>
+    </svg>
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--grey-dim); letter-spacing: 3px; text-transform: uppercase; margin-bottom: 8px;">
+      AntSeed Brand Guidelines v1.0
+    </div>
+    <div style="font-size: 14px; color: var(--grey-dim);">
+      Everyone profits. No one controls.
+    </div>
+  </div>
+</section>
+
+</body>
+</html>
