@@ -306,34 +306,50 @@ function extractRequestedModel(request: SerializedHttpRequest): string | null {
   }
 }
 
+function toFiniteNumberOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function setFiniteNumberHeader(
+  headers: Record<string, string>,
+  name: string,
+  value: unknown,
+): void {
+  const finite = toFiniteNumberOrNull(value)
+  if (finite !== null) {
+    headers[name] = String(finite)
+  }
+}
+
+function setPeerIdentityHeaders(headers: Record<string, string>, selectedPeer: PeerInfo): void {
+  headers['x-antseed-peer-id'] = selectedPeer.peerId
+  if (selectedPeer.publicAddress) {
+    headers['x-antseed-peer-address'] = selectedPeer.publicAddress
+  }
+  if (selectedPeer.providers.length > 0) {
+    headers['x-antseed-peer-providers'] = selectedPeer.providers.join(',')
+  }
+}
+
 function resolvePeerPricing(peer: PeerInfo, provider: string, model: string | null): { inputUsdPerMillion: number | null; outputUsdPerMillion: number | null } {
   const providerPricing = peer.providerPricing?.[provider]
   if (providerPricing) {
-    if (model && providerPricing.models?.[model]) {
+    const modelPricing = model ? providerPricing.models?.[model] : undefined
+    if (modelPricing) {
       return {
-        inputUsdPerMillion: Number.isFinite(providerPricing.models[model]!.inputUsdPerMillion)
-          ? providerPricing.models[model]!.inputUsdPerMillion
-          : null,
-        outputUsdPerMillion: Number.isFinite(providerPricing.models[model]!.outputUsdPerMillion)
-          ? providerPricing.models[model]!.outputUsdPerMillion
-          : null,
+        inputUsdPerMillion: toFiniteNumberOrNull(modelPricing.inputUsdPerMillion),
+        outputUsdPerMillion: toFiniteNumberOrNull(modelPricing.outputUsdPerMillion),
       }
     }
     return {
-      inputUsdPerMillion: Number.isFinite(providerPricing.defaults.inputUsdPerMillion)
-        ? providerPricing.defaults.inputUsdPerMillion
-        : null,
-      outputUsdPerMillion: Number.isFinite(providerPricing.defaults.outputUsdPerMillion)
-        ? providerPricing.defaults.outputUsdPerMillion
-        : null,
+      inputUsdPerMillion: toFiniteNumberOrNull(providerPricing.defaults.inputUsdPerMillion),
+      outputUsdPerMillion: toFiniteNumberOrNull(providerPricing.defaults.outputUsdPerMillion),
     }
   }
 
-  const input = peer.defaultInputUsdPerMillion
-  const output = peer.defaultOutputUsdPerMillion
   return {
-    inputUsdPerMillion: Number.isFinite(input) ? input! : null,
-    outputUsdPerMillion: Number.isFinite(output) ? output! : null,
+    inputUsdPerMillion: toFiniteNumberOrNull(peer.defaultInputUsdPerMillion),
+    outputUsdPerMillion: toFiniteNumberOrNull(peer.defaultOutputUsdPerMillion),
   }
 }
 
@@ -397,35 +413,17 @@ function attachAntseedTelemetryHeaders(
   const headers: Record<string, string> = { ...upstreamHeaders }
   headers['x-antseed-request-id'] = requestId
   headers['x-antseed-latency-ms'] = String(Math.max(0, Math.floor(latencyMs)))
-  headers['x-antseed-peer-id'] = selectedPeer.peerId
-  if (selectedPeer.publicAddress) {
-    headers['x-antseed-peer-address'] = selectedPeer.publicAddress
-  }
-  if (selectedPeer.providers.length > 0) {
-    headers['x-antseed-peer-providers'] = selectedPeer.providers.join(',')
-  }
-  if (typeof selectedPeer.reputationScore === 'number' && Number.isFinite(selectedPeer.reputationScore)) {
-    headers['x-antseed-peer-reputation'] = String(selectedPeer.reputationScore)
-  }
-  if (typeof selectedPeer.trustScore === 'number' && Number.isFinite(selectedPeer.trustScore)) {
-    headers['x-antseed-peer-trust-score'] = String(selectedPeer.trustScore)
-  }
-  if (typeof selectedPeer.currentLoad === 'number' && Number.isFinite(selectedPeer.currentLoad)) {
-    headers['x-antseed-peer-current-load'] = String(selectedPeer.currentLoad)
-  }
-  if (typeof selectedPeer.maxConcurrency === 'number' && Number.isFinite(selectedPeer.maxConcurrency)) {
-    headers['x-antseed-peer-max-concurrency'] = String(selectedPeer.maxConcurrency)
-  }
+  setPeerIdentityHeaders(headers, selectedPeer)
+  setFiniteNumberHeader(headers, 'x-antseed-peer-reputation', selectedPeer.reputationScore)
+  setFiniteNumberHeader(headers, 'x-antseed-peer-trust-score', selectedPeer.trustScore)
+  setFiniteNumberHeader(headers, 'x-antseed-peer-current-load', selectedPeer.currentLoad)
+  setFiniteNumberHeader(headers, 'x-antseed-peer-max-concurrency', selectedPeer.maxConcurrency)
   headers['x-antseed-provider'] = telemetry.pricing.provider
   if (telemetry.pricing.model) {
     headers['x-antseed-model'] = telemetry.pricing.model
   }
-  if (telemetry.pricing.inputUsdPerMillion !== null) {
-    headers['x-antseed-input-usd-per-million'] = String(telemetry.pricing.inputUsdPerMillion)
-  }
-  if (telemetry.pricing.outputUsdPerMillion !== null) {
-    headers['x-antseed-output-usd-per-million'] = String(telemetry.pricing.outputUsdPerMillion)
-  }
+  setFiniteNumberHeader(headers, 'x-antseed-input-usd-per-million', telemetry.pricing.inputUsdPerMillion)
+  setFiniteNumberHeader(headers, 'x-antseed-output-usd-per-million', telemetry.pricing.outputUsdPerMillion)
   headers['x-antseed-token-source'] = telemetry.usage.source
   headers['x-antseed-input-tokens'] = String(telemetry.usage.inputTokens)
   headers['x-antseed-output-tokens'] = String(telemetry.usage.outputTokens)
@@ -443,13 +441,7 @@ function attachStreamingAntseedHeaders(
 ): Record<string, string> {
   const headers: Record<string, string> = { ...upstreamHeaders }
   headers['x-antseed-request-id'] = requestId
-  headers['x-antseed-peer-id'] = selectedPeer.peerId
-  if (selectedPeer.publicAddress) {
-    headers['x-antseed-peer-address'] = selectedPeer.publicAddress
-  }
-  if (selectedPeer.providers.length > 0) {
-    headers['x-antseed-peer-providers'] = selectedPeer.providers.join(',')
-  }
+  setPeerIdentityHeaders(headers, selectedPeer)
   return headers
 }
 

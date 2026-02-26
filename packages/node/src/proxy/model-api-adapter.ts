@@ -506,9 +506,8 @@ export function transformOpenAIChatResponseToAnthropicMessage(
     contentBlocks.push({ type: 'text', text: textContent });
   }
 
-  if (Array.isArray(message?.tool_calls)) {
-    for (let i = 0; i < message!.tool_calls.length; i++) {
-      const toolCallRaw = message!.tool_calls[i];
+  const toolCalls = Array.isArray(message?.tool_calls) ? message.tool_calls : [];
+  for (const [index, toolCallRaw] of toolCalls.entries()) {
       if (!toolCallRaw || typeof toolCallRaw !== 'object') {
         continue;
       }
@@ -518,7 +517,7 @@ export function transformOpenAIChatResponseToAnthropicMessage(
         : {};
       const id = typeof toolCall.id === 'string' && toolCall.id.length > 0
         ? toolCall.id
-        : `toolu_${i + 1}`;
+        : `toolu_${index + 1}`;
       const name = typeof functionPayload.name === 'string' && functionPayload.name.length > 0
         ? functionPayload.name
         : 'tool';
@@ -532,7 +531,6 @@ export function transformOpenAIChatResponseToAnthropicMessage(
           ? (parsedArgs as Record<string, unknown>)
           : { raw: argsRaw },
       });
-    }
   }
 
   const usage = parsed.usage && typeof parsed.usage === 'object'
