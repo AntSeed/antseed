@@ -1,7 +1,7 @@
 {
   "name": "@antseed/desktop",
   "productName": "AntSeed Desktop",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "private": true,
   "description": "Desktop app for AntSeed",
   "author": "AntSeed <hello@antseed.ai>",
@@ -26,10 +26,12 @@
     "prepare-dist": "node ./scripts/prepare-dist.mjs",
     "dist": "npm run build && npm run prepare-dist && electron-builder",
     "dist:mac": "npm run build && npm run prepare-dist && electron-builder --mac",
+    "release:mac": "npm run build && npm run prepare-dist && node scripts/release-mac.mjs",
     "dist:win": "npm run build && npm run prepare-dist && electron-builder --win",
     "dist:linux": "npm run build && npm run prepare-dist && electron-builder --linux"
   },
   "dependencies": {
+    "@antseed/dashboard": "workspace:*",
     "@antseed/node": "workspace:*",
     "@fastify/cors": "^10.0.0",
     "@fastify/static": "^9.0.0",
@@ -39,7 +41,6 @@
     "@noble/ed25519": "^2.1.0",
     "@silentbot1/nat-api": "^0.4.9",
     "@walletconnect/ethereum-provider": "^2.17.0",
-    "@antseed/dashboard": "workspace:*",
     "better-sqlite3": "^12.6.2",
     "bittorrent-dht": "^11.0.11",
     "chalk": "^5.6.2",
@@ -54,6 +55,7 @@
     "qrcode": "^1.5.4"
   },
   "devDependencies": {
+    "@electron/notarize": "^3.1.1",
     "@types/node": "^20.11.0",
     "@vitejs/plugin-react": "^4.3.0",
     "concurrently": "^9.0.1",

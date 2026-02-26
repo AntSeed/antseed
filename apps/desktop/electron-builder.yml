@@ -12,13 +12,21 @@ files:
   - dist/**/*
   - assets/**/*
   - package.json
+  - "!node_modules/koffi/build/koffi/linux*"
+  - "!node_modules/koffi/build/koffi/win32*"
+  - "!node_modules/koffi/build/koffi/freebsd*"
+  - "!node_modules/koffi/build/koffi/openbsd*"
+  - "!node_modules/koffi/build/koffi/musl*"
 
 extraMetadata:
   main: dist/main/main.js
 
 asar: true
 asarUnpack:
-  - "node_modules/**"
+  - "node_modules/**/*.node"
+  - "node_modules/better-sqlite3/**"
+  - "node_modules/node-datachannel/**"
+  - "node_modules/keytar/**"
 
 extraResources:
   - from: cli-dist/
@@ -31,7 +39,12 @@ afterPack: ./scripts/after-pack.js
 mac:
   category: public.app-category.developer-tools
   icon: assets/antseed-dock-icon.png
-  identity: null
+  identity: "Shahaf Antwarg (H3M5BXXQR2)"
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  notarize:
+    teamId: H3M5BXXQR2
   target:
     - target: dmg
       arch:
