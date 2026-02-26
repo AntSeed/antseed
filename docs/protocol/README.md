@@ -22,7 +22,7 @@ Install the CLI globally:
 npm install -g @antseed/cli
 antseed init         # install official plugins
 antseed seed --provider anthropic   # provide AI services
-antseed connect --router local-proxy  # consume via local proxy
+antseed connect --router local  # consume via local router
 ```
 
 ## Plugin Ecosystem
@@ -52,7 +52,6 @@ cd my-router && npm install && npm run verify
 - [@antseed/cli](https://npmjs.com/package/@antseed/cli) — CLI tools
 - [@antseed/provider-anthropic](https://npmjs.com/package/@antseed/provider-anthropic) — Anthropic provider (API key)
 - [@antseed/provider-claude-code](https://npmjs.com/package/@antseed/provider-claude-code) — Claude Code provider (keychain, testing only)
-- [@antseed/provider-openrouter](https://npmjs.com/package/@antseed/provider-openrouter) — OpenRouter provider
+- [@antseed/provider-openai](https://npmjs.com/package/@antseed/provider-openai) — OpenAI-compatible provider (OpenAI, Together, OpenRouter)
 - [@antseed/provider-local-llm](https://npmjs.com/package/@antseed/provider-local-llm) — Local LLM provider
-- [@antseed/router-local-proxy](https://npmjs.com/package/@antseed/router-local-proxy) — Local proxy router (Claude Code, Codex)
-- [@antseed/router-local-chat](https://npmjs.com/package/@antseed/router-local-chat) — Desktop chat router
+- [@antseed/router-local](https://npmjs.com/package/@antseed/router-local) — Local router (Claude Code, Codex)

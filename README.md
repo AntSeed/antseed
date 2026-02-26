@@ -4,7 +4,7 @@ A peer-to-peer AI services network. Providers offer AI services, buyers discover
 
 ## How It Works
 
-**Providers** run a provider plugin that connects to an upstream LLM API (Anthropic, OpenRouter, local Ollama, etc.) and announce capacity on the DHT network.
+**Providers** run a provider plugin that connects to an upstream LLM API (Anthropic, OpenAI-compatible APIs, local Ollama, etc.) and announce capacity on the DHT network.
 
 **Buyers** run a router plugin that discovers providers, scores them on price/latency/reputation, and proxies requests through a local HTTP endpoint that drop-in replaces `ANTHROPIC_BASE_URL` or `OPENAI_BASE_URL`.
 
@@ -25,7 +25,7 @@ pnpm run build
 node apps/cli/dist/cli/index.js seed --provider claude-code
 
 # Start buying (local proxy on port 8377)
-node apps/cli/dist/cli/index.js connect --router local-proxy
+node apps/cli/dist/cli/index.js connect --router local
 ```
 
 Or install globally:
@@ -49,10 +49,9 @@ plugins/              Provider and router plugins
   provider-anthropic/       Anthropic API key provider
   provider-claude-code/     Claude Code keychain provider
   provider-claude-oauth/    Claude OAuth provider
-  provider-openrouter/      OpenRouter multi-model provider
+  provider-openai/          OpenAI-compatible provider (OpenAI, Together, OpenRouter)
   provider-local-llm/       Local LLM provider (Ollama, llama.cpp)
-  router-local-chat/        Desktop chat router (latency-optimized)
-  router-local-proxy/       HTTP proxy router (Claude Code, Aider, Continue.dev)
+  router-local/             Local router (Claude Code, Aider, Continue.dev)
 
 apps/                 Applications
   cli/                CLI tool and plugin manager
@@ -70,9 +69,9 @@ docs/protocol/        Protocol specification
 @antseed/node (core SDK)
   ├── provider-core
   │     └── provider-anthropic, provider-claude-code, provider-claude-oauth,
-  │         provider-openrouter, provider-local-llm
+  │         provider-openai, provider-local-llm
   ├── router-core
-  │     └── router-local-chat, router-local-proxy
+  │     └── router-local
   ├── dashboard (peer: node)
   │     └── cli (depends: node + dashboard)
   │           └── desktop (Electron wrapper)

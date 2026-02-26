@@ -30,9 +30,9 @@ export interface PeerInfo {
 
 ### Router Plugin Peer Scoring
 
-**Source:** `@antseed/router-local-proxy/src/router.ts`
+**Source:** `@antseed/router-local/src/router.ts`
 
-Buyer-side peer selection is implemented in **router plugins**, not in the core node. Each router plugin is free to define its own scoring logic. The official `@antseed/router-local-proxy` plugin computes a composite score for each candidate peer using four weighted factors:
+Buyer-side peer selection is implemented in **router plugins**, not in the core node. Each router plugin is free to define its own scoring logic. The official `@antseed/router-local` plugin computes a composite score for each candidate peer using four weighted factors:
 
 | Factor     | Weight | Description                                              |
 |------------|--------|----------------------------------------------------------|
@@ -42,7 +42,7 @@ Buyer-side peer selection is implemented in **router plugins**, not in the core 
 | reputation | 0.10   | Higher reputation scores higher                          |
 
 ```typescript
-// @antseed/router-local-proxy/src/router.ts
+// @antseed/router-local/src/router.ts
 const WEIGHTS = {
   price: 0.40,
   latency: 0.30,
@@ -61,7 +61,7 @@ When a peer has no `reputationScore`, the value **0** is used (treated as unknow
 
 ### Minimum Reputation Filter
 
-Router plugins apply a minimum reputation filter before scoring. In `@antseed/router-local-proxy`:
+Router plugins apply a minimum reputation filter before scoring. In `@antseed/router-local`:
 
 - Config field: `BuyerConfig.minPeerReputation` (`@antseed/cli/src/config/defaults.ts`)
 - Default value: **50**

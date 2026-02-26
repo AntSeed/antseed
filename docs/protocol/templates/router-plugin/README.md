@@ -105,7 +105,7 @@ interface Router {
 | Property | Type | Description |
 |---|---|---|
 | `type` | `'router'` | Must be `'router'` |
-| `name` | `string` | Short ID, e.g. `'local-proxy'` |
+| `name` | `string` | Short ID, e.g. `'local'` |
 | `displayName` | `string` | Human-readable label |
 | `version` | `string` | Semantic version (e.g. `'1.0.0'`) |
 | `description` | `string` | Short description of the plugin |
@@ -116,5 +116,5 @@ interface Router {
 
 - [@antseed/node source](https://github.com/AntSeed/node)
 - [Router interface](https://github.com/AntSeed/node/tree/main/src/interfaces/buyer-router.ts)
-- [Official local proxy router](https://github.com/AntSeed/router-local-proxy)
+- [Official local router](https://github.com/AntSeed/router-local)
 - [Provider plugin template](../provider-plugin/)

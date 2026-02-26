@@ -67,7 +67,7 @@ fi
 echo "  CLI version: $(antseed --version)"
 
 echo "==> Installing buyer proxy plugin..."
-antseed plugin add @antseed/router-local-proxy </dev/null 2>&1 | tail -3 || true
+antseed plugin add @antseed/router-local </dev/null 2>&1 | tail -3 || true
 
 # Add bootstrap node if specified
 if [ -n "$BOOTSTRAP" ]; then
@@ -143,7 +143,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=$(whoami)
-ExecStart=${ANTSEED_BIN} connect --router local-proxy --port ${PORT}
+ExecStart=${ANTSEED_BIN} connect --router local --port ${PORT}
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
@@ -159,7 +159,7 @@ SERVICE
 else
   echo ""
   echo "==> To start the buyer proxy:"
-  echo "  antseed connect --router local-proxy --port ${PORT}"
+  echo "  antseed connect --router local --port ${PORT}"
   echo ""
   echo "  Or install as a service with: $0 --model ${MODEL} --service"
 fi

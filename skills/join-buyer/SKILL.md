@@ -58,7 +58,7 @@ The balance command shows wallet USDC, escrowed USDC, committed (locked in activ
 ## Step 5: Start the proxy
 
 ```bash
-antseed connect --router local-proxy
+antseed connect --router local
 ```
 
 This will:
@@ -70,13 +70,13 @@ This will:
 Custom port:
 
 ```bash
-antseed connect --router local-proxy -p 8888
+antseed connect --router local -p 8888
 ```
 
 Runtime pricing overrides:
 
 ```bash
-antseed connect --router local-proxy \
+antseed connect --router local \
   --max-input-usd-per-million 30 \
   --max-output-usd-per-million 80
 ```
@@ -141,7 +141,7 @@ Opens web UI at `http://localhost:3117` showing connected peers, request routing
 
 - [ ] `antseed --version` prints a version
 - [ ] `~/.antseed/identity.key` exists
-- [ ] `antseed connect --router local-proxy` starts without errors
+- [ ] `antseed connect --router local` starts without errors
 - [ ] Proxy is listening on the configured port
 - [ ] `curl http://localhost:8377/v1/models` returns available models
 - [ ] Tools work with `ANTHROPIC_BASE_URL=http://localhost:8377`

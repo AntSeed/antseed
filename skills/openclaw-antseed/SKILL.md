@@ -21,7 +21,7 @@ The buyer proxy runs locally, discovers providers via DHT, and exposes an API-co
 
 ```bash
 npm install -g @antseed/cli
-antseed plugin add @antseed/router-local-proxy
+antseed plugin add @antseed/router-local
 ```
 
 Verify: `antseed --version` (requires Node.js 20+).
@@ -31,7 +31,7 @@ Verify: `antseed --version` (requires Node.js 20+).
 Run in a terminal or set up as a persistent service:
 
 ```bash
-antseed connect --router local-proxy --port 5005
+antseed connect --router local --port 5005
 ```
 
 The proxy will:
@@ -53,7 +53,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=$USER
-ExecStart=/usr/bin/env antseed connect --router local-proxy --port 5005
+ExecStart=/usr/bin/env antseed connect --router local --port 5005
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
@@ -155,7 +155,7 @@ Then restart the buyer proxy.
 ## Verification checklist
 
 - [ ] `antseed --version` prints a version
-- [ ] `antseed connect --router local-proxy --port 5005` starts without errors
+- [ ] `antseed connect --router local --port 5005` starts without errors
 - [ ] `curl http://127.0.0.1:5005/v1/models` returns available models
 - [ ] OpenClaw config has `models.providers.antseed` configured
 - [ ] `agents.defaults.model.primary` is set to `antseed/<model-id>`

@@ -35,8 +35,8 @@ antseed seed --provider anthropic
 **Routers** select peers and proxy requests (consumer mode):
 
 ```bash
-antseed plugin add @antseed/router-local-proxy
-antseed connect --router local-proxy
+antseed plugin add @antseed/router-local
+antseed connect --router local
 ```
 
 Run `antseed init` to install all trusted plugins interactively.
@@ -126,7 +126,7 @@ Runtime-only overrides (do not write your config file):
 
 ```bash
 antseed seed --provider anthropic --input-usd-per-million 10 --output-usd-per-million 30
-antseed connect --router local-proxy --max-input-usd-per-million 20 --max-output-usd-per-million 60
+antseed connect --router local --max-input-usd-per-million 20 --max-output-usd-per-million 60
 ```
 
 ## Settlement Runtime (Seeder)

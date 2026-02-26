@@ -22,10 +22,9 @@ plugins/            Provider and router plugins (extend core)
   provider-anthropic/     Anthropic API key provider
   provider-claude-code/   Claude Code keychain provider
   provider-claude-oauth/  Claude OAuth provider
-  provider-openrouter/    OpenRouter provider
+  provider-openai/        OpenAI-compatible provider (OpenAI, Together, OpenRouter)
   provider-local-llm/     Local LLM (Ollama/llama.cpp) provider
-  router-local-chat/      Desktop chat router (latency-prioritized)
-  router-local-proxy/     HTTP proxy router (Claude Code, Aider, Continue.dev)
+  router-local/           Local router (Claude Code, Aider, Continue.dev)
 apps/               Applications
   cli/              CLI tool (@antseed/cli) — bin: antseed
   desktop/          Electron desktop app
@@ -48,9 +47,9 @@ docs/protocol/      Protocol specification and plugin templates
 @antseed/node (no internal deps)
   ├── @antseed/provider-core (peer: node)
   │     └── provider-anthropic, provider-claude-code, provider-claude-oauth,
-  │         provider-openrouter, provider-local-llm
+  │         provider-openai, provider-local-llm
   ├── @antseed/router-core (peer: node)
-  │     └── router-local-chat, router-local-proxy
+  │     └── router-local
   ├── antseed-dashboard (peer: node)
   │     └── @antseed/cli (depends: node + dashboard)
   │           └── @antseed/desktop (builds: cli + dashboard)

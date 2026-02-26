@@ -30,5 +30,5 @@ antseed v0.1.1
 | `@antseed/router-core` | Peer scoring and routing utilities |
 | `@antseed/provider-anthropic` | Anthropic API key provider |
 | `@antseed/provider-claude-code` | Claude Code keychain provider |
-| `@antseed/router-local-proxy` | Local HTTP proxy router for CLI tools |
-| `@antseed/router-local-chat` | Desktop chat router |
+| `@antseed/provider-openai` | OpenAI-compatible provider (OpenAI, Together, OpenRouter) |
+| `@antseed/router-local` | Local router for CLI tools |

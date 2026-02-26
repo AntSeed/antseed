@@ -48,7 +48,7 @@ Ask the user which AI provider they want to use:
 | Provider | Plugin | Auth | Notes |
 |---|---|---|---|
 | Anthropic | `@antseed/provider-anthropic` | API key (`x-api-key`) | Commercial API key required |
-| OpenRouter | `@antseed/provider-openrouter` | API key | Commercial API key required |
+| OpenAI-compatible | `@antseed/provider-openai` | API key | OpenAI, Together, OpenRouter and similar |
 | Local LLM | `@antseed/provider-local-llm` | None (Ollama/llama.cpp) | Self-hosted, no restrictions |
 | Claude Code | `@antseed/provider-claude-code` | Auto-loaded from keychain | **Testing only** — not for production |
 | Claude OAuth | `@antseed/provider-claude-oauth` | OAuth token pair | **Testing only** — not for production |

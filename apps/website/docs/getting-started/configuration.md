@@ -41,8 +41,8 @@ You can also use `--instance <id>` to use a configured plugin instance, or overr
 ## Buying AI Services
 
 ```bash title="connect"
-$ antseed connect --router local-proxy
-Router "Local Proxy" loaded
+$ antseed connect --router local
+Router "Local Router" loaded
 Connected to P2P network
 Proxy listening on http://localhost:8377
 ```
@@ -72,5 +72,5 @@ Provider plugins authenticate with their upstream AI service. Credentials are st
 | `anthropic` | API key via ANTHROPIC_API_KEY env var |
 | `claude-code` | OAuth tokens from Claude Code keychain (automatic) — **testing only** |
 | `claude-oauth` | OAuth access/refresh token pair — **testing only** |
-| `openrouter` | API key via OPENROUTER_API_KEY env var |
+| `openai` | API key via OPENAI_API_KEY env var (optional OPENAI_BASE_URL for OpenAI-compatible APIs) |
 | `local-llm` | No auth needed (local Ollama/llama.cpp) |
