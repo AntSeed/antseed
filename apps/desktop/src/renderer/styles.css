@@ -268,12 +268,14 @@ select {
   grid-template-rows: auto minmax(0, 1fr);
 }
 
-.runtime-toolbar.hidden {
+.runtime-toolbar.hidden,
+.runtime-controls.hidden {
   display: none;
 }
 
 /* Desktop-only runtime toolbar */
-.runtime-toolbar {
+.runtime-toolbar,
+.runtime-controls {
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: var(--radius);

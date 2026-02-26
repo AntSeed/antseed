@@ -13,6 +13,7 @@ const POLL_INTERVAL_MS = 5000;
 const SEED_AUTH_PREFS_KEY = 'antseed-seed-auth-prefs';
 const DEFAULT_PROVIDER_RUNTIME = 'anthropic';
 const DEFAULT_ROUTER_RUNTIME = 'local-proxy';
+const ONION_HOST_RE = /^([a-z2-7]{16}|[a-z2-7]{56})\.onion$/;
 
 const PROVIDER_PACKAGE_ALIASES: Record<string, string> = {
   anthropic: '@antseed/provider-anthropic',
@@ -114,6 +115,48 @@ function safeObject(value) {
     return value;
   }
   return null;
+}
+
+function parseHostPort(rawValue: string): { host: string; port: number } | null {
+  const raw = safeString(rawValue, '').trim();
+  if (raw.length === 0) return null;
+
+  if (raw.startsWith('[')) {
+    const end = raw.indexOf(']');
+    if (end <= 1) return null;
+    const host = raw.slice(1, end).trim();
+    const portPart = raw.slice(end + 1);
+    if (!portPart.startsWith(':')) return null;
+    const port = Number.parseInt(portPart.slice(1), 10);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
+    return { host, port };
+  }
+
+  const sep = raw.lastIndexOf(':');
+  if (sep <= 0) return null;
+  const host = raw.slice(0, sep).trim();
+  const port = Number.parseInt(raw.slice(sep + 1), 10);
+  if (!host || !Number.isInteger(port) || port < 1 || port > 65535) return null;
+  return { host, port };
+}
+
+function normalizeTorOnion(rawValue: string): string | null {
+  const raw = safeString(rawValue, '').trim().toLowerCase();
+  if (raw.length === 0) return null;
+
+  let host = raw;
+  let port: number | null = null;
+  const sep = raw.lastIndexOf(':');
+  if (sep > 0) {
+    host = raw.slice(0, sep).trim();
+    port = Number.parseInt(raw.slice(sep + 1), 10);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      return null;
+    }
+  }
+
+  if (!ONION_HOST_RE.test(host)) return null;
+  return port ? `${host}:${port}` : host;
 }
 
 function formatClock(timestamp) {
@@ -452,10 +495,13 @@ function updatePluginHintFromLog(event) {
 }
 
 function renderPluginSetupState() {
+  const expectedProvider = uiState.pluginHints.provider || expectedProviderPluginPackage();
   const expectedRouter = uiState.pluginHints.router || expectedRouterPluginPackage();
 
+  const installedProvider = uiState.installedPlugins.has(expectedProvider);
   const installedRouter = uiState.installedPlugins.has(expectedRouter);
   const missing: string[] = [];
+  if (!installedProvider) missing.push(expectedProvider);
   if (!installedRouter) missing.push(expectedRouter);
 
   if (elements.pluginSetupStatus) {
@@ -464,6 +510,13 @@ function renderPluginSetupState() {
     } else {
       elements.pluginSetupStatus.textContent = `Missing plugin${missing.length > 1 ? 's' : ''}: ${missing.join(', ')}`;
     }
+  }
+
+  if (elements.installSeedPluginBtn) {
+    elements.installSeedPluginBtn.textContent = installedProvider
+      ? `Seller Ready (${expectedProvider})`
+      : `Install ${expectedProvider}`;
+    elements.installSeedPluginBtn.disabled = uiState.pluginInstallBusy || installedProvider || !bridge?.pluginsInstall;
   }
 
   if (elements.installConnectPluginBtn) {
@@ -527,6 +580,12 @@ const elements = {
   seedAuthValue: byId('seedAuthValue'),
   seedAuthValueLabel: byId('seedAuthValueLabel'),
   connectRouter: byId('connectRouter'),
+  torEnabledToggle: byId('torEnabledToggle'),
+  torSocks: byId('torSocks'),
+  torOnion: byId('torOnion'),
+  torPeer: byId('torPeer'),
+  relaunchTorBtn: byId('relaunchTorBtn'),
+  torRelaunchStatus: byId('torRelaunchStatus'),
   pluginSetupCard: byId('pluginSetupCard'),
   pluginSetupStatus: byId('pluginSetupStatus'),
   refreshPluginsBtn: byId('refreshPluginsBtn'),
@@ -648,16 +707,67 @@ function setConnectWarning(message: string | null): void {
   elements.connectWarning.hidden = false;
 }
 
+function setTorRelaunchStatus(message: string): void {
+  if (!elements.torRelaunchStatus) return;
+  elements.torRelaunchStatus.textContent = message;
+}
+
+function syncTorControlState(): void {
+  const enabled = Boolean(elements.torEnabledToggle?.checked);
+  const torInputs = [elements.torSocks, elements.torOnion, elements.torPeer];
+  for (const input of torInputs) {
+    if (input) {
+      input.disabled = !enabled;
+    }
+  }
+  setTorRelaunchStatus(enabled ? 'Tor relaunch is enabled.' : 'Tor relaunch is disabled.');
+}
+
+function getTorRelaunchOptions(): { enabled: boolean; socksProxy: string; onion: string; peer?: string } {
+  const enabled = Boolean(elements.torEnabledToggle?.checked);
+  if (!enabled) {
+    throw new Error('Enable Tor relaunch first.');
+  }
+
+  const socksRaw = safeString(elements.torSocks?.value, '').trim();
+  if (!parseHostPort(socksRaw)) {
+    throw new Error('Invalid SOCKS proxy. Expected host:port (example: 127.0.0.1:9050).');
+  }
+
+  const onionRaw = safeString(elements.torOnion?.value, '').trim();
+  const onion = normalizeTorOnion(onionRaw);
+  if (!onion) {
+    throw new Error('Invalid onion endpoint. Expected .onion or .onion:port.');
+  }
+
+  const peerRaw = safeString(elements.torPeer?.value, '').trim();
+  return {
+    enabled: true,
+    socksProxy: socksRaw,
+    onion,
+    ...(peerRaw ? { peer: peerRaw } : {}),
+  };
+}
+
 const navButtons = Array.from(document.querySelectorAll<HTMLElement>('.sidebar-btn[data-view]'));
 const views = Array.from(document.querySelectorAll<HTMLElement>('.view'));
 
-const TOOLBAR_VIEWS = new Set<string>();
+const TOOLBAR_VIEWS = new Set<string>([
+  'chat',
+  'overview',
+  'peers',
+  'sessions',
+  'connection',
+  'config',
+  'desktop',
+]);
 
 const {
   setActiveView,
   getActiveView,
   setAppMode,
   initNavigation,
+  getSavedAppMode,
 } = initNavigationModule({
   uiState,
   navButtons,
@@ -850,6 +960,56 @@ function bindControls() {
     await installPluginPackage(packageName);
   }, { refreshAfter: false });
 
+  bindAction('relaunchTorBtn', async () => {
+    const tor = getTorRelaunchOptions();
+    setTorRelaunchStatus('Stopping existing runtimes...');
+    await bridge.stop('connect');
+    await bridge.stop('seed');
+
+    setTorRelaunchStatus('Starting seller in Tor mode...');
+    uiState.pluginHints.provider = null;
+    saveSeedAuthPrefs();
+    await bridge.start({
+      mode: 'seed',
+      provider: normalizeProviderRuntime(elements.seedProvider?.value),
+      env: buildSeedRuntimeEnv(),
+      tor: {
+        enabled: true,
+        socksProxy: tor.socksProxy,
+        onion: tor.onion,
+      },
+    });
+
+    await refreshAll();
+
+    let peerHint = tor.peer;
+    if (!peerHint) {
+      const daemonSnapshot = safeObject(uiState.daemonState);
+      const daemonState = safeObject(daemonSnapshot?.state);
+      peerHint = safeString(daemonState?.torPeerHint, '').trim();
+    }
+    if (!peerHint) {
+      throw new Error('Tor peer hint unavailable. Set Buyer Peer manually or verify onion settings.');
+    }
+    if (elements.torPeer && elements.torPeer.value.trim().length === 0) {
+      elements.torPeer.value = peerHint;
+    }
+
+    setTorRelaunchStatus('Starting buyer in Tor mode...');
+    uiState.pluginHints.router = null;
+    await bridge.start({
+      mode: 'connect',
+      router: normalizeRouterRuntime(elements.connectRouter?.value),
+      tor: {
+        enabled: true,
+        socksProxy: tor.socksProxy,
+        peer: peerHint,
+      },
+    });
+    setConnectWarning(null);
+    setTorRelaunchStatus(`Tor relaunch active via ${peerHint}`);
+  });
+
   elements.seedProvider?.addEventListener('input', () => {
     uiState.pluginHints.provider = null;
     renderPluginSetupState();
@@ -858,6 +1018,10 @@ function bindControls() {
     uiState.pluginHints.router = null;
     renderPluginSetupState();
   });
+  elements.torEnabledToggle?.addEventListener('change', () => {
+    syncTorControlState();
+  });
+  syncTorControlState();
 }
 
 function initializeBridge() {
@@ -1010,7 +1174,7 @@ function initPeriodToggle() {
 
 initNavigation();
 setActiveView('chat');
-setAppMode('connect');
+setAppMode(getSavedAppMode() ?? 'connect');
 
 renderPluginSetupState();
 initSeedAuthControls();

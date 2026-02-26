@@ -23,6 +23,12 @@ export interface StartOptions {
   configPath?: string;
   verbose?: boolean;
   env?: Record<string, string>;
+  tor?: {
+    enabled?: boolean;
+    socksProxy?: string;
+    onion?: string;
+    peer?: string;
+  };
 }
 
 export interface DaemonStateSnapshot {
@@ -303,6 +309,10 @@ function resolveCliExecution(): CliExecution {
 
 function resolveCommandArgs(opts: StartOptions): string[] {
   const args: string[] = [];
+  const torEnabled = opts.tor?.enabled === true;
+  const torSocksProxy = opts.tor?.socksProxy?.trim();
+  const torOnion = opts.tor?.onion?.trim();
+  const torPeer = opts.tor?.peer?.trim();
 
   if (opts.verbose) {
     args.push('--verbose');
@@ -315,10 +325,25 @@ function resolveCommandArgs(opts: StartOptions): string[] {
     case 'seed':
       args.push('--data-dir', DESKTOP_SEED_DATA_DIR);
       args.push('seed', '--provider', normalizeProviderIdentifier(opts.provider));
+      if (torEnabled) {
+        args.push('--tor');
+        if (torOnion && torOnion.length > 0) {
+          args.push('--tor-onion', torOnion);
+        }
+      }
       break;
     case 'connect':
       args.push('--data-dir', DESKTOP_CONNECT_DATA_DIR);
       args.push('connect', '--router', normalizeRouterIdentifier(opts.router));
+      if (torEnabled) {
+        args.push('--tor');
+        if (torPeer && torPeer.length > 0) {
+          args.push('--tor-peer', torPeer);
+        }
+        if (torSocksProxy && torSocksProxy.length > 0) {
+          args.push('--tor-socks', torSocksProxy);
+        }
+      }
       break;
     case 'dashboard':
       args.push('dashboard', '--port', String(opts.dashboardPort ?? DEFAULT_DASHBOARD_PORT), '--no-open');
@@ -376,6 +401,12 @@ export class ProcessManager {
     for (const [key, value] of Object.entries(opts.env ?? {})) {
       if (typeof key === 'string' && key.trim().length > 0) {
         childEnv[key] = String(value);
+      }
+    }
+    if (opts.tor?.enabled === true) {
+      const torSocksProxy = opts.tor.socksProxy?.trim();
+      if (torSocksProxy && !childEnv['ANTSEED_TOR_SOCKS']) {
+        childEnv['ANTSEED_TOR_SOCKS'] = torSocksProxy;
       }
     }
     delete childEnv['ELECTRON_RUN_AS_NODE'];

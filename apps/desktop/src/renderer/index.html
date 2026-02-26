@@ -19,9 +19,16 @@
           <p class="sidebar-version">Desktop Runtime Console</p>
           <p id="runtimeSummary" class="sidebar-status">No active services</p>
           <p id="connectWarning" class="sidebar-warning" hidden></p>
+          <div class="mode-switcher" role="tablist" aria-label="Runtime mode">
+            <button class="mode-btn active" data-appmode="connect" role="tab" aria-selected="true">Buyer</button>
+            <button class="mode-btn" data-appmode="seeder" role="tab" aria-selected="false">Seller</button>
+          </div>
         </div>
 
         <ul class="sidebar-nav" role="tablist" aria-label="Dashboard Views">
+          <li class="sidebar-nav-label">Runtime</li>
+          <li data-mode="both"><button class="sidebar-btn" data-view="runtime" role="tab">Runtime</button></li>
+          <li class="sidebar-nav-divider" aria-hidden="true"></li>
           <li class="sidebar-nav-label">Chat Interface</li>
           <li data-mode="connect"><button class="sidebar-btn active" data-view="chat" role="tab">AI Chat</button></li>
           <li class="sidebar-nav-divider" aria-hidden="true"></li>
@@ -43,43 +50,97 @@
       </aside>
 
       <main class="main-content">
-        <section class="runtime-toolbar" data-mode="seeder">
-          <div class="toolbar-header">
-            <h2>Buyer Runtime</h2>
-            <div class="toolbar-actions">
-              <button id="startAllBtn">Start Connect</button>
-              <button id="stopAllBtn" class="danger">Stop Connect</button>
-              <button id="scanNetworkBtn" class="secondary">Scan DHT</button>
-              <button id="refreshBtn" class="secondary">Refresh</button>
-              <button id="clearLogsBtn" class="danger">Clear Logs</button>
-            </div>
-          </div>
-
-          <div class="runtime-grid">
-            <article class="control-card" data-mode="connect">
-              <h3>Buyer Runtime</h3>
-              <label>Router<input id="connectRouter" value="local-proxy" /></label>
-              <div class="row">
-                <button id="connectStartBtn">Start</button>
-                <button id="connectStopBtn" class="danger">Stop</button>
-              </div>
-              <p id="connectState" class="state status-stopped">Unknown</p>
-            </article>
-          </div>
-
-          <article id="pluginSetupCard" class="plugin-setup-card">
-            <div class="plugin-setup-head">
-              <h3>Plugin Setup</h3>
-              <button id="refreshPluginsBtn" class="secondary">Recheck</button>
-            </div>
-            <p id="pluginSetupStatus" class="plugin-setup-status">Checking plugin availability...</p>
-            <div class="plugin-setup-actions">
-              <button id="installConnectPluginBtn" class="secondary">Install Buyer Plugin</button>
-            </div>
-          </article>
-        </section>
-
         <section class="view-host">
+          <section id="view-runtime" class="view" role="tabpanel">
+            <section class="runtime-controls" data-mode="both">
+              <div class="toolbar-header">
+                <h2>Runtime Controls</h2>
+                <div class="toolbar-actions">
+                  <button id="startAllBtn">Start Buyer</button>
+                  <button id="stopAllBtn" class="danger">Stop Buyer</button>
+                  <button id="scanNetworkBtn" class="secondary">Scan DHT</button>
+                  <button id="refreshBtn" class="secondary">Refresh</button>
+                  <button id="clearLogsBtn" class="danger">Clear Logs</button>
+                </div>
+              </div>
+
+              <div class="runtime-grid">
+                <article class="control-card" data-mode="seeder">
+                  <h3>Seller Runtime</h3>
+                  <label>Provider
+                    <select id="seedProvider">
+                      <option value="anthropic">anthropic</option>
+                      <option value="openrouter">openrouter</option>
+                      <option value="local-llm">local-llm</option>
+                      <option value="claude-code">claude-code</option>
+                      <option value="claude-oauth">claude-oauth</option>
+                    </select>
+                  </label>
+                  <label>Auth Type
+                    <select id="seedAuthType">
+                      <option value="apikey">apikey</option>
+                      <option value="oauth">oauth</option>
+                      <option value="claude-code">claude-code</option>
+                    </select>
+                  </label>
+                  <label id="seedAuthValueLabel">API Key
+                    <input id="seedAuthValue" type="password" autocomplete="off" placeholder="Paste API key" />
+                  </label>
+                  <div class="row">
+                    <button id="seedStartBtn">Start</button>
+                    <button id="seedStopBtn" class="danger">Stop</button>
+                  </div>
+                  <p id="seedState" class="state status-stopped">Unknown</p>
+                </article>
+
+                <article class="control-card" data-mode="connect">
+                  <h3>Buyer Runtime</h3>
+                  <label>Router<input id="connectRouter" value="local-proxy" /></label>
+                  <div class="row">
+                    <button id="connectStartBtn">Start</button>
+                    <button id="connectStopBtn" class="danger">Stop</button>
+                  </div>
+                  <p id="connectState" class="state status-stopped">Unknown</p>
+                </article>
+              </div>
+
+              <article id="pluginSetupCard" class="plugin-setup-card">
+                <div class="plugin-setup-head">
+                  <h3>Plugin Setup</h3>
+                  <button id="refreshPluginsBtn" class="secondary">Recheck</button>
+                </div>
+                <p id="pluginSetupStatus" class="plugin-setup-status">Checking plugin availability...</p>
+                <div class="plugin-setup-actions">
+                  <button id="installSeedPluginBtn" class="secondary" data-mode="seeder">Install Seller Plugin</button>
+                  <button id="installConnectPluginBtn" class="secondary">Install Buyer Plugin</button>
+                </div>
+              </article>
+
+              <article class="plugin-setup-card">
+                <div class="plugin-setup-head">
+                  <h3>Tor Hidden Service</h3>
+                </div>
+                <label>
+                  <span>Enable Tor Relaunch</span>
+                  <input id="torEnabledToggle" type="checkbox" />
+                </label>
+                <label>SOCKS Proxy (host:port)
+                  <input id="torSocks" value="127.0.0.1:9050" />
+                </label>
+                <label>Seller Onion Endpoint (.onion:port)
+                  <input id="torOnion" placeholder="abcdefghijklmnop.onion:80" />
+                </label>
+                <label>Buyer Peer (optional override)
+                  <input id="torPeer" placeholder="peerId@abcdefghijklmnop.onion:80" />
+                </label>
+                <div class="plugin-setup-actions">
+                  <button id="relaunchTorBtn">Relaunch Through Tor</button>
+                </div>
+                <p id="torRelaunchStatus" class="plugin-setup-status">Tor relaunch is disabled.</p>
+              </article>
+            </section>
+          </section>
+
           <section id="view-overview" class="view" role="tabpanel">
             <div class="page-header">
               <h2>Overview</h2>

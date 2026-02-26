@@ -75,6 +75,12 @@ export type StartOptions = {
   router?: string;
   dashboardPort?: number;
   env?: Record<string, string>;
+  tor?: {
+    enabled?: boolean;
+    socksProxy?: string;
+    onion?: string;
+    peer?: string;
+  };
 };
 
 export type DesktopBridge = {
