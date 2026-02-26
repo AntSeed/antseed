@@ -1,4 +1,5 @@
 import {useEffect, useRef, useState} from 'react';
+import BrowserOnly from '@docusaurus/BrowserOnly';
 import Link from '@docusaurus/Link';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import Layout from '@theme/Layout';
@@ -281,7 +282,13 @@ export default function Home(): JSX.Element {
       title={`${siteConfig.title} — ${siteConfig.tagline}`}
       description="An open market for machines to trade intelligence. Agents discover, carry, and deliver AI services peer-to-peer. Everyone profits. No one controls."
       wrapperClassName="homepage-wrapper">
-      <div ref={containerRef}>
+      <BrowserOnly fallback={null}>
+        {() => {
+          const AntNetworkBackground = require('../components/AntNetworkBackground').default;
+          return <AntNetworkBackground />;
+        }}
+      </BrowserOnly>
+      <div ref={containerRef} style={{position: 'relative', zIndex: 1}}>
         <Hero />
         <HowItWorks />
         <SupplySources />
