@@ -1,4 +1,5 @@
-import { describe, it, expect } from 'vitest'
+import assert from 'node:assert/strict'
+import test from 'node:test'
 import {
   transformAnthropicMessagesRequestToOpenAIChat,
   transformOpenAIChatResponseToAnthropicMessage,
@@ -18,139 +19,132 @@ function makeRequest(body: unknown, path = '/v1/messages'): SerializedHttpReques
   }
 }
 
-describe('transformAnthropicMessagesRequestToOpenAIChat', () => {
-  it('preserves plain string message content', () => {
-    const result = transformAnthropicMessagesRequestToOpenAIChat(
-      makeRequest({ model: 'claude-3-5-haiku-20241022', messages: [{ role: 'user', content: 'Hello' }], max_tokens: 100 }),
-    )
-    expect(result).not.toBeNull()
-    const body = JSON.parse(dec.decode(result!.request.body)) as { messages: Array<{ content: string }> }
-    expect(body.messages[0]!.content).toBe('Hello')
-  })
-
-  it('does NOT produce [object Object] for array content blocks', () => {
-    // This is the regression case: Claude Code sends content as [{type:'text', text:'...'}]
-    const result = transformAnthropicMessagesRequestToOpenAIChat(
-      makeRequest({
-        model: 'claude-3-5-haiku-20241022',
-        messages: [
-          { role: 'user', content: [{ type: 'text', text: 'What is 2+2?' }] },
-        ],
-        max_tokens: 100,
-      }),
-    )
-    expect(result).not.toBeNull()
-    const body = JSON.parse(dec.decode(result!.request.body)) as { messages: Array<{ role: string; content: string }> }
-    const userMsg = body.messages.find((m) => m.role === 'user')
-    expect(userMsg!.content).toBe('What is 2+2?')
-    expect(userMsg!.content).not.toBe('[object Object]')
-  })
-
-  it('does NOT produce [object Object] for multi-block user messages', () => {
-    const result = transformAnthropicMessagesRequestToOpenAIChat(
-      makeRequest({
-        model: 'claude-3-5-haiku-20241022',
-        messages: [
-          {
-            role: 'user',
-            content: [
-              { type: 'text', text: 'Line one' },
-              { type: 'text', text: 'Line two' },
-            ],
-          },
-        ],
-        max_tokens: 100,
-      }),
-    )
-    expect(result).not.toBeNull()
-    const body = JSON.parse(dec.decode(result!.request.body)) as { messages: Array<{ role: string; content: string }> }
-    const userMsg = body.messages.find((m) => m.role === 'user')
-    expect(userMsg!.content).toBe('Line one\nLine two')
-    expect(userMsg!.content).not.toContain('[object Object]')
-  })
-
-  it('does NOT produce [object Object] for assistant array content blocks', () => {
-    const result = transformAnthropicMessagesRequestToOpenAIChat(
-      makeRequest({
-        model: 'claude-3-5-haiku-20241022',
-        messages: [
-          { role: 'user', content: 'Hi' },
-          { role: 'assistant', content: [{ type: 'text', text: 'Hello there!' }] },
-          { role: 'user', content: 'Good' },
-        ],
-        max_tokens: 100,
-      }),
-    )
-    expect(result).not.toBeNull()
-    const body = JSON.parse(dec.decode(result!.request.body)) as { messages: Array<{ role: string; content: string }> }
-    const assistantMsg = body.messages.find((m) => m.role === 'assistant')
-    expect(assistantMsg!.content).toBe('Hello there!')
-    expect(assistantMsg!.content).not.toBe('[object Object]')
-  })
-
-  it('removes anthropic-version and anthropic-beta headers', () => {
-    const result = transformAnthropicMessagesRequestToOpenAIChat(
-      makeRequest({ messages: [{ role: 'user', content: 'hi' }], max_tokens: 10 }),
-    )
-    expect(result).not.toBeNull()
-    expect(result!.request.headers['anthropic-version']).toBeUndefined()
-  })
-
-  it('rewrites path to /v1/chat/completions', () => {
-    const result = transformAnthropicMessagesRequestToOpenAIChat(
-      makeRequest({ messages: [{ role: 'user', content: 'hi' }], max_tokens: 10 }),
-    )
-    expect(result!.request.path).toBe('/v1/chat/completions')
-  })
-
-  it('returns null for non-messages paths', () => {
-    const req = makeRequest({ messages: [] }, '/v1/embeddings')
-    expect(transformAnthropicMessagesRequestToOpenAIChat(req)).toBeNull()
-  })
+test('preserves plain string message content', () => {
+  const result = transformAnthropicMessagesRequestToOpenAIChat(
+    makeRequest({ model: 'claude-3-5-haiku-20241022', messages: [{ role: 'user', content: 'Hello' }], max_tokens: 100 }),
+  )
+  assert.notEqual(result, null)
+  const body = JSON.parse(dec.decode(result!.request.body)) as { messages: Array<{ content: string }> }
+  assert.equal(body.messages[0]!.content, 'Hello')
 })
 
-describe('transformOpenAIChatResponseToAnthropicMessage', () => {
-  function makeOAIResponse(body: unknown, statusCode = 200): SerializedHttpResponse {
-    return {
-      requestId: 'r1',
-      statusCode,
-      headers: { 'content-type': 'application/json' },
-      body: enc.encode(JSON.stringify(body)),
-    }
+test('does NOT produce [object Object] for array content blocks', () => {
+  // Regression: Claude Code sends content as [{type:'text', text:'...'}]
+  const result = transformAnthropicMessagesRequestToOpenAIChat(
+    makeRequest({
+      model: 'claude-3-5-haiku-20241022',
+      messages: [
+        { role: 'user', content: [{ type: 'text', text: 'What is 2+2?' }] },
+      ],
+      max_tokens: 100,
+    }),
+  )
+  assert.notEqual(result, null)
+  const body = JSON.parse(dec.decode(result!.request.body)) as { messages: Array<{ role: string; content: string }> }
+  const userMsg = body.messages.find((m) => m.role === 'user')
+  assert.equal(userMsg!.content, 'What is 2+2?')
+  assert.notEqual(userMsg!.content, '[object Object]')
+})
+
+test('does NOT produce [object Object] for multi-block user messages', () => {
+  const result = transformAnthropicMessagesRequestToOpenAIChat(
+    makeRequest({
+      model: 'claude-3-5-haiku-20241022',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Line one' },
+            { type: 'text', text: 'Line two' },
+          ],
+        },
+      ],
+      max_tokens: 100,
+    }),
+  )
+  assert.notEqual(result, null)
+  const body = JSON.parse(dec.decode(result!.request.body)) as { messages: Array<{ role: string; content: string }> }
+  const userMsg = body.messages.find((m) => m.role === 'user')
+  assert.equal(userMsg!.content, 'Line one\nLine two')
+  assert.equal(userMsg!.content.includes('[object Object]'), false)
+})
+
+test('does NOT produce [object Object] for assistant array content blocks', () => {
+  const result = transformAnthropicMessagesRequestToOpenAIChat(
+    makeRequest({
+      model: 'claude-3-5-haiku-20241022',
+      messages: [
+        { role: 'user', content: 'Hi' },
+        { role: 'assistant', content: [{ type: 'text', text: 'Hello there!' }] },
+        { role: 'user', content: 'Good' },
+      ],
+      max_tokens: 100,
+    }),
+  )
+  assert.notEqual(result, null)
+  const body = JSON.parse(dec.decode(result!.request.body)) as { messages: Array<{ role: string; content: string }> }
+  const assistantMsg = body.messages.find((m) => m.role === 'assistant')
+  assert.equal(assistantMsg!.content, 'Hello there!')
+  assert.notEqual(assistantMsg!.content, '[object Object]')
+})
+
+test('removes anthropic-version header', () => {
+  const result = transformAnthropicMessagesRequestToOpenAIChat(
+    makeRequest({ messages: [{ role: 'user', content: 'hi' }], max_tokens: 10 }),
+  )
+  assert.notEqual(result, null)
+  assert.equal(result!.request.headers['anthropic-version'], undefined)
+})
+
+test('rewrites path to /v1/chat/completions', () => {
+  const result = transformAnthropicMessagesRequestToOpenAIChat(
+    makeRequest({ messages: [{ role: 'user', content: 'hi' }], max_tokens: 10 }),
+  )
+  assert.equal(result!.request.path, '/v1/chat/completions')
+})
+
+test('returns null for non-messages paths', () => {
+  const req = makeRequest({ messages: [] }, '/v1/embeddings')
+  assert.equal(transformAnthropicMessagesRequestToOpenAIChat(req), null)
+})
+
+test('converts a basic OpenAI response to Anthropic format', () => {
+  const oaiBody = {
+    id: 'chatcmpl-abc',
+    model: 'gpt-4o',
+    choices: [{ message: { role: 'assistant', content: 'Hello!' }, finish_reason: 'stop' }],
+    usage: { prompt_tokens: 10, completion_tokens: 5 },
   }
+  const resp: SerializedHttpResponse = {
+    requestId: 'r1',
+    statusCode: 200,
+    headers: { 'content-type': 'application/json' },
+    body: enc.encode(JSON.stringify(oaiBody)),
+  }
+  const result = transformOpenAIChatResponseToAnthropicMessage(resp, { streamRequested: false })
+  const body = JSON.parse(dec.decode(result.body)) as {
+    type: string
+    content: Array<{ type: string; text: string }>
+  }
+  assert.equal(body.type, 'message')
+  assert.equal(body.content[0]!.type, 'text')
+  assert.equal(body.content[0]!.text, 'Hello!')
+})
 
-  it('converts a basic OpenAI response to Anthropic format', () => {
-    const oaiBody = {
-      id: 'chatcmpl-abc',
-      model: 'gpt-4o',
-      choices: [{ message: { role: 'assistant', content: 'Hello!' }, finish_reason: 'stop' }],
-      usage: { prompt_tokens: 10, completion_tokens: 5 },
-    }
-    const result = transformOpenAIChatResponseToAnthropicMessage(
-      makeOAIResponse(oaiBody),
-      { streamRequested: false },
-    )
-    const body = JSON.parse(dec.decode(result.body)) as {
-      type: string
-      content: Array<{ type: string; text: string }>
-    }
-    expect(body.type).toBe('message')
-    expect(body.content[0]!.type).toBe('text')
-    expect(body.content[0]!.text).toBe('Hello!')
-  })
-
-  it('maps finish_reason stop → end_turn', () => {
-    const oaiBody = {
-      id: 'x',
-      model: 'gpt-4o',
-      choices: [{ message: { role: 'assistant', content: 'Hi' }, finish_reason: 'stop' }],
-      usage: { prompt_tokens: 1, completion_tokens: 1 },
-    }
-    const result = transformOpenAIChatResponseToAnthropicMessage(
-      makeOAIResponse(oaiBody),
-      { streamRequested: false },
-    )
-    const body = JSON.parse(dec.decode(result.body)) as { stop_reason: string }
-    expect(body.stop_reason).toBe('end_turn')
-  })
+test('maps finish_reason stop → end_turn', () => {
+  const oaiBody = {
+    id: 'x',
+    model: 'gpt-4o',
+    choices: [{ message: { role: 'assistant', content: 'Hi' }, finish_reason: 'stop' }],
+    usage: { prompt_tokens: 1, completion_tokens: 1 },
+  }
+  const resp: SerializedHttpResponse = {
+    requestId: 'r1',
+    statusCode: 200,
+    headers: { 'content-type': 'application/json' },
+    body: enc.encode(JSON.stringify(oaiBody)),
+  }
+  const result = transformOpenAIChatResponseToAnthropicMessage(resp, { streamRequested: false })
+  const body = JSON.parse(dec.decode(result.body)) as { stop_reason: string }
+  assert.equal(body.stop_reason, 'end_turn')
 })
