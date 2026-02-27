@@ -8,6 +8,9 @@ export enum MessageType {
   HttpResponseChunk = 0x22,
   HttpResponseEnd = 0x23,
   HttpResponseError = 0x24,
+  // Chunked request upload (buyer→seller body streaming)
+  HttpRequestChunk = 0x25,
+  HttpRequestEnd   = 0x26,
   // Task/Agent message types
   TaskRequest = 0x30,
   TaskEvent = 0x31,

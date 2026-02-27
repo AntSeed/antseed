@@ -1,4 +1,8 @@
 export const ANTSEED_STREAMING_RESPONSE_HEADER = 'x-antseed-streaming';
+/** Marker header set on HttpRequest frames whose body is sent via HttpRequestChunk/End frames. */
+export const ANTSEED_UPLOAD_CHUNK_HEADER = 'x-antseed-upload';
+/** Body size threshold above which ProxyMux automatically switches to chunked upload (1 MiB). */
+export const ANTSEED_UPLOAD_CHUNK_SIZE = 1 * 1024 * 1024;
 
 export interface SerializedHttpRequest {
   requestId: string;
@@ -16,6 +20,12 @@ export interface SerializedHttpResponse {
 }
 
 export interface SerializedHttpResponseChunk {
+  requestId: string;
+  data: Uint8Array;
+  done: boolean;
+}
+
+export interface SerializedHttpRequestChunk {
   requestId: string;
   data: Uint8Array;
   done: boolean;

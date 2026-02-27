@@ -2,6 +2,7 @@ import type {
   SerializedHttpRequest,
   SerializedHttpResponse,
   SerializedHttpResponseChunk,
+  SerializedHttpRequestChunk,
 } from "../types/http.js";
 
 const encoder = new TextEncoder();
@@ -286,6 +287,63 @@ export function decodeHttpResponseChunk(
   offset += 1;
 
   // data
+  const dataLen = view.getUint32(offset);
+  offset += 4;
+  const chunkData = data.slice(offset, offset + dataLen);
+
+  return { requestId, data: chunkData, done };
+}
+
+/**
+ * Encode an HTTP request chunk into binary format:
+ * [requestIdLen:2][requestId:N][done:1][dataLen:4][data:N]
+ */
+export function encodeHttpRequestChunk(
+  chunk: SerializedHttpRequestChunk
+): Uint8Array {
+  const requestIdBytes = encoder.encode(chunk.requestId);
+
+  const totalSize =
+    2 + requestIdBytes.length +
+    1 +
+    4 + chunk.data.length;
+
+  const buf = new Uint8Array(totalSize);
+  const view = new DataView(buf.buffer);
+  let offset = 0;
+
+  view.setUint16(offset, requestIdBytes.length);
+  offset += 2;
+  buf.set(requestIdBytes, offset);
+  offset += requestIdBytes.length;
+
+  view.setUint8(offset, chunk.done ? 1 : 0);
+  offset += 1;
+
+  view.setUint32(offset, chunk.data.length);
+  offset += 4;
+  buf.set(chunk.data, offset);
+
+  return buf;
+}
+
+/**
+ * Decode binary data into a SerializedHttpRequestChunk.
+ */
+export function decodeHttpRequestChunk(
+  data: Uint8Array
+): SerializedHttpRequestChunk {
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  let offset = 0;
+
+  const requestIdLen = view.getUint16(offset);
+  offset += 2;
+  const requestId = decoder.decode(data.slice(offset, offset + requestIdLen));
+  offset += requestIdLen;
+
+  const done = view.getUint8(offset) === 1;
+  offset += 1;
+
   const dataLen = view.getUint32(offset);
   offset += 4;
   const chunkData = data.slice(offset, offset + dataLen);

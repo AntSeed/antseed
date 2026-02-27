@@ -6,11 +6,14 @@ import {
   decodeHttpResponse,
   encodeHttpResponseChunk,
   decodeHttpResponseChunk,
+  encodeHttpRequestChunk,
+  decodeHttpRequestChunk,
 } from '../src/proxy/request-codec.js';
 import type {
   SerializedHttpRequest,
   SerializedHttpResponse,
   SerializedHttpResponseChunk,
+  SerializedHttpRequestChunk,
 } from '../src/types/http.js';
 
 describe('HTTP Request codec', () => {
@@ -140,5 +143,41 @@ describe('HTTP Response Chunk codec', () => {
     const decoded = decodeHttpResponseChunk(encodeHttpResponseChunk(chunk));
     expect(decoded.done).toBe(false);
     expect(decoded.data.length).toBe(0);
+  });
+});
+
+describe('HTTP Request Chunk codec', () => {
+  it('should round-trip a mid-stream chunk (done=false)', () => {
+    const chunk: SerializedHttpRequestChunk = {
+      requestId: 'req-upload-1',
+      data: new Uint8Array([0x01, 0x02, 0x03, 0xFF]),
+      done: false,
+    };
+    const decoded = decodeHttpRequestChunk(encodeHttpRequestChunk(chunk));
+    expect(decoded.requestId).toBe('req-upload-1');
+    expect(decoded.done).toBe(false);
+    expect(decoded.data).toEqual(chunk.data);
+  });
+
+  it('should round-trip a final chunk (done=true)', () => {
+    const chunk: SerializedHttpRequestChunk = {
+      requestId: 'req-upload-1',
+      data: new Uint8Array(0),
+      done: true,
+    };
+    const decoded = decodeHttpRequestChunk(encodeHttpRequestChunk(chunk));
+    expect(decoded.requestId).toBe('req-upload-1');
+    expect(decoded.done).toBe(true);
+    expect(decoded.data.length).toBe(0);
+  });
+
+  it('should handle a 2 MiB binary payload', () => {
+    const data = new Uint8Array(2 * 1024 * 1024);
+    for (let i = 0; i < data.length; i++) data[i] = i & 0xFF;
+    const chunk: SerializedHttpRequestChunk = { requestId: 'big-upload', data, done: false };
+    const decoded = decodeHttpRequestChunk(encodeHttpRequestChunk(chunk));
+    expect(decoded.data.length).toBe(data.length);
+    expect(decoded.data[0]).toBe(0);
+    expect(decoded.data[255]).toBe(255);
   });
 });

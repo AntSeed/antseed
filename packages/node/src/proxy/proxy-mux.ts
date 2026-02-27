@@ -8,8 +8,14 @@ import {
   decodeHttpResponse,
   encodeHttpResponseChunk,
   decodeHttpResponseChunk,
+  encodeHttpRequestChunk,
+  decodeHttpRequestChunk,
 } from "./request-codec.js";
-import { ANTSEED_STREAMING_RESPONSE_HEADER } from "../types/http.js";
+import {
+  ANTSEED_STREAMING_RESPONSE_HEADER,
+  ANTSEED_UPLOAD_CHUNK_HEADER,
+  ANTSEED_UPLOAD_CHUNK_SIZE,
+} from "../types/http.js";
 import type {
   SerializedHttpRequest,
   SerializedHttpResponse,
@@ -22,6 +28,27 @@ type ResponseHandler = (
 ) => void;
 type ChunkHandler = (chunk: SerializedHttpResponseChunk) => void;
 type RequestHandler = (request: SerializedHttpRequest) => void | Promise<void>;
+
+/** Per-request upload size cap, total budget, and stall timeout. */
+export interface ProxyMuxUploadLimits {
+  /** Max body bytes for a single upload. Default: 32 MiB. Buyer receives 413 on violation. */
+  maxUploadBodyBytes?: number;
+  /** Max bytes across ALL concurrent in-progress uploads. Default: 256 MiB. */
+  maxTotalPendingUploadBytes?: number;
+  /** Max ms between the header frame and HttpRequestEnd. Default: 120_000 ms. */
+  uploadTimeoutMs?: number;
+}
+
+const DEFAULT_MAX_UPLOAD_BODY_BYTES       = 32  * 1024 * 1024; // 32 MiB
+const DEFAULT_MAX_TOTAL_PENDING_BYTES     = 256 * 1024 * 1024; // 256 MiB
+const DEFAULT_UPLOAD_TIMEOUT_MS           = 120_000;            // 2 min
+
+interface PendingUpload {
+  headerReq: SerializedHttpRequest;
+  chunks: Uint8Array[];
+  byteCount: number;
+  timer: ReturnType<typeof setTimeout>;
+}
 
 /**
  * Request/response multiplexer over DataChannel.
@@ -38,8 +65,19 @@ export class ProxyMux {
   // Seller side: handler for incoming proxy requests
   private _requestHandler: RequestHandler | null = null;
 
-  constructor(connection: PeerConnection) {
+  // Seller side: in-progress chunked uploads with size tracking and timeouts
+  private readonly _pendingUploads = new Map<string, PendingUpload>();
+  private _totalPendingUploadBytes = 0;
+
+  private readonly _maxUploadBodyBytes: number;
+  private readonly _maxTotalPendingUploadBytes: number;
+  private readonly _uploadTimeoutMs: number;
+
+  constructor(connection: PeerConnection, uploadLimits?: ProxyMuxUploadLimits) {
     this._connection = connection;
+    this._maxUploadBodyBytes       = uploadLimits?.maxUploadBodyBytes       ?? DEFAULT_MAX_UPLOAD_BODY_BYTES;
+    this._maxTotalPendingUploadBytes = uploadLimits?.maxTotalPendingUploadBytes ?? DEFAULT_MAX_TOTAL_PENDING_BYTES;
+    this._uploadTimeoutMs          = uploadLimits?.uploadTimeoutMs          ?? DEFAULT_UPLOAD_TIMEOUT_MS;
   }
 
   /** Buyer side: send a proxy request and register response/chunk handlers. */
@@ -51,14 +89,50 @@ export class ProxyMux {
     this._responseHandlers.set(request.requestId, onResponse);
     this._chunkHandlers.set(request.requestId, onChunk);
 
-    const payload = encodeHttpRequest(request);
-    const frame = encodeFrame({
+    if (request.body.length > ANTSEED_UPLOAD_CHUNK_SIZE) {
+      this._sendChunkedRequest(request);
+    } else {
+      const payload = encodeHttpRequest(request);
+      this._connection.send(encodeFrame({
+        type: MessageType.HttpRequest,
+        messageId: this._nextMessageId(),
+        payload,
+      }));
+    }
+  }
+
+  /** Buyer side: split a large request body into HttpRequest + HttpRequestChunk* + HttpRequestEnd. */
+  private _sendChunkedRequest(request: SerializedHttpRequest): void {
+    // Header frame: metadata only, empty body, upload marker
+    const headerRequest: SerializedHttpRequest = {
+      ...request,
+      headers: { ...request.headers, [ANTSEED_UPLOAD_CHUNK_HEADER]: 'chunked' },
+      body: new Uint8Array(0),
+    };
+    this._connection.send(encodeFrame({
       type: MessageType.HttpRequest,
       messageId: this._nextMessageId(),
-      payload,
-    });
+      payload: encodeHttpRequest(headerRequest),
+    }));
 
-    this._connection.send(frame);
+    // Stream body in ANTSEED_UPLOAD_CHUNK_SIZE slices
+    const body = request.body;
+    let offset = 0;
+    while (offset < body.length) {
+      const end = Math.min(offset + ANTSEED_UPLOAD_CHUNK_SIZE, body.length);
+      const isLast = end >= body.length;
+      const payload = encodeHttpRequestChunk({
+        requestId: request.requestId,
+        data: body.slice(offset, end),
+        done: isLast,
+      });
+      this._connection.send(encodeFrame({
+        type: isLast ? MessageType.HttpRequestEnd : MessageType.HttpRequestChunk,
+        messageId: this._nextMessageId(),
+        payload,
+      }));
+      offset = end;
+    }
   }
 
   /** Buyer side: cancel handlers for an in-flight request. */
@@ -106,9 +180,79 @@ export class ProxyMux {
       switch (frame.type) {
         case MessageType.HttpRequest: {
           // Seller side: incoming request from buyer
-          if (this._requestHandler) {
-            const request = decodeHttpRequest(frame.payload);
+          const request = decodeHttpRequest(frame.payload);
+          if (request.headers[ANTSEED_UPLOAD_CHUNK_HEADER] === 'chunked') {
+            // Body will arrive via HttpRequestChunk/HttpRequestEnd — start buffering
+            const timer = setTimeout(
+              () => this._abortUpload(request.requestId, 408, 'Upload timed out'),
+              this._uploadTimeoutMs,
+            );
+            this._pendingUploads.set(request.requestId, {
+              headerReq: request,
+              chunks: [],
+              byteCount: 0,
+              timer,
+            });
+          } else if (this._requestHandler) {
             await this._requestHandler(request);
+          }
+          break;
+        }
+        case MessageType.HttpRequestChunk: {
+          // Seller side: non-final body chunk of a chunked upload
+          const chunk = decodeHttpRequestChunk(frame.payload);
+          const entry = this._pendingUploads.get(chunk.requestId);
+          if (!entry || chunk.data.length === 0) break;
+
+          // Per-request size guard
+          if (entry.byteCount + chunk.data.length > this._maxUploadBodyBytes) {
+            this._abortUpload(chunk.requestId, 413, 'Upload body exceeds per-request limit');
+            break;
+          }
+          // Global budget guard
+          if (this._totalPendingUploadBytes + chunk.data.length > this._maxTotalPendingUploadBytes) {
+            this._abortUpload(chunk.requestId, 413, 'Server upload capacity exceeded');
+            break;
+          }
+
+          entry.chunks.push(chunk.data);
+          entry.byteCount += chunk.data.length;
+          this._totalPendingUploadBytes += chunk.data.length;
+          break;
+        }
+        case MessageType.HttpRequestEnd: {
+          // Seller side: final body chunk — reassemble, zero intermediates, dispatch
+          const chunk = decodeHttpRequestChunk(frame.payload);
+          const entry = this._pendingUploads.get(chunk.requestId);
+          if (!entry) break;
+
+          // Check final chunk against limits
+          const finalLen = chunk.data.length;
+          if (finalLen > 0) {
+            if (entry.byteCount + finalLen > this._maxUploadBodyBytes) {
+              this._abortUpload(chunk.requestId, 413, 'Upload body exceeds per-request limit');
+              break;
+            }
+            if (this._totalPendingUploadBytes + finalLen > this._maxTotalPendingUploadBytes) {
+              this._abortUpload(chunk.requestId, 413, 'Server upload capacity exceeded');
+              break;
+            }
+            entry.chunks.push(chunk.data);
+          }
+
+          // Clean up tracking state
+          clearTimeout(entry.timer);
+          this._pendingUploads.delete(chunk.requestId);
+          this._totalPendingUploadBytes -= entry.byteCount;
+
+          if (this._requestHandler) {
+            const body = _concatChunks(entry.chunks);
+            // Zero intermediates — reduces the window for sensitive data in RAM
+            for (const c of entry.chunks) c.fill(0);
+            entry.chunks.length = 0;
+
+            const { [ANTSEED_UPLOAD_CHUNK_HEADER]: _marker, ...cleanHeaders } = entry.headerReq.headers;
+            await this._requestHandler({ ...entry.headerReq, headers: cleanHeaders, body });
           }
           break;
         }
@@ -172,9 +316,64 @@ export class ProxyMux {
     return this._responseHandlers.size;
   }
 
+  /** Number of in-progress chunked uploads buffered on the seller side. */
+  pendingUploadCount(): number {
+    return this._pendingUploads.size;
+  }
+
+  /** Total bytes currently buffered across all in-progress uploads. */
+  pendingUploadBytes(): number {
+    return this._totalPendingUploadBytes;
+  }
+
+  /**
+   * Seller side: abort and discard all buffered chunked-upload state.
+   * Call on connection close or session end to prevent memory leaks.
+   * Zeros all buffered chunk data before discarding.
+   */
+  abortPendingUploads(): void {
+    for (const entry of this._pendingUploads.values()) {
+      clearTimeout(entry.timer);
+      for (const c of entry.chunks) c.fill(0);
+    }
+    this._pendingUploads.clear();
+    this._totalPendingUploadBytes = 0;
+  }
+
+  /**
+   * Abort a single in-progress upload, zero its buffers, and send an error
+   * response to the buyer.
+   */
+  private _abortUpload(requestId: string, statusCode: number, reason: string): void {
+    const entry = this._pendingUploads.get(requestId);
+    if (!entry) return;
+
+    clearTimeout(entry.timer);
+    this._totalPendingUploadBytes -= entry.byteCount;
+    for (const c of entry.chunks) c.fill(0);
+    this._pendingUploads.delete(requestId);
+
+    this.sendProxyResponse({
+      requestId,
+      statusCode,
+      headers: { 'content-type': 'text/plain' },
+      body: new TextEncoder().encode(reason),
+    });
+  }
+
   private _nextMessageId(): number {
     const id = this._messageIdCounter;
     this._messageIdCounter = (this._messageIdCounter + 1) & 0xFFFFFFFF;
     return id;
   }
+}
+
+function _concatChunks(chunks: Uint8Array[]): Uint8Array {
+  if (chunks.length === 0) return new Uint8Array(0);
+  if (chunks.length === 1) return chunks[0]!;
+  const total = chunks.reduce((n, c) => n + c.length, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) { out.set(c, offset); offset += c.length; }
+  return out;
 }

@@ -662,6 +662,8 @@ export class AntseedNode extends EventEmitter {
 
     conn.on("stateChange", (state: ConnectionState) => {
       if (state === ConnectionState.Closed || state === ConnectionState.Failed) {
+        // Flush any in-progress chunked uploads so buffers are not leaked
+        this._muxes.get(peerId)?.abortPendingUploads();
         this._muxes.delete(peerId);
         this._paymentMuxes.delete(peerId);
         this._decoders.delete(peerId);
