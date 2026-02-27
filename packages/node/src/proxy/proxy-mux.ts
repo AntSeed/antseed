@@ -246,6 +246,8 @@ export class ProxyMux {
               break;
             }
             entry.chunks.push(chunk.data);
+            entry.byteCount += finalLen;
+            this._totalPendingUploadBytes += finalLen;
           }
 
           // Clean up tracking state
@@ -378,7 +380,7 @@ export class ProxyMux {
 
 function _concatChunks(chunks: Uint8Array[]): Uint8Array {
   if (chunks.length === 0) return new Uint8Array(0);
-  if (chunks.length === 1) return chunks[0]!;
+  if (chunks.length === 1) return chunks[0]!.slice();
   const total = chunks.reduce((n, c) => n + c.length, 0);
   const out = new Uint8Array(total);
   let offset = 0;
