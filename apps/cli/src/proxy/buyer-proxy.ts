@@ -26,6 +26,12 @@ export interface BuyerProxyConfig {
   node: AntseedNode
   /** How long to cache discovered peers before re-querying DHT (ms). Default: 30000 */
   peerCacheTtlMs?: number
+  /**
+   * Pin all requests to a specific peer ID for this session.
+   * The router is bypassed; the named peer is used directly if it is available
+   * and protocol-compatible. A 502 is returned if the peer cannot be reached.
+   */
+  pinnedPeerId?: string
 }
 
 const DAEMON_STATE_FILE = join(homedir(), '.antseed', 'daemon.state.json')
@@ -70,6 +76,16 @@ export type CandidatePeerRouteSelection = {
 function getExplicitProviderOverride(request: SerializedHttpRequest): string | null {
   const provider = request.headers['x-antseed-provider']?.trim().toLowerCase()
   return provider && provider.length > 0 ? provider : null
+}
+
+function getExplicitPeerIdOverride(
+  request: SerializedHttpRequest,
+  sessionPinnedPeerId: string | undefined,
+): string | null {
+  // Per-request header takes priority over session pin
+  const header = request.headers['x-antseed-pin-peer']?.trim().toLowerCase()
+  if (header && header.length > 0) return header
+  return sessionPinnedPeerId?.toLowerCase() ?? null
 }
 
 function getPeerProviderProtocols(
@@ -536,6 +552,7 @@ export class BuyerProxy {
   private readonly _node: AntseedNode
   private readonly _port: number
   private readonly _peerCacheTtlMs: number
+  private readonly _pinnedPeerId: string | undefined
 
   private _cachedPeers: PeerInfo[] = []
   private _cacheTimestamp = 0
@@ -544,6 +561,7 @@ export class BuyerProxy {
     this._node = config.node
     this._port = config.port
     this._peerCacheTtlMs = config.peerCacheTtlMs ?? 30_000
+    this._pinnedPeerId = config.pinnedPeerId?.toLowerCase()
     this._server = createServer((req, res) => {
       this._handleRequest(req, res).catch((err) => {
         log('Unhandled error:', err)
@@ -727,6 +745,7 @@ export class BuyerProxy {
     const requestProtocol = detectRequestModelApiProtocol(serializedReq)
     const requestedModel = extractRequestedModel(serializedReq)
     const explicitProvider = getExplicitProviderOverride(serializedReq)
+    const explicitPeerId = getExplicitPeerIdOverride(serializedReq, this._pinnedPeerId)
     const {
       candidatePeers,
       routePlanByPeerId,
@@ -745,32 +764,45 @@ export class BuyerProxy {
       return
     }
 
-    // Use router to select peer
+    // Select peer: explicit pin bypasses the router
     const router = this._node.router
-    const localPeers = candidatePeers.filter((peer) => isLoopbackPeer(peer))
     let selectedPeer: PeerInfo | null = null
 
-    if (localPeers.length > 0) {
-      selectedPeer = router
-        ? router.selectPeer(serializedReq, localPeers)
-        : localPeers[0] ?? null
-      if (selectedPeer) {
-        log(`Preferring local peer ${selectedPeer.peerId.slice(0, 12)}... @ ${selectedPeer.publicAddress ?? 'unknown'}`)
+    if (explicitPeerId) {
+      selectedPeer = candidatePeers.find((p) => p.peerId.toLowerCase() === explicitPeerId) ?? null
+      if (!selectedPeer) {
+        const source = serializedReq.headers['x-antseed-pin-peer'] ? 'x-antseed-pin-peer header' : '--peer flag'
+        log(`Pinned peer ${explicitPeerId.slice(0, 12)}... not found in candidate list (${source})`)
+        res.writeHead(502, { 'content-type': 'text/plain' })
+        res.end(`Pinned peer ${explicitPeerId.slice(0, 12)}... is not available or does not support this request.`)
+        return
       }
-    }
+      log(`Using pinned peer ${selectedPeer.peerId.slice(0, 12)}...`)
+    } else {
+      const localPeers = candidatePeers.filter((peer) => isLoopbackPeer(peer))
 
-    if (!selectedPeer) {
-      selectedPeer = router
-        ? router.selectPeer(serializedReq, candidatePeers)
-        : candidatePeers[0] ?? null
-    }
+      if (localPeers.length > 0) {
+        selectedPeer = router
+          ? router.selectPeer(serializedReq, localPeers)
+          : localPeers[0] ?? null
+        if (selectedPeer) {
+          log(`Preferring local peer ${selectedPeer.peerId.slice(0, 12)}... @ ${selectedPeer.publicAddress ?? 'unknown'}`)
+        }
+      }
 
-    if (!selectedPeer) {
-      const diagnostics = this._formatPeerSelectionDiagnostics(candidatePeers)
-      log('Router could not select a peer.', diagnostics)
-      res.writeHead(502, { 'content-type': 'text/plain' })
-      res.end(`Router could not select a suitable peer. ${diagnostics}`)
-      return
+      if (!selectedPeer) {
+        selectedPeer = router
+          ? router.selectPeer(serializedReq, candidatePeers)
+          : candidatePeers[0] ?? null
+      }
+
+      if (!selectedPeer) {
+        const diagnostics = this._formatPeerSelectionDiagnostics(candidatePeers)
+        log('Router could not select a peer.', diagnostics)
+        res.writeHead(502, { 'content-type': 'text/plain' })
+        res.end(`Router could not select a suitable peer. ${diagnostics}`)
+        return
+      }
     }
 
     const selectedRoutePlan = routePlanByPeerId.get(selectedPeer.peerId)
@@ -783,10 +815,11 @@ export class BuyerProxy {
       return
     }
 
+    const { 'x-antseed-pin-peer': _pinPeer, ...headersForPeer } = serializedReq.headers
     let requestForPeer: SerializedHttpRequest = {
       ...serializedReq,
       headers: {
-        ...serializedReq.headers,
+        ...headersForPeer,
         'x-antseed-provider': selectedRoutePlan.provider,
       },
     }

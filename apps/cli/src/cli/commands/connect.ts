@@ -148,9 +148,17 @@ export function registerConnectCommand(program: Command): void {
     .option('--instance <id>', 'use a configured plugin instance by ID')
     .option('--max-input-usd-per-million <number>', 'runtime-only max input pricing override in USD per 1M tokens', parseFloat)
     .option('--max-output-usd-per-million <number>', 'runtime-only max output pricing override in USD per 1M tokens', parseFloat)
+    .option('--peer <peerId>', 'pin all requests to a specific peer ID (64-char hex), bypassing the router')
     .action(async (options) => {
       const globalOpts = getGlobalOptions(program)
       const config = await loadConfig(globalOpts.config)
+
+      const pinnedPeerId = options.peer as string | undefined
+      if (pinnedPeerId !== undefined && !/^[0-9a-f]{64}$/i.test(pinnedPeerId)) {
+        console.error(chalk.red('Error: --peer must be a 64-character hex peer ID.'))
+        process.exit(1)
+      }
+
       const runtimeOverrides = buildBuyerRuntimeOverridesFromFlags({
         port: options.port as number | undefined,
         maxInputUsdPerMillion: options.maxInputUsdPerMillion as number | undefined,
@@ -257,6 +265,9 @@ export function registerConnectCommand(program: Command): void {
       )
       console.log(chalk.dim(`  min peer reputation: ${effectiveBuyerConfig.minPeerReputation}`))
       console.log(chalk.dim(`  proxy port: ${effectiveBuyerConfig.proxyPort}`))
+      if (pinnedPeerId) {
+        console.log(chalk.yellow(`  pinned peer: ${pinnedPeerId} (router bypassed)`))
+      }
       console.log('')
 
       const node = new AntseedNode({
@@ -304,6 +315,7 @@ export function registerConnectCommand(program: Command): void {
       const proxy = new BuyerProxy({
         port: proxyPort,
         node,
+        pinnedPeerId,
       })
 
       try {
