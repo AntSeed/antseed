@@ -60,6 +60,17 @@ function toStringContent(value: unknown): string {
   if (value === null || value === undefined) {
     return ''
   }
+  // Handle a single content block object (e.g. {type:'text', text:'...'})
+  if (typeof value === 'object') {
+    const block = value as Record<string, unknown>
+    if (block.type === 'text' && typeof block.text === 'string') {
+      return block.text
+    }
+    if (block.type === 'tool_result') {
+      return toStringContent(block.content)
+    }
+    return ''
+  }
   return String(value)
 }
 
