@@ -167,4 +167,42 @@ describe('transformOpenAIChatResponseToAnthropicMessage', () => {
     expect(sseText).toContain('event: content_block_start');
     expect(sseText).toContain('event: message_stop');
   });
+
+  it('emits input_json_delta for tool_use blocks in SSE stream', () => {
+    const transformed = transformOpenAIChatResponseToAnthropicMessage(makeOpenAIResponse(), {
+      streamRequested: true,
+      fallbackModel: 'fallback-model',
+    });
+    const sseText = new TextDecoder().decode(transformed.body);
+
+    // Parse SSE events
+    const events: Array<{ event: string; data: Record<string, unknown> }> = [];
+    for (const chunk of sseText.split('\n\n')) {
+      const lines = chunk.split('\n').filter((l) => l.length > 0);
+      if (lines.length < 2) continue;
+      const event = lines[0].replace('event: ', '');
+      const data = JSON.parse(lines[1].replace('data: ', '')) as Record<string, unknown>;
+      events.push({ event, data });
+    }
+
+    // Find content_block_start for tool_use
+    const toolStart = events.find(
+      (e) => e.event === 'content_block_start'
+        && (e.data.content_block as Record<string, unknown>)?.type === 'tool_use',
+    );
+    expect(toolStart).toBeDefined();
+    // input should be empty in content_block_start per Anthropic spec
+    expect((toolStart!.data.content_block as Record<string, unknown>).input).toEqual({});
+
+    // Find input_json_delta for tool_use arguments
+    const toolDelta = events.find(
+      (e) => e.event === 'content_block_delta'
+        && (e.data.delta as Record<string, unknown>)?.type === 'input_json_delta',
+    );
+    expect(toolDelta).toBeDefined();
+    const delta = toolDelta!.data.delta as Record<string, unknown>;
+    expect(delta.type).toBe('input_json_delta');
+    const parsedArgs = JSON.parse(delta.partial_json as string) as Record<string, unknown>;
+    expect(parsedArgs).toEqual({ path: 'hello.txt' });
+  });
 });

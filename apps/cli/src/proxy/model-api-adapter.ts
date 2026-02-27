@@ -307,7 +307,7 @@ function buildAnthropicStreamFromMessage(message: {
       index,
       content_block: block.type === 'text'
         ? { type: 'text', text: '' }
-        : { type: 'tool_use', id: block.id, name: block.name, input: block.input },
+        : { type: 'tool_use', id: block.id, name: block.name, input: {} },
     })
 
     if (block.type === 'text' && block.text.length > 0) {
@@ -317,6 +317,17 @@ function buildAnthropicStreamFromMessage(message: {
         delta: {
           type: 'text_delta',
           text: block.text,
+        },
+      })
+    }
+
+    if (block.type === 'tool_use') {
+      pushEvent('content_block_delta', {
+        type: 'content_block_delta',
+        index,
+        delta: {
+          type: 'input_json_delta',
+          partial_json: JSON.stringify(block.input),
         },
       })
     }
