@@ -137,6 +137,33 @@ describe('validateMetadata', () => {
     expect(errors.some((e) => e.field.includes('models'))).toBe(true);
   });
 
+  it('should reject modelPricing entries with model names exceeding max length', () => {
+    const longModelName = 'x'.repeat(MAX_MODEL_NAME_LENGTH + 1);
+    const errors = validateMetadata(
+      validMetadata({
+        providers: [
+          {
+            provider: 'test',
+            models: ['m'],
+            defaultPricing: {
+              inputUsdPerMillion: 1,
+              outputUsdPerMillion: 1,
+            },
+            modelPricing: {
+              [longModelName]: {
+                inputUsdPerMillion: 2,
+                outputUsdPerMillion: 3,
+              },
+            },
+            maxConcurrency: 1,
+            currentLoad: 0,
+          },
+        ],
+      })
+    );
+    expect(errors.some((e) => e.field.includes('modelPricing'))).toBe(true);
+  });
+
   it('should reject negative default input price', () => {
     const errors = validateMetadata(
       validMetadata({
@@ -325,6 +352,28 @@ describe('validateMetadata', () => {
     expect(errors.some((e) => e.field.includes('modelCategories.m1'))).toBe(true);
   });
 
+  it('should reject model category entries with model names exceeding max length', () => {
+    const longModelName = 'x'.repeat(MAX_MODEL_NAME_LENGTH + 1);
+    const errors = validateMetadata(validMetadata({
+      providers: [
+        {
+          provider: 'test',
+          models: [],
+          defaultPricing: {
+            inputUsdPerMillion: 1,
+            outputUsdPerMillion: 1,
+          },
+          modelCategories: {
+            [longModelName]: ['privacy'],
+          },
+          maxConcurrency: 1,
+          currentLoad: 0,
+        },
+      ],
+    }));
+    expect(errors.some((e) => e.field.includes('modelCategories'))).toBe(true);
+  });
+
   it('should reject model API protocols for a model not listed by provider', () => {
     const errors = validateMetadata(validMetadata({
       providers: [
@@ -409,6 +458,28 @@ describe('validateMetadata', () => {
       ],
     }));
     expect(errors.some((e) => e.field.includes('modelApiProtocols.m1'))).toBe(true);
+  });
+
+  it('should reject model API protocol entries with model names exceeding max length', () => {
+    const longModelName = 'x'.repeat(MAX_MODEL_NAME_LENGTH + 1);
+    const errors = validateMetadata(validMetadata({
+      providers: [
+        {
+          provider: 'test',
+          models: [],
+          defaultPricing: {
+            inputUsdPerMillion: 1,
+            outputUsdPerMillion: 1,
+          },
+          modelApiProtocols: {
+            [longModelName]: ['openai-chat-completions'],
+          },
+          maxConcurrency: 1,
+          currentLoad: 0,
+        },
+      ],
+    }));
+    expect(errors.some((e) => e.field.includes('modelApiProtocols'))).toBe(true);
   });
 });
 

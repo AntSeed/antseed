@@ -127,6 +127,12 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
     // model pricing (optional)
     if (p.modelPricing !== undefined) {
       for (const [modelName, modelPricing] of Object.entries(p.modelPricing)) {
+        if (modelName.length > MAX_MODEL_NAME_LENGTH) {
+          errors.push({
+            field: `providers[${i}].modelPricing.${modelName}`,
+            message: `Model name length ${modelName.length} exceeds max ${MAX_MODEL_NAME_LENGTH}`,
+          });
+        }
         if (!modelPricing || !Number.isFinite(modelPricing.inputUsdPerMillion) || modelPricing.inputUsdPerMillion < 0) {
           errors.push({
             field: `providers[${i}].modelPricing.${modelName}.inputUsdPerMillion`,
@@ -144,6 +150,12 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
 
     if (p.modelCategories !== undefined) {
       for (const [modelName, categories] of Object.entries(p.modelCategories)) {
+        if (modelName.length > MAX_MODEL_NAME_LENGTH) {
+          errors.push({
+            field: `providers[${i}].modelCategories.${modelName}`,
+            message: `Model name length ${modelName.length} exceeds max ${MAX_MODEL_NAME_LENGTH}`,
+          });
+        }
         if (!hasWildcardModels && !p.models.includes(modelName)) {
           errors.push({
             field: `providers[${i}].modelCategories.${modelName}`,
@@ -199,6 +211,12 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
 
     if (p.modelApiProtocols !== undefined) {
       for (const [modelName, protocols] of Object.entries(p.modelApiProtocols)) {
+        if (modelName.length > MAX_MODEL_NAME_LENGTH) {
+          errors.push({
+            field: `providers[${i}].modelApiProtocols.${modelName}`,
+            message: `Model name length ${modelName.length} exceeds max ${MAX_MODEL_NAME_LENGTH}`,
+          });
+        }
         if (!hasWildcardModels && !p.models.includes(modelName)) {
           errors.push({
             field: `providers[${i}].modelApiProtocols.${modelName}`,

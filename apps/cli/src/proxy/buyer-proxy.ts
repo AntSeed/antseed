@@ -62,6 +62,11 @@ type PeerProtocolRoutePlan = {
   selection: TargetProtocolSelection | null
 }
 
+export type CandidatePeerRouteSelection = {
+  candidatePeers: PeerInfo[]
+  routePlanByPeerId: Map<string, PeerProtocolRoutePlan>
+}
+
 function getExplicitProviderOverride(request: SerializedHttpRequest): string | null {
   const provider = request.headers['x-antseed-provider']?.trim().toLowerCase()
   return provider && provider.length > 0 ? provider : null
@@ -132,6 +137,33 @@ function resolvePeerRoutePlan(
   }
 
   return transformedFallback
+}
+
+export function selectCandidatePeersForRouting(
+  peers: PeerInfo[],
+  requestProtocol: ModelApiProtocol | null,
+  requestedModel: string | null,
+  explicitProvider: string | null,
+): CandidatePeerRouteSelection {
+  const routePlanByPeerId = new Map<string, PeerProtocolRoutePlan>()
+  if (!requestProtocol && !explicitProvider) {
+    return {
+      candidatePeers: peers,
+      routePlanByPeerId,
+    }
+  }
+
+  const candidatePeers = peers.filter((peer) => {
+    const plan = resolvePeerRoutePlan(peer, requestProtocol, requestedModel, explicitProvider)
+    if (!plan) return false
+    routePlanByPeerId.set(peer.peerId, plan)
+    return true
+  })
+
+  return {
+    candidatePeers,
+    routePlanByPeerId,
+  }
 }
 
 function parseTokenCount(value: unknown): number {
@@ -695,25 +727,22 @@ export class BuyerProxy {
     const requestProtocol = detectRequestModelApiProtocol(serializedReq)
     const requestedModel = extractRequestedModel(serializedReq)
     const explicitProvider = getExplicitProviderOverride(serializedReq)
-    const routePlanByPeerId = new Map<string, PeerProtocolRoutePlan>()
+    const {
+      candidatePeers,
+      routePlanByPeerId,
+    } = selectCandidatePeersForRouting(peers, requestProtocol, requestedModel, explicitProvider)
 
-    let candidatePeers = peers
-    if (requestProtocol) {
-      candidatePeers = peers.filter((peer) => {
-        const plan = resolvePeerRoutePlan(peer, requestProtocol, requestedModel, explicitProvider)
-        if (!plan) return false
-        routePlanByPeerId.set(peer.peerId, plan)
-        return true
-      })
-
-      if (candidatePeers.length === 0) {
+    if (candidatePeers.length === 0) {
+      const diagnostics = this._formatPeerSelectionDiagnostics(peers)
+      res.writeHead(502, { 'content-type': 'text/plain' })
+      if (requestProtocol) {
         const protocolLabel = requestProtocol
         const providerLabel = explicitProvider ? ` for provider "${explicitProvider}"` : ''
-        const diagnostics = this._formatPeerSelectionDiagnostics(peers)
-        res.writeHead(502, { 'content-type': 'text/plain' })
         res.end(`No peers support ${protocolLabel}${providerLabel}. ${diagnostics}`)
-        return
+      } else {
+        res.end(`No peers advertise provider "${explicitProvider}". ${diagnostics}`)
       }
+      return
     }
 
     // Use router to select peer

@@ -200,10 +200,11 @@ export class PeerAnnouncer {
       return undefined;
     }
 
+    const hasWildcardModels = supportedModels.length === 0;
     const supportedModelSet = new Set(supportedModels);
     const normalized: Record<string, string[]> = {};
     for (const [model, categories] of Object.entries(modelCategories)) {
-      if (!supportedModelSet.has(model)) {
+      if (!hasWildcardModels && !supportedModelSet.has(model)) {
         continue;
       }
       const deduped = Array.from(
@@ -230,10 +231,11 @@ export class PeerAnnouncer {
       return undefined;
     }
 
+    const hasWildcardModels = supportedModels.length === 0;
     const supportedModelSet = new Set(supportedModels);
     const normalized: Record<string, ModelApiProtocol[]> = {};
     for (const [model, protocols] of Object.entries(modelApiProtocols)) {
-      if (!supportedModelSet.has(model)) {
+      if (!hasWildcardModels && !supportedModelSet.has(model)) {
         continue;
       }
       const deduped = Array.from(

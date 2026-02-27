@@ -66,4 +66,35 @@ describe('PeerAnnouncer live load metadata', () => {
     );
     expect(valid).toBe(true);
   });
+
+  it('preserves wildcard model metadata entries when provider models are wildcard', async () => {
+    const { config } = await makeConfig();
+    config.providers = [
+      {
+        provider: 'openai',
+        models: [],
+        modelCategories: {
+          'gpt-4.1': [' Coding ', 'coding'],
+        },
+        modelApiProtocols: {
+          'gpt-4.1': ['openai-chat-completions', 'OPENAI-CHAT-COMPLETIONS' as any, 'invalid-protocol' as any],
+        },
+        maxConcurrency: 5,
+      },
+    ];
+    config.pricing = new Map([
+      ['openai', { defaults: { inputUsdPerMillion: 1, outputUsdPerMillion: 1 } }],
+    ]);
+
+    const announcer = new PeerAnnouncer(config);
+    await announcer.refreshMetadata();
+    const refreshed = announcer.getLatestMetadata();
+    expect(refreshed).not.toBeNull();
+    expect(refreshed!.providers[0]!.modelCategories).toEqual({
+      'gpt-4.1': ['coding'],
+    });
+    expect(refreshed!.providers[0]!.modelApiProtocols).toEqual({
+      'gpt-4.1': ['openai-chat-completions'],
+    });
+  });
 });
