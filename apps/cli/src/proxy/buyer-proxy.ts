@@ -103,6 +103,12 @@ function getPeerProviderProtocols(
       return Array.from(new Set(fromMetadata[requestedModel]!))
     }
 
+    // If the peer advertises specific models and the requested model is not among them, return empty
+    // so this peer is filtered out in favour of peers that actually serve the model.
+    if (requestedModel && Object.keys(fromMetadata).length > 0) {
+      return []
+    }
+
     const merged = Object.values(fromMetadata).flat()
     if (merged.length > 0) {
       return Array.from(new Set(merged))
