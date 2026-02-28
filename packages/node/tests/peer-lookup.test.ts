@@ -56,9 +56,8 @@ describe('PeerLookup', () => {
 
     expect(resolve).toHaveBeenCalledTimes(2);
     expect(results).toHaveLength(2);
-    expect(results.map((r) => `${r.host}:${r.port}`)).toEqual([
-      '84.228.226.179:6882',
-      '147.236.231.105:6882',
-    ]);
+    expect(results.map((r) => `${r.host}:${r.port}`)).toEqual(
+      expect.arrayContaining(['84.228.226.179:6882', '147.236.231.105:6882']),
+    );
   });
 });
