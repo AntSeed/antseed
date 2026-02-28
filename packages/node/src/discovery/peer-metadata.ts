@@ -44,6 +44,5 @@ export interface PeerMetadata {
   evmAddress?: string;
   onChainReputation?: number;
   onChainSessionCount?: number;
-  onChainDisputeCount?: number;
   signature: string;
 }

@@ -166,27 +166,6 @@ describe('PaymentMux', () => {
       expect(handler).toHaveBeenCalledWith(payload);
     });
 
-    it('dispatches DisputeNotify', async () => {
-      const conn = mockConnection();
-      const mux  = new PaymentMux(conn);
-      const handler = vi.fn();
-      mux.onDisputeNotify(handler);
-
-      const payload = {
-        sessionId: '0x' + 'a'.repeat(64),
-        reason:    'Unacknowledged service',
-        txHash:    '0xtx456',
-      };
-      const frame: FramedMessage = {
-        type:      MessageType.DisputeNotify,
-        messageId: 6,
-        payload:   codec.encodeDisputeNotify(payload),
-      };
-
-      const result = await mux.handleFrame(frame);
-      expect(result).toBe(true);
-      expect(handler).toHaveBeenCalledWith(payload);
-    });
 
     it('returns true even with no handler registered', async () => {
       const conn = mockConnection();

@@ -7,8 +7,6 @@ import type { PeerId } from '../types/peer.js';
 export interface TrustComponents {
   /** Successful delivery rate (completed requests / total requests) */
   deliveryRate: number;
-  /** Inverse dispute rate (1 - disputes/total) */
-  disputeRate: number;
   /** Uptime percentage over rolling window */
   uptimeRate: number;
   /** Response quality score from metering data */
@@ -36,10 +34,9 @@ export interface TrustScore {
 
 /** Default weights for trust score computation. */
 export const DEFAULT_TRUST_WEIGHTS: Record<keyof TrustComponents, number> = {
-  deliveryRate: 0.25,
-  disputeRate: 0.25,
-  uptimeRate: 0.15,
-  responseQuality: 0.15,
+  deliveryRate: 0.40,
+  uptimeRate: 0.20,
+  responseQuality: 0.20,
   stakeWeight: 0.10,
   peerRatings: 0.05,
   accountAge: 0.05,
@@ -48,7 +45,6 @@ export const DEFAULT_TRUST_WEIGHTS: Record<keyof TrustComponents, number> = {
 /** Default component values for unknown metrics */
 export const DEFAULT_COMPONENTS: TrustComponents = {
   deliveryRate: 0.5,
-  disputeRate: 0.5,
   uptimeRate: 0.5,
   responseQuality: 0.5,
   stakeWeight: 0.0,

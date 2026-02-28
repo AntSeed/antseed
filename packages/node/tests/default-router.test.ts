@@ -89,7 +89,6 @@ describe('DefaultRouter', () => {
         trustScore: 0,
         onChainReputation: 0,
         onChainSessionCount: 0,
-        onChainDisputeCount: 0,
       });
 
       const selected = router.selectPeer(dummyReq, [newSeller]);

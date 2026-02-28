@@ -27,14 +27,12 @@ export enum MessageType {
   // 0x53  SellerReceipt   — per-request Ed25519 receipt (off-chain tracking)
   // 0x54  BuyerAck        — buyer Ed25519 ack of receipt
   // 0x55  TopUpRequest    — seller near cap, requests new SpendingAuth
-  // 0x57  DisputeNotify   — on-chain dispute notification
 
   SpendingAuth  = 0x50,
   AuthAck       = 0x51,
   SellerReceipt = 0x53,
   BuyerAck      = 0x54,
   TopUpRequest  = 0x55,
-  DisputeNotify = 0x57,
 
   // Report message types
   PeerReport = 0x60,
@@ -123,30 +121,3 @@ export interface TopUpRequestPayload {
   requestedAdditional: string;   // suggested new cap
 }
 
-/**
- * Notify counterparty that a dispute has been opened on-chain.
- */
-export interface DisputeNotifyPayload {
-  sessionId: string;
-  reason:    string;
-  txHash:    string;
-}
-
-// ─── Legacy type aliases (kept so existing receipt/ack code compiles) ────────
-
-/** @deprecated Use SpendingAuthPayload */
-export type SessionLockAuthPayload    = SpendingAuthPayload;
-/** @deprecated Use AuthAckPayload */
-export type SessionLockConfirmPayload = AuthAckPayload;
-/** @deprecated No longer used */
-export interface SessionLockRejectPayload { sessionId: string; reason: string; }
-/** @deprecated No longer used; seller charges on-demand */
-export interface SessionEndPayload {
-  sessionId:   string;
-  runningTotal: string;
-  requestCount: number;
-  score:        number;
-  buyerSig:    string;
-}
-/** @deprecated Absorbed into SpendingAuthPayload */
-export interface TopUpAuthPayload { sessionId: string; additionalAmount: string; buyerSig: string; }

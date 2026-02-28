@@ -231,7 +231,6 @@ describe('LocalRouter', () => {
       reputationScore: undefined,
       onChainReputation: 0,
       onChainSessionCount: 0,
-      onChainDisputeCount: 0,
     });
 
     const selected = router.selectPeer(makeRequest(), [newSeller]);

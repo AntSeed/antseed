@@ -19,8 +19,6 @@ import {
 import { bytesToHex, hexToBytes } from '../utils/hex.js';
 import { debugLog, debugWarn } from '../utils/debug.js';
 
-// ── Configuration ─────────────────────────────────────────────────────────────
-
 export interface BuyerPaymentConfig {
   /** Chain ID for EIP-712 domain (8453 = Base mainnet, 84532 = Base Sepolia) */
   chainId: number;
@@ -49,20 +47,18 @@ export interface BuyerPaymentConfig {
   autoAck?: boolean;
 }
 
-// ── Per-seller session tracking ───────────────────────────────────────────────
-
 export interface SellerSession {
-  sessionId:      string;   // 0x-prefixed 32-byte hex
-  sellerPeerId:   string;
-  sellerEvmAddr:  string;
-  nonce:          number;   // current auth nonce
-  authMax:        bigint;   // current auth cap
-  deadline:       number;   // current auth expiry (unix secs)
-  authorized:     boolean;  // has seller ack'd?
-  totalSpend:     bigint;   // cumulative charged this session (from receipts)
-  requestCount:   number;
-  createdAt:      number;
-  updatedAt:      number;
+  sessionId:     string;   // 0x-prefixed 32-byte hex
+  sellerPeerId:  string;
+  sellerEvmAddr: string;
+  nonce:         number;   // current auth nonce
+  authMax:       bigint;   // current auth cap
+  deadline:      number;   // current auth expiry (unix secs)
+  authorized:    boolean;  // has seller ack'd?
+  totalSpend:    bigint;   // cumulative charged this session (from receipts)
+  requestCount:  number;
+  createdAt:     number;
+  updatedAt:     number;
 }
 
 /**
@@ -106,7 +102,6 @@ export class BuyerPaymentManager {
 
   get escrowClient(): EscrowClient { return this._escrow; }
 
-  /** Snapshot of all non-disconnected sessions. */
   getActiveSessions(): SellerSession[] {
     return [...this._sessions.values()];
   }
@@ -115,27 +110,17 @@ export class BuyerPaymentManager {
     return this._sessions.get(sellerPeerId);
   }
 
-  // ── Authorization ─────────────────────────────────────────────────────────
-
-  /**
-   * Generate a session ID, sign a SpendingAuth, and send it to the seller.
-   *
-   * Called by the buyer proxy before forwarding the first request to a seller peer.
-   */
   async authorizeSpending(
-    sellerPeerId:  string,
-    sellerEvmAddr: string,
-    paymentMux:    PaymentMux,
+    sellerPeerId:   string,
+    sellerEvmAddr:  string,
+    paymentMux:     PaymentMux,
     maxAmountUsdc?: bigint,
   ): Promise<string> {
-    const maxAmount = maxAmountUsdc ?? this._config.defaultAuthAmountUsdc ?? 2_000_000n;
+    const maxAmount    = maxAmountUsdc ?? this._config.defaultAuthAmountUsdc ?? 2_000_000n;
     const durationSecs = this._config.defaultAuthDurationSecs ?? 3600;
-
-    // Generate a random 32-byte session ID
-    const sessionIdBytes = randomBytes(32);
-    const sessionId      = '0x' + sessionIdBytes.toString('hex');
-    const nonce          = 1;
-    const deadline       = Math.floor(Date.now() / 1000) + durationSecs;
+    const sessionId    = '0x' + randomBytes(32).toString('hex');
+    const nonce        = 1;
+    const deadline     = Math.floor(Date.now() / 1000) + durationSecs;
 
     debugLog(`[BuyerPayment] Authorizing: session=${sessionId.slice(0, 18)}... seller=${sellerPeerId.slice(0, 12)}... max=${maxAmount}`);
 
@@ -151,13 +136,13 @@ export class BuyerPaymentManager {
       sellerPeerId,
       sellerEvmAddr,
       nonce,
-      authMax: maxAmount,
+      authMax:      maxAmount,
       deadline,
       authorized:   false,
       totalSpend:   0n,
       requestCount: 0,
-      createdAt: now,
-      updatedAt: now,
+      createdAt:    now,
+      updatedAt:    now,
     });
 
     paymentMux.sendSpendingAuth({
@@ -170,8 +155,6 @@ export class BuyerPaymentManager {
 
     return sessionId;
   }
-
-  // ── AuthAck handler ───────────────────────────────────────────────────────
 
   handleAuthAck(sellerPeerId: string, payload: AuthAckPayload): void {
     const session = this._sessions.get(sellerPeerId);
@@ -188,12 +171,6 @@ export class BuyerPaymentManager {
     debugLog(`[BuyerPayment] Authorized: session=${session.sessionId.slice(0, 18)}... nonce=${payload.nonce}`);
   }
 
-  // ── TopUpRequest handler ──────────────────────────────────────────────────
-
-  /**
-   * Handle a top-up request from the seller.
-   * If budget allows, sign and send a new SpendingAuth (nonce+1).
-   */
   async handleTopUpRequest(
     sellerPeerId: string,
     request:      TopUpRequestPayload,
@@ -205,9 +182,9 @@ export class BuyerPaymentManager {
       return;
     }
 
-    const requested     = BigInt(request.requestedAdditional);
-    const currentSpend  = BigInt(request.currentUsed);
-    const maxBudget     = this._config.maxSessionBudgetUsdc ?? 10_000_000n;
+    const requested      = BigInt(request.requestedAdditional);
+    const currentSpend   = BigInt(request.currentUsed);
+    const maxBudget      = this._config.maxSessionBudgetUsdc ?? 10_000_000n;
     const projectedTotal = currentSpend + requested;
 
     debugLog(`[BuyerPayment] TopUp: session=${session.sessionId.slice(0, 18)}... requested=${requested} total=${projectedTotal}`);
@@ -217,7 +194,6 @@ export class BuyerPaymentManager {
       return;
     }
 
-    // Check on-chain balance
     const buyerAddr = identityToEvmAddress(this._identity);
     const balance   = await this._escrow.getBuyerBalance(buyerAddr);
     if (balance.available < requested) {
@@ -225,9 +201,9 @@ export class BuyerPaymentManager {
       return;
     }
 
-    const newNonce   = session.nonce + 1;
+    const newNonce     = session.nonce + 1;
     const durationSecs = this._config.defaultAuthDurationSecs ?? 3600;
-    const deadline   = Math.floor(Date.now() / 1000) + durationSecs;
+    const deadline     = Math.floor(Date.now() / 1000) + durationSecs;
 
     const sig = await signSpendingAuth(
       this._signer,
@@ -241,9 +217,9 @@ export class BuyerPaymentManager {
       },
     );
 
-    session.nonce    = newNonce;
-    session.authMax  = requested;
-    session.deadline = deadline;
+    session.nonce     = newNonce;
+    session.authMax   = requested;
+    session.deadline  = deadline;
     session.updatedAt = Date.now();
 
     paymentMux.sendSpendingAuth({
@@ -256,8 +232,6 @@ export class BuyerPaymentManager {
 
     debugLog(`[BuyerPayment] TopUp sent: nonce=${newNonce} amount=${requested}`);
   }
-
-  // ── Receipt handling ──────────────────────────────────────────────────────
 
   async handleSellerReceipt(
     sellerPeerId: string,
@@ -276,27 +250,22 @@ export class BuyerPaymentManager {
 
     debugLog(`[BuyerPayment] Receipt: session=${session.sessionId.slice(0, 18)}... total=${receipt.runningTotal} count=${receipt.requestCount}`);
 
-    const autoAck = this._config.autoAck ?? true;
-    if (!autoAck) return;
+    if (!(this._config.autoAck ?? true)) return;
 
-    const sessionIdBytes = hexToBytes(
-      session.sessionId.startsWith('0x') ? session.sessionId.slice(2) : session.sessionId,
-    );
+    const sessionIdHex  = session.sessionId.startsWith('0x') ? session.sessionId.slice(2) : session.sessionId;
+    const sessionIdBytes = hexToBytes(sessionIdHex);
     const ackMsg    = buildAckMessage(sessionIdBytes, BigInt(receipt.runningTotal), receipt.requestCount);
     const sigBytes  = await signMessageEd25519(this._identity, ackMsg);
-    const buyerSig  = bytesToHex(sigBytes);
 
     const ack: BuyerAckPayload = {
       sessionId:    session.sessionId,
       runningTotal: receipt.runningTotal,
       requestCount: receipt.requestCount,
-      buyerSig,
+      buyerSig:     bytesToHex(sigBytes),
     };
     paymentMux.sendBuyerAck(ack);
     debugLog(`[BuyerPayment] Auto-ack sent: session=${session.sessionId.slice(0, 18)}...`);
   }
-
-  // ── Disconnect ────────────────────────────────────────────────────────────
 
   onPeerDisconnect(sellerPeerId: string): void {
     const session = this._sessions.get(sellerPeerId);
@@ -331,10 +300,6 @@ export class BuyerPaymentManager {
   async getBalance(): Promise<{ available: bigint; pendingWithdrawal: bigint; withdrawalReadyAt: number }> {
     const addr = identityToEvmAddress(this._identity);
     return this._escrow.getBuyerBalance(addr);
-  }
-
-  async openDispute(sellerEvmAddr: string, claimedAmount: bigint): Promise<string> {
-    return this._escrow.openDispute(this._signer, sellerEvmAddr, claimedAmount);
   }
 
   isAuthorized(sellerPeerId: string): boolean {

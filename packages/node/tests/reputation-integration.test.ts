@@ -32,7 +32,6 @@ describe('Reputation Integration', () => {
       evmAddress: '0x1234567890abcdef1234567890abcdef12345678',
       onChainReputation: 85,
       onChainSessionCount: 42,
-      onChainDisputeCount: 2,
     });
     const encoded = encodeMetadata(original);
     const decoded = decodeMetadata(encoded);
@@ -40,7 +39,7 @@ describe('Reputation Integration', () => {
     expect(decoded.evmAddress).toBe('0x1234567890abcdef1234567890abcdef12345678');
     expect(decoded.onChainReputation).toBe(85);
     expect(decoded.onChainSessionCount).toBe(42);
-    expect(decoded.onChainDisputeCount).toBe(2);
+    expect(decoded.onChainDisputeCount).toBeUndefined();
     // Verify other fields are still correct
     expect(decoded.peerId).toBe(original.peerId);
     expect(decoded.region).toBe(original.region);
@@ -58,7 +57,6 @@ describe('Reputation Integration', () => {
     expect(decoded.evmAddress).toBeUndefined();
     expect(decoded.onChainReputation).toBeUndefined();
     expect(decoded.onChainSessionCount).toBeUndefined();
-    expect(decoded.onChainDisputeCount).toBeUndefined();
     // Core fields should still work
     expect(decoded.peerId).toBe(original.peerId);
     expect(decoded.region).toBe(original.region);
@@ -70,7 +68,6 @@ describe('Reputation Integration', () => {
       evmAddress: '0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
       onChainReputation: 92,
       onChainSessionCount: 100,
-      onChainDisputeCount: 1,
     });
 
     // Simulate what _lookupResultToPeerInfo does
@@ -82,14 +79,12 @@ describe('Reputation Integration', () => {
       evmAddress: metadata.evmAddress,
       onChainReputation: metadata.onChainReputation,
       onChainSessionCount: metadata.onChainSessionCount,
-      onChainDisputeCount: metadata.onChainDisputeCount,
       trustScore: metadata.onChainReputation,
     };
 
     expect(peerInfo.evmAddress).toBe('0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef');
     expect(peerInfo.onChainReputation).toBe(92);
     expect(peerInfo.onChainSessionCount).toBe(100);
-    expect(peerInfo.onChainDisputeCount).toBe(1);
     expect(peerInfo.trustScore).toBe(92);
   });
 
@@ -155,7 +150,6 @@ describe('Reputation Integration', () => {
       evmAddress: '0x1111111111111111111111111111111111111111',
       onChainReputation: 80,
       onChainSessionCount: 50,
-      onChainDisputeCount: 3,
     });
 
     // Mock escrow client
@@ -176,17 +170,14 @@ describe('Reputation Integration', () => {
     expect(result.valid).toBe(true);
     expect(result.actualReputation).toBe(80);
     expect(result.actualSessionCount).toBe(50);
-    expect(result.actualDisputeCount).toBe(0);  // dispute count no longer tracked per-seller
     expect(result.claimedReputation).toBe(80);
     expect(result.claimedSessionCount).toBe(50);
-    expect(result.claimedDisputeCount).toBe(3);  // metadata still carries the claimed value
 
     // Test with mismatched data
     const mismatchedMetadata = makeMetadata({
       evmAddress: '0x1111111111111111111111111111111111111111',
       onChainReputation: 90, // claimed higher than actual
       onChainSessionCount: 50,
-      onChainDisputeCount: 3,
     });
 
     const mismatchResult = await verifyReputation(mockEscrowClient, mismatchedMetadata);

@@ -71,6 +71,4 @@ export interface PeerInfo {
   onChainReputation?: number;
   /** On-chain session count from the Base escrow contract. */
   onChainSessionCount?: number;
-  /** On-chain dispute count from the Base escrow contract. */
-  onChainDisputeCount?: number;
 }

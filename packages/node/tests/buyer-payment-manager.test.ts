@@ -37,14 +37,12 @@ function createMockPaymentMux(): PaymentMux & {
     sendAuthAck:      vi.fn(),
     sendSellerReceipt: vi.fn(),
     sendTopUpRequest: vi.fn(),
-    sendDisputeNotify: vi.fn(),
     // Handler registrations
     onSpendingAuth:  vi.fn(),
     onAuthAck:       vi.fn(),
     onSellerReceipt: vi.fn(),
     onBuyerAck:      vi.fn(),
     onTopUpRequest:  vi.fn(),
-    onDisputeNotify: vi.fn(),
     handleFrame: vi.fn(),
   } as unknown as PaymentMux & {
     _sentSpendingAuths: any[];

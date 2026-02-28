@@ -58,7 +58,6 @@ import {
   type PaymentConfig,
   type PaymentMethod,
   EscrowClient,
-  identityToEvmWallet,
   buildReceiptMessage,
   buildAckMessage,
   signMessageEd25519,
@@ -131,9 +130,9 @@ interface SellerSessionState {
   totalCostCents: number;
   provider: string;
 
-  // --- Bilateral payment state ---
-  lockCommitted: boolean;
-  lockedAmount: bigint;
+  // --- Pull-payment state ---
+  hasSpendingAuth: boolean;
+  authMaxAmount: bigint;
   runningTotal: bigint;
   ackedRequestCount: number;
   lastAckedTotal: bigint;
@@ -155,8 +154,8 @@ export interface SellerSessionSnapshot {
   totalTokens: number;
   avgLatencyMs: number;
   settling: boolean;
-  lockCommitted: boolean;
-  lockedAmountUSDC: string;
+  hasSpendingAuth: boolean;
+  authMaxAmountUsdc: string;
   runningTotalUSDC: string;
   ackedRequestCount: number;
 }
@@ -259,8 +258,8 @@ export class AntseedNode extends EventEmitter {
         totalTokens: session.totalTokens,
         avgLatencyMs: session.totalRequests > 0 ? session.totalLatencyMs / session.totalRequests : 0,
         settling: Boolean(session.settling),
-        lockCommitted: session.lockCommitted,
-        lockedAmountUSDC: session.lockedAmount.toString(),
+        hasSpendingAuth: session.hasSpendingAuth,
+        authMaxAmountUsdc: session.authMaxAmount.toString(),
         runningTotalUSDC: session.runningTotal.toString(),
         ackedRequestCount: session.ackedRequestCount,
       });
@@ -413,7 +412,6 @@ export class AntseedNode extends EventEmitter {
             const rep = await this._escrowClient.getReputation(p.evmAddress);
             p.onChainReputation = rep.avgRating;
             p.onChainSessionCount = rep.totalTransactions;
-            p.onChainDisputeCount = 0;
             p.trustScore = rep.avgRating;
           } catch {
             // Use claimed data if verification fails
@@ -838,7 +836,7 @@ export class AntseedNode extends EventEmitter {
 
       // Reject with 402 if lock not committed and escrow client is configured
       const session = this._sessions.get(buyerPeerId);
-      if (this._escrowClient && (!session || !session.lockCommitted)) {
+      if (this._escrowClient && (!session || !session.hasSpendingAuth)) {
         debugWarn(`[Node] Rejecting request from ${buyerPeerId.slice(0, 12)}... — lock not committed`);
         mux.sendProxyResponse({
           requestId: request.requestId,
@@ -948,7 +946,7 @@ export class AntseedNode extends EventEmitter {
 
         // Generate bilateral receipt after each request if lock committed (Task 3)
         const currentSession = this._sessions.get(buyerPeerId);
-        if (currentSession?.lockCommitted) {
+        if (currentSession?.hasSpendingAuth) {
           await this._sendBilateralReceipt(buyerPeerId, currentSession, requestPricing, responseBody, paymentMux);
         }
       } finally {
@@ -1152,8 +1150,8 @@ export class AntseedNode extends EventEmitter {
         totalLatencyMs: 0,
         totalCostCents: 0,
         provider: providerName,
-        lockCommitted: false,
-        lockedAmount: 0n,
+        hasSpendingAuth: false,
+        authMaxAmount: 0n,
         runningTotal: 0n,
         ackedRequestCount: 0,
         lastAckedTotal: 0n,
@@ -1354,37 +1352,6 @@ export class AntseedNode extends EventEmitter {
       this._settlementTimers.delete(buyerPeerId);
     }
 
-    // Bilateral-aware disconnect handling (ghost scenario - Task 7)
-    if (session.lockCommitted && this._escrowClient && this._identity && reason === "disconnect") {
-      const sellerWallet = identityToEvmWallet(this._identity);
-      const sessionIdHex = "0x" + bytesToHex(session.sessionIdBytes);
-
-      try {
-        if (session.lastAckedTotal > 0n) {
-          // Buyer acked some work — open dispute with last acked total
-          debugLog(`[Node] Ghost buyer — opening dispute with lastAckedTotal=${session.lastAckedTotal}`);
-          await this._escrowClient.openDispute(sellerWallet, sessionIdHex, session.lastAckedTotal);
-        } else if (session.runningTotal > 0n) {
-          // No acks but work was done — open dispute with running total
-          debugLog(`[Node] Ghost buyer — opening dispute with runningTotal=${session.runningTotal}`);
-          await this._escrowClient.openDispute(sellerWallet, sessionIdHex, session.runningTotal);
-        } else {
-          // No work done — lock expires after 1 hour automatically
-          debugLog(`[Node] Ghost buyer — no work done, lock will expire`);
-        }
-      } catch (err) {
-        debugWarn(`[Node] Failed to handle ghost buyer for session ${session.sessionId}: ${err instanceof Error ? err.message : err}`);
-      }
-
-      this._sessions.delete(buyerPeerId);
-      this.emit("session:finalized", {
-        buyerPeerId,
-        sessionId: session.sessionId,
-        reason: "ghost-disconnect",
-      });
-      return;
-    }
-
     if (!this._metering || !this._identity) {
       this._sessions.delete(buyerPeerId);
       return;
@@ -1535,8 +1502,8 @@ export class AntseedNode extends EventEmitter {
     if (session) {
       session.sessionId      = payload.sessionId;
       session.sessionIdBytes = hexToBytes(payload.sessionId.replace(/^0x/, ""));
-      session.lockCommitted  = true; // reuse flag to mean "has valid spending auth"
-      session.lockedAmount   = BigInt(payload.maxAmountUsdc);
+      session.hasSpendingAuth  = true; // reuse flag to mean "has valid spending auth"
+      session.authMaxAmount   = BigInt(payload.maxAmountUsdc);
       session.runningTotal   = 0n;
     }
 
@@ -1592,15 +1559,15 @@ export class AntseedNode extends EventEmitter {
     session.awaitingAck = true;
 
     // Send TopUpRequest if running total > 80% of locked amount
-    if (session.lockedAmount > 0n && session.runningTotal * 100n > session.lockedAmount * 80n) {
-      const additional = session.lockedAmount; // request same cap again
+    if (session.authMaxAmount > 0n && session.runningTotal * 100n > session.authMaxAmount * 80n) {
+      const additional = session.authMaxAmount; // request same cap again
       paymentMux.sendTopUpRequest({
         sessionId:           session.sessionId,
         currentUsed:         session.runningTotal.toString(),
-        currentMax:          session.lockedAmount.toString(),
+        currentMax:          session.authMaxAmount.toString(),
         requestedAdditional: additional.toString(),
       });
-      debugLog(`[Node] TopUpRequest sent for session ${session.sessionId.slice(0, 8)}... (running=${session.runningTotal}, locked=${session.lockedAmount})`);
+      debugLog(`[Node] TopUpRequest sent for session ${session.sessionId.slice(0, 8)}... (running=${session.runningTotal}, locked=${session.authMaxAmount})`);
     }
   }
 
@@ -1610,7 +1577,7 @@ export class AntseedNode extends EventEmitter {
    */
   private async _handleBuyerAck(buyerPeerId: string, payload: BuyerAckPayload): Promise<void> {
     const session = this._sessions.get(buyerPeerId);
-    if (!session || !session.lockCommitted) {
+    if (!session || !session.hasSpendingAuth) {
       debugWarn(`[Node] Received BuyerAck for unknown/uncommitted session from ${buyerPeerId.slice(0, 12)}...`);
       return;
     }
@@ -1800,7 +1767,6 @@ export class AntseedNode extends EventEmitter {
       evmAddress: result.metadata.evmAddress,
       onChainReputation: result.metadata.onChainReputation,
       onChainSessionCount: result.metadata.onChainSessionCount,
-      onChainDisputeCount: result.metadata.onChainDisputeCount,
       trustScore: result.metadata.onChainReputation,
     };
   }

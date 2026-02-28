@@ -161,10 +161,7 @@ export class LocalRouter implements Router {
   private _hasReputation(p: PeerInfo): boolean {
     if (this._isFiniteNonNegative(p.onChainReputation)) {
       const sessionCount = this._isFiniteNonNegative(p.onChainSessionCount) ? p.onChainSessionCount : undefined;
-      const disputeCount = this._isFiniteNonNegative(p.onChainDisputeCount) ? p.onChainDisputeCount : undefined;
-      if (sessionCount !== undefined || disputeCount !== undefined) {
-        return (sessionCount ?? 0) > 0 || (disputeCount ?? 0) > 0;
-      }
+      if (sessionCount !== undefined) return sessionCount > 0;
       return true;
     }
 

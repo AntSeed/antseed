@@ -4,13 +4,10 @@ import type {
   SellerReceiptPayload,
   BuyerAckPayload,
   TopUpRequestPayload,
-  DisputeNotifyPayload,
 } from '../types/protocol.js';
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
-
-// ── Parsing helpers ───────────────────────────────────────────────────────────
 
 function parseJson(data: Uint8Array): Record<string, unknown> {
   const raw: unknown = JSON.parse(decoder.decode(data));
@@ -36,7 +33,7 @@ function requireNumber(obj: Record<string, unknown>, field: string): number {
   return val;
 }
 
-// ── SpendingAuth (0x50) ───────────────────────────────────────────────────────
+// SpendingAuth (0x50)
 
 export function encodeSpendingAuth(payload: SpendingAuthPayload): Uint8Array {
   return encoder.encode(JSON.stringify(payload));
@@ -53,7 +50,7 @@ export function decodeSpendingAuth(data: Uint8Array): SpendingAuthPayload {
   };
 }
 
-// ── AuthAck (0x51) ────────────────────────────────────────────────────────────
+// AuthAck (0x51)
 
 export function encodeAuthAck(payload: AuthAckPayload): Uint8Array {
   return encoder.encode(JSON.stringify(payload));
@@ -67,7 +64,7 @@ export function decodeAuthAck(data: Uint8Array): AuthAckPayload {
   };
 }
 
-// ── SellerReceipt (0x53) ──────────────────────────────────────────────────────
+// SellerReceipt (0x53)
 
 export function encodeSellerReceipt(payload: SellerReceiptPayload): Uint8Array {
   return encoder.encode(JSON.stringify(payload));
@@ -84,7 +81,7 @@ export function decodeSellerReceipt(data: Uint8Array): SellerReceiptPayload {
   };
 }
 
-// ── BuyerAck (0x54) ───────────────────────────────────────────────────────────
+// BuyerAck (0x54)
 
 export function encodeBuyerAck(payload: BuyerAckPayload): Uint8Array {
   return encoder.encode(JSON.stringify(payload));
@@ -100,7 +97,7 @@ export function decodeBuyerAck(data: Uint8Array): BuyerAckPayload {
   };
 }
 
-// ── TopUpRequest (0x55) ───────────────────────────────────────────────────────
+// TopUpRequest (0x55)
 
 export function encodeTopUpRequest(payload: TopUpRequestPayload): Uint8Array {
   return encoder.encode(JSON.stringify(payload));
@@ -116,17 +113,3 @@ export function decodeTopUpRequest(data: Uint8Array): TopUpRequestPayload {
   };
 }
 
-// ── DisputeNotify (0x57) ──────────────────────────────────────────────────────
-
-export function encodeDisputeNotify(payload: DisputeNotifyPayload): Uint8Array {
-  return encoder.encode(JSON.stringify(payload));
-}
-
-export function decodeDisputeNotify(data: Uint8Array): DisputeNotifyPayload {
-  const obj = parseJson(data);
-  return {
-    sessionId: requireString(obj, 'sessionId'),
-    reason:    requireString(obj, 'reason'),
-    txHash:    requireString(obj, 'txHash'),
-  };
-}

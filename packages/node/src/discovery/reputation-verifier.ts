@@ -8,14 +8,10 @@ export interface ReputationVerification {
   actualReputation: number;
   /** The actual on-chain session count. */
   actualSessionCount: number;
-  /** The actual on-chain dispute count. */
-  actualDisputeCount: number;
   /** The claimed on-chain reputation score from metadata. */
   claimedReputation?: number;
   /** The claimed on-chain session count from metadata. */
   claimedSessionCount?: number;
-  /** The claimed on-chain dispute count from metadata. */
-  claimedDisputeCount?: number;
 }
 
 /**
@@ -35,7 +31,6 @@ export async function verifyReputation(
 
   const actualReputation    = reputation.avgRating;
   const actualSessionCount  = reputation.totalTransactions;
-  const actualDisputeCount  = 0; // dispute count no longer stored per-seller on-chain
 
   const valid =
     metadata.onChainReputation === actualReputation &&
@@ -45,9 +40,7 @@ export async function verifyReputation(
     valid,
     actualReputation,
     actualSessionCount,
-    actualDisputeCount,
-    claimedReputation:    metadata.onChainReputation,
-    claimedSessionCount:  metadata.onChainSessionCount,
-    claimedDisputeCount:  metadata.onChainDisputeCount,
+    claimedReputation:   metadata.onChainReputation,
+    claimedSessionCount: metadata.onChainSessionCount,
   };
 }

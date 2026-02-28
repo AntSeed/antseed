@@ -2,9 +2,7 @@ import { type AbstractSigner, type TypedDataDomain, getBytes } from 'ethers';
 import type { Identity } from '../../p2p/identity.js';
 import { signData, verifySignature } from '../../p2p/identity.js';
 
-// =========================================================================
-// EIP-712 — SpendingAuth (on-chain, verified by AntseedEscrow.charge())
-// =========================================================================
+// ── EIP-712 — SpendingAuth (verified by AntseedEscrow.charge()) ───────────────
 
 export const SPENDING_AUTH_TYPES: Record<string, import('ethers').TypedDataField[]> = {
   SpendingAuth: [
@@ -33,21 +31,23 @@ export function makeEscrowDomain(chainId: number, contractAddress: string): Type
   };
 }
 
-/**
- * Sign an EIP-712 SpendingAuth using an ethers signer.
- * Returns the 65-byte ECDSA signature as a 0x-prefixed hex string.
- */
 export async function signSpendingAuth(
-  signer:          AbstractSigner,
-  domain:          TypedDataDomain,
-  msg:             SpendingAuthMessage,
+  signer: AbstractSigner,
+  domain: TypedDataDomain,
+  msg:    SpendingAuthMessage,
 ): Promise<string> {
   return signer.signTypedData(domain, SPENDING_AUTH_TYPES, msg);
 }
 
-// =========================================================================
-// Ed25519 signatures (off-chain P2P) — bilateral receipt proof
-// =========================================================================
+// ── Binary message builders for Ed25519 receipt/ack proofs ───────────────────
+
+function writeU64LE(buf: Uint8Array, value: bigint, offset: number): void {
+  new DataView(buf.buffer, buf.byteOffset).setBigUint64(offset, value, true);
+}
+
+function writeU32LE(buf: Uint8Array, value: number, offset: number): void {
+  new DataView(buf.buffer, buf.byteOffset).setUint32(offset, value, true);
+}
 
 export function buildReceiptMessage(
   sessionId:    Uint8Array,
@@ -55,16 +55,12 @@ export function buildReceiptMessage(
   requestCount: number,
   responseHash: Uint8Array,
 ): Uint8Array {
-  if (sessionId.length   !== 32) throw new Error(`sessionId must be 32 bytes, got ${sessionId.length}`);
+  if (sessionId.length    !== 32) throw new Error(`sessionId must be 32 bytes, got ${sessionId.length}`);
   if (responseHash.length !== 32) throw new Error(`responseHash must be 32 bytes, got ${responseHash.length}`);
   const msg = new Uint8Array(76);
   msg.set(sessionId, 0);
-  const totalBuf = new ArrayBuffer(8);
-  new DataView(totalBuf).setBigUint64(0, runningTotal, true);
-  msg.set(new Uint8Array(totalBuf), 32);
-  const countBuf = new ArrayBuffer(4);
-  new DataView(countBuf).setUint32(0, requestCount, true);
-  msg.set(new Uint8Array(countBuf), 40);
+  writeU64LE(msg, runningTotal, 32);
+  writeU32LE(msg, requestCount, 40);
   msg.set(responseHash, 44);
   return msg;
 }
@@ -77,12 +73,8 @@ export function buildAckMessage(
   if (sessionId.length !== 32) throw new Error(`sessionId must be 32 bytes, got ${sessionId.length}`);
   const msg = new Uint8Array(44);
   msg.set(sessionId, 0);
-  const totalBuf = new ArrayBuffer(8);
-  new DataView(totalBuf).setBigUint64(0, runningTotal, true);
-  msg.set(new Uint8Array(totalBuf), 32);
-  const countBuf = new ArrayBuffer(4);
-  new DataView(countBuf).setUint32(0, requestCount, true);
-  msg.set(new Uint8Array(countBuf), 40);
+  writeU64LE(msg, runningTotal, 32);
+  writeU32LE(msg, requestCount, 40);
   return msg;
 }
 
@@ -100,8 +92,6 @@ export async function verifyMessageEd25519(
 ): Promise<boolean> {
   return verifySignature(publicKey, signature, message);
 }
-
-// ── Legacy helpers (kept for backward compatibility with receipt/ack tests) ──
 
 /** @deprecated Use signSpendingAuth + EIP-712 instead. */
 export async function signMessageEcdsa(

@@ -59,10 +59,7 @@ export class DefaultRouter implements Router {
   private _hasReputation(peer: PeerInfo): boolean {
     if (this._isFiniteNonNegative(peer.onChainReputation)) {
       const sessionCount = this._isFiniteNonNegative(peer.onChainSessionCount) ? peer.onChainSessionCount : undefined;
-      const disputeCount = this._isFiniteNonNegative(peer.onChainDisputeCount) ? peer.onChainDisputeCount : undefined;
-      if (sessionCount !== undefined || disputeCount !== undefined) {
-        return (sessionCount ?? 0) > 0 || (disputeCount ?? 0) > 0;
-      }
+      if (sessionCount !== undefined) return sessionCount > 0;
       return true;
     }
 

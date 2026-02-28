@@ -25,9 +25,6 @@ interface IERC20 {
  *   - Buyers who meet eligibility requirements can rate sellers 0-100. The
  *     composite reputation score is computed off-chain from the on-chain
  *     ReputationData struct.
- *   - A lightweight dispute mechanism lets buyers freeze a portion of a
- *     seller's pending earnings pending arbiter resolution.
- *
  * @dev All reverts use custom errors (no require-with-string).
  */
 contract AntseedEscrow {
@@ -40,7 +37,6 @@ contract AntseedEscrow {
     error Reentrancy();
     error TransferFailed();
     error NotOwner();
-    error NotArbiter();
     error FeeTooHigh(uint16 bps, uint16 max);
 
     // Withdrawal
@@ -61,10 +57,6 @@ contract AntseedEscrow {
     // Stake
     error StakeLocked(uint256 unlocksAt);
     error InsufficientStakedAmount(uint256 have, uint256 need);
-
-    // Dispute
-    error DisputeAlreadyOpen();
-    error DisputeNotOpen();
 
     // Rating
     error RatingOutOfRange(uint8 score);
@@ -96,7 +88,6 @@ contract AntseedEscrow {
     bytes32 public immutable DOMAIN_SEPARATOR;
 
     address public owner;
-    address public arbiter;
     address public feeCollector;
     uint16  public platformFeeBps;  // e.g. 200 = 2 %
     bool    public paused;
@@ -114,7 +105,6 @@ contract AntseedEscrow {
 
     struct SellerAccount {
         uint256 pendingEarnings;
-        uint256 frozenEarnings;       // locked during an open dispute
         uint256 stakedAmount;
         uint256 stakedSince;
         uint256 firstTransactionAt;
@@ -128,13 +118,6 @@ contract AntseedEscrow {
         uint256 authMax;    // cap for current nonce
         uint256 authUsed;   // cumulative charges in current nonce
         uint256 deadline;   // expiry of current nonce
-    }
-
-    struct Dispute {
-        address buyer;
-        uint256 frozenAmount;
-        uint256 openedAt;
-        bool    resolved;
     }
 
     struct ReputationData {
@@ -154,9 +137,6 @@ contract AntseedEscrow {
 
     // buyer => seller => sessionId => SessionAuth
     mapping(address => mapping(address => mapping(bytes32 => SessionAuth))) private _sessionAuths;
-
-    // disputeId = keccak256(buyer, seller)
-    mapping(bytes32 => Dispute) private _disputes;
 
     // Reputation aggregates
     mapping(address => uint256) private _ratingSum;    // sum of all ratings for a seller
@@ -194,13 +174,9 @@ contract AntseedEscrow {
 
     event SellerRated(address indexed buyer, address indexed seller, uint8 score);
 
-    event DisputeOpened(address indexed buyer, address indexed seller, uint256 frozenAmount);
-    event DisputeResolved(address indexed buyer, address indexed seller, bool buyerWins, uint256 amount);
-
     event Paused(address indexed by);
     event Unpaused(address indexed by);
     event OwnershipTransferred(address indexed prev, address indexed next);
-    event ArbiterUpdated(address indexed prev, address indexed next);
     event FeeCollectorUpdated(address indexed prev, address indexed next);
     event PlatformFeeUpdated(uint16 prev, uint16 next);
 
@@ -227,18 +203,15 @@ contract AntseedEscrow {
 
     constructor(
         address usdcToken,
-        address initialArbiter,
         address initialFeeCollector,
         uint16  initialFeeBps
     ) {
-        if (usdcToken          == address(0)) revert ZeroAddress();
-        if (initialArbiter     == address(0)) revert ZeroAddress();
+        if (usdcToken           == address(0)) revert ZeroAddress();
         if (initialFeeCollector == address(0)) revert ZeroAddress();
         if (initialFeeBps > MAX_PLATFORM_FEE_BPS) revert FeeTooHigh(initialFeeBps, MAX_PLATFORM_FEE_BPS);
 
         usdc         = IERC20(usdcToken);
         owner        = msg.sender;
-        arbiter      = initialArbiter;
         feeCollector = initialFeeCollector;
         platformFeeBps = initialFeeBps;
 
@@ -257,12 +230,6 @@ contract AntseedEscrow {
         if (newOwner == address(0)) revert ZeroAddress();
         emit OwnershipTransferred(owner, newOwner);
         owner = newOwner;
-    }
-
-    function setArbiter(address newArbiter) external onlyOwner {
-        if (newArbiter == address(0)) revert ZeroAddress();
-        emit ArbiterUpdated(arbiter, newArbiter);
-        arbiter = newArbiter;
     }
 
     function setFeeCollector(address newCollector) external onlyOwner {
@@ -447,8 +414,10 @@ contract AntseedEscrow {
     function stake(uint256 amount) external nonReentrant whenNotPaused {
         if (amount == 0) revert ZeroAmount();
         SellerAccount storage s = sellers[msg.sender];
+        // Only reset the lock timer on the first stake (or after a full unstake).
+        // Topping up an existing stake does not restart the lock period.
+        if (s.stakedAmount == 0) s.stakedSince = block.timestamp;
         s.stakedAmount += amount;
-        s.stakedSince   = block.timestamp;
         _safeTransferFrom(msg.sender, address(this), amount);
         emit Staked(msg.sender, amount);
     }
@@ -478,65 +447,6 @@ contract AntseedEscrow {
         accumulatedFees = 0;
         _safeTransfer(feeCollector, amount);
         emit FeeSwept(feeCollector, amount);
-    }
-
-    // ── Dispute mechanism ────────────────────────────────────────────────────
-
-    /**
-     * @notice Buyer freezes a portion of a seller's pending earnings for review.
-     * @param seller        The seller being disputed.
-     * @param claimedAmount Amount the buyer claims should be returned.
-     */
-    function openDispute(address seller, uint256 claimedAmount) external whenNotPaused {
-        if (claimedAmount == 0) revert ZeroAmount();
-        address buyer = msg.sender;
-        bytes32 disputeId = _disputeId(buyer, seller);
-
-        Dispute storage d = _disputes[disputeId];
-        if (d.frozenAmount > 0 && !d.resolved) revert DisputeAlreadyOpen();
-
-        SellerAccount storage s = sellers[seller];
-        if (s.pendingEarnings < claimedAmount)
-            revert InsufficientBalance(s.pendingEarnings, claimedAmount);
-
-        s.pendingEarnings -= claimedAmount;
-        s.frozenEarnings  += claimedAmount;
-
-        _disputes[disputeId] = Dispute({
-            buyer:        buyer,
-            frozenAmount: claimedAmount,
-            openedAt:     block.timestamp,
-            resolved:     false
-        });
-
-        emit DisputeOpened(buyer, seller, claimedAmount);
-    }
-
-    /**
-     * @notice Arbiter resolves a dispute.
-     * @param buyer     The buyer who opened the dispute.
-     * @param seller    The seller being disputed.
-     * @param buyerWins If true, frozen amount returns to buyer balance;
-     *                  otherwise it returns to seller pending earnings.
-     */
-    function resolveDispute(address buyer, address seller, bool buyerWins) external nonReentrant {
-        if (msg.sender != arbiter) revert NotArbiter();
-        bytes32 disputeId = _disputeId(buyer, seller);
-        Dispute storage d = _disputes[disputeId];
-        if (d.frozenAmount == 0 || d.resolved) revert DisputeNotOpen();
-
-        uint256 amount    = d.frozenAmount;
-        d.frozenAmount    = 0;
-        d.resolved        = true;
-        sellers[seller].frozenEarnings -= amount;
-
-        if (buyerWins) {
-            buyers[buyer].balance += amount;
-        } else {
-            sellers[seller].pendingEarnings += amount;
-        }
-
-        emit DisputeResolved(buyer, seller, buyerWins, amount);
     }
 
     // ── Reputation ───────────────────────────────────────────────────────────
@@ -666,18 +576,6 @@ contract AntseedEscrow {
         return (a.nonce, a.authMax, a.authUsed, a.deadline);
     }
 
-    /**
-     * @notice Return the open dispute (if any) between a buyer and seller.
-     */
-    function getDispute(address buyer, address seller) external view returns (
-        uint256 frozenAmount,
-        uint256 openedAt,
-        bool    resolved
-    ) {
-        Dispute storage d = _disputes[_disputeId(buyer, seller)];
-        return (d.frozenAmount, d.openedAt, d.resolved);
-    }
-
     // ── Internal helpers ─────────────────────────────────────────────────────
 
     function _updateStats(address buyer, address seller, uint256 amount) private {
@@ -698,10 +596,6 @@ contract AntseedEscrow {
         buyerSpendWithSeller[buyer][seller] += amount;
         s.totalTransactions += 1;
         s.totalVolume       += amount;
-    }
-
-    function _disputeId(address buyer, address seller) private pure returns (bytes32) {
-        return keccak256(abi.encodePacked(buyer, seller));
     }
 
     function _recoverSigner(bytes32 digest, bytes calldata sig) private pure returns (address) {

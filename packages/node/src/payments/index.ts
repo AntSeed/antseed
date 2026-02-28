@@ -6,7 +6,6 @@ export type {
   BuyerBalance,
   SessionAuthInfo,
   ReputationData,
-  DisputeInfo,
 } from './evm/escrow-client.js';
 
 export { identityToEvmWallet, identityToEvmAddress } from './evm/keypair.js';

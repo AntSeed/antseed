@@ -5,7 +5,6 @@ import {
   encodeSellerReceipt, decodeSellerReceipt,
   encodeBuyerAck, decodeBuyerAck,
   encodeTopUpRequest, decodeTopUpRequest,
-  encodeDisputeNotify, decodeDisputeNotify,
 } from '../src/p2p/payment-codec.js';
 
 describe('payment codec round-trips', () => {
@@ -56,12 +55,4 @@ describe('payment codec round-trips', () => {
     expect(decodeTopUpRequest(encodeTopUpRequest(payload))).toEqual(payload);
   });
 
-  it('DisputeNotify', () => {
-    const payload = {
-      sessionId: '0x' + 'a'.repeat(64),
-      reason:    'Unacknowledged service',
-      txHash:    '0xtx456',
-    };
-    expect(decodeDisputeNotify(encodeDisputeNotify(payload))).toEqual(payload);
-  });
 });
