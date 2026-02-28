@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { Command } from 'commander';
+import { createRequire } from 'node:module';
 import { loadEnvFromFiles } from '../env/load-env.js';
 import { registerSeedCommand } from './commands/seed.js';
 import { registerConnectCommand } from './commands/connect.js';
@@ -18,12 +19,15 @@ import { registerBalanceCommand } from './commands/balance.js';
 
 loadEnvFromFiles();
 
+const require = createRequire(import.meta.url);
+const { version } = require('../../package.json') as { version: string };
+
 const program = new Command();
 
 program
   .name('antseed')
   .description('P2P network for AI services')
-  .version('0.1.2')
+  .version(version)
   .option('-c, --config <path>', 'path to config file', '~/.antseed/config.json')
   .option('--data-dir <path>', 'path to node identity/state directory', '~/.antseed')
   .option('-v, --verbose', 'enable verbose logging', false);
