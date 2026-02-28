@@ -4,11 +4,17 @@ import type * as Preset from '@docusaurus/preset-classic';
 
 const config: Config = {
   title: 'AntSeed',
-  tagline: 'A Peer-to-Peer AI Services Network',
+  tagline: 'Private AI. Anonymous. Peer-to-peer.',
   favicon: 'logo.svg',
   url: 'https://antseed.com',
   baseUrl: '/',
   onBrokenLinks: 'throw',
+
+  // SEO - Keywords
+  metadata: [
+    {name: 'keywords', content: 'private AI, anonymous AI, P2P AI, decentralized AI inference, uncensored AI, AI without account, no signup AI, peer-to-peer AI'},
+    {name: 'description', content: 'Private AI inference with zero data collection. No account, no logs, no middleman. Connect directly to AI providers through an anonymous P2P network.'},
+  ],
 
   markdown: {
     hooks: {
