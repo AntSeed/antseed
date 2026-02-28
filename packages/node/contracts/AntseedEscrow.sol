@@ -267,21 +267,23 @@ contract AntseedEscrow {
     }
 
     /**
-     * @notice Begin the withdrawal timelock. Locks `amount` from the available
-     *         balance. Call executeWithdrawal() after WITHDRAWAL_TIMELOCK seconds.
+     * @notice Begin the withdrawal timelock. Reserves `amount` without reducing
+     *         the chargeable balance — sellers can still call charge() during the
+     *         timelock window. Balance is deducted only when executeWithdrawal() runs.
      */
     function requestWithdrawal(uint256 amount) external whenNotPaused {
         if (amount == 0) revert ZeroAmount();
         BuyerAccount storage b = buyers[msg.sender];
-        if (b.balance < amount) revert InsufficientBalance(b.balance, amount);
-        b.balance             -= amount;
-        b.withdrawalAmount    += amount;
-        b.withdrawalRequestedAt = block.timestamp;
+        uint256 available = b.balance - b.withdrawalAmount;
+        if (available < amount) revert InsufficientBalance(available, amount);
+        b.withdrawalAmount      += amount;
+        b.withdrawalRequestedAt  = block.timestamp;
         emit WithdrawalRequested(msg.sender, amount, block.timestamp + WITHDRAWAL_TIMELOCK);
     }
 
     /**
      * @notice Execute a pending withdrawal after the timelock has elapsed.
+     *         Deducts the reserved amount from balance here (not at request time).
      */
     function executeWithdrawal() external nonReentrant {
         BuyerAccount storage b = buyers[msg.sender];
@@ -291,20 +293,20 @@ contract AntseedEscrow {
         uint256 amount = b.withdrawalAmount;
         b.withdrawalAmount      = 0;
         b.withdrawalRequestedAt = 0;
+        b.balance              -= amount;
         _safeTransfer(msg.sender, amount);
         emit WithdrawalExecuted(msg.sender, amount);
     }
 
     /**
-     * @notice Cancel a pending withdrawal and return funds to the available balance.
+     * @notice Cancel a pending withdrawal and release the reservation.
      */
     function cancelWithdrawal() external {
         BuyerAccount storage b = buyers[msg.sender];
         if (b.withdrawalAmount == 0) revert WithdrawalNotRequested();
-        uint256 amount = b.withdrawalAmount;
+        uint256 amount          = b.withdrawalAmount;
         b.withdrawalAmount      = 0;
         b.withdrawalRequestedAt = 0;
-        b.balance              += amount;
         emit WithdrawalCancelled(msg.sender, amount);
     }
 
@@ -374,8 +376,10 @@ contract AntseedEscrow {
             revert AuthCapExceeded(auth.authUsed, amount, auth.authMax);
 
         // ── Balance check ─────────────────────────────────────────────────────
+        // Use effective chargeable balance: total minus any reserved-for-withdrawal.
         BuyerAccount storage b = buyers[buyer];
-        if (b.balance < amount) revert InsufficientBalance(b.balance, amount);
+        uint256 chargeable = b.balance - b.withdrawalAmount;
+        if (chargeable < amount) revert InsufficientBalance(chargeable, amount);
 
         // ── Fee split ──────────────────────────────────────────────────────────
         uint256 fee          = (amount * platformFeeBps) / 10_000;
@@ -552,7 +556,7 @@ contract AntseedEscrow {
         uint256 withdrawalReadyAt
     ) {
         BuyerAccount storage b = buyers[buyer];
-        available         = b.balance;
+        available         = b.balance - b.withdrawalAmount;
         pendingWithdrawal = b.withdrawalAmount;
         withdrawalReadyAt = b.withdrawalAmount > 0
             ? b.withdrawalRequestedAt + WITHDRAWAL_TIMELOCK
