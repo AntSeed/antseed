@@ -1,6 +1,9 @@
 import { verifySignature, hexToBytes } from "../p2p/identity.js";
 import type { DHTNode } from "./dht-node.js";
 import { providerTopic, modelTopic, capabilityTopic, topicToInfoHash } from "./dht-node.js";
+import type { PeerMetadata } from "./peer-metadata.js";
+import { encodeMetadataForSigning } from "./metadata-codec.js";
+import type { MetadataResolver, PeerEndpoint } from "./metadata-resolver.js";
 
 function shuffle<T>(arr: T[]): T[] {
   const out = arr.slice();
@@ -10,9 +13,6 @@ function shuffle<T>(arr: T[]): T[] {
   }
   return out;
 }
-import type { PeerMetadata } from "./peer-metadata.js";
-import { encodeMetadataForSigning } from "./metadata-codec.js";
-import type { MetadataResolver, PeerEndpoint } from "./metadata-resolver.js";
 
 export interface LookupConfig {
   dht: DHTNode;

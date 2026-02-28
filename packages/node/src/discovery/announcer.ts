@@ -153,7 +153,6 @@ export class PeerAnnouncer {
           metadata.onChainReputation = reputation.weightedAverage;
           metadata.onChainSessionCount = reputation.sessionCount;
           metadata.onChainDisputeCount = reputation.disputeCount;
-          metadata.onChainDisputeCount = 0;
         } catch {
           // Silently continue without reputation data
         }
