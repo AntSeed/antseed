@@ -886,6 +886,8 @@ export class AntseedNode extends EventEmitter {
       // in-flight work immediately (not only after metering persistence).
       this._getOrCreateSellerSession(buyerPeerId, provider.name);
 
+      request.headers['x-antseed-buyer-peer-id'] = buyerPeerId;
+
       debugLog(`[Node] Routing to provider "${provider.name}"`);
       const startTime = Date.now();
       let statusCode = 500;
