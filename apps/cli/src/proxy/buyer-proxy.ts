@@ -785,7 +785,12 @@ export class BuyerProxy {
         return
       }
       log(`Using pinned peer ${selectedPeer.peerId.slice(0, 12)}...`)
-      await this._dispatchToPeer(res, serializedReq, selectedPeer, routePlanByPeerId, requestProtocol, requestedModel, explicitProvider, router, RETRYABLE_STATUS_CODES)
+      const result = await this._dispatchToPeer(res, serializedReq, selectedPeer, routePlanByPeerId, requestProtocol, requestedModel, explicitProvider, router, RETRYABLE_STATUS_CODES)
+      if (!result.done) {
+        // Pinned peer returned a retryable error, but we don't retry — send error to client
+        res.writeHead(result.statusCode, result.responseHeaders)
+        res.end(result.responseBody)
+      }
       return
     }
 
