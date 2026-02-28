@@ -70,6 +70,7 @@ import type {
 import { hexToBytes, bytesToHex } from "./utils/hex.js";
 import { debugLog, debugWarn } from "./utils/debug.js";
 import { BuyerPaymentManager, type BuyerPaymentConfig } from "./payments/buyer-payment-manager.js";
+import { SellerPaymentManager, type SellerPaymentConfig } from "./payments/seller-payment-manager.js";
 import { identityToEvmAddress } from "./payments/evm/keypair.js";
 
 export type { Provider, ProviderStreamCallbacks, TaskRequest, TaskEvent, SkillRequest, SkillResponse };
@@ -198,6 +199,8 @@ export class AntseedNode extends EventEmitter {
   private _settlementTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** Buyer-side payment manager (initialized when buyer has payment config). */
   private _buyerPaymentManager: BuyerPaymentManager | null = null;
+  /** Seller-side payment manager (initialized when seller has EVM payment config). */
+  private _sellerPaymentManager: SellerPaymentManager | null = null;
   /** Tracks which seller peers the buyer has already initiated a lock for. */
   private _buyerLockedPeers = new Set<string>();
 
@@ -834,15 +837,18 @@ export class AntseedNode extends EventEmitter {
     mux.onProxyRequest(async (request: SerializedHttpRequest) => {
       debugLog(`[Node] Seller received request: ${request.method} ${request.path} (reqId=${request.requestId.slice(0, 8)})`);
 
-      // Reject with 402 if lock not committed and escrow client is configured
+      // Reject with 402 if no valid spending authorization and escrow is configured
       const session = this._sessions.get(buyerPeerId);
-      if (this._escrowClient && (!session || !session.hasSpendingAuth)) {
-        debugWarn(`[Node] Rejecting request from ${buyerPeerId.slice(0, 12)}... — lock not committed`);
+      const isAuthorized = this._sellerPaymentManager
+        ? this._sellerPaymentManager.hasAuth(buyerPeerId)
+        : (session?.hasSpendingAuth ?? false);
+      if (this._escrowClient && !isAuthorized) {
+        debugWarn(`[Node] Rejecting request from ${buyerPeerId.slice(0, 12)}... — no valid spending authorization`);
         mux.sendProxyResponse({
           requestId: request.requestId,
           statusCode: 402,
           headers: { "content-type": "text/plain" },
-          body: new TextEncoder().encode("Payment required: session lock not committed"),
+          body: new TextEncoder().encode("Payment required: spending authorization not validated"),
         });
         return;
       }
@@ -1298,15 +1304,27 @@ export class AntseedNode extends EventEmitter {
       return;
     }
 
-    // Initialize BaseEscrowClient if Base config is provided
+    // Initialize EscrowClient and SellerPaymentManager if Base config is provided
     if (payments.rpcUrl && payments.contractAddress && payments.usdcAddress) {
+      const chainId = payments.chainId ?? 8453;
       this._escrowClient = new EscrowClient({
         rpcUrl:          payments.rpcUrl,
         contractAddress: payments.contractAddress,
         usdcAddress:     payments.usdcAddress,
-        chainId:         payments.chainId ?? 8453,
+        chainId,
       });
       debugLog(`[Node] BaseEscrowClient initialized (contract=${payments.contractAddress.slice(0, 10)}...)`);
+
+      if (this._identity) {
+        const sellerConfig: SellerPaymentConfig = {
+          chainId,
+          rpcUrl:          payments.rpcUrl,
+          contractAddress: payments.contractAddress,
+          usdcAddress:     payments.usdcAddress,
+        };
+        this._sellerPaymentManager = new SellerPaymentManager(this._identity, sellerConfig);
+        debugLog(`[Node] SellerPaymentManager initialized`);
+      }
     }
 
     if (!this._metering) {
@@ -1372,6 +1390,13 @@ export class AntseedNode extends EventEmitter {
       peerSwitches: 0,
       disputedReceipts: 0,
     };
+
+    // Flush any pending charges on-chain before finalizing
+    if (this._sellerPaymentManager) {
+      await this._sellerPaymentManager.onBuyerDisconnect(buyerPeerId).catch((err) => {
+        debugWarn(`[Node] Failed to flush pending charges for ${buyerPeerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
+      });
+    }
 
     try {
       this._metering.upsertSession(baseMetrics);
@@ -1486,37 +1511,51 @@ export class AntseedNode extends EventEmitter {
 
   /**
    * Handle SpendingAuth from buyer (pull-payment model).
-   * Validates the payload, initializes session state, and sends AuthAck.
-   * Actual on-chain charge happens later via SellerPaymentManager.chargeForRequest().
+   * When SellerPaymentManager is configured, delegates EIP-712 verification and
+   * AuthAck to it. Otherwise accepts any auth (dev/test mode) and sends AuthAck directly.
    */
-  private _handleSpendingAuth(
+  private async _handleSpendingAuth(
     buyerPeerId: string,
     payload: SpendingAuthPayload,
     paymentMux: PaymentMux,
-  ): void {
-    // Initialize or update session state
+  ): Promise<void> {
+    // Initialize or update local session state
     let session: SellerSessionState | null | undefined = this._sessions.get(buyerPeerId);
     if (!session) {
       session = this._getOrCreateSellerSession(buyerPeerId, this._providers[0]?.name ?? "unknown");
     }
     if (session) {
-      session.sessionId      = payload.sessionId;
-      session.sessionIdBytes = hexToBytes(payload.sessionId.replace(/^0x/, ""));
-      session.hasSpendingAuth  = true; // reuse flag to mean "has valid spending auth"
+      session.sessionId       = payload.sessionId;
+      session.sessionIdBytes  = hexToBytes(payload.sessionId.replace(/^0x/, ""));
+      session.hasSpendingAuth = true;
       session.authMaxAmount   = BigInt(payload.maxAmountUsdc);
-      session.runningTotal   = 0n;
+      session.runningTotal    = 0n;
+      if (payload.buyerEvmAddr) {
+        session.buyerEvmAddress = payload.buyerEvmAddr;
+      }
     }
 
     debugLog(`[Node] SpendingAuth received from ${buyerPeerId.slice(0, 12)}... nonce=${payload.nonce} max=${payload.maxAmountUsdc}`);
 
-    paymentMux.sendAuthAck({ sessionId: payload.sessionId, nonce: payload.nonce });
+    if (this._sellerPaymentManager) {
+      // EIP-712 verification + AuthAck handled by SellerPaymentManager
+      await this._sellerPaymentManager.handleSpendingAuth(
+        buyerPeerId,
+        payload.buyerEvmAddr,
+        payload,
+        paymentMux,
+      );
+    } else {
+      // Dev/test mode: accept any auth without EIP-712 verification
+      paymentMux.sendAuthAck({ sessionId: payload.sessionId, nonce: payload.nonce });
+    }
   }
 
   /**
    * Generate and send a bilateral receipt after processing a request (Task 3).
    */
   private async _sendBilateralReceipt(
-    _buyerPeerId: string,
+    buyerPeerId: string,
     session: SellerSessionState,
     providerPricingUsdPerMillion: { inputUsdPerMillion: number; outputUsdPerMillion: number },
     responseBody: Uint8Array,
@@ -1532,6 +1571,11 @@ export class AntseedNode extends EventEmitter {
         tokens.outputTokens * providerPricingUsdPerMillion.outputUsdPerMillion) /
       1_000_000;
     const costBaseUnits = BigInt(Math.round(costUSD * 1_000_000));
+
+    // Submit on-chain charge via SellerPaymentManager (batches until threshold)
+    if (this._sellerPaymentManager && costBaseUnits > 0n) {
+      await this._sellerPaymentManager.chargeForRequest(buyerPeerId, costBaseUnits, paymentMux);
+    }
 
     // Update running total
     session.runningTotal += costBaseUnits;

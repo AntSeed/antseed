@@ -85,6 +85,10 @@ export class SellerPaymentManager {
   get signer(): AbstractSigner { return this._signer; }
   get escrowClient(): EscrowClient { return this._escrow; }
 
+  hasAuth(buyerPeerId: string): boolean {
+    return this._auths.has(buyerPeerId);
+  }
+
   setBuyerEvmAddress(buyerPeerId: string, evmAddress: string): void {
     const auth = this._auths.get(buyerPeerId);
     if (auth) auth.buyerEvmAddr = evmAddress;

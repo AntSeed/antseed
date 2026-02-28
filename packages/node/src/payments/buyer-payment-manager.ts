@@ -151,6 +151,7 @@ export class BuyerPaymentManager {
       nonce,
       deadline,
       buyerSig: sig,
+      buyerEvmAddr: identityToEvmAddress(this._identity),
     });
 
     return sessionId;
@@ -228,6 +229,7 @@ export class BuyerPaymentManager {
       nonce:         newNonce,
       deadline,
       buyerSig:      sig,
+      buyerEvmAddr:  identityToEvmAddress(this._identity),
     });
 
     debugLog(`[BuyerPayment] TopUp sent: nonce=${newNonce} amount=${requested}`);

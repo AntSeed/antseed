@@ -74,6 +74,8 @@ export interface SpendingAuthPayload {
   deadline: number;
   /** EIP-712 signature (0x-prefixed 65-byte hex) */
   buyerSig: string;
+  /** Buyer's EVM address (0x-prefixed 20 bytes). Used by seller for EIP-712 sig recovery. */
+  buyerEvmAddr: string;
 }
 
 /**

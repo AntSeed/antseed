@@ -47,6 +47,7 @@ export function decodeSpendingAuth(data: Uint8Array): SpendingAuthPayload {
     nonce:         requireNumber(obj, 'nonce'),
     deadline:      requireNumber(obj, 'deadline'),
     buyerSig:      requireString(obj, 'buyerSig'),
+    buyerEvmAddr:  requireString(obj, 'buyerEvmAddr'),
   };
 }
 

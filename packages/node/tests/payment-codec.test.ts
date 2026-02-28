@@ -15,6 +15,7 @@ describe('payment codec round-trips', () => {
       nonce:         1,
       deadline:      Math.floor(Date.now() / 1000) + 3600,
       buyerSig:      '0x' + 'b'.repeat(130),
+      buyerEvmAddr:  '0x' + 'c'.repeat(40),
     };
     expect(decodeSpendingAuth(encodeSpendingAuth(payload))).toEqual(payload);
   });

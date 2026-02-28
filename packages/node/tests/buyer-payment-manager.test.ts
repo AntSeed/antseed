@@ -94,6 +94,7 @@ describe('BuyerPaymentManager', () => {
       expect(sentPayload.nonce).toBe(1);
       expect(typeof sentPayload.buyerSig).toBe('string');
       expect(sentPayload.buyerSig.length).toBeGreaterThan(0);
+      expect(sentPayload.buyerEvmAddr).toMatch(/^0x[0-9a-fA-F]{40}$/);
 
       // Session should start unauthorized
       const session = manager.getSession(SELLER_PEER_ID);
