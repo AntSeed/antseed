@@ -7,6 +7,7 @@ import type {
   AntseedNode,
   PeerInfo,
   RequestStreamResponseMetadata,
+  Router,
   SerializedHttpRequest,
   SerializedHttpResponse,
   SerializedHttpResponseChunk,
@@ -770,12 +771,12 @@ export class BuyerProxy {
       return
     }
 
-    // Select peer: explicit pin bypasses the router
+    // Select peer: explicit pin bypasses the router (and retry)
     const router = this._node.router
-    let selectedPeer: PeerInfo | null = null
+    const RETRYABLE_STATUS_CODES = new Set([400, 404, 408, 429, 500, 502, 503, 504])
 
     if (explicitPeerId) {
-      selectedPeer = candidatePeers.find((p) => p.peerId.toLowerCase() === explicitPeerId) ?? null
+      const selectedPeer = candidatePeers.find((p) => p.peerId.toLowerCase() === explicitPeerId) ?? null
       if (!selectedPeer) {
         const source = serializedReq.headers['x-antseed-pin-peer'] ? 'x-antseed-pin-peer header' : '--peer flag'
         log(`Pinned peer ${explicitPeerId.slice(0, 12)}... not found in candidate list (${source})`)
@@ -784,41 +785,105 @@ export class BuyerProxy {
         return
       }
       log(`Using pinned peer ${selectedPeer.peerId.slice(0, 12)}...`)
-    } else {
-      const localPeers = candidatePeers.filter((peer) => isLoopbackPeer(peer))
+      await this._dispatchToPeer(res, serializedReq, selectedPeer, routePlanByPeerId, requestProtocol, requestedModel, explicitProvider, router, RETRYABLE_STATUS_CODES)
+      return
+    }
 
-      if (localPeers.length > 0) {
-        selectedPeer = router
-          ? router.selectPeer(serializedReq, localPeers)
-          : localPeers[0] ?? null
-        if (selectedPeer) {
-          log(`Preferring local peer ${selectedPeer.peerId.slice(0, 12)}... @ ${selectedPeer.publicAddress ?? 'unknown'}`)
+    // Non-pinned: retry with failover on provider errors
+    const MAX_ATTEMPTS = 3
+    const triedPeerIds = new Set<string>()
+    let lastStatusCode = 502
+    let lastResponseBody: Buffer | null = null
+    let lastResponseHeaders: Record<string, string> = { 'content-type': 'text/plain' }
+    let lastErrorMessage: string | null = null
+
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      const availableCandidates = candidatePeers.filter((p) => !triedPeerIds.has(p.peerId))
+      if (availableCandidates.length === 0) break
+
+      let selectedPeer: PeerInfo | null = null
+
+      // Prefer local peers on first attempt
+      if (attempt === 0) {
+        const localPeers = availableCandidates.filter((peer) => isLoopbackPeer(peer))
+        if (localPeers.length > 0) {
+          selectedPeer = router
+            ? router.selectPeer(serializedReq, localPeers)
+            : localPeers[0] ?? null
+          if (selectedPeer) {
+            log(`Preferring local peer ${selectedPeer.peerId.slice(0, 12)}... @ ${selectedPeer.publicAddress ?? 'unknown'}`)
+          }
         }
       }
 
       if (!selectedPeer) {
         selectedPeer = router
-          ? router.selectPeer(serializedReq, candidatePeers)
-          : candidatePeers[0] ?? null
+          ? router.selectPeer(serializedReq, availableCandidates)
+          : availableCandidates[0] ?? null
       }
 
-      if (!selectedPeer) {
-        const diagnostics = this._formatPeerSelectionDiagnostics(candidatePeers)
-        log('Router could not select a peer.', diagnostics)
-        res.writeHead(502, { 'content-type': 'text/plain' })
-        res.end(`Router could not select a suitable peer. ${diagnostics}`)
-        return
+      if (!selectedPeer) break
+
+      triedPeerIds.add(selectedPeer.peerId)
+
+      const result = await this._dispatchToPeer(res, serializedReq, selectedPeer, routePlanByPeerId, requestProtocol, requestedModel, explicitProvider, router, RETRYABLE_STATUS_CODES)
+
+      if (result.done) return
+
+      // Request failed with a retryable error — try another peer
+      lastStatusCode = result.statusCode
+      lastResponseBody = result.responseBody
+      lastResponseHeaders = result.responseHeaders
+      lastErrorMessage = result.errorMessage
+
+      if (attempt < MAX_ATTEMPTS - 1) {
+        log(`Peer ${selectedPeer.peerId.slice(0, 12)}... returned ${result.statusCode}, retrying with another peer (attempt ${attempt + 2}/${MAX_ATTEMPTS})`)
       }
     }
 
+    // All retries exhausted or no peers available
+    if (!res.headersSent) {
+      if (lastResponseBody) {
+        log(`All ${triedPeerIds.size} peer(s) failed, returning last error (${lastStatusCode})`)
+        res.writeHead(lastStatusCode, lastResponseHeaders)
+        res.end(lastResponseBody)
+      } else if (lastErrorMessage) {
+        log(`All ${triedPeerIds.size} peer(s) failed with connection errors`)
+        res.writeHead(502, { 'content-type': 'text/plain' })
+        res.end(`P2P request failed: ${lastErrorMessage}`)
+      } else {
+        const diagnostics = this._formatPeerSelectionDiagnostics(candidatePeers)
+        log('No peers available for request')
+        res.writeHead(502, { 'content-type': 'text/plain' })
+        res.end(`Router could not select a suitable peer. ${diagnostics}`)
+      }
+    }
+  }
+
+  /**
+   * Dispatch a request to a specific peer. Returns `{ done: true }` if the response
+   * was sent to the client (success or non-retryable error), or retry info if the
+   * caller should try another peer.
+   */
+  private async _dispatchToPeer(
+    res: ServerResponse,
+    serializedReq: SerializedHttpRequest,
+    selectedPeer: PeerInfo,
+    routePlanByPeerId: Map<string, PeerProtocolRoutePlan>,
+    requestProtocol: ModelApiProtocol | null,
+    requestedModel: string | null,
+    explicitProvider: string | null,
+    router: Router | null,
+    retryableStatusCodes: Set<number>,
+  ): Promise<
+    | { done: true }
+    | { done: false; statusCode: number; responseBody: Buffer; responseHeaders: Record<string, string>; errorMessage: string | null }
+  > {
     const selectedRoutePlan = routePlanByPeerId.get(selectedPeer.peerId)
       ?? resolvePeerRoutePlan(selectedPeer, requestProtocol, requestedModel, explicitProvider)
 
     if (!selectedRoutePlan) {
-      const diagnostics = this._formatPeerSelectionDiagnostics(candidatePeers)
-      res.writeHead(502, { 'content-type': 'text/plain' })
-      res.end(`No compatible provider route found for selected peer. ${diagnostics}`)
-      return
+      return { done: false, statusCode: 502, responseBody: Buffer.from('No compatible provider route'), responseHeaders: { 'content-type': 'text/plain' }, errorMessage: null }
     }
 
     const { 'x-antseed-pin-peer': _pinPeer, ...headersForPeer } = serializedReq.headers
@@ -842,7 +907,7 @@ export class BuyerProxy {
         if (!transformed) {
           res.writeHead(502, { 'content-type': 'text/plain' })
           res.end('Failed to transform Anthropic request for selected provider protocol')
-          return
+          return { done: true }
         }
         requestForPeer = {
           ...transformed.request,
@@ -860,7 +925,7 @@ export class BuyerProxy {
       } else {
         res.writeHead(502, { 'content-type': 'text/plain' })
         res.end('Unsupported protocol transformation path')
-        return
+        return { done: true }
       }
     }
 
@@ -901,27 +966,35 @@ export class BuyerProxy {
         const telemetry = computeResponseTelemetry(requestForPeer, response.headers, response.body, selectedPeer)
         if (router) {
           router.onResult(selectedPeer, {
-            success: response.statusCode < 500,
+            success: !retryableStatusCodes.has(response.statusCode),
             latencyMs,
             tokens: telemetry.usage.totalTokens,
           })
         }
 
         if (streamed) {
+          // Headers already sent to client, can't retry
           if (!res.writableEnded) {
             res.end()
           }
-        } else {
-          const responseHeaders = attachAntseedTelemetryHeaders(
-            response.headers,
-            selectedPeer,
-            telemetry,
-            requestForPeer.requestId,
-            latencyMs,
-          )
-          res.writeHead(response.statusCode, responseHeaders)
-          res.end(Buffer.from(response.body))
+          return { done: true }
         }
+
+        // Non-streamed response — check if retryable
+        const responseHeaders = attachAntseedTelemetryHeaders(
+          response.headers,
+          selectedPeer,
+          telemetry,
+          requestForPeer.requestId,
+          latencyMs,
+        )
+        if (retryableStatusCodes.has(response.statusCode)) {
+          return { done: false, statusCode: response.statusCode, responseBody: Buffer.from(response.body), responseHeaders, errorMessage: null }
+        }
+
+        res.writeHead(response.statusCode, responseHeaders)
+        res.end(Buffer.from(response.body))
+        return { done: true }
       } else {
         let response = await this._node.sendRequest(selectedPeer, requestForPeer)
         if (adaptResponse) {
@@ -943,15 +1016,21 @@ export class BuyerProxy {
         // Report result to router for learning
         if (router) {
           router.onResult(selectedPeer, {
-            success: response.statusCode < 500,
+            success: !retryableStatusCodes.has(response.statusCode),
             latencyMs,
             tokens: telemetry.usage.totalTokens,
           })
         }
 
+        // Check if retryable
+        if (retryableStatusCodes.has(response.statusCode)) {
+          return { done: false, statusCode: response.statusCode, responseBody: Buffer.from(response.body), responseHeaders, errorMessage: null }
+        }
+
         // Forward response headers and body to the HTTP client
         res.writeHead(response.statusCode, responseHeaders)
         res.end(Buffer.from(response.body))
+        return { done: true }
       }
     } catch (err) {
       const latencyMs = Date.now() - startTime
@@ -970,12 +1049,15 @@ export class BuyerProxy {
       this._cachedPeers = []
       this._cacheTimestamp = 0
 
-      if (!res.headersSent) {
-        res.writeHead(502, { 'content-type': 'text/plain' })
-        res.end(`P2P request failed: ${message}`)
-      } else if (!res.writableEnded) {
-        res.end()
+      if (res.headersSent) {
+        // Headers already sent (streaming), can't retry
+        if (!res.writableEnded) {
+          res.end()
+        }
+        return { done: true }
       }
+
+      return { done: false, statusCode: 502, responseBody: Buffer.from(`P2P request failed: ${message}`), responseHeaders: { 'content-type': 'text/plain' }, errorMessage: message }
     }
   }
 }
