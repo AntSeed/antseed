@@ -45,10 +45,6 @@ import { FrameDecoder } from "./p2p/message-protocol.js";
 import type {
   Provider,
   ProviderStreamCallbacks,
-  TaskRequest,
-  TaskEvent,
-  SkillRequest,
-  SkillResponse,
 } from "./interfaces/seller-provider.js";
 import type { Router } from "./interfaces/buyer-router.js";
 import { NatTraversal } from "./p2p/nat-traversal.js";
@@ -77,7 +73,7 @@ import { debugLog, debugWarn } from "./utils/debug.js";
 import { BuyerPaymentManager, type BuyerPaymentConfig } from "./payments/buyer-payment-manager.js";
 import { identityToEvmAddress } from "./payments/evm/keypair.js";
 
-export type { Provider, ProviderStreamCallbacks, TaskRequest, TaskEvent, SkillRequest, SkillResponse };
+export type { Provider, ProviderStreamCallbacks };
 export type { Router };
 export type { BuyerPaymentConfig };
 
@@ -389,12 +385,18 @@ export class AntseedNode extends EventEmitter {
       throw new Error("Node not started or not in buyer mode");
     }
 
-    // If a model is specified, search by model across known provider topics.
-    // Otherwise search for a generic topic. The PeerLookup uses provider names,
-    // so without a model we search broadly.
-    const searchTerm = model ?? "*";
-    debugLog(`[Node] Discovering peers (search: "${searchTerm}")...`);
-    const results = await this._peerLookup.findSellers(searchTerm);
+    debugLog(`[Node] Discovering peers (model: "${model ?? "*"}")...`);
+
+    // Query model-level DHT topic when a model is specified — returns only peers
+    // that explicitly announced that model. Fall back to wildcard if no results.
+    let results = model
+      ? await this._peerLookup.findByModel(model)
+      : await this._peerLookup.findSellers("*");
+
+    if (model && results.length === 0) {
+      debugLog(`[Node] No model-topic results for "${model}", falling back to wildcard`);
+      results = await this._peerLookup.findSellers("*");
+    }
     debugLog(`[Node] DHT returned ${results.length} result(s)`);
 
     // Deduplicate by peerId (DHT can return the same peer from multiple topic lookups)
@@ -574,47 +576,6 @@ export class AntseedNode extends EventEmitter {
         },
       );
     });
-  }
-
-  async *sendTask(peer: PeerInfo, task: TaskRequest): AsyncIterable<TaskEvent> {
-    const req: SerializedHttpRequest = {
-      requestId: task.taskId,
-      method: "POST",
-      path: "/v1/task",
-      headers: {
-        "content-type": "application/json",
-        "x-antseed-capability": "task",
-      },
-      body: new TextEncoder().encode(JSON.stringify(task)),
-    };
-
-    const response = await this.sendRequest(peer, req);
-    const bodyText = new TextDecoder().decode(response.body);
-    const parsed = JSON.parse(bodyText) as TaskEvent | TaskEvent[];
-    if (Array.isArray(parsed)) {
-      for (const event of parsed) {
-        yield event;
-      }
-    } else {
-      yield parsed;
-    }
-  }
-
-  async sendSkill(peer: PeerInfo, skill: SkillRequest): Promise<SkillResponse> {
-    const req: SerializedHttpRequest = {
-      requestId: skill.skillId,
-      method: "POST",
-      path: "/v1/skill",
-      headers: {
-        "content-type": "application/json",
-        "x-antseed-capability": "skill",
-      },
-      body: new TextEncoder().encode(JSON.stringify(skill)),
-    };
-
-    const response = await this.sendRequest(peer, req);
-    const bodyText = new TextDecoder().decode(response.body);
-    return JSON.parse(bodyText) as SkillResponse;
   }
 
   private _createDHTConfig(port: number, bootstrapNodes: Array<{ host: string; port: number }>): DHTNodeConfig {
@@ -973,101 +934,6 @@ export class AntseedNode extends EventEmitter {
     request: SerializedHttpRequest,
     streamCallbacks?: ProviderStreamCallbacks,
   ): Promise<SerializedHttpResponse> {
-    const capability = request.headers["x-antseed-capability"]?.toLowerCase();
-    const isTask = capability === "task" || request.path === "/v1/task";
-    const isSkill = capability === "skill" || request.path === "/v1/skill";
-
-    if (isSkill) {
-      if (!provider.handleSkill) {
-        return {
-          requestId: request.requestId,
-          statusCode: 501,
-          headers: { "content-type": "application/json" },
-          body: new TextEncoder().encode(JSON.stringify({ error: "Provider does not support skill capability" })),
-        };
-      }
-
-      const parsed = this._parseJsonBody(request.body);
-      if (!parsed || typeof parsed !== "object") {
-        return {
-          requestId: request.requestId,
-          statusCode: 400,
-          headers: { "content-type": "application/json" },
-          body: new TextEncoder().encode(JSON.stringify({ error: "Invalid skill payload" })),
-        };
-      }
-
-      const raw = parsed as Record<string, unknown>;
-      const skillReq: SkillRequest = {
-        skillId: typeof raw["skillId"] === "string" ? raw["skillId"] : request.requestId,
-        capability: typeof raw["capability"] === "string" ? raw["capability"] as SkillRequest["capability"] : "skill",
-        input: raw["input"] ?? {},
-        inputSchema: (raw["inputSchema"] && typeof raw["inputSchema"] === "object")
-          ? raw["inputSchema"] as Record<string, unknown>
-          : undefined,
-      };
-
-      const skillResponse = await provider.handleSkill(skillReq);
-      return {
-        requestId: request.requestId,
-        statusCode: 200,
-        headers: { "content-type": "application/json" },
-        body: new TextEncoder().encode(JSON.stringify(skillResponse)),
-      };
-    }
-
-    if (isTask) {
-      if (!provider.handleTask) {
-        return {
-          requestId: request.requestId,
-          statusCode: 501,
-          headers: { "content-type": "application/json" },
-          body: new TextEncoder().encode(JSON.stringify({ error: "Provider does not support task capability" })),
-        };
-      }
-
-      const parsed = this._parseJsonBody(request.body);
-      if (!parsed || typeof parsed !== "object") {
-        return {
-          requestId: request.requestId,
-          statusCode: 400,
-          headers: { "content-type": "application/json" },
-          body: new TextEncoder().encode(JSON.stringify({ error: "Invalid task payload" })),
-        };
-      }
-
-      const raw = parsed as Record<string, unknown>;
-      const taskReq: TaskRequest = {
-        taskId: typeof raw["taskId"] === "string" ? raw["taskId"] : request.requestId,
-        capability: typeof raw["capability"] === "string" ? raw["capability"] as TaskRequest["capability"] : "agent",
-        input: raw["input"] ?? {},
-        metadata: (raw["metadata"] && typeof raw["metadata"] === "object")
-          ? raw["metadata"] as Record<string, unknown>
-          : undefined,
-      };
-
-      const events: TaskEvent[] = [];
-      for await (const event of provider.handleTask(taskReq)) {
-        events.push(event);
-      }
-
-      const payload: TaskEvent | TaskEvent[] = events.length <= 1
-        ? (events[0] ?? {
-          taskId: taskReq.taskId,
-          type: "final",
-          data: {},
-          timestamp: Date.now(),
-        })
-        : events;
-
-      return {
-        requestId: request.requestId,
-        statusCode: 200,
-        headers: { "content-type": "application/json" },
-        body: new TextEncoder().encode(JSON.stringify(payload)),
-      };
-    }
-
     if (streamCallbacks && provider.handleRequestStream) {
       return provider.handleRequestStream(request, streamCallbacks);
     }

@@ -1,6 +1,15 @@
 import { verifySignature, hexToBytes } from "../p2p/identity.js";
 import type { DHTNode } from "./dht-node.js";
-import { providerTopic, capabilityTopic, topicToInfoHash } from "./dht-node.js";
+import { providerTopic, modelTopic, capabilityTopic, topicToInfoHash } from "./dht-node.js";
+
+function shuffle<T>(arr: T[]): T[] {
+  const out = arr.slice();
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [out[i], out[j]] = [out[j]!, out[i]!];
+  }
+  return out;
+}
 import type { PeerMetadata } from "./peer-metadata.js";
 import { encodeMetadataForSigning } from "./metadata-codec.js";
 import type { MetadataResolver, PeerEndpoint } from "./metadata-resolver.js";
@@ -38,14 +47,21 @@ export class PeerLookup {
     const topic = providerTopic(provider);
     const infoHash = topicToInfoHash(topic);
     const peers = await this.config.dht.lookup(infoHash);
-    return this.resolveLookupResults(peers);
+    return this.resolveLookupResults(shuffle(peers));
+  }
+
+  async findByModel(model: string): Promise<LookupResult[]> {
+    const topic = modelTopic(model);
+    const infoHash = topicToInfoHash(topic);
+    const peers = await this.config.dht.lookup(infoHash);
+    return this.resolveLookupResults(shuffle(peers));
   }
 
   async findByCapability(capability: string, name?: string): Promise<LookupResult[]> {
     const topic = capabilityTopic(capability, name);
     const infoHash = topicToInfoHash(topic);
     const peers = await this.config.dht.lookup(infoHash);
-    return this.resolveLookupResults(peers);
+    return this.resolveLookupResults(shuffle(peers));
   }
 
   private async resolveLookupResults(peers: PeerEndpoint[]): Promise<LookupResult[]> {

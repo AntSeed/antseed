@@ -7,7 +7,6 @@ export * from './seller.js';
 export * from './buyer.js';
 export * from './http.js';
 export * from './capability.js';
-export * from './peer-profile.js';
 export * from './staking.js';
 export * from './report.js';
 export * from './rating.js';

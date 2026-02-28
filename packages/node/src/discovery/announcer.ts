@@ -1,7 +1,7 @@
 import type { Identity } from "../p2p/identity.js";
 import { signData } from "../p2p/identity.js";
 import type { DHTNode } from "./dht-node.js";
-import { providerTopic, capabilityTopic, topicToInfoHash } from "./dht-node.js";
+import { providerTopic, modelTopic, capabilityTopic, topicToInfoHash } from "./dht-node.js";
 import type { PeerOffering } from "../types/capability.js";
 import type { PeerMetadata, ProviderAnnouncement } from "./peer-metadata.js";
 import { METADATA_VERSION } from "./peer-metadata.js";
@@ -153,6 +153,7 @@ export class PeerAnnouncer {
           metadata.onChainReputation = reputation.weightedAverage;
           metadata.onChainSessionCount = reputation.sessionCount;
           metadata.onChainDisputeCount = reputation.disputeCount;
+          metadata.onChainDisputeCount = 0;
         } catch {
           // Silently continue without reputation data
         }
@@ -170,8 +171,16 @@ export class PeerAnnouncer {
   }
 
   private async _announceTopics(providers: ProviderAnnouncement[]): Promise<void> {
+    const announcedModels = new Set<string>();
+
     for (const p of providers) {
       await this._tryAnnounceTopic(providerTopic(p.provider));
+      for (const model of p.models) {
+        if (!announcedModels.has(model)) {
+          announcedModels.add(model);
+          await this._tryAnnounceTopic(modelTopic(model));
+        }
+      }
     }
 
     await this._tryAnnounceTopic(providerTopic("*"));
@@ -179,6 +188,7 @@ export class PeerAnnouncer {
     if (this.config.offerings) {
       for (const offering of this.config.offerings) {
         await this._tryAnnounceTopic(capabilityTopic(offering.capability, offering.name));
+        await this._tryAnnounceTopic(capabilityTopic(offering.capability));
       }
     }
   }

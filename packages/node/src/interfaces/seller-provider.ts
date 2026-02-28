@@ -1,5 +1,4 @@
 import type { SerializedHttpRequest, SerializedHttpResponse, SerializedHttpResponseChunk } from '../types/http.js';
-import type { ProviderCapability } from '../types/capability.js';
 import type { ModelApiProtocol } from '../types/model-api.js';
 
 export interface ProviderTokenPricingUsdPerMillion {
@@ -60,46 +59,9 @@ export interface Provider {
 
   /** Return current and maximum concurrent request counts */
   getCapacity(): { current: number; max: number };
-
-  /** Capabilities beyond inference (optional — defaults to ['inference']) */
-  capabilities?: ProviderCapability[];
-
-  /** Handle a long-running agent task. Returns an async iterable of events. */
-  handleTask?(task: TaskRequest): AsyncIterable<TaskEvent>;
-
-  /** Handle a one-shot skill request. */
-  handleSkill?(skill: SkillRequest): Promise<SkillResponse>;
 }
 
 export interface ProviderStreamCallbacks {
   onResponseStart: (response: SerializedHttpResponse) => void;
   onResponseChunk: (chunk: SerializedHttpResponseChunk) => void;
-}
-
-export interface TaskRequest {
-  taskId: string;
-  capability: ProviderCapability;
-  input: unknown;
-  metadata?: Record<string, unknown>;
-}
-
-export interface TaskEvent {
-  taskId: string;
-  type: 'status' | 'progress' | 'intermediate' | 'final';
-  data: unknown;
-  timestamp: number;
-}
-
-export interface SkillRequest {
-  skillId: string;
-  capability: ProviderCapability;
-  input: unknown;
-  inputSchema?: Record<string, unknown>;
-}
-
-export interface SkillResponse {
-  skillId: string;
-  output: unknown;
-  outputSchema?: Record<string, unknown>;
-  durationMs: number;
 }

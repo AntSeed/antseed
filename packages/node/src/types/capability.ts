@@ -4,8 +4,6 @@
 export type ProviderCapability =
   | 'inference'
   | 'agent'
-  | 'skill'
-  | 'tool'
   | 'embedding'
   | 'image-gen'
   | 'tts'
@@ -21,7 +19,8 @@ export interface PricingTier {
 }
 
 /**
- * A discrete offering that a peer advertises.
+ * A discrete offering that a peer advertises via DHT capability topics.
+ * Skills and tasks are handled as provider-node middlewares, not here.
  */
 export interface PeerOffering {
   capability: ProviderCapability;

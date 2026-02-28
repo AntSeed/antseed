@@ -7,7 +7,7 @@ export {
   type RequestStreamCallbacks,
   type RequestStreamResponseMetadata,
 } from './node.js';
-export type { Provider, ProviderStreamCallbacks, TaskRequest, TaskEvent, SkillRequest, SkillResponse } from './interfaces/seller-provider.js';
+export type { Provider, ProviderStreamCallbacks } from './interfaces/seller-provider.js';
 export type { Router } from './interfaces/buyer-router.js';
 
 // Types (re-export everything)
@@ -46,8 +46,6 @@ export {
 export { DefaultRouter, type DefaultRouterConfig } from './routing/default-router.js';
 
 export type { AntseedPlugin, AntseedProviderPlugin, AntseedRouterPlugin, PluginConfigKey, ConfigField } from './interfaces/plugin.js'
-export { ProfileManager } from './discovery/profile-manager.js';
-export type { PeerProfile, ProfileCapability } from './types/peer-profile.js';
 
 // Reputation
 export { TrustScoreEngine } from './reputation/trust-engine.js';
@@ -59,10 +57,6 @@ export { ReportManager } from './reputation/report-manager.js';
 export type { PeerReport, ReportReason, ReportEvidence, ReportStatus } from './types/report.js';
 export { RatingManager } from './reputation/rating-manager.js';
 export type { PeerRating, RatingDimension, AggregateRating } from './types/rating.js';
-
-// Profile search
-export { ProfileSearchIndex } from './discovery/profile-search.js';
-export type { ProfileSearchQuery, ProfileSearchResult } from './discovery/profile-search.js';
 
 // Plugin config & loading
 export { encryptValue, decryptValue, deriveMachineKey, generateSalt } from './config/encryption.js'
