@@ -3,25 +3,9 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { getGlobalOptions } from './types.js';
 import { loadConfig } from '../../config/loader.js';
-import {
-  loadOrCreateIdentity,
-  BaseEscrowClient,
-  identityToEvmAddress,
-} from '@antseed/node';
-
-const CHAIN_IDS: Record<string, number> = {
-  'base-mainnet': 8453,
-  'base-sepolia': 84532,
-  'base-local':   31337,
-};
-
-/** Format USDC base units (6 decimals) to human-readable string. */
-function formatUsdc(baseUnits: bigint): string {
-  const whole = baseUnits / 1_000_000n;
-  const frac = baseUnits % 1_000_000n;
-  const fracStr = frac.toString().padStart(6, '0').replace(/0+$/, '') || '0';
-  return `${whole}.${fracStr}`;
-}
+import { loadOrCreateIdentity, identityToEvmAddress } from '@antseed/node';
+import { createEscrowClient } from '../payment-utils.js';
+import { formatUsdc } from '../formatters.js';
 
 export function registerBalanceCommand(program: Command): void {
   program
@@ -42,12 +26,7 @@ export function registerBalanceCommand(program: Command): void {
       const identity = await loadOrCreateIdentity(globalOpts.dataDir);
       const address = identityToEvmAddress(identity);
 
-      const escrowClient = new BaseEscrowClient({
-        rpcUrl:          payments.crypto.rpcUrl,
-        contractAddress: payments.crypto.escrowContractAddress,
-        usdcAddress:     payments.crypto.usdcContractAddress,
-        chainId:         CHAIN_IDS[payments.crypto.chainId] ?? 8453,
-      });
+      const escrowClient = createEscrowClient(payments.crypto);
 
       const spinner = ora('Fetching balance...').start();
 
