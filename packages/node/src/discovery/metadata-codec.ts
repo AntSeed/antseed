@@ -203,32 +203,26 @@ function encodeBody(metadata: PeerMetadata): Uint8Array {
   const PRICING_UNIT_MAP: Record<string, number> = { token: 0, request: 1, minute: 2, task: 3 };
 
   for (const o of offerings) {
-    // capability: length-prefixed (1 byte len)
     const capBytes = new TextEncoder().encode(o.capability);
     parts.push(new Uint8Array([capBytes.length]));
     parts.push(capBytes);
 
-    // name: length-prefixed (1 byte len)
     const nameBytes = new TextEncoder().encode(o.name);
     parts.push(new Uint8Array([nameBytes.length]));
     parts.push(nameBytes);
 
-    // description: length-prefixed (2 byte uint16 len)
     const descBytes = new TextEncoder().encode(o.description);
     const descLenBuf = new ArrayBuffer(2);
     new DataView(descLenBuf).setUint16(0, descBytes.length, false);
     parts.push(new Uint8Array(descLenBuf));
     parts.push(descBytes);
 
-    // pricingUnit: 1 byte
     parts.push(new Uint8Array([PRICING_UNIT_MAP[o.pricing.unit] ?? 0]));
 
-    // pricePerUnit: 4 bytes float32
     const priceBuf = new ArrayBuffer(4);
     new DataView(priceBuf).setFloat32(0, o.pricing.pricePerUnit, false);
     parts.push(new Uint8Array(priceBuf));
 
-    // modelCount: 1 byte, then each model
     const models = o.models ?? [];
     parts.push(new Uint8Array([models.length]));
     for (const model of models) {
@@ -493,7 +487,7 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
     }
   }
 
-  // offerings (optional — present if there are remaining bytes before the 64-byte signature)
+  // offerings
   const PRICING_UNIT_REVERSE: Array<'token' | 'request' | 'minute' | 'task'> = ['token', 'request', 'minute', 'task'];
   let offerings: PeerOffering[] | undefined;
 
@@ -501,67 +495,44 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
   if (remainingBeforeSignature >= 2) {
     offerings = [];
     checkBounds(offset, 2, data.length - 64);
-    const offeringCountView = new DataView(data.buffer, data.byteOffset + offset, 2);
-    const offeringCount = offeringCountView.getUint16(0, false);
+    const offeringCount = new DataView(data.buffer, data.byteOffset + offset, 2).getUint16(0, false);
     offset += 2;
 
     for (let i = 0; i < offeringCount; i++) {
-      // capability
       checkBounds(offset, 1, data.length - 64);
-      const capLen = data[offset]!;
-      offset += 1;
+      const capLen = data[offset]!; offset += 1;
       checkBounds(offset, capLen, data.length - 64);
-      const capability = new TextDecoder().decode(data.slice(offset, offset + capLen));
-      offset += capLen;
+      const capability = new TextDecoder().decode(data.slice(offset, offset + capLen)); offset += capLen;
 
-      // name
       checkBounds(offset, 1, data.length - 64);
-      const nameLen = data[offset]!;
-      offset += 1;
+      const nameLen = data[offset]!; offset += 1;
       checkBounds(offset, nameLen, data.length - 64);
-      const name = new TextDecoder().decode(data.slice(offset, offset + nameLen));
-      offset += nameLen;
+      const name = new TextDecoder().decode(data.slice(offset, offset + nameLen)); offset += nameLen;
 
-      // description (uint16 length)
       checkBounds(offset, 2, data.length - 64);
-      const descLenView = new DataView(data.buffer, data.byteOffset + offset, 2);
-      const descLen = descLenView.getUint16(0, false);
-      offset += 2;
+      const descLen = new DataView(data.buffer, data.byteOffset + offset, 2).getUint16(0, false); offset += 2;
       checkBounds(offset, descLen, data.length - 64);
-      const description = new TextDecoder().decode(data.slice(offset, offset + descLen));
-      offset += descLen;
+      const description = new TextDecoder().decode(data.slice(offset, offset + descLen)); offset += descLen;
 
-      // pricingUnit: 1 byte
       checkBounds(offset, 1, data.length - 64);
-      const pricingUnitIdx = data[offset]!;
-      offset += 1;
-      const unit = PRICING_UNIT_REVERSE[pricingUnitIdx] ?? 'token';
+      const unit = PRICING_UNIT_REVERSE[data[offset]!] ?? 'token'; offset += 1;
 
-      // pricePerUnit: 4 bytes float32
       checkBounds(offset, 4, data.length - 64);
-      const priceView = new DataView(data.buffer, data.byteOffset + offset, 4);
-      const pricePerUnit = priceView.getFloat32(0, false);
-      offset += 4;
+      const pricePerUnit = new DataView(data.buffer, data.byteOffset + offset, 4).getFloat32(0, false); offset += 4;
 
-      // models
       checkBounds(offset, 1, data.length - 64);
-      const modelCount = data[offset]!;
-      offset += 1;
+      const modelCount = data[offset]!; offset += 1;
       const models: string[] = [];
       for (let j = 0; j < modelCount; j++) {
         checkBounds(offset, 1, data.length - 64);
-        const modelLen = data[offset]!;
-        offset += 1;
+        const modelLen = data[offset]!; offset += 1;
         checkBounds(offset, modelLen, data.length - 64);
-        const model = new TextDecoder().decode(data.slice(offset, offset + modelLen));
-        offset += modelLen;
-        models.push(model);
+        models.push(new TextDecoder().decode(data.slice(offset, offset + modelLen))); offset += modelLen;
       }
 
       offerings.push({
         capability: capability as PeerOffering['capability'],
-        name,
-        description,
+        name, description,
         models: models.length > 0 ? models : undefined,
         pricing: { unit, pricePerUnit, currency: 'USD' },
       });

@@ -43,6 +43,10 @@ export function providerTopic(providerName: string): string {
   return "antseed:" + providerName.toLowerCase();
 }
 
+export function modelTopic(modelName: string): string {
+  return "antseed:model:" + modelName.toLowerCase();
+}
+
 export function capabilityTopic(capability: string, name?: string): string {
   const base = "antseed:" + capability.toLowerCase();
   return name ? base + ":" + name.toLowerCase() : base;
