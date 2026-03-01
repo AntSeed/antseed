@@ -56,6 +56,7 @@ describe('Request flow: buyer sends request to seller via P2P', () => {
       signalingPort: 0,
       bootstrapNodes: bootstrap.bootstrapConfig,
       allowPrivateIPs: true,
+      noOfficialBootstrap: true,
     });
     sellerNode.registerProvider(mockProvider);
     await sellerNode.start();
@@ -69,6 +70,7 @@ describe('Request flow: buyer sends request to seller via P2P', () => {
       dhtPort: 0,
       bootstrapNodes: bootstrap.bootstrapConfig,
       allowPrivateIPs: true,
+      noOfficialBootstrap: true,
     });
     await buyerNode.start();
 

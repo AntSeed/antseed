@@ -115,6 +115,7 @@ describe('Streaming: SSE streaming request flow across P2P boundary', () => {
       signalingPort: 0,
       bootstrapNodes: bootstrap.bootstrapConfig,
       allowPrivateIPs: true,
+      noOfficialBootstrap: true,
     });
     sellerNode.registerProvider(streamingProvider);
     await sellerNode.start();
@@ -128,6 +129,7 @@ describe('Streaming: SSE streaming request flow across P2P boundary', () => {
       dhtPort: 0,
       bootstrapNodes: bootstrap.bootstrapConfig,
       allowPrivateIPs: true,
+      noOfficialBootstrap: true,
     });
     await buyerNode.start();
 

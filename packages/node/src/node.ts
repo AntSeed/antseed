@@ -114,6 +114,9 @@ export interface NodeConfig {
   maxStreamDurationMs?: number;
   /** Allow private/loopback IPs in DHT lookups. Default: false. Set true for local testing. */
   allowPrivateIPs?: boolean;
+  /** Use only the provided bootstrapNodes and skip the official public DHT nodes. Default: false.
+   *  Set true for isolated local testing where official nodes must not be contacted. */
+  noOfficialBootstrap?: boolean;
   /** Optional seller-side payment runtime wiring. */
   payments?: NodePaymentsConfig;
 }
@@ -288,9 +291,12 @@ export class AntseedNode extends EventEmitter {
     this._identity = await loadOrCreateIdentity(dataDir);
     debugLog(`[Node] Identity loaded: ${this._identity.peerId.slice(0, 12)}...`);
 
-    // Determine bootstrap nodes — always merge official + any user-configured nodes
+    // Determine bootstrap nodes — merge official + any user-configured nodes unless
+    // noOfficialBootstrap is set (e.g. isolated local testing).
     const bootstrapNodes = toBootstrapConfig(
-      mergeBootstrapNodes(OFFICIAL_BOOTSTRAP_NODES, this._config.bootstrapNodes ?? [])
+      this._config.noOfficialBootstrap
+        ? (this._config.bootstrapNodes ?? [])
+        : mergeBootstrapNodes(OFFICIAL_BOOTSTRAP_NODES, this._config.bootstrapNodes ?? [])
     );
     debugLog(`[Node] Starting as ${this._config.role} with ${bootstrapNodes.length} bootstrap node(s)`);
 

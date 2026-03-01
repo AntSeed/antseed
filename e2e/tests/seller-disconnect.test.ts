@@ -76,6 +76,7 @@ describe('Negative: seller disconnects mid-request', () => {
       signalingPort: 0,
       bootstrapNodes: bootstrap.bootstrapConfig,
       allowPrivateIPs: true,
+      noOfficialBootstrap: true,
     });
     sellerNode.registerProvider(crashProvider);
     await sellerNode.start();
@@ -87,6 +88,7 @@ describe('Negative: seller disconnects mid-request', () => {
       dhtPort: 0,
       bootstrapNodes: bootstrap.bootstrapConfig,
       allowPrivateIPs: true,
+      noOfficialBootstrap: true,
     });
     await buyerNode.start();
 

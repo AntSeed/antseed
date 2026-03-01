@@ -51,6 +51,7 @@ describe('Discovery: seller announces, buyer discovers via DHT', () => {
       signalingPort: 0,    // OS-assigned
       bootstrapNodes: bootstrap.bootstrapConfig,
       allowPrivateIPs: true,
+      noOfficialBootstrap: true,
     });
     sellerNode.registerProvider(mockProvider);
     await sellerNode.start();
@@ -67,6 +68,7 @@ describe('Discovery: seller announces, buyer discovers via DHT', () => {
       dhtPort: 0,          // OS-assigned
       bootstrapNodes: bootstrap.bootstrapConfig,
       allowPrivateIPs: true,
+      noOfficialBootstrap: true,
     });
     await buyerNode.start();
 
