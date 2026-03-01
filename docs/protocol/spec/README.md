@@ -1,6 +1,6 @@
 # Antseed Network Protocol Specification
 
-**Version:** 1.0 (current discovery metadata format uses `METADATA_VERSION = 3`)
+**Version:** 1.0 (current discovery metadata format uses `METADATA_VERSION = 4`)
 
 ## Overview
 

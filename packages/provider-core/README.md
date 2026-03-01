@@ -31,6 +31,9 @@ const provider = new BaseProvider({
     tokenProvider: new StaticTokenProvider('Bearer sk-...'),
     maxConcurrency: 10,
     allowedModels: ['model-a', 'model-b'],
+    modelRewriteMap: {
+      'model-a': 'together/model-a',
+    },
   },
 });
 ```
@@ -49,7 +52,7 @@ const provider = new BaseProvider({
 
 ### HttpRelay
 
-Low-level HTTP relay with concurrency control, SSE streaming support, and model validation. Used internally by `BaseProvider`.
+Low-level HTTP relay with concurrency control, SSE streaming support, model validation, and optional request model rewriting (`modelRewriteMap`). Used internally by `BaseProvider`.
 
 ## Usage in Plugins
 

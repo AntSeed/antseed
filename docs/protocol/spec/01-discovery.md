@@ -14,14 +14,29 @@ The network uses the BitTorrent Mainline DHT (BEP 5) as a decentralised director
 
 ### Topic Hashing
 
-Sellers announce themselves under a topic derived from their provider name:
+Sellers announce multiple topic types on the DHT:
 
 ```
-topic  = "antseed:" + lowercase(providerName)
-infoHash = SHA1(topic)                        // 20-byte info hash
+providerTopic(provider)        = "antseed:" + normalize(provider)
+modelTopic(model)              = "antseed:model:" + normalize(model)
+modelSearchTopic(model)        = "antseed:model-search:" + compact(normalize(model))
+capabilityTopic(capability)    = "antseed:" + normalize(capability)
+capabilityTopic(capability,id) = "antseed:" + normalize(capability) + ":" + normalize(id)
+
+normalize(x) = trim(lowercase(x))
+compact(x)   = remove all spaces, "-" and "_" (preserve ".")
+infoHash     = SHA1(topic)      // 20-byte info hash
 ```
 
-The `providerTopic()` function lowercases the provider name and prepends the `antseed:` prefix. The `topicToInfoHash()` function produces a 20-byte SHA-1 digest used as the DHT info hash.
+The announcer always publishes canonical model topics (`modelTopic`). It additionally publishes compact `modelSearchTopic` entries only when the compact key differs from canonical.
+
+Examples:
+
+- `kimi 2.5` => canonical `antseed:model:kimi 2.5`, compact `antseed:model-search:kimi2.5`
+- `kimi-2.5` => canonical `antseed:model:kimi-2.5`, compact `antseed:model-search:kimi2.5`
+- `kimi_2.5` => canonical `antseed:model:kimi_2.5`, compact `antseed:model-search:kimi2.5`
+
+`topicToInfoHash()` produces the SHA-1 digest used as the DHT info hash.
 
 ### Bootstrap Nodes
 
@@ -60,7 +75,7 @@ Custom bootstrap nodes can be supplied and are merged (deduplicated by `host:por
 **Source:** `node/src/discovery/peer-metadata.ts`
 
 ```
-METADATA_VERSION = 3
+METADATA_VERSION = 4
 ```
 
 ### Data Structures
@@ -70,7 +85,7 @@ METADATA_VERSION = 3
 | Field       | Type                    | Description                             |
 |-------------|-------------------------|-----------------------------------------|
 | peerId      | PeerId (string)         | 64 hex chars (32-byte Ed25519 public key) |
-| version     | number                  | Must equal `METADATA_VERSION` (3)       |
+| version     | number                  | Must equal `METADATA_VERSION` (4)       |
 | displayName | string                  | Optional human-readable node label      |
 | providers   | ProviderAnnouncement[]  | List of provider offerings              |
 | region      | string                  | Geographic region identifier            |
@@ -86,6 +101,7 @@ METADATA_VERSION = 3
 | defaultPricing   | object   | Default `{ inputUsdPerMillion, outputUsdPerMillion }`       |
 | modelPricing     | object   | Optional per-model map `{ [model]: { inputUsdPerMillion, outputUsdPerMillion } }` |
 | modelCategories  | object   | Optional per-model map `{ [model]: string[] }` with lowercase tags |
+| modelApiProtocols| object   | Optional per-model map `{ [model]: string[] }` of supported model API protocols |
 | maxConcurrency   | number   | Maximum concurrent requests (>= 1)                           |
 | currentLoad      | number   | Current number of active requests                            |
 
@@ -127,6 +143,14 @@ Per provider (repeated providerCount times):
     Per category (repeated categoryCount times):
       [categoryLen : 1 byte uint8 ]
       [category    : N bytes UTF-8 ]
+  [modelApiProtocolCount      : 1 byte   uint8 ]      // v4+
+  Per model API protocol entry (repeated modelApiProtocolCount times):
+    [modelLen   : 1 byte   uint8 ]
+    [model      : N bytes  UTF-8  ]
+    [protocolCount : 1 byte uint8 ]
+    Per protocol (repeated protocolCount times):
+      [protocolLen : 1 byte uint8 ]
+      [protocol    : N bytes UTF-8 ]
   [maxConcurrency: 2 bytes  uint16  big-endian ]
   [currentLoad   : 2 bytes  uint16  big-endian ]
 
@@ -159,10 +183,11 @@ The body (everything except the trailing 64-byte signature) is the data that is 
 | MAX_DISPLAY_NAME_LENGTH   | 64    | Maximum display name length in characters   |
 | MAX_MODEL_CATEGORIES_PER_MODEL | 8 | Maximum categories per model               |
 | MAX_MODEL_CATEGORY_LENGTH | 32    | Maximum category length in characters       |
+| MAX_MODEL_API_PROTOCOLS_PER_MODEL | 4 | Maximum protocol entries per model |
 
 Additional validation rules enforced by `validateMetadata()`:
 
-- `version` must equal `METADATA_VERSION` (3).
+- `version` must equal `METADATA_VERSION` (4).
 - `peerId` must be exactly 64 lowercase hex characters.
 - `region` must not be empty.
 - `displayName` is optional, but when present it must be non-empty and <= 64 chars.
@@ -174,6 +199,8 @@ Additional validation rules enforced by `validateMetadata()`:
 - Each category must be lowercase alphanumeric or hyphen: `^[a-z0-9][a-z0-9-]*$`.
 - Categories must be non-empty, unique per model, and within per-model/per-tag limits above.
 - Recommended category tags: `privacy`, `legal`, `uncensored`, `coding`, `finance`, `tee` (not enforced; custom tags allowed).
+- `modelApiProtocols` (if present) must reference models listed in `providers[].models`.
+- `modelApiProtocols` entries must be known protocol IDs, non-empty, unique per model, and within per-model limits above.
 - `maxConcurrency` must be at least 1.
 - `currentLoad` must be non-negative and must not exceed `maxConcurrency`.
 - `signature` must be exactly 128 lowercase hex characters (64 bytes).
@@ -223,8 +250,11 @@ On any non-OK response, network error, timeout, or invalid JSON, the resolver re
 
 The `PeerLookup` class orchestrates the full discovery flow:
 
-1. Compute `infoHash = SHA1("antseed:" + lowercase(provider))`.
-2. Query the DHT for the info hash to obtain a list of `{host, port}` peer endpoints.
+1. Build lookup topic(s):
+   - provider lookup: `SHA1(providerTopic(provider))`
+   - model lookup: `SHA1(modelTopic(model))`, and if compact key differs, also `SHA1(modelSearchTopic(model))`
+   - capability lookup: `SHA1(capabilityTopic(capability[, name]))`
+2. Query the DHT for the topic hash(es) to obtain `{host, port}` peer endpoints.
 3. For each peer (up to `maxResults`):
    a. Fetch metadata via the configured `MetadataResolver`.
    b. If `requireValidSignature` is `true`, verify the Ed25519 signature over the encoded body using the peer's public key (`peerId`). Discard peers with invalid signatures.
@@ -249,10 +279,15 @@ The `PeerLookup` class orchestrates the full discovery flow:
 The `PeerAnnouncer` class handles the seller-side announcement lifecycle:
 
 1. Build a `PeerMetadata` object from the configured providers, current pricing, current load, and region.
-2. Set `version` to `METADATA_VERSION` (3) and `timestamp` to `Date.now()`.
+2. Set `version` to `METADATA_VERSION` (4) and `timestamp` to `Date.now()`.
 3. Encode the body (without signature) via `encodeMetadataForSigning()`.
 4. Sign the body with the seller's Ed25519 private key.
-5. For each provider in the metadata, compute `infoHash = SHA1("antseed:" + lowercase(provider))` and announce on the DHT at the configured signaling port.
+5. Announce DHT topics at the configured signaling port:
+   - provider topics (`providerTopic(provider)`)
+   - canonical model topics (`modelTopic(model)`)
+   - compact model-search topics (`modelSearchTopic(model)`) when canonical and compact keys differ
+   - wildcard provider topic (`providerTopic("*")`)
+   - capability topics when offerings are configured
 
 Periodic re-announcement is managed by `startPeriodicAnnounce()`, which calls `announce()` immediately and then every `reannounceIntervalMs` milliseconds. Load can be updated at any time via `updateLoad(providerName, currentLoad)` and will be reflected in the next announcement cycle.
 

@@ -12,7 +12,24 @@ The discovery protocol uses the BitTorrent Mainline DHT (BEP 5) as a decentraliz
 
 ## DHT Topic Hashing
 
-Sellers announce themselves under a topic derived from their provider name. The info hash is `SHA1("antseed:" + lowercase(providerName))`.
+Sellers announce multiple topic types. Each topic is SHA1-hashed for DHT lookup.
+
+| Topic Type | Plain Topic String | Key Normalization |
+|---|---|---|
+| Provider | `antseed:{provider}` | `trim + lowercase` |
+| Model (canonical) | `antseed:model:{model}` | `trim + lowercase` |
+| Model (search fallback) | `antseed:model-search:{model}` | `trim + lowercase`, then remove spaces, `-`, `_` (keep `.`) |
+| Capability | `antseed:{capability}` or `antseed:{capability}:{name}` | `trim + lowercase` |
+
+`model-search` topics are announced only when the compact key differs from the canonical key.
+
+Example:
+
+- `kimi 2.5` -> canonical `antseed:model:kimi 2.5`, search `antseed:model-search:kimi2.5`
+- `kimi-2.5` -> canonical `antseed:model:kimi-2.5`, search `antseed:model-search:kimi2.5`
+- `kimi_2.5` -> canonical `antseed:model:kimi_2.5`, search `antseed:model-search:kimi2.5`
+
+Buyer model discovery queries canonical model topic first, then also queries `model-search` when keys differ.
 
 ## Bootstrap Nodes
 
@@ -32,7 +49,7 @@ Sellers announce themselves under a topic derived from their provider name. The 
 
 ## Metadata Endpoint
 
-Each seller runs an HTTP server exposing `GET /metadata` which returns JSON-serialized `PeerMetadata` with pricing, capacity, and optional metadata tags.  
+Each seller runs an HTTP server exposing `GET /metadata` which returns JSON-serialized `PeerMetadata` with pricing, capacity, and optional metadata tags/protocol hints.  
 By default, metadata is fetched from `http://{host}:{port}/metadata` (`metadataPortOffset = 0`).
 
 ## PeerMetadata
@@ -40,7 +57,7 @@ By default, metadata is fetched from `http://{host}:{port}/metadata` (`metadataP
 ```json title="metadata structure"
 {
   "peerId": "a1b2c3d4...64 hex chars",
-  "version": 3,
+  "version": 4,
   "displayName": "Acme Inference - us-east-1",
   "providers": [{
     "provider": "anthropic",
@@ -55,6 +72,9 @@ By default, metadata is fetched from `http://{host}:{port}/metadata` (`metadataP
     },
     "modelCategories": {
       "claude-sonnet-4-6": ["coding", "privacy"]
+    },
+    "modelApiProtocols": {
+      "claude-sonnet-4-6": ["anthropic-messages"]
     },
     "maxConcurrency": 5,
     "currentLoad": 2

@@ -43,6 +43,15 @@ export ANTSEED_ALLOWED_MODELS="kimi2.5"
 export OPENAI_UPSTREAM_MODEL_PREFIX="together/"
 ```
 
+Example: explicit per-model alias mapping:
+
+```bash
+export ANTSEED_ALLOWED_MODELS="kimi2.5,deepseek-v3"
+export OPENAI_MODEL_ALIAS_MAP_JSON='{"kimi2.5":"together/kimi2.5","deepseek-v3":"openrouter/deepseek/deepseek-chat"}'
+```
+
+When both are set, `OPENAI_MODEL_ALIAS_MAP_JSON` entries take precedence over `OPENAI_UPSTREAM_MODEL_PREFIX` for matching announced models.
+
 ## How It Works
 
 Uses `BaseProvider` and `StaticTokenProvider` from `@antseed/provider-core` to relay requests to OpenAI-compatible APIs with `Authorization: Bearer` authentication.

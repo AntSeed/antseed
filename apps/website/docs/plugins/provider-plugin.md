@@ -19,6 +19,7 @@ AntSeed is designed for providers who build differentiated services — such as 
 interface Provider {
   name: string
   models: string[]
+  modelApiProtocols?: Record<string, string[]>
   pricing: {
     defaults: {
       inputUsdPerMillion: number
@@ -89,6 +90,8 @@ export default {
 ```
 
 `modelCategories` is optional and is announced in peer metadata for discovery filtering. Recommended tags include `privacy`, `legal`, `uncensored`, `coding`, `finance`, and `tee` (custom tags are allowed).
+
+`models` should represent the model IDs buyers will request on the network. A provider can still rewrite to different upstream model IDs internally (for example, announce `kimi2.5` and forward upstream as `together/kimi2.5`).
 
 ## Peer Offering
 

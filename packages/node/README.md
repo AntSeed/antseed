@@ -94,6 +94,16 @@ if (peers.length > 0) {
 }
 ```
 
+## Discovery Topic Normalization
+
+Discovery topics are normalized to improve lookup consistency:
+
+- Provider topic: `antseed:{provider}` with `trim + lowercase`
+- Model topic (canonical): `antseed:model:{model}` with `trim + lowercase`
+- Model topic (search fallback): `antseed:model-search:{model}` with spaces, `-`, `_` removed after canonical normalization (keeps `.`)
+
+Canonical and search model topics are both used when their keys differ, so variants like `kimi 2.5`, `kimi-2.5`, and `kimi_2.5` can converge in discovery while keeping exact canonical topics.
+
 ## Node Configuration
 
 ```ts
@@ -232,6 +242,9 @@ interface Provider {
 
   /** Optional per-model discovery tags (e.g., coding/privacy/legal) */
   modelCategories?: Record<string, string[]>;
+
+  /** Optional per-model API protocol support advertised via discovery metadata. */
+  modelApiProtocols?: Record<string, ModelApiProtocol[]>;
 
   /** Maximum concurrent requests this provider can handle */
   maxConcurrency: number;

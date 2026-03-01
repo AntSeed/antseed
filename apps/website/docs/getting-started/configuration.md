@@ -103,3 +103,27 @@ Provider plugins authenticate with their upstream AI service. Credentials are st
 | `claude-oauth` | OAuth access/refresh token pair — **testing only** |
 | `openai` | API key via OPENAI_API_KEY env var (optional OPENAI_BASE_URL for OpenAI-compatible APIs) |
 | `local-llm` | No auth needed (local Ollama/llama.cpp) |
+
+## OpenAI-Compatible Model Aliases
+
+When using the `openai` provider plugin, you can announce buyer-facing model names while forwarding different upstream model IDs.
+
+Useful env vars:
+
+- `ANTSEED_ALLOWED_MODELS`: announced model list (what buyers request)
+- `OPENAI_UPSTREAM_MODEL_PREFIX`: prefix added before forwarding upstream
+- `OPENAI_MODEL_ALIAS_MAP_JSON`: explicit announcedModel -> upstreamModel map
+
+Example: announce `kimi2.5`, forward to Together as `together/kimi2.5`:
+
+```bash
+export ANTSEED_ALLOWED_MODELS="kimi2.5"
+export OPENAI_UPSTREAM_MODEL_PREFIX="together/"
+```
+
+Example with explicit alias map:
+
+```bash
+export ANTSEED_ALLOWED_MODELS="kimi2.5,deepseek-v3"
+export OPENAI_MODEL_ALIAS_MAP_JSON='{"kimi2.5":"together/kimi2.5","deepseek-v3":"openrouter/deepseek/deepseek-chat"}'
+```
