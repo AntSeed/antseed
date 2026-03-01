@@ -32,15 +32,6 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
-      label: 'Skills',
-      collapsible: false,
-      items: [
-        'skills/overview',
-        'skills/creating-skills',
-      ],
-    },
-    {
-      type: 'category',
       label: 'Plugins',
       collapsible: false,
       items: [
