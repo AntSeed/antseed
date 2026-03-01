@@ -44,6 +44,35 @@ const provider = new BaseProvider({
 - **`OAuthTokenProvider`** -- Manages OAuth access/refresh token pairs with automatic renewal.
 - **`createTokenProvider()`** -- Factory that creates the right provider based on auth type.
 
+### MiddlewareProvider
+
+A decorator that wraps any `Provider` to inject Markdown file content into every LLM request before it reaches the upstream API. Use it to add system prompts, persona files, skill instructions, or output-format rules — without buyers seeing the injected content (standard LLM APIs never echo input in their responses).
+
+```ts
+import { MiddlewareProvider } from '@antseed/provider-core';
+
+const provider = new MiddlewareProvider(innerProvider, [
+  { content: systemPromptMd,   position: 'system-prepend' },
+  { content: outputFormatMd,   position: 'system-append' },
+  { content: reminderMd,       position: 'append', role: 'user' },
+]);
+```
+
+**Injection positions:**
+
+| position | effect |
+|---|---|
+| `system-prepend` | Prepend to the Anthropic `system` field; or insert a `{role:'system'}` message at the top of an OpenAI messages array |
+| `system-append`  | Append to the `system` field; or insert after the last system message in an OpenAI messages array |
+| `prepend`        | Insert as the first element of the `messages` array |
+| `append`         | Insert as the last element of the `messages` array |
+
+The request path is used to auto-detect format: paths containing `/chat/completions` are treated as OpenAI format; all others as Anthropic format.
+
+`role` is only used for `prepend`/`append` positions and defaults to `'user'`.
+
+In practice the CLI configures `MiddlewareProvider` automatically — see the `seller.middleware` config option in `@antseed/cli`.
+
 ### Utilities
 
 - **`swapAuthHeader()`** -- Injects/replaces authentication headers on outgoing requests.

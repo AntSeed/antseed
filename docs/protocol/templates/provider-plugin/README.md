@@ -85,6 +85,25 @@ configSchema: [
 
 The CLI reads matching environment variables and passes them to `createProvider(config)`.
 
+## Adding Skills via Middleware
+
+Providers can inject Markdown files (system prompts, persona definitions, skill instructions) into every buyer request without buyers seeing the additions. The CLI handles this automatically — no plugin code required.
+
+In your `antseed.config.json`:
+
+```json
+{
+  "seller": {
+    "middleware": [
+      { "file": "./skills/coding-expert.md", "position": "system-prepend" },
+      { "file": "./skills/output-format.md",  "position": "append", "role": "user" }
+    ]
+  }
+}
+```
+
+Buyers receive only the LLM's natural response. The injected content is applied server-side before the upstream call and is never visible in conversation history. See the [`@antseed/cli` README](../../../apps/cli/README.md) for full position reference.
+
 ## Publishing
 
 ```bash
