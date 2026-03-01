@@ -1,5 +1,7 @@
 import Link from '@docusaurus/Link';
 import {useLocation} from '@docusaurus/router';
+import {useNavbarMobileSidebar} from '@docusaurus/theme-common/internal';
+import NavbarMobileSidebar from '@theme/Navbar/MobileSidebar';
 
 function NavLogo() {
   return (
@@ -62,17 +64,10 @@ const iconLinkStyle = {
   alignItems: 'center',
 };
 
-const DOC_LINKS = [
-  {label: 'Intro', to: '/docs/intro'},
-  {label: 'Install', to: '/docs/install'},
-  {label: 'Commands', to: '/docs/commands'},
-  {label: 'Config', to: '/docs/configuration'},
-  {label: 'Lightpaper', to: '/docs/lightpaper'},
-];
-
 export default function Navbar(): JSX.Element {
   const location = useLocation();
   const isDocsPage = location.pathname.startsWith('/docs');
+  const mobileSidebar = useNavbarMobileSidebar();
 
   const scrollToTop = () => {
     window.scrollTo({top: 0, behavior: 'smooth'});
@@ -193,20 +188,17 @@ export default function Navbar(): JSX.Element {
         </Link>
       </div>
     </nav>
-    {/* Mobile docs sub-nav — only on docs pages */}
+    {/* Mobile docs sidebar toggle — only on docs pages, only on mobile */}
     {isDocsPage && (
-      <div className="mobile-docs-subnav">
-        {DOC_LINKS.map((item) => (
-          <Link
-            key={item.to}
-            to={item.to}
-            className={`mobile-docs-subnav-link${location.pathname === item.to ? ' active' : ''}`}
-          >
-            {item.label}
-          </Link>
-        ))}
-      </div>
+      <button
+        onClick={() => mobileSidebar.toggle()}
+        className="mobile-docs-hamburger"
+        aria-label="Toggle docs menu"
+      >
+        ☰
+      </button>
     )}
+    {isDocsPage && <NavbarMobileSidebar />}
     </>
   );
 }
