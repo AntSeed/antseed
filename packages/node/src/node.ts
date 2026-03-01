@@ -23,7 +23,7 @@ import {
   DEFAULT_DHT_CONFIG,
   type DHTNodeConfig,
 } from "./discovery/dht-node.js";
-import { toBootstrapConfig, OFFICIAL_BOOTSTRAP_NODES } from "./discovery/bootstrap.js";
+import { toBootstrapConfig, OFFICIAL_BOOTSTRAP_NODES, mergeBootstrapNodes } from "./discovery/bootstrap.js";
 import {
   ConnectionManager,
   PeerConnection,
@@ -288,8 +288,10 @@ export class AntseedNode extends EventEmitter {
     this._identity = await loadOrCreateIdentity(dataDir);
     debugLog(`[Node] Identity loaded: ${this._identity.peerId.slice(0, 12)}...`);
 
-    // Determine bootstrap nodes
-    const bootstrapNodes = this._config.bootstrapNodes ?? toBootstrapConfig(OFFICIAL_BOOTSTRAP_NODES);
+    // Determine bootstrap nodes — always merge official + any user-configured nodes
+    const bootstrapNodes = toBootstrapConfig(
+      mergeBootstrapNodes(OFFICIAL_BOOTSTRAP_NODES, this._config.bootstrapNodes ?? [])
+    );
     debugLog(`[Node] Starting as ${this._config.role} with ${bootstrapNodes.length} bootstrap node(s)`);
 
     if (this._config.role === "seller") {
