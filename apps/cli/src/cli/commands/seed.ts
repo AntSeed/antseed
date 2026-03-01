@@ -1,8 +1,8 @@
 import type { Command } from 'commander'
 import chalk from 'chalk'
 import ora from 'ora'
-import { writeFile, unlink } from 'node:fs/promises'
-import { join } from 'node:path'
+import { writeFile, unlink, readFile } from 'node:fs/promises'
+import { join, resolve, isAbsolute, dirname } from 'node:path'
 import { homedir } from 'node:os'
 import { getGlobalOptions } from './types.js'
 import { loadConfig } from '../../config/loader.js'
@@ -13,7 +13,8 @@ import { parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
 import { setupShutdownHandler } from '../shutdown.js'
 import { loadProviderPlugin, buildPluginConfig } from '../../plugins/loader.js'
 import { resolveEffectiveSellerConfig, type SellerRuntimeOverrides } from '../../config/effective.js'
-import type { SellerCLIConfig } from '../../config/types.js'
+import type { SellerCLIConfig, SellerMiddlewareConfig } from '../../config/types.js'
+import { MiddlewareProvider, type ProviderMiddleware } from '@antseed/provider-core'
 
 function getStateFile(dataDir: string): string {
   return join(dataDir, 'daemon.state.json')
@@ -166,6 +167,19 @@ function parseRuntimeModelCategoriesJson(raw: string | undefined): Record<string
   } catch {
     return undefined
   }
+}
+
+async function loadMiddlewareFiles(
+  configs: SellerMiddlewareConfig[],
+  baseDir: string,
+): Promise<ProviderMiddleware[]> {
+  return Promise.all(
+    configs.map(async (entry) => {
+      const filePath = isAbsolute(entry.file) ? entry.file : resolve(baseDir, entry.file)
+      const content = await readFile(filePath, 'utf-8')
+      return { content, position: entry.position, role: entry.role } as ProviderMiddleware
+    }),
+  )
 }
 
 export function registerSeedCommand(program: Command): void {
@@ -335,6 +349,20 @@ export function registerSeedCommand(program: Command): void {
           paymentConfig,
         },
       })
+
+      // Wrap provider with middleware if configured
+      const middlewareConfigs = effectiveSellerConfig.middleware ?? []
+      if (middlewareConfigs.length > 0) {
+        const baseDir = globalOpts.config ? dirname(resolve(globalOpts.config)) : process.cwd()
+        try {
+          const middleware = await loadMiddlewareFiles(middlewareConfigs, baseDir)
+          provider = new MiddlewareProvider(provider, middleware)
+          console.log(chalk.dim(`  middleware: ${middlewareConfigs.length} file(s) loaded`))
+        } catch (err) {
+          console.error(chalk.red(`Failed to load middleware: ${(err as Error).message}`))
+          process.exit(1)
+        }
+      }
 
       node.registerProvider(provider)
 

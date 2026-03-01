@@ -58,6 +58,23 @@ export interface SellerModelCategoryConfig {
 }
 
 /**
+ * Injection position for a middleware entry.
+ */
+export type MiddlewarePosition = 'system-prepend' | 'system-append' | 'prepend' | 'append';
+
+/**
+ * A single middleware entry referencing a Markdown file on disk.
+ */
+export interface SellerMiddlewareConfig {
+  /** Path to the .md file (relative to the config file's directory, or absolute). */
+  file: string;
+  /** Where to inject the content in the LLM request. */
+  position: MiddlewarePosition;
+  /** Role for 'prepend'/'append' positions. Defaults to 'user'. */
+  role?: string;
+}
+
+/**
  * Seller-specific configuration within the Antseed config.
  */
 export interface SellerCLIConfig {
@@ -71,6 +88,8 @@ export interface SellerCLIConfig {
   pricing: HierarchicalPricingConfig;
   /** Optional provider/model category tags announced in peer metadata */
   modelCategories?: SellerModelCategoryConfig;
+  /** Optional middleware files to inject into every LLM request. */
+  middleware?: SellerMiddlewareConfig[];
 }
 
 /**
