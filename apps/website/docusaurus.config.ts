@@ -63,6 +63,7 @@ const config: Config = {
 
   themeConfig: {
     metadata: [
+      {name: 'google-site-verification', content: '09pzs5Q9kHdpQSNSBpr0vNh9SMq-T8lzhBgH5Zgm6ug'},
       {name: 'keywords', content: 'private AI, anonymous AI, P2P AI, decentralized AI inference, uncensored AI, AI without account, no signup AI, peer-to-peer AI'},
       {name: 'description', content: 'Private AI inference with zero data collection. No account, no logs, no middleman. Connect directly to AI providers through an anonymous P2P network.'},
       {property: 'og:title', content: 'AntSeed — Private AI. Anonymous. Peer-to-peer.'},
