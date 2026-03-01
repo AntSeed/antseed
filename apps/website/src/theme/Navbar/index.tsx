@@ -62,8 +62,17 @@ const iconLinkStyle = {
   alignItems: 'center',
 };
 
+const DOC_LINKS = [
+  {label: 'Intro', to: '/docs/intro'},
+  {label: 'Install', to: '/docs/install'},
+  {label: 'Commands', to: '/docs/commands'},
+  {label: 'Config', to: '/docs/configuration'},
+  {label: 'Lightpaper', to: '/docs/lightpaper'},
+];
+
 export default function Navbar(): JSX.Element {
   const location = useLocation();
+  const isDocsPage = location.pathname.startsWith('/docs');
 
   const scrollToTop = () => {
     window.scrollTo({top: 0, behavior: 'smooth'});
@@ -73,6 +82,7 @@ export default function Navbar(): JSX.Element {
   const docsTo = location.pathname.startsWith('/docs') ? location.pathname : '/docs/intro';
 
   return (
+    <>
     <nav
       className="navbar navbar--fixed-top"
       style={{
@@ -183,5 +193,20 @@ export default function Navbar(): JSX.Element {
         </Link>
       </div>
     </nav>
+    {/* Mobile docs sub-nav — only on docs pages */}
+    {isDocsPage && (
+      <div className="mobile-docs-subnav">
+        {DOC_LINKS.map((item) => (
+          <Link
+            key={item.to}
+            to={item.to}
+            className={`mobile-docs-subnav-link${location.pathname === item.to ? ' active' : ''}`}
+          >
+            {item.label}
+          </Link>
+        ))}
+      </div>
+    )}
+    </>
   );
 }
