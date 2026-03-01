@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import * as ed from '@noble/ed25519';
 import { PeerAnnouncer, type AnnouncerConfig } from '../src/discovery/announcer.js';
 import { encodeMetadataForSigning } from '../src/discovery/metadata-codec.js';
+import { modelTopic, providerTopic, topicToInfoHash } from '../src/discovery/dht-node.js';
 import { verifySignature, bytesToHex, hexToBytes } from '../src/p2p/identity.js';
 import { toPeerId } from '../src/types/peer.js';
 
@@ -96,5 +97,27 @@ describe('PeerAnnouncer live load metadata', () => {
     expect(refreshed!.providers[0]!.modelApiProtocols).toEqual({
       'gpt-4.1': ['openai-chat-completions'],
     });
+  });
+
+  it('announces deduped lowercase model topics', async () => {
+    const { config, dht } = await makeConfig();
+    config.providers = [
+      {
+        provider: 'openai',
+        models: ['KIMI2.5', 'kimi2.5'],
+        maxConcurrency: 5,
+      },
+    ];
+    config.pricing = new Map([
+      ['openai', { defaults: { inputUsdPerMillion: 1, outputUsdPerMillion: 1 } }],
+    ]);
+
+    const announcer = new PeerAnnouncer(config);
+    await announcer.announce();
+
+    expect(dht.announce).toHaveBeenCalledTimes(3);
+    expect(dht.announce).toHaveBeenCalledWith(topicToInfoHash(providerTopic('openai')), 6882);
+    expect(dht.announce).toHaveBeenCalledWith(topicToInfoHash(modelTopic('kimi2.5')), 6882);
+    expect(dht.announce).toHaveBeenCalledWith(topicToInfoHash(providerTopic('*')), 6882);
   });
 });

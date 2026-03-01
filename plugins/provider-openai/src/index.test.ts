@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import plugin from './index.js';
 
 describe('provider-openai plugin', () => {
@@ -15,6 +15,8 @@ describe('provider-openai plugin', () => {
     expect(keys).toContain('OPENAI_BASE_URL');
     expect(keys).toContain('OPENAI_PROVIDER_FLAVOR');
     expect(keys).toContain('OPENAI_UPSTREAM_PROVIDER');
+    expect(keys).toContain('OPENAI_UPSTREAM_MODEL_PREFIX');
+    expect(keys).toContain('OPENAI_MODEL_ALIAS_MAP_JSON');
     expect(keys).toContain('ANTSEED_INPUT_USD_PER_MILLION');
     expect(keys).toContain('ANTSEED_OUTPUT_USD_PER_MILLION');
     expect(keys).toContain('ANTSEED_MAX_CONCURRENCY');
@@ -55,5 +57,42 @@ describe('provider-openai plugin', () => {
     expect(provider.pricing.defaults.inputUsdPerMillion).toBe(3);
     expect(provider.pricing.defaults.outputUsdPerMillion).toBe(7);
     expect(provider.maxConcurrency).toBe(5);
+  });
+
+  it('rewrites announced model names to upstream prefixed models', async () => {
+    const originalFetch = globalThis.fetch;
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response('{}', {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    try {
+      const provider = plugin.createProvider({
+        OPENAI_API_KEY: 'sk-test-key',
+        ANTSEED_ALLOWED_MODELS: 'kimi2.5',
+        OPENAI_UPSTREAM_MODEL_PREFIX: 'together',
+      });
+
+      const response = await provider.handleRequest({
+        requestId: 'req-1',
+        method: 'POST',
+        path: '/v1/chat/completions',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: new TextEncoder().encode(JSON.stringify({ model: 'kimi2.5', messages: [] })),
+      });
+
+      expect(response.statusCode).toBe(200);
+      const [, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+      const parsedBody = JSON.parse(
+        new TextDecoder().decode((requestInit.body as Uint8Array) ?? new Uint8Array(0)),
+      ) as { model?: string };
+      expect(parsedBody.model).toBe('together/kimi2.5');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

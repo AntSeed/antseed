@@ -39,17 +39,21 @@ export function topicToInfoHash(topic: string): Buffer {
   return createHash("sha1").update(topic).digest();
 }
 
+function normalizeTopicSegment(value: string): string {
+  return value.trim().toLowerCase();
+}
+
 export function providerTopic(providerName: string): string {
-  return "antseed:" + providerName.toLowerCase();
+  return "antseed:" + normalizeTopicSegment(providerName);
 }
 
 export function modelTopic(modelName: string): string {
-  return "antseed:model:" + modelName.toLowerCase();
+  return "antseed:model:" + normalizeTopicSegment(modelName);
 }
 
 export function capabilityTopic(capability: string, name?: string): string {
-  const base = "antseed:" + capability.toLowerCase();
-  return name ? base + ":" + name.toLowerCase() : base;
+  const base = "antseed:" + normalizeTopicSegment(capability);
+  return name ? base + ":" + normalizeTopicSegment(name) : base;
 }
 
 export class DHTNode {

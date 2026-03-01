@@ -175,9 +175,13 @@ export class PeerAnnouncer {
     for (const p of providers) {
       await this._tryAnnounceTopic(providerTopic(p.provider));
       for (const model of p.models) {
-        if (!announcedModels.has(model)) {
-          announcedModels.add(model);
-          await this._tryAnnounceTopic(modelTopic(model));
+        const normalizedModel = model.trim().toLowerCase();
+        if (!normalizedModel) {
+          continue;
+        }
+        if (!announcedModels.has(normalizedModel)) {
+          announcedModels.add(normalizedModel);
+          await this._tryAnnounceTopic(modelTopic(normalizedModel));
         }
       }
     }
@@ -188,9 +192,13 @@ export class PeerAnnouncer {
       const announcedCapabilities = new Set<string>();
       for (const offering of this.config.offerings) {
         await this._tryAnnounceTopic(capabilityTopic(offering.capability, offering.name));
-        if (!announcedCapabilities.has(offering.capability)) {
-          announcedCapabilities.add(offering.capability);
-          await this._tryAnnounceTopic(capabilityTopic(offering.capability));
+        const normalizedCapability = offering.capability.trim().toLowerCase();
+        if (!normalizedCapability) {
+          continue;
+        }
+        if (!announcedCapabilities.has(normalizedCapability)) {
+          announcedCapabilities.add(normalizedCapability);
+          await this._tryAnnounceTopic(capabilityTopic(normalizedCapability));
         }
       }
     }

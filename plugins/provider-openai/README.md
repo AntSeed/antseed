@@ -25,6 +25,8 @@ antseed seed --provider openai
 | `OPENAI_BASE_URL` | string | No | `https://api.openai.com` | Upstream base URL |
 | `OPENAI_PROVIDER_FLAVOR` | string | No | `generic` | Special handling profile (`generic`, `openrouter`) |
 | `OPENAI_UPSTREAM_PROVIDER` | string | No | -- | Optional OpenRouter upstream provider selector |
+| `OPENAI_UPSTREAM_MODEL_PREFIX` | string | No | -- | Optional prefix added to announced model names when forwarding upstream (example: `together/`) |
+| `OPENAI_MODEL_ALIAS_MAP_JSON` | string | No | -- | Optional JSON map of `announcedModel -> upstreamModel` |
 | `OPENAI_EXTRA_HEADERS_JSON` | string | No | -- | Extra headers as JSON object |
 | `OPENAI_BODY_INJECT_JSON` | string | No | -- | JSON object merged into request body |
 | `OPENAI_STRIP_HEADER_PREFIXES` | string[] | No | -- | Comma-separated header prefixes to strip |
@@ -33,6 +35,13 @@ antseed seed --provider openai
 | `ANTSEED_MODEL_PRICING_JSON` | string | No | -- | Per-model pricing as JSON |
 | `ANTSEED_MAX_CONCURRENCY` | number | No | 10 | Max concurrent requests |
 | `ANTSEED_ALLOWED_MODELS` | string[] | No | -- | Comma-separated model allowlist |
+
+Example: announce `kimi2.5` on AntSeed while forwarding to Together model `together/kimi2.5` upstream:
+
+```bash
+export ANTSEED_ALLOWED_MODELS="kimi2.5"
+export OPENAI_UPSTREAM_MODEL_PREFIX="together/"
+```
 
 ## How It Works
 

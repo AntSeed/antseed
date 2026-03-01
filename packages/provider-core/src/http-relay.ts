@@ -25,6 +25,8 @@ export interface RelayConfig {
   timeoutMs?: number;
   /** Lowercase header-name prefixes to strip before forwarding upstream. */
   stripHeaderPrefixes?: string[];
+  /** Optional lowercase map: announced model -> upstream model. */
+  modelRewriteMap?: Record<string, string>;
   /** Fields to deep-merge into the JSON request body before forwarding upstream. */
   injectJsonFields?: Record<string, unknown>;
 }
@@ -104,11 +106,31 @@ export class HttpRelay {
       // Swap auth headers
       let swappedRequest = swapAuthHeader(request, effectiveConfig);
 
-      // Inject extra JSON fields into the request body if configured
-      if (this._config.injectJsonFields && swappedRequest.method !== 'GET' && swappedRequest.method !== 'HEAD') {
+      const shouldProcessJsonBody = (
+        (this._config.modelRewriteMap && Object.keys(this._config.modelRewriteMap).length > 0)
+        || this._config.injectJsonFields
+      );
+
+      // Optionally rewrite model IDs and inject extra JSON fields into request body.
+      if (shouldProcessJsonBody && swappedRequest.method !== 'GET' && swappedRequest.method !== 'HEAD') {
         try {
           const decoded = JSON.parse(new TextDecoder().decode(swappedRequest.body)) as Record<string, unknown>;
-          const merged = deepMerge(decoded, this._config.injectJsonFields);
+          const transformed: Record<string, unknown> = { ...decoded };
+
+          if (this._config.modelRewriteMap) {
+            const model = transformed.model;
+            if (typeof model === 'string' && model.trim().length > 0) {
+              const rewrittenModel = this._config.modelRewriteMap[model.trim().toLowerCase()];
+              if (typeof rewrittenModel === 'string' && rewrittenModel.trim().length > 0) {
+                transformed.model = rewrittenModel.trim();
+              }
+            }
+          }
+
+          const merged = this._config.injectJsonFields
+            ? deepMerge(transformed, this._config.injectJsonFields)
+            : transformed;
+
           swappedRequest = { ...swappedRequest, body: new TextEncoder().encode(JSON.stringify(merged)) };
         } catch {
           // Not JSON — leave body unchanged

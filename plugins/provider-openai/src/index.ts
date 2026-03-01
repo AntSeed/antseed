@@ -75,6 +75,63 @@ function parseJsonObject(raw: string | undefined, key: string): Record<string, u
   return parsed as Record<string, unknown>;
 }
 
+function parseModelAliasMap(raw: string | undefined): Record<string, string> | undefined {
+  const parsed = parseJsonObject(raw, 'OPENAI_MODEL_ALIAS_MAP_JSON');
+  if (!parsed) {
+    return undefined;
+  }
+
+  const out: Record<string, string> = {};
+  for (const [announcedModelRaw, upstreamModelRaw] of Object.entries(parsed)) {
+    const announcedModel = announcedModelRaw.trim().toLowerCase();
+    if (!announcedModel) {
+      continue;
+    }
+    if (typeof upstreamModelRaw !== 'string' || upstreamModelRaw.trim().length === 0) {
+      throw new Error(`OPENAI_MODEL_ALIAS_MAP_JSON entry "${announcedModelRaw}" must map to a non-empty string`);
+    }
+    out[announcedModel] = upstreamModelRaw.trim();
+  }
+
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function normalizeModelPrefix(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  return trimmed.endsWith('/') ? trimmed : `${trimmed}/`;
+}
+
+function buildModelRewriteMap(
+  announcedModels: string[],
+  upstreamModelPrefixRaw: string | undefined,
+  modelAliasMap: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+  const out: Record<string, string> = {};
+  const upstreamModelPrefix = normalizeModelPrefix(upstreamModelPrefixRaw);
+
+  if (upstreamModelPrefix) {
+    for (const model of announcedModels) {
+      const announced = model.trim();
+      if (!announced) {
+        continue;
+      }
+      out[announced.toLowerCase()] = announced.startsWith(upstreamModelPrefix)
+        ? announced
+        : `${upstreamModelPrefix}${announced}`;
+    }
+  }
+
+  if (modelAliasMap) {
+    for (const [announcedModel, upstreamModel] of Object.entries(modelAliasMap)) {
+      out[announcedModel] = upstreamModel;
+    }
+  }
+
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 function parseExtraHeaders(raw: string | undefined): Record<string, string> | undefined {
   const parsed = parseJsonObject(raw, 'OPENAI_EXTRA_HEADERS_JSON');
   if (!parsed) {
@@ -137,6 +194,8 @@ const plugin: AntseedProviderPlugin = {
     { key: 'OPENAI_BASE_URL', label: 'Base URL', type: 'string', required: false, default: 'https://api.openai.com', description: 'OpenAI-compatible base URL' },
     { key: 'OPENAI_PROVIDER_FLAVOR', label: 'Provider Flavor', type: 'string', required: false, default: 'generic', description: 'Special handling profile: generic | openrouter' },
     { key: 'OPENAI_UPSTREAM_PROVIDER', label: 'Upstream Provider', type: 'string', required: false, description: 'Optional OpenRouter provider selector value' },
+    { key: 'OPENAI_UPSTREAM_MODEL_PREFIX', label: 'Upstream Model Prefix', type: 'string', required: false, description: 'Optional prefix prepended to announced model names when forwarding upstream (e.g. together/)' },
+    { key: 'OPENAI_MODEL_ALIAS_MAP_JSON', label: 'Model Alias Map JSON', type: 'string', required: false, description: 'Optional JSON map of announcedModel -> upstreamModel' },
     { key: 'OPENAI_EXTRA_HEADERS_JSON', label: 'Extra Headers JSON', type: 'string', required: false, description: 'Optional JSON object of extra headers' },
     { key: 'OPENAI_BODY_INJECT_JSON', label: 'Body Inject JSON', type: 'string', required: false, description: 'Optional JSON object merged into request body' },
     { key: 'OPENAI_STRIP_HEADER_PREFIXES', label: 'Strip Header Prefixes', type: 'string[]', required: false, description: 'Comma-separated header prefixes to strip before relay' },
@@ -186,6 +245,12 @@ const plugin: AntseedProviderPlugin = {
 
     const tokenProvider = new StaticTokenProvider(apiKey);
     const modelApiProtocols = buildModelApiProtocols(allowedModels, 'openai-chat-completions');
+    const modelAliasMap = parseModelAliasMap(config['OPENAI_MODEL_ALIAS_MAP_JSON']);
+    const modelRewriteMap = buildModelRewriteMap(
+      allowedModels,
+      config['OPENAI_UPSTREAM_MODEL_PREFIX'],
+      modelAliasMap,
+    );
 
     return new BaseProvider({
       name: 'openai',
@@ -199,6 +264,7 @@ const plugin: AntseedProviderPlugin = {
         tokenProvider,
         maxConcurrency,
         allowedModels,
+        ...(modelRewriteMap ? { modelRewriteMap } : {}),
         ...(effectiveStripHeaderPrefixes.length > 0 ? { stripHeaderPrefixes: effectiveStripHeaderPrefixes } : {}),
         ...(Object.keys(bodyInject).length > 0 ? { injectJsonFields: bodyInject } : {}),
         ...(extraHeaders ? { extraHeaders } : {}),

@@ -101,6 +101,39 @@ describe('HttpRelay', () => {
     expect(responses[0]!.statusCode).toBe(200);
   });
 
+  it('rewrites announced model names to upstream model IDs before relay', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
+
+    const responses: SerializedHttpResponse[] = [];
+    const callbacks: RelayCallbacks = {
+      onResponse: (res) => responses.push(res),
+    };
+
+    const relay = new HttpRelay(
+      makeConfig({
+        allowedModels: ['kimi2.5'],
+        modelRewriteMap: {
+          'kimi2.5': 'together/kimi2.5',
+        },
+      }),
+      callbacks,
+    );
+
+    const req = makeRequest({
+      body: new TextEncoder().encode(JSON.stringify({ model: 'kimi2.5', messages: [] })),
+    });
+    await relay.handleRequest(req);
+
+    expect(responses).toHaveLength(1);
+    expect(responses[0]!.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const [, opts] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = opts.body as Uint8Array | undefined;
+    const parsed = JSON.parse(new TextDecoder().decode(body ?? new Uint8Array(0))) as { model?: string };
+    expect(parsed.model).toBe('together/kimi2.5');
+  });
+
   it('enforces concurrency limit', async () => {
     // Create a fetch that blocks until we resolve it
     let resolveFirst!: (value: Response) => void;
