@@ -42,7 +42,7 @@ A single node may act as both a Seller and a Buyer simultaneously.
 
 ## Protocol Layers
 
-The Antseed protocol is organized into five layers, each responsible for a distinct aspect of the system:
+The Antseed protocol is organized into five functional layers plus one cross-cutting security layer:
 
 ### 1. Discovery
 
@@ -74,6 +74,12 @@ How nodes build and query trust. Covers reputation scoring, peer ratings, histor
 
 See: [05-reputation.md](./05-reputation.md)
 
+### 6. Security (Cross-Cutting)
+
+How trust boundaries, cryptographic controls, abuse resistance, and residual risks are handled across discovery, transport, metering, and payments.
+
+See: [06-security-overview.md](./06-security-overview.md)
+
 ## Specification Documents
 
 | Document | Layer | Description |
@@ -84,9 +90,11 @@ See: [05-reputation.md](./05-reputation.md)
 | [03-metering.md](./03-metering.md) | Metering | Token usage metering and verification |
 | [04-payments.md](./04-payments.md) | Payments | Payment settlement and pricing |
 | [05-reputation.md](./05-reputation.md) | Reputation | Trust and reputation system |
+| [06-security-overview.md](./06-security-overview.md) | Security | Cross-layer security model, controls, and hardening priorities |
 
 ## Version History
 
 | Version | Date | Notes |
 |---|---|---|
+| 1.1 | 2026-03-01 | Added cross-layer security overview for buyer-seller flow |
 | 1.0 | 2026-02-18 | Initial protocol specification |

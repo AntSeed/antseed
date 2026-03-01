@@ -28,6 +28,7 @@ const sidebars: SidebarsConfig = {
         'protocol/metering',
         'protocol/payments',
         'protocol/reputation',
+        'protocol/security',
       ],
     },
     {

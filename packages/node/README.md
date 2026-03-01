@@ -104,6 +104,20 @@ Discovery topics are normalized to improve lookup consistency:
 
 Canonical and search model topics are both used when their keys differ, so variants like `kimi 2.5`, `kimi-2.5`, and `kimi_2.5` can converge in discovery while keeping exact canonical topics.
 
+## Security Overview
+
+For a full buyer-seller threat model and hardening guide, see:
+
+- [`docs/protocol/spec/06-security-overview.md`](../../docs/protocol/spec/06-security-overview.md)
+
+At a high level, `@antseed/node` currently enforces:
+
+- Signed discovery metadata verification and staleness checks
+- Signed connection intro envelopes with replay protection
+- Frame, stream, and upload limits to reduce DoS exposure
+- Escrow-aware request gating (`402` if lock is not committed when escrow is enabled)
+- Signed bilateral receipts (Ed25519) plus on-chain payment authorization (ECDSA)
+
 ## Node Configuration
 
 ```ts
