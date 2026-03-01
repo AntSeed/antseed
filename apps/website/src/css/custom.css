@@ -381,51 +381,88 @@ pre {
   }
 }
 
-/* Mobile docs hamburger button — replaces "On this page" */
-.mobile-docs-hamburger {
+/* Mobile docs menu — hidden on desktop */
+.docs-menu-mobile {
   display: none;
 }
 
 @media (max-width: 996px) {
-  /* Hide "On this page" TOC on mobile */
-  .tocMobile_ITEo,
+  /* Hide the native "On this page" TOC on mobile */
   [class*='tocMobile'] {
     display: none !important;
   }
 
-  /* Show docs menu button — fixed strip below navbar */
-  .mobile-docs-hamburger {
+  /* Show our docs menu */
+  .docs-menu-mobile {
+    display: block;
+    margin-bottom: 1rem;
+  }
+
+  .docs-menu-mobile__btn {
     display: flex;
+    justify-content: space-between;
     align-items: center;
-    gap: 8px;
-    position: fixed;
-    top: 73px;
-    left: 0;
-    right: 0;
-    z-index: 98;
-    background: #0d1117;
-    border-bottom: 1px solid rgba(61, 255, 162, 0.07);
-    color: #8b949e;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 12px;
-    letter-spacing: 0.5px;
-    padding: 10px 20px;
+    width: 100%;
+    background: var(--ifm-color-emphasis-200);
+    border: none;
+    border-radius: 4px;
+    padding: 0.75rem 1rem;
+    font-family: var(--ifm-font-family-base);
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--ifm-color-content);
     cursor: pointer;
+    text-align: left;
+  }
+
+  .docs-menu-mobile__arrow {
+    font-size: 10px;
+    opacity: 0.5;
+  }
+
+  .docs-menu-mobile__list {
+    list-style: none;
+    padding: 8px 0;
+    margin: 4px 0 0 0;
+    background: var(--ifm-background-color);
+    border: 1px solid var(--ifm-color-emphasis-200);
+    border-radius: 4px;
+    max-height: 60vh;
+    overflow-y: auto;
+  }
+
+  .docs-menu-mobile__list ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .docs-menu-mobile__category {
+    display: block;
+    font-size: 10px;
+    font-weight: 700;
+    color: #484f58;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    padding: 8px 16px 4px;
+  }
+
+  .docs-menu-mobile__link {
+    display: block;
+    font-size: 13px;
+    color: var(--ifm-color-content-secondary);
+    text-decoration: none;
+    padding: 6px 16px;
     transition: color 0.2s;
   }
-  .mobile-docs-hamburger:hover {
-    color: #e6edf3;
+
+  .docs-menu-mobile__link:hover {
+    color: #3dffa2;
+    text-decoration: none;
   }
-  /* Push doc content down below the docs menu strip */
-  [class*='docsWrapper'] {
-    padding-top: 37px;
+
+  .docs-menu-mobile__link--sub {
+    padding-left: 28px;
+    font-size: 12px;
   }
-}
-
-
-
-.nav-docs-btn:hover {
-  border-color: #3dffa2 !important;
-  color: #e6edf3 !important;
-  text-decoration: none !important;
 }

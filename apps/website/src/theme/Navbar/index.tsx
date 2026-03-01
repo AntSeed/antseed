@@ -1,7 +1,5 @@
 import Link from '@docusaurus/Link';
 import {useLocation} from '@docusaurus/router';
-import {useNavbarMobileSidebar} from '@docusaurus/theme-common/internal';
-import NavbarMobileSidebar from '@theme/Navbar/MobileSidebar';
 
 function NavLogo() {
   return (
@@ -66,8 +64,6 @@ const iconLinkStyle = {
 
 export default function Navbar(): JSX.Element {
   const location = useLocation();
-  const isDocsPage = location.pathname.startsWith('/docs');
-  const mobileSidebar = useNavbarMobileSidebar();
 
   const scrollToTop = () => {
     window.scrollTo({top: 0, behavior: 'smooth'});
@@ -188,19 +184,6 @@ export default function Navbar(): JSX.Element {
         </Link>
       </div>
     </nav>
-    {isDocsPage && <NavbarMobileSidebar />}
-    {isDocsPage && (
-      <button
-        onClick={() => mobileSidebar.toggle()}
-        className="mobile-docs-hamburger"
-        aria-label="Open docs menu"
-      >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
-        </svg>
-        Docs menu
-      </button>
-    )}
     </>
   );
 }
