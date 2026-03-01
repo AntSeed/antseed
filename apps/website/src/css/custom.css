@@ -65,8 +65,11 @@ nav.navbar {
   color: #e6edf3 !important;
 }
 
-/* Push doc content below fixed navbar */
-[class*='docsWrapper'] {
+/* Push doc and blog content below fixed navbar */
+[class*='docsWrapper'],
+[class*='blogWrapper'],
+[class*='blogListPage'],
+[class*='blogPostPage'] {
   padding-top: var(--ifm-navbar-height);
 }
 
