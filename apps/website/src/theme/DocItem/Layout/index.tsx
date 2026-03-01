@@ -1,6 +1,7 @@
-import React, {useState} from 'react';
+import React from 'react';
 import clsx from 'clsx';
-import {useWindowSize} from '@docusaurus/theme-common';
+import {useWindowSize, useCollapsible, Collapsible} from '@docusaurus/theme-common';
+import {ThemeClassNames} from '@docusaurus/theme-common';
 import {useDoc} from '@docusaurus/plugin-content-docs/client';
 import DocItemPaginator from '@theme/DocItem/Paginator';
 import DocVersionBanner from '@theme/DocVersionBanner';
@@ -12,6 +13,8 @@ import DocBreadcrumbs from '@theme/DocBreadcrumbs';
 import ContentVisibility from '@theme/ContentVisibility';
 import Link from '@docusaurus/Link';
 import styles from './styles.module.css';
+import tocMobileStyles from '@docusaurus/theme-classic/lib/theme/DocItem/TOC/Mobile/styles.module.css';
+import tocCollapsibleStyles from '@docusaurus/theme-classic/lib/theme/TOCCollapsible/styles.module.css';
 
 const DOC_ITEMS = [
   {label: 'Light Paper', to: '/docs/lightpaper'},
@@ -44,36 +47,39 @@ const DOC_ITEMS = [
 ];
 
 function DocsMenuMobile() {
-  const [open, setOpen] = useState(false);
+  const {collapsed, toggleCollapsed} = useCollapsible({initialState: true});
   return (
-    <div className="docs-menu-mobile">
-      <button
-        className={`docs-menu-mobile__btn${open ? ' docs-menu-mobile__btn--open' : ''}`}
-        onClick={() => setOpen(!open)}
-      >
+    <div className={clsx(
+      tocCollapsibleStyles.tocCollapsible,
+      !collapsed && tocCollapsibleStyles.tocCollapsibleExpanded,
+      ThemeClassNames.docs.docTocMobile,
+      tocMobileStyles.tocMobile,
+    )}>
+      <button type="button" className={clsx('clean-btn', tocCollapsibleStyles.tocCollapsibleButton)} onClick={toggleCollapsed}>
         Docs menu
-        <span className="docs-menu-mobile__arrow">{open ? '▲' : '▼'}</span>
       </button>
-      {open && (
-        <ul className="docs-menu-mobile__list" onClick={() => setOpen(false)}>
+      <Collapsible lazy className={tocCollapsibleStyles.tocCollapsibleContent} collapsed={collapsed}>
+        <ul className="table-of-contents table-of-contents__left-border">
           {DOC_ITEMS.map((item) => 'to' in item ? (
             <li key={item.to}>
-              <Link to={item.to} className="docs-menu-mobile__link">{item.label}</Link>
+              <Link to={item.to} className="table-of-contents__link toc-highlight">{item.label}</Link>
             </li>
           ) : (
             <li key={item.label}>
-              <span className="docs-menu-mobile__category">{item.label}</span>
+              <span style={{display: 'block', fontSize: '0.75rem', fontWeight: 700, opacity: 0.5, padding: '4px 0 2px', textTransform: 'uppercase', letterSpacing: '0.05em'}}>
+                {item.label}
+              </span>
               <ul>
                 {item.items.map((sub) => (
                   <li key={sub.to}>
-                    <Link to={sub.to} className="docs-menu-mobile__link docs-menu-mobile__link--sub">{sub.label}</Link>
+                    <Link to={sub.to} className="table-of-contents__link toc-highlight">{sub.label}</Link>
                   </li>
                 ))}
               </ul>
             </li>
           ))}
         </ul>
-      )}
+      </Collapsible>
     </div>
   );
 }
@@ -102,7 +108,6 @@ export default function DocItemLayout({children}) {
           <article>
             <DocBreadcrumbs />
             <DocVersionBadge />
-            {/* Docs menu replaces "On this page" on mobile */}
             <DocsMenuMobile />
             <DocItemContent>{children}</DocItemContent>
             <DocItemFooter />
