@@ -27,10 +27,23 @@ export interface SellerPaymentConfig {
    */
   chargeThresholdUsdc?: bigint;
   /**
+   * Tighter threshold used when buyer balance is below signed auth max.
+   * Reduces unpaid exposure for obviously underfunded authorizations.
+   * Default: 10_000 (0.01 USDC)
+   */
+  underfundedChargeThresholdUsdc?: bigint;
+  /**
    * Request a top-up when authUsed / authMax exceeds this ratio (0-1).
    * Default: 0.80
    */
   topUpThreshold?: number;
+  /**
+   * Poll interval for on-chain pending-withdrawal checks per active auth.
+   * When a pending withdrawal is detected, seller flushes any pending charge
+   * immediately (ignoring batch threshold).
+   * Default: 15_000 ms.
+   */
+  pendingWithdrawalPollMs?: number;
   /**
    * Suggested cap for each top-up request (USDC base units).
    * Default: same as the original authMax from the first SpendingAuth.
@@ -50,6 +63,7 @@ export interface BuyerAuth {
   pendingCharge:   bigint;   // accumulated charges not yet submitted on-chain
   requestCount:    number;
   chargeInFlight:  boolean;  // true while a charge() tx is in-flight
+  chargeThreshold: bigint;   // per-session batching threshold
 }
 
 /**
@@ -67,8 +81,11 @@ export class SellerPaymentManager {
   private readonly _config: SellerPaymentConfig;
   // buyerPeerId -> sessionId -> auth
   private readonly _auths = new Map<string, Map<string, BuyerAuth>>();
+  private readonly _withdrawalWatchers = new Map<string, ReturnType<typeof setInterval>>();
   private readonly _chargeThreshold: bigint;
+  private readonly _underfundedChargeThreshold: bigint;
   private readonly _topUpThreshold: number;
+  private readonly _pendingWithdrawalPollMs: number;
 
   constructor(identity: Identity, config: SellerPaymentConfig) {
     this._config = config;
@@ -80,7 +97,9 @@ export class SellerPaymentManager {
       chainId:         config.chainId,
     });
     this._chargeThreshold = config.chargeThresholdUsdc ?? 100_000n;
+    this._underfundedChargeThreshold = config.underfundedChargeThresholdUsdc ?? 10_000n;
     this._topUpThreshold  = config.topUpThreshold ?? 0.80;
+    this._pendingWithdrawalPollMs = config.pendingWithdrawalPollMs ?? 15_000;
   }
 
   get signer(): AbstractSigner { return this._signer; }
@@ -160,12 +179,17 @@ export class SellerPaymentManager {
 
     // Soft balance check — warn if buyer's on-chain balance is below the requested cap.
     // Hard rejection is not used: the contract enforces balance at charge() time, and a
-    // TOCTOU race makes a hard check unreliable. This catches obviously underfunded auths.
+    // TOCTOU race makes a hard check unreliable. For underfunded auths we reduce the
+    // per-session batching threshold to limit unpaid work exposure.
+    let chargeThreshold = this._chargeThreshold;
     try {
       const bal = await this._escrow.getBuyerBalance(buyerEvmAddr);
       if (bal.available < maxAmount) {
+        chargeThreshold = this._underfundedChargeThreshold < this._chargeThreshold
+          ? this._underfundedChargeThreshold
+          : this._chargeThreshold;
         debugWarn(
-          `[SellerPayment] Buyer ${buyerEvmAddr.slice(0, 10)}... balance ${bal.available} < authMax ${maxAmount} — proceeding, contract will enforce`,
+          `[SellerPayment] Buyer ${buyerEvmAddr.slice(0, 10)}... balance ${bal.available} < authMax ${maxAmount} — using tighter charge threshold ${chargeThreshold}`,
         );
       }
     } catch (err) {
@@ -194,6 +218,7 @@ export class SellerPaymentManager {
       existing.authUsed       = 0n;
       existing.deadline       = payload.deadline;
       existing.buyerSig       = payload.buyerSig;
+      existing.chargeThreshold = chargeThreshold;
       debugLog(`[SellerPayment] Top-up auth accepted: nonce=${payload.nonce} max=${maxAmount}`);
     } else if (existing && payload.nonce === existing.nonce) {
       if (maxAmount !== existing.authMax) {
@@ -202,6 +227,7 @@ export class SellerPaymentManager {
       }
       existing.deadline = payload.deadline;
       existing.buyerSig = payload.buyerSig;
+      existing.chargeThreshold = chargeThreshold;
       debugLog(`[SellerPayment] Auth refresh accepted: nonce=${payload.nonce}`);
     } else if (existing) {
       debugWarn(
@@ -226,8 +252,12 @@ export class SellerPaymentManager {
         pendingCharge:  0n,
         requestCount:   0,
         chargeInFlight: false,
+        chargeThreshold,
       });
-      debugLog(`[SellerPayment] Auth accepted: session=${payload.sessionId.slice(0, 18)}... nonce=${payload.nonce} max=${maxAmount}`);
+      this._startPendingWithdrawalWatcher(buyerPeerId, payload.sessionId);
+      debugLog(
+        `[SellerPayment] Auth accepted: session=${payload.sessionId.slice(0, 18)}... nonce=${payload.nonce} max=${maxAmount} threshold=${chargeThreshold}`,
+      );
     }
 
     const ack: AuthAckPayload = { sessionId: payload.sessionId, nonce: payload.nonce };
@@ -256,7 +286,7 @@ export class SellerPaymentManager {
 
     debugLog(`[SellerPayment] Accrued ${costUsdc} for ${buyerPeerId.slice(0, 12)}... pending=${auth.pendingCharge}`);
 
-    if (!auth.chargeInFlight && auth.pendingCharge >= this._chargeThreshold) {
+    if (!auth.chargeInFlight && auth.pendingCharge >= auth.chargeThreshold) {
       await this._submitCharge(auth);
     }
 
@@ -273,6 +303,7 @@ export class SellerPaymentManager {
     if (!sessions || sessions.size === 0) return;
 
     for (const auth of sessions.values()) {
+      this._stopPendingWithdrawalWatcher(buyerPeerId, auth.sessionId);
       if (auth.pendingCharge > 0n) {
         debugLog(
           `[SellerPayment] Flushing ${auth.pendingCharge} on disconnect for ${buyerPeerId.slice(0, 12)}... session=${auth.sessionId.slice(0, 12)}...`,
@@ -335,7 +366,54 @@ export class SellerPaymentManager {
       sessions = new Map<string, BuyerAuth>();
       this._auths.set(buyerPeerId, sessions);
     }
+    const previous = sessions.get(auth.sessionId);
+    if (previous && previous !== auth) {
+      this._stopPendingWithdrawalWatcher(buyerPeerId, auth.sessionId);
+    }
     sessions.set(auth.sessionId, auth);
+  }
+
+  private _watcherKey(buyerPeerId: string, sessionId: string): string {
+    return `${buyerPeerId}:${sessionId}`;
+  }
+
+  private _startPendingWithdrawalWatcher(buyerPeerId: string, sessionId: string): void {
+    if (this._pendingWithdrawalPollMs <= 0) return;
+    const key = this._watcherKey(buyerPeerId, sessionId);
+    if (this._withdrawalWatchers.has(key)) return;
+
+    const timer = setInterval(() => {
+      const auth = this._getAuth(buyerPeerId, sessionId);
+      if (!auth || auth.pendingCharge === 0n || auth.chargeInFlight) return;
+      void this._flushOnPendingWithdrawal(auth);
+    }, this._pendingWithdrawalPollMs);
+
+    if (typeof (timer as { unref?: () => void }).unref === 'function') {
+      (timer as { unref: () => void }).unref();
+    }
+    this._withdrawalWatchers.set(key, timer);
+  }
+
+  private _stopPendingWithdrawalWatcher(buyerPeerId: string, sessionId: string): void {
+    const key = this._watcherKey(buyerPeerId, sessionId);
+    const timer = this._withdrawalWatchers.get(key);
+    if (!timer) return;
+    clearInterval(timer);
+    this._withdrawalWatchers.delete(key);
+  }
+
+  private async _flushOnPendingWithdrawal(auth: BuyerAuth): Promise<void> {
+    try {
+      const bal = await this._escrow.getBuyerBalance(auth.buyerEvmAddr);
+      if (bal.pendingWithdrawal === 0n) return;
+      if (auth.pendingCharge === 0n || auth.chargeInFlight) return;
+      debugLog(
+        `[SellerPayment] Pending withdrawal detected for ${auth.buyerPeerId.slice(0, 12)}... session=${auth.sessionId.slice(0, 12)}..., flushing ${auth.pendingCharge}`,
+      );
+      await this._submitCharge(auth);
+    } catch (err) {
+      debugWarn(`[SellerPayment] Pending-withdrawal flush failed: ${err}`);
+    }
   }
 
   private async _submitCharge(auth: BuyerAuth): Promise<void> {
