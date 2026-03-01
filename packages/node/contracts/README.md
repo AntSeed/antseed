@@ -1,102 +1,84 @@
 # Antseed Escrow Contract
 
-`AntseedEscrow.sol` is the on-chain escrow contract used by the payment channel flow.
+`AntseedEscrow.sol` is the on-chain USDC escrow contract used by Antseed pull-payments.
 
 ## Contract Paths
 
-- `node/contracts/AntseedEscrow.sol` - production escrow contract
-- `node/contracts/MockUSDC.sol` - test-only ERC20 used for local integration flows
+- `packages/node/contracts/AntseedEscrow.sol` - production escrow contract
+- `packages/node/contracts/MockUSDC.sol` - test ERC-20 for local flows
 
-## ABI Compatibility
+## Runtime API
 
-The contract exposes the runtime methods expected by `BaseEscrowClient`:
+The contract methods used by `EscrowClient` / `BaseEscrowClient` are:
 
-- `deposit(bytes32 sessionId, address seller, uint256 amount)`
-- `release(bytes32 sessionId)`
-- `settle(bytes32 sessionId, uint256 sellerAmount, uint256 platformAmount)`
-- `dispute(bytes32 sessionId)`
-- `refund(bytes32 sessionId)`
-- `resolveDisputeTimeout(bytes32 sessionId)`
-- `getChannel(bytes32 sessionId) returns (address buyer, address seller, uint256 amount, uint8 state)`
+### Buyer
 
-Owner/admin methods:
+- `deposit(uint256 amount)`
+- `requestWithdrawal(uint256 amount)`
+- `executeWithdrawal()`
+- `cancelWithdrawal()`
+- `getBuyerBalance(address buyer)`
 
-- `setArbiter(address)`
+### Seller
+
+- `charge(address buyer, uint256 amount, bytes32 sessionId, uint256 maxAmount, uint256 nonce, uint256 deadline, bytes sig)`
+- `claimEarnings()`
+- `stake(uint256 amount)`
+- `unstake(uint256 amount)`
+- `getSessionAuth(address buyer, address seller, bytes32 sessionId)`
+
+### Platform / Reputation
+
+- `sweepFees()`
+- `rateSeller(address seller, uint8 score)`
+- `canRate(address buyer, address seller)`
+- `getReputation(address seller)`
+
+### Admin
+
+- `transferOwnership(address)`
 - `setFeeCollector(address)`
-- `setDisputeTimeout(uint64 seconds)`
+- `setPlatformFee(uint16)`
+- `pause()`
+- `unpause()`
 
-Deployment uses the constructor signature:
+## Constructor
 
-- `constructor(address usdcToken, address initialArbiter)`
-
-Channel states are encoded as:
-
-- `0 = open`
-- `1 = active`
-- `2 = disputed`
-- `3 = settled`
-- `4 = closed`
+```solidity
+constructor(address usdcToken, address initialFeeCollector, uint16 initialFeeBps)
+```
 
 ## Compile
 
-Example using Foundry (`forge`):
+Using Foundry:
 
 ```bash
-cd node
+cd packages/node
 forge build --root . --contracts contracts --out contracts/out
 ```
 
-Example using `solc`:
+Using `solc`:
 
 ```bash
-solc --optimize --bin --abi node/contracts/AntseedEscrow.sol -o node/contracts/out
+solc --optimize --bin --abi packages/node/contracts/AntseedEscrow.sol -o packages/node/contracts/out
 ```
 
-## Deploy (TypeScript Helper)
-
-Deploy the compiled contract using ethers.js or your preferred toolchain. The constructor expects `(address usdcToken, address initialArbiter)`.
-
-For programmatic deployment, use `BaseEscrowClient` from `@antseed/node`:
+## TypeScript Usage
 
 ```ts
 import { BaseEscrowClient } from '@antseed/node';
 
 const client = new BaseEscrowClient({
   rpcUrl: process.env.RPC_URL!,
-  contractAddress: deployedAddress,
+  contractAddress: process.env.ESCROW_ADDRESS!,
   usdcAddress: process.env.USDC_ADDRESS!,
+  chainId: 8453,
 });
 ```
 
-## End-to-End Integration Test
+## Notes
 
-A full on-chain test lives in:
-
-- `node/tests/escrow-contract.integration.test.ts`
-
-It compiles `AntseedEscrow.sol` + `MockUSDC.sol`, starts a local Anvil chain, deploys the contract, and exercises:
-
-- `deposit -> release`
-- `deposit -> dispute -> arbiter refund`
-- `deposit -> settle(seller/platform/refund split)`
-- `deposit -> dispute -> resolveDisputeTimeout`
-
-Run only this suite:
-
-```bash
-cd node
-npm test -- escrow-contract.integration.test.ts
-```
-
-The test auto-skips when `anvil` or `forge` is unavailable.
-
-## Operational Notes
-
-- `deposit` sets `buyer = msg.sender`; it expects an approved USDC `transferFrom`.
-- `release` while active can be called by buyer/seller/arbiter.
-- `release` while disputed requires arbiter.
-- `settle` while active can be called by buyer/seller/arbiter.
-- `settle` while disputed requires arbiter and supports explicit seller/platform payouts with automatic buyer refund remainder.
-- `refund` while active can be called by buyer/arbiter.
-- `refund` while disputed requires arbiter.
-- `resolveDisputeTimeout` allows anyone to refund a stale disputed channel after `disputeTimeout`.
+- Buyers authorize spending with EIP-712 `SpendingAuth` signatures; sellers submit `charge()`.
+- Withdrawals are timelocked (1 hour) and executed in a second transaction.
+- Pending withdrawal is best-effort and can be reduced by later charges before execution.
+- Sellers must maintain minimum stake to charge.

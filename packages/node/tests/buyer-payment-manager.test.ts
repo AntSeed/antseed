@@ -298,6 +298,48 @@ describe('BuyerPaymentManager', () => {
     });
   });
 
+  describe('handleTopUpRequest (budget safety)', () => {
+    it('enforces maxSessionBudget against cumulative signed exposure', async () => {
+      const strictBudgetManager = new BuyerPaymentManager(identity, {
+        ...DEFAULT_CONFIG,
+        defaultAuthAmountUsdc: 1_000_000n,
+        maxSessionBudgetUsdc:  2_500_000n,
+      });
+
+      const sessionId = await strictBudgetManager.authorizeSpending(
+        SELLER_PEER_ID,
+        SELLER_EVM_ADDRESS,
+        mux,
+      );
+      strictBudgetManager.handleAuthAck(SELLER_PEER_ID, { sessionId, nonce: 1 });
+
+      // Balance is sufficient; rejection should be purely budget-based.
+      const mockGetBuyerBalance = vi.fn().mockResolvedValue({
+        available:         20_000_000n,
+        pendingWithdrawal: 0n,
+        withdrawalReadyAt: 0,
+      });
+      (strictBudgetManager as any)._escrow = {
+        ...strictBudgetManager.escrowClient,
+        getBuyerBalance: mockGetBuyerBalance,
+      };
+
+      // Seller claims low current usage, but requested top-up would push signed exposure
+      // from 1_000_000 to 3_000_000 (> 2_500_000 budget), so it must be rejected.
+      await strictBudgetManager.handleTopUpRequest(SELLER_PEER_ID, {
+        sessionId,
+        currentUsed:         '1',
+        currentMax:          '1000000',
+        requestedAdditional: '2000000',
+      }, mux);
+
+      expect(mux.sendSpendingAuth).toHaveBeenCalledTimes(1); // only initial auth
+      const session = strictBudgetManager.getSession(SELLER_PEER_ID);
+      expect(session!.nonce).toBe(1);
+      expect(session!.authorizedCapTotal).toBe(1_000_000n);
+    });
+  });
+
   describe('onPeerDisconnect', () => {
     it('removes session on disconnect', async () => {
       await manager.authorizeSpending(SELLER_PEER_ID, SELLER_EVM_ADDRESS, mux);

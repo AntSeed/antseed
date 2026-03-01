@@ -178,6 +178,7 @@ describe('PaymentMux', () => {
         nonce:         1,
         deadline:      Math.floor(Date.now() / 1000) + 3600,
         buyerSig:      '0x' + 'b'.repeat(130),
+        buyerEvmAddr:  '0x' + 'c'.repeat(40),
       };
       const frame: FramedMessage = {
         type:      MessageType.SpendingAuth,

@@ -1574,7 +1574,11 @@ export class AntseedNode extends EventEmitter {
 
     // Submit on-chain charge via SellerPaymentManager (batches until threshold)
     if (this._sellerPaymentManager && costBaseUnits > 0n) {
-      await this._sellerPaymentManager.chargeForRequest(buyerPeerId, costBaseUnits, paymentMux);
+      try {
+        await this._sellerPaymentManager.chargeForRequest(buyerPeerId, costBaseUnits, paymentMux);
+      } catch (err) {
+        debugWarn(`[Node] Failed to submit charge for ${buyerPeerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
+      }
     }
 
     // Update running total

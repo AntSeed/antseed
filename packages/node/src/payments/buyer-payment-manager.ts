@@ -39,7 +39,8 @@ export interface BuyerPaymentConfig {
    */
   defaultAuthDurationSecs?: number;
   /**
-   * Automatically approve TopUpRequests up to this total session spend.
+   * Automatically approve TopUpRequests up to this total signed exposure per session.
+   * Exposure is tracked as: initial auth cap + all approved top-up caps.
    * Default: 10_000_000 (10 USDC). Set to 0 to disable auto top-up.
    */
   maxSessionBudgetUsdc?: bigint;
@@ -53,6 +54,8 @@ export interface SellerSession {
   sellerEvmAddr: string;
   nonce:         number;   // current auth nonce
   authMax:       bigint;   // current auth cap
+  /** Cumulative max exposure signed so far (initial auth + all top-ups). */
+  authorizedCapTotal: bigint;
   deadline:      number;   // current auth expiry (unix secs)
   authorized:    boolean;  // has seller ack'd?
   totalSpend:    bigint;   // cumulative charged this session (from receipts)
@@ -137,6 +140,7 @@ export class BuyerPaymentManager {
       sellerEvmAddr,
       nonce,
       authMax:      maxAmount,
+      authorizedCapTotal: maxAmount,
       deadline,
       authorized:   false,
       totalSpend:   0n,
@@ -183,15 +187,37 @@ export class BuyerPaymentManager {
       return;
     }
 
-    const requested      = BigInt(request.requestedAdditional);
-    const currentSpend   = BigInt(request.currentUsed);
+    let requested: bigint;
+    let sellerReportedUsed: bigint;
+    try {
+      requested = BigInt(request.requestedAdditional);
+      sellerReportedUsed = BigInt(request.currentUsed);
+    } catch {
+      debugWarn(`[BuyerPayment] Invalid TopUpRequest amounts for seller ${sellerPeerId.slice(0, 12)}...`);
+      return;
+    }
+    if (requested <= 0n) {
+      debugWarn(`[BuyerPayment] Rejecting non-positive top-up request (${requested})`);
+      return;
+    }
+
+    if (request.sessionId !== session.sessionId) {
+      debugWarn(
+        `[BuyerPayment] TopUpRequest session mismatch: expected=${session.sessionId.slice(0, 12)}... got=${request.sessionId.slice(0, 12)}...`,
+      );
+      return;
+    }
+
     const maxBudget      = this._config.maxSessionBudgetUsdc ?? 10_000_000n;
-    const projectedTotal = currentSpend + requested;
+    const projectedExposure = session.authorizedCapTotal + requested;
 
-    debugLog(`[BuyerPayment] TopUp: session=${session.sessionId.slice(0, 18)}... requested=${requested} total=${projectedTotal}`);
+    debugLog(
+      `[BuyerPayment] TopUp: session=${session.sessionId.slice(0, 18)}... requested=${requested} reportedUsed=${sellerReportedUsed} projectedExposure=${projectedExposure}`,
+    );
 
-    if (maxBudget > 0n && projectedTotal > maxBudget) {
-      debugWarn(`[BuyerPayment] TopUp would exceed budget (${projectedTotal} > ${maxBudget}), declining`);
+    // Enforce budget against cumulative signed exposure instead of seller-reported usage.
+    if (maxBudget > 0n && projectedExposure > maxBudget) {
+      debugWarn(`[BuyerPayment] TopUp would exceed session budget (${projectedExposure} > ${maxBudget}), declining`);
       return;
     }
 
@@ -220,6 +246,7 @@ export class BuyerPaymentManager {
 
     session.nonce     = newNonce;
     session.authMax   = requested;
+    session.authorizedCapTotal = projectedExposure;
     session.deadline  = deadline;
     session.updatedAt = Date.now();
 

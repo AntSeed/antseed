@@ -100,9 +100,30 @@ export class SellerPaymentManager {
     payload:      SpendingAuthPayload,
     paymentMux:   PaymentMux,
   ): Promise<void> {
+    if (!Number.isInteger(payload.nonce) || payload.nonce <= 0) {
+      debugWarn(`[SellerPayment] Rejecting SpendingAuth with invalid nonce=${payload.nonce} from ${buyerPeerId.slice(0, 12)}...`);
+      return;
+    }
+    const now = Math.floor(Date.now() / 1000);
+    if (!Number.isInteger(payload.deadline) || payload.deadline <= now) {
+      debugWarn(`[SellerPayment] Rejecting expired SpendingAuth from ${buyerPeerId.slice(0, 12)}... deadline=${payload.deadline} now=${now}`);
+      return;
+    }
+
+    let maxAmount: bigint;
+    try {
+      maxAmount = BigInt(payload.maxAmountUsdc);
+    } catch {
+      debugWarn(`[SellerPayment] Rejecting SpendingAuth with invalid maxAmount from ${buyerPeerId.slice(0, 12)}...`);
+      return;
+    }
+    if (maxAmount <= 0n) {
+      debugWarn(`[SellerPayment] Rejecting SpendingAuth with non-positive maxAmount=${maxAmount}`);
+      return;
+    }
+
     const sellerAddr = await this._signer.getAddress();
     const domain     = makeEscrowDomain(this._config.chainId, this._config.contractAddress);
-    const maxAmount  = BigInt(payload.maxAmountUsdc);
 
     const recovered = verifyTypedData(
       domain,
@@ -141,6 +162,12 @@ export class SellerPaymentManager {
 
     const existing = this._auths.get(buyerPeerId);
     if (existing && payload.nonce === existing.nonce + 1) {
+      if (payload.sessionId !== existing.sessionId) {
+        debugWarn(
+          `[SellerPayment] Rejecting top-up with mismatched sessionId: expected=${existing.sessionId.slice(0, 12)}... got=${payload.sessionId.slice(0, 12)}...`,
+        );
+        return;
+      }
       // Flush any sub-threshold pending charges under the old auth before advancing nonce.
       // Without this, charges that haven't yet reached the batch threshold are permanently lost.
       if (existing.pendingCharge > 0n && !existing.chargeInFlight) {
@@ -148,7 +175,12 @@ export class SellerPaymentManager {
           await this._submitCharge(existing);
         } catch (err) {
           debugWarn(`[SellerPayment] Failed to flush pending charges before top-up: ${err}`);
+          return;
         }
+      }
+      if (existing.pendingCharge > 0n || existing.chargeInFlight) {
+        debugWarn(`[SellerPayment] Rejecting top-up while pending charge flush is incomplete`);
+        return;
       }
       // Top-up: advance nonce and reset authUsed
       existing.nonce          = payload.nonce;
@@ -156,11 +188,32 @@ export class SellerPaymentManager {
       existing.authUsed       = 0n;
       existing.deadline       = payload.deadline;
       existing.buyerSig       = payload.buyerSig;
-      existing.pendingCharge  = 0n;  // clear any unflushed remainder after attempted flush
-      existing.chargeInFlight = false;
       debugLog(`[SellerPayment] Top-up auth accepted: nonce=${payload.nonce} max=${maxAmount}`);
+    } else if (existing && payload.nonce === existing.nonce) {
+      if (payload.sessionId !== existing.sessionId) {
+        debugWarn(
+          `[SellerPayment] Rejecting auth refresh with mismatched sessionId: expected=${existing.sessionId.slice(0, 12)}... got=${payload.sessionId.slice(0, 12)}...`,
+        );
+        return;
+      }
+      if (maxAmount !== existing.authMax) {
+        debugWarn(`[SellerPayment] Rejecting auth refresh with changed maxAmount: expected=${existing.authMax} got=${maxAmount}`);
+        return;
+      }
+      existing.deadline = payload.deadline;
+      existing.buyerSig = payload.buyerSig;
+      debugLog(`[SellerPayment] Auth refresh accepted: nonce=${payload.nonce}`);
+    } else if (existing) {
+      debugWarn(
+        `[SellerPayment] Rejecting SpendingAuth nonce jump for ${buyerPeerId.slice(0, 12)}... expected=${existing.nonce} or ${existing.nonce + 1}, got=${payload.nonce}`,
+      );
+      return;
     } else {
       // Initial auth
+      if (payload.nonce !== 1) {
+        debugWarn(`[SellerPayment] Rejecting initial SpendingAuth with nonce=${payload.nonce} (expected 1)`);
+        return;
+      }
       this._auths.set(buyerPeerId, {
         sessionId:     payload.sessionId,
         buyerPeerId,
