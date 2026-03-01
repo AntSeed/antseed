@@ -381,29 +381,44 @@ pre {
   }
 }
 
-/* Mobile docs hamburger button */
+/* Mobile docs hamburger button — replaces "On this page" */
 .mobile-docs-hamburger {
   display: none;
-  position: fixed;
-  bottom: 24px;
-  right: 24px;
-  z-index: 200;
-  background: #3dffa2;
-  color: #0a0e14;
-  border: none;
-  border-radius: 50%;
-  width: 48px;
-  height: 48px;
-  font-size: 18px;
-  cursor: pointer;
-  box-shadow: 0 4px 16px rgba(61, 255, 162, 0.3);
-  align-items: center;
-  justify-content: center;
 }
 
 @media (max-width: 996px) {
+  /* Hide "On this page" TOC on mobile */
+  .tocMobile_ITEo,
+  [class*='tocMobile'] {
+    display: none !important;
+  }
+
+  /* Show docs menu button — fixed strip below navbar */
   .mobile-docs-hamburger {
     display: flex;
+    align-items: center;
+    gap: 8px;
+    position: fixed;
+    top: 73px;
+    left: 0;
+    right: 0;
+    z-index: 98;
+    background: #0d1117;
+    border-bottom: 1px solid rgba(61, 255, 162, 0.07);
+    color: #8b949e;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.5px;
+    padding: 10px 20px;
+    cursor: pointer;
+    transition: color 0.2s;
+  }
+  .mobile-docs-hamburger:hover {
+    color: #e6edf3;
+  }
+  /* Push doc content down below the docs menu strip */
+  [class*='docsWrapper'] {
+    padding-top: 37px;
   }
 }
 
