@@ -147,6 +147,21 @@ export default function Navbar(): JSX.Element {
           <TelegramIcon />
         </a>
         <Link
+          to="/blog"
+          className="custom-nav-link"
+          style={{
+            fontFamily: "'JetBrains Mono', monospace",
+            fontSize: '12px',
+            fontWeight: 500,
+            color: '#8b949e',
+            letterSpacing: '1px',
+            textDecoration: 'none',
+            transition: 'color 0.2s',
+          }}
+        >
+          Blog
+        </Link>
+        <Link
           to={docsTo}
           onClick={scrollToTop}
           className="custom-nav-link nav-docs-btn"
