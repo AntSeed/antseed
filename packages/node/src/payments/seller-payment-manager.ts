@@ -65,7 +65,8 @@ export class SellerPaymentManager {
   private _signer: AbstractSigner;
   private readonly _escrow: EscrowClient;
   private readonly _config: SellerPaymentConfig;
-  private readonly _auths = new Map<string, BuyerAuth>(); // keyed by buyerPeerId
+  // buyerPeerId -> sessionId -> auth
+  private readonly _auths = new Map<string, Map<string, BuyerAuth>>();
   private readonly _chargeThreshold: bigint;
   private readonly _topUpThreshold: number;
 
@@ -85,13 +86,24 @@ export class SellerPaymentManager {
   get signer(): AbstractSigner { return this._signer; }
   get escrowClient(): EscrowClient { return this._escrow; }
 
-  hasAuth(buyerPeerId: string): boolean {
-    return this._auths.has(buyerPeerId);
+  hasAuth(buyerPeerId: string, sessionId?: string): boolean {
+    const sessions = this._auths.get(buyerPeerId);
+    if (!sessions) return false;
+    if (sessionId) return sessions.has(sessionId);
+    return sessions.size > 0;
   }
 
-  setBuyerEvmAddress(buyerPeerId: string, evmAddress: string): void {
-    const auth = this._auths.get(buyerPeerId);
-    if (auth) auth.buyerEvmAddr = evmAddress;
+  setBuyerEvmAddress(buyerPeerId: string, evmAddress: string, sessionId?: string): void {
+    const sessions = this._auths.get(buyerPeerId);
+    if (!sessions) return;
+    if (sessionId) {
+      const auth = sessions.get(sessionId);
+      if (auth) auth.buyerEvmAddr = evmAddress;
+      return;
+    }
+    for (const auth of sessions.values()) {
+      auth.buyerEvmAddr = evmAddress;
+    }
   }
 
   async handleSpendingAuth(
@@ -160,14 +172,8 @@ export class SellerPaymentManager {
       debugWarn(`[SellerPayment] Could not fetch buyer balance for auth check: ${err}`);
     }
 
-    const existing = this._auths.get(buyerPeerId);
+    const existing = this._getAuth(buyerPeerId, payload.sessionId);
     if (existing && payload.nonce === existing.nonce + 1) {
-      if (payload.sessionId !== existing.sessionId) {
-        debugWarn(
-          `[SellerPayment] Rejecting top-up with mismatched sessionId: expected=${existing.sessionId.slice(0, 12)}... got=${payload.sessionId.slice(0, 12)}...`,
-        );
-        return;
-      }
       // Flush any sub-threshold pending charges under the old auth before advancing nonce.
       // Without this, charges that haven't yet reached the batch threshold are permanently lost.
       if (existing.pendingCharge > 0n && !existing.chargeInFlight) {
@@ -190,12 +196,6 @@ export class SellerPaymentManager {
       existing.buyerSig       = payload.buyerSig;
       debugLog(`[SellerPayment] Top-up auth accepted: nonce=${payload.nonce} max=${maxAmount}`);
     } else if (existing && payload.nonce === existing.nonce) {
-      if (payload.sessionId !== existing.sessionId) {
-        debugWarn(
-          `[SellerPayment] Rejecting auth refresh with mismatched sessionId: expected=${existing.sessionId.slice(0, 12)}... got=${payload.sessionId.slice(0, 12)}...`,
-        );
-        return;
-      }
       if (maxAmount !== existing.authMax) {
         debugWarn(`[SellerPayment] Rejecting auth refresh with changed maxAmount: expected=${existing.authMax} got=${maxAmount}`);
         return;
@@ -214,7 +214,7 @@ export class SellerPaymentManager {
         debugWarn(`[SellerPayment] Rejecting initial SpendingAuth with nonce=${payload.nonce} (expected 1)`);
         return;
       }
-      this._auths.set(buyerPeerId, {
+      this._setAuth(buyerPeerId, {
         sessionId:     payload.sessionId,
         buyerPeerId,
         buyerEvmAddr,
@@ -236,14 +236,17 @@ export class SellerPaymentManager {
 
   async chargeForRequest(
     buyerPeerId: string,
+    sessionId:   string,
     costUsdc:    bigint,
     paymentMux:  PaymentMux,
   ): Promise<void> {
     if (costUsdc === 0n) return;
 
-    const auth = this._auths.get(buyerPeerId);
+    const auth = this._getAuth(buyerPeerId, sessionId);
     if (!auth) {
-      debugWarn(`[SellerPayment] No auth for buyer ${buyerPeerId.slice(0, 12)}... — cannot charge`);
+      debugWarn(
+        `[SellerPayment] No auth for buyer ${buyerPeerId.slice(0, 12)}... session=${sessionId.slice(0, 12)}... — cannot charge`,
+      );
       return;
     }
 
@@ -260,21 +263,25 @@ export class SellerPaymentManager {
     this._maybeRequestTopUp(auth, paymentMux);
   }
 
-  checkAndRequestTopUp(buyerPeerId: string, paymentMux: PaymentMux): void {
-    const auth = this._auths.get(buyerPeerId);
+  checkAndRequestTopUp(buyerPeerId: string, sessionId: string, paymentMux: PaymentMux): void {
+    const auth = this._getAuth(buyerPeerId, sessionId);
     if (auth) this._maybeRequestTopUp(auth, paymentMux);
   }
 
   async onBuyerDisconnect(buyerPeerId: string): Promise<void> {
-    const auth = this._auths.get(buyerPeerId);
-    if (!auth) return;
+    const sessions = this._auths.get(buyerPeerId);
+    if (!sessions || sessions.size === 0) return;
 
-    if (auth.pendingCharge > 0n) {
-      debugLog(`[SellerPayment] Flushing ${auth.pendingCharge} on disconnect for ${buyerPeerId.slice(0, 12)}...`);
-      try {
-        await this._submitCharge(auth);
-      } catch (err) {
-        debugWarn(`[SellerPayment] Flush failed for ${buyerPeerId.slice(0, 12)}...: ${err}`);
+    for (const auth of sessions.values()) {
+      if (auth.pendingCharge > 0n) {
+        debugLog(
+          `[SellerPayment] Flushing ${auth.pendingCharge} on disconnect for ${buyerPeerId.slice(0, 12)}... session=${auth.sessionId.slice(0, 12)}...`,
+        );
+        try {
+          await this._submitCharge(auth);
+        } catch (err) {
+          debugWarn(`[SellerPayment] Flush failed for ${buyerPeerId.slice(0, 12)}... session=${auth.sessionId.slice(0, 12)}...: ${err}`);
+        }
       }
     }
 
@@ -316,6 +323,19 @@ export class SellerPaymentManager {
       requestedAdditional: requested,
     };
     paymentMux.sendTopUpRequest(topUp);
+  }
+
+  private _getAuth(buyerPeerId: string, sessionId: string): BuyerAuth | undefined {
+    return this._auths.get(buyerPeerId)?.get(sessionId);
+  }
+
+  private _setAuth(buyerPeerId: string, auth: BuyerAuth): void {
+    let sessions = this._auths.get(buyerPeerId);
+    if (!sessions) {
+      sessions = new Map<string, BuyerAuth>();
+      this._auths.set(buyerPeerId, sessions);
+    }
+    sessions.set(auth.sessionId, auth);
   }
 
   private async _submitCharge(auth: BuyerAuth): Promise<void> {

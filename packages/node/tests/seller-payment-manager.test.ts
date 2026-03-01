@@ -125,7 +125,7 @@ describe('SellerPaymentManager', () => {
     expect(mux.sendAuthAck).not.toHaveBeenCalled();
   });
 
-  it('rejects top-up with mismatched session id', async () => {
+  it('rejects new-session auth when nonce is not 1', async () => {
     const initial = await buildAuthPayload(sellerAddress, buyerWallet, {
       sessionId: '0x' + '33'.repeat(32),
       maxAmount: 1_000_000n,
@@ -142,7 +142,8 @@ describe('SellerPaymentManager', () => {
     });
     await manager.handleSpendingAuth(BUYER_PEER_ID, buyerWallet.address, topUpWrongSession, mux);
 
-    const auth = (manager as any)._auths.get(BUYER_PEER_ID);
+    const sessions = (manager as any)._auths.get(BUYER_PEER_ID) as Map<string, any>;
+    const auth = sessions.get(initial.sessionId);
     expect(auth.sessionId).toBe(initial.sessionId);
     expect(auth.nonce).toBe(1);
     expect(mux.sendAuthAck).toHaveBeenCalledTimes(1);
@@ -157,7 +158,8 @@ describe('SellerPaymentManager', () => {
     });
     await manager.handleSpendingAuth(BUYER_PEER_ID, buyerWallet.address, initial, mux);
 
-    const auth = (manager as any)._auths.get(BUYER_PEER_ID);
+    const sessions = (manager as any)._auths.get(BUYER_PEER_ID) as Map<string, any>;
+    const auth = sessions.get(initial.sessionId);
     auth.pendingCharge = 123_000n;
     vi.spyOn(manager as any, '_submitCharge').mockRejectedValue(new Error('flush failed'));
 
@@ -172,5 +174,44 @@ describe('SellerPaymentManager', () => {
     expect(auth.nonce).toBe(1);
     expect(auth.pendingCharge).toBe(123_000n);
     expect(mux.sendAuthAck).toHaveBeenCalledTimes(1);
+  });
+
+  it('supports multiple concurrent sessions for the same buyer peer', async () => {
+    const sessionA = '0x' + '66'.repeat(32);
+    const sessionB = '0x' + '77'.repeat(32);
+    const deadline = Math.floor(Date.now() / 1000) + 3600;
+
+    const payloadA = await buildAuthPayload(sellerAddress, buyerWallet, {
+      sessionId: sessionA,
+      maxAmount: 1_000_000n,
+      nonce: 1,
+      deadline,
+    });
+    const payloadB = await buildAuthPayload(sellerAddress, buyerWallet, {
+      sessionId: sessionB,
+      maxAmount: 2_000_000n,
+      nonce: 1,
+      deadline,
+    });
+
+    await manager.handleSpendingAuth(BUYER_PEER_ID, buyerWallet.address, payloadA, mux);
+    await manager.handleSpendingAuth(BUYER_PEER_ID, buyerWallet.address, payloadB, mux);
+
+    expect(manager.hasAuth(BUYER_PEER_ID, sessionA)).toBe(true);
+    expect(manager.hasAuth(BUYER_PEER_ID, sessionB)).toBe(true);
+    expect(mux.sendAuthAck).toHaveBeenCalledTimes(2);
+
+    const chargeMock = vi.fn().mockResolvedValue('0xabc');
+    (manager as any)._escrow = {
+      ...(manager as any)._escrow,
+      charge: chargeMock,
+    };
+
+    await manager.chargeForRequest(BUYER_PEER_ID, sessionA, 150_000n, mux);
+    await manager.chargeForRequest(BUYER_PEER_ID, sessionB, 200_000n, mux);
+
+    expect(chargeMock).toHaveBeenCalledTimes(2);
+    expect(chargeMock.mock.calls[0]?.[3]).toBe(sessionA);
+    expect(chargeMock.mock.calls[1]?.[3]).toBe(sessionB);
   });
 });

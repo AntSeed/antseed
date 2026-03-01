@@ -840,7 +840,7 @@ export class AntseedNode extends EventEmitter {
       // Reject with 402 if no valid spending authorization and escrow is configured
       const session = this._sessions.get(buyerPeerId);
       const isAuthorized = this._sellerPaymentManager
-        ? this._sellerPaymentManager.hasAuth(buyerPeerId)
+        ? this._sellerPaymentManager.hasAuth(buyerPeerId, session?.sessionId)
         : (session?.hasSpendingAuth ?? false);
       if (this._escrowClient && !isAuthorized) {
         debugWarn(`[Node] Rejecting request from ${buyerPeerId.slice(0, 12)}... — no valid spending authorization`);
@@ -1575,7 +1575,12 @@ export class AntseedNode extends EventEmitter {
     // Submit on-chain charge via SellerPaymentManager (batches until threshold)
     if (this._sellerPaymentManager && costBaseUnits > 0n) {
       try {
-        await this._sellerPaymentManager.chargeForRequest(buyerPeerId, costBaseUnits, paymentMux);
+        await this._sellerPaymentManager.chargeForRequest(
+          buyerPeerId,
+          session.sessionId,
+          costBaseUnits,
+          paymentMux,
+        );
       } catch (err) {
         debugWarn(`[Node] Failed to submit charge for ${buyerPeerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
       }
