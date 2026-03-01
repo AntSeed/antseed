@@ -38,36 +38,145 @@ html[data-theme='dark'] {
 }
 
 /* =============================================
-   Custom Navbar — override Docusaurus defaults
+   Navbar — style Docusaurus defaults
    ============================================= */
 nav.navbar {
   box-shadow: none !important;
+  background: rgba(10, 14, 20, 0.8) !important;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-bottom: 1px solid rgba(61, 255, 162, 0.07);
   --ifm-navbar-background-color: transparent;
   --ifm-navbar-shadow: none;
+  padding: 0 clamp(16px, 4vw, 56px);
 }
 
-/* =============================================
-   Custom Navbar hover states
-   ============================================= */
-.custom-nav-link:hover {
-  color: #e6edf3 !important;
+/* Navbar title — monospace font, split ANT (white) + SEED (green) */
+.navbar__title {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 700;
+  font-size: 18px;
+  letter-spacing: -1px;
+  background: linear-gradient(to right, #fff 0%, #fff 42.86%, #3dffa2 42.86%, #3dffa2 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
 
-.custom-nav-github:hover {
-  border-color: rgba(61, 255, 162, 0.3) !important;
-  color: #e6edf3 !important;
+/* Navbar link items */
+.navbar__items--right .navbar__link {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 1px;
+  color: #8b949e;
 }
+
+.navbar__items--right .navbar__link:hover {
+  color: #e6edf3;
+}
+
+/* Social icon links — SVG background icons */
+.header-github-link,
+.header-x-link,
+.header-telegram-link {
+  width: 32px;
+  height: 32px;
+  padding: 4px;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 18px;
+  opacity: 0.6;
+  transition: opacity 0.2s;
+}
+
+.header-github-link:hover,
+.header-x-link:hover,
+.header-telegram-link:hover {
+  opacity: 1;
+}
+
+/* Hide the text for icon-only links */
+.header-github-link::before,
+.header-x-link::before,
+.header-telegram-link::before {
+  content: '';
+}
+
+.header-github-link {
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' fill='%238b949e' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z'/%3E%3C/svg%3E");
+}
+
+.header-x-link {
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' fill='%238b949e' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z'/%3E%3C/svg%3E");
+  background-size: 16px;
+}
+
+.header-telegram-link {
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' fill='%238b949e' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M11.944 0A12 12 0 000 12a12 12 0 0012 12 12 12 0 0012-12A12 12 0 0012 0a12 12 0 00-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 01.171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z'/%3E%3C/svg%3E");
+}
+
+/* Mobile sidebar styling */
+.navbar-sidebar {
+  background: #0a0e14 !important;
+  --ifm-navbar-background-color: #0a0e14;
+  height: 100vh !important;
+  width: 100vw !important;
+  max-width: 100vw !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+
+.navbar-sidebar__item {
+  background: #0a0e14 !important;
+}
+
+.navbar-sidebar__brand {
+  background: #0a0e14 !important;
+  border-bottom: 1px solid rgba(61, 255, 162, 0.07);
+  flex: none !important;
+}
+
+.navbar-sidebar__items {
+  background: #0a0e14 !important;
+  flex: 1 !important;
+}
+
+.navbar-sidebar__items .menu__link {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px;
+  color: #8b949e;
+}
+
+.navbar-sidebar__items .menu__link:hover {
+  color: #e6edf3;
+}
+
+.navbar-sidebar__back {
+  font-family: 'JetBrains Mono', monospace;
+  color: #8b949e;
+}
+
+/* Mobile sidebar — show text labels for social icon links */
+.navbar-sidebar .header-github-link,
+.navbar-sidebar .header-x-link,
+.navbar-sidebar .header-telegram-link {
+  width: auto;
+  height: auto;
+  background-position: left 12px center;
+  padding-left: 42px !important;
+  opacity: 1;
+}
+
+.navbar-sidebar .header-github-link::after { content: 'GitHub'; }
+.navbar-sidebar .header-x-link::after { content: 'X'; }
+.navbar-sidebar .header-telegram-link::after { content: 'Telegram'; }
 
 /* =============================================
    Custom Footer hover states
    ============================================= */
 .custom-footer-link:hover {
   color: #e6edf3 !important;
-}
-
-/* Push blog content below fixed navbar */
-.main-wrapper {
-  padding-top: var(--ifm-navbar-height);
 }
 
 /* Docs already handle their own offset — avoid double padding */
@@ -158,10 +267,7 @@ aside.theme-doc-sidebar-container {
   display: none;
 }
 
-/* Hide right-side TOC */
-.col.col--3 {
-  display: none;
-}
+/* Right-side TOC — visible on desktop */
 
 /* Make doc content column fill space */
 .col[class*='docItemCol'] {
@@ -375,9 +481,5 @@ pre {
 /* =============================================
    Responsive
    ============================================= */
-@media (max-width: 640px) {
-  .custom-nav-github {
-    display: none !important;
-  }
-}
+/* Responsive rules */
 

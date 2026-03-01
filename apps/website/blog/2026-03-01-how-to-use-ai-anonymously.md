@@ -40,7 +40,7 @@ The most private option — nothing leaves your machine.
 Not perfect, but meaningfully better than the big players:
 
 - **[Mistral Le Chat](https://chat.mistral.ai)** — French company, GDPR-native, strong data protection. Free tier. Competitive models.
-- **[Venice AI](https://venice.ai)** — Claims zero conversation storage, no training on your data.
+- **[DuckDuckGo AI Chat](https://duckduckgo.com/aichat)** — Anonymous access to multiple models. No account, no storage. Proxied through DuckDuckGo's servers.
 
 Still centralized. Your prompts still pass through their servers. Privacy is a promise, not a proof.
 
@@ -61,7 +61,7 @@ For maximum privacy, AntSeed supports **TEE providers** — nodes running inside
 | Method | Privacy | Effort | Model Quality |
 |---|---|---|---|
 | ChatGPT / Claude | Low | None | Frontier |
-| Mistral / Venice | Medium | None | Very Good |
+| Mistral / DDG AI | Medium | None | Very Good |
 | Local model | Maximum | Medium | Limited |
 | AntSeed P2P | High | Low | Frontier |
 | AntSeed + TEE | Maximum | Low | Frontier |

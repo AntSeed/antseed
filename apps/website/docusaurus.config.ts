@@ -79,7 +79,39 @@ const config: Config = {
       respectPrefersColorScheme: false,
     },
     navbar: {
-      items: [],
+      title: 'ANTSEED',
+      logo: {
+        alt: 'AntSeed',
+        src: 'logo.svg',
+      },
+      items: [
+        {to: '/blog', label: 'Blog', position: 'right'},
+        {
+          type: 'docSidebar',
+          sidebarId: 'docs',
+          label: 'Docs',
+          position: 'right',
+          className: 'header-docs-link',
+        },
+        {
+          href: 'https://github.com/antseed',
+          'aria-label': 'GitHub',
+          position: 'right',
+          className: 'header-github-link',
+        },
+        {
+          href: 'https://x.com/antseedai',
+          'aria-label': 'X',
+          position: 'right',
+          className: 'header-x-link',
+        },
+        {
+          href: 'https://t.me/antseed',
+          'aria-label': 'Telegram',
+          position: 'right',
+          className: 'header-telegram-link',
+        },
+      ],
     },
     prism: {
       theme: prismThemes.dracula,
