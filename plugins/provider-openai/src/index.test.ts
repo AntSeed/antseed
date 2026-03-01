@@ -95,4 +95,41 @@ describe('provider-openai plugin', () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  it('does not double-prefix when model already includes upstream prefix with different casing', async () => {
+    const originalFetch = globalThis.fetch;
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response('{}', {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    try {
+      const provider = plugin.createProvider({
+        OPENAI_API_KEY: 'sk-test-key',
+        ANTSEED_ALLOWED_MODELS: 'together/kimi2.5',
+        OPENAI_UPSTREAM_MODEL_PREFIX: 'Together/',
+      });
+
+      const response = await provider.handleRequest({
+        requestId: 'req-2',
+        method: 'POST',
+        path: '/v1/chat/completions',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: new TextEncoder().encode(JSON.stringify({ model: 'together/kimi2.5', messages: [] })),
+      });
+
+      expect(response.statusCode).toBe(200);
+      const [, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+      const parsedBody = JSON.parse(
+        new TextDecoder().decode((requestInit.body as Uint8Array) ?? new Uint8Array(0)),
+      ) as { model?: string };
+      expect(parsedBody.model).toBe('together/kimi2.5');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });

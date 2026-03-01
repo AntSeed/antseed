@@ -112,12 +112,15 @@ function buildModelRewriteMap(
   const upstreamModelPrefix = normalizeModelPrefix(upstreamModelPrefixRaw);
 
   if (upstreamModelPrefix) {
+    const normalizedPrefix = upstreamModelPrefix.toLowerCase();
     for (const model of announcedModels) {
       const announced = model.trim();
       if (!announced) {
         continue;
       }
-      out[announced.toLowerCase()] = announced.startsWith(upstreamModelPrefix)
+      const normalizedAnnounced = announced.toLowerCase();
+      const hasPrefix = normalizedAnnounced.startsWith(normalizedPrefix);
+      out[announced.toLowerCase()] = hasPrefix
         ? announced
         : `${upstreamModelPrefix}${announced}`;
     }
