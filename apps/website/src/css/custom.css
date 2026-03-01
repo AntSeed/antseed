@@ -65,21 +65,14 @@ nav.navbar {
   color: #e6edf3 !important;
 }
 
-/* Push docs content below fixed navbar */
-[class*='docsWrapper'] {
-  padding-top: var(--ifm-navbar-height);
-}
-
 /* Push blog content below fixed navbar */
 .main-wrapper {
   padding-top: var(--ifm-navbar-height);
 }
 
-/* Blog post and blog list page top clearance */
-[class*='blogPost'] header:first-child,
-[class*='blogList'] header:first-child,
-article header:first-child {
-  padding-top: 1rem;
+/* Docs already handle their own offset — avoid double padding */
+[class*='docsWrapper'] {
+  padding-top: 0;
 }
 
 /* =============================================
@@ -385,6 +378,52 @@ pre {
 @media (max-width: 640px) {
   .custom-nav-github {
     display: none !important;
+  }
+}
+
+/* Mobile docs sub-navigation bar */
+.mobile-docs-subnav {
+  display: none;
+}
+
+@media (max-width: 996px) {
+  .mobile-docs-subnav {
+    display: flex;
+    position: fixed;
+    top: 73px;
+    left: 0;
+    right: 0;
+    z-index: 99;
+    background: rgba(10, 14, 20, 0.95);
+    border-bottom: 1px solid rgba(61, 255, 162, 0.07);
+    overflow-x: auto;
+    padding: 0 16px;
+    gap: 4px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .mobile-docs-subnav::-webkit-scrollbar {
+    display: none;
+  }
+  .mobile-docs-subnav-link {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: #484f58;
+    text-decoration: none;
+    padding: 8px 12px;
+    white-space: nowrap;
+    border-bottom: 2px solid transparent;
+    transition: color 0.2s;
+    flex-shrink: 0;
+  }
+  .mobile-docs-subnav-link:hover,
+  .mobile-docs-subnav-link.active {
+    color: #3dffa2;
+    border-bottom-color: #3dffa2;
+  }
+  /* Push docs content down to account for sub-nav */
+  [class*='docsWrapper'] {
+    padding-top: 37px;
   }
 }
 
