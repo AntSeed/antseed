@@ -1,7 +1,15 @@
 import type { Identity } from "../p2p/identity.js";
 import { signData } from "../p2p/identity.js";
 import type { DHTNode } from "./dht-node.js";
-import { providerTopic, modelTopic, capabilityTopic, topicToInfoHash } from "./dht-node.js";
+import {
+  providerTopic,
+  modelTopic,
+  modelSearchTopic,
+  capabilityTopic,
+  topicToInfoHash,
+  normalizeModelTopicKey,
+  normalizeModelSearchTopicKey,
+} from "./dht-node.js";
 import type { PeerOffering } from "../types/capability.js";
 import type { PeerMetadata, ProviderAnnouncement } from "./peer-metadata.js";
 import { METADATA_VERSION } from "./peer-metadata.js";
@@ -170,18 +178,28 @@ export class PeerAnnouncer {
   }
 
   private async _announceTopics(providers: ProviderAnnouncement[]): Promise<void> {
-    const announcedModels = new Set<string>();
+    const announcedModelTopics = new Set<string>();
 
     for (const p of providers) {
       await this._tryAnnounceTopic(providerTopic(p.provider));
       for (const model of p.models) {
-        const normalizedModel = model.trim().toLowerCase();
-        if (!normalizedModel) {
+        const canonicalModelKey = normalizeModelTopicKey(model);
+        if (!canonicalModelKey) {
           continue;
         }
-        if (!announcedModels.has(normalizedModel)) {
-          announcedModels.add(normalizedModel);
-          await this._tryAnnounceTopic(modelTopic(normalizedModel));
+        const canonicalTopic = modelTopic(canonicalModelKey);
+        if (!announcedModelTopics.has(canonicalTopic)) {
+          announcedModelTopics.add(canonicalTopic);
+          await this._tryAnnounceTopic(canonicalTopic);
+        }
+
+        const compactModelKey = normalizeModelSearchTopicKey(model);
+        if (compactModelKey !== canonicalModelKey) {
+          const compactTopic = modelSearchTopic(compactModelKey);
+          if (!announcedModelTopics.has(compactTopic)) {
+            announcedModelTopics.add(compactTopic);
+            await this._tryAnnounceTopic(compactTopic);
+          }
         }
       }
     }

@@ -47,8 +47,22 @@ export function providerTopic(providerName: string): string {
   return "antseed:" + normalizeTopicSegment(providerName);
 }
 
+export function normalizeModelTopicKey(modelName: string): string {
+  return normalizeTopicSegment(modelName);
+}
+
+export function normalizeModelSearchTopicKey(modelName: string): string {
+  const canonical = normalizeModelTopicKey(modelName);
+  const compact = canonical.replace(/[\s_-]+/g, "");
+  return compact.length > 0 ? compact : canonical;
+}
+
 export function modelTopic(modelName: string): string {
-  return "antseed:model:" + normalizeTopicSegment(modelName);
+  return "antseed:model:" + normalizeModelTopicKey(modelName);
+}
+
+export function modelSearchTopic(modelName: string): string {
+  return "antseed:model-search:" + normalizeModelSearchTopicKey(modelName);
 }
 
 export function capabilityTopic(capability: string, name?: string): string {

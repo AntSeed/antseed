@@ -1,4 +1,15 @@
-export { DHTNode, DEFAULT_DHT_CONFIG, topicToInfoHash, providerTopic, modelTopic, capabilityTopic, type DHTNodeConfig } from './dht-node.js';
+export {
+  DHTNode,
+  DEFAULT_DHT_CONFIG,
+  topicToInfoHash,
+  providerTopic,
+  modelTopic,
+  modelSearchTopic,
+  capabilityTopic,
+  normalizeModelTopicKey,
+  normalizeModelSearchTopicKey,
+  type DHTNodeConfig,
+} from './dht-node.js';
 export { PeerAnnouncer, type AnnouncerConfig } from './announcer.js';
 export { PeerLookup, DEFAULT_LOOKUP_CONFIG, type LookupConfig, type LookupResult } from './peer-lookup.js';
 
