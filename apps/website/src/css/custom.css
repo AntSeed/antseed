@@ -65,9 +65,21 @@ nav.navbar {
   color: #e6edf3 !important;
 }
 
-/* Push all content below fixed navbar */
+/* Push docs content below fixed navbar */
+[class*='docsWrapper'] {
+  padding-top: var(--ifm-navbar-height);
+}
+
+/* Push blog content below fixed navbar */
 .main-wrapper {
   padding-top: var(--ifm-navbar-height);
+}
+
+/* Blog post and blog list page top clearance */
+[class*='blogPost'] header:first-child,
+[class*='blogList'] header:first-child,
+article header:first-child {
+  padding-top: 1rem;
 }
 
 /* =============================================
@@ -372,7 +384,7 @@ pre {
    ============================================= */
 @media (max-width: 640px) {
   .custom-nav-github {
-    display: none;
+    display: none !important;
   }
 }
 

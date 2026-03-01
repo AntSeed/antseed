@@ -120,7 +120,7 @@ export default function Navbar(): JSX.Element {
           href="https://github.com/antseed"
           target="_blank"
           rel="noopener noreferrer"
-          className="custom-nav-link"
+          className="custom-nav-link custom-nav-github"
           style={iconLinkStyle}
           title="GitHub"
         >
@@ -130,7 +130,7 @@ export default function Navbar(): JSX.Element {
           href="https://x.com/antseedai"
           target="_blank"
           rel="noopener noreferrer"
-          className="custom-nav-link"
+          className="custom-nav-link custom-nav-github"
           style={iconLinkStyle}
           title="X (Twitter)"
         >
@@ -140,7 +140,7 @@ export default function Navbar(): JSX.Element {
           href="https://t.me/antseed"
           target="_blank"
           rel="noopener noreferrer"
-          className="custom-nav-link"
+          className="custom-nav-link custom-nav-github"
           style={iconLinkStyle}
           title="Telegram"
         >
