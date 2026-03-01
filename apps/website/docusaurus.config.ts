@@ -10,12 +10,6 @@ const config: Config = {
   baseUrl: '/',
   onBrokenLinks: 'throw',
 
-  // SEO - Keywords
-  metadata: [
-    {name: 'keywords', content: 'private AI, anonymous AI, P2P AI, decentralized AI inference, uncensored AI, AI without account, no signup AI, peer-to-peer AI'},
-    {name: 'description', content: 'Private AI inference with zero data collection. No account, no logs, no middleman. Connect directly to AI providers through an anonymous P2P network.'},
-  ],
-
   markdown: {
     hooks: {
       onBrokenMarkdownLinks: 'warn',
@@ -42,7 +36,13 @@ const config: Config = {
           sidebarPath: './sidebars.ts',
           routeBasePath: 'docs',
         },
-        blog: false,
+        blog: {
+          showReadingTime: true,
+          blogTitle: 'AntSeed Blog',
+          blogDescription: 'Insights on private AI, decentralized inference, and P2P AI networks.',
+          postsPerPage: 10,
+          blogSidebarCount: 'ALL',
+        },
         theme: {
           customCss: './src/css/custom.css',
         },
@@ -62,6 +62,16 @@ const config: Config = {
   ],
 
   themeConfig: {
+    metadata: [
+      {name: 'keywords', content: 'private AI, anonymous AI, P2P AI, decentralized AI inference, uncensored AI, AI without account, no signup AI, peer-to-peer AI'},
+      {name: 'description', content: 'Private AI inference with zero data collection. No account, no logs, no middleman. Connect directly to AI providers through an anonymous P2P network.'},
+      {property: 'og:title', content: 'AntSeed — Private AI. Anonymous. Peer-to-peer.'},
+      {property: 'og:description', content: 'Private AI inference with zero data collection. No account, no logs, no middleman.'},
+      {property: 'og:type', content: 'website'},
+      {name: 'twitter:card', content: 'summary_large_image'},
+      {name: 'twitter:title', content: 'AntSeed — Private AI. Anonymous. Peer-to-peer.'},
+      {name: 'twitter:description', content: 'Private AI inference with zero data collection. No account, no logs, no middleman.'},
+    ],
     colorMode: {
       defaultMode: 'dark',
       disableSwitch: true,
