@@ -65,44 +65,50 @@ export class PeerLookup {
   }
 
   private async resolveLookupResults(peers: PeerEndpoint[]): Promise<LookupResult[]> {
-    const results: LookupResult[] = [];
+    // Deduplicate endpoints before firing parallel requests
     const seenEndpoints = new Set<string>();
-
+    const uniquePeers: PeerEndpoint[] = [];
     for (const peer of peers) {
-      if (results.length >= this.config.maxResults) {
-        break;
+      const key = `${peer.host.toLowerCase()}:${peer.port}`;
+      if (!seenEndpoints.has(key)) {
+        seenEndpoints.add(key);
+        uniquePeers.push(peer);
       }
-
-      const endpointKey = `${peer.host.toLowerCase()}:${peer.port}`;
-      if (seenEndpoints.has(endpointKey)) {
-        continue;
-      }
-      seenEndpoints.add(endpointKey);
-
-      const metadata = await this.config.metadataResolver.resolve(peer);
-      if (metadata === null) {
-        continue;
-      }
-
-      if (this.config.requireValidSignature) {
-        const valid = await this.verifyMetadataSignature(metadata);
-        if (!valid) {
-          continue;
-        }
-      }
-
-      if (!this.config.allowStaleMetadata && this.isStale(metadata)) {
-        continue;
-      }
-
-      results.push({
-        metadata,
-        host: peer.host,
-        port: peer.port,
-      });
     }
 
+    // Resolve all peers in parallel — bad-port timeouts no longer block good peers
+    const settled = await Promise.allSettled(
+      uniquePeers.map((peer) => this._resolveSinglePeer(peer)),
+    );
+
+    const results: LookupResult[] = [];
+    for (const r of settled) {
+      if (r.status === "fulfilled" && r.value !== null) {
+        results.push(r.value);
+        if (results.length >= this.config.maxResults) break;
+      }
+    }
     return results;
+  }
+
+  private async _resolveSinglePeer(peer: PeerEndpoint): Promise<LookupResult | null> {
+    const metadata = await this.config.metadataResolver.resolve(peer);
+    if (metadata === null) {
+      return null;
+    }
+
+    if (this.config.requireValidSignature) {
+      const valid = await this.verifyMetadataSignature(metadata);
+      if (!valid) {
+        return null;
+      }
+    }
+
+    if (!this.config.allowStaleMetadata && this.isStale(metadata)) {
+      return null;
+    }
+
+    return { metadata, host: peer.host, port: peer.port };
   }
 
   async verifyMetadataSignature(metadata: PeerMetadata): Promise<boolean> {

@@ -25,8 +25,8 @@ import {
 export interface BuyerProxyConfig {
   port: number
   node: AntseedNode
-  /** How long to cache discovered peers before re-querying DHT (ms). Default: 30000 */
-  peerCacheTtlMs?: number
+  /** How often to refresh the peer list from DHT in the background (ms). Default: 300000 (5 min) */
+  backgroundRefreshIntervalMs?: number
   /**
    * Pin all requests to a specific peer ID for this session.
    * The router is bypassed; the named peer is used directly if it is available
@@ -558,16 +558,16 @@ export class BuyerProxy {
   private readonly _server: Server
   private readonly _node: AntseedNode
   private readonly _port: number
-  private readonly _peerCacheTtlMs: number
+  private readonly _bgRefreshIntervalMs: number
   private readonly _pinnedPeerId: string | undefined
 
   private _cachedPeers: PeerInfo[] = []
-  private _cacheTimestamp = 0
+  private _bgRefreshHandle: ReturnType<typeof setInterval> | null = null
 
   constructor(config: BuyerProxyConfig) {
     this._node = config.node
     this._port = config.port
-    this._peerCacheTtlMs = config.peerCacheTtlMs ?? 30_000
+    this._bgRefreshIntervalMs = config.backgroundRefreshIntervalMs ?? 5 * 60_000
     this._pinnedPeerId = config.pinnedPeerId?.toLowerCase()
     this._server = createServer((req, res) => {
       this._handleRequest(req, res).catch((err) => {
@@ -581,19 +581,57 @@ export class BuyerProxy {
   }
 
   async start(): Promise<void> {
-    return new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       this._server.once('error', reject)
       this._server.listen(this._port, '127.0.0.1', () => {
         this._server.removeListener('error', reject)
         resolve()
       })
     })
+    this._startBackgroundRefresh()
   }
 
   async stop(): Promise<void> {
+    if (this._bgRefreshHandle) {
+      clearInterval(this._bgRefreshHandle)
+      this._bgRefreshHandle = null
+    }
     return new Promise((resolve) => {
       this._server.close(() => resolve())
     })
+  }
+
+  private _startBackgroundRefresh(): void {
+    this._bgRefreshHandle = setInterval(() => {
+      this._node.discoverPeers().then((peers) => {
+        if (peers.length > 0) {
+          this._mergePeers(peers)
+        }
+      }).catch(() => {/* background refresh failure is non-fatal */})
+    }, this._bgRefreshIntervalMs)
+  }
+
+  private _mergePeers(incoming: PeerInfo[]): void {
+    const existing = new Map(this._cachedPeers.map((p) => [p.peerId, p]))
+    let added = 0
+    for (const p of incoming) {
+      if (!existing.has(p.peerId)) {
+        existing.set(p.peerId, p)
+        added++
+      }
+    }
+    if (added > 0) {
+      this._cachedPeers = Array.from(existing.values())
+      log(`[background] Merged ${added} new peer(s) into cache (total: ${this._cachedPeers.length})`)
+    }
+  }
+
+  private _evictPeer(peerId: string): void {
+    const before = this._cachedPeers.length
+    this._cachedPeers = this._cachedPeers.filter((p) => p.peerId !== peerId)
+    if (this._cachedPeers.length < before) {
+      log(`Evicted failing peer ${peerId.slice(0, 12)}... from cache (${this._cachedPeers.length} remaining)`)
+    }
   }
 
   private async _readLocalSeederFallback(): Promise<PeerInfo | null> {
@@ -651,36 +689,26 @@ export class BuyerProxy {
   }
 
   private async _getPeers(): Promise<PeerInfo[]> {
-    const now = Date.now()
-    if (this._cachedPeers.length > 0 && now - this._cacheTimestamp < this._peerCacheTtlMs) {
+    // Return cache immediately — no TTL expiry; peers are evicted on failure
+    // and refreshed in the background on a fixed interval.
+    if (this._cachedPeers.length > 0) {
       return this._cachedPeers
     }
 
+    // Cache is empty — must block on discovery (first request or all peers evicted)
     const localSeeder = await this._readLocalSeederFallback()
     if (localSeeder) {
       this._cachedPeers = [localSeeder]
-      this._cacheTimestamp = now
       log(`Using local seeder ${localSeeder.peerId.slice(0, 12)}... @ ${localSeeder.publicAddress} (skipping DHT lookup)`)
       return this._cachedPeers
     }
 
     log('Discovering peers via DHT...')
     const peers = await this._node.discoverPeers()
-
     if (peers.length > 0) {
       this._cachedPeers = peers
-      this._cacheTimestamp = now
       log(`Found ${peers.length} peer(s)`)
-      return peers
     }
-
-    // DHT returned nothing — fall back to stale cached peers if available.
-    // The peer may still be reachable even if the DHT announcement expired.
-    if (this._cachedPeers.length > 0) {
-      log(`DHT returned 0 peers, reusing ${this._cachedPeers.length} stale cached peer(s)`)
-      return this._cachedPeers
-    }
-
     return peers
   }
 
@@ -1044,9 +1072,8 @@ export class BuyerProxy {
         })
       }
 
-      // Invalidate peer cache on connection errors so next request re-discovers
-      this._cachedPeers = []
-      this._cacheTimestamp = 0
+      // Evict only the failing peer — others remain usable
+      this._evictPeer(selectedPeer.peerId)
 
       if (res.headersSent) {
         // Headers already sent (streaming), can't retry
