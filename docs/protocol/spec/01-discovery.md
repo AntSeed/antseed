@@ -202,10 +202,11 @@ The seller runs an HTTP server that exposes its current metadata:
 
 The buyer resolves metadata from a discovered peer's HTTP endpoint:
 
-| Parameter              | Default | Description                                          |
-|------------------------|---------|------------------------------------------------------|
-| timeoutMs              | 5000    | HTTP fetch timeout in milliseconds                   |
-| metadataPortOffset     | 0       | Offset from the signaling port to the metadata port  |
+| Parameter              | Default | Description                                                         |
+|------------------------|---------|---------------------------------------------------------------------|
+| timeoutMs              | 2000    | HTTP fetch timeout in milliseconds                                  |
+| metadataPortOffset     | 0       | Offset from the signaling port to the metadata port                 |
+| failureCooldownMs      | 30000   | How long to skip an endpoint after it fails                         |
 
 The metadata URL is constructed as:
 
@@ -213,7 +214,9 @@ The metadata URL is constructed as:
 http://{host}:{port + metadataPortOffset}/metadata
 ```
 
-On any non-OK response, network error, timeout, or invalid JSON, the resolver returns `null` (fail-closed).
+On any non-OK response, network error, timeout, or invalid JSON, the resolver returns `null` (fail-closed) and marks both the specific endpoint and the peer's host as failed for `failureCooldownMs`. Subsequent resolution attempts for any port on the same host are skipped immediately until the cooldown expires.
+
+All peers returned by a DHT lookup are resolved in parallel, so a single slow or unreachable endpoint does not delay the others.
 
 ---
 
