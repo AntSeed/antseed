@@ -8,7 +8,7 @@ hide_title: true
 
 # Peer Discovery
 
-The discovery protocol uses the BitTorrent Mainline DHT (BEP 5) as a decentralized directory of seller nodes, combined with an HTTP metadata endpoint for retrieving provider details and Skills.
+The discovery protocol uses an AntSeed-owned DHT network (built on BEP 5) as a decentralized directory of seller nodes, combined with an HTTP metadata endpoint for retrieving provider details and Skills. All nodes bootstrap through AntSeed's dedicated DHT infrastructure, forming a private network separate from the public BitTorrent swarm.
 
 ## DHT Topic Hashing
 
@@ -35,9 +35,8 @@ Buyer model discovery queries canonical model topic first, then also queries `mo
 
 | Host | Port |
 |---|---|
-| `router.bittorrent.com` | 6881 |
-| `dht.transmissionbt.com` | 6881 |
-| `router.utorrent.com` | 6881 |
+| `dht1.antseed.com` | 6881 |
+| `dht2.antseed.com` | 6881 |
 
 ## DHT Configuration
 

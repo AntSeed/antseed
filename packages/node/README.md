@@ -133,7 +133,7 @@ interface NodeConfig {
 | `dataDir` | `~/.antseed` | Directory for identity keys, metering DB, and config |
 | `dhtPort` | `6881` / `0` | UDP port for DHT. Seller defaults to 6881, buyer uses OS-assigned |
 | `signalingPort` | `6882` | TCP port for P2P signaling and incoming connections (seller only) |
-| `bootstrapNodes` | Official nodes | Custom DHT bootstrap nodes for testing or private networks |
+| `bootstrapNodes` | AntSeed nodes | Additional DHT bootstrap nodes merged with the official AntSeed infrastructure |
 | `payments` | disabled | Optional seller-side payment channel + settlement lifecycle wiring |
 
 ## On-Chain Settlement Flow
@@ -195,7 +195,7 @@ import { NatTraversal, type NatMapping, type NatTraversalResult } from '@antseed
 
 // Discovery
 import { DHTNode, DEFAULT_DHT_CONFIG } from '@antseed/node';
-import { OFFICIAL_BOOTSTRAP_NODES, mergeBootstrapNodes, toBootstrapConfig } from '@antseed/node';
+import { OFFICIAL_BOOTSTRAP_NODES, mergeBootstrapNodes, toBootstrapConfig } from '@antseed/node'; // AntSeed-operated DHT bootstrap nodes
 import { MetadataServer, type MetadataServerConfig } from '@antseed/node';
 import type { PeerMetadata, ProviderAnnouncement } from '@antseed/node';
 

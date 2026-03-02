@@ -22,5 +22,6 @@ antseed dashboard                     Launch the local web dashboard
 antseed deposit                       Deposit USDC into escrow
 antseed withdraw                      Withdraw USDC from escrow
 antseed balance                       Check USDC balance
+antseed bootstrap                     Run a dedicated DHT bootstrap node
 antseed dev                           Development mode
 ```
