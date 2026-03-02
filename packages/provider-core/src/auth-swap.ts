@@ -81,7 +81,9 @@ export function validateRequestModel(
     return 'Request is missing a valid "model" field';
   }
 
-  if (!allowedModels.includes(model)) {
+  const normalizedModel = model.trim().toLowerCase();
+  const normalizedAllowed = allowedModels.map((m) => m.trim().toLowerCase());
+  if (!normalizedAllowed.includes(normalizedModel)) {
     return `Model "${model}" is not in the allowed list`;
   }
 
