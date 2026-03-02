@@ -50,7 +50,7 @@ describe('HttpMetadataResolver', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('skips other ports for a host after any port fails (host-level cache)', async () => {
+  it('does not skip other ports for the same host after one port fails', async () => {
     const fetchMock = vi.fn().mockRejectedValue(new Error('network down'));
     vi.stubGlobal('fetch', fetchMock);
 
@@ -59,14 +59,14 @@ describe('HttpMetadataResolver', () => {
       failureCooldownMs: 60_000,
     });
 
-    // First call on a random ephemeral port fails and marks the host
+    // First call on a random ephemeral port fails.
     const first = await resolver.resolve({ host: '18.200.194.8', port: 57882 });
-    // Second call on the correct port is skipped immediately (host-level cache)
+    // Second call on another port of the same host still attempts fetch.
     const second = await resolver.resolve({ host: '18.200.194.8', port: 6882 });
 
     expect(first).toBeNull();
     expect(second).toBeNull();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it('retries an endpoint after cooldown expires', async () => {
