@@ -244,14 +244,14 @@ function encodeBody(metadata: PeerMetadata): Uint8Array {
     parts.push(new Uint8Array([0])); // flag: absent
   }
 
-  // On-chain reputation: 1 flag byte + 10 data bytes (1 reputation + 4 sessionCount + 4 disputeCount + 1 reserved)
+  // On-chain reputation: 1 flag byte + 10 data bytes (1 reputation + 4 sessionCount + 4 reserved + 1 reserved)
   if (metadata.onChainReputation !== undefined) {
     parts.push(new Uint8Array([1])); // flag: present
     const repBuf = new ArrayBuffer(10);
     const repView = new DataView(repBuf);
     repView.setUint8(0, Math.min(255, Math.max(0, metadata.onChainReputation)));
     repView.setUint32(1, metadata.onChainSessionCount ?? 0, false);
-    repView.setUint32(5, metadata.onChainDisputeCount ?? 0, false);
+    repView.setUint32(5, 0, false); // reserved (was disputeCount)
     repView.setUint8(9, 0); // reserved
     parts.push(new Uint8Array(repBuf));
   } else {
@@ -556,7 +556,6 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
   // Optional on-chain reputation (flag + 10 bytes)
   let onChainReputation: number | undefined;
   let onChainSessionCount: number | undefined;
-  let onChainDisputeCount: number | undefined;
   const remainingBeforeRepSig = data.length - offset - 64;
   if (remainingBeforeRepSig >= 1) {
     const repFlag = data[offset]!;
@@ -566,8 +565,7 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
       const repView = new DataView(data.buffer, data.byteOffset + offset, 10);
       onChainReputation = repView.getUint8(0);
       onChainSessionCount = repView.getUint32(1, false);
-      onChainDisputeCount = repView.getUint32(5, false);
-      // byte 9 is reserved
+      // bytes 5-9 are reserved
       offset += 10;
     }
   }
@@ -586,7 +584,6 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
     ...(evmAddress !== undefined ? { evmAddress } : {}),
     ...(onChainReputation !== undefined ? { onChainReputation } : {}),
     ...(onChainSessionCount !== undefined ? { onChainSessionCount } : {}),
-    ...(onChainDisputeCount !== undefined ? { onChainDisputeCount } : {}),
     region,
     timestamp,
     signature,

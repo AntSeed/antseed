@@ -8,14 +8,10 @@ export interface ReputationVerification {
   actualReputation: number;
   /** The actual on-chain session count. */
   actualSessionCount: number;
-  /** The actual on-chain dispute count. */
-  actualDisputeCount: number;
   /** The claimed on-chain reputation score from metadata. */
   claimedReputation?: number;
   /** The claimed on-chain session count from metadata. */
   claimedSessionCount?: number;
-  /** The claimed on-chain dispute count from metadata. */
-  claimedDisputeCount?: number;
 }
 
 /**
@@ -33,22 +29,18 @@ export async function verifyReputation(
 
   const reputation = await escrowClient.getReputation(metadata.evmAddress);
 
-  const actualReputation = reputation.weightedAverage;
-  const actualSessionCount = reputation.sessionCount;
-  const actualDisputeCount = reputation.disputeCount;
+  const actualReputation    = reputation.avgRating;
+  const actualSessionCount  = reputation.totalTransactions;
 
   const valid =
     metadata.onChainReputation === actualReputation &&
-    metadata.onChainSessionCount === actualSessionCount &&
-    metadata.onChainDisputeCount === actualDisputeCount;
+    metadata.onChainSessionCount === actualSessionCount;
 
   return {
     valid,
     actualReputation,
     actualSessionCount,
-    actualDisputeCount,
-    claimedReputation: metadata.onChainReputation,
+    claimedReputation:   metadata.onChainReputation,
     claimedSessionCount: metadata.onChainSessionCount,
-    claimedDisputeCount: metadata.onChainDisputeCount,
   };
 }

@@ -158,16 +158,14 @@ export class PeerAnnouncer {
       if (includeOnChainReputation) {
         try {
           const reputation = await this.config.escrowClient.getReputation(evmAddress);
-          metadata.onChainReputation = reputation.weightedAverage;
-          metadata.onChainSessionCount = reputation.sessionCount;
-          metadata.onChainDisputeCount = reputation.disputeCount;
+          metadata.onChainReputation = reputation.avgRating;
+          metadata.onChainSessionCount = reputation.totalTransactions;
         } catch {
           // Silently continue without reputation data
         }
       } else if (this._latestMetadata) {
         metadata.onChainReputation = this._latestMetadata.onChainReputation;
         metadata.onChainSessionCount = this._latestMetadata.onChainSessionCount;
-        metadata.onChainDisputeCount = this._latestMetadata.onChainDisputeCount;
       }
     }
 

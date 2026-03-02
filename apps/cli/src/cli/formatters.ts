@@ -1,5 +1,13 @@
 import chalk from 'chalk';
 
+/** Format USDC base units (6 decimals) to human-readable string, e.g. 1500000n → "1.5" */
+export function formatUsdc(baseUnits: bigint): string {
+  const whole = baseUnits / 1_000_000n;
+  const frac = baseUnits % 1_000_000n;
+  const fracStr = frac.toString().padStart(6, '0').replace(/0+$/, '') || '0';
+  return `${whole}.${fracStr}`;
+}
+
 /**
  * Format a USD earnings string with a dollar sign and green color.
  * @param amountUSD - Amount as string (e.g., "1.234567")

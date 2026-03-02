@@ -1,60 +1,38 @@
-import { Contract, JsonRpcProvider, type AbstractSigner } from 'ethers';
+import { Contract, JsonRpcProvider, type AbstractSigner, type ContractTransactionResponse } from 'ethers';
 
-export interface BaseEscrowConfig {
-  /** Base JSON-RPC endpoint (e.g. http://127.0.0.1:8545 for anvil) */
+export interface EscrowConfig {
+  /** Base JSON-RPC endpoint (e.g. https://mainnet.base.org) */
   rpcUrl: string;
   /** Deployed AntseedEscrow contract address */
   contractAddress: string;
   /** USDC token contract address */
   usdcAddress: string;
-  /** Confirmation commitment level (not used on EVM, reserved for future) */
-  commitment?: 'latest' | 'finalized';
+  /** Chain ID (8453 = Base mainnet, 84532 = Base Sepolia) */
+  chainId: number;
 }
 
-export interface SessionInfo {
-  buyer: string;
-  seller: string;
-  lockedAmount: bigint;
-  status: number;
-  expiresAt: number;
-  settledAmount: bigint;
-  score: number;
-  disputeClaimedAmount: bigint;
-  disputeOpenedAt: number;
-  disputeBuyerResponded: boolean;
+export interface BuyerBalance {
+  available: bigint;
+  pendingWithdrawal: bigint;
+  withdrawalReadyAt: number;  // unix seconds; 0 if no pending withdrawal
 }
 
-export interface ReputationInfo {
-  totalWeightedScore: bigint;
-  totalWeight: bigint;
-  sessionCount: number;
-  disputeCount: number;
-  weightedAverage: number;
+export interface SessionAuthInfo {
+  nonce:    number;
+  authMax:  bigint;
+  authUsed: bigint;
+  deadline: number;
 }
 
-const ESCROW_ABI = [
-  // Deposit & Withdraw
-  'function deposit(uint256 amount) external',
-  'function withdraw(uint256 amount) external',
-
-  // Session lifecycle
-  'function commitLock(bytes32 sessionId, address buyer, uint256 amount, bytes calldata buyerSig) external',
-  'function extendLock(bytes32 sessionId, uint256 additionalAmount, bytes calldata buyerSig) external',
-  'function settle(bytes32 sessionId, uint256 runningTotal, uint8 score, bytes calldata buyerSig) external',
-
-  // Disputes
-  'function openDispute(bytes32 sessionId, uint256 claimedAmount) external',
-  'function respondDispute(bytes32 sessionId) external',
-  'function resolveDispute(bytes32 sessionId) external',
-
-  // Expired lock
-  'function releaseExpiredLock(bytes32 sessionId) external',
-
-  // View functions
-  'function buyers(address) external view returns (uint256 deposited, uint256 committed)',
-  'function sessions(bytes32) external view returns (address buyer, address seller, uint256 lockedAmount, uint8 status, uint64 expiresAt, uint256 settledAmount, uint8 score, uint256 disputeClaimedAmount, uint64 disputeOpenedAt, bool disputeBuyerResponded, bool exists)',
-  'function reputations(address) external view returns (uint256 totalWeightedScore, uint256 totalWeight, uint256 sessionCount, uint256 disputeCount)',
-] as const;
+export interface ReputationData {
+  avgRating:          number;
+  ratingCount:        number;
+  stakedAmount:       bigint;
+  totalTransactions:  number;
+  totalVolume:        bigint;
+  uniqueBuyersServed: number;
+  ageDays:            number;
+}
 
 const ERC20_ABI = [
   'function approve(address spender, uint256 amount) external returns (bool)',
@@ -62,198 +40,233 @@ const ERC20_ABI = [
   'function allowance(address owner, address spender) external view returns (uint256)',
 ] as const;
 
-export class BaseEscrowClient {
+const ESCROW_ABI = [
+  // Buyer
+  'function deposit(uint256 amount) external',
+  'function requestWithdrawal(uint256 amount) external',
+  'function executeWithdrawal() external',
+  'function cancelWithdrawal() external',
+
+  // Seller
+  'function charge(address buyer, uint256 amount, bytes32 sessionId, uint256 maxAmount, uint256 nonce, uint256 deadline, bytes calldata sig) external',
+  'function claimEarnings() external',
+  'function stake(uint256 amount) external',
+  'function unstake(uint256 amount) external',
+
+  // Platform
+  'function sweepFees() external',
+
+  // Reputation
+  'function rateSeller(address seller, uint8 score) external',
+  'function canRate(address buyer, address seller) external view returns (bool)',
+  'function getReputation(address seller) external view returns (tuple(uint256 avgRating, uint256 ratingCount, uint256 stakedAmount, uint256 totalTransactions, uint256 totalVolume, uint256 uniqueBuyersServed, uint256 ageDays))',
+
+  // Views
+  'function getBuyerBalance(address buyer) external view returns (uint256 available, uint256 pendingWithdrawal, uint256 withdrawalReadyAt)',
+  'function getSessionAuth(address buyer, address seller, bytes32 sessionId) external view returns (uint256 nonce, uint256 authMax, uint256 authUsed, uint256 deadline)',
+
+  // State reads
+  'function buyers(address) external view returns (uint256 balance, uint256 withdrawalAmount, uint256 withdrawalRequestedAt, uint256 firstTransactionAt, uint256 uniqueSellersCount)',
+  'function sellers(address) external view returns (uint256 pendingEarnings, uint256 stakedAmount, uint256 stakedSince, uint256 firstTransactionAt, uint256 totalTransactions, uint256 totalVolume, uint256 uniqueBuyersCount)',
+  'function hasInteracted(address buyer, address seller) external view returns (bool)',
+  'function accumulatedFees() external view returns (uint256)',
+  'function platformFeeBps() external view returns (uint16)',
+  'function paused() external view returns (bool)',
+  'function DOMAIN_SEPARATOR() external view returns (bytes32)',
+] as const;
+
+export class EscrowClient {
   private readonly _provider: JsonRpcProvider;
   private readonly _contractAddress: string;
   private readonly _usdcAddress: string;
+  private readonly _chainId: number;
+  /** Local nonce cache to avoid pending-tx collisions */
   private readonly _nonceCursor = new Map<string, number>();
 
-  constructor(config: BaseEscrowConfig) {
-    this._provider = new JsonRpcProvider(config.rpcUrl);
+  constructor(config: EscrowConfig) {
+    this._provider        = new JsonRpcProvider(config.rpcUrl);
     this._contractAddress = config.contractAddress;
-    this._usdcAddress = config.usdcAddress;
+    this._usdcAddress     = config.usdcAddress;
+    this._chainId         = config.chainId;
   }
 
-  get provider(): JsonRpcProvider { return this._provider; }
-  get contractAddress(): string { return this._contractAddress; }
-  get usdcAddress(): string { return this._usdcAddress; }
+  get provider():        JsonRpcProvider { return this._provider; }
+  get contractAddress(): string          { return this._contractAddress; }
+  get usdcAddress():     string          { return this._usdcAddress; }
+  get chainId():         number          { return this._chainId; }
 
-  private _ensureConnected(signer: AbstractSigner): AbstractSigner {
-    if (signer.provider) {
-      return signer;
-    }
-    return signer.connect(this._provider);
+  // ── Internal helpers ──────────────────────────────────────────────────────
+
+  private _connected(signer: AbstractSigner): AbstractSigner {
+    return signer.provider ? signer : signer.connect(this._provider);
   }
 
-  private async reserveNonce(address: string): Promise<number> {
-    const networkNonce = await this._provider.getTransactionCount(address, 'pending');
-    const cachedNext = this._nonceCursor.get(address);
-    const nonce = cachedNext === undefined ? networkNonce : Math.max(networkNonce, cachedNext);
+  private async _reserveNonce(address: string): Promise<number> {
+    const network = await this._provider.getTransactionCount(address, 'pending');
+    const cached  = this._nonceCursor.get(address);
+    const nonce   = cached === undefined ? network : Math.max(network, cached);
     this._nonceCursor.set(address, nonce + 1);
     return nonce;
   }
 
-  private async _prepareEscrowWrite(signer: AbstractSigner): Promise<{
-    contract: Contract;
-    nonce: number;
-  }> {
-    const connected = this._ensureConnected(signer);
-    const signerAddress = await connected.getAddress();
-    const nonce = await this.reserveNonce(signerAddress);
-    const contract = new Contract(this._contractAddress, ESCROW_ABI, connected);
+  private async _prepareWrite(signer: AbstractSigner): Promise<{ contract: Contract; nonce: number }> {
+    const s = this._connected(signer);
+    const addr = await s.getAddress();
+    const nonce = await this._reserveNonce(addr);
+    const contract = new Contract(this._contractAddress, ESCROW_ABI, s);
     return { contract, nonce };
   }
 
+  private _readContract(): Contract {
+    return new Contract(this._contractAddress, ESCROW_ABI, this._provider);
+  }
+
+  private _usdcContract(signer: AbstractSigner): Contract {
+    return new Contract(this._usdcAddress, ERC20_ABI, this._connected(signer));
+  }
+
+  private async _approveIfNeeded(signer: AbstractSigner, amount: bigint): Promise<void> {
+    const s = this._connected(signer);
+    const addr = await s.getAddress();
+    const usdc = this._usdcContract(signer);
+    const current = await usdc.getFunction('allowance')(addr, this._contractAddress) as bigint;
+    if (current >= amount) return;
+    const nonce = await this._reserveNonce(addr);
+    const tx = await usdc.getFunction('approve')(this._contractAddress, amount, { nonce });
+    await tx.wait();
+  }
+
+  private static async _exec(tx: ContractTransactionResponse): Promise<string> {
+    const receipt = await tx.wait();
+    if (!receipt) throw new Error('Transaction receipt is null');
+    return receipt.hash;
+  }
+
+  // ── Buyer operations ──────────────────────────────────────────────────────
+
   async deposit(signer: AbstractSigner, amount: bigint): Promise<string> {
-    const connected = this._ensureConnected(signer);
-    const signerAddress = await connected.getAddress();
-    const usdc = new Contract(this._usdcAddress, ERC20_ABI, connected);
-    const approveNonce = await this.reserveNonce(signerAddress);
-    const approveTx = await usdc.getFunction('approve')(this._contractAddress, amount, { nonce: approveNonce });
-    await approveTx.wait();
-    const contract = new Contract(this._contractAddress, ESCROW_ABI, connected);
-    const depositNonce = await this.reserveNonce(signerAddress);
-    const tx = await contract.getFunction('deposit')(amount, { nonce: depositNonce });
-    const receipt = await tx.wait();
-    return receipt.hash;
+    await this._approveIfNeeded(signer, amount);
+    const { contract, nonce } = await this._prepareWrite(signer);
+    return EscrowClient._exec(await contract.getFunction('deposit')(amount, { nonce }));
   }
 
-  async withdraw(signer: AbstractSigner, amount: bigint): Promise<string> {
-    const { contract, nonce } = await this._prepareEscrowWrite(signer);
-    const tx = await contract.getFunction('withdraw')(amount, { nonce });
-    const receipt = await tx.wait();
-    return receipt.hash;
+  async requestWithdrawal(signer: AbstractSigner, amount: bigint): Promise<string> {
+    const { contract, nonce } = await this._prepareWrite(signer);
+    return EscrowClient._exec(await contract.getFunction('requestWithdrawal')(amount, { nonce }));
   }
 
-  async commitLock(
-    seller: AbstractSigner,
-    buyerAddr: string,
+  async executeWithdrawal(signer: AbstractSigner): Promise<string> {
+    const { contract, nonce } = await this._prepareWrite(signer);
+    return EscrowClient._exec(await contract.getFunction('executeWithdrawal')({ nonce }));
+  }
+
+  async cancelWithdrawal(signer: AbstractSigner): Promise<string> {
+    const { contract, nonce } = await this._prepareWrite(signer);
+    return EscrowClient._exec(await contract.getFunction('cancelWithdrawal')({ nonce }));
+  }
+
+  // ── Seller operations ─────────────────────────────────────────────────────
+
+  async charge(
+    seller:    AbstractSigner,
+    buyer:     string,
+    amount:    bigint,
     sessionId: string,
-    amount: bigint,
-    buyerSig: string,
+    maxAmount: bigint,
+    authNonce: number,
+    deadline:  number,
+    sig:       string,
   ): Promise<string> {
-    const { contract, nonce } = await this._prepareEscrowWrite(seller);
-    const tx = await contract.getFunction('commitLock')(sessionId, buyerAddr, amount, buyerSig, { nonce });
-    const receipt = await tx.wait();
-    return receipt.hash;
+    const { contract, nonce } = await this._prepareWrite(seller);
+    return EscrowClient._exec(
+      await contract.getFunction('charge')(buyer, amount, sessionId, maxAmount, authNonce, deadline, sig, { nonce }),
+    );
   }
 
-  async extendLock(
-    seller: AbstractSigner,
-    sessionId: string,
-    additionalAmount: bigint,
-    buyerSig: string,
-  ): Promise<string> {
-    const { contract, nonce } = await this._prepareEscrowWrite(seller);
-    const tx = await contract.getFunction('extendLock')(sessionId, additionalAmount, buyerSig, { nonce });
-    const receipt = await tx.wait();
-    return receipt.hash;
+  async claimEarnings(seller: AbstractSigner): Promise<string> {
+    const { contract, nonce } = await this._prepareWrite(seller);
+    return EscrowClient._exec(await contract.getFunction('claimEarnings')({ nonce }));
   }
 
-  async settle(
-    seller: AbstractSigner,
-    sessionId: string,
-    runningTotal: bigint,
-    score: number,
-    buyerSig: string,
-  ): Promise<string> {
-    const { contract, nonce } = await this._prepareEscrowWrite(seller);
-    const tx = await contract.getFunction('settle')(sessionId, runningTotal, score, buyerSig, { nonce });
-    const receipt = await tx.wait();
-    return receipt.hash;
+  async stake(signer: AbstractSigner, amount: bigint): Promise<string> {
+    await this._approveIfNeeded(signer, amount);
+    const { contract, nonce } = await this._prepareWrite(signer);
+    return EscrowClient._exec(await contract.getFunction('stake')(amount, { nonce }));
   }
 
-  async openDispute(
-    caller: AbstractSigner,
-    sessionId: string,
-    claimedAmount: bigint,
-  ): Promise<string> {
-    const { contract, nonce } = await this._prepareEscrowWrite(caller);
-    const tx = await contract.getFunction('openDispute')(sessionId, claimedAmount, { nonce });
-    const receipt = await tx.wait();
-    return receipt.hash;
+  async unstake(signer: AbstractSigner, amount: bigint): Promise<string> {
+    const { contract, nonce } = await this._prepareWrite(signer);
+    return EscrowClient._exec(await contract.getFunction('unstake')(amount, { nonce }));
   }
 
-  async respondDispute(
-    buyer: AbstractSigner,
-    sessionId: string,
-  ): Promise<string> {
-    const { contract, nonce } = await this._prepareEscrowWrite(buyer);
-    const tx = await contract.getFunction('respondDispute')(sessionId, { nonce });
-    const receipt = await tx.wait();
-    return receipt.hash;
+  // ── Platform ──────────────────────────────────────────────────────────────
+
+  async sweepFees(signer: AbstractSigner): Promise<string> {
+    const { contract, nonce } = await this._prepareWrite(signer);
+    return EscrowClient._exec(await contract.getFunction('sweepFees')({ nonce }));
   }
 
-  async resolveDispute(
-    caller: AbstractSigner,
-    sessionId: string,
-  ): Promise<string> {
-    const { contract, nonce } = await this._prepareEscrowWrite(caller);
-    const tx = await contract.getFunction('resolveDispute')(sessionId, { nonce });
-    const receipt = await tx.wait();
-    return receipt.hash;
+  // ── Reputation ────────────────────────────────────────────────────────────
+
+  async rateSeller(buyer: AbstractSigner, seller: string, score: number): Promise<string> {
+    const { contract, nonce } = await this._prepareWrite(buyer);
+    return EscrowClient._exec(await contract.getFunction('rateSeller')(seller, score, { nonce }));
   }
 
-  async releaseExpiredLock(
-    buyer: AbstractSigner,
-    sessionId: string,
-  ): Promise<string> {
-    const { contract, nonce } = await this._prepareEscrowWrite(buyer);
-    const tx = await contract.getFunction('releaseExpiredLock')(sessionId, { nonce });
-    const receipt = await tx.wait();
-    return receipt.hash;
+  async canRate(buyerAddr: string, sellerAddr: string): Promise<boolean> {
+    return this._readContract().getFunction('canRate')(buyerAddr, sellerAddr) as Promise<boolean>;
   }
 
-  async getBuyerAccount(buyerAddr: string): Promise<{
-    deposited: bigint;
-    committed: bigint;
-    available: bigint;
-  }> {
-    const contract = new Contract(this._contractAddress, ESCROW_ABI, this._provider);
-    const result = await contract.getFunction('buyers')(buyerAddr);
-    const deposited = result[0] as bigint;
-    const committed = result[1] as bigint;
+  async getReputation(sellerAddr: string): Promise<ReputationData> {
+    const r = await this._readContract().getFunction('getReputation')(sellerAddr);
     return {
-      deposited,
-      committed,
-      available: deposited - committed,
+      avgRating:          Number(r.avgRating),
+      ratingCount:        Number(r.ratingCount),
+      stakedAmount:       r.stakedAmount as bigint,
+      totalTransactions:  Number(r.totalTransactions),
+      totalVolume:        r.totalVolume as bigint,
+      uniqueBuyersServed: Number(r.uniqueBuyersServed),
+      ageDays:            Number(r.ageDays),
     };
   }
 
-  async getSession(sessionId: string): Promise<SessionInfo> {
-    const contract = new Contract(this._contractAddress, ESCROW_ABI, this._provider);
-    const result = await contract.getFunction('sessions')(sessionId);
+  // ── View helpers ──────────────────────────────────────────────────────────
+
+  async getBuyerBalance(buyerAddr: string): Promise<BuyerBalance> {
+    const r = await this._readContract().getFunction('getBuyerBalance')(buyerAddr);
     return {
-      buyer: result[0],
-      seller: result[1],
-      lockedAmount: result[2],
-      status: Number(result[3]),
-      expiresAt: Number(result[4]),
-      settledAmount: result[5],
-      score: Number(result[6]),
-      disputeClaimedAmount: result[7],
-      disputeOpenedAt: Number(result[8]),
-      disputeBuyerResponded: result[9],
+      available:         r[0] as bigint,
+      pendingWithdrawal: r[1] as bigint,
+      withdrawalReadyAt: Number(r[2]),
     };
   }
 
-  async getReputation(sellerAddr: string): Promise<ReputationInfo> {
-    const contract = new Contract(this._contractAddress, ESCROW_ABI, this._provider);
-    const result = await contract.getFunction('reputations')(sellerAddr);
-    const totalWeightedScore = result[0] as bigint;
-    const totalWeight = result[1] as bigint;
-    const sessionCount = Number(result[2]);
-    const disputeCount = Number(result[3]);
-    const weightedAverage = totalWeight > 0n
-      ? Number(totalWeightedScore / totalWeight)
-      : 50;
+  async getSessionAuth(buyerAddr: string, sellerAddr: string, sessionId: string): Promise<SessionAuthInfo> {
+    const r = await this._readContract().getFunction('getSessionAuth')(buyerAddr, sellerAddr, sessionId);
     return {
-      totalWeightedScore,
-      totalWeight,
-      sessionCount,
-      disputeCount,
-      weightedAverage,
+      nonce:    Number(r[0]),
+      authMax:  r[1] as bigint,
+      authUsed: r[2] as bigint,
+      deadline: Number(r[3]),
     };
+  }
+
+  async getAccumulatedFees(): Promise<bigint> {
+    return this._readContract().getFunction('accumulatedFees')() as Promise<bigint>;
+  }
+
+  async getPlatformFeeBps(): Promise<number> {
+    const bps = await this._readContract().getFunction('platformFeeBps')();
+    return Number(bps);
+  }
+
+  async isPaused(): Promise<boolean> {
+    return this._readContract().getFunction('paused')() as Promise<boolean>;
+  }
+
+  async getSellerPendingEarnings(sellerAddr: string): Promise<bigint> {
+    const r = await this._readContract().getFunction('sellers')(sellerAddr);
+    return r[0] as bigint;
   }
 
   async getUSDCBalance(ownerAddr: string): Promise<bigint> {
@@ -261,3 +274,7 @@ export class BaseEscrowClient {
     return usdc.getFunction('balanceOf')(ownerAddr) as Promise<bigint>;
   }
 }
+
+/** @deprecated Use EscrowClient. */
+export { EscrowClient as BaseEscrowClient };
+export type { EscrowConfig as BaseEscrowConfig };

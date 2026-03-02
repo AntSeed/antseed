@@ -1,11 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { isAddress, verifyMessage, getBytes, solidityPackedKeccak256 } from 'ethers';
+import { isAddress, verifyTypedData } from 'ethers';
 import { identityToEvmWallet, identityToEvmAddress } from '../src/payments/evm/keypair.js';
 import {
-  buildLockMessageHash,
-  buildSettlementMessageHash,
-  buildExtendLockMessageHash,
-  signMessageEcdsa,
+  SPENDING_AUTH_TYPES,
+  makeEscrowDomain,
+  signSpendingAuth,
   buildReceiptMessage,
   buildAckMessage,
   signMessageEd25519,
@@ -51,73 +50,59 @@ describe('EVM keypair from identity', () => {
   it('identityToEvmAddress returns the same address as the wallet', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'lch-test-'));
     const identity = await loadOrCreateIdentity(dir);
-    const wallet = identityToEvmWallet(identity);
+    const wallet  = identityToEvmWallet(identity);
     const address = identityToEvmAddress(identity);
 
     expect(address).toBe(wallet.address);
   });
 });
 
-describe('ECDSA signature helpers', () => {
-  it('sign and recover round-trip for lock message', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'lch-test-'));
+describe('EIP-712 SpendingAuth signature', () => {
+  it('sign and verify round-trip', async () => {
+    const dir      = await mkdtemp(join(tmpdir(), 'lch-test-'));
     const identity = await loadOrCreateIdentity(dir);
-    const wallet = identityToEvmWallet(identity);
+    const wallet   = identityToEvmWallet(identity);
 
+    const domain    = makeEscrowDomain(31337, '0x' + 'ca'.repeat(20));
     const sessionId = '0x' + '01'.repeat(32);
-    const seller = '0x' + 'ab'.repeat(20);
-    const amount = 1_000_000n;
+    const seller    = '0x' + 'ab'.repeat(20);
+    const maxAmount = 2_000_000n;
+    const nonce     = 1;
+    const deadline  = Math.floor(Date.now() / 1000) + 3600;
 
-    const messageHash = buildLockMessageHash(sessionId, seller, amount);
-    const sig = await signMessageEcdsa(wallet, messageHash);
+    const sig = await signSpendingAuth(wallet, domain, { seller, sessionId, maxAmount, nonce, deadline });
 
-    const recoveredAddress = verifyMessage(getBytes(messageHash), sig);
-    expect(recoveredAddress.toLowerCase()).toBe(wallet.address.toLowerCase());
+    const recovered = verifyTypedData(
+      domain,
+      SPENDING_AUTH_TYPES,
+      { seller, sessionId, maxAmount, nonce, deadline },
+      sig,
+    );
+
+    expect(recovered.toLowerCase()).toBe(wallet.address.toLowerCase());
   });
 
-  it('buildLockMessageHash produces correct keccak256 with domain byte 0x01', () => {
+  it('different nonce produces different signature', async () => {
+    const dir      = await mkdtemp(join(tmpdir(), 'lch-test-'));
+    const identity = await loadOrCreateIdentity(dir);
+    const wallet   = identityToEvmWallet(identity);
+
+    const domain    = makeEscrowDomain(31337, '0x' + 'ca'.repeat(20));
     const sessionId = '0x' + '01'.repeat(32);
-    const seller = '0x' + 'ab'.repeat(20);
-    const amount = 500_000n;
+    const seller    = '0x' + 'ab'.repeat(20);
+    const maxAmount = 2_000_000n;
+    const deadline  = Math.floor(Date.now() / 1000) + 3600;
 
-    const hash = buildLockMessageHash(sessionId, seller, amount);
-    const expected = solidityPackedKeccak256(
-      ['bytes1', 'bytes32', 'address', 'uint256'],
-      ['0x01', sessionId, seller, amount],
-    );
-    expect(hash).toBe(expected);
-  });
+    const sig1 = await signSpendingAuth(wallet, domain, { seller, sessionId, maxAmount, nonce: 1, deadline });
+    const sig2 = await signSpendingAuth(wallet, domain, { seller, sessionId, maxAmount, nonce: 2, deadline });
 
-  it('buildSettlementMessageHash produces correct hash', () => {
-    const sessionId = '0x' + '02'.repeat(32);
-    const runningTotal = 400_000n;
-    const score = 85;
-
-    const hash = buildSettlementMessageHash(sessionId, runningTotal, score);
-    const expected = solidityPackedKeccak256(
-      ['bytes32', 'uint256', 'uint8'],
-      [sessionId, runningTotal, score],
-    );
-    expect(hash).toBe(expected);
-  });
-
-  it('buildExtendLockMessageHash produces correct hash with domain byte 0x02', () => {
-    const sessionId = '0x' + '03'.repeat(32);
-    const seller = '0x' + 'cd'.repeat(20);
-    const additionalAmount = 200_000n;
-
-    const hash = buildExtendLockMessageHash(sessionId, seller, additionalAmount);
-    const expected = solidityPackedKeccak256(
-      ['bytes1', 'bytes32', 'address', 'uint256'],
-      ['0x02', sessionId, seller, additionalAmount],
-    );
-    expect(hash).toBe(expected);
+    expect(sig1).not.toBe(sig2);
   });
 });
 
 describe('Ed25519 off-chain signatures', () => {
   it('buildReceiptMessage produces 76-byte message', () => {
-    const sessionId = new Uint8Array(32).fill(1);
+    const sessionId    = new Uint8Array(32).fill(1);
     const runningTotal = 1_000_000n;
     const requestCount = 5;
     const responseHash = new Uint8Array(32).fill(0xab);
@@ -129,7 +114,7 @@ describe('Ed25519 off-chain signatures', () => {
   });
 
   it('buildAckMessage produces 44-byte message', () => {
-    const sessionId = new Uint8Array(32).fill(2);
+    const sessionId    = new Uint8Array(32).fill(2);
     const runningTotal = 500_000n;
     const requestCount = 3;
 
@@ -139,23 +124,23 @@ describe('Ed25519 off-chain signatures', () => {
   });
 
   it('Ed25519 sign and verify round-trip', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'lch-test-'));
+    const dir      = await mkdtemp(join(tmpdir(), 'lch-test-'));
     const identity = await loadOrCreateIdentity(dir);
 
     const message = new Uint8Array([1, 2, 3, 4, 5]);
-    const sig = await signMessageEd25519(identity, message);
-    const valid = await verifyMessageEd25519(identity.publicKey, sig, message);
+    const sig     = await signMessageEd25519(identity, message);
+    const valid   = await verifyMessageEd25519(identity.publicKey, sig, message);
     expect(valid).toBe(true);
   });
 
   it('Ed25519 verify rejects tampered message', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'lch-test-'));
+    const dir      = await mkdtemp(join(tmpdir(), 'lch-test-'));
     const identity = await loadOrCreateIdentity(dir);
 
-    const message = new Uint8Array([1, 2, 3, 4, 5]);
-    const sig = await signMessageEd25519(identity, message);
+    const message  = new Uint8Array([1, 2, 3, 4, 5]);
+    const sig      = await signMessageEd25519(identity, message);
     const tampered = new Uint8Array([1, 2, 3, 4, 6]);
-    const valid = await verifyMessageEd25519(identity.publicKey, sig, tampered);
+    const valid    = await verifyMessageEd25519(identity.publicKey, sig, tampered);
     expect(valid).toBe(false);
   });
 
@@ -166,8 +151,8 @@ describe('Ed25519 off-chain signatures', () => {
     const identity2 = await loadOrCreateIdentity(dir2);
 
     const message = new Uint8Array([10, 20, 30]);
-    const sig = await signMessageEd25519(identity1, message);
-    const valid = await verifyMessageEd25519(identity2.publicKey, sig, message);
+    const sig     = await signMessageEd25519(identity1, message);
+    const valid   = await verifyMessageEd25519(identity2.publicKey, sig, message);
     expect(valid).toBe(false);
   });
 });

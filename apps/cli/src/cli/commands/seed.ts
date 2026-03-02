@@ -14,6 +14,7 @@ import { setupShutdownHandler } from '../shutdown.js'
 import { loadProviderPlugin, buildPluginConfig } from '../../plugins/loader.js'
 import { resolveEffectiveSellerConfig, type SellerRuntimeOverrides } from '../../config/effective.js'
 import type { SellerCLIConfig } from '../../config/types.js'
+import { parseOptionalBoolEnv, isRpcReachable } from '../payment-utils.js'
 
 function getStateFile(dataDir: string): string {
   return join(dataDir, 'daemon.state.json')
@@ -25,42 +26,6 @@ function providerConfigToEnv(p: CLIProviderConfig): Record<string, string> {
   if (p.authValue) env['ANTHROPIC_API_KEY'] = p.authValue
   if (p.authType) env['ANTSEED_AUTH_TYPE'] = p.authType
   return env
-}
-
-function parseOptionalBoolEnv(value: string | undefined): boolean | null {
-  if (value === undefined) return null
-  const normalized = value.trim().toLowerCase()
-  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true
-  if (['0', 'false', 'no', 'off'].includes(normalized)) return false
-  return null
-}
-
-async function isRpcReachable(rpcUrl: string, timeoutMs = 1500): Promise<boolean> {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), timeoutMs)
-
-  try {
-    const response = await fetch(rpcUrl, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'eth_chainId',
-        params: [],
-      }),
-      signal: controller.signal,
-    })
-
-    if (!response.ok) return false
-
-    const payload = await response.json() as { result?: unknown }
-    return typeof payload.result === 'string' && payload.result.startsWith('0x')
-  } catch {
-    return false
-  } finally {
-    clearTimeout(timeout)
-  }
 }
 
 function toUSDCBaseUnits(value: string | undefined, fallbackBaseUnits: string): string {

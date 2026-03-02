@@ -3,12 +3,8 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { getGlobalOptions } from './types.js';
 import { loadConfig } from '../../config/loader.js';
-import {
-  loadOrCreateIdentity,
-  BaseEscrowClient,
-  identityToEvmWallet,
-  identityToEvmAddress,
-} from '@antseed/node';
+import { loadOrCreateIdentity, identityToEvmWallet, identityToEvmAddress } from '@antseed/node';
+import { createEscrowClient, parseUsdcToBaseUnits } from '../payment-utils.js';
 
 export function registerDepositCommand(program: Command): void {
   program
@@ -31,18 +27,12 @@ export function registerDepositCommand(program: Command): void {
         process.exit(1);
       }
 
-      // Convert human-readable USDC to base units (6 decimals)
-      const amountBaseUnits = BigInt(Math.round(amountFloat * 1_000_000));
+      const amountBaseUnits = parseUsdcToBaseUnits(amountFloat);
 
       const identity = await loadOrCreateIdentity(globalOpts.dataDir);
       const wallet = identityToEvmWallet(identity);
       const address = identityToEvmAddress(identity);
-
-      const escrowClient = new BaseEscrowClient({
-        rpcUrl: payments.crypto.rpcUrl,
-        contractAddress: payments.crypto.escrowContractAddress,
-        usdcAddress: payments.crypto.usdcContractAddress,
-      });
+      const escrowClient = createEscrowClient(payments.crypto);
 
       console.log(chalk.dim(`Wallet: ${address}`));
       console.log(chalk.dim(`Amount: ${amountFloat} USDC (${amountBaseUnits} base units)`));

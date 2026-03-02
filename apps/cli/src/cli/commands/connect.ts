@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { getGlobalOptions } from './types.js'
 import { loadConfig } from '../../config/loader.js'
-import { AntseedNode, BaseEscrowClient, loadOrCreateIdentity, identityToEvmAddress, getInstance } from '@antseed/node'
+import { AntseedNode, loadOrCreateIdentity, identityToEvmAddress, getInstance } from '@antseed/node'
 import type { NodePaymentsConfig } from '@antseed/node'
 import { OFFICIAL_BOOTSTRAP_NODES, parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
 import { setupShutdownHandler } from '../shutdown.js'
@@ -14,6 +14,7 @@ import { loadRouterPlugin, buildPluginConfig } from '../../plugins/loader.js'
 import { BuyerProxy } from '../../proxy/buyer-proxy.js'
 import { resolveEffectiveBuyerConfig, type BuyerRuntimeOverrides } from '../../config/effective.js'
 import type { BuyerCLIConfig } from '../../config/types.js'
+import { createEscrowClient, parseUsdcToBaseUnits, parseOptionalBoolEnv, isRpcReachable } from '../payment-utils.js'
 
 interface LocalSeederInfo {
   dhtPort: number
@@ -81,42 +82,6 @@ export function buildBuyerBootstrapEntries(
   }
 
   return entries
-}
-
-function parseOptionalBoolEnv(value: string | undefined): boolean | null {
-  if (value === undefined) return null
-  const normalized = value.trim().toLowerCase()
-  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true
-  if (['0', 'false', 'no', 'off'].includes(normalized)) return false
-  return null
-}
-
-async function isRpcReachable(rpcUrl: string, timeoutMs = 1500): Promise<boolean> {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), timeoutMs)
-
-  try {
-    const response = await fetch(rpcUrl, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'eth_chainId',
-        params: [],
-      }),
-      signal: controller.signal,
-    })
-
-    if (!response.ok) return false
-
-    const payload = await response.json() as { result?: unknown }
-    return typeof payload.result === 'string' && payload.result.startsWith('0x')
-  } catch {
-    return false
-  } finally {
-    clearTimeout(timeout)
-  }
 }
 
 async function getLocalSeederInfo(): Promise<LocalSeederInfo | null> {
@@ -246,7 +211,7 @@ export function registerConnectCommand(program: Command): void {
           contractAddress: crypto.escrowContractAddress,
           usdcAddress: crypto.usdcContractAddress,
           defaultEscrowAmountUSDC: crypto.defaultLockAmountUSDC
-            ? String(Math.round(parseFloat(crypto.defaultLockAmountUSDC) * 1_000_000))
+            ? String(parseUsdcToBaseUnits(parseFloat(crypto.defaultLockAmountUSDC)))
             : '1000000',
           platformFeeRate: config.payments.platformFeeRate,
         }
@@ -293,14 +258,10 @@ export function registerConnectCommand(program: Command): void {
         try {
           const identity = await loadOrCreateIdentity(globalOpts.dataDir)
           const address = identityToEvmAddress(identity)
-          const escrowClient = new BaseEscrowClient({
-            rpcUrl: config.payments.crypto.rpcUrl,
-            contractAddress: config.payments.crypto.escrowContractAddress,
-            usdcAddress: config.payments.crypto.usdcContractAddress,
-          })
-          const account = await escrowClient.getBuyerAccount(address)
+          const escrowClient = createEscrowClient(config.payments.crypto)
+          const balance = await escrowClient.getBuyerBalance(address)
           console.log(chalk.dim(`Wallet: ${address}`))
-          const availUsdc = Number(account.available) / 1_000_000
+          const availUsdc = Number(balance.available) / 1_000_000
           console.log(chalk.dim(`Escrow available: ${availUsdc.toFixed(6)} USDC`))
         } catch {
           // Non-fatal — chain may not be available

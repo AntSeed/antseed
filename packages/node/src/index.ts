@@ -31,7 +31,8 @@ export { BaseEscrowClient, type BaseEscrowConfig } from './payments/evm/escrow-c
 export { identityToEvmWallet, identityToEvmAddress } from './payments/evm/keypair.js';
 export { NatTraversal, type NatMapping, type NatTraversalResult } from './p2p/nat-traversal.js';
 export { BuyerPaymentManager } from './payments/buyer-payment-manager.js';
-export type { BuyerSessionState, BuyerSessionStatus } from './payments/buyer-payment-manager.js';
+export type { SellerSession as BuyerSessionState } from './payments/buyer-payment-manager.js';
+export { SellerPaymentManager } from './payments/seller-payment-manager.js';
 export { ProxyMux } from './proxy/proxy-mux.js';
 export { resolveProvider } from './proxy/provider-detection.js';
 export {

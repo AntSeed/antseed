@@ -1,19 +1,13 @@
 import type {
-  SessionLockAuthPayload,
-  SessionLockConfirmPayload,
-  SessionLockRejectPayload,
+  SpendingAuthPayload,
+  AuthAckPayload,
   SellerReceiptPayload,
   BuyerAckPayload,
-  SessionEndPayload,
   TopUpRequestPayload,
-  TopUpAuthPayload,
-  DisputeNotifyPayload,
 } from '../types/protocol.js';
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
-
-// --- Validation helpers ---
 
 function parseJson(data: Uint8Array): Record<string, unknown> {
   const raw: unknown = JSON.parse(decoder.decode(data));
@@ -39,127 +33,84 @@ function requireNumber(obj: Record<string, unknown>, field: string): number {
   return val;
 }
 
-// --- Encoders ---
+// SpendingAuth (0x50)
 
-export function encodeSessionLockAuth(payload: SessionLockAuthPayload): Uint8Array {
+export function encodeSpendingAuth(payload: SpendingAuthPayload): Uint8Array {
   return encoder.encode(JSON.stringify(payload));
 }
 
-export function encodeSessionLockConfirm(payload: SessionLockConfirmPayload): Uint8Array {
+export function decodeSpendingAuth(data: Uint8Array): SpendingAuthPayload {
+  const obj = parseJson(data);
+  return {
+    sessionId:     requireString(obj, 'sessionId'),
+    maxAmountUsdc: requireString(obj, 'maxAmountUsdc'),
+    nonce:         requireNumber(obj, 'nonce'),
+    deadline:      requireNumber(obj, 'deadline'),
+    buyerSig:      requireString(obj, 'buyerSig'),
+    buyerEvmAddr:  requireString(obj, 'buyerEvmAddr'),
+  };
+}
+
+// AuthAck (0x51)
+
+export function encodeAuthAck(payload: AuthAckPayload): Uint8Array {
   return encoder.encode(JSON.stringify(payload));
 }
 
-export function encodeSessionLockReject(payload: SessionLockRejectPayload): Uint8Array {
-  return encoder.encode(JSON.stringify(payload));
+export function decodeAuthAck(data: Uint8Array): AuthAckPayload {
+  const obj = parseJson(data);
+  return {
+    sessionId: requireString(obj, 'sessionId'),
+    nonce:     requireNumber(obj, 'nonce'),
+  };
 }
+
+// SellerReceipt (0x53)
 
 export function encodeSellerReceipt(payload: SellerReceiptPayload): Uint8Array {
   return encoder.encode(JSON.stringify(payload));
 }
 
-export function encodeBuyerAck(payload: BuyerAckPayload): Uint8Array {
-  return encoder.encode(JSON.stringify(payload));
-}
-
-export function encodeSessionEnd(payload: SessionEndPayload): Uint8Array {
-  return encoder.encode(JSON.stringify(payload));
-}
-
-export function encodeTopUpRequest(payload: TopUpRequestPayload): Uint8Array {
-  return encoder.encode(JSON.stringify(payload));
-}
-
-export function encodeTopUpAuth(payload: TopUpAuthPayload): Uint8Array {
-  return encoder.encode(JSON.stringify(payload));
-}
-
-export function encodeDisputeNotify(payload: DisputeNotifyPayload): Uint8Array {
-  return encoder.encode(JSON.stringify(payload));
-}
-
-// --- Decoders (with runtime validation) ---
-
-export function decodeSessionLockAuth(data: Uint8Array): SessionLockAuthPayload {
-  const obj = parseJson(data);
-  return {
-    sessionId: requireString(obj, 'sessionId'),
-    lockedAmount: requireString(obj, 'lockedAmount'),
-    buyerSig: requireString(obj, 'buyerSig'),
-  };
-}
-
-export function decodeSessionLockConfirm(data: Uint8Array): SessionLockConfirmPayload {
-  const obj = parseJson(data);
-  return {
-    sessionId: requireString(obj, 'sessionId'),
-    txSignature: requireString(obj, 'txSignature'),
-  };
-}
-
-export function decodeSessionLockReject(data: Uint8Array): SessionLockRejectPayload {
-  const obj = parseJson(data);
-  return {
-    sessionId: requireString(obj, 'sessionId'),
-    reason: requireString(obj, 'reason'),
-  };
-}
-
 export function decodeSellerReceipt(data: Uint8Array): SellerReceiptPayload {
   const obj = parseJson(data);
   return {
-    sessionId: requireString(obj, 'sessionId'),
+    sessionId:    requireString(obj, 'sessionId'),
     runningTotal: requireString(obj, 'runningTotal'),
     requestCount: requireNumber(obj, 'requestCount'),
     responseHash: requireString(obj, 'responseHash'),
-    sellerSig: requireString(obj, 'sellerSig'),
+    sellerSig:    requireString(obj, 'sellerSig'),
   };
+}
+
+// BuyerAck (0x54)
+
+export function encodeBuyerAck(payload: BuyerAckPayload): Uint8Array {
+  return encoder.encode(JSON.stringify(payload));
 }
 
 export function decodeBuyerAck(data: Uint8Array): BuyerAckPayload {
   const obj = parseJson(data);
   return {
-    sessionId: requireString(obj, 'sessionId'),
+    sessionId:    requireString(obj, 'sessionId'),
     runningTotal: requireString(obj, 'runningTotal'),
     requestCount: requireNumber(obj, 'requestCount'),
-    buyerSig: requireString(obj, 'buyerSig'),
+    buyerSig:     requireString(obj, 'buyerSig'),
   };
 }
 
-export function decodeSessionEnd(data: Uint8Array): SessionEndPayload {
-  const obj = parseJson(data);
-  return {
-    sessionId: requireString(obj, 'sessionId'),
-    runningTotal: requireString(obj, 'runningTotal'),
-    requestCount: requireNumber(obj, 'requestCount'),
-    score: requireNumber(obj, 'score'),
-    buyerSig: requireString(obj, 'buyerSig'),
-  };
+// TopUpRequest (0x55)
+
+export function encodeTopUpRequest(payload: TopUpRequestPayload): Uint8Array {
+  return encoder.encode(JSON.stringify(payload));
 }
 
 export function decodeTopUpRequest(data: Uint8Array): TopUpRequestPayload {
   const obj = parseJson(data);
   return {
-    sessionId: requireString(obj, 'sessionId'),
-    additionalAmount: requireString(obj, 'additionalAmount'),
-    currentRunningTotal: requireString(obj, 'currentRunningTotal'),
-    currentLockedAmount: requireString(obj, 'currentLockedAmount'),
+    sessionId:           requireString(obj, 'sessionId'),
+    currentUsed:         requireString(obj, 'currentUsed'),
+    currentMax:          requireString(obj, 'currentMax'),
+    requestedAdditional: requireString(obj, 'requestedAdditional'),
   };
 }
 
-export function decodeTopUpAuth(data: Uint8Array): TopUpAuthPayload {
-  const obj = parseJson(data);
-  return {
-    sessionId: requireString(obj, 'sessionId'),
-    additionalAmount: requireString(obj, 'additionalAmount'),
-    buyerSig: requireString(obj, 'buyerSig'),
-  };
-}
-
-export function decodeDisputeNotify(data: Uint8Array): DisputeNotifyPayload {
-  const obj = parseJson(data);
-  return {
-    sessionId: requireString(obj, 'sessionId'),
-    reason: requireString(obj, 'reason'),
-    txSignature: requireString(obj, 'txSignature'),
-  };
-}

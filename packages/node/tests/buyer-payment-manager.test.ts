@@ -3,8 +3,7 @@ import { BuyerPaymentManager, type BuyerPaymentConfig } from '../src/payments/bu
 import type { PaymentMux } from '../src/p2p/payment-mux.js';
 import type { Identity } from '../src/p2p/identity.js';
 import type {
-  SessionLockConfirmPayload,
-  SessionLockRejectPayload,
+  AuthAckPayload,
   SellerReceiptPayload,
   TopUpRequestPayload,
 } from '../src/types/protocol.js';
@@ -14,197 +13,168 @@ import * as ed from '@noble/ed25519';
 
 async function createTestIdentity(): Promise<Identity> {
   const privateKey = ed.utils.randomPrivateKey();
-  const publicKey = await ed.getPublicKeyAsync(privateKey);
-  const peerId = Array.from(publicKey)
+  const publicKey  = await ed.getPublicKeyAsync(privateKey);
+  const peerId     = Array.from(publicKey)
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
   return { peerId: peerId as any, privateKey, publicKey };
 }
 
 function createMockPaymentMux(): PaymentMux & {
-  _sentLockAuths: any[];
+  _sentSpendingAuths: any[];
   _sentBuyerAcks: any[];
-  _sentSessionEnds: any[];
-  _sentTopUpAuths: any[];
 } {
   const mux = {
-    _sentLockAuths: [] as any[],
-    _sentBuyerAcks: [] as any[],
-    _sentSessionEnds: [] as any[],
-    _sentTopUpAuths: [] as any[],
-    sendSessionLockAuth: vi.fn(function (this: any, payload: any) {
-      this._sentLockAuths.push(payload);
+    _sentSpendingAuths: [] as any[],
+    _sentBuyerAcks:     [] as any[],
+    sendSpendingAuth: vi.fn(function (this: any, payload: any) {
+      this._sentSpendingAuths.push(payload);
     }),
     sendBuyerAck: vi.fn(function (this: any, payload: any) {
       this._sentBuyerAcks.push(payload);
     }),
-    sendSessionEnd: vi.fn(function (this: any, payload: any) {
-      this._sentSessionEnds.push(payload);
-    }),
-    sendTopUpAuth: vi.fn(function (this: any, payload: any) {
-      this._sentTopUpAuths.push(payload);
-    }),
-    // Unused but required by type
-    sendSessionLockConfirm: vi.fn(),
-    sendSessionLockReject: vi.fn(),
+    // Unused send methods required by type
+    sendAuthAck:      vi.fn(),
     sendSellerReceipt: vi.fn(),
     sendTopUpRequest: vi.fn(),
-    sendDisputeNotify: vi.fn(),
-    onSessionLockAuth: vi.fn(),
-    onSessionLockConfirm: vi.fn(),
-    onSessionLockReject: vi.fn(),
+    // Handler registrations
+    onSpendingAuth:  vi.fn(),
+    onAuthAck:       vi.fn(),
     onSellerReceipt: vi.fn(),
-    onBuyerAck: vi.fn(),
-    onSessionEnd: vi.fn(),
-    onTopUpRequest: vi.fn(),
-    onTopUpAuth: vi.fn(),
-    onDisputeNotify: vi.fn(),
+    onBuyerAck:      vi.fn(),
+    onTopUpRequest:  vi.fn(),
     handleFrame: vi.fn(),
   } as unknown as PaymentMux & {
-    _sentLockAuths: any[];
+    _sentSpendingAuths: any[];
     _sentBuyerAcks: any[];
-    _sentSessionEnds: any[];
-    _sentTopUpAuths: any[];
   };
   return mux;
 }
 
 const DEFAULT_CONFIG: BuyerPaymentConfig = {
-  defaultLockAmountUSDC: '1000000',
-  rpcUrl: 'http://127.0.0.1:8545',
-  contractAddress: '0x5FbDB2315678afecb367f032d93F642f64180aa3',
-  usdcAddress: '0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512',
-  autoAck: true,
-  autoTopUp: true,
-  maxSessionBudgetUSDC: '10000000',
+  chainId:              31337,
+  defaultAuthAmountUsdc: 1_000_000n,
+  rpcUrl:               'http://127.0.0.1:8545',
+  contractAddress:      '0x5FbDB2315678afecb367f032d93F642f64180aa3',
+  usdcAddress:          '0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512',
+  autoAck:              true,
+  maxSessionBudgetUsdc: 10_000_000n,
 };
 
-const SELLER_PEER_ID = 'seller-peer-0123456789abcdef';
+const SELLER_PEER_ID    = 'seller-peer-0123456789abcdef';
 const SELLER_EVM_ADDRESS = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8';
 
 // --- Tests ---
 
 describe('BuyerPaymentManager', () => {
   let identity: Identity;
-  let manager: BuyerPaymentManager;
-  let mux: ReturnType<typeof createMockPaymentMux>;
+  let manager:  BuyerPaymentManager;
+  let mux:      ReturnType<typeof createMockPaymentMux>;
 
   beforeEach(async () => {
     identity = await createTestIdentity();
-    manager = new BuyerPaymentManager(identity, DEFAULT_CONFIG);
-    mux = createMockPaymentMux();
+    manager  = new BuyerPaymentManager(identity, DEFAULT_CONFIG);
+    mux      = createMockPaymentMux();
   });
 
-  describe('initiateLock', () => {
-    it('sends SessionLockAuth with correct session ID and amount', async () => {
-      const sessionId = await manager.initiateLock(
+  describe('authorizeSpending', () => {
+    it('sends SpendingAuth with correct session ID and amount', async () => {
+      const sessionId = await manager.authorizeSpending(
         SELLER_PEER_ID,
         SELLER_EVM_ADDRESS,
         mux,
       );
 
       expect(sessionId).toMatch(/^0x[0-9a-f]{64}$/);
-      expect(mux.sendSessionLockAuth).toHaveBeenCalledTimes(1);
+      expect(mux.sendSpendingAuth).toHaveBeenCalledTimes(1);
 
-      const sentPayload = mux._sentLockAuths[0]!;
+      const sentPayload = mux._sentSpendingAuths[0]!;
       expect(sentPayload.sessionId).toBe(sessionId);
-      expect(sentPayload.lockedAmount).toBe('1000000');
+      expect(sentPayload.maxAmountUsdc).toBe('1000000');
+      expect(sentPayload.nonce).toBe(1);
       expect(typeof sentPayload.buyerSig).toBe('string');
       expect(sentPayload.buyerSig.length).toBeGreaterThan(0);
+      expect(sentPayload.buyerEvmAddr).toMatch(/^0x[0-9a-fA-F]{40}$/);
 
-      // Session should be in pending state
+      // Session should start unauthorized
       const session = manager.getSession(SELLER_PEER_ID);
       expect(session).toBeDefined();
-      expect(session!.status).toBe('pending');
-      expect(session!.lockedAmount).toBe(1000000n);
+      expect(session!.authorized).toBe(false);
+      expect(session!.authMax).toBe(1_000_000n);
     });
 
-    it('uses custom lock amount when specified', async () => {
-      await manager.initiateLock(
+    it('uses custom auth amount when specified', async () => {
+      await manager.authorizeSpending(
         SELLER_PEER_ID,
         SELLER_EVM_ADDRESS,
         mux,
-        '5000000',
+        5_000_000n,
       );
 
-      const sentPayload = mux._sentLockAuths[0]!;
-      expect(sentPayload.lockedAmount).toBe('5000000');
+      const sentPayload = mux._sentSpendingAuths[0]!;
+      expect(sentPayload.maxAmountUsdc).toBe('5000000');
 
       const session = manager.getSession(SELLER_PEER_ID);
-      expect(session!.lockedAmount).toBe(5000000n);
+      expect(session!.authMax).toBe(5_000_000n);
     });
   });
 
-  describe('handleLockConfirm', () => {
-    it('marks session as confirmed with tx signature', async () => {
-      const sessionId = await manager.initiateLock(
+  describe('handleAuthAck', () => {
+    it('marks session as authorized', async () => {
+      const sessionId = await manager.authorizeSpending(
         SELLER_PEER_ID,
         SELLER_EVM_ADDRESS,
         mux,
       );
 
-      const payload: SessionLockConfirmPayload = {
-        sessionId,
-        txSignature: '0xabc123def456',
-      };
-
-      manager.handleLockConfirm(SELLER_PEER_ID, payload);
+      const payload: AuthAckPayload = { sessionId, nonce: 1 };
+      manager.handleAuthAck(SELLER_PEER_ID, payload);
 
       const session = manager.getSession(SELLER_PEER_ID);
-      expect(session!.status).toBe('confirmed');
-      expect(session!.txSignature).toBe('0xabc123def456');
-      expect(manager.isLockConfirmed(SELLER_PEER_ID)).toBe(true);
+      expect(session!.authorized).toBe(true);
+      expect(manager.isAuthorized(SELLER_PEER_ID)).toBe(true);
     });
 
-    it('ignores confirmation for unknown seller', () => {
+    it('ignores ack for unknown seller', () => {
       // Should not throw
-      manager.handleLockConfirm('unknown-peer', {
+      manager.handleAuthAck('unknown-peer', {
         sessionId: '0x' + 'a'.repeat(64),
-        txSignature: '0xabc',
+        nonce: 1,
       });
     });
-  });
 
-  describe('handleLockReject', () => {
-    it('removes session on rejection', async () => {
-      const sessionId = await manager.initiateLock(
+    it('ignores ack with mismatched nonce', async () => {
+      const sessionId = await manager.authorizeSpending(
         SELLER_PEER_ID,
         SELLER_EVM_ADDRESS,
         mux,
       );
 
-      const payload: SessionLockRejectPayload = {
-        sessionId,
-        reason: 'Insufficient buyer balance',
-      };
+      // Send ack with wrong nonce
+      manager.handleAuthAck(SELLER_PEER_ID, { sessionId, nonce: 99 });
 
-      manager.handleLockReject(SELLER_PEER_ID, payload);
-
-      expect(manager.getSession(SELLER_PEER_ID)).toBeUndefined();
-      expect(manager.isLockRejected(SELLER_PEER_ID)).toBe(true);
+      const session = manager.getSession(SELLER_PEER_ID);
+      expect(session!.authorized).toBe(false);
+      expect(manager.isAuthorized(SELLER_PEER_ID)).toBe(false);
     });
   });
 
   describe('handleSellerReceipt (auto-ack)', () => {
     it('auto-acknowledges receipt with Ed25519 signature', async () => {
-      const sessionId = await manager.initiateLock(
+      const sessionId = await manager.authorizeSpending(
         SELLER_PEER_ID,
         SELLER_EVM_ADDRESS,
         mux,
       );
 
-      // Confirm the lock first
-      manager.handleLockConfirm(SELLER_PEER_ID, {
-        sessionId,
-        txSignature: '0xabc',
-      });
+      manager.handleAuthAck(SELLER_PEER_ID, { sessionId, nonce: 1 });
 
       const receipt: SellerReceiptPayload = {
         sessionId,
         runningTotal: '50000',
         requestCount: 1,
         responseHash: 'c'.repeat(64),
-        sellerSig: 'd'.repeat(128),
+        sellerSig:    'd'.repeat(128),
       };
 
       await manager.handleSellerReceipt(SELLER_PEER_ID, receipt, mux);
@@ -217,142 +187,167 @@ describe('BuyerPaymentManager', () => {
       expect(typeof ackPayload.buyerSig).toBe('string');
       expect(ackPayload.buyerSig.length).toBeGreaterThan(0);
 
-      // Session should update running total
+      // Session should update spend counters
       const session = manager.getSession(SELLER_PEER_ID);
-      expect(session!.lastRunningTotal).toBe(50000n);
-      expect(session!.lastRequestCount).toBe(1);
-      expect(session!.status).toBe('active');
+      expect(session!.totalSpend).toBe(50_000n);
+      expect(session!.requestCount).toBe(1);
     });
-  });
 
-  describe('endSession', () => {
-    it('sends SessionEnd with ECDSA settlement signature', async () => {
-      const sessionId = await manager.initiateLock(
+    it('does not auto-ack when autoAck is false', async () => {
+      const noAckManager = new BuyerPaymentManager(identity, {
+        ...DEFAULT_CONFIG,
+        autoAck: false,
+      });
+
+      const sessionId = await noAckManager.authorizeSpending(
         SELLER_PEER_ID,
         SELLER_EVM_ADDRESS,
         mux,
       );
 
-      // Confirm and process a receipt
-      manager.handleLockConfirm(SELLER_PEER_ID, {
-        sessionId,
-        txSignature: '0xabc',
-      });
+      noAckManager.handleAuthAck(SELLER_PEER_ID, { sessionId, nonce: 1 });
 
-      await manager.handleSellerReceipt(SELLER_PEER_ID, {
+      await noAckManager.handleSellerReceipt(SELLER_PEER_ID, {
         sessionId,
-        runningTotal: '100000',
-        requestCount: 3,
+        runningTotal: '50000',
+        requestCount: 1,
         responseHash: 'c'.repeat(64),
-        sellerSig: 'd'.repeat(128),
+        sellerSig:    'd'.repeat(128),
       }, mux);
 
-      await manager.endSession(SELLER_PEER_ID, mux, 90);
-
-      expect(mux.sendSessionEnd).toHaveBeenCalledTimes(1);
-      const endPayload = mux._sentSessionEnds[0]!;
-      expect(endPayload.sessionId).toBe(sessionId);
-      expect(endPayload.runningTotal).toBe('100000');
-      expect(endPayload.requestCount).toBe(3);
-      expect(endPayload.score).toBe(90);
-      expect(typeof endPayload.buyerSig).toBe('string');
-      expect(endPayload.buyerSig.length).toBeGreaterThan(0);
-
-      // Session should be ended
-      const session = manager.getSession(SELLER_PEER_ID);
-      expect(session!.status).toBe('ended');
+      expect(mux.sendBuyerAck).not.toHaveBeenCalled();
     });
   });
 
   describe('handleTopUpRequest (sufficient balance)', () => {
-    it('auto-approves top-up when budget allows and balance sufficient', async () => {
-      const sessionId = await manager.initiateLock(
+    it('sends new SpendingAuth with nonce+1 when budget allows', async () => {
+      const sessionId = await manager.authorizeSpending(
         SELLER_PEER_ID,
         SELLER_EVM_ADDRESS,
         mux,
       );
 
-      manager.handleLockConfirm(SELLER_PEER_ID, {
-        sessionId,
-        txSignature: '0xabc',
-      });
+      manager.handleAuthAck(SELLER_PEER_ID, { sessionId, nonce: 1 });
 
       // Mock the escrow client to return sufficient balance
-      const mockGetBuyerAccount = vi.fn().mockResolvedValue({
-        deposited: 20000000n,
-        committed: 1000000n,
-        available: 19000000n,
+      const mockGetBuyerBalance = vi.fn().mockResolvedValue({
+        available:          19_000_000n,
+        pendingWithdrawal:  0n,
+        withdrawalReadyAt:  0,
       });
-      (manager as any)._escrowClient = {
+      (manager as any)._escrow = {
         ...manager.escrowClient,
-        getBuyerAccount: mockGetBuyerAccount,
+        getBuyerBalance: mockGetBuyerBalance,
       };
 
       const request: TopUpRequestPayload = {
         sessionId,
-        additionalAmount: '2000000',
-        currentRunningTotal: '800000',
-        currentLockedAmount: '1000000',
+        currentUsed:         '800000',
+        currentMax:          '1000000',
+        requestedAdditional: '2000000',
       };
 
       await manager.handleTopUpRequest(SELLER_PEER_ID, request, mux);
 
-      expect(mux.sendTopUpAuth).toHaveBeenCalledTimes(1);
-      const authPayload = mux._sentTopUpAuths[0]!;
-      expect(authPayload.sessionId).toBe(sessionId);
-      expect(authPayload.additionalAmount).toBe('2000000');
-      expect(typeof authPayload.buyerSig).toBe('string');
+      // Should send a second SpendingAuth (top-up)
+      expect(mux.sendSpendingAuth).toHaveBeenCalledTimes(2);
+      const topUpPayload = mux._sentSpendingAuths[1]!;
+      expect(topUpPayload.sessionId).toBe(sessionId);
+      expect(topUpPayload.maxAmountUsdc).toBe('2000000');
+      expect(topUpPayload.nonce).toBe(2); // nonce incremented
+      expect(typeof topUpPayload.buyerSig).toBe('string');
 
-      // Session locked amount should be updated
       const session = manager.getSession(SELLER_PEER_ID);
-      expect(session!.lockedAmount).toBe(3000000n); // 1M + 2M
+      expect(session!.nonce).toBe(2);
+      expect(session!.authMax).toBe(2_000_000n);
     });
   });
 
   describe('handleTopUpRequest (insufficient balance)', () => {
-    it('ends session when balance is insufficient for top-up', async () => {
-      const sessionId = await manager.initiateLock(
+    it('does not send SpendingAuth when balance is insufficient', async () => {
+      const sessionId = await manager.authorizeSpending(
         SELLER_PEER_ID,
         SELLER_EVM_ADDRESS,
         mux,
       );
 
-      manager.handleLockConfirm(SELLER_PEER_ID, {
-        sessionId,
-        txSignature: '0xabc',
-      });
+      manager.handleAuthAck(SELLER_PEER_ID, { sessionId, nonce: 1 });
 
-      // Mock the escrow client to return insufficient balance
-      const mockGetBuyerAccount = vi.fn().mockResolvedValue({
-        deposited: 1000000n,
-        committed: 1000000n,
-        available: 0n,
+      // Mock insufficient balance
+      const mockGetBuyerBalance = vi.fn().mockResolvedValue({
+        available:         0n,
+        pendingWithdrawal: 0n,
+        withdrawalReadyAt: 0,
       });
-      (manager as any)._escrowClient = {
+      (manager as any)._escrow = {
         ...manager.escrowClient,
-        getBuyerAccount: mockGetBuyerAccount,
+        getBuyerBalance: mockGetBuyerBalance,
       };
 
       const request: TopUpRequestPayload = {
         sessionId,
-        additionalAmount: '2000000',
-        currentRunningTotal: '800000',
-        currentLockedAmount: '1000000',
+        currentUsed:         '800000',
+        currentMax:          '1000000',
+        requestedAdditional: '2000000',
       };
 
       await manager.handleTopUpRequest(SELLER_PEER_ID, request, mux);
 
-      // Should NOT send top-up auth
-      expect(mux.sendTopUpAuth).not.toHaveBeenCalled();
+      // Should NOT send a second SpendingAuth
+      expect(mux.sendSpendingAuth).toHaveBeenCalledTimes(1); // only the original auth
+    });
+  });
 
-      // Should end the session instead
-      expect(mux.sendSessionEnd).toHaveBeenCalledTimes(1);
-      const endPayload = mux._sentSessionEnds[0]!;
-      expect(endPayload.sessionId).toBe(sessionId);
-      expect(endPayload.score).toBe(80); // default score
+  describe('handleTopUpRequest (budget safety)', () => {
+    it('enforces maxSessionBudget against cumulative signed exposure', async () => {
+      const strictBudgetManager = new BuyerPaymentManager(identity, {
+        ...DEFAULT_CONFIG,
+        defaultAuthAmountUsdc: 1_000_000n,
+        maxSessionBudgetUsdc:  2_500_000n,
+      });
 
-      const session = manager.getSession(SELLER_PEER_ID);
-      expect(session!.status).toBe('ended');
+      const sessionId = await strictBudgetManager.authorizeSpending(
+        SELLER_PEER_ID,
+        SELLER_EVM_ADDRESS,
+        mux,
+      );
+      strictBudgetManager.handleAuthAck(SELLER_PEER_ID, { sessionId, nonce: 1 });
+
+      // Balance is sufficient; rejection should be purely budget-based.
+      const mockGetBuyerBalance = vi.fn().mockResolvedValue({
+        available:         20_000_000n,
+        pendingWithdrawal: 0n,
+        withdrawalReadyAt: 0,
+      });
+      (strictBudgetManager as any)._escrow = {
+        ...strictBudgetManager.escrowClient,
+        getBuyerBalance: mockGetBuyerBalance,
+      };
+
+      // Seller claims low current usage, but requested top-up would push signed exposure
+      // from 1_000_000 to 3_000_000 (> 2_500_000 budget), so it must be rejected.
+      await strictBudgetManager.handleTopUpRequest(SELLER_PEER_ID, {
+        sessionId,
+        currentUsed:         '1',
+        currentMax:          '1000000',
+        requestedAdditional: '2000000',
+      }, mux);
+
+      expect(mux.sendSpendingAuth).toHaveBeenCalledTimes(1); // only initial auth
+      const session = strictBudgetManager.getSession(SELLER_PEER_ID);
+      expect(session!.nonce).toBe(1);
+      expect(session!.authorizedCapTotal).toBe(1_000_000n);
+    });
+  });
+
+  describe('onPeerDisconnect', () => {
+    it('removes session on disconnect', async () => {
+      await manager.authorizeSpending(SELLER_PEER_ID, SELLER_EVM_ADDRESS, mux);
+
+      manager.onPeerDisconnect(SELLER_PEER_ID);
+
+      expect(manager.getSession(SELLER_PEER_ID)).toBeUndefined();
+      expect(manager.isAuthorized(SELLER_PEER_ID)).toBe(false);
     });
   });
 });
