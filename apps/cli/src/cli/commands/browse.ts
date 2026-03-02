@@ -40,6 +40,7 @@ export function registerBrowseCommand(program: Command): void {
       const node = new AntseedNode({
         role: 'buyer',
         bootstrapNodes,
+        dhtOperationTimeoutMs: 30_000,
       });
 
       try {

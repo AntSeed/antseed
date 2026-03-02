@@ -117,6 +117,8 @@ export interface NodeConfig {
   /** Use only the provided bootstrapNodes and skip the official public DHT nodes. Default: false.
    *  Set true for isolated local testing where official nodes must not be contacted. */
   noOfficialBootstrap?: boolean;
+  /** Override the DHT operation timeout in ms. Defaults to DEFAULT_DHT_CONFIG.operationTimeoutMs (10 000). */
+  dhtOperationTimeoutMs?: number;
   /** Optional seller-side payment runtime wiring. */
   payments?: NodePaymentsConfig;
 }
@@ -185,7 +187,6 @@ export class AntseedNode extends EventEmitter {
   private _started = false;
   private _announcer: PeerAnnouncer | null = null;
   private _peerLookup: PeerLookup | null = null;
-  private _metadataResolver: HttpMetadataResolver | null = null;
   private _muxes = new Map<PeerId, ProxyMux>();
   private _decoders = new Map<PeerId, FrameDecoder>();
   private _nat: NatTraversal | null = null;
@@ -380,7 +381,6 @@ export class AntseedNode extends EventEmitter {
     }
 
     this._peerLookup = null;
-    this._metadataResolver = null;
     this._receiptGenerator = null;
     this._balanceManager = null;
     this._escrowClient = null;
@@ -420,32 +420,7 @@ export class AntseedNode extends EventEmitter {
       }
     }
 
-    // Also probe bootstrap nodes' signaling ports (DHT port + 1 by convention).
-    // This ensures AntSeed bootstrap nodes are always discoverable even when DHT
-    // announcement propagation is unreliable.
-    if (this._config.bootstrapNodes && this._config.bootstrapNodes.length > 0 && this._metadataResolver && this._peerLookup) {
-      const bootstrapProbes = await Promise.allSettled(
-        this._config.bootstrapNodes.map(async (n) => {
-          const signalingPort = n.port + 1;
-          const metadata = await this._metadataResolver!.resolve({ host: n.host, port: signalingPort });
-          if (!metadata) return null;
-          const valid = await this._peerLookup!.verifyMetadataSignature(metadata);
-          if (!valid) return null;
-          if (this._peerLookup!.isStale(metadata)) return null;
-          return { metadata, host: n.host, port: signalingPort };
-        }),
-      );
-      for (const r of bootstrapProbes) {
-        if (r.status === "fulfilled" && r.value !== null) {
-          const p = this._lookupResultToPeerInfo(r.value);
-          if (!seen.has(p.peerId)) {
-            seen.add(p.peerId);
-            peers.push(p);
-            debugLog(`[Node]   bootstrap-probe peer ${p.peerId.slice(0, 12)}... providers=[${p.providers.join(",")}]`);
-          }
-        }
-      }
-    }
+
 
     // Optional reputation verification: replace claimed data with verified on-chain data
     if (this._escrowClient) {
@@ -622,7 +597,7 @@ export class AntseedNode extends EventEmitter {
       port,
       bootstrapNodes,
       reannounceIntervalMs: DEFAULT_DHT_CONFIG.reannounceIntervalMs,
-      operationTimeoutMs: DEFAULT_DHT_CONFIG.operationTimeoutMs,
+      operationTimeoutMs: this._config.dhtOperationTimeoutMs ?? DEFAULT_DHT_CONFIG.operationTimeoutMs,
       allowPrivateIPs: this._config.allowPrivateIPs,
     };
   }
@@ -789,7 +764,6 @@ export class AntseedNode extends EventEmitter {
 
     // Create PeerLookup with HttpMetadataResolver
     const metadataResolver = new HttpMetadataResolver();
-    this._metadataResolver = metadataResolver;
     const lookupConfig: LookupConfig = {
       dht: this._dht,
       metadataResolver,
