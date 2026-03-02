@@ -20,6 +20,8 @@ export interface TokenProviderState {
 export interface TokenProvider {
   /** Get a valid access token. May refresh if expired. */
   getToken(): Promise<string>;
+  /** Force-refresh the token regardless of expiry (e.g. after a 401 response). */
+  forceRefresh?(): Promise<string>;
   /** Clean up resources. */
   stop(): void;
   /** Current provider state for persistence (if available). */

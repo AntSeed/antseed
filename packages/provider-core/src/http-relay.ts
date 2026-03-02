@@ -29,6 +29,8 @@ export interface RelayConfig {
   modelRewriteMap?: Record<string, string>;
   /** Fields to deep-merge into the JSON request body before forwarding upstream. */
   injectJsonFields?: Record<string, unknown>;
+  /** If true, retry once with a force-refreshed token on 401. Only meaningful for providers with a refreshable tokenProvider (e.g. OAuth). */
+  retryOn401?: boolean;
 }
 
 export interface RelayCallbacks {
@@ -157,20 +159,33 @@ export class HttpRelay {
       }
 
       const timeoutMs = this._config.timeoutMs ?? 120_000;
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), timeoutMs);
-      let fetchResponse: Response;
-      try {
-        fetchResponse = await fetch(url, {
-          method: swappedRequest.method,
-          headers: fetchHeaders,
-          body: swappedRequest.method !== 'GET' && swappedRequest.method !== 'HEAD'
-            ? Buffer.from(swappedRequest.body)
-            : undefined,
-          signal: controller.signal,
-        });
-      } finally {
-        clearTimeout(timeout);
+
+      const doFetch = async (headers: Record<string, string>): Promise<Response> => {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+          return await fetch(url, {
+            method: swappedRequest.method,
+            headers,
+            body: swappedRequest.method !== 'GET' && swappedRequest.method !== 'HEAD'
+              ? Buffer.from(swappedRequest.body)
+              : undefined,
+            signal: controller.signal,
+          });
+        } finally {
+          clearTimeout(timeout);
+        }
+      };
+
+      let fetchResponse = await doFetch(fetchHeaders);
+
+      if (fetchResponse.status === 401 && this._config.retryOn401 && this._config.tokenProvider?.forceRefresh) {
+        const refreshedToken = await this._config.tokenProvider.forceRefresh();
+        const isBearer = this._config.authHeaderName === 'authorization';
+        const newHeaderValue = isBearer ? `Bearer ${refreshedToken}` : refreshedToken;
+        const retryHeaders = { ...fetchHeaders };
+        retryHeaders[this._config.authHeaderName] = newHeaderValue;
+        fetchResponse = await doFetch(retryHeaders);
       }
 
       const contentType = fetchResponse.headers.get('content-type') ?? '';

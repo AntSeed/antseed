@@ -88,6 +88,16 @@ export class OAuthTokenProvider implements TokenProvider {
     return this.refreshPromise;
   }
 
+  async forceRefresh(): Promise<string> {
+    // Deduplicate with any in-flight refresh
+    if (!this.refreshPromise) {
+      this.refreshPromise = this.refresh().finally(() => {
+        this.refreshPromise = null;
+      });
+    }
+    return this.refreshPromise;
+  }
+
   stop(): void {}
 
   /** Expose current state for persistence. */
