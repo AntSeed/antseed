@@ -5,12 +5,8 @@ export interface BootstrapNode {
 }
 
 export const OFFICIAL_BOOTSTRAP_NODES: BootstrapNode[] = [
-  { host: "router.bittorrent.com", port: 6881, label: "BitTorrent" },
-  { host: "dht.transmissionbt.com", port: 6881, label: "Transmission" },
-  { host: "router.utorrent.com", port: 6881, label: "uTorrent" },
-  { host: "dht.libtorrent.org", port: 25401, label: "libtorrent" },
-  { host: "router.silotis.us", port: 6881, label: "Silotis" },
-  { host: "dht.aelitis.com", port: 6881, label: "Vuze" },
+  { host: "dht1.antseed.com", port: 6881, label: "AntSeed-1" },
+  { host: "dht2.antseed.com", port: 6881, label: "AntSeed-2" },
 ];
 
 export function parseBootstrapList(entries: string[]): BootstrapNode[] {

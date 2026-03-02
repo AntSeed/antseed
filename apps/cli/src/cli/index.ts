@@ -16,6 +16,7 @@ import { registerProfileCommand, registerPeerCommand } from './commands/profile.
 import { registerDepositCommand } from './commands/deposit.js';
 import { registerWithdrawCommand } from './commands/withdraw.js';
 import { registerBalanceCommand } from './commands/balance.js';
+import { registerBootstrapCommand } from './commands/bootstrap.js';
 
 loadEnvFromFiles();
 
@@ -46,5 +47,6 @@ registerPeerCommand(program);
 registerDepositCommand(program);
 registerWithdrawCommand(program);
 registerBalanceCommand(program);
+registerBootstrapCommand(program);
 
 program.parse(process.argv);
