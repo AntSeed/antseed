@@ -8,7 +8,7 @@ hide_title: true
 
 # Peer Discovery
 
-The discovery protocol uses an AntSeed-owned DHT network (built on BEP 5) as a decentralized directory of seller nodes, combined with an HTTP metadata endpoint for retrieving provider details and Skills. All nodes bootstrap through AntSeed's dedicated DHT infrastructure, forming a private network separate from the public BitTorrent swarm.
+The discovery protocol uses a DHT network (built on BEP 5) as a decentralized directory of seller nodes, combined with an HTTP metadata endpoint for retrieving provider details and Skills. All nodes bootstrap through dedicated AntSeed infrastructure.
 
 ## DHT Topic Hashing
 

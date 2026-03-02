@@ -195,7 +195,7 @@ import { NatTraversal, type NatMapping, type NatTraversalResult } from '@antseed
 
 // Discovery
 import { DHTNode, DEFAULT_DHT_CONFIG } from '@antseed/node';
-import { OFFICIAL_BOOTSTRAP_NODES, mergeBootstrapNodes, toBootstrapConfig } from '@antseed/node'; // AntSeed-operated DHT bootstrap nodes
+import { OFFICIAL_BOOTSTRAP_NODES, mergeBootstrapNodes, toBootstrapConfig } from '@antseed/node';
 import { MetadataServer, type MetadataServerConfig } from '@antseed/node';
 import type { PeerMetadata, ProviderAnnouncement } from '@antseed/node';
 

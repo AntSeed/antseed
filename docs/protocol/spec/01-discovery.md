@@ -2,7 +2,7 @@
 
 ## Overview
 
-The discovery protocol enables buyers to find sellers offering AI inference capacity on the Antseed Network. It uses an AntSeed-owned DHT network (built on BEP 5) bootstrapped through dedicated AntSeed infrastructure, combined with an HTTP metadata endpoint for retrieving provider details, and a scoring system for selecting the best peer from the candidate pool.
+The discovery protocol enables buyers to find sellers offering AI inference capacity on the Antseed Network. It uses a DHT network (built on BEP 5) combined with an HTTP metadata endpoint for retrieving provider details, and a scoring system for selecting the best peer from the candidate pool.
 
 ---
 
@@ -44,8 +44,6 @@ Examples:
 |-----------------------|------|------------|
 | dht1.antseed.com      | 6881 | AntSeed-1  |
 | dht2.antseed.com      | 6881 | AntSeed-2  |
-
-These are AntSeed-operated dedicated bootstrap nodes — not BitTorrent public nodes. They form a private DHT network for the AntSeed protocol.
 
 Custom bootstrap nodes can be supplied and are merged (deduplicated by `host:port`) with the official list via `mergeBootstrapNodes()`.
 
