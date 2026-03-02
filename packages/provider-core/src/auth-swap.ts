@@ -60,10 +60,10 @@ export function swapAuthHeader(
  */
 export function validateRequestModel(
   request: SerializedHttpRequest,
-  allowedModels: string[]
+  allowedModels: ReadonlySet<string>
 ): string | null {
   // If allowedModels is empty, allow everything
-  if (allowedModels.length === 0) {
+  if (allowedModels.size === 0) {
     return null;
   }
 
@@ -92,8 +92,7 @@ export function validateRequestModel(
   }
 
   const normalizedModel = model.trim().toLowerCase();
-  const normalizedAllowed = allowedModels.map((m) => m.trim().toLowerCase());
-  if (!normalizedAllowed.includes(normalizedModel)) {
+  if (!allowedModels.has(normalizedModel)) {
     return `Model "${model}" is not in the allowed list`;
   }
 

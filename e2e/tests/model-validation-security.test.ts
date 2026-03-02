@@ -12,26 +12,27 @@ function makeRequest(body: string): SerializedHttpRequest {
   };
 }
 
+function allowSet(...models: string[]): ReadonlySet<string> {
+  return new Set(models.map((m) => m.trim().toLowerCase()));
+}
+
 describe('Security: allowed-model validation', () => {
   it('rejects duplicate model keys that end with a forbidden model', () => {
-    const allowedModels = ['claude-sonnet-4-5-20250929'];
     const request = makeRequest(
       '{"model":"claude-sonnet-4-5-20250929","model":"claude-opus-4-0-20250514"}',
     );
 
-    const error = validateRequestModel(request, allowedModels);
+    const error = validateRequestModel(request, allowSet('claude-sonnet-4-5-20250929'));
     expect(error).toContain('not in the allowed list');
   });
 
   it('allows invalid JSON payloads through (upstream will reject them)', () => {
-    const allowedModels = ['claude-sonnet-4-5-20250929'];
     const request = makeRequest('{not-valid-json');
-    expect(validateRequestModel(request, allowedModels)).toBeNull();
+    expect(validateRequestModel(request, allowSet('claude-sonnet-4-5-20250929'))).toBeNull();
   });
 
   it('allows valid payloads with allowed models', () => {
-    const allowedModels = ['claude-sonnet-4-5-20250929'];
     const request = makeRequest('{"model":"claude-sonnet-4-5-20250929","messages":[]}');
-    expect(validateRequestModel(request, allowedModels)).toBeNull();
+    expect(validateRequestModel(request, allowSet('claude-sonnet-4-5-20250929'))).toBeNull();
   });
 });
