@@ -109,6 +109,70 @@ function Hero() {
   );
 }
 
+function UseCaseIcon({type}: {type: string}) {
+  const c = '#3dffa2';
+  if (type === 'models') return (
+    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="3"/>
+      <circle cx="4" cy="6" r="2"/>
+      <circle cx="20" cy="6" r="2"/>
+      <circle cx="4" cy="18" r="2"/>
+      <circle cx="20" cy="18" r="2"/>
+      <line x1="6" y1="6" x2="10" y2="11"/>
+      <line x1="18" y1="6" x2="14" y2="11"/>
+      <line x1="6" y1="18" x2="10" y2="13"/>
+      <line x1="18" y1="18" x2="14" y2="13"/>
+    </svg>
+  );
+  if (type === 'anon') return (
+    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 2C8 2 4 5 4 9v2l-1 1v2h2v1a7 7 0 0 0 14 0v-1h2v-2l-1-1V9c0-4-4-7-8-7z"/>
+      <circle cx="9" cy="12" r="1" fill={c}/>
+      <circle cx="15" cy="12" r="1" fill={c}/>
+    </svg>
+  );
+  if (type === 'failover') return (
+    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="23 4 23 10 17 10"/>
+      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+    </svg>
+  );
+  return null;
+}
+
+function UseCases() {
+  const cases = [
+    {
+      type: 'models',
+      title: 'Any model, one place',
+      desc: 'Claude, DeepSeek, Llama, Qwen, and specialized agents — all available through a single connection. Switch models without switching tools or accounts.',
+    },
+    {
+      type: 'anon',
+      title: 'Anonymous by default',
+      desc: 'Providers never know who you are — like a VPN, but for AI. Route to TEE nodes for uncensored models where not even the operator can see your prompts, or both.',
+    },
+    {
+      type: 'failover',
+      title: 'Never hit a limit',
+      desc: 'Rate limited? Provider down? The network detects it instantly and reroutes to the next best provider. Automatic failover, zero data loss.',
+    },
+  ];
+  return (
+    <section className={styles.section}>
+      <div className={`${styles.grid3} reveal`}>
+        {cases.map((c) => (
+          <div key={c.title} className={styles.card}>
+            <div style={{marginBottom: '16px', opacity: 0.9}}><UseCaseIcon type={c.type} /></div>
+            <h3 className={styles.cardTitle}>{c.title}</h3>
+            <p className={styles.cardDesc}>{c.desc}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function HowItWorks() {
   const steps = [
     {step: '01', title: 'Install the daemon', desc: 'One command. Runs as a background service. Exposes an API-compatible endpoint on localhost. Your existing tools work without modification.'},
@@ -290,6 +354,7 @@ export default function Home(): JSX.Element {
       </BrowserOnly>
       <div ref={containerRef} style={{position: 'relative', zIndex: 1}}>
         <Hero />
+        <UseCases />
         <HowItWorks />
         <SupplySources />
         <ThreeMarkets />
