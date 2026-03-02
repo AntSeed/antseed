@@ -348,6 +348,28 @@ describe('HttpRelay', () => {
     expect(parsed.model).toBe('moonshotai/kimi-k2.5');
   });
 
+  it('accepts model names case-insensitively', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
+
+    const responses: SerializedHttpResponse[] = [];
+    const callbacks: RelayCallbacks = { onResponse: (res) => responses.push(res) };
+
+    // Provider configured with mixed-case model names (as they appear in upstream APIs)
+    const relay = new HttpRelay(
+      makeConfig({ allowedModels: ['DeepSeek-R1', 'Kimi-K2.5'] }),
+      callbacks,
+    );
+
+    // Buyer sends lowercase (DHT topics are normalized to lowercase)
+    const req = makeRequest({
+      body: new TextEncoder().encode(JSON.stringify({ model: 'deepseek-r1', messages: [] })),
+    });
+    await relay.handleRequest(req);
+
+    expect(responses[0]!.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('tracks active count correctly', async () => {
     fetchMock.mockResolvedValue(new Response('{}', { status: 200 }));
 
