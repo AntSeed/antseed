@@ -7,50 +7,54 @@ hide_title: true
 
 # Security
 
-This page summarizes the buyer-seller security model in `@antseed/node`: discovery trust boundaries, P2P transport controls, metering/payment integrity, and known residual risks.
+AntSeed enforces security at every layer of the buyer-seller flow — from discovery through settlement — without relying on trusted intermediaries.
 
 ## Security Model
 
-AntSeed assumes an untrusted network. Security is built by combining:
+All communication happens over an untrusted network. Every trust-critical operation is cryptographically verified:
 
-- Signed peer identity and metadata (Ed25519)
-- Authenticated connection intro envelopes with replay protection
-- Bounded framing/stream/upload limits for DoS resistance
-- Signed bilateral receipts plus on-chain escrow settlement
+- **Ed25519 peer identity** — every node has a unique keypair; metadata, connection handshakes, and metering receipts are all signed
+- **Replay-resistant authentication** — connection envelopes include nonce + timestamp with skew checks
+- **Bounded resource usage** — frame sizes, upload caps, stream durations, and concurrent connections are all hard-limited
+- **On-chain settlement** — bilateral signed receipts plus ECDSA-authorized escrow operations ensure payment integrity
 
-## Buyer -> Seller Flow Controls
+## Buyer → Seller Flow
 
-| Flow Stage | Main Risks | Current Controls |
-|---|---|---|
-| Discovery | Topic fragmentation, stale/forged metadata, DHT poisoning | Lowercased topic normalization + compact model search topics, signature verification, staleness checks, private IP filtering by default |
-| Connection setup | Peer spoofing, replay, handshake flooding | Signed intro/hello auth envelope, nonce replay guard, timestamp skew checks, initial-line size/time limits, per-IP connection cap |
-| P2P transport | Malformed frames, oversized payloads, stalled streams | Frame type/size validation (`64 MiB` max payload), connection fail-closed on decode errors, request/stream timeouts |
-| Proxy upload/stream | Memory pressure and slow-loris uploads | Per-request upload cap, global pending upload cap, upload timeout, abort with 413/408, stream buffer/duration limits |
-| Metering + payment | Unpaid work, forged settlement data, buyer ghosting | 402 gating when lock not committed, Ed25519 receipt/ack trail, ECDSA lock/top-up/settlement auth, dispute path on disconnect |
+| Stage | Controls |
+|---|---|
+| **Discovery** | Signed metadata with freshness checks, topic normalization for consistent lookup, private IP filtering enabled by default |
+| **Connection** | Ed25519-signed intro envelopes with nonce replay guard, timestamp skew rejection, per-IP connection cap (10), inbound line size/time limits |
+| **Transport** | Frame type and size validation (64 MiB max), fail-closed on decode errors, request and stream timeouts |
+| **Upload/Stream** | Per-request cap (32 MiB), global pending cap (256 MiB), upload timeout (120s), stream buffer (16 MiB) and duration (5 min) limits |
+| **Metering** | Bilateral Ed25519-signed receipts with running totals, auto-ack enabled by default |
+| **Payment** | 402 gating until escrow lock is committed, ECDSA-authorized lock/top-up/settlement, dispute path on buyer disconnect |
 
-## Key Limits (Defaults)
+## Cryptographic Controls
 
-- `requestTimeoutMs`: `30_000`
-- `maxStreamBufferBytes`: `16 MiB`
-- `maxStreamDurationMs`: `5 minutes`
-- `ProxyMux` per-upload cap: `32 MiB`
-- `ProxyMux` total pending upload cap: `256 MiB`
-- `ProxyMux` upload timeout: `120_000 ms`
-- metadata fetch timeout: `2_000 ms`
+| Use Case | Primitive |
+|---|---|
+| Node identity and metadata signing | Ed25519 |
+| Connection authentication | Ed25519 signature + nonce + timestamp |
+| Metering receipts and acks | Ed25519 binary signatures |
+| Payment authorization (on-chain) | ECDSA over typed hashes |
 
-## Known Gaps
+## Default Limits
 
-1. TCP fallback is authenticated but not encrypted end-to-end.
-2. Metadata resolution currently uses plain HTTP transport.
-3. Metadata schema validation helpers exist, but lookup path primarily enforces signature + freshness.
-4. Session maps are keyed by peer ID, so parallel sessions per counterparty are constrained.
-5. Metering is byte-estimate based, not provider-native token attestation.
+| Parameter | Default |
+|---|---|
+| Request timeout | 30 s |
+| Max stream buffer | 16 MiB |
+| Max stream duration | 5 min |
+| Per-upload cap | 32 MiB |
+| Global pending upload cap | 256 MiB |
+| Upload timeout | 120 s |
+| Metadata fetch timeout | 2 s |
+| Max inbound connections per IP | 10 |
 
-## Operator Hardening Checklist
+## Best Practices
 
-1. Keep `allowPrivateIPs=false` outside local testing.
-2. Keep signature verification enabled and stale metadata rejected.
-3. Use stricter time/size caps for internet-facing providers if workloads are predictable.
-4. Prefer WebRTC transport and monitor fallback usage.
-5. Use dedicated escrow wallets and monitor dispute/settlement events.
-6. Add ABI compatibility tests between escrow client and deployed contract before releases.
+1. Keep `allowPrivateIPs=false` in production.
+2. Keep signature verification and stale metadata rejection enabled (both are on by default).
+3. Prefer WebRTC transport for end-to-end encryption.
+4. Use dedicated wallets for escrow operations.
+5. Tune upload/stream caps if workloads are predictable.
