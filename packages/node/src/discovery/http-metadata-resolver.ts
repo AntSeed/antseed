@@ -16,16 +16,12 @@ export class HttpMetadataResolver implements MetadataResolver {
   private readonly metadataPortOffset: number;
   private readonly failureCooldownMs: number;
   private readonly failedEndpoints: Map<string, number>;
-  /** Host-level failure cache: any port failure marks the whole host as failed.
-   *  Prevents wasting time on multiple bad-port DHT entries for the same peer. */
-  private readonly failedHosts: Map<string, number>;
 
   constructor(config?: HttpMetadataResolverConfig) {
     this.timeoutMs = config?.timeoutMs ?? 2000;
     this.metadataPortOffset = config?.metadataPortOffset ?? 0;
     this.failureCooldownMs = Math.max(0, config?.failureCooldownMs ?? 30_000);
     this.failedEndpoints = new Map();
-    this.failedHosts = new Map();
   }
 
   async resolve(peer: PeerEndpoint): Promise<PeerMetadata | null> {
@@ -33,15 +29,6 @@ export class HttpMetadataResolver implements MetadataResolver {
     const host = peer.host.toLowerCase();
     const endpointKey = this.getEndpointKey(host, metadataPort);
     const now = Date.now();
-
-    // Check host-level cooldown first (covers all ports for this peer)
-    const hostFailedUntil = this.failedHosts.get(host);
-    if (hostFailedUntil !== undefined) {
-      if (hostFailedUntil > now) {
-        return null;
-      }
-      this.failedHosts.delete(host);
-    }
 
     const failedUntil = this.failedEndpoints.get(endpointKey);
     if (failedUntil !== undefined) {
@@ -59,16 +46,15 @@ export class HttpMetadataResolver implements MetadataResolver {
       const response = await fetch(url, { signal: controller.signal });
 
       if (!response.ok) {
-        this.markEndpointFailure(endpointKey, host);
+        this.markEndpointFailure(endpointKey);
         return null;
       }
 
       const metadata = (await response.json()) as PeerMetadata;
       this.failedEndpoints.delete(endpointKey);
-      this.failedHosts.delete(host);
       return metadata;
     } catch (err) {
-      this.markEndpointFailure(endpointKey, host);
+      this.markEndpointFailure(endpointKey);
       const reason = err instanceof DOMException && err.name === 'AbortError'
         ? 'timeout'
         : err instanceof SyntaxError
@@ -81,13 +67,12 @@ export class HttpMetadataResolver implements MetadataResolver {
     }
   }
 
-  private markEndpointFailure(endpointKey: string, host: string): void {
+  private markEndpointFailure(endpointKey: string): void {
     if (this.failureCooldownMs <= 0) {
       return;
     }
     const failedUntil = Date.now() + this.failureCooldownMs;
     this.failedEndpoints.set(endpointKey, failedUntil);
-    this.failedHosts.set(host, failedUntil);
   }
 
   private getEndpointKey(host: string, port: number): string {

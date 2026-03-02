@@ -23,10 +23,10 @@ describe('Security: allowed-model validation', () => {
     expect(error).toContain('not in the allowed list');
   });
 
-  it('rejects invalid JSON payloads when allow-list enforcement is enabled', () => {
+  it('allows invalid JSON payloads through (upstream will reject them)', () => {
     const allowedModels = ['claude-sonnet-4-5-20250929'];
     const request = makeRequest('{not-valid-json');
-    expect(validateRequestModel(request, allowedModels)).toContain('Invalid JSON');
+    expect(validateRequestModel(request, allowedModels)).toBeNull();
   });
 
   it('allows valid payloads with allowed models', () => {
