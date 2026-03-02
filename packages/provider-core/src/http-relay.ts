@@ -53,11 +53,17 @@ function deepMerge(target: Record<string, unknown>, source: Record<string, unkno
 export class HttpRelay {
   private readonly _config: RelayConfig;
   private readonly _callbacks: RelayCallbacks;
+  private readonly _validationModels: ReadonlySet<string>;
   private _activeCount = 0;
 
   constructor(config: RelayConfig, callbacks: RelayCallbacks) {
     this._config = config;
     this._callbacks = callbacks;
+    const rewriteValues = Object.values(config.modelRewriteMap ?? {});
+    this._validationModels = new Set([
+      ...config.allowedModels.map((m) => m.trim().toLowerCase()),
+      ...rewriteValues.map((m) => m.trim().toLowerCase()),
+    ]);
   }
 
   getActiveCount(): number {
@@ -74,14 +80,8 @@ export class HttpRelay {
   }
 
   async handleRequest(request: SerializedHttpRequest): Promise<void> {
-    // Validate model against allowedModels.
-    // Also accept the upstream (full) model names from the rewrite map so that buyers
-    // can send either the announced short name or the full upstream name.
-    const rewriteValues = Object.values(this._config.modelRewriteMap ?? {});
-    const validationModels = rewriteValues.length > 0
-      ? [...this._config.allowedModels, ...rewriteValues]
-      : this._config.allowedModels;
-    const validationError = validateRequestModel(request, validationModels);
+    // Validate model against pre-computed set (normalized at construction time).
+    const validationError = validateRequestModel(request, this._validationModels);
     if (validationError) {
       this._sendError(request.requestId, 403, validationError);
       return;
