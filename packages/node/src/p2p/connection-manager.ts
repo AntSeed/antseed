@@ -191,13 +191,20 @@ export class PeerConnection extends EventEmitter {
     if (this._dataChannel && this._dataChannel.isOpen()) {
       const ok = this._dataChannel.sendMessageBinary(data);
       if (!ok) {
-        throw new Error(`Failed to send data to ${this.remotePeerId}`);
+        const err = new Error(`Failed to send data to ${this.remotePeerId}`);
+        this.fail(err);
+        throw err;
       }
       return;
     }
 
     if (!this._rawSocket || this._rawSocket.destroyed || !this._rawSocket.writable) {
-      throw new Error(`Cannot send to ${this.remotePeerId}: no writable transport`);
+      // Transport is unexpectedly unavailable while state is Open — eagerly fail the
+      // connection so it is evicted from the pool and the next request gets a fresh
+      // connection instead of also hitting this error.
+      const err = new Error(`Cannot send to ${this.remotePeerId}: no writable transport`);
+      this.fail(err);
+      throw err;
     }
 
     this._rawSocket.write(Buffer.from(data));
