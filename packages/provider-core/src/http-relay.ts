@@ -74,8 +74,14 @@ export class HttpRelay {
   }
 
   async handleRequest(request: SerializedHttpRequest): Promise<void> {
-    // Validate model against allowedModels
-    const validationError = validateRequestModel(request, this._config.allowedModels);
+    // Validate model against allowedModels.
+    // Also accept the upstream (full) model names from the rewrite map so that buyers
+    // can send either the announced short name or the full upstream name.
+    const rewriteValues = Object.values(this._config.modelRewriteMap ?? {});
+    const validationModels = rewriteValues.length > 0
+      ? [...this._config.allowedModels, ...rewriteValues]
+      : this._config.allowedModels;
+    const validationError = validateRequestModel(request, validationModels);
     if (validationError) {
       this._sendError(request.requestId, 403, validationError);
       return;

@@ -300,6 +300,54 @@ describe('HttpRelay', () => {
     expect(bodyText).toContain('World');
   });
 
+  it('allows GET requests through model validation', async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ object: 'list', data: [] }), { status: 200 }));
+
+    const responses: SerializedHttpResponse[] = [];
+    const callbacks: RelayCallbacks = {
+      onResponse: (res) => responses.push(res),
+    };
+
+    const relay = new HttpRelay(makeConfig({ allowedModels: ['claude-sonnet-4-20250514'] }), callbacks);
+    await relay.handleRequest(makeRequest({
+      method: 'GET',
+      path: '/v1/models',
+      body: new Uint8Array(0),
+    }));
+
+    expect(responses[0]!.statusCode).toBe(200);
+  });
+
+  it('accepts upstream (full) model names via modelRewriteMap', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
+
+    const responses: SerializedHttpResponse[] = [];
+    const callbacks: RelayCallbacks = {
+      onResponse: (res) => responses.push(res),
+    };
+
+    const relay = new HttpRelay(
+      makeConfig({
+        allowedModels: ['kimi-k2.5'],
+        modelRewriteMap: { 'kimi-k2.5': 'moonshotai/kimi-k2.5' },
+      }),
+      callbacks,
+    );
+
+    // Buyer sends the full upstream name — should still be accepted
+    const req = makeRequest({
+      body: new TextEncoder().encode(JSON.stringify({ model: 'moonshotai/kimi-k2.5', messages: [] })),
+    });
+    await relay.handleRequest(req);
+
+    expect(responses[0]!.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // Body should pass through unchanged (no rewrite entry for the full name)
+    const [, opts] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const parsed = JSON.parse(new TextDecoder().decode(opts.body as Uint8Array)) as { model?: string };
+    expect(parsed.model).toBe('moonshotai/kimi-k2.5');
+  });
+
   it('tracks active count correctly', async () => {
     fetchMock.mockResolvedValue(new Response('{}', { status: 200 }));
 

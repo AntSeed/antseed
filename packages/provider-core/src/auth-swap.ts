@@ -54,6 +54,8 @@ export function swapAuthHeader(
 /**
  * Validate request against allowed models.
  * Parses JSON body and enforces strict top-level `"model"` allow-list.
+ * Requests without a JSON body or without a `model` field are allowed through
+ * (e.g. GET /v1/models has no body and needs no model validation).
  * Returns null if ok, error string if rejected.
  */
 export function validateRequestModel(
@@ -65,20 +67,28 @@ export function validateRequestModel(
     return null;
   }
 
+  // GET/HEAD have no body — nothing to validate
+  if (request.method === 'GET' || request.method === 'HEAD') {
+    return null;
+  }
+
   let payload: unknown;
   try {
     payload = JSON.parse(new TextDecoder().decode(request.body)) as unknown;
   } catch {
-    return "Invalid JSON request body";
+    // Non-JSON body — no model field to validate, allow through
+    return null;
   }
 
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-    return 'Request body must be a JSON object containing a "model" field';
+    // No model field possible — allow through
+    return null;
   }
 
   const model = (payload as Record<string, unknown>)["model"];
   if (typeof model !== "string" || model.trim() === "") {
-    return 'Request is missing a valid "model" field';
+    // No model field — allow through (endpoint may not require it)
+    return null;
   }
 
   const normalizedModel = model.trim().toLowerCase();
