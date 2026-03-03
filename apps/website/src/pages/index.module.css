@@ -8,7 +8,7 @@
   text-align: center;
   padding: 120px 20px 80px;
   position: relative;
-  background: #f5f7fa;
+  background: transparent;
 }
 
 .heroInner {
@@ -21,7 +21,7 @@
 .heroSubtitle {
   font-family: 'JetBrains Mono', monospace;
   font-size: 13px;
-  color: #666e7a;
+  color: #6b7280;
   letter-spacing: 4px;
   text-transform: uppercase;
   margin-bottom: 32px;
@@ -35,16 +35,18 @@
   letter-spacing: -3px;
   margin-bottom: 20px;
   opacity: 0;
-  color: #0d1117;
+  color: #0a0e14;
 }
 
 .accent {
-  color: #16a863;
+  color: #0a0e14;
+  position: relative;
+  display: inline-block;
 }
 
 .heroDesc {
   font-size: 15px;
-  color: #666e7a;
+  color: #6b7280;
   max-width: 560px;
   margin: 0 auto 48px;
   line-height: 2;
@@ -69,14 +71,20 @@
   display: inline-flex;
   align-items: center;
   gap: 20px;
-  background: white;
-  border: 1px solid #e2e8f0;
+  background: rgba(255,255,255,0.75);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(10, 14, 20, 0.1);
   border-radius: 40px;
   padding: 10px 24px;
   margin-bottom: 48px;
-  box-shadow: 0 2px 12px rgba(0,0,0,0.06);
   flex-wrap: wrap;
   justify-content: center;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.liveBar:hover {
+  border-color: rgba(10, 14, 20, 0.25);
 }
 
 .liveDot {
@@ -92,13 +100,13 @@
 .liveLabel {
   font-family: 'JetBrains Mono', monospace;
   font-size: 12px;
-  color: #16a863;
+  color: #3dffa2;
   letter-spacing: 0.05em;
   font-weight: 500;
 }
 
 .liveSep {
-  color: #e2e8f0;
+  color: rgba(139, 148, 158, 0.3);
   font-size: 16px;
 }
 
@@ -112,12 +120,12 @@
   font-family: 'JetBrains Mono', monospace;
   font-size: 18px;
   font-weight: 700;
-  color: #0d1117;
+  color: #0a0e14;
 }
 
 .liveStatLabel {
   font-size: 11px;
-  color: #8b949e;
+  color: #6b7280;
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
@@ -137,7 +145,7 @@
   left: 50%;
   transform: translateX(-50%);
   font-size: 12px;
-  color: #8b949e;
+  color: #6b7280;
   font-family: -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
@@ -153,7 +161,7 @@
 }
 
 .appWindowBar {
-  background: #1e1e1e;
+  background: #e8edf2;
   padding: 10px 16px;
   display: flex;
   align-items: center;
@@ -163,7 +171,10 @@
 
 .appWindowImg {
   width: 100%;
+  height: 100%;
   display: block;
+  object-fit: cover;
+  object-position: top;
 }
 
 @keyframes float {
@@ -178,7 +189,7 @@
 
 .heroSectionLabel {
   font-size: 17px;
-  color: #444d56;
+  color: #6b7280;
   margin-bottom: 32px;
   font-weight: 400;
 }
@@ -196,20 +207,21 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  background: #0d1117;
-  color: #fff;
+  background: #0a0e14;
+  color: #ffffff;
   padding: 10px 20px;
-  border-radius: 8px;
-  font-size: 13px;
+  border-radius: 6px;
+  font-size: 12px;
   font-family: 'JetBrains Mono', monospace;
   font-weight: 500;
   text-decoration: none;
+  letter-spacing: 0.5px;
   transition: background 0.2s;
 }
 
 .badgeMac:hover {
-  background: #1a1a2e;
-  color: #fff;
+  background: #141a22;
+  color: #3dffa2;
   text-decoration: none;
 }
 
@@ -217,13 +229,14 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  background: white;
-  color: #8b949e;
+  background: #ffffff;
+  color: #6b7280;
   padding: 10px 20px;
-  border-radius: 8px;
-  font-size: 13px;
+  border-radius: 6px;
+  font-size: 12px;
   font-family: 'JetBrains Mono', monospace;
-  border: 1px solid #e2e8f0;
+  border: 1px solid rgba(10, 14, 20, 0.07);
+  letter-spacing: 0.5px;
 }
 
 /* Developer section */
@@ -237,27 +250,27 @@
 }
 
 .devCard {
-  background: white;
-  border: 1px solid #e2e8f0;
-  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(10, 14, 20, 0.07);
+  border-radius: 8px;
   padding: 36px;
-  box-shadow: 0 4px 24px rgba(0,0,0,0.06);
 }
 
 .devCardLabel {
   font-family: 'JetBrains Mono', monospace;
   font-size: 10px;
-  color: #16a863;
+  color: #3dffa2;
   letter-spacing: 3px;
   text-transform: uppercase;
   margin-bottom: 12px;
-  opacity: 0.8;
+  opacity: 0.6;
 }
 
 .devCardTitle {
   font-size: 22px;
   font-weight: 700;
-  color: #0d1117;
+  color: #0a0e14;
   line-height: 1.3;
   margin-bottom: 12px;
   letter-spacing: -0.5px;
@@ -265,7 +278,7 @@
 
 .devCardDesc {
   font-size: 14px;
-  color: #666e7a;
+  color: #6b7280;
   line-height: 1.7;
   margin-bottom: 24px;
 }
@@ -274,11 +287,12 @@
 .terminal {
   border-radius: 8px;
   overflow: hidden;
-  border: 1px solid #1a1a1a;
+  border: 1px solid rgba(10, 14, 20, 0.1);
+  box-shadow: 0 4px 24px rgba(10, 14, 20, 0.06);
 }
 
 .terminalBar {
-  background: #1e1e1e;
+  background: #e8edf2;
   padding: 8px 14px;
   display: flex;
   align-items: center;
@@ -287,9 +301,10 @@
 }
 
 .terminalBody {
-  background: #0d1117;
+  background: #f8fafc;
   padding: 16px;
-  min-height: 120px;
+  height: 260px;
+  overflow: hidden;
   font-family: 'JetBrains Mono', monospace;
   font-size: 12px;
   line-height: 1.8;
@@ -300,16 +315,60 @@
 }
 
 .terminalCmd {
-  color: #3dffa2;
+  color: #0a0e14;
+  font-weight: 600;
 }
 
 .terminalOut {
-  color: #8b949e;
+  color: #6b7280;
 }
 
 .terminalCursor {
   color: #3dffa2;
   font-size: 14px;
+}
+
+.terminalSuccess {
+  color: #3dffa2;
+}
+
+/* Video */
+.videoPlaceholder {
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid rgba(10, 14, 20, 0.08);
+  background: #f0f4f8;
+  height: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.videoStaticPlaceholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.videoPlaceholderIcon {
+  font-size: 28px;
+  color: rgba(10, 14, 20, 0.15);
+}
+
+.videoPlaceholderText {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: #6b7280;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+
+.appWindowPlaceholder {
+  width: 100%;
+  height: 400px;
+  overflow: hidden;
+  flex-shrink: 0;
 }
 
 /* Integration badges */
@@ -321,53 +380,53 @@
 }
 
 .integrationBadge {
-  background: #f5f7fa;
-  border: 1px solid #e2e8f0;
+  background: #f0f4f8;
+  border: 1px solid rgba(10, 14, 20, 0.08);
   border-radius: 6px;
   padding: 8px 14px;
   font-size: 12px;
   font-family: 'JetBrains Mono', monospace;
-  color: #444d56;
+  color: #6b7280;
   font-weight: 500;
 }
 
 /* Buttons */
 .btnPrimary {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 500;
   padding: 14px 32px;
-  background: #0d1117;
-  color: #fff;
-  border-radius: 8px;
+  background: #0a0e14;
+  color: #ffffff;
+  border-radius: 6px;
   transition: background 0.2s;
   text-decoration: none;
-  letter-spacing: 0.5px;
+  letter-spacing: 1px;
 }
 
 .btnPrimary:hover {
-  background: #1a1a2e;
-  color: #fff;
+  background: #141a22;
+  color: #3dffa2;
   text-decoration: none;
 }
 
 .btnSecondary {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
   padding: 14px 32px;
   background: transparent;
-  color: #666e7a;
-  border: 1px solid #d0d7de;
-  border-radius: 8px;
+  color: #6b7280;
+  border: 1px solid rgba(10, 14, 20, 0.15);
+  border-radius: 6px;
   transition: all 0.2s;
   text-decoration: none;
-  letter-spacing: 0.5px;
+  letter-spacing: 1px;
 }
 
 .btnSecondary:hover {
-  border-color: #0d1117;
-  color: #0d1117;
+  border-color: #0a0e14;
+  color: #0a0e14;
   text-decoration: none;
 }
 
@@ -376,7 +435,7 @@
   display: inline-flex;
   align-items: center;
   gap: 12px;
-  background: #0d1117;
+  background: #f8fafc;
   border: 1px solid #21262D;
   border-radius: 6px;
   padding: 12px 24px;
@@ -395,7 +454,7 @@
 }
 
 .installCmd {
-  color: #e6edf3;
+  color: #0a0e14;
 }
 
 .installCopy {
@@ -421,7 +480,7 @@
 }
 
 .sectionBorder {
-  border-top: 1px solid rgba(61, 255, 162, 0.03);
+  border-top: 1px solid rgba(10, 14, 20, 0.06);
 }
 
 .sectionLabel {
@@ -440,12 +499,12 @@
   letter-spacing: -0.5px;
   margin-bottom: 8px;
   line-height: 1.3;
-  color: #e6edf3;
+  color: #0a0e14;
 }
 
 .sectionDesc {
   font-size: 15px;
-  color: #8b949e;
+  color: #6b7280;
   max-width: 640px;
   line-height: 2;
   margin-bottom: 48px;
@@ -466,14 +525,15 @@
 
 /* Cards */
 .card {
-  background: #0d1117;
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(8px);
   padding: 40px;
   position: relative;
   transition: background 0.2s;
 }
 
 .card:hover {
-  background: #161B22;
+  background: rgba(255, 255, 255, 0.85);
 }
 
 .cardNum {
@@ -498,13 +558,14 @@
 
 .cardDesc {
   font-size: 14px;
-  color: #8b949e;
+  color: #6b7280;
   line-height: 1.8;
 }
 
 /* Supply cards */
 .supplyCard {
-  background: #0d1117;
+  background: rgba(255, 255, 255, 0.65);
+  backdrop-filter: blur(8px);
   padding: 36px;
   border-left: 2px solid transparent;
   transition: all 0.2s;
@@ -512,14 +573,14 @@
 
 .supplyCard:hover {
   border-left-color: #3dffa2;
-  background: #161B22;
+  background: rgba(255, 255, 255, 0.85);
 }
 
 .supplyName {
   font-size: 16px;
   font-weight: 600;
   margin-bottom: 6px;
-  color: #e6edf3;
+  color: #0a0e14;
 }
 
 .supplyTier {
@@ -559,12 +620,12 @@
   font-size: 16px;
   font-weight: 600;
   margin-bottom: 12px;
-  color: #e6edf3;
+  color: #0a0e14;
 }
 
 /* Download */
 .downloadCard {
-  background: #0d1117;
+  background: #f8fafc;
   padding: 40px;
   position: relative;
   transition: background 0.2s;
@@ -572,7 +633,7 @@
 }
 
 .downloadCard:hover {
-  background: #161B22;
+  background: #f0f4f8;
   text-decoration: none;
 }
 
@@ -608,12 +669,12 @@
   font-weight: 700;
   letter-spacing: -1px;
   margin-bottom: 16px;
-  color: #e6edf3;
+  color: #0a0e14;
 }
 
 .ctaDesc {
   font-size: 15px;
-  color: #8b949e;
+  color: #6b7280;
   margin-bottom: 40px;
 }
 
@@ -636,4 +697,93 @@
   .grid3 {
     grid-template-columns: repeat(2, 1fr);
   }
+}
+
+/* FAQ */
+.faqSection {
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+.faqList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 40px;
+}
+
+.faqItem {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(10, 14, 20, 0.07);
+  border-radius: 10px;
+  padding: 24px 28px;
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.faqItem:hover {
+  border-color: rgba(10, 14, 20, 0.18);
+  background: #ffffff;
+}
+
+.faqItemOpen {
+  border-color: rgba(22, 168, 99, 0.4);
+  background: #ffffff;
+}
+
+.faqQuestion {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #0a0e14;
+  line-height: 1.4;
+}
+
+.faqChevron {
+  color: #3dffa2;
+  font-size: 16px;
+  flex-shrink: 0;
+  transition: transform 0.25s ease;
+  opacity: 0.7;
+}
+
+.faqAnswer {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(10, 14, 20, 0.07);
+  font-size: 14px;
+  color: #6b7280;
+  line-height: 1.9;
+}
+
+.faqFooter {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.faqMoreLink {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: #3dffa2;
+  text-decoration: none;
+  letter-spacing: 1px;
+  opacity: 0.65;
+  transition: opacity 0.2s;
+  border: 1px solid rgba(61, 255, 162, 0.15);
+  border-radius: 6px;
+  padding: 10px 20px;
+}
+
+.faqMoreLink:hover {
+  opacity: 1;
+  text-decoration: none;
+  color: #3dffa2;
+  border-color: rgba(22, 168, 99, 0.5);
 }

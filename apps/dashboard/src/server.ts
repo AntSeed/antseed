@@ -74,7 +74,7 @@ export async function createDashboardServer(
 
   return {
     start: async () => {
-      await app.listen({ port, host: '127.0.0.1' });
+      await app.listen({ port, host: '0.0.0.0' });
       // Start DHT query service after Fastify is listening
       await dhtQueryService.start().catch((err: unknown) => {
         console.error(`DHT start failed (non-fatal): ${(err as Error).message}`);
