@@ -10,6 +10,12 @@ const config: Config = {
   baseUrl: '/',
   onBrokenLinks: 'throw',
 
+  clientModules: [require.resolve('./src/forceLight.ts')],
+
+  scripts: [{src: '/force-light.js', async: false}],
+
+
+
   markdown: {
     hooks: {
       onBrokenMarkdownLinks: 'warn',
@@ -59,6 +65,25 @@ const config: Config = {
         ],
       },
     ],
+    function statsProxy() {
+      return {
+        name: 'stats-proxy',
+        configureWebpack() {
+          return {
+            devServer: {
+              proxy: [
+                {
+                  context: ['/stats-api'],
+                  target: 'http://localhost:3001',
+                  pathRewrite: {'^/stats-api': ''},
+                  changeOrigin: true,
+                },
+              ],
+            },
+          };
+        },
+      };
+    },
   ],
 
   themeConfig: {
@@ -76,7 +101,7 @@ const config: Config = {
       {name: 'twitter:description', content: 'Private AI inference with zero data collection. No account, no logs, no middleman.'},
     ],
     colorMode: {
-      defaultMode: 'dark',
+      defaultMode: 'light',
       disableSwitch: true,
       respectPrefersColorScheme: false,
     },

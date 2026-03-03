@@ -8,12 +8,13 @@ import styles from './index.module.css';
 const RELEASES_URL = 'https://github.com/AntSeed/antseed/releases/latest';
 
 function AntMarkFull({size = 48}: {size?: number}) {
-  const c = '#3dffa2';
+  const c = '#3dffa2'; // mint — seeds and nodes
+  const body = '#0a0e14'; // black — ant body segments
   return (
     <svg width={size} height={size} viewBox="0 0 80 80" fill="none">
-      <ellipse cx="40" cy="22" rx="5" ry="5.5" fill={c} opacity="0.9" />
-      <ellipse cx="40" cy="36" rx="7" ry="8" fill={c} />
-      <ellipse cx="40" cy="55" rx="9" ry="12" fill={c} opacity="0.9" />
+      <ellipse cx="40" cy="22" rx="5" ry="5.5" fill={body} />
+      <ellipse cx="40" cy="36" rx="7" ry="8" fill={body} />
+      <ellipse cx="40" cy="55" rx="9" ry="12" fill={body} />
       <line x1="37" y1="17" x2="28" y2="6" stroke={c} strokeWidth="1.5" strokeLinecap="round" opacity="0.7" />
       <line x1="43" y1="17" x2="52" y2="6" stroke={c} strokeWidth="1.5" strokeLinecap="round" opacity="0.7" />
       <circle cx="28" cy="6" r="2.5" fill={c} opacity="0.6" />
@@ -104,38 +105,53 @@ function AppWindow() {
           <span className={styles.macDotYellow} />
           <span className={styles.macDotGreen} />
         </div>
-        <span className={styles.macTitle}>AntSeed</span>
+        <span className={styles.macTitle}>AntFarm</span>
       </div>
-      <img src="/app-screenshot.jpg" alt="AntSeed app" className={styles.appWindowImg} />
+      <div className={styles.appWindowPlaceholder}>
+        <img src="/app-screenshot.jpg" alt="AntFarm app" className={styles.appWindowImg} />
+      </div>
     </div>
   );
 }
 
-const TERMINAL_LINES = [
-  '$ antseed connect',
-  '> Discovering peers...',
-  '> Found 3 peers • 10 models',
-  '> Routing to best provider',
-  '> Ready on localhost:8787 ✓',
+const TERMINAL_LINES: {text: string; type: 'cmd' | 'out' | 'success'; gap?: boolean}[] = [
+  {text: '$ antseed connect', type: 'cmd'},
+  {text: '> Discovering peers on the network...', type: 'out'},
+  {text: '> Found 3 peers · 10 models available', type: 'out'},
+  {text: '> Routing: DeepSeek-R1 · $0.08/M · 12ms', type: 'out'},
+  {text: '> Ready. Routing to best provider...', type: 'out'},
+  {text: '$ antseed models', type: 'cmd', gap: true},
+  {text: '> claude-sonnet-4-6, deepseek-r1,', type: 'out'},
+  {text: '  llama-4-maverick, qwen3.5-397b...', type: 'out'},
+  {text: '✓ Ready. Point any OpenAI client here.', type: 'success', gap: true},
 ];
 
 function TerminalWindow() {
-  const [lines, setLines] = useState<string[]>([]);
+  const [visibleCount, setVisibleCount] = useState(0);
   const [cursor, setCursor] = useState(true);
 
   useEffect(() => {
-    let i = 0;
-    const next = () => {
-      if (i < TERMINAL_LINES.length) {
-        setLines(prev => [...prev, TERMINAL_LINES[i++]]);
-        setTimeout(next, 900);
-      } else {
-        setTimeout(() => { setLines([]); i = 0; next(); }, 3000);
-      }
+    const DELAYS = [0, 500, 950, 1400, 1850, 2600, 3100, 3450, 4050];
+    const TOTAL = 4050;
+    const PAUSE = 5000; // pause at full before reset
+
+    let timers: ReturnType<typeof setTimeout>[] = [];
+
+    function runCycle() {
+      setVisibleCount(0);
+      timers = DELAYS.map((d, idx) =>
+        setTimeout(() => setVisibleCount(idx + 1), d)
+      );
+      // Loop after full display + pause
+      timers.push(setTimeout(() => runCycle(), TOTAL + PAUSE));
+    }
+
+    runCycle();
+    const blink = setInterval(() => setCursor(c => !c), 530);
+    return () => {
+      timers.forEach(clearTimeout);
+      clearInterval(blink);
     };
-    const t = setTimeout(next, 600);
-    const blink = setInterval(() => setCursor(c => !c), 500);
-    return () => { clearTimeout(t); clearInterval(blink); };
   }, []);
 
   return (
@@ -149,10 +165,22 @@ function TerminalWindow() {
         <span className={styles.macTitle}>Terminal</span>
       </div>
       <div className={styles.terminalBody}>
-        {lines.map((line, i) => (
-          <div key={i} className={styles.terminalLine}>
-            <span className={line.startsWith('$') ? styles.terminalCmd : line.startsWith('>') ? styles.terminalOut : styles.terminalOut}>
-              {line}
+        {TERMINAL_LINES.map((line, i) => (
+          <div
+            key={i}
+            className={styles.terminalLine}
+            style={{
+              marginTop: line.gap ? '12px' : undefined,
+              opacity: i < visibleCount ? 1 : 0,
+              transition: 'opacity 0.15s ease',
+            }}
+          >
+            <span className={
+              line.type === 'cmd' ? styles.terminalCmd :
+              line.type === 'success' ? styles.terminalSuccess :
+              styles.terminalOut
+            }>
+              {line.text}
             </span>
           </div>
         ))}
@@ -211,12 +239,12 @@ function Hero() {
           <div className={styles.devCard}>
             <div className={styles.devCardLabel}>Works with</div>
             <h3 className={styles.devCardTitle}>Claude Code,<br />Cursor & more.</h3>
-            <p className={styles.devCardDesc}>Point your existing tools at AntSeed. No code changes. Access every model on the network instantly.</p>
-            <div className={styles.integrationPlaceholder}>
-              <div className={styles.integrationBadge}>Claude Code</div>
-              <div className={styles.integrationBadge}>Cursor</div>
-              <div className={styles.integrationBadge}>Claude Desktop</div>
-              <div className={styles.integrationBadge}>Any OpenAI client</div>
+            <p className={styles.devCardDesc}>Point your existing tools at AntFarm. No code changes. Access every model on the network instantly.</p>
+            <div className={styles.videoPlaceholder}>
+              <div className={styles.videoStaticPlaceholder}>
+                <span className={styles.videoPlaceholderIcon}>▶</span>
+                <span className={styles.videoPlaceholderText}>Demo video</span>
+              </div>
             </div>
           </div>
         </div>
@@ -330,7 +358,6 @@ function SupplySources() {
   return (
     <section className={styles.section}>
       <div className="reveal">
-        <div className={styles.sectionLabel}>Supply</div>
         <div className={styles.sectionTitle}>Anyone can provide.<br />No partnership required.</div>
         <div className={styles.sectionDesc}>
           The protocol is provider-agnostic. It does not care how a seller fulfills a request. It cares that a response came back, the receipt verified, and quality was consistent.
@@ -358,7 +385,6 @@ function ThreeMarkets() {
   return (
     <section className={styles.section}>
       <div className="reveal">
-        <div className={styles.sectionLabel}>Three Markets</div>
         <div className={styles.sectionTitle}>One protocol.<br />Three use cases.</div>
         <div className={styles.sectionDesc}>
           Each builds on the one before it. All three share the same discovery, routing, reputation, and settlement mechanisms.
@@ -437,6 +463,63 @@ function DownloadDesktop() {
   );
 }
 
+const FAQ_ITEMS = [
+  {
+    q: 'What is AntSeed?',
+    a: 'AntSeed is a peer-to-peer network for AI services. It connects buyers who need AI inference with providers who offer it — directly, without a central platform in the middle. Unlike cloud AI APIs (OpenAI, Anthropic, Google), there is no single company routing your requests or storing your data. The protocol handles discovery, routing, and payment settlement across a decentralized network of peers.',
+  },
+  {
+    q: 'How is this different from ChatGPT or Claude?',
+    a: 'ChatGPT and Claude are centralized AI products. AntSeed is open infrastructure — a protocol layer that lets you access any model on the network, including Claude Sonnet, DeepSeek-R1, Llama 4, Qwen, and more, without going through their native platforms. Your existing tools (Cursor, Claude Code, any OpenAI-compatible client) connect and work immediately without modification.',
+  },
+  {
+    q: 'Is my data private?',
+    a: 'Privacy starts at the network level — like a VPN for AI. Providers never know who you are. No accounts, no identity, no way to link a request back to you. That is the baseline for every request on AntSeed. From there, you can go deeper: TEE-verified providers run inside hardware enclaves where not even the node operator can read your prompts — cryptographic proof, not a policy promise. Multiple layers of privacy. You choose how deep you go.',
+  },
+  {
+    q: 'Do I need to sign up or create an account?',
+    a: 'No account required. Install the CLI with one command and you are connected to the network. Any tool that speaks the OpenAI API format works immediately — no API keys, no dashboards, no terms of service to accept.',
+  },
+];
+
+function FAQSection() {
+  const [open, setOpen] = useState<number | null>(null);
+  return (
+    <section className={`${styles.section} ${styles.sectionBorder}`} id="faq">
+      <script type="application/ld+json" dangerouslySetInnerHTML={{__html: JSON.stringify({
+        '@context': 'https://schema.org',
+        '@type': 'FAQPage',
+        mainEntity: FAQ_ITEMS.map(f => ({
+          '@type': 'Question',
+          name: f.q,
+          acceptedAnswer: {'@type': 'Answer', text: f.a},
+        })),
+      })}} />
+      <div className={`${styles.faqSection} reveal`}>
+        <div className={styles.sectionTitle} style={{marginBottom: '40px'}}>Frequently asked questions</div>
+        <div className={styles.faqList}>
+          {FAQ_ITEMS.map((item, i) => (
+            <div
+              key={i}
+              className={`${styles.faqItem} ${open === i ? styles.faqItemOpen : ''}`}
+              onClick={() => setOpen(open === i ? null : i)}
+            >
+              <div className={styles.faqQuestion}>
+                <span>{item.q}</span>
+                <span className={styles.faqChevron} style={{transform: open === i ? 'rotate(180deg)' : 'rotate(0deg)'}}>▾</span>
+              </div>
+              {open === i && <div className={styles.faqAnswer}>{item.a}</div>}
+            </div>
+          ))}
+        </div>
+        <div className={styles.faqFooter}>
+          <Link to="/docs/faq" className={styles.faqMoreLink}>See all FAQs →</Link>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function CTASection() {
   return (
     <div className={`${styles.cta} ${styles.sectionBorder}`}>
@@ -448,6 +531,7 @@ function CTASection() {
         <div className={styles.heroCtas}>
           <Link to="/docs/intro" className={styles.btnPrimary}>Get Started</Link>
           <Link to="/docs/lightpaper" className={styles.btnSecondary}>Light Paper</Link>
+          <a href="https://github.com/AntSeed/antseed" target="_blank" rel="noopener noreferrer" className={styles.btnSecondary}>GitHub →</a>
         </div>
       </div>
     </div>
@@ -469,14 +553,19 @@ export default function Home(): JSX.Element {
           return <AntNetworkBackground />;
         }}
       </BrowserOnly>
-      <div ref={containerRef} style={{position: 'relative', zIndex: 1}}>
-        <Hero />
-        <UseCases />
-        <HowItWorks />
-        <SupplySources />
+      <div ref={containerRef} style={{position: 'relative', zIndex: 3}}>
+        {/* Solid bg covers animation over hero + use cases */}
+        <div style={{background: '#f0f4f8', position: 'relative'}}>
+          <Hero />
+          <UseCases />
+        </div>
+        {/* Fade transition into animation */}
+        <div style={{height: '60px', background: 'linear-gradient(to bottom, #f0f4f8, transparent)', position: 'relative', marginTop: '-60px'}} />
+        {/* Animation visible all the way to the bottom — transparent backgrounds only */}
         <ThreeMarkets />
-        <DownloadDesktop />
+        <SupplySources />
         <CTASection />
+        <FAQSection />
       </div>
     </Layout>
   );

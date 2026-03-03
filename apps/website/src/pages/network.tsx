@@ -3,11 +3,7 @@ import Layout from '@theme/Layout';
 import Link from '@docusaurus/Link';
 import styles from './network.module.css';
 
-const KNOWN_PEERS = [
-  'http://108.128.178.49:6882',
-  'http://108.128.178.49:6892',
-  'http://18.200.194.8:6882',
-];
+const STATS_API = '';
 
 interface ProviderInfo {
   provider: string;
@@ -25,17 +21,6 @@ interface PeerInfo {
   timestamp: number;
   url: string;
   online: boolean;
-}
-
-async function fetchPeer(url: string): Promise<PeerInfo | null> {
-  try {
-    const res = await fetch(`${url}/metadata`, {signal: AbortSignal.timeout(4000)});
-    if (!res.ok) return null;
-    const d = await res.json();
-    return {...d, url, online: true};
-  } catch {
-    return null;
-  }
 }
 
 function ModelTag({name}: {name: string}) {
@@ -83,9 +68,13 @@ export default function NetworkPage() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   const refresh = async () => {
-    const results = await Promise.all(KNOWN_PEERS.map(fetchPeer));
-    const alive = results.filter(Boolean) as PeerInfo[];
-    setPeers(alive);
+    try {
+      const res = await fetch(`${STATS_API}/stats-api/api/peers`);
+      const data = await res.json();
+      setPeers((data as PeerInfo[]).map(p => ({...p, online: true})));
+    } catch {
+      setPeers([]);
+    }
     setLastUpdated(new Date());
     setLoading(false);
   };

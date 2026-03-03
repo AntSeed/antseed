@@ -13,10 +13,10 @@ export default function AntNetworkBackground() {
     const container = containerRef.current;
     if (!container) return;
 
-    // -- Theme colors (light mode) --
-    const BG = 0xf0f4f8;
-    const ACCENT = 0x16a863;
-    const ACCENT_DIM = 0x16a863;
+    // -- Theme colors --
+    const BG = 0x0a0e14;
+    const ACCENT = 0x3dffa2;
+    const ACCENT_DIM = 0x1a9e5f;
     const ERROR = 0xea580c;
 
     // -- State --
@@ -31,7 +31,7 @@ export default function AntNetworkBackground() {
 
     // -- Scene --
     const scene = new THREE.Scene();
-    scene.fog = new THREE.FogExp2(BG, 0.008);
+    scene.fog = new THREE.FogExp2(BG, 0.012);
 
     const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
     camera.position.set(0, 0, 45);
@@ -39,7 +39,7 @@ export default function AntNetworkBackground() {
     const renderer = new THREE.WebGLRenderer({antialias: true, alpha: true, powerPreference: 'high-performance'});
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.setClearColor(BG, 1);
+    renderer.setClearColor(BG, 0);
     container.appendChild(renderer.domElement);
 
     // -- Lights --
@@ -52,16 +52,16 @@ export default function AntNetworkBackground() {
     const nodeMaterial = new THREE.MeshPhysicalMaterial({
       color: ACCENT,
       roughness: 0.3,
-      transmission: 0.4,
-      thickness: 1,
+      transmission: 0.85,
+      thickness: 2,
       transparent: true,
-      opacity: 0.35,
+      opacity: 0.5,
     });
 
     const activeLineMat = new THREE.LineBasicMaterial({
       color: ACCENT_DIM,
       transparent: true,
-      opacity: 0.08,
+      opacity: 0.12,
     });
 
     const errorLineMat = new THREE.LineBasicMaterial({
@@ -73,8 +73,8 @@ export default function AntNetworkBackground() {
     // -- Procedural ant --
     function createProceduralAnt(): THREE.Group {
       const group = new THREE.Group();
-      const bodyMat = new THREE.MeshStandardMaterial({color: 0x0a0e14, roughness: 0.5, emissive: 0x141a22, emissiveIntensity: 0.1});
-      const legMat = new THREE.MeshStandardMaterial({color: 0x141a22, roughness: 0.6, emissive: 0x0a0e14, emissiveIntensity: 0.1});
+      const bodyMat = new THREE.MeshStandardMaterial({color: 0x1a6b55, roughness: 0.5, emissive: 0x0d3a2e, emissiveIntensity: 0.4});
+      const legMat = new THREE.MeshStandardMaterial({color: 0x1a6b55, roughness: 0.6, emissive: 0x0d3a2e, emissiveIntensity: 0.3});
 
       // Abdomen — large rear segment, slightly elongated
       const abdomen = new THREE.Mesh(new THREE.SphereGeometry(0.22, 10, 10), bodyMat);
@@ -111,7 +111,7 @@ export default function AntNetworkBackground() {
         ];
         const curve = new THREE.CatmullRomCurve3(pts);
         const geo = new THREE.BufferGeometry().setFromPoints(curve.getPoints(8));
-        return new THREE.Line(geo, new THREE.LineBasicMaterial({color: 0x0a0e14, linewidth: 1}));
+        return new THREE.Line(geo, new THREE.LineBasicMaterial({color: 0x2ecc82, linewidth: 1}));
       }
       group.add(createAntenna(1));
       group.add(createAntenna(-1));
@@ -199,15 +199,15 @@ export default function AntNetworkBackground() {
     const nodes: THREE.Mesh[] = [];
     const edges: Edge[] = [];
 
-    // Create nodes — spread across a tall range to cover full page scroll
-    for (let i = 0; i < 60; i++) {
+    // Create nodes
+    for (let i = 0; i < 40; i++) {
       const mesh = new THREE.Mesh(
         new THREE.IcosahedronGeometry(Math.random() * 0.8 + 0.4, 0),
         nodeMaterial,
       );
       mesh.position.set(
         (Math.random() - 0.5) * 60,
-        40 - Math.random() * 400,
+        30 - Math.random() * 150,
         (Math.random() - 0.5) * 20 - 5,
       );
       (mesh as any).userData = {
@@ -248,7 +248,7 @@ export default function AntNetworkBackground() {
     // Connect nodes
     for (let i = 0; i < nodes.length; i++) {
       const candidates = nodes.filter(
-        (n) => n.position.y < nodes[i].position.y && n.position.y > nodes[i].position.y - 50,
+        (n) => n.position.y < nodes[i].position.y && n.position.y > nodes[i].position.y - 30,
       );
       if (candidates.length > 0) {
         createConnection(nodes[i], candidates[Math.floor(Math.random() * candidates.length)]);
@@ -272,7 +272,7 @@ export default function AntNetworkBackground() {
           (n) =>
             n !== edge.startNode &&
             n !== edge.endNode &&
-            Math.abs(n.position.y - edge.startNode.position.y) < 50,
+            Math.abs(n.position.y - edge.startNode.position.y) < 30,
         );
         if (c.length > 0) {
           createConnection(edge.startNode, c[Math.floor(Math.random() * c.length)]);
@@ -343,7 +343,7 @@ export default function AntNetworkBackground() {
         left: 0,
         width: '100vw',
         height: '100vh',
-        zIndex: 2,
+        zIndex: 0,
         pointerEvents: 'none',
       }}
     />
