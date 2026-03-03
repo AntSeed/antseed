@@ -1,0 +1,264 @@
+.page {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 80px 24px 120px;
+}
+
+.header {
+  margin-bottom: 48px;
+}
+
+.back {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: #8b949e;
+  text-decoration: none;
+  letter-spacing: 0.05em;
+  display: inline-block;
+  margin-bottom: 24px;
+  transition: color 0.2s;
+}
+
+.back:hover {
+  color: #16a863;
+  text-decoration: none;
+}
+
+.title {
+  font-size: clamp(32px, 5vw, 52px);
+  font-weight: 800;
+  letter-spacing: -2px;
+  color: #0d1117;
+  margin-bottom: 12px;
+  line-height: 1.1;
+}
+
+.subtitle {
+  font-size: 15px;
+  color: #666e7a;
+  line-height: 1.7;
+}
+
+/* Stats bar */
+.statsBar {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  padding: 28px 40px;
+  margin-bottom: 48px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.06);
+  flex-wrap: wrap;
+  gap: 24px;
+  justify-content: center;
+}
+
+.stat {
+  text-align: center;
+  flex: 1;
+  min-width: 120px;
+}
+
+.statNum {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 40px;
+  font-weight: 700;
+  color: #0d1117;
+  line-height: 1;
+  margin-bottom: 8px;
+}
+
+.statLabel {
+  font-size: 11px;
+  color: #8b949e;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.statLive {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 18px;
+  font-weight: 700;
+  color: #16a863;
+  margin-bottom: 8px;
+}
+
+.liveDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #3dffa2;
+  box-shadow: 0 0 8px #3dffa2;
+  animation: pulse 2s infinite;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 8px #3dffa2; }
+  50% { opacity: 0.5; box-shadow: 0 0 3px #3dffa2; }
+}
+
+.statDivider {
+  width: 1px;
+  height: 48px;
+  background: #e2e8f0;
+  flex-shrink: 0;
+}
+
+/* Sections */
+.section {
+  margin-bottom: 48px;
+}
+
+.sectionTitle {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: #16a863;
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  margin-bottom: 20px;
+  opacity: 0.8;
+}
+
+/* Model grid */
+.modelGrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.modelTag {
+  background: #f5f7fa;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-family: 'JetBrains Mono', monospace;
+  color: #0d1117;
+  font-weight: 500;
+}
+
+/* Peer grid */
+.peerGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.peerCard {
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 24px;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.04);
+  transition: box-shadow 0.2s;
+}
+
+.peerCard:hover {
+  box-shadow: 0 8px 32px rgba(0,0,0,0.08);
+}
+
+.peerHeader {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.peerOnline {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #3dffa2;
+  box-shadow: 0 0 6px #3dffa2;
+  margin-top: 5px;
+  flex-shrink: 0;
+}
+
+.peerName {
+  font-size: 15px;
+  font-weight: 600;
+  color: #0d1117;
+  margin-bottom: 4px;
+}
+
+.peerId {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: #8b949e;
+}
+
+.peerRegion {
+  margin-left: auto;
+  font-size: 11px;
+  color: #8b949e;
+  background: #f5f7fa;
+  padding: 4px 10px;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+
+.peerModels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.peerPricing {
+  display: flex;
+  gap: 12px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: #16a863;
+  margin-bottom: 10px;
+}
+
+.peerMeta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  color: #8b949e;
+}
+
+.peerUrl {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+}
+
+.loading {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  color: #8b949e;
+  padding: 40px 0;
+  text-align: center;
+}
+
+.footer {
+  margin-top: 80px;
+  text-align: center;
+  font-size: 14px;
+  color: #8b949e;
+}
+
+.footer a {
+  color: #16a863;
+  text-decoration: none;
+}
+
+.footer a:hover {
+  text-decoration: underline;
+}
+
+@media (max-width: 600px) {
+  .statDivider { display: none; }
+  .statsBar { flex-direction: column; gap: 24px; }
+}

@@ -483,3 +483,8 @@ pre {
    ============================================= */
 /* Responsive rules */
 
+
+/* Light hero — hide dark animated background */
+.homepage-wrapper canvas {
+  display: none !important;
+}

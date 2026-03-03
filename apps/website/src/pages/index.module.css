@@ -8,47 +8,43 @@
   text-align: center;
   padding: 120px 20px 80px;
   position: relative;
+  background: #f5f7fa;
 }
 
 .heroInner {
   position: relative;
   z-index: 2;
-}
-
-.heroLogo {
-  display: flex;
-  justify-content: center;
-  margin-bottom: 40px;
-  opacity: 0;
+  max-width: 900px;
+  width: 100%;
 }
 
 .heroSubtitle {
   font-family: 'JetBrains Mono', monospace;
   font-size: 13px;
-  color: #8b949e;
+  color: #666e7a;
   letter-spacing: 4px;
   text-transform: uppercase;
-  margin-bottom: 24px;
+  margin-bottom: 32px;
   opacity: 0;
 }
 
 .heroTitle {
-  font-size: clamp(44px, 6vw, 72px);
-  font-weight: 700;
-  line-height: 1.1;
-  letter-spacing: -2px;
-  margin-bottom: 24px;
+  font-size: clamp(44px, 6vw, 80px);
+  font-weight: 800;
+  line-height: 1.05;
+  letter-spacing: -3px;
+  margin-bottom: 20px;
   opacity: 0;
-  color: #e6edf3;
+  color: #0d1117;
 }
 
 .accent {
-  color: #3dffa2;
+  color: #16a863;
 }
 
 .heroDesc {
   font-size: 15px;
-  color: #8b949e;
+  color: #666e7a;
   max-width: 560px;
   margin: 0 auto 48px;
   line-height: 2;
@@ -60,7 +56,7 @@
   gap: 12px;
   justify-content: center;
   flex-wrap: wrap;
-  opacity: 0;
+  margin-top: 40px;
 }
 
 .heroInstall {
@@ -68,43 +64,310 @@
   opacity: 0;
 }
 
+/* Live bar */
+.liveBar {
+  display: inline-flex;
+  align-items: center;
+  gap: 20px;
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 40px;
+  padding: 10px 24px;
+  margin-bottom: 48px;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.liveDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #3dffa2;
+  box-shadow: 0 0 6px #3dffa2;
+  animation: pulse 2s infinite;
+  flex-shrink: 0;
+}
+
+.liveLabel {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: #16a863;
+  letter-spacing: 0.05em;
+  font-weight: 500;
+}
+
+.liveSep {
+  color: #e2e8f0;
+  font-size: 16px;
+}
+
+.liveStat {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.liveNum {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 18px;
+  font-weight: 700;
+  color: #0d1117;
+}
+
+.liveStatLabel {
+  font-size: 11px;
+  color: #8b949e;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* Mac dots (shared) */
+.macDots {
+  display: flex;
+  gap: 6px;
+}
+
+.macDotRed { width: 12px; height: 12px; border-radius: 50%; background: #ff5f57; display: block; }
+.macDotYellow { width: 12px; height: 12px; border-radius: 50%; background: #febc2e; display: block; }
+.macDotGreen { width: 12px; height: 12px; border-radius: 50%; background: #28c840; display: block; }
+
+.macTitle {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 12px;
+  color: #8b949e;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+/* App window */
+.appWindow {
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 32px 80px rgba(0,0,0,0.18), 0 0 0 1px rgba(0,0,0,0.08);
+  animation: float 4s ease-in-out infinite;
+  max-width: 760px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.appWindowBar {
+  background: #1e1e1e;
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: relative;
+}
+
+.appWindowImg {
+  width: 100%;
+  display: block;
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px); box-shadow: 0 32px 80px rgba(0,0,0,0.18); }
+  50% { transform: translateY(-10px); box-shadow: 0 48px 100px rgba(0,0,0,0.14); }
+}
+
+/* Hero sections */
+.heroSection {
+  margin-bottom: 80px;
+}
+
+.heroSectionLabel {
+  font-size: 17px;
+  color: #444d56;
+  margin-bottom: 32px;
+  font-weight: 400;
+}
+
+/* Platform badges */
+.platformBadges {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 28px;
+}
+
+.badgeMac {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: #0d1117;
+  color: #fff;
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 500;
+  text-decoration: none;
+  transition: background 0.2s;
+}
+
+.badgeMac:hover {
+  background: #1a1a2e;
+  color: #fff;
+  text-decoration: none;
+}
+
+.badgeComingSoon {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: white;
+  color: #8b949e;
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: 'JetBrains Mono', monospace;
+  border: 1px solid #e2e8f0;
+}
+
+/* Developer section */
+.devSection {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  max-width: 900px;
+  margin: 0 auto 80px;
+  text-align: left;
+}
+
+.devCard {
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  padding: 36px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.06);
+}
+
+.devCardLabel {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: #16a863;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  margin-bottom: 12px;
+  opacity: 0.8;
+}
+
+.devCardTitle {
+  font-size: 22px;
+  font-weight: 700;
+  color: #0d1117;
+  line-height: 1.3;
+  margin-bottom: 12px;
+  letter-spacing: -0.5px;
+}
+
+.devCardDesc {
+  font-size: 14px;
+  color: #666e7a;
+  line-height: 1.7;
+  margin-bottom: 24px;
+}
+
+/* Terminal */
+.terminal {
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid #1a1a1a;
+}
+
+.terminalBar {
+  background: #1e1e1e;
+  padding: 8px 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: relative;
+}
+
+.terminalBody {
+  background: #0d1117;
+  padding: 16px;
+  min-height: 120px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+.terminalLine {
+  display: block;
+}
+
+.terminalCmd {
+  color: #3dffa2;
+}
+
+.terminalOut {
+  color: #8b949e;
+}
+
+.terminalCursor {
+  color: #3dffa2;
+  font-size: 14px;
+}
+
+/* Integration badges */
+.integrationPlaceholder {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.integrationBadge {
+  background: #f5f7fa;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 8px 14px;
+  font-size: 12px;
+  font-family: 'JetBrains Mono', monospace;
+  color: #444d56;
+  font-weight: 500;
+}
+
 /* Buttons */
 .btnPrimary {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 12px;
-  font-weight: 500;
-  padding: 12px 28px;
-  background: #3dffa2;
-  color: #0a0e14;
-  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 14px 32px;
+  background: #0d1117;
+  color: #fff;
+  border-radius: 8px;
   transition: background 0.2s;
   text-decoration: none;
-  letter-spacing: 1px;
+  letter-spacing: 0.5px;
 }
 
 .btnPrimary:hover {
-  background: #2ecc82;
-  color: #0a0e14;
+  background: #1a1a2e;
+  color: #fff;
   text-decoration: none;
 }
 
 .btnSecondary {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
-  padding: 12px 28px;
+  padding: 14px 32px;
   background: transparent;
-  color: #8b949e;
-  border: 1px solid rgba(61, 255, 162, 0.09);
-  border-radius: 6px;
+  color: #666e7a;
+  border: 1px solid #d0d7de;
+  border-radius: 8px;
   transition: all 0.2s;
   text-decoration: none;
-  letter-spacing: 1px;
+  letter-spacing: 0.5px;
 }
 
 .btnSecondary:hover {
-  border-color: #3dffa2;
-  color: #e6edf3;
+  border-color: #0d1117;
+  color: #0d1117;
   text-decoration: none;
 }
 

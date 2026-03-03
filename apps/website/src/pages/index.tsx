@@ -75,35 +75,152 @@ function InstallBox() {
   );
 }
 
+function LiveBar() {
+  return (
+    <Link to="/network" className={styles.liveBar} style={{textDecoration: 'none'}}>
+      <div className={styles.liveDot} />
+      <span className={styles.liveLabel}>Network live</span>
+      <span className={styles.liveSep}>|</span>
+      <div className={styles.liveStat}>
+        <span className={styles.liveNum}>3</span>
+        <span className={styles.liveStatLabel}>Active peers</span>
+      </div>
+      <span className={styles.liveSep}>|</span>
+      <div className={styles.liveStat}>
+        <span className={styles.liveNum}>10</span>
+        <span className={styles.liveStatLabel}>Models available</span>
+      </div>
+      <span style={{fontSize: '11px', color: '#16a863', fontFamily: "'JetBrains Mono', monospace", marginLeft: '4px'}}>→</span>
+    </Link>
+  );
+}
+
+function AppWindow() {
+  return (
+    <div className={styles.appWindow}>
+      <div className={styles.appWindowBar}>
+        <div className={styles.macDots}>
+          <span className={styles.macDotRed} />
+          <span className={styles.macDotYellow} />
+          <span className={styles.macDotGreen} />
+        </div>
+        <span className={styles.macTitle}>AntSeed</span>
+      </div>
+      <img src="/app-screenshot.jpg" alt="AntSeed app" className={styles.appWindowImg} />
+    </div>
+  );
+}
+
+const TERMINAL_LINES = [
+  '$ antseed connect',
+  '> Discovering peers...',
+  '> Found 3 peers • 10 models',
+  '> Routing to best provider',
+  '> Ready on localhost:8787 ✓',
+];
+
+function TerminalWindow() {
+  const [lines, setLines] = useState<string[]>([]);
+  const [cursor, setCursor] = useState(true);
+
+  useEffect(() => {
+    let i = 0;
+    const next = () => {
+      if (i < TERMINAL_LINES.length) {
+        setLines(prev => [...prev, TERMINAL_LINES[i++]]);
+        setTimeout(next, 900);
+      } else {
+        setTimeout(() => { setLines([]); i = 0; next(); }, 3000);
+      }
+    };
+    const t = setTimeout(next, 600);
+    const blink = setInterval(() => setCursor(c => !c), 500);
+    return () => { clearTimeout(t); clearInterval(blink); };
+  }, []);
+
+  return (
+    <div className={styles.terminal}>
+      <div className={styles.terminalBar}>
+        <div className={styles.macDots}>
+          <span className={styles.macDotRed} />
+          <span className={styles.macDotYellow} />
+          <span className={styles.macDotGreen} />
+        </div>
+        <span className={styles.macTitle}>Terminal</span>
+      </div>
+      <div className={styles.terminalBody}>
+        {lines.map((line, i) => (
+          <div key={i} className={styles.terminalLine}>
+            <span className={line.startsWith('$') ? styles.terminalCmd : line.startsWith('>') ? styles.terminalOut : styles.terminalOut}>
+              {line}
+            </span>
+          </div>
+        ))}
+        <span className={styles.terminalCursor} style={{opacity: cursor ? 1 : 0}}>▋</span>
+      </div>
+    </div>
+  );
+}
+
 function Hero() {
   return (
     <div className={styles.hero}>
       <div className={styles.heroInner}>
-        <div className={`${styles.heroLogo} animate-fade-up-1`}>
-          <div className="animate-float">
-            <AntMarkFull size={100} />
-          </div>
-        </div>
-        <div className={`${styles.heroSubtitle} animate-fade-up-1`}>
-          A Peer-to-Peer AI Services Network
-        </div>
-        <h1 className={`${styles.heroTitle} animate-fade-up-2`}>
+        <h1 className={`${styles.heroTitle} animate-fade-up-1`}>
           Your AI tools,<br /><span className={styles.accent}>unstoppable.</span>
         </h1>
-        <p className={`${styles.heroDesc} animate-fade-up-3`}>
-          An open market for machines to trade intelligence. Agents discover, carry, and deliver AI services peer-to-peer. Everyone profits. No one controls.
-        </p>
-        <div className={`${styles.heroCtas} animate-fade-up-4`}>
-          <Link to="/docs/lightpaper" className={styles.btnPrimary}>
-            Light Paper
-          </Link>
-          <Link to="/docs/intro" className={styles.btnSecondary}>
-            Read the Docs
-          </Link>
+        <div className={`${styles.heroSubtitle} animate-fade-up-2`}>
+          A Peer-to-Peer AI Services Network
         </div>
-        <div className={`${styles.heroInstall} animate-fade-up-5`}>
-          <InstallBox />
+        <div className="animate-fade-up-3">
+          <LiveBar />
         </div>
+
+        {/* Consumer section */}
+        <div className={`${styles.heroSection} animate-fade-up-4`}>
+          <p className={styles.heroSectionLabel}>All the models. One chat. Totally anonymous and P2P.</p>
+          <AppWindow />
+          <div className={styles.platformBadges}>
+            <a href={RELEASES_URL} target="_blank" rel="noopener noreferrer" className={styles.badgeMac}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+              Download for Mac
+            </a>
+            <span className={styles.badgeComingSoon}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M3 5h18v14H3V5zm2 2v10h14V7H5zm2 2h10v2H7V9zm0 4h7v2H7v-2z"/></svg>
+              Windows — soon
+            </span>
+            <span className={styles.badgeComingSoon}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.7 9.05 7.4c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.39-1.32 2.76-2.54 3.99zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/></svg>
+              iOS — soon
+            </span>
+            <span className={styles.badgeComingSoon}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M17.523 15.341c-.303 0-.548-.245-.548-.548V9.207c0-.303.245-.548.548-.548s.548.245.548.548v5.586c0 .303-.245.548-.548.548zm-11.046 0c-.303 0-.548-.245-.548-.548V9.207c0-.303.245-.548.548-.548s.548.245.548.548v5.586c0 .303-.245.548-.548.548zM17.12 7.365l1.065-1.954a.22.22 0 00-.09-.299.22.22 0 00-.299.09L16.72 7.17a6.635 6.635 0 00-2.72-.578 6.635 6.635 0 00-2.72.578L10.204 5.202a.22.22 0 00-.299-.09.22.22 0 00-.09.299l1.065 1.954A6.267 6.267 0 007.5 12h9a6.267 6.267 0 00-2.38-4.635zM10.5 10.5a.75.75 0 110-1.5.75.75 0 010 1.5zm3 0a.75.75 0 110-1.5.75.75 0 010 1.5z"/></svg>
+              Android — soon
+            </span>
+          </div>
+        </div>
+
+        {/* Developer section */}
+        <div className={`${styles.devSection} animate-fade-up-5`}>
+          <div className={styles.devCard}>
+            <div className={styles.devCardLabel}>For developers & agents</div>
+            <h3 className={styles.devCardTitle}>Connect anything.<br />Route everywhere.</h3>
+            <p className={styles.devCardDesc}>One command connects your tools to the entire network. Works with any OpenAI-compatible client.</p>
+            <TerminalWindow />
+          </div>
+          <div className={styles.devCard}>
+            <div className={styles.devCardLabel}>Works with</div>
+            <h3 className={styles.devCardTitle}>Claude Code,<br />Cursor & more.</h3>
+            <p className={styles.devCardDesc}>Point your existing tools at AntSeed. No code changes. Access every model on the network instantly.</p>
+            <div className={styles.integrationPlaceholder}>
+              <div className={styles.integrationBadge}>Claude Code</div>
+              <div className={styles.integrationBadge}>Cursor</div>
+              <div className={styles.integrationBadge}>Claude Desktop</div>
+              <div className={styles.integrationBadge}>Any OpenAI client</div>
+            </div>
+          </div>
+        </div>
+
       </div>
     </div>
   );
@@ -358,7 +475,6 @@ export default function Home(): JSX.Element {
         <HowItWorks />
         <SupplySources />
         <ThreeMarkets />
-        <Roadmap />
         <DownloadDesktop />
         <CTASection />
       </div>
