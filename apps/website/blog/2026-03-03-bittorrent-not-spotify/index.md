@@ -55,7 +55,7 @@ This is agent-to-agent commerce. It can't exist on centralized infrastructure be
 
 ## Why This Moment
 
-P2P AI isn't a new idea. What's new is that the primary consumers of AI infrastructure are shifting from humans to agents — and agents make the tradeoff in the opposite direction.
+The primary consumers of AI infrastructure are shifting from humans to agents — and agents make the tradeoff in the opposite direction.
 
 For humans: centralized wins on convenience.
 For agents: P2P wins on everything that matters.
