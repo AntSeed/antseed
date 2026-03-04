@@ -174,7 +174,7 @@ contract AntseedEscrow {
 
     event SellerRated(address indexed buyer, address indexed seller, uint8 score);
 
-    event Paused(address indexed by);
+    event ContractPaused(address indexed by);
     event Unpaused(address indexed by);
     event OwnershipTransferred(address indexed prev, address indexed next);
     event FeeCollectorUpdated(address indexed prev, address indexed next);
@@ -246,7 +246,7 @@ contract AntseedEscrow {
 
     function pause() external onlyOwner {
         paused = true;
-        emit Paused(msg.sender);
+        emit ContractPaused(msg.sender);
     }
 
     function unpause() external onlyOwner {

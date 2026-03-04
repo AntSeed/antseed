@@ -44,6 +44,8 @@
     "build": "tsc",
     "pretest": "npm run ensure:native",
     "test": "\"$npm_node_execpath\" ./node_modules/vitest/vitest.mjs run",
+    "test:contracts": "forge test --root .",
+    "coverage:contracts": "forge coverage --root .",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
