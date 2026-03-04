@@ -378,8 +378,17 @@ export default function Home(): JSX.Element {
         <span className={styles.dlnote}>Other platforms soon</span>
       </div>
 
-      {/* AntFarm Mockup */}
-      <AntFarmMockup />
+      {/* Desktop App Video */}
+      <div className={styles.mockupWrap}>
+        <video
+          src="/videos/desktop-app.mp4"
+          autoPlay
+          loop
+          muted
+          playsInline
+          style={{width:'100%',borderRadius:'12px',display:'block'}}
+        />
+      </div>
 
       {/* Two cards: Developer + Works With */}
       <div className={styles.twoCards}>
@@ -393,7 +402,14 @@ export default function Home(): JSX.Element {
           <div className={styles.cardLabel}>Works With</div>
           <h3>Claude Code,<br/>Cursor &amp; more.</h3>
           <p>Point your existing tools at AntFarm. No code changes. Access every model on the network instantly.</p>
-          <div className={styles.demoBox}>DEMO VIDEO</div>
+          <video
+            src="/videos/claude-code.mp4"
+            autoPlay
+            loop
+            muted
+            playsInline
+            style={{width:'100%',borderRadius:'8px',display:'block',marginTop:'16px'}}
+          />
         </div>
       </div>
 
