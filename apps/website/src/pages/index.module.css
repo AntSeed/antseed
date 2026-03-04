@@ -787,3 +787,430 @@
   color: #3dffa2;
   border-color: rgba(22, 168, 99, 0.5);
 }
+
+/* v9 additions */
+
+.dlNote {
+  font-size: 12px;
+  color: #6b7280;
+  font-family: 'JetBrains Mono', monospace;
+  margin-top: 8px;
+}
+
+.cardHeading {
+  font-size: 16px;
+  font-weight: 700;
+  color: #0a0e14;
+  letter-spacing: -0.3px;
+  margin-bottom: 10px;
+  line-height: 1.3;
+}
+
+/* Build Once Earn Forever */
+.earnSection {
+  padding: 80px 20px;
+  max-width: 900px;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.earnTitle {
+  font-size: clamp(32px, 4vw, 48px);
+  font-weight: 700;
+  letter-spacing: -2px;
+  margin-bottom: 16px;
+  color: #0a0e14;
+}
+
+.earnSub {
+  font-size: 16px;
+  color: #6b7280;
+  line-height: 1.6;
+  max-width: 560px;
+  margin: 0 auto 48px;
+}
+
+.earnStage {
+  position: relative;
+  width: 520px;
+  height: 520px;
+  margin: 0 auto 48px;
+}
+
+.earnCenter {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  z-index: 5;
+}
+
+.earnInnerRing {
+  width: 140px;
+  height: 140px;
+  border-radius: 50%;
+  border: 1.5px solid #e8e8e3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: #fff;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.04);
+}
+
+.earnAmount {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 28px;
+  font-weight: 700;
+  color: #3dffa2;
+  letter-spacing: -1px;
+  line-height: 1;
+}
+
+.earnLabel {
+  font-size: 9px;
+  color: #aaa;
+  margin-top: 4px;
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.earnNode {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  z-index: 5;
+}
+
+.earnNodeIcon {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #fff;
+  border: 1.5px solid #e8e8e3;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.05);
+  transition: all 0.3s;
+}
+
+.earnNodeIcon svg {
+  width: 22px;
+  height: 22px;
+}
+
+.earnNodeActive .earnNodeIcon {
+  border-color: #3dffa2;
+  box-shadow: 0 0 16px rgba(61,255,162,0.2);
+}
+
+.earnNodeTop {
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.earnNodeRight {
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.earnNodeBottom {
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.earnNodeLeft {
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.earnFeed {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-height: 80px;
+  margin-bottom: 32px;
+}
+
+.feedRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: #6b7280;
+  animation: feedIn 0.4s ease-out;
+}
+
+.feedDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #3dffa2;
+  flex-shrink: 0;
+}
+
+.feedAmount {
+  color: #3dffa2;
+  font-weight: 600;
+  margin-left: 8px;
+}
+
+@keyframes feedIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.earnMobile {
+  display: none;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 340px;
+  margin: 0 auto 40px;
+}
+
+.earnMobileCounter {
+  text-align: center;
+  padding: 20px;
+  background: #fff;
+  border: 1.5px solid #e8e8e3;
+  border-radius: 16px;
+}
+
+.earnMobileStep {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: #fff;
+  border: 1px solid #e8e8e3;
+  border-radius: 14px;
+  padding: 16px 20px;
+}
+
+.earnMobileIcon {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f8fafc;
+  border: 1px solid #e8e8e3;
+  flex-shrink: 0;
+}
+
+.earnMobileIcon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.earnCta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: #0a0e14;
+  color: #ffffff;
+  padding: 14px 32px;
+  border-radius: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 1px;
+  text-decoration: none;
+  transition: background 0.2s;
+}
+
+.earnCta:hover {
+  background: #141a22;
+  color: #3dffa2;
+  text-decoration: none;
+}
+
+/* How it works v9 */
+.howSteps {
+  display: flex;
+  align-items: flex-start;
+  gap: 0;
+}
+
+.howStepWrap {
+  display: contents;
+}
+
+.howStep {
+  flex: 1;
+  padding: 24px;
+  background: rgba(255,255,255,0.7);
+  backdrop-filter: blur(8px);
+}
+
+.howNum {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: #0a0e14;
+  color: #3dffa2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 15px;
+  font-weight: 700;
+  margin-bottom: 16px;
+}
+
+.howTitle {
+  font-size: 16px;
+  font-weight: 700;
+  color: #0a0e14;
+  margin-bottom: 8px;
+  letter-spacing: -0.3px;
+}
+
+.howArrow {
+  color: #3dffa2;
+  font-size: 20px;
+  padding-top: 38px;
+  flex-shrink: 0;
+  opacity: 0.5;
+}
+
+/* Works with */
+.compatLogos {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 48px;
+  flex-wrap: wrap;
+  margin-top: 24px;
+}
+
+.compatItem {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.compatIcon {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.8);
+  border: 1px solid rgba(10,14,20,0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.compatIcon svg {
+  width: 24px;
+  height: 24px;
+}
+
+.compatName {
+  font-size: 11px;
+  color: #6b7280;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Bottom cards */
+.bottomGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+.bottomCard {
+  background: rgba(255,255,255,0.7);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(10,14,20,0.07);
+  border-radius: 12px;
+  padding: 40px;
+  text-align: center;
+}
+
+.bottomCardTitle {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  margin-bottom: 12px;
+  color: #0a0e14;
+}
+
+.subscribeForm {
+  display: flex;
+  gap: 8px;
+  max-width: 320px;
+  margin: 0 auto;
+}
+
+.subscribeInput {
+  flex: 1;
+  padding: 12px 16px;
+  border: 1px solid rgba(10,14,20,0.12);
+  border-radius: 6px;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 14px;
+  outline: none;
+  background: #f8fafc;
+  transition: border-color 0.2s;
+}
+
+.subscribeInput:focus {
+  border-color: #3dffa2;
+}
+
+.subscribeInput::placeholder {
+  color: #aaa;
+}
+
+.subscribeBtn {
+  padding: 12px 20px;
+  border-radius: 6px;
+  background: #0a0e14;
+  color: #fff;
+  font-weight: 600;
+  font-size: 14px;
+  border: none;
+  cursor: pointer;
+  font-family: 'Space Grotesk', sans-serif;
+  transition: background 0.2s;
+}
+
+.subscribeBtn:hover {
+  background: #141a22;
+}
+
+/* Mobile overrides for v9 */
+@media (max-width: 900px) {
+  .earnStage {
+    display: none;
+  }
+  .earnMobile {
+    display: flex;
+  }
+  .howSteps {
+    flex-direction: column;
+    gap: 2px;
+  }
+  .howArrow {
+    display: none;
+  }
+  .bottomGrid {
+    grid-template-columns: 1fr;
+  }
+  .compatLogos {
+    gap: 24px;
+  }
+}

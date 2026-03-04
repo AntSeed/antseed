@@ -8,8 +8,8 @@ import styles from './index.module.css';
 const RELEASES_URL = 'https://github.com/AntSeed/antseed/releases/latest';
 
 function AntMarkFull({size = 48}: {size?: number}) {
-  const c = '#3dffa2'; // mint — seeds and nodes
-  const body = '#0a0e14'; // black — ant body segments
+  const c = '#3dffa2';
+  const body = '#0a0e14';
   return (
     <svg width={size} height={size} viewBox="0 0 80 80" fill="none">
       <ellipse cx="40" cy="22" rx="5" ry="5.5" fill={body} />
@@ -31,10 +31,6 @@ function AntMarkFull({size = 48}: {size?: number}) {
       <line x1="46" y1="52" x2="64" y2="60" stroke={c} strokeWidth="1.3" strokeLinecap="round" opacity="0.5" />
       <circle cx="16" cy="60" r="2.5" fill={c} opacity="0.5" />
       <circle cx="64" cy="60" r="2.5" fill={c} opacity="0.5" />
-      <line x1="18" y1="22" x2="14" y2="40" stroke={c} strokeWidth="0.7" strokeLinecap="round" opacity="0.15" />
-      <line x1="62" y1="22" x2="66" y2="40" stroke={c} strokeWidth="0.7" strokeLinecap="round" opacity="0.15" />
-      <line x1="14" y1="40" x2="16" y2="60" stroke={c} strokeWidth="0.7" strokeLinecap="round" opacity="0.15" />
-      <line x1="66" y1="40" x2="64" y2="60" stroke={c} strokeWidth="0.7" strokeLinecap="round" opacity="0.15" />
     </svg>
   );
 }
@@ -133,7 +129,7 @@ function TerminalWindow() {
   useEffect(() => {
     const DELAYS = [0, 500, 950, 1400, 1850, 2600, 3100, 3450, 4050];
     const TOTAL = 4050;
-    const PAUSE = 5000; // pause at full before reset
+    const PAUSE = 5000;
 
     let timers: ReturnType<typeof setTimeout>[] = [];
 
@@ -142,7 +138,6 @@ function TerminalWindow() {
       timers = DELAYS.map((d, idx) =>
         setTimeout(() => setVisibleCount(idx + 1), d)
       );
-      // Loop after full display + pause
       timers.push(setTimeout(() => runCycle(), TOTAL + PAUSE));
     }
 
@@ -195,10 +190,10 @@ function Hero() {
     <div className={styles.hero}>
       <div className={styles.heroInner}>
         <h1 className={`${styles.heroTitle} animate-fade-up-1`}>
-          Your AI tools,<br /><span className={styles.accent}>unstoppable.</span>
+          The Unstoppable<br /><span className={styles.accent}>AI Economy</span>
         </h1>
         <div className={`${styles.heroSubtitle} animate-fade-up-2`}>
-          A Peer-to-Peer AI Services Network
+          ACCESS, BUILD, AND MONETIZE AI. NO MIDDLEMAN.
         </div>
         <div className="animate-fade-up-3">
           <LiveBar />
@@ -206,39 +201,28 @@ function Hero() {
 
         {/* Consumer section */}
         <div className={`${styles.heroSection} animate-fade-up-4`}>
-          <p className={styles.heroSectionLabel}>All the models. One chat. Totally anonymous and P2P.</p>
+          <p className={styles.heroSectionLabel}>Private inference. Specialised chat. Autonomous agents. One network.</p>
           <AppWindow />
           <div className={styles.platformBadges}>
             <a href={RELEASES_URL} target="_blank" rel="noopener noreferrer" className={styles.badgeMac}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
               Download for Mac
             </a>
-            <span className={styles.badgeComingSoon}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M3 5h18v14H3V5zm2 2v10h14V7H5zm2 2h10v2H7V9zm0 4h7v2H7v-2z"/></svg>
-              Windows — soon
-            </span>
-            <span className={styles.badgeComingSoon}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.7 9.05 7.4c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.39-1.32 2.76-2.54 3.99zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/></svg>
-              iOS — soon
-            </span>
-            <span className={styles.badgeComingSoon}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M17.523 15.341c-.303 0-.548-.245-.548-.548V9.207c0-.303.245-.548.548-.548s.548.245.548.548v5.586c0 .303-.245.548-.548.548zm-11.046 0c-.303 0-.548-.245-.548-.548V9.207c0-.303.245-.548.548-.548s.548.245.548.548v5.586c0 .303-.245.548-.548.548zM17.12 7.365l1.065-1.954a.22.22 0 00-.09-.299.22.22 0 00-.299.09L16.72 7.17a6.635 6.635 0 00-2.72-.578 6.635 6.635 0 00-2.72.578L10.204 5.202a.22.22 0 00-.299-.09.22.22 0 00-.09.299l1.065 1.954A6.267 6.267 0 007.5 12h9a6.267 6.267 0 00-2.38-4.635zM10.5 10.5a.75.75 0 110-1.5.75.75 0 010 1.5zm3 0a.75.75 0 110-1.5.75.75 0 010 1.5z"/></svg>
-              Android — soon
-            </span>
+            <p className={styles.dlNote}>Other platforms soon</p>
           </div>
         </div>
 
         {/* Developer section */}
         <div className={`${styles.devSection} animate-fade-up-5`}>
           <div className={styles.devCard}>
-            <div className={styles.devCardLabel}>For developers & agents</div>
+            <div className={styles.devCardLabel}>For developers &amp; agents</div>
             <h3 className={styles.devCardTitle}>Connect anything.<br />Route everywhere.</h3>
             <p className={styles.devCardDesc}>One command connects your tools to the entire network. Works with any OpenAI-compatible client.</p>
             <TerminalWindow />
           </div>
           <div className={styles.devCard}>
             <div className={styles.devCardLabel}>Works with</div>
-            <h3 className={styles.devCardTitle}>Claude Code,<br />Cursor & more.</h3>
+            <h3 className={styles.devCardTitle}>Claude Code,<br />Cursor &amp; more.</h3>
             <p className={styles.devCardDesc}>Point your existing tools at AntFarm. No code changes. Access every model on the network instantly.</p>
             <div className={styles.videoPlaceholder}>
               <div className={styles.videoStaticPlaceholder}>
@@ -254,62 +238,53 @@ function Hero() {
   );
 }
 
-function UseCaseIcon({type}: {type: string}) {
-  const c = '#3dffa2';
-  if (type === 'models') return (
-    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <circle cx="12" cy="12" r="3"/>
-      <circle cx="4" cy="6" r="2"/>
-      <circle cx="20" cy="6" r="2"/>
-      <circle cx="4" cy="18" r="2"/>
-      <circle cx="20" cy="18" r="2"/>
-      <line x1="6" y1="6" x2="10" y2="11"/>
-      <line x1="18" y1="6" x2="14" y2="11"/>
-      <line x1="6" y1="18" x2="10" y2="13"/>
-      <line x1="18" y1="18" x2="14" y2="13"/>
-    </svg>
-  );
-  if (type === 'anon') return (
-    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 2C8 2 4 5 4 9v2l-1 1v2h2v1a7 7 0 0 0 14 0v-1h2v-2l-1-1V9c0-4-4-7-8-7z"/>
-      <circle cx="9" cy="12" r="1" fill={c}/>
-      <circle cx="15" cy="12" r="1" fill={c}/>
-    </svg>
-  );
-  if (type === 'failover') return (
-    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <polyline points="23 4 23 10 17 10"/>
-      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
-    </svg>
-  );
-  return null;
-}
-
-function UseCases() {
-  const cases = [
+function FeatureCards() {
+  const cards = [
     {
-      type: 'models',
-      title: 'Any model, one place',
-      desc: 'Claude, DeepSeek, Llama, Qwen, and specialized agents — all available through a single connection. Switch models without switching tools or accounts.',
+      title: 'Private Inference',
+      heading: 'Anonymous. TEE-secured. Always on.',
+      desc: 'Every open model, one connection. Your prompts never touch a corporate server. Route to TEE nodes where not even the operator can see your data. No logging, no accounts, no lock-in. Switch models and providers freely.',
+      icon: (
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#3dffa2" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M12 2v2M12 20v2M2 12h2M20 12h2"/>
+          <path d="M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+        </svg>
+      ),
     },
     {
-      type: 'anon',
-      title: 'Anonymous by default',
-      desc: 'Providers never know who you are — like a VPN, but for AI. Route to TEE nodes for uncensored models where not even the operator can see your prompts, or both.',
+      title: 'Specialised Chat',
+      heading: 'Expertise on demand.',
+      desc: 'Chat with AI that actually knows your domain. Legal, medical, financial, creative. Real expertise packaged as skills by real people. Pick a specialisation, start talking. Skill creators earn every time you use their work.',
+      icon: (
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#3dffa2" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
+          <line x1="9" y1="10" x2="15" y2="10"/>
+          <line x1="9" y1="13" x2="12" y2="13"/>
+        </svg>
+      ),
     },
     {
-      type: 'failover',
-      title: 'Never hit a limit',
-      desc: 'Rate limited? Provider down? The network detects it instantly and reroutes to the next best provider. Automatic failover, zero data loss.',
+      title: 'Specialised Agents',
+      heading: 'Specialised AI that works for you, 24/7.',
+      desc: 'Deploy specialised agents that run continuously on the network. Expert skills running autonomously. Reviewing code, monitoring systems, publishing content, executing workflows. Built by creators, powered by the swarm, always earning.',
+      icon: (
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#3dffa2" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="9"/>
+          <path d="M12 6v6l4 3"/>
+        </svg>
+      ),
     },
   ];
+
   return (
     <section className={styles.section}>
       <div className={`${styles.grid3} reveal`}>
-        {cases.map((c) => (
+        {cards.map((c) => (
           <div key={c.title} className={styles.card}>
-            <div style={{marginBottom: '16px', opacity: 0.9}}><UseCaseIcon type={c.type} /></div>
-            <h3 className={styles.cardTitle}>{c.title}</h3>
+            <div style={{marginBottom: '16px', opacity: 0.9}}>{c.icon}</div>
+            <div className={styles.cardTitle}>{c.title}</div>
+            <h3 className={styles.cardHeading}>{c.heading}</h3>
             <p className={styles.cardDesc}>{c.desc}</p>
           </div>
         ))}
@@ -318,27 +293,204 @@ function UseCases() {
   );
 }
 
-function HowItWorks() {
-  const steps = [
-    {step: '01', title: 'Install the daemon', desc: 'One command. Runs as a background service. Exposes an API-compatible endpoint on localhost. Your existing tools work without modification.'},
-    {step: '02', title: 'Set your preferences', desc: 'Tell AntSeed what you care about: cheapest price, lowest latency, specific capabilities, TEE privacy, minimum provider reputation. The router scores all available providers and picks the best match in real time.'},
-    {step: '03', title: 'Never stop working', desc: 'Hit a rate limit? Provider down? AntSeed detects it instantly and reroutes to the next best provider. Automatic failover across a decentralized network. Zero data loss on switch.'},
+function BuildOnceEarnForever() {
+  const stageRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [earnings, setEarnings] = useState('0.000');
+  const [activeNode, setActiveNode] = useState(-1);
+  const [feed, setFeed] = useState<{skill: string; amount: string; id: number}[]>([]);
+  const startedRef = useRef(false);
+  const feedIdRef = useRef(0);
+  const totalRef = useRef(0);
+
+  const skills = ['Legal analysis skill','Code review agent','Translation skill','Writing assistant','Data analysis agent','Medical triage skill','Research agent','Tax advisory skill','Content pipeline','Compliance monitor'];
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const W = 400, H = 400;
+    const hex = [{x:200,y:24},{x:367,y:110},{x:367,y:290},{x:200,y:376},{x:33,y:290},{x:33,y:110}];
+
+    interface ParticleType {
+      t: number; speed: number; size: number; opacity: number;
+      update: () => void; draw: () => void;
+    }
+
+    function makeParticle(speed: number, size: number, opacity: number): ParticleType {
+      return {
+        t: Math.random() * 6, speed, size, opacity,
+        update() { this.t += this.speed; if (this.t >= 6) this.t -= 6; },
+        draw() {
+          const seg = Math.floor(this.t); const frac = this.t - seg;
+          const a = hex[seg % 6]; const b = hex[(seg + 1) % 6];
+          const x = a.x + (b.x - a.x) * frac; const y = a.y + (b.y - a.y) * frac;
+          ctx.beginPath(); ctx.arc(x, y, this.size * 3, 0, Math.PI * 2);
+          ctx.fillStyle = `rgba(61,255,162,${this.opacity * 0.15})`; ctx.fill();
+          ctx.beginPath(); ctx.arc(x, y, this.size, 0, Math.PI * 2);
+          ctx.fillStyle = `rgba(61,255,162,${this.opacity})`; ctx.fill();
+        },
+      };
+    }
+
+    const particles = [
+      makeParticle(0.012,4,0.9), makeParticle(0.008,3,0.6),
+      makeParticle(0.005,2.5,0.4), makeParticle(0.015,3.5,0.7), makeParticle(0.006,2,0.35),
+    ];
+    let raf: number;
+    function animate() { ctx.clearRect(0,0,W,H); particles.forEach(p=>{p.update();p.draw();}); raf = requestAnimationFrame(animate); }
+    animate();
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
+  useEffect(() => {
+    const el = stageRef.current;
+    if (!el) return;
+    let timeout: ReturnType<typeof setTimeout>;
+
+    const obs = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting && !startedRef.current) {
+          startedRef.current = true;
+          function fire() {
+            const amount = (Math.random() * 0.014 + 0.001).toFixed(3);
+            totalRef.current += parseFloat(amount);
+            setEarnings(totalRef.current.toFixed(3));
+            setActiveNode(n => (n + 1) % 4);
+            const skill = skills[Math.floor(Math.random() * skills.length)];
+            const id = feedIdRef.current++;
+            setFeed(f => [...f.slice(-4), {skill, amount, id}]);
+            timeout = setTimeout(fire, 1000 + Math.random() * 1500);
+          }
+          timeout = setTimeout(fire, 400);
+          obs.disconnect();
+        }
+      });
+    }, {threshold: 0.15});
+    obs.observe(el);
+    return () => { obs.disconnect(); clearTimeout(timeout); };
+  }, []);
+
+  const nodeConfigs = [
+    {className: styles.earnNodeTop, label: 'You build', sub: 'Skill or agent'},
+    {className: styles.earnNodeRight, label: 'Peers run', sub: 'Network hosts it'},
+    {className: styles.earnNodeBottom, label: 'Users pay', sub: 'Per request'},
+    {className: styles.earnNodeLeft, label: 'You earn', sub: 'Passive income'},
   ];
+
+  const nodeIcons = [
+    <svg key="build" viewBox="0 0 24 24" fill="none" stroke="#3dffa2" strokeWidth="1.8" strokeLinecap="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>,
+    <svg key="run" viewBox="0 0 24 24" fill="none" stroke="#3dffa2" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="12" r="3"/><circle cx="5" cy="6" r="1.5"/><circle cx="19" cy="6" r="1.5"/><circle cx="5" cy="18" r="1.5"/><circle cx="19" cy="18" r="1.5"/><line x1="10" y1="10" x2="6.2" y2="7.2"/><line x1="14" y1="10" x2="17.8" y2="7.2"/><line x1="10" y1="14" x2="6.2" y2="16.8"/><line x1="14" y1="14" x2="17.8" y2="16.8"/></svg>,
+    <svg key="pay" viewBox="0 0 24 24" fill="none" stroke="#3dffa2" strokeWidth="1.8" strokeLinecap="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>,
+    <svg key="earn" viewBox="0 0 24 24" fill="none" stroke="#3dffa2" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v12M8 10c0-1.1 1.8-2 4-2s4 .9 4 2-1.8 2-4 2-4 .9-4 2 1.8 2 4 2 4-.9 4-2"/></svg>,
+  ];
+
+  return (
+    <section className={styles.earnSection}>
+      <div className="reveal">
+        <h2 className={styles.earnTitle}>Build Once. Earn Forever.</h2>
+        <p className={styles.earnSub}>A new creator economy for AI. Package your expertise into a skill. Deploy it as a chat or an autonomous agent. Earn every time someone uses it. No app store. No platform cut. No kill switch on your income.</p>
+      </div>
+
+      {/* Desktop hex visualization */}
+      <div className={styles.earnStage} ref={stageRef}>
+        <svg style={{position:'absolute',top:'60px',left:'60px',right:'60px',bottom:'60px',width:'calc(100% - 120px)',height:'calc(100% - 120px)'}} viewBox="0 0 420 420">
+          <defs>
+            <linearGradient id="hexGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stopColor="#3dffa2"/>
+              <stop offset="100%" stopColor="#2ecf85"/>
+            </linearGradient>
+          </defs>
+          <polygon fill="none" stroke="#3dffa2" strokeWidth="8" opacity="0.06" style={{filter:'blur(6px)'}} points="210,25 385,115 385,305 210,395 35,305 35,115"/>
+          <polygon fill="none" stroke="#e8e8e3" strokeWidth="0.5" opacity="0.4" points="210,80 340,150 340,270 210,340 80,270 80,150"/>
+          <polygon fill="none" stroke="#e8e8e3" strokeWidth="1.5" points="210,25 385,115 385,305 210,395 35,305 35,115"/>
+          <polygon fill="none" stroke="url(#hexGrad)" strokeWidth="2.5" strokeLinecap="round" points="210,25 385,115 385,305 210,395 35,305 35,115"/>
+        </svg>
+        <canvas ref={canvasRef} width={400} height={400} style={{position:'absolute',top:'60px',left:'60px',width:'400px',height:'400px',pointerEvents:'none'}} />
+
+        {/* Center badge */}
+        <div className={styles.earnCenter}>
+          <div className={styles.earnInnerRing}>
+            <div className={styles.earnAmount}>${earnings}</div>
+            <div className={styles.earnLabel}>earned</div>
+          </div>
+        </div>
+
+        {/* Nodes */}
+        {nodeConfigs.map((n, i) => (
+          <div key={i} className={`${styles.earnNode} ${n.className} ${activeNode === i ? styles.earnNodeActive : ''}`}>
+            <div className={styles.earnNodeIcon}>{nodeIcons[i]}</div>
+            <strong style={{fontSize:'11px'}}>{n.label}</strong>
+            <span style={{fontSize:'10px',color:'#6b7280'}}>{n.sub}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Feed */}
+      <div className={styles.earnFeed}>
+        {feed.map(f => (
+          <div key={f.id} className={styles.feedRow}>
+            <span className={styles.feedDot} />
+            <span>{f.skill}</span>
+            <span className={styles.feedAmount}>+${f.amount}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Mobile fallback */}
+      <div className={styles.earnMobile}>
+        <div className={styles.earnMobileCounter}>
+          <div className={styles.earnAmount}>${earnings}</div>
+          <div className={styles.earnLabel}>earned</div>
+        </div>
+        {nodeConfigs.map((n, i) => (
+          <div key={i} className={styles.earnMobileStep}>
+            <div className={styles.earnMobileIcon}>{nodeIcons[i]}</div>
+            <div>
+              <strong style={{display:'block',fontSize:'14px',marginBottom:'2px'}}>{n.label}</strong>
+              <span style={{fontSize:'12px',color:'#6b7280'}}>{n.sub}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <Link to="/docs/intro" className={styles.earnCta}>Start Building →</Link>
+    </section>
+  );
+}
+
+function JoinEconomy() {
+  const cols = [
+    {
+      label: 'Inference Providers',
+      heading: 'Serve models. Earn per request.',
+      desc: 'You have a way to serve inference. Your own hardware, a cloud deployment, a fine-tuned model for a specific domain or language. Connect to the network and start earning. Run open-weight models, specialised fine-tunes, uncensored models, TEE-secured nodes. The more unique or reliable your offering, the more traffic you attract.',
+    },
+    {
+      label: 'Skill Creators',
+      heading: 'Package expertise. Get paid.',
+      desc: "You're a lawyer, trader, doctor, developer, musician. You know things models don't. Package that knowledge into a skill. Prompts, fine-tuning, tools, domain data. Deploy it as a chat or an agent. Earn every time someone uses your work.",
+    },
+    {
+      label: 'Agent Builders',
+      heading: 'Build once. Runs forever.',
+      desc: "Combine skills, inference, and tools into autonomous agents that run 24/7 on the swarm. A compliance monitor. A content pipeline. A research assistant. They use other providers' compute and other creators' skills. Everyone in the chain earns.",
+    },
+  ];
+
   return (
     <section className={styles.section}>
       <div className="reveal">
-        <div className={styles.sectionLabel}>How It Works</div>
-        <div className={styles.sectionTitle}>Install. Route. Unstoppable.</div>
-        <div className={styles.sectionDesc}>
-          AntSeed runs as a local proxy. Your tools send requests to localhost. The protocol handles everything else.
-        </div>
+        <div className={styles.sectionTitle}>Join the economy.</div>
+        <div className={styles.sectionDesc}>Three ways to earn on the network. Bring expertise, bring inference, or build agents that combine both.</div>
       </div>
       <div className={`${styles.grid3} reveal`}>
-        {steps.map((s) => (
-          <div key={s.step} className={styles.card}>
-            <div className={styles.cardNum}>{s.step}</div>
-            <h3 className={styles.cardTitle}>{s.title}</h3>
-            <p className={styles.cardDesc}>{s.desc}</p>
+        {cols.map(c => (
+          <div key={c.label} className={styles.card}>
+            <div className={styles.cardTitle}>{c.label}</div>
+            <h3 className={styles.cardHeading}>{c.heading}</h3>
+            <p className={styles.cardDesc}>{c.desc}</p>
           </div>
         ))}
       </div>
@@ -346,195 +498,121 @@ function HowItWorks() {
   );
 }
 
-function SupplySources() {
-  const sources = [
-    {name: 'Skilled Inference', tier: 'Differentiated · Reputation-based', desc: 'Anyone with frontier model API access can offer specialized agents with Skills — legal research, security audit, market analysis. Compete on outcomes, not just price.'},
-    {name: 'Self-Hosted Operators', tier: 'Low cost · Variable uptime', desc: 'A gamer with a GPU, a developer with a Mac Mini running open-weight models. No terms-of-service issues. Cost basis is electricity and hardware depreciation.'},
-    {name: 'Inference Farms', tier: 'Mid cost · 24/7 reliability', desc: 'Professional operators running optimized stacks at scale. Always on, high throughput, high stake. Farms in cheap-electricity regions set the global floor price.'},
-    {name: 'Privacy / TEE Nodes', tier: 'Premium · Cryptographic proof', desc: 'Trusted Execution Environments where not even the operator can see prompts. Cryptographic attestation proves the enclave is genuine.'},
-    {name: 'Custom Model Operators', tier: 'Premium · Unique capabilities', desc: 'Models serving use cases that cannot exist on centralized platforms — security research, red-teaming, unrestricted creative work.'},
-    {name: 'Edge Providers', tier: 'Premium · Sub-100ms latency', desc: 'Metro-located nodes optimized for speed. For real-time coding assistants, chatbots, and agentic chains where every millisecond matters.'},
+function HowItWorksV9() {
+  const rows = [
+    {
+      label: 'FOR USERS',
+      steps: [
+        {n:'1', title:'Download AntFarm', desc:"Install the app. No sign-up, no API key, no credit card. You're connected to the network instantly."},
+        {n:'2', title:'Connect to the swarm', desc:'AntFarm discovers peers automatically. Choose your priority: cost, speed, quality, or privacy.'},
+        {n:'3', title:'Chat, build, or earn', desc:'Use it as a chat app. Pick a specialised skill. Or package your own expertise and start earning.'},
+      ],
+    },
+    {
+      label: 'FOR DEVELOPERS & AGENTS',
+      steps: [
+        {n:'1', title:'Install the SDK', desc:'One command: npm install antseed. Or just point any OpenAI-compatible client at your local AntFarm endpoint.'},
+        {n:'2', title:'Route to the network', desc:'Your code connects to the swarm automatically. Pick models, set routing preferences, or let OpenMind decide.'},
+        {n:'3', title:'Ship and scale', desc:'No API keys to manage. No rate limits. No vendor lock-in. Your agents run on the network, always on.'},
+      ],
+    },
   ];
+
   return (
     <section className={styles.section}>
       <div className="reveal">
-        <div className={styles.sectionTitle}>Anyone can provide.<br />No partnership required.</div>
-        <div className={styles.sectionDesc}>
-          The protocol is provider-agnostic. It does not care how a seller fulfills a request. It cares that a response came back, the receipt verified, and quality was consistent.
-        </div>
+        <div className={styles.sectionTitle}>How it works.</div>
       </div>
-      <div className={`${styles.grid2} reveal`}>
-        {sources.map((s) => (
-          <div key={s.name} className={styles.supplyCard}>
-            <h3 className={styles.supplyName}>{s.name}</h3>
-            <div className={styles.supplyTier}>{s.tier}</div>
-            <p className={styles.cardDesc}>{s.desc}</p>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function ThreeMarkets() {
-  const markets = [
-    {num: '01', title: 'Commodity Inference', desc: 'A seller has a model or API access. A buyer needs inference. They trade directly. Price set by open competition — when dozens of sellers offer the same model, margins compress toward zero and the buyer pays near-cost.'},
-    {num: '02', title: 'Differentiated AI Services', desc: 'Same protocol, but the seller equips their model with Skills — modular packages of domain expertise and workflows. The buyer does not care what is inside. They care about the result and the reputation.'},
-    {num: '03', title: 'Agent-to-Agent Commerce', desc: 'Same protocol, but now the buyers are also machines. An autonomous agent holds credits, discovers providers by capability, evaluates reputation, consumes services, and settles payment — without human involvement.'},
-  ];
-  return (
-    <section className={styles.section}>
-      <div className="reveal">
-        <div className={styles.sectionTitle}>One protocol.<br />Three use cases.</div>
-        <div className={styles.sectionDesc}>
-          Each builds on the one before it. All three share the same discovery, routing, reputation, and settlement mechanisms.
-        </div>
-      </div>
-      <div className={`${styles.grid3} reveal`}>
-        {markets.map((m) => (
-          <div key={m.num} className={styles.card}>
-            <div className={styles.cardNum}>{m.num}</div>
-            <h3 className={styles.cardTitle}>{m.title}</h3>
-            <p className={styles.cardDesc}>{m.desc}</p>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function Roadmap() {
-  const phases = [
-    {label: 'Phase 1a', title: 'The Protocol', desc: 'P2P protocol goes live. Commodity inference and skilled services serve builders and agents. Settlement and reputation operational.'},
-    {label: 'Phase 1b', title: 'Differentiated Services', desc: 'Providers offer specialized AI services: fine-tuned models, agentic workflows, domain expertise. Capability-based discovery and per-skill reputation.'},
-    {label: 'Phase 1c', title: 'Agent Network', desc: 'Autonomous agents use the network for inference and for hiring other agents. Agent-to-agent commerce emerges.'},
-    {label: 'Phase 2', title: 'Price Index & Derivatives', desc: 'The AntSeed Compute Index — real-time pricing from verified transactions. Futures contracts let startups hedge AI costs and providers sell forward capacity.'},
-  ];
-  return (
-    <section className={`${styles.section} ${styles.sectionBorder}`}>
-      <div className="reveal">
-        <div className={styles.sectionLabel}>Roadmap</div>
-        <div className={styles.sectionTitle}>From marketplace to commodity standard.</div>
-      </div>
-      <div className={`${styles.roadmapGrid} reveal`}>
-        {phases.map((p) => (
-          <div key={p.label} className={styles.roadmapItem}>
-            <div className={styles.roadmapLabel}>{p.label}</div>
-            <div className={styles.roadmapTitle}>{p.title}</div>
-            <p className={styles.cardDesc}>{p.desc}</p>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function DownloadDesktop() {
-  const platforms = [
-    {name: 'macOS', arch: 'Apple Silicon & Intel', ext: '.dmg', icon: '\u2318'},
-    {name: 'Windows', arch: 'x64 & ARM64', ext: '.exe', icon: '\u229E'},
-    {name: 'Linux', arch: 'x64 & ARM64', ext: '.AppImage', icon: '\u2726'},
-  ];
-  return (
-    <section className={`${styles.section} ${styles.sectionBorder}`}>
-      <div className="reveal">
-        <div className={styles.sectionLabel}>Download</div>
-        <div className={styles.sectionTitle}>AntSeed Desktop</div>
-        <div className={styles.sectionDesc}>
-          A native app for seeding and connecting to the AntSeed network. Manage providers, monitor peers, and route requests — all from one interface.
-        </div>
-      </div>
-      <div className={`${styles.grid3} reveal`}>
-        {platforms.map((p) => (
-          <a key={p.name} href={RELEASES_URL} target="_blank" rel="noopener noreferrer" className={styles.downloadCard}>
-            <div className={styles.cardNum}>{p.icon}</div>
-            <h3 className={styles.cardTitle}>{p.name}</h3>
-            <p className={styles.cardDesc}>{p.arch}</p>
-            <p className={styles.downloadExt}>{p.ext}</p>
-          </a>
-        ))}
-      </div>
-      <div className="reveal" style={{marginTop: '1.5rem', textAlign: 'center'}}>
-        <a href={RELEASES_URL} target="_blank" rel="noopener noreferrer" className={styles.releasesLink}>
-          All releases on GitHub &rarr;
-        </a>
-      </div>
-    </section>
-  );
-}
-
-const FAQ_ITEMS = [
-  {
-    q: 'What is AntSeed?',
-    a: 'AntSeed is a peer-to-peer network for AI services. It connects buyers who need AI inference with providers who offer it — directly, without a central platform in the middle. Unlike cloud AI APIs (OpenAI, Anthropic, Google), there is no single company routing your requests or storing your data. The protocol handles discovery, routing, and payment settlement across a decentralized network of peers.',
-  },
-  {
-    q: 'How is this different from ChatGPT or Claude?',
-    a: 'ChatGPT and Claude are centralized AI products. AntSeed is open infrastructure — a protocol layer that lets you access any model on the network, including Claude Sonnet, DeepSeek-R1, Llama 4, Qwen, and more, without going through their native platforms. Your existing tools (Cursor, Claude Code, any OpenAI-compatible client) connect and work immediately without modification.',
-  },
-  {
-    q: 'Is my data private?',
-    a: 'Privacy starts at the network level — like a VPN for AI. Providers never know who you are. No accounts, no identity, no way to link a request back to you. That is the baseline for every request on AntSeed. From there, you can go deeper: TEE-verified providers run inside hardware enclaves where not even the node operator can read your prompts — cryptographic proof, not a policy promise. Multiple layers of privacy. You choose how deep you go.',
-  },
-  {
-    q: 'Do I need to sign up or create an account?',
-    a: 'No account required. Install the CLI with one command and you are connected to the network. Any tool that speaks the OpenAI API format works immediately — no API keys, no dashboards, no terms of service to accept.',
-  },
-];
-
-function FAQSection() {
-  const [open, setOpen] = useState<number | null>(null);
-  return (
-    <section className={`${styles.section} ${styles.sectionBorder}`} id="faq">
-      <script type="application/ld+json" dangerouslySetInnerHTML={{__html: JSON.stringify({
-        '@context': 'https://schema.org',
-        '@type': 'FAQPage',
-        mainEntity: FAQ_ITEMS.map(f => ({
-          '@type': 'Question',
-          name: f.q,
-          acceptedAnswer: {'@type': 'Answer', text: f.a},
-        })),
-      })}} />
-      <div className={`${styles.faqSection} reveal`}>
-        <div className={styles.sectionTitle} style={{marginBottom: '40px'}}>Frequently asked questions</div>
-        <div className={styles.faqList}>
-          {FAQ_ITEMS.map((item, i) => (
-            <div
-              key={i}
-              className={`${styles.faqItem} ${open === i ? styles.faqItemOpen : ''}`}
-              onClick={() => setOpen(open === i ? null : i)}
-            >
-              <div className={styles.faqQuestion}>
-                <span>{item.q}</span>
-                <span className={styles.faqChevron} style={{transform: open === i ? 'rotate(180deg)' : 'rotate(0deg)'}}>▾</span>
+      {rows.map(row => (
+        <div key={row.label} className="reveal" style={{marginBottom: '48px'}}>
+          <div className={styles.sectionLabel} style={{marginBottom: '24px'}}>{row.label}</div>
+          <div className={styles.howSteps}>
+            {row.steps.map((s, i) => (
+              <div key={s.n} className={styles.howStepWrap}>
+                <div className={styles.howStep}>
+                  <div className={styles.howNum}>{s.n}</div>
+                  <h4 className={styles.howTitle}>{s.title}</h4>
+                  <p className={styles.cardDesc}>{s.desc}</p>
+                </div>
+                {i < 2 && <span className={styles.howArrow}>→</span>}
               </div>
-              {open === i && <div className={styles.faqAnswer}>{item.a}</div>}
+            ))}
+          </div>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function WorksWith() {
+  const tools = [
+    {
+      name: 'Claude Code',
+      icon: <svg viewBox="0 0 24 24" fill="none" stroke="#1a1a1a" strokeWidth="1.5" strokeLinecap="round"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"/><path d="M7 12h10M12 7v10" stroke="#3dffa2" strokeWidth="2"/></svg>,
+    },
+    {
+      name: 'Cursor',
+      icon: <svg viewBox="0 0 24 24" fill="none" stroke="#1a1a1a" strokeWidth="1.5" strokeLinecap="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>,
+    },
+    {
+      name: 'VS Code',
+      icon: <svg viewBox="0 0 24 24" fill="none" stroke="#1a1a1a" strokeWidth="1.5" strokeLinecap="round"><path d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>,
+    },
+    {
+      name: 'Any OpenAI client',
+      icon: <svg viewBox="0 0 24 24" fill="none" stroke="#1a1a1a" strokeWidth="1.5" strokeLinecap="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6M9 12h6M9 15h4"/></svg>,
+    },
+  ];
+
+  return (
+    <section className={styles.section} style={{textAlign: 'center'}}>
+      <div className="reveal">
+        <div className={styles.sectionLabel}>Works with your tools</div>
+        <div className={styles.compatLogos}>
+          {tools.map(t => (
+            <div key={t.name} className={styles.compatItem}>
+              <div className={styles.compatIcon}>{t.icon}</div>
+              <span className={styles.compatName}>{t.name}</span>
             </div>
           ))}
         </div>
-        <div className={styles.faqFooter}>
-          <Link to="/docs/faq" className={styles.faqMoreLink}>See all FAQs →</Link>
-        </div>
       </div>
     </section>
   );
 }
 
-function CTASection() {
+function LightPaperAndSubscribe() {
+  const [email, setEmail] = useState('');
+  const [subscribed, setSubscribed] = useState(false);
+
   return (
-    <div className={`${styles.cta} ${styles.sectionBorder}`}>
-      <div className="reveal">
-        <h2 className={styles.ctaTitle}>
-          Start providing. Start building.<br /><span className={styles.accent}>Start now.</span>
-        </h2>
-        <p className={styles.ctaDesc}>Everyone profits. No one controls.</p>
-        <div className={styles.heroCtas}>
-          <Link to="/docs/intro" className={styles.btnPrimary}>Get Started</Link>
-          <Link to="/docs/lightpaper" className={styles.btnSecondary}>Light Paper</Link>
-          <a href="https://github.com/AntSeed/antseed" target="_blank" rel="noopener noreferrer" className={styles.btnSecondary}>GitHub →</a>
+    <section className={`${styles.section} ${styles.sectionBorder}`}>
+      <div className={`${styles.bottomGrid} reveal`}>
+        <div className={styles.bottomCard}>
+          <h3 className={styles.bottomCardTitle}>Read the Light Paper</h3>
+          <p className={styles.cardDesc}>Understand the protocol, the architecture, and the economics behind the unstoppable AI economy.</p>
+          <Link to="/docs/lightpaper" className={styles.btnPrimary}>Read Light Paper →</Link>
+        </div>
+        <div className={styles.bottomCard}>
+          <h3 className={styles.bottomCardTitle}>Stay in the loop</h3>
+          <p className={styles.cardDesc}>Get updates on new features, platform launches, network milestones, and everything AntSeed.</p>
+          {subscribed ? (
+            <p style={{color: '#3dffa2', fontFamily: "'JetBrains Mono', monospace", fontSize: '13px'}}>You're in. We'll be in touch.</p>
+          ) : (
+            <div className={styles.subscribeForm}>
+              <input
+                type="email"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                placeholder="your@email.com"
+                className={styles.subscribeInput}
+              />
+              <button className={styles.subscribeBtn} onClick={() => email && setSubscribed(true)}>Subscribe</button>
+            </div>
+          )}
         </div>
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -554,18 +632,18 @@ export default function Home(): JSX.Element {
         }}
       </BrowserOnly>
       <div ref={containerRef} style={{position: 'relative', zIndex: 3}}>
-        {/* Solid bg covers animation over hero + use cases */}
         <div style={{background: '#f0f4f8', position: 'relative'}}>
           <Hero />
-          <UseCases />
+          <FeatureCards />
         </div>
-        {/* Fade transition into animation */}
         <div style={{height: '60px', background: 'linear-gradient(to bottom, #f0f4f8, transparent)', position: 'relative', marginTop: '-60px'}} />
-        {/* Animation visible all the way to the bottom — transparent backgrounds only */}
-        <ThreeMarkets />
-        <SupplySources />
-        <CTASection />
-        <FAQSection />
+        <BrowserOnly fallback={null}>
+          {() => <BuildOnceEarnForever />}
+        </BrowserOnly>
+        <JoinEconomy />
+        <HowItWorksV9 />
+        <WorksWith />
+        <LightPaperAndSubscribe />
       </div>
     </Layout>
   );
