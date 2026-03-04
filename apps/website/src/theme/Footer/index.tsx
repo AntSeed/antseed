@@ -9,12 +9,14 @@ const linkStyle = {
   transition: 'color 0.2s',
 };
 
+const iconStyle = {color: '#6b7280', transition: 'color 0.2s'};
+
 export default function Footer(): JSX.Element {
   return (
     <footer
       style={{
         padding: '40px 56px',
-        borderTop: '1px solid rgba(61, 255, 162, 0.03)',
+        borderTop: '1px solid rgba(10, 14, 20, 0.06)',
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'center',
@@ -34,32 +36,21 @@ export default function Footer(): JSX.Element {
         <Link to="/blog" className="custom-footer-link" style={linkStyle}>Blog</Link>
       </div>
 
-      {/* Social icons */}
+      {/* Social icons — same filled SVGs as header */}
       <div style={{display: 'flex', gap: '16px', alignItems: 'center'}}>
-        <a href="https://github.com/antseed" target="_blank" rel="noopener noreferrer" title="GitHub" style={{color: '#484F58', transition: 'color 0.2s'}} className="custom-footer-link">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 00-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0020 4.77 5.07 5.07 0 0019.91 1S18.73.65 16 2.48a13.38 13.38 0 00-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 005 4.77a5.44 5.44 0 00-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 009 18.13V22"/>
+        <a href="https://github.com/antseed" target="_blank" rel="noopener noreferrer" title="GitHub" style={iconStyle} className="custom-footer-link">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
           </svg>
         </a>
-        <a href="https://x.com/antseedai" target="_blank" rel="noopener noreferrer" title="X / Twitter" style={{color: '#484F58', transition: 'color 0.2s'}} className="custom-footer-link">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-            <path d="M4 4l11.7 16h4.3M4 20L20 4"/>
+        <a href="https://x.com/antseedai" target="_blank" rel="noopener noreferrer" title="X" style={iconStyle} className="custom-footer-link">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
           </svg>
         </a>
-        <a href="https://t.me/antseed" target="_blank" rel="noopener noreferrer" title="Telegram" style={{color: '#484F58', transition: 'color 0.2s'}} className="custom-footer-link">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M21.2 4.4L2.4 10.7c-.6.2-.6 1.1.1 1.3l4.8 1.5 1.9 6c.1.4.6.5.9.3l2.7-2.2 5.3 3.9c.4.3 1 .1 1.1-.4l3.2-15.3c.1-.6-.5-1-.2-.9z"/>
-            <path d="M8.3 13.5l9.7-7.4"/>
-          </svg>
-        </a>
-        <a href="https://discord.gg/antseed" target="_blank" rel="noopener noreferrer" title="Discord" style={{color: '#484F58', transition: 'color 0.2s'}} className="custom-footer-link">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-            <path d="M8.5 14.5A1.5 1.5 0 1 0 8.5 11.5 1.5 1.5 0 1 0 8.5 14.5z"/>
-            <path d="M15.5 14.5A1.5 1.5 0 1 0 15.5 11.5 1.5 1.5 0 1 0 15.5 14.5z"/>
-            <path d="M6 7c1-1 3-2 6-2s5 1 6 2"/>
-            <path d="M6 17c1 1 3 2 6 2s5-1 6-2"/>
-            <path d="M4 8l-1 5c0 3 2 5 4 6"/>
-            <path d="M20 8l1 5c0 3-2 5-4 6"/>
+        <a href="https://t.me/antseed" target="_blank" rel="noopener noreferrer" title="Telegram" style={iconStyle} className="custom-footer-link">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M11.944 0A12 12 0 000 12a12 12 0 0012 12 12 12 0 0012-12A12 12 0 0012 0a12 12 0 00-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 01.171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/>
           </svg>
         </a>
       </div>

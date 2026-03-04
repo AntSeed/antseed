@@ -12,9 +12,9 @@ html[data-theme='light'],
   --ifm-color-primary-lightest: #3dffa2;
 
   --ifm-navbar-height: 73px;
-  --ifm-background-color: #f0f4f8;
+  --ifm-background-color: #f5f5f0;
   --ifm-background-surface-color: #ffffff;
-  --ifm-navbar-background-color: rgba(240, 244, 248, 0.92);
+  --ifm-navbar-background-color: rgba(245, 245, 240, 0.92);
   --ifm-footer-background-color: #0a0e14;
 
   --ifm-font-family-base: 'Space Grotesk', system-ui, -apple-system, sans-serif;
@@ -81,7 +81,7 @@ html[data-theme='dark'] {
    ============================================= */
 nav.navbar {
   box-shadow: none !important;
-  background: rgba(240, 244, 248, 0.88) !important;
+  background: rgba(245, 245, 240, 0.92) !important;
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   border-bottom: 1px solid rgba(10, 14, 20, 0.07);
@@ -157,8 +157,8 @@ nav.navbar {
 
 /* Mobile sidebar styling */
 .navbar-sidebar {
-  background: #f0f4f8 !important;
-  --ifm-navbar-background-color: #f0f4f8;
+  background: #f5f5f0 !important;
+  --ifm-navbar-background-color: #f5f5f0;
   height: 100vh !important;
   width: 100vw !important;
   max-width: 100vw !important;
@@ -167,17 +167,17 @@ nav.navbar {
 }
 
 .navbar-sidebar__item {
-  background: #f0f4f8 !important;
+  background: #f5f5f0 !important;
 }
 
 .navbar-sidebar__brand {
-  background: #f0f4f8 !important;
+  background: #f5f5f0 !important;
   border-bottom: 1px solid rgba(10, 14, 20, 0.07);
   flex: none !important;
 }
 
 .navbar-sidebar__items {
-  background: #f0f4f8 !important;
+  background: #f5f5f0 !important;
   flex: 1 !important;
 }
 
@@ -420,7 +420,7 @@ div[class*='codeBlockTitle'] {
   letter-spacing: 1px;
   text-transform: uppercase;
   color: #3dffa2;
-  background: #f0f4f8;
+  background: #f5f5f0;
   border-bottom: 1px solid rgba(10, 14, 20, 0.08);
 }
 
@@ -468,23 +468,19 @@ pre {
 }
 
 ::-webkit-scrollbar-track {
-  background: #0a0e14;
+  background: #f5f5f0;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #21262D;
+  background: #d0d0c8;
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #484F58;
+  background: #b0b0a8;
 }
 
-/* Selection */
-::selection {
-  background-color: rgba(61, 255, 162, 0.25);
-  color: #fff;
-}
+/* Selection — handled in blog section above */
 
 /* =============================================
    Landing page animations
@@ -528,6 +524,50 @@ pre {
 
 
 
+/* =============================================
+   Blog — warm theme adjustments
+   ============================================= */
+.blog-wrapper .main-wrapper,
+.blog-list-page .main-wrapper,
+.blog-post-page .main-wrapper {
+  background: #f5f5f0 !important;
+}
+
+/* Blog post title links */
+.blog-wrapper article header h2 a {
+  color: #1a1a1a;
+}
+.blog-wrapper article header h2 a:hover {
+  color: #2ecf85;
+}
+
+/* Blog sidebar */
+.blog-wrapper aside nav {
+  background: transparent;
+}
+
+/* Blog tags */
+.blog-wrapper a[class*='tag'] {
+  background: #fff;
+  border: 1px solid #e8e8e3;
+  color: #666;
+}
+.blog-wrapper a[class*='tag']:hover {
+  border-color: #2ecf85;
+  color: #2ecf85;
+}
+
+/* Blog post read more link */
+.blog-wrapper footer a b {
+  color: #2ecf85;
+}
+
+/* Selection color for warm theme */
+::selection {
+  background-color: rgba(46, 207, 133, 0.2);
+  color: #1a1a1a;
+}
+
 /* Homepage light theme */
 .homepage-wrapper,
 .homepage-wrapper .main-wrapper,
@@ -539,5 +579,16 @@ pre {
 
 html:has(.homepage-wrapper),
 body:has(.homepage-wrapper) {
-  background: #f0f4f8 !important;
+  background: #f5f5f0 !important;
+}
+
+.homepage-wrapper .navbar,
+html:has(.homepage-wrapper) .navbar {
+  background: #f5f5f0 !important;
+  --ifm-navbar-background-color: #f5f5f0 !important;
+}
+
+html:has(.homepage-wrapper) .navbar--fixed-top {
+  background: rgba(245, 245, 240, 0.92) !important;
+  backdrop-filter: blur(12px);
 }

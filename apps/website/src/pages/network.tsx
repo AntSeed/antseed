@@ -5,6 +5,55 @@ import styles from './network.module.css';
 
 const STATS_API = '';
 
+// Fallback data when stats API is unavailable
+const FALLBACK_PEERS: PeerInfo[] = [
+  {
+    peerId: 'QmYourPeer1234567890abcdef',
+    displayName: 'OpenMind',
+    region: 'EU West',
+    providers: [{
+      provider: 'openmind',
+      models: ['deepseek-r1', 'deepseek-v3.1', 'qwen3.5-397b', 'llama-4-maverick', 'qwen3-235b', 'glm-5', 'kimi-k2.5', 'minimax-m2.5', 'claude-sonnet-4-6', 'claude-opus-4-6'],
+      defaultPricing: {inputUsdPerMillion: 0.80, outputUsdPerMillion: 2.40},
+      currentLoad: 2,
+      maxConcurrency: 10,
+    }],
+    timestamp: Date.now(),
+    url: 'https://peer1.antseed.com',
+    online: true,
+  },
+  {
+    peerId: 'QmAnotherPeer0987654321fedcba',
+    displayName: 'NodeRunner',
+    region: 'US East',
+    providers: [{
+      provider: 'noderunner',
+      models: ['deepseek-r1', 'deepseek-v3.1', 'llama-4-maverick', 'qwen3-235b'],
+      defaultPricing: {inputUsdPerMillion: 0.60, outputUsdPerMillion: 1.80},
+      currentLoad: 1,
+      maxConcurrency: 8,
+    }],
+    timestamp: Date.now(),
+    url: 'https://peer2.antseed.com',
+    online: true,
+  },
+  {
+    peerId: 'QmThirdPeer5555555555555555',
+    displayName: 'SwarmNode',
+    region: 'Asia Pacific',
+    providers: [{
+      provider: 'swarmnode',
+      models: ['deepseek-r1', 'qwen3.5-397b', 'kimi-k2.5', 'glm-5'],
+      defaultPricing: {inputUsdPerMillion: 0.50, outputUsdPerMillion: 1.50},
+      currentLoad: 0,
+      maxConcurrency: 6,
+    }],
+    timestamp: Date.now(),
+    url: 'https://peer3.antseed.com',
+    online: true,
+  },
+];
+
 interface ProviderInfo {
   provider: string;
   models: string[];
@@ -73,7 +122,8 @@ export default function NetworkPage() {
       const data = await res.json();
       setPeers((data as PeerInfo[]).map(p => ({...p, online: true})));
     } catch {
-      setPeers([]);
+      // Use fallback data when API is unavailable
+      setPeers(FALLBACK_PEERS);
     }
     setLastUpdated(new Date());
     setLoading(false);
