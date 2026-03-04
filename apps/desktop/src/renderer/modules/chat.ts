@@ -1107,11 +1107,50 @@ export function initChatModule({
     let streamingContentEl: HTMLElement | null = null;
     let streamingTextBuffer = '';
     let streamingThinkingBuffer = '';
+    let streamRafPending = false;
+    let streamRafId: number | null = null;
+    let streamThinkingDirtyIndex: number | null = null;
+
+    function flushStreamRender() {
+      streamRafPending = false;
+      streamRafId = null;
+
+      if (streamingContentEl) {
+        streamingContentEl.innerHTML = renderMarkdown(streamingTextBuffer);
+        streamingContentEl.classList.add('streaming-cursor');
+      }
+
+      if (streamThinkingDirtyIndex !== null && streamingBubble) {
+        const thinkBody = streamingBubble.querySelector(`#stream-think-${streamThinkingDirtyIndex} .thinking-block-body`);
+        if (thinkBody) {
+          thinkBody.textContent = streamingThinkingBuffer;
+        }
+        streamThinkingDirtyIndex = null;
+      }
+
+      scrollChatToBottom();
+    }
+
+    function scheduleStreamRender() {
+      if (streamRafPending) return;
+      streamRafPending = true;
+      streamRafId = requestAnimationFrame(flushStreamRender);
+    }
+
+    function cancelStreamRaf() {
+      if (streamRafId !== null) {
+        cancelAnimationFrame(streamRafId);
+        streamRafId = null;
+      }
+      streamRafPending = false;
+      streamThinkingDirtyIndex = null;
+    }
 
     if (bridge.onChatAiStreamStart) {
       bridge.onChatAiStreamStart((data) => {
         if (data.conversationId !== uiState.chatActiveConversation) return;
         clearChatError();
+        cancelStreamRaf();
         streamingTextBuffer = '';
         streamingThinkingBuffer = '';
         streamingContentEl = null;
@@ -1177,18 +1216,11 @@ export function initChatModule({
 
         if (data.blockType === 'text') {
           streamingTextBuffer += data.text;
-          if (streamingContentEl) {
-            streamingContentEl.innerHTML = renderMarkdown(streamingTextBuffer);
-            streamingContentEl.classList.add('streaming-cursor');
-          }
-          scrollChatToBottom();
+          scheduleStreamRender();
         } else if (data.blockType === 'thinking') {
           streamingThinkingBuffer += data.text;
-          const thinkBody = streamingBubble.querySelector(`#stream-think-${data.index} .thinking-block-body`);
-          if (thinkBody) {
-            thinkBody.textContent = streamingThinkingBuffer;
-          }
-          scrollChatToBottom();
+          streamThinkingDirtyIndex = data.index;
+          scheduleStreamRender();
         }
       });
     }
@@ -1198,9 +1230,11 @@ export function initChatModule({
         if (data.conversationId !== uiState.chatActiveConversation || !streamingBubble) return;
 
         if (data.blockType === 'text') {
+          // Flush any pending RAF so final content is accurate
+          cancelStreamRaf();
           if (streamingContentEl) {
-            streamingContentEl.classList.remove('streaming-cursor');
             streamingContentEl.innerHTML = renderMarkdown(streamingTextBuffer);
+            streamingContentEl.classList.remove('streaming-cursor');
             streamingContentEl = null;
           }
         } else if (data.blockType === 'thinking') {
@@ -1279,6 +1313,13 @@ export function initChatModule({
       bridge.onChatAiStreamDone((data) => {
         if (data.conversationId !== uiState.chatActiveConversation) return;
 
+        // Flush any pending render before tearing down
+        cancelStreamRaf();
+        if (streamingContentEl && streamingTextBuffer) {
+          streamingContentEl.innerHTML = renderMarkdown(streamingTextBuffer);
+          streamingContentEl.classList.remove('streaming-cursor');
+        }
+
         const elapsedMs = activeStreamStartedAt > 0 ? Date.now() - activeStreamStartedAt : 0;
         streamingBubble = null;
         streamingTextBuffer = '';
@@ -1298,6 +1339,7 @@ export function initChatModule({
       bridge.onChatAiStreamError((data) => {
         if (data.conversationId !== uiState.chatActiveConversation) return;
 
+        cancelStreamRaf();
         streamingBubble = null;
         streamingTextBuffer = '';
         streamingThinkingBuffer = '';
