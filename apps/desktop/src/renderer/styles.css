@@ -1,8 +1,8 @@
 :root {
-  --bg-primary: #080c12;
-  --bg-secondary: #0d1117;
-  --bg-surface: #161b22;
-  --bg-hover: #161b22;
+  --bg-primary: #1c1c1e;
+  --bg-secondary: #222224;
+  --bg-surface: #2f2f31;
+  --bg-hover: #363638;
   --text-primary: #e6edf3;
   --text-secondary: #8b949e;
   --text-muted: #484f58;
@@ -65,8 +65,22 @@ select {
 }
 
 .sidebar-header {
-  padding: 20px 16px 12px;
+  padding: 8px 16px 12px;
   border-bottom: 1px solid var(--border);
+}
+
+/* macOS traffic lights are positioned inside the app; keep clear space + drag region */
+body.platform-macos .sidebar-header {
+  padding-left: 72px;
+  -webkit-app-region: drag;
+}
+
+body.platform-macos .sidebar-header button,
+body.platform-macos .sidebar-header a,
+body.platform-macos .sidebar-header input,
+body.platform-macos .sidebar-header select,
+body.platform-macos .sidebar-header textarea {
+  -webkit-app-region: no-drag;
 }
 
 .sidebar-logo {
@@ -95,13 +109,6 @@ select {
 
 .sidebar-title-seed {
   color: #3dffa2;
-}
-
-.sidebar-version {
-  font-size: 10px;
-  color: var(--text-muted);
-  margin-top: 4px;
-  letter-spacing: 0.5px;
 }
 
 .sidebar-status {
@@ -156,7 +163,6 @@ select {
 
 .mode-btn.active {
   background: rgba(var(--accent-rgb), 0.14);
-  color: var(--accent);
 }
 
 /* Mode visibility */
@@ -168,7 +174,9 @@ select {
   list-style: none;
   padding: 12px 8px;
   flex: 1;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .sidebar-nav-label {
@@ -191,7 +199,7 @@ select {
   padding: 10px 12px;
   background: none;
   border: none;
-  color: var(--text-secondary);
+  color: var(--text-primary);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -208,8 +216,8 @@ select {
 }
 
 .sidebar-btn.active {
-  background: rgba(var(--accent-rgb), 0.12);
-  color: var(--accent);
+  background: var(--bg-surface);
+  color: var(--text-primary);
   font-weight: 600;
 }
 
@@ -260,7 +268,6 @@ select {
   gap: 12px;
   min-width: 0;
   overflow: hidden;
-  padding: 16px 20px;
   background: var(--bg-primary);
 }
 
@@ -401,7 +408,7 @@ button {
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: 6px;
-  color: var(--text-secondary);
+  color: var(--text-primary);
   cursor: pointer;
   font-size: 12px;
   font-weight: 500;
@@ -500,10 +507,11 @@ button:disabled {
 }
 
 .page-header {
+  background: var(--bg-secondary);
+  padding: 12px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 16px;
   gap: 10px;
 }
 
@@ -1078,20 +1086,17 @@ canvas {
 }
 
 .chat-container {
-  display: grid;
-  grid-template-columns: 220px 1fr;
+  display: flex;
   flex: 1;
   min-height: 0;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
   overflow: hidden;
 }
 
 .chat-sidebar {
-  border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
+  flex: 2;
+  overflow-y: auto;
 }
 
 .chat-sidebar-header {
@@ -1197,7 +1202,7 @@ canvas {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  min-width: 0;
+  flex: 1;
 }
 
 .chat-thread-header {
@@ -1341,11 +1346,10 @@ canvas {
 
 .chat-text-input {
   flex: 1;
-  background: var(--bg-primary);
-  border: 1px solid var(--border);
-  border-radius: 14px;
+  background: var(--bg-surface);
+  border: none;
   color: var(--text-primary);
-  padding: 7px 12px;
+  padding: 7px 0;
   font-size: 12px;
 }
 
@@ -1383,9 +1387,7 @@ canvas {
 .chat-new-btn {
   width: 100%;
   padding: 7px 10px;
-  background: rgba(var(--accent-rgb), 0.12);
-  border: 1px solid rgba(var(--accent-rgb), 0.24);
-  color: var(--accent);
+  background: var(--bg-surface);
   cursor: pointer;
   border-radius: 5px;
   font-size: 11px;
@@ -1394,7 +1396,8 @@ canvas {
 }
 
 .chat-new-btn:hover {
-  background: rgba(var(--accent-rgb), 0.24);
+  background: rgba(var(--accent-rgb), 0.12);
+  border: 1px solid rgba(var(--accent-rgb), 0.24);
 }
 
 /* Chat delete button */

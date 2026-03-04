@@ -1,0 +1,35 @@
+<section class="runtime-toolbar" data-mode="seeder">
+  <div class="toolbar-header">
+    <h2>Buyer Runtime</h2>
+    <div class="toolbar-actions">
+      <button id="startAllBtn">Start Connect</button>
+      <button id="stopAllBtn" class="danger">Stop Connect</button>
+      <button id="scanNetworkBtn" class="secondary">Scan DHT</button>
+      <button id="refreshBtn" class="secondary">Refresh</button>
+      <button id="clearLogsBtn" class="danger">Clear Logs</button>
+    </div>
+  </div>
+
+  <div class="runtime-grid">
+    <article class="control-card" data-mode="connect">
+      <h3>Buyer Runtime</h3>
+      <label>Router<input id="connectRouter" value="local" /></label>
+      <div class="row">
+        <button id="connectStartBtn">Start</button>
+        <button id="connectStopBtn" class="danger">Stop</button>
+      </div>
+      <p id="connectState" class="state status-stopped">Unknown</p>
+    </article>
+  </div>
+
+  <article id="pluginSetupCard" class="plugin-setup-card">
+    <div class="plugin-setup-head">
+      <h3>Plugin Setup</h3>
+      <button id="refreshPluginsBtn" class="secondary">Recheck</button>
+    </div>
+    <p id="pluginSetupStatus" class="plugin-setup-status">Checking plugin availability...</p>
+    <div class="plugin-setup-actions">
+      <button id="installConnectPluginBtn" class="secondary">Install Buyer Plugin</button>
+    </div>
+  </article>
+</section>

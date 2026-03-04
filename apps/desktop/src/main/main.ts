@@ -617,6 +617,13 @@ async function stopDashboardRuntime(reason: string): Promise<void> {
 }
 
 function createWindow(): void {
+  const macosWindowChrome = process.platform === 'darwin'
+    ? {
+      titleBarStyle: 'hidden' as const,
+      trafficLightPosition: { x: 14, y: 14 },
+    }
+    : {};
+
   mainWindow = new BrowserWindow({
     width: 1240,
     height: 860,
@@ -631,6 +638,7 @@ function createWindow(): void {
       nodeIntegration: false,
       sandbox: false,
     },
+    ...macosWindowChrome,
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {

@@ -1,0 +1,40 @@
+<aside class="sidebar">
+  <div class="sidebar-header">
+    <div class="sidebar-logo">
+      <img class="sidebar-logo-mark" src="./assets/antseed-mark.svg" alt="AntSeed mark" />
+      <h1 class="sidebar-title">
+        <span class="sidebar-title-ant">Ant</span><span class="sidebar-title-seed">Station</span>
+      </h1>
+    </div>
+    <p id="connectWarning" class="sidebar-warning" hidden></p>
+  </div>
+
+  <ul class="sidebar-nav" role="tablist" aria-label="Dashboard Views">
+    <li class="sidebar-nav-label">Chat Interface</li>
+    <li data-mode="connect"><button class="sidebar-btn active" data-view="chat" role="tab">AI Chat</button></li>
+    <li class="sidebar-nav-divider" aria-hidden="true"></li>
+    <li class="sidebar-nav-label">Network Overview</li>
+    <li data-mode="connect"><button class="sidebar-btn" data-view="overview" role="tab">Overview</button></li>
+    <li data-mode="connect"><button class="sidebar-btn" data-view="peers" role="tab">Peers</button></li>
+    <li data-mode="seeder"><button class="sidebar-btn" data-view="sessions" role="tab">Sessions</button></li>
+    <li data-mode="seeder"><button class="sidebar-btn" data-view="connection" role="tab">Connection</button></li>
+    <li data-mode="seeder"><button class="sidebar-btn" data-view="config" role="tab">Settings</button></li>
+    <li data-mode="connect"><button class="sidebar-btn" data-view="desktop" role="tab">Logs</button></li>
+  </ul>
+
+  <aside class="chat-sidebar">
+    <div class="chat-sidebar-header">
+      <button id="chatNewBtn" class="chat-new-btn">+ New Chat</button>
+    </div>
+    <div id="chatConversations" class="chat-conversation-list">
+      <div class="chat-empty">No conversations yet</div>
+    </div>
+  </aside>
+
+  <div class="sidebar-footer">
+    <div class="runtime-chip-wrap">
+      <span class="runtime-chip" data-mode="seeder">Seller <strong id="seedBadge">Stopped</strong></span>
+      <span class="runtime-chip" data-mode="connect">Buyer <strong id="connectBadge">Stopped</strong></span>
+    </div>
+  </div>
+</aside>

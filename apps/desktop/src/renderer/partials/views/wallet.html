@@ -1,0 +1,88 @@
+<section id="view-wallet" class="view" role="tabpanel" data-mode="seeder">
+  <div class="page-header">
+    <h2>Wallet</h2>
+    <div id="walletMeta" class="connection-badge badge-idle">Not connected</div>
+  </div>
+  <p id="walletMessage" class="message">Loading wallet info...</p>
+
+  <div class="wallet-mode-toggle">
+    <button id="walletModeNode" class="toggle-btn active" data-mode="node">Node Wallet</button>
+    <button id="walletModeExternal" class="toggle-btn" data-mode="external">External Wallet</button>
+  </div>
+
+  <div id="walletNodeSection">
+    <div class="wallet-card">
+      <div class="wallet-address-row">
+        <div class="wallet-address-label">Wallet Address</div>
+        <div class="wallet-address-display">
+          <span id="walletAddress" class="mono">Not configured</span>
+          <button id="walletCopyBtn" class="btn-icon" title="Copy address">Copy</button>
+        </div>
+        <div id="walletChain" class="wallet-chain">Base Sepolia</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="walletExternalSection" style="display:none">
+    <div class="wallet-card">
+      <div class="wallet-address-row">
+        <div class="wallet-address-label">WalletConnect</div>
+        <div id="wcStatus" class="wc-status">
+          <span id="wcStatusText">Not connected</span>
+        </div>
+        <div id="wcAddressRow" class="wallet-address-display" style="display:none">
+          <span id="wcAddress" class="mono">-</span>
+          <button id="wcCopyBtn" class="btn-icon" title="Copy address">Copy</button>
+        </div>
+        <div class="wc-actions">
+          <button id="wcConnectBtn">Connect Wallet</button>
+          <button id="wcDisconnectBtn" class="danger" style="display:none">Disconnect</button>
+        </div>
+        <div id="wcQrContainer" class="wc-qr-container" style="display:none">
+          <canvas id="wcQrCanvas" width="260" height="260"></canvas>
+          <p class="wc-qr-hint">Scan with your mobile wallet</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="stat-grid">
+    <div class="stat-card"><p class="stat-label">ETH Balance</p><p id="walletETH" class="stat-value">0.00</p></div>
+    <div class="stat-card"><p class="stat-label">USDC Balance</p><p id="walletUSDC" class="stat-value green">0.00</p></div>
+    <div class="stat-card"><p class="stat-label">Network</p><p id="walletNetwork" class="stat-value">Base</p></div>
+  </div>
+
+  <div class="panel-grid two-col">
+    <article class="panel">
+      <div class="panel-head"><h3>Escrow Balance</h3></div>
+      <div class="escrow-grid">
+        <div class="escrow-item">
+          <span class="escrow-label">Deposited</span>
+          <span id="escrowDeposited" class="escrow-value green">$0.00</span>
+        </div>
+        <div class="escrow-item">
+          <span class="escrow-label">Committed</span>
+          <span id="escrowCommitted" class="escrow-value">$0.00</span>
+        </div>
+        <div class="escrow-item">
+          <span class="escrow-label">Available</span>
+          <span id="escrowAvailable" class="escrow-value">$0.00</span>
+        </div>
+      </div>
+    </article>
+
+    <article class="panel">
+      <div class="panel-head"><h3>Deposit / Withdraw</h3></div>
+      <div class="wallet-actions">
+        <div class="wallet-action-row">
+          <input id="walletAmount" type="number" class="form-input" placeholder="Amount (USDC)" step="0.01" min="0" />
+        </div>
+        <div class="wallet-action-row">
+          <button id="walletDepositBtn">Deposit</button>
+          <button id="walletWithdrawBtn" class="secondary">Withdraw</button>
+        </div>
+        <p id="walletActionMessage" class="message"></p>
+      </div>
+    </article>
+  </div>
+</section>
