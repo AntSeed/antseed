@@ -1,0 +1,31 @@
+<section id="view-earnings" class="view" role="tabpanel" data-mode="seeder">
+  <div class="page-header">
+    <h2>Earnings</h2>
+    <div class="page-header-right">
+      <div class="period-toggle">
+        <button class="toggle-btn" data-period="day">Day</button>
+        <button class="toggle-btn" data-period="week">Week</button>
+        <button class="toggle-btn active" data-period="month">Month</button>
+      </div>
+      <div id="earningsMeta" class="connection-badge badge-idle">month</div>
+    </div>
+  </div>
+  <p id="earningsMessage" class="message">Loading earnings...</p>
+
+  <div class="stat-grid">
+    <div class="stat-card"><p class="stat-label">Today</p><p id="earnToday" class="stat-value green">$0.00</p></div>
+    <div class="stat-card"><p class="stat-label">This Week</p><p id="earnWeek" class="stat-value">$0.00</p></div>
+    <div class="stat-card"><p class="stat-label">This Month</p><p id="earnMonth" class="stat-value">$0.00</p></div>
+  </div>
+
+  <div class="panel-grid two-col">
+    <article class="panel">
+      <div class="panel-head"><h3>Earnings Over Time</h3></div>
+      <canvas id="earningsLineChart" width="500" height="220"></canvas>
+    </article>
+    <article class="panel">
+      <div class="panel-head"><h3>By Provider</h3></div>
+      <canvas id="earningsPieChart" width="300" height="220"></canvas>
+    </article>
+  </div>
+</section>

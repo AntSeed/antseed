@@ -1,10 +1,52 @@
+import type { BadgeTone, RendererElements } from '../core/elements';
+import type { RendererUiState } from '../core/state';
+import type { DesktopBridge } from '../types/bridge';
+
+type ChatConversationUsage = {
+  inputTokens?: number;
+  outputTokens?: number;
+};
+
+type ChatConversationSummary = {
+  id: string;
+  title?: string;
+  model?: string;
+  createdAt?: number;
+  updatedAt?: number;
+  messageCount?: number;
+  usage?: ChatConversationUsage;
+  totalTokens?: number;
+  totalEstimatedCostUsd?: number;
+  [key: string]: unknown;
+};
+
+type ChatMessage = {
+  role: string;
+  content: unknown;
+  createdAt?: number;
+  meta?: Record<string, unknown>;
+  [key: string]: unknown;
+};
+
+type ChatConversation = ChatConversationSummary & {
+  messages?: ChatMessage[];
+};
+
+type ChatModuleOptions = {
+  bridge?: DesktopBridge;
+  elements: RendererElements;
+  uiState: RendererUiState;
+  setBadgeTone: (el: Element | null | undefined, tone: BadgeTone, label: string) => void;
+  appendSystemLog: (message: string) => void;
+};
+
 export function initChatModule({
   bridge,
   elements,
   uiState,
   setBadgeTone,
   appendSystemLog,
-}: any) {
+}: ChatModuleOptions) {
   const myrmecochoryPhrases = [
     'Myrmecochory scouting for the right peer',
     'Myrmecochory optimizing route and cost',
@@ -13,12 +55,51 @@ export function initChatModule({
     'Myrmecochory preparing the next inference hop',
   ];
 
-  let activeConversation: any = null;
+  let activeConversation: ChatConversation | null = null;
   let activeStreamTurn: number | null = null;
   let activeStreamStartedAt = 0;
   let streamingIndicatorTimer: number | null = null;
   let proxyState: 'unknown' | 'online' | 'offline' = 'unknown';
   let proxyPort = 0;
+
+  function getConversationSummaries(): ChatConversationSummary[] {
+    return Array.isArray(uiState.chatConversations)
+      ? (uiState.chatConversations as ChatConversationSummary[])
+      : [];
+  }
+
+  function setConversationSummaries(conversations: ChatConversationSummary[]): void {
+    uiState.chatConversations = conversations;
+  }
+
+  function getActiveConversationId(): string | null {
+    return typeof uiState.chatActiveConversation === 'string' ? uiState.chatActiveConversation : null;
+  }
+
+  function getConversationId(payload: unknown): string | null {
+    if (!payload || typeof payload !== 'object') {
+      return null;
+    }
+
+    const id = (payload as { id?: unknown }).id;
+    return typeof id === 'string' && id.length > 0 ? id : null;
+  }
+
+  function getSelectedChatModel(): string {
+    const selectedValue = elements.chatModelSelect?.value;
+    if (selectedValue && selectedValue.trim().length > 0) {
+      return selectedValue;
+    }
+
+    if (elements.chatModelSelect instanceof HTMLSelectElement) {
+      const firstOption = elements.chatModelSelect.options[0]?.value;
+      if (firstOption && firstOption.trim().length > 0) {
+        return firstOption;
+      }
+    }
+
+    return 'moonshotai/kimi-k2.5';
+  }
 
   function formatChatTime(timestamp) {
     const d = new Date(timestamp);
@@ -293,7 +374,7 @@ export function initChatModule({
     return div.innerHTML;
   }
 
-  function toErrorMessage(err, fallback = 'Unexpected error') {
+  function toErrorMessage(err: unknown, fallback = 'Unexpected error'): string {
     if (typeof err === 'string' && err.trim().length > 0) {
       return err;
     }
@@ -303,7 +384,7 @@ export function initChatModule({
     return fallback;
   }
 
-  function showChatError(message) {
+  function showChatError(message: unknown): void {
     const text = toErrorMessage(message, 'Unexpected chat error');
     if (elements.chatError) {
       elements.chatError.textContent = text;
@@ -311,11 +392,18 @@ export function initChatModule({
     }
   }
 
-  function clearChatError() {
+  function clearChatError(): void {
     if (elements.chatError) {
       elements.chatError.textContent = '';
       elements.chatError.style.display = 'none';
     }
+  }
+
+  function reportChatError(err: unknown, fallback: string): string {
+    const message = toErrorMessage(err, fallback);
+    showChatError(message);
+    appendSystemLog(`Chat error: ${message}`);
+    return message;
   }
 
   function scrollChatToBottom() {
@@ -548,22 +636,95 @@ export function initChatModule({
     }
   }
 
+  function syncActiveConversationSummary(conversations: ChatConversationSummary[]): void {
+    const activeConversationId = getActiveConversationId();
+    if (!activeConversationId) {
+      return;
+    }
+
+    const activeSummary = conversations.find((conversation) => conversation.id === activeConversationId);
+    if (!activeSummary) {
+      return;
+    }
+
+    activeConversation = {
+      ...(activeConversation || {}),
+      ...activeSummary,
+      messages: activeConversation?.messages || [],
+    };
+    updateThreadMeta(activeConversation);
+  }
+
+  function renderEmptyConversationState(container: HTMLElement): void {
+    container.innerHTML = '<div class="chat-empty">No conversations yet</div>';
+  }
+
+  function appendConversationMeta(metaRow: HTMLElement, text: string): void {
+    const span = document.createElement('span');
+    span.textContent = text;
+    metaRow.appendChild(span);
+  }
+
+  function createConversationListItem(conv: ChatConversationSummary): HTMLElement {
+    const item = document.createElement('div');
+    item.className = `chat-conv-item${conv.id === getActiveConversationId() ? ' active' : ''}`;
+    item.dataset.convId = conv.id;
+
+    const top = document.createElement('div');
+    top.className = 'chat-conv-top';
+
+    const peer = document.createElement('div');
+    peer.className = 'chat-conv-peer';
+    peer.textContent = String(conv.title || '');
+    top.appendChild(peer);
+
+    const updatedLabel = Number(conv.updatedAt) > 0 ? formatChatTime(conv.updatedAt) : 'n/a';
+    const time = document.createElement('span');
+    time.className = 'chat-conv-time';
+    time.textContent = updatedLabel;
+    top.appendChild(time);
+
+    const preview = document.createElement('div');
+    preview.className = 'chat-conv-preview';
+    preview.textContent = shortModelName(conv.model);
+
+    const tokenCounts = getConversationTokenCounts(conv);
+    const totalCostUsd = Number(conv.totalEstimatedCostUsd) || 0;
+    const messageCount = Number(conv.messageCount) || 0;
+    const createdLabel = Number(conv.createdAt) > 0 ? formatChatTime(conv.createdAt) : null;
+
+    const metaRow = document.createElement('div');
+    metaRow.className = 'chat-conv-meta';
+    appendConversationMeta(metaRow, `${messageCount} msg${messageCount === 1 ? '' : 's'}`);
+    appendConversationMeta(metaRow, `${formatCompactNumber(tokenCounts.totalTokens)} tok`);
+
+    if (totalCostUsd > 0) {
+      appendConversationMeta(metaRow, `$${formatUsd(totalCostUsd, 4)}`);
+    } else if (tokenCounts.totalTokens > 0) {
+      appendConversationMeta(metaRow, '$n/a');
+    }
+
+    if (createdLabel) {
+      appendConversationMeta(metaRow, `created ${createdLabel}`);
+    }
+
+    item.append(top, preview, metaRow);
+    item.addEventListener('click', () => {
+      void openConversation(conv.id);
+    });
+
+    return item;
+  }
+
   async function refreshChatConversations() {
     if (!bridge || !bridge.chatAiListConversations) return;
 
     try {
       const result = await bridge.chatAiListConversations();
       if (result.ok) {
-        uiState.chatConversations = result.data || [];
-        const activeSummary = uiState.chatConversations.find((conv) => conv.id === uiState.chatActiveConversation);
-        if (activeSummary) {
-          activeConversation = {
-            ...(activeConversation || {}),
-            ...activeSummary,
-            messages: activeConversation?.messages || [],
-          };
-          updateThreadMeta(activeConversation);
-        }
+        const conversations = Array.isArray(result.data) ? (result.data as ChatConversationSummary[]) : [];
+        setConversationSummaries(conversations);
+        syncActiveConversationSummary(conversations);
         renderChatConversations();
       }
     } catch {
@@ -577,52 +738,21 @@ export function initChatModule({
     const container = elements.chatConversations;
     if (!container) return;
 
-    const convs = uiState.chatConversations;
-    if (convs.length === 0) {
-      container.innerHTML = '<div class="chat-empty">No conversations yet</div>';
+    const conversations = getConversationSummaries();
+    if (conversations.length === 0) {
+      renderEmptyConversationState(container);
       return;
     }
 
     container.innerHTML = '';
-    for (const conv of convs) {
-      const item = document.createElement('div');
-      item.className = `chat-conv-item${conv.id === uiState.chatActiveConversation ? ' active' : ''}`;
-      item.dataset.convId = conv.id;
-
-      const modelName = shortModelName(conv.model);
-      const messageCount = Number(conv.messageCount) || 0;
-      const tokenCounts = getConversationTokenCounts(conv);
-      const totalCostUsd = Number(conv.totalEstimatedCostUsd) || 0;
-      const updatedLabel = conv.updatedAt > 0 ? formatChatTime(conv.updatedAt) : 'n/a';
-      const createdLabel = conv.createdAt > 0 ? formatChatTime(conv.createdAt) : null;
-
-      let html = '<div class="chat-conv-top">';
-      html += `<div class="chat-conv-peer">${escapeHtml(conv.title)}</div>`;
-      html += `<span class="chat-conv-time">${escapeHtml(updatedLabel)}</span>`;
-      html += '</div>';
-      html += `<div class="chat-conv-preview">${escapeHtml(modelName)}</div>`;
-      html += '<div class="chat-conv-meta">';
-      html += `<span>${messageCount} msg${messageCount === 1 ? '' : 's'}</span>`;
-      html += `<span>${formatCompactNumber(tokenCounts.totalTokens)} tok</span>`;
-      if (totalCostUsd > 0) {
-        html += `<span>$${formatUsd(totalCostUsd, 4)}</span>`;
-      } else if (tokenCounts.totalTokens > 0) {
-        html += '<span>$n/a</span>';
-      }
-      if (createdLabel) {
-        html += `<span>created ${escapeHtml(createdLabel)}</span>`;
-      }
-      html += '</div>';
-
-      item.innerHTML = html;
-      item.addEventListener('click', () => {
-        void openConversation(conv.id);
-      });
-      container.appendChild(item);
+    const fragment = document.createDocumentFragment();
+    for (const conversation of conversations) {
+      fragment.appendChild(createConversationListItem(conversation));
     }
+    container.appendChild(fragment);
   }
 
-  async function openConversation(convId) {
+  async function openConversation(convId: string) {
     if (!bridge || !bridge.chatAiGetConversation) return;
 
     uiState.chatActiveConversation = convId;
@@ -630,18 +760,20 @@ export function initChatModule({
     try {
       const result = await bridge.chatAiGetConversation(convId);
       if (result.ok && result.data) {
-        const conv = result.data;
+        const conv = result.data as ChatConversation;
         activeConversation = conv;
-        uiState.chatMessages = conv.messages || [];
+        uiState.chatMessages = Array.isArray(conv.messages) ? conv.messages : [];
 
         const header = elements.chatHeader;
         if (header) {
-          const peerSpan = header.querySelector('.chat-thread-peer');
-          if (peerSpan) peerSpan.textContent = conv.title;
+          const peerSpan = header.querySelector<HTMLElement>('.chat-thread-peer');
+          if (peerSpan) {
+            peerSpan.textContent = String(conv.title || 'Conversation');
+          }
         }
 
         if (elements.chatDeleteBtn) elements.chatDeleteBtn.style.display = '';
-        if (elements.chatModelSelect) elements.chatModelSelect.value = conv.model;
+        if (elements.chatModelSelect) elements.chatModelSelect.value = String(conv.model || elements.chatModelSelect.value || '');
         if (elements.chatInput) elements.chatInput.disabled = false;
         if (elements.chatSendBtn) elements.chatSendBtn.disabled = false;
 
@@ -650,14 +782,10 @@ export function initChatModule({
         renderChatConversations();
         clearChatError();
       } else {
-        const message = toErrorMessage(result.error, 'Failed to open conversation');
-        showChatError(message);
-        appendSystemLog(`Chat error: ${message}`);
+        reportChatError(result.error, 'Failed to open conversation');
       }
     } catch (err) {
-      const message = toErrorMessage(err, 'Failed to open conversation');
-      showChatError(message);
-      appendSystemLog(`Chat error: ${message}`);
+      reportChatError(err, 'Failed to open conversation');
     }
   }
 
@@ -756,22 +884,22 @@ export function initChatModule({
   async function createNewConversation() {
     if (!bridge || !bridge.chatAiCreateConversation) return;
 
-    const model = elements.chatModelSelect?.value || 'moonshotai/kimi-k2.5';
+    const model = getSelectedChatModel();
     try {
       const result = await bridge.chatAiCreateConversation(model);
       if (result.ok && result.data) {
+        const conversationId = getConversationId(result.data);
+        if (!conversationId) {
+          throw new Error('Conversation created but ID is missing');
+        }
         await refreshChatConversations();
-        await openConversation(result.data.id);
+        await openConversation(conversationId);
         clearChatError();
       } else {
-        const message = toErrorMessage(result.error, 'Failed to create conversation');
-        showChatError(message);
-        appendSystemLog(`Chat error: ${message}`);
+        reportChatError(result.error, 'Failed to create conversation');
       }
     } catch (err) {
-      const message = toErrorMessage(err, 'Failed to create conversation');
-      showChatError(message);
-      appendSystemLog(`Chat error: ${message}`);
+      reportChatError(err, 'Failed to create conversation');
     }
   }
 
@@ -800,9 +928,7 @@ export function initChatModule({
       await refreshChatConversations();
       clearChatError();
     } catch (err) {
-      const message = toErrorMessage(err, 'Failed to delete conversation');
-      showChatError(message);
-      appendSystemLog(`Chat error: ${message}`);
+      reportChatError(err, 'Failed to delete conversation');
     }
   }
 
@@ -842,7 +968,7 @@ export function initChatModule({
 
     uiState.chatMessages.push({ role: 'user', content, createdAt: Date.now() });
     if (activeConversation) {
-      activeConversation.messages = uiState.chatMessages;
+      activeConversation.messages = uiState.chatMessages as ChatMessage[];
       activeConversation.updatedAt = Date.now();
       updateThreadMeta(activeConversation);
     }
@@ -856,9 +982,7 @@ export function initChatModule({
       if (bridge.chatAiSendStream) {
         const result = await bridge.chatAiSendStream(convId, content, model);
         if (!result.ok) {
-          const message = toErrorMessage(result.error, 'Request failed');
-          showChatError(message);
-          appendSystemLog(`Chat error: ${message}`);
+          reportChatError(result.error, 'Request failed');
           setChatSending(false);
         } else if (uiState.chatSending) {
           // Fallback in case stream completion event is missed.
@@ -872,16 +996,12 @@ export function initChatModule({
       } else if (bridge.chatAiSend) {
         const result = await bridge.chatAiSend(convId, content, model);
         if (!result.ok) {
-          const message = toErrorMessage(result.error, 'Request failed');
-          showChatError(message);
-          appendSystemLog(`Chat error: ${message}`);
+          reportChatError(result.error, 'Request failed');
         }
         setChatSending(false);
       }
     } catch (err) {
-      const message = toErrorMessage(err, 'Chat send failed');
-      showChatError(message);
-      appendSystemLog(`Chat error: ${message}`);
+      reportChatError(err, 'Chat send failed');
       setChatSending(false);
     }
   }
@@ -908,7 +1028,8 @@ export function initChatModule({
   }
 
   if (elements.chatInput) {
-    elements.chatInput.addEventListener('keydown', (e) => {
+    elements.chatInput.addEventListener('keydown', (event) => {
+      const e = event as KeyboardEvent;
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         void sendChatMessage();
@@ -947,7 +1068,7 @@ export function initChatModule({
           };
           uiState.chatMessages.push(assistantMessage);
           if (activeConversation) {
-            activeConversation.messages = uiState.chatMessages;
+            activeConversation.messages = uiState.chatMessages as ChatMessage[];
             activeConversation.updatedAt = Date.now();
             updateThreadMeta(activeConversation);
           }
@@ -974,7 +1095,7 @@ export function initChatModule({
     if (bridge.onChatAiUserPersisted) {
       bridge.onChatAiUserPersisted((data) => {
         if (data.conversationId !== uiState.chatActiveConversation) return;
-        const last = uiState.chatMessages[uiState.chatMessages.length - 1];
+        const last = (uiState.chatMessages[uiState.chatMessages.length - 1] || null) as ChatMessage | null;
         if (last && last.role === 'user' && !last.createdAt) {
           last.createdAt = data.message?.createdAt || Date.now();
           renderChatMessages();

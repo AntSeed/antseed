@@ -110,15 +110,6 @@ export function initRuntimeModule({
     }
   }
 
-  function renderRuntimeSummary(processes: RuntimeProcessState[]): void {
-    const buyerRunning = processes.some((proc) => proc.running && proc.mode === 'connect');
-    if (!buyerRunning) {
-      setText(elements.runtimeSummary, 'No active services');
-      return;
-    }
-    setText(elements.runtimeSummary, 'Buyer runtime connected');
-  }
-
   function renderProcesses(processes: RuntimeProcessState[]): void {
     uiState.processes = Array.isArray(processes) ? processes : [];
     uiState.dashboardRunning = isModeRunning('dashboard', uiState.processes);
@@ -127,7 +118,6 @@ export function initRuntimeModule({
     renderProcessState('connect', elements.connectState, elements.connectBadge, processByMode('connect'));
     renderProcessState('dashboard', elements.dashboardState, elements.dashboardBadge, processByMode('dashboard'));
 
-    renderRuntimeSummary(uiState.processes);
   }
 
   function renderDaemonState(snapshot: { exists: boolean; state: Record<string, unknown> | null } | null): void {
