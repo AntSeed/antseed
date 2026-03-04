@@ -11,14 +11,15 @@ const RELEASES_URL = 'https://github.com/AntSeed/antseed/releases/latest';
 /* Nav is handled by Docusaurus Layout — DO NOT TOUCH */
 
 /* ========== LIVENESS BAR ========== */
+// TODO: Replace hardcoded stats with live data from network API
 function LiveBar() {
   return (
     <Link to="/network" className={styles.lbar} style={{textDecoration:'none'}}>
       <div className={styles.litem}><span className={styles.ldot}/> <span>Network live</span></div>
-      <div className={styles.ldiv}/>
+      {/* <div className={styles.ldiv}/>
       <div className={styles.litem}><strong>3</strong> ACTIVE PEERS</div>
       <div className={styles.ldiv}/>
-      <div className={styles.litem}><strong>10</strong> MODELS AVAILABLE</div>
+      <div className={styles.litem}><strong>10</strong> MODELS AVAILABLE</div> */}
       <span className={styles.liveArrow}>→</span>
     </Link>
   );

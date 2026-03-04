@@ -35,14 +35,6 @@ export interface NetworkStats {
 }
 
 const SCAN_INTERVAL_MS = 30_000;
-
-// Known Antseed peers — used as a direct fallback when DHT lookup yields nothing.
-// Format: { host, port } where port is the signaling/metadata port.
-const KNOWN_ANTSEED_PEERS: Array<{ host: string; port: number }> = [
-  { host: '18.200.194.8', port: 6882 },
-  { host: '108.128.178.49', port: 6892 },
-];
-
 const DEFAULT_DISCOVERY_PROVIDERS = [
   'anthropic',
   'openai',
@@ -234,15 +226,8 @@ export class DHTQueryService {
     });
     this.running = true;
 
-    // Delay initial scan to allow DHT routing table to populate after bootstrap.
-    // Scanning immediately after start yields 0 peers because the DHT hasn't
-    // had time to discover nodes yet.
-    const INITIAL_SCAN_DELAY_MS = 15_000;
-    setTimeout(() => {
-      if (this.running) {
-        this.scanNow().catch(() => {});
-      }
-    }, INITIAL_SCAN_DELAY_MS);
+    // Initial scan
+    this.scanNow().catch(() => {});
 
     // Periodic scans
     this.scanTimer = setInterval(() => {
@@ -323,39 +308,6 @@ export class DHTQueryService {
         }
       } catch {
         this.healthMonitor.recordLookup(false, Date.now() - startTime);
-      }
-    }
-
-    // Fallback: directly resolve known peers if DHT yielded nothing.
-    // This ensures the dashboard always shows peers even when DHT propagation is unreliable.
-    if (discoveredPeers.size === 0) {
-      for (const ep of KNOWN_ANTSEED_PEERS) {
-        try {
-          const metadata = await this.metadataResolver.resolve(ep);
-          if (metadata) {
-            const peerId = metadata.peerId;
-            const providers = resolveNetworkPeerProviders(metadata, undefined, '*');
-            const summaryPricing = this.resolveSummaryPricing(metadata);
-            let capacityMsgPerHour = 0;
-            for (const pa of metadata.providers ?? []) {
-              capacityMsgPerHour += pa.maxConcurrency * 60;
-            }
-            discoveredPeers.set(peerId, {
-              peerId,
-              host: ep.host,
-              port: ep.port,
-              providers,
-              inputUsdPerMillion: summaryPricing.inputUsdPerMillion,
-              outputUsdPerMillion: summaryPricing.outputUsdPerMillion,
-              capacityMsgPerHour,
-              reputation: 100,
-              lastSeen: Date.now(),
-              source: 'dht',
-            });
-          }
-        } catch {
-          // peer unreachable
-        }
       }
     }
 
