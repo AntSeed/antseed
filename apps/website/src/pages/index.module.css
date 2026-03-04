@@ -832,8 +832,8 @@
 
 .earnStage {
   position: relative;
-  width: 520px;
-  height: 520px;
+  width: 620px;
+  height: 620px;
   margin: 0 auto 48px;
 }
 
@@ -910,25 +910,25 @@
 }
 
 .earnNodeTop {
-  top: 10px;
+  top: -20px;
   left: 50%;
   transform: translateX(-50%);
 }
 
 .earnNodeRight {
-  right: 10px;
+  right: -20px;
   top: 50%;
   transform: translateY(-50%);
 }
 
 .earnNodeBottom {
-  bottom: 10px;
+  bottom: -20px;
   left: 50%;
   transform: translateX(-50%);
 }
 
 .earnNodeLeft {
-  left: 10px;
+  left: -20px;
   top: 50%;
   transform: translateY(-50%);
 }
