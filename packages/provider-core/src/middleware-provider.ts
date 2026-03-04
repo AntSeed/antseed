@@ -2,6 +2,7 @@ import type {
   Provider,
   SerializedHttpRequest,
   SerializedHttpResponse,
+  SerializedHttpResponseChunk,
   ProviderStreamCallbacks,
 } from '@antseed/node';
 import { type ProviderMiddleware, applyMiddleware } from './middleware.js';
@@ -100,7 +101,25 @@ export class MiddlewareProvider implements Provider {
     if (!this._inner.handleRequestStream) return undefined;
     return async (req: SerializedHttpRequest, callbacks: ProviderStreamCallbacks) => {
       const { req: augmented, applied } = this._augment(req);
-      const resp = await this._inner.handleRequestStream!(augmented, callbacks);
+      const wrappedCallbacks: ProviderStreamCallbacks = applied && this._phrases.length > 0
+        ? {
+            onResponseStart: callbacks.onResponseStart,
+            onResponseChunk: (chunk: SerializedHttpResponseChunk) => {
+              if (chunk.data.length > 0) {
+                try {
+                  const text = new TextDecoder().decode(chunk.data);
+                  const redacted = redactText(text, this._phrases);
+                  if (redacted !== text) {
+                    callbacks.onResponseChunk({ ...chunk, data: new TextEncoder().encode(redacted) });
+                    return;
+                  }
+                } catch { /* not decodable text — pass through */ }
+              }
+              callbacks.onResponseChunk(chunk);
+            },
+          }
+        : callbacks;
+      const resp = await this._inner.handleRequestStream!(augmented, wrappedCallbacks);
       return this._stripResponse(resp, applied);
     };
   }
