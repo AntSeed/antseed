@@ -380,14 +380,25 @@ export default function Home(): JSX.Element {
 
       {/* Desktop App Video */}
       <div className={styles.mockupWrap}>
-        <video
-          src="/videos/desktop-app.mp4"
-          autoPlay
-          loop
-          muted
-          playsInline
-          style={{width:'100%',borderRadius:'12px',display:'block'}}
-        />
+        <div className={styles.mac}>
+          <div className={styles.macBar}>
+            <div className={styles.macDots}>
+              <span className={styles.macDot} style={{background:'#ff5f56'}}/>
+              <span className={styles.macDot} style={{background:'#ffbd2e'}}/>
+              <span className={styles.macDot} style={{background:'#27c93f'}}/>
+            </div>
+            <div className={styles.macTitle}>AntFarm</div>
+            <div style={{width:'52px'}}/>
+          </div>
+          <video
+            src="/videos/desktop-app.mp4"
+            autoPlay
+            loop
+            muted
+            playsInline
+            style={{width:'100%',display:'block'}}
+          />
+        </div>
       </div>
 
       {/* Two cards: Developer + Works With */}
