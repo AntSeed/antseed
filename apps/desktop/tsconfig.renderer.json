@@ -4,6 +4,11 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "jsx": "react-jsx",
+    "baseUrl": ".",
+    "paths": {
+      "@mariozechner/pi-ai": ["src/renderer/shims/pi-ai.ts"]
+    },
+    "skipLibCheck": true,
     "strict": true,
     "noImplicitAny": false,
     "types": ["vite/client"]

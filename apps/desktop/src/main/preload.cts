@@ -16,9 +16,11 @@ type RuntimeSnapshot = {
 
 type NetworkPeer = {
   peerId: string;
+  displayName?: string | null;
   host: string;
   port: number;
   providers: string[];
+  models?: string[];
   inputUsdPerMillion: number;
   outputUsdPerMillion: number;
   capacityMsgPerHour: number;

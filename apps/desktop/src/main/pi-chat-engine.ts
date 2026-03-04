@@ -107,7 +107,7 @@ const CHAT_SESSIONS_DIR = path.join(CHAT_DATA_DIR, 'sessions');
 const CHAT_WORKSPACE_DIR = path.join(ANTSEED_HOME_DIR, 'projects');
 const CHAT_AGENT_DIR = path.join(CHAT_DATA_DIR, 'pi-agent');
 const DEFAULT_PROXY_PORT = 8377;
-const DEFAULT_CHAT_MODEL = 'claude-sonnet-4-20250514';
+const DEFAULT_CHAT_MODEL = 'claude-sonnet-4.6';
 const DEFAULT_MAX_TOKENS = 4096;
 const PROXY_PROVIDER_ID = 'antseed-proxy';
 const PROXY_RUNTIME_API_KEY = 'antseed-local';
@@ -1423,6 +1423,25 @@ function asErrorMessage(error: unknown): string {
   return text.length > 0 ? text : 'Unexpected error';
 }
 
+function extractAssistantFailureMessage(messages: Message[]): string | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const entry = messages[index] as (AssistantMessage & { errorMessage?: unknown }) | Message | undefined;
+    if (!entry || entry.role !== 'assistant') {
+      continue;
+    }
+    const assistant = entry as AssistantMessage & { errorMessage?: unknown };
+    const explicit = typeof assistant.errorMessage === 'string' ? assistant.errorMessage.trim() : '';
+    if (explicit.length > 0) {
+      return explicit;
+    }
+    if (assistant.stopReason === 'error') {
+      return 'Proxy request failed';
+    }
+    return null;
+  }
+  return null;
+}
+
 function toConversationTitle(userMessage: string): string {
   const normalized = userMessage.trim();
   if (normalized.length === 0) {
@@ -1442,9 +1461,6 @@ export function registerPiChatHandlers({
   let activeRun: ActiveRun | null = null;
 
   const isProxyAvailable = async (port: number): Promise<boolean> => {
-    if (isBuyerRuntimeRunning()) {
-      return true;
-    }
     return await isPortReachable(port);
   };
 
@@ -1464,6 +1480,9 @@ export function registerPiChatHandlers({
 
     const proxyPort = await resolveProxyPort(configPath);
     if (!(await isProxyAvailable(proxyPort))) {
+      if (isBuyerRuntimeRunning()) {
+        appendSystemLog(`Buyer runtime process is running, but proxy port ${proxyPort} is not reachable.`);
+      }
       return {
         ok: false,
         error: `Buyer proxy is not reachable on port ${proxyPort}. Start Buyer runtime or fix buyer.proxyPort in config.`,
@@ -1663,6 +1682,12 @@ export function registerPiChatHandlers({
 
     try {
       await session.prompt(trimmedMessage);
+      const assistantFailure = extractAssistantFailureMessage(session.messages as Message[]);
+      if (assistantFailure) {
+        sendToRenderer('chat:ai-stream-error', { conversationId, error: assistantFailure });
+        appendSystemLog(`Pi chat error: ${assistantFailure}`);
+        return { ok: false, error: assistantFailure };
+      }
       if (!streamDone) {
         streamDone = true;
         sendToRenderer('chat:ai-stream-done', { conversationId });

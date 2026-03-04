@@ -66,9 +66,11 @@ type LogEvent = {
 
 type DashboardNetworkPeer = {
   peerId: string;
+  displayName?: string | null;
   host: string;
   port: number;
   providers: string[];
+  models?: string[];
   inputUsdPerMillion: number;
   outputUsdPerMillion: number;
   capacityMsgPerHour: number;
@@ -1696,7 +1698,7 @@ function normalizeConversation(value: unknown): AiConversation {
   return {
     id: asString(conv.id, randomUUID()),
     title: asString(conv.title, 'New conversation'),
-    model: asString(conv.model, 'claude-sonnet-4-20250514'),
+    model: asString(conv.model, 'claude-sonnet-4.6'),
     messages,
     createdAt,
     updatedAt,
@@ -2024,10 +2026,6 @@ function getProxyPort(): number {
   return 8377;
 }
 
-function isProxyRunning(): boolean {
-  return isModeRunning('connect', getCombinedProcessState());
-}
-
 async function resolveProxyPort(): Promise<number> {
   try {
     const config = await loadDashboardConfig(ACTIVE_CONFIG_PATH);
@@ -2060,15 +2058,7 @@ async function isPortReachable(port: number, timeoutMs = 700): Promise<boolean> 
 }
 
 async function isProxyAvailable(port: number): Promise<boolean> {
-  if (isProxyRunning()) {
-    return true;
-  }
   return isPortReachable(port);
-}
-
-function isModeRunning(mode: string, processes: RuntimeProcessState[]): boolean {
-  const proc = processes.find((p) => p.mode === mode);
-  return Boolean(proc && proc.running);
 }
 
 ipcMain.handle('chat:ai-get-proxy-status', async () => {
@@ -2100,7 +2090,7 @@ ipcMain.handle('chat:ai-create-conversation', async (_event, model: string) => {
   const conv: AiConversation = {
     id: randomUUID(),
     title: 'New conversation',
-    model: model || 'claude-sonnet-4-20250514',
+    model: model || 'claude-sonnet-4.6',
     messages: [],
     createdAt: Date.now(),
     updatedAt: Date.now(),
