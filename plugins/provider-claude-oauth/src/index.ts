@@ -10,7 +10,18 @@ const configSchema: ConfigField[] = [
   { key: 'ANTSEED_OUTPUT_USD_PER_MILLION', label: 'Output Price', type: 'number', required: false, default: 10 },
   { key: 'ANTSEED_MAX_CONCURRENCY', label: 'Max Concurrency', type: 'number', required: false, default: 5 },
   { key: 'ANTSEED_ALLOWED_MODELS', label: 'Allowed Models', type: 'string[]', required: false },
+  { key: 'ANTSEED_MODEL_REWRITE_MAP', label: 'Model Rewrite Map', type: 'string', required: false, description: 'Comma-separated alias=upstream pairs (e.g. marketing-llm=claude-sonnet-4-6)' },
 ];
+
+function parseModelRewriteMap(raw: string | undefined): Record<string, string> | undefined {
+  if (!raw) return undefined;
+  const map: Record<string, string> = {};
+  for (const pair of raw.split(',')) {
+    const [alias, upstream] = pair.split('=').map(s => s.trim());
+    if (alias && upstream) map[alias.toLowerCase()] = upstream;
+  }
+  return Object.keys(map).length > 0 ? map : undefined;
+}
 
 function buildModelApiProtocols(
   models: string[],
@@ -55,6 +66,7 @@ const plugin: AntseedProviderPlugin = {
     const maxConcurrency = parseInt(config['ANTSEED_MAX_CONCURRENCY'] ?? '5', 10);
     const allowedModels = (config['ANTSEED_ALLOWED_MODELS'] ?? '')
       .split(',').map(s => s.trim()).filter(Boolean);
+    const modelRewriteMap = parseModelRewriteMap(config['ANTSEED_MODEL_REWRITE_MAP']);
     const modelApiProtocols = buildModelApiProtocols(allowedModels, 'anthropic-messages');
 
     return new BaseProvider({
@@ -76,6 +88,7 @@ const plugin: AntseedProviderPlugin = {
         maxConcurrency,
         allowedModels,
         retryOn401: true,
+        ...(modelRewriteMap ? { modelRewriteMap } : {}),
       },
     });
   },

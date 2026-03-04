@@ -5,6 +5,7 @@ import type {
   HierarchicalPricingConfig,
   AntseedConfig,
   ProviderPricingConfig,
+  SellerCLIConfig,
   TokenPricingUsdPerMillion,
 } from './types.js';
 import { createDefaultConfig } from './defaults.js';
@@ -206,6 +207,9 @@ function mergeSellerConfig(
       : [...defaults.enabledProviders],
     pricing: mergeHierarchicalPricing(defaults.pricing, value['pricing']),
     ...(mergedModelCategories ? { modelCategories: mergedModelCategories } : {}),
+    ...(Array.isArray(value['middleware']) && value['middleware'].length > 0
+      ? { middleware: value['middleware'] as SellerCLIConfig['middleware'] }
+      : defaults.middleware ? { middleware: defaults.middleware } : {}),
   };
 }
 
