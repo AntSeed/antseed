@@ -46,7 +46,9 @@ function computeReadiness(
 /** PeerInfo type for API responses */
 export interface PeerInfo {
   peerId: string;
+  displayName: string | null;
   providers: string[];
+  models: string[];
   capacityMsgPerHour: number;
   inputUsdPerMillion: number;
   outputUsdPerMillion: number;
@@ -225,9 +227,11 @@ export async function registerApiRoutes(
       // Convert daemon peers to NetworkPeer format for merging
       const allPeers: NetworkPeer[] = daemonResult.peers.map((p) => ({
         peerId: p.peerId,
+        displayName: p.displayName,
         host: '',
         port: 0,
         providers: p.providers,
+        models: p.models,
         inputUsdPerMillion: p.inputUsdPerMillion,
         outputUsdPerMillion: p.outputUsdPerMillion,
         capacityMsgPerHour: p.capacityMsgPerHour,
@@ -236,13 +240,25 @@ export async function registerApiRoutes(
         source: 'daemon' as const,
       }));
 
-      // Add DHT peers, deduplicating by peerId
-      const seen = new Set(allPeers.map((p) => p.peerId));
+      // Add DHT peers, deduplicating by peerId while preserving daemon values.
+      const byPeerId = new Map(allPeers.map((p) => [p.peerId, p]));
       for (const dp of dhtPeers) {
-        if (!seen.has(dp.peerId)) {
-          allPeers.push(dp);
-          seen.add(dp.peerId);
+        const existing = byPeerId.get(dp.peerId);
+        if (existing) {
+          if ((!existing.displayName || existing.displayName.trim().length === 0) && dp.displayName) {
+            existing.displayName = dp.displayName;
+          }
+          if ((existing.models?.length ?? 0) === 0 && (dp.models?.length ?? 0) > 0) {
+            existing.models = dp.models;
+          }
+          if (existing.host.trim().length === 0 && dp.host.trim().length > 0) {
+            existing.host = dp.host;
+            existing.port = dp.port;
+          }
+          continue;
         }
+        allPeers.push(dp);
+        byPeerId.set(dp.peerId, dp);
       }
 
       return reply.send({
@@ -337,23 +353,71 @@ function mergePeers(daemonPeers: PeerInfo[], dhtPeers: NetworkPeer[]): PeerInfo[
     merged.set(p.peerId, { ...p, source: 'daemon' });
   }
 
-  // DHT peers, skip duplicates
+  // DHT peers, enrich daemon entries and add missing ones.
   for (const dp of dhtPeers) {
-    if (!merged.has(dp.peerId)) {
-      merged.set(dp.peerId, {
-        peerId: dp.peerId,
-        providers: dp.providers,
-        capacityMsgPerHour: dp.capacityMsgPerHour,
-        inputUsdPerMillion: dp.inputUsdPerMillion,
-        outputUsdPerMillion: dp.outputUsdPerMillion,
-        reputation: dp.reputation,
-        location: null,
-        source: 'dht',
-      });
+    const existing = merged.get(dp.peerId);
+    if (existing) {
+      if ((!existing.displayName || existing.displayName.trim().length === 0) && dp.displayName) {
+        existing.displayName = dp.displayName;
+      }
+      if ((existing.models?.length ?? 0) === 0 && (dp.models?.length ?? 0) > 0) {
+        existing.models = dp.models;
+      }
+      continue;
     }
+    merged.set(dp.peerId, {
+      peerId: dp.peerId,
+      displayName: dp.displayName ?? null,
+      providers: dp.providers,
+      models: dp.models ?? [],
+      capacityMsgPerHour: dp.capacityMsgPerHour,
+      inputUsdPerMillion: dp.inputUsdPerMillion,
+      outputUsdPerMillion: dp.outputUsdPerMillion,
+      reputation: dp.reputation,
+      location: null,
+      source: 'dht',
+    });
   }
 
   return Array.from(merged.values());
+}
+
+function collectPeerModels(peer: Record<string, unknown>): string[] {
+  const models = new Set<string>();
+
+  const explicitModels = peer.models;
+  if (Array.isArray(explicitModels)) {
+    for (const model of explicitModels) {
+      if (typeof model !== 'string') {
+        continue;
+      }
+      const normalized = model.trim();
+      if (normalized.length > 0) {
+        models.add(normalized);
+      }
+    }
+  }
+
+  const providerPricing = peer.providerPricing;
+  if (providerPricing && typeof providerPricing === 'object') {
+    for (const providerEntry of Object.values(providerPricing as Record<string, unknown>)) {
+      if (!providerEntry || typeof providerEntry !== 'object') {
+        continue;
+      }
+      const modelPricing = (providerEntry as Record<string, unknown>).models;
+      if (!modelPricing || typeof modelPricing !== 'object') {
+        continue;
+      }
+      for (const modelName of Object.keys(modelPricing as Record<string, unknown>)) {
+        const normalized = modelName.trim();
+        if (normalized.length > 0) {
+          models.add(normalized);
+        }
+      }
+    }
+  }
+
+  return Array.from(models);
 }
 
 async function getPeerList(): Promise<{ peers: PeerInfo[]; degraded: boolean }> {
@@ -363,10 +427,18 @@ async function getPeerList(): Promise<{ peers: PeerInfo[]; degraded: boolean }> 
     const state = JSON.parse(raw) as Record<string, unknown>;
     const rawPeers = Array.isArray(state.peers) ? state.peers : [];
     const peers: PeerInfo[] = rawPeers.map((p) => {
-      const peer = p as Partial<PeerInfo>;
+      const peer = p as Record<string, unknown>;
+      const rawDisplayName = typeof peer.displayName === 'string' ? peer.displayName.trim() : '';
+      const fallbackDisplayName = typeof peer.publicAddress === 'string' && peer.publicAddress.trim().length > 0
+        ? peer.publicAddress.trim()
+        : (typeof peer.peerId === 'string' && peer.peerId.trim().length > 0
+          ? peer.peerId.trim().slice(0, 12)
+          : '');
       return {
-        peerId: peer.peerId ?? '',
-        providers: Array.isArray(peer.providers) ? peer.providers : [],
+        peerId: typeof peer.peerId === 'string' ? peer.peerId : '',
+        displayName: (rawDisplayName.length > 0 ? rawDisplayName : fallbackDisplayName) || null,
+        providers: Array.isArray(peer.providers) ? peer.providers.filter((provider): provider is string => typeof provider === 'string') : [],
+        models: collectPeerModels(peer),
         capacityMsgPerHour: typeof peer.capacityMsgPerHour === 'number' ? peer.capacityMsgPerHour : 0,
         inputUsdPerMillion: typeof peer.inputUsdPerMillion === 'number' ? peer.inputUsdPerMillion : 0,
         outputUsdPerMillion: typeof peer.outputUsdPerMillion === 'number' ? peer.outputUsdPerMillion : 0,

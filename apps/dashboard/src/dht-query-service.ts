@@ -11,9 +11,11 @@ import type { PeerMetadata } from '@antseed/node';
 
 export interface NetworkPeer {
   peerId: string;
+  displayName: string | null;
   host: string;
   port: number;
   providers: string[];
+  models: string[];
   inputUsdPerMillion: number;
   outputUsdPerMillion: number;
   capacityMsgPerHour: number;
@@ -124,6 +126,28 @@ function providerNamesFromMetadata(
   return Array.from(providers);
 }
 
+function modelNamesFromMetadata(
+  metadata: Pick<PeerMetadata, 'providers'> | null | undefined,
+): string[] {
+  if (!metadata?.providers || metadata.providers.length === 0) {
+    return [];
+  }
+
+  const models = new Set<string>();
+  for (const provider of metadata.providers) {
+    for (const model of provider.models ?? []) {
+      if (typeof model !== 'string') {
+        continue;
+      }
+      const normalized = model.trim();
+      if (normalized.length > 0) {
+        models.add(normalized);
+      }
+    }
+  }
+  return Array.from(models);
+}
+
 export function resolveNetworkPeerProviders(
   metadata: Pick<PeerMetadata, 'providers'> | null | undefined,
   existingProviders: string[] | undefined,
@@ -148,6 +172,29 @@ export function resolveNetworkPeerProviders(
     providers.add(normalizedTopic);
   }
   return Array.from(providers);
+}
+
+export function resolveNetworkPeerModels(
+  metadata: Pick<PeerMetadata, 'providers'> | null | undefined,
+  existingModels: string[] | undefined,
+): string[] {
+  // Prefer metadata models whenever available.
+  const fromMetadata = modelNamesFromMetadata(metadata);
+  if (fromMetadata.length > 0) {
+    return fromMetadata;
+  }
+
+  const models = new Set<string>();
+  for (const model of existingModels ?? []) {
+    if (typeof model !== 'string') {
+      continue;
+    }
+    const normalized = model.trim();
+    if (normalized.length > 0) {
+      models.add(normalized);
+    }
+  }
+  return Array.from(models);
 }
 
 export function resolveMetadataSummaryPricing(
@@ -283,6 +330,10 @@ export class DHTQueryService {
 
           const existing = discoveredPeers.get(peerId);
           const providers = resolveNetworkPeerProviders(metadata, existing?.providers, name);
+          const models = resolveNetworkPeerModels(metadata, existing?.models);
+          const displayName = typeof metadata?.displayName === 'string' && metadata.displayName.trim().length > 0
+            ? metadata.displayName.trim()
+            : (existing?.displayName ?? `${ep.host}:${ep.port}`);
 
           // Extract summary pricing and capacity from metadata
           const summaryPricing = this.resolveSummaryPricing(metadata);
@@ -295,9 +346,11 @@ export class DHTQueryService {
 
           discoveredPeers.set(peerId, {
             peerId,
+            displayName,
             host: ep.host,
             port: ep.port,
             providers,
+            models,
             inputUsdPerMillion: existing?.inputUsdPerMillion || summaryPricing.inputUsdPerMillion,
             outputUsdPerMillion: existing?.outputUsdPerMillion || summaryPricing.outputUsdPerMillion,
             capacityMsgPerHour: existing?.capacityMsgPerHour || capacityMsgPerHour,
