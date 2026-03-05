@@ -165,40 +165,6 @@ function getPeerProviderProtocols(
   return inferred
 }
 
-function isProviderModelExplicitlyUnsupported(
-  peer: PeerInfo,
-  provider: string,
-  requestedModel: string | null,
-): boolean {
-  if (!requestedModel) {
-    return false
-  }
-
-  const modelMatrix = (
-    peer as PeerInfo & {
-      providerModelApiProtocols?: Record<string, { models: Record<string, ModelApiProtocol[]> }>
-    }
-  ).providerModelApiProtocols?.[provider]?.models
-
-  if (!modelMatrix) {
-    return false
-  }
-
-  const advertisedModels = Object.keys(modelMatrix)
-  if (advertisedModels.length === 0) {
-    return false
-  }
-
-  if (Object.prototype.hasOwnProperty.call(modelMatrix, requestedModel)) {
-    return false
-  }
-
-  log(
-    `Model strict-miss: peer ${peer.peerId.slice(0, 8)} provider=${provider} does not advertise model="${requestedModel}"`,
-  )
-  return true
-}
-
 function resolvePeerRoutePlan(
   peer: PeerInfo,
   requestProtocol: ModelApiProtocol | null,
@@ -226,9 +192,6 @@ function resolvePeerRoutePlan(
 
   let transformedFallback: PeerProtocolRoutePlan | null = null
   for (const provider of candidates) {
-    if (!explicitProvider && isProviderModelExplicitlyUnsupported(peer, provider, requestedModel)) {
-      continue
-    }
     const supportedProtocols = getPeerProviderProtocols(peer, provider, requestedModel)
     const selection = selectTargetProtocolForRequest(requestProtocol, supportedProtocols)
     if (!selection) {
@@ -1182,6 +1145,42 @@ export class BuyerProxy {
       return
     }
 
+    const preferredProviders = explicitProvider
+      ? []
+      : inferPreferredProvidersForRequest(requestProtocol, requestedModel)
+    let hasPreferredProviderCandidate = preferredProviders.length > 0
+      && routingPeers.some((peer) => {
+        const provider = routingPlans.get(peer.peerId)?.provider?.trim().toLowerCase()
+        return Boolean(provider && preferredProviders.includes(provider))
+      })
+
+    if (preferredProviders.length > 0 && !hasPreferredProviderCandidate) {
+      log(
+        `No preferred-provider peers in candidate set; forcing refresh for [${preferredProviders.join(',')}] before routing.`,
+      )
+      discoveredPeers = await this._getPeers({ forceRefresh: true })
+      const refreshedSelection = selectCandidatePeersForRouting(
+        discoveredPeers,
+        requestProtocol,
+        requestedModel,
+        explicitProvider,
+      )
+      routingPeers = refreshedSelection.candidatePeers
+      routingPlans = refreshedSelection.routePlanByPeerId
+      hasPreferredProviderCandidate = routingPeers.some((peer) => {
+        const provider = routingPlans.get(peer.peerId)?.provider?.trim().toLowerCase()
+        return Boolean(provider && preferredProviders.includes(provider))
+      })
+    }
+
+    if (routingPeers.length === 0) {
+      const diagnostics = this._formatPeerSelectionDiagnostics(discoveredPeers)
+      res.writeHead(502, { 'content-type': 'text/plain' })
+      const providerLabel = explicitProvider ? ` for provider "${explicitProvider}"` : ''
+      res.end(`No peers support ${requestProtocol ?? 'this request'}${providerLabel}. ${diagnostics}`)
+      return
+    }
+
     log(`Routing candidates: ${routingPeers.length} peer(s)`)
 
     // Select peer: explicit pin bypasses the router (and retry)
@@ -1247,28 +1246,24 @@ export class BuyerProxy {
     // Non-pinned: retry with failover on provider errors
     const MAX_ATTEMPTS = 3
     const triedPeerIds = new Set<string>()
-    const preferredProviders = explicitProvider
-      ? []
-      : inferPreferredProvidersForRequest(requestProtocol, requestedModel)
-    const hasPreferredProviderCandidate = preferredProviders.length > 0
-      && routingPeers.some((peer) => {
-        const provider = routingPlans.get(peer.peerId)?.provider?.trim().toLowerCase()
-        return Boolean(provider && preferredProviders.includes(provider))
-      })
     const restrictFailoverToPreferredProviders = preferredProviders.length > 0 && hasPreferredProviderCandidate
     if (restrictFailoverToPreferredProviders) {
-      log(`Provider-family failover lock active: [${preferredProviders.join(',')}]`)
+      log(`Provider-family preference active (attempt 1): [${preferredProviders.join(',')}]`)
     }
     let lastStatusCode = 502
     let lastResponseBody: Buffer | null = null
     let lastResponseHeaders: Record<string, string> = { 'content-type': 'text/plain' }
 
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      const limitToPreferredProviders = restrictFailoverToPreferredProviders && attempt === 0
+      if (restrictFailoverToPreferredProviders && attempt === 1) {
+        log('Preferred provider attempt failed; expanding failover to all compatible providers.')
+      }
       const availableCandidates = routingPeers.filter((peer) => {
         if (triedPeerIds.has(peer.peerId)) {
           return false
         }
-        if (!restrictFailoverToPreferredProviders) {
+        if (!limitToPreferredProviders) {
           return true
         }
         const provider = routingPlans.get(peer.peerId)?.provider?.trim().toLowerCase()

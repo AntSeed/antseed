@@ -47,7 +47,7 @@ test('selectCandidatePeersForRouting keeps all peers when no protocol or provide
   assert.equal(result.routePlanByPeerId.size, 0)
 })
 
-test('selectCandidatePeersForRouting excludes providers that explicitly do not advertise requested model', () => {
+test('selectCandidatePeersForRouting keeps compatible transformed peers when requested model is missing from metadata', () => {
   const openAiPeer = makePeer('a', ['openai'])
   openAiPeer.providerModelApiProtocols = {
     openai: {
@@ -72,8 +72,12 @@ test('selectCandidatePeersForRouting excludes providers that explicitly do not a
     null,
   )
 
-  assert.equal(result.candidatePeers.length, 1)
-  assert.equal(result.candidatePeers[0]?.peerId, claudePeer.peerId)
+  assert.equal(result.candidatePeers.length, 2)
+  assert.deepEqual(
+    new Set(result.candidatePeers.map((peer) => peer.peerId)),
+    new Set([openAiPeer.peerId, claudePeer.peerId]),
+  )
+  assert.equal(result.routePlanByPeerId.get(openAiPeer.peerId)?.provider, 'openai')
   assert.equal(result.routePlanByPeerId.get(claudePeer.peerId)?.provider, 'claude-oauth')
 })
 
