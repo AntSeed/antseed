@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export type RuntimeMode = 'seed' | 'connect' | 'dashboard';
+export type RuntimeMode = 'connect' | 'dashboard';
 
 export interface RuntimeProcessState {
   mode: RuntimeMode;
@@ -17,7 +17,6 @@ export interface RuntimeProcessState {
 
 export interface StartOptions {
   mode: RuntimeMode;
-  provider?: string;
   router?: string;
   dashboardPort?: number;
   configPath?: string;
@@ -45,32 +44,8 @@ const RUNTIME_NATIVE_SCRIPT_RELATIVE = ['scripts', 'ensure-runtime-native-module
 const RUNTIME_NATIVE_MARKER_FILE = '.runtime-native-meta.json';
 const DEFAULT_CONFIG_PATH = join(homedir(), '.antseed', 'config.json');
 const DESKTOP_DATA_ROOT = join(homedir(), '.antseed-desktop');
-const DESKTOP_SEED_DATA_DIR = join(DESKTOP_DATA_ROOT, 'seed');
 const DESKTOP_CONNECT_DATA_DIR = join(DESKTOP_DATA_ROOT, 'connect');
 const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
-
-function normalizeProviderIdentifier(value: string | undefined): string {
-  const raw = (value ?? 'anthropic').trim().toLowerCase();
-  if (!raw) return 'anthropic';
-
-  if (raw === '@antseed/provider-anthropic' || raw === 'antseed-provider-anthropic') {
-    return 'anthropic';
-  }
-  if (raw === '@antseed/provider-openai' || raw === 'antseed-provider-openai') {
-    return 'openai';
-  }
-  if (raw === '@antseed/provider-local-llm' || raw === 'antseed-provider-local-llm') {
-    return 'local-llm';
-  }
-  if (raw === '@antseed/provider-claude-code' || raw === 'antseed-provider-claude-code') {
-    return 'claude-code';
-  }
-  if (raw === '@antseed/provider-claude-oauth') {
-    return 'claude-oauth';
-  }
-
-  return raw;
-}
 
 function normalizeRouterIdentifier(value: string | undefined): string {
   const raw = (value ?? 'local').trim().toLowerCase();
@@ -306,10 +281,6 @@ function resolveCommandArgs(opts: StartOptions): string[] {
   args.push('--config', configPath);
 
   switch (opts.mode) {
-    case 'seed':
-      args.push('--data-dir', DESKTOP_SEED_DATA_DIR);
-      args.push('seed', '--provider', normalizeProviderIdentifier(opts.provider));
-      break;
     case 'connect':
       args.push('--data-dir', DESKTOP_CONNECT_DATA_DIR);
       args.push('connect', '--router', normalizeRouterIdentifier(opts.router));
@@ -329,7 +300,6 @@ export class ProcessManager {
   private runtimeNativeAligned = false;
   private runtimeNativeAlignmentPromise: Promise<void> | null = null;
   private readonly states = new Map<RuntimeMode, RuntimeProcessState>([
-    ['seed', { mode: 'seed', running: false, pid: null, startedAt: null, lastExitCode: null, lastError: null }],
     ['connect', { mode: 'connect', running: false, pid: null, startedAt: null, lastExitCode: null, lastError: null }],
     ['dashboard', { mode: 'dashboard', running: false, pid: null, startedAt: null, lastExitCode: null, lastError: null }],
   ]);
@@ -668,6 +638,5 @@ export class ProcessManager {
   async stopAll(): Promise<void> {
     await this.stop('dashboard');
     await this.stop('connect');
-    await this.stop('seed');
   }
 }

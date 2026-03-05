@@ -10,13 +10,11 @@ type RefreshHooks = {
   renderDashboardData: (payload: {
     network: DashboardDataResult;
     peers: DashboardDataResult;
-    sessions: DashboardDataResult;
-    earnings: DashboardDataResult;
     status: DashboardDataResult;
     dataSources: DashboardDataResult;
     config: DashboardDataResult;
   }) => void;
-  refreshWalletInfo: () => Promise<void> | void;
+  setDashboardRefreshState?: (busy: boolean, stage: string) => void;
   refreshChatConversations: () => Promise<void> | void;
   refreshChatProxyStatus: () => Promise<void> | void;
   [key: string]: unknown;
@@ -59,7 +57,7 @@ export function initDashboardApiModule({
   }
 
   async function getDashboardData(
-    endpoint: 'status' | 'network' | 'peers' | 'sessions' | 'earnings' | 'config' | 'data-sources',
+    endpoint: 'status' | 'network' | 'peers' | 'config' | 'data-sources',
     query: Record<string, string | number | boolean> | undefined = undefined,
   ): Promise<DashboardDataResult> {
     if (!bridge) {
@@ -156,40 +154,39 @@ export function initDashboardApiModule({
 
     const {
       renderDashboardData,
-      refreshWalletInfo,
+      setDashboardRefreshState,
       refreshChatConversations,
       refreshChatProxyStatus,
     } = refreshHooks;
 
-    const [
-      network,
-      peers,
-      sessions,
-      earnings,
-      status,
-      dataSources,
-      config,
-    ] = await Promise.all([
-      getDashboardData('network'),
-      getDashboardData('peers'),
-      getDashboardData('sessions', { limit: 100, offset: 0 }),
-      getDashboardData('earnings', { period: uiState.earningsPeriod }),
-      getDashboardData('status'),
-      getDashboardData('data-sources'),
-      getDashboardData('config'),
-    ]);
+    setDashboardRefreshState?.(true, 'Refreshing peers and network status...');
 
-    renderDashboardData({
-      network,
-      peers,
-      sessions,
-      earnings,
-      status,
-      dataSources,
-      config,
-    });
+    try {
+      setDashboardRefreshState?.(true, 'Loading network and peers...');
+      const [network, peers] = await Promise.all([
+        getDashboardData('network'),
+        getDashboardData('peers'),
+      ]);
 
-    void refreshWalletInfo();
+      setDashboardRefreshState?.(true, 'Loading runtime status and settings...');
+      const [status, dataSources, config] = await Promise.all([
+        getDashboardData('status'),
+        getDashboardData('data-sources'),
+        getDashboardData('config'),
+      ]);
+
+      renderDashboardData({
+        network,
+        peers,
+        status,
+        dataSources,
+        config,
+      });
+      setDashboardRefreshState?.(true, 'Dashboard data refreshed.');
+    } finally {
+      setDashboardRefreshState?.(false, 'Idle');
+    }
+
     void refreshChatConversations();
     void refreshChatProxyStatus();
   }

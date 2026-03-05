@@ -114,7 +114,6 @@ export function initRuntimeModule({
     uiState.processes = Array.isArray(processes) ? processes : [];
     uiState.dashboardRunning = isModeRunning('dashboard', uiState.processes);
 
-    renderProcessState('seed', elements.seedState, elements.seedBadge, processByMode('seed'));
     renderProcessState('connect', elements.connectState, elements.connectBadge, processByMode('connect'));
     renderProcessState('dashboard', elements.dashboardState, elements.dashboardBadge, processByMode('dashboard'));
 

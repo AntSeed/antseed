@@ -1,10 +1,6 @@
 type SettingsElements = Record<string, HTMLElement | null | undefined> & {
   configMessage?: HTMLElement | null;
   configSaveBtn?: HTMLButtonElement | null;
-  cfgReserveFloor?: HTMLInputElement | null;
-  cfgSellerInputUsdPerMillion?: HTMLInputElement | null;
-  cfgSellerOutputUsdPerMillion?: HTMLInputElement | null;
-  cfgMaxBuyers?: HTMLInputElement | null;
   cfgProxyPort?: HTMLInputElement | null;
   cfgPreferredProviders?: HTMLInputElement | null;
   cfgBuyerMaxInputUsdPerMillion?: HTMLInputElement | null;
@@ -15,7 +11,6 @@ type SettingsElements = Record<string, HTMLElement | null | undefined> & {
 
 type SettingsModuleOptions = {
   elements: SettingsElements;
-  safeObject: (value: unknown) => Record<string, unknown> | null;
   safeArray: (value: unknown) => unknown[];
   safeNumber: (value: unknown, fallback?: number) => number;
   safeString: (value: unknown, fallback?: string) => string;
@@ -39,7 +34,6 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 export function initSettingsModule({
   elements,
-  safeObject,
   safeArray,
   safeNumber,
   safeString,
@@ -53,18 +47,11 @@ export function initSettingsModule({
     configFormPopulated = true;
 
     const configObj = asRecord(config);
-    const seller = asRecord(configObj.seller);
     const buyer = asRecord(configObj.buyer);
-    const sellerPricing = asRecord(seller.pricing);
-    const sellerPricingDefaults = asRecord(sellerPricing.defaults);
     const buyerMaxPricing = asRecord(buyer.maxPricing);
     const buyerMaxPricingDefaults = asRecord(buyerMaxPricing.defaults);
     const payments = asRecord(configObj.payments);
 
-    setInputValue(elements.cfgReserveFloor, safeNumber(seller.reserveFloor, 0));
-    setInputValue(elements.cfgSellerInputUsdPerMillion, safeNumber(sellerPricingDefaults.inputUsdPerMillion, 0));
-    setInputValue(elements.cfgSellerOutputUsdPerMillion, safeNumber(sellerPricingDefaults.outputUsdPerMillion, 0));
-    setInputValue(elements.cfgMaxBuyers, safeNumber(seller.maxConcurrentBuyers, 1));
     setInputValue(elements.cfgProxyPort, safeNumber(buyer.proxyPort, 8377));
     setInputValue(elements.cfgPreferredProviders, safeArray(buyer.preferredProviders).join(', '));
     setInputValue(elements.cfgBuyerMaxInputUsdPerMillion, safeNumber(buyerMaxPricingDefaults.inputUsdPerMillion, 0));
@@ -75,16 +62,6 @@ export function initSettingsModule({
 
   function getSettingsFromForm() {
     return {
-      seller: {
-        reserveFloor: parseInt(getInputValue(elements.cfgReserveFloor, '0'), 10) || 0,
-        pricing: {
-          defaults: {
-            inputUsdPerMillion: parseFloat(getInputValue(elements.cfgSellerInputUsdPerMillion, '0')) || 0,
-            outputUsdPerMillion: parseFloat(getInputValue(elements.cfgSellerOutputUsdPerMillion, '0')) || 0,
-          },
-        },
-        maxConcurrentBuyers: parseInt(getInputValue(elements.cfgMaxBuyers, '1'), 10) || 1,
-      },
       buyer: {
         proxyPort: parseInt(getInputValue(elements.cfgProxyPort, '8377'), 10) || 8377,
         preferredProviders: getInputValue(elements.cfgPreferredProviders, '')
@@ -98,6 +75,9 @@ export function initSettingsModule({
           },
         },
         minPeerReputation: parseInt(getInputValue(elements.cfgMinRep, '0'), 10) || 0,
+      },
+      payments: {
+        preferredMethod: getInputValue(elements.cfgPaymentMethod, 'crypto') || 'crypto',
       },
     };
   }
@@ -132,7 +112,17 @@ export function initSettingsModule({
 
       const resultData = (result.data ?? {}) as Record<string, unknown>;
       const currentConfig = (resultData.config as Record<string, unknown> | undefined) ?? resultData;
-      const merged = { ...currentConfig, ...configData };
+      const merged = {
+        ...currentConfig,
+        buyer: {
+          ...(asRecord(currentConfig.buyer)),
+          ...configData.buyer,
+        },
+        payments: {
+          ...(asRecord(currentConfig.payments)),
+          ...configData.payments,
+        },
+      };
 
       const port = getDashboardPort();
       const response = await fetch(`http://127.0.0.1:${port}/api/config`, {

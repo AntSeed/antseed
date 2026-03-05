@@ -2,9 +2,7 @@ import type { DesktopBridge, LogEvent, PluginInfo } from '../types/bridge';
 import type { RendererElements } from '../core/elements';
 import type { RendererUiState } from '../core/state';
 import {
-  DEFAULT_PROVIDER_RUNTIME,
   DEFAULT_ROUTER_RUNTIME,
-  PROVIDER_PACKAGE_ALIASES,
   ROUTER_PACKAGE_ALIASES,
 } from '../core/constants';
 import { safeArray, safeString } from '../core/safe';
@@ -22,17 +20,6 @@ function normalizePluginSlug(value: unknown, fallback: string): string {
   return slug || fallback;
 }
 
-export function normalizeProviderRuntime(value: unknown): string {
-  const raw = safeString(value, DEFAULT_PROVIDER_RUNTIME).trim().toLowerCase();
-  if (!raw) return DEFAULT_PROVIDER_RUNTIME;
-  if (raw === '@antseed/provider-anthropic' || raw === 'antseed-provider-anthropic') return 'anthropic';
-  if (raw === '@antseed/provider-openai' || raw === 'antseed-provider-openai') return 'openai';
-  if (raw === '@antseed/provider-local-llm' || raw === 'antseed-provider-local-llm') return 'local-llm';
-  if (raw === '@antseed/provider-claude-code' || raw === 'antseed-provider-claude-code') return 'claude-code';
-  if (raw === '@antseed/provider-claude-oauth') return 'claude-oauth';
-  return raw;
-}
-
 export function normalizeRouterRuntime(value: unknown): string {
   const raw = safeString(value, DEFAULT_ROUTER_RUNTIME).trim().toLowerCase();
   if (!raw) return DEFAULT_ROUTER_RUNTIME;
@@ -47,15 +34,6 @@ export function normalizeRouterRuntime(value: unknown): string {
   }
 
   return raw;
-}
-
-export function resolveProviderPackageName(value: unknown): string {
-  const raw = safeString(value, DEFAULT_PROVIDER_RUNTIME).trim().toLowerCase();
-  if (!raw) return PROVIDER_PACKAGE_ALIASES[DEFAULT_PROVIDER_RUNTIME];
-  if (PROVIDER_PACKAGE_ALIASES[raw]) return PROVIDER_PACKAGE_ALIASES[raw];
-  if (raw.startsWith('@')) return raw;
-  if (raw.startsWith('provider-')) return `@antseed/${raw}`;
-  return `@antseed/provider-${normalizePluginSlug(raw, DEFAULT_PROVIDER_RUNTIME)}`;
 }
 
 export function resolveRouterPackageName(value: unknown): string {
@@ -86,16 +64,8 @@ export function initPluginSetupModule({
   uiState,
   appendSystemLog,
 }: PluginSetupModuleOptions) {
-  function expectedProviderPluginPackage(): string {
-    return resolveProviderPackageName(elements.seedProvider?.value);
-  }
-
   function expectedRouterPluginPackage(): string {
     return resolveRouterPackageName(elements.connectRouter?.value);
-  }
-
-  function clearProviderPluginHint(): void {
-    uiState.pluginHints.provider = null;
   }
 
   function clearRouterPluginHint(): void {
@@ -103,7 +73,6 @@ export function initPluginSetupModule({
   }
 
   function clearAllPluginHints(): void {
-    clearProviderPluginHint();
     clearRouterPluginHint();
   }
 
@@ -113,18 +82,8 @@ export function initPluginSetupModule({
       return;
     }
 
-    if (event?.mode === 'seed') {
-      uiState.pluginHints.provider = resolveProviderPackageName(pkg);
-      return;
-    }
-
     if (event?.mode === 'connect') {
       uiState.pluginHints.router = resolveRouterPackageName(pkg);
-      return;
-    }
-
-    if (pkg.includes('-provider-') || pkg.includes('/provider-')) {
-      uiState.pluginHints.provider = resolveProviderPackageName(pkg);
       return;
     }
 
@@ -200,13 +159,9 @@ export function initPluginSetupModule({
   }
 
   return {
-    expectedProviderPluginPackage,
     expectedRouterPluginPackage,
-    normalizeProviderRuntime,
     normalizeRouterRuntime,
-    resolveProviderPackageName,
     resolveRouterPackageName,
-    clearProviderPluginHint,
     clearRouterPluginHint,
     clearAllPluginHints,
     updatePluginHintFromLog,

@@ -11,6 +11,7 @@ type ChatConversationSummary = {
   id: string;
   title?: string;
   model?: string;
+  provider?: string;
   createdAt?: number;
   updatedAt?: number;
   messageCount?: number;
@@ -47,6 +48,7 @@ type ChatModuleOptions = {
   uiState: RendererUiState;
   setBadgeTone: (el: Element | null | undefined, tone: BadgeTone, label: string) => void;
   appendSystemLog: (message: string) => void;
+  setRuntimeActivity?: (tone: BadgeTone, label: string) => void;
 };
 
 export function initChatModule({
@@ -55,6 +57,7 @@ export function initChatModule({
   uiState,
   setBadgeTone,
   appendSystemLog,
+  setRuntimeActivity,
 }: ChatModuleOptions) {
   const myrmecochoryPhrases = [
     'Myrmecochory scouting for the right peer',
@@ -64,9 +67,6 @@ export function initChatModule({
     'Myrmecochory preparing the next inference hop',
   ];
   const fallbackChatModels: Array<Required<Pick<ChatModelCatalogEntry, 'id' | 'label' | 'provider' | 'protocol' | 'count'>>> = [
-    { id: 'claude-sonnet-4-6', label: 'claude-sonnet-4-6 · claude-oauth', provider: 'claude-oauth', protocol: 'anthropic-messages', count: 0 },
-    { id: 'claude-opus-4-6', label: 'claude-opus-4-6 · claude-oauth', provider: 'claude-oauth', protocol: 'anthropic-messages', count: 0 },
-    { id: 'kimi-k2.5', label: 'kimi-k2.5 · openai', provider: 'openai', protocol: 'openai-chat-completions', count: 0 },
   ];
   const chatModelAliases: Record<string, string> = {
     'moonshotai/kimi-k2.5': 'kimi-k2.5',
@@ -75,6 +75,65 @@ export function initChatModule({
     'claude-haiku-4-20250514': 'claude-haiku-4-6',
   };
   type NormalizedChatModelEntry = Required<Pick<ChatModelCatalogEntry, 'id' | 'label' | 'provider' | 'protocol' | 'count'>>;
+  type ChatModelSelection = { id: string; provider: string | null };
+  type ChatModelOption = ChatModelSelection & { label: string; value: string };
+  const CHAT_MODEL_SELECTION_SEPARATOR = '\u0001';
+
+  function normalizeProviderId(value: unknown): string | null {
+    if (typeof value !== 'string') {
+      return null;
+    }
+    const normalized = value.trim().toLowerCase();
+    return normalized.length > 0 ? normalized : null;
+  }
+
+  function encodeChatModelSelection(modelId: string, provider: string | null): string {
+    const normalizedModelId = normalizeChatModelId(modelId);
+    if (!normalizedModelId) {
+      return '';
+    }
+    const normalizedProvider = normalizeProviderId(provider);
+    return normalizedProvider
+      ? `${normalizedProvider}${CHAT_MODEL_SELECTION_SEPARATOR}${normalizedModelId}`
+      : normalizedModelId;
+  }
+
+  function decodeChatModelSelection(value: unknown): ChatModelSelection {
+    const raw = String(value ?? '');
+    if (!raw) {
+      return { id: '', provider: null };
+    }
+    const separatorIndex = raw.indexOf(CHAT_MODEL_SELECTION_SEPARATOR);
+    if (separatorIndex === -1) {
+      return {
+        id: normalizeChatModelId(raw),
+        provider: null,
+      };
+    }
+    const provider = normalizeProviderId(raw.slice(0, separatorIndex));
+    const id = normalizeChatModelId(raw.slice(separatorIndex + CHAT_MODEL_SELECTION_SEPARATOR.length));
+    return { id, provider };
+  }
+
+  function findMatchingChatModelOptionValue(
+    options: ChatModelOption[],
+    targetModelId: unknown,
+    targetProvider?: unknown,
+  ): string | null {
+    const modelId = normalizeChatModelId(targetModelId);
+    if (!modelId) {
+      return null;
+    }
+    const provider = normalizeProviderId(targetProvider);
+    if (provider) {
+      const exact = options.find((option) => option.id === modelId && option.provider === provider);
+      if (exact) {
+        return exact.value;
+      }
+    }
+    const fallback = options.find((option) => option.id === modelId);
+    return fallback?.value ?? null;
+  }
 
   let activeConversation: ChatConversation | null = null;
   let activeStreamTurn: number | null = null;
@@ -82,6 +141,19 @@ export function initChatModule({
   let streamingIndicatorTimer: number | null = null;
   let proxyState: 'unknown' | 'online' | 'offline' = 'unknown';
   let proxyPort = 0;
+  let lastModelOptionsSignature = '';
+  let pendingModelOptions: NormalizedChatModelEntry[] | null = null;
+  let lastModelRefreshAt = 0;
+  let modelRefreshToken = 0;
+
+  const CHAT_MODEL_REFRESH_INTERVAL_MS = 60_000;
+  const CHAT_MODEL_LIST_TIMEOUT_MS = 12_000;
+
+  function computeModelOptionsSignature(options: NormalizedChatModelEntry[]): string {
+    return options
+      .map((entry) => `${entry.id}|${entry.label}|${entry.provider}|${entry.protocol}|${String(entry.count)}`)
+      .join('\n');
+  }
 
   function getConversationSummaries(): ChatConversationSummary[] {
     return Array.isArray(uiState.chatConversations)
@@ -137,7 +209,7 @@ export function initChatModule({
     };
   }
 
-  function updateChatModelOptions(
+  function applyChatModelOptions(
     entries: NormalizedChatModelEntry[],
   ): void {
     const select = elements.chatModelSelect;
@@ -145,15 +217,17 @@ export function initChatModule({
       return;
     }
 
-    const currentValue = normalizeChatModelId(select.value);
+    const currentSelection = decodeChatModelSelection(select.value);
     const activeConversationModel = normalizeChatModelId(activeConversation?.model);
+    const activeConversationProvider = normalizeProviderId(activeConversation?.provider);
 
     const unique = new Map<string, NormalizedChatModelEntry>();
     for (const entry of entries) {
-      if (!entry.id || unique.has(entry.id)) {
+      const key = `${entry.provider}${CHAT_MODEL_SELECTION_SEPARATOR}${entry.id}`;
+      if (!entry.id || unique.has(key)) {
         continue;
       }
-      unique.set(entry.id, entry);
+      unique.set(key, entry);
     }
 
     const options = Array.from(unique.values()).sort((a, b) => {
@@ -166,62 +240,301 @@ export function initChatModule({
       return a.id.localeCompare(b.id);
     });
 
+    const optionCandidates: ChatModelOption[] = options.map((entry) => ({
+      id: entry.id,
+      provider: normalizeProviderId(entry.provider),
+      label: entry.label,
+      value: encodeChatModelSelection(entry.id, entry.provider),
+    }));
+
+    const preferred = (
+      findMatchingChatModelOptionValue(optionCandidates, currentSelection.id, currentSelection.provider)
+      ?? findMatchingChatModelOptionValue(optionCandidates, activeConversationModel, activeConversationProvider)
+      ?? optionCandidates[0]?.value
+      ?? ''
+    );
+
+    const nextSignature = computeModelOptionsSignature(options);
+    const selectedBefore = String(select.value ?? '');
+    if (
+      nextSignature === lastModelOptionsSignature
+      && selectedBefore === preferred
+    ) {
+      return;
+    }
+
     select.innerHTML = '';
-    for (const optionEntry of options) {
+    if (options.length === 0) {
+      const emptyOption = document.createElement('option');
+      emptyOption.value = '';
+      emptyOption.textContent = 'No models available';
+      select.appendChild(emptyOption);
+      select.value = '';
+      lastModelOptionsSignature = '';
+      return;
+    }
+
+    for (const optionEntry of optionCandidates) {
       const option = document.createElement('option');
-      option.value = optionEntry.id;
+      option.value = optionEntry.value;
+      if (optionEntry.provider) {
+        option.dataset.provider = optionEntry.provider;
+      }
       option.textContent = optionEntry.label;
       select.appendChild(option);
     }
 
-    const preferred = (
-      [activeConversationModel, currentValue]
-        .find((candidate) => candidate.length > 0 && options.some((option) => option.id === candidate))
-      ?? options[0]?.id
-      ?? ''
-    );
-
     if (preferred.length > 0) {
       select.value = preferred;
+    }
+
+    lastModelOptionsSignature = nextSignature;
+  }
+
+  function updateChatModelOptions(
+    entries: NormalizedChatModelEntry[],
+  ): void {
+    const select = elements.chatModelSelect;
+    if (!(select instanceof HTMLSelectElement)) {
+      return;
+    }
+
+    if (document.activeElement === select) {
+      pendingModelOptions = entries;
+      return;
+    }
+
+    applyChatModelOptions(entries);
+  }
+
+  function setModelCatalogStatus(
+    tone: BadgeTone,
+    label: string,
+  ): void {
+    setBadgeTone(elements.chatModelStatus, tone, label);
+  }
+
+  function setModelSelectLoading(loading: boolean): void {
+    if (elements.chatModelSelect instanceof HTMLSelectElement) {
+      elements.chatModelSelect.disabled = loading;
+    }
+  }
+
+  async function listChatModelsWithTimeout(
+    refreshToken: number,
+  ): Promise<{ ok: boolean; data?: unknown[]; error?: string }> {
+    if (!bridge?.chatAiListModels) {
+      return { ok: false, data: [], error: 'Model catalog bridge unavailable' };
+    }
+
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+    try {
+      const timeoutPromise = new Promise<{ ok: boolean; data?: unknown[]; error?: string }>((resolve) => {
+        timeoutHandle = setTimeout(() => {
+          resolve({
+            ok: false,
+            data: [],
+            error: `Model discovery timed out after ${String(CHAT_MODEL_LIST_TIMEOUT_MS)}ms`,
+          });
+        }, CHAT_MODEL_LIST_TIMEOUT_MS);
+      });
+
+      const result = await Promise.race([
+        bridge.chatAiListModels(),
+        timeoutPromise,
+      ]);
+
+      if (refreshToken !== modelRefreshToken) {
+        return { ok: false, data: [], error: 'stale model refresh' };
+      }
+
+      return result;
+    } finally {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
     }
   }
 
   async function refreshChatModelOptions(): Promise<void> {
+    const refreshToken = ++modelRefreshToken;
     const fallback = fallbackChatModels.map((entry) => ({ ...entry }));
     if (!bridge?.chatAiListModels) {
       updateChatModelOptions(fallback);
+      setModelCatalogStatus('warn', 'Models unavailable');
+      setRuntimeActivity?.('warn', 'Model catalog unavailable (bridge missing).');
+      if (!getActiveConversationId() && getConversationSummaries().length === 0) {
+        renderChatMessages();
+      }
       return;
     }
 
+    setModelCatalogStatus('warn', 'Loading models...');
+    setRuntimeActivity?.('warn', 'Loading model catalog from peers...');
+    setModelSelectLoading(true);
+
     try {
-      const result = await bridge.chatAiListModels();
+      const result = await listChatModelsWithTimeout(refreshToken);
+      if (refreshToken !== modelRefreshToken) {
+        return;
+      }
+
       if (!result.ok || !Array.isArray(result.data)) {
         updateChatModelOptions(fallback);
+        setModelCatalogStatus('warn', result.error || 'Models unavailable');
+        setRuntimeActivity?.('warn', result.error || 'Model catalog unavailable.');
+        if (!getActiveConversationId() && getConversationSummaries().length === 0) {
+          renderChatMessages();
+        }
         return;
       }
       const parsed = result.data
         .map((entry) => normalizeChatModelEntry(entry))
         .filter((entry): entry is NormalizedChatModelEntry => entry !== null);
-      updateChatModelOptions(parsed.length > 0 ? parsed : fallback);
-    } catch {
+      const optionsToRender = parsed.length > 0 ? parsed : fallback;
+      updateChatModelOptions(optionsToRender);
+      setModelCatalogStatus(
+        optionsToRender.length > 0 ? 'active' : 'warn',
+        optionsToRender.length > 0 ? `Models ready (${String(optionsToRender.length)})` : 'No models available',
+      );
+      setRuntimeActivity?.(
+        optionsToRender.length > 0 ? 'active' : 'warn',
+        optionsToRender.length > 0
+          ? `Model catalog ready (${String(optionsToRender.length)} models).`
+          : 'No models discovered from current peers.',
+      );
+      if (!getActiveConversationId() && getConversationSummaries().length === 0) {
+        renderChatMessages();
+      }
+    } catch (error) {
+      if (refreshToken !== modelRefreshToken) {
+        return;
+      }
       updateChatModelOptions(fallback);
+      const message = toErrorMessage(error, 'Failed to load models');
+      setModelCatalogStatus('warn', message);
+      setRuntimeActivity?.('bad', message);
+      if (!getActiveConversationId() && getConversationSummaries().length === 0) {
+        renderChatMessages();
+      }
+    } finally {
+      if (refreshToken === modelRefreshToken) {
+        setModelSelectLoading(false);
+      }
     }
   }
 
-  function getSelectedChatModel(): string {
-    const selectedValue = normalizeChatModelId(elements.chatModelSelect?.value);
-    if (selectedValue.length > 0) {
+  function getAvailableChatModelOptions(): ChatModelOption[] {
+    const select = elements.chatModelSelect;
+    if (select instanceof HTMLSelectElement) {
+      const options = Array.from(select.options)
+        .map((option) => {
+          const selection = decodeChatModelSelection(option.value);
+          const id = selection.id;
+          if (!id) {
+            return null;
+          }
+          const label = String(option.textContent ?? '').trim() || id;
+          return {
+            id,
+            label,
+            provider: selection.provider,
+            value: option.value,
+          };
+        })
+        .filter((option): option is ChatModelOption => option !== null);
+      if (options.length > 0) {
+        return options;
+      }
+    }
+
+    return fallbackChatModels.map((entry) => ({
+      id: normalizeChatModelId(entry.id),
+      label: String(entry.label ?? entry.id),
+      provider: normalizeProviderId(entry.provider),
+      value: encodeChatModelSelection(entry.id, entry.provider),
+    }));
+  }
+
+  function getSelectedChatModelSelection(): ChatModelSelection {
+    const selectedValue = decodeChatModelSelection(elements.chatModelSelect?.value);
+    if (selectedValue.id.length > 0) {
       return selectedValue;
     }
 
+    const conversationModel = normalizeChatModelId(activeConversation?.model);
+    if (conversationModel.length > 0) {
+      return {
+        id: conversationModel,
+        provider: normalizeProviderId(activeConversation?.provider),
+      };
+    }
+
     if (elements.chatModelSelect instanceof HTMLSelectElement) {
-      const firstOption = normalizeChatModelId(elements.chatModelSelect.options[0]?.value);
-      if (firstOption.length > 0) {
+      const firstOption = decodeChatModelSelection(elements.chatModelSelect.options[0]?.value);
+      if (firstOption.id.length > 0) {
         return firstOption;
       }
     }
 
-    return fallbackChatModels[0].id;
+    return { id: '', provider: null };
+  }
+
+  function renderChatOnboarding(container: HTMLElement): void {
+    const options = getAvailableChatModelOptions();
+    const preferredSelection = getSelectedChatModelSelection();
+    const preferredValue = (
+      findMatchingChatModelOptionValue(options, preferredSelection.id, preferredSelection.provider)
+      ?? options[0]?.value
+      ?? ''
+    );
+    const optionsHtml = options
+      .map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`)
+      .join('');
+
+    container.innerHTML = `
+      <div class="chat-welcome">
+        <div class="chat-welcome-title">Start your first chat</div>
+        <div class="chat-welcome-subtitle">Select a model from the network API and create a conversation.</div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:center;">
+          <select id="chatOnboardingModelSelect" class="form-input chat-model-select"${options.length === 0 ? ' disabled' : ''}>
+            ${optionsHtml}
+          </select>
+          <button id="chatOnboardingStartBtn"${options.length === 0 ? ' disabled' : ''}>Start chat</button>
+        </div>
+        ${options.length === 0 ? '<div class="chat-welcome-subtitle">No models available yet. Ensure Buyer runtime/proxy is online.</div>' : ''}
+      </div>
+    `;
+
+    const onboardingSelect = container.querySelector('#chatOnboardingModelSelect') as HTMLSelectElement | null;
+    const onboardingStart = container.querySelector('#chatOnboardingStartBtn') as HTMLButtonElement | null;
+
+    if (onboardingSelect && preferredValue.length > 0) {
+      onboardingSelect.value = preferredValue;
+    }
+    if (onboardingSelect && elements.chatModelSelect instanceof HTMLSelectElement && onboardingSelect.value.length > 0) {
+      elements.chatModelSelect.value = onboardingSelect.value;
+    }
+
+    onboardingSelect?.addEventListener('change', () => {
+      if (onboardingSelect.value.length > 0 && elements.chatModelSelect instanceof HTMLSelectElement) {
+        elements.chatModelSelect.value = onboardingSelect.value;
+      }
+    });
+
+    onboardingStart?.addEventListener('click', () => {
+      const fallbackSelection = getSelectedChatModelSelection();
+      const selectedValue = onboardingSelect?.value
+        ?? findMatchingChatModelOptionValue(options, fallbackSelection.id, fallbackSelection.provider)
+        ?? '';
+      if (selectedValue.length > 0 && elements.chatModelSelect instanceof HTMLSelectElement) {
+        elements.chatModelSelect.value = selectedValue;
+      }
+      void createNewConversation();
+    });
+
+    if (elements.chatInput) elements.chatInput.disabled = true;
+    if (elements.chatSendBtn) elements.chatSendBtn.disabled = true;
   }
 
   function formatChatTime(timestamp) {
@@ -325,8 +638,8 @@ export function initChatModule({
     };
   }
 
-  function getMyrmecochoryLabel(seed = 0) {
-    const index = Math.abs(Math.floor(Number(seed) || 0)) % myrmecochoryPhrases.length;
+  function getMyrmecochoryLabel(indexBase = 0) {
+    const index = Math.abs(Math.floor(Number(indexBase) || 0)) % myrmecochoryPhrases.length;
     return myrmecochoryPhrases[index];
   }
 
@@ -729,9 +1042,11 @@ export function initChatModule({
   }
 
   async function refreshChatProxyStatus() {
+    const previousProxyState = proxyState;
     if (!bridge || !bridge.chatAiGetProxyStatus) {
       proxyState = 'unknown';
       proxyPort = 0;
+      setModelCatalogStatus('idle', 'Models idle');
       updateStreamingIndicator();
       return;
     }
@@ -744,18 +1059,40 @@ export function initChatModule({
           proxyState = 'online';
           proxyPort = Number(port) || 0;
           setBadgeTone(elements.chatProxyStatus, 'active', `Proxy :${port}`);
+          if (previousProxyState !== 'online') {
+            setRuntimeActivity?.('active', `Buyer proxy online on :${String(proxyPort || port)}.`);
+          }
         } else {
           proxyState = 'offline';
           proxyPort = 0;
           setBadgeTone(elements.chatProxyStatus, 'idle', 'Proxy offline');
+          setModelCatalogStatus('idle', 'Models unavailable (proxy offline)');
+          if (previousProxyState !== 'offline') {
+            setRuntimeActivity?.('warn', 'Buyer proxy offline; waiting for runtime.');
+          }
         }
       }
     } catch {
       proxyState = 'offline';
       proxyPort = 0;
       setBadgeTone(elements.chatProxyStatus, 'idle', 'Proxy offline');
+      setModelCatalogStatus('idle', 'Models unavailable (proxy offline)');
+      if (previousProxyState !== 'offline') {
+        setRuntimeActivity?.('warn', 'Buyer proxy unreachable; retrying.');
+      }
     } finally {
-      void refreshChatModelOptions();
+      const now = Date.now();
+      const shouldRefreshModels = (
+        proxyState === 'online'
+        && (
+          previousProxyState !== 'online'
+          || (now - lastModelRefreshAt) >= CHAT_MODEL_REFRESH_INTERVAL_MS
+        )
+      );
+      if (shouldRefreshModels) {
+        lastModelRefreshAt = now;
+        void refreshChatModelOptions();
+      }
       updateStreamingIndicator();
     }
   }
@@ -898,12 +1235,21 @@ export function initChatModule({
 
         if (elements.chatDeleteBtn) elements.chatDeleteBtn.style.display = '';
         if (elements.chatModelSelect instanceof HTMLSelectElement) {
-          const conversationModel = normalizeChatModelId(conv.model);
-          if (conversationModel.length > 0) {
-            elements.chatModelSelect.value = conversationModel;
+          const optionCandidates = getAvailableChatModelOptions();
+          const preferredValue = findMatchingChatModelOptionValue(optionCandidates, conv.model, conv.provider);
+          if (preferredValue) {
+            elements.chatModelSelect.value = preferredValue;
           }
           if (!elements.chatModelSelect.value) {
-            elements.chatModelSelect.value = getSelectedChatModel();
+            const fallbackSelection = getSelectedChatModelSelection();
+            const fallbackValue = findMatchingChatModelOptionValue(
+              optionCandidates,
+              fallbackSelection.id,
+              fallbackSelection.provider,
+            );
+            if (fallbackValue) {
+              elements.chatModelSelect.value = fallbackValue;
+            }
           }
         }
         if (elements.chatInput) elements.chatInput.disabled = false;
@@ -927,6 +1273,12 @@ export function initChatModule({
 
     const msgs = visibleMessages(uiState.chatMessages);
     if (msgs.length === 0) {
+      const noConversationsYet = getConversationSummaries().length === 0;
+      const noActiveConversation = !getActiveConversationId();
+      if (noConversationsYet && noActiveConversation) {
+        renderChatOnboarding(container);
+        return;
+      }
       container.innerHTML = `
       <div class="chat-welcome">
         <div class="chat-welcome-title">AntSeed AI Chat</div>
@@ -1016,9 +1368,16 @@ export function initChatModule({
   async function createNewConversation() {
     if (!bridge || !bridge.chatAiCreateConversation) return;
 
-    const model = getSelectedChatModel();
+    const selection = getSelectedChatModelSelection();
+    if (selection.id.length === 0) {
+      showChatError('No model is currently available. Start Buyer runtime and refresh models.');
+      return;
+    }
     try {
-      const result = await bridge.chatAiCreateConversation(model);
+      const result = await bridge.chatAiCreateConversation(
+        selection.id,
+        selection.provider ?? undefined,
+      );
       if (result.ok && result.data) {
         const conversationId = getConversationId(result.data);
         if (!conversationId) {
@@ -1110,9 +1469,14 @@ export function initChatModule({
     setChatSending(true);
 
     try {
-      const model = getSelectedChatModel();
+      const selection = getSelectedChatModelSelection();
       if (bridge.chatAiSendStream) {
-        const result = await bridge.chatAiSendStream(convId, content, model);
+        const result = await bridge.chatAiSendStream(
+          convId,
+          content,
+          selection.id || undefined,
+          selection.provider ?? undefined,
+        );
         if (!result.ok) {
           reportChatError(result.error, 'Request failed');
           setChatSending(false);
@@ -1126,7 +1490,12 @@ export function initChatModule({
           }
         }
       } else if (bridge.chatAiSend) {
-        const result = await bridge.chatAiSend(convId, content, model);
+        const result = await bridge.chatAiSend(
+          convId,
+          content,
+          selection.id || undefined,
+          selection.provider ?? undefined,
+        );
         if (!result.ok) {
           reportChatError(result.error, 'Request failed');
         }
@@ -1187,6 +1556,20 @@ export function initChatModule({
   if (elements.chatDeleteBtn) {
     elements.chatDeleteBtn.addEventListener('click', () => {
       void deleteConversation();
+    });
+  }
+
+  if (elements.chatModelSelect instanceof HTMLSelectElement) {
+    elements.chatModelSelect.addEventListener('blur', () => {
+      if (!pendingModelOptions) {
+        return;
+      }
+      const pending = pendingModelOptions;
+      pendingModelOptions = null;
+      applyChatModelOptions(pending);
+    });
+    elements.chatModelSelect.addEventListener('change', () => {
+      pendingModelOptions = null;
     });
   }
 

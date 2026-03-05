@@ -1,10 +1,3 @@
-const PROVIDER_COLORS = {
-  anthropic: '#e94560',
-  openai: '#00c853',
-  google: '#4285f4',
-  moonshot: '#ffd600',
-};
-
 export function initDashboardRenderModule({
   elements,
   uiState,
@@ -12,22 +5,15 @@ export function initDashboardRenderModule({
   safeArray,
   safeString,
   safeObject,
-  formatTimestamp,
   formatRelativeTime,
-  formatDuration,
   formatInt,
   formatPercent,
-  formatMoney,
-  formatPrice,
   formatLatency,
   formatShortId,
   formatEndpoint,
-  getCapacityColor,
   setText,
   setBadgeTone,
   isModeRunning,
-  getActiveView,
-  setActiveView,
   appendSystemLog,
   populateSettingsForm,
 }: any) {
@@ -185,196 +171,6 @@ export function initDashboardRenderModule({
     }
   }
 
-  function renderCapacityRing(percent, proxyPort, sessions, peerCount, dhtNodes) {
-    const arc = elements.capacityArc;
-    if (arc) {
-      const circumference = 2 * Math.PI * 40;
-      const offset = circumference - (percent / 100) * circumference;
-      const color = getCapacityColor(percent);
-      arc.setAttribute('stroke-dasharray', String(circumference));
-      arc.setAttribute('stroke-dashoffset', String(offset));
-      arc.setAttribute('stroke', color);
-      if (elements.capacityPercent) {
-        elements.capacityPercent.textContent = `${Math.round(percent)}%`;
-        elements.capacityPercent.style.color = color;
-      }
-    }
-    setText(elements.ovProxyPort, proxyPort > 0 ? String(proxyPort) : '-');
-    setText(elements.ovCapSessions, formatInt(sessions));
-    setText(elements.ovCapPeers, formatInt(peerCount));
-    setText(elements.ovCapDht, formatInt(dhtNodes));
-  }
-
-  function renderMiniChart(dailyData) {
-    const container = elements.miniChartContainer;
-    if (!container) return;
-
-    const data = safeArray(dailyData).slice(-14).map((d) => ({
-      date: safeString(d.date, ''),
-      amount: safeNumber(typeof d.amount === 'string' ? parseFloat(d.amount) : d.amount, 0),
-    }));
-
-    if (data.length === 0) {
-      container.innerHTML = '<div class="mini-chart-empty">No earnings data yet</div>';
-      return;
-    }
-
-    const max = Math.max(...data.map((d) => d.amount), 0.01);
-
-    let html = '<div class="mini-chart-bars">';
-    for (const d of data) {
-      const height = Math.max(2, (d.amount / max) * 60);
-      html += `<div class="mini-chart-bar-group" title="${d.date}: $${d.amount.toFixed(2)}">`;
-      html += `<div class="mini-chart-bar" style="height:${height}px"></div>`;
-      html += '</div>';
-    }
-    html += '</div>';
-    html += '<div class="mini-chart-labels">';
-    html += `<span>${data[0].date.slice(5)}</span>`;
-    html += `<span>${data[data.length - 1].date.slice(5)}</span>`;
-    html += '</div>';
-
-    container.innerHTML = html;
-  }
-
-  function drawLineChart(canvas, dailyData) {
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    const dpr = window.devicePixelRatio || 1;
-    const rect = canvas.getBoundingClientRect();
-    canvas.width = rect.width * dpr;
-    canvas.height = rect.height * dpr;
-    ctx.scale(dpr, dpr);
-    const w = rect.width;
-    const h = rect.height;
-
-    ctx.clearRect(0, 0, w, h);
-
-    const data = safeArray(dailyData).map((d) => ({
-      date: safeString(d.date, ''),
-      amount: safeNumber(typeof d.amount === 'string' ? parseFloat(d.amount) : d.amount, 0),
-    }));
-
-    if (data.length === 0) {
-      ctx.fillStyle = '#64748b';
-      ctx.font = '12px Inter, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('No earnings data yet', w / 2, h / 2);
-      return;
-    }
-
-    const pad = { top: 20, right: 20, bottom: 30, left: 50 };
-    const plotW = w - pad.left - pad.right;
-    const plotH = h - pad.top - pad.bottom;
-    const max = Math.max(...data.map((d) => d.amount), 0.01) * 1.1;
-
-    ctx.strokeStyle = '#1e293b';
-    ctx.lineWidth = 1;
-    const gridLines = 4;
-    for (let i = 0; i <= gridLines; i += 1) {
-      const y = pad.top + (plotH / gridLines) * i;
-      ctx.setLineDash([4, 4]);
-      ctx.beginPath();
-      ctx.moveTo(pad.left, y);
-      ctx.lineTo(w - pad.right, y);
-      ctx.stroke();
-
-      const val = max - (max / gridLines) * i;
-      ctx.setLineDash([]);
-      ctx.fillStyle = '#94a3b8';
-      ctx.font = '10px Inter, sans-serif';
-      ctx.textAlign = 'right';
-      ctx.fillText(`$${val.toFixed(2)}`, pad.left - 6, y + 4);
-    }
-
-    ctx.setLineDash([]);
-    ctx.strokeStyle = '#10b981';
-    ctx.lineWidth = 2;
-    ctx.lineJoin = 'round';
-    ctx.beginPath();
-    for (let i = 0; i < data.length; i += 1) {
-      const x = pad.left + (i / Math.max(data.length - 1, 1)) * plotW;
-      const y = pad.top + plotH - (data[i].amount / max) * plotH;
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    }
-    ctx.stroke();
-
-    ctx.fillStyle = '#94a3b8';
-    ctx.font = '10px Inter, sans-serif';
-    ctx.textAlign = 'center';
-    const labelStep = Math.max(1, Math.floor(data.length / 6));
-    for (let i = 0; i < data.length; i += labelStep) {
-      const x = pad.left + (i / Math.max(data.length - 1, 1)) * plotW;
-      ctx.fillText(data[i].date.slice(5), x, h - 8);
-    }
-    if (data.length > 1) {
-      const lastX = pad.left + plotW;
-      ctx.fillText(data[data.length - 1].date.slice(5), lastX, h - 8);
-    }
-  }
-
-  function drawPieChart(canvas, providerData) {
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    const dpr = window.devicePixelRatio || 1;
-    const rect = canvas.getBoundingClientRect();
-    canvas.width = rect.width * dpr;
-    canvas.height = rect.height * dpr;
-    ctx.scale(dpr, dpr);
-    const w = rect.width;
-    const h = rect.height;
-
-    ctx.clearRect(0, 0, w, h);
-
-    const data = safeArray(providerData).map((d) => ({
-      provider: safeString(d.provider, 'unknown'),
-      amount: safeNumber(typeof d.amount === 'string' ? parseFloat(d.amount) : d.amount, 0),
-    })).filter((d) => d.amount > 0);
-
-    if (data.length === 0) {
-      ctx.fillStyle = '#64748b';
-      ctx.font = '12px Inter, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('No provider data yet', w / 2, h / 2);
-      return;
-    }
-
-    const total = data.reduce((sum, d) => sum + d.amount, 0);
-    const cx = w * 0.4;
-    const cy = h / 2;
-    const r = Math.min(cx - 20, cy - 20, 80);
-
-    let startAngle = -Math.PI / 2;
-    for (const d of data) {
-      const sliceAngle = (d.amount / total) * 2 * Math.PI;
-      const color = (PROVIDER_COLORS as Record<string, string>)[String(d.provider)] || '#888';
-
-      ctx.beginPath();
-      ctx.moveTo(cx, cy);
-      ctx.arc(cx, cy, r, startAngle, startAngle + sliceAngle);
-      ctx.closePath();
-      ctx.fillStyle = color;
-      ctx.fill();
-
-      startAngle += sliceAngle;
-    }
-
-    const legendX = cx + r + 30;
-    let legendY = cy - (data.length * 20) / 2;
-    ctx.font = '11px Inter, sans-serif';
-    ctx.textAlign = 'left';
-    for (const d of data) {
-      const color = (PROVIDER_COLORS as Record<string, string>)[String(d.provider)] || '#888';
-      const pct = ((d.amount / total) * 100).toFixed(0);
-      ctx.fillStyle = color;
-      ctx.fillRect(legendX, legendY, 10, 10);
-      ctx.fillStyle = '#f1f5f9';
-      ctx.fillText(`${d.provider} ${pct}% ($${d.amount.toFixed(2)})`, legendX + 16, legendY + 9);
-      legendY += 20;
-    }
-  }
-
   function sortItems(items, sortState) {
     const { key, dir } = sortState;
     return [...items].sort((a, b) => {
@@ -411,8 +207,8 @@ export function initDashboardRenderModule({
         peer.peerId,
         safeString(peer.source, ''),
         peer.providers.join(' '),
-        formatPrice(peer.inputUsdPerMillion),
-        formatPrice(peer.outputUsdPerMillion),
+        String(peer.inputUsdPerMillion),
+        String(peer.outputUsdPerMillion),
         String(peer.capacityMsgPerHour),
         String(peer.reputation),
         safeString(peer.location, ''),
@@ -450,10 +246,10 @@ export function initDashboardRenderModule({
       providers.textContent = peer.providers.length > 0 ? peer.providers.join(', ') : 'n/a';
 
       const inputPrice = document.createElement('td');
-      inputPrice.textContent = formatPrice(peer.inputUsdPerMillion);
+      inputPrice.textContent = String(peer.inputUsdPerMillion);
 
       const outputPrice = document.createElement('td');
-      outputPrice.textContent = formatPrice(peer.outputUsdPerMillion);
+      outputPrice.textContent = String(peer.outputUsdPerMillion);
 
       const capacity = document.createElement('td');
       capacity.textContent = peer.capacityMsgPerHour > 0 ? `${formatInt(peer.capacityMsgPerHour)}/h` : 'n/a';
@@ -472,78 +268,18 @@ export function initDashboardRenderModule({
     }
   }
 
-  function renderSessionsTable(payload) {
-    if (!elements.sessionsBody) return;
-    uiState.lastSessionsPayload = payload;
-
-    const sessions = sortItems(safeArray(payload?.sessions), uiState.sessionSort);
-    updateSortHeaders(elements.sessionsHead, uiState.sessionSort);
-
-    elements.sessionsBody.innerHTML = '';
-
-    if (sessions.length === 0) {
-      elements.sessionsBody.appendChild(buildEmptyRow(8, 'No sessions yet.'));
-      return;
-    }
-
-    for (const session of sessions) {
-      const row = document.createElement('tr');
-
-      const sessionId = document.createElement('td');
-      sessionId.textContent = formatShortId(session.sessionId, 10, 6);
-      sessionId.title = safeString(session.sessionId, '');
-
-      const provider = document.createElement('td');
-      provider.textContent = safeString(session.provider, 'n/a');
-
-      const started = document.createElement('td');
-      started.textContent = formatTimestamp(session.startedAt);
-
-      const tokens = document.createElement('td');
-      tokens.textContent = formatInt(session.totalTokens);
-
-      const requests = document.createElement('td');
-      requests.textContent = formatInt(session.totalRequests);
-
-      const duration = document.createElement('td');
-      duration.textContent = formatDuration(session.durationMs);
-
-      const latency = document.createElement('td');
-      latency.textContent = formatLatency(session.avgLatencyMs);
-
-      const switches = document.createElement('td');
-      switches.textContent = formatInt(session.peerSwitches);
-
-      row.append(sessionId, provider, started, tokens, requests, duration, latency, switches);
-      elements.sessionsBody.appendChild(row);
-    }
-  }
-
   function renderOfflineState(message) {
     setText(elements.peersMessage, message);
-    setText(elements.sessionsMessage, message);
-    setText(elements.earningsMessage, message);
     setText(elements.configMessage, message);
 
     setText(elements.ovNodeState, 'offline');
     setText(elements.ovPeers, '0');
-    setText(elements.ovSessions, '0');
-    setText(elements.ovEarnings, '$0.00');
     setText(elements.ovDhtHealth, 'Down');
     setText(elements.ovUptime, '-');
     setText(elements.ovPeersCount, '0');
 
     renderOverviewPeers([]);
-    renderCapacityRing(0, 0, 0, 0, 0);
-    renderMiniChart([]);
     renderPeersTable([]);
-    renderSessionsTable({ sessions: [] });
-    drawLineChart(elements.earningsLineChart, []);
-    drawPieChart(elements.earningsPieChart, []);
-
-    setText(elements.earnToday, '$0.00');
-    setText(elements.earnWeek, '$0.00');
-    setText(elements.earnMonth, '$0.00');
 
     setText(elements.connectionStatus, message);
     setText(elements.connectionNetwork, message);
@@ -553,8 +289,6 @@ export function initDashboardRenderModule({
 
     setBadgeTone(elements.overviewBadge, 'idle', 'Idle');
     setBadgeTone(elements.peersMeta, 'idle', '0 peers');
-    setBadgeTone(elements.sessionsMeta, 'idle', '0 sessions');
-    setBadgeTone(elements.earningsMeta, 'idle', 'month');
     setBadgeTone(elements.connectionMeta, 'idle', 'offline');
     setBadgeTone(elements.configMeta, 'idle', 'offline');
   }
@@ -571,8 +305,6 @@ export function initDashboardRenderModule({
     const dht = networkHealth(stats, peers.length);
 
     const statusPayload = results.status.ok ? results.status.data : null;
-    const sessionsPayload = results.sessions.ok ? results.sessions.data : null;
-    const earningsPayload = results.earnings.ok ? results.earnings.data : null;
     const dataSourcesPayload = results.dataSources.ok ? results.dataSources.data : null;
     const configPayload = results.config.ok ? results.config.data : null;
 
@@ -583,22 +315,17 @@ export function initDashboardRenderModule({
 
     const buyerRuntimeState = isModeRunning('connect') ? 'connected' : 'offline';
     const activeSessions = Math.max(
-      safeNumber(statusPayload?.activeSessions, safeNumber(sessionsPayload?.total, 0)),
+      safeNumber(statusPayload?.activeSessions, 0),
       daemonActiveSessions,
       daemonDetailsCount,
     );
-    const earningsToday = earningsPayload?.today ?? statusPayload?.earningsToday ?? '0';
     const proxyPort = safeNumber(statusPayload?.proxyPort, 0);
 
     setText(elements.ovNodeState, buyerRuntimeState);
     setText(elements.ovPeers, formatInt(peers.length));
-    setText(elements.ovSessions, formatInt(activeSessions));
-    setText(elements.ovEarnings, formatMoney(earningsToday));
     setText(elements.ovDhtHealth, dht.label);
     setText(elements.ovUptime, proxyPort > 0 ? String(proxyPort) : '-');
     setText(elements.ovPeersCount, formatInt(peers.length));
-
-    uiState.lastActiveSessions = activeSessions;
 
     setBadgeTone(
       elements.overviewBadge,
@@ -607,14 +334,6 @@ export function initDashboardRenderModule({
     );
 
     renderOverviewPeers(peers);
-
-    const capacityPercent = safeNumber(statusPayload?.capacityUsedPercent, 0);
-    renderCapacityRing(capacityPercent, proxyPort, activeSessions, peers.length, stats.dhtNodeCount);
-
-    if (results.earnings.ok) {
-      renderMiniChart(safeArray(earningsPayload?.daily));
-    }
-
     renderPeersTable(peers);
 
     if (networkOk) {
@@ -629,117 +348,6 @@ export function initDashboardRenderModule({
       dht.tone,
       `${formatInt(peers.length)} peers • DHT ${dht.label}`,
     );
-
-    const sessionRowsFromApi = safeArray(sessionsPayload?.sessions);
-    const totalSessionsFromApi = safeNumber(sessionsPayload?.total, sessionRowsFromApi.length);
-    const missingLiveSessions = Math.max(0, activeSessions - totalSessionsFromApi);
-
-    let sessionsForTable = sessionsPayload;
-    let usingLiveSessionFallback = false;
-    let sessionsUnavailable = false;
-
-    if (!results.sessions.ok) {
-      sessionsUnavailable = true;
-    }
-
-    if (sessionRowsFromApi.length === 0 && (activeSessions > 0 || daemonDetailsCount > 0)) {
-      const now = Date.now();
-      const fromDaemon = daemonSessionDetails
-        .map((entry, index) => {
-          const row = safeObject(entry);
-          if (!row) {
-            return null;
-          }
-          const startedAt = safeNumber(row.startedAt, now);
-          return {
-            sessionId: safeString(row.sessionId, `live-${index + 1}`),
-            provider: safeString(row.provider, 'live'),
-            startedAt,
-            totalTokens: safeNumber(row.totalTokens, 0),
-            totalRequests: safeNumber(row.totalRequests, 0),
-            durationMs: Math.max(0, now - startedAt),
-            avgLatencyMs: safeNumber(row.avgLatencyMs, 0),
-            peerSwitches: 0,
-          };
-        })
-        .filter((item) => item !== null);
-
-      const fallbackRows = fromDaemon.length > 0
-        ? fromDaemon
-        : Array.from({ length: Math.max(1, Math.round(activeSessions)) }, (_, index) => ({
-          sessionId: `live-${index + 1}`,
-          provider: 'live',
-          startedAt: now,
-          totalTokens: 0,
-          totalRequests: 0,
-          durationMs: 0,
-          avgLatencyMs: 0,
-          peerSwitches: 0,
-        }));
-      sessionsForTable = {
-        sessions: fallbackRows,
-        total: fallbackRows.length,
-      };
-      usingLiveSessionFallback = true;
-    }
-
-    const sessionDebugKey = [
-      `status=${safeNumber(statusPayload?.activeSessions, -1)}`,
-      `daemon=${daemonActiveSessions}`,
-      `details=${daemonDetailsCount}`,
-      `apiTotal=${totalSessionsFromApi}`,
-      `apiRows=${sessionRowsFromApi.length}`,
-      `apiOk=${results.sessions.ok}`,
-      `fallback=${usingLiveSessionFallback}`,
-    ].join('|');
-    if (sessionDebugKey !== uiState.lastSessionDebugKey) {
-      uiState.lastSessionDebugKey = sessionDebugKey;
-      appendSystemLog(`Session debug: ${sessionDebugKey}`);
-    }
-
-    renderSessionsTable(sessionsForTable);
-    if (results.sessions.ok || usingLiveSessionFallback) {
-      const totalSessions = Math.max(totalSessionsFromApi, activeSessions);
-      setBadgeTone(elements.sessionsMeta, totalSessions > 0 ? 'active' : 'idle', `${formatInt(totalSessions)} sessions`);
-      if (usingLiveSessionFallback) {
-        setText(
-          elements.sessionsMessage,
-          sessionsUnavailable
-            ? `${formatInt(activeSessions)} active session(s) detected from daemon state. Sessions API is degraded, showing live placeholders.`
-            : `${formatInt(activeSessions)} active session(s) detected from daemon state. Detailed metering rows will appear as writes land.`,
-        );
-      } else if (missingLiveSessions > 0) {
-        setText(
-          elements.sessionsMessage,
-          `Showing ${formatInt(totalSessionsFromApi)} metered session(s). ${formatInt(missingLiveSessions)} live session(s) are still syncing.`,
-        );
-      } else {
-        setText(elements.sessionsMessage, 'Session metrics from metering storage.');
-      }
-    } else {
-      setBadgeTone(elements.sessionsMeta, 'warn', 'sessions unavailable');
-      setText(elements.sessionsMessage, `Unable to load sessions: ${results.sessions.error ?? 'unknown error'}`);
-    }
-
-    if (results.earnings.ok) {
-      setText(elements.earnToday, formatMoney(earningsPayload?.today));
-      setText(elements.earnWeek, formatMoney(earningsPayload?.thisWeek));
-      setText(elements.earnMonth, formatMoney(earningsPayload?.thisMonth));
-
-      drawLineChart(elements.earningsLineChart, safeArray(earningsPayload?.daily));
-      drawPieChart(elements.earningsPieChart, safeArray(earningsPayload?.byProvider));
-
-      setText(elements.earningsMessage, 'Earnings from metering data.');
-      setBadgeTone(elements.earningsMeta, 'active', uiState.earningsPeriod);
-    } else {
-      setText(elements.earningsMessage, `Unable to load earnings: ${results.earnings.error ?? 'unknown error'}`);
-      setText(elements.earnToday, '$0.00');
-      setText(elements.earnWeek, '$0.00');
-      setText(elements.earnMonth, '$0.00');
-      drawLineChart(elements.earningsLineChart, []);
-      drawPieChart(elements.earningsPieChart, []);
-      setBadgeTone(elements.earningsMeta, 'warn', 'degraded');
-    }
 
     if (results.status.ok) {
       const buyerStatus = {
@@ -809,12 +417,23 @@ export function initDashboardRenderModule({
       setText(elements.configMessage, `Unable to load config: ${results.config.error ?? 'unknown error'}`);
       setBadgeTone(elements.configMeta, 'warn', 'config unavailable');
     }
+
+    const debugKey = [
+      `active=${activeSessions}`,
+      `daemon=${daemonActiveSessions}`,
+      `details=${daemonDetailsCount}`,
+      `peers=${peers.length}`,
+    ].join('|');
+    if (debugKey !== uiState.lastDebugKey) {
+      uiState.lastDebugKey = debugKey;
+      appendSystemLog(`Buyer status debug: ${debugKey}`);
+    }
   }
 
   function initSortableHeaders() {
     if (elements.peersHead) {
       elements.peersHead.addEventListener('click', (e) => {
-        const th = e.target.closest('.sortable');
+        const th = (e.target as HTMLElement | null)?.closest('.sortable') as HTMLElement | null;
         if (!th) return;
         const key = th.dataset.sort;
         if (uiState.peerSort.key === key) {
@@ -825,28 +444,12 @@ export function initDashboardRenderModule({
         renderPeersTable(uiState.lastPeers);
       });
     }
-
-    if (elements.sessionsHead) {
-      elements.sessionsHead.addEventListener('click', (e) => {
-        const th = e.target.closest('.sortable');
-        if (!th) return;
-        const key = th.dataset.sort;
-        if (uiState.sessionSort.key === key) {
-          uiState.sessionSort.dir = uiState.sessionSort.dir === 'asc' ? 'desc' : 'asc';
-        } else {
-          uiState.sessionSort = { key, dir: 'asc' };
-        }
-        if (uiState.lastSessionsPayload) {
-          renderSessionsTable(uiState.lastSessionsPayload);
-        }
-      });
-    }
   }
 
   function bindPeerFilter() {
     if (elements.peerFilter) {
       elements.peerFilter.addEventListener('input', (e) => {
-        uiState.peerFilter = e.target.value;
+        uiState.peerFilter = (e.target as HTMLInputElement).value;
         renderPeersTable(uiState.lastPeers);
       });
     }
@@ -855,7 +458,6 @@ export function initDashboardRenderModule({
   return {
     renderDashboardData,
     renderPeersTable,
-    renderSessionsTable,
     renderOfflineState,
     initSortableHeaders,
     bindPeerFilter,

@@ -5,6 +5,7 @@
       <select id="chatModelSelect" class="form-input chat-model-select">
         <option value="">Loading models...</option>
       </select>
+      <div id="chatModelStatus" class="connection-badge badge-idle">Models idle</div>
       <div id="chatProxyStatus" class="connection-badge badge-idle">Proxy offline</div>
     </div>
   </div>
@@ -24,9 +25,6 @@
           <div class="chat-welcome-subtitle">Send messages through the P2P marketplace to inference providers.</div>
           <div class="chat-welcome-subtitle">Buyer runtime auto-connects to the local proxy. Create a new conversation to begin.</div>
         </div>
-      </div>
-      <div id="chatStreamingIndicator" class="chat-streaming-indicator">
-        Generating response...
       </div>
       <div class="chat-input-area">
         <textarea id="chatInput" class="chat-text-input" placeholder="Type a message... (Shift+Enter for newline)" rows="1" disabled></textarea>

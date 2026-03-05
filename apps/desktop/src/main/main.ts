@@ -85,6 +85,19 @@ type LogEvent = {
   timestamp: number;
 };
 
+type RuntimeActivityTone = 'active' | 'idle' | 'warn' | 'bad';
+
+type RuntimeActivityEvent = {
+  mode: RuntimeMode;
+  tone: RuntimeActivityTone;
+  stage: string;
+  message: string;
+  holdMs: number;
+  timestamp: number;
+  requestId?: string;
+  peerId?: string;
+};
+
 type DashboardNetworkPeer = {
   peerId: string;
   host: string;
@@ -203,6 +216,7 @@ const DASHBOARD_ENDPOINTS: ReadonlySet<DashboardEndpoint> = new Set([
 
 let mainWindow: BrowserWindow | null = null;
 const logBuffer: LogEvent[] = [];
+let lastRuntimeActivityHash = '';
 
 let dashboardServer: DashboardServer | null = null;
 const dashboardRuntime: DashboardRuntimeState = {
@@ -212,6 +226,9 @@ const dashboardRuntime: DashboardRuntimeState = {
   lastError: null,
   lastExitCode: null,
 };
+let dashboardStartPromise: Promise<void> | null = null;
+let dashboardPortInUseUntilMs = 0;
+const DASHBOARD_PORT_IN_USE_RETRY_COOLDOWN_MS = 60_000;
 
 function toSafeDashboardPort(port?: number): number {
   const parsed = Number(port);
@@ -226,6 +243,295 @@ function isAddressInUseError(message: string): boolean {
   return normalized.includes('eaddrinuse') || normalized.includes('address already in use');
 }
 
+function stripAnsi(input: string): string {
+  return input.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '');
+}
+
+function shortId(value: string | undefined): string {
+  if (!value) {
+    return 'unknown';
+  }
+  return value.length > 8 ? value.slice(0, 8) : value;
+}
+
+function toRuntimeActivity(event: Omit<RuntimeActivityEvent, 'timestamp'>): RuntimeActivityEvent {
+  return {
+    ...event,
+    timestamp: Date.now(),
+  };
+}
+
+function parseConnectRuntimeActivity(lineRaw: string): RuntimeActivityEvent | null {
+  const line = stripAnsi(lineRaw).trim();
+  if (line.length === 0) {
+    return null;
+  }
+
+  const proxyBindErrorMatch = /failed to start proxy:\s*listen\s+eaddrinuse:\s*address already in use.*:(\d+)/i.exec(line);
+  if (proxyBindErrorMatch) {
+    const port = proxyBindErrorMatch[1] ?? '8377';
+    return toRuntimeActivity({
+      mode: 'connect',
+      tone: 'bad',
+      stage: 'proxy-port-in-use',
+      message: `Buyer proxy port :${port} is already in use.`,
+      holdMs: 120_000,
+    });
+  }
+
+  if (/process exited \(code=\d+\)/i.test(line)) {
+    return toRuntimeActivity({
+      mode: 'connect',
+      tone: 'bad',
+      stage: 'connect-exit',
+      message: 'Buyer runtime exited unexpectedly.',
+      holdMs: 90_000,
+    });
+  }
+
+  const adapterMatch = /\[proxy\]\s+Applying protocol adapter\s+([^\s]+)\s*->\s*([^\s]+)\s+via provider\s+"([^"]+)"/i.exec(line);
+  if (adapterMatch) {
+    const from = adapterMatch[1] ?? 'unknown';
+    const to = adapterMatch[2] ?? 'unknown';
+    const provider = adapterMatch[3] ?? 'unknown';
+    return toRuntimeActivity({
+      mode: 'connect',
+      tone: 'warn',
+      stage: 'protocol-adapter',
+      message: `Adapting protocol ${from} -> ${to} via ${provider}.`,
+      holdMs: 15_000,
+    });
+  }
+
+  const sendMatch = /\[Node\]\s+sendRequest(?:Stream)?\s+([A-Z]+)\s+(\S+)\s+.*peer\s+([a-f0-9]+)\.\.\.\s+\(reqId=([a-f0-9-]+)\)/i.exec(line);
+  if (sendMatch) {
+    const method = sendMatch[1] ?? 'REQ';
+    const path = sendMatch[2] ?? '/';
+    const peerId = sendMatch[3] ?? '';
+    const requestId = sendMatch[4] ?? '';
+    return toRuntimeActivity({
+      mode: 'connect',
+      tone: 'warn',
+      stage: 'request-dispatched',
+      message: `Request ${shortId(requestId)}: ${method} ${path} to peer ${shortId(peerId)}...`,
+      holdMs: 20_000,
+      requestId,
+      peerId,
+    });
+  }
+
+  const routingMatch = /\[proxy\]\s+Routing to peer\s+([a-f0-9]+)\.\.\./i.exec(line);
+  if (routingMatch) {
+    const peerId = routingMatch[1] ?? '';
+    return toRuntimeActivity({
+      mode: 'connect',
+      tone: 'warn',
+      stage: 'routing',
+      message: `Routing request to peer ${shortId(peerId)}...`,
+      holdMs: 15_000,
+      peerId,
+    });
+  }
+
+  const connectingMatch = /\[Node\]\s+Connecting to\s+([a-f0-9]+)\.\.\.\s+at\s+([0-9a-z.:_-]+)/i.exec(line);
+  if (connectingMatch) {
+    const peerId = connectingMatch[1] ?? '';
+    const endpoint = connectingMatch[2] ?? 'unknown';
+    return toRuntimeActivity({
+      mode: 'connect',
+      tone: 'warn',
+      stage: 'peer-connecting',
+      message: `Connecting to peer ${shortId(peerId)} at ${endpoint}...`,
+      holdMs: 15_000,
+      peerId,
+    });
+  }
+
+  const connectionStateMatch = /\[Node\]\s+Connection(?: to [a-f0-9.]+)? state:\s*(\w+)/i.exec(line);
+  if (connectionStateMatch) {
+    const state = (connectionStateMatch[1] ?? '').toLowerCase();
+    if (state === 'open') {
+      return toRuntimeActivity({
+        mode: 'connect',
+        tone: 'active',
+        stage: 'peer-connected',
+        message: 'Peer connection open.',
+        holdMs: 12_000,
+      });
+    }
+  }
+
+  const responseMatch = /\[Node\]\s+Response for\s+([a-f0-9-]+):\s+status=(\d+)\s+\((\d+)ms/i.exec(line);
+  if (responseMatch) {
+    const requestId = responseMatch[1] ?? '';
+    const status = Number(responseMatch[2] ?? 0);
+    const latencyMs = Number(responseMatch[3] ?? 0);
+    const ok = status >= 200 && status < 400;
+    return toRuntimeActivity({
+      mode: 'connect',
+      tone: ok ? 'active' : 'bad',
+      stage: 'response',
+      message: ok
+        ? `Request ${shortId(requestId)} succeeded (${status}, ${String(latencyMs)}ms).`
+        : `Request ${shortId(requestId)} failed (${status}, ${String(latencyMs)}ms).`,
+      holdMs: ok ? 12_000 : 45_000,
+      requestId,
+    });
+  }
+
+  const timeoutMatch = /\[Node\]\s+Request\s+([a-f0-9-]+)\s+timed out after\s+(\d+)ms/i.exec(line);
+  if (timeoutMatch) {
+    const requestId = timeoutMatch[1] ?? '';
+    const timeoutMs = timeoutMatch[2] ?? '30000';
+    return toRuntimeActivity({
+      mode: 'connect',
+      tone: 'bad',
+      stage: 'request-timeout',
+      message: `Request ${shortId(requestId)} timed out after ${timeoutMs}ms.`,
+      holdMs: 60_000,
+      requestId,
+    });
+  }
+
+  const retryMatch = /\[proxy\]\s+Peer\s+([a-f0-9]+)\.\.\.\s+returned\s+(\d+),\s+retrying.*\(attempt\s+(\d+)\/(\d+)\)/i.exec(line);
+  if (retryMatch) {
+    const peerId = retryMatch[1] ?? '';
+    const code = retryMatch[2] ?? 'unknown';
+    const attempt = retryMatch[3] ?? '?';
+    const max = retryMatch[4] ?? '?';
+    return toRuntimeActivity({
+      mode: 'connect',
+      tone: 'warn',
+      stage: 'peer-retry',
+      message: `Peer ${shortId(peerId)} returned ${code}. Retrying (${attempt}/${max})...`,
+      holdMs: 25_000,
+      peerId,
+    });
+  }
+
+  const allFailedMatch = /\[proxy\]\s+All\s+\d+\s+peer\(s\)\s+failed, returning last error \((\d+)\)/i.exec(line);
+  if (allFailedMatch) {
+    const code = allFailedMatch[1] ?? 'unknown';
+    return toRuntimeActivity({
+      mode: 'connect',
+      tone: 'bad',
+      stage: 'routing-failed',
+      message: `All candidate peers failed (${code}).`,
+      holdMs: 60_000,
+    });
+  }
+
+  if (/\[proxy\]\s+No peers available for request/i.test(line)) {
+    return toRuntimeActivity({
+      mode: 'connect',
+      tone: 'bad',
+      stage: 'no-peers',
+      message: 'No peers available for this request.',
+      holdMs: 60_000,
+    });
+  }
+
+  if (/\[Node\]\s+Discovering peers/i.test(line)) {
+    return toRuntimeActivity({
+      mode: 'connect',
+      tone: 'warn',
+      stage: 'discovering-peers',
+      message: 'Discovering peers from DHT...',
+      holdMs: 12_000,
+    });
+  }
+
+  const dhtResultMatch = /\[Node\]\s+DHT returned\s+(\d+)\s+result\(s\)/i.exec(line);
+  if (dhtResultMatch) {
+    const count = Number(dhtResultMatch[1] ?? 0);
+    return toRuntimeActivity({
+      mode: 'connect',
+      tone: count > 0 ? 'active' : 'warn',
+      stage: 'dht-results',
+      message: `DHT discovery returned ${String(count)} peer result${count === 1 ? '' : 's'}.`,
+      holdMs: 12_000,
+    });
+  }
+
+  if (/\[proxy\]\s+POST \/v1\/messages/i.test(line)) {
+    return toRuntimeActivity({
+      mode: 'connect',
+      tone: 'warn',
+      stage: 'chat-request',
+      message: 'Submitting chat request to buyer proxy...',
+      holdMs: 18_000,
+    });
+  }
+
+  if (/\[proxy\]\s+GET \/v1\/models/i.test(line)) {
+    return toRuntimeActivity({
+      mode: 'connect',
+      tone: 'warn',
+      stage: 'model-request',
+      message: 'Loading available models from peers...',
+      holdMs: 20_000,
+    });
+  }
+
+  return null;
+}
+
+function parseDashboardRuntimeActivity(lineRaw: string): RuntimeActivityEvent | null {
+  const line = stripAnsi(lineRaw).trim().toLowerCase();
+  if (line.length === 0) {
+    return null;
+  }
+
+  if (line.includes('embedded dashboard engine running on http://127.0.0.1')) {
+    return toRuntimeActivity({
+      mode: 'dashboard',
+      tone: 'active',
+      stage: 'dashboard-ready',
+      message: 'Local data service is ready.',
+      holdMs: 10_000,
+    });
+  }
+
+  if (line.includes('address already in use') || line.includes('eaddrinuse')) {
+    return toRuntimeActivity({
+      mode: 'dashboard',
+      tone: 'warn',
+      stage: 'dashboard-reuse',
+      message: 'Local data service port is busy; using existing service.',
+      holdMs: 20_000,
+    });
+  }
+
+  return null;
+}
+
+function parseRuntimeActivityFromLog(event: LogEvent): RuntimeActivityEvent | null {
+  if (event.mode === 'connect') {
+    return parseConnectRuntimeActivity(event.line);
+  }
+  if (event.mode === 'dashboard') {
+    return parseDashboardRuntimeActivity(event.line);
+  }
+  return null;
+}
+
+function emitRuntimeActivity(activity: RuntimeActivityEvent): void {
+  const hash = [
+    activity.mode,
+    activity.stage,
+    activity.tone,
+    activity.message,
+    activity.requestId ?? '',
+    activity.peerId ?? '',
+  ].join('|');
+
+  if (hash === lastRuntimeActivityHash) {
+    return;
+  }
+  lastRuntimeActivityHash = hash;
+  mainWindow?.webContents.send('runtime:activity', activity);
+}
+
 function appendLog(mode: RuntimeMode, stream: 'stdout' | 'stderr' | 'system', line: string): void {
   const event: LogEvent = { mode, stream, line, timestamp: Date.now() };
   logBuffer.push(event);
@@ -234,6 +540,10 @@ function appendLog(mode: RuntimeMode, stream: 'stdout' | 'stderr' | 'system', li
   }
 
   mainWindow?.webContents.send('runtime:log', event);
+  const activity = parseRuntimeActivityFromLog(event);
+  if (activity) {
+    emitRuntimeActivity(activity);
+  }
   emitRuntimeState();
 }
 
@@ -580,35 +890,58 @@ async function startDashboardRuntime(port?: number): Promise<void> {
   if (dashboardRuntime.running && dashboardRuntime.port === targetPort) {
     return;
   }
-
-  if (dashboardRuntime.running) {
-    await stopDashboardRuntime('restart');
+  if (dashboardStartPromise) {
+    await dashboardStartPromise;
+    if (dashboardRuntime.running && dashboardRuntime.port === targetPort) {
+      return;
+    }
   }
 
-  dashboardRuntime.port = targetPort;
-  dashboardRuntime.lastError = null;
+  const startAttempt = (async () => {
+    if (dashboardRuntime.running) {
+      await stopDashboardRuntime('restart');
+    }
 
-  try {
-    const config = await loadDashboardConfig(ACTIVE_CONFIG_PATH);
-    dashboardServer = await createDashboardServer(config, targetPort, { configPath: ACTIVE_CONFIG_PATH });
-    await dashboardServer.start();
-
-    dashboardRuntime.running = true;
-    dashboardRuntime.startedAt = Date.now();
-    dashboardRuntime.lastExitCode = null;
+    dashboardRuntime.port = targetPort;
     dashboardRuntime.lastError = null;
 
-    appendLog('dashboard', 'system', `Embedded dashboard engine running on http://127.0.0.1:${targetPort}`);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    dashboardRuntime.running = false;
-    dashboardRuntime.startedAt = null;
-    dashboardRuntime.lastExitCode = 1;
-    dashboardRuntime.lastError = message;
-    dashboardServer = null;
+    try {
+      const config = await loadDashboardConfig(ACTIVE_CONFIG_PATH);
+      dashboardServer = await createDashboardServer(config, targetPort, { configPath: ACTIVE_CONFIG_PATH });
+      await dashboardServer.start();
 
-    appendLog('dashboard', 'system', `Embedded dashboard engine failed to start: ${message}`);
-    throw err;
+      dashboardRuntime.running = true;
+      dashboardRuntime.startedAt = Date.now();
+      dashboardRuntime.lastExitCode = null;
+      dashboardRuntime.lastError = null;
+      dashboardPortInUseUntilMs = 0;
+
+      appendLog('dashboard', 'system', `Embedded dashboard engine running on http://127.0.0.1:${targetPort}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      dashboardRuntime.running = false;
+      dashboardRuntime.startedAt = null;
+      dashboardRuntime.lastExitCode = 1;
+      dashboardRuntime.lastError = message;
+      dashboardServer = null;
+
+      if (isAddressInUseError(message)) {
+        // Avoid startup log storms from parallel callers while still allowing a near-term retry.
+        dashboardPortInUseUntilMs = Date.now() + DASHBOARD_PORT_IN_USE_RETRY_COOLDOWN_MS;
+      }
+
+      appendLog('dashboard', 'system', `Embedded dashboard engine failed to start: ${message}`);
+      throw err;
+    }
+  })();
+
+  dashboardStartPromise = startAttempt;
+  try {
+    await startAttempt;
+  } finally {
+    if (dashboardStartPromise === startAttempt) {
+      dashboardStartPromise = null;
+    }
   }
 }
 
@@ -791,6 +1124,8 @@ function sanitizeDashboardQuery(query: unknown): Record<string, DashboardQueryVa
   return safe;
 }
 
+const DASHBOARD_FETCH_TIMEOUT_MS = 10_000;
+
 function buildDashboardUrl(endpoint: DashboardEndpoint, port: number, query: Record<string, DashboardQueryValue>): string {
   const url = new URL(`http://127.0.0.1:${port}/api/${endpoint}`);
   for (const [key, value] of Object.entries(query)) {
@@ -817,53 +1152,14 @@ async function fetchDashboardData(
 ): Promise<DashboardApiResult> {
   const safePort = toSafeDashboardPort(port);
   const url = buildDashboardUrl(endpoint, safePort, query);
-
-  try {
-    const response = await fetch(url);
-
-    let payload: unknown = null;
-    const contentType = response.headers.get('content-type') ?? '';
-    if (contentType.includes('application/json')) {
-      payload = await response.json();
-    } else {
-      payload = await response.text();
-    }
-
-    if (!response.ok) {
-      return {
-        ok: false,
-        data: payload,
-        error: errorMessageFromPayload(payload) ?? `dashboard api returned ${response.status}`,
-        status: response.status,
-      };
-    }
-
-    return {
-      ok: true,
-      data: payload,
-      error: null,
-      status: response.status,
-    };
-  } catch (err) {
-    return {
-      ok: false,
-      data: null,
-      error: err instanceof Error ? err.message : String(err),
-      status: null,
-    };
-  }
-}
-
-async function scanDashboardNetwork(port?: number): Promise<DashboardApiResult> {
-  const safePort = toSafeDashboardPort(port);
-  const url = `http://127.0.0.1:${safePort}/api/network/scan`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort();
+  }, DASHBOARD_FETCH_TIMEOUT_MS);
 
   try {
     const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-      },
+      signal: controller.signal,
     });
 
     let payload: unknown = null;
@@ -890,12 +1186,76 @@ async function scanDashboardNetwork(port?: number): Promise<DashboardApiResult> 
       status: response.status,
     };
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const normalized = message.toLowerCase();
+    const error = normalized.includes('abort')
+      ? `dashboard ${endpoint} request timed out after ${String(DASHBOARD_FETCH_TIMEOUT_MS)}ms`
+      : message;
     return {
       ok: false,
       data: null,
-      error: err instanceof Error ? err.message : String(err),
+      error,
       status: null,
     };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function scanDashboardNetwork(port?: number): Promise<DashboardApiResult> {
+  const safePort = toSafeDashboardPort(port);
+  const url = `http://127.0.0.1:${safePort}/api/network/scan`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort();
+  }, DASHBOARD_FETCH_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      signal: controller.signal,
+    });
+
+    let payload: unknown = null;
+    const contentType = response.headers.get('content-type') ?? '';
+    if (contentType.includes('application/json')) {
+      payload = await response.json();
+    } else {
+      payload = await response.text();
+    }
+
+    if (!response.ok) {
+      return {
+        ok: false,
+        data: payload,
+        error: errorMessageFromPayload(payload) ?? `dashboard api returned ${response.status}`,
+        status: response.status,
+      };
+    }
+
+    return {
+      ok: true,
+      data: payload,
+      error: null,
+      status: response.status,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const normalized = message.toLowerCase();
+    const error = normalized.includes('abort')
+      ? `dashboard network scan timed out after ${String(DASHBOARD_FETCH_TIMEOUT_MS)}ms`
+      : message;
+    return {
+      ok: false,
+      data: null,
+      error,
+      status: null,
+    };
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -928,8 +1288,12 @@ async function ensureDashboardRuntime(targetPort?: number): Promise<void> {
   }
 
   const desiredPort = toSafeDashboardPort(targetPort ?? dashboardRuntime.port);
+  const now = Date.now();
+  if (dashboardPortInUseUntilMs > now && dashboardRuntime.port === desiredPort) {
+    return;
+  }
   const lastError = dashboardRuntime.lastError ?? '';
-  if (isAddressInUseError(lastError) && dashboardRuntime.port === desiredPort) {
+  if (isAddressInUseError(lastError) && dashboardRuntime.port === desiredPort && dashboardPortInUseUntilMs > now) {
     return;
   }
 

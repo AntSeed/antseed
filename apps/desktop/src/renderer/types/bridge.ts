@@ -1,4 +1,4 @@
-export type RuntimeMode = 'seed' | 'connect' | 'dashboard';
+export type RuntimeMode = 'connect' | 'dashboard';
 
 export type RuntimeProcessState = {
   mode: RuntimeMode;
@@ -17,6 +17,19 @@ export type LogEvent = {
   timestamp: number;
 };
 
+export type RuntimeActivityTone = 'active' | 'idle' | 'warn' | 'bad';
+
+export type RuntimeActivityEvent = {
+  mode: RuntimeMode | string;
+  tone: RuntimeActivityTone;
+  stage: string;
+  message: string;
+  holdMs: number;
+  timestamp: number;
+  requestId?: string;
+  peerId?: string;
+};
+
 export type DaemonStateSnapshot = {
   exists: boolean;
   state: Record<string, unknown> | null;
@@ -32,8 +45,6 @@ export type DashboardEndpoint =
   | 'status'
   | 'network'
   | 'peers'
-  | 'sessions'
-  | 'earnings'
   | 'config'
   | 'data-sources';
 
@@ -62,20 +73,10 @@ export type PluginInstallResult = {
   error: string | null;
 };
 
-export type WalletConnectState = {
-  connected: boolean;
-  address: string | null;
-  chainId: number | null;
-  pairingUri: string | null;
-};
-
 export type StartOptions = {
   mode: RuntimeMode;
-  provider?: string;
   router?: string;
   dashboardPort?: number;
-  verbose?: boolean;
-  env?: Record<string, string>;
 };
 
 export type DesktopBridge = {
@@ -97,23 +98,15 @@ export type DesktopBridge = {
 
   onLog?: (handler: (event: LogEvent) => void) => () => void;
   onState?: (handler: (states: RuntimeProcessState[]) => void) => () => void;
-
-  walletGetInfo?: (port?: number) => Promise<{ ok: boolean; data: unknown; error: string | null }>;
-  walletDeposit?: (amount: string) => Promise<{ ok: boolean; error?: string; message?: string }>;
-  walletWithdraw?: (amount: string) => Promise<{ ok: boolean; error?: string; message?: string }>;
-
-  walletConnectState?: () => Promise<{ ok: boolean; data: WalletConnectState }>;
-  walletConnectConnect?: () => Promise<{ ok: boolean; data?: { uri: string }; error?: string }>;
-  walletConnectDisconnect?: () => Promise<{ ok: boolean; error?: string }>;
-  onWalletConnectStateChanged?: (handler: (state: WalletConnectState) => void) => () => void;
+  onRuntimeActivity?: (handler: (event: RuntimeActivityEvent) => void) => () => void;
 
   chatAiListConversations?: () => Promise<{ ok: boolean; data: unknown[] }>;
   chatAiListModels?: () => Promise<{ ok: boolean; data?: unknown[]; error?: string }>;
   chatAiGetConversation?: (id: string) => Promise<{ ok: boolean; data?: unknown; error?: string }>;
-  chatAiCreateConversation?: (model: string) => Promise<{ ok: boolean; data?: unknown; error?: string }>;
+  chatAiCreateConversation?: (model: string, provider?: string) => Promise<{ ok: boolean; data?: unknown; error?: string }>;
   chatAiDeleteConversation?: (id: string) => Promise<{ ok: boolean }>;
-  chatAiSend?: (conversationId: string, message: string, model?: string) => Promise<{ ok: boolean; error?: string }>;
-  chatAiSendStream?: (conversationId: string, message: string, model?: string) => Promise<{ ok: boolean; error?: string }>;
+  chatAiSend?: (conversationId: string, message: string, model?: string, provider?: string) => Promise<{ ok: boolean; error?: string }>;
+  chatAiSendStream?: (conversationId: string, message: string, model?: string, provider?: string) => Promise<{ ok: boolean; error?: string }>;
   chatAiAbort?: () => Promise<{ ok: boolean }>;
   chatAiGetProxyStatus?: () => Promise<{ ok: boolean; data: { running: boolean; port: number } }>;
   onChatAiDone?: (handler: (data: { conversationId: string; message: { role: string; content: unknown; createdAt?: number } }) => void) => () => void;
