@@ -176,6 +176,10 @@ export interface RequestStreamCallbacks {
   onResponseChunk?: (chunk: SerializedHttpResponseChunk) => void;
 }
 
+export interface RequestExecutionOptions {
+  signal?: AbortSignal;
+}
+
 export class AntseedNode extends EventEmitter {
   private static readonly _METADATA_REFRESH_DEBOUNCE_MS = 200;
   private _config: NodeConfig;
@@ -445,22 +449,28 @@ export class AntseedNode extends EventEmitter {
     return peers;
   }
 
-  async sendRequest(peer: PeerInfo, req: SerializedHttpRequest): Promise<SerializedHttpResponse> {
-    return this._sendRequestInternal(peer, req);
+  async sendRequest(
+    peer: PeerInfo,
+    req: SerializedHttpRequest,
+    options?: RequestExecutionOptions,
+  ): Promise<SerializedHttpResponse> {
+    return this._sendRequestInternal(peer, req, undefined, options);
   }
 
   async sendRequestStream(
     peer: PeerInfo,
     req: SerializedHttpRequest,
     callbacks: RequestStreamCallbacks,
+    options?: RequestExecutionOptions,
   ): Promise<SerializedHttpResponse> {
-    return this._sendRequestInternal(peer, req, callbacks);
+    return this._sendRequestInternal(peer, req, callbacks, options);
   }
 
   private async _sendRequestInternal(
     peer: PeerInfo,
     req: SerializedHttpRequest,
     callbacks?: RequestStreamCallbacks,
+    options?: RequestExecutionOptions,
   ): Promise<SerializedHttpResponse> {
     if (!req.requestId || typeof req.requestId !== "string") {
       throw new Error("requestId must be a non-empty string");
@@ -486,6 +496,7 @@ export class AntseedNode extends EventEmitter {
       const timeoutMs = this._config.requestTimeoutMs ?? 30_000;
       const maxStreamBufferBytes = Math.max(1, this._config.maxStreamBufferBytes ?? 16 * 1024 * 1024);
       const maxStreamDurationMs = Math.max(1, this._config.maxStreamDurationMs ?? 5 * 60_000);
+      const streamInitialResponseTimeoutMs = callbacks ? Math.max(timeoutMs, 90_000) : timeoutMs;
       // Idle timeout for streaming: resets on each chunk so long-running
       // streams (thinking models, large outputs) stay alive as long as
       // data keeps flowing.
@@ -497,25 +508,88 @@ export class AntseedNode extends EventEmitter {
       let streamStartResponse: SerializedHttpResponse | null = null;
       const streamChunks: Uint8Array[] = [];
       let activeTimeout: ReturnType<typeof setTimeout> | null = null;
+      let activeTimeoutMs = streamInitialResponseTimeoutMs;
+      const abortSignal = options?.signal;
+      let abortListenerAttached = false;
+      let connectionStateListenerAttached = false;
+      const hasConnectionStateEvents =
+        typeof (conn as { on?: unknown }).on === "function"
+        && typeof (conn as { off?: unknown }).off === "function";
+
+      const cleanupAbortListener = (): void => {
+        if (abortSignal && abortListenerAttached) {
+          abortSignal.removeEventListener("abort", onAbort);
+          abortListenerAttached = false;
+        }
+      };
+      const onConnectionStateChange = (state: ConnectionState): void => {
+        if (settled) return;
+        if (state !== ConnectionState.Closed && state !== ConnectionState.Failed) {
+          return;
+        }
+        settled = true;
+        if (activeTimeout) clearTimeout(activeTimeout);
+        cleanupAbortListener();
+        cleanupConnectionListener();
+        mux.cancelProxyRequest(req.requestId);
+        reject(new Error(`Connection to ${peer.peerId} ${state.toLowerCase()} during request ${req.requestId}`));
+      };
+      const cleanupConnectionListener = (): void => {
+        if (!connectionStateListenerAttached) return;
+        conn.off("stateChange", onConnectionStateChange);
+        connectionStateListenerAttached = false;
+      };
+
+      const onAbort = (): void => {
+        if (settled) return;
+        settled = true;
+        if (activeTimeout) clearTimeout(activeTimeout);
+        cleanupAbortListener();
+        cleanupConnectionListener();
+        debugWarn(`[Node] Request ${req.requestId.slice(0, 8)} aborted by caller`);
+        mux.cancelProxyRequest(req.requestId);
+        reject(new Error(`Request ${req.requestId} aborted`));
+      };
+
+      if (abortSignal) {
+        if (abortSignal.aborted) {
+          onAbort();
+          return;
+        }
+        abortSignal.addEventListener("abort", onAbort, { once: true });
+        abortListenerAttached = true;
+      }
+      if (hasConnectionStateEvents) {
+        conn.on("stateChange", onConnectionStateChange);
+        connectionStateListenerAttached = true;
+      }
 
       const resetTimeout = (ms: number): void => {
         if (activeTimeout) clearTimeout(activeTimeout);
+        activeTimeoutMs = ms;
         activeTimeout = setTimeout(() => {
           if (settled) return;
           settled = true;
-          debugWarn(`[Node] Request ${req.requestId.slice(0, 8)} timed out after ${Date.now() - startTime}ms`);
+          cleanupAbortListener();
+          cleanupConnectionListener();
+          debugWarn(
+            `[Node] Request ${req.requestId.slice(0, 8)} timed out after ${Date.now() - startTime}ms `
+            + `(timeout=${activeTimeoutMs}ms, stream=${callbacks ? "true" : "false"}, streamStarted=${streamStarted ? "true" : "false"}, buffered=${streamBufferedBytes}b)`,
+          );
           mux.cancelProxyRequest(req.requestId);
           reject(new Error(`Request ${req.requestId} timed out`));
         }, ms);
       };
 
       // Initial timeout: wait for the first response frame.
-      resetTimeout(timeoutMs);
+      resetTimeout(streamInitialResponseTimeoutMs);
 
       const finish = (response: SerializedHttpResponse): void => {
         if (settled) return;
         settled = true;
         if (activeTimeout) clearTimeout(activeTimeout);
+        cleanupAbortListener();
+        cleanupConnectionListener();
         const cleaned = this._stripStreamingHeader(response);
         debugLog(`[Node] Response for ${req.requestId.slice(0, 8)}: status=${cleaned.statusCode} (${Date.now() - startTime}ms, ${cleaned.body.length}b)`);
         resolve(cleaned);
@@ -525,6 +599,8 @@ export class AntseedNode extends EventEmitter {
         if (settled) return;
         settled = true;
         if (activeTimeout) clearTimeout(activeTimeout);
+        cleanupAbortListener();
+        cleanupConnectionListener();
         reject(error);
       };
 
@@ -537,6 +613,7 @@ export class AntseedNode extends EventEmitter {
             streamStartedAtMs = Date.now();
             streamBufferedBytes = 0;
             streamStartResponse = this._stripStreamingHeader(response);
+            debugLog(`[Node] Stream started for ${req.requestId.slice(0, 8)}; idle-timeout=${streamIdleTimeoutMs}ms`);
             // Switch to streaming idle timeout: resets on each chunk.
             resetTimeout(streamIdleTimeoutMs);
             callbacks?.onResponseStart?.(streamStartResponse, { streaming: true });
@@ -678,6 +755,9 @@ export class AntseedNode extends EventEmitter {
     // Create ConnectionManager and start listening
     this._connectionManager = new ConnectionManager();
     this._connectionManager.setLocalIdentity(identity);
+    this._connectionManager.on("error", (err: Error) => {
+      debugWarn(`[ConnectionManager] ${err.message}`);
+    });
     await this._connectionManager.startListening({
       peerId: identity.peerId,
       port: signalingPort,
@@ -761,6 +841,9 @@ export class AntseedNode extends EventEmitter {
     // Create ConnectionManager for outbound connections
     this._connectionManager = new ConnectionManager();
     this._connectionManager.setLocalIdentity(identity);
+    this._connectionManager.on("error", (err: Error) => {
+      debugWarn(`[ConnectionManager] ${err.message}`);
+    });
 
     // Create PeerLookup with HttpMetadataResolver
     const metadataResolver = new HttpMetadataResolver();
