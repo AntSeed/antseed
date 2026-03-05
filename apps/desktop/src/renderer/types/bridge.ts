@@ -74,6 +74,7 @@ export type StartOptions = {
   provider?: string;
   router?: string;
   dashboardPort?: number;
+  verbose?: boolean;
   env?: Record<string, string>;
 };
 
