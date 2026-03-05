@@ -9,19 +9,31 @@ export interface HttpMetadataResolverConfig {
   metadataPortOffset?: number;
   /** Cooldown in ms before retrying an endpoint that recently failed. Default: 30000 */
   failureCooldownMs?: number;
+  /** Upper bound for failure cooldown backoff. Default: 1800000 (30 minutes) */
+  maxFailureCooldownMs?: number;
+}
+
+type FailedEndpointState = {
+  nextRetryAt: number;
+  consecutiveFailures: number;
 }
 
 export class HttpMetadataResolver implements MetadataResolver {
   private readonly timeoutMs: number;
   private readonly metadataPortOffset: number;
   private readonly failureCooldownMs: number;
-  private readonly failedEndpoints: Map<string, number>;
+  private readonly maxFailureCooldownMs: number;
+  private readonly failedEndpoints: Map<string, FailedEndpointState>;
 
   constructor(config?: HttpMetadataResolverConfig) {
     this.timeoutMs = config?.timeoutMs ?? 2000;
     this.metadataPortOffset = config?.metadataPortOffset ?? 0;
     this.failureCooldownMs = Math.max(0, config?.failureCooldownMs ?? 30_000);
-    this.failedEndpoints = new Map();
+    this.maxFailureCooldownMs = Math.max(
+      this.failureCooldownMs,
+      config?.maxFailureCooldownMs ?? 30 * 60_000,
+    );
+    this.failedEndpoints = new Map<string, FailedEndpointState>();
   }
 
   async resolve(peer: PeerEndpoint): Promise<PeerMetadata | null> {
@@ -30,9 +42,9 @@ export class HttpMetadataResolver implements MetadataResolver {
     const endpointKey = this.getEndpointKey(host, metadataPort);
     const now = Date.now();
 
-    const failedUntil = this.failedEndpoints.get(endpointKey);
-    if (failedUntil !== undefined) {
-      if (failedUntil > now) {
+    const failedState = this.failedEndpoints.get(endpointKey);
+    if (failedState !== undefined) {
+      if (failedState.nextRetryAt > now) {
         return null;
       }
       this.failedEndpoints.delete(endpointKey);
@@ -71,8 +83,14 @@ export class HttpMetadataResolver implements MetadataResolver {
     if (this.failureCooldownMs <= 0) {
       return;
     }
-    const failedUntil = Date.now() + this.failureCooldownMs;
-    this.failedEndpoints.set(endpointKey, failedUntil);
+    const previous = this.failedEndpoints.get(endpointKey);
+    const consecutiveFailures = Math.max(1, (previous?.consecutiveFailures ?? 0) + 1);
+    const multiplier = 2 ** Math.max(0, consecutiveFailures - 1);
+    const backoffMs = Math.min(this.maxFailureCooldownMs, this.failureCooldownMs * multiplier);
+    this.failedEndpoints.set(endpointKey, {
+      nextRetryAt: Date.now() + backoffMs,
+      consecutiveFailures,
+    });
   }
 
   private getEndpointKey(host: string, port: number): string {
