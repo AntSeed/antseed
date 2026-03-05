@@ -1,6 +1,8 @@
 import type { AntseedProviderPlugin, ConfigField, ModelApiProtocol } from '@antseed/node';
 import { BaseProvider, OAuthTokenProvider, StaticTokenProvider } from '@antseed/provider-core';
 
+const DEFAULT_ANTHROPIC_VERSION = '2023-06-01';
+
 const configSchema: ConfigField[] = [
   { key: 'CLAUDE_ACCESS_TOKEN', label: 'Access Token', type: 'secret', required: true, description: 'Claude OAuth access token' },
   { key: 'CLAUDE_REFRESH_TOKEN', label: 'Refresh Token', type: 'secret', required: false, description: 'OAuth refresh token for auto-renewal' },
@@ -72,7 +74,10 @@ const plugin: AntseedProviderPlugin = {
         authHeaderName: 'authorization',
         authHeaderValue: `Bearer ${accessToken}`,
         tokenProvider,
-        extraHeaders: { 'anthropic-beta': 'oauth-2025-04-20' },
+        extraHeaders: {
+          'anthropic-beta': 'oauth-2025-04-20',
+          'anthropic-version': DEFAULT_ANTHROPIC_VERSION,
+        },
         maxConcurrency,
         allowedModels,
         retryOn401: true,
