@@ -35,6 +35,27 @@ const execFileAsync = promisify(execFileCallback);
 const isDev = Boolean(process.env['VITE_DEV_SERVER_URL']);
 const rendererUrl = process.env['VITE_DEV_SERVER_URL'] ?? `file://${path.join(__dirname, '../renderer/index.html')}`;
 const APP_NAME = 'AntSeed Desktop';
+const DESKTOP_DEBUG_ENV = 'ANTSEED_DESKTOP_DEBUG';
+const DESKTOP_DEBUG_FLAGS = new Set(['--debug-runtime', '--desktop-debug']);
+
+function isTruthyEnv(value: string | undefined): boolean {
+  if (!value) {
+    return false;
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
+}
+
+function hasDesktopDebugFlag(argv: string[]): boolean {
+  for (const arg of argv) {
+    if (DESKTOP_DEBUG_FLAGS.has(arg.trim().toLowerCase())) {
+      return true;
+    }
+  }
+  return false;
+}
+
+const DESKTOP_DEBUG_ENABLED = isTruthyEnv(process.env[DESKTOP_DEBUG_ENV]) || hasDesktopDebugFlag(process.argv);
 
 function resolveAppIconPath(): string | undefined {
   const candidates = [
@@ -950,7 +971,19 @@ ipcMain.handle('runtime:start', async (_event, options: StartOptions) => {
     };
   }
 
-  const state = await processManager.start(options);
+  const startOptions: StartOptions = {
+    ...options,
+    ...(DESKTOP_DEBUG_ENABLED ? { verbose: true } : {}),
+    env: {
+      ...(options.env ?? {}),
+      ...(DESKTOP_DEBUG_ENABLED ? { ANTSEED_DEBUG: '1' } : {}),
+    },
+  };
+  if (DESKTOP_DEBUG_ENABLED) {
+    appendLog(startOptions.mode, 'system', 'Desktop debug mode enabled (ANTSEED_DEBUG=1, --verbose).');
+  }
+
+  const state = await processManager.start(startOptions);
   return {
     state,
     processes: getCombinedProcessState(),

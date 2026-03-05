@@ -559,7 +559,7 @@ export function initChatModule({
     html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" style="color:var(--accent-blue);text-decoration:underline" target="_blank" rel="noopener">$1</a>');
     html = html.replace(/^\s*[\-*•] (.+)$/gm, '<li class="chat-md-li chat-md-li-ul">$1</li>');
     html = html.replace(/^\s*\d+\. (.+)$/gm, '<li class="chat-md-li chat-md-li-ol">$1</li>');
-    html = html.replace(/\n/g, '<br>');
+    // html = html.replace(/\n/g, '<br>');
     html = html.replace(/<br>\s*(<li class="chat-md-li[^"]*">)/g, '$1');
     html = html.replace(/(<\/li>)\s*(?:<br>\s*)+(?=<li class="chat-md-li)/g, '$1');
     html = html.replace(/((?:<li class="chat-md-li[^"]*">[\s\S]*?<\/li>(?:\s*<br>\s*)*)+)/g, (listBlock) => {
@@ -1245,8 +1245,12 @@ export function initChatModule({
     let streamThinkingDirtyIndex: number | null = null;
     let streamTextRafId: number | null = null;
     let streamTextLastFrameAt = 0;
+    let streamTextLastRenderAt = 0;
 
-    const STREAM_TEXT_CHARS_PER_SECOND = 110;
+    const STREAM_TEXT_BASE_CHARS_PER_SECOND = 140;
+    const STREAM_TEXT_MAX_CHARS_PER_SECOND = 2600;
+    const STREAM_TEXT_TARGET_LAG_MS = 180;
+    const STREAM_TEXT_RENDER_INTERVAL_MS = 24;
 
     function renderStreamingText(): void {
       if (!streamingContentEl) {
@@ -1264,6 +1268,18 @@ export function initChatModule({
         streamTextRafId = null;
       }
       streamTextLastFrameAt = 0;
+      streamTextLastRenderAt = 0;
+    }
+
+    function resolveStreamTextRate(backlogChars: number): number {
+      if (backlogChars <= 0) {
+        return STREAM_TEXT_BASE_CHARS_PER_SECOND;
+      }
+      const catchUpRate = Math.ceil((backlogChars * 1000) / STREAM_TEXT_TARGET_LAG_MS);
+      return Math.min(
+        STREAM_TEXT_MAX_CHARS_PER_SECOND,
+        Math.max(STREAM_TEXT_BASE_CHARS_PER_SECOND, catchUpRate),
+      );
     }
 
     function streamTextStep(timestamp: number): void {
@@ -1276,23 +1292,40 @@ export function initChatModule({
         streamTextLastFrameAt = timestamp;
       }
 
-      const elapsedMs = Math.max(0, timestamp - streamTextLastFrameAt);
-      const charBudget = Math.max(1, Math.floor((elapsedMs * STREAM_TEXT_CHARS_PER_SECOND) / 1000));
-
-      if (charBudget > 0) {
-        const nextLength = Math.min(streamingTextTarget.length, streamingTextVisible.length + charBudget);
-        if (nextLength !== streamingTextVisible.length) {
-          streamingTextVisible = streamingTextTarget.slice(0, nextLength);
-          renderStreamingText();
-        }
-        streamTextLastFrameAt = timestamp;
+      const elapsedMs = Math.max(1, timestamp - streamTextLastFrameAt);
+      const backlogChars = Math.max(0, streamingTextTarget.length - streamingTextVisible.length);
+      if (backlogChars <= 0) {
+        stopStreamTextAnimation();
+        return;
       }
 
-      if (streamingTextVisible.length < streamingTextTarget.length) {
+      const adaptiveRate = resolveStreamTextRate(backlogChars);
+      const charBudget = Math.max(1, Math.floor((elapsedMs * adaptiveRate) / 1000));
+      const nextLength = Math.min(streamingTextTarget.length, streamingTextVisible.length + charBudget);
+      const changed = nextLength !== streamingTextVisible.length;
+      if (changed) {
+        streamingTextVisible = streamingTextTarget.slice(0, nextLength);
+      }
+
+      const remaining = Math.max(0, streamingTextTarget.length - streamingTextVisible.length);
+      const elapsedSinceRender = streamTextLastRenderAt <= 0 ? Number.POSITIVE_INFINITY : (timestamp - streamTextLastRenderAt);
+      const shouldRender = changed
+        && (remaining === 0 || elapsedSinceRender >= STREAM_TEXT_RENDER_INTERVAL_MS);
+      if (shouldRender) {
+        renderStreamingText();
+        streamTextLastRenderAt = timestamp;
+      }
+
+      streamTextLastFrameAt = timestamp;
+
+      if (remaining > 0) {
         streamTextRafId = requestAnimationFrame(streamTextStep);
         return;
       }
 
+      if (changed && !shouldRender) {
+        renderStreamingText();
+      }
       stopStreamTextAnimation();
     }
 

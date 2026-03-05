@@ -103,12 +103,14 @@ function getPeerProviderProtocols(
   ).providerModelApiProtocols?.[provider]?.models
   if (fromMetadata) {
     if (requestedModel && fromMetadata[requestedModel]?.length) {
+      log(`Model match: peer ${peer.peerId.slice(0, 8)} provider=${provider} model="${requestedModel}" → [${fromMetadata[requestedModel]!.join(',')}]`)
       return Array.from(new Set(fromMetadata[requestedModel]!))
     }
 
     // If the peer advertises specific models and the requested model is not among them, return empty
     // so this peer is filtered out in favour of peers that actually serve the model.
     if (requestedModel && Object.keys(fromMetadata).length > 0) {
+      log(`Model filter: peer ${peer.peerId.slice(0, 8)} provider=${provider} model="${requestedModel}" not in [${Object.keys(fromMetadata).join(',')}] → filtered`)
       return []
     }
 
@@ -118,7 +120,9 @@ function getPeerProviderProtocols(
     }
   }
 
-  return inferProviderDefaultModelApiProtocols(provider)
+  const inferred = inferProviderDefaultModelApiProtocols(provider)
+  log(`No metadata: peer ${peer.peerId.slice(0, 8)} provider=${provider} → inferred [${inferred.join(',')}]`)
+  return inferred
 }
 
 function resolvePeerRoutePlan(
@@ -811,6 +815,7 @@ export class BuyerProxy {
 
     const requestProtocol = detectRequestModelApiProtocol(serializedReq)
     const requestedModel = extractRequestedModel(serializedReq)
+    log(`Routing: protocol=${requestProtocol ?? 'null'} model=${requestedModel ?? 'null'}`)
     const explicitProvider = getExplicitProviderOverride(serializedReq)
     const explicitPeerId = getExplicitPeerIdOverride(serializedReq, this._pinnedPeerId)
     const {
