@@ -3,36 +3,38 @@ import { initSettingsModule } from './modules/settings';
 import { initRuntimeModule } from './modules/runtime';
 import { initDashboardRenderModule } from './modules/dashboard-render';
 import { initDashboardApiModule } from './modules/dashboard-api';
-import { initPluginSetupModule } from './modules/plugin-setup';
+import {
+  initPluginSetupModule,
+  normalizeRouterRuntime,
+  resolveRouterPackageName,
+} from './modules/plugin-setup';
 import { mountAppShell } from './ui/mount';
+import { registerActions } from './ui/actions';
 import {
   DEFAULT_DASHBOARD_PORT,
   POLL_INTERVAL_MS,
   UI_MESSAGES,
 } from './core/constants';
-import { createRendererElements, setBadgeTone, setText } from './core/elements';
-import type { BadgeTone } from './core/elements';
-import {
-  formatClock,
-  formatDuration,
-  formatEndpoint,
-  formatInt,
-  formatLatency,
-  formatPercent,
-  formatRelativeTime,
-  formatShortId,
-} from './core/format';
-import { safeArray, safeNumber, safeObject, safeString } from './core/safe';
+import { safeNumber, safeString } from './core/safe';
+import type { BadgeTone } from './core/state';
 import { createInitialUiState } from './core/state';
+import { initStore, notifyUiStateChanged } from './core/store';
 import type { DesktopBridge } from './types/bridge';
+
+/* ------------------------------------------------------------------ */
+/*  Bootstrap                                                          */
+/* ------------------------------------------------------------------ */
 
 const isMacPlatform = /Mac|iPhone|iPad|iPod/.test(navigator.platform);
 document.body.classList.toggle('platform-macos', isMacPlatform);
-mountAppShell();
 
 const bridge = window.antseedDesktop as DesktopBridge | undefined;
-const elements = createRendererElements();
 const uiState = createInitialUiState();
+initStore(uiState);
+
+/* ------------------------------------------------------------------ */
+/*  Module initialisation                                              */
+/* ------------------------------------------------------------------ */
 
 const {
   appendLog,
@@ -41,13 +43,7 @@ const {
   renderProcesses,
   renderDaemonState,
   appendSystemLog,
-} = initRuntimeModule({
-  elements,
-  uiState,
-  formatClock,
-  formatDuration,
-  setText,
-});
+} = initRuntimeModule({ uiState });
 
 const {
   getDashboardPort,
@@ -57,16 +53,11 @@ const {
   refreshDashboardData,
 } = initDashboardApiModule({
   bridge,
-  elements,
   uiState,
   defaultDashboardPort: DEFAULT_DASHBOARD_PORT,
-  safeNumber,
-  safeArray,
 });
 
 const {
-  normalizeRouterRuntime,
-  resolveRouterPackageName,
   clearRouterPluginHint,
   updatePluginHintFromLog,
   renderPluginSetupState,
@@ -74,73 +65,62 @@ const {
   installPluginPackage,
 } = initPluginSetupModule({
   bridge,
-  elements,
   uiState,
   appendSystemLog,
 });
 
+const { populateSettingsForm, saveConfig } = initSettingsModule({
+  uiState,
+  getDashboardData: getDashboardData as (
+    endpoint: string,
+    query?: Record<string, string | number | boolean>,
+  ) => Promise<{ ok: boolean; data: unknown; error?: string | null }>,
+  getDashboardPort,
+});
+
+const {
+  renderDashboardData,
+  renderOfflineState,
+} = initDashboardRenderModule({
+  uiState,
+  isModeRunning,
+  appendSystemLog,
+  populateSettingsForm,
+});
+
+const chatApi = initChatModule({
+  bridge,
+  uiState,
+  appendSystemLog,
+});
+
+/* ------------------------------------------------------------------ */
+/*  Runtime activity helpers                                           */
+/* ------------------------------------------------------------------ */
+
 function isProxyPortOccupiedMessage(value: unknown): boolean {
   const message = safeString(value, '').toLowerCase();
-  if (!message) {
-    return false;
-  }
+  if (!message) return false;
   return message.includes('eaddrinuse') || message.includes('address already in use');
 }
 
-function setConnectWarning(message: string | null): void {
-  if (!elements.connectWarning) {
-    return;
-  }
-
-  const text = safeString(message, '').trim();
-  if (!text) {
-    elements.connectWarning.textContent = '';
-    elements.connectWarning.hidden = true;
-    return;
-  }
-
-  elements.connectWarning.textContent = text;
-  elements.connectWarning.hidden = false;
-}
-
 let runtimeActivityHoldUntil = 0;
-let runtimeActivityLast = '';
-let runtimeActivityTone: BadgeTone = 'idle';
-
-function applyRuntimeActivity(tone: BadgeTone, message: string): void {
-  if (!elements.runtimeActivity) {
-    return;
-  }
-
-  const text = safeString(message, '').trim() || 'Idle';
-  if (runtimeActivityLast === text && runtimeActivityTone === tone) {
-    return;
-  }
-
-  runtimeActivityLast = text;
-  runtimeActivityTone = tone;
-  elements.runtimeActivity.classList.remove(
-    'runtime-activity-idle',
-    'runtime-activity-active',
-    'runtime-activity-warn',
-    'runtime-activity-bad',
-  );
-  elements.runtimeActivity.classList.add(`runtime-activity-${tone}`);
-  elements.runtimeActivity.textContent = text;
-}
 
 function setRuntimeActivity(tone: BadgeTone, message: string, holdMs = 0): void {
   if (holdMs > 0) {
     runtimeActivityHoldUntil = Math.max(runtimeActivityHoldUntil, Date.now() + holdMs);
   }
-  applyRuntimeActivity(tone, message);
+  const text = safeString(message, '').trim() || 'Idle';
+  if (uiState.runtimeActivity.message === text && uiState.runtimeActivity.tone === tone) {
+    return;
+  }
+  uiState.runtimeActivity = { tone, message: text };
+  notifyUiStateChanged();
 }
 
 function setRuntimeSteadyActivity(tone: BadgeTone, message: string): void {
-  if (Date.now() < runtimeActivityHoldUntil) {
-    return;
-  }
-  applyRuntimeActivity(tone, message);
+  if (Date.now() < runtimeActivityHoldUntil) return;
+  setRuntimeActivity(tone, message);
 }
 
 function syncRuntimeActivityFromProcesses(processes = uiState.processes): void {
@@ -155,28 +135,25 @@ function syncRuntimeActivityFromProcesses(processes = uiState.processes): void {
 
 function syncBuyerRuntimeOverview(processes = uiState.processes): void {
   const buyerConnected = isModeRunning('connect', processes);
-  setText(elements.ovNodeState, buyerConnected ? 'connected' : 'offline');
+  uiState.ovNodeState = buyerConnected ? 'connected' : 'offline';
 
-  if (uiState.refreshing) {
-    return;
-  }
-
-  const badgeText = safeString(elements.overviewBadge?.textContent, '').toLowerCase();
-  if (buyerConnected) {
-    if (badgeText.includes('offline') || badgeText.includes('idle')) {
-      setBadgeTone(elements.overviewBadge, 'active', 'CONNECTED • Refreshing DHT status...');
+  if (!uiState.refreshing) {
+    const badgeLabel = uiState.overviewBadge.label.toLowerCase();
+    if (buyerConnected) {
+      if (badgeLabel.includes('offline') || badgeLabel.includes('idle')) {
+        uiState.overviewBadge = { tone: 'active', label: 'CONNECTED • Refreshing DHT status...' };
+      }
+    } else {
+      uiState.overviewBadge = { tone: 'idle', label: 'OFFLINE' };
     }
-    return;
   }
 
-  setBadgeTone(elements.overviewBadge, 'idle', 'OFFLINE');
+  notifyUiStateChanged();
 }
 
 function updateRuntimeActivityFromLog(mode: string, lineRaw: string): void {
   const line = safeString(lineRaw, '').toLowerCase();
-  if (!line) {
-    return;
-  }
+  if (!line) return;
 
   if (mode === 'connect') {
     if (line.includes('connecting to p2p network')) {
@@ -221,19 +198,24 @@ function updateRuntimeActivityFromLog(mode: string, lineRaw: string): void {
   }
 }
 
+/* ------------------------------------------------------------------ */
+/*  Refresh                                                            */
+/* ------------------------------------------------------------------ */
+
 type RefreshReason = 'poll' | 'manual' | 'startup';
 
 async function refreshAll(reason: RefreshReason = 'poll'): Promise<void> {
-  if (!bridge?.getState || uiState.refreshing) {
-    return;
-  }
+  if (!bridge?.getState || uiState.refreshing) return;
 
   uiState.refreshing = true;
-  setBadgeTone(elements.overviewBadge, 'warn', 'Refreshing runtime and peers...');
-  setText(elements.peersMessage, 'Refreshing peers and runtime status...');
+  uiState.overviewBadge = { tone: 'warn', label: 'Refreshing runtime and peers...' };
+  uiState.peersMessage = 'Refreshing peers and runtime status...';
+  notifyUiStateChanged();
+
   if (reason !== 'poll') {
     setRuntimeActivity('warn', 'Refreshing runtime and peer snapshots...', 8_000);
   }
+
   try {
     const snapshot = await bridge.getState();
     renderLogs(snapshot.logs);
@@ -245,59 +227,18 @@ async function refreshAll(reason: RefreshReason = 'poll'): Promise<void> {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     appendSystemLog(`Refresh failed: ${message}`);
-    setText(elements.peersMessage, `Unable to refresh runtime and peers: ${message}`);
+    uiState.peersMessage = `Unable to refresh runtime and peers: ${message}`;
+    notifyUiStateChanged();
     setRuntimeActivity('bad', `Refresh failed: ${message}`, 10_000);
   } finally {
     uiState.refreshing = false;
+    notifyUiStateChanged();
   }
 }
 
-type ActionOptions = {
-  refreshAfter: boolean;
-};
-
-const DEFAULT_ACTION_OPTIONS: ActionOptions = {
-  refreshAfter: true,
-};
-
-function getActionButton(buttonId: string): HTMLButtonElement | null {
-  return document.getElementById(buttonId) as HTMLButtonElement | null;
-}
-
-function bindAction(
-  buttonId: string,
-  action: () => Promise<void>,
-  options: ActionOptions = DEFAULT_ACTION_OPTIONS,
-): void {
-  const button = getActionButton(buttonId);
-  if (!button) {
-    return;
-  }
-
-  if (!bridge) {
-    button.disabled = true;
-    return;
-  }
-
-    button.addEventListener('click', async () => {
-      button.disabled = true;
-      try {
-        await action();
-        if (options.refreshAfter) {
-          await refreshAll('manual');
-        }
-      } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if ((buttonId === 'connectStartBtn' || buttonId === 'startAllBtn') && isProxyPortOccupiedMessage(message)) {
-        setConnectWarning(UI_MESSAGES.proxyPortInUse);
-      }
-      appendSystemLog(`Action failed: ${message}`);
-      setRuntimeActivity('bad', `Action failed: ${message}`, 8_000);
-    } finally {
-      button.disabled = false;
-    }
-  });
-}
+/* ------------------------------------------------------------------ */
+/*  Actions                                                            */
+/* ------------------------------------------------------------------ */
 
 function requireBridgeMethod<K extends keyof DesktopBridge>(
   key: K,
@@ -311,145 +252,176 @@ function requireBridgeMethod<K extends keyof DesktopBridge>(
 }
 
 async function ensureConnectRuntimeStarted(): Promise<void> {
-  if (!bridge?.start) {
-    return;
-  }
-
-  if (isModeRunning('connect')) {
-    return;
-  }
+  if (!bridge?.start || isModeRunning('connect')) return;
 
   try {
     setRuntimeActivity('warn', 'Starting buyer runtime...', 8_000);
     await bridge.start({
       mode: 'connect',
-      router: normalizeRouterRuntime(elements.connectRouter?.value),
+      router: normalizeRouterRuntime(uiState.connectRouterValue),
     });
-    setConnectWarning(null);
+    uiState.connectWarning = null;
+    notifyUiStateChanged();
     appendSystemLog(UI_MESSAGES.buyerAutoStarted);
     setRuntimeActivity('active', 'Buyer runtime auto-started.', 4_000);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const normalized = message.toLowerCase();
-    if (normalized.includes('already running')) {
-      return;
-    }
-
+    if (message.toLowerCase().includes('already running')) return;
     if (isProxyPortOccupiedMessage(message)) {
-      setConnectWarning(UI_MESSAGES.proxyPortInUse);
+      uiState.connectWarning = UI_MESSAGES.proxyPortInUse;
+      notifyUiStateChanged();
     }
-
     appendSystemLog(`Buyer auto-start failed: ${message}`);
     setRuntimeActivity('bad', `Buyer auto-start failed: ${message}`, 10_000);
   }
 }
 
-function bindControls(): void {
-  bindAction('connectStartBtn', async () => {
-    const start = requireBridgeMethod('start', 'Runtime start is unavailable in this build');
-    clearRouterPluginHint();
-    setText(elements.connectState, 'Starting buyer runtime...');
-    if (elements.connectBadge) {
-      elements.connectBadge.textContent = 'Starting...';
-      elements.connectBadge.classList.remove('running', 'stopped', 'error');
-      elements.connectBadge.classList.add('stopped');
-    }
-    setRuntimeActivity('warn', 'Starting buyer runtime...', 8_000);
+async function actionStartConnect(): Promise<void> {
+  const start = requireBridgeMethod('start', 'Runtime start is unavailable in this build');
+  clearRouterPluginHint();
+  uiState.connectState = 'Starting buyer runtime...';
+  uiState.connectBadge = { tone: 'idle', label: 'Starting...' };
+  notifyUiStateChanged();
+  setRuntimeActivity('warn', 'Starting buyer runtime...', 8_000);
+  try {
     await start({
       mode: 'connect',
-      router: normalizeRouterRuntime(elements.connectRouter?.value),
+      router: normalizeRouterRuntime(uiState.connectRouterValue),
     });
-  });
-
-  bindAction('connectStopBtn', async () => {
-    const stop = requireBridgeMethod('stop', 'Runtime stop is unavailable in this build');
-    setText(elements.connectState, 'Stopping buyer runtime...');
-    if (elements.connectBadge) {
-      elements.connectBadge.textContent = 'Stopping...';
-      elements.connectBadge.classList.remove('running', 'stopped', 'error');
-      elements.connectBadge.classList.add('stopped');
-    }
-    setRuntimeActivity('warn', 'Stopping buyer runtime...', 8_000);
-    await stop('connect');
-  });
-
-  bindAction('refreshBtn', async () => {
     await refreshAll('manual');
-  });
-
-  bindAction('clearLogsBtn', async () => {
-    const clearLogs = requireBridgeMethod('clearLogs', 'Log clearing is unavailable in this build');
-    await clearLogs();
-  });
-
-  bindAction('startAllBtn', async () => {
-    if (isModeRunning('connect')) {
-      return;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (isProxyPortOccupiedMessage(message)) {
+      uiState.connectWarning = UI_MESSAGES.proxyPortInUse;
+      notifyUiStateChanged();
     }
+    appendSystemLog(`Action failed: ${message}`);
+    setRuntimeActivity('bad', `Action failed: ${message}`, 8_000);
+  }
+}
 
-    const start = requireBridgeMethod('start', 'Runtime start is unavailable in this build');
-    setText(elements.connectState, 'Starting buyer runtime...');
-    if (elements.connectBadge) {
-      elements.connectBadge.textContent = 'Starting...';
-      elements.connectBadge.classList.remove('running', 'stopped', 'error');
-      elements.connectBadge.classList.add('stopped');
-    }
-    setRuntimeActivity('warn', 'Starting buyer runtime...', 8_000);
-    await start({
-      mode: 'connect',
-      router: normalizeRouterRuntime(elements.connectRouter?.value),
-    });
-    setConnectWarning(null);
-  });
-
-  bindAction('stopAllBtn', async () => {
-    if (!isModeRunning('connect')) {
-      return;
-    }
-
-    const stop = requireBridgeMethod('stop', 'Runtime stop is unavailable in this build');
-    setText(elements.connectState, 'Stopping buyer runtime...');
-    if (elements.connectBadge) {
-      elements.connectBadge.textContent = 'Stopping...';
-      elements.connectBadge.classList.remove('running', 'stopped', 'error');
-      elements.connectBadge.classList.add('stopped');
-    }
-    setRuntimeActivity('warn', 'Stopping buyer runtime...', 8_000);
+async function actionStopConnect(): Promise<void> {
+  const stop = requireBridgeMethod('stop', 'Runtime stop is unavailable in this build');
+  uiState.connectState = 'Stopping buyer runtime...';
+  uiState.connectBadge = { tone: 'idle', label: 'Stopping...' };
+  notifyUiStateChanged();
+  setRuntimeActivity('warn', 'Stopping buyer runtime...', 8_000);
+  try {
     await stop('connect');
-  });
+    await refreshAll('manual');
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    appendSystemLog(`Action failed: ${message}`);
+    setRuntimeActivity('bad', `Action failed: ${message}`, 8_000);
+  }
+}
 
-  const scanAction = async () => {
-    setText(elements.peersMessage, 'Scanning DHT for peers...');
-    setBadgeTone(elements.peersMeta, 'warn', 'Scanning...');
-    setBadgeTone(elements.overviewBadge, 'warn', 'Scanning DHT for peers...');
-    setRuntimeActivity('warn', 'Scanning DHT for peers...', 12_000);
+async function actionStartAll(): Promise<void> {
+  if (isModeRunning('connect')) return;
+  await actionStartConnect();
+  uiState.connectWarning = null;
+  notifyUiStateChanged();
+}
+
+async function actionStopAll(): Promise<void> {
+  if (!isModeRunning('connect')) return;
+  await actionStopConnect();
+}
+
+async function actionScanDht(): Promise<void> {
+  uiState.peersMessage = 'Scanning DHT for peers...';
+  uiState.peersMeta = { tone: 'warn', label: 'Scanning...' };
+  uiState.overviewBadge = { tone: 'warn', label: 'Scanning DHT for peers...' };
+  notifyUiStateChanged();
+  setRuntimeActivity('warn', 'Scanning DHT for peers...', 12_000);
+  try {
     const result = await scanDhtNow();
     if (!result.ok) {
       throw new Error(result.error ?? 'DHT scan failed');
     }
     appendSystemLog('Triggered immediate DHT scan.');
     setRuntimeActivity('active', 'DHT scan completed.', 4_000);
-  };
-
-  bindAction('scanNetworkBtn', scanAction);
-  bindAction('scanNetworkBtnPeers', scanAction);
-
-  bindAction('refreshPluginsBtn', async () => {
-    await refreshPluginInventory();
-  }, { refreshAfter: false });
-
-  bindAction('installConnectPluginBtn', async () => {
-    const packageName = resolveRouterPackageName(uiState.pluginHints.router || elements.connectRouter?.value);
-    await installPluginPackage(packageName);
-  }, { refreshAfter: false });
-
-  elements.connectRouter?.addEventListener('input', () => {
-    clearRouterPluginHint();
-    renderPluginSetupState();
-  });
+    await refreshAll('manual');
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    appendSystemLog(`DHT scan failed: ${message}`);
+    setRuntimeActivity('bad', `DHT scan failed: ${message}`, 8_000);
+  }
 }
 
-function initializeBridge(renderOfflineState: (message: string) => void): void {
+async function actionClearLogs(): Promise<void> {
+  const clearLogs = requireBridgeMethod('clearLogs', 'Log clearing is unavailable in this build');
+  try {
+    await clearLogs();
+    await refreshAll('manual');
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    appendSystemLog(`Clear logs failed: ${message}`);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Register actions for React                                         */
+/* ------------------------------------------------------------------ */
+
+registerActions({
+  startConnect: actionStartConnect,
+  stopConnect: actionStopConnect,
+  startAll: actionStartAll,
+  stopAll: actionStopAll,
+  refreshAll: () => refreshAll('manual'),
+  clearLogs: actionClearLogs,
+  scanDht: actionScanDht,
+  saveConfig: saveConfig,
+  createNewConversation: chatApi.createNewConversation,
+  openConversation: chatApi.openConversation,
+  sendMessage: chatApi.sendMessage,
+  abortChat: chatApi.abortChat,
+  deleteConversation: chatApi.deleteConversation,
+  handleModelChange: chatApi.handleModelChange,
+  handleModelFocus: chatApi.handleModelFocus,
+  handleModelBlur: chatApi.handleModelBlur,
+  refreshPlugins: refreshPluginInventory,
+  installPlugin: () => {
+    const packageName = resolveRouterPackageName(
+      uiState.pluginHints.router || uiState.connectRouterValue,
+    );
+    return installPluginPackage(packageName);
+  },
+});
+
+/* ------------------------------------------------------------------ */
+/*  Mount React (store + actions both ready)                           */
+/* ------------------------------------------------------------------ */
+
+mountAppShell();
+
+/* ------------------------------------------------------------------ */
+/*  Refresh hooks (dashboard-api → dashboard-render bridge)            */
+/* ------------------------------------------------------------------ */
+
+setRefreshHooks({
+  setDashboardRefreshState: (busy: boolean, stage: string) => {
+    if (busy) {
+      uiState.peersMessage = stage;
+      uiState.peersMeta = { tone: 'warn', label: 'Refreshing...' };
+      uiState.overviewBadge = { tone: 'warn', label: stage };
+      notifyUiStateChanged();
+      return;
+    }
+    syncBuyerRuntimeOverview();
+    syncRuntimeActivityFromProcesses();
+  },
+  renderDashboardData,
+  refreshChatConversations: chatApi.refreshChatConversations,
+  refreshChatProxyStatus: chatApi.refreshChatProxyStatus,
+});
+
+/* ------------------------------------------------------------------ */
+/*  Bridge initialisation                                              */
+/* ------------------------------------------------------------------ */
+
+function initializeBridge(): void {
   if (!bridge) {
     appendSystemLog(UI_MESSAGES.desktopBridgeUnavailable);
     renderOfflineState('Desktop bridge unavailable.');
@@ -468,7 +440,8 @@ function initializeBridge(renderOfflineState: (message: string) => void): void {
   bridge.onLog?.((event) => {
     updatePluginHintFromLog(event);
     if (event.mode === 'connect' && isProxyPortOccupiedMessage(event.line)) {
-      setConnectWarning(UI_MESSAGES.proxyPortInUse);
+      uiState.connectWarning = UI_MESSAGES.proxyPortInUse;
+      notifyUiStateChanged();
     }
 
     appendLog(event);
@@ -485,7 +458,8 @@ function initializeBridge(renderOfflineState: (message: string) => void): void {
     syncRuntimeActivityFromProcesses(processes);
 
     if (isModeRunning('connect', processes)) {
-      setConnectWarning(null);
+      uiState.connectWarning = null;
+      notifyUiStateChanged();
       clearRouterPluginHint();
     }
 
@@ -530,70 +504,10 @@ function initializeBridge(renderOfflineState: (message: string) => void): void {
   }, POLL_INTERVAL_MS);
 }
 
-const { populateSettingsForm } = initSettingsModule({
-  elements,
-  safeArray,
-  safeNumber,
-  safeString,
-  getDashboardData,
-  getDashboardPort,
-});
-
-const {
-  renderDashboardData,
-  renderOfflineState,
-  initSortableHeaders,
-  bindPeerFilter,
-} = initDashboardRenderModule({
-  elements,
-  uiState,
-  safeNumber,
-  safeArray,
-  safeString,
-  safeObject,
-  formatRelativeTime,
-  formatDuration,
-  formatInt,
-  formatPercent,
-  formatLatency,
-  formatShortId,
-  formatEndpoint,
-  setText,
-  setBadgeTone,
-  isModeRunning,
-  appendSystemLog,
-  populateSettingsForm,
-});
-
-const { refreshChatConversations, refreshChatProxyStatus } = initChatModule({
-  bridge,
-  elements,
-  uiState,
-  setBadgeTone,
-  appendSystemLog,
-  setRuntimeActivity,
-});
-
-  setRefreshHooks({
-    setDashboardRefreshState: (busy: boolean, stage: string) => {
-      if (busy) {
-        setText(elements.peersMessage, stage);
-        setBadgeTone(elements.peersMeta, 'warn', 'Refreshing...');
-        setBadgeTone(elements.overviewBadge, 'warn', stage);
-        return;
-      }
-      syncBuyerRuntimeOverview();
-      syncRuntimeActivityFromProcesses();
-    },
-  renderOfflineState,
-  renderDashboardData,
-  refreshChatConversations,
-  refreshChatProxyStatus,
-});
+/* ------------------------------------------------------------------ */
+/*  Start                                                              */
+/* ------------------------------------------------------------------ */
 
 renderPluginSetupState();
-bindControls();
-initSortableHeaders();
-bindPeerFilter();
 setRuntimeActivity('idle', 'Initializing desktop runtime...', 6_000);
-initializeBridge(renderOfflineState);
+initializeBridge();

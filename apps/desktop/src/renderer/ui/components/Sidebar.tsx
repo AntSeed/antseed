@@ -1,5 +1,7 @@
 import { memo } from 'react';
 import type { ViewName } from '../types';
+import { useUiSnapshot } from '../hooks/useUiSnapshot';
+import { useActions } from '../hooks/useActions';
 
 type SidebarProps = {
   activeView: ViewName;
@@ -22,6 +24,8 @@ const networkEntries: NavEntry[] = [
 ];
 
 const SidebarHeader = memo(function SidebarHeader() {
+  const { connectWarning } = useUiSnapshot();
+
   return (
     <div className="sidebar-header">
       <div className="sidebar-logo">
@@ -30,37 +34,91 @@ const SidebarHeader = memo(function SidebarHeader() {
           <span className="sidebar-title-ant">AntStation</span>
         </h1>
       </div>
-      <p id="connectWarning" className="sidebar-warning" hidden></p>
+      {connectWarning && (
+        <p className="sidebar-warning">{connectWarning}</p>
+      )}
     </div>
   );
 });
 
-const ChatSidebar = memo(function ChatSidebar() {
+function formatChatTime(timestamp: unknown): string {
+  const ts = Number(timestamp);
+  if (!ts || ts <= 0) return 'n/a';
+  const d = new Date(ts);
+  const now = new Date();
+  if (d.toDateString() === now.toDateString()) {
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+function shortModelName(model: unknown): string {
+  const raw = String(model || '').trim();
+  if (!raw) return 'unknown-model';
+  return raw.replace(/^claude-/, '').replace(/-20\d{6,}/, '');
+}
+
+function ChatSidebar() {
+  const { chatConversations, chatActiveConversation } = useUiSnapshot();
+  const actions = useActions();
+  const conversations = Array.isArray(chatConversations) ? chatConversations : [];
+
   return (
     <aside className="chat-sidebar">
       <div className="chat-sidebar-header">
-        <button id="chatNewBtn" className="chat-new-btn">
+        <button className="chat-new-btn" onClick={() => void actions.createNewConversation()}>
           + New Chat
         </button>
       </div>
-      <div id="chatConversations" className="chat-conversation-list">
-        <div className="chat-empty">No conversations yet</div>
+      <div className="chat-conversation-list">
+        {conversations.length === 0 ? (
+          <div className="chat-empty">No conversations yet</div>
+        ) : (
+          conversations.map((item: unknown) => {
+            const conv = item as Record<string, unknown>;
+            const id = String(conv.id ?? '');
+            const isActive = id === chatActiveConversation;
+            const updatedLabel = Number(conv.updatedAt) > 0 ? formatChatTime(conv.updatedAt) : 'n/a';
+            const messageCount = Number(conv.messageCount) || 0;
+            const totalTokens = Number(conv.totalTokens) || 0;
+
+            return (
+              <div
+                key={id}
+                className={`chat-conv-item${isActive ? ' active' : ''}`}
+                onClick={() => void actions.openConversation(id)}
+              >
+                <div className="chat-conv-top">
+                  <div className="chat-conv-peer">{String(conv.title || '')}</div>
+                  <span className="chat-conv-time">{updatedLabel}</span>
+                </div>
+                <div className="chat-conv-preview">{shortModelName(conv.model)}</div>
+                <div className="chat-conv-meta">
+                  <span>{`${messageCount} msg${messageCount === 1 ? '' : 's'}`}</span>
+                  <span>{`${totalTokens.toLocaleString()} tok`}</span>
+                </div>
+              </div>
+            );
+          })
+        )}
       </div>
     </aside>
   );
-});
+}
 
-const SidebarFooter = memo(function SidebarFooter() {
+function SidebarFooter() {
+  const { connectBadge } = useUiSnapshot();
+
   return (
     <div className="sidebar-footer">
       <div className="runtime-chip-wrap">
         <span className="runtime-chip">
-          Buyer <strong id="connectBadge">Stopped</strong>
+          Buyer <strong>{connectBadge.label}</strong>
         </span>
       </div>
     </div>
   );
-});
+}
 
 export function Sidebar({ activeView, onSelectView }: SidebarProps) {
   return (
@@ -75,9 +133,7 @@ export function Sidebar({ activeView, onSelectView }: SidebarProps) {
             data-view={chatEntry.view}
             role="tab"
             aria-selected={activeView === chatEntry.view ? 'true' : 'false'}
-            onClick={() => {
-              onSelectView(chatEntry.view);
-            }}
+            onClick={() => onSelectView(chatEntry.view)}
           >
             {chatEntry.label}
           </button>
@@ -93,9 +149,7 @@ export function Sidebar({ activeView, onSelectView }: SidebarProps) {
                 data-view={view}
                 role="tab"
                 aria-selected={isActive ? 'true' : 'false'}
-                onClick={() => {
-                  onSelectView(view);
-                }}
+                onClick={() => onSelectView(view)}
               >
                 {label}
               </button>

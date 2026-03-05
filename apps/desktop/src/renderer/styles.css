@@ -375,6 +375,7 @@ button:disabled {
 
 /* Shared dashboard page styling */
 .view-host {
+  height: 100%;
   min-height: 0;
   overflow: hidden;
 }
@@ -389,35 +390,35 @@ button:disabled {
   display: block;
 }
 
-#view-desktop.view {
+.view-desktop.view {
   overflow: hidden;
 }
 
-#view-desktop.view.active {
+.view-desktop.view.active {
   display: flex;
   flex-direction: column;
   min-height: 0;
 }
 
-#view-desktop .panel-grid {
+.view-desktop .panel-grid {
   flex: 1;
   min-height: 0;
 }
 
-#view-desktop .panel {
+.view-desktop .panel {
   display: flex;
   flex-direction: column;
   min-height: 0;
 }
 
-#view-desktop #daemonState,
-#view-desktop .logs {
+.view-desktop #daemonState,
+.view-desktop .logs {
   flex: 1;
   min-height: 0;
   height: auto;
 }
 
-#view-desktop .logs {
+.view-desktop .logs {
   min-height: 0;
   overflow-y: auto;
 }
@@ -712,11 +713,11 @@ pre,
 }
 
 /* Chat view */
-#view-chat.view {
+.view-chat.view {
   overflow: hidden;
 }
 
-#view-chat.view.active {
+.view-chat.view.active {
   display: flex;
   flex-direction: column;
   min-height: 0;

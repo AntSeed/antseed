@@ -1,52 +1,45 @@
-import { memo } from 'react';
+import { useUiSnapshot } from '../../hooks/useUiSnapshot';
 
 type ConnectionViewProps = {
   active: boolean;
 };
 
-const ConnectionContent = memo(function ConnectionContent() {
+export function ConnectionView({ active }: ConnectionViewProps) {
+  const { connectionMeta, connectionStatus, connectionNetwork, connectionSources, connectionNotes } =
+    useUiSnapshot();
+
   return (
-    <>
+    <section className={`view${active ? ' active' : ''}`} role="tabpanel">
       <div className="page-header">
         <h2>Connection</h2>
-        <div id="connectionMeta" className="connection-badge badge-idle">
-          No data
-        </div>
+        <div className={`connection-badge badge-${connectionMeta.tone}`}>{connectionMeta.label}</div>
       </div>
       <div className="panel-grid two-col">
         <article className="panel">
           <div className="panel-head">
             <h3>Node Status</h3>
           </div>
-          <pre id="connectionStatus">No status data.</pre>
+          <pre>{connectionStatus}</pre>
         </article>
         <article className="panel">
           <div className="panel-head">
             <h3>Network Stats</h3>
           </div>
-          <pre id="connectionNetwork">No network stats.</pre>
+          <pre>{connectionNetwork}</pre>
         </article>
         <article className="panel">
           <div className="panel-head">
             <h3>Data Sources</h3>
           </div>
-          <pre id="connectionSources">No data source info.</pre>
+          <pre>{connectionSources}</pre>
         </article>
         <article className="panel">
           <div className="panel-head">
             <h3>Connection Notes</h3>
           </div>
-          <pre id="connectionNotes">No notes.</pre>
+          <pre>{connectionNotes}</pre>
         </article>
       </div>
-    </>
-  );
-});
-
-export function ConnectionView({ active }: ConnectionViewProps) {
-  return (
-    <section id="view-connection" className={`view${active ? ' active' : ''}`} role="tabpanel">
-      <ConnectionContent />
     </section>
   );
 }
