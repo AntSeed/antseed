@@ -680,8 +680,9 @@ export class ConnectionManager extends EventEmitter {
   private _acceptTcpInbound(socket: Socket, remotePeerId: PeerId, remainingData: Buffer): void {
     const existing = this._connections.get(remotePeerId);
     if (existing && existing.state !== ConnectionState.Closed && existing.state !== ConnectionState.Failed) {
-      socket.destroy(new Error(`Connection from ${remotePeerId} already exists`));
-      return;
+      // Replace stale/ghost connections from the same peer instead of rejecting
+      // fresh reconnect attempts, which can leave buyers stuck on dead links.
+      existing.close();
     }
 
     const conn = new PeerConnection({
@@ -699,8 +700,9 @@ export class ConnectionManager extends EventEmitter {
   private _acceptWebRtcInbound(socket: Socket, remotePeerId: PeerId, initialSignalingBuffer: string): void {
     const existing = this._connections.get(remotePeerId);
     if (existing && existing.state !== ConnectionState.Closed && existing.state !== ConnectionState.Failed) {
-      socket.destroy(new Error(`Connection from ${remotePeerId} already exists`));
-      return;
+      // Replace stale/ghost connections from the same peer instead of rejecting
+      // fresh reconnect attempts, which can leave buyers stuck on dead links.
+      existing.close();
     }
 
     const conn = new PeerConnection({
@@ -867,7 +869,11 @@ export class ConnectionManager extends EventEmitter {
     conn.on("stateChange", (state: ConnectionState) => {
       this.emit("connectionStateChange", peerId, state);
       if (state === ConnectionState.Closed || state === ConnectionState.Failed) {
-        this._connections.delete(peerId);
+        // Only delete if this exact instance is still the active mapping.
+        // A newer replacement connection may already exist for the same peer.
+        if (this._connections.get(peerId) === conn) {
+          this._connections.delete(peerId);
+        }
       }
     });
 
