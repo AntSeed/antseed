@@ -2,9 +2,9 @@ import { initChatModule } from './modules/chat';
 import { initSettingsModule } from './modules/settings';
 import { initRuntimeModule } from './modules/runtime';
 import { initDashboardRenderModule } from './modules/dashboard-render';
-import { initNavigationModule } from './modules/navigation';
 import { initDashboardApiModule } from './modules/dashboard-api';
 import { initPluginSetupModule } from './modules/plugin-setup';
+import { mountAppShell } from './ui/mount';
 import {
   DEFAULT_DASHBOARD_PORT,
   POLL_INTERVAL_MS,
@@ -28,23 +28,11 @@ import type { DesktopBridge } from './types/bridge';
 
 const isMacPlatform = /Mac|iPhone|iPad|iPod/.test(navigator.platform);
 document.body.classList.toggle('platform-macos', isMacPlatform);
+mountAppShell();
 
 const bridge = window.antseedDesktop as DesktopBridge | undefined;
 const elements = createRendererElements();
 const uiState = createInitialUiState();
-
-const navButtons = Array.from(document.querySelectorAll<HTMLElement>('.sidebar-btn[data-view]'));
-const views = Array.from(document.querySelectorAll<HTMLElement>('.view'));
-const toolbarViews = new Set<string>(['overview', 'desktop']);
-
-const {
-  setActiveView,
-  initNavigation,
-} = initNavigationModule({
-  navButtons,
-  views,
-  toolbarViews,
-});
 
 const {
   appendLog,
@@ -603,8 +591,6 @@ const { refreshChatConversations, refreshChatProxyStatus } = initChatModule({
   refreshChatProxyStatus,
 });
 
-initNavigation();
-setActiveView('chat');
 renderPluginSetupState();
 bindControls();
 initSortableHeaders();
