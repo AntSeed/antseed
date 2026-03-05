@@ -77,6 +77,15 @@ export type CandidatePeerRouteSelection = {
 }
 
 const CLAUDE_PROVIDER_PREFERENCE = ['claude-oauth', 'anthropic', 'claude-code'] as const
+const DEFAULT_ANTHROPIC_VERSION = '2023-06-01'
+
+function hasHeaderCaseInsensitive(headers: Record<string, string>, name: string): boolean {
+  const target = name.trim().toLowerCase()
+  if (target.length === 0) {
+    return false
+  }
+  return Object.keys(headers).some((key) => key.toLowerCase() === target)
+}
 
 function inferPreferredProvidersForRequest(
   requestProtocol: ModelApiProtocol | null,
@@ -1446,6 +1455,20 @@ export class BuyerProxy {
         ...headersForPeer,
         'x-antseed-provider': selectedRoutePlan.provider,
       },
+    }
+
+    if (
+      requestProtocol === 'anthropic-messages'
+      && !hasHeaderCaseInsensitive(requestForPeer.headers, 'anthropic-version')
+    ) {
+      requestForPeer = {
+        ...requestForPeer,
+        headers: {
+          ...requestForPeer.headers,
+          'anthropic-version': DEFAULT_ANTHROPIC_VERSION,
+        },
+      }
+      log(`Injecting default anthropic-version=${DEFAULT_ANTHROPIC_VERSION}`)
     }
     let adaptResponse: ((response: SerializedHttpResponse) => SerializedHttpResponse) | null = null
     let forceDisableUpstreamStreaming = false
