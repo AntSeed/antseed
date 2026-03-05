@@ -46,3 +46,46 @@ test('selectCandidatePeersForRouting keeps all peers when no protocol or provide
   assert.deepEqual(result.candidatePeers.map((peer) => peer.peerId), peers.map((peer) => peer.peerId))
   assert.equal(result.routePlanByPeerId.size, 0)
 })
+
+test('selectCandidatePeersForRouting excludes providers that explicitly do not advertise requested model', () => {
+  const openAiPeer = makePeer('a', ['openai'])
+  openAiPeer.providerModelApiProtocols = {
+    openai: {
+      models: {
+        'gpt-4o': ['openai-chat-completions'],
+      },
+    },
+  }
+  const claudePeer = makePeer('b', ['claude-oauth'])
+  claudePeer.providerModelApiProtocols = {
+    'claude-oauth': {
+      models: {
+        'claude-opus-4-6': ['anthropic-messages'],
+      },
+    },
+  }
+
+  const result = selectCandidatePeersForRouting(
+    [openAiPeer, claudePeer],
+    'anthropic-messages',
+    'claude-opus-4-6',
+    null,
+  )
+
+  assert.equal(result.candidatePeers.length, 1)
+  assert.equal(result.candidatePeers[0]?.peerId, claudePeer.peerId)
+  assert.equal(result.routePlanByPeerId.get(claudePeer.peerId)?.provider, 'claude-oauth')
+})
+
+test('selectCandidatePeersForRouting can still include peers without model protocol metadata', () => {
+  const peerWithoutMetadata = makePeer('a', ['openai'])
+  const result = selectCandidatePeersForRouting(
+    [peerWithoutMetadata],
+    'openai-chat-completions',
+    'gpt-4o',
+    null,
+  )
+
+  assert.equal(result.candidatePeers.length, 1)
+  assert.equal(result.candidatePeers[0]?.peerId, peerWithoutMetadata.peerId)
+})

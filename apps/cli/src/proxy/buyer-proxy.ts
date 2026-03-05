@@ -165,6 +165,40 @@ function getPeerProviderProtocols(
   return inferred
 }
 
+function isProviderModelExplicitlyUnsupported(
+  peer: PeerInfo,
+  provider: string,
+  requestedModel: string | null,
+): boolean {
+  if (!requestedModel) {
+    return false
+  }
+
+  const modelMatrix = (
+    peer as PeerInfo & {
+      providerModelApiProtocols?: Record<string, { models: Record<string, ModelApiProtocol[]> }>
+    }
+  ).providerModelApiProtocols?.[provider]?.models
+
+  if (!modelMatrix) {
+    return false
+  }
+
+  const advertisedModels = Object.keys(modelMatrix)
+  if (advertisedModels.length === 0) {
+    return false
+  }
+
+  if (Object.prototype.hasOwnProperty.call(modelMatrix, requestedModel)) {
+    return false
+  }
+
+  log(
+    `Model strict-miss: peer ${peer.peerId.slice(0, 8)} provider=${provider} does not advertise model="${requestedModel}"`,
+  )
+  return true
+}
+
 function resolvePeerRoutePlan(
   peer: PeerInfo,
   requestProtocol: ModelApiProtocol | null,
@@ -192,6 +226,9 @@ function resolvePeerRoutePlan(
 
   let transformedFallback: PeerProtocolRoutePlan | null = null
   for (const provider of candidates) {
+    if (!explicitProvider && isProviderModelExplicitlyUnsupported(peer, provider, requestedModel)) {
+      continue
+    }
     const supportedProtocols = getPeerProviderProtocols(peer, provider, requestedModel)
     const selection = selectTargetProtocolForRequest(requestProtocol, supportedProtocols)
     if (!selection) {
@@ -405,6 +442,184 @@ function extractRequestedModel(request: SerializedHttpRequest): string | null {
   } catch {
     return null
   }
+}
+
+function decodeJsonBody(body: Uint8Array): Record<string, unknown> | null {
+  if (!body || body.length === 0) {
+    return null
+  }
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(body)) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return null
+    }
+    return parsed as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
+function summarizeMessageShape(messagesRaw: unknown): string {
+  if (!Array.isArray(messagesRaw)) {
+    return 'msgShape=none'
+  }
+
+  const roleCounts = new Map<string, number>()
+  const contentKindCounts = new Map<string, number>()
+  const blockTypeCounts = new Map<string, number>()
+  let invalidMessages = 0
+  let firstRole = 'none'
+  let lastRole = 'none'
+
+  const bump = (map: Map<string, number>, key: string): void => {
+    map.set(key, (map.get(key) ?? 0) + 1)
+  }
+
+  for (const entry of messagesRaw) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      invalidMessages += 1
+      continue
+    }
+
+    const message = entry as Record<string, unknown>
+    const role = typeof message.role === 'string' && message.role.trim().length > 0
+      ? message.role.trim().toLowerCase()
+      : 'invalid-role'
+    bump(roleCounts, role)
+    if (firstRole === 'none') {
+      firstRole = role
+    }
+    lastRole = role
+
+    const content = message.content
+    if (typeof content === 'string') {
+      bump(contentKindCounts, 'string')
+      continue
+    }
+    if (Array.isArray(content)) {
+      bump(contentKindCounts, 'array')
+      for (const block of content) {
+        if (!block || typeof block !== 'object' || Array.isArray(block)) {
+          bump(blockTypeCounts, 'invalid')
+          continue
+        }
+        const blockType = typeof (block as Record<string, unknown>).type === 'string'
+          ? String((block as Record<string, unknown>).type).trim().toLowerCase()
+          : 'missing-type'
+        bump(blockTypeCounts, blockType || 'missing-type')
+      }
+      continue
+    }
+    if (content && typeof content === 'object') {
+      bump(contentKindCounts, 'object')
+      continue
+    }
+    bump(contentKindCounts, 'other')
+  }
+
+  const joinMap = (map: Map<string, number>): string => (
+    [...map.entries()]
+      .sort((left, right) => left[0].localeCompare(right[0]))
+      .map(([key, value]) => `${key}:${String(value)}`)
+      .join(',')
+  )
+
+  const roleSummary = joinMap(roleCounts) || 'none'
+  const contentSummary = joinMap(contentKindCounts) || 'none'
+  const blockSummary = joinMap(blockTypeCounts) || 'none'
+
+  return [
+    `msgShape=roles{${roleSummary}}`,
+    `content{${contentSummary}}`,
+    `blocks{${blockSummary}}`,
+    `firstRole=${firstRole}`,
+    `lastRole=${lastRole}`,
+    `invalidMsgs=${String(invalidMessages)}`,
+  ].join(' ')
+}
+
+function summarizeRequestShape(request: SerializedHttpRequest): string {
+  const contentType = (request.headers['content-type'] ?? request.headers['Content-Type'] ?? '').toLowerCase()
+  const accept = (request.headers['accept'] ?? request.headers['Accept'] ?? '').toLowerCase()
+  const providerHeader = request.headers['x-antseed-provider'] ?? 'none'
+  const preferPeerHeader = request.headers['x-antseed-prefer-peer'] ?? 'none'
+  const model = extractRequestedModel(request) ?? 'none'
+  const wantsStreaming = requestWantsStreaming(request.headers, request.body)
+
+  const baseParts = [
+    `method=${request.method}`,
+    `path=${request.path}`,
+    `provider=${providerHeader}`,
+    `preferPeer=${preferPeerHeader}`,
+    `contentType=${contentType || 'none'}`,
+    `accept=${accept || 'none'}`,
+    `stream=${String(wantsStreaming)}`,
+    `model=${model}`,
+    `bodyBytes=${String(request.body.length)}`,
+  ]
+
+  const jsonBody = decodeJsonBody(request.body)
+  if (!jsonBody) {
+    return baseParts.join(' ')
+  }
+
+  const messagesRaw = jsonBody.messages
+  const toolsRaw = jsonBody.tools
+  const messageCount = Array.isArray(messagesRaw) ? messagesRaw.length : 0
+  const toolCount = Array.isArray(toolsRaw) ? toolsRaw.length : 0
+  const maxTokens = Number(jsonBody.max_tokens ?? jsonBody.maxTokens)
+  const keys = Object.keys(jsonBody).sort().join(',')
+
+  baseParts.push(`messages=${String(messageCount)}`)
+  baseParts.push(`tools=${String(toolCount)}`)
+  if (Number.isFinite(maxTokens) && maxTokens > 0) {
+    baseParts.push(`maxTokens=${String(Math.floor(maxTokens))}`)
+  }
+  if (keys.length > 0) {
+    baseParts.push(`keys=[${keys}]`)
+  }
+  baseParts.push(summarizeMessageShape(messagesRaw))
+
+  return baseParts.join(' ')
+}
+
+function summarizeErrorResponse(response: SerializedHttpResponse): string {
+  const contentType = (response.headers['content-type'] ?? '').toLowerCase()
+  if (!response.body || response.body.length === 0) {
+    return 'empty response body'
+  }
+
+  const raw = new TextDecoder().decode(response.body).trim()
+  if (raw.length === 0) {
+    return 'empty response body'
+  }
+
+  if (contentType.includes('application/json')) {
+    try {
+      const parsed = JSON.parse(raw) as unknown
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        const object = parsed as Record<string, unknown>
+        const nestedError = object.error && typeof object.error === 'object' && !Array.isArray(object.error)
+          ? (object.error as Record<string, unknown>)
+          : null
+        const message = (
+          (typeof nestedError?.message === 'string' && nestedError.message)
+          || (typeof object.message === 'string' && object.message)
+          || (typeof object.detail === 'string' && object.detail)
+        )
+        if (message) {
+          return `message="${message}"`
+        }
+      }
+    } catch {
+      // fall through to raw snippet
+    }
+  }
+
+  const compact = raw.replace(/\s+/g, ' ')
+  const maxChars = 280
+  const snippet = compact.length > maxChars ? `${compact.slice(0, maxChars)}...` : compact
+  return `body="${snippet}"`
 }
 
 function toFiniteNumberOrNull(value: unknown): number | null {
@@ -898,6 +1113,20 @@ export class BuyerProxy {
       headers,
       body: new Uint8Array(body),
     }
+    const clientAbortController = new AbortController()
+    const onClientAbort = (): void => {
+      if (clientAbortController.signal.aborted) {
+        return
+      }
+      clientAbortController.abort()
+      log(`Client disconnected; aborting upstream request reqId=${serializedReq.requestId.slice(0, 8)}`)
+    }
+    req.once('aborted', onClientAbort)
+    res.once('close', () => {
+      if (!res.writableEnded) {
+        onClientAbort()
+      }
+    })
 
     // Discover peers
     const peers = await this._getPeers()
@@ -914,6 +1143,9 @@ export class BuyerProxy {
     const explicitProvider = getExplicitProviderOverride(serializedReq)
     const explicitPeerId = getExplicitPeerIdOverride(serializedReq, this._pinnedPeerId)
     const preferredPeerId = getPreferredPeerIdHint(serializedReq)
+    log(
+      `Routing hints: provider=${explicitProvider ?? 'auto'} pin-peer=${explicitPeerId ?? 'none'} prefer-peer=${preferredPeerId ?? 'none'}`,
+    )
     const routeKey = this._buildRouteKey(serializedReq.path, requestProtocol, requestedModel, explicitProvider)
     const {
       candidatePeers,
@@ -950,29 +1182,11 @@ export class BuyerProxy {
       return
     }
 
-    // If model-specific routing collapses to a single candidate, relax the model constraint
-    // to keep protocol/provider-compatible failover peers available.
-    if (!explicitPeerId && requestedModel && routingPeers.length <= 1) {
-      const relaxedSelection = selectCandidatePeersForRouting(
-        discoveredPeers,
-        requestProtocol,
-        null,
-        explicitProvider,
-      )
-      if (relaxedSelection.candidatePeers.length > routingPeers.length) {
-        log(
-          `Relaxed model constraint for failover: model="${requestedModel}" candidates ${routingPeers.length} -> ${relaxedSelection.candidatePeers.length}`,
-        )
-        routingPeers = relaxedSelection.candidatePeers
-        routingPlans = relaxedSelection.routePlanByPeerId
-      }
-    }
-
     log(`Routing candidates: ${routingPeers.length} peer(s)`)
 
     // Select peer: explicit pin bypasses the router (and retry)
     const router = this._node.router
-    const RETRYABLE_STATUS_CODES = new Set([400, 401, 403, 404, 408, 429, 500, 502, 503, 504])
+    const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504])
 
     if (explicitPeerId) {
       let pinnedRoutingPeers = routingPeers
@@ -1019,6 +1233,7 @@ export class BuyerProxy {
         explicitProvider,
         router,
         RETRYABLE_STATUS_CODES,
+        clientAbortController.signal,
       )
       if (!result.done) {
         this._forgetSuccessfulPeer(routeKey, selectedPeer.peerId)
@@ -1035,12 +1250,30 @@ export class BuyerProxy {
     const preferredProviders = explicitProvider
       ? []
       : inferPreferredProvidersForRequest(requestProtocol, requestedModel)
+    const hasPreferredProviderCandidate = preferredProviders.length > 0
+      && routingPeers.some((peer) => {
+        const provider = routingPlans.get(peer.peerId)?.provider?.trim().toLowerCase()
+        return Boolean(provider && preferredProviders.includes(provider))
+      })
+    const restrictFailoverToPreferredProviders = preferredProviders.length > 0 && hasPreferredProviderCandidate
+    if (restrictFailoverToPreferredProviders) {
+      log(`Provider-family failover lock active: [${preferredProviders.join(',')}]`)
+    }
     let lastStatusCode = 502
     let lastResponseBody: Buffer | null = null
     let lastResponseHeaders: Record<string, string> = { 'content-type': 'text/plain' }
 
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-      const availableCandidates = routingPeers.filter((p) => !triedPeerIds.has(p.peerId))
+      const availableCandidates = routingPeers.filter((peer) => {
+        if (triedPeerIds.has(peer.peerId)) {
+          return false
+        }
+        if (!restrictFailoverToPreferredProviders) {
+          return true
+        }
+        const provider = routingPlans.get(peer.peerId)?.provider?.trim().toLowerCase()
+        return Boolean(provider && preferredProviders.includes(provider))
+      })
       if (availableCandidates.length === 0) break
 
       let selectedPeer: PeerInfo | null = null
@@ -1148,6 +1381,7 @@ export class BuyerProxy {
         explicitProvider,
         router,
         RETRYABLE_STATUS_CODES,
+        clientAbortController.signal,
       )
 
       if (result.done) return
@@ -1194,6 +1428,7 @@ export class BuyerProxy {
     explicitProvider: string | null,
     router: Router | null,
     retryableStatusCodes: Set<number>,
+    requestSignal: AbortSignal,
   ): Promise<
     | { done: true }
     | { done: false; statusCode: number; responseBody: Buffer; responseHeaders: Record<string, string>; errorMessage: string | null }
@@ -1252,6 +1487,7 @@ export class BuyerProxy {
       }
     }
 
+    log(`Outbound request shape: ${summarizeRequestShape(requestForPeer)}`)
     log(`Routing to peer ${selectedPeer.peerId.slice(0, 12)}...`)
 
     // Forward through P2P
@@ -1286,10 +1522,13 @@ export class BuyerProxy {
               res.write(Buffer.from(chunk.data))
             }
           },
-        })
+        }, { signal: requestSignal })
 
         const latencyMs = Date.now() - startTime
         log(`Response: ${response.statusCode} (${latencyMs}ms, ${response.body.length} bytes)`)
+        if (response.statusCode >= 400) {
+          log(`Upstream error detail: ${summarizeErrorResponse(response)}`)
+        }
 
         const telemetry = computeResponseTelemetry(requestForPeer, response.headers, response.body, selectedPeer)
         if (router) {
@@ -1330,13 +1569,21 @@ export class BuyerProxy {
         res.end(Buffer.from(response.body))
         return { done: true }
       } else {
-        let response = await this._node.sendRequest(selectedPeer, requestForPeer)
+        const upstreamResponse = await this._node.sendRequest(selectedPeer, requestForPeer, { signal: requestSignal })
+        if (upstreamResponse.statusCode >= 400) {
+          log(`Upstream raw error detail: ${summarizeErrorResponse(upstreamResponse)}`)
+        }
+
+        let response = upstreamResponse
         if (adaptResponse) {
           response = adaptResponse(response)
         }
         const latencyMs = Date.now() - startTime
 
         log(`Response: ${response.statusCode} (${latencyMs}ms, ${response.body.length} bytes)`)
+        if (response.statusCode >= 400) {
+          log(`Upstream error detail: ${summarizeErrorResponse(response)}`)
+        }
 
         const telemetry = computeResponseTelemetry(requestForPeer, response.headers, response.body, selectedPeer)
         const responseHeaders = attachAntseedTelemetryHeaders(
@@ -1372,7 +1619,19 @@ export class BuyerProxy {
     } catch (err) {
       const latencyMs = Date.now() - startTime
       const message = err instanceof Error ? err.message : String(err)
+      const abortedLocally = requestSignal.aborted || /\baborted\b/i.test(message)
       log(`Request failed after ${latencyMs}ms: ${message}`)
+
+      if (abortedLocally) {
+        log(`Request ${requestForPeer.requestId.slice(0, 8)} aborted locally; skipping retry, router penalty, and peer eviction.`)
+        if (res.headersSent) {
+          if (!res.writableEnded) {
+            res.end()
+          }
+          return { done: true }
+        }
+        return { done: true }
+      }
 
       if (router) {
         router.onResult(selectedPeer, {
