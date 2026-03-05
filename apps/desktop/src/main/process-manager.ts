@@ -43,8 +43,10 @@ const LOCAL_CLI_BIN_RELATIVE = ['..', 'cli', 'dist', 'cli', 'index.js'] as const
 const RUNTIME_NATIVE_SCRIPT_RELATIVE = ['scripts', 'ensure-runtime-native-modules.mjs'] as const;
 const RUNTIME_NATIVE_MARKER_FILE = '.runtime-native-meta.json';
 const DEFAULT_CONFIG_PATH = join(homedir(), '.antseed', 'config.json');
-const DESKTOP_DATA_ROOT = join(homedir(), '.antseed-desktop');
-const DESKTOP_CONNECT_DATA_DIR = join(DESKTOP_DATA_ROOT, 'connect');
+const DEFAULT_CONNECT_DATA_DIR = join(homedir(), '.antseed');
+const LEGACY_DESKTOP_DATA_ROOT = join(homedir(), '.antseed-desktop');
+const LEGACY_DESKTOP_CONNECT_DATA_DIR = join(LEGACY_DESKTOP_DATA_ROOT, 'connect');
+const CONNECT_DATA_DIR_ENV = 'ANTSEED_DESKTOP_CONNECT_DATA_DIR';
 const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
 
 function normalizeRouterIdentifier(value: string | undefined): string {
@@ -249,6 +251,17 @@ function resolveConfigPath(configPath?: string): string {
   return resolve(configPath);
 }
 
+function resolveConnectDataDir(): string {
+  const envDir = process.env[CONNECT_DATA_DIR_ENV]?.trim();
+  if (envDir && envDir.length > 0) {
+    if (envDir.startsWith('~/')) {
+      return join(homedir(), envDir.slice(2));
+    }
+    return resolve(envDir);
+  }
+  return DEFAULT_CONNECT_DATA_DIR;
+}
+
 type CliExecution = {
   executable: string;
   executableArgsPrefix: string[];
@@ -282,7 +295,7 @@ function resolveCommandArgs(opts: StartOptions): string[] {
 
   switch (opts.mode) {
     case 'connect':
-      args.push('--data-dir', DESKTOP_CONNECT_DATA_DIR);
+      args.push('--data-dir', resolveConnectDataDir());
       args.push('connect', '--router', normalizeRouterIdentifier(opts.router));
       break;
     case 'dashboard':
@@ -411,6 +424,17 @@ export class ProcessManager {
       'system',
       `Started ${mode} with "${executable}" (pid=${String(child.pid ?? 'unknown')})`,
     );
+    if (mode === 'connect') {
+      const dataDir = resolveConnectDataDir();
+      this.onLog(mode, 'system', `Connect data dir: ${dataDir}`);
+      if (dataDir === DEFAULT_CONNECT_DATA_DIR && existsSync(LEGACY_DESKTOP_CONNECT_DATA_DIR)) {
+        this.onLog(
+          mode,
+          'system',
+          `Legacy desktop connect data dir detected at ${LEGACY_DESKTOP_CONNECT_DATA_DIR}. Set ${CONNECT_DATA_DIR_ENV} to use it explicitly.`,
+        );
+      }
+    }
     return { ...state };
   }
 
