@@ -1376,7 +1376,6 @@ export function initChatModule({
     try {
       const result = await bridge.chatAiCreateConversation(
         selection.id,
-        selection.provider ?? undefined,
       );
       if (result.ok && result.data) {
         const conversationId = getConversationId(result.data);
@@ -1446,10 +1445,19 @@ export function initChatModule({
     updateStreamingIndicator();
   }
 
+  function isInProgressErrorMessage(message: unknown): boolean {
+    return String(message ?? '').toLowerCase().includes('already in progress');
+  }
+
   async function sendChatMessage() {
     const convId = uiState.chatActiveConversation;
     const input = elements.chatInput;
     if (!convId || !input || !bridge) return;
+
+    if (uiState.chatSending) {
+      showChatError('Another chat request is already in progress.');
+      return;
+    }
 
     const content = input.value.trim();
     if (content.length === 0) return;
@@ -1471,12 +1479,19 @@ export function initChatModule({
     try {
       const selection = getSelectedChatModelSelection();
       if (bridge.chatAiSendStream) {
-        const result = await bridge.chatAiSendStream(
+        const sendStreamRequest = async () => await bridge.chatAiSendStream!(
           convId,
           content,
           selection.id || undefined,
-          selection.provider ?? undefined,
         );
+
+        let result = await sendStreamRequest();
+        if (!result.ok && isInProgressErrorMessage(result.error) && bridge.chatAiAbort) {
+          appendSystemLog('Detected stuck in-flight chat request. Aborting and retrying once...');
+          await bridge.chatAiAbort().catch(() => undefined);
+          result = await sendStreamRequest();
+        }
+
         if (!result.ok) {
           reportChatError(result.error, 'Request failed');
           setChatSending(false);
@@ -1490,12 +1505,19 @@ export function initChatModule({
           }
         }
       } else if (bridge.chatAiSend) {
-        const result = await bridge.chatAiSend(
+        const sendRequest = async () => await bridge.chatAiSend!(
           convId,
           content,
           selection.id || undefined,
-          selection.provider ?? undefined,
         );
+
+        let result = await sendRequest();
+        if (!result.ok && isInProgressErrorMessage(result.error) && bridge.chatAiAbort) {
+          appendSystemLog('Detected stuck in-flight chat request. Aborting and retrying once...');
+          await bridge.chatAiAbort().catch(() => undefined);
+          result = await sendRequest();
+        }
+
         if (!result.ok) {
           reportChatError(result.error, 'Request failed');
         }

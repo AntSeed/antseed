@@ -2521,7 +2521,7 @@ ipcMain.handle('chat:ai-create-conversation', async (_event, model: string) => {
   const conv: AiConversation = {
     id: randomUUID(),
     title: 'New conversation',
-    model: model || 'claude-sonnet-4-20250514',
+    model: model || 'claude-sonnet-4-6',
     messages: [],
     createdAt: Date.now(),
     updatedAt: Date.now(),

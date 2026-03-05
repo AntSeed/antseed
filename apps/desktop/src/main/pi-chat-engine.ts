@@ -340,27 +340,6 @@ function toModelLabel(modelId: string, provider: string): string {
   return `${modelId} · ${provider}`;
 }
 
-function inferProviderFromModelId(modelId: string): string | null {
-  const trimmed = modelId.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  const slashIndex = trimmed.indexOf('/');
-  if (slashIndex > 0) {
-    const prefix = normalizeProviderId(trimmed.slice(0, slashIndex));
-    if (prefix && inferProviderProtocol(prefix)) {
-      return prefix;
-    }
-  }
-
-  if (trimmed.toLowerCase().startsWith('claude-')) {
-    return 'claude-oauth';
-  }
-
-  return null;
-}
-
 function updateModelProviderHints(
   modelProviderHints: Map<string, string[]>,
   entries: ChatModelCatalogEntry[],
@@ -381,27 +360,13 @@ function updateModelProviderHints(
 }
 
 function resolveProviderHintForModel(
-  modelId: string,
-  modelProviderHints: Map<string, string[]>,
   explicitProvider?: string,
-  contextProvider?: string,
 ): string | null {
   const explicit = normalizeProviderId(explicitProvider);
   if (explicit && inferProviderProtocol(explicit)) {
     return explicit;
   }
-
-  const context = normalizeProviderId(contextProvider);
-  if (context && inferProviderProtocol(context)) {
-    return context;
-  }
-
-  const hintedProviders = modelProviderHints.get(modelId.trim().toLowerCase()) ?? [];
-  if (hintedProviders.length === 1) {
-    return hintedProviders[0] ?? null;
-  }
-
-  return inferProviderFromModelId(modelId);
+  return null;
 }
 
 function normalizePeerId(value: unknown): string | null {
@@ -410,19 +375,6 @@ function normalizePeerId(value: unknown): string | null {
   }
   const peerId = value.trim().toLowerCase();
   return /^[0-9a-f]{64}$/i.test(peerId) ? peerId : null;
-}
-
-function findLatestPeerHint(messages: Message[]): string | null {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index] as unknown;
-    const record = asRecord(message);
-    const meta = asRecord(record?.meta);
-    const peerId = normalizePeerId(meta?.peerId);
-    if (peerId) {
-      return peerId;
-    }
-  }
-  return null;
 }
 
 function normalizeChatModelCatalogEntry(raw: unknown): ChatModelCatalogEntry | null {
@@ -2051,6 +2003,42 @@ export function registerPiChatHandlers({
   let modelCatalogRefreshPromise: Promise<ChatModelCatalogEntry[]> | null = null;
   let lastModelCatalogRefreshAt = 0;
 
+  const clearActiveRun = (run: ActiveRun | null): void => {
+    if (!run) {
+      return;
+    }
+
+    try {
+      run.unsubscribe();
+    } catch {
+      // Ignore listener cleanup failures.
+    }
+
+    try {
+      run.session.dispose();
+    } catch {
+      // Ignore disposal races.
+    }
+
+    if (activeRun === run) {
+      activeRun = null;
+    }
+  };
+
+  const abortAndClearActiveRun = async (run: ActiveRun | null): Promise<void> => {
+    if (!run) {
+      return;
+    }
+
+    try {
+      await run.session.abort();
+    } catch {
+      // Ignore abort races.
+    }
+
+    clearActiveRun(run);
+  };
+
   const isProxyAvailable = async (port: number): Promise<boolean> => {
     if (isBuyerRuntimeRunning()) {
       return true;
@@ -2070,7 +2058,8 @@ export function registerPiChatHandlers({
     }
 
     if (activeRun) {
-      return { ok: false, error: 'Another chat request is already in progress.' };
+      appendSystemLog(`Cancelling existing in-flight chat request for conversation ${activeRun.conversationId.slice(0, 8)}...`);
+      await abortAndClearActiveRun(activeRun);
     }
 
     const proxyPort = await resolveProxyPort(configPath);
@@ -2088,16 +2077,12 @@ export function registerPiChatHandlers({
 
     const context = sessionManager.buildSessionContext();
     const modelId = normalizeModelId(modelOverride || context.model?.modelId);
-    const preferredPeerId = preferredPeerByConversationId.get(conversationId)
-      ?? findLatestPeerHint(context.messages as Message[]);
+    const preferredPeerId = preferredPeerByConversationId.get(conversationId) ?? null;
     if (preferredPeerId) {
       preferredPeerByConversationId.set(conversationId, preferredPeerId);
     }
     const providerHint = resolveProviderHintForModel(
-      modelId,
-      modelProviderHints,
       providerOverride,
-      context.model?.provider,
     );
     const proxyModel = makeProxyModel(modelId, proxyPort);
 
@@ -2285,7 +2270,8 @@ export function registerPiChatHandlers({
       }
     });
 
-    activeRun = { conversationId, session, unsubscribe };
+    const run: ActiveRun = { conversationId, session, unsubscribe };
+    activeRun = run;
 
     try {
       await session.prompt(trimmedMessage);
@@ -2300,20 +2286,13 @@ export function registerPiChatHandlers({
         return { ok: false, error: 'Aborted' };
       }
       const message = asErrorMessage(error);
+      preferredPeerByConversationId.delete(conversationId);
       sendToRenderer('chat:ai-stream-error', { conversationId, error: message });
       appendSystemLog(`Pi chat error: ${message}`);
       return { ok: false, error: message };
     } finally {
-      try {
-        unsubscribe();
-      } catch {
-        // Ignore listener cleanup failures.
-      }
-      session.dispose();
+      clearActiveRun(run);
       store.markPersistedIfAvailable(conversationId);
-      if (activeRun?.conversationId === conversationId) {
-        activeRun = null;
-      }
     }
   };
 
@@ -2454,11 +2433,7 @@ export function registerPiChatHandlers({
     if (!run) {
       return { ok: true };
     }
-    try {
-      await run.session.abort();
-    } catch {
-      // Ignore abort races.
-    }
+    await abortAndClearActiveRun(run);
     return { ok: true };
   });
 }
