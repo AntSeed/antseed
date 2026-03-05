@@ -155,6 +155,9 @@ const api = {
   chatAiCreateConversation(model: string): Promise<{ ok: boolean; data?: unknown; error?: string }> {
     return ipcRenderer.invoke('chat:ai-create-conversation', model);
   },
+  chatAiListModels(): Promise<{ ok: boolean; data?: unknown[]; error?: string }> {
+    return ipcRenderer.invoke('chat:ai-list-models');
+  },
   chatAiDeleteConversation(id: string): Promise<{ ok: boolean }> {
     return ipcRenderer.invoke('chat:ai-delete-conversation', id);
   },

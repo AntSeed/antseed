@@ -32,6 +32,15 @@ type ChatConversation = ChatConversationSummary & {
   messages?: ChatMessage[];
 };
 
+type ChatModelCatalogEntry = {
+  id?: string;
+  label?: string;
+  provider?: string;
+  protocol?: string;
+  count?: number;
+  [key: string]: unknown;
+};
+
 type ChatModuleOptions = {
   bridge?: DesktopBridge;
   elements: RendererElements;
@@ -54,6 +63,18 @@ export function initChatModule({
     'Myrmecochory checking tool and context trail',
     'Myrmecochory preparing the next inference hop',
   ];
+  const fallbackChatModels: Array<Required<Pick<ChatModelCatalogEntry, 'id' | 'label' | 'provider' | 'protocol' | 'count'>>> = [
+    { id: 'claude-sonnet-4-6', label: 'claude-sonnet-4-6 · claude-oauth', provider: 'claude-oauth', protocol: 'anthropic-messages', count: 0 },
+    { id: 'claude-opus-4-6', label: 'claude-opus-4-6 · claude-oauth', provider: 'claude-oauth', protocol: 'anthropic-messages', count: 0 },
+    { id: 'kimi-k2.5', label: 'kimi-k2.5 · openai', provider: 'openai', protocol: 'openai-chat-completions', count: 0 },
+  ];
+  const chatModelAliases: Record<string, string> = {
+    'moonshotai/kimi-k2.5': 'kimi-k2.5',
+    'claude-sonnet-4-20250514': 'claude-sonnet-4-6',
+    'claude-opus-4-20250514': 'claude-opus-4-6',
+    'claude-haiku-4-20250514': 'claude-haiku-4-6',
+  };
+  type NormalizedChatModelEntry = Required<Pick<ChatModelCatalogEntry, 'id' | 'label' | 'provider' | 'protocol' | 'count'>>;
 
   let activeConversation: ChatConversation | null = null;
   let activeStreamTurn: number | null = null;
@@ -85,20 +106,122 @@ export function initChatModule({
     return typeof id === 'string' && id.length > 0 ? id : null;
   }
 
+  function normalizeChatModelId(model: unknown): string {
+    const raw = String(model ?? '').trim();
+    if (!raw) {
+      return '';
+    }
+    const alias = chatModelAliases[raw.toLowerCase()];
+    return alias ?? raw;
+  }
+
+  function normalizeChatModelEntry(raw: unknown): NormalizedChatModelEntry | null {
+    if (!raw || typeof raw !== 'object') {
+      return null;
+    }
+    const entry = raw as ChatModelCatalogEntry;
+    const id = normalizeChatModelId(entry.id);
+    if (!id) {
+      return null;
+    }
+    const provider = String(entry.provider ?? '').trim().toLowerCase() || 'unknown';
+    const protocol = String(entry.protocol ?? '').trim().toLowerCase() || 'unknown';
+    const count = Math.max(0, Math.floor(Number(entry.count) || 0));
+    const label = String(entry.label ?? '').trim() || `${id} · ${provider}`;
+    return {
+      id,
+      label,
+      provider,
+      protocol,
+      count,
+    };
+  }
+
+  function updateChatModelOptions(
+    entries: NormalizedChatModelEntry[],
+  ): void {
+    const select = elements.chatModelSelect;
+    if (!(select instanceof HTMLSelectElement)) {
+      return;
+    }
+
+    const currentValue = normalizeChatModelId(select.value);
+    const activeConversationModel = normalizeChatModelId(activeConversation?.model);
+
+    const unique = new Map<string, NormalizedChatModelEntry>();
+    for (const entry of entries) {
+      if (!entry.id || unique.has(entry.id)) {
+        continue;
+      }
+      unique.set(entry.id, entry);
+    }
+
+    const options = Array.from(unique.values()).sort((a, b) => {
+      if (b.count !== a.count) {
+        return b.count - a.count;
+      }
+      if (a.provider !== b.provider) {
+        return a.provider.localeCompare(b.provider);
+      }
+      return a.id.localeCompare(b.id);
+    });
+
+    select.innerHTML = '';
+    for (const optionEntry of options) {
+      const option = document.createElement('option');
+      option.value = optionEntry.id;
+      option.textContent = optionEntry.label;
+      select.appendChild(option);
+    }
+
+    const preferred = (
+      [activeConversationModel, currentValue]
+        .find((candidate) => candidate.length > 0 && options.some((option) => option.id === candidate))
+      ?? options[0]?.id
+      ?? ''
+    );
+
+    if (preferred.length > 0) {
+      select.value = preferred;
+    }
+  }
+
+  async function refreshChatModelOptions(): Promise<void> {
+    const fallback = fallbackChatModels.map((entry) => ({ ...entry }));
+    if (!bridge?.chatAiListModels) {
+      updateChatModelOptions(fallback);
+      return;
+    }
+
+    try {
+      const result = await bridge.chatAiListModels();
+      if (!result.ok || !Array.isArray(result.data)) {
+        updateChatModelOptions(fallback);
+        return;
+      }
+      const parsed = result.data
+        .map((entry) => normalizeChatModelEntry(entry))
+        .filter((entry): entry is NormalizedChatModelEntry => entry !== null);
+      updateChatModelOptions(parsed.length > 0 ? parsed : fallback);
+    } catch {
+      updateChatModelOptions(fallback);
+    }
+  }
+
   function getSelectedChatModel(): string {
-    const selectedValue = elements.chatModelSelect?.value;
-    if (selectedValue && selectedValue.trim().length > 0) {
+    const selectedValue = normalizeChatModelId(elements.chatModelSelect?.value);
+    if (selectedValue.length > 0) {
       return selectedValue;
     }
 
     if (elements.chatModelSelect instanceof HTMLSelectElement) {
-      const firstOption = elements.chatModelSelect.options[0]?.value;
-      if (firstOption && firstOption.trim().length > 0) {
+      const firstOption = normalizeChatModelId(elements.chatModelSelect.options[0]?.value);
+      if (firstOption.length > 0) {
         return firstOption;
       }
     }
 
-    return 'moonshotai/kimi-k2.5';
+    return fallbackChatModels[0].id;
   }
 
   function formatChatTime(timestamp) {
@@ -632,6 +755,7 @@ export function initChatModule({
       proxyPort = 0;
       setBadgeTone(elements.chatProxyStatus, 'idle', 'Proxy offline');
     } finally {
+      void refreshChatModelOptions();
       updateStreamingIndicator();
     }
   }
@@ -773,7 +897,15 @@ export function initChatModule({
         }
 
         if (elements.chatDeleteBtn) elements.chatDeleteBtn.style.display = '';
-        if (elements.chatModelSelect) elements.chatModelSelect.value = String(conv.model || elements.chatModelSelect.value || '');
+        if (elements.chatModelSelect instanceof HTMLSelectElement) {
+          const conversationModel = normalizeChatModelId(conv.model);
+          if (conversationModel.length > 0) {
+            elements.chatModelSelect.value = conversationModel;
+          }
+          if (!elements.chatModelSelect.value) {
+            elements.chatModelSelect.value = getSelectedChatModel();
+          }
+        }
         if (elements.chatInput) elements.chatInput.disabled = false;
         if (elements.chatSendBtn) elements.chatSendBtn.disabled = false;
 
@@ -978,7 +1110,7 @@ export function initChatModule({
     setChatSending(true);
 
     try {
-      const model = elements.chatModelSelect?.value;
+      const model = getSelectedChatModel();
       if (bridge.chatAiSendStream) {
         const result = await bridge.chatAiSendStream(convId, content, model);
         if (!result.ok) {
@@ -1105,20 +1237,89 @@ export function initChatModule({
 
     let streamingBubble: any = null;
     let streamingContentEl: HTMLElement | null = null;
-    let streamingTextBuffer = '';
+    let streamingTextTarget = '';
+    let streamingTextVisible = '';
     let streamingThinkingBuffer = '';
-    let streamRafPending = false;
-    let streamRafId: number | null = null;
+    let streamThinkingRafPending = false;
+    let streamThinkingRafId: number | null = null;
     let streamThinkingDirtyIndex: number | null = null;
+    let streamTextRafId: number | null = null;
+    let streamTextLastFrameAt = 0;
 
-    function flushStreamRender() {
-      streamRafPending = false;
-      streamRafId = null;
+    const STREAM_TEXT_CHARS_PER_SECOND = 110;
 
-      if (streamingContentEl) {
-        streamingContentEl.innerHTML = renderMarkdown(streamingTextBuffer);
-        streamingContentEl.classList.add('streaming-cursor');
+    function renderStreamingText(): void {
+      if (!streamingContentEl) {
+        return;
       }
+
+      streamingContentEl.innerHTML = renderMarkdown(streamingTextVisible);
+      streamingContentEl.classList.add('streaming-cursor');
+      scrollChatToBottom();
+    }
+
+    function stopStreamTextAnimation(): void {
+      if (streamTextRafId !== null) {
+        cancelAnimationFrame(streamTextRafId);
+        streamTextRafId = null;
+      }
+      streamTextLastFrameAt = 0;
+    }
+
+    function streamTextStep(timestamp: number): void {
+      if (!streamingContentEl) {
+        stopStreamTextAnimation();
+        return;
+      }
+
+      if (streamTextLastFrameAt <= 0) {
+        streamTextLastFrameAt = timestamp;
+      }
+
+      const elapsedMs = Math.max(0, timestamp - streamTextLastFrameAt);
+      const charBudget = Math.max(1, Math.floor((elapsedMs * STREAM_TEXT_CHARS_PER_SECOND) / 1000));
+
+      if (charBudget > 0) {
+        const nextLength = Math.min(streamingTextTarget.length, streamingTextVisible.length + charBudget);
+        if (nextLength !== streamingTextVisible.length) {
+          streamingTextVisible = streamingTextTarget.slice(0, nextLength);
+          renderStreamingText();
+        }
+        streamTextLastFrameAt = timestamp;
+      }
+
+      if (streamingTextVisible.length < streamingTextTarget.length) {
+        streamTextRafId = requestAnimationFrame(streamTextStep);
+        return;
+      }
+
+      stopStreamTextAnimation();
+    }
+
+    function scheduleStreamTextAnimation(): void {
+      if (streamTextRafId !== null) {
+        return;
+      }
+      streamTextRafId = requestAnimationFrame(streamTextStep);
+    }
+
+    function resetStreamingText(): void {
+      stopStreamTextAnimation();
+      streamingTextTarget = '';
+      streamingTextVisible = '';
+    }
+
+    function flushStreamingText(): void {
+      stopStreamTextAnimation();
+      if (streamingTextVisible !== streamingTextTarget) {
+        streamingTextVisible = streamingTextTarget;
+        renderStreamingText();
+      }
+    }
+
+    function flushThinkingRender() {
+      streamThinkingRafPending = false;
+      streamThinkingRafId = null;
 
       if (streamThinkingDirtyIndex !== null && streamingBubble) {
         const thinkBody = streamingBubble.querySelector(`#stream-think-${streamThinkingDirtyIndex} .thinking-block-body`);
@@ -1131,18 +1332,18 @@ export function initChatModule({
       scrollChatToBottom();
     }
 
-    function scheduleStreamRender() {
-      if (streamRafPending) return;
-      streamRafPending = true;
-      streamRafId = requestAnimationFrame(flushStreamRender);
+    function scheduleThinkingRender() {
+      if (streamThinkingRafPending) return;
+      streamThinkingRafPending = true;
+      streamThinkingRafId = requestAnimationFrame(flushThinkingRender);
     }
 
-    function cancelStreamRaf() {
-      if (streamRafId !== null) {
-        cancelAnimationFrame(streamRafId);
-        streamRafId = null;
+    function cancelThinkingRaf() {
+      if (streamThinkingRafId !== null) {
+        cancelAnimationFrame(streamThinkingRafId);
+        streamThinkingRafId = null;
       }
-      streamRafPending = false;
+      streamThinkingRafPending = false;
       streamThinkingDirtyIndex = null;
     }
 
@@ -1150,8 +1351,8 @@ export function initChatModule({
       bridge.onChatAiStreamStart((data) => {
         if (data.conversationId !== uiState.chatActiveConversation) return;
         clearChatError();
-        cancelStreamRaf();
-        streamingTextBuffer = '';
+        cancelThinkingRaf();
+        resetStreamingText();
         streamingThinkingBuffer = '';
         streamingContentEl = null;
         activeStreamTurn = Number(data.turn) + 1;
@@ -1180,7 +1381,7 @@ export function initChatModule({
         if (data.conversationId !== uiState.chatActiveConversation || !streamingBubble) return;
 
         if (data.blockType === 'text') {
-          streamingTextBuffer = '';
+          resetStreamingText();
           streamingContentEl = document.createElement('div');
           streamingContentEl.className = 'chat-bubble-content streaming-cursor';
           streamingBubble.appendChild(streamingContentEl);
@@ -1215,12 +1416,12 @@ export function initChatModule({
         if (data.conversationId !== uiState.chatActiveConversation || !streamingBubble) return;
 
         if (data.blockType === 'text') {
-          streamingTextBuffer += data.text;
-          scheduleStreamRender();
+          streamingTextTarget += data.text;
+          scheduleStreamTextAnimation();
         } else if (data.blockType === 'thinking') {
           streamingThinkingBuffer += data.text;
           streamThinkingDirtyIndex = data.index;
-          scheduleStreamRender();
+          scheduleThinkingRender();
         }
       });
     }
@@ -1230,10 +1431,8 @@ export function initChatModule({
         if (data.conversationId !== uiState.chatActiveConversation || !streamingBubble) return;
 
         if (data.blockType === 'text') {
-          // Flush any pending RAF so final content is accurate
-          cancelStreamRaf();
+          flushStreamingText();
           if (streamingContentEl) {
-            streamingContentEl.innerHTML = renderMarkdown(streamingTextBuffer);
             streamingContentEl.classList.remove('streaming-cursor');
             streamingContentEl = null;
           }
@@ -1313,16 +1512,17 @@ export function initChatModule({
       bridge.onChatAiStreamDone((data) => {
         if (data.conversationId !== uiState.chatActiveConversation) return;
 
-        // Flush any pending render before tearing down
-        cancelStreamRaf();
-        if (streamingContentEl && streamingTextBuffer) {
-          streamingContentEl.innerHTML = renderMarkdown(streamingTextBuffer);
+        cancelThinkingRaf();
+        flushStreamingText();
+        if (streamingContentEl) {
           streamingContentEl.classList.remove('streaming-cursor');
         }
 
         const elapsedMs = activeStreamStartedAt > 0 ? Date.now() - activeStreamStartedAt : 0;
         streamingBubble = null;
-        streamingTextBuffer = '';
+        streamingContentEl = null;
+        streamingTextTarget = '';
+        streamingTextVisible = '';
         streamingThinkingBuffer = '';
         setChatSending(false);
         clearChatError();
@@ -1339,10 +1539,13 @@ export function initChatModule({
       bridge.onChatAiStreamError((data) => {
         if (data.conversationId !== uiState.chatActiveConversation) return;
 
-        cancelStreamRaf();
+        cancelThinkingRaf();
+        stopStreamTextAnimation();
         streamingBubble = null;
-        streamingTextBuffer = '';
+        streamingTextTarget = '';
+        streamingTextVisible = '';
         streamingThinkingBuffer = '';
+        streamingContentEl = null;
         setChatSending(false);
 
         if (data.error !== 'Request aborted') {
@@ -1355,6 +1558,7 @@ export function initChatModule({
 
   updateThreadMeta(null);
   updateStreamingIndicator();
+  void refreshChatModelOptions();
 
   return {
     refreshChatProxyStatus,

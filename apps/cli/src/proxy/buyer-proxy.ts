@@ -27,6 +27,8 @@ export interface BuyerProxyConfig {
   node: AntseedNode
   /** How often to refresh the peer list from DHT in the background (ms). Default: 300000 (5 min) */
   backgroundRefreshIntervalMs?: number
+  /** Max age for the in-memory peer cache before forcing a blocking refresh (ms). Default: 30000 (30s). */
+  peerCacheTtlMs?: number
   /**
    * Pin all requests to a specific peer ID for this session.
    * The router is bypassed; the named peer is used directly if it is available
@@ -559,15 +561,18 @@ export class BuyerProxy {
   private readonly _node: AntseedNode
   private readonly _port: number
   private readonly _bgRefreshIntervalMs: number
+  private readonly _peerCacheTtlMs: number
   private readonly _pinnedPeerId: string | undefined
 
   private _cachedPeers: PeerInfo[] = []
+  private _cacheLastUpdatedAtMs = 0
   private _bgRefreshHandle: ReturnType<typeof setInterval> | null = null
 
   constructor(config: BuyerProxyConfig) {
     this._node = config.node
     this._port = config.port
     this._bgRefreshIntervalMs = config.backgroundRefreshIntervalMs ?? 5 * 60_000
+    this._peerCacheTtlMs = Math.max(0, config.peerCacheTtlMs ?? 30_000)
     this._pinnedPeerId = config.pinnedPeerId?.toLowerCase()
     this._server = createServer((req, res) => {
       this._handleRequest(req, res).catch((err) => {
@@ -622,14 +627,21 @@ export class BuyerProxy {
     }
     if (added > 0) {
       this._cachedPeers = Array.from(existing.values())
+      this._cacheLastUpdatedAtMs = Date.now()
       log(`[background] Merged ${added} new peer(s) into cache (total: ${this._cachedPeers.length})`)
     }
+  }
+
+  private _replacePeers(incoming: PeerInfo[]): void {
+    this._cachedPeers = incoming
+    this._cacheLastUpdatedAtMs = Date.now()
   }
 
   private _evictPeer(peerId: string): void {
     const before = this._cachedPeers.length
     this._cachedPeers = this._cachedPeers.filter((p) => p.peerId !== peerId)
     if (this._cachedPeers.length < before) {
+      this._cacheLastUpdatedAtMs = Date.now()
       log(`Evicted failing peer ${peerId.slice(0, 12)}... from cache (${this._cachedPeers.length} remaining)`)
     }
   }
@@ -688,26 +700,46 @@ export class BuyerProxy {
     }
   }
 
-  private async _getPeers(): Promise<PeerInfo[]> {
-    // Return cache immediately — no TTL expiry; peers are evicted on failure
-    // and refreshed in the background on a fixed interval.
-    if (this._cachedPeers.length > 0) {
-      return this._cachedPeers
-    }
-
-    // Cache is empty — must block on discovery (first request or all peers evicted)
+  private async _discoverAndCachePeers(): Promise<PeerInfo[]> {
     const localSeeder = await this._readLocalSeederFallback()
     if (localSeeder) {
-      this._cachedPeers = [localSeeder]
+      this._replacePeers([localSeeder])
       log(`Using local seeder ${localSeeder.peerId.slice(0, 12)}... @ ${localSeeder.publicAddress} (skipping DHT lookup)`)
       return this._cachedPeers
     }
 
     log('Discovering peers via DHT...')
     const peers = await this._node.discoverPeers()
+    this._replacePeers(peers)
     if (peers.length > 0) {
-      this._cachedPeers = peers
       log(`Found ${peers.length} peer(s)`)
+    }
+    return peers
+  }
+
+  private async _getPeers(options?: { forceRefresh?: boolean }): Promise<PeerInfo[]> {
+    const forceRefresh = options?.forceRefresh === true
+    const cacheAgeMs = Date.now() - this._cacheLastUpdatedAtMs
+    const cacheFresh = this._cacheLastUpdatedAtMs > 0 && cacheAgeMs <= this._peerCacheTtlMs
+    const previousCachedPeers = this._cachedPeers
+
+    if (!forceRefresh && this._cachedPeers.length > 0 && cacheFresh) {
+      return this._cachedPeers
+    }
+
+    // Cache is empty, stale, or a forced refresh was requested.
+    if (!forceRefresh && this._cachedPeers.length > 0) {
+      log(`Peer cache stale (${cacheAgeMs}ms old); refreshing before routing.`)
+    } else if (forceRefresh) {
+      log('Forcing peer refresh before routing.')
+    }
+
+    const peers = await this._discoverAndCachePeers()
+    if (peers.length === 0 && previousCachedPeers.length > 0) {
+      // Preserve stale cache as fallback when discovery transiently fails.
+      log('Discovery returned 0 peers; keeping previous cached peers as fallback.')
+      this._replacePeers(previousCachedPeers)
+      return previousCachedPeers
     }
     return peers
   }
@@ -786,8 +818,25 @@ export class BuyerProxy {
       routePlanByPeerId,
     } = selectCandidatePeersForRouting(peers, requestProtocol, requestedModel, explicitProvider)
 
-    if (candidatePeers.length === 0) {
-      const diagnostics = this._formatPeerSelectionDiagnostics(peers)
+    let routingPeers = candidatePeers
+    let routingPlans = routePlanByPeerId
+    let discoveredPeers = peers
+
+    if (routingPeers.length === 0) {
+      // One forced refresh handles stale-cache routing mismatches (e.g. missing provider/model updates).
+      discoveredPeers = await this._getPeers({ forceRefresh: true })
+      const refreshedSelection = selectCandidatePeersForRouting(
+        discoveredPeers,
+        requestProtocol,
+        requestedModel,
+        explicitProvider,
+      )
+      routingPeers = refreshedSelection.candidatePeers
+      routingPlans = refreshedSelection.routePlanByPeerId
+    }
+
+    if (routingPeers.length === 0) {
+      const diagnostics = this._formatPeerSelectionDiagnostics(discoveredPeers)
       res.writeHead(502, { 'content-type': 'text/plain' })
       if (requestProtocol) {
         const protocolLabel = requestProtocol
@@ -804,16 +853,50 @@ export class BuyerProxy {
     const RETRYABLE_STATUS_CODES = new Set([400, 404, 408, 429, 500, 502, 503, 504])
 
     if (explicitPeerId) {
-      const selectedPeer = candidatePeers.find((p) => p.peerId.toLowerCase() === explicitPeerId) ?? null
+      let pinnedRoutingPeers = routingPeers
+      let pinnedRoutePlans = routingPlans
+      let selectedPeer = pinnedRoutingPeers.find((p) => p.peerId.toLowerCase() === explicitPeerId) ?? null
+
+      if (!selectedPeer) {
+        log(`Pinned peer ${explicitPeerId.slice(0, 12)}... not in current candidate set; forcing refresh.`)
+        discoveredPeers = await this._getPeers({ forceRefresh: true })
+        const refreshedSelection = selectCandidatePeersForRouting(
+          discoveredPeers,
+          requestProtocol,
+          requestedModel,
+          explicitProvider,
+        )
+        pinnedRoutingPeers = refreshedSelection.candidatePeers
+        pinnedRoutePlans = refreshedSelection.routePlanByPeerId
+        selectedPeer = pinnedRoutingPeers.find((p) => p.peerId.toLowerCase() === explicitPeerId) ?? null
+      }
+
       if (!selectedPeer) {
         const source = serializedReq.headers['x-antseed-pin-peer'] ? 'x-antseed-pin-peer header' : '--peer flag'
+        const peerDiscovered = discoveredPeers.some((peer) => peer.peerId.toLowerCase() === explicitPeerId)
+        const protocolLabel = requestProtocol ? `protocol=${requestProtocol}` : 'protocol=unknown'
+        const providerLabel = explicitProvider ? `provider=${explicitProvider}` : 'provider=auto'
+        const modelLabel = requestedModel ? `model=${requestedModel}` : 'model=none'
+        const mismatchHint = peerDiscovered
+          ? `Peer is discoverable but filtered as incompatible (${protocolLabel}, ${providerLabel}, ${modelLabel}).`
+          : 'Peer is not discoverable right now.'
         log(`Pinned peer ${explicitPeerId.slice(0, 12)}... not found in candidate list (${source})`)
         res.writeHead(502, { 'content-type': 'text/plain' })
-        res.end(`Pinned peer ${explicitPeerId.slice(0, 12)}... is not available or does not support this request.`)
+        res.end(`Pinned peer ${explicitPeerId.slice(0, 12)}... is not available or does not support this request. ${mismatchHint}`)
         return
       }
       log(`Using pinned peer ${selectedPeer.peerId.slice(0, 12)}...`)
-      const result = await this._dispatchToPeer(res, serializedReq, selectedPeer, routePlanByPeerId, requestProtocol, requestedModel, explicitProvider, router, RETRYABLE_STATUS_CODES)
+      const result = await this._dispatchToPeer(
+        res,
+        serializedReq,
+        selectedPeer,
+        pinnedRoutePlans,
+        requestProtocol,
+        requestedModel,
+        explicitProvider,
+        router,
+        RETRYABLE_STATUS_CODES,
+      )
       if (!result.done) {
         // Pinned peer returned a retryable error, but we don't retry — send error to client
         res.writeHead(result.statusCode, result.responseHeaders)
@@ -830,7 +913,7 @@ export class BuyerProxy {
     let lastResponseHeaders: Record<string, string> = { 'content-type': 'text/plain' }
 
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-      const availableCandidates = candidatePeers.filter((p) => !triedPeerIds.has(p.peerId))
+      const availableCandidates = routingPeers.filter((p) => !triedPeerIds.has(p.peerId))
       if (availableCandidates.length === 0) break
 
       let selectedPeer: PeerInfo | null = null
@@ -879,7 +962,7 @@ export class BuyerProxy {
         res.writeHead(lastStatusCode, lastResponseHeaders)
         res.end(lastResponseBody)
       } else {
-        const diagnostics = this._formatPeerSelectionDiagnostics(candidatePeers)
+        const diagnostics = this._formatPeerSelectionDiagnostics(routingPeers)
         log('No peers available for request')
         res.writeHead(502, { 'content-type': 'text/plain' })
         res.end(`Router could not select a suitable peer. ${diagnostics}`)
@@ -975,11 +1058,11 @@ export class BuyerProxy {
               requestForPeer.requestId,
             )
             // Ensure SSE-friendly headers so intermediaries don't buffer
-            streamingHeaders['cache-control'] = 'no-cache, no-transform'
-            streamingHeaders['x-accel-buffering'] = 'no'
+            /* streamingHeaders['cache-control'] = 'no-cache, no-transform'
+            streamingHeaders['x-accel-buffering'] = 'no' */
             res.writeHead(startResponse.statusCode, streamingHeaders)
             // Disable Nagle's algorithm on the underlying socket for low-latency streaming
-            res.socket?.setNoDelay(true)
+            // res.socket?.setNoDelay(true)
             if (startResponse.body.length > 0) {
               res.write(Buffer.from(startResponse.body))
             }

@@ -1220,6 +1220,22 @@ if (chatEngine === 'pi') {
     appendSystemLog: (line) => {
       appendLog('dashboard', 'system', line);
     },
+    getNetworkPeers: async () => {
+      const requestedPort = dashboardRuntime.port;
+      await ensureDashboardRuntime(requestedPort);
+      const activePort = dashboardRuntime.running ? dashboardRuntime.port : requestedPort;
+      const snapshot = await fetchNetworkSnapshot(activePort);
+      if (!snapshot.ok) {
+        return [];
+      }
+      return snapshot.peers
+        .map((peer) => ({
+          host: typeof peer.host === 'string' ? peer.host.trim() : '',
+          port: Number(peer.port) || 0,
+          providers: Array.isArray(peer.providers) ? peer.providers.map((provider) => String(provider)) : [],
+        }))
+        .filter((peer) => peer.host.length > 0 && peer.port > 0 && peer.port <= 65535);
+    },
   });
 } else {
 

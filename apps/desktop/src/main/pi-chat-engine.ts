@@ -88,6 +88,7 @@ type RegisterPiChatHandlersOptions = {
   configPath: string;
   isBuyerRuntimeRunning: () => boolean;
   appendSystemLog: (line: string) => void;
+  getNetworkPeers?: () => Promise<NetworkPeerAddress[]>;
 };
 
 type SessionPathInfo = {
@@ -99,6 +100,22 @@ type ActiveRun = {
   conversationId: string;
   session: AgentSession;
   unsubscribe: () => void;
+};
+
+type NetworkPeerAddress = {
+  host: string;
+  port: number;
+  providers?: string[];
+};
+
+type ChatModelProtocol = 'anthropic-messages' | 'openai-chat-completions';
+
+type ChatModelCatalogEntry = {
+  id: string;
+  label: string;
+  provider: string;
+  protocol: ChatModelProtocol;
+  count: number;
 };
 
 const ANTSEED_HOME_DIR = path.join(homedir(), '.antseed');
@@ -117,6 +134,8 @@ const CHAT_STREAM_TOTAL_TIMEOUT_ENV = 'ANTSEED_CHAT_STREAM_TOTAL_TIMEOUT_MS';
 const CHAT_STREAM_IDLE_TIMEOUT_ENV = 'ANTSEED_CHAT_STREAM_IDLE_TIMEOUT_MS';
 const DEFAULT_CHAT_STREAM_TOTAL_TIMEOUT_MS = 240_000;
 const DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS = 45_000;
+const CHAT_MODEL_METADATA_FETCH_TIMEOUT_MS = 2_500;
+const CHAT_MODEL_SCAN_MAX_PEERS = 20;
 
 function normalizeTokenCount(value: unknown): number {
   const parsed = Number(value);
@@ -227,6 +246,224 @@ function parseProxyMeta(response: Response, requestStartedAt: number): AiMessage
 function normalizeModelId(model?: string): string {
   const trimmed = String(model ?? '').trim();
   return trimmed.length > 0 ? trimmed : DEFAULT_CHAT_MODEL;
+}
+
+function isChatModelProtocol(value: unknown): value is ChatModelProtocol {
+  return value === 'anthropic-messages' || value === 'openai-chat-completions';
+}
+
+function normalizeProviderId(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function inferProviderProtocol(provider: string): ChatModelProtocol | null {
+  if (provider === 'openai' || provider === 'openrouter' || provider === 'local-llm') {
+    return 'openai-chat-completions';
+  }
+  if (provider === 'anthropic' || provider === 'claude-code' || provider === 'claude-oauth') {
+    return 'anthropic-messages';
+  }
+  return null;
+}
+
+function normalizeHost(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const host = value.trim();
+  return host.length > 0 ? host : null;
+}
+
+function normalizePort(value: unknown): number | null {
+  const port = Number(value);
+  if (!Number.isFinite(port)) {
+    return null;
+  }
+  const normalized = Math.floor(port);
+  if (normalized < 1 || normalized > 65535) {
+    return null;
+  }
+  return normalized;
+}
+
+function normalizeModelValue(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const model = value.trim();
+  return model.length > 0 ? model : null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function resolveProtocolForModel(
+  provider: string,
+  matrixRaw: unknown,
+  modelId: string,
+): ChatModelProtocol | null {
+  const matrix = asRecord(matrixRaw);
+  if (matrix) {
+    const targetKey = modelId.trim().toLowerCase();
+    for (const [key, value] of Object.entries(matrix)) {
+      if (key.trim().toLowerCase() !== targetKey || !Array.isArray(value)) {
+        continue;
+      }
+      for (const protocolCandidate of value) {
+        if (isChatModelProtocol(protocolCandidate)) {
+          return protocolCandidate;
+        }
+      }
+    }
+  }
+  return inferProviderProtocol(provider);
+}
+
+function toModelLabel(modelId: string, provider: string): string {
+  return `${modelId} · ${provider}`;
+}
+
+async function fetchPeerMetadata(host: string, port: number): Promise<Record<string, unknown> | null> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), CHAT_MODEL_METADATA_FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(`http://${host}:${String(port)}/metadata`, {
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      return null;
+    }
+    const payload = await response.json();
+    return asRecord(payload);
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function extractChatModelCatalog(metadata: Record<string, unknown>): Omit<ChatModelCatalogEntry, 'count'>[] {
+  const providersRaw = metadata.providers;
+  if (!Array.isArray(providersRaw)) {
+    return [];
+  }
+
+  const models: Omit<ChatModelCatalogEntry, 'count'>[] = [];
+  for (const providerEntry of providersRaw) {
+    const providerRecord = asRecord(providerEntry);
+    if (!providerRecord) {
+      continue;
+    }
+    const providerId = normalizeProviderId(providerRecord.provider);
+    if (!providerId) {
+      continue;
+    }
+    const modelListRaw = providerRecord.models;
+    if (!Array.isArray(modelListRaw)) {
+      continue;
+    }
+    for (const modelRaw of modelListRaw) {
+      const modelId = normalizeModelValue(modelRaw);
+      if (!modelId) {
+        continue;
+      }
+      const protocol = resolveProtocolForModel(providerId, providerRecord.modelApiProtocols, modelId);
+      if (!protocol) {
+        continue;
+      }
+      models.push({
+        id: modelId,
+        label: toModelLabel(modelId, providerId),
+        provider: providerId,
+        protocol,
+      });
+    }
+  }
+  return models;
+}
+
+async function discoverChatModelCatalog(
+  getNetworkPeers?: () => Promise<NetworkPeerAddress[]>,
+): Promise<ChatModelCatalogEntry[]> {
+  if (!getNetworkPeers) {
+    return [];
+  }
+
+  let peers: NetworkPeerAddress[] = [];
+  try {
+    peers = await getNetworkPeers();
+  } catch {
+    return [];
+  }
+
+  const uniqueTargets: Array<{ host: string; port: number }> = [];
+  const seen = new Set<string>();
+  for (const peer of peers.slice(0, CHAT_MODEL_SCAN_MAX_PEERS)) {
+    const host = normalizeHost(peer.host);
+    const port = normalizePort(peer.port);
+    if (!host || !port) {
+      continue;
+    }
+    const key = `${host}:${String(port)}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    uniqueTargets.push({ host, port });
+  }
+
+  if (uniqueTargets.length === 0) {
+    return [];
+  }
+
+  const responses = await Promise.all(uniqueTargets.map(async (target) => {
+    return await fetchPeerMetadata(target.host, target.port);
+  }));
+
+  const aggregate = new Map<string, ChatModelCatalogEntry>();
+  for (const metadata of responses) {
+    if (!metadata) {
+      continue;
+    }
+    const entries = extractChatModelCatalog(metadata);
+    for (const entry of entries) {
+      const key = `${entry.id}\u0000${entry.provider}\u0000${entry.protocol}`;
+      const existing = aggregate.get(key);
+      if (existing) {
+        existing.count += 1;
+        continue;
+      }
+      aggregate.set(key, {
+        ...entry,
+        count: 1,
+      });
+    }
+  }
+
+  const protocolRank = (protocol: ChatModelProtocol): number => (
+    protocol === 'anthropic-messages' ? 0 : 1
+  );
+
+  return Array.from(aggregate.values()).sort((a, b) => {
+    if (b.count !== a.count) {
+      return b.count - a.count;
+    }
+    if (protocolRank(a.protocol) !== protocolRank(b.protocol)) {
+      return protocolRank(a.protocol) - protocolRank(b.protocol);
+    }
+    if (a.provider !== b.provider) {
+      return a.provider.localeCompare(b.provider);
+    }
+    return a.id.localeCompare(b.id);
+  });
 }
 
 function toUsage(value: unknown): Usage {
@@ -1437,6 +1674,7 @@ export function registerPiChatHandlers({
   configPath,
   isBuyerRuntimeRunning,
   appendSystemLog,
+  getNetworkPeers,
 }: RegisterPiChatHandlersOptions): void {
   const store = new PiConversationStore();
   let activeRun: ActiveRun | null = null;
@@ -1701,6 +1939,19 @@ export function registerPiChatHandlers({
         port,
       },
     };
+  });
+
+  ipcMain.handle('chat:ai-list-models', async () => {
+    try {
+      const models = await discoverChatModelCatalog(getNetworkPeers);
+      return { ok: true, data: models };
+    } catch (error) {
+      return {
+        ok: false,
+        data: [] as ChatModelCatalogEntry[],
+        error: asErrorMessage(error),
+      };
+    }
   });
 
   ipcMain.handle('chat:ai-list-conversations', async () => {
