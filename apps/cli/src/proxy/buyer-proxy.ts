@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { homedir } from 'node:os'
 import type {
   AntseedNode,
+  ConnectionState,
   PeerInfo,
   RequestStreamResponseMetadata,
   Router,
@@ -27,7 +28,11 @@ export interface BuyerProxyConfig {
   node: AntseedNode
   /** How often to refresh the peer list from DHT in the background (ms). Default: 300000 (5 min) */
   backgroundRefreshIntervalMs?: number
-  /** Max age for the in-memory peer cache before forcing a blocking refresh (ms). Default: 30000 (30s). */
+  /**
+   * Max age for the in-memory peer cache before it is treated as stale (ms).
+   * Stale caches can still be used for routing while background refresh repopulates.
+   * Default: 30000 (30s).
+   */
   peerCacheTtlMs?: number
   /**
    * Pin all requests to a specific peer ID for this session.
@@ -743,6 +748,18 @@ function requestWantsStreaming(headers: Record<string, string>, body: Uint8Array
   }
 }
 
+function isConnectionChurnError(message: string): boolean {
+  return /\b(closed|failed)\s+during request\b/i.test(message)
+}
+
+function isConnectionHealthy(state: ConnectionState | null): boolean {
+  if (!state) {
+    return false
+  }
+  const normalized = String(state).toLowerCase()
+  return normalized === 'open' || normalized === 'authenticated' || normalized === 'connecting'
+}
+
 function extractHostFromAddress(address: string): string {
   const trimmed = address.trim()
   if (trimmed.length === 0) return ''
@@ -873,7 +890,11 @@ export class BuyerProxy {
       this._lastSuccessfulPeerByRouteKey.delete(routeKey)
     }
     if (this._lastSuccessfulPeerId === peerId) {
-      this._lastSuccessfulPeerId = null
+      const stillUsedByOtherRoute = Array.from(this._lastSuccessfulPeerByRouteKey.values())
+        .some((rememberedPeerId) => rememberedPeerId === peerId)
+      if (!stillUsedByOtherRoute) {
+        this._lastSuccessfulPeerId = null
+      }
     }
   }
 
@@ -1084,7 +1105,11 @@ export class BuyerProxy {
       clientAbortController.abort()
       log(`Client disconnected; aborting upstream request reqId=${serializedReq.requestId.slice(0, 8)}`)
     }
-    req.once('aborted', onClientAbort)
+    req.once('close', () => {
+      if (!req.complete && !res.writableEnded) {
+        onClientAbort()
+      }
+    })
     res.once('close', () => {
       if (!res.writableEnded) {
         onClientAbort()
@@ -1565,7 +1590,7 @@ export class BuyerProxy {
         return { done: true }
       } else {
         const upstreamResponse = await this._node.sendRequest(selectedPeer, requestForPeer, { signal: requestSignal })
-        if (upstreamResponse.statusCode >= 400) {
+        if (upstreamResponse.statusCode >= 400 && !adaptResponse) {
           log(`Upstream raw error detail: ${summarizeErrorResponse(upstreamResponse)}`)
         }
 
@@ -1577,7 +1602,8 @@ export class BuyerProxy {
 
         log(`Response: ${response.statusCode} (${latencyMs}ms, ${response.body.length} bytes)`)
         if (response.statusCode >= 400) {
-          log(`Upstream error detail: ${summarizeErrorResponse(response)}`)
+          const prefix = adaptResponse ? 'Upstream adapted error detail' : 'Upstream error detail'
+          log(`${prefix}: ${summarizeErrorResponse(response)}`)
         }
 
         const telemetry = computeResponseTelemetry(requestForPeer, response.headers, response.body, selectedPeer)
@@ -1615,6 +1641,7 @@ export class BuyerProxy {
       const latencyMs = Date.now() - startTime
       const message = err instanceof Error ? err.message : String(err)
       const abortedLocally = requestSignal.aborted || /\baborted\b/i.test(message)
+      const connectionChurnError = isConnectionChurnError(message)
       log(`Request failed after ${latencyMs}ms: ${message}`)
 
       if (abortedLocally) {
@@ -1642,6 +1669,18 @@ export class BuyerProxy {
       const isControlPlaneModelsRequest = normalizedPath.startsWith('/v1/models')
       if (isControlPlaneModelsRequest) {
         log(`Skipping peer eviction for control-plane failure on ${requestForPeer.path}`)
+      } else if (connectionChurnError) {
+        const currentState = (
+          this._node as unknown as { getPeerConnectionState?: (peerId: string) => ConnectionState | null }
+        ).getPeerConnectionState?.(selectedPeer.peerId) ?? null
+        if (isConnectionHealthy(currentState)) {
+          log(
+            `Skipping peer eviction after connection churn: peer ${selectedPeer.peerId.slice(0, 12)}... `
+            + `has replacement connection state=${currentState}`,
+          )
+        } else {
+          this._evictPeer(selectedPeer.peerId)
+        }
       } else {
         // Evict only the failing peer — others remain usable.
         this._evictPeer(selectedPeer.peerId)

@@ -249,6 +249,11 @@ export class AntseedNode extends EventEmitter {
     return this._connectionManager?.getListeningPort() ?? 0;
   }
 
+  /** Current connection state for a peer if a connection exists, otherwise null. */
+  getPeerConnectionState(peerId: PeerId): ConnectionState | null {
+    return this._connectionManager?.getConnection(peerId)?.state ?? null;
+  }
+
   /**
    * Active seller sessions currently tracked in-memory.
    * Includes open sessions before they are finalized/settled.

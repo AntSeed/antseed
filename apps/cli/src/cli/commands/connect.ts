@@ -165,6 +165,47 @@ async function isPortReachable(port: number, timeoutMs = 700): Promise<boolean> 
   })
 }
 
+async function isCompatibleBuyerProxy(port: number, timeoutMs = 1200): Promise<boolean> {
+  if (!await isPortReachable(port, Math.min(timeoutMs, 700))) {
+    return false
+  }
+
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const response = await fetch(`http://127.0.0.1:${Math.floor(port)}/v1/models`, {
+      method: 'GET',
+      headers: {
+        accept: 'application/json',
+      },
+      signal: controller.signal,
+    })
+
+    // Antseed proxy usually attaches these telemetry headers when a request reached routing.
+    const antseedHeaderNames = ['x-antseed-request-id', 'x-antseed-peer-id', 'x-antseed-provider']
+    if (antseedHeaderNames.some((header) => response.headers.has(header))) {
+      return true
+    }
+
+    const body = (await response.text()).toLowerCase()
+    // Local proxy-generated fallbacks that may not include telemetry headers.
+    if (
+      body.includes('no sellers available on the network')
+      || body.includes('no peers support')
+      || body.includes('p2p request failed')
+      || body.includes('pinned peer')
+    ) {
+      return true
+    }
+
+    return false
+  } catch {
+    return false
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
 export function registerConnectCommand(program: Command): void {
   program
     .command('connect')
@@ -350,7 +391,7 @@ export function registerConnectCommand(program: Command): void {
         ownsProxyListener = true
         proxySpinner.succeed(chalk.green(`Proxy listening on http://localhost:${proxyPort}`))
       } catch (err) {
-        if (isAddrInUseError(err) && await isPortReachable(proxyPort)) {
+        if (isAddrInUseError(err) && await isCompatibleBuyerProxy(proxyPort)) {
           proxySpinner.succeed(chalk.yellow(`Proxy port ${proxyPort} already in use; reusing existing local proxy.`))
           console.log(chalk.yellow('Proxy request logs will be emitted by the process that already owns this port.'))
         } else {
