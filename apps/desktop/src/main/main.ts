@@ -1640,7 +1640,8 @@ type TextBlock = { type: 'text'; text: string };
 type ThinkingBlock = { type: 'thinking'; thinking: string };
 type ToolUseBlock = { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> };
 type ToolResultBlock = { type: 'tool_result'; tool_use_id: string; content: string; is_error?: boolean };
-type ContentBlock = TextBlock | ThinkingBlock | ToolUseBlock | ToolResultBlock;
+type ImageBlock = { type: 'image'; source: { type: 'base64'; media_type: string; data: string } };
+type ContentBlock = TextBlock | ThinkingBlock | ToolUseBlock | ToolResultBlock | ImageBlock;
 
 type AiMessageMeta = {
   peerId?: string;
@@ -2536,8 +2537,8 @@ ipcMain.handle('chat:ai-delete-conversation', async (_event, id: string) => {
   return { ok: true };
 });
 
-ipcMain.handle('chat:ai-send', async (_event, conversationId: string, userMessage: string, model?: string) => {
-  if (!userMessage || userMessage.trim().length === 0) {
+ipcMain.handle('chat:ai-send', async (_event, conversationId: string, userMessage: string, model?: string, _provider?: string, imageBase64?: string, imageMimeType?: string) => {
+  if ((!userMessage || userMessage.trim().length === 0) && !imageBase64) {
     return { ok: false, error: 'Empty message' };
   }
 
@@ -2551,8 +2552,16 @@ ipcMain.handle('chat:ai-send', async (_event, conversationId: string, userMessag
     return { ok: false, error: 'Conversation not found' };
   }
 
+  // Build user message content — multipart if image attached
+  const userContent: string | unknown[] = imageBase64 && imageMimeType
+    ? [
+        { type: 'image', source: { type: 'base64', media_type: imageMimeType, data: imageBase64 } },
+        { type: 'text', text: userMessage.trim() || 'What is in this image?' },
+      ]
+    : userMessage.trim();
+
   // Add user message
-  conv.messages.push({ role: 'user', content: userMessage.trim(), createdAt: Date.now() });
+  conv.messages.push({ role: 'user', content: userContent as string, createdAt: Date.now() });
   conv.updatedAt = Date.now();
 
   // Auto-title from first user message
@@ -3016,8 +3025,8 @@ async function streamingChatLoop(conv: AiConversation, conversationId: string, s
   mainWindow?.webContents.send('chat:ai-stream-done', { conversationId });
 }
 
-ipcMain.handle('chat:ai-send-stream', async (_event, conversationId: string, userMessage: string, model?: string) => {
-  if (!userMessage || userMessage.trim().length === 0) {
+ipcMain.handle('chat:ai-send-stream', async (_event, conversationId: string, userMessage: string, model?: string, _provider?: string, imageBase64?: string, imageMimeType?: string) => {
+  if ((!userMessage || userMessage.trim().length === 0) && !imageBase64) {
     return { ok: false, error: 'Empty message' };
   }
 
@@ -3031,13 +3040,22 @@ ipcMain.handle('chat:ai-send-stream', async (_event, conversationId: string, use
     return { ok: false, error: 'Conversation not found' };
   }
 
+  // Build user message content — multipart if image attached
+  const userContent: string | unknown[] = imageBase64 && imageMimeType
+    ? [
+        { type: 'image', source: { type: 'base64', media_type: imageMimeType, data: imageBase64 } },
+        { type: 'text', text: userMessage.trim() || 'What is in this image?' },
+      ]
+    : userMessage.trim();
+
   // Add user message
-  conv.messages.push({ role: 'user', content: userMessage.trim(), createdAt: Date.now() });
+  conv.messages.push({ role: 'user', content: userContent as string, createdAt: Date.now() });
   conv.updatedAt = Date.now();
 
   // Auto-title from first user message
+  const titleText = userMessage.trim() || 'Image';
   if (conv.title === 'New conversation' && conv.messages.filter(m => m.role === 'user').length === 1) {
-    conv.title = userMessage.trim().slice(0, 60) + (userMessage.trim().length > 60 ? '...' : '');
+    conv.title = titleText.slice(0, 60) + (titleText.length > 60 ? '...' : '');
   }
 
   if (model) {

@@ -975,10 +975,86 @@ pre,
 
 .chat-input-area {
   display: flex;
+  flex-direction: column;
   gap: 6px;
   padding: 8px 12px;
   border-top: 0;
   background: var(--bg-surface);
+}
+
+.chat-input-row {
+  display: flex;
+  gap: 6px;
+  align-items: flex-end;
+}
+
+/* Image attachment preview (above input row) */
+.chat-image-attach-preview {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 4px 0 2px;
+}
+
+.chat-image-attach-thumb {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+
+.chat-image-remove-btn {
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--text-muted);
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.chat-image-remove-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-active);
+}
+
+/* Attach button */
+.chat-attach-btn {
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 14px;
+  cursor: pointer;
+  opacity: 0.6;
+  flex-shrink: 0;
+}
+
+.chat-attach-btn:hover {
+  opacity: 1;
+  background: var(--bg-hover);
+}
+
+.chat-attach-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+/* Image rendered inside a chat bubble */
+.chat-image-preview {
+  max-width: 280px;
+  max-height: 200px;
+  border-radius: 8px;
+  margin-bottom: 6px;
+  display: block;
+  object-fit: contain;
 }
 
 .chat-text-input {

@@ -55,7 +55,7 @@ export type ChatModuleApi = {
   createNewConversation: () => Promise<void>;
   deleteConversation: () => Promise<void>;
   openConversation: (convId: string) => Promise<void>;
-  sendMessage: (text: string) => void;
+  sendMessage: (text: string, imageBase64?: string, imageMimeType?: string) => void;
   abortChat: () => Promise<void>;
   handleModelChange: (value: string) => void;
   handleModelFocus: () => void;
@@ -105,7 +105,6 @@ export function initChatModule({
   let activeConversation: ChatConversation | null = null;
   let activeStreamTurn: number | null = null;
   let activeStreamStartedAt = 0;
-  let streamGeneration = 0;
   let streamingIndicatorTimer: number | null = null;
   let proxyState: 'unknown' | 'online' | 'offline' = 'unknown';
   let proxyPort = 0;
@@ -1199,7 +1198,7 @@ export function initChatModule({
       .includes('already in progress');
   }
 
-  function sendMessage(text: string): void {
+  function sendMessage(text: string, imageBase64?: string, imageMimeType?: string): void {
     const convId = uiState.chatActiveConversation;
     if (!convId || !bridge) return;
 
@@ -1209,9 +1208,17 @@ export function initChatModule({
     }
 
     const content = text.trim();
-    if (content.length === 0) return;
+    if (content.length === 0 && !imageBase64) return;
 
-    uiState.chatMessages = [...uiState.chatMessages, { role: 'user', content, createdAt: Date.now() }];
+    // Build message content — multipart if image attached, plain string otherwise
+    const messageContent: unknown = imageBase64 && imageMimeType
+      ? [
+          { type: 'image', source: { type: 'base64', media_type: imageMimeType, data: imageBase64 } },
+          { type: 'text', text: content || 'What is in this image?' },
+        ]
+      : content;
+
+    uiState.chatMessages = [...uiState.chatMessages, { role: 'user', content: messageContent, createdAt: Date.now() }];
     if (activeConversation) {
       activeConversation.messages = uiState.chatMessages as ChatMessage[];
       activeConversation.updatedAt = Date.now();
@@ -1226,7 +1233,7 @@ export function initChatModule({
 
     if (bridge.chatAiSendStream) {
       const sendStreamRequest = async () =>
-        await bridge.chatAiSendStream!(convId, content, selection.id || undefined);
+        await bridge.chatAiSendStream!(convId, content, selection.id || undefined, undefined, imageBase64, imageMimeType);
 
       void (async () => {
         try {
@@ -1267,7 +1274,7 @@ export function initChatModule({
       void (async () => {
         try {
           const sendRequest = async () =>
-            await bridge.chatAiSend!(convId, content, selection.id || undefined);
+            await bridge.chatAiSend!(convId, content, selection.id || undefined, undefined, imageBase64, imageMimeType);
 
           let result = await sendRequest();
           if (
@@ -1552,7 +1559,6 @@ export function initChatModule({
         streamingContentEl = null;
         activeStreamTurn = Number(data.turn) + 1;
         activeStreamStartedAt = Date.now();
-        streamGeneration++;
         updateStreamingIndicator();
 
         const streamContainer = document.querySelector<HTMLElement>(
@@ -1560,7 +1566,8 @@ export function initChatModule({
         );
         if (!streamContainer) return;
 
-        streamContainer.innerHTML = '';
+        // Don't clear streamContainer.innerHTML — previous turn's streaming
+        // bubbles stay visible until openConversation() loads them into React.
         streamingBubble = document.createElement('div');
         streamingBubble.className = 'chat-bubble other';
         const streamMeta = activeStreamTurn
@@ -1780,10 +1787,17 @@ export function initChatModule({
           );
         }
 
-        const gen = streamGeneration;
         void openConversation(data.conversationId).then(() => {
-          if (streamGeneration === gen) {
-            clearStreamContainer();
+          // Remove old streaming bubbles, but keep the active one if a new
+          // turn has already started streaming (prevents the flash of empty
+          // content between DOM clear and React state update).
+          const sc = document.querySelector<HTMLElement>('[data-chat-stream]');
+          if (sc) {
+            const keep = streamingBubble; // active bubble from new turn, or null
+            while (sc.firstChild) {
+              if (sc.firstChild === keep) break;
+              sc.removeChild(sc.firstChild);
+            }
           }
           void refreshChatConversations();
         });

@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
+import { useRef, useEffect, useState, useCallback, useMemo, useId } from 'react';
 import { useUiSnapshot } from '../../hooks/useUiSnapshot';
 import { useActions } from '../../hooks/useActions';
 import { ChatBubble, isToolResultOnlyMessage } from '../chat/ChatBubble';
@@ -19,8 +19,11 @@ export function ChatView({ active }: ChatViewProps) {
   const snap = useUiSnapshot();
   const actions = useActions();
   const [inputValue, setInputValue] = useState('');
+  const [attachedImage, setAttachedImage] = useState<{ base64: string; mimeType: string; previewUrl: string } | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const fileInputId = useId();
 
   const visibleMessages = useMemo(() => {
     const msgs = Array.isArray(snap.chatMessages) ? (snap.chatMessages as ChatMessage[]) : [];
@@ -33,15 +36,44 @@ export function ChatView({ active }: ChatViewProps) {
     }
   }, [snap.chatMessages]);
 
+  // Re-focus the input whenever it becomes enabled (e.g. after AI response completes)
+  useEffect(() => {
+    if (!snap.chatInputDisabled && inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, [snap.chatInputDisabled]);
+
   const handleSend = useCallback(() => {
     const text = inputValue.trim();
-    if (!text) return;
+    if (!text && !attachedImage) return;
     setInputValue('');
+    setAttachedImage(null);
     if (inputRef.current) {
       inputRef.current.style.height = 'auto';
+      inputRef.current.focus();
     }
-    actions.sendMessage(text);
-  }, [inputValue, actions]);
+    actions.sendMessage(text, attachedImage?.base64, attachedImage?.mimeType);
+  }, [inputValue, attachedImage, actions]);
+
+  const handleImageAttach = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      const [header, base64] = dataUrl.split(',');
+      const mimeType = header.replace('data:', '').replace(';base64', '');
+      setAttachedImage({ base64, mimeType, previewUrl: dataUrl });
+    };
+    reader.readAsDataURL(file);
+    // Reset so the same file can be re-attached
+    e.target.value = '';
+  }, []);
+
+  const handleRemoveImage = useCallback(() => {
+    setAttachedImage(null);
+    if (inputRef.current) inputRef.current.focus();
+  }, []);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -143,26 +175,50 @@ export function ChatView({ active }: ChatViewProps) {
           </div>
 
           <div className="chat-input-area">
-            <textarea
-              ref={inputRef}
-              className="chat-text-input"
-              placeholder="Type a message... (Shift+Enter for newline)"
-              rows={1}
-              disabled={snap.chatInputDisabled}
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              onInput={handleInput}
-              onKeyDown={handleKeyDown}
-            />
-            {snap.chatAbortVisible ? (
-              <button className="chat-abort-btn" onClick={() => void actions.abortChat()}>
-                Stop
-              </button>
-            ) : (
-              <button disabled={snap.chatSendDisabled} onClick={handleSend}>
-                Send
-              </button>
+            {attachedImage && (
+              <div className="chat-image-attach-preview">
+                <img src={attachedImage.previewUrl} alt="Attached" className="chat-image-attach-thumb" />
+                <button className="chat-image-remove-btn" onClick={handleRemoveImage} title="Remove image">✕</button>
+              </div>
             )}
+            <div className="chat-input-row">
+              <input
+                ref={fileInputRef}
+                id={fileInputId}
+                type="file"
+                accept="image/jpeg,image/png,image/gif,image/webp"
+                style={{ display: 'none' }}
+                onChange={handleImageAttach}
+              />
+              <button
+                className="chat-attach-btn"
+                title="Attach image"
+                disabled={snap.chatInputDisabled}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                📎
+              </button>
+              <textarea
+                ref={inputRef}
+                className="chat-text-input"
+                placeholder="Type a message... (Shift+Enter for newline)"
+                rows={1}
+                disabled={snap.chatInputDisabled}
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                onInput={handleInput}
+                onKeyDown={handleKeyDown}
+              />
+              {snap.chatAbortVisible ? (
+                <button className="chat-abort-btn" onClick={() => void actions.abortChat()}>
+                  Stop
+                </button>
+              ) : (
+                <button disabled={snap.chatSendDisabled && !attachedImage} onClick={handleSend}>
+                  Send
+                </button>
+              )}
+            </div>
           </div>
 
           {snap.chatError && <div className="chat-error">{snap.chatError}</div>}

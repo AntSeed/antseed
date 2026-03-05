@@ -16,6 +16,7 @@ type ContentBlock = {
   input?: Record<string, unknown>;
   content?: string;
   is_error?: boolean;
+  source?: { type: string; media_type?: string; data?: string };
 };
 
 function formatChatTime(timestamp: unknown): string {
@@ -257,6 +258,18 @@ export function ChatBubble({ message }: ChatBubbleProps) {
     }
     if (typeof message.content === 'string') {
       return `<div class="chat-bubble-content">${escapeHtml(message.content)}</div>`;
+    }
+    // User message with multipart content (e.g. image + text)
+    if (Array.isArray(message.content)) {
+      let html = '';
+      for (const block of message.content as ContentBlock[]) {
+        if (block.type === 'image' && block.source?.data && block.source?.media_type) {
+          html += `<img src="data:${block.source.media_type};base64,${block.source.data}" class="chat-image-preview" alt="Attached image" />`;
+        } else if (block.type === 'text' && block.text) {
+          html += `<div class="chat-bubble-content">${escapeHtml(block.text)}</div>`;
+        }
+      }
+      return html;
     }
     return `<div class="chat-bubble-content">${escapeHtml(JSON.stringify(message.content))}</div>`;
   }, [message.role, message.content]);

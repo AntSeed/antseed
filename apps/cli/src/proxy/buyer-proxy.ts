@@ -1526,12 +1526,7 @@ export class BuyerProxy {
               selectedPeer,
               requestForPeer.requestId,
             )
-            // Ensure SSE-friendly headers so intermediaries don't buffer
-            /* streamingHeaders['cache-control'] = 'no-cache, no-transform'
-            streamingHeaders['x-accel-buffering'] = 'no' */
             res.writeHead(startResponse.statusCode, streamingHeaders)
-            // Disable Nagle's algorithm on the underlying socket for low-latency streaming
-            // res.socket?.setNoDelay(true)
             if (startResponse.body.length > 0) {
               res.write(Buffer.from(startResponse.body))
             }
