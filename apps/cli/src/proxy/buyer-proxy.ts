@@ -1705,9 +1705,7 @@ export class BuyerProxy {
       if (isControlPlaneModelsRequest) {
         log(`Skipping peer eviction for control-plane failure on ${requestForPeer.path}`)
       } else if (connectionChurnError) {
-        const currentState = (
-          this._node as unknown as { getPeerConnectionState?: (peerId: string) => ConnectionState | null }
-        ).getPeerConnectionState?.(selectedPeer.peerId) ?? null
+        const currentState = this._node.getPeerConnectionState(selectedPeer.peerId)
         if (isConnectionHealthy(currentState)) {
           log(
             `Skipping peer eviction after connection churn: peer ${selectedPeer.peerId.slice(0, 12)}... `
