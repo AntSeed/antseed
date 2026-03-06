@@ -53,7 +53,8 @@ export type ChatModuleApi = {
   refreshChatProxyStatus: () => Promise<void>;
   refreshChatConversations: () => Promise<void>;
   createNewConversation: () => Promise<void>;
-  deleteConversation: () => Promise<void>;
+  deleteConversation: (convId?: string) => Promise<void>;
+  renameConversation: (convId: string, newTitle: string) => void;
   openConversation: (convId: string) => Promise<void>;
   sendMessage: (text: string, imageBase64?: string, imageMimeType?: string) => void;
   abortChat: () => Promise<void>;
@@ -679,6 +680,7 @@ export function initChatModule({
   function updateThreadMeta(conv: ChatConversation | null): void {
     if (!conv) {
       uiState.chatThreadMeta = 'No conversation selected';
+      uiState.chatRoutedPeer = '';
       return;
     }
 
@@ -727,6 +729,8 @@ export function initChatModule({
     parts.push(`updated ${formatChatDateTime(conv.updatedAt)}`);
 
     uiState.chatThreadMeta = parts.join(' · ');
+    const peerArr = [...servingPeers];
+    uiState.chatRoutedPeer = peerArr.length > 0 ? peerArr[peerArr.length - 1].slice(0, 8) : '';
   }
 
   // ---------------------------------------------------------------------------
@@ -1169,27 +1173,46 @@ export function initChatModule({
     }
   }
 
-  async function deleteConversation(): Promise<void> {
-    const convId = uiState.chatActiveConversation;
+  async function deleteConversation(targetId?: string): Promise<void> {
+    const convId = targetId || uiState.chatActiveConversation;
     if (!convId || !bridge || !bridge.chatAiDeleteConversation) return;
 
     try {
       await bridge.chatAiDeleteConversation(convId);
-      uiState.chatActiveConversation = null;
-      uiState.chatMessages = [];
-      activeConversation = null;
-      uiState.chatDeleteVisible = false;
-      uiState.chatInputDisabled = true;
-      uiState.chatSendDisabled = true;
-      uiState.chatConversationTitle = 'Conversation';
 
-      updateThreadMeta(null);
-      uiState.chatError = null;
+      // If we deleted the active conversation, clear the view
+      if (convId === uiState.chatActiveConversation) {
+        uiState.chatActiveConversation = null;
+        uiState.chatMessages = [];
+        activeConversation = null;
+        uiState.chatDeleteVisible = false;
+        uiState.chatInputDisabled = true;
+        uiState.chatSendDisabled = true;
+        uiState.chatConversationTitle = 'Conversation';
+        updateThreadMeta(null);
+        uiState.chatError = null;
+      }
+
       notifyUiStateChanged();
       await refreshChatConversations();
     } catch (err) {
       reportChatError(err, 'Failed to delete conversation');
     }
+  }
+
+  function renameConversation(convId: string, newTitle: string): void {
+    const conversations = Array.isArray(uiState.chatConversations)
+      ? (uiState.chatConversations as ChatConversationSummary[])
+      : [];
+    const conv = conversations.find((c) => c.id === convId);
+    if (conv) {
+      conv.title = newTitle;
+      uiState.chatConversations = [...conversations];
+    }
+    if (convId === uiState.chatActiveConversation) {
+      uiState.chatConversationTitle = newTitle;
+    }
+    notifyUiStateChanged();
   }
 
   function isInProgressErrorMessage(message: unknown): boolean {
@@ -1844,6 +1867,7 @@ export function initChatModule({
     refreshChatConversations,
     createNewConversation,
     deleteConversation,
+    renameConversation,
     openConversation,
     sendMessage,
     abortChat,

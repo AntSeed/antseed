@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { StreamingIndicator } from './components/StreamingIndicator';
+import { TitleBar } from './components/TitleBar';
 import { ViewHost } from './components/ViewHost';
 import type { ViewName } from './types';
 
@@ -9,6 +10,7 @@ export function AppShell() {
 
   return (
     <>
+      <TitleBar />
       <div className="app-container">
         <Sidebar activeView={activeView} onSelectView={setActiveView} />
         <main className="main-content">

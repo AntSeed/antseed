@@ -1,7 +1,11 @@
 import { useRef, useEffect, useState, useCallback, useMemo, useId } from 'react';
+import { HugeiconsIcon } from '@hugeicons/react';
+import { Add01Icon } from '@hugeicons/core-free-icons';
+import { ArrowUp02Icon } from '@hugeicons/core-free-icons';
 import { useUiSnapshot } from '../../hooks/useUiSnapshot';
 import { useActions } from '../../hooks/useActions';
 import { ChatBubble, isToolResultOnlyMessage } from '../chat/ChatBubble';
+import { ModelDropdown } from '../chat/ModelDropdown';
 import type { ChatModelOptionEntry } from '../../../core/state';
 
 type ChatMessage = {
@@ -130,53 +134,28 @@ export function ChatView({ active }: ChatViewProps) {
   return (
     <section className={`view view-chat${active ? ' active' : ''}`} role="tabpanel">
       <div className="page-header">
-        <h2>AI Chat</h2>
-        <div className="page-header-right">
-          <select
-            className="form-input chat-model-select"
+        <div className="page-header-left">
+          <ModelDropdown
+            options={snap.chatModelOptions}
             value={snap.chatSelectedModelValue}
             disabled={snap.chatModelSelectDisabled}
-            onChange={(e) => actions.handleModelChange(e.target.value)}
-            onFocus={() => actions.handleModelFocus()}
-            onBlur={() => actions.handleModelBlur()}
-          >
-            {snap.chatModelOptions.length === 0 ? (
-              <option value="">No models available</option>
-            ) : (
-              snap.chatModelOptions.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))
-            )}
-          </select>
-          <div className={`connection-badge badge-${snap.chatModelStatus.tone}`}>
-            {snap.chatModelStatus.label}
-          </div>
-          <div className={`connection-badge badge-${snap.chatProxyStatus.tone}`}>
-            {snap.chatProxyStatus.label}
-          </div>
+            onChange={actions.handleModelChange}
+            onFocus={actions.handleModelFocus}
+            onBlur={actions.handleModelBlur}
+          />
+        </div>
+        <div className="page-header-right">
+          {snap.chatRoutedPeer && (
+            <>
+              <span className="chat-routed-label">Routed to:</span>
+              <span className="chat-routed-peer">{snap.chatRoutedPeer}</span>
+            </>
+          )}
         </div>
       </div>
 
       <div className="chat-container">
         <div className="chat-main">
-          <div className="chat-thread-header">
-            <div className="chat-thread-title">
-              <span className="chat-thread-peer">{snap.chatConversationTitle}</span>
-              <span className="chat-thread-meta">{snap.chatThreadMeta}</span>
-            </div>
-            {snap.chatDeleteVisible && (
-              <button
-                className="btn-icon chat-delete-btn"
-                title="Delete conversation"
-                onClick={() => void actions.deleteConversation()}
-              >
-                Delete
-              </button>
-            )}
-          </div>
-
           <div className="chat-messages" ref={scrollRef} data-chat-scroll>
             {showOnboarding ? (
               <ChatOnboarding
@@ -220,14 +199,6 @@ export function ChatView({ active }: ChatViewProps) {
                 style={{ display: 'none' }}
                 onChange={handleImageAttach}
               />
-              <button
-                className="chat-attach-btn"
-                title="Attach image"
-                disabled={snap.chatInputDisabled}
-                onClick={() => fileInputRef.current?.click()}
-              >
-                📎
-              </button>
               <textarea
                 ref={inputRef}
                 className="chat-text-input"
@@ -239,15 +210,27 @@ export function ChatView({ active }: ChatViewProps) {
                 onInput={handleInput}
                 onKeyDown={handleKeyDown}
               />
-              {snap.chatAbortVisible ? (
-                <button className="chat-abort-btn" onClick={() => void actions.abortChat()}>
-                  Stop
-                </button>
-              ) : (
-                <button disabled={snap.chatSendDisabled && !attachedImage} onClick={handleSend}>
-                  Send
-                </button>
-              )}
+              <div className="chat-input-bottom">
+                <div className="chat-input-bottom-left">
+                  <button
+                    className="chat-attach-btn"
+                    title="Attach image"
+                    disabled={snap.chatInputDisabled}
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    <HugeiconsIcon icon={Add01Icon} size={18} strokeWidth={2} />
+                  </button>
+                </div>
+                {snap.chatAbortVisible ? (
+                  <button className="chat-abort-btn" onClick={() => void actions.abortChat()}>
+                    Stop
+                  </button>
+                ) : (
+                  <button className="chat-send-btn" disabled={snap.chatSendDisabled && !attachedImage} onClick={handleSend}>
+                    <HugeiconsIcon icon={ArrowUp02Icon} size={18} strokeWidth={2.5} />
+                  </button>
+                )}
+              </div>
             </div>
           </div>
 

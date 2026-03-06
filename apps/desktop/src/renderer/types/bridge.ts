@@ -120,4 +120,6 @@ export type DesktopBridge = {
   onChatAiStreamError?: (handler: (data: { conversationId: string; error: string }) => void) => () => void;
   onChatAiToolExecuting?: (handler: (data: { conversationId: string; toolUseId: string; name: string; input: Record<string, unknown> }) => void) => () => void;
   onChatAiToolResult?: (handler: (data: { conversationId: string; toolUseId: string; output: string; isError: boolean }) => void) => () => void;
+  onFullscreenChange?: (handler: (isFullscreen: boolean) => void) => () => void;
+  onWindowFocusChange?: (handler: (isFocused: boolean) => void) => () => void;
 };

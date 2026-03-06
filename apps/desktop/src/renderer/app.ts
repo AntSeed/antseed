@@ -40,6 +40,13 @@ const bridge = window.antseedDesktop as DesktopBridge | undefined;
 const uiState = createInitialUiState();
 initStore(uiState);
 
+bridge?.onFullscreenChange?.((isFullscreen) => {
+  document.body.classList.toggle('platform-fullscreen', isFullscreen);
+});
+bridge?.onWindowFocusChange?.((isFocused) => {
+  document.body.classList.toggle('window-blurred', !isFocused);
+});
+
 /* ------------------------------------------------------------------ */
 /*  Module initialisation                                              */
 /* ------------------------------------------------------------------ */
@@ -386,6 +393,7 @@ registerActions({
   sendMessage: chatApi.sendMessage,
   abortChat: chatApi.abortChat,
   deleteConversation: chatApi.deleteConversation,
+  renameConversation: chatApi.renameConversation,
   handleModelChange: chatApi.handleModelChange,
   handleModelFocus: chatApi.handleModelFocus,
   handleModelBlur: chatApi.handleModelBlur,
