@@ -5,7 +5,7 @@ export const ANTSEED_UPLOAD_CHUNK_HEADER = 'x-antseed-upload';
  * Maximum size of a request body that can be sent as a single request frame.
  * Larger bodies are sent as chunked upload frames.
  */
-export const ANTSEED_UPLOAD_THRESHOLD_BYTES = 256 * 1024;
+export const ANTSEED_UPLOAD_THRESHOLD_BYTES = 512 * 1024;
 /**
  * Maximum size of each chunk when sending chunked request uploads.
  * Kept small for cross-peer RTC compatibility where max message size can vary
