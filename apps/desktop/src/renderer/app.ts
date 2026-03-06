@@ -25,7 +25,15 @@ import type { DesktopBridge } from './types/bridge';
 /*  Bootstrap                                                          */
 /* ------------------------------------------------------------------ */
 
-const isMacPlatform = /Mac|iPhone|iPad|iPod/.test(navigator.platform);
+function detectApplePlatform(): boolean {
+  const nav = navigator as Navigator & {
+    userAgentData?: { platform?: string };
+  };
+  const platformHint = nav.userAgentData?.platform || navigator.platform || navigator.userAgent;
+  return /Mac|iPhone|iPad|iPod/i.test(platformHint);
+}
+
+const isMacPlatform = detectApplePlatform();
 document.body.classList.toggle('platform-macos', isMacPlatform);
 
 const bridge = window.antseedDesktop as DesktopBridge | undefined;

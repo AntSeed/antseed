@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 
 type ChatMessage = {
   role: string;
@@ -106,12 +106,28 @@ function escapeHtml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+function sanitizeMarkdownHref(rawHref: string): string | null {
+  const trimmed = rawHref.trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = new URL(trimmed, 'https://antseed.invalid');
+    const protocol = parsed.protocol.toLowerCase();
+    if (protocol === 'http:' || protocol === 'https:' || protocol === 'mailto:') {
+      return escapeHtml(trimmed);
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 function renderMarkdown(text: string): string {
+  let codeBlockIndex = 0;
   let html = escapeHtml(text);
   html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_match, lang, code) => {
     const langLabel = lang || 'code';
-    const codeId = 'code-' + Math.random().toString(36).slice(2, 8);
-    return `<div class="chat-code-container"><div class="chat-code-header"><span class="code-lang">${langLabel}</span><button class="chat-code-copy-btn" onclick="navigator.clipboard.writeText(document.getElementById('${codeId}').textContent).then(()=>{this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500)})">Copy</button></div><pre><code id="${codeId}">${code}</code></pre></div>`;
+    const codeId = `chat-code-${codeBlockIndex++}`;
+    return `<div class="chat-code-container"><div class="chat-code-header"><span class="code-lang">${langLabel}</span><button class="chat-code-copy-btn" type="button" data-copy-code="true" data-copy-target="${codeId}">Copy</button></div><pre><code id="${codeId}">${code}</code></pre></div>`;
   });
   html = html.replace(/`([^`]+)`/g, '<code class="chat-inline-code">$1</code>');
   html = html.replace(/^### (.+)$/gm, '<h3 style="font-size:14px;font-weight:600;margin:12px 0 6px;color:var(--text-primary)">$1</h3>');
@@ -121,7 +137,13 @@ function renderMarkdown(text: string): string {
   html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
   html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
-  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" style="color:var(--accent-blue);text-decoration:underline" target="_blank" rel="noopener">$1</a>');
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, label, href) => {
+    const safeHref = sanitizeMarkdownHref(String(href || ''));
+    if (!safeHref) {
+      return `<span class="chat-inline-link-invalid">${label}</span>`;
+    }
+    return `<a href="${safeHref}" style="color:var(--accent-blue);text-decoration:underline" target="_blank" rel="noopener noreferrer">${label}</a>`;
+  });
   html = html.replace(/^\s*[\-*•] (.+)$/gm, '<li class="chat-md-li chat-md-li-ul">$1</li>');
   html = html.replace(/^\s*\d+\. (.+)$/gm, '<li class="chat-md-li chat-md-li-ol">$1</li>');
   html = html.replace(/<br>\s*(<li class="chat-md-li[^"]*">)/g, '$1');
@@ -248,6 +270,7 @@ type ChatBubbleProps = {
 };
 
 export function ChatBubble({ message }: ChatBubbleProps) {
+  const contentRef = useRef<HTMLDivElement>(null);
   const metaParts = useMemo(() => buildMetaParts(message), [message]);
   const contentHtml = useMemo(() => {
     if (message.role === 'assistant') {
@@ -274,6 +297,33 @@ export function ChatBubble({ message }: ChatBubbleProps) {
     return `<div class="chat-bubble-content">${escapeHtml(JSON.stringify(message.content))}</div>`;
   }, [message.role, message.content]);
 
+  useEffect(() => {
+    const container = contentRef.current;
+    if (!container) return;
+    const handleClick = (event: Event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      const button = target.closest<HTMLButtonElement>('[data-copy-code="true"]');
+      if (!button) return;
+      const codeId = button.dataset.copyTarget;
+      if (!codeId) return;
+      const codeNode = container.querySelector<HTMLElement>(`#${CSS.escape(codeId)}`);
+      const codeText = codeNode?.textContent ?? '';
+      if (!codeText) return;
+      void navigator.clipboard.writeText(codeText).then(() => {
+        const previousText = button.textContent;
+        button.textContent = 'Copied!';
+        window.setTimeout(() => {
+          button.textContent = previousText || 'Copy';
+        }, 1500);
+      });
+    };
+    container.addEventListener('click', handleClick);
+    return () => {
+      container.removeEventListener('click', handleClick);
+    };
+  }, [contentHtml]);
+
   const bubbleMeta =
     metaParts.length > 0 ? (
       <div className="chat-bubble-meta">
@@ -284,7 +334,7 @@ export function ChatBubble({ message }: ChatBubbleProps) {
   return (
     <div className={`chat-bubble ${message.role === 'user' ? 'own' : 'other'}`}>
       {bubbleMeta}
-      <div dangerouslySetInnerHTML={{ __html: contentHtml }} />
+      <div ref={contentRef} dangerouslySetInnerHTML={{ __html: contentHtml }} />
     </div>
   );
 }
