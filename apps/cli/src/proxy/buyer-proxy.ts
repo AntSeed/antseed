@@ -143,15 +143,32 @@ function getPeerProviderProtocols(
   provider: string,
   requestedModel: string | null,
 ): ModelApiProtocol[] {
+  const normalizedRequestedModel = requestedModel?.trim()
   const fromMetadata = (
     peer as PeerInfo & {
       providerModelApiProtocols?: Record<string, { models: Record<string, ModelApiProtocol[]> }>
     }
   ).providerModelApiProtocols?.[provider]?.models
   if (fromMetadata) {
-    if (requestedModel && fromMetadata[requestedModel]?.length) {
-      log(`Model match: peer ${peer.peerId.slice(0, 8)} provider=${provider} model="${requestedModel}" → [${fromMetadata[requestedModel]!.join(',')}]`)
-      return Array.from(new Set(fromMetadata[requestedModel]!))
+    if (normalizedRequestedModel) {
+      const directMatchKey = Object.keys(fromMetadata).find(
+        (model) => model.toLowerCase() === normalizedRequestedModel.toLowerCase(),
+      )
+      if (directMatchKey && fromMetadata[directMatchKey]?.length) {
+        log(
+          `Model match: peer ${peer.peerId.slice(0, 8)} provider=${provider} model="${normalizedRequestedModel}" `
+          + `→ [${fromMetadata[directMatchKey]!.join(',')}]`,
+        )
+        return Array.from(new Set(fromMetadata[directMatchKey]!))
+      }
+
+      if (Object.keys(fromMetadata).length > 0) {
+        log(
+          `Model strict-miss: peer ${peer.peerId.slice(0, 8)} provider=${provider} model="${normalizedRequestedModel}" `
+          + 'not in metadata; excluding from route candidates.',
+        )
+        return []
+      }
     }
 
     const merged = Object.values(fromMetadata).flat()
@@ -749,7 +766,7 @@ function requestWantsStreaming(headers: Record<string, string>, body: Uint8Array
 }
 
 function isConnectionChurnError(message: string): boolean {
-  return /\b(closed|failed)\s+during request\b/i.test(message)
+  return /connection .*?\b(closed|failed)\s+during request\b/i.test(message)
 }
 
 function isConnectionHealthy(state: ConnectionState | null): boolean {
@@ -805,6 +822,7 @@ export class BuyerProxy {
 
   private _cachedPeers: PeerInfo[] = []
   private _cacheLastUpdatedAtMs = 0
+  private _cacheMutationEpoch = 0
   private _peerRefreshPromise: Promise<PeerInfo[]> | null = null
   private _lastStaleCacheLogAtMs = 0
   private _bgRefreshHandle: ReturnType<typeof setInterval> | null = null
@@ -860,6 +878,7 @@ export class BuyerProxy {
   private _replacePeers(incoming: PeerInfo[]): void {
     this._cachedPeers = incoming
     this._cacheLastUpdatedAtMs = Date.now()
+    this._cacheMutationEpoch += 1
   }
 
   private _evictPeer(peerId: string): void {
@@ -867,6 +886,7 @@ export class BuyerProxy {
     this._cachedPeers = this._cachedPeers.filter((p) => p.peerId !== peerId)
     if (this._cachedPeers.length < before) {
       this._cacheLastUpdatedAtMs = Date.now()
+      this._cacheMutationEpoch += 1
       log(`Evicted failing peer ${peerId.slice(0, 12)}... from cache (${this._cachedPeers.length} remaining)`)
     }
   }
@@ -976,17 +996,15 @@ export class BuyerProxy {
     }
   }
 
-  private async _discoverAndCachePeers(): Promise<PeerInfo[]> {
+  private async _discoverPeersFromNetwork(): Promise<PeerInfo[]> {
     const localSeeder = await this._readLocalSeederFallback()
     if (localSeeder) {
-      this._replacePeers([localSeeder])
       log(`Using local seeder ${localSeeder.peerId.slice(0, 12)}... @ ${localSeeder.publicAddress} (skipping DHT lookup)`)
-      return this._cachedPeers
+      return [localSeeder]
     }
 
     log('Discovering peers via DHT...')
     const peers = await this._node.discoverPeers()
-    this._replacePeers(peers)
     if (peers.length > 0) {
       log(`Found ${peers.length} peer(s)`)
     }
@@ -999,16 +1017,22 @@ export class BuyerProxy {
     }
 
     const previousCachedPeers = [...this._cachedPeers]
+    const mutationEpochAtStart = this._cacheMutationEpoch
     this._peerRefreshPromise = (async () => {
-      const peers = await this._discoverAndCachePeers()
-      if (peers.length === 0) {
-        const fallbackPeers = this._cachedPeers.length > 0 ? [...this._cachedPeers] : previousCachedPeers
+      const peers = await this._discoverPeersFromNetwork()
+      if (peers.length > 0) {
+        this._replacePeers(peers)
+        return peers
+      }
+
+      const fallbackPeers = previousCachedPeers.length > 0 && this._cacheMutationEpoch === mutationEpochAtStart
+        ? [...previousCachedPeers]
+        : []
+      if (fallbackPeers.length > 0) {
         // Preserve stale cache as fallback when discovery transiently fails.
-        if (fallbackPeers.length > 0) {
-          log('Discovery returned 0 peers; preserving most-recent cached peers as fallback.')
-          this._replacePeers(fallbackPeers)
-          return fallbackPeers
-        }
+        log('Discovery returned 0 peers; preserving most-recent cached peers as fallback.')
+        this._replacePeers(fallbackPeers)
+        return fallbackPeers
       }
       return peers
     })().finally(() => {
@@ -1644,11 +1668,30 @@ export class BuyerProxy {
 
       if (abortedLocally) {
         log(`Request ${requestForPeer.requestId.slice(0, 8)} aborted locally; skipping retry, router penalty, and peer eviction.`)
-        if (res.headersSent) {
-          if (!res.writableEnded) {
-            res.end()
+        if (!res.writableEnded) {
+          let responded = false
+          if (!res.headersSent) {
+            try {
+              res.writeHead(499, { 'content-type': 'text/plain' })
+              responded = true
+            } catch {
+              // ignore
+            }
           }
-          return { done: true }
+          try {
+            if (res.writableEnded) {
+              // no-op
+            } else {
+              if (responded) {
+                res.end('Request cancelled')
+              } else {
+                res.end()
+              }
+              responded = true
+            }
+          } catch {
+            // ignore
+          }
         }
         return { done: true }
       }

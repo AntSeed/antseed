@@ -1997,7 +1997,7 @@ export function registerPiChatHandlers({
   getNetworkPeers,
 }: RegisterPiChatHandlersOptions): void {
   const store = new PiConversationStore();
-  let activeRun: ActiveRun | null = null;
+  const activeRunsByConversation = new Map<string, ActiveRun>();
   const modelProviderHints = new Map<string, string[]>();
   const preferredPeerByConversationId = new Map<string, string>();
   let modelCatalogRefreshPromise: Promise<ChatModelCatalogEntry[]> | null = null;
@@ -2020,8 +2020,8 @@ export function registerPiChatHandlers({
       // Ignore disposal races.
     }
 
-    if (activeRun === run) {
-      activeRun = null;
+    if (activeRunsByConversation.get(run.conversationId) === run) {
+      activeRunsByConversation.delete(run.conversationId);
     }
   };
 
@@ -2057,9 +2057,12 @@ export function registerPiChatHandlers({
       return { ok: false, error: 'Empty message' };
     }
 
-    if (activeRun) {
-      appendSystemLog(`Cancelling existing in-flight chat request for conversation ${activeRun.conversationId.slice(0, 8)}...`);
-      await abortAndClearActiveRun(activeRun);
+    const existingRun = activeRunsByConversation.get(conversationId);
+    if (existingRun) {
+      appendSystemLog(
+        `Cancelling existing in-flight chat request for conversation ${existingRun.conversationId.slice(0, 8)}...`,
+      );
+      await abortAndClearActiveRun(existingRun);
     }
 
     const proxyPort = await resolveProxyPort(configPath);
@@ -2271,7 +2274,7 @@ export function registerPiChatHandlers({
     });
 
     const run: ActiveRun = { conversationId, session, unsubscribe };
-    activeRun = run;
+    activeRunsByConversation.set(conversationId, run);
 
     try {
       await session.prompt(trimmedMessage);
@@ -2429,11 +2432,11 @@ export function registerPiChatHandlers({
   );
 
   ipcMain.handle('chat:ai-abort', async () => {
-    const run = activeRun;
-    if (!run) {
+    const activeRuns = Array.from(activeRunsByConversation.values());
+    if (activeRuns.length === 0) {
       return { ok: true };
     }
-    await abortAndClearActiveRun(run);
+    await Promise.all(activeRuns.map((run) => abortAndClearActiveRun(run)));
     return { ok: true };
   });
 }
