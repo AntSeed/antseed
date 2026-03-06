@@ -1162,26 +1162,38 @@ export class BuyerProxy {
       `Routing hints: provider=${explicitProvider ?? 'auto'} pin-peer=${explicitPeerId ?? 'none'} prefer-peer=${preferredPeerId ?? 'none'}`,
     )
     const routeKey = this._buildRouteKey(serializedReq.path, requestProtocol, requestedModel, explicitProvider)
-    const {
+    const selectPeers = (candidateSources: PeerInfo[]): CandidatePeerRouteSelection => selectCandidatePeersForRouting(
+      candidateSources,
+      requestProtocol,
+      requestedModel,
+      explicitProvider,
+    )
+
+    let hasForcedRefresh = false
+    const refreshPeerSelection = async (reason: string): Promise<void> => {
+      if (hasForcedRefresh) {
+        return
+      }
+      hasForcedRefresh = true
+      log(`Forcing peer refresh before routing after ${reason}.`)
+      discoveredPeers = await this._getPeers({ forceRefresh: true })
+      ;({
+        candidatePeers: routingPeers,
+        routePlanByPeerId: routingPlans,
+      } = selectPeers(discoveredPeers))
+    }
+
+    let {
       candidatePeers,
       routePlanByPeerId,
-    } = selectCandidatePeersForRouting(peers, requestProtocol, requestedModel, explicitProvider)
+    } = selectPeers(peers)
 
     let routingPeers = candidatePeers
     let routingPlans = routePlanByPeerId
     let discoveredPeers = peers
 
     if (routingPeers.length === 0) {
-      // One forced refresh handles stale-cache routing mismatches (e.g. missing provider/model updates).
-      discoveredPeers = await this._getPeers({ forceRefresh: true })
-      const refreshedSelection = selectCandidatePeersForRouting(
-        discoveredPeers,
-        requestProtocol,
-        requestedModel,
-        explicitProvider,
-      )
-      routingPeers = refreshedSelection.candidatePeers
-      routingPlans = refreshedSelection.routePlanByPeerId
+      await refreshPeerSelection('empty initial routing candidate set')
     }
 
     if (routingPeers.length === 0) {
@@ -1207,18 +1219,7 @@ export class BuyerProxy {
       })
 
     if (preferredProviders.length > 0 && !hasPreferredProviderCandidate) {
-      log(
-        `No preferred-provider peers in candidate set; forcing refresh for [${preferredProviders.join(',')}] before routing.`,
-      )
-      discoveredPeers = await this._getPeers({ forceRefresh: true })
-      const refreshedSelection = selectCandidatePeersForRouting(
-        discoveredPeers,
-        requestProtocol,
-        requestedModel,
-        explicitProvider,
-      )
-      routingPeers = refreshedSelection.candidatePeers
-      routingPlans = refreshedSelection.routePlanByPeerId
+      await refreshPeerSelection(`missing preferred providers [${preferredProviders.join(',')}]`)
       hasPreferredProviderCandidate = routingPeers.some((peer) => {
         const provider = routingPlans.get(peer.peerId)?.provider?.trim().toLowerCase()
         return Boolean(provider && preferredProviders.includes(provider))
@@ -1245,16 +1246,9 @@ export class BuyerProxy {
       let selectedPeer = pinnedRoutingPeers.find((p) => p.peerId.toLowerCase() === explicitPeerId) ?? null
 
       if (!selectedPeer) {
-        log(`Pinned peer ${explicitPeerId.slice(0, 12)}... not in current candidate set; forcing refresh.`)
-        discoveredPeers = await this._getPeers({ forceRefresh: true })
-        const refreshedSelection = selectCandidatePeersForRouting(
-          discoveredPeers,
-          requestProtocol,
-          requestedModel,
-          explicitProvider,
-        )
-        pinnedRoutingPeers = refreshedSelection.candidatePeers
-        pinnedRoutePlans = refreshedSelection.routePlanByPeerId
+        await refreshPeerSelection(`pinned peer ${explicitPeerId.slice(0, 12)}... not in candidate set`)
+        pinnedRoutingPeers = routingPeers
+        pinnedRoutePlans = routingPlans
         selectedPeer = pinnedRoutingPeers.find((p) => p.peerId.toLowerCase() === explicitPeerId) ?? null
       }
 
