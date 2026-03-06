@@ -14,6 +14,7 @@ import {
 import {
   ANTSEED_STREAMING_RESPONSE_HEADER,
   ANTSEED_UPLOAD_CHUNK_HEADER,
+  ANTSEED_UPLOAD_THRESHOLD_BYTES,
   ANTSEED_UPLOAD_CHUNK_SIZE,
 } from "../types/http.js";
 import { debugLog } from "../utils/debug.js";
@@ -87,7 +88,7 @@ export class ProxyMux {
     onResponse: ResponseHandler,
     onChunk: ChunkHandler
   ): void {
-    const useChunkedUpload = request.body.length > ANTSEED_UPLOAD_CHUNK_SIZE;
+    const useChunkedUpload = request.body.length > ANTSEED_UPLOAD_THRESHOLD_BYTES;
     debugLog(
       `[ProxyMux] send request reqId=${request.requestId.slice(0, 8)} bytes=${request.body.length} chunked=${useChunkedUpload ? "true" : "false"}`,
     );
