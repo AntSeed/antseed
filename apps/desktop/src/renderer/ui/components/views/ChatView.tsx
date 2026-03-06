@@ -7,7 +7,7 @@ import { useActions } from '../../hooks/useActions';
 import { ChatBubble, isToolResultOnlyMessage } from '../chat/ChatBubble';
 import { WalkingAnt } from '../chat/WalkingAnt';
 import { ModelDropdown } from '../chat/ModelDropdown';
-import { AntStationLogo } from '../AntStationLogo';
+import { AntStationStackedLogo } from '../AntStationLogo';
 import styles from './ChatView.module.scss';
 
 type ChatMessage = {
@@ -176,7 +176,7 @@ export function ChatView({ active }: ChatViewProps) {
           <div className={styles.chatMessages} ref={scrollRef} data-chat-scroll>
             {showWelcome ? (
               <div className={styles.chatWelcome}>
-                <AntStationLogo height={56} />
+                <AntStationStackedLogo height={72} />
                 <div className={styles.chatWelcomeSubtitle}>
                   Start typing. Best provider auto-selected by reputation.
                 </div>
@@ -209,7 +209,7 @@ export function ChatView({ active }: ChatViewProps) {
               <textarea
                 ref={inputRef}
                 className={styles.chatTextInput}
-                placeholder="Message Community Peers..."
+                placeholder="Type a message... (Shift+Enter for newline)"
                 rows={1}
                 disabled={snap.chatInputDisabled}
                 value={inputValue}
@@ -247,4 +247,3 @@ export function ChatView({ active }: ChatViewProps) {
     </section>
   );
 }
-
