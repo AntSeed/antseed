@@ -1233,7 +1233,7 @@ export function initChatModule({
 
     if (bridge.chatAiSendStream) {
       const sendStreamRequest = async () =>
-        await bridge.chatAiSendStream!(convId, content, selection.id || undefined, undefined, imageBase64, imageMimeType);
+        await bridge.chatAiSendStream!(convId, content || ' ', selection.id || undefined, undefined, imageBase64, imageMimeType);
 
       void (async () => {
         try {
@@ -1274,7 +1274,7 @@ export function initChatModule({
       void (async () => {
         try {
           const sendRequest = async () =>
-            await bridge.chatAiSend!(convId, content, selection.id || undefined, undefined, imageBase64, imageMimeType);
+            await bridge.chatAiSend!(convId, content || ' ', selection.id || undefined, undefined, imageBase64, imageMimeType);
 
           let result = await sendRequest();
           if (

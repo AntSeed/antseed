@@ -16,7 +16,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { createConnection } from 'node:net';
+import { createConnection, isIP } from 'node:net';
 import { createDashboardServer, type DashboardConfig, type DashboardServer } from '@antseed/dashboard';
 import {
   ProcessManager,
@@ -56,6 +56,47 @@ function hasDesktopDebugFlag(argv: string[]): boolean {
 }
 
 const DESKTOP_DEBUG_ENABLED = isTruthyEnv(process.env[DESKTOP_DEBUG_ENV]) || hasDesktopDebugFlag(process.argv);
+
+type LegacyTextBlock = { type: 'text'; text: string };
+type LegacyThinkingBlock = { type: 'thinking'; thinking: string };
+type LegacyToolUseBlock = { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> };
+type LegacyToolResultBlock = { type: 'tool_result'; tool_use_id: string; content: string; is_error?: boolean };
+type LegacyImageBlock = { type: 'image'; source: { type: 'base64'; media_type: string; data: string } };
+type ContentBlock = LegacyTextBlock | LegacyThinkingBlock | LegacyToolUseBlock | LegacyToolResultBlock | LegacyImageBlock;
+type ToolUseBlock = LegacyToolUseBlock;
+type ToolResultBlock = LegacyToolResultBlock;
+
+type AiMessageMeta = {
+  peerId?: string;
+  peerAddress?: string;
+  peerProviders?: string[];
+  peerReputation?: number;
+  peerTrustScore?: number;
+  peerCurrentLoad?: number;
+  peerMaxConcurrency?: number;
+  provider?: string;
+  model?: string;
+  requestId?: string;
+  routeRequestId?: string;
+  latencyMs?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  tokenSource?: 'usage' | 'estimated' | 'unknown';
+  inputUsdPerMillion?: number;
+  outputUsdPerMillion?: number;
+  estimatedCostUsd?: number;
+};
+type AiChatMessage = {
+  role: 'user' | 'assistant';
+  content: string | ContentBlock[];
+  createdAt?: number;
+  meta?: AiMessageMeta;
+};
+type AiUsageTotals = {
+  inputTokens: number;
+  outputTokens: number;
+};
 
 function resolveAppIconPath(): string | undefined {
   const candidates = [
@@ -164,6 +205,7 @@ const DEFAULT_CONFIG_PATH = path.join(homedir(), '.antseed', 'config.json');
 const DEFAULT_PLUGINS_DIR = path.join(homedir(), '.antseed', 'plugins');
 const DEFAULT_PLUGINS_PACKAGE_JSON = path.join(DEFAULT_PLUGINS_DIR, 'package.json');
 const SAFE_PLUGIN_PACKAGE_PATTERN = /^(@?[a-z0-9][a-z0-9._-]*)(\/[a-z0-9][a-z0-9._-]*)?$/i;
+const ALLOWED_IMAGE_MIME_TYPES = new Set<string>(['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp']);
 const PLUGIN_PACKAGE_ALIAS_MAP: Record<string, string> = {
   anthropic: '@antseed/provider-anthropic',
   openai: '@antseed/provider-openai',
@@ -589,6 +631,99 @@ function asNumber(value: unknown, fallback: number): number {
     return parsed;
   }
   return fallback;
+}
+
+function normalizeImageMimeType(value: string | undefined): string | null {
+  if (!value) return null;
+  const normalized = value.trim().toLowerCase();
+  if (!ALLOWED_IMAGE_MIME_TYPES.has(normalized)) {
+    return null;
+  }
+  return normalized;
+}
+
+function resolveUserChatContent(
+  userMessage: string,
+  imageBase64: string | undefined,
+  imageMimeType: string | undefined,
+): string | ContentBlock[] {
+  const trimmedMessage = userMessage.trim();
+  const normalizedMimeType = normalizeImageMimeType(imageMimeType);
+  if (!imageBase64) {
+    return trimmedMessage;
+  }
+
+  if (!normalizedMimeType) {
+    throw new Error(`Unsupported image MIME type: ${imageMimeType ?? 'unknown'}`);
+  }
+
+  return [
+    { type: 'image', source: { type: 'base64', media_type: normalizedMimeType, data: imageBase64 } },
+    { type: 'text', text: trimmedMessage || 'What is in this image?' },
+  ];
+}
+
+function isPublicMetadataHost(rawHost: string): boolean {
+  const host = rawHost.trim();
+  if (host.length === 0 || host.includes('/') || host.includes('..') || host.includes('@')) {
+    return false;
+  }
+
+  const ipVersion = isIP(host);
+  if (ipVersion === 0) {
+    return false;
+  }
+
+  if (ipVersion === 4) {
+    const parts = host.split('.').map((part) => Number(part));
+    if (parts.length !== 4 || parts.some((part) => !Number.isFinite(part) || part < 0 || part > 255)) {
+      return false;
+    }
+    const a = parts[0] ?? 0;
+    const b = parts[1] ?? 0;
+    if (a === 10) return false;
+    if (a === 127) return false;
+    if (a === 172 && b >= 16 && b <= 31) return false;
+    if (a === 192 && b === 168) return false;
+    if (a === 169 && b === 254) return false;
+    if (a === 100 && b >= 64 && b <= 127) return false;
+    if (a === 198 && (b === 18 || b === 19)) return false;
+    if (a === 0) return false;
+    return true;
+  }
+
+  const normalized = host.toLowerCase();
+  if (normalized === '::1' || normalized === '::' || normalized.startsWith('::ffff:')) {
+    return false;
+  }
+  if (
+    normalized.startsWith('fe80:')
+    || normalized.startsWith('fe81:')
+    || normalized.startsWith('fe82:')
+    || normalized.startsWith('fe83:')
+    || normalized.startsWith('fe84:')
+    || normalized.startsWith('fe85:')
+    || normalized.startsWith('fe86:')
+    || normalized.startsWith('fe87:')
+    || normalized.startsWith('fe88:')
+    || normalized.startsWith('fe89:')
+    || normalized.startsWith('fe8a:')
+    || normalized.startsWith('fe8b:')
+    || normalized.startsWith('fe8c:')
+    || normalized.startsWith('fe8d:')
+    || normalized.startsWith('fe8e:')
+    || normalized.startsWith('fe8f:')
+    || normalized.startsWith('fc')
+    || normalized.startsWith('fd')
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+function parseImageMimeTypeList(): string {
+  return [...ALLOWED_IMAGE_MIME_TYPES].join(', ');
 }
 
 function asStringArray(value: unknown, fallback: string[]): string[] {
@@ -1292,10 +1427,6 @@ async function ensureDashboardRuntime(targetPort?: number): Promise<void> {
   if (dashboardPortInUseUntilMs > now && dashboardRuntime.port === desiredPort) {
     return;
   }
-  const lastError = dashboardRuntime.lastError ?? '';
-  if (isAddressInUseError(lastError) && dashboardRuntime.port === desiredPort && dashboardPortInUseUntilMs > now) {
-    return;
-  }
 
   try {
     await startDashboardRuntime(desiredPort);
@@ -1631,51 +1762,13 @@ if (chatEngine === 'pi') {
           port: Number(peer.port) || 0,
           providers: Array.isArray(peer.providers) ? peer.providers.map((provider) => String(provider)) : [],
         }))
-        .filter((peer) => peer.host.length > 0 && peer.port > 0 && peer.port <= 65535);
+        .filter((peer) => peer.host.length > 0
+          && isPublicMetadataHost(peer.host)
+          && peer.port > 0
+          && peer.port <= 65535);
     },
   });
 } else {
-
-type TextBlock = { type: 'text'; text: string };
-type ThinkingBlock = { type: 'thinking'; thinking: string };
-type ToolUseBlock = { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> };
-type ToolResultBlock = { type: 'tool_result'; tool_use_id: string; content: string; is_error?: boolean };
-type ImageBlock = { type: 'image'; source: { type: 'base64'; media_type: string; data: string } };
-type ContentBlock = TextBlock | ThinkingBlock | ToolUseBlock | ToolResultBlock | ImageBlock;
-
-type AiMessageMeta = {
-  peerId?: string;
-  peerAddress?: string;
-  peerProviders?: string[];
-  peerReputation?: number;
-  peerTrustScore?: number;
-  peerCurrentLoad?: number;
-  peerMaxConcurrency?: number;
-  provider?: string;
-  model?: string;
-  requestId?: string;
-  routeRequestId?: string;
-  latencyMs?: number;
-  inputTokens?: number;
-  outputTokens?: number;
-  totalTokens?: number;
-  tokenSource?: 'usage' | 'estimated' | 'unknown';
-  inputUsdPerMillion?: number;
-  outputUsdPerMillion?: number;
-  estimatedCostUsd?: number;
-};
-
-type AiChatMessage = {
-  role: 'user' | 'assistant';
-  content: string | ContentBlock[];
-  createdAt?: number;
-  meta?: AiMessageMeta;
-};
-
-type AiUsageTotals = {
-  inputTokens: number;
-  outputTokens: number;
-};
 
 type AiConversation = {
   id: string;
@@ -2553,12 +2646,15 @@ ipcMain.handle('chat:ai-send', async (_event, conversationId: string, userMessag
   }
 
   // Build user message content — multipart if image attached
-  const userContent: string | ContentBlock[] = imageBase64 && imageMimeType
-    ? [
-        { type: 'image', source: { type: 'base64', media_type: imageMimeType, data: imageBase64 } },
-        { type: 'text', text: userMessage.trim() || 'What is in this image?' },
-      ]
-    : userMessage.trim();
+  let userContent: string | ContentBlock[];
+  try {
+    userContent = resolveUserChatContent(userMessage, imageBase64, imageMimeType);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    const errMessage = `${detail} Allowed: ${parseImageMimeTypeList()}.`;
+    mainWindow?.webContents.send('chat:ai-error', { conversationId, error: errMessage });
+    return { ok: false, error: errMessage };
+  }
 
   // Add user message
   conv.messages.push({ role: 'user', content: userContent as string | ContentBlock[], createdAt: Date.now() });
@@ -3041,12 +3137,15 @@ ipcMain.handle('chat:ai-send-stream', async (_event, conversationId: string, use
   }
 
   // Build user message content — multipart if image attached
-  const userContent: string | ContentBlock[] = imageBase64 && imageMimeType
-    ? [
-        { type: 'image', source: { type: 'base64', media_type: imageMimeType, data: imageBase64 } },
-        { type: 'text', text: userMessage.trim() || 'What is in this image?' },
-      ]
-    : userMessage.trim();
+  let userContent: string | ContentBlock[];
+  try {
+    userContent = resolveUserChatContent(userMessage, imageBase64, imageMimeType);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    const errMessage = `${detail} Allowed: ${parseImageMimeTypeList()}.`;
+    mainWindow?.webContents.send('chat:ai-stream-error', { conversationId, error: errMessage });
+    return { ok: false, error: errMessage };
+  }
 
   // Add user message
   conv.messages.push({ role: 'user', content: userContent as string | ContentBlock[], createdAt: Date.now() });

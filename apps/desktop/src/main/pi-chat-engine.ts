@@ -1,7 +1,7 @@
 import type { IpcMain } from 'electron';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, stat, unlink, writeFile } from 'node:fs/promises';
-import { createConnection } from 'node:net';
+import { createConnection, isIP } from 'node:net';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import type { AgentSession, AgentSessionEvent } from '@mariozechner/pi-coding-agent';
@@ -10,6 +10,7 @@ import type {
   AssistantMessage,
   AssistantMessageEvent,
   Context,
+  ImageContent,
   Message,
   Model,
   StreamOptions,
@@ -287,6 +288,65 @@ function normalizeHost(value: unknown): string | null {
   return host.length > 0 ? host : null;
 }
 
+function isPublicMetadataHost(rawHost: string): boolean {
+  const host = rawHost.trim().toLowerCase();
+  if (host.length === 0 || host === 'localhost' || host.endsWith('.local') || host.includes('/') || host.includes('@')) {
+    return false;
+  }
+
+  const ipVersion = isIP(host);
+  if (ipVersion === 0) {
+    return false;
+  }
+
+  if (ipVersion === 4) {
+    const parts = host.split('.').map((part) => Number(part));
+    if (parts.length !== 4 || parts.some((part) => !Number.isFinite(part) || part < 0 || part > 255)) {
+      return false;
+    }
+    const a = parts[0] ?? 0;
+    const b = parts[1] ?? 0;
+    if (a === 10) return false;
+    if (a === 127) return false;
+    if (a === 172 && b >= 16 && b <= 31) return false;
+    if (a === 192 && b === 168) return false;
+    if (a === 169 && b === 254) return false;
+    if (a === 100 && b >= 64 && b <= 127) return false;
+    if (a === 198 && (b === 18 || b === 19)) return false;
+    if (a === 0) return false;
+    return true;
+  }
+
+  if (host === '::1' || host === '::' || host.startsWith('::ffff:')) {
+    return false;
+  }
+
+  if (
+    host.startsWith('fe80:') ||
+    host.startsWith('fe81:') ||
+    host.startsWith('fe82:') ||
+    host.startsWith('fe83:') ||
+    host.startsWith('fe84:') ||
+    host.startsWith('fe85:') ||
+    host.startsWith('fe86:') ||
+    host.startsWith('fe87:') ||
+    host.startsWith('fe88:') ||
+    host.startsWith('fe89:') ||
+    host.startsWith('fe8a:') ||
+    host.startsWith('fe8b:') ||
+    host.startsWith('fe8c:') ||
+    host.startsWith('fe8d:') ||
+    host.startsWith('fe8e:') ||
+    host.startsWith('fe8f:') ||
+    host.startsWith('fc') ||
+    host.startsWith('fd')
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
 function normalizePort(value: unknown): number | null {
   const port = Number(value);
   if (!Number.isFinite(port)) {
@@ -497,6 +557,10 @@ function limitChatModelCatalogEntries(entries: ChatModelCatalogEntry[]): ChatMod
 }
 
 async function fetchPeerMetadata(host: string, port: number): Promise<Record<string, unknown> | null> {
+  if (!isPublicMetadataHost(host)) {
+    return null;
+  }
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), CHAT_MODEL_METADATA_FETCH_TIMEOUT_MS);
   try {
@@ -851,12 +915,26 @@ function convertPiMessageToUiBlocks(message: Message): string | ContentBlock[] {
     if (typeof message.content === 'string') {
       return message.content;
     }
+    // Preserve image blocks so the UI can render them
+    const hasImage = message.content.some((block) => block.type === 'image');
+    if (hasImage) {
+      const blocks: ContentBlock[] = [];
+      for (const block of message.content) {
+        if (block.type === 'image') {
+          blocks.push({
+            type: 'image',
+            source: { type: 'base64', media_type: (block as ImageContent).mimeType, data: (block as ImageContent).data },
+          } as unknown as ContentBlock);
+        } else if (block.type === 'text') {
+          blocks.push({ type: 'text', text: block.text });
+        }
+      }
+      return blocks;
+    }
     const textParts: string[] = [];
     for (const block of message.content) {
       if (block.type === 'text') {
         textParts.push(block.text);
-      } else {
-        textParts.push(`[image:${block.mimeType}]`);
       }
     }
     return textParts.join('\n').trim();
@@ -2051,9 +2129,11 @@ export function registerPiChatHandlers({
     userMessage: string,
     modelOverride?: string,
     providerOverride?: string,
+    imageBase64?: string,
+    imageMimeType?: string,
   ): Promise<{ ok: boolean; error?: string }> => {
     const trimmedMessage = userMessage.trim();
-    if (trimmedMessage.length === 0) {
+    if (trimmedMessage.length === 0 && !imageBase64) {
       return { ok: false, error: 'Empty message' };
     }
 
@@ -2277,7 +2357,10 @@ export function registerPiChatHandlers({
     activeRunsByConversation.set(conversationId, run);
 
     try {
-      await session.prompt(trimmedMessage);
+      const images: ImageContent[] = imageBase64 && imageMimeType
+        ? [{ type: 'image', data: imageBase64, mimeType: imageMimeType }]
+        : [];
+      await session.prompt(trimmedMessage || ' ', { images: images.length > 0 ? images : undefined });
       if (!streamDone) {
         streamDone = true;
         sendToRenderer('chat:ai-stream-done', { conversationId });
@@ -2419,15 +2502,15 @@ export function registerPiChatHandlers({
 
   ipcMain.handle(
     'chat:ai-send-stream',
-    async (_event, conversationId: string, userMessage: string, model?: string, provider?: string) => {
-      return await runStreamingPrompt(conversationId, userMessage, model, provider);
+    async (_event, conversationId: string, userMessage: string, model?: string, provider?: string, imageBase64?: string, imageMimeType?: string) => {
+      return await runStreamingPrompt(conversationId, userMessage, model, provider, imageBase64, imageMimeType);
     },
   );
 
   ipcMain.handle(
     'chat:ai-send',
-    async (_event, conversationId: string, userMessage: string, model?: string, provider?: string) => {
-      return await runStreamingPrompt(conversationId, userMessage, model, provider);
+    async (_event, conversationId: string, userMessage: string, model?: string, provider?: string, imageBase64?: string, imageMimeType?: string) => {
+      return await runStreamingPrompt(conversationId, userMessage, model, provider, imageBase64, imageMimeType);
     },
   );
 

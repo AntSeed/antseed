@@ -24,6 +24,7 @@ export function ChatView({ active }: ChatViewProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputId = useId();
+  const prevInputDisabled = useRef<boolean>(snap.chatInputDisabled);
 
   const visibleMessages = useMemo(() => {
     const msgs = Array.isArray(snap.chatMessages) ? (snap.chatMessages as ChatMessage[]) : [];
@@ -36,9 +37,12 @@ export function ChatView({ active }: ChatViewProps) {
     }
   }, [snap.chatMessages]);
 
-  // Re-focus the input whenever it becomes enabled (e.g. after AI response completes)
+  // Re-focus the input when it transitions from disabled → enabled (e.g. after AI response completes)
   useEffect(() => {
-    if (!snap.chatInputDisabled && inputRef.current) {
+    const wasDisabled = prevInputDisabled.current;
+    const isDisabled = snap.chatInputDisabled;
+    prevInputDisabled.current = isDisabled;
+    if (wasDisabled && !isDisabled && inputRef.current) {
       inputRef.current.focus();
     }
   }, [snap.chatInputDisabled]);
