@@ -289,7 +289,7 @@
 .chat-new-btn {
   width: 100%;
   padding: 9px 8px;
-  background: var(--bg-hover);
+  background: transparent;
   cursor: pointer;
   border-radius: var(--radius-sm);
   font-size: 14px;
@@ -299,10 +299,14 @@
   color: var(--text-primary);
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
 
   &:hover {
-    background: var(--bg-surface);
+    background: var(--bg-hover);
+  }
+
+  &.active {
+    background: var(--bg-hover);
   }
 }
 
