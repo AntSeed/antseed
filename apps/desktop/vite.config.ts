@@ -12,6 +12,11 @@ export default defineConfig({
     outDir: path.resolve(__dirname, 'dist/renderer'),
     emptyOutDir: true,
   },
+  css: {
+    modules: {
+      localsConvention: 'camelCaseOnly'
+    }
+  },
   server: {
     host: '127.0.0.1',
     port: 5174,

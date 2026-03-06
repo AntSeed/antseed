@@ -9,6 +9,7 @@ import { MoreVerticalIcon } from '@hugeicons/core-free-icons';
 import type { ViewName } from '../types';
 import { useUiSnapshot } from '../hooks/useUiSnapshot';
 import { useActions } from '../hooks/useActions';
+import styles from './Sidebar.module.scss';
 
 type IconData = Parameters<typeof HugeiconsIcon>[0]['icon'];
 
@@ -34,7 +35,7 @@ const networkEntries: NavEntry[] = [
 const SidebarWarning = memo(function SidebarWarning() {
   const { connectWarning } = useUiSnapshot();
   if (!connectWarning) return null;
-  return <p className="sidebar-warning">{connectWarning}</p>;
+  return <p className={styles.sidebarWarning}>{connectWarning}</p>;
 });
 
 function formatChatTime(timestamp: unknown): string {
@@ -95,10 +96,10 @@ function ConvContextMenu({
 
   if (renaming) {
     return (
-      <div className="conv-context-menu" ref={menuRef}>
+      <div className={styles.convContextMenu} ref={menuRef}>
         <input
           ref={renameInputRef}
-          className="conv-rename-input"
+          className={styles.convRenameInput}
           value={renameValue}
           onChange={(e) => setRenameValue(e.target.value)}
           onKeyDown={(e) => {
@@ -112,12 +113,12 @@ function ConvContextMenu({
   }
 
   return (
-    <div className="conv-context-menu" ref={menuRef}>
-      <button className="conv-context-item" onClick={() => setRenaming(true)}>
+    <div className={styles.convContextMenu} ref={menuRef}>
+      <button className={styles.convContextItem} onClick={() => setRenaming(true)}>
         Rename
       </button>
       <button
-        className="conv-context-item conv-context-item-danger"
+        className={`${styles.convContextItem} ${styles.convContextItemDanger}`}
         onClick={() => {
           void actions.deleteConversation(convId);
           onClose();
@@ -137,11 +138,11 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
   const menuBtnRefs = useRef<Map<string, HTMLButtonElement | null>>(new Map());
 
   return (
-    <aside className="chat-sidebar">
-      <div className="chat-sidebar-label">Recents</div>
-      <div className="chat-conversation-list">
+    <aside className={styles.chatSidebar}>
+      <div className={styles.chatSidebarLabel}>Recents</div>
+      <div className={styles.chatConversationList}>
         {conversations.length === 0 ? (
-          <div className="chat-empty">No conversations yet</div>
+          <div className={styles.chatEmpty}>No conversations yet</div>
         ) : (
           conversations.map((item: unknown) => {
             const conv = item as Record<string, unknown>;
@@ -153,18 +154,18 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
             return (
               <div
                 key={id}
-                className={`chat-conv-item${isActive ? ' active' : ''}`}
+                className={`${styles.chatConvItem}${isActive ? ` ${styles.active}` : ''}`}
                 onClick={() => {
                   void actions.openConversation(id);
                   onSelectView('chat');
                 }}
               >
-                <div className="chat-conv-top">
-                  <div className="chat-conv-peer">{title}</div>
-                  <div className="chat-conv-right">
-                    <span className="chat-conv-time">{updatedLabel}</span>
+                <div className={styles.chatConvTop}>
+                  <div className={styles.chatConvPeer}>{title}</div>
+                  <div className={styles.chatConvRight}>
+                    <span className={styles.chatConvTime}>{updatedLabel}</span>
                     <button
-                      className="chat-conv-menu-btn"
+                      className={styles.chatConvMenuBtn}
                       ref={(el) => { menuBtnRefs.current.set(id, el); }}
                       onClick={(e) => {
                         e.stopPropagation();
@@ -196,10 +197,10 @@ export function Sidebar({ activeView, onSelectView }: SidebarProps) {
   const actions = useActions();
 
   return (
-    <aside className="sidebar">
-      <div className="sidebar-header">
+    <aside className={styles.sidebar}>
+      <div className={styles.sidebarHeader}>
         <button
-          className="chat-new-btn"
+          className={styles.chatNewBtn}
           onClick={() => {
             void actions.createNewConversation();
             onSelectView('chat');
@@ -211,13 +212,13 @@ export function Sidebar({ activeView, onSelectView }: SidebarProps) {
 
       <SidebarWarning />
 
-      <ul className="sidebar-nav" role="tablist" aria-label="Dashboard Views">
+      <ul className={styles.sidebarNav} role="tablist" aria-label="Dashboard Views">
         {networkEntries.map(({ label, view, icon }) => {
           const isActive = activeView === view;
           return (
             <li key={view}>
               <button
-                className={`sidebar-btn${isActive ? ' active' : ''}`}
+                className={`${styles.sidebarBtn}${isActive ? ` ${styles.active}` : ''}`}
                 data-view={view}
                 role="tab"
                 aria-selected={isActive ? 'true' : 'false'}

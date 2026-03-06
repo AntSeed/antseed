@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { Sun02Icon } from '@hugeicons/core-free-icons';
 import { Moon02Icon } from '@hugeicons/core-free-icons';
+import styles from './TitleBar.module.scss';
 
 export function TitleBar() {
   const [isDark, setIsDark] = useState(() =>
@@ -17,17 +18,17 @@ export function TitleBar() {
   }, [isDark]);
 
   return (
-    <header className="title-bar">
-      <div className="title-bar-left">
+    <header className={styles.titleBar}>
+      <div className={styles.titleBarLeft}>
         <img
-          className="title-bar-logo"
+          className={styles.titleBarLogo}
           src="./assets/antseed-logo.svg"
           alt="AntSeed"
         />
       </div>
-      <div className="title-bar-right">
+      <div className={styles.titleBarRight}>
         <button
-          className="title-bar-theme-toggle"
+          className={styles.titleBarThemeToggle}
           onClick={() => setIsDark((d) => !d)}
           aria-label={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
           title={isDark ? 'Switch to light theme' : 'Switch to dark theme'}

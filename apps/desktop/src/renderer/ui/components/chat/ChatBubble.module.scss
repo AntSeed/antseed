@@ -1,0 +1,384 @@
+/* ChatBubble.module.scss — module-scoped styles for ChatBubble */
+
+/* ===================================================================
+   Chat bubble base
+   =================================================================== */
+
+.chat-bubble {
+  max-width: 640px;
+  font-size: 14px;
+  line-height: 1.7;
+  word-wrap: break-word;
+  border: 0;
+
+  /* ===================================================================
+     User message (own)
+     =================================================================== */
+
+  &.own {
+    width: fit-content;
+    margin-left: auto;
+    margin-right: max(0px, calc((100% - 640px) / 2));
+    background: var(--chat-user-bubble);
+    border: 1px solid var(--chat-user-bubble-border);
+    color: var(--text-primary);
+    border-radius: var(--radius);
+    padding: 9px 17px;
+    margin-bottom: 32px;
+
+    .chat-bubble-meta {
+      margin-bottom: 4px;
+      text-align: left;
+      justify-content: flex-start;
+      font-size: 11px;
+    }
+
+    :global {
+      .chat-bubble-content {
+        line-height: 1.7;
+      }
+
+      .chat-image-preview {
+        max-width: 280px;
+        max-height: 200px;
+        border-radius: var(--radius-sm);
+        margin-bottom: 6px;
+        display: block;
+        object-fit: contain;
+      }
+    }
+  }
+
+  /* ===================================================================
+     Assistant message (other)
+     =================================================================== */
+
+  &.other {
+    align-self: stretch;
+    background: transparent;
+    color: var(--text-primary);
+    border-left: 0;
+    border-radius: 0;
+    width: 100%;
+    padding: 0 16px;
+
+  :global {
+    .chat-bubble-content {
+      line-height: 1.7;
+    }
+
+    .chat-bubble-content h1,
+    .chat-bubble-content h2,
+    .chat-bubble-content h3 {
+      margin-top: 8px;
+      margin-bottom: 4px;
+    }
+
+    .chat-bubble-content hr {
+      margin: 8px 0;
+      border: none;
+      border-top: 1px solid var(--border);
+    }
+
+    /* Markdown lists */
+    .chat-md-list {
+      margin: 4px 0 6px 16px;
+      padding: 0;
+    }
+
+    .chat-md-list .chat-md-li {
+      margin: 0;
+      padding: 0;
+    }
+
+    .chat-md-list .chat-md-li + .chat-md-li {
+      margin-top: 2px;
+    }
+
+    .chat-md-li-ul {
+      list-style: disc;
+    }
+
+    .chat-md-li-ol {
+      list-style: decimal;
+    }
+
+    /* Code blocks */
+    .chat-code-block {
+      background: var(--bg-primary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 12px;
+      margin: 8px 0;
+      overflow-x: auto;
+      font-size: 13px;
+      line-height: 1.5;
+      position: relative;
+    }
+
+    .chat-code-block .code-lang {
+      position: absolute;
+      top: 4px;
+      right: 8px;
+      font-size: 10px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+    }
+
+    .chat-inline-code {
+      background: var(--bg-primary);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 13px;
+    }
+
+    .chat-code-container {
+      margin: 8px 0;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      overflow: hidden;
+    }
+
+    .chat-code-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 4px 10px;
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border);
+      font-size: 10px;
+      color: var(--text-muted);
+    }
+
+    .chat-code-header .code-lang {
+      text-transform: uppercase;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+    }
+
+    .chat-code-copy-btn {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 10px;
+      padding: 1px 5px;
+      border-radius: 3px;
+    }
+
+    .chat-code-copy-btn:hover {
+      color: var(--text-primary);
+      background: var(--bg-hover);
+    }
+
+    .chat-code-container pre {
+      margin: 0;
+      border: none;
+      border-radius: 0;
+      padding: 10px 12px;
+      background: var(--bg-card-alt);
+    }
+
+    /* Tool inline rows */
+    .tool-inline {
+      margin: 8px 0;
+      overflow: hidden;
+    }
+
+    .tool-inline-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 24px;
+    }
+
+    .tool-inline-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex: 0 0 8px;
+      background: var(--text-muted);
+    }
+
+    .tool-inline-dot.running {
+      background: var(--accent-blue);
+    }
+
+    .tool-inline-dot.success {
+      background: var(--accent-green);
+    }
+
+    .tool-inline-dot.error {
+      background: var(--danger);
+    }
+
+    .tool-inline-label {
+      opacity: 0.3;
+      font-family: var(--font-sans);
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      padding: 0;
+      border-radius: 0;
+      background: none;
+    }
+
+    .tool-inline-status {
+      margin-left: auto;
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0;
+      text-transform: none;
+      color: var(--text-muted);
+    }
+
+    .tool-inline-status.running {
+      color: var(--accent-blue);
+    }
+
+    .tool-inline-status.success {
+      color: var(--accent-green);
+    }
+
+    .tool-inline-status.error {
+      color: var(--danger);
+    }
+
+    .tool-inline-output {
+      border-top: 1px solid var(--border);
+      padding: 8px 10px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: var(--text-secondary);
+      background: var(--bg-card-alt);
+      margin-top: 4px;
+      border-radius: var(--radius-sm);
+    }
+
+    .tool-inline-output.error {
+      color: var(--danger);
+    }
+
+    .tool-spinner {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: tool-spin 0.8s linear infinite;
+    }
+
+    /* Thinking blocks */
+    .thinking-block {
+      margin: 8px 0;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      overflow: hidden;
+    }
+
+    .thinking-block-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      background: var(--bg-surface);
+      cursor: pointer;
+      font-size: 12px;
+      color: var(--text-muted);
+      user-select: none;
+    }
+
+    .thinking-block-header:hover {
+      background: var(--bg-hover);
+    }
+
+    .thinking-block-triangle {
+      font-size: 8px;
+      transition: transform 0.15s;
+    }
+
+    .thinking-block.open .thinking-block-triangle {
+      transform: rotate(90deg);
+    }
+
+    .thinking-block-body {
+      display: none;
+      padding: 10px 12px;
+      border-top: 1px solid var(--border);
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--text-secondary);
+      max-height: 400px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: var(--bg-card-alt);
+    }
+
+    .thinking-block.open .thinking-block-body {
+      display: block;
+    }
+
+    .thinking-dots {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      margin-left: 4px;
+    }
+
+    .thinking-dots span {
+      width: 3px;
+      height: 3px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      animation: thinking-dot-pulse 1.2s ease-in-out infinite;
+    }
+
+    .thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
+    .thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
+  }
+  }
+}
+
+/* ===================================================================
+   Bubble meta
+   =================================================================== */
+
+.chat-bubble-meta {
+  font-size: 14px;
+  color: var(--text-faint);
+  margin-bottom: 8px;
+  display: block;
+  letter-spacing: 0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 24px;
+  cursor: pointer;
+
+  &.chat-bubble-meta-expanded {
+    white-space: normal;
+    text-overflow: unset;
+  }
+}
+
+.chat-bubble-stats {
+  color: var(--text-faint);
+  font-size: inherit;
+}
+
+/* ===================================================================
+   Tool-result-only messages (hidden)
+   =================================================================== */
+
+.tool-result-msg {
+  display: none;
+}
