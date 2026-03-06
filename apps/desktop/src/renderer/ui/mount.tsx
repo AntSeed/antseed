@@ -1,4 +1,3 @@
-import { flushSync } from 'react-dom';
 import { createRoot, type Root } from 'react-dom/client';
 import { AppShell } from './AppShell';
 
@@ -14,7 +13,5 @@ export function mountAppShell(): void {
     root = createRoot(container);
   }
 
-  flushSync(() => {
-    root?.render(<AppShell />);
-  });
+  root.render(<AppShell />);
 }

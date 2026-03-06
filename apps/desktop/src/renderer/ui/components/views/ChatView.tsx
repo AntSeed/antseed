@@ -11,6 +11,32 @@ type ChatMessage = {
   meta?: Record<string, unknown>;
 };
 
+function getMessageContentKey(content: unknown): string {
+  if (typeof content === 'string') {
+    return content.slice(0, 48);
+  }
+  if (Array.isArray(content)) {
+    return `${content.length}:${content
+      .map((block) => {
+        if (!block || typeof block !== 'object') return 'x';
+        const typedBlock = block as { type?: unknown; text?: unknown; name?: unknown };
+        return `${String(typedBlock.type || 'x')}:${String(typedBlock.name || typedBlock.text || '').slice(0, 24)}`;
+      })
+      .join('|')}`;
+  }
+  return String(content ?? '');
+}
+
+function getMessageKey(message: ChatMessage, index: number): string {
+  const routeRequestId =
+    typeof message.meta?.routeRequestId === 'string' ? message.meta.routeRequestId : '';
+  if (routeRequestId) {
+    return `${message.role}:${routeRequestId}:${index}`;
+  }
+  const createdAt = Number(message.createdAt) || 0;
+  return `${message.role}:${createdAt}:${getMessageContentKey(message.content)}:${index}`;
+}
+
 type ChatViewProps = {
   active: boolean;
 };
@@ -172,7 +198,7 @@ export function ChatView({ active }: ChatViewProps) {
               </div>
             ) : (
               visibleMessages.map((msg, i) => (
-                <ChatBubble key={`msg-${msg.createdAt || 0}-${i}`} message={msg} />
+                <ChatBubble key={getMessageKey(msg, i)} message={msg} />
               ))
             )}
             <div data-chat-stream />
