@@ -143,7 +143,7 @@ function syncRuntimeActivityFromProcesses(processes = uiState.processes): void {
   setRuntimeSteadyActivity(
     buyerConnected ? 'active' : 'idle',
     buyerConnected
-      ? 'Buyer runtime connected. Waiting for peers and requests...'
+      ? 'Ready.'
       : 'Buyer runtime offline. Waiting for local runtime start...',
   );
 }
@@ -389,6 +389,7 @@ registerActions({
   scanDht: actionScanDht,
   saveConfig: saveConfig,
   createNewConversation: chatApi.createNewConversation,
+  startNewChat: chatApi.startNewChat,
   openConversation: chatApi.openConversation,
   sendMessage: chatApi.sendMessage,
   abortChat: chatApi.abortChat,
@@ -421,7 +422,7 @@ setRefreshHooks({
     if (busy) {
       uiState.peersMessage = stage;
       uiState.peersMeta = { tone: 'warn', label: 'Refreshing...' };
-      uiState.overviewBadge = { tone: 'warn', label: stage };
+      uiState.overviewBadge = { tone: 'active', label: stage };
       notifyUiStateChanged();
       return;
     }

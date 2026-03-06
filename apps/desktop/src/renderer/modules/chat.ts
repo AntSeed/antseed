@@ -54,6 +54,7 @@ export type ChatModuleApi = {
   refreshChatProxyStatus: () => Promise<void>;
   refreshChatConversations: () => Promise<void>;
   createNewConversation: () => Promise<void>;
+  startNewChat: () => void;
   deleteConversation: (convId?: string) => Promise<void>;
   renameConversation: (convId: string, newTitle: string) => void;
   openConversation: (convId: string) => Promise<void>;
@@ -599,8 +600,19 @@ export function initChatModule({
   }
 
   function updateStreamingIndicator(): void {
+    const genericStatus = formatGenericChatStatus();
     const elapsedMs =
       activeStreamStartedAt > 0 ? Date.now() - activeStreamStartedAt : 0;
+    const elapsedText = elapsedMs > 0 ? ` · ${formatElapsedMs(elapsedMs)}` : '';
+
+    if (activeStreamTurn !== null && uiState.chatSending) {
+      const label = getMyrmecochoryLabel(activeStreamTurn);
+      uiState.chatStreamingIndicatorText = `Turn ${activeStreamTurn} · ${label}${elapsedText} · ${genericStatus}`;
+    } else if (uiState.chatSending) {
+      uiState.chatStreamingIndicatorText = `Generating response...${elapsedText} · ${genericStatus}`;
+    } else {
+      uiState.chatStreamingIndicatorText = genericStatus;
+    }
 
     uiState.chatStreamingActive = uiState.chatSending;
     uiState.chatThinkingElapsedMs = uiState.chatSending ? elapsedMs : 0;
@@ -1076,6 +1088,19 @@ export function initChatModule({
     }
   }
 
+  function startNewChat(): void {
+    uiState.chatActiveConversation = null;
+    uiState.chatMessages = [];
+    activeConversation = null;
+    uiState.chatDeleteVisible = false;
+    uiState.chatInputDisabled = false;
+    uiState.chatSendDisabled = false;
+    uiState.chatConversationTitle = 'New Chat';
+    uiState.chatError = null;
+    updateThreadMeta(null);
+    notifyUiStateChanged();
+  }
+
   async function createNewConversation(): Promise<void> {
     if (!bridge || !bridge.chatAiCreateConversation) return;
 
@@ -1112,17 +1137,9 @@ export function initChatModule({
     try {
       await bridge.chatAiDeleteConversation(convId);
 
-      // If we deleted the active conversation, clear the view
+      // If we deleted the active conversation, reset to new-chat state
       if (convId === uiState.chatActiveConversation) {
-        uiState.chatActiveConversation = null;
-        uiState.chatMessages = [];
-        activeConversation = null;
-        uiState.chatDeleteVisible = false;
-        uiState.chatInputDisabled = true;
-        uiState.chatSendDisabled = true;
-        uiState.chatConversationTitle = 'Conversation';
-        updateThreadMeta(null);
-        uiState.chatError = null;
+        startNewChat();
       }
 
       notifyUiStateChanged();
@@ -1154,8 +1171,7 @@ export function initChatModule({
   }
 
   function sendMessage(text: string, imageBase64?: string, imageMimeType?: string): void {
-    const convId = uiState.chatActiveConversation;
-    if (!convId || !bridge) return;
+    if (!bridge) return;
 
     if (uiState.chatSending) {
       showChatError('Another chat request is already in progress.');
@@ -1164,6 +1180,19 @@ export function initChatModule({
 
     const content = text.trim();
     if (content.length === 0 && !imageBase64) return;
+
+    // If no active conversation, create one first then send
+    if (!uiState.chatActiveConversation) {
+      void (async () => {
+        await createNewConversation();
+        if (uiState.chatActiveConversation) {
+          sendMessage(text, imageBase64, imageMimeType);
+        }
+      })();
+      return;
+    }
+
+    const convId = uiState.chatActiveConversation;
 
     // Build message content — multipart if image attached, plain string otherwise
     const messageContent: unknown = imageBase64 && imageMimeType
@@ -1795,6 +1824,7 @@ export function initChatModule({
     refreshChatProxyStatus,
     refreshChatConversations,
     createNewConversation,
+    startNewChat,
     deleteConversation,
     renameConversation,
     openConversation,

@@ -10,6 +10,7 @@ export type AppActions = {
   scanDht: () => Promise<void>;
   saveConfig: (formData: ConfigFormData) => Promise<void>;
   createNewConversation: () => Promise<void>;
+  startNewChat: () => void;
   openConversation: (id: string) => Promise<void>;
   sendMessage: (text: string, imageBase64?: string, imageMimeType?: string) => void;
   abortChat: () => Promise<void>;

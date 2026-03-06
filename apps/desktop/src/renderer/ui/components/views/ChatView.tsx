@@ -7,7 +7,7 @@ import { useActions } from '../../hooks/useActions';
 import { ChatBubble, isToolResultOnlyMessage } from '../chat/ChatBubble';
 import { WalkingAnt } from '../chat/WalkingAnt';
 import { ModelDropdown } from '../chat/ModelDropdown';
-import type { ChatModelOptionEntry } from '../../../core/state';
+import { AntStationLogo } from '../AntStationLogo';
 import styles from './ChatView.module.scss';
 
 type ChatMessage = {
@@ -146,10 +146,7 @@ export function ChatView({ active }: ChatViewProps) {
     }
   }, []);
 
-  const conversations = Array.isArray(snap.chatConversations) ? snap.chatConversations : [];
-  const showOnboarding =
-    conversations.length === 0 && !snap.chatActiveConversation && visibleMessages.length === 0;
-  const showWelcome = !showOnboarding && visibleMessages.length === 0;
+  const showWelcome = !snap.chatActiveConversation && visibleMessages.length === 0;
 
   return (
     <section className={`view view-chat${active ? ' active' : ''}`} role="tabpanel">
@@ -177,22 +174,11 @@ export function ChatView({ active }: ChatViewProps) {
       <div className={styles.chatContainer}>
         <div className={styles.chatMain}>
           <div className={styles.chatMessages} ref={scrollRef} data-chat-scroll>
-            {showOnboarding ? (
-              <ChatOnboarding
-                options={snap.chatModelOptions}
-                selectedValue={snap.chatSelectedModelValue}
-                onModelChange={actions.handleModelChange}
-                onStart={() => void actions.createNewConversation()}
-              />
-            ) : showWelcome ? (
+            {showWelcome ? (
               <div className={styles.chatWelcome}>
-                <div className={styles.chatWelcomeTitle}>AntSeed AI Chat</div>
+                <AntStationLogo height={56} />
                 <div className={styles.chatWelcomeSubtitle}>
-                  Send messages through the P2P marketplace to inference providers.
-                </div>
-                <div className={styles.chatWelcomeSubtitle}>
-                  Buyer runtime auto-connects to the local proxy. Create a new conversation to
-                  begin.
+                  Start typing. Best provider auto-selected by reputation.
                 </div>
               </div>
             ) : (
@@ -223,7 +209,7 @@ export function ChatView({ active }: ChatViewProps) {
               <textarea
                 ref={inputRef}
                 className={styles.chatTextInput}
-                placeholder="Type a message... (Shift+Enter for newline)"
+                placeholder="Message Community Peers..."
                 rows={1}
                 disabled={snap.chatInputDisabled}
                 value={inputValue}
@@ -262,56 +248,3 @@ export function ChatView({ active }: ChatViewProps) {
   );
 }
 
-type ChatOnboardingProps = {
-  options: ChatModelOptionEntry[];
-  selectedValue: string;
-  onModelChange?: (value: string) => void;
-  onStart?: () => void;
-};
-
-function ChatOnboarding({ options, selectedValue, onModelChange, onStart }: ChatOnboardingProps) {
-  const hasModels = options.length > 0;
-
-  return (
-    <div className={styles.chatWelcome}>
-      <div className={styles.chatWelcomeTitle}>Start your first chat</div>
-      <div className={styles.chatWelcomeSubtitle}>
-        Select a model from the network API and create a conversation.
-      </div>
-      <div
-        style={{
-          display: 'flex',
-          gap: '8px',
-          alignItems: 'center',
-          flexWrap: 'wrap',
-          justifyContent: 'center',
-        }}
-      >
-        <select
-          className="form-input chat-model-select"
-          value={selectedValue}
-          disabled={!hasModels}
-          onChange={(e) => onModelChange?.(e.target.value)}
-        >
-          {hasModels ? (
-            options.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))
-          ) : (
-            <option value="">No models available</option>
-          )}
-        </select>
-        <button disabled={!hasModels} onClick={onStart}>
-          Start chat
-        </button>
-      </div>
-      {!hasModels && (
-        <div className={styles.chatWelcomeSubtitle}>
-          No models available yet. Ensure Buyer runtime/proxy is online.
-        </div>
-      )}
-    </div>
-  );
-}

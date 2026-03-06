@@ -6,6 +6,7 @@ import { PeerToPeer02Icon } from '@hugeicons/core-free-icons';
 import { Settings02Icon } from '@hugeicons/core-free-icons';
 import { CommandLineIcon } from '@hugeicons/core-free-icons';
 import { MoreVerticalIcon } from '@hugeicons/core-free-icons';
+import { Add01Icon } from '@hugeicons/core-free-icons';
 import type { ViewName } from '../types';
 import { useUiSnapshot } from '../hooks/useUiSnapshot';
 import { useActions } from '../hooks/useActions';
@@ -195,18 +196,20 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
 
 export function Sidebar({ activeView, onSelectView }: SidebarProps) {
   const actions = useActions();
+  const isChatActive = activeView === 'chat';
 
   return (
     <aside className={styles.sidebar}>
       <div className={styles.sidebarHeader}>
         <button
-          className={styles.chatNewBtn}
+          className={`${styles.chatNewBtn}${isChatActive ? ` ${styles.active}` : ''}`}
           onClick={() => {
-            void actions.createNewConversation();
+            actions.startNewChat();
             onSelectView('chat');
           }}
         >
-          + New Chat
+          <HugeiconsIcon icon={Add01Icon} size={16} strokeWidth={2} />
+          New Chat
         </button>
       </div>
 
