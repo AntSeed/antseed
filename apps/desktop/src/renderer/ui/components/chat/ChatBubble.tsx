@@ -339,11 +339,4 @@ export function ChatBubble({ message }: ChatBubbleProps) {
   );
 }
 
-export function isToolResultOnlyMessage(msg: ChatMessage): boolean {
-  return (
-    msg.role === 'user' &&
-    Array.isArray(msg.content) &&
-    msg.content.length > 0 &&
-    (msg.content as ContentBlock[]).every((b) => b.type === 'tool_result')
-  );
-}
+export { isToolResultOnlyMessage } from './chat-utils.js';
