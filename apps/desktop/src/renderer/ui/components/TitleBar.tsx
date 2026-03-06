@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { Sun02Icon } from '@hugeicons/core-free-icons';
 import { Moon02Icon } from '@hugeicons/core-free-icons';
+import { AntStationLogo } from './AntStationLogo';
 import styles from './TitleBar.module.scss';
 
 export function TitleBar() {
@@ -20,11 +21,7 @@ export function TitleBar() {
   return (
     <header className={styles.titleBar}>
       <div className={styles.titleBarLeft}>
-        <img
-          className={styles.titleBarLogo}
-          src="./assets/antseed-logo.svg"
-          alt="AntSeed"
-        />
+        <AntStationLogo height={20} className={styles.titleBarLogo} />
       </div>
       <div className={styles.titleBarRight}>
         <button

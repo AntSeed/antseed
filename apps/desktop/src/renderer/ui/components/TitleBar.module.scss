@@ -80,16 +80,24 @@
   width: 30px;
   height: 30px;
   border-radius: 8px;
-  background: transparent;
+  background: #ffffff;
   border: 1px solid var(--border);
   color: var(--text-secondary);
   cursor: pointer;
   padding: 0;
   transition: all 0.15s ease;
 
-  &:hover {
+  :global(body.dark-theme) & {
     background: var(--bg-hover);
+  }
+
+  &:hover {
+    background: #f0f0f0;
     color: var(--text-primary);
     border-color: var(--border-strong);
+
+    :global(body.dark-theme) & {
+      background: var(--bg-surface);
+    }
   }
 }
