@@ -2,9 +2,14 @@ export const ANTSEED_STREAMING_RESPONSE_HEADER = 'x-antseed-streaming';
 /** Marker header set on HttpRequest frames whose body is sent via HttpRequestChunk/End frames. */
 export const ANTSEED_UPLOAD_CHUNK_HEADER = 'x-antseed-upload';
 /**
- * Body size threshold/chunk size used by ProxyMux for request uploads.
- * Kept deliberately small for cross-peer RTC compatibility where max message
- * size can vary across environments.
+ * Maximum size of a request body that can be sent as a single request frame.
+ * Larger bodies are sent as chunked upload frames.
+ */
+export const ANTSEED_UPLOAD_THRESHOLD_BYTES = 256 * 1024;
+/**
+ * Maximum size of each chunk when sending chunked request uploads.
+ * Kept small for cross-peer RTC compatibility where max message size can vary
+ * across environments.
  */
 export const ANTSEED_UPLOAD_CHUNK_SIZE = 8 * 1024;
 
