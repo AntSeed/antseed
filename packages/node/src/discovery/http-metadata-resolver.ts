@@ -47,7 +47,6 @@ export class HttpMetadataResolver implements MetadataResolver {
       if (failedState.nextRetryAt > now) {
         return null;
       }
-      this.failedEndpoints.delete(endpointKey);
     }
 
     const url = `http://${peer.host}:${metadataPort}/metadata`;

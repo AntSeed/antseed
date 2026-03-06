@@ -166,12 +166,21 @@ async function isPortReachable(port: number, timeoutMs = 700): Promise<boolean> 
 }
 
 async function isCompatibleBuyerProxy(port: number, timeoutMs = 1200): Promise<boolean> {
-  if (!await isPortReachable(port, Math.min(timeoutMs, 700))) {
+  const overallBudgetMs = Math.max(1, timeoutMs)
+  const startedAt = Date.now()
+  const reachabilityTimeoutMs = Math.min(overallBudgetMs, 700)
+  if (!await isPortReachable(port, reachabilityTimeoutMs)) {
+    return false
+  }
+
+  const elapsedMs = Date.now() - startedAt
+  const remainingBudgetMs = overallBudgetMs - elapsedMs
+  if (remainingBudgetMs <= 0) {
     return false
   }
 
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), timeoutMs)
+  const timeout = setTimeout(() => controller.abort(), remainingBudgetMs)
   try {
     const response = await fetch(`http://127.0.0.1:${Math.floor(port)}/v1/models`, {
       method: 'GET',

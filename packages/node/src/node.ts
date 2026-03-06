@@ -527,6 +527,11 @@ export class AntseedNode extends EventEmitter {
           abortListenerAttached = false;
         }
       };
+      const cleanupConnectionListener = (): void => {
+        if (!connectionStateListenerAttached) return;
+        conn.off("stateChange", onConnectionStateChange);
+        connectionStateListenerAttached = false;
+      };
       const onConnectionStateChange = (state: ConnectionState): void => {
         if (settled) return;
         if (state !== ConnectionState.Closed && state !== ConnectionState.Failed) {
@@ -538,11 +543,6 @@ export class AntseedNode extends EventEmitter {
         cleanupConnectionListener();
         mux.cancelProxyRequest(req.requestId);
         reject(new Error(`Connection to ${peer.peerId} ${state.toLowerCase()} during request ${req.requestId}`));
-      };
-      const cleanupConnectionListener = (): void => {
-        if (!connectionStateListenerAttached) return;
-        conn.off("stateChange", onConnectionStateChange);
-        connectionStateListenerAttached = false;
       };
 
       const onAbort = (): void => {
