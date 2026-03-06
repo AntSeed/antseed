@@ -1031,8 +1031,8 @@ async function stopDashboardRuntime(reason: string): Promise<void> {
 function createWindow(): void {
   const macosWindowChrome = process.platform === 'darwin'
     ? {
-      titleBarStyle: 'hidden' as const,
-      trafficLightPosition: { x: 14, y: 14 },
+      titleBarStyle: 'hiddenInset' as const,
+      trafficLightPosition: { x: 14, y: 16 },
     }
     : {};
 
@@ -1043,7 +1043,7 @@ function createWindow(): void {
     minHeight: 700,
     title: APP_NAME,
     icon: APP_ICON_PATH,
-    backgroundColor: '#080c12',
+    backgroundColor: '#ececec',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -1056,6 +1056,19 @@ function createWindow(): void {
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url);
     return { action: 'deny' };
+  });
+
+  mainWindow.on('enter-full-screen', () => {
+    mainWindow?.webContents.send('fullscreen-change', true);
+  });
+  mainWindow.on('leave-full-screen', () => {
+    mainWindow?.webContents.send('fullscreen-change', false);
+  });
+  mainWindow.on('focus', () => {
+    mainWindow?.webContents.send('window-focus-change', true);
+  });
+  mainWindow.on('blur', () => {
+    mainWindow?.webContents.send('window-focus-change', false);
   });
 
   void mainWindow.loadURL(rendererUrl);

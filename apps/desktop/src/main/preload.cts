@@ -220,6 +220,16 @@ const api = {
     ipcRenderer.on('chat:ai-tool-result', listener);
     return () => ipcRenderer.off('chat:ai-tool-result', listener);
   },
+  onFullscreenChange(handler: (isFullscreen: boolean) => void): () => void {
+    const listener = (_: unknown, isFullscreen: boolean) => handler(isFullscreen);
+    ipcRenderer.on('fullscreen-change', listener);
+    return () => ipcRenderer.off('fullscreen-change', listener);
+  },
+  onWindowFocusChange(handler: (isFocused: boolean) => void): () => void {
+    const listener = (_: unknown, isFocused: boolean) => handler(isFocused);
+    ipcRenderer.on('window-focus-change', listener);
+    return () => ipcRenderer.off('window-focus-change', listener);
+  },
 };
 
 contextBridge.exposeInMainWorld('antseedDesktop', api);

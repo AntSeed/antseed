@@ -116,6 +116,7 @@ export type RendererUiState = {
   chatSending: boolean;
   chatError: string | null;
   chatThreadMeta: string;
+  chatRoutedPeer: string;
   chatModelOptions: ChatModelOptionEntry[];
   chatSelectedModelValue: string;
   chatModelStatus: BadgeState;
@@ -204,6 +205,7 @@ export function createInitialUiState(): RendererUiState {
     chatSending: false,
     chatError: null,
     chatThreadMeta: 'No conversation selected',
+    chatRoutedPeer: '',
     chatModelOptions: [],
     chatSelectedModelValue: '',
     chatModelStatus: { tone: 'idle', label: 'Models idle' },
