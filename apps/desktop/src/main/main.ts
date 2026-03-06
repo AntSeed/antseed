@@ -1330,6 +1330,67 @@ async function scanDashboardNetwork(port?: number): Promise<DashboardApiResult> 
   }
 }
 
+async function updateDashboardConfig(
+  config: Record<string, unknown>,
+  port?: number,
+): Promise<DashboardApiResult> {
+  const safePort = toSafeDashboardPort(port);
+  const url = `http://127.0.0.1:${safePort}/api/config`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort();
+  }, DASHBOARD_FETCH_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(url, {
+      method: 'PUT',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(config),
+      signal: controller.signal,
+    });
+
+    let payload: unknown = null;
+    const contentType = response.headers.get('content-type') ?? '';
+    if (contentType.includes('application/json')) {
+      payload = await response.json();
+    } else {
+      payload = await response.text();
+    }
+
+    if (!response.ok) {
+      return {
+        ok: false,
+        data: payload,
+        error: errorMessageFromPayload(payload) ?? `dashboard api returned ${response.status}`,
+        status: response.status,
+      };
+    }
+
+    return {
+      ok: true,
+      data: payload,
+      error: null,
+      status: response.status,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const normalized = message.toLowerCase();
+    const error = normalized.includes('abort')
+      ? `dashboard config update timed out after ${String(DASHBOARD_FETCH_TIMEOUT_MS)}ms`
+      : message;
+    return {
+      ok: false,
+      data: null,
+      error,
+      status: null,
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function fetchNetworkSnapshot(port?: number): Promise<DashboardNetworkResult> {
   const response = await fetchDashboardData('network', port);
   if (!response.ok || !response.data || typeof response.data !== 'object') {
@@ -1560,6 +1621,16 @@ ipcMain.handle(
     const safeQuery = sanitizeDashboardQuery(options?.query);
     const activePort = dashboardRuntime.running ? dashboardRuntime.port : requestedPort;
     return fetchDashboardData(safeEndpoint, activePort, safeQuery);
+  },
+);
+
+ipcMain.handle(
+  'runtime:update-dashboard-config',
+  async (_event, config: Record<string, unknown>, options?: { port?: number }): Promise<DashboardApiResult> => {
+    const requestedPort = toSafeDashboardPort(options?.port);
+    await ensureDashboardRuntime(requestedPort);
+    const activePort = dashboardRuntime.running ? dashboardRuntime.port : requestedPort;
+    return updateDashboardConfig(config, activePort);
   },
 );
 

@@ -40,6 +40,7 @@ export type ConfigFormData = {
   maxOutputUsdPerMillion: number;
   minRep: number;
   paymentMethod: string;
+  devMode: boolean;
 };
 
 export type ChatModelOptionEntry = {
@@ -101,6 +102,7 @@ export type RendererUiState = {
   configMessage: { text: string; type: 'success' | 'error' | 'info' } | null;
   configFormData: ConfigFormData | null;
   configSaving: boolean;
+  devMode: boolean;
 
   // --- Plugin setup ---
   installedPlugins: Set<string>;
@@ -194,6 +196,7 @@ export function createInitialUiState(): RendererUiState {
     configMessage: null,
     configFormData: null,
     configSaving: false,
+    devMode: false,
 
     // Plugin setup
     installedPlugins: new Set<string>(),

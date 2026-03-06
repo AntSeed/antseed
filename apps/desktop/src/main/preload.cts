@@ -117,6 +117,12 @@ const api = {
   ): Promise<DashboardDataResult> {
     return ipcRenderer.invoke('runtime:get-dashboard-data', endpoint, options) as Promise<DashboardDataResult>;
   },
+  updateDashboardConfig(
+    config: Record<string, unknown>,
+    options?: { port?: number },
+  ): Promise<DashboardDataResult> {
+    return ipcRenderer.invoke('runtime:update-dashboard-config', config, options) as Promise<DashboardDataResult>;
+  },
   scanNetwork(port?: number): Promise<DashboardDataResult> {
     return ipcRenderer.invoke('runtime:scan-network', port) as Promise<DashboardDataResult>;
   },

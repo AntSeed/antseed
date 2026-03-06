@@ -55,6 +55,13 @@ export type DashboardDataResult<T = unknown> = {
   status: number | null;
 };
 
+export type DashboardUpdateResult<T = unknown> = {
+  ok: boolean;
+  data: T | null;
+  error: string | null;
+  status: number | null;
+};
+
 export type PluginInfo = {
   package: string;
   version: string;
@@ -94,6 +101,10 @@ export type DesktopBridge = {
     endpoint: DashboardEndpoint,
     options?: { port?: number; query?: Record<string, string | number | boolean> }
   ) => Promise<DashboardDataResult>;
+  updateDashboardConfig?: (
+    config: Record<string, unknown>,
+    options?: { port?: number }
+  ) => Promise<DashboardUpdateResult>;
   scanNetwork?: (port?: number) => Promise<DashboardDataResult>;
 
   onLog?: (handler: (event: LogEvent) => void) => () => void;

@@ -326,6 +326,7 @@ textarea {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 16px;
+  overflow-x: auto;
 }
 
 .panel-head {
@@ -681,17 +682,77 @@ pre,
 
 .settings-sections {
   display: grid;
-  gap: 14px;
-  padding: 16px;
+  gap: 16px;
+  padding: 0 16px;
+  max-width: 720px;
 }
 
-.settings-panel .form-grid {
+.settings-panel {
+  padding: 18px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0))
+    ,
+    var(--bg-card);
+}
+
+body.dark-theme .settings-panel {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0))
+    ,
+    var(--bg-card);
+}
+
+.settings-stack {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 14px;
 }
 
-.form-label {
+.settings-panel-hidden {
+  display: none;
+}
+
+.settings-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(220px, 320px);
+  gap: 18px;
+  align-items: center;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--border-light);
+  background: var(--bg-card-alt);
+}
+
+.settings-item-wide {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.settings-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.settings-kicker {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.settings-copy h4 {
+  font-size: 15px;
+  line-height: 1.2;
+  color: var(--text-primary);
+}
+
+.settings-copy p {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.form-label,
+.settings-item {
   display: grid;
   gap: 6px;
   font-size: 12px;
@@ -700,12 +761,16 @@ pre,
   letter-spacing: 0;
 }
 
+.settings-control {
+  width: 100%;
+}
+
 .form-input {
   background: var(--bg-primary);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text-primary);
-  padding: 8px 10px;
+  padding: 10px 12px;
   font-size: 13px;
 }
 
@@ -722,8 +787,64 @@ select.form-input {
   padding-right: 28px;
 }
 
+.settings-switch {
+  justify-self: end;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 104px;
+  padding: 8px 10px;
+  border-radius: 999px;
+  border: none;
+  background: transparent;
+}
+
+.settings-switch:hover,
+.settings-switch:focus-visible {
+  background: transparent;
+}
+
+.settings-switch-track {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.settings-switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.settings-switch-label {
+  min-width: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-align: left;
+}
+
+.settings-switch.is-on .settings-switch-track {
+  background: rgba(var(--accent-rgb), 0.18);
+  border-color: rgba(var(--accent-rgb), 0.38);
+}
+
+.settings-switch.is-on .settings-switch-thumb {
+  transform: translateX(18px);
+  background: var(--accent-green);
+}
+
 .settings-message {
-  margin-bottom: 10px;
+  margin: 0;
   padding: 8px 12px;
   border-radius: var(--radius-sm);
   font-size: 12px;
@@ -739,6 +860,36 @@ select.form-input {
   background: rgba(var(--danger-rgb), 0.08);
   color: var(--danger);
   border: 1px solid rgba(var(--danger-rgb), 0.2);
+}
+
+.settings-footer {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-light);
+}
+
+.settings-note {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.settings-save-btn {
+  justify-self: start;
+  min-width: 140px;
+}
+
+@media (max-width: 900px) {
+  .settings-item,
+  .settings-item-wide {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-switch {
+    justify-self: start;
+  }
 }
 
 /* ===================================================================

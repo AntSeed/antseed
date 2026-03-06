@@ -63,6 +63,7 @@ const {
 const {
   getDashboardPort,
   getDashboardData,
+  updateDashboardConfig,
   scanDhtNow,
   setRefreshHooks,
   refreshDashboardData,
@@ -90,7 +91,9 @@ const { populateSettingsForm, saveConfig } = initSettingsModule({
     endpoint: string,
     query?: Record<string, string | number | boolean>,
   ) => Promise<{ ok: boolean; data: unknown; error?: string | null }>,
-  getDashboardPort,
+  updateDashboardConfig: updateDashboardConfig as (
+    config: Record<string, unknown>,
+  ) => Promise<{ ok: boolean; data: unknown; error?: string | null; status?: number | null }>,
 });
 
 const {

@@ -100,62 +100,64 @@ export function PeersView({ active }: PeersViewProps) {
           <button className="secondary" onClick={() => void actions.scanDht()}>
             Scan DHT
           </button>
-          <div className={`connection-badge badge-${peersMeta.tone}`}>{peersMeta.label}</div>
+          {/* <div className={`connection-badge badge-${peersMeta.tone}`}>{peersMeta.label}</div> */}
         </div>
       </div>
-      <p className="message">{peersMessage}</p>
-      <div className="panel">
-        <div className="table-wrap">
-          <table className="table">
-            <thead>
-              <tr>
-                {COLUMNS.map((col) => (
-                  <th
-                    key={col.key}
-                    className={
-                      col.sortable
-                        ? `sortable${sortKey === col.key ? (sortDir === 'asc' ? ' sort-asc' : ' sort-desc') : ''}`
-                        : undefined
-                    }
-                    data-sort={col.sortable ? col.key : undefined}
-                    onClick={col.sortable ? () => handleSort(col.key) : undefined}
-                  >
-                    {col.label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {displayPeers.length === 0 ? (
+      <div className="panel-grid">
+        <div className="panel">
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
                 <tr>
-                  <td colSpan={9} className="empty">
-                    {lastPeers.length > 0 ? 'No peers match filter.' : 'No peers discovered yet.'}
-                  </td>
+                  {COLUMNS.map((col) => (
+                    <th
+                      key={col.key}
+                      className={
+                        col.sortable
+                          ? `sortable${sortKey === col.key ? (sortDir === 'asc' ? ' sort-asc' : ' sort-desc') : ''}`
+                          : undefined
+                      }
+                      data-sort={col.sortable ? col.key : undefined}
+                      onClick={col.sortable ? () => handleSort(col.key) : undefined}
+                    >
+                      {col.label}
+                    </th>
+                  ))}
                 </tr>
-              ) : (
-                displayPeers.map((peer) => (
-                  <tr key={peer.peerId}>
-                    <td title={peer.peerId}>{formatShortId(peer.peerId)}</td>
-                    <td>{safeString(peer.source, 'n/a').toUpperCase()}</td>
-                    <td>{peer.models.join(', ')}</td>
-                    <td>{String(peer.inputUsdPerMillion)}</td>
-                    <td>{String(peer.outputUsdPerMillion)}</td>
-                    <td>
-                      {peer.capacityMsgPerHour > 0
-                        ? `${formatInt(peer.capacityMsgPerHour)}/h`
-                        : 'n/a'}
+              </thead>
+              <tbody>
+                {displayPeers.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} className="empty">
+                      {lastPeers.length > 0 ? 'No peers match filter.' : 'No peers discovered yet.'}
                     </td>
-                    <td>{formatInt(peer.reputation)}</td>
-                    <td>
-                      {peer.location && peer.location.trim().length > 0 ? peer.location : '-'}
-                    </td>
-                    <td>{formatEndpoint(peer)}</td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                ) : (
+                  displayPeers.map((peer) => (
+                    <tr key={peer.peerId}>
+                      <td title={peer.peerId}>{formatShortId(peer.peerId)}</td>
+                      <td>{safeString(peer.source, 'n/a').toUpperCase()}</td>
+                      <td>{peer.models.join(', ')}</td>
+                      <td>{String(peer.inputUsdPerMillion)}</td>
+                      <td>{String(peer.outputUsdPerMillion)}</td>
+                      <td>
+                        {peer.capacityMsgPerHour > 0
+                          ? `${formatInt(peer.capacityMsgPerHour)}/h`
+                          : 'n/a'}
+                      </td>
+                      <td>{formatInt(peer.reputation)}</td>
+                      <td>
+                        {peer.location && peer.location.trim().length > 0 ? peer.location : '-'}
+                      </td>
+                      <td>{formatEndpoint(peer)}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
+        <p className="message">{peersMessage}</p>
       </div>
     </section>
   );

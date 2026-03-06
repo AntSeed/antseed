@@ -96,6 +96,20 @@ export function initDashboardApiModule({
     }
   }
 
+  async function updateDashboardConfig(config: Record<string, unknown>): Promise<DashboardDataResult> {
+    if (!bridge) return dashboardBridgeError('Desktop bridge unavailable');
+    if (!bridge.updateDashboardConfig) {
+      return dashboardBridgeError('Dashboard config update bridge unavailable');
+    }
+
+    try {
+      return await bridge.updateDashboardConfig(config, { port: getDashboardPort() });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return dashboardBridgeError(message);
+    }
+  }
+
   function setRefreshHooks(hooks: RefreshHooks): void {
     refreshHooks = hooks;
   }
@@ -132,6 +146,7 @@ export function initDashboardApiModule({
   return {
     getDashboardPort,
     getDashboardData,
+    updateDashboardConfig,
     scanDhtNow,
     setRefreshHooks,
     refreshDashboardData,

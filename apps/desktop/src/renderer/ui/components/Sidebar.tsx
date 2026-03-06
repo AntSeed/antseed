@@ -23,13 +23,18 @@ type NavEntry = {
   label: string;
   view: ViewName;
   icon: IconData;
+  action?: 'new-chat';
 };
 
-const networkEntries: NavEntry[] = [
+const baseEntries: NavEntry[] = [
+  { label: 'New Chat', view: 'chat', icon: Add01Icon, action: 'new-chat' },
   { label: 'Overview', view: 'overview', icon: DashboardSquare01Icon },
-  { label: 'Peers', view: 'peers', icon: UserGroupIcon },
-  { label: 'Connection', view: 'connection', icon: PeerToPeer02Icon },
   { label: 'Settings', view: 'config', icon: Settings02Icon },
+];
+
+const devEntries: NavEntry[] = [
+  { label: 'Connection', view: 'connection', icon: PeerToPeer02Icon },
+  { label: 'Peers', view: 'peers', icon: UserGroupIcon },
   { label: 'Logs', view: 'desktop', icon: CommandLineIcon },
 ];
 
@@ -196,27 +201,15 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
 
 export function Sidebar({ activeView, onSelectView }: SidebarProps) {
   const actions = useActions();
-  const isChatActive = activeView === 'chat';
+  const { devMode } = useUiSnapshot();
+  const navEntries = devMode ? [...baseEntries, ...devEntries] : baseEntries;
 
   return (
     <aside className={styles.sidebar}>
-      <div className={styles.sidebarHeader}>
-        <button
-          className={`${styles.chatNewBtn}${isChatActive ? ` ${styles.active}` : ''}`}
-          onClick={() => {
-            actions.startNewChat();
-            onSelectView('chat');
-          }}
-        >
-          <HugeiconsIcon icon={Add01Icon} size={16} strokeWidth={2} />
-          New Chat
-        </button>
-      </div>
-
       <SidebarWarning />
 
       <ul className={styles.sidebarNav} role="tablist" aria-label="Dashboard Views">
-        {networkEntries.map(({ label, view, icon }) => {
+        {navEntries.map(({ label, view, icon, action }) => {
           const isActive = activeView === view;
           return (
             <li key={view}>
@@ -225,7 +218,12 @@ export function Sidebar({ activeView, onSelectView }: SidebarProps) {
                 data-view={view}
                 role="tab"
                 aria-selected={isActive ? 'true' : 'false'}
-                onClick={() => onSelectView(view)}
+                onClick={() => {
+                  if (action === 'new-chat') {
+                    actions.startNewChat();
+                  }
+                  onSelectView(view);
+                }}
               >
                 <HugeiconsIcon icon={icon} size={18} strokeWidth={1.5} />
                 {label}

@@ -5,10 +5,7 @@
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
-}
-
-.sidebar-header {
-  padding: 8px 8px 0;
+  padding: 8px 0;
 }
 
 .sidebar-warning {
@@ -290,35 +287,6 @@
   padding: 0 4px;
   float: right;
   margin-top: 2px;
-}
-
-.chat-new-btn {
-  width: 100%;
-  padding: 9px 8px;
-  background: transparent;
-  cursor: pointer;
-  border-radius: var(--radius-sm);
-  font-size: 14px;
-  font-weight: 500;
-  transition: all 0.15s;
-  border: none;
-  color: var(--text-primary);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-
-  &:hover {
-    background: var(--bg-hover);
-  }
-
-  &:focus-visible {
-    outline: none;
-    background: var(--bg-hover);
-  }
-
-  &.active {
-    background: var(--bg-hover);
-  }
 }
 
 .chat-empty {

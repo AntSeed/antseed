@@ -8,19 +8,45 @@ type SettingsModuleOptions = {
     endpoint: string,
     query?: Record<string, string | number | boolean>,
   ) => Promise<{ ok: boolean; data: unknown; error?: string | null }>;
-  getDashboardPort: () => number;
+  updateDashboardConfig: (
+    config: Record<string, unknown>,
+  ) => Promise<{ ok: boolean; data: unknown; error?: string | null; status?: number | null }>;
 };
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
 }
 
+const DESKTOP_DEV_MODE_KEY = 'antseed.desktop.devMode';
+
+function loadDesktopDevMode(): boolean {
+  try {
+    return window.localStorage.getItem(DESKTOP_DEV_MODE_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+function persistDesktopDevMode(value: boolean): void {
+  try {
+    window.localStorage.setItem(DESKTOP_DEV_MODE_KEY, value ? 'true' : 'false');
+  } catch {
+    // Ignore storage errors and continue with in-memory state.
+  }
+}
+
 export function initSettingsModule({
   uiState,
   getDashboardData,
-  getDashboardPort,
+  updateDashboardConfig,
 }: SettingsModuleOptions) {
   let configFormPopulated = false;
+  uiState.devMode = loadDesktopDevMode();
+
+  function applyConfigFormData(formData: ConfigFormData): void {
+    uiState.devMode = formData.devMode;
+    uiState.configFormData = { ...formData };
+  }
 
   function populateSettingsForm(config: unknown): void {
     if (!config || configFormPopulated) return;
@@ -32,19 +58,22 @@ export function initSettingsModule({
     const buyerMaxPricingDefaults = asRecord(buyerMaxPricing.defaults);
     const payments = asRecord(configObj.payments);
 
-    uiState.configFormData = {
+    applyConfigFormData({
       proxyPort: safeNumber(buyer.proxyPort, 8377),
       preferredProviders: safeArray(buyer.preferredProviders).join(', '),
       maxInputUsdPerMillion: safeNumber(buyerMaxPricingDefaults.inputUsdPerMillion, 0),
       maxOutputUsdPerMillion: safeNumber(buyerMaxPricingDefaults.outputUsdPerMillion, 0),
       minRep: safeNumber(buyer.minPeerReputation, 0),
       paymentMethod: safeString(payments.preferredMethod, 'crypto'),
-    };
+      devMode: uiState.devMode,
+    });
     notifyUiStateChanged();
   }
 
   async function saveConfig(formData: ConfigFormData): Promise<void> {
     uiState.configSaving = true;
+    persistDesktopDevMode(formData.devMode);
+    applyConfigFormData(formData);
     notifyUiStateChanged();
 
     try {
@@ -80,18 +109,16 @@ export function initSettingsModule({
         },
       };
 
-      const port = getDashboardPort();
-      const response = await fetch(`http://127.0.0.1:${port}/api/config`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(merged),
-      });
-
+      const response = await updateDashboardConfig(merged);
       if (response.ok) {
+        applyConfigFormData(formData);
         uiState.configMessage = { text: 'Configuration saved successfully', type: 'success' };
         configFormPopulated = false;
       } else {
-        uiState.configMessage = { text: 'Failed to save configuration', type: 'error' };
+        uiState.configMessage = {
+          text: response.error ?? `Failed to save configuration${response.status ? ` (${String(response.status)})` : ''}`,
+          type: 'error',
+        };
       }
     } catch (err) {
       uiState.configMessage = {
