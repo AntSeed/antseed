@@ -2,6 +2,7 @@ import type { RendererUiState } from '../core/state';
 import type { BadgeTone } from '../core/state';
 import { notifyUiStateChanged } from '../core/store';
 import type { DesktopBridge } from '../types/bridge';
+import { renderMarkdown, chatBubbleClasses } from '../ui/components/chat/chat-utils.js';
 
 type ChatConversationUsage = {
   inputTokens?: number;
@@ -391,66 +392,6 @@ export function initChatModule({
   // Rendering helpers (for imperative streaming only)
   // ---------------------------------------------------------------------------
 
-  function renderMarkdown(text: string): string {
-    let html = escapeHtml(text);
-    html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_match, lang, code) => {
-      const langLabel = lang || 'code';
-      const codeId = 'code-' + Math.random().toString(36).slice(2, 8);
-      return `<div class="chat-code-container"><div class="chat-code-header"><span class="code-lang">${langLabel}</span><button class="chat-code-copy-btn" onclick="navigator.clipboard.writeText(document.getElementById('${codeId}').textContent).then(()=>{this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500)})">Copy</button></div><pre><code id="${codeId}">${code}</code></pre></div>`;
-    });
-    html = html.replace(/`([^`]+)`/g, '<code class="chat-inline-code">$1</code>');
-    html = html.replace(
-      /^### (.+)$/gm,
-      '<h3 style="font-size:14px;font-weight:600;margin:12px 0 6px;color:var(--text-primary)">$1</h3>',
-    );
-    html = html.replace(
-      /^## (.+)$/gm,
-      '<h2 style="font-size:16px;font-weight:600;margin:14px 0 8px;color:var(--text-primary)">$1</h2>',
-    );
-    html = html.replace(
-      /^# (.+)$/gm,
-      '<h1 style="font-size:18px;font-weight:700;margin:16px 0 8px;color:var(--text-primary)">$1</h1>',
-    );
-    html = html.replace(
-      /^---$/gm,
-      '<hr style="border:none;border-top:1px solid var(--border);margin:12px 0">',
-    );
-    html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
-    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-    html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
-    html = html.replace(
-      /\[([^\]]+)\]\(([^)]+)\)/g,
-      '<a href="$2" style="color:var(--accent-blue);text-decoration:underline" target="_blank" rel="noopener">$1</a>',
-    );
-    html = html.replace(
-      /^\s*[\-*•] (.+)$/gm,
-      '<li class="chat-md-li chat-md-li-ul">$1</li>',
-    );
-    html = html.replace(
-      /^\s*\d+\. (.+)$/gm,
-      '<li class="chat-md-li chat-md-li-ol">$1</li>',
-    );
-    html = html.replace(/<br>\s*(<li class="chat-md-li[^"]*">)/g, '$1');
-    html = html.replace(/(<\/li>)\s*(?:<br>\s*)+(?=<li class="chat-md-li)/g, '$1');
-    html = html.replace(
-      /((?:<li class="chat-md-li[^"]*">[\s\S]*?<\/li>(?:\s*<br>\s*)*)+)/g,
-      (listBlock) => {
-        const ordered = listBlock.includes('chat-md-li-ol');
-        const tag = ordered ? 'ol' : 'ul';
-        const cleaned = listBlock
-          .replace(/^\s*(?:<br>\s*)+/, '')
-          .replace(/(?:<br>\s*)+\s*$/, '');
-        return `<${tag} class="chat-md-list">${cleaned}</${tag}>`;
-      },
-    );
-    html = html.replace(
-      /<(ul|ol) class="chat-md-list">\s*(?:<br>\s*)+/g,
-      '<$1 class="chat-md-list">',
-    );
-    html = html.replace(/(?:<br>\s*)+\s*<\/(ul|ol)>/g, '</$1>');
-    return html;
-  }
-
   function toToolDisplayName(name: unknown): string {
     const raw = String(name || 'tool').trim();
     if (!raw) return 'Tool';
@@ -658,22 +599,11 @@ export function initChatModule({
   }
 
   function updateStreamingIndicator(): void {
-    const genericStatus = formatGenericChatStatus();
-    const elapsedText =
-      activeStreamStartedAt > 0
-        ? ` · ${formatElapsedMs(Date.now() - activeStreamStartedAt)}`
-        : '';
-
-    if (activeStreamTurn !== null && uiState.chatSending) {
-      const label = getMyrmecochoryLabel(activeStreamTurn);
-      uiState.chatStreamingIndicatorText = `Turn ${activeStreamTurn} · ${label}${elapsedText} · ${genericStatus}`;
-    } else if (uiState.chatSending) {
-      uiState.chatStreamingIndicatorText = `Generating response...${elapsedText} · ${genericStatus}`;
-    } else {
-      uiState.chatStreamingIndicatorText = genericStatus;
-    }
+    const elapsedMs =
+      activeStreamStartedAt > 0 ? Date.now() - activeStreamStartedAt : 0;
 
     uiState.chatStreamingActive = uiState.chatSending;
+    uiState.chatThinkingElapsedMs = uiState.chatSending ? elapsedMs : 0;
     notifyUiStateChanged();
   }
 
@@ -760,6 +690,8 @@ export function initChatModule({
     uiState.chatInputDisabled = sending || !uiState.chatActiveConversation;
     uiState.chatSendDisabled = sending || !uiState.chatActiveConversation;
     uiState.chatAbortVisible = sending;
+    if (sending) uiState.chatWaitingForStream = true;
+    if (!sending) uiState.chatWaitingForStream = false;
 
     if (sending) {
       if (activeStreamStartedAt <= 0) activeStreamStartedAt = Date.now();
@@ -1592,15 +1524,7 @@ export function initChatModule({
         // Don't clear streamContainer.innerHTML — previous turn's streaming
         // bubbles stay visible until openConversation() loads them into React.
         streamingBubble = document.createElement('div');
-        streamingBubble.className = 'chat-bubble other';
-        const streamMeta = activeStreamTurn
-          ? `turn ${activeStreamTurn} · ${getMyrmecochoryLabel(activeStreamTurn)}`
-          : 'streaming';
-        streamingBubble.innerHTML = `
-          <div class="chat-bubble-meta">
-            <span class="chat-bubble-stats">${escapeHtml(streamMeta)}</span>
-          </div>
-        `;
+        streamingBubble.className = `${chatBubbleClasses.bubble} ${chatBubbleClasses.other}`;
         streamContainer.appendChild(streamingBubble);
         scrollChatToBottom();
       });
@@ -1613,6 +1537,11 @@ export function initChatModule({
           !streamingBubble
         )
           return;
+
+        if (uiState.chatWaitingForStream) {
+          uiState.chatWaitingForStream = false;
+          notifyUiStateChanged();
+        }
 
         if (data.blockType === 'text') {
           resetStreamingText();

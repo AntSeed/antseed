@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { renderMarkdown } from './chat-utils.js';
+import styles from './ChatBubble.module.scss';
 
 type ChatMessage = {
   role: string;
@@ -104,59 +106,6 @@ function countBlocks(blocks: ContentBlock[]) {
 
 function escapeHtml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
-function sanitizeMarkdownHref(rawHref: string): string | null {
-  const trimmed = rawHref.trim();
-  if (!trimmed) return null;
-  try {
-    const parsed = new URL(trimmed, 'https://antseed.invalid');
-    const protocol = parsed.protocol.toLowerCase();
-    if (protocol === 'http:' || protocol === 'https:' || protocol === 'mailto:') {
-      return escapeHtml(trimmed);
-    }
-  } catch {
-    return null;
-  }
-  return null;
-}
-
-function renderMarkdown(text: string): string {
-  let codeBlockIndex = 0;
-  let html = escapeHtml(text);
-  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_match, lang, code) => {
-    const langLabel = lang || 'code';
-    const codeId = `chat-code-${codeBlockIndex++}`;
-    return `<div class="chat-code-container"><div class="chat-code-header"><span class="code-lang">${langLabel}</span><button class="chat-code-copy-btn" type="button" data-copy-code="true" data-copy-target="${codeId}">Copy</button></div><pre><code id="${codeId}">${code}</code></pre></div>`;
-  });
-  html = html.replace(/`([^`]+)`/g, '<code class="chat-inline-code">$1</code>');
-  html = html.replace(/^### (.+)$/gm, '<h3 style="font-size:14px;font-weight:600;margin:12px 0 6px;color:var(--text-primary)">$1</h3>');
-  html = html.replace(/^## (.+)$/gm, '<h2 style="font-size:16px;font-weight:600;margin:14px 0 8px;color:var(--text-primary)">$1</h2>');
-  html = html.replace(/^# (.+)$/gm, '<h1 style="font-size:18px;font-weight:700;margin:16px 0 8px;color:var(--text-primary)">$1</h1>');
-  html = html.replace(/^---$/gm, '<hr style="border:none;border-top:1px solid var(--border);margin:12px 0">');
-  html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
-  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
-  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, label, href) => {
-    const safeHref = sanitizeMarkdownHref(String(href || ''));
-    if (!safeHref) {
-      return `<span class="chat-inline-link-invalid">${label}</span>`;
-    }
-    return `<a href="${safeHref}" style="color:var(--accent-blue);text-decoration:underline" target="_blank" rel="noopener noreferrer">${label}</a>`;
-  });
-  html = html.replace(/^\s*[\-*•] (.+)$/gm, '<li class="chat-md-li chat-md-li-ul">$1</li>');
-  html = html.replace(/^\s*\d+\. (.+)$/gm, '<li class="chat-md-li chat-md-li-ol">$1</li>');
-  html = html.replace(/<br>\s*(<li class="chat-md-li[^"]*">)/g, '$1');
-  html = html.replace(/(<\/li>)\s*(?:<br>\s*)+(?=<li class="chat-md-li)/g, '$1');
-  html = html.replace(/((?:<li class="chat-md-li[^"]*">[\s\S]*?<\/li>(?:\s*<br>\s*)*)+)/g, (listBlock) => {
-    const ordered = listBlock.includes('chat-md-li-ol');
-    const tag = ordered ? 'ol' : 'ul';
-    const cleaned = listBlock.replace(/^\s*(?:<br>\s*)+/, '').replace(/(?:<br>\s*)+\s*$/, '');
-    return `<${tag} class="chat-md-list">${cleaned}</${tag}>`;
-  });
-  html = html.replace(/<(ul|ol) class="chat-md-list">\s*(?:<br>\s*)+/g, '<$1 class="chat-md-list">');
-  html = html.replace(/(?:<br>\s*)+\s*<\/(ul|ol)>/g, '</$1>');
-  return html;
 }
 
 function toToolDisplayName(name: unknown): string {
@@ -271,6 +220,7 @@ type ChatBubbleProps = {
 
 export function ChatBubble({ message }: ChatBubbleProps) {
   const contentRef = useRef<HTMLDivElement>(null);
+  const [metaExpanded, setMetaExpanded] = useState(false);
   const metaParts = useMemo(() => buildMetaParts(message), [message]);
   const contentHtml = useMemo(() => {
     if (message.role === 'assistant') {
@@ -280,7 +230,7 @@ export function ChatBubble({ message }: ChatBubbleProps) {
       return `<div class="chat-bubble-content">${renderMarkdown(String(message.content))}</div>`;
     }
     if (typeof message.content === 'string') {
-      return `<div class="chat-bubble-content">${escapeHtml(message.content)}</div>`;
+      return `<div class="chat-bubble-content">${renderMarkdown(message.content)}</div>`;
     }
     // User message with multipart content (e.g. image + text)
     if (Array.isArray(message.content)) {
@@ -289,7 +239,7 @@ export function ChatBubble({ message }: ChatBubbleProps) {
         if (block.type === 'image' && block.source?.data && block.source?.media_type) {
           html += `<img src="data:${block.source.media_type};base64,${block.source.data}" class="chat-image-preview" alt="Attached image" />`;
         } else if (block.type === 'text' && block.text) {
-          html += `<div class="chat-bubble-content">${escapeHtml(block.text)}</div>`;
+          html += `<div class="chat-bubble-content">${renderMarkdown(block.text)}</div>`;
         }
       }
       return html;
@@ -326,13 +276,16 @@ export function ChatBubble({ message }: ChatBubbleProps) {
 
   const bubbleMeta =
     metaParts.length > 0 ? (
-      <div className="chat-bubble-meta">
-        <span className="chat-bubble-stats">{metaParts.join(' · ')}</span>
+      <div
+        className={`${styles.chatBubbleMeta}${metaExpanded ? ` ${styles.chatBubbleMetaExpanded}` : ''}`}
+        onClick={() => setMetaExpanded((v) => !v)}
+      >
+        <span className={styles.chatBubbleStats}>{metaParts.join(' · ')}</span>
       </div>
     ) : null;
 
   return (
-    <div className={`chat-bubble ${message.role === 'user' ? 'own' : 'other'}`}>
+    <div className={`${styles.chatBubble} ${message.role === 'user' ? styles.own : styles.other}`}>
       {bubbleMeta}
       <div ref={contentRef} dangerouslySetInnerHTML={{ __html: contentHtml }} />
     </div>
