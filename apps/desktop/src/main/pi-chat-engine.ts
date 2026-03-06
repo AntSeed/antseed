@@ -1275,6 +1275,10 @@ function convertContextMessagesToAnthropic(messages: Message[]): Array<Record<st
     if (message.role === 'assistant') {
       const content = anthropicContentFromAssistant(message.content);
       if (content.length === 0) {
+        converted.push({
+          role: 'assistant',
+          content: [{ type: 'text', text: '…' }],
+        });
         continue;
       }
       converted.push({
@@ -2161,9 +2165,6 @@ export function registerPiChatHandlers({
     const context = sessionManager.buildSessionContext();
     const modelId = normalizeModelId(modelOverride || context.model?.modelId);
     const preferredPeerId = preferredPeerByConversationId.get(conversationId) ?? null;
-    if (preferredPeerId) {
-      preferredPeerByConversationId.set(conversationId, preferredPeerId);
-    }
     const providerHint = resolveProviderHintForModel(
       providerOverride,
     );
