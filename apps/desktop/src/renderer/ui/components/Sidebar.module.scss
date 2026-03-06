@@ -51,6 +51,12 @@
     color: var(--text-primary);
   }
 
+  &:focus-visible {
+    outline: none;
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+
   &.active {
     background: var(--bg-hover);
     color: var(--text-primary);
@@ -302,6 +308,11 @@
   gap: 8px;
 
   &:hover {
+    background: var(--bg-hover);
+  }
+
+  &:focus-visible {
+    outline: none;
     background: var(--bg-hover);
   }
 

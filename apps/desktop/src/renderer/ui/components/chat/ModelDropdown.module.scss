@@ -17,6 +17,12 @@
     background: none;
     border-color: var(--border);
   }
+
+  &:focus-visible {
+    outline: none;
+    background: var(--bg-hover);
+    border-color: var(--border);
+  }
 }
 
 .model-dropdown-icon {
@@ -75,6 +81,11 @@
   &:hover {
     background: var(--bg-hover);
     border: none;
+  }
+
+  &:focus-visible {
+    outline: none;
+    background: var(--bg-hover);
   }
 
   &.active {

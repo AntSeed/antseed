@@ -23,6 +23,7 @@ export type PeerEntry = {
   host: string;
   port: number;
   providers: string[];
+  models: string[];
   inputUsdPerMillion: number;
   outputUsdPerMillion: number;
   capacityMsgPerHour: number;
@@ -73,7 +74,9 @@ export type RendererUiState = {
   ovNodeState: string;
   ovPeers: string;
   ovDhtHealth: string;
-  ovUptime: string;
+  ovProxyPort: string;
+  ovModelCount: string;
+  ovLastScan: string;
   ovPeersCount: string;
   overviewPeers: PeerEntry[];
 
@@ -164,7 +167,9 @@ export function createInitialUiState(): RendererUiState {
     ovNodeState: 'idle',
     ovPeers: '0',
     ovDhtHealth: 'Down',
-    ovUptime: '-',
+    ovProxyPort: '-',
+    ovModelCount: '0',
+    ovLastScan: 'n/a',
     ovPeersCount: '0',
     overviewPeers: [],
 

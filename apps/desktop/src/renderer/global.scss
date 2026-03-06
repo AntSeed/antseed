@@ -520,6 +520,11 @@ button:hover {
   background: var(--bg-hover);
 }
 
+button:focus-visible {
+  outline: none;
+  background: var(--bg-hover);
+}
+
 button.secondary:hover {
   border-color: var(--accent-blue);
   color: var(--accent-blue);
@@ -590,6 +595,11 @@ button:disabled {
 .btn-icon:hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+.btn-icon:focus-visible {
+  outline: none;
+  background: var(--bg-hover);
 }
 
 /* ===================================================================

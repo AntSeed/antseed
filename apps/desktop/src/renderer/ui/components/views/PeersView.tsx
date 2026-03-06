@@ -34,7 +34,7 @@ function filterPeers(peers: PeerEntry[], filterText: string): PeerEntry[] {
     const searchable = [
       peer.peerId,
       safeString(peer.source, ''),
-      peer.providers.join(' '),
+      peer.models.join(' '),
       String(peer.inputUsdPerMillion),
       String(peer.outputUsdPerMillion),
       String(peer.capacityMsgPerHour),
@@ -51,7 +51,7 @@ function filterPeers(peers: PeerEntry[], filterText: string): PeerEntry[] {
 const COLUMNS: { key: string; label: string; sortable: boolean }[] = [
   { key: 'peerId', label: 'Peer', sortable: true },
   { key: 'source', label: 'Source', sortable: true },
-  { key: 'providers', label: 'Providers', sortable: true },
+  { key: 'models', label: 'Models', sortable: true },
   { key: 'inputUsdPerMillion', label: 'Input $/1M', sortable: true },
   { key: 'outputUsdPerMillion', label: 'Output $/1M', sortable: true },
   { key: 'capacityMsgPerHour', label: 'Capacity', sortable: true },
@@ -137,7 +137,7 @@ export function PeersView({ active }: PeersViewProps) {
                   <tr key={peer.peerId}>
                     <td title={peer.peerId}>{formatShortId(peer.peerId)}</td>
                     <td>{safeString(peer.source, 'n/a').toUpperCase()}</td>
-                    <td>{peer.providers.length > 0 ? peer.providers.join(', ') : 'n/a'}</td>
+                    <td>{peer.models.join(', ')}</td>
                     <td>{String(peer.inputUsdPerMillion)}</td>
                     <td>{String(peer.outputUsdPerMillion)}</td>
                     <td>
