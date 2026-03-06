@@ -1,0 +1,182 @@
+/* WalkingAnt — side-view walking ant with CSS-driven walk cycle */
+
+$green: #1FD87A;
+$size: 0.38; // scale factor
+
+.container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 16px 8px;
+}
+
+.scene {
+  width: #{56 * $size}px;
+  height: #{36 * $size}px;
+  position: relative;
+  flex-shrink: 0;
+}
+
+/* ── Whole ant: subtle bob while walking ── */
+.ant {
+  position: absolute;
+  inset: 0;
+  animation: ant-bob 0.32s ease-in-out infinite alternate;
+}
+
+/* ── Body segments (side view, facing right) ── */
+.head {
+  position: absolute;
+  width: #{18 * $size}px;
+  height: #{16 * $size}px;
+  background: $green;
+  border-radius: 50%;
+  top: #{6 * $size}px;
+  left: #{36 * $size}px;
+}
+
+.thorax {
+  position: absolute;
+  width: #{16 * $size}px;
+  height: #{14 * $size}px;
+  background: $green;
+  border-radius: 50%;
+  top: #{8 * $size}px;
+  left: #{22 * $size}px;
+}
+
+.abdomen {
+  position: absolute;
+  width: #{24 * $size}px;
+  height: #{20 * $size}px;
+  background: $green;
+  border-radius: 50% 42% 42% 50%;
+  top: #{6 * $size}px;
+  left: #{0 * $size}px;
+  animation: abdomen-pulse 1s ease-in-out infinite;
+}
+
+/* ── Antennae ── */
+.antenna-group {
+  position: absolute;
+  top: #{4 * $size}px;
+  left: #{44 * $size}px;
+}
+
+.antenna {
+  position: absolute;
+  width: #{1.2 * $size}px;
+  height: #{14 * $size}px;
+  background: $green;
+  border-radius: #{1 * $size}px;
+  transform-origin: bottom center;
+  opacity: 0.8;
+}
+
+.antenna1 {
+  left: 0;
+  animation: antenna-sway-1 0.7s ease-in-out infinite alternate;
+}
+
+.antenna2 {
+  left: #{4 * $size}px;
+  animation: antenna-sway-2 0.7s ease-in-out infinite alternate;
+}
+
+.antenna-tip {
+  position: absolute;
+  top: #{-1 * $size}px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: #{3.5 * $size}px;
+  height: #{3.5 * $size}px;
+  background: $green;
+  border-radius: 50%;
+}
+
+/* ── Legs ── */
+.legs {
+  position: absolute;
+  top: #{18 * $size}px;
+  left: 0;
+  width: 100%;
+}
+
+.leg {
+  position: absolute;
+  width: #{1.4 * $size}px;
+  height: #{16 * $size}px;
+  background: $green;
+  border-radius: #{1 * $size}px;
+  transform-origin: top center;
+  opacity: 0.7;
+}
+
+/* Front pair */
+.leg-front-a {
+  left: #{38 * $size}px;
+  animation: leg-swing-a 0.32s ease-in-out infinite alternate;
+}
+.leg-front-b {
+  left: #{36 * $size}px;
+  animation: leg-swing-b 0.32s ease-in-out infinite alternate;
+}
+
+/* Mid pair */
+.leg-mid-a {
+  left: #{28 * $size}px;
+  animation: leg-swing-b 0.32s ease-in-out infinite alternate;
+}
+.leg-mid-b {
+  left: #{26 * $size}px;
+  animation: leg-swing-a 0.32s ease-in-out infinite alternate;
+}
+
+/* Rear pair */
+.leg-rear-a {
+  left: #{14 * $size}px;
+  animation: leg-swing-a 0.32s ease-in-out infinite alternate;
+}
+.leg-rear-b {
+  left: #{12 * $size}px;
+  animation: leg-swing-b 0.32s ease-in-out infinite alternate;
+}
+
+/* ── Timer ── */
+.timer {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ── Keyframes ── */
+@keyframes ant-bob {
+  from { transform: translateY(0); }
+  to   { transform: translateY(#{-1.5 * $size}px); }
+}
+
+@keyframes abdomen-pulse {
+  0%, 100% { transform: scaleX(1); }
+  50%      { transform: scaleX(1.04); }
+}
+
+@keyframes antenna-sway-1 {
+  from { transform: rotate(-25deg); }
+  to   { transform: rotate(-45deg); }
+}
+
+@keyframes antenna-sway-2 {
+  from { transform: rotate(-40deg); }
+  to   { transform: rotate(-20deg); }
+}
+
+@keyframes leg-swing-a {
+  from { transform: rotate(25deg); }
+  to   { transform: rotate(-20deg); }
+}
+
+@keyframes leg-swing-b {
+  from { transform: rotate(-20deg); }
+  to   { transform: rotate(25deg); }
+}
