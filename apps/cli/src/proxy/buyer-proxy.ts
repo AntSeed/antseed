@@ -998,14 +998,17 @@ export class BuyerProxy {
       return this._peerRefreshPromise
     }
 
-    const previousCachedPeers = this._cachedPeers
+    const previousCachedPeers = [...this._cachedPeers]
     this._peerRefreshPromise = (async () => {
       const peers = await this._discoverAndCachePeers()
-      if (peers.length === 0 && previousCachedPeers.length > 0) {
+      if (peers.length === 0) {
+        const fallbackPeers = this._cachedPeers.length > 0 ? [...this._cachedPeers] : previousCachedPeers
         // Preserve stale cache as fallback when discovery transiently fails.
-        log('Discovery returned 0 peers; keeping previous cached peers as fallback.')
-        this._replacePeers(previousCachedPeers)
-        return previousCachedPeers
+        if (fallbackPeers.length > 0) {
+          log('Discovery returned 0 peers; preserving most-recent cached peers as fallback.')
+          this._replacePeers(fallbackPeers)
+          return fallbackPeers
+        }
       }
       return peers
     })().finally(() => {
@@ -1635,7 +1638,7 @@ export class BuyerProxy {
     } catch (err) {
       const latencyMs = Date.now() - startTime
       const message = err instanceof Error ? err.message : String(err)
-      const abortedLocally = requestSignal.aborted || /\baborted\b/i.test(message)
+      const abortedLocally = requestSignal.aborted
       const connectionChurnError = isConnectionChurnError(message)
       log(`Request failed after ${latencyMs}ms: ${message}`)
 
