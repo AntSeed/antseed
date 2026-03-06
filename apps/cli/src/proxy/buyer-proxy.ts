@@ -1528,7 +1528,9 @@ export class BuyerProxy {
       }
     }
 
-    log(`Outbound request shape: ${summarizeRequestShape(requestForPeer)}`)
+    if (DEBUG()) {
+      log(`Outbound request shape: ${summarizeRequestShape(requestForPeer)}`)
+    }
     log(`Routing to peer ${selectedPeer.peerId.slice(0, 12)}...`)
 
     // Forward through P2P
