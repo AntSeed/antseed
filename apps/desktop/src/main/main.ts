@@ -2553,7 +2553,7 @@ ipcMain.handle('chat:ai-send', async (_event, conversationId: string, userMessag
   }
 
   // Build user message content — multipart if image attached
-  const userContent: string | unknown[] = imageBase64 && imageMimeType
+  const userContent: string | ContentBlock[] = imageBase64 && imageMimeType
     ? [
         { type: 'image', source: { type: 'base64', media_type: imageMimeType, data: imageBase64 } },
         { type: 'text', text: userMessage.trim() || 'What is in this image?' },
@@ -2561,7 +2561,7 @@ ipcMain.handle('chat:ai-send', async (_event, conversationId: string, userMessag
     : userMessage.trim();
 
   // Add user message
-  conv.messages.push({ role: 'user', content: userContent as string, createdAt: Date.now() });
+  conv.messages.push({ role: 'user', content: userContent as string | ContentBlock[], createdAt: Date.now() });
   conv.updatedAt = Date.now();
 
   // Auto-title from first user message
@@ -3041,7 +3041,7 @@ ipcMain.handle('chat:ai-send-stream', async (_event, conversationId: string, use
   }
 
   // Build user message content — multipart if image attached
-  const userContent: string | unknown[] = imageBase64 && imageMimeType
+  const userContent: string | ContentBlock[] = imageBase64 && imageMimeType
     ? [
         { type: 'image', source: { type: 'base64', media_type: imageMimeType, data: imageBase64 } },
         { type: 'text', text: userMessage.trim() || 'What is in this image?' },
@@ -3049,7 +3049,7 @@ ipcMain.handle('chat:ai-send-stream', async (_event, conversationId: string, use
     : userMessage.trim();
 
   // Add user message
-  conv.messages.push({ role: 'user', content: userContent as string, createdAt: Date.now() });
+  conv.messages.push({ role: 'user', content: userContent as string | ContentBlock[], createdAt: Date.now() });
   conv.updatedAt = Date.now();
 
   // Auto-title from first user message

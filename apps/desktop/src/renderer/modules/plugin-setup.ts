@@ -67,10 +67,12 @@ export function initPluginSetupModule({
 
   function clearRouterPluginHint(): void {
     uiState.pluginHints.router = null;
+    notifyUiStateChanged();
   }
 
   function clearAllPluginHints(): void {
     clearRouterPluginHint();
+    notifyUiStateChanged();
   }
 
   function updatePluginHintFromLog(event: Partial<LogEvent> | null | undefined): void {
