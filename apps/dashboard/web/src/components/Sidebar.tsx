@@ -36,16 +36,20 @@ export function Sidebar({ items, activeItem, onNavigate }: SidebarProps) {
     <nav className="sidebar">
       <div className="sidebar-header">
         <div className="sidebar-logo">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-            <circle cx="12" cy="12" r="10" stroke="var(--accent)" strokeWidth="2"/>
-            <circle cx="12" cy="12" r="4" fill="var(--accent)"/>
-            <line x1="12" y1="2" x2="12" y2="6" stroke="var(--accent)" strokeWidth="2"/>
-            <line x1="12" y1="18" x2="12" y2="22" stroke="var(--accent)" strokeWidth="2"/>
-            <line x1="2" y1="12" x2="6" y2="12" stroke="var(--accent)" strokeWidth="2"/>
-            <line x1="18" y1="12" x2="22" y2="12" stroke="var(--accent)" strokeWidth="2"/>
+          <svg className="sidebar-logo-mark" width="24" height="24" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+            <ellipse cx="32" cy="33" rx="7" ry="10" stroke="currentColor" strokeWidth="3"/>
+            <ellipse cx="32" cy="20" rx="5" ry="6" stroke="currentColor" strokeWidth="3"/>
+            <ellipse cx="32" cy="47" rx="9" ry="8" stroke="currentColor" strokeWidth="3"/>
+            <line x1="24" y1="24" x2="11" y2="15" stroke="currentColor" strokeWidth="3" strokeLinecap="round"/>
+            <line x1="24" y1="32" x2="8" y2="32" stroke="currentColor" strokeWidth="3" strokeLinecap="round"/>
+            <line x1="24" y1="40" x2="11" y2="49" stroke="currentColor" strokeWidth="3" strokeLinecap="round"/>
+            <line x1="40" y1="24" x2="53" y2="15" stroke="currentColor" strokeWidth="3" strokeLinecap="round"/>
+            <line x1="40" y1="32" x2="56" y2="32" stroke="currentColor" strokeWidth="3" strokeLinecap="round"/>
+            <line x1="40" y1="40" x2="53" y2="49" stroke="currentColor" strokeWidth="3" strokeLinecap="round"/>
           </svg>
-          <h1 className="sidebar-title">Antseed</h1>
+          <h1 className="sidebar-title"><span className="ant">ANT</span><span className="seed">SEED</span></h1>
         </div>
+        <div className="sidebar-tagline">P2P AI Services Network</div>
         <div className="sidebar-version">v0.1.0</div>
       </div>
       <ul className="sidebar-nav">
@@ -62,7 +66,7 @@ export function Sidebar({ items, activeItem, onNavigate }: SidebarProps) {
         ))}
       </ul>
       <div className="sidebar-footer">
-        <div className="sidebar-footer-text">P2P AI Marketplace</div>
+        <div className="sidebar-footer-text">Local Runtime Dashboard</div>
       </div>
     </nav>
   );

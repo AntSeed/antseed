@@ -1,0 +1,64 @@
+import type { RendererUiState } from './state';
+
+type Listener = () => void;
+
+let listeners: Listener[] = [];
+let stateRef: RendererUiState | null = null;
+let version = 0;
+let cachedSnapshotVersion = -1;
+let cachedSnapshot: RendererUiState | null = null;
+
+export function initStore(state: RendererUiState): void {
+  stateRef = state;
+  version = 0;
+  cachedSnapshotVersion = -1;
+  cachedSnapshot = null;
+}
+
+export function notifyUiStateChanged(): void {
+  version += 1;
+  cachedSnapshotVersion = -1;
+  cachedSnapshot = null;
+  for (const listener of listeners) {
+    listener();
+  }
+}
+
+export function subscribe(listener: Listener): () => void {
+  listeners = [...listeners, listener];
+  return () => {
+    listeners = listeners.filter((l) => l !== listener);
+  };
+}
+
+function getStateRef(): RendererUiState {
+  if (!stateRef) {
+    throw new Error('Store not initialized — call initStore() before rendering');
+  }
+  return stateRef;
+}
+
+export function getUiSnapshot(): RendererUiState {
+  if (cachedSnapshot && cachedSnapshotVersion === version) {
+    return cachedSnapshot;
+  }
+
+  const state = getStateRef();
+  cachedSnapshot = {
+    ...state,
+    installedPlugins: new Set(state.installedPlugins),
+    pluginHints: { ...state.pluginHints },
+    peerSort: { ...state.peerSort },
+    runtimeActivity: { ...state.runtimeActivity },
+    configFormData: state.configFormData ? { ...state.configFormData } : null,
+    configMessage: state.configMessage ? { ...state.configMessage } : null,
+    logs: [...state.logs],
+    overviewPeers: [...state.overviewPeers],
+    lastPeers: [...state.lastPeers],
+    chatConversations: [...state.chatConversations],
+    chatMessages: [...state.chatMessages],
+    chatModelOptions: [...state.chatModelOptions],
+  };
+  cachedSnapshotVersion = version;
+  return cachedSnapshot;
+}

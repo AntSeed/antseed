@@ -72,6 +72,8 @@ export interface SellerMiddlewareConfig {
   position: MiddlewarePosition;
   /** Role for 'prepend'/'append' positions. Defaults to 'user'. */
   role?: string;
+  /** If set, only inject for requests targeting one of these model IDs. Applies to all models when omitted. */
+  models?: string[];
 }
 
 /**

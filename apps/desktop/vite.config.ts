@@ -1,9 +1,13 @@
-import { defineConfig } from 'vite';
 import path from 'node:path';
+import react from '@vitejs/plugin-react';
+import { defineConfig } from 'vite';
+
+const rendererRoot = path.resolve(__dirname, 'src/renderer');
 
 export default defineConfig({
+  plugins: [react()],
   base: './',
-  root: path.resolve(__dirname, 'src/renderer'),
+  root: rendererRoot,
   build: {
     outDir: path.resolve(__dirname, 'dist/renderer'),
     emptyOutDir: true,

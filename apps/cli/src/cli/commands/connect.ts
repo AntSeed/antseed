@@ -4,6 +4,7 @@ import ora from 'ora'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
+import { createConnection } from 'node:net'
 import { getGlobalOptions } from './types.js'
 import { loadConfig } from '../../config/loader.js'
 import { AntseedNode, BaseEscrowClient, loadOrCreateIdentity, identityToEvmAddress, getInstance } from '@antseed/node'
@@ -137,6 +138,81 @@ async function getLocalSeederInfo(): Promise<LocalSeederInfo | null> {
     // No state file or unreadable
   }
   return null
+}
+
+function isAddrInUseError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false
+  }
+  return error.message.includes('EADDRINUSE')
+}
+
+async function isPortReachable(port: number, timeoutMs = 700): Promise<boolean> {
+  return await new Promise((resolve) => {
+    const socket = createConnection({ host: '127.0.0.1', port: Math.floor(port) })
+    let settled = false
+
+    const finish = (reachable: boolean): void => {
+      if (settled) return
+      settled = true
+      socket.destroy()
+      resolve(reachable)
+    }
+
+    socket.once('connect', () => finish(true))
+    socket.once('error', () => finish(false))
+    socket.setTimeout(timeoutMs, () => finish(false))
+  })
+}
+
+async function isCompatibleBuyerProxy(port: number, timeoutMs = 1200): Promise<boolean> {
+  const overallBudgetMs = Math.max(1, timeoutMs)
+  const startedAt = Date.now()
+  const reachabilityTimeoutMs = Math.min(overallBudgetMs, 700)
+  if (!await isPortReachable(port, reachabilityTimeoutMs)) {
+    return false
+  }
+
+  const elapsedMs = Date.now() - startedAt
+  const remainingBudgetMs = overallBudgetMs - elapsedMs
+  if (remainingBudgetMs <= 0) {
+    return false
+  }
+
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), remainingBudgetMs)
+  try {
+    const response = await fetch(`http://127.0.0.1:${Math.floor(port)}/v1/models`, {
+      method: 'GET',
+      headers: {
+        accept: 'application/json',
+      },
+      signal: controller.signal,
+    })
+
+    // Antseed proxy usually attaches these telemetry headers when a request reached routing.
+    const antseedHeaderNames = ['x-antseed-request-id', 'x-antseed-peer-id', 'x-antseed-provider']
+    if (antseedHeaderNames.some((header) => response.headers.has(header))) {
+      return true
+    }
+
+    const body = (await response.text()).toLowerCase()
+    // Local proxy-generated fallbacks that may not include telemetry headers.
+    if (
+      body.includes('no sellers available on the network')
+      || body.includes('no peers support')
+      || body.includes('p2p request failed')
+      || body.includes('pinned peer')
+    ) {
+      return true
+    }
+
+    return false
+  } catch {
+    return false
+  } finally {
+    clearTimeout(timeout)
+  }
 }
 
 export function registerConnectCommand(program: Command): void {
@@ -317,14 +393,21 @@ export function registerConnectCommand(program: Command): void {
         node,
         pinnedPeerId,
       })
+      let ownsProxyListener = false
 
       try {
         await proxy.start()
+        ownsProxyListener = true
         proxySpinner.succeed(chalk.green(`Proxy listening on http://localhost:${proxyPort}`))
       } catch (err) {
-        proxySpinner.fail(chalk.red(`Failed to start proxy: ${(err as Error).message}`))
-        await node.stop()
-        process.exit(1)
+        if (isAddrInUseError(err) && await isCompatibleBuyerProxy(proxyPort)) {
+          proxySpinner.succeed(chalk.yellow(`Proxy port ${proxyPort} already in use; reusing existing local proxy.`))
+          console.log(chalk.yellow('Proxy request logs will be emitted by the process that already owns this port.'))
+        } else {
+          proxySpinner.fail(chalk.red(`Failed to start proxy: ${(err as Error).message}`))
+          await node.stop()
+          process.exit(1)
+        }
       }
 
       const proxyUrl = `http://localhost:${proxyPort}`
@@ -346,7 +429,9 @@ export function registerConnectCommand(program: Command): void {
 
       setupShutdownHandler(async () => {
         nodeSpinner.start('Shutting down...')
-        await proxy.stop()
+        if (ownsProxyListener) {
+          await proxy.stop()
+        }
         await node.stop()
         nodeSpinner.succeed('Disconnected. All sessions finalized.')
       })

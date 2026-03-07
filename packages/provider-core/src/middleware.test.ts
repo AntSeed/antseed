@@ -164,3 +164,24 @@ describe('empty middleware list', () => {
     expect(result).toBe(body);
   });
 });
+
+// ---------------------------------------------------------------------------
+// models filter (ProviderMiddleware.models) — note: filtering is enforced by
+// MiddlewareProvider before calling applyMiddleware; these tests confirm the
+// field is accepted on the type and that passing a pre-filtered list works.
+// ---------------------------------------------------------------------------
+
+describe('models field on ProviderMiddleware', () => {
+  it('applies when models list matches', () => {
+    const body = { system: 'base', messages: [] };
+    const filtered = [{ content: 'injected', position: 'system-prepend' as const, models: ['model-a'] }];
+    const result = applyMiddleware(body, filtered);
+    expect(result.system).toBe('injected\n\nbase');
+  });
+
+  it('is a no-op when caller passes an empty list (filtered out upstream)', () => {
+    const body = { system: 'base', messages: [] };
+    const result = applyMiddleware(body, []);
+    expect(result).toBe(body);
+  });
+});

@@ -76,4 +76,16 @@ describe('createProvider', () => {
     });
     expect(provider.maxConcurrency).toBe(3);
   });
+
+  it('injects anthropic headers at provider relay layer', () => {
+    const provider = plugin.createProvider({
+      CLAUDE_ACCESS_TOKEN: 'test-access-token',
+      CLAUDE_OAUTH_CLIENT_ID: 'test-client-id',
+    }) as any;
+
+    const extraHeaders = provider?._relay?._config?.extraHeaders as Record<string, string> | undefined;
+    expect(extraHeaders).toBeDefined();
+    expect(extraHeaders?.['anthropic-version']).toBe('2023-06-01');
+    expect(extraHeaders?.['anthropic-beta']).toBe('oauth-2025-04-20');
+  });
 });

@@ -52,8 +52,13 @@ export class MiddlewareProvider implements Provider {
     } catch {
       return req; // not JSON — leave unchanged
     }
+    const model = typeof body.model === 'string' ? body.model : undefined;
+    const applicable = this._middleware.filter(
+      (mw) => !mw.models || (!!model && mw.models.includes(model)),
+    );
+    if (!applicable.length) return req;
     const format = req.path?.includes('/chat/completions') ? 'openai' : 'anthropic';
-    const augmented = applyMiddleware(body, this._middleware, format);
+    const augmented = applyMiddleware(body, applicable, format);
     return { ...req, body: new TextEncoder().encode(JSON.stringify(augmented)) };
   }
 }

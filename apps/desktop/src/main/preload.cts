@@ -8,6 +8,19 @@ type LogEvent = {
   timestamp: number;
 };
 
+type RuntimeActivityTone = 'active' | 'idle' | 'warn' | 'bad';
+
+type RuntimeActivityEvent = {
+  mode: RuntimeMode;
+  tone: RuntimeActivityTone;
+  stage: string;
+  message: string;
+  holdMs: number;
+  timestamp: number;
+  requestId?: string;
+  peerId?: string;
+};
+
 type RuntimeSnapshot = {
   processes: RuntimeProcessState[];
   daemonState: { exists: boolean; state: Record<string, unknown> | null };
@@ -46,7 +59,7 @@ type NetworkSnapshot = {
   error: string | null;
 };
 
-type DashboardEndpoint = 'status' | 'network' | 'peers' | 'sessions' | 'earnings' | 'config' | 'data-sources';
+type DashboardEndpoint = 'status' | 'network' | 'peers' | 'config' | 'data-sources';
 
 type DashboardDataResult = {
   ok: boolean;
@@ -117,32 +130,10 @@ const api = {
     ipcRenderer.on('runtime:state', listener);
     return () => ipcRenderer.off('runtime:state', listener);
   },
-
-  // Wallet API
-  walletGetInfo(port?: number): Promise<{ ok: boolean; data: unknown; error: string | null }> {
-    return ipcRenderer.invoke('wallet:get-info', port);
-  },
-  walletDeposit(amount: string): Promise<{ ok: boolean; error?: string; message?: string }> {
-    return ipcRenderer.invoke('wallet:deposit', amount);
-  },
-  walletWithdraw(amount: string): Promise<{ ok: boolean; error?: string; message?: string }> {
-    return ipcRenderer.invoke('wallet:withdraw', amount);
-  },
-
-  // WalletConnect API
-  walletConnectState(): Promise<{ ok: boolean; data: { connected: boolean; address: string | null; chainId: number | null; pairingUri: string | null } }> {
-    return ipcRenderer.invoke('wallet:wc-state');
-  },
-  walletConnectConnect(): Promise<{ ok: boolean; data?: { uri: string }; error?: string }> {
-    return ipcRenderer.invoke('wallet:wc-connect');
-  },
-  walletConnectDisconnect(): Promise<{ ok: boolean; error?: string }> {
-    return ipcRenderer.invoke('wallet:wc-disconnect');
-  },
-  onWalletConnectStateChanged(handler: (state: { connected: boolean; address: string | null; chainId: number | null; pairingUri: string | null }) => void): () => void {
-    const listener = (_: unknown, state: { connected: boolean; address: string | null; chainId: number | null; pairingUri: string | null }) => handler(state);
-    ipcRenderer.on('wallet:wc-state-changed', listener);
-    return () => ipcRenderer.off('wallet:wc-state-changed', listener);
+  onRuntimeActivity(handler: (event: RuntimeActivityEvent) => void): () => void {
+    const listener = (_: unknown, event: RuntimeActivityEvent) => handler(event);
+    ipcRenderer.on('runtime:activity', listener);
+    return () => ipcRenderer.off('runtime:activity', listener);
   },
 
   // AI Chat API
@@ -152,17 +143,20 @@ const api = {
   chatAiGetConversation(id: string): Promise<{ ok: boolean; data?: unknown; error?: string }> {
     return ipcRenderer.invoke('chat:ai-get-conversation', id);
   },
-  chatAiCreateConversation(model: string): Promise<{ ok: boolean; data?: unknown; error?: string }> {
-    return ipcRenderer.invoke('chat:ai-create-conversation', model);
+  chatAiCreateConversation(model: string, provider?: string): Promise<{ ok: boolean; data?: unknown; error?: string }> {
+    return ipcRenderer.invoke('chat:ai-create-conversation', model, provider);
+  },
+  chatAiListModels(): Promise<{ ok: boolean; data?: unknown[]; error?: string }> {
+    return ipcRenderer.invoke('chat:ai-list-models');
   },
   chatAiDeleteConversation(id: string): Promise<{ ok: boolean }> {
     return ipcRenderer.invoke('chat:ai-delete-conversation', id);
   },
-  chatAiSend(conversationId: string, message: string, model?: string): Promise<{ ok: boolean; error?: string }> {
-    return ipcRenderer.invoke('chat:ai-send', conversationId, message, model);
+  chatAiSend(conversationId: string, message: string, model?: string, provider?: string, imageBase64?: string, imageMimeType?: string): Promise<{ ok: boolean; error?: string }> {
+    return ipcRenderer.invoke('chat:ai-send', conversationId, message, model, provider, imageBase64, imageMimeType);
   },
-  chatAiSendStream(conversationId: string, message: string, model?: string): Promise<{ ok: boolean; error?: string }> {
-    return ipcRenderer.invoke('chat:ai-send-stream', conversationId, message, model);
+  chatAiSendStream(conversationId: string, message: string, model?: string, provider?: string, imageBase64?: string, imageMimeType?: string): Promise<{ ok: boolean; error?: string }> {
+    return ipcRenderer.invoke('chat:ai-send-stream', conversationId, message, model, provider, imageBase64, imageMimeType);
   },
   chatAiAbort(): Promise<{ ok: boolean }> {
     return ipcRenderer.invoke('chat:ai-abort');

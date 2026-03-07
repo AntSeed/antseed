@@ -14,8 +14,10 @@ import {
 import {
   ANTSEED_STREAMING_RESPONSE_HEADER,
   ANTSEED_UPLOAD_CHUNK_HEADER,
+  ANTSEED_UPLOAD_THRESHOLD_BYTES,
   ANTSEED_UPLOAD_CHUNK_SIZE,
 } from "../types/http.js";
+import { debugLog } from "../utils/debug.js";
 import type {
   SerializedHttpRequest,
   SerializedHttpResponse,
@@ -86,10 +88,14 @@ export class ProxyMux {
     onResponse: ResponseHandler,
     onChunk: ChunkHandler
   ): void {
+    const useChunkedUpload = request.body.length > ANTSEED_UPLOAD_THRESHOLD_BYTES;
+    debugLog(
+      `[ProxyMux] send request reqId=${request.requestId.slice(0, 8)} bytes=${request.body.length} chunked=${useChunkedUpload ? "true" : "false"}`,
+    );
     this._responseHandlers.set(request.requestId, onResponse);
     this._chunkHandlers.set(request.requestId, onChunk);
 
-    if (request.body.length > ANTSEED_UPLOAD_CHUNK_SIZE) {
+    if (useChunkedUpload) {
       this._sendChunkedRequest(request);
     } else {
       const payload = encodeHttpRequest(request);
@@ -137,6 +143,7 @@ export class ProxyMux {
 
   /** Buyer side: cancel handlers for an in-flight request. */
   cancelProxyRequest(requestId: string): void {
+    debugLog(`[ProxyMux] cancel request reqId=${requestId.slice(0, 8)}`);
     this._responseHandlers.delete(requestId);
     this._chunkHandlers.delete(requestId);
   }
@@ -181,6 +188,9 @@ export class ProxyMux {
         case MessageType.HttpRequest: {
           // Seller side: incoming request from buyer
           const request = decodeHttpRequest(frame.payload);
+          debugLog(
+            `[ProxyMux] recv request reqId=${request.requestId.slice(0, 8)} chunked=${request.headers[ANTSEED_UPLOAD_CHUNK_HEADER] === 'chunked' ? "true" : "false"} bodyBytes=${request.body.length}`,
+          );
           if (request.headers[ANTSEED_UPLOAD_CHUNK_HEADER] === 'chunked') {
             // Body will arrive via HttpRequestChunk/HttpRequestEnd — start buffering.
             // If a duplicate header frame arrives for the same requestId, evict the
@@ -211,6 +221,9 @@ export class ProxyMux {
           const chunk = decodeHttpRequestChunk(frame.payload);
           const entry = this._pendingUploads.get(chunk.requestId);
           if (!entry || chunk.data.length === 0) break;
+          debugLog(
+            `[ProxyMux] recv request chunk reqId=${chunk.requestId.slice(0, 8)} bytes=${chunk.data.length} pending=${entry.byteCount + chunk.data.length}`,
+          );
 
           // Per-request size guard
           if (entry.byteCount + chunk.data.length > this._maxUploadBodyBytes) {
@@ -233,6 +246,9 @@ export class ProxyMux {
           const chunk = decodeHttpRequestChunk(frame.payload);
           const entry = this._pendingUploads.get(chunk.requestId);
           if (!entry) break;
+          debugLog(
+            `[ProxyMux] recv request end reqId=${chunk.requestId.slice(0, 8)} finalBytes=${chunk.data.length} pendingBefore=${entry.byteCount}`,
+          );
 
           // Check final chunk against limits
           const finalLen = chunk.data.length;
@@ -269,6 +285,9 @@ export class ProxyMux {
         case MessageType.HttpResponse: {
           // Buyer side: response from seller (start frame for streams).
           const response = decodeHttpResponse(frame.payload);
+          debugLog(
+            `[ProxyMux] recv response reqId=${response.requestId.slice(0, 8)} status=${response.statusCode} bytes=${response.body.length} streamingStart=${response.headers[ANTSEED_STREAMING_RESPONSE_HEADER] === '1' ? "true" : "false"}`,
+          );
           const handler = this._responseHandlers.get(response.requestId);
           if (handler) {
             const streamingStart = response.headers[ANTSEED_STREAMING_RESPONSE_HEADER] === '1';
@@ -283,6 +302,9 @@ export class ProxyMux {
         case MessageType.HttpResponseChunk: {
           // Buyer side: streaming chunk from seller
           const chunk = decodeHttpResponseChunk(frame.payload);
+          debugLog(
+            `[ProxyMux] recv response chunk reqId=${chunk.requestId.slice(0, 8)} bytes=${chunk.data.length} done=${chunk.done ? "true" : "false"}`,
+          );
           const chunkHandler = this._chunkHandlers.get(chunk.requestId);
           if (chunkHandler) {
             chunkHandler(chunk);
@@ -292,6 +314,9 @@ export class ProxyMux {
         case MessageType.HttpResponseEnd: {
           // Buyer side: final chunk (done=true) from seller
           const endChunk = decodeHttpResponseChunk(frame.payload);
+          debugLog(
+            `[ProxyMux] recv response end reqId=${endChunk.requestId.slice(0, 8)} bytes=${endChunk.data.length}`,
+          );
           const endHandler = this._chunkHandlers.get(endChunk.requestId);
           if (endHandler) {
             endHandler(endChunk);

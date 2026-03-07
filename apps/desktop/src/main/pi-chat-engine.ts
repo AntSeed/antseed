@@ -1,7 +1,7 @@
 import type { IpcMain } from 'electron';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, stat, unlink } from 'node:fs/promises';
-import { createConnection } from 'node:net';
+import { mkdir, readFile, stat, unlink, writeFile } from 'node:fs/promises';
+import { createConnection, isIP } from 'node:net';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import type { AgentSession, AgentSessionEvent } from '@mariozechner/pi-coding-agent';
@@ -10,6 +10,7 @@ import type {
   AssistantMessage,
   AssistantMessageEvent,
   Context,
+  ImageContent,
   Message,
   Model,
   StreamOptions,
@@ -64,6 +65,7 @@ type AiConversation = {
   id: string;
   title: string;
   model: string;
+  provider?: string;
   messages: AiChatMessage[];
   createdAt: number;
   updatedAt: number;
@@ -74,6 +76,7 @@ type AiConversationSummary = {
   id: string;
   title: string;
   model: string;
+  provider?: string;
   messageCount: number;
   createdAt: number;
   updatedAt: number;
@@ -88,6 +91,7 @@ type RegisterPiChatHandlersOptions = {
   configPath: string;
   isBuyerRuntimeRunning: () => boolean;
   appendSystemLog: (line: string) => void;
+  getNetworkPeers?: () => Promise<NetworkPeerAddress[]>;
 };
 
 type SessionPathInfo = {
@@ -99,6 +103,22 @@ type ActiveRun = {
   conversationId: string;
   session: AgentSession;
   unsubscribe: () => void;
+};
+
+type NetworkPeerAddress = {
+  host: string;
+  port: number;
+  providers?: string[];
+};
+
+type ChatModelProtocol = 'anthropic-messages' | 'openai-chat-completions';
+
+type ChatModelCatalogEntry = {
+  id: string;
+  label: string;
+  provider: string;
+  protocol: ChatModelProtocol;
+  count: number;
 };
 
 const ANTSEED_HOME_DIR = path.join(homedir(), '.antseed');
@@ -117,6 +137,15 @@ const CHAT_STREAM_TOTAL_TIMEOUT_ENV = 'ANTSEED_CHAT_STREAM_TOTAL_TIMEOUT_MS';
 const CHAT_STREAM_IDLE_TIMEOUT_ENV = 'ANTSEED_CHAT_STREAM_IDLE_TIMEOUT_MS';
 const DEFAULT_CHAT_STREAM_TOTAL_TIMEOUT_MS = 240_000;
 const DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS = 45_000;
+const CHAT_MODEL_METADATA_FETCH_TIMEOUT_MS = 2_500;
+const CHAT_MODEL_SCAN_MAX_PEERS = 20;
+const CHAT_MODEL_API_FETCH_TIMEOUT_MS = 3_500;
+const CHAT_MODEL_SCAN_MAX_PROVIDERS = 12;
+const CHAT_MODEL_MAX_OPTIONS = 120;
+const CHAT_MODEL_MAX_OPTIONS_PER_PROVIDER = 40;
+const CHAT_MODEL_CACHE_FILE = path.join(CHAT_DATA_DIR, 'model-catalog-cache.json');
+const CHAT_MODEL_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
+const CHAT_MODEL_CACHE_REFRESH_DEBOUNCE_MS = 60_000;
 
 function normalizeTokenCount(value: unknown): number {
   const parsed = Number(value);
@@ -229,6 +258,570 @@ function normalizeModelId(model?: string): string {
   return trimmed.length > 0 ? trimmed : DEFAULT_CHAT_MODEL;
 }
 
+function isChatModelProtocol(value: unknown): value is ChatModelProtocol {
+  return value === 'anthropic-messages' || value === 'openai-chat-completions';
+}
+
+function normalizeProviderId(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function inferProviderProtocol(provider: string): ChatModelProtocol | null {
+  if (provider === 'openai' || provider === 'openrouter' || provider === 'local-llm') {
+    return 'openai-chat-completions';
+  }
+  if (provider === 'anthropic' || provider === 'claude-code' || provider === 'claude-oauth') {
+    return 'anthropic-messages';
+  }
+  return null;
+}
+
+function normalizeHost(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const host = value.trim();
+  return host.length > 0 ? host : null;
+}
+
+function isPublicMetadataHost(rawHost: string): boolean {
+  const host = rawHost.trim().toLowerCase();
+  if (host.length === 0 || host === 'localhost' || host.endsWith('.local') || host.includes('/') || host.includes('@')) {
+    return false;
+  }
+
+  const ipVersion = isIP(host);
+  if (ipVersion === 0) {
+    return false;
+  }
+
+  if (ipVersion === 4) {
+    const parts = host.split('.').map((part) => Number(part));
+    if (parts.length !== 4 || parts.some((part) => !Number.isFinite(part) || part < 0 || part > 255)) {
+      return false;
+    }
+    const a = parts[0] ?? 0;
+    const b = parts[1] ?? 0;
+    if (a === 10) return false;
+    if (a === 127) return false;
+    if (a === 172 && b >= 16 && b <= 31) return false;
+    if (a === 192 && b === 168) return false;
+    if (a === 169 && b === 254) return false;
+    if (a === 100 && b >= 64 && b <= 127) return false;
+    if (a === 198 && (b === 18 || b === 19)) return false;
+    if (a === 0) return false;
+    return true;
+  }
+
+  if (host === '::1' || host === '::' || host.startsWith('::ffff:')) {
+    return false;
+  }
+
+  if (
+    host.startsWith('fe80:') ||
+    host.startsWith('fe81:') ||
+    host.startsWith('fe82:') ||
+    host.startsWith('fe83:') ||
+    host.startsWith('fe84:') ||
+    host.startsWith('fe85:') ||
+    host.startsWith('fe86:') ||
+    host.startsWith('fe87:') ||
+    host.startsWith('fe88:') ||
+    host.startsWith('fe89:') ||
+    host.startsWith('fe8a:') ||
+    host.startsWith('fe8b:') ||
+    host.startsWith('fe8c:') ||
+    host.startsWith('fe8d:') ||
+    host.startsWith('fe8e:') ||
+    host.startsWith('fe8f:') ||
+    host.startsWith('fc') ||
+    host.startsWith('fd')
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+function normalizePort(value: unknown): number | null {
+  const port = Number(value);
+  if (!Number.isFinite(port)) {
+    return null;
+  }
+  const normalized = Math.floor(port);
+  if (normalized < 1 || normalized > 65535) {
+    return null;
+  }
+  return normalized;
+}
+
+function normalizeModelValue(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const model = value.trim();
+  return model.length > 0 ? model : null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function resolveProtocolForModel(
+  provider: string,
+  matrixRaw: unknown,
+  modelId: string,
+): ChatModelProtocol | null {
+  const matrix = asRecord(matrixRaw);
+  if (matrix) {
+    const targetKey = modelId.trim().toLowerCase();
+    for (const [key, value] of Object.entries(matrix)) {
+      if (key.trim().toLowerCase() !== targetKey || !Array.isArray(value)) {
+        continue;
+      }
+      for (const protocolCandidate of value) {
+        if (isChatModelProtocol(protocolCandidate)) {
+          return protocolCandidate;
+        }
+      }
+    }
+  }
+  return inferProviderProtocol(provider);
+}
+
+function toModelLabel(modelId: string, provider: string): string {
+  return `${modelId} · ${provider}`;
+}
+
+function updateModelProviderHints(
+  modelProviderHints: Map<string, string[]>,
+  entries: ChatModelCatalogEntry[],
+): void {
+  modelProviderHints.clear();
+  for (const entry of entries) {
+    const modelId = normalizeModelValue(entry.id)?.toLowerCase();
+    const provider = normalizeProviderId(entry.provider);
+    if (!modelId || !provider || !inferProviderProtocol(provider)) {
+      continue;
+    }
+    const providers = modelProviderHints.get(modelId) ?? [];
+    if (!providers.includes(provider)) {
+      providers.push(provider);
+      modelProviderHints.set(modelId, providers);
+    }
+  }
+}
+
+function resolveProviderHintForModel(
+  explicitProvider?: string,
+): string | null {
+  const explicit = normalizeProviderId(explicitProvider);
+  if (explicit && inferProviderProtocol(explicit)) {
+    return explicit;
+  }
+  return null;
+}
+
+function normalizePeerId(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const peerId = value.trim().toLowerCase();
+  return /^[0-9a-f]{64}$/i.test(peerId) ? peerId : null;
+}
+
+function normalizeChatModelCatalogEntry(raw: unknown): ChatModelCatalogEntry | null {
+  const entry = asRecord(raw);
+  if (!entry) {
+    return null;
+  }
+
+  const id = normalizeModelValue(entry.id);
+  const provider = normalizeProviderId(entry.provider);
+  const protocol = entry.protocol;
+  if (!id || !provider || !isChatModelProtocol(protocol) || !inferProviderProtocol(provider)) {
+    return null;
+  }
+
+  const count = Number(entry.count);
+  const normalizedCount = Number.isFinite(count) && count > 0 ? Math.max(1, Math.floor(count)) : 1;
+  const label = normalizeModelValue(entry.label) ?? toModelLabel(id, provider);
+  return {
+    id,
+    label,
+    provider,
+    protocol,
+    count: normalizedCount,
+  };
+}
+
+function normalizeChatModelCatalogEntries(rawEntries: unknown[]): ChatModelCatalogEntry[] {
+  const deduped = new Map<string, ChatModelCatalogEntry>();
+  for (const rawEntry of rawEntries) {
+    const entry = normalizeChatModelCatalogEntry(rawEntry);
+    if (!entry) {
+      continue;
+    }
+    const key = `${entry.id}\u0000${entry.provider}\u0000${entry.protocol}`;
+    const existing = deduped.get(key);
+    if (existing) {
+      existing.count = Math.max(existing.count, entry.count);
+      continue;
+    }
+    deduped.set(key, { ...entry });
+  }
+  return sortChatModelCatalogEntries([...deduped.values()]);
+}
+
+async function readChatModelCatalogCache(): Promise<{ updatedAt: number; entries: ChatModelCatalogEntry[] } | null> {
+  try {
+    const raw = await readFile(CHAT_MODEL_CACHE_FILE, 'utf-8');
+    const parsed = JSON.parse(raw) as { updatedAt?: unknown; entries?: unknown };
+    const updatedAt = Number(parsed.updatedAt);
+    if (!Number.isFinite(updatedAt) || updatedAt <= 0) {
+      return null;
+    }
+    const entries = normalizeChatModelCatalogEntries(Array.isArray(parsed.entries) ? parsed.entries : []);
+    if (entries.length === 0) {
+      return null;
+    }
+    return {
+      updatedAt: Math.floor(updatedAt),
+      entries: limitChatModelCatalogEntries(entries),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function writeChatModelCatalogCache(entries: ChatModelCatalogEntry[]): Promise<void> {
+  const normalized = limitChatModelCatalogEntries(normalizeChatModelCatalogEntries(entries));
+  if (normalized.length === 0) {
+    return;
+  }
+  await mkdir(CHAT_DATA_DIR, { recursive: true });
+  const payload = {
+    updatedAt: Date.now(),
+    entries: normalized,
+  };
+  await writeFile(CHAT_MODEL_CACHE_FILE, JSON.stringify(payload, null, 2), 'utf-8');
+}
+
+function sortChatModelCatalogEntries(entries: ChatModelCatalogEntry[]): ChatModelCatalogEntry[] {
+  const protocolRank = (protocol: ChatModelProtocol): number => (
+    protocol === 'anthropic-messages' ? 0 : 1
+  );
+
+  return entries.sort((a, b) => {
+    if (b.count !== a.count) {
+      return b.count - a.count;
+    }
+    if (protocolRank(a.protocol) !== protocolRank(b.protocol)) {
+      return protocolRank(a.protocol) - protocolRank(b.protocol);
+    }
+    if (a.provider !== b.provider) {
+      return a.provider.localeCompare(b.provider);
+    }
+    return a.id.localeCompare(b.id);
+  });
+}
+
+function limitChatModelCatalogEntries(entries: ChatModelCatalogEntry[]): ChatModelCatalogEntry[] {
+  if (entries.length <= CHAT_MODEL_MAX_OPTIONS) {
+    return entries;
+  }
+
+  const limited: ChatModelCatalogEntry[] = [];
+  const perProviderCount = new Map<string, number>();
+  for (const entry of entries) {
+    const provider = entry.provider;
+    const providerCount = perProviderCount.get(provider) ?? 0;
+    if (providerCount >= CHAT_MODEL_MAX_OPTIONS_PER_PROVIDER) {
+      continue;
+    }
+    limited.push(entry);
+    perProviderCount.set(provider, providerCount + 1);
+    if (limited.length >= CHAT_MODEL_MAX_OPTIONS) {
+      break;
+    }
+  }
+
+  return limited;
+}
+
+async function fetchPeerMetadata(host: string, port: number): Promise<Record<string, unknown> | null> {
+  if (!isPublicMetadataHost(host)) {
+    return null;
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), CHAT_MODEL_METADATA_FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(`http://${host}:${String(port)}/metadata`, {
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      return null;
+    }
+    const payload = await response.json();
+    return asRecord(payload);
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function extractChatModelCatalog(metadata: Record<string, unknown>): Omit<ChatModelCatalogEntry, 'count'>[] {
+  const providersRaw = metadata.providers;
+  if (!Array.isArray(providersRaw)) {
+    return [];
+  }
+
+  const models: Omit<ChatModelCatalogEntry, 'count'>[] = [];
+  for (const providerEntry of providersRaw) {
+    const providerRecord = asRecord(providerEntry);
+    if (!providerRecord) {
+      continue;
+    }
+    const providerId = normalizeProviderId(providerRecord.provider);
+    if (!providerId) {
+      continue;
+    }
+    const modelListRaw = providerRecord.models;
+    if (!Array.isArray(modelListRaw)) {
+      continue;
+    }
+    for (const modelRaw of modelListRaw) {
+      const modelId = normalizeModelValue(modelRaw);
+      if (!modelId) {
+        continue;
+      }
+      const protocol = resolveProtocolForModel(providerId, providerRecord.modelApiProtocols, modelId);
+      if (!protocol) {
+        continue;
+      }
+      models.push({
+        id: modelId,
+        label: toModelLabel(modelId, providerId),
+        provider: providerId,
+        protocol,
+      });
+    }
+  }
+  return models;
+}
+
+async function discoverChatModelCatalog(
+  getNetworkPeers?: () => Promise<NetworkPeerAddress[]>,
+): Promise<ChatModelCatalogEntry[]> {
+  if (!getNetworkPeers) {
+    return [];
+  }
+
+  let peers: NetworkPeerAddress[] = [];
+  try {
+    peers = await getNetworkPeers();
+  } catch {
+    return [];
+  }
+
+  const uniqueTargets: Array<{ host: string; port: number }> = [];
+  const seen = new Set<string>();
+  for (const peer of peers.slice(0, CHAT_MODEL_SCAN_MAX_PEERS)) {
+    const host = normalizeHost(peer.host);
+    const port = normalizePort(peer.port);
+    if (!host || !port) {
+      continue;
+    }
+    const key = `${host}:${String(port)}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    uniqueTargets.push({ host, port });
+  }
+
+  if (uniqueTargets.length === 0) {
+    return [];
+  }
+
+  const responses = await Promise.all(uniqueTargets.map(async (target) => {
+    return await fetchPeerMetadata(target.host, target.port);
+  }));
+
+  const aggregate = new Map<string, ChatModelCatalogEntry>();
+  for (const metadata of responses) {
+    if (!metadata) {
+      continue;
+    }
+    const entries = extractChatModelCatalog(metadata);
+    for (const entry of entries) {
+      const key = `${entry.id}\u0000${entry.provider}\u0000${entry.protocol}`;
+      const existing = aggregate.get(key);
+      if (existing) {
+        existing.count += 1;
+        continue;
+      }
+      aggregate.set(key, {
+        ...entry,
+        count: 1,
+      });
+    }
+  }
+
+  return sortChatModelCatalogEntries(Array.from(aggregate.values()));
+}
+
+function extractModelIdsFromApiPayload(payload: unknown): string[] {
+  let modelEntries: unknown[] = [];
+  if (Array.isArray(payload)) {
+    modelEntries = payload;
+  } else {
+    const root = asRecord(payload);
+    if (root) {
+      if (Array.isArray(root.data)) {
+        modelEntries = root.data;
+      } else if (Array.isArray(root.models)) {
+        modelEntries = root.models;
+      }
+    }
+  }
+
+  if (modelEntries.length === 0) {
+    return [];
+  }
+
+  const modelIds: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of modelEntries) {
+    let candidate: unknown = entry;
+    if (entry && typeof entry === 'object') {
+      const record = entry as Record<string, unknown>;
+      candidate = record.id ?? record.model ?? record.name;
+    }
+    const modelId = normalizeModelValue(candidate);
+    if (!modelId) {
+      continue;
+    }
+    const key = modelId.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    modelIds.push(modelId);
+  }
+  return modelIds;
+}
+
+async function fetchProxyProviderModelCatalog(
+  proxyPort: number,
+  provider: string,
+): Promise<ChatModelCatalogEntry[]> {
+  const protocol = inferProviderProtocol(provider);
+  if (!protocol) {
+    return [];
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), CHAT_MODEL_API_FETCH_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${String(proxyPort)}/v1/models`, {
+      method: 'GET',
+      headers: {
+        accept: 'application/json',
+        'x-antseed-provider': provider,
+      },
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      return [];
+    }
+
+    const payload = await response.json();
+    const modelIds = extractModelIdsFromApiPayload(payload);
+    return modelIds.map((modelId) => ({
+      id: modelId,
+      label: toModelLabel(modelId, provider),
+      provider,
+      protocol,
+      count: 1,
+    }));
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function discoverChatModelCatalogFromApi(
+  proxyPort: number,
+  getNetworkPeers?: () => Promise<NetworkPeerAddress[]>,
+): Promise<ChatModelCatalogEntry[]> {
+  if (!getNetworkPeers) {
+    return [];
+  }
+
+  let peers: NetworkPeerAddress[] = [];
+  try {
+    peers = await getNetworkPeers();
+  } catch {
+    return [];
+  }
+
+  const providerSet = new Set<string>();
+  for (const peer of peers) {
+    if (!Array.isArray(peer.providers)) {
+      continue;
+    }
+    for (const providerRaw of peer.providers) {
+      const provider = normalizeProviderId(providerRaw);
+      if (!provider || !inferProviderProtocol(provider)) {
+        continue;
+      }
+      providerSet.add(provider);
+      if (providerSet.size >= CHAT_MODEL_SCAN_MAX_PROVIDERS) {
+        break;
+      }
+    }
+    if (providerSet.size >= CHAT_MODEL_SCAN_MAX_PROVIDERS) {
+      break;
+    }
+  }
+
+  const providers = Array.from(providerSet.values());
+  if (providers.length === 0) {
+    return [];
+  }
+
+  const providerEntries = await Promise.all(
+    providers.map(async (provider) => await fetchProxyProviderModelCatalog(proxyPort, provider)),
+  );
+
+  const aggregate = new Map<string, ChatModelCatalogEntry>();
+  for (const entries of providerEntries) {
+    for (const entry of entries) {
+      const key = `${entry.id}\u0000${entry.provider}\u0000${entry.protocol}`;
+      const existing = aggregate.get(key);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        aggregate.set(key, entry);
+      }
+    }
+  }
+
+  return sortChatModelCatalogEntries(Array.from(aggregate.values()));
+}
+
 function toUsage(value: unknown): Usage {
   const usage = (value ?? {}) as Record<string, unknown>;
   const input = normalizeTokenCount(
@@ -322,12 +915,26 @@ function convertPiMessageToUiBlocks(message: Message): string | ContentBlock[] {
     if (typeof message.content === 'string') {
       return message.content;
     }
+    // Preserve image blocks so the UI can render them
+    const hasImage = message.content.some((block) => block.type === 'image');
+    if (hasImage) {
+      const blocks: ContentBlock[] = [];
+      for (const block of message.content) {
+        if (block.type === 'image') {
+          blocks.push({
+            type: 'image',
+            source: { type: 'base64', media_type: (block as ImageContent).mimeType, data: (block as ImageContent).data },
+          } as unknown as ContentBlock);
+        } else if (block.type === 'text') {
+          blocks.push({ type: 'text', text: block.text });
+        }
+      }
+      return blocks;
+    }
     const textParts: string[] = [];
     for (const block of message.content) {
       if (block.type === 'text') {
         textParts.push(block.text);
-      } else {
-        textParts.push(`[image:${block.mimeType}]`);
       }
     }
     return textParts.join('\n').trim();
@@ -585,19 +1192,26 @@ function anthropicContentFromUser(content: Extract<Message, { role: 'user' }>['c
   if (typeof content === 'string') {
     return content;
   }
-  return content.map((block) => {
+  const blocks: unknown[] = [];
+  for (const block of content) {
     if (block.type === 'text') {
-      return { type: 'text', text: block.text };
+      const text = String(block.text ?? '');
+      if (text.length === 0) {
+        continue;
+      }
+      blocks.push({ type: 'text', text });
+      continue;
     }
-    return {
+    blocks.push({
       type: 'image',
       source: {
         type: 'base64',
         media_type: block.mimeType,
         data: block.data,
       },
-    };
-  });
+    });
+  }
+  return blocks;
 }
 
 function anthropicContentFromAssistant(content: AssistantMessage['content']): unknown[] {
@@ -608,7 +1222,11 @@ function anthropicContentFromAssistant(content: AssistantMessage['content']): un
       continue;
     }
     if (block.type === 'text') {
-      blocks.push({ type: 'text', text: block.text });
+      const text = String(block.text ?? '');
+      if (text.length === 0) {
+        continue;
+      }
+      blocks.push({ type: 'text', text });
       continue;
     }
     // Strip thinking blocks: the proxy routes to arbitrary models (OpenRouter,
@@ -624,18 +1242,15 @@ function anthropicContentFromAssistant(content: AssistantMessage['content']): un
       input: block.arguments ?? {},
     });
   }
-  // Ensure at least one content block — the API rejects empty content arrays.
-  if (blocks.length === 0) {
-    blocks.push({ type: 'text', text: '' });
-  }
   return blocks;
 }
 
 function anthropicContentFromToolResult(message: ToolResultMessage): unknown[] {
+  const content = convertToolContentToText(message.content);
   return [{
     type: 'tool_result',
     tool_use_id: message.toolCallId,
-    content: convertToolContentToText(message.content),
+    content: content.length > 0 ? content : '(no tool output)',
     is_error: message.isError,
   }];
 }
@@ -644,16 +1259,31 @@ function convertContextMessagesToAnthropic(messages: Message[]): Array<Record<st
   const converted: Array<Record<string, unknown>> = [];
   for (const message of messages) {
     if (message.role === 'user') {
+      const content = anthropicContentFromUser(message.content);
+      if (typeof content === 'string' && content.length === 0) {
+        continue;
+      }
+      if (Array.isArray(content) && content.length === 0) {
+        continue;
+      }
       converted.push({
         role: 'user',
-        content: anthropicContentFromUser(message.content),
+        content,
       });
       continue;
     }
     if (message.role === 'assistant') {
+      const content = anthropicContentFromAssistant(message.content);
+      if (content.length === 0) {
+        converted.push({
+          role: 'assistant',
+          content: [{ type: 'text', text: '…' }],
+        });
+        continue;
+      }
       converted.push({
         role: 'assistant',
-        content: anthropicContentFromAssistant(message.content),
+        content,
       });
       continue;
     }
@@ -779,6 +1409,8 @@ function extractToolCallFromPartial(
 
 function createBuyerProxyStreamFn(
   onMeta: (meta: AiMessageMeta) => void,
+  providerHint: string | null,
+  preferredPeerId: string | null,
 ): (model: Model<any>, context: Context, options?: StreamOptions) => ReturnType<typeof createAssistantMessageEventStream> {
   return (model, context, options) => {
     const stream = createAssistantMessageEventStream();
@@ -869,6 +1501,8 @@ function createBuyerProxyStreamFn(
           headers: {
             'content-type': 'application/json',
             'anthropic-version': '2023-06-01',
+            ...(providerHint ? { 'x-antseed-provider': providerHint } : {}),
+            ...(preferredPeerId ? { 'x-antseed-prefer-peer': preferredPeerId } : {}),
             ...(options?.headers ?? {}),
           },
           body: requestBodyJson,
@@ -1217,6 +1851,7 @@ class PiConversationStore {
       id: manager.getSessionId(),
       title: manager.getSessionName() || deriveTitle(messages),
       model: normalizeModelId(context.model?.modelId),
+      provider: normalizeProviderId(context.model?.provider) ?? undefined,
       messages,
       createdAt,
       updatedAt,
@@ -1257,6 +1892,7 @@ class PiConversationStore {
         id: conversation.id,
         title: conversation.title,
         model: conversation.model,
+        provider: conversation.provider,
         messageCount: conversation.messages.length,
         createdAt: conversation.createdAt,
         updatedAt: conversation.updatedAt,
@@ -1276,6 +1912,7 @@ class PiConversationStore {
         id: conversation.id,
         title: conversation.title,
         model: conversation.model,
+        provider: conversation.provider,
         messageCount: conversation.messages.length,
         createdAt: conversation.createdAt,
         updatedAt: conversation.updatedAt,
@@ -1300,10 +1937,12 @@ class PiConversationStore {
     return await this.readConversationFromPath(sessionPath);
   }
 
-  async create(model?: string): Promise<AiConversation> {
+  async create(model?: string, provider?: string): Promise<AiConversation> {
     await this.ready;
     const manager = SessionManager.create(this.workspaceDir, this.sessionsDir);
-    manager.appendModelChange(PROXY_PROVIDER_ID, normalizeModelId(model));
+    const providerId = normalizeProviderId(provider);
+    const modelProvider = providerId && inferProviderProtocol(providerId) ? providerId : PROXY_PROVIDER_ID;
+    manager.appendModelChange(modelProvider, normalizeModelId(model));
     const sessionPath = manager.getSessionFile();
     if (!sessionPath) {
       throw new Error('Failed to create persisted pi session');
@@ -1437,9 +2076,50 @@ export function registerPiChatHandlers({
   configPath,
   isBuyerRuntimeRunning,
   appendSystemLog,
+  getNetworkPeers,
 }: RegisterPiChatHandlersOptions): void {
   const store = new PiConversationStore();
-  let activeRun: ActiveRun | null = null;
+  const activeRunsByConversation = new Map<string, ActiveRun>();
+  const modelProviderHints = new Map<string, string[]>();
+  const preferredPeerByConversationId = new Map<string, string>();
+  let modelCatalogRefreshPromise: Promise<ChatModelCatalogEntry[]> | null = null;
+  let lastModelCatalogRefreshAt = 0;
+
+  const clearActiveRun = (run: ActiveRun | null): void => {
+    if (!run) {
+      return;
+    }
+
+    try {
+      run.unsubscribe();
+    } catch {
+      // Ignore listener cleanup failures.
+    }
+
+    try {
+      run.session.dispose();
+    } catch {
+      // Ignore disposal races.
+    }
+
+    if (activeRunsByConversation.get(run.conversationId) === run) {
+      activeRunsByConversation.delete(run.conversationId);
+    }
+  };
+
+  const abortAndClearActiveRun = async (run: ActiveRun | null): Promise<void> => {
+    if (!run) {
+      return;
+    }
+
+    try {
+      await run.session.abort();
+    } catch {
+      // Ignore abort races.
+    }
+
+    clearActiveRun(run);
+  };
 
   const isProxyAvailable = async (port: number): Promise<boolean> => {
     if (isBuyerRuntimeRunning()) {
@@ -1452,14 +2132,21 @@ export function registerPiChatHandlers({
     conversationId: string,
     userMessage: string,
     modelOverride?: string,
+    providerOverride?: string,
+    imageBase64?: string,
+    imageMimeType?: string,
   ): Promise<{ ok: boolean; error?: string }> => {
     const trimmedMessage = userMessage.trim();
-    if (trimmedMessage.length === 0) {
+    if (trimmedMessage.length === 0 && !imageBase64) {
       return { ok: false, error: 'Empty message' };
     }
 
-    if (activeRun) {
-      return { ok: false, error: 'Another chat request is already in progress.' };
+    const existingRun = activeRunsByConversation.get(conversationId);
+    if (existingRun) {
+      appendSystemLog(
+        `Cancelling existing in-flight chat request for conversation ${existingRun.conversationId.slice(0, 8)}...`,
+      );
+      await abortAndClearActiveRun(existingRun);
     }
 
     const proxyPort = await resolveProxyPort(configPath);
@@ -1477,6 +2164,10 @@ export function registerPiChatHandlers({
 
     const context = sessionManager.buildSessionContext();
     const modelId = normalizeModelId(modelOverride || context.model?.modelId);
+    const preferredPeerId = preferredPeerByConversationId.get(conversationId) ?? null;
+    const providerHint = resolveProviderHintForModel(
+      providerOverride,
+    );
     const proxyModel = makeProxyModel(modelId, proxyPort);
 
     const authStorage = AuthStorage.inMemory();
@@ -1508,7 +2199,7 @@ export function registerPiChatHandlers({
     const toolArgsById = new Map<string, Record<string, unknown>>();
     session.agent.streamFn = createBuyerProxyStreamFn((meta) => {
       turnMetaQueue.push(meta);
-    });
+    }, providerHint, preferredPeerId ?? null);
 
     let turnIndex = 0;
     let userPersisted = false;
@@ -1646,6 +2337,10 @@ export function registerPiChatHandlers({
         if (message.role === 'assistant') {
           const proxyMeta = turnMetaQueue.shift();
           const parsedMeta = parseAssistantMetaFromSessionEvent(message, proxyMeta);
+          const peerId = normalizePeerId(parsedMeta.peerId);
+          if (peerId) {
+            preferredPeerByConversationId.set(conversationId, peerId);
+          }
           (message as unknown as { meta?: AiMessageMeta }).meta = parsedMeta;
         }
         return;
@@ -1659,10 +2354,14 @@ export function registerPiChatHandlers({
       }
     });
 
-    activeRun = { conversationId, session, unsubscribe };
+    const run: ActiveRun = { conversationId, session, unsubscribe };
+    activeRunsByConversation.set(conversationId, run);
 
     try {
-      await session.prompt(trimmedMessage);
+      const images: ImageContent[] = imageBase64 && imageMimeType
+        ? [{ type: 'image', data: imageBase64, mimeType: imageMimeType }]
+        : [];
+      await session.prompt(trimmedMessage || ' ', { images: images.length > 0 ? images : undefined });
       if (!streamDone) {
         streamDone = true;
         sendToRenderer('chat:ai-stream-done', { conversationId });
@@ -1674,21 +2373,57 @@ export function registerPiChatHandlers({
         return { ok: false, error: 'Aborted' };
       }
       const message = asErrorMessage(error);
+      preferredPeerByConversationId.delete(conversationId);
       sendToRenderer('chat:ai-stream-error', { conversationId, error: message });
       appendSystemLog(`Pi chat error: ${message}`);
       return { ok: false, error: message };
     } finally {
-      try {
-        unsubscribe();
-      } catch {
-        // Ignore listener cleanup failures.
-      }
-      session.dispose();
+      clearActiveRun(run);
       store.markPersistedIfAvailable(conversationId);
-      if (activeRun?.conversationId === conversationId) {
-        activeRun = null;
+    }
+  };
+
+  const refreshModelCatalogFromNetwork = async (force = false): Promise<ChatModelCatalogEntry[]> => {
+    const now = Date.now();
+    if (!force && modelCatalogRefreshPromise) {
+      return await modelCatalogRefreshPromise;
+    }
+    if (!force && now - lastModelCatalogRefreshAt < CHAT_MODEL_CACHE_REFRESH_DEBOUNCE_MS) {
+      const cached = await readChatModelCatalogCache();
+      if (cached) {
+        return cached.entries;
       }
     }
+
+    modelCatalogRefreshPromise = (async () => {
+      const proxyPort = await resolveProxyPort(configPath);
+      const modelsFromMetadata = await discoverChatModelCatalog(getNetworkPeers);
+      if (modelsFromMetadata.length > 0) {
+        const limited = limitChatModelCatalogEntries(normalizeChatModelCatalogEntries(modelsFromMetadata));
+        updateModelProviderHints(modelProviderHints, limited);
+        void writeChatModelCatalogCache(limited).catch(() => undefined);
+        lastModelCatalogRefreshAt = Date.now();
+        return limited;
+      }
+
+      const modelsFromApi = await isProxyAvailable(proxyPort)
+        ? await discoverChatModelCatalogFromApi(proxyPort, getNetworkPeers)
+        : [];
+      const limited = limitChatModelCatalogEntries(normalizeChatModelCatalogEntries(modelsFromApi));
+      if (limited.length < modelsFromApi.length) {
+        appendSystemLog(
+          `Chat models truncated to ${String(limited.length)} of ${String(modelsFromApi.length)} API entries for usability.`,
+        );
+      }
+      updateModelProviderHints(modelProviderHints, limited);
+      void writeChatModelCatalogCache(limited).catch(() => undefined);
+      lastModelCatalogRefreshAt = Date.now();
+      return limited;
+    })().finally(() => {
+      modelCatalogRefreshPromise = null;
+    });
+
+    return await modelCatalogRefreshPromise;
   };
 
   ipcMain.handle('chat:ai-get-proxy-status', async () => {
@@ -1701,6 +2436,44 @@ export function registerPiChatHandlers({
         port,
       },
     };
+  });
+
+  ipcMain.handle('chat:ai-list-models', async () => {
+    try {
+      const cached = await readChatModelCatalogCache();
+      if (cached) {
+        updateModelProviderHints(modelProviderHints, cached.entries);
+        const cacheAgeMs = Date.now() - cached.updatedAt;
+        if (cacheAgeMs <= CHAT_MODEL_CACHE_MAX_AGE_MS) {
+          if (cacheAgeMs > CHAT_MODEL_CACHE_REFRESH_DEBOUNCE_MS) {
+            void refreshModelCatalogFromNetwork(false).catch((error) => {
+              appendSystemLog(`Background model catalog refresh failed: ${asErrorMessage(error)}`);
+            });
+          }
+          return {
+            ok: true,
+            data: cached.entries,
+          };
+        }
+      }
+      const limitedModels = await refreshModelCatalogFromNetwork(true);
+      if (limitedModels.length === 0 && cached) {
+        return {
+          ok: true,
+          data: cached.entries,
+        };
+      }
+      return {
+        ok: true,
+        data: limitedModels,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        data: [] as ChatModelCatalogEntry[],
+        error: asErrorMessage(error),
+      };
+    }
   });
 
   ipcMain.handle('chat:ai-list-conversations', async () => {
@@ -1716,34 +2489,38 @@ export function registerPiChatHandlers({
     return { ok: true, data: conversation };
   });
 
-  ipcMain.handle('chat:ai-create-conversation', async (_event, model: string) => {
-    const conversation = await store.create(model);
+  ipcMain.handle('chat:ai-create-conversation', async (_event, model: string, provider?: string) => {
+    const conversation = await store.create(model, provider);
+    preferredPeerByConversationId.delete(conversation.id);
     return { ok: true, data: conversation };
   });
 
   ipcMain.handle('chat:ai-delete-conversation', async (_event, id: string) => {
+    preferredPeerByConversationId.delete(id);
     await store.delete(id);
     return { ok: true };
   });
 
-  ipcMain.handle('chat:ai-send-stream', async (_event, conversationId: string, userMessage: string, model?: string) => {
-    return await runStreamingPrompt(conversationId, userMessage, model);
-  });
+  ipcMain.handle(
+    'chat:ai-send-stream',
+    async (_event, conversationId: string, userMessage: string, model?: string, provider?: string, imageBase64?: string, imageMimeType?: string) => {
+      return await runStreamingPrompt(conversationId, userMessage, model, provider, imageBase64, imageMimeType);
+    },
+  );
 
-  ipcMain.handle('chat:ai-send', async (_event, conversationId: string, userMessage: string, model?: string) => {
-    return await runStreamingPrompt(conversationId, userMessage, model);
-  });
+  ipcMain.handle(
+    'chat:ai-send',
+    async (_event, conversationId: string, userMessage: string, model?: string, provider?: string, imageBase64?: string, imageMimeType?: string) => {
+      return await runStreamingPrompt(conversationId, userMessage, model, provider, imageBase64, imageMimeType);
+    },
+  );
 
   ipcMain.handle('chat:ai-abort', async () => {
-    const run = activeRun;
-    if (!run) {
+    const activeRuns = Array.from(activeRunsByConversation.values());
+    if (activeRuns.length === 0) {
       return { ok: true };
     }
-    try {
-      await run.session.abort();
-    } catch {
-      // Ignore abort races.
-    }
+    await Promise.all(activeRuns.map((run) => abortAndClearActiveRun(run)));
     return { ok: true };
   });
 }

@@ -101,4 +101,38 @@ describe('HttpMetadataResolver', () => {
     expect(retried).toEqual(metadata);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it('increases endpoint cooldown across consecutive failures', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+
+    const fetchMock = vi.fn().mockRejectedValue(new Error('offline'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const resolver = new HttpMetadataResolver({
+      timeoutMs: 100,
+      failureCooldownMs: 1_000,
+      maxFailureCooldownMs: 10_000,
+    });
+    const peer = { host: '147.236.231.105', port: 6882 };
+
+    const first = await resolver.resolve(peer); // attempt #1, fail, cooldown=1s
+    const firstCooldownSkip = await resolver.resolve(peer); // still in 1s window
+
+    vi.setSystemTime(new Date('2026-01-01T00:00:01.001Z'));
+    const second = await resolver.resolve(peer); // attempt #2, fail, cooldown=2s
+
+    vi.setSystemTime(new Date('2026-01-01T00:00:02.500Z'));
+    const secondCooldownSkip = await resolver.resolve(peer); // should still be cooling down
+
+    vi.setSystemTime(new Date('2026-01-01T00:00:03.002Z'));
+    const third = await resolver.resolve(peer); // attempt #3 allowed
+
+    expect(first).toBeNull();
+    expect(firstCooldownSkip).toBeNull();
+    expect(second).toBeNull();
+    expect(secondCooldownSkip).toBeNull();
+    expect(third).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
 });

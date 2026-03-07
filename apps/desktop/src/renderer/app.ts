@@ -2,669 +2,47 @@ import { initChatModule } from './modules/chat';
 import { initSettingsModule } from './modules/settings';
 import { initRuntimeModule } from './modules/runtime';
 import { initDashboardRenderModule } from './modules/dashboard-render';
-import { initNavigationModule } from './modules/navigation';
 import { initDashboardApiModule } from './modules/dashboard-api';
+import {
+  initPluginSetupModule,
+  normalizeRouterRuntime,
+  resolveRouterPackageName,
+} from './modules/plugin-setup';
+import { mountAppShell } from './ui/mount';
+import { registerActions } from './ui/actions';
+import {
+  DEFAULT_DASHBOARD_PORT,
+  POLL_INTERVAL_MS,
+  UI_MESSAGES,
+} from './core/constants';
+import { safeNumber, safeString } from './core/safe';
+import type { BadgeTone } from './core/state';
+import { createInitialUiState } from './core/state';
+import { initStore, notifyUiStateChanged } from './core/store';
+import type { DesktopBridge } from './types/bridge';
 
-type AnyRecord = Record<string, any>;
+/* ------------------------------------------------------------------ */
+/*  Bootstrap                                                          */
+/* ------------------------------------------------------------------ */
 
-const bridge: any = window.antseedDesktop;
-const DEFAULT_DASHBOARD_PORT = 3117;
-const POLL_INTERVAL_MS = 5000;
-const SEED_AUTH_PREFS_KEY = 'antseed-seed-auth-prefs';
-const DEFAULT_PROVIDER_RUNTIME = 'anthropic';
-const DEFAULT_ROUTER_RUNTIME = 'local';
-
-const PROVIDER_PACKAGE_ALIASES: Record<string, string> = {
-  anthropic: '@antseed/provider-anthropic',
-  openai: '@antseed/provider-openai',
-  'local-llm': '@antseed/provider-local-llm',
-  'provider-anthropic': '@antseed/provider-anthropic',
-  'provider-openai': '@antseed/provider-openai',
-  'provider-local-llm': '@antseed/provider-local-llm',
-  'antseed-provider-anthropic': '@antseed/provider-anthropic',
-  'antseed-provider-openai': '@antseed/provider-openai',
-  'antseed-provider-local-llm': '@antseed/provider-local-llm',
-  'claude-code': '@antseed/provider-claude-code',
-  'provider-claude-code': '@antseed/provider-claude-code',
-  'antseed-provider-claude-code': '@antseed/provider-claude-code',
-  '@antseed/provider-claude-code': '@antseed/provider-claude-code',
-  'claude-oauth': '@antseed/provider-claude-oauth',
-  'provider-claude-oauth': '@antseed/provider-claude-oauth',
-  '@antseed/provider-claude-oauth': '@antseed/provider-claude-oauth',
-  '@antseed/provider-anthropic': '@antseed/provider-anthropic',
-  '@antseed/provider-openai': '@antseed/provider-openai',
-  '@antseed/provider-local-llm': '@antseed/provider-local-llm',
-};
-
-const ROUTER_PACKAGE_ALIASES: Record<string, string> = {
-  'local': '@antseed/router-local',
-  'claude-code': '@antseed/router-local',
-  'router-local': '@antseed/router-local',
-  'antseed-router-claude-code': '@antseed/router-local',
-  'antseed-router-local': '@antseed/router-local',
-  '@antseed/router-local': '@antseed/router-local',
-};
-
-const uiState: AnyRecord = {
-  processes: [],
-  refreshing: false,
-  dashboardRunning: false,
-  lastActiveSessions: 0,
-  daemonState: null,
-  lastSessionDebugKey: '',
-  peerSort: { key: 'reputation', dir: 'desc' },
-  sessionSort: { key: 'startedAt', dir: 'desc' },
-  peerFilter: '',
-  lastPeers: [],
-  lastSessionsPayload: null,
-  earningsPeriod: 'month',
-  walletInfo: null,
-  walletMode: 'node',
-  wcState: { connected: false, address: null, chainId: null, pairingUri: null },
-  chatActiveConversation: null,
-  chatConversations: [],
-  chatMessages: [],
-  chatSending: false,
-  appMode: 'connect',
-  installedPlugins: new Set<string>(),
-  pluginHints: {
-    provider: null,
-    router: null,
-  },
-  pluginInstallBusy: false,
-};
-
-function byId(id: string): any {
-  return document.getElementById(id);
-}
-
-function setText(el: any, value: string): void {
-  if (el) {
-    el.textContent = value;
-  }
-}
-
-function isProxyPortOccupiedMessage(value: unknown): boolean {
-  const message = safeString(value, '').toLowerCase();
-  if (!message) {
-    return false;
-  }
-  return message.includes('eaddrinuse') || message.includes('address already in use');
-}
-
-function safeNumber(value, fallback = 0) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
-}
-
-function safeArray(value) {
-  return Array.isArray(value) ? value : [];
-}
-
-function safeString(value, fallback = '') {
-  return typeof value === 'string' ? value : fallback;
-}
-
-function safeObject(value) {
-  if (value && typeof value === 'object') {
-    return value;
-  }
-  return null;
-}
-
-function formatClock(timestamp) {
-  return new Date(timestamp).toLocaleTimeString();
-}
-
-function formatTimestamp(timestamp) {
-  const ts = safeNumber(timestamp, 0);
-  if (ts <= 0) {
-    return 'n/a';
-  }
-  return new Date(ts).toLocaleString();
-}
-
-function formatRelativeTime(timestamp) {
-  const ts = safeNumber(timestamp, 0);
-  if (ts <= 0) {
-    return 'n/a';
-  }
-
-  const diffMs = Date.now() - ts;
-  if (diffMs < 0) {
-    return 'now';
-  }
-
-  const seconds = Math.floor(diffMs / 1000);
-  if (seconds < 60) {
-    return `${seconds}s ago`;
-  }
-
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) {
-    return `${minutes}m ago`;
-  }
-
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) {
-    return `${hours}h ago`;
-  }
-
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
-
-function formatDuration(durationMs) {
-  const ms = safeNumber(durationMs, 0);
-  if (ms <= 0) {
-    return '0s';
-  }
-
-  const totalSeconds = Math.floor(ms / 1000);
-  if (totalSeconds < 60) {
-    return `${totalSeconds}s`;
-  }
-
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  if (minutes < 60) {
-    return `${minutes}m ${seconds}s`;
-  }
-
-  const hours = Math.floor(minutes / 60);
-  const remMinutes = minutes % 60;
-  return `${hours}h ${remMinutes}m`;
-}
-
-function formatInt(value) {
-  return Math.round(safeNumber(value, 0)).toLocaleString();
-}
-
-function formatPercent(value) {
-  const pct = safeNumber(value, 0);
-  return `${Math.max(0, Math.min(100, Math.round(pct)))}%`;
-}
-
-function getCapacityColor(percent) {
-  if (percent > 80) {
-    return 'var(--accent)';
-  }
-  if (percent > 50) {
-    return 'var(--accent-yellow)';
-  }
-  return 'var(--accent-green)';
-}
-
-function getWalletActionResult(result, successMessage, errorMessage) {
-  if (result.ok) {
-    return {
-      message: result.message || successMessage,
-      type: 'success',
-    };
-  }
-
-  return {
-    message: result.error || errorMessage,
-    type: 'error',
+function detectApplePlatform(): boolean {
+  const nav = navigator as Navigator & {
+    userAgentData?: { platform?: string };
   };
+  const platformHint = nav.userAgentData?.platform || navigator.platform || navigator.userAgent;
+  return /Mac|iPhone|iPad|iPod/i.test(platformHint);
 }
 
-function formatMoney(value) {
-  if (typeof value === 'string') {
-    const normalized = value.trim();
-    if (normalized.length === 0) {
-      return '$0.00';
-    }
-    const numeric = Number(normalized);
-    if (!Number.isNaN(numeric)) {
-      return `$${numeric.toFixed(2)}`;
-    }
-    return `$${normalized}`;
-  }
+const isMacPlatform = detectApplePlatform();
+document.body.classList.toggle('platform-macos', isMacPlatform);
 
-  const numeric = safeNumber(value, 0);
-  return `$${numeric.toFixed(2)}`;
-}
+const bridge = window.antseedDesktop as DesktopBridge | undefined;
+const uiState = createInitialUiState();
+initStore(uiState);
 
-function formatPrice(value) {
-  const numeric = safeNumber(value, 0);
-  if (numeric <= 0) {
-    return 'n/a';
-  }
-  if (numeric < 0.01) {
-    return `$${numeric.toFixed(4)}`;
-  }
-  return `$${numeric.toFixed(2)}`;
-}
-
-function formatLatency(value) {
-  const numeric = safeNumber(value, 0);
-  if (numeric <= 0) {
-    return 'n/a';
-  }
-  return `${Math.round(numeric)}ms`;
-}
-
-function formatShortId(id, head = 8, tail = 6) {
-  if (typeof id !== 'string' || id.length === 0) {
-    return 'unknown';
-  }
-  if (id.length <= head + tail + 3) {
-    return id;
-  }
-  return `${id.slice(0, head)}...${id.slice(-tail)}`;
-}
-
-function formatEndpoint(peer) {
-  const host = safeString(peer.host, '').trim();
-  const port = safeNumber(peer.port, 0);
-  if (host.length > 0 && port > 0) {
-    return `${host}:${port}`;
-  }
-  return '-';
-}
-
-function loadSeedAuthPrefs() {
-  try {
-    const raw = localStorage.getItem(SEED_AUTH_PREFS_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object') return {};
-    return parsed;
-  } catch {
-    return {};
-  }
-}
-
-function saveSeedAuthPrefs() {
-  const authType = safeString(elements.seedAuthType?.value, 'apikey');
-  const authValue = safeString(elements.seedAuthValue?.value, '');
-  const next = {
-    authType,
-    authValue,
-  };
-  localStorage.setItem(SEED_AUTH_PREFS_KEY, JSON.stringify(next));
-}
-
-function getSelectedSeedAuthType() {
-  const raw = safeString(elements.seedAuthType?.value, 'apikey').toLowerCase();
-  if (raw === 'oauth' || raw === 'claude-code' || raw === 'apikey') {
-    return raw;
-  }
-  return 'apikey';
-}
-
-function renderSeedAuthInputs() {
-  const authType = getSelectedSeedAuthType();
-  const label = elements.seedAuthValueLabel;
-  const input = elements.seedAuthValue;
-  if (!label || !input) return;
-
-  if (authType === 'claude-code') {
-    label.textContent = 'Auth Value (not required)';
-    label.appendChild(input);
-    input.placeholder = 'Claude Code keychain will be used';
-    input.disabled = true;
-    return;
-  }
-
-  input.disabled = false;
-  if (authType === 'oauth') {
-    label.textContent = 'OAuth Access Token';
-    label.appendChild(input);
-    input.placeholder = 'Paste OAuth access token';
-  } else {
-    label.textContent = 'API Key';
-    label.appendChild(input);
-    input.placeholder = 'Paste API key';
-  }
-}
-
-function buildSeedRuntimeEnv() {
-  const authType = getSelectedSeedAuthType();
-  const authValue = safeString(elements.seedAuthValue?.value, '').trim();
-  const env: Record<string, string> = {
-    ANTSEED_AUTH_TYPE: authType,
-  };
-
-  if (authType !== 'claude-code') {
-    if (!authValue) {
-      if (authType === 'oauth') {
-        throw new Error('OAuth access token is required for auth type "oauth".');
-      }
-      throw new Error('API key is required for auth type "apikey".');
-    }
-    env['ANTHROPIC_API_KEY'] = authValue;
-  }
-
-  return env;
-}
-
-function initSeedAuthControls() {
-  const prefs = loadSeedAuthPrefs();
-  const prefType = safeString(prefs.authType, '');
-  const prefValue = safeString(prefs.authValue, '');
-
-  if (elements.seedAuthType) {
-    if (prefType === 'apikey' || prefType === 'oauth' || prefType === 'claude-code') {
-      elements.seedAuthType.value = prefType;
-    } else {
-      elements.seedAuthType.value = 'apikey';
-    }
-    elements.seedAuthType.addEventListener('change', () => {
-      renderSeedAuthInputs();
-      saveSeedAuthPrefs();
-    });
-  }
-
-  if (elements.seedAuthValue) {
-    elements.seedAuthValue.value = prefValue;
-    elements.seedAuthValue.addEventListener('input', () => {
-      saveSeedAuthPrefs();
-    });
-  }
-
-  renderSeedAuthInputs();
-}
-
-function normalizePluginSlug(value, fallback) {
-  const raw = safeString(value, fallback).trim().toLowerCase();
-  const slug = raw.replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
-  return slug || fallback;
-}
-
-function normalizeProviderRuntime(value) {
-  const raw = safeString(value, DEFAULT_PROVIDER_RUNTIME).trim().toLowerCase();
-  if (!raw) return DEFAULT_PROVIDER_RUNTIME;
-  if (raw === '@antseed/provider-anthropic' || raw === 'antseed-provider-anthropic') return 'anthropic';
-  if (raw === '@antseed/provider-openai' || raw === 'antseed-provider-openai') return 'openai';
-  if (raw === '@antseed/provider-local-llm' || raw === 'antseed-provider-local-llm') return 'local-llm';
-  if (raw === '@antseed/provider-claude-code' || raw === 'antseed-provider-claude-code') return 'claude-code';
-  if (raw === '@antseed/provider-claude-oauth') return 'claude-oauth';
-  return raw;
-}
-
-function normalizeRouterRuntime(value) {
-  const raw = safeString(value, DEFAULT_ROUTER_RUNTIME).trim().toLowerCase();
-  if (!raw) return DEFAULT_ROUTER_RUNTIME;
-  if (
-    raw === 'claude-code'
-    || raw === '@antseed/router-local'
-    || raw === 'antseed-router-claude-code'
-    || raw === 'antseed-router-local'
-  ) {
-    return 'local';
-  }
-  return raw;
-}
-
-function resolveProviderPackageName(value) {
-  const raw = safeString(value, DEFAULT_PROVIDER_RUNTIME).trim().toLowerCase();
-  if (!raw) return PROVIDER_PACKAGE_ALIASES[DEFAULT_PROVIDER_RUNTIME];
-  if (PROVIDER_PACKAGE_ALIASES[raw]) return PROVIDER_PACKAGE_ALIASES[raw];
-  if (raw.startsWith('@')) return raw;
-  if (raw.startsWith('provider-')) return `@antseed/${raw}`;
-  return `@antseed/provider-${normalizePluginSlug(raw, DEFAULT_PROVIDER_RUNTIME)}`;
-}
-
-function resolveRouterPackageName(value) {
-  const raw = safeString(value, DEFAULT_ROUTER_RUNTIME).trim().toLowerCase();
-  if (!raw) return ROUTER_PACKAGE_ALIASES[DEFAULT_ROUTER_RUNTIME];
-  if (ROUTER_PACKAGE_ALIASES[raw]) return ROUTER_PACKAGE_ALIASES[raw];
-  if (raw.startsWith('@')) return raw;
-  if (raw.startsWith('router-')) return `@antseed/${raw}`;
-  return `@antseed/router-${normalizePluginSlug(raw, DEFAULT_ROUTER_RUNTIME)}`;
-}
-
-function expectedProviderPluginPackage() {
-  return resolveProviderPackageName(elements.seedProvider?.value);
-}
-
-function expectedRouterPluginPackage() {
-  return resolveRouterPackageName(elements.connectRouter?.value);
-}
-
-function extractMissingPluginPackage(logLine) {
-  const match = /Plugin\s+"([^"]+)"\s+not found/i.exec(safeString(logLine, ''));
-  return match?.[1]?.trim() || null;
-}
-
-function updatePluginHintFromLog(event) {
-  const pkg = extractMissingPluginPackage(event?.line);
-  if (!pkg) return;
-
-  if (event.mode === 'seed') {
-    uiState.pluginHints.provider = resolveProviderPackageName(pkg);
-  } else if (event.mode === 'connect') {
-    uiState.pluginHints.router = resolveRouterPackageName(pkg);
-  } else if (pkg.includes('-provider-') || pkg.includes('/provider-')) {
-    uiState.pluginHints.provider = resolveProviderPackageName(pkg);
-  } else if (pkg.includes('-router-') || pkg.includes('/router-')) {
-    uiState.pluginHints.router = resolveRouterPackageName(pkg);
-  }
-}
-
-function renderPluginSetupState() {
-  const expectedRouter = uiState.pluginHints.router || expectedRouterPluginPackage();
-
-  const installedRouter = uiState.installedPlugins.has(expectedRouter);
-  const missing: string[] = [];
-  if (!installedRouter) missing.push(expectedRouter);
-
-  if (elements.pluginSetupStatus) {
-    if (missing.length === 0) {
-      elements.pluginSetupStatus.textContent = 'Required runtime plugins are installed.';
-    } else {
-      elements.pluginSetupStatus.textContent = `Missing plugin${missing.length > 1 ? 's' : ''}: ${missing.join(', ')}`;
-    }
-  }
-
-  if (elements.installConnectPluginBtn) {
-    elements.installConnectPluginBtn.textContent = installedRouter
-      ? `Buyer Ready (${expectedRouter})`
-      : `Install ${expectedRouter}`;
-    elements.installConnectPluginBtn.disabled = uiState.pluginInstallBusy || installedRouter || !bridge?.pluginsInstall;
-  }
-
-  if (elements.refreshPluginsBtn) {
-    elements.refreshPluginsBtn.disabled = uiState.pluginInstallBusy || !bridge?.pluginsList;
-  }
-}
-
-async function refreshPluginInventory() {
-  if (!bridge?.pluginsList) {
-    return;
-  }
-  const result = await bridge.pluginsList();
-  if (!result?.ok) {
-    throw new Error(result?.error || 'Failed to read installed plugins');
-  }
-  uiState.installedPlugins = new Set(safeArray(result.plugins).map((plugin) => safeString(plugin?.package, '')).filter(Boolean));
-  renderPluginSetupState();
-}
-
-async function installPluginPackage(packageName) {
-  if (!bridge?.pluginsInstall) {
-    throw new Error('Plugin installer is unavailable in this build');
-  }
-  uiState.pluginInstallBusy = true;
-  renderPluginSetupState();
-  try {
-    const result = await bridge.pluginsInstall(packageName);
-    if (!result?.ok) {
-      throw new Error(result?.error || `Failed to install ${packageName}`);
-    }
-    uiState.installedPlugins = new Set(safeArray(result.plugins).map((plugin) => safeString(plugin?.package, '')).filter(Boolean));
-    appendSystemLog(`Installed ${packageName}.`);
-    uiState.pluginHints.provider = null;
-    uiState.pluginHints.router = null;
-    renderPluginSetupState();
-  } finally {
-    uiState.pluginInstallBusy = false;
-    renderPluginSetupState();
-  }
-}
-
-const elements = {
-  seedState: byId('seedState'),
-  connectState: byId('connectState'),
-  seedBadge: byId('seedBadge'),
-  connectBadge: byId('connectBadge'),
-  runtimeSummary: byId('runtimeSummary'),
-  connectWarning: byId('connectWarning'),
-  daemonState: byId('daemonState'),
-  logs: byId('logs'),
-
-  seedProvider: byId('seedProvider'),
-  seedAuthType: byId('seedAuthType'),
-  seedAuthValue: byId('seedAuthValue'),
-  seedAuthValueLabel: byId('seedAuthValueLabel'),
-  connectRouter: byId('connectRouter'),
-  pluginSetupCard: byId('pluginSetupCard'),
-  pluginSetupStatus: byId('pluginSetupStatus'),
-  refreshPluginsBtn: byId('refreshPluginsBtn'),
-  installSeedPluginBtn: byId('installSeedPluginBtn'),
-  installConnectPluginBtn: byId('installConnectPluginBtn'),
-
-  overviewBadge: byId('overviewBadge'),
-  ovNodeState: byId('ovNodeState'),
-  ovPeers: byId('ovPeers'),
-  ovSessionsCard: byId('ovSessionsCard'),
-  ovSessions: byId('ovSessions'),
-  ovEarnings: byId('ovEarnings'),
-  ovDhtHealth: byId('ovDhtHealth'),
-  ovUptime: byId('ovUptime'),
-  ovPeersCount: byId('ovPeersCount'),
-  overviewPeersBody: byId('overviewPeersBody'),
-  capacityArc: byId('capacityArc'),
-  capacityPercent: byId('capacityPercent'),
-  ovProxyPort: byId('ovProxyPort'),
-  ovCapSessions: byId('ovCapSessions'),
-  ovCapPeers: byId('ovCapPeers'),
-  ovCapDht: byId('ovCapDht'),
-  miniChartContainer: byId('miniChartContainer'),
-
-  peersMeta: byId('peersMeta'),
-  peersMessage: byId('peersMessage'),
-  peersBody: byId('peersBody'),
-  peersHead: byId('peersHead'),
-  peerFilter: byId('peerFilter'),
-
-  sessionsMeta: byId('sessionsMeta'),
-  sessionsMessage: byId('sessionsMessage'),
-  sessionsBody: byId('sessionsBody'),
-  sessionsHead: byId('sessionsHead'),
-
-  earningsMeta: byId('earningsMeta'),
-  earningsMessage: byId('earningsMessage'),
-  earnToday: byId('earnToday'),
-  earnWeek: byId('earnWeek'),
-  earnMonth: byId('earnMonth'),
-  earningsLineChart: byId('earningsLineChart'),
-  earningsPieChart: byId('earningsPieChart'),
-
-  // Wallet
-  walletMeta: byId('walletMeta'),
-  walletMessage: byId('walletMessage'),
-  walletAddress: byId('walletAddress'),
-  walletCopyBtn: byId('walletCopyBtn'),
-  walletChain: byId('walletChain'),
-  walletETH: byId('walletETH'),
-  walletUSDC: byId('walletUSDC'),
-  walletNetwork: byId('walletNetwork'),
-  escrowDeposited: byId('escrowDeposited'),
-  escrowCommitted: byId('escrowCommitted'),
-  escrowAvailable: byId('escrowAvailable'),
-  walletAmount: byId('walletAmount'),
-  walletDepositBtn: byId('walletDepositBtn'),
-  walletWithdrawBtn: byId('walletWithdrawBtn'),
-  walletActionMessage: byId('walletActionMessage'),
-  walletModeNode: byId('walletModeNode'),
-  walletModeExternal: byId('walletModeExternal'),
-  walletNodeSection: byId('walletNodeSection'),
-  walletExternalSection: byId('walletExternalSection'),
-  wcStatus: byId('wcStatus'),
-  wcStatusText: byId('wcStatusText'),
-  wcAddressRow: byId('wcAddressRow'),
-  wcAddress: byId('wcAddress'),
-  wcCopyBtn: byId('wcCopyBtn'),
-  wcConnectBtn: byId('wcConnectBtn'),
-  wcDisconnectBtn: byId('wcDisconnectBtn'),
-  wcQrContainer: byId('wcQrContainer'),
-  wcQrCanvas: byId('wcQrCanvas'),
-
-  // AI Chat
-  chatModelSelect: byId('chatModelSelect'),
-  chatProxyStatus: byId('chatProxyStatus'),
-  chatNewBtn: byId('chatNewBtn'),
-  chatConversations: byId('chatConversations'),
-  chatHeader: byId('chatHeader'),
-  chatThreadMeta: byId('chatThreadMeta'),
-  chatDeleteBtn: byId('chatDeleteBtn'),
-  chatMessages: byId('chatMessages'),
-  chatInput: byId('chatInput'),
-  chatSendBtn: byId('chatSendBtn'),
-  chatAbortBtn: byId('chatAbortBtn'),
-  chatError: byId('chatError'),
-  chatStreamingIndicator: byId('chatStreamingIndicator'),
-
-  connectionMeta: byId('connectionMeta'),
-  connectionStatus: byId('connectionStatus'),
-  connectionNetwork: byId('connectionNetwork'),
-  connectionSources: byId('connectionSources'),
-  connectionNotes: byId('connectionNotes'),
-
-  configMeta: byId('configMeta'),
-  configMessage: byId('configMessage'),
-  configSaveBtn: byId('configSaveBtn'),
-  cfgReserveFloor: byId('cfgReserveFloor'),
-  cfgSellerInputUsdPerMillion: byId('cfgSellerInputUsdPerMillion'),
-  cfgSellerOutputUsdPerMillion: byId('cfgSellerOutputUsdPerMillion'),
-  cfgMaxBuyers: byId('cfgMaxBuyers'),
-  cfgProxyPort: byId('cfgProxyPort'),
-  cfgPreferredProviders: byId('cfgPreferredProviders'),
-  cfgBuyerMaxInputUsdPerMillion: byId('cfgBuyerMaxInputUsdPerMillion'),
-  cfgBuyerMaxOutputUsdPerMillion: byId('cfgBuyerMaxOutputUsdPerMillion'),
-  cfgMinRep: byId('cfgMinRep'),
-  cfgPaymentMethod: byId('cfgPaymentMethod'),
-};
-
-function setConnectWarning(message: string | null): void {
-  if (!elements.connectWarning) return;
-  const text = safeString(message, '').trim();
-  if (!text) {
-    elements.connectWarning.textContent = '';
-    elements.connectWarning.hidden = true;
-    return;
-  }
-  elements.connectWarning.textContent = text;
-  elements.connectWarning.hidden = false;
-}
-
-const navButtons = Array.from(document.querySelectorAll<HTMLElement>('.sidebar-btn[data-view]'));
-const views = Array.from(document.querySelectorAll<HTMLElement>('.view'));
-
-const TOOLBAR_VIEWS = new Set<string>();
-
-const {
-  setActiveView,
-  getActiveView,
-  setAppMode,
-  initNavigation,
-} = initNavigationModule({
-  uiState,
-  navButtons,
-  views,
-  toolbarViews: TOOLBAR_VIEWS,
-  storageKey: 'antseed-app-mode',
-});
-
-function setBadgeTone(el, tone, label) {
-  if (!el) return;
-  el.classList.remove('badge-active', 'badge-idle', 'badge-warn', 'badge-bad');
-  el.classList.add(`badge-${tone}`);
-  el.textContent = label;
-}
+/* ------------------------------------------------------------------ */
+/*  Module initialisation                                              */
+/* ------------------------------------------------------------------ */
 
 const {
   appendLog,
@@ -673,13 +51,7 @@ const {
   renderProcesses,
   renderDaemonState,
   appendSystemLog,
-} = initRuntimeModule({
-  elements,
-  uiState,
-  formatClock,
-  formatDuration,
-  setText,
-});
+} = initRuntimeModule({ uiState });
 
 const {
   getDashboardPort,
@@ -689,199 +61,416 @@ const {
   refreshDashboardData,
 } = initDashboardApiModule({
   bridge,
-  elements,
   uiState,
   defaultDashboardPort: DEFAULT_DASHBOARD_PORT,
-  safeNumber,
-  safeArray,
 });
 
-async function refreshAll() {
-  if (!bridge || uiState.refreshing) {
+const {
+  clearRouterPluginHint,
+  updatePluginHintFromLog,
+  renderPluginSetupState,
+  refreshPluginInventory,
+  installPluginPackage,
+} = initPluginSetupModule({
+  bridge,
+  uiState,
+  appendSystemLog,
+});
+
+const { populateSettingsForm, saveConfig } = initSettingsModule({
+  uiState,
+  getDashboardData: getDashboardData as (
+    endpoint: string,
+    query?: Record<string, string | number | boolean>,
+  ) => Promise<{ ok: boolean; data: unknown; error?: string | null }>,
+  getDashboardPort,
+});
+
+const {
+  renderDashboardData,
+  renderOfflineState,
+} = initDashboardRenderModule({
+  uiState,
+  isModeRunning,
+  appendSystemLog,
+  populateSettingsForm,
+});
+
+const chatApi = initChatModule({
+  bridge,
+  uiState,
+  appendSystemLog,
+});
+
+/* ------------------------------------------------------------------ */
+/*  Runtime activity helpers                                           */
+/* ------------------------------------------------------------------ */
+
+function isProxyPortOccupiedMessage(value: unknown): boolean {
+  const message = safeString(value, '').toLowerCase();
+  if (!message) return false;
+  return message.includes('eaddrinuse') || message.includes('address already in use');
+}
+
+let runtimeActivityHoldUntil = 0;
+
+function setRuntimeActivity(tone: BadgeTone, message: string, holdMs = 0): void {
+  if (holdMs > 0) {
+    runtimeActivityHoldUntil = Math.max(runtimeActivityHoldUntil, Date.now() + holdMs);
+  }
+  const text = safeString(message, '').trim() || 'Idle';
+  if (uiState.runtimeActivity.message === text && uiState.runtimeActivity.tone === tone) {
     return;
   }
+  uiState.runtimeActivity = { tone, message: text };
+  notifyUiStateChanged();
+}
+
+function setRuntimeSteadyActivity(tone: BadgeTone, message: string): void {
+  if (Date.now() < runtimeActivityHoldUntil) return;
+  setRuntimeActivity(tone, message);
+}
+
+function syncRuntimeActivityFromProcesses(processes = uiState.processes): void {
+  const buyerConnected = isModeRunning('connect', processes);
+  setRuntimeSteadyActivity(
+    buyerConnected ? 'active' : 'idle',
+    buyerConnected
+      ? 'Buyer runtime connected. Waiting for peers and requests...'
+      : 'Buyer runtime offline. Waiting for local runtime start...',
+  );
+}
+
+function syncBuyerRuntimeOverview(processes = uiState.processes): void {
+  const buyerConnected = isModeRunning('connect', processes);
+  uiState.ovNodeState = buyerConnected ? 'connected' : 'offline';
+
+  if (!uiState.refreshing) {
+    const badgeLabel = uiState.overviewBadge.label.toLowerCase();
+    if (buyerConnected) {
+      if (badgeLabel.includes('offline') || badgeLabel.includes('idle')) {
+        uiState.overviewBadge = { tone: 'active', label: 'CONNECTED • Refreshing DHT status...' };
+      }
+    } else {
+      uiState.overviewBadge = { tone: 'idle', label: 'OFFLINE' };
+    }
+  }
+
+  notifyUiStateChanged();
+}
+
+function updateRuntimeActivityFromLog(mode: string, lineRaw: string): void {
+  const line = safeString(lineRaw, '').toLowerCase();
+  if (!line) return;
+
+  if (mode === 'connect') {
+    if (line.includes('connecting to p2p network')) {
+      setRuntimeActivity('warn', 'Connecting to P2P network...', 6_000);
+      return;
+    }
+    if (line.includes('connected to p2p network')) {
+      setRuntimeActivity('active', 'Connected to P2P network.', 3_000);
+      return;
+    }
+    if (line.includes('discovering peers')) {
+      setRuntimeActivity('warn', 'Searching DHT for peers...', 6_000);
+      return;
+    }
+    if (line.includes('/v1/models')) {
+      setRuntimeActivity('warn', 'Loading model catalog from peers...', 8_000);
+      return;
+    }
+    if (line.includes('proxy listening on')) {
+      setRuntimeActivity('active', 'Buyer proxy online.', 4_000);
+      return;
+    }
+    if (line.includes('no peers available')) {
+      setRuntimeActivity('warn', 'No peers available for this request.', 8_000);
+      return;
+    }
+    if (line.includes('timed out')) {
+      setRuntimeActivity('bad', 'Peer request timed out. Retrying another route...', 10_000);
+      return;
+    }
+  }
+
+  if (mode === 'dashboard') {
+    if (line.includes('running on http://127.0.0.1')) {
+      setRuntimeActivity('active', 'Local data service ready.', 3_000);
+      return;
+    }
+    if (line.includes('failed to start')) {
+      setRuntimeActivity('warn', 'Local data service start fallback in progress...', 8_000);
+      return;
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Refresh                                                            */
+/* ------------------------------------------------------------------ */
+
+type RefreshReason = 'poll' | 'manual' | 'startup';
+
+async function refreshAll(reason: RefreshReason = 'poll'): Promise<void> {
+  if (!bridge?.getState || uiState.refreshing) return;
 
   uiState.refreshing = true;
+  uiState.overviewBadge = { tone: 'warn', label: 'Refreshing runtime and peers...' };
+  uiState.peersMessage = 'Refreshing peers and runtime status...';
+  notifyUiStateChanged();
+
+  if (reason !== 'poll') {
+    setRuntimeActivity('warn', 'Refreshing runtime and peer snapshots...', 8_000);
+  }
+
   try {
     const snapshot = await bridge.getState();
     renderLogs(snapshot.logs);
     renderProcesses(snapshot.processes);
+    syncBuyerRuntimeOverview(snapshot.processes);
     renderDaemonState(snapshot.daemonState);
     await refreshDashboardData(snapshot.processes);
-  } finally {
-    uiState.refreshing = false;
-  }
-}
-
-function bindAction(buttonId, action, options = { refreshAfter: true }) {
-  const button = byId(buttonId);
-  if (!button) return;
-
-  if (!bridge) {
-    button.disabled = true;
-    return;
-  }
-
-  button.addEventListener('click', async () => {
-    button.disabled = true;
-    try {
-      await action();
-      if (options.refreshAfter) {
-        await refreshAll();
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if ((buttonId === 'connectStartBtn' || buttonId === 'startAllBtn') && isProxyPortOccupiedMessage(message)) {
-        setConnectWarning('Buyer proxy port is already in use. Stop the conflicting process or change `buyer.proxyPort` in config.');
-      }
-      appendSystemLog(`Action failed: ${message}`);
-    } finally {
-      button.disabled = false;
-    }
-  });
-}
-
-async function ensureConnectRuntimeStarted() {
-  if (!bridge?.start) {
-    return;
-  }
-  if (isModeRunning('connect')) {
-    return;
-  }
-
-  try {
-    await bridge.start({
-      mode: 'connect',
-      router: normalizeRouterRuntime(elements.connectRouter?.value),
-    });
-    setConnectWarning(null);
-    appendSystemLog('Buyer runtime auto-started for local proxy chat.');
+    syncRuntimeActivityFromProcesses(snapshot.processes);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const normalized = message.toLowerCase();
-    if (normalized.includes('already running')) {
-      return;
-    }
-    if (isProxyPortOccupiedMessage(message)) {
-      setConnectWarning('Buyer proxy port is already in use. Stop the conflicting process or change `buyer.proxyPort` in config.');
-    }
-    appendSystemLog(`Buyer auto-start failed: ${message}`);
+    appendSystemLog(`Refresh failed: ${message}`);
+    uiState.peersMessage = `Unable to refresh runtime and peers: ${message}`;
+    notifyUiStateChanged();
+    setRuntimeActivity('bad', `Refresh failed: ${message}`, 10_000);
+  } finally {
+    uiState.refreshing = false;
+    notifyUiStateChanged();
   }
 }
 
-function bindControls() {
-  bindAction('seedStartBtn', async () => {
-    uiState.pluginHints.provider = null;
-    saveSeedAuthPrefs();
-    await bridge.start({
-      mode: 'seed',
-      provider: normalizeProviderRuntime(elements.seedProvider?.value),
-      env: buildSeedRuntimeEnv(),
-    });
-  });
+/* ------------------------------------------------------------------ */
+/*  Actions                                                            */
+/* ------------------------------------------------------------------ */
 
-  bindAction('seedStopBtn', async () => {
-    await bridge.stop('seed');
-  });
+function requireBridgeMethod<K extends keyof DesktopBridge>(
+  key: K,
+  unavailableMessage: string,
+): NonNullable<DesktopBridge[K]> {
+  const method = bridge?.[key];
+  if (typeof method !== 'function') {
+    throw new Error(unavailableMessage);
+  }
+  return method as NonNullable<DesktopBridge[K]>;
+}
 
-  bindAction('connectStartBtn', async () => {
-    uiState.pluginHints.router = null;
+async function ensureConnectRuntimeStarted(): Promise<void> {
+  if (!bridge?.start || isModeRunning('connect')) return;
+
+  try {
+    setRuntimeActivity('warn', 'Starting buyer runtime...', 8_000);
     await bridge.start({
       mode: 'connect',
-      router: normalizeRouterRuntime(elements.connectRouter?.value),
+      router: normalizeRouterRuntime(uiState.connectRouterValue),
     });
-  });
-
-  bindAction('connectStopBtn', async () => {
-    await bridge.stop('connect');
-  });
-
-  bindAction('refreshBtn', refreshAll);
-
-  bindAction('clearLogsBtn', async () => {
-    await bridge.clearLogs();
-  });
-
-  bindAction('startAllBtn', async () => {
-    if (!isModeRunning('connect')) {
-      await bridge.start({
-        mode: 'connect',
-        router: normalizeRouterRuntime(elements.connectRouter?.value),
-      });
-      setConnectWarning(null);
+    uiState.connectWarning = null;
+    notifyUiStateChanged();
+    appendSystemLog(UI_MESSAGES.buyerAutoStarted);
+    setRuntimeActivity('active', 'Buyer runtime auto-started.', 4_000);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.toLowerCase().includes('already running')) return;
+    if (isProxyPortOccupiedMessage(message)) {
+      uiState.connectWarning = UI_MESSAGES.proxyPortInUse;
+      notifyUiStateChanged();
     }
-  });
+    appendSystemLog(`Buyer auto-start failed: ${message}`);
+    setRuntimeActivity('bad', `Buyer auto-start failed: ${message}`, 10_000);
+  }
+}
 
-  bindAction('stopAllBtn', async () => {
-    if (isModeRunning('connect')) {
-      await bridge.stop('connect');
+async function actionStartConnect(): Promise<void> {
+  const start = requireBridgeMethod('start', 'Runtime start is unavailable in this build');
+  clearRouterPluginHint();
+  uiState.connectState = 'Starting buyer runtime...';
+  uiState.connectBadge = { tone: 'idle', label: 'Starting...' };
+  notifyUiStateChanged();
+  setRuntimeActivity('warn', 'Starting buyer runtime...', 8_000);
+  try {
+    await start({
+      mode: 'connect',
+      router: normalizeRouterRuntime(uiState.connectRouterValue),
+    });
+    await refreshAll('manual');
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (isProxyPortOccupiedMessage(message)) {
+      uiState.connectWarning = UI_MESSAGES.proxyPortInUse;
+      notifyUiStateChanged();
     }
-  });
+    appendSystemLog(`Action failed: ${message}`);
+    setRuntimeActivity('bad', `Action failed: ${message}`, 8_000);
+  }
+}
 
-  const scanAction = async () => {
+async function actionStopConnect(): Promise<void> {
+  const stop = requireBridgeMethod('stop', 'Runtime stop is unavailable in this build');
+  uiState.connectState = 'Stopping buyer runtime...';
+  uiState.connectBadge = { tone: 'idle', label: 'Stopping...' };
+  notifyUiStateChanged();
+  setRuntimeActivity('warn', 'Stopping buyer runtime...', 8_000);
+  try {
+    await stop('connect');
+    await refreshAll('manual');
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    appendSystemLog(`Action failed: ${message}`);
+    setRuntimeActivity('bad', `Action failed: ${message}`, 8_000);
+  }
+}
+
+async function actionStartAll(): Promise<void> {
+  if (isModeRunning('connect')) return;
+  await actionStartConnect();
+  uiState.connectWarning = null;
+  notifyUiStateChanged();
+}
+
+async function actionStopAll(): Promise<void> {
+  if (!isModeRunning('connect')) return;
+  await actionStopConnect();
+}
+
+async function actionScanDht(): Promise<void> {
+  uiState.peersMessage = 'Scanning DHT for peers...';
+  uiState.peersMeta = { tone: 'warn', label: 'Scanning...' };
+  uiState.overviewBadge = { tone: 'warn', label: 'Scanning DHT for peers...' };
+  notifyUiStateChanged();
+  setRuntimeActivity('warn', 'Scanning DHT for peers...', 12_000);
+  try {
     const result = await scanDhtNow();
     if (!result.ok) {
       throw new Error(result.error ?? 'DHT scan failed');
     }
     appendSystemLog('Triggered immediate DHT scan.');
-  };
-
-  bindAction('scanNetworkBtn', scanAction);
-  bindAction('scanNetworkBtnPeers', scanAction);
-
-  bindAction('refreshPluginsBtn', async () => {
-    await refreshPluginInventory();
-  }, { refreshAfter: false });
-
-  bindAction('installSeedPluginBtn', async () => {
-    const packageName = resolveProviderPackageName(uiState.pluginHints.provider || elements.seedProvider?.value);
-    await installPluginPackage(packageName);
-  }, { refreshAfter: false });
-
-  bindAction('installConnectPluginBtn', async () => {
-    const packageName = resolveRouterPackageName(uiState.pluginHints.router || elements.connectRouter?.value);
-    await installPluginPackage(packageName);
-  }, { refreshAfter: false });
-
-  elements.seedProvider?.addEventListener('input', () => {
-    uiState.pluginHints.provider = null;
-    renderPluginSetupState();
-  });
-  elements.connectRouter?.addEventListener('input', () => {
-    uiState.pluginHints.router = null;
-    renderPluginSetupState();
-  });
+    setRuntimeActivity('active', 'DHT scan completed.', 4_000);
+    await refreshAll('manual');
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    appendSystemLog(`DHT scan failed: ${message}`);
+    setRuntimeActivity('bad', `DHT scan failed: ${message}`, 8_000);
+  }
 }
 
-function initializeBridge() {
+async function actionClearLogs(): Promise<void> {
+  const clearLogs = requireBridgeMethod('clearLogs', 'Log clearing is unavailable in this build');
+  try {
+    await clearLogs();
+    await refreshAll('manual');
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    appendSystemLog(`Clear logs failed: ${message}`);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Register actions for React                                         */
+/* ------------------------------------------------------------------ */
+
+registerActions({
+  startConnect: actionStartConnect,
+  stopConnect: actionStopConnect,
+  startAll: actionStartAll,
+  stopAll: actionStopAll,
+  refreshAll: () => refreshAll('manual'),
+  clearLogs: actionClearLogs,
+  scanDht: actionScanDht,
+  saveConfig: saveConfig,
+  createNewConversation: chatApi.createNewConversation,
+  openConversation: chatApi.openConversation,
+  sendMessage: chatApi.sendMessage,
+  abortChat: chatApi.abortChat,
+  deleteConversation: chatApi.deleteConversation,
+  handleModelChange: chatApi.handleModelChange,
+  handleModelFocus: chatApi.handleModelFocus,
+  handleModelBlur: chatApi.handleModelBlur,
+  refreshPlugins: refreshPluginInventory,
+  installPlugin: () => {
+    const packageName = resolveRouterPackageName(
+      uiState.pluginHints.router || uiState.connectRouterValue,
+    );
+    return installPluginPackage(packageName);
+  },
+});
+
+/* ------------------------------------------------------------------ */
+/*  Mount React (store + actions both ready)                           */
+/* ------------------------------------------------------------------ */
+
+mountAppShell();
+
+/* ------------------------------------------------------------------ */
+/*  Refresh hooks (dashboard-api → dashboard-render bridge)            */
+/* ------------------------------------------------------------------ */
+
+setRefreshHooks({
+  setDashboardRefreshState: (busy: boolean, stage: string) => {
+    if (busy) {
+      uiState.peersMessage = stage;
+      uiState.peersMeta = { tone: 'warn', label: 'Refreshing...' };
+      uiState.overviewBadge = { tone: 'warn', label: stage };
+      notifyUiStateChanged();
+      return;
+    }
+    syncBuyerRuntimeOverview();
+    syncRuntimeActivityFromProcesses();
+  },
+  renderDashboardData,
+  refreshChatConversations: chatApi.refreshChatConversations,
+  refreshChatProxyStatus: chatApi.refreshChatProxyStatus,
+});
+
+/* ------------------------------------------------------------------ */
+/*  Bridge initialisation                                              */
+/* ------------------------------------------------------------------ */
+
+function initializeBridge(): void {
   if (!bridge) {
-    appendSystemLog('Desktop bridge unavailable: preload failed to inject API. Restart app after main/preload compile.');
+    appendSystemLog(UI_MESSAGES.desktopBridgeUnavailable);
     renderOfflineState('Desktop bridge unavailable.');
+    setRuntimeActivity('bad', 'Desktop bridge unavailable.', 15_000);
     return;
   }
 
-  bridge.onLog((event) => {
-    updatePluginHintFromLog(event);
-    if (event.mode === 'connect' && isProxyPortOccupiedMessage(event.line)) {
-      setConnectWarning('Buyer proxy port is already in use. Stop the conflicting process or change `buyer.proxyPort` in config.');
-    }
-    appendLog(event);
-    renderPluginSetupState();
+  let hasStructuredRuntimeActivity = false;
+
+  bridge.onRuntimeActivity?.((activity) => {
+    hasStructuredRuntimeActivity = true;
+    const holdMs = Math.max(0, safeNumber(activity.holdMs, 0));
+    setRuntimeActivity(activity.tone, activity.message, holdMs);
   });
 
-  bridge.onState((processes) => {
-    const wasDashboardRunning = uiState.dashboardRunning;
-    renderProcesses(processes);
-    if (isModeRunning('connect', processes)) {
-      setConnectWarning(null);
+  bridge.onLog?.((event) => {
+    updatePluginHintFromLog(event);
+    if (event.mode === 'connect' && isProxyPortOccupiedMessage(event.line)) {
+      uiState.connectWarning = UI_MESSAGES.proxyPortInUse;
+      notifyUiStateChanged();
     }
 
-    if (isModeRunning('seed', processes)) {
-      uiState.pluginHints.provider = null;
+    appendLog(event);
+    renderPluginSetupState();
+    if (!hasStructuredRuntimeActivity) {
+      updateRuntimeActivityFromLog(event.mode, event.line);
     }
+  });
+
+  bridge.onState?.((processes) => {
+    const wasDashboardRunning = uiState.dashboardRunning;
+    renderProcesses(processes);
+    syncBuyerRuntimeOverview(processes);
+    syncRuntimeActivityFromProcesses(processes);
+
     if (isModeRunning('connect', processes)) {
-      uiState.pluginHints.router = null;
+      uiState.connectWarning = null;
+      notifyUiStateChanged();
+      clearRouterPluginHint();
     }
+
     renderPluginSetupState();
 
     const nowDashboardRunning = isModeRunning('dashboard', processes);
@@ -891,124 +480,42 @@ function initializeBridge() {
   });
 
   if (bridge.start) {
+    setRuntimeActivity('warn', 'Starting local data service...', 8_000);
     void bridge.start({
       mode: 'dashboard',
       dashboardPort: getDashboardPort(),
     }).catch((err) => {
       const message = err instanceof Error ? err.message : String(err);
-      const normalized = message.toLowerCase();
-      if (normalized.includes('eaddrinuse') || normalized.includes('address already in use')) {
-        appendSystemLog('Local data service port already in use; reusing the existing service.');
+      if (isProxyPortOccupiedMessage(message)) {
+        appendSystemLog(UI_MESSAGES.localServicePortInUse);
+        setRuntimeActivity('active', UI_MESSAGES.localServicePortInUse, 6_000);
         return;
       }
       appendSystemLog(`Background data service start failed: ${message}`);
+      setRuntimeActivity('bad', `Data service start failed: ${message}`, 10_000);
     });
   }
 
   void (async () => {
-    await refreshAll();
+    await refreshAll('startup');
     await ensureConnectRuntimeStarted();
-    await refreshAll();
+    await refreshAll('startup');
   })();
+
   void refreshPluginInventory().catch((err) => {
     const message = err instanceof Error ? err.message : String(err);
     appendSystemLog(`Plugin inventory refresh failed: ${message}`);
   });
+
   setInterval(() => {
-    void refreshAll();
+    void refreshAll('poll');
   }, POLL_INTERVAL_MS);
 }
 
-if (elements.ovSessionsCard) {
-  elements.ovSessionsCard.title = 'Open Sessions view';
-  elements.ovSessionsCard.addEventListener('click', () => {
-    setActiveView('sessions');
-  });
-}
-
-const { populateSettingsForm } = initSettingsModule({
-  elements,
-  safeObject,
-  safeArray,
-  safeNumber,
-  safeString,
-  getDashboardData,
-  getDashboardPort,
-});
-
-const {
-  renderDashboardData,
-  renderOfflineState,
-  initSortableHeaders,
-  bindPeerFilter,
-} = initDashboardRenderModule({
-  elements,
-  uiState,
-  safeNumber,
-  safeArray,
-  safeString,
-  safeObject,
-  formatTimestamp,
-  formatRelativeTime,
-  formatDuration,
-  formatInt,
-  formatPercent,
-  formatMoney,
-  formatPrice,
-  formatLatency,
-  formatShortId,
-  formatEndpoint,
-  getCapacityColor,
-  setText,
-  setBadgeTone,
-  isModeRunning,
-  getActiveView,
-  setActiveView,
-  appendSystemLog,
-  populateSettingsForm,
-});
-
-const refreshWalletInfo = async () => {};
-
-const { refreshChatConversations, refreshChatProxyStatus } = initChatModule({
-  bridge,
-  elements,
-  uiState,
-  setBadgeTone,
-  appendSystemLog,
-});
-
-setRefreshHooks({
-  isModeRunning,
-  renderOfflineState,
-  renderDashboardData,
-  refreshWalletInfo,
-  refreshChatConversations,
-  refreshChatProxyStatus,
-  appendSystemLog,
-});
-
-function initPeriodToggle() {
-  const buttons = document.querySelectorAll<HTMLElement>('.toggle-btn[data-period]');
-  for (const btn of buttons) {
-    btn.addEventListener('click', () => {
-      uiState.earningsPeriod = btn.dataset.period;
-      for (const b of buttons) {
-        b.classList.toggle('active', b.dataset.period === uiState.earningsPeriod);
-      }
-      void refreshAll();
-    });
-  }
-}
-
-initNavigation();
-setActiveView('chat');
-setAppMode('connect');
+/* ------------------------------------------------------------------ */
+/*  Start                                                              */
+/* ------------------------------------------------------------------ */
 
 renderPluginSetupState();
-initSeedAuthControls();
-bindControls();
-initSortableHeaders();
-bindPeerFilter();
-initPeriodToggle();
+setRuntimeActivity('idle', 'Initializing desktop runtime...', 6_000);
 initializeBridge();

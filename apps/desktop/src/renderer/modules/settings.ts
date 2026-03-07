@@ -1,48 +1,22 @@
-type SettingsElements = Record<string, HTMLElement | null | undefined> & {
-  configMessage?: HTMLElement | null;
-  configSaveBtn?: HTMLButtonElement | null;
-  cfgReserveFloor?: HTMLInputElement | null;
-  cfgSellerInputUsdPerMillion?: HTMLInputElement | null;
-  cfgSellerOutputUsdPerMillion?: HTMLInputElement | null;
-  cfgMaxBuyers?: HTMLInputElement | null;
-  cfgProxyPort?: HTMLInputElement | null;
-  cfgPreferredProviders?: HTMLInputElement | null;
-  cfgBuyerMaxInputUsdPerMillion?: HTMLInputElement | null;
-  cfgBuyerMaxOutputUsdPerMillion?: HTMLInputElement | null;
-  cfgMinRep?: HTMLInputElement | null;
-  cfgPaymentMethod?: HTMLInputElement | HTMLSelectElement | null;
-};
+import type { RendererUiState, ConfigFormData } from '../core/state';
+import { notifyUiStateChanged } from '../core/store';
+import { safeNumber, safeArray, safeString } from '../core/safe';
 
 type SettingsModuleOptions = {
-  elements: SettingsElements;
-  safeObject: (value: unknown) => Record<string, unknown> | null;
-  safeArray: (value: unknown) => unknown[];
-  safeNumber: (value: unknown, fallback?: number) => number;
-  safeString: (value: unknown, fallback?: string) => string;
-  getDashboardData: (endpoint: any, query?: any) => Promise<{ ok: boolean; data: unknown; error?: string | null }>;
+  uiState: RendererUiState;
+  getDashboardData: (
+    endpoint: string,
+    query?: Record<string, string | number | boolean>,
+  ) => Promise<{ ok: boolean; data: unknown; error?: string | null }>;
   getDashboardPort: () => number;
 };
-
-function setInputValue(el: HTMLInputElement | HTMLSelectElement | null | undefined, value: string | number): void {
-  if (el) {
-    el.value = String(value);
-  }
-}
-
-function getInputValue(el: HTMLInputElement | HTMLSelectElement | null | undefined, fallback = ''): string {
-  return el?.value ?? fallback;
-}
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
 }
 
 export function initSettingsModule({
-  elements,
-  safeObject,
-  safeArray,
-  safeNumber,
-  safeString,
+  uiState,
   getDashboardData,
   getDashboardPort,
 }: SettingsModuleOptions) {
@@ -53,86 +27,58 @@ export function initSettingsModule({
     configFormPopulated = true;
 
     const configObj = asRecord(config);
-    const seller = asRecord(configObj.seller);
     const buyer = asRecord(configObj.buyer);
-    const sellerPricing = asRecord(seller.pricing);
-    const sellerPricingDefaults = asRecord(sellerPricing.defaults);
     const buyerMaxPricing = asRecord(buyer.maxPricing);
     const buyerMaxPricingDefaults = asRecord(buyerMaxPricing.defaults);
     const payments = asRecord(configObj.payments);
 
-    setInputValue(elements.cfgReserveFloor, safeNumber(seller.reserveFloor, 0));
-    setInputValue(elements.cfgSellerInputUsdPerMillion, safeNumber(sellerPricingDefaults.inputUsdPerMillion, 0));
-    setInputValue(elements.cfgSellerOutputUsdPerMillion, safeNumber(sellerPricingDefaults.outputUsdPerMillion, 0));
-    setInputValue(elements.cfgMaxBuyers, safeNumber(seller.maxConcurrentBuyers, 1));
-    setInputValue(elements.cfgProxyPort, safeNumber(buyer.proxyPort, 8377));
-    setInputValue(elements.cfgPreferredProviders, safeArray(buyer.preferredProviders).join(', '));
-    setInputValue(elements.cfgBuyerMaxInputUsdPerMillion, safeNumber(buyerMaxPricingDefaults.inputUsdPerMillion, 0));
-    setInputValue(elements.cfgBuyerMaxOutputUsdPerMillion, safeNumber(buyerMaxPricingDefaults.outputUsdPerMillion, 0));
-    setInputValue(elements.cfgMinRep, safeNumber(buyer.minPeerReputation, 0));
-    setInputValue(elements.cfgPaymentMethod, safeString(payments.preferredMethod, 'crypto'));
-  }
-
-  function getSettingsFromForm() {
-    return {
-      seller: {
-        reserveFloor: parseInt(getInputValue(elements.cfgReserveFloor, '0'), 10) || 0,
-        pricing: {
-          defaults: {
-            inputUsdPerMillion: parseFloat(getInputValue(elements.cfgSellerInputUsdPerMillion, '0')) || 0,
-            outputUsdPerMillion: parseFloat(getInputValue(elements.cfgSellerOutputUsdPerMillion, '0')) || 0,
-          },
-        },
-        maxConcurrentBuyers: parseInt(getInputValue(elements.cfgMaxBuyers, '1'), 10) || 1,
-      },
-      buyer: {
-        proxyPort: parseInt(getInputValue(elements.cfgProxyPort, '8377'), 10) || 8377,
-        preferredProviders: getInputValue(elements.cfgPreferredProviders, '')
-          .split(',')
-          .map((provider) => provider.trim())
-          .filter((provider) => provider.length > 0),
-        maxPricing: {
-          defaults: {
-            inputUsdPerMillion: parseFloat(getInputValue(elements.cfgBuyerMaxInputUsdPerMillion, '0')) || 0,
-            outputUsdPerMillion: parseFloat(getInputValue(elements.cfgBuyerMaxOutputUsdPerMillion, '0')) || 0,
-          },
-        },
-        minPeerReputation: parseInt(getInputValue(elements.cfgMinRep, '0'), 10) || 0,
-      },
+    uiState.configFormData = {
+      proxyPort: safeNumber(buyer.proxyPort, 8377),
+      preferredProviders: safeArray(buyer.preferredProviders).join(', '),
+      maxInputUsdPerMillion: safeNumber(buyerMaxPricingDefaults.inputUsdPerMillion, 0),
+      maxOutputUsdPerMillion: safeNumber(buyerMaxPricingDefaults.outputUsdPerMillion, 0),
+      minRep: safeNumber(buyer.minPeerReputation, 0),
+      paymentMethod: safeString(payments.preferredMethod, 'crypto'),
     };
+    notifyUiStateChanged();
   }
 
-  function showConfigMessage(text: string, type: 'error' | 'success'): void {
-    const messageEl = elements.configMessage;
-    if (!messageEl) return;
-    messageEl.textContent = text;
-    messageEl.className = `message settings-message ${type}`;
-    setTimeout(() => {
-      if (messageEl.textContent === text) {
-        messageEl.textContent = '';
-        messageEl.className = 'message';
-      }
-    }, 5000);
-  }
-
-  async function saveConfig(): Promise<void> {
-    const configData = getSettingsFromForm();
-    const saveBtn = elements.configSaveBtn;
-    if (saveBtn) {
-      saveBtn.disabled = true;
-      saveBtn.textContent = 'Saving...';
-    }
+  async function saveConfig(formData: ConfigFormData): Promise<void> {
+    uiState.configSaving = true;
+    notifyUiStateChanged();
 
     try {
       const result = await getDashboardData('config');
       if (!result.ok) {
-        showConfigMessage('Failed to read current config', 'error');
+        uiState.configMessage = { text: 'Failed to read current config', type: 'error' };
+        notifyUiStateChanged();
         return;
       }
 
       const resultData = (result.data ?? {}) as Record<string, unknown>;
       const currentConfig = (resultData.config as Record<string, unknown> | undefined) ?? resultData;
-      const merged = { ...currentConfig, ...configData };
+      const merged = {
+        ...currentConfig,
+        buyer: {
+          ...asRecord(currentConfig.buyer),
+          proxyPort: formData.proxyPort,
+          preferredProviders: formData.preferredProviders
+            .split(',')
+            .map((p) => p.trim())
+            .filter((p) => p.length > 0),
+          maxPricing: {
+            defaults: {
+              inputUsdPerMillion: formData.maxInputUsdPerMillion,
+              outputUsdPerMillion: formData.maxOutputUsdPerMillion,
+            },
+          },
+          minPeerReputation: formData.minRep,
+        },
+        payments: {
+          ...asRecord(currentConfig.payments),
+          preferredMethod: formData.paymentMethod || 'crypto',
+        },
+      };
 
       const port = getDashboardPort();
       const response = await fetch(`http://127.0.0.1:${port}/api/config`, {
@@ -142,28 +88,24 @@ export function initSettingsModule({
       });
 
       if (response.ok) {
-        showConfigMessage('Configuration saved successfully', 'success');
+        uiState.configMessage = { text: 'Configuration saved successfully', type: 'success' };
         configFormPopulated = false;
       } else {
-        showConfigMessage('Failed to save configuration', 'error');
+        uiState.configMessage = { text: 'Failed to save configuration', type: 'error' };
       }
     } catch (err) {
-      showConfigMessage(`Error saving: ${err instanceof Error ? err.message : String(err)}`, 'error');
+      uiState.configMessage = {
+        text: `Error saving: ${err instanceof Error ? err.message : String(err)}`,
+        type: 'error',
+      };
     } finally {
-      if (saveBtn) {
-        saveBtn.disabled = false;
-        saveBtn.textContent = 'Save';
-      }
+      uiState.configSaving = false;
+      notifyUiStateChanged();
     }
-  }
-
-  if (elements.configSaveBtn) {
-    elements.configSaveBtn.addEventListener('click', () => {
-      void saveConfig();
-    });
   }
 
   return {
     populateSettingsForm,
+    saveConfig,
   };
 }
