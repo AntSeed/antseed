@@ -93,6 +93,36 @@ export default {
 
 `models` should represent the model IDs buyers will request on the network. A provider can still rewrite to different upstream model IDs internally (for example, announce `kimi2.5` and forward upstream as `together/kimi2.5`).
 
+## Middleware / Skills
+
+Providers can inject Markdown files into every buyer request server-side — before the upstream LLM call — without buyers ever seeing the additions. No plugin code required; the CLI handles it automatically.
+
+```json title="antseed.config.json"
+{
+  "seller": {
+    "middleware": [
+      { "file": "./skills/persona.md", "position": "system-prepend" },
+      { "file": "./skills/output-format.md", "position": "append", "role": "user" },
+      { "file": "./skills/sonnet-rules.md", "position": "system-append", "models": ["claude-sonnet-4-5", "claude-sonnet-4-6"] }
+    ]
+  }
+}
+```
+
+| Field | Required | Description |
+|---|---|---|
+| `file` | Yes | Path to a `.md` file (relative to config or absolute) |
+| `position` | Yes | Where to inject: `system-prepend`, `system-append`, `prepend`, or `append` |
+| `role` | No | Message role for `prepend`/`append`. Defaults to `user` |
+| `models` | No | Scope injection to specific model IDs. Omit to apply globally. Must not be empty |
+
+Injection positions:
+
+- **`system-prepend`** / **`system-append`** — Prepend or append to the system prompt (Anthropic format) or insert a system-role message (OpenAI format)
+- **`prepend`** / **`append`** — Insert as the first or last message in the conversation
+
+When `models` is set, the entry is only injected when the request's `model` field matches one of the listed IDs. If the request has no `model` field, model-scoped entries are skipped. Global entries (no `models`) always apply.
+
 ## Peer Offering
 
 Each provider advertises discrete offerings to the network:

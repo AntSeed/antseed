@@ -92,6 +92,31 @@ antseed config set identity.displayName "Acme Inference - us-east-1"
 antseed config seller set modelCategories.anthropic.claude-sonnet-4-5-20250929 '["coding","privacy"]'
 ```
 
+## Middleware (Skills Injection)
+
+Providers can inject Markdown content into buyer requests server-side — before the upstream LLM call — without buyers seeing the additions. Configure this in the `seller.middleware` array:
+
+```json title="config example"
+{
+  "seller": {
+    "middleware": [
+      { "file": "./skills/persona.md", "position": "system-prepend" },
+      { "file": "./skills/output-format.md", "position": "append", "role": "user" },
+      { "file": "./skills/sonnet-rules.md", "position": "system-append", "models": ["claude-sonnet-4-5", "claude-sonnet-4-6"] }
+    ]
+  }
+}
+```
+
+| Field | Required | Description |
+|---|---|---|
+| `file` | Yes | Path to a `.md` file, relative to config file or absolute |
+| `position` | Yes | `system-prepend`, `system-append`, `prepend`, or `append` |
+| `role` | No | Role for `prepend`/`append`. Defaults to `user` |
+| `models` | No | Scope to specific model IDs. Omit to apply to all models. Must not be an empty list |
+
+When `models` is set, the entry is only injected when the request's `model` field matches one of the listed IDs. Global entries (no `models`) apply to every request regardless of model.
+
 ## Authentication
 
 Provider plugins authenticate with their upstream AI service. Credentials are stored locally and never leave the seller's machine. Authentication methods depend on the provider plugin:
