@@ -9,6 +9,7 @@ let stateRef: RendererUiState | null = null;
 let version = 0;
 let cachedSnapshotVersion = -1;
 let cachedSnapshot: RendererUiState | null = null;
+let notifyPending = false;
 
 export function initStore(state: RendererUiState): void {
   stateRef = state;
@@ -21,8 +22,14 @@ export function notifyUiStateChanged(): void {
   version += 1;
   cachedSnapshotVersion = -1;
   cachedSnapshot = null;
-  for (const listener of listeners) {
-    listener();
+  if (!notifyPending) {
+    notifyPending = true;
+    queueMicrotask(() => {
+      notifyPending = false;
+      for (const listener of listeners) {
+        listener();
+      }
+    });
   }
 }
 

@@ -109,8 +109,7 @@ function listItemHtml(token: LexerToken): string {
 
 function blocksHtml(tokens: LexerToken[]): string {
   let out = '';
-  for (const [i, t] of tokens.entries()) {
-    const key = `${i}`;
+  for (const [, t] of tokens.entries()) {
     switch (t.type) {
       case 'space':
         break;
@@ -174,7 +173,6 @@ function blocksHtml(tokens: LexerToken[]): string {
           out += `<p>${esc(String(t.text ?? t.raw ?? ''))}</p>`;
         }
     }
-    void key; // suppress unused variable warning
   }
   return out;
 }

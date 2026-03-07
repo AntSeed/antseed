@@ -45,6 +45,9 @@ export function WalkingAnt({ elapsedMs: initialElapsedMs }: WalkingAntProps) {
 
   return (
     <div className={styles.container}>
+      {elapsed >= 1000 && (
+        <span className={styles.timer}>Thinking for {formatElapsed(elapsed)}</span>
+      )}
       <div className={styles.antWrap}>
         <svg
           className={styles.ant}
@@ -112,10 +115,6 @@ l-36 76 -57 15 c-127 36 -224 43 -349 26z" />
           </g>
         </svg>
       </div>
-
-      {elapsed >= 1000 && (
-        <span className={styles.timer}>{formatElapsed(elapsed)}</span>
-      )}
     </div>
   );
 }

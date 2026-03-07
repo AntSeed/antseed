@@ -902,7 +902,20 @@ export function initChatModule({
 
   function materializeStreamingMessage(): ChatMessage | null {
     const current = uiState.chatStreamingMessage;
-    return current ? cloneStreamingMessage(current) : null;
+    if (!current) return null;
+    const cloned = cloneStreamingMessage(current);
+    // Strip synthetic renderKeys and IDs (e.g. "stream-text-0", "text-0") so that
+    // when multiple turns get merged by buildDisplayMessages, getBlockRenderKey
+    // falls back to the array-position index and avoids duplicate-key warnings.
+    if (Array.isArray(cloned.content)) {
+      for (const block of cloned.content as ContentBlock[]) {
+        delete block.renderKey;
+        if (typeof block.id === 'string' && /^(text|thinking)-\d+$/.test(block.id)) {
+          delete block.id;
+        }
+      }
+    }
+    return cloned;
   }
 
   function commitAssistantMessage(message: ChatMessage): void {
@@ -1143,15 +1156,29 @@ export function initChatModule({
       bridge.onChatAiDone((data) => {
         if (data.conversationId === uiState.chatActiveConversation) {
           const isStreamingCommit = Boolean(uiState.chatStreamingMessage);
-          // Capture the streaming message BEFORE clearing — it has tool outputs
-          // patched in via onChatAiToolUpdate. data.message from the main process
-          // only has bare tool_use blocks without output, so using it directly would
-          // make all tool rows non-clickable (hasDetail=false) until next refresh.
-          const finalizedStreamingMessage = materializeStreamingMessage();
           if (isStreamingCommit) {
             cancelThinkingRaf();
-            flushStreamingText();
-            setStreamingMessage(null);
+            // Flush text FIRST so the streaming message has the final text before capture.
+            // Use stopStreamTextAnimation + direct buffer copy to avoid a notifyUiStateChanged
+            // mid-commit (multiple notifies in one IPC callback can trigger React tearing warnings).
+            stopStreamTextAnimation();
+            if (streamingTextVisible !== streamingTextTarget) {
+              streamingTextVisible = streamingTextTarget;
+              const blocks = getStreamingBlocks();
+              const textBlock = findLastStreamingBlockByType(blocks, 'text');
+              if (textBlock) {
+                textBlock.text = streamingTextVisible;
+                textBlock.streaming = true;
+              }
+            }
+          }
+          // Capture the streaming message AFTER flushing — it has tool outputs patched
+          // in via onChatAiToolUpdate. data.message from the main process only has bare
+          // tool_use blocks without output, making tool rows non-clickable (hasDetail=false).
+          const finalizedStreamingMessage = materializeStreamingMessage();
+          if (isStreamingCommit) {
+            // Mutate directly to avoid a second notifyUiStateChanged before the final one below.
+            uiState.chatStreamingMessage = null;
             streamingTextTarget = '';
             streamingTextVisible = '';
             streamingThinkingBuffer = '';
