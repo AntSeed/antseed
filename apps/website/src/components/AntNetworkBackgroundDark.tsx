@@ -15,7 +15,7 @@ export default function AntNetworkBackground() {
 
     // -- Theme colors --
     const BG = 0x0a0e14;
-    const ACCENT = 0x3dffa2;
+    const ACCENT = 0x1FD87A;
     const ACCENT_DIM = 0x1a9e5f;
     const ERROR = 0xea580c;
 
@@ -111,7 +111,7 @@ export default function AntNetworkBackground() {
         ];
         const curve = new THREE.CatmullRomCurve3(pts);
         const geo = new THREE.BufferGeometry().setFromPoints(curve.getPoints(8));
-        return new THREE.Line(geo, new THREE.LineBasicMaterial({color: 0x2ecc82, linewidth: 1}));
+        return new THREE.Line(geo, new THREE.LineBasicMaterial({color: 0x1FD87A, linewidth: 1}));
       }
       group.add(createAntenna(1));
       group.add(createAntenna(-1));

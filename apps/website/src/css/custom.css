@@ -3,13 +3,13 @@
 /* Light mode (default) — for docs, blog, network, all non-homepage pages */
 html[data-theme='light'],
 :root {
-  --ifm-color-primary: #3dffa2;
-  --ifm-color-primary-dark: #2ecc82;
+  --ifm-color-primary: #1FD87A;
+  --ifm-color-primary-dark: #1FD87A;
   --ifm-color-primary-darker: #0f7d4d;
   --ifm-color-primary-darkest: #0b5c38;
   --ifm-color-primary-light: #1ec478;
   --ifm-color-primary-lighter: #28d485;
-  --ifm-color-primary-lightest: #3dffa2;
+  --ifm-color-primary-lightest: #1FD87A;
 
   --ifm-navbar-height: 73px;
   --ifm-background-color: #f5f5f0;
@@ -40,8 +40,8 @@ html[data-theme='light'],
 }
 
 html[data-theme='dark'] {
-  --ifm-color-primary: #3dffa2;
-  --ifm-color-primary-dark: #2ecc82;
+  --ifm-color-primary: #1FD87A;
+  --ifm-color-primary-dark: #1FD87A;
   --ifm-color-primary-darker: #24b873;
   --ifm-color-primary-darkest: #1a9e5f;
   --ifm-color-primary-light: #6affba;
@@ -96,7 +96,7 @@ nav.navbar {
   font-weight: 700;
   font-size: 18px;
   letter-spacing: -1px;
-  background: linear-gradient(to right, #0a0e14 0%, #0a0e14 42.86%, #3dffa2 42.86%, #3dffa2 100%);
+  background: linear-gradient(to right, #0a0e14 0%, #0a0e14 42.86%, #1FD87A 42.86%, #1FD87A 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -250,7 +250,7 @@ aside.theme-doc-sidebar-container {
 /* Active sidebar item — green bg + green text */
 .menu__link--active:not(.menu__link--sublist) {
   background: rgba(61, 255, 162, 0.12);
-  color: #3dffa2;
+  color: #1FD87A;
   font-weight: 500;
 }
 
@@ -326,7 +326,7 @@ aside.theme-doc-sidebar-container {
 .markdown h1::before {
   content: '# ';
   opacity: 0.3;
-  color: #3dffa2;
+  color: #1FD87A;
 }
 
 .markdown h2 {
@@ -343,7 +343,7 @@ aside.theme-doc-sidebar-container {
 .markdown h2::before {
   content: '## ';
   opacity: 0.3;
-  color: #3dffa2;
+  color: #1FD87A;
 }
 
 .markdown h3 {
@@ -358,7 +358,7 @@ aside.theme-doc-sidebar-container {
 .markdown h3::before {
   content: '### ';
   opacity: 0.3;
-  color: #3dffa2;
+  color: #1FD87A;
 }
 
 .markdown p {
@@ -374,7 +374,7 @@ aside.theme-doc-sidebar-container {
 }
 
 .markdown code {
-  color: #3dffa2;
+  color: #1FD87A;
   background: #e8f5ee;
   font-size: 12px;
   padding: 2px 6px;
@@ -419,17 +419,23 @@ div[class*='codeBlockTitle'] {
   font-size: 11px;
   letter-spacing: 1px;
   text-transform: uppercase;
-  color: #3dffa2;
+  color: #1FD87A;
   background: #f5f5f0;
   border-bottom: 1px solid rgba(10, 14, 20, 0.08);
 }
 
 div[class*='codeBlockContent'] {
-  background: #f8fafc !important;
+  background: #f6f8fa !important;
 }
 
 pre {
-  background: #f8fafc !important;
+  background: #f6f8fa !important;
+}
+
+/* Ensure code text is dark in light mode */
+html[data-theme='light'] .prism-code {
+  background: #f6f8fa !important;
+  color: #24292e !important;
 }
 
 /* =============================================
@@ -441,7 +447,7 @@ pre {
 }
 
 .pagination-nav__link:hover {
-  border-color: #3dffa2;
+  border-color: #1FD87A;
 }
 
 .pagination-nav__sublabel {
@@ -456,7 +462,7 @@ pre {
    Table of contents (right side — hidden)
    ============================================= */
 .table-of-contents__link--active {
-  color: #3dffa2;
+  color: #1FD87A;
 }
 
 /* =============================================
@@ -538,7 +544,7 @@ pre {
   color: #1a1a1a;
 }
 .blog-wrapper article header h2 a:hover {
-  color: #2ecf85;
+  color: #1FD87A;
 }
 
 /* Blog sidebar */
@@ -553,13 +559,13 @@ pre {
   color: #666;
 }
 .blog-wrapper a[class*='tag']:hover {
-  border-color: #2ecf85;
-  color: #2ecf85;
+  border-color: #1FD87A;
+  color: #1FD87A;
 }
 
 /* Blog post read more link */
 .blog-wrapper footer a b {
-  color: #2ecf85;
+  color: #1FD87A;
 }
 
 /* Selection color for warm theme */

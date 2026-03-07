@@ -25,7 +25,7 @@ function LiveBar() {
   );
 }
 
-/* ========== ANTFARM MOCKUP (inline dark UI) ========== */
+/* ========== ANTSTATION MOCKUP (inline dark UI) ========== */
 function AntFarmMockup() {
   return (
     <div className={styles.mockupWrap}>
@@ -36,7 +36,7 @@ function AntFarmMockup() {
             <span className={styles.macDot} style={{background:'#ffbd2e'}}/>
             <span className={styles.macDot} style={{background:'#27c93f'}}/>
           </div>
-          <div className={styles.macTitle}>AntFarm</div>
+          <div className={styles.macTitle}>AntStation</div>
           <div style={{width:'52px'}}/>
         </div>
         <div className={styles.macBody}>
@@ -54,17 +54,17 @@ function AntFarmMockup() {
           </div>
           <div style={{marginBottom:'14px'}}>
             <svg width="48" height="48" viewBox="0 0 100 100" fill="none">
-              <circle cx="50" cy="62" r="14" fill="#3dffa2"/><circle cx="50" cy="30" r="5" fill="#3dffa2"/>
-              <circle cx="26" cy="22" r="4" fill="#3dffa2" opacity=".7"/><circle cx="74" cy="22" r="4" fill="#3dffa2" opacity=".7"/>
-              <line x1="50" y1="48" x2="50" y2="35" stroke="#3dffa2" strokeWidth="2"/>
-              <line x1="42" y1="52" x2="28" y2="25" stroke="#3dffa2" strokeWidth="1.5" opacity=".6"/>
-              <line x1="58" y1="52" x2="72" y2="25" stroke="#3dffa2" strokeWidth="1.5" opacity=".6"/>
+              <circle cx="50" cy="62" r="14" fill="#1FD87A"/><circle cx="50" cy="30" r="5" fill="#1FD87A"/>
+              <circle cx="26" cy="22" r="4" fill="#1FD87A" opacity=".7"/><circle cx="74" cy="22" r="4" fill="#1FD87A" opacity=".7"/>
+              <line x1="50" y1="48" x2="50" y2="35" stroke="#1FD87A" strokeWidth="2"/>
+              <line x1="42" y1="52" x2="28" y2="25" stroke="#1FD87A" strokeWidth="1.5" opacity=".6"/>
+              <line x1="58" y1="52" x2="72" y2="25" stroke="#1FD87A" strokeWidth="1.5" opacity=".6"/>
             </svg>
           </div>
-          <div className={styles.appWelcome}>Welcome to Ant<span style={{color:'#3dffa2'}}>Seed</span></div>
+          <div className={styles.appWelcome}>Welcome to Ant<span style={{color:'#1FD87A'}}>Seed</span></div>
           <div className={styles.appDesc}>You're connected to 3 free community peers. Start chatting. No sign-up, no API key, no credit card.</div>
           <div className={styles.appStatus}>
-            <span style={{width:'5px',height:'5px',borderRadius:'50%',background:'#3dffa2',display:'inline-block'}}/> 3 peers · llama-4-scout · Free tier
+            <span style={{width:'5px',height:'5px',borderRadius:'50%',background:'#1FD87A',display:'inline-block'}}/> 3 peers · llama-4-scout · Free tier
           </div>
           <div className={styles.appCards}>
             <div className={styles.appCard}><div className={styles.appCardTitle}>💬 Just chat</div><div className={styles.appCardDesc}>General knowledge, brainstorming</div></div>
@@ -78,7 +78,7 @@ function AntFarmMockup() {
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#0a0a0a" strokeWidth="3" strokeLinecap="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
             </div>
           </div>
-          <div className={styles.appRoute}>Routed → <span style={{color:'#3dffa2'}}>OpenMind</span> · llama-4-scout · $0.12/M tokens</div>
+          <div className={styles.appRoute}>Routed → <span style={{color:'#1FD87A'}}>OpenMind</span> · llama-4-scout · $0.12/M tokens</div>
         </div>
       </div>
     </div>
@@ -139,12 +139,12 @@ function TerminalCard() {
         {TERM_LINES.slice(0, visibleCount).map((line, i) => {
           if (line.text === '') return <br key={i}/>;
           return (
-            <div key={i} style={{color: line.cls === 'cmd' ? '#e8e8e8' : line.cls === 'grn' ? '#3dffa2' : '#888', fontWeight: line.cls === 'cmd' ? 600 : 400}}>
+            <div key={i} style={{color: line.cls === 'cmd' ? '#e8e8e8' : line.cls === 'grn' ? '#1FD87A' : '#888', fontWeight: line.cls === 'cmd' ? 600 : 400}}>
               {line.text}
             </div>
           );
         })}
-        <span style={{color:'#3dffa2', opacity: cursorVisible ? 1 : 0}}>▋</span>
+        <span style={{color:'#1FD87A', opacity: cursorVisible ? 1 : 0}}>▋</span>
       </div>
     </div>
   );
@@ -185,13 +185,13 @@ function EarnAnimation() {
       ctx.translate(cx, cy);
       ctx.rotate(angle);
       // Body: 3 ellipses (head, thorax, abdomen)
-      ctx.fillStyle = '#2ecf85';
+      ctx.fillStyle = '#1FD87A';
       ctx.globalAlpha = 0.85;
       ctx.beginPath(); ctx.ellipse(0, -4, 1.5, 2, 0, 0, Math.PI*2); ctx.fill(); // head
       ctx.beginPath(); ctx.ellipse(0, 0, 2, 2.5, 0, 0, Math.PI*2); ctx.fill(); // thorax
       ctx.beginPath(); ctx.ellipse(0, 5, 2.5, 3.5, 0, 0, Math.PI*2); ctx.fill(); // abdomen
       // Legs
-      ctx.strokeStyle = '#2ecf85';
+      ctx.strokeStyle = '#1FD87A';
       ctx.lineWidth = 0.6;
       ctx.globalAlpha = 0.5;
       ctx.beginPath(); ctx.moveTo(-2, -1); ctx.lineTo(-6, -4); ctx.stroke();
@@ -256,17 +256,17 @@ function EarnAnimation() {
   }, []);
 
   const nodeData = [
-    {cls:styles.nTop, label:'You build', sub:'Skill or agent', icon:<svg viewBox="0 0 24 24" fill="none" stroke="#2ecf85" strokeWidth="1.8" strokeLinecap="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>},
-    {cls:styles.nRight, label:'Peers run', sub:'Network hosts it', icon:<svg viewBox="0 0 24 24" fill="none" stroke="#2ecf85" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="12" r="3"/><circle cx="5" cy="6" r="1.5"/><circle cx="19" cy="6" r="1.5"/><circle cx="5" cy="18" r="1.5"/><circle cx="19" cy="18" r="1.5"/><line x1="10" y1="10" x2="6.2" y2="7.2"/><line x1="14" y1="10" x2="17.8" y2="7.2"/><line x1="10" y1="14" x2="6.2" y2="16.8"/><line x1="14" y1="14" x2="17.8" y2="16.8"/></svg>},
-    {cls:styles.nBottom, label:'Users pay', sub:'Per request', icon:<svg viewBox="0 0 24 24" fill="none" stroke="#2ecf85" strokeWidth="1.8" strokeLinecap="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/><path d="M9 10h6M9 13h3"/></svg>},
-    {cls:styles.nLeft, label:'You earn', sub:'Passive income', icon:<svg viewBox="0 0 24 24" fill="none" stroke="#2ecf85" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v12M8 10c0-1.1 1.8-2 4-2s4 .9 4 2-1.8 2-4 2-4 .9-4 2 1.8 2 4 2 4-.9 4-2"/></svg>},
+    {cls:styles.nTop, label:'You provide', sub:'Models & Agents', icon:<svg viewBox="0 0 24 24" fill="none" stroke="#1FD87A" strokeWidth="1.8" strokeLinecap="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>},
+    {cls:styles.nRight, label:'Users request', sub:'Routed to you', icon:<svg viewBox="0 0 24 24" fill="none" stroke="#1FD87A" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="12" r="3"/><circle cx="5" cy="6" r="1.5"/><circle cx="19" cy="6" r="1.5"/><circle cx="5" cy="18" r="1.5"/><circle cx="19" cy="18" r="1.5"/><line x1="10" y1="10" x2="6.2" y2="7.2"/><line x1="14" y1="10" x2="17.8" y2="7.2"/><line x1="10" y1="14" x2="6.2" y2="16.8"/><line x1="14" y1="14" x2="17.8" y2="16.8"/></svg>},
+    {cls:styles.nBottom, label:'Settlement', sub:'Per request', icon:<svg viewBox="0 0 24 24" fill="none" stroke="#1FD87A" strokeWidth="1.8" strokeLinecap="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/><path d="M9 10h6M9 13h3"/></svg>},
+    {cls:styles.nLeft, label:'You earn', sub:'Passive income', icon:<svg viewBox="0 0 24 24" fill="none" stroke="#1FD87A" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v12M8 10c0-1.1 1.8-2 4-2s4 .9 4 2-1.8 2-4 2-4 .9-4 2 1.8 2 4 2 4-.9 4-2"/></svg>},
   ];
 
   return (
     <>
       <div className={styles.earnStage} ref={stageRef} id="earn-stage">
         <svg className={styles.earnHex} viewBox="0 0 420 420">
-          <defs><linearGradient id="hex-grad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stopColor="#3dffa2"/><stop offset="100%" stopColor="#2ecf85"/></linearGradient></defs>
+          <defs><linearGradient id="hex-grad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stopColor="#1FD87A"/><stop offset="100%" stopColor="#1FD87A"/></linearGradient></defs>
           <polygon className={styles.hexBg} points="210,25 385,115 385,305 210,395 35,305 35,115"/>
           <polygon className={styles.hexGlow} ref={hexGlowRef} points="210,25 385,115 385,305 210,395 35,305 35,115"/>
           <polygon className={styles.hexProgress} ref={hexProgRef} points="210,25 385,115 385,305 210,395 35,305 35,115"/>
@@ -314,13 +314,13 @@ function EarnAnimation() {
 
 /* ========== FAQ ========== */
 const FAQ_DATA = [
-  {q:'What is AntSeed?', a:"AntSeed is a peer-to-peer network for AI services. It connects people who need AI (users, developers, agents) directly with people who provide it (inference providers, skill creators, agent builders) with no centralised middleman."},
-  {q:'Is it really private?', a:"By default, you're anonymous. No accounts, no sign-up, no tracking. You connect to providers directly with no corporate server in the middle. For maximum privacy, some providers offer TEE-secured nodes where not even the operator can see your data. The same applies to skills and agents on the network."},
-  {q:'What models are available?', a:"Any open-weight model that providers choose to serve. Available models depend on what providers are currently online. Check the <a href='/network'>network page</a> for a live view."},
-  {q:'How do I earn on AntSeed?', a:"Three ways: serve inference (run models and get paid per request), create skills (package domain expertise and earn when people use it), or build agents (deploy autonomous AI that uses others' compute and skills, everyone in the chain earns)."},
-  {q:'Do I need an account or API key?', a:"No. Download AntFarm, open it, and you're connected. No sign-up, no API key, no credit card. Free community peers are available immediately."},
-  {q:'What is AntFarm?', a:"AntFarm is the desktop client for AntSeed. It gives you a chat interface, connects you to the P2P network, handles model routing, and exposes a local OpenAI-compatible endpoint so your existing tools (Claude Code, Cursor, VS Code) can use the network too."},
-  {q:'How is this different from OpenRouter or other API aggregators?', a:"Aggregators like OpenRouter are single providers on the network, not the network itself. They take up to 5.5% on every request and control who gets access. AntSeed is an open network where any provider can compete freely on price, speed, and quality. No platform cut. No gatekeeper. Just providers competing for your traffic."},
+  {q:'What is AntSeed?', a:"AntSeed is a peer-to-peer network for AI. It connects people who need AI — users, developers, agents — directly with providers who serve it: inference operators, specialized providers, agent operators, and API providers. No centralized middleman."},
+  {q:'Is it really private?', a:"Privacy works in two layers. Layer 1 — the base network: requests go peer-to-peer like a VPN, so the provider never knows who you are. No accounts, no identity, no IP exposed. Layer 2 — TEE providers: hardware enclaves (Intel TDX, AMD SEV) where not even the operator can see your prompts. Cryptographic proof, not a policy promise. Payments are settled on-chain — the money trail stays private too. TEE verification is coming in a future release."},
+  {q:'What models are available?', a:"Any model a provider chooses to serve — open-weight models, specialized fine-tunes, uncensored models, and providers using their own API access to other platforms. Available models depend on what providers are online right now. Check the <a href='/network'>network page</a> for a live view."},
+  {q:'How do I earn on AntSeed?', a:"Four ways: serve inference (run any model and earn per request — GPU, cloud, or your own API access), run specialized providers (deploy domain expertise as specialized chats or agents), operate agents (deploy always-on autonomous agents on the network), or provide API access (connect your existing API keys — no hardware needed). Everyone in the chain earns."},
+  {q:'Do I need an account or API key?', a:"No. Download AntStation, connect your wallet, and you're on the network. No sign-up, no API key, no credit card. Free community peers are available immediately."},
+  {q:'What is AntStation?', a:"AntStation is the desktop client for AntSeed. It gives you a chat interface, connects you to the P2P network, and handles model routing. For developers, the AntSeed CLI (@antseed/cli) exposes a local OpenAI-compatible endpoint so your existing tools (Claude Code, Aider, VS Code) can use the network too."},
+  {q:'How is this different from OpenRouter or other API aggregators?', a:"API aggregators are centralized intermediaries — they proxy your requests through their servers, require accounts, and can see your data. AntSeed is fully peer-to-peer: your traffic goes directly from you to the provider. No middleman, no logs, no single point of failure or control. Plus, providers can serve via their own API keys — something no aggregator allows."},
 ];
 
 function FAQSection() {
@@ -367,7 +367,7 @@ export default function Home(): JSX.Element {
       <section className={styles.live}><LiveBar /></section>
 
       {/* Tagline */}
-      <div className={styles.tagline}>Private inference. Specialised chat. Autonomous agents. One network.</div>
+      <div className={styles.tagline}>P2P inference. Specialized chat. Autonomous agents. One network.</div>
 
       {/* Download */}
       <div className={styles.downloads}>
@@ -387,7 +387,7 @@ export default function Home(): JSX.Element {
               <span className={styles.macDot} style={{background:'#ffbd2e'}}/>
               <span className={styles.macDot} style={{background:'#27c93f'}}/>
             </div>
-            <div className={styles.macTitle}>AntFarm</div>
+            <div className={styles.macTitle}>AntStation</div>
             <div style={{width:'52px'}}/>
           </div>
           <video
@@ -401,26 +401,33 @@ export default function Home(): JSX.Element {
         </div>
       </div>
 
-      {/* Two cards: Developer + Works With */}
-      <div className={styles.twoCards}>
-        <div className={styles.card}>
-          <div className={styles.cardLabel}>For Developers &amp; Agents</div>
+      {/* Agents & Developers — full width */}
+      <div className={styles.agentsSection}>
+        <div className={styles.agentsCopy}>
+          <div className={styles.cardLabel}>For Agents &amp; Developers</div>
           <h3>Connect anything.<br/>Route everywhere.</h3>
-          <p>One command connects your tools to the entire network. Works with any OpenAI-compatible client.</p>
-          <BrowserOnly fallback={null}>{() => <TerminalCard />}</BrowserOnly>
+          <ul className={styles.agentsBullets}>
+            <li>One command: <code>npm install -g @antseed/cli</code></li>
+            <li>Works with any OpenAI-compatible client — no code changes</li>
+            <li>Pick models, set routing preferences, or let the network decide</li>
+          </ul>
+          <Link to="/docs/intro" className={styles.agentsCta}>Read the Docs →</Link>
         </div>
-        <div className={styles.card}>
-          <div className={styles.cardLabel}>Works With</div>
-          <h3>Claude Code,<br/>Cursor &amp; more.</h3>
-          <p>Point your existing tools at AntFarm. No code changes. Access every model on the network instantly.</p>
+        <div className={styles.agentsVideo}>
           <video
             src="/videos/claude-code.mp4"
             autoPlay
             loop
             muted
             playsInline
-            style={{width:'100%',borderRadius:'8px',display:'block',marginTop:'16px'}}
+            style={{width:'100%',borderRadius:'8px',display:'block'}}
           />
+          <div className={styles.compatChips}>
+            <span className={styles.compatChip}>Claude Code</span>
+            <span className={styles.compatChip}>Aider</span>
+            <span className={styles.compatChip}>VS Code</span>
+            <span className={styles.compatChip}>Any OpenAI client</span>
+          </div>
         </div>
       </div>
 
@@ -428,22 +435,22 @@ export default function Home(): JSX.Element {
       <section className={styles.features}>
         <div className={styles.featuresGrid}>
           <div className={styles.feat}>
-            <div className={styles.featIcon}><svg viewBox="0 0 44 44" fill="none"><rect x="2" y="2" width="40" height="40" rx="10" stroke="#2ecf85" strokeWidth="1.5" fill="#fff"/><circle cx="22" cy="22" r="8" stroke="#2ecf85" strokeWidth="1.5" fill="none"/><path d="M22 14v-4M22 34v-4M30 22h4M8 22h4" stroke="#2ecf85" strokeWidth="1.5" strokeLinecap="round"/><circle cx="22" cy="22" r="3" fill="#2ecf85"/></svg></div>
-            <div className={styles.featTitle}>Private Inference</div>
-            <h4>Anonymous by default. Always on.</h4>
-            <p>Every open model, one connection. No accounts, no sign-up, no tracking. You connect directly to providers with no corporate server in the middle. For maximum privacy, choose TEE-secured providers where not even the operator can see your data. No lock-in. Switch models and providers freely.</p>
+            <div className={styles.featIcon}><svg viewBox="0 0 44 44" fill="none"><rect x="2" y="2" width="40" height="40" rx="10" stroke="#1FD87A" strokeWidth="1.5" fill="#fff"/><circle cx="22" cy="22" r="8" stroke="#1FD87A" strokeWidth="1.5" fill="none"/><path d="M22 14v-4M22 34v-4M30 22h4M8 22h4" stroke="#1FD87A" strokeWidth="1.5" strokeLinecap="round"/><circle cx="22" cy="22" r="3" fill="#1FD87A"/></svg></div>
+            <div className={styles.featTitle}>Anonymous Inference</div>
+            <h4>Peer-to-peer. Anonymous. Always on.</h4>
+            <p>Connect directly to real providers running open models — no corporate middleman. Every request is peer-to-peer. Choose TEE-secured nodes for maximum privacy, where not even the operator can see your data. No accounts, no logging, no lock-in.</p>
           </div>
           <div className={styles.feat}>
-            <div className={styles.featIcon}><svg viewBox="0 0 44 44" fill="none"><rect x="2" y="2" width="40" height="40" rx="10" stroke="#2ecf85" strokeWidth="1.5" fill="#fff"/><path d="M14 18h16M14 22h12M14 26h8" stroke="#2ecf85" strokeWidth="1.5" strokeLinecap="round"/><circle cx="32" cy="14" r="4" fill="#2ecf85"/><path d="M30.5 14l1 1 2-2.5" stroke="#fff" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"/></svg></div>
-            <div className={styles.featTitle}>Specialised Chat</div>
+            <div className={styles.featIcon}><svg viewBox="0 0 44 44" fill="none"><rect x="2" y="2" width="40" height="40" rx="10" stroke="#1FD87A" strokeWidth="1.5" fill="#fff"/><path d="M14 18h16M14 22h12M14 26h8" stroke="#1FD87A" strokeWidth="1.5" strokeLinecap="round"/><circle cx="32" cy="14" r="4" fill="#1FD87A"/><path d="M30.5 14l1 1 2-2.5" stroke="#fff" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"/></svg></div>
+            <div className={styles.featTitle}>Specialized Chat</div>
             <h4>Expertise on demand.</h4>
-            <p>Chat with AI that actually knows your domain. Legal, medical, financial, creative. Real expertise packaged as skills by real people. Pick a specialisation, start talking. Skill creators earn every time you use their work.</p>
+            <p>Chat with AI that actually knows your domain. Legal, medical, financial, creative. Real expertise packaged by real providers. Pick a specialization, start talking. Providers earn every time you use their work.</p>
           </div>
           <div className={styles.feat}>
-            <div className={styles.featIcon}><svg viewBox="0 0 44 44" fill="none"><rect x="2" y="2" width="40" height="40" rx="10" stroke="#2ecf85" strokeWidth="1.5" fill="#fff"/><circle cx="22" cy="22" r="9" stroke="#2ecf85" strokeWidth="1.5" fill="none"/><path d="M22 16v6l4 3" stroke="#2ecf85" strokeWidth="1.5" strokeLinecap="round"/><circle cx="22" cy="22" r="2" fill="#2ecf85"/><path d="M15 10l-2-3M29 10l2-3" stroke="#2ecf85" strokeWidth="1.5" strokeLinecap="round"/></svg></div>
-            <div className={styles.featTitle}>Specialised Agents</div>
-            <h4>Specialised AI that works for you, 24/7.</h4>
-            <p>Deploy specialised agents that run continuously on the network. Expert skills running autonomously. Reviewing code, monitoring systems, publishing content, executing workflows. Built by creators, powered by the swarm, always earning.</p>
+            <div className={styles.featIcon}><svg viewBox="0 0 44 44" fill="none"><rect x="2" y="2" width="40" height="40" rx="10" stroke="#1FD87A" strokeWidth="1.5" fill="#fff"/><circle cx="22" cy="22" r="9" stroke="#1FD87A" strokeWidth="1.5" fill="none"/><path d="M22 16v6l4 3" stroke="#1FD87A" strokeWidth="1.5" strokeLinecap="round"/><circle cx="22" cy="22" r="2" fill="#1FD87A"/><path d="M15 10l-2-3M29 10l2-3" stroke="#1FD87A" strokeWidth="1.5" strokeLinecap="round"/></svg></div>
+            <div className={styles.featTitle}>Specialized Agents</div>
+            <h4>Autonomous AI on the network, 24/7.</h4>
+            <p>Run autonomous agents on the network, 24/7. Code reviewers, compliance monitors, research assistants — agents that use any model and switch providers freely. Always on and fully P2P.</p>
           </div>
         </div>
       </section>
@@ -451,7 +458,7 @@ export default function Home(): JSX.Element {
       {/* Build Once. Earn Forever. */}
       <section className={styles.creator}>
         <h2 className={styles.creatorTitle}>Build Once. Earn Forever.</h2>
-        <p className={styles.creatorSub}>A new creator economy for AI. Package your expertise into a skill. Deploy it as a chat or an autonomous agent. Earn every time someone uses it. No app store. No platform cut. No kill switch on your income.</p>
+        <p className={styles.creatorSub}>A new economy for AI providers. Run models, serve specialized inference, deploy agents. Earn per request — directly from users. No middleman. No permission needed. No kill switch on your income.</p>
         <BrowserOnly fallback={null}>{() => <EarnAnimation />}</BrowserOnly>
         <Link to="/docs/intro" className={styles.creatorCta}>Start Building →</Link>
       </section>
@@ -460,24 +467,25 @@ export default function Home(): JSX.Element {
       <section className={styles.supply}>
         <div className={styles.supplyHeader}>
           <h2>Join the economy.</h2>
-          <p>Three ways to earn on the network. Bring expertise, bring inference, or build agents that combine both.</p>
+          <p>Three ways to earn on the network. Serve inference, specialize in a domain, or deploy agents.</p>
         </div>
         <div className={styles.supplyGrid}>
           <div className={styles.supplyCol}>
             <div className={styles.supplyLabel}>Inference Providers</div>
             <h4>Serve models. Earn per request.</h4>
-            <p>You have a way to serve inference. Your own hardware, a cloud deployment, a fine-tuned model for a specific domain or language. Connect to the network and start earning. Run open-weight models, specialised fine-tunes, uncensored models, TEE-secured nodes. The more unique or reliable your offering, the more traffic you attract.</p>
+            <p>Your own hardware, a cloud deployment, or your existing API keys — connect and start earning. Run open-weight models, specialized fine-tunes, TEE-secured nodes, or API-backed inference. No hardware? No problem. The more reliable your offering, the more traffic you attract.</p>
           </div>
           <div className={styles.supplyCol}>
-            <div className={styles.supplyLabel}>Skill Creators</div>
-            <h4>Package expertise. Get paid.</h4>
-            <p>You're a lawyer, trader, doctor, developer, musician. You know things models don't. Package that knowledge into a skill. Prompts, fine-tuning, tools, domain data. Deploy it as a chat or an agent. Earn every time someone uses your work.</p>
+            <div className={styles.supplyLabel}>Specialized Providers</div>
+            <h4>Domain expertise. Premium pricing.</h4>
+            <p>Run fine-tuned or domain-specific models. Legal, medical, financial — your expertise combined with dedicated inference earns premium pricing. Deploy as a specialized chat or an autonomous agent. The more unique your offering, the more demand you attract.</p>
           </div>
           <div className={styles.supplyCol}>
-            <div className={styles.supplyLabel}>Agent Builders</div>
-            <h4>Build once. Runs forever.</h4>
-            <p>Combine skills, inference, and tools into autonomous agents that run 24/7 on the swarm. A compliance monitor. A content pipeline. A research assistant. They use other providers' compute and other creators' skills. Everyone in the chain earns.</p>
+            <div className={styles.supplyLabel}>Agent Operators</div>
+            <h4>Deploy once. Runs forever.</h4>
+            <p>Deploy always-on agents that use the network's models and providers. Compliance monitoring, research pipelines, automated workflows — running continuously without your hardware. Agents switch models and providers freely. Everyone in the chain earns.</p>
           </div>
+
         </div>
       </section>
 
@@ -486,19 +494,19 @@ export default function Home(): JSX.Element {
         <h2>How it works.</h2>
         <div className={styles.howLabel}>For users</div>
         <div className={styles.howSteps}>
-          <div className={styles.howStep}><div className={styles.howNum}>1</div><h4>Download AntFarm</h4><p>Install the app. No sign-up, no API key, no credit card. You're connected to the network instantly.</p></div>
+          <div className={styles.howStep}><div className={styles.howNum}>1</div><h4>Download AntStation</h4><p>Install the app. Connect your wallet. You're on the network — no sign-up, no credit card.</p></div>
           <span className={styles.howArrow}>→</span>
-          <div className={styles.howStep}><div className={styles.howNum}>2</div><h4>Connect to the swarm</h4><p>AntFarm discovers peers automatically. Choose your priority: cost, speed, quality, or privacy.</p></div>
+          <div className={styles.howStep}><div className={styles.howNum}>2</div><h4>Connect to the swarm</h4><p>AntStation discovers peers automatically. Choose your priority: cost, speed, quality, or privacy.</p></div>
           <span className={styles.howArrow}>→</span>
-          <div className={styles.howStep}><div className={styles.howNum}>3</div><h4>Chat, build, or earn</h4><p>Use it as a chat app. Pick a specialised skill. Or package your own expertise and start earning.</p></div>
+          <div className={styles.howStep}><div className={styles.howNum}>3</div><h4>Start chatting</h4><p>Use it as a private AI chat. Pick your model, choose your provider. Auto-routed by reputation and your preferences.</p></div>
         </div>
         <div className={styles.howLabel} style={{marginTop:'48px'}}>For developers &amp; agents</div>
         <div className={styles.howSteps}>
-          <div className={styles.howStep}><div className={styles.howNum}>1</div><h4>Install the SDK</h4><p>One command: npm install antseed. Or just point any OpenAI-compatible client at your local AntFarm endpoint.</p></div>
+          <div className={styles.howStep}><div className={styles.howNum}>1</div><h4>Install the node</h4><p>One command: npm install -g @antseed/cli. Run the local proxy that any OpenAI-compatible tool can connect to.</p></div>
           <span className={styles.howArrow}>→</span>
-          <div className={styles.howStep}><div className={styles.howNum}>2</div><h4>Route to the network</h4><p>Your code connects to the swarm automatically. Pick models, set routing preferences, or let OpenMind decide.</p></div>
+          <div className={styles.howStep}><div className={styles.howNum}>2</div><h4>Expose to the network</h4><p>Expose your inference to the network. Set your models, pricing, and routing. Start receiving requests.</p></div>
           <span className={styles.howArrow}>→</span>
-          <div className={styles.howStep}><div className={styles.howNum}>3</div><h4>Ship and scale</h4><p>No API keys to manage. No rate limits. No vendor lock-in. Your agents run on the network, always on.</p></div>
+          <div className={styles.howStep}><div className={styles.howNum}>3</div><h4>Go live</h4><p>You're live. Your node joins the network. Requests route to you based on reputation, price, and performance. Earn from day one.</p></div>
         </div>
       </section>
 
@@ -507,12 +515,12 @@ export default function Home(): JSX.Element {
         <h3>Works with your tools</h3>
         <div className={styles.compatLogos}>
           <div className={styles.compatItem}>
-            <div className={styles.compatIcon}><svg viewBox="0 0 24 24" fill="none" stroke="#1a1a1a" strokeWidth="1.5" strokeLinecap="round"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"/><path d="M7 12h10M12 7v10" stroke="#2ecf85" strokeWidth="2"/></svg></div>
+            <div className={styles.compatIcon}><svg viewBox="0 0 24 24" fill="none" stroke="#1a1a1a" strokeWidth="1.5" strokeLinecap="round"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"/><path d="M7 12h10M12 7v10" stroke="#1FD87A" strokeWidth="2"/></svg></div>
             <span className={styles.compatName}>Claude Code</span>
           </div>
           <div className={styles.compatItem}>
-            <div className={styles.compatIcon}><svg viewBox="0 0 24 24" fill="none" stroke="#1a1a1a" strokeWidth="1.5" strokeLinecap="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg></div>
-            <span className={styles.compatName}>Cursor</span>
+            <div className={styles.compatIcon}><svg viewBox="0 0 24 24" fill="none" stroke="#1a1a1a" strokeWidth="1.5" strokeLinecap="round"><path d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2v-4M9 21H5a2 2 0 01-2-2v-4m0 0h18"/></svg></div>
+            <span className={styles.compatName}>Aider</span>
           </div>
           <div className={styles.compatItem}>
             <div className={styles.compatIcon}><svg viewBox="0 0 24 24" fill="none" stroke="#1a1a1a" strokeWidth="1.5" strokeLinecap="round"><path d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg></div>

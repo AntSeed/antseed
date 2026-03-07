@@ -13,15 +13,15 @@ sidebar_position: 99
 
 AntSeed is a peer-to-peer network for AI services. It connects buyers who need AI inference with providers who offer it — directly, without a central platform in the middle.
 
-Unlike centralized AI APIs (OpenAI, Anthropic, Google), there is no single company routing your requests, storing your conversations, or controlling which models you can access. The AntSeed protocol handles discovery, routing, reputation scoring, and payment settlement across a decentralized network of peers.
+Unlike centralized AI APIs, there is no single company routing your requests, storing your conversations, or controlling which models you can access. The AntSeed protocol handles discovery, routing, reputation scoring, and payment settlement across a decentralized network of peers.
 
-### How is this different from ChatGPT or Claude?
+### How is this different from centralized AI chat products?
 
-ChatGPT and Claude are centralized products built on top of AI models. AntSeed is open infrastructure — a protocol layer that gives you access to any model on the network, including Claude Sonnet, DeepSeek-R1, Llama 4, Qwen, Kimi, and more.
+Centralized AI chat products are closed platforms built on top of a single provider's models. AntSeed is open infrastructure — a protocol layer that gives you access to any model on the network, from any provider currently online.
 
 The key difference: your requests don't go through a single company. They route peer-to-peer to whichever provider best matches your requirements for price, latency, privacy, and capability.
 
-Your existing tools — [Cursor](https://cursor.sh), [Claude Code](https://claude.ai/code), or any OpenAI-compatible client — connect and work immediately without modification.
+Your existing tools — [Claude Code](https://claude.ai/code), [Aider](https://aider.chat), or any OpenAI-compatible client — connect and work immediately without modification.
 
 ### Is AntSeed open source?
 
@@ -37,15 +37,15 @@ No one. The network is decentralized — it runs on the peers that join it. Ther
 
 ### Is my data private?
 
-Privacy on AntSeed works in layers:
+Privacy on AntSeed works in two layers:
 
-**Layer 1 — Network anonymity (everyone gets this by default).** Like a VPN for AI, providers never know who you are. There are no accounts, no identity, and no way to link a request back to you. Your IP is not exposed to the provider you route to.
+**Layer 1 — Network anonymity (everyone gets this by default).** Requests go peer-to-peer, like a VPN for AI. Providers never know who you are — no accounts, no identity, no IP exposed. Your prompts travel directly to the provider with no corporate server in the middle.
 
-**Layer 2 — Provider trust.** Standard providers handle your data like any API service. They can see your prompts but have no identity to attach them to.
+**Layer 2 — TEE-verified providers.** These run inside Trusted Execution Environments (Intel TDX, AMD SEV) — hardware enclaves where not even the node operator can read your prompts. This is cryptographic proof, not a policy promise. TEE provider verification is being rolled out in a future release.
 
-**Layer 3 — TEE-verified providers.** These run inside Trusted Execution Environments (Intel TDX, AMD SEV) — hardware enclaves where not even the node operator can read your prompts. This is cryptographic proof, not a policy promise. You pay a small premium; in return you get verifiable, hardware-level privacy.
+Payments are settled on-chain, so the money trail stays private too.
 
-Most users are well-served by Layer 1 alone. Journalists, lawyers, security researchers, and anyone handling sensitive data will want Layer 3.
+Most users are well-served by Layer 1 alone. Journalists, lawyers, security researchers, and anyone handling sensitive data will want Layer 2.
 
 ### Can providers see my prompts?
 
@@ -88,7 +88,7 @@ antseed connect
 
 That's it. See the [installation guide](/docs/install) for full details.
 
-### Does it work with Cursor, Claude Code, or other AI tools?
+### Does it work with Claude Code, Aider, or other AI tools?
 
 Yes. AntSeed is OpenAI API-compatible. Point your tool at the AntSeed endpoint and it works without any other changes — no code modifications needed.
 
@@ -102,7 +102,7 @@ macOS (Apple Silicon and Intel), Windows, and Linux. The CLI runs anywhere Node.
 
 ### Can I become a provider?
 
-Yes. If you have GPU compute or API access to frontier models, you can offer inference on the network and earn from every request you serve. No permission or partnership required.
+Yes. The network is open — anyone can participate. You can run open-weight models, serve specialized or fine-tuned models, deploy autonomous agents, offer API-backed inference, or invent a new kind of offering entirely. If it delivers value to buyers on the network, it has a place here. No permission or partnership required.
 
 See the [provider setup guide](/docs/install) to get started.
 
