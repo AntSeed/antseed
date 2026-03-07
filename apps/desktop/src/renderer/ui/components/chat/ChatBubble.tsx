@@ -1,295 +1,335 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { renderMarkdown } from './chat-utils.js';
+import type { ReactNode } from 'react';
+import { MarkdownContent } from './chat-utils.js';
 import styles from './ChatBubble.module.scss';
+import type { ChatMessage, ContentBlock } from './chat-shared';
+import {
+  buildChatMetaParts,
+  formatToolExecutionLabel,
+  getMyrmecochoryLabel,
+  renderMarkdownToHtml,
+} from './chat-shared';
+import { registerStreamingTextUpdater } from '../../../core/streaming-text';
 
-type ChatMessage = {
-  role: string;
-  content: unknown;
-  createdAt?: number;
-  meta?: Record<string, unknown>;
+type ToolRenderItem = {
+  id: string;
+  label: string;
+  kind: string;
+  status: 'running' | 'success' | 'error';
+  output: string;
+  outputLineCount: number;
+  diff: string;
+  additions: number;
+  removals: number;
 };
 
-type ContentBlock = {
-  type: string;
-  text?: string;
-  thinking?: string;
-  name?: string;
-  id?: string;
-  input?: Record<string, unknown>;
-  content?: string;
-  is_error?: boolean;
-  source?: { type: string; media_type?: string; data?: string };
-};
+function getToolKind(name: unknown): string {
+  return String(name || '').trim().toLowerCase();
+}
 
-function formatChatTime(timestamp: unknown): string {
-  const ts = Number(timestamp);
-  if (!ts || ts <= 0) return '';
-  const d = new Date(ts);
-  const now = new Date();
-  if (d.toDateString() === now.toDateString()) {
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+function extractToolDiff(block: ContentBlock): string {
+  const detailsDiff = block.details?.diff;
+  if (typeof detailsDiff === 'string' && detailsDiff.trim().length > 0) {
+    return detailsDiff;
   }
-  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
-}
-
-function shortModelName(model: unknown): string {
-  const raw = String(model || '').trim();
-  if (!raw) return 'unknown-model';
-  return raw.replace(/^claude-/, '').replace(/-20\d{6,}/, '');
-}
-
-function formatCompactNumber(value: unknown): string {
-  const num = Number(value);
-  if (!Number.isFinite(num) || num <= 0) return '0';
-  return Math.floor(num).toLocaleString();
-}
-
-function formatUsd(value: unknown, maxFractionDigits = 6): string {
-  const num = Number(value);
-  if (!Number.isFinite(num) || num <= 0) return '0';
-  return num.toLocaleString([], { minimumFractionDigits: 0, maximumFractionDigits: maxFractionDigits });
-}
-
-const myrmecochoryPhrases = [
-  'Myrmecochory scouting for the right peer',
-  'Myrmecochory optimizing route and cost',
-  'Myrmecochory validating marketplace path',
-  'Myrmecochory checking tool and context trail',
-  'Myrmecochory preparing the next inference hop',
-];
-
-function getMyrmecochoryLabel(indexBase = 0): string {
-  const index = Math.abs(Math.floor(Number(indexBase) || 0)) % myrmecochoryPhrases.length;
-  return myrmecochoryPhrases[index];
-}
-
-function normalizeAssistantMeta(msg: ChatMessage) {
-  if (!msg || msg.role !== 'assistant' || !msg.meta || typeof msg.meta !== 'object') return null;
-  const meta = msg.meta;
-  const peerId = typeof meta.peerId === 'string' && (meta.peerId as string).trim().length > 0 ? (meta.peerId as string).trim() : null;
-  const peerAddress = typeof meta.peerAddress === 'string' && (meta.peerAddress as string).trim().length > 0 ? (meta.peerAddress as string).trim() : null;
-  const peerProviders = Array.isArray(meta.peerProviders) ? (meta.peerProviders as string[]).map(String).filter(Boolean) : [];
-  const provider = typeof meta.provider === 'string' && (meta.provider as string).trim().length > 0 ? (meta.provider as string).trim() : null;
-  const model = typeof meta.model === 'string' && (meta.model as string).trim().length > 0 ? (meta.model as string).trim() : null;
-  const inputTokens = Math.max(0, Math.floor(Number(meta.inputTokens) || 0));
-  const outputTokens = Math.max(0, Math.floor(Number(meta.outputTokens) || 0));
-  const explicitTotalTokens = Math.max(0, Math.floor(Number(meta.totalTokens) || 0));
-  const totalTokens = explicitTotalTokens > 0 ? explicitTotalTokens : inputTokens + outputTokens;
-  const tokenSourceRaw = String(meta.tokenSource || '').trim().toLowerCase();
-  const tokenSource = tokenSourceRaw === 'estimated' ? 'estimated' : tokenSourceRaw === 'usage' ? 'usage' : 'unknown';
-  const costUsd = Number.isFinite(Number(meta.estimatedCostUsd)) ? Number(meta.estimatedCostUsd) : 0;
-  const latencyMs = Number.isFinite(Number(meta.latencyMs)) ? Number(meta.latencyMs) : 0;
-  const peerReputation = Number.isFinite(Number(meta.peerReputation)) ? Number(meta.peerReputation) : null;
-  const peerTrustScore = Number.isFinite(Number(meta.peerTrustScore)) ? Number(meta.peerTrustScore) : null;
-  const peerCurrentLoad = Number.isFinite(Number(meta.peerCurrentLoad)) ? Number(meta.peerCurrentLoad) : null;
-  const peerMaxConcurrency = Number.isFinite(Number(meta.peerMaxConcurrency)) ? Number(meta.peerMaxConcurrency) : null;
-  const routeRequestId = typeof meta.routeRequestId === 'string' && (meta.routeRequestId as string).trim().length > 0 ? (meta.routeRequestId as string).trim() : null;
-  return {
-    peerId, peerAddress, peerProviders, peerReputation, peerTrustScore,
-    peerCurrentLoad, peerMaxConcurrency, routeRequestId, provider, model,
-    inputTokens, outputTokens, totalTokens, tokenSource,
-    costUsd: costUsd > 0 ? costUsd : 0,
-    latencyMs: latencyMs > 0 ? latencyMs : 0,
-  };
-}
-
-function countBlocks(blocks: ContentBlock[]) {
-  const summary = { text: 0, toolUse: 0, toolResult: 0, thinking: 0 };
-  for (const block of blocks) {
-    if (block.type === 'text') summary.text += 1;
-    if (block.type === 'tool_use') summary.toolUse += 1;
-    if (block.type === 'tool_result') summary.toolResult += 1;
-    if (block.type === 'thinking') summary.thinking += 1;
-  }
-  return summary;
-}
-
-function escapeHtml(text: string): string {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
-function toToolDisplayName(name: unknown): string {
-  const raw = String(name || 'tool').trim();
-  if (!raw) return 'Tool';
-  return raw.split(/[_\-\s]+/).filter(Boolean).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
-}
-
-function compactInlineText(value: unknown, maxLength = 72): string {
-  const normalized = String(value || '').replace(/\s+/g, ' ').trim();
-  if (!normalized) return '';
-  if (normalized.length <= maxLength) return normalized;
-  return `${normalized.slice(0, maxLength - 1)}...`;
-}
-
-function extractPrimaryToolInput(name: unknown, input: unknown): string {
-  if (!input || typeof input !== 'object') return '';
-  const rawName = String(name || '').trim().toLowerCase();
-  const payload = input as Record<string, unknown>;
-  const preferredKeys = rawName === 'bash' ? ['command', 'cmd', 'script', 'args']
-    : rawName === 'read_file' ? ['path', 'filePath', 'file', 'target']
-    : rawName === 'write_file' ? ['path', 'filePath', 'file', 'target']
-    : ['command', 'cmd', 'path', 'query', 'pattern', 'target', 'file'];
-
-  for (const key of preferredKeys) {
-    const value = payload[key];
-    if (typeof value === 'string' && value.trim().length > 0) return compactInlineText(value);
-    if (Array.isArray(value) && value.length > 0) {
-      const rendered = compactInlineText(value.map(String).join(' '));
-      if (rendered.length > 0) return rendered;
-    }
-  }
-  for (const value of Object.values(payload)) {
-    if (typeof value === 'string' && value.trim().length > 0) return compactInlineText(value);
+  const output = String(block.content || '');
+  if (/^--- .*?\n\+\+\+ .*?\n@@/m.test(output)) {
+    return output;
   }
   return '';
 }
 
-function renderToolRow(block: ContentBlock): string {
-  const toolName = toToolDisplayName(block.name);
-  const summary = extractPrimaryToolInput(block.name, block.input);
-  const label = summary.length > 0 ? `${toolName} (${summary})` : toolName;
-  return `<div class="tool-inline"><div class="tool-inline-row"><span class="tool-inline-dot success"></span><span class="tool-inline-label">${escapeHtml(label)}</span><span class="tool-inline-status success">Done</span></div></div>`;
+function countDiffStats(diff: string): { additions: number; removals: number } {
+  let additions = 0;
+  let removals = 0;
+  for (const line of diff.split('\n')) {
+    if (line.startsWith('+++') || line.startsWith('---')) continue;
+    if (line.startsWith('+')) additions += 1;
+    if (line.startsWith('-')) removals += 1;
+  }
+  return { additions, removals };
 }
 
-function renderContentBlocks(blocks: ContentBlock[]): string {
-  let html = '';
-  for (const block of blocks) {
-    if (block.type === 'text') {
-      html += `<div class="chat-bubble-content">${renderMarkdown(block.text || '')}</div>`;
-    } else if (block.type === 'thinking' && block.thinking?.trim()) {
-      const thinkingLabel = getMyrmecochoryLabel(block.thinking?.length);
-      html += `<div class="thinking-block"><div class="thinking-block-header" onclick="this.parentElement.classList.toggle('open')"><span class="thinking-block-triangle">▶</span><span>${escapeHtml(thinkingLabel)}</span></div><div class="thinking-block-body">${escapeHtml(block.thinking)}</div></div>`;
-    } else if (block.type === 'tool_use') {
-      html += renderToolRow(block);
-    } else if (block.type === 'tool_result' && block.is_error) {
-      const outputText = String(block.content || '');
-      const truncated = outputText.length > 600 ? `${outputText.slice(0, 600)}\n... (truncated)` : outputText;
-      html += `<div class="tool-inline"><div class="tool-inline-row"><span class="tool-inline-dot error"></span><span class="tool-inline-label">Result</span><span class="tool-inline-status error">Error</span></div><div class="tool-inline-output error">${escapeHtml(truncated)}</div></div>`;
-    }
-  }
-  return html;
+function buildToolRenderItem(block: ContentBlock, index: number): ToolRenderItem {
+  const output = String(block.content || '');
+  const diff = extractToolDiff(block);
+  const diffStats = countDiffStats(diff);
+  return {
+    id: String(block.id || `tool-${index}`),
+    label: formatToolExecutionLabel(block.name, block.input),
+    kind: getToolKind(block.name),
+    status: block.status ?? 'success',
+    output,
+    outputLineCount: output.split('\n').filter((line) => line.trim().length > 0).length,
+    diff,
+    additions: diffStats.additions,
+    removals: diffStats.removals,
+  };
 }
 
-function buildMetaParts(msg: ChatMessage): string[] {
-  const parts: string[] = [];
-  if (msg.createdAt && Number(msg.createdAt) > 0) parts.push(formatChatTime(msg.createdAt));
+function ToolDiffPreview({ diff }: { diff: string }) {
+  const lines = diff.split('\n');
+  return (
+    <div className="tool-diff-preview">
+      {lines.map((line, index) => {
+        let className = 'context';
+        if (line.startsWith('+') && !line.startsWith('+++')) className = 'added';
+        else if (line.startsWith('-') && !line.startsWith('---')) className = 'removed';
+        else if (line.startsWith('@@')) className = 'hunk';
+        else if (line.startsWith('+++') || line.startsWith('---')) className = 'file';
+        return (
+          <div key={`${index}-${line.slice(0, 16)}`} className={`tool-diff-line ${className}`}>
+            {line}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
-  const blocks = Array.isArray(msg.content) ? (msg.content as ContentBlock[]) : null;
-  const stats = blocks ? countBlocks(blocks) : null;
-  const assistantMeta = normalizeAssistantMeta(msg);
+function getBlockRenderKey(block: ContentBlock, index: number): string {
+  return String(block.renderKey || block.id || block.tool_use_id || `${block.type}-${index}`);
+}
 
-  if (stats && msg.role === 'assistant') {
-    if (stats.toolUse > 0) parts.push(`${stats.toolUse} tool${stats.toolUse === 1 ? '' : 's'}`);
-    if (stats.thinking > 0) parts.push(`${stats.thinking} reasoning`);
-    if (stats.text > 0) parts.push(`${stats.text} text block${stats.text === 1 ? '' : 's'}`);
+
+// Renders streaming text content directly into the DOM via innerHTML, bypassing
+// React re-renders for high-frequency character-level updates. The RAF loop
+// in chat.ts calls applyStreamingText(), which writes here imperatively.
+// When streaming ends, this component is swapped out for MarkdownContent.
+function StreamingText({ initialText }: { initialText: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (ref.current) {
+      ref.current.innerHTML = renderMarkdownToHtml(initialText);
+    }
+    return registerStreamingTextUpdater((html) => {
+      if (ref.current) ref.current.innerHTML = html;
+    });
+  }, []); // intentionally empty — updates come imperatively via the bridge
+
+  // eslint-disable-next-line react/no-danger -- content is AI-generated, not user input
+  return <div ref={ref} className="chat-bubble-content streaming-cursor" />;
+}
+
+function ThinkingBlockView({ block }: { block: ContentBlock }) {
+  const [open, setOpen] = useState(false);
+
+  if (!block.thinking?.trim()) return null;
+
+  const thinkingLabel =
+    String(block.name || '').trim() || getMyrmecochoryLabel(block.thinking.length);
+
+  return (
+    <div className={`thinking-block${block.streaming ? ' streaming' : ''}${open ? ' open' : ''}`}>
+      <button
+        type="button"
+        className="thinking-block-header"
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="thinking-block-triangle">▶</span>
+        <span>{thinkingLabel}</span>
+        {block.streaming ? (
+          <span className="thinking-dots" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </span>
+        ) : null}
+      </button>
+      <div className="thinking-block-body">{block.thinking}</div>
+    </div>
+  );
+}
+
+function ToolGroupView({ blocks }: { blocks: ContentBlock[] }) {
+  const [expandedToolId, setExpandedToolId] = useState<string | null>(null);
+  const items = useMemo(
+    () => blocks.map((block, index) => buildToolRenderItem(block, index)),
+    [blocks],
+  );
+
+  return (
+    <div className="tool-group">
+      <div className="tool-group-header">
+        <span>{items.length} tool{items.length === 1 ? '' : 's'}</span>
+      </div>
+      <div className="tool-group-list">
+        {items.map((item) => {
+          const canExpand =
+            item.diff.length > 0 ||
+            item.output.trim().length > 0 ||
+            item.kind === 'bash';
+          const isExpanded = expandedToolId === item.id;
+          const statusLabel =
+            item.kind === 'edit' && item.diff.length > 0
+              ? `+${item.additions} / -${item.removals}`
+              : item.kind === 'bash' && item.outputLineCount > 0
+                ? `${item.outputLineCount} lines`
+                : item.status === 'running'
+                  ? 'Running'
+                  : item.status === 'error'
+                    ? 'Error'
+                    : 'Done';
+          const outputText =
+            item.output.length > 8000
+              ? `${item.output.slice(0, 8000)}\n... (truncated)`
+              : item.output;
+
+          return (
+            <div key={item.id} className="tool-inline">
+              <button
+                type="button"
+                className={`tool-inline-row${canExpand ? ' expandable' : ''}`}
+                onClick={() => {
+                  if (!canExpand) return;
+                  setExpandedToolId((current) => (current === item.id ? null : item.id));
+                }}
+              >
+                <span className={`tool-inline-dot ${item.status}`} />
+                <span className="tool-inline-label">{item.label}</span>
+                <span className={`tool-inline-status ${item.status}`}>{statusLabel}</span>
+              </button>
+              {isExpanded ? (
+                item.diff.length > 0 ? (
+                  <ToolDiffPreview diff={item.diff} />
+                ) : (
+                  <div className={`tool-inline-output${item.status === 'error' ? ' error' : ''}`}>
+                    {outputText.trim().length > 0 ? outputText : '(no output)'}
+                  </div>
+                )
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function renderAssistantBlocks(blocks: ContentBlock[], streaming = false): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  let toolGroup: ContentBlock[] = [];
+
+  const flushToolGroup = (): void => {
+    if (toolGroup.length === 0) return;
+    nodes.push(
+      <ToolGroupView
+        key={`tool-group-${toolGroup.map((block) => String(block.id || '')).join('-')}`}
+        blocks={toolGroup}
+      />,
+    );
+    toolGroup = [];
+  };
+
+  blocks.forEach((block, index) => {
+    if (block.type === 'tool_use') {
+      toolGroup.push(block);
+      return;
+    }
+    flushToolGroup();
+    nodes.push(renderBlock(block, index, streaming));
+  });
+
+  flushToolGroup();
+  return nodes;
+}
+
+function renderBlock(block: ContentBlock, index: number, streaming = false): ReactNode {
+  const blockKey = getBlockRenderKey(block, index);
+
+  if (block.type === 'text') {
+    if (block.streaming) {
+      return <StreamingText key={blockKey} initialText={String(block.text || '')} />;
+    }
+    return (
+      <MarkdownContent
+        key={blockKey}
+        text={String(block.text || '')}
+        className="chat-bubble-content"
+      />
+    );
   }
 
-  if (assistantMeta) {
-    parts.push(assistantMeta.peerId ? `peer ${assistantMeta.peerId.slice(0, 8)}` : 'peer n/a');
-    if (assistantMeta.peerAddress) parts.push(assistantMeta.peerAddress);
-    if (assistantMeta.provider) parts.push(assistantMeta.provider);
-    if (assistantMeta.model) parts.push(shortModelName(assistantMeta.model));
-    if (assistantMeta.peerProviders.length > 0 && !assistantMeta.provider) parts.push(assistantMeta.peerProviders.join(','));
-    if (assistantMeta.totalTokens > 0) {
-      const tokenParts = [`${formatCompactNumber(assistantMeta.totalTokens)} tok`];
-      if (assistantMeta.inputTokens > 0 || assistantMeta.outputTokens > 0) {
-        tokenParts.push(`(${formatCompactNumber(assistantMeta.inputTokens)} in / ${formatCompactNumber(assistantMeta.outputTokens)} out)`);
-      }
-      parts.push(tokenParts.join(' '));
-    } else {
-      parts.push('tok n/a');
-    }
-    if (assistantMeta.tokenSource === 'estimated') parts.push('est.');
-    if (assistantMeta.costUsd > 0) parts.push(`$${formatUsd(assistantMeta.costUsd)}`);
-    else if (assistantMeta.totalTokens > 0) parts.push('$n/a');
-    if (assistantMeta.latencyMs > 0) parts.push(`${Math.round(assistantMeta.latencyMs)}ms`);
-    if (assistantMeta.peerReputation !== null) parts.push(`rep ${Math.round(assistantMeta.peerReputation)}`);
-    if (assistantMeta.peerTrustScore !== null) parts.push(`trust ${Math.round(assistantMeta.peerTrustScore)}`);
-    if (assistantMeta.peerCurrentLoad !== null && assistantMeta.peerMaxConcurrency !== null && assistantMeta.peerMaxConcurrency > 0) {
-      parts.push(`load ${Math.round(assistantMeta.peerCurrentLoad)}/${Math.round(assistantMeta.peerMaxConcurrency)}`);
-    }
-    if (assistantMeta.routeRequestId) parts.push(`route ${assistantMeta.routeRequestId.slice(0, 8)}`);
+  if (block.type === 'thinking') {
+    return <ThinkingBlockView key={blockKey} block={block} />;
   }
 
-  return parts;
+  if (block.type === 'tool_use') {
+    // tool_use blocks are grouped by renderAssistantBlocks into ToolGroupView
+    return null;
+  }
+
+  if (block.type === 'tool_result' && block.is_error) {
+    const normalizedOutput = String(block.content || '');
+    const truncated =
+      normalizedOutput.length > 600
+        ? `${normalizedOutput.slice(0, 600)}\n... (truncated)`
+        : normalizedOutput;
+    return (
+      <div key={blockKey} className="tool-inline">
+        <div className="tool-inline-output error">{truncated}</div>
+      </div>
+    );
+  }
+
+  if (block.type === 'image' && block.source?.data && block.source?.media_type) {
+    return (
+      <img
+        key={blockKey}
+        src={`data:${block.source.media_type};base64,${block.source.data}`}
+        className="chat-image-preview"
+        alt="Attached image"
+      />
+    );
+  }
+
+  return null;
 }
 
 type ChatBubbleProps = {
   message: ChatMessage;
+  streaming?: boolean;
 };
 
-export function ChatBubble({ message }: ChatBubbleProps) {
-  const contentRef = useRef<HTMLDivElement>(null);
+export function ChatBubble({ message, streaming = false }: ChatBubbleProps) {
   const [metaExpanded, setMetaExpanded] = useState(false);
-  const metaParts = useMemo(() => buildMetaParts(message), [message]);
-  const contentHtml = useMemo(() => {
+  const metaParts = useMemo(() => buildChatMetaParts(message), [message]);
+
+  const content = useMemo(() => {
     if (message.role === 'assistant') {
       if (Array.isArray(message.content)) {
-        return renderContentBlocks(message.content as ContentBlock[]);
+        return renderAssistantBlocks(message.content as ContentBlock[], streaming);
       }
-      return `<div class="chat-bubble-content">${renderMarkdown(String(message.content))}</div>`;
+      return <MarkdownContent text={String(message.content)} />;
     }
-    if (typeof message.content === 'string') {
-      return `<div class="chat-bubble-content">${renderMarkdown(message.content)}</div>`;
-    }
-    // User message with multipart content (e.g. image + text)
-    if (Array.isArray(message.content)) {
-      let html = '';
-      for (const block of message.content as ContentBlock[]) {
-        if (block.type === 'image' && block.source?.data && block.source?.media_type) {
-          html += `<img src="data:${block.source.media_type};base64,${block.source.data}" class="chat-image-preview" alt="Attached image" />`;
-        } else if (block.type === 'text' && block.text) {
-          html += `<div class="chat-bubble-content">${renderMarkdown(block.text)}</div>`;
-        }
-      }
-      return html;
-    }
-    return `<div class="chat-bubble-content">${escapeHtml(JSON.stringify(message.content))}</div>`;
-  }, [message.role, message.content]);
 
-  useEffect(() => {
-    const container = contentRef.current;
-    if (!container) return;
-    const handleClick = (event: Event) => {
-      const target = event.target;
-      if (!(target instanceof HTMLElement)) return;
-      const button = target.closest<HTMLButtonElement>('[data-copy-code="true"]');
-      if (!button) return;
-      const codeId = button.dataset.copyTarget;
-      if (!codeId) return;
-      const codeNode = container.querySelector<HTMLElement>(`#${CSS.escape(codeId)}`);
-      const codeText = codeNode?.textContent ?? '';
-      if (!codeText) return;
-      void navigator.clipboard.writeText(codeText).then(() => {
-        const previousText = button.textContent;
-        button.textContent = 'Copied!';
-        window.setTimeout(() => {
-          button.textContent = previousText || 'Copy';
-        }, 1500);
-      });
-    };
-    container.addEventListener('click', handleClick);
-    return () => {
-      container.removeEventListener('click', handleClick);
-    };
-  }, [contentHtml]);
+    if (typeof message.content === 'string') {
+      return <MarkdownContent text={message.content} />;
+    }
+
+    if (Array.isArray(message.content)) {
+      return (message.content as ContentBlock[]).map((block, index) => renderBlock(block, index, streaming));
+    }
+
+    return <div className="chat-bubble-content">{JSON.stringify(message.content)}</div>;
+  }, [message, streaming]);
 
   const bubbleMeta =
-    metaParts.length > 0 ? (
-      <div
+    metaParts.length > 0 && !streaming ? (
+      <button
+        type="button"
         className={`${styles.chatBubbleMeta}${metaExpanded ? ` ${styles.chatBubbleMetaExpanded}` : ''}`}
-        onClick={() => setMetaExpanded((v) => !v)}
+        onClick={() => setMetaExpanded((value) => !value)}
       >
         <span className={styles.chatBubbleStats}>{metaParts.join(' · ')}</span>
-      </div>
+      </button>
     ) : null;
 
   return (
     <div className={`${styles.chatBubble} ${message.role === 'user' ? styles.own : styles.other}`}>
       {bubbleMeta}
-      <div ref={contentRef} dangerouslySetInnerHTML={{ __html: contentHtml }} />
+      <div>{content}</div>
     </div>
   );
 }
-
-export { isToolResultOnlyMessage } from './chat-utils.js';

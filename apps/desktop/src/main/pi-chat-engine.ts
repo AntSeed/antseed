@@ -24,7 +24,13 @@ import { createAssistantMessageEventStream } from '@mariozechner/pi-ai';
 type TextBlock = { type: 'text'; text: string };
 type ThinkingBlock = { type: 'thinking'; thinking: string };
 type ToolUseBlock = { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> };
-type ToolResultBlock = { type: 'tool_result'; tool_use_id: string; content: string; is_error?: boolean };
+type ToolResultBlock = {
+  type: 'tool_result';
+  tool_use_id: string;
+  content: string;
+  is_error?: boolean;
+  details?: Record<string, unknown>;
+};
 type ContentBlock = TextBlock | ThinkingBlock | ToolUseBlock | ToolResultBlock;
 
 type AiMessageMeta = {
@@ -946,6 +952,10 @@ function convertPiMessageToUiBlocks(message: Message): string | ContentBlock[] {
     tool_use_id: toolResult.toolCallId,
     content: convertToolContentToText(toolResult.content),
     is_error: toolResult.isError,
+    details:
+      toolResult.details && typeof toolResult.details === 'object'
+        ? (toolResult.details as Record<string, unknown>)
+        : undefined,
   }];
 }
 
@@ -962,27 +972,11 @@ function convertPiMessagesToUi(messages: Message[]): AiChatMessage[] {
     }
 
     if (message.role === 'assistant') {
-      const assistant = message as AssistantMessage & { meta?: AiMessageMeta };
-      const usage = ensureUsageShape(assistant.usage);
-      const totalTokens = usage.totalTokens > 0 ? usage.totalTokens : usage.input + usage.output;
-      const usageMeta: AiMessageMeta = {
-        provider: assistant.provider,
-        model: assistant.model,
-        inputTokens: usage.input,
-        outputTokens: usage.output,
-        totalTokens,
-        tokenSource: usage.input > 0 || usage.output > 0 ? 'usage' : 'unknown',
-      };
-      const mergedMeta: AiMessageMeta = {
-        ...usageMeta,
-        ...(assistant.meta ?? {}),
-      };
-      converted.push({
-        role: 'assistant',
-        content: convertPiMessageToUiBlocks(assistant),
-        createdAt: normalizeTokenCount(assistant.timestamp),
-        meta: mergedMeta,
-      });
+      converted.push(
+        convertAssistantMessageForUi(
+          message as AssistantMessage & { meta?: AiMessageMeta },
+        ),
+      );
       continue;
     }
 
@@ -1188,6 +1182,57 @@ function convertUserMessageForUi(message: Message): AiChatMessage {
   };
 }
 
+function convertAssistantMessageForUi(
+  message: AssistantMessage & { meta?: AiMessageMeta },
+): AiChatMessage {
+  const usage = ensureUsageShape(message.usage);
+  const totalTokens = usage.totalTokens > 0 ? usage.totalTokens : usage.input + usage.output;
+  const usageMeta: AiMessageMeta = {
+    provider: message.provider,
+    model: message.model,
+    inputTokens: usage.input,
+    outputTokens: usage.output,
+    totalTokens,
+    tokenSource: usage.input > 0 || usage.output > 0 ? 'usage' : 'unknown',
+  };
+  const mergedMeta: AiMessageMeta = {
+    ...usageMeta,
+    ...(message.meta ?? {}),
+  };
+  return {
+    role: 'assistant',
+    content: convertPiMessageToUiBlocks(message),
+    createdAt: normalizeTokenCount(message.timestamp),
+    meta: mergedMeta,
+  };
+}
+
+function mergeAssistantMessagesForUi(base: AiChatMessage | null, next: AiChatMessage): AiChatMessage {
+  const toBlocks = (content: AiChatMessage['content']): ContentBlock[] => {
+    if (Array.isArray(content)) {
+      return content.map((block) => ({ ...block }));
+    }
+    const text = String(content ?? '');
+    return text.length > 0 ? [{ type: 'text', text }] : [];
+  };
+
+  if (!base) {
+    return next;
+  }
+  const baseContent = toBlocks(base.content);
+  const nextContent = toBlocks(next.content);
+  return {
+    ...base,
+    ...next,
+    createdAt: base.createdAt || next.createdAt,
+    meta: {
+      ...(base.meta ?? {}),
+      ...(next.meta ?? {}),
+    },
+    content: [...baseContent, ...nextContent],
+  };
+}
+
 function anthropicContentFromUser(content: Extract<Message, { role: 'user' }>['content']): unknown {
   if (typeof content === 'string') {
     return content;
@@ -1255,9 +1300,30 @@ function anthropicContentFromToolResult(message: ToolResultMessage): unknown[] {
   }];
 }
 
+function getAssistantToolUseIds(content: unknown[]): string[] {
+  const ids: string[] = [];
+  for (const block of content) {
+    if (!block || typeof block !== 'object') continue;
+    const typedBlock = block as { type?: unknown; id?: unknown };
+    if (typedBlock.type !== 'tool_use') continue;
+    const id = String(typedBlock.id ?? '').trim();
+    if (id.length > 0) ids.push(id);
+  }
+  return ids;
+}
+
+function getToolResultIdFromAnthropicBlock(block: unknown): string | null {
+  if (!block || typeof block !== 'object') return null;
+  const typedBlock = block as { type?: unknown; tool_use_id?: unknown };
+  if (typedBlock.type !== 'tool_result') return null;
+  const id = String(typedBlock.tool_use_id ?? '').trim();
+  return id.length > 0 ? id : null;
+}
+
 function convertContextMessagesToAnthropic(messages: Message[]): Array<Record<string, unknown>> {
   const converted: Array<Record<string, unknown>> = [];
-  for (const message of messages) {
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index]!;
     if (message.role === 'user') {
       const content = anthropicContentFromUser(message.content);
       if (typeof content === 'string' && content.length === 0) {
@@ -1273,7 +1339,18 @@ function convertContextMessagesToAnthropic(messages: Message[]): Array<Record<st
       continue;
     }
     if (message.role === 'assistant') {
-      const content = anthropicContentFromAssistant(message.content);
+      let content = anthropicContentFromAssistant(message.content);
+      const toolUseIds = getAssistantToolUseIds(content);
+      if (toolUseIds.length > 0) {
+        const nextMessage = messages[index + 1];
+        if (!nextMessage || nextMessage.role !== 'toolResult') {
+          content = content.filter((block) => {
+            if (!block || typeof block !== 'object') return false;
+            const typedBlock = block as { type?: unknown };
+            return typedBlock.type !== 'tool_use';
+          });
+        }
+      }
       if (content.length === 0) {
         converted.push({
           role: 'assistant',
@@ -1288,9 +1365,25 @@ function convertContextMessagesToAnthropic(messages: Message[]): Array<Record<st
       continue;
     }
     if (message.role === 'toolResult') {
+      const contentBlocks: unknown[] = [];
+      let toolIndex = index;
+      while (toolIndex < messages.length) {
+        const toolMessage = messages[toolIndex];
+        if (!toolMessage || toolMessage.role !== 'toolResult') break;
+        contentBlocks.push(...anthropicContentFromToolResult(toolMessage as ToolResultMessage));
+        toolIndex += 1;
+      }
+      index = toolIndex - 1;
+      const filteredBlocks = contentBlocks.filter((block) => {
+        const toolUseId = getToolResultIdFromAnthropicBlock(block);
+        return toolUseId !== null;
+      });
+      if (filteredBlocks.length === 0) {
+        continue;
+      }
       converted.push({
         role: 'user',
-        content: anthropicContentFromToolResult(message),
+        content: filteredBlocks,
       });
     }
   }
@@ -2204,6 +2297,7 @@ export function registerPiChatHandlers({
     let turnIndex = 0;
     let userPersisted = false;
     let streamDone = false;
+    let pendingAssistantMessage: AiChatMessage | null = null;
 
     const unsubscribe = session.subscribe((event: AgentSessionEvent) => {
       if (event.type === 'turn_start') {
@@ -2313,6 +2407,26 @@ export function registerPiChatHandlers({
         return;
       }
 
+      if (event.type === 'tool_execution_update') {
+        const eventArgs = isToolArgumentsObject(event.args) ? event.args : undefined;
+        sendToRenderer('chat:ai-tool-update', {
+          conversationId,
+          toolUseId: event.toolCallId,
+          name: event.toolName,
+          input: eventArgs ?? toolArgsById.get(event.toolCallId) ?? {},
+          output: toToolOutputString(event.partialResult),
+          details:
+            event.partialResult &&
+            typeof event.partialResult === 'object' &&
+            'details' in event.partialResult &&
+            event.partialResult.details &&
+            typeof event.partialResult.details === 'object'
+              ? (event.partialResult.details as Record<string, unknown>)
+              : undefined,
+        });
+        return;
+      }
+
       if (event.type === 'tool_execution_end') {
         toolArgsById.delete(event.toolCallId);
         sendToRenderer('chat:ai-tool-result', {
@@ -2320,6 +2434,14 @@ export function registerPiChatHandlers({
           toolUseId: event.toolCallId,
           output: toToolOutputString(event.result),
           isError: Boolean(event.isError),
+          details:
+            event.result &&
+            typeof event.result === 'object' &&
+            'details' in event.result &&
+            event.result.details &&
+            typeof event.result.details === 'object'
+              ? (event.result.details as Record<string, unknown>)
+              : undefined,
         });
         return;
       }
@@ -2341,12 +2463,24 @@ export function registerPiChatHandlers({
           if (peerId) {
             preferredPeerByConversationId.set(conversationId, peerId);
           }
-          (message as unknown as { meta?: AiMessageMeta }).meta = parsedMeta;
+          const assistantMessage = message as AssistantMessage & { meta?: AiMessageMeta };
+          assistantMessage.meta = parsedMeta;
+          pendingAssistantMessage = mergeAssistantMessagesForUi(
+            pendingAssistantMessage,
+            convertAssistantMessageForUi(assistantMessage),
+          );
         }
         return;
       }
 
       if (event.type === 'agent_end') {
+        if (pendingAssistantMessage) {
+          sendToRenderer('chat:ai-done', {
+            conversationId,
+            message: pendingAssistantMessage,
+          });
+          pendingAssistantMessage = null;
+        }
         if (!streamDone) {
           streamDone = true;
           sendToRenderer('chat:ai-stream-done', { conversationId });
@@ -2362,6 +2496,13 @@ export function registerPiChatHandlers({
         ? [{ type: 'image', data: imageBase64, mimeType: imageMimeType }]
         : [];
       await session.prompt(trimmedMessage || ' ', { images: images.length > 0 ? images : undefined });
+      if (pendingAssistantMessage) {
+        sendToRenderer('chat:ai-done', {
+          conversationId,
+          message: pendingAssistantMessage,
+        });
+        pendingAssistantMessage = null;
+      }
       if (!streamDone) {
         streamDone = true;
         sendToRenderer('chat:ai-stream-done', { conversationId });

@@ -2,7 +2,21 @@ import type { RendererUiState } from '../core/state';
 import type { BadgeTone } from '../core/state';
 import { notifyUiStateChanged } from '../core/store';
 import type { DesktopBridge } from '../types/bridge';
-import { renderMarkdown, chatBubbleClasses } from '../ui/components/chat/chat-utils.js';
+import type {
+  ChatMessage,
+  ContentBlock,
+} from '../ui/components/chat/chat-shared';
+import {
+  cloneContentBlock,
+  countBlocks,
+  formatCompactNumber,
+  formatUsd,
+  getMyrmecochoryLabel,
+  normalizeAssistantMeta,
+  renderMarkdownToHtml,
+  shortModelName,
+} from '../ui/components/chat/chat-shared';
+import { applyStreamingText } from '../core/streaming-text';
 
 type ChatConversationUsage = {
   inputTokens?: number;
@@ -20,14 +34,6 @@ type ChatConversationSummary = {
   usage?: ChatConversationUsage;
   totalTokens?: number;
   totalEstimatedCostUsd?: number;
-  [key: string]: unknown;
-};
-
-type ChatMessage = {
-  role: string;
-  content: unknown;
-  createdAt?: number;
-  meta?: Record<string, unknown>;
   [key: string]: unknown;
 };
 
@@ -73,14 +79,6 @@ export function initChatModule({
   // ---------------------------------------------------------------------------
   // Constants
   // ---------------------------------------------------------------------------
-
-  const myrmecochoryPhrases = [
-    'Myrmecochory scouting for the right peer',
-    'Myrmecochory optimizing route and cost',
-    'Myrmecochory validating marketplace path',
-    'Myrmecochory checking tool and context trail',
-    'Myrmecochory preparing the next inference hop',
-  ];
 
   const fallbackChatModels: NormalizedChatModelEntry[] = [];
 
@@ -229,19 +227,6 @@ export function initChatModule({
     };
   }
 
-  // ---------------------------------------------------------------------------
-  // Formatting helpers
-  // ---------------------------------------------------------------------------
-
-  function formatChatTime(timestamp: unknown): string {
-    const d = new Date(Number(timestamp));
-    const now = new Date();
-    if (d.toDateString() === now.toDateString()) {
-      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    }
-    return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
-  }
-
   function formatChatDateTime(timestamp: unknown): string {
     if (!timestamp || Number(timestamp) <= 0) return 'n/a';
     const d = new Date(Number(timestamp));
@@ -250,27 +235,6 @@ export function initChatModule({
       day: 'numeric',
       hour: '2-digit',
       minute: '2-digit',
-    });
-  }
-
-  function shortModelName(model: unknown): string {
-    const raw = String(model || '').trim();
-    if (!raw) return 'unknown-model';
-    return raw.replace(/^claude-/, '').replace(/-20\d{6,}/, '');
-  }
-
-  function formatCompactNumber(value: unknown): string {
-    const num = Number(value);
-    if (!Number.isFinite(num) || num <= 0) return '0';
-    return Math.floor(num).toLocaleString();
-  }
-
-  function formatUsd(value: unknown, maxFractionDigits = 6): string {
-    const num = Number(value);
-    if (!Number.isFinite(num) || num <= 0) return '0';
-    return num.toLocaleString([], {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: maxFractionDigits,
     });
   }
 
@@ -285,20 +249,6 @@ export function initChatModule({
     return `${minutes}:${String(seconds).padStart(2, '0')}`;
   }
 
-  function getMyrmecochoryLabel(indexBase = 0): string {
-    const index =
-      Math.abs(Math.floor(Number(indexBase) || 0)) % myrmecochoryPhrases.length;
-    return myrmecochoryPhrases[index];
-  }
-
-  function escapeHtml(text: string): string {
-    return text
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
-  }
-
   function toErrorMessage(err: unknown, fallback = 'Unexpected error'): string {
     if (typeof err === 'string' && err.trim().length > 0) return err;
     if (
@@ -311,191 +261,6 @@ export function initChatModule({
       return err.message;
     }
     return fallback;
-  }
-
-  function normalizeAssistantMeta(msg: ChatMessage) {
-    if (!msg || msg.role !== 'assistant' || !msg.meta || typeof msg.meta !== 'object') return null;
-    const meta = msg.meta;
-    const peerId =
-      typeof meta.peerId === 'string' && (meta.peerId as string).trim().length > 0
-        ? (meta.peerId as string).trim()
-        : null;
-    const peerAddress =
-      typeof meta.peerAddress === 'string' && (meta.peerAddress as string).trim().length > 0
-        ? (meta.peerAddress as string).trim()
-        : null;
-    const peerProviders = Array.isArray(meta.peerProviders)
-      ? (meta.peerProviders as string[])
-          .map((e) => String(e).trim())
-          .filter((e) => e.length > 0)
-      : [];
-    const provider =
-      typeof meta.provider === 'string' && (meta.provider as string).trim().length > 0
-        ? (meta.provider as string).trim()
-        : null;
-    const model =
-      typeof meta.model === 'string' && (meta.model as string).trim().length > 0
-        ? (meta.model as string).trim()
-        : null;
-    const inputTokens = Math.max(0, Math.floor(Number(meta.inputTokens) || 0));
-    const outputTokens = Math.max(0, Math.floor(Number(meta.outputTokens) || 0));
-    const explicitTotalTokens = Math.max(0, Math.floor(Number(meta.totalTokens) || 0));
-    const totalTokens = explicitTotalTokens > 0 ? explicitTotalTokens : inputTokens + outputTokens;
-    const tokenSourceRaw = String(meta.tokenSource || '').trim().toLowerCase();
-    const tokenSource =
-      tokenSourceRaw === 'estimated'
-        ? 'estimated'
-        : tokenSourceRaw === 'usage'
-          ? 'usage'
-          : 'unknown';
-    const costUsd = Number.isFinite(Number(meta.estimatedCostUsd))
-      ? Number(meta.estimatedCostUsd)
-      : 0;
-    const latencyMs = Number.isFinite(Number(meta.latencyMs)) ? Number(meta.latencyMs) : 0;
-    const peerReputation = Number.isFinite(Number(meta.peerReputation))
-      ? Number(meta.peerReputation)
-      : null;
-    const peerTrustScore = Number.isFinite(Number(meta.peerTrustScore))
-      ? Number(meta.peerTrustScore)
-      : null;
-    const peerCurrentLoad = Number.isFinite(Number(meta.peerCurrentLoad))
-      ? Number(meta.peerCurrentLoad)
-      : null;
-    const peerMaxConcurrency = Number.isFinite(Number(meta.peerMaxConcurrency))
-      ? Number(meta.peerMaxConcurrency)
-      : null;
-    const routeRequestId =
-      typeof meta.routeRequestId === 'string' &&
-      (meta.routeRequestId as string).trim().length > 0
-        ? (meta.routeRequestId as string).trim()
-        : null;
-    return {
-      peerId,
-      peerAddress,
-      peerProviders,
-      peerReputation,
-      peerTrustScore,
-      peerCurrentLoad,
-      peerMaxConcurrency,
-      routeRequestId,
-      provider,
-      model,
-      inputTokens,
-      outputTokens,
-      totalTokens,
-      tokenSource,
-      costUsd: costUsd > 0 ? costUsd : 0,
-      latencyMs: latencyMs > 0 ? latencyMs : 0,
-    };
-  }
-
-  // ---------------------------------------------------------------------------
-  // Rendering helpers (for imperative streaming only)
-  // ---------------------------------------------------------------------------
-
-  function toToolDisplayName(name: unknown): string {
-    const raw = String(name || 'tool').trim();
-    if (!raw) return 'Tool';
-    return raw
-      .split(/[_\-\s]+/)
-      .filter(Boolean)
-      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-      .join(' ');
-  }
-
-  function compactInlineText(value: unknown, maxLength = 72): string {
-    const normalized = String(value || '')
-      .replace(/\s+/g, ' ')
-      .trim();
-    if (!normalized) return '';
-    if (normalized.length <= maxLength) return normalized;
-    return `${normalized.slice(0, maxLength - 1)}...`;
-  }
-
-  function extractPrimaryToolInput(name: unknown, input: unknown): string {
-    if (!input || typeof input !== 'object') return '';
-    const rawName = String(name || '').trim().toLowerCase();
-    const payload = input as Record<string, unknown>;
-    const preferredKeys =
-      rawName === 'bash'
-        ? ['command', 'cmd', 'script', 'args']
-        : rawName === 'read_file'
-          ? ['path', 'filePath', 'file', 'target']
-          : rawName === 'write_file'
-            ? ['path', 'filePath', 'file', 'target']
-            : rawName === 'list_directory'
-              ? ['path', 'directory', 'dir']
-              : rawName === 'search_files'
-                ? ['query', 'pattern', 'path']
-                : rawName === 'grep'
-                  ? ['pattern', 'query', 'path']
-                  : ['command', 'cmd', 'path', 'query', 'pattern', 'target', 'file'];
-
-    for (const key of preferredKeys) {
-      const value = payload[key];
-      if (typeof value === 'string' && value.trim().length > 0) return compactInlineText(value);
-      if (Array.isArray(value) && value.length > 0) {
-        const rendered = compactInlineText(value.map(String).join(' '));
-        if (rendered.length > 0) return rendered;
-      }
-      if (
-        (typeof value === 'number' || typeof value === 'boolean') &&
-        Number.isFinite(Number(value))
-      ) {
-        return String(value);
-      }
-    }
-
-    for (const value of Object.values(payload)) {
-      if (typeof value === 'string' && value.trim().length > 0) return compactInlineText(value);
-    }
-    return '';
-  }
-
-  function formatToolExecutionLabel(name: unknown, input: unknown): string {
-    const toolName = toToolDisplayName(name);
-    const summary = extractPrimaryToolInput(name, input);
-    return summary.length > 0 ? `${toolName} (${summary})` : toolName;
-  }
-
-  function renderToolExecutionRow({
-    name,
-    input = undefined,
-    status = 'success',
-    output = '',
-    showOutput = false,
-    isError = false,
-    toolId = '',
-  }: {
-    name: unknown;
-    input?: unknown;
-    status?: string;
-    output?: string;
-    showOutput?: boolean;
-    isError?: boolean;
-    toolId?: string;
-  }): string {
-    const safeStatus =
-      status === 'running' || status === 'error' ? status : 'success';
-    const statusLabel =
-      safeStatus === 'running' ? 'Running' : safeStatus === 'error' ? 'Error' : 'Done';
-    const label = formatToolExecutionLabel(name, input);
-    const outputClass = isError ? 'tool-inline-output error' : 'tool-inline-output';
-    const hasOutput = showOutput && String(output).trim().length > 0;
-    const outputHtml = hasOutput
-      ? `<div class="${outputClass}">${escapeHtml(String(output))}</div>`
-      : `<div class="${outputClass}" style="display:none"></div>`;
-
-    return `
-      <div class="tool-inline" data-tool-id="${escapeHtml(String(toolId || ''))}" data-tool-name="${escapeHtml(String(name || 'tool'))}">
-        <div class="tool-inline-row">
-          <span class="tool-inline-dot ${safeStatus}"></span>
-          <span class="tool-inline-label">${escapeHtml(label)}</span>
-          <span class="tool-inline-status ${safeStatus}">${statusLabel}</span>
-        </div>
-        ${outputHtml}
-      </div>
-    `;
   }
 
   // ---------------------------------------------------------------------------
@@ -718,7 +483,7 @@ export function initChatModule({
   }
 
   // ---------------------------------------------------------------------------
-  // Scroll helper (imperative — used by streaming code)
+  // Scroll helper
   // ---------------------------------------------------------------------------
 
   function scrollChatToBottom(): void {
@@ -730,6 +495,38 @@ export function initChatModule({
     if (distanceFromBottom < threshold) {
       container.scrollTop = container.scrollHeight;
     }
+  }
+
+  function queueScrollChatToBottom(): void {
+    requestAnimationFrame(() => {
+      scrollChatToBottom();
+    });
+  }
+
+  function cloneStreamingMessage(message: ChatMessage): ChatMessage {
+    return {
+      ...message,
+      meta: message.meta ? { ...message.meta } : undefined,
+      content: Array.isArray(message.content)
+        ? (message.content as ContentBlock[]).map(cloneContentBlock)
+        : message.content,
+    };
+  }
+
+  function setStreamingMessage(message: ChatMessage | null): void {
+    uiState.chatStreamingMessage = message ? cloneStreamingMessage(message) : null;
+    notifyUiStateChanged();
+    if (message) queueScrollChatToBottom();
+  }
+
+  function updateStreamingMessage(mutator: (message: ChatMessage) => void): void {
+    const current = uiState.chatStreamingMessage;
+    if (!current) return;
+    const next = cloneStreamingMessage(current);
+    mutator(next);
+    uiState.chatStreamingMessage = next;
+    notifyUiStateChanged();
+    queueScrollChatToBottom();
   }
 
   // ---------------------------------------------------------------------------
@@ -1055,6 +852,7 @@ export function initChatModule({
     if (!bridge || !bridge.chatAiGetConversation) return;
 
     uiState.chatActiveConversation = convId;
+    setStreamingMessage(null);
 
     try {
       const result = await bridge.chatAiGetConversation(convId);
@@ -1091,6 +889,7 @@ export function initChatModule({
   function startNewChat(): void {
     uiState.chatActiveConversation = null;
     uiState.chatMessages = [];
+    setStreamingMessage(null);
     activeConversation = null;
     uiState.chatDeleteVisible = false;
     uiState.chatInputDisabled = false;
@@ -1099,6 +898,24 @@ export function initChatModule({
     uiState.chatError = null;
     updateThreadMeta(null);
     notifyUiStateChanged();
+  }
+
+  function materializeStreamingMessage(): ChatMessage | null {
+    const current = uiState.chatStreamingMessage;
+    return current ? cloneStreamingMessage(current) : null;
+  }
+
+  function commitAssistantMessage(message: ChatMessage): void {
+    const assistantMessage = {
+      ...message,
+      createdAt: message?.createdAt || Date.now(),
+    };
+    uiState.chatMessages = [...uiState.chatMessages, assistantMessage];
+    if (activeConversation) {
+      activeConversation.messages = uiState.chatMessages as ChatMessage[];
+      activeConversation.updatedAt = Number(assistantMessage.createdAt) || Date.now();
+      updateThreadMeta(activeConversation);
+    }
   }
 
   async function createNewConversation(): Promise<void> {
@@ -1325,18 +1142,20 @@ export function initChatModule({
     if (bridge.onChatAiDone) {
       bridge.onChatAiDone((data) => {
         if (data.conversationId === uiState.chatActiveConversation) {
-          const assistantMessage = {
-            ...data.message,
-            createdAt: data.message?.createdAt || Date.now(),
-          };
-          uiState.chatMessages.push(assistantMessage);
-          if (activeConversation) {
-            activeConversation.messages = uiState.chatMessages as ChatMessage[];
-            activeConversation.updatedAt = Date.now();
-            updateThreadMeta(activeConversation);
+          const isStreamingCommit = Boolean(uiState.chatStreamingMessage);
+          if (isStreamingCommit) {
+            cancelThinkingRaf();
+            flushStreamingText();
+            setStreamingMessage(null);
+            streamingTextTarget = '';
+            streamingTextVisible = '';
+            streamingThinkingBuffer = '';
           }
-          setChatSending(false);
+          commitAssistantMessage(data.message as ChatMessage);
           uiState.chatError = null;
+          if (!isStreamingCommit) {
+            setChatSending(false);
+          }
           notifyUiStateChanged();
         }
         void refreshChatConversations();
@@ -1367,10 +1186,8 @@ export function initChatModule({
       });
     }
 
-    // --- Streaming callbacks (imperative DOM — escape hatch) ---
+    // --- Streaming callbacks ---
 
-    let streamingBubble: HTMLElement | null = null;
-    let streamingContentEl: HTMLElement | null = null;
     let streamingTextTarget = '';
     let streamingTextVisible = '';
     let streamingThinkingBuffer = '';
@@ -1386,11 +1203,26 @@ export function initChatModule({
     const STREAM_TEXT_TARGET_LAG_MS = 180;
     const STREAM_TEXT_RENDER_INTERVAL_MS = 24;
 
-    function renderStreamingText(): void {
-      if (!streamingContentEl) return;
-      streamingContentEl.innerHTML = renderMarkdown(streamingTextVisible);
-      streamingContentEl.classList.add('streaming-cursor');
-      scrollChatToBottom();
+    function getStreamingBlocks(message: ChatMessage | null = uiState.chatStreamingMessage): ContentBlock[] {
+      return message && Array.isArray(message.content)
+        ? (message.content as ContentBlock[])
+        : [];
+    }
+
+    function getStreamingBlockId(blockType: string, index: number | string): string {
+      return `${blockType}-${String(index)}`;
+    }
+
+    function createStreamingRenderKey(blockType: string, index: number | string): string {
+      return `stream-${blockType}-${String(index)}`;
+    }
+
+    function findLastStreamingBlockByType(blocks: ContentBlock[], type: string): ContentBlock | undefined {
+      for (let i = blocks.length - 1; i >= 0; i -= 1) {
+        const block = blocks[i];
+        if (block?.type === type) return block;
+      }
+      return undefined;
     }
 
     function stopStreamTextAnimation(): void {
@@ -1414,7 +1246,7 @@ export function initChatModule({
     }
 
     function streamTextStep(timestamp: number): void {
-      if (!streamingContentEl) {
+      if (!uiState.chatStreamingMessage) {
         stopStreamTextAnimation();
         return;
       }
@@ -1457,7 +1289,7 @@ export function initChatModule({
         changed &&
         (remaining === 0 || elapsedSinceRender >= STREAM_TEXT_RENDER_INTERVAL_MS);
       if (shouldRender) {
-        renderStreamingText();
+        applyStreamingText(renderMarkdownToHtml(streamingTextVisible));
         streamTextLastRenderAt = timestamp;
       }
 
@@ -1469,7 +1301,7 @@ export function initChatModule({
       }
 
       if (changed && !shouldRender) {
-        renderStreamingText();
+        applyStreamingText(renderMarkdownToHtml(streamingTextVisible));
       }
       stopStreamTextAnimation();
     }
@@ -1489,7 +1321,14 @@ export function initChatModule({
       stopStreamTextAnimation();
       if (streamingTextVisible !== streamingTextTarget) {
         streamingTextVisible = streamingTextTarget;
-        renderStreamingText();
+        updateStreamingMessage((message) => {
+          const blocks = message.content as ContentBlock[];
+          const textBlock = findLastStreamingBlockByType(blocks, 'text');
+          if (textBlock) {
+            textBlock.text = streamingTextVisible;
+            textBlock.streaming = true;
+          }
+        });
       }
     }
 
@@ -1497,17 +1336,21 @@ export function initChatModule({
       streamThinkingRafPending = false;
       streamThinkingRafId = null;
 
-      if (streamThinkingDirtyIndex !== null && streamingBubble) {
-        const thinkBody = streamingBubble.querySelector(
-          `#stream-think-${streamThinkingDirtyIndex} .thinking-block-body`,
-        );
-        if (thinkBody) {
-          thinkBody.textContent = streamingThinkingBuffer;
-        }
+      if (streamThinkingDirtyIndex !== null) {
+        updateStreamingMessage((message) => {
+          const blocks = message.content as ContentBlock[];
+          const thinkingBlock = blocks.find(
+            (block) =>
+              block?.type === 'thinking' &&
+              block.id === getStreamingBlockId('thinking', streamThinkingDirtyIndex as number),
+          );
+          if (thinkingBlock && thinkingBlock.type === 'thinking') {
+            thinkingBlock.thinking = streamingThinkingBuffer;
+            thinkingBlock.streaming = true;
+          }
+        });
         streamThinkingDirtyIndex = null;
       }
-
-      scrollChatToBottom();
     }
 
     function scheduleThinkingRender(): void {
@@ -1525,11 +1368,6 @@ export function initChatModule({
       streamThinkingDirtyIndex = null;
     }
 
-    function clearStreamContainer(): void {
-      const container = document.querySelector<HTMLElement>('[data-chat-stream]');
-      if (container) container.innerHTML = '';
-    }
-
     if (bridge.onChatAiStreamStart) {
       bridge.onChatAiStreamStart((data) => {
         if (data.conversationId !== uiState.chatActiveConversation) return;
@@ -1540,22 +1378,17 @@ export function initChatModule({
         cancelThinkingRaf();
         resetStreamingText();
         streamingThinkingBuffer = '';
-        streamingContentEl = null;
         activeStreamTurn = Number(data.turn) + 1;
         activeStreamStartedAt = Date.now();
         updateStreamingIndicator();
-
-        const streamContainer = document.querySelector<HTMLElement>(
-          '[data-chat-stream]',
-        );
-        if (!streamContainer) return;
-
-        // Don't clear streamContainer.innerHTML — previous turn's streaming
-        // bubbles stay visible until openConversation() loads them into React.
-        streamingBubble = document.createElement('div');
-        streamingBubble.className = `${chatBubbleClasses.bubble} ${chatBubbleClasses.other}`;
-        streamContainer.appendChild(streamingBubble);
-        scrollChatToBottom();
+        if (!uiState.chatStreamingMessage) {
+          setStreamingMessage({
+            role: 'assistant',
+            content: [],
+            createdAt: Date.now(),
+            meta: {},
+          });
+        }
       });
     }
 
@@ -1563,7 +1396,7 @@ export function initChatModule({
       bridge.onChatAiStreamBlockStart((data) => {
         if (
           data.conversationId !== uiState.chatActiveConversation ||
-          !streamingBubble
+          !uiState.chatStreamingMessage
         )
           return;
 
@@ -1574,36 +1407,45 @@ export function initChatModule({
 
         if (data.blockType === 'text') {
           resetStreamingText();
-          streamingContentEl = document.createElement('div');
-          streamingContentEl.className = 'chat-bubble-content streaming-cursor';
-          streamingBubble.appendChild(streamingContentEl);
-          scrollChatToBottom();
+          updateStreamingMessage((message) => {
+            const blocks = getStreamingBlocks(message);
+            blocks.push({
+              type: 'text',
+              renderKey: createStreamingRenderKey('text', data.index),
+              text: '',
+              streaming: true,
+            });
+            message.content = blocks;
+          });
         } else if (data.blockType === 'thinking') {
           streamingThinkingBuffer = '';
           const thinkingLabel = getMyrmecochoryLabel(
             (activeStreamTurn || 0) + Number(data.index || 0),
           );
-          const thinkDiv = document.createElement('div');
-          thinkDiv.className = 'thinking-block streaming';
-          thinkDiv.id = `stream-think-${data.index}`;
-          thinkDiv.innerHTML = `<div class="thinking-block-header" onclick="this.parentElement.classList.toggle('open')"><span class="thinking-block-triangle">▶</span><span>${escapeHtml(thinkingLabel)}</span><span class="thinking-dots"><span></span><span></span><span></span></span></div><div class="thinking-block-body"></div>`;
-          streamingBubble.appendChild(thinkDiv);
-          scrollChatToBottom();
+          updateStreamingMessage((message) => {
+            const blocks = getStreamingBlocks(message);
+            blocks.push({
+              type: 'thinking',
+              renderKey: createStreamingRenderKey('thinking', data.index),
+              id: getStreamingBlockId('thinking', data.index),
+              name: thinkingLabel,
+              thinking: '',
+              streaming: true,
+            });
+            message.content = blocks;
+          });
         } else if (data.blockType === 'tool_use') {
-          streamingBubble.insertAdjacentHTML(
-            'beforeend',
-            renderToolExecutionRow({
-              name: data.toolName,
+          updateStreamingMessage((message) => {
+            const blocks = getStreamingBlocks(message);
+            blocks.push({
+              type: 'tool_use',
+              renderKey: createStreamingRenderKey('tool', data.toolId || data.index),
+              id: String(data.toolId || getStreamingBlockId('tool', data.index)),
+              name: String(data.toolName || 'tool'),
               status: 'running',
-              toolId: data.toolId,
-            }),
-          );
-          const toolDiv = streamingBubble.lastElementChild as HTMLElement | null;
-          if (toolDiv) {
-            toolDiv.id = `stream-tool-${data.toolId}`;
-            toolDiv.dataset.toolName = String(data.toolName || 'tool');
-          }
-          scrollChatToBottom();
+            });
+            message.content = blocks;
+          });
         }
       });
     }
@@ -1612,7 +1454,7 @@ export function initChatModule({
       bridge.onChatAiStreamDelta((data) => {
         if (
           data.conversationId !== uiState.chatActiveConversation ||
-          !streamingBubble
+          !uiState.chatStreamingMessage
         )
           return;
 
@@ -1631,39 +1473,37 @@ export function initChatModule({
       bridge.onChatAiStreamBlockStop((data) => {
         if (
           data.conversationId !== uiState.chatActiveConversation ||
-          !streamingBubble
+          !uiState.chatStreamingMessage
         )
           return;
 
         if (data.blockType === 'text') {
           flushStreamingText();
-          if (streamingContentEl) {
-            streamingContentEl.classList.remove('streaming-cursor');
-            streamingContentEl = null;
-          }
+          updateStreamingMessage((message) => {
+            const blocks = message.content as ContentBlock[];
+            const textBlock = findLastStreamingBlockByType(blocks, 'text');
+            if (textBlock) textBlock.streaming = false;
+          });
         } else if (data.blockType === 'thinking') {
-          const thinkBlock = streamingBubble.querySelector(
-            `#stream-think-${data.index}`,
-          );
-          if (thinkBlock) {
-            thinkBlock.classList.remove('streaming');
-            const dots = thinkBlock.querySelector('.thinking-dots');
-            if (dots) dots.remove();
-          }
+          updateStreamingMessage((message) => {
+            const blocks = message.content as ContentBlock[];
+            const thinkingBlock = blocks.find(
+              (block) => block.type === 'thinking' && block.id === getStreamingBlockId('thinking', data.index),
+            );
+            if (thinkingBlock && thinkingBlock.type === 'thinking') {
+              thinkingBlock.streaming = false;
+            }
+          });
         } else if (data.blockType === 'tool_use' && data.input) {
-          const toolBlock = streamingBubble.querySelector(
-            `#stream-tool-${data.toolId}`,
-          );
-          if (toolBlock) {
-            const labelEl = toolBlock.querySelector('.tool-inline-label');
-            const toolName =
-              (toolBlock as HTMLElement).dataset.toolName || 'tool';
-            if (labelEl)
-              labelEl.textContent = formatToolExecutionLabel(
-                toolName,
-                data.input,
-              );
-          }
+          updateStreamingMessage((message) => {
+            const blocks = message.content as ContentBlock[];
+            const toolBlock = blocks.find(
+              (block) => block.type === 'tool_use' && block.id === data.toolId,
+            );
+            if (toolBlock) {
+              toolBlock.input = data.input;
+            }
+          });
         }
       });
     }
@@ -1672,34 +1512,47 @@ export function initChatModule({
       bridge.onChatAiToolExecuting((data) => {
         if (
           data.conversationId !== uiState.chatActiveConversation ||
-          !streamingBubble
+          !uiState.chatStreamingMessage
         )
           return;
-
-        const toolBlock = streamingBubble.querySelector(
-          `#stream-tool-${data.toolUseId}`,
-        );
-        if (toolBlock) {
-          (toolBlock as HTMLElement).dataset.toolName = String(
-            data.name || (toolBlock as HTMLElement).dataset.toolName || 'tool',
+        updateStreamingMessage((message) => {
+          const blocks = message.content as ContentBlock[];
+          const toolBlock = blocks.find(
+            (block) => block.type === 'tool_use' && block.id === data.toolUseId,
           );
-          const dotEl = toolBlock.querySelector('.tool-inline-dot');
-          if (dotEl) dotEl.className = 'tool-inline-dot running';
-          const statusEl = toolBlock.querySelector('.tool-inline-status');
-          if (statusEl) {
-            statusEl.className = 'tool-inline-status running';
-            statusEl.textContent = 'Running';
+          if (toolBlock) {
+            toolBlock.name = String(data.name || toolBlock.name || 'tool');
+            toolBlock.input = data.input;
+            toolBlock.status = 'running';
           }
-          const labelEl = toolBlock.querySelector('.tool-inline-label');
-          if (labelEl) {
-            labelEl.textContent = formatToolExecutionLabel(
-              data.name ||
-                (toolBlock as HTMLElement).dataset.toolName ||
-                'tool',
-              data.input,
-            );
+        });
+      });
+    }
+
+    if (bridge.onChatAiToolUpdate) {
+      bridge.onChatAiToolUpdate((data) => {
+        if (
+          data.conversationId !== uiState.chatActiveConversation ||
+          !uiState.chatStreamingMessage
+        )
+          return;
+        updateStreamingMessage((message) => {
+          const blocks = message.content as ContentBlock[];
+          const toolBlock = blocks.find(
+            (block) => block.type === 'tool_use' && block.id === data.toolUseId,
+          );
+          if (toolBlock) {
+            toolBlock.name = String(data.name || toolBlock.name || 'tool');
+            toolBlock.input = data.input;
+            toolBlock.content = data.output;
+            if (data.details) {
+              toolBlock.details = data.details;
+            }
+            toolBlock.status = 'running';
+          } else {
+            appendSystemLog(`[chat] tool-update: block not found for toolUseId=${data.toolUseId}`);
           }
-        }
+        });
       });
     }
 
@@ -1707,36 +1560,23 @@ export function initChatModule({
       bridge.onChatAiToolResult((data) => {
         if (
           data.conversationId !== uiState.chatActiveConversation ||
-          !streamingBubble
+          !uiState.chatStreamingMessage
         )
           return;
-
-        const toolBlock = streamingBubble.querySelector(
-          `#stream-tool-${data.toolUseId}`,
-        );
-        if (toolBlock) {
-          const dotEl = toolBlock.querySelector('.tool-inline-dot');
-          if (dotEl)
-            dotEl.className = `tool-inline-dot ${data.isError ? 'error' : 'success'}`;
-          const statusEl = toolBlock.querySelector('.tool-inline-status');
-          if (statusEl) {
-            statusEl.className = `tool-inline-status ${data.isError ? 'error' : 'success'}`;
-            statusEl.textContent = data.isError ? 'Error' : 'Done';
+        updateStreamingMessage((message) => {
+          const blocks = message.content as ContentBlock[];
+          const toolBlock = blocks.find(
+            (block) => block.type === 'tool_use' && block.id === data.toolUseId,
+          );
+          if (toolBlock) {
+            toolBlock.status = data.isError ? 'error' : 'success';
+            toolBlock.content = data.output;
+            toolBlock.is_error = data.isError;
+            if (data.details) {
+              toolBlock.details = data.details;
+            }
           }
-          const outputEl = toolBlock.querySelector(
-            '.tool-inline-output',
-          ) as HTMLElement | null;
-          if (outputEl && data.isError) {
-            const truncated =
-              data.output.length > 2000
-                ? data.output.slice(0, 2000) + '\n... (truncated)'
-                : data.output;
-            outputEl.textContent = truncated;
-            outputEl.style.display = '';
-            outputEl.className = `tool-inline-output${data.isError ? ' error' : ''}`;
-          }
-        }
-        scrollChatToBottom();
+        });
       });
     }
 
@@ -1746,15 +1586,16 @@ export function initChatModule({
 
         cancelThinkingRaf();
         flushStreamingText();
-        if (streamingContentEl) {
-          streamingContentEl.classList.remove('streaming-cursor');
-        }
 
         const elapsedMs =
           activeStreamStartedAt > 0 ? Date.now() - activeStreamStartedAt : 0;
 
-        streamingBubble = null;
-        streamingContentEl = null;
+        const finalizedStreamingMessage = materializeStreamingMessage();
+        if (finalizedStreamingMessage) {
+          commitAssistantMessage(finalizedStreamingMessage);
+        }
+
+        setStreamingMessage(null);
         streamingTextTarget = '';
         streamingTextVisible = '';
         streamingThinkingBuffer = '';
@@ -1768,20 +1609,7 @@ export function initChatModule({
           );
         }
 
-        void openConversation(data.conversationId).then(() => {
-          // Remove old streaming bubbles, but keep the active one if a new
-          // turn has already started streaming (prevents the flash of empty
-          // content between DOM clear and React state update).
-          const sc = document.querySelector<HTMLElement>('[data-chat-stream]');
-          if (sc) {
-            const keep = streamingBubble; // active bubble from new turn, or null
-            while (sc.firstChild) {
-              if (sc.firstChild === keep) break;
-              sc.removeChild(sc.firstChild);
-            }
-          }
-          void refreshChatConversations();
-        });
+        void refreshChatConversations();
       });
     }
 
@@ -1791,14 +1619,12 @@ export function initChatModule({
 
         cancelThinkingRaf();
         stopStreamTextAnimation();
-        streamingBubble = null;
+        uiState.chatStreamingMessage = null;
+        notifyUiStateChanged();
         streamingTextTarget = '';
         streamingTextVisible = '';
         streamingThinkingBuffer = '';
-        streamingContentEl = null;
         setChatSending(false);
-
-        clearStreamContainer();
 
         if (data.error !== 'Request aborted') {
           showChatError(data.error);
