@@ -265,7 +265,7 @@
       background: var(--bg-surface);
       display: flex;
       align-items: center;
-      gap: 6px;
+      gap: 7px;
       padding: 7px 10px;
       font-size: 12px;
       font-weight: 600;
@@ -287,6 +287,7 @@
       transition: transform 0.2s ease;
       transform: rotate(90deg);
       display: inline-block;
+      flex-shrink: 0;
     }
 
     .tool-group-header-btn.collapsed .tool-group-chevron {
@@ -295,6 +296,27 @@
 
     .tool-group-header-btn.collapsed {
       border-bottom-color: transparent;
+    }
+
+    .tool-group-label {
+      flex-shrink: 0;
+    }
+
+    .tool-group-spacer {
+      flex: 1;
+    }
+
+    .tool-group-status {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 7px;
+      border-radius: 20px;
+      text-transform: none;
+      letter-spacing: 0;
+
+      &.running { color: var(--accent-blue);  background: color-mix(in srgb, var(--accent-blue) 14%, transparent); }
+      &.success { color: var(--accent-green); background: color-mix(in srgb, var(--accent-green) 14%, transparent); }
+      &.error   { color: var(--danger);       background: color-mix(in srgb, var(--danger) 14%, transparent); }
     }
 
     /* Collapse animation via CSS grid rows */
@@ -350,10 +372,15 @@
     }
 
     .tool-inline-open {
-      margin-left: auto;
+      flex-shrink: 0;
       font-size: 11px;
       opacity: 0.4;
       transition: opacity 0.1s;
+
+      &.hidden {
+        opacity: 0;
+        pointer-events: none;
+      }
     }
 
     .tool-inline-row.expandable:hover .tool-inline-open {
@@ -381,10 +408,11 @@
     }
 
     .tool-inline-label {
-      opacity: 0.3;
+      flex: 1;
+      min-width: 0;
       font-family: var(--font-sans);
-      font-size: 14px;
-      font-weight: 600;
+      font-size: 13px;
+      font-weight: 500;
       color: var(--text-primary);
       white-space: nowrap;
       overflow: hidden;
@@ -395,8 +423,8 @@
     }
 
     .tool-inline-status {
-      margin-left: auto;
-      font-size: 14px;
+      flex-shrink: 0;
+      font-size: 12px;
       font-weight: 600;
       letter-spacing: 0;
       text-transform: none;
