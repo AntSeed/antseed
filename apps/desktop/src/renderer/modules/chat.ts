@@ -1143,6 +1143,11 @@ export function initChatModule({
       bridge.onChatAiDone((data) => {
         if (data.conversationId === uiState.chatActiveConversation) {
           const isStreamingCommit = Boolean(uiState.chatStreamingMessage);
+          // Capture the streaming message BEFORE clearing — it has tool outputs
+          // patched in via onChatAiToolUpdate. data.message from the main process
+          // only has bare tool_use blocks without output, so using it directly would
+          // make all tool rows non-clickable (hasDetail=false) until next refresh.
+          const finalizedStreamingMessage = materializeStreamingMessage();
           if (isStreamingCommit) {
             cancelThinkingRaf();
             flushStreamingText();
@@ -1151,7 +1156,15 @@ export function initChatModule({
             streamingTextVisible = '';
             streamingThinkingBuffer = '';
           }
-          commitAssistantMessage(data.message as ChatMessage);
+          const incomingMessage = data.message as ChatMessage;
+          const messageToCommit = finalizedStreamingMessage
+            ? {
+                ...finalizedStreamingMessage,
+                meta: { ...(finalizedStreamingMessage.meta ?? {}), ...(incomingMessage.meta ?? {}) },
+                createdAt: finalizedStreamingMessage.createdAt || incomingMessage.createdAt,
+              }
+            : incomingMessage;
+          commitAssistantMessage(messageToCommit);
           uiState.chatError = null;
           if (!isStreamingCommit) {
             setChatSending(false);

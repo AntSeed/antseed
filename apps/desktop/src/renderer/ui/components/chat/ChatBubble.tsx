@@ -214,6 +214,9 @@ function ToolGroupView({ blocks }: { blocks: ContentBlock[] }) {
   );
 
   const anyRunning = items.some((item) => item.status === 'running');
+  const anyError = !anyRunning && items.some((item) => item.status === 'error');
+  const groupStatus: 'running' | 'error' | 'success' = anyRunning ? 'running' : anyError ? 'error' : 'success';
+  const groupStatusLabel = anyRunning ? 'Running' : anyError ? 'Error' : 'Done';
   const label = `${items.length} tool${items.length === 1 ? '' : 's'} used`;
 
   return (
@@ -225,12 +228,14 @@ function ToolGroupView({ blocks }: { blocks: ContentBlock[] }) {
           onClick={() => setCollapsed((v) => !v)}
         >
           <span className="tool-group-chevron">›</span>
-          <span>{label}</span>
+          <span className="tool-group-label">{label}</span>
           {anyRunning ? (
             <span className="thinking-dots" aria-hidden="true">
               <span /><span /><span />
             </span>
           ) : null}
+          <span className="tool-group-spacer" />
+          <span className={`tool-group-status ${groupStatus}`}>{groupStatusLabel}</span>
         </button>
         <div className={`tool-group-list-wrap${collapsed ? ' collapsed' : ''}`}>
           <div className="tool-group-list-inner">
@@ -259,7 +264,7 @@ function ToolGroupView({ blocks }: { blocks: ContentBlock[] }) {
                       <span className={`tool-inline-dot ${item.status}`} />
                       <span className="tool-inline-label">{item.label}</span>
                       <span className={`tool-inline-status ${item.status}`}>{statusLabel}</span>
-                      {hasDetail ? <span className="tool-inline-open">↗</span> : null}
+                      <span className={`tool-inline-open${hasDetail ? '' : ' hidden'}`}>↗</span>
                     </button>
                   </div>
                 );
@@ -283,7 +288,7 @@ function renderAssistantBlocks(blocks: ContentBlock[], streaming = false): React
     if (toolGroup.length === 0) return;
     nodes.push(
       <ToolGroupView
-        key={`tool-group-${toolGroup.map((block) => String(block.id || '')).join('-')}`}
+        key={`tool-group-${String(toolGroup[0]?.id || toolGroup[0]?.tool_use_id || nodes.length)}`}
         blocks={toolGroup}
       />,
     );
@@ -310,13 +315,7 @@ function renderBlock(block: ContentBlock, index: number, streaming = false): Rea
     if (block.streaming) {
       return <StreamingText key={blockKey} initialText={String(block.text || '')} />;
     }
-    return (
-      <MarkdownContent
-        key={blockKey}
-        text={String(block.text || '')}
-        className="chat-bubble-content"
-      />
-    );
+    return <MarkdownContent key={blockKey} text={String(block.text || '')} />;
   }
 
   if (block.type === 'thinking') {

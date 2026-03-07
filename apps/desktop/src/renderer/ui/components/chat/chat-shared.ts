@@ -1,7 +1,187 @@
-import { marked } from 'marked';
+import { Lexer } from 'marked';
+
+type LexerToken = {
+  type: string;
+  raw?: string;
+  text?: string;
+  lang?: string;
+  tokens?: LexerToken[];
+  items?: LexerToken[];
+  ordered?: boolean;
+  depth?: number;
+  href?: string;
+  title?: string | null;
+  header?: LexerToken[];
+  rows?: LexerToken[][];
+  align?: Array<'center' | 'left' | 'right' | null>;
+  task?: boolean;
+  checked?: boolean;
+};
+
+function isSafeHref(href: string): boolean {
+  const trimmed = href.trim();
+  if (!trimmed) return false;
+  try {
+    const parsed = new URL(trimmed, 'https://antseed.invalid');
+    const protocol = parsed.protocol.toLowerCase();
+    return protocol === 'http:' || protocol === 'https:' || protocol === 'mailto:';
+  } catch {
+    return false;
+  }
+}
+
+function esc(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function flatInline(tokens: LexerToken[] | undefined): string {
+  if (!tokens?.length) return '';
+  let out = '';
+  for (const t of tokens) {
+    if (t.type === 'br') { out += '<br>'; continue; }
+    if (t.tokens?.length) { out += flatInline(t.tokens); continue; }
+    out += String(t.text ?? t.raw ?? '');
+  }
+  return out;
+}
+
+function inlineHtml(tokens: LexerToken[] | undefined): string {
+  if (!tokens?.length) return '';
+  let out = '';
+  for (const t of tokens) {
+    switch (t.type) {
+      case 'text':
+        out += t.tokens?.length ? inlineHtml(t.tokens) : esc(String(t.text ?? ''));
+        break;
+      case 'escape':
+        out += esc(String(t.text ?? ''));
+        break;
+      case 'strong':
+        out += `<strong>${inlineHtml(t.tokens)}</strong>`;
+        break;
+      case 'em':
+        out += `<em>${inlineHtml(t.tokens)}</em>`;
+        break;
+      case 'del':
+        out += `<del>${inlineHtml(t.tokens)}</del>`;
+        break;
+      case 'codespan':
+        out += `<code class="chat-inline-code">${esc(String(t.text ?? ''))}</code>`;
+        break;
+      case 'br':
+        out += '<br>';
+        break;
+      case 'link': {
+        const href = String(t.href ?? '');
+        const inner = inlineHtml(t.tokens) || esc(href);
+        if (!isSafeHref(href)) {
+          out += `<span class="chat-inline-link-invalid">${inner}</span>`;
+        } else {
+          const titleAttr = t.title ? ` title="${esc(t.title)}"` : '';
+          out += `<a href="${esc(href)}" style="color:var(--accent-blue);text-decoration:underline" target="_blank" rel="noopener noreferrer"${titleAttr}>${inner}</a>`;
+        }
+        break;
+      }
+      case 'image': {
+        const href = String(t.href ?? '');
+        const alt = flatInline(t.tokens) || esc(String(t.text ?? '')) || 'Image';
+        if (!isSafeHref(href)) {
+          out += `<span class="chat-inline-link-invalid">${alt}</span>`;
+        } else {
+          out += `<img src="${esc(href)}" alt="${alt}" class="chat-inline-image">`;
+        }
+        break;
+      }
+      default:
+        out += t.tokens?.length ? inlineHtml(t.tokens) : esc(String(t.text ?? t.raw ?? ''));
+    }
+  }
+  return out;
+}
+
+function listItemHtml(token: LexerToken): string {
+  if (!token.tokens?.length) return esc(String(token.text ?? token.raw ?? ''));
+  const hasBlock = token.tokens.some(
+    (t) => !['paragraph', 'space', 'text', 'strong', 'em', 'codespan', 'link', 'del', 'br'].includes(t.type),
+  );
+  return hasBlock ? blocksHtml(token.tokens) : inlineHtml(token.tokens);
+}
+
+function blocksHtml(tokens: LexerToken[]): string {
+  let out = '';
+  for (const [i, t] of tokens.entries()) {
+    const key = `${i}`;
+    switch (t.type) {
+      case 'space':
+        break;
+      case 'paragraph':
+        out += `<p>${inlineHtml(t.tokens)}</p>`;
+        break;
+      case 'text':
+        out += t.tokens?.length ? `<p>${inlineHtml(t.tokens)}</p>` : `<p>${esc(String(t.text ?? ''))}</p>`;
+        break;
+      case 'heading': {
+        const depth = Math.min(Math.max(Number(t.depth) || 1, 1), 6);
+        out += `<h${depth}>${inlineHtml(t.tokens)}</h${depth}>`;
+        break;
+      }
+      case 'code': {
+        const lang = (t.lang ?? '').trim() || 'code';
+        out += `<div class="chat-code-container"><div class="chat-code-header"><span class="code-lang">${esc(lang)}</span></div><pre><code>${esc(String(t.text ?? ''))}</code></pre></div>`;
+        break;
+      }
+      case 'blockquote':
+        out += `<blockquote>${blocksHtml(t.tokens ?? [])}</blockquote>`;
+        break;
+      case 'hr':
+        out += '<hr>';
+        break;
+      case 'list': {
+        const tag = t.ordered ? 'ol' : 'ul';
+        const items = (t.items ?? []).map((item) => {
+          if (item.task) {
+            const checked = item.checked ? ' checked' : '';
+            return `<li class="chat-md-li"><label class="chat-task-item"><input type="checkbox"${checked} disabled>${listItemHtml(item)}</label></li>`;
+          }
+          return `<li class="chat-md-li">${listItemHtml(item)}</li>`;
+        }).join('');
+        out += `<${tag} class="chat-md-list">${items}</${tag}>`;
+        break;
+      }
+      case 'table': {
+        const headerCells = (t.header ?? []).map((cell, ci) => {
+          const align = t.align?.[ci];
+          const alignAttr = align ? ` align="${align}"` : '';
+          const content = cell.tokens?.length ? inlineHtml(cell.tokens) : esc(String(cell.text ?? cell.raw ?? ''));
+          return `<th${alignAttr}>${content}</th>`;
+        }).join('');
+        const bodyRows = (t.rows ?? []).map((row) => {
+          const cells = row.map((cell, ci) => {
+            const align = t.align?.[ci];
+            const alignAttr = align ? ` align="${align}"` : '';
+            const content = cell.tokens?.length ? inlineHtml(cell.tokens) : esc(String(cell.text ?? cell.raw ?? ''));
+            return `<td${alignAttr}>${content}</td>`;
+          }).join('');
+          return `<tr>${cells}</tr>`;
+        }).join('');
+        out += `<div class="chat-table-wrap"><table class="chat-md-table"><thead><tr>${headerCells}</tr></thead><tbody>${bodyRows}</tbody></table></div>`;
+        break;
+      }
+      default:
+        if (t.tokens?.length) {
+          out += `<p>${inlineHtml(t.tokens)}</p>`;
+        } else {
+          out += `<p>${esc(String(t.text ?? t.raw ?? ''))}</p>`;
+        }
+    }
+    void key; // suppress unused variable warning
+  }
+  return out;
+}
 
 export function renderMarkdownToHtml(text: string): string {
-  return String(marked.parse(text, { gfm: true, breaks: true }));
+  const tokens = Lexer.lex(text, { gfm: true, breaks: true }) as LexerToken[];
+  return blocksHtml(tokens);
 }
 
 export type ChatMessage = {
