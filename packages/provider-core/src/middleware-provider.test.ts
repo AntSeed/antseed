@@ -104,14 +104,24 @@ describe('MiddlewareProvider — per-model filtering', () => {
     expect(inner.lastBody().system).toBe('global\n\nbase');
   });
 
-  it('applies middleware when request has no model field (safe default)', async () => {
+  it('skips model-scoped middleware when request has no model field', async () => {
     const inner = mockProvider();
     const provider = new MiddlewareProvider(inner, [
       mw('injected', 'system-prepend', ['model-a']),
     ]);
-    // No model field in body — middleware should still apply (cannot filter)
+    // No model field in body — cannot confirm a match, so scoped middleware is skipped
     await provider.handleRequest(makeReq({ system: 'base', messages: [] }));
-    expect(inner.lastBody().system).toBe('injected\n\nbase');
+    expect(inner.lastBody().system).toBe('base');
+  });
+
+  it('still applies global middleware when request has no model field', async () => {
+    const inner = mockProvider();
+    const provider = new MiddlewareProvider(inner, [
+      mw('global', 'system-prepend'),
+      mw('scoped', 'system-append', ['model-a']),
+    ]);
+    await provider.handleRequest(makeReq({ system: 'base', messages: [] }));
+    expect(inner.lastBody().system).toBe('global\n\nbase');
   });
 
   it('returns original request unchanged when all middleware is filtered out', async () => {

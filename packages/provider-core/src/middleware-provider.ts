@@ -54,7 +54,7 @@ export class MiddlewareProvider implements Provider {
     }
     const model = typeof body.model === 'string' ? body.model : undefined;
     const applicable = this._middleware.filter(
-      (mw) => !mw.models || !model || mw.models.includes(model),
+      (mw) => !mw.models || (!!model && mw.models.includes(model)),
     );
     if (!applicable.length) return req;
     const format = req.path?.includes('/chat/completions') ? 'openai' : 'anthropic';
