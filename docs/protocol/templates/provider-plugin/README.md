@@ -96,11 +96,21 @@ In your `antseed.config.json`:
   "seller": {
     "middleware": [
       { "file": "./skills/coding-expert.md", "position": "system-prepend" },
-      { "file": "./skills/output-format.md",  "position": "append", "role": "user" }
+      { "file": "./skills/output-format.md",  "position": "append", "role": "user" },
+      { "file": "./skills/sonnet-rules.md", "position": "system-append", "models": ["claude-sonnet-4-5", "claude-sonnet-4-6"] }
     ]
   }
 }
 ```
+
+Each entry supports:
+
+| Field | Required | Description |
+|---|---|---|
+| `file` | Yes | Path to a `.md` file (relative to config or absolute) |
+| `position` | Yes | `system-prepend`, `system-append`, `prepend`, or `append` |
+| `role` | No | Role for `prepend`/`append` positions. Defaults to `user` |
+| `models` | No | If set, only inject for requests targeting one of these model IDs. Omit to apply to all models. Must contain at least one model ID |
 
 Buyers receive only the LLM's natural response. The injected content is applied server-side before the upstream call and is never visible in conversation history. See the [`@antseed/cli` README](../../../apps/cli/README.md) for full position reference.
 
