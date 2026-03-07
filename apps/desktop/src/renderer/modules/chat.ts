@@ -1290,6 +1290,7 @@ export function initChatModule({
         (remaining === 0 || elapsedSinceRender >= STREAM_TEXT_RENDER_INTERVAL_MS);
       if (shouldRender) {
         applyStreamingText(renderMarkdownToHtml(streamingTextVisible));
+        queueScrollChatToBottom();
         streamTextLastRenderAt = timestamp;
       }
 
@@ -1302,6 +1303,7 @@ export function initChatModule({
 
       if (changed && !shouldRender) {
         applyStreamingText(renderMarkdownToHtml(streamingTextVisible));
+        queueScrollChatToBottom();
       }
       stopStreamTextAnimation();
     }

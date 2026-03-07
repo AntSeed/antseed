@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { MarkdownContent } from './chat-utils.js';
@@ -67,25 +68,6 @@ function buildToolRenderItem(block: ContentBlock, index: number): ToolRenderItem
   };
 }
 
-function ToolDiffPreview({ diff }: { diff: string }) {
-  const lines = diff.split('\n');
-  return (
-    <div className="tool-diff-preview">
-      {lines.map((line, index) => {
-        let className = 'context';
-        if (line.startsWith('+') && !line.startsWith('+++')) className = 'added';
-        else if (line.startsWith('-') && !line.startsWith('---')) className = 'removed';
-        else if (line.startsWith('@@')) className = 'hunk';
-        else if (line.startsWith('+++') || line.startsWith('---')) className = 'file';
-        return (
-          <div key={`${index}-${line.slice(0, 16)}`} className={`tool-diff-line ${className}`}>
-            {line}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
 
 function getBlockRenderKey(block: ContentBlock, index: number): string {
   return String(block.renderKey || block.id || block.tool_use_id || `${block.type}-${index}`);
@@ -142,68 +124,154 @@ function ThinkingBlockView({ block }: { block: ContentBlock }) {
   );
 }
 
+function ToolModal({ item, onClose }: { item: ToolRenderItem; onClose: () => void }) {
+  const [closing, setClosing] = useState(false);
+
+  const close = (): void => {
+    setClosing(true);
+    window.setTimeout(onClose, 180);
+  };
+
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') close();
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, []);
+
+  const outputText =
+    item.output.length > 20000
+      ? `${item.output.slice(0, 20000)}\n... (truncated)`
+      : item.output;
+
+  const statusLabel =
+    item.status === 'running' ? 'Running' : item.status === 'error' ? 'Error' : 'Done';
+
+  return createPortal(
+    <div
+      className={`${styles.toolModalBackdrop}${closing ? ` ${styles.toolModalClosing}` : ''}`}
+      onClick={close}
+      role="presentation"
+    >
+      <div
+        className={styles.toolModalPanel}
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label={item.label}
+      >
+        <div className={styles.toolModalHeader}>
+          <div className={styles.toolModalTitle}>
+            <span className={`${styles.toolModalDot} ${styles[item.status]}`} />
+            <span className={styles.toolModalName}>{item.label}</span>
+            <span className={`${styles.toolModalStatusBadge} ${styles[item.status]}`}>
+              {statusLabel}
+            </span>
+          </div>
+          <button type="button" className={styles.toolModalClose} onClick={close} aria-label="Close">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <path d="M1 1l12 12M13 1L1 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+          </button>
+        </div>
+        <div className={styles.toolModalBody}>
+          {item.diff.length > 0 ? (
+            <div className={styles.toolModalDiff}>
+              {item.diff.split('\n').map((line, index) => {
+                let cls = styles.diffContext;
+                if (line.startsWith('+') && !line.startsWith('+++')) cls = styles.diffAdded;
+                else if (line.startsWith('-') && !line.startsWith('---')) cls = styles.diffRemoved;
+                else if (line.startsWith('@@')) cls = styles.diffHunk;
+                else if (line.startsWith('+++') || line.startsWith('---')) cls = styles.diffFile;
+                return (
+                  <div key={`${index}-${line.slice(0, 12)}`} className={`${styles.diffLine} ${cls}`}>
+                    {line}
+                  </div>
+                );
+              })}
+            </div>
+          ) : outputText.trim().length > 0 ? (
+            <pre className={`${styles.toolModalOutput}${item.status === 'error' ? ` ${styles.toolModalOutputError}` : ''}`}>
+              {outputText}
+            </pre>
+          ) : (
+            <div className={styles.toolModalEmpty}>No output</div>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 function ToolGroupView({ blocks }: { blocks: ContentBlock[] }) {
-  const [expandedToolId, setExpandedToolId] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState(true);
+  const [modalItem, setModalItem] = useState<ToolRenderItem | null>(null);
   const items = useMemo(
     () => blocks.map((block, index) => buildToolRenderItem(block, index)),
     [blocks],
   );
 
-  return (
-    <div className="tool-group">
-      <div className="tool-group-header">
-        <span>{items.length} tool{items.length === 1 ? '' : 's'}</span>
-      </div>
-      <div className="tool-group-list">
-        {items.map((item) => {
-          const canExpand =
-            item.diff.length > 0 ||
-            item.output.trim().length > 0 ||
-            item.kind === 'bash';
-          const isExpanded = expandedToolId === item.id;
-          const statusLabel =
-            item.kind === 'edit' && item.diff.length > 0
-              ? `+${item.additions} / -${item.removals}`
-              : item.kind === 'bash' && item.outputLineCount > 0
-                ? `${item.outputLineCount} lines`
-                : item.status === 'running'
-                  ? 'Running'
-                  : item.status === 'error'
-                    ? 'Error'
-                    : 'Done';
-          const outputText =
-            item.output.length > 8000
-              ? `${item.output.slice(0, 8000)}\n... (truncated)`
-              : item.output;
+  const anyRunning = items.some((item) => item.status === 'running');
+  const label = `${items.length} tool${items.length === 1 ? '' : 's'} used`;
 
-          return (
-            <div key={item.id} className="tool-inline">
-              <button
-                type="button"
-                className={`tool-inline-row${canExpand ? ' expandable' : ''}`}
-                onClick={() => {
-                  if (!canExpand) return;
-                  setExpandedToolId((current) => (current === item.id ? null : item.id));
-                }}
-              >
-                <span className={`tool-inline-dot ${item.status}`} />
-                <span className="tool-inline-label">{item.label}</span>
-                <span className={`tool-inline-status ${item.status}`}>{statusLabel}</span>
-              </button>
-              {isExpanded ? (
-                item.diff.length > 0 ? (
-                  <ToolDiffPreview diff={item.diff} />
-                ) : (
-                  <div className={`tool-inline-output${item.status === 'error' ? ' error' : ''}`}>
-                    {outputText.trim().length > 0 ? outputText : '(no output)'}
+  return (
+    <>
+      <div className="tool-group">
+        <button
+          type="button"
+          className={`tool-group-header-btn${collapsed ? ' collapsed' : ''}`}
+          onClick={() => setCollapsed((v) => !v)}
+        >
+          <span className="tool-group-chevron">›</span>
+          <span>{label}</span>
+          {anyRunning ? (
+            <span className="thinking-dots" aria-hidden="true">
+              <span /><span /><span />
+            </span>
+          ) : null}
+        </button>
+        <div className={`tool-group-list-wrap${collapsed ? ' collapsed' : ''}`}>
+          <div className="tool-group-list-inner">
+            <div className="tool-group-list">
+              {items.map((item) => {
+                const statusLabel =
+                  item.kind === 'edit' && item.diff.length > 0
+                    ? `+${item.additions} / -${item.removals}`
+                    : item.kind === 'bash' && item.outputLineCount > 0
+                      ? `${item.outputLineCount} lines`
+                      : item.status === 'running'
+                        ? 'Running'
+                        : item.status === 'error'
+                          ? 'Error'
+                          : 'Done';
+                const hasDetail =
+                  item.diff.length > 0 || item.output.trim().length > 0;
+
+                return (
+                  <div key={item.id} className="tool-inline">
+                    <button
+                      type="button"
+                      className={`tool-inline-row${hasDetail ? ' expandable' : ''}`}
+                      onClick={() => hasDetail && setModalItem(item)}
+                    >
+                      <span className={`tool-inline-dot ${item.status}`} />
+                      <span className="tool-inline-label">{item.label}</span>
+                      <span className={`tool-inline-status ${item.status}`}>{statusLabel}</span>
+                      {hasDetail ? <span className="tool-inline-open">↗</span> : null}
+                    </button>
                   </div>
-                )
-              ) : null}
+                );
+              })}
             </div>
-          );
-        })}
+          </div>
+        </div>
       </div>
-    </div>
+      {modalItem ? (
+        <ToolModal item={modalItem} onClose={() => setModalItem(null)} />
+      ) : null}
+    </>
   );
 }
 
