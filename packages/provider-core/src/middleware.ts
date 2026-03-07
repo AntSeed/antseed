@@ -10,6 +10,8 @@ export interface ProviderMiddleware {
   position: MiddlewarePosition;
   /** Role for 'prepend'/'append' positions. Default: 'user'. */
   role?: string;
+  /** If set, only inject for requests targeting one of these model IDs. Applies to all models when omitted. */
+  models?: string[];
 }
 
 /**
