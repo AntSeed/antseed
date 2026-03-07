@@ -177,7 +177,7 @@ async function loadMiddlewareFiles(
     configs.map(async (entry) => {
       const filePath = isAbsolute(entry.file) ? entry.file : resolve(baseDir, entry.file)
       const content = await readFile(filePath, 'utf-8')
-      return { content, position: entry.position, role: entry.role } as ProviderMiddleware
+      return { content, position: entry.position, role: entry.role, models: entry.models } as ProviderMiddleware
     }),
   )
 }
