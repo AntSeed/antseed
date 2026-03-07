@@ -4,18 +4,14 @@ import { Add01Icon } from '@hugeicons/core-free-icons';
 import { ArrowUp02Icon } from '@hugeicons/core-free-icons';
 import { useUiSnapshot } from '../../hooks/useUiSnapshot';
 import { useActions } from '../../hooks/useActions';
-import { ChatBubble, isToolResultOnlyMessage } from '../chat/ChatBubble';
+import { ChatBubble } from '../chat/ChatBubble';
+import { isToolResultOnlyMessage } from '../chat/chat-utils.js';
 import { WalkingAnt } from '../chat/WalkingAnt';
 import { ModelDropdown } from '../chat/ModelDropdown';
 import { AntStationStackedLogo } from '../AntStationLogo';
 import styles from './ChatView.module.scss';
-
-type ChatMessage = {
-  role: string;
-  content: unknown;
-  createdAt?: number;
-  meta?: Record<string, unknown>;
-};
+import type { ChatMessage } from '../chat/chat-shared';
+import { buildDisplayMessages } from '../chat/chat-shared';
 
 function getMessageContentKey(content: unknown): string {
   if (typeof content === 'string') {
@@ -62,7 +58,7 @@ export function ChatView({ active }: ChatViewProps) {
 
   const visibleMessages = useMemo(() => {
     const msgs = Array.isArray(snap.chatMessages) ? (snap.chatMessages as ChatMessage[]) : [];
-    return msgs.filter((msg) => !isToolResultOnlyMessage(msg));
+    return buildDisplayMessages(msgs).filter((msg) => !isToolResultOnlyMessage(msg));
   }, [snap.chatMessages]);
 
   // Track whether the user has scrolled away from the bottom
@@ -146,7 +142,10 @@ export function ChatView({ active }: ChatViewProps) {
     }
   }, []);
 
-  const showWelcome = !snap.chatActiveConversation && visibleMessages.length === 0;
+  const showWelcome =
+    !snap.chatActiveConversation &&
+    visibleMessages.length === 0 &&
+    !snap.chatStreamingMessage;
 
   return (
     <section className={`view view-chat${active ? ' active' : ''}`} role="tabpanel">
@@ -186,7 +185,9 @@ export function ChatView({ active }: ChatViewProps) {
                 <ChatBubble key={getMessageKey(msg, i)} message={msg} />
               ))
             )}
-            <div data-chat-stream />
+            {snap.chatStreamingMessage ? (
+              <ChatBubble message={snap.chatStreamingMessage as ChatMessage} streaming />
+            ) : null}
             {snap.chatSending && <WalkingAnt elapsedMs={snap.chatThinkingElapsedMs} />}
           </div>
 

@@ -95,6 +95,16 @@
       margin-top: 2px;
     }
 
+    .chat-task-item {
+      display: inline-flex;
+      align-items: flex-start;
+      gap: 8px;
+    }
+
+    .chat-task-item input {
+      margin-top: 4px;
+    }
+
     .chat-md-li-ul {
       list-style: disc;
     }
@@ -180,17 +190,118 @@
       background: var(--bg-card-alt);
     }
 
-    /* Tool inline rows */
-    .tool-inline {
+    .chat-code-container code {
+      font-family: var(--font-mono);
+      white-space: pre;
+    }
+
+    .chat-table-wrap {
+      overflow-x: auto;
       margin: 8px 0;
+    }
+
+    .chat-md-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    .chat-md-table th,
+    .chat-md-table td {
+      border: 1px solid var(--border);
+      padding: 6px 8px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    .chat-md-table th {
+      background: var(--bg-surface);
+      color: var(--text-primary);
+      font-weight: 600;
+    }
+
+    .chat-bubble-content blockquote {
+      margin: 8px 0;
+      padding: 8px 12px;
+      border-left: 2px solid var(--border);
+      color: var(--text-secondary);
+      background: var(--bg-card-alt);
+    }
+
+    .chat-bubble-content blockquote > :first-child {
+      margin-top: 0;
+    }
+
+    .chat-bubble-content blockquote > :last-child {
+      margin-bottom: 0;
+    }
+
+    .chat-inline-link-invalid {
+      color: var(--text-muted);
+      text-decoration: line-through;
+    }
+
+    .chat-inline-image {
+      max-width: 100%;
+      border-radius: var(--radius-sm);
+      display: inline-block;
+      margin: 6px 0;
+    }
+
+    /* Tool inline rows */
+    .tool-group {
+      margin: 10px 0 12px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
       overflow: hidden;
+      background: var(--bg-card-alt);
+    }
+
+    .tool-group-header {
+      padding: 6px 10px;
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .tool-group-list {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .tool-inline {
+      overflow: hidden;
+      border-top: 1px solid var(--border);
+    }
+
+    .tool-group-list .tool-inline:first-child {
+      border-top: 0;
     }
 
     .tool-inline-row {
+      appearance: none;
+      width: 100%;
+      border: 0;
+      background: none;
       display: flex;
       align-items: center;
       gap: 8px;
       min-height: 24px;
+      padding: 10px 12px;
+      text-align: left;
+      cursor: default;
+    }
+
+    .tool-inline-row.expandable {
+      cursor: pointer;
+    }
+
+    .tool-inline-row.expandable:hover {
+      background: var(--bg-hover);
     }
 
     .tool-inline-dot {
@@ -266,6 +377,35 @@
       color: var(--danger);
     }
 
+    .tool-diff-preview {
+      border-top: 1px solid var(--border);
+      padding: 8px 10px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: var(--bg-card-alt);
+    }
+
+    .tool-diff-line {
+      white-space: pre-wrap;
+    }
+
+    .tool-diff-line.added {
+      color: var(--accent-green);
+    }
+
+    .tool-diff-line.removed {
+      color: var(--danger);
+    }
+
+    .tool-diff-line.file,
+    .tool-diff-line.hunk,
+    .tool-diff-line.context {
+      color: var(--text-secondary);
+    }
+
     .tool-spinner {
       display: inline-block;
       width: 12px;
@@ -288,11 +428,14 @@
       display: flex;
       align-items: center;
       gap: 6px;
+      width: 100%;
       padding: 6px 10px;
       background: var(--bg-surface);
+      border: 0;
       cursor: pointer;
       font-size: 12px;
       color: var(--text-muted);
+      text-align: left;
       user-select: none;
     }
 
@@ -353,6 +496,11 @@
    =================================================================== */
 
 .chat-bubble-meta {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  width: 100%;
   font-size: 14px;
   color: var(--text-faint);
   margin-bottom: 8px;

@@ -1,4 +1,6 @@
 import type { RendererUiState } from './state';
+import type { ContentBlock } from '../ui/components/chat/chat-shared';
+import { cloneContentBlock } from '../ui/components/chat/chat-shared';
 
 type Listener = () => void;
 
@@ -57,6 +59,15 @@ export function getUiSnapshot(): RendererUiState {
     lastPeers: [...state.lastPeers],
     chatConversations: [...state.chatConversations],
     chatMessages: [...state.chatMessages],
+    chatStreamingMessage: state.chatStreamingMessage
+      ? {
+          ...state.chatStreamingMessage,
+          meta: state.chatStreamingMessage.meta ? { ...state.chatStreamingMessage.meta } : undefined,
+          content: Array.isArray(state.chatStreamingMessage.content)
+            ? (state.chatStreamingMessage.content as ContentBlock[]).map(cloneContentBlock)
+            : state.chatStreamingMessage.content,
+        }
+      : null,
     chatModelOptions: [...state.chatModelOptions],
   };
   cachedSnapshotVersion = version;

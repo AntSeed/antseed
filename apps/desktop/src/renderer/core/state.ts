@@ -1,4 +1,5 @@
 import type { DaemonStateSnapshot, LogEvent, RuntimeProcessState } from '../types/bridge';
+import type { ChatMessage } from '../ui/components/chat/chat-shared';
 
 export type BadgeTone = 'active' | 'idle' | 'warn' | 'bad';
 
@@ -118,6 +119,7 @@ export type RendererUiState = {
   chatConversationTitle: string;
   chatConversations: unknown[];
   chatMessages: unknown[];
+  chatStreamingMessage: ChatMessage | null;
   chatSending: boolean;
   chatError: string | null;
   chatThreadMeta: string;
@@ -212,6 +214,7 @@ export function createInitialUiState(): RendererUiState {
     chatConversationTitle: 'Conversation',
     chatConversations: [],
     chatMessages: [],
+    chatStreamingMessage: null,
     chatSending: false,
     chatError: null,
     chatThreadMeta: 'No conversation selected',
