@@ -133,4 +133,16 @@ describe('MiddlewareProvider — per-model filtering', () => {
     // Body passed through unmodified — system stays as-is
     expect(inner.lastBody().system).toBe('base');
   });
+
+  it('never applies middleware with an empty models list (should be rejected at config load)', async () => {
+    // models: [] means no model can ever match — the entry is effectively dead.
+    // The CLI layer rejects this at load time; at the MiddlewareProvider level it
+    // behaves as a no-op so nothing blows up if the object is constructed directly.
+    const inner = mockProvider();
+    const provider = new MiddlewareProvider(inner, [
+      { content: 'injected', position: 'system-prepend', models: [] },
+    ]);
+    await provider.handleRequest(makeReq({ model: 'model-a', system: 'base', messages: [] }));
+    expect(inner.lastBody().system).toBe('base');
+  });
 });
