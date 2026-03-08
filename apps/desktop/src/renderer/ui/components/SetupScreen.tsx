@@ -39,12 +39,10 @@ function StepRow({ label, done, active }: StepRowProps) {
   );
 }
 
-// Progress levels — only move forward, never backward.
+// Progress level advances monotonically: 0 → 1 → 2 → 3, never backward.
+// 0 = waiting for plugin  1 = plugin done, connecting
+// 2 = P2P activity seen   3 = model-loading activity seen
 type ProgressLevel = 0 | 1 | 2 | 3;
-// 0 = waiting for plugin
-// 1 = plugin done, connecting
-// 2 = seen P2P/peer activity
-// 3 = seen model-loading activity
 
 export function SetupScreen() {
   const snap = useUiSnapshot();
@@ -53,26 +51,18 @@ export function SetupScreen() {
   const hasModels = snap.chatModelOptions.length > 0;
   const msg = snap.runtimeActivity.message;
 
-  // Advance progress monotonically based on observed state.
-  if (snap.appSetupComplete && progressRef.current < 1) progressRef.current = 1;
-  if (progressRef.current >= 1 && /peer|connecting|p2p|proxy|dht/i.test(msg) && progressRef.current < 2) progressRef.current = 2;
-  if (progressRef.current >= 1 && /model/i.test(msg) && progressRef.current < 3) progressRef.current = 3;
-  if (hasModels && progressRef.current < 3) progressRef.current = 3;
+  // Advance based on observed state — never go backward.
+  const p = progressRef.current;
+  if (snap.appSetupComplete && p < 1) progressRef.current = 1;
+  else if (p === 1 && /peer|connecting|p2p|proxy|dht/i.test(msg)) progressRef.current = 2;
+  else if (p >= 1 && (/model/i.test(msg) || hasModels)) progressRef.current = 3;
 
   const level = progressRef.current;
-
-  const dhtDone = level >= 2 || hasModels;
-  const dhtActive = level === 1;
-  const peerDone = level >= 2 || hasModels;
-  const peerActive = false; // absorbed into dhtActive for simplicity
-  const modelDone = hasModels;
+  const networkDone = level >= 2 || hasModels;
   const modelActive = level >= 2 && !hasModels;
 
-  // Show the live activity message only on the currently active step.
-  const dhtLabel = dhtActive ? (msg || 'Connecting to P2P network...') : 'Connecting to P2P network';
+  const connectLabel = level === 1 ? (msg || 'Connecting to P2P network...') : 'Connecting to P2P network';
   const modelLabel = modelActive ? (msg || 'Loading models...') : 'Loading models';
-
-  const allDone = snap.appSetupComplete && hasModels;
 
   return (
     <>
@@ -90,16 +80,12 @@ export function SetupScreen() {
               done={snap.appSetupComplete}
               active={!snap.appSetupComplete}
             />
-            <StepRow label={dhtLabel} done={dhtDone} active={dhtActive} />
-            <StepRow
-              label="Discovering peers"
-              done={peerDone}
-              active={peerActive}
-            />
-            <StepRow label={modelLabel} done={modelDone} active={modelActive} />
+            <StepRow label={connectLabel} done={networkDone} active={level === 1} />
+            <StepRow label="Discovering peers" done={networkDone} active={false} />
+            <StepRow label={modelLabel} done={hasModels} active={modelActive} />
           </div>
 
-          {allDone && (
+          {snap.appSetupComplete && hasModels && (
             <div className={styles.ready}>
               <span className={styles.readyDot} />
               Ready
