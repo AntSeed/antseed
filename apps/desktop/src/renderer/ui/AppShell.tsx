@@ -19,15 +19,21 @@ export function AppShell() {
   const hasModels = snap.chatModelOptions.length > 0;
 
   // Show setup screen while needed; hide once plugin installed and models are available.
+  // Gate on appSetupStatusKnown so we don't briefly flash the normal app shell before
+  // the IPC round-trip resolves and reveals that setup is actually required.
   useEffect(() => {
-    if (!snap.appSetupNeeded) return;
+    if (!snap.appSetupStatusKnown) return;
+    if (!snap.appSetupNeeded) {
+      setSetupVisible(false);
+      return;
+    }
     if (!snap.appSetupComplete || !hasModels) {
       setSetupVisible(true);
     } else {
       const timer = setTimeout(() => setSetupVisible(false), 900);
       return () => clearTimeout(timer);
     }
-  }, [snap.appSetupNeeded, snap.appSetupComplete, hasModels]);
+  }, [snap.appSetupStatusKnown, snap.appSetupNeeded, snap.appSetupComplete, hasModels]);
 
   const showSetup = setupVisible;
 
@@ -59,6 +65,10 @@ export function AppShell() {
     },
     [actions],
   );
+
+  // Render nothing until the setup status IPC round-trip resolves, preventing
+  // a brief flash of the normal app shell before the setup screen appears on first launch.
+  if (!snap.appSetupStatusKnown) return null;
 
   if (showSetup) {
     return <SetupScreen />;

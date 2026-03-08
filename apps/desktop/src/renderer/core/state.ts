@@ -146,6 +146,7 @@ export type RendererUiState = {
   dashboardPortValue: string;
 
   // --- First-run setup ---
+  appSetupStatusKnown: boolean;
   appSetupNeeded: boolean;
   appSetupComplete: boolean;
   appSetupStep: string;
@@ -247,6 +248,7 @@ export function createInitialUiState(): RendererUiState {
     dashboardPortValue: '3117',
 
     // First-run setup
+    appSetupStatusKnown: false,
     appSetupNeeded: false,
     appSetupComplete: false,
     appSetupStep: '',

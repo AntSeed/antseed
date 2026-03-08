@@ -271,26 +271,28 @@ function resolveConnectDataDir(): string {
 type CliExecution = {
   executable: string;
   executableArgsPrefix: string[];
-  useLocalCliScript: boolean;
+  // True only for the local monorepo dev script — native module alignment is
+  // only needed there. The bundled production CLI already ships aligned natives.
+  isLocalDevScript: boolean;
   cliCommand: string;
 };
 
 function resolveCliExecution(): CliExecution {
   const cliCommand = resolveCliCommand();
   const localCliPath = resolveLocalCliPath();
-  const useLocalCliScript = existsSync(localCliPath) && resolve(cliCommand) === localCliPath;
+  const isLocalDevScript = existsSync(localCliPath) && resolve(cliCommand) === localCliPath;
 
   // The bundled CLI (from extraResources) is also a .js script that needs node.
   // Packaged macOS apps have a minimal PATH, so we must resolve node explicitly.
-  const isBundledScript = !useLocalCliScript && cliCommand.endsWith('.js');
-  const needsNode = useLocalCliScript || isBundledScript;
+  const isBundledScript = !isLocalDevScript && cliCommand.endsWith('.js');
+  const needsNode = isLocalDevScript || isBundledScript;
 
   const executable = needsNode ? resolveNodeBinary(process.arch) : cliCommand;
   const executableArgsPrefix = needsNode ? [cliCommand] : [];
   return {
     executable,
     executableArgsPrefix,
-    useLocalCliScript: needsNode,
+    isLocalDevScript,
     cliCommand,
   };
 }
@@ -360,7 +362,7 @@ export class ProcessManager {
     const args = resolveCommandArgs(opts);
     const executable = cliExecution.executable;
     const executableArgs = [...cliExecution.executableArgsPrefix, ...args];
-    await this.ensureRuntimeNativeModules(mode, executable, cliExecution.useLocalCliScript);
+    await this.ensureRuntimeNativeModules(mode, executable, cliExecution.isLocalDevScript);
     const childEnv: NodeJS.ProcessEnv = { ...process.env };
     for (const [key, value] of Object.entries(opts.env ?? {})) {
       if (typeof key === 'string' && key.trim().length > 0) {
@@ -552,8 +554,8 @@ export class ProcessManager {
     });
   }
 
-  private async ensureRuntimeNativeModules(mode: RuntimeMode, executable: string, useLocalCliScript: boolean): Promise<void> {
-    if (!useLocalCliScript) {
+  private async ensureRuntimeNativeModules(mode: RuntimeMode, executable: string, isLocalDevScript: boolean): Promise<void> {
+    if (!isLocalDevScript) {
       return;
     }
     if (this.runtimeNativeAligned) {
