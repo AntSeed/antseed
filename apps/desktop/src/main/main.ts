@@ -1634,7 +1634,6 @@ const DASHBOARD_CONFIG_ALLOWED_KEYS = new Set([
   'identity',
   'network',
   'payments',
-  'middlewareConfidentialityPrompt',
 ]);
 
 function sanitizeDashboardConfigPayload(raw: unknown): Record<string, unknown> {
