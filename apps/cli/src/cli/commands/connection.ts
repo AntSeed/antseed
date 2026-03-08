@@ -25,7 +25,12 @@ async function readStateFile(): Promise<BuyerStateFile | null> {
 }
 
 async function writeStateFile(data: BuyerStateFile): Promise<void> {
-  await writeFile(BUYER_STATE_FILE, JSON.stringify(data, null, 2))
+  try {
+    await writeFile(BUYER_STATE_FILE, JSON.stringify(data, null, 2))
+  } catch (err) {
+    console.error(chalk.red(`Failed to write session state: ${err instanceof Error ? err.message : String(err)}`))
+    process.exit(1)
+  }
 }
 
 function isProcessAlive(pid: number): boolean {
