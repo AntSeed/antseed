@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import { Command } from 'commander';
-import { createRequire } from 'node:module';
 import { loadEnvFromFiles } from '../env/load-env.js';
 import { registerSeedCommand } from './commands/seed.js';
 import { registerConnectCommand } from './commands/connect.js';
@@ -21,8 +20,8 @@ import { registerConnectionCommand } from './commands/connection.js';
 
 loadEnvFromFiles();
 
-const require = createRequire(import.meta.url);
-const { version } = require('../../package.json') as { version: string };
+import pkg from '../../package.json' with { type: 'json' };
+const version = pkg.version;
 
 const program = new Command();
 
