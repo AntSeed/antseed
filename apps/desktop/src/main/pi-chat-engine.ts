@@ -402,10 +402,6 @@ function resolveProtocolForModel(
   return inferProviderProtocol(provider);
 }
 
-function toModelLabel(modelId: string, provider: string): string {
-  return `${modelId} · ${provider}`;
-}
-
 function updateModelProviderHints(
   modelProviderHints: Map<string, string[]>,
   entries: ChatModelCatalogEntry[],
@@ -458,7 +454,7 @@ function normalizeChatModelCatalogEntry(raw: unknown): ChatModelCatalogEntry | n
 
   const count = Number(entry.count);
   const normalizedCount = Number.isFinite(count) && count > 0 ? Math.max(1, Math.floor(count)) : 1;
-  const label = normalizeModelValue(entry.label) ?? toModelLabel(id, provider);
+  const label = normalizeModelValue(entry.label) ?? id;
   return {
     id,
     label,
@@ -616,7 +612,7 @@ function extractChatModelCatalog(metadata: Record<string, unknown>): Omit<ChatMo
       }
       models.push({
         id: modelId,
-        label: toModelLabel(modelId, providerId),
+        label: modelId,
         provider: providerId,
         protocol,
       });
@@ -756,7 +752,7 @@ async function fetchProxyProviderModelCatalog(
     const modelIds = extractModelIdsFromApiPayload(payload);
     return modelIds.map((modelId) => ({
       id: modelId,
-      label: toModelLabel(modelId, provider),
+      label: modelId,
       provider,
       protocol,
       count: 1,
