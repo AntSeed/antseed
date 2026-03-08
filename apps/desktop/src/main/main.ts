@@ -741,6 +741,29 @@ async function installPluginDependency(packageSpec: string): Promise<void> {
   });
 }
 
+function isPluginInstalled(packageName: string): boolean {
+  const pluginDir = path.join(DEFAULT_PLUGINS_DIR, 'node_modules', packageName);
+  return existsSync(path.join(pluginDir, 'package.json'));
+}
+
+async function ensureDefaultPlugin(packageName: string): Promise<void> {
+  if (isPluginInstalled(packageName)) return;
+  appendLog('connect', 'system', `Required plugin "${packageName}" not found. Installing...`);
+  try {
+    const localSource = await resolveLocalPluginSource(packageName);
+    if (localSource) {
+      await installPluginDependency(toFileInstallSpec(packageName, localSource));
+    } else {
+      await installPluginDependency(packageName);
+    }
+    appendLog('connect', 'system', `Installed plugin "${packageName}".`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    appendLog('connect', 'system', `Failed to auto-install plugin "${packageName}": ${message}`);
+    throw new Error(`Required plugin "${packageName}" could not be installed: ${message}`);
+  }
+}
+
 async function resolveLocalPluginSource(packageName: string): Promise<string | null> {
   const rootCandidates = [
     path.resolve(process.cwd(), '..'),
@@ -1473,6 +1496,10 @@ ipcMain.handle('runtime:start', async (_event, options: StartOptions) => {
   };
   if (DESKTOP_DEBUG_ENABLED) {
     appendLog(startOptions.mode, 'system', 'Desktop debug mode enabled (ANTSEED_DEBUG=1, --verbose).');
+  }
+
+  if (startOptions.mode === 'connect') {
+    await ensureDefaultPlugin('@antseed/router-local');
   }
 
   const state = await processManager.start(startOptions);
