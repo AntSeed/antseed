@@ -188,7 +188,9 @@ export function ChatView({ active }: ChatViewProps) {
             {snap.chatStreamingMessage ? (
               <ChatBubble message={snap.chatStreamingMessage as ChatMessage} streaming />
             ) : null}
-            {snap.chatSending && <WalkingAnt elapsedMs={snap.chatThinkingElapsedMs} />}
+            {snap.chatSending && snap.chatSendingConversationId === snap.chatActiveConversation && (
+              <WalkingAnt elapsedMs={snap.chatThinkingElapsedMs} />
+            )}
           </div>
 
           <div className={styles.chatInputArea}>

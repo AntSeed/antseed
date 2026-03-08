@@ -121,6 +121,7 @@ export type RendererUiState = {
   chatMessages: unknown[];
   chatStreamingMessage: ChatMessage | null;
   chatSending: boolean;
+  chatSendingConversationId: string | null;
   chatError: string | null;
   chatThreadMeta: string;
   chatRoutedPeer: string;
@@ -216,6 +217,7 @@ export function createInitialUiState(): RendererUiState {
     chatMessages: [],
     chatStreamingMessage: null,
     chatSending: false,
+    chatSendingConversationId: null,
     chatError: null,
     chatThreadMeta: 'No conversation selected',
     chatRoutedPeer: '',
