@@ -8,6 +8,7 @@ import {
   normalizeRouterRuntime,
   resolveRouterPackageName,
 } from './modules/plugin-setup';
+import { initAppSetupModule } from './modules/app-setup';
 import { mountAppShell } from './ui/mount';
 import { registerActions } from './ui/actions';
 import {
@@ -111,6 +112,8 @@ const chatApi = initChatModule({
   uiState,
   appendSystemLog,
 });
+
+initAppSetupModule({ uiState, bridge: bridge ?? null });
 
 /* ------------------------------------------------------------------ */
 /*  Runtime activity helpers                                           */
@@ -233,6 +236,9 @@ async function refreshAll(reason: RefreshReason = 'poll'): Promise<void> {
   if (reason !== 'poll') {
     setRuntimeActivity('warn', 'Refreshing runtime and peer snapshots...', 8_000);
   }
+
+  // Run proxy + model check independently so it isn't blocked by slow dashboard HTTP calls.
+  void chatApi.refreshChatProxyStatus();
 
   try {
     const snapshot = await bridge.getState();
