@@ -43,7 +43,7 @@ function networkHealth(
 function normalizeNetworkData(
   networkData: Record<string, unknown> | null,
   peersData: Record<string, unknown> | null,
-): { peers: PeerEntry[]; stats: ReturnType<typeof defaultNetworkStats> } {
+): { peers: PeerEntry[]; stats: ReturnType<typeof defaultNetworkStats>; modelCount: number } {
   const networkPeers = safeArray(networkData?.peers) as Record<string, unknown>[];
   const daemonPeers = safeArray(peersData?.peers) as Record<string, unknown>[];
   const rawStats = networkData?.stats;
@@ -63,6 +63,10 @@ function normalizeNetworkData(
       host: safeString(peer.host, ''),
       port: safeNumber(peer.port, 0),
       providers: safeArray(peer.providers).map(String),
+      models: safeArray(peer.models)
+        .filter((model): model is string => typeof model === 'string')
+        .map((model) => model.trim())
+        .filter((model) => model.length > 0),
       inputUsdPerMillion: safeNumber(peer.inputUsdPerMillion, 0),
       outputUsdPerMillion: safeNumber(peer.outputUsdPerMillion, 0),
       capacityMsgPerHour: safeNumber(peer.capacityMsgPerHour, 0),
@@ -82,6 +86,7 @@ function normalizeNetworkData(
       host: '',
       port: 0,
       providers: [],
+      models: [],
       inputUsdPerMillion: 0,
       outputUsdPerMillion: 0,
       capacityMsgPerHour: 0,
@@ -93,6 +98,11 @@ function normalizeNetworkData(
 
     const providers = safeArray(peer.providers).map(String);
     if (providers.length > 0) existing.providers = providers;
+    const models = safeArray(peer.models)
+      .filter((model): model is string => typeof model === 'string')
+      .map((model) => model.trim())
+      .filter((model) => model.length > 0);
+    if (models.length > 0) existing.models = models;
     if (safeNumber(peer.inputUsdPerMillion, 0) > 0) existing.inputUsdPerMillion = safeNumber(peer.inputUsdPerMillion, 0);
     if (safeNumber(peer.outputUsdPerMillion, 0) > 0) existing.outputUsdPerMillion = safeNumber(peer.outputUsdPerMillion, 0);
     if (safeNumber(peer.capacityMsgPerHour, 0) > 0) existing.capacityMsgPerHour = safeNumber(peer.capacityMsgPerHour, 0);
@@ -103,13 +113,26 @@ function normalizeNetworkData(
     merged.set(peerId, existing);
   }
 
-  const peers = Array.from(merged.values()).sort((a, b) => {
-    if (b.reputation !== a.reputation) return b.reputation - a.reputation;
-    return b.lastSeen - a.lastSeen;
-  });
+  const peers = Array.from(merged.values())
+    .filter((peer) => peer.models.length > 0)
+    .sort((a, b) => {
+      if (b.reputation !== a.reputation) return b.reputation - a.reputation;
+      return b.lastSeen - a.lastSeen;
+    });
+
+  const models = new Set<string>();
+  for (const peer of [...networkPeers, ...daemonPeers]) {
+    for (const model of safeArray(peer.models)) {
+      if (typeof model !== 'string') continue;
+      const normalized = model.trim();
+      if (normalized.length > 0) {
+        models.add(normalized);
+      }
+    }
+  }
 
   stats.totalPeers = peers.length;
-  return { peers, stats };
+  return { peers, stats, modelCount: models.size };
 }
 
 export function initDashboardRenderModule({
@@ -125,7 +148,9 @@ export function initDashboardRenderModule({
     uiState.ovNodeState = 'offline';
     uiState.ovPeers = '0';
     uiState.ovDhtHealth = 'Down';
-    uiState.ovUptime = '-';
+    uiState.ovProxyPort = '-';
+    uiState.ovModelCount = '0';
+    uiState.ovLastScan = 'n/a';
     uiState.ovPeersCount = '0';
     uiState.overviewPeers = [];
     uiState.lastPeers = [];
@@ -159,6 +184,7 @@ export function initDashboardRenderModule({
 
     const peers = normalizedNetwork.peers;
     const stats = normalizedNetwork.stats;
+    const modelCount = normalizedNetwork.modelCount;
     const dht = networkHealth(stats, peers.length);
 
     const statusPayload = results.status.ok ? (results.status.data as Record<string, unknown>) : null;
@@ -176,13 +202,19 @@ export function initDashboardRenderModule({
       daemonActiveSessions,
       daemonDetailsCount,
     );
-    const proxyPort = safeNumber(statusPayload?.proxyPort, 0);
+    const configRoot = safeObject((configPayload as Record<string, unknown> | null)?.config ?? configPayload);
+    const configBuyer = safeObject(configRoot?.buyer);
+    const configuredProxyPort = safeNumber(configBuyer?.proxyPort, 0);
+    const runtimeProxyPort = safeNumber(statusPayload?.proxyPort, 0);
+    const proxyPort = runtimeProxyPort > 0 ? runtimeProxyPort : configuredProxyPort;
 
     // Overview stats
     uiState.ovNodeState = buyerRuntimeState;
     uiState.ovPeers = formatInt(peers.length);
     uiState.ovDhtHealth = dht.label;
-    uiState.ovUptime = proxyPort > 0 ? String(proxyPort) : '-';
+    uiState.ovProxyPort = proxyPort > 0 ? String(proxyPort) : '-';
+    uiState.ovModelCount = formatInt(modelCount);
+    uiState.ovLastScan = formatRelativeTime(stats.lastScanAt);
     uiState.ovPeersCount = formatInt(peers.length);
     uiState.overviewBadge = {
       tone: buyerRuntimeState === 'offline' ? 'idle' : dht.tone,

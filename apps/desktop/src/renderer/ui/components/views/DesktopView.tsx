@@ -33,7 +33,7 @@ export function DesktopView({ active }: DesktopViewProps) {
           <button className="secondary" onClick={() => void actions.clearLogs()}>
             Clear Logs
           </button>
-          <div className="connection-badge badge-idle">live stream</div>
+          {/* <div className="connection-badge badge-idle">live stream</div> */}
         </div>
       </div>
 

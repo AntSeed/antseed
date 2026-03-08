@@ -1,0 +1,16 @@
+.chat-streaming-indicator {
+  background: var(--bg-surface);
+  padding: 2px 16px;
+  font-size: 11px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: color 150ms ease, background-color 150ms ease;
+  border-top: 1px solid var(--border-light);
+}
+
+.is-thinking {
+  background: rgba(var(--accent-rgb), 0.06);
+  color: var(--accent-green);
+}

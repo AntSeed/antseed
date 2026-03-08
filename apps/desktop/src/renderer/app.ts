@@ -40,6 +40,13 @@ const bridge = window.antseedDesktop as DesktopBridge | undefined;
 const uiState = createInitialUiState();
 initStore(uiState);
 
+bridge?.onFullscreenChange?.((isFullscreen) => {
+  document.body.classList.toggle('platform-fullscreen', isFullscreen);
+});
+bridge?.onWindowFocusChange?.((isFocused) => {
+  document.body.classList.toggle('window-blurred', !isFocused);
+});
+
 /* ------------------------------------------------------------------ */
 /*  Module initialisation                                              */
 /* ------------------------------------------------------------------ */
@@ -56,6 +63,7 @@ const {
 const {
   getDashboardPort,
   getDashboardData,
+  updateDashboardConfig,
   scanDhtNow,
   setRefreshHooks,
   refreshDashboardData,
@@ -83,7 +91,9 @@ const { populateSettingsForm, saveConfig } = initSettingsModule({
     endpoint: string,
     query?: Record<string, string | number | boolean>,
   ) => Promise<{ ok: boolean; data: unknown; error?: string | null }>,
-  getDashboardPort,
+  updateDashboardConfig: updateDashboardConfig as (
+    config: Record<string, unknown>,
+  ) => Promise<{ ok: boolean; data: unknown; error?: string | null; status?: number | null }>,
 });
 
 const {
@@ -136,7 +146,7 @@ function syncRuntimeActivityFromProcesses(processes = uiState.processes): void {
   setRuntimeSteadyActivity(
     buyerConnected ? 'active' : 'idle',
     buyerConnected
-      ? 'Buyer runtime connected. Waiting for peers and requests...'
+      ? 'Ready.'
       : 'Buyer runtime offline. Waiting for local runtime start...',
   );
 }
@@ -382,10 +392,12 @@ registerActions({
   scanDht: actionScanDht,
   saveConfig: saveConfig,
   createNewConversation: chatApi.createNewConversation,
+  startNewChat: chatApi.startNewChat,
   openConversation: chatApi.openConversation,
   sendMessage: chatApi.sendMessage,
   abortChat: chatApi.abortChat,
   deleteConversation: chatApi.deleteConversation,
+  renameConversation: chatApi.renameConversation,
   handleModelChange: chatApi.handleModelChange,
   handleModelFocus: chatApi.handleModelFocus,
   handleModelBlur: chatApi.handleModelBlur,
@@ -413,7 +425,7 @@ setRefreshHooks({
     if (busy) {
       uiState.peersMessage = stage;
       uiState.peersMeta = { tone: 'warn', label: 'Refreshing...' };
-      uiState.overviewBadge = { tone: 'warn', label: stage };
+      uiState.overviewBadge = { tone: 'active', label: stage };
       notifyUiStateChanged();
       return;
     }

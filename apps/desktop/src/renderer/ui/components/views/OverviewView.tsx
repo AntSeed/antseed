@@ -11,7 +11,9 @@ export function OverviewView({ active }: OverviewViewProps) {
     ovNodeState,
     ovPeers,
     ovDhtHealth,
-    ovUptime,
+    ovProxyPort,
+    ovModelCount,
+    ovLastScan,
     ovPeersCount,
     overviewPeers,
   } = useUiSnapshot();
@@ -38,7 +40,15 @@ export function OverviewView({ active }: OverviewViewProps) {
         </div>
         <div className="stat-card">
           <p className="stat-label">Proxy Port</p>
-          <p className="stat-value">{ovUptime}</p>
+          <p className="stat-value">{ovProxyPort}</p>
+        </div>
+        <div className="stat-card">
+          <p className="stat-label">Network Models</p>
+          <p className="stat-value">{ovModelCount}</p>
+        </div>
+        <div className="stat-card">
+          <p className="stat-label">Last Scan</p>
+          <p className="stat-value">{ovLastScan}</p>
         </div>
       </div>
 
@@ -53,7 +63,7 @@ export function OverviewView({ active }: OverviewViewProps) {
               <thead>
                 <tr>
                   <th>Peer</th>
-                  <th>Providers</th>
+                  <th>Models</th>
                   <th>Rep</th>
                 </tr>
               </thead>
@@ -68,7 +78,7 @@ export function OverviewView({ active }: OverviewViewProps) {
                   overviewPeers.map((peer) => (
                     <tr key={peer.peerId}>
                       <td title={peer.peerId}>{formatShortId(peer.peerId)}</td>
-                      <td>{peer.providers.length > 0 ? peer.providers.join(', ') : 'n/a'}</td>
+                      <td>{peer.models.join(', ')}</td>
                       <td>{formatInt(peer.reputation)}</td>
                     </tr>
                   ))

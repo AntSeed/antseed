@@ -1,4 +1,5 @@
 import type { DaemonStateSnapshot, LogEvent, RuntimeProcessState } from '../types/bridge';
+import type { ChatMessage } from '../ui/components/chat/chat-shared';
 
 export type BadgeTone = 'active' | 'idle' | 'warn' | 'bad';
 
@@ -23,6 +24,7 @@ export type PeerEntry = {
   host: string;
   port: number;
   providers: string[];
+  models: string[];
   inputUsdPerMillion: number;
   outputUsdPerMillion: number;
   capacityMsgPerHour: number;
@@ -39,6 +41,7 @@ export type ConfigFormData = {
   maxOutputUsdPerMillion: number;
   minRep: number;
   paymentMethod: string;
+  devMode: boolean;
 };
 
 export type ChatModelOptionEntry = {
@@ -73,7 +76,9 @@ export type RendererUiState = {
   ovNodeState: string;
   ovPeers: string;
   ovDhtHealth: string;
-  ovUptime: string;
+  ovProxyPort: string;
+  ovModelCount: string;
+  ovLastScan: string;
   ovPeersCount: string;
   overviewPeers: PeerEntry[];
 
@@ -98,6 +103,7 @@ export type RendererUiState = {
   configMessage: { text: string; type: 'success' | 'error' | 'info' } | null;
   configFormData: ConfigFormData | null;
   configSaving: boolean;
+  devMode: boolean;
 
   // --- Plugin setup ---
   installedPlugins: Set<string>;
@@ -113,9 +119,11 @@ export type RendererUiState = {
   chatConversationTitle: string;
   chatConversations: unknown[];
   chatMessages: unknown[];
+  chatStreamingMessage: ChatMessage | null;
   chatSending: boolean;
   chatError: string | null;
   chatThreadMeta: string;
+  chatRoutedPeer: string;
   chatModelOptions: ChatModelOptionEntry[];
   chatSelectedModelValue: string;
   chatModelStatus: BadgeState;
@@ -129,6 +137,8 @@ export type RendererUiState = {
   // --- Streaming indicator ---
   chatStreamingIndicatorText: string;
   chatStreamingActive: boolean;
+  chatThinkingElapsedMs: number;
+  chatWaitingForStream: boolean;
 
   // --- Router input value (for plugin setup + chat) ---
   connectRouterValue: string;
@@ -161,7 +171,9 @@ export function createInitialUiState(): RendererUiState {
     ovNodeState: 'idle',
     ovPeers: '0',
     ovDhtHealth: 'Down',
-    ovUptime: '-',
+    ovProxyPort: '-',
+    ovModelCount: '0',
+    ovLastScan: 'n/a',
     ovPeersCount: '0',
     overviewPeers: [],
 
@@ -186,6 +198,7 @@ export function createInitialUiState(): RendererUiState {
     configMessage: null,
     configFormData: null,
     configSaving: false,
+    devMode: false,
 
     // Plugin setup
     installedPlugins: new Set<string>(),
@@ -201,9 +214,11 @@ export function createInitialUiState(): RendererUiState {
     chatConversationTitle: 'Conversation',
     chatConversations: [],
     chatMessages: [],
+    chatStreamingMessage: null,
     chatSending: false,
     chatError: null,
     chatThreadMeta: 'No conversation selected',
+    chatRoutedPeer: '',
     chatModelOptions: [],
     chatSelectedModelValue: '',
     chatModelStatus: { tone: 'idle', label: 'Models idle' },
@@ -217,6 +232,8 @@ export function createInitialUiState(): RendererUiState {
     // Streaming indicator
     chatStreamingIndicatorText: '',
     chatStreamingActive: false,
+    chatThinkingElapsedMs: 0,
+    chatWaitingForStream: false,
 
     // Router / dashboard port
     connectRouterValue: 'local',

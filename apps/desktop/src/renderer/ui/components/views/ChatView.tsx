@@ -1,15 +1,17 @@
 import { useRef, useEffect, useState, useCallback, useMemo, useId } from 'react';
+import { HugeiconsIcon } from '@hugeicons/react';
+import { Add01Icon } from '@hugeicons/core-free-icons';
+import { ArrowUp02Icon } from '@hugeicons/core-free-icons';
 import { useUiSnapshot } from '../../hooks/useUiSnapshot';
 import { useActions } from '../../hooks/useActions';
-import { ChatBubble, isToolResultOnlyMessage } from '../chat/ChatBubble';
-import type { ChatModelOptionEntry } from '../../../core/state';
-
-type ChatMessage = {
-  role: string;
-  content: unknown;
-  createdAt?: number;
-  meta?: Record<string, unknown>;
-};
+import { ChatBubble } from '../chat/ChatBubble';
+import { isToolResultOnlyMessage } from '../chat/chat-utils.js';
+import { WalkingAnt } from '../chat/WalkingAnt';
+import { ModelDropdown } from '../chat/ModelDropdown';
+import { AntStationStackedLogo } from '../AntStationLogo';
+import styles from './ChatView.module.scss';
+import type { ChatMessage } from '../chat/chat-shared';
+import { buildDisplayMessages } from '../chat/chat-shared';
 
 function getMessageContentKey(content: unknown): string {
   if (typeof content === 'string') {
@@ -51,17 +53,35 @@ export function ChatView({ active }: ChatViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputId = useId();
   const prevInputDisabled = useRef<boolean>(snap.chatInputDisabled);
+  const isUserScrolledUp = useRef(false);
+  const prevMessageCount = useRef(0);
 
   const visibleMessages = useMemo(() => {
     const msgs = Array.isArray(snap.chatMessages) ? (snap.chatMessages as ChatMessage[]) : [];
-    return msgs.filter((msg) => !isToolResultOnlyMessage(msg));
+    return buildDisplayMessages(msgs).filter((msg) => !isToolResultOnlyMessage(msg));
   }, [snap.chatMessages]);
 
+  // Track whether the user has scrolled away from the bottom
   useEffect(() => {
-    if (scrollRef.current) {
+    const el = scrollRef.current;
+    if (!el) return;
+    const handleScroll = () => {
+      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+      isUserScrolledUp.current = !atBottom;
+    };
+    el.addEventListener('scroll', handleScroll, { passive: true });
+    return () => el.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  // Auto-scroll only when new messages arrive and user hasn't scrolled up
+  useEffect(() => {
+    const count = visibleMessages.length;
+    const isNew = count > prevMessageCount.current;
+    prevMessageCount.current = count;
+    if (isNew && !isUserScrolledUp.current && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [snap.chatMessages]);
+  }, [visibleMessages]);
 
   // Re-focus the input when it transitions from disabled → enabled (e.g. after AI response completes)
   useEffect(() => {
@@ -122,78 +142,42 @@ export function ChatView({ active }: ChatViewProps) {
     }
   }, []);
 
-  const conversations = Array.isArray(snap.chatConversations) ? snap.chatConversations : [];
-  const showOnboarding =
-    conversations.length === 0 && !snap.chatActiveConversation && visibleMessages.length === 0;
-  const showWelcome = !showOnboarding && visibleMessages.length === 0;
+  const showWelcome =
+    !snap.chatActiveConversation &&
+    visibleMessages.length === 0 &&
+    !snap.chatStreamingMessage;
 
   return (
     <section className={`view view-chat${active ? ' active' : ''}`} role="tabpanel">
-      <div className="page-header">
-        <h2>AI Chat</h2>
-        <div className="page-header-right">
-          <select
-            className="form-input chat-model-select"
+      <div className={styles.pageHeader}>
+        <div className={styles.pageHeaderLeft}>
+          <ModelDropdown
+            options={snap.chatModelOptions}
             value={snap.chatSelectedModelValue}
             disabled={snap.chatModelSelectDisabled}
-            onChange={(e) => actions.handleModelChange(e.target.value)}
-            onFocus={() => actions.handleModelFocus()}
-            onBlur={() => actions.handleModelBlur()}
-          >
-            {snap.chatModelOptions.length === 0 ? (
-              <option value="">No models available</option>
-            ) : (
-              snap.chatModelOptions.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))
-            )}
-          </select>
-          <div className={`connection-badge badge-${snap.chatModelStatus.tone}`}>
-            {snap.chatModelStatus.label}
-          </div>
-          <div className={`connection-badge badge-${snap.chatProxyStatus.tone}`}>
-            {snap.chatProxyStatus.label}
-          </div>
+            onChange={actions.handleModelChange}
+            onFocus={actions.handleModelFocus}
+            onBlur={actions.handleModelBlur}
+          />
+        </div>
+        <div className={styles.pageHeaderRight}>
+          {snap.chatRoutedPeer && (
+            <>
+              <span className={styles.chatRoutedLabel}>Routed to:</span>
+              <span className={styles.chatRoutedPeer}>{snap.chatRoutedPeer}</span>
+            </>
+          )}
         </div>
       </div>
 
-      <div className="chat-container">
-        <div className="chat-main">
-          <div className="chat-thread-header">
-            <div className="chat-thread-title">
-              <span className="chat-thread-peer">{snap.chatConversationTitle}</span>
-              <span className="chat-thread-meta">{snap.chatThreadMeta}</span>
-            </div>
-            {snap.chatDeleteVisible && (
-              <button
-                className="btn-icon chat-delete-btn"
-                title="Delete conversation"
-                onClick={() => void actions.deleteConversation()}
-              >
-                Delete
-              </button>
-            )}
-          </div>
-
-          <div className="chat-messages" ref={scrollRef} data-chat-scroll>
-            {showOnboarding ? (
-              <ChatOnboarding
-                options={snap.chatModelOptions}
-                selectedValue={snap.chatSelectedModelValue}
-                onModelChange={actions.handleModelChange}
-                onStart={() => void actions.createNewConversation()}
-              />
-            ) : showWelcome ? (
-              <div className="chat-welcome">
-                <div className="chat-welcome-title">AntSeed AI Chat</div>
-                <div className="chat-welcome-subtitle">
-                  Send messages through the P2P marketplace to inference providers.
-                </div>
-                <div className="chat-welcome-subtitle">
-                  Buyer runtime auto-connects to the local proxy. Create a new conversation to
-                  begin.
+      <div className={styles.chatContainer}>
+        <div className={styles.chatMain}>
+          <div className={styles.chatMessages} ref={scrollRef} data-chat-scroll>
+            {showWelcome ? (
+              <div className={styles.chatWelcome}>
+                <AntStationStackedLogo height={72} />
+                <div className={styles.chatWelcomeSubtitle}>
+                  Start typing. Best provider auto-selected by reputation.
                 </div>
               </div>
             ) : (
@@ -201,17 +185,20 @@ export function ChatView({ active }: ChatViewProps) {
                 <ChatBubble key={getMessageKey(msg, i)} message={msg} />
               ))
             )}
-            <div data-chat-stream />
+            {snap.chatStreamingMessage ? (
+              <ChatBubble message={snap.chatStreamingMessage as ChatMessage} streaming />
+            ) : null}
+            {snap.chatSending && <WalkingAnt elapsedMs={snap.chatThinkingElapsedMs} />}
           </div>
 
-          <div className="chat-input-area">
+          <div className={styles.chatInputArea}>
             {attachedImage && (
-              <div className="chat-image-attach-preview">
-                <img src={attachedImage.previewUrl} alt="Attached" className="chat-image-attach-thumb" />
-                <button className="chat-image-remove-btn" onClick={handleRemoveImage} title="Remove image">✕</button>
+              <div className={styles.chatImageAttachPreview}>
+                <img src={attachedImage.previewUrl} alt="Attached" className={styles.chatImageAttachThumb} />
+                <button className={styles.chatImageRemoveBtn} onClick={handleRemoveImage} title="Remove image">✕</button>
               </div>
             )}
-            <div className="chat-input-row">
+            <div className={styles.chatInputRow}>
               <input
                 ref={fileInputRef}
                 id={fileInputId}
@@ -220,17 +207,9 @@ export function ChatView({ active }: ChatViewProps) {
                 style={{ display: 'none' }}
                 onChange={handleImageAttach}
               />
-              <button
-                className="chat-attach-btn"
-                title="Attach image"
-                disabled={snap.chatInputDisabled}
-                onClick={() => fileInputRef.current?.click()}
-              >
-                📎
-              </button>
               <textarea
                 ref={inputRef}
-                className="chat-text-input"
+                className={styles.chatTextInput}
                 placeholder="Type a message... (Shift+Enter for newline)"
                 rows={1}
                 disabled={snap.chatInputDisabled}
@@ -239,75 +218,33 @@ export function ChatView({ active }: ChatViewProps) {
                 onInput={handleInput}
                 onKeyDown={handleKeyDown}
               />
-              {snap.chatAbortVisible ? (
-                <button className="chat-abort-btn" onClick={() => void actions.abortChat()}>
-                  Stop
-                </button>
-              ) : (
-                <button disabled={snap.chatSendDisabled && !attachedImage} onClick={handleSend}>
-                  Send
-                </button>
-              )}
+              <div className={styles.chatInputBottom}>
+                <div className={styles.chatInputBottomLeft}>
+                  <button
+                    className={styles.chatAttachBtn}
+                    title="Attach image"
+                    disabled={snap.chatInputDisabled}
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    <HugeiconsIcon icon={Add01Icon} size={18} strokeWidth={2} />
+                  </button>
+                </div>
+                {snap.chatAbortVisible ? (
+                  <button className={styles.chatAbortBtn} onClick={() => void actions.abortChat()}>
+                    Stop
+                  </button>
+                ) : (
+                  <button className={styles.chatSendBtn} disabled={snap.chatSendDisabled && !attachedImage} onClick={handleSend}>
+                    <HugeiconsIcon icon={ArrowUp02Icon} size={18} strokeWidth={2.5} />
+                  </button>
+                )}
+              </div>
             </div>
           </div>
 
-          {snap.chatError && <div className="chat-error">{snap.chatError}</div>}
+          {snap.chatError && <div className={styles.chatError}>{snap.chatError}</div>}
         </div>
       </div>
     </section>
-  );
-}
-
-type ChatOnboardingProps = {
-  options: ChatModelOptionEntry[];
-  selectedValue: string;
-  onModelChange?: (value: string) => void;
-  onStart?: () => void;
-};
-
-function ChatOnboarding({ options, selectedValue, onModelChange, onStart }: ChatOnboardingProps) {
-  const hasModels = options.length > 0;
-
-  return (
-    <div className="chat-welcome">
-      <div className="chat-welcome-title">Start your first chat</div>
-      <div className="chat-welcome-subtitle">
-        Select a model from the network API and create a conversation.
-      </div>
-      <div
-        style={{
-          display: 'flex',
-          gap: '8px',
-          alignItems: 'center',
-          flexWrap: 'wrap',
-          justifyContent: 'center',
-        }}
-      >
-        <select
-          className="form-input chat-model-select"
-          value={selectedValue}
-          disabled={!hasModels}
-          onChange={(e) => onModelChange?.(e.target.value)}
-        >
-          {hasModels ? (
-            options.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))
-          ) : (
-            <option value="">No models available</option>
-          )}
-        </select>
-        <button disabled={!hasModels} onClick={onStart}>
-          Start chat
-        </button>
-      </div>
-      {!hasModels && (
-        <div className="chat-welcome-subtitle">
-          No models available yet. Ensure Buyer runtime/proxy is online.
-        </div>
-      )}
-    </div>
   );
 }

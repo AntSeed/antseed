@@ -117,6 +117,12 @@ const api = {
   ): Promise<DashboardDataResult> {
     return ipcRenderer.invoke('runtime:get-dashboard-data', endpoint, options) as Promise<DashboardDataResult>;
   },
+  updateDashboardConfig(
+    config: Record<string, unknown>,
+    options?: { port?: number },
+  ): Promise<DashboardDataResult> {
+    return ipcRenderer.invoke('runtime:update-dashboard-config', config, options) as Promise<DashboardDataResult>;
+  },
   scanNetwork(port?: number): Promise<DashboardDataResult> {
     return ipcRenderer.invoke('runtime:scan-network', port) as Promise<DashboardDataResult>;
   },
@@ -164,8 +170,8 @@ const api = {
   chatAiGetProxyStatus(): Promise<{ ok: boolean; data: { running: boolean; port: number } }> {
     return ipcRenderer.invoke('chat:ai-get-proxy-status');
   },
-  onChatAiDone(handler: (data: { conversationId: string; message: { role: string; content: unknown; createdAt?: number } }) => void): () => void {
-    const listener = (_: unknown, data: { conversationId: string; message: { role: string; content: unknown; createdAt?: number } }) => handler(data);
+  onChatAiDone(handler: (data: { conversationId: string; message: { role: string; content: unknown; createdAt?: number; meta?: Record<string, unknown> } }) => void): () => void {
+    const listener = (_: unknown, data: { conversationId: string; message: { role: string; content: unknown; createdAt?: number; meta?: Record<string, unknown> } }) => handler(data);
     ipcRenderer.on('chat:ai-done', listener);
     return () => ipcRenderer.off('chat:ai-done', listener);
   },
@@ -215,10 +221,25 @@ const api = {
     ipcRenderer.on('chat:ai-tool-executing', listener);
     return () => ipcRenderer.off('chat:ai-tool-executing', listener);
   },
-  onChatAiToolResult(handler: (data: { conversationId: string; toolUseId: string; output: string; isError: boolean }) => void): () => void {
-    const listener = (_: unknown, data: { conversationId: string; toolUseId: string; output: string; isError: boolean }) => handler(data);
+  onChatAiToolUpdate(handler: (data: { conversationId: string; toolUseId: string; name: string; input: Record<string, unknown>; output: string; details?: Record<string, unknown> }) => void): () => void {
+    const listener = (_: unknown, data: { conversationId: string; toolUseId: string; name: string; input: Record<string, unknown>; output: string; details?: Record<string, unknown> }) => handler(data);
+    ipcRenderer.on('chat:ai-tool-update', listener);
+    return () => ipcRenderer.off('chat:ai-tool-update', listener);
+  },
+  onChatAiToolResult(handler: (data: { conversationId: string; toolUseId: string; output: string; isError: boolean; details?: Record<string, unknown> }) => void): () => void {
+    const listener = (_: unknown, data: { conversationId: string; toolUseId: string; output: string; isError: boolean; details?: Record<string, unknown> }) => handler(data);
     ipcRenderer.on('chat:ai-tool-result', listener);
     return () => ipcRenderer.off('chat:ai-tool-result', listener);
+  },
+  onFullscreenChange(handler: (isFullscreen: boolean) => void): () => void {
+    const listener = (_: unknown, isFullscreen: boolean) => handler(isFullscreen);
+    ipcRenderer.on('fullscreen-change', listener);
+    return () => ipcRenderer.off('fullscreen-change', listener);
+  },
+  onWindowFocusChange(handler: (isFocused: boolean) => void): () => void {
+    const listener = (_: unknown, isFocused: boolean) => handler(isFocused);
+    ipcRenderer.on('window-focus-change', listener);
+    return () => ipcRenderer.off('window-focus-change', listener);
   },
 };
 
