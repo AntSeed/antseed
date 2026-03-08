@@ -190,11 +190,11 @@ export function ConfigView({ active }: ConfigViewProps) {
             {/* <p className="settings-note">
               Additional buyer and payment settings are temporarily hidden while this screen is being simplified.
             </p> */}
-            {/* configMessage ? (
+            {configMessage ? (
               <p className={`settings-message ${configMessage.type}`}>
                 {configMessage.text}
               </p>
-            ) : null */}
+            ) : null}
             <button className="settings-save-btn" onClick={handleSave} disabled={configSaving}>
               {configSaving ? 'Saving...' : 'Save Settings'}
             </button>

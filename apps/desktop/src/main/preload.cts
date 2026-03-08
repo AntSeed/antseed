@@ -68,6 +68,8 @@ type DashboardDataResult = {
   status: number | null;
 };
 
+type DashboardUpdateResult = DashboardDataResult;
+
 type PluginInfo = {
   package: string;
   version: string;
@@ -120,8 +122,8 @@ const api = {
   updateDashboardConfig(
     config: Record<string, unknown>,
     options?: { port?: number },
-  ): Promise<DashboardDataResult> {
-    return ipcRenderer.invoke('runtime:update-dashboard-config', config, options) as Promise<DashboardDataResult>;
+  ): Promise<DashboardUpdateResult> {
+    return ipcRenderer.invoke('runtime:update-dashboard-config', config, options) as Promise<DashboardUpdateResult>;
   },
   scanNetwork(port?: number): Promise<DashboardDataResult> {
     return ipcRenderer.invoke('runtime:scan-network', port) as Promise<DashboardDataResult>;
@@ -157,6 +159,9 @@ const api = {
   },
   chatAiDeleteConversation(id: string): Promise<{ ok: boolean }> {
     return ipcRenderer.invoke('chat:ai-delete-conversation', id);
+  },
+  chatAiRenameConversation(id: string, title: string): Promise<{ ok: boolean; error?: string }> {
+    return ipcRenderer.invoke('chat:ai-rename-conversation', id, title);
   },
   chatAiSend(conversationId: string, message: string, model?: string, provider?: string, imageBase64?: string, imageMimeType?: string): Promise<{ ok: boolean; error?: string }> {
     return ipcRenderer.invoke('chat:ai-send', conversationId, message, model, provider, imageBase64, imageMimeType);

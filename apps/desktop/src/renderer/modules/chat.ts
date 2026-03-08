@@ -980,6 +980,11 @@ export function initChatModule({
       uiState.chatConversationTitle = newTitle;
     }
     notifyUiStateChanged();
+    if (bridge?.chatAiRenameConversation) {
+      void bridge.chatAiRenameConversation(convId, newTitle).catch((err: unknown) => {
+        appendSystemLog(`Failed to persist conversation rename: ${String(err)}`);
+      });
+    }
   }
 
   function isInProgressErrorMessage(message: unknown): boolean {
@@ -1005,6 +1010,8 @@ export function initChatModule({
         await createNewConversation();
         if (uiState.chatActiveConversation) {
           sendMessage(text, imageBase64, imageMimeType);
+        } else {
+          showChatError('Failed to create a conversation. Please try again.');
         }
       })();
       return;

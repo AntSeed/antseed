@@ -2644,6 +2644,15 @@ export function registerPiChatHandlers({
     return { ok: true };
   });
 
+  ipcMain.handle('chat:ai-rename-conversation', async (_event, id: string, title: string) => {
+    const manager = await store.openSessionManager(id);
+    if (!manager) {
+      return { ok: false, error: 'Conversation not found' };
+    }
+    manager.appendSessionInfo(title.trim());
+    return { ok: true };
+  });
+
   ipcMain.handle(
     'chat:ai-send-stream',
     async (_event, conversationId: string, userMessage: string, model?: string, provider?: string, imageBase64?: string, imageMimeType?: string) => {
