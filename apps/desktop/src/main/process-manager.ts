@@ -238,7 +238,13 @@ function resolveNodeBinary(targetArch: string): string {
     }
   }
 
-  return firstExisting ?? 'node';
+  // Fallback: use Electron's own Node.js runtime (requires ELECTRON_RUN_AS_NODE=1).
+  // This ensures the packaged app works even if no system node is installed.
+  if (firstExisting == null && process.execPath) {
+    return process.execPath;
+  }
+
+  return firstExisting ?? process.execPath ?? 'node';
 }
 
 function resolveConfigPath(configPath?: string): string {
@@ -273,12 +279,18 @@ function resolveCliExecution(): CliExecution {
   const cliCommand = resolveCliCommand();
   const localCliPath = resolveLocalCliPath();
   const useLocalCliScript = existsSync(localCliPath) && resolve(cliCommand) === localCliPath;
-  const executable = useLocalCliScript ? resolveNodeBinary(process.arch) : cliCommand;
-  const executableArgsPrefix = useLocalCliScript ? [localCliPath] : [];
+
+  // The bundled CLI (from extraResources) is also a .js script that needs node.
+  // Packaged macOS apps have a minimal PATH, so we must resolve node explicitly.
+  const isBundledScript = !useLocalCliScript && cliCommand.endsWith('.js');
+  const needsNode = useLocalCliScript || isBundledScript;
+
+  const executable = needsNode ? resolveNodeBinary(process.arch) : cliCommand;
+  const executableArgsPrefix = needsNode ? [cliCommand] : [];
   return {
     executable,
     executableArgsPrefix,
-    useLocalCliScript,
+    useLocalCliScript: needsNode,
     cliCommand,
   };
 }
@@ -355,7 +367,13 @@ export class ProcessManager {
         childEnv[key] = String(value);
       }
     }
-    delete childEnv['ELECTRON_RUN_AS_NODE'];
+    // When using Electron's own binary as node, set ELECTRON_RUN_AS_NODE so it
+    // behaves like a regular Node.js process. Otherwise, remove it.
+    if (executable === process.execPath) {
+      childEnv['ELECTRON_RUN_AS_NODE'] = '1';
+    } else {
+      delete childEnv['ELECTRON_RUN_AS_NODE'];
+    }
     const extraNodePath = resolveChildNodePath();
     if (extraNodePath) {
       childEnv['NODE_PATH'] = extraNodePath + (childEnv['NODE_PATH'] ? `:${childEnv['NODE_PATH']}` : '');
@@ -444,7 +462,11 @@ export class ProcessManager {
     const executableArgs = [...cliExecution.executableArgsPrefix, ...args];
 
     const childEnv = { ...process.env };
-    delete childEnv['ELECTRON_RUN_AS_NODE'];
+    if (executable === process.execPath) {
+      childEnv['ELECTRON_RUN_AS_NODE'] = '1';
+    } else {
+      delete childEnv['ELECTRON_RUN_AS_NODE'];
+    }
     const extraNodePath = resolveChildNodePath();
     if (extraNodePath) {
       childEnv['NODE_PATH'] = extraNodePath + (childEnv['NODE_PATH'] ? `:${childEnv['NODE_PATH']}` : '');
