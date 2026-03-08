@@ -845,7 +845,9 @@ async function ensureDefaultPlugin(packageName: string): Promise<void> {
     const message = err instanceof Error ? err.message : String(err);
     appendLog('connect', 'system', `Failed to auto-install plugin "${packageName}": ${message}`);
     mainWindow?.webContents.send('app:setup-step', { step: 'error', label: 'Failed to install router plugin' });
-    mainWindow?.webContents.send('app:setup-complete');
+    // Do NOT emit app:setup-complete on failure — the onAppSetupComplete handler
+    // would unconditionally start the connect process even though the plugin is
+    // not available, producing a spurious "Buyer runtime exited unexpectedly" message.
     throw new Error(`Required plugin "${packageName}" could not be installed: ${message}`);
   }
 }

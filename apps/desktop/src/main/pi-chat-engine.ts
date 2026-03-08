@@ -5,7 +5,8 @@ import { createConnection, isIP } from 'node:net';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import type { AgentSession, AgentSessionEvent } from '@mariozechner/pi-coding-agent';
-import { AuthStorage, createAgentSession, ModelRegistry, SessionManager } from '@mariozechner/pi-coding-agent';
+import { antStationSystemPromptOverride } from './chat-system-prompt.js';
+import { AuthStorage, createAgentSession, DefaultResourceLoader, ModelRegistry, SessionManager, SettingsManager } from '@mariozechner/pi-coding-agent';
 import type {
   AssistantMessage,
   AssistantMessageEvent,
@@ -2121,6 +2122,28 @@ export function registerPiChatHandlers({
     authStorage.setRuntimeApiKey(PROXY_PROVIDER_ID, PROXY_RUNTIME_API_KEY);
     const modelRegistry = new ModelRegistry(authStorage);
 
+    // Resolve system prompt override: user config → AntStation default transform.
+    // We use resourceLoader so the prompt is applied on every turn (agent-session
+    // rebuilds _baseSystemPrompt from the resource loader each turn, overriding
+    // any one-shot session.agent.setSystemPrompt call).
+    //
+    // If the user has configured a custom prompt (env var or config), pass it as
+    // customPrompt so buildSystemPrompt uses it directly (skills + context files
+    // are still appended). Otherwise, use systemPromptOverride to transform pi's
+    // fully-built prompt (tool list, guidelines, skills, etc.) into an AntStation-
+    // branded version without touching the dynamic sections.
+    const userSystemPrompt = await resolveSystemPrompt(configPath);
+    const settingsManager = SettingsManager.create(CHAT_WORKSPACE_DIR, CHAT_AGENT_DIR);
+    const resourceLoader = new DefaultResourceLoader({
+      cwd: CHAT_WORKSPACE_DIR,
+      agentDir: CHAT_AGENT_DIR,
+      settingsManager,
+      ...(userSystemPrompt
+        ? { systemPrompt: userSystemPrompt }
+        : { systemPromptOverride: antStationSystemPromptOverride }),
+    });
+    await resourceLoader.reload();
+
     const { session } = await createAgentSession({
       cwd: CHAT_WORKSPACE_DIR,
       agentDir: CHAT_AGENT_DIR,
@@ -2128,14 +2151,11 @@ export function registerPiChatHandlers({
       authStorage,
       modelRegistry,
       model: proxyModel,
+      resourceLoader,
     });
 
     await session.setModel(proxyModel);
     session.agent.sessionId = conversationId;
-    const systemPrompt = await resolveSystemPrompt(configPath);
-    if (systemPrompt) {
-      session.agent.setSystemPrompt(systemPrompt);
-    }
 
     const existingUserMessages = session.messages.filter((message) => message.role === 'user').length;
     if (existingUserMessages === 0 && (!session.sessionName || session.sessionName.trim().length === 0)) {
