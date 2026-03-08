@@ -8,7 +8,7 @@ import {
   nativeImage,
   type MenuItemConstructorOptions,
 } from 'electron';
-import { readFile, writeFile, readdir, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, readdir, mkdir, cp } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { execFile as execFileCallback } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -770,32 +770,28 @@ async function installPluginDependency(packageSpec: string): Promise<void> {
 }
 
 async function installPluginFromBundle(packageName: string): Promise<boolean> {
-  // In production builds the plugin is bundled into Resources/bundled-plugins/
+  // In production builds, plugins are bundled into Resources/bundled-plugins/.
   const bundleRoot = path.join(process.resourcesPath ?? '', 'bundled-plugins');
-  const srcDir = path.join(bundleRoot, packageName);
-  if (!existsSync(srcDir)) return false;
+  if (!existsSync(path.join(bundleRoot, packageName))) return false;
 
   await ensurePluginsDirectory();
   const destRoot = path.join(DEFAULT_PLUGINS_DIR, 'node_modules');
 
-  // Copy every package found in the bundle dir (the target + its peer deps).
-  const { cp } = await import('node:fs/promises');
+  // Copy all scoped packages from the bundle (target + its bundled dependencies).
   const bundleEntries = await readdir(bundleRoot, { withFileTypes: true });
-  for (const scope of bundleEntries) {
-    if (!scope.isDirectory()) continue;
-    if (scope.name.startsWith('@')) {
-      // Scoped package — one more level deep
-      const scopedEntries = await readdir(path.join(bundleRoot, scope.name), { withFileTypes: true });
-      for (const pkg of scopedEntries) {
-        if (!pkg.isDirectory()) continue;
-        const src = path.join(bundleRoot, scope.name, pkg.name);
-        const dest = path.join(destRoot, scope.name, pkg.name);
-        await mkdir(path.dirname(dest), { recursive: true });
-        await cp(src, dest, { recursive: true, force: true });
-        appendLog('connect', 'system', `Copied bundled plugin ${scope.name}/${pkg.name} to plugins dir.`);
-      }
+  const scopeDirs = bundleEntries.filter((e) => e.isDirectory() && e.name.startsWith('@'));
+
+  for (const scope of scopeDirs) {
+    const pkgEntries = await readdir(path.join(bundleRoot, scope.name), { withFileTypes: true });
+    for (const pkg of pkgEntries.filter((e) => e.isDirectory())) {
+      const src = path.join(bundleRoot, scope.name, pkg.name);
+      const dest = path.join(destRoot, scope.name, pkg.name);
+      await mkdir(path.dirname(dest), { recursive: true });
+      await cp(src, dest, { recursive: true, force: true });
+      appendLog('connect', 'system', `Copied bundled plugin ${scope.name}/${pkg.name}.`);
     }
   }
+
   return existsSync(path.join(destRoot, packageName, 'package.json'));
 }
 
