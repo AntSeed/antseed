@@ -246,6 +246,19 @@ const api = {
     ipcRenderer.on('window-focus-change', listener);
     return () => ipcRenderer.off('window-focus-change', listener);
   },
+  getAppSetupStatus(): Promise<{ needed: boolean; complete: boolean }> {
+    return ipcRenderer.invoke('app:get-setup-status') as Promise<{ needed: boolean; complete: boolean }>;
+  },
+  onAppSetupStep(handler: (data: { step: string; label: string }) => void): () => void {
+    const listener = (_: unknown, data: { step: string; label: string }) => handler(data);
+    ipcRenderer.on('app:setup-step', listener);
+    return () => ipcRenderer.off('app:setup-step', listener);
+  },
+  onAppSetupComplete(handler: () => void): () => void {
+    const listener = () => handler();
+    ipcRenderer.on('app:setup-complete', listener);
+    return () => ipcRenderer.off('app:setup-complete', listener);
+  },
 };
 
 contextBridge.exposeInMainWorld('antseedDesktop', api);

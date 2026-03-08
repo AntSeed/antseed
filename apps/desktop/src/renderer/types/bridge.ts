@@ -135,4 +135,7 @@ export type DesktopBridge = {
   onChatAiToolResult?: (handler: (data: { conversationId: string; toolUseId: string; output: string; isError: boolean; details?: Record<string, unknown> }) => void) => () => void;
   onFullscreenChange?: (handler: (isFullscreen: boolean) => void) => () => void;
   onWindowFocusChange?: (handler: (isFocused: boolean) => void) => () => void;
+  getAppSetupStatus?: () => Promise<{ needed: boolean; complete: boolean }>;
+  onAppSetupStep?: (handler: (data: { step: string; label: string }) => void) => () => void;
+  onAppSetupComplete?: (handler: () => void) => () => void;
 };

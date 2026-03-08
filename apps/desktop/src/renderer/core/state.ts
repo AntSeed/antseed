@@ -144,6 +144,11 @@ export type RendererUiState = {
   // --- Router input value (for plugin setup + chat) ---
   connectRouterValue: string;
   dashboardPortValue: string;
+
+  // --- First-run setup ---
+  appSetupNeeded: boolean;
+  appSetupComplete: boolean;
+  appSetupStep: string;
 };
 
 const MAX_LOGS = 2000;
@@ -240,6 +245,11 @@ export function createInitialUiState(): RendererUiState {
     // Router / dashboard port
     connectRouterValue: 'local',
     dashboardPortValue: '3117',
+
+    // First-run setup
+    appSetupNeeded: false,
+    appSetupComplete: false,
+    appSetupStep: '',
   };
 }
 

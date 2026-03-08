@@ -4,6 +4,7 @@ import { StreamingIndicator } from './components/StreamingIndicator';
 import { TitleBar } from './components/TitleBar';
 import { ViewHost } from './components/ViewHost';
 import { DiscoverWelcome } from './components/chat/DiscoverWelcome';
+import { SetupScreen } from './components/SetupScreen';
 import { useUiSnapshot } from './hooks/useUiSnapshot';
 import { useActions } from './hooks/useActions';
 import type { ViewName } from './types';
@@ -13,6 +14,22 @@ export function AppShell() {
   const actions = useActions();
   const [activeView, setActiveView] = useState<ViewName>('chat');
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
+  const [setupVisible, setSetupVisible] = useState(false);
+
+  const hasModels = snap.chatModelOptions.length > 0;
+
+  // Show setup screen while needed; hide once plugin installed and models are available.
+  useEffect(() => {
+    if (!snap.appSetupNeeded) return;
+    if (!snap.appSetupComplete || !hasModels) {
+      setSetupVisible(true);
+    } else {
+      const timer = setTimeout(() => setSetupVisible(false), 900);
+      return () => clearTimeout(timer);
+    }
+  }, [snap.appSetupNeeded, snap.appSetupComplete, hasModels]);
+
+  const showSetup = setupVisible;
 
   const hasConversations = Array.isArray(snap.chatConversations) && snap.chatConversations.length > 0;
   const showOnboarding =
@@ -42,6 +59,10 @@ export function AppShell() {
     },
     [actions],
   );
+
+  if (showSetup) {
+    return <SetupScreen />;
+  }
 
   if (showOnboarding) {
     return (
