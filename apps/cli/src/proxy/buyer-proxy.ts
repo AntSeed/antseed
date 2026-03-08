@@ -925,17 +925,6 @@ export class BuyerProxy {
     })
   }
 
-  updateSessionOverrides(overrides: { pinnedModel?: string | null; pinnedPeer?: string | null }): void {
-    if ('pinnedModel' in overrides) {
-      const model = overrides.pinnedModel?.trim() ?? null
-      this._pinnedModel = model && model.length > 0 ? model : null
-    }
-    if ('pinnedPeer' in overrides) {
-      const peer = overrides.pinnedPeer?.toLowerCase() ?? null
-      this._pinnedPeer = peer && peer.length > 0 ? peer : null
-    }
-  }
-
   private _watchStateFile(): void {
     try {
       this._stateFileWatcher = watch(BUYER_STATE_FILE, { persistent: false }, () => {
@@ -982,13 +971,18 @@ export class BuyerProxy {
       } catch {
         // file doesn't exist yet
       }
+      // When stopping, preserve whatever pinnedModel/pinnedPeerId is already
+      // in the file — the debounce may have been cancelled before
+      // _reloadSessionOverrides could commit the latest CLI-written values.
+      const sessionOverrides = state === 'connected'
+        ? { pinnedModel: this._pinnedModel, pinnedPeerId: this._pinnedPeer }
+        : {}
       const data = {
         ...existing,
         state,
         pid: process.pid,
         port: this._port,
-        pinnedModel: this._pinnedModel,
-        pinnedPeerId: this._pinnedPeer,
+        ...sessionOverrides,
       }
       await writeFile(BUYER_STATE_FILE, JSON.stringify(data, null, 2))
     } catch {
@@ -1254,9 +1248,10 @@ export class BuyerProxy {
       body: new Uint8Array(body),
     }
 
-    // Apply session model override before routing so peer selection,
-    // pricing, and the forwarded request all use the overridden model.
+    // Snapshot both session overrides together before any await so a concurrent
+    // _reloadSessionOverrides() cannot produce a model/peer mismatch mid-request.
     const effectivePinnedModel = this._pinnedModel
+    const effectivePinnedPeer = this._pinnedPeer
     if (effectivePinnedModel) {
       const { body: rewrittenBody, headers: rewrittenHeaders } = rewriteModelInBody(
         serializedReq.body,
@@ -1301,7 +1296,7 @@ export class BuyerProxy {
     const requestedModel = extractRequestedModel(serializedReq)
     log(`Routing: protocol=${requestProtocol ?? 'null'} model=${requestedModel ?? 'null'}`)
     const explicitProvider = getExplicitProviderOverride(serializedReq)
-    const explicitPeerId = getExplicitPeerIdOverride(serializedReq, this._pinnedPeer ?? undefined)
+    const explicitPeerId = getExplicitPeerIdOverride(serializedReq, effectivePinnedPeer ?? undefined)
     const preferredPeerId = getPreferredPeerIdHint(serializedReq)
     log(
       `Routing hints: provider=${explicitProvider ?? 'auto'} pin-peer=${explicitPeerId ?? 'none'} prefer-peer=${preferredPeerId ?? 'none'}`,
