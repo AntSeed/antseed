@@ -1453,7 +1453,7 @@ export function initChatModule({
             const blocks = getStreamingBlocks(message);
             blocks.push({
               type: 'text',
-              renderKey: createStreamingRenderKey('text', data.index),
+              renderKey: createStreamingRenderKey('text', blocks.length),
               text: '',
               streaming: true,
             });
@@ -1468,7 +1468,7 @@ export function initChatModule({
             const blocks = getStreamingBlocks(message);
             blocks.push({
               type: 'thinking',
-              renderKey: createStreamingRenderKey('thinking', data.index),
+              renderKey: createStreamingRenderKey('thinking', blocks.length),
               id: getStreamingBlockId('thinking', data.index),
               name: thinkingLabel,
               thinking: '',
@@ -1481,7 +1481,7 @@ export function initChatModule({
             const blocks = getStreamingBlocks(message);
             blocks.push({
               type: 'tool_use',
-              renderKey: createStreamingRenderKey('tool', data.toolId || data.index),
+              renderKey: createStreamingRenderKey('tool', data.toolId || blocks.length),
               id: String(data.toolId || getStreamingBlockId('tool', data.index)),
               name: String(data.toolName || 'tool'),
               status: 'running',

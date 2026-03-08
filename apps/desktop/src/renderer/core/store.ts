@@ -24,12 +24,12 @@ export function notifyUiStateChanged(): void {
   cachedSnapshot = null;
   if (!notifyPending) {
     notifyPending = true;
-    queueMicrotask(() => {
+    setTimeout(() => {
       notifyPending = false;
       for (const listener of listeners) {
         listener();
       }
-    });
+    }, 0);
   }
 }
 

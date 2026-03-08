@@ -25,6 +25,7 @@
     border-radius: var(--radius);
     padding: 9px 17px;
     margin-bottom: 32px;
+    margin-top: 16px;
 
     .chat-bubble-meta {
       margin-bottom: 4px;
@@ -300,6 +301,16 @@
 
     .tool-group-label {
       flex-shrink: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .tool-group-summary {
+      font-weight: 400;
+      opacity: 0.55;
+      text-transform: none;
+      letter-spacing: 0;
     }
 
     .tool-group-spacer {

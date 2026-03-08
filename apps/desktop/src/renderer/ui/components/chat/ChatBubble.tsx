@@ -9,6 +9,7 @@ import {
   formatToolExecutionLabel,
   getMyrmecochoryLabel,
   renderMarkdownToHtml,
+  toToolDisplayName,
 } from './chat-shared';
 import { registerStreamingTextUpdater } from '../../../core/streaming-text';
 
@@ -205,6 +206,24 @@ function ToolModal({ item, onClose }: { item: ToolRenderItem; onClose: () => voi
   );
 }
 
+function getToolActionLabel(kind: string): string {
+  switch (kind) {
+    case 'bash': return 'Running bash';
+    case 'read': case 'read_file': return 'Reading file';
+    case 'write': case 'write_file': return 'Writing file';
+    case 'edit': case 'multiedit': return 'Editing file';
+    case 'glob': return 'Listing files';
+    case 'grep': return 'Searching';
+    case 'search': case 'search_files': return 'Searching files';
+    case 'list_directory': return 'Listing directory';
+    case 'web_search': case 'websearch': return 'Searching web';
+    case 'web_fetch': case 'webfetch': return 'Fetching URL';
+    case 'computer': return 'Using computer';
+    case 'agent': return 'Running agent';
+    default: return `Running ${toToolDisplayName(kind).toLowerCase()}`;
+  }
+}
+
 function ToolGroupView({ blocks }: { blocks: ContentBlock[] }) {
   const [collapsed, setCollapsed] = useState(true);
   const [modalItem, setModalItem] = useState<ToolRenderItem | null>(null);
@@ -215,9 +234,13 @@ function ToolGroupView({ blocks }: { blocks: ContentBlock[] }) {
 
   const anyRunning = items.some((item) => item.status === 'running');
   const anyError = !anyRunning && items.some((item) => item.status === 'error');
-  const groupStatus: 'running' | 'error' | 'success' = anyRunning ? 'running' : anyError ? 'error' : 'success';
-  const groupStatusLabel = anyRunning ? 'Running' : anyError ? 'Error' : 'Done';
+  const groupStatus: 'running' | 'success' = anyRunning ? 'running' : 'success';
+  const groupStatusLabel = anyRunning ? 'Running' : 'Done';
   const label = `${items.length} tool${items.length === 1 ? '' : 's'} used`;
+  const toolSummary = items
+    .filter((item) => item.status === 'running')
+    .map((item) => `${getToolActionLabel(item.kind)} | ${item.label}`)
+    .join(' / ');
 
   return (
     <>
@@ -228,7 +251,7 @@ function ToolGroupView({ blocks }: { blocks: ContentBlock[] }) {
           onClick={() => setCollapsed((v) => !v)}
         >
           <span className="tool-group-chevron">›</span>
-          <span className="tool-group-label">{label}</span>
+          <span className="tool-group-label">{label}{toolSummary ? <span className="tool-group-summary"> | {toolSummary}</span> : null}</span>
           {anyRunning ? (
             <span className="thinking-dots" aria-hidden="true">
               <span /><span /><span />
@@ -288,7 +311,7 @@ function renderAssistantBlocks(blocks: ContentBlock[], streaming = false): React
     if (toolGroup.length === 0) return;
     nodes.push(
       <ToolGroupView
-        key={`tool-group-${String(toolGroup[0]?.id || toolGroup[0]?.tool_use_id || nodes.length)}`}
+        key={`tool-group-${nodes.length}-${String(toolGroup[0]?.id || toolGroup[0]?.tool_use_id || '')}`}
         blocks={toolGroup}
       />,
     );
