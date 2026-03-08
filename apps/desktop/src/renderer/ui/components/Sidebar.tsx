@@ -70,6 +70,7 @@ function ConvContextMenu({
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(convTitle);
   const renameInputRef = useRef<HTMLInputElement>(null);
+  const cancelledRef = useRef(false);
   const actions = useActions();
 
   useEffect(() => {
@@ -92,8 +93,6 @@ function ConvContextMenu({
       renameInputRef.current.select();
     }
   }, [renaming]);
-
-  const cancelledRef = useRef(false);
 
   const handleRenameSubmit = useCallback(() => {
     if (cancelledRef.current) return;
