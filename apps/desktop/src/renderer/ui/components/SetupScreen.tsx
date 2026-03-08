@@ -55,11 +55,11 @@ export function SetupScreen() {
   // only happen during the commit phase (safe in concurrent/strict mode).
   useEffect(() => {
     setLevel((prev) => {
-      let next = prev;
-      if (snap.appSetupComplete && next < 1) next = 1 as ProgressLevel;
-      if (next >= 1 && /peer|connecting|p2p|proxy|dht/i.test(msg) && next < 2) next = 2 as ProgressLevel;
-      if (next >= 1 && (/model/i.test(msg) || hasModels) && next < 3) next = 3 as ProgressLevel;
-      return next;
+      // Advance at most one level per call so intermediate steps animate visibly.
+      if (snap.appSetupComplete && prev < 1) return 1 as ProgressLevel;
+      if (prev >= 1 && /\bpeer(s)?\b|p2p|dht|discovering/i.test(msg) && prev < 2) return 2 as ProgressLevel;
+      if (prev >= 1 && (/model/i.test(msg) || hasModels) && prev < 3) return 3 as ProgressLevel;
+      return prev;
     });
   }, [snap.appSetupComplete, msg, hasModels]);
   const networkDone = level >= 2 || hasModels;
