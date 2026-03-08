@@ -761,13 +761,42 @@ async function installPluginDependency(packageSpec: string): Promise<void> {
     timeout: 120_000, // 2-minute hard limit
     env: {
       ...process.env,
-      // Ensure common binary paths are included for npm's own needs
       PATH: [
         '/usr/local/bin', '/opt/homebrew/bin', '/usr/bin', '/bin',
         process.env['PATH'] ?? '',
       ].join(':'),
     },
   });
+}
+
+async function installPluginFromBundle(packageName: string): Promise<boolean> {
+  // In production builds the plugin is bundled into Resources/bundled-plugins/
+  const bundleRoot = path.join(process.resourcesPath ?? '', 'bundled-plugins');
+  const srcDir = path.join(bundleRoot, packageName);
+  if (!existsSync(srcDir)) return false;
+
+  await ensurePluginsDirectory();
+  const destRoot = path.join(DEFAULT_PLUGINS_DIR, 'node_modules');
+
+  // Copy every package found in the bundle dir (the target + its peer deps).
+  const { cp } = await import('node:fs/promises');
+  const bundleEntries = await readdir(bundleRoot, { withFileTypes: true });
+  for (const scope of bundleEntries) {
+    if (!scope.isDirectory()) continue;
+    if (scope.name.startsWith('@')) {
+      // Scoped package — one more level deep
+      const scopedEntries = await readdir(path.join(bundleRoot, scope.name), { withFileTypes: true });
+      for (const pkg of scopedEntries) {
+        if (!pkg.isDirectory()) continue;
+        const src = path.join(bundleRoot, scope.name, pkg.name);
+        const dest = path.join(destRoot, scope.name, pkg.name);
+        await mkdir(path.dirname(dest), { recursive: true });
+        await cp(src, dest, { recursive: true, force: true });
+        appendLog('connect', 'system', `Copied bundled plugin ${scope.name}/${pkg.name} to plugins dir.`);
+      }
+    }
+  }
+  return existsSync(path.join(destRoot, packageName, 'package.json'));
 }
 
 function isPluginInstalled(packageName: string): boolean {
@@ -783,14 +812,22 @@ async function ensureDefaultPlugin(packageName: string): Promise<void> {
   }
   appSetupNeeded = true;
   mainWindow?.webContents.send('app:setup-step', { step: 'installing', label: 'Installing router plugin...' });
-  appendLog('connect', 'system', `Required plugin "${packageName}" not found. Installing via npm (npm: ${resolveNpmBin()})...`);
+  appendLog('connect', 'system', `Required plugin "${packageName}" not found. Installing...`);
   try {
-    const localSource = await resolveLocalPluginSource(packageName);
-    appendLog('connect', 'system', localSource ? `Using local source: ${localSource}` : 'Using npm registry...');
-    if (localSource) {
-      await installPluginDependency(toFileInstallSpec(packageName, localSource));
+    // 1. Try copying from the app bundle (production builds — instant, no network)
+    const installedFromBundle = await installPluginFromBundle(packageName);
+    if (installedFromBundle) {
+      appendLog('connect', 'system', `Installed plugin "${packageName}" from app bundle.`);
     } else {
-      await installPluginDependency(packageName);
+      // 2. Try local monorepo source (dev builds)
+      const localSource = await resolveLocalPluginSource(packageName);
+      appendLog('connect', 'system', localSource ? `Using local source: ${localSource}` : `Using npm registry (${resolveNpmBin()})...`);
+      if (localSource) {
+        await installPluginDependency(toFileInstallSpec(packageName, localSource));
+      } else {
+        // 3. Fall back to npm registry
+        await installPluginDependency(packageName);
+      }
     }
     appendLog('connect', 'system', `Installed plugin "${packageName}".`);
     appSetupComplete = true;
