@@ -55,7 +55,7 @@ export class WalletConnectManager extends EventEmitter {
         metadata: {
           name: 'AntSeed Desktop',
           description: 'Decentralized AI inference marketplace',
-          url: 'https://antseed.ai',
+          url: 'https://antseed.com',
           icons: [],
         },
         rpcMap: {

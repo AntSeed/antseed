@@ -2,8 +2,10 @@
  * Replace pnpm workspace symlinks in node_modules with real copies
  * so electron-builder can pack them into the asar archive.
  *
- * Also copies the CLI dist into cli-dist/ so it can be included as
- * an extraResource for spawning child processes.
+ * Also bundles the CLI into a single self-contained file for extraResources.
+ * Bundling (esbuild) instead of copying tsc output means the child process
+ * has no external JS dependencies — native modules are marked external and
+ * resolved via NODE_PATH pointing to app.asar.unpacked/node_modules/.
  *
  * pnpm links workspace packages as symlinks pointing outside the app
  * directory, which causes electron-builder's asar packer to fail with
@@ -13,7 +15,8 @@
  * packages (e.g. @antseed/node).
  */
 
-import { readdirSync, lstatSync, readlinkSync, rmSync, cpSync, existsSync } from 'node:fs';
+import { readdirSync, lstatSync, readlinkSync, rmSync, cpSync, existsSync, mkdirSync, chmodSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -72,19 +75,42 @@ for (const entry of entries) {
   }
 }
 
-// --- 2. Copy CLI dist for extraResources ---
+// --- 2. Bundle CLI into a single self-contained file for extraResources ---
 
-const cliSrcDir = path.resolve(appDir, '..', 'cli', 'dist');
+const cliDir = path.resolve(appDir, '..', 'cli');
 const cliDestDir = path.join(appDir, 'cli-dist');
+const bundleOutput = path.join(cliDestDir, 'cli', 'index.js');
+const esbinPath = path.resolve(appDir, '..', '..', 'node_modules', '.bin', 'esbuild');
 
-if (existsSync(cliSrcDir)) {
-  if (existsSync(cliDestDir)) {
-    rmSync(cliDestDir, { recursive: true });
-  }
-  cpSync(cliSrcDir, cliDestDir, { recursive: true });
-  console.log(`[prepare-dist] Copied CLI dist -> ${cliDestDir}`);
-} else {
-  console.warn(`[prepare-dist] WARNING: CLI dist not found at ${cliSrcDir}. Build the CLI first.`);
+if (existsSync(cliDestDir)) {
+  rmSync(cliDestDir, { recursive: true });
 }
+mkdirSync(path.dirname(bundleOutput), { recursive: true });
+
+console.log('[prepare-dist] Bundling CLI with esbuild...');
+execFileSync(esbinPath, [
+  'src/cli/index.ts',
+  '--bundle',
+  '--platform=node',
+  '--format=cjs',
+  `--outfile=${bundleOutput}`,
+  '--external:better-sqlite3',
+  '--external:node-datachannel',
+  '--external:koffi',
+  '--external:keytar',
+  '--define:import.meta.url=__importMetaUrl',
+  '--banner:js=const __importMetaUrl=require("url").pathToFileURL(__filename).href;',
+], { cwd: cliDir, stdio: 'inherit' });
+
+chmodSync(bundleOutput, 0o755);
+
+// Write a package.json with "type":"commonjs" so Node treats the CJS bundle
+// correctly regardless of whether the parent directory has "type":"module".
+writeFileSync(
+  path.join(cliDestDir, 'package.json'),
+  JSON.stringify({ name: 'antseed-cli-bundled', version: '1.0.0', type: 'commonjs' }, null, 2),
+);
+
+console.log(`[prepare-dist] Bundled CLI -> ${bundleOutput}`);
 
 console.log('[prepare-dist] Done.');

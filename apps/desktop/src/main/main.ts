@@ -220,6 +220,12 @@ let lastRuntimeActivityHash = '';
 let appSetupNeeded = false;
 let appSetupComplete = false;
 
+// When a specific connect error (e.g. port-in-use) is detected, suppress the
+// generic "exited unexpectedly" message for a short window so the specific
+// error isn't overwritten by the process-exit log that immediately follows.
+let connectSpecificErrorAt = 0;
+const CONNECT_EXIT_SUPPRESS_WINDOW_MS = 5_000;
+
 let dashboardServer: DashboardServer | null = null;
 const dashboardRuntime: DashboardRuntimeState = {
   running: false,
@@ -272,6 +278,7 @@ function parseConnectRuntimeActivity(lineRaw: string): RuntimeActivityEvent | nu
   const proxyBindErrorMatch = /failed to start proxy:\s*listen\s+eaddrinuse:\s*address already in use.*:(\d+)/i.exec(line);
   if (proxyBindErrorMatch) {
     const port = proxyBindErrorMatch[1] ?? '8377';
+    connectSpecificErrorAt = Date.now();
     return toRuntimeActivity({
       mode: 'connect',
       tone: 'bad',
@@ -282,6 +289,11 @@ function parseConnectRuntimeActivity(lineRaw: string): RuntimeActivityEvent | nu
   }
 
   if (/process exited \(code=\d+\)/i.test(line)) {
+    // If a specific error was just shown (e.g. port in use), don't overwrite it
+    // with the generic exit message — the process exiting is a consequence, not the cause.
+    if (Date.now() - connectSpecificErrorAt < CONNECT_EXIT_SUPPRESS_WINDOW_MS) {
+      return null;
+    }
     return toRuntimeActivity({
       mode: 'connect',
       tone: 'bad',
@@ -1980,4 +1992,13 @@ app.on('before-quit', (event) => {
   ]).finally(() => {
     app.quit();
   });
+});
+
+// Ensure child processes are cleaned up if the main process receives SIGTERM
+// (e.g. dev runner Ctrl+C kills Electron before before-quit fires).
+process.on('SIGTERM', () => {
+  void Promise.allSettled([
+    stopDashboardRuntime('SIGTERM'),
+    processManager.stopAll(),
+  ]).finally(() => process.exit(0));
 });
