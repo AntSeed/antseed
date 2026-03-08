@@ -737,10 +737,36 @@ async function listInstalledPlugins(): Promise<InstalledPlugin[]> {
   }
 }
 
+function resolveNpmBin(): string {
+  // Electron apps on macOS get a restricted PATH that may not include npm.
+  // Check common locations before falling back to plain 'npm'.
+  const candidates = [
+    '/usr/local/bin/npm',          // Homebrew (Intel Mac)
+    '/opt/homebrew/bin/npm',       // Homebrew (Apple Silicon)
+    '/usr/bin/npm',                // System
+    path.join(homedir(), '.nvm', 'alias', 'default', 'bin', 'npm'), // nvm symlink
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return 'npm'; // fallback — rely on PATH
+}
+
 async function installPluginDependency(packageSpec: string): Promise<void> {
   await ensurePluginsDirectory();
-  await execFileAsync('npm', ['install', '--ignore-scripts', packageSpec], {
+  const npmBin = resolveNpmBin();
+  appendLog('connect', 'system', `Installing "${packageSpec}" via ${npmBin}...`);
+  await execFileAsync(npmBin, ['install', '--ignore-scripts', packageSpec], {
     cwd: DEFAULT_PLUGINS_DIR,
+    timeout: 120_000, // 2-minute hard limit
+    env: {
+      ...process.env,
+      // Ensure common binary paths are included for npm's own needs
+      PATH: [
+        '/usr/local/bin', '/opt/homebrew/bin', '/usr/bin', '/bin',
+        process.env['PATH'] ?? '',
+      ].join(':'),
+    },
   });
 }
 
@@ -757,9 +783,10 @@ async function ensureDefaultPlugin(packageName: string): Promise<void> {
   }
   appSetupNeeded = true;
   mainWindow?.webContents.send('app:setup-step', { step: 'installing', label: 'Installing router plugin...' });
-  appendLog('connect', 'system', `Required plugin "${packageName}" not found. Installing...`);
+  appendLog('connect', 'system', `Required plugin "${packageName}" not found. Installing via npm (npm: ${resolveNpmBin()})...`);
   try {
     const localSource = await resolveLocalPluginSource(packageName);
+    appendLog('connect', 'system', localSource ? `Using local source: ${localSource}` : 'Using npm registry...');
     if (localSource) {
       await installPluginDependency(toFileInstallSpec(packageName, localSource));
     } else {
@@ -1125,6 +1152,16 @@ function createWindow(): void {
   if (isDev) {
     mainWindow.webContents.openDevTools({ mode: 'detach' });
   }
+
+  // Allow opening DevTools in production for debugging (Cmd+Option+I / Ctrl+Shift+I).
+  mainWindow.webContents.on('before-input-event', (_event, input) => {
+    const devToolsShortcut =
+      (input.meta && input.alt && input.key === 'i') ||   // macOS: Cmd+Option+I
+      (input.control && input.shift && input.key === 'I'); // Windows/Linux: Ctrl+Shift+I
+    if (devToolsShortcut && mainWindow) {
+      mainWindow.webContents.openDevTools({ mode: 'detach' });
+    }
+  });
 
   mainWindow.on('closed', () => {
     mainWindow = null;
