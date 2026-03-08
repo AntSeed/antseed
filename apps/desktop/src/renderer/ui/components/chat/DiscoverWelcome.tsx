@@ -1,4 +1,6 @@
 import { useState, useMemo, useCallback } from 'react';
+import Skeleton from 'react-loading-skeleton';
+import 'react-loading-skeleton/dist/skeleton.css';
 import type { ChatModelOptionEntry } from '../../../core/state';
 import styles from './DiscoverWelcome.module.scss';
 
@@ -126,45 +128,9 @@ function buildCards(options: ChatModelOptionEntry[]): CardItem[] {
   }));
 }
 
-/* ── Showcase fallback (when no network data yet) ────────────────────── */
+/* ── Skeleton placeholder count ──────────────────────────────────────── */
 
-const SHOWCASE_CARDS: CardItem[] = [
-  {
-    name: 'Community Peers', value: 'community', provider: 'community', providerCount: 0,
-    tags: ['ANON', 'Free'],
-    gradient: 'linear-gradient(135deg, rgba(51,236,142,0.15), rgba(31,216,122,0.25))',
-  },
-  {
-    name: 'llama-4-scout', value: '', provider: '', providerCount: 5,
-    tags: ['ANON', 'Uncensored', 'Fast'],
-    gradient: 'linear-gradient(135deg, #0668E1, #0553B7)',
-  },
-  {
-    name: 'deepseek-v3.2', value: '', provider: '', providerCount: 3,
-    tags: ['ANON', 'Private', 'Reasoning'],
-    gradient: 'linear-gradient(135deg, #4D6EFC, #2F4FCC)',
-  },
-  {
-    name: 'kimi-k2.5', value: '', provider: '', providerCount: 2,
-    tags: ['ANON', 'Code', 'Reasoning'],
-    gradient: 'linear-gradient(135deg, #0D0D18, #252545)',
-  },
-  {
-    name: 'qwen3-235b', value: '', provider: '', providerCount: 4,
-    tags: ['ANON', 'Uncensored', 'Private'],
-    gradient: 'linear-gradient(135deg, #06b6d4, #0891b2)',
-  },
-  {
-    name: 'flux-1.1-pro', value: '', provider: '', providerCount: 2,
-    tags: ['ANON', 'Image', 'Uncensored'],
-    gradient: 'linear-gradient(135deg, #1c1c1e, #3a3a3c)',
-  },
-  {
-    name: 'mistral-large-3', value: '', provider: '', providerCount: 3,
-    tags: ['ANON', 'Fast', 'Code'],
-    gradient: 'linear-gradient(135deg, #ff7000, #e05800)',
-  },
-];
+const SKELETON_CARD_COUNT = 8;
 
 /* ── Helpers ──────────────────────────────────────────────────────────── */
 
@@ -217,6 +183,32 @@ function matchesFilter(item: CardItem, filter: string): boolean {
   return item.tags.some((t) => matchTags.includes(t));
 }
 
+/* ── Skeleton card ───────────────────────────────────────────────────── */
+
+const skeletonBaseColor = 'rgba(255,255,255,0.04)';
+const skeletonHighlightColor = 'rgba(255,255,255,0.08)';
+
+function SkeletonCard() {
+  return (
+    <div className={styles.card}>
+      <div className={styles.cardTop}>
+        <Skeleton width={32} height={32} borderRadius={8} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
+        <div className={styles.cardMeta}>
+          <Skeleton width="70%" height={14} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
+          <Skeleton width="40%" height={11} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
+        </div>
+      </div>
+      <div className={styles.cardTags}>
+        <Skeleton width={42} height={18} borderRadius={24} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
+        <Skeleton width={56} height={18} borderRadius={24} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
+      </div>
+      <div className={styles.cardBottom}>
+        <Skeleton width={80} height={11} baseColor={skeletonBaseColor} highlightColor={skeletonHighlightColor} />
+      </div>
+    </div>
+  );
+}
+
 /* ── Main component ──────────────────────────────────────────────────── */
 
 type DiscoverWelcomeProps = {
@@ -229,7 +221,7 @@ export function DiscoverWelcome({ modelOptions, onStartChatting }: DiscoverWelco
 
   const hasNetworkData = modelOptions.length > 0;
   const cards = useMemo(
-    () => (hasNetworkData ? buildCards(modelOptions) : SHOWCASE_CARDS),
+    () => (hasNetworkData ? buildCards(modelOptions) : []),
     [hasNetworkData, modelOptions],
   );
 
@@ -274,23 +266,26 @@ export function DiscoverWelcome({ modelOptions, onStartChatting }: DiscoverWelco
       {/* Scrollable cards area */}
       <div className={styles.cardsScroll}>
         <div className={styles.cardsInner}>
-          {!hasNetworkData && (
-            <div className={styles.loadingHint}>
-              Connecting to network... showing preview.
-            </div>
-          )}
-
-          {filtered.length > 0 ? (
+          {!hasNetworkData ? (
             <>
-              <div className={styles.sectionLabel}>
-                {hasNetworkData ? 'Available Models' : 'Models'}
+              <div className={styles.loadingHint}>
+                Connecting to network...
               </div>
+              <div className={styles.sectionLabel}>Models</div>
+              <div className={styles.cardGrid}>
+                {Array.from({ length: SKELETON_CARD_COUNT }, (_, i) => (
+                  <SkeletonCard key={i} />
+                ))}
+              </div>
+            </>
+          ) : filtered.length > 0 ? (
+            <>
+              <div className={styles.sectionLabel}>Available Models</div>
               <div className={styles.cardGrid}>
                 {filtered.map((item) => (
                   <Card
                     key={item.value || item.name}
                     item={item}
-                    hasNetworkData={hasNetworkData}
                     onClick={handleClick}
                   />
                 ))}
@@ -314,11 +309,9 @@ export function DiscoverWelcome({ modelOptions, onStartChatting }: DiscoverWelco
 
 function Card({
   item,
-  hasNetworkData,
   onClick,
 }: {
   item: CardItem;
-  hasNetworkData: boolean;
   onClick: (v: string) => void;
 }) {
   const providerLabel =
@@ -328,15 +321,13 @@ function Card({
         ? `${item.providerCount} providers`
         : '';
 
-  const clickable = !!item.value;
-
   return (
     <div
-      className={`${styles.card}${!hasNetworkData ? ` ${styles.cardPreview}` : ''}${clickable ? ` ${styles.cardClickable}` : ''}`}
-      onClick={clickable ? () => onClick(item.value) : undefined}
-      role={clickable ? 'button' : undefined}
-      tabIndex={clickable ? 0 : undefined}
-      onKeyDown={clickable ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(item.value); } } : undefined}
+      className={`${styles.card} ${styles.cardClickable}`}
+      onClick={() => onClick(item.value)}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(item.value); } }}
     >
       {/* Top row: icon + name */}
       <div className={styles.cardTop}>
@@ -356,13 +347,9 @@ function Card({
 
       {/* Bottom: CTA */}
       <div className={styles.cardBottom}>
-        {clickable ? (
-          <span className={styles.cardCta}>
-            Start chatting <span className={styles.cardCtaArrow}>→</span>
-          </span>
-        ) : (
-          <span className={styles.cardCtaDisabled}>Coming soon</span>
-        )}
+        <span className={styles.cardCta}>
+          Start chatting <span className={styles.cardCtaArrow}>→</span>
+        </span>
       </div>
     </div>
   );

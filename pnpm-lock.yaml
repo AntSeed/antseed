@@ -190,6 +190,9 @@ importers:
       electron-builder:
         specifier: ^25.1.8
         version: 25.1.8(electron-builder-squirrel-windows@25.1.8)
+      react-loading-skeleton:
+        specifier: ^3.5.0
+        version: 3.5.0(react@18.3.1)
       sass:
         specifier: ^1.97.3
         version: 1.97.3
@@ -8314,6 +8317,11 @@ packages:
     peerDependencies:
       react-loadable: '*'
       webpack: '>=4.41.1 || 5.x'
+
+  react-loading-skeleton@3.5.0:
+    resolution: {integrity: sha512-gxxSyLbrEAdXTKgfbpBEFZCO/P153DnqSCQau2+o6lNy1jgMRr2MmRmOzMmyrwSaSYLRB8g7b0waYPmUjz7IhQ==}
+    peerDependencies:
+      react: '>=16.8.0'
 
   react-refresh@0.17.0:
     resolution: {integrity: sha512-z6F7K9bV85EfseRCp2bzrpyQ0Gkw1uLoCel9XBVWPg/TjRj94SkJzUTGfOa4bs7iJvBWtQG0Wq7wnI0syw3EBQ==}
@@ -20735,6 +20743,10 @@ snapshots:
       '@babel/runtime': 7.28.6
       react-loadable: '@docusaurus/react-loadable@6.0.0(react@18.3.1)'
       webpack: 5.105.2
+
+  react-loading-skeleton@3.5.0(react@18.3.1):
+    dependencies:
+      react: 18.3.1
 
   react-refresh@0.17.0: {}
 
