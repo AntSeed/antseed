@@ -281,18 +281,6 @@ export function initChatModule({
     return (messages as ChatMessage[]).filter((msg) => !isToolResultOnlyMessage(msg));
   }
 
-  function countBlocks(blocks: unknown[]) {
-    const summary = { text: 0, toolUse: 0, toolResult: 0, thinking: 0 };
-    if (!Array.isArray(blocks)) return summary;
-    for (const block of blocks as Array<{ type: string }>) {
-      if (block.type === 'text') summary.text += 1;
-      if (block.type === 'tool_use') summary.toolUse += 1;
-      if (block.type === 'tool_result') summary.toolResult += 1;
-      if (block.type === 'thinking') summary.thinking += 1;
-    }
-    return summary;
-  }
-
   function isConnectRunning(): boolean {
     const processes = Array.isArray(uiState.processes) ? uiState.processes : [];
     return processes.some(
@@ -399,7 +387,7 @@ export function initChatModule({
 
     for (const msg of messages) {
       if (msg.role === 'assistant' && Array.isArray(msg.content)) {
-        const counts = countBlocks(msg.content);
+        const counts = countBlocks(msg.content as ContentBlock[]);
         toolCalls += counts.toolUse;
         reasoningBlocks += counts.thinking;
       }
@@ -1662,6 +1650,10 @@ export function initChatModule({
         cancelThinkingRaf();
         stopStreamTextAnimation();
         uiState.chatStreamingMessage = null;
+        // Ensure the waiting-for-stream flag is cleared even if the error fires
+        // before chat:ai-stream-start is received (which is the only other place
+        // this flag gets cleared), preventing a permanent UI spinner lock.
+        uiState.chatWaitingForStream = false;
         notifyUiStateChanged();
         streamingTextTarget = '';
         streamingTextVisible = '';

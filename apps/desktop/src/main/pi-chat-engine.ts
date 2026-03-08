@@ -2509,6 +2509,8 @@ export function registerPiChatHandlers({
       }
       return { ok: true };
     } catch (error) {
+      // Always discard any buffered assistant message on error — it will not be committed.
+      pendingAssistantMessage = null;
       if ((error as Error).name === 'AbortError') {
         sendToRenderer('chat:ai-stream-error', { conversationId, error: 'Request aborted' });
         return { ok: false, error: 'Aborted' };

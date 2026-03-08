@@ -1,6 +1,7 @@
 import { createPortal } from 'react-dom';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
+import DOMPurify from 'dompurify';
 import { MarkdownContent } from './chat-utils.js';
 import styles from './ChatBubble.module.scss';
 import type { ChatMessage, ContentBlock } from './chat-shared';
@@ -12,6 +13,20 @@ import {
   toToolDisplayName,
 } from './chat-shared';
 import { registerStreamingTextUpdater } from '../../../core/streaming-text';
+
+// Sanitize HTML produced by the markdown renderer before writing to the DOM.
+// AI-generated content is untrusted — this prevents XSS via crafted markdown.
+function sanitizeHtml(html: string): string {
+  return DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: [
+      'p', 'br', 'strong', 'em', 'code', 'pre', 'a', 'ul', 'ol', 'li',
+      'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'blockquote', 'img',
+      'div', 'span', 'table', 'thead', 'tbody', 'tr', 'th', 'td',
+    ],
+    ALLOWED_ATTR: ['href', 'target', 'rel', 'src', 'alt', 'class', 'id', 'style', 'title'],
+    ALLOW_DATA_ATTR: false,
+  });
+}
 
 type ToolRenderItem = {
   id: string;
@@ -70,8 +85,12 @@ function buildToolRenderItem(block: ContentBlock, index: number): ToolRenderItem
 }
 
 
-function getBlockRenderKey(block: ContentBlock, index: number): string {
-  return String(block.renderKey || block.id || block.tool_use_id || `${block.type}-${index}`);
+// messagePrefix scopes the key to a specific message so that when
+// buildDisplayMessages merges consecutive assistant turns, two text-0 blocks
+// from different turns don't share the same React key.
+function getBlockRenderKey(block: ContentBlock, index: number, messagePrefix = ''): string {
+  const base = String(block.renderKey || block.id || block.tool_use_id || `${block.type}-${index}`);
+  return messagePrefix ? `${messagePrefix}-${base}` : base;
 }
 
 
@@ -79,19 +98,20 @@ function getBlockRenderKey(block: ContentBlock, index: number): string {
 // React re-renders for high-frequency character-level updates. The RAF loop
 // in chat.ts calls applyStreamingText(), which writes here imperatively.
 // When streaming ends, this component is swapped out for MarkdownContent.
+// All HTML is passed through DOMPurify before being written to the DOM.
 function StreamingText({ initialText }: { initialText: string }) {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (ref.current) {
-      ref.current.innerHTML = renderMarkdownToHtml(initialText);
+      ref.current.innerHTML = sanitizeHtml(renderMarkdownToHtml(initialText));
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally empty; updates come imperatively via the bridge
     return registerStreamingTextUpdater((html) => {
-      if (ref.current) ref.current.innerHTML = html;
+      if (ref.current) ref.current.innerHTML = sanitizeHtml(html);
     });
   }, []); // intentionally empty — updates come imperatively via the bridge
 
-  // eslint-disable-next-line react/no-danger -- content is AI-generated, not user input
   return <div ref={ref} className="chat-bubble-content streaming-cursor" />;
 }
 
@@ -127,11 +147,21 @@ function ThinkingBlockView({ block }: { block: ContentBlock }) {
 
 function ToolModal({ item, onClose }: { item: ToolRenderItem; onClose: () => void }) {
   const [closing, setClosing] = useState(false);
+  const closingTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
 
   const close = (): void => {
     setClosing(true);
-    window.setTimeout(onClose, 180);
+    closingTimerRef.current = window.setTimeout(onClose, 180);
   };
+
+  // Clean up the close timer if the parent unmounts while the modal is open.
+  useEffect(() => {
+    return () => {
+      if (closingTimerRef.current !== null) {
+        window.clearTimeout(closingTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent): void => {
@@ -206,24 +236,6 @@ function ToolModal({ item, onClose }: { item: ToolRenderItem; onClose: () => voi
   );
 }
 
-function getToolActionLabel(kind: string): string {
-  switch (kind) {
-    case 'bash': return 'Running bash';
-    case 'read': case 'read_file': return 'Reading file';
-    case 'write': case 'write_file': return 'Writing file';
-    case 'edit': case 'multiedit': return 'Editing file';
-    case 'glob': return 'Listing files';
-    case 'grep': return 'Searching';
-    case 'search': case 'search_files': return 'Searching files';
-    case 'list_directory': return 'Listing directory';
-    case 'web_search': case 'websearch': return 'Searching web';
-    case 'web_fetch': case 'webfetch': return 'Fetching URL';
-    case 'computer': return 'Using computer';
-    case 'agent': return 'Running agent';
-    default: return `Running ${toToolDisplayName(kind).toLowerCase()}`;
-  }
-}
-
 function ToolGroupView({ blocks }: { blocks: ContentBlock[] }) {
   const [collapsed, setCollapsed] = useState(true);
   const [modalItem, setModalItem] = useState<ToolRenderItem | null>(null);
@@ -239,7 +251,7 @@ function ToolGroupView({ blocks }: { blocks: ContentBlock[] }) {
   const label = `${items.length} tool${items.length === 1 ? '' : 's'} used`;
   const toolSummary = items
     .filter((item) => item.status === 'running')
-    .map((item) => `${getToolActionLabel(item.kind)} | ${item.label}`)
+    .map((item) => item.label)
     .join(' / ');
 
   return (
@@ -251,7 +263,8 @@ function ToolGroupView({ blocks }: { blocks: ContentBlock[] }) {
           onClick={() => setCollapsed((v) => !v)}
         >
           <span className="tool-group-chevron">›</span>
-          <span className="tool-group-label">{label}{toolSummary ? <span className="tool-group-summary"> | {toolSummary}</span> : null}</span>
+          <span className="tool-group-label">{label}</span>
+          {toolSummary ? <span className="tool-group-summary">{toolSummary}</span> : null}
           {anyRunning ? (
             <span className="thinking-dots" aria-hidden="true">
               <span /><span /><span />
@@ -303,7 +316,7 @@ function ToolGroupView({ blocks }: { blocks: ContentBlock[] }) {
   );
 }
 
-function renderAssistantBlocks(blocks: ContentBlock[], streaming = false): ReactNode[] {
+function renderAssistantBlocks(blocks: ContentBlock[], streaming = false, messagePrefix = ''): ReactNode[] {
   const nodes: ReactNode[] = [];
   let toolGroup: ContentBlock[] = [];
 
@@ -311,7 +324,7 @@ function renderAssistantBlocks(blocks: ContentBlock[], streaming = false): React
     if (toolGroup.length === 0) return;
     nodes.push(
       <ToolGroupView
-        key={`tool-group-${nodes.length}-${String(toolGroup[0]?.id || toolGroup[0]?.tool_use_id || '')}`}
+        key={`${messagePrefix}-tool-group-${nodes.length}-${String(toolGroup[0]?.id || toolGroup[0]?.tool_use_id || '')}`}
         blocks={toolGroup}
       />,
     );
@@ -324,15 +337,15 @@ function renderAssistantBlocks(blocks: ContentBlock[], streaming = false): React
       return;
     }
     flushToolGroup();
-    nodes.push(renderBlock(block, index, streaming));
+    nodes.push(renderBlock(block, index, streaming, messagePrefix));
   });
 
   flushToolGroup();
   return nodes;
 }
 
-function renderBlock(block: ContentBlock, index: number, streaming = false): ReactNode {
-  const blockKey = getBlockRenderKey(block, index);
+function renderBlock(block: ContentBlock, index: number, streaming = false, messagePrefix = ''): ReactNode {
+  const blockKey = getBlockRenderKey(block, index, messagePrefix);
 
   if (block.type === 'text') {
     if (block.streaming) {
@@ -386,10 +399,18 @@ export function ChatBubble({ message, streaming = false }: ChatBubbleProps) {
   const [metaExpanded, setMetaExpanded] = useState(false);
   const metaParts = useMemo(() => buildChatMetaParts(message), [message]);
 
+  // Derive a stable per-message prefix so block keys are scoped to this message
+  // and don't collide when buildDisplayMessages merges consecutive assistant turns.
+  const messagePrefix = String(
+    (message as { id?: unknown }).id ||
+    message.createdAt ||
+    message.role,
+  );
+
   const content = useMemo(() => {
     if (message.role === 'assistant') {
       if (Array.isArray(message.content)) {
-        return renderAssistantBlocks(message.content as ContentBlock[], streaming);
+        return renderAssistantBlocks(message.content as ContentBlock[], streaming, messagePrefix);
       }
       return <MarkdownContent text={String(message.content)} />;
     }
@@ -399,11 +420,11 @@ export function ChatBubble({ message, streaming = false }: ChatBubbleProps) {
     }
 
     if (Array.isArray(message.content)) {
-      return (message.content as ContentBlock[]).map((block, index) => renderBlock(block, index, streaming));
+      return (message.content as ContentBlock[]).map((block, index) => renderBlock(block, index, streaming, messagePrefix));
     }
 
     return <div className="chat-bubble-content">{JSON.stringify(message.content)}</div>;
-  }, [message, streaming]);
+  }, [message, streaming, messagePrefix]);
 
   const bubbleMeta =
     metaParts.length > 0 && !streaming ? (

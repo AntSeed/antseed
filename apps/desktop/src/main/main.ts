@@ -1624,13 +1624,40 @@ ipcMain.handle(
   },
 );
 
+// Allowlisted top-level keys that the renderer is permitted to update via IPC.
+// Any key not in this set is stripped before the request is forwarded to the
+// dashboard API, preventing a compromised renderer from overwriting arbitrary
+// config fields.
+const DASHBOARD_CONFIG_ALLOWED_KEYS = new Set([
+  'seller',
+  'buyer',
+  'identity',
+  'network',
+  'middlewareConfidentialityPrompt',
+]);
+
+function sanitizeDashboardConfigPayload(raw: unknown): Record<string, unknown> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const safe: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (DASHBOARD_CONFIG_ALLOWED_KEYS.has(key)) {
+      safe[key] = value;
+    }
+  }
+  return safe;
+}
+
 ipcMain.handle(
   'runtime:update-dashboard-config',
   async (_event, config: Record<string, unknown>, options?: { port?: number }): Promise<DashboardApiResult> => {
+    const safeConfig = sanitizeDashboardConfigPayload(config);
+    if (Object.keys(safeConfig).length === 0) {
+      return { ok: false, data: null, error: 'No valid config keys provided', status: null };
+    }
     const requestedPort = toSafeDashboardPort(options?.port);
     await ensureDashboardRuntime(requestedPort);
     const activePort = dashboardRuntime.running ? dashboardRuntime.port : requestedPort;
-    return updateDashboardConfig(config, activePort);
+    return updateDashboardConfig(safeConfig, activePort);
   },
 );
 
