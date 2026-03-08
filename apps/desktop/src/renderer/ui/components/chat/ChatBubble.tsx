@@ -277,18 +277,27 @@ function ToolGroupView({ blocks }: { blocks: ContentBlock[] }) {
           <div className="tool-group-list-inner">
             <div className="tool-group-list">
               {items.map((item) => {
-                const statusLabel =
-                  item.kind === 'edit' && item.diff.length > 0
-                    ? `+${item.additions} / -${item.removals}`
-                    : item.kind === 'bash' && item.outputLineCount > 0
-                      ? `${item.outputLineCount} lines`
-                      : item.status === 'running'
-                        ? 'Running'
-                        : item.status === 'error'
-                          ? 'Error'
-                          : 'Done';
                 const hasDetail =
                   item.diff.length > 0 || item.output.trim().length > 0;
+
+                const statusNode =
+                  item.kind === 'edit' && item.diff.length > 0 ? (
+                    <span className={`tool-inline-status ${item.status}`}>
+                      <span className="diff-additions">+{item.additions}</span>
+                      {' / '}
+                      <span className="diff-removals">-{item.removals}</span>
+                    </span>
+                  ) : (
+                    <span className={`tool-inline-status ${item.status}`}>
+                      {item.kind === 'bash' && item.outputLineCount > 0
+                        ? `${item.outputLineCount} lines`
+                        : item.status === 'running'
+                          ? 'Running'
+                          : item.status === 'error'
+                            ? 'Error'
+                            : 'Done'}
+                    </span>
+                  );
 
                 return (
                   <div key={item.id} className="tool-inline">
@@ -299,7 +308,7 @@ function ToolGroupView({ blocks }: { blocks: ContentBlock[] }) {
                     >
                       <span className={`tool-inline-dot ${item.status}`} />
                       <span className="tool-inline-label">{item.label}</span>
-                      <span className={`tool-inline-status ${item.status}`}>{statusLabel}</span>
+                      {statusNode}
                       <span className={`tool-inline-open${hasDetail ? '' : ' hidden'}`}>↗</span>
                     </button>
                   </div>

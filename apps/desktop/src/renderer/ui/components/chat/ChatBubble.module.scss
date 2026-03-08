@@ -311,6 +311,10 @@
       opacity: 0.55;
       text-transform: none;
       letter-spacing: 0;
+      text-overflow: ellipsis;
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
     }
 
     .tool-group-spacer {
@@ -451,6 +455,14 @@
     }
 
     .tool-inline-status.error {
+      color: var(--danger);
+    }
+
+    .diff-additions {
+      color: var(--accent-green);
+    }
+
+    .diff-removals {
       color: var(--danger);
     }
 
