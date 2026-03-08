@@ -145,8 +145,6 @@ const DEFAULT_CHAT_STREAM_TOTAL_TIMEOUT_MS = 240_000;
 const DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS = 45_000;
 const CHAT_MODEL_METADATA_FETCH_TIMEOUT_MS = 2_500;
 const CHAT_MODEL_SCAN_MAX_PEERS = 20;
-const CHAT_MODEL_API_FETCH_TIMEOUT_MS = 3_500;
-const CHAT_MODEL_SCAN_MAX_PROVIDERS = 12;
 const CHAT_MODEL_MAX_OPTIONS = 120;
 const CHAT_MODEL_MAX_OPTIONS_PER_PROVIDER = 40;
 const CHAT_MODEL_CACHE_FILE = path.join(CHAT_DATA_DIR, 'model-catalog-cache.json');
@@ -682,149 +680,7 @@ async function discoverChatModelCatalog(
   return sortChatModelCatalogEntries(Array.from(aggregate.values()));
 }
 
-function extractModelIdsFromApiPayload(payload: unknown): string[] {
-  let modelEntries: unknown[] = [];
-  if (Array.isArray(payload)) {
-    modelEntries = payload;
-  } else {
-    const root = asRecord(payload);
-    if (root) {
-      if (Array.isArray(root.data)) {
-        modelEntries = root.data;
-      } else if (Array.isArray(root.models)) {
-        modelEntries = root.models;
-      }
-    }
-  }
 
-  if (modelEntries.length === 0) {
-    return [];
-  }
-
-  const modelIds: string[] = [];
-  const seen = new Set<string>();
-  for (const entry of modelEntries) {
-    let candidate: unknown = entry;
-    if (entry && typeof entry === 'object') {
-      const record = entry as Record<string, unknown>;
-      candidate = record.id ?? record.model ?? record.name;
-    }
-    const modelId = normalizeModelValue(candidate);
-    if (!modelId) {
-      continue;
-    }
-    const key = modelId.toLowerCase();
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    modelIds.push(modelId);
-  }
-  return modelIds;
-}
-
-async function fetchProxyProviderModelCatalog(
-  proxyPort: number,
-  provider: string,
-): Promise<ChatModelCatalogEntry[]> {
-  const protocol = inferProviderProtocol(provider);
-  if (!protocol) {
-    return [];
-  }
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), CHAT_MODEL_API_FETCH_TIMEOUT_MS);
-
-  try {
-    const response = await fetch(`http://127.0.0.1:${String(proxyPort)}/v1/models`, {
-      method: 'GET',
-      headers: {
-        accept: 'application/json',
-        'x-antseed-provider': provider,
-      },
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      return [];
-    }
-
-    const payload = await response.json();
-    const modelIds = extractModelIdsFromApiPayload(payload);
-    return modelIds.map((modelId) => ({
-      id: modelId,
-      label: modelId,
-      provider,
-      protocol,
-      count: 1,
-    }));
-  } catch {
-    return [];
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-async function discoverChatModelCatalogFromApi(
-  proxyPort: number,
-  getNetworkPeers?: () => Promise<NetworkPeerAddress[]>,
-): Promise<ChatModelCatalogEntry[]> {
-  if (!getNetworkPeers) {
-    return [];
-  }
-
-  let peers: NetworkPeerAddress[] = [];
-  try {
-    peers = await getNetworkPeers();
-  } catch {
-    return [];
-  }
-
-  const providerSet = new Set<string>();
-  for (const peer of peers) {
-    if (!Array.isArray(peer.providers)) {
-      continue;
-    }
-    for (const providerRaw of peer.providers) {
-      const provider = normalizeProviderId(providerRaw);
-      // Skip openrouter — its /v1/models returns the full catalog of hundreds
-      // of unrelated models. Models from openrouter peers come via DHT metadata.
-      if (!provider || provider === 'openrouter' || !inferProviderProtocol(provider)) {
-        continue;
-      }
-      providerSet.add(provider);
-      if (providerSet.size >= CHAT_MODEL_SCAN_MAX_PROVIDERS) {
-        break;
-      }
-    }
-    if (providerSet.size >= CHAT_MODEL_SCAN_MAX_PROVIDERS) {
-      break;
-    }
-  }
-
-  const providers = Array.from(providerSet.values());
-  if (providers.length === 0) {
-    return [];
-  }
-
-  const providerEntries = await Promise.all(
-    providers.map(async (provider) => await fetchProxyProviderModelCatalog(proxyPort, provider)),
-  );
-
-  const aggregate = new Map<string, ChatModelCatalogEntry>();
-  for (const entries of providerEntries) {
-    for (const entry of entries) {
-      const key = `${entry.id}\u0000${entry.provider}\u0000${entry.protocol}`;
-      const existing = aggregate.get(key);
-      if (existing) {
-        existing.count += 1;
-      } else {
-        aggregate.set(key, entry);
-      }
-    }
-  }
-
-  return sortChatModelCatalogEntries(Array.from(aggregate.values()));
-}
 
 function toUsage(value: unknown): Usage {
   const usage = (value ?? {}) as Record<string, unknown>;
@@ -2537,36 +2393,15 @@ export function registerPiChatHandlers({
     }
 
     modelCatalogRefreshPromise = (async () => {
-      // Fetch peers and proxy port once, in parallel, so both discovery paths
-      // share a single dashboard round-trip instead of each making their own.
-      const [peers, proxyPort] = await Promise.all([
-        getNetworkPeers ? getNetworkPeers().catch(() => [] as NetworkPeerAddress[]) : Promise.resolve([] as NetworkPeerAddress[]),
-        resolveProxyPort(configPath),
-      ]);
+      const peers = getNetworkPeers
+        ? await getNetworkPeers().catch(() => [] as NetworkPeerAddress[])
+        : ([] as NetworkPeerAddress[]);
 
       const getPeers = async (): Promise<NetworkPeerAddress[]> => peers;
 
-      // Run both peer-aware discovery paths concurrently.
-      const [modelsFromMetadata, modelsFromApi] = await Promise.all([
-        discoverChatModelCatalog(getPeers),
-        isProxyAvailable(proxyPort).then((up) =>
-          up ? discoverChatModelCatalogFromApi(proxyPort, getPeers) : [],
-        ),
-      ]);
+      const modelsFromMetadata = await discoverChatModelCatalog(getPeers);
 
-      // Merge results, deduplicating by (id, provider, protocol).
-      const merged = new Map<string, ChatModelCatalogEntry>();
-      for (const entry of [...modelsFromMetadata, ...modelsFromApi]) {
-        const key = `${entry.id}\u0000${entry.provider}\u0000${entry.protocol}`;
-        const existing = merged.get(key);
-        if (existing) {
-          existing.count = Math.max(existing.count, entry.count);
-        } else {
-          merged.set(key, { ...entry });
-        }
-      }
-
-      const limited = limitChatModelCatalogEntries(normalizeChatModelCatalogEntries(Array.from(merged.values())));
+      const limited = limitChatModelCatalogEntries(normalizeChatModelCatalogEntries(modelsFromMetadata));
       updateModelProviderHints(modelProviderHints, limited);
       void writeChatModelCatalogCache(limited).catch(() => undefined);
       lastModelCatalogRefreshAt = Date.now();
