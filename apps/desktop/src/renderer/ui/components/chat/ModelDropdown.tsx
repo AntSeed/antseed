@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { ArrowDown01Icon } from '@hugeicons/core-free-icons';
 import type { ChatModelOptionEntry } from '../../../core/state';
+import antseedMark from '../../../assets/antseed-mark.svg';
 import styles from './ModelDropdown.module.scss';
 
 type ModelDropdownProps = {
@@ -43,7 +44,7 @@ export function ModelDropdown({ options, value, disabled, onChange, onFocus, onB
         }}
       >
         <span className={styles.modelDropdownIcon}>
-          <img src="./assets/antseed-mark.svg" alt="" width={16} height={16} />
+          <img src={antseedMark} alt="" width={16} height={16} />
         </span>
         <span className={styles.modelDropdownLabel}>{label}</span>
         <HugeiconsIcon icon={ArrowDown01Icon} size={16} strokeWidth={1.5} />
