@@ -87,12 +87,16 @@ function ConvContextMenu({
 
   useEffect(() => {
     if (renaming && renameInputRef.current) {
+      cancelledRef.current = false;
       renameInputRef.current.focus();
       renameInputRef.current.select();
     }
   }, [renaming]);
 
+  const cancelledRef = useRef(false);
+
   const handleRenameSubmit = useCallback(() => {
+    if (cancelledRef.current) return;
     const trimmed = renameValue.trim();
     if (trimmed && trimmed !== convTitle) {
       actions.renameConversation(convId, trimmed);
@@ -110,7 +114,7 @@ function ConvContextMenu({
           onChange={(e) => setRenameValue(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') handleRenameSubmit();
-            if (e.key === 'Escape') onClose();
+            if (e.key === 'Escape') { cancelledRef.current = true; onClose(); }
           }}
           onBlur={handleRenameSubmit}
         />

@@ -1633,6 +1633,7 @@ const DASHBOARD_CONFIG_ALLOWED_KEYS = new Set([
   'buyer',
   'identity',
   'network',
+  'payments',
   'middlewareConfidentialityPrompt',
 ]);
 
