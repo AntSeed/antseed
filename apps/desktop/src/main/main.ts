@@ -217,6 +217,9 @@ let mainWindow: BrowserWindow | null = null;
 const logBuffer: LogEvent[] = [];
 let lastRuntimeActivityHash = '';
 
+let appSetupNeeded = false;
+let appSetupComplete = false;
+
 let dashboardServer: DashboardServer | null = null;
 const dashboardRuntime: DashboardRuntimeState = {
   running: false,
@@ -747,7 +750,13 @@ function isPluginInstalled(packageName: string): boolean {
 }
 
 async function ensureDefaultPlugin(packageName: string): Promise<void> {
-  if (isPluginInstalled(packageName)) return;
+  if (isPluginInstalled(packageName)) {
+    appSetupNeeded = false;
+    appSetupComplete = true;
+    return;
+  }
+  appSetupNeeded = true;
+  mainWindow?.webContents.send('app:setup-step', { step: 'installing', label: 'Installing router plugin...' });
   appendLog('connect', 'system', `Required plugin "${packageName}" not found. Installing...`);
   try {
     const localSource = await resolveLocalPluginSource(packageName);
@@ -757,9 +766,14 @@ async function ensureDefaultPlugin(packageName: string): Promise<void> {
       await installPluginDependency(packageName);
     }
     appendLog('connect', 'system', `Installed plugin "${packageName}".`);
+    appSetupComplete = true;
+    mainWindow?.webContents.send('app:setup-step', { step: 'done', label: 'Router plugin ready' });
+    mainWindow?.webContents.send('app:setup-complete');
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     appendLog('connect', 'system', `Failed to auto-install plugin "${packageName}": ${message}`);
+    mainWindow?.webContents.send('app:setup-step', { step: 'error', label: 'Failed to install router plugin' });
+    mainWindow?.webContents.send('app:setup-complete');
     throw new Error(`Required plugin "${packageName}" could not be installed: ${message}`);
   }
 }
@@ -1498,10 +1512,6 @@ ipcMain.handle('runtime:start', async (_event, options: StartOptions) => {
     appendLog(startOptions.mode, 'system', 'Desktop debug mode enabled (ANTSEED_DEBUG=1, --verbose).');
   }
 
-  if (startOptions.mode === 'connect') {
-    await ensureDefaultPlugin('@antseed/router-local');
-  }
-
   const state = await processManager.start(startOptions);
   return {
     state,
@@ -1538,6 +1548,11 @@ ipcMain.handle('runtime:clear-logs', async () => {
   logBuffer.length = 0;
   return { ok: true };
 });
+
+ipcMain.handle('app:get-setup-status', () => ({
+  needed: appSetupNeeded,
+  complete: appSetupComplete,
+}));
 
 ipcMain.handle('plugins:list', async () => {
   try {
@@ -1851,6 +1866,10 @@ app.whenReady().then(() => {
 
   void startDashboardRuntime().catch(() => {
     // Failure is already logged to renderer/system log.
+  });
+
+  void ensureDefaultPlugin('@antseed/router-local').catch(() => {
+    // Failure is already logged via appendLog inside ensureDefaultPlugin.
   });
 
   // Initialize WalletConnect if project ID is configured
