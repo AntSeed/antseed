@@ -305,20 +305,30 @@ export class DHTQueryService {
 
     const topics = resolveDiscoveryProviders(this.config);
 
+    // Run all DHT topic lookups in parallel — previously sequential, which meant
+    // 6 topics × up to 30s each = 3+ minute scans before any peers were visible.
+    const topicResults = await Promise.all(
+      topics.map(async (name) => {
+        const topic = providerTopic(name);
+        const infoHash = topicToInfoHash(topic);
+        const startTime = Date.now();
+        try {
+          const endpoints = await this.dhtNode!.lookup(infoHash);
+          this.healthMonitor!.recordLookup(endpoints.length > 0, Date.now() - startTime);
+          return { name, endpoints };
+        } catch {
+          this.healthMonitor!.recordLookup(false, Date.now() - startTime);
+          return { name, endpoints: [] };
+        }
+      }),
+    );
+
+    // Resolve metadata for all discovered endpoints in parallel.
     const discoveredPeers = new Map<string, NetworkPeer>();
 
-    for (const name of topics) {
-      const topic = providerTopic(name);
-      const infoHash = topicToInfoHash(topic);
-
-      const startTime = Date.now();
-      try {
-        const endpoints = await this.dhtNode.lookup(infoHash);
-        const latency = Date.now() - startTime;
-        this.healthMonitor.recordLookup(endpoints.length > 0, latency);
-
-        for (const ep of endpoints) {
-          // Try to resolve metadata for richer peer info
+    await Promise.all(
+      topicResults.flatMap(({ name, endpoints }) =>
+        endpoints.map(async (ep) => {
           let metadata: PeerMetadata | null = null;
           try {
             metadata = await this.metadataResolver.resolve(ep);
@@ -331,11 +341,11 @@ export class DHTQueryService {
           const existing = discoveredPeers.get(peerId);
           const providers = resolveNetworkPeerProviders(metadata, existing?.providers, name);
           const models = resolveNetworkPeerModels(metadata, existing?.models);
-          const displayName = typeof metadata?.displayName === 'string' && metadata.displayName.trim().length > 0
-            ? metadata.displayName.trim()
-            : (existing?.displayName ?? `${ep.host}:${ep.port}`);
+          const displayName =
+            typeof metadata?.displayName === 'string' && metadata.displayName.trim().length > 0
+              ? metadata.displayName.trim()
+              : (existing?.displayName ?? `${ep.host}:${ep.port}`);
 
-          // Extract summary pricing and capacity from metadata
           const summaryPricing = this.resolveSummaryPricing(metadata);
           let capacityMsgPerHour = 0;
           if (metadata?.providers) {
@@ -354,15 +364,13 @@ export class DHTQueryService {
             inputUsdPerMillion: existing?.inputUsdPerMillion || summaryPricing.inputUsdPerMillion,
             outputUsdPerMillion: existing?.outputUsdPerMillion || summaryPricing.outputUsdPerMillion,
             capacityMsgPerHour: existing?.capacityMsgPerHour || capacityMsgPerHour,
-            reputation: metadata ? 100 : 50, // Reputation scale is 0-100
+            reputation: metadata ? 100 : 50,
             lastSeen: Date.now(),
             source: 'dht',
           });
-        }
-      } catch {
-        this.healthMonitor.recordLookup(false, Date.now() - startTime);
-      }
-    }
+        }),
+      ),
+    );
 
     // Update cache
     this.peers.clear();

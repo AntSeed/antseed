@@ -97,6 +97,8 @@ export function initChatModule({
 
   const CHAT_MODEL_SELECTION_SEPARATOR = '\u0001';
   const CHAT_MODEL_REFRESH_INTERVAL_MS = 60_000;
+  // Faster retry during first-run setup while no models have been found yet.
+  const CHAT_MODEL_SETUP_REFRESH_INTERVAL_MS = 2_000;
   const CHAT_MODEL_LIST_TIMEOUT_MS = 12_000;
 
   // ---------------------------------------------------------------------------
@@ -113,6 +115,7 @@ export function initChatModule({
   let pendingModelOptions: NormalizedChatModelEntry[] | null = null;
   let lastModelRefreshAt = 0;
   let modelRefreshToken = 0;
+  let modelRefreshInProgress = false;
   let modelSelectFocused = false;
 
   // ---------------------------------------------------------------------------
@@ -678,6 +681,11 @@ export function initChatModule({
   }
 
   async function refreshChatModelOptions(): Promise<void> {
+    // Skip if a fetch is already in-flight — the 12s timeout outlasts the 5s poll
+    // cycle, so without this guard every result gets a stale token and is dropped.
+    if (modelRefreshInProgress) return;
+    modelRefreshInProgress = true;
+
     const refreshToken = ++modelRefreshToken;
     const fallback = fallbackChatModels.map((entry) => ({ ...entry }));
 
@@ -685,6 +693,7 @@ export function initChatModule({
       updateChatModelOptions(fallback);
       setModelCatalogStatus('warn', 'Models unavailable');
       setRuntimeActivity('warn', 'Model catalog unavailable (bridge missing).');
+      modelRefreshInProgress = false;
       return;
     }
 
@@ -718,7 +727,7 @@ export function initChatModule({
         optionsToRender.length > 0 ? 'active' : 'warn',
         optionsToRender.length > 0
           ? `Model catalog ready (${String(optionsToRender.length)} models)`
-          : 'No models discovered from current peers',
+          : 'Discovering models',
       );
     } catch (error) {
       if (refreshToken !== modelRefreshToken) return;
@@ -727,6 +736,7 @@ export function initChatModule({
       setModelCatalogStatus('warn', message);
       setRuntimeActivity('bad', message);
     } finally {
+      modelRefreshInProgress = false;
       if (refreshToken === modelRefreshToken) {
         setModelSelectLoading(false);
       }
@@ -769,7 +779,7 @@ export function initChatModule({
           notifyUiStateChanged();
           setModelCatalogStatus('idle', 'Models unavailable (proxy offline)');
           if (previousProxyState !== 'offline') {
-            setRuntimeActivity('warn', 'Buyer proxy offline; waiting for runtime.');
+            setRuntimeActivity('warn', 'Waiting for runtime.');
           }
         }
       }
@@ -784,10 +794,14 @@ export function initChatModule({
       }
     } finally {
       const now = Date.now();
+      const setupMode = uiState.appSetupComplete && uiState.chatModelOptions.length === 0;
+      const refreshInterval = setupMode
+        ? CHAT_MODEL_SETUP_REFRESH_INTERVAL_MS
+        : CHAT_MODEL_REFRESH_INTERVAL_MS;
       const shouldRefreshModels =
         proxyState === 'online' &&
         (previousProxyState !== 'online' ||
-          now - lastModelRefreshAt >= CHAT_MODEL_REFRESH_INTERVAL_MS);
+          now - lastModelRefreshAt >= refreshInterval);
       if (shouldRefreshModels) {
         lastModelRefreshAt = now;
         void refreshChatModelOptions();

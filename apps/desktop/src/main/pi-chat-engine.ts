@@ -2535,25 +2535,36 @@ export function registerPiChatHandlers({
     }
 
     modelCatalogRefreshPromise = (async () => {
-      const proxyPort = await resolveProxyPort(configPath);
-      const modelsFromMetadata = await discoverChatModelCatalog(getNetworkPeers);
-      if (modelsFromMetadata.length > 0) {
-        const limited = limitChatModelCatalogEntries(normalizeChatModelCatalogEntries(modelsFromMetadata));
-        updateModelProviderHints(modelProviderHints, limited);
-        void writeChatModelCatalogCache(limited).catch(() => undefined);
-        lastModelCatalogRefreshAt = Date.now();
-        return limited;
+      // Fetch peers and proxy port once, in parallel, so both discovery paths
+      // share a single dashboard round-trip instead of each making their own.
+      const [peers, proxyPort] = await Promise.all([
+        getNetworkPeers ? getNetworkPeers().catch(() => [] as NetworkPeerAddress[]) : Promise.resolve([] as NetworkPeerAddress[]),
+        resolveProxyPort(configPath),
+      ]);
+
+      const getPeers = async (): Promise<NetworkPeerAddress[]> => peers;
+
+      // Run both peer-aware discovery paths concurrently.
+      const [modelsFromMetadata, modelsFromApi] = await Promise.all([
+        discoverChatModelCatalog(getPeers),
+        isProxyAvailable(proxyPort).then((up) =>
+          up ? discoverChatModelCatalogFromApi(proxyPort, getPeers) : [],
+        ),
+      ]);
+
+      // Merge results, deduplicating by (id, provider, protocol).
+      const merged = new Map<string, ChatModelCatalogEntry>();
+      for (const entry of [...modelsFromMetadata, ...modelsFromApi]) {
+        const key = `${entry.id}\u0000${entry.provider}\u0000${entry.protocol}`;
+        const existing = merged.get(key);
+        if (existing) {
+          existing.count = Math.max(existing.count, entry.count);
+        } else {
+          merged.set(key, { ...entry });
+        }
       }
 
-      const modelsFromApi = await isProxyAvailable(proxyPort)
-        ? await discoverChatModelCatalogFromApi(proxyPort, getNetworkPeers)
-        : [];
-      const limited = limitChatModelCatalogEntries(normalizeChatModelCatalogEntries(modelsFromApi));
-      if (limited.length < modelsFromApi.length) {
-        appendSystemLog(
-          `Chat models truncated to ${String(limited.length)} of ${String(modelsFromApi.length)} API entries for usability.`,
-        );
-      }
+      const limited = limitChatModelCatalogEntries(normalizeChatModelCatalogEntries(Array.from(merged.values())));
       updateModelProviderHints(modelProviderHints, limited);
       void writeChatModelCatalogCache(limited).catch(() => undefined);
       lastModelCatalogRefreshAt = Date.now();
