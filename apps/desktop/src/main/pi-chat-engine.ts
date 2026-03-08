@@ -786,7 +786,9 @@ async function discoverChatModelCatalogFromApi(
     }
     for (const providerRaw of peer.providers) {
       const provider = normalizeProviderId(providerRaw);
-      if (!provider || !inferProviderProtocol(provider)) {
+      // Skip openrouter — its /v1/models returns the full catalog of hundreds
+      // of unrelated models. Models from openrouter peers come via DHT metadata.
+      if (!provider || provider === 'openrouter' || !inferProviderProtocol(provider)) {
         continue;
       }
       providerSet.add(provider);
