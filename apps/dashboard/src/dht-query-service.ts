@@ -338,14 +338,6 @@ export class DHTQueryService {
 
           const peerId = metadata?.peerId ?? `${ep.host}:${ep.port}`;
 
-          const existing = discoveredPeers.get(peerId);
-          const providers = resolveNetworkPeerProviders(metadata, existing?.providers, name);
-          const models = resolveNetworkPeerModels(metadata, existing?.models);
-          const displayName =
-            typeof metadata?.displayName === 'string' && metadata.displayName.trim().length > 0
-              ? metadata.displayName.trim()
-              : (existing?.displayName ?? `${ep.host}:${ep.port}`);
-
           const summaryPricing = this.resolveSummaryPricing(metadata);
           let capacityMsgPerHour = 0;
           if (metadata?.providers) {
@@ -353,6 +345,16 @@ export class DHTQueryService {
               capacityMsgPerHour += pa.maxConcurrency * 60;
             }
           }
+
+          // Re-read existing after the metadata await so concurrent coroutines
+          // for the same peerId always merge against the latest committed value.
+          const existing = discoveredPeers.get(peerId);
+          const providers = resolveNetworkPeerProviders(metadata, existing?.providers, name);
+          const models = resolveNetworkPeerModels(metadata, existing?.models);
+          const displayName =
+            typeof metadata?.displayName === 'string' && metadata.displayName.trim().length > 0
+              ? metadata.displayName.trim()
+              : (existing?.displayName ?? `${ep.host}:${ep.port}`);
 
           discoveredPeers.set(peerId, {
             peerId,

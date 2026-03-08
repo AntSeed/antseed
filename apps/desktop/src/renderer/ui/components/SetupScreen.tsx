@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { AntStationStackedLogo } from './AntStationLogo';
 import { TitleBar } from './TitleBar';
 import { useUiSnapshot } from '../hooks/useUiSnapshot';
@@ -46,18 +46,22 @@ type ProgressLevel = 0 | 1 | 2 | 3;
 
 export function SetupScreen() {
   const snap = useUiSnapshot();
-  const progressRef = useRef<ProgressLevel>(0);
+  const [level, setLevel] = useState<ProgressLevel>(0);
 
   const hasModels = snap.chatModelOptions.length > 0;
   const msg = snap.runtimeActivity.message;
 
-  // Advance based on observed state — never go backward.
-  const p = progressRef.current;
-  if (snap.appSetupComplete && p < 1) progressRef.current = 1;
-  else if (p === 1 && /peer|connecting|p2p|proxy|dht/i.test(msg)) progressRef.current = 2;
-  else if (p >= 1 && (/model/i.test(msg) || hasModels)) progressRef.current = 3;
-
-  const level = progressRef.current;
+  // Advance progress level monotonically inside useEffect so mutations
+  // only happen during the commit phase (safe in concurrent/strict mode).
+  useEffect(() => {
+    setLevel((prev) => {
+      let next = prev;
+      if (snap.appSetupComplete && next < 1) next = 1 as ProgressLevel;
+      if (next >= 1 && /peer|connecting|p2p|proxy|dht/i.test(msg) && next < 2) next = 2 as ProgressLevel;
+      if (next >= 1 && (/model/i.test(msg) || hasModels) && next < 3) next = 3 as ProgressLevel;
+      return next;
+    });
+  }, [snap.appSetupComplete, msg, hasModels]);
   const networkDone = level >= 2 || hasModels;
   const modelActive = level >= 2 && !hasModels;
 
