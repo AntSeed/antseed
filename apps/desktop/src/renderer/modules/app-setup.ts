@@ -18,6 +18,7 @@ export function initAppSetupModule({ uiState, bridge }: AppSetupModuleOptions) {
   void bridge.getAppSetupStatus?.().then((status) => {
     uiState.appSetupNeeded = status.needed;
     uiState.appSetupComplete = status.complete;
+    uiState.appSetupStatusKnown = true;
     notifyUiStateChanged();
 
     if (status.needed && status.complete) {
@@ -25,12 +26,12 @@ export function initAppSetupModule({ uiState, bridge }: AppSetupModuleOptions) {
     }
   });
 
-  bridge.onAppSetupStep?.((data) => {
+  const unsubStep = bridge.onAppSetupStep?.((data) => {
     uiState.appSetupStep = data.label;
     notifyUiStateChanged();
   });
 
-  bridge.onAppSetupComplete?.(() => {
+  const unsubComplete = bridge.onAppSetupComplete?.(() => {
     uiState.appSetupComplete = true;
     notifyUiStateChanged();
 
@@ -42,4 +43,9 @@ export function initAppSetupModule({ uiState, bridge }: AppSetupModuleOptions) {
       // Error is handled / logged by the runtime module.
     });
   });
+
+  return () => {
+    unsubStep?.();
+    unsubComplete?.();
+  };
 }
