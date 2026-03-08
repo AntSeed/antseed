@@ -146,7 +146,7 @@ function syncRuntimeActivityFromProcesses(processes = uiState.processes): void {
   setRuntimeSteadyActivity(
     buyerConnected ? 'active' : 'idle',
     buyerConnected
-      ? 'Ready.'
+      ? 'Ready'
       : 'Buyer runtime offline. Waiting for local runtime start...',
   );
 }

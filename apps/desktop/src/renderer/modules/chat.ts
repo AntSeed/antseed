@@ -717,8 +717,8 @@ export function initChatModule({
       setRuntimeActivity(
         optionsToRender.length > 0 ? 'active' : 'warn',
         optionsToRender.length > 0
-          ? `Model catalog ready (${String(optionsToRender.length)} models).`
-          : 'No models discovered from current peers.',
+          ? `Model catalog ready (${String(optionsToRender.length)} models)`
+          : 'No models discovered from current peers',
       );
     } catch (error) {
       if (refreshToken !== modelRefreshToken) return;

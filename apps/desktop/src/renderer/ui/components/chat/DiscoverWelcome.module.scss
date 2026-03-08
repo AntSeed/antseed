@@ -1,0 +1,304 @@
+/* DiscoverWelcome.module.scss — onboarding / discovery page */
+
+/* ── Root container ─────────────────────────────────────────────────── */
+
+.discover {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  max-width: 100% !important;
+  overflow: hidden;
+}
+
+/* ── Header ─────────────────────────────────────────────────────────── */
+
+.header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 40px 24px 0;
+  flex-shrink: 0;
+}
+
+.heading {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-align: center;
+  letter-spacing: -0.4px;
+  line-height: 1.3;
+}
+
+.heading-accent {
+  color: var(--accent-green);
+}
+
+.subtitle {
+  font-size: 14px;
+  color: var(--text-secondary);
+  text-align: center;
+  line-height: 1.5;
+  max-width: 440px;
+}
+
+/* ── Filter pills ───────────────────────────────────────────────────── */
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+  padding: 20px 24px 0;
+  flex-shrink: 0;
+}
+
+.filter-pill {
+  padding: 4px 12px;
+  border-radius: 16px;
+  border: none !important;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  background: var(--bg-surface);
+  color: var(--text-muted);
+  transition: background 0.12s, color 0.12s;
+
+  &:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+    border: none !important;
+  }
+}
+
+.filter-active {
+  background: var(--accent-green) !important;
+  color: #0f0f0e !important;
+}
+
+/* ── Scrollable cards area ──────────────────────────────────────────── */
+
+.cards-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 24px 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.cards-inner {
+  width: 100%;
+  max-width: 960px;
+  margin: 0 auto;
+  flex: 1;
+}
+
+/* ── Section label ──────────────────────────────────────────────────── */
+
+.section-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  padding: 8px 0 12px;
+}
+
+/* ── Card grid ──────────────────────────────────────────────────────── */
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+@media (max-width: 900px) {
+  .card-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 680px) {
+  .card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ── Card ────────────────────────────────────────────────────────────── */
+
+.card {
+  background: var(--bg-card);
+  border-radius: var(--radius);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  transition: box-shadow 0.15s;
+
+  &:hover {
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+  }
+}
+
+.card-clickable {
+  cursor: pointer;
+}
+
+/* First card (Community Peers) gets alt background */
+.card-grid .card:first-child {
+  background: var(--bg-card-alt);
+}
+
+.card-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.card-icon {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.card-initials {
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  line-height: 1;
+}
+
+.card-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.card-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+  line-height: 1.15;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card-price {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1;
+}
+
+.card-desc {
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.45;
+  /* 2-line clamp */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ── Tags ────────────────────────────────────────────────────────────── */
+
+.card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 7px;
+  border-radius: 24px;
+  font-size: 10px;
+  font-weight: 500;
+  border: 1px solid;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* ── Card bottom ─────────────────────────────────────────────────────── */
+
+.card-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: auto;
+}
+
+.card-providers {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.card-cta {
+  background: none !important;
+  border: none !important;
+  padding: 0 !important;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--accent-green);
+  cursor: pointer;
+  white-space: nowrap;
+
+  &:hover {
+    opacity: 0.8;
+    background: none !important;
+    border: none !important;
+  }
+}
+
+.card-cta-arrow {
+  margin-left: 2px;
+}
+
+/* ── Preview cards (no network data yet) ─────────────────────────────── */
+
+.card-preview {
+  opacity: 0.6;
+}
+
+.loading-hint {
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 4px 0 8px;
+}
+
+.card-cta-disabled {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* ── Empty filter ────────────────────────────────────────────────────── */
+
+.empty-filter {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+  padding: 40px 16px;
+}
+
+/* ── Footer ──────────────────────────────────────────────────────────── */
+
+.footer {
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 24px 0 16px;
+  margin-top: auto;
+}
