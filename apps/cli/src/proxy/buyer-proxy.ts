@@ -1,7 +1,7 @@
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http'
 import { randomUUID } from 'node:crypto'
 import { watch, type FSWatcher } from 'node:fs'
-import { readFile, writeFile, mkdir } from 'node:fs/promises'
+import { readFile, writeFile, rename, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import type {
@@ -984,7 +984,9 @@ export class BuyerProxy {
         port: this._port,
         ...sessionOverrides,
       }
-      await writeFile(BUYER_STATE_FILE, JSON.stringify(data, null, 2))
+      const tmp = join(homedir(), '.antseed', `.buyer.state.${randomUUID()}.json.tmp`)
+      await writeFile(tmp, JSON.stringify(data, null, 2))
+      await rename(tmp, BUYER_STATE_FILE)
     } catch {
       // non-fatal
     }

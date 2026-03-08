@@ -1,7 +1,8 @@
 import type { Command } from 'commander'
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile, writeFile, rename } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
+import { randomUUID } from 'node:crypto'
 import chalk from 'chalk'
 
 const BUYER_STATE_FILE = join(homedir(), '.antseed', 'buyer.state.json')
@@ -25,8 +26,11 @@ async function readStateFile(): Promise<BuyerStateFile | null> {
 }
 
 async function writeStateFile(data: BuyerStateFile): Promise<void> {
+  const dir = join(homedir(), '.antseed')
+  const tmp = join(dir, `.buyer.state.${randomUUID()}.json.tmp`)
   try {
-    await writeFile(BUYER_STATE_FILE, JSON.stringify(data, null, 2))
+    await writeFile(tmp, JSON.stringify(data, null, 2))
+    await rename(tmp, BUYER_STATE_FILE)
   } catch (err) {
     console.error(chalk.red(`Failed to write session state: ${err instanceof Error ? err.message : String(err)}`))
     process.exit(1)
@@ -97,7 +101,6 @@ export function registerConnectionCommand(program: Command): void {
           process.exit(1)
         }
         state.pinnedModel = model
-        console.log(chalk.green(`Pinned model set to: ${model}`))
       }
 
       if (options.peer !== undefined) {
@@ -107,10 +110,12 @@ export function registerConnectionCommand(program: Command): void {
           process.exit(1)
         }
         state.pinnedPeerId = peer.toLowerCase()
-        console.log(chalk.green(`Pinned peer set to: ${state.pinnedPeerId}`))
       }
 
       await writeStateFile(state)
+
+      if (options.model !== undefined) console.log(chalk.green(`Pinned model set to: ${state.pinnedModel}`))
+      if (options.peer !== undefined) console.log(chalk.green(`Pinned peer set to: ${state.pinnedPeerId}`))
     })
 
   connection
