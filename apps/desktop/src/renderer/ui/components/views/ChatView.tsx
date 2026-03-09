@@ -180,7 +180,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
           onClick={() => onSelectView?.('external-clients')}
         >
           <HugeiconsIcon icon={ComputerTerminal01Icon} size={13} strokeWidth={1.5} />
-          <span>Also works with Claude Code, Codex, OpenCode, or any OpenAI-compatible tool</span>
+          <span>Works with Claude Code, Codex, OpenCode, and any OpenAI-compatible tool</span>
           <HugeiconsIcon icon={ArrowRight01Icon} size={12} strokeWidth={1.5} />
         </button>
       )}
