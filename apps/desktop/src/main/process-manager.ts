@@ -36,6 +36,7 @@ export interface CliCommandResult {
 }
 
 const DEFAULT_DASHBOARD_PORT = 3117;
+const MIN_NODE_MAJOR_VERSION = 20;
 const DEFAULT_CLI_COMMAND = 'antseed';
 const CLI_COMMAND_ENV = 'ANTSEED_CLI_BIN';
 const CLI_NODE_BIN_ENV = 'ANTSEED_NODE_BIN';
@@ -159,6 +160,19 @@ function detectNodeArch(nodeBinary: string): string | null {
   }
 }
 
+function detectNodeMajorVersion(nodeBinary: string): number | null {
+  try {
+    const output = execFileSync(nodeBinary, ['-p', 'process.versions.node.split(".")[0]'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    const major = Number(output);
+    return Number.isFinite(major) && major > 0 ? major : null;
+  } catch {
+    return null;
+  }
+}
+
 type SemverTuple = [major: number, minor: number, patch: number];
 
 function parseSemverTag(raw: string): SemverTuple | null {
@@ -220,6 +234,7 @@ function resolveNodeBinary(targetArch: string): string {
 
   const tried = new Set<string>();
   let firstExisting: string | null = null;
+  let firstCompatible: string | null = null;
 
   for (const candidate of candidates) {
     if (!candidate || tried.has(candidate)) {
@@ -232,19 +247,22 @@ function resolveNodeBinary(targetArch: string): string {
     if (!firstExisting) {
       firstExisting = candidate;
     }
+    const majorVersion = detectNodeMajorVersion(candidate);
+    const meetsMinVersion = majorVersion !== null && majorVersion >= MIN_NODE_MAJOR_VERSION;
+    if (meetsMinVersion && !firstCompatible) {
+      firstCompatible = candidate;
+    }
     const arch = detectNodeArch(candidate);
-    if (arch === targetArch) {
+    if (arch === targetArch && meetsMinVersion) {
       return candidate;
     }
   }
 
-  // Fallback: use Electron's own Node.js runtime (requires ELECTRON_RUN_AS_NODE=1).
+  // Prefer a version-compatible node over one that is too old.
+  // Falls back to firstExisting only if no candidate meets the minimum version.
+  // Last resort: use Electron's own Node.js runtime (requires ELECTRON_RUN_AS_NODE=1).
   // This ensures the packaged app works even if no system node is installed.
-  if (firstExisting == null && process.execPath) {
-    return process.execPath;
-  }
-
-  return firstExisting ?? process.execPath ?? 'node';
+  return firstCompatible ?? firstExisting ?? process.execPath ?? 'node';
 }
 
 function resolveConfigPath(configPath?: string): string {
