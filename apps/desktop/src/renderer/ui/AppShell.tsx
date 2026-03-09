@@ -66,17 +66,9 @@ export function AppShell() {
     [actions],
   );
 
-  // Render nothing until the setup status IPC round-trip resolves, preventing
-  // a brief flash of the normal app shell before the setup screen appears on first launch.
-  if (!snap.appSetupStatusKnown) return null;
-
-  if (showSetup) {
+  if (showSetup || !snap.appSetupStatusKnown || !snap.chatConversationsLoaded) {
     return <SetupScreen />;
   }
-
-  // Wait for the conversation list before rendering the shell or onboarding,
-  // preventing a flash of empty state on relaunch when setup is already complete.
-  if (!snap.chatConversationsLoaded) return null;
 
   if (showOnboarding) {
     return (
