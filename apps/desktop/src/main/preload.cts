@@ -259,6 +259,16 @@ const api = {
     ipcRenderer.on('app:setup-complete', listener);
     return () => ipcRenderer.off('app:setup-complete', listener);
   },
+
+  // Auto-update
+  onUpdateStatus(handler: (data: { status: string; version: string }) => void): () => void {
+    const listener = (_: unknown, data: { status: string; version: string }) => handler(data);
+    ipcRenderer.on('app:update-status', listener);
+    return () => ipcRenderer.off('app:update-status', listener);
+  },
+  installUpdate(): Promise<void> {
+    return ipcRenderer.invoke('app:install-update') as Promise<void>;
+  },
 };
 
 contextBridge.exposeInMainWorld('antseedDesktop', api);

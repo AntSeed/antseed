@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { Sun02Icon } from '@hugeicons/core-free-icons';
 import { Moon02Icon } from '@hugeicons/core-free-icons';
@@ -13,6 +13,7 @@ export function TitleBar() {
     if (saved !== null) return saved === 'dark';
     return document.body.classList.contains('dark-theme');
   });
+  const [updateReady, setUpdateReady] = useState<string | null>(null);
 
   useEffect(() => {
     if (isDark) {
@@ -23,12 +24,30 @@ export function TitleBar() {
     localStorage.setItem(THEME_STORAGE_KEY, isDark ? 'dark' : 'light');
   }, [isDark]);
 
+  useEffect(() => {
+    const bridge = (window as unknown as { antseedDesktop?: { onUpdateStatus?: (h: (d: { status: string; version: string }) => void) => () => void } }).antseedDesktop;
+    if (!bridge?.onUpdateStatus) return;
+    return bridge.onUpdateStatus((data) => {
+      if (data.status === 'ready') setUpdateReady(data.version);
+    });
+  }, []);
+
+  const handleUpdate = useCallback(() => {
+    const bridge = (window as unknown as { antseedDesktop?: { installUpdate?: () => Promise<void> } }).antseedDesktop;
+    void bridge?.installUpdate?.();
+  }, []);
+
   return (
     <header className={styles.titleBar}>
       <div className={styles.titleBarLeft}>
         <AntStationLogo height={20} className={styles.titleBarLogo} />
       </div>
       <div className={styles.titleBarRight}>
+        {updateReady && (
+          <button className={styles.titleBarUpdateBtn} onClick={handleUpdate}>
+            Update to v{updateReady}
+          </button>
+        )}
         <button
           className={styles.titleBarThemeToggle}
           onClick={() => setIsDark((d) => !d)}

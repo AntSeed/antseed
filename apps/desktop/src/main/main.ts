@@ -8,6 +8,7 @@ import {
   nativeImage,
   type MenuItemConstructorOptions,
 } from 'electron';
+import { autoUpdater } from 'electron-updater';
 import { readFile, writeFile, readdir, mkdir, cp } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { execFile as execFileCallback } from 'node:child_process';
@@ -1954,6 +1955,32 @@ app.whenReady().then(() => {
 
   void ensureDefaultPlugin('@antseed/router-local').catch(() => {
     // Failure is already logged via appendLog inside ensureDefaultPlugin.
+  });
+
+  // Auto-update: check for updates silently on launch
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.logger = null; // suppress default console logging
+
+  autoUpdater.on('update-available', (info) => {
+    mainWindow?.webContents.send('app:update-status', { status: 'downloading', version: info.version });
+  });
+  autoUpdater.on('update-downloaded', (info) => {
+    mainWindow?.webContents.send('app:update-status', { status: 'ready', version: info.version });
+  });
+  autoUpdater.on('error', () => {
+    // Silent — don't bother the user if update check fails
+  });
+
+  void autoUpdater.checkForUpdates().catch(() => {});
+
+  // Re-check every 4 hours
+  setInterval(() => {
+    void autoUpdater.checkForUpdates().catch(() => {});
+  }, 4 * 60 * 60 * 1000);
+
+  ipcMain.handle('app:install-update', () => {
+    autoUpdater.quitAndInstall(false, true);
   });
 
   // Initialize WalletConnect if project ID is configured
