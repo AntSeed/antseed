@@ -232,8 +232,8 @@ export function createInitialUiState(): RendererUiState {
     chatModelStatus: { tone: 'idle', label: 'Models idle' },
     chatProxyStatus: { tone: 'idle', label: 'Proxy offline' },
     chatDeleteVisible: false,
-    chatInputDisabled: true,
-    chatSendDisabled: true,
+    chatInputDisabled: false,
+    chatSendDisabled: false,
     chatAbortVisible: false,
     chatModelSelectDisabled: false,
 
