@@ -13,7 +13,7 @@ export function TitleBar() {
     if (saved !== null) return saved === 'dark';
     return document.body.classList.contains('dark-theme');
   });
-  const [updateReady, setUpdateReady] = useState<string | null>(null);
+  const [updateReady, setUpdateReady] = useState<string | null>('0.2.0');
 
   useEffect(() => {
     if (isDark) {
@@ -44,7 +44,11 @@ export function TitleBar() {
       </div>
       <div className={styles.titleBarRight}>
         {updateReady && (
-          <button className={styles.titleBarUpdateBtn} onClick={handleUpdate}>
+          <button
+            className={styles.titleBarUpdateBtn}
+            onClick={handleUpdate}
+            title={`Install v${updateReady} and restart`}
+          >
             Update to v{updateReady}
           </button>
         )}

@@ -8,7 +8,8 @@ import {
   nativeImage,
   type MenuItemConstructorOptions,
 } from 'electron';
-import { autoUpdater } from 'electron-updater';
+import electronUpdater from 'electron-updater';
+const { autoUpdater } = electronUpdater;
 import { readFile, writeFile, readdir, mkdir, cp } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { execFile as execFileCallback } from 'node:child_process';
@@ -1957,25 +1958,26 @@ app.whenReady().then(() => {
     // Failure is already logged via appendLog inside ensureDefaultPlugin.
   });
 
-  // Auto-update: check for updates silently on launch
+  // Auto-update: check for updates silently on launch and every 4 hours
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
-  autoUpdater.logger = null; // suppress default console logging
 
-  autoUpdater.on('update-available', (info) => {
-    mainWindow?.webContents.send('app:update-status', { status: 'downloading', version: info.version });
-  });
+  let updateCheckInterval: ReturnType<typeof setInterval> | null = null;
+
   autoUpdater.on('update-downloaded', (info) => {
     mainWindow?.webContents.send('app:update-status', { status: 'ready', version: info.version });
+    if (updateCheckInterval) {
+      clearInterval(updateCheckInterval);
+      updateCheckInterval = null;
+    }
   });
-  autoUpdater.on('error', () => {
-    // Silent — don't bother the user if update check fails
+  autoUpdater.on('error', (err) => {
+    console.error('[auto-update] error:', err?.message ?? err);
   });
 
   void autoUpdater.checkForUpdates().catch(() => {});
 
-  // Re-check every 4 hours
-  setInterval(() => {
+  updateCheckInterval = setInterval(() => {
     void autoUpdater.checkForUpdates().catch(() => {});
   }, 4 * 60 * 60 * 1000);
 
