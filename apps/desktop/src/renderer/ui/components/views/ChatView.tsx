@@ -143,6 +143,7 @@ export function ChatView({ active }: ChatViewProps) {
   }, []);
 
   const showWelcome =
+    snap.chatConversationsLoaded &&
     !snap.chatActiveConversation &&
     visibleMessages.length === 0 &&
     !snap.chatStreamingMessage;

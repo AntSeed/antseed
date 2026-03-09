@@ -847,6 +847,7 @@ export function initChatModule({
     } catch {
       // Chat unavailable
     } finally {
+      uiState.chatConversationsLoaded = true;
       updateStreamingIndicator();
     }
   }
@@ -1021,11 +1022,14 @@ export function initChatModule({
 
     // If no active conversation, create one first then send
     if (!uiState.chatActiveConversation) {
+      setChatSending(true);
       void (async () => {
         await createNewConversation();
         if (uiState.chatActiveConversation) {
+          setChatSending(false);
           sendMessage(text, imageBase64, imageMimeType);
         } else {
+          setChatSending(false);
           showChatError('Failed to create a conversation. Please try again.');
         }
       })();

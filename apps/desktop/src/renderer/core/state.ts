@@ -118,6 +118,7 @@ export type RendererUiState = {
   chatActiveConversation: string | null;
   chatConversationTitle: string;
   chatConversations: unknown[];
+  chatConversationsLoaded: boolean;
   chatMessages: unknown[];
   chatStreamingMessage: ChatMessage | null;
   chatSending: boolean;
@@ -220,6 +221,7 @@ export function createInitialUiState(): RendererUiState {
     chatActiveConversation: null,
     chatConversationTitle: 'Conversation',
     chatConversations: [],
+    chatConversationsLoaded: false,
     chatMessages: [],
     chatStreamingMessage: null,
     chatSending: false,
