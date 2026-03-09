@@ -39,7 +39,6 @@ export function AppShell() {
 
   const hasConversations = Array.isArray(snap.chatConversations) && snap.chatConversations.length > 0;
   const showOnboarding =
-    snap.chatConversationsLoaded &&
     !onboardingDismissed &&
     !hasConversations &&
     !snap.chatActiveConversation &&
@@ -74,6 +73,10 @@ export function AppShell() {
   if (showSetup) {
     return <SetupScreen />;
   }
+
+  // Wait for the conversation list before rendering the shell or onboarding,
+  // preventing a flash of empty state on relaunch when setup is already complete.
+  if (!snap.chatConversationsLoaded) return null;
 
   if (showOnboarding) {
     return (
