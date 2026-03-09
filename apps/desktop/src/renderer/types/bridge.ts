@@ -55,6 +55,13 @@ export type DashboardDataResult<T = unknown> = {
   status: number | null;
 };
 
+export type DashboardUpdateResult<T = unknown> = {
+  ok: boolean;
+  data: T | null;
+  error: string | null;
+  status: number | null;
+};
+
 export type PluginInfo = {
   package: string;
   version: string;
@@ -94,6 +101,10 @@ export type DesktopBridge = {
     endpoint: DashboardEndpoint,
     options?: { port?: number; query?: Record<string, string | number | boolean> }
   ) => Promise<DashboardDataResult>;
+  updateDashboardConfig?: (
+    config: Record<string, unknown>,
+    options?: { port?: number }
+  ) => Promise<DashboardUpdateResult>;
   scanNetwork?: (port?: number) => Promise<DashboardDataResult>;
 
   onLog?: (handler: (event: LogEvent) => void) => () => void;
@@ -105,11 +116,12 @@ export type DesktopBridge = {
   chatAiGetConversation?: (id: string) => Promise<{ ok: boolean; data?: unknown; error?: string }>;
   chatAiCreateConversation?: (model: string, provider?: string) => Promise<{ ok: boolean; data?: unknown; error?: string }>;
   chatAiDeleteConversation?: (id: string) => Promise<{ ok: boolean }>;
+  chatAiRenameConversation?: (id: string, title: string) => Promise<{ ok: boolean; error?: string }>;
   chatAiSend?: (conversationId: string, message: string, model?: string, provider?: string, imageBase64?: string, imageMimeType?: string) => Promise<{ ok: boolean; error?: string }>;
   chatAiSendStream?: (conversationId: string, message: string, model?: string, provider?: string, imageBase64?: string, imageMimeType?: string) => Promise<{ ok: boolean; error?: string }>;
   chatAiAbort?: () => Promise<{ ok: boolean }>;
   chatAiGetProxyStatus?: () => Promise<{ ok: boolean; data: { running: boolean; port: number } }>;
-  onChatAiDone?: (handler: (data: { conversationId: string; message: { role: string; content: unknown; createdAt?: number } }) => void) => () => void;
+  onChatAiDone?: (handler: (data: { conversationId: string; message: { role: string; content: unknown; createdAt?: number; meta?: Record<string, unknown> } }) => void) => () => void;
   onChatAiError?: (handler: (data: { conversationId: string; error: string }) => void) => () => void;
   onChatAiUserPersisted?: (handler: (data: { conversationId: string; message: { role: string; content: unknown; createdAt?: number } }) => void) => () => void;
   onChatAiStreamStart?: (handler: (data: { conversationId: string; turn: number }) => void) => () => void;
@@ -119,5 +131,11 @@ export type DesktopBridge = {
   onChatAiStreamDone?: (handler: (data: { conversationId: string }) => void) => () => void;
   onChatAiStreamError?: (handler: (data: { conversationId: string; error: string }) => void) => () => void;
   onChatAiToolExecuting?: (handler: (data: { conversationId: string; toolUseId: string; name: string; input: Record<string, unknown> }) => void) => () => void;
-  onChatAiToolResult?: (handler: (data: { conversationId: string; toolUseId: string; output: string; isError: boolean }) => void) => () => void;
+  onChatAiToolUpdate?: (handler: (data: { conversationId: string; toolUseId: string; name: string; input: Record<string, unknown>; output: string; details?: Record<string, unknown> }) => void) => () => void;
+  onChatAiToolResult?: (handler: (data: { conversationId: string; toolUseId: string; output: string; isError: boolean; details?: Record<string, unknown> }) => void) => () => void;
+  onFullscreenChange?: (handler: (isFullscreen: boolean) => void) => () => void;
+  onWindowFocusChange?: (handler: (isFocused: boolean) => void) => () => void;
+  getAppSetupStatus?: () => Promise<{ needed: boolean; complete: boolean }>;
+  onAppSetupStep?: (handler: (data: { step: string; label: string }) => void) => () => void;
+  onAppSetupComplete?: (handler: () => void) => () => void;
 };

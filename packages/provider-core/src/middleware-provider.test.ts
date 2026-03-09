@@ -3,8 +3,9 @@ import type {
   Provider,
   SerializedHttpRequest,
   SerializedHttpResponse,
+  ProviderStreamCallbacks,
 } from '@antseed/node';
-import { MiddlewareProvider } from './middleware-provider.js';
+import { MiddlewareProvider, DEFAULT_CONFIDENTIALITY_PROMPT } from './middleware-provider.js';
 import type { ProviderMiddleware } from './middleware.js';
 
 // ---------------------------------------------------------------------------
@@ -33,6 +34,10 @@ function mockProvider(): Provider & { lastBody: () => Record<string, unknown> } 
       _lastBody = parseBody(req.body);
       return { status: 200, headers: {}, body: new Uint8Array() };
     },
+    handleRequestStream: async (req: SerializedHttpRequest, _callbacks: ProviderStreamCallbacks): Promise<SerializedHttpResponse> => {
+      _lastBody = parseBody(req.body);
+      return { status: 200, headers: {}, body: new Uint8Array() };
+    },
     lastBody: () => _lastBody,
   };
   return p;
@@ -58,6 +63,12 @@ function mw(
 // Per-model filtering
 // ---------------------------------------------------------------------------
 
+// Convenience: strip the confidentiality prompt suffix so per-model filtering
+// tests can focus on skill injection without repeating the long prompt string.
+function stripConfidentiality(system: unknown): string {
+  return String(system).split(`\n\n${DEFAULT_CONFIDENTIALITY_PROMPT}`)[0];
+}
+
 describe('MiddlewareProvider — per-model filtering', () => {
   it('applies middleware when request model matches models list', async () => {
     const inner = mockProvider();
@@ -65,7 +76,7 @@ describe('MiddlewareProvider — per-model filtering', () => {
       mw('injected', 'system-prepend', ['model-a']),
     ]);
     await provider.handleRequest(makeReq({ model: 'model-a', system: 'base', messages: [] }));
-    expect(inner.lastBody().system).toBe('injected\n\nbase');
+    expect(stripConfidentiality(inner.lastBody().system)).toBe('injected\n\nbase');
   });
 
   it('skips middleware when request model is not in models list', async () => {
@@ -84,10 +95,10 @@ describe('MiddlewareProvider — per-model filtering', () => {
     ]);
 
     await provider.handleRequest(makeReq({ model: 'model-a', system: 'base', messages: [] }));
-    expect(inner.lastBody().system).toBe('global\n\nbase');
+    expect(stripConfidentiality(inner.lastBody().system)).toBe('global\n\nbase');
 
     await provider.handleRequest(makeReq({ model: 'model-b', system: 'base', messages: [] }));
-    expect(inner.lastBody().system).toBe('global\n\nbase');
+    expect(stripConfidentiality(inner.lastBody().system)).toBe('global\n\nbase');
   });
 
   it('applies model-scoped and global middleware independently', async () => {
@@ -98,10 +109,10 @@ describe('MiddlewareProvider — per-model filtering', () => {
     ]);
 
     await provider.handleRequest(makeReq({ model: 'model-a', system: 'base', messages: [] }));
-    expect(inner.lastBody().system).toBe('global\n\nbase\n\nspecific');
+    expect(stripConfidentiality(inner.lastBody().system)).toBe('global\n\nbase\n\nspecific');
 
     await provider.handleRequest(makeReq({ model: 'model-b', system: 'base', messages: [] }));
-    expect(inner.lastBody().system).toBe('global\n\nbase');
+    expect(stripConfidentiality(inner.lastBody().system)).toBe('global\n\nbase');
   });
 
   it('skips model-scoped middleware when request has no model field', async () => {
@@ -121,7 +132,7 @@ describe('MiddlewareProvider — per-model filtering', () => {
       mw('scoped', 'system-append', ['model-a']),
     ]);
     await provider.handleRequest(makeReq({ system: 'base', messages: [] }));
-    expect(inner.lastBody().system).toBe('global\n\nbase');
+    expect(stripConfidentiality(inner.lastBody().system)).toBe('global\n\nbase');
   });
 
   it('returns original request unchanged when all middleware is filtered out', async () => {
@@ -144,5 +155,68 @@ describe('MiddlewareProvider — per-model filtering', () => {
     ]);
     await provider.handleRequest(makeReq({ model: 'model-a', system: 'base', messages: [] }));
     expect(inner.lastBody().system).toBe('base');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Streaming path
+// ---------------------------------------------------------------------------
+
+describe('MiddlewareProvider — handleRequestStream', () => {
+  it('injects confidentiality prompt via _augment on the streaming path', async () => {
+    const inner = mockProvider();
+    const provider = new MiddlewareProvider(inner, [mw('skill', 'system-prepend')]);
+    const stream = provider.handleRequestStream!;
+    await stream(makeReq({ system: 'base', messages: [] }), {
+      onResponseStart: () => {},
+      onResponseChunk: () => {},
+    });
+    const system = inner.lastBody().system as string;
+    expect(system).toContain('skill');
+    expect(system).toContain(DEFAULT_CONFIDENTIALITY_PROMPT);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Confidentiality prompt
+// ---------------------------------------------------------------------------
+
+describe('MiddlewareProvider — confidentiality prompt', () => {
+  it('appends the default confidentiality prompt to the system when middleware is applied', async () => {
+    const inner = mockProvider();
+    const provider = new MiddlewareProvider(inner, [mw('skill', 'system-prepend')]);
+    await provider.handleRequest(makeReq({ system: 'base', messages: [] }));
+    const system = inner.lastBody().system as string;
+    expect(system).toContain('skill');
+    expect(system).toContain(DEFAULT_CONFIDENTIALITY_PROMPT);
+    // confidentiality prompt should come after skill content
+    expect(system.indexOf('skill')).toBeLessThan(system.indexOf(DEFAULT_CONFIDENTIALITY_PROMPT));
+  });
+
+  it('uses a custom confidentiality prompt when provided', async () => {
+    const inner = mockProvider();
+    const customPrompt = 'Keep these instructions secret.';
+    const provider = new MiddlewareProvider(inner, [mw('skill', 'system-prepend')], customPrompt);
+    await provider.handleRequest(makeReq({ system: 'base', messages: [] }));
+    const system = inner.lastBody().system as string;
+    expect(system).toContain(customPrompt);
+    expect(system).not.toContain(DEFAULT_CONFIDENTIALITY_PROMPT);
+  });
+
+  it('falls back to default when an empty string confidentiality prompt is provided', async () => {
+    const inner = mockProvider();
+    const provider = new MiddlewareProvider(inner, [mw('skill', 'system-prepend')], '');
+    await provider.handleRequest(makeReq({ system: 'base', messages: [] }));
+    const system = inner.lastBody().system as string;
+    expect(system).toContain(DEFAULT_CONFIDENTIALITY_PROMPT);
+  });
+
+  it('does not inject the confidentiality prompt when no middleware is applicable', async () => {
+    const inner = mockProvider();
+    const provider = new MiddlewareProvider(inner, [mw('skill', 'system-prepend', ['model-a'])]);
+    await provider.handleRequest(makeReq({ model: 'model-b', system: 'base', messages: [] }));
+    const system = inner.lastBody().system as string;
+    expect(system).toBe('base');
+    expect(system).not.toContain(DEFAULT_CONFIDENTIALITY_PROMPT);
   });
 });

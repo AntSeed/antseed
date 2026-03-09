@@ -11,6 +11,9 @@ Command-line interface and web dashboard for the AntSeed Network — a P2P netwo
 | `antseed init` | Install trusted provider and router plugins |
 | `antseed seed` | Start providing AI services on the P2P network |
 | `antseed connect` | Start the buyer proxy and connect to sellers |
+| `antseed connection get` | Show current session state (pinned model, peer) |
+| `antseed connection set` | Update model/peer overrides on a running proxy |
+| `antseed connection clear` | Clear model/peer overrides on a running proxy |
 | `antseed plugin add <pkg>` | Install a provider or router plugin from npm |
 | `antseed plugin remove <name>` | Remove an installed plugin |
 | `antseed plugin list` | List installed plugins |
@@ -173,6 +176,35 @@ Runtime-only overrides (do not write your config file):
 antseed seed --provider anthropic --input-usd-per-million 10 --output-usd-per-million 30
 antseed connect --router local --max-input-usd-per-million 20 --max-output-usd-per-million 60
 ```
+
+### Session overrides (live, while proxy is running)
+
+After `antseed connect` is running, you can override the model or peer for all subsequent requests without restarting:
+
+```bash
+# Pin all requests to a specific model (overrides whatever the tool sends)
+antseed connection set --model claude-opus-4-6
+
+# Pin all requests to a specific peer (bypasses router for peer selection)
+antseed connection set --peer <64-char-hex-peer-id>
+
+# Combine both in one command
+antseed connection set --model claude-sonnet-4-6 --peer <peer-id>
+
+# Check current session state
+antseed connection get
+
+# Clear individual overrides
+antseed connection clear --model
+antseed connection clear --peer
+
+# Clear all overrides at once
+antseed connection clear
+```
+
+Session overrides are stored in `~/.antseed/buyer.state.json` and picked up by the running proxy immediately via file-watching. The desktop app reads and writes the same file to expose model/peer selection in its UI.
+
+The model override rewrites the `model` field in the request body **before routing**, so peer selection, pricing, and the forwarded request all reflect the overridden model — regardless of what the tool (e.g. Claude Code) originally requested.
 
 ## Settlement Runtime (Seeder)
 

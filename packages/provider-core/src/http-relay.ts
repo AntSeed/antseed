@@ -218,10 +218,14 @@ export class HttpRelay {
         });
 
         const reader = fetchResponse.body.getReader();
+        let totalStreamBytes = 0;
+        const debugChunks: Uint8Array[] = [];
         try {
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
+            totalStreamBytes += value.byteLength;
+            if (totalStreamBytes <= 500) debugChunks.push(value);
             this._callbacks.onResponseChunk?.({
               requestId: request.requestId,
               data: value,
@@ -236,6 +240,12 @@ export class HttpRelay {
             ),
             done: false,
           });
+        }
+        if (totalStreamBytes < 300) {
+          const body = new TextDecoder().decode(
+            debugChunks.reduce((a, b) => { const r = new Uint8Array(a.byteLength + b.byteLength); r.set(a); r.set(b, a.byteLength); return r; }, new Uint8Array(0))
+          );
+          console.warn(`[http-relay] Short stream (${totalStreamBytes}b): ${JSON.stringify(body)}`);
         }
 
         this._callbacks.onResponseChunk?.({

@@ -36,6 +36,7 @@ export interface CliCommandResult {
 }
 
 const DEFAULT_DASHBOARD_PORT = 3117;
+const MIN_NODE_MAJOR_VERSION = 20;
 const DEFAULT_CLI_COMMAND = 'antseed';
 const CLI_COMMAND_ENV = 'ANTSEED_CLI_BIN';
 const CLI_NODE_BIN_ENV = 'ANTSEED_NODE_BIN';
@@ -159,6 +160,19 @@ function detectNodeArch(nodeBinary: string): string | null {
   }
 }
 
+function detectNodeMajorVersion(nodeBinary: string): number | null {
+  try {
+    const output = execFileSync(nodeBinary, ['-p', 'process.versions.node.split(".")[0]'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    const major = Number(output);
+    return Number.isFinite(major) && major > 0 ? major : null;
+  } catch {
+    return null;
+  }
+}
+
 type SemverTuple = [major: number, minor: number, patch: number];
 
 function parseSemverTag(raw: string): SemverTuple | null {
@@ -220,6 +234,7 @@ function resolveNodeBinary(targetArch: string): string {
 
   const tried = new Set<string>();
   let firstExisting: string | null = null;
+  let firstCompatible: string | null = null;
 
   for (const candidate of candidates) {
     if (!candidate || tried.has(candidate)) {
@@ -232,13 +247,24 @@ function resolveNodeBinary(targetArch: string): string {
     if (!firstExisting) {
       firstExisting = candidate;
     }
-    const arch = detectNodeArch(candidate);
-    if (arch === targetArch) {
-      return candidate;
+    const majorVersion = detectNodeMajorVersion(candidate);
+    const meetsMinVersion = majorVersion !== null && majorVersion >= MIN_NODE_MAJOR_VERSION;
+    if (meetsMinVersion) {
+      if (!firstCompatible) {
+        firstCompatible = candidate;
+      }
+      const arch = detectNodeArch(candidate);
+      if (arch === targetArch) {
+        return candidate;
+      }
     }
   }
 
-  return firstExisting ?? 'node';
+  // Prefer a version-compatible node over one that is too old.
+  // Falls back to firstExisting only if no candidate meets the minimum version.
+  // Last resort: use Electron's own Node.js runtime (requires ELECTRON_RUN_AS_NODE=1).
+  // This ensures the packaged app works even if no system node is installed.
+  return firstCompatible ?? firstExisting ?? process.execPath ?? 'node';
 }
 
 function resolveConfigPath(configPath?: string): string {
@@ -265,20 +291,28 @@ function resolveConnectDataDir(): string {
 type CliExecution = {
   executable: string;
   executableArgsPrefix: string[];
-  useLocalCliScript: boolean;
+  // True only for the local monorepo dev script — native module alignment is
+  // only needed there. The bundled production CLI already ships aligned natives.
+  isLocalDevScript: boolean;
   cliCommand: string;
 };
 
 function resolveCliExecution(): CliExecution {
   const cliCommand = resolveCliCommand();
   const localCliPath = resolveLocalCliPath();
-  const useLocalCliScript = existsSync(localCliPath) && resolve(cliCommand) === localCliPath;
-  const executable = useLocalCliScript ? resolveNodeBinary(process.arch) : cliCommand;
-  const executableArgsPrefix = useLocalCliScript ? [localCliPath] : [];
+  const isLocalDevScript = existsSync(localCliPath) && resolve(cliCommand) === localCliPath;
+
+  // The bundled CLI (from extraResources) is also a .js script that needs node.
+  // Packaged macOS apps have a minimal PATH, so we must resolve node explicitly.
+  const isBundledScript = !isLocalDevScript && cliCommand.endsWith('.js');
+  const needsNode = isLocalDevScript || isBundledScript;
+
+  const executable = needsNode ? resolveNodeBinary(process.arch) : cliCommand;
+  const executableArgsPrefix = needsNode ? [cliCommand] : [];
   return {
     executable,
     executableArgsPrefix,
-    useLocalCliScript,
+    isLocalDevScript,
     cliCommand,
   };
 }
@@ -348,14 +382,20 @@ export class ProcessManager {
     const args = resolveCommandArgs(opts);
     const executable = cliExecution.executable;
     const executableArgs = [...cliExecution.executableArgsPrefix, ...args];
-    await this.ensureRuntimeNativeModules(mode, executable, cliExecution.useLocalCliScript);
+    await this.ensureRuntimeNativeModules(mode, executable, cliExecution.isLocalDevScript);
     const childEnv: NodeJS.ProcessEnv = { ...process.env };
     for (const [key, value] of Object.entries(opts.env ?? {})) {
       if (typeof key === 'string' && key.trim().length > 0) {
         childEnv[key] = String(value);
       }
     }
-    delete childEnv['ELECTRON_RUN_AS_NODE'];
+    // When using Electron's own binary as node, set ELECTRON_RUN_AS_NODE so it
+    // behaves like a regular Node.js process. Otherwise, remove it.
+    if (executable === process.execPath) {
+      childEnv['ELECTRON_RUN_AS_NODE'] = '1';
+    } else {
+      delete childEnv['ELECTRON_RUN_AS_NODE'];
+    }
     const extraNodePath = resolveChildNodePath();
     if (extraNodePath) {
       childEnv['NODE_PATH'] = extraNodePath + (childEnv['NODE_PATH'] ? `:${childEnv['NODE_PATH']}` : '');
@@ -444,7 +484,11 @@ export class ProcessManager {
     const executableArgs = [...cliExecution.executableArgsPrefix, ...args];
 
     const childEnv = { ...process.env };
-    delete childEnv['ELECTRON_RUN_AS_NODE'];
+    if (executable === process.execPath) {
+      childEnv['ELECTRON_RUN_AS_NODE'] = '1';
+    } else {
+      delete childEnv['ELECTRON_RUN_AS_NODE'];
+    }
     const extraNodePath = resolveChildNodePath();
     if (extraNodePath) {
       childEnv['NODE_PATH'] = extraNodePath + (childEnv['NODE_PATH'] ? `:${childEnv['NODE_PATH']}` : '');
@@ -530,8 +574,8 @@ export class ProcessManager {
     });
   }
 
-  private async ensureRuntimeNativeModules(mode: RuntimeMode, executable: string, useLocalCliScript: boolean): Promise<void> {
-    if (!useLocalCliScript) {
+  private async ensureRuntimeNativeModules(mode: RuntimeMode, executable: string, isLocalDevScript: boolean): Promise<void> {
+    if (!isLocalDevScript) {
       return;
     }
     if (this.runtimeNativeAligned) {

@@ -1,3 +1,3 @@
-export const VIEW_NAMES = ['chat', 'overview', 'peers', 'connection', 'config', 'desktop'] as const;
+export const VIEW_NAMES = ['chat', 'overview', 'peers', 'connection', 'config', 'desktop', 'external-clients'] as const;
 
 export type ViewName = (typeof VIEW_NAMES)[number];

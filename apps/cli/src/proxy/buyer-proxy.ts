@@ -1,6 +1,7 @@
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http'
 import { randomUUID } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
+import { watch, type FSWatcher } from 'node:fs'
+import { readFile, writeFile, rename, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import type {
@@ -40,9 +41,16 @@ export interface BuyerProxyConfig {
    * and protocol-compatible. A 502 is returned if the peer cannot be reached.
    */
   pinnedPeerId?: string
+  /**
+   * Pin all requests to a specific model ID for this session.
+   * Overrides the model field in the request body before routing and forwarding.
+   * Can be updated at runtime via `antseed connection set --model`.
+   */
+  pinnedModel?: string
 }
 
 const DAEMON_STATE_FILE = join(homedir(), '.antseed', 'daemon.state.json')
+const BUYER_STATE_FILE = join(homedir(), '.antseed', 'buyer.state.json')
 
 const DEBUG = () =>
   ['1', 'true', 'yes', 'on'].includes((process.env['ANTSEED_DEBUG'] ?? '').trim().toLowerCase())
@@ -806,6 +814,41 @@ function isLoopbackPeer(peer: PeerInfo): boolean {
 }
 
 /**
+ * Rewrite the `model` field in a JSON request body.
+ * Also updates `content-length` if present in headers.
+ * Returns the original body/headers unchanged if the body is not JSON,
+ * is empty, or cannot be parsed.
+ */
+export function rewriteModelInBody(
+  body: Uint8Array,
+  headers: Record<string, string>,
+  model: string,
+): { body: Uint8Array; headers: Record<string, string> } {
+  const contentType = (headers['content-type'] ?? headers['Content-Type'] ?? '').toLowerCase()
+  if (!contentType.includes('application/json') || body.length === 0) {
+    return { body, headers }
+  }
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(body)) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return { body, headers }
+    }
+    const obj = parsed as Record<string, unknown>
+    obj['model'] = model
+    const rewritten = new TextEncoder().encode(JSON.stringify(obj))
+    const updatedHeaders = { ...headers }
+    if ('content-length' in updatedHeaders) {
+      updatedHeaders['content-length'] = String(rewritten.length)
+    } else if ('Content-Length' in updatedHeaders) {
+      updatedHeaders['Content-Length'] = String(rewritten.length)
+    }
+    return { body: rewritten, headers: updatedHeaders }
+  } catch {
+    return { body, headers }
+  }
+}
+
+/**
  * Local HTTP proxy that forwards requests to P2P sellers.
  *
  * Tools like Claude CLI set ANTHROPIC_BASE_URL=http://localhost:8377
@@ -818,7 +861,10 @@ export class BuyerProxy {
   private readonly _port: number
   private readonly _bgRefreshIntervalMs: number
   private readonly _peerCacheTtlMs: number
-  private readonly _pinnedPeerId: string | undefined
+  private _pinnedPeer: string | null
+  private _pinnedModel: string | null
+  private _stateFileWatcher: FSWatcher | null = null
+  private _stateWatchDebounce: ReturnType<typeof setTimeout> | null = null
 
   private _cachedPeers: PeerInfo[] = []
   private _cacheLastUpdatedAtMs = 0
@@ -834,7 +880,8 @@ export class BuyerProxy {
     this._port = config.port
     this._bgRefreshIntervalMs = config.backgroundRefreshIntervalMs ?? 5 * 60_000
     this._peerCacheTtlMs = Math.max(0, config.peerCacheTtlMs ?? 30_000)
-    this._pinnedPeerId = config.pinnedPeerId?.toLowerCase()
+    this._pinnedPeer = config.pinnedPeerId?.toLowerCase() ?? null
+    this._pinnedModel = config.pinnedModel?.trim() ?? null
     this._server = createServer((req, res) => {
       this._handleRequest(req, res).catch((err) => {
         log('Unhandled error:', err)
@@ -855,16 +902,94 @@ export class BuyerProxy {
       })
     })
     this._startBackgroundRefresh()
+    await this._writeStateFile('connected')
+    this._watchStateFile()
   }
 
   async stop(): Promise<void> {
+    if (this._stateWatchDebounce) {
+      clearTimeout(this._stateWatchDebounce)
+      this._stateWatchDebounce = null
+    }
+    if (this._stateFileWatcher) {
+      this._stateFileWatcher.close()
+      this._stateFileWatcher = null
+    }
     if (this._bgRefreshHandle) {
       clearInterval(this._bgRefreshHandle)
       this._bgRefreshHandle = null
     }
+    await this._writeStateFile('stopped')
     return new Promise((resolve) => {
       this._server.close(() => resolve())
     })
+  }
+
+  private _watchStateFile(): void {
+    try {
+      this._stateFileWatcher = watch(BUYER_STATE_FILE, { persistent: false }, () => {
+        if (this._stateWatchDebounce) clearTimeout(this._stateWatchDebounce)
+        this._stateWatchDebounce = setTimeout(() => {
+          this._stateWatchDebounce = null
+          void this._reloadSessionOverrides().catch(() => {})
+        }, 50)
+      })
+      this._stateFileWatcher.on('error', () => {
+        // watcher error is non-fatal
+      })
+    } catch {
+      // watcher setup failed; non-fatal
+    }
+  }
+
+  private async _reloadSessionOverrides(): Promise<void> {
+    try {
+      const raw = await readFile(BUYER_STATE_FILE, 'utf-8')
+      const parsed = JSON.parse(raw) as { pinnedModel?: unknown; pinnedPeerId?: unknown }
+      const pinnedModel = typeof parsed.pinnedModel === 'string' && parsed.pinnedModel.trim().length > 0
+        ? parsed.pinnedModel.trim()
+        : null
+      const pinnedPeer = typeof parsed.pinnedPeerId === 'string' && parsed.pinnedPeerId.trim().length > 0
+        ? parsed.pinnedPeerId.trim().toLowerCase()
+        : null
+      this._pinnedModel = pinnedModel
+      this._pinnedPeer = pinnedPeer
+      log(`Session overrides reloaded: model=${pinnedModel ?? 'none'} peer=${pinnedPeer ?? 'none'}`)
+    } catch {
+      // state file unreadable; keep current values
+    }
+  }
+
+  private async _writeStateFile(state: 'connected' | 'stopped'): Promise<void> {
+    try {
+      const dir = join(homedir(), '.antseed')
+      await mkdir(dir, { recursive: true })
+      let existing: Record<string, unknown> = {}
+      try {
+        const raw = await readFile(BUYER_STATE_FILE, 'utf-8')
+        existing = JSON.parse(raw) as Record<string, unknown>
+      } catch {
+        // file doesn't exist yet
+      }
+      // When stopping, preserve whatever pinnedModel/pinnedPeerId is already
+      // in the file — the debounce may have been cancelled before
+      // _reloadSessionOverrides could commit the latest CLI-written values.
+      const sessionOverrides = state === 'connected'
+        ? { pinnedModel: this._pinnedModel, pinnedPeerId: this._pinnedPeer }
+        : {}
+      const data = {
+        ...existing,
+        state,
+        pid: process.pid,
+        port: this._port,
+        ...sessionOverrides,
+      }
+      const tmp = join(homedir(), '.antseed', `.buyer.state.${randomUUID()}.json.tmp`)
+      await writeFile(tmp, JSON.stringify(data, null, 2))
+      await rename(tmp, BUYER_STATE_FILE)
+    } catch {
+      // non-fatal
+    }
   }
 
   private _startBackgroundRefresh(): void {
@@ -1117,13 +1242,30 @@ export class BuyerProxy {
     // Remove host header (points to localhost, not the seller)
     delete headers['host']
 
-    const serializedReq: SerializedHttpRequest = {
+    let serializedReq: SerializedHttpRequest = {
       requestId: randomUUID(),
       method,
       path,
       headers,
       body: new Uint8Array(body),
     }
+
+    // Snapshot both session overrides together before any await so a concurrent
+    // _reloadSessionOverrides() cannot produce a model/peer mismatch mid-request.
+    const effectivePinnedModel = this._pinnedModel
+    const effectivePinnedPeer = this._pinnedPeer
+    if (effectivePinnedModel) {
+      const { body: rewrittenBody, headers: rewrittenHeaders } = rewriteModelInBody(
+        serializedReq.body,
+        serializedReq.headers,
+        effectivePinnedModel,
+      )
+      if (rewrittenBody !== serializedReq.body) {
+        serializedReq = { ...serializedReq, body: rewrittenBody, headers: rewrittenHeaders }
+        log(`Model override applied: ${effectivePinnedModel}`)
+      }
+    }
+
     const clientAbortController = new AbortController()
     const onClientAbort = (): void => {
       if (clientAbortController.signal.aborted) {
@@ -1156,7 +1298,7 @@ export class BuyerProxy {
     const requestedModel = extractRequestedModel(serializedReq)
     log(`Routing: protocol=${requestProtocol ?? 'null'} model=${requestedModel ?? 'null'}`)
     const explicitProvider = getExplicitProviderOverride(serializedReq)
-    const explicitPeerId = getExplicitPeerIdOverride(serializedReq, this._pinnedPeerId)
+    const explicitPeerId = getExplicitPeerIdOverride(serializedReq, effectivePinnedPeer ?? undefined)
     const preferredPeerId = getPreferredPeerIdHint(serializedReq)
     log(
       `Routing hints: provider=${explicitProvider ?? 'auto'} pin-peer=${explicitPeerId ?? 'none'} prefer-peer=${preferredPeerId ?? 'none'}`,

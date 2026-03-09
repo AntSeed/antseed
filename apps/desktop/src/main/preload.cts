@@ -68,6 +68,8 @@ type DashboardDataResult = {
   status: number | null;
 };
 
+type DashboardUpdateResult = DashboardDataResult;
+
 type PluginInfo = {
   package: string;
   version: string;
@@ -117,6 +119,12 @@ const api = {
   ): Promise<DashboardDataResult> {
     return ipcRenderer.invoke('runtime:get-dashboard-data', endpoint, options) as Promise<DashboardDataResult>;
   },
+  updateDashboardConfig(
+    config: Record<string, unknown>,
+    options?: { port?: number },
+  ): Promise<DashboardUpdateResult> {
+    return ipcRenderer.invoke('runtime:update-dashboard-config', config, options) as Promise<DashboardUpdateResult>;
+  },
   scanNetwork(port?: number): Promise<DashboardDataResult> {
     return ipcRenderer.invoke('runtime:scan-network', port) as Promise<DashboardDataResult>;
   },
@@ -152,6 +160,9 @@ const api = {
   chatAiDeleteConversation(id: string): Promise<{ ok: boolean }> {
     return ipcRenderer.invoke('chat:ai-delete-conversation', id);
   },
+  chatAiRenameConversation(id: string, title: string): Promise<{ ok: boolean; error?: string }> {
+    return ipcRenderer.invoke('chat:ai-rename-conversation', id, title);
+  },
   chatAiSend(conversationId: string, message: string, model?: string, provider?: string, imageBase64?: string, imageMimeType?: string): Promise<{ ok: boolean; error?: string }> {
     return ipcRenderer.invoke('chat:ai-send', conversationId, message, model, provider, imageBase64, imageMimeType);
   },
@@ -164,8 +175,8 @@ const api = {
   chatAiGetProxyStatus(): Promise<{ ok: boolean; data: { running: boolean; port: number } }> {
     return ipcRenderer.invoke('chat:ai-get-proxy-status');
   },
-  onChatAiDone(handler: (data: { conversationId: string; message: { role: string; content: unknown; createdAt?: number } }) => void): () => void {
-    const listener = (_: unknown, data: { conversationId: string; message: { role: string; content: unknown; createdAt?: number } }) => handler(data);
+  onChatAiDone(handler: (data: { conversationId: string; message: { role: string; content: unknown; createdAt?: number; meta?: Record<string, unknown> } }) => void): () => void {
+    const listener = (_: unknown, data: { conversationId: string; message: { role: string; content: unknown; createdAt?: number; meta?: Record<string, unknown> } }) => handler(data);
     ipcRenderer.on('chat:ai-done', listener);
     return () => ipcRenderer.off('chat:ai-done', listener);
   },
@@ -215,10 +226,48 @@ const api = {
     ipcRenderer.on('chat:ai-tool-executing', listener);
     return () => ipcRenderer.off('chat:ai-tool-executing', listener);
   },
-  onChatAiToolResult(handler: (data: { conversationId: string; toolUseId: string; output: string; isError: boolean }) => void): () => void {
-    const listener = (_: unknown, data: { conversationId: string; toolUseId: string; output: string; isError: boolean }) => handler(data);
+  onChatAiToolUpdate(handler: (data: { conversationId: string; toolUseId: string; name: string; input: Record<string, unknown>; output: string; details?: Record<string, unknown> }) => void): () => void {
+    const listener = (_: unknown, data: { conversationId: string; toolUseId: string; name: string; input: Record<string, unknown>; output: string; details?: Record<string, unknown> }) => handler(data);
+    ipcRenderer.on('chat:ai-tool-update', listener);
+    return () => ipcRenderer.off('chat:ai-tool-update', listener);
+  },
+  onChatAiToolResult(handler: (data: { conversationId: string; toolUseId: string; output: string; isError: boolean; details?: Record<string, unknown> }) => void): () => void {
+    const listener = (_: unknown, data: { conversationId: string; toolUseId: string; output: string; isError: boolean; details?: Record<string, unknown> }) => handler(data);
     ipcRenderer.on('chat:ai-tool-result', listener);
     return () => ipcRenderer.off('chat:ai-tool-result', listener);
+  },
+  onFullscreenChange(handler: (isFullscreen: boolean) => void): () => void {
+    const listener = (_: unknown, isFullscreen: boolean) => handler(isFullscreen);
+    ipcRenderer.on('fullscreen-change', listener);
+    return () => ipcRenderer.off('fullscreen-change', listener);
+  },
+  onWindowFocusChange(handler: (isFocused: boolean) => void): () => void {
+    const listener = (_: unknown, isFocused: boolean) => handler(isFocused);
+    ipcRenderer.on('window-focus-change', listener);
+    return () => ipcRenderer.off('window-focus-change', listener);
+  },
+  getAppSetupStatus(): Promise<{ needed: boolean; complete: boolean }> {
+    return ipcRenderer.invoke('app:get-setup-status') as Promise<{ needed: boolean; complete: boolean }>;
+  },
+  onAppSetupStep(handler: (data: { step: string; label: string }) => void): () => void {
+    const listener = (_: unknown, data: { step: string; label: string }) => handler(data);
+    ipcRenderer.on('app:setup-step', listener);
+    return () => ipcRenderer.off('app:setup-step', listener);
+  },
+  onAppSetupComplete(handler: () => void): () => void {
+    const listener = () => handler();
+    ipcRenderer.on('app:setup-complete', listener);
+    return () => ipcRenderer.off('app:setup-complete', listener);
+  },
+
+  // Auto-update
+  onUpdateStatus(handler: (data: { status: string; version: string }) => void): () => void {
+    const listener = (_: unknown, data: { status: string; version: string }) => handler(data);
+    ipcRenderer.on('app:update-status', listener);
+    return () => ipcRenderer.off('app:update-status', listener);
+  },
+  installUpdate(): Promise<void> {
+    return ipcRenderer.invoke('app:install-update') as Promise<void>;
   },
 };
 

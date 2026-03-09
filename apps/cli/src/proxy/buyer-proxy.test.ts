@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { PeerInfo } from '@antseed/node'
-import { selectCandidatePeersForRouting } from './buyer-proxy.js'
+import { selectCandidatePeersForRouting, rewriteModelInBody } from './buyer-proxy.js'
 
 function makePeer(seed: string, providers: string[]): PeerInfo {
   const repeated = (seed.repeat(64) + 'a'.repeat(64)).slice(0, 64)
@@ -89,4 +89,64 @@ test('selectCandidatePeersForRouting can still include peers without model proto
 
   assert.equal(result.candidatePeers.length, 1)
   assert.equal(result.candidatePeers[0]?.peerId, peerWithoutMetadata.peerId)
+})
+
+// rewriteModelInBody tests
+
+function makeJsonBody(obj: Record<string, unknown>): Uint8Array {
+  return new TextEncoder().encode(JSON.stringify(obj))
+}
+
+function parseJsonBody(body: Uint8Array): Record<string, unknown> {
+  return JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>
+}
+
+const jsonHeaders: Record<string, string> = { 'content-type': 'application/json' }
+
+test('rewriteModelInBody replaces existing model field', () => {
+  const body = makeJsonBody({ model: 'claude-sonnet-4-5', messages: [] })
+  const result = rewriteModelInBody(body, jsonHeaders, 'claude-opus-4-6')
+  assert.equal(parseJsonBody(result.body)['model'], 'claude-opus-4-6')
+})
+
+test('rewriteModelInBody adds model field when absent', () => {
+  const body = makeJsonBody({ messages: [] })
+  const result = rewriteModelInBody(body, jsonHeaders, 'claude-opus-4-6')
+  assert.equal(parseJsonBody(result.body)['model'], 'claude-opus-4-6')
+})
+
+test('rewriteModelInBody preserves all other fields', () => {
+  const body = makeJsonBody({ model: 'old', messages: [{ role: 'user', content: 'hi' }], max_tokens: 1024 })
+  const result = rewriteModelInBody(body, jsonHeaders, 'new-model')
+  const parsed = parseJsonBody(result.body)
+  assert.equal(parsed['model'], 'new-model')
+  assert.deepEqual(parsed['messages'], [{ role: 'user', content: 'hi' }])
+  assert.equal(parsed['max_tokens'], 1024)
+})
+
+test('rewriteModelInBody updates content-length header when present', () => {
+  const original = makeJsonBody({ model: 'a', messages: [] })
+  const headers = { 'content-type': 'application/json', 'content-length': String(original.length) }
+  const result = rewriteModelInBody(original, headers, 'claude-opus-4-6-20251201')
+  assert.equal(result.headers['content-length'], String(result.body.length))
+})
+
+test('rewriteModelInBody returns original when body is not JSON content-type', () => {
+  const body = makeJsonBody({ model: 'old' })
+  const headers = { 'content-type': 'text/plain' }
+  const result = rewriteModelInBody(body, headers, 'new-model')
+  assert.equal(result.body, body)
+  assert.equal(result.headers, headers)
+})
+
+test('rewriteModelInBody returns original when body is empty', () => {
+  const body = new Uint8Array(0)
+  const result = rewriteModelInBody(body, jsonHeaders, 'new-model')
+  assert.equal(result.body, body)
+})
+
+test('rewriteModelInBody returns original when body is not a JSON object', () => {
+  const body = new TextEncoder().encode('"just a string"')
+  const result = rewriteModelInBody(body, jsonHeaders, 'new-model')
+  assert.equal(result.body, body)
 })

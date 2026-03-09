@@ -1,4 +1,6 @@
 import type { RendererUiState } from './state';
+import type { ContentBlock } from '../ui/components/chat/chat-shared';
+import { cloneContentBlock } from '../ui/components/chat/chat-shared';
 
 type Listener = () => void;
 
@@ -7,6 +9,7 @@ let stateRef: RendererUiState | null = null;
 let version = 0;
 let cachedSnapshotVersion = -1;
 let cachedSnapshot: RendererUiState | null = null;
+let notifyPending = false;
 
 export function initStore(state: RendererUiState): void {
   stateRef = state;
@@ -19,8 +22,14 @@ export function notifyUiStateChanged(): void {
   version += 1;
   cachedSnapshotVersion = -1;
   cachedSnapshot = null;
-  for (const listener of listeners) {
-    listener();
+  if (!notifyPending) {
+    notifyPending = true;
+    setTimeout(() => {
+      notifyPending = false;
+      for (const listener of listeners) {
+        listener();
+      }
+    }, 0);
   }
 }
 
@@ -57,6 +66,15 @@ export function getUiSnapshot(): RendererUiState {
     lastPeers: [...state.lastPeers],
     chatConversations: [...state.chatConversations],
     chatMessages: [...state.chatMessages],
+    chatStreamingMessage: state.chatStreamingMessage
+      ? {
+          ...state.chatStreamingMessage,
+          meta: state.chatStreamingMessage.meta ? { ...state.chatStreamingMessage.meta } : undefined,
+          content: Array.isArray(state.chatStreamingMessage.content)
+            ? (state.chatStreamingMessage.content as ContentBlock[]).map(cloneContentBlock)
+            : state.chatStreamingMessage.content,
+        }
+      : null,
     chatModelOptions: [...state.chatModelOptions],
   };
   cachedSnapshotVersion = version;

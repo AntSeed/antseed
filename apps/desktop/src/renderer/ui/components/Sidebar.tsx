@@ -1,7 +1,19 @@
-import { memo } from 'react';
+import { memo, useState, useRef, useEffect, useCallback } from 'react';
+import { HugeiconsIcon } from '@hugeicons/react';
+import { HierarchySquare03Icon } from '@hugeicons/core-free-icons';
+import { UserGroupIcon } from '@hugeicons/core-free-icons';
+import { PeerToPeer02Icon } from '@hugeicons/core-free-icons';
+import { Settings02Icon } from '@hugeicons/core-free-icons';
+import { CommandLineIcon } from '@hugeicons/core-free-icons';
+import { MoreVerticalIcon } from '@hugeicons/core-free-icons';
+import { Add01Icon } from '@hugeicons/core-free-icons';
+import { ComputerTerminal01Icon } from '@hugeicons/core-free-icons';
 import type { ViewName } from '../types';
 import { useUiSnapshot } from '../hooks/useUiSnapshot';
 import { useActions } from '../hooks/useActions';
+import styles from './Sidebar.module.scss';
+
+type IconData = Parameters<typeof HugeiconsIcon>[0]['icon'];
 
 type SidebarProps = {
   activeView: ViewName;
@@ -11,34 +23,27 @@ type SidebarProps = {
 type NavEntry = {
   label: string;
   view: ViewName;
+  icon: IconData;
+  action?: 'new-chat';
 };
 
-const chatEntry: NavEntry = { label: 'AI Chat', view: 'chat' };
-
-const networkEntries: NavEntry[] = [
-  { label: 'Overview', view: 'overview' },
-  { label: 'Peers', view: 'peers' },
-  { label: 'Connection', view: 'connection' },
-  { label: 'Settings', view: 'config' },
-  { label: 'Logs', view: 'desktop' },
+const baseEntries: NavEntry[] = [
+  { label: 'New Chat', view: 'chat', icon: Add01Icon, action: 'new-chat' },
+  { label: 'Network', view: 'overview', icon: HierarchySquare03Icon },
+  { label: 'External Clients', view: 'external-clients', icon: ComputerTerminal01Icon },
+  { label: 'Settings', view: 'config', icon: Settings02Icon },
 ];
 
-const SidebarHeader = memo(function SidebarHeader() {
-  const { connectWarning } = useUiSnapshot();
+const devEntries: NavEntry[] = [
+  { label: 'Connection', view: 'connection', icon: PeerToPeer02Icon },
+  { label: 'Peers', view: 'peers', icon: UserGroupIcon },
+  { label: 'Logs', view: 'desktop', icon: CommandLineIcon },
+];
 
-  return (
-    <div className="sidebar-header">
-      <div className="sidebar-logo">
-        <img className="sidebar-logo-mark" src="./assets/antseed-mark.svg" alt="AntSeed mark" />
-        <h1 className="sidebar-title">
-          <span className="sidebar-title-ant">AntStation</span>
-        </h1>
-      </div>
-      {connectWarning && (
-        <p className="sidebar-warning">{connectWarning}</p>
-      )}
-    </div>
-  );
+const SidebarWarning = memo(function SidebarWarning() {
+  const { connectWarning } = useUiSnapshot();
+  if (!connectWarning) return null;
+  return <p className={styles.sidebarWarning}>{connectWarning}</p>;
 });
 
 function formatChatTime(timestamp: unknown): string {
@@ -52,51 +57,144 @@ function formatChatTime(timestamp: unknown): string {
   return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
-function shortModelName(model: unknown): string {
-  const raw = String(model || '').trim();
-  if (!raw) return 'unknown-model';
-  return raw.replace(/^claude-/, '').replace(/-20\d{6,}/, '');
+function ConvContextMenu({
+  convId,
+  convTitle,
+  anchorRef,
+  onClose,
+}: {
+  convId: string;
+  convTitle: string;
+  anchorRef: React.RefObject<HTMLButtonElement | null>;
+  onClose: () => void;
+}) {
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [renaming, setRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState(convTitle);
+  const renameInputRef = useRef<HTMLInputElement>(null);
+  const cancelledRef = useRef(false);
+  const actions = useActions();
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (
+        menuRef.current && !menuRef.current.contains(e.target as Node) &&
+        anchorRef.current && !anchorRef.current.contains(e.target as Node)
+      ) {
+        onClose();
+      }
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [onClose, anchorRef]);
+
+  useEffect(() => {
+    if (renaming && renameInputRef.current) {
+      cancelledRef.current = false;
+      renameInputRef.current.focus();
+      renameInputRef.current.select();
+    }
+  }, [renaming]);
+
+  const handleRenameSubmit = useCallback(() => {
+    if (cancelledRef.current) return;
+    const trimmed = renameValue.trim();
+    if (trimmed && trimmed !== convTitle) {
+      actions.renameConversation(convId, trimmed);
+    }
+    onClose();
+  }, [renameValue, convTitle, convId, actions, onClose]);
+
+  if (renaming) {
+    return (
+      <div className={styles.convContextMenu} ref={menuRef}>
+        <input
+          ref={renameInputRef}
+          className={styles.convRenameInput}
+          value={renameValue}
+          onChange={(e) => setRenameValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') handleRenameSubmit();
+            if (e.key === 'Escape') { cancelledRef.current = true; onClose(); }
+          }}
+          onBlur={handleRenameSubmit}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className={styles.convContextMenu} ref={menuRef}>
+      <button className={styles.convContextItem} onClick={() => setRenaming(true)}>
+        Rename
+      </button>
+      <button
+        className={`${styles.convContextItem} ${styles.convContextItemDanger}`}
+        onClick={() => {
+          void actions.deleteConversation(convId);
+          onClose();
+        }}
+      >
+        Delete
+      </button>
+    </div>
+  );
 }
 
-function ChatSidebar() {
+function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void }) {
   const { chatConversations, chatActiveConversation } = useUiSnapshot();
   const actions = useActions();
   const conversations = Array.isArray(chatConversations) ? chatConversations : [];
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+  const menuBtnRefs = useRef<Map<string, HTMLButtonElement | null>>(new Map());
 
   return (
-    <aside className="chat-sidebar">
-      <div className="chat-sidebar-header">
-        <button className="chat-new-btn" onClick={() => void actions.createNewConversation()}>
-          + New Chat
-        </button>
-      </div>
-      <div className="chat-conversation-list">
+    <aside className={styles.chatSidebar}>
+      <div className={styles.chatSidebarLabel}>Recents</div>
+      <div className={styles.chatConversationList}>
         {conversations.length === 0 ? (
-          <div className="chat-empty">No conversations yet</div>
+          <div className={styles.chatEmpty}>No conversations yet</div>
         ) : (
           conversations.map((item: unknown) => {
             const conv = item as Record<string, unknown>;
             const id = String(conv.id ?? '');
             const isActive = id === chatActiveConversation;
             const updatedLabel = Number(conv.updatedAt) > 0 ? formatChatTime(conv.updatedAt) : 'n/a';
-            const messageCount = Number(conv.messageCount) || 0;
-            const totalTokens = Number(conv.totalTokens) || 0;
+            const title = String(conv.title || '');
 
             return (
               <div
                 key={id}
-                className={`chat-conv-item${isActive ? ' active' : ''}`}
-                onClick={() => void actions.openConversation(id)}
+                className={`${styles.chatConvItem}${isActive ? ` ${styles.active}` : ''}`}
+                onClick={() => {
+                  void actions.openConversation(id);
+                  onSelectView('chat');
+                }}
               >
-                <div className="chat-conv-top">
-                  <div className="chat-conv-peer">{String(conv.title || '')}</div>
-                  <span className="chat-conv-time">{updatedLabel}</span>
+                <div className={styles.chatConvTop}>
+                  <div className={styles.chatConvPeer}>{title}</div>
+                  <div className={styles.chatConvRight}>
+                    <span className={styles.chatConvTime}>{updatedLabel}</span>
+                    <button
+                      className={styles.chatConvMenuBtn}
+                      ref={(el) => { menuBtnRefs.current.set(id, el); }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMenuOpenId(menuOpenId === id ? null : id);
+                      }}
+                    >
+                      <HugeiconsIcon icon={MoreVerticalIcon} size={14} strokeWidth={1.5} />
+                    </button>
+                  </div>
                 </div>
-                <div className="chat-conv-preview">{shortModelName(conv.model)}</div>
-                <div className="chat-conv-meta">
-                  <span>{`${messageCount} msg${messageCount === 1 ? '' : 's'}`}</span>
-                  <span>{`${totalTokens.toLocaleString()} tok`}</span>
-                </div>
+                {menuOpenId === id && (
+                  <ConvContextMenu
+                    convId={id}
+                    convTitle={title}
+                    anchorRef={{ current: menuBtnRefs.current.get(id) ?? null }}
+                    onClose={() => setMenuOpenId(null)}
+                  />
+                )}
               </div>
             );
           })
@@ -106,51 +204,35 @@ function ChatSidebar() {
   );
 }
 
-function SidebarFooter() {
-  const { connectBadge } = useUiSnapshot();
-
-  return (
-    <div className="sidebar-footer">
-      <div className="runtime-chip-wrap">
-        <span className="runtime-chip">
-          Buyer <strong>{connectBadge.label}</strong>
-        </span>
-      </div>
-    </div>
-  );
-}
-
 export function Sidebar({ activeView, onSelectView }: SidebarProps) {
-  return (
-    <aside className="sidebar">
-      <SidebarHeader />
+  const actions = useActions();
+  const { devMode, chatActiveConversation } = useUiSnapshot();
+  const navEntries = devMode ? [...baseEntries, ...devEntries] : baseEntries;
 
-      <ul className="sidebar-nav" role="tablist" aria-label="Dashboard Views">
-        <li className="sidebar-nav-label">Chat Interface</li>
-        <li>
-          <button
-            className={`sidebar-btn${activeView === chatEntry.view ? ' active' : ''}`}
-            data-view={chatEntry.view}
-            role="tab"
-            aria-selected={activeView === chatEntry.view ? 'true' : 'false'}
-            onClick={() => onSelectView(chatEntry.view)}
-          >
-            {chatEntry.label}
-          </button>
-        </li>
-        <li className="sidebar-nav-divider" aria-hidden="true"></li>
-        <li className="sidebar-nav-label">Network Overview</li>
-        {networkEntries.map(({ label, view }) => {
-          const isActive = activeView === view;
+  return (
+    <aside className={styles.sidebar}>
+      <SidebarWarning />
+
+      <ul className={styles.sidebarNav} role="tablist" aria-label="Dashboard Views">
+        {navEntries.map(({ label, view, icon, action }) => {
+          const isActive = action === 'new-chat'
+            ? activeView === view && chatActiveConversation === null
+            : activeView === view;
           return (
             <li key={view}>
               <button
-                className={`sidebar-btn${isActive ? ' active' : ''}`}
+                className={`${styles.sidebarBtn}${isActive ? ` ${styles.active}` : ''}`}
                 data-view={view}
                 role="tab"
                 aria-selected={isActive ? 'true' : 'false'}
-                onClick={() => onSelectView(view)}
+                onClick={() => {
+                  if (action === 'new-chat') {
+                    actions.startNewChat();
+                  }
+                  onSelectView(view);
+                }}
               >
+                <HugeiconsIcon icon={icon} size={18} strokeWidth={1.5} />
                 {label}
               </button>
             </li>
@@ -158,8 +240,8 @@ export function Sidebar({ activeView, onSelectView }: SidebarProps) {
         })}
       </ul>
 
-      <ChatSidebar />
-      <SidebarFooter />
+      <ChatSidebar onSelectView={onSelectView} />
+
     </aside>
   );
 }

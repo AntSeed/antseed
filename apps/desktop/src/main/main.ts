@@ -8,7 +8,9 @@ import {
   nativeImage,
   type MenuItemConstructorOptions,
 } from 'electron';
-import { readFile, writeFile, readdir, mkdir } from 'node:fs/promises';
+import electronUpdater from 'electron-updater';
+const { autoUpdater } = electronUpdater;
+import { readFile, writeFile, readdir, mkdir, cp } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { execFile as execFileCallback } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -217,6 +219,15 @@ let mainWindow: BrowserWindow | null = null;
 const logBuffer: LogEvent[] = [];
 let lastRuntimeActivityHash = '';
 
+let appSetupNeeded = false;
+let appSetupComplete = false;
+
+// When a specific connect error (e.g. port-in-use) is detected, suppress the
+// generic "exited unexpectedly" message for a short window so the specific
+// error isn't overwritten by the process-exit log that immediately follows.
+let connectSpecificErrorAt = 0;
+const CONNECT_EXIT_SUPPRESS_WINDOW_MS = 5_000;
+
 let dashboardServer: DashboardServer | null = null;
 const dashboardRuntime: DashboardRuntimeState = {
   running: false,
@@ -269,6 +280,7 @@ function parseConnectRuntimeActivity(lineRaw: string): RuntimeActivityEvent | nu
   const proxyBindErrorMatch = /failed to start proxy:\s*listen\s+eaddrinuse:\s*address already in use.*:(\d+)/i.exec(line);
   if (proxyBindErrorMatch) {
     const port = proxyBindErrorMatch[1] ?? '8377';
+    connectSpecificErrorAt = Date.now();
     return toRuntimeActivity({
       mode: 'connect',
       tone: 'bad',
@@ -279,6 +291,11 @@ function parseConnectRuntimeActivity(lineRaw: string): RuntimeActivityEvent | nu
   }
 
   if (/process exited \(code=\d+\)/i.test(line)) {
+    // If a specific error was just shown (e.g. port in use), don't overwrite it
+    // with the generic exit message — the process exiting is a consequence, not the cause.
+    if (Date.now() - connectSpecificErrorAt < CONNECT_EXIT_SUPPRESS_WINDOW_MS) {
+      return null;
+    }
     return toRuntimeActivity({
       mode: 'connect',
       tone: 'bad',
@@ -734,11 +751,107 @@ async function listInstalledPlugins(): Promise<InstalledPlugin[]> {
   }
 }
 
+function resolveNpmBin(): string {
+  // Electron apps on macOS get a restricted PATH that may not include npm.
+  // Check common locations before falling back to plain 'npm'.
+  const candidates = [
+    '/usr/local/bin/npm',          // Homebrew (Intel Mac)
+    '/opt/homebrew/bin/npm',       // Homebrew (Apple Silicon)
+    '/usr/bin/npm',                // System
+    path.join(homedir(), '.nvm', 'alias', 'default', 'bin', 'npm'), // nvm symlink
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return 'npm'; // fallback — rely on PATH
+}
+
 async function installPluginDependency(packageSpec: string): Promise<void> {
   await ensurePluginsDirectory();
-  await execFileAsync('npm', ['install', '--ignore-scripts', packageSpec], {
+  const npmBin = resolveNpmBin();
+  appendLog('connect', 'system', `Installing "${packageSpec}" via ${npmBin}...`);
+  await execFileAsync(npmBin, ['install', '--ignore-scripts', packageSpec], {
     cwd: DEFAULT_PLUGINS_DIR,
+    timeout: 120_000, // 2-minute hard limit
+    env: {
+      ...process.env,
+      PATH: [
+        '/usr/local/bin', '/opt/homebrew/bin', '/usr/bin', '/bin',
+        process.env['PATH'] ?? '',
+      ].join(':'),
+    },
   });
+}
+
+async function installPluginFromBundle(packageName: string): Promise<boolean> {
+  // In production builds, plugins are bundled into Resources/bundled-plugins/.
+  const bundleRoot = path.join(process.resourcesPath ?? '', 'bundled-plugins');
+  if (!existsSync(path.join(bundleRoot, packageName))) return false;
+
+  await ensurePluginsDirectory();
+  const destRoot = path.join(DEFAULT_PLUGINS_DIR, 'node_modules');
+
+  // Copy all scoped packages from the bundle (target + its bundled dependencies).
+  const bundleEntries = await readdir(bundleRoot, { withFileTypes: true });
+  const scopeDirs = bundleEntries.filter((e) => e.isDirectory() && e.name.startsWith('@'));
+
+  for (const scope of scopeDirs) {
+    const pkgEntries = await readdir(path.join(bundleRoot, scope.name), { withFileTypes: true });
+    for (const pkg of pkgEntries.filter((e) => e.isDirectory())) {
+      const src = path.join(bundleRoot, scope.name, pkg.name);
+      const dest = path.join(destRoot, scope.name, pkg.name);
+      await mkdir(path.dirname(dest), { recursive: true });
+      await cp(src, dest, { recursive: true, force: true });
+      appendLog('connect', 'system', `Copied bundled plugin ${scope.name}/${pkg.name}.`);
+    }
+  }
+
+  return existsSync(path.join(destRoot, packageName, 'package.json'));
+}
+
+function isPluginInstalled(packageName: string): boolean {
+  const pluginDir = path.join(DEFAULT_PLUGINS_DIR, 'node_modules', packageName);
+  return existsSync(path.join(pluginDir, 'package.json'));
+}
+
+async function ensureDefaultPlugin(packageName: string): Promise<void> {
+  if (isPluginInstalled(packageName)) {
+    appSetupNeeded = false;
+    appSetupComplete = true;
+    return;
+  }
+  appSetupNeeded = true;
+  mainWindow?.webContents.send('app:setup-step', { step: 'installing', label: 'Installing router plugin...' });
+  appendLog('connect', 'system', `Required plugin "${packageName}" not found. Installing...`);
+  try {
+    // 1. Try copying from the app bundle (production builds — instant, no network)
+    const installedFromBundle = await installPluginFromBundle(packageName);
+    if (installedFromBundle) {
+      appendLog('connect', 'system', `Installed plugin "${packageName}" from app bundle.`);
+    } else {
+      // 2. Try local monorepo source (dev builds)
+      const localSource = await resolveLocalPluginSource(packageName);
+      appendLog('connect', 'system', localSource ? `Using local source: ${localSource}` : `Using npm registry (${resolveNpmBin()})...`);
+      if (localSource) {
+        await installPluginDependency(toFileInstallSpec(packageName, localSource));
+      } else {
+        // 3. Fall back to npm registry
+        await installPluginDependency(packageName);
+      }
+    }
+    appendLog('connect', 'system', `Installed plugin "${packageName}".`);
+    appSetupComplete = true;
+    mainWindow?.webContents.send('app:setup-step', { step: 'done', label: 'Router plugin ready' });
+    mainWindow?.webContents.send('app:setup-complete');
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    appendLog('connect', 'system', `Failed to auto-install plugin "${packageName}": ${message}`);
+    mainWindow?.webContents.send('app:setup-step', { step: 'error', label: 'Failed to install router plugin' });
+    // Do NOT emit app:setup-complete on failure — the onAppSetupComplete handler
+    // would unconditionally start the connect process even though the plugin is
+    // not available, producing a spurious "Buyer runtime exited unexpectedly" message.
+    throw new Error(`Required plugin "${packageName}" could not be installed: ${message}`);
+  }
 }
 
 async function resolveLocalPluginSource(packageName: string): Promise<string | null> {
@@ -1031,8 +1144,8 @@ async function stopDashboardRuntime(reason: string): Promise<void> {
 function createWindow(): void {
   const macosWindowChrome = process.platform === 'darwin'
     ? {
-      titleBarStyle: 'hidden' as const,
-      trafficLightPosition: { x: 14, y: 14 },
+      titleBarStyle: 'hiddenInset' as const,
+      trafficLightPosition: { x: 14, y: 16 },
     }
     : {};
 
@@ -1043,7 +1156,7 @@ function createWindow(): void {
     minHeight: 700,
     title: APP_NAME,
     icon: APP_ICON_PATH,
-    backgroundColor: '#080c12',
+    backgroundColor: '#ececec',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -1056,6 +1169,19 @@ function createWindow(): void {
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url);
     return { action: 'deny' };
+  });
+
+  mainWindow.on('enter-full-screen', () => {
+    mainWindow?.webContents.send('fullscreen-change', true);
+  });
+  mainWindow.on('leave-full-screen', () => {
+    mainWindow?.webContents.send('fullscreen-change', false);
+  });
+  mainWindow.on('focus', () => {
+    mainWindow?.webContents.send('window-focus-change', true);
+  });
+  mainWindow.on('blur', () => {
+    mainWindow?.webContents.send('window-focus-change', false);
   });
 
   void mainWindow.loadURL(rendererUrl);
@@ -1075,6 +1201,16 @@ function createWindow(): void {
   if (isDev) {
     mainWindow.webContents.openDevTools({ mode: 'detach' });
   }
+
+  // Allow opening DevTools in production for debugging (Cmd+Option+I / Ctrl+Shift+I).
+  mainWindow.webContents.on('before-input-event', (_event, input) => {
+    const devToolsShortcut =
+      (input.meta && input.alt && input.key === 'i') ||   // macOS: Cmd+Option+I
+      (input.control && input.shift && input.key === 'I'); // Windows/Linux: Ctrl+Shift+I
+    if (devToolsShortcut && mainWindow) {
+      mainWindow.webContents.openDevTools({ mode: 'detach' });
+    }
+  });
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -1317,6 +1453,67 @@ async function scanDashboardNetwork(port?: number): Promise<DashboardApiResult> 
   }
 }
 
+async function updateDashboardConfig(
+  config: Record<string, unknown>,
+  port?: number,
+): Promise<DashboardApiResult> {
+  const safePort = toSafeDashboardPort(port);
+  const url = `http://127.0.0.1:${safePort}/api/config`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort();
+  }, DASHBOARD_FETCH_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(url, {
+      method: 'PUT',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(config),
+      signal: controller.signal,
+    });
+
+    let payload: unknown = null;
+    const contentType = response.headers.get('content-type') ?? '';
+    if (contentType.includes('application/json')) {
+      payload = await response.json();
+    } else {
+      payload = await response.text();
+    }
+
+    if (!response.ok) {
+      return {
+        ok: false,
+        data: payload,
+        error: errorMessageFromPayload(payload) ?? `dashboard api returned ${response.status}`,
+        status: response.status,
+      };
+    }
+
+    return {
+      ok: true,
+      data: payload,
+      error: null,
+      status: response.status,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const normalized = message.toLowerCase();
+    const error = normalized.includes('abort')
+      ? `dashboard config update timed out after ${String(DASHBOARD_FETCH_TIMEOUT_MS)}ms`
+      : message;
+    return {
+      ok: false,
+      data: null,
+      error,
+      status: null,
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function fetchNetworkSnapshot(port?: number): Promise<DashboardNetworkResult> {
   const response = await fetchDashboardData('network', port);
   if (!response.ok || !response.data || typeof response.data !== 'object') {
@@ -1438,6 +1635,11 @@ ipcMain.handle('runtime:clear-logs', async () => {
   return { ok: true };
 });
 
+ipcMain.handle('app:get-setup-status', () => ({
+  needed: appSetupNeeded,
+  complete: appSetupComplete,
+}));
+
 ipcMain.handle('plugins:list', async () => {
   try {
     const plugins = await listInstalledPlugins();
@@ -1547,6 +1749,43 @@ ipcMain.handle(
     const safeQuery = sanitizeDashboardQuery(options?.query);
     const activePort = dashboardRuntime.running ? dashboardRuntime.port : requestedPort;
     return fetchDashboardData(safeEndpoint, activePort, safeQuery);
+  },
+);
+
+// Allowlisted top-level keys that the renderer is permitted to update via IPC.
+// Any key not in this set is stripped before the request is forwarded to the
+// dashboard API, preventing a compromised renderer from overwriting arbitrary
+// config fields.
+const DASHBOARD_CONFIG_ALLOWED_KEYS = new Set([
+  'seller',
+  'buyer',
+  'identity',
+  'network',
+  'payments',
+]);
+
+function sanitizeDashboardConfigPayload(raw: unknown): Record<string, unknown> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const safe: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (DASHBOARD_CONFIG_ALLOWED_KEYS.has(key)) {
+      safe[key] = value;
+    }
+  }
+  return safe;
+}
+
+ipcMain.handle(
+  'runtime:update-dashboard-config',
+  async (_event, config: Record<string, unknown>, options?: { port?: number }): Promise<DashboardApiResult> => {
+    const safeConfig = sanitizeDashboardConfigPayload(config);
+    if (Object.keys(safeConfig).length === 0) {
+      return { ok: false, data: null, error: 'No valid config keys provided', status: null };
+    }
+    const requestedPort = toSafeDashboardPort(options?.port);
+    await ensureDashboardRuntime(requestedPort);
+    const activePort = dashboardRuntime.running ? dashboardRuntime.port : requestedPort;
+    return updateDashboardConfig(safeConfig, activePort);
   },
 );
 
@@ -1715,6 +1954,37 @@ app.whenReady().then(() => {
     // Failure is already logged to renderer/system log.
   });
 
+  void ensureDefaultPlugin('@antseed/router-local').catch(() => {
+    // Failure is already logged via appendLog inside ensureDefaultPlugin.
+  });
+
+  // Auto-update: check for updates silently on launch and every 4 hours
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  let updateCheckInterval: ReturnType<typeof setInterval> | null = null;
+
+  autoUpdater.on('update-downloaded', (info) => {
+    mainWindow?.webContents.send('app:update-status', { status: 'ready', version: info.version });
+    if (updateCheckInterval) {
+      clearInterval(updateCheckInterval);
+      updateCheckInterval = null;
+    }
+  });
+  autoUpdater.on('error', (err) => {
+    console.error('[auto-update] error:', err?.message ?? err);
+  });
+
+  void autoUpdater.checkForUpdates().catch(() => {});
+
+  updateCheckInterval = setInterval(() => {
+    void autoUpdater.checkForUpdates().catch(() => {});
+  }, 4 * 60 * 60 * 1000);
+
+  ipcMain.handle('app:install-update', () => {
+    autoUpdater.quitAndInstall(false, true);
+  });
+
   // Initialize WalletConnect if project ID is configured
   const wcProjectId = process.env['WALLETCONNECT_PROJECT_ID'] ?? '';
   if (wcProjectId.length > 0) {
@@ -1753,4 +2023,13 @@ app.on('before-quit', (event) => {
   ]).finally(() => {
     app.quit();
   });
+});
+
+// Ensure child processes are cleaned up if the main process receives SIGTERM
+// (e.g. dev runner Ctrl+C kills Electron before before-quit fires).
+process.on('SIGTERM', () => {
+  void Promise.allSettled([
+    stopDashboardRuntime('SIGTERM'),
+    processManager.stopAll(),
+  ]).finally(() => process.exit(0));
 });

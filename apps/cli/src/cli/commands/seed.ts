@@ -359,7 +359,7 @@ export function registerSeedCommand(program: Command): void {
         const baseDir = globalOpts.config ? dirname(resolve(globalOpts.config)) : process.cwd()
         try {
           const middleware = await loadMiddlewareFiles(middlewareConfigs, baseDir)
-          provider = new MiddlewareProvider(provider, middleware)
+          provider = new MiddlewareProvider(provider, middleware, effectiveSellerConfig.middlewareConfidentialityPrompt)
           console.log(chalk.dim(`  middleware: ${middlewareConfigs.length} file(s) loaded`))
         } catch (err) {
           console.error(chalk.red(`Failed to load middleware: ${(err as Error).message}`))

@@ -1,4 +1,5 @@
 import type { DaemonStateSnapshot, LogEvent, RuntimeProcessState } from '../types/bridge';
+import type { ChatMessage } from '../ui/components/chat/chat-shared';
 
 export type BadgeTone = 'active' | 'idle' | 'warn' | 'bad';
 
@@ -20,9 +21,11 @@ export type PluginHints = {
 
 export type PeerEntry = {
   peerId: string;
+  displayName: string | null;
   host: string;
   port: number;
   providers: string[];
+  models: string[];
   inputUsdPerMillion: number;
   outputUsdPerMillion: number;
   capacityMsgPerHour: number;
@@ -39,6 +42,7 @@ export type ConfigFormData = {
   maxOutputUsdPerMillion: number;
   minRep: number;
   paymentMethod: string;
+  devMode: boolean;
 };
 
 export type ChatModelOptionEntry = {
@@ -73,7 +77,9 @@ export type RendererUiState = {
   ovNodeState: string;
   ovPeers: string;
   ovDhtHealth: string;
-  ovUptime: string;
+  ovProxyPort: string;
+  ovModelCount: string;
+  ovLastScan: string;
   ovPeersCount: string;
   overviewPeers: PeerEntry[];
 
@@ -98,6 +104,7 @@ export type RendererUiState = {
   configMessage: { text: string; type: 'success' | 'error' | 'info' } | null;
   configFormData: ConfigFormData | null;
   configSaving: boolean;
+  devMode: boolean;
 
   // --- Plugin setup ---
   installedPlugins: Set<string>;
@@ -112,10 +119,15 @@ export type RendererUiState = {
   chatActiveConversation: string | null;
   chatConversationTitle: string;
   chatConversations: unknown[];
+  chatConversationsLoaded: boolean;
+  chatProxyPort: number;
   chatMessages: unknown[];
+  chatStreamingMessage: ChatMessage | null;
   chatSending: boolean;
+  chatSendingConversationId: string | null;
   chatError: string | null;
   chatThreadMeta: string;
+  chatRoutedPeer: string;
   chatModelOptions: ChatModelOptionEntry[];
   chatSelectedModelValue: string;
   chatModelStatus: BadgeState;
@@ -129,10 +141,18 @@ export type RendererUiState = {
   // --- Streaming indicator ---
   chatStreamingIndicatorText: string;
   chatStreamingActive: boolean;
+  chatThinkingElapsedMs: number;
+  chatWaitingForStream: boolean;
 
   // --- Router input value (for plugin setup + chat) ---
   connectRouterValue: string;
   dashboardPortValue: string;
+
+  // --- First-run setup ---
+  appSetupStatusKnown: boolean;
+  appSetupNeeded: boolean;
+  appSetupComplete: boolean;
+  appSetupStep: string;
 };
 
 const MAX_LOGS = 2000;
@@ -161,7 +181,9 @@ export function createInitialUiState(): RendererUiState {
     ovNodeState: 'idle',
     ovPeers: '0',
     ovDhtHealth: 'Down',
-    ovUptime: '-',
+    ovProxyPort: '-',
+    ovModelCount: '0',
+    ovLastScan: 'n/a',
     ovPeersCount: '0',
     overviewPeers: [],
 
@@ -186,6 +208,7 @@ export function createInitialUiState(): RendererUiState {
     configMessage: null,
     configFormData: null,
     configSaving: false,
+    devMode: false,
 
     // Plugin setup
     installedPlugins: new Set<string>(),
@@ -200,27 +223,40 @@ export function createInitialUiState(): RendererUiState {
     chatActiveConversation: null,
     chatConversationTitle: 'Conversation',
     chatConversations: [],
+    chatConversationsLoaded: false,
+    chatProxyPort: 0,
     chatMessages: [],
+    chatStreamingMessage: null,
     chatSending: false,
+    chatSendingConversationId: null,
     chatError: null,
     chatThreadMeta: 'No conversation selected',
+    chatRoutedPeer: '',
     chatModelOptions: [],
     chatSelectedModelValue: '',
     chatModelStatus: { tone: 'idle', label: 'Models idle' },
     chatProxyStatus: { tone: 'idle', label: 'Proxy offline' },
     chatDeleteVisible: false,
-    chatInputDisabled: true,
-    chatSendDisabled: true,
+    chatInputDisabled: false,
+    chatSendDisabled: false,
     chatAbortVisible: false,
     chatModelSelectDisabled: false,
 
     // Streaming indicator
     chatStreamingIndicatorText: '',
     chatStreamingActive: false,
+    chatThinkingElapsedMs: 0,
+    chatWaitingForStream: false,
 
     // Router / dashboard port
     connectRouterValue: 'local',
     dashboardPortValue: '3117',
+
+    // First-run setup
+    appSetupStatusKnown: false,
+    appSetupNeeded: false,
+    appSetupComplete: false,
+    appSetupStep: '',
   };
 }
 

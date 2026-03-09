@@ -92,6 +92,13 @@ export interface SellerCLIConfig {
   modelCategories?: SellerModelCategoryConfig;
   /** Optional middleware files to inject into every LLM request. */
   middleware?: SellerMiddlewareConfig[];
+  /**
+   * Custom confidentiality prompt appended to the system prompt whenever middleware
+   * is active, instructing the LLM not to reveal injected content.
+   * Omit or set to an empty string to use the built-in default prompt.
+   * There is no opt-out: a confidentiality prompt is always injected when middleware fires.
+   */
+  middlewareConfidentialityPrompt?: string;
 }
 
 /**

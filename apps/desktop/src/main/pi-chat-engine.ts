@@ -1,11 +1,28 @@
+import { app, BrowserWindow } from 'electron';
 import type { IpcMain } from 'electron';
+import { type Static, Type } from '@sinclair/typebox';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, stat, unlink, writeFile } from 'node:fs/promises';
 import { createConnection, isIP } from 'node:net';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import type { AgentSession, AgentSessionEvent } from '@mariozechner/pi-coding-agent';
-import { AuthStorage, createAgentSession, ModelRegistry, SessionManager } from '@mariozechner/pi-coding-agent';
+import type { AgentSession, AgentSessionEvent, ToolDefinition } from '@mariozechner/pi-coding-agent';
+import { ANTSTATION_SYSTEM_PROMPT } from './chat-system-prompt.js';
+import {
+  AuthStorage,
+  bashTool,
+  createAgentSession,
+  DefaultResourceLoader,
+  editTool,
+  findTool,
+  grepTool,
+  lsTool,
+  ModelRegistry,
+  readTool,
+  SessionManager,
+  SettingsManager,
+  writeTool,
+} from '@mariozechner/pi-coding-agent';
 import type {
   AssistantMessage,
   AssistantMessageEvent,
@@ -24,7 +41,13 @@ import { createAssistantMessageEventStream } from '@mariozechner/pi-ai';
 type TextBlock = { type: 'text'; text: string };
 type ThinkingBlock = { type: 'thinking'; thinking: string };
 type ToolUseBlock = { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> };
-type ToolResultBlock = { type: 'tool_result'; tool_use_id: string; content: string; is_error?: boolean };
+type ToolResultBlock = {
+  type: 'tool_result';
+  tool_use_id: string;
+  content: string;
+  is_error?: boolean;
+  details?: Record<string, unknown>;
+};
 type ContentBlock = TextBlock | ThinkingBlock | ToolUseBlock | ToolResultBlock;
 
 type AiMessageMeta = {
@@ -85,6 +108,219 @@ type AiConversationSummary = {
   totalEstimatedCostUsd: number;
 };
 
+const WEB_FETCH_MAX_CHARS_DEFAULT = 20_000;
+const WEB_FETCH_MAX_CHARS_LIMIT = 50_000;
+const WebFetchParams = Type.Object({
+  url: Type.String({
+    description: 'The HTTP or HTTPS URL to fetch.',
+  }),
+  maxChars: Type.Optional(Type.Number({
+    description: `Maximum number of response characters to return (default ${WEB_FETCH_MAX_CHARS_DEFAULT}, max ${WEB_FETCH_MAX_CHARS_LIMIT}).`,
+    minimum: 100,
+    maximum: WEB_FETCH_MAX_CHARS_LIMIT,
+  })),
+});
+
+function stripHtmlToText(input: string): string {
+  return input
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<\/?(?:p|div|section|article|main|header|footer|aside|nav|li|ul|ol|h[1-6]|br|tr|td|th|table)\b[^>]*>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, '\'')
+    .replace(/\r/g, '')
+    .replace(/\n{2,}/g, '\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+}
+
+// Heuristic: HTML that looks like a JS-rendered SPA (very little visible text, React/Next.js markers).
+// Accepts pre-stripped text to avoid running stripHtmlToText twice.
+function looksLikeJsRequired(rawHtml: string, strippedText: string): boolean {
+  // Fewer than 200 chars of visible text → likely needs JS to render
+  if (strippedText.length < 200) return true;
+  // Common SPA root patterns (empty root/app div)
+  if (/<div[^>]+id=["'](?:root|__next|app|app-root|react-root|app-container|main-app)["'][^>]*>\s*<\/div>/i.test(rawHtml)) return true;
+  return false;
+}
+
+// Persistent hidden BrowserWindow reused across web_fetch calls to avoid per-call renderer startup cost.
+let _headlessBrowser: BrowserWindow | null = null;
+
+function getHeadlessBrowser(): BrowserWindow {
+  if (_headlessBrowser && !_headlessBrowser.isDestroyed()) return _headlessBrowser;
+  _headlessBrowser = new BrowserWindow({
+    show: false,
+    width: 1280,
+    height: 900,
+    webPreferences: {
+      javascript: true,
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
+  });
+  _headlessBrowser.on('closed', () => { _headlessBrowser = null; });
+  return _headlessBrowser;
+}
+
+// Serializes headless requests so concurrent calls don't clobber each other
+// (loading a new URL aborts the previous one, which would fire did-fail-load).
+let _headlessQueue: Promise<void> = Promise.resolve();
+
+// Extract readable text from a fully rendered page using Electron's built-in Chromium
+function fetchWithHeadlessBrowser(url: string, timeoutMs: number, signal?: AbortSignal): Promise<string> {
+  const result = _headlessQueue.then(() => _fetchHeadlessSerial(url, timeoutMs, signal));
+  _headlessQueue = result.then(() => {}, () => {});
+  return result;
+}
+
+function _fetchHeadlessSerial(url: string, timeoutMs: number, signal?: AbortSignal): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(signal.reason); return; }
+
+    const win = getHeadlessBrowser();
+    let settled = false;
+
+    const onFailLoad = (_event: Electron.Event, errorCode: number, errorDescription: string) => {
+      settle(new Error(`Page load failed: ${errorDescription} (${String(errorCode)})`));
+    };
+    const onFinishLoad = () => {
+      setTimeout(() => {
+        win.webContents
+          .executeJavaScript(`
+            (function() {
+              ['script','style','noscript','nav','footer','aside','iframe'].forEach(function(tag) {
+                document.querySelectorAll(tag).forEach(function(el) { el.remove(); });
+              });
+              var title = document.title ? document.title + '\\n\\n' : '';
+              var text = (document.body && document.body.innerText) ? document.body.innerText : document.documentElement.innerText || '';
+              return title + text;
+            })()
+          `)
+          .then((text: unknown) => {
+            const result = typeof text === 'string' ? text.replace(/\n{2,}/g, '\n').trim() : '';
+            settle(result);
+          })
+          .catch((err: unknown) => {
+            settle(err instanceof Error ? err : new Error(String(err)));
+          });
+      }, 1500);
+    };
+
+    const settle = (result: string | Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      win.webContents.removeListener('did-fail-load', onFailLoad);
+      win.webContents.removeListener('did-finish-load', onFinishLoad);
+      if (result instanceof Error) reject(result);
+      else resolve(result);
+    };
+
+    const timer = setTimeout(() => settle(new Error('Headless browser timed out')), timeoutMs);
+    const onAbort = () => settle(new Error('web_fetch aborted'));
+    signal?.addEventListener('abort', onAbort, { once: true });
+
+    win.webContents.once('did-fail-load', onFailLoad);
+    win.webContents.once('did-finish-load', onFinishLoad);
+
+    win.loadURL(url).catch((err: unknown) => {
+      settle(err instanceof Error ? err : new Error(String(err)));
+    });
+  });
+}
+
+const webFetchTool: ToolDefinition = {
+  name: 'web_fetch',
+  label: 'Web Fetch',
+  description:
+    'Fetch a public HTTP/HTTPS URL and return the page content as readable text. Handles both static pages and JavaScript-rendered sites (news, SPAs, etc.). Always use this tool instead of curl or bash for web content.',
+  parameters: WebFetchParams,
+  async execute(_toolCallId, params, signal) {
+    const typedParams = params as Static<typeof WebFetchParams>;
+    const parsedUrl = new URL(typedParams.url);
+    if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+      throw new Error('web_fetch only supports http:// and https:// URLs');
+    }
+
+    const requestedMaxChars =
+      typeof typedParams.maxChars === 'number' ? typedParams.maxChars : WEB_FETCH_MAX_CHARS_DEFAULT;
+    const maxChars = Math.max(
+      100,
+      Math.min(
+        WEB_FETCH_MAX_CHARS_LIMIT,
+        Math.floor(requestedMaxChars),
+      ),
+    );
+
+    // Fast path: plain fetch first
+    const timeoutSignal = AbortSignal.timeout(15_000);
+    const fetchSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+    const response = await fetch(parsedUrl, {
+      method: 'GET',
+      redirect: 'follow',
+      signal: fetchSignal,
+      headers: {
+        'user-agent': app.userAgentFallback ?? 'Mozilla/5.0 AntStation/web_fetch',
+        accept: 'text/html,application/json,text/plain,application/xml,text/xml,*/*;q=0.8',
+      },
+    });
+
+    const contentType = response.headers.get('content-type') ?? 'unknown';
+    const isHtml = /\btext\/html\b/i.test(contentType);
+
+    let normalizedText: string;
+    let usedHeadless = false;
+
+    if (isHtml) {
+      const rawText = await response.text();
+      const stripped = stripHtmlToText(rawText);
+      if (looksLikeJsRequired(rawText, stripped)) {
+        // Fall back to headless Chromium for JS-rendered pages
+        usedHeadless = true;
+        try {
+          normalizedText = await fetchWithHeadlessBrowser(parsedUrl.toString(), 30_000, signal ?? undefined);
+          if (!normalizedText) normalizedText = stripped; // headless returned empty, use raw
+        } catch {
+          normalizedText = stripped; // headless failed, use raw strip
+        }
+      } else {
+        normalizedText = stripped;
+      }
+    } else {
+      const rawText = await response.text();
+      // Clip before trim to avoid buffering megabytes unnecessarily
+      normalizedText = rawText.slice(0, maxChars * 4).trim();
+    }
+
+    const truncated = normalizedText.length > maxChars;
+    const body = truncated ? `${normalizedText.slice(0, maxChars)}\n\n[truncated]` : normalizedText;
+    const renderedNote = usedHeadless ? ' (JS-rendered via headless browser)' : '';
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `URL: ${response.url}\nStatus: ${response.status} ${response.statusText}\nContent-Type: ${contentType}${renderedNote}\n\n${body}`,
+        },
+      ],
+      details: {
+        url: response.url,
+        status: response.status,
+        statusText: response.statusText,
+        contentType,
+        truncated,
+        usedHeadless,
+      },
+    };
+  },
+};
+
 type RegisterPiChatHandlersOptions = {
   ipcMain: IpcMain;
   sendToRenderer: (channel: string, payload: unknown) => void;
@@ -139,8 +375,6 @@ const DEFAULT_CHAT_STREAM_TOTAL_TIMEOUT_MS = 240_000;
 const DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS = 45_000;
 const CHAT_MODEL_METADATA_FETCH_TIMEOUT_MS = 2_500;
 const CHAT_MODEL_SCAN_MAX_PEERS = 20;
-const CHAT_MODEL_API_FETCH_TIMEOUT_MS = 3_500;
-const CHAT_MODEL_SCAN_MAX_PROVIDERS = 12;
 const CHAT_MODEL_MAX_OPTIONS = 120;
 const CHAT_MODEL_MAX_OPTIONS_PER_PROVIDER = 40;
 const CHAT_MODEL_CACHE_FILE = path.join(CHAT_DATA_DIR, 'model-catalog-cache.json');
@@ -396,10 +630,6 @@ function resolveProtocolForModel(
   return inferProviderProtocol(provider);
 }
 
-function toModelLabel(modelId: string, provider: string): string {
-  return `${modelId} · ${provider}`;
-}
-
 function updateModelProviderHints(
   modelProviderHints: Map<string, string[]>,
   entries: ChatModelCatalogEntry[],
@@ -452,7 +682,7 @@ function normalizeChatModelCatalogEntry(raw: unknown): ChatModelCatalogEntry | n
 
   const count = Number(entry.count);
   const normalizedCount = Number.isFinite(count) && count > 0 ? Math.max(1, Math.floor(count)) : 1;
-  const label = normalizeModelValue(entry.label) ?? toModelLabel(id, provider);
+  const label = normalizeModelValue(entry.label) ?? id;
   return {
     id,
     label,
@@ -610,7 +840,7 @@ function extractChatModelCatalog(metadata: Record<string, unknown>): Omit<ChatMo
       }
       models.push({
         id: modelId,
-        label: toModelLabel(modelId, providerId),
+        label: modelId,
         provider: providerId,
         protocol,
       });
@@ -680,147 +910,7 @@ async function discoverChatModelCatalog(
   return sortChatModelCatalogEntries(Array.from(aggregate.values()));
 }
 
-function extractModelIdsFromApiPayload(payload: unknown): string[] {
-  let modelEntries: unknown[] = [];
-  if (Array.isArray(payload)) {
-    modelEntries = payload;
-  } else {
-    const root = asRecord(payload);
-    if (root) {
-      if (Array.isArray(root.data)) {
-        modelEntries = root.data;
-      } else if (Array.isArray(root.models)) {
-        modelEntries = root.models;
-      }
-    }
-  }
 
-  if (modelEntries.length === 0) {
-    return [];
-  }
-
-  const modelIds: string[] = [];
-  const seen = new Set<string>();
-  for (const entry of modelEntries) {
-    let candidate: unknown = entry;
-    if (entry && typeof entry === 'object') {
-      const record = entry as Record<string, unknown>;
-      candidate = record.id ?? record.model ?? record.name;
-    }
-    const modelId = normalizeModelValue(candidate);
-    if (!modelId) {
-      continue;
-    }
-    const key = modelId.toLowerCase();
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    modelIds.push(modelId);
-  }
-  return modelIds;
-}
-
-async function fetchProxyProviderModelCatalog(
-  proxyPort: number,
-  provider: string,
-): Promise<ChatModelCatalogEntry[]> {
-  const protocol = inferProviderProtocol(provider);
-  if (!protocol) {
-    return [];
-  }
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), CHAT_MODEL_API_FETCH_TIMEOUT_MS);
-
-  try {
-    const response = await fetch(`http://127.0.0.1:${String(proxyPort)}/v1/models`, {
-      method: 'GET',
-      headers: {
-        accept: 'application/json',
-        'x-antseed-provider': provider,
-      },
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      return [];
-    }
-
-    const payload = await response.json();
-    const modelIds = extractModelIdsFromApiPayload(payload);
-    return modelIds.map((modelId) => ({
-      id: modelId,
-      label: toModelLabel(modelId, provider),
-      provider,
-      protocol,
-      count: 1,
-    }));
-  } catch {
-    return [];
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-async function discoverChatModelCatalogFromApi(
-  proxyPort: number,
-  getNetworkPeers?: () => Promise<NetworkPeerAddress[]>,
-): Promise<ChatModelCatalogEntry[]> {
-  if (!getNetworkPeers) {
-    return [];
-  }
-
-  let peers: NetworkPeerAddress[] = [];
-  try {
-    peers = await getNetworkPeers();
-  } catch {
-    return [];
-  }
-
-  const providerSet = new Set<string>();
-  for (const peer of peers) {
-    if (!Array.isArray(peer.providers)) {
-      continue;
-    }
-    for (const providerRaw of peer.providers) {
-      const provider = normalizeProviderId(providerRaw);
-      if (!provider || !inferProviderProtocol(provider)) {
-        continue;
-      }
-      providerSet.add(provider);
-      if (providerSet.size >= CHAT_MODEL_SCAN_MAX_PROVIDERS) {
-        break;
-      }
-    }
-    if (providerSet.size >= CHAT_MODEL_SCAN_MAX_PROVIDERS) {
-      break;
-    }
-  }
-
-  const providers = Array.from(providerSet.values());
-  if (providers.length === 0) {
-    return [];
-  }
-
-  const providerEntries = await Promise.all(
-    providers.map(async (provider) => await fetchProxyProviderModelCatalog(proxyPort, provider)),
-  );
-
-  const aggregate = new Map<string, ChatModelCatalogEntry>();
-  for (const entries of providerEntries) {
-    for (const entry of entries) {
-      const key = `${entry.id}\u0000${entry.provider}\u0000${entry.protocol}`;
-      const existing = aggregate.get(key);
-      if (existing) {
-        existing.count += 1;
-      } else {
-        aggregate.set(key, entry);
-      }
-    }
-  }
-
-  return sortChatModelCatalogEntries(Array.from(aggregate.values()));
-}
 
 function toUsage(value: unknown): Usage {
   const usage = (value ?? {}) as Record<string, unknown>;
@@ -946,6 +1036,10 @@ function convertPiMessageToUiBlocks(message: Message): string | ContentBlock[] {
     tool_use_id: toolResult.toolCallId,
     content: convertToolContentToText(toolResult.content),
     is_error: toolResult.isError,
+    details:
+      toolResult.details && typeof toolResult.details === 'object'
+        ? (toolResult.details as Record<string, unknown>)
+        : undefined,
   }];
 }
 
@@ -962,27 +1056,11 @@ function convertPiMessagesToUi(messages: Message[]): AiChatMessage[] {
     }
 
     if (message.role === 'assistant') {
-      const assistant = message as AssistantMessage & { meta?: AiMessageMeta };
-      const usage = ensureUsageShape(assistant.usage);
-      const totalTokens = usage.totalTokens > 0 ? usage.totalTokens : usage.input + usage.output;
-      const usageMeta: AiMessageMeta = {
-        provider: assistant.provider,
-        model: assistant.model,
-        inputTokens: usage.input,
-        outputTokens: usage.output,
-        totalTokens,
-        tokenSource: usage.input > 0 || usage.output > 0 ? 'usage' : 'unknown',
-      };
-      const mergedMeta: AiMessageMeta = {
-        ...usageMeta,
-        ...(assistant.meta ?? {}),
-      };
-      converted.push({
-        role: 'assistant',
-        content: convertPiMessageToUiBlocks(assistant),
-        createdAt: normalizeTokenCount(assistant.timestamp),
-        meta: mergedMeta,
-      });
+      converted.push(
+        convertAssistantMessageForUi(
+          message as AssistantMessage & { meta?: AiMessageMeta },
+        ),
+      );
       continue;
     }
 
@@ -1188,6 +1266,57 @@ function convertUserMessageForUi(message: Message): AiChatMessage {
   };
 }
 
+function convertAssistantMessageForUi(
+  message: AssistantMessage & { meta?: AiMessageMeta },
+): AiChatMessage {
+  const usage = ensureUsageShape(message.usage);
+  const totalTokens = usage.totalTokens > 0 ? usage.totalTokens : usage.input + usage.output;
+  const usageMeta: AiMessageMeta = {
+    provider: message.provider,
+    model: message.model,
+    inputTokens: usage.input,
+    outputTokens: usage.output,
+    totalTokens,
+    tokenSource: usage.input > 0 || usage.output > 0 ? 'usage' : 'unknown',
+  };
+  const mergedMeta: AiMessageMeta = {
+    ...usageMeta,
+    ...(message.meta ?? {}),
+  };
+  return {
+    role: 'assistant',
+    content: convertPiMessageToUiBlocks(message),
+    createdAt: normalizeTokenCount(message.timestamp),
+    meta: mergedMeta,
+  };
+}
+
+function mergeAssistantMessagesForUi(base: AiChatMessage | null, next: AiChatMessage): AiChatMessage {
+  const toBlocks = (content: AiChatMessage['content']): ContentBlock[] => {
+    if (Array.isArray(content)) {
+      return content.map((block) => ({ ...block }));
+    }
+    const text = String(content ?? '');
+    return text.length > 0 ? [{ type: 'text', text }] : [];
+  };
+
+  if (!base) {
+    return next;
+  }
+  const baseContent = toBlocks(base.content);
+  const nextContent = toBlocks(next.content);
+  return {
+    ...base,
+    ...next,
+    createdAt: base.createdAt || next.createdAt,
+    meta: {
+      ...(base.meta ?? {}),
+      ...(next.meta ?? {}),
+    },
+    content: [...baseContent, ...nextContent],
+  };
+}
+
 function anthropicContentFromUser(content: Extract<Message, { role: 'user' }>['content']): unknown {
   if (typeof content === 'string') {
     return content;
@@ -1255,9 +1384,30 @@ function anthropicContentFromToolResult(message: ToolResultMessage): unknown[] {
   }];
 }
 
+function getAssistantToolUseIds(content: unknown[]): string[] {
+  const ids: string[] = [];
+  for (const block of content) {
+    if (!block || typeof block !== 'object') continue;
+    const typedBlock = block as { type?: unknown; id?: unknown };
+    if (typedBlock.type !== 'tool_use') continue;
+    const id = String(typedBlock.id ?? '').trim();
+    if (id.length > 0) ids.push(id);
+  }
+  return ids;
+}
+
+function getToolResultIdFromAnthropicBlock(block: unknown): string | null {
+  if (!block || typeof block !== 'object') return null;
+  const typedBlock = block as { type?: unknown; tool_use_id?: unknown };
+  if (typedBlock.type !== 'tool_result') return null;
+  const id = String(typedBlock.tool_use_id ?? '').trim();
+  return id.length > 0 ? id : null;
+}
+
 function convertContextMessagesToAnthropic(messages: Message[]): Array<Record<string, unknown>> {
   const converted: Array<Record<string, unknown>> = [];
-  for (const message of messages) {
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index]!;
     if (message.role === 'user') {
       const content = anthropicContentFromUser(message.content);
       if (typeof content === 'string' && content.length === 0) {
@@ -1273,7 +1423,18 @@ function convertContextMessagesToAnthropic(messages: Message[]): Array<Record<st
       continue;
     }
     if (message.role === 'assistant') {
-      const content = anthropicContentFromAssistant(message.content);
+      let content = anthropicContentFromAssistant(message.content);
+      const toolUseIds = getAssistantToolUseIds(content);
+      if (toolUseIds.length > 0) {
+        const nextMessage = messages[index + 1];
+        if (!nextMessage || nextMessage.role !== 'toolResult') {
+          content = content.filter((block) => {
+            if (!block || typeof block !== 'object') return false;
+            const typedBlock = block as { type?: unknown };
+            return typedBlock.type !== 'tool_use';
+          });
+        }
+      }
       if (content.length === 0) {
         converted.push({
           role: 'assistant',
@@ -1288,9 +1449,25 @@ function convertContextMessagesToAnthropic(messages: Message[]): Array<Record<st
       continue;
     }
     if (message.role === 'toolResult') {
+      const contentBlocks: unknown[] = [];
+      let toolIndex = index;
+      while (toolIndex < messages.length) {
+        const toolMessage = messages[toolIndex];
+        if (!toolMessage || toolMessage.role !== 'toolResult') break;
+        contentBlocks.push(...anthropicContentFromToolResult(toolMessage as ToolResultMessage));
+        toolIndex += 1;
+      }
+      index = toolIndex - 1;
+      const filteredBlocks = contentBlocks.filter((block) => {
+        const toolUseId = getToolResultIdFromAnthropicBlock(block);
+        return toolUseId !== null;
+      });
+      if (filteredBlocks.length === 0) {
+        continue;
+      }
       converted.push({
         role: 'user',
-        content: anthropicContentFromToolResult(message),
+        content: filteredBlocks,
       });
     }
   }
@@ -2174,6 +2351,20 @@ export function registerPiChatHandlers({
     authStorage.setRuntimeApiKey(PROXY_PROVIDER_ID, PROXY_RUNTIME_API_KEY);
     const modelRegistry = new ModelRegistry(authStorage);
 
+    // Pass the system prompt via resourceLoader so it is applied on every turn.
+    // (agent-session rebuilds _baseSystemPrompt from the loader each turn, so a
+    // one-shot session.agent.setSystemPrompt call would be overridden.)
+    // Priority: user override (env/config) → AntStation default.
+    const userSystemPrompt = await resolveSystemPrompt(configPath);
+    const settingsManager = SettingsManager.create(CHAT_WORKSPACE_DIR, CHAT_AGENT_DIR);
+    const resourceLoader = new DefaultResourceLoader({
+      cwd: CHAT_WORKSPACE_DIR,
+      agentDir: CHAT_AGENT_DIR,
+      settingsManager,
+      systemPrompt: userSystemPrompt ?? ANTSTATION_SYSTEM_PROMPT,
+    });
+    await resourceLoader.reload();
+
     const { session } = await createAgentSession({
       cwd: CHAT_WORKSPACE_DIR,
       agentDir: CHAT_AGENT_DIR,
@@ -2181,14 +2372,21 @@ export function registerPiChatHandlers({
       authStorage,
       modelRegistry,
       model: proxyModel,
+      tools: [
+        readTool,
+        bashTool,
+        editTool,
+        writeTool,
+        grepTool,
+        findTool,
+        lsTool,
+      ],
+      customTools: [webFetchTool],
+      resourceLoader,
     });
 
     await session.setModel(proxyModel);
     session.agent.sessionId = conversationId;
-    const systemPrompt = await resolveSystemPrompt(configPath);
-    if (systemPrompt) {
-      session.agent.setSystemPrompt(systemPrompt);
-    }
 
     const existingUserMessages = session.messages.filter((message) => message.role === 'user').length;
     if (existingUserMessages === 0 && (!session.sessionName || session.sessionName.trim().length === 0)) {
@@ -2204,6 +2402,7 @@ export function registerPiChatHandlers({
     let turnIndex = 0;
     let userPersisted = false;
     let streamDone = false;
+    let pendingAssistantMessage: AiChatMessage | null = null;
 
     const unsubscribe = session.subscribe((event: AgentSessionEvent) => {
       if (event.type === 'turn_start') {
@@ -2313,6 +2512,26 @@ export function registerPiChatHandlers({
         return;
       }
 
+      if (event.type === 'tool_execution_update') {
+        const eventArgs = isToolArgumentsObject(event.args) ? event.args : undefined;
+        sendToRenderer('chat:ai-tool-update', {
+          conversationId,
+          toolUseId: event.toolCallId,
+          name: event.toolName,
+          input: eventArgs ?? toolArgsById.get(event.toolCallId) ?? {},
+          output: toToolOutputString(event.partialResult),
+          details:
+            event.partialResult &&
+            typeof event.partialResult === 'object' &&
+            'details' in event.partialResult &&
+            event.partialResult.details &&
+            typeof event.partialResult.details === 'object'
+              ? (event.partialResult.details as Record<string, unknown>)
+              : undefined,
+        });
+        return;
+      }
+
       if (event.type === 'tool_execution_end') {
         toolArgsById.delete(event.toolCallId);
         sendToRenderer('chat:ai-tool-result', {
@@ -2320,6 +2539,14 @@ export function registerPiChatHandlers({
           toolUseId: event.toolCallId,
           output: toToolOutputString(event.result),
           isError: Boolean(event.isError),
+          details:
+            event.result &&
+            typeof event.result === 'object' &&
+            'details' in event.result &&
+            event.result.details &&
+            typeof event.result.details === 'object'
+              ? (event.result.details as Record<string, unknown>)
+              : undefined,
         });
         return;
       }
@@ -2341,12 +2568,24 @@ export function registerPiChatHandlers({
           if (peerId) {
             preferredPeerByConversationId.set(conversationId, peerId);
           }
-          (message as unknown as { meta?: AiMessageMeta }).meta = parsedMeta;
+          const assistantMessage = message as AssistantMessage & { meta?: AiMessageMeta };
+          assistantMessage.meta = parsedMeta;
+          pendingAssistantMessage = mergeAssistantMessagesForUi(
+            pendingAssistantMessage,
+            convertAssistantMessageForUi(assistantMessage),
+          );
         }
         return;
       }
 
       if (event.type === 'agent_end') {
+        if (pendingAssistantMessage) {
+          sendToRenderer('chat:ai-done', {
+            conversationId,
+            message: pendingAssistantMessage,
+          });
+          pendingAssistantMessage = null;
+        }
         if (!streamDone) {
           streamDone = true;
           sendToRenderer('chat:ai-stream-done', { conversationId });
@@ -2362,12 +2601,21 @@ export function registerPiChatHandlers({
         ? [{ type: 'image', data: imageBase64, mimeType: imageMimeType }]
         : [];
       await session.prompt(trimmedMessage || ' ', { images: images.length > 0 ? images : undefined });
+      if (pendingAssistantMessage) {
+        sendToRenderer('chat:ai-done', {
+          conversationId,
+          message: pendingAssistantMessage,
+        });
+        pendingAssistantMessage = null;
+      }
       if (!streamDone) {
         streamDone = true;
         sendToRenderer('chat:ai-stream-done', { conversationId });
       }
       return { ok: true };
     } catch (error) {
+      // Always discard any buffered assistant message on error — it will not be committed.
+      pendingAssistantMessage = null;
       if ((error as Error).name === 'AbortError') {
         sendToRenderer('chat:ai-stream-error', { conversationId, error: 'Request aborted' });
         return { ok: false, error: 'Aborted' };
@@ -2396,25 +2644,15 @@ export function registerPiChatHandlers({
     }
 
     modelCatalogRefreshPromise = (async () => {
-      const proxyPort = await resolveProxyPort(configPath);
-      const modelsFromMetadata = await discoverChatModelCatalog(getNetworkPeers);
-      if (modelsFromMetadata.length > 0) {
-        const limited = limitChatModelCatalogEntries(normalizeChatModelCatalogEntries(modelsFromMetadata));
-        updateModelProviderHints(modelProviderHints, limited);
-        void writeChatModelCatalogCache(limited).catch(() => undefined);
-        lastModelCatalogRefreshAt = Date.now();
-        return limited;
-      }
+      const peers = getNetworkPeers
+        ? await getNetworkPeers().catch(() => [] as NetworkPeerAddress[])
+        : ([] as NetworkPeerAddress[]);
 
-      const modelsFromApi = await isProxyAvailable(proxyPort)
-        ? await discoverChatModelCatalogFromApi(proxyPort, getNetworkPeers)
-        : [];
-      const limited = limitChatModelCatalogEntries(normalizeChatModelCatalogEntries(modelsFromApi));
-      if (limited.length < modelsFromApi.length) {
-        appendSystemLog(
-          `Chat models truncated to ${String(limited.length)} of ${String(modelsFromApi.length)} API entries for usability.`,
-        );
-      }
+      const getPeers = async (): Promise<NetworkPeerAddress[]> => peers;
+
+      const modelsFromMetadata = await discoverChatModelCatalog(getPeers);
+
+      const limited = limitChatModelCatalogEntries(normalizeChatModelCatalogEntries(modelsFromMetadata));
       updateModelProviderHints(modelProviderHints, limited);
       void writeChatModelCatalogCache(limited).catch(() => undefined);
       lastModelCatalogRefreshAt = Date.now();
@@ -2498,6 +2736,15 @@ export function registerPiChatHandlers({
   ipcMain.handle('chat:ai-delete-conversation', async (_event, id: string) => {
     preferredPeerByConversationId.delete(id);
     await store.delete(id);
+    return { ok: true };
+  });
+
+  ipcMain.handle('chat:ai-rename-conversation', async (_event, id: string, title: string) => {
+    const manager = await store.openSessionManager(id);
+    if (!manager) {
+      return { ok: false, error: 'Conversation not found' };
+    }
+    manager.appendSessionInfo(title.trim());
     return { ok: true };
   });
 
