@@ -1,6 +1,6 @@
 import { memo, useState, useRef, useEffect, useCallback } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { DashboardSquare01Icon } from '@hugeicons/core-free-icons';
+import { AiNetworkIcon } from '@hugeicons/core-free-icons';
 import { UserGroupIcon } from '@hugeicons/core-free-icons';
 import { PeerToPeer02Icon } from '@hugeicons/core-free-icons';
 import { Settings02Icon } from '@hugeicons/core-free-icons';
@@ -29,7 +29,7 @@ type NavEntry = {
 
 const baseEntries: NavEntry[] = [
   { label: 'New Chat', view: 'chat', icon: Add01Icon, action: 'new-chat' },
-  { label: 'Overview', view: 'overview', icon: DashboardSquare01Icon },
+  { label: 'Network', view: 'overview', icon: AiNetworkIcon },
   { label: 'External Clients', view: 'external-clients', icon: ComputerTerminal01Icon },
   { label: 'Settings', view: 'config', icon: Settings02Icon },
 ];
