@@ -258,7 +258,7 @@
   font-weight: 600; font-size: 15px;
   text-decoration: none; transition: all 0.2s; margin-top: 8px;
 }
-.creatorCta:hover { transform: translateY(-1px); text-decoration: none; color: #1FD87A; }
+.creatorCta:hover { transform: translateY(-1px); text-decoration: none; color: #fff; }
 
 /* Mobile earn fallback */
 .earnMobile { display: none; flex-direction: column; gap: 16px; max-width: 340px; margin: 0 auto 40px; }
@@ -354,7 +354,7 @@
   text-decoration: none; transition: all 0.2s;
   background: #1a1a1a; color: #fff;
 }
-.bottomBtn:hover { transform: translateY(-1px); text-decoration: none; color: #1FD87A; }
+.bottomBtn:hover { transform: translateY(-1px); text-decoration: none; color: #fff; }
 .waitlistForm { display: flex; gap: 8px; max-width: 320px; margin: 0 auto; }
 .waitlistInput {
   flex: 1; padding: 12px 16px;

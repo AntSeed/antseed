@@ -7,6 +7,11 @@
     "node": ">=20.0.0",
     "pnpm": ">=9.0.0"
   },
+  "pnpm": {
+    "overrides": {
+      "webpack": "^5.95.0"
+    }
+  },
   "packageManager": "pnpm@9.15.4",
   "scripts": {
     "build": "pnpm run build:tier0 && pnpm run build:tier1 && pnpm run build:tier2 && pnpm run build:tier3 && pnpm run build:tier4 && pnpm run build:standalone",

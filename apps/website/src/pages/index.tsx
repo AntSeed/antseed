@@ -455,13 +455,10 @@ export default function Home(): JSX.Element {
 
       {/* Bottom CTAs */}
       <section className={styles.bottomCtas}>
-        <div className={styles.bottomGrid}>
-          <div className={styles.bottomCard}>
-            <h3>Read the Light Paper</h3>
-            <p>Understand the protocol, the architecture, and the economics behind the unstoppable AI economy.</p>
-            <Link to="/docs/lightpaper" className={styles.bottomBtn}>Read Light Paper →</Link>
-          </div>
-          {/* Subscribe card hidden until backend is wired up */}
+        <div className={styles.bottomCard} style={{ maxWidth: 480, margin: '0 auto' }}>
+          <h3>Read the Light Paper</h3>
+          <p>Understand the protocol, the architecture, and the economics behind the unstoppable AI economy.</p>
+          <Link to="/docs/lightpaper" className={styles.bottomBtn}>Read Light Paper →</Link>
         </div>
       </section>
 
