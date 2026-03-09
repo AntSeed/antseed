@@ -15,11 +15,24 @@ import { writeFile, mkdir } from 'node:fs/promises';
 
 import { NetworkPoller } from './poller.js';
 import { createServer } from './server.js';
+import type { PeerMetadata } from '@antseed/node';
+import { toPeerId } from '@antseed/node';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 function tmpCache(): string {
   return join(tmpdir(), `antseed-test-${randomUUID()}`, 'network.json');
+}
+
+function fakePeer(id: string, models: string[]): PeerMetadata {
+  return {
+    peerId: toPeerId(id.padStart(64, '0')),
+    version: 4,
+    providers: [{ provider: 'test', models, defaultPricing: { inputUsdPerMillion: 10, outputUsdPerMillion: 10 }, maxConcurrency: 1, currentLoad: 0 }],
+    region: 'eu-west-1',
+    timestamp: Date.now(),
+    signature: 'sig',
+  };
 }
 
 // ── NetworkPoller unit tests ──────────────────────────────────────────────────
@@ -28,21 +41,19 @@ describe('NetworkPoller', () => {
   it('returns empty snapshot before first poll', () => {
     const poller = new NetworkPoller(tmpCache());
     const snap = poller.getSnapshot();
-    assert.equal(snap.peers, 0);
-    assert.deepEqual(snap.models, []);
+    assert.equal(snap.peers.length, 0);
+    assert.equal(snap.updatedAt, new Date(0).toISOString());
   });
 
   it('loads snapshot from existing cache file on start', async () => {
     const cachePath = tmpCache();
     await mkdir(join(tmpdir(), cachePath.split('/').slice(-2, -1)[0]!), { recursive: true });
 
-    const saved = { peers: 5, models: ['gpt-4o', 'claude-sonnet'], updatedAt: '2026-01-01T00:00:00.000Z' };
+    const peer = fakePeer('peer-1', ['gpt-4o', 'claude-sonnet']);
+    const saved = { peers: [peer], updatedAt: '2026-01-01T00:00:00.000Z' };
     await writeFile(cachePath, JSON.stringify(saved), 'utf8');
 
     const poller = new NetworkPoller(cachePath);
-    // Manually invoke the private loadCache via start — but we don't want the timer or DHT.
-    // Instead, access the cache-loading path by calling start and immediately stopping.
-    // We stub setTimeout/setInterval so nothing actually fires.
     const originalSetTimeout = globalThis.setTimeout;
     const originalSetInterval = globalThis.setInterval;
     // @ts-expect-error — stub
@@ -57,29 +68,20 @@ describe('NetworkPoller', () => {
     }
 
     const snap = poller.getSnapshot();
-    assert.equal(snap.peers, 5);
-    assert.deepEqual(snap.models, ['gpt-4o', 'claude-sonnet']);
+    assert.equal(snap.peers.length, 1);
+    assert.ok(snap.peers[0]!.peerId);
   });
 
-  it('poll() aggregates models across multiple peers', async () => {
-    const cachePath = tmpCache();
-    const poller = new NetworkPoller(cachePath);
-
-    // Patch the internal poll to inject a known result without DHT
-    const injectSnapshot = {
-      peers: 3,
-      models: ['deepseek-r1', 'llama-4-maverick', 'qwen3.5-397b'],
-      updatedAt: new Date().toISOString(),
-    };
-
-    // Directly set the snapshot via a patched poll
+  it('snapshot holds full PeerMetadata objects', () => {
+    const poller = new NetworkPoller(tmpCache());
+    const peers = [fakePeer('peer-a', ['deepseek-r1']), fakePeer('peer-b', ['llama-4-maverick'])];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (poller as any).snapshot = injectSnapshot;
+    (poller as any).snapshot = { peers, updatedAt: new Date().toISOString() };
 
     const snap = poller.getSnapshot();
-    assert.equal(snap.peers, 3);
-    assert.equal(snap.models.length, 3);
-    assert.ok(snap.models.includes('deepseek-r1'));
+    assert.equal(snap.peers.length, 2);
+    assert.ok(snap.peers[0]!.peerId);
+    assert.deepEqual(snap.peers[1]!.providers[0]!.models, ['llama-4-maverick']);
   });
 
   it('stop() clears the interval without throwing', () => {
@@ -97,12 +99,9 @@ describe('createServer', () => {
 
   before(async () => {
     poller = new NetworkPoller(tmpCache());
+    const peers = [fakePeer('peer-1', ['kimi-k2.5']), fakePeer('peer-2', ['glm-5'])];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (poller as any).snapshot = {
-      peers: 2,
-      models: ['kimi-k2.5', 'glm-5'],
-      updatedAt: '2026-03-04T12:00:00.000Z',
-    };
+    (poller as any).snapshot = { peers, updatedAt: '2026-03-04T12:00:00.000Z' };
     serverHandle = createServer(poller, PORT);
     await serverHandle.start();
   });
@@ -121,17 +120,17 @@ describe('createServer', () => {
   it('GET /stats returns snapshot shape', async () => {
     const res = await fetch(`http://localhost:${PORT}/stats`);
     assert.equal(res.status, 200);
-    const body = await res.json() as { peers: number; models: string[]; updatedAt: string };
-    assert.equal(typeof body.peers, 'number');
-    assert.ok(Array.isArray(body.models));
+    const body = await res.json() as { peers: PeerMetadata[]; updatedAt: string };
+    assert.ok(Array.isArray(body.peers));
     assert.equal(typeof body.updatedAt, 'string');
   });
 
-  it('GET /stats returns correct values from poller', async () => {
+  it('GET /stats returns correct peer count and data', async () => {
     const res = await fetch(`http://localhost:${PORT}/stats`);
-    const body = await res.json() as { peers: number; models: string[] };
-    assert.equal(body.peers, 2);
-    assert.deepEqual(body.models, ['kimi-k2.5', 'glm-5']);
+    const body = await res.json() as { peers: PeerMetadata[] };
+    assert.equal(body.peers.length, 2);
+    assert.ok(body.peers[0]!.peerId);
+    assert.ok(body.peers[1]!.peerId);
   });
 
   it('GET /stats includes CORS header', async () => {

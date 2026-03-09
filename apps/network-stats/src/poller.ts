@@ -2,8 +2,7 @@
  * NetworkPoller
  *
  * Connects to the AntSeed network as an anonymous buyer, discovers peers,
- * and extracts peer count + available model list. Results are cached in memory
- * and optionally persisted to a JSON file.
+ * and returns raw PeerMetadata for each discovered peer.
  */
 
 import { writeFile, readFile, mkdir } from 'node:fs/promises';
@@ -15,7 +14,6 @@ import {
   DHTNode,
   DEFAULT_DHT_CONFIG,
   topicToInfoHash,
-  providerTopic,
   HttpMetadataResolver,
   mergeBootstrapNodes,
   OFFICIAL_BOOTSTRAP_NODES,
@@ -27,27 +25,17 @@ import type { PeerMetadata } from '@antseed/node';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export interface NetworkSnapshot {
-  peers: number;
-  models: string[];
+  peers: PeerMetadata[];
   updatedAt: string; // ISO 8601
 }
 
 const DEFAULT_CACHE_PATH = join(__dirname, '..', 'cache', 'network.json');
 
-const DISCOVERY_PROVIDERS = [
-  'anthropic',
-  'openai',
-  'google',
-  'claude-code',
-  'claude-oauth',
-  'local-llm',
-];
-
 const POLL_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
 const DHT_WARMUP_MS = 15_000;            // wait for routing table to populate
 
 export class NetworkPoller {
-  private snapshot: NetworkSnapshot = { peers: 0, models: [], updatedAt: new Date(0).toISOString() };
+  private snapshot: NetworkSnapshot = { peers: [], updatedAt: new Date(0).toISOString() };
   private cachePath: string;
   private timer: ReturnType<typeof setInterval> | null = null;
 
@@ -95,57 +83,29 @@ export class NetworkPoller {
       await dht.start();
 
       const metadataResolver = new HttpMetadataResolver();
-      const discoveredPeers = new Map<string, { models: string[] }>();
+      const discoveredPeers = new Map<string, PeerMetadata>();
 
-      // Look up each provider topic on the DHT
+      const infoHash = topicToInfoHash('antseed:*');
+      const endpoints = await dht.lookup(infoHash);
+
       await Promise.allSettled(
-        DISCOVERY_PROVIDERS.map(async (provider) => {
+        endpoints.map(async (ep: { host: string; port: number }) => {
           try {
-            const infoHash = topicToInfoHash(providerTopic(provider));
-            const peers = await dht.lookup(infoHash);
-            await Promise.allSettled(
-              peers.map(async (ep: { host: string; port: number }) => {
-                try {
-                  const metadata: PeerMetadata | null = await metadataResolver.resolve(ep);
-                  if (!metadata?.peerId) return;
-                  const models: string[] = [];
-                  for (const pa of metadata.providers ?? []) {
-                    for (const model of pa.models ?? []) {
-                      if (!models.includes(model)) models.push(model);
-                    }
-                  }
-                  const existing = discoveredPeers.get(metadata.peerId);
-                  if (existing) {
-                    for (const m of models) {
-                      if (!existing.models.includes(m)) existing.models.push(m);
-                    }
-                  } else {
-                    discoveredPeers.set(metadata.peerId, { models });
-                  }
-                } catch {
-                  // unreachable peer — skip
-                }
-              }),
-            );
+            const metadata: PeerMetadata | null = await metadataResolver.resolve(ep);
+            if (!metadata?.peerId) return;
+            discoveredPeers.set(metadata.peerId, metadata);
           } catch {
-            // topic lookup failed — skip
+            // unreachable peer — skip
           }
         }),
       );
 
-      // Aggregate all unique models across peers
-      const allModels = new Set<string>();
-      for (const { models } of discoveredPeers.values()) {
-        for (const m of models) allModels.add(m);
-      }
-
       this.snapshot = {
-        peers: discoveredPeers.size,
-        models: [...allModels].sort(),
+        peers: [...discoveredPeers.values()],
         updatedAt: new Date().toISOString(),
       };
 
-      console.log(`[network-stats] poll complete — ${this.snapshot.peers} peers, ${this.snapshot.models.length} models`);
+      console.log(`[network-stats] poll complete — ${this.snapshot.peers.length} peers`);
       await this.saveCache();
     } finally {
       await dht.stop().catch(() => {});
