@@ -134,7 +134,7 @@ function stripHtmlToText(input: string): string {
     .replace(/&quot;/gi, '"')
     .replace(/&#39;/gi, '\'')
     .replace(/\r/g, '')
-    .replace(/\n{3,}/g, '\n\n')
+    .replace(/\n{2,}/g, '\n')
     .replace(/[ \t]{2,}/g, ' ')
     .trim();
 }
@@ -203,7 +203,7 @@ function _fetchHeadlessSerial(url: string, timeoutMs: number, signal?: AbortSign
             })()
           `)
           .then((text: unknown) => {
-            const result = typeof text === 'string' ? text.replace(/\n{3,}/g, '\n\n').trim() : '';
+            const result = typeof text === 'string' ? text.replace(/\n{2,}/g, '\n').trim() : '';
             settle(result);
           })
           .catch((err: unknown) => {
