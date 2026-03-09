@@ -16,7 +16,7 @@ interface ProviderInfo {
 
 interface PeerInfo {
   peerId: string;
-  displayName: string;
+  displayName?: string;
   region: string;
   providers: ProviderInfo[];
   timestamp: number;
@@ -42,7 +42,7 @@ function PeerCard({peer}: {peer: PeerInfo}) {
       <div className={styles.peerHeader}>
         <div className={styles.peerOnline} />
         <div>
-          <div className={styles.peerName}>{peer.displayName}</div>
+          <div className={styles.peerName}>{peer.displayName ?? peer.peerId.slice(0, 12)}</div>
           <div className={styles.peerId}>{peer.peerId.slice(0, 16)}...</div>
         </div>
         <div className={styles.peerRegion}>{peer.region !== 'unknown' ? peer.region : 'Global'}</div>
