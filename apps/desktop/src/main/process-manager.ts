@@ -249,12 +249,14 @@ function resolveNodeBinary(targetArch: string): string {
     }
     const majorVersion = detectNodeMajorVersion(candidate);
     const meetsMinVersion = majorVersion !== null && majorVersion >= MIN_NODE_MAJOR_VERSION;
-    if (meetsMinVersion && !firstCompatible) {
-      firstCompatible = candidate;
-    }
-    const arch = detectNodeArch(candidate);
-    if (arch === targetArch && meetsMinVersion) {
-      return candidate;
+    if (meetsMinVersion) {
+      if (!firstCompatible) {
+        firstCompatible = candidate;
+      }
+      const arch = detectNodeArch(candidate);
+      if (arch === targetArch) {
+        return candidate;
+      }
     }
   }
 
