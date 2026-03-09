@@ -59,8 +59,9 @@
   background: #1a1a1a;
   color: #fff;
 }
-.dlbtn:hover { transform: translateY(-1px); color: #1FD87A; text-decoration: none; }
-.dlnote { font-size: 12px; color: #aaa; font-family: 'JetBrains Mono', monospace; }
+.dlbtn:hover { transform: translateY(-1px); background: #333; color: #fff; text-decoration: none; }
+.dlnote { font-size: 12px; color: #999; font-family: 'JetBrains Mono', monospace; text-decoration: none; transition: color 0.2s; }
+.dlnote:hover { color: #666; text-decoration: underline; }
 
 /* ---- MAC MOCKUP ---- */
 .mockupWrap { padding: 0 60px 60px; display: flex; justify-content: center; }
@@ -372,9 +373,9 @@
 }
 
 /* ---- FAQ ---- */
-.faq { padding: 60px 60px 80px; max-width: 800px; margin: 0 auto; }
+.faq { padding: 60px 60px 80px; width: 100%; max-width: 800px; margin: 0 auto; }
 .faqTitle { font-size: clamp(28px, 3.5vw, 40px); font-weight: 700; letter-spacing: -1.5px; margin-bottom: 32px; text-align: center; }
-.faqList { display: flex; flex-direction: column; gap: 0; }
+.faqList { display: flex; flex-direction: column; gap: 0; width: 100%; }
 .faqItem { border-bottom: 1px solid #e8e8e3; padding: 0; }
 .faqItemFirst { border-top: 1px solid #e8e8e3; }
 .faqSummary {
@@ -388,7 +389,11 @@
 .faqSummary:hover { color: #1FD87A; }
 .faqSummary::-webkit-details-marker { display: none; }
 .faqAnswer { padding: 0 0 20px; font-size: 14px; color: #888; line-height: 1.7; margin: 0; }
-.faqChevron { font-size: 22px; font-weight: 300; color: #888; transition: transform 0.2s; flex-shrink: 0; }
+.faqChevron { font-size: 22px; font-weight: 300; color: #888; transition: transform 0.25s ease; flex-shrink: 0; }
+.faqChevronOpen { transform: rotate(45deg); }
+.faqCollapse { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.25s ease; }
+.faqCollapseOpen { grid-template-rows: 1fr; }
+.faqCollapseInner { overflow: hidden; }
 .faqMore { text-align: center; margin-top: 32px; }
 .faqMoreLink {
   font-family: 'JetBrains Mono', monospace;

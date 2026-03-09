@@ -1,4 +1,4 @@
-import {useEffect, useRef, useState, Fragment} from 'react';
+import {useEffect, useRef, useState, useMemo} from 'react';
 import BrowserOnly from '@docusaurus/BrowserOnly';
 import Link from '@docusaurus/Link';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
@@ -6,6 +6,47 @@ import Layout from '@theme/Layout';
 import styles from './index.module.css';
 
 const RELEASES_URL = 'https://github.com/AntSeed/antseed/releases/latest';
+const GH_API_LATEST = 'https://api.github.com/repos/AntSeed/antseed/releases/latest';
+
+function buildDmgUrl(tag: string, arch: 'arm64' | 'x64'): string {
+  const version = tag.replace(/^v/, '');
+  const suffix = arch === 'arm64' ? '-arm64' : '';
+  return `https://github.com/AntSeed/antseed/releases/download/${tag}/AntSeed-Desktop-${version}${suffix}.dmg`;
+}
+
+function isMac(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return /Macintosh|Mac OS X/.test(navigator.userAgent);
+}
+
+function useLatestRelease() {
+  const [tag, setTag] = useState<string | null>(null);
+  const [arch, setArch] = useState<'arm64' | 'x64'>('arm64');
+  const mac = useMemo(isMac, []);
+
+  useEffect(() => {
+    if (!mac) return;
+
+    // Detect architecture via UserAgentData API (Chromium browsers)
+    // The legacy UA string always says "Intel" on macOS regardless of chip
+    const nav = navigator as Navigator & { userAgentData?: { getHighEntropyValues(hints: string[]): Promise<{ architecture?: string }> } };
+    if (nav.userAgentData?.getHighEntropyValues) {
+      nav.userAgentData.getHighEntropyValues(['architecture'])
+        .then(data => {
+          if (data.architecture === 'x86') setArch('x64');
+        })
+        .catch(() => { /* keep default arm64 */ });
+    }
+
+    fetch(GH_API_LATEST)
+      .then(r => r.json())
+      .then(data => { if (data?.tag_name) setTag(data.tag_name as string); })
+      .catch(() => { /* fall through to RELEASES_URL */ });
+  }, [mac]);
+
+  const dmgUrl = mac && tag ? buildDmgUrl(tag, arch) : null;
+  return { dmgUrl };
+}
 
 /* ========== NAV ICONS (used in mockup nav) ========== */
 /* Nav is handled by Docusaurus Layout — DO NOT TOUCH */
@@ -25,136 +66,10 @@ function LiveBar() {
   );
 }
 
-/* ========== ANTSTATION MOCKUP (inline dark UI) ========== */
-function AntFarmMockup() {
-  return (
-    <div className={styles.mockupWrap}>
-      <div className={styles.mac}>
-        <div className={styles.macBar}>
-          <div className={styles.macDots}>
-            <span className={styles.macDot} style={{background:'#ff5f56'}}/>
-            <span className={styles.macDot} style={{background:'#ffbd2e'}}/>
-            <span className={styles.macDot} style={{background:'#27c93f'}}/>
-          </div>
-          <div className={styles.macTitle}>AntStation</div>
-          <div style={{width:'52px'}}/>
-        </div>
-        <div className={styles.macBody}>
-          <div style={{display:'flex',justifyContent:'space-between',width:'100%',maxWidth:'420px',marginBottom:'20px'}}>
-            <div className={styles.appPills}>
-              <span className={`${styles.appPill} ${styles.appPillAuto}`}>Auto</span>
-              <span className={`${styles.appPill} ${styles.appPillManual}`}>Manual</span>
-            </div>
-            <div className={styles.appPills}>
-              <span className={`${styles.appPill} ${styles.appPillOpt}`}>Low Cost</span>
-              <span className={`${styles.appPill} ${styles.appPillOpt}`}>Low Latency</span>
-              <span className={`${styles.appPill} ${styles.appPillOpt}`}>Best Quality</span>
-              <span className={`${styles.appPill} ${styles.appPillOpt}`}>Max Privacy</span>
-            </div>
-          </div>
-          <div style={{marginBottom:'14px'}}>
-            <svg width="48" height="48" viewBox="0 0 100 100" fill="none">
-              <circle cx="50" cy="62" r="14" fill="#1FD87A"/><circle cx="50" cy="30" r="5" fill="#1FD87A"/>
-              <circle cx="26" cy="22" r="4" fill="#1FD87A" opacity=".7"/><circle cx="74" cy="22" r="4" fill="#1FD87A" opacity=".7"/>
-              <line x1="50" y1="48" x2="50" y2="35" stroke="#1FD87A" strokeWidth="2"/>
-              <line x1="42" y1="52" x2="28" y2="25" stroke="#1FD87A" strokeWidth="1.5" opacity=".6"/>
-              <line x1="58" y1="52" x2="72" y2="25" stroke="#1FD87A" strokeWidth="1.5" opacity=".6"/>
-            </svg>
-          </div>
-          <div className={styles.appWelcome}>Welcome to Ant<span style={{color:'#1FD87A'}}>Seed</span></div>
-          <div className={styles.appDesc}>You're connected to 3 free community peers. Start chatting. No sign-up, no API key, no credit card.</div>
-          <div className={styles.appStatus}>
-            <span style={{width:'5px',height:'5px',borderRadius:'50%',background:'#1FD87A',display:'inline-block'}}/> 3 peers · llama-4-scout · Free tier
-          </div>
-          <div className={styles.appCards}>
-            <div className={styles.appCard}><div className={styles.appCardTitle}>💬 Just chat</div><div className={styles.appCardDesc}>General knowledge, brainstorming</div></div>
-            <div className={styles.appCard}><div className={styles.appCardTitle}>✍️ Write something</div><div className={styles.appCardDesc}>Emails, posts, creative writing</div></div>
-            <div className={styles.appCard}><div className={styles.appCardTitle}>&lt;/&gt; Help me code</div><div className={styles.appCardDesc}>Debug, refactor, explain</div></div>
-            <div className={styles.appCard}><div className={styles.appCardTitle}>🔗 Explore providers</div><div className={styles.appCardDesc}>Private, uncensored, skilled</div></div>
-          </div>
-          <div className={styles.appInput}>
-            <span>Message the swarm...</span>
-            <div className={styles.appSend}>
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#0a0a0a" strokeWidth="3" strokeLinecap="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
-            </div>
-          </div>
-          <div className={styles.appRoute}>Routed → <span style={{color:'#1FD87A'}}>OpenMind</span> · llama-4-scout · $0.12/M tokens</div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ========== TERMINAL (animated, looping) ========== */
-const TERM_LINES: {text:string; cls:'cmd'|'out'|'grn'; delay:number}[] = [
-  {text:'$ antseed connect', cls:'cmd', delay:600},
-  {text:'> Discovering peers on the network...', cls:'out', delay:800},
-  {text:'> Found 3 peers · 10 models available', cls:'out', delay:600},
-  {text:'> Routing: DeepSeek-R1 · $0.08/M · 12ms', cls:'out', delay:500},
-  {text:'> Ready. Routing to best provider...', cls:'out', delay:800},
-  {text:'', cls:'out', delay:300},
-  {text:'$ antseed models', cls:'cmd', delay:600},
-  {text:'> claude-sonnet-4-6, deepseek-r1,', cls:'out', delay:400},
-  {text:'  llama-4-maverick, qwen3.5-397b...', cls:'out', delay:400},
-  {text:'', cls:'out', delay:300},
-  {text:'✓ Ready. Point any OpenAI client here.', cls:'grn', delay:0},
-];
-
-function TerminalCard() {
-  const [visibleCount, setVisibleCount] = useState(0);
-  const [cursorVisible, setCursorVisible] = useState(true);
-
-  useEffect(() => {
-    let cancelled = false;
-    const timers: ReturnType<typeof setTimeout>[] = [];
-
-    function runCycle() {
-      if (cancelled) return;
-      setVisibleCount(0);
-      let total = 0;
-      TERM_LINES.forEach((_line, i) => {
-        total += _line.delay;
-        timers.push(setTimeout(() => { if (!cancelled) setVisibleCount(i + 1); }, total));
-      });
-      total += 3000;
-      timers.push(setTimeout(() => { if (!cancelled) runCycle(); }, total));
-    }
-
-    // Start immediately
-    runCycle();
-
-    const blink = setInterval(() => setCursorVisible(v => !v), 530);
-    return () => { cancelled = true; timers.forEach(clearTimeout); clearInterval(blink); };
-  }, []);
-
-  return (
-    <div className={styles.terminal}>
-      <div className={styles.termBar}>
-        <span className={styles.termDot} style={{background:'#ff5f56'}}/>
-        <span className={styles.termDot} style={{background:'#ffbd2e'}}/>
-        <span className={styles.termDot} style={{background:'#27c93f'}}/>
-        <div className={styles.termTitle}>Terminal</div>
-      </div>
-      <div className={styles.termBody}>
-        {TERM_LINES.slice(0, visibleCount).map((line, i) => {
-          if (line.text === '') return <br key={i}/>;
-          return (
-            <div key={i} style={{color: line.cls === 'cmd' ? '#e8e8e8' : line.cls === 'grn' ? '#1FD87A' : '#888', fontWeight: line.cls === 'cmd' ? 600 : 400}}>
-              {line.text}
-            </div>
-          );
-        })}
-        <span style={{color:'#1FD87A', opacity: cursorVisible ? 1 : 0}}>▋</span>
-      </div>
-    </div>
-  );
-}
-
 /* ========== EARN ANIMATION ========== */
 function EarnAnimation() {
   const stageRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [counter, setCounter] = useState('0.000');
   const [activeNode, setActiveNode] = useState(-1);
   const [feed, setFeed] = useState<{skill:string;amount:string;id:number}[]>([]);
   const startedRef = useRef(false);
@@ -162,6 +77,8 @@ function EarnAnimation() {
   const feedIdRef = useRef(0);
   const hexProgRef = useRef<SVGPolygonElement>(null);
   const hexGlowRef = useRef<SVGPolygonElement>(null);
+
+  const counter = totalRef.current.toFixed(3);
 
   const skills = ['Legal analysis skill','Code review agent','Translation skill','Writing assistant','Data analysis agent','Medical triage skill','Research agent','Tax advisory skill','Content pipeline','Compliance monitor'];
 
@@ -235,7 +152,6 @@ function EarnAnimation() {
         function fire() {
           const amt = (Math.random()*0.014+0.001).toFixed(3);
           totalRef.current += parseFloat(amt);
-          setCounter(totalRef.current.toFixed(3));
           setActiveNode(n => (n+1)%4);
           const skill = skills[Math.floor(Math.random()*skills.length)];
           setFeed(f => [...f.slice(-4), {skill, amount:amt, id:feedIdRef.current++}]);
@@ -255,12 +171,12 @@ function EarnAnimation() {
     return () => { obs.disconnect(); clearTimeout(timeout); };
   }, []);
 
-  const nodeData = [
+  const nodeData = useMemo(() => [
     {cls:styles.nTop, label:'You provide', sub:'Models & Agents', icon:<svg viewBox="0 0 24 24" fill="none" stroke="#1FD87A" strokeWidth="1.8" strokeLinecap="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>},
     {cls:styles.nRight, label:'Users request', sub:'Routed to you', icon:<svg viewBox="0 0 24 24" fill="none" stroke="#1FD87A" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="12" r="3"/><circle cx="5" cy="6" r="1.5"/><circle cx="19" cy="6" r="1.5"/><circle cx="5" cy="18" r="1.5"/><circle cx="19" cy="18" r="1.5"/><line x1="10" y1="10" x2="6.2" y2="7.2"/><line x1="14" y1="10" x2="17.8" y2="7.2"/><line x1="10" y1="14" x2="6.2" y2="16.8"/><line x1="14" y1="14" x2="17.8" y2="16.8"/></svg>},
     {cls:styles.nBottom, label:'Settlement', sub:'Per request', icon:<svg viewBox="0 0 24 24" fill="none" stroke="#1FD87A" strokeWidth="1.8" strokeLinecap="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/><path d="M9 10h6M9 13h3"/></svg>},
     {cls:styles.nLeft, label:'You earn', sub:'Passive income', icon:<svg viewBox="0 0 24 24" fill="none" stroke="#1FD87A" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v12M8 10c0-1.1 1.8-2 4-2s4 .9 4 2-1.8 2-4 2-4 .9-4 2 1.8 2 4 2 4-.9 4-2"/></svg>},
-  ];
+  ], []);
 
   return (
     <>
@@ -333,9 +249,13 @@ function FAQSection() {
           <div key={i} className={`${styles.faqItem} ${i===0 ? styles.faqItemFirst : ''}`}>
             <div className={styles.faqSummary} onClick={() => setOpenIdx(openIdx===i ? null : i)}>
               <span>{item.q}</span>
-              <span className={styles.faqChevron}>{openIdx===i ? '−' : '+'}</span>
+              <span className={`${styles.faqChevron} ${openIdx===i ? styles.faqChevronOpen : ''}`}>+</span>
             </div>
-            {openIdx===i && <p className={styles.faqAnswer} dangerouslySetInnerHTML={{__html: item.a}}/>}
+            <div className={`${styles.faqCollapse} ${openIdx===i ? styles.faqCollapseOpen : ''}`}>
+              <div className={styles.faqCollapseInner}>
+                <p className={styles.faqAnswer} dangerouslySetInnerHTML={{__html: item.a}}/>
+              </div>
+            </div>
           </div>
         ))}
       </div>
@@ -350,6 +270,7 @@ function FAQSection() {
 export default function Home(): JSX.Element {
   const {siteConfig} = useDocusaurusContext();
   const [email, setEmail] = useState('');
+  const {dmgUrl} = useLatestRelease();
 
   return (
     <Layout
@@ -371,17 +292,17 @@ export default function Home(): JSX.Element {
 
       {/* Download */}
       <div className={styles.downloads}>
-        <a href={RELEASES_URL} target="_blank" rel="noopener noreferrer" className={styles.dlbtn}>
+        <a href={dmgUrl ?? RELEASES_URL} target="_blank" rel="noopener noreferrer" className={styles.dlbtn}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
           Download for Mac
         </a>
-        <span className={styles.dlnote}>Other platforms soon</span>
+        <a href={RELEASES_URL} target="_blank" rel="noopener noreferrer" className={styles.dlnote}>All releases →</a>
       </div>
 
       {/* Desktop App Video */}
       <div className={styles.mockupWrap}>
         <div className={styles.mac}>
-          <div className={styles.macBar}>
+          {/* <div className={styles.macBar}>
             <div className={styles.macDots}>
               <span className={styles.macDot} style={{background:'#ff5f56'}}/>
               <span className={styles.macDot} style={{background:'#ffbd2e'}}/>
@@ -389,7 +310,7 @@ export default function Home(): JSX.Element {
             </div>
             <div className={styles.macTitle}>AntStation</div>
             <div style={{width:'52px'}}/>
-          </div>
+          </div> */}
           <video
             src="/videos/desktop-app.mp4"
             autoPlay

@@ -1,9 +1,7 @@
-import {useEffect, useState} from 'react';
+import {useEffect, useState, useMemo} from 'react';
 import Layout from '@theme/Layout';
 import Link from '@docusaurus/Link';
 import styles from './network.module.css';
-
-const STATS_API = '';
 
 // Fallback data when stats API is unavailable
 const FALLBACK_PEERS: PeerInfo[] = [
@@ -18,7 +16,7 @@ const FALLBACK_PEERS: PeerInfo[] = [
       currentLoad: 2,
       maxConcurrency: 10,
     }],
-    timestamp: Date.now(),
+    timestamp: 0,
     url: 'https://peer1.antseed.com',
     online: true,
   },
@@ -33,7 +31,7 @@ const FALLBACK_PEERS: PeerInfo[] = [
       currentLoad: 1,
       maxConcurrency: 8,
     }],
-    timestamp: Date.now(),
+    timestamp: 0,
     url: 'https://peer2.antseed.com',
     online: true,
   },
@@ -48,7 +46,7 @@ const FALLBACK_PEERS: PeerInfo[] = [
       currentLoad: 0,
       maxConcurrency: 6,
     }],
-    timestamp: Date.now(),
+    timestamp: 0,
     url: 'https://peer3.antseed.com',
     online: true,
   },
@@ -112,31 +110,28 @@ function PeerCard({peer}: {peer: PeerInfo}) {
 }
 
 export default function NetworkPage() {
-  const [peers, setPeers] = useState<PeerInfo[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [peers, setPeers] = useState<PeerInfo[]>(FALLBACK_PEERS);
+  const [loading, setLoading] = useState(false);
 
-  const refresh = async () => {
-    try {
-      const res = await fetch(`${STATS_API}/stats-api/api/peers`);
-      const data = await res.json();
-      setPeers((data as PeerInfo[]).map(p => ({...p, online: true})));
-    } catch {
-      // Use fallback data when API is unavailable
-      setPeers(FALLBACK_PEERS);
-    }
-    setLastUpdated(new Date());
-    setLoading(false);
-  };
+  // TODO: Replace with real stats API when available
+  // useEffect(() => {
+  //   const refresh = async () => {
+  //     try {
+  //       const res = await fetch('/stats-api/api/peers');
+  //       const data = await res.json();
+  //       setPeers((data as PeerInfo[]).map(p => ({...p, online: true})));
+  //     } catch { /* keep fallback */ }
+  //   };
+  //   refresh();
+  //   const interval = setInterval(refresh, 30_000);
+  //   return () => clearInterval(interval);
+  // }, []);
 
-  useEffect(() => {
-    refresh();
-    const interval = setInterval(refresh, 30_000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const allModels = new Set<string>();
-  for (const p of peers) for (const pr of p.providers) for (const m of pr.models) allModels.add(m);
+  const allModels = useMemo(() => {
+    const set = new Set<string>();
+    for (const p of peers) for (const pr of p.providers) for (const m of pr.models) set.add(m);
+    return set;
+  }, [peers]);
 
   return (
     <Layout title="Network Status" description="Live AntSeed network status — active peers, available models, and network health.">
@@ -144,7 +139,7 @@ export default function NetworkPage() {
         <div className={styles.header}>
           <Link to="/" className={styles.back}>← Back</Link>
           <h1 className={styles.title}>Network Status</h1>
-          <p className={styles.subtitle}>Live peer-to-peer network overview. Updates every 30 seconds.</p>
+          <p className={styles.subtitle}>Peer-to-peer network overview.</p>
         </div>
 
         {/* Stats bar */}
@@ -164,9 +159,7 @@ export default function NetworkPage() {
               <span className={styles.liveDot} />
               Live
             </div>
-            <div className={styles.statLabel}>
-              {lastUpdated ? `Updated ${lastUpdated.toLocaleTimeString()}` : 'Connecting...'}
-            </div>
+            <div className={styles.statLabel}>Static data</div>
           </div>
         </div>
 

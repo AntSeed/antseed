@@ -10,8 +10,6 @@ const config: Config = {
   baseUrl: '/',
   onBrokenLinks: 'throw',
 
-  clientModules: [require.resolve('./src/forceLight.ts')],
-
   scripts: [{src: '/force-light.js', async: false}],
 
 
