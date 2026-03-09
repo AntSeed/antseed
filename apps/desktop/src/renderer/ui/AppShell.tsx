@@ -39,6 +39,7 @@ export function AppShell() {
 
   const hasConversations = Array.isArray(snap.chatConversations) && snap.chatConversations.length > 0;
   const showOnboarding =
+    snap.chatConversationsLoaded &&
     !onboardingDismissed &&
     !hasConversations &&
     !snap.chatActiveConversation &&
