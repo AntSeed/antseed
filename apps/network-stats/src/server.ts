@@ -1,7 +1,7 @@
 /**
  * Express HTTP server — exposes network stats for XHR consumption.
  *
- * GET /stats  →  { peers, models, updatedAt }
+ * GET /stats  →  { peers: PeerMetadata[], updatedAt }
  * GET /health →  { ok: true }
  */
 
