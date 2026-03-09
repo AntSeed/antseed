@@ -1,5 +1,9 @@
 /* ExternalClientsView.module.scss */
 
+.view {
+  overflow-x: hidden;
+}
+
 /* ── Proxy badge ── */
 
 .proxy-badge {
@@ -41,12 +45,14 @@
 .content {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 20px;
   display: flex;
   flex-direction: column;
   gap: 16px;
   max-width: 860px;
   width: 100%;
+  box-sizing: border-box;
 }
 
 /* ── Intro block ── */
@@ -92,6 +98,8 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .tool-header {
@@ -286,6 +294,7 @@
   border-radius: 5px;
   padding: 4px 8px;
   flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -308,6 +317,7 @@
   font-size: 11px;
   color: var(--text-secondary);
   flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

@@ -174,7 +174,7 @@ export function ExternalClientsView({ active }: ExternalClientsViewProps) {
   const isOnline = chatProxyStatus.tone === 'active' && chatProxyPort > 0;
 
   return (
-    <section className={`view${active ? ' active' : ''}`} role="tabpanel">
+    <section className={`view ${styles.view}${active ? ' active' : ''}`} role="tabpanel">
       <div className="page-header">
         <h2>External Clients</h2>
         <div className={`${styles.proxyBadge} ${isOnline ? styles.proxyOnline : styles.proxyOffline}`}>
