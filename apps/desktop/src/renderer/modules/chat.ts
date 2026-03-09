@@ -456,8 +456,8 @@ export function initChatModule({
   function setChatSending(sending: boolean): void {
     uiState.chatSending = sending;
     uiState.chatSendingConversationId = sending ? (uiState.chatActiveConversation ?? null) : null;
-    uiState.chatInputDisabled = sending || !uiState.chatActiveConversation;
-    uiState.chatSendDisabled = sending || !uiState.chatActiveConversation;
+    uiState.chatInputDisabled = sending;
+    uiState.chatSendDisabled = sending;
     uiState.chatAbortVisible = sending;
     if (sending) uiState.chatWaitingForStream = true;
     if (!sending) uiState.chatWaitingForStream = false;

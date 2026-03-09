@@ -204,7 +204,7 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
 
 export function Sidebar({ activeView, onSelectView }: SidebarProps) {
   const actions = useActions();
-  const { devMode } = useUiSnapshot();
+  const { devMode, chatActiveConversation } = useUiSnapshot();
   const navEntries = devMode ? [...baseEntries, ...devEntries] : baseEntries;
 
   return (
@@ -213,7 +213,9 @@ export function Sidebar({ activeView, onSelectView }: SidebarProps) {
 
       <ul className={styles.sidebarNav} role="tablist" aria-label="Dashboard Views">
         {navEntries.map(({ label, view, icon, action }) => {
-          const isActive = activeView === view;
+          const isActive = action === 'new-chat'
+            ? activeView === view && chatActiveConversation === null
+            : activeView === view;
           return (
             <li key={view}>
               <button
