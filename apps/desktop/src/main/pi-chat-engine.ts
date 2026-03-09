@@ -1,4 +1,4 @@
-import { BrowserWindow } from 'electron';
+import { app, BrowserWindow } from 'electron';
 import type { IpcMain } from 'electron';
 import { type Static, Type } from '@sinclair/typebox';
 import { existsSync } from 'node:fs';
@@ -168,28 +168,28 @@ function getHeadlessBrowser(): BrowserWindow {
   return _headlessBrowser;
 }
 
+// Serializes headless requests so concurrent calls don't clobber each other
+// (loading a new URL aborts the previous one, which would fire did-fail-load).
+let _headlessQueue: Promise<void> = Promise.resolve();
+
 // Extract readable text from a fully rendered page using Electron's built-in Chromium
-function fetchWithHeadlessBrowser(url: string, timeoutMs: number): Promise<string> {
+function fetchWithHeadlessBrowser(url: string, timeoutMs: number, signal?: AbortSignal): Promise<string> {
+  const result = _headlessQueue.then(() => _fetchHeadlessSerial(url, timeoutMs, signal));
+  _headlessQueue = result.then(() => {}, () => {});
+  return result;
+}
+
+function _fetchHeadlessSerial(url: string, timeoutMs: number, signal?: AbortSignal): Promise<string> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(signal.reason); return; }
+
     const win = getHeadlessBrowser();
     let settled = false;
 
-    const settle = (result: string | Error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (result instanceof Error) reject(result);
-      else resolve(result);
-    };
-
-    const timer = setTimeout(() => settle(new Error('Headless browser timed out')), timeoutMs);
-
-    win.webContents.once('did-fail-load', (_event, errorCode, errorDescription) => {
+    const onFailLoad = (_event: Electron.Event, errorCode: number, errorDescription: string) => {
       settle(new Error(`Page load failed: ${errorDescription} (${String(errorCode)})`));
-    });
-
-    win.webContents.once('did-finish-load', () => {
-      // Wait a moment for JS hydration then extract text
+    };
+    const onFinishLoad = () => {
       setTimeout(() => {
         win.webContents
           .executeJavaScript(`
@@ -210,7 +210,24 @@ function fetchWithHeadlessBrowser(url: string, timeoutMs: number): Promise<strin
             settle(err instanceof Error ? err : new Error(String(err)));
           });
       }, 1500);
-    });
+    };
+
+    const settle = (result: string | Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      win.webContents.removeListener('did-fail-load', onFailLoad);
+      win.webContents.removeListener('did-finish-load', onFinishLoad);
+      if (result instanceof Error) reject(result);
+      else resolve(result);
+    };
+
+    const timer = setTimeout(() => settle(new Error('Headless browser timed out')), timeoutMs);
+    const onAbort = () => settle(new Error('web_fetch aborted'));
+    signal?.addEventListener('abort', onAbort, { once: true });
+
+    win.webContents.once('did-fail-load', onFailLoad);
+    win.webContents.once('did-finish-load', onFinishLoad);
 
     win.loadURL(url).catch((err: unknown) => {
       settle(err instanceof Error ? err : new Error(String(err)));
@@ -249,7 +266,7 @@ const webFetchTool: ToolDefinition = {
       redirect: 'follow',
       signal: fetchSignal,
       headers: {
-        'user-agent': BrowserWindow.getAllWindows()[0]?.webContents.getUserAgent() ?? 'Mozilla/5.0 AntStation/web_fetch',
+        'user-agent': app.userAgentFallback ?? 'Mozilla/5.0 AntStation/web_fetch',
         accept: 'text/html,application/json,text/plain,application/xml,text/xml,*/*;q=0.8',
       },
     });
@@ -267,7 +284,7 @@ const webFetchTool: ToolDefinition = {
         // Fall back to headless Chromium for JS-rendered pages
         usedHeadless = true;
         try {
-          normalizedText = await fetchWithHeadlessBrowser(parsedUrl.toString(), 30_000);
+          normalizedText = await fetchWithHeadlessBrowser(parsedUrl.toString(), 30_000, signal ?? undefined);
           if (!normalizedText) normalizedText = stripped; // headless returned empty, use raw
         } catch {
           normalizedText = stripped; // headless failed, use raw strip
@@ -277,7 +294,8 @@ const webFetchTool: ToolDefinition = {
       }
     } else {
       const rawText = await response.text();
-      normalizedText = rawText.trim();
+      // Clip before trim to avoid buffering megabytes unnecessarily
+      normalizedText = rawText.slice(0, maxChars * 4).trim();
     }
 
     const truncated = normalizedText.length > maxChars;
