@@ -10,7 +10,7 @@ import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { writeFile, mkdir } from 'node:fs/promises';
 
 import { NetworkPoller } from './poller.js';
@@ -26,7 +26,7 @@ function tmpCache(): string {
 
 function fakePeer(id: string, models: string[]): PeerMetadata {
   return {
-    peerId: toPeerId(id.padStart(64, '0')),
+    peerId: toPeerId(createHash('sha256').update(id).digest('hex')),
     version: 4,
     providers: [{ provider: 'test', models, defaultPricing: { inputUsdPerMillion: 10, outputUsdPerMillion: 10 }, maxConcurrency: 1, currentLoad: 0 }],
     region: 'eu-west-1',
