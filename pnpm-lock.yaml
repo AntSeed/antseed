@@ -105,6 +105,9 @@ importers:
       '@silentbot1/nat-api':
         specifier: ^0.4.9
         version: 0.4.9
+      '@sinclair/typebox':
+        specifier: ^0.34.48
+        version: 0.34.48
       '@walletconnect/ethereum-provider':
         specifier: ^2.17.0
         version: 2.23.6(@types/react@18.3.28)(bufferutil@4.1.0)(encoding@0.1.13)(react@18.3.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76)
