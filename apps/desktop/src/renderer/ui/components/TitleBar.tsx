@@ -47,6 +47,7 @@ export function TitleBar() {
           <button
             className={styles.titleBarUpdateBtn}
             onClick={handleUpdate}
+            aria-label={`Install v${updateReady} and restart`}
             title={`Install v${updateReady} and restart`}
           >
             Update to v{updateReady}
