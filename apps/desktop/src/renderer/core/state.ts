@@ -21,6 +21,7 @@ export type PluginHints = {
 
 export type PeerEntry = {
   peerId: string;
+  displayName: string | null;
   host: string;
   port: number;
   providers: string[];

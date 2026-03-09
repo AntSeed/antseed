@@ -387,6 +387,7 @@ export function initChatModule({
     let reasoningBlocks = 0;
     let totalEstimatedCostUsd = 0;
     const servingPeers = new Set<string>();
+    let lastServingPeerId = '';
 
     for (const msg of messages) {
       if (msg.role === 'assistant' && Array.isArray(msg.content)) {
@@ -396,7 +397,10 @@ export function initChatModule({
       }
       const meta = normalizeAssistantMeta(msg);
       if (meta) {
-        if (meta.peerId) servingPeers.add(meta.peerId);
+        if (meta.peerId) {
+          servingPeers.add(meta.peerId);
+          lastServingPeerId = meta.peerId;
+        }
         if (meta.costUsd > 0) totalEstimatedCostUsd += meta.costUsd;
       }
     }
@@ -427,8 +431,17 @@ export function initChatModule({
     parts.push(`updated ${formatChatDateTime(conv.updatedAt)}`);
 
     uiState.chatThreadMeta = parts.join(' · ');
-    const peerArr = [...servingPeers];
-    uiState.chatRoutedPeer = peerArr.length > 0 ? peerArr[peerArr.length - 1].slice(0, 8) : '';
+    if (lastServingPeerId) {
+      const knownPeer = Array.isArray(uiState.lastPeers)
+        ? uiState.lastPeers.find((p) => p.peerId === lastServingPeerId)
+        : undefined;
+      const shortId = lastServingPeerId.slice(0, 8);
+      uiState.chatRoutedPeer = knownPeer?.displayName
+        ? `${knownPeer.displayName} (${shortId})`
+        : shortId;
+    } else {
+      uiState.chatRoutedPeer = '';
+    }
   }
 
   // ---------------------------------------------------------------------------

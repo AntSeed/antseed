@@ -58,8 +58,10 @@ function normalizeNetworkData(
     const peerId = safeString(peer.peerId, '').trim();
     if (peerId.length === 0) continue;
 
+    const dn = typeof peer.displayName === 'string' && peer.displayName.trim().length > 0 ? peer.displayName.trim() : null;
     merged.set(peerId, {
       peerId,
+      displayName: dn,
       host: safeString(peer.host, ''),
       port: safeNumber(peer.port, 0),
       providers: safeArray(peer.providers).map(String),
@@ -83,6 +85,7 @@ function normalizeNetworkData(
 
     const existing = merged.get(peerId) ?? {
       peerId,
+      displayName: null,
       host: '',
       port: 0,
       providers: [],
@@ -108,6 +111,8 @@ function normalizeNetworkData(
     if (safeNumber(peer.capacityMsgPerHour, 0) > 0) existing.capacityMsgPerHour = safeNumber(peer.capacityMsgPerHour, 0);
     if (safeNumber(peer.reputation, 0) > 0) existing.reputation = safeNumber(peer.reputation, 0);
     existing.location = typeof peer.location === 'string' ? peer.location : existing.location;
+    const daemonDn = typeof peer.displayName === 'string' && (peer.displayName as string).trim().length > 0 ? (peer.displayName as string).trim() : null;
+    if (daemonDn) existing.displayName = daemonDn;
     if (!existing.source || existing.source === 'dht') existing.source = safeString(peer.source, 'daemon');
 
     merged.set(peerId, existing);

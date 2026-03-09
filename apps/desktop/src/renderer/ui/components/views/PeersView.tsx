@@ -49,7 +49,8 @@ function filterPeers(peers: PeerEntry[], filterText: string): PeerEntry[] {
 }
 
 const COLUMNS: { key: string; label: string; sortable: boolean }[] = [
-  { key: 'peerId', label: 'Peer', sortable: true },
+  { key: 'displayName', label: 'Peer', sortable: true },
+  { key: 'peerId', label: 'ID', sortable: true },
   { key: 'source', label: 'Source', sortable: true },
   { key: 'models', label: 'Models', sortable: true },
   { key: 'inputUsdPerMillion', label: 'Input $/1M', sortable: true },
@@ -128,13 +129,14 @@ export function PeersView({ active }: PeersViewProps) {
               <tbody>
                 {displayPeers.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="empty">
+                    <td colSpan={10} className="empty">
                       {lastPeers.length > 0 ? 'No peers match filter.' : 'No peers discovered yet.'}
                     </td>
                   </tr>
                 ) : (
                   displayPeers.map((peer) => (
                     <tr key={peer.peerId}>
+                      <td>{peer.displayName || '-'}</td>
                       <td title={peer.peerId}>{formatShortId(peer.peerId)}</td>
                       <td>{safeString(peer.source, 'n/a').toUpperCase()}</td>
                       <td>{peer.models.join(', ')}</td>

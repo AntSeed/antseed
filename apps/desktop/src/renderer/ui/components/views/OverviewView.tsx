@@ -63,6 +63,7 @@ export function OverviewView({ active }: OverviewViewProps) {
               <thead>
                 <tr>
                   <th>Peer</th>
+                  <th>ID</th>
                   <th>Models</th>
                   <th>Rep</th>
                 </tr>
@@ -70,13 +71,14 @@ export function OverviewView({ active }: OverviewViewProps) {
               <tbody>
                 {overviewPeers.length === 0 ? (
                   <tr>
-                    <td colSpan={3} className="empty">
+                    <td colSpan={4} className="empty">
                       No peers yet.
                     </td>
                   </tr>
                 ) : (
                   overviewPeers.map((peer) => (
                     <tr key={peer.peerId}>
+                      <td>{peer.displayName || '-'}</td>
                       <td title={peer.peerId}>{formatShortId(peer.peerId)}</td>
                       <td>{peer.models.join(', ')}</td>
                       <td>{formatInt(peer.reputation)}</td>
