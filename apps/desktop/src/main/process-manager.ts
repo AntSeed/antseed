@@ -244,11 +244,15 @@ function resolveNodeBinary(targetArch: string): string {
     if (candidate !== 'node' && !existsSync(candidate)) {
       continue;
     }
+    const majorVersion = detectNodeMajorVersion(candidate);
+    if (majorVersion === null) {
+      // Candidate doesn't exist or can't execute — skip it entirely.
+      continue;
+    }
     if (!firstExisting) {
       firstExisting = candidate;
     }
-    const majorVersion = detectNodeMajorVersion(candidate);
-    const meetsMinVersion = majorVersion !== null && majorVersion >= MIN_NODE_MAJOR_VERSION;
+    const meetsMinVersion = majorVersion >= MIN_NODE_MAJOR_VERSION;
     if (meetsMinVersion) {
       if (!firstCompatible) {
         firstCompatible = candidate;
@@ -443,7 +447,7 @@ export class ProcessManager {
         this.onLog(
           mode,
           'system',
-          `CLI command "${cliExecution.cliCommand}" was not found. Install antseed on PATH or set ${CLI_COMMAND_ENV} to a valid executable path.`,
+          `CLI command "${cliExecution.cliCommand}" was not found (executable: "${executable}"). Install Node.js ≥${MIN_NODE_MAJOR_VERSION} or set ${CLI_COMMAND_ENV} to a valid executable path.`,
         );
         return;
       }
