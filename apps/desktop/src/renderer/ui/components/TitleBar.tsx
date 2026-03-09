@@ -13,7 +13,7 @@ export function TitleBar() {
     if (saved !== null) return saved === 'dark';
     return document.body.classList.contains('dark-theme');
   });
-  const [updateReady, setUpdateReady] = useState<string | null>('0.2.0');
+  const [updateReady, setUpdateReady] = useState<string | null>(null);
 
   useEffect(() => {
     if (isDark) {
