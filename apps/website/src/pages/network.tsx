@@ -3,54 +3,8 @@ import Layout from '@theme/Layout';
 import Link from '@docusaurus/Link';
 import styles from './network.module.css';
 
-// Fallback data when stats API is unavailable
-const FALLBACK_PEERS: PeerInfo[] = [
-  {
-    peerId: 'QmYourPeer1234567890abcdef',
-    displayName: 'OpenMind',
-    region: 'EU West',
-    providers: [{
-      provider: 'openmind',
-      models: ['deepseek-r1', 'deepseek-v3.1', 'qwen3.5-397b', 'llama-4-maverick', 'qwen3-235b', 'glm-5', 'kimi-k2.5', 'minimax-m2.5', 'claude-sonnet-4-6', 'claude-opus-4-6'],
-      defaultPricing: {inputUsdPerMillion: 0.80, outputUsdPerMillion: 2.40},
-      currentLoad: 2,
-      maxConcurrency: 10,
-    }],
-    timestamp: 0,
-    url: 'https://peer1.antseed.com',
-    online: true,
-  },
-  {
-    peerId: 'QmAnotherPeer0987654321fedcba',
-    displayName: 'NodeRunner',
-    region: 'US East',
-    providers: [{
-      provider: 'noderunner',
-      models: ['deepseek-r1', 'deepseek-v3.1', 'llama-4-maverick', 'qwen3-235b'],
-      defaultPricing: {inputUsdPerMillion: 0.60, outputUsdPerMillion: 1.80},
-      currentLoad: 1,
-      maxConcurrency: 8,
-    }],
-    timestamp: 0,
-    url: 'https://peer2.antseed.com',
-    online: true,
-  },
-  {
-    peerId: 'QmThirdPeer5555555555555555',
-    displayName: 'SwarmNode',
-    region: 'Asia Pacific',
-    providers: [{
-      provider: 'swarmnode',
-      models: ['deepseek-r1', 'qwen3.5-397b', 'kimi-k2.5', 'glm-5'],
-      defaultPricing: {inputUsdPerMillion: 0.50, outputUsdPerMillion: 1.50},
-      currentLoad: 0,
-      maxConcurrency: 6,
-    }],
-    timestamp: 0,
-    url: 'https://peer3.antseed.com',
-    online: true,
-  },
-];
+const STATS_URL = 'https://network.antseed.com/stats';
+const DEV_STATS_URL = 'http://localhost:4000/stats';
 
 interface ProviderInfo {
   provider: string;
@@ -66,8 +20,11 @@ interface PeerInfo {
   region: string;
   providers: ProviderInfo[];
   timestamp: number;
-  url: string;
-  online: boolean;
+}
+
+interface StatsResponse {
+  peers: PeerInfo[];
+  updatedAt: string;
 }
 
 function ModelTag({name}: {name: string}) {
@@ -99,33 +56,43 @@ function PeerCard({peer}: {peer: PeerInfo}) {
           <span>${pricing.outputUsdPerMillion}/M output</span>
         </div>
       )}
-      <div className={styles.peerMeta}>
-        {peer.providers[0]?.currentLoad !== undefined && (
+      {peer.providers[0]?.currentLoad !== undefined && (
+        <div className={styles.peerMeta}>
           <span>Load: {peer.providers[0].currentLoad}/{peer.providers[0].maxConcurrency}</span>
-        )}
-        <span className={styles.peerUrl}>{peer.url.replace('http://', '')}</span>
-      </div>
+        </div>
+      )}
     </div>
   );
 }
 
 export default function NetworkPage() {
-  const [peers, setPeers] = useState<PeerInfo[]>(FALLBACK_PEERS);
-  const [loading, setLoading] = useState(false);
+  const [peers, setPeers] = useState<PeerInfo[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [updatedAt, setUpdatedAt] = useState<string | null>(null);
+  const [error, setError] = useState(false);
 
-  // TODO: Replace with real stats API when available
-  // useEffect(() => {
-  //   const refresh = async () => {
-  //     try {
-  //       const res = await fetch('/stats-api/api/peers');
-  //       const data = await res.json();
-  //       setPeers((data as PeerInfo[]).map(p => ({...p, online: true})));
-  //     } catch { /* keep fallback */ }
-  //   };
-  //   refresh();
-  //   const interval = setInterval(refresh, 30_000);
-  //   return () => clearInterval(interval);
-  // }, []);
+  useEffect(() => {
+    const refresh = async () => {
+      // Try production URL first, then dev
+      for (const url of [STATS_URL, DEV_STATS_URL]) {
+        try {
+          const res = await fetch(url, {signal: AbortSignal.timeout(5000)});
+          if (!res.ok) continue;
+          const data = (await res.json()) as StatsResponse;
+          setPeers(data.peers);
+          setUpdatedAt(data.updatedAt);
+          setLoading(false);
+          setError(false);
+          return;
+        } catch { /* try next */ }
+      }
+      setLoading(false);
+      setError(true);
+    };
+    refresh();
+    const interval = setInterval(refresh, 30_000);
+    return () => clearInterval(interval);
+  }, []);
 
   const allModels = useMemo(() => {
     const set = new Set<string>();
@@ -133,13 +100,17 @@ export default function NetworkPage() {
     return set;
   }, [peers]);
 
+  const updatedLabel = updatedAt
+    ? `Updated ${new Date(updatedAt).toLocaleTimeString()}`
+    : null;
+
   return (
     <Layout title="Network Status" description="Live AntSeed network status — active peers, available models, and network health.">
       <div className={styles.page}>
         <div className={styles.header}>
           <Link to="/" className={styles.back}>← Back</Link>
           <h1 className={styles.title}>Network Status</h1>
-          <p className={styles.subtitle}>Peer-to-peer network overview.</p>
+          <p className={styles.subtitle}>Live peer-to-peer network overview. Updates every 30 seconds.</p>
         </div>
 
         {/* Stats bar */}
@@ -157,9 +128,11 @@ export default function NetworkPage() {
           <div className={styles.stat}>
             <div className={styles.statLive}>
               <span className={styles.liveDot} />
-              Live
+              {error ? 'Offline' : 'Live'}
             </div>
-            <div className={styles.statLabel}>Static data</div>
+            <div className={styles.statLabel}>
+              {updatedLabel ?? (loading ? 'Connecting...' : 'Unable to reach stats server')}
+            </div>
           </div>
         </div>
 
@@ -179,7 +152,7 @@ export default function NetworkPage() {
           {loading ? (
             <div className={styles.loading}>Discovering peers...</div>
           ) : peers.length === 0 ? (
-            <div className={styles.loading}>No peers found</div>
+            <div className={styles.loading}>{error ? 'Could not reach the network stats server.' : 'No peers found'}</div>
           ) : (
             <div className={styles.peerGrid}>
               {peers.map(p => <PeerCard key={p.peerId} peer={p} />)}

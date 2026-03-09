@@ -3,13 +3,13 @@
 /* Light mode (default) — for docs, blog, network, all non-homepage pages */
 html[data-theme='light'],
 :root {
-  --ifm-color-primary: #1FD87A;
-  --ifm-color-primary-dark: #1FD87A;
+  --ifm-color-primary: #16a863;
+  --ifm-color-primary-dark: #139256;
   --ifm-color-primary-darker: #0f7d4d;
   --ifm-color-primary-darkest: #0b5c38;
-  --ifm-color-primary-light: #1ec478;
-  --ifm-color-primary-lighter: #28d485;
-  --ifm-color-primary-lightest: #1FD87A;
+  --ifm-color-primary-light: #1abe6e;
+  --ifm-color-primary-lighter: #1ec478;
+  --ifm-color-primary-lightest: #28d485;
 
   --ifm-navbar-height: 73px;
   --ifm-background-color: #f5f5f0;
@@ -96,7 +96,7 @@ nav.navbar {
   font-weight: 700;
   font-size: 18px;
   letter-spacing: -1px;
-  background: linear-gradient(to right, #0a0e14 0%, #0a0e14 42.86%, #1FD87A 42.86%, #1FD87A 100%);
+  background: linear-gradient(to right, #0a0e14 0%, #0a0e14 42.86%, var(--ifm-color-primary) 42.86%, var(--ifm-color-primary) 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -249,8 +249,8 @@ aside.theme-doc-sidebar-container {
 
 /* Active sidebar item — green bg + green text */
 .menu__link--active:not(.menu__link--sublist) {
-  background: rgba(61, 255, 162, 0.12);
-  color: #1FD87A;
+  background: rgba(22, 168, 99, 0.1);
+  color: var(--ifm-color-primary);
   font-weight: 500;
 }
 
@@ -326,7 +326,7 @@ aside.theme-doc-sidebar-container {
 .markdown h1::before {
   content: '# ';
   opacity: 0.3;
-  color: #1FD87A;
+  color: var(--ifm-color-primary);
 }
 
 .markdown h2 {
@@ -343,7 +343,7 @@ aside.theme-doc-sidebar-container {
 .markdown h2::before {
   content: '## ';
   opacity: 0.3;
-  color: #1FD87A;
+  color: var(--ifm-color-primary);
 }
 
 .markdown h3 {
@@ -358,7 +358,7 @@ aside.theme-doc-sidebar-container {
 .markdown h3::before {
   content: '### ';
   opacity: 0.3;
-  color: #1FD87A;
+  color: var(--ifm-color-primary);
 }
 
 .markdown p {
@@ -374,8 +374,8 @@ aside.theme-doc-sidebar-container {
 }
 
 .markdown code {
-  color: #1FD87A;
-  background: #e8f5ee;
+  color: var(--ifm-color-primary);
+  background: #ebebe9;
   font-size: 12px;
   padding: 2px 6px;
   border-radius: 4px;
@@ -419,7 +419,7 @@ div[class*='codeBlockTitle'] {
   font-size: 11px;
   letter-spacing: 1px;
   text-transform: uppercase;
-  color: #1FD87A;
+  color: var(--ifm-color-primary);
   background: #f5f5f0;
   border-bottom: 1px solid rgba(10, 14, 20, 0.08);
 }
@@ -447,7 +447,7 @@ html[data-theme='light'] .prism-code {
 }
 
 .pagination-nav__link:hover {
-  border-color: #1FD87A;
+  border-color: var(--ifm-color-primary);
 }
 
 .pagination-nav__sublabel {
@@ -462,7 +462,7 @@ html[data-theme='light'] .prism-code {
    Table of contents (right side — hidden)
    ============================================= */
 .table-of-contents__link--active {
-  color: #1FD87A;
+  color: var(--ifm-color-primary);
 }
 
 /* =============================================
@@ -544,7 +544,7 @@ html[data-theme='light'] .prism-code {
   color: #1a1a1a;
 }
 .blog-wrapper article header h2 a:hover {
-  color: #1FD87A;
+  color: var(--ifm-color-primary);
 }
 
 /* Blog sidebar */
@@ -559,13 +559,13 @@ html[data-theme='light'] .prism-code {
   color: #666;
 }
 .blog-wrapper a[class*='tag']:hover {
-  border-color: #1FD87A;
-  color: #1FD87A;
+  border-color: var(--ifm-color-primary);
+  color: var(--ifm-color-primary);
 }
 
 /* Blog post read more link */
 .blog-wrapper footer a b {
-  color: #1FD87A;
+  color: var(--ifm-color-primary);
 }
 
 /* Selection color for warm theme */

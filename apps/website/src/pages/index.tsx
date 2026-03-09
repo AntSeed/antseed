@@ -234,8 +234,8 @@ const FAQ_DATA = [
   {q:'Is it really private?', a:"Privacy works in two layers. Layer 1 — the base network: requests go peer-to-peer like a VPN, so the provider never knows who you are. No accounts, no identity, no IP exposed. Layer 2 — TEE providers: hardware enclaves (Intel TDX, AMD SEV) where not even the operator can see your prompts. Cryptographic proof, not a policy promise. Payments are settled on-chain — the money trail stays private too. TEE verification is coming in a future release."},
   {q:'What models are available?', a:"Any model a provider chooses to serve — open-weight models, specialized fine-tunes, uncensored models, and providers using their own API access to other platforms. Available models depend on what providers are online right now. Check the <a href='/network'>network page</a> for a live view."},
   {q:'How do I earn on AntSeed?', a:"Four ways: serve inference (run any model and earn per request — GPU, cloud, or your own API access), run specialized providers (deploy domain expertise as specialized chats or agents), operate agents (deploy always-on autonomous agents on the network), or provide API access (connect your existing API keys — no hardware needed). Everyone in the chain earns."},
-  {q:'Do I need an account or API key?', a:"No. Download AntStation, connect your wallet, and you're on the network. No sign-up, no API key, no credit card. Free community peers are available immediately."},
-  {q:'What is AntStation?', a:"AntStation is the desktop client for AntSeed. It gives you a chat interface, connects you to the P2P network, and handles model routing. For developers, the AntSeed CLI (@antseed/cli) exposes a local OpenAI-compatible endpoint so your existing tools (Claude Code, Aider, VS Code) can use the network too."},
+  {q:'Do I need an account or API key?', a:"No. Download AntStation, connect your wallet, and you're on the network. No sign-up, no API key, no credit card."},
+  {q:'What is AntStation?', a:"AntStation is the desktop client for AntSeed. It gives you a chat interface, connects you to the P2P network, and handles model routing. For developers, the AntSeed CLI (@antseed/cli) exposes a local OpenAI-compatible endpoint so your existing tools (Claude Code, Codex, VS Code) can use the network too."},
   {q:'How is this different from OpenRouter or other API aggregators?', a:"API aggregators are centralized intermediaries — they proxy your requests through their servers, require accounts, and can see your data. AntSeed is fully peer-to-peer: your traffic goes directly from you to the provider. No middleman, no logs, no single point of failure or control. Plus, providers can serve via their own API keys — something no aggregator allows."},
 ];
 
@@ -345,7 +345,7 @@ export default function Home(): JSX.Element {
           />
           <div className={styles.compatChips}>
             <span className={styles.compatChip}>Claude Code</span>
-            <span className={styles.compatChip}>Aider</span>
+            <span className={styles.compatChip}>Codex</span>
             <span className={styles.compatChip}>VS Code</span>
             <span className={styles.compatChip}>Any OpenAI client</span>
           </div>
@@ -441,7 +441,7 @@ export default function Home(): JSX.Element {
           </div>
           <div className={styles.compatItem}>
             <div className={styles.compatIcon}><svg viewBox="0 0 24 24" fill="none" stroke="#1a1a1a" strokeWidth="1.5" strokeLinecap="round"><path d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2v-4M9 21H5a2 2 0 01-2-2v-4m0 0h18"/></svg></div>
-            <span className={styles.compatName}>Aider</span>
+            <span className={styles.compatName}>Codex</span>
           </div>
           <div className={styles.compatItem}>
             <div className={styles.compatIcon}><svg viewBox="0 0 24 24" fill="none" stroke="#1a1a1a" strokeWidth="1.5" strokeLinecap="round"><path d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg></div>

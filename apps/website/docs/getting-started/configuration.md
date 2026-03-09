@@ -48,7 +48,7 @@ Connected to P2P network
 Proxy listening on http://localhost:8377
 ```
 
-The buyer proxy listens on `localhost:8377` by default. Your existing tools (Claude Code, Aider, etc.) point to this proxy instead of the upstream API. The router handles peer selection and failover transparently.
+The buyer proxy listens on `localhost:8377` by default. Your existing tools (Claude Code, Codex, etc.) point to this proxy instead of the upstream API. The router handles peer selection and failover transparently.
 
 ## Configuration File
 

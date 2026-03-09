@@ -21,7 +21,7 @@ Centralized AI chat products are closed platforms built on top of a single provi
 
 The key difference: your requests don't go through a single company. They route peer-to-peer to whichever provider best matches your requirements for price, latency, privacy, and capability.
 
-Your existing tools — [Claude Code](https://claude.ai/code), [Aider](https://aider.chat), or any OpenAI-compatible client — connect and work immediately without modification.
+Your existing tools — [Claude Code](https://claude.ai/code), [Codex](https://github.com/openai/codex), or any OpenAI-compatible client — connect and work immediately without modification.
 
 ### Is AntSeed open source?
 
@@ -82,13 +82,13 @@ No account required. Install the CLI, run `antseed connect`, and you are live on
 ### How do I install AntSeed?
 
 ```bash
-npm install -g antseed
-antseed connect
+npm install -g @antseed/cli
+antseed connect --router local
 ```
 
 That's it. See the [installation guide](/docs/install) for full details.
 
-### Does it work with Claude Code, Aider, or other AI tools?
+### Does it work with Claude Code, Codex, or other AI tools?
 
 Yes. AntSeed is OpenAI API-compatible. Point your tool at the AntSeed endpoint and it works without any other changes — no code modifications needed.
 
@@ -118,4 +118,4 @@ Payment settlement is handled on-chain through the AntSeed smart contracts. Paym
 
 ## Still have questions?
 
-Join the community on [Telegram](https://t.me/antseedai) or open an issue on [GitHub](https://github.com/AntSeed/antseed).
+Join the community on [Telegram](https://t.me/antseed) or open an issue on [GitHub](https://github.com/AntSeed/antseed).
