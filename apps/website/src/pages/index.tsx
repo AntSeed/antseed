@@ -1,4 +1,4 @@
-import {useEffect, useRef, useState, useMemo} from 'react';
+import {useCallback, useEffect, useRef, useState, useMemo} from 'react';
 import BrowserOnly from '@docusaurus/BrowserOnly';
 import Link from '@docusaurus/Link';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
@@ -270,7 +270,14 @@ function FAQSection() {
 export default function Home(): JSX.Element {
   const {siteConfig} = useDocusaurusContext();
   const [email, setEmail] = useState('');
+  const [subscribed, setSubscribed] = useState(false);
   const {dmgUrl} = useLatestRelease();
+
+  const handleSubscribe = useCallback(() => {
+    if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return;
+    setSubscribed(true);
+    setEmail('');
+  }, [email]);
 
   return (
     <Layout
@@ -465,10 +472,14 @@ export default function Home(): JSX.Element {
           <div className={styles.bottomCard}>
             <h3>Stay in the loop</h3>
             <p>Get updates on new features, platform launches, network milestones, and everything AntSeed.</p>
-            <div className={styles.waitlistForm}>
-              <input type="email" className={styles.waitlistInput} placeholder="your@email.com" value={email} onChange={e=>setEmail(e.target.value)}/>
-              <button className={styles.waitlistBtn}>Subscribe</button>
-            </div>
+            {subscribed ? (
+              <p className={styles.waitlistSuccess}>Thanks! We'll be in touch.</p>
+            ) : (
+              <div className={styles.waitlistForm}>
+                <input type="email" className={styles.waitlistInput} placeholder="your@email.com" value={email} onChange={e=>setEmail(e.target.value)} onKeyDown={e=>{ if (e.key==='Enter') handleSubscribe(); }}/>
+                <button className={styles.waitlistBtn} onClick={handleSubscribe}>Subscribe</button>
+              </div>
+            )}
           </div>
         </div>
       </section>

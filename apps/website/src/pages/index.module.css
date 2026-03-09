@@ -372,6 +372,8 @@
   font-family: 'Space Grotesk', sans-serif;
 }
 
+.waitlistSuccess { color: #1FD87A; font-weight: 600; font-size: 15px; margin: 0; }
+
 /* ---- FAQ ---- */
 .faq { padding: 60px 60px 80px; width: 100%; max-width: 800px; margin: 0 auto; }
 .faqTitle { font-size: clamp(28px, 3.5vw, 40px); font-weight: 700; letter-spacing: -1.5px; margin-bottom: 32px; text-align: center; }
