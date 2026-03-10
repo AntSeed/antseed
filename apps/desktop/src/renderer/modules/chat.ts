@@ -656,6 +656,7 @@ export function initChatModule({
     if (options.length === 0) {
       uiState.chatModelOptions = [];
       uiState.chatSelectedModelValue = '';
+      uiState.chatModelUnavailableNotice = null;
       lastModelOptionsSignature = '';
       notifyUiStateChanged();
       return;
@@ -919,6 +920,7 @@ export function initChatModule({
         if (preferredValue) {
           uiState.chatSelectedModelValue = preferredValue;
         }
+        uiState.chatModelUnavailableNotice = null;
 
         updateThreadMeta(conv);
         uiState.chatError = null;
@@ -941,6 +943,7 @@ export function initChatModule({
     uiState.chatSendDisabled = false;
     uiState.chatConversationTitle = 'New Chat';
     uiState.chatError = null;
+    uiState.chatModelUnavailableNotice = null;
     updateThreadMeta(null);
     notifyUiStateChanged();
   }
