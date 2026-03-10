@@ -69,6 +69,7 @@ export type ChatModuleApi = {
   handleModelChange: (value: string) => void;
   handleModelFocus: () => void;
   handleModelBlur: () => void;
+  clearModelUnavailableNotice: () => void;
 };
 
 export function initChatModule({
@@ -607,24 +608,47 @@ export function initChatModule({
       value: encodeChatModelSelection(entry.id, entry.provider),
     }));
 
-    const preferred =
-      findMatchingChatModelOptionValue(
-        optionCandidates,
-        currentSelection.id,
-        currentSelection.provider,
-      ) ??
-      findMatchingChatModelOptionValue(
-        optionCandidates,
-        activeConversationModel,
-        activeConversationProvider,
-      ) ??
-      optionCandidates[0]?.value ??
-      '';
+    // Try to keep the user's current selection. Only fall back to the
+    // conversation model or the first option when there is no prior user
+    // selection at all (i.e. the value field is empty).
+    const currentMatchedValue = findMatchingChatModelOptionValue(
+      optionCandidates,
+      currentSelection.id,
+      currentSelection.provider,
+    );
+
+    const hasExistingUserSelection = currentSelection.id.length > 0;
+
+    let preferred: string;
+    let unavailableNotice: string | null = null;
+
+    if (currentMatchedValue !== null) {
+      // Current selection is still available — use it.
+      preferred = currentMatchedValue;
+    } else if (hasExistingUserSelection) {
+      // The user had a model selected but it is no longer in the option list.
+      // Keep the stored value so the dropdown label still shows the model name,
+      // but surface a notice so the user knows to pick a different one.
+      preferred = uiState.chatSelectedModelValue;
+      const currentLabel = currentSelection.id;
+      unavailableNotice = `"${currentLabel}" is unavailable. Please select a different model.`;
+    } else {
+      // No prior user selection — fall back to conversation model or first option.
+      preferred =
+        findMatchingChatModelOptionValue(
+          optionCandidates,
+          activeConversationModel,
+          activeConversationProvider,
+        ) ??
+        optionCandidates[0]?.value ??
+        '';
+    }
 
     const nextSignature = computeModelOptionsSignature(options);
     if (
       nextSignature === lastModelOptionsSignature &&
-      uiState.chatSelectedModelValue === preferred
+      uiState.chatSelectedModelValue === preferred &&
+      uiState.chatModelUnavailableNotice === unavailableNotice
     ) {
       return;
     }
@@ -647,6 +671,7 @@ export function initChatModule({
     }));
 
     uiState.chatSelectedModelValue = preferred;
+    uiState.chatModelUnavailableNotice = unavailableNotice;
     lastModelOptionsSignature = nextSignature;
     notifyUiStateChanged();
   }
@@ -1158,7 +1183,14 @@ export function initChatModule({
 
   function handleModelChange(value: string): void {
     uiState.chatSelectedModelValue = value;
+    uiState.chatModelUnavailableNotice = null;
     pendingModelOptions = null;
+    notifyUiStateChanged();
+  }
+
+  function clearModelUnavailableNotice(): void {
+    if (uiState.chatModelUnavailableNotice === null) return;
+    uiState.chatModelUnavailableNotice = null;
     notifyUiStateChanged();
   }
 
@@ -1735,5 +1767,6 @@ export function initChatModule({
     handleModelChange,
     handleModelFocus,
     handleModelBlur,
+    clearModelUnavailableNotice,
   };
 }

@@ -19,6 +19,7 @@ export type AppActions = {
   handleModelChange: (value: string) => void;
   handleModelFocus: () => void;
   handleModelBlur: () => void;
+  clearModelUnavailableNotice: () => void;
   refreshPlugins: () => Promise<void>;
   installPlugin: () => Promise<void>;
 };

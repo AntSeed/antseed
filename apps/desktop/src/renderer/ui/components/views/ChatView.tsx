@@ -174,6 +174,19 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
         </div>
       </div>
 
+      {snap.chatModelUnavailableNotice && (
+        <div className={styles.modelNotice}>
+          <span>{snap.chatModelUnavailableNotice}</span>
+          <button
+            className={styles.modelNoticeClose}
+            onClick={() => actions.clearModelUnavailableNotice()}
+            aria-label="Dismiss"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
       {showWelcome && (
         <button
           className={styles.chatExternalHint}

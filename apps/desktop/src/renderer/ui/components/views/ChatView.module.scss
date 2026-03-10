@@ -42,6 +42,43 @@
 }
 
 /* ===================================================================
+   Model unavailable notice
+   =================================================================== */
+
+.model-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: rgba(var(--tone-warn-rgb, 200, 140, 20), 0.12);
+  border-bottom: 1px solid rgba(var(--tone-warn-rgb, 200, 140, 20), 0.25);
+  font-size: 12px;
+  color: var(--tone-warn, #b8860b);
+
+  span {
+    flex: 1;
+  }
+}
+
+.model-notice-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--text-muted);
+  padding: 0 2px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  &:hover {
+    color: var(--text-primary);
+  }
+}
+
+/* ===================================================================
    Chat layout
    =================================================================== */
 
