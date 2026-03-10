@@ -6,7 +6,6 @@
  */
 
 import { writeFile, readFile, mkdir } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
@@ -15,7 +14,6 @@ import {
   DEFAULT_DHT_CONFIG,
   topicToInfoHash,
   HttpMetadataResolver,
-  mergeBootstrapNodes,
   OFFICIAL_BOOTSTRAP_NODES,
   toBootstrapConfig,
 } from '@antseed/node/discovery';
@@ -75,7 +73,7 @@ export class NetworkPoller {
     const dht = new DHTNode({
       ...DEFAULT_DHT_CONFIG,
       port: 0, // OS-assigned, ephemeral
-      bootstrapNodes: toBootstrapConfig(mergeBootstrapNodes(OFFICIAL_BOOTSTRAP_NODES, [])),
+      bootstrapNodes: toBootstrapConfig(OFFICIAL_BOOTSTRAP_NODES),
       peerId,
     });
 
@@ -114,13 +112,11 @@ export class NetworkPoller {
 
   private async loadCache(): Promise<void> {
     try {
-      if (existsSync(this.cachePath)) {
-        const raw = await readFile(this.cachePath, 'utf8');
-        this.snapshot = JSON.parse(raw) as NetworkSnapshot;
-        console.log('[network-stats] loaded cache from disk');
-      }
+      const raw = await readFile(this.cachePath, 'utf8');
+      this.snapshot = JSON.parse(raw) as NetworkSnapshot;
+      console.log('[network-stats] loaded cache from disk');
     } catch {
-      // stale or missing cache — start fresh
+      // file missing or stale — start fresh
     }
   }
 

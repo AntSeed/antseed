@@ -9,7 +9,7 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { writeFile, mkdir } from 'node:fs/promises';
 
@@ -47,7 +47,7 @@ describe('NetworkPoller', () => {
 
   it('loads snapshot from existing cache file on start', async () => {
     const cachePath = tmpCache();
-    await mkdir(join(tmpdir(), cachePath.split('/').slice(-2, -1)[0]!), { recursive: true });
+    await mkdir(dirname(cachePath), { recursive: true });
 
     const peer = fakePeer('peer-1', ['gpt-4o', 'claude-sonnet']);
     const saved = { peers: [peer], updatedAt: '2026-01-01T00:00:00.000Z' };

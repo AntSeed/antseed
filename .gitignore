@@ -31,3 +31,4 @@ coverage/
 # Electron builder output
 release/
 cli-dist/
+.deployments/
