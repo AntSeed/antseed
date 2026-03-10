@@ -299,7 +299,7 @@ describe('transformOpenAIResponsesRequestToOpenAIChat', () => {
     expect(messages[2]).toEqual({ role: 'user', content: 'How are you?' });
   });
 
-  it('preserves stream flag', () => {
+  it('records streamRequested but always sends stream: false to upstream', () => {
     const request = makeResponsesRequest({
       body: new TextEncoder().encode(JSON.stringify({
         model: 'gpt-4.1',
@@ -311,7 +311,7 @@ describe('transformOpenAIResponsesRequestToOpenAIChat', () => {
     expect(result!.streamRequested).toBe(true);
 
     const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
-    expect(body.stream).toBe(true);
+    expect(body.stream).toBe(false);
   });
 
   it('converts Responses API flat tools to Chat Completions nested format', () => {
@@ -331,6 +331,20 @@ describe('transformOpenAIResponsesRequestToOpenAIChat', () => {
       function: { name: 'search', description: 'Search the web', parameters: { type: 'object' } },
     }]);
     expect(body.tool_choice).toBe('auto');
+  });
+
+  it('remaps object tool_choice to Chat Completions nested format', () => {
+    const request = makeResponsesRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-4.1',
+        input: 'test',
+        tools: [{ type: 'function', name: 'search', parameters: { type: 'object' } }],
+        tool_choice: { type: 'function', name: 'search' },
+      })),
+    });
+    const result = transformOpenAIResponsesRequestToOpenAIChat(request);
+    const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
+    expect(body.tool_choice).toEqual({ type: 'function', function: { name: 'search' } });
   });
 
   it('returns null for non-responses path', () => {
@@ -385,6 +399,7 @@ describe('transformOpenAIChatResponseToOpenAIResponses', () => {
     expect(functionCall).toBeDefined();
     expect(functionCall!.name).toBe('write');
     expect(functionCall!.id).toBe('call_123');
+    expect(functionCall!.call_id).toBe('call_123');
     expect(functionCall!.arguments).toBe('{"path":"hello.txt"}');
   });
 

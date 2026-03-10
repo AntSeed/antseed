@@ -731,7 +731,7 @@ export function transformOpenAIResponsesRequestToOpenAIChat(
   const transformedBody: Record<string, unknown> = {
     ...(requestedModel ? { model: requestedModel } : {}),
     messages,
-    stream: streamRequested,
+    stream: false,
     // TODO: forward store from the Responses request once our client supports it
     store: false,
   };
@@ -749,7 +749,17 @@ export function transformOpenAIResponsesRequestToOpenAIChat(
     transformedBody.tools = convertResponsesToolsToChatTools(body.tools);
   }
   if (body.tool_choice !== undefined) {
-    transformedBody.tool_choice = body.tool_choice;
+    const tc = body.tool_choice;
+    if (tc && typeof tc === 'object' && !Array.isArray(tc)) {
+      const tcObj = tc as Record<string, unknown>;
+      if (tcObj.type === 'function' && typeof tcObj.name === 'string') {
+        transformedBody.tool_choice = { type: 'function', function: { name: tcObj.name } };
+      } else {
+        transformedBody.tool_choice = tc;
+      }
+    } else {
+      transformedBody.tool_choice = tc;
+    }
   }
   if (body.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata)) {
     transformedBody.metadata = body.metadata;
@@ -807,9 +817,11 @@ export function transformOpenAIChatResponseToOpenAIResponses(
     const functionPayload = toolCall.function && typeof toolCall.function === 'object'
       ? (toolCall.function as Record<string, unknown>)
       : {};
+    const callId = typeof toolCall.id === 'string' ? toolCall.id : '';
     outputItems.push({
       type: 'function_call',
-      id: typeof toolCall.id === 'string' ? toolCall.id : '',
+      id: callId,
+      call_id: callId,
       name: typeof functionPayload.name === 'string' ? functionPayload.name : '',
       arguments: typeof functionPayload.arguments === 'string' ? functionPayload.arguments : '{}',
     });
