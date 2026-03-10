@@ -40,8 +40,11 @@ export {
   selectTargetProtocolForRequest,
   transformAnthropicMessagesRequestToOpenAIChat,
   transformOpenAIChatResponseToAnthropicMessage,
+  transformOpenAIResponsesRequestToOpenAIChat,
+  transformOpenAIChatResponseToOpenAIResponses,
   type TargetProtocolSelection,
   type AnthropicToOpenAIRequestTransformResult,
+  type ResponsesToOpenAIRequestTransformResult,
 } from './proxy/model-api-adapter.js';
 export { DefaultRouter, type DefaultRouterConfig } from './routing/default-router.js';
 

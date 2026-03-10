@@ -2,6 +2,7 @@ export const WELL_KNOWN_MODEL_API_PROTOCOLS = [
   'anthropic-messages',
   'openai-chat-completions',
   'openai-completions',
+  'openai-responses',
 ] as const;
 
 export type ModelApiProtocol = (typeof WELL_KNOWN_MODEL_API_PROTOCOLS)[number];
