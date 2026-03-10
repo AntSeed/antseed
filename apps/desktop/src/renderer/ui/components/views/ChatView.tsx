@@ -109,21 +109,6 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     actions.sendMessage(text, attachedImage?.base64, attachedImage?.mimeType);
   }, [inputValue, attachedImage, actions]);
 
-  const handleImageAttach = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result as string;
-      const [header, base64] = dataUrl.split(',');
-      const mimeType = header.replace('data:', '').replace(';base64', '');
-      setAttachedImage({ base64, mimeType, previewUrl: dataUrl });
-    };
-    reader.readAsDataURL(file);
-    // Reset so the same file can be re-attached
-    e.target.value = '';
-  }, []);
-
   const handleRemoveImage = useCallback(() => {
     setAttachedImage(null);
     if (inputRef.current) inputRef.current.focus();
@@ -141,6 +126,14 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     reader.readAsDataURL(file);
   }, []);
 
+  const handleImageAttach = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    attachImageFile(file);
+    // Reset so the same file can be re-attached
+    e.target.value = '';
+  }, [attachImageFile]);
+
   const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
@@ -148,7 +141,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   }, []);
 
   const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
     setIsDragOver(false);
   }, []);
 
