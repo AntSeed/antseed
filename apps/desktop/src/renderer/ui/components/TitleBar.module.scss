@@ -15,41 +15,8 @@
     padding-left: 80px;
   }
 
-  :global(body.platform-macos) &::before,
-  :global(body.platform-macos) &::after {
-    content: '';
-    position: absolute;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 11.5px;
-    height: 11.5px;
-    border-radius: 50%;
-    background: rgba(0, 0, 0, 0.06);
-    pointer-events: none;
-  }
-
-  :global(body.platform-macos) &::before {
-    left: 13px;
-    top: 16px;
-    transform: none;
-    box-shadow: 18.5px 0 0 rgba(0, 0, 0, 0.06), 36.5px 0 0 rgba(0, 0, 0, 0.06);
-  }
-
-  :global(body.platform-macos) &::after {
-    display: none;
-  }
-
-  :global(body.dark-theme.platform-macos) &::before {
-    background: rgba(255, 255, 255, 0.08);
-    box-shadow: 18.5px 0 0 rgba(255, 255, 255, 0.08), 36.5px 0 0 rgba(255, 255, 255, 0.08);
-  }
-
   :global(body.platform-fullscreen) & {
     padding-left: 16px;
-  }
-
-  :global(body.platform-fullscreen) &::before {
-    display: none;
   }
 }
 
