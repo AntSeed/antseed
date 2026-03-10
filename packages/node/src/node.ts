@@ -718,6 +718,10 @@ export class AntseedNode extends EventEmitter {
 
     conn.on("stateChange", (state: ConnectionState) => {
       if (state === ConnectionState.Closed || state === ConnectionState.Failed) {
+        // Guard against stale close events: if a reconnect arrived before this
+        // connection finished closing, a new decoder will have been registered.
+        // Wiping the maps would evict the live session, so bail out early.
+        if (this._decoders.get(peerId) !== decoder) return;
         // Flush any in-progress chunked uploads so buffers are not leaked
         this._muxes.get(peerId)?.abortPendingUploads();
         this._muxes.delete(peerId);
