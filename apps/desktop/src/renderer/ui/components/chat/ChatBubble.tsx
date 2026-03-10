@@ -490,21 +490,17 @@ export function ChatBubble({ message, streaming = false, searchQuery = '' }: Cha
     }
 
     if (Array.isArray(message.content)) {
-      if (searchQuery) {
-        // Highlight text blocks inline; fall back to normal render for other block types
-        return (message.content as ContentBlock[]).map((block, index) => {
-          if (block.type === 'text' && typeof block.text === 'string') {
-            const blockKey = getBlockRenderKey(block, index, messagePrefix);
-            return (
-              <div key={blockKey} className="chat-bubble-content">
-                <HighlightedText text={block.text} query={searchQuery} highlightClass={styles.searchHighlight} />
-              </div>
-            );
-          }
-          return renderBlock(block, index, streaming, messagePrefix);
-        });
-      }
-      return (message.content as ContentBlock[]).map((block, index) => renderBlock(block, index, streaming, messagePrefix));
+      return (message.content as ContentBlock[]).map((block, index) => {
+        if (searchQuery && block.type === 'text' && typeof block.text === 'string') {
+          const blockKey = getBlockRenderKey(block, index, messagePrefix);
+          return (
+            <div key={blockKey} className="chat-bubble-content">
+              <HighlightedText text={block.text} query={searchQuery} highlightClass={styles.searchHighlight} />
+            </div>
+          );
+        }
+        return renderBlock(block, index, streaming, messagePrefix);
+      });
     }
 
     return <div className="chat-bubble-content">{JSON.stringify(message.content)}</div>;
