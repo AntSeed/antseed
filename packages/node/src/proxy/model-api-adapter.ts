@@ -45,6 +45,12 @@ function toStringContent(value: unknown): string {
         if ((block.type === 'text' || block.type === 'input_text') && typeof block.text === 'string') {
           return block.text;
         }
+        if (block.type === 'output_text' && typeof block.text === 'string') {
+          return block.text;
+        }
+        if (block.type === 'refusal' && typeof block.refusal === 'string') {
+          return block.refusal;
+        }
         if (block.type === 'tool_result') {
           return toStringContent(block.content);
         }
@@ -61,6 +67,12 @@ function toStringContent(value: unknown): string {
     const block = value as Record<string, unknown>;
     if ((block.type === 'text' || block.type === 'input_text') && typeof block.text === 'string') {
       return block.text;
+    }
+    if (block.type === 'output_text' && typeof block.text === 'string') {
+      return block.text;
+    }
+    if (block.type === 'refusal' && typeof block.refusal === 'string') {
+      return block.refusal;
     }
     if (block.type === 'tool_result') {
       return toStringContent(block.content);
@@ -627,6 +639,46 @@ export interface ResponsesToOpenAIRequestTransformResult {
   requestedModel: string | null;
 }
 
+interface OpenAIResponsesOutputMessage {
+  type: 'message';
+  id: string;
+  role: 'assistant';
+  status: 'completed';
+  content: Array<{
+    type: 'output_text';
+    text: string;
+    annotations: unknown[];
+  }>;
+}
+
+interface OpenAIResponsesOutputFunctionCall {
+  type: 'function_call';
+  id: string;
+  call_id: string;
+  name: string;
+  arguments: string;
+  status: 'completed';
+}
+
+type OpenAIResponsesOutputItem =
+  | OpenAIResponsesOutputMessage
+  | OpenAIResponsesOutputFunctionCall;
+
+interface OpenAIResponsesBody {
+  id: string;
+  object: 'response';
+  model: string;
+  status: 'completed';
+  created_at: number;
+  output: OpenAIResponsesOutputItem[];
+  output_text: string;
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+    total_tokens: number;
+  };
+}
+
 function convertResponsesToolsToChatTools(tools: unknown[]): unknown[] {
   const out: unknown[] = [];
   for (const toolRaw of tools) {
@@ -732,8 +784,6 @@ export function transformOpenAIResponsesRequestToOpenAIChat(
     ...(requestedModel ? { model: requestedModel } : {}),
     messages,
     stream: false,
-    // TODO: forward store from the Responses request once our client supports it
-    store: false,
   };
 
   if (typeof body.max_output_tokens === 'number') {
@@ -777,19 +827,11 @@ export function transformOpenAIResponsesRequestToOpenAIChat(
   };
 }
 
-export function transformOpenAIChatResponseToOpenAIResponses(
+function buildOpenAIResponsesBody(
   response: SerializedHttpResponse,
-  options: { fallbackModel?: string | null; streamRequested?: boolean },
-): SerializedHttpResponse {
-  const parsed = parseJsonObject(response.body);
-  if (!parsed) {
-    return response;
-  }
-
-  if (response.statusCode >= 400) {
-    return response;
-  }
-
+  parsed: Record<string, unknown>,
+  options: { fallbackModel?: string | null },
+): OpenAIResponsesBody {
   const choices = Array.isArray(parsed.choices) ? parsed.choices : [];
   const firstChoice = choices[0] && typeof choices[0] === 'object'
     ? (choices[0] as Record<string, unknown>)
@@ -798,18 +840,24 @@ export function transformOpenAIChatResponseToOpenAIResponses(
     ? (firstChoice.message as Record<string, unknown>)
     : null;
 
-  const outputItems: unknown[] = [];
+  const outputItems: OpenAIResponsesOutputItem[] = [];
   const textContent = toStringContent(message?.content);
   if (textContent.length > 0) {
     outputItems.push({
       type: 'message',
+      id: `${typeof parsed.id === 'string' && parsed.id.length > 0 ? parsed.id : `resp_${response.requestId}`}_msg_1`,
       role: 'assistant',
-      content: [{ type: 'output_text', text: textContent }],
+      status: 'completed',
+      content: [{
+        type: 'output_text',
+        text: textContent,
+        annotations: [],
+      }],
     });
   }
 
   const toolCalls = Array.isArray(message?.tool_calls) ? message.tool_calls : [];
-  for (const toolCallRaw of toolCalls) {
+  for (const [index, toolCallRaw] of toolCalls.entries()) {
     if (!toolCallRaw || typeof toolCallRaw !== 'object') {
       continue;
     }
@@ -817,13 +865,16 @@ export function transformOpenAIChatResponseToOpenAIResponses(
     const functionPayload = toolCall.function && typeof toolCall.function === 'object'
       ? (toolCall.function as Record<string, unknown>)
       : {};
-    const callId = typeof toolCall.id === 'string' ? toolCall.id : '';
+    const callId = typeof toolCall.id === 'string' && toolCall.id.length > 0
+      ? toolCall.id
+      : `call_${index + 1}`;
     outputItems.push({
       type: 'function_call',
       id: callId,
       call_id: callId,
       name: typeof functionPayload.name === 'string' ? functionPayload.name : '',
       arguments: typeof functionPayload.arguments === 'string' ? functionPayload.arguments : '{}',
+      status: 'completed',
     });
   }
 
@@ -838,7 +889,7 @@ export function transformOpenAIChatResponseToOpenAIResponses(
     ? parsed.model
     : (options.fallbackModel ?? 'unknown');
 
-  const responsesBody = {
+  return {
     id,
     object: 'response',
     model,
@@ -852,6 +903,121 @@ export function transformOpenAIChatResponseToOpenAIResponses(
       total_tokens: inputTokens + outputTokens,
     },
   };
+}
+
+function buildOpenAIResponsesStream(body: OpenAIResponsesBody): Uint8Array {
+  const sseEvents: string[] = [];
+  let sequenceNumber = 0;
+  const pushEvent = (event: string, data: Record<string, unknown>) => {
+    sseEvents.push(
+      `event: ${event}\ndata: ${JSON.stringify({ type: event, sequence_number: sequenceNumber++, ...data })}\n\n`,
+    );
+  };
+
+  pushEvent('response.created', {
+    response: {
+      ...body,
+      status: 'in_progress',
+      output: [],
+      output_text: '',
+    },
+  });
+
+  for (const [outputIndex, outputItem] of body.output.entries()) {
+    if (outputItem.type === 'message') {
+      const pendingItem = {
+        ...outputItem,
+        status: 'in_progress',
+        content: outputItem.content.map((part) => ({ ...part, text: '' })),
+      };
+      pushEvent('response.output_item.added', {
+        output_index: outputIndex,
+        item: pendingItem,
+      });
+
+      for (const [contentIndex, part] of outputItem.content.entries()) {
+        const pendingPart = { ...part, text: '' };
+        pushEvent('response.content_part.added', {
+          output_index: outputIndex,
+          item_id: outputItem.id,
+          content_index: contentIndex,
+          part: pendingPart,
+        });
+        pushEvent('response.output_text.delta', {
+          output_index: outputIndex,
+          item_id: outputItem.id,
+          content_index: contentIndex,
+          delta: part.text,
+          logprobs: [],
+        });
+        pushEvent('response.output_text.done', {
+          output_index: outputIndex,
+          item_id: outputItem.id,
+          content_index: contentIndex,
+          text: part.text,
+          logprobs: [],
+        });
+        pushEvent('response.content_part.done', {
+          output_index: outputIndex,
+          item_id: outputItem.id,
+          content_index: contentIndex,
+          part,
+        });
+      }
+
+      pushEvent('response.output_item.done', {
+        output_index: outputIndex,
+        item: outputItem,
+      });
+      continue;
+    }
+
+    const pendingItem = {
+      ...outputItem,
+      status: 'in_progress',
+      arguments: '',
+    };
+    pushEvent('response.output_item.added', {
+      output_index: outputIndex,
+      item: pendingItem,
+    });
+    pushEvent('response.function_call_arguments.delta', {
+      output_index: outputIndex,
+      item_id: outputItem.id,
+      delta: outputItem.arguments,
+    });
+    pushEvent('response.function_call_arguments.done', {
+      output_index: outputIndex,
+      item_id: outputItem.id,
+      name: outputItem.name,
+      arguments: outputItem.arguments,
+    });
+    pushEvent('response.output_item.done', {
+      output_index: outputIndex,
+      item: outputItem,
+    });
+  }
+
+  pushEvent('response.completed', { response: body });
+  sseEvents.push('data: [DONE]\n\n');
+
+  return new TextEncoder().encode(sseEvents.join(''));
+}
+
+export function transformOpenAIChatResponseToOpenAIResponses(
+  response: SerializedHttpResponse,
+  options: { fallbackModel?: string | null; streamRequested?: boolean },
+): SerializedHttpResponse {
+  const parsed = parseJsonObject(response.body);
+  if (!parsed) {
+    return response;
+  }
+
+  if (response.statusCode >= 400) {
+    return response;
+  }
+
+  const responsesBody = buildOpenAIResponsesBody(response, parsed, options);
 
   if (!options.streamRequested) {
     return {
@@ -861,44 +1027,9 @@ export function transformOpenAIChatResponseToOpenAIResponses(
     };
   }
 
-  // Build SSE stream matching OpenAI Responses API streaming format
-  const sseEvents: string[] = [];
-  const sse = (event: string, data: unknown) => {
-    sseEvents.push(`event: ${event}\ndata: ${JSON.stringify(data)}\n`);
-  };
-
-  sse('response.created', responsesBody);
-
-  let outputIndex = 0;
-  for (const item of outputItems) {
-    const outputItem = item as Record<string, unknown>;
-    sse('response.output_item.added', { output_index: outputIndex, item: outputItem });
-
-    if (outputItem.type === 'message') {
-      const contentArr = outputItem.content as Array<Record<string, unknown>>;
-      for (let ci = 0; ci < contentArr.length; ci++) {
-        const part = contentArr[ci]!;
-        sse('response.content_part.added', { output_index: outputIndex, content_index: ci, part });
-        if (part.type === 'output_text') {
-          sse('response.output_text.delta', { output_index: outputIndex, content_index: ci, delta: part.text });
-          sse('response.output_text.done', { output_index: outputIndex, content_index: ci, text: part.text });
-        }
-        sse('response.content_part.done', { output_index: outputIndex, content_index: ci, part });
-      }
-    } else if (outputItem.type === 'function_call') {
-      sse('response.function_call_arguments.delta', { output_index: outputIndex, delta: outputItem.arguments });
-      sse('response.function_call_arguments.done', { output_index: outputIndex, arguments: outputItem.arguments });
-    }
-
-    sse('response.output_item.done', { output_index: outputIndex, item: outputItem });
-    outputIndex++;
-  }
-
-  sse('response.completed', responsesBody);
-
   return {
     ...response,
-    headers: { ...response.headers, 'content-type': 'text/event-stream' },
-    body: new TextEncoder().encode(sseEvents.join('\n')),
+    headers: { ...response.headers, 'content-type': 'text/event-stream', 'cache-control': 'no-cache' },
+    body: buildOpenAIResponsesStream(responsesBody),
   };
 }

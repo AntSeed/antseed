@@ -85,6 +85,22 @@ function makeOpenAIResponse(overrides?: Partial<SerializedHttpResponse>): Serial
   };
 }
 
+function parseSseEvents(sseText: string): Array<{ event: string | null; data: string }> {
+  return sseText
+    .trim()
+    .split('\n\n')
+    .filter((chunk) => chunk.length > 0)
+    .map((chunk) => {
+      const lines = chunk.split('\n');
+      const eventLine = lines.find((line) => line.startsWith('event: ')) ?? null;
+      const dataLine = lines.find((line) => line.startsWith('data: ')) ?? 'data: ';
+      return {
+        event: eventLine ? eventLine.slice('event: '.length) : null,
+        data: dataLine.slice('data: '.length),
+      };
+    });
+}
+
 describe('detectRequestModelApiProtocol', () => {
   it('detects anthropic messages from path', () => {
     expect(detectRequestModelApiProtocol(makeRequest())).toBe('anthropic-messages');
@@ -270,7 +286,7 @@ describe('transformOpenAIResponsesRequestToOpenAIChat', () => {
     expect(body.model).toBe('gpt-4.1');
     expect(body.max_tokens).toBe(100);
     expect(body.temperature).toBe(0.5);
-    expect(body.store).toBe(false);
+    expect(body.store).toBeUndefined();
 
     const messages = body.messages as Array<Record<string, unknown>>;
     expect(messages[0]).toEqual({ role: 'system', content: 'Answer concisely' });
@@ -394,7 +410,16 @@ describe('transformOpenAIChatResponseToOpenAIResponses', () => {
     const output = body.output as Array<Record<string, unknown>>;
     expect(output).toHaveLength(1);
     expect(output[0].type).toBe('message');
+    expect(output[0].id).toBe('chatcmpl-abc_msg_1');
     expect(output[0].role).toBe('assistant');
+    expect(output[0].status).toBe('completed');
+
+    const content = output[0].content as Array<Record<string, unknown>>;
+    expect(content[0]).toEqual({
+      type: 'output_text',
+      text: 'Paris is the capital of France.',
+      annotations: [],
+    });
 
     const usage = body.usage as Record<string, unknown>;
     expect(usage.input_tokens).toBe(15);
@@ -455,10 +480,100 @@ describe('transformOpenAIChatResponseToOpenAIResponses', () => {
       streamRequested: true,
     });
     expect(result.headers['content-type']).toBe('text/event-stream');
+    expect(result.headers['cache-control']).toBe('no-cache');
     const sseText = new TextDecoder().decode(result.body);
-    expect(sseText).toContain('event: response.created');
-    expect(sseText).toContain('event: response.output_text.delta');
-    expect(sseText).toContain('event: response.completed');
+    const events = parseSseEvents(sseText);
+    expect(events.at(-1)).toEqual({ event: null, data: '[DONE]' });
+
+    const created = events.find((event) => event.event === 'response.created');
+    expect(created).toBeDefined();
+    expect(JSON.parse(created!.data)).toMatchObject({
+      type: 'response.created',
+      sequence_number: 0,
+      response: {
+        id: 'chatcmpl-stream',
+        status: 'in_progress',
+        output: [],
+        output_text: '',
+      },
+    });
+
+    const added = events.find((event) => event.event === 'response.output_item.added');
+    expect(added).toBeDefined();
+    expect(JSON.parse(added!.data)).toMatchObject({
+      type: 'response.output_item.added',
+      output_index: 0,
+      item: {
+        type: 'message',
+        id: 'chatcmpl-stream_msg_1',
+        status: 'in_progress',
+        content: [{ type: 'output_text', text: '', annotations: [] }],
+      },
+    });
+
+    const delta = events.find((event) => event.event === 'response.output_text.delta');
+    expect(delta).toBeDefined();
+    expect(JSON.parse(delta!.data)).toMatchObject({
+      type: 'response.output_text.delta',
+      item_id: 'chatcmpl-stream_msg_1',
+      output_index: 0,
+      content_index: 0,
+      delta: 'Hello!',
+      logprobs: [],
+    });
+
+    const completed = events.find((event) => event.event === 'response.completed');
+    expect(completed).toBeDefined();
+    expect(JSON.parse(completed!.data)).toMatchObject({
+      type: 'response.completed',
+      response: {
+        id: 'chatcmpl-stream',
+        status: 'completed',
+        output_text: 'Hello!',
+      },
+    });
+  });
+
+  it('emits correlated function call SSE events', () => {
+    const result = transformOpenAIChatResponseToOpenAIResponses(makeOpenAIResponse(), {
+      fallbackModel: 'fallback',
+      streamRequested: true,
+    });
+    const events = parseSseEvents(new TextDecoder().decode(result.body));
+
+    const added = events.find((event) => event.event === 'response.output_item.added' && event.data.includes('"function_call"'));
+    expect(added).toBeDefined();
+    expect(JSON.parse(added!.data)).toMatchObject({
+      type: 'response.output_item.added',
+      output_index: 1,
+      item: {
+        type: 'function_call',
+        id: 'call_123',
+        call_id: 'call_123',
+        name: 'write',
+        arguments: '',
+        status: 'in_progress',
+      },
+    });
+
+    const delta = events.find((event) => event.event === 'response.function_call_arguments.delta');
+    expect(delta).toBeDefined();
+    expect(JSON.parse(delta!.data)).toMatchObject({
+      type: 'response.function_call_arguments.delta',
+      output_index: 1,
+      item_id: 'call_123',
+      delta: '{"path":"hello.txt"}',
+    });
+
+    const done = events.find((event) => event.event === 'response.function_call_arguments.done');
+    expect(done).toBeDefined();
+    expect(JSON.parse(done!.data)).toMatchObject({
+      type: 'response.function_call_arguments.done',
+      output_index: 1,
+      item_id: 'call_123',
+      name: 'write',
+      arguments: '{"path":"hello.txt"}',
+    });
   });
 
   it('passes through error responses unchanged', () => {
