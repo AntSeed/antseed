@@ -4,9 +4,11 @@ import { Add01Icon } from '@hugeicons/core-free-icons';
 import { ArrowUp02Icon } from '@hugeicons/core-free-icons';
 import { ComputerTerminal01Icon } from '@hugeicons/core-free-icons';
 import { ArrowRight01Icon } from '@hugeicons/core-free-icons';
+import { Search01Icon } from '@hugeicons/core-free-icons';
+import { Cancel01Icon } from '@hugeicons/core-free-icons';
 import { useUiSnapshot } from '../../hooks/useUiSnapshot';
 import { useActions } from '../../hooks/useActions';
-import { ChatBubble } from '../chat/ChatBubble';
+import { ChatBubble, extractMessagePlainText } from '../chat/ChatBubble';
 import { isToolResultOnlyMessage } from '../chat/chat-utils.js';
 import { WalkingAnt } from '../chat/WalkingAnt';
 import { ModelDropdown } from '../chat/ModelDropdown';
@@ -54,15 +56,44 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const fileInputId = useId();
   const prevInputDisabled = useRef<boolean>(snap.chatInputDisabled);
   const isUserScrolledUp = useRef(false);
   const prevMessageCount = useRef(0);
 
+  // Search state
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+
   const visibleMessages = useMemo(() => {
     const msgs = Array.isArray(snap.chatMessages) ? (snap.chatMessages as ChatMessage[]) : [];
     return buildDisplayMessages(msgs).filter((msg) => !isToolResultOnlyMessage(msg));
   }, [snap.chatMessages]);
+
+  // Search match count
+  const searchMatchCount = useMemo(() => {
+    if (!searchQuery.trim()) return 0;
+    const q = searchQuery.toLowerCase();
+    return visibleMessages.filter((msg) => extractMessagePlainText(msg).toLowerCase().includes(q)).length;
+  }, [searchQuery, visibleMessages]);
+
+  const openSearch = useCallback(() => {
+    setSearchOpen(true);
+  }, []);
+
+  const closeSearch = useCallback(() => {
+    setSearchOpen(false);
+    setSearchQuery('');
+    inputRef.current?.focus();
+  }, []);
+
+  // Auto-focus the search input when opened
+  useEffect(() => {
+    if (searchOpen && searchInputRef.current) {
+      searchInputRef.current.focus();
+    }
+  }, [searchOpen]);
 
   // Track whether the user has scrolled away from the bottom
   useEffect(() => {
@@ -171,8 +202,46 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
               <span className={styles.chatRoutedPeer}>{snap.chatRoutedPeer}</span>
             </>
           )}
+          <button
+            type="button"
+            className={`${styles.searchToggleBtn}${searchOpen ? ` ${styles.active}` : ''}`}
+            title="Search messages"
+            onClick={searchOpen ? closeSearch : openSearch}
+            aria-pressed={searchOpen}
+          >
+            <HugeiconsIcon icon={Search01Icon} size={16} strokeWidth={1.8} />
+          </button>
         </div>
       </div>
+
+      {searchOpen && (
+        <div className={styles.searchBar}>
+          <input
+            ref={searchInputRef}
+            type="text"
+            className={styles.searchInput}
+            placeholder="Search messages..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') closeSearch();
+            }}
+          />
+          {searchQuery.trim() && (
+            <span className={styles.searchMeta}>
+              {searchMatchCount} match{searchMatchCount !== 1 ? 'es' : ''}
+            </span>
+          )}
+          <button
+            type="button"
+            className={styles.searchCloseBtn}
+            title="Close search"
+            onClick={closeSearch}
+          >
+            <HugeiconsIcon icon={Cancel01Icon} size={14} strokeWidth={1.8} />
+          </button>
+        </div>
+      )}
 
       {showWelcome && (
         <button
@@ -196,7 +265,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
               </div>
             ) : (
               visibleMessages.map((msg, i) => (
-                <ChatBubble key={getMessageKey(msg, i)} message={msg} />
+                <ChatBubble key={getMessageKey(msg, i)} message={msg} searchQuery={searchQuery} />
               ))
             )}
             {snap.chatStreamingMessage ? (

@@ -287,6 +287,86 @@
    Chat abort / error
    =================================================================== */
 
+/* ===================================================================
+   Search bar
+   =================================================================== */
+
+.search-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  background: var(--chat-header-bg);
+  border-bottom: 1px solid var(--border-light);
+}
+
+.search-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-family: var(--font-sans);
+  padding: 0;
+  min-height: 22px;
+  line-height: 1.5;
+
+  &:focus {
+    outline: none;
+  }
+
+  &::placeholder {
+    color: var(--text-muted);
+  }
+}
+
+.search-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.search-close-btn {
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  padding: 3px;
+  cursor: pointer;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+
+  &:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+  }
+}
+
+.search-toggle-btn {
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  padding: 4px;
+  cursor: pointer;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+
+  &:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+  }
+
+  &.active {
+    color: var(--text-primary);
+  }
+}
+
 .chat-abort-btn {
   border-radius: var(--radius-sm) !important;
   padding: 8px 14px !important;
