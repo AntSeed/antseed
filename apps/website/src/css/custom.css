@@ -3,7 +3,7 @@
 /* Light mode (default) — for docs, blog, network, all non-homepage pages */
 html[data-theme='light'],
 :root {
-  --ifm-color-primary: #16a863;
+  --ifm-color-primary: #1FD87A;
   --ifm-color-primary-dark: #139256;
   --ifm-color-primary-darker: #0f7d4d;
   --ifm-color-primary-darkest: #0b5c38;
