@@ -584,6 +584,37 @@
 }
 
 /* ===================================================================
+   Copy response button
+   =================================================================== */
+
+.copyResponseRow {
+  display: flex;
+  justify-content: flex-start;
+  padding: 4px 16px 8px;
+  opacity: 0;
+  transition: opacity 0.15s;
+
+  .chatBubble:hover & {
+    opacity: 1;
+  }
+}
+
+.copyResponseBtn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 3px;
+
+  &:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+  }
+}
+
+/* ===================================================================
    Tool modal (portal — rendered at document.body, module classes)
    =================================================================== */
 

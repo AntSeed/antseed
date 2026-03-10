@@ -1,5 +1,5 @@
 import { createPortal } from 'react-dom';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import DOMPurify from 'dompurify';
 import { MarkdownContent } from './chat-utils.js';
@@ -399,6 +399,50 @@ function renderBlock(block: ContentBlock, index: number, streaming = false, mess
   return null;
 }
 
+function extractPlainText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return (content as ContentBlock[])
+      .filter((block) => block.type === 'text' || block.type === 'thinking')
+      .map((block) => (block.type === 'thinking' ? String(block.thinking || '') : String(block.text || '')))
+      .filter(Boolean)
+      .join('\n\n');
+  }
+  return '';
+}
+
+function CopyResponseButton({ content }: { content: unknown }) {
+  const [copied, setCopied] = useState(false);
+  const timerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+    };
+  }, []);
+
+  const handleCopy = useCallback(() => {
+    const text = extractPlainText(content);
+    if (!text) return;
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+      timerRef.current = window.setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {/* clipboard denied — silently ignore */});
+  }, [content]);
+
+  return (
+    <button
+      type="button"
+      className={styles.copyResponseBtn}
+      onClick={handleCopy}
+      aria-label="Copy response"
+    >
+      {copied ? 'Copied!' : 'Copy'}
+    </button>
+  );
+}
+
 type ChatBubbleProps = {
   message: ChatMessage;
   streaming?: boolean;
@@ -450,6 +494,11 @@ export function ChatBubble({ message, streaming = false }: ChatBubbleProps) {
     <div className={`${styles.chatBubble} ${message.role === 'user' ? styles.own : styles.other}`}>
       {bubbleMeta}
       <div>{content}</div>
+      {message.role !== 'user' && !streaming ? (
+        <div className={styles.copyResponseRow}>
+          <CopyResponseButton content={message.content} />
+        </div>
+      ) : null}
     </div>
   );
 }
