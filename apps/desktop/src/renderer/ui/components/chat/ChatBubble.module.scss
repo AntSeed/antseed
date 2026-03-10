@@ -766,3 +766,14 @@
 .tool-result-msg {
   display: none;
 }
+
+/* ===================================================================
+   Search highlight
+   =================================================================== */
+
+.search-highlight {
+  background: #f5c842;
+  color: #1a1000;
+  border-radius: 2px;
+  padding: 0 1px;
+}

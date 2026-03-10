@@ -399,12 +399,66 @@ function renderBlock(block: ContentBlock, index: number, streaming = false, mess
   return null;
 }
 
+// Splits `text` into alternating non-match / match segments for a given query.
+// Returns an array of { text, highlight } objects.
+function splitHighlight(text: string, query: string): { text: string; highlight: boolean }[] {
+  if (!query) return [{ text, highlight: false }];
+  const parts: { text: string; highlight: boolean }[] = [];
+  const lowerText = text.toLowerCase();
+  const lowerQuery = query.toLowerCase();
+  let pos = 0;
+  while (pos < text.length) {
+    const idx = lowerText.indexOf(lowerQuery, pos);
+    if (idx === -1) {
+      parts.push({ text: text.slice(pos), highlight: false });
+      break;
+    }
+    if (idx > pos) {
+      parts.push({ text: text.slice(pos, idx), highlight: false });
+    }
+    parts.push({ text: text.slice(idx, idx + query.length), highlight: true });
+    pos = idx + query.length;
+  }
+  return parts;
+}
+
+// Renders a plain-text string with search highlights applied.
+function HighlightedText({ text, query, highlightClass }: { text: string; query: string; highlightClass: string }) {
+  const parts = splitHighlight(text, query);
+  return (
+    <>
+      {parts.map((part, i) =>
+        part.highlight ? (
+          <mark key={i} className={highlightClass}>
+            {part.text}
+          </mark>
+        ) : (
+          <span key={i}>{part.text}</span>
+        ),
+      )}
+    </>
+  );
+}
+
+// Extracts plain-text from a message for search matching.
+export function extractMessagePlainText(message: ChatMessage): string {
+  if (typeof message.content === 'string') return message.content;
+  if (Array.isArray(message.content)) {
+    return (message.content as ContentBlock[])
+      .filter((block) => block.type === 'text' && typeof block.text === 'string')
+      .map((block) => block.text as string)
+      .join(' ');
+  }
+  return '';
+}
+
 type ChatBubbleProps = {
   message: ChatMessage;
   streaming?: boolean;
+  searchQuery?: string;
 };
 
-export function ChatBubble({ message, streaming = false }: ChatBubbleProps) {
+export function ChatBubble({ message, streaming = false, searchQuery = '' }: ChatBubbleProps) {
   const [metaExpanded, setMetaExpanded] = useState(false);
   const metaParts = useMemo(() => buildChatMetaParts(message), [message]);
 
@@ -425,15 +479,32 @@ export function ChatBubble({ message, streaming = false }: ChatBubbleProps) {
     }
 
     if (typeof message.content === 'string') {
+      if (searchQuery) {
+        return (
+          <div className="chat-bubble-content">
+            <HighlightedText text={message.content} query={searchQuery} highlightClass={styles.searchHighlight} />
+          </div>
+        );
+      }
       return <MarkdownContent text={message.content} />;
     }
 
     if (Array.isArray(message.content)) {
-      return (message.content as ContentBlock[]).map((block, index) => renderBlock(block, index, streaming, messagePrefix));
+      return (message.content as ContentBlock[]).map((block, index) => {
+        if (searchQuery && block.type === 'text' && typeof block.text === 'string') {
+          const blockKey = getBlockRenderKey(block, index, messagePrefix);
+          return (
+            <div key={blockKey} className="chat-bubble-content">
+              <HighlightedText text={block.text} query={searchQuery} highlightClass={styles.searchHighlight} />
+            </div>
+          );
+        }
+        return renderBlock(block, index, streaming, messagePrefix);
+      });
     }
 
     return <div className="chat-bubble-content">{JSON.stringify(message.content)}</div>;
-  }, [message, streaming, messagePrefix]);
+  }, [message, streaming, messagePrefix, searchQuery]);
 
   const bubbleMeta =
     metaParts.length > 0 && !streaming ? (
