@@ -31,3 +31,9 @@ coverage/
 # Electron builder output
 release/
 cli-dist/
+
+# Claude worktrees
+.claude/worktrees/
+
+# Deployments
+.deployments/
