@@ -51,6 +51,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   const actions = useActions();
   const [inputValue, setInputValue] = useState('');
   const [attachedImage, setAttachedImage] = useState<{ base64: string; mimeType: string; previewUrl: string } | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -127,6 +128,36 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     setAttachedImage(null);
     if (inputRef.current) inputRef.current.focus();
   }, []);
+
+  const attachImageFile = useCallback((file: File) => {
+    if (!file.type.startsWith('image/')) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      const [header, base64] = dataUrl.split(',');
+      const mimeType = header.replace('data:', '').replace(';base64', '');
+      setAttachedImage({ base64, mimeType, previewUrl: dataUrl });
+    };
+    reader.readAsDataURL(file);
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    setIsDragOver(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragOver(false);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) attachImageFile(file);
+  }, [attachImageFile]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -207,7 +238,12 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
             )}
           </div>
 
-          <div className={styles.chatInputArea}>
+          <div
+            className={`${styles.chatInputArea}${isDragOver ? ` ${styles.chatInputAreaDragOver}` : ''}`}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+          >
             {attachedImage && (
               <div className={styles.chatImageAttachPreview}>
                 <img src={attachedImage.previewUrl} alt="Attached" className={styles.chatImageAttachThumb} />
