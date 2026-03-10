@@ -364,6 +364,19 @@ describe('transformOpenAIResponsesRequestToOpenAIChat', () => {
     expect(body.tool_choice).toBe('auto');
   });
 
+  it('omits tools when only built-in Responses tools are provided', () => {
+    const request = makeResponsesRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-4.1',
+        input: 'test',
+        tools: [{ type: 'web_search' }],
+      })),
+    });
+    const result = transformOpenAIResponsesRequestToOpenAIChat(request);
+    const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
+    expect(body.tools).toBeUndefined();
+  });
+
   it('remaps object tool_choice to Chat Completions nested format', () => {
     const request = makeResponsesRequest({
       body: new TextEncoder().encode(JSON.stringify({
@@ -638,5 +651,25 @@ describe('transformOpenAIChatResponseToOpenAIResponses', () => {
       message: 'Rate limit exceeded',
       type: 'rate_limit_error',
     });
+  });
+
+  it('returns SSE error frames when streamRequested is true', () => {
+    const errorResponse = makeOpenAIResponse({
+      statusCode: 429,
+      headers: { 'content-type': 'application/json' },
+      body: new TextEncoder().encode(JSON.stringify({
+        error: { message: 'Rate limit exceeded', type: 'rate_limit_error' },
+      })),
+    });
+    const result = transformOpenAIChatResponseToOpenAIResponses(errorResponse, {
+      streamRequested: true,
+    });
+    expect(result.statusCode).toBe(429);
+    expect(result.headers['content-type']).toBe('text/event-stream');
+    expect(result.headers['cache-control']).toBe('no-cache');
+    const text = new TextDecoder().decode(result.body);
+    expect(text).toContain('event: error');
+    expect(text).toContain('"message":"Rate limit exceeded"');
+    expect(text).toContain('"type":"rate_limit_error"');
   });
 });

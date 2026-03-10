@@ -679,7 +679,7 @@ interface OpenAIResponsesBody {
   };
 }
 
-function convertResponsesToolsToChatTools(tools: unknown[]): unknown[] {
+function convertResponsesToolsToChatTools(tools: unknown[]): unknown[] | undefined {
   const out: unknown[] = [];
   for (const toolRaw of tools) {
     if (!toolRaw || typeof toolRaw !== 'object') {
@@ -698,7 +698,7 @@ function convertResponsesToolsToChatTools(tools: unknown[]): unknown[] {
       },
     });
   }
-  return out;
+  return out.length > 0 ? out : undefined;
 }
 
 function convertResponsesInputToMessages(body: Record<string, unknown>): unknown[] {
@@ -799,7 +799,10 @@ export function transformOpenAIResponsesRequestToOpenAIChat(
     transformedBody.top_p = body.top_p;
   }
   if (Array.isArray(body.tools)) {
-    transformedBody.tools = convertResponsesToolsToChatTools(body.tools);
+    const chatTools = convertResponsesToolsToChatTools(body.tools);
+    if (chatTools) {
+      transformedBody.tools = chatTools;
+    }
   }
   if (body.tool_choice !== undefined) {
     const tc = body.tool_choice;
@@ -1022,10 +1025,22 @@ export function transformOpenAIChatResponseToOpenAIResponses(
     const errorPayload = parsed.error && typeof parsed.error === 'object'
       ? parsed.error
       : parsed;
+    const errorBody = errorPayload === parsed ? parsed : { error: errorPayload };
+    if (options.streamRequested) {
+      return {
+        ...response,
+        headers: {
+          ...response.headers,
+          'content-type': 'text/event-stream',
+          'cache-control': 'no-cache',
+        },
+        body: new TextEncoder().encode(`event: error\ndata: ${JSON.stringify(errorBody)}\n\n`),
+      };
+    }
     return {
       ...response,
       headers: { ...response.headers, 'content-type': 'application/json' },
-      body: encodeJson(errorPayload === parsed ? parsed : { error: errorPayload }),
+      body: encodeJson(errorBody),
     };
   }
 
