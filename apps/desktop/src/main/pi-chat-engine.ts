@@ -37,6 +37,7 @@ import type {
   Usage,
 } from '@mariozechner/pi-ai';
 import { createAssistantMessageEventStream } from '@mariozechner/pi-ai';
+import { resolveRequestMaxTokens } from './chat-request-budget.js';
 
 type TextBlock = { type: 'text'; text: string };
 type ThinkingBlock = { type: 'thinking'; thinking: string };
@@ -364,7 +365,6 @@ const CHAT_WORKSPACE_DIR = path.join(ANTSEED_HOME_DIR, 'projects');
 const CHAT_AGENT_DIR = path.join(CHAT_DATA_DIR, 'pi-agent');
 const DEFAULT_PROXY_PORT = 8377;
 const DEFAULT_CHAT_MODEL = 'claude-sonnet-4-20250514';
-const DEFAULT_MAX_TOKENS = 4096;
 const PROXY_PROVIDER_ID = 'antseed-proxy';
 const PROXY_RUNTIME_API_KEY = 'antseed-local';
 const CHAT_SYSTEM_PROMPT_ENV = 'ANTSEED_CHAT_SYSTEM_PROMPT';
@@ -1653,7 +1653,7 @@ function createBuyerProxyStreamFn(
       const url = `${String(model.baseUrl).replace(/\/+$/, '')}/v1/messages`;
       const requestBody = {
         model: model.id,
-        max_tokens: Number(options?.maxTokens) > 0 ? Math.floor(Number(options?.maxTokens)) : DEFAULT_MAX_TOKENS,
+        max_tokens: resolveRequestMaxTokens(model, options),
         stream: true,
         ...(context.systemPrompt ? { system: context.systemPrompt } : {}),
         ...(context.tools ? { tools: convertToolsToAnthropic(context.tools) } : {}),
