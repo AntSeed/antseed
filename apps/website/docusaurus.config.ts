@@ -24,7 +24,7 @@ const statsProxyPlugin: PluginModule = () => ({
 
 const config: Config = {
   title: 'AntSeed',
-  tagline: 'Private AI. Anonymous. Peer-to-peer.',
+  tagline: 'The Unstoppable AI Economy',
   favicon: 'logo.svg',
   url: 'https://antseed.com',
   baseUrl: '/',
@@ -89,16 +89,16 @@ const config: Config = {
   themeConfig: {
     metadata: [
       {name: 'google-site-verification', content: '09pzs5Q9kHdpQSNSBpr0vNh9SMq-T8lzhBgH5Zgm6ug'},
-      {name: 'keywords', content: 'private AI, anonymous AI, P2P AI, decentralized AI inference, uncensored AI, AI without account, no signup AI, peer-to-peer AI'},
-      {name: 'description', content: 'Private AI inference with zero data collection. No account, no logs, no middleman. Connect directly to AI providers through an anonymous P2P network.'},
-      {property: 'og:title', content: 'AntSeed — Private AI. Anonymous. Peer-to-peer.'},
-      {property: 'og:description', content: 'Private AI inference with zero data collection. No account, no logs, no middleman.'},
+      {name: 'keywords', content: 'AI marketplace, buy AI services, sell AI services, peer-to-peer AI, decentralized AI inference, anonymous AI, private AI, P2P AI, AI economy'},
+      {name: 'description', content: 'Buy, sell, and build AI services peer-to-peer. Anonymous. Private. No middleman. Network live.'},
+      {property: 'og:title', content: 'AntSeed — The Unstoppable AI Economy'},
+      {property: 'og:description', content: 'Buy, sell, and build AI services peer-to-peer. Anonymous. Private. No middleman. Network live.'},
       {property: 'og:type', content: 'website'},
       {name: 'twitter:card', content: 'summary_large_image'},
       {name: 'twitter:image', content: 'https://antseed.com/og-image.jpg'},
       {property: 'og:image', content: 'https://antseed.com/og-image.jpg'},
-      {name: 'twitter:title', content: 'AntSeed — Private AI. Anonymous. Peer-to-peer.'},
-      {name: 'twitter:description', content: 'Private AI inference with zero data collection. No account, no logs, no middleman.'},
+      {name: 'twitter:title', content: 'AntSeed — The Unstoppable AI Economy'},
+      {name: 'twitter:description', content: 'Buy, sell, and build AI services peer-to-peer. Anonymous. Private. No middleman. Network live.'},
     ],
     colorMode: {
       defaultMode: 'light',
