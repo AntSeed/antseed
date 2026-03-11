@@ -15,6 +15,8 @@ import styles from './ChatView.module.scss';
 import type { ChatMessage } from '../chat/chat-shared';
 import { buildDisplayMessages } from '../chat/chat-shared';
 
+const MAX_INPUT_HEIGHT = 220;
+
 function getMessageContentKey(content: unknown): string {
   if (typeof content === 'string') {
     return content.slice(0, 48);
@@ -104,6 +106,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     setAttachedImage(null);
     if (inputRef.current) {
       inputRef.current.style.height = 'auto';
+      inputRef.current.style.overflowY = 'hidden';
       inputRef.current.focus();
     }
     actions.sendMessage(text, attachedImage?.base64, attachedImage?.mimeType);
@@ -129,8 +132,9 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     if (inputRef.current) inputRef.current.focus();
   }, []);
 
+  const ALLOWED_PASTE_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+
   const attachImageFile = useCallback((file: File) => {
-    if (!file.type.startsWith('image/')) return;
     const reader = new FileReader();
     reader.onload = () => {
       const dataUrl = reader.result as string;
@@ -141,6 +145,20 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     reader.readAsDataURL(file);
   }, []);
 
+  const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (!ALLOWED_PASTE_MIME_TYPES.has(item.type)) continue;
+      const file = item.getAsFile();
+      if (!file) continue;
+      e.preventDefault();
+      attachImageFile(file);
+      return;
+    }
+  }, [attachImageFile]);
+
   const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
@@ -148,7 +166,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   }, []);
 
   const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
     setIsDragOver(false);
   }, []);
 
@@ -156,8 +174,9 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     e.preventDefault();
     setIsDragOver(false);
     const file = e.dataTransfer.files[0];
-    if (file) attachImageFile(file);
+    if (file && ALLOWED_PASTE_MIME_TYPES.has(file.type)) attachImageFile(file);
   }, [attachImageFile]);
+
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -172,7 +191,9 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   const handleInput = useCallback(() => {
     if (inputRef.current) {
       inputRef.current.style.height = 'auto';
-      inputRef.current.style.height = `${Math.min(inputRef.current.scrollHeight, 150)}px`;
+      const newHeight = Math.min(inputRef.current.scrollHeight, MAX_INPUT_HEIGHT);
+      inputRef.current.style.height = `${newHeight}px`;
+      inputRef.current.style.overflowY = inputRef.current.scrollHeight > MAX_INPUT_HEIGHT ? 'auto' : 'hidden';
     }
   }, []);
 
@@ -269,6 +290,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                 onChange={(e) => setInputValue(e.target.value)}
                 onInput={handleInput}
                 onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
               />
               <div className={styles.chatInputBottom}>
                 <div className={styles.chatInputBottomLeft}>

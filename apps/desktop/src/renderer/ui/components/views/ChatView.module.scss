@@ -193,16 +193,16 @@
 }
 
 .chat-text-input {
-  flex: 1;
+  width: 100%;
   background: transparent;
   border: none;
   color: var(--text-primary);
   padding: 0;
   font-size: 17px;
   resize: none;
-  overflow-y: auto;
+  overflow-y: hidden;
   min-height: 26px;
-  max-height: 150px;
+  max-height: 220px;
   line-height: 1.5;
   font-family: var(--font-sans);
 
