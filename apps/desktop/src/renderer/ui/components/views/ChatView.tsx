@@ -131,6 +131,29 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     if (inputRef.current) inputRef.current.focus();
   }, []);
 
+  const ALLOWED_PASTE_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+
+  const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (!ALLOWED_PASTE_MIME_TYPES.has(item.type)) continue;
+      const file = item.getAsFile();
+      if (!file) continue;
+      e.preventDefault();
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = reader.result as string;
+        const [header, base64] = dataUrl.split(',');
+        const mimeType = header.replace('data:', '').replace(';base64', '');
+        setAttachedImage({ base64, mimeType, previewUrl: dataUrl });
+      };
+      reader.readAsDataURL(file);
+      return;
+    }
+  }, []);
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
       if (e.key === 'Enter' && !e.shiftKey) {
@@ -238,6 +261,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                 onChange={(e) => setInputValue(e.target.value)}
                 onInput={handleInput}
                 onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
               />
               <div className={styles.chatInputBottom}>
                 <div className={styles.chatInputBottomLeft}>
