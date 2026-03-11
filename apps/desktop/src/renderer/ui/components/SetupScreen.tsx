@@ -80,7 +80,7 @@ export function SetupScreen() {
           <div className={styles.steps}>
             <StepRow label="Preparing workspace" done={true} active={false} />
             <StepRow
-              label={snap.appSetupStep || 'Installing router plugin...'}
+              label={snap.appSetupStep || 'Installing router plugin'}
               done={snap.appSetupComplete}
               active={!snap.appSetupComplete}
             />

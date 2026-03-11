@@ -821,8 +821,8 @@ async function ensureDefaultPlugin(packageName: string): Promise<void> {
     return;
   }
   appSetupNeeded = true;
-  mainWindow?.webContents.send('app:setup-step', { step: 'installing', label: 'Installing router plugin...' });
-  appendLog('connect', 'system', `Required plugin "${packageName}" not found. Installing...`);
+  mainWindow?.webContents.send('app:setup-step', { step: 'installing', label: 'Installing router plugin' });
+  appendLog('connect', 'system', `Required plugin "${packageName}" not found. Installing`);
   try {
     // 1. Try copying from the app bundle (production builds — instant, no network)
     const installedFromBundle = await installPluginFromBundle(packageName);
