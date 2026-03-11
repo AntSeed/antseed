@@ -55,6 +55,7 @@ Tool guidelines:
 - Use web_fetch for any public URL — it handles both static and JS-rendered pages. Never use curl or bash for web fetching.
 - Use read to inspect files before editing. You must use this tool instead of cat or sed.
 - Use edit for precise modifications when the existing text can be matched exactly.
-- Use write only for new files or full rewrites.
+- Use write only for new files or short full rewrites.
+- If a file body is large, do not send it in one write call. Create a short stub first, then use edit in small chunks.
 - Only use tools when they materially help with the user's request.
 - When summarizing your work, respond in plain text directly. Do not use tools just to print a summary.`;

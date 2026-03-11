@@ -21,7 +21,6 @@ import {
   readTool,
   SessionManager,
   SettingsManager,
-  writeTool,
 } from '@mariozechner/pi-coding-agent';
 import type {
   AssistantMessage,
@@ -37,6 +36,7 @@ import type {
   Usage,
 } from '@mariozechner/pi-ai';
 import { createAssistantMessageEventStream } from '@mariozechner/pi-ai';
+import { createManagedWriteTool } from './write-tool-policy.js';
 
 type TextBlock = { type: 'text'; text: string };
 type ThinkingBlock = { type: 'thinking'; thinking: string };
@@ -2364,6 +2364,7 @@ export function registerPiChatHandlers({
       systemPrompt: userSystemPrompt ?? ANTSTATION_SYSTEM_PROMPT,
     });
     await resourceLoader.reload();
+    const managedWriteTool = createManagedWriteTool(CHAT_WORKSPACE_DIR);
 
     const { session } = await createAgentSession({
       cwd: CHAT_WORKSPACE_DIR,
@@ -2376,7 +2377,7 @@ export function registerPiChatHandlers({
         readTool,
         bashTool,
         editTool,
-        writeTool,
+        managedWriteTool,
         grepTool,
         findTool,
         lsTool,
