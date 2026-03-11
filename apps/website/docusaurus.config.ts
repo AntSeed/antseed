@@ -89,7 +89,7 @@ const config: Config = {
   themeConfig: {
     metadata: [
       {name: 'google-site-verification', content: '09pzs5Q9kHdpQSNSBpr0vNh9SMq-T8lzhBgH5Zgm6ug'},
-      {name: 'keywords', content: 'private AI, anonymous AI, P2P AI, decentralized AI inference, uncensored AI, AI without account, no signup AI, peer-to-peer AI'},
+      {name: 'keywords', content: 'AI marketplace, buy AI services, sell AI services, peer-to-peer AI, decentralized AI inference, anonymous AI, private AI, P2P AI, AI economy'},
       {name: 'description', content: 'Buy, sell, and build AI services peer-to-peer. Anonymous. Private. No middleman. Network live.'},
       {property: 'og:title', content: 'AntSeed — The Unstoppable AI Economy'},
       {property: 'og:description', content: 'Buy, sell, and build AI services peer-to-peer. Anonymous. Private. No middleman. Network live.'},
