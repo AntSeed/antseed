@@ -3,7 +3,7 @@
 /* Light mode (default) — for docs, blog, network, all non-homepage pages */
 html[data-theme='light'],
 :root {
-  --ifm-color-primary: #16a863;
+  --ifm-color-primary: #1FD87A;
   --ifm-color-primary-dark: #139256;
   --ifm-color-primary-darker: #0f7d4d;
   --ifm-color-primary-darkest: #0b5c38;
@@ -326,7 +326,7 @@ aside.theme-doc-sidebar-container {
 .markdown h1::before {
   content: '# ';
   opacity: 0.3;
-  color: var(--ifm-color-primary);
+  color: var(--ifm-color-primary-dark);
 }
 
 .markdown h2 {
@@ -343,7 +343,7 @@ aside.theme-doc-sidebar-container {
 .markdown h2::before {
   content: '## ';
   opacity: 0.3;
-  color: var(--ifm-color-primary);
+  color: var(--ifm-color-primary-dark);
 }
 
 .markdown h3 {
@@ -358,7 +358,7 @@ aside.theme-doc-sidebar-container {
 .markdown h3::before {
   content: '### ';
   opacity: 0.3;
-  color: var(--ifm-color-primary);
+  color: var(--ifm-color-primary-dark);
 }
 
 .markdown p {
@@ -374,7 +374,7 @@ aside.theme-doc-sidebar-container {
 }
 
 .markdown code {
-  color: var(--ifm-color-primary);
+  color: var(--ifm-color-primary-darker);
   background: #ebebe9;
   font-size: 12px;
   padding: 2px 6px;
@@ -419,7 +419,7 @@ div[class*='codeBlockTitle'] {
   font-size: 11px;
   letter-spacing: 1px;
   text-transform: uppercase;
-  color: var(--ifm-color-primary);
+  color: var(--ifm-color-primary-dark);
   background: #f5f5f0;
   border-bottom: 1px solid rgba(10, 14, 20, 0.08);
 }
