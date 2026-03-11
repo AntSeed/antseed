@@ -237,7 +237,19 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
       )}
 
       <div className={styles.chatContainer}>
-        <div className={styles.chatMain}>
+        <div
+          className={styles.chatMain}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+        >
+          {isDragOver && (
+            <div className={styles.chatDropOverlay}>
+              <div className={styles.chatDropOverlayInner}>
+                <span>Drop image here</span>
+              </div>
+            </div>
+          )}
           <div className={styles.chatMessages} ref={scrollRef} data-chat-scroll>
             {showWelcome ? (
               <div className={styles.chatWelcome}>
@@ -259,12 +271,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
             )}
           </div>
 
-          <div
-            className={`${styles.chatInputArea}${isDragOver ? ` ${styles.chatInputAreaDragOver}` : ''}`}
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
-          >
+          <div className={styles.chatInputArea}>
             {attachedImage && (
               <div className={styles.chatImageAttachPreview}>
                 <img src={attachedImage.previewUrl} alt="Attached" className={styles.chatImageAttachThumb} />

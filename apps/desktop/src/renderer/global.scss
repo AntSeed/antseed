@@ -41,6 +41,7 @@
   --chat-input-bg: #ffffff;
   --chat-header-bg: #fafaf6;
   --chat-area-bg: #fcfcf8;
+  --drop-overlay-bg: rgba(252, 252, 248, 0.82);
 
   /* Scrollbar */
   --scrollbar-thumb: rgba(0, 0, 0, 0.12);
@@ -77,6 +78,7 @@ body.dark-theme {
   --chat-input-bg: #2a2a2c;
   --chat-header-bg: #252527;
   --chat-area-bg: #1c1c1e;
+  --drop-overlay-bg: rgba(28, 28, 30, 0.82);
   --scrollbar-thumb: rgba(255, 255, 255, 0.1);
   --scrollbar-thumb-hover: rgba(255, 255, 255, 0.18);
 }
