@@ -137,6 +137,7 @@ export type RendererUiState = {
   chatSendDisabled: boolean;
   chatAbortVisible: boolean;
   chatModelSelectDisabled: boolean;
+  chatModelUnavailableNotice: string | null;
 
   // --- Streaming indicator ---
   chatStreamingIndicatorText: string;
@@ -241,6 +242,7 @@ export function createInitialUiState(): RendererUiState {
     chatSendDisabled: false,
     chatAbortVisible: false,
     chatModelSelectDisabled: false,
+    chatModelUnavailableNotice: null,
 
     // Streaming indicator
     chatStreamingIndicatorText: '',

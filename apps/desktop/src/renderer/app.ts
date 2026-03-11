@@ -408,6 +408,7 @@ registerActions({
   handleModelChange: chatApi.handleModelChange,
   handleModelFocus: chatApi.handleModelFocus,
   handleModelBlur: chatApi.handleModelBlur,
+  clearModelUnavailableNotice: chatApi.clearModelUnavailableNotice,
   refreshPlugins: refreshPluginInventory,
   installPlugin: () => {
     const packageName = resolveRouterPackageName(
