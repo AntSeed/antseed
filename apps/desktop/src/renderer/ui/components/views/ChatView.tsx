@@ -53,6 +53,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   const actions = useActions();
   const [inputValue, setInputValue] = useState('');
   const [attachedImage, setAttachedImage] = useState<{ base64: string; mimeType: string; previewUrl: string } | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -111,9 +112,9 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     actions.sendMessage(text, attachedImage?.base64, attachedImage?.mimeType);
   }, [inputValue, attachedImage, actions]);
 
-  const handleImageAttach = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const ALLOWED_PASTE_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+
+  const attachImageFile = useCallback((file: File) => {
     const reader = new FileReader();
     reader.onload = () => {
       const dataUrl = reader.result as string;
@@ -122,16 +123,20 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
       setAttachedImage({ base64, mimeType, previewUrl: dataUrl });
     };
     reader.readAsDataURL(file);
+  }, []);
+
+  const handleImageAttach = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    attachImageFile(file);
     // Reset so the same file can be re-attached
     e.target.value = '';
-  }, []);
+  }, [attachImageFile]);
 
   const handleRemoveImage = useCallback(() => {
     setAttachedImage(null);
     if (inputRef.current) inputRef.current.focus();
   }, []);
-
-  const ALLOWED_PASTE_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
 
   const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const items = e.clipboardData?.items;
@@ -142,17 +147,31 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
       const file = item.getAsFile();
       if (!file) continue;
       e.preventDefault();
-      const reader = new FileReader();
-      reader.onload = () => {
-        const dataUrl = reader.result as string;
-        const [header, base64] = dataUrl.split(',');
-        const mimeType = header.replace('data:', '').replace(';base64', '');
-        setAttachedImage({ base64, mimeType, previewUrl: dataUrl });
-      };
-      reader.readAsDataURL(file);
+      attachImageFile(file);
       return;
     }
+  }, [attachImageFile]);
+
+  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    setIsDragOver(true);
   }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+      setIsDragOver(false);
+    }
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file && ALLOWED_PASTE_MIME_TYPES.has(file.type)) attachImageFile(file);
+  }, [attachImageFile]);
+
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -213,7 +232,19 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
       )}
 
       <div className={styles.chatContainer}>
-        <div className={styles.chatMain}>
+        <div
+          className={styles.chatMain}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+        >
+          {isDragOver && (
+            <div className={styles.chatDropOverlay}>
+              <div className={styles.chatDropOverlayInner}>
+                <span>Drop image here</span>
+              </div>
+            </div>
+          )}
           <div className={styles.chatMessages} ref={scrollRef} data-chat-scroll>
             {showWelcome ? (
               <div className={styles.chatWelcome}>

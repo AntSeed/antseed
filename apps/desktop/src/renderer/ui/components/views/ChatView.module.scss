@@ -58,6 +58,7 @@
   min-height: 0;
   flex: 1;
   background: var(--chat-area-bg);
+  position: relative;
 }
 
 .chat-messages {
@@ -101,6 +102,23 @@
     margin-left: auto;
     margin-right: auto;
   }
+}
+
+.chat-drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 100;
+  background: var(--drop-overlay-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.chat-drop-overlay-inner {
+  color: var(--text-primary);
+  font-size: 16px;
+  font-weight: 500;
 }
 
 .chat-input-row {
