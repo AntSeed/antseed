@@ -187,6 +187,15 @@ function parseUpstream(
     throw new Error(`upstreams[${index}].allowedServices must contain at least one service`);
   }
 
+  if (type === 'anthropic') {
+    const openaiOnlyFields = ['serviceAliasMap', 'upstreamServicePrefix', 'providerFlavor', 'upstreamProvider'];
+    for (const field of openaiOnlyFields) {
+      if (raw[field] !== undefined) {
+        throw new Error(`upstreams[${index}].${field} is not supported for type "anthropic"`);
+      }
+    }
+  }
+
   return {
     name,
     type,
