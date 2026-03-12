@@ -2,14 +2,14 @@ import { describe, it, expect } from 'vitest';
 import type { PeerInfo, SerializedHttpRequest } from '@antseed/node';
 import { LocalRouter } from '../../plugins/router-local/src/router.js';
 
-function makeRequest(model: string): SerializedHttpRequest {
+function makeRequest(service: string): SerializedHttpRequest {
   return {
-    requestId: `req-${model}`,
+    requestId: `req-${service}`,
     method: 'POST',
     path: '/v1/messages',
     headers: { 'content-type': 'application/json' },
     body: new TextEncoder().encode(JSON.stringify({
-      model,
+      model: service,
       messages: [{ role: 'user', content: 'Hello' }],
     })),
   };
@@ -39,7 +39,7 @@ function makePeer(overrides?: Partial<PeerInfo>): PeerInfo {
 }
 
 describe('pricing fallback hierarchy', () => {
-  it('uses model -> provider default -> peer default fallback order and enforces input/output max checks', () => {
+  it('uses service -> provider default -> peer default fallback order and enforces input/output max checks', () => {
     const router = new LocalRouter({
       preferredProviders: ['anthropic'],
       maxPricing: {
@@ -59,7 +59,7 @@ describe('pricing fallback hierarchy', () => {
             outputUsdPerMillion: 20,
           },
           services: {
-            'model-a': {
+            'service-a': {
               inputUsdPerMillion: 5,
               outputUsdPerMillion: 7,
             },
@@ -105,20 +105,20 @@ describe('pricing fallback hierarchy', () => {
       defaultOutputUsdPerMillion: 80,
     });
 
-    // model-specific
-    const selectedModelSpecific = router.selectPeer(makeRequest('model-a'), [serviceSpecificPeer]);
-    expect(selectedModelSpecific?.peerId).toBe(serviceSpecificPeer.peerId);
+    // service-specific
+    const selectedServiceSpecific = router.selectPeer(makeRequest('service-a'), [serviceSpecificPeer]);
+    expect(selectedServiceSpecific?.peerId).toBe(serviceSpecificPeer.peerId);
 
-    // provider defaults (no model-specific entry)
-    const selectedProviderDefault = router.selectPeer(makeRequest('model-b'), [providerDefaultPeer]);
+    // provider defaults (no service-specific entry)
+    const selectedProviderDefault = router.selectPeer(makeRequest('service-b'), [providerDefaultPeer]);
     expect(selectedProviderDefault?.peerId).toBe(providerDefaultPeer.peerId);
 
     // peer defaults (no provider pricing map)
-    const selectedPeerDefault = router.selectPeer(makeRequest('model-c'), [peerDefaultOnly]);
+    const selectedPeerDefault = router.selectPeer(makeRequest('service-c'), [peerDefaultOnly]);
     expect(selectedPeerDefault?.peerId).toBe(peerDefaultOnly.peerId);
 
     // output max price enforcement
-    const selectedRejected = router.selectPeer(makeRequest('model-b'), [outputTooHigh]);
+    const selectedRejected = router.selectPeer(makeRequest('service-b'), [outputTooHigh]);
     expect(selectedRejected).toBeNull();
   });
 });

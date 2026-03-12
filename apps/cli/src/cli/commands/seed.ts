@@ -124,12 +124,12 @@ function parseRuntimeServicePricingJson(
       return undefined
     }
     const out: Record<string, { inputUsdPerMillion: number; outputUsdPerMillion: number }> = {}
-    for (const [model, pricing] of Object.entries(parsed as Record<string, unknown>)) {
+    for (const [service, pricing] of Object.entries(parsed as Record<string, unknown>)) {
       if (!pricing || typeof pricing !== 'object' || Array.isArray(pricing)) continue
       const input = Number((pricing as Record<string, unknown>)['inputUsdPerMillion'])
       const output = Number((pricing as Record<string, unknown>)['outputUsdPerMillion'])
       if (Number.isFinite(input) && Number.isFinite(output)) {
-        out[model] = { inputUsdPerMillion: input, outputUsdPerMillion: output }
+        out[service] = { inputUsdPerMillion: input, outputUsdPerMillion: output }
       }
     }
     return Object.keys(out).length > 0 ? out : undefined
@@ -149,7 +149,7 @@ function parseRuntimeServiceCategoriesJson(raw: string | undefined): Record<stri
       return undefined
     }
     const out: Record<string, string[]> = {}
-    for (const [model, categoriesRaw] of Object.entries(parsed as Record<string, unknown>)) {
+    for (const [service, categoriesRaw] of Object.entries(parsed as Record<string, unknown>)) {
       if (!Array.isArray(categoriesRaw)) continue
       const categories = Array.from(
         new Set(
@@ -160,7 +160,7 @@ function parseRuntimeServiceCategoriesJson(raw: string | undefined): Record<stri
         )
       )
       if (categories.length > 0) {
-        out[model] = categories
+        out[service] = categories
       }
     }
     return Object.keys(out).length > 0 ? out : undefined
@@ -491,7 +491,7 @@ export function registerSeedCommand(program: Command): void {
           },
           ...(runtimeServiceCategories
             ? {
-                providerModelCategories: {
+                providerServiceCategories: {
                   [providerName]: {
                     services: runtimeServiceCategories,
                   },

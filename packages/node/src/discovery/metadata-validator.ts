@@ -8,11 +8,11 @@ export const MAX_SERVICES_PER_PROVIDER = 20;
 export const MAX_SERVICE_NAME_LENGTH = 64;
 export const MAX_REGION_LENGTH = 32;
 export const MAX_DISPLAY_NAME_LENGTH = 64;
-export const MAX_MODEL_CATEGORIES_PER_MODEL = 8;
-export const MAX_MODEL_CATEGORY_LENGTH = 32;
-export const MAX_MODEL_API_PROTOCOLS_PER_MODEL = 4;
+export const MAX_SERVICE_CATEGORIES_PER_SERVICE = 8;
+export const MAX_SERVICE_CATEGORY_LENGTH = 32;
+export const MAX_SERVICE_API_PROTOCOLS_PER_SERVICE = 4;
 const SERVICE_CATEGORY_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
-const MODEL_API_PROTOCOL_SET = new Set<string>(WELL_KNOWN_SERVICE_API_PROTOCOLS);
+const SERVICE_API_PROTOCOL_SET = new Set<string>(WELL_KNOWN_SERVICE_API_PROTOCOLS);
 
 export interface ValidationError {
   field: string;
@@ -126,22 +126,22 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
 
     // service pricing (optional)
     if (p.servicePricing !== undefined) {
-      for (const [modelName, servicePricing] of Object.entries(p.servicePricing)) {
-        if (modelName.length > MAX_SERVICE_NAME_LENGTH) {
+      for (const [serviceName, servicePricing] of Object.entries(p.servicePricing)) {
+        if (serviceName.length > MAX_SERVICE_NAME_LENGTH) {
           errors.push({
-            field: `providers[${i}].servicePricing.${modelName}`,
-            message: `Service name length ${modelName.length} exceeds max ${MAX_SERVICE_NAME_LENGTH}`,
+            field: `providers[${i}].servicePricing.${serviceName}`,
+            message: `Service name length ${serviceName.length} exceeds max ${MAX_SERVICE_NAME_LENGTH}`,
           });
         }
         if (!servicePricing || !Number.isFinite(servicePricing.inputUsdPerMillion) || servicePricing.inputUsdPerMillion < 0) {
           errors.push({
-            field: `providers[${i}].servicePricing.${modelName}.inputUsdPerMillion`,
+            field: `providers[${i}].servicePricing.${serviceName}.inputUsdPerMillion`,
             message: "Service input price must be a non-negative finite number",
           });
         }
         if (!servicePricing || !Number.isFinite(servicePricing.outputUsdPerMillion) || servicePricing.outputUsdPerMillion < 0) {
           errors.push({
-            field: `providers[${i}].servicePricing.${modelName}.outputUsdPerMillion`,
+            field: `providers[${i}].servicePricing.${serviceName}.outputUsdPerMillion`,
             message: "Service output price must be a non-negative finite number",
           });
         }
@@ -149,30 +149,30 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
     }
 
     if (p.serviceCategories !== undefined) {
-      for (const [modelName, categories] of Object.entries(p.serviceCategories)) {
-        if (modelName.length > MAX_SERVICE_NAME_LENGTH) {
+      for (const [serviceName, categories] of Object.entries(p.serviceCategories)) {
+        if (serviceName.length > MAX_SERVICE_NAME_LENGTH) {
           errors.push({
-            field: `providers[${i}].serviceCategories.${modelName}`,
-            message: `Service name length ${modelName.length} exceeds max ${MAX_SERVICE_NAME_LENGTH}`,
+            field: `providers[${i}].serviceCategories.${serviceName}`,
+            message: `Service name length ${serviceName.length} exceeds max ${MAX_SERVICE_NAME_LENGTH}`,
           });
         }
-        if (!hasWildcardServices && !p.services.includes(modelName)) {
+        if (!hasWildcardServices && !p.services.includes(serviceName)) {
           errors.push({
-            field: `providers[${i}].serviceCategories.${modelName}`,
-            message: "Service categories must reference a model listed in providers[].services",
+            field: `providers[${i}].serviceCategories.${serviceName}`,
+            message: "Service categories must reference a service listed in providers[].services",
           });
         }
         if (!Array.isArray(categories) || categories.length === 0) {
           errors.push({
-            field: `providers[${i}].serviceCategories.${modelName}`,
+            field: `providers[${i}].serviceCategories.${serviceName}`,
             message: "Service categories must be a non-empty string array",
           });
           continue;
         }
-        if (categories.length > MAX_MODEL_CATEGORIES_PER_MODEL) {
+        if (categories.length > MAX_SERVICE_CATEGORIES_PER_SERVICE) {
           errors.push({
-            field: `providers[${i}].serviceCategories.${modelName}`,
-            message: `Service category count ${categories.length} exceeds max ${MAX_MODEL_CATEGORIES_PER_MODEL}`,
+            field: `providers[${i}].serviceCategories.${serviceName}`,
+            message: `Service category count ${categories.length} exceeds max ${MAX_SERVICE_CATEGORIES_PER_SERVICE}`,
           });
         }
         const deduped = new Set<string>();
@@ -180,27 +180,27 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
           const category = categories[j];
           if (typeof category !== "string" || category.trim().length === 0) {
             errors.push({
-              field: `providers[${i}].serviceCategories.${modelName}[${j}]`,
+              field: `providers[${i}].serviceCategories.${serviceName}[${j}]`,
               message: "Service category must be a non-empty string",
             });
             continue;
           }
           const normalized = category.trim().toLowerCase();
-          if (normalized.length > MAX_MODEL_CATEGORY_LENGTH) {
+          if (normalized.length > MAX_SERVICE_CATEGORY_LENGTH) {
             errors.push({
-              field: `providers[${i}].serviceCategories.${modelName}[${j}]`,
-              message: `Service category length ${normalized.length} exceeds max ${MAX_MODEL_CATEGORY_LENGTH}`,
+              field: `providers[${i}].serviceCategories.${serviceName}[${j}]`,
+              message: `Service category length ${normalized.length} exceeds max ${MAX_SERVICE_CATEGORY_LENGTH}`,
             });
           }
           if (!SERVICE_CATEGORY_PATTERN.test(normalized)) {
             errors.push({
-              field: `providers[${i}].serviceCategories.${modelName}[${j}]`,
+              field: `providers[${i}].serviceCategories.${serviceName}[${j}]`,
               message: "Service category must use lowercase letters, digits, or hyphen",
             });
           }
           if (deduped.has(normalized)) {
             errors.push({
-              field: `providers[${i}].serviceCategories.${modelName}[${j}]`,
+              field: `providers[${i}].serviceCategories.${serviceName}[${j}]`,
               message: "Service category values must be unique per service",
             });
           }
@@ -210,30 +210,30 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
     }
 
     if (p.serviceApiProtocols !== undefined) {
-      for (const [modelName, protocols] of Object.entries(p.serviceApiProtocols)) {
-        if (modelName.length > MAX_SERVICE_NAME_LENGTH) {
+      for (const [serviceName, protocols] of Object.entries(p.serviceApiProtocols)) {
+        if (serviceName.length > MAX_SERVICE_NAME_LENGTH) {
           errors.push({
-            field: `providers[${i}].serviceApiProtocols.${modelName}`,
-            message: `Service name length ${modelName.length} exceeds max ${MAX_SERVICE_NAME_LENGTH}`,
+            field: `providers[${i}].serviceApiProtocols.${serviceName}`,
+            message: `Service name length ${serviceName.length} exceeds max ${MAX_SERVICE_NAME_LENGTH}`,
           });
         }
-        if (!hasWildcardServices && !p.services.includes(modelName)) {
+        if (!hasWildcardServices && !p.services.includes(serviceName)) {
           errors.push({
-            field: `providers[${i}].serviceApiProtocols.${modelName}`,
-            message: "Service API protocols must reference a model listed in providers[].services",
+            field: `providers[${i}].serviceApiProtocols.${serviceName}`,
+            message: "Service API protocols must reference a service listed in providers[].services",
           });
         }
         if (!Array.isArray(protocols) || protocols.length === 0) {
           errors.push({
-            field: `providers[${i}].serviceApiProtocols.${modelName}`,
+            field: `providers[${i}].serviceApiProtocols.${serviceName}`,
             message: "Service API protocols must be a non-empty string array",
           });
           continue;
         }
-        if (protocols.length > MAX_MODEL_API_PROTOCOLS_PER_MODEL) {
+        if (protocols.length > MAX_SERVICE_API_PROTOCOLS_PER_SERVICE) {
           errors.push({
-            field: `providers[${i}].serviceApiProtocols.${modelName}`,
-            message: `Service API protocol count ${protocols.length} exceeds max ${MAX_MODEL_API_PROTOCOLS_PER_MODEL}`,
+            field: `providers[${i}].serviceApiProtocols.${serviceName}`,
+            message: `Service API protocol count ${protocols.length} exceeds max ${MAX_SERVICE_API_PROTOCOLS_PER_SERVICE}`,
           });
         }
         const deduped = new Set<string>();
@@ -241,21 +241,21 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
           const protocol = protocols[j];
           if (typeof protocol !== "string" || protocol.trim().length === 0) {
             errors.push({
-              field: `providers[${i}].serviceApiProtocols.${modelName}[${j}]`,
+              field: `providers[${i}].serviceApiProtocols.${serviceName}[${j}]`,
               message: "Service API protocol must be a non-empty string",
             });
             continue;
           }
           const normalized = protocol.trim().toLowerCase();
-          if (!MODEL_API_PROTOCOL_SET.has(normalized)) {
+          if (!SERVICE_API_PROTOCOL_SET.has(normalized)) {
             errors.push({
-              field: `providers[${i}].serviceApiProtocols.${modelName}[${j}]`,
+              field: `providers[${i}].serviceApiProtocols.${serviceName}[${j}]`,
               message: `Unsupported service API protocol "${normalized}"`,
             });
           }
           if (deduped.has(normalized)) {
             errors.push({
-              field: `providers[${i}].serviceApiProtocols.${modelName}[${j}]`,
+              field: `providers[${i}].serviceApiProtocols.${serviceName}[${j}]`,
               message: "Service API protocol values must be unique per service",
             });
           }

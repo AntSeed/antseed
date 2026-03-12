@@ -52,7 +52,7 @@ export interface PeerInfo {
   /** Provider/service-aware pricing map announced by seller. */
   providerPricing?: Record<string, ProviderPricingMatrixEntry>;
   /** Provider/service category tags announced by seller. */
-  providerModelCategories?: Record<string, ProviderServiceCategoryMatrixEntry>;
+  providerServiceCategories?: Record<string, ProviderServiceCategoryMatrixEntry>;
   /** Provider/service API protocols announced by seller. */
   providerServiceApiProtocols?: Record<string, ProviderServiceApiProtocolMatrixEntry>;
   /** Deterministic fallback default input price (USD per 1M tokens). */

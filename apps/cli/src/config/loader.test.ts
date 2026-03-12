@@ -94,7 +94,7 @@ test('loadConfig throws explicit validation error for incomplete service pricing
   );
 });
 
-test('loadConfig merges seller model categories per provider/model', async () => {
+test('loadConfig merges seller service categories per provider/service', async () => {
   await withTempConfig(
     JSON.stringify({
       seller: {
@@ -115,7 +115,7 @@ test('loadConfig merges seller model categories per provider/model', async () =>
   );
 });
 
-test('loadConfig rejects invalid seller model category values', async () => {
+test('loadConfig rejects invalid seller service category values', async () => {
   await withTempConfig(
     JSON.stringify({
       seller: {

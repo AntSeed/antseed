@@ -43,7 +43,7 @@ export interface ProviderPricingConfig {
 }
 
 /**
- * Hierarchical pricing with global defaults and optional provider/model overrides.
+ * Hierarchical pricing with global defaults and optional provider/service overrides.
  */
 export interface HierarchicalPricingConfig {
   defaults: TokenPricingUsdPerMillion;
@@ -51,7 +51,7 @@ export interface HierarchicalPricingConfig {
 }
 
 /**
- * Optional provider/model category tags for metadata discovery.
+ * Optional provider/service category tags for metadata discovery.
  */
 export interface SellerServiceCategoryConfig {
   [provider: string]: Record<string, string[]>;
@@ -72,7 +72,7 @@ export interface SellerMiddlewareConfig {
   position: MiddlewarePosition;
   /** Role for 'prepend'/'append' positions. Defaults to 'user'. */
   role?: string;
-  /** If set, only inject for requests targeting one of these model IDs. Applies to all models when omitted. */
+  /** If set, only inject for requests targeting one of these service IDs. Applies to all services when omitted. */
   services?: string[];
 }
 
@@ -88,7 +88,7 @@ export interface SellerCLIConfig {
   enabledProviders: string[];
   /** Seller offer pricing rules in USD per 1M tokens */
   pricing: HierarchicalPricingConfig;
-  /** Optional provider/model category tags announced in peer metadata */
+  /** Optional provider/service category tags announced in peer metadata */
   serviceCategories?: SellerServiceCategoryConfig;
   /** Optional middleware files to inject into every LLM request. */
   middleware?: SellerMiddlewareConfig[];

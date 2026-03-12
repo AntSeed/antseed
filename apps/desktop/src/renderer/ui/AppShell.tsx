@@ -57,8 +57,8 @@ export function AppShell() {
   }, [hasConversations]);
 
   const handleStartChatting = useCallback(
-    (modelValue: string) => {
-      actions.handleServiceChange(modelValue);
+    (serviceValue: string) => {
+      actions.handleServiceChange(serviceValue);
       actions.startNewChat();
       setOnboardingDismissed(true);
       setActiveView('chat');
@@ -77,7 +77,7 @@ export function AppShell() {
         <div className="app-container">
           <main className="main-content">
             <DiscoverWelcome
-              modelOptions={snap.chatServiceOptions}
+              serviceOptions={snap.chatServiceOptions}
               onStartChatting={handleStartChatting}
             />
           </main>

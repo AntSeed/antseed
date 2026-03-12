@@ -60,7 +60,7 @@ export class LocalRouter implements Router {
 
   selectPeer(req: SerializedHttpRequest, peers: PeerInfo[]): PeerInfo | null {
     const now = this._now();
-    const requestedModel = this._extractRequestedModel(req);
+    const requestedService = this._extractRequestedService(req);
 
     const candidates: {
       peer: PeerInfo;
@@ -90,12 +90,12 @@ export class LocalRouter implements Router {
       }
 
       // Pricing filter
-      const offer = this._resolvePeerOfferPrice(peer, selectedProvider.provider, requestedModel);
+      const offer = this._resolvePeerOfferPrice(peer, selectedProvider.provider, requestedService);
       if (!offer) {
         continue;
       }
 
-      const max = this._resolveBuyerMaxPrice(selectedProvider.provider, requestedModel);
+      const max = this._resolveBuyerMaxPrice(selectedProvider.provider, requestedService);
       if (offer.inputUsdPerMillion > max.inputUsdPerMillion || offer.outputUsdPerMillion > max.outputUsdPerMillion) {
         continue;
       }
@@ -171,7 +171,7 @@ export class LocalRouter implements Router {
     return this._isFiniteNonNegative(p.trustScore) || this._isFiniteNonNegative(p.reputationScore);
   }
 
-  private _extractRequestedModel(req: SerializedHttpRequest): string | null {
+  private _extractRequestedService(req: SerializedHttpRequest): string | null {
     const contentType = req.headers['content-type'] ?? req.headers['Content-Type'] ?? '';
     if (!contentType.toLowerCase().includes('application/json')) {
       return null;
@@ -182,8 +182,8 @@ export class LocalRouter implements Router {
       if (!parsed || typeof parsed !== 'object') {
         return null;
       }
-      const model = (parsed as Record<string, unknown>)['model'];
-      return typeof model === 'string' && model.trim().length > 0 ? model.trim() : null;
+      const service = (parsed as Record<string, unknown>)['model'];
+      return typeof service === 'string' && service.trim().length > 0 ? service.trim() : null;
     } catch {
       return null;
     }
@@ -212,12 +212,12 @@ export class LocalRouter implements Router {
   private _resolvePeerOfferPrice(
     peer: PeerInfo,
     provider: string,
-    model: string | null,
+    service: string | null,
   ): TokenPricingUsdPerMillion | null {
     const providerPricing = peer.providerPricing?.[provider];
 
-    if (model) {
-      const serviceSpecific = providerPricing?.services?.[model];
+    if (service) {
+      const serviceSpecific = providerPricing?.services?.[service];
       if (serviceSpecific && this._isValidOffer(serviceSpecific)) {
         return serviceSpecific;
       }
@@ -241,11 +241,11 @@ export class LocalRouter implements Router {
     return null;
   }
 
-  private _resolveBuyerMaxPrice(provider: string, model: string | null): TokenPricingUsdPerMillion {
+  private _resolveBuyerMaxPrice(provider: string, service: string | null): TokenPricingUsdPerMillion {
     const providerPricing = this._maxPricing.providers?.[provider];
 
-    if (model) {
-      const serviceOverride = providerPricing?.services?.[model];
+    if (service) {
+      const serviceOverride = providerPricing?.services?.[service];
       if (serviceOverride && this._isValidOffer(serviceOverride)) {
         return serviceOverride;
       }

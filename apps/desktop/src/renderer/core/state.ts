@@ -136,7 +136,7 @@ export type RendererUiState = {
   chatInputDisabled: boolean;
   chatSendDisabled: boolean;
   chatAbortVisible: boolean;
-  chatModelSelectDisabled: boolean;
+  chatServiceSelectDisabled: boolean;
 
   // --- Streaming indicator ---
   chatStreamingIndicatorText: string;
@@ -234,13 +234,13 @@ export function createInitialUiState(): RendererUiState {
     chatRoutedPeer: '',
     chatServiceOptions: [],
     chatSelectedServiceValue: '',
-    chatServiceStatus: { tone: 'idle', label: 'Models idle' },
+    chatServiceStatus: { tone: 'idle', label: 'Services idle' },
     chatProxyStatus: { tone: 'idle', label: 'Proxy offline' },
     chatDeleteVisible: false,
     chatInputDisabled: false,
     chatSendDisabled: false,
     chatAbortVisible: false,
-    chatModelSelectDisabled: false,
+    chatServiceSelectDisabled: false,
 
     // Streaming indicator
     chatStreamingIndicatorText: '',

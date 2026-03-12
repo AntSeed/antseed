@@ -43,7 +43,7 @@ import type { SerializedHttpRequest, SerializedHttpResponse } from '@antseed/nod
 
 export class MyProvider implements Provider {
   readonly name = 'my-provider';
-  readonly models = ['my-model-v1'];
+  readonly services = ['my-model-v1'];
   readonly pricing = {
     defaults: {
       inputUsdPerMillion: 2,
@@ -114,7 +114,7 @@ Each entry supports:
 | `file` | Yes | Path to a `.md` file (relative to config or absolute) |
 | `position` | Yes | `system-prepend`, `system-append`, `prepend`, or `append` |
 | `role` | No | Role for `prepend`/`append` positions. Defaults to `user` |
-| `models` | No | If set, only inject for requests targeting one of these model IDs. Omit to apply to all models. Must contain at least one model ID |
+| `models` | No | If set, only inject for requests targeting one of these service IDs. Omit to apply to all services. Must contain at least one service ID |
 
 ### Skills (loaded on demand)
 
@@ -188,7 +188,7 @@ npm run verify
 | Property / Method | Type | Description |
 |---|---|---|
 | `name` | `string` | Unique provider name |
-| `models` | `string[]` | Supported model IDs |
+| `services` | `string[]` | Supported service IDs |
 | `pricing.defaults.inputUsdPerMillion` | `number` | Default input pricing in USD per 1M tokens |
 | `pricing.defaults.outputUsdPerMillion` | `number` | Default output pricing in USD per 1M tokens |
 | `pricing.services?` | `Record<string, { inputUsdPerMillion; outputUsdPerMillion }>` | Optional per-service pricing overrides |

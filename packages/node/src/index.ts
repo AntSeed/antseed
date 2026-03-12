@@ -18,7 +18,7 @@ export { loadOrCreateIdentity, type Identity } from './p2p/identity.js';
 export { DHTNode, DEFAULT_DHT_CONFIG } from './discovery/dht-node.js';
 export { OFFICIAL_BOOTSTRAP_NODES, mergeBootstrapNodes, toBootstrapConfig } from './discovery/bootstrap.js';
 export {
-  WELL_KNOWN_MODEL_CATEGORIES,
+  WELL_KNOWN_SERVICE_CATEGORIES,
   WELL_KNOWN_SERVICE_API_PROTOCOLS,
   type ServiceApiProtocol,
   type PeerMetadata,

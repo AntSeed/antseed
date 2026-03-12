@@ -12,7 +12,7 @@ const SERVICE_API_PROTOCOLS_METADATA_VERSION = 4;
  * Encode metadata into binary format:
  * [version:1][peerId:32][regionLen:1][region:N][timestamp:8 BigUint64][providerCount:1]
  * for each provider:
- *   [providerLen:1][provider:N][serviceCount:1][models...]
+ *   [providerLen:1][provider:N][serviceCount:1][services...]
  *   [defaultInputPrice:4][defaultOutputPrice:4]
  *   [servicePricingCount:1][servicePricingEntries...]
  *   [serviceCategoryCount:1][serviceCategoryEntries...] (v3+ only)
@@ -357,11 +357,11 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
     const servicePricing: Record<string, { inputUsdPerMillion: number; outputUsdPerMillion: number }> = {};
     for (let j = 0; j < servicePricingCount; j++) {
       checkBounds(offset, 1, data.length);
-      const pricedModelLen = data[offset]!;
+      const pricedServiceLen = data[offset]!;
       offset += 1;
-      checkBounds(offset, pricedModelLen, data.length);
-      const pricedModelName = new TextDecoder().decode(data.slice(offset, offset + pricedModelLen));
-      offset += pricedModelLen;
+      checkBounds(offset, pricedServiceLen, data.length);
+      const pricedServiceName = new TextDecoder().decode(data.slice(offset, offset + pricedServiceLen));
+      offset += pricedServiceLen;
 
       checkBounds(offset, 4, data.length);
       const pricedInputView = new DataView(data.buffer, data.byteOffset + offset, 4);
@@ -373,7 +373,7 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
       const outputUsdPerMillion = pricedOutputView.getFloat32(0, false);
       offset += 4;
 
-      servicePricing[pricedModelName] = {
+      servicePricing[pricedServiceName] = {
         inputUsdPerMillion,
         outputUsdPerMillion,
       };
@@ -388,11 +388,11 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
         serviceCategories = {};
         for (let j = 0; j < serviceCategoryCount; j++) {
           checkBounds(offset, 1, data.length);
-          const categorizedModelLen = data[offset]!;
+          const categorizedServiceLen = data[offset]!;
           offset += 1;
-          checkBounds(offset, categorizedModelLen, data.length);
-          const categorizedModelName = new TextDecoder().decode(data.slice(offset, offset + categorizedModelLen));
-          offset += categorizedModelLen;
+          checkBounds(offset, categorizedServiceLen, data.length);
+          const categorizedServiceName = new TextDecoder().decode(data.slice(offset, offset + categorizedServiceLen));
+          offset += categorizedServiceLen;
 
           checkBounds(offset, 1, data.length);
           const categoryCount = data[offset]!;
@@ -407,7 +407,7 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
             offset += categoryLen;
             categories.push(category);
           }
-          serviceCategories[categorizedModelName] = categories;
+          serviceCategories[categorizedServiceName] = categories;
         }
       }
     }
@@ -421,11 +421,11 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
         serviceApiProtocols = {};
         for (let j = 0; j < serviceApiProtocolCount; j++) {
           checkBounds(offset, 1, data.length);
-          const protocolModelLen = data[offset]!;
+          const protocolServiceLen = data[offset]!;
           offset += 1;
-          checkBounds(offset, protocolModelLen, data.length);
-          const protocolModelName = new TextDecoder().decode(data.slice(offset, offset + protocolModelLen));
-          offset += protocolModelLen;
+          checkBounds(offset, protocolServiceLen, data.length);
+          const protocolServiceName = new TextDecoder().decode(data.slice(offset, offset + protocolServiceLen));
+          offset += protocolServiceLen;
 
           checkBounds(offset, 1, data.length);
           const protocolCount = data[offset]!;
@@ -440,7 +440,7 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
             offset += protocolLen;
             protocols.push(protocol as ServiceApiProtocol);
           }
-          serviceApiProtocols[protocolModelName] = protocols;
+          serviceApiProtocols[protocolServiceName] = protocols;
         }
       }
     }

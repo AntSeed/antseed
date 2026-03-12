@@ -41,7 +41,7 @@ export ANTSEED_MAX_PRICING_JSON='{"defaults":{"inputUsdPerMillion":20,"outputUsd
 Or with per-provider overrides:
 
 ```bash
-export ANTSEED_MAX_PRICING_JSON='{"defaults":{"inputUsdPerMillion":20,"outputUsdPerMillion":60},"providers":{"anthropic":{"models":{"claude-sonnet-4-5-20250929":{"inputUsdPerMillion":15,"outputUsdPerMillion":75}}}}}'
+export ANTSEED_MAX_PRICING_JSON='{"defaults":{"inputUsdPerMillion":20,"outputUsdPerMillion":60},"providers":{"anthropic":{"services":{"claude-sonnet-4-5-20250929":{"inputUsdPerMillion":15,"outputUsdPerMillion":75}}}}}'
 ```
 
 ## How It Works

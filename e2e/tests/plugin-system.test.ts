@@ -60,7 +60,7 @@ describe('Plugin Loader', () => {
         createProvider(config) {
           return {
             name: 'test',
-            services: ['test-model'],
+            services: ['test-service'],
             pricing: {
               defaults: {
                 inputUsdPerMillion: 10,

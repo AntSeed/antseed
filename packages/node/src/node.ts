@@ -920,21 +920,21 @@ export class AntseedNode extends EventEmitter {
         return;
       }
 
-      const requestedModel = this._extractRequestedModel(request);
+      const requestedService = this._extractRequestedService(request);
       const requestedProvider = this._extractRequestedProvider(request);
-      const matchesModel = (provider: Provider): boolean =>
+      const matchesService = (provider: Provider): boolean =>
         provider.services.length === 0
-        || (requestedModel !== null && provider.services.includes(requestedModel))
+        || (requestedService !== null && provider.services.includes(requestedService))
         || this._providers.length === 1;
 
       let provider: Provider | undefined;
       if (requestedProvider) {
         provider = this._providers.find((candidate) =>
-          candidate.name.toLowerCase() === requestedProvider && matchesModel(candidate),
+          candidate.name.toLowerCase() === requestedProvider && matchesService(candidate),
         );
       }
       if (!provider) {
-        provider = this._providers.find((candidate) => matchesModel(candidate));
+        provider = this._providers.find((candidate) => matchesService(candidate));
       }
 
       if (!provider) {
@@ -1067,7 +1067,7 @@ export class AntseedNode extends EventEmitter {
     }
   }
 
-  private _extractRequestedModel(request: SerializedHttpRequest): string | null {
+  private _extractRequestedService(request: SerializedHttpRequest): string | null {
     const contentType = request.headers["content-type"] ?? request.headers["Content-Type"] ?? "";
     if (!contentType.toLowerCase().includes("application/json")) {
       return null;
@@ -1076,11 +1076,11 @@ export class AntseedNode extends EventEmitter {
     if (!parsed || typeof parsed !== "object") {
       return null;
     }
-    const model = (parsed as Record<string, unknown>)["model"];
-    if (typeof model !== "string" || model.trim().length === 0) {
+    const service = (parsed as Record<string, unknown>)["model"];
+    if (typeof service !== "string" || service.trim().length === 0) {
       return null;
     }
-    return model.trim();
+    return service.trim();
   }
 
   private _extractRequestedProvider(request: SerializedHttpRequest): string | null {
@@ -1096,9 +1096,9 @@ export class AntseedNode extends EventEmitter {
     provider: Provider,
     request: SerializedHttpRequest,
   ): { inputUsdPerMillion: number; outputUsdPerMillion: number } {
-    const requestedModel = this._extractRequestedModel(request);
-    if (requestedModel) {
-      const servicePricing = provider.pricing.services?.[requestedModel];
+    const requestedService = this._extractRequestedService(request);
+    if (requestedService) {
+      const servicePricing = provider.pricing.services?.[requestedService];
       if (servicePricing) {
         return servicePricing;
       }
@@ -1864,7 +1864,7 @@ export class AntseedNode extends EventEmitter {
     const providers = result.metadata.providers.map((p) => p.provider);
     const firstProvider = result.metadata.providers[0];
     const providerPricingEntries: NonNullable<PeerInfo["providerPricing"]> = {};
-    const providerModelCategoryEntries: NonNullable<PeerInfo["providerModelCategories"]> = {};
+    const providerServiceCategoryEntries: NonNullable<PeerInfo["providerServiceCategories"]> = {};
     const providerServiceApiProtocolEntries: NonNullable<PeerInfo["providerServiceApiProtocols"]> = {};
 
     for (const providerAnnouncement of result.metadata.providers) {
@@ -1877,7 +1877,7 @@ export class AntseedNode extends EventEmitter {
       };
 
       if (providerAnnouncement.serviceCategories && Object.keys(providerAnnouncement.serviceCategories).length > 0) {
-        providerModelCategoryEntries[providerAnnouncement.provider] = {
+        providerServiceCategoryEntries[providerAnnouncement.provider] = {
           services: Object.fromEntries(
             Object.entries(providerAnnouncement.serviceCategories)
               .map(([service, categories]) => [service, [...categories]]),
@@ -1896,7 +1896,7 @@ export class AntseedNode extends EventEmitter {
     }
 
     const hasProviderPricing = Object.keys(providerPricingEntries).length > 0;
-    const hasProviderModelCategories = Object.keys(providerModelCategoryEntries).length > 0;
+    const hasProviderServiceCategories = Object.keys(providerServiceCategoryEntries).length > 0;
     const hasProviderServiceApiProtocols = Object.keys(providerServiceApiProtocolEntries).length > 0;
 
     return {
@@ -1906,7 +1906,7 @@ export class AntseedNode extends EventEmitter {
       providers,
       publicAddress: `${result.host}:${result.port}`,
       ...(hasProviderPricing ? { providerPricing: providerPricingEntries } : {}),
-      ...(hasProviderModelCategories ? { providerModelCategories: providerModelCategoryEntries } : {}),
+      ...(hasProviderServiceCategories ? { providerServiceCategories: providerServiceCategoryEntries } : {}),
       ...(hasProviderServiceApiProtocols ? { providerServiceApiProtocols: providerServiceApiProtocolEntries } : {}),
       defaultInputUsdPerMillion: firstProvider?.defaultPricing.inputUsdPerMillion,
       defaultOutputUsdPerMillion: firstProvider?.defaultPricing.outputUsdPerMillion,

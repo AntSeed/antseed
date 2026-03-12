@@ -17,7 +17,7 @@ function allowSet(...services: string[]): ReadonlySet<string> {
 }
 
 describe('Security: allowed-service validation', () => {
-  it('rejects duplicate model keys that end with a forbidden model', () => {
+  it('rejects duplicate service keys that end with a forbidden service', () => {
     const request = makeRequest(
       '{"model":"claude-sonnet-4-5-20250929","model":"claude-opus-4-0-20250514"}',
     );
@@ -31,7 +31,7 @@ describe('Security: allowed-service validation', () => {
     expect(validateRequestService(request, allowSet('claude-sonnet-4-5-20250929'))).toBeNull();
   });
 
-  it('allows valid payloads with allowed models', () => {
+  it('allows valid payloads with allowed services', () => {
     const request = makeRequest('{"model":"claude-sonnet-4-5-20250929","messages":[]}');
     expect(validateRequestService(request, allowSet('claude-sonnet-4-5-20250929'))).toBeNull();
   });

@@ -13,11 +13,11 @@ describe('DHT topic helpers', () => {
     expect(providerTopic('  OpenAI  ')).toBe('antseed:openai');
   });
 
-  it('normalizes model topics to lowercase', () => {
+  it('normalizes service topics to lowercase', () => {
     expect(serviceTopic('  KIMI2.5  ')).toBe('antseed:service:kimi2.5');
   });
 
-  it('normalizes compact model-search keys by removing spaces, hyphens, and underscores', () => {
+  it('normalizes compact service-search keys by removing spaces, hyphens, and underscores', () => {
     expect(normalizeServiceTopicKey('  KIMI-2.5  ')).toBe('kimi-2.5');
     expect(normalizeServiceSearchTopicKey('  KIMI-2.5  ')).toBe('kimi2.5');
     expect(normalizeServiceSearchTopicKey('  kimi_2.5  ')).toBe('kimi2.5');

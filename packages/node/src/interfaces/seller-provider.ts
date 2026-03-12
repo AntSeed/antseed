@@ -22,7 +22,7 @@ export interface Provider {
   /** Unique name for this provider (e.g., 'anthropic', 'openai', 'my-local-llm') */
   name: string;
 
-  /** Model IDs this provider supports (e.g., ['claude-sonnet-4-5-20250929', 'claude-opus-4-0-20250514']) */
+  /** Service IDs this provider supports (e.g., ['claude-sonnet-4-5-20250929', 'claude-opus-4-0-20250514']) */
   services: string[];
 
   /** Seller pricing in USD per 1M tokens (defaults + optional per-service overrides). */

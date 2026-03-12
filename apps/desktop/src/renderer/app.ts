@@ -191,7 +191,7 @@ function updateRuntimeActivityFromLog(mode: string, lineRaw: string): void {
       return;
     }
     if (line.includes('/v1/models')) {
-      setRuntimeActivity('warn', 'Loading model catalog from peers...', 8_000);
+      setRuntimeActivity('warn', 'Loading service catalog from peers...', 8_000);
       return;
     }
     if (line.includes('proxy listening on')) {
@@ -238,7 +238,7 @@ async function refreshAll(reason: RefreshReason = 'poll'): Promise<void> {
     setRuntimeActivity('warn', 'Refreshing runtime and peer snapshots...', 8_000);
   }
 
-  // Run proxy + model check independently so it isn't blocked by slow dashboard HTTP calls.
+  // Run proxy + service check independently so it isn't blocked by slow dashboard HTTP calls.
   void chatApi.refreshChatProxyStatus();
 
   try {

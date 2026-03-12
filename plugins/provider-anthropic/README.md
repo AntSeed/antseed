@@ -26,7 +26,7 @@ antseed seed --provider anthropic
 | `ANTSEED_OUTPUT_USD_PER_MILLION` | number | No | 10 | Output token price (USD per 1M) |
 | `ANTSEED_SERVICE_PRICING_JSON` | string | No | -- | Per-service pricing as JSON |
 | `ANTSEED_MAX_CONCURRENCY` | number | No | 10 | Max concurrent requests |
-| `ANTSEED_ALLOWED_MODELS` | string[] | No | -- | Comma-separated model allowlist |
+| `ANTSEED_ALLOWED_SERVICES` | string[] | No | -- | Comma-separated service allowlist |
 
 ## Per-Service Pricing
 

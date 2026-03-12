@@ -18,8 +18,8 @@ Sellers announce multiple topic types on the DHT:
 
 ```
 providerTopic(provider)        = "antseed:" + normalize(provider)
-serviceTopic(model)              = "antseed:service:" + normalize(model)
-serviceSearchTopic(model)        = "antseed:service-search:" + compact(normalize(model))
+serviceTopic(service)            = "antseed:service:" + normalize(service)
+serviceSearchTopic(service)      = "antseed:service-search:" + compact(normalize(service))
 capabilityTopic(capability)    = "antseed:" + normalize(capability)
 capabilityTopic(capability,id) = "antseed:" + normalize(capability) + ":" + normalize(id)
 
@@ -28,7 +28,7 @@ compact(x)   = remove all spaces, "-" and "_" (preserve ".")
 infoHash     = SHA1(topic)      // 20-byte info hash
 ```
 
-The announcer always publishes canonical model topics (`serviceTopic`). It additionally publishes compact `serviceSearchTopic` entries only when the compact key differs from canonical.
+The announcer always publishes canonical service topics (`serviceTopic`). It additionally publishes compact `serviceSearchTopic` entries only when the compact key differs from canonical.
 
 Examples:
 
@@ -95,9 +95,9 @@ METADATA_VERSION = 4
 | provider         | string   | Provider name (e.g. "anthropic")                            |
 | services         | string[] | List of service identifiers                                  |
 | defaultPricing   | object   | Default `{ inputUsdPerMillion, outputUsdPerMillion }`       |
-| servicePricing     | object   | Optional per-service map `{ [model]: { inputUsdPerMillion, outputUsdPerMillion } }` |
-| serviceCategories  | object   | Optional per-service map `{ [model]: string[] }` with lowercase tags |
-| serviceApiProtocols| object   | Optional per-service map `{ [model]: string[] }` of supported model API protocols |
+| servicePricing     | object   | Optional per-service map `{ [service]: { inputUsdPerMillion, outputUsdPerMillion } }` |
+| serviceCategories  | object   | Optional per-service map `{ [service]: string[] }` with lowercase tags |
+| serviceApiProtocols| object   | Optional per-service map `{ [service]: string[] }` of supported service API protocols |
 | maxConcurrency   | number   | Maximum concurrent requests (>= 1)                           |
 | currentLoad      | number   | Current number of active requests                            |
 
@@ -119,30 +119,30 @@ Header:
 Per provider (repeated providerCount times):
   [providerLen   : 1 byte   uint8 ]
   [provider      : N bytes  UTF-8  ]   // N = providerLen
-  [modelCount    : 1 byte   uint8 ]
-  Per model (repeated modelCount times):
-    [modelLen    : 1 byte   uint8 ]
-    [model       : N bytes  UTF-8  ]   // N = modelLen
+  [serviceCount  : 1 byte   uint8 ]
+  Per service (repeated serviceCount times):
+    [serviceLen  : 1 byte   uint8 ]
+    [service     : N bytes  UTF-8  ]   // N = serviceLen
   [defaultInputUsdPerMillion  : 4 bytes  float32 big-endian ]
   [defaultOutputUsdPerMillion : 4 bytes  float32 big-endian ]
   [servicePricingCount          : 1 byte   uint8 ]
   Per service pricing entry (repeated servicePricingCount times):
-    [modelLen   : 1 byte   uint8 ]
-    [model      : N bytes  UTF-8  ]
+    [serviceLen : 1 byte   uint8 ]
+    [service    : N bytes  UTF-8  ]
     [inputUsdPerMillion  : 4 bytes  float32 big-endian ]
     [outputUsdPerMillion : 4 bytes  float32 big-endian ]
-  [modelCategoryCount         : 1 byte   uint8 ]      // v3+
-  Per model category entry (repeated modelCategoryCount times):
-    [modelLen   : 1 byte   uint8 ]
-    [model      : N bytes  UTF-8  ]
+  [serviceCategoryCount       : 1 byte   uint8 ]      // v3+
+  Per service category entry (repeated serviceCategoryCount times):
+    [serviceLen : 1 byte   uint8 ]
+    [service    : N bytes  UTF-8  ]
     [categoryCount : 1 byte uint8 ]
     Per category (repeated categoryCount times):
       [categoryLen : 1 byte uint8 ]
       [category    : N bytes UTF-8 ]
-  [modelApiProtocolCount      : 1 byte   uint8 ]      // v4+
-  Per model API protocol entry (repeated modelApiProtocolCount times):
-    [modelLen   : 1 byte   uint8 ]
-    [model      : N bytes  UTF-8  ]
+  [serviceApiProtocolCount    : 1 byte   uint8 ]      // v4+
+  Per service API protocol entry (repeated serviceApiProtocolCount times):
+    [serviceLen : 1 byte   uint8 ]
+    [service    : N bytes  UTF-8  ]
     [protocolCount : 1 byte uint8 ]
     Per protocol (repeated protocolCount times):
       [protocolLen : 1 byte uint8 ]
@@ -173,13 +173,13 @@ The body (everything except the trailing 64-byte signature) is the data that is 
 |---------------------------|-------|---------------------------------------------|
 | MAX_METADATA_SIZE         | 1000  | Maximum encoded size in bytes               |
 | MAX_PROVIDERS             | 10    | Maximum provider entries per metadata       |
-| MAX_MODELS_PER_PROVIDER   | 20    | Maximum models per provider entry           |
-| MAX_MODEL_NAME_LENGTH     | 64    | Maximum model name length in characters     |
+| MAX_SERVICES_PER_PROVIDER | 20    | Maximum services per provider entry         |
+| MAX_SERVICE_NAME_LENGTH   | 64    | Maximum service name length in characters   |
 | MAX_REGION_LENGTH         | 32    | Maximum region string length in characters  |
 | MAX_DISPLAY_NAME_LENGTH   | 64    | Maximum display name length in characters   |
-| MAX_MODEL_CATEGORIES_PER_MODEL | 8 | Maximum categories per model               |
-| MAX_MODEL_CATEGORY_LENGTH | 32    | Maximum category length in characters       |
-| MAX_MODEL_API_PROTOCOLS_PER_MODEL | 4 | Maximum protocol entries per model |
+| MAX_SERVICE_CATEGORIES_PER_SERVICE | 8 | Maximum categories per service           |
+| MAX_SERVICE_CATEGORY_LENGTH | 32  | Maximum category length in characters       |
+| MAX_SERVICE_API_PROTOCOLS_PER_SERVICE | 4 | Maximum protocol entries per service |
 
 Additional validation rules enforced by `validateMetadata()`:
 
@@ -190,7 +190,7 @@ Additional validation rules enforced by `validateMetadata()`:
 - `timestamp` must be a positive finite number.
 - At least one provider must be present.
 - `defaultPricing.inputUsdPerMillion` and `defaultPricing.outputUsdPerMillion` must be non-negative.
-- Each `servicePricing[model].inputUsdPerMillion` and `servicePricing[model].outputUsdPerMillion` (if present) must be non-negative.
+- Each `servicePricing[service].inputUsdPerMillion` and `servicePricing[service].outputUsdPerMillion` (if present) must be non-negative.
 - `serviceCategories` (if present) must reference models listed in `providers[].services`.
 - Each category must be lowercase alphanumeric or hyphen: `^[a-z0-9][a-z0-9-]*$`.
 - Categories must be non-empty, unique per model, and within per-service/per-tag limits above.
@@ -251,7 +251,7 @@ The `PeerLookup` class orchestrates the full discovery flow:
 
 1. Build lookup topic(s):
    - provider lookup: `SHA1(providerTopic(provider))`
-   - model lookup: `SHA1(serviceTopic(model))`, and if compact key differs, also `SHA1(serviceSearchTopic(model))`
+   - service lookup: `SHA1(serviceTopic(service))`, and if compact key differs, also `SHA1(serviceSearchTopic(service))`
    - capability lookup: `SHA1(capabilityTopic(capability[, name]))`
 2. Query the DHT for the topic hash(es) to obtain `{host, port}` peer endpoints.
 3. For each peer (up to `maxResults`):
@@ -283,8 +283,8 @@ The `PeerAnnouncer` class handles the seller-side announcement lifecycle:
 4. Sign the body with the seller's Ed25519 private key.
 5. Announce DHT topics at the configured signaling port:
    - provider topics (`providerTopic(provider)`)
-   - canonical model topics (`serviceTopic(model)`)
-   - compact model-search topics (`serviceSearchTopic(model)`) when canonical and compact keys differ
+   - canonical service topics (`serviceTopic(service)`)
+   - compact service-search topics (`serviceSearchTopic(service)`) when canonical and compact keys differ
    - wildcard provider topic (`providerTopic("*")`)
    - capability topics when offerings are configured
 

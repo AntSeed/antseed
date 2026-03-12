@@ -4,7 +4,7 @@ import type { ServiceApiProtocol } from "../types/service-api.js";
 import { WELL_KNOWN_SERVICE_API_PROTOCOLS } from "../types/service-api.js";
 
 export const METADATA_VERSION = 4;
-export const WELL_KNOWN_MODEL_CATEGORIES = [
+export const WELL_KNOWN_SERVICE_CATEGORIES = [
   "privacy",
   "legal",
   "uncensored",

@@ -25,8 +25,8 @@ function makePeer(overrides?: Partial<PeerInfo>): PeerInfo {
   };
 }
 
-function makeRequest(model?: string): SerializedHttpRequest {
-  const payload = model ? { model } : { messages: [{ role: 'user', content: 'hi' }] };
+function makeRequest(service?: string): SerializedHttpRequest {
+  const payload = service ? { model: service } : { messages: [{ role: 'user', content: 'hi' }] };
   return {
     requestId: 'req-1',
     method: 'POST',
@@ -106,7 +106,7 @@ describe('LocalRouter', () => {
         anthropic: {
           defaults: { inputUsdPerMillion: 10, outputUsdPerMillion: 10 },
           services: {
-            'model-a': { inputUsdPerMillion: 90, outputUsdPerMillion: 90 },
+            'service-a': { inputUsdPerMillion: 90, outputUsdPerMillion: 90 },
           },
         },
       },
@@ -119,7 +119,7 @@ describe('LocalRouter', () => {
         anthropic: {
           defaults: { inputUsdPerMillion: 20, outputUsdPerMillion: 20 },
           services: {
-            'model-a': { inputUsdPerMillion: 5, outputUsdPerMillion: 5 },
+            'service-a': { inputUsdPerMillion: 5, outputUsdPerMillion: 5 },
           },
         },
       },
@@ -127,7 +127,7 @@ describe('LocalRouter', () => {
       defaultOutputUsdPerMillion: 20,
     });
 
-    const selected = router.selectPeer(makeRequest('model-a'), [peerA, peerB]);
+    const selected = router.selectPeer(makeRequest('service-a'), [peerA, peerB]);
     expect(selected?.peerId).toBe(peerB.peerId);
   });
 
@@ -144,7 +144,7 @@ describe('LocalRouter', () => {
         anthropic: {
           defaults: { inputUsdPerMillion: 40, outputUsdPerMillion: 40 },
           services: {
-            'model-a': { inputUsdPerMillion: 1, outputUsdPerMillion: 1 },
+            'service-a': { inputUsdPerMillion: 1, outputUsdPerMillion: 1 },
           },
         },
       },

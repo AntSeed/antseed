@@ -60,7 +60,7 @@ type AiMessageMeta = {
   peerCurrentLoad?: number;
   peerMaxConcurrency?: number;
   provider?: string;
-  model?: string;
+  service?: string;
   requestId?: string;
   routeRequestId?: string;
   latencyMs?: number;
@@ -88,7 +88,7 @@ type AiUsageTotals = {
 type AiConversation = {
   id: string;
   title: string;
-  model: string;
+  service: string;
   provider?: string;
   messages: AiChatMessage[];
   createdAt: number;
@@ -99,7 +99,7 @@ type AiConversation = {
 type AiConversationSummary = {
   id: string;
   title: string;
-  model: string;
+  service: string;
   provider?: string;
   messageCount: number;
   createdAt: number;
@@ -442,7 +442,7 @@ function parseProxyMeta(response: Response, requestStartedAt: number): AiMessage
   const peerAddressRaw = response.headers.get('x-antseed-peer-address');
   const peerProvidersRaw = parseHeaderCsv(response.headers, 'x-antseed-peer-providers');
   const providerRaw = response.headers.get('x-antseed-provider');
-  const modelRaw = response.headers.get('x-antseed-model');
+  const serviceRaw = response.headers.get('x-antseed-service');
   const requestIdRaw = response.headers.get('request-id') ?? response.headers.get('x-request-id');
   const routeRequestIdRaw = response.headers.get('x-antseed-request-id');
 
@@ -473,7 +473,7 @@ function parseProxyMeta(response: Response, requestStartedAt: number): AiMessage
     peerCurrentLoad,
     peerMaxConcurrency,
     provider: typeof providerRaw === 'string' && providerRaw.trim().length > 0 ? providerRaw.trim() : undefined,
-    model: typeof modelRaw === 'string' && modelRaw.trim().length > 0 ? modelRaw.trim() : undefined,
+    service: typeof serviceRaw === 'string' && serviceRaw.trim().length > 0 ? serviceRaw.trim() : undefined,
     requestId: typeof requestIdRaw === 'string' && requestIdRaw.trim().length > 0 ? requestIdRaw.trim() : undefined,
     routeRequestId: typeof routeRequestIdRaw === 'string' && routeRequestIdRaw.trim().length > 0 ? routeRequestIdRaw.trim() : undefined,
     latencyMs,
@@ -487,8 +487,8 @@ function parseProxyMeta(response: Response, requestStartedAt: number): AiMessage
   };
 }
 
-function normalizeModelId(model?: string): string {
-  const trimmed = String(model ?? '').trim();
+function normalizeServiceId(service?: string): string {
+  const trimmed = String(service ?? '').trim();
   return trimmed.length > 0 ? trimmed : DEFAULT_CHAT_MODEL;
 }
 
@@ -597,8 +597,8 @@ function normalizeServiceValue(value: unknown): string | null {
   if (typeof value !== 'string') {
     return null;
   }
-  const model = value.trim();
-  return model.length > 0 ? model : null;
+  const service = value.trim();
+  return service.length > 0 ? service : null;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -611,11 +611,11 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 function resolveProtocolForService(
   provider: string,
   matrixRaw: unknown,
-  modelId: string,
+  serviceId: string,
 ): ChatServiceProtocol | null {
   const matrix = asRecord(matrixRaw);
   if (matrix) {
-    const targetKey = modelId.trim().toLowerCase();
+    const targetKey = serviceId.trim().toLowerCase();
     for (const [key, value] of Object.entries(matrix)) {
       if (key.trim().toLowerCase() !== targetKey || !Array.isArray(value)) {
         continue;
@@ -630,26 +630,26 @@ function resolveProtocolForService(
   return inferProviderProtocol(provider);
 }
 
-function updateModelProviderHints(
-  modelProviderHints: Map<string, string[]>,
+function updateServiceProviderHints(
+  serviceProviderHints: Map<string, string[]>,
   entries: ChatServiceCatalogEntry[],
 ): void {
-  modelProviderHints.clear();
+  serviceProviderHints.clear();
   for (const entry of entries) {
-    const modelId = normalizeServiceValue(entry.id)?.toLowerCase();
+    const serviceId = normalizeServiceValue(entry.id)?.toLowerCase();
     const provider = normalizeProviderId(entry.provider);
-    if (!modelId || !provider || !inferProviderProtocol(provider)) {
+    if (!serviceId || !provider || !inferProviderProtocol(provider)) {
       continue;
     }
-    const providers = modelProviderHints.get(modelId) ?? [];
+    const providers = serviceProviderHints.get(serviceId) ?? [];
     if (!providers.includes(provider)) {
       providers.push(provider);
-      modelProviderHints.set(modelId, providers);
+      serviceProviderHints.set(serviceId, providers);
     }
   }
 }
 
-function resolveProviderHintForModel(
+function resolveProviderHintForService(
   explicitProvider?: string,
 ): string | null {
   const explicit = normalizeProviderId(explicitProvider);
@@ -809,8 +809,9 @@ async function fetchPeerMetadata(host: string, port: number): Promise<Record<str
   }
 }
 
-function extractChatModelCatalog(metadata: Record<string, unknown>): Omit<ChatServiceCatalogEntry, 'count'>[] {
+function extractChatServiceCatalog(metadata: Record<string, unknown>): Omit<ChatServiceCatalogEntry, 'count'>[] {
   const providersRaw = metadata.providers;
+
   if (!Array.isArray(providersRaw)) {
     return [];
   }
@@ -825,7 +826,7 @@ function extractChatModelCatalog(metadata: Record<string, unknown>): Omit<ChatSe
     if (!providerId) {
       continue;
     }
-    const serviceListRaw = providerRecord.services;
+    const serviceListRaw = providerRecord.services || providerRecord.models;
     if (!Array.isArray(serviceListRaw)) {
       continue;
     }
@@ -892,7 +893,7 @@ async function discoverChatServiceCatalog(
     if (!metadata) {
       continue;
     }
-    const entries = extractChatModelCatalog(metadata);
+    const entries = extractChatServiceCatalog(metadata);
     for (const entry of entries) {
       const key = `${entry.id}\u0000${entry.provider}\u0000${entry.protocol}`;
       const existing = aggregate.get(key);
@@ -1136,10 +1137,10 @@ function deriveTitle(messages: AiChatMessage[]): string {
   return 'New conversation';
 }
 
-function makeProxyModel(modelId: string, port: number): Model<'anthropic-messages'> {
+function makeProxyService(serviceId: string, port: number): Model<'anthropic-messages'> {
   return {
-    id: modelId,
-    name: modelId,
+    id: serviceId,
+    name: serviceId,
     api: 'anthropic-messages',
     provider: PROXY_PROVIDER_ID,
     baseUrl: `http://127.0.0.1:${port}`,
@@ -1273,7 +1274,7 @@ function convertAssistantMessageForUi(
   const totalTokens = usage.totalTokens > 0 ? usage.totalTokens : usage.input + usage.output;
   const usageMeta: AiMessageMeta = {
     provider: message.provider,
-    model: message.model,
+    service: message.model,
     inputTokens: usage.input,
     outputTokens: usage.output,
     totalTokens,
@@ -1358,7 +1359,7 @@ function anthropicContentFromAssistant(content: AssistantMessage['content']): un
       blocks.push({ type: 'text', text });
       continue;
     }
-    // Strip thinking blocks: the proxy routes to arbitrary models (OpenRouter,
+    // Strip thinking blocks: the proxy routes to arbitrary services (OpenRouter,
     // local LLMs, etc.) that do not understand Anthropic-format thinking blocks.
     // Echoing them back causes broken multi-turn conversations.
     if (block.type === 'thinking') {
@@ -2027,7 +2028,7 @@ class PiConversationStore {
     return {
       id: manager.getSessionId(),
       title: manager.getSessionName() || deriveTitle(messages),
-      model: normalizeModelId(context.model?.modelId),
+      service: normalizeServiceId(context.model?.modelId),
       provider: normalizeProviderId(context.model?.provider) ?? undefined,
       messages,
       createdAt,
@@ -2068,7 +2069,7 @@ class PiConversationStore {
       summaryById.set(conversation.id, {
         id: conversation.id,
         title: conversation.title,
-        model: conversation.model,
+        service: conversation.service,
         provider: conversation.provider,
         messageCount: conversation.messages.length,
         createdAt: conversation.createdAt,
@@ -2088,7 +2089,7 @@ class PiConversationStore {
       summaryById.set(conversation.id, {
         id: conversation.id,
         title: conversation.title,
-        model: conversation.model,
+        service: conversation.service,
         provider: conversation.provider,
         messageCount: conversation.messages.length,
         createdAt: conversation.createdAt,
@@ -2114,12 +2115,12 @@ class PiConversationStore {
     return await this.readConversationFromPath(sessionPath);
   }
 
-  async create(model?: string, provider?: string): Promise<AiConversation> {
+  async create(service?: string, provider?: string): Promise<AiConversation> {
     await this.ready;
     const manager = SessionManager.create(this.workspaceDir, this.sessionsDir);
     const providerId = normalizeProviderId(provider);
     const modelProvider = providerId && inferProviderProtocol(providerId) ? providerId : PROXY_PROVIDER_ID;
-    manager.appendModelChange(modelProvider, normalizeModelId(model));
+    manager.appendModelChange(modelProvider, normalizeServiceId(service));
     const sessionPath = manager.getSessionFile();
     if (!sessionPath) {
       throw new Error('Failed to create persisted pi session');
@@ -2205,7 +2206,7 @@ function parseAssistantMetaFromSessionEvent(
   const totalTokens = usage.totalTokens > 0 ? usage.totalTokens : usage.input + usage.output;
   const usageMeta: AiMessageMeta = {
     provider: assistant.provider,
-    model: assistant.model,
+    service: assistant.model,
     inputTokens: usage.input,
     outputTokens: usage.output,
     totalTokens,
@@ -2257,10 +2258,10 @@ export function registerPiChatHandlers({
 }: RegisterPiChatHandlersOptions): void {
   const store = new PiConversationStore();
   const activeRunsByConversation = new Map<string, ActiveRun>();
-  const modelProviderHints = new Map<string, string[]>();
+  const serviceProviderHints = new Map<string, string[]>();
   const preferredPeerByConversationId = new Map<string, string>();
-  let modelCatalogRefreshPromise: Promise<ChatServiceCatalogEntry[]> | null = null;
-  let lastModelCatalogRefreshAt = 0;
+  let serviceCatalogRefreshPromise: Promise<ChatServiceCatalogEntry[]> | null = null;
+  let lastServiceCatalogRefreshAt = 0;
 
   const clearActiveRun = (run: ActiveRun | null): void => {
     if (!run) {
@@ -2340,12 +2341,12 @@ export function registerPiChatHandlers({
     }
 
     const context = sessionManager.buildSessionContext();
-    const modelId = normalizeModelId(serviceOverride || context.model?.modelId);
+    const serviceId = normalizeServiceId(serviceOverride || context.model?.modelId);
     const preferredPeerId = preferredPeerByConversationId.get(conversationId) ?? null;
-    const providerHint = resolveProviderHintForModel(
+    const providerHint = resolveProviderHintForService(
       providerOverride,
     );
-    const proxyModel = makeProxyModel(modelId, proxyPort);
+    const proxyModel = makeProxyService(serviceId, proxyPort);
 
     const authStorage = AuthStorage.inMemory();
     authStorage.setRuntimeApiKey(PROXY_PROVIDER_ID, PROXY_RUNTIME_API_KEY);
@@ -2631,37 +2632,37 @@ export function registerPiChatHandlers({
     }
   };
 
-  const refreshModelCatalogFromNetwork = async (force = false): Promise<ChatServiceCatalogEntry[]> => {
+  const refreshServiceCatalogFromNetwork = async (force = false): Promise<ChatServiceCatalogEntry[]> => {
     const now = Date.now();
-    if (!force && modelCatalogRefreshPromise) {
-      return await modelCatalogRefreshPromise;
+    if (!force && serviceCatalogRefreshPromise) {
+      return await serviceCatalogRefreshPromise;
     }
-    if (!force && now - lastModelCatalogRefreshAt < CHAT_SERVICE_CACHE_REFRESH_DEBOUNCE_MS) {
+    if (!force && now - lastServiceCatalogRefreshAt < CHAT_SERVICE_CACHE_REFRESH_DEBOUNCE_MS) {
       const cached = await readChatServiceCatalogCache();
       if (cached) {
         return cached.entries;
       }
     }
 
-    modelCatalogRefreshPromise = (async () => {
+    serviceCatalogRefreshPromise = (async () => {
       const peers = getNetworkPeers
         ? await getNetworkPeers().catch(() => [] as NetworkPeerAddress[])
         : ([] as NetworkPeerAddress[]);
 
       const getPeers = async (): Promise<NetworkPeerAddress[]> => peers;
 
-      const modelsFromMetadata = await discoverChatServiceCatalog(getPeers);
+      const servicesFromMetadata = await discoverChatServiceCatalog(getPeers);
 
-      const limited = limitChatServiceCatalogEntries(normalizeChatServiceCatalogEntries(modelsFromMetadata));
-      updateModelProviderHints(modelProviderHints, limited);
+      const limited = limitChatServiceCatalogEntries(normalizeChatServiceCatalogEntries(servicesFromMetadata));
+      updateServiceProviderHints(serviceProviderHints, limited);
       void writeChatServiceCatalogCache(limited).catch(() => undefined);
-      lastModelCatalogRefreshAt = Date.now();
+      lastServiceCatalogRefreshAt = Date.now();
       return limited;
     })().finally(() => {
-      modelCatalogRefreshPromise = null;
+      serviceCatalogRefreshPromise = null;
     });
 
-    return await modelCatalogRefreshPromise;
+    return await serviceCatalogRefreshPromise;
   };
 
   ipcMain.handle('chat:ai-get-proxy-status', async () => {
@@ -2676,16 +2677,16 @@ export function registerPiChatHandlers({
     };
   });
 
-  ipcMain.handle('chat:ai-list-models', async () => {
+  ipcMain.handle('chat:ai-list-services', async () => {
     try {
       const cached = await readChatServiceCatalogCache();
       if (cached) {
-        updateModelProviderHints(modelProviderHints, cached.entries);
+        updateServiceProviderHints(serviceProviderHints, cached.entries);
         const cacheAgeMs = Date.now() - cached.updatedAt;
         if (cacheAgeMs <= CHAT_SERVICE_CACHE_MAX_AGE_MS) {
           if (cacheAgeMs > CHAT_SERVICE_CACHE_REFRESH_DEBOUNCE_MS) {
-            void refreshModelCatalogFromNetwork(false).catch((error) => {
-              appendSystemLog(`Background model catalog refresh failed: ${asErrorMessage(error)}`);
+            void refreshServiceCatalogFromNetwork(false).catch((error) => {
+              appendSystemLog(`Background service catalog refresh failed: ${asErrorMessage(error)}`);
             });
           }
           return {
@@ -2694,8 +2695,8 @@ export function registerPiChatHandlers({
           };
         }
       }
-      const limitedModels = await refreshModelCatalogFromNetwork(true);
-      if (limitedModels.length === 0 && cached) {
+      const limitedServices = await refreshServiceCatalogFromNetwork(true);
+      if (limitedServices.length === 0 && cached) {
         return {
           ok: true,
           data: cached.entries,
@@ -2703,7 +2704,7 @@ export function registerPiChatHandlers({
       }
       return {
         ok: true,
-        data: limitedModels,
+        data: limitedServices,
       };
     } catch (error) {
       return {
@@ -2727,8 +2728,8 @@ export function registerPiChatHandlers({
     return { ok: true, data: conversation };
   });
 
-  ipcMain.handle('chat:ai-create-conversation', async (_event, model: string, provider?: string) => {
-    const conversation = await store.create(model, provider);
+  ipcMain.handle('chat:ai-create-conversation', async (_event, service: string, provider?: string) => {
+    const conversation = await store.create(service, provider);
     preferredPeerByConversationId.delete(conversation.id);
     return { ok: true, data: conversation };
   });
@@ -2750,15 +2751,15 @@ export function registerPiChatHandlers({
 
   ipcMain.handle(
     'chat:ai-send-stream',
-    async (_event, conversationId: string, userMessage: string, model?: string, provider?: string, imageBase64?: string, imageMimeType?: string) => {
-      return await runStreamingPrompt(conversationId, userMessage, model, provider, imageBase64, imageMimeType);
+    async (_event, conversationId: string, userMessage: string, service?: string, provider?: string, imageBase64?: string, imageMimeType?: string) => {
+      return await runStreamingPrompt(conversationId, userMessage, service, provider, imageBase64, imageMimeType);
     },
   );
 
   ipcMain.handle(
     'chat:ai-send',
-    async (_event, conversationId: string, userMessage: string, model?: string, provider?: string, imageBase64?: string, imageMimeType?: string) => {
-      return await runStreamingPrompt(conversationId, userMessage, model, provider, imageBase64, imageMimeType);
+    async (_event, conversationId: string, userMessage: string, service?: string, provider?: string, imageBase64?: string, imageMimeType?: string) => {
+      return await runStreamingPrompt(conversationId, userMessage, service, provider, imageBase64, imageMimeType);
     },
   );
 

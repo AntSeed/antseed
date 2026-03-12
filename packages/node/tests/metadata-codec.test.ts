@@ -103,7 +103,7 @@ describe('encodeMetadata / decodeMetadata', () => {
     expect(decoded.providers).toHaveLength(0);
   });
 
-  it('should round-trip empty models list', () => {
+  it('should round-trip empty services list', () => {
     const original = makeMetadata({
       providers: [
         {
@@ -122,7 +122,7 @@ describe('encodeMetadata / decodeMetadata', () => {
     expect(decoded.providers[0]!.services).toEqual([]);
   });
 
-  it('should round-trip display name, model categories, and model API protocols', () => {
+  it('should round-trip display name, service categories, and service API protocols', () => {
     const original = makeMetadata({
       displayName: 'Node A',
       providers: [
@@ -207,13 +207,13 @@ describe('encodeMetadata / decodeMetadata', () => {
       providers: [
         {
           provider: 'openai',
-          services: ['model-a'],
+          services: ['service-a'],
           defaultPricing: {
             inputUsdPerMillion: 1,
             outputUsdPerMillion: 2,
           },
           serviceApiProtocols: {
-            'model-a': ['openai-chat-completions'],
+            'service-a': ['openai-chat-completions'],
           },
           maxConcurrency: 3,
           currentLoad: 1,

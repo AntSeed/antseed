@@ -24,19 +24,19 @@ function parseServicePricingJson(raw: string | undefined): Provider['pricing']['
   }
 
   const out: NonNullable<Provider['pricing']['services']> = {};
-  for (const [model, pricing] of Object.entries(parsed as Record<string, unknown>)) {
+  for (const [service, pricing] of Object.entries(parsed as Record<string, unknown>)) {
     if (!pricing || typeof pricing !== 'object' || Array.isArray(pricing)) {
-      throw new Error(`Service pricing for "${model}" must be an object`);
+      throw new Error(`Service pricing for "${service}" must be an object`);
     }
     const input = (pricing as Record<string, unknown>)['inputUsdPerMillion'];
     const output = (pricing as Record<string, unknown>)['outputUsdPerMillion'];
     if (typeof input !== 'number' || !Number.isFinite(input) || input < 0) {
-      throw new Error(`Service pricing for "${model}" requires non-negative inputUsdPerMillion`);
+      throw new Error(`Service pricing for "${service}" requires non-negative inputUsdPerMillion`);
     }
     if (typeof output !== 'number' || !Number.isFinite(output) || output < 0) {
-      throw new Error(`Service pricing for "${model}" requires non-negative outputUsdPerMillion`);
+      throw new Error(`Service pricing for "${service}" requires non-negative outputUsdPerMillion`);
     }
-    out[model] = { inputUsdPerMillion: input, outputUsdPerMillion: output };
+    out[service] = { inputUsdPerMillion: input, outputUsdPerMillion: output };
   }
 
   return Object.keys(out).length > 0 ? out : undefined;
@@ -47,7 +47,7 @@ function buildServiceApiProtocols(
   protocol: ServiceApiProtocol,
 ): Record<string, ServiceApiProtocol[]> | undefined {
   if (services.length === 0) return undefined;
-  return Object.fromEntries(services.map((model) => [model, [protocol]]));
+  return Object.fromEntries(services.map((service) => [service, [protocol]]));
 }
 
 const plugin: AntseedProviderPlugin = {
@@ -62,7 +62,7 @@ const plugin: AntseedProviderPlugin = {
     { key: 'ANTSEED_OUTPUT_USD_PER_MILLION', label: 'Output Price', type: 'number', required: false, default: 10, description: 'Output price in USD per 1M tokens' },
     { key: 'ANTSEED_SERVICE_PRICING_JSON', label: 'Service Pricing JSON', type: 'string', required: false, description: 'Per-service pricing JSON' },
     { key: 'ANTSEED_MAX_CONCURRENCY', label: 'Max Concurrency', type: 'number', required: false, default: 10, description: 'Max concurrent requests' },
-    { key: 'ANTSEED_ALLOWED_MODELS', label: 'Allowed Services', type: 'string[]', required: false, description: 'Model allow-list' },
+    { key: 'ANTSEED_ALLOWED_SERVICES', label: 'Allowed Services', type: 'string[]', required: false, description: 'Service allow-list' },
   ],
 
   createProvider(config: Record<string, string>): Provider {
@@ -85,8 +85,8 @@ const plugin: AntseedProviderPlugin = {
       throw new Error('ANTSEED_MAX_CONCURRENCY must be a valid number');
     }
 
-    const allowedServices = config['ANTSEED_ALLOWED_MODELS']
-      ? config['ANTSEED_ALLOWED_MODELS'].split(',').map((s: string) => s.trim())
+    const allowedServices = config['ANTSEED_ALLOWED_SERVICES']
+      ? config['ANTSEED_ALLOWED_SERVICES'].split(',').map((s: string) => s.trim())
       : [];
 
     const tokenProvider = new StaticTokenProvider(apiKey);

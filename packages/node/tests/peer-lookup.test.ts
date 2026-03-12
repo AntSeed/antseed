@@ -62,7 +62,7 @@ describe('PeerLookup', () => {
     );
   });
 
-  it('findByService queries canonical and compact model topics when keys differ', async () => {
+  it('findByService queries canonical and compact service topics when keys differ', async () => {
     const canonicalPeers: PeerEndpoint[] = [
       { host: '84.228.226.179', port: 6882 },
     ];

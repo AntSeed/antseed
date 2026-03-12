@@ -105,7 +105,7 @@ export default function NetworkPage() {
     : null;
 
   return (
-    <Layout title="Network Status" description="Live AntSeed network status — active peers, available models, and network health.">
+    <Layout title="Network Status" description="Live AntSeed network status — active peers, available services, and network health.">
       <div className={styles.page}>
         <div className={styles.header}>
           <Link to="/" className={styles.back}>← Back</Link>

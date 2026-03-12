@@ -43,7 +43,7 @@ function networkHealth(
 function normalizeNetworkData(
   networkData: Record<string, unknown> | null,
   peersData: Record<string, unknown> | null,
-): { peers: PeerEntry[]; stats: ReturnType<typeof defaultNetworkStats>; modelCount: number } {
+): { peers: PeerEntry[]; stats: ReturnType<typeof defaultNetworkStats>; serviceCount: number } {
   const networkPeers = safeArray(networkData?.peers) as Record<string, unknown>[];
   const daemonPeers = safeArray(peersData?.peers) as Record<string, unknown>[];
   const rawStats = networkData?.stats;
@@ -66,9 +66,9 @@ function normalizeNetworkData(
       port: safeNumber(peer.port, 0),
       providers: safeArray(peer.providers).map(String),
       services: safeArray(peer.services)
-        .filter((model): model is string => typeof model === 'string')
-        .map((model) => model.trim())
-        .filter((model) => model.length > 0),
+        .filter((s): s is string => typeof s === 'string')
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0),
       inputUsdPerMillion: safeNumber(peer.inputUsdPerMillion, 0),
       outputUsdPerMillion: safeNumber(peer.outputUsdPerMillion, 0),
       capacityMsgPerHour: safeNumber(peer.capacityMsgPerHour, 0),
@@ -101,11 +101,11 @@ function normalizeNetworkData(
 
     const providers = safeArray(peer.providers).map(String);
     if (providers.length > 0) existing.providers = providers;
-    const models = safeArray(peer.services)
-      .filter((model): model is string => typeof model === 'string')
-      .map((model) => model.trim())
-      .filter((model) => model.length > 0);
-    if (models.length > 0) existing.services = models;
+    const peerServices = safeArray(peer.services)
+      .filter((s): s is string => typeof s === 'string')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    if (peerServices.length > 0) existing.services = peerServices;
     if (safeNumber(peer.inputUsdPerMillion, 0) > 0) existing.inputUsdPerMillion = safeNumber(peer.inputUsdPerMillion, 0);
     if (safeNumber(peer.outputUsdPerMillion, 0) > 0) existing.outputUsdPerMillion = safeNumber(peer.outputUsdPerMillion, 0);
     if (safeNumber(peer.capacityMsgPerHour, 0) > 0) existing.capacityMsgPerHour = safeNumber(peer.capacityMsgPerHour, 0);
@@ -125,19 +125,19 @@ function normalizeNetworkData(
       return b.lastSeen - a.lastSeen;
     });
 
-  const models = new Set<string>();
+  const services = new Set<string>();
   for (const peer of [...networkPeers, ...daemonPeers]) {
-    for (const model of safeArray(peer.services)) {
-      if (typeof model !== 'string') continue;
-      const normalized = model.trim();
+    for (const s of safeArray(peer.services)) {
+      if (typeof s !== 'string') continue;
+      const normalized = s.trim();
       if (normalized.length > 0) {
-        models.add(normalized);
+        services.add(normalized);
       }
     }
   }
 
   stats.totalPeers = peers.length;
-  return { peers, stats, modelCount: models.size };
+  return { peers, stats, serviceCount: services.size };
 }
 
 export function initDashboardRenderModule({
@@ -189,7 +189,7 @@ export function initDashboardRenderModule({
 
     const peers = normalizedNetwork.peers;
     const stats = normalizedNetwork.stats;
-    const modelCount = normalizedNetwork.modelCount;
+    const serviceCount = normalizedNetwork.serviceCount;
     const dht = networkHealth(stats, peers.length);
 
     const statusPayload = results.status.ok ? (results.status.data as Record<string, unknown>) : null;
@@ -218,7 +218,7 @@ export function initDashboardRenderModule({
     uiState.ovPeers = formatInt(peers.length);
     uiState.ovDhtHealth = dht.label;
     uiState.ovProxyPort = proxyPort > 0 ? String(proxyPort) : '-';
-    uiState.ovServiceCount = formatInt(modelCount);
+    uiState.ovServiceCount = formatInt(serviceCount);
     uiState.ovLastScan = formatRelativeTime(stats.lastScanAt);
     uiState.ovPeersCount = formatInt(peers.length);
     uiState.overviewBadge = {

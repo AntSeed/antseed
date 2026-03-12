@@ -25,8 +25,8 @@ antseed seed --provider openai
 | `OPENAI_BASE_URL` | string | No | `https://api.openai.com` | Upstream base URL |
 | `OPENAI_PROVIDER_FLAVOR` | string | No | `generic` | Special handling profile (`generic`, `openrouter`) |
 | `OPENAI_UPSTREAM_PROVIDER` | string | No | -- | Optional OpenRouter upstream provider selector |
-| `OPENAI_UPSTREAM_MODEL_PREFIX` | string | No | -- | Optional prefix added to announced model names when forwarding upstream (example: `together/`) |
-| `OPENAI_MODEL_ALIAS_MAP_JSON` | string | No | -- | Optional JSON map of `announcedService -> upstreamService` |
+| `OPENAI_UPSTREAM_SERVICE_PREFIX` | string | No | -- | Optional prefix added to announced service names when forwarding upstream (example: `together/`) |
+| `OPENAI_SERVICE_ALIAS_MAP_JSON` | string | No | -- | Optional JSON map of `announcedService -> upstreamService` |
 | `OPENAI_EXTRA_HEADERS_JSON` | string | No | -- | Extra headers as JSON object |
 | `OPENAI_BODY_INJECT_JSON` | string | No | -- | JSON object merged into request body |
 | `OPENAI_STRIP_HEADER_PREFIXES` | string[] | No | -- | Comma-separated header prefixes to strip |
@@ -34,23 +34,23 @@ antseed seed --provider openai
 | `ANTSEED_OUTPUT_USD_PER_MILLION` | number | No | 10 | Output token price (USD per 1M) |
 | `ANTSEED_SERVICE_PRICING_JSON` | string | No | -- | Per-service pricing as JSON |
 | `ANTSEED_MAX_CONCURRENCY` | number | No | 10 | Max concurrent requests |
-| `ANTSEED_ALLOWED_MODELS` | string[] | No | -- | Comma-separated model allowlist |
+| `ANTSEED_ALLOWED_SERVICES` | string[] | No | -- | Comma-separated service allowlist |
 
-Example: announce `kimi2.5` on AntSeed while forwarding to Together model `together/kimi2.5` upstream:
+Example: announce `kimi2.5` on AntSeed while forwarding to Together service `together/kimi2.5` upstream:
 
 ```bash
-export ANTSEED_ALLOWED_MODELS="kimi2.5"
-export OPENAI_UPSTREAM_MODEL_PREFIX="together/"
+export ANTSEED_ALLOWED_SERVICES="kimi2.5"
+export OPENAI_UPSTREAM_SERVICE_PREFIX="together/"
 ```
 
 Example: explicit per-service alias mapping:
 
 ```bash
-export ANTSEED_ALLOWED_MODELS="kimi2.5,deepseek-v3"
-export OPENAI_MODEL_ALIAS_MAP_JSON='{"kimi2.5":"together/kimi2.5","deepseek-v3":"openrouter/deepseek/deepseek-chat"}'
+export ANTSEED_ALLOWED_SERVICES="kimi2.5,deepseek-v3"
+export OPENAI_SERVICE_ALIAS_MAP_JSON='{"kimi2.5":"together/kimi2.5","deepseek-v3":"openrouter/deepseek/deepseek-chat"}'
 ```
 
-When both are set, `OPENAI_MODEL_ALIAS_MAP_JSON` entries take precedence over `OPENAI_UPSTREAM_MODEL_PREFIX` for matching announced models.
+When both are set, `OPENAI_SERVICE_ALIAS_MAP_JSON` entries take precedence over `OPENAI_UPSTREAM_SERVICE_PREFIX` for matching announced services.
 
 ## How It Works
 

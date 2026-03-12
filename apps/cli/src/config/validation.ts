@@ -31,9 +31,9 @@ function validateHierarchicalPricing(
       validatePricingLeaf(`${path}.providers.${provider}.defaults`, providerPricing.defaults, errors);
     }
 
-    for (const [model, servicePricing] of Object.entries(providerPricing.services ?? {})) {
+    for (const [service, servicePricing] of Object.entries(providerPricing.services ?? {})) {
       validatePricingLeaf(
-        `${path}.providers.${provider}.services.${model}`,
+        `${path}.providers.${provider}.services.${service}`,
         servicePricing,
         errors
       );
@@ -48,11 +48,11 @@ function validateSellerServiceCategories(
 ): void {
   if (!categories) return;
 
-  for (const [provider, models] of Object.entries(categories)) {
-    for (const [model, tags] of Object.entries(models)) {
-      const modelPath = `${path}.${provider}.${model}`;
+  for (const [provider, services] of Object.entries(categories)) {
+    for (const [service, tags] of Object.entries(services)) {
+      const servicePath = `${path}.${provider}.${service}`;
       if (!Array.isArray(tags) || tags.length === 0) {
-        errors.push(`${modelPath} must be a non-empty string array`);
+        errors.push(`${servicePath} must be a non-empty string array`);
         continue;
       }
 
@@ -60,19 +60,19 @@ function validateSellerServiceCategories(
       for (let i = 0; i < tags.length; i += 1) {
         const rawTag = tags[i];
         if (typeof rawTag !== 'string') {
-          errors.push(`${modelPath}[${i}] must be a string`);
+          errors.push(`${servicePath}[${i}] must be a string`);
           continue;
         }
         const tag = rawTag.trim().toLowerCase();
         if (tag.length === 0) {
-          errors.push(`${modelPath}[${i}] must not be empty`);
+          errors.push(`${servicePath}[${i}] must not be empty`);
           continue;
         }
         if (!SERVICE_CATEGORY_PATTERN.test(tag)) {
-          errors.push(`${modelPath}[${i}] must use lowercase letters, digits, or hyphen`);
+          errors.push(`${servicePath}[${i}] must use lowercase letters, digits, or hyphen`);
         }
         if (seen.has(tag)) {
-          errors.push(`${modelPath}[${i}] is duplicated`);
+          errors.push(`${servicePath}[${i}] is duplicated`);
         }
         seen.add(tag);
       }

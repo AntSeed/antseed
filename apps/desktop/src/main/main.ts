@@ -483,8 +483,8 @@ function parseConnectRuntimeActivity(lineRaw: string): RuntimeActivityEvent | nu
     return toRuntimeActivity({
       mode: 'connect',
       tone: 'warn',
-      stage: 'model-request',
-      message: 'Loading available models from peers...',
+      stage: 'service-request',
+      message: 'Loading available services from peers...',
       holdMs: 20_000,
     });
   }

@@ -27,7 +27,7 @@ test('metadata default pricing maps to input/output USD per million', () => {
   assert.equal(pricing.outputUsdPerMillion, 33);
 });
 
-test('missing model-specific pricing still resolves provider defaults', () => {
+test('missing service-specific pricing still resolves provider defaults', () => {
   const pricing = resolveMetadataSummaryPricing(
     {
       providers: [
@@ -104,8 +104,8 @@ test('network peer providers fallback accumulates inferred topics when metadata 
   assert.deepEqual(providers, ['openai']);
 });
 
-test('network peer models are extracted from metadata announcements', () => {
-  const models = resolveNetworkPeerServices(
+test('network peer services are extracted from metadata announcements', () => {
+  const services = resolveNetworkPeerServices(
     {
       providers: [
         {
@@ -117,13 +117,13 @@ test('network peer models are extracted from metadata announcements', () => {
         },
       ],
     } as any,
-    ['legacy-model'],
+    ['legacy-service'],
   );
 
-  assert.deepEqual(models, ['claude-sonnet-4.6', 'claude-opus-4.1']);
+  assert.deepEqual(services, ['claude-sonnet-4.6', 'claude-opus-4.1']);
 });
 
-test('network peer models fallback keeps existing model list when metadata is unavailable', () => {
-  const models = resolveNetworkPeerServices(null, ['claude-sonnet-4.6', 'gpt-4.1']);
-  assert.deepEqual(models, ['claude-sonnet-4.6', 'gpt-4.1']);
+test('network peer services fallback keeps existing service list when metadata is unavailable', () => {
+  const services = resolveNetworkPeerServices(null, ['claude-sonnet-4.6', 'gpt-4.1']);
+  assert.deepEqual(services, ['claude-sonnet-4.6', 'gpt-4.1']);
 });

@@ -82,10 +82,10 @@ function mergeServicePricing(
     ...(defaults ?? {}),
   };
   if (isRecord(value)) {
-    for (const [model, rawPricing] of Object.entries(value)) {
+    for (const [service, rawPricing] of Object.entries(value)) {
       const parsed = normalizeTokenPricing(rawPricing);
       if (parsed) {
-        out[model] = parsed;
+        out[service] = parsed;
       }
     }
   }
@@ -105,9 +105,9 @@ function mergeProviderPricing(
       const next: ProviderPricingConfig = {
         ...(parsedDefaults ? { defaults: parsedDefaults } : (existing?.defaults ? { defaults: existing.defaults } : {})),
       };
-      const mergedModels = mergeServicePricing(existing?.services, rawCfg['services']);
-      if (mergedModels) {
-        next.services = mergedModels;
+      const mergedServices = mergeServicePricing(existing?.services, rawCfg['services']);
+      if (mergedServices) {
+        next.services = mergedServices;
       }
       if (next.defaults || next.services) {
         out[provider] = next;
@@ -139,9 +139,9 @@ function cloneSellerServiceCategories(
 ): AntseedConfig['seller']['serviceCategories'] | undefined {
   if (!categories) return undefined;
   const out: NonNullable<AntseedConfig['seller']['serviceCategories']> = {};
-  for (const [provider, models] of Object.entries(categories)) {
+  for (const [provider, services] of Object.entries(categories)) {
     out[provider] = Object.fromEntries(
-      Object.entries(models).map(([model, tags]) => [model, [...tags]])
+      Object.entries(services).map(([service, tags]) => [service, [...tags]])
     );
   }
   return out;
@@ -158,21 +158,21 @@ function mergeSellerServiceCategories(
 
   for (const [provider, rawProvider] of Object.entries(value)) {
     if (!isRecord(rawProvider)) continue;
-    const nextModels: Record<string, string[]> = {
+    const nextServices: Record<string, string[]> = {
       ...(out[provider] ?? {}),
     };
-    for (const [model, rawCategories] of Object.entries(rawProvider)) {
+    for (const [service, rawCategories] of Object.entries(rawProvider)) {
       if (!Array.isArray(rawCategories)) continue;
       const normalizedCategories = rawCategories
         .filter((entry): entry is string => typeof entry === 'string')
         .map((entry) => entry.trim())
         .filter((entry) => entry.length > 0);
       if (normalizedCategories.length > 0) {
-        nextModels[model] = normalizedCategories;
+        nextServices[service] = normalizedCategories;
       }
     }
-    if (Object.keys(nextModels).length > 0) {
-      out[provider] = nextModels;
+    if (Object.keys(nextServices).length > 0) {
+      out[provider] = nextServices;
     }
   }
 

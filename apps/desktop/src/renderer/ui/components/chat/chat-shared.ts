@@ -217,7 +217,7 @@ export type AssistantMeta = {
   peerMaxConcurrency: number | null;
   routeRequestId: string | null;
   provider: string | null;
-  model: string | null;
+  service: string | null;
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
@@ -245,8 +245,8 @@ export function formatChatTime(timestamp: unknown): string {
   return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
-export function shortServiceName(model: unknown): string {
-  const raw = String(model || '').trim();
+export function shortServiceName(service: unknown): string {
+  const raw = String(service || '').trim();
   if (!raw) return 'unknown-service';
   return raw.replace(/^claude-/, '').replace(/-20\d{6,}/, '');
 }
@@ -283,7 +283,7 @@ export function normalizeAssistantMeta(msg: ChatMessage): AssistantMeta | null {
   const peerAddress = typeof meta.peerAddress === 'string' && (meta.peerAddress as string).trim().length > 0 ? (meta.peerAddress as string).trim() : null;
   const peerProviders = Array.isArray(meta.peerProviders) ? (meta.peerProviders as string[]).map(String).filter(Boolean) : [];
   const provider = typeof meta.provider === 'string' && (meta.provider as string).trim().length > 0 ? (meta.provider as string).trim() : null;
-  const model = typeof meta.model === 'string' && (meta.model as string).trim().length > 0 ? (meta.model as string).trim() : null;
+  const service = typeof meta.service === 'string' && (meta.service as string).trim().length > 0 ? (meta.service as string).trim() : null;
   const inputTokens = Math.max(0, Math.floor(Number(meta.inputTokens) || 0));
   const outputTokens = Math.max(0, Math.floor(Number(meta.outputTokens) || 0));
   const explicitTotalTokens = Math.max(0, Math.floor(Number(meta.totalTokens) || 0));
@@ -307,7 +307,7 @@ export function normalizeAssistantMeta(msg: ChatMessage): AssistantMeta | null {
     peerMaxConcurrency,
     routeRequestId,
     provider,
-    model,
+    service,
     inputTokens,
     outputTokens,
     totalTokens,
@@ -395,7 +395,7 @@ export function buildChatMetaParts(msg: ChatMessage): string[] {
     parts.push(assistantMeta.peerId ? `peer ${assistantMeta.peerId.slice(0, 8)}` : 'peer n/a');
     if (assistantMeta.peerAddress) parts.push(assistantMeta.peerAddress);
     if (assistantMeta.provider) parts.push(assistantMeta.provider);
-    if (assistantMeta.model) parts.push(shortServiceName(assistantMeta.model));
+    if (assistantMeta.service) parts.push(shortServiceName(assistantMeta.service));
     if (assistantMeta.peerProviders.length > 0 && !assistantMeta.provider) {
       parts.push(assistantMeta.peerProviders.join(','));
     }

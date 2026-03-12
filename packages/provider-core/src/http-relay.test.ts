@@ -300,7 +300,7 @@ describe('HttpRelay', () => {
     expect(bodyText).toContain('World');
   });
 
-  it('allows GET requests through model validation', async () => {
+  it('allows GET requests through service validation', async () => {
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ object: 'list', data: [] }), { status: 200 }));
 
     const responses: SerializedHttpResponse[] = [];
@@ -354,7 +354,7 @@ describe('HttpRelay', () => {
     const responses: SerializedHttpResponse[] = [];
     const callbacks: RelayCallbacks = { onResponse: (res) => responses.push(res) };
 
-    // Provider configured with mixed-case model names (as they appear in upstream APIs)
+    // Provider configured with mixed-case service names (as they appear in upstream APIs)
     const relay = new HttpRelay(
       makeConfig({ allowedServices: ['DeepSeek-R1', 'Kimi-K2.5'] }),
       callbacks,

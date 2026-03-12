@@ -131,24 +131,24 @@ Provider plugins authenticate with their upstream AI service. Credentials are st
 
 ## OpenAI-Compatible Model Aliases
 
-When using the `openai` provider plugin, you can announce buyer-facing model names while forwarding different upstream model IDs.
+When using the `openai` provider plugin, you can announce buyer-facing service names while forwarding different upstream service IDs.
 
 Useful env vars:
 
-- `ANTSEED_ALLOWED_MODELS`: announced model list (what buyers request)
-- `OPENAI_UPSTREAM_MODEL_PREFIX`: prefix added before forwarding upstream
-- `OPENAI_MODEL_ALIAS_MAP_JSON`: explicit announcedService -> upstreamService map
+- `ANTSEED_ALLOWED_SERVICES`: announced service list (what buyers request)
+- `OPENAI_UPSTREAM_SERVICE_PREFIX`: prefix added before forwarding upstream
+- `OPENAI_SERVICE_ALIAS_MAP_JSON`: explicit announcedService -> upstreamService map
 
 Example: announce `kimi2.5`, forward to Together as `together/kimi2.5`:
 
 ```bash
-export ANTSEED_ALLOWED_MODELS="kimi2.5"
-export OPENAI_UPSTREAM_MODEL_PREFIX="together/"
+export ANTSEED_ALLOWED_SERVICES="kimi2.5"
+export OPENAI_UPSTREAM_SERVICE_PREFIX="together/"
 ```
 
 Example with explicit alias map:
 
 ```bash
-export ANTSEED_ALLOWED_MODELS="kimi2.5,deepseek-v3"
-export OPENAI_MODEL_ALIAS_MAP_JSON='{"kimi2.5":"together/kimi2.5","deepseek-v3":"openrouter/deepseek/deepseek-chat"}'
+export ANTSEED_ALLOWED_SERVICES="kimi2.5,deepseek-v3"
+export OPENAI_SERVICE_ALIAS_MAP_JSON='{"kimi2.5":"together/kimi2.5","deepseek-v3":"openrouter/deepseek/deepseek-chat"}'
 ```

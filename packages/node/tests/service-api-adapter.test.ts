@@ -499,7 +499,7 @@ describe('transformOpenAIChatResponseToOpenAIResponses', () => {
     expect(functionCall!.arguments).toBe('{"path":"hello.txt"}');
   });
 
-  it('uses fallback model when response has none', () => {
+  it('uses fallback service when response has none', () => {
     const chatResponse = makeOpenAIResponse({
       body: new TextEncoder().encode(JSON.stringify({
         id: 'chatcmpl-x',

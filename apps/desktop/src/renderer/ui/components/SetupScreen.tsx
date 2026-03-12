@@ -58,7 +58,7 @@ export function SetupScreen() {
       // Advance at most one level per call so intermediate steps animate visibly.
       if (snap.appSetupComplete && prev < 1) return 1 as ProgressLevel;
       if (prev >= 1 && /\bpeer(s)?\b|p2p|dht|discovering/i.test(msg) && prev < 2) return 2 as ProgressLevel;
-      if (prev >= 1 && (/model/i.test(msg) || hasServices) && prev < 3) return 3 as ProgressLevel;
+      if (prev >= 1 && (/service/i.test(msg) || hasServices) && prev < 3) return 3 as ProgressLevel;
       return prev;
     });
   }, [snap.appSetupComplete, msg, hasServices]);

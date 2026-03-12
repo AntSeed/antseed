@@ -10,7 +10,7 @@ import type { SerializedHttpRequest, SerializedHttpResponse } from '@antseed/nod
  */
 export class EchoProvider implements Provider {
   readonly name = 'echo';
-  readonly models = ['echo-v1'];
+  readonly services = ['echo-v1'];
   readonly pricing = {
     defaults: {
       inputUsdPerMillion: 0,

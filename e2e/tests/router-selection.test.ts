@@ -79,7 +79,7 @@ describe('LocalRouter peer selection hardening', () => {
     expect(selected?.peerId).toBe(lowIdPeer.peerId);
   });
 
-  it('falls back to provider defaults for unknown model instead of rejecting peer', () => {
+  it('falls back to provider defaults for unknown service instead of rejecting peer', () => {
     const router = new LocalRouter({
       maxPricing: {
         defaults: {
@@ -97,7 +97,7 @@ describe('LocalRouter peer selection hardening', () => {
             outputUsdPerMillion: 5,
           },
           services: {
-            'known-model': {
+            'known-service': {
               inputUsdPerMillion: 7,
               outputUsdPerMillion: 7,
             },
@@ -108,12 +108,12 @@ describe('LocalRouter peer selection hardening', () => {
       defaultOutputUsdPerMillion: 5,
     });
 
-    const reqUnknownModel: SerializedHttpRequest = {
+    const reqUnknownService: SerializedHttpRequest = {
       ...dummyReq,
-      body: new TextEncoder().encode(JSON.stringify({ model: 'unknown-model' })),
+      body: new TextEncoder().encode(JSON.stringify({ model: 'unknown-service' })),
     };
 
-    const selected = router.selectPeer(reqUnknownModel, [peer]);
+    const selected = router.selectPeer(reqUnknownService, [peer]);
     expect(selected?.peerId).toBe(peer.peerId);
   });
 });

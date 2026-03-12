@@ -58,18 +58,18 @@ export class PeerLookup {
     return this.resolveLookupResults(shuffle(peers));
   }
 
-  async findByService(model: string): Promise<LookupResult[]> {
-    const canonicalTopic = serviceTopic(model);
+  async findByService(service: string): Promise<LookupResult[]> {
+    const canonicalTopic = serviceTopic(service);
     const canonicalInfoHash = topicToInfoHash(canonicalTopic);
 
-    const canonicalServiceKey = normalizeServiceTopicKey(model);
-    const compactServiceKey = normalizeServiceSearchTopicKey(model);
+    const canonicalServiceKey = normalizeServiceTopicKey(service);
+    const compactServiceKey = normalizeServiceSearchTopicKey(service);
     if (compactServiceKey === canonicalServiceKey) {
       const peers = await this.config.dht.lookup(canonicalInfoHash);
       return this.resolveLookupResults(shuffle(peers));
     }
 
-    const compactTopic = serviceSearchTopic(model);
+    const compactTopic = serviceSearchTopic(service);
     const compactInfoHash = topicToInfoHash(compactTopic);
     const [canonicalPeers, compactPeers] = await Promise.all([
       this.config.dht.lookup(canonicalInfoHash),

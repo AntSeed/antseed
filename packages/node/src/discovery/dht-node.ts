@@ -47,22 +47,22 @@ export function providerTopic(providerName: string): string {
   return "antseed:" + normalizeTopicSegment(providerName);
 }
 
-export function normalizeServiceTopicKey(modelName: string): string {
-  return normalizeTopicSegment(modelName);
+export function normalizeServiceTopicKey(serviceName: string): string {
+  return normalizeTopicSegment(serviceName);
 }
 
-export function normalizeServiceSearchTopicKey(modelName: string): string {
-  const canonical = normalizeServiceTopicKey(modelName);
+export function normalizeServiceSearchTopicKey(serviceName: string): string {
+  const canonical = normalizeServiceTopicKey(serviceName);
   const compact = canonical.replace(/[\s_-]+/g, "");
   return compact.length > 0 ? compact : canonical;
 }
 
-export function serviceTopic(modelName: string): string {
-  return "antseed:service:" + normalizeServiceTopicKey(modelName);
+export function serviceTopic(serviceName: string): string {
+  return "antseed:service:" + normalizeServiceTopicKey(serviceName);
 }
 
-export function serviceSearchTopic(modelName: string): string {
-  return "antseed:service-search:" + normalizeServiceSearchTopicKey(modelName);
+export function serviceSearchTopic(serviceName: string): string {
+  return "antseed:service-search:" + normalizeServiceSearchTopicKey(serviceName);
 }
 
 export function capabilityTopic(capability: string, name?: string): string {

@@ -35,7 +35,7 @@ export function initAppSetupModule({ uiState, bridge }: AppSetupModuleOptions) {
     uiState.appSetupComplete = true;
     notifyUiStateChanged();
 
-    // Auto-start connect so the setup screen can show DHT/peer/model progress.
+    // Auto-start connect so the setup screen can show DHT/peer/service progress.
     void bridge.start?.({
       mode: 'connect',
       router: 'local',

@@ -43,7 +43,7 @@ export function OverviewView({ active }: OverviewViewProps) {
           <p className="stat-value">{ovProxyPort}</p>
         </div>
         <div className="stat-card">
-          <p className="stat-label">Network Models</p>
+          <p className="stat-label">Network Services</p>
           <p className="stat-value">{ovServiceCount}</p>
         </div>
         <div className="stat-card">
@@ -64,7 +64,7 @@ export function OverviewView({ active }: OverviewViewProps) {
                 <tr>
                   <th>Peer</th>
                   <th>ID</th>
-                  <th>Models</th>
+                  <th>Services</th>
                   <th>Rep</th>
                 </tr>
               </thead>

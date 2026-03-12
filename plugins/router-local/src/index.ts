@@ -86,16 +86,16 @@ function parseMaxPricingJson(raw: string | undefined): BuyerMaxPricingConfig | u
         }
 
         const servicesOut: NonNullable<BuyerMaxPricingConfig['providers']>[string]['services'] = {};
-        for (const [model, servicePricingRaw] of Object.entries(servicePricing as Record<string, unknown>)) {
+        for (const [service, servicePricingRaw] of Object.entries(servicePricing as Record<string, unknown>)) {
           if (!servicePricingRaw || typeof servicePricingRaw !== 'object' || Array.isArray(servicePricingRaw)) {
-            throw new Error(`ANTSEED_MAX_PRICING_JSON.providers.${provider}.services.${model} must be an object`);
+            throw new Error(`ANTSEED_MAX_PRICING_JSON.providers.${provider}.services.${service} must be an object`);
           }
           const serviceInput = (servicePricingRaw as Record<string, unknown>)['inputUsdPerMillion'];
           const serviceOutput = (servicePricingRaw as Record<string, unknown>)['outputUsdPerMillion'];
           if (!isNonNegativeFinite(serviceInput) || !isNonNegativeFinite(serviceOutput)) {
-            throw new Error(`ANTSEED_MAX_PRICING_JSON.providers.${provider}.services.${model} must include non-negative inputUsdPerMillion/outputUsdPerMillion`);
+            throw new Error(`ANTSEED_MAX_PRICING_JSON.providers.${provider}.services.${service} must include non-negative inputUsdPerMillion/outputUsdPerMillion`);
           }
-          servicesOut[model] = {
+          servicesOut[service] = {
             inputUsdPerMillion: serviceInput,
             outputUsdPerMillion: serviceOutput,
           };

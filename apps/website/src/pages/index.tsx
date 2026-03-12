@@ -57,7 +57,7 @@ const DEV_STATS_URL = 'http://localhost:4000/stats';
 
 function useNetworkStats() {
   const [peerCount, setPeerCount] = useState<number | null>(null);
-  const [modelCount, setModelCount] = useState<number | null>(null);
+  const [serviceCount, setServiceCount] = useState<number | null>(null);
 
   useEffect(() => {
     const refresh = async () => {
@@ -67,10 +67,10 @@ function useNetworkStats() {
           if (!res.ok) continue;
           const data = await res.json();
           const peers = data.peers ?? [];
-          const models = new Set<string>();
-          for (const p of peers) for (const pr of p.providers ?? []) for (const m of pr.services ?? []) models.add(m);
+          const services = new Set<string>();
+          for (const p of peers) for (const pr of p.providers ?? []) for (const m of pr.services ?? []) services.add(m);
           setPeerCount(peers.length);
-          setModelCount(models.size);
+          setServiceCount(services.size);
           return;
         } catch { /* try next */ }
       }
@@ -80,11 +80,11 @@ function useNetworkStats() {
     return () => clearInterval(interval);
   }, []);
 
-  return {peerCount, modelCount};
+  return {peerCount, serviceCount};
 }
 
 function LiveBar() {
-  const {peerCount, modelCount} = useNetworkStats();
+  const {peerCount, serviceCount} = useNetworkStats();
   return (
     <Link to="/network" className={styles.lbar} style={{textDecoration:'none'}}>
       <div className={styles.litem}><span className={styles.ldot}/> <span>Network live</span></div>
@@ -92,9 +92,9 @@ function LiveBar() {
         <div className={styles.ldiv}/>
         <div className={styles.litem}><strong>{peerCount}</strong> ACTIVE PEERS</div>
       </>}
-      {modelCount != null && <>
+      {serviceCount != null && <>
         <div className={styles.ldiv}/>
-        <div className={styles.litem}><strong>{modelCount}</strong> MODELS AVAILABLE</div>
+        <div className={styles.litem}><strong>{serviceCount}</strong> SERVICES AVAILABLE</div>
       </>}
       <span className={styles.liveArrow}>→</span>
     </Link>
@@ -209,7 +209,7 @@ function EarnAnimation() {
   }, []);
 
   const nodeData = useMemo(() => [
-    {cls:styles.nTop, label:'You provide', sub:'Models & Agents', icon:<svg viewBox="0 0 24 24" fill="none" stroke="#1FD87A" strokeWidth="1.8" strokeLinecap="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>},
+    {cls:styles.nTop, label:'You provide', sub:'Services & Agents', icon:<svg viewBox="0 0 24 24" fill="none" stroke="#1FD87A" strokeWidth="1.8" strokeLinecap="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>},
     {cls:styles.nRight, label:'Users request', sub:'Routed to you', icon:<svg viewBox="0 0 24 24" fill="none" stroke="#1FD87A" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="12" r="3"/><circle cx="5" cy="6" r="1.5"/><circle cx="19" cy="6" r="1.5"/><circle cx="5" cy="18" r="1.5"/><circle cx="19" cy="18" r="1.5"/><line x1="10" y1="10" x2="6.2" y2="7.2"/><line x1="14" y1="10" x2="17.8" y2="7.2"/><line x1="10" y1="14" x2="6.2" y2="16.8"/><line x1="14" y1="14" x2="17.8" y2="16.8"/></svg>},
     {cls:styles.nBottom, label:'Settlement', sub:'Per request', icon:<svg viewBox="0 0 24 24" fill="none" stroke="#1FD87A" strokeWidth="1.8" strokeLinecap="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/><path d="M9 10h6M9 13h3"/></svg>},
     {cls:styles.nLeft, label:'You earn', sub:'Passive income', icon:<svg viewBox="0 0 24 24" fill="none" stroke="#1FD87A" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v12M8 10c0-1.1 1.8-2 4-2s4 .9 4 2-1.8 2-4 2-4 .9-4 2 1.8 2 4 2 4-.9 4-2"/></svg>},
@@ -270,10 +270,10 @@ function EarnAnimation() {
 const FAQ_DATA = [
   {q:'What is AntSeed?', a:"AntSeed is a peer-to-peer network for AI. It connects people who need AI (users, developers, agents) directly with those who serve it: inference providers, specialized providers, and agent operators. No centralized middleman."},
   {q:'Is it really private?', a:"Privacy works in two layers. Layer 1, the base network: requests go peer-to-peer like a VPN, so the provider never knows who you are. No accounts, no identity, no IP exposed. Layer 2, TEE providers: hardware enclaves (Intel TDX, AMD SEV) where not even the operator can see your prompts. Cryptographic proof, not a policy promise. Payments are settled on-chain. The money trail stays private too. TEE verification is coming in a future release."},
-  {q:'What models are available?', a:"Any model a provider chooses to serve. Open-weight models, specialized fine-tunes, uncensored models, and providers using their own API access to other platforms. Available models depend on what providers are online right now. Check the <a href='/network'>network page</a> for a live view."},
+  {q:'What services are available?', a:"Any service a provider chooses to offer. Open-weight models, specialized fine-tunes, uncensored inference, and providers using their own API access to other platforms. Available services depend on what providers are online right now. Check the <a href='/network'>network page</a> for a live view."},
   {q:'How do I earn on AntSeed?', a:"Provide inference or a specialized model. Run open-weight models, fine-tunes, or domain-specific skills and earn per request. Operate agents that solve real problems and rent them out on the network. Or just connect API keys you already have, like Together AI or other providers, and earn on traffic routed through you. The network is built on reputation. The more reliable your offering, the more traffic you attract."},
   {q:'Do I need an account or API key?', a:"No. Download AntStation, connect your wallet, and you're on the network. No sign-up, no API key, no credit card."},
-  {q:'What is AntStation?', a:"AntStation is the desktop client for AntSeed. It gives you a chat interface, connects you to the P2P network, and handles model routing. For developers, the AntSeed CLI (@antseed/cli) exposes a local OpenAI-compatible endpoint so your existing tools (Claude Code, Codex, VS Code) can use the network too."},
+  {q:'What is AntStation?', a:"AntStation is the desktop client for AntSeed. It gives you a chat interface, connects you to the P2P network, and handles service routing. For developers, the AntSeed CLI (@antseed/cli) exposes a local OpenAI-compatible endpoint so your existing tools (Claude Code, Codex, VS Code) can use the network too."},
   {q:'How is this different from OpenRouter or other API aggregators?', a:"No curation. Anyone can provide, anyone can consume. API aggregators are centralized intermediaries that decide which models you get access to, proxy your requests through their servers, require accounts, and can see your data. AntSeed is fully peer-to-peer. Your traffic goes directly from you to the provider. No middleman, no logs, no single point of failure or control. Plus, AntSeed is not just inference. The network supports specialized chat, autonomous agents, and skills-based providers, things no aggregator offers."},
 ];
 
@@ -367,7 +367,7 @@ export default function Home(): JSX.Element {
           <ul className={styles.agentsBullets}>
             <li>One command: <code>npm install -g @antseed/cli</code></li>
             <li>Works with any OpenAI-compatible client. No code changes</li>
-            <li>Pick models, set routing preferences, or let the network decide</li>
+            <li>Pick services, set routing preferences, or let the network decide</li>
           </ul>
           <Link to="/docs/intro" className={styles.agentsCta}>Read the Docs →</Link>
         </div>
@@ -396,7 +396,7 @@ export default function Home(): JSX.Element {
             <div className={styles.featIcon}><svg viewBox="0 0 44 44" fill="none"><rect x="2" y="2" width="40" height="40" rx="10" stroke="#1FD87A" strokeWidth="1.5" fill="#fff"/><circle cx="22" cy="22" r="8" stroke="#1FD87A" strokeWidth="1.5" fill="none"/><path d="M22 14v-4M22 34v-4M30 22h4M8 22h4" stroke="#1FD87A" strokeWidth="1.5" strokeLinecap="round"/><circle cx="22" cy="22" r="3" fill="#1FD87A"/></svg></div>
             <div className={styles.featTitle}>Anonymous Inference</div>
             <h4>Peer-to-peer. Anonymous. Always on.</h4>
-            <p>Connect directly to real providers running different models. No corporate middleman. Every request is peer-to-peer. Choose TEE-secured nodes for maximum privacy, where not even the operator can see your data. No accounts, no logging, no lock-in.</p>
+            <p>Connect directly to real providers running different services. No corporate middleman. Every request is peer-to-peer. Choose TEE-secured nodes for maximum privacy, where not even the operator can see your data. No accounts, no logging, no lock-in.</p>
           </div>
           <div className={styles.feat}>
             <div className={styles.featIcon}><svg viewBox="0 0 44 44" fill="none"><rect x="2" y="2" width="40" height="40" rx="10" stroke="#1FD87A" strokeWidth="1.5" fill="#fff"/><path d="M14 18h16M14 22h12M14 26h8" stroke="#1FD87A" strokeWidth="1.5" strokeLinecap="round"/><circle cx="32" cy="14" r="4" fill="#1FD87A"/><path d="M30.5 14l1 1 2-2.5" stroke="#fff" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"/></svg></div>
@@ -408,7 +408,7 @@ export default function Home(): JSX.Element {
             <div className={styles.featIcon}><svg viewBox="0 0 44 44" fill="none"><rect x="2" y="2" width="40" height="40" rx="10" stroke="#1FD87A" strokeWidth="1.5" fill="#fff"/><circle cx="22" cy="22" r="9" stroke="#1FD87A" strokeWidth="1.5" fill="none"/><path d="M22 16v6l4 3" stroke="#1FD87A" strokeWidth="1.5" strokeLinecap="round"/><circle cx="22" cy="22" r="2" fill="#1FD87A"/><path d="M15 10l-2-3M29 10l2-3" stroke="#1FD87A" strokeWidth="1.5" strokeLinecap="round"/></svg></div>
             <div className={styles.featTitle}>Agents That Work For You</div>
             <h4>Hire AI agents. Let them handle it.</h4>
-            <p>Need a code reviewer, compliance monitor, or research assistant? Hire an always-on agent from the network. They run 24/7, switch models and providers as needed, and you only pay for what they do. No setup, no infrastructure, no babysitting.</p>
+            <p>Need a code reviewer, compliance monitor, or research assistant? Hire an always-on agent from the network. They run 24/7, switch services and providers as needed, and you only pay for what they do. No setup, no infrastructure, no babysitting.</p>
           </div>
         </div>
       </section>
@@ -416,7 +416,7 @@ export default function Home(): JSX.Element {
       {/* Build Once. Earn Forever. */}
       <section className={styles.creator}>
         <h2 className={styles.creatorTitle}>Build Once. Earn Forever.</h2>
-        <p className={styles.creatorSub}>A new economy for AI providers. Run models, serve specialized inference, deploy agents. Earn per request, directly from users. No middleman. No permission needed. No kill switch on your income.</p>
+        <p className={styles.creatorSub}>A new economy for AI providers. Run services, serve specialized inference, deploy agents. Earn per request, directly from users. No middleman. No permission needed. No kill switch on your income.</p>
         <BrowserOnly fallback={null}>{() => <EarnAnimation />}</BrowserOnly>
         <Link to="/docs/intro" className={styles.creatorCta}>Start Building →</Link>
       </section>
@@ -430,7 +430,7 @@ export default function Home(): JSX.Element {
         <div className={styles.supplyGrid}>
           <div className={styles.supplyCol}>
             <div className={styles.supplyLabel}>Inference Providers</div>
-            <h4>Serve models. Earn per request.</h4>
+            <h4>Serve services. Earn per request.</h4>
             <p>Your own hardware, a cloud deployment, or your existing API keys. Connect and start earning. Run open-weight models, specialized fine-tunes, TEE-secured nodes, or API-backed inference. The network is built on reputation. The more reliable your offering, the more traffic you attract.</p>
           </div>
           <div className={styles.supplyCol}>
@@ -456,7 +456,7 @@ export default function Home(): JSX.Element {
           <span className={styles.howArrow}>→</span>
           <div className={styles.howStep}><div className={styles.howNum}>2</div><h4>Connect to the network</h4><p>AntStation discovers peers automatically. Choose your priority: cost, speed, quality, or privacy.</p></div>
           <span className={styles.howArrow}>→</span>
-          <div className={styles.howStep}><div className={styles.howNum}>3</div><h4>Start chatting</h4><p>Use it as commodity inference. Pick your model, specialized chat, or the job that needs to get done.</p></div>
+          <div className={styles.howStep}><div className={styles.howNum}>3</div><h4>Start chatting</h4><p>Use it as commodity inference. Pick your service, specialized chat, or the job that needs to get done.</p></div>
         </div>
         <div className={styles.howLabel} style={{marginTop:'48px'}}>For developers &amp; agents</div>
         <div className={styles.howSteps}>
@@ -464,7 +464,7 @@ export default function Home(): JSX.Element {
           <span className={styles.howArrow}>→</span>
           <div className={styles.howStep}><div className={styles.howNum}>2</div><h4>Pick what you need</h4><p>Commodity inference, specialized chat, or a full agent for the job. Browse what's available or let the network route for you.</p></div>
           <span className={styles.howArrow}>→</span>
-          <div className={styles.howStep}><div className={styles.howNum}>3</div><h4>Build with it</h4><p>Pipe it into your app, your agent, your workflow. Switch models and providers without changing code. Pay per request, nothing else.</p></div>
+          <div className={styles.howStep}><div className={styles.howNum}>3</div><h4>Build with it</h4><p>Pipe it into your app, your agent, your workflow. Switch services and providers without changing code. Pay per request, nothing else.</p></div>
         </div>
       </section>
 

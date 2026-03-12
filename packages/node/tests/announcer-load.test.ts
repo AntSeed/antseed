@@ -68,7 +68,7 @@ describe('PeerAnnouncer live load metadata', () => {
     expect(valid).toBe(true);
   });
 
-  it('preserves wildcard model metadata entries when provider models are wildcard', async () => {
+  it('preserves wildcard service metadata entries when provider services are wildcard', async () => {
     const { config } = await makeConfig();
     config.providers = [
       {
@@ -99,7 +99,7 @@ describe('PeerAnnouncer live load metadata', () => {
     });
   });
 
-  it('announces deduped lowercase model topics', async () => {
+  it('announces deduped lowercase service topics', async () => {
     const { config, dht } = await makeConfig();
     config.providers = [
       {
@@ -121,7 +121,7 @@ describe('PeerAnnouncer live load metadata', () => {
     expect(dht.announce).toHaveBeenCalledWith(topicToInfoHash(providerTopic('*')), 6882);
   });
 
-  it('announces compact model-search topic when canonical model key differs', async () => {
+  it('announces compact service-search topic when canonical service key differs', async () => {
     const { config, dht } = await makeConfig();
     config.providers = [
       {

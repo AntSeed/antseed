@@ -382,7 +382,7 @@ function mergePeers(daemonPeers: PeerInfo[], dhtPeers: NetworkPeer[]): PeerInfo[
   return Array.from(merged.values());
 }
 
-function collectPeerModels(peer: Record<string, unknown>): string[] {
+function collectPeerServices(peer: Record<string, unknown>): string[] {
   const services = new Set<string>();
 
   const explicitServices = peer.services;
@@ -438,7 +438,7 @@ async function getPeerList(): Promise<{ peers: PeerInfo[]; degraded: boolean }> 
         peerId: typeof peer.peerId === 'string' ? peer.peerId : '',
         displayName: (rawDisplayName.length > 0 ? rawDisplayName : fallbackDisplayName) || null,
         providers: Array.isArray(peer.providers) ? peer.providers.filter((provider): provider is string => typeof provider === 'string') : [],
-        services: collectPeerModels(peer),
+        services: collectPeerServices(peer),
         capacityMsgPerHour: typeof peer.capacityMsgPerHour === 'number' ? peer.capacityMsgPerHour : 0,
         inputUsdPerMillion: typeof peer.inputUsdPerMillion === 'number' ? peer.inputUsdPerMillion : 0,
         outputUsdPerMillion: typeof peer.outputUsdPerMillion === 'number' ? peer.outputUsdPerMillion : 0,

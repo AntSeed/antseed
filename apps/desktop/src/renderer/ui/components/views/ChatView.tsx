@@ -205,7 +205,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
           <ServiceDropdown
             options={snap.chatServiceOptions}
             value={snap.chatSelectedServiceValue}
-            disabled={snap.chatModelSelectDisabled}
+            disabled={snap.chatServiceSelectDisabled}
             onChange={actions.handleServiceChange}
             onFocus={actions.handleServiceFocus}
             onBlur={actions.handleServiceBlur}

@@ -20,7 +20,7 @@ describe('provider-claude-oauth plugin manifest', () => {
     expect(keys).toContain('ANTSEED_INPUT_USD_PER_MILLION');
     expect(keys).toContain('ANTSEED_OUTPUT_USD_PER_MILLION');
     expect(keys).toContain('ANTSEED_MAX_CONCURRENCY');
-    expect(keys).toContain('ANTSEED_ALLOWED_MODELS');
+    expect(keys).toContain('ANTSEED_ALLOWED_SERVICES');
     const accessField = plugin.configSchema!.find(f => f.key === 'CLAUDE_ACCESS_TOKEN');
     expect(accessField!.required).toBe(true);
     expect(accessField!.type).toBe('secret');

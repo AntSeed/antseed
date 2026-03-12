@@ -182,8 +182,8 @@ export class PeerAnnouncer {
 
     for (const p of providers) {
       await this._tryAnnounceTopic(providerTopic(p.provider));
-      for (const model of p.services) {
-        const canonicalServiceKey = normalizeServiceTopicKey(model);
+      for (const service of p.services) {
+        const canonicalServiceKey = normalizeServiceTopicKey(service);
         if (!canonicalServiceKey) {
           continue;
         }
@@ -193,7 +193,7 @@ export class PeerAnnouncer {
           await this._tryAnnounceTopic(canonicalTopic);
         }
 
-        const compactServiceKey = normalizeServiceSearchTopicKey(model);
+        const compactServiceKey = normalizeServiceSearchTopicKey(service);
         if (compactServiceKey !== canonicalServiceKey) {
           const compactTopic = serviceSearchTopic(compactServiceKey);
           if (!announcedServiceTopics.has(compactTopic)) {
@@ -233,14 +233,14 @@ export class PeerAnnouncer {
 
   private _normalizeServiceCategories(
     serviceCategories: Record<string, string[]> | undefined,
-    supportedModels: string[],
+    supportedServices: string[],
   ): Record<string, string[]> | undefined {
     if (!serviceCategories) {
       return undefined;
     }
 
-    const hasWildcardServices = supportedModels.length === 0;
-    const supportedServiceSet = new Set(supportedModels);
+    const hasWildcardServices = supportedServices.length === 0;
+    const supportedServiceSet = new Set(supportedServices);
     const normalized: Record<string, string[]> = {};
     for (const [service, categories] of Object.entries(serviceCategories)) {
       if (!hasWildcardServices && !supportedServiceSet.has(service)) {
@@ -264,14 +264,14 @@ export class PeerAnnouncer {
 
   private _normalizeServiceApiProtocols(
     serviceApiProtocols: Record<string, ServiceApiProtocol[]> | undefined,
-    supportedModels: string[],
+    supportedServices: string[],
   ): Record<string, ServiceApiProtocol[]> | undefined {
     if (!serviceApiProtocols) {
       return undefined;
     }
 
-    const hasWildcardServices = supportedModels.length === 0;
-    const supportedServiceSet = new Set(supportedModels);
+    const hasWildcardServices = supportedServices.length === 0;
+    const supportedServiceSet = new Set(supportedServices);
     const normalized: Record<string, ServiceApiProtocol[]> = {};
     for (const [service, protocols] of Object.entries(serviceApiProtocols)) {
       if (!hasWildcardServices && !supportedServiceSet.has(service)) {

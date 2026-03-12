@@ -7,8 +7,8 @@ import {
   MAX_SERVICE_NAME_LENGTH,
   MAX_REGION_LENGTH,
   MAX_DISPLAY_NAME_LENGTH,
-  MAX_MODEL_CATEGORY_LENGTH,
-  MAX_MODEL_API_PROTOCOLS_PER_MODEL,
+  MAX_SERVICE_CATEGORY_LENGTH,
+  MAX_SERVICE_API_PROTOCOLS_PER_SERVICE,
 } from '../src/discovery/metadata-validator.js';
 import { METADATA_VERSION, type PeerMetadata } from '../src/discovery/peer-metadata.js';
 
@@ -97,7 +97,7 @@ describe('validateMetadata', () => {
   });
 
   it('should reject too many services per provider', () => {
-    const services = Array.from({ length: MAX_SERVICES_PER_PROVIDER + 1 }, (_, i) => `model-${i}`);
+    const services = Array.from({ length: MAX_SERVICES_PER_PROVIDER + 1 }, (_, i) => `service-${i}`);
     const errors = validateMetadata(
       validMetadata({
         providers: [
@@ -137,7 +137,7 @@ describe('validateMetadata', () => {
     expect(errors.some((e) => e.field.includes('services'))).toBe(true);
   });
 
-  it('should reject servicePricing entries with model names exceeding max length', () => {
+  it('should reject servicePricing entries with service names exceeding max length', () => {
     const longModelName = 'x'.repeat(MAX_SERVICE_NAME_LENGTH + 1);
     const errors = validateMetadata(
       validMetadata({
@@ -289,7 +289,7 @@ describe('validateMetadata', () => {
     expect(errors.some((e) => e.field === 'displayName')).toBe(true);
   });
 
-  it('should reject categories for a model not listed by provider', () => {
+  it('should reject categories for a service not listed by provider', () => {
     const errors = validateMetadata(validMetadata({
       providers: [
         {
@@ -310,7 +310,7 @@ describe('validateMetadata', () => {
     expect(errors.some((e) => e.field.includes('serviceCategories.m2'))).toBe(true);
   });
 
-  it('should allow model categories when provider declares wildcard models', () => {
+  it('should allow service categories when provider declares wildcard services', () => {
     const errors = validateMetadata(validMetadata({
       providers: [
         {
@@ -321,7 +321,7 @@ describe('validateMetadata', () => {
             outputUsdPerMillion: 1,
           },
           serviceCategories: {
-            'any-model': ['privacy'],
+            'any-service': ['privacy'],
           },
           maxConcurrency: 1,
           currentLoad: 0,
@@ -331,7 +331,7 @@ describe('validateMetadata', () => {
     expect(errors.some((e) => e.field.includes('serviceCategories.any-model'))).toBe(false);
   });
 
-  it('should reject invalid model category value', () => {
+  it('should reject invalid service category value', () => {
     const errors = validateMetadata(validMetadata({
       providers: [
         {
@@ -342,7 +342,7 @@ describe('validateMetadata', () => {
             outputUsdPerMillion: 1,
           },
           serviceCategories: {
-            m1: [`${'x'.repeat(MAX_MODEL_CATEGORY_LENGTH)}!`],
+            m1: [`${'x'.repeat(MAX_SERVICE_CATEGORY_LENGTH)}!`],
           },
           maxConcurrency: 1,
           currentLoad: 0,
@@ -352,7 +352,7 @@ describe('validateMetadata', () => {
     expect(errors.some((e) => e.field.includes('serviceCategories.m1'))).toBe(true);
   });
 
-  it('should reject model category entries with model names exceeding max length', () => {
+  it('should reject service category entries with service names exceeding max length', () => {
     const longModelName = 'x'.repeat(MAX_SERVICE_NAME_LENGTH + 1);
     const errors = validateMetadata(validMetadata({
       providers: [
@@ -374,7 +374,7 @@ describe('validateMetadata', () => {
     expect(errors.some((e) => e.field.includes('serviceCategories'))).toBe(true);
   });
 
-  it('should reject model API protocols for a model not listed by provider', () => {
+  it('should reject service API protocols for a service not listed by provider', () => {
     const errors = validateMetadata(validMetadata({
       providers: [
         {
@@ -395,7 +395,7 @@ describe('validateMetadata', () => {
     expect(errors.some((e) => e.field.includes('serviceApiProtocols.m2'))).toBe(true);
   });
 
-  it('should allow model API protocols when provider declares wildcard models', () => {
+  it('should allow service API protocols when provider declares wildcard services', () => {
     const errors = validateMetadata(validMetadata({
       providers: [
         {
@@ -406,7 +406,7 @@ describe('validateMetadata', () => {
             outputUsdPerMillion: 1,
           },
           serviceApiProtocols: {
-            'any-model': ['openai-chat-completions'],
+            'any-service': ['openai-chat-completions'],
           },
           maxConcurrency: 1,
           currentLoad: 0,
@@ -416,7 +416,7 @@ describe('validateMetadata', () => {
     expect(errors.some((e) => e.field.includes('serviceApiProtocols.any-model'))).toBe(false);
   });
 
-  it('should reject unsupported model API protocol values', () => {
+  it('should reject unsupported service API protocol values', () => {
     const errors = validateMetadata(validMetadata({
       providers: [
         {
@@ -437,7 +437,7 @@ describe('validateMetadata', () => {
     expect(errors.some((e) => e.field.includes('serviceApiProtocols.m1'))).toBe(true);
   });
 
-  it('should reject too many model API protocols per model', () => {
+  it('should reject too many service API protocols per service', () => {
     const errors = validateMetadata(validMetadata({
       providers: [
         {
@@ -448,7 +448,7 @@ describe('validateMetadata', () => {
             outputUsdPerMillion: 1,
           },
           serviceApiProtocols: {
-            m1: Array.from({ length: MAX_MODEL_API_PROTOCOLS_PER_MODEL + 1 }, (_, i) =>
+            m1: Array.from({ length: MAX_SERVICE_API_PROTOCOLS_PER_SERVICE + 1 }, (_, i) =>
               i % 2 === 0 ? 'openai-chat-completions' : 'anthropic-messages',
             ),
           },
@@ -460,7 +460,7 @@ describe('validateMetadata', () => {
     expect(errors.some((e) => e.field.includes('serviceApiProtocols.m1'))).toBe(true);
   });
 
-  it('should reject model API protocol entries with model names exceeding max length', () => {
+  it('should reject service API protocol entries with service names exceeding max length', () => {
     const longModelName = 'x'.repeat(MAX_SERVICE_NAME_LENGTH + 1);
     const errors = validateMetadata(validMetadata({
       providers: [

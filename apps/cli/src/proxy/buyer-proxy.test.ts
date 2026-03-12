@@ -47,7 +47,7 @@ test('selectCandidatePeersForRouting keeps all peers when no protocol or provide
   assert.equal(result.routePlanByPeerId.size, 0)
 })
 
-test('selectCandidatePeersForRouting excludes peers when requested model is not in provider metadata', () => {
+test('selectCandidatePeersForRouting excludes peers when requested service is not in provider metadata', () => {
   const openAiPeer = makePeer('a', ['openai'])
   openAiPeer.providerServiceApiProtocols = {
     openai: {
@@ -78,7 +78,7 @@ test('selectCandidatePeersForRouting excludes peers when requested model is not 
   assert.equal(result.routePlanByPeerId.get(claudePeer.peerId)?.provider, 'claude-oauth')
 })
 
-test('selectCandidatePeersForRouting can still include peers without model protocol metadata', () => {
+test('selectCandidatePeersForRouting can still include peers without service protocol metadata', () => {
   const peerWithoutMetadata = makePeer('a', ['openai'])
   const result = selectCandidatePeersForRouting(
     [peerWithoutMetadata],
