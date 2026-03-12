@@ -131,8 +131,8 @@ function createUpstreamProvider(config: UnifiedUpstreamConfig): Provider {
     relay: {
       baseUrl,
       authHeaderName: 'authorization',
-      authHeaderValue: `Bearer ${config.apiKey}`,
-      tokenProvider: new StaticTokenProvider(config.apiKey),
+      authHeaderValue: '',
+      tokenProvider: new StaticTokenProvider(`Bearer ${config.apiKey}`),
       maxConcurrency: config.maxConcurrency ?? 10,
       allowedServices: config.allowedServices,
       ...(config.extraHeaders ? { extraHeaders: config.extraHeaders } : {}),
@@ -470,9 +470,12 @@ class UnifiedProvider implements Provider {
         throw new Error('Unified provider route names cannot be empty');
       }
       for (const service of route.services) {
-        if (!this.routeByService.has(service)) {
-          this.routeByService.set(service, route);
+        if (this.routeByService.has(service)) {
+          throw new Error(
+            `Service "${service}" is declared by upstream "${this.routeByService.get(service)!.key}" and again by "${route.key}". Each service must be declared by exactly one upstream.`,
+          );
         }
+        this.routeByService.set(service, route);
       }
     }
 
