@@ -105,7 +105,7 @@ export default function NetworkPage() {
     : null;
 
   return (
-    <Layout title="Network Status" description="Live AntSeed network status — active peers, available models, and network health.">
+    <Layout title="Network Status" description="Live AntSeed network status — active peers, available services, and network health.">
       <div className={styles.page}>
         <div className={styles.header}>
           <Link to="/" className={styles.back}>← Back</Link>
@@ -122,7 +122,7 @@ export default function NetworkPage() {
           <div className={styles.statDivider} />
           <div className={styles.stat}>
             <div className={styles.statNum}>{loading ? '--' : allModels.size}</div>
-            <div className={styles.statLabel}>Models Available</div>
+            <div className={styles.statLabel}>Services Available</div>
           </div>
           <div className={styles.statDivider} />
           <div className={styles.stat}>
@@ -136,10 +136,10 @@ export default function NetworkPage() {
           </div>
         </div>
 
-        {/* Models list */}
+        {/* Services list */}
         {allModels.size > 0 && (
           <div className={styles.section}>
-            <div className={styles.sectionTitle}>Available Models</div>
+            <div className={styles.sectionTitle}>Available Services</div>
             <div className={styles.modelGrid}>
               {Array.from(allModels).map(m => <ModelTag key={m} name={m} />)}
             </div>

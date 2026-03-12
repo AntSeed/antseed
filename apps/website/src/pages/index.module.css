@@ -285,7 +285,7 @@
 .supplyHeader h2 { font-size: clamp(28px, 3.5vw, 40px); font-weight: 700; letter-spacing: -1.5px; margin-bottom: 8px; }
 .supplyHeader p { font-size: 14px; color: #888; max-width: 520px; line-height: 1.6; }
 .supplyGrid {
-  display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 0;
   border: 1px solid #e8e8e3; border-radius: 16px; overflow: hidden;
 }
 .supplyCol { padding: 36px; background: #fff; border-right: 1px solid #e8e8e3; }

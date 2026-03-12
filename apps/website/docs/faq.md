@@ -11,15 +11,15 @@ sidebar_position: 99
 
 ### What is AntSeed?
 
-AntSeed is a peer-to-peer network for AI services. It connects buyers who need AI inference with providers who offer it — directly, without a central platform in the middle.
+AntSeed is a peer-to-peer network for AI services. It connects buyers who need AI services with providers who deliver them — specialized inference, domain expertise, autonomous agents. Directly, without a central platform in the middle.
 
-Unlike centralized AI APIs, there is no single company routing your requests, storing your conversations, or controlling which models you can access. The AntSeed protocol handles discovery, routing, reputation scoring, and payment settlement across a decentralized network of peers.
+Unlike centralized AI APIs, there is no single company routing your requests, storing your conversations, or controlling what you can access. The AntSeed protocol handles discovery, routing, reputation scoring, and payment settlement across a decentralized network of peers.
 
 ### How is this different from centralized AI chat products?
 
-Centralized AI chat products are closed platforms built on top of a single provider's models. AntSeed is open infrastructure — a protocol layer that gives you access to any model on the network, from any provider currently online.
+Centralized AI chat products are closed platforms built on top of a single provider's models. AntSeed is open infrastructure — a protocol layer that connects you with providers offering AI services. Not just models — expertise, agents, and specialized workflows.
 
-The key difference: your requests don't go through a single company. They route peer-to-peer to whichever provider best matches your requirements for price, latency, privacy, and capability.
+The key difference: your requests don't go through a single company. They route peer-to-peer to whichever provider best matches your requirements for price, latency, privacy, reputation, and capability.
 
 Your existing tools — [Claude Code](https://claude.ai/code), [Codex](https://github.com/openai/codex), or any OpenAI-compatible client — connect and work immediately without modification.
 
@@ -57,19 +57,19 @@ AntSeed the protocol does not log requests. We don't operate the nodes — provi
 
 ---
 
-## Models & Availability
+## Services & Availability
 
-### What models are available?
+### What services are available?
 
-Any model a provider offers. The network is open — any provider can list new models. See what's live right now on the [network page](/network).
+Any service a provider chooses to offer. Specialized inference, domain expertise, autonomous agents, uncensored models. The network is open — availability depends on who's online. See what's live right now on the [network page](/network).
 
 ### Can I use closed-source models like GPT-4?
 
 If a provider offers access to GPT-4 or other closed-source models, you can access them through AntSeed. The protocol is model-agnostic. Availability depends on what providers choose to offer.
 
-### What if a model goes offline?
+### What if a provider goes offline?
 
-AntSeed automatically detects provider failures and reroutes to the next best available provider. You never have to manually switch — failover is built into the routing layer.
+AntSeed automatically detects provider failures and reroutes to the next best specialized service available. You never have to manually switch — failover is built into the routing layer.
 
 ---
 
@@ -102,13 +102,13 @@ macOS (Apple Silicon and Intel), Windows, and Linux. The CLI runs anywhere Node.
 
 ### Can I become a provider?
 
-Yes. The network is open — anyone can participate. You can run open-weight models, serve specialized or fine-tuned models, deploy autonomous agents, offer API-backed inference, or invent a new kind of offering entirely. If it delivers value to buyers on the network, it has a place here. No permission or partnership required.
+Yes. The network is open. Wrap your expertise in AI and sell it — video creation, legal analysis, code audits, uncensored inference, autonomous agents. It's your job to pick the models and workflows that deliver the best results. The network only measures delivery quality. No permission or partnership required.
 
 See the [provider setup guide](/docs/install) to get started.
 
 ### How does pricing work?
 
-Providers set their own prices per million tokens. The routing layer scores all available providers by your preferences (cheapest, fastest, most private, highest reputation) and picks the best match. Prices are visible before routing.
+Providers set their own prices. The routing layer scores all available providers by your preferences (cheapest, fastest, most private, highest reputation) and picks the best match. Prices are visible before routing.
 
 ### How do providers get paid?
 
