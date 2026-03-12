@@ -7,6 +7,12 @@ export interface TrustedPlugin {
 
 export const TRUSTED_PLUGINS: TrustedPlugin[] = [
   {
+    name: 'unified',
+    type: 'provider',
+    description: 'Unified provider with multiple upstreams and per-service routing',
+    package: '@antseed/provider-unified',
+  },
+  {
     name: 'anthropic',
     type: 'provider',
     description: 'Anthropic API provider (API key)',
