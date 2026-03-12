@@ -313,7 +313,7 @@ class MyProvider implements Provider {
   private _active = 0;
 
   constructor(apiKey: string, services: string[], inputUsdPerMillion: number, outputUsdPerMillion: number, maxConcurrency: number) {
-    this.services = models;
+    this.services = services;
     this.pricing = {
       defaults: {
         inputUsdPerMillion,
@@ -356,16 +356,16 @@ const plugin: AntseedProviderPlugin = {
   description: 'Provides My LLM capacity on the Antseed Network',
   configSchema: [
     { key: 'MY_API_KEY', label: 'API Key', type: 'secret', required: true, description: 'API key for My LLM' },
-    { key: 'MY_MODELS', label: 'Models', type: 'string[]', required: false, description: 'Comma-separated model list' },
+    { key: 'MY_SERVICES', label: 'Services', type: 'string[]', required: false, description: 'Comma-separated service list' },
     { key: 'MY_INPUT_USD_PER_MILLION', label: 'Input Price', type: 'number', required: false, description: 'Input price in USD per 1M tokens' },
     { key: 'MY_OUTPUT_USD_PER_MILLION', label: 'Output Price', type: 'number', required: false, description: 'Output price in USD per 1M tokens' },
   ],
   createProvider(config: Record<string, string>) {
     const apiKey = config['MY_API_KEY'] ?? '';
-    const models = (config['MY_MODELS'] ?? 'default-model').split(',').map(s => s.trim());
+    const services = (config['MY_SERVICES'] ?? 'default-service').split(',').map(s => s.trim());
     const input = parseFloat(config['MY_INPUT_USD_PER_MILLION'] ?? '10');
     const output = parseFloat(config['MY_OUTPUT_USD_PER_MILLION'] ?? String(input));
-    return new MyProvider(apiKey, models, input, output, 10);
+    return new MyProvider(apiKey, services, input, output, 10);
   },
 };
 

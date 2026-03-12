@@ -102,7 +102,7 @@ Providers can inject Markdown content into buyer requests server-side — before
     "middleware": [
       { "file": "./skills/persona.md", "position": "system-prepend" },
       { "file": "./skills/output-format.md", "position": "append", "role": "user" },
-      { "file": "./skills/sonnet-rules.md", "position": "system-append", "models": ["claude-sonnet-4-5", "claude-sonnet-4-6"] }
+      { "file": "./skills/sonnet-rules.md", "position": "system-append", "services": ["claude-sonnet-4-5", "claude-sonnet-4-6"] }
     ]
   }
 }
@@ -113,9 +113,9 @@ Providers can inject Markdown content into buyer requests server-side — before
 | `file` | Yes | Path to a `.md` file, relative to config file or absolute |
 | `position` | Yes | `system-prepend`, `system-append`, `prepend`, or `append` |
 | `role` | No | Role for `prepend`/`append`. Defaults to `user` |
-| `models` | No | Scope to specific model IDs. Omit to apply to all models. Must not be an empty list |
+| `services` | No | Scope to specific service IDs. Omit to apply to all services. Must not be an empty list |
 
-When `models` is set, the entry is only injected when the request's `model` field matches one of the listed IDs. Global entries (no `models`) apply to every request regardless of model.
+When `services` is set, the entry is only injected when the request's service matches one of the listed IDs. Global entries (no `services`) apply to every request regardless of service.
 
 ## Authentication
 

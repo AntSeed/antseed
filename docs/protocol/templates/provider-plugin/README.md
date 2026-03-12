@@ -101,7 +101,7 @@ Markdown files injected into **every** request. Use for instructions the LLM alw
     "middleware": [
       { "file": "./prompts/persona.md", "position": "system-prepend" },
       { "file": "./prompts/output-format.md", "position": "append", "role": "user" },
-      { "file": "./prompts/sonnet-rules.md", "position": "system-append", "models": ["claude-sonnet-4-5", "claude-sonnet-4-6"] }
+      { "file": "./prompts/sonnet-rules.md", "position": "system-append", "services": ["claude-sonnet-4-5", "claude-sonnet-4-6"] }
     ]
   }
 }
@@ -114,7 +114,7 @@ Each entry supports:
 | `file` | Yes | Path to a `.md` file (relative to config or absolute) |
 | `position` | Yes | `system-prepend`, `system-append`, `prepend`, or `append` |
 | `role` | No | Role for `prepend`/`append` positions. Defaults to `user` |
-| `models` | No | If set, only inject for requests targeting one of these service IDs. Omit to apply to all services. Must contain at least one service ID |
+| `services` | No | If set, only inject for requests targeting one of these service IDs. Omit to apply to all services. Must contain at least one service ID |
 
 ### Skills (loaded on demand)
 

@@ -950,9 +950,7 @@ export class BuyerProxy {
       const parsed = JSON.parse(raw) as Record<string, unknown>
       const pinnedService = typeof parsed.pinnedService === 'string' && parsed.pinnedService.trim().length > 0
         ? parsed.pinnedService.trim()
-        : typeof parsed.pinnedModel === 'string' && (parsed.pinnedModel as string).trim().length > 0
-          ? (parsed.pinnedModel as string).trim()
-          : null
+        : null
       const pinnedPeer = typeof parsed.pinnedPeerId === 'string' && parsed.pinnedPeerId.trim().length > 0
         ? parsed.pinnedPeerId.trim().toLowerCase()
         : null

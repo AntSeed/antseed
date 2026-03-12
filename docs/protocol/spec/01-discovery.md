@@ -191,12 +191,12 @@ Additional validation rules enforced by `validateMetadata()`:
 - At least one provider must be present.
 - `defaultPricing.inputUsdPerMillion` and `defaultPricing.outputUsdPerMillion` must be non-negative.
 - Each `servicePricing[service].inputUsdPerMillion` and `servicePricing[service].outputUsdPerMillion` (if present) must be non-negative.
-- `serviceCategories` (if present) must reference models listed in `providers[].services`.
+- `serviceCategories` (if present) must reference services listed in `providers[].services`.
 - Each category must be lowercase alphanumeric or hyphen: `^[a-z0-9][a-z0-9-]*$`.
-- Categories must be non-empty, unique per model, and within per-service/per-tag limits above.
+- Categories must be non-empty, unique per service, and within per-service/per-tag limits above.
 - Recommended category tags: `privacy`, `legal`, `uncensored`, `coding`, `finance`, `tee` (not enforced; custom tags allowed).
-- `serviceApiProtocols` (if present) must reference models listed in `providers[].services`.
-- `serviceApiProtocols` entries must be known protocol IDs, non-empty, unique per model, and within per-service limits above.
+- `serviceApiProtocols` (if present) must reference services listed in `providers[].services`.
+- `serviceApiProtocols` entries must be known protocol IDs, non-empty, unique per service, and within per-service limits above.
 - `maxConcurrency` must be at least 1.
 - `currentLoad` must be non-negative and must not exceed `maxConcurrency`.
 - `signature` must be exactly 128 lowercase hex characters (64 bytes).

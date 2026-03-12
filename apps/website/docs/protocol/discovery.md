@@ -60,7 +60,7 @@ By default, metadata is fetched from `http://{host}:{port}/metadata` (`metadataP
   "displayName": "Acme Inference - us-east-1",
   "providers": [{
     "provider": "anthropic",
-    "models": ["claude-sonnet-4-6", "claude-haiku-4-5"],
+    "services": ["claude-sonnet-4-6", "claude-haiku-4-5"],
     "defaultPricing": {
       "inputUsdPerMillion": 3,
       "outputUsdPerMillion": 15

@@ -138,7 +138,7 @@ describe('validateMetadata', () => {
   });
 
   it('should reject servicePricing entries with service names exceeding max length', () => {
-    const longModelName = 'x'.repeat(MAX_SERVICE_NAME_LENGTH + 1);
+    const longServiceName = 'x'.repeat(MAX_SERVICE_NAME_LENGTH + 1);
     const errors = validateMetadata(
       validMetadata({
         providers: [
@@ -150,7 +150,7 @@ describe('validateMetadata', () => {
               outputUsdPerMillion: 1,
             },
             servicePricing: {
-              [longModelName]: {
+              [longServiceName]: {
                 inputUsdPerMillion: 2,
                 outputUsdPerMillion: 3,
               },
@@ -353,7 +353,7 @@ describe('validateMetadata', () => {
   });
 
   it('should reject service category entries with service names exceeding max length', () => {
-    const longModelName = 'x'.repeat(MAX_SERVICE_NAME_LENGTH + 1);
+    const longServiceName = 'x'.repeat(MAX_SERVICE_NAME_LENGTH + 1);
     const errors = validateMetadata(validMetadata({
       providers: [
         {
@@ -364,7 +364,7 @@ describe('validateMetadata', () => {
             outputUsdPerMillion: 1,
           },
           serviceCategories: {
-            [longModelName]: ['privacy'],
+            [longServiceName]: ['privacy'],
           },
           maxConcurrency: 1,
           currentLoad: 0,
@@ -461,7 +461,7 @@ describe('validateMetadata', () => {
   });
 
   it('should reject service API protocol entries with service names exceeding max length', () => {
-    const longModelName = 'x'.repeat(MAX_SERVICE_NAME_LENGTH + 1);
+    const longServiceName = 'x'.repeat(MAX_SERVICE_NAME_LENGTH + 1);
     const errors = validateMetadata(validMetadata({
       providers: [
         {
@@ -472,7 +472,7 @@ describe('validateMetadata', () => {
             outputUsdPerMillion: 1,
           },
           serviceApiProtocols: {
-            [longModelName]: ['openai-chat-completions'],
+            [longServiceName]: ['openai-chat-completions'],
           },
           maxConcurrency: 1,
           currentLoad: 0,

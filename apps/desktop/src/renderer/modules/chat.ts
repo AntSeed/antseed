@@ -102,7 +102,7 @@ export function initChatModule({
   let streamingIndicatorTimer: number | null = null;
   let proxyState: 'unknown' | 'online' | 'offline' = 'unknown';
   let proxyPort = 0;
-  let lastModelOptionsSignature = '';
+  let lastServiceOptionsSignature = '';
   let pendingServiceOptions: NormalizedChatServiceEntry[] | null = null;
   let lastServiceRefreshAt = 0;
   let serviceRefreshToken = 0;
@@ -299,12 +299,12 @@ export function initChatModule({
   // Display state updates (no DOM — writes to uiState + notifies React)
   // ---------------------------------------------------------------------------
 
-  function setModelCatalogStatus(tone: BadgeTone, label: string): void {
+  function setServiceCatalogStatus(tone: BadgeTone, label: string): void {
     uiState.chatServiceStatus = { tone, label };
     notifyUiStateChanged();
   }
 
-  function setModelSelectLoading(loading: boolean): void {
+  function setServiceSelectLoading(loading: boolean): void {
     uiState.chatServiceSelectDisabled = loading;
     notifyUiStateChanged();
   }
@@ -645,7 +645,7 @@ export function initChatModule({
 
     const nextSignature = computeServiceOptionsSignature(options);
     if (
-      nextSignature === lastModelOptionsSignature &&
+      nextSignature === lastServiceOptionsSignature &&
       uiState.chatSelectedServiceValue === preferred
     ) {
       return;
@@ -654,7 +654,7 @@ export function initChatModule({
     if (options.length === 0) {
       uiState.chatServiceOptions = [];
       uiState.chatSelectedServiceValue = '';
-      lastModelOptionsSignature = '';
+      lastServiceOptionsSignature = '';
       notifyUiStateChanged();
       return;
     }
@@ -669,7 +669,7 @@ export function initChatModule({
     }));
 
     uiState.chatSelectedServiceValue = preferred;
-    lastModelOptionsSignature = nextSignature;
+    lastServiceOptionsSignature = nextSignature;
     notifyUiStateChanged();
   }
 
@@ -726,15 +726,15 @@ export function initChatModule({
 
     if (!bridge?.chatAiListServices) {
       updateChatServiceOptions(fallback);
-      setModelCatalogStatus('warn', 'Services unavailable');
+      setServiceCatalogStatus('warn', 'Services unavailable');
       setRuntimeActivity('warn', 'Service catalog unavailable (bridge missing).');
       serviceRefreshInProgress = false;
       return;
     }
 
-    setModelCatalogStatus('warn', 'Loading services...');
+    setServiceCatalogStatus('warn', 'Loading services...');
     setRuntimeActivity('warn', 'Loading service catalog from peers...');
-    setModelSelectLoading(true);
+    setServiceSelectLoading(true);
 
     try {
       const result = await listChatServicesWithTimeout(refreshToken);
@@ -742,7 +742,7 @@ export function initChatModule({
 
       if (!result.ok || !Array.isArray(result.data)) {
         updateChatServiceOptions(fallback);
-        setModelCatalogStatus('warn', result.error || 'Services unavailable');
+        setServiceCatalogStatus('warn', result.error || 'Services unavailable');
         setRuntimeActivity('warn', result.error || 'Service catalog unavailable.');
         return;
       }
@@ -752,7 +752,7 @@ export function initChatModule({
         .filter((entry): entry is NormalizedChatServiceEntry => entry !== null);
       const optionsToRender = parsed.length > 0 ? parsed : fallback;
       updateChatServiceOptions(optionsToRender);
-      setModelCatalogStatus(
+      setServiceCatalogStatus(
         optionsToRender.length > 0 ? 'active' : 'warn',
         optionsToRender.length > 0
           ? `Services ready (${String(optionsToRender.length)})`
@@ -768,12 +768,12 @@ export function initChatModule({
       if (refreshToken !== serviceRefreshToken) return;
       updateChatServiceOptions(fallback);
       const message = toErrorMessage(error, 'Failed to load services');
-      setModelCatalogStatus('warn', message);
+      setServiceCatalogStatus('warn', message);
       setRuntimeActivity('bad', message);
     } finally {
       serviceRefreshInProgress = false;
       if (refreshToken === serviceRefreshToken) {
-        setModelSelectLoading(false);
+        setServiceSelectLoading(false);
       }
     }
   }
@@ -787,7 +787,7 @@ export function initChatModule({
     if (!bridge || !bridge.chatAiGetProxyStatus) {
       proxyState = 'unknown';
       proxyPort = 0;
-      setModelCatalogStatus('idle', 'Services idle');
+      setServiceCatalogStatus('idle', 'Services idle');
       updateStreamingIndicator();
       return;
     }
@@ -814,7 +814,7 @@ export function initChatModule({
           uiState.chatProxyPort = 0;
           uiState.chatProxyStatus = { tone: 'idle', label: 'Proxy offline' };
           notifyUiStateChanged();
-          setModelCatalogStatus('idle', 'Services unavailable (proxy offline)');
+          setServiceCatalogStatus('idle', 'Services unavailable (proxy offline)');
           if (previousProxyState !== 'offline') {
             setRuntimeActivity('warn', 'Waiting for runtime.');
           }
@@ -826,7 +826,7 @@ export function initChatModule({
       uiState.chatProxyPort = 0;
       uiState.chatProxyStatus = { tone: 'idle', label: 'Proxy offline' };
       notifyUiStateChanged();
-      setModelCatalogStatus('idle', 'Services unavailable (proxy offline)');
+      setServiceCatalogStatus('idle', 'Services unavailable (proxy offline)');
       if (previousProxyState !== 'offline') {
         setRuntimeActivity('warn', 'Buyer proxy unreachable; retrying.');
       }

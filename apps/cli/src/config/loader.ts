@@ -192,7 +192,7 @@ function mergeSellerConfig(
       ...(defaults.serviceCategories ? { serviceCategories: cloneSellerServiceCategories(defaults.serviceCategories) } : {}),
     };
   }
-  const mergedModelCategories = mergeSellerServiceCategories(defaults.serviceCategories, value['serviceCategories']);
+  const mergedServiceCategories = mergeSellerServiceCategories(defaults.serviceCategories, value['serviceCategories']);
 
   return {
     reserveFloor: typeof value['reserveFloor'] === 'number'
@@ -205,7 +205,7 @@ function mergeSellerConfig(
       ? value['enabledProviders'].filter((entry): entry is string => typeof entry === 'string')
       : [...defaults.enabledProviders],
     pricing: mergeHierarchicalPricing(defaults.pricing, value['pricing']),
-    ...(mergedModelCategories ? { serviceCategories: mergedModelCategories } : {}),
+    ...(mergedServiceCategories ? { serviceCategories: mergedServiceCategories } : {}),
   };
 }
 

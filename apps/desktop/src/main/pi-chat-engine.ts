@@ -364,7 +364,7 @@ const CHAT_SESSIONS_DIR = path.join(CHAT_DATA_DIR, 'sessions');
 const CHAT_WORKSPACE_DIR = path.join(ANTSEED_HOME_DIR, 'projects');
 const CHAT_AGENT_DIR = path.join(CHAT_DATA_DIR, 'pi-agent');
 const DEFAULT_PROXY_PORT = 8377;
-const DEFAULT_CHAT_MODEL = 'claude-sonnet-4-20250514';
+const DEFAULT_CHAT_SERVICE = 'claude-sonnet-4-20250514';
 const PROXY_PROVIDER_ID = 'antseed-proxy';
 const PROXY_RUNTIME_API_KEY = 'antseed-local';
 const CHAT_SYSTEM_PROMPT_ENV = 'ANTSEED_CHAT_SYSTEM_PROMPT';
@@ -373,7 +373,7 @@ const CHAT_STREAM_TOTAL_TIMEOUT_ENV = 'ANTSEED_CHAT_STREAM_TOTAL_TIMEOUT_MS';
 const CHAT_STREAM_IDLE_TIMEOUT_ENV = 'ANTSEED_CHAT_STREAM_IDLE_TIMEOUT_MS';
 const DEFAULT_CHAT_STREAM_TOTAL_TIMEOUT_MS = 240_000;
 const DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS = 45_000;
-const CHAT_MODEL_METADATA_FETCH_TIMEOUT_MS = 2_500;
+const CHAT_SERVICE_METADATA_FETCH_TIMEOUT_MS = 2_500;
 const CHAT_SERVICE_SCAN_MAX_PEERS = 20;
 const CHAT_SERVICE_MAX_OPTIONS = 120;
 const CHAT_SERVICE_MAX_OPTIONS_PER_PROVIDER = 40;
@@ -489,7 +489,7 @@ function parseProxyMeta(response: Response, requestStartedAt: number): AiMessage
 
 function normalizeServiceId(service?: string): string {
   const trimmed = String(service ?? '').trim();
-  return trimmed.length > 0 ? trimmed : DEFAULT_CHAT_MODEL;
+  return trimmed.length > 0 ? trimmed : DEFAULT_CHAT_SERVICE;
 }
 
 function isChatServiceProtocol(value: unknown): value is ChatServiceProtocol {
@@ -792,7 +792,7 @@ async function fetchPeerMetadata(host: string, port: number): Promise<Record<str
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), CHAT_MODEL_METADATA_FETCH_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), CHAT_SERVICE_METADATA_FETCH_TIMEOUT_MS);
   try {
     const response = await fetch(`http://${host}:${String(port)}/metadata`, {
       signal: controller.signal,

@@ -21,7 +21,7 @@ Command-line interface and web dashboard for the AntSeed Network — a P2P netwo
 | `antseed config` | Manage configuration (`show`, `set`, `seller show/set`, `buyer show/set`, `init`) |
 | `antseed dashboard` | Start the web dashboard for monitoring and configuration |
 | `antseed dev` | Run seller + buyer locally for development and testing |
-| `antseed browse` | Browse available models, prices, and reputation on the network |
+| `antseed browse` | Browse available services, prices, and reputation on the network |
 
 ## Plugins
 
@@ -90,7 +90,7 @@ Pricing is configured in USD per 1M tokens with role-specific defaults and optio
       },
       "providers": {
         "anthropic": {
-          "models": {
+          "services": {
             "claude-sonnet-4-5-20250929": {
               "inputUsdPerMillion": 12,
               "outputUsdPerMillion": 18
