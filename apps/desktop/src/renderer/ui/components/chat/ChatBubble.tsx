@@ -4,7 +4,6 @@ import { HugeiconsIcon } from '@hugeicons/react';
 import { Copy01Icon, Tick02Icon } from '@hugeicons/core-free-icons';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import type { ReactNode } from 'react';
-import DOMPurify from 'dompurify';
 import { MarkdownContent } from './chat-utils.js';
 import styles from './ChatBubble.module.scss';
 import type { ChatMessage, ContentBlock } from './chat-shared';
@@ -12,24 +11,8 @@ import {
   buildChatMetaParts,
   formatToolExecutionLabel,
   getMyrmecochoryLabel,
-  renderMarkdownToHtml,
   toToolDisplayName,
 } from './chat-shared';
-import { registerStreamingTextUpdater } from '../../../core/streaming-text';
-
-// Sanitize HTML produced by the markdown renderer before writing to the DOM.
-// AI-generated content is untrusted — this prevents XSS via crafted markdown.
-function sanitizeHtml(html: string): string {
-  return DOMPurify.sanitize(html, {
-    ALLOWED_TAGS: [
-      'p', 'br', 'strong', 'em', 'code', 'pre', 'a', 'ul', 'ol', 'li',
-      'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'blockquote', 'img',
-      'div', 'span', 'table', 'thead', 'tbody', 'tr', 'th', 'td',
-    ],
-    ALLOWED_ATTR: ['href', 'target', 'rel', 'src', 'alt', 'class', 'id', 'style', 'title'],
-    ALLOW_DATA_ATTR: false,
-  });
-}
 
 type ToolRenderItem = {
   id: string;
@@ -97,25 +80,74 @@ function getBlockRenderKey(block: ContentBlock, index: number, messagePrefix = '
 }
 
 
-// Renders streaming text content directly into the DOM via innerHTML, bypassing
-// React re-renders for high-frequency character-level updates. The RAF loop
-// in chat.ts calls applyStreamingText(), which writes here imperatively.
-// When streaming ends, this component is swapped out for MarkdownContent.
-// All HTML is passed through DOMPurify before being written to the DOM.
-function StreamingText({ initialText }: { initialText: string }) {
-  const ref = useRef<HTMLDivElement>(null);
+function StreamingMarkdown({ text }: { text: string }) {
+  const [visibleText, setVisibleText] = useState(text);
+  const frameRef = useRef<number | null>(null);
+  const lastFrameAtRef = useRef(0);
+  const visibleTextRef = useRef(text);
 
   useEffect(() => {
-    if (ref.current) {
-      ref.current.innerHTML = sanitizeHtml(renderMarkdownToHtml(initialText));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally empty; updates come imperatively via the bridge
-    return registerStreamingTextUpdater((html) => {
-      if (ref.current) ref.current.innerHTML = sanitizeHtml(html);
-    });
-  }, []); // intentionally empty — updates come imperatively via the bridge
+    visibleTextRef.current = visibleText;
+  }, [visibleText]);
 
-  return <div ref={ref} className="chat-bubble-content streaming-cursor" />;
+  useEffect(() => {
+    if (frameRef.current !== null) {
+      cancelAnimationFrame(frameRef.current);
+      frameRef.current = null;
+    }
+
+    if (visibleTextRef.current === text) return;
+    if (!text.startsWith(visibleTextRef.current)) {
+      visibleTextRef.current = text;
+      setVisibleText(text);
+      return;
+    }
+
+    const step = (timestamp: number): void => {
+      if (lastFrameAtRef.current <= 0) {
+        lastFrameAtRef.current = timestamp;
+      }
+
+      const elapsedMs = Math.max(1, timestamp - lastFrameAtRef.current);
+      const currentVisibleText = visibleTextRef.current;
+      const remaining = text.length - currentVisibleText.length;
+      if (remaining <= 0) {
+        frameRef.current = null;
+        lastFrameAtRef.current = 0;
+        return;
+      }
+
+      const charsPerSecond = Math.min(2600, Math.max(140, Math.ceil((remaining * 1000) / 180)));
+      const charBudget = Math.max(1, Math.floor((elapsedMs * charsPerSecond) / 1000));
+      const nextText = text.slice(0, Math.min(text.length, currentVisibleText.length + charBudget));
+
+      lastFrameAtRef.current = timestamp;
+      visibleTextRef.current = nextText;
+      setVisibleText(nextText);
+      if (nextText.length < text.length) {
+        frameRef.current = requestAnimationFrame(step);
+      } else {
+        frameRef.current = null;
+        lastFrameAtRef.current = 0;
+      }
+    };
+
+    lastFrameAtRef.current = 0;
+    frameRef.current = requestAnimationFrame(step);
+    return () => {
+      if (frameRef.current !== null) {
+        cancelAnimationFrame(frameRef.current);
+        frameRef.current = null;
+      }
+      lastFrameAtRef.current = 0;
+    };
+  }, [text]);
+
+  return (
+    <div className="chat-bubble-content streaming-cursor">
+      <MarkdownContent text={visibleText} />
+    </div>
+  );
 }
 
 function ThinkingBlockView({ block }: { block: ContentBlock }) {
@@ -361,7 +393,7 @@ function renderBlock(block: ContentBlock, index: number, streaming = false, mess
 
   if (block.type === 'text') {
     if (block.streaming) {
-      return <StreamingText key={blockKey} initialText={String(block.text || '')} />;
+      return <StreamingMarkdown key={blockKey} text={String(block.text || '')} />;
     }
     return <MarkdownContent key={blockKey} text={String(block.text || '')} />;
   }
@@ -471,6 +503,13 @@ type ChatBubbleProps = {
 export function ChatBubble({ message, streaming = false }: ChatBubbleProps) {
   const [metaExpanded, setMetaExpanded] = useState(false);
   const metaParts = useMemo(() => buildChatMetaParts(message), [message]);
+  const hasStreamingBlocks = useMemo(
+    () =>
+      Array.isArray(message.content) &&
+      (message.content as ContentBlock[]).some((block) => block.streaming),
+    [message.content],
+  );
+  const isStreamingBubble = streaming || hasStreamingBlocks;
 
   // Derive a stable per-message prefix so block keys are scoped to this message
   // and don't collide when buildDisplayMessages merges consecutive assistant turns.
@@ -483,7 +522,7 @@ export function ChatBubble({ message, streaming = false }: ChatBubbleProps) {
   const content = useMemo(() => {
     if (message.role === 'assistant') {
       if (Array.isArray(message.content)) {
-        return renderAssistantBlocks(message.content as ContentBlock[], streaming, messagePrefix);
+        return renderAssistantBlocks(message.content as ContentBlock[], isStreamingBubble, messagePrefix);
       }
       return <MarkdownContent text={String(message.content)} />;
     }
@@ -493,14 +532,14 @@ export function ChatBubble({ message, streaming = false }: ChatBubbleProps) {
     }
 
     if (Array.isArray(message.content)) {
-      return (message.content as ContentBlock[]).map((block, index) => renderBlock(block, index, streaming, messagePrefix));
+      return (message.content as ContentBlock[]).map((block, index) => renderBlock(block, index, isStreamingBubble, messagePrefix));
     }
 
     return <div className="chat-bubble-content">{JSON.stringify(message.content)}</div>;
-  }, [message, streaming, messagePrefix]);
+  }, [message, isStreamingBubble, messagePrefix]);
 
   const bubbleMeta =
-    metaParts.length > 0 && !streaming ? (
+    metaParts.length > 0 && !isStreamingBubble ? (
       <button
         type="button"
         className={`${styles.chatBubbleMeta}${metaExpanded ? ` ${styles.chatBubbleMetaExpanded}` : ''}`}
@@ -514,7 +553,7 @@ export function ChatBubble({ message, streaming = false }: ChatBubbleProps) {
     <div className={`${styles.chatBubble} ${message.role === 'user' ? styles.own : styles.other}`}>
       {bubbleMeta}
       <div>{content}</div>
-      {message.role !== 'user' && !streaming ? (
+      {message.role !== 'user' && !isStreamingBubble ? (
         <div className={styles.messageActions}>
           <CopyResponseButton content={message.content} />
         </div>

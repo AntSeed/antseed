@@ -13,10 +13,8 @@ import {
   formatUsd,
   getMyrmecochoryLabel,
   normalizeAssistantMeta,
-  renderMarkdownToHtml,
   shortModelName,
 } from '../ui/components/chat/chat-shared';
-import { applyStreamingText } from '../core/streaming-text';
 
 type ChatConversationUsage = {
   inputTokens?: number;
@@ -117,6 +115,8 @@ export function initChatModule({
   let modelRefreshToken = 0;
   let modelRefreshInProgress = false;
   let modelSelectFocused = false;
+  const localConversationMessages = new Map<string, ChatMessage[]>();
+  const streamingMessagesByConversation = new Map<string, ChatMessage>();
 
   // ---------------------------------------------------------------------------
   // Normalization helpers
@@ -518,20 +518,52 @@ export function initChatModule({
     };
   }
 
+  function cloneMessages(messages: ChatMessage[]): ChatMessage[] {
+    return messages.map((message) => cloneStreamingMessage(message));
+  }
+
+  function setLocalConversationMessages(convId: string, messages: ChatMessage[]): void {
+    localConversationMessages.set(convId, cloneMessages(messages));
+  }
+
+  function getLocalConversationMessages(convId: string): ChatMessage[] | null {
+    const cached = localConversationMessages.get(convId);
+    return cached ? cloneMessages(cached) : null;
+  }
+
   function setStreamingMessage(message: ChatMessage | null): void {
     uiState.chatStreamingMessage = message ? cloneStreamingMessage(message) : null;
     notifyUiStateChanged();
     if (message) queueScrollChatToBottom();
   }
 
-  function updateStreamingMessage(mutator: (message: ChatMessage) => void): void {
-    const current = uiState.chatStreamingMessage;
+  function getConversationStreamingMessage(convId: string): ChatMessage | null {
+    const message = streamingMessagesByConversation.get(convId);
+    return message ? cloneStreamingMessage(message) : null;
+  }
+
+  function hasConversationStreamingMessage(convId: string): boolean {
+    return streamingMessagesByConversation.has(convId);
+  }
+
+  function setConversationStreamingMessage(convId: string, message: ChatMessage | null): void {
+    if (message) {
+      streamingMessagesByConversation.set(convId, cloneStreamingMessage(message));
+    } else {
+      streamingMessagesByConversation.delete(convId);
+    }
+
+    if (uiState.chatActiveConversation === convId) {
+      setStreamingMessage(message);
+    }
+  }
+
+  function updateStreamingMessage(convId: string, mutator: (message: ChatMessage) => void): void {
+    const current = streamingMessagesByConversation.get(convId);
     if (!current) return;
     const next = cloneStreamingMessage(current);
     mutator(next);
-    uiState.chatStreamingMessage = next;
-    notifyUiStateChanged();
-    queueScrollChatToBottom();
+    setConversationStreamingMessage(convId, next);
   }
 
   // ---------------------------------------------------------------------------
@@ -872,14 +904,24 @@ export function initChatModule({
     if (!bridge || !bridge.chatAiGetConversation) return;
 
     uiState.chatActiveConversation = convId;
-    setStreamingMessage(null);
 
     try {
       const result = await bridge.chatAiGetConversation(convId);
       if (result.ok && result.data) {
         const conv = result.data as ChatConversation;
-        activeConversation = conv;
-        uiState.chatMessages = Array.isArray(conv.messages) ? conv.messages : [];
+        const serverMessages = Array.isArray(conv.messages) ? conv.messages : [];
+        const shouldPreferLocalMessages =
+          hasConversationStreamingMessage(convId) || uiState.chatSendingConversationId === convId;
+        const nextMessages =
+          shouldPreferLocalMessages
+            ? (getLocalConversationMessages(convId) ?? serverMessages)
+            : serverMessages;
+        activeConversation = {
+          ...conv,
+          messages: nextMessages,
+        };
+        uiState.chatMessages = nextMessages;
+        uiState.chatStreamingMessage = getConversationStreamingMessage(convId);
         uiState.chatConversationTitle = String(conv.title || 'Conversation');
         uiState.chatDeleteVisible = true;
         uiState.chatInputDisabled = false;
@@ -895,7 +937,8 @@ export function initChatModule({
           uiState.chatSelectedModelValue = preferredValue;
         }
 
-        updateThreadMeta(conv);
+        setLocalConversationMessages(convId, uiState.chatMessages as ChatMessage[]);
+        updateThreadMeta(activeConversation);
         uiState.chatError = null;
         notifyUiStateChanged();
       } else {
@@ -920,8 +963,8 @@ export function initChatModule({
     notifyUiStateChanged();
   }
 
-  function materializeStreamingMessage(): ChatMessage | null {
-    const current = uiState.chatStreamingMessage;
+  function materializeStreamingMessage(message: ChatMessage | null): ChatMessage | null {
+    const current = message;
     if (!current) return null;
     const cloned = cloneStreamingMessage(current);
     // Strip synthetic renderKeys and IDs (e.g. "stream-text-0", "text-0") so that
@@ -944,6 +987,12 @@ export function initChatModule({
       createdAt: message?.createdAt || Date.now(),
     };
     uiState.chatMessages = [...uiState.chatMessages, assistantMessage];
+    if (uiState.chatActiveConversation) {
+      setLocalConversationMessages(
+        uiState.chatActiveConversation,
+        uiState.chatMessages as ChatMessage[],
+      );
+    }
     if (activeConversation) {
       activeConversation.messages = uiState.chatMessages as ChatMessage[];
       activeConversation.updatedAt = Number(assistantMessage.createdAt) || Date.now();
@@ -1063,6 +1112,7 @@ export function initChatModule({
       : content;
 
     uiState.chatMessages = [...uiState.chatMessages, { role: 'user', content: messageContent, createdAt: Date.now() }];
+    setLocalConversationMessages(convId, uiState.chatMessages as ChatMessage[]);
     if (activeConversation) {
       activeConversation.messages = uiState.chatMessages as ChatMessage[];
       activeConversation.updatedAt = Date.now();
@@ -1184,49 +1234,23 @@ export function initChatModule({
 
     if (bridge.onChatAiDone) {
       bridge.onChatAiDone((data) => {
-        if (data.conversationId === uiState.chatActiveConversation) {
-          const isStreamingCommit = Boolean(uiState.chatStreamingMessage);
-          if (isStreamingCommit) {
-            cancelThinkingRaf();
-            // Flush text FIRST so the streaming message has the final text before capture.
-            // Use stopStreamTextAnimation + direct buffer copy to avoid a notifyUiStateChanged
-            // mid-commit (multiple notifies in one IPC callback can trigger React tearing warnings).
-            stopStreamTextAnimation();
-            if (streamingTextVisible !== streamingTextTarget) {
-              streamingTextVisible = streamingTextTarget;
-              const blocks = getStreamingBlocks();
-              const textBlock = findLastStreamingBlockByType(blocks, 'text');
-              if (textBlock) {
-                textBlock.text = streamingTextVisible;
-                textBlock.streaming = true;
-              }
+        const incomingMessage = data.message as ChatMessage;
+        const isStreamingCommit = hasConversationStreamingMessage(data.conversationId);
+        if (isStreamingCommit) {
+          updateStreamingMessage(data.conversationId, (message) => {
+            message.meta = {
+              ...(message.meta ?? {}),
+              ...(incomingMessage.meta ?? {}),
+            };
+            if (!message.createdAt && incomingMessage.createdAt) {
+              message.createdAt = incomingMessage.createdAt;
             }
-          }
-          // Capture the streaming message AFTER flushing — it has tool outputs patched
-          // in via onChatAiToolUpdate. data.message from the main process only has bare
-          // tool_use blocks without output, making tool rows non-clickable (hasDetail=false).
-          const finalizedStreamingMessage = materializeStreamingMessage();
-          if (isStreamingCommit) {
-            // Mutate directly to avoid a second notifyUiStateChanged before the final one below.
-            uiState.chatStreamingMessage = null;
-            streamingTextTarget = '';
-            streamingTextVisible = '';
-            streamingThinkingBuffer = '';
-          }
-          const incomingMessage = data.message as ChatMessage;
-          const messageToCommit = finalizedStreamingMessage
-            ? {
-                ...finalizedStreamingMessage,
-                meta: { ...(finalizedStreamingMessage.meta ?? {}), ...(incomingMessage.meta ?? {}) },
-                createdAt: finalizedStreamingMessage.createdAt || incomingMessage.createdAt,
-              }
-            : incomingMessage;
-          commitAssistantMessage(messageToCommit);
-          uiState.chatError = null;
-          if (!isStreamingCommit) {
+          });
+        } else if (data.conversationId === uiState.chatActiveConversation) {
+            commitAssistantMessage(incomingMessage);
+            uiState.chatError = null;
             setChatSending(false);
-          }
-          notifyUiStateChanged();
+            notifyUiStateChanged();
         }
         void refreshChatConversations();
       });
@@ -1251,27 +1275,16 @@ export function initChatModule({
           null) as ChatMessage | null;
         if (last && last.role === 'user' && !last.createdAt) {
           last.createdAt = data.message?.createdAt || Date.now();
+          setLocalConversationMessages(
+            data.conversationId,
+            uiState.chatMessages as ChatMessage[],
+          );
           notifyUiStateChanged();
         }
       });
     }
 
     // --- Streaming callbacks ---
-
-    let streamingTextTarget = '';
-    let streamingTextVisible = '';
-    let streamingThinkingBuffer = '';
-    let streamThinkingRafPending = false;
-    let streamThinkingRafId: number | null = null;
-    let streamThinkingDirtyIndex: number | null = null;
-    let streamTextRafId: number | null = null;
-    let streamTextLastFrameAt = 0;
-    let streamTextLastRenderAt = 0;
-
-    const STREAM_TEXT_BASE_CHARS_PER_SECOND = 140;
-    const STREAM_TEXT_MAX_CHARS_PER_SECOND = 2600;
-    const STREAM_TEXT_TARGET_LAG_MS = 180;
-    const STREAM_TEXT_RENDER_INTERVAL_MS = 24;
 
     function getStreamingBlocks(message: ChatMessage | null = uiState.chatStreamingMessage): ContentBlock[] {
       return message && Array.isArray(message.content)
@@ -1295,166 +1308,20 @@ export function initChatModule({
       return undefined;
     }
 
-    function stopStreamTextAnimation(): void {
-      if (streamTextRafId !== null) {
-        cancelAnimationFrame(streamTextRafId);
-        streamTextRafId = null;
-      }
-      streamTextLastFrameAt = 0;
-      streamTextLastRenderAt = 0;
-    }
-
-    function resolveStreamTextRate(backlogChars: number): number {
-      if (backlogChars <= 0) return STREAM_TEXT_BASE_CHARS_PER_SECOND;
-      const catchUpRate = Math.ceil(
-        (backlogChars * 1000) / STREAM_TEXT_TARGET_LAG_MS,
-      );
-      return Math.min(
-        STREAM_TEXT_MAX_CHARS_PER_SECOND,
-        Math.max(STREAM_TEXT_BASE_CHARS_PER_SECOND, catchUpRate),
-      );
-    }
-
-    function streamTextStep(timestamp: number): void {
-      if (!uiState.chatStreamingMessage) {
-        stopStreamTextAnimation();
-        return;
-      }
-
-      if (streamTextLastFrameAt <= 0) streamTextLastFrameAt = timestamp;
-
-      const elapsedMs = Math.max(1, timestamp - streamTextLastFrameAt);
-      const backlogChars = Math.max(
-        0,
-        streamingTextTarget.length - streamingTextVisible.length,
-      );
-      if (backlogChars <= 0) {
-        stopStreamTextAnimation();
-        return;
-      }
-
-      const adaptiveRate = resolveStreamTextRate(backlogChars);
-      const charBudget = Math.max(
-        1,
-        Math.floor((elapsedMs * adaptiveRate) / 1000),
-      );
-      const nextLength = Math.min(
-        streamingTextTarget.length,
-        streamingTextVisible.length + charBudget,
-      );
-      const changed = nextLength !== streamingTextVisible.length;
-      if (changed) {
-        streamingTextVisible = streamingTextTarget.slice(0, nextLength);
-      }
-
-      const remaining = Math.max(
-        0,
-        streamingTextTarget.length - streamingTextVisible.length,
-      );
-      const elapsedSinceRender =
-        streamTextLastRenderAt <= 0
-          ? Number.POSITIVE_INFINITY
-          : timestamp - streamTextLastRenderAt;
-      const shouldRender =
-        changed &&
-        (remaining === 0 || elapsedSinceRender >= STREAM_TEXT_RENDER_INTERVAL_MS);
-      if (shouldRender) {
-        applyStreamingText(renderMarkdownToHtml(streamingTextVisible));
-        queueScrollChatToBottom();
-        streamTextLastRenderAt = timestamp;
-      }
-
-      streamTextLastFrameAt = timestamp;
-
-      if (remaining > 0) {
-        streamTextRafId = requestAnimationFrame(streamTextStep);
-        return;
-      }
-
-      if (changed && !shouldRender) {
-        applyStreamingText(renderMarkdownToHtml(streamingTextVisible));
-        queueScrollChatToBottom();
-      }
-      stopStreamTextAnimation();
-    }
-
-    function scheduleStreamTextAnimation(): void {
-      if (streamTextRafId !== null) return;
-      streamTextRafId = requestAnimationFrame(streamTextStep);
-    }
-
-    function resetStreamingText(): void {
-      stopStreamTextAnimation();
-      streamingTextTarget = '';
-      streamingTextVisible = '';
-    }
-
-    function flushStreamingText(): void {
-      stopStreamTextAnimation();
-      if (streamingTextVisible !== streamingTextTarget) {
-        streamingTextVisible = streamingTextTarget;
-        updateStreamingMessage((message) => {
-          const blocks = message.content as ContentBlock[];
-          const textBlock = findLastStreamingBlockByType(blocks, 'text');
-          if (textBlock) {
-            textBlock.text = streamingTextVisible;
-            textBlock.streaming = true;
-          }
-        });
-      }
-    }
-
-    function flushThinkingRender(): void {
-      streamThinkingRafPending = false;
-      streamThinkingRafId = null;
-
-      if (streamThinkingDirtyIndex !== null) {
-        updateStreamingMessage((message) => {
-          const blocks = message.content as ContentBlock[];
-          const thinkingBlock = blocks.find(
-            (block) =>
-              block?.type === 'thinking' &&
-              block.id === getStreamingBlockId('thinking', streamThinkingDirtyIndex as number),
-          );
-          if (thinkingBlock && thinkingBlock.type === 'thinking') {
-            thinkingBlock.thinking = streamingThinkingBuffer;
-            thinkingBlock.streaming = true;
-          }
-        });
-        streamThinkingDirtyIndex = null;
-      }
-    }
-
-    function scheduleThinkingRender(): void {
-      if (streamThinkingRafPending) return;
-      streamThinkingRafPending = true;
-      streamThinkingRafId = requestAnimationFrame(flushThinkingRender);
-    }
-
-    function cancelThinkingRaf(): void {
-      if (streamThinkingRafId !== null) {
-        cancelAnimationFrame(streamThinkingRafId);
-        streamThinkingRafId = null;
-      }
-      streamThinkingRafPending = false;
-      streamThinkingDirtyIndex = null;
-    }
-
     if (bridge.onChatAiStreamStart) {
       bridge.onChatAiStreamStart((data) => {
-        if (data.conversationId !== uiState.chatActiveConversation) return;
+        if (data.conversationId === uiState.chatActiveConversation) {
+          uiState.chatError = null;
+          notifyUiStateChanged();
+        }
 
-        uiState.chatError = null;
-        notifyUiStateChanged();
-
-        cancelThinkingRaf();
-        resetStreamingText();
-        streamingThinkingBuffer = '';
-        activeStreamTurn = Number(data.turn) + 1;
-        activeStreamStartedAt = Date.now();
-        updateStreamingIndicator();
-        if (!uiState.chatStreamingMessage) {
-          setStreamingMessage({
+        if (data.conversationId === uiState.chatSendingConversationId) {
+          activeStreamTurn = Number(data.turn) + 1;
+          activeStreamStartedAt = Date.now();
+          updateStreamingIndicator();
+        }
+        if (!hasConversationStreamingMessage(data.conversationId)) {
+          setConversationStreamingMessage(data.conversationId, {
             role: 'assistant',
             content: [],
             createdAt: Date.now(),
@@ -1466,20 +1333,18 @@ export function initChatModule({
 
     if (bridge.onChatAiStreamBlockStart) {
       bridge.onChatAiStreamBlockStart((data) => {
-        if (
-          data.conversationId !== uiState.chatActiveConversation ||
-          !uiState.chatStreamingMessage
-        )
-          return;
+        if (!hasConversationStreamingMessage(data.conversationId)) return;
 
-        if (uiState.chatWaitingForStream) {
+        if (
+          data.conversationId === uiState.chatActiveConversation &&
+          uiState.chatWaitingForStream
+        ) {
           uiState.chatWaitingForStream = false;
           notifyUiStateChanged();
         }
 
         if (data.blockType === 'text') {
-          resetStreamingText();
-          updateStreamingMessage((message) => {
+          updateStreamingMessage(data.conversationId, (message) => {
             const blocks = getStreamingBlocks(message);
             blocks.push({
               type: 'text',
@@ -1490,11 +1355,10 @@ export function initChatModule({
             message.content = blocks;
           });
         } else if (data.blockType === 'thinking') {
-          streamingThinkingBuffer = '';
           const thinkingLabel = getMyrmecochoryLabel(
             (activeStreamTurn || 0) + Number(data.index || 0),
           );
-          updateStreamingMessage((message) => {
+          updateStreamingMessage(data.conversationId, (message) => {
             const blocks = getStreamingBlocks(message);
             blocks.push({
               type: 'thinking',
@@ -1507,7 +1371,7 @@ export function initChatModule({
             message.content = blocks;
           });
         } else if (data.blockType === 'tool_use') {
-          updateStreamingMessage((message) => {
+          updateStreamingMessage(data.conversationId, (message) => {
             const blocks = getStreamingBlocks(message);
             blocks.push({
               type: 'tool_use',
@@ -1524,40 +1388,46 @@ export function initChatModule({
 
     if (bridge.onChatAiStreamDelta) {
       bridge.onChatAiStreamDelta((data) => {
-        if (
-          data.conversationId !== uiState.chatActiveConversation ||
-          !uiState.chatStreamingMessage
-        )
-          return;
+        if (!hasConversationStreamingMessage(data.conversationId)) return;
 
         if (data.blockType === 'text') {
-          streamingTextTarget += data.text;
-          scheduleStreamTextAnimation();
+          updateStreamingMessage(data.conversationId, (message) => {
+            const blocks = message.content as ContentBlock[];
+            const textBlock = findLastStreamingBlockByType(blocks, 'text');
+            if (textBlock) {
+              textBlock.text = `${String(textBlock.text || '')}${data.text}`;
+              textBlock.streaming = true;
+            }
+          });
         } else if (data.blockType === 'thinking') {
-          streamingThinkingBuffer += data.text;
-          streamThinkingDirtyIndex = data.index;
-          scheduleThinkingRender();
+          updateStreamingMessage(data.conversationId, (message) => {
+            const blocks = message.content as ContentBlock[];
+            const thinkingBlock = blocks.find(
+              (block) =>
+                block?.type === 'thinking' &&
+                block.id === getStreamingBlockId('thinking', data.index),
+            );
+            if (thinkingBlock && thinkingBlock.type === 'thinking') {
+              thinkingBlock.thinking = `${String(thinkingBlock.thinking || '')}${data.text}`;
+              thinkingBlock.streaming = true;
+            }
+          });
         }
       });
     }
 
     if (bridge.onChatAiStreamBlockStop) {
       bridge.onChatAiStreamBlockStop((data) => {
-        if (
-          data.conversationId !== uiState.chatActiveConversation ||
-          !uiState.chatStreamingMessage
-        )
-          return;
+        if (!hasConversationStreamingMessage(data.conversationId)) return;
 
         if (data.blockType === 'text') {
-          flushStreamingText();
-          updateStreamingMessage((message) => {
+          updateStreamingMessage(data.conversationId, (message) => {
             const blocks = message.content as ContentBlock[];
             const textBlock = findLastStreamingBlockByType(blocks, 'text');
             if (textBlock) textBlock.streaming = false;
           });
         } else if (data.blockType === 'thinking') {
-          updateStreamingMessage((message) => {
+          updateStreamingMessage(data.conversationId, (message) => {
             const blocks = message.content as ContentBlock[];
             const thinkingBlock = blocks.find(
               (block) => block.type === 'thinking' && block.id === getStreamingBlockId('thinking', data.index),
@@ -1567,7 +1437,7 @@ export function initChatModule({
             }
           });
         } else if (data.blockType === 'tool_use' && data.input) {
-          updateStreamingMessage((message) => {
+          updateStreamingMessage(data.conversationId, (message) => {
             const blocks = message.content as ContentBlock[];
             const toolBlock = blocks.find(
               (block) => block.type === 'tool_use' && block.id === data.toolId,
@@ -1582,12 +1452,8 @@ export function initChatModule({
 
     if (bridge.onChatAiToolExecuting) {
       bridge.onChatAiToolExecuting((data) => {
-        if (
-          data.conversationId !== uiState.chatActiveConversation ||
-          !uiState.chatStreamingMessage
-        )
-          return;
-        updateStreamingMessage((message) => {
+        if (!hasConversationStreamingMessage(data.conversationId)) return;
+        updateStreamingMessage(data.conversationId, (message) => {
           const blocks = message.content as ContentBlock[];
           const toolBlock = blocks.find(
             (block) => block.type === 'tool_use' && block.id === data.toolUseId,
@@ -1603,12 +1469,8 @@ export function initChatModule({
 
     if (bridge.onChatAiToolUpdate) {
       bridge.onChatAiToolUpdate((data) => {
-        if (
-          data.conversationId !== uiState.chatActiveConversation ||
-          !uiState.chatStreamingMessage
-        )
-          return;
-        updateStreamingMessage((message) => {
+        if (!hasConversationStreamingMessage(data.conversationId)) return;
+        updateStreamingMessage(data.conversationId, (message) => {
           const blocks = message.content as ContentBlock[];
           const toolBlock = blocks.find(
             (block) => block.type === 'tool_use' && block.id === data.toolUseId,
@@ -1630,12 +1492,8 @@ export function initChatModule({
 
     if (bridge.onChatAiToolResult) {
       bridge.onChatAiToolResult((data) => {
-        if (
-          data.conversationId !== uiState.chatActiveConversation ||
-          !uiState.chatStreamingMessage
-        )
-          return;
-        updateStreamingMessage((message) => {
+        if (!hasConversationStreamingMessage(data.conversationId)) return;
+        updateStreamingMessage(data.conversationId, (message) => {
           const blocks = message.content as ContentBlock[];
           const toolBlock = blocks.find(
             (block) => block.type === 'tool_use' && block.id === data.toolUseId,
@@ -1654,26 +1512,32 @@ export function initChatModule({
 
     if (bridge.onChatAiStreamDone) {
       bridge.onChatAiStreamDone((data) => {
-        if (data.conversationId !== uiState.chatActiveConversation) return;
-
-        cancelThinkingRaf();
-        flushStreamingText();
-
+        const shouldClearSending = data.conversationId === uiState.chatSendingConversationId;
         const elapsedMs =
-          activeStreamStartedAt > 0 ? Date.now() - activeStreamStartedAt : 0;
+          activeStreamStartedAt > 0 && shouldClearSending
+            ? Date.now() - activeStreamStartedAt
+            : 0;
 
-        const finalizedStreamingMessage = materializeStreamingMessage();
-        if (finalizedStreamingMessage) {
-          commitAssistantMessage(finalizedStreamingMessage);
+        const finalizedStreamingMessage = materializeStreamingMessage(
+          getConversationStreamingMessage(data.conversationId),
+        );
+
+        if (data.conversationId === uiState.chatActiveConversation) {
+          if (finalizedStreamingMessage) {
+            commitAssistantMessage(finalizedStreamingMessage);
+          }
+          setConversationStreamingMessage(data.conversationId, null);
+          if (shouldClearSending) {
+            setChatSending(false);
+          }
+          uiState.chatError = null;
+          notifyUiStateChanged();
+        } else {
+          setConversationStreamingMessage(data.conversationId, null);
+          if (shouldClearSending) {
+            setChatSending(false);
+          }
         }
-
-        setStreamingMessage(null);
-        streamingTextTarget = '';
-        streamingTextVisible = '';
-        streamingThinkingBuffer = '';
-        setChatSending(false);
-        uiState.chatError = null;
-        notifyUiStateChanged();
 
         if (elapsedMs > 0) {
           appendSystemLog(
@@ -1687,24 +1551,25 @@ export function initChatModule({
 
     if (bridge.onChatAiStreamError) {
       bridge.onChatAiStreamError((data) => {
-        if (data.conversationId !== uiState.chatActiveConversation) return;
+        const shouldClearSending = data.conversationId === uiState.chatSendingConversationId;
+        setConversationStreamingMessage(data.conversationId, null);
 
-        cancelThinkingRaf();
-        stopStreamTextAnimation();
-        uiState.chatStreamingMessage = null;
-        // Ensure the waiting-for-stream flag is cleared even if the error fires
-        // before chat:ai-stream-start is received (which is the only other place
-        // this flag gets cleared), preventing a permanent UI spinner lock.
-        uiState.chatWaitingForStream = false;
-        notifyUiStateChanged();
-        streamingTextTarget = '';
-        streamingTextVisible = '';
-        streamingThinkingBuffer = '';
-        setChatSending(false);
+        if (data.conversationId === uiState.chatActiveConversation) {
+          // Ensure the waiting-for-stream flag is cleared even if the error fires
+          // before chat:ai-stream-start is received (which is the only other place
+          // this flag gets cleared), preventing a permanent UI spinner lock.
+          uiState.chatWaitingForStream = false;
+          notifyUiStateChanged();
+          if (shouldClearSending) {
+            setChatSending(false);
+          }
 
-        if (data.error !== 'Request aborted') {
-          showChatError(data.error);
-          appendSystemLog(`AI Chat error: ${data.error}`);
+          if (data.error !== 'Request aborted') {
+            showChatError(data.error);
+            appendSystemLog(`AI Chat error: ${data.error}`);
+          }
+        } else if (shouldClearSending) {
+          setChatSending(false);
         }
       });
     }

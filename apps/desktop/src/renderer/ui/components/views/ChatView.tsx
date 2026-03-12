@@ -259,7 +259,11 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
               ))
             )}
             {snap.chatStreamingMessage ? (
-              <ChatBubble message={snap.chatStreamingMessage as ChatMessage} streaming />
+              <ChatBubble
+                key={`streaming:${snap.chatActiveConversation || 'new'}`}
+                message={snap.chatStreamingMessage as ChatMessage}
+                streaming
+              />
             ) : null}
             {snap.chatSending && snap.chatSendingConversationId === snap.chatActiveConversation && (
               <WalkingAnt elapsedMs={snap.chatThinkingElapsedMs} />
