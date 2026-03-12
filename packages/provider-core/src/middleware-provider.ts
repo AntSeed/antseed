@@ -62,7 +62,7 @@ export class MiddlewareProvider implements Provider {
     } catch {
       return req; // not JSON — leave unchanged
     }
-    const service = typeof body.model === 'string' ? body.model : undefined;
+    const service = typeof body.service === 'string' ? body.service : typeof body.model === 'string' ? body.model : undefined;
     const applicable = this._middleware.filter(
       (mw) => !mw.services || (!!service && mw.services.includes(service)),
     );

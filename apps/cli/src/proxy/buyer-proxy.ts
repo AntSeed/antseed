@@ -429,7 +429,7 @@ function extractRequestedService(request: SerializedHttpRequest): string | null 
 
   try {
     const parsed = JSON.parse(new TextDecoder().decode(request.body)) as Record<string, unknown>
-    const service = parsed.model
+    const service = parsed.service ?? parsed.model
     if (typeof service === 'string' && service.trim().length > 0) {
       return service.trim()
     }
