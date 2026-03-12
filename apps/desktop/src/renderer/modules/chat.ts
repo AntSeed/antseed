@@ -1553,6 +1553,7 @@ export function initChatModule({
           setConversationStreamingMessage(data.conversationId, null);
           if (shouldClearSending) {
             setChatSending(false);
+            notifyUiStateChanged();
           }
         }
 
@@ -1587,6 +1588,7 @@ export function initChatModule({
           }
         } else if (shouldClearSending) {
           setChatSending(false);
+          notifyUiStateChanged();
         }
       });
     }
