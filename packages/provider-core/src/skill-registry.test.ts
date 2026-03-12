@@ -72,6 +72,8 @@ describe('SkillRegistry', () => {
       expect(registry.all()).toHaveLength(2);
       expect(registry.get('my-skill')?.description).toBe('Does cool things');
       expect(registry.get('my-skill')?.content).toContain('# My Skill');
+      // Frontmatter should be stripped from content
+      expect(registry.get('my-skill')?.content).not.toContain('---');
     } finally {
       await rm(dir, { recursive: true });
     }

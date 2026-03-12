@@ -102,9 +102,9 @@ export class AgentProvider implements Provider {
       return this._inner.handleRequest(req);
     }
 
-    body = this._injectCatalogAndTool(body, format);
-
     for (let i = 0; i < this._maxIterations; i++) {
+      body = this._injectCatalogAndTool(body, format);
+
       const augmentedReq = {
         ...req,
         body: encoder.encode(JSON.stringify(body)),
@@ -119,17 +119,24 @@ export class AgentProvider implements Provider {
         return response;
       }
 
-      const toolCalls = extractAntseedLoadCalls(responseBody, format);
-      if (toolCalls.length === 0) {
+      const antseedCalls = extractAntseedLoadCalls(responseBody, format);
+      if (antseedCalls.length === 0) {
         return response;
       }
 
-      const toolResults = this._resolveLoads(toolCalls);
-      body = this._appendToolLoop(body, responseBody, toolResults, format);
+      // If the LLM also called non-antseed tools, abort the loop and return
+      // the raw response — the buyer must handle their own tool calls.
+      if (hasNonAntseedToolCalls(responseBody, format)) {
+        return response;
+      }
+
+      const toolResults = this._resolveLoads(antseedCalls);
       body = this._stripCatalogAndTool(body, format);
+      body = this._appendToolLoop(body, responseBody, toolResults, format);
     }
 
     // Max iterations reached — final request without antseed_load
+    body = this._stripCatalogAndTool(body, format);
     const finalReq = {
       ...req,
       body: encoder.encode(JSON.stringify(body)),
@@ -158,9 +165,11 @@ export class AgentProvider implements Provider {
         return this._inner.handleRequestStream!(req, callbacks);
       }
 
-      body = this._injectCatalogAndTool(body, format);
+      let lastResponse: SerializedHttpResponse | null = null;
 
       for (let i = 0; i < this._maxIterations; i++) {
+        body = this._injectCatalogAndTool(body, format);
+
         const augmentedReq = {
           ...req,
           body: encoder.encode(JSON.stringify(body)),
@@ -172,20 +181,29 @@ export class AgentProvider implements Provider {
         try {
           responseBody = JSON.parse(decoder.decode(response.body)) as Record<string, unknown>;
         } catch {
+          lastResponse = response;
           break;
         }
 
-        const toolCalls = extractAntseedLoadCalls(responseBody, format);
-        if (toolCalls.length === 0) {
+        const antseedCalls = extractAntseedLoadCalls(responseBody, format);
+        if (antseedCalls.length === 0 || hasNonAntseedToolCalls(responseBody, format)) {
+          lastResponse = response;
           break;
         }
 
-        const toolResults = this._resolveLoads(toolCalls);
-        body = this._appendToolLoop(body, responseBody, toolResults, format);
+        const toolResults = this._resolveLoads(antseedCalls);
         body = this._stripCatalogAndTool(body, format);
+        body = this._appendToolLoop(body, responseBody, toolResults, format);
       }
 
-      // Final request — stream to buyer
+      if (lastResponse) {
+        // Stream the already-received response through callbacks
+        callbacks.onResponseStart(lastResponse);
+        callbacks.onResponseChunk({ requestId: req.requestId, data: lastResponse.body, done: true });
+        return lastResponse;
+      }
+
+      // Max iterations reached — stream the final request
       body = this._stripCatalogAndTool(body, format);
       const finalReq = {
         ...req,
@@ -383,4 +401,27 @@ function extractAntseedLoadCalls(
   }
 
   return calls;
+}
+
+/**
+ * Check if the response contains tool calls for non-antseed tools.
+ * When mixed calls exist, the agent loop must abort so the buyer can handle them.
+ */
+function hasNonAntseedToolCalls(
+  responseBody: Record<string, unknown>,
+  format: RequestFormat,
+): boolean {
+  if (format === 'openai') {
+    const choices = responseBody.choices as { message: { tool_calls?: unknown[] } }[] | undefined;
+    const toolCalls = choices?.[0]?.message?.tool_calls as {
+      function: { name: string };
+    }[] | undefined;
+    return toolCalls?.some((tc) => tc.function.name !== ANTSEED_LOAD_TOOL_NAME) ?? false;
+  }
+
+  const content = responseBody.content as {
+    type: string;
+    name?: string;
+  }[] | undefined;
+  return content?.some((block) => block.type === 'tool_use' && block.name !== ANTSEED_LOAD_TOOL_NAME) ?? false;
 }
