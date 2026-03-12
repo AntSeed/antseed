@@ -91,7 +91,7 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
     const p = metadata.providers[i]!;
     const hasWildcardServices = p.services.length === 0;
 
-    // models count
+    // services count
     if (p.services.length > MAX_SERVICES_PER_PROVIDER) {
       errors.push({
         field: `providers[${i}].services`,
