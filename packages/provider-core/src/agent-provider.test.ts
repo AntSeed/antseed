@@ -178,6 +178,35 @@ describe('AgentProvider — Anthropic format', () => {
     expect(tools.some((t) => t.name === 'antseed_load')).toBe(true);
   });
 
+  it('preserves array-format system prompt (prompt caching)', async () => {
+    const inner = mockProvider({
+      responses: [
+        makeAnthropicToolUseResponse('antseed_load', 'tool-1', { name: 'visual-explainer' }),
+        makeAnthropicTextResponse('done'),
+      ],
+    });
+    const agent = new AgentProvider(inner, makeRegistry());
+
+    const systemArray = [
+      { type: 'text', text: 'You are helpful.', cache_control: { type: 'ephemeral' } },
+    ];
+    const req = makeReq({ system: systemArray, messages: [{ role: 'user', content: 'hi' }] });
+    await agent.handleRequest(req);
+
+    // First request: system should be array with original block + catalog block
+    const firstBody = inner.requestBodies()[0]!;
+    const firstSystem = firstBody.system as { type: string; text: string; cache_control?: unknown }[];
+    expect(Array.isArray(firstSystem)).toBe(true);
+    expect(firstSystem.some((b) => b.text === 'You are helpful.' && b.cache_control)).toBe(true);
+    expect(firstSystem.some((b) => b.text?.includes('antseed_load'))).toBe(true);
+
+    // Second request: catalog re-injected, original block still preserved
+    const secondBody = inner.requestBodies()[1]!;
+    const secondSystem = secondBody.system as { type: string; text: string; cache_control?: unknown }[];
+    expect(Array.isArray(secondSystem)).toBe(true);
+    expect(secondSystem.some((b) => b.text === 'You are helpful.' && b.cache_control)).toBe(true);
+  });
+
   it('executes agent loop when LLM calls antseed_load', async () => {
     const inner = mockProvider({
       responses: [

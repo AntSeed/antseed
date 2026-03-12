@@ -228,6 +228,12 @@ export class AgentProvider implements Provider {
       const messages = Array.isArray(body.messages) ? [...(body.messages as unknown[])] : [];
       messages.unshift({ role: 'system', content: systemInjection });
       body = { ...body, messages };
+    } else if (Array.isArray(body.system)) {
+      // Preserve existing array blocks (e.g. prompt caching with cache_control)
+      body = {
+        ...body,
+        system: [...(body.system as unknown[]), { type: 'text', text: systemInjection }],
+      };
     } else {
       const existing = typeof body.system === 'string' ? body.system : '';
       body = { ...body, system: existing ? `${existing}\n\n${systemInjection}` : systemInjection };
@@ -269,6 +275,14 @@ export class AgentProvider implements Provider {
         });
         body = { ...body, messages };
       }
+    } else if (Array.isArray(body.system)) {
+      // Remove the catalog text block from the system array
+      const filtered = (body.system as { type?: string; text?: string }[]).filter((block) => {
+        if (block.type !== 'text') return true;
+        return !block.text?.includes(CATALOG_START_MARKER);
+      });
+      body = { ...body, system: filtered.length > 0 ? filtered : undefined };
+      if (!body.system) delete body.system;
     } else {
       if (typeof body.system === 'string' && body.system.includes(CATALOG_START_MARKER)) {
         const startIdx = body.system.indexOf(CATALOG_START_MARKER);
