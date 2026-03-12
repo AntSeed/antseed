@@ -77,7 +77,7 @@ export function registerConnectionCommand(program: Command): void {
       console.log(`State:         ${alive ? chalk.green('connected') : chalk.red(state.state ?? 'stopped')}`)
       console.log(`PID:           ${state.pid}`)
       console.log(`Port:          ${state.port}`)
-      console.log(`Pinned model:  ${state.pinnedService ? chalk.cyan(state.pinnedService) : chalk.dim('none')}`)
+      console.log(`Pinned service: ${state.pinnedService ? chalk.cyan(state.pinnedService) : chalk.dim('none')}`)
       console.log(`Pinned peer:   ${state.pinnedPeerId ? chalk.cyan(state.pinnedPeerId) : chalk.dim('none')}`)
     })
 

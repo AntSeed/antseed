@@ -176,7 +176,7 @@ async function loadMiddlewareFiles(
   return Promise.all(
     configs.map(async (entry) => {
       if (entry.services !== undefined && entry.services.length === 0) {
-        throw new Error(`Middleware entry "${entry.file}" has an empty models list — remove the field to apply globally or list at least one model ID.`)
+        throw new Error(`Middleware entry "${entry.file}" has an empty services list — remove the field to apply globally or list at least one service ID.`)
       }
       const filePath = isAbsolute(entry.file) ? entry.file : resolve(baseDir, entry.file)
       const content = await readFile(filePath, 'utf-8')

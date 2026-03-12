@@ -947,16 +947,18 @@ export class BuyerProxy {
   private async _reloadSessionOverrides(): Promise<void> {
     try {
       const raw = await readFile(BUYER_STATE_FILE, 'utf-8')
-      const parsed = JSON.parse(raw) as { pinnedService?: unknown; pinnedPeerId?: unknown }
+      const parsed = JSON.parse(raw) as Record<string, unknown>
       const pinnedService = typeof parsed.pinnedService === 'string' && parsed.pinnedService.trim().length > 0
         ? parsed.pinnedService.trim()
-        : null
+        : typeof parsed.pinnedModel === 'string' && (parsed.pinnedModel as string).trim().length > 0
+          ? (parsed.pinnedModel as string).trim()
+          : null
       const pinnedPeer = typeof parsed.pinnedPeerId === 'string' && parsed.pinnedPeerId.trim().length > 0
         ? parsed.pinnedPeerId.trim().toLowerCase()
         : null
       this._pinnedService = pinnedService
       this._pinnedPeer = pinnedPeer
-      log(`Session overrides reloaded: model=${pinnedService ?? 'none'} peer=${pinnedPeer ?? 'none'}`)
+      log(`Session overrides reloaded: service=${pinnedService ?? 'none'} peer=${pinnedPeer ?? 'none'}`)
     } catch {
       // state file unreadable; keep current values
     }
@@ -1256,17 +1258,17 @@ export class BuyerProxy {
 
     // Snapshot both session overrides together before any await so a concurrent
     // _reloadSessionOverrides() cannot produce a model/peer mismatch mid-request.
-    const effectivePinnedModel = this._pinnedService
+    const effectivePinnedService = this._pinnedService
     const effectivePinnedPeer = this._pinnedPeer
-    if (effectivePinnedModel) {
+    if (effectivePinnedService) {
       const { body: rewrittenBody, headers: rewrittenHeaders } = rewriteModelInBody(
         serializedReq.body,
         serializedReq.headers,
-        effectivePinnedModel,
+        effectivePinnedService,
       )
       if (rewrittenBody !== serializedReq.body) {
         serializedReq = { ...serializedReq, body: rewrittenBody, headers: rewrittenHeaders }
-        log(`Model override applied: ${effectivePinnedModel}`)
+        log(`Service override applied: ${effectivePinnedService}`)
       }
     }
 
