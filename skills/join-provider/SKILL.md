@@ -84,9 +84,9 @@ antseed config seller set pricing.defaults.outputUsdPerMillion 36
 antseed config seller set pricing.providers.anthropic.defaults.inputUsdPerMillion 15
 antseed config seller set pricing.providers.anthropic.defaults.outputUsdPerMillion 45
 
-# Per-model overrides (optional)
-antseed config seller set pricing.providers.anthropic.models.claude-3-haiku.inputUsdPerMillion 5
-antseed config seller set pricing.providers.anthropic.models.claude-3-haiku.outputUsdPerMillion 15
+# Per-service overrides (optional)
+antseed config seller set pricing.providers.anthropic.services.claude-3-haiku.inputUsdPerMillion 5
+antseed config seller set pricing.providers.anthropic.services.claude-3-haiku.outputUsdPerMillion 15
 ```
 
 Also configure capacity limits:

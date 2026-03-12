@@ -74,7 +74,7 @@ Use config to control metadata advertised to buyers:
     "displayName": "Acme Inference - us-east-1"
   },
   "seller": {
-    "modelCategories": {
+    "serviceCategories": {
       "anthropic": {
         "claude-sonnet-4-5-20250929": ["coding", "privacy"]
       }
@@ -84,12 +84,12 @@ Use config to control metadata advertised to buyers:
 ```
 
 - `identity.displayName`: optional node label shown in browse/discovery results.
-- `seller.modelCategories`: optional provider/model -> tag array map announced in peer metadata.
+- `seller.serviceCategories`: optional provider/model -> tag array map announced in peer metadata.
 - Recommended category tags: `privacy`, `legal`, `uncensored`, `coding`, `finance`, `tee` (custom tags are allowed).
 
 ```bash title="set metadata fields"
 antseed config set identity.displayName "Acme Inference - us-east-1"
-antseed config seller set modelCategories.anthropic.claude-sonnet-4-5-20250929 '["coding","privacy"]'
+antseed config seller set serviceCategories.anthropic.claude-sonnet-4-5-20250929 '["coding","privacy"]'
 ```
 
 ## Middleware (Skills Injection)
@@ -102,7 +102,7 @@ Providers can inject Markdown content into buyer requests server-side — before
     "middleware": [
       { "file": "./skills/persona.md", "position": "system-prepend" },
       { "file": "./skills/output-format.md", "position": "append", "role": "user" },
-      { "file": "./skills/sonnet-rules.md", "position": "system-append", "models": ["claude-sonnet-4-5", "claude-sonnet-4-6"] }
+      { "file": "./skills/sonnet-rules.md", "position": "system-append", "services": ["claude-sonnet-4-5", "claude-sonnet-4-6"] }
     ]
   }
 }
@@ -113,9 +113,9 @@ Providers can inject Markdown content into buyer requests server-side — before
 | `file` | Yes | Path to a `.md` file, relative to config file or absolute |
 | `position` | Yes | `system-prepend`, `system-append`, `prepend`, or `append` |
 | `role` | No | Role for `prepend`/`append`. Defaults to `user` |
-| `models` | No | Scope to specific model IDs. Omit to apply to all models. Must not be an empty list |
+| `services` | No | Scope to specific service IDs. Omit to apply to all services. Must not be an empty list |
 
-When `models` is set, the entry is only injected when the request's `model` field matches one of the listed IDs. Global entries (no `models`) apply to every request regardless of model.
+When `services` is set, the entry is only injected when the request's service matches one of the listed IDs. Global entries (no `services`) apply to every request regardless of service.
 
 ## Authentication
 
@@ -131,24 +131,24 @@ Provider plugins authenticate with their upstream AI service. Credentials are st
 
 ## OpenAI-Compatible Model Aliases
 
-When using the `openai` provider plugin, you can announce buyer-facing model names while forwarding different upstream model IDs.
+When using the `openai` provider plugin, you can announce buyer-facing service names while forwarding different upstream service IDs.
 
 Useful env vars:
 
-- `ANTSEED_ALLOWED_MODELS`: announced model list (what buyers request)
-- `OPENAI_UPSTREAM_MODEL_PREFIX`: prefix added before forwarding upstream
-- `OPENAI_MODEL_ALIAS_MAP_JSON`: explicit announcedModel -> upstreamModel map
+- `ANTSEED_ALLOWED_SERVICES`: announced service list (what buyers request)
+- `OPENAI_UPSTREAM_SERVICE_PREFIX`: prefix added before forwarding upstream
+- `OPENAI_SERVICE_ALIAS_MAP_JSON`: explicit announcedService -> upstreamService map
 
 Example: announce `kimi2.5`, forward to Together as `together/kimi2.5`:
 
 ```bash
-export ANTSEED_ALLOWED_MODELS="kimi2.5"
-export OPENAI_UPSTREAM_MODEL_PREFIX="together/"
+export ANTSEED_ALLOWED_SERVICES="kimi2.5"
+export OPENAI_UPSTREAM_SERVICE_PREFIX="together/"
 ```
 
 Example with explicit alias map:
 
 ```bash
-export ANTSEED_ALLOWED_MODELS="kimi2.5,deepseek-v3"
-export OPENAI_MODEL_ALIAS_MAP_JSON='{"kimi2.5":"together/kimi2.5","deepseek-v3":"openrouter/deepseek/deepseek-chat"}'
+export ANTSEED_ALLOWED_SERVICES="kimi2.5,deepseek-v3"
+export OPENAI_SERVICE_ALIAS_MAP_JSON='{"kimi2.5":"together/kimi2.5","deepseek-v3":"openrouter/deepseek/deepseek-chat"}'
 ```

@@ -25,7 +25,7 @@ export type PeerEntry = {
   host: string;
   port: number;
   providers: string[];
-  models: string[];
+  services: string[];
   inputUsdPerMillion: number;
   outputUsdPerMillion: number;
   capacityMsgPerHour: number;
@@ -45,7 +45,7 @@ export type ConfigFormData = {
   devMode: boolean;
 };
 
-export type ChatModelOptionEntry = {
+export type ChatServiceOptionEntry = {
   id: string;
   label: string;
   provider: string;
@@ -78,7 +78,7 @@ export type RendererUiState = {
   ovPeers: string;
   ovDhtHealth: string;
   ovProxyPort: string;
-  ovModelCount: string;
+  ovServiceCount: string;
   ovLastScan: string;
   ovPeersCount: string;
   overviewPeers: PeerEntry[];
@@ -128,15 +128,15 @@ export type RendererUiState = {
   chatError: string | null;
   chatThreadMeta: string;
   chatRoutedPeer: string;
-  chatModelOptions: ChatModelOptionEntry[];
-  chatSelectedModelValue: string;
-  chatModelStatus: BadgeState;
+  chatServiceOptions: ChatServiceOptionEntry[];
+  chatSelectedServiceValue: string;
+  chatServiceStatus: BadgeState;
   chatProxyStatus: BadgeState;
   chatDeleteVisible: boolean;
   chatInputDisabled: boolean;
   chatSendDisabled: boolean;
   chatAbortVisible: boolean;
-  chatModelSelectDisabled: boolean;
+  chatServiceSelectDisabled: boolean;
 
   // --- Streaming indicator ---
   chatStreamingIndicatorText: string;
@@ -182,7 +182,7 @@ export function createInitialUiState(): RendererUiState {
     ovPeers: '0',
     ovDhtHealth: 'Down',
     ovProxyPort: '-',
-    ovModelCount: '0',
+    ovServiceCount: '0',
     ovLastScan: 'n/a',
     ovPeersCount: '0',
     overviewPeers: [],
@@ -232,15 +232,15 @@ export function createInitialUiState(): RendererUiState {
     chatError: null,
     chatThreadMeta: 'No conversation selected',
     chatRoutedPeer: '',
-    chatModelOptions: [],
-    chatSelectedModelValue: '',
-    chatModelStatus: { tone: 'idle', label: 'Models idle' },
+    chatServiceOptions: [],
+    chatSelectedServiceValue: '',
+    chatServiceStatus: { tone: 'idle', label: 'Services idle' },
     chatProxyStatus: { tone: 'idle', label: 'Proxy offline' },
     chatDeleteVisible: false,
     chatInputDisabled: false,
     chatSendDisabled: false,
     chatAbortVisible: false,
-    chatModelSelectDisabled: false,
+    chatServiceSelectDisabled: false,
 
     // Streaming indicator
     chatStreamingIndicatorText: '',

@@ -1,4 +1,4 @@
-import type { ModelApiProtocol } from "./model-api.js";
+import type { ServiceApiProtocol } from "./service-api.js";
 
 /**
  * A PeerId is the hex-encoded Ed25519 public key (64 hex chars = 32 bytes).
@@ -24,15 +24,15 @@ export interface TokenPricingUsdPerMillion {
 
 export interface ProviderPricingMatrixEntry {
   defaults: TokenPricingUsdPerMillion;
-  models?: Record<string, TokenPricingUsdPerMillion>;
+  services?: Record<string, TokenPricingUsdPerMillion>;
 }
 
-export interface ProviderModelCategoryMatrixEntry {
-  models: Record<string, string[]>;
+export interface ProviderServiceCategoryMatrixEntry {
+  services: Record<string, string[]>;
 }
 
-export interface ProviderModelApiProtocolMatrixEntry {
-  models: Record<string, ModelApiProtocol[]>;
+export interface ProviderServiceApiProtocolMatrixEntry {
+  services: Record<string, ServiceApiProtocol[]>;
 }
 
 /** Information about a known peer. */
@@ -49,12 +49,12 @@ export interface PeerInfo {
   providers: string[];
   /** Reputation score (0-100). */
   reputationScore?: number;
-  /** Provider/model-aware pricing map announced by seller. */
+  /** Provider/service-aware pricing map announced by seller. */
   providerPricing?: Record<string, ProviderPricingMatrixEntry>;
-  /** Provider/model category tags announced by seller. */
-  providerModelCategories?: Record<string, ProviderModelCategoryMatrixEntry>;
-  /** Provider/model API protocols announced by seller. */
-  providerModelApiProtocols?: Record<string, ProviderModelApiProtocolMatrixEntry>;
+  /** Provider/service category tags announced by seller. */
+  providerServiceCategories?: Record<string, ProviderServiceCategoryMatrixEntry>;
+  /** Provider/service API protocols announced by seller. */
+  providerServiceApiProtocols?: Record<string, ProviderServiceApiProtocolMatrixEntry>;
   /** Deterministic fallback default input price (USD per 1M tokens). */
   defaultInputUsdPerMillion?: number;
   /** Deterministic fallback default output price (USD per 1M tokens). */

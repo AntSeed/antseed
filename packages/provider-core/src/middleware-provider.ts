@@ -29,14 +29,14 @@ export class MiddlewareProvider implements Provider {
   }
 
   get name() { return this._inner.name; }
-  get models() { return this._inner.models; }
+  get services() { return this._inner.services; }
   get pricing(): Provider['pricing'] { return this._inner.pricing; }
   get maxConcurrency() { return this._inner.maxConcurrency; }
 
-  get modelCategories() { return this._inner.modelCategories; }
-  set modelCategories(v: Record<string, string[]> | undefined) { this._inner.modelCategories = v; }
+  get serviceCategories() { return this._inner.serviceCategories; }
+  set serviceCategories(v: Record<string, string[]> | undefined) { this._inner.serviceCategories = v; }
 
-  get modelApiProtocols() { return this._inner.modelApiProtocols; }
+  get serviceApiProtocols() { return this._inner.serviceApiProtocols; }
 
   getCapacity() { return this._inner.getCapacity(); }
 
@@ -62,9 +62,9 @@ export class MiddlewareProvider implements Provider {
     } catch {
       return req; // not JSON — leave unchanged
     }
-    const model = typeof body.model === 'string' ? body.model : undefined;
+    const service = typeof body.service === 'string' ? body.service : typeof body.model === 'string' ? body.model : undefined;
     const applicable = this._middleware.filter(
-      (mw) => !mw.models || (!!model && mw.models.includes(model)),
+      (mw) => !mw.services || (!!service && mw.services.includes(service)),
     );
     if (!applicable.length) return req;
     const format = detectRequestFormat(req.path);

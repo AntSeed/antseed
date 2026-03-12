@@ -19,13 +19,13 @@ function getReputationColor(reputation: number): (message: string) => string {
 
 /**
  * Register the `antseed browse` command on the Commander program.
- * Discovers peers on the network and displays available models, prices, and reputation.
+ * Discovers peers on the network and displays available services, prices, and reputation.
  */
 export function registerBrowseCommand(program: Command): void {
   program
     .command('browse')
-    .description('Browse available models, prices, and reputation on the P2P network')
-    .option('-m, --model <model>', 'filter by model name')
+    .description('Browse available services, prices, and reputation on the P2P network')
+    .option('-s, --service <service>', 'filter by service name')
     .option('--json', 'output as JSON', false)
     .action(async (options) => {
       const globalOpts = getGlobalOptions(program);
@@ -51,7 +51,7 @@ export function registerBrowseCommand(program: Command): void {
       }
 
       try {
-        const peers = await node.discoverPeers(options.model as string | undefined);
+        const peers = await node.discoverPeers(options.service as string | undefined);
         spinner.succeed(chalk.green(`Found ${peers.length} peer(s)`));
 
         if (peers.length === 0) {

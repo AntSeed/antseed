@@ -5,14 +5,14 @@ Standalone service that polls the AntSeed network as an anonymous buyer and expo
 ## What it does
 
 - Connects to the network via DHT discovery every 15 minutes
-- Extracts: active peer count + list of available models
+- Extracts: active peer count + list of available services
 - Caches result to `cache/network.json`
 - Exposes a simple Express API for XHR consumption by the website
 
 ## API
 
 ```
-GET /stats   →  { peers: number, models: string[], updatedAt: string }
+GET /stats   →  { peers: number, services: string[], updatedAt: string }
 GET /health  →  { ok: true }
 ```
 

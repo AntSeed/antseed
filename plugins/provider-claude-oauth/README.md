@@ -112,7 +112,7 @@ This will download the plugin from npm, register it with the local Antseed node,
 | `ANTSEED_INPUT_USD_PER_MILLION`| number   | No       | 10      | Input token price (USD per 1M)       |
 | `ANTSEED_OUTPUT_USD_PER_MILLION`| number  | No       | 10      | Output token price (USD per 1M)      |
 | `ANTSEED_MAX_CONCURRENCY`      | number   | No       | 5       | Max concurrent requests              |
-| `ANTSEED_ALLOWED_MODELS`       | string[] | No       | --      | Comma-separated list of model IDs    |
+| `ANTSEED_ALLOWED_SERVICES`     | string[] | No       | --      | Comma-separated list of service IDs  |
 
 ## License
 

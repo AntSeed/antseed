@@ -13,7 +13,7 @@ import {
   formatUsd,
   getMyrmecochoryLabel,
   normalizeAssistantMeta,
-  shortModelName,
+  shortServiceName,
 } from '../ui/components/chat/chat-shared';
 
 type ChatConversationUsage = {
@@ -24,7 +24,7 @@ type ChatConversationUsage = {
 type ChatConversationSummary = {
   id: string;
   title?: string;
-  model?: string;
+  service?: string;
   provider?: string;
   createdAt?: number;
   updatedAt?: number;
@@ -39,7 +39,7 @@ type ChatConversation = ChatConversationSummary & {
   messages?: ChatMessage[];
 };
 
-type ChatModelCatalogEntry = {
+type ChatServiceCatalogEntry = {
   id?: string;
   label?: string;
   provider?: string;
@@ -64,9 +64,9 @@ export type ChatModuleApi = {
   openConversation: (convId: string) => Promise<void>;
   sendMessage: (text: string, imageBase64?: string, imageMimeType?: string) => void;
   abortChat: () => Promise<void>;
-  handleModelChange: (value: string) => void;
-  handleModelFocus: () => void;
-  handleModelBlur: () => void;
+  handleServiceChange: (value: string) => void;
+  handleServiceFocus: () => void;
+  handleServiceBlur: () => void;
 };
 
 export function initChatModule({
@@ -78,26 +78,19 @@ export function initChatModule({
   // Constants
   // ---------------------------------------------------------------------------
 
-  const fallbackChatModels: NormalizedChatModelEntry[] = [];
+  const fallbackChatServices: NormalizedChatServiceEntry[] = [];
 
-  const chatModelAliases: Record<string, string> = {
-    'moonshotai/kimi-k2.5': 'kimi-k2.5',
-    'claude-sonnet-4-20250514': 'claude-sonnet-4-6',
-    'claude-opus-4-20250514': 'claude-opus-4-6',
-    'claude-haiku-4-20250514': 'claude-haiku-4-6',
-  };
-
-  type NormalizedChatModelEntry = Required<
-    Pick<ChatModelCatalogEntry, 'id' | 'label' | 'provider' | 'protocol' | 'count'>
+  type NormalizedChatServiceEntry = Required<
+    Pick<ChatServiceCatalogEntry, 'id' | 'label' | 'provider' | 'protocol' | 'count'>
   >;
-  type ChatModelSelection = { id: string; provider: string | null };
-  type ChatModelOption = ChatModelSelection & { label: string; value: string };
+  type ChatServiceSelection = { id: string; provider: string | null };
+  type ChatServiceOption = ChatServiceSelection & { label: string; value: string };
 
-  const CHAT_MODEL_SELECTION_SEPARATOR = '\u0001';
-  const CHAT_MODEL_REFRESH_INTERVAL_MS = 60_000;
-  // Faster retry during first-run setup while no models have been found yet.
-  const CHAT_MODEL_SETUP_REFRESH_INTERVAL_MS = 2_000;
-  const CHAT_MODEL_LIST_TIMEOUT_MS = 12_000;
+  const CHAT_SERVICE_SELECTION_SEPARATOR = '\u0001';
+  const CHAT_SERVICE_REFRESH_INTERVAL_MS = 60_000;
+  // Faster retry during first-run setup while no services have been found yet.
+  const CHAT_SERVICE_SETUP_REFRESH_INTERVAL_MS = 2_000;
+  const CHAT_SERVICE_LIST_TIMEOUT_MS = 12_000;
 
   // ---------------------------------------------------------------------------
   // Module-local state
@@ -109,12 +102,12 @@ export function initChatModule({
   let streamingIndicatorTimer: number | null = null;
   let proxyState: 'unknown' | 'online' | 'offline' = 'unknown';
   let proxyPort = 0;
-  let lastModelOptionsSignature = '';
-  let pendingModelOptions: NormalizedChatModelEntry[] | null = null;
-  let lastModelRefreshAt = 0;
-  let modelRefreshToken = 0;
-  let modelRefreshInProgress = false;
-  let modelSelectFocused = false;
+  let lastServiceOptionsSignature = '';
+  let pendingServiceOptions: NormalizedChatServiceEntry[] | null = null;
+  let lastServiceRefreshAt = 0;
+  let serviceRefreshToken = 0;
+  let serviceRefreshInProgress = false;
+  let serviceSelectFocused = false;
   const localConversationMessages = new Map<string, ChatMessage[]>();
   const streamingMessagesByConversation = new Map<string, ChatMessage>();
 
@@ -128,17 +121,14 @@ export function initChatModule({
     return normalized.length > 0 ? normalized : null;
   }
 
-  function normalizeChatModelId(model: unknown): string {
-    const raw = String(model ?? '').trim();
-    if (!raw) return '';
-    const alias = chatModelAliases[raw.toLowerCase()];
-    return alias ?? raw;
+  function normalizeChatServiceId(service: unknown): string {
+    return String(service ?? '').trim();
   }
 
-  function normalizeChatModelEntry(raw: unknown): NormalizedChatModelEntry | null {
+  function normalizeChatServiceEntry(raw: unknown): NormalizedChatServiceEntry | null {
     if (!raw || typeof raw !== 'object') return null;
-    const entry = raw as ChatModelCatalogEntry;
-    const id = normalizeChatModelId(entry.id);
+    const entry = raw as ChatServiceCatalogEntry;
+    const id = normalizeChatServiceId(entry.id);
     if (!id) return null;
     const provider = String(entry.provider ?? '').trim().toLowerCase() || 'unknown';
     const protocol = String(entry.protocol ?? '').trim().toLowerCase() || 'unknown';
@@ -147,44 +137,44 @@ export function initChatModule({
     return { id, label, provider, protocol, count };
   }
 
-  function encodeChatModelSelection(modelId: string, provider: string | null): string {
-    const normalizedModelId = normalizeChatModelId(modelId);
-    if (!normalizedModelId) return '';
+  function encodeChatServiceSelection(serviceId: string, provider: string | null): string {
+    const normalizedServiceId = normalizeChatServiceId(serviceId);
+    if (!normalizedServiceId) return '';
     const normalizedProvider = normalizeProviderId(provider);
     return normalizedProvider
-      ? `${normalizedProvider}${CHAT_MODEL_SELECTION_SEPARATOR}${normalizedModelId}`
-      : normalizedModelId;
+      ? `${normalizedProvider}${CHAT_SERVICE_SELECTION_SEPARATOR}${normalizedServiceId}`
+      : normalizedServiceId;
   }
 
-  function decodeChatModelSelection(value: unknown): ChatModelSelection {
+  function decodeChatServiceSelection(value: unknown): ChatServiceSelection {
     const raw = String(value ?? '');
     if (!raw) return { id: '', provider: null };
-    const separatorIndex = raw.indexOf(CHAT_MODEL_SELECTION_SEPARATOR);
-    if (separatorIndex === -1) return { id: normalizeChatModelId(raw), provider: null };
+    const separatorIndex = raw.indexOf(CHAT_SERVICE_SELECTION_SEPARATOR);
+    if (separatorIndex === -1) return { id: normalizeChatServiceId(raw), provider: null };
     const provider = normalizeProviderId(raw.slice(0, separatorIndex));
-    const id = normalizeChatModelId(
-      raw.slice(separatorIndex + CHAT_MODEL_SELECTION_SEPARATOR.length),
+    const id = normalizeChatServiceId(
+      raw.slice(separatorIndex + CHAT_SERVICE_SELECTION_SEPARATOR.length),
     );
     return { id, provider };
   }
 
-  function findMatchingChatModelOptionValue(
-    options: ChatModelOption[],
-    targetModelId: unknown,
+  function findMatchingChatServiceOptionValue(
+    options: ChatServiceOption[],
+    targetServiceId: unknown,
     targetProvider?: unknown,
   ): string | null {
-    const modelId = normalizeChatModelId(targetModelId);
-    if (!modelId) return null;
+    const serviceId = normalizeChatServiceId(targetServiceId);
+    if (!serviceId) return null;
     const provider = normalizeProviderId(targetProvider);
     if (provider) {
-      const exact = options.find((o) => o.id === modelId && o.provider === provider);
+      const exact = options.find((o) => o.id === serviceId && o.provider === provider);
       if (exact) return exact.value;
     }
-    const fallback = options.find((o) => o.id === modelId);
+    const fallback = options.find((o) => o.id === serviceId);
     return fallback?.value ?? null;
   }
 
-  function computeModelOptionsSignature(options: NormalizedChatModelEntry[]): string {
+  function computeServiceOptionsSignature(options: NormalizedChatServiceEntry[]): string {
     return options
       .map(
         (e) =>
@@ -309,13 +299,13 @@ export function initChatModule({
   // Display state updates (no DOM — writes to uiState + notifies React)
   // ---------------------------------------------------------------------------
 
-  function setModelCatalogStatus(tone: BadgeTone, label: string): void {
-    uiState.chatModelStatus = { tone, label };
+  function setServiceCatalogStatus(tone: BadgeTone, label: string): void {
+    uiState.chatServiceStatus = { tone, label };
     notifyUiStateChanged();
   }
 
-  function setModelSelectLoading(loading: boolean): void {
-    uiState.chatModelSelectDisabled = loading;
+  function setServiceSelectLoading(loading: boolean): void {
+    uiState.chatServiceSelectDisabled = loading;
     notifyUiStateChanged();
   }
 
@@ -407,7 +397,7 @@ export function initChatModule({
 
     const parts = [
       `session ${String(conv.id || '').slice(0, 8) || 'n/a'}`,
-      shortModelName(conv.model),
+      shortServiceName(conv.service),
       `${messages.length} msg${messages.length === 1 ? '' : 's'}`,
     ];
     if (toolCalls > 0) parts.push(`${toolCalls} tool${toolCalls === 1 ? '' : 's'}`);
@@ -567,14 +557,14 @@ export function initChatModule({
   }
 
   // ---------------------------------------------------------------------------
-  // Model management
+  // Service management
   // ---------------------------------------------------------------------------
 
-  function getAvailableChatModelOptions(): ChatModelOption[] {
-    if (uiState.chatModelOptions.length > 0) {
-      return uiState.chatModelOptions
+  function getAvailableChatServiceOptions(): ChatServiceOption[] {
+    if (uiState.chatServiceOptions.length > 0) {
+      return uiState.chatServiceOptions
         .map((entry) => {
-          const selection = decodeChatModelSelection(entry.value);
+          const selection = decodeChatServiceSelection(entry.value);
           if (!selection.id) return null;
           return {
             id: selection.id,
@@ -583,22 +573,22 @@ export function initChatModule({
             value: entry.value,
           };
         })
-        .filter((opt): opt is ChatModelOption => opt !== null);
+        .filter((opt): opt is ChatServiceOption => opt !== null);
     }
 
-    return fallbackChatModels.map((entry) => ({
-      id: normalizeChatModelId(entry.id),
+    return fallbackChatServices.map((entry) => ({
+      id: normalizeChatServiceId(entry.id),
       label: String(entry.label ?? entry.id),
       provider: normalizeProviderId(entry.provider),
-      value: encodeChatModelSelection(entry.id, entry.provider),
+      value: encodeChatServiceSelection(entry.id, entry.provider),
     }));
   }
 
-  function getSelectedChatModelSelection(): ChatModelSelection {
-    const selectedValue = decodeChatModelSelection(uiState.chatSelectedModelValue);
+  function getSelectedChatServiceSelection(): ChatServiceSelection {
+    const selectedValue = decodeChatServiceSelection(uiState.chatSelectedServiceValue);
     if (selectedValue.id.length > 0) return selectedValue;
 
-    const conversationModel = normalizeChatModelId(activeConversation?.model);
+    const conversationModel = normalizeChatServiceId(activeConversation?.service);
     if (conversationModel.length > 0) {
       return {
         id: conversationModel,
@@ -606,22 +596,22 @@ export function initChatModule({
       };
     }
 
-    if (uiState.chatModelOptions.length > 0) {
-      const firstOption = decodeChatModelSelection(uiState.chatModelOptions[0].value);
+    if (uiState.chatServiceOptions.length > 0) {
+      const firstOption = decodeChatServiceSelection(uiState.chatServiceOptions[0].value);
       if (firstOption.id.length > 0) return firstOption;
     }
 
     return { id: '', provider: null };
   }
 
-  function applyChatModelOptions(entries: NormalizedChatModelEntry[]): void {
-    const currentSelection = decodeChatModelSelection(uiState.chatSelectedModelValue);
-    const activeConversationModel = normalizeChatModelId(activeConversation?.model);
+  function applyChatServiceOptions(entries: NormalizedChatServiceEntry[]): void {
+    const currentSelection = decodeChatServiceSelection(uiState.chatSelectedServiceValue);
+    const activeConversationModel = normalizeChatServiceId(activeConversation?.service);
     const activeConversationProvider = normalizeProviderId(activeConversation?.provider);
 
-    const unique = new Map<string, NormalizedChatModelEntry>();
+    const unique = new Map<string, NormalizedChatServiceEntry>();
     for (const entry of entries) {
-      const key = `${entry.provider}${CHAT_MODEL_SELECTION_SEPARATOR}${entry.id}`;
+      const key = `${entry.provider}${CHAT_SERVICE_SELECTION_SEPARATOR}${entry.id}`;
       if (!entry.id || unique.has(key)) continue;
       unique.set(key, entry);
     }
@@ -632,20 +622,20 @@ export function initChatModule({
       return a.id.localeCompare(b.id);
     });
 
-    const optionCandidates: ChatModelOption[] = options.map((entry) => ({
+    const optionCandidates: ChatServiceOption[] = options.map((entry) => ({
       id: entry.id,
       provider: normalizeProviderId(entry.provider),
       label: entry.label,
-      value: encodeChatModelSelection(entry.id, entry.provider),
+      value: encodeChatServiceSelection(entry.id, entry.provider),
     }));
 
     const preferred =
-      findMatchingChatModelOptionValue(
+      findMatchingChatServiceOptionValue(
         optionCandidates,
         currentSelection.id,
         currentSelection.provider,
       ) ??
-      findMatchingChatModelOptionValue(
+      findMatchingChatServiceOptionValue(
         optionCandidates,
         activeConversationModel,
         activeConversationProvider,
@@ -653,49 +643,49 @@ export function initChatModule({
       optionCandidates[0]?.value ??
       '';
 
-    const nextSignature = computeModelOptionsSignature(options);
+    const nextSignature = computeServiceOptionsSignature(options);
     if (
-      nextSignature === lastModelOptionsSignature &&
-      uiState.chatSelectedModelValue === preferred
+      nextSignature === lastServiceOptionsSignature &&
+      uiState.chatSelectedServiceValue === preferred
     ) {
       return;
     }
 
     if (options.length === 0) {
-      uiState.chatModelOptions = [];
-      uiState.chatSelectedModelValue = '';
-      lastModelOptionsSignature = '';
+      uiState.chatServiceOptions = [];
+      uiState.chatSelectedServiceValue = '';
+      lastServiceOptionsSignature = '';
       notifyUiStateChanged();
       return;
     }
 
-    uiState.chatModelOptions = options.map((entry) => ({
+    uiState.chatServiceOptions = options.map((entry) => ({
       id: entry.id,
       label: entry.label,
       provider: entry.provider,
       protocol: entry.protocol,
       count: entry.count,
-      value: encodeChatModelSelection(entry.id, entry.provider),
+      value: encodeChatServiceSelection(entry.id, entry.provider),
     }));
 
-    uiState.chatSelectedModelValue = preferred;
-    lastModelOptionsSignature = nextSignature;
+    uiState.chatSelectedServiceValue = preferred;
+    lastServiceOptionsSignature = nextSignature;
     notifyUiStateChanged();
   }
 
-  function updateChatModelOptions(entries: NormalizedChatModelEntry[]): void {
-    if (modelSelectFocused) {
-      pendingModelOptions = entries;
+  function updateChatServiceOptions(entries: NormalizedChatServiceEntry[]): void {
+    if (serviceSelectFocused) {
+      pendingServiceOptions = entries;
       return;
     }
-    applyChatModelOptions(entries);
+    applyChatServiceOptions(entries);
   }
 
-  async function listChatModelsWithTimeout(
+  async function listChatServicesWithTimeout(
     refreshToken: number,
   ): Promise<{ ok: boolean; data?: unknown[]; error?: string }> {
-    if (!bridge?.chatAiListModels) {
-      return { ok: false, data: [], error: 'Model catalog bridge unavailable' };
+    if (!bridge?.chatAiListServices) {
+      return { ok: false, data: [], error: 'Service catalog bridge unavailable' };
     }
 
     let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
@@ -709,15 +699,15 @@ export function initChatModule({
           resolve({
             ok: false,
             data: [],
-            error: `Model discovery timed out after ${String(CHAT_MODEL_LIST_TIMEOUT_MS)}ms`,
+            error: `Service discovery timed out after ${String(CHAT_SERVICE_LIST_TIMEOUT_MS)}ms`,
           });
-        }, CHAT_MODEL_LIST_TIMEOUT_MS);
+        }, CHAT_SERVICE_LIST_TIMEOUT_MS);
       });
 
-      const result = await Promise.race([bridge.chatAiListModels(), timeoutPromise]);
+      const result = await Promise.race([bridge.chatAiListServices(), timeoutPromise]);
 
-      if (refreshToken !== modelRefreshToken) {
-        return { ok: false, data: [], error: 'stale model refresh' };
+      if (refreshToken !== serviceRefreshToken) {
+        return { ok: false, data: [], error: 'stale service refresh' };
       }
       return result;
     } finally {
@@ -725,65 +715,65 @@ export function initChatModule({
     }
   }
 
-  async function refreshChatModelOptions(): Promise<void> {
+  async function refreshChatServiceOptions(): Promise<void> {
     // Skip if a fetch is already in-flight — the 12s timeout outlasts the 5s poll
     // cycle, so without this guard every result gets a stale token and is dropped.
-    if (modelRefreshInProgress) return;
-    modelRefreshInProgress = true;
+    if (serviceRefreshInProgress) return;
+    serviceRefreshInProgress = true;
 
-    const refreshToken = ++modelRefreshToken;
-    const fallback = fallbackChatModels.map((entry) => ({ ...entry }));
+    const refreshToken = ++serviceRefreshToken;
+    const fallback = fallbackChatServices.map((entry) => ({ ...entry }));
 
-    if (!bridge?.chatAiListModels) {
-      updateChatModelOptions(fallback);
-      setModelCatalogStatus('warn', 'Models unavailable');
-      setRuntimeActivity('warn', 'Model catalog unavailable (bridge missing).');
-      modelRefreshInProgress = false;
+    if (!bridge?.chatAiListServices) {
+      updateChatServiceOptions(fallback);
+      setServiceCatalogStatus('warn', 'Services unavailable');
+      setRuntimeActivity('warn', 'Service catalog unavailable (bridge missing).');
+      serviceRefreshInProgress = false;
       return;
     }
 
-    setModelCatalogStatus('warn', 'Loading models...');
-    setRuntimeActivity('warn', 'Loading model catalog from peers...');
-    setModelSelectLoading(true);
+    setServiceCatalogStatus('warn', 'Loading services...');
+    setRuntimeActivity('warn', 'Loading service catalog from peers...');
+    setServiceSelectLoading(true);
 
     try {
-      const result = await listChatModelsWithTimeout(refreshToken);
-      if (refreshToken !== modelRefreshToken) return;
+      const result = await listChatServicesWithTimeout(refreshToken);
+      if (refreshToken !== serviceRefreshToken) return;
 
       if (!result.ok || !Array.isArray(result.data)) {
-        updateChatModelOptions(fallback);
-        setModelCatalogStatus('warn', result.error || 'Models unavailable');
-        setRuntimeActivity('warn', result.error || 'Model catalog unavailable.');
+        updateChatServiceOptions(fallback);
+        setServiceCatalogStatus('warn', result.error || 'Services unavailable');
+        setRuntimeActivity('warn', result.error || 'Service catalog unavailable.');
         return;
       }
 
       const parsed = result.data
-        .map((entry) => normalizeChatModelEntry(entry))
-        .filter((entry): entry is NormalizedChatModelEntry => entry !== null);
+        .map((entry) => normalizeChatServiceEntry(entry))
+        .filter((entry): entry is NormalizedChatServiceEntry => entry !== null);
       const optionsToRender = parsed.length > 0 ? parsed : fallback;
-      updateChatModelOptions(optionsToRender);
-      setModelCatalogStatus(
+      updateChatServiceOptions(optionsToRender);
+      setServiceCatalogStatus(
         optionsToRender.length > 0 ? 'active' : 'warn',
         optionsToRender.length > 0
-          ? `Models ready (${String(optionsToRender.length)})`
-          : 'No models available',
+          ? `Services ready (${String(optionsToRender.length)})`
+          : 'No services available',
       );
       setRuntimeActivity(
         optionsToRender.length > 0 ? 'active' : 'warn',
         optionsToRender.length > 0
-          ? `Model catalog ready (${String(optionsToRender.length)} models)`
-          : 'Discovering models',
+          ? `Service catalog ready (${String(optionsToRender.length)} services)`
+          : 'Discovering services',
       );
     } catch (error) {
-      if (refreshToken !== modelRefreshToken) return;
-      updateChatModelOptions(fallback);
-      const message = toErrorMessage(error, 'Failed to load models');
-      setModelCatalogStatus('warn', message);
+      if (refreshToken !== serviceRefreshToken) return;
+      updateChatServiceOptions(fallback);
+      const message = toErrorMessage(error, 'Failed to load services');
+      setServiceCatalogStatus('warn', message);
       setRuntimeActivity('bad', message);
     } finally {
-      modelRefreshInProgress = false;
-      if (refreshToken === modelRefreshToken) {
-        setModelSelectLoading(false);
+      serviceRefreshInProgress = false;
+      if (refreshToken === serviceRefreshToken) {
+        setServiceSelectLoading(false);
       }
     }
   }
@@ -797,7 +787,7 @@ export function initChatModule({
     if (!bridge || !bridge.chatAiGetProxyStatus) {
       proxyState = 'unknown';
       proxyPort = 0;
-      setModelCatalogStatus('idle', 'Models idle');
+      setServiceCatalogStatus('idle', 'Services idle');
       updateStreamingIndicator();
       return;
     }
@@ -824,7 +814,7 @@ export function initChatModule({
           uiState.chatProxyPort = 0;
           uiState.chatProxyStatus = { tone: 'idle', label: 'Proxy offline' };
           notifyUiStateChanged();
-          setModelCatalogStatus('idle', 'Models unavailable (proxy offline)');
+          setServiceCatalogStatus('idle', 'Services unavailable (proxy offline)');
           if (previousProxyState !== 'offline') {
             setRuntimeActivity('warn', 'Waiting for runtime.');
           }
@@ -836,23 +826,23 @@ export function initChatModule({
       uiState.chatProxyPort = 0;
       uiState.chatProxyStatus = { tone: 'idle', label: 'Proxy offline' };
       notifyUiStateChanged();
-      setModelCatalogStatus('idle', 'Models unavailable (proxy offline)');
+      setServiceCatalogStatus('idle', 'Services unavailable (proxy offline)');
       if (previousProxyState !== 'offline') {
         setRuntimeActivity('warn', 'Buyer proxy unreachable; retrying.');
       }
     } finally {
       const now = Date.now();
-      const setupMode = uiState.appSetupComplete && uiState.chatModelOptions.length === 0;
+      const setupMode = uiState.appSetupComplete && uiState.chatServiceOptions.length === 0;
       const refreshInterval = setupMode
-        ? CHAT_MODEL_SETUP_REFRESH_INTERVAL_MS
-        : CHAT_MODEL_REFRESH_INTERVAL_MS;
+        ? CHAT_SERVICE_SETUP_REFRESH_INTERVAL_MS
+        : CHAT_SERVICE_REFRESH_INTERVAL_MS;
       const shouldRefreshModels =
         proxyState === 'online' &&
         (previousProxyState !== 'online' ||
-          now - lastModelRefreshAt >= refreshInterval);
+          now - lastServiceRefreshAt >= refreshInterval);
       if (shouldRefreshModels) {
-        lastModelRefreshAt = now;
-        void refreshChatModelOptions();
+        lastServiceRefreshAt = now;
+        void refreshChatServiceOptions();
       }
       updateStreamingIndicator();
     }
@@ -927,14 +917,14 @@ export function initChatModule({
         uiState.chatInputDisabled = false;
         uiState.chatSendDisabled = false;
 
-        const optionCandidates = getAvailableChatModelOptions();
-        const preferredValue = findMatchingChatModelOptionValue(
+        const optionCandidates = getAvailableChatServiceOptions();
+        const preferredValue = findMatchingChatServiceOptionValue(
           optionCandidates,
-          conv.model,
+          conv.service,
           conv.provider,
         );
         if (preferredValue) {
-          uiState.chatSelectedModelValue = preferredValue;
+          uiState.chatSelectedServiceValue = preferredValue;
         }
 
         setLocalConversationMessages(convId, uiState.chatMessages as ChatMessage[]);
@@ -1012,10 +1002,10 @@ export function initChatModule({
   async function createNewConversation(): Promise<void> {
     if (!bridge || !bridge.chatAiCreateConversation) return;
 
-    const selection = getSelectedChatModelSelection();
+    const selection = getSelectedChatServiceSelection();
     if (selection.id.length === 0) {
       showChatError(
-        'No model is currently available. Start Buyer runtime and refresh models.',
+        'No service is currently available. Start Buyer runtime and refresh services.',
       );
       return;
     }
@@ -1134,7 +1124,7 @@ export function initChatModule({
     uiState.chatError = null;
     setChatSending(true);
 
-    const selection = getSelectedChatModelSelection();
+    const selection = getSelectedChatServiceSelection();
 
     if (bridge.chatAiSendStream) {
       const sendStreamRequest = async () =>
@@ -1214,25 +1204,25 @@ export function initChatModule({
   }
 
   // ---------------------------------------------------------------------------
-  // Model select handlers (called by ChatView)
+  // Service select handlers (called by ChatView)
   // ---------------------------------------------------------------------------
 
-  function handleModelChange(value: string): void {
-    uiState.chatSelectedModelValue = value;
-    pendingModelOptions = null;
+  function handleServiceChange(value: string): void {
+    uiState.chatSelectedServiceValue = value;
+    pendingServiceOptions = null;
     notifyUiStateChanged();
   }
 
-  function handleModelFocus(): void {
-    modelSelectFocused = true;
+  function handleServiceFocus(): void {
+    serviceSelectFocused = true;
   }
 
-  function handleModelBlur(): void {
-    modelSelectFocused = false;
-    if (pendingModelOptions) {
-      const pending = pendingModelOptions;
-      pendingModelOptions = null;
-      applyChatModelOptions(pending);
+  function handleServiceBlur(): void {
+    serviceSelectFocused = false;
+    if (pendingServiceOptions) {
+      const pending = pendingServiceOptions;
+      pendingServiceOptions = null;
+      applyChatServiceOptions(pending);
     }
   }
 
@@ -1600,7 +1590,7 @@ export function initChatModule({
 
   updateThreadMeta(null);
   updateStreamingIndicator();
-  void refreshChatModelOptions();
+  void refreshChatServiceOptions();
 
   // ---------------------------------------------------------------------------
   // Public API
@@ -1616,8 +1606,8 @@ export function initChatModule({
     openConversation,
     sendMessage,
     abortChat,
-    handleModelChange,
-    handleModelFocus,
-    handleModelBlur,
+    handleServiceChange,
+    handleServiceFocus,
+    handleServiceBlur,
   };
 }

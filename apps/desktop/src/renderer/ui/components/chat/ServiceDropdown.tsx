@@ -1,12 +1,12 @@
 import { useState, useRef, useEffect } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { ArrowDown01Icon } from '@hugeicons/core-free-icons';
-import type { ChatModelOptionEntry } from '../../../core/state';
+import type { ChatServiceOptionEntry } from '../../../core/state';
 import antseedMark from '../../../assets/antseed-mark.svg';
-import styles from './ModelDropdown.module.scss';
+import styles from './ServiceDropdown.module.scss';
 
-type ModelDropdownProps = {
-  options: ChatModelOptionEntry[];
+type ServiceDropdownProps = {
+  options: ChatServiceOptionEntry[];
   value: string;
   disabled: boolean;
   onChange: (value: string) => void;
@@ -14,12 +14,12 @@ type ModelDropdownProps = {
   onBlur?: () => void;
 };
 
-export function ModelDropdown({ options, value, disabled, onChange, onFocus, onBlur }: ModelDropdownProps) {
+export function ServiceDropdown({ options, value, disabled, onChange, onFocus, onBlur }: ServiceDropdownProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   const selected = options.find((o) => o.value === value);
-  const label = selected?.label || 'Select model';
+  const label = selected?.label || 'Select service';
 
   useEffect(() => {
     if (!open) return;
@@ -34,27 +34,27 @@ export function ModelDropdown({ options, value, disabled, onChange, onFocus, onB
   }, [open, onBlur]);
 
   return (
-    <div className={styles.modelDropdown} ref={ref}>
+    <div className={styles.serviceDropdown} ref={ref}>
       <button
-        className={styles.modelDropdownTrigger}
+        className={styles.serviceDropdownTrigger}
         disabled={disabled}
         onClick={() => {
           setOpen((o) => !o);
           if (!open) onFocus?.();
         }}
       >
-        <span className={styles.modelDropdownIcon}>
+        <span className={styles.serviceDropdownIcon}>
           <img src={antseedMark} alt="" width={16} height={16} />
         </span>
-        <span className={styles.modelDropdownLabel}>{label}</span>
+        <span className={styles.serviceDropdownLabel}>{label}</span>
         <HugeiconsIcon icon={ArrowDown01Icon} size={16} strokeWidth={1.5} />
       </button>
       {open && options.length > 0 && (
-        <div className={styles.modelDropdownMenu}>
+        <div className={styles.serviceDropdownMenu}>
           {options.map((opt) => (
             <button
               key={opt.value}
-              className={`${styles.modelDropdownItem}${opt.value === value ? ` ${styles.active}` : ''}`}
+              className={`${styles.serviceDropdownItem}${opt.value === value ? ` ${styles.active}` : ''}`}
               onClick={() => {
                 onChange(opt.value);
                 setOpen(false);

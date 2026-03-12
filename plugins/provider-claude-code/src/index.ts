@@ -1,4 +1,4 @@
-import type { AntseedProviderPlugin, Provider, ModelApiProtocol } from '@antseed/node';
+import type { AntseedProviderPlugin, Provider, ServiceApiProtocol } from '@antseed/node';
 import { BaseProvider } from '@antseed/provider-core';
 import { ClaudeCodeTokenProvider } from './claude-code-token.js';
 
@@ -10,12 +10,12 @@ function parseNonNegativeNumber(raw: string | undefined, key: string, fallback: 
   return parsed;
 }
 
-function buildModelApiProtocols(
-  models: string[],
-  protocol: ModelApiProtocol,
-): Record<string, ModelApiProtocol[]> | undefined {
-  if (models.length === 0) return undefined;
-  return Object.fromEntries(models.map((model) => [model, [protocol]]));
+function buildServiceApiProtocols(
+  services: string[],
+  protocol: ServiceApiProtocol,
+): Record<string, ServiceApiProtocol[]> | undefined {
+  if (services.length === 0) return undefined;
+  return Object.fromEntries(services.map((service) => [service, [protocol]]));
 }
 
 const plugin: AntseedProviderPlugin = {
@@ -28,7 +28,7 @@ const plugin: AntseedProviderPlugin = {
     { key: 'ANTSEED_INPUT_USD_PER_MILLION', label: 'Input Price', type: 'number', required: false, default: 10, description: 'Input price in USD per 1M tokens' },
     { key: 'ANTSEED_OUTPUT_USD_PER_MILLION', label: 'Output Price', type: 'number', required: false, default: 10, description: 'Output price in USD per 1M tokens' },
     { key: 'ANTSEED_MAX_CONCURRENCY', label: 'Max Concurrency', type: 'number', required: false, default: 10, description: 'Max concurrent requests' },
-    { key: 'ANTSEED_ALLOWED_MODELS', label: 'Allowed Models', type: 'string[]', required: false, description: 'Model allow-list' },
+    { key: 'ANTSEED_ALLOWED_SERVICES', label: 'Allowed Services', type: 'string[]', required: false, description: 'Service allow-list' },
   ],
 
   createProvider(config: Record<string, string>): Provider {
@@ -44,25 +44,25 @@ const plugin: AntseedProviderPlugin = {
       throw new Error('ANTSEED_MAX_CONCURRENCY must be a valid number');
     }
 
-    const allowedModels = config['ANTSEED_ALLOWED_MODELS']
-      ? config['ANTSEED_ALLOWED_MODELS'].split(',').map((s: string) => s.trim())
+    const allowedServices = config['ANTSEED_ALLOWED_SERVICES']
+      ? config['ANTSEED_ALLOWED_SERVICES'].split(',').map((s: string) => s.trim())
       : [];
 
     const tokenProvider = new ClaudeCodeTokenProvider();
-    const modelApiProtocols = buildModelApiProtocols(allowedModels, 'anthropic-messages');
+    const serviceApiProtocols = buildServiceApiProtocols(allowedServices, 'anthropic-messages');
 
     return new BaseProvider({
       name: 'claude-code',
-      models: allowedModels,
+      services: allowedServices,
       pricing,
-      ...(modelApiProtocols ? { modelApiProtocols } : {}),
+      ...(serviceApiProtocols ? { serviceApiProtocols } : {}),
       relay: {
         baseUrl: 'https://api.anthropic.com',
         authHeaderName: 'authorization',
         authHeaderValue: '',
         tokenProvider,
         maxConcurrency,
-        allowedModels,
+        allowedServices,
         extraHeaders: { 'anthropic-beta': 'oauth-2025-04-20' },
       },
     });

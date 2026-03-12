@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { PeerLookup, type LookupConfig } from '../src/discovery/peer-lookup.js';
-import { modelSearchTopic, modelTopic, topicToInfoHash } from '../src/discovery/dht-node.js';
+import { serviceSearchTopic, serviceTopic, topicToInfoHash } from '../src/discovery/dht-node.js';
 import type { DHTNode } from '../src/discovery/dht-node.js';
 import type { MetadataResolver, PeerEndpoint } from '../src/discovery/metadata-resolver.js';
 import { METADATA_VERSION, type PeerMetadata } from '../src/discovery/peer-metadata.js';
@@ -12,7 +12,7 @@ function buildMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
     providers: [
       {
         provider: 'anthropic',
-        models: ['claude-3-opus'],
+        services: ['claude-3-opus'],
         defaultPricing: {
           inputUsdPerMillion: 15,
           outputUsdPerMillion: 75,
@@ -62,7 +62,7 @@ describe('PeerLookup', () => {
     );
   });
 
-  it('findByModel queries canonical and compact model topics when keys differ', async () => {
+  it('findByService queries canonical and compact service topics when keys differ', async () => {
     const canonicalPeers: PeerEndpoint[] = [
       { host: '84.228.226.179', port: 6882 },
     ];
@@ -71,8 +71,8 @@ describe('PeerLookup', () => {
       { host: '147.236.231.105', port: 6882 },
     ];
 
-    const canonicalHashHex = topicToInfoHash(modelTopic('kimi-2.5')).toString('hex');
-    const compactHashHex = topicToInfoHash(modelSearchTopic('kimi-2.5')).toString('hex');
+    const canonicalHashHex = topicToInfoHash(serviceTopic('kimi-2.5')).toString('hex');
+    const compactHashHex = topicToInfoHash(serviceSearchTopic('kimi-2.5')).toString('hex');
     const lookup = vi.fn(async (hash: Buffer) => {
       const hex = hash.toString('hex');
       if (hex === canonicalHashHex) return canonicalPeers;
@@ -93,13 +93,13 @@ describe('PeerLookup', () => {
     };
     const peerLookup = new PeerLookup(config);
 
-    const results = await peerLookup.findByModel('kimi-2.5');
+    const results = await peerLookup.findByService('kimi-2.5');
     expect(lookup).toHaveBeenCalledTimes(2);
     expect(resolve).toHaveBeenCalledTimes(2);
     expect(results).toHaveLength(2);
   });
 
-  it('findByModel queries only canonical topic when compact key matches canonical', async () => {
+  it('findByService queries only canonical topic when compact key matches canonical', async () => {
     const peers: PeerEndpoint[] = [{ host: '84.228.226.179', port: 6882 }];
     const lookup = vi.fn(async () => peers);
     const dht = { lookup } as unknown as DHTNode;
@@ -116,7 +116,7 @@ describe('PeerLookup', () => {
     };
     const peerLookup = new PeerLookup(config);
 
-    const results = await peerLookup.findByModel('kimi2.5');
+    const results = await peerLookup.findByService('kimi2.5');
     expect(lookup).toHaveBeenCalledTimes(1);
     expect(results).toHaveLength(1);
   });

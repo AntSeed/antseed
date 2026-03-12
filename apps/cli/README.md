@@ -21,7 +21,7 @@ Command-line interface and web dashboard for the AntSeed Network — a P2P netwo
 | `antseed config` | Manage configuration (`show`, `set`, `seller show/set`, `buyer show/set`, `init`) |
 | `antseed dashboard` | Start the web dashboard for monitoring and configuration |
 | `antseed dev` | Run seller + buyer locally for development and testing |
-| `antseed browse` | Browse available models, prices, and reputation on the network |
+| `antseed browse` | Browse available services, prices, and reputation on the network |
 
 ## Plugins
 
@@ -75,7 +75,7 @@ Initialize a new config:
 antseed config init
 ```
 
-Pricing is configured in USD per 1M tokens with role-specific defaults and optional provider/model overrides. You can also set node `displayName` and optional per-model category tags announced in discovery metadata:
+Pricing is configured in USD per 1M tokens with role-specific defaults and optional provider/model overrides. You can also set node `displayName` and optional per-service category tags announced in discovery metadata:
 
 ```json
 {
@@ -90,7 +90,7 @@ Pricing is configured in USD per 1M tokens with role-specific defaults and optio
       },
       "providers": {
         "anthropic": {
-          "models": {
+          "services": {
             "claude-sonnet-4-5-20250929": {
               "inputUsdPerMillion": 12,
               "outputUsdPerMillion": 18
@@ -99,7 +99,7 @@ Pricing is configured in USD per 1M tokens with role-specific defaults and optio
         }
       }
     },
-    "modelCategories": {
+    "serviceCategories": {
       "anthropic": {
         "claude-sonnet-4-5-20250929": ["coding", "privacy"]
       }
@@ -158,11 +158,11 @@ antseed config set identity.displayName "Acme Inference - us-east-1"
 antseed config seller set pricing.defaults.inputUsdPerMillion 12
 antseed config seller set pricing.defaults.outputUsdPerMillion 36
 
-# Seller per-model override for a provider
-antseed config seller set pricing.providers.anthropic.models '{"claude-sonnet-4-5-20250929":{"inputUsdPerMillion":14,"outputUsdPerMillion":42}}'
+# Seller per-service override for a provider
+antseed config seller set pricing.providers.anthropic.services '{"claude-sonnet-4-5-20250929":{"inputUsdPerMillion":14,"outputUsdPerMillion":42}}'
 
-# Seller per-model category tags announced in metadata
-antseed config seller set modelCategories.anthropic.claude-sonnet-4-5-20250929 '["coding","legal"]'
+# Seller per-service category tags announced in metadata
+antseed config seller set serviceCategories.anthropic.claude-sonnet-4-5-20250929 '["coding","legal"]'
 
 # Buyer preferences and max pricing
 antseed config buyer set preferredProviders '["anthropic","openai"]'

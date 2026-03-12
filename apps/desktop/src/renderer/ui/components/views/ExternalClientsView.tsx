@@ -76,7 +76,7 @@ const TOOLS: Tool[] = [
       { label: 'Find the "Custom base URL" or "OpenAI API base" setting in your tool' },
       { label: 'Set it to the proxy endpoint below' },
       { label: 'Set any API key field to a placeholder value (e.g. antseed)', command: 'antseed' },
-      { label: 'Select a model — requests are routed by AntSeed automatically' },
+      { label: 'Select a service — requests are routed by AntSeed automatically' },
     ],
     persist: '',
   },

@@ -15,12 +15,12 @@ describe('provider-openai plugin', () => {
     expect(keys).toContain('OPENAI_BASE_URL');
     expect(keys).toContain('OPENAI_PROVIDER_FLAVOR');
     expect(keys).toContain('OPENAI_UPSTREAM_PROVIDER');
-    expect(keys).toContain('OPENAI_UPSTREAM_MODEL_PREFIX');
-    expect(keys).toContain('OPENAI_MODEL_ALIAS_MAP_JSON');
+    expect(keys).toContain('OPENAI_UPSTREAM_SERVICE_PREFIX');
+    expect(keys).toContain('OPENAI_SERVICE_ALIAS_MAP_JSON');
     expect(keys).toContain('ANTSEED_INPUT_USD_PER_MILLION');
     expect(keys).toContain('ANTSEED_OUTPUT_USD_PER_MILLION');
     expect(keys).toContain('ANTSEED_MAX_CONCURRENCY');
-    expect(keys).toContain('ANTSEED_ALLOWED_MODELS');
+    expect(keys).toContain('ANTSEED_ALLOWED_SERVICES');
   });
 
   it('creates provider with valid config', () => {
@@ -59,7 +59,7 @@ describe('provider-openai plugin', () => {
     expect(provider.maxConcurrency).toBe(5);
   });
 
-  it('rewrites announced model names to upstream prefixed models', async () => {
+  it('rewrites announced service names to upstream prefixed models', async () => {
     const originalFetch = globalThis.fetch;
     const fetchMock = vi.fn().mockResolvedValue(
       new Response('{}', {
@@ -71,8 +71,8 @@ describe('provider-openai plugin', () => {
     try {
       const provider = plugin.createProvider({
         OPENAI_API_KEY: 'sk-test-key',
-        ANTSEED_ALLOWED_MODELS: 'kimi2.5',
-        OPENAI_UPSTREAM_MODEL_PREFIX: 'together',
+        ANTSEED_ALLOWED_SERVICES: 'kimi2.5',
+        OPENAI_UPSTREAM_SERVICE_PREFIX: 'together',
       });
 
       const response = await provider.handleRequest({
@@ -96,7 +96,7 @@ describe('provider-openai plugin', () => {
     }
   });
 
-  it('does not double-prefix when model already includes upstream prefix with different casing', async () => {
+  it('does not double-prefix when service already includes upstream prefix with different casing', async () => {
     const originalFetch = globalThis.fetch;
     const fetchMock = vi.fn().mockResolvedValue(
       new Response('{}', {
@@ -108,8 +108,8 @@ describe('provider-openai plugin', () => {
     try {
       const provider = plugin.createProvider({
         OPENAI_API_KEY: 'sk-test-key',
-        ANTSEED_ALLOWED_MODELS: 'together/kimi2.5',
-        OPENAI_UPSTREAM_MODEL_PREFIX: 'Together/',
+        ANTSEED_ALLOWED_SERVICES: 'together/kimi2.5',
+        OPENAI_UPSTREAM_SERVICE_PREFIX: 'Together/',
       });
 
       const response = await provider.handleRequest({

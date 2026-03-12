@@ -9,7 +9,7 @@ import { useActions } from '../../hooks/useActions';
 import { ChatBubble } from '../chat/ChatBubble';
 import { isToolResultOnlyMessage } from '../chat/chat-utils.js';
 import { WalkingAnt } from '../chat/WalkingAnt';
-import { ModelDropdown } from '../chat/ModelDropdown';
+import { ServiceDropdown } from '../chat/ServiceDropdown';
 import { AntStationStackedLogo } from '../AntStationLogo';
 import styles from './ChatView.module.scss';
 import type { ChatMessage } from '../chat/chat-shared';
@@ -202,13 +202,13 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     <section className={`view view-chat${active ? ' active' : ''}`} role="tabpanel">
       <div className={styles.pageHeader}>
         <div className={styles.pageHeaderLeft}>
-          <ModelDropdown
-            options={snap.chatModelOptions}
-            value={snap.chatSelectedModelValue}
-            disabled={snap.chatModelSelectDisabled}
-            onChange={actions.handleModelChange}
-            onFocus={actions.handleModelFocus}
-            onBlur={actions.handleModelBlur}
+          <ServiceDropdown
+            options={snap.chatServiceOptions}
+            value={snap.chatSelectedServiceValue}
+            disabled={snap.chatServiceSelectDisabled}
+            onChange={actions.handleServiceChange}
+            onFocus={actions.handleServiceFocus}
+            onBlur={actions.handleServiceBlur}
           />
         </div>
         <div className={styles.pageHeaderRight}>

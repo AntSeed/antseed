@@ -27,14 +27,14 @@ import type { Provider, SerializedHttpRequest, SerializedHttpResponse } from '@a
 // Implement the Provider interface (or use an existing plugin)
 const myProvider: Provider = {
   name: 'my-llm',
-  models: ['my-model-v1'],
+  services: ['my-model-v1'],
   pricing: {
     defaults: {
       inputUsdPerMillion: 10,
       outputUsdPerMillion: 10,
     },
   },
-  modelCategories: {
+  serviceCategories: {
     'my-model-v1': ['coding', 'privacy'],
   },
   maxConcurrency: 10,
@@ -99,8 +99,8 @@ if (peers.length > 0) {
 Discovery topics are normalized to improve lookup consistency:
 
 - Provider topic: `antseed:{provider}` with `trim + lowercase`
-- Model topic (canonical): `antseed:model:{model}` with `trim + lowercase`
-- Model topic (search fallback): `antseed:model-search:{model}` with spaces, `-`, `_` removed after canonical normalization (keeps `.`)
+- Model topic (canonical): `antseed:service:{model}` with `trim + lowercase`
+- Model topic (search fallback): `antseed:service-search:{model}` with spaces, `-`, `_` removed after canonical normalization (keeps `.`)
 
 Canonical and search model topics are both used when their keys differ, so variants like `kimi 2.5`, `kimi-2.5`, and `kimi_2.5` can converge in discovery while keeping exact canonical topics.
 
@@ -246,19 +246,19 @@ interface Provider {
   name: string;
 
   /** Model IDs this provider supports */
-  models: string[];
+  services: string[];
 
-  /** Pricing in USD per 1M tokens (defaults + optional per-model overrides) */
+  /** Pricing in USD per 1M tokens (defaults + optional per-service overrides) */
   pricing: {
     defaults: { inputUsdPerMillion: number; outputUsdPerMillion: number };
-    models?: Record<string, { inputUsdPerMillion: number; outputUsdPerMillion: number }>;
+    services?: Record<string, { inputUsdPerMillion: number; outputUsdPerMillion: number }>;
   };
 
-  /** Optional per-model discovery tags (e.g., coding/privacy/legal) */
-  modelCategories?: Record<string, string[]>;
+  /** Optional per-service discovery tags (e.g., coding/privacy/legal) */
+  serviceCategories?: Record<string, string[]>;
 
-  /** Optional per-model API protocol support advertised via discovery metadata. */
-  modelApiProtocols?: Record<string, ModelApiProtocol[]>;
+  /** Optional per-service API protocol support advertised via discovery metadata. */
+  serviceApiProtocols?: Record<string, ServiceApiProtocol[]>;
 
   /** Maximum concurrent requests this provider can handle */
   maxConcurrency: number;
@@ -307,13 +307,13 @@ import type { AntseedProviderPlugin, Provider, SerializedHttpRequest, Serialized
 
 class MyProvider implements Provider {
   readonly name = 'my-provider';
-  readonly models: string[];
+  readonly services: string[];
   readonly pricing: Provider['pricing'];
   readonly maxConcurrency: number;
   private _active = 0;
 
-  constructor(apiKey: string, models: string[], inputUsdPerMillion: number, outputUsdPerMillion: number, maxConcurrency: number) {
-    this.models = models;
+  constructor(apiKey: string, services: string[], inputUsdPerMillion: number, outputUsdPerMillion: number, maxConcurrency: number) {
+    this.services = services;
     this.pricing = {
       defaults: {
         inputUsdPerMillion,
@@ -356,16 +356,16 @@ const plugin: AntseedProviderPlugin = {
   description: 'Provides My LLM capacity on the Antseed Network',
   configSchema: [
     { key: 'MY_API_KEY', label: 'API Key', type: 'secret', required: true, description: 'API key for My LLM' },
-    { key: 'MY_MODELS', label: 'Models', type: 'string[]', required: false, description: 'Comma-separated model list' },
+    { key: 'MY_SERVICES', label: 'Services', type: 'string[]', required: false, description: 'Comma-separated service list' },
     { key: 'MY_INPUT_USD_PER_MILLION', label: 'Input Price', type: 'number', required: false, description: 'Input price in USD per 1M tokens' },
     { key: 'MY_OUTPUT_USD_PER_MILLION', label: 'Output Price', type: 'number', required: false, description: 'Output price in USD per 1M tokens' },
   ],
   createProvider(config: Record<string, string>) {
     const apiKey = config['MY_API_KEY'] ?? '';
-    const models = (config['MY_MODELS'] ?? 'default-model').split(',').map(s => s.trim());
+    const services = (config['MY_SERVICES'] ?? 'default-service').split(',').map(s => s.trim());
     const input = parseFloat(config['MY_INPUT_USD_PER_MILLION'] ?? '10');
     const output = parseFloat(config['MY_OUTPUT_USD_PER_MILLION'] ?? String(input));
-    return new MyProvider(apiKey, models, input, output, 10);
+    return new MyProvider(apiKey, services, input, output, 10);
   },
 };
 

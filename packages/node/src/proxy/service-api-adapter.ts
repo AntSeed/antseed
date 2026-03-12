@@ -1,11 +1,11 @@
 import type { SerializedHttpRequest, SerializedHttpResponse } from '../types/http.js';
-import type { ModelApiProtocol } from '../types/model-api.js';
+import type { ServiceApiProtocol } from '../types/service-api.js';
 
 const ANTHROPIC_PROVIDER_NAMES = new Set(['anthropic', 'claude-code', 'claude-oauth']);
 const OPENAI_CHAT_PROVIDER_NAMES = new Set(['openai', 'local-llm']);
 
 export interface TargetProtocolSelection {
-  targetProtocol: ModelApiProtocol;
+  targetProtocol: ServiceApiProtocol;
   requiresTransform: boolean;
 }
 
@@ -278,7 +278,7 @@ function convertAnthropicToolChoiceToOpenAI(toolChoice: unknown): unknown {
 
 function buildAnthropicStreamFromMessage(message: {
   id: string;
-  model: string;
+  service: string;
   content: Array<
     | { type: 'text'; text: string }
     | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
@@ -298,7 +298,7 @@ function buildAnthropicStreamFromMessage(message: {
       id: message.id,
       type: 'message',
       role: 'assistant',
-      model: message.model,
+      model: message.service,
       content: [],
       stop_reason: null,
       stop_sequence: null,
@@ -364,7 +364,7 @@ function buildAnthropicStreamFromMessage(message: {
   return new TextEncoder().encode(chunks.join(''));
 }
 
-export function detectRequestModelApiProtocol(request: Pick<SerializedHttpRequest, 'path' | 'headers'>): ModelApiProtocol | null {
+export function detectRequestServiceApiProtocol(request: Pick<SerializedHttpRequest, 'path' | 'headers'>): ServiceApiProtocol | null {
   const normalizedPath = request.path.toLowerCase();
   if (normalizedPath.startsWith('/v1/messages') || normalizedPath.startsWith('/v1/complete')) {
     return 'anthropic-messages';
@@ -388,7 +388,7 @@ export function detectRequestModelApiProtocol(request: Pick<SerializedHttpReques
   return null;
 }
 
-export function inferProviderDefaultModelApiProtocols(providerName: string): ModelApiProtocol[] {
+export function inferProviderDefaultServiceApiProtocols(providerName: string): ServiceApiProtocol[] {
   const normalized = providerName.trim().toLowerCase();
   if (normalized.length === 0) {
     return [];
@@ -403,8 +403,8 @@ export function inferProviderDefaultModelApiProtocols(providerName: string): Mod
 }
 
 export function selectTargetProtocolForRequest(
-  requestProtocol: ModelApiProtocol | null,
-  supportedProtocols: ModelApiProtocol[],
+  requestProtocol: ServiceApiProtocol | null,
+  supportedProtocols: ServiceApiProtocol[],
 ): TargetProtocolSelection | null {
   if (!requestProtocol) {
     return null;
@@ -580,7 +580,7 @@ export function transformOpenAIChatResponseToAnthropicMessage(
   const outputTokens = toNonNegativeInt(usage.completion_tokens ?? usage.output_tokens);
 
   const id = typeof parsed.id === 'string' && parsed.id.length > 0 ? parsed.id : `msg_${response.requestId}`;
-  const model = typeof parsed.model === 'string' && parsed.model.length > 0
+  const service = typeof parsed.model === 'string' && parsed.model.length > 0
     ? parsed.model
     : (options.fallbackModel ?? 'unknown');
 
@@ -588,7 +588,7 @@ export function transformOpenAIChatResponseToAnthropicMessage(
     id,
     type: 'message',
     role: 'assistant',
-    model,
+    model: service,
     content: contentBlocks,
     stop_reason: finishReason,
     stop_sequence: null,
@@ -608,7 +608,7 @@ export function transformOpenAIChatResponseToAnthropicMessage(
       },
       body: buildAnthropicStreamFromMessage({
         id,
-        model,
+        service,
         content: contentBlocks,
         stopReason: finishReason,
         usage: {
@@ -891,14 +891,14 @@ function buildOpenAIResponsesBody(
   const outputTokens = toNonNegativeInt(usage.completion_tokens ?? usage.output_tokens);
 
   const id = typeof parsed.id === 'string' && parsed.id.length > 0 ? parsed.id : `resp_${response.requestId}`;
-  const model = typeof parsed.model === 'string' && parsed.model.length > 0
+  const service = typeof parsed.model === 'string' && parsed.model.length > 0
     ? parsed.model
     : (options.fallbackModel ?? 'unknown');
 
   return {
     id,
     object: 'response',
-    model,
+    model: service,
     status: 'completed',
     created_at: Math.floor(Date.now() / 1000),
     output: outputItems,

@@ -93,7 +93,7 @@ export interface ConfigResponse {
             inputUsdPerMillion: number;
             outputUsdPerMillion: number;
           };
-          models?: Record<string, {
+          services?: Record<string, {
             inputUsdPerMillion: number;
             outputUsdPerMillion: number;
           }>;
@@ -112,7 +112,7 @@ export interface ConfigResponse {
             inputUsdPerMillion: number;
             outputUsdPerMillion: number;
           };
-          models?: Record<string, {
+          services?: Record<string, {
             inputUsdPerMillion: number;
             outputUsdPerMillion: number;
           }>;

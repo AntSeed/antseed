@@ -8,7 +8,7 @@ const DEV_STATS_URL = 'http://localhost:4000/stats';
 
 interface ProviderInfo {
   provider: string;
-  models: string[];
+  services: string[];
   defaultPricing?: {inputUsdPerMillion: number; outputUsdPerMillion: number};
   currentLoad?: number;
   maxConcurrency?: number;
@@ -27,14 +27,14 @@ interface StatsResponse {
   updatedAt: string;
 }
 
-function ModelTag({name}: {name: string}) {
+function ServiceTag({name}: {name: string}) {
   const short = name.split('/').pop() ?? name;
-  return <span className={styles.modelTag}>{short}</span>;
+  return <span className={styles.serviceTag}>{short}</span>;
 }
 
 function PeerCard({peer}: {peer: PeerInfo}) {
-  const allModels: string[] = [];
-  for (const p of peer.providers) allModels.push(...p.models);
+  const allServices: string[] = [];
+  for (const p of peer.providers) allServices.push(...p.services);
   const pricing = peer.providers[0]?.defaultPricing;
 
   return (
@@ -47,8 +47,8 @@ function PeerCard({peer}: {peer: PeerInfo}) {
         </div>
         <div className={styles.peerRegion}>{peer.region !== 'unknown' ? peer.region : 'Global'}</div>
       </div>
-      <div className={styles.peerModels}>
-        {allModels.map(m => <ModelTag key={m} name={m} />)}
+      <div className={styles.peerServices}>
+        {allServices.map(m => <ServiceTag key={m} name={m} />)}
       </div>
       {pricing && (
         <div className={styles.peerPricing}>
@@ -94,9 +94,9 @@ export default function NetworkPage() {
     return () => clearInterval(interval);
   }, []);
 
-  const allModels = useMemo(() => {
+  const allServices = useMemo(() => {
     const set = new Set<string>();
-    for (const p of peers) for (const pr of p.providers) for (const m of pr.models) set.add(m);
+    for (const p of peers) for (const pr of p.providers) for (const m of pr.services) set.add(m);
     return set;
   }, [peers]);
 
@@ -105,7 +105,7 @@ export default function NetworkPage() {
     : null;
 
   return (
-    <Layout title="Network Status" description="Live AntSeed network status — active peers, available models, and network health.">
+    <Layout title="Network Status" description="Live AntSeed network status — active peers, available services, and network health.">
       <div className={styles.page}>
         <div className={styles.header}>
           <Link to="/" className={styles.back}>← Back</Link>
@@ -121,8 +121,8 @@ export default function NetworkPage() {
           </div>
           <div className={styles.statDivider} />
           <div className={styles.stat}>
-            <div className={styles.statNum}>{loading ? '--' : allModels.size}</div>
-            <div className={styles.statLabel}>Models Available</div>
+            <div className={styles.statNum}>{loading ? '--' : allServices.size}</div>
+            <div className={styles.statLabel}>Services Available</div>
           </div>
           <div className={styles.statDivider} />
           <div className={styles.stat}>
@@ -136,12 +136,12 @@ export default function NetworkPage() {
           </div>
         </div>
 
-        {/* Models list */}
-        {allModels.size > 0 && (
+        {/* Services list */}
+        {allServices.size > 0 && (
           <div className={styles.section}>
-            <div className={styles.sectionTitle}>Available Models</div>
-            <div className={styles.modelGrid}>
-              {Array.from(allModels).map(m => <ModelTag key={m} name={m} />)}
+            <div className={styles.sectionTitle}>Available Services</div>
+            <div className={styles.serviceGrid}>
+              {Array.from(allServices).map(m => <ServiceTag key={m} name={m} />)}
             </div>
           </div>
         )}

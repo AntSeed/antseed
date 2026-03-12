@@ -151,11 +151,11 @@ const api = {
   chatAiGetConversation(id: string): Promise<{ ok: boolean; data?: unknown; error?: string }> {
     return ipcRenderer.invoke('chat:ai-get-conversation', id);
   },
-  chatAiCreateConversation(model: string, provider?: string): Promise<{ ok: boolean; data?: unknown; error?: string }> {
-    return ipcRenderer.invoke('chat:ai-create-conversation', model, provider);
+  chatAiCreateConversation(service: string, provider?: string): Promise<{ ok: boolean; data?: unknown; error?: string }> {
+    return ipcRenderer.invoke('chat:ai-create-conversation', service, provider);
   },
-  chatAiListModels(): Promise<{ ok: boolean; data?: unknown[]; error?: string }> {
-    return ipcRenderer.invoke('chat:ai-list-models');
+  chatAiListServices(): Promise<{ ok: boolean; data?: unknown[]; error?: string }> {
+    return ipcRenderer.invoke('chat:ai-list-services');
   },
   chatAiDeleteConversation(id: string): Promise<{ ok: boolean }> {
     return ipcRenderer.invoke('chat:ai-delete-conversation', id);
@@ -163,11 +163,11 @@ const api = {
   chatAiRenameConversation(id: string, title: string): Promise<{ ok: boolean; error?: string }> {
     return ipcRenderer.invoke('chat:ai-rename-conversation', id, title);
   },
-  chatAiSend(conversationId: string, message: string, model?: string, provider?: string, imageBase64?: string, imageMimeType?: string): Promise<{ ok: boolean; error?: string }> {
-    return ipcRenderer.invoke('chat:ai-send', conversationId, message, model, provider, imageBase64, imageMimeType);
+  chatAiSend(conversationId: string, message: string, service?: string, provider?: string, imageBase64?: string, imageMimeType?: string): Promise<{ ok: boolean; error?: string }> {
+    return ipcRenderer.invoke('chat:ai-send', conversationId, message, service, provider, imageBase64, imageMimeType);
   },
-  chatAiSendStream(conversationId: string, message: string, model?: string, provider?: string, imageBase64?: string, imageMimeType?: string): Promise<{ ok: boolean; error?: string }> {
-    return ipcRenderer.invoke('chat:ai-send-stream', conversationId, message, model, provider, imageBase64, imageMimeType);
+  chatAiSendStream(conversationId: string, message: string, service?: string, provider?: string, imageBase64?: string, imageMimeType?: string): Promise<{ ok: boolean; error?: string }> {
+    return ipcRenderer.invoke('chat:ai-send-stream', conversationId, message, service, provider, imageBase64, imageMimeType);
   },
   chatAiAbort(): Promise<{ ok: boolean }> {
     return ipcRenderer.invoke('chat:ai-abort');

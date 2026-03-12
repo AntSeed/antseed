@@ -28,6 +28,6 @@ export interface PeerOffering {
   description: string;
   inputSchema?: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;
-  models?: string[];
+  services?: string[];
   pricing: PricingTier;
 }

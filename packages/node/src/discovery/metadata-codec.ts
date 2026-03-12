@@ -2,26 +2,26 @@ import type { PeerMetadata } from "./peer-metadata.js";
 import type { PeerOffering } from "../types/capability.js";
 import { hexToBytes, bytesToHex } from "../utils/hex.js";
 import { toPeerId } from "../types/peer.js";
-import type { ModelApiProtocol } from "../types/model-api.js";
-import { isKnownModelApiProtocol } from "../types/model-api.js";
+import type { ServiceApiProtocol } from "../types/service-api.js";
+import { isKnownServiceApiProtocol } from "../types/service-api.js";
 
-const MODEL_CATEGORIES_METADATA_VERSION = 3;
-const MODEL_API_PROTOCOLS_METADATA_VERSION = 4;
+const SERVICE_CATEGORIES_METADATA_VERSION = 3;
+const SERVICE_API_PROTOCOLS_METADATA_VERSION = 4;
 
 /**
  * Encode metadata into binary format:
  * [version:1][peerId:32][regionLen:1][region:N][timestamp:8 BigUint64][providerCount:1]
  * for each provider:
- *   [providerLen:1][provider:N][modelCount:1][models...]
+ *   [providerLen:1][provider:N][serviceCount:1][services...]
  *   [defaultInputPrice:4][defaultOutputPrice:4]
- *   [modelPricingCount:1][modelPricingEntries...]
- *   [modelCategoryCount:1][modelCategoryEntries...] (v3+ only)
- *   [modelApiProtocolCount:1][modelApiProtocolEntries...] (v4+ only)
+ *   [servicePricingCount:1][servicePricingEntries...]
+ *   [serviceCategoryCount:1][serviceCategoryEntries...] (v3+ only)
+ *   [serviceApiProtocolCount:1][serviceApiProtocolEntries...] (v4+ only)
  *   [maxConcurrency:2][currentLoad:2]
- * modelPricingEntry: [modelLen:1][model:N][inputPrice:4][outputPrice:4]
- * modelCategoryEntry(v3+): [modelLen:1][model:N][categoryCount:1][categories...]
+ * servicePricingEntry: [serviceLen:1][service:N][inputPrice:4][outputPrice:4]
+ * serviceCategoryEntry(v3+): [serviceLen:1][service:N][categoryCount:1][categories...]
  * category(v3+): [categoryLen:1][category:N]
- * modelApiProtocolEntry(v4+): [modelLen:1][model:N][protocolCount:1][protocols...]
+ * serviceApiProtocolEntry(v4+): [serviceLen:1][service:N][protocolCount:1][protocols...]
  * protocol(v4+): [protocolLen:1][protocol:N]
  * [displayNameFlag:1][displayNameLen:1][displayName:N] (v3+ only)
  * [signature:64]
@@ -45,8 +45,8 @@ export function encodeMetadataForSigning(metadata: PeerMetadata): Uint8Array {
 
 function encodeBody(metadata: PeerMetadata): Uint8Array {
   const parts: Uint8Array[] = [];
-  const hasModelCategoryExtensions = metadata.version >= MODEL_CATEGORIES_METADATA_VERSION;
-  const hasModelApiProtocolExtensions = metadata.version >= MODEL_API_PROTOCOLS_METADATA_VERSION;
+  const hasServiceCategoryExtensions = metadata.version >= SERVICE_CATEGORIES_METADATA_VERSION;
+  const hasServiceApiProtocolExtensions = metadata.version >= SERVICE_API_PROTOCOLS_METADATA_VERSION;
 
   // version: 1 byte
   parts.push(new Uint8Array([metadata.version]));
@@ -74,14 +74,14 @@ function encodeBody(metadata: PeerMetadata): Uint8Array {
     parts.push(new Uint8Array([providerNameBytes.length]));
     parts.push(providerNameBytes);
 
-    // modelCount: 1 byte
-    parts.push(new Uint8Array([p.models.length]));
+    // serviceCount: 1 byte
+    parts.push(new Uint8Array([p.services.length]));
 
-    // each model: length-prefixed
-    for (const model of p.models) {
-      const modelBytes = new TextEncoder().encode(model);
-      parts.push(new Uint8Array([modelBytes.length]));
-      parts.push(modelBytes);
+    // each service: length-prefixed
+    for (const service of p.services) {
+      const serviceBytes = new TextEncoder().encode(service);
+      parts.push(new Uint8Array([serviceBytes.length]));
+      parts.push(serviceBytes);
     }
 
     // default input price: 4 bytes (float32)
@@ -94,28 +94,28 @@ function encodeBody(metadata: PeerMetadata): Uint8Array {
     new DataView(outputPriceBuf).setFloat32(0, p.defaultPricing.outputUsdPerMillion, false);
     parts.push(new Uint8Array(outputPriceBuf));
 
-    // modelPricing entries
-    const modelPricingEntries = Object.entries(p.modelPricing ?? {}).sort(([a], [b]) =>
+    // servicePricing entries
+    const servicePricingEntries = Object.entries(p.servicePricing ?? {}).sort(([a], [b]) =>
       a.localeCompare(b),
     );
-    parts.push(new Uint8Array([modelPricingEntries.length]));
-    for (const [modelName, pricing] of modelPricingEntries) {
-      const modelNameBytes = new TextEncoder().encode(modelName);
-      parts.push(new Uint8Array([modelNameBytes.length]));
-      parts.push(modelNameBytes);
+    parts.push(new Uint8Array([servicePricingEntries.length]));
+    for (const [serviceName, pricing] of servicePricingEntries) {
+      const serviceNameBytes = new TextEncoder().encode(serviceName);
+      parts.push(new Uint8Array([serviceNameBytes.length]));
+      parts.push(serviceNameBytes);
 
-      const modelInputBuf = new ArrayBuffer(4);
-      new DataView(modelInputBuf).setFloat32(0, pricing.inputUsdPerMillion, false);
-      parts.push(new Uint8Array(modelInputBuf));
+      const serviceInputBuf = new ArrayBuffer(4);
+      new DataView(serviceInputBuf).setFloat32(0, pricing.inputUsdPerMillion, false);
+      parts.push(new Uint8Array(serviceInputBuf));
 
-      const modelOutputBuf = new ArrayBuffer(4);
-      new DataView(modelOutputBuf).setFloat32(0, pricing.outputUsdPerMillion, false);
-      parts.push(new Uint8Array(modelOutputBuf));
+      const serviceOutputBuf = new ArrayBuffer(4);
+      new DataView(serviceOutputBuf).setFloat32(0, pricing.outputUsdPerMillion, false);
+      parts.push(new Uint8Array(serviceOutputBuf));
     }
 
-    if (hasModelCategoryExtensions) {
-      const modelCategoryEntries = Object.entries(p.modelCategories ?? {})
-        .map(([modelName, categories]) => {
+    if (hasServiceCategoryExtensions) {
+      const serviceCategoryEntries = Object.entries(p.serviceCategories ?? {})
+        .map(([serviceName, categories]) => {
           const normalizedCategories = Array.from(
             new Set(
               categories
@@ -123,16 +123,16 @@ function encodeBody(metadata: PeerMetadata): Uint8Array {
                 .filter((category) => category.length > 0),
             ),
           ).sort();
-          return [modelName, normalizedCategories] as const;
+          return [serviceName, normalizedCategories] as const;
         })
         .filter(([, categories]) => categories.length > 0)
         .sort(([a], [b]) => a.localeCompare(b));
 
-      parts.push(new Uint8Array([modelCategoryEntries.length]));
-      for (const [modelName, categories] of modelCategoryEntries) {
-        const modelNameBytes = new TextEncoder().encode(modelName);
-        parts.push(new Uint8Array([modelNameBytes.length]));
-        parts.push(modelNameBytes);
+      parts.push(new Uint8Array([serviceCategoryEntries.length]));
+      for (const [serviceName, categories] of serviceCategoryEntries) {
+        const serviceNameBytes = new TextEncoder().encode(serviceName);
+        parts.push(new Uint8Array([serviceNameBytes.length]));
+        parts.push(serviceNameBytes);
         parts.push(new Uint8Array([categories.length]));
         for (const category of categories) {
           const categoryBytes = new TextEncoder().encode(category);
@@ -142,26 +142,26 @@ function encodeBody(metadata: PeerMetadata): Uint8Array {
       }
     }
 
-    if (hasModelApiProtocolExtensions) {
-      const modelApiProtocolEntries = Object.entries(p.modelApiProtocols ?? {})
-        .map(([modelName, protocols]) => {
+    if (hasServiceApiProtocolExtensions) {
+      const serviceApiProtocolEntries = Object.entries(p.serviceApiProtocols ?? {})
+        .map(([serviceName, protocols]) => {
           const normalizedProtocols = Array.from(
             new Set(
               protocols
                 .map((protocol) => protocol.trim().toLowerCase())
-                .filter((protocol): protocol is ModelApiProtocol => isKnownModelApiProtocol(protocol)),
+                .filter((protocol): protocol is ServiceApiProtocol => isKnownServiceApiProtocol(protocol)),
             ),
           ).sort();
-          return [modelName, normalizedProtocols] as const;
+          return [serviceName, normalizedProtocols] as const;
         })
         .filter(([, protocols]) => protocols.length > 0)
         .sort(([a], [b]) => a.localeCompare(b));
 
-      parts.push(new Uint8Array([modelApiProtocolEntries.length]));
-      for (const [modelName, protocols] of modelApiProtocolEntries) {
-        const modelNameBytes = new TextEncoder().encode(modelName);
-        parts.push(new Uint8Array([modelNameBytes.length]));
-        parts.push(modelNameBytes);
+      parts.push(new Uint8Array([serviceApiProtocolEntries.length]));
+      for (const [serviceName, protocols] of serviceApiProtocolEntries) {
+        const serviceNameBytes = new TextEncoder().encode(serviceName);
+        parts.push(new Uint8Array([serviceNameBytes.length]));
+        parts.push(serviceNameBytes);
         parts.push(new Uint8Array([protocols.length]));
         for (const protocol of protocols) {
           const protocolBytes = new TextEncoder().encode(protocol);
@@ -182,7 +182,7 @@ function encodeBody(metadata: PeerMetadata): Uint8Array {
     parts.push(new Uint8Array(loadBuf));
   }
 
-  if (hasModelCategoryExtensions) {
+  if (hasServiceCategoryExtensions) {
     const displayName = metadata.displayName?.trim();
     if (displayName && displayName.length > 0) {
       const displayNameBytes = new TextEncoder().encode(displayName);
@@ -223,12 +223,12 @@ function encodeBody(metadata: PeerMetadata): Uint8Array {
     new DataView(priceBuf).setFloat32(0, o.pricing.pricePerUnit, false);
     parts.push(new Uint8Array(priceBuf));
 
-    const models = o.models ?? [];
-    parts.push(new Uint8Array([models.length]));
-    for (const model of models) {
-      const modelBytes = new TextEncoder().encode(model);
-      parts.push(new Uint8Array([modelBytes.length]));
-      parts.push(modelBytes);
+    const offeringServices = o.services ?? [];
+    parts.push(new Uint8Array([offeringServices.length]));
+    for (const service of offeringServices) {
+      const serviceBytes = new TextEncoder().encode(service);
+      parts.push(new Uint8Array([serviceBytes.length]));
+      parts.push(serviceBytes);
     }
   }
 
@@ -282,8 +282,8 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
   // version: 1 byte
   checkBounds(offset, 1, data.length);
   const version = data[offset]!;
-  const hasModelCategoryExtensions = version >= MODEL_CATEGORIES_METADATA_VERSION;
-  const hasModelApiProtocolExtensions = version >= MODEL_API_PROTOCOLS_METADATA_VERSION;
+  const hasServiceCategoryExtensions = version >= SERVICE_CATEGORIES_METADATA_VERSION;
+  const hasServiceApiProtocolExtensions = version >= SERVICE_API_PROTOCOLS_METADATA_VERSION;
   offset += 1;
 
   // peerId: 32 bytes
@@ -321,20 +321,20 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
     const provider = new TextDecoder().decode(data.slice(offset, offset + providerLen));
     offset += providerLen;
 
-    // modelCount: 1 byte
+    // serviceCount: 1 byte
     checkBounds(offset, 1, data.length);
-    const modelCount = data[offset]!;
+    const serviceCount = data[offset]!;
     offset += 1;
 
-    const models: string[] = [];
-    for (let j = 0; j < modelCount; j++) {
+    const services: string[] = [];
+    for (let j = 0; j < serviceCount; j++) {
       checkBounds(offset, 1, data.length);
-      const modelLen = data[offset]!;
+      const serviceLen = data[offset]!;
       offset += 1;
-      checkBounds(offset, modelLen, data.length);
-      const model = new TextDecoder().decode(data.slice(offset, offset + modelLen));
-      offset += modelLen;
-      models.push(model);
+      checkBounds(offset, serviceLen, data.length);
+      const service = new TextDecoder().decode(data.slice(offset, offset + serviceLen));
+      offset += serviceLen;
+      services.push(service);
     }
 
     // default input price: 4 bytes float32
@@ -349,19 +349,19 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
     const defaultOutputUsdPerMillion = outputPriceView.getFloat32(0, false);
     offset += 4;
 
-    // modelPricing entries
+    // servicePricing entries
     checkBounds(offset, 1, data.length);
-    const modelPricingCount = data[offset]!;
+    const servicePricingCount = data[offset]!;
     offset += 1;
 
-    const modelPricing: Record<string, { inputUsdPerMillion: number; outputUsdPerMillion: number }> = {};
-    for (let j = 0; j < modelPricingCount; j++) {
+    const servicePricing: Record<string, { inputUsdPerMillion: number; outputUsdPerMillion: number }> = {};
+    for (let j = 0; j < servicePricingCount; j++) {
       checkBounds(offset, 1, data.length);
-      const pricedModelLen = data[offset]!;
+      const pricedServiceLen = data[offset]!;
       offset += 1;
-      checkBounds(offset, pricedModelLen, data.length);
-      const pricedModelName = new TextDecoder().decode(data.slice(offset, offset + pricedModelLen));
-      offset += pricedModelLen;
+      checkBounds(offset, pricedServiceLen, data.length);
+      const pricedServiceName = new TextDecoder().decode(data.slice(offset, offset + pricedServiceLen));
+      offset += pricedServiceLen;
 
       checkBounds(offset, 4, data.length);
       const pricedInputView = new DataView(data.buffer, data.byteOffset + offset, 4);
@@ -373,26 +373,26 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
       const outputUsdPerMillion = pricedOutputView.getFloat32(0, false);
       offset += 4;
 
-      modelPricing[pricedModelName] = {
+      servicePricing[pricedServiceName] = {
         inputUsdPerMillion,
         outputUsdPerMillion,
       };
     }
 
-    let modelCategories: Record<string, string[]> | undefined;
-    if (hasModelCategoryExtensions) {
+    let serviceCategories: Record<string, string[]> | undefined;
+    if (hasServiceCategoryExtensions) {
       checkBounds(offset, 1, data.length);
-      const modelCategoryCount = data[offset]!;
+      const serviceCategoryCount = data[offset]!;
       offset += 1;
-      if (modelCategoryCount > 0) {
-        modelCategories = {};
-        for (let j = 0; j < modelCategoryCount; j++) {
+      if (serviceCategoryCount > 0) {
+        serviceCategories = {};
+        for (let j = 0; j < serviceCategoryCount; j++) {
           checkBounds(offset, 1, data.length);
-          const categorizedModelLen = data[offset]!;
+          const categorizedServiceLen = data[offset]!;
           offset += 1;
-          checkBounds(offset, categorizedModelLen, data.length);
-          const categorizedModelName = new TextDecoder().decode(data.slice(offset, offset + categorizedModelLen));
-          offset += categorizedModelLen;
+          checkBounds(offset, categorizedServiceLen, data.length);
+          const categorizedServiceName = new TextDecoder().decode(data.slice(offset, offset + categorizedServiceLen));
+          offset += categorizedServiceLen;
 
           checkBounds(offset, 1, data.length);
           const categoryCount = data[offset]!;
@@ -407,30 +407,30 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
             offset += categoryLen;
             categories.push(category);
           }
-          modelCategories[categorizedModelName] = categories;
+          serviceCategories[categorizedServiceName] = categories;
         }
       }
     }
 
-    let modelApiProtocols: Record<string, ModelApiProtocol[]> | undefined;
-    if (hasModelApiProtocolExtensions) {
+    let serviceApiProtocols: Record<string, ServiceApiProtocol[]> | undefined;
+    if (hasServiceApiProtocolExtensions) {
       checkBounds(offset, 1, data.length);
-      const modelApiProtocolCount = data[offset]!;
+      const serviceApiProtocolCount = data[offset]!;
       offset += 1;
-      if (modelApiProtocolCount > 0) {
-        modelApiProtocols = {};
-        for (let j = 0; j < modelApiProtocolCount; j++) {
+      if (serviceApiProtocolCount > 0) {
+        serviceApiProtocols = {};
+        for (let j = 0; j < serviceApiProtocolCount; j++) {
           checkBounds(offset, 1, data.length);
-          const protocolModelLen = data[offset]!;
+          const protocolServiceLen = data[offset]!;
           offset += 1;
-          checkBounds(offset, protocolModelLen, data.length);
-          const protocolModelName = new TextDecoder().decode(data.slice(offset, offset + protocolModelLen));
-          offset += protocolModelLen;
+          checkBounds(offset, protocolServiceLen, data.length);
+          const protocolServiceName = new TextDecoder().decode(data.slice(offset, offset + protocolServiceLen));
+          offset += protocolServiceLen;
 
           checkBounds(offset, 1, data.length);
           const protocolCount = data[offset]!;
           offset += 1;
-          const protocols: ModelApiProtocol[] = [];
+          const protocols: ServiceApiProtocol[] = [];
           for (let k = 0; k < protocolCount; k++) {
             checkBounds(offset, 1, data.length);
             const protocolLen = data[offset]!;
@@ -438,9 +438,9 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
             checkBounds(offset, protocolLen, data.length);
             const protocol = new TextDecoder().decode(data.slice(offset, offset + protocolLen));
             offset += protocolLen;
-            protocols.push(protocol as ModelApiProtocol);
+            protocols.push(protocol as ServiceApiProtocol);
           }
-          modelApiProtocols[protocolModelName] = protocols;
+          serviceApiProtocols[protocolServiceName] = protocols;
         }
       }
     }
@@ -459,21 +459,21 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
 
     providers.push({
       provider,
-      models,
+      services,
       defaultPricing: {
         inputUsdPerMillion: defaultInputUsdPerMillion,
         outputUsdPerMillion: defaultOutputUsdPerMillion,
       },
-      ...(modelPricingCount > 0 ? { modelPricing } : {}),
-      ...(modelCategories && Object.keys(modelCategories).length > 0 ? { modelCategories } : {}),
-      ...(modelApiProtocols && Object.keys(modelApiProtocols).length > 0 ? { modelApiProtocols } : {}),
+      ...(servicePricingCount > 0 ? { servicePricing } : {}),
+      ...(serviceCategories && Object.keys(serviceCategories).length > 0 ? { serviceCategories } : {}),
+      ...(serviceApiProtocols && Object.keys(serviceApiProtocols).length > 0 ? { serviceApiProtocols } : {}),
       maxConcurrency,
       currentLoad,
     });
   }
 
   let displayName: string | undefined;
-  if (hasModelCategoryExtensions) {
+  if (hasServiceCategoryExtensions) {
     checkBounds(offset, 1, data.length - 64);
     const displayNameFlag = data[offset]!;
     offset += 1;
@@ -521,19 +521,19 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
       const pricePerUnit = new DataView(data.buffer, data.byteOffset + offset, 4).getFloat32(0, false); offset += 4;
 
       checkBounds(offset, 1, data.length - 64);
-      const modelCount = data[offset]!; offset += 1;
-      const models: string[] = [];
-      for (let j = 0; j < modelCount; j++) {
+      const offeringServiceCount = data[offset]!; offset += 1;
+      const offeringServices: string[] = [];
+      for (let j = 0; j < offeringServiceCount; j++) {
         checkBounds(offset, 1, data.length - 64);
-        const modelLen = data[offset]!; offset += 1;
-        checkBounds(offset, modelLen, data.length - 64);
-        models.push(new TextDecoder().decode(data.slice(offset, offset + modelLen))); offset += modelLen;
+        const serviceLen = data[offset]!; offset += 1;
+        checkBounds(offset, serviceLen, data.length - 64);
+        offeringServices.push(new TextDecoder().decode(data.slice(offset, offset + serviceLen))); offset += serviceLen;
       }
 
       offerings.push({
         capability: capability as PeerOffering['capability'],
         name, description,
-        models: models.length > 0 ? models : undefined,
+        services: offeringServices.length > 0 ? offeringServices : undefined,
         pricing: { unit, pricePerUnit, currency: 'USD' },
       });
     }

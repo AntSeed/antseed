@@ -1,7 +1,7 @@
 import { useState, useMemo, useCallback } from 'react';
 import Skeleton from 'react-loading-skeleton';
 import 'react-loading-skeleton/dist/skeleton.css';
-import type { ChatModelOptionEntry } from '../../../core/state';
+import type { ChatServiceOptionEntry } from '../../../core/state';
 import styles from './DiscoverWelcome.module.scss';
 
 /* ── Tag colour map (from Figma design tokens) ──────────────────────── */
@@ -42,9 +42,9 @@ type CardItem = {
   gradient: string;
 };
 
-/* ── Model-name → visual gradient ────────────────────────────────────── */
+/* ── Service-name → visual gradient ──────────────────────────────────── */
 
-const MODEL_GRADIENTS: Record<string, string> = {
+const SERVICE_GRADIENTS: Record<string, string> = {
   llama:     'linear-gradient(135deg, #0668E1, #0553B7)',  // Meta blue
   deepseek:  'linear-gradient(135deg, #536DFE, #304FFE)',  // DeepSeek indigo
   kimi:      'linear-gradient(135deg, #0D0D18, #252545)',  // Moonshot dark
@@ -85,19 +85,19 @@ function simpleHash(s: string): number {
   return Math.abs(h);
 }
 
-function getGradient(modelId: string): string {
-  const lower = modelId.toLowerCase();
-  for (const [key, gradient] of Object.entries(MODEL_GRADIENTS)) {
+function getGradient(serviceId: string): string {
+  const lower = serviceId.toLowerCase();
+  for (const [key, gradient] of Object.entries(SERVICE_GRADIENTS)) {
     if (lower.includes(key)) return gradient;
   }
   return FALLBACK_GRADIENTS[simpleHash(lower) % FALLBACK_GRADIENTS.length];
 }
 
-/* ── Infer tags from model name / protocol ───────────────────────────── */
+/* ── Infer tags from service name / protocol ───────────────────────────── */
 
-function inferTags(modelId: string, protocol: string): string[] {
+function inferTags(serviceId: string, protocol: string): string[] {
   const tags: string[] = ['ANON'];
-  const lower = modelId.toLowerCase();
+  const lower = serviceId.toLowerCase();
 
   if (lower.includes('code') || lower.includes('claude') || lower.includes('codex') || lower.includes('codebot') || lower.includes('starcoder'))
     tags.push('Code');
@@ -115,9 +115,9 @@ function inferTags(modelId: string, protocol: string): string[] {
   return tags;
 }
 
-/* ── Build cards from network model options ──────────────────────────── */
+/* ── Build cards from network service options ──────────────────────────── */
 
-function buildCards(options: ChatModelOptionEntry[]): CardItem[] {
+function buildCards(options: ChatServiceOptionEntry[]): CardItem[] {
   return options.map((opt) => ({
     name: opt.label || opt.id,
     value: opt.value,
@@ -212,17 +212,17 @@ function SkeletonCard() {
 /* ── Main component ──────────────────────────────────────────────────── */
 
 type DiscoverWelcomeProps = {
-  modelOptions: ChatModelOptionEntry[];
-  onStartChatting: (modelValue: string) => void;
+  serviceOptions: ChatServiceOptionEntry[];
+  onStartChatting: (serviceValue: string) => void;
 };
 
-export function DiscoverWelcome({ modelOptions, onStartChatting }: DiscoverWelcomeProps) {
+export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWelcomeProps) {
   const [activeFilter, setActiveFilter] = useState('All');
 
-  const hasNetworkData = modelOptions.length > 0;
+  const hasNetworkData = serviceOptions.length > 0;
   const cards = useMemo(
-    () => (hasNetworkData ? buildCards(modelOptions) : []),
-    [hasNetworkData, modelOptions],
+    () => (hasNetworkData ? buildCards(serviceOptions) : []),
+    [hasNetworkData, serviceOptions],
   );
 
   const filtered = useMemo(
@@ -245,7 +245,7 @@ export function DiscoverWelcome({ modelOptions, onStartChatting }: DiscoverWelco
           What do you need <span className={styles.headingAccent}>AI</span> for?
         </h1>
         <p className={styles.subtitle}>
-          Pick a model or agent to start. Filter by what you need.
+          Pick a service or agent to start. Filter by what you need.
           Everything is anonymous — no account required.
         </p>
       </div>
@@ -271,7 +271,7 @@ export function DiscoverWelcome({ modelOptions, onStartChatting }: DiscoverWelco
               <div className={styles.loadingHint}>
                 Connecting to network...
               </div>
-              <div className={styles.sectionLabel}>Models</div>
+              <div className={styles.sectionLabel}>Services</div>
               <div className={styles.cardGrid}>
                 {Array.from({ length: SKELETON_CARD_COUNT }, (_, i) => (
                   <SkeletonCard key={i} />
@@ -280,7 +280,7 @@ export function DiscoverWelcome({ modelOptions, onStartChatting }: DiscoverWelco
             </>
           ) : filtered.length > 0 ? (
             <>
-              <div className={styles.sectionLabel}>Available Models</div>
+              <div className={styles.sectionLabel}>Available Services</div>
               <div className={styles.cardGrid}>
                 {filtered.map((item) => (
                   <Card
@@ -292,7 +292,7 @@ export function DiscoverWelcome({ modelOptions, onStartChatting }: DiscoverWelco
               </div>
             </>
           ) : (
-            <div className={styles.emptyFilter}>No models match this filter.</div>
+            <div className={styles.emptyFilter}>No services match this filter.</div>
           )}
         </div>
 

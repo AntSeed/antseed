@@ -16,9 +16,9 @@ export function AppShell() {
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
   const [setupVisible, setSetupVisible] = useState(false);
 
-  const hasModels = snap.chatModelOptions.length > 0;
+  const hasServices = snap.chatServiceOptions.length > 0;
 
-  // Show setup screen while needed; hide once plugin installed and models are available.
+  // Show setup screen while needed; hide once plugin installed and services are available.
   // Gate on appSetupStatusKnown so we don't briefly flash the normal app shell before
   // the IPC round-trip resolves and reveals that setup is actually required.
   useEffect(() => {
@@ -27,13 +27,13 @@ export function AppShell() {
       setSetupVisible(false);
       return;
     }
-    if (!snap.appSetupComplete || !hasModels) {
+    if (!snap.appSetupComplete || !hasServices) {
       setSetupVisible(true);
     } else {
       const timer = setTimeout(() => setSetupVisible(false), 900);
       return () => clearTimeout(timer);
     }
-  }, [snap.appSetupStatusKnown, snap.appSetupNeeded, snap.appSetupComplete, hasModels]);
+  }, [snap.appSetupStatusKnown, snap.appSetupNeeded, snap.appSetupComplete, hasServices]);
 
   const showSetup = setupVisible;
 
@@ -57,8 +57,8 @@ export function AppShell() {
   }, [hasConversations]);
 
   const handleStartChatting = useCallback(
-    (modelValue: string) => {
-      actions.handleModelChange(modelValue);
+    (serviceValue: string) => {
+      actions.handleServiceChange(serviceValue);
       actions.startNewChat();
       setOnboardingDismissed(true);
       setActiveView('chat');
@@ -77,7 +77,7 @@ export function AppShell() {
         <div className="app-container">
           <main className="main-content">
             <DiscoverWelcome
-              modelOptions={snap.chatModelOptions}
+              serviceOptions={snap.chatServiceOptions}
               onStartChatting={handleStartChatting}
             />
           </main>

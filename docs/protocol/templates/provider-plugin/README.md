@@ -43,14 +43,14 @@ import type { SerializedHttpRequest, SerializedHttpResponse } from '@antseed/nod
 
 export class MyProvider implements Provider {
   readonly name = 'my-provider';
-  readonly models = ['my-model-v1'];
+  readonly services = ['my-model-v1'];
   readonly pricing = {
     defaults: {
       inputUsdPerMillion: 2,
       outputUsdPerMillion: 2,
     },
   };
-  readonly modelCategories = { 'my-model-v1': ['coding'] };
+  readonly serviceCategories = { 'my-model-v1': ['coding'] };
   readonly maxConcurrency = 10;
 
   private _current = 0;
@@ -101,7 +101,7 @@ Markdown files injected into **every** request. Use for instructions the LLM alw
     "middleware": [
       { "file": "./prompts/persona.md", "position": "system-prepend" },
       { "file": "./prompts/output-format.md", "position": "append", "role": "user" },
-      { "file": "./prompts/sonnet-rules.md", "position": "system-append", "models": ["claude-sonnet-4-5", "claude-sonnet-4-6"] }
+      { "file": "./prompts/sonnet-rules.md", "position": "system-append", "services": ["claude-sonnet-4-5", "claude-sonnet-4-6"] }
     ]
   }
 }
@@ -114,7 +114,7 @@ Each entry supports:
 | `file` | Yes | Path to a `.md` file (relative to config or absolute) |
 | `position` | Yes | `system-prepend`, `system-append`, `prepend`, or `append` |
 | `role` | No | Role for `prepend`/`append` positions. Defaults to `user` |
-| `models` | No | If set, only inject for requests targeting one of these model IDs. Omit to apply to all models. Must contain at least one model ID |
+| `services` | No | If set, only inject for requests targeting one of these service IDs. Omit to apply to all services. Must contain at least one service ID |
 
 ### Skills (loaded on demand)
 
@@ -188,11 +188,11 @@ npm run verify
 | Property / Method | Type | Description |
 |---|---|---|
 | `name` | `string` | Unique provider name |
-| `models` | `string[]` | Supported model IDs |
+| `services` | `string[]` | Supported service IDs |
 | `pricing.defaults.inputUsdPerMillion` | `number` | Default input pricing in USD per 1M tokens |
 | `pricing.defaults.outputUsdPerMillion` | `number` | Default output pricing in USD per 1M tokens |
-| `pricing.models?` | `Record<string, { inputUsdPerMillion; outputUsdPerMillion }>` | Optional per-model pricing overrides |
-| `modelCategories?` | `Record<string, string[]>` | Optional per-model discovery tags (e.g. `coding`, `privacy`) |
+| `pricing.services?` | `Record<string, { inputUsdPerMillion; outputUsdPerMillion }>` | Optional per-service pricing overrides |
+| `serviceCategories?` | `Record<string, string[]>` | Optional per-service discovery tags (e.g. `coding`, `privacy`) |
 | `maxConcurrency` | `number` | Max concurrent requests |
 | `handleRequest(req)` | `Promise<SerializedHttpResponse>` | Handle an inference request |
 | `getCapacity()` | `{ current: number; max: number }` | Current / max concurrency |

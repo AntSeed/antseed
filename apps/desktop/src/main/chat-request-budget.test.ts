@@ -12,7 +12,7 @@ test('resolveRequestMaxTokens prefers explicit stream option override', () => {
   assert.equal(value, 32_000);
 });
 
-test('resolveRequestMaxTokens falls back to model maxTokens', () => {
+test('resolveRequestMaxTokens falls back to service maxTokens', () => {
   const value = resolveRequestMaxTokens(
     { maxTokens: 16_384 },
     undefined,

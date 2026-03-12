@@ -24,7 +24,7 @@ async function waitForPeers(
 
 class DisconnectingProvider implements Provider {
   readonly name = 'anthropic';
-  readonly models = ['claude-sonnet-4-5-20250929'];
+  readonly services = ['claude-sonnet-4-5-20250929'];
   readonly pricing = {
     defaults: {
       inputUsdPerMillion: 1,

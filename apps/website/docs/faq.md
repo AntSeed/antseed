@@ -57,17 +57,17 @@ AntSeed the protocol does not log requests. We don't operate the nodes — provi
 
 ---
 
-## Models & Availability
+## Services & Availability
 
-### What models are available?
+### What services are available?
 
-Any model a provider offers. The network is open — any provider can list new models. See what's live right now on the [network page](/network).
+Any service a provider offers. The network is open — any provider can list new services. See what's live right now on the [network page](/network).
 
 ### Can I use closed-source models like GPT-4?
 
 If a provider offers access to GPT-4 or other closed-source models, you can access them through AntSeed. The protocol is model-agnostic. Availability depends on what providers choose to offer.
 
-### What if a model goes offline?
+### What if a service goes offline?
 
 AntSeed automatically detects provider failures and reroutes to the next best available provider. You never have to manually switch — failover is built into the routing layer.
 

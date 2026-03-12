@@ -40,7 +40,7 @@ async function main(): Promise<void> {
   console.log('\n2. createProvider()');
   const provider = await p.createProvider({});
   assert(typeof provider.name === 'string' && provider.name.length > 0, 'provider.name is a non-empty string');
-  assert(Array.isArray(provider.models) && provider.models.length > 0, 'provider.models is non-empty array');
+  assert(Array.isArray(provider.services) && provider.services.length > 0, 'provider.services is non-empty array');
   assert(
     typeof provider.pricing?.defaults?.inputUsdPerMillion === 'number',
     'provider.pricing.defaults.inputUsdPerMillion is a number',

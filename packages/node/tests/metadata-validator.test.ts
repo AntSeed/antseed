@@ -3,12 +3,12 @@ import {
   validateMetadata,
   MAX_METADATA_SIZE,
   MAX_PROVIDERS,
-  MAX_MODELS_PER_PROVIDER,
-  MAX_MODEL_NAME_LENGTH,
+  MAX_SERVICES_PER_PROVIDER,
+  MAX_SERVICE_NAME_LENGTH,
   MAX_REGION_LENGTH,
   MAX_DISPLAY_NAME_LENGTH,
-  MAX_MODEL_CATEGORY_LENGTH,
-  MAX_MODEL_API_PROTOCOLS_PER_MODEL,
+  MAX_SERVICE_CATEGORY_LENGTH,
+  MAX_SERVICE_API_PROTOCOLS_PER_SERVICE,
 } from '../src/discovery/metadata-validator.js';
 import { METADATA_VERSION, type PeerMetadata } from '../src/discovery/peer-metadata.js';
 
@@ -19,7 +19,7 @@ function validMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
     providers: [
       {
         provider: 'anthropic',
-        models: ['claude-3-opus'],
+        services: ['claude-3-opus'],
         defaultPricing: {
           inputUsdPerMillion: 15,
           outputUsdPerMillion: 75,
@@ -84,7 +84,7 @@ describe('validateMetadata', () => {
   it('should reject too many providers', () => {
     const providers = Array.from({ length: MAX_PROVIDERS + 1 }, (_, i) => ({
       provider: `p${i}`,
-      models: ['m'],
+      services: ['m'],
       defaultPricing: {
         inputUsdPerMillion: 1,
         outputUsdPerMillion: 1,
@@ -96,14 +96,14 @@ describe('validateMetadata', () => {
     expect(errors.some((e) => e.field === 'providers')).toBe(true);
   });
 
-  it('should reject too many models per provider', () => {
-    const models = Array.from({ length: MAX_MODELS_PER_PROVIDER + 1 }, (_, i) => `model-${i}`);
+  it('should reject too many services per provider', () => {
+    const services = Array.from({ length: MAX_SERVICES_PER_PROVIDER + 1 }, (_, i) => `service-${i}`);
     const errors = validateMetadata(
       validMetadata({
         providers: [
           {
             provider: 'test',
-            models,
+            services,
             defaultPricing: {
               inputUsdPerMillion: 1,
               outputUsdPerMillion: 1,
@@ -114,16 +114,16 @@ describe('validateMetadata', () => {
         ],
       })
     );
-    expect(errors.some((e) => e.field.includes('models'))).toBe(true);
+    expect(errors.some((e) => e.field.includes('services'))).toBe(true);
   });
 
-  it('should reject model name exceeding max length', () => {
+  it('should reject service name exceeding max length', () => {
     const errors = validateMetadata(
       validMetadata({
         providers: [
           {
             provider: 'test',
-            models: ['x'.repeat(MAX_MODEL_NAME_LENGTH + 1)],
+            services: ['x'.repeat(MAX_SERVICE_NAME_LENGTH + 1)],
             defaultPricing: {
               inputUsdPerMillion: 1,
               outputUsdPerMillion: 1,
@@ -134,23 +134,23 @@ describe('validateMetadata', () => {
         ],
       })
     );
-    expect(errors.some((e) => e.field.includes('models'))).toBe(true);
+    expect(errors.some((e) => e.field.includes('services'))).toBe(true);
   });
 
-  it('should reject modelPricing entries with model names exceeding max length', () => {
-    const longModelName = 'x'.repeat(MAX_MODEL_NAME_LENGTH + 1);
+  it('should reject servicePricing entries with service names exceeding max length', () => {
+    const longServiceName = 'x'.repeat(MAX_SERVICE_NAME_LENGTH + 1);
     const errors = validateMetadata(
       validMetadata({
         providers: [
           {
             provider: 'test',
-            models: ['m'],
+            services: ['m'],
             defaultPricing: {
               inputUsdPerMillion: 1,
               outputUsdPerMillion: 1,
             },
-            modelPricing: {
-              [longModelName]: {
+            servicePricing: {
+              [longServiceName]: {
                 inputUsdPerMillion: 2,
                 outputUsdPerMillion: 3,
               },
@@ -161,7 +161,7 @@ describe('validateMetadata', () => {
         ],
       })
     );
-    expect(errors.some((e) => e.field.includes('modelPricing'))).toBe(true);
+    expect(errors.some((e) => e.field.includes('servicePricing'))).toBe(true);
   });
 
   it('should reject negative default input price', () => {
@@ -170,7 +170,7 @@ describe('validateMetadata', () => {
         providers: [
           {
             provider: 'test',
-            models: ['m'],
+            services: ['m'],
             defaultPricing: {
               inputUsdPerMillion: -1,
               outputUsdPerMillion: 1,
@@ -190,7 +190,7 @@ describe('validateMetadata', () => {
         providers: [
           {
             provider: 'test',
-            models: ['m'],
+            services: ['m'],
             defaultPricing: {
               inputUsdPerMillion: 1,
               outputUsdPerMillion: -1,
@@ -204,18 +204,18 @@ describe('validateMetadata', () => {
     expect(errors.some((e) => e.field.includes('defaultPricing.outputUsdPerMillion'))).toBe(true);
   });
 
-  it('should reject model pricing entries with missing output half', () => {
+  it('should reject service pricing entries with missing output half', () => {
     const errors = validateMetadata(
       validMetadata({
         providers: [
           {
             provider: 'test',
-            models: ['m'],
+            services: ['m'],
             defaultPricing: {
               inputUsdPerMillion: 1,
               outputUsdPerMillion: 1,
             },
-            modelPricing: {
+            servicePricing: {
               m: {
                 inputUsdPerMillion: 2,
               } as any,
@@ -226,7 +226,7 @@ describe('validateMetadata', () => {
         ],
       })
     );
-    expect(errors.some((e) => e.field.includes('modelPricing.m.outputUsdPerMillion'))).toBe(true);
+    expect(errors.some((e) => e.field.includes('servicePricing.m.outputUsdPerMillion'))).toBe(true);
   });
 
   it('should reject maxConcurrency < 1', () => {
@@ -235,7 +235,7 @@ describe('validateMetadata', () => {
         providers: [
           {
             provider: 'test',
-            models: ['m'],
+            services: ['m'],
             defaultPricing: {
               inputUsdPerMillion: 1,
               outputUsdPerMillion: 1,
@@ -255,7 +255,7 @@ describe('validateMetadata', () => {
         providers: [
           {
             provider: 'test',
-            models: ['m'],
+            services: ['m'],
             defaultPricing: {
               inputUsdPerMillion: 1,
               outputUsdPerMillion: 1,
@@ -289,17 +289,17 @@ describe('validateMetadata', () => {
     expect(errors.some((e) => e.field === 'displayName')).toBe(true);
   });
 
-  it('should reject categories for a model not listed by provider', () => {
+  it('should reject categories for a service not listed by provider', () => {
     const errors = validateMetadata(validMetadata({
       providers: [
         {
           provider: 'test',
-          models: ['m1'],
+          services: ['m1'],
           defaultPricing: {
             inputUsdPerMillion: 1,
             outputUsdPerMillion: 1,
           },
-          modelCategories: {
+          serviceCategories: {
             m2: ['privacy'],
           },
           maxConcurrency: 1,
@@ -307,84 +307,84 @@ describe('validateMetadata', () => {
         },
       ],
     }));
-    expect(errors.some((e) => e.field.includes('modelCategories.m2'))).toBe(true);
+    expect(errors.some((e) => e.field.includes('serviceCategories.m2'))).toBe(true);
   });
 
-  it('should allow model categories when provider declares wildcard models', () => {
+  it('should allow service categories when provider declares wildcard services', () => {
     const errors = validateMetadata(validMetadata({
       providers: [
         {
           provider: 'test',
-          models: [],
+          services: [],
           defaultPricing: {
             inputUsdPerMillion: 1,
             outputUsdPerMillion: 1,
           },
-          modelCategories: {
-            'any-model': ['privacy'],
+          serviceCategories: {
+            'any-service': ['privacy'],
           },
           maxConcurrency: 1,
           currentLoad: 0,
         },
       ],
     }));
-    expect(errors.some((e) => e.field.includes('modelCategories.any-model'))).toBe(false);
+    expect(errors.some((e) => e.field.includes('serviceCategories.any-model'))).toBe(false);
   });
 
-  it('should reject invalid model category value', () => {
+  it('should reject invalid service category value', () => {
     const errors = validateMetadata(validMetadata({
       providers: [
         {
           provider: 'test',
-          models: ['m1'],
+          services: ['m1'],
           defaultPricing: {
             inputUsdPerMillion: 1,
             outputUsdPerMillion: 1,
           },
-          modelCategories: {
-            m1: [`${'x'.repeat(MAX_MODEL_CATEGORY_LENGTH)}!`],
+          serviceCategories: {
+            m1: [`${'x'.repeat(MAX_SERVICE_CATEGORY_LENGTH)}!`],
           },
           maxConcurrency: 1,
           currentLoad: 0,
         },
       ],
     }));
-    expect(errors.some((e) => e.field.includes('modelCategories.m1'))).toBe(true);
+    expect(errors.some((e) => e.field.includes('serviceCategories.m1'))).toBe(true);
   });
 
-  it('should reject model category entries with model names exceeding max length', () => {
-    const longModelName = 'x'.repeat(MAX_MODEL_NAME_LENGTH + 1);
+  it('should reject service category entries with service names exceeding max length', () => {
+    const longServiceName = 'x'.repeat(MAX_SERVICE_NAME_LENGTH + 1);
     const errors = validateMetadata(validMetadata({
       providers: [
         {
           provider: 'test',
-          models: [],
+          services: [],
           defaultPricing: {
             inputUsdPerMillion: 1,
             outputUsdPerMillion: 1,
           },
-          modelCategories: {
-            [longModelName]: ['privacy'],
+          serviceCategories: {
+            [longServiceName]: ['privacy'],
           },
           maxConcurrency: 1,
           currentLoad: 0,
         },
       ],
     }));
-    expect(errors.some((e) => e.field.includes('modelCategories'))).toBe(true);
+    expect(errors.some((e) => e.field.includes('serviceCategories'))).toBe(true);
   });
 
-  it('should reject model API protocols for a model not listed by provider', () => {
+  it('should reject service API protocols for a service not listed by provider', () => {
     const errors = validateMetadata(validMetadata({
       providers: [
         {
           provider: 'test',
-          models: ['m1'],
+          services: ['m1'],
           defaultPricing: {
             inputUsdPerMillion: 1,
             outputUsdPerMillion: 1,
           },
-          modelApiProtocols: {
+          serviceApiProtocols: {
             m2: ['openai-chat-completions'],
           },
           maxConcurrency: 1,
@@ -392,41 +392,41 @@ describe('validateMetadata', () => {
         },
       ],
     }));
-    expect(errors.some((e) => e.field.includes('modelApiProtocols.m2'))).toBe(true);
+    expect(errors.some((e) => e.field.includes('serviceApiProtocols.m2'))).toBe(true);
   });
 
-  it('should allow model API protocols when provider declares wildcard models', () => {
+  it('should allow service API protocols when provider declares wildcard services', () => {
     const errors = validateMetadata(validMetadata({
       providers: [
         {
           provider: 'test',
-          models: [],
+          services: [],
           defaultPricing: {
             inputUsdPerMillion: 1,
             outputUsdPerMillion: 1,
           },
-          modelApiProtocols: {
-            'any-model': ['openai-chat-completions'],
+          serviceApiProtocols: {
+            'any-service': ['openai-chat-completions'],
           },
           maxConcurrency: 1,
           currentLoad: 0,
         },
       ],
     }));
-    expect(errors.some((e) => e.field.includes('modelApiProtocols.any-model'))).toBe(false);
+    expect(errors.some((e) => e.field.includes('serviceApiProtocols.any-model'))).toBe(false);
   });
 
-  it('should reject unsupported model API protocol values', () => {
+  it('should reject unsupported service API protocol values', () => {
     const errors = validateMetadata(validMetadata({
       providers: [
         {
           provider: 'test',
-          models: ['m1'],
+          services: ['m1'],
           defaultPricing: {
             inputUsdPerMillion: 1,
             outputUsdPerMillion: 1,
           },
-          modelApiProtocols: {
+          serviceApiProtocols: {
             m1: ['not-a-real-protocol' as any],
           },
           maxConcurrency: 1,
@@ -434,21 +434,21 @@ describe('validateMetadata', () => {
         },
       ],
     }));
-    expect(errors.some((e) => e.field.includes('modelApiProtocols.m1'))).toBe(true);
+    expect(errors.some((e) => e.field.includes('serviceApiProtocols.m1'))).toBe(true);
   });
 
-  it('should reject too many model API protocols per model', () => {
+  it('should reject too many service API protocols per service', () => {
     const errors = validateMetadata(validMetadata({
       providers: [
         {
           provider: 'test',
-          models: ['m1'],
+          services: ['m1'],
           defaultPricing: {
             inputUsdPerMillion: 1,
             outputUsdPerMillion: 1,
           },
-          modelApiProtocols: {
-            m1: Array.from({ length: MAX_MODEL_API_PROTOCOLS_PER_MODEL + 1 }, (_, i) =>
+          serviceApiProtocols: {
+            m1: Array.from({ length: MAX_SERVICE_API_PROTOCOLS_PER_SERVICE + 1 }, (_, i) =>
               i % 2 === 0 ? 'openai-chat-completions' : 'anthropic-messages',
             ),
           },
@@ -457,29 +457,29 @@ describe('validateMetadata', () => {
         },
       ],
     }));
-    expect(errors.some((e) => e.field.includes('modelApiProtocols.m1'))).toBe(true);
+    expect(errors.some((e) => e.field.includes('serviceApiProtocols.m1'))).toBe(true);
   });
 
-  it('should reject model API protocol entries with model names exceeding max length', () => {
-    const longModelName = 'x'.repeat(MAX_MODEL_NAME_LENGTH + 1);
+  it('should reject service API protocol entries with service names exceeding max length', () => {
+    const longServiceName = 'x'.repeat(MAX_SERVICE_NAME_LENGTH + 1);
     const errors = validateMetadata(validMetadata({
       providers: [
         {
           provider: 'test',
-          models: [],
+          services: [],
           defaultPricing: {
             inputUsdPerMillion: 1,
             outputUsdPerMillion: 1,
           },
-          modelApiProtocols: {
-            [longModelName]: ['openai-chat-completions'],
+          serviceApiProtocols: {
+            [longServiceName]: ['openai-chat-completions'],
           },
           maxConcurrency: 1,
           currentLoad: 0,
         },
       ],
     }));
-    expect(errors.some((e) => e.field.includes('modelApiProtocols'))).toBe(true);
+    expect(errors.some((e) => e.field.includes('serviceApiProtocols'))).toBe(true);
   });
 });
 
@@ -487,8 +487,8 @@ describe('constants', () => {
   it('should export reasonable constant values', () => {
     expect(MAX_METADATA_SIZE).toBe(1000);
     expect(MAX_PROVIDERS).toBe(10);
-    expect(MAX_MODELS_PER_PROVIDER).toBe(20);
-    expect(MAX_MODEL_NAME_LENGTH).toBe(64);
+    expect(MAX_SERVICES_PER_PROVIDER).toBe(20);
+    expect(MAX_SERVICE_NAME_LENGTH).toBe(64);
     expect(MAX_REGION_LENGTH).toBe(32);
   });
 });

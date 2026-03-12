@@ -47,7 +47,7 @@ test('seed maps effective seller pricing into provider runtime keys', () => {
         inputUsdPerMillion: 15,
         outputUsdPerMillion: 35,
       },
-      models: {
+      services: {
         'claude-sonnet-4-5-20250929': {
           inputUsdPerMillion: 18,
           outputUsdPerMillion: 42,
@@ -55,7 +55,7 @@ test('seed maps effective seller pricing into provider runtime keys', () => {
       },
     },
   };
-  config.seller.modelCategories = {
+  config.seller.serviceCategories = {
     anthropic: {
       'claude-sonnet-4-5-20250929': ['coding', 'legal'],
     },
@@ -66,13 +66,13 @@ test('seed maps effective seller pricing into provider runtime keys', () => {
   assert.equal(runtimeEnv['ANTSEED_OUTPUT_USD_PER_MILLION'], '35');
   assert.equal(runtimeEnv['ANTSEED_MAX_CONCURRENCY'], '17');
 
-  const models = JSON.parse(runtimeEnv['ANTSEED_MODEL_PRICING_JSON'] ?? '{}') as Record<string, {
+  const services = JSON.parse(runtimeEnv['ANTSEED_SERVICE_PRICING_JSON'] ?? '{}') as Record<string, {
     inputUsdPerMillion: number;
     outputUsdPerMillion: number;
   }>;
-  assert.equal(models['claude-sonnet-4-5-20250929']?.inputUsdPerMillion, 18);
-  assert.equal(models['claude-sonnet-4-5-20250929']?.outputUsdPerMillion, 42);
+  assert.equal(services['claude-sonnet-4-5-20250929']?.inputUsdPerMillion, 18);
+  assert.equal(services['claude-sonnet-4-5-20250929']?.outputUsdPerMillion, 42);
 
-  const categories = JSON.parse(runtimeEnv['ANTSEED_MODEL_CATEGORIES_JSON'] ?? '{}') as Record<string, string[]>;
+  const categories = JSON.parse(runtimeEnv['ANTSEED_SERVICE_CATEGORIES_JSON'] ?? '{}') as Record<string, string[]>;
   assert.deepEqual(categories['claude-sonnet-4-5-20250929'], ['coding', 'legal']);
 });

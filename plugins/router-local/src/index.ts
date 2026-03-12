@@ -79,30 +79,30 @@ function parseMaxPricingJson(raw: string | undefined): BuyerMaxPricingConfig | u
         };
       }
 
-      const modelPricing = providerObj['models'];
-      if (modelPricing !== undefined) {
-        if (!modelPricing || typeof modelPricing !== 'object' || Array.isArray(modelPricing)) {
-          throw new Error(`ANTSEED_MAX_PRICING_JSON.providers.${provider}.models must be an object`);
+      const servicePricing = providerObj['services'];
+      if (servicePricing !== undefined) {
+        if (!servicePricing || typeof servicePricing !== 'object' || Array.isArray(servicePricing)) {
+          throw new Error(`ANTSEED_MAX_PRICING_JSON.providers.${provider}.services must be an object`);
         }
 
-        const modelsOut: NonNullable<BuyerMaxPricingConfig['providers']>[string]['models'] = {};
-        for (const [model, modelPricingRaw] of Object.entries(modelPricing as Record<string, unknown>)) {
-          if (!modelPricingRaw || typeof modelPricingRaw !== 'object' || Array.isArray(modelPricingRaw)) {
-            throw new Error(`ANTSEED_MAX_PRICING_JSON.providers.${provider}.models.${model} must be an object`);
+        const servicesOut: NonNullable<BuyerMaxPricingConfig['providers']>[string]['services'] = {};
+        for (const [service, servicePricingRaw] of Object.entries(servicePricing as Record<string, unknown>)) {
+          if (!servicePricingRaw || typeof servicePricingRaw !== 'object' || Array.isArray(servicePricingRaw)) {
+            throw new Error(`ANTSEED_MAX_PRICING_JSON.providers.${provider}.services.${service} must be an object`);
           }
-          const modelInput = (modelPricingRaw as Record<string, unknown>)['inputUsdPerMillion'];
-          const modelOutput = (modelPricingRaw as Record<string, unknown>)['outputUsdPerMillion'];
-          if (!isNonNegativeFinite(modelInput) || !isNonNegativeFinite(modelOutput)) {
-            throw new Error(`ANTSEED_MAX_PRICING_JSON.providers.${provider}.models.${model} must include non-negative inputUsdPerMillion/outputUsdPerMillion`);
+          const serviceInput = (servicePricingRaw as Record<string, unknown>)['inputUsdPerMillion'];
+          const serviceOutput = (servicePricingRaw as Record<string, unknown>)['outputUsdPerMillion'];
+          if (!isNonNegativeFinite(serviceInput) || !isNonNegativeFinite(serviceOutput)) {
+            throw new Error(`ANTSEED_MAX_PRICING_JSON.providers.${provider}.services.${service} must include non-negative inputUsdPerMillion/outputUsdPerMillion`);
           }
-          modelsOut[model] = {
-            inputUsdPerMillion: modelInput,
-            outputUsdPerMillion: modelOutput,
+          servicesOut[service] = {
+            inputUsdPerMillion: serviceInput,
+            outputUsdPerMillion: serviceOutput,
           };
         }
 
-        if (Object.keys(modelsOut).length > 0) {
-          providerOut.models = modelsOut;
+        if (Object.keys(servicesOut).length > 0) {
+          providerOut.services = servicesOut;
         }
       }
 

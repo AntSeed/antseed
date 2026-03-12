@@ -15,7 +15,7 @@ export interface NetworkPeer {
   host: string;
   port: number;
   providers: string[];
-  models: string[];
+  services: string[];
   inputUsdPerMillion: number;
   outputUsdPerMillion: number;
   capacityMsgPerHour: number;
@@ -126,26 +126,26 @@ function providerNamesFromMetadata(
   return Array.from(providers);
 }
 
-function modelNamesFromMetadata(
+function serviceNamesFromMetadata(
   metadata: Pick<PeerMetadata, 'providers'> | null | undefined,
 ): string[] {
   if (!metadata?.providers || metadata.providers.length === 0) {
     return [];
   }
 
-  const models = new Set<string>();
+  const services = new Set<string>();
   for (const provider of metadata.providers) {
-    for (const model of provider.models ?? []) {
-      if (typeof model !== 'string') {
+    for (const service of provider.services ?? []) {
+      if (typeof service !== 'string') {
         continue;
       }
-      const normalized = model.trim();
+      const normalized = service.trim();
       if (normalized.length > 0) {
-        models.add(normalized);
+        services.add(normalized);
       }
     }
   }
-  return Array.from(models);
+  return Array.from(services);
 }
 
 export function resolveNetworkPeerProviders(
@@ -174,27 +174,27 @@ export function resolveNetworkPeerProviders(
   return Array.from(providers);
 }
 
-export function resolveNetworkPeerModels(
+export function resolveNetworkPeerServices(
   metadata: Pick<PeerMetadata, 'providers'> | null | undefined,
-  existingModels: string[] | undefined,
+  existingServices: string[] | undefined,
 ): string[] {
-  // Prefer metadata models whenever available.
-  const fromMetadata = modelNamesFromMetadata(metadata);
+  // Prefer metadata services whenever available.
+  const fromMetadata = serviceNamesFromMetadata(metadata);
   if (fromMetadata.length > 0) {
     return fromMetadata;
   }
 
-  const models = new Set<string>();
-  for (const model of existingModels ?? []) {
-    if (typeof model !== 'string') {
+  const services = new Set<string>();
+  for (const service of existingServices ?? []) {
+    if (typeof service !== 'string') {
       continue;
     }
-    const normalized = model.trim();
+    const normalized = service.trim();
     if (normalized.length > 0) {
-      models.add(normalized);
+      services.add(normalized);
     }
   }
-  return Array.from(models);
+  return Array.from(services);
 }
 
 export function resolveMetadataSummaryPricing(
@@ -350,7 +350,7 @@ export class DHTQueryService {
           // for the same peerId always merge against the latest committed value.
           const existing = discoveredPeers.get(peerId);
           const providers = resolveNetworkPeerProviders(metadata, existing?.providers, name);
-          const models = resolveNetworkPeerModels(metadata, existing?.models);
+          const services = resolveNetworkPeerServices(metadata, existing?.services);
           const displayName =
             typeof metadata?.displayName === 'string' && metadata.displayName.trim().length > 0
               ? metadata.displayName.trim()
@@ -362,7 +362,7 @@ export class DHTQueryService {
             host: ep.host,
             port: ep.port,
             providers,
-            models,
+            services,
             inputUsdPerMillion: existing?.inputUsdPerMillion ?? summaryPricing.inputUsdPerMillion,
             outputUsdPerMillion: existing?.outputUsdPerMillion ?? summaryPricing.outputUsdPerMillion,
             capacityMsgPerHour: existing?.capacityMsgPerHour ?? capacityMsgPerHour,

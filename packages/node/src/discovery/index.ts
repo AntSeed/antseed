@@ -3,11 +3,11 @@ export {
   DEFAULT_DHT_CONFIG,
   topicToInfoHash,
   providerTopic,
-  modelTopic,
-  modelSearchTopic,
+  serviceTopic,
+  serviceSearchTopic,
   capabilityTopic,
-  normalizeModelTopicKey,
-  normalizeModelSearchTopicKey,
+  normalizeServiceTopicKey,
+  normalizeServiceSearchTopicKey,
   type DHTNodeConfig,
 } from './dht-node.js';
 export { PeerAnnouncer, type AnnouncerConfig } from './announcer.js';
@@ -17,7 +17,7 @@ export { scorePeer, rankPeers, selectBestPeer, selectDiversePeers, DEFAULT_SCORI
 export { OFFICIAL_BOOTSTRAP_NODES, parseBootstrapList, mergeBootstrapNodes, toBootstrapConfig, type BootstrapNode } from './bootstrap.js';
 export { encodeMetadata, encodeMetadataForSigning, decodeMetadata } from './metadata-codec.js';
 export { validateMetadata, MAX_METADATA_SIZE, MAX_PROVIDERS, type ValidationError } from './metadata-validator.js';
-export { METADATA_VERSION, WELL_KNOWN_MODEL_CATEGORIES, type PeerMetadata, type ProviderAnnouncement } from './peer-metadata.js';
+export { METADATA_VERSION, WELL_KNOWN_SERVICE_CATEGORIES, type PeerMetadata, type ProviderAnnouncement } from './peer-metadata.js';
 export { type MetadataResolver, type PeerEndpoint } from './metadata-resolver.js';
 export { DefaultMetadataResolver } from './default-metadata-resolver.js';
 export { HttpMetadataResolver, type HttpMetadataResolverConfig } from './http-metadata-resolver.js';

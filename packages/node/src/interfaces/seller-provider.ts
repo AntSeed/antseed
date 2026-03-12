@@ -1,5 +1,5 @@
 import type { SerializedHttpRequest, SerializedHttpResponse, SerializedHttpResponseChunk } from '../types/http.js';
-import type { ModelApiProtocol } from '../types/model-api.js';
+import type { ServiceApiProtocol } from '../types/service-api.js';
 
 export interface ProviderTokenPricingUsdPerMillion {
   inputUsdPerMillion: number;
@@ -8,7 +8,7 @@ export interface ProviderTokenPricingUsdPerMillion {
 
 export interface ProviderPricing {
   defaults: ProviderTokenPricingUsdPerMillion;
-  models?: Record<string, ProviderTokenPricingUsdPerMillion>;
+  services?: Record<string, ProviderTokenPricingUsdPerMillion>;
 }
 
 /**
@@ -22,17 +22,17 @@ export interface Provider {
   /** Unique name for this provider (e.g., 'anthropic', 'openai', 'my-local-llm') */
   name: string;
 
-  /** Model IDs this provider supports (e.g., ['claude-sonnet-4-5-20250929', 'claude-opus-4-0-20250514']) */
-  models: string[];
+  /** Service IDs this provider supports (e.g., ['claude-sonnet-4-5-20250929', 'claude-opus-4-0-20250514']) */
+  services: string[];
 
-  /** Seller pricing in USD per 1M tokens (defaults + optional per-model overrides). */
+  /** Seller pricing in USD per 1M tokens (defaults + optional per-service overrides). */
   pricing: ProviderPricing;
 
-  /** Optional model category tags used for discovery metadata. */
-  modelCategories?: Record<string, string[]>;
+  /** Optional service category tags used for discovery metadata. */
+  serviceCategories?: Record<string, string[]>;
 
-  /** Optional per-model API protocol support advertised via discovery metadata. */
-  modelApiProtocols?: Record<string, ModelApiProtocol[]>;
+  /** Optional per-service API protocol support advertised via discovery metadata. */
+  serviceApiProtocols?: Record<string, ServiceApiProtocol[]>;
 
   /** Maximum concurrent requests this provider can handle */
   maxConcurrency: number;

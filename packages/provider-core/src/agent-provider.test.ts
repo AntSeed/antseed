@@ -86,11 +86,11 @@ function mockProvider(opts: MockProviderOptions): Provider & {
     lastRequest: () => SerializedHttpRequest | undefined;
   } = {
     name: 'mock',
-    models: ['claude-sonnet-4-5-20250929'],
+    services: ['claude-sonnet-4-5-20250929'],
     pricing: { defaults: { inputUsdPerMillion: 3, outputUsdPerMillion: 15 } },
     maxConcurrency: 10,
-    modelCategories: undefined,
-    modelApiProtocols: undefined,
+    serviceCategories: undefined,
+    serviceApiProtocols: undefined,
     getCapacity: () => ({ current: 0, max: 10 }),
 
     handleRequest: async (req: SerializedHttpRequest): Promise<SerializedHttpResponse> => {

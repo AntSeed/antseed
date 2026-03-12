@@ -60,7 +60,7 @@ type AiMessageMeta = {
   peerCurrentLoad?: number;
   peerMaxConcurrency?: number;
   provider?: string;
-  model?: string;
+  service?: string;
   requestId?: string;
   routeRequestId?: string;
   latencyMs?: number;
@@ -88,7 +88,7 @@ type AiUsageTotals = {
 type AiConversation = {
   id: string;
   title: string;
-  model: string;
+  service: string;
   provider?: string;
   messages: AiChatMessage[];
   createdAt: number;
@@ -99,7 +99,7 @@ type AiConversation = {
 type AiConversationSummary = {
   id: string;
   title: string;
-  model: string;
+  service: string;
   provider?: string;
   messageCount: number;
   createdAt: number;
@@ -348,13 +348,13 @@ type NetworkPeerAddress = {
   providers?: string[];
 };
 
-type ChatModelProtocol = 'anthropic-messages' | 'openai-chat-completions';
+type ChatServiceProtocol = 'anthropic-messages' | 'openai-chat-completions';
 
-type ChatModelCatalogEntry = {
+type ChatServiceCatalogEntry = {
   id: string;
   label: string;
   provider: string;
-  protocol: ChatModelProtocol;
+  protocol: ChatServiceProtocol;
   count: number;
 };
 
@@ -364,7 +364,7 @@ const CHAT_SESSIONS_DIR = path.join(CHAT_DATA_DIR, 'sessions');
 const CHAT_WORKSPACE_DIR = path.join(ANTSEED_HOME_DIR, 'projects');
 const CHAT_AGENT_DIR = path.join(CHAT_DATA_DIR, 'pi-agent');
 const DEFAULT_PROXY_PORT = 8377;
-const DEFAULT_CHAT_MODEL = 'claude-sonnet-4-20250514';
+const DEFAULT_CHAT_SERVICE = 'claude-sonnet-4-20250514';
 const PROXY_PROVIDER_ID = 'antseed-proxy';
 const PROXY_RUNTIME_API_KEY = 'antseed-local';
 const CHAT_SYSTEM_PROMPT_ENV = 'ANTSEED_CHAT_SYSTEM_PROMPT';
@@ -373,13 +373,13 @@ const CHAT_STREAM_TOTAL_TIMEOUT_ENV = 'ANTSEED_CHAT_STREAM_TOTAL_TIMEOUT_MS';
 const CHAT_STREAM_IDLE_TIMEOUT_ENV = 'ANTSEED_CHAT_STREAM_IDLE_TIMEOUT_MS';
 const DEFAULT_CHAT_STREAM_TOTAL_TIMEOUT_MS = 240_000;
 const DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS = 45_000;
-const CHAT_MODEL_METADATA_FETCH_TIMEOUT_MS = 2_500;
-const CHAT_MODEL_SCAN_MAX_PEERS = 20;
-const CHAT_MODEL_MAX_OPTIONS = 120;
-const CHAT_MODEL_MAX_OPTIONS_PER_PROVIDER = 40;
-const CHAT_MODEL_CACHE_FILE = path.join(CHAT_DATA_DIR, 'model-catalog-cache.json');
-const CHAT_MODEL_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
-const CHAT_MODEL_CACHE_REFRESH_DEBOUNCE_MS = 60_000;
+const CHAT_SERVICE_METADATA_FETCH_TIMEOUT_MS = 2_500;
+const CHAT_SERVICE_SCAN_MAX_PEERS = 20;
+const CHAT_SERVICE_MAX_OPTIONS = 120;
+const CHAT_SERVICE_MAX_OPTIONS_PER_PROVIDER = 40;
+const CHAT_SERVICE_CACHE_FILE = path.join(CHAT_DATA_DIR, 'service-catalog-cache.json');
+const CHAT_SERVICE_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
+const CHAT_SERVICE_CACHE_REFRESH_DEBOUNCE_MS = 60_000;
 
 function normalizeTokenCount(value: unknown): number {
   const parsed = Number(value);
@@ -442,7 +442,7 @@ function parseProxyMeta(response: Response, requestStartedAt: number): AiMessage
   const peerAddressRaw = response.headers.get('x-antseed-peer-address');
   const peerProvidersRaw = parseHeaderCsv(response.headers, 'x-antseed-peer-providers');
   const providerRaw = response.headers.get('x-antseed-provider');
-  const modelRaw = response.headers.get('x-antseed-model');
+  const serviceRaw = response.headers.get('x-antseed-service');
   const requestIdRaw = response.headers.get('request-id') ?? response.headers.get('x-request-id');
   const routeRequestIdRaw = response.headers.get('x-antseed-request-id');
 
@@ -473,7 +473,7 @@ function parseProxyMeta(response: Response, requestStartedAt: number): AiMessage
     peerCurrentLoad,
     peerMaxConcurrency,
     provider: typeof providerRaw === 'string' && providerRaw.trim().length > 0 ? providerRaw.trim() : undefined,
-    model: typeof modelRaw === 'string' && modelRaw.trim().length > 0 ? modelRaw.trim() : undefined,
+    service: typeof serviceRaw === 'string' && serviceRaw.trim().length > 0 ? serviceRaw.trim() : undefined,
     requestId: typeof requestIdRaw === 'string' && requestIdRaw.trim().length > 0 ? requestIdRaw.trim() : undefined,
     routeRequestId: typeof routeRequestIdRaw === 'string' && routeRequestIdRaw.trim().length > 0 ? routeRequestIdRaw.trim() : undefined,
     latencyMs,
@@ -487,12 +487,12 @@ function parseProxyMeta(response: Response, requestStartedAt: number): AiMessage
   };
 }
 
-function normalizeModelId(model?: string): string {
-  const trimmed = String(model ?? '').trim();
-  return trimmed.length > 0 ? trimmed : DEFAULT_CHAT_MODEL;
+function normalizeServiceId(service?: string): string {
+  const trimmed = String(service ?? '').trim();
+  return trimmed.length > 0 ? trimmed : DEFAULT_CHAT_SERVICE;
 }
 
-function isChatModelProtocol(value: unknown): value is ChatModelProtocol {
+function isChatServiceProtocol(value: unknown): value is ChatServiceProtocol {
   return value === 'anthropic-messages' || value === 'openai-chat-completions';
 }
 
@@ -504,7 +504,7 @@ function normalizeProviderId(value: unknown): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
-function inferProviderProtocol(provider: string): ChatModelProtocol | null {
+function inferProviderProtocol(provider: string): ChatServiceProtocol | null {
   if (provider === 'openai' || provider === 'openrouter' || provider === 'local-llm') {
     return 'openai-chat-completions';
   }
@@ -593,12 +593,12 @@ function normalizePort(value: unknown): number | null {
   return normalized;
 }
 
-function normalizeModelValue(value: unknown): string | null {
+function normalizeServiceValue(value: unknown): string | null {
   if (typeof value !== 'string') {
     return null;
   }
-  const model = value.trim();
-  return model.length > 0 ? model : null;
+  const service = value.trim();
+  return service.length > 0 ? service : null;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -608,20 +608,20 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-function resolveProtocolForModel(
+function resolveProtocolForService(
   provider: string,
   matrixRaw: unknown,
-  modelId: string,
-): ChatModelProtocol | null {
+  serviceId: string,
+): ChatServiceProtocol | null {
   const matrix = asRecord(matrixRaw);
   if (matrix) {
-    const targetKey = modelId.trim().toLowerCase();
+    const targetKey = serviceId.trim().toLowerCase();
     for (const [key, value] of Object.entries(matrix)) {
       if (key.trim().toLowerCase() !== targetKey || !Array.isArray(value)) {
         continue;
       }
       for (const protocolCandidate of value) {
-        if (isChatModelProtocol(protocolCandidate)) {
+        if (isChatServiceProtocol(protocolCandidate)) {
           return protocolCandidate;
         }
       }
@@ -630,26 +630,26 @@ function resolveProtocolForModel(
   return inferProviderProtocol(provider);
 }
 
-function updateModelProviderHints(
-  modelProviderHints: Map<string, string[]>,
-  entries: ChatModelCatalogEntry[],
+function updateServiceProviderHints(
+  serviceProviderHints: Map<string, string[]>,
+  entries: ChatServiceCatalogEntry[],
 ): void {
-  modelProviderHints.clear();
+  serviceProviderHints.clear();
   for (const entry of entries) {
-    const modelId = normalizeModelValue(entry.id)?.toLowerCase();
+    const serviceId = normalizeServiceValue(entry.id)?.toLowerCase();
     const provider = normalizeProviderId(entry.provider);
-    if (!modelId || !provider || !inferProviderProtocol(provider)) {
+    if (!serviceId || !provider || !inferProviderProtocol(provider)) {
       continue;
     }
-    const providers = modelProviderHints.get(modelId) ?? [];
+    const providers = serviceProviderHints.get(serviceId) ?? [];
     if (!providers.includes(provider)) {
       providers.push(provider);
-      modelProviderHints.set(modelId, providers);
+      serviceProviderHints.set(serviceId, providers);
     }
   }
 }
 
-function resolveProviderHintForModel(
+function resolveProviderHintForService(
   explicitProvider?: string,
 ): string | null {
   const explicit = normalizeProviderId(explicitProvider);
@@ -667,22 +667,22 @@ function normalizePeerId(value: unknown): string | null {
   return /^[0-9a-f]{64}$/i.test(peerId) ? peerId : null;
 }
 
-function normalizeChatModelCatalogEntry(raw: unknown): ChatModelCatalogEntry | null {
+function normalizeChatServiceCatalogEntry(raw: unknown): ChatServiceCatalogEntry | null {
   const entry = asRecord(raw);
   if (!entry) {
     return null;
   }
 
-  const id = normalizeModelValue(entry.id);
+  const id = normalizeServiceValue(entry.id);
   const provider = normalizeProviderId(entry.provider);
   const protocol = entry.protocol;
-  if (!id || !provider || !isChatModelProtocol(protocol) || !inferProviderProtocol(provider)) {
+  if (!id || !provider || !isChatServiceProtocol(protocol) || !inferProviderProtocol(provider)) {
     return null;
   }
 
   const count = Number(entry.count);
   const normalizedCount = Number.isFinite(count) && count > 0 ? Math.max(1, Math.floor(count)) : 1;
-  const label = normalizeModelValue(entry.label) ?? id;
+  const label = normalizeServiceValue(entry.label) ?? id;
   return {
     id,
     label,
@@ -692,10 +692,10 @@ function normalizeChatModelCatalogEntry(raw: unknown): ChatModelCatalogEntry | n
   };
 }
 
-function normalizeChatModelCatalogEntries(rawEntries: unknown[]): ChatModelCatalogEntry[] {
-  const deduped = new Map<string, ChatModelCatalogEntry>();
+function normalizeChatServiceCatalogEntries(rawEntries: unknown[]): ChatServiceCatalogEntry[] {
+  const deduped = new Map<string, ChatServiceCatalogEntry>();
   for (const rawEntry of rawEntries) {
-    const entry = normalizeChatModelCatalogEntry(rawEntry);
+    const entry = normalizeChatServiceCatalogEntry(rawEntry);
     if (!entry) {
       continue;
     }
@@ -707,32 +707,32 @@ function normalizeChatModelCatalogEntries(rawEntries: unknown[]): ChatModelCatal
     }
     deduped.set(key, { ...entry });
   }
-  return sortChatModelCatalogEntries([...deduped.values()]);
+  return sortChatServiceCatalogEntries([...deduped.values()]);
 }
 
-async function readChatModelCatalogCache(): Promise<{ updatedAt: number; entries: ChatModelCatalogEntry[] } | null> {
+async function readChatServiceCatalogCache(): Promise<{ updatedAt: number; entries: ChatServiceCatalogEntry[] } | null> {
   try {
-    const raw = await readFile(CHAT_MODEL_CACHE_FILE, 'utf-8');
+    const raw = await readFile(CHAT_SERVICE_CACHE_FILE, 'utf-8');
     const parsed = JSON.parse(raw) as { updatedAt?: unknown; entries?: unknown };
     const updatedAt = Number(parsed.updatedAt);
     if (!Number.isFinite(updatedAt) || updatedAt <= 0) {
       return null;
     }
-    const entries = normalizeChatModelCatalogEntries(Array.isArray(parsed.entries) ? parsed.entries : []);
+    const entries = normalizeChatServiceCatalogEntries(Array.isArray(parsed.entries) ? parsed.entries : []);
     if (entries.length === 0) {
       return null;
     }
     return {
       updatedAt: Math.floor(updatedAt),
-      entries: limitChatModelCatalogEntries(entries),
+      entries: limitChatServiceCatalogEntries(entries),
     };
   } catch {
     return null;
   }
 }
 
-async function writeChatModelCatalogCache(entries: ChatModelCatalogEntry[]): Promise<void> {
-  const normalized = limitChatModelCatalogEntries(normalizeChatModelCatalogEntries(entries));
+async function writeChatServiceCatalogCache(entries: ChatServiceCatalogEntry[]): Promise<void> {
+  const normalized = limitChatServiceCatalogEntries(normalizeChatServiceCatalogEntries(entries));
   if (normalized.length === 0) {
     return;
   }
@@ -741,11 +741,11 @@ async function writeChatModelCatalogCache(entries: ChatModelCatalogEntry[]): Pro
     updatedAt: Date.now(),
     entries: normalized,
   };
-  await writeFile(CHAT_MODEL_CACHE_FILE, JSON.stringify(payload, null, 2), 'utf-8');
+  await writeFile(CHAT_SERVICE_CACHE_FILE, JSON.stringify(payload, null, 2), 'utf-8');
 }
 
-function sortChatModelCatalogEntries(entries: ChatModelCatalogEntry[]): ChatModelCatalogEntry[] {
-  const protocolRank = (protocol: ChatModelProtocol): number => (
+function sortChatServiceCatalogEntries(entries: ChatServiceCatalogEntry[]): ChatServiceCatalogEntry[] {
+  const protocolRank = (protocol: ChatServiceProtocol): number => (
     protocol === 'anthropic-messages' ? 0 : 1
   );
 
@@ -763,22 +763,22 @@ function sortChatModelCatalogEntries(entries: ChatModelCatalogEntry[]): ChatMode
   });
 }
 
-function limitChatModelCatalogEntries(entries: ChatModelCatalogEntry[]): ChatModelCatalogEntry[] {
-  if (entries.length <= CHAT_MODEL_MAX_OPTIONS) {
+function limitChatServiceCatalogEntries(entries: ChatServiceCatalogEntry[]): ChatServiceCatalogEntry[] {
+  if (entries.length <= CHAT_SERVICE_MAX_OPTIONS) {
     return entries;
   }
 
-  const limited: ChatModelCatalogEntry[] = [];
+  const limited: ChatServiceCatalogEntry[] = [];
   const perProviderCount = new Map<string, number>();
   for (const entry of entries) {
     const provider = entry.provider;
     const providerCount = perProviderCount.get(provider) ?? 0;
-    if (providerCount >= CHAT_MODEL_MAX_OPTIONS_PER_PROVIDER) {
+    if (providerCount >= CHAT_SERVICE_MAX_OPTIONS_PER_PROVIDER) {
       continue;
     }
     limited.push(entry);
     perProviderCount.set(provider, providerCount + 1);
-    if (limited.length >= CHAT_MODEL_MAX_OPTIONS) {
+    if (limited.length >= CHAT_SERVICE_MAX_OPTIONS) {
       break;
     }
   }
@@ -792,7 +792,7 @@ async function fetchPeerMetadata(host: string, port: number): Promise<Record<str
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), CHAT_MODEL_METADATA_FETCH_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), CHAT_SERVICE_METADATA_FETCH_TIMEOUT_MS);
   try {
     const response = await fetch(`http://${host}:${String(port)}/metadata`, {
       signal: controller.signal,
@@ -809,13 +809,14 @@ async function fetchPeerMetadata(host: string, port: number): Promise<Record<str
   }
 }
 
-function extractChatModelCatalog(metadata: Record<string, unknown>): Omit<ChatModelCatalogEntry, 'count'>[] {
+function extractChatServiceCatalog(metadata: Record<string, unknown>): Omit<ChatServiceCatalogEntry, 'count'>[] {
   const providersRaw = metadata.providers;
+
   if (!Array.isArray(providersRaw)) {
     return [];
   }
 
-  const models: Omit<ChatModelCatalogEntry, 'count'>[] = [];
+  const services: Omit<ChatServiceCatalogEntry, 'count'>[] = [];
   for (const providerEntry of providersRaw) {
     const providerRecord = asRecord(providerEntry);
     if (!providerRecord) {
@@ -825,33 +826,33 @@ function extractChatModelCatalog(metadata: Record<string, unknown>): Omit<ChatMo
     if (!providerId) {
       continue;
     }
-    const modelListRaw = providerRecord.models;
-    if (!Array.isArray(modelListRaw)) {
+    const serviceListRaw = providerRecord.services || providerRecord.models;
+    if (!Array.isArray(serviceListRaw)) {
       continue;
     }
-    for (const modelRaw of modelListRaw) {
-      const modelId = normalizeModelValue(modelRaw);
-      if (!modelId) {
+    for (const serviceRaw of serviceListRaw) {
+      const serviceId = normalizeServiceValue(serviceRaw);
+      if (!serviceId) {
         continue;
       }
-      const protocol = resolveProtocolForModel(providerId, providerRecord.modelApiProtocols, modelId);
+      const protocol = resolveProtocolForService(providerId, providerRecord.serviceApiProtocols, serviceId);
       if (!protocol) {
         continue;
       }
-      models.push({
-        id: modelId,
-        label: modelId,
+      services.push({
+        id: serviceId,
+        label: serviceId,
         provider: providerId,
         protocol,
       });
     }
   }
-  return models;
+  return services;
 }
 
-async function discoverChatModelCatalog(
+async function discoverChatServiceCatalog(
   getNetworkPeers?: () => Promise<NetworkPeerAddress[]>,
-): Promise<ChatModelCatalogEntry[]> {
+): Promise<ChatServiceCatalogEntry[]> {
   if (!getNetworkPeers) {
     return [];
   }
@@ -865,7 +866,7 @@ async function discoverChatModelCatalog(
 
   const uniqueTargets: Array<{ host: string; port: number }> = [];
   const seen = new Set<string>();
-  for (const peer of peers.slice(0, CHAT_MODEL_SCAN_MAX_PEERS)) {
+  for (const peer of peers.slice(0, CHAT_SERVICE_SCAN_MAX_PEERS)) {
     const host = normalizeHost(peer.host);
     const port = normalizePort(peer.port);
     if (!host || !port) {
@@ -887,12 +888,12 @@ async function discoverChatModelCatalog(
     return await fetchPeerMetadata(target.host, target.port);
   }));
 
-  const aggregate = new Map<string, ChatModelCatalogEntry>();
+  const aggregate = new Map<string, ChatServiceCatalogEntry>();
   for (const metadata of responses) {
     if (!metadata) {
       continue;
     }
-    const entries = extractChatModelCatalog(metadata);
+    const entries = extractChatServiceCatalog(metadata);
     for (const entry of entries) {
       const key = `${entry.id}\u0000${entry.provider}\u0000${entry.protocol}`;
       const existing = aggregate.get(key);
@@ -907,7 +908,7 @@ async function discoverChatModelCatalog(
     }
   }
 
-  return sortChatModelCatalogEntries(Array.from(aggregate.values()));
+  return sortChatServiceCatalogEntries(Array.from(aggregate.values()));
 }
 
 
@@ -1136,10 +1137,10 @@ function deriveTitle(messages: AiChatMessage[]): string {
   return 'New conversation';
 }
 
-function makeProxyModel(modelId: string, port: number): Model<'anthropic-messages'> {
+function makeProxyService(serviceId: string, port: number): Model<'anthropic-messages'> {
   return {
-    id: modelId,
-    name: modelId,
+    id: serviceId,
+    name: serviceId,
     api: 'anthropic-messages',
     provider: PROXY_PROVIDER_ID,
     baseUrl: `http://127.0.0.1:${port}`,
@@ -1273,7 +1274,7 @@ function convertAssistantMessageForUi(
   const totalTokens = usage.totalTokens > 0 ? usage.totalTokens : usage.input + usage.output;
   const usageMeta: AiMessageMeta = {
     provider: message.provider,
-    model: message.model,
+    service: message.model,
     inputTokens: usage.input,
     outputTokens: usage.output,
     totalTokens,
@@ -1358,7 +1359,7 @@ function anthropicContentFromAssistant(content: AssistantMessage['content']): un
       blocks.push({ type: 'text', text });
       continue;
     }
-    // Strip thinking blocks: the proxy routes to arbitrary models (OpenRouter,
+    // Strip thinking blocks: the proxy routes to arbitrary services (OpenRouter,
     // local LLMs, etc.) that do not understand Anthropic-format thinking blocks.
     // Echoing them back causes broken multi-turn conversations.
     if (block.type === 'thinking') {
@@ -2027,7 +2028,7 @@ class PiConversationStore {
     return {
       id: manager.getSessionId(),
       title: manager.getSessionName() || deriveTitle(messages),
-      model: normalizeModelId(context.model?.modelId),
+      service: normalizeServiceId(context.model?.modelId),
       provider: normalizeProviderId(context.model?.provider) ?? undefined,
       messages,
       createdAt,
@@ -2068,7 +2069,7 @@ class PiConversationStore {
       summaryById.set(conversation.id, {
         id: conversation.id,
         title: conversation.title,
-        model: conversation.model,
+        service: conversation.service,
         provider: conversation.provider,
         messageCount: conversation.messages.length,
         createdAt: conversation.createdAt,
@@ -2088,7 +2089,7 @@ class PiConversationStore {
       summaryById.set(conversation.id, {
         id: conversation.id,
         title: conversation.title,
-        model: conversation.model,
+        service: conversation.service,
         provider: conversation.provider,
         messageCount: conversation.messages.length,
         createdAt: conversation.createdAt,
@@ -2114,12 +2115,12 @@ class PiConversationStore {
     return await this.readConversationFromPath(sessionPath);
   }
 
-  async create(model?: string, provider?: string): Promise<AiConversation> {
+  async create(service?: string, provider?: string): Promise<AiConversation> {
     await this.ready;
     const manager = SessionManager.create(this.workspaceDir, this.sessionsDir);
     const providerId = normalizeProviderId(provider);
     const modelProvider = providerId && inferProviderProtocol(providerId) ? providerId : PROXY_PROVIDER_ID;
-    manager.appendModelChange(modelProvider, normalizeModelId(model));
+    manager.appendModelChange(modelProvider, normalizeServiceId(service));
     const sessionPath = manager.getSessionFile();
     if (!sessionPath) {
       throw new Error('Failed to create persisted pi session');
@@ -2205,7 +2206,7 @@ function parseAssistantMetaFromSessionEvent(
   const totalTokens = usage.totalTokens > 0 ? usage.totalTokens : usage.input + usage.output;
   const usageMeta: AiMessageMeta = {
     provider: assistant.provider,
-    model: assistant.model,
+    service: assistant.model,
     inputTokens: usage.input,
     outputTokens: usage.output,
     totalTokens,
@@ -2257,10 +2258,10 @@ export function registerPiChatHandlers({
 }: RegisterPiChatHandlersOptions): void {
   const store = new PiConversationStore();
   const activeRunsByConversation = new Map<string, ActiveRun>();
-  const modelProviderHints = new Map<string, string[]>();
+  const serviceProviderHints = new Map<string, string[]>();
   const preferredPeerByConversationId = new Map<string, string>();
-  let modelCatalogRefreshPromise: Promise<ChatModelCatalogEntry[]> | null = null;
-  let lastModelCatalogRefreshAt = 0;
+  let serviceCatalogRefreshPromise: Promise<ChatServiceCatalogEntry[]> | null = null;
+  let lastServiceCatalogRefreshAt = 0;
 
   const clearActiveRun = (run: ActiveRun | null): void => {
     if (!run) {
@@ -2308,7 +2309,7 @@ export function registerPiChatHandlers({
   const runStreamingPrompt = async (
     conversationId: string,
     userMessage: string,
-    modelOverride?: string,
+    serviceOverride?: string,
     providerOverride?: string,
     imageBase64?: string,
     imageMimeType?: string,
@@ -2340,12 +2341,12 @@ export function registerPiChatHandlers({
     }
 
     const context = sessionManager.buildSessionContext();
-    const modelId = normalizeModelId(modelOverride || context.model?.modelId);
+    const serviceId = normalizeServiceId(serviceOverride || context.model?.modelId);
     const preferredPeerId = preferredPeerByConversationId.get(conversationId) ?? null;
-    const providerHint = resolveProviderHintForModel(
+    const providerHint = resolveProviderHintForService(
       providerOverride,
     );
-    const proxyModel = makeProxyModel(modelId, proxyPort);
+    const proxyModel = makeProxyService(serviceId, proxyPort);
 
     const authStorage = AuthStorage.inMemory();
     authStorage.setRuntimeApiKey(PROXY_PROVIDER_ID, PROXY_RUNTIME_API_KEY);
@@ -2631,37 +2632,37 @@ export function registerPiChatHandlers({
     }
   };
 
-  const refreshModelCatalogFromNetwork = async (force = false): Promise<ChatModelCatalogEntry[]> => {
+  const refreshServiceCatalogFromNetwork = async (force = false): Promise<ChatServiceCatalogEntry[]> => {
     const now = Date.now();
-    if (!force && modelCatalogRefreshPromise) {
-      return await modelCatalogRefreshPromise;
+    if (!force && serviceCatalogRefreshPromise) {
+      return await serviceCatalogRefreshPromise;
     }
-    if (!force && now - lastModelCatalogRefreshAt < CHAT_MODEL_CACHE_REFRESH_DEBOUNCE_MS) {
-      const cached = await readChatModelCatalogCache();
+    if (!force && now - lastServiceCatalogRefreshAt < CHAT_SERVICE_CACHE_REFRESH_DEBOUNCE_MS) {
+      const cached = await readChatServiceCatalogCache();
       if (cached) {
         return cached.entries;
       }
     }
 
-    modelCatalogRefreshPromise = (async () => {
+    serviceCatalogRefreshPromise = (async () => {
       const peers = getNetworkPeers
         ? await getNetworkPeers().catch(() => [] as NetworkPeerAddress[])
         : ([] as NetworkPeerAddress[]);
 
       const getPeers = async (): Promise<NetworkPeerAddress[]> => peers;
 
-      const modelsFromMetadata = await discoverChatModelCatalog(getPeers);
+      const servicesFromMetadata = await discoverChatServiceCatalog(getPeers);
 
-      const limited = limitChatModelCatalogEntries(normalizeChatModelCatalogEntries(modelsFromMetadata));
-      updateModelProviderHints(modelProviderHints, limited);
-      void writeChatModelCatalogCache(limited).catch(() => undefined);
-      lastModelCatalogRefreshAt = Date.now();
+      const limited = limitChatServiceCatalogEntries(normalizeChatServiceCatalogEntries(servicesFromMetadata));
+      updateServiceProviderHints(serviceProviderHints, limited);
+      void writeChatServiceCatalogCache(limited).catch(() => undefined);
+      lastServiceCatalogRefreshAt = Date.now();
       return limited;
     })().finally(() => {
-      modelCatalogRefreshPromise = null;
+      serviceCatalogRefreshPromise = null;
     });
 
-    return await modelCatalogRefreshPromise;
+    return await serviceCatalogRefreshPromise;
   };
 
   ipcMain.handle('chat:ai-get-proxy-status', async () => {
@@ -2676,16 +2677,16 @@ export function registerPiChatHandlers({
     };
   });
 
-  ipcMain.handle('chat:ai-list-models', async () => {
+  ipcMain.handle('chat:ai-list-services', async () => {
     try {
-      const cached = await readChatModelCatalogCache();
+      const cached = await readChatServiceCatalogCache();
       if (cached) {
-        updateModelProviderHints(modelProviderHints, cached.entries);
+        updateServiceProviderHints(serviceProviderHints, cached.entries);
         const cacheAgeMs = Date.now() - cached.updatedAt;
-        if (cacheAgeMs <= CHAT_MODEL_CACHE_MAX_AGE_MS) {
-          if (cacheAgeMs > CHAT_MODEL_CACHE_REFRESH_DEBOUNCE_MS) {
-            void refreshModelCatalogFromNetwork(false).catch((error) => {
-              appendSystemLog(`Background model catalog refresh failed: ${asErrorMessage(error)}`);
+        if (cacheAgeMs <= CHAT_SERVICE_CACHE_MAX_AGE_MS) {
+          if (cacheAgeMs > CHAT_SERVICE_CACHE_REFRESH_DEBOUNCE_MS) {
+            void refreshServiceCatalogFromNetwork(false).catch((error) => {
+              appendSystemLog(`Background service catalog refresh failed: ${asErrorMessage(error)}`);
             });
           }
           return {
@@ -2694,8 +2695,8 @@ export function registerPiChatHandlers({
           };
         }
       }
-      const limitedModels = await refreshModelCatalogFromNetwork(true);
-      if (limitedModels.length === 0 && cached) {
+      const limitedServices = await refreshServiceCatalogFromNetwork(true);
+      if (limitedServices.length === 0 && cached) {
         return {
           ok: true,
           data: cached.entries,
@@ -2703,12 +2704,12 @@ export function registerPiChatHandlers({
       }
       return {
         ok: true,
-        data: limitedModels,
+        data: limitedServices,
       };
     } catch (error) {
       return {
         ok: false,
-        data: [] as ChatModelCatalogEntry[],
+        data: [] as ChatServiceCatalogEntry[],
         error: asErrorMessage(error),
       };
     }
@@ -2727,8 +2728,8 @@ export function registerPiChatHandlers({
     return { ok: true, data: conversation };
   });
 
-  ipcMain.handle('chat:ai-create-conversation', async (_event, model: string, provider?: string) => {
-    const conversation = await store.create(model, provider);
+  ipcMain.handle('chat:ai-create-conversation', async (_event, service: string, provider?: string) => {
+    const conversation = await store.create(service, provider);
     preferredPeerByConversationId.delete(conversation.id);
     return { ok: true, data: conversation };
   });
@@ -2750,15 +2751,15 @@ export function registerPiChatHandlers({
 
   ipcMain.handle(
     'chat:ai-send-stream',
-    async (_event, conversationId: string, userMessage: string, model?: string, provider?: string, imageBase64?: string, imageMimeType?: string) => {
-      return await runStreamingPrompt(conversationId, userMessage, model, provider, imageBase64, imageMimeType);
+    async (_event, conversationId: string, userMessage: string, service?: string, provider?: string, imageBase64?: string, imageMimeType?: string) => {
+      return await runStreamingPrompt(conversationId, userMessage, service, provider, imageBase64, imageMimeType);
     },
   );
 
   ipcMain.handle(
     'chat:ai-send',
-    async (_event, conversationId: string, userMessage: string, model?: string, provider?: string, imageBase64?: string, imageMimeType?: string) => {
-      return await runStreamingPrompt(conversationId, userMessage, model, provider, imageBase64, imageMimeType);
+    async (_event, conversationId: string, userMessage: string, service?: string, provider?: string, imageBase64?: string, imageMimeType?: string) => {
+      return await runStreamingPrompt(conversationId, userMessage, service, provider, imageBase64, imageMimeType);
     },
   );
 
