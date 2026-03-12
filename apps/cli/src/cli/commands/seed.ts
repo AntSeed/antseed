@@ -378,6 +378,8 @@ export function registerSeedCommand(program: Command): void {
         if (registry.size > 0) {
           provider = new AgentProvider(provider, registry)
           console.log(chalk.dim(`  skills: ${registry.size} skill(s) loaded from ${effectiveSellerConfig.skillsDir}`))
+        } else {
+          console.warn(chalk.yellow(`  skills: no skills loaded from ${effectiveSellerConfig.skillsDir} — check SKILL.md files`))
         }
       }
 
