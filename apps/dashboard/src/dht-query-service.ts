@@ -38,6 +38,7 @@ export interface NetworkStats {
 
 const SCAN_INTERVAL_MS = 30_000;
 const DEFAULT_DISCOVERY_PROVIDERS = [
+  'unified',
   'anthropic',
   'openai',
   'google',
@@ -45,19 +46,6 @@ const DEFAULT_DISCOVERY_PROVIDERS = [
   'claude-oauth',
   'local-llm',
 ];
-const PROVIDER_ALIAS_MAP: Record<string, string> = {
-  '@antseed/provider-anthropic': 'anthropic',
-  'antseed-provider-anthropic': 'anthropic',
-  '@antseed/provider-claude-code': 'claude-code',
-  'antseed-provider-claude-code': 'claude-code',
-  '@antseed/provider-claude-oauth': 'claude-oauth',
-  'antseed-provider-claude-oauth': 'claude-oauth',
-  '@antseed/provider-openai': 'openai',
-  'antseed-provider-openai': 'openai',
-  '@antseed/provider-local-llm': 'local-llm',
-  'antseed-provider-local-llm': 'local-llm',
-};
-
 function normalizeProviderTopicName(value: unknown): string | null {
   if (typeof value !== 'string') {
     return null;
@@ -66,11 +54,6 @@ function normalizeProviderTopicName(value: unknown): string | null {
   const raw = value.trim().toLowerCase();
   if (!raw) {
     return null;
-  }
-
-  const alias = PROVIDER_ALIAS_MAP[raw];
-  if (alias) {
-    return alias;
   }
 
   if (raw.startsWith('@antseed/provider-')) {
