@@ -275,11 +275,6 @@ interface Provider {
   /** Optional capabilities beyond plain inference */
   capabilities?: ProviderCapability[];
 
-  /** Optional long-running task endpoint backing `/v1/task` */
-  handleTask?(task: TaskRequest): AsyncIterable<TaskEvent>;
-
-  /** Optional one-shot skill endpoint backing `/v1/skill` */
-  handleSkill?(skill: SkillRequest): Promise<SkillResponse>;
 }
 ```
 

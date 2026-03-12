@@ -4,4 +4,6 @@ export { StaticTokenProvider, OAuthTokenProvider, createTokenProvider, type Auth
 export type { TokenProvider, TokenProviderState } from './token-providers.js';
 export { BaseProvider, type BaseProviderConfig } from './base-provider.js';
 export { MiddlewareProvider } from './middleware-provider.js';
-export { applyMiddleware, type ProviderMiddleware, type MiddlewarePosition } from './middleware.js';
+export { applyMiddleware, detectRequestFormat, type ProviderMiddleware, type MiddlewarePosition, type RequestFormat } from './middleware.js';
+export { AgentProvider, type AgentProviderOptions } from './agent-provider.js';
+export { SkillRegistry, type SkillEntry } from './skill-registry.js';

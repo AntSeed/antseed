@@ -99,6 +99,14 @@ export interface SellerCLIConfig {
    * There is no opt-out: a confidentiality prompt is always injected when middleware fires.
    */
   middlewareConfidentialityPrompt?: string;
+  /**
+   * Path to a directory containing skill subdirectories for on-demand loading.
+   * Each subdirectory must contain a `SKILL.md` file with YAML frontmatter (name, description).
+   * Skills are loaded dynamically by the LLM via the `antseed_load` tool when needed,
+   * rather than being injected into every request like middleware.
+   * Relative paths are resolved from the config file's directory.
+   */
+  skillsDir?: string;
 }
 
 /**
