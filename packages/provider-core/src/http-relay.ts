@@ -114,27 +114,29 @@ export class HttpRelay {
       // Swap auth headers
       let swappedRequest = swapAuthHeader(request, effectiveConfig);
 
-      const shouldProcessJsonBody = (
-        (this._config.serviceRewriteMap && Object.keys(this._config.serviceRewriteMap).length > 0)
-        || this._config.injectJsonFields
-      );
-
-      // Optionally rewrite service IDs and inject extra JSON fields into request body.
-      if (shouldProcessJsonBody && swappedRequest.method !== 'GET' && swappedRequest.method !== 'HEAD') {
+      // Always process JSON bodies to normalize "service" → "model" for upstream APIs,
+      // apply service rewrites, and inject extra fields.
+      if (swappedRequest.method !== 'GET' && swappedRequest.method !== 'HEAD') {
         try {
           const decoded = JSON.parse(new TextDecoder().decode(swappedRequest.body)) as Record<string, unknown>;
           const transformed: Record<string, unknown> = { ...decoded };
 
-          if (this._config.serviceRewriteMap) {
-            // Read from both "model" (upstream API compat) and "service" (native) fields
-            const requestedService = (transformed.service ?? transformed.model) as string | undefined;
-            if (typeof requestedService === 'string' && requestedService.trim().length > 0) {
-              const rewrittenService = this._config.serviceRewriteMap[requestedService.trim().toLowerCase()];
-              if (typeof rewrittenService === 'string' && rewrittenService.trim().length > 0) {
-                transformed.model = rewrittenService.trim();
-              }
+          // Read from both "model" (upstream API compat) and "service" (native) fields
+          const requestedService = (transformed.service ?? transformed.model) as string | undefined;
+
+          if (this._config.serviceRewriteMap && typeof requestedService === 'string' && requestedService.trim().length > 0) {
+            const rewrittenService = this._config.serviceRewriteMap[requestedService.trim().toLowerCase()];
+            if (typeof rewrittenService === 'string' && rewrittenService.trim().length > 0) {
+              transformed.model = rewrittenService.trim();
             }
           }
+
+          // Normalize: if client sent "service" without "model", copy to "model" for upstream API compat.
+          if (transformed.service !== undefined && transformed.model === undefined) {
+            transformed.model = transformed.service;
+          }
+          // Remove the "service" field — upstream APIs don't understand it.
+          delete transformed.service;
 
           const merged = this._config.injectJsonFields
             ? deepMerge(transformed, this._config.injectJsonFields)

@@ -370,6 +370,47 @@ describe('HttpRelay', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('normalizes body.service to body.model for upstream API compatibility', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
+
+    const responses: SerializedHttpResponse[] = [];
+    const callbacks: RelayCallbacks = { onResponse: (res) => responses.push(res) };
+
+    const relay = new HttpRelay(makeConfig({ allowedServices: ['claude-sonnet-4-20250514'] }), callbacks);
+    // Client sends "service" instead of "model"
+    const req = makeRequest({
+      body: new TextEncoder().encode(JSON.stringify({ service: 'claude-sonnet-4-20250514', messages: [] })),
+    });
+    await relay.handleRequest(req);
+
+    expect(responses[0]!.statusCode).toBe(200);
+    const [, opts] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const parsed = JSON.parse(new TextDecoder().decode(opts.body as Uint8Array)) as Record<string, unknown>;
+    // "service" should be removed, "model" should be set
+    expect(parsed.model).toBe('claude-sonnet-4-20250514');
+    expect(parsed.service).toBeUndefined();
+  });
+
+  it('strips body.service when body.model is already present', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
+
+    const responses: SerializedHttpResponse[] = [];
+    const callbacks: RelayCallbacks = { onResponse: (res) => responses.push(res) };
+
+    const relay = new HttpRelay(makeConfig({ allowedServices: ['claude-sonnet-4-20250514'] }), callbacks);
+    // Client sends both "service" and "model"
+    const req = makeRequest({
+      body: new TextEncoder().encode(JSON.stringify({ model: 'claude-sonnet-4-20250514', service: 'claude-sonnet-4-20250514', messages: [] })),
+    });
+    await relay.handleRequest(req);
+
+    expect(responses[0]!.statusCode).toBe(200);
+    const [, opts] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const parsed = JSON.parse(new TextDecoder().decode(opts.body as Uint8Array)) as Record<string, unknown>;
+    expect(parsed.model).toBe('claude-sonnet-4-20250514');
+    expect(parsed.service).toBeUndefined();
+  });
+
   it('tracks active count correctly', async () => {
     fetchMock.mockResolvedValue(new Response('{}', { status: 200 }));
 
