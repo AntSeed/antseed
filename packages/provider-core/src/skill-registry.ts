@@ -111,7 +111,7 @@ export class SkillRegistry {
           const name = parsed.name || entry;
           const description = parsed.description || '';
 
-          const content = raw.replace(/^---[\s\S]*?---\s*\n?/, '');
+          const content = raw.replace(/^---\s*\n[\s\S]*?\n---\s*\n?/, '');
           this.register({ name, description, content });
         } catch {
           // No SKILL.md or not a directory — skip

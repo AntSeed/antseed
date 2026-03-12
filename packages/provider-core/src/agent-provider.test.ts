@@ -327,7 +327,7 @@ describe('AgentProvider — Anthropic format', () => {
     expect(content[0]!.name).toBe('some_other_tool');
   });
 
-  it('aborts loop when LLM calls both antseed_load and buyer tools', async () => {
+  it('aborts loop and strips antseed_load when LLM calls both antseed_load and buyer tools', async () => {
     // LLM calls antseed_load AND a buyer tool in the same message
     const response = makeAnthropicResponse([
       { type: 'tool_use', id: 'tool-1', name: 'antseed_load', input: { name: 'visual-explainer' } },
@@ -339,13 +339,13 @@ describe('AgentProvider — Anthropic format', () => {
     const req = makeReq({ messages: [{ role: 'user', content: 'search and load' }] });
     const res = await agent.handleRequest(req);
 
-    // Should return the raw response without looping — buyer handles their tool
+    // Should return response without looping
     expect(inner.callCount()).toBe(1);
     const responseBody = parseBody(res.body);
     const content = responseBody.content as { type: string; name: string }[];
-    expect(content).toHaveLength(2);
-    expect(content[0]!.name).toBe('antseed_load');
-    expect(content[1]!.name).toBe('search');
+    // antseed_load should be stripped — buyer only sees their own tool
+    expect(content).toHaveLength(1);
+    expect(content[0]!.name).toBe('search');
   });
 
   it('preserves existing tools in the request', async () => {
@@ -419,7 +419,7 @@ describe('AgentProvider — OpenAI format', () => {
     expect(choices[0]!.message.content).toBe('Here is the code review.');
   });
 
-  it('aborts loop when OpenAI response has mixed tool calls', async () => {
+  it('aborts loop and strips antseed_load from OpenAI mixed tool calls', async () => {
     const response = makeOpenAIResponse({
       role: 'assistant',
       content: null,
@@ -439,8 +439,10 @@ describe('AgentProvider — OpenAI format', () => {
 
     expect(inner.callCount()).toBe(1);
     const responseBody = parseBody(res.body);
-    const choices = responseBody.choices as { message: { tool_calls: unknown[] } }[];
-    expect(choices[0]!.message.tool_calls).toHaveLength(2);
+    const choices = responseBody.choices as { message: { tool_calls: { function: { name: string } }[] } }[];
+    // antseed_load should be stripped — buyer only sees their own tool
+    expect(choices[0]!.message.tool_calls).toHaveLength(1);
+    expect(choices[0]!.message.tool_calls[0]!.function.name).toBe('search');
   });
 });
 

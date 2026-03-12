@@ -125,9 +125,10 @@ export class AgentProvider implements Provider {
       }
 
       // If the LLM also called non-antseed tools, abort the loop and return
-      // the raw response — the buyer must handle their own tool calls.
+      // the response with antseed_load blocks stripped — the buyer handles their own tools.
       if (hasNonAntseedToolCalls(responseBody, format)) {
-        return response;
+        const cleaned = stripAntseedLoadFromResponse(responseBody, format);
+        return { ...response, body: encoder.encode(JSON.stringify(cleaned)) };
       }
 
       const toolResults = this._resolveLoads(antseedCalls);
@@ -186,8 +187,13 @@ export class AgentProvider implements Provider {
         }
 
         const antseedCalls = extractAntseedLoadCalls(responseBody, format);
-        if (antseedCalls.length === 0 || hasNonAntseedToolCalls(responseBody, format)) {
+        if (antseedCalls.length === 0) {
           lastResponse = response;
+          break;
+        }
+        if (hasNonAntseedToolCalls(responseBody, format)) {
+          const cleaned = stripAntseedLoadFromResponse(responseBody, format);
+          lastResponse = { ...response, body: encoder.encode(JSON.stringify(cleaned)) };
           break;
         }
 
@@ -438,4 +444,30 @@ function hasNonAntseedToolCalls(
     name?: string;
   }[] | undefined;
   return content?.some((block) => block.type === 'tool_use' && block.name !== ANTSEED_LOAD_TOOL_NAME) ?? false;
+}
+
+/**
+ * Strip antseed_load tool-use blocks from a response body so the buyer
+ * never sees the internal tool. Used when aborting the loop due to mixed calls.
+ */
+function stripAntseedLoadFromResponse(
+  responseBody: Record<string, unknown>,
+  format: RequestFormat,
+): Record<string, unknown> {
+  if (format === 'openai') {
+    const choices = responseBody.choices as { message: Record<string, unknown> }[] | undefined;
+    if (!choices?.[0]?.message?.tool_calls) return responseBody;
+    const msg = { ...choices[0].message };
+    msg.tool_calls = (msg.tool_calls as { function: { name: string } }[]).filter(
+      (tc) => tc.function.name !== ANTSEED_LOAD_TOOL_NAME,
+    );
+    return { ...responseBody, choices: [{ ...choices[0], message: msg }] };
+  }
+
+  const content = responseBody.content as { type: string; name?: string }[] | undefined;
+  if (!content) return responseBody;
+  const filtered = content.filter(
+    (block) => !(block.type === 'tool_use' && block.name === ANTSEED_LOAD_TOOL_NAME),
+  );
+  return { ...responseBody, content: filtered };
 }
