@@ -8,6 +8,7 @@ import { CommandLineIcon } from '@hugeicons/core-free-icons';
 import { MoreVerticalIcon } from '@hugeicons/core-free-icons';
 import { Add01Icon } from '@hugeicons/core-free-icons';
 import { ComputerTerminal01Icon } from '@hugeicons/core-free-icons';
+import { DiscoverCircleIcon } from '@hugeicons/core-free-icons';
 import type { ViewName } from '../types';
 import { useUiSnapshot } from '../hooks/useUiSnapshot';
 import { useActions } from '../hooks/useActions';
@@ -29,6 +30,7 @@ type NavEntry = {
 
 const baseEntries: NavEntry[] = [
   { label: 'New Chat', view: 'chat', icon: Add01Icon, action: 'new-chat' },
+  { label: 'Discover', view: 'discover', icon: DiscoverCircleIcon },
   { label: 'Network', view: 'overview', icon: HierarchySquare03Icon },
   { label: 'External Clients', view: 'external-clients', icon: ComputerTerminal01Icon },
   { label: 'Settings', view: 'config', icon: Settings02Icon },

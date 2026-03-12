@@ -3,6 +3,7 @@ import { ChatView } from './views/ChatView';
 import { ConfigView } from './views/ConfigView';
 import { ConnectionView } from './views/ConnectionView';
 import { DesktopView } from './views/DesktopView';
+import { DiscoverView } from './views/DiscoverView';
 import { ExternalClientsView } from './views/ExternalClientsView';
 import { OverviewView } from './views/OverviewView';
 import { PeersView } from './views/PeersView';
@@ -22,6 +23,7 @@ export function ViewHost({ activeView, onSelectView }: ViewHostProps) {
       <ConfigView active={activeView === 'config'} />
       <DesktopView active={activeView === 'desktop'} />
       <ExternalClientsView active={activeView === 'external-clients'} />
+      <DiscoverView active={activeView === 'discover'} onSelectView={onSelectView} />
     </section>
   );
 }
