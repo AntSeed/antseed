@@ -166,15 +166,12 @@ const DEFAULT_PLUGINS_DIR = path.join(homedir(), '.antseed', 'plugins');
 const DEFAULT_PLUGINS_PACKAGE_JSON = path.join(DEFAULT_PLUGINS_DIR, 'package.json');
 const SAFE_PLUGIN_PACKAGE_PATTERN = /^(@?[a-z0-9][a-z0-9._-]*)(\/[a-z0-9][a-z0-9._-]*)?$/i;
 const PLUGIN_PACKAGE_ALIAS_MAP: Record<string, string> = {
-  unified: '@antseed/provider-unified',
   anthropic: '@antseed/provider-anthropic',
   openai: '@antseed/provider-openai',
   'local-llm': '@antseed/provider-local-llm',
-  'provider-unified': '@antseed/provider-unified',
   'provider-anthropic': '@antseed/provider-anthropic',
   'provider-openai': '@antseed/provider-openai',
   'provider-local-llm': '@antseed/provider-local-llm',
-  'antseed-provider-unified': '@antseed/provider-unified',
   'antseed-provider-anthropic': '@antseed/provider-anthropic',
   'antseed-provider-openai': '@antseed/provider-openai',
   'antseed-provider-local-llm': '@antseed/provider-local-llm',
@@ -189,7 +186,6 @@ const PLUGIN_PACKAGE_ALIAS_MAP: Record<string, string> = {
   'antseed-router-local': '@antseed/router-local',
 };
 const SCOPED_TO_LEGACY_PLUGIN_PACKAGE_MAP: Record<string, string> = {
-  '@antseed/provider-unified': 'antseed-provider-unified',
   '@antseed/provider-anthropic': 'antseed-provider-anthropic',
   '@antseed/provider-openai': 'antseed-provider-openai',
   '@antseed/provider-local-llm': 'antseed-provider-local-llm',
