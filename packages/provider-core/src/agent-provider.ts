@@ -245,11 +245,15 @@ export class AgentProvider implements Provider {
       body = { ...body, system: existing ? `${existing}\n\n${systemInjection}` : systemInjection };
     }
 
-    // Inject antseed_load tool
-    const toolDef = format === 'openai' ? ANTSEED_LOAD_TOOL_OPENAI : ANTSEED_LOAD_TOOL;
-    const tools = Array.isArray(body.tools) ? [...(body.tools as unknown[])] : [];
-    tools.push(toolDef);
-    body = { ...body, tools };
+    // Inject antseed_load tool — skip if tool_choice forces a specific function,
+    // since the LLM wouldn't be able to call antseed_load anyway and the extra
+    // tool definition could interfere with the buyer's intent.
+    if (!isToolChoiceForced(body)) {
+      const toolDef = format === 'openai' ? ANTSEED_LOAD_TOOL_OPENAI : ANTSEED_LOAD_TOOL;
+      const tools = Array.isArray(body.tools) ? [...(body.tools as unknown[])] : [];
+      tools.push(toolDef);
+      body = { ...body, tools };
+    }
 
     return body;
   }
@@ -447,6 +451,29 @@ function hasNonAntseedToolCalls(
 }
 
 /**
+ * Check if `tool_choice` forces a specific function, making it pointless
+ * (and potentially harmful) to inject `antseed_load`.
+ *
+ * Covers both Anthropic (`{ type: 'tool', name: '...' }`) and
+ * OpenAI (`{ type: 'function', function: { name: '...' } }`) formats.
+ * `"auto"`, `"any"`, `"required"`, and `"none"` all allow the LLM to
+ * pick freely (or at least pick among all tools), so we inject normally.
+ */
+function isToolChoiceForced(body: Record<string, unknown>): boolean {
+  const tc = body.tool_choice;
+  if (tc == null || typeof tc === 'string') return false;
+  const obj = tc as Record<string, unknown>;
+  // Anthropic: { type: 'tool', name: 'specific_tool' }
+  if (obj.type === 'tool' && typeof obj.name === 'string') return true;
+  // OpenAI: { type: 'function', function: { name: 'specific_tool' } }
+  if (obj.type === 'function') {
+    const fn = obj.function as Record<string, unknown> | undefined;
+    if (fn && typeof fn.name === 'string') return true;
+  }
+  return false;
+}
+
+/**
  * Strip antseed_load tool-use blocks from a response body so the buyer
  * never sees the internal tool. Used when aborting the loop due to mixed calls.
  */
@@ -456,12 +483,16 @@ function stripAntseedLoadFromResponse(
 ): Record<string, unknown> {
   if (format === 'openai') {
     const choices = responseBody.choices as { message: Record<string, unknown> }[] | undefined;
-    if (!choices?.[0]?.message?.tool_calls) return responseBody;
-    const msg = { ...choices[0].message };
-    msg.tool_calls = (msg.tool_calls as { function: { name: string } }[]).filter(
-      (tc) => tc.function.name !== ANTSEED_LOAD_TOOL_NAME,
-    );
-    return { ...responseBody, choices: [{ ...choices[0], message: msg }] };
+    if (!choices?.length) return responseBody;
+    const cleaned = choices.map((choice) => {
+      if (!choice.message?.tool_calls) return choice;
+      const msg = { ...choice.message };
+      msg.tool_calls = (msg.tool_calls as { function: { name: string } }[]).filter(
+        (tc) => tc.function.name !== ANTSEED_LOAD_TOOL_NAME,
+      );
+      return { ...choice, message: msg };
+    });
+    return { ...responseBody, choices: cleaned };
   }
 
   const content = responseBody.content as { type: string; name?: string }[] | undefined;

@@ -60,6 +60,10 @@ function makeOpenAITextResponse(text: string): Uint8Array {
   return makeOpenAIResponse({ role: 'assistant', content: text });
 }
 
+function makeResponse(body: Record<string, unknown>): Uint8Array {
+  return makeBody(body);
+}
+
 // ─── Mock provider ──────────────────────────────────────────────
 
 interface MockProviderOptions {
@@ -70,13 +74,16 @@ interface MockProviderOptions {
 function mockProvider(opts: MockProviderOptions): Provider & {
   requestBodies: () => Record<string, unknown>[];
   callCount: () => number;
+  lastRequest: () => SerializedHttpRequest | undefined;
 } {
   const _requestBodies: Record<string, unknown>[] = [];
+  const _rawRequests: SerializedHttpRequest[] = [];
   let _callIndex = 0;
 
   const p: Provider & {
     requestBodies: () => Record<string, unknown>[];
     callCount: () => number;
+    lastRequest: () => SerializedHttpRequest | undefined;
   } = {
     name: 'mock',
     models: ['claude-sonnet-4-5-20250929'],
@@ -87,6 +94,7 @@ function mockProvider(opts: MockProviderOptions): Provider & {
     getCapacity: () => ({ current: 0, max: 10 }),
 
     handleRequest: async (req: SerializedHttpRequest): Promise<SerializedHttpResponse> => {
+      _rawRequests.push(req);
       _requestBodies.push(parseBody(req.body));
       const responseBody = opts.responses[_callIndex] ?? makeAnthropicTextResponse('fallback');
       _callIndex++;
@@ -110,6 +118,7 @@ function mockProvider(opts: MockProviderOptions): Provider & {
 
     requestBodies: () => _requestBodies,
     callCount: () => _callIndex,
+    lastRequest: () => _rawRequests[_rawRequests.length - 1],
   };
   return p;
 }
@@ -443,6 +452,83 @@ describe('AgentProvider — OpenAI format', () => {
     // antseed_load should be stripped — buyer only sees their own tool
     expect(choices[0]!.message.tool_calls).toHaveLength(1);
     expect(choices[0]!.message.tool_calls[0]!.function.name).toBe('search');
+  });
+
+  it('strips antseed_load from all choices in multi-choice OpenAI responses', async () => {
+    const response = makeResponse({
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              { id: 'c1-1', type: 'function', function: { name: 'antseed_load', arguments: '{"name":"visual-explainer"}' } },
+              { id: 'c1-2', type: 'function', function: { name: 'search', arguments: '{"q":"a"}' } },
+            ],
+          },
+        },
+        {
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              { id: 'c2-1', type: 'function', function: { name: 'antseed_load', arguments: '{"name":"code-review"}' } },
+              { id: 'c2-2', type: 'function', function: { name: 'calc', arguments: '{}' } },
+            ],
+          },
+        },
+      ],
+    });
+    const inner = mockProvider({ responses: [response] });
+    const agent = new AgentProvider(inner, makeRegistry());
+
+    const req = makeReq(
+      { messages: [{ role: 'user', content: 'test' }] },
+      '/v1/chat/completions',
+    );
+    const res = await agent.handleRequest(req);
+
+    const responseBody = parseBody(res.body);
+    const choices = responseBody.choices as { message: { tool_calls: { function: { name: string } }[] } }[];
+    expect(choices).toHaveLength(2);
+    expect(choices[0]!.message.tool_calls).toHaveLength(1);
+    expect(choices[0]!.message.tool_calls[0]!.function.name).toBe('search');
+    expect(choices[1]!.message.tool_calls).toHaveLength(1);
+    expect(choices[1]!.message.tool_calls[0]!.function.name).toBe('calc');
+  });
+
+  it('skips antseed_load tool injection when tool_choice forces a specific function', async () => {
+    const response = makeOpenAIResponse({
+      role: 'assistant',
+      content: null,
+      tool_calls: [
+        { id: 'call-1', type: 'function', function: { name: 'search', arguments: '{"q":"test"}' } },
+      ],
+    });
+    const inner = mockProvider({ responses: [response] });
+    const agent = new AgentProvider(inner, makeRegistry());
+
+    // OpenAI format with tool_choice forcing a specific function
+    const req = makeReq(
+      {
+        messages: [{ role: 'user', content: 'search' }],
+        tools: [{ type: 'function', function: { name: 'search', parameters: {} } }],
+        tool_choice: { type: 'function', function: { name: 'search' } },
+      },
+      '/v1/chat/completions',
+    );
+    const res = await agent.handleRequest(req);
+
+    // Verify antseed_load was NOT injected into the request
+    const sentBody = parseBody(inner.lastRequest()!.body);
+    const tools = sentBody.tools as { function?: { name: string }; name?: string }[];
+    const hasAntseedTool = tools.some(
+      (t) => t.name === 'antseed_load' || t.function?.name === 'antseed_load',
+    );
+    expect(hasAntseedTool).toBe(false);
+    // Catalog is still injected in the system prompt
+    const messages = sentBody.messages as { role: string; content: string }[];
+    expect(messages[0]!.content).toContain('ANTSEED_CATALOG_START');
   });
 });
 

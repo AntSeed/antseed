@@ -37,12 +37,6 @@ interface Provider {
   handleRequest(req: SerializedHttpRequest):
     Promise<SerializedHttpResponse>
 
-  handleTask?(task: TaskRequest):
-    AsyncIterable<TaskEvent>
-
-  handleSkill?(skill: SkillRequest):
-    Promise<SkillResponse>
-
   init?(): Promise<void>
   getCapacity(): { current: number; max: number }
 }
