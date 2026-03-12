@@ -466,9 +466,10 @@ function CopyResponseButton({ content }: { content: unknown }) {
 type ChatBubbleProps = {
   message: ChatMessage;
   streaming?: boolean;
+  hideActions?: boolean;
 };
 
-export function ChatBubble({ message, streaming = false }: ChatBubbleProps) {
+export function ChatBubble({ message, streaming = false, hideActions = false }: ChatBubbleProps) {
   const [metaExpanded, setMetaExpanded] = useState(false);
   const metaParts = useMemo(() => buildChatMetaParts(message), [message]);
 
@@ -514,7 +515,7 @@ export function ChatBubble({ message, streaming = false }: ChatBubbleProps) {
     <div className={`${styles.chatBubble} ${message.role === 'user' ? styles.own : styles.other}`}>
       {bubbleMeta}
       <div>{content}</div>
-      {message.role !== 'user' && !streaming ? (
+      {message.role !== 'user' && !streaming && !hideActions ? (
         <div className={styles.messageActions}>
           <CopyResponseButton content={message.content} />
         </div>

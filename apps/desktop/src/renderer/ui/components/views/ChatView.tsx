@@ -255,7 +255,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
               </div>
             ) : (
               visibleMessages.map((msg, i) => (
-                <ChatBubble key={getMessageKey(msg, i)} message={msg} />
+                <ChatBubble key={getMessageKey(msg, i)} message={msg} hideActions={Boolean(snap.chatStreamingMessage) && i === visibleMessages.length - 1} />
               ))
             )}
             {snap.chatStreamingMessage ? (

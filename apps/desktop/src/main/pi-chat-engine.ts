@@ -2762,6 +2762,10 @@ export function registerPiChatHandlers({
     },
   );
 
+  ipcMain.handle('chat:ai-is-stream-active', (_event, conversationId: string) => {
+    return { ok: true, active: activeRunsByConversation.has(conversationId) };
+  });
+
   ipcMain.handle('chat:ai-abort', async () => {
     const activeRuns = Array.from(activeRunsByConversation.values());
     if (activeRuns.length === 0) {

@@ -508,6 +508,9 @@ export function initChatModule({
     });
   }
 
+  // Per-conversation cache so the streaming message survives navigation.
+  const streamingMessageCache = new Map<string, ChatMessage>();
+
   function cloneStreamingMessage(message: ChatMessage): ChatMessage {
     return {
       ...message,
@@ -871,6 +874,12 @@ export function initChatModule({
   async function openConversation(convId: string): Promise<void> {
     if (!bridge || !bridge.chatAiGetConversation) return;
 
+    // Save the current streaming message so it survives navigation.
+    const previousConvId = uiState.chatActiveConversation;
+    if (previousConvId && uiState.chatStreamingMessage) {
+      streamingMessageCache.set(previousConvId, cloneStreamingMessage(uiState.chatStreamingMessage));
+    }
+
     uiState.chatActiveConversation = convId;
     setStreamingMessage(null);
 
@@ -897,6 +906,26 @@ export function initChatModule({
 
         updateThreadMeta(conv);
         uiState.chatError = null;
+
+        // Restore the cached streaming message if the stream is still active
+        // and the cached turn hasn't already been committed to disk.
+        const cached = streamingMessageCache.get(convId);
+        if (cached) {
+          streamingMessageCache.delete(convId);
+          if (bridge.chatAiIsStreamActive) {
+            const { active } = await bridge.chatAiIsStreamActive(convId);
+            if (active) {
+              const lastAssistant = uiState.chatMessages
+                .findLast((m: ChatMessage) => m.role === 'assistant');
+              const isStale = lastAssistant &&
+                Number(lastAssistant.createdAt) >= Number(cached.createdAt);
+              if (!isStale && !uiState.chatStreamingMessage) {
+                setStreamingMessage(cached);
+              }
+            }
+          }
+        }
+
         notifyUiStateChanged();
       } else {
         reportChatError(result.error, 'Failed to open conversation');
@@ -1654,6 +1683,7 @@ export function initChatModule({
 
     if (bridge.onChatAiStreamDone) {
       bridge.onChatAiStreamDone((data) => {
+        streamingMessageCache.delete(data.conversationId);
         if (data.conversationId !== uiState.chatActiveConversation) return;
 
         cancelThinkingRaf();
@@ -1687,6 +1717,7 @@ export function initChatModule({
 
     if (bridge.onChatAiStreamError) {
       bridge.onChatAiStreamError((data) => {
+        streamingMessageCache.delete(data.conversationId);
         if (data.conversationId !== uiState.chatActiveConversation) return;
 
         cancelThinkingRaf();

@@ -172,6 +172,9 @@ const api = {
   chatAiAbort(): Promise<{ ok: boolean }> {
     return ipcRenderer.invoke('chat:ai-abort');
   },
+  chatAiIsStreamActive(conversationId: string): Promise<{ ok: boolean; active: boolean }> {
+    return ipcRenderer.invoke('chat:ai-is-stream-active', conversationId);
+  },
   chatAiGetProxyStatus(): Promise<{ ok: boolean; data: { running: boolean; port: number } }> {
     return ipcRenderer.invoke('chat:ai-get-proxy-status');
   },

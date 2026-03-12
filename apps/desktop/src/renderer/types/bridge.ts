@@ -120,6 +120,7 @@ export type DesktopBridge = {
   chatAiSend?: (conversationId: string, message: string, model?: string, provider?: string, imageBase64?: string, imageMimeType?: string) => Promise<{ ok: boolean; error?: string }>;
   chatAiSendStream?: (conversationId: string, message: string, model?: string, provider?: string, imageBase64?: string, imageMimeType?: string) => Promise<{ ok: boolean; error?: string }>;
   chatAiAbort?: () => Promise<{ ok: boolean }>;
+  chatAiIsStreamActive?: (conversationId: string) => Promise<{ ok: boolean; active: boolean }>;
   chatAiGetProxyStatus?: () => Promise<{ ok: boolean; data: { running: boolean; port: number } }>;
   onChatAiDone?: (handler: (data: { conversationId: string; message: { role: string; content: unknown; createdAt?: number; meta?: Record<string, unknown> } }) => void) => () => void;
   onChatAiError?: (handler: (data: { conversationId: string; error: string }) => void) => () => void;
