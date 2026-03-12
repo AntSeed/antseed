@@ -3,11 +3,11 @@ export {
   DEFAULT_DHT_CONFIG,
   topicToInfoHash,
   providerTopic,
-  modelTopic,
-  modelSearchTopic,
+  serviceTopic,
+  serviceSearchTopic,
   capabilityTopic,
-  normalizeModelTopicKey,
-  normalizeModelSearchTopicKey,
+  normalizeServiceTopicKey,
+  normalizeServiceSearchTopicKey,
   type DHTNodeConfig,
 } from './dht-node.js';
 export { PeerAnnouncer, type AnnouncerConfig } from './announcer.js';

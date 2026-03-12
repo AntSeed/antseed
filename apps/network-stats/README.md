@@ -12,7 +12,7 @@ Standalone service that polls the AntSeed network as an anonymous buyer and expo
 ## API
 
 ```
-GET /stats   →  { peers: number, models: string[], updatedAt: string }
+GET /stats   →  { peers: number, services: string[], updatedAt: string }
 GET /health  →  { ok: true }
 ```
 

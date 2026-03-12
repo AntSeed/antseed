@@ -405,9 +405,9 @@ registerActions({
   abortChat: chatApi.abortChat,
   deleteConversation: chatApi.deleteConversation,
   renameConversation: chatApi.renameConversation,
-  handleModelChange: chatApi.handleModelChange,
-  handleModelFocus: chatApi.handleModelFocus,
-  handleModelBlur: chatApi.handleModelBlur,
+  handleServiceChange: chatApi.handleServiceChange,
+  handleServiceFocus: chatApi.handleServiceFocus,
+  handleServiceBlur: chatApi.handleServiceBlur,
   refreshPlugins: refreshPluginInventory,
   installPlugin: () => {
     const packageName = resolveRouterPackageName(

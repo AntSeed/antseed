@@ -1,4 +1,4 @@
-import type { AntseedProviderPlugin, Provider, ModelApiProtocol } from '@antseed/node';
+import type { AntseedProviderPlugin, Provider, ServiceApiProtocol } from '@antseed/node';
 import { BaseProvider, StaticTokenProvider } from '@antseed/provider-core';
 
 function parseNonNegativeNumber(raw: string | undefined, key: string, fallback: number): number {
@@ -9,32 +9,32 @@ function parseNonNegativeNumber(raw: string | undefined, key: string, fallback: 
   return parsed;
 }
 
-function parseModelPricingJson(raw: string | undefined): Provider['pricing']['models'] {
+function parseServicePricingJson(raw: string | undefined): Provider['pricing']['services'] {
   if (!raw) return undefined;
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw) as unknown;
   } catch {
-    throw new Error('ANTSEED_MODEL_PRICING_JSON must be valid JSON');
+    throw new Error('ANTSEED_SERVICE_PRICING_JSON must be valid JSON');
   }
 
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('ANTSEED_MODEL_PRICING_JSON must be an object map of model -> pricing');
+    throw new Error('ANTSEED_SERVICE_PRICING_JSON must be an object map of service -> pricing');
   }
 
-  const out: NonNullable<Provider['pricing']['models']> = {};
+  const out: NonNullable<Provider['pricing']['services']> = {};
   for (const [model, pricing] of Object.entries(parsed as Record<string, unknown>)) {
     if (!pricing || typeof pricing !== 'object' || Array.isArray(pricing)) {
-      throw new Error(`Model pricing for "${model}" must be an object`);
+      throw new Error(`Service pricing for "${model}" must be an object`);
     }
     const input = (pricing as Record<string, unknown>)['inputUsdPerMillion'];
     const output = (pricing as Record<string, unknown>)['outputUsdPerMillion'];
     if (typeof input !== 'number' || !Number.isFinite(input) || input < 0) {
-      throw new Error(`Model pricing for "${model}" requires non-negative inputUsdPerMillion`);
+      throw new Error(`Service pricing for "${model}" requires non-negative inputUsdPerMillion`);
     }
     if (typeof output !== 'number' || !Number.isFinite(output) || output < 0) {
-      throw new Error(`Model pricing for "${model}" requires non-negative outputUsdPerMillion`);
+      throw new Error(`Service pricing for "${model}" requires non-negative outputUsdPerMillion`);
     }
     out[model] = { inputUsdPerMillion: input, outputUsdPerMillion: output };
   }
@@ -42,12 +42,12 @@ function parseModelPricingJson(raw: string | undefined): Provider['pricing']['mo
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
-function buildModelApiProtocols(
-  models: string[],
-  protocol: ModelApiProtocol,
-): Record<string, ModelApiProtocol[]> | undefined {
-  if (models.length === 0) return undefined;
-  return Object.fromEntries(models.map((model) => [model, [protocol]]));
+function buildServiceApiProtocols(
+  services: string[],
+  protocol: ServiceApiProtocol,
+): Record<string, ServiceApiProtocol[]> | undefined {
+  if (services.length === 0) return undefined;
+  return Object.fromEntries(services.map((model) => [model, [protocol]]));
 }
 
 const plugin: AntseedProviderPlugin = {
@@ -60,9 +60,9 @@ const plugin: AntseedProviderPlugin = {
     { key: 'ANTHROPIC_API_KEY', label: 'API Key', type: 'secret', required: true, description: 'Anthropic API key' },
     { key: 'ANTSEED_INPUT_USD_PER_MILLION', label: 'Input Price', type: 'number', required: false, default: 10, description: 'Input price in USD per 1M tokens' },
     { key: 'ANTSEED_OUTPUT_USD_PER_MILLION', label: 'Output Price', type: 'number', required: false, default: 10, description: 'Output price in USD per 1M tokens' },
-    { key: 'ANTSEED_MODEL_PRICING_JSON', label: 'Model Pricing JSON', type: 'string', required: false, description: 'Per-model pricing JSON' },
+    { key: 'ANTSEED_SERVICE_PRICING_JSON', label: 'Service Pricing JSON', type: 'string', required: false, description: 'Per-service pricing JSON' },
     { key: 'ANTSEED_MAX_CONCURRENCY', label: 'Max Concurrency', type: 'number', required: false, default: 10, description: 'Max concurrent requests' },
-    { key: 'ANTSEED_ALLOWED_MODELS', label: 'Allowed Models', type: 'string[]', required: false, description: 'Model allow-list' },
+    { key: 'ANTSEED_ALLOWED_MODELS', label: 'Allowed Services', type: 'string[]', required: false, description: 'Model allow-list' },
   ],
 
   createProvider(config: Record<string, string>): Provider {
@@ -71,13 +71,13 @@ const plugin: AntseedProviderPlugin = {
       throw new Error('ANTHROPIC_API_KEY is required');
     }
 
-    const modelPricing = parseModelPricingJson(config['ANTSEED_MODEL_PRICING_JSON']);
+    const servicePricing = parseServicePricingJson(config['ANTSEED_SERVICE_PRICING_JSON']);
     const pricing: Provider['pricing'] = {
       defaults: {
         inputUsdPerMillion: parseNonNegativeNumber(config['ANTSEED_INPUT_USD_PER_MILLION'], 'ANTSEED_INPUT_USD_PER_MILLION', 10),
         outputUsdPerMillion: parseNonNegativeNumber(config['ANTSEED_OUTPUT_USD_PER_MILLION'], 'ANTSEED_OUTPUT_USD_PER_MILLION', 10),
       },
-      ...(modelPricing ? { models: modelPricing } : {}),
+      ...(servicePricing ? { services: servicePricing } : {}),
     };
 
     const maxConcurrency = parseInt(config['ANTSEED_MAX_CONCURRENCY'] ?? '10', 10);
@@ -85,25 +85,25 @@ const plugin: AntseedProviderPlugin = {
       throw new Error('ANTSEED_MAX_CONCURRENCY must be a valid number');
     }
 
-    const allowedModels = config['ANTSEED_ALLOWED_MODELS']
+    const allowedServices = config['ANTSEED_ALLOWED_MODELS']
       ? config['ANTSEED_ALLOWED_MODELS'].split(',').map((s: string) => s.trim())
       : [];
 
     const tokenProvider = new StaticTokenProvider(apiKey);
-    const modelApiProtocols = buildModelApiProtocols(allowedModels, 'anthropic-messages');
+    const serviceApiProtocols = buildServiceApiProtocols(allowedServices, 'anthropic-messages');
 
     return new BaseProvider({
       name: 'anthropic',
-      models: allowedModels,
+      services: allowedServices,
       pricing,
-      ...(modelApiProtocols ? { modelApiProtocols } : {}),
+      ...(serviceApiProtocols ? { serviceApiProtocols } : {}),
       relay: {
         baseUrl: 'https://api.anthropic.com',
         authHeaderName: 'x-api-key',
         authHeaderValue: '',
         tokenProvider,
         maxConcurrency,
-        allowedModels,
+        allowedServices,
       },
     });
   },

@@ -2,12 +2,12 @@ import { verifySignature, hexToBytes } from "../p2p/identity.js";
 import type { DHTNode } from "./dht-node.js";
 import {
   providerTopic,
-  modelTopic,
-  modelSearchTopic,
+  serviceTopic,
+  serviceSearchTopic,
   capabilityTopic,
   topicToInfoHash,
-  normalizeModelTopicKey,
-  normalizeModelSearchTopicKey,
+  normalizeServiceTopicKey,
+  normalizeServiceSearchTopicKey,
 } from "./dht-node.js";
 import type { PeerMetadata } from "./peer-metadata.js";
 import { encodeMetadataForSigning } from "./metadata-codec.js";
@@ -58,18 +58,18 @@ export class PeerLookup {
     return this.resolveLookupResults(shuffle(peers));
   }
 
-  async findByModel(model: string): Promise<LookupResult[]> {
-    const canonicalTopic = modelTopic(model);
+  async findByService(model: string): Promise<LookupResult[]> {
+    const canonicalTopic = serviceTopic(model);
     const canonicalInfoHash = topicToInfoHash(canonicalTopic);
 
-    const canonicalModelKey = normalizeModelTopicKey(model);
-    const compactModelKey = normalizeModelSearchTopicKey(model);
-    if (compactModelKey === canonicalModelKey) {
+    const canonicalServiceKey = normalizeServiceTopicKey(model);
+    const compactServiceKey = normalizeServiceSearchTopicKey(model);
+    if (compactServiceKey === canonicalServiceKey) {
       const peers = await this.config.dht.lookup(canonicalInfoHash);
       return this.resolveLookupResults(shuffle(peers));
     }
 
-    const compactTopic = modelSearchTopic(model);
+    const compactTopic = serviceSearchTopic(model);
     const compactInfoHash = topicToInfoHash(compactTopic);
     const [canonicalPeers, compactPeers] = await Promise.all([
       this.config.dht.lookup(canonicalInfoHash),

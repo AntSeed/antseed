@@ -95,23 +95,23 @@ export function buildSellerPluginRuntimeEnv(
 ): Record<string, string> {
   const providerPricing = sellerConfig.pricing.providers?.[providerName]
   const effectiveDefaults = providerPricing?.defaults ?? sellerConfig.pricing.defaults
-  const modelPricing = providerPricing?.models
-  const modelCategories = sellerConfig.modelCategories?.[providerName]
+  const servicePricing = providerPricing?.services
+  const serviceCategories = sellerConfig.serviceCategories?.[providerName]
   const runtimeEnv: Record<string, string> = {
     ANTSEED_INPUT_USD_PER_MILLION: String(effectiveDefaults.inputUsdPerMillion),
     ANTSEED_OUTPUT_USD_PER_MILLION: String(effectiveDefaults.outputUsdPerMillion),
     ANTSEED_MAX_CONCURRENCY: String(sellerConfig.maxConcurrentBuyers),
   }
-  if (modelPricing && Object.keys(modelPricing).length > 0) {
-    runtimeEnv['ANTSEED_MODEL_PRICING_JSON'] = JSON.stringify(modelPricing)
+  if (servicePricing && Object.keys(servicePricing).length > 0) {
+    runtimeEnv['ANTSEED_SERVICE_PRICING_JSON'] = JSON.stringify(servicePricing)
   }
-  if (modelCategories && Object.keys(modelCategories).length > 0) {
-    runtimeEnv['ANTSEED_MODEL_CATEGORIES_JSON'] = JSON.stringify(modelCategories)
+  if (serviceCategories && Object.keys(serviceCategories).length > 0) {
+    runtimeEnv['ANTSEED_SERVICE_CATEGORIES_JSON'] = JSON.stringify(serviceCategories)
   }
   return runtimeEnv
 }
 
-function parseRuntimeModelPricingJson(
+function parseRuntimeServicePricingJson(
   raw: string | undefined,
 ): Record<string, { inputUsdPerMillion: number; outputUsdPerMillion: number }> | undefined {
   if (!raw) {
@@ -138,7 +138,7 @@ function parseRuntimeModelPricingJson(
   }
 }
 
-function parseRuntimeModelCategoriesJson(raw: string | undefined): Record<string, string[]> | undefined {
+function parseRuntimeServiceCategoriesJson(raw: string | undefined): Record<string, string[]> | undefined {
   if (!raw) {
     return undefined
   }
@@ -175,12 +175,12 @@ async function loadMiddlewareFiles(
 ): Promise<ProviderMiddleware[]> {
   return Promise.all(
     configs.map(async (entry) => {
-      if (entry.models !== undefined && entry.models.length === 0) {
+      if (entry.services !== undefined && entry.services.length === 0) {
         throw new Error(`Middleware entry "${entry.file}" has an empty models list — remove the field to apply globally or list at least one model ID.`)
       }
       const filePath = isAbsolute(entry.file) ? entry.file : resolve(baseDir, entry.file)
       const content = await readFile(filePath, 'utf-8')
-      return { content, position: entry.position, role: entry.role, models: entry.models } as ProviderMiddleware
+      return { content, position: entry.position, role: entry.role, services: entry.services } as ProviderMiddleware
     }),
   )
 }
@@ -309,10 +309,10 @@ export function registerSeedCommand(program: Command): void {
       const runtimeProviderPricing = buildSellerPluginRuntimeEnv(effectiveSellerConfig, providerName)
       const runtimeInputUsdPerMillion = Number.parseFloat(runtimeProviderPricing['ANTSEED_INPUT_USD_PER_MILLION'] ?? '')
       const runtimeOutputUsdPerMillion = Number.parseFloat(runtimeProviderPricing['ANTSEED_OUTPUT_USD_PER_MILLION'] ?? '')
-      const runtimeModelPricing = parseRuntimeModelPricingJson(runtimeProviderPricing['ANTSEED_MODEL_PRICING_JSON'])
-      const runtimeModelCategories = parseRuntimeModelCategoriesJson(runtimeProviderPricing['ANTSEED_MODEL_CATEGORIES_JSON'])
-      if (runtimeModelCategories) {
-        provider.modelCategories = runtimeModelCategories
+      const runtimeServicePricing = parseRuntimeServicePricingJson(runtimeProviderPricing['ANTSEED_SERVICE_PRICING_JSON'])
+      const runtimeServiceCategories = parseRuntimeServiceCategoriesJson(runtimeProviderPricing['ANTSEED_SERVICE_CATEGORIES_JSON'])
+      if (runtimeServiceCategories) {
+        provider.serviceCategories = runtimeServiceCategories
       }
       console.log(chalk.bold('Effective seller settings:'))
       console.log(chalk.dim(`  provider: ${providerName}`))
@@ -486,14 +486,14 @@ export function registerSeedCommand(program: Command): void {
                 inputUsdPerMillion: Number.isFinite(runtimeInputUsdPerMillion) ? runtimeInputUsdPerMillion : 0,
                 outputUsdPerMillion: Number.isFinite(runtimeOutputUsdPerMillion) ? runtimeOutputUsdPerMillion : 0,
               },
-              ...(runtimeModelPricing ? { models: runtimeModelPricing } : {}),
+              ...(runtimeServicePricing ? { services: runtimeServicePricing } : {}),
             },
           },
-          ...(runtimeModelCategories
+          ...(runtimeServiceCategories
             ? {
                 providerModelCategories: {
                   [providerName]: {
-                    models: runtimeModelCategories,
+                    services: runtimeServiceCategories,
                   },
                 },
               }

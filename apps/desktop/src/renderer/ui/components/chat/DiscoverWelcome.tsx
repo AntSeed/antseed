@@ -1,7 +1,7 @@
 import { useState, useMemo, useCallback } from 'react';
 import Skeleton from 'react-loading-skeleton';
 import 'react-loading-skeleton/dist/skeleton.css';
-import type { ChatModelOptionEntry } from '../../../core/state';
+import type { ChatServiceOptionEntry } from '../../../core/state';
 import styles from './DiscoverWelcome.module.scss';
 
 /* ── Tag colour map (from Figma design tokens) ──────────────────────── */
@@ -93,7 +93,7 @@ function getGradient(modelId: string): string {
   return FALLBACK_GRADIENTS[simpleHash(lower) % FALLBACK_GRADIENTS.length];
 }
 
-/* ── Infer tags from model name / protocol ───────────────────────────── */
+/* ── Infer tags from service name / protocol ───────────────────────────── */
 
 function inferTags(modelId: string, protocol: string): string[] {
   const tags: string[] = ['ANON'];
@@ -115,9 +115,9 @@ function inferTags(modelId: string, protocol: string): string[] {
   return tags;
 }
 
-/* ── Build cards from network model options ──────────────────────────── */
+/* ── Build cards from network service options ──────────────────────────── */
 
-function buildCards(options: ChatModelOptionEntry[]): CardItem[] {
+function buildCards(options: ChatServiceOptionEntry[]): CardItem[] {
   return options.map((opt) => ({
     name: opt.label || opt.id,
     value: opt.value,
@@ -212,7 +212,7 @@ function SkeletonCard() {
 /* ── Main component ──────────────────────────────────────────────────── */
 
 type DiscoverWelcomeProps = {
-  modelOptions: ChatModelOptionEntry[];
+  modelOptions: ChatServiceOptionEntry[];
   onStartChatting: (modelValue: string) => void;
 };
 
@@ -245,7 +245,7 @@ export function DiscoverWelcome({ modelOptions, onStartChatting }: DiscoverWelco
           What do you need <span className={styles.headingAccent}>AI</span> for?
         </h1>
         <p className={styles.subtitle}>
-          Pick a model or agent to start. Filter by what you need.
+          Pick a service or agent to start. Filter by what you need.
           Everything is anonymous — no account required.
         </p>
       </div>
@@ -292,7 +292,7 @@ export function DiscoverWelcome({ modelOptions, onStartChatting }: DiscoverWelco
               </div>
             </>
           ) : (
-            <div className={styles.emptyFilter}>No models match this filter.</div>
+            <div className={styles.emptyFilter}>No services match this filter.</div>
           )}
         </div>
 

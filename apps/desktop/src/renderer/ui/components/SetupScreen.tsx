@@ -41,14 +41,14 @@ function StepRow({ label, done, active }: StepRowProps) {
 
 // Progress level advances monotonically: 0 → 1 → 2 → 3, never backward.
 // 0 = waiting for plugin  1 = plugin done, connecting
-// 2 = P2P activity seen   3 = model-loading activity seen
+// 2 = P2P activity seen   3 = service-loading activity seen
 type ProgressLevel = 0 | 1 | 2 | 3;
 
 export function SetupScreen() {
   const snap = useUiSnapshot();
   const [level, setLevel] = useState<ProgressLevel>(0);
 
-  const hasModels = snap.chatModelOptions.length > 0;
+  const hasServices = snap.chatServiceOptions.length > 0;
   const msg = snap.runtimeActivity.message;
 
   // Advance progress level monotonically inside useEffect so mutations
@@ -58,15 +58,15 @@ export function SetupScreen() {
       // Advance at most one level per call so intermediate steps animate visibly.
       if (snap.appSetupComplete && prev < 1) return 1 as ProgressLevel;
       if (prev >= 1 && /\bpeer(s)?\b|p2p|dht|discovering/i.test(msg) && prev < 2) return 2 as ProgressLevel;
-      if (prev >= 1 && (/model/i.test(msg) || hasModels) && prev < 3) return 3 as ProgressLevel;
+      if (prev >= 1 && (/model/i.test(msg) || hasServices) && prev < 3) return 3 as ProgressLevel;
       return prev;
     });
-  }, [snap.appSetupComplete, msg, hasModels]);
-  const networkDone = level >= 2 || hasModels;
-  const modelActive = level >= 2 && !hasModels;
+  }, [snap.appSetupComplete, msg, hasServices]);
+  const networkDone = level >= 2 || hasServices;
+  const serviceActive = level >= 2 && !hasServices;
 
   const connectLabel = level === 1 ? (msg || 'Connecting to P2P network...') : 'Connecting to P2P network';
-  const modelLabel = modelActive ? (msg || 'Loading models...') : 'Loading models';
+  const serviceLabel = serviceActive ? (msg || 'Loading services...') : 'Loading services';
 
   return (
     <>
@@ -86,10 +86,10 @@ export function SetupScreen() {
             />
             <StepRow label={connectLabel} done={networkDone} active={level === 1} />
             <StepRow label="Discovering peers" done={networkDone} active={false} />
-            <StepRow label={modelLabel} done={hasModels} active={modelActive} />
+            <StepRow label={serviceLabel} done={hasServices} active={serviceActive} />
           </div>
 
-          {snap.appSetupComplete && hasModels && (
+          {snap.appSetupComplete && hasServices && (
             <div className={styles.ready}>
               <span className={styles.readyDot} />
               Ready

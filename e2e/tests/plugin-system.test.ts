@@ -60,7 +60,7 @@ describe('Plugin Loader', () => {
         createProvider(config) {
           return {
             name: 'test',
-            models: ['test-model'],
+            services: ['test-model'],
             pricing: {
               defaults: {
                 inputUsdPerMillion: 10,
@@ -267,7 +267,7 @@ describe('@antseed/provider-anthropic plugin shape', () => {
 
     expect(provider).toBeDefined();
     expect(provider.name).toBeTruthy();
-    expect(Array.isArray(provider.models)).toBe(true);
+    expect(Array.isArray(provider.services)).toBe(true);
     expect(typeof provider.pricing.defaults.inputUsdPerMillion).toBe('number');
     expect(typeof provider.pricing.defaults.outputUsdPerMillion).toBe('number');
     expect(typeof provider.maxConcurrency).toBe('number');

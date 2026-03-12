@@ -50,7 +50,7 @@ describe('pricing fallback hierarchy', () => {
       },
     });
 
-    const modelSpecificPeer = makePeer({
+    const serviceSpecificPeer = makePeer({
       peerId: '1'.repeat(64) as PeerInfo['peerId'],
       providerPricing: {
         anthropic: {
@@ -58,7 +58,7 @@ describe('pricing fallback hierarchy', () => {
             inputUsdPerMillion: 20,
             outputUsdPerMillion: 20,
           },
-          models: {
+          services: {
             'model-a': {
               inputUsdPerMillion: 5,
               outputUsdPerMillion: 7,
@@ -106,8 +106,8 @@ describe('pricing fallback hierarchy', () => {
     });
 
     // model-specific
-    const selectedModelSpecific = router.selectPeer(makeRequest('model-a'), [modelSpecificPeer]);
-    expect(selectedModelSpecific?.peerId).toBe(modelSpecificPeer.peerId);
+    const selectedModelSpecific = router.selectPeer(makeRequest('model-a'), [serviceSpecificPeer]);
+    expect(selectedModelSpecific?.peerId).toBe(serviceSpecificPeer.peerId);
 
     // provider defaults (no model-specific entry)
     const selectedProviderDefault = router.selectPeer(makeRequest('model-b'), [providerDefaultPeer]);

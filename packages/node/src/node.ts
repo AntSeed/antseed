@@ -399,21 +399,21 @@ export class AntseedNode extends EventEmitter {
     this.emit("stopped");
   }
 
-  async discoverPeers(model?: string): Promise<PeerInfo[]> {
+  async discoverPeers(service?: string): Promise<PeerInfo[]> {
     if (!this._peerLookup) {
       throw new Error("Node not started or not in buyer mode");
     }
 
-    debugLog(`[Node] Discovering peers (model: "${model ?? "*"}")...`);
+    debugLog(`[Node] Discovering peers (service: "${service ?? "*"}")...`);
 
-    // Query model-level DHT topic when a model is specified — returns only peers
-    // that explicitly announced that model. Fall back to wildcard if no results.
-    let results = model
-      ? await this._peerLookup.findByModel(model)
+    // Query service-level DHT topic when a service is specified — returns only peers
+    // that explicitly announced that service. Fall back to wildcard if no results.
+    let results = service
+      ? await this._peerLookup.findByService(service)
       : await this._peerLookup.findSellers("*");
 
-    if (model && results.length === 0) {
-      debugLog(`[Node] No model-topic results for "${model}", falling back to wildcard`);
+    if (service && results.length === 0) {
+      debugLog(`[Node] No service-topic results for "${service}", falling back to wildcard`);
       results = await this._peerLookup.findSellers("*");
     }
     debugLog(`[Node] DHT returned ${results.length} result(s)`);
@@ -799,9 +799,9 @@ export class AntseedNode extends EventEmitter {
         dht: this._dht,
         providers: this._providers.map((p) => ({
           provider: p.name,
-          models: p.models,
-          ...(p.modelCategories ? { modelCategories: { ...p.modelCategories } } : {}),
-          ...(p.modelApiProtocols ? { modelApiProtocols: { ...p.modelApiProtocols } } : {}),
+          services: p.services,
+          ...(p.serviceCategories ? { serviceCategories: { ...p.serviceCategories } } : {}),
+          ...(p.serviceApiProtocols ? { serviceApiProtocols: { ...p.serviceApiProtocols } } : {}),
           maxConcurrency: p.maxConcurrency,
         })),
         ...(this._config.displayName ? { displayName: this._config.displayName } : {}),
@@ -814,7 +814,7 @@ export class AntseedNode extends EventEmitter {
                 inputUsdPerMillion: p.pricing.defaults.inputUsdPerMillion,
                 outputUsdPerMillion: p.pricing.defaults.outputUsdPerMillion,
               },
-              ...(p.pricing.models ? { models: { ...p.pricing.models } } : {}),
+              ...(p.pricing.services ? { services: { ...p.pricing.services } } : {}),
             },
           ]),
         ),
@@ -923,8 +923,8 @@ export class AntseedNode extends EventEmitter {
       const requestedModel = this._extractRequestedModel(request);
       const requestedProvider = this._extractRequestedProvider(request);
       const matchesModel = (provider: Provider): boolean =>
-        provider.models.length === 0
-        || (requestedModel !== null && provider.models.includes(requestedModel))
+        provider.services.length === 0
+        || (requestedModel !== null && provider.services.includes(requestedModel))
         || this._providers.length === 1;
 
       let provider: Provider | undefined;
@@ -1098,9 +1098,9 @@ export class AntseedNode extends EventEmitter {
   ): { inputUsdPerMillion: number; outputUsdPerMillion: number } {
     const requestedModel = this._extractRequestedModel(request);
     if (requestedModel) {
-      const modelPricing = provider.pricing.models?.[requestedModel];
-      if (modelPricing) {
-        return modelPricing;
+      const servicePricing = provider.pricing.services?.[requestedModel];
+      if (servicePricing) {
+        return servicePricing;
       }
     }
     return provider.pricing.defaults;
@@ -1865,7 +1865,7 @@ export class AntseedNode extends EventEmitter {
     const firstProvider = result.metadata.providers[0];
     const providerPricingEntries: NonNullable<PeerInfo["providerPricing"]> = {};
     const providerModelCategoryEntries: NonNullable<PeerInfo["providerModelCategories"]> = {};
-    const providerModelApiProtocolEntries: NonNullable<PeerInfo["providerModelApiProtocols"]> = {};
+    const providerServiceApiProtocolEntries: NonNullable<PeerInfo["providerServiceApiProtocols"]> = {};
 
     for (const providerAnnouncement of result.metadata.providers) {
       providerPricingEntries[providerAnnouncement.provider] = {
@@ -1873,23 +1873,23 @@ export class AntseedNode extends EventEmitter {
           inputUsdPerMillion: providerAnnouncement.defaultPricing.inputUsdPerMillion,
           outputUsdPerMillion: providerAnnouncement.defaultPricing.outputUsdPerMillion,
         },
-        ...(providerAnnouncement.modelPricing ? { models: { ...providerAnnouncement.modelPricing } } : {}),
+        ...(providerAnnouncement.servicePricing ? { services: { ...providerAnnouncement.servicePricing } } : {}),
       };
 
-      if (providerAnnouncement.modelCategories && Object.keys(providerAnnouncement.modelCategories).length > 0) {
+      if (providerAnnouncement.serviceCategories && Object.keys(providerAnnouncement.serviceCategories).length > 0) {
         providerModelCategoryEntries[providerAnnouncement.provider] = {
-          models: Object.fromEntries(
-            Object.entries(providerAnnouncement.modelCategories)
-              .map(([model, categories]) => [model, [...categories]]),
+          services: Object.fromEntries(
+            Object.entries(providerAnnouncement.serviceCategories)
+              .map(([service, categories]) => [service, [...categories]]),
           ),
         };
       }
 
-      if (providerAnnouncement.modelApiProtocols && Object.keys(providerAnnouncement.modelApiProtocols).length > 0) {
-        providerModelApiProtocolEntries[providerAnnouncement.provider] = {
-          models: Object.fromEntries(
-            Object.entries(providerAnnouncement.modelApiProtocols)
-              .map(([model, protocols]) => [model, [...protocols]]),
+      if (providerAnnouncement.serviceApiProtocols && Object.keys(providerAnnouncement.serviceApiProtocols).length > 0) {
+        providerServiceApiProtocolEntries[providerAnnouncement.provider] = {
+          services: Object.fromEntries(
+            Object.entries(providerAnnouncement.serviceApiProtocols)
+              .map(([service, protocols]) => [service, [...protocols]]),
           ),
         };
       }
@@ -1897,7 +1897,7 @@ export class AntseedNode extends EventEmitter {
 
     const hasProviderPricing = Object.keys(providerPricingEntries).length > 0;
     const hasProviderModelCategories = Object.keys(providerModelCategoryEntries).length > 0;
-    const hasProviderModelApiProtocols = Object.keys(providerModelApiProtocolEntries).length > 0;
+    const hasProviderServiceApiProtocols = Object.keys(providerServiceApiProtocolEntries).length > 0;
 
     return {
       peerId: result.metadata.peerId,
@@ -1907,7 +1907,7 @@ export class AntseedNode extends EventEmitter {
       publicAddress: `${result.host}:${result.port}`,
       ...(hasProviderPricing ? { providerPricing: providerPricingEntries } : {}),
       ...(hasProviderModelCategories ? { providerModelCategories: providerModelCategoryEntries } : {}),
-      ...(hasProviderModelApiProtocols ? { providerModelApiProtocols: providerModelApiProtocolEntries } : {}),
+      ...(hasProviderServiceApiProtocols ? { providerServiceApiProtocols: providerServiceApiProtocolEntries } : {}),
       defaultInputUsdPerMillion: firstProvider?.defaultPricing.inputUsdPerMillion,
       defaultOutputUsdPerMillion: firstProvider?.defaultPricing.outputUsdPerMillion,
       maxConcurrency: firstProvider?.maxConcurrency,

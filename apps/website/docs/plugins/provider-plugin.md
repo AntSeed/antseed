@@ -18,19 +18,19 @@ AntSeed is designed for providers who build differentiated services — such as 
 ```typescript title="provider interface"
 interface Provider {
   name: string
-  models: string[]
-  modelApiProtocols?: Record<string, string[]>
+  services: string[]
+  serviceApiProtocols?: Record<string, string[]>
   pricing: {
     defaults: {
       inputUsdPerMillion: number
       outputUsdPerMillion: number
     }
-    models?: Record<string, {
+    services?: Record<string, {
       inputUsdPerMillion: number
       outputUsdPerMillion: number
     }>
   }
-  modelCategories?: Record<string, string[]>
+  serviceCategories?: Record<string, string[]>
   maxConcurrency: number
   capabilities?: ProviderCapability[]
 
@@ -50,7 +50,7 @@ import Anthropic from '@anthropic-ai/sdk'
 
 export default {
   name: 'anthropic',
-  models: ['claude-sonnet-4-6', 'claude-haiku-4-5'],
+  services: ['claude-sonnet-4-6', 'claude-haiku-4-5'],
 
   pricing: {
     defaults: {
@@ -58,7 +58,7 @@ export default {
       outputUsdPerMillion: 15
     }
   },
-  modelCategories: {
+  serviceCategories: {
     "claude-sonnet-4-6": ["coding", "privacy"]
   },
   maxConcurrency: 5,
@@ -83,7 +83,7 @@ export default {
 } satisfies Provider
 ```
 
-`modelCategories` is optional and is announced in peer metadata for discovery filtering. Recommended tags include `privacy`, `legal`, `uncensored`, `coding`, `finance`, and `tee` (custom tags are allowed).
+`serviceCategories` is optional and is announced in peer metadata for discovery filtering. Recommended tags include `privacy`, `legal`, `uncensored`, `coding`, `finance`, and `tee` (custom tags are allowed).
 
 `models` should represent the model IDs buyers will request on the network. A provider can still rewrite to different upstream model IDs internally (for example, announce `kimi2.5` and forward upstream as `together/kimi2.5`).
 

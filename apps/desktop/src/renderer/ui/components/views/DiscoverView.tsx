@@ -15,7 +15,7 @@ export function DiscoverView({ active, onSelectView }: DiscoverViewProps) {
 
   const handleStartChatting = useCallback(
     (modelValue: string) => {
-      actions.handleModelChange(modelValue);
+      actions.handleServiceChange(modelValue);
       actions.startNewChat();
       onSelectView('chat');
     },
@@ -25,7 +25,7 @@ export function DiscoverView({ active, onSelectView }: DiscoverViewProps) {
   return (
     <section className={`view${active ? ' active' : ''}`} role="tabpanel">
       <DiscoverWelcome
-        modelOptions={snap.chatModelOptions}
+        modelOptions={snap.chatServiceOptions}
         onStartChatting={handleStartChatting}
       />
     </section>

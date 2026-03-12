@@ -68,13 +68,13 @@ function cloneProviderPricing(
   for (const [provider, cfg] of Object.entries(providers)) {
     out[provider] = {
       ...(cfg.defaults ? { defaults: clonePricing(cfg.defaults) } : {}),
-      ...(cfg.models ? { models: { ...cfg.models } } : {}),
+      ...(cfg.services ? { services: { ...cfg.services } } : {}),
     };
   }
   return out;
 }
 
-function mergeModelPricing(
+function mergeServicePricing(
   defaults: Record<string, TokenPricingUsdPerMillion> | undefined,
   value: unknown
 ): Record<string, TokenPricingUsdPerMillion> | undefined {
@@ -105,11 +105,11 @@ function mergeProviderPricing(
       const next: ProviderPricingConfig = {
         ...(parsedDefaults ? { defaults: parsedDefaults } : (existing?.defaults ? { defaults: existing.defaults } : {})),
       };
-      const mergedModels = mergeModelPricing(existing?.models, rawCfg['models']);
+      const mergedModels = mergeServicePricing(existing?.services, rawCfg['services']);
       if (mergedModels) {
-        next.models = mergedModels;
+        next.services = mergedModels;
       }
-      if (next.defaults || next.models) {
+      if (next.defaults || next.services) {
         out[provider] = next;
       }
     }
@@ -134,11 +134,11 @@ function mergeHierarchicalPricing(
   };
 }
 
-function cloneSellerModelCategories(
-  categories: AntseedConfig['seller']['modelCategories'] | undefined
-): AntseedConfig['seller']['modelCategories'] | undefined {
+function cloneSellerServiceCategories(
+  categories: AntseedConfig['seller']['serviceCategories'] | undefined
+): AntseedConfig['seller']['serviceCategories'] | undefined {
   if (!categories) return undefined;
-  const out: NonNullable<AntseedConfig['seller']['modelCategories']> = {};
+  const out: NonNullable<AntseedConfig['seller']['serviceCategories']> = {};
   for (const [provider, models] of Object.entries(categories)) {
     out[provider] = Object.fromEntries(
       Object.entries(models).map(([model, tags]) => [model, [...tags]])
@@ -147,11 +147,11 @@ function cloneSellerModelCategories(
   return out;
 }
 
-function mergeSellerModelCategories(
-  defaults: AntseedConfig['seller']['modelCategories'] | undefined,
+function mergeSellerServiceCategories(
+  defaults: AntseedConfig['seller']['serviceCategories'] | undefined,
   value: unknown
-): AntseedConfig['seller']['modelCategories'] | undefined {
-  const out = cloneSellerModelCategories(defaults) ?? {};
+): AntseedConfig['seller']['serviceCategories'] | undefined {
+  const out = cloneSellerServiceCategories(defaults) ?? {};
   if (!isRecord(value)) {
     return Object.keys(out).length > 0 ? out : undefined;
   }
@@ -189,10 +189,10 @@ function mergeSellerConfig(
       maxConcurrentBuyers: defaults.maxConcurrentBuyers,
       enabledProviders: [...defaults.enabledProviders],
       pricing: mergeHierarchicalPricing(defaults.pricing, undefined),
-      ...(defaults.modelCategories ? { modelCategories: cloneSellerModelCategories(defaults.modelCategories) } : {}),
+      ...(defaults.serviceCategories ? { serviceCategories: cloneSellerServiceCategories(defaults.serviceCategories) } : {}),
     };
   }
-  const mergedModelCategories = mergeSellerModelCategories(defaults.modelCategories, value['modelCategories']);
+  const mergedModelCategories = mergeSellerServiceCategories(defaults.serviceCategories, value['serviceCategories']);
 
   return {
     reserveFloor: typeof value['reserveFloor'] === 'number'
@@ -205,7 +205,7 @@ function mergeSellerConfig(
       ? value['enabledProviders'].filter((entry): entry is string => typeof entry === 'string')
       : [...defaults.enabledProviders],
     pricing: mergeHierarchicalPricing(defaults.pricing, value['pricing']),
-    ...(mergedModelCategories ? { modelCategories: mergedModelCategories } : {}),
+    ...(mergedModelCategories ? { serviceCategories: mergedModelCategories } : {}),
   };
 }
 

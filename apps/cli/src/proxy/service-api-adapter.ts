@@ -2,12 +2,12 @@
 // The CLI previously maintained its own copy; this file now exists
 // only to preserve local import paths for buyer-proxy and tests.
 export {
-  type ModelApiProtocol,
+  type ServiceApiProtocol,
   type TargetProtocolSelection,
   type AnthropicToOpenAIRequestTransformResult,
   type ResponsesToOpenAIRequestTransformResult,
-  detectRequestModelApiProtocol,
-  inferProviderDefaultModelApiProtocols,
+  detectRequestServiceApiProtocol,
+  inferProviderDefaultServiceApiProtocols,
   selectTargetProtocolForRequest,
   transformAnthropicMessagesRequestToOpenAIChat,
   transformOpenAIChatResponseToAnthropicMessage,

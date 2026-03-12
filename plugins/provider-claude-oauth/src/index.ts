@@ -1,4 +1,4 @@
-import type { AntseedProviderPlugin, ConfigField, ModelApiProtocol } from '@antseed/node';
+import type { AntseedProviderPlugin, ConfigField, ServiceApiProtocol } from '@antseed/node';
 import { BaseProvider, OAuthTokenProvider, StaticTokenProvider } from '@antseed/provider-core';
 
 const DEFAULT_ANTHROPIC_VERSION = '2023-06-01';
@@ -11,15 +11,15 @@ const configSchema: ConfigField[] = [
   { key: 'ANTSEED_INPUT_USD_PER_MILLION', label: 'Input Price', type: 'number', required: false, default: 10 },
   { key: 'ANTSEED_OUTPUT_USD_PER_MILLION', label: 'Output Price', type: 'number', required: false, default: 10 },
   { key: 'ANTSEED_MAX_CONCURRENCY', label: 'Max Concurrency', type: 'number', required: false, default: 5 },
-  { key: 'ANTSEED_ALLOWED_MODELS', label: 'Allowed Models', type: 'string[]', required: false },
+  { key: 'ANTSEED_ALLOWED_MODELS', label: 'Allowed Services', type: 'string[]', required: false },
 ];
 
-function buildModelApiProtocols(
-  models: string[],
-  protocol: ModelApiProtocol,
-): Record<string, ModelApiProtocol[]> | undefined {
-  if (models.length === 0) return undefined;
-  return Object.fromEntries(models.map((model) => [model, [protocol]]));
+function buildServiceApiProtocols(
+  services: string[],
+  protocol: ServiceApiProtocol,
+): Record<string, ServiceApiProtocol[]> | undefined {
+  if (services.length === 0) return undefined;
+  return Object.fromEntries(services.map((model) => [model, [protocol]]));
 }
 
 const plugin: AntseedProviderPlugin = {
@@ -55,20 +55,20 @@ const plugin: AntseedProviderPlugin = {
     const inputPrice = parseFloat(config['ANTSEED_INPUT_USD_PER_MILLION'] ?? '10');
     const outputPrice = parseFloat(config['ANTSEED_OUTPUT_USD_PER_MILLION'] ?? '10');
     const maxConcurrency = parseInt(config['ANTSEED_MAX_CONCURRENCY'] ?? '5', 10);
-    const allowedModels = (config['ANTSEED_ALLOWED_MODELS'] ?? '')
+    const allowedServices = (config['ANTSEED_ALLOWED_MODELS'] ?? '')
       .split(',').map(s => s.trim()).filter(Boolean);
-    const modelApiProtocols = buildModelApiProtocols(allowedModels, 'anthropic-messages');
+    const serviceApiProtocols = buildServiceApiProtocols(allowedServices, 'anthropic-messages');
 
     return new BaseProvider({
       name: 'claude-oauth',
-      models: allowedModels,
+      services: allowedServices,
       pricing: {
         defaults: {
           inputUsdPerMillion: inputPrice,
           outputUsdPerMillion: outputPrice,
         },
       },
-      ...(modelApiProtocols ? { modelApiProtocols } : {}),
+      ...(serviceApiProtocols ? { serviceApiProtocols } : {}),
       relay: {
         baseUrl: 'https://api.anthropic.com',
         authHeaderName: 'authorization',
@@ -79,7 +79,7 @@ const plugin: AntseedProviderPlugin = {
           'anthropic-version': DEFAULT_ANTHROPIC_VERSION,
         },
         maxConcurrency,
-        allowedModels,
+        allowedServices,
         retryOn401: true,
       },
     });

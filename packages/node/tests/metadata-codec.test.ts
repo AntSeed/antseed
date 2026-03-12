@@ -9,12 +9,12 @@ function makeMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
     providers: [
       {
         provider: 'anthropic',
-        models: ['claude-3-opus', 'claude-3-sonnet'],
+        services: ['claude-3-opus', 'claude-3-sonnet'],
         defaultPricing: {
           inputUsdPerMillion: 15,
           outputUsdPerMillion: 75,
         },
-        modelPricing: {
+        servicePricing: {
           'claude-3-opus': {
             inputUsdPerMillion: 18,
             outputUsdPerMillion: 90,
@@ -44,7 +44,7 @@ describe('encodeMetadata / decodeMetadata', () => {
     expect(decoded.signature).toBe(original.signature);
     expect(decoded.providers).toHaveLength(1);
     expect(decoded.providers[0]!.provider).toBe('anthropic');
-    expect(decoded.providers[0]!.models).toEqual(['claude-3-opus', 'claude-3-sonnet']);
+    expect(decoded.providers[0]!.services).toEqual(['claude-3-opus', 'claude-3-sonnet']);
     expect(decoded.providers[0]!.maxConcurrency).toBe(10);
     expect(decoded.providers[0]!.currentLoad).toBe(3);
   });
@@ -56,8 +56,8 @@ describe('encodeMetadata / decodeMetadata', () => {
     // Float32 has limited precision — allow small delta
     expect(decoded.providers[0]!.defaultPricing.inputUsdPerMillion).toBeCloseTo(15, 3);
     expect(decoded.providers[0]!.defaultPricing.outputUsdPerMillion).toBeCloseTo(75, 3);
-    expect(decoded.providers[0]!.modelPricing?.['claude-3-opus']?.inputUsdPerMillion).toBeCloseTo(18, 3);
-    expect(decoded.providers[0]!.modelPricing?.['claude-3-opus']?.outputUsdPerMillion).toBeCloseTo(90, 3);
+    expect(decoded.providers[0]!.servicePricing?.['claude-3-opus']?.inputUsdPerMillion).toBeCloseTo(18, 3);
+    expect(decoded.providers[0]!.servicePricing?.['claude-3-opus']?.outputUsdPerMillion).toBeCloseTo(90, 3);
   });
 
   it('should round-trip multiple providers', () => {
@@ -65,7 +65,7 @@ describe('encodeMetadata / decodeMetadata', () => {
       providers: [
         {
           provider: 'openai',
-          models: ['gpt-4'],
+          services: ['gpt-4'],
           defaultPricing: {
             inputUsdPerMillion: 10,
             outputUsdPerMillion: 30,
@@ -75,12 +75,12 @@ describe('encodeMetadata / decodeMetadata', () => {
         },
         {
           provider: 'anthropic',
-          models: ['claude-3-haiku'],
+          services: ['claude-3-haiku'],
           defaultPricing: {
             inputUsdPerMillion: 1,
             outputUsdPerMillion: 5,
           },
-          modelPricing: {
+          servicePricing: {
             'claude-3-haiku': {
               inputUsdPerMillion: 0.9,
               outputUsdPerMillion: 4.5,
@@ -108,7 +108,7 @@ describe('encodeMetadata / decodeMetadata', () => {
       providers: [
         {
           provider: 'test',
-          models: [],
+          services: [],
           defaultPricing: {
             inputUsdPerMillion: 0,
             outputUsdPerMillion: 0,
@@ -119,7 +119,7 @@ describe('encodeMetadata / decodeMetadata', () => {
       ],
     });
     const decoded = decodeMetadata(encodeMetadata(original));
-    expect(decoded.providers[0]!.models).toEqual([]);
+    expect(decoded.providers[0]!.services).toEqual([]);
   });
 
   it('should round-trip display name, model categories, and model API protocols', () => {
@@ -128,15 +128,15 @@ describe('encodeMetadata / decodeMetadata', () => {
       providers: [
         {
           provider: 'anthropic',
-          models: ['claude-3-opus'],
+          services: ['claude-3-opus'],
           defaultPricing: {
             inputUsdPerMillion: 15,
             outputUsdPerMillion: 75,
           },
-          modelCategories: {
+          serviceCategories: {
             'claude-3-opus': ['privacy', 'coding'],
           },
-          modelApiProtocols: {
+          serviceApiProtocols: {
             'claude-3-opus': ['openai-chat-completions', 'anthropic-messages'],
           },
           maxConcurrency: 10,
@@ -146,8 +146,8 @@ describe('encodeMetadata / decodeMetadata', () => {
     });
     const decoded = decodeMetadata(encodeMetadata(original));
     expect(decoded.displayName).toBe('Node A');
-    expect(decoded.providers[0]!.modelCategories?.['claude-3-opus']).toEqual(['coding', 'privacy']);
-    expect(decoded.providers[0]!.modelApiProtocols?.['claude-3-opus']).toEqual(['anthropic-messages', 'openai-chat-completions']);
+    expect(decoded.providers[0]!.serviceCategories?.['claude-3-opus']).toEqual(['coding', 'privacy']);
+    expect(decoded.providers[0]!.serviceApiProtocols?.['claude-3-opus']).toEqual(['anthropic-messages', 'openai-chat-completions']);
   });
 
   it('should decode offerings and optional trailer fields after v2 provider pricing payload', () => {
@@ -158,7 +158,7 @@ describe('encodeMetadata / decodeMetadata', () => {
           name: 'summarize',
           description: 'Summarize text',
           pricing: { unit: 'request', pricePerUnit: 0.1, currency: 'USD' },
-          models: ['claude-3-sonnet'],
+          services: ['claude-3-sonnet'],
         },
       ],
       evmAddress: '0x1111111111111111111111111111111111111111',
@@ -181,12 +181,12 @@ describe('encodeMetadata / decodeMetadata', () => {
       providers: [
         {
           provider: 'anthropic',
-          models: ['claude-3-opus'],
+          services: ['claude-3-opus'],
           defaultPricing: {
             inputUsdPerMillion: 15,
             outputUsdPerMillion: 75,
           },
-          modelCategories: {
+          serviceCategories: {
             'claude-3-opus': ['coding'],
           },
           maxConcurrency: 10,
@@ -197,8 +197,8 @@ describe('encodeMetadata / decodeMetadata', () => {
     const decoded = decodeMetadata(encodeMetadata(v2));
     expect(decoded.version).toBe(2);
     expect(decoded.displayName).toBeUndefined();
-    expect(decoded.providers[0]!.modelCategories).toBeUndefined();
-    expect(decoded.providers[0]!.modelApiProtocols).toBeUndefined();
+    expect(decoded.providers[0]!.serviceCategories).toBeUndefined();
+    expect(decoded.providers[0]!.serviceApiProtocols).toBeUndefined();
   });
 
   it('should retain backward-compatible binary layout for metadata version 3', () => {
@@ -207,12 +207,12 @@ describe('encodeMetadata / decodeMetadata', () => {
       providers: [
         {
           provider: 'openai',
-          models: ['model-a'],
+          services: ['model-a'],
           defaultPricing: {
             inputUsdPerMillion: 1,
             outputUsdPerMillion: 2,
           },
-          modelApiProtocols: {
+          serviceApiProtocols: {
             'model-a': ['openai-chat-completions'],
           },
           maxConcurrency: 3,
@@ -222,7 +222,7 @@ describe('encodeMetadata / decodeMetadata', () => {
     });
     const decoded = decodeMetadata(encodeMetadata(v3));
     expect(decoded.version).toBe(3);
-    expect(decoded.providers[0]!.modelApiProtocols).toBeUndefined();
+    expect(decoded.providers[0]!.serviceApiProtocols).toBeUndefined();
   });
 });
 

@@ -3,7 +3,7 @@ import test from 'node:test'
 import {
   transformAnthropicMessagesRequestToOpenAIChat,
   transformOpenAIChatResponseToAnthropicMessage,
-} from './model-api-adapter.js'
+} from './service-api-adapter.js'
 import type { SerializedHttpRequest, SerializedHttpResponse } from '@antseed/node'
 
 const enc = new TextEncoder()

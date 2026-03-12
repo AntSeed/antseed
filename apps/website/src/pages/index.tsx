@@ -68,7 +68,7 @@ function useNetworkStats() {
           const data = await res.json();
           const peers = data.peers ?? [];
           const models = new Set<string>();
-          for (const p of peers) for (const pr of p.providers ?? []) for (const m of pr.models ?? []) models.add(m);
+          for (const p of peers) for (const pr of p.providers ?? []) for (const m of pr.services ?? []) models.add(m);
           setPeerCount(peers.length);
           setModelCount(models.size);
           return;

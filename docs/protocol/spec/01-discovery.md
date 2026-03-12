@@ -18,8 +18,8 @@ Sellers announce multiple topic types on the DHT:
 
 ```
 providerTopic(provider)        = "antseed:" + normalize(provider)
-modelTopic(model)              = "antseed:model:" + normalize(model)
-modelSearchTopic(model)        = "antseed:model-search:" + compact(normalize(model))
+serviceTopic(model)              = "antseed:service:" + normalize(model)
+serviceSearchTopic(model)        = "antseed:service-search:" + compact(normalize(model))
 capabilityTopic(capability)    = "antseed:" + normalize(capability)
 capabilityTopic(capability,id) = "antseed:" + normalize(capability) + ":" + normalize(id)
 
@@ -28,13 +28,13 @@ compact(x)   = remove all spaces, "-" and "_" (preserve ".")
 infoHash     = SHA1(topic)      // 20-byte info hash
 ```
 
-The announcer always publishes canonical model topics (`modelTopic`). It additionally publishes compact `modelSearchTopic` entries only when the compact key differs from canonical.
+The announcer always publishes canonical model topics (`serviceTopic`). It additionally publishes compact `serviceSearchTopic` entries only when the compact key differs from canonical.
 
 Examples:
 
-- `kimi 2.5` => canonical `antseed:model:kimi 2.5`, compact `antseed:model-search:kimi2.5`
-- `kimi-2.5` => canonical `antseed:model:kimi-2.5`, compact `antseed:model-search:kimi2.5`
-- `kimi_2.5` => canonical `antseed:model:kimi_2.5`, compact `antseed:model-search:kimi2.5`
+- `kimi 2.5` => canonical `antseed:service:kimi 2.5`, compact `antseed:service-search:kimi2.5`
+- `kimi-2.5` => canonical `antseed:service:kimi-2.5`, compact `antseed:service-search:kimi2.5`
+- `kimi_2.5` => canonical `antseed:service:kimi_2.5`, compact `antseed:service-search:kimi2.5`
 
 `topicToInfoHash()` produces the SHA-1 digest used as the DHT info hash.
 
@@ -95,9 +95,9 @@ METADATA_VERSION = 4
 | provider         | string   | Provider name (e.g. "anthropic")                            |
 | models           | string[] | List of model identifiers                                    |
 | defaultPricing   | object   | Default `{ inputUsdPerMillion, outputUsdPerMillion }`       |
-| modelPricing     | object   | Optional per-model map `{ [model]: { inputUsdPerMillion, outputUsdPerMillion } }` |
-| modelCategories  | object   | Optional per-model map `{ [model]: string[] }` with lowercase tags |
-| modelApiProtocols| object   | Optional per-model map `{ [model]: string[] }` of supported model API protocols |
+| servicePricing     | object   | Optional per-service map `{ [model]: { inputUsdPerMillion, outputUsdPerMillion } }` |
+| serviceCategories  | object   | Optional per-service map `{ [model]: string[] }` with lowercase tags |
+| serviceApiProtocols| object   | Optional per-service map `{ [model]: string[] }` of supported model API protocols |
 | maxConcurrency   | number   | Maximum concurrent requests (>= 1)                           |
 | currentLoad      | number   | Current number of active requests                            |
 
@@ -125,8 +125,8 @@ Per provider (repeated providerCount times):
     [model       : N bytes  UTF-8  ]   // N = modelLen
   [defaultInputUsdPerMillion  : 4 bytes  float32 big-endian ]
   [defaultOutputUsdPerMillion : 4 bytes  float32 big-endian ]
-  [modelPricingCount          : 1 byte   uint8 ]
-  Per model pricing entry (repeated modelPricingCount times):
+  [servicePricingCount          : 1 byte   uint8 ]
+  Per service pricing entry (repeated servicePricingCount times):
     [modelLen   : 1 byte   uint8 ]
     [model      : N bytes  UTF-8  ]
     [inputUsdPerMillion  : 4 bytes  float32 big-endian ]
@@ -190,13 +190,13 @@ Additional validation rules enforced by `validateMetadata()`:
 - `timestamp` must be a positive finite number.
 - At least one provider must be present.
 - `defaultPricing.inputUsdPerMillion` and `defaultPricing.outputUsdPerMillion` must be non-negative.
-- Each `modelPricing[model].inputUsdPerMillion` and `modelPricing[model].outputUsdPerMillion` (if present) must be non-negative.
-- `modelCategories` (if present) must reference models listed in `providers[].models`.
+- Each `servicePricing[model].inputUsdPerMillion` and `servicePricing[model].outputUsdPerMillion` (if present) must be non-negative.
+- `serviceCategories` (if present) must reference models listed in `providers[].services`.
 - Each category must be lowercase alphanumeric or hyphen: `^[a-z0-9][a-z0-9-]*$`.
-- Categories must be non-empty, unique per model, and within per-model/per-tag limits above.
+- Categories must be non-empty, unique per model, and within per-service/per-tag limits above.
 - Recommended category tags: `privacy`, `legal`, `uncensored`, `coding`, `finance`, `tee` (not enforced; custom tags allowed).
-- `modelApiProtocols` (if present) must reference models listed in `providers[].models`.
-- `modelApiProtocols` entries must be known protocol IDs, non-empty, unique per model, and within per-model limits above.
+- `serviceApiProtocols` (if present) must reference models listed in `providers[].services`.
+- `serviceApiProtocols` entries must be known protocol IDs, non-empty, unique per model, and within per-service limits above.
 - `maxConcurrency` must be at least 1.
 - `currentLoad` must be non-negative and must not exceed `maxConcurrency`.
 - `signature` must be exactly 128 lowercase hex characters (64 bytes).
@@ -251,7 +251,7 @@ The `PeerLookup` class orchestrates the full discovery flow:
 
 1. Build lookup topic(s):
    - provider lookup: `SHA1(providerTopic(provider))`
-   - model lookup: `SHA1(modelTopic(model))`, and if compact key differs, also `SHA1(modelSearchTopic(model))`
+   - model lookup: `SHA1(serviceTopic(model))`, and if compact key differs, also `SHA1(serviceSearchTopic(model))`
    - capability lookup: `SHA1(capabilityTopic(capability[, name]))`
 2. Query the DHT for the topic hash(es) to obtain `{host, port}` peer endpoints.
 3. For each peer (up to `maxResults`):
@@ -283,8 +283,8 @@ The `PeerAnnouncer` class handles the seller-side announcement lifecycle:
 4. Sign the body with the seller's Ed25519 private key.
 5. Announce DHT topics at the configured signaling port:
    - provider topics (`providerTopic(provider)`)
-   - canonical model topics (`modelTopic(model)`)
-   - compact model-search topics (`modelSearchTopic(model)`) when canonical and compact keys differ
+   - canonical model topics (`serviceTopic(model)`)
+   - compact model-search topics (`serviceSearchTopic(model)`) when canonical and compact keys differ
    - wildcard provider topic (`providerTopic("*")`)
    - capability topics when offerings are configured
 

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { SerializedHttpRequest } from '@antseed/node';
-import { validateRequestModel } from '@antseed/provider-core';
+import { validateRequestService } from '@antseed/provider-core';
 
 function makeRequest(body: string): SerializedHttpRequest {
   return {
@@ -12,27 +12,27 @@ function makeRequest(body: string): SerializedHttpRequest {
   };
 }
 
-function allowSet(...models: string[]): ReadonlySet<string> {
-  return new Set(models.map((m) => m.trim().toLowerCase()));
+function allowSet(...services: string[]): ReadonlySet<string> {
+  return new Set(services.map((m) => m.trim().toLowerCase()));
 }
 
-describe('Security: allowed-model validation', () => {
+describe('Security: allowed-service validation', () => {
   it('rejects duplicate model keys that end with a forbidden model', () => {
     const request = makeRequest(
       '{"model":"claude-sonnet-4-5-20250929","model":"claude-opus-4-0-20250514"}',
     );
 
-    const error = validateRequestModel(request, allowSet('claude-sonnet-4-5-20250929'));
+    const error = validateRequestService(request, allowSet('claude-sonnet-4-5-20250929'));
     expect(error).toContain('not in the allowed list');
   });
 
   it('allows invalid JSON payloads through (upstream will reject them)', () => {
     const request = makeRequest('{not-valid-json');
-    expect(validateRequestModel(request, allowSet('claude-sonnet-4-5-20250929'))).toBeNull();
+    expect(validateRequestService(request, allowSet('claude-sonnet-4-5-20250929'))).toBeNull();
   });
 
   it('allows valid payloads with allowed models', () => {
     const request = makeRequest('{"model":"claude-sonnet-4-5-20250929","messages":[]}');
-    expect(validateRequestModel(request, allowSet('claude-sonnet-4-5-20250929'))).toBeNull();
+    expect(validateRequestService(request, allowSet('claude-sonnet-4-5-20250929'))).toBeNull();
   });
 });

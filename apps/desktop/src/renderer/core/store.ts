@@ -75,7 +75,7 @@ export function getUiSnapshot(): RendererUiState {
             : state.chatStreamingMessage.content,
         }
       : null,
-    chatModelOptions: [...state.chatModelOptions],
+    chatServiceOptions: [...state.chatServiceOptions],
   };
   cachedSnapshotVersion = version;
   return cachedSnapshot;

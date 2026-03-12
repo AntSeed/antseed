@@ -93,7 +93,7 @@ describe('LocalRouter', () => {
     expect(router.selectPeer(makeRequest('claude-sonnet-4-5-20250929'), [overpricedOutputPeer])).toBeNull();
   });
 
-  it('uses model-specific seller offer pricing when request model is present', () => {
+  it('uses service-specific seller offer pricing when request service is present', () => {
     const router = new LocalRouter({
       maxPricing: {
         defaults: { inputUsdPerMillion: 1_000, outputUsdPerMillion: 1_000 },
@@ -105,7 +105,7 @@ describe('LocalRouter', () => {
       providerPricing: {
         anthropic: {
           defaults: { inputUsdPerMillion: 10, outputUsdPerMillion: 10 },
-          models: {
+          services: {
             'model-a': { inputUsdPerMillion: 90, outputUsdPerMillion: 90 },
           },
         },
@@ -118,7 +118,7 @@ describe('LocalRouter', () => {
       providerPricing: {
         anthropic: {
           defaults: { inputUsdPerMillion: 20, outputUsdPerMillion: 20 },
-          models: {
+          services: {
             'model-a': { inputUsdPerMillion: 5, outputUsdPerMillion: 5 },
           },
         },
@@ -131,7 +131,7 @@ describe('LocalRouter', () => {
     expect(selected?.peerId).toBe(peerB.peerId);
   });
 
-  it('falls back to provider defaults when request model is absent', () => {
+  it('falls back to provider defaults when request service is absent', () => {
     const router = new LocalRouter({
       maxPricing: {
         defaults: { inputUsdPerMillion: 1_000, outputUsdPerMillion: 1_000 },
@@ -143,7 +143,7 @@ describe('LocalRouter', () => {
       providerPricing: {
         anthropic: {
           defaults: { inputUsdPerMillion: 40, outputUsdPerMillion: 40 },
-          models: {
+          services: {
             'model-a': { inputUsdPerMillion: 1, outputUsdPerMillion: 1 },
           },
         },

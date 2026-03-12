@@ -21,17 +21,17 @@ import { BaseProvider, StaticTokenProvider } from '@antseed/provider-core';
 
 const provider = new BaseProvider({
   name: 'my-provider',
-  models: ['model-a', 'model-b'],
+  services: ['model-a', 'model-b'],
   pricing: { defaults: { inputUsdPerMillion: 10, outputUsdPerMillion: 10 } },
-  modelCategories: { 'model-a': ['coding'] },
+  serviceCategories: { 'model-a': ['coding'] },
   relay: {
     baseUrl: 'https://api.example.com',
     authHeaderName: 'Authorization',
     authHeaderValue: '',
     tokenProvider: new StaticTokenProvider('Bearer sk-...'),
     maxConcurrency: 10,
-    allowedModels: ['model-a', 'model-b'],
-    modelRewriteMap: {
+    allowedServices: ['model-a', 'model-b'],
+    serviceRewriteMap: {
       'model-a': 'together/model-a',
     },
   },
@@ -76,12 +76,12 @@ In practice the CLI configures `MiddlewareProvider` automatically — see the `s
 ### Utilities
 
 - **`swapAuthHeader()`** -- Injects/replaces authentication headers on outgoing requests.
-- **`validateRequestModel()`** -- Validates request body `model` field against an allow-list.
+- **`validateRequestService()`** -- Validates request body `model` field against an allow-list.
 - **`KNOWN_AUTH_HEADERS`** -- Standard auth header names (x-api-key, Authorization, etc.).
 
 ### HttpRelay
 
-Low-level HTTP relay with concurrency control, SSE streaming support, model validation, and optional request model rewriting (`modelRewriteMap`). Used internally by `BaseProvider`.
+Low-level HTTP relay with concurrency control, SSE streaming support, model validation, and optional request model rewriting (`serviceRewriteMap`). Used internally by `BaseProvider`.
 
 ## Usage in Plugins
 
@@ -101,7 +101,7 @@ const plugin: AntseedProviderPlugin = {
   createProvider(config) {
     return new BaseProvider({
       name: 'my-provider',
-      models: ['default-model'],
+      services: ['default-model'],
       pricing: { defaults: { inputUsdPerMillion: 10, outputUsdPerMillion: 10 } },
       relay: {
         baseUrl: 'https://api.example.com',
@@ -109,7 +109,7 @@ const plugin: AntseedProviderPlugin = {
         authHeaderValue: '',
         tokenProvider: new StaticTokenProvider(`Bearer ${config['API_KEY']}`),
         maxConcurrency: 10,
-        allowedModels: ['default-model'],
+        allowedServices: ['default-model'],
       },
     });
   },

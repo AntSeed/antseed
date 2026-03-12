@@ -96,7 +96,7 @@ describe('LocalRouter peer selection hardening', () => {
             inputUsdPerMillion: 5,
             outputUsdPerMillion: 5,
           },
-          models: {
+          services: {
             'known-model': {
               inputUsdPerMillion: 7,
               outputUsdPerMillion: 7,

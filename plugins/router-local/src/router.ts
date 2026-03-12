@@ -10,7 +10,7 @@ export interface BuyerMaxPricingConfig {
   defaults: TokenPricingUsdPerMillion;
   providers?: Record<string, {
     defaults?: TokenPricingUsdPerMillion;
-    models?: Record<string, TokenPricingUsdPerMillion>;
+    services?: Record<string, TokenPricingUsdPerMillion>;
   }>;
 }
 
@@ -217,9 +217,9 @@ export class LocalRouter implements Router {
     const providerPricing = peer.providerPricing?.[provider];
 
     if (model) {
-      const modelSpecific = providerPricing?.models?.[model];
-      if (modelSpecific && this._isValidOffer(modelSpecific)) {
-        return modelSpecific;
+      const serviceSpecific = providerPricing?.services?.[model];
+      if (serviceSpecific && this._isValidOffer(serviceSpecific)) {
+        return serviceSpecific;
       }
     }
 
@@ -245,9 +245,9 @@ export class LocalRouter implements Router {
     const providerPricing = this._maxPricing.providers?.[provider];
 
     if (model) {
-      const modelOverride = providerPricing?.models?.[model];
-      if (modelOverride && this._isValidOffer(modelOverride)) {
-        return modelOverride;
+      const serviceOverride = providerPricing?.services?.[model];
+      if (serviceOverride && this._isValidOffer(serviceOverride)) {
+        return serviceOverride;
       }
     }
 

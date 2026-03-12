@@ -11,7 +11,7 @@ interface BuyerStateFile {
   state: 'connected' | 'stopped'
   pid: number
   port: number
-  pinnedModel: string | null
+  pinnedService: string | null
   pinnedPeerId: string | null
   [key: string]: unknown
 }
@@ -77,7 +77,7 @@ export function registerConnectionCommand(program: Command): void {
       console.log(`State:         ${alive ? chalk.green('connected') : chalk.red(state.state ?? 'stopped')}`)
       console.log(`PID:           ${state.pid}`)
       console.log(`Port:          ${state.port}`)
-      console.log(`Pinned model:  ${state.pinnedModel ? chalk.cyan(state.pinnedModel) : chalk.dim('none')}`)
+      console.log(`Pinned model:  ${state.pinnedService ? chalk.cyan(state.pinnedService) : chalk.dim('none')}`)
       console.log(`Pinned peer:   ${state.pinnedPeerId ? chalk.cyan(state.pinnedPeerId) : chalk.dim('none')}`)
     })
 
@@ -100,7 +100,7 @@ export function registerConnectionCommand(program: Command): void {
           console.error(chalk.red('Error: --model must not be empty.'))
           process.exit(1)
         }
-        state.pinnedModel = model
+        state.pinnedService = model
       }
 
       if (options.peer !== undefined) {
@@ -114,7 +114,7 @@ export function registerConnectionCommand(program: Command): void {
 
       await writeStateFile(state)
 
-      if (options.model !== undefined) console.log(chalk.green(`Pinned model set to: ${state.pinnedModel}`))
+      if (options.model !== undefined) console.log(chalk.green(`Pinned model set to: ${state.pinnedService}`))
       if (options.peer !== undefined) console.log(chalk.green(`Pinned peer set to: ${state.pinnedPeerId}`))
     })
 
@@ -130,7 +130,7 @@ export function registerConnectionCommand(program: Command): void {
       const clearModel = clearAll || Boolean(options.model)
       const clearPeer = clearAll || Boolean(options.peer)
 
-      if (clearModel) state.pinnedModel = null
+      if (clearModel) state.pinnedService = null
       if (clearPeer) state.pinnedPeerId = null
 
       await writeStateFile(state)

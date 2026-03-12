@@ -48,7 +48,7 @@ export interface PeerInfo {
   peerId: string;
   displayName: string | null;
   providers: string[];
-  models: string[];
+  services: string[];
   capacityMsgPerHour: number;
   inputUsdPerMillion: number;
   outputUsdPerMillion: number;
@@ -231,7 +231,7 @@ export async function registerApiRoutes(
         host: '',
         port: 0,
         providers: p.providers,
-        models: p.models,
+        services: p.services,
         inputUsdPerMillion: p.inputUsdPerMillion,
         outputUsdPerMillion: p.outputUsdPerMillion,
         capacityMsgPerHour: p.capacityMsgPerHour,
@@ -248,8 +248,8 @@ export async function registerApiRoutes(
           if ((!existing.displayName || existing.displayName.trim().length === 0) && dp.displayName) {
             existing.displayName = dp.displayName;
           }
-          if ((existing.models?.length ?? 0) === 0 && (dp.models?.length ?? 0) > 0) {
-            existing.models = dp.models;
+          if ((existing.services?.length ?? 0) === 0 && (dp.services?.length ?? 0) > 0) {
+            existing.services = dp.services;
           }
           if (existing.host.trim().length === 0 && dp.host.trim().length > 0) {
             existing.host = dp.host;
@@ -360,8 +360,8 @@ function mergePeers(daemonPeers: PeerInfo[], dhtPeers: NetworkPeer[]): PeerInfo[
       if ((!existing.displayName || existing.displayName.trim().length === 0) && dp.displayName) {
         existing.displayName = dp.displayName;
       }
-      if ((existing.models?.length ?? 0) === 0 && (dp.models?.length ?? 0) > 0) {
-        existing.models = dp.models;
+      if ((existing.services?.length ?? 0) === 0 && (dp.services?.length ?? 0) > 0) {
+        existing.services = dp.services;
       }
       continue;
     }
@@ -369,7 +369,7 @@ function mergePeers(daemonPeers: PeerInfo[], dhtPeers: NetworkPeer[]): PeerInfo[
       peerId: dp.peerId,
       displayName: dp.displayName ?? null,
       providers: dp.providers,
-      models: dp.models ?? [],
+      services: dp.services ?? [],
       capacityMsgPerHour: dp.capacityMsgPerHour,
       inputUsdPerMillion: dp.inputUsdPerMillion,
       outputUsdPerMillion: dp.outputUsdPerMillion,
@@ -383,17 +383,17 @@ function mergePeers(daemonPeers: PeerInfo[], dhtPeers: NetworkPeer[]): PeerInfo[
 }
 
 function collectPeerModels(peer: Record<string, unknown>): string[] {
-  const models = new Set<string>();
+  const services = new Set<string>();
 
-  const explicitModels = peer.models;
-  if (Array.isArray(explicitModels)) {
-    for (const model of explicitModels) {
-      if (typeof model !== 'string') {
+  const explicitServices = peer.services;
+  if (Array.isArray(explicitServices)) {
+    for (const service of explicitServices) {
+      if (typeof service !== 'string') {
         continue;
       }
-      const normalized = model.trim();
+      const normalized = service.trim();
       if (normalized.length > 0) {
-        models.add(normalized);
+        services.add(normalized);
       }
     }
   }
@@ -404,20 +404,20 @@ function collectPeerModels(peer: Record<string, unknown>): string[] {
       if (!providerEntry || typeof providerEntry !== 'object') {
         continue;
       }
-      const modelPricing = (providerEntry as Record<string, unknown>).models;
-      if (!modelPricing || typeof modelPricing !== 'object') {
+      const servicePricing = (providerEntry as Record<string, unknown>).services;
+      if (!servicePricing || typeof servicePricing !== 'object') {
         continue;
       }
-      for (const modelName of Object.keys(modelPricing as Record<string, unknown>)) {
-        const normalized = modelName.trim();
+      for (const serviceName of Object.keys(servicePricing as Record<string, unknown>)) {
+        const normalized = serviceName.trim();
         if (normalized.length > 0) {
-          models.add(normalized);
+          services.add(normalized);
         }
       }
     }
   }
 
-  return Array.from(models);
+  return Array.from(services);
 }
 
 async function getPeerList(): Promise<{ peers: PeerInfo[]; degraded: boolean }> {
@@ -438,7 +438,7 @@ async function getPeerList(): Promise<{ peers: PeerInfo[]; degraded: boolean }> 
         peerId: typeof peer.peerId === 'string' ? peer.peerId : '',
         displayName: (rawDisplayName.length > 0 ? rawDisplayName : fallbackDisplayName) || null,
         providers: Array.isArray(peer.providers) ? peer.providers.filter((provider): provider is string => typeof provider === 'string') : [],
-        models: collectPeerModels(peer),
+        services: collectPeerModels(peer),
         capacityMsgPerHour: typeof peer.capacityMsgPerHour === 'number' ? peer.capacityMsgPerHour : 0,
         inputUsdPerMillion: typeof peer.inputUsdPerMillion === 'number' ? peer.inputUsdPerMillion : 0,
         outputUsdPerMillion: typeof peer.outputUsdPerMillion === 'number' ? peer.outputUsdPerMillion : 0,

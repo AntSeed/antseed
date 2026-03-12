@@ -1,7 +1,7 @@
 import type { PeerId } from "../types/peer.js";
 import type { PeerOffering } from "../types/capability.js";
-import type { ModelApiProtocol } from "../types/model-api.js";
-import { WELL_KNOWN_MODEL_API_PROTOCOLS } from "../types/model-api.js";
+import type { ServiceApiProtocol } from "../types/service-api.js";
+import { WELL_KNOWN_SERVICE_API_PROTOCOLS } from "../types/service-api.js";
 
 export const METADATA_VERSION = 4;
 export const WELL_KNOWN_MODEL_CATEGORIES = [
@@ -12,8 +12,8 @@ export const WELL_KNOWN_MODEL_CATEGORIES = [
   "finance",
   "tee",
 ] as const;
-export { WELL_KNOWN_MODEL_API_PROTOCOLS };
-export type { ModelApiProtocol };
+export { WELL_KNOWN_SERVICE_API_PROTOCOLS };
+export type { ServiceApiProtocol };
 
 export interface TokenPricingUsdPerMillion {
   inputUsdPerMillion: number;
@@ -22,11 +22,11 @@ export interface TokenPricingUsdPerMillion {
 
 export interface ProviderAnnouncement {
   provider: string;
-  models: string[];
+  services: string[];
   defaultPricing: TokenPricingUsdPerMillion;
-  modelPricing?: Record<string, TokenPricingUsdPerMillion>;
-  modelCategories?: Record<string, string[]>;
-  modelApiProtocols?: Record<string, ModelApiProtocol[]>;
+  servicePricing?: Record<string, TokenPricingUsdPerMillion>;
+  serviceCategories?: Record<string, string[]>;
+  serviceApiProtocols?: Record<string, ServiceApiProtocol[]>;
   maxConcurrency: number;
   currentLoad: number;
 }

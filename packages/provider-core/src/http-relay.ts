@@ -1,7 +1,7 @@
 import type { TokenProvider } from '@antseed/node';
 import type { SerializedHttpRequest, SerializedHttpResponse, SerializedHttpResponseChunk } from '@antseed/node';
 import { ANTSEED_STREAMING_RESPONSE_HEADER } from '@antseed/node';
-import { swapAuthHeader, validateRequestModel } from './auth-swap.js';
+import { swapAuthHeader, validateRequestService } from './auth-swap.js';
 
 /** Hop-by-hop headers that must not be forwarded. */
 const HOP_BY_HOP_HEADERS = new Set([
@@ -21,12 +21,12 @@ export interface RelayConfig {
   tokenProvider?: TokenProvider;
   extraHeaders?: Record<string, string>;
   maxConcurrency: number;
-  allowedModels: string[];
+  allowedServices: string[];
   timeoutMs?: number;
   /** Lowercase header-name prefixes to strip before forwarding upstream. */
   stripHeaderPrefixes?: string[];
-  /** Optional lowercase map: announced model -> upstream model. */
-  modelRewriteMap?: Record<string, string>;
+  /** Optional lowercase map: announced service -> upstream service. */
+  serviceRewriteMap?: Record<string, string>;
   /** Fields to deep-merge into the JSON request body before forwarding upstream. */
   injectJsonFields?: Record<string, unknown>;
   /** If true, retry once with a force-refreshed token on 401. Only meaningful for providers with a refreshable tokenProvider (e.g. OAuth). */
@@ -53,15 +53,15 @@ function deepMerge(target: Record<string, unknown>, source: Record<string, unkno
 export class HttpRelay {
   private readonly _config: RelayConfig;
   private readonly _callbacks: RelayCallbacks;
-  private readonly _validationModels: ReadonlySet<string>;
+  private readonly _validationServices: ReadonlySet<string>;
   private _activeCount = 0;
 
   constructor(config: RelayConfig, callbacks: RelayCallbacks) {
     this._config = config;
     this._callbacks = callbacks;
-    const rewriteValues = Object.values(config.modelRewriteMap ?? {});
-    this._validationModels = new Set([
-      ...config.allowedModels.map((m) => m.trim().toLowerCase()),
+    const rewriteValues = Object.values(config.serviceRewriteMap ?? {});
+    this._validationServices = new Set([
+      ...config.allowedServices.map((m) => m.trim().toLowerCase()),
       ...rewriteValues.map((m) => m.trim().toLowerCase()),
     ]);
   }
@@ -80,8 +80,8 @@ export class HttpRelay {
   }
 
   async handleRequest(request: SerializedHttpRequest): Promise<void> {
-    // Validate model against pre-computed set (normalized at construction time).
-    const validationError = validateRequestModel(request, this._validationModels);
+    // Validate service against pre-computed set (normalized at construction time).
+    const validationError = validateRequestService(request, this._validationServices);
     if (validationError) {
       this._sendError(request.requestId, 403, validationError);
       return;
@@ -115,22 +115,23 @@ export class HttpRelay {
       let swappedRequest = swapAuthHeader(request, effectiveConfig);
 
       const shouldProcessJsonBody = (
-        (this._config.modelRewriteMap && Object.keys(this._config.modelRewriteMap).length > 0)
+        (this._config.serviceRewriteMap && Object.keys(this._config.serviceRewriteMap).length > 0)
         || this._config.injectJsonFields
       );
 
-      // Optionally rewrite model IDs and inject extra JSON fields into request body.
+      // Optionally rewrite service IDs and inject extra JSON fields into request body.
       if (shouldProcessJsonBody && swappedRequest.method !== 'GET' && swappedRequest.method !== 'HEAD') {
         try {
           const decoded = JSON.parse(new TextDecoder().decode(swappedRequest.body)) as Record<string, unknown>;
           const transformed: Record<string, unknown> = { ...decoded };
 
-          if (this._config.modelRewriteMap) {
-            const model = transformed.model;
-            if (typeof model === 'string' && model.trim().length > 0) {
-              const rewrittenModel = this._config.modelRewriteMap[model.trim().toLowerCase()];
-              if (typeof rewrittenModel === 'string' && rewrittenModel.trim().length > 0) {
-                transformed.model = rewrittenModel.trim();
+          if (this._config.serviceRewriteMap) {
+            // Read from both "model" (upstream API compat) and "service" (native) fields
+            const requestedService = (transformed.service ?? transformed.model) as string | undefined;
+            if (typeof requestedService === 'string' && requestedService.trim().length > 0) {
+              const rewrittenService = this._config.serviceRewriteMap[requestedService.trim().toLowerCase()];
+              if (typeof rewrittenService === 'string' && rewrittenService.trim().length > 0) {
+                transformed.model = rewrittenService.trim();
               }
             }
           }

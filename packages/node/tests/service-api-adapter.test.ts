@@ -1,14 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import type { SerializedHttpRequest, SerializedHttpResponse } from '../src/types/http.js';
 import {
-  detectRequestModelApiProtocol,
-  inferProviderDefaultModelApiProtocols,
+  detectRequestServiceApiProtocol,
+  inferProviderDefaultServiceApiProtocols,
   selectTargetProtocolForRequest,
   transformAnthropicMessagesRequestToOpenAIChat,
   transformOpenAIChatResponseToAnthropicMessage,
   transformOpenAIResponsesRequestToOpenAIChat,
   transformOpenAIChatResponseToOpenAIResponses,
-} from '../src/proxy/model-api-adapter.js';
+} from '../src/proxy/service-api-adapter.js';
 
 function makeRequest(overrides?: Partial<SerializedHttpRequest>): SerializedHttpRequest {
   return {
@@ -101,14 +101,14 @@ function parseSseEvents(sseText: string): Array<{ event: string | null; data: st
     });
 }
 
-describe('detectRequestModelApiProtocol', () => {
+describe('detectRequestServiceApiProtocol', () => {
   it('detects anthropic messages from path', () => {
-    expect(detectRequestModelApiProtocol(makeRequest())).toBe('anthropic-messages');
+    expect(detectRequestServiceApiProtocol(makeRequest())).toBe('anthropic-messages');
   });
 
   it('detects openai chat completions from path', () => {
     expect(
-      detectRequestModelApiProtocol(makeRequest({ path: '/v1/chat/completions' })),
+      detectRequestServiceApiProtocol(makeRequest({ path: '/v1/chat/completions' })),
     ).toBe('openai-chat-completions');
   });
 });
@@ -125,13 +125,13 @@ describe('selectTargetProtocolForRequest', () => {
   });
 });
 
-describe('inferProviderDefaultModelApiProtocols', () => {
+describe('inferProviderDefaultServiceApiProtocols', () => {
   it('infers anthropic providers', () => {
-    expect(inferProviderDefaultModelApiProtocols('claude-oauth')).toEqual(['anthropic-messages']);
+    expect(inferProviderDefaultServiceApiProtocols('claude-oauth')).toEqual(['anthropic-messages']);
   });
 
   it('infers openai-style providers', () => {
-    expect(inferProviderDefaultModelApiProtocols('openai')).toEqual(['openai-chat-completions']);
+    expect(inferProviderDefaultServiceApiProtocols('openai')).toEqual(['openai-chat-completions']);
   });
 });
 
@@ -249,10 +249,10 @@ function makeResponsesRequest(overrides?: Partial<SerializedHttpRequest>): Seria
   };
 }
 
-describe('detectRequestModelApiProtocol – responses', () => {
+describe('detectRequestServiceApiProtocol – responses', () => {
   it('detects openai responses from /v1/responses path', () => {
     expect(
-      detectRequestModelApiProtocol(makeResponsesRequest()),
+      detectRequestServiceApiProtocol(makeResponsesRequest()),
     ).toBe('openai-responses');
   });
 });

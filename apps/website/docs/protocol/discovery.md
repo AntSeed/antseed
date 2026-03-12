@@ -17,17 +17,17 @@ Sellers announce multiple topic types. Each topic is SHA1-hashed for DHT lookup.
 | Topic Type | Plain Topic String | Key Normalization |
 |---|---|---|
 | Provider | `antseed:{provider}` | `trim + lowercase` |
-| Model (canonical) | `antseed:model:{model}` | `trim + lowercase` |
-| Model (search fallback) | `antseed:model-search:{model}` | `trim + lowercase`, then remove spaces, `-`, `_` (keep `.`) |
+| Model (canonical) | `antseed:service:{model}` | `trim + lowercase` |
+| Model (search fallback) | `antseed:service-search:{model}` | `trim + lowercase`, then remove spaces, `-`, `_` (keep `.`) |
 | Capability | `antseed:{capability}` or `antseed:{capability}:{name}` | `trim + lowercase` |
 
 `model-search` topics are announced only when the compact key differs from the canonical key.
 
 Example:
 
-- `kimi 2.5` -> canonical `antseed:model:kimi 2.5`, search `antseed:model-search:kimi2.5`
-- `kimi-2.5` -> canonical `antseed:model:kimi-2.5`, search `antseed:model-search:kimi2.5`
-- `kimi_2.5` -> canonical `antseed:model:kimi_2.5`, search `antseed:model-search:kimi2.5`
+- `kimi 2.5` -> canonical `antseed:service:kimi 2.5`, search `antseed:service-search:kimi2.5`
+- `kimi-2.5` -> canonical `antseed:service:kimi-2.5`, search `antseed:service-search:kimi2.5`
+- `kimi_2.5` -> canonical `antseed:service:kimi_2.5`, search `antseed:service-search:kimi2.5`
 
 Buyer model discovery queries canonical model topic first, then also queries `model-search` when keys differ.
 
@@ -65,14 +65,14 @@ By default, metadata is fetched from `http://{host}:{port}/metadata` (`metadataP
       "inputUsdPerMillion": 3,
       "outputUsdPerMillion": 15
     },
-    "modelPricing": {
+    "servicePricing": {
       "claude-sonnet-4-6": { "inputUsdPerMillion": 3, "outputUsdPerMillion": 15 },
       "claude-haiku-4-5": { "inputUsdPerMillion": 1, "outputUsdPerMillion": 5 }
     },
-    "modelCategories": {
+    "serviceCategories": {
       "claude-sonnet-4-6": ["coding", "privacy"]
     },
-    "modelApiProtocols": {
+    "serviceApiProtocols": {
       "claude-sonnet-4-6": ["anthropic-messages"]
     },
     "maxConcurrency": 5,

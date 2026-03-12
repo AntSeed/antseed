@@ -3,7 +3,7 @@ import test from 'node:test';
 import {
   resolveDiscoveryProviders,
   resolveMetadataSummaryPricing,
-  resolveNetworkPeerModels,
+  resolveNetworkPeerServices,
   resolveNetworkPeerProviders,
 } from './dht-query-service.js';
 
@@ -12,7 +12,7 @@ test('metadata default pricing maps to input/output USD per million', () => {
     providers: [
       {
         provider: 'anthropic',
-        models: ['claude-sonnet-4-5-20250929'],
+        services: ['claude-sonnet-4-5-20250929'],
         defaultPricing: {
           inputUsdPerMillion: 11,
           outputUsdPerMillion: 33,
@@ -33,7 +33,7 @@ test('missing model-specific pricing still resolves provider defaults', () => {
       providers: [
         {
           provider: 'openai',
-          models: ['gpt-4o', 'gpt-4o-mini'],
+          services: ['gpt-4o', 'gpt-4o-mini'],
           defaultPricing: {
             inputUsdPerMillion: 7,
             outputUsdPerMillion: 21,
@@ -80,7 +80,7 @@ test('network peer providers prefer metadata providers over topic inference', ()
       providers: [
         {
           provider: 'claude-code',
-          models: ['x'],
+          services: ['x'],
           defaultPricing: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 },
           maxConcurrency: 1,
           currentLoad: 0,
@@ -105,12 +105,12 @@ test('network peer providers fallback accumulates inferred topics when metadata 
 });
 
 test('network peer models are extracted from metadata announcements', () => {
-  const models = resolveNetworkPeerModels(
+  const models = resolveNetworkPeerServices(
     {
       providers: [
         {
           provider: 'anthropic',
-          models: ['claude-sonnet-4.6', 'claude-opus-4.1'],
+          services: ['claude-sonnet-4.6', 'claude-opus-4.1'],
           defaultPricing: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 },
           maxConcurrency: 1,
           currentLoad: 0,
@@ -124,6 +124,6 @@ test('network peer models are extracted from metadata announcements', () => {
 });
 
 test('network peer models fallback keeps existing model list when metadata is unavailable', () => {
-  const models = resolveNetworkPeerModels(null, ['claude-sonnet-4.6', 'gpt-4.1']);
+  const models = resolveNetworkPeerServices(null, ['claude-sonnet-4.6', 'gpt-4.1']);
   assert.deepEqual(models, ['claude-sonnet-4.6', 'gpt-4.1']);
 });

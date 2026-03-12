@@ -49,7 +49,7 @@ export interface TokenPricingUsdPerMillion {
 
 export interface ProviderPricingConfig {
   defaults?: TokenPricingUsdPerMillion;
-  models?: Record<string, TokenPricingUsdPerMillion>;
+  services?: Record<string, TokenPricingUsdPerMillion>;
 }
 
 export interface HierarchicalPricingConfig {

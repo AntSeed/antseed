@@ -27,14 +27,14 @@ import type { Provider, SerializedHttpRequest, SerializedHttpResponse } from '@a
 // Implement the Provider interface (or use an existing plugin)
 const myProvider: Provider = {
   name: 'my-llm',
-  models: ['my-model-v1'],
+  services: ['my-model-v1'],
   pricing: {
     defaults: {
       inputUsdPerMillion: 10,
       outputUsdPerMillion: 10,
     },
   },
-  modelCategories: {
+  serviceCategories: {
     'my-model-v1': ['coding', 'privacy'],
   },
   maxConcurrency: 10,
@@ -99,8 +99,8 @@ if (peers.length > 0) {
 Discovery topics are normalized to improve lookup consistency:
 
 - Provider topic: `antseed:{provider}` with `trim + lowercase`
-- Model topic (canonical): `antseed:model:{model}` with `trim + lowercase`
-- Model topic (search fallback): `antseed:model-search:{model}` with spaces, `-`, `_` removed after canonical normalization (keeps `.`)
+- Model topic (canonical): `antseed:service:{model}` with `trim + lowercase`
+- Model topic (search fallback): `antseed:service-search:{model}` with spaces, `-`, `_` removed after canonical normalization (keeps `.`)
 
 Canonical and search model topics are both used when their keys differ, so variants like `kimi 2.5`, `kimi-2.5`, and `kimi_2.5` can converge in discovery while keeping exact canonical topics.
 
@@ -246,19 +246,19 @@ interface Provider {
   name: string;
 
   /** Model IDs this provider supports */
-  models: string[];
+  services: string[];
 
-  /** Pricing in USD per 1M tokens (defaults + optional per-model overrides) */
+  /** Pricing in USD per 1M tokens (defaults + optional per-service overrides) */
   pricing: {
     defaults: { inputUsdPerMillion: number; outputUsdPerMillion: number };
-    models?: Record<string, { inputUsdPerMillion: number; outputUsdPerMillion: number }>;
+    services?: Record<string, { inputUsdPerMillion: number; outputUsdPerMillion: number }>;
   };
 
-  /** Optional per-model discovery tags (e.g., coding/privacy/legal) */
-  modelCategories?: Record<string, string[]>;
+  /** Optional per-service discovery tags (e.g., coding/privacy/legal) */
+  serviceCategories?: Record<string, string[]>;
 
-  /** Optional per-model API protocol support advertised via discovery metadata. */
-  modelApiProtocols?: Record<string, ModelApiProtocol[]>;
+  /** Optional per-service API protocol support advertised via discovery metadata. */
+  serviceApiProtocols?: Record<string, ServiceApiProtocol[]>;
 
   /** Maximum concurrent requests this provider can handle */
   maxConcurrency: number;
@@ -307,13 +307,13 @@ import type { AntseedProviderPlugin, Provider, SerializedHttpRequest, Serialized
 
 class MyProvider implements Provider {
   readonly name = 'my-provider';
-  readonly models: string[];
+  readonly services: string[];
   readonly pricing: Provider['pricing'];
   readonly maxConcurrency: number;
   private _active = 0;
 
-  constructor(apiKey: string, models: string[], inputUsdPerMillion: number, outputUsdPerMillion: number, maxConcurrency: number) {
-    this.models = models;
+  constructor(apiKey: string, services: string[], inputUsdPerMillion: number, outputUsdPerMillion: number, maxConcurrency: number) {
+    this.services = models;
     this.pricing = {
       defaults: {
         inputUsdPerMillion,

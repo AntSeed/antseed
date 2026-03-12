@@ -76,14 +76,14 @@ export class AgentProvider implements Provider {
   }
 
   get name() { return this._inner.name; }
-  get models() { return this._inner.models; }
+  get services() { return this._inner.services; }
   get pricing(): Provider['pricing'] { return this._inner.pricing; }
   get maxConcurrency() { return this._inner.maxConcurrency; }
 
-  get modelCategories() { return this._inner.modelCategories; }
-  set modelCategories(v: Record<string, string[]> | undefined) { this._inner.modelCategories = v; }
+  get serviceCategories() { return this._inner.serviceCategories; }
+  set serviceCategories(v: Record<string, string[]> | undefined) { this._inner.serviceCategories = v; }
 
-  get modelApiProtocols() { return this._inner.modelApiProtocols; }
+  get serviceApiProtocols() { return this._inner.serviceApiProtocols; }
 
   getCapacity() { return this._inner.getCapacity(); }
 

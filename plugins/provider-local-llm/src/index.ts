@@ -1,4 +1,4 @@
-import type { AntseedProviderPlugin, Provider, ModelApiProtocol } from '@antseed/node';
+import type { AntseedProviderPlugin, Provider, ServiceApiProtocol } from '@antseed/node';
 import { BaseProvider, StaticTokenProvider } from '@antseed/provider-core';
 
 function parseNonNegativeNumber(raw: string | undefined, key: string, fallback: number): number {
@@ -9,12 +9,12 @@ function parseNonNegativeNumber(raw: string | undefined, key: string, fallback: 
   return parsed;
 }
 
-function buildModelApiProtocols(
-  models: string[],
-  protocol: ModelApiProtocol,
-): Record<string, ModelApiProtocol[]> | undefined {
-  if (models.length === 0) return undefined;
-  return Object.fromEntries(models.map((model) => [model, [protocol]]));
+function buildServiceApiProtocols(
+  services: string[],
+  protocol: ServiceApiProtocol,
+): Record<string, ServiceApiProtocol[]> | undefined {
+  if (services.length === 0) return undefined;
+  return Object.fromEntries(services.map((model) => [model, [protocol]]));
 }
 
 const plugin: AntseedProviderPlugin = {
@@ -29,7 +29,7 @@ const plugin: AntseedProviderPlugin = {
     { key: 'ANTSEED_INPUT_USD_PER_MILLION', label: 'Input Price', type: 'number', required: false, default: 0, description: 'Input price in USD per 1M tokens' },
     { key: 'ANTSEED_OUTPUT_USD_PER_MILLION', label: 'Output Price', type: 'number', required: false, default: 0, description: 'Output price in USD per 1M tokens' },
     { key: 'ANTSEED_MAX_CONCURRENCY', label: 'Max Concurrency', type: 'number', required: false, default: 1, description: 'Max concurrent requests' },
-    { key: 'ANTSEED_ALLOWED_MODELS', label: 'Allowed Models', type: 'string[]', required: false, description: 'Model allow-list' },
+    { key: 'ANTSEED_ALLOWED_MODELS', label: 'Allowed Services', type: 'string[]', required: false, description: 'Model allow-list' },
   ],
 
   createProvider(config: Record<string, string>): Provider {
@@ -48,25 +48,25 @@ const plugin: AntseedProviderPlugin = {
       throw new Error('ANTSEED_MAX_CONCURRENCY must be a valid number');
     }
 
-    const allowedModels = config['ANTSEED_ALLOWED_MODELS']
+    const allowedServices = config['ANTSEED_ALLOWED_MODELS']
       ? config['ANTSEED_ALLOWED_MODELS'].split(',').map((s: string) => s.trim())
       : [];
-    const modelApiProtocols = buildModelApiProtocols(allowedModels, 'openai-chat-completions');
+    const serviceApiProtocols = buildServiceApiProtocols(allowedServices, 'openai-chat-completions');
 
     const tokenProvider = apiKey ? new StaticTokenProvider(apiKey) : undefined;
 
     return new BaseProvider({
       name: 'local-llm',
-      models: allowedModels,
+      services: allowedServices,
       pricing,
-      ...(modelApiProtocols ? { modelApiProtocols } : {}),
+      ...(serviceApiProtocols ? { serviceApiProtocols } : {}),
       relay: {
         baseUrl,
         authHeaderName: 'authorization',
         authHeaderValue: apiKey ? `Bearer ${apiKey}` : '',
         tokenProvider,
         maxConcurrency,
-        allowedModels,
+        allowedServices,
       },
     });
   },

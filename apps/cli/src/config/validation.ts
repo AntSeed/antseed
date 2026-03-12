@@ -4,7 +4,7 @@ import type {
   TokenPricingUsdPerMillion,
 } from './types.js';
 
-const MODEL_CATEGORY_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
+const SERVICE_CATEGORY_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 
 function validatePricingLeaf(
   path: string,
@@ -31,19 +31,19 @@ function validateHierarchicalPricing(
       validatePricingLeaf(`${path}.providers.${provider}.defaults`, providerPricing.defaults, errors);
     }
 
-    for (const [model, modelPricing] of Object.entries(providerPricing.models ?? {})) {
+    for (const [model, servicePricing] of Object.entries(providerPricing.services ?? {})) {
       validatePricingLeaf(
-        `${path}.providers.${provider}.models.${model}`,
-        modelPricing,
+        `${path}.providers.${provider}.services.${model}`,
+        servicePricing,
         errors
       );
     }
   }
 }
 
-function validateSellerModelCategories(
+function validateSellerServiceCategories(
   path: string,
-  categories: AntseedConfig['seller']['modelCategories'] | undefined,
+  categories: AntseedConfig['seller']['serviceCategories'] | undefined,
   errors: string[]
 ): void {
   if (!categories) return;
@@ -68,7 +68,7 @@ function validateSellerModelCategories(
           errors.push(`${modelPath}[${i}] must not be empty`);
           continue;
         }
-        if (!MODEL_CATEGORY_PATTERN.test(tag)) {
+        if (!SERVICE_CATEGORY_PATTERN.test(tag)) {
           errors.push(`${modelPath}[${i}] must use lowercase letters, digits, or hyphen`);
         }
         if (seen.has(tag)) {
@@ -87,7 +87,7 @@ export function validateConfig(config: AntseedConfig): string[] {
   const errors: string[] = [];
 
   validateHierarchicalPricing('seller.pricing', config.seller.pricing, errors);
-  validateSellerModelCategories('seller.modelCategories', config.seller.modelCategories, errors);
+  validateSellerServiceCategories('seller.serviceCategories', config.seller.serviceCategories, errors);
   validateHierarchicalPricing('buyer.maxPricing', config.buyer.maxPricing, errors);
 
   if (!Number.isFinite(config.buyer.minPeerReputation) || config.buyer.minPeerReputation < 0 || config.buyer.minPeerReputation > 100) {

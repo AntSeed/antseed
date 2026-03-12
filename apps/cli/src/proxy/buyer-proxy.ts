@@ -15,16 +15,16 @@ import type {
   SerializedHttpResponseChunk,
 } from '@antseed/node'
 import {
-  detectRequestModelApiProtocol,
-  inferProviderDefaultModelApiProtocols,
-  type ModelApiProtocol,
+  detectRequestServiceApiProtocol,
+  inferProviderDefaultServiceApiProtocols,
+  type ServiceApiProtocol,
   selectTargetProtocolForRequest,
   type TargetProtocolSelection,
   transformAnthropicMessagesRequestToOpenAIChat,
   transformOpenAIChatResponseToAnthropicMessage,
   transformOpenAIResponsesRequestToOpenAIChat,
   transformOpenAIChatResponseToOpenAIResponses,
-} from './model-api-adapter.js'
+} from './service-api-adapter.js'
 
 export interface BuyerProxyConfig {
   port: number
@@ -48,7 +48,7 @@ export interface BuyerProxyConfig {
    * Overrides the model field in the request body before routing and forwarding.
    * Can be updated at runtime via `antseed connection set --model`.
    */
-  pinnedModel?: string
+  pinnedService?: string
 }
 
 const DAEMON_STATE_FILE = join(homedir(), '.antseed', 'daemon.state.json')
@@ -94,7 +94,7 @@ export type CandidatePeerRouteSelection = {
 const CLAUDE_PROVIDER_PREFERENCE = ['claude-oauth', 'anthropic', 'claude-code'] as const
 
 function inferPreferredProvidersForRequest(
-  requestProtocol: ModelApiProtocol | null,
+  requestProtocol: ServiceApiProtocol | null,
   requestedModel: string | null,
 ): string[] {
   const model = requestedModel?.trim().toLowerCase() ?? ''
@@ -152,13 +152,13 @@ function getPeerProviderProtocols(
   peer: PeerInfo,
   provider: string,
   requestedModel: string | null,
-): ModelApiProtocol[] {
+): ServiceApiProtocol[] {
   const normalizedRequestedModel = requestedModel?.trim()
   const fromMetadata = (
     peer as PeerInfo & {
-      providerModelApiProtocols?: Record<string, { models: Record<string, ModelApiProtocol[]> }>
+      providerServiceApiProtocols?: Record<string, { services: Record<string, ServiceApiProtocol[]> }>
     }
-  ).providerModelApiProtocols?.[provider]?.models
+  ).providerServiceApiProtocols?.[provider]?.services
   if (fromMetadata) {
     if (normalizedRequestedModel) {
       const directMatchKey = Object.keys(fromMetadata).find(
@@ -192,14 +192,14 @@ function getPeerProviderProtocols(
     }
   }
 
-  const inferred = inferProviderDefaultModelApiProtocols(provider)
+  const inferred = inferProviderDefaultServiceApiProtocols(provider)
   log(`No metadata: peer ${peer.peerId.slice(0, 8)} provider=${provider} → inferred [${inferred.join(',')}]`)
   return inferred
 }
 
 function resolvePeerRoutePlan(
   peer: PeerInfo,
-  requestProtocol: ModelApiProtocol | null,
+  requestProtocol: ServiceApiProtocol | null,
   requestedModel: string | null,
   explicitProvider: string | null,
 ): PeerProtocolRoutePlan | null {
@@ -242,7 +242,7 @@ function resolvePeerRoutePlan(
 
 export function selectCandidatePeersForRouting(
   peers: PeerInfo[],
-  requestProtocol: ModelApiProtocol | null,
+  requestProtocol: ServiceApiProtocol | null,
   requestedModel: string | null,
   explicitProvider: string | null,
 ): CandidatePeerRouteSelection {
@@ -645,11 +645,11 @@ function setPeerIdentityHeaders(headers: Record<string, string>, selectedPeer: P
 function resolvePeerPricing(peer: PeerInfo, provider: string, model: string | null): { inputUsdPerMillion: number | null; outputUsdPerMillion: number | null } {
   const providerPricing = peer.providerPricing?.[provider]
   if (providerPricing) {
-    const modelPricing = model ? providerPricing.models?.[model] : undefined
-    if (modelPricing) {
+    const servicePricing = model ? providerPricing.services?.[model] : undefined
+    if (servicePricing) {
       return {
-        inputUsdPerMillion: toFiniteNumberOrNull(modelPricing.inputUsdPerMillion),
-        outputUsdPerMillion: toFiniteNumberOrNull(modelPricing.outputUsdPerMillion),
+        inputUsdPerMillion: toFiniteNumberOrNull(servicePricing.inputUsdPerMillion),
+        outputUsdPerMillion: toFiniteNumberOrNull(servicePricing.outputUsdPerMillion),
       }
     }
     return {
@@ -864,7 +864,7 @@ export class BuyerProxy {
   private readonly _bgRefreshIntervalMs: number
   private readonly _peerCacheTtlMs: number
   private _pinnedPeer: string | null
-  private _pinnedModel: string | null
+  private _pinnedService: string | null
   private _stateFileWatcher: FSWatcher | null = null
   private _stateWatchDebounce: ReturnType<typeof setTimeout> | null = null
 
@@ -883,7 +883,7 @@ export class BuyerProxy {
     this._bgRefreshIntervalMs = config.backgroundRefreshIntervalMs ?? 5 * 60_000
     this._peerCacheTtlMs = Math.max(0, config.peerCacheTtlMs ?? 30_000)
     this._pinnedPeer = config.pinnedPeerId?.toLowerCase() ?? null
-    this._pinnedModel = config.pinnedModel?.trim() ?? null
+    this._pinnedService = config.pinnedService?.trim() ?? null
     this._server = createServer((req, res) => {
       this._handleRequest(req, res).catch((err) => {
         log('Unhandled error:', err)
@@ -947,16 +947,16 @@ export class BuyerProxy {
   private async _reloadSessionOverrides(): Promise<void> {
     try {
       const raw = await readFile(BUYER_STATE_FILE, 'utf-8')
-      const parsed = JSON.parse(raw) as { pinnedModel?: unknown; pinnedPeerId?: unknown }
-      const pinnedModel = typeof parsed.pinnedModel === 'string' && parsed.pinnedModel.trim().length > 0
-        ? parsed.pinnedModel.trim()
+      const parsed = JSON.parse(raw) as { pinnedService?: unknown; pinnedPeerId?: unknown }
+      const pinnedService = typeof parsed.pinnedService === 'string' && parsed.pinnedService.trim().length > 0
+        ? parsed.pinnedService.trim()
         : null
       const pinnedPeer = typeof parsed.pinnedPeerId === 'string' && parsed.pinnedPeerId.trim().length > 0
         ? parsed.pinnedPeerId.trim().toLowerCase()
         : null
-      this._pinnedModel = pinnedModel
+      this._pinnedService = pinnedService
       this._pinnedPeer = pinnedPeer
-      log(`Session overrides reloaded: model=${pinnedModel ?? 'none'} peer=${pinnedPeer ?? 'none'}`)
+      log(`Session overrides reloaded: model=${pinnedService ?? 'none'} peer=${pinnedPeer ?? 'none'}`)
     } catch {
       // state file unreadable; keep current values
     }
@@ -973,11 +973,11 @@ export class BuyerProxy {
       } catch {
         // file doesn't exist yet
       }
-      // When stopping, preserve whatever pinnedModel/pinnedPeerId is already
+      // When stopping, preserve whatever pinnedService/pinnedPeerId is already
       // in the file — the debounce may have been cancelled before
       // _reloadSessionOverrides could commit the latest CLI-written values.
       const sessionOverrides = state === 'connected'
-        ? { pinnedModel: this._pinnedModel, pinnedPeerId: this._pinnedPeer }
+        ? { pinnedService: this._pinnedService, pinnedPeerId: this._pinnedPeer }
         : {}
       const data = {
         ...existing,
@@ -1047,7 +1047,7 @@ export class BuyerProxy {
 
   private _buildRouteKey(
     path: string,
-    requestProtocol: ModelApiProtocol | null,
+    requestProtocol: ServiceApiProtocol | null,
     requestedModel: string | null,
     explicitProvider: string | null,
   ): string {
@@ -1256,7 +1256,7 @@ export class BuyerProxy {
 
     // Snapshot both session overrides together before any await so a concurrent
     // _reloadSessionOverrides() cannot produce a model/peer mismatch mid-request.
-    const effectivePinnedModel = this._pinnedModel
+    const effectivePinnedModel = this._pinnedService
     const effectivePinnedPeer = this._pinnedPeer
     if (effectivePinnedModel) {
       const { body: rewrittenBody, headers: rewrittenHeaders } = rewriteModelInBody(
@@ -1298,7 +1298,7 @@ export class BuyerProxy {
       return
     }
 
-    const requestProtocol = detectRequestModelApiProtocol(serializedReq)
+    const requestProtocol = detectRequestServiceApiProtocol(serializedReq)
     const requestedModel = extractRequestedModel(serializedReq)
     log(`Routing: protocol=${requestProtocol ?? 'null'} model=${requestedModel ?? 'null'}`)
     const explicitProvider = getExplicitProviderOverride(serializedReq)
@@ -1610,7 +1610,7 @@ export class BuyerProxy {
     selectedPeer: PeerInfo,
     routeKey: string,
     routePlanByPeerId: Map<string, PeerProtocolRoutePlan>,
-    requestProtocol: ModelApiProtocol | null,
+    requestProtocol: ServiceApiProtocol | null,
     requestedModel: string | null,
     explicitProvider: string | null,
     router: Router | null,

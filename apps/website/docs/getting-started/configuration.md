@@ -74,7 +74,7 @@ Use config to control metadata advertised to buyers:
     "displayName": "Acme Inference - us-east-1"
   },
   "seller": {
-    "modelCategories": {
+    "serviceCategories": {
       "anthropic": {
         "claude-sonnet-4-5-20250929": ["coding", "privacy"]
       }
@@ -84,12 +84,12 @@ Use config to control metadata advertised to buyers:
 ```
 
 - `identity.displayName`: optional node label shown in browse/discovery results.
-- `seller.modelCategories`: optional provider/model -> tag array map announced in peer metadata.
+- `seller.serviceCategories`: optional provider/model -> tag array map announced in peer metadata.
 - Recommended category tags: `privacy`, `legal`, `uncensored`, `coding`, `finance`, `tee` (custom tags are allowed).
 
 ```bash title="set metadata fields"
 antseed config set identity.displayName "Acme Inference - us-east-1"
-antseed config seller set modelCategories.anthropic.claude-sonnet-4-5-20250929 '["coding","privacy"]'
+antseed config seller set serviceCategories.anthropic.claude-sonnet-4-5-20250929 '["coding","privacy"]'
 ```
 
 ## Middleware (Skills Injection)
@@ -137,7 +137,7 @@ Useful env vars:
 
 - `ANTSEED_ALLOWED_MODELS`: announced model list (what buyers request)
 - `OPENAI_UPSTREAM_MODEL_PREFIX`: prefix added before forwarding upstream
-- `OPENAI_MODEL_ALIAS_MAP_JSON`: explicit announcedModel -> upstreamModel map
+- `OPENAI_MODEL_ALIAS_MAP_JSON`: explicit announcedService -> upstreamService map
 
 Example: announce `kimi2.5`, forward to Together as `together/kimi2.5`:
 

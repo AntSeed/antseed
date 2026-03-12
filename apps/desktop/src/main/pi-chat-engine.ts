@@ -348,13 +348,13 @@ type NetworkPeerAddress = {
   providers?: string[];
 };
 
-type ChatModelProtocol = 'anthropic-messages' | 'openai-chat-completions';
+type ChatServiceProtocol = 'anthropic-messages' | 'openai-chat-completions';
 
-type ChatModelCatalogEntry = {
+type ChatServiceCatalogEntry = {
   id: string;
   label: string;
   provider: string;
-  protocol: ChatModelProtocol;
+  protocol: ChatServiceProtocol;
   count: number;
 };
 
@@ -374,12 +374,12 @@ const CHAT_STREAM_IDLE_TIMEOUT_ENV = 'ANTSEED_CHAT_STREAM_IDLE_TIMEOUT_MS';
 const DEFAULT_CHAT_STREAM_TOTAL_TIMEOUT_MS = 240_000;
 const DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS = 45_000;
 const CHAT_MODEL_METADATA_FETCH_TIMEOUT_MS = 2_500;
-const CHAT_MODEL_SCAN_MAX_PEERS = 20;
-const CHAT_MODEL_MAX_OPTIONS = 120;
-const CHAT_MODEL_MAX_OPTIONS_PER_PROVIDER = 40;
-const CHAT_MODEL_CACHE_FILE = path.join(CHAT_DATA_DIR, 'model-catalog-cache.json');
-const CHAT_MODEL_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
-const CHAT_MODEL_CACHE_REFRESH_DEBOUNCE_MS = 60_000;
+const CHAT_SERVICE_SCAN_MAX_PEERS = 20;
+const CHAT_SERVICE_MAX_OPTIONS = 120;
+const CHAT_SERVICE_MAX_OPTIONS_PER_PROVIDER = 40;
+const CHAT_SERVICE_CACHE_FILE = path.join(CHAT_DATA_DIR, 'service-catalog-cache.json');
+const CHAT_SERVICE_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
+const CHAT_SERVICE_CACHE_REFRESH_DEBOUNCE_MS = 60_000;
 
 function normalizeTokenCount(value: unknown): number {
   const parsed = Number(value);
@@ -492,7 +492,7 @@ function normalizeModelId(model?: string): string {
   return trimmed.length > 0 ? trimmed : DEFAULT_CHAT_MODEL;
 }
 
-function isChatModelProtocol(value: unknown): value is ChatModelProtocol {
+function isChatServiceProtocol(value: unknown): value is ChatServiceProtocol {
   return value === 'anthropic-messages' || value === 'openai-chat-completions';
 }
 
@@ -504,7 +504,7 @@ function normalizeProviderId(value: unknown): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
-function inferProviderProtocol(provider: string): ChatModelProtocol | null {
+function inferProviderProtocol(provider: string): ChatServiceProtocol | null {
   if (provider === 'openai' || provider === 'openrouter' || provider === 'local-llm') {
     return 'openai-chat-completions';
   }
@@ -593,7 +593,7 @@ function normalizePort(value: unknown): number | null {
   return normalized;
 }
 
-function normalizeModelValue(value: unknown): string | null {
+function normalizeServiceValue(value: unknown): string | null {
   if (typeof value !== 'string') {
     return null;
   }
@@ -608,11 +608,11 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-function resolveProtocolForModel(
+function resolveProtocolForService(
   provider: string,
   matrixRaw: unknown,
   modelId: string,
-): ChatModelProtocol | null {
+): ChatServiceProtocol | null {
   const matrix = asRecord(matrixRaw);
   if (matrix) {
     const targetKey = modelId.trim().toLowerCase();
@@ -621,7 +621,7 @@ function resolveProtocolForModel(
         continue;
       }
       for (const protocolCandidate of value) {
-        if (isChatModelProtocol(protocolCandidate)) {
+        if (isChatServiceProtocol(protocolCandidate)) {
           return protocolCandidate;
         }
       }
@@ -632,11 +632,11 @@ function resolveProtocolForModel(
 
 function updateModelProviderHints(
   modelProviderHints: Map<string, string[]>,
-  entries: ChatModelCatalogEntry[],
+  entries: ChatServiceCatalogEntry[],
 ): void {
   modelProviderHints.clear();
   for (const entry of entries) {
-    const modelId = normalizeModelValue(entry.id)?.toLowerCase();
+    const modelId = normalizeServiceValue(entry.id)?.toLowerCase();
     const provider = normalizeProviderId(entry.provider);
     if (!modelId || !provider || !inferProviderProtocol(provider)) {
       continue;
@@ -667,22 +667,22 @@ function normalizePeerId(value: unknown): string | null {
   return /^[0-9a-f]{64}$/i.test(peerId) ? peerId : null;
 }
 
-function normalizeChatModelCatalogEntry(raw: unknown): ChatModelCatalogEntry | null {
+function normalizeChatServiceCatalogEntry(raw: unknown): ChatServiceCatalogEntry | null {
   const entry = asRecord(raw);
   if (!entry) {
     return null;
   }
 
-  const id = normalizeModelValue(entry.id);
+  const id = normalizeServiceValue(entry.id);
   const provider = normalizeProviderId(entry.provider);
   const protocol = entry.protocol;
-  if (!id || !provider || !isChatModelProtocol(protocol) || !inferProviderProtocol(provider)) {
+  if (!id || !provider || !isChatServiceProtocol(protocol) || !inferProviderProtocol(provider)) {
     return null;
   }
 
   const count = Number(entry.count);
   const normalizedCount = Number.isFinite(count) && count > 0 ? Math.max(1, Math.floor(count)) : 1;
-  const label = normalizeModelValue(entry.label) ?? id;
+  const label = normalizeServiceValue(entry.label) ?? id;
   return {
     id,
     label,
@@ -692,10 +692,10 @@ function normalizeChatModelCatalogEntry(raw: unknown): ChatModelCatalogEntry | n
   };
 }
 
-function normalizeChatModelCatalogEntries(rawEntries: unknown[]): ChatModelCatalogEntry[] {
-  const deduped = new Map<string, ChatModelCatalogEntry>();
+function normalizeChatServiceCatalogEntries(rawEntries: unknown[]): ChatServiceCatalogEntry[] {
+  const deduped = new Map<string, ChatServiceCatalogEntry>();
   for (const rawEntry of rawEntries) {
-    const entry = normalizeChatModelCatalogEntry(rawEntry);
+    const entry = normalizeChatServiceCatalogEntry(rawEntry);
     if (!entry) {
       continue;
     }
@@ -707,32 +707,32 @@ function normalizeChatModelCatalogEntries(rawEntries: unknown[]): ChatModelCatal
     }
     deduped.set(key, { ...entry });
   }
-  return sortChatModelCatalogEntries([...deduped.values()]);
+  return sortChatServiceCatalogEntries([...deduped.values()]);
 }
 
-async function readChatModelCatalogCache(): Promise<{ updatedAt: number; entries: ChatModelCatalogEntry[] } | null> {
+async function readChatServiceCatalogCache(): Promise<{ updatedAt: number; entries: ChatServiceCatalogEntry[] } | null> {
   try {
-    const raw = await readFile(CHAT_MODEL_CACHE_FILE, 'utf-8');
+    const raw = await readFile(CHAT_SERVICE_CACHE_FILE, 'utf-8');
     const parsed = JSON.parse(raw) as { updatedAt?: unknown; entries?: unknown };
     const updatedAt = Number(parsed.updatedAt);
     if (!Number.isFinite(updatedAt) || updatedAt <= 0) {
       return null;
     }
-    const entries = normalizeChatModelCatalogEntries(Array.isArray(parsed.entries) ? parsed.entries : []);
+    const entries = normalizeChatServiceCatalogEntries(Array.isArray(parsed.entries) ? parsed.entries : []);
     if (entries.length === 0) {
       return null;
     }
     return {
       updatedAt: Math.floor(updatedAt),
-      entries: limitChatModelCatalogEntries(entries),
+      entries: limitChatServiceCatalogEntries(entries),
     };
   } catch {
     return null;
   }
 }
 
-async function writeChatModelCatalogCache(entries: ChatModelCatalogEntry[]): Promise<void> {
-  const normalized = limitChatModelCatalogEntries(normalizeChatModelCatalogEntries(entries));
+async function writeChatServiceCatalogCache(entries: ChatServiceCatalogEntry[]): Promise<void> {
+  const normalized = limitChatServiceCatalogEntries(normalizeChatServiceCatalogEntries(entries));
   if (normalized.length === 0) {
     return;
   }
@@ -741,11 +741,11 @@ async function writeChatModelCatalogCache(entries: ChatModelCatalogEntry[]): Pro
     updatedAt: Date.now(),
     entries: normalized,
   };
-  await writeFile(CHAT_MODEL_CACHE_FILE, JSON.stringify(payload, null, 2), 'utf-8');
+  await writeFile(CHAT_SERVICE_CACHE_FILE, JSON.stringify(payload, null, 2), 'utf-8');
 }
 
-function sortChatModelCatalogEntries(entries: ChatModelCatalogEntry[]): ChatModelCatalogEntry[] {
-  const protocolRank = (protocol: ChatModelProtocol): number => (
+function sortChatServiceCatalogEntries(entries: ChatServiceCatalogEntry[]): ChatServiceCatalogEntry[] {
+  const protocolRank = (protocol: ChatServiceProtocol): number => (
     protocol === 'anthropic-messages' ? 0 : 1
   );
 
@@ -763,22 +763,22 @@ function sortChatModelCatalogEntries(entries: ChatModelCatalogEntry[]): ChatMode
   });
 }
 
-function limitChatModelCatalogEntries(entries: ChatModelCatalogEntry[]): ChatModelCatalogEntry[] {
-  if (entries.length <= CHAT_MODEL_MAX_OPTIONS) {
+function limitChatServiceCatalogEntries(entries: ChatServiceCatalogEntry[]): ChatServiceCatalogEntry[] {
+  if (entries.length <= CHAT_SERVICE_MAX_OPTIONS) {
     return entries;
   }
 
-  const limited: ChatModelCatalogEntry[] = [];
+  const limited: ChatServiceCatalogEntry[] = [];
   const perProviderCount = new Map<string, number>();
   for (const entry of entries) {
     const provider = entry.provider;
     const providerCount = perProviderCount.get(provider) ?? 0;
-    if (providerCount >= CHAT_MODEL_MAX_OPTIONS_PER_PROVIDER) {
+    if (providerCount >= CHAT_SERVICE_MAX_OPTIONS_PER_PROVIDER) {
       continue;
     }
     limited.push(entry);
     perProviderCount.set(provider, providerCount + 1);
-    if (limited.length >= CHAT_MODEL_MAX_OPTIONS) {
+    if (limited.length >= CHAT_SERVICE_MAX_OPTIONS) {
       break;
     }
   }
@@ -809,13 +809,13 @@ async function fetchPeerMetadata(host: string, port: number): Promise<Record<str
   }
 }
 
-function extractChatModelCatalog(metadata: Record<string, unknown>): Omit<ChatModelCatalogEntry, 'count'>[] {
+function extractChatModelCatalog(metadata: Record<string, unknown>): Omit<ChatServiceCatalogEntry, 'count'>[] {
   const providersRaw = metadata.providers;
   if (!Array.isArray(providersRaw)) {
     return [];
   }
 
-  const models: Omit<ChatModelCatalogEntry, 'count'>[] = [];
+  const services: Omit<ChatServiceCatalogEntry, 'count'>[] = [];
   for (const providerEntry of providersRaw) {
     const providerRecord = asRecord(providerEntry);
     if (!providerRecord) {
@@ -825,33 +825,33 @@ function extractChatModelCatalog(metadata: Record<string, unknown>): Omit<ChatMo
     if (!providerId) {
       continue;
     }
-    const modelListRaw = providerRecord.models;
-    if (!Array.isArray(modelListRaw)) {
+    const serviceListRaw = providerRecord.services;
+    if (!Array.isArray(serviceListRaw)) {
       continue;
     }
-    for (const modelRaw of modelListRaw) {
-      const modelId = normalizeModelValue(modelRaw);
-      if (!modelId) {
+    for (const serviceRaw of serviceListRaw) {
+      const serviceId = normalizeServiceValue(serviceRaw);
+      if (!serviceId) {
         continue;
       }
-      const protocol = resolveProtocolForModel(providerId, providerRecord.modelApiProtocols, modelId);
+      const protocol = resolveProtocolForService(providerId, providerRecord.serviceApiProtocols, serviceId);
       if (!protocol) {
         continue;
       }
-      models.push({
-        id: modelId,
-        label: modelId,
+      services.push({
+        id: serviceId,
+        label: serviceId,
         provider: providerId,
         protocol,
       });
     }
   }
-  return models;
+  return services;
 }
 
-async function discoverChatModelCatalog(
+async function discoverChatServiceCatalog(
   getNetworkPeers?: () => Promise<NetworkPeerAddress[]>,
-): Promise<ChatModelCatalogEntry[]> {
+): Promise<ChatServiceCatalogEntry[]> {
   if (!getNetworkPeers) {
     return [];
   }
@@ -865,7 +865,7 @@ async function discoverChatModelCatalog(
 
   const uniqueTargets: Array<{ host: string; port: number }> = [];
   const seen = new Set<string>();
-  for (const peer of peers.slice(0, CHAT_MODEL_SCAN_MAX_PEERS)) {
+  for (const peer of peers.slice(0, CHAT_SERVICE_SCAN_MAX_PEERS)) {
     const host = normalizeHost(peer.host);
     const port = normalizePort(peer.port);
     if (!host || !port) {
@@ -887,7 +887,7 @@ async function discoverChatModelCatalog(
     return await fetchPeerMetadata(target.host, target.port);
   }));
 
-  const aggregate = new Map<string, ChatModelCatalogEntry>();
+  const aggregate = new Map<string, ChatServiceCatalogEntry>();
   for (const metadata of responses) {
     if (!metadata) {
       continue;
@@ -907,7 +907,7 @@ async function discoverChatModelCatalog(
     }
   }
 
-  return sortChatModelCatalogEntries(Array.from(aggregate.values()));
+  return sortChatServiceCatalogEntries(Array.from(aggregate.values()));
 }
 
 
@@ -2259,7 +2259,7 @@ export function registerPiChatHandlers({
   const activeRunsByConversation = new Map<string, ActiveRun>();
   const modelProviderHints = new Map<string, string[]>();
   const preferredPeerByConversationId = new Map<string, string>();
-  let modelCatalogRefreshPromise: Promise<ChatModelCatalogEntry[]> | null = null;
+  let modelCatalogRefreshPromise: Promise<ChatServiceCatalogEntry[]> | null = null;
   let lastModelCatalogRefreshAt = 0;
 
   const clearActiveRun = (run: ActiveRun | null): void => {
@@ -2308,7 +2308,7 @@ export function registerPiChatHandlers({
   const runStreamingPrompt = async (
     conversationId: string,
     userMessage: string,
-    modelOverride?: string,
+    serviceOverride?: string,
     providerOverride?: string,
     imageBase64?: string,
     imageMimeType?: string,
@@ -2340,7 +2340,7 @@ export function registerPiChatHandlers({
     }
 
     const context = sessionManager.buildSessionContext();
-    const modelId = normalizeModelId(modelOverride || context.model?.modelId);
+    const modelId = normalizeModelId(serviceOverride || context.model?.modelId);
     const preferredPeerId = preferredPeerByConversationId.get(conversationId) ?? null;
     const providerHint = resolveProviderHintForModel(
       providerOverride,
@@ -2631,13 +2631,13 @@ export function registerPiChatHandlers({
     }
   };
 
-  const refreshModelCatalogFromNetwork = async (force = false): Promise<ChatModelCatalogEntry[]> => {
+  const refreshModelCatalogFromNetwork = async (force = false): Promise<ChatServiceCatalogEntry[]> => {
     const now = Date.now();
     if (!force && modelCatalogRefreshPromise) {
       return await modelCatalogRefreshPromise;
     }
-    if (!force && now - lastModelCatalogRefreshAt < CHAT_MODEL_CACHE_REFRESH_DEBOUNCE_MS) {
-      const cached = await readChatModelCatalogCache();
+    if (!force && now - lastModelCatalogRefreshAt < CHAT_SERVICE_CACHE_REFRESH_DEBOUNCE_MS) {
+      const cached = await readChatServiceCatalogCache();
       if (cached) {
         return cached.entries;
       }
@@ -2650,11 +2650,11 @@ export function registerPiChatHandlers({
 
       const getPeers = async (): Promise<NetworkPeerAddress[]> => peers;
 
-      const modelsFromMetadata = await discoverChatModelCatalog(getPeers);
+      const modelsFromMetadata = await discoverChatServiceCatalog(getPeers);
 
-      const limited = limitChatModelCatalogEntries(normalizeChatModelCatalogEntries(modelsFromMetadata));
+      const limited = limitChatServiceCatalogEntries(normalizeChatServiceCatalogEntries(modelsFromMetadata));
       updateModelProviderHints(modelProviderHints, limited);
-      void writeChatModelCatalogCache(limited).catch(() => undefined);
+      void writeChatServiceCatalogCache(limited).catch(() => undefined);
       lastModelCatalogRefreshAt = Date.now();
       return limited;
     })().finally(() => {
@@ -2678,12 +2678,12 @@ export function registerPiChatHandlers({
 
   ipcMain.handle('chat:ai-list-models', async () => {
     try {
-      const cached = await readChatModelCatalogCache();
+      const cached = await readChatServiceCatalogCache();
       if (cached) {
         updateModelProviderHints(modelProviderHints, cached.entries);
         const cacheAgeMs = Date.now() - cached.updatedAt;
-        if (cacheAgeMs <= CHAT_MODEL_CACHE_MAX_AGE_MS) {
-          if (cacheAgeMs > CHAT_MODEL_CACHE_REFRESH_DEBOUNCE_MS) {
+        if (cacheAgeMs <= CHAT_SERVICE_CACHE_MAX_AGE_MS) {
+          if (cacheAgeMs > CHAT_SERVICE_CACHE_REFRESH_DEBOUNCE_MS) {
             void refreshModelCatalogFromNetwork(false).catch((error) => {
               appendSystemLog(`Background model catalog refresh failed: ${asErrorMessage(error)}`);
             });
@@ -2708,7 +2708,7 @@ export function registerPiChatHandlers({
     } catch (error) {
       return {
         ok: false,
-        data: [] as ChatModelCatalogEntry[],
+        data: [] as ChatServiceCatalogEntry[],
         error: asErrorMessage(error),
       };
     }

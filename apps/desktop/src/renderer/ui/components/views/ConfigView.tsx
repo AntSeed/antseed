@@ -65,7 +65,7 @@ export function ConfigView({ active }: ConfigViewProps) {
               <div className="settings-copy">
                 <span className="settings-kicker">Runtime</span>
                 <h4>Proxy Port</h4>
-                <p>Local port used by the buyer proxy for model routing and chat requests.</p>
+                <p>Local port used by the buyer proxy for service routing and chat requests.</p>
               </div>
               <input
                 type="number"

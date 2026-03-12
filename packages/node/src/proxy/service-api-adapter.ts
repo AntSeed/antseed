@@ -1,11 +1,11 @@
 import type { SerializedHttpRequest, SerializedHttpResponse } from '../types/http.js';
-import type { ModelApiProtocol } from '../types/model-api.js';
+import type { ServiceApiProtocol } from '../types/service-api.js';
 
 const ANTHROPIC_PROVIDER_NAMES = new Set(['anthropic', 'claude-code', 'claude-oauth']);
 const OPENAI_CHAT_PROVIDER_NAMES = new Set(['openai', 'local-llm']);
 
 export interface TargetProtocolSelection {
-  targetProtocol: ModelApiProtocol;
+  targetProtocol: ServiceApiProtocol;
   requiresTransform: boolean;
 }
 
@@ -364,7 +364,7 @@ function buildAnthropicStreamFromMessage(message: {
   return new TextEncoder().encode(chunks.join(''));
 }
 
-export function detectRequestModelApiProtocol(request: Pick<SerializedHttpRequest, 'path' | 'headers'>): ModelApiProtocol | null {
+export function detectRequestServiceApiProtocol(request: Pick<SerializedHttpRequest, 'path' | 'headers'>): ServiceApiProtocol | null {
   const normalizedPath = request.path.toLowerCase();
   if (normalizedPath.startsWith('/v1/messages') || normalizedPath.startsWith('/v1/complete')) {
     return 'anthropic-messages';
@@ -388,7 +388,7 @@ export function detectRequestModelApiProtocol(request: Pick<SerializedHttpReques
   return null;
 }
 
-export function inferProviderDefaultModelApiProtocols(providerName: string): ModelApiProtocol[] {
+export function inferProviderDefaultServiceApiProtocols(providerName: string): ServiceApiProtocol[] {
   const normalized = providerName.trim().toLowerCase();
   if (normalized.length === 0) {
     return [];
@@ -403,8 +403,8 @@ export function inferProviderDefaultModelApiProtocols(providerName: string): Mod
 }
 
 export function selectTargetProtocolForRequest(
-  requestProtocol: ModelApiProtocol | null,
-  supportedProtocols: ModelApiProtocol[],
+  requestProtocol: ServiceApiProtocol | null,
+  supportedProtocols: ServiceApiProtocol[],
 ): TargetProtocolSelection | null {
   if (!requestProtocol) {
     return null;

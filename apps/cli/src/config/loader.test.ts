@@ -23,7 +23,7 @@ test('loadConfig deep-merges nested hierarchical pricing without dropping defaul
         pricing: {
           providers: {
             anthropic: {
-              models: {
+              services: {
                 'claude-sonnet-4-5-20250929': {
                   inputUsdPerMillion: 12,
                   outputUsdPerMillion: 18,
@@ -52,11 +52,11 @@ test('loadConfig deep-merges nested hierarchical pricing without dropping defaul
       assert.equal(config.seller.pricing.defaults.inputUsdPerMillion, 10);
       assert.equal(config.seller.pricing.defaults.outputUsdPerMillion, 10);
       assert.equal(
-        config.seller.pricing.providers?.anthropic?.models?.['claude-sonnet-4-5-20250929']?.inputUsdPerMillion,
+        config.seller.pricing.providers?.anthropic?.services?.['claude-sonnet-4-5-20250929']?.inputUsdPerMillion,
         12
       );
       assert.equal(
-        config.seller.pricing.providers?.anthropic?.models?.['claude-sonnet-4-5-20250929']?.outputUsdPerMillion,
+        config.seller.pricing.providers?.anthropic?.services?.['claude-sonnet-4-5-20250929']?.outputUsdPerMillion,
         18
       );
 
@@ -68,14 +68,14 @@ test('loadConfig deep-merges nested hierarchical pricing without dropping defaul
   );
 });
 
-test('loadConfig throws explicit validation error for incomplete model pricing', async () => {
+test('loadConfig throws explicit validation error for incomplete service pricing', async () => {
   await withTempConfig(
     JSON.stringify({
       seller: {
         pricing: {
           providers: {
             anthropic: {
-              models: {
+              services: {
                 broken: {
                   inputUsdPerMillion: 12,
                 },
@@ -88,7 +88,7 @@ test('loadConfig throws explicit validation error for incomplete model pricing',
     async (configPath) => {
       await assert.rejects(
         async () => loadConfig(configPath),
-        /seller\.pricing\.providers\.anthropic\.models\.broken\.outputUsdPerMillion/
+        /seller\.pricing\.providers\.anthropic\.services\.broken\.outputUsdPerMillion/
       );
     }
   );
@@ -98,7 +98,7 @@ test('loadConfig merges seller model categories per provider/model', async () =>
   await withTempConfig(
     JSON.stringify({
       seller: {
-        modelCategories: {
+        serviceCategories: {
           anthropic: {
             'claude-sonnet-4-5-20250929': ['coding', 'legal'],
           },
@@ -108,7 +108,7 @@ test('loadConfig merges seller model categories per provider/model', async () =>
     async (configPath) => {
       const config = await loadConfig(configPath);
       assert.deepEqual(
-        config.seller.modelCategories?.anthropic?.['claude-sonnet-4-5-20250929'],
+        config.seller.serviceCategories?.anthropic?.['claude-sonnet-4-5-20250929'],
         ['coding', 'legal']
       );
     }
@@ -119,7 +119,7 @@ test('loadConfig rejects invalid seller model category values', async () => {
   await withTempConfig(
     JSON.stringify({
       seller: {
-        modelCategories: {
+        serviceCategories: {
           anthropic: {
             'claude-sonnet-4-5-20250929': ['Bad Value'],
           },
@@ -129,7 +129,7 @@ test('loadConfig rejects invalid seller model category values', async () => {
     async (configPath) => {
       await assert.rejects(
         async () => loadConfig(configPath),
-        /seller\.modelCategories\.anthropic\.claude-sonnet-4-5-20250929/
+        /seller\.serviceCategories\.anthropic\.claude-sonnet-4-5-20250929/
       );
     }
   );

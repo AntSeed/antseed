@@ -245,9 +245,9 @@ export function formatChatTime(timestamp: unknown): string {
   return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
-export function shortModelName(model: unknown): string {
+export function shortServiceName(model: unknown): string {
   const raw = String(model || '').trim();
-  if (!raw) return 'unknown-model';
+  if (!raw) return 'unknown-service';
   return raw.replace(/^claude-/, '').replace(/-20\d{6,}/, '');
 }
 
@@ -395,7 +395,7 @@ export function buildChatMetaParts(msg: ChatMessage): string[] {
     parts.push(assistantMeta.peerId ? `peer ${assistantMeta.peerId.slice(0, 8)}` : 'peer n/a');
     if (assistantMeta.peerAddress) parts.push(assistantMeta.peerAddress);
     if (assistantMeta.provider) parts.push(assistantMeta.provider);
-    if (assistantMeta.model) parts.push(shortModelName(assistantMeta.model));
+    if (assistantMeta.model) parts.push(shortServiceName(assistantMeta.model));
     if (assistantMeta.peerProviders.length > 0 && !assistantMeta.provider) {
       parts.push(assistantMeta.peerProviders.join(','));
     }

@@ -49,17 +49,17 @@ test('selectCandidatePeersForRouting keeps all peers when no protocol or provide
 
 test('selectCandidatePeersForRouting excludes peers when requested model is not in provider metadata', () => {
   const openAiPeer = makePeer('a', ['openai'])
-  openAiPeer.providerModelApiProtocols = {
+  openAiPeer.providerServiceApiProtocols = {
     openai: {
-      models: {
+      services: {
         'gpt-4o': ['openai-chat-completions'],
       },
     },
   }
   const claudePeer = makePeer('b', ['claude-oauth'])
-  claudePeer.providerModelApiProtocols = {
+  claudePeer.providerServiceApiProtocols = {
     'claude-oauth': {
-      models: {
+      services: {
         'claude-opus-4-6': ['anthropic-messages'],
       },
     },

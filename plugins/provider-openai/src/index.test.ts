@@ -59,7 +59,7 @@ describe('provider-openai plugin', () => {
     expect(provider.maxConcurrency).toBe(5);
   });
 
-  it('rewrites announced model names to upstream prefixed models', async () => {
+  it('rewrites announced service names to upstream prefixed models', async () => {
     const originalFetch = globalThis.fetch;
     const fetchMock = vi.fn().mockResolvedValue(
       new Response('{}', {
@@ -96,7 +96,7 @@ describe('provider-openai plugin', () => {
     }
   });
 
-  it('does not double-prefix when model already includes upstream prefix with different casing', async () => {
+  it('does not double-prefix when service already includes upstream prefix with different casing', async () => {
     const originalFetch = globalThis.fetch;
     const fetchMock = vi.fn().mockResolvedValue(
       new Response('{}', {

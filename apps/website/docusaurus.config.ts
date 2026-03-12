@@ -121,7 +121,7 @@ const config: Config = {
           'OpenAI Chat Completions API compatible',
           'Reputation-based provider scoring',
           'TEE attestation for privacy-preserving inference',
-          'Per-model middleware and prompt injection',
+          'Per-service middleware and prompt injection',
           'Desktop app (AntStation)',
           'Agent-to-agent commerce support',
         ],
