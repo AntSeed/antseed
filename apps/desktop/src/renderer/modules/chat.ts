@@ -1000,6 +1000,15 @@ export function initChatModule({
     }
   }
 
+  function appendAssistantMessageToConversation(convId: string, message: ChatMessage): void {
+    const assistantMessage = {
+      ...message,
+      createdAt: message?.createdAt || Date.now(),
+    };
+    const existingMessages = getLocalConversationMessages(convId) ?? [];
+    setLocalConversationMessages(convId, [...existingMessages, assistantMessage]);
+  }
+
   async function createNewConversation(): Promise<void> {
     if (!bridge || !bridge.chatAiCreateConversation) return;
 
@@ -1035,6 +1044,8 @@ export function initChatModule({
 
     try {
       await bridge.chatAiDeleteConversation(convId);
+      localConversationMessages.delete(convId);
+      streamingMessagesByConversation.delete(convId);
 
       // If we deleted the active conversation, reset to new-chat state
       if (convId === uiState.chatActiveConversation) {
@@ -1533,6 +1544,12 @@ export function initChatModule({
           uiState.chatError = null;
           notifyUiStateChanged();
         } else {
+          if (finalizedStreamingMessage) {
+            appendAssistantMessageToConversation(
+              data.conversationId,
+              finalizedStreamingMessage,
+            );
+          }
           setConversationStreamingMessage(data.conversationId, null);
           if (shouldClearSending) {
             setChatSending(false);

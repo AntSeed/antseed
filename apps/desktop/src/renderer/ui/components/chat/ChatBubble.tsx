@@ -87,10 +87,6 @@ function StreamingMarkdown({ text }: { text: string }) {
   const visibleTextRef = useRef(text);
 
   useEffect(() => {
-    visibleTextRef.current = visibleText;
-  }, [visibleText]);
-
-  useEffect(() => {
     if (frameRef.current !== null) {
       cancelAnimationFrame(frameRef.current);
       frameRef.current = null;
