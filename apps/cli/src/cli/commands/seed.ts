@@ -14,7 +14,7 @@ import { setupShutdownHandler } from '../shutdown.js'
 import { loadProviderPlugin, buildPluginConfig } from '../../plugins/loader.js'
 import { resolveEffectiveSellerConfig, type SellerRuntimeOverrides } from '../../config/effective.js'
 import type { SellerCLIConfig, SellerMiddlewareConfig } from '../../config/types.js'
-import { MiddlewareProvider, type ProviderMiddleware } from '@antseed/provider-core'
+import { MiddlewareProvider, AgentProvider, SkillRegistry, type ProviderMiddleware } from '@antseed/provider-core'
 
 function getStateFile(dataDir: string): string {
   return join(dataDir, 'daemon.state.json')
@@ -364,6 +364,20 @@ export function registerSeedCommand(program: Command): void {
         } catch (err) {
           console.error(chalk.red(`Failed to load middleware: ${(err as Error).message}`))
           process.exit(1)
+        }
+      }
+
+      // Wrap provider with agent loop for on-demand skill loading
+      if (effectiveSellerConfig.skillsDir) {
+        const baseDir = globalOpts.config ? dirname(resolve(globalOpts.config)) : process.cwd()
+        const skillsPath = isAbsolute(effectiveSellerConfig.skillsDir)
+          ? effectiveSellerConfig.skillsDir
+          : resolve(baseDir, effectiveSellerConfig.skillsDir)
+        const registry = new SkillRegistry()
+        await registry.loadDirectory(skillsPath)
+        if (registry.size > 0) {
+          provider = new AgentProvider(provider, registry)
+          console.log(chalk.dim(`  skills: ${registry.size} skill(s) loaded from ${effectiveSellerConfig.skillsDir}`))
         }
       }
 

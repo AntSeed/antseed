@@ -11,14 +11,6 @@ export enum MessageType {
   // Chunked request upload (buyer→seller body streaming)
   HttpRequestChunk = 0x25,
   HttpRequestEnd   = 0x26,
-  // Task/Agent message types
-  TaskRequest = 0x30,
-  TaskEvent = 0x31,
-  TaskComplete = 0x32,
-  TaskError = 0x33,
-  // Skill message types
-  SkillRequest = 0x40,
-  SkillResponse = 0x41,
 
   // --- Bilateral Payment Protocol (0x50-0x5F) ---
   SessionLockAuth = 0x50,

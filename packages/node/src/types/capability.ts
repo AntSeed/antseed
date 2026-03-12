@@ -20,7 +20,7 @@ export interface PricingTier {
 
 /**
  * A discrete offering that a peer advertises via DHT capability topics.
- * Skills and tasks are handled as provider-node middlewares, not here.
+ * Skills are loaded dynamically via the AgentProvider middleware in @antseed/provider-core.
  */
 export interface PeerOffering {
   capability: ProviderCapability;

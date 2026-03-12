@@ -85,19 +85,23 @@ configSchema: [
 
 The CLI reads matching environment variables and passes them to `createProvider(config)`.
 
-## Adding Skills via Middleware
+## Adding Skills and Middleware
 
-Providers can inject Markdown files (system prompts, persona definitions, skill instructions) into every buyer request without buyers seeing the additions. The CLI handles this automatically — no plugin code required.
+Providers can differentiate their service by injecting instructions, context, and skills into buyer requests — all transparently, without buyers seeing the additions. The CLI handles this automatically — no plugin code required.
 
-In your `antseed.config.json`:
+There are two mechanisms:
+
+### Middleware (always injected)
+
+Markdown files injected into **every** request. Use for instructions the LLM always needs: persona definitions, formatting rules, domain context.
 
 ```json
 {
   "seller": {
     "middleware": [
-      { "file": "./skills/coding-expert.md", "position": "system-prepend" },
-      { "file": "./skills/output-format.md",  "position": "append", "role": "user" },
-      { "file": "./skills/sonnet-rules.md", "position": "system-append", "models": ["claude-sonnet-4-5", "claude-sonnet-4-6"] }
+      { "file": "./prompts/persona.md", "position": "system-prepend" },
+      { "file": "./prompts/output-format.md", "position": "append", "role": "user" },
+      { "file": "./prompts/sonnet-rules.md", "position": "system-append", "models": ["claude-sonnet-4-5", "claude-sonnet-4-6"] }
     ]
   }
 }
@@ -112,7 +116,54 @@ Each entry supports:
 | `role` | No | Role for `prepend`/`append` positions. Defaults to `user` |
 | `models` | No | If set, only inject for requests targeting one of these model IDs. Omit to apply to all models. Must contain at least one model ID |
 
-Buyers receive only the LLM's natural response. The injected content is applied server-side before the upstream call and is never visible in conversation history. See the [`@antseed/cli` README](../../../apps/cli/README.md) for full position reference.
+### Skills (loaded on demand)
+
+Skill directories containing a `SKILL.md` file that the LLM can load dynamically when needed. Only a catalog of skill names and descriptions is injected into the system prompt — the full content is loaded only when the LLM calls the `antseed_load` tool. This keeps the context window lean for requests that don't need every skill.
+
+```json
+{
+  "seller": {
+    "skillsDir": "./skills"
+  }
+}
+```
+
+Skills follow the same directory structure as Claude Code skills:
+
+```
+skills/
+  visual-explainer/
+    SKILL.md          ← frontmatter (name, description) + full instructions
+    references/       ← optional supporting files
+  code-review/
+    SKILL.md
+```
+
+Each `SKILL.md` requires YAML frontmatter with `name` and `description`:
+
+```markdown
+---
+name: visual-explainer
+description: Generate self-contained HTML pages for technical diagrams
+---
+# Visual Explainer
+... full skill instructions ...
+```
+
+The LLM sees the catalog and decides which skills to load based on the buyer's request. The skill content, the catalog, and the `antseed_load` tool are all stripped from the final response — the buyer only sees the LLM's natural output.
+
+### When to use which
+
+| | Middleware | Skills |
+|---|---|---|
+| **Injection** | Every request | Only when the LLM asks |
+| **Use for** | Persona, formatting, rules | Situational capabilities (diagramming, code review, etc.) |
+| **Context cost** | Always in context | Catalog only; full content loaded on demand |
+| **Config** | `middleware` array | `skillsDir` path |
+
+Both mechanisms can be used together. The composition chain is: `AgentProvider → MiddlewareProvider → BaseProvider`.
+
+Buyers receive only the LLM's natural response. All injected content is applied server-side and is never visible in conversation history.
 
 ## Publishing
 
