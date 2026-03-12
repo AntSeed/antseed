@@ -93,7 +93,7 @@ METADATA_VERSION = 4
 | Field            | Type     | Description                                                  |
 |------------------|----------|--------------------------------------------------------------|
 | provider         | string   | Provider name (e.g. "anthropic")                            |
-| models           | string[] | List of model identifiers                                    |
+| services         | string[] | List of service identifiers                                  |
 | defaultPricing   | object   | Default `{ inputUsdPerMillion, outputUsdPerMillion }`       |
 | servicePricing     | object   | Optional per-service map `{ [model]: { inputUsdPerMillion, outputUsdPerMillion } }` |
 | serviceCategories  | object   | Optional per-service map `{ [model]: string[] }` with lowercase tags |
