@@ -71,7 +71,7 @@ Custom bootstrap nodes can be supplied and are merged (deduplicated by `host:por
 **Source:** `node/src/discovery/peer-metadata.ts`
 
 ```
-METADATA_VERSION = 4
+METADATA_VERSION = 5
 ```
 
 ### Data Structures
@@ -155,6 +155,9 @@ Post-provider sections:
   [displayNameFlag:1]                             // v3+
   if displayNameFlag == 1:
     [displayNameLen:1][displayName:N]
+  [publicAddressFlag:1]                           // v5+
+  if publicAddressFlag == 1:
+    [publicAddressLen:1][publicAddress:N]
   [offeringCount:2]                               // uint16
   [offeringEntries...]
   [evmAddressFlag:1] + [evmAddress:20 if present]
@@ -178,13 +181,14 @@ The body (everything except the trailing 64-byte signature) is the data that is 
 | MAX_SERVICE_NAME_LENGTH   | 64    | Maximum service name length in characters   |
 | MAX_REGION_LENGTH         | 32    | Maximum region string length in characters  |
 | MAX_DISPLAY_NAME_LENGTH   | 64    | Maximum display name length in characters   |
+| MAX_PUBLIC_ADDRESS_LENGTH | 255   | Maximum public address length in characters |
 | MAX_SERVICE_CATEGORIES_PER_SERVICE | 8 | Maximum categories per service           |
 | MAX_SERVICE_CATEGORY_LENGTH | 32  | Maximum category length in characters       |
 | MAX_SERVICE_API_PROTOCOLS_PER_SERVICE | 4 | Maximum protocol entries per service |
 
 Additional validation rules enforced by `validateMetadata()`:
 
-- `version` must equal `METADATA_VERSION` (4).
+- `version` must equal `METADATA_VERSION` (5).
 - `peerId` must be exactly 64 lowercase hex characters.
 - `region` must not be empty.
 - `displayName` is optional, but when present it must be non-empty and <= 64 chars.

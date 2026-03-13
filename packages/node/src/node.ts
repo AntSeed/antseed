@@ -70,6 +70,7 @@ import type {
 } from "./types/protocol.js";
 import { hexToBytes, bytesToHex } from "./utils/hex.js";
 import { debugLog, debugWarn } from "./utils/debug.js";
+import { parsePublicAddress } from "./discovery/public-address.js";
 import { BuyerPaymentManager, type BuyerPaymentConfig } from "./payments/buyer-payment-manager.js";
 import { identityToEvmAddress } from "./payments/evm/keypair.js";
 
@@ -1865,7 +1866,7 @@ export class AntseedNode extends EventEmitter {
 
   private _resolvePublicAddress(result: LookupResult): string {
     const metadataPublicAddress = result.metadata.publicAddress?.trim();
-    if (metadataPublicAddress && isValidPublicAddress(metadataPublicAddress)) {
+    if (metadataPublicAddress && parsePublicAddress(metadataPublicAddress) !== null) {
       return metadataPublicAddress;
     }
     return `${result.host}:${result.port}`;
@@ -1962,16 +1963,6 @@ export class AntseedNode extends EventEmitter {
       (timer as { unref: () => void }).unref();
     }
   }
-}
-
-function isValidPublicAddress(value: string): boolean {
-  const lastColon = value.lastIndexOf(":");
-  if (lastColon <= 0 || lastColon === value.length - 1) {
-    return false;
-  }
-  const host = value.slice(0, lastColon).trim();
-  const port = Number.parseInt(value.slice(lastColon + 1), 10);
-  return host.length > 0 && Number.isInteger(port) && port >= 1 && port <= 65535;
 }
 
 function concatChunks(chunks: Uint8Array[]): Uint8Array {
