@@ -375,12 +375,15 @@ export function createOpenAIChatToAnthropicStreamingAdapter(
   const decoder = new TextDecoder();
   let messageStarted = false;
   let textBlockStarted = false;
+  let hadTextBlock = false;
   let outputTokens = 0;
   let stopReason: string | null = null;
   let messageId = options.fallbackModel ? `msg_${options.fallbackModel}` : 'msg_stream';
   let service = options.fallbackModel ?? 'unknown';
   const toolBlocks = new Map<number, { id: string; name: string }>();
   let openToolBlockIndex: number | null = null;
+
+  const getToolBlockIndex = (index: number): number => (hadTextBlock ? 1 : 0) + index;
 
   const startMessage = (): Array<{ event: string; data: unknown }> => {
     if (messageStarted) return [];
@@ -409,6 +412,7 @@ export function createOpenAIChatToAnthropicStreamingAdapter(
   const startTextBlock = (): Array<{ event: string; data: unknown }> => {
     if (textBlockStarted) return [];
     textBlockStarted = true;
+    hadTextBlock = true;
     return [{
       event: 'content_block_start',
       data: {
@@ -566,16 +570,17 @@ export function createOpenAIChatToAnthropicStreamingAdapter(
                 event: 'content_block_stop',
                 data: {
                   type: 'content_block_stop',
-                  index: openToolBlockIndex + 1,
+                  index: getToolBlockIndex(openToolBlockIndex),
                 },
               });
             }
+            const toolBlockIndex = getToolBlockIndex(index);
             emitted.push(...startMessage());
             emitted.push({
               event: 'content_block_start',
               data: {
                 type: 'content_block_start',
-                index: index + 1,
+                index: toolBlockIndex,
                 content_block: {
                   type: 'tool_use',
                   id,
@@ -596,7 +601,7 @@ export function createOpenAIChatToAnthropicStreamingAdapter(
               event: 'content_block_delta',
               data: {
                 type: 'content_block_delta',
-                index: index + 1,
+                index: getToolBlockIndex(index),
                 delta: {
                   type: 'input_json_delta',
                   partial_json: argumentsDelta,
@@ -613,7 +618,7 @@ export function createOpenAIChatToAnthropicStreamingAdapter(
             event: 'content_block_stop',
             data: {
               type: 'content_block_stop',
-              index: openToolBlockIndex + 1,
+              index: getToolBlockIndex(openToolBlockIndex),
             },
           });
           openToolBlockIndex = null;

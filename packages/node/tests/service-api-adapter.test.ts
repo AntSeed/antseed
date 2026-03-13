@@ -276,6 +276,33 @@ describe('createOpenAIChatToAnthropicStreamingAdapter', () => {
     expect(sseText).toContain('hello.txt');
   });
 
+  it('uses block index 0 for tool-only anthropic streams', () => {
+    const adapter = createOpenAIChatToAnthropicStreamingAdapter({ fallbackModel: 'claude-sonnet' });
+    const chunks = adapter.adaptChunk({
+      requestId: 'req-tool-only-index',
+      data: new TextEncoder().encode(
+        'data: {"id":"chatcmpl-tool-only","model":"gpt-4.1","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"write","arguments":"{\\"path\\":\\"hello.txt\\"}"}}]},"finish_reason":"tool_calls"}]}\n\n'
+        + 'data: [DONE]\n\n',
+      ),
+      done: true,
+    });
+
+    const events = parseSseEvents(chunks.map((chunk) => new TextDecoder().decode(chunk.data)).join(''));
+    const toolStart = events.find(
+      (event) => event.event === 'content_block_start' && event.data.includes('"id":"call_1"'),
+    );
+    const toolDelta = events.find(
+      (event) => event.event === 'content_block_delta' && event.data.includes('"partial_json"'),
+    );
+    const toolStop = events.find(
+      (event) => event.event === 'content_block_stop' && event.data.includes('"index":0'),
+    );
+
+    expect(toolStart?.data).toContain('"index":0');
+    expect(toolDelta?.data).toContain('"index":0');
+    expect(toolStop).toBeDefined();
+  });
+
   it('closes the text block before opening a tool block', () => {
     const adapter = createOpenAIChatToAnthropicStreamingAdapter({ fallbackModel: 'claude-sonnet' });
     const chunks = adapter.adaptChunk({
@@ -316,7 +343,7 @@ describe('createOpenAIChatToAnthropicStreamingAdapter', () => {
       (event) => event.event === 'content_block_start' && event.data.includes('"id":"call_1"'),
     );
     const firstToolStopIndex = events.findIndex(
-      (event) => event.event === 'content_block_stop' && event.data.includes('"index":1'),
+      (event) => event.event === 'content_block_stop' && event.data.includes('"index":0'),
     );
     const secondToolStartIndex = events.findIndex(
       (event) => event.event === 'content_block_start' && event.data.includes('"id":"call_2"'),
