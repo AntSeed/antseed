@@ -70,6 +70,7 @@ import type {
 } from "./types/protocol.js";
 import { hexToBytes, bytesToHex } from "./utils/hex.js";
 import { debugLog, debugWarn } from "./utils/debug.js";
+import { parsePublicAddress } from "./discovery/public-address.js";
 import { BuyerPaymentManager, type BuyerPaymentConfig } from "./payments/buyer-payment-manager.js";
 import { identityToEvmAddress } from "./payments/evm/keypair.js";
 
@@ -103,6 +104,8 @@ export interface NodePaymentsConfig {
 export interface NodeConfig {
   role: 'seller' | 'buyer';
   displayName?: string;
+  /** Publicly reachable seller address override ("host:port") announced in metadata. */
+  publicAddress?: string;
   dataDir?: string;           // Default: ~/.antseed
   dhtPort?: number;           // Default: 6881 for seller, 0 for buyer
   signalingPort?: number;     // Default: 6882 for seller
@@ -805,6 +808,7 @@ export class AntseedNode extends EventEmitter {
           maxConcurrency: p.maxConcurrency,
         })),
         ...(this._config.displayName ? { displayName: this._config.displayName } : {}),
+        ...(this._config.publicAddress ? { publicAddress: this._config.publicAddress } : {}),
         region: "unknown",
         pricing: new Map(
           this._providers.map((p) => [
@@ -1860,6 +1864,14 @@ export class AntseedNode extends EventEmitter {
     );
   }
 
+  private _resolvePublicAddress(result: LookupResult): string {
+    const metadataPublicAddress = result.metadata.publicAddress?.trim();
+    if (metadataPublicAddress && parsePublicAddress(metadataPublicAddress) !== null) {
+      return metadataPublicAddress;
+    }
+    return `${result.host}:${result.port}`;
+  }
+
   private _lookupResultToPeerInfo(result: LookupResult): PeerInfo {
     const providers = result.metadata.providers.map((p) => p.provider);
     const firstProvider = result.metadata.providers[0];
@@ -1904,7 +1916,7 @@ export class AntseedNode extends EventEmitter {
       displayName: result.metadata.displayName,
       lastSeen: result.metadata.timestamp,
       providers,
-      publicAddress: `${result.host}:${result.port}`,
+      publicAddress: this._resolvePublicAddress(result),
       ...(hasProviderPricing ? { providerPricing: providerPricingEntries } : {}),
       ...(hasProviderServiceCategories ? { providerServiceCategories: providerServiceCategoryEntries } : {}),
       ...(hasProviderServiceApiProtocols ? { providerServiceApiProtocols: providerServiceApiProtocolEntries } : {}),

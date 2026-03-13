@@ -107,6 +107,8 @@ export interface SellerCLIConfig {
    * Relative paths are resolved from the config file's directory.
    */
   skillsDir?: string;
+  /** Publicly reachable seller address override announced in metadata, e.g. "peer.example.com:6882". */
+  publicAddress?: string;
 }
 
 /**

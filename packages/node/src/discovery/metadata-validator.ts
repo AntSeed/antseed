@@ -1,6 +1,7 @@
 import type { PeerMetadata } from "./peer-metadata.js";
 import { METADATA_VERSION, WELL_KNOWN_SERVICE_API_PROTOCOLS } from "./peer-metadata.js";
 import { encodeMetadata } from "./metadata-codec.js";
+import { MAX_PUBLIC_ADDRESS_LENGTH, parsePublicAddress } from "./public-address.js";
 
 export const MAX_METADATA_SIZE = 1000;
 export const MAX_PROVIDERS = 10;
@@ -61,6 +62,26 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
       errors.push({
         field: "displayName",
         message: `Display name length ${metadata.displayName.length} exceeds max ${MAX_DISPLAY_NAME_LENGTH}`,
+      });
+    }
+  }
+
+  if (metadata.publicAddress !== undefined) {
+    const value = metadata.publicAddress.trim();
+    if (value.length === 0) {
+      errors.push({
+        field: "publicAddress",
+        message: "Public address must not be empty when provided",
+      });
+    } else if (value.length > MAX_PUBLIC_ADDRESS_LENGTH) {
+      errors.push({
+        field: "publicAddress",
+        message: `Public address length ${value.length} exceeds max ${MAX_PUBLIC_ADDRESS_LENGTH}`,
+      });
+    } else if (parsePublicAddress(value) === null) {
+      errors.push({
+        field: "publicAddress",
+        message: 'Public address must be in the form "host:port" with a valid port',
       });
     }
   }
