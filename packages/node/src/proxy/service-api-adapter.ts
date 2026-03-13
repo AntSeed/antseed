@@ -372,6 +372,7 @@ export function createOpenAIChatToAnthropicStreamingAdapter(
   options: { fallbackModel?: string | null },
 ): StreamingResponseAdapter {
   let rawBuffer = '';
+  const decoder = new TextDecoder();
   let messageStarted = false;
   let textBlockStarted = false;
   let outputTokens = 0;
@@ -379,6 +380,7 @@ export function createOpenAIChatToAnthropicStreamingAdapter(
   let messageId = options.fallbackModel ? `msg_${options.fallbackModel}` : 'msg_stream';
   let service = options.fallbackModel ?? 'unknown';
   const toolBlocks = new Map<number, { id: string; name: string }>();
+  let openToolBlockIndex: number | null = null;
 
   const startMessage = (): Array<{ event: string; data: unknown }> => {
     if (messageStarted) return [];
@@ -471,7 +473,7 @@ export function createOpenAIChatToAnthropicStreamingAdapter(
     adaptChunk(chunk) {
       const out: SerializedHttpResponseChunk[] = [];
       if (chunk.data.length > 0) {
-        rawBuffer += new TextDecoder().decode(chunk.data, { stream: !chunk.done });
+        rawBuffer += decoder.decode(chunk.data, { stream: !chunk.done });
       }
 
       const { events, remainder } = parseSseBuffer(rawBuffer);
@@ -559,6 +561,15 @@ export function createOpenAIChatToAnthropicStreamingAdapter(
               });
               textBlockStarted = false;
             }
+            if (openToolBlockIndex !== null && openToolBlockIndex !== index) {
+              emitted.push({
+                event: 'content_block_stop',
+                data: {
+                  type: 'content_block_stop',
+                  index: openToolBlockIndex + 1,
+                },
+              });
+            }
             emitted.push(...startMessage());
             emitted.push({
               event: 'content_block_start',
@@ -573,6 +584,7 @@ export function createOpenAIChatToAnthropicStreamingAdapter(
                 },
               },
             });
+            openToolBlockIndex = index;
           }
           toolBlocks.set(index, { id, name });
 
@@ -596,20 +608,17 @@ export function createOpenAIChatToAnthropicStreamingAdapter(
       }
 
       if (chunk.done) {
-        emitted.push(...finishMessage());
-        for (const index of [...toolBlocks.keys()].sort((a, b) => a - b)) {
-          emitted.splice(
-            Math.max(0, emitted.length - 2),
-            0,
-            {
-              event: 'content_block_stop',
-              data: {
-                type: 'content_block_stop',
-                index: index + 1,
-              },
+        if (openToolBlockIndex !== null) {
+          emitted.push({
+            event: 'content_block_stop',
+            data: {
+              type: 'content_block_stop',
+              index: openToolBlockIndex + 1,
             },
-          );
+          });
+          openToolBlockIndex = null;
         }
+        emitted.push(...finishMessage());
       }
 
       if (emitted.length > 0) {
@@ -1332,6 +1341,7 @@ export function createOpenAIChatToResponsesStreamingAdapter(
   options: { fallbackModel?: string | null },
 ): StreamingResponseAdapter {
   let rawBuffer = '';
+  const decoder = new TextDecoder();
   let sequenceNumber = 0;
   let responseCreated = false;
   let outputStarted = false;
@@ -1528,7 +1538,7 @@ export function createOpenAIChatToResponsesStreamingAdapter(
     adaptChunk(chunk) {
       const out: SerializedHttpResponseChunk[] = [];
       if (chunk.data.length > 0) {
-        rawBuffer += new TextDecoder().decode(chunk.data, { stream: !chunk.done });
+        rawBuffer += decoder.decode(chunk.data, { stream: !chunk.done });
       }
       const { events, remainder } = parseSseBuffer(rawBuffer);
       rawBuffer = remainder;

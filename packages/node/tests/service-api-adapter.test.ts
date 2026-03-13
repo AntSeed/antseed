@@ -298,6 +298,35 @@ describe('createOpenAIChatToAnthropicStreamingAdapter', () => {
     expect(toolStartIndex).toBeGreaterThan(-1);
     expect(textStopIndex).toBeLessThan(toolStartIndex);
   });
+
+  it('closes the previous tool block before opening the next tool block', () => {
+    const adapter = createOpenAIChatToAnthropicStreamingAdapter({ fallbackModel: 'claude-sonnet' });
+    const chunks = adapter.adaptChunk({
+      requestId: 'req-multi-tool',
+      data: new TextEncoder().encode(
+        'data: {"id":"chatcmpl-multi","model":"gpt-4.1","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"write","arguments":"{\\"path\\":\\"hello.txt\\"}"}}]},"finish_reason":null}]}\n\n'
+        + 'data: {"choices":[{"delta":{"tool_calls":[{"index":1,"id":"call_2","type":"function","function":{"name":"search","arguments":"{\\"q\\":\\"antseed\\"}"}}]},"finish_reason":"tool_calls"}]}\n\n'
+        + 'data: [DONE]\n\n',
+      ),
+      done: true,
+    });
+
+    const events = parseSseEvents(chunks.map((chunk) => new TextDecoder().decode(chunk.data)).join(''));
+    const firstToolStartIndex = events.findIndex(
+      (event) => event.event === 'content_block_start' && event.data.includes('"id":"call_1"'),
+    );
+    const firstToolStopIndex = events.findIndex(
+      (event) => event.event === 'content_block_stop' && event.data.includes('"index":1'),
+    );
+    const secondToolStartIndex = events.findIndex(
+      (event) => event.event === 'content_block_start' && event.data.includes('"id":"call_2"'),
+    );
+
+    expect(firstToolStartIndex).toBeGreaterThan(-1);
+    expect(firstToolStopIndex).toBeGreaterThan(-1);
+    expect(secondToolStartIndex).toBeGreaterThan(-1);
+    expect(firstToolStopIndex).toBeLessThan(secondToolStartIndex);
+  });
 });
 
 // ---------------------------------------------------------------------------
