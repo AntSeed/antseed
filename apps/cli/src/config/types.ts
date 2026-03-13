@@ -61,6 +61,12 @@ export interface SellerServiceCategoryConfig {
  * Injection position for a middleware entry.
  */
 export type MiddlewarePosition = 'system-prepend' | 'system-append' | 'prepend' | 'append';
+export const VALID_MIDDLEWARE_POSITIONS: ReadonlySet<MiddlewarePosition> = new Set([
+  'system-prepend',
+  'system-append',
+  'prepend',
+  'append',
+]);
 
 /**
  * A single middleware entry referencing a Markdown file on disk.
