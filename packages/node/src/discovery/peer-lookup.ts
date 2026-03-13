@@ -1,7 +1,7 @@
 import { verifySignature, hexToBytes } from "../p2p/identity.js";
 import type { DHTNode } from "./dht-node.js";
 import {
-  providerTopic,
+  ANTSEED_WILDCARD_TOPIC,
   serviceTopic,
   serviceSearchTopic,
   capabilityTopic,
@@ -51,9 +51,8 @@ export class PeerLookup {
     this.config = config;
   }
 
-  async findSellers(provider: string): Promise<LookupResult[]> {
-    const topic = providerTopic(provider);
-    const infoHash = topicToInfoHash(topic);
+  async findAll(): Promise<LookupResult[]> {
+    const infoHash = topicToInfoHash(ANTSEED_WILDCARD_TOPIC);
     const peers = await this.config.dht.lookup(infoHash);
     return this.resolveLookupResults(shuffle(peers));
   }

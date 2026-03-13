@@ -2,7 +2,7 @@ export {
   DHTNode,
   DEFAULT_DHT_CONFIG,
   topicToInfoHash,
-  providerTopic,
+  ANTSEED_WILDCARD_TOPIC,
   serviceTopic,
   serviceSearchTopic,
   capabilityTopic,

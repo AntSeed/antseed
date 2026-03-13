@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { randomBytes } from 'node:crypto';
 import type { DashboardConfig } from './types.js';
-import { DHTNode, DEFAULT_DHT_CONFIG, topicToInfoHash, providerTopic } from '@antseed/node/discovery';
+import { DHTNode, DEFAULT_DHT_CONFIG, topicToInfoHash, ANTSEED_WILDCARD_TOPIC } from '@antseed/node/discovery';
 import { DHTHealthMonitor } from '@antseed/node/discovery';
 import { DEFAULT_HEALTH_THRESHOLDS } from '@antseed/node/discovery';
 import { HttpMetadataResolver } from '@antseed/node/discovery';
@@ -179,7 +179,7 @@ export class DHTQueryService {
   async scanNow(): Promise<void> {
     if (!this.dhtNode || !this.healthMonitor) return;
 
-    const infoHash = topicToInfoHash(providerTopic('*'));
+    const infoHash = topicToInfoHash(ANTSEED_WILDCARD_TOPIC);
     const startTime = Date.now();
     let endpoints: Awaited<ReturnType<DHTNode['lookup']>> = [];
     try {

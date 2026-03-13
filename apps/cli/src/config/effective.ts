@@ -28,16 +28,6 @@ function parseEnvNumber(env: NodeJS.ProcessEnv, key: string): number | undefined
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-function parseEnvProviders(env: NodeJS.ProcessEnv, key: string): string[] | undefined {
-  const raw = env[key];
-  if (!raw) return undefined;
-  const list = raw
-    .split(',')
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0);
-  return list.length > 0 ? list : undefined;
-}
-
 export function resolveEffectiveSellerConfig(input: ResolveEffectiveConfigInput): SellerCLIConfig {
   const env = input.env ?? process.env;
   const seller = structuredClone(input.config.seller);
@@ -71,15 +61,11 @@ export function resolveEffectiveBuyerConfig(input: ResolveEffectiveConfigInput):
   const buyer = structuredClone(input.config.buyer);
 
   const envMinReputation = parseEnvNumber(env, 'ANTSEED_BUYER_MIN_REPUTATION');
-  const envPreferredProviders = parseEnvProviders(env, 'ANTSEED_BUYER_PREFERRED_PROVIDERS');
   const envMaxInputUsdPerMillion = parseEnvNumber(env, 'ANTSEED_BUYER_MAX_INPUT_USD_PER_MILLION');
   const envMaxOutputUsdPerMillion = parseEnvNumber(env, 'ANTSEED_BUYER_MAX_OUTPUT_USD_PER_MILLION');
 
   if (envMinReputation !== undefined) {
     buyer.minPeerReputation = envMinReputation;
-  }
-  if (envPreferredProviders) {
-    buyer.preferredProviders = envPreferredProviders;
   }
   if (envMaxInputUsdPerMillion !== undefined) {
     buyer.maxPricing.defaults.inputUsdPerMillion = envMaxInputUsdPerMillion;

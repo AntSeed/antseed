@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  providerTopic,
+  ANTSEED_WILDCARD_TOPIC,
   serviceTopic,
   serviceSearchTopic,
   capabilityTopic,
@@ -9,8 +9,8 @@ import {
 } from '../src/discovery/dht-node.js';
 
 describe('DHT topic helpers', () => {
-  it('normalizes provider topics to lowercase', () => {
-    expect(providerTopic('  OpenAI  ')).toBe('antseed:openai');
+  it('wildcard topic is antseed:*', () => {
+    expect(ANTSEED_WILDCARD_TOPIC).toBe('antseed:*');
   });
 
   it('normalizes service topics to lowercase', () => {
