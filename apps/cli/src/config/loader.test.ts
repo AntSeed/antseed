@@ -181,3 +181,50 @@ test('loadConfig preserves seller middleware and skills settings', async () => {
     }
   );
 });
+
+test('loadConfig rejects invalid middleware position values', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      seller: {
+        middleware: [
+          {
+            file: '/etc/antseed/middleware/social-strategist.md',
+            position: 'before',
+          },
+        ],
+      },
+    }),
+    async (configPath) => {
+      await assert.rejects(
+        async () => loadConfig(configPath),
+        /seller\.middleware\[0\]\.position/,
+      );
+    }
+  );
+});
+
+test('loadConfig preserves explicit empty role in seller middleware', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      seller: {
+        middleware: [
+          {
+            file: '/etc/antseed/middleware/social-strategist.md',
+            position: 'append',
+            role: '',
+          },
+        ],
+      },
+    }),
+    async (configPath) => {
+      const config = await loadConfig(configPath);
+      assert.deepEqual(config.seller.middleware, [
+        {
+          file: '/etc/antseed/middleware/social-strategist.md',
+          position: 'append',
+          role: '',
+        },
+      ]);
+    }
+  );
+});

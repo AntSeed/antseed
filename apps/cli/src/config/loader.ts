@@ -11,6 +11,13 @@ import type {
 import { createDefaultConfig } from './defaults.js';
 import { assertValidConfig } from './validation.js';
 
+const VALID_MIDDLEWARE_POSITIONS = new Set<SellerMiddlewareConfig['position']>([
+  'system-prepend',
+  'system-append',
+  'prepend',
+  'append',
+]);
+
 /**
  * Resolve a config path, expanding ~ to the user's home directory.
  */
@@ -187,7 +194,7 @@ function cloneSellerMiddleware(
   return middleware.map((entry) => ({
     file: entry.file,
     position: entry.position,
-    ...(entry.role ? { role: entry.role } : {}),
+    ...(typeof entry.role === 'string' ? { role: entry.role } : {}),
     ...(entry.services ? { services: [...entry.services] } : {}),
   }));
 }
@@ -202,7 +209,11 @@ function mergeSellerMiddleware(
 
   const merged = value.flatMap((entry): SellerMiddlewareConfig[] => {
     if (!isRecord(entry)) return [];
-    if (typeof entry['file'] !== 'string' || typeof entry['position'] !== 'string') {
+    if (
+      typeof entry['file'] !== 'string'
+      || typeof entry['position'] !== 'string'
+      || !VALID_MIDDLEWARE_POSITIONS.has(entry['position'] as SellerMiddlewareConfig['position'])
+    ) {
       return [];
     }
 

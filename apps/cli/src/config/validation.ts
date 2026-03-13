@@ -1,11 +1,18 @@
 import type {
   HierarchicalPricingConfig,
   AntseedConfig,
+  SellerMiddlewareConfig,
   TokenPricingUsdPerMillion,
 } from './types.js';
 
 const SERVICE_CATEGORY_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const MAX_PUBLIC_ADDRESS_LENGTH = 255;
+const VALID_MIDDLEWARE_POSITIONS = new Set<SellerMiddlewareConfig['position']>([
+  'system-prepend',
+  'system-append',
+  'prepend',
+  'append',
+]);
 
 function validatePricingLeaf(
   path: string,
@@ -106,6 +113,42 @@ function parsePublicAddress(value: string): { host: string; port: number } | nul
   return { host, port };
 }
 
+function validateSellerMiddleware(
+  path: string,
+  middleware: AntseedConfig['seller']['middleware'] | undefined,
+  errors: string[],
+): void {
+  if (!middleware) return;
+
+  for (let i = 0; i < middleware.length; i += 1) {
+    const entry = middleware[i];
+    const entryPath = `${path}[${i}]`;
+    if (typeof entry.file !== 'string' || entry.file.trim().length === 0) {
+      errors.push(`${entryPath}.file must be a non-empty string`);
+    }
+    if (!VALID_MIDDLEWARE_POSITIONS.has(entry.position)) {
+      errors.push(
+        `${entryPath}.position must be one of: system-prepend, system-append, prepend, append`,
+      );
+    }
+    if (entry.role !== undefined && typeof entry.role !== 'string') {
+      errors.push(`${entryPath}.role must be a string when provided`);
+    }
+    if (entry.services !== undefined) {
+      if (!Array.isArray(entry.services) || entry.services.length === 0) {
+        errors.push(`${entryPath}.services must be a non-empty string array when provided`);
+        continue;
+      }
+      for (let j = 0; j < entry.services.length; j += 1) {
+        const service = entry.services[j];
+        if (typeof service !== 'string' || service.trim().length === 0) {
+          errors.push(`${entryPath}.services[${j}] must be a non-empty string`);
+        }
+      }
+    }
+  }
+}
+
 /**
  * Validate the full config and return all issues.
  */
@@ -114,6 +157,7 @@ export function validateConfig(config: AntseedConfig): string[] {
 
   validateHierarchicalPricing('seller.pricing', config.seller.pricing, errors);
   validateSellerServiceCategories('seller.serviceCategories', config.seller.serviceCategories, errors);
+  validateSellerMiddleware('seller.middleware', config.seller.middleware, errors);
   validateHierarchicalPricing('buyer.maxPricing', config.buyer.maxPricing, errors);
 
   if (!Number.isFinite(config.buyer.minPeerReputation) || config.buyer.minPeerReputation < 0 || config.buyer.minPeerReputation > 100) {
