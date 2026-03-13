@@ -120,4 +120,28 @@ describe('PeerLookup', () => {
     expect(lookup).toHaveBeenCalledTimes(1);
     expect(results).toHaveLength(1);
   });
+
+  it('preserves metadata publicAddress so callers can prefer it over the DHT source host', async () => {
+    const peers: PeerEndpoint[] = [{ host: '34.134.97.133', port: 6882 }];
+    const lookup = vi.fn(async () => peers);
+    const dht = { lookup } as unknown as DHTNode;
+
+    const resolve = vi.fn(async () => buildMetadata({ publicAddress: '34.27.100.162:6882' }));
+    const metadataResolver: MetadataResolver = { resolve };
+    const config: LookupConfig = {
+      dht,
+      metadataResolver,
+      requireValidSignature: false,
+      allowStaleMetadata: true,
+      maxAnnouncementAgeMs: 60_000,
+      maxResults: 50,
+    };
+    const peerLookup = new PeerLookup(config);
+
+    const results = await peerLookup.findByService('kimi2.5');
+    expect(results).toHaveLength(1);
+    expect(results[0]?.host).toBe('34.134.97.133');
+    expect(results[0]?.port).toBe(6882);
+    expect(results[0]?.metadata.publicAddress).toBe('34.27.100.162:6882');
+  });
 });

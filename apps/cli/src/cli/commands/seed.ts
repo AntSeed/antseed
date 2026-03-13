@@ -338,6 +338,7 @@ export function registerSeedCommand(program: Command): void {
       const node = new AntseedNode({
         role: 'seller',
         displayName: config.identity.displayName,
+        ...(config.seller.publicAddress ? { publicAddress: config.seller.publicAddress } : {}),
         bootstrapNodes,
         dataDir: globalOpts.dataDir,
         ...(dhtPort ? { dhtPort } : {}),

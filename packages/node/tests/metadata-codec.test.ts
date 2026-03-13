@@ -125,6 +125,7 @@ describe('encodeMetadata / decodeMetadata', () => {
   it('should round-trip display name, service categories, and service API protocols', () => {
     const original = makeMetadata({
       displayName: 'Node A',
+      publicAddress: 'peer.example.com:6882',
       providers: [
         {
           provider: 'anthropic',
@@ -146,6 +147,7 @@ describe('encodeMetadata / decodeMetadata', () => {
     });
     const decoded = decodeMetadata(encodeMetadata(original));
     expect(decoded.displayName).toBe('Node A');
+    expect(decoded.publicAddress).toBe('peer.example.com:6882');
     expect(decoded.providers[0]!.serviceCategories?.['claude-3-opus']).toEqual(['coding', 'privacy']);
     expect(decoded.providers[0]!.serviceApiProtocols?.['claude-3-opus']).toEqual(['anthropic-messages', 'openai-chat-completions']);
   });
@@ -223,6 +225,16 @@ describe('encodeMetadata / decodeMetadata', () => {
     const decoded = decodeMetadata(encodeMetadata(v3));
     expect(decoded.version).toBe(3);
     expect(decoded.providers[0]!.serviceApiProtocols).toBeUndefined();
+  });
+
+  it('should retain backward-compatible binary layout for metadata version 4', () => {
+    const v4 = makeMetadata({
+      version: 4,
+      publicAddress: 'peer.example.com:6882',
+    });
+    const decoded = decodeMetadata(encodeMetadata(v4));
+    expect(decoded.version).toBe(4);
+    expect(decoded.publicAddress).toBeUndefined();
   });
 });
 

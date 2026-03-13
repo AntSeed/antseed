@@ -189,6 +189,7 @@ function mergeSellerConfig(
       maxConcurrentBuyers: defaults.maxConcurrentBuyers,
       enabledProviders: [...defaults.enabledProviders],
       pricing: mergeHierarchicalPricing(defaults.pricing, undefined),
+      publicAddress: defaults.publicAddress,
       ...(defaults.serviceCategories ? { serviceCategories: cloneSellerServiceCategories(defaults.serviceCategories) } : {}),
     };
   }
@@ -205,6 +206,9 @@ function mergeSellerConfig(
       ? value['enabledProviders'].filter((entry): entry is string => typeof entry === 'string')
       : [...defaults.enabledProviders],
     pricing: mergeHierarchicalPricing(defaults.pricing, value['pricing']),
+    publicAddress: typeof value['publicAddress'] === 'string'
+      ? value['publicAddress']
+      : defaults.publicAddress,
     ...(mergedServiceCategories ? { serviceCategories: mergedServiceCategories } : {}),
   };
 }

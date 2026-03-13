@@ -3,7 +3,7 @@ import type { PeerOffering } from "../types/capability.js";
 import type { ServiceApiProtocol } from "../types/service-api.js";
 import { WELL_KNOWN_SERVICE_API_PROTOCOLS } from "../types/service-api.js";
 
-export const METADATA_VERSION = 4;
+export const METADATA_VERSION = 5;
 export const WELL_KNOWN_SERVICE_CATEGORIES = [
   "privacy",
   "legal",
@@ -35,6 +35,7 @@ export interface PeerMetadata {
   peerId: PeerId;
   version: number;
   displayName?: string;
+  publicAddress?: string;
   providers: ProviderAnnouncement[];
   offerings?: PeerOffering[];
   region: string;

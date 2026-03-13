@@ -81,8 +81,9 @@ METADATA_VERSION = 4
 | Field       | Type                    | Description                             |
 |-------------|-------------------------|-----------------------------------------|
 | peerId      | PeerId (string)         | 64 hex chars (32-byte Ed25519 public key) |
-| version     | number                  | Must equal `METADATA_VERSION` (4)       |
+| version     | number                  | Must equal `METADATA_VERSION` (5)       |
 | displayName | string                  | Optional human-readable node label      |
+| publicAddress | string                | Optional public `host:port` buyers should dial instead of the raw DHT source address |
 | providers   | ProviderAnnouncement[]  | List of provider offerings              |
 | region      | string                  | Geographic region identifier            |
 | timestamp   | number                  | Unix epoch milliseconds                 |
@@ -187,6 +188,7 @@ Additional validation rules enforced by `validateMetadata()`:
 - `peerId` must be exactly 64 lowercase hex characters.
 - `region` must not be empty.
 - `displayName` is optional, but when present it must be non-empty and <= 64 chars.
+- `publicAddress` is optional, but when present it must be a valid `host:port` and is signed as part of the metadata.
 - `timestamp` must be a positive finite number.
 - At least one provider must be present.
 - `defaultPricing.inputUsdPerMillion` and `defaultPricing.outputUsdPerMillion` must be non-negative.

@@ -19,6 +19,7 @@ export function createDefaultConfig(): AntseedConfig {
           outputUsdPerMillion: 10,
         },
       },
+      publicAddress: '',
     },
     buyer: {
       maxPricing: {

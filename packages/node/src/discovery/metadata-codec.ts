@@ -7,6 +7,7 @@ import { isKnownServiceApiProtocol } from "../types/service-api.js";
 
 const SERVICE_CATEGORIES_METADATA_VERSION = 3;
 const SERVICE_API_PROTOCOLS_METADATA_VERSION = 4;
+const PUBLIC_ADDRESS_METADATA_VERSION = 5;
 
 /**
  * Encode metadata into binary format:
@@ -24,6 +25,7 @@ const SERVICE_API_PROTOCOLS_METADATA_VERSION = 4;
  * serviceApiProtocolEntry(v4+): [serviceLen:1][service:N][protocolCount:1][protocols...]
  * protocol(v4+): [protocolLen:1][protocol:N]
  * [displayNameFlag:1][displayNameLen:1][displayName:N] (v3+ only)
+ * [publicAddressFlag:1][publicAddressLen:1][publicAddress:N] (v5+ only)
  * [signature:64]
  */
 export function encodeMetadata(metadata: PeerMetadata): Uint8Array {
@@ -194,6 +196,18 @@ function encodeBody(metadata: PeerMetadata): Uint8Array {
     }
   }
 
+  if (metadata.version >= PUBLIC_ADDRESS_METADATA_VERSION) {
+    const publicAddress = metadata.publicAddress?.trim();
+    if (publicAddress && publicAddress.length > 0) {
+      const publicAddressBytes = new TextEncoder().encode(publicAddress);
+      parts.push(new Uint8Array([1]));
+      parts.push(new Uint8Array([publicAddressBytes.length]));
+      parts.push(publicAddressBytes);
+    } else {
+      parts.push(new Uint8Array([0]));
+    }
+  }
+
   // offerings
   const offerings = metadata.offerings ?? [];
   const offeringCountBuf = new ArrayBuffer(2);
@@ -284,6 +298,7 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
   const version = data[offset]!;
   const hasServiceCategoryExtensions = version >= SERVICE_CATEGORIES_METADATA_VERSION;
   const hasServiceApiProtocolExtensions = version >= SERVICE_API_PROTOCOLS_METADATA_VERSION;
+  const hasPublicAddressExtension = version >= PUBLIC_ADDRESS_METADATA_VERSION;
   offset += 1;
 
   // peerId: 32 bytes
@@ -487,6 +502,21 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
     }
   }
 
+  let publicAddress: string | undefined;
+  if (hasPublicAddressExtension) {
+    checkBounds(offset, 1, data.length - 64);
+    const publicAddressFlag = data[offset]!;
+    offset += 1;
+    if (publicAddressFlag === 1) {
+      checkBounds(offset, 1, data.length - 64);
+      const publicAddressLen = data[offset]!;
+      offset += 1;
+      checkBounds(offset, publicAddressLen, data.length - 64);
+      publicAddress = new TextDecoder().decode(data.slice(offset, offset + publicAddressLen));
+      offset += publicAddressLen;
+    }
+  }
+
   // offerings
   const PRICING_UNIT_REVERSE: Array<'token' | 'request' | 'minute' | 'task'> = ['token', 'request', 'minute', 'task'];
   let offerings: PeerOffering[] | undefined;
@@ -581,6 +611,7 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
     peerId: toPeerId(peerId),
     version,
     ...(displayName ? { displayName } : {}),
+    ...(publicAddress ? { publicAddress } : {}),
     providers,
     ...(offerings && offerings.length > 0 ? { offerings } : {}),
     ...(evmAddress !== undefined ? { evmAddress } : {}),

@@ -134,3 +134,17 @@ test('loadConfig rejects invalid seller service category values', async () => {
     }
   );
 });
+
+test('loadConfig preserves seller publicAddress override', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      seller: {
+        publicAddress: 'peer.example.com:6882',
+      },
+    }),
+    async (configPath) => {
+      const config = await loadConfig(configPath);
+      assert.equal(config.seller.publicAddress, 'peer.example.com:6882');
+    }
+  );
+});
