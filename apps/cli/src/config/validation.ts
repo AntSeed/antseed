@@ -139,12 +139,13 @@ function validateSellerMiddleware(
       errors.push(`${entryPath}.role must be a string when provided`);
     }
     if (entry.services !== undefined) {
-      if (!Array.isArray(entry.services) || entry.services.length === 0) {
+      const services = entry.services;
+      if (!Array.isArray(services) || services.length === 0) {
         errors.push(`${entryPath}.services must be a non-empty string array when provided`);
         continue;
       }
-      for (let j = 0; j < entry.services.length; j += 1) {
-        const service = entry.services[j];
+      for (let j = 0; j < services.length; j += 1) {
+        const service = services[j];
         if (typeof service !== 'string' || service.trim().length === 0) {
           errors.push(`${entryPath}.services[${j}] must be a non-empty string`);
         }
