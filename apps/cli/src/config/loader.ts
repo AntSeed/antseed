@@ -5,6 +5,7 @@ import type {
   HierarchicalPricingConfig,
   AntseedConfig,
   ProviderPricingConfig,
+  SellerMiddlewareConfig,
   TokenPricingUsdPerMillion,
 } from './types.js';
 import { createDefaultConfig } from './defaults.js';
@@ -179,6 +180,50 @@ function mergeSellerServiceCategories(
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+function cloneSellerMiddleware(
+  middleware: SellerMiddlewareConfig[] | undefined,
+): SellerMiddlewareConfig[] | undefined {
+  if (!middleware) return undefined;
+  return middleware.map((entry) => ({
+    file: entry.file,
+    position: entry.position,
+    ...(entry.role ? { role: entry.role } : {}),
+    ...(entry.services ? { services: [...entry.services] } : {}),
+  }));
+}
+
+function mergeSellerMiddleware(
+  defaults: SellerMiddlewareConfig[] | undefined,
+  value: unknown,
+): SellerMiddlewareConfig[] | undefined {
+  if (!Array.isArray(value)) {
+    return cloneSellerMiddleware(defaults);
+  }
+
+  const merged = value.flatMap((entry): SellerMiddlewareConfig[] => {
+    if (!isRecord(entry)) return [];
+    if (typeof entry['file'] !== 'string' || typeof entry['position'] !== 'string') {
+      return [];
+    }
+
+    const services = Array.isArray(entry['services'])
+      ? entry['services']
+        .filter((service): service is string => typeof service === 'string')
+        .map((service) => service.trim())
+        .filter((service) => service.length > 0)
+      : undefined;
+
+    return [{
+      file: entry['file'],
+      position: entry['position'] as SellerMiddlewareConfig['position'],
+      ...(typeof entry['role'] === 'string' ? { role: entry['role'] } : {}),
+      ...(services && services.length > 0 ? { services } : {}),
+    }];
+  });
+
+  return merged.length > 0 ? merged : undefined;
+}
+
 function mergeSellerConfig(
   defaults: AntseedConfig['seller'],
   value: unknown
@@ -190,10 +235,16 @@ function mergeSellerConfig(
       enabledProviders: [...defaults.enabledProviders],
       pricing: mergeHierarchicalPricing(defaults.pricing, undefined),
       publicAddress: defaults.publicAddress,
+      ...(defaults.middleware ? { middleware: cloneSellerMiddleware(defaults.middleware) } : {}),
+      ...(defaults.middlewareConfidentialityPrompt
+        ? { middlewareConfidentialityPrompt: defaults.middlewareConfidentialityPrompt }
+        : {}),
+      ...(defaults.skillsDir ? { skillsDir: defaults.skillsDir } : {}),
       ...(defaults.serviceCategories ? { serviceCategories: cloneSellerServiceCategories(defaults.serviceCategories) } : {}),
     };
   }
   const mergedServiceCategories = mergeSellerServiceCategories(defaults.serviceCategories, value['serviceCategories']);
+  const mergedMiddleware = mergeSellerMiddleware(defaults.middleware, value['middleware']);
 
   return {
     reserveFloor: typeof value['reserveFloor'] === 'number'
@@ -209,6 +260,15 @@ function mergeSellerConfig(
     publicAddress: typeof value['publicAddress'] === 'string'
       ? value['publicAddress']
       : defaults.publicAddress,
+    ...(mergedMiddleware ? { middleware: mergedMiddleware } : {}),
+    ...(typeof value['middlewareConfidentialityPrompt'] === 'string'
+      ? { middlewareConfidentialityPrompt: value['middlewareConfidentialityPrompt'] }
+      : (defaults.middlewareConfidentialityPrompt
+        ? { middlewareConfidentialityPrompt: defaults.middlewareConfidentialityPrompt }
+        : {})),
+    ...(typeof value['skillsDir'] === 'string'
+      ? { skillsDir: value['skillsDir'] }
+      : (defaults.skillsDir ? { skillsDir: defaults.skillsDir } : {})),
     ...(mergedServiceCategories ? { serviceCategories: mergedServiceCategories } : {}),
   };
 }
