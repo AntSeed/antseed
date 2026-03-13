@@ -644,20 +644,25 @@ export class AntseedNode extends EventEmitter {
             return;
           }
 
-          if (chunk.data.length > 0) {
-            const nextBufferedBytes = streamBufferedBytes + chunk.data.length;
-            if (nextBufferedBytes > maxStreamBufferBytes) {
-              mux.cancelProxyRequest(req.requestId);
-              fail(new Error(`Stream ${req.requestId} exceeded max buffered size (${maxStreamBufferBytes} bytes)`));
-              return;
-            }
-            streamBufferedBytes = nextBufferedBytes;
-          }
-
           callbacks?.onResponseChunk?.(chunk);
 
           if (chunk.data.length > 0) {
-            streamChunks.push(chunk.data);
+            if (callbacks) {
+              // Streaming mode: chunks already delivered to caller, only track
+              // bytes for duration/idle timeout — skip buffer accumulation so
+              // large streams aren't capped by maxStreamBufferBytes.
+              streamBufferedBytes += chunk.data.length;
+            } else {
+              // Non-streaming: accumulate chunks for the final response body.
+              const nextBufferedBytes = streamBufferedBytes + chunk.data.length;
+              if (nextBufferedBytes > maxStreamBufferBytes) {
+                mux.cancelProxyRequest(req.requestId);
+                fail(new Error(`Stream ${req.requestId} exceeded max buffered size (${maxStreamBufferBytes} bytes)`));
+                return;
+              }
+              streamBufferedBytes = nextBufferedBytes;
+              streamChunks.push(chunk.data);
+            }
           }
 
           if (!chunk.done) return;

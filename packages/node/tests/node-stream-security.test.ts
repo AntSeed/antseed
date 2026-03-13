@@ -103,7 +103,7 @@ describe('AntseedNode streaming security guards', () => {
       body: new Uint8Array(0),
     };
 
-    const promise = (node as any)._sendRequestInternal(peer, request, {});
+    const promise = (node as any)._sendRequestInternal(peer, request, undefined);
     await harness.waitUntilRegistered();
     harness.emitStreamingStart();
     harness.emitChunk({
@@ -135,7 +135,7 @@ describe('AntseedNode streaming security guards', () => {
       body: new Uint8Array(0),
     };
 
-    const promise = (node as any)._sendRequestInternal(peer, request, {});
+    const promise = (node as any)._sendRequestInternal(peer, request, undefined);
     await harness.waitUntilRegistered();
     harness.emitStreamingStart();
     vi.setSystemTime(new Date('2026-01-01T00:00:00.200Z'));
@@ -165,7 +165,7 @@ describe('AntseedNode streaming security guards', () => {
       body: new Uint8Array(0),
     };
 
-    const promise = (node as any)._sendRequestInternal(peer, request, {});
+    const promise = (node as any)._sendRequestInternal(peer, request, undefined);
     await harness.waitUntilRegistered();
     harness.emitStreamingStart();
     harness.emitChunk({
@@ -181,5 +181,46 @@ describe('AntseedNode streaming security guards', () => {
 
     const response = await promise;
     expect([...response.body]).toEqual([1, 2, 3]);
+  });
+
+  it('does not enforce buffer limit in streaming callback mode', async () => {
+    const requestId = 'stream-no-limit';
+    const node = createNode({
+      maxStreamBufferBytes: 4,
+      maxStreamDurationMs: 60_000,
+    });
+    const harness = setupStreamingHarness(node, requestId);
+    const peer = { peerId: 'b'.repeat(64) } as PeerInfo;
+    const request: SerializedHttpRequest = {
+      requestId,
+      method: 'POST',
+      path: '/v1/messages',
+      headers: { accept: 'text/event-stream' },
+      body: new Uint8Array(0),
+    };
+
+    const chunks: Uint8Array[] = [];
+    const promise = (node as any)._sendRequestInternal(peer, request, {
+      onResponseStart: () => {},
+      onResponseChunk: (chunk: SerializedHttpResponseChunk) => {
+        if (chunk.data.length > 0) chunks.push(chunk.data);
+      },
+    });
+    await harness.waitUntilRegistered();
+    harness.emitStreamingStart();
+    harness.emitChunk({
+      requestId,
+      data: new Uint8Array([1, 2, 3, 4, 5]),
+      done: false,
+    });
+    harness.emitChunk({
+      requestId,
+      data: new Uint8Array([6, 7, 8, 9, 10]),
+      done: true,
+    });
+
+    const response = await promise;
+    expect(response.statusCode).toBe(200);
+    expect(chunks.length).toBe(2);
   });
 });
