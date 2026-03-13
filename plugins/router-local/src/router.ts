@@ -78,7 +78,7 @@ export class LocalRouter implements Router {
       }
 
       // Provider availability filter
-      const provider = this._selectProviderForPeer(peer);
+      const provider = this._selectProviderForPeer(peer, requestedService);
       if (!provider) {
         continue;
       }
@@ -171,10 +171,17 @@ export class LocalRouter implements Router {
     }
   }
 
-  private _selectProviderForPeer(peer: PeerInfo): string | null {
+  private _selectProviderForPeer(peer: PeerInfo, requestedService: string | null): string | null {
     const availableProviders = peer.providers
       .map((provider) => provider.trim())
       .filter((provider) => provider.length > 0);
+
+    if (requestedService && peer.providerPricing) {
+      for (const provider of availableProviders) {
+        const pricing = peer.providerPricing[provider];
+        if (pricing?.services?.[requestedService]) return provider;
+      }
+    }
 
     return availableProviders[0] ?? null;
   }

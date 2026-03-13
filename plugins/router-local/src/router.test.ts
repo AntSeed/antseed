@@ -248,6 +248,36 @@ describe('LocalRouter', () => {
     expect(selected?.peerId).toBe(malformedProviders.peerId);
   });
 
+  it('selects correct provider for pricing on multi-provider peer', () => {
+    const router = new LocalRouter({
+      maxPricing: {
+        defaults: { inputUsdPerMillion: 50, outputUsdPerMillion: 50 },
+      },
+    });
+
+    // Peer has two providers: anthropic (expensive) and openai (cheap)
+    const multiPeer = makePeer({
+      peerId: '1'.repeat(64) as PeerInfo['peerId'],
+      providers: ['anthropic', 'openai'],
+      providerPricing: {
+        anthropic: {
+          defaults: { inputUsdPerMillion: 100, outputUsdPerMillion: 100 },
+          services: { 'claude-sonnet-4-5-20250929': { inputUsdPerMillion: 100, outputUsdPerMillion: 100 } },
+        },
+        openai: {
+          defaults: { inputUsdPerMillion: 10, outputUsdPerMillion: 10 },
+          services: { 'gpt-4o': { inputUsdPerMillion: 10, outputUsdPerMillion: 10 } },
+        },
+      },
+      defaultInputUsdPerMillion: 100,
+      defaultOutputUsdPerMillion: 100,
+    });
+
+    // Requesting gpt-4o should use openai pricing (10), not anthropic (100 > max 50)
+    const selected = router.selectPeer(makeRequest('gpt-4o'), [multiPeer]);
+    expect(selected?.peerId).toBe(multiPeer.peerId);
+  });
+
   it('returns null when no peers are available', () => {
     const router = new LocalRouter();
     expect(router.selectPeer(makeRequest(), [])).toBeNull();
