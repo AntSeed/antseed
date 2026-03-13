@@ -549,7 +549,6 @@ export function createOpenAIChatToAnthropicStreamingAdapter(
             : (existing?.name ?? 'tool');
 
           if (!existing) {
-            toolBlocks.set(index, { id, name });
             emitted.push(...startMessage());
             emitted.push({
               event: 'content_block_start',
@@ -564,9 +563,8 @@ export function createOpenAIChatToAnthropicStreamingAdapter(
                 },
               },
             });
-          } else {
-            toolBlocks.set(index, { id, name });
           }
+          toolBlocks.set(index, { id, name });
 
           const argumentsDelta = typeof functionPayload.arguments === 'string'
             ? functionPayload.arguments
