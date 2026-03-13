@@ -549,6 +549,16 @@ export function createOpenAIChatToAnthropicStreamingAdapter(
             : (existing?.name ?? 'tool');
 
           if (!existing) {
+            if (textBlockStarted) {
+              emitted.push({
+                event: 'content_block_stop',
+                data: {
+                  type: 'content_block_stop',
+                  index: 0,
+                },
+              });
+              textBlockStarted = false;
+            }
             emitted.push(...startMessage());
             emitted.push({
               event: 'content_block_start',
@@ -1329,6 +1339,7 @@ export function createOpenAIChatToResponsesStreamingAdapter(
   let responseId = options.fallbackModel ? `resp_${options.fallbackModel}` : 'resp_stream';
   let responseModel = options.fallbackModel ?? 'unknown';
   let textBuffer = '';
+  let inputTokens = 0;
   let outputTokens = 0;
   const toolCallMap = new Map<number, { id: string; name: string; arguments: string }>();
 
@@ -1347,7 +1358,7 @@ export function createOpenAIChatToResponsesStreamingAdapter(
     });
   };
 
-  const ensureStarted = (emitted: Array<{ event?: string; data: unknown | string }>): void => {
+  const ensureResponseCreated = (emitted: Array<{ event?: string; data: unknown | string }>): void => {
     if (!responseCreated) {
       responseCreated = true;
       pushEvent(emitted, 'response.created', {
@@ -1367,6 +1378,10 @@ export function createOpenAIChatToResponsesStreamingAdapter(
         },
       });
     }
+  };
+
+  const ensureTextOutputStarted = (emitted: Array<{ event?: string; data: unknown | string }>): void => {
+    ensureResponseCreated(emitted);
     if (!outputStarted) {
       outputStarted = true;
       pushEvent(emitted, 'response.output_item.added', {
@@ -1396,51 +1411,56 @@ export function createOpenAIChatToResponsesStreamingAdapter(
     }
   };
 
+  const getToolOutputIndex = (index: number): number => index + (outputStarted ? 1 : 0);
+
   const finalize = (emitted: Array<{ event?: string; data: unknown | string }>): void => {
-    ensureStarted(emitted);
+    ensureResponseCreated(emitted);
     if (!outputDone) {
       outputDone = true;
-      pushEvent(emitted, 'response.output_text.done', {
-        output_index: 0,
-        item_id: `${responseId}_msg_1`,
-        content_index: 0,
-        text: textBuffer,
-        logprobs: [],
-      });
-      pushEvent(emitted, 'response.content_part.done', {
-        output_index: 0,
-        item_id: `${responseId}_msg_1`,
-        content_index: 0,
-        part: {
-          type: 'output_text',
+      if (outputStarted) {
+        pushEvent(emitted, 'response.output_text.done', {
+          output_index: 0,
+          item_id: `${responseId}_msg_1`,
+          content_index: 0,
           text: textBuffer,
-          annotations: [],
-        },
-      });
-      pushEvent(emitted, 'response.output_item.done', {
-        output_index: 0,
-        item: {
-          type: 'message',
-          id: `${responseId}_msg_1`,
-          role: 'assistant',
-          status: 'completed',
-          content: [{
+          logprobs: [],
+        });
+        pushEvent(emitted, 'response.content_part.done', {
+          output_index: 0,
+          item_id: `${responseId}_msg_1`,
+          content_index: 0,
+          part: {
             type: 'output_text',
             text: textBuffer,
             annotations: [],
-          }],
-        },
-      });
+          },
+        });
+        pushEvent(emitted, 'response.output_item.done', {
+          output_index: 0,
+          item: {
+            type: 'message',
+            id: `${responseId}_msg_1`,
+            role: 'assistant',
+            status: 'completed',
+            content: [{
+              type: 'output_text',
+              text: textBuffer,
+              annotations: [],
+            }],
+          },
+        });
+      }
       for (const [index, toolCall] of [...toolCallMap.entries()].sort((a, b) => a[0] - b[0])) {
+        const outputIndex = getToolOutputIndex(index);
         pushEvent(emitted, 'response.function_call_arguments.done', {
-          output_index: index + 1,
+          output_index: outputIndex,
           item_id: toolCall.id,
           call_id: toolCall.id,
           name: toolCall.name,
           arguments: toolCall.arguments,
         });
         pushEvent(emitted, 'response.output_item.done', {
-          output_index: index + 1,
+          output_index: outputIndex,
           item: {
             type: 'function_call',
             id: toolCall.id,
@@ -1459,17 +1479,17 @@ export function createOpenAIChatToResponsesStreamingAdapter(
           status: 'completed',
           created_at: Math.floor(Date.now() / 1000),
           output: [
-            {
-              type: 'message',
+            ...(outputStarted ? [{
+              type: 'message' as const,
               id: `${responseId}_msg_1`,
               role: 'assistant',
-              status: 'completed',
+              status: 'completed' as const,
               content: [{
-                type: 'output_text',
+                type: 'output_text' as const,
                 text: textBuffer,
                 annotations: [],
               }],
-            },
+            }] : []),
             ...[...toolCallMap.entries()]
               .sort((a, b) => a[0] - b[0])
               .map(([, toolCall]) => ({
@@ -1483,9 +1503,9 @@ export function createOpenAIChatToResponsesStreamingAdapter(
           ],
           output_text: textBuffer,
           usage: {
-            input_tokens: 0,
+            input_tokens: inputTokens,
             output_tokens: outputTokens,
-            total_tokens: outputTokens,
+            total_tokens: inputTokens + outputTokens,
           },
         },
       });
@@ -1533,6 +1553,7 @@ export function createOpenAIChatToResponsesStreamingAdapter(
           ? payload.usage as Record<string, unknown>
           : null;
         if (usage) {
+          inputTokens = toNonNegativeInt(usage.prompt_tokens ?? usage.input_tokens);
           outputTokens = toNonNegativeInt(usage.completion_tokens ?? usage.output_tokens);
         }
         const choices = Array.isArray(payload.choices) ? payload.choices : [];
@@ -1544,7 +1565,7 @@ export function createOpenAIChatToResponsesStreamingAdapter(
           : null;
         const textDelta = typeof delta?.content === 'string' ? delta.content : '';
         if (textDelta.length > 0) {
-          ensureStarted(emitted);
+          ensureTextOutputStarted(emitted);
           textBuffer += textDelta;
           pushEvent(emitted, 'response.output_text.delta', {
             output_index: 0,
@@ -1578,8 +1599,10 @@ export function createOpenAIChatToResponsesStreamingAdapter(
             : '';
 
           if (!existing) {
+            ensureResponseCreated(emitted);
+            const outputIndex = getToolOutputIndex(index);
             pushEvent(emitted, 'response.output_item.added', {
-              output_index: index + 1,
+              output_index: outputIndex,
               item: {
                 type: 'function_call',
                 id,
@@ -1592,8 +1615,9 @@ export function createOpenAIChatToResponsesStreamingAdapter(
           }
 
           if (argumentsDelta.length > 0) {
+            const outputIndex = getToolOutputIndex(index);
             pushEvent(emitted, 'response.function_call_arguments.delta', {
-              output_index: index + 1,
+              output_index: outputIndex,
               item_id: id,
               call_id: id,
               delta: argumentsDelta,

@@ -275,6 +275,29 @@ describe('createOpenAIChatToAnthropicStreamingAdapter', () => {
     expect(sseText).toContain('\\"path\\"');
     expect(sseText).toContain('hello.txt');
   });
+
+  it('closes the text block before opening a tool block', () => {
+    const adapter = createOpenAIChatToAnthropicStreamingAdapter({ fallbackModel: 'claude-sonnet' });
+    const chunks = adapter.adaptChunk({
+      requestId: 'req-mixed',
+      data: new TextEncoder().encode(
+        'data: {"id":"chatcmpl-mixed","model":"gpt-4.1","choices":[{"delta":{"content":"Thinking...","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"write","arguments":"{\\"path\\":\\"hello.txt\\"}"}}]},"finish_reason":"tool_calls"}]}\n\n'
+        + 'data: [DONE]\n\n',
+      ),
+      done: true,
+    });
+
+    const events = parseSseEvents(chunks.map((chunk) => new TextDecoder().decode(chunk.data)).join(''));
+    const eventNames = events.map((event) => event.event);
+    const textStopIndex = eventNames.findIndex((event) => event === 'content_block_stop');
+    const toolStartIndex = events.findIndex(
+      (event) => event.event === 'content_block_start' && event.data.includes('"tool_use"'),
+    );
+
+    expect(textStopIndex).toBeGreaterThan(-1);
+    expect(toolStartIndex).toBeGreaterThan(-1);
+    expect(textStopIndex).toBeLessThan(toolStartIndex);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -774,5 +797,58 @@ describe('createOpenAIChatToResponsesStreamingAdapter', () => {
     expect(sseText).toContain('event: response.function_call_arguments.done');
     expect(sseText).toContain('"name":"write"');
     expect(sseText).toContain('hello.txt');
+  });
+
+  it('emits response.created first and avoids phantom text items for tool-only streams', () => {
+    const adapter = createOpenAIChatToResponsesStreamingAdapter({ fallbackModel: 'gpt-4.1' });
+    const chunks = adapter.adaptChunk({
+      requestId: 'req-tool-only',
+      data: new TextEncoder().encode(
+        'data: {"id":"chatcmpl-tool","model":"gpt-4.1","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"write","arguments":"{\\"path\\""}}]},"finish_reason":null}]}\n\n'
+        + 'data: {"usage":{"prompt_tokens":7,"completion_tokens":3},"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":":\\"hello.txt\\"}"}}]},"finish_reason":"tool_calls"}]}\n\n'
+        + 'data: [DONE]\n\n',
+      ),
+      done: true,
+    });
+
+    const events = parseSseEvents(chunks.map((chunk) => new TextDecoder().decode(chunk.data)).join(''));
+
+    expect(events[0]?.event).toBe('response.created');
+
+    const firstAdded = events.find((event) => event.event === 'response.output_item.added');
+    expect(firstAdded).toBeDefined();
+    expect(JSON.parse(firstAdded!.data)).toMatchObject({
+      type: 'response.output_item.added',
+      output_index: 0,
+      item: {
+        type: 'function_call',
+        id: 'call_1',
+      },
+    });
+
+    const completed = events.find((event) => event.event === 'response.completed');
+    expect(completed).toBeDefined();
+    expect(JSON.parse(completed!.data)).toMatchObject({
+      type: 'response.completed',
+      response: {
+        output: [{
+          type: 'function_call',
+          id: 'call_1',
+          call_id: 'call_1',
+          name: 'write',
+          arguments: '{"path":"hello.txt"}',
+          status: 'completed',
+        }],
+        output_text: '',
+        usage: {
+          input_tokens: 7,
+          output_tokens: 3,
+          total_tokens: 10,
+        },
+      },
+    });
+
+    expect(events.some((event) => event.event === 'response.output_text.delta')).toBe(false);
+    expect(events.some((event) => event.event === 'response.output_text.done')).toBe(false);
   });
 });
