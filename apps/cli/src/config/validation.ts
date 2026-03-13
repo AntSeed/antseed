@@ -123,6 +123,10 @@ function validateSellerMiddleware(
   for (let i = 0; i < middleware.length; i += 1) {
     const entry = middleware[i];
     const entryPath = `${path}[${i}]`;
+    if (!entry) {
+      errors.push(`${entryPath} must be defined`);
+      continue;
+    }
     if (typeof entry.file !== 'string' || entry.file.trim().length === 0) {
       errors.push(`${entryPath}.file must be a non-empty string`);
     }
