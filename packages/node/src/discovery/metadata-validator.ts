@@ -8,11 +8,13 @@ export const MAX_SERVICES_PER_PROVIDER = 20;
 export const MAX_SERVICE_NAME_LENGTH = 64;
 export const MAX_REGION_LENGTH = 32;
 export const MAX_DISPLAY_NAME_LENGTH = 64;
+export const MAX_PUBLIC_ADDRESS_LENGTH = 255;
 export const MAX_SERVICE_CATEGORIES_PER_SERVICE = 8;
 export const MAX_SERVICE_CATEGORY_LENGTH = 32;
 export const MAX_SERVICE_API_PROTOCOLS_PER_SERVICE = 4;
 const SERVICE_CATEGORY_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const SERVICE_API_PROTOCOL_SET = new Set<string>(WELL_KNOWN_SERVICE_API_PROTOCOLS);
+const PUBLIC_ADDRESS_PATTERN = /^.+:\d+$/;
 
 export interface ValidationError {
   field: string;
@@ -62,6 +64,31 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
         field: "displayName",
         message: `Display name length ${metadata.displayName.length} exceeds max ${MAX_DISPLAY_NAME_LENGTH}`,
       });
+    }
+  }
+
+  if (metadata.publicAddress !== undefined) {
+    const value = metadata.publicAddress.trim();
+    if (value.length === 0) {
+      errors.push({
+        field: "publicAddress",
+        message: "Public address must not be empty when provided",
+      });
+    } else if (value.length > MAX_PUBLIC_ADDRESS_LENGTH) {
+      errors.push({
+        field: "publicAddress",
+        message: `Public address length ${value.length} exceeds max ${MAX_PUBLIC_ADDRESS_LENGTH}`,
+      });
+    } else {
+      const parts = value.split(":");
+      const port = Number(parts.at(-1));
+      const host = parts.slice(0, -1).join(":").trim();
+      if (!PUBLIC_ADDRESS_PATTERN.test(value) || host.length === 0 || !Number.isInteger(port) || port < 1 || port > 65535) {
+        errors.push({
+          field: "publicAddress",
+          message: 'Public address must be in the form "host:port" with a valid port',
+        });
+      }
     }
   }
 

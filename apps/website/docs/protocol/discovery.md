@@ -56,8 +56,9 @@ By default, metadata is fetched from `http://{host}:{port}/metadata` (`metadataP
 ```json title="metadata structure"
 {
   "peerId": "a1b2c3d4...64 hex chars",
-  "version": 4,
+  "version": 5,
   "displayName": "Acme Inference - us-east-1",
+  "publicAddress": "peer.example.com:6882",
   "providers": [{
     "provider": "anthropic",
     "services": ["claude-sonnet-4-6", "claude-haiku-4-5"],
@@ -85,6 +86,8 @@ By default, metadata is fetched from `http://{host}:{port}/metadata` (`metadataP
 ```
 
 Recommended category tags: `privacy`, `legal`, `uncensored`, `coding`, `finance`, `tee` (custom tags are allowed).
+
+`publicAddress` is optional. When present, buyers should prefer it over the raw host learned from the DHT announcement. This is intended for deployments where DHT traffic exits from one IP but buyers must connect to another address, such as a Kubernetes load balancer.
 
 ## Peer Scoring
 

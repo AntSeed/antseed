@@ -75,7 +75,7 @@ Initialize a new config:
 antseed config init
 ```
 
-Pricing is configured in USD per 1M tokens with role-specific defaults and optional provider/service overrides. You can also set node `displayName` and optional per-service category tags announced in discovery metadata:
+Pricing is configured in USD per 1M tokens with role-specific defaults and optional provider/service overrides. You can also set node `displayName`, an optional seller `publicAddress`, and per-service category tags announced in discovery metadata:
 
 ```json
 {
@@ -83,6 +83,7 @@ Pricing is configured in USD per 1M tokens with role-specific defaults and optio
     "displayName": "Acme Inference - us-east-1"
   },
   "seller": {
+    "publicAddress": "peer.example.com:6882",
     "pricing": {
       "defaults": {
         "inputUsdPerMillion": 10,
@@ -163,6 +164,9 @@ antseed config seller set pricing.providers.anthropic.services '{"claude-sonnet-
 
 # Seller per-service category tags announced in metadata
 antseed config seller set serviceCategories.anthropic.claude-sonnet-4-5-20250929 '["coding","legal"]'
+
+# Seller public address override for load-balanced deployments
+antseed config seller set publicAddress "peer.example.com:6882"
 
 # Buyer preferences and max pricing
 antseed config buyer set preferredProviders '["anthropic","openai"]'

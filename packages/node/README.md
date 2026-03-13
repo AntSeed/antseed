@@ -124,6 +124,7 @@ At a high level, `@antseed/node` currently enforces:
 interface NodeConfig {
   role: 'seller' | 'buyer';
   displayName?: string;       // Optional human-readable name announced in metadata
+  publicAddress?: string;     // Optional public host:port override announced in metadata
   dataDir?: string;           // Default: ~/.antseed
   dhtPort?: number;           // Default: 6881 for seller, 0 (OS-assigned) for buyer
   signalingPort?: number;     // Default: 6882 for seller
@@ -144,11 +145,21 @@ interface NodeConfig {
 |---|---|---|
 | `role` | (required) | `'seller'` to serve requests, `'buyer'` to consume them |
 | `displayName` | unset | Optional node label included in discovery metadata |
+| `publicAddress` | unset | Optional public `host:port` advertised in signed metadata and preferred by buyers over the raw DHT source address |
 | `dataDir` | `~/.antseed` | Directory for identity keys, metering DB, and config |
 | `dhtPort` | `6881` / `0` | UDP port for DHT. Seller defaults to 6881, buyer uses OS-assigned |
 | `signalingPort` | `6882` | TCP port for P2P signaling and incoming connections (seller only) |
 | `bootstrapNodes` | AntSeed nodes | Additional DHT bootstrap nodes merged with the official AntSeed infrastructure |
 | `payments` | disabled | Optional seller-side payment channel + settlement lifecycle wiring |
+
+Use `publicAddress` when the DHT announce source IP is not the address buyers should dial, such as Kubernetes or other load-balanced deployments:
+
+```ts
+const node = new AntseedNode({
+  role: 'seller',
+  publicAddress: 'peer.example.com:6882',
+});
+```
 
 ## On-Chain Settlement Flow
 

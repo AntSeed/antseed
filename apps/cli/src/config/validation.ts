@@ -5,6 +5,7 @@ import type {
 } from './types.js';
 
 const SERVICE_CATEGORY_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
+const PUBLIC_ADDRESS_PATTERN = /^.+:\d+$/;
 
 function validatePricingLeaf(
   path: string,
@@ -104,6 +105,16 @@ export function validateConfig(config: AntseedConfig): string[] {
 
   if (!Number.isFinite(config.seller.reserveFloor) || config.seller.reserveFloor < 0) {
     errors.push('seller.reserveFloor must be a non-negative finite number');
+  }
+
+  if (config.seller.publicAddress) {
+    const raw = config.seller.publicAddress.trim();
+    const parts = raw.split(':');
+    const port = Number(parts.at(-1));
+    const host = parts.slice(0, -1).join(':').trim();
+    if (!PUBLIC_ADDRESS_PATTERN.test(raw) || host.length === 0 || !Number.isInteger(port) || port < 1 || port > 65535) {
+      errors.push('seller.publicAddress must be in the form "host:port" with a valid port');
+    }
   }
 
   return errors;
