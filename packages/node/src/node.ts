@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { Identity } from "./p2p/identity.js";
 import { loadOrCreateIdentity } from "./p2p/identity.js";
 import type { PeerId } from "./types/peer.js";
-import type { PeerInfo } from "./types/peer.js";
+import type { PeerInfo, TokenPricingUsdPerMillion } from "./types/peer.js";
 import {
   ANTSEED_STREAMING_RESPONSE_HEADER,
   type SerializedHttpRequest,
@@ -1880,12 +1880,17 @@ export class AntseedNode extends EventEmitter {
     const providerServiceApiProtocolEntries: NonNullable<PeerInfo["providerServiceApiProtocols"]> = {};
 
     for (const providerAnnouncement of result.metadata.providers) {
+      const serviceEntries: Record<string, TokenPricingUsdPerMillion> = {};
+      for (const service of providerAnnouncement.services) {
+        serviceEntries[service] =
+          providerAnnouncement.servicePricing?.[service] ?? providerAnnouncement.defaultPricing;
+      }
       providerPricingEntries[providerAnnouncement.provider] = {
         defaults: {
           inputUsdPerMillion: providerAnnouncement.defaultPricing.inputUsdPerMillion,
           outputUsdPerMillion: providerAnnouncement.defaultPricing.outputUsdPerMillion,
         },
-        ...(providerAnnouncement.servicePricing ? { services: { ...providerAnnouncement.servicePricing } } : {}),
+        ...(Object.keys(serviceEntries).length > 0 ? { services: serviceEntries } : {}),
       };
 
       if (providerAnnouncement.serviceCategories && Object.keys(providerAnnouncement.serviceCategories).length > 0) {
