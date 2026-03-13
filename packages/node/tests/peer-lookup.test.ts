@@ -53,7 +53,7 @@ describe('PeerLookup', () => {
     };
     const lookup = new PeerLookup(config);
 
-    const results = await lookup.findSellers('anthropic');
+    const results = await lookup.findAll();
 
     expect(resolve).toHaveBeenCalledTimes(2);
     expect(results).toHaveLength(2);

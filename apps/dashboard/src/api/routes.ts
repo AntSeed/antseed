@@ -47,7 +47,6 @@ function computeReadiness(
 export interface PeerInfo {
   peerId: string;
   displayName: string | null;
-  providers: string[];
   services: string[];
   capacityMsgPerHour: number;
   inputUsdPerMillion: number;
@@ -230,7 +229,6 @@ export async function registerApiRoutes(
         displayName: p.displayName,
         host: '',
         port: 0,
-        providers: p.providers,
         services: p.services,
         inputUsdPerMillion: p.inputUsdPerMillion,
         outputUsdPerMillion: p.outputUsdPerMillion,
@@ -368,7 +366,6 @@ function mergePeers(daemonPeers: PeerInfo[], dhtPeers: NetworkPeer[]): PeerInfo[
     merged.set(dp.peerId, {
       peerId: dp.peerId,
       displayName: dp.displayName ?? null,
-      providers: dp.providers,
       services: dp.services ?? [],
       capacityMsgPerHour: dp.capacityMsgPerHour,
       inputUsdPerMillion: dp.inputUsdPerMillion,
@@ -437,7 +434,6 @@ async function getPeerList(): Promise<{ peers: PeerInfo[]; degraded: boolean }> 
       return {
         peerId: typeof peer.peerId === 'string' ? peer.peerId : '',
         displayName: (rawDisplayName.length > 0 ? rawDisplayName : fallbackDisplayName) || null,
-        providers: Array.isArray(peer.providers) ? peer.providers.filter((provider): provider is string => typeof provider === 'string') : [],
         services: collectPeerServices(peer),
         capacityMsgPerHour: typeof peer.capacityMsgPerHour === 'number' ? peer.capacityMsgPerHour : 0,
         inputUsdPerMillion: typeof peer.inputUsdPerMillion === 'number' ? peer.inputUsdPerMillion : 0,

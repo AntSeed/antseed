@@ -43,9 +43,8 @@ function normalizeTopicSegment(value: string): string {
   return value.trim().toLowerCase();
 }
 
-export function providerTopic(providerName: string): string {
-  return "antseed:" + normalizeTopicSegment(providerName);
-}
+/** Wildcard topic that all peers announce on — used for general discovery. */
+export const ANTSEED_WILDCARD_TOPIC = "antseed:*";
 
 export function normalizeServiceTopicKey(serviceName: string): string {
   return normalizeTopicSegment(serviceName);

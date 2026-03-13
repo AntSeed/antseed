@@ -17,7 +17,7 @@ The network uses the BitTorrent Mainline DHT (BEP 5) as a decentralised director
 Sellers announce multiple topic types on the DHT:
 
 ```
-providerTopic(provider)        = "antseed:" + normalize(provider)
+ANTSEED_WILDCARD_TOPIC           = "antseed:*"
 serviceTopic(service)            = "antseed:service:" + normalize(service)
 serviceSearchTopic(service)      = "antseed:service-search:" + compact(normalize(service))
 capabilityTopic(capability)    = "antseed:" + normalize(capability)
@@ -250,7 +250,7 @@ All peers returned by a DHT lookup are resolved in parallel, so a single slow or
 The `PeerLookup` class orchestrates the full discovery flow:
 
 1. Build lookup topic(s):
-   - provider lookup: `SHA1(providerTopic(provider))`
+   - wildcard lookup: `SHA1(ANTSEED_WILDCARD_TOPIC)` — finds all peers
    - service lookup: `SHA1(serviceTopic(service))`, and if compact key differs, also `SHA1(serviceSearchTopic(service))`
    - capability lookup: `SHA1(capabilityTopic(capability[, name]))`
 2. Query the DHT for the topic hash(es) to obtain `{host, port}` peer endpoints.
@@ -282,10 +282,9 @@ The `PeerAnnouncer` class handles the seller-side announcement lifecycle:
 3. Encode the body (without signature) via `encodeMetadataForSigning()`.
 4. Sign the body with the seller's Ed25519 private key.
 5. Announce DHT topics at the configured signaling port:
-   - provider topics (`providerTopic(provider)`)
    - canonical service topics (`serviceTopic(service)`)
    - compact service-search topics (`serviceSearchTopic(service)`) when canonical and compact keys differ
-   - wildcard provider topic (`providerTopic("*")`)
+   - wildcard topic (`ANTSEED_WILDCARD_TOPIC`)
    - capability topics when offerings are configured
 
 Periodic re-announcement is managed by `startPeriodicAnnounce()`, which calls `announce()` immediately and then every `reannounceIntervalMs` milliseconds. Load can be updated at any time via `updateLoad(providerName, currentLoad)` and will be reflected in the next announcement cycle.

@@ -2,7 +2,7 @@ import type { Identity } from "../p2p/identity.js";
 import { signData } from "../p2p/identity.js";
 import type { DHTNode } from "./dht-node.js";
 import {
-  providerTopic,
+  ANTSEED_WILDCARD_TOPIC,
   serviceTopic,
   serviceSearchTopic,
   capabilityTopic,
@@ -181,7 +181,6 @@ export class PeerAnnouncer {
     const announcedServiceTopics = new Set<string>();
 
     for (const p of providers) {
-      await this._tryAnnounceTopic(providerTopic(p.provider));
       for (const service of p.services) {
         const canonicalServiceKey = normalizeServiceTopicKey(service);
         if (!canonicalServiceKey) {
@@ -204,7 +203,7 @@ export class PeerAnnouncer {
       }
     }
 
-    await this._tryAnnounceTopic(providerTopic("*"));
+    await this._tryAnnounceTopic(ANTSEED_WILDCARD_TOPIC);
 
     if (this.config.offerings) {
       const announcedCapabilities = new Set<string>();

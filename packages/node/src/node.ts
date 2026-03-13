@@ -410,11 +410,11 @@ export class AntseedNode extends EventEmitter {
     // that explicitly announced that service. Fall back to wildcard if no results.
     let results = service
       ? await this._peerLookup.findByService(service)
-      : await this._peerLookup.findSellers("*");
+      : await this._peerLookup.findAll();
 
     if (service && results.length === 0) {
       debugLog(`[Node] No service-topic results for "${service}", falling back to wildcard`);
-      results = await this._peerLookup.findSellers("*");
+      results = await this._peerLookup.findAll();
     }
     debugLog(`[Node] DHT returned ${results.length} result(s)`);
 
