@@ -47,6 +47,37 @@ const CONFIDENTIALITY_INSTRUCTION =
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
+function normalizeDebugValue(value: string | undefined): string {
+  return (value ?? '').trim().toLowerCase();
+}
+
+function isDebugEnabled(): boolean {
+  const fromAntseed = normalizeDebugValue(process.env['ANTSEED_DEBUG']);
+  if (
+    fromAntseed === '1' ||
+    fromAntseed === 'true' ||
+    fromAntseed === 'yes' ||
+    fromAntseed === 'on'
+  ) {
+    return true;
+  }
+
+  return normalizeDebugValue(process.env['DEBUG'])
+    .split(',')
+    .some((namespace) => {
+      const trimmed = namespace.trim();
+      return trimmed === '*' || trimmed === 'antseed' || trimmed === 'antseed:*';
+    });
+}
+
+const DEBUG_ENABLED = isDebugEnabled();
+
+function debugLog(...args: unknown[]): void {
+  if (DEBUG_ENABLED) {
+    console.log(...args);
+  }
+}
+
 export interface AgentProviderOptions {
   /** Maximum agent loop iterations before returning the response as-is. Default: 5. */
   maxIterations?: number;
@@ -103,6 +134,7 @@ export class AgentProvider implements Provider {
     }
 
     for (let i = 0; i < this._maxIterations; i++) {
+      this._debug(req, `loop iteration ${i + 1}/${this._maxIterations} (buffered)`);
       body = this._injectCatalogAndTool(body, format);
 
       const augmentedReq = {
@@ -116,27 +148,33 @@ export class AgentProvider implements Provider {
       try {
         responseBody = JSON.parse(decoder.decode(response.body)) as Record<string, unknown>;
       } catch {
+        this._debug(req, 'buffered response was not JSON; returning upstream response as-is');
         return response;
       }
 
       const antseedCalls = extractAntseedLoadCalls(responseBody, format);
       if (antseedCalls.length === 0) {
+        this._debug(req, 'no antseed_load calls detected; returning buffered response');
         return response;
       }
+      this._debug(req, `detected ${antseedCalls.length} antseed_load call(s): ${this._formatLoadNames(antseedCalls)}`);
 
       // If the LLM also called non-antseed tools, abort the loop and return
       // the response with antseed_load blocks stripped — the buyer handles their own tools.
       if (hasNonAntseedToolCalls(responseBody, format)) {
+        this._debug(req, 'response also contains buyer-visible tool calls; stripping antseed_load blocks and returning buffered response');
         const cleaned = stripAntseedLoadFromResponse(responseBody, format);
         return { ...response, body: encoder.encode(JSON.stringify(cleaned)) };
       }
 
       const toolResults = this._resolveLoads(antseedCalls);
+      this._debug(req, `resolved ${toolResults.length} skill load(s): ${this._formatToolResults(antseedCalls, toolResults)}`);
       body = this._stripCatalogAndTool(body, format);
       body = this._appendToolLoop(body, responseBody, toolResults, format);
     }
 
     // Max iterations reached — final request without antseed_load
+    this._debug(req, `max iterations (${this._maxIterations}) reached; issuing final buffered request without antseed_load`);
     body = this._stripCatalogAndTool(body, format);
     const finalReq = {
       ...req,
@@ -169,6 +207,7 @@ export class AgentProvider implements Provider {
       let lastResponse: SerializedHttpResponse | null = null;
 
       for (let i = 0; i < this._maxIterations; i++) {
+        this._debug(req, `loop iteration ${i + 1}/${this._maxIterations} (stream preflight)`);
         body = this._injectCatalogAndTool(body, format);
 
         const augmentedReq = {
@@ -191,13 +230,16 @@ export class AgentProvider implements Provider {
           lastResponse = response;
           break;
         }
+        this._debug(req, `detected ${antseedCalls.length} antseed_load call(s): ${this._formatLoadNames(antseedCalls)}`);
         if (hasNonAntseedToolCalls(responseBody, format)) {
+          this._debug(req, 'response also contains buyer-visible tool calls; stripping antseed_load blocks and returning buffered response');
           const cleaned = stripAntseedLoadFromResponse(responseBody, format);
           lastResponse = { ...response, body: encoder.encode(JSON.stringify(cleaned)) };
           break;
         }
 
         const toolResults = this._resolveLoads(antseedCalls);
+        this._debug(req, `resolved ${toolResults.length} skill load(s): ${this._formatToolResults(antseedCalls, toolResults)}`);
         body = this._stripCatalogAndTool(body, format);
         body = this._appendToolLoop(body, responseBody, toolResults, format);
       }
@@ -210,6 +252,7 @@ export class AgentProvider implements Provider {
       }
 
       // Max iterations reached — stream the final request
+      this._debug(req, `max iterations (${this._maxIterations}) reached; issuing final upstream stream without antseed_load`);
       body = this._stripCatalogAndTool(body, format);
       const finalReq = {
         ...req,
@@ -220,6 +263,21 @@ export class AgentProvider implements Provider {
   }
 
   // ─── Private helpers ─────────────────────────────────────────────
+
+  private _debug(req: SerializedHttpRequest, message: string): void {
+    debugLog(`[AgentProvider] ${req.method} ${req.path} (reqId=${req.requestId.slice(0, 8)}): ${message}`);
+  }
+
+  private _formatLoadNames(calls: AntseedLoadCall[]): string {
+    return calls.map((call) => call.resourceName || '<unnamed>').join(', ');
+  }
+
+  private _formatToolResults(calls: AntseedLoadCall[], results: ToolResult[]): string {
+    return results.map((result, index) => {
+      const name = calls[index]?.resourceName || '<unnamed>';
+      return `${name}:${result.isError ? 'miss' : 'hit'}`;
+    }).join(', ');
+  }
 
   private _injectCatalogAndTool(
     body: Record<string, unknown>,
