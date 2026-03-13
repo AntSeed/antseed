@@ -106,7 +106,6 @@ Pricing is configured in USD per 1M tokens with role-specific defaults and optio
     }
   },
   "buyer": {
-    "preferredProviders": ["anthropic", "openai"],
     "maxPricing": {
       "defaults": {
         "inputUsdPerMillion": 100,
@@ -164,8 +163,7 @@ antseed config seller set pricing.providers.anthropic.services '{"claude-sonnet-
 # Seller per-service category tags announced in metadata
 antseed config seller set serviceCategories.anthropic.claude-sonnet-4-5-20250929 '["coding","legal"]'
 
-# Buyer preferences and max pricing
-antseed config buyer set preferredProviders '["anthropic","openai"]'
+# Buyer max pricing
 antseed config buyer set maxPricing.defaults.inputUsdPerMillion 25
 antseed config buyer set maxPricing.defaults.outputUsdPerMillion 75
 ```

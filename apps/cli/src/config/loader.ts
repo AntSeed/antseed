@@ -215,16 +215,12 @@ function mergeBuyerConfig(
 ): AntseedConfig['buyer'] {
   if (!isRecord(value)) {
     return {
-      preferredProviders: [...defaults.preferredProviders],
       maxPricing: mergeHierarchicalPricing(defaults.maxPricing, undefined),
       minPeerReputation: defaults.minPeerReputation,
       proxyPort: defaults.proxyPort,
     };
   }
   return {
-    preferredProviders: Array.isArray(value['preferredProviders'])
-      ? value['preferredProviders'].filter((entry): entry is string => typeof entry === 'string')
-      : [...defaults.preferredProviders],
     maxPricing: mergeHierarchicalPricing(defaults.maxPricing, value['maxPricing']),
     minPeerReputation: typeof value['minPeerReputation'] === 'number'
       ? value['minPeerReputation']

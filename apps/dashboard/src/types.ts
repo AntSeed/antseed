@@ -19,7 +19,6 @@ export interface DashboardConfig {
     pricing: HierarchicalPricingConfig;
   };
   buyer: {
-    preferredProviders: string[];
     maxPricing: HierarchicalPricingConfig;
     minPeerReputation: number;
     proxyPort: number;

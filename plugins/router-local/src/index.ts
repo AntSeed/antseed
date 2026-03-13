@@ -2,15 +2,6 @@ import type { AntseedRouterPlugin } from '@antseed/node';
 import { WELL_KNOWN_TOOL_HINTS, formatToolHints } from '@antseed/router-core';
 import { LocalRouter, type BuyerMaxPricingConfig } from './router.js';
 
-function parseCsvProviders(raw: string | undefined): string[] | undefined {
-  if (!raw) return undefined;
-  const parsed = raw
-    .split(',')
-    .map((provider) => provider.trim())
-    .filter((provider) => provider.length > 0);
-  return parsed.length > 0 ? parsed : undefined;
-}
-
 function isNonNegativeFinite(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0;
 }
@@ -125,7 +116,6 @@ const plugin: AntseedRouterPlugin = {
   description: 'Local router for Claude Code, Aider, Continue.dev, OpenAI Codex',
   configSchema: [
     { key: 'ANTSEED_MIN_REPUTATION', label: 'Min Reputation', type: 'number', required: false, default: 50, description: 'Min peer reputation 0-100' },
-    { key: 'ANTSEED_PREFERRED_PROVIDERS', label: 'Preferred Providers', type: 'string[]', required: false, description: 'Ordered preferred providers' },
     { key: 'ANTSEED_MAX_PRICING_JSON', label: 'Max Pricing JSON', type: 'string', required: false, description: 'Buyer max pricing JSON' },
     { key: 'ANTSEED_MAX_FAILURES', label: 'Max Failures', type: 'number', required: false, default: 3, description: 'Max consecutive failures before excluding peer' },
     { key: 'ANTSEED_FAILURE_COOLDOWN_MS', label: 'Failure Cooldown (ms)', type: 'number', required: false, default: 30000, description: 'Cooldown after repeated failures (ms)' },
@@ -136,7 +126,6 @@ const plugin: AntseedRouterPlugin = {
     if (minReputation !== undefined && Number.isNaN(minReputation)) {
       throw new Error('ANTSEED_MIN_REPUTATION must be a valid number');
     }
-    const preferredProviders = parseCsvProviders(config['ANTSEED_PREFERRED_PROVIDERS']);
     const maxPricing = parseMaxPricingJson(config['ANTSEED_MAX_PRICING_JSON']);
     const maxFailures = config['ANTSEED_MAX_FAILURES'] ? parseInt(config['ANTSEED_MAX_FAILURES'], 10) : undefined;
     if (maxFailures !== undefined && Number.isNaN(maxFailures)) {
@@ -151,7 +140,6 @@ const plugin: AntseedRouterPlugin = {
       throw new Error('ANTSEED_MAX_PEER_STALENESS_MS must be a valid number');
     }
     return new LocalRouter({
-      preferredProviders,
       minReputation,
       maxPricing,
       maxFailures,

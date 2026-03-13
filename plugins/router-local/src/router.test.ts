@@ -37,15 +37,14 @@ function makeRequest(service?: string): SerializedHttpRequest {
 }
 
 describe('LocalRouter', () => {
-  it('enforces ordered provider preferences even when lower-ranked provider is cheaper', () => {
+  it('selects cheapest peer regardless of provider name', () => {
     const router = new LocalRouter({
-      preferredProviders: ['anthropic', 'openai'],
       maxPricing: {
         defaults: { inputUsdPerMillion: 1_000, outputUsdPerMillion: 1_000 },
       },
     });
 
-    const preferredButExpensive = makePeer({
+    const expensive = makePeer({
       peerId: '1'.repeat(64) as PeerInfo['peerId'],
       providers: ['anthropic'],
       providerPricing: {
@@ -56,7 +55,7 @@ describe('LocalRouter', () => {
       defaultInputUsdPerMillion: 100,
       defaultOutputUsdPerMillion: 100,
     });
-    const cheaperLowerRank = makePeer({
+    const cheap = makePeer({
       peerId: '2'.repeat(64) as PeerInfo['peerId'],
       providers: ['openai'],
       providerPricing: {
@@ -68,8 +67,8 @@ describe('LocalRouter', () => {
       defaultOutputUsdPerMillion: 1,
     });
 
-    const selected = router.selectPeer(makeRequest('claude-sonnet-4-5-20250929'), [cheaperLowerRank, preferredButExpensive]);
-    expect(selected?.peerId).toBe(preferredButExpensive.peerId);
+    const selected = router.selectPeer(makeRequest('claude-sonnet-4-5-20250929'), [expensive, cheap]);
+    expect(selected?.peerId).toBe(cheap.peerId);
   });
 
   it('rejects peers when output price exceeds buyer max even if input is within max', () => {

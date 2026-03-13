@@ -113,8 +113,6 @@ export interface SellerCLIConfig {
  * Buyer-specific configuration within the Antseed config.
  */
 export interface BuyerCLIConfig {
-  /** Preferred provider types for purchasing */
-  preferredProviders: string[];
   /** Buyer max willing-to-pay rules in USD per 1M tokens */
   maxPricing: HierarchicalPricingConfig;
   /** Minimum peer reputation score (0-100) */

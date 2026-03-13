@@ -101,7 +101,6 @@ export interface ConfigResponse {
       };
     };
     buyer: {
-      preferredProviders: string[];
       maxPricing: {
         defaults: {
           inputUsdPerMillion: number;

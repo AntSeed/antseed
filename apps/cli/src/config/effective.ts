@@ -9,7 +9,6 @@ export interface SellerRuntimeOverrides {
 export interface BuyerRuntimeOverrides {
   proxyPort?: number;
   minPeerReputation?: number;
-  preferredProviders?: string[];
   maxInputUsdPerMillion?: number;
   maxOutputUsdPerMillion?: number;
 }
@@ -80,9 +79,6 @@ export function resolveEffectiveBuyerConfig(input: ResolveEffectiveConfigInput):
   }
   if (overrides?.minPeerReputation !== undefined) {
     buyer.minPeerReputation = overrides.minPeerReputation;
-  }
-  if (overrides?.preferredProviders && overrides.preferredProviders.length > 0) {
-    buyer.preferredProviders = [...overrides.preferredProviders];
   }
   if (overrides?.maxInputUsdPerMillion !== undefined) {
     buyer.maxPricing.defaults.inputUsdPerMillion = overrides.maxInputUsdPerMillion;

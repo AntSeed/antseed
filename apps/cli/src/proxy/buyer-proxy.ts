@@ -91,40 +91,6 @@ export type CandidatePeerRouteSelection = {
   routePlanByPeerId: Map<string, PeerProtocolRoutePlan>
 }
 
-const CLAUDE_PROVIDER_PREFERENCE = ['claude-oauth', 'anthropic', 'claude-code'] as const
-
-function inferPreferredProvidersForRequest(
-  requestProtocol: ServiceApiProtocol | null,
-  requestedService: string | null,
-): string[] {
-  const service = requestedService?.trim().toLowerCase() ?? ''
-  if (service.length === 0) {
-    return []
-  }
-
-  const providers: string[] = []
-  const pushProvider = (value: string | null | undefined): void => {
-    const provider = value?.trim().toLowerCase()
-    if (!provider || provider.length === 0 || providers.includes(provider)) {
-      return
-    }
-    providers.push(provider)
-  }
-
-  const slashIndex = service.indexOf('/')
-  if (slashIndex > 0) {
-    pushProvider(service.slice(0, slashIndex))
-  }
-
-  if (requestProtocol === 'anthropic-messages' || service.startsWith('claude-') || service.includes('claude')) {
-    for (const provider of CLAUDE_PROVIDER_PREFERENCE) {
-      pushProvider(provider)
-    }
-  }
-
-  return providers
-}
-
 function getExplicitProviderOverride(request: SerializedHttpRequest): string | null {
   const provider = request.headers['x-antseed-provider']?.trim().toLowerCase()
   return provider && provider.length > 0 ? provider : null
@@ -1355,23 +1321,6 @@ export class BuyerProxy {
       return
     }
 
-    const preferredProviders = explicitProvider
-      ? []
-      : inferPreferredProvidersForRequest(requestProtocol, requestedService)
-    let hasPreferredProviderCandidate = preferredProviders.length > 0
-      && routingPeers.some((peer) => {
-        const provider = routingPlans.get(peer.peerId)?.provider?.trim().toLowerCase()
-        return Boolean(provider && preferredProviders.includes(provider))
-      })
-
-    if (preferredProviders.length > 0 && !hasPreferredProviderCandidate) {
-      await refreshPeerSelection(`missing preferred providers [${preferredProviders.join(',')}]`)
-      hasPreferredProviderCandidate = routingPeers.some((peer) => {
-        const provider = routingPlans.get(peer.peerId)?.provider?.trim().toLowerCase()
-        return Boolean(provider && preferredProviders.includes(provider))
-      })
-    }
-
     if (routingPeers.length === 0) {
       const diagnostics = this._formatPeerSelectionDiagnostics(discoveredPeers)
       res.writeHead(502, { 'content-type': 'text/plain' })
@@ -1438,29 +1387,12 @@ export class BuyerProxy {
     // Non-pinned: retry with failover on provider errors
     const MAX_ATTEMPTS = 3
     const triedPeerIds = new Set<string>()
-    const restrictFailoverToPreferredProviders = preferredProviders.length > 0 && hasPreferredProviderCandidate
-    if (restrictFailoverToPreferredProviders) {
-      log(`Provider-family preference active (attempt 1): [${preferredProviders.join(',')}]`)
-    }
     let lastStatusCode = 502
     let lastResponseBody: Buffer | null = null
     let lastResponseHeaders: Record<string, string> = { 'content-type': 'text/plain' }
 
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-      const limitToPreferredProviders = restrictFailoverToPreferredProviders && attempt === 0
-      if (restrictFailoverToPreferredProviders && attempt === 1) {
-        log('Preferred provider attempt failed; expanding failover to all compatible providers.')
-      }
-      const availableCandidates = routingPeers.filter((peer) => {
-        if (triedPeerIds.has(peer.peerId)) {
-          return false
-        }
-        if (!limitToPreferredProviders) {
-          return true
-        }
-        const provider = routingPlans.get(peer.peerId)?.provider?.trim().toLowerCase()
-        return Boolean(provider && preferredProviders.includes(provider))
-      })
+      const availableCandidates = routingPeers.filter((peer) => !triedPeerIds.has(peer.peerId))
       if (availableCandidates.length === 0) break
 
       let selectedPeer: PeerInfo | null = null
@@ -1492,25 +1424,6 @@ export class BuyerProxy {
         if (preferred) {
           selectedPeer = preferred
           log(`Preferring requested peer ${selectedPeer.peerId.slice(0, 12)}...`)
-        }
-      }
-
-      // Strongly prefer providers that match the requested service family (e.g. claude-* -> claude/anthropic providers).
-      if (!selectedPeer && attempt === 0 && preferredProviders.length > 0) {
-        const providerMatchedPeers = availableCandidates.filter((peer) => {
-          const plannedProvider = routingPlans.get(peer.peerId)?.provider?.trim().toLowerCase()
-          return plannedProvider ? preferredProviders.includes(plannedProvider) : false
-        })
-        if (providerMatchedPeers.length > 0) {
-          selectedPeer = router
-            ? router.selectPeer(serializedReq, providerMatchedPeers)
-            : providerMatchedPeers[0] ?? null
-          if (selectedPeer) {
-            const plannedProvider = routingPlans.get(selectedPeer.peerId)?.provider ?? 'unknown'
-            log(
-              `Preferring service-matched provider "${plannedProvider}" for service "${requestedService ?? 'unknown'}"`,
-            )
-          }
         }
       }
 

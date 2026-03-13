@@ -21,7 +21,6 @@ export function createDefaultConfig(): AntseedConfig {
       },
     },
     buyer: {
-      preferredProviders: ['anthropic', 'openai', 'claude-code', 'claude-oauth', 'local-llm'],
       maxPricing: {
         defaults: {
           inputUsdPerMillion: 100,

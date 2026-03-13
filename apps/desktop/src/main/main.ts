@@ -948,7 +948,6 @@ function defaultDashboardConfig(): DashboardConfig {
       },
     },
     buyer: {
-      preferredProviders: ['anthropic', 'openai', 'claude-code', 'claude-oauth', 'local-llm'],
       maxPricing: {
         defaults: {
           inputUsdPerMillion: 100,
@@ -1028,7 +1027,6 @@ async function loadDashboardConfig(configPath = DEFAULT_CONFIG_PATH): Promise<Da
       },
     },
     buyer: {
-      preferredProviders: asStringArray(buyer.preferredProviders, defaults.buyer.preferredProviders),
       maxPricing: {
         defaults: {
           inputUsdPerMillion: asNumber(
