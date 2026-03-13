@@ -826,7 +826,7 @@ function extractChatServiceCatalog(metadata: Record<string, unknown>): Omit<Chat
     if (!providerId) {
       continue;
     }
-    const serviceListRaw = providerRecord.services || providerRecord.models;
+    const serviceListRaw = providerRecord.services /* || providerRecord.models */;
     if (!Array.isArray(serviceListRaw)) {
       continue;
     }
@@ -982,6 +982,7 @@ function convertPiMessageToUiBlocks(message: Message): string | ContentBlock[] {
   if (message.role === 'assistant') {
     const blocks: ContentBlock[] = [];
     for (const block of message.content) {
+      if (!block) continue;
       if (block.type === 'text') {
         blocks.push({ type: 'text', text: block.text });
         continue;
