@@ -165,26 +165,6 @@ export function Settings() {
           />
         </label>
         <label className="form-label">
-          Preferred Providers (comma-separated, ordered)
-          <input
-            type="text"
-            className="form-input"
-            value={config.buyer.preferredProviders.join(', ')}
-            onChange={(e) =>
-              setConfig({
-                ...config,
-                buyer: {
-                  ...config.buyer,
-                  preferredProviders: e.target.value
-                    .split(',')
-                    .map((provider) => provider.trim())
-                    .filter((provider) => provider.length > 0),
-                },
-              })
-            }
-          />
-        </label>
-        <label className="form-label">
           Max Input Price (USD per 1M tokens)
           <input
             type="number"

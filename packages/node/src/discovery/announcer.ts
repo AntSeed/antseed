@@ -32,6 +32,7 @@ export interface AnnouncerConfig {
     maxConcurrency: number;
   }>;
   displayName?: string;
+  publicAddress?: string;
   region: string;
   pricing: Map<
     string,
@@ -136,6 +137,7 @@ export class PeerAnnouncer {
       peerId: this.config.identity.peerId,
       version: METADATA_VERSION,
       ...(this.config.displayName ? { displayName: this.config.displayName } : {}),
+      ...(this.config.publicAddress ? { publicAddress: this.config.publicAddress } : {}),
       providers,
       region: this.config.region,
       timestamp: Date.now(),

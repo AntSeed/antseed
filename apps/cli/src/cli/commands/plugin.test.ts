@@ -3,10 +3,9 @@ import test from 'node:test'
 import { TRUSTED_PLUGINS } from '../../plugins/registry.js'
 import { buildPluginConfig, LEGACY_PACKAGE_MAP } from '../../plugins/loader.js'
 
-test('TRUSTED_PLUGINS contains 6 official plugins', () => {
-  assert.equal(TRUSTED_PLUGINS.length, 6)
+test('TRUSTED_PLUGINS contains 5 official plugins', () => {
+  assert.equal(TRUSTED_PLUGINS.length, 5)
   const names = TRUSTED_PLUGINS.map(p => p.name)
-  assert.ok(names.includes('unified'))
   assert.ok(names.includes('anthropic'))
   assert.ok(names.includes('claude-code'))
   assert.ok(names.includes('openai'))
@@ -50,7 +49,6 @@ test('buildPluginConfig works without instanceConfig (backwards compatible)', ()
 })
 
 test('LEGACY_PACKAGE_MAP maps old names to scoped names', () => {
-  assert.equal(LEGACY_PACKAGE_MAP['antseed-provider-unified'], '@antseed/provider-unified')
   assert.equal(LEGACY_PACKAGE_MAP['antseed-provider-anthropic'], '@antseed/provider-anthropic')
   assert.equal(LEGACY_PACKAGE_MAP['antseed-router-claude-code'], '@antseed/router-local')
 })

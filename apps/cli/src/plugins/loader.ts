@@ -91,7 +91,6 @@ export function buildPluginConfig(
 
 /** Map legacy package names to current names */
 export const LEGACY_PACKAGE_MAP: Record<string, string> = {
-  'antseed-provider-unified': '@antseed/provider-unified',
   'antseed-provider-anthropic': '@antseed/provider-anthropic',
   'antseed-router-claude-code': '@antseed/router-local',
 }

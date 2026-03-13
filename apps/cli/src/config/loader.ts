@@ -189,6 +189,7 @@ function mergeSellerConfig(
       maxConcurrentBuyers: defaults.maxConcurrentBuyers,
       enabledProviders: [...defaults.enabledProviders],
       pricing: mergeHierarchicalPricing(defaults.pricing, undefined),
+      publicAddress: defaults.publicAddress,
       ...(defaults.serviceCategories ? { serviceCategories: cloneSellerServiceCategories(defaults.serviceCategories) } : {}),
     };
   }
@@ -205,6 +206,9 @@ function mergeSellerConfig(
       ? value['enabledProviders'].filter((entry): entry is string => typeof entry === 'string')
       : [...defaults.enabledProviders],
     pricing: mergeHierarchicalPricing(defaults.pricing, value['pricing']),
+    publicAddress: typeof value['publicAddress'] === 'string'
+      ? value['publicAddress']
+      : defaults.publicAddress,
     ...(mergedServiceCategories ? { serviceCategories: mergedServiceCategories } : {}),
   };
 }
@@ -215,16 +219,12 @@ function mergeBuyerConfig(
 ): AntseedConfig['buyer'] {
   if (!isRecord(value)) {
     return {
-      preferredProviders: [...defaults.preferredProviders],
       maxPricing: mergeHierarchicalPricing(defaults.maxPricing, undefined),
       minPeerReputation: defaults.minPeerReputation,
       proxyPort: defaults.proxyPort,
     };
   }
   return {
-    preferredProviders: Array.isArray(value['preferredProviders'])
-      ? value['preferredProviders'].filter((entry): entry is string => typeof entry === 'string')
-      : [...defaults.preferredProviders],
     maxPricing: mergeHierarchicalPricing(defaults.maxPricing, value['maxPricing']),
     minPeerReputation: typeof value['minPeerReputation'] === 'number'
       ? value['minPeerReputation']

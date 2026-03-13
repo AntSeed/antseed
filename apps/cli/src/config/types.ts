@@ -107,14 +107,14 @@ export interface SellerCLIConfig {
    * Relative paths are resolved from the config file's directory.
    */
   skillsDir?: string;
+  /** Publicly reachable seller address override announced in metadata, e.g. "peer.example.com:6882". */
+  publicAddress?: string;
 }
 
 /**
  * Buyer-specific configuration within the Antseed config.
  */
 export interface BuyerCLIConfig {
-  /** Preferred provider types for purchasing */
-  preferredProviders: string[];
   /** Buyer max willing-to-pay rules in USD per 1M tokens */
   maxPricing: HierarchicalPricingConfig;
   /** Minimum peer reputation score (0-100) */

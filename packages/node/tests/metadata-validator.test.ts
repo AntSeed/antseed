@@ -7,6 +7,7 @@ import {
   MAX_SERVICE_NAME_LENGTH,
   MAX_REGION_LENGTH,
   MAX_DISPLAY_NAME_LENGTH,
+  MAX_PUBLIC_ADDRESS_LENGTH,
   MAX_SERVICE_CATEGORY_LENGTH,
   MAX_SERVICE_API_PROTOCOLS_PER_SERVICE,
 } from '../src/discovery/metadata-validator.js';
@@ -287,6 +288,26 @@ describe('validateMetadata', () => {
   it('should reject too long displayName', () => {
     const errors = validateMetadata(validMetadata({ displayName: 'x'.repeat(MAX_DISPLAY_NAME_LENGTH + 1) }));
     expect(errors.some((e) => e.field === 'displayName')).toBe(true);
+  });
+
+  it('should accept valid publicAddress', () => {
+    const errors = validateMetadata(validMetadata({ publicAddress: 'peer.example.com:6882' }));
+    expect(errors.some((e) => e.field === 'publicAddress')).toBe(false);
+  });
+
+  it('should reject empty publicAddress when present', () => {
+    const errors = validateMetadata(validMetadata({ publicAddress: '   ' }));
+    expect(errors.some((e) => e.field === 'publicAddress')).toBe(true);
+  });
+
+  it('should reject too long publicAddress', () => {
+    const errors = validateMetadata(validMetadata({ publicAddress: 'a'.repeat(MAX_PUBLIC_ADDRESS_LENGTH + 1) }));
+    expect(errors.some((e) => e.field === 'publicAddress')).toBe(true);
+  });
+
+  it('should reject malformed publicAddress', () => {
+    const errors = validateMetadata(validMetadata({ publicAddress: 'peer.example.com' }));
+    expect(errors.some((e) => e.field === 'publicAddress')).toBe(true);
   });
 
   it('should reject categories for a service not listed by provider', () => {

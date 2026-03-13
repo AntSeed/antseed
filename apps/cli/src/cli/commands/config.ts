@@ -84,7 +84,7 @@ export function registerConfigCommand(program: Command): void {
 
   buyerCmd
     .command('set <key> <value>')
-    .description('Set buyer configuration value (e.g., preferredProviders [\"anthropic\",\"openai\"])')
+    .description('Set buyer configuration value (e.g., maxPricing.defaults.inputUsdPerMillion 25)')
     .action(async (key: string, value: string) => {
       await setRoleScopedValue(program, 'buyer', key, value);
     });

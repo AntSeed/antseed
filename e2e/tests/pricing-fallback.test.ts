@@ -41,7 +41,6 @@ function makePeer(overrides?: Partial<PeerInfo>): PeerInfo {
 describe('pricing fallback hierarchy', () => {
   it('uses service -> provider default -> peer default fallback order and enforces input/output max checks', () => {
     const router = new LocalRouter({
-      preferredProviders: ['anthropic'],
       maxPricing: {
         defaults: {
           inputUsdPerMillion: 30,

@@ -24,12 +24,9 @@ This installs all trusted plugins, generates an identity keypair, and creates co
 
 ## Step 3: Configure buyer preferences
 
-Set which providers the user wants to route through and their max willingness to pay:
+Set the buyer's max willingness to pay and other preferences:
 
 ```bash
-# Which provider types to accept
-antseed config buyer set preferredProviders '["anthropic"]'
-
 # Max pricing (USD per 1M tokens) — reject peers charging more
 antseed config buyer set maxPricing.defaults.inputUsdPerMillion 25
 antseed config buyer set maxPricing.defaults.outputUsdPerMillion 75

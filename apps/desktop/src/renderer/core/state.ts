@@ -37,7 +37,6 @@ export type PeerEntry = {
 
 export type ConfigFormData = {
   proxyPort: number;
-  preferredProviders: string;
   maxInputUsdPerMillion: number;
   maxOutputUsdPerMillion: number;
   minRep: number;

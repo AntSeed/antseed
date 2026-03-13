@@ -25,6 +25,7 @@ export {
   type ProviderAnnouncement,
 } from './discovery/peer-metadata.js';
 export { MetadataServer, type MetadataServerConfig } from './discovery/metadata-server.js';
+export { parsePublicAddress, MAX_PUBLIC_ADDRESS_LENGTH, type ParsedPublicAddress } from './discovery/public-address.js';
 export { MeteringStorage } from './metering/storage.js';
 export { BalanceManager } from './payments/balance-manager.js';
 export { BaseEscrowClient, type BaseEscrowConfig } from './payments/evm/escrow-client.js';
