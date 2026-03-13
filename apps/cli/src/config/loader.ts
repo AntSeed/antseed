@@ -11,13 +11,6 @@ import type {
 import { createDefaultConfig } from './defaults.js';
 import { assertValidConfig } from './validation.js';
 
-const VALID_MIDDLEWARE_POSITIONS = new Set<SellerMiddlewareConfig['position']>([
-  'system-prepend',
-  'system-append',
-  'prepend',
-  'append',
-]);
-
 /**
  * Resolve a config path, expanding ~ to the user's home directory.
  */
@@ -212,7 +205,6 @@ function mergeSellerMiddleware(
     if (
       typeof entry['file'] !== 'string'
       || typeof entry['position'] !== 'string'
-      || !VALID_MIDDLEWARE_POSITIONS.has(entry['position'] as SellerMiddlewareConfig['position'])
     ) {
       return [];
     }
@@ -232,7 +224,7 @@ function mergeSellerMiddleware(
     }];
   });
 
-  return merged.length > 0 ? merged : undefined;
+  return merged;
 }
 
 function mergeSellerConfig(
@@ -271,7 +263,7 @@ function mergeSellerConfig(
     publicAddress: typeof value['publicAddress'] === 'string'
       ? value['publicAddress']
       : defaults.publicAddress,
-    ...(mergedMiddleware ? { middleware: mergedMiddleware } : {}),
+    ...(mergedMiddleware !== undefined ? { middleware: mergedMiddleware } : {}),
     ...(typeof value['middlewareConfidentialityPrompt'] === 'string'
       ? { middlewareConfidentialityPrompt: value['middlewareConfidentialityPrompt'] }
       : (defaults.middlewareConfidentialityPrompt

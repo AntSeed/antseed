@@ -1,18 +1,12 @@
 import type {
   HierarchicalPricingConfig,
   AntseedConfig,
-  SellerMiddlewareConfig,
   TokenPricingUsdPerMillion,
 } from './types.js';
+import { VALID_MIDDLEWARE_POSITIONS } from './types.js';
 
 const SERVICE_CATEGORY_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const MAX_PUBLIC_ADDRESS_LENGTH = 255;
-const VALID_MIDDLEWARE_POSITIONS = new Set<SellerMiddlewareConfig['position']>([
-  'system-prepend',
-  'system-append',
-  'prepend',
-  'append',
-]);
 
 function validatePricingLeaf(
   path: string,
