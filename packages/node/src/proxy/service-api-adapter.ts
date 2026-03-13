@@ -378,6 +378,7 @@ export function createOpenAIChatToAnthropicStreamingAdapter(
   let stopReason: string | null = null;
   let messageId = options.fallbackModel ? `msg_${options.fallbackModel}` : 'msg_stream';
   let service = options.fallbackModel ?? 'unknown';
+  const toolBlocks = new Map<number, { id: string; name: string }>();
 
   const startMessage = (): Array<{ event: string; data: unknown }> => {
     if (messageStarted) return [];
@@ -527,10 +528,80 @@ export function createOpenAIChatToAnthropicStreamingAdapter(
             },
           });
         }
+
+        const toolCalls = Array.isArray(delta?.tool_calls) ? delta.tool_calls : [];
+        for (const toolCallRaw of toolCalls) {
+          if (!toolCallRaw || typeof toolCallRaw !== 'object') {
+            continue;
+          }
+          const toolCall = toolCallRaw as Record<string, unknown>;
+          const rawIndex = typeof toolCall.index === 'number' ? toolCall.index : 0;
+          const index = Number.isFinite(rawIndex) ? Math.max(0, Math.floor(rawIndex)) : 0;
+          const functionPayload = toolCall.function && typeof toolCall.function === 'object'
+            ? toolCall.function as Record<string, unknown>
+            : {};
+          const existing = toolBlocks.get(index);
+          const id = typeof toolCall.id === 'string' && toolCall.id.length > 0
+            ? toolCall.id
+            : (existing?.id ?? `toolu_${index + 1}`);
+          const name = typeof functionPayload.name === 'string' && functionPayload.name.length > 0
+            ? functionPayload.name
+            : (existing?.name ?? 'tool');
+
+          if (!existing) {
+            toolBlocks.set(index, { id, name });
+            emitted.push(...startMessage());
+            emitted.push({
+              event: 'content_block_start',
+              data: {
+                type: 'content_block_start',
+                index: index + 1,
+                content_block: {
+                  type: 'tool_use',
+                  id,
+                  name,
+                  input: {},
+                },
+              },
+            });
+          } else {
+            toolBlocks.set(index, { id, name });
+          }
+
+          const argumentsDelta = typeof functionPayload.arguments === 'string'
+            ? functionPayload.arguments
+            : '';
+          if (argumentsDelta.length > 0) {
+            emitted.push({
+              event: 'content_block_delta',
+              data: {
+                type: 'content_block_delta',
+                index: index + 1,
+                delta: {
+                  type: 'input_json_delta',
+                  partial_json: argumentsDelta,
+                },
+              },
+            });
+          }
+        }
       }
 
       if (chunk.done) {
         emitted.push(...finishMessage());
+        for (const index of [...toolBlocks.keys()].sort((a, b) => a - b)) {
+          emitted.splice(
+            Math.max(0, emitted.length - 2),
+            0,
+            {
+              event: 'content_block_stop',
+              data: {
+                type: 'content_block_stop',
+                index: index + 1,
+              },
+            },
+          );
+        }
       }
 
       if (emitted.length > 0) {
@@ -1261,6 +1332,7 @@ export function createOpenAIChatToResponsesStreamingAdapter(
   let responseModel = options.fallbackModel ?? 'unknown';
   let textBuffer = '';
   let outputTokens = 0;
+  const toolCallMap = new Map<number, { id: string; name: string; arguments: string }>();
 
   const pushEvent = (
     emitted: Array<{ event?: string; data: unknown | string }>,
@@ -1361,6 +1433,26 @@ export function createOpenAIChatToResponsesStreamingAdapter(
           }],
         },
       });
+      for (const [index, toolCall] of [...toolCallMap.entries()].sort((a, b) => a[0] - b[0])) {
+        pushEvent(emitted, 'response.function_call_arguments.done', {
+          output_index: index + 1,
+          item_id: toolCall.id,
+          call_id: toolCall.id,
+          name: toolCall.name,
+          arguments: toolCall.arguments,
+        });
+        pushEvent(emitted, 'response.output_item.done', {
+          output_index: index + 1,
+          item: {
+            type: 'function_call',
+            id: toolCall.id,
+            call_id: toolCall.id,
+            name: toolCall.name,
+            arguments: toolCall.arguments,
+            status: 'completed',
+          },
+        });
+      }
       pushEvent(emitted, 'response.completed', {
         response: {
           id: responseId,
@@ -1368,17 +1460,29 @@ export function createOpenAIChatToResponsesStreamingAdapter(
           model: responseModel,
           status: 'completed',
           created_at: Math.floor(Date.now() / 1000),
-          output: [{
-            type: 'message',
-            id: `${responseId}_msg_1`,
-            role: 'assistant',
-            status: 'completed',
-            content: [{
-              type: 'output_text',
-              text: textBuffer,
-              annotations: [],
-            }],
-          }],
+          output: [
+            {
+              type: 'message',
+              id: `${responseId}_msg_1`,
+              role: 'assistant',
+              status: 'completed',
+              content: [{
+                type: 'output_text',
+                text: textBuffer,
+                annotations: [],
+              }],
+            },
+            ...[...toolCallMap.entries()]
+              .sort((a, b) => a[0] - b[0])
+              .map(([, toolCall]) => ({
+                type: 'function_call' as const,
+                id: toolCall.id,
+                call_id: toolCall.id,
+                name: toolCall.name,
+                arguments: toolCall.arguments,
+                status: 'completed' as const,
+              })),
+          ],
           output_text: textBuffer,
           usage: {
             input_tokens: 0,
@@ -1450,6 +1554,58 @@ export function createOpenAIChatToResponsesStreamingAdapter(
             content_index: 0,
             delta: textDelta,
             logprobs: [],
+          });
+        }
+
+        const deltaToolCalls = Array.isArray(delta?.tool_calls) ? delta.tool_calls : [];
+        for (const toolCallRaw of deltaToolCalls) {
+          if (!toolCallRaw || typeof toolCallRaw !== 'object') {
+            continue;
+          }
+          const toolCall = toolCallRaw as Record<string, unknown>;
+          const rawIndex = typeof toolCall.index === 'number' ? toolCall.index : toolCallMap.size;
+          const index = Number.isFinite(rawIndex) ? Math.max(0, Math.floor(rawIndex)) : toolCallMap.size;
+          const functionPayload = toolCall.function && typeof toolCall.function === 'object'
+            ? toolCall.function as Record<string, unknown>
+            : {};
+          const existing = toolCallMap.get(index);
+          const id = typeof toolCall.id === 'string' && toolCall.id.length > 0
+            ? toolCall.id
+            : (existing?.id ?? `call_${index + 1}`);
+          const name = typeof functionPayload.name === 'string' && functionPayload.name.length > 0
+            ? functionPayload.name
+            : (existing?.name ?? '');
+          const argumentsDelta = typeof functionPayload.arguments === 'string'
+            ? functionPayload.arguments
+            : '';
+
+          if (!existing) {
+            pushEvent(emitted, 'response.output_item.added', {
+              output_index: index + 1,
+              item: {
+                type: 'function_call',
+                id,
+                call_id: id,
+                name,
+                arguments: '',
+                status: 'in_progress',
+              },
+            });
+          }
+
+          if (argumentsDelta.length > 0) {
+            pushEvent(emitted, 'response.function_call_arguments.delta', {
+              output_index: index + 1,
+              item_id: id,
+              call_id: id,
+              delta: argumentsDelta,
+            });
+          }
+
+          toolCallMap.set(index, {
+            id,
+            name,
+            arguments: (existing?.arguments ?? '') + argumentsDelta,
           });
         }
       }

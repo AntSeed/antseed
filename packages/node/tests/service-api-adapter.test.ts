@@ -253,6 +253,28 @@ describe('createOpenAIChatToAnthropicStreamingAdapter', () => {
     expect(sseText).toContain('"text":" world"');
     expect(sseText).toContain('event: message_stop');
   });
+
+  it('converts streamed tool call deltas into anthropic tool_use events', () => {
+    const adapter = createOpenAIChatToAnthropicStreamingAdapter({ fallbackModel: 'claude-sonnet' });
+    const chunks = adapter.adaptChunk({
+      requestId: 'req-tool',
+      data: new TextEncoder().encode(
+        'data: {"id":"chatcmpl-tool","model":"gpt-4.1","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"write","arguments":"{\\"path\\""}}]},"finish_reason":null}]}\n\n'
+        + 'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":":\\"hello.txt\\"}"}}]},"finish_reason":"tool_calls"}]}\n\n'
+        + 'data: [DONE]\n\n',
+      ),
+      done: true,
+    });
+
+    const sseText = chunks.map((chunk) => new TextDecoder().decode(chunk.data)).join('');
+    expect(sseText).toContain('event: content_block_start');
+    expect(sseText).toContain('"type":"tool_use"');
+    expect(sseText).toContain('"name":"write"');
+    expect(sseText).toContain('event: content_block_delta');
+    expect(sseText).toContain('"type":"input_json_delta"');
+    expect(sseText).toContain('\\"path\\"');
+    expect(sseText).toContain('hello.txt');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -731,5 +753,26 @@ describe('createOpenAIChatToResponsesStreamingAdapter', () => {
     expect(sseText).toContain('"delta":" world"');
     expect(sseText).toContain('event: response.completed');
     expect(sseText).toContain('data: [DONE]');
+  });
+
+  it('converts streamed tool call deltas into responses function_call events', () => {
+    const adapter = createOpenAIChatToResponsesStreamingAdapter({ fallbackModel: 'gpt-4.1' });
+    const chunks = adapter.adaptChunk({
+      requestId: 'req-tool',
+      data: new TextEncoder().encode(
+        'data: {"id":"chatcmpl-tool","model":"gpt-4.1","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"write","arguments":"{\\"path\\""}}]},"finish_reason":null}]}\n\n'
+        + 'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":":\\"hello.txt\\"}"}}]},"finish_reason":"tool_calls"}]}\n\n'
+        + 'data: [DONE]\n\n',
+      ),
+      done: true,
+    });
+
+    const sseText = chunks.map((chunk) => new TextDecoder().decode(chunk.data)).join('');
+    expect(sseText).toContain('event: response.output_item.added');
+    expect(sseText).toContain('"type":"function_call"');
+    expect(sseText).toContain('event: response.function_call_arguments.delta');
+    expect(sseText).toContain('event: response.function_call_arguments.done');
+    expect(sseText).toContain('"name":"write"');
+    expect(sseText).toContain('hello.txt');
   });
 });
