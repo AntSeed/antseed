@@ -374,7 +374,6 @@ export function createOpenAIChatToAnthropicStreamingAdapter(
   let rawBuffer = '';
   let messageStarted = false;
   let textBlockStarted = false;
-  let nextContentIndex = 0;
   let outputTokens = 0;
   let stopReason: string | null = null;
   let messageId = options.fallbackModel ? `msg_${options.fallbackModel}` : 'msg_stream';
@@ -411,7 +410,7 @@ export function createOpenAIChatToAnthropicStreamingAdapter(
       event: 'content_block_start',
       data: {
         type: 'content_block_start',
-        index: nextContentIndex,
+        index: 0,
         content_block: {
           type: 'text',
           text: '',
@@ -430,7 +429,7 @@ export function createOpenAIChatToAnthropicStreamingAdapter(
         event: 'content_block_stop',
         data: {
           type: 'content_block_stop',
-          index: nextContentIndex,
+          index: 0,
         },
       });
     }
@@ -520,7 +519,7 @@ export function createOpenAIChatToAnthropicStreamingAdapter(
             event: 'content_block_delta',
             data: {
               type: 'content_block_delta',
-              index: nextContentIndex,
+              index: 0,
               delta: {
                 type: 'text_delta',
                 text: textDelta,
