@@ -15,10 +15,13 @@ import type {
   SerializedHttpResponseChunk,
 } from '@antseed/node'
 import {
+  createOpenAIChatToAnthropicStreamingAdapter,
+  createOpenAIChatToResponsesStreamingAdapter,
   detectRequestServiceApiProtocol,
   inferProviderDefaultServiceApiProtocols,
   type ServiceApiProtocol,
   selectTargetProtocolForRequest,
+  type StreamingResponseAdapter,
   type TargetProtocolSelection,
   transformAnthropicMessagesRequestToOpenAIChat,
   transformOpenAIChatResponseToAnthropicMessage,
@@ -1553,7 +1556,7 @@ export class BuyerProxy {
       },
     }
     let adaptResponse: ((response: SerializedHttpResponse) => SerializedHttpResponse) | null = null
-    let forceDisableUpstreamStreaming = false
+    let streamResponseAdapter: StreamingResponseAdapter | null = null
 
     if (selectedRoutePlan.selection?.requiresTransform) {
       if (
@@ -1579,7 +1582,11 @@ export class BuyerProxy {
             streamRequested: transformed.streamRequested,
             fallbackModel: transformed.requestedModel,
           })
-        forceDisableUpstreamStreaming = true
+        if (transformed.streamRequested) {
+          streamResponseAdapter = createOpenAIChatToAnthropicStreamingAdapter({
+            fallbackModel: transformed.requestedModel,
+          })
+        }
       } else if (
         requestProtocol === 'openai-responses'
         && selectedRoutePlan.selection.targetProtocol === 'openai-chat-completions'
@@ -1603,7 +1610,11 @@ export class BuyerProxy {
             fallbackModel: transformed.requestedModel,
             streamRequested: transformed.streamRequested,
           })
-        forceDisableUpstreamStreaming = true
+        if (transformed.streamRequested) {
+          streamResponseAdapter = createOpenAIChatToResponsesStreamingAdapter({
+            fallbackModel: transformed.requestedModel,
+          })
+        }
       } else {
         res.writeHead(502, { 'content-type': 'text/plain' })
         res.end('Unsupported protocol transformation path')
@@ -1617,8 +1628,7 @@ export class BuyerProxy {
     log(`Routing to peer ${selectedPeer.peerId.slice(0, 12)}...`)
 
     // Forward through P2P
-    const wantsStreaming = !forceDisableUpstreamStreaming
-      && requestWantsStreaming(requestForPeer.headers, requestForPeer.body)
+    const wantsStreaming = requestWantsStreaming(requestForPeer.headers, requestForPeer.body)
     const startTime = Date.now()
     try {
       if (wantsStreaming) {
@@ -1627,34 +1637,53 @@ export class BuyerProxy {
           onResponseStart: (startResponse: SerializedHttpResponse, metadata: RequestStreamResponseMetadata) => {
             if (!metadata.streaming) return
             streamed = true
+            const adaptedStartResponse = streamResponseAdapter
+              ? streamResponseAdapter.adaptStart(startResponse)
+              : startResponse
             const streamingHeaders = attachStreamingAntseedHeaders(
-              startResponse.headers,
+              adaptedStartResponse.headers,
               selectedPeer,
               requestForPeer.requestId,
             )
-            res.writeHead(startResponse.statusCode, streamingHeaders)
-            if (startResponse.body.length > 0) {
-              res.write(Buffer.from(startResponse.body))
+            res.writeHead(adaptedStartResponse.statusCode, streamingHeaders)
+            if (adaptedStartResponse.body.length > 0) {
+              res.write(Buffer.from(adaptedStartResponse.body))
             }
           },
           onResponseChunk: (chunk: SerializedHttpResponseChunk) => {
             if (!streamed) return
-            if (chunk.data.length > 0) {
-              res.write(Buffer.from(chunk.data))
+            const adaptedChunks = streamResponseAdapter
+              ? streamResponseAdapter.adaptChunk(chunk)
+              : [chunk]
+            for (const adaptedChunk of adaptedChunks) {
+              if (adaptedChunk.data.length > 0) {
+                res.write(Buffer.from(adaptedChunk.data))
+              }
             }
           },
         }, { signal: requestSignal })
 
-        const latencyMs = Date.now() - startTime
-        log(`Response: ${response.statusCode} (${latencyMs}ms, ${response.body.length} bytes)`)
-        if (response.statusCode >= 400) {
-          log(`Upstream error detail: ${summarizeErrorResponse(response)}`)
+        let responseForClient = response
+        if (!streamed && adaptResponse) {
+          responseForClient = adaptResponse(response)
         }
 
-        const telemetry = computeResponseTelemetry(requestForPeer, response.headers, response.body, selectedPeer)
+        const latencyMs = Date.now() - startTime
+        log(`Response: ${responseForClient.statusCode} (${latencyMs}ms, ${responseForClient.body.length} bytes)`)
+        if (responseForClient.statusCode >= 400) {
+          const prefix = adaptResponse && !streamed ? 'Upstream adapted error detail' : 'Upstream error detail'
+          log(`${prefix}: ${summarizeErrorResponse(responseForClient)}`)
+        }
+
+        const telemetry = computeResponseTelemetry(
+          requestForPeer,
+          responseForClient.headers,
+          responseForClient.body,
+          selectedPeer,
+        )
         if (router) {
           router.onResult(selectedPeer, {
-            success: !retryableStatusCodes.has(response.statusCode),
+            success: !retryableStatusCodes.has(responseForClient.statusCode),
             latencyMs,
             tokens: telemetry.usage.totalTokens,
           })
@@ -1662,7 +1691,7 @@ export class BuyerProxy {
 
         if (streamed) {
           // Headers already sent to client, can't retry
-          if (response.statusCode >= 200 && response.statusCode < 400) {
+          if (responseForClient.statusCode >= 200 && responseForClient.statusCode < 400) {
             this._rememberSuccessfulPeer(routeKey, selectedPeer.peerId)
           }
           if (!res.writableEnded) {
@@ -1673,21 +1702,27 @@ export class BuyerProxy {
 
         // Non-streamed response — check if retryable
         const responseHeaders = attachAntseedTelemetryHeaders(
-          response.headers,
+          responseForClient.headers,
           selectedPeer,
           telemetry,
           requestForPeer.requestId,
           latencyMs,
         )
-        if (retryableStatusCodes.has(response.statusCode)) {
-          return { done: false, statusCode: response.statusCode, responseBody: Buffer.from(response.body), responseHeaders, errorMessage: null }
+        if (retryableStatusCodes.has(responseForClient.statusCode)) {
+          return {
+            done: false,
+            statusCode: responseForClient.statusCode,
+            responseBody: Buffer.from(responseForClient.body),
+            responseHeaders,
+            errorMessage: null,
+          }
         }
 
-        if (response.statusCode >= 200 && response.statusCode < 400) {
+        if (responseForClient.statusCode >= 200 && responseForClient.statusCode < 400) {
           this._rememberSuccessfulPeer(routeKey, selectedPeer.peerId)
         }
-        res.writeHead(response.statusCode, responseHeaders)
-        res.end(Buffer.from(response.body))
+        res.writeHead(responseForClient.statusCode, responseHeaders)
+        res.end(Buffer.from(responseForClient.body))
         return { done: true }
       } else {
         const upstreamResponse = await this._node.sendRequest(selectedPeer, requestForPeer, { signal: requestSignal })

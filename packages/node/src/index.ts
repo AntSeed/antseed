@@ -37,6 +37,8 @@ export { ProxyMux } from './proxy/proxy-mux.js';
 export { resolveProvider } from './proxy/provider-detection.js';
 export {
   detectRequestServiceApiProtocol,
+  createOpenAIChatToAnthropicStreamingAdapter,
+  createOpenAIChatToResponsesStreamingAdapter,
   inferProviderDefaultServiceApiProtocols,
   selectTargetProtocolForRequest,
   transformAnthropicMessagesRequestToOpenAIChat,
@@ -46,6 +48,7 @@ export {
   type TargetProtocolSelection,
   type AnthropicToOpenAIRequestTransformResult,
   type ResponsesToOpenAIRequestTransformResult,
+  type StreamingResponseAdapter,
 } from './proxy/service-api-adapter.js';
 export { DefaultRouter, type DefaultRouterConfig } from './routing/default-router.js';
 

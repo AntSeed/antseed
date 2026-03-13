@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import type { SerializedHttpRequest, SerializedHttpResponse } from '../src/types/http.js';
 import {
+  createOpenAIChatToAnthropicStreamingAdapter,
+  createOpenAIChatToResponsesStreamingAdapter,
   detectRequestServiceApiProtocol,
   inferProviderDefaultServiceApiProtocols,
   selectTargetProtocolForRequest,
@@ -145,7 +147,7 @@ describe('transformAnthropicMessagesRequestToOpenAIChat', () => {
 
     const body = JSON.parse(new TextDecoder().decode(transformed!.request.body)) as Record<string, unknown>;
     expect(body.model).toBe('claude-sonnet');
-    expect(body.stream).toBe(false);
+    expect(body.stream).toBe(true);
     expect(Array.isArray(body.messages)).toBe(true);
     expect(Array.isArray(body.tools)).toBe(true);
     expect(body.tool_choice).toEqual({
@@ -222,6 +224,33 @@ describe('transformOpenAIChatResponseToAnthropicMessage', () => {
     expect(delta.type).toBe('input_json_delta');
     const parsedArgs = JSON.parse(delta.partial_json as string) as Record<string, unknown>;
     expect(parsedArgs).toEqual({ path: 'hello.txt' });
+  });
+});
+
+describe('createOpenAIChatToAnthropicStreamingAdapter', () => {
+  it('converts openai chat deltas into anthropic SSE frames incrementally', () => {
+    const adapter = createOpenAIChatToAnthropicStreamingAdapter({ fallbackModel: 'claude-sonnet' });
+    const start = adapter.adaptStart(makeOpenAIResponse({
+      headers: { 'content-type': 'text/event-stream' },
+      body: new Uint8Array(0),
+    }));
+    expect(start.headers['content-type']).toBe('text/event-stream');
+
+    const chunks = adapter.adaptChunk({
+      requestId: 'req-1',
+      data: new TextEncoder().encode(
+        'data: {"id":"chatcmpl-1","model":"gpt-4.1","choices":[{"delta":{"content":"Hello"},"finish_reason":null}]}\n\n'
+        + 'data: {"choices":[{"delta":{"content":" world"},"finish_reason":"stop"}]}\n\n'
+        + 'data: [DONE]\n\n',
+      ),
+      done: true,
+    });
+    const sseText = chunks.map((chunk) => new TextDecoder().decode(chunk.data)).join('');
+    expect(sseText).toContain('event: message_start');
+    expect(sseText).toContain('event: content_block_delta');
+    expect(sseText).toContain('"text":"Hello"');
+    expect(sseText).toContain('"text":" world"');
+    expect(sseText).toContain('event: message_stop');
   });
 });
 
@@ -330,7 +359,7 @@ describe('transformOpenAIResponsesRequestToOpenAIChat', () => {
     expect(messages[0]).toEqual({ role: 'user', content: 'Hello from input_text' });
   });
 
-  it('records streamRequested but always sends stream: false to upstream', () => {
+  it('preserves streamRequested on the upstream request', () => {
     const request = makeResponsesRequest({
       body: new TextEncoder().encode(JSON.stringify({
         model: 'gpt-4.1',
@@ -342,7 +371,7 @@ describe('transformOpenAIResponsesRequestToOpenAIChat', () => {
     expect(result!.streamRequested).toBe(true);
 
     const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
-    expect(body.stream).toBe(false);
+    expect(body.stream).toBe(true);
   });
 
   it('converts Responses API flat tools to Chat Completions nested format', () => {
@@ -671,5 +700,34 @@ describe('transformOpenAIChatResponseToOpenAIResponses', () => {
     expect(text).toContain('event: error');
     expect(text).toContain('"message":"Rate limit exceeded"');
     expect(text).toContain('"type":"rate_limit_error"');
+  });
+});
+
+describe('createOpenAIChatToResponsesStreamingAdapter', () => {
+  it('converts openai chat deltas into responses SSE frames incrementally', () => {
+    const adapter = createOpenAIChatToResponsesStreamingAdapter({ fallbackModel: 'gpt-4.1' });
+    const start = adapter.adaptStart(makeOpenAIResponse({
+      headers: { 'content-type': 'text/event-stream' },
+      body: new Uint8Array(0),
+    }));
+    expect(start.headers['content-type']).toBe('text/event-stream');
+
+    const chunks = adapter.adaptChunk({
+      requestId: 'req-resp-1',
+      data: new TextEncoder().encode(
+        'data: {"id":"chatcmpl-stream","model":"gpt-4.1","choices":[{"delta":{"content":"Hello"},"finish_reason":null}]}\n\n'
+        + 'data: {"choices":[{"delta":{"content":" world"},"finish_reason":"stop"}]}\n\n'
+        + 'data: [DONE]\n\n',
+      ),
+      done: true,
+    });
+
+    const sseText = chunks.map((chunk) => new TextDecoder().decode(chunk.data)).join('');
+    expect(sseText).toContain('event: response.created');
+    expect(sseText).toContain('event: response.output_text.delta');
+    expect(sseText).toContain('"delta":"Hello"');
+    expect(sseText).toContain('"delta":" world"');
+    expect(sseText).toContain('event: response.completed');
+    expect(sseText).toContain('data: [DONE]');
   });
 });
