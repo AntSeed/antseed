@@ -1,11 +1,6 @@
-// Re-export from the canonical implementation in @antseed/node.
-// The CLI previously maintained its own copy; this file now exists
-// only to preserve local import paths for buyer-proxy and tests.
 export {
-  type ServiceApiProtocol,
-  type TargetProtocolSelection,
-  type AnthropicToOpenAIRequestTransformResult,
-  type ResponsesToOpenAIRequestTransformResult,
+  createOpenAIChatToAnthropicStreamingAdapter,
+  createOpenAIChatToResponsesStreamingAdapter,
   detectRequestServiceApiProtocol,
   inferProviderDefaultServiceApiProtocols,
   selectTargetProtocolForRequest,
@@ -13,4 +8,14 @@ export {
   transformOpenAIChatResponseToAnthropicMessage,
   transformOpenAIResponsesRequestToOpenAIChat,
   transformOpenAIChatResponseToOpenAIResponses,
+} from '@antseed/node'
+
+export type {
+  AnthropicToOpenAIRequestTransformResult,
+  ResponsesToOpenAIRequestTransformResult,
+  SerializedHttpResponse,
+  SerializedHttpResponseChunk,
+  ServiceApiProtocol,
+  StreamingResponseAdapter,
+  TargetProtocolSelection,
 } from '@antseed/node'
