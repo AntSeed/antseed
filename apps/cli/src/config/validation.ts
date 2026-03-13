@@ -5,7 +5,7 @@ import type {
 } from './types.js';
 
 const SERVICE_CATEGORY_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
-const PUBLIC_ADDRESS_PATTERN = /^.+:\d+$/;
+const MAX_PUBLIC_ADDRESS_LENGTH = 255;
 
 function validatePricingLeaf(
   path: string,
@@ -81,6 +81,31 @@ function validateSellerServiceCategories(
   }
 }
 
+function parsePublicAddress(value: string): { host: string; port: number } | null {
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.length > MAX_PUBLIC_ADDRESS_LENGTH) {
+    return null;
+  }
+
+  const lastColon = trimmed.lastIndexOf(':');
+  if (lastColon <= 0 || lastColon === trimmed.length - 1) {
+    return null;
+  }
+
+  const host = trimmed.slice(0, lastColon).trim();
+  const portText = trimmed.slice(lastColon + 1);
+  if (!/^\d+$/.test(portText)) {
+    return null;
+  }
+
+  const port = Number(portText);
+  if (host.length === 0 || !Number.isInteger(port) || port < 1 || port > 65535) {
+    return null;
+  }
+
+  return { host, port };
+}
+
 /**
  * Validate the full config and return all issues.
  */
@@ -109,10 +134,7 @@ export function validateConfig(config: AntseedConfig): string[] {
 
   if (config.seller.publicAddress) {
     const raw = config.seller.publicAddress.trim();
-    const parts = raw.split(':');
-    const port = Number(parts.at(-1));
-    const host = parts.slice(0, -1).join(':').trim();
-    if (!PUBLIC_ADDRESS_PATTERN.test(raw) || host.length === 0 || !Number.isInteger(port) || port < 1 || port > 65535) {
+    if (parsePublicAddress(raw) === null) {
       errors.push('seller.publicAddress must be in the form "host:port" with a valid port');
     }
   }
