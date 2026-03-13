@@ -148,6 +148,7 @@ describe('transformAnthropicMessagesRequestToOpenAIChat', () => {
     const body = JSON.parse(new TextDecoder().decode(transformed!.request.body)) as Record<string, unknown>;
     expect(body.model).toBe('claude-sonnet');
     expect(body.stream).toBe(true);
+    expect(body.stream_options).toEqual({ include_usage: true });
     expect(Array.isArray(body.messages)).toBe(true);
     expect(Array.isArray(body.tools)).toBe(true);
     expect(body.tool_choice).toEqual({
@@ -372,6 +373,7 @@ describe('transformOpenAIResponsesRequestToOpenAIChat', () => {
 
     const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
     expect(body.stream).toBe(true);
+    expect(body.stream_options).toEqual({ include_usage: true });
   });
 
   it('converts Responses API flat tools to Chat Completions nested format', () => {

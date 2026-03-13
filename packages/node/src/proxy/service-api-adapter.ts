@@ -632,6 +632,7 @@ export function transformAnthropicMessagesRequestToOpenAIChat(
     ...(requestedModel ? { model: requestedModel } : {}),
     messages: mappedMessages,
     stream: streamRequested,
+    ...(streamRequested ? { stream_options: { include_usage: true } } : {}),
   };
 
   if (typeof body.max_tokens === 'number') {
@@ -1022,6 +1023,7 @@ export function transformOpenAIResponsesRequestToOpenAIChat(
     ...(requestedModel ? { model: requestedModel } : {}),
     messages,
     stream: streamRequested,
+    ...(streamRequested ? { stream_options: { include_usage: true } } : {}),
   };
 
   if (typeof body.max_output_tokens === 'number') {

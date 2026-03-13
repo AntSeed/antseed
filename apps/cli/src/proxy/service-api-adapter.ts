@@ -46,10 +46,13 @@ function parseSseBuffer(buffer: string): { events: Array<{ data: string }>; rema
   const normalized = buffer.replace(/\r\n/g, '\n')
   const blocks = normalized.split('\n\n')
   const remainder = blocks.pop() ?? ''
-  const events = blocks
-    .map((block) => block.split('\n').find((line) => line.startsWith('data: ')) ?? '')
-    .filter((line) => line.length > 0)
-    .map((line) => ({ data: line.slice('data: '.length) }))
+  const events = blocks.flatMap((block) => {
+    const dataLines = block
+      .split('\n')
+      .filter((line) => line.startsWith('data: '))
+      .map((line) => line.slice('data: '.length))
+    return dataLines.length > 0 ? [{ data: dataLines.join('\n') }] : []
+  })
   return { events, remainder }
 }
 
