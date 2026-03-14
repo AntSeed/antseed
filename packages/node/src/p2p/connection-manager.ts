@@ -551,14 +551,14 @@ export class ConnectionManager extends EventEmitter {
   private _handleInboundSocket(socket: Socket): void {
     let buffer = Buffer.alloc(0);
     const timeout = setTimeout(() => {
-      socket.destroy(new Error("Inbound socket intro timeout"));
+      socket.destroy();
     }, INITIAL_LINE_TIMEOUT_MS);
 
     const onData = (chunk: Buffer): void => {
       if (buffer.length + chunk.length > MAX_INITIAL_LINE_BYTES) {
         socket.off("data", onData);
         clearTimeout(timeout);
-        socket.destroy(new Error("Inbound socket intro exceeded 8KB limit"));
+        socket.destroy();
         return;
       }
       buffer = Buffer.concat([buffer, chunk]);
@@ -583,11 +583,11 @@ export class ConnectionManager extends EventEmitter {
       try {
         intro = JSON.parse(line) as InitialWireMessage;
       } catch {
-        socket.destroy(new Error("Failed to parse initial socket message"));
+        socket.destroy();
         return;
       }
       if (intro.type !== "intro" && intro.type !== "hello") {
-        socket.destroy(new Error("Unsupported initial socket message type"));
+        socket.destroy();
         return;
       }
 
@@ -597,7 +597,7 @@ export class ConnectionManager extends EventEmitter {
         replayGuard: this._introReplayGuard,
       });
       if (!verified.ok || !verified.peerId) {
-        socket.destroy(new Error(`Inbound auth failed: ${verified.reason ?? "unknown reason"}`));
+        socket.destroy();
         return;
       }
 
@@ -611,12 +611,18 @@ export class ConnectionManager extends EventEmitter {
         return;
       }
 
-      socket.destroy(new Error("Unsupported initial socket message type"));
+      socket.destroy();
     };
 
     socket.on("data", onData);
     socket.on("error", (err: Error) => {
       clearTimeout(timeout);
+      // ECONNRESET / EPIPE are expected when scanners or bots drop the
+      // connection before sending the intro — suppress to avoid log noise.
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "ECONNRESET" || code === "EPIPE" || code === "ECONNABORTED") {
+        return;
+      }
       this._emitError(err);
     });
     socket.on("close", () => {
@@ -628,7 +634,7 @@ export class ConnectionManager extends EventEmitter {
     const MAX_HEADER_SIZE = 8 * 1024; // 8KB
     let headerBytes = 0;
     const headerTimeout = setTimeout(() => {
-      socket.destroy(new Error("HTTP header read timeout"));
+      socket.destroy();
     }, 5_000);
 
     const onData = (chunk: Buffer): void => {
@@ -636,7 +642,7 @@ export class ConnectionManager extends EventEmitter {
       if (headerBytes > MAX_HEADER_SIZE) {
         clearTimeout(headerTimeout);
         socket.off("data", onData);
-        socket.destroy(new Error("HTTP headers exceeded 8KB limit"));
+        socket.destroy();
         return;
       }
       if (chunk.includes(Buffer.from("\r\n\r\n")) || chunk.includes(Buffer.from("\n\n"))) {
