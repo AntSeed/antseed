@@ -649,6 +649,21 @@ function updateServiceProviderHints(
   }
 }
 
+function updateServiceProtocolMap(
+  serviceProtocolMap: Map<string, ChatServiceProtocol>,
+  entries: ChatServiceCatalogEntry[],
+): void {
+  serviceProtocolMap.clear();
+  for (const entry of entries) {
+    const serviceId = normalizeServiceValue(entry.id)?.toLowerCase();
+    if (!serviceId) continue;
+    // First entry wins — the catalog is sorted by popularity (count desc)
+    if (!serviceProtocolMap.has(serviceId)) {
+      serviceProtocolMap.set(serviceId, entry.protocol);
+    }
+  }
+}
+
 function resolveProviderHintForService(
   explicitProvider?: string,
 ): string | null {
@@ -1138,24 +1153,41 @@ function deriveTitle(messages: AiChatMessage[]): string {
   return 'New conversation';
 }
 
-function makeProxyService(serviceId: string, port: number): Model<'anthropic-messages'> {
-  return {
+function makeProxyService(
+  serviceId: string,
+  port: number,
+  protocol: ChatServiceProtocol = 'anthropic-messages',
+  extraHeaders?: Record<string, string>,
+): Model<any> {
+  const base = {
     id: serviceId,
     name: serviceId,
-    api: 'anthropic-messages',
     provider: PROXY_PROVIDER_ID,
     baseUrl: `http://127.0.0.1:${port}`,
     reasoning: true,
-    input: ['text', 'image'],
-    cost: {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-    },
+    input: ['text', 'image'] as ('text' | 'image')[],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 200_000,
     maxTokens: 16_384,
+    ...(extraHeaders ? { headers: extraHeaders } : {}),
   };
+
+  if (protocol === 'openai-chat-completions') {
+    return {
+      ...base,
+      api: 'openai-completions' as const,
+      compat: {
+        supportsStore: false,
+        supportsDeveloperRole: false,
+        supportsReasoningEffort: false,
+        supportsUsageInStreaming: true,
+        maxTokensField: 'max_tokens' as const,
+        supportsStrictMode: false,
+      },
+    };
+  }
+
+  return { ...base, api: 'anthropic-messages' as const };
 }
 
 function mapStopReason(value: unknown): AssistantMessage['stopReason'] {
@@ -2260,6 +2292,7 @@ export function registerPiChatHandlers({
   const store = new PiConversationStore();
   const activeRunsByConversation = new Map<string, ActiveRun>();
   const serviceProviderHints = new Map<string, string[]>();
+  const serviceProtocolMap = new Map<string, ChatServiceProtocol>();
   const preferredPeerByConversationId = new Map<string, string>();
   let serviceCatalogRefreshPromise: Promise<ChatServiceCatalogEntry[]> | null = null;
   let lastServiceCatalogRefreshAt = 0;
@@ -2347,7 +2380,16 @@ export function registerPiChatHandlers({
     const providerHint = resolveProviderHintForService(
       providerOverride,
     );
-    const proxyModel = makeProxyService(serviceId, proxyPort);
+    const protocol = serviceProtocolMap.get(serviceId.toLowerCase()) ?? 'anthropic-messages';
+    const antseedHeaders: Record<string, string> = {};
+    if (providerHint) antseedHeaders['x-antseed-provider'] = providerHint;
+    if (preferredPeerId) antseedHeaders['x-antseed-prefer-peer'] = preferredPeerId;
+    const proxyModel = makeProxyService(
+      serviceId,
+      proxyPort,
+      protocol,
+      Object.keys(antseedHeaders).length > 0 ? antseedHeaders : undefined,
+    );
 
     const authStorage = AuthStorage.inMemory();
     authStorage.setRuntimeApiKey(PROXY_PROVIDER_ID, PROXY_RUNTIME_API_KEY);
@@ -2397,9 +2439,14 @@ export function registerPiChatHandlers({
 
     const turnMetaQueue: AiMessageMeta[] = [];
     const toolArgsById = new Map<string, Record<string, unknown>>();
-    session.agent.streamFn = createBuyerProxyStreamFn((meta) => {
-      turnMetaQueue.push(meta);
-    }, providerHint, preferredPeerId ?? null);
+    if (protocol === 'anthropic-messages') {
+      // Anthropic: use custom stream function with proxy meta parsing
+      session.agent.streamFn = createBuyerProxyStreamFn((meta) => {
+        turnMetaQueue.push(meta);
+      }, providerHint, preferredPeerId ?? null);
+    }
+    // OpenAI: let pi-ai use its built-in streamOpenAICompletions via the api registry.
+    // The model already has api: 'openai-completions' and antseed routing headers.
 
     let turnIndex = 0;
     let userPersisted = false;
@@ -2656,6 +2703,7 @@ export function registerPiChatHandlers({
 
       const limited = limitChatServiceCatalogEntries(normalizeChatServiceCatalogEntries(servicesFromMetadata));
       updateServiceProviderHints(serviceProviderHints, limited);
+      updateServiceProtocolMap(serviceProtocolMap, limited);
       void writeChatServiceCatalogCache(limited).catch(() => undefined);
       lastServiceCatalogRefreshAt = Date.now();
       return limited;
@@ -2683,6 +2731,7 @@ export function registerPiChatHandlers({
       const cached = await readChatServiceCatalogCache();
       if (cached) {
         updateServiceProviderHints(serviceProviderHints, cached.entries);
+        updateServiceProtocolMap(serviceProtocolMap, cached.entries);
         const cacheAgeMs = Date.now() - cached.updatedAt;
         if (cacheAgeMs <= CHAT_SERVICE_CACHE_MAX_AGE_MS) {
           if (cacheAgeMs > CHAT_SERVICE_CACHE_REFRESH_DEBOUNCE_MS) {
