@@ -380,6 +380,7 @@ const CHAT_SERVICE_MAX_OPTIONS_PER_PROVIDER = 40;
 const CHAT_SERVICE_CACHE_FILE = path.join(CHAT_DATA_DIR, 'service-catalog-cache.json');
 const CHAT_SERVICE_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
 const CHAT_SERVICE_CACHE_REFRESH_DEBOUNCE_MS = 60_000;
+const OPENAI_REASONING_FIELDS = ['reasoning_content', 'reasoning', 'reasoning_text'] as const;
 
 function normalizeTokenCount(value: unknown): number {
   const parsed = Number(value);
@@ -2232,6 +2233,7 @@ function createBuyerProxyOpenAIStreamFn(
         let currentBlock: AssistantMessage['content'][number] | null = null;
         const blocks = message.content;
         const blockIndex = (): number => blocks.length - 1;
+        const toolJsonByBlockIndex = new Map<number, string>();
 
         const finishCurrentBlock = (): void => {
           if (!currentBlock) return;
@@ -2240,10 +2242,9 @@ function createBuyerProxyOpenAIStreamFn(
           } else if (currentBlock.type === 'thinking') {
             stream.push({ type: 'thinking_end', contentIndex: blockIndex(), content: currentBlock.thinking, partial: message });
           } else if (currentBlock.type === 'toolCall') {
-            const merged = (currentBlock as any).partialArgs ?? '';
+            const merged = toolJsonByBlockIndex.get(blockIndex()) ?? '';
             const parsed = parseToolJson(merged);
             if (parsed) currentBlock.arguments = parsed;
-            delete (currentBlock as any).partialArgs;
             stream.push({ type: 'toolcall_end', contentIndex: blockIndex(), toolCall: currentBlock, partial: message });
           }
         };
@@ -2317,7 +2318,7 @@ function createBuyerProxyOpenAIStreamFn(
             }
 
             // Reasoning / thinking content
-            const reasoningFields = ['reasoning_content', 'reasoning', 'reasoning_text'];
+            const reasoningFields = OPENAI_REASONING_FIELDS;
             let foundReasoning: string | null = null;
             for (const field of reasoningFields) {
               const val = delta[field];
@@ -2353,10 +2354,10 @@ function createBuyerProxyOpenAIStreamFn(
                     id: tcId ?? '',
                     name: (tcFunc?.name as string) ?? '',
                     arguments: {} as Record<string, unknown>,
-                    partialArgs: '',
                   };
-                  currentBlock = toolBlock as any;
+                  currentBlock = toolBlock;
                   blocks.push(toolBlock);
+                  toolJsonByBlockIndex.set(blockIndex(), '');
                   stream.push({ type: 'toolcall_start', contentIndex: blockIndex(), partial: message });
                 }
                 if (currentBlock && currentBlock.type === 'toolCall') {
@@ -2365,9 +2366,10 @@ function createBuyerProxyOpenAIStreamFn(
                   let argsDelta = '';
                   if (tcFunc?.arguments) {
                     argsDelta = String(tcFunc.arguments);
-                    const prev = ((currentBlock as any).partialArgs as string) ?? '';
-                    (currentBlock as any).partialArgs = prev + argsDelta;
-                    const parsed = parseToolJson((currentBlock as any).partialArgs as string);
+                    const idx = blockIndex();
+                    const merged = (toolJsonByBlockIndex.get(idx) ?? '') + argsDelta;
+                    toolJsonByBlockIndex.set(idx, merged);
+                    const parsed = parseToolJson(merged);
                     if (parsed) currentBlock.arguments = parsed;
                   }
                   stream.push({ type: 'toolcall_delta', contentIndex: blockIndex(), delta: argsDelta, partial: message });
