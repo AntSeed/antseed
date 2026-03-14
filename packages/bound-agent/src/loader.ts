@@ -85,14 +85,14 @@ export async function loadBoundAgent(agentDir: string): Promise<BoundAgentDefini
   const knowledge: KnowledgeModule[] = [];
   if (manifest.knowledge) {
     for (const entry of manifest.knowledge) {
-      if (!entry.name || !entry.file) {
-        throw new Error(`Knowledge entry must have "name" and "file" fields`);
+      if (!entry.name || !entry.description || !entry.file) {
+        throw new Error(`Knowledge entry must have "name", "description", and "file" fields`);
       }
       const filePath = isAbsolute(entry.file)
         ? entry.file
         : join(agentDir, entry.file);
       const content = await readFile(filePath, 'utf-8');
-      knowledge.push({ name: entry.name, description: entry.description ?? '', content });
+      knowledge.push({ name: entry.name, description: entry.description, content });
     }
   }
 
