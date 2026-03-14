@@ -106,16 +106,18 @@ function EarnAnimation() {
   const stageRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [activeNode, setActiveNode] = useState(-1);
-  const [feed, setFeed] = useState<{skill:string;amount:string;id:number}[]>([]);
+  const initialSkills = ['Video Creator','Legal in Guatemala','Company Intelligence','Medical Diagnostics BR','Manga Translator JP'];
+  const initialFeed = initialSkills.map((skill, i) => ({skill, amount:(Math.random()*0.014+0.001).toFixed(3), id:i}));
+  const [feed, setFeed] = useState<{skill:string;amount:string;id:number}[]>(initialFeed);
   const startedRef = useRef(false);
-  const totalRef = useRef(0);
-  const feedIdRef = useRef(0);
+  const totalRef = useRef(initialFeed.reduce((s,f) => s + parseFloat(f.amount), 0));
+  const feedIdRef = useRef(initialFeed.length);
   const hexProgRef = useRef<SVGPolygonElement>(null);
   const hexGlowRef = useRef<SVGPolygonElement>(null);
 
   const counter = totalRef.current.toFixed(3);
 
-  const skills = ['Legal analysis skill','Code review agent','Translation skill','Writing assistant','Data analysis agent','Medical triage skill','Research agent','Tax advisory skill','Content pipeline','Compliance monitor'];
+  const skills = ['Video Creator','Legal in Guatemala','Company Intelligence','Medical Diagnostics BR','Manga Translator JP','Real Estate Analyst NY','Solidity Auditor','Podcast Editor','Immigration Law UK','Supply Chain Optimizer'];
 
   // Ant particles circling the hex
   useEffect(() => {
@@ -209,10 +211,10 @@ function EarnAnimation() {
   }, []);
 
   const nodeData = useMemo(() => [
-    {cls:styles.nTop, label:'You provide', sub:'Services & Agents', icon:<svg viewBox="0 0 24 24" fill="none" stroke="#1FD87A" strokeWidth="1.8" strokeLinecap="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>},
-    {cls:styles.nRight, label:'Users request', sub:'Routed to you', icon:<svg viewBox="0 0 24 24" fill="none" stroke="#1FD87A" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="12" r="3"/><circle cx="5" cy="6" r="1.5"/><circle cx="19" cy="6" r="1.5"/><circle cx="5" cy="18" r="1.5"/><circle cx="19" cy="18" r="1.5"/><line x1="10" y1="10" x2="6.2" y2="7.2"/><line x1="14" y1="10" x2="17.8" y2="7.2"/><line x1="10" y1="14" x2="6.2" y2="16.8"/><line x1="14" y1="14" x2="17.8" y2="16.8"/></svg>},
-    {cls:styles.nBottom, label:'Settlement', sub:'Per request', icon:<svg viewBox="0 0 24 24" fill="none" stroke="#1FD87A" strokeWidth="1.8" strokeLinecap="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/><path d="M9 10h6M9 13h3"/></svg>},
-    {cls:styles.nLeft, label:'You earn', sub:'Passive income', icon:<svg viewBox="0 0 24 24" fill="none" stroke="#1FD87A" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v12M8 10c0-1.1 1.8-2 4-2s4 .9 4 2-1.8 2-4 2-4 .9-4 2 1.8 2 4 2 4-.9 4-2"/></svg>},
+    {cls:styles.nTop, label:'You offer', sub:'Expertise & Services', icon:<svg viewBox="0 0 24 24" fill="none" stroke="#1FD87A" strokeWidth="1.8" strokeLinecap="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>},
+    {cls:styles.nRight, label:'Buyers request', sub:'Matched to you', icon:<svg viewBox="0 0 24 24" fill="none" stroke="#1FD87A" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="12" r="3"/><circle cx="5" cy="6" r="1.5"/><circle cx="19" cy="6" r="1.5"/><circle cx="5" cy="18" r="1.5"/><circle cx="19" cy="18" r="1.5"/><line x1="10" y1="10" x2="6.2" y2="7.2"/><line x1="14" y1="10" x2="17.8" y2="7.2"/><line x1="10" y1="14" x2="6.2" y2="16.8"/><line x1="14" y1="14" x2="17.8" y2="16.8"/></svg>},
+    {cls:styles.nBottom, label:'Delivery verified', sub:'On-chain proof', icon:<svg viewBox="0 0 24 24" fill="none" stroke="#1FD87A" strokeWidth="1.8" strokeLinecap="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/><path d="M9 10h6M9 13h3"/></svg>},
+    {cls:styles.nLeft, label:'You earn', sub:'Reputation grows', icon:<svg viewBox="0 0 24 24" fill="none" stroke="#1FD87A" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v12M8 10c0-1.1 1.8-2 4-2s4 .9 4 2-1.8 2-4 2-4 .9-4 2 1.8 2 4 2 4-.9 4-2"/></svg>},
   ], []);
 
   return (
@@ -268,13 +270,13 @@ function EarnAnimation() {
 
 /* ========== FAQ ========== */
 const FAQ_DATA = [
-  {q:'What is AntSeed?', a:"AntSeed is a peer-to-peer network for AI. It connects people who need AI (users, developers, agents) directly with those who serve it: inference providers, specialized providers, and agent operators. No centralized middleman."},
+  {q:'What is AntSeed?', a:"AntSeed is a peer-to-peer network for AI services. It connects people who need a job done with providers who deliver it. Specialized inference, domain expertise, autonomous agents — whatever the job needs. Providers set their own price, build their own reputation, and get paid directly. No centralized middleman."},
   {q:'Is it really private?', a:"Privacy works in two layers. Layer 1, the base network: requests go peer-to-peer like a VPN, so the provider never knows who you are. No accounts, no identity, no IP exposed. Layer 2, TEE providers: hardware enclaves (Intel TDX, AMD SEV) where not even the operator can see your prompts. Cryptographic proof, not a policy promise. Payments are settled on-chain. The money trail stays private too. TEE verification is coming in a future release."},
-  {q:'What services are available?', a:"Any service a provider chooses to offer. Open-weight models, specialized fine-tunes, uncensored inference, and providers using their own API access to other platforms. Available services depend on what providers are online right now. Check the <a href='/network'>network page</a> for a live view."},
-  {q:'How do I earn on AntSeed?', a:"Provide inference or a specialized model. Run open-weight models, fine-tunes, or domain-specific skills and earn per request. Operate agents that solve real problems and rent them out on the network. Or just connect API keys you already have, like Together AI or other providers, and earn on traffic routed through you. The network is built on reputation. The more reliable your offering, the more traffic you attract."},
+  {q:'What services are available?', a:"Anything a provider chooses to offer. Specialized inference, domain expertise in legal, medical, finance, video creation, uncensored inference, autonomous agents for code review or compliance, and more. What's available depends on who's online. Check the <a href='/network'>network page</a> for a live view."},
+  {q:'How do I earn on AntSeed?', a:"Wrap your expertise in AI and sell it on the network. Set your own price. Video creation, legal analysis, code audits, uncensored inference, autonomous agents — whatever you know how to do. How you deliver is your business — pick the models, build the workflows. The network only measures delivery quality. Every verified delivery builds a track record that belongs to your wallet, not a platform."},
   {q:'Do I need an account or API key?', a:"No. Download AntStation, connect your wallet, and you're on the network. No sign-up, no API key, no credit card."},
   {q:'What is AntStation?', a:"AntStation is the desktop client for AntSeed. It gives you a chat interface, connects you to the P2P network, and handles service routing. For developers, the AntSeed CLI (@antseed/cli) exposes a local OpenAI-compatible endpoint so your existing tools (Claude Code, Codex, VS Code) can use the network too."},
-  {q:'How is this different from OpenRouter or other API aggregators?', a:"No curation. Anyone can provide, anyone can consume. API aggregators are centralized intermediaries that decide which models you get access to, proxy your requests through their servers, require accounts, and can see your data. AntSeed is fully peer-to-peer. Your traffic goes directly from you to the provider. No middleman, no logs, no single point of failure or control. Plus, AntSeed is not just inference. The network supports specialized chat, autonomous agents, and skills-based providers, things no aggregator offers."},
+  {q:'How is this different from OpenRouter or other API aggregators?', a:"You don't choose a model — you choose the job you need done. API aggregators are centralized proxies for inference. AntSeed is a peer-to-peer network for AI services — not just inference. Specialized expertise, autonomous agents, uncensored inference. Anyone can provide, anyone can consume. Your request goes directly to the provider. Your reputation is on-chain and belongs to you. No middleman, no logs, no single point of control."},
 ];
 
 function FAQSection() {
@@ -312,20 +314,17 @@ export default function Home(): JSX.Element {
   return (
     <Layout
       title={`${siteConfig.title} | ${siteConfig.tagline}`}
-      description="An open market for machines to trade intelligence. Agents discover, carry, and deliver AI services peer-to-peer."
+      description="A peer-to-peer network for AI services. Find the right expert for the job, or become one. Anonymous, reputation-based."
       wrapperClassName="homepage-wrapper">
 
       {/* Hero */}
       <section className={styles.hero}>
         <h1 className={styles.heroTitle}>The Unstoppable<br/>AI Economy</h1>
-        <p className={styles.heroSub}>Access, build, and monetize AI. No middleman.</p>
+        <p className={styles.heroSub}>AI that works. Expertise you own. No middleman.</p>
       </section>
 
       {/* Liveness */}
       <section className={styles.live}><LiveBar /></section>
-
-      {/* Tagline */}
-      <div className={styles.tagline}>P2P inference. Specialized chat. Autonomous agents. One network.</div>
 
       {/* Download */}
       <div className={styles.downloads}>
@@ -359,6 +358,55 @@ export default function Home(): JSX.Element {
         </div>
       </div>
 
+      {/* What is AntSeed — unified feature section */}
+      <section className={styles.features}>
+        <div className={styles.featuresGrid}>
+          <div className={styles.feat}>
+            <div className={styles.featIcon}><svg viewBox="0 0 44 44" fill="none"><rect x="2" y="2" width="40" height="40" rx="10" stroke="#1FD87A" strokeWidth="1.5" fill="#fff"/><circle cx="22" cy="22" r="8" stroke="#1FD87A" strokeWidth="1.5" fill="none"/><path d="M22 14v-4M22 34v-4M30 22h4M8 22h4" stroke="#1FD87A" strokeWidth="1.5" strokeLinecap="round"/><circle cx="22" cy="22" r="3" fill="#1FD87A"/></svg></div>
+            <h4>A peer-to-peer network for AI services.</h4>
+            <p>Find specialized inference, domain experts, or autonomous agents that handle real work. Need a legal review, a code audit, a video edited, or a financial analysis? Find a provider who built real expertise into their service. They deliver the job. It's their job to pick the model and workflows to provide you with the best results.</p>
+          </div>
+          <div className={styles.feat}>
+            <div className={styles.featIcon}><svg viewBox="0 0 44 44" fill="none"><rect x="2" y="2" width="40" height="40" rx="10" stroke="#1FD87A" strokeWidth="1.5" fill="#fff"/><path d="M14 18h16M14 22h12M14 26h8" stroke="#1FD87A" strokeWidth="1.5" strokeLinecap="round"/><circle cx="32" cy="14" r="4" fill="#1FD87A"/><path d="M30.5 14l1 1 2-2.5" stroke="#fff" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"/></svg></div>
+            <h4>Reputation-based.</h4>
+            <p>Every request goes directly from you to the provider. No platform in the middle. Providers set their own price and build a reputation with every verified delivery. That reputation is on-chain and belongs to them permanently. The better the track record, the more traffic they attract.</p>
+          </div>
+          <div className={styles.feat}>
+            <div className={styles.featIcon}><svg viewBox="0 0 44 44" fill="none"><rect x="2" y="2" width="40" height="40" rx="10" stroke="#1FD87A" strokeWidth="1.5" fill="#fff"/><circle cx="22" cy="22" r="9" stroke="#1FD87A" strokeWidth="1.5" fill="none"/><path d="M22 16v6l4 3" stroke="#1FD87A" strokeWidth="1.5" strokeLinecap="round"/><circle cx="22" cy="22" r="2" fill="#1FD87A"/><path d="M15 10l-2-3M29 10l2-3" stroke="#1FD87A" strokeWidth="1.5" strokeLinecap="round"/></svg></div>
+            <h4>Anonymous. Private. Uncensored.</h4>
+            <p>No accounts, no logging, no corporate middleman watching what you ask. Choose TEE-secured providers for maximum privacy where not even the operator can see your data. Some providers run uncensored models with no content restrictions. Ask anything, explore anything, without anyone looking over your shoulder.</p>
+          </div>
+        </div>
+      </section>
+
+      {/* Build Once. Earn Forever. */}
+      <section className={styles.creator}>
+        <h2 className={styles.creatorTitle}>Build Once. Earn Forever.</h2>
+        <p className={styles.creatorSub}>Your expertise has a price. Set it yourself. Serve it on the network. Build a reputation that compounds with every delivery. No middleman. No permission needed. No kill switch on your income.</p>
+        <BrowserOnly fallback={<div style={{height:'740px'}}/>}>{() => <EarnAnimation />}</BrowserOnly>
+        <Link to="/docs/intro" className={styles.creatorCta}>Start Building →</Link>
+      </section>
+
+      {/* Join the economy */}
+      <section className={styles.supply}>
+        <div className={styles.supplyHeader}>
+          <h2>Join the economy.</h2>
+        </div>
+        <div className={styles.supplyGrid}>
+          <div className={styles.supplyCol}>
+            <div className={styles.supplyLabel}>Sell a service</div>
+            <h4>Your expertise. Your price.</h4>
+            <p>Video creation, legal review, financial analysis, code audits, uncensored inference, autonomous agents. Whatever you know how to do, wrap it in AI and sell it on the network. Build an agent that handles real work and rent it out 24/7. How you deliver is your business. Change models, update workflows, add new capabilities. The network only measures the quality of what you deliver.</p>
+          </div>
+          <div className={styles.supplyCol}>
+            <div className={styles.supplyLabel}>Build reputation</div>
+            <h4>Every delivery compounds.</h4>
+            <p>Each verified delivery builds a track record that belongs to your wallet. Not a platform that can revoke it. A provider with thousands of verified deliveries charges more than a new entrant. That premium is earned through the work, and it compounds. Early providers build moats that cannot be bought.</p>
+          </div>
+
+        </div>
+      </section>
+
       {/* Agents & Developers — full width */}
       <div className={styles.agentsSection}>
         <div className={styles.agentsCopy}>
@@ -389,84 +437,7 @@ export default function Home(): JSX.Element {
         </div>
       </div>
 
-      {/* Three feature cards */}
-      <section className={styles.features}>
-        <div className={styles.featuresGrid}>
-          <div className={styles.feat}>
-            <div className={styles.featIcon}><svg viewBox="0 0 44 44" fill="none"><rect x="2" y="2" width="40" height="40" rx="10" stroke="#1FD87A" strokeWidth="1.5" fill="#fff"/><circle cx="22" cy="22" r="8" stroke="#1FD87A" strokeWidth="1.5" fill="none"/><path d="M22 14v-4M22 34v-4M30 22h4M8 22h4" stroke="#1FD87A" strokeWidth="1.5" strokeLinecap="round"/><circle cx="22" cy="22" r="3" fill="#1FD87A"/></svg></div>
-            <div className={styles.featTitle}>Anonymous Inference</div>
-            <h4>Peer-to-peer. Anonymous. Always on.</h4>
-            <p>Connect directly to real providers running different services. No corporate middleman. Every request is peer-to-peer. Choose TEE-secured nodes for maximum privacy, where not even the operator can see your data. No accounts, no logging, no lock-in.</p>
-          </div>
-          <div className={styles.feat}>
-            <div className={styles.featIcon}><svg viewBox="0 0 44 44" fill="none"><rect x="2" y="2" width="40" height="40" rx="10" stroke="#1FD87A" strokeWidth="1.5" fill="#fff"/><path d="M14 18h16M14 22h12M14 26h8" stroke="#1FD87A" strokeWidth="1.5" strokeLinecap="round"/><circle cx="32" cy="14" r="4" fill="#1FD87A"/><path d="M30.5 14l1 1 2-2.5" stroke="#fff" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"/></svg></div>
-            <div className={styles.featTitle}>Specialized Chat</div>
-            <h4>Expertise on demand.</h4>
-            <p>Choose the right skilled inference for your domain. Legal, medical, financial, creative. Real expertise built specifically for the domain you need AI for. Pick a specialization, start talking. Providers earn every time you use their work.</p>
-          </div>
-          <div className={styles.feat}>
-            <div className={styles.featIcon}><svg viewBox="0 0 44 44" fill="none"><rect x="2" y="2" width="40" height="40" rx="10" stroke="#1FD87A" strokeWidth="1.5" fill="#fff"/><circle cx="22" cy="22" r="9" stroke="#1FD87A" strokeWidth="1.5" fill="none"/><path d="M22 16v6l4 3" stroke="#1FD87A" strokeWidth="1.5" strokeLinecap="round"/><circle cx="22" cy="22" r="2" fill="#1FD87A"/><path d="M15 10l-2-3M29 10l2-3" stroke="#1FD87A" strokeWidth="1.5" strokeLinecap="round"/></svg></div>
-            <div className={styles.featTitle}>Agents That Work For You</div>
-            <h4>Hire AI agents. Let them handle it.</h4>
-            <p>Need a code reviewer, compliance monitor, or research assistant? Hire an always-on agent from the network. They run 24/7, switch services and providers as needed, and you only pay for what they do. No setup, no infrastructure, no babysitting.</p>
-          </div>
-        </div>
-      </section>
 
-      {/* Build Once. Earn Forever. */}
-      <section className={styles.creator}>
-        <h2 className={styles.creatorTitle}>Build Once. Earn Forever.</h2>
-        <p className={styles.creatorSub}>A new economy for AI providers. Run services, serve specialized inference, deploy agents. Earn per request, directly from users. No middleman. No permission needed. No kill switch on your income.</p>
-        <BrowserOnly fallback={null}>{() => <EarnAnimation />}</BrowserOnly>
-        <Link to="/docs/intro" className={styles.creatorCta}>Start Building →</Link>
-      </section>
-
-      {/* Join the economy */}
-      <section className={styles.supply}>
-        <div className={styles.supplyHeader}>
-          <h2>Join the economy.</h2>
-          <p>There are three ways to earn on the network.</p>
-        </div>
-        <div className={styles.supplyGrid}>
-          <div className={styles.supplyCol}>
-            <div className={styles.supplyLabel}>Inference Providers</div>
-            <h4>Serve services. Earn per request.</h4>
-            <p>Your own hardware, a cloud deployment, or your existing API keys. Connect and start earning. Run open-weight models, specialized fine-tunes, TEE-secured nodes, or API-backed inference. The network is built on reputation. The more reliable your offering, the more traffic you attract.</p>
-          </div>
-          <div className={styles.supplyCol}>
-            <div className={styles.supplyLabel}>Specialized Providers</div>
-            <h4>Domain expertise. Premium pricing.</h4>
-            <p>Run fine-tuned or domain-specific models. Legal, medical, financial. Your expertise built into a skill running on the right model is the specialized inference chat. The more unique your offering, the more demand you attract.</p>
-          </div>
-          <div className={styles.supplyCol}>
-            <div className={styles.supplyLabel}>Agent Operators</div>
-            <h4>Build an agent. Rent it out.</h4>
-            <p>You built an agent that solves a real problem. Code review, compliance checks, research pipelines, automated workflows. Put it on the network and let others rent it for specific jobs. Your agent runs 24/7, serves paying users, and you earn every time someone uses it. Build once, get paid forever.</p>
-          </div>
-
-        </div>
-      </section>
-
-      {/* How it works */}
-      <section className={styles.how}>
-        <h2>How it works.</h2>
-        <div className={styles.howLabel}>For users</div>
-        <div className={styles.howSteps}>
-          <div className={styles.howStep}><div className={styles.howNum}>1</div><h4>Download AntStation</h4><p>Install the app. Connect your wallet. You're on the network. No sign-up, no credit card.</p></div>
-          <span className={styles.howArrow}>→</span>
-          <div className={styles.howStep}><div className={styles.howNum}>2</div><h4>Connect to the network</h4><p>AntStation discovers peers automatically. Choose your priority: cost, speed, quality, or privacy.</p></div>
-          <span className={styles.howArrow}>→</span>
-          <div className={styles.howStep}><div className={styles.howNum}>3</div><h4>Start chatting</h4><p>Use it as commodity inference. Pick your service, specialized chat, or the job that needs to get done.</p></div>
-        </div>
-        <div className={styles.howLabel} style={{marginTop:'48px'}}>For developers &amp; agents</div>
-        <div className={styles.howSteps}>
-          <div className={styles.howStep}><div className={styles.howNum}>1</div><h4>Install the CLI</h4><p>One command: npm install -g @antseed/cli. You get a local OpenAI-compatible endpoint. Your existing tools work instantly.</p></div>
-          <span className={styles.howArrow}>→</span>
-          <div className={styles.howStep}><div className={styles.howNum}>2</div><h4>Pick what you need</h4><p>Commodity inference, specialized chat, or a full agent for the job. Browse what's available or let the network route for you.</p></div>
-          <span className={styles.howArrow}>→</span>
-          <div className={styles.howStep}><div className={styles.howNum}>3</div><h4>Build with it</h4><p>Pipe it into your app, your agent, your workflow. Switch services and providers without changing code. Pay per request, nothing else.</p></div>
-        </div>
-      </section>
 
       {/* Works with your tools */}
       <section className={styles.compat}>
