@@ -156,14 +156,14 @@ describe('AgentProvider — pass-through', () => {
   });
 
   it('passes through when LLM responds with text (no tool calls)', async () => {
-    const inner = mockProvider({ responses: [makeAnthropicTextResponse('just text')] });
+    const inner = mockProvider({ responses: [makeAnthropicTextResponse('just text'), makeAnthropicTextResponse('just text')] });
     const agent = new AgentProvider(inner, makeRegistry());
 
     const req = makeReq({ messages: [{ role: 'user', content: 'hi' }] });
     const res = await agent.handleRequest(req);
 
     expect(res.statusCode).toBe(200);
-    expect(inner.callCount()).toBe(1);
+    expect(inner.callCount()).toBe(2);
     const responseBody = parseBody(res.body);
     expect(responseBody.content).toEqual([{ type: 'text', text: 'just text' }]);
   });
@@ -223,6 +223,8 @@ describe('AgentProvider — Anthropic format', () => {
         makeAnthropicToolUseResponse('antseed_load', 'tool-1', { name: 'visual-explainer' }),
         // Second call: LLM responds with text (skill is now in context)
         makeAnthropicTextResponse('Here is your diagram.'),
+        // Final clean request
+        makeAnthropicTextResponse('Here is your diagram.'),
       ],
     });
     const agent = new AgentProvider(inner, makeRegistry());
@@ -230,8 +232,8 @@ describe('AgentProvider — Anthropic format', () => {
     const req = makeReq({ messages: [{ role: 'user', content: 'create a diagram' }] });
     const res = await agent.handleRequest(req);
 
-    // Should have made 2 calls to inner provider
-    expect(inner.callCount()).toBe(2);
+    // Preflight tool load + post-tool response + clean final request
+    expect(inner.callCount()).toBe(3);
 
     // Second request should contain the tool result with skill content
     const secondBody = inner.requestBodies()[1]!;
@@ -268,7 +270,7 @@ describe('AgentProvider — Anthropic format', () => {
     const req = makeReq({ messages: [{ role: 'user', content: 'diagram and review' }] });
     await agent.handleRequest(req);
 
-    expect(inner.callCount()).toBe(3);
+    expect(inner.callCount()).toBe(4);
 
     // Second request should have antseed_load tool re-injected
     const secondBody = inner.requestBodies()[1]!;
@@ -293,7 +295,7 @@ describe('AgentProvider — Anthropic format', () => {
     const req = makeReq({ messages: [{ role: 'user', content: 'do something' }] });
     await agent.handleRequest(req);
 
-    expect(inner.callCount()).toBe(2);
+    expect(inner.callCount()).toBe(3);
     const secondBody = inner.requestBodies()[1]!;
     const messages = secondBody.messages as Record<string, unknown>[];
     const toolResultMsg = messages[2]!;
@@ -403,6 +405,7 @@ describe('AgentProvider — OpenAI format', () => {
       responses: [
         makeOpenAIToolCallResponse('antseed_load', 'call-1', { name: 'code-review' }),
         makeOpenAITextResponse('Here is the code review.'),
+        makeOpenAITextResponse('Here is the code review.'),
       ],
     });
     const agent = new AgentProvider(inner, makeRegistry());
@@ -413,7 +416,7 @@ describe('AgentProvider — OpenAI format', () => {
     );
     const res = await agent.handleRequest(req);
 
-    expect(inner.callCount()).toBe(2);
+    expect(inner.callCount()).toBe(3);
 
     // Second request should have tool result
     const secondBody = inner.requestBodies()[1]!;
@@ -520,7 +523,7 @@ describe('AgentProvider — OpenAI format', () => {
     const res = await agent.handleRequest(req);
 
     // Verify antseed_load was NOT injected into the request
-    const sentBody = parseBody(inner.lastRequest()!.body);
+    const sentBody = inner.requestBodies()[0]!;
     const tools = sentBody.tools as { function?: { name: string }; name?: string }[];
     const hasAntseedTool = tools.some(
       (t) => t.name === 'antseed_load' || t.function?.name === 'antseed_load',

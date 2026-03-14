@@ -154,6 +154,10 @@ export class AgentProvider implements Provider {
 
       const antseedCalls = extractAntseedLoadCalls(responseBody, format);
       if (antseedCalls.length === 0) {
+        if (hasNonAntseedToolCalls(responseBody, format)) {
+          this._debug(req, 'no antseed_load calls detected and response contains buyer-visible tool calls; returning buffered response');
+          return response;
+        }
         this._debug(req, 'no antseed_load calls detected; issuing final buffered request without catalog');
         const finalBody = this._stripCatalogAndTool(body, format);
         return this._inner.handleRequest({
