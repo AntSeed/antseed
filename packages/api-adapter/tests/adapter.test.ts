@@ -2,15 +2,19 @@ import { describe, it, expect } from 'vitest';
 import type { SerializedHttpRequest, SerializedHttpResponse } from '../src/types.js';
 import {
   createOpenAIChatToAnthropicStreamingAdapter,
+  transformAnthropicMessagesRequestToOpenAIChat,
+  transformOpenAIChatResponseToAnthropicMessage,
+} from '../src/anthropic.js';
+import {
   createOpenAIChatToResponsesStreamingAdapter,
+  transformOpenAIChatResponseToOpenAIResponses,
+  transformOpenAIResponsesRequestToOpenAIChat,
+} from '../src/openai-responses.js';
+import {
   detectRequestServiceApiProtocol,
   inferProviderDefaultServiceApiProtocols,
   selectTargetProtocolForRequest,
-  transformAnthropicMessagesRequestToOpenAIChat,
-  transformOpenAIChatResponseToAnthropicMessage,
-  transformOpenAIResponsesRequestToOpenAIChat,
-  transformOpenAIChatResponseToOpenAIResponses,
-} from '../src/adapter.js';
+} from '../src/detect.js';
 
 function makeRequest(overrides?: Partial<SerializedHttpRequest>): SerializedHttpRequest {
   return {

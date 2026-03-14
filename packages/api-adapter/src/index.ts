@@ -1,18 +1,27 @@
 export {
   createOpenAIChatToAnthropicStreamingAdapter,
+  transformAnthropicMessagesRequestToOpenAIChat,
+  transformOpenAIChatResponseToAnthropicMessage,
+  type AnthropicToOpenAIRequestTransformResult,
+} from './anthropic.js';
+
+export {
   createOpenAIChatToResponsesStreamingAdapter,
+  transformOpenAIChatResponseToOpenAIResponses,
+  transformOpenAIResponsesRequestToOpenAIChat,
+  type ResponsesToOpenAIRequestTransformResult,
+} from './openai-responses.js';
+
+export {
   detectRequestServiceApiProtocol,
   inferProviderDefaultServiceApiProtocols,
   selectTargetProtocolForRequest,
-  transformAnthropicMessagesRequestToOpenAIChat,
-  transformOpenAIChatResponseToAnthropicMessage,
-  transformOpenAIResponsesRequestToOpenAIChat,
-  transformOpenAIChatResponseToOpenAIResponses,
   type TargetProtocolSelection,
-  type AnthropicToOpenAIRequestTransformResult,
-  type ResponsesToOpenAIRequestTransformResult,
+} from './detect.js';
+
+export {
   type StreamingResponseAdapter,
-} from './adapter.js';
+} from './utils.js';
 
 export {
   type SerializedHttpRequest,
