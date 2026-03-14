@@ -85,85 +85,57 @@ configSchema: [
 
 The CLI reads matching environment variables and passes them to `createProvider(config)`.
 
-## Adding Skills and Middleware
+## Adding a Bound Agent
 
-Providers can differentiate their service by injecting instructions, context, and skills into buyer requests — all transparently, without buyers seeing the additions. The CLI handles this automatically — no plugin code required.
+Providers can differentiate their service by wrapping it with a **bound agent** — a read-only, knowledge-augmented AI service that injects a persona, guardrails, and selectively loaded knowledge into buyer requests. The CLI handles this automatically via `@antseed/bound-agent` — no plugin code required.
 
-There are two mechanisms:
+### Setup
 
-### Middleware (always injected)
+Create an agent directory with an `agent.json` manifest:
 
-Markdown files injected into **every** request. Use for instructions the LLM always needs: persona definitions, formatting rules, domain context.
+```
+my-agent/
+  agent.json           # manifest
+  persona.md           # system prompt / personality
+  knowledge/           # knowledge modules (markdown files)
+    visual-explainer.md
+    code-review.md
+```
+
+```json
+{
+  "name": "my-coding-agent",
+  "persona": "./persona.md",
+  "guardrails": [
+    "Never execute code on behalf of the user",
+    "Always explain trade-offs"
+  ],
+  "knowledge": [
+    { "name": "visual-explainer", "description": "Generate HTML diagrams and visualizations", "file": "./knowledge/visual-explainer.md" },
+    { "name": "code-review", "description": "Review code for quality and bugs", "file": "./knowledge/code-review.md" }
+  ]
+}
+```
+
+Then point your config at the agent directory:
 
 ```json
 {
   "seller": {
-    "middleware": [
-      { "file": "./prompts/persona.md", "position": "system-prepend" },
-      { "file": "./prompts/output-format.md", "position": "append", "role": "user" },
-      { "file": "./prompts/sonnet-rules.md", "position": "system-append", "services": ["claude-sonnet-4-5", "claude-sonnet-4-6"] }
-    ]
+    "agentDir": "./my-agent"
   }
 }
 ```
 
-Each entry supports:
+### How it works
 
-| Field | Required | Description |
-|---|---|---|
-| `file` | Yes | Path to a `.md` file (relative to config or absolute) |
-| `position` | Yes | `system-prepend`, `system-append`, `prepend`, or `append` |
-| `role` | No | Role for `prepend`/`append` positions. Defaults to `user` |
-| `services` | No | If set, only inject for requests targeting one of these service IDs. Omit to apply to all services. Must contain at least one service ID |
+1. **Persona + guardrails** are always injected into the system prompt
+2. **Knowledge modules** are selectively loaded — a lightweight selection pass determines which modules are relevant to the buyer's request, then only those are injected
+3. The buyer gets a clean streamed response with no tools or selection artifacts
 
-### Skills (loaded on demand)
+The composition chain is: `BoundAgentProvider → BaseProvider`.
 
-Skill directories containing a `SKILL.md` file that the LLM can load dynamically when needed. Only a catalog of skill names and descriptions is injected into the system prompt — the full content is loaded only when the LLM calls the `antseed_load` tool. This keeps the context window lean for requests that don't need every skill.
-
-```json
-{
-  "seller": {
-    "skillsDir": "./skills"
-  }
-}
-```
-
-Skills follow the same directory structure as Claude Code skills:
-
-```
-skills/
-  visual-explainer/
-    SKILL.md          ← frontmatter (name, description) + full instructions
-    references/       ← optional supporting files
-  code-review/
-    SKILL.md
-```
-
-Each `SKILL.md` requires YAML frontmatter with `name` and `description`:
-
-```markdown
----
-name: visual-explainer
-description: Generate self-contained HTML pages for technical diagrams
----
-# Visual Explainer
-... full skill instructions ...
-```
-
-The LLM sees the catalog and decides which skills to load based on the buyer's request. The skill content, the catalog, and the `antseed_load` tool are all stripped from the final response — the buyer only sees the LLM's natural output.
-
-### When to use which
-
-| | Middleware | Skills |
-|---|---|---|
-| **Injection** | Every request | Only when the LLM asks |
-| **Use for** | Persona, formatting, rules | Situational capabilities (diagramming, code review, etc.) |
-| **Context cost** | Always in context | Catalog only; full content loaded on demand |
-| **Config** | `middleware` array | `skillsDir` path |
-
-Both mechanisms can be used together. The composition chain is: `AgentProvider → MiddlewareProvider → BaseProvider`.
-
-Buyers receive only the LLM's natural response. All injected content is applied server-side and is never visible in conversation history.
+See the [`@antseed/bound-agent` README](../../../packages/bound-agent/README.md) for the full manifest reference.
 
 ## Publishing
 

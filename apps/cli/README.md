@@ -119,34 +119,21 @@ Pricing is configured in USD per 1M tokens with role-specific defaults and optio
 
 Service categories are normalized to lowercase tags. Recommended tags include: `privacy`, `legal`, `uncensored`, `coding`, `finance`, `tee` (custom tags are also allowed).
 
-### Seller Middleware
+### Bound Agent
 
-Providers can inject Markdown files into every LLM request using `seller.middleware`. This is the primary mechanism for adding system prompts, skill instructions, persona definitions, and output-format rules — buyers only see the LLM's natural response, never the injected content.
+Providers can wrap their service with a bound agent — a read-only, knowledge-augmented AI service that injects a persona, guardrails, and selectively loaded knowledge into buyer requests.
 
 ```json
 {
   "seller": {
-    "middleware": [
-      { "file": "./skills/coding-expert.md", "position": "system-prepend" },
-      { "file": "./skills/output-format.md",  "position": "system-append" },
-      { "file": "./skills/reminder.md",       "position": "append", "role": "user" }
-    ]
+    "agentDir": "./my-agent"
   }
 }
 ```
 
-**`file`** — path to a `.md` file, relative to the config file directory (or absolute).
+The agent directory contains an `agent.json` manifest that defines the agent's persona, guardrails, and knowledge modules. Knowledge modules are selectively loaded based on the buyer's request — only relevant modules are injected into context. Buyers only see the LLM's natural response, never the injected content.
 
-**`position`** — where to inject the content:
-
-| position | effect |
-|---|---|
-| `system-prepend` | Prepend to the Anthropic `system` field; or insert a system-role message at the top of OpenAI messages |
-| `system-append`  | Append to the `system` field; or insert after the last system message in OpenAI messages |
-| `prepend`        | Insert as the first message in the `messages` array |
-| `append`         | Insert as the last message in the `messages` array |
-
-**`role`** — only used for `prepend`/`append` positions; defaults to `'user'`.
+See the [`@antseed/bound-agent` README](../../packages/bound-agent/README.md) for the full manifest reference and directory structure.
 
 Role-first config examples:
 
