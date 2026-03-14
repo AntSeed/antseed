@@ -17,6 +17,7 @@ import { registerWithdrawCommand } from './commands/withdraw.js';
 import { registerBalanceCommand } from './commands/balance.js';
 import { registerBootstrapCommand } from './commands/bootstrap.js';
 import { registerConnectionCommand } from './commands/connection.js';
+import { registerServeAgentCommand } from './commands/serve-agent.js';
 
 loadEnvFromFiles();
 
@@ -49,5 +50,6 @@ registerWithdrawCommand(program);
 registerBalanceCommand(program);
 registerBootstrapCommand(program);
 registerConnectionCommand(program);
+registerServeAgentCommand(program);
 
 program.parse(process.argv);

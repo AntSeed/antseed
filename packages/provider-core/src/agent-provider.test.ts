@@ -38,6 +38,10 @@ function makeAnthropicTextResponse(text: string): Uint8Array {
   ]);
 }
 
+function makeRawTextResponse(text: string): Uint8Array {
+  return new TextEncoder().encode(text);
+}
+
 function makeOpenAIResponse(message: Record<string, unknown>): Uint8Array {
   return makeBody({
     choices: [{ message, finish_reason: 'stop' }],
@@ -156,7 +160,12 @@ describe('AgentProvider — pass-through', () => {
   });
 
   it('passes through when LLM responds with text (no tool calls)', async () => {
-    const inner = mockProvider({ responses: [makeAnthropicTextResponse('just text'), makeAnthropicTextResponse('just text')] });
+    const inner = mockProvider({
+      responses: [
+        makeAnthropicTextResponse('just text'),
+        makeAnthropicTextResponse('just text'),
+      ],
+    });
     const agent = new AgentProvider(inner, makeRegistry());
 
     const req = makeReq({ messages: [{ role: 'user', content: 'hi' }] });
@@ -164,6 +173,8 @@ describe('AgentProvider — pass-through', () => {
 
     expect(res.statusCode).toBe(200);
     expect(inner.callCount()).toBe(2);
+    const finalBody = inner.requestBodies()[1]!;
+    expect(finalBody.tools).toBeUndefined();
     const responseBody = parseBody(res.body);
     expect(responseBody.content).toEqual([{ type: 'text', text: 'just text' }]);
   });
@@ -223,7 +234,7 @@ describe('AgentProvider — Anthropic format', () => {
         makeAnthropicToolUseResponse('antseed_load', 'tool-1', { name: 'visual-explainer' }),
         // Second call: LLM responds with text (skill is now in context)
         makeAnthropicTextResponse('Here is your diagram.'),
-        // Final clean request
+        // Third call: final clean request without internal tool history
         makeAnthropicTextResponse('Here is your diagram.'),
       ],
     });
@@ -232,7 +243,7 @@ describe('AgentProvider — Anthropic format', () => {
     const req = makeReq({ messages: [{ role: 'user', content: 'create a diagram' }] });
     const res = await agent.handleRequest(req);
 
-    // Preflight tool load + post-tool response + clean final request
+    // Preflight load + post-load response + final clean request
     expect(inner.callCount()).toBe(3);
 
     // Second request should contain the tool result with skill content
@@ -248,6 +259,31 @@ describe('AgentProvider — Anthropic format', () => {
     const toolResultContent = toolResultMsg.content as { type: string; content: string }[];
     expect(toolResultContent[0]!.type).toBe('tool_result');
     expect(toolResultContent[0]!.content).toContain('Visual Explainer');
+
+    // Final clean request should strip the injected tool and internal tool history
+    const finalBody = inner.requestBodies()[2]!;
+    expect(finalBody.tools).toBeUndefined();
+    const finalMessages = finalBody.messages as Record<string, unknown>[];
+    expect(
+      finalMessages.some(
+        (message) =>
+          message.role === 'assistant' &&
+          Array.isArray(message.content) &&
+          (message.content as Record<string, unknown>[]).some(
+            (block) => block.type === 'tool_use' && block.name === 'antseed_load',
+          ),
+      ),
+    ).toBe(false);
+    expect(
+      finalMessages.some(
+        (message) =>
+          message.role === 'user' &&
+          Array.isArray(message.content) &&
+          (message.content as Record<string, unknown>[]).some(
+            (block) => block.type === 'tool_result',
+          ),
+      ),
+    ).toBe(false);
 
     // Final response should be the text response
     const responseBody = parseBody(res.body);
@@ -281,6 +317,10 @@ describe('AgentProvider — Anthropic format', () => {
     const thirdBody = inner.requestBodies()[2]!;
     const thirdTools = thirdBody.tools as { name: string }[];
     expect(thirdTools.some((t) => t.name === 'antseed_load')).toBe(true);
+
+    // Final request should be clean
+    const finalBody = inner.requestBodies()[3]!;
+    expect(finalBody.tools).toBeUndefined();
   });
 
   it('returns error tool_result when skill is not found', async () => {
@@ -302,6 +342,38 @@ describe('AgentProvider — Anthropic format', () => {
     const toolResultContent = toolResultMsg.content as { type: string; content: string; is_error: boolean }[];
     expect(toolResultContent[0]!.is_error).toBe(true);
     expect(toolResultContent[0]!.content).toContain('not found');
+    const finalBody = inner.requestBodies()[2]!;
+    expect(finalBody.tools).toBeUndefined();
+  });
+
+  it('strips internal tool history from mixed anthropic assistant messages', async () => {
+    const inner = mockProvider({
+      responses: [
+        makeAnthropicResponse([
+          { type: 'text', text: 'Let me look that up.' },
+          { type: 'tool_use', id: 'tool-1', name: 'antseed_load', input: { name: 'visual-explainer' } },
+        ]),
+        makeAnthropicTextResponse('Here is your diagram.'),
+        makeAnthropicTextResponse('Here is your diagram.'),
+      ],
+    });
+    const agent = new AgentProvider(inner, makeRegistry());
+
+    await agent.handleRequest(makeReq({ messages: [{ role: 'user', content: 'create a diagram' }] }));
+
+    const finalBody = inner.requestBodies()[2]!;
+    const finalMessages = finalBody.messages as Record<string, unknown>[];
+    const assistantMessage = finalMessages.find((message) => message.role === 'assistant');
+    expect(assistantMessage).toBeDefined();
+    expect(assistantMessage!.content).toEqual([{ type: 'text', text: 'Let me look that up.' }]);
+    expect(
+      finalMessages.some(
+        (message) =>
+          message.role === 'user' &&
+          Array.isArray(message.content) &&
+          (message.content as Record<string, unknown>[]).some((block) => block.type === 'tool_result'),
+      ),
+    ).toBe(false);
   });
 
   it('respects maxIterations limit', async () => {
@@ -426,6 +498,28 @@ describe('AgentProvider — OpenAI format', () => {
     expect(toolResultMsg!.tool_call_id).toBe('call-1');
     expect(toolResultMsg!.content).toContain('Code Review');
 
+    const finalBody = inner.requestBodies()[2]!;
+    expect(finalBody.tools).toBeUndefined();
+    const finalMessages = finalBody.messages as Record<string, unknown>[];
+    expect(
+      finalMessages.some(
+        (message) =>
+          message.role === 'assistant' &&
+          Array.isArray(message.tool_calls) &&
+          (message.tool_calls as Record<string, unknown>[]).some((toolCall) => {
+            const fn = toolCall.function as Record<string, unknown> | undefined;
+            return fn?.name === 'antseed_load';
+          }),
+      ),
+    ).toBe(false);
+    expect(
+      finalMessages.some(
+        (message) =>
+          message.role === 'tool' &&
+          typeof message.tool_call_id === 'string',
+      ),
+    ).toBe(false);
+
     const responseBody = parseBody(res.body);
     const choices = responseBody.choices as { message: { content: string } }[];
     expect(choices[0]!.message.content).toBe('Here is the code review.');
@@ -523,7 +617,7 @@ describe('AgentProvider — OpenAI format', () => {
     const res = await agent.handleRequest(req);
 
     // Verify antseed_load was NOT injected into the request
-    const sentBody = inner.requestBodies()[0]!;
+    const sentBody = parseBody(inner.lastRequest()!.body);
     const tools = sentBody.tools as { function?: { name: string }; name?: string }[];
     const hasAntseedTool = tools.some(
       (t) => t.name === 'antseed_load' || t.function?.name === 'antseed_load',
@@ -536,12 +630,14 @@ describe('AgentProvider — OpenAI format', () => {
 });
 
 describe('AgentProvider — streaming', () => {
-  it('streams the buffered response without extra LLM call', async () => {
+  it('uses a real final stream after hidden skill-loading iterations', async () => {
     const inner = mockProvider({
       responses: [
         // First call (buffered): LLM requests a skill
         makeAnthropicToolUseResponse('antseed_load', 'tool-1', { name: 'visual-explainer' }),
-        // Second call (buffered): LLM responds with text — streamed via callbacks
+        // Second call (buffered): LLM produces the final answer once the skill is loaded
+        makeAnthropicTextResponse('Here is your diagram.'),
+        // Third call (streamed): buyer-visible final answer
         makeAnthropicTextResponse('Here is your diagram.'),
       ],
     });
@@ -558,11 +654,126 @@ describe('AgentProvider — streaming', () => {
 
     expect(streamStarted).toBe(true);
     expect(res.statusCode).toBe(200);
-    // Should only make 2 calls (loop + text), NOT 3 (loop + text + stream)
-    expect(inner.callCount()).toBe(2);
-    // The streamed response should contain the final text
+    expect(inner.callCount()).toBe(3);
+    const finalBody = inner.requestBodies()[2]!;
+    expect(finalBody.tools).toBeUndefined();
+    const system = finalBody.system as string | undefined;
+    if (system) {
+      expect(system).not.toContain('ANTSEED_CATALOG_START');
+    }
+    const finalMessages = finalBody.messages as Record<string, unknown>[];
+    expect(finalMessages.some((message) => message.role === 'tool')).toBe(false);
+    expect(
+      finalMessages.some(
+        (message) =>
+          message.role === 'assistant' &&
+          Array.isArray(message.tool_calls),
+      ),
+    ).toBe(false);
     const responseBody = parseBody(res.body);
     expect(responseBody.content).toEqual([{ type: 'text', text: 'Here is your diagram.' }]);
+    const streamedText = chunks.map((chunk) => new TextDecoder().decode(chunk)).join('');
+    expect(streamedText).toContain('Here is your diagram.');
+  });
+
+  it('emits a loading-status chunk on openai streams while fetching more context', async () => {
+    const inner = mockProvider({
+      responses: [
+        makeOpenAIToolCallResponse('antseed_load', 'call-1', { name: 'code-review' }),
+        makeOpenAITextResponse('Here is the review.'),
+        makeOpenAITextResponse('Here is the review.'),
+      ],
+    });
+    const agent = new AgentProvider(inner, makeRegistry());
+
+    const chunks: Uint8Array[] = [];
+    const req = makeReq(
+      { messages: [{ role: 'user', content: 'review this code' }] },
+      '/v1/chat/completions',
+    );
+
+    await agent.handleRequestStream!(req, {
+      onResponseStart: () => {},
+      onResponseChunk: (chunk) => { chunks.push(chunk.data); },
+    });
+
+    const streamedText = chunks.map((chunk) => new TextDecoder().decode(chunk)).join('');
+    expect(streamedText).toContain('Loading additional context: code-review');
+    expect(streamedText).toContain('Here is the review.');
+  });
+
+  it('keeps openai SSE valid when buyer-visible tool calls appear after loading status', async () => {
+    const inner = mockProvider({
+      responses: [
+        makeOpenAIToolCallResponse('antseed_load', 'call-1', { name: 'code-review' }),
+        new TextEncoder().encode(JSON.stringify({
+          id: 'chatcmpl-2',
+          model: 'gpt-4.1',
+          choices: [
+            {
+              index: 0,
+              finish_reason: 'tool_calls',
+              message: {
+                role: 'assistant',
+                content: null,
+                tool_calls: [
+                  {
+                    id: 'call-2',
+                    type: 'function',
+                    function: {
+                      name: 'search',
+                      arguments: '{"q":"test"}',
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        })),
+      ],
+    });
+    const agent = new AgentProvider(inner, makeRegistry());
+
+    const chunks: Uint8Array[] = [];
+    const req = makeReq(
+      { messages: [{ role: 'user', content: 'review and search' }] },
+      '/v1/chat/completions',
+    );
+
+    await agent.handleRequestStream!(req, {
+      onResponseStart: () => {},
+      onResponseChunk: (chunk) => { chunks.push(chunk.data); },
+    });
+
+    const streamedText = chunks.map((chunk) => new TextDecoder().decode(chunk)).join('');
+    expect(streamedText).toContain('Loading additional context: code-review');
+    expect(streamedText).toContain('"tool_calls"');
+    expect(streamedText).toContain('"search"');
+    expect(streamedText).toContain('data: [DONE]');
+  });
+
+  it('emits the buffered response when an intermediate pass is not JSON', async () => {
+    const inner = mockProvider({
+      responses: [
+        makeAnthropicToolUseResponse('antseed_load', 'tool-1', { name: 'visual-explainer' }),
+        makeRawTextResponse('streamed plain text'),
+      ],
+    });
+    const agent = new AgentProvider(inner, makeRegistry());
+
+    let streamStarted = false;
+    const chunks: Uint8Array[] = [];
+
+    const req = makeReq({ messages: [{ role: 'user', content: 'create a diagram' }] });
+    const res = await agent.handleRequestStream!(req, {
+      onResponseStart: () => { streamStarted = true; },
+      onResponseChunk: (chunk) => { chunks.push(chunk.data); },
+    });
+
+    expect(streamStarted).toBe(true);
+    expect(inner.callCount()).toBe(2);
+    expect(new TextDecoder().decode(res.body)).toBe('streamed plain text');
+    expect(new TextDecoder().decode(chunks[0]!)).toBe('streamed plain text');
   });
 
   it('streams directly when no skills registered', async () => {

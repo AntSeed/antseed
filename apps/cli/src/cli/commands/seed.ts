@@ -1,8 +1,8 @@
 import type { Command } from 'commander'
 import chalk from 'chalk'
 import ora from 'ora'
-import { writeFile, unlink, readFile } from 'node:fs/promises'
-import { join, resolve, isAbsolute, dirname } from 'node:path'
+import { writeFile, unlink } from 'node:fs/promises'
+import { join, resolve, dirname, isAbsolute } from 'node:path'
 import { homedir } from 'node:os'
 import { getGlobalOptions } from './types.js'
 import { loadConfig } from '../../config/loader.js'
@@ -13,8 +13,9 @@ import { parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
 import { setupShutdownHandler } from '../shutdown.js'
 import { loadProviderPlugin, buildPluginConfig } from '../../plugins/loader.js'
 import { resolveEffectiveSellerConfig, type SellerRuntimeOverrides } from '../../config/effective.js'
-import type { SellerCLIConfig, SellerMiddlewareConfig } from '../../config/types.js'
-import { MiddlewareProvider, AgentProvider, SkillRegistry, type ProviderMiddleware } from '@antseed/provider-core'
+import type { SellerCLIConfig } from '../../config/types.js'
+import { MiddlewareProvider, AgentProvider, SkillRegistry } from '@antseed/provider-core'
+import { loadMiddlewareFiles } from '../provider-files.js'
 
 function getStateFile(dataDir: string): string {
   return join(dataDir, 'daemon.state.json')
@@ -167,22 +168,6 @@ function parseRuntimeServiceCategoriesJson(raw: string | undefined): Record<stri
   } catch {
     return undefined
   }
-}
-
-async function loadMiddlewareFiles(
-  configs: SellerMiddlewareConfig[],
-  baseDir: string,
-): Promise<ProviderMiddleware[]> {
-  return Promise.all(
-    configs.map(async (entry) => {
-      if (entry.services !== undefined && entry.services.length === 0) {
-        throw new Error(`Middleware entry "${entry.file}" has an empty services list — remove the field to apply globally or list at least one service ID.`)
-      }
-      const filePath = isAbsolute(entry.file) ? entry.file : resolve(baseDir, entry.file)
-      const content = await readFile(filePath, 'utf-8')
-      return { content, position: entry.position, role: entry.role, services: entry.services } as ProviderMiddleware
-    }),
-  )
 }
 
 export function registerSeedCommand(program: Command): void {

@@ -136,6 +136,50 @@ export function encodeSseEvents(events: Array<{ event?: string; data: unknown | 
   return encoder.encode(chunks.join(''));
 }
 
+export function isBufferedSseResponse(response: SerializedHttpResponse): boolean {
+  const contentType = (response.headers['content-type'] ?? response.headers['Content-Type'] ?? '').toLowerCase();
+  if (contentType.includes('text/event-stream')) {
+    return true;
+  }
+  if (!response.body || response.body.length === 0) {
+    return false;
+  }
+  const previewLength = Math.min(response.body.length, 256);
+  const preview = decoder.decode(response.body.slice(0, previewLength));
+  const trimmed = preview.trimStart();
+  return trimmed.startsWith('data:') || trimmed.startsWith('event:');
+}
+
+export function concatUint8Arrays(chunks: Uint8Array[]): Uint8Array {
+  const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const merged = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return merged;
+}
+
+export function adaptBufferedSseResponse(
+  response: SerializedHttpResponse,
+  adapter: StreamingResponseAdapter,
+): SerializedHttpResponse {
+  const startResponse = adapter.adaptStart({ ...response, body: new Uint8Array(0) });
+  const adaptedChunks = adapter.adaptChunk({
+    requestId: response.requestId,
+    data: response.body,
+    done: true,
+  });
+  return {
+    ...startResponse,
+    body: concatUint8Arrays([
+      startResponse.body,
+      ...adaptedChunks.map((chunk) => chunk.data),
+    ]),
+  };
+}
+
 export function makeStreamingStartResponse(response: SerializedHttpResponse): SerializedHttpResponse {
   return {
     ...response,

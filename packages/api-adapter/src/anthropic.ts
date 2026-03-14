@@ -1,9 +1,11 @@
 import type { SerializedHttpRequest, SerializedHttpResponse } from './types.js';
 import {
+  adaptBufferedSseResponse,
   createChatStreamParser,
   encodeJson,
   encodeText,
   encodeSseEvents,
+  isBufferedSseResponse,
   makeStreamingStartResponse,
   mapFinishReasonToAnthropicStopReason,
   parseChatCompletionResponse,
@@ -247,6 +249,12 @@ export function transformOpenAIChatResponseToAnthropicMessage(
   options: { streamRequested: boolean; fallbackModel?: string | null },
 ): SerializedHttpResponse {
   const parsed = parseJsonObject(response.body);
+  if (!parsed && options.streamRequested && response.statusCode < 400 && isBufferedSseResponse(response)) {
+    return adaptBufferedSseResponse(
+      response,
+      createOpenAIChatToAnthropicStreamingAdapter({ fallbackModel: options.fallbackModel }),
+    );
+  }
   if (!parsed) return response;
 
   if (response.statusCode >= 400) {

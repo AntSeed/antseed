@@ -87,6 +87,34 @@ function makeOpenAIResponse(overrides?: Partial<SerializedHttpResponse>): Serial
   };
 }
 
+function makeBufferedOpenAIStreamResponse(overrides?: Partial<SerializedHttpResponse>): SerializedHttpResponse {
+  return {
+    requestId: 'req-stream-1',
+    statusCode: 200,
+    headers: {
+      'content-type': 'text/event-stream',
+    },
+    body: new TextEncoder().encode(
+      'data: {"id":"chatcmpl-stream","model":"gpt-4.1","choices":[{"delta":{"content":"Hello"},"finish_reason":null}]}\n\n'
+      + 'data: {"usage":{"prompt_tokens":5,"completion_tokens":3},"choices":[{"delta":{"content":" world"},"finish_reason":"stop"}]}\n\n'
+      + 'data: [DONE]\n\n',
+    ),
+    ...overrides,
+  };
+}
+
+function makePlainTextDataResponse(overrides?: Partial<SerializedHttpResponse>): SerializedHttpResponse {
+  return {
+    requestId: 'req-text-1',
+    statusCode: 400,
+    headers: {
+      'content-type': 'text/plain',
+    },
+    body: new TextEncoder().encode('Bad request data: missing field'),
+    ...overrides,
+  };
+}
+
 function parseSseEvents(sseText: string): Array<{ event: string | null; data: string }> {
   return sseText
     .trim()
@@ -187,6 +215,29 @@ describe('transformOpenAIChatResponseToAnthropicMessage', () => {
     expect(sseText).toContain('event: message_start');
     expect(sseText).toContain('event: content_block_start');
     expect(sseText).toContain('event: message_stop');
+  });
+
+  it('adapts buffered SSE bodies when stream is requested', () => {
+    const transformed = transformOpenAIChatResponseToAnthropicMessage(makeBufferedOpenAIStreamResponse(), {
+      streamRequested: true,
+      fallbackModel: 'fallback-model',
+    });
+    expect(transformed.headers['content-type']).toBe('text/event-stream');
+    const sseText = new TextDecoder().decode(transformed.body);
+    expect(sseText).toContain('event: message_start');
+    expect(sseText).toContain('event: content_block_delta');
+    expect(sseText).toContain('"text":"Hello"');
+    expect(sseText).toContain('"text":" world"');
+    expect(sseText).toContain('event: message_stop');
+  });
+
+  it('does not misclassify plain text bodies containing \"data:\" as SSE', () => {
+    const response = makePlainTextDataResponse();
+    const transformed = transformOpenAIChatResponseToAnthropicMessage(response, {
+      streamRequested: true,
+      fallbackModel: 'fallback-model',
+    });
+    expect(transformed).toEqual(response);
   });
 
   it('emits input_json_delta for tool_use blocks in SSE stream', () => {
@@ -720,6 +771,40 @@ describe('transformOpenAIChatResponseToOpenAIResponses', () => {
         output_text: 'Hello!',
       },
     });
+  });
+
+  it('adapts buffered SSE bodies into responses SSE when streamRequested is true', () => {
+    const result = transformOpenAIChatResponseToOpenAIResponses(makeBufferedOpenAIStreamResponse(), {
+      fallbackModel: 'fallback',
+      streamRequested: true,
+    });
+    expect(result.headers['content-type']).toBe('text/event-stream');
+    const sseText = new TextDecoder().decode(result.body);
+    const events = parseSseEvents(sseText);
+    const deltas = events.filter((event) => event.event === 'response.output_text.delta');
+    const completed = events.find((event) => event.event === 'response.completed');
+
+    expect(deltas.length).toBeGreaterThan(0);
+    expect(JSON.parse(deltas[0]!.data)).toMatchObject({
+      type: 'response.output_text.delta',
+      delta: 'Hello',
+    });
+    expect(completed).toBeDefined();
+    expect(JSON.parse(completed!.data)).toMatchObject({
+      type: 'response.completed',
+      response: {
+        output_text: 'Hello world',
+      },
+    });
+  });
+
+  it('does not misclassify plain text bodies containing \"data:\" for responses SSE', () => {
+    const response = makePlainTextDataResponse();
+    const result = transformOpenAIChatResponseToOpenAIResponses(response, {
+      fallbackModel: 'fallback',
+      streamRequested: true,
+    });
+    expect(result).toEqual(response);
   });
 
   it('emits correlated function call SSE events', () => {
