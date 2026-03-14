@@ -2230,23 +2230,24 @@ function createBuyerProxyOpenAIStreamFn(
 
         let sseBuffer = '';
         const decoder = new TextDecoder();
-        let currentBlock: AssistantMessage['content'][number] | null = null;
+        let currentTextOrThinkBlock: AssistantMessage['content'][number] | null = null;
+        let currentTextOrThinkIndex = -1;
         const blocks = message.content;
         const blockIndex = (): number => blocks.length - 1;
         const toolJsonByBlockIndex = new Map<number, string>();
+        // Map from OpenAI tool_calls[].index → our content block index,
+        // so interleaved parallel tool call deltas resolve correctly.
+        const toolCallIndexToBlockIndex = new Map<number, number>();
 
-        const finishCurrentBlock = (): void => {
-          if (!currentBlock) return;
-          if (currentBlock.type === 'text') {
-            stream.push({ type: 'text_end', contentIndex: blockIndex(), content: currentBlock.text, partial: message });
-          } else if (currentBlock.type === 'thinking') {
-            stream.push({ type: 'thinking_end', contentIndex: blockIndex(), content: currentBlock.thinking, partial: message });
-          } else if (currentBlock.type === 'toolCall') {
-            const merged = toolJsonByBlockIndex.get(blockIndex()) ?? '';
-            const parsed = parseToolJson(merged);
-            if (parsed) currentBlock.arguments = parsed;
-            stream.push({ type: 'toolcall_end', contentIndex: blockIndex(), toolCall: currentBlock, partial: message });
+        const finishTextOrThinkBlock = (): void => {
+          if (!currentTextOrThinkBlock) return;
+          if (currentTextOrThinkBlock.type === 'text') {
+            stream.push({ type: 'text_end', contentIndex: currentTextOrThinkIndex, content: currentTextOrThinkBlock.text, partial: message });
+          } else if (currentTextOrThinkBlock.type === 'thinking') {
+            stream.push({ type: 'thinking_end', contentIndex: currentTextOrThinkIndex, content: currentTextOrThinkBlock.thinking, partial: message });
           }
+          currentTextOrThinkBlock = null;
+          currentTextOrThinkIndex = -1;
         };
 
         resetIdleTimeout();
@@ -2279,15 +2280,13 @@ function createBuyerProxyOpenAIStreamFn(
               const promptTokens = Number(usage.prompt_tokens ?? 0);
               const completionTokens = Number(usage.completion_tokens ?? 0);
               const promptDetails = usage.prompt_tokens_details as Record<string, unknown> | undefined;
-              const completionDetails = usage.completion_tokens_details as Record<string, unknown> | undefined;
               const cachedTokens = Number(promptDetails?.cached_tokens ?? 0);
-              const reasoningTokens = Number(completionDetails?.reasoning_tokens ?? 0);
+              // reasoning_tokens is a subset of completion_tokens, not additive
               const inputTokens = promptTokens - cachedTokens;
-              const outputTokens = completionTokens + reasoningTokens;
               message.usage.input = inputTokens;
-              message.usage.output = outputTokens;
+              message.usage.output = completionTokens;
               message.usage.cacheRead = cachedTokens;
-              message.usage.totalTokens = inputTokens + outputTokens + cachedTokens;
+              message.usage.totalTokens = inputTokens + completionTokens + cachedTokens;
             }
 
             const choices = chunk.choices as Array<Record<string, unknown>> | undefined;
@@ -2304,23 +2303,23 @@ function createBuyerProxyOpenAIStreamFn(
             // Text content
             if (delta.content !== null && delta.content !== undefined && String(delta.content).length > 0) {
               const textDelta = String(delta.content);
-              if (!currentBlock || currentBlock.type !== 'text') {
-                finishCurrentBlock();
+              if (!currentTextOrThinkBlock || currentTextOrThinkBlock.type !== 'text') {
+                finishTextOrThinkBlock();
                 const textBlock = { type: 'text' as const, text: '' };
-                currentBlock = textBlock;
+                currentTextOrThinkBlock = textBlock;
                 blocks.push(textBlock);
-                stream.push({ type: 'text_start', contentIndex: blockIndex(), partial: message });
+                currentTextOrThinkIndex = blockIndex();
+                stream.push({ type: 'text_start', contentIndex: currentTextOrThinkIndex, partial: message });
               }
-              if (currentBlock.type === 'text') {
-                currentBlock.text += textDelta;
-                stream.push({ type: 'text_delta', contentIndex: blockIndex(), delta: textDelta, partial: message });
+              if (currentTextOrThinkBlock.type === 'text') {
+                currentTextOrThinkBlock.text += textDelta;
+                stream.push({ type: 'text_delta', contentIndex: currentTextOrThinkIndex, delta: textDelta, partial: message });
               }
             }
 
             // Reasoning / thinking content
-            const reasoningFields = OPENAI_REASONING_FIELDS;
             let foundReasoning: string | null = null;
-            for (const field of reasoningFields) {
+            for (const field of OPENAI_REASONING_FIELDS) {
               const val = delta[field];
               if (val !== null && val !== undefined && String(val).length > 0) {
                 foundReasoning = String(val);
@@ -2328,58 +2327,74 @@ function createBuyerProxyOpenAIStreamFn(
               }
             }
             if (foundReasoning) {
-              if (!currentBlock || currentBlock.type !== 'thinking') {
-                finishCurrentBlock();
+              if (!currentTextOrThinkBlock || currentTextOrThinkBlock.type !== 'thinking') {
+                finishTextOrThinkBlock();
                 const thinkBlock = { type: 'thinking' as const, thinking: '' };
-                currentBlock = thinkBlock;
+                currentTextOrThinkBlock = thinkBlock;
                 blocks.push(thinkBlock);
-                stream.push({ type: 'thinking_start', contentIndex: blockIndex(), partial: message });
+                currentTextOrThinkIndex = blockIndex();
+                stream.push({ type: 'thinking_start', contentIndex: currentTextOrThinkIndex, partial: message });
               }
-              if (currentBlock.type === 'thinking') {
-                currentBlock.thinking += foundReasoning;
-                stream.push({ type: 'thinking_delta', contentIndex: blockIndex(), delta: foundReasoning, partial: message });
+              if (currentTextOrThinkBlock.type === 'thinking') {
+                currentTextOrThinkBlock.thinking += foundReasoning;
+                stream.push({ type: 'thinking_delta', contentIndex: currentTextOrThinkIndex, delta: foundReasoning, partial: message });
               }
             }
 
-            // Tool calls
+            // Tool calls — keyed by tc.index (not id) to handle interleaved parallel calls
             const toolCalls = delta.tool_calls as Array<Record<string, unknown>> | undefined;
             if (toolCalls) {
               for (const tc of toolCalls) {
+                const tcIndex = Number(tc.index ?? 0);
                 const tcId = tc.id as string | undefined;
                 const tcFunc = tc.function as Record<string, unknown> | undefined;
-                if (!currentBlock || currentBlock.type !== 'toolCall' || (tcId && currentBlock.id !== tcId)) {
-                  finishCurrentBlock();
+                let blkIdx = toolCallIndexToBlockIndex.get(tcIndex);
+                if (blkIdx === undefined) {
+                  // First delta for this tool call index — create the block
+                  finishTextOrThinkBlock();
                   const toolBlock = {
                     type: 'toolCall' as const,
                     id: tcId ?? '',
                     name: (tcFunc?.name as string) ?? '',
                     arguments: {} as Record<string, unknown>,
                   };
-                  currentBlock = toolBlock;
                   blocks.push(toolBlock);
-                  toolJsonByBlockIndex.set(blockIndex(), '');
-                  stream.push({ type: 'toolcall_start', contentIndex: blockIndex(), partial: message });
+                  blkIdx = blockIndex();
+                  toolCallIndexToBlockIndex.set(tcIndex, blkIdx);
+                  toolJsonByBlockIndex.set(blkIdx, '');
+                  stream.push({ type: 'toolcall_start', contentIndex: blkIdx, partial: message });
                 }
-                if (currentBlock && currentBlock.type === 'toolCall') {
-                  if (tcId) currentBlock.id = tcId;
-                  if (tcFunc?.name) currentBlock.name = tcFunc.name as string;
+                const block = blocks[blkIdx];
+                if (block && block.type === 'toolCall') {
+                  if (tcId) block.id = tcId;
+                  if (tcFunc?.name) block.name = tcFunc.name as string;
                   let argsDelta = '';
                   if (tcFunc?.arguments) {
                     argsDelta = String(tcFunc.arguments);
-                    const idx = blockIndex();
-                    const merged = (toolJsonByBlockIndex.get(idx) ?? '') + argsDelta;
-                    toolJsonByBlockIndex.set(idx, merged);
+                    const merged = (toolJsonByBlockIndex.get(blkIdx) ?? '') + argsDelta;
+                    toolJsonByBlockIndex.set(blkIdx, merged);
                     const parsed = parseToolJson(merged);
-                    if (parsed) currentBlock.arguments = parsed;
+                    if (parsed) block.arguments = parsed;
                   }
-                  stream.push({ type: 'toolcall_delta', contentIndex: blockIndex(), delta: argsDelta, partial: message });
+                  stream.push({ type: 'toolcall_delta', contentIndex: blkIdx, delta: argsDelta, partial: message });
                 }
               }
             }
           }
         }
 
-        finishCurrentBlock();
+        // Finish any open text/thinking block
+        finishTextOrThinkBlock();
+        // Finish all open tool call blocks
+        for (const [, blkIdx] of toolCallIndexToBlockIndex) {
+          const block = blocks[blkIdx];
+          if (block && block.type === 'toolCall') {
+            const merged = toolJsonByBlockIndex.get(blkIdx) ?? '';
+            const parsed = parseToolJson(merged);
+            if (parsed) block.arguments = parsed;
+            stream.push({ type: 'toolcall_end', contentIndex: blkIdx, toolCall: block, partial: message });
+          }
+        }
 
         message.usage.totalTokens = message.usage.totalTokens > 0
           ? message.usage.totalTokens
