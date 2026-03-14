@@ -34,7 +34,7 @@ function ServiceTag({name}: {name: string}) {
 
 function PeerCard({peer}: {peer: PeerInfo}) {
   const allServices: string[] = [];
-  for (const p of peer.providers) allServices.push(...p.services);
+  for (const p of peer.providers) p.services ? allServices.push(...p.services) : allServices.push(...p.models);
   const pricing = peer.providers[0]?.defaultPricing;
 
   return (
@@ -96,7 +96,7 @@ export default function NetworkPage() {
 
   const allServices = useMemo(() => {
     const set = new Set<string>();
-    for (const p of peers) for (const pr of p.providers) for (const m of pr.services) set.add(m);
+    for (const p of peers) for (const pr of p.providers) for (const m of (pr.services || pr.models)) set.add(m);
     return set;
   }, [peers]);
 
