@@ -123,3 +123,15 @@ export interface TopUpRequestPayload {
   requestedAdditional: string;   // suggested new cap
 }
 
+/**
+ * Proven delivery summary attached to session finalization.
+ * These counters are verifiable on-chain via charge events.
+ */
+export interface ProvenDeliverySummary {
+  sessionId:         string;
+  totalCharged:      string;   // USDC base units charged on-chain for this session
+  requestCount:      number;   // number of requests served
+  sellerEvmAddr:     string;   // seller's EVM address (links to on-chain stats)
+  buyerEvmAddr:      string;   // buyer's EVM address
+}
+

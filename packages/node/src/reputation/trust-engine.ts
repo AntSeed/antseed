@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import type { PeerId } from '../types/peer.js';
 import type { TrustScore, TrustComponents } from './trust-score.js';
 import { DEFAULT_COMPONENTS, computeTrustScore } from './trust-score.js';
+import type { ReputationData } from '../payments/evm/escrow-client.js';
 
 export interface TrustEngineConfig {
   configDir: string;
@@ -94,6 +95,45 @@ export class TrustScoreEngine {
     const bayesian = (minRatings * globalAverage + n * rawAverage) / (minRatings + n);
 
     return Math.max(0, Math.min(1, (bayesian - 1) / 4));
+  }
+
+  /**
+   * Compute trust components from on-chain ReputationData.
+   * Returns partial components that can be merged via updateScore().
+   */
+  computeOnChainComponents(rep: ReputationData): Partial<TrustComponents> {
+    const components: Partial<TrustComponents> = {};
+
+    // Proven delivery rate: transactions / unique buyers gives density.
+    // More transactions per buyer = more proven reliability.
+    if (rep.totalTransactions > 0 && rep.uniqueBuyersServed > 0) {
+      const txPerBuyer = rep.totalTransactions / rep.uniqueBuyersServed;
+      // Normalize: 10+ tx per buyer = 1.0
+      components.provenDeliveryRate = Math.min(1, txPerBuyer / 10);
+    }
+
+    // Stake weight: normalize against 1000 USDC (high-confidence threshold)
+    const stakedUsdc = Number(rep.stakedAmount) / 1e6;
+    components.stakeWeight = Math.min(1, stakedUsdc / 1000);
+
+    // Peer ratings from on-chain average (0-100 → 0-1)
+    if (rep.ratingCount > 0) {
+      components.peerRatings = rep.avgRating / 100;
+    }
+
+    // Account age: logarithmic, 365 days = ~1.0
+    if (rep.ageDays > 0) {
+      components.accountAge = Math.min(1, Math.log(1 + rep.ageDays) / Math.log(366));
+    }
+
+    // Slash penalty: each slash reduces by 20%, multiplicative
+    if (rep.slashCount > 0) {
+      components.slashPenalty = Math.pow(0.8, rep.slashCount);
+    } else {
+      components.slashPenalty = 1.0;
+    }
+
+    return components;
   }
 
   async save(): Promise<void> {
