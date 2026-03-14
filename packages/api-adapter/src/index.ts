@@ -1,5 +1,3 @@
-// Re-export everything from @antseed/api-adapter for backward compatibility.
-// The adapter source now lives in packages/api-adapter.
 export {
   createOpenAIChatToAnthropicStreamingAdapter,
   createOpenAIChatToResponsesStreamingAdapter,
@@ -14,4 +12,13 @@ export {
   type AnthropicToOpenAIRequestTransformResult,
   type ResponsesToOpenAIRequestTransformResult,
   type StreamingResponseAdapter,
-} from '@antseed/api-adapter';
+} from './adapter.js';
+
+export {
+  type SerializedHttpRequest,
+  type SerializedHttpResponse,
+  type SerializedHttpResponseChunk,
+  type ServiceApiProtocol,
+  WELL_KNOWN_SERVICE_API_PROTOCOLS,
+  isKnownServiceApiProtocol,
+} from './types.js';

@@ -8,7 +8,7 @@ export {
   transformOpenAIChatResponseToAnthropicMessage,
   transformOpenAIResponsesRequestToOpenAIChat,
   transformOpenAIChatResponseToOpenAIResponses,
-} from '@antseed/node'
+} from '@antseed/api-adapter'
 
 export type {
   AnthropicToOpenAIRequestTransformResult,
@@ -18,4 +18,4 @@ export type {
   ServiceApiProtocol,
   StreamingResponseAdapter,
   TargetProtocolSelection,
-} from '@antseed/node'
+} from '@antseed/api-adapter'

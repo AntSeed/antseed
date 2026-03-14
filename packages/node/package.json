@@ -47,6 +47,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@antseed/api-adapter": "workspace:*",
     "@noble/ed25519": "^2.1.0",
     "@silentbot1/nat-api": "^0.4.9",
     "better-sqlite3": "^12.6.2",
