@@ -380,6 +380,7 @@ const CHAT_SERVICE_MAX_OPTIONS_PER_PROVIDER = 40;
 const CHAT_SERVICE_CACHE_FILE = path.join(CHAT_DATA_DIR, 'service-catalog-cache.json');
 const CHAT_SERVICE_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
 const CHAT_SERVICE_CACHE_REFRESH_DEBOUNCE_MS = 60_000;
+const OPENAI_REASONING_FIELDS = ['reasoning_content', 'reasoning', 'reasoning_text'] as const;
 
 function normalizeTokenCount(value: unknown): number {
   const parsed = Number(value);
@@ -645,6 +646,21 @@ function updateServiceProviderHints(
     if (!providers.includes(provider)) {
       providers.push(provider);
       serviceProviderHints.set(serviceId, providers);
+    }
+  }
+}
+
+function updateServiceProtocolMap(
+  serviceProtocolMap: Map<string, ChatServiceProtocol>,
+  entries: ChatServiceCatalogEntry[],
+): void {
+  serviceProtocolMap.clear();
+  for (const entry of entries) {
+    const serviceId = normalizeServiceValue(entry.id)?.toLowerCase();
+    if (!serviceId) continue;
+    // First entry wins — the catalog is sorted by popularity (count desc)
+    if (!serviceProtocolMap.has(serviceId)) {
+      serviceProtocolMap.set(serviceId, entry.protocol);
     }
   }
 }
@@ -1138,24 +1154,39 @@ function deriveTitle(messages: AiChatMessage[]): string {
   return 'New conversation';
 }
 
-function makeProxyService(serviceId: string, port: number): Model<'anthropic-messages'> {
-  return {
+function makeProxyService(
+  serviceId: string,
+  port: number,
+  protocol: ChatServiceProtocol = 'anthropic-messages',
+): Model<any> {
+  const base = {
     id: serviceId,
     name: serviceId,
-    api: 'anthropic-messages',
     provider: PROXY_PROVIDER_ID,
     baseUrl: `http://127.0.0.1:${port}`,
     reasoning: true,
-    input: ['text', 'image'],
-    cost: {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-    },
+    input: ['text', 'image'] as ('text' | 'image')[],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 200_000,
     maxTokens: 16_384,
   };
+
+  if (protocol === 'openai-chat-completions') {
+    return {
+      ...base,
+      api: 'openai-completions' as const,
+      compat: {
+        supportsStore: false,
+        supportsDeveloperRole: false,
+        supportsReasoningEffort: false,
+        supportsUsageInStreaming: true,
+        maxTokensField: 'max_tokens' as const,
+        supportsStrictMode: false,
+      },
+    };
+  }
+
+  return { ...base, api: 'anthropic-messages' as const };
 }
 
 function mapStopReason(value: unknown): AssistantMessage['stopReason'] {
@@ -1973,6 +2004,446 @@ function createBuyerProxyStreamFn(
   };
 }
 
+// ---------------------------------------------------------------------------
+// OpenAI Chat Completions – context converters (pi-ai Message[] → OpenAI format)
+// ---------------------------------------------------------------------------
+
+function openaiContentFromUser(content: Extract<Message, { role: 'user' }>['content']): unknown {
+  if (typeof content === 'string') {
+    return content;
+  }
+  const parts: unknown[] = [];
+  for (const block of content) {
+    if (block.type === 'text') {
+      const text = String(block.text ?? '');
+      if (text.length > 0) parts.push({ type: 'text', text });
+    } else {
+      parts.push({
+        type: 'image_url',
+        image_url: { url: `data:${block.mimeType};base64,${block.data}` },
+      });
+    }
+  }
+  return parts;
+}
+
+function convertContextMessagesToOpenAI(messages: Message[]): Array<Record<string, unknown>> {
+  const converted: Array<Record<string, unknown>> = [];
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index]!;
+    if (message.role === 'user') {
+      const content = openaiContentFromUser(message.content);
+      if (typeof content === 'string' && content.length === 0) continue;
+      if (Array.isArray(content) && content.length === 0) continue;
+      converted.push({ role: 'user', content });
+      continue;
+    }
+    if (message.role === 'assistant') {
+      let textContent = '';
+      const toolCalls: Array<Record<string, unknown>> = [];
+      for (const block of message.content) {
+        if (!block) continue;
+        if (block.type === 'text') {
+          textContent += block.text ?? '';
+        } else if (block.type === 'thinking') {
+          // Skip thinking blocks — upstream OpenAI endpoints don't understand them
+          continue;
+        } else if (block.type === 'toolCall') {
+          toolCalls.push({
+            id: block.id,
+            type: 'function',
+            function: {
+              name: block.name,
+              arguments: JSON.stringify(block.arguments ?? {}),
+            },
+          });
+        }
+      }
+      // If assistant had tool_calls but no next toolResult, strip the calls
+      if (toolCalls.length > 0) {
+        const nextMessage = messages[index + 1];
+        if (!nextMessage || nextMessage.role !== 'toolResult') {
+          converted.push({ role: 'assistant', content: textContent || '…' });
+          continue;
+        }
+      }
+      const entry: Record<string, unknown> = { role: 'assistant' };
+      if (textContent.length > 0 || toolCalls.length === 0) {
+        entry.content = textContent || '…';
+      }
+      if (toolCalls.length > 0) {
+        entry.tool_calls = toolCalls;
+      }
+      converted.push(entry);
+      continue;
+    }
+    if (message.role === 'toolResult') {
+      let toolIndex = index;
+      while (toolIndex < messages.length) {
+        const toolMessage = messages[toolIndex];
+        if (!toolMessage || toolMessage.role !== 'toolResult') break;
+        const toolResult = toolMessage as ToolResultMessage;
+        const content = convertToolContentToText(toolResult.content);
+        converted.push({
+          role: 'tool',
+          tool_call_id: toolResult.toolCallId,
+          content: content.length > 0 ? content : '(no tool output)',
+        });
+        toolIndex += 1;
+      }
+      index = toolIndex - 1;
+    }
+  }
+  return converted;
+}
+
+function convertToolsToOpenAI(tools?: Tool[]): Array<Record<string, unknown>> | undefined {
+  if (!Array.isArray(tools) || tools.length === 0) {
+    return undefined;
+  }
+  return tools.map((tool) => ({
+    type: 'function',
+    function: {
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters,
+    },
+  }));
+}
+
+// ---------------------------------------------------------------------------
+// OpenAI Chat Completions – custom stream function with proxy meta extraction
+// ---------------------------------------------------------------------------
+
+function createBuyerProxyOpenAIStreamFn(
+  onMeta: (meta: AiMessageMeta) => void,
+  providerHint: string | null,
+  preferredPeerId: string | null,
+): (model: Model<any>, context: Context, options?: StreamOptions) => ReturnType<typeof createAssistantMessageEventStream> {
+  return (model, context, options) => {
+    const stream = createAssistantMessageEventStream();
+    const totalTimeoutMs = resolveTimeoutMs(process.env[CHAT_STREAM_TOTAL_TIMEOUT_ENV], DEFAULT_CHAT_STREAM_TOTAL_TIMEOUT_MS);
+    const idleTimeoutMs = resolveTimeoutMs(process.env[CHAT_STREAM_IDLE_TIMEOUT_ENV], DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS);
+    const timeoutController = new AbortController();
+    const parentSignal = options?.signal;
+    let timeoutErrorMessage: string | null = null;
+    let totalTimeout: ReturnType<typeof setTimeout> | null = null;
+    let idleTimeout: ReturnType<typeof setTimeout> | null = null;
+
+    const clearIdleTimeout = (): void => {
+      if (!idleTimeout) return;
+      clearTimeout(idleTimeout);
+      idleTimeout = null;
+    };
+    const clearTotalTimeout = (): void => {
+      if (!totalTimeout) return;
+      clearTimeout(totalTimeout);
+      totalTimeout = null;
+    };
+    const triggerTimeoutAbort = (msg: string): void => {
+      if (timeoutController.signal.aborted) return;
+      timeoutErrorMessage = msg;
+      timeoutController.abort();
+    };
+    const resetIdleTimeout = (): void => {
+      clearIdleTimeout();
+      idleTimeout = setTimeout(() => {
+        triggerTimeoutAbort(`Proxy stream idle timeout after ${String(idleTimeoutMs)}ms`);
+      }, idleTimeoutMs);
+    };
+
+    totalTimeout = setTimeout(() => {
+      triggerTimeoutAbort(`Proxy stream timed out after ${String(totalTimeoutMs)}ms`);
+    }, totalTimeoutMs);
+
+    const onParentAbort = (): void => {
+      if (timeoutController.signal.aborted) return;
+      timeoutController.abort();
+    };
+    if (parentSignal) {
+      if (parentSignal.aborted) {
+        timeoutController.abort();
+      } else {
+        parentSignal.addEventListener('abort', onParentAbort, { once: true });
+      }
+    }
+
+    void (async () => {
+      const startedAt = Date.now();
+      const message: AssistantMessage = {
+        role: 'assistant',
+        api: model.api,
+        provider: model.provider,
+        model: model.id,
+        content: [],
+        usage: ensureUsageShape(),
+        stopReason: 'stop',
+        timestamp: Date.now(),
+      };
+
+      const url = `${String(model.baseUrl).replace(/\/+$/, '')}/v1/chat/completions`;
+      const openaiMessages = convertContextMessagesToOpenAI(context.messages);
+      if (context.systemPrompt) {
+        openaiMessages.unshift({ role: 'system', content: context.systemPrompt });
+      }
+      const requestBody: Record<string, unknown> = {
+        model: model.id,
+        messages: openaiMessages,
+        stream: true,
+        stream_options: { include_usage: true },
+        max_tokens: resolveRequestMaxTokens(model, options),
+      };
+      const openaiTools = convertToolsToOpenAI(context.tools);
+      if (openaiTools) {
+        requestBody.tools = openaiTools;
+      }
+      const requestBodyJson = JSON.stringify(requestBody);
+
+      let responseMeta: AiMessageMeta | undefined;
+
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            ...(providerHint ? { 'x-antseed-provider': providerHint } : {}),
+            ...(preferredPeerId ? { 'x-antseed-prefer-peer': preferredPeerId } : {}),
+            ...(options?.headers ?? {}),
+          },
+          body: requestBodyJson,
+          signal: timeoutController.signal,
+        });
+
+        responseMeta = parseProxyMeta(response, startedAt);
+
+        if (!response.ok) {
+          const errorText = await response.text().catch(() => '');
+          throw new Error(`Proxy returned ${response.status}: ${errorText.slice(0, 280)}`);
+        }
+
+        stream.push({ type: 'start', partial: message });
+
+        const reader = response.body?.getReader();
+        if (!reader) {
+          throw new Error('Proxy response is missing stream body');
+        }
+
+        let sseBuffer = '';
+        const decoder = new TextDecoder();
+        let currentTextOrThinkBlock: AssistantMessage['content'][number] | null = null;
+        let currentTextOrThinkIndex = -1;
+        const blocks = message.content;
+        const blockIndex = (): number => blocks.length - 1;
+        const toolJsonByBlockIndex = new Map<number, string>();
+        // Map from OpenAI tool_calls[].index → our content block index,
+        // so interleaved parallel tool call deltas resolve correctly.
+        const toolCallIndexToBlockIndex = new Map<number, number>();
+
+        const finishTextOrThinkBlock = (): void => {
+          if (!currentTextOrThinkBlock) return;
+          if (currentTextOrThinkBlock.type === 'text') {
+            stream.push({ type: 'text_end', contentIndex: currentTextOrThinkIndex, content: currentTextOrThinkBlock.text, partial: message });
+          } else if (currentTextOrThinkBlock.type === 'thinking') {
+            stream.push({ type: 'thinking_end', contentIndex: currentTextOrThinkIndex, content: currentTextOrThinkBlock.thinking, partial: message });
+          }
+          currentTextOrThinkBlock = null;
+          currentTextOrThinkIndex = -1;
+        };
+
+        resetIdleTimeout();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          resetIdleTimeout();
+
+          const chunkText = decoder.decode(value, { stream: true });
+          sseBuffer += chunkText;
+          const lines = sseBuffer.split('\n');
+          sseBuffer = lines.pop() ?? '';
+
+          for (const rawLine of lines) {
+            const line = rawLine.trim();
+            if (!line.startsWith('data:')) continue;
+            const payloadText = line.slice(5).trim();
+            if (payloadText.length === 0 || payloadText === '[DONE]') continue;
+
+            let chunk: Record<string, unknown>;
+            try {
+              chunk = JSON.parse(payloadText) as Record<string, unknown>;
+            } catch {
+              continue;
+            }
+
+            // Usage (sent with stream_options.include_usage)
+            const usage = chunk.usage as Record<string, unknown> | undefined;
+            if (usage) {
+              const promptTokens = Number(usage.prompt_tokens ?? 0);
+              const completionTokens = Number(usage.completion_tokens ?? 0);
+              const promptDetails = usage.prompt_tokens_details as Record<string, unknown> | undefined;
+              const cachedTokens = Number(promptDetails?.cached_tokens ?? 0);
+              // reasoning_tokens is a subset of completion_tokens, not additive
+              const inputTokens = promptTokens - cachedTokens;
+              message.usage.input = inputTokens;
+              message.usage.output = completionTokens;
+              message.usage.cacheRead = cachedTokens;
+              message.usage.totalTokens = inputTokens + completionTokens + cachedTokens;
+            }
+
+            const choices = chunk.choices as Array<Record<string, unknown>> | undefined;
+            const choice = choices?.[0];
+            if (!choice) continue;
+
+            if (choice.finish_reason) {
+              message.stopReason = mapStopReason(choice.finish_reason);
+            }
+
+            const delta = choice.delta as Record<string, unknown> | undefined;
+            if (!delta) continue;
+
+            // Text content
+            if (delta.content !== null && delta.content !== undefined && String(delta.content).length > 0) {
+              const textDelta = String(delta.content);
+              if (!currentTextOrThinkBlock || currentTextOrThinkBlock.type !== 'text') {
+                finishTextOrThinkBlock();
+                const textBlock = { type: 'text' as const, text: '' };
+                currentTextOrThinkBlock = textBlock;
+                blocks.push(textBlock);
+                currentTextOrThinkIndex = blockIndex();
+                stream.push({ type: 'text_start', contentIndex: currentTextOrThinkIndex, partial: message });
+              }
+              if (currentTextOrThinkBlock.type === 'text') {
+                currentTextOrThinkBlock.text += textDelta;
+                stream.push({ type: 'text_delta', contentIndex: currentTextOrThinkIndex, delta: textDelta, partial: message });
+              }
+            }
+
+            // Reasoning / thinking content
+            let foundReasoning: string | null = null;
+            for (const field of OPENAI_REASONING_FIELDS) {
+              const val = delta[field];
+              if (val !== null && val !== undefined && String(val).length > 0) {
+                foundReasoning = String(val);
+                break;
+              }
+            }
+            if (foundReasoning) {
+              if (!currentTextOrThinkBlock || currentTextOrThinkBlock.type !== 'thinking') {
+                finishTextOrThinkBlock();
+                const thinkBlock = { type: 'thinking' as const, thinking: '' };
+                currentTextOrThinkBlock = thinkBlock;
+                blocks.push(thinkBlock);
+                currentTextOrThinkIndex = blockIndex();
+                stream.push({ type: 'thinking_start', contentIndex: currentTextOrThinkIndex, partial: message });
+              }
+              if (currentTextOrThinkBlock.type === 'thinking') {
+                currentTextOrThinkBlock.thinking += foundReasoning;
+                stream.push({ type: 'thinking_delta', contentIndex: currentTextOrThinkIndex, delta: foundReasoning, partial: message });
+              }
+            }
+
+            // Tool calls — keyed by tc.index (not id) to handle interleaved parallel calls
+            const toolCalls = delta.tool_calls as Array<Record<string, unknown>> | undefined;
+            if (toolCalls) {
+              for (const tc of toolCalls) {
+                const tcIndex = Number(tc.index ?? 0);
+                const tcId = tc.id as string | undefined;
+                const tcFunc = tc.function as Record<string, unknown> | undefined;
+                let blkIdx = toolCallIndexToBlockIndex.get(tcIndex);
+                if (blkIdx === undefined) {
+                  // First delta for this tool call index — create the block
+                  finishTextOrThinkBlock();
+                  const toolBlock = {
+                    type: 'toolCall' as const,
+                    id: tcId ?? '',
+                    name: (tcFunc?.name as string) ?? '',
+                    arguments: {} as Record<string, unknown>,
+                  };
+                  blocks.push(toolBlock);
+                  blkIdx = blockIndex();
+                  toolCallIndexToBlockIndex.set(tcIndex, blkIdx);
+                  toolJsonByBlockIndex.set(blkIdx, '');
+                  stream.push({ type: 'toolcall_start', contentIndex: blkIdx, partial: message });
+                }
+                const block = blocks[blkIdx];
+                if (block && block.type === 'toolCall') {
+                  if (tcId) block.id = tcId;
+                  if (tcFunc?.name) block.name = tcFunc.name as string;
+                  let argsDelta = '';
+                  if (tcFunc?.arguments) {
+                    argsDelta = String(tcFunc.arguments);
+                    const merged = (toolJsonByBlockIndex.get(blkIdx) ?? '') + argsDelta;
+                    toolJsonByBlockIndex.set(blkIdx, merged);
+                    const parsed = parseToolJson(merged);
+                    if (parsed) block.arguments = parsed;
+                  }
+                  stream.push({ type: 'toolcall_delta', contentIndex: blkIdx, delta: argsDelta, partial: message });
+                }
+              }
+            }
+          }
+        }
+
+        // Finish any open text/thinking block
+        finishTextOrThinkBlock();
+        // Finish all open tool call blocks
+        for (const [, blkIdx] of toolCallIndexToBlockIndex) {
+          const block = blocks[blkIdx];
+          if (block && block.type === 'toolCall') {
+            const merged = toolJsonByBlockIndex.get(blkIdx) ?? '';
+            const parsed = parseToolJson(merged);
+            if (parsed) block.arguments = parsed;
+            stream.push({ type: 'toolcall_end', contentIndex: blkIdx, toolCall: block, partial: message });
+          }
+        }
+
+        message.usage.totalTokens = message.usage.totalTokens > 0
+          ? message.usage.totalTokens
+          : message.usage.input + message.usage.output + message.usage.cacheRead + message.usage.cacheWrite;
+
+        const doneReason: 'stop' | 'length' | 'toolUse' = message.stopReason === 'toolUse'
+          ? 'toolUse'
+          : (message.stopReason === 'length' ? 'length' : 'stop');
+        stream.push({ type: 'done', reason: doneReason, message });
+        onMeta({
+          ...responseMeta,
+          inputTokens: responseMeta?.inputTokens || message.usage.input,
+          outputTokens: responseMeta?.outputTokens || message.usage.output,
+          totalTokens: responseMeta?.totalTokens || message.usage.totalTokens,
+          tokenSource: responseMeta?.tokenSource === 'unknown' ? 'usage' : responseMeta?.tokenSource,
+        });
+        stream.end();
+      } catch (error) {
+        const aborted = Boolean(parentSignal?.aborted);
+        const errorMessage = timeoutErrorMessage
+          ?? (error instanceof Error ? error.message : String(error));
+        const failed: AssistantMessage = {
+          ...message,
+          stopReason: aborted ? 'aborted' : 'error',
+          errorMessage,
+          timestamp: Date.now(),
+        };
+        if (responseMeta) {
+          onMeta(responseMeta);
+        }
+        stream.push({
+          type: 'error',
+          reason: aborted ? 'aborted' : 'error',
+          error: failed,
+        });
+        stream.end();
+      } finally {
+        clearIdleTimeout();
+        clearTotalTimeout();
+        if (parentSignal) {
+          parentSignal.removeEventListener('abort', onParentAbort);
+        }
+      }
+    })();
+
+    return stream;
+  };
+}
+
 class PiConversationStore {
   private readonly sessionsDir = CHAT_SESSIONS_DIR;
   private readonly workspaceDir = CHAT_WORKSPACE_DIR;
@@ -2260,6 +2731,7 @@ export function registerPiChatHandlers({
   const store = new PiConversationStore();
   const activeRunsByConversation = new Map<string, ActiveRun>();
   const serviceProviderHints = new Map<string, string[]>();
+  const serviceProtocolMap = new Map<string, ChatServiceProtocol>();
   const preferredPeerByConversationId = new Map<string, string>();
   let serviceCatalogRefreshPromise: Promise<ChatServiceCatalogEntry[]> | null = null;
   let lastServiceCatalogRefreshAt = 0;
@@ -2347,7 +2819,8 @@ export function registerPiChatHandlers({
     const providerHint = resolveProviderHintForService(
       providerOverride,
     );
-    const proxyModel = makeProxyService(serviceId, proxyPort);
+    const protocol = serviceProtocolMap.get(serviceId.toLowerCase()) ?? 'anthropic-messages';
+    const proxyModel = makeProxyService(serviceId, proxyPort, protocol);
 
     const authStorage = AuthStorage.inMemory();
     authStorage.setRuntimeApiKey(PROXY_PROVIDER_ID, PROXY_RUNTIME_API_KEY);
@@ -2397,9 +2870,15 @@ export function registerPiChatHandlers({
 
     const turnMetaQueue: AiMessageMeta[] = [];
     const toolArgsById = new Map<string, Record<string, unknown>>();
-    session.agent.streamFn = createBuyerProxyStreamFn((meta) => {
-      turnMetaQueue.push(meta);
-    }, providerHint, preferredPeerId ?? null);
+    if (protocol === 'openai-chat-completions') {
+      session.agent.streamFn = createBuyerProxyOpenAIStreamFn((meta) => {
+        turnMetaQueue.push(meta);
+      }, providerHint, preferredPeerId ?? null);
+    } else {
+      session.agent.streamFn = createBuyerProxyStreamFn((meta) => {
+        turnMetaQueue.push(meta);
+      }, providerHint, preferredPeerId ?? null);
+    }
 
     let turnIndex = 0;
     let userPersisted = false;
@@ -2656,6 +3135,7 @@ export function registerPiChatHandlers({
 
       const limited = limitChatServiceCatalogEntries(normalizeChatServiceCatalogEntries(servicesFromMetadata));
       updateServiceProviderHints(serviceProviderHints, limited);
+      updateServiceProtocolMap(serviceProtocolMap, limited);
       void writeChatServiceCatalogCache(limited).catch(() => undefined);
       lastServiceCatalogRefreshAt = Date.now();
       return limited;
@@ -2683,6 +3163,7 @@ export function registerPiChatHandlers({
       const cached = await readChatServiceCatalogCache();
       if (cached) {
         updateServiceProviderHints(serviceProviderHints, cached.entries);
+        updateServiceProtocolMap(serviceProtocolMap, cached.entries);
         const cacheAgeMs = Date.now() - cached.updatedAt;
         if (cacheAgeMs <= CHAT_SERVICE_CACHE_MAX_AGE_MS) {
           if (cacheAgeMs > CHAT_SERVICE_CACHE_REFRESH_DEBOUNCE_MS) {
