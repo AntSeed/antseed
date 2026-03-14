@@ -58,31 +58,6 @@ export interface SellerServiceCategoryConfig {
 }
 
 /**
- * Injection position for a middleware entry.
- */
-export type MiddlewarePosition = 'system-prepend' | 'system-append' | 'prepend' | 'append';
-export const VALID_MIDDLEWARE_POSITIONS: ReadonlySet<MiddlewarePosition> = new Set([
-  'system-prepend',
-  'system-append',
-  'prepend',
-  'append',
-]);
-
-/**
- * A single middleware entry referencing a Markdown file on disk.
- */
-export interface SellerMiddlewareConfig {
-  /** Path to the .md file (relative to the config file's directory, or absolute). */
-  file: string;
-  /** Where to inject the content in the LLM request. */
-  position: MiddlewarePosition;
-  /** Role for 'prepend'/'append' positions. Defaults to 'user'. */
-  role?: string;
-  /** If set, only inject for requests targeting one of these service IDs. Applies to all services when omitted. */
-  services?: string[];
-}
-
-/**
  * Seller-specific configuration within the Antseed config.
  */
 export interface SellerCLIConfig {
@@ -96,23 +71,13 @@ export interface SellerCLIConfig {
   pricing: HierarchicalPricingConfig;
   /** Optional provider/service category tags announced in peer metadata */
   serviceCategories?: SellerServiceCategoryConfig;
-  /** Optional middleware files to inject into every LLM request. */
-  middleware?: SellerMiddlewareConfig[];
   /**
-   * Custom confidentiality prompt appended to the system prompt whenever middleware
-   * is active, instructing the LLM not to reveal injected content.
-   * Omit or set to an empty string to use the built-in default prompt.
-   * There is no opt-out: a confidentiality prompt is always injected when middleware fires.
-   */
-  middlewareConfidentialityPrompt?: string;
-  /**
-   * Path to a directory containing skill subdirectories for on-demand loading.
-   * Each subdirectory must contain a `SKILL.md` file with YAML frontmatter (name, description).
-   * Skills are loaded dynamically by the LLM via the `antseed_load` tool when needed,
-   * rather than being injected into every request like middleware.
+   * Path to a bound agent directory containing `agent.json`.
+   * The agent defines a persona, guardrails, and knowledge modules that are
+   * selectively loaded based on the buyer's request.
    * Relative paths are resolved from the config file's directory.
    */
-  skillsDir?: string;
+  agentDir?: string;
   /** Publicly reachable seller address override announced in metadata, e.g. "peer.example.com:6882". */
   publicAddress?: string;
 }
