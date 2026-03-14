@@ -25,6 +25,7 @@
     "test": "npm run build && node --test dist/config/*.test.js dist/cli/commands/*.test.js dist/proxy/*.test.js"
   },
   "dependencies": {
+    "@antseed/api-adapter": "workspace:*",
     "@antseed/node": "workspace:*",
     "@antseed/provider-core": "workspace:*",
     "@antseed/dashboard": "workspace:*",
