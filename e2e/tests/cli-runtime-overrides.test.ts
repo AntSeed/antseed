@@ -28,7 +28,6 @@ const baselineConfig = {
     },
   },
   buyer: {
-    preferredProviders: ['anthropic'],
     maxPricing: {
       defaults: {
         inputUsdPerMillion: 100,

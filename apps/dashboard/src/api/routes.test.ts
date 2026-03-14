@@ -24,7 +24,6 @@ function makeConfig(): DashboardConfig {
       },
     },
     buyer: {
-      preferredProviders: ['anthropic'],
       maxPricing: {
         defaults: {
           inputUsdPerMillion: 30,

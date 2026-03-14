@@ -2,7 +2,7 @@ import type { Provider, SerializedHttpRequest, SerializedHttpResponse } from '@a
 
 export class MockOpenAIChatProvider implements Provider {
   readonly name = 'openai';
-  readonly models = ['gpt-4.1'];
+  readonly services = ['gpt-4.1'];
   readonly pricing = {
     defaults: {
       inputUsdPerMillion: 1,

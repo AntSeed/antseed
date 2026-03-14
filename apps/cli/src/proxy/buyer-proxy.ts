@@ -15,16 +15,19 @@ import type {
   SerializedHttpResponseChunk,
 } from '@antseed/node'
 import {
-  detectRequestModelApiProtocol,
-  inferProviderDefaultModelApiProtocols,
-  type ModelApiProtocol,
+  createOpenAIChatToAnthropicStreamingAdapter,
+  createOpenAIChatToResponsesStreamingAdapter,
+  detectRequestServiceApiProtocol,
+  inferProviderDefaultServiceApiProtocols,
+  type ServiceApiProtocol,
   selectTargetProtocolForRequest,
+  type StreamingResponseAdapter,
   type TargetProtocolSelection,
   transformAnthropicMessagesRequestToOpenAIChat,
   transformOpenAIChatResponseToAnthropicMessage,
   transformOpenAIResponsesRequestToOpenAIChat,
   transformOpenAIChatResponseToOpenAIResponses,
-} from './model-api-adapter.js'
+} from './service-api-adapter.js'
 
 export interface BuyerProxyConfig {
   port: number
@@ -44,11 +47,11 @@ export interface BuyerProxyConfig {
    */
   pinnedPeerId?: string
   /**
-   * Pin all requests to a specific model ID for this session.
-   * Overrides the model field in the request body before routing and forwarding.
-   * Can be updated at runtime via `antseed connection set --model`.
+   * Pin all requests to a specific service ID for this session.
+   * Overrides the service field in the request body before routing and forwarding.
+   * Can be updated at runtime via `antseed connection set --service`.
    */
-  pinnedModel?: string
+  pinnedService?: string
 }
 
 const DAEMON_STATE_FILE = join(homedir(), '.antseed', 'daemon.state.json')
@@ -70,7 +73,7 @@ type TokenUsageSummary = {
 
 type RoutingPricing = {
   provider: string
-  model: string | null
+  service: string | null
   inputUsdPerMillion: number | null
   outputUsdPerMillion: number | null
 }
@@ -89,40 +92,6 @@ type PeerProtocolRoutePlan = {
 export type CandidatePeerRouteSelection = {
   candidatePeers: PeerInfo[]
   routePlanByPeerId: Map<string, PeerProtocolRoutePlan>
-}
-
-const CLAUDE_PROVIDER_PREFERENCE = ['claude-oauth', 'anthropic', 'claude-code'] as const
-
-function inferPreferredProvidersForRequest(
-  requestProtocol: ModelApiProtocol | null,
-  requestedModel: string | null,
-): string[] {
-  const model = requestedModel?.trim().toLowerCase() ?? ''
-  if (model.length === 0) {
-    return []
-  }
-
-  const providers: string[] = []
-  const pushProvider = (value: string | null | undefined): void => {
-    const provider = value?.trim().toLowerCase()
-    if (!provider || provider.length === 0 || providers.includes(provider)) {
-      return
-    }
-    providers.push(provider)
-  }
-
-  const slashIndex = model.indexOf('/')
-  if (slashIndex > 0) {
-    pushProvider(model.slice(0, slashIndex))
-  }
-
-  if (requestProtocol === 'anthropic-messages' || model.startsWith('claude-') || model.includes('claude')) {
-    for (const provider of CLAUDE_PROVIDER_PREFERENCE) {
-      pushProvider(provider)
-    }
-  }
-
-  return providers
 }
 
 function getExplicitProviderOverride(request: SerializedHttpRequest): string | null {
@@ -151,22 +120,22 @@ function getPreferredPeerIdHint(request: SerializedHttpRequest): string | null {
 function getPeerProviderProtocols(
   peer: PeerInfo,
   provider: string,
-  requestedModel: string | null,
-): ModelApiProtocol[] {
-  const normalizedRequestedModel = requestedModel?.trim()
+  requestedService: string | null,
+): ServiceApiProtocol[] {
+  const normalizedRequestedService = requestedService?.trim()
   const fromMetadata = (
     peer as PeerInfo & {
-      providerModelApiProtocols?: Record<string, { models: Record<string, ModelApiProtocol[]> }>
+      providerServiceApiProtocols?: Record<string, { services: Record<string, ServiceApiProtocol[]> }>
     }
-  ).providerModelApiProtocols?.[provider]?.models
+  ).providerServiceApiProtocols?.[provider]?.services
   if (fromMetadata) {
-    if (normalizedRequestedModel) {
+    if (normalizedRequestedService) {
       const directMatchKey = Object.keys(fromMetadata).find(
-        (model) => model.toLowerCase() === normalizedRequestedModel.toLowerCase(),
+        (key) => key.toLowerCase() === normalizedRequestedService.toLowerCase(),
       )
       if (directMatchKey && fromMetadata[directMatchKey]?.length) {
         log(
-          `Model match: peer ${peer.peerId.slice(0, 8)} provider=${provider} model="${normalizedRequestedModel}" `
+          `Service match: peer ${peer.peerId.slice(0, 8)} provider=${provider} service="${normalizedRequestedService}" `
           + `→ [${fromMetadata[directMatchKey]!.join(',')}]`,
         )
         return Array.from(new Set(fromMetadata[directMatchKey]!))
@@ -174,7 +143,7 @@ function getPeerProviderProtocols(
 
       if (Object.keys(fromMetadata).length > 0) {
         log(
-          `Model strict-miss: peer ${peer.peerId.slice(0, 8)} provider=${provider} model="${normalizedRequestedModel}" `
+          `Service strict-miss: peer ${peer.peerId.slice(0, 8)} provider=${provider} service="${normalizedRequestedService}" `
           + 'not in metadata; excluding from route candidates.',
         )
         return []
@@ -183,24 +152,24 @@ function getPeerProviderProtocols(
 
     const merged = Object.values(fromMetadata).flat()
     if (merged.length > 0) {
-      if (requestedModel) {
+      if (requestedService) {
         log(
-          `Model hint miss: peer ${peer.peerId.slice(0, 8)} provider=${provider} model="${requestedModel}" not in metadata; falling back to provider protocol set [${Array.from(new Set(merged)).join(',')}]`,
+          `Service hint miss: peer ${peer.peerId.slice(0, 8)} provider=${provider} service="${requestedService}" not in metadata; falling back to provider protocol set [${Array.from(new Set(merged)).join(',')}]`,
         )
       }
       return Array.from(new Set(merged))
     }
   }
 
-  const inferred = inferProviderDefaultModelApiProtocols(provider)
+  const inferred = inferProviderDefaultServiceApiProtocols(provider)
   log(`No metadata: peer ${peer.peerId.slice(0, 8)} provider=${provider} → inferred [${inferred.join(',')}]`)
   return inferred
 }
 
 function resolvePeerRoutePlan(
   peer: PeerInfo,
-  requestProtocol: ModelApiProtocol | null,
-  requestedModel: string | null,
+  requestProtocol: ServiceApiProtocol | null,
+  requestedService: string | null,
   explicitProvider: string | null,
 ): PeerProtocolRoutePlan | null {
   const providers = peer.providers
@@ -224,7 +193,7 @@ function resolvePeerRoutePlan(
 
   let transformedFallback: PeerProtocolRoutePlan | null = null
   for (const provider of candidates) {
-    const supportedProtocols = getPeerProviderProtocols(peer, provider, requestedModel)
+    const supportedProtocols = getPeerProviderProtocols(peer, provider, requestedService)
     const selection = selectTargetProtocolForRequest(requestProtocol, supportedProtocols)
     if (!selection) {
       continue
@@ -242,8 +211,8 @@ function resolvePeerRoutePlan(
 
 export function selectCandidatePeersForRouting(
   peers: PeerInfo[],
-  requestProtocol: ModelApiProtocol | null,
-  requestedModel: string | null,
+  requestProtocol: ServiceApiProtocol | null,
+  requestedService: string | null,
   explicitProvider: string | null,
 ): CandidatePeerRouteSelection {
   const routePlanByPeerId = new Map<string, PeerProtocolRoutePlan>()
@@ -255,7 +224,7 @@ export function selectCandidatePeersForRouting(
   }
 
   const candidatePeers = peers.filter((peer) => {
-    const plan = resolvePeerRoutePlan(peer, requestProtocol, requestedModel, explicitProvider)
+    const plan = resolvePeerRoutePlan(peer, requestProtocol, requestedService, explicitProvider)
     if (!plan) return false
     routePlanByPeerId.set(peer.peerId, plan)
     return true
@@ -421,7 +390,7 @@ function pickProviderForPeer(peer: PeerInfo, request: SerializedHttpRequest): st
   return 'unknown'
 }
 
-function extractRequestedModel(request: SerializedHttpRequest): string | null {
+function extractRequestedService(request: SerializedHttpRequest): string | null {
   const contentType = (request.headers['content-type'] ?? request.headers['Content-Type'] ?? '').toLowerCase()
   if (!contentType.includes('application/json')) {
     return null
@@ -429,9 +398,9 @@ function extractRequestedModel(request: SerializedHttpRequest): string | null {
 
   try {
     const parsed = JSON.parse(new TextDecoder().decode(request.body)) as Record<string, unknown>
-    const model = parsed.model
-    if (typeof model === 'string' && model.trim().length > 0) {
-      return model.trim()
+    const service = parsed.service ?? parsed.model
+    if (typeof service === 'string' && service.trim().length > 0) {
+      return service.trim()
     }
     return null
   } catch {
@@ -538,7 +507,7 @@ function summarizeRequestShape(request: SerializedHttpRequest): string {
   const accept = (request.headers['accept'] ?? request.headers['Accept'] ?? '').toLowerCase()
   const providerHeader = request.headers['x-antseed-provider'] ?? 'none'
   const preferPeerHeader = request.headers['x-antseed-prefer-peer'] ?? 'none'
-  const model = extractRequestedModel(request) ?? 'none'
+  const service = extractRequestedService(request) ?? 'none'
   const wantsStreaming = requestWantsStreaming(request.headers, request.body)
 
   const baseParts = [
@@ -549,7 +518,7 @@ function summarizeRequestShape(request: SerializedHttpRequest): string {
     `contentType=${contentType || 'none'}`,
     `accept=${accept || 'none'}`,
     `stream=${String(wantsStreaming)}`,
-    `model=${model}`,
+    `service=${service}`,
     `bodyBytes=${String(request.body.length)}`,
   ]
 
@@ -642,14 +611,14 @@ function setPeerIdentityHeaders(headers: Record<string, string>, selectedPeer: P
   }
 }
 
-function resolvePeerPricing(peer: PeerInfo, provider: string, model: string | null): { inputUsdPerMillion: number | null; outputUsdPerMillion: number | null } {
+function resolvePeerPricing(peer: PeerInfo, provider: string, service: string | null): { inputUsdPerMillion: number | null; outputUsdPerMillion: number | null } {
   const providerPricing = peer.providerPricing?.[provider]
   if (providerPricing) {
-    const modelPricing = model ? providerPricing.models?.[model] : undefined
-    if (modelPricing) {
+    const servicePricing = service ? providerPricing.services?.[service] : undefined
+    if (servicePricing) {
       return {
-        inputUsdPerMillion: toFiniteNumberOrNull(modelPricing.inputUsdPerMillion),
-        outputUsdPerMillion: toFiniteNumberOrNull(modelPricing.outputUsdPerMillion),
+        inputUsdPerMillion: toFiniteNumberOrNull(servicePricing.inputUsdPerMillion),
+        outputUsdPerMillion: toFiniteNumberOrNull(servicePricing.outputUsdPerMillion),
       }
     }
     return {
@@ -671,8 +640,8 @@ function computeResponseTelemetry(
   selectedPeer: PeerInfo,
 ): ResponseTelemetry {
   const provider = pickProviderForPeer(selectedPeer, request)
-  const model = extractRequestedModel(request)
-  const pricing = resolvePeerPricing(selectedPeer, provider, model)
+  const service = extractRequestedService(request)
+  const pricing = resolvePeerPricing(selectedPeer, provider, service)
   const contentType = (responseHeaders['content-type'] ?? '').toLowerCase()
 
   const usageFromBody = contentType.includes('text/event-stream')
@@ -706,7 +675,7 @@ function computeResponseTelemetry(
     usage,
     pricing: {
       provider,
-      model,
+      service,
       inputUsdPerMillion: pricing.inputUsdPerMillion,
       outputUsdPerMillion: pricing.outputUsdPerMillion,
     },
@@ -730,8 +699,8 @@ function attachAntseedTelemetryHeaders(
   setFiniteNumberHeader(headers, 'x-antseed-peer-current-load', selectedPeer.currentLoad)
   setFiniteNumberHeader(headers, 'x-antseed-peer-max-concurrency', selectedPeer.maxConcurrency)
   headers['x-antseed-provider'] = telemetry.pricing.provider
-  if (telemetry.pricing.model) {
-    headers['x-antseed-model'] = telemetry.pricing.model
+  if (telemetry.pricing.service) {
+    headers['x-antseed-service'] = telemetry.pricing.service
   }
   setFiniteNumberHeader(headers, 'x-antseed-input-usd-per-million', telemetry.pricing.inputUsdPerMillion)
   setFiniteNumberHeader(headers, 'x-antseed-output-usd-per-million', telemetry.pricing.outputUsdPerMillion)
@@ -864,7 +833,7 @@ export class BuyerProxy {
   private readonly _bgRefreshIntervalMs: number
   private readonly _peerCacheTtlMs: number
   private _pinnedPeer: string | null
-  private _pinnedModel: string | null
+  private _pinnedService: string | null
   private _stateFileWatcher: FSWatcher | null = null
   private _stateWatchDebounce: ReturnType<typeof setTimeout> | null = null
 
@@ -883,7 +852,7 @@ export class BuyerProxy {
     this._bgRefreshIntervalMs = config.backgroundRefreshIntervalMs ?? 5 * 60_000
     this._peerCacheTtlMs = Math.max(0, config.peerCacheTtlMs ?? 30_000)
     this._pinnedPeer = config.pinnedPeerId?.toLowerCase() ?? null
-    this._pinnedModel = config.pinnedModel?.trim() ?? null
+    this._pinnedService = config.pinnedService?.trim() ?? null
     this._server = createServer((req, res) => {
       this._handleRequest(req, res).catch((err) => {
         log('Unhandled error:', err)
@@ -947,16 +916,16 @@ export class BuyerProxy {
   private async _reloadSessionOverrides(): Promise<void> {
     try {
       const raw = await readFile(BUYER_STATE_FILE, 'utf-8')
-      const parsed = JSON.parse(raw) as { pinnedModel?: unknown; pinnedPeerId?: unknown }
-      const pinnedModel = typeof parsed.pinnedModel === 'string' && parsed.pinnedModel.trim().length > 0
-        ? parsed.pinnedModel.trim()
+      const parsed = JSON.parse(raw) as Record<string, unknown>
+      const pinnedService = typeof parsed.pinnedService === 'string' && parsed.pinnedService.trim().length > 0
+        ? parsed.pinnedService.trim()
         : null
       const pinnedPeer = typeof parsed.pinnedPeerId === 'string' && parsed.pinnedPeerId.trim().length > 0
         ? parsed.pinnedPeerId.trim().toLowerCase()
         : null
-      this._pinnedModel = pinnedModel
+      this._pinnedService = pinnedService
       this._pinnedPeer = pinnedPeer
-      log(`Session overrides reloaded: model=${pinnedModel ?? 'none'} peer=${pinnedPeer ?? 'none'}`)
+      log(`Session overrides reloaded: service=${pinnedService ?? 'none'} peer=${pinnedPeer ?? 'none'}`)
     } catch {
       // state file unreadable; keep current values
     }
@@ -973,11 +942,11 @@ export class BuyerProxy {
       } catch {
         // file doesn't exist yet
       }
-      // When stopping, preserve whatever pinnedModel/pinnedPeerId is already
+      // When stopping, preserve whatever pinnedService/pinnedPeerId is already
       // in the file — the debounce may have been cancelled before
       // _reloadSessionOverrides could commit the latest CLI-written values.
       const sessionOverrides = state === 'connected'
-        ? { pinnedModel: this._pinnedModel, pinnedPeerId: this._pinnedPeer }
+        ? { pinnedService: this._pinnedService, pinnedPeerId: this._pinnedPeer }
         : {}
       const data = {
         ...existing,
@@ -1047,8 +1016,8 @@ export class BuyerProxy {
 
   private _buildRouteKey(
     path: string,
-    requestProtocol: ModelApiProtocol | null,
-    requestedModel: string | null,
+    requestProtocol: ServiceApiProtocol | null,
+    requestedService: string | null,
     explicitProvider: string | null,
   ): string {
     const normalizedPath = path.split('?')[0]?.trim().toLowerCase() ?? '/'
@@ -1066,7 +1035,7 @@ export class BuyerProxy {
     return [
       pathGroup,
       requestProtocol ?? 'unknown-protocol',
-      requestedModel ?? 'unknown-model',
+      requestedService ?? 'unknown-service',
       explicitProvider ?? 'auto-provider',
     ].join('|')
   }
@@ -1255,18 +1224,18 @@ export class BuyerProxy {
     }
 
     // Snapshot both session overrides together before any await so a concurrent
-    // _reloadSessionOverrides() cannot produce a model/peer mismatch mid-request.
-    const effectivePinnedModel = this._pinnedModel
+    // _reloadSessionOverrides() cannot produce a service/peer mismatch mid-request.
+    const effectivePinnedService = this._pinnedService
     const effectivePinnedPeer = this._pinnedPeer
-    if (effectivePinnedModel) {
+    if (effectivePinnedService) {
       const { body: rewrittenBody, headers: rewrittenHeaders } = rewriteModelInBody(
         serializedReq.body,
         serializedReq.headers,
-        effectivePinnedModel,
+        effectivePinnedService,
       )
       if (rewrittenBody !== serializedReq.body) {
         serializedReq = { ...serializedReq, body: rewrittenBody, headers: rewrittenHeaders }
-        log(`Model override applied: ${effectivePinnedModel}`)
+        log(`Service override applied: ${effectivePinnedService}`)
       }
     }
 
@@ -1298,20 +1267,20 @@ export class BuyerProxy {
       return
     }
 
-    const requestProtocol = detectRequestModelApiProtocol(serializedReq)
-    const requestedModel = extractRequestedModel(serializedReq)
-    log(`Routing: protocol=${requestProtocol ?? 'null'} model=${requestedModel ?? 'null'}`)
+    const requestProtocol = detectRequestServiceApiProtocol(serializedReq)
+    const requestedService = extractRequestedService(serializedReq)
+    log(`Routing: protocol=${requestProtocol ?? 'null'} service=${requestedService ?? 'null'}`)
     const explicitProvider = getExplicitProviderOverride(serializedReq)
     const explicitPeerId = getExplicitPeerIdOverride(serializedReq, effectivePinnedPeer ?? undefined)
     const preferredPeerId = getPreferredPeerIdHint(serializedReq)
     log(
       `Routing hints: provider=${explicitProvider ?? 'auto'} pin-peer=${explicitPeerId ?? 'none'} prefer-peer=${preferredPeerId ?? 'none'}`,
     )
-    const routeKey = this._buildRouteKey(serializedReq.path, requestProtocol, requestedModel, explicitProvider)
+    const routeKey = this._buildRouteKey(serializedReq.path, requestProtocol, requestedService, explicitProvider)
     const selectPeers = (candidateSources: PeerInfo[]): CandidatePeerRouteSelection => selectCandidatePeersForRouting(
       candidateSources,
       requestProtocol,
-      requestedModel,
+      requestedService,
       explicitProvider,
     )
 
@@ -1355,23 +1324,6 @@ export class BuyerProxy {
       return
     }
 
-    const preferredProviders = explicitProvider
-      ? []
-      : inferPreferredProvidersForRequest(requestProtocol, requestedModel)
-    let hasPreferredProviderCandidate = preferredProviders.length > 0
-      && routingPeers.some((peer) => {
-        const provider = routingPlans.get(peer.peerId)?.provider?.trim().toLowerCase()
-        return Boolean(provider && preferredProviders.includes(provider))
-      })
-
-    if (preferredProviders.length > 0 && !hasPreferredProviderCandidate) {
-      await refreshPeerSelection(`missing preferred providers [${preferredProviders.join(',')}]`)
-      hasPreferredProviderCandidate = routingPeers.some((peer) => {
-        const provider = routingPlans.get(peer.peerId)?.provider?.trim().toLowerCase()
-        return Boolean(provider && preferredProviders.includes(provider))
-      })
-    }
-
     if (routingPeers.length === 0) {
       const diagnostics = this._formatPeerSelectionDiagnostics(discoveredPeers)
       res.writeHead(502, { 'content-type': 'text/plain' })
@@ -1403,9 +1355,9 @@ export class BuyerProxy {
         const peerDiscovered = discoveredPeers.some((peer) => peer.peerId.toLowerCase() === explicitPeerId)
         const protocolLabel = requestProtocol ? `protocol=${requestProtocol}` : 'protocol=unknown'
         const providerLabel = explicitProvider ? `provider=${explicitProvider}` : 'provider=auto'
-        const modelLabel = requestedModel ? `model=${requestedModel}` : 'model=none'
+        const serviceLabel = requestedService ? `service=${requestedService}` : 'service=none'
         const mismatchHint = peerDiscovered
-          ? `Peer is discoverable but filtered as incompatible (${protocolLabel}, ${providerLabel}, ${modelLabel}).`
+          ? `Peer is discoverable but filtered as incompatible (${protocolLabel}, ${providerLabel}, ${serviceLabel}).`
           : 'Peer is not discoverable right now.'
         log(`Pinned peer ${explicitPeerId.slice(0, 12)}... not found in candidate list (${source})`)
         res.writeHead(502, { 'content-type': 'text/plain' })
@@ -1420,7 +1372,7 @@ export class BuyerProxy {
         routeKey,
         pinnedRoutePlans,
         requestProtocol,
-        requestedModel,
+        requestedService,
         explicitProvider,
         router,
         RETRYABLE_STATUS_CODES,
@@ -1438,29 +1390,12 @@ export class BuyerProxy {
     // Non-pinned: retry with failover on provider errors
     const MAX_ATTEMPTS = 3
     const triedPeerIds = new Set<string>()
-    const restrictFailoverToPreferredProviders = preferredProviders.length > 0 && hasPreferredProviderCandidate
-    if (restrictFailoverToPreferredProviders) {
-      log(`Provider-family preference active (attempt 1): [${preferredProviders.join(',')}]`)
-    }
     let lastStatusCode = 502
     let lastResponseBody: Buffer | null = null
     let lastResponseHeaders: Record<string, string> = { 'content-type': 'text/plain' }
 
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-      const limitToPreferredProviders = restrictFailoverToPreferredProviders && attempt === 0
-      if (restrictFailoverToPreferredProviders && attempt === 1) {
-        log('Preferred provider attempt failed; expanding failover to all compatible providers.')
-      }
-      const availableCandidates = routingPeers.filter((peer) => {
-        if (triedPeerIds.has(peer.peerId)) {
-          return false
-        }
-        if (!limitToPreferredProviders) {
-          return true
-        }
-        const provider = routingPlans.get(peer.peerId)?.provider?.trim().toLowerCase()
-        return Boolean(provider && preferredProviders.includes(provider))
-      })
+      const availableCandidates = routingPeers.filter((peer) => !triedPeerIds.has(peer.peerId))
       if (availableCandidates.length === 0) break
 
       let selectedPeer: PeerInfo | null = null
@@ -1478,7 +1413,7 @@ export class BuyerProxy {
       }
 
       // Fallback to the latest globally successful peer.
-      if (!selectedPeer && attempt === 0 && this._lastSuccessfulPeerId && !requestedModel) {
+      if (!selectedPeer && attempt === 0 && this._lastSuccessfulPeerId && !requestedService) {
         const remembered = availableCandidates.find((peer) => peer.peerId === this._lastSuccessfulPeerId) ?? null
         if (remembered) {
           selectedPeer = remembered
@@ -1492,25 +1427,6 @@ export class BuyerProxy {
         if (preferred) {
           selectedPeer = preferred
           log(`Preferring requested peer ${selectedPeer.peerId.slice(0, 12)}...`)
-        }
-      }
-
-      // Strongly prefer providers that match the requested model family (e.g. claude-* -> claude/anthropic providers).
-      if (!selectedPeer && attempt === 0 && preferredProviders.length > 0) {
-        const providerMatchedPeers = availableCandidates.filter((peer) => {
-          const plannedProvider = routingPlans.get(peer.peerId)?.provider?.trim().toLowerCase()
-          return plannedProvider ? preferredProviders.includes(plannedProvider) : false
-        })
-        if (providerMatchedPeers.length > 0) {
-          selectedPeer = router
-            ? router.selectPeer(serializedReq, providerMatchedPeers)
-            : providerMatchedPeers[0] ?? null
-          if (selectedPeer) {
-            const plannedProvider = routingPlans.get(selectedPeer.peerId)?.provider ?? 'unknown'
-            log(
-              `Preferring model-matched provider "${plannedProvider}" for model "${requestedModel ?? 'unknown'}"`,
-            )
-          }
         }
       }
 
@@ -1529,7 +1445,7 @@ export class BuyerProxy {
 
       // Prefer peers that can serve the request protocol directly without adapter transform.
       if (!selectedPeer && requestProtocol === 'anthropic-messages') {
-        const shouldPreferDirect = !requestedModel || /claude|anthropic/i.test(requestedModel)
+        const shouldPreferDirect = !requestedService || /claude|anthropic/i.test(requestedService)
         if (shouldPreferDirect) {
           const directPeers = availableCandidates.filter((peer) => {
             const plan = routingPlans.get(peer.peerId)
@@ -1564,7 +1480,7 @@ export class BuyerProxy {
         routeKey,
         routingPlans,
         requestProtocol,
-        requestedModel,
+        requestedService,
         explicitProvider,
         router,
         RETRYABLE_STATUS_CODES,
@@ -1610,8 +1526,8 @@ export class BuyerProxy {
     selectedPeer: PeerInfo,
     routeKey: string,
     routePlanByPeerId: Map<string, PeerProtocolRoutePlan>,
-    requestProtocol: ModelApiProtocol | null,
-    requestedModel: string | null,
+    requestProtocol: ServiceApiProtocol | null,
+    requestedService: string | null,
     explicitProvider: string | null,
     router: Router | null,
     retryableStatusCodes: Set<number>,
@@ -1621,7 +1537,7 @@ export class BuyerProxy {
     | { done: false; statusCode: number; responseBody: Buffer; responseHeaders: Record<string, string>; errorMessage: string | null }
   > {
     const selectedRoutePlan = routePlanByPeerId.get(selectedPeer.peerId)
-      ?? resolvePeerRoutePlan(selectedPeer, requestProtocol, requestedModel, explicitProvider)
+      ?? resolvePeerRoutePlan(selectedPeer, requestProtocol, requestedService, explicitProvider)
 
     if (!selectedRoutePlan) {
       return { done: false, statusCode: 502, responseBody: Buffer.from('No compatible provider route'), responseHeaders: { 'content-type': 'text/plain' }, errorMessage: null }
@@ -1640,7 +1556,7 @@ export class BuyerProxy {
       },
     }
     let adaptResponse: ((response: SerializedHttpResponse) => SerializedHttpResponse) | null = null
-    let forceDisableUpstreamStreaming = false
+    let streamResponseAdapter: StreamingResponseAdapter | null = null
 
     if (selectedRoutePlan.selection?.requiresTransform) {
       if (
@@ -1666,7 +1582,11 @@ export class BuyerProxy {
             streamRequested: transformed.streamRequested,
             fallbackModel: transformed.requestedModel,
           })
-        forceDisableUpstreamStreaming = true
+        if (transformed.streamRequested) {
+          streamResponseAdapter = createOpenAIChatToAnthropicStreamingAdapter({
+            fallbackModel: transformed.requestedModel,
+          })
+        }
       } else if (
         requestProtocol === 'openai-responses'
         && selectedRoutePlan.selection.targetProtocol === 'openai-chat-completions'
@@ -1690,7 +1610,11 @@ export class BuyerProxy {
             fallbackModel: transformed.requestedModel,
             streamRequested: transformed.streamRequested,
           })
-        forceDisableUpstreamStreaming = true
+        if (transformed.streamRequested) {
+          streamResponseAdapter = createOpenAIChatToResponsesStreamingAdapter({
+            fallbackModel: transformed.requestedModel,
+          })
+        }
       } else {
         res.writeHead(502, { 'content-type': 'text/plain' })
         res.end('Unsupported protocol transformation path')
@@ -1704,8 +1628,7 @@ export class BuyerProxy {
     log(`Routing to peer ${selectedPeer.peerId.slice(0, 12)}...`)
 
     // Forward through P2P
-    const wantsStreaming = !forceDisableUpstreamStreaming
-      && requestWantsStreaming(requestForPeer.headers, requestForPeer.body)
+    const wantsStreaming = requestWantsStreaming(requestForPeer.headers, requestForPeer.body)
     const startTime = Date.now()
     try {
       if (wantsStreaming) {
@@ -1714,34 +1637,53 @@ export class BuyerProxy {
           onResponseStart: (startResponse: SerializedHttpResponse, metadata: RequestStreamResponseMetadata) => {
             if (!metadata.streaming) return
             streamed = true
+            const adaptedStartResponse = streamResponseAdapter
+              ? streamResponseAdapter.adaptStart(startResponse)
+              : startResponse
             const streamingHeaders = attachStreamingAntseedHeaders(
-              startResponse.headers,
+              adaptedStartResponse.headers,
               selectedPeer,
               requestForPeer.requestId,
             )
-            res.writeHead(startResponse.statusCode, streamingHeaders)
-            if (startResponse.body.length > 0) {
-              res.write(Buffer.from(startResponse.body))
+            res.writeHead(adaptedStartResponse.statusCode, streamingHeaders)
+            if (adaptedStartResponse.body.length > 0) {
+              res.write(Buffer.from(adaptedStartResponse.body))
             }
           },
           onResponseChunk: (chunk: SerializedHttpResponseChunk) => {
             if (!streamed) return
-            if (chunk.data.length > 0) {
-              res.write(Buffer.from(chunk.data))
+            const adaptedChunks = streamResponseAdapter
+              ? streamResponseAdapter.adaptChunk(chunk)
+              : [chunk]
+            for (const adaptedChunk of adaptedChunks) {
+              if (adaptedChunk.data.length > 0) {
+                res.write(Buffer.from(adaptedChunk.data))
+              }
             }
           },
         }, { signal: requestSignal })
 
-        const latencyMs = Date.now() - startTime
-        log(`Response: ${response.statusCode} (${latencyMs}ms, ${response.body.length} bytes)`)
-        if (response.statusCode >= 400) {
-          log(`Upstream error detail: ${summarizeErrorResponse(response)}`)
+        let responseForClient = response
+        if (!streamed && adaptResponse) {
+          responseForClient = adaptResponse(response)
         }
 
-        const telemetry = computeResponseTelemetry(requestForPeer, response.headers, response.body, selectedPeer)
+        const latencyMs = Date.now() - startTime
+        log(`Response: ${responseForClient.statusCode} (${latencyMs}ms, ${responseForClient.body.length} bytes)`)
+        if (responseForClient.statusCode >= 400) {
+          const prefix = adaptResponse && !streamed ? 'Upstream adapted error detail' : 'Upstream error detail'
+          log(`${prefix}: ${summarizeErrorResponse(responseForClient)}`)
+        }
+
+        const telemetry = computeResponseTelemetry(
+          requestForPeer,
+          responseForClient.headers,
+          responseForClient.body,
+          selectedPeer,
+        )
         if (router) {
           router.onResult(selectedPeer, {
-            success: !retryableStatusCodes.has(response.statusCode),
+            success: !retryableStatusCodes.has(responseForClient.statusCode),
             latencyMs,
             tokens: telemetry.usage.totalTokens,
           })
@@ -1749,7 +1691,7 @@ export class BuyerProxy {
 
         if (streamed) {
           // Headers already sent to client, can't retry
-          if (response.statusCode >= 200 && response.statusCode < 400) {
+          if (responseForClient.statusCode >= 200 && responseForClient.statusCode < 400) {
             this._rememberSuccessfulPeer(routeKey, selectedPeer.peerId)
           }
           if (!res.writableEnded) {
@@ -1760,21 +1702,27 @@ export class BuyerProxy {
 
         // Non-streamed response — check if retryable
         const responseHeaders = attachAntseedTelemetryHeaders(
-          response.headers,
+          responseForClient.headers,
           selectedPeer,
           telemetry,
           requestForPeer.requestId,
           latencyMs,
         )
-        if (retryableStatusCodes.has(response.statusCode)) {
-          return { done: false, statusCode: response.statusCode, responseBody: Buffer.from(response.body), responseHeaders, errorMessage: null }
+        if (retryableStatusCodes.has(responseForClient.statusCode)) {
+          return {
+            done: false,
+            statusCode: responseForClient.statusCode,
+            responseBody: Buffer.from(responseForClient.body),
+            responseHeaders,
+            errorMessage: null,
+          }
         }
 
-        if (response.statusCode >= 200 && response.statusCode < 400) {
+        if (responseForClient.statusCode >= 200 && responseForClient.statusCode < 400) {
           this._rememberSuccessfulPeer(routeKey, selectedPeer.peerId)
         }
-        res.writeHead(response.statusCode, responseHeaders)
-        res.end(Buffer.from(response.body))
+        res.writeHead(responseForClient.statusCode, responseHeaders)
+        res.end(Buffer.from(responseForClient.body))
         return { done: true }
       } else {
         const upstreamResponse = await this._node.sendRequest(selectedPeer, requestForPeer, { signal: requestSignal })
@@ -1870,11 +1818,11 @@ export class BuyerProxy {
         })
       }
 
-      // Avoid poisoning routing cache from control-plane model enumeration failures.
-      // Some peers can time out on /v1/models while still serving inference paths.
+      // Avoid poisoning routing cache from control-plane service enumeration failures.
+      // Some peers can time out on /v1/models (service probe) while still serving inference paths.
       const normalizedPath = requestForPeer.path.toLowerCase()
-      const isControlPlaneModelsRequest = normalizedPath.startsWith('/v1/models')
-      if (isControlPlaneModelsRequest) {
+      const isControlPlaneServicesRequest = normalizedPath.startsWith('/v1/models')
+      if (isControlPlaneServicesRequest) {
         log(`Skipping peer eviction for control-plane failure on ${requestForPeer.path}`)
       } else if (connectionChurnError) {
         const currentState = this._node.getPeerConnectionState(selectedPeer.peerId)

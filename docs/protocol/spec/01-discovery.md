@@ -17,9 +17,9 @@ The network uses the BitTorrent Mainline DHT (BEP 5) as a decentralised director
 Sellers announce multiple topic types on the DHT:
 
 ```
-providerTopic(provider)        = "antseed:" + normalize(provider)
-modelTopic(model)              = "antseed:model:" + normalize(model)
-modelSearchTopic(model)        = "antseed:model-search:" + compact(normalize(model))
+ANTSEED_WILDCARD_TOPIC           = "antseed:*"
+serviceTopic(service)            = "antseed:service:" + normalize(service)
+serviceSearchTopic(service)      = "antseed:service-search:" + compact(normalize(service))
 capabilityTopic(capability)    = "antseed:" + normalize(capability)
 capabilityTopic(capability,id) = "antseed:" + normalize(capability) + ":" + normalize(id)
 
@@ -28,13 +28,13 @@ compact(x)   = remove all spaces, "-" and "_" (preserve ".")
 infoHash     = SHA1(topic)      // 20-byte info hash
 ```
 
-The announcer always publishes canonical model topics (`modelTopic`). It additionally publishes compact `modelSearchTopic` entries only when the compact key differs from canonical.
+The announcer always publishes canonical service topics (`serviceTopic`). It additionally publishes compact `serviceSearchTopic` entries only when the compact key differs from canonical.
 
 Examples:
 
-- `kimi 2.5` => canonical `antseed:model:kimi 2.5`, compact `antseed:model-search:kimi2.5`
-- `kimi-2.5` => canonical `antseed:model:kimi-2.5`, compact `antseed:model-search:kimi2.5`
-- `kimi_2.5` => canonical `antseed:model:kimi_2.5`, compact `antseed:model-search:kimi2.5`
+- `kimi 2.5` => canonical `antseed:service:kimi 2.5`, compact `antseed:service-search:kimi2.5`
+- `kimi-2.5` => canonical `antseed:service:kimi-2.5`, compact `antseed:service-search:kimi2.5`
+- `kimi_2.5` => canonical `antseed:service:kimi_2.5`, compact `antseed:service-search:kimi2.5`
 
 `topicToInfoHash()` produces the SHA-1 digest used as the DHT info hash.
 
@@ -71,7 +71,7 @@ Custom bootstrap nodes can be supplied and are merged (deduplicated by `host:por
 **Source:** `node/src/discovery/peer-metadata.ts`
 
 ```
-METADATA_VERSION = 4
+METADATA_VERSION = 5
 ```
 
 ### Data Structures
@@ -81,8 +81,9 @@ METADATA_VERSION = 4
 | Field       | Type                    | Description                             |
 |-------------|-------------------------|-----------------------------------------|
 | peerId      | PeerId (string)         | 64 hex chars (32-byte Ed25519 public key) |
-| version     | number                  | Must equal `METADATA_VERSION` (4)       |
+| version     | number                  | Must equal `METADATA_VERSION` (5)       |
 | displayName | string                  | Optional human-readable node label      |
+| publicAddress | string                | Optional public `host:port` buyers should dial instead of the raw DHT source address |
 | providers   | ProviderAnnouncement[]  | List of provider offerings              |
 | region      | string                  | Geographic region identifier            |
 | timestamp   | number                  | Unix epoch milliseconds                 |
@@ -93,11 +94,11 @@ METADATA_VERSION = 4
 | Field            | Type     | Description                                                  |
 |------------------|----------|--------------------------------------------------------------|
 | provider         | string   | Provider name (e.g. "anthropic")                            |
-| models           | string[] | List of model identifiers                                    |
+| services         | string[] | List of service identifiers                                  |
 | defaultPricing   | object   | Default `{ inputUsdPerMillion, outputUsdPerMillion }`       |
-| modelPricing     | object   | Optional per-model map `{ [model]: { inputUsdPerMillion, outputUsdPerMillion } }` |
-| modelCategories  | object   | Optional per-model map `{ [model]: string[] }` with lowercase tags |
-| modelApiProtocols| object   | Optional per-model map `{ [model]: string[] }` of supported model API protocols |
+| servicePricing     | object   | Optional per-service map `{ [service]: { inputUsdPerMillion, outputUsdPerMillion } }` |
+| serviceCategories  | object   | Optional per-service map `{ [service]: string[] }` with lowercase tags |
+| serviceApiProtocols| object   | Optional per-service map `{ [service]: string[] }` of supported service API protocols |
 | maxConcurrency   | number   | Maximum concurrent requests (>= 1)                           |
 | currentLoad      | number   | Current number of active requests                            |
 
@@ -119,30 +120,30 @@ Header:
 Per provider (repeated providerCount times):
   [providerLen   : 1 byte   uint8 ]
   [provider      : N bytes  UTF-8  ]   // N = providerLen
-  [modelCount    : 1 byte   uint8 ]
-  Per model (repeated modelCount times):
-    [modelLen    : 1 byte   uint8 ]
-    [model       : N bytes  UTF-8  ]   // N = modelLen
+  [serviceCount  : 1 byte   uint8 ]
+  Per service (repeated serviceCount times):
+    [serviceLen  : 1 byte   uint8 ]
+    [service     : N bytes  UTF-8  ]   // N = serviceLen
   [defaultInputUsdPerMillion  : 4 bytes  float32 big-endian ]
   [defaultOutputUsdPerMillion : 4 bytes  float32 big-endian ]
-  [modelPricingCount          : 1 byte   uint8 ]
-  Per model pricing entry (repeated modelPricingCount times):
-    [modelLen   : 1 byte   uint8 ]
-    [model      : N bytes  UTF-8  ]
+  [servicePricingCount          : 1 byte   uint8 ]
+  Per service pricing entry (repeated servicePricingCount times):
+    [serviceLen : 1 byte   uint8 ]
+    [service    : N bytes  UTF-8  ]
     [inputUsdPerMillion  : 4 bytes  float32 big-endian ]
     [outputUsdPerMillion : 4 bytes  float32 big-endian ]
-  [modelCategoryCount         : 1 byte   uint8 ]      // v3+
-  Per model category entry (repeated modelCategoryCount times):
-    [modelLen   : 1 byte   uint8 ]
-    [model      : N bytes  UTF-8  ]
+  [serviceCategoryCount       : 1 byte   uint8 ]      // v3+
+  Per service category entry (repeated serviceCategoryCount times):
+    [serviceLen : 1 byte   uint8 ]
+    [service    : N bytes  UTF-8  ]
     [categoryCount : 1 byte uint8 ]
     Per category (repeated categoryCount times):
       [categoryLen : 1 byte uint8 ]
       [category    : N bytes UTF-8 ]
-  [modelApiProtocolCount      : 1 byte   uint8 ]      // v4+
-  Per model API protocol entry (repeated modelApiProtocolCount times):
-    [modelLen   : 1 byte   uint8 ]
-    [model      : N bytes  UTF-8  ]
+  [serviceApiProtocolCount    : 1 byte   uint8 ]      // v4+
+  Per service API protocol entry (repeated serviceApiProtocolCount times):
+    [serviceLen : 1 byte   uint8 ]
+    [service    : N bytes  UTF-8  ]
     [protocolCount : 1 byte uint8 ]
     Per protocol (repeated protocolCount times):
       [protocolLen : 1 byte uint8 ]
@@ -154,6 +155,9 @@ Post-provider sections:
   [displayNameFlag:1]                             // v3+
   if displayNameFlag == 1:
     [displayNameLen:1][displayName:N]
+  [publicAddressFlag:1]                           // v5+
+  if publicAddressFlag == 1:
+    [publicAddressLen:1][publicAddress:N]
   [offeringCount:2]                               // uint16
   [offeringEntries...]
   [evmAddressFlag:1] + [evmAddress:20 if present]
@@ -173,30 +177,32 @@ The body (everything except the trailing 64-byte signature) is the data that is 
 |---------------------------|-------|---------------------------------------------|
 | MAX_METADATA_SIZE         | 1000  | Maximum encoded size in bytes               |
 | MAX_PROVIDERS             | 10    | Maximum provider entries per metadata       |
-| MAX_MODELS_PER_PROVIDER   | 20    | Maximum models per provider entry           |
-| MAX_MODEL_NAME_LENGTH     | 64    | Maximum model name length in characters     |
+| MAX_SERVICES_PER_PROVIDER | 20    | Maximum services per provider entry         |
+| MAX_SERVICE_NAME_LENGTH   | 64    | Maximum service name length in characters   |
 | MAX_REGION_LENGTH         | 32    | Maximum region string length in characters  |
 | MAX_DISPLAY_NAME_LENGTH   | 64    | Maximum display name length in characters   |
-| MAX_MODEL_CATEGORIES_PER_MODEL | 8 | Maximum categories per model               |
-| MAX_MODEL_CATEGORY_LENGTH | 32    | Maximum category length in characters       |
-| MAX_MODEL_API_PROTOCOLS_PER_MODEL | 4 | Maximum protocol entries per model |
+| MAX_PUBLIC_ADDRESS_LENGTH | 255   | Maximum public address length in characters |
+| MAX_SERVICE_CATEGORIES_PER_SERVICE | 8 | Maximum categories per service           |
+| MAX_SERVICE_CATEGORY_LENGTH | 32  | Maximum category length in characters       |
+| MAX_SERVICE_API_PROTOCOLS_PER_SERVICE | 4 | Maximum protocol entries per service |
 
 Additional validation rules enforced by `validateMetadata()`:
 
-- `version` must equal `METADATA_VERSION` (4).
+- `version` must equal `METADATA_VERSION` (5).
 - `peerId` must be exactly 64 lowercase hex characters.
 - `region` must not be empty.
 - `displayName` is optional, but when present it must be non-empty and <= 64 chars.
+- `publicAddress` is optional, but when present it must be a valid `host:port` and is signed as part of the metadata.
 - `timestamp` must be a positive finite number.
 - At least one provider must be present.
 - `defaultPricing.inputUsdPerMillion` and `defaultPricing.outputUsdPerMillion` must be non-negative.
-- Each `modelPricing[model].inputUsdPerMillion` and `modelPricing[model].outputUsdPerMillion` (if present) must be non-negative.
-- `modelCategories` (if present) must reference models listed in `providers[].models`.
+- Each `servicePricing[service].inputUsdPerMillion` and `servicePricing[service].outputUsdPerMillion` (if present) must be non-negative.
+- `serviceCategories` (if present) must reference services listed in `providers[].services`.
 - Each category must be lowercase alphanumeric or hyphen: `^[a-z0-9][a-z0-9-]*$`.
-- Categories must be non-empty, unique per model, and within per-model/per-tag limits above.
+- Categories must be non-empty, unique per service, and within per-service/per-tag limits above.
 - Recommended category tags: `privacy`, `legal`, `uncensored`, `coding`, `finance`, `tee` (not enforced; custom tags allowed).
-- `modelApiProtocols` (if present) must reference models listed in `providers[].models`.
-- `modelApiProtocols` entries must be known protocol IDs, non-empty, unique per model, and within per-model limits above.
+- `serviceApiProtocols` (if present) must reference services listed in `providers[].services`.
+- `serviceApiProtocols` entries must be known protocol IDs, non-empty, unique per service, and within per-service limits above.
 - `maxConcurrency` must be at least 1.
 - `currentLoad` must be non-negative and must not exceed `maxConcurrency`.
 - `signature` must be exactly 128 lowercase hex characters (64 bytes).
@@ -250,8 +256,8 @@ All peers returned by a DHT lookup are resolved in parallel, so a single slow or
 The `PeerLookup` class orchestrates the full discovery flow:
 
 1. Build lookup topic(s):
-   - provider lookup: `SHA1(providerTopic(provider))`
-   - model lookup: `SHA1(modelTopic(model))`, and if compact key differs, also `SHA1(modelSearchTopic(model))`
+   - wildcard lookup: `SHA1(ANTSEED_WILDCARD_TOPIC)` — finds all peers
+   - service lookup: `SHA1(serviceTopic(service))`, and if compact key differs, also `SHA1(serviceSearchTopic(service))`
    - capability lookup: `SHA1(capabilityTopic(capability[, name]))`
 2. Query the DHT for the topic hash(es) to obtain `{host, port}` peer endpoints.
 3. For each peer (up to `maxResults`):
@@ -282,10 +288,9 @@ The `PeerAnnouncer` class handles the seller-side announcement lifecycle:
 3. Encode the body (without signature) via `encodeMetadataForSigning()`.
 4. Sign the body with the seller's Ed25519 private key.
 5. Announce DHT topics at the configured signaling port:
-   - provider topics (`providerTopic(provider)`)
-   - canonical model topics (`modelTopic(model)`)
-   - compact model-search topics (`modelSearchTopic(model)`) when canonical and compact keys differ
-   - wildcard provider topic (`providerTopic("*")`)
+   - canonical service topics (`serviceTopic(service)`)
+   - compact service-search topics (`serviceSearchTopic(service)`) when canonical and compact keys differ
+   - wildcard topic (`ANTSEED_WILDCARD_TOPIC`)
    - capability topics when offerings are configured
 
 Periodic re-announcement is managed by `startPeriodicAnnounce()`, which calls `announce()` immediately and then every `reannounceIntervalMs` milliseconds. Load can be updated at any time via `updateLoad(providerName, currentLoad)` and will be reflected in the next announcement cycle.

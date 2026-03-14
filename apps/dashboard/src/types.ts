@@ -19,7 +19,6 @@ export interface DashboardConfig {
     pricing: HierarchicalPricingConfig;
   };
   buyer: {
-    preferredProviders: string[];
     maxPricing: HierarchicalPricingConfig;
     minPeerReputation: number;
     proxyPort: number;
@@ -49,7 +48,7 @@ export interface TokenPricingUsdPerMillion {
 
 export interface ProviderPricingConfig {
   defaults?: TokenPricingUsdPerMillion;
-  models?: Record<string, TokenPricingUsdPerMillion>;
+  services?: Record<string, TokenPricingUsdPerMillion>;
 }
 
 export interface HierarchicalPricingConfig {

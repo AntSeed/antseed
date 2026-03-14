@@ -176,6 +176,7 @@ describe('OpenAI SDK integration: Responses API over buyer proxy', () => {
     expect(provider.requestCount).toBe(1);
 
     const upstreamBody = JSON.parse(new TextDecoder().decode(provider.lastRequest!.body)) as Record<string, unknown>;
-    expect(upstreamBody.stream).toBe(false);
+    expect(upstreamBody.stream).toBe(true);
+    expect(upstreamBody.stream_options).toEqual({ include_usage: true });
   });
 });

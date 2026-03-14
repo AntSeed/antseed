@@ -19,7 +19,7 @@ function makeConfig(overrides?: Partial<RelayConfig>): RelayConfig {
     authHeaderName: 'x-api-key',
     authHeaderValue: 'sk-test-key',
     maxConcurrency: 2,
-    allowedModels: ['claude-sonnet-4-20250514'],
+    allowedServices: ['claude-sonnet-4-20250514'],
     ...overrides,
   };
 }
@@ -64,7 +64,7 @@ describe('HttpRelay', () => {
     expect((opts.headers as Record<string, string>)['x-api-key']).toBe('sk-test-key');
   });
 
-  it('rejects disallowed model', async () => {
+  it('rejects disallowed service', async () => {
     const responses: SerializedHttpResponse[] = [];
     const callbacks: RelayCallbacks = {
       onResponse: (res) => responses.push(res),
@@ -83,7 +83,7 @@ describe('HttpRelay', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('allows any model when allowedModels is empty', async () => {
+  it('allows any service when allowedServices is empty', async () => {
     fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
 
     const responses: SerializedHttpResponse[] = [];
@@ -91,7 +91,7 @@ describe('HttpRelay', () => {
       onResponse: (res) => responses.push(res),
     };
 
-    const relay = new HttpRelay(makeConfig({ allowedModels: [] }), callbacks);
+    const relay = new HttpRelay(makeConfig({ allowedServices: [] }), callbacks);
     const req = makeRequest({
       body: new TextEncoder().encode(JSON.stringify({ model: 'any-model', messages: [] })),
     });
@@ -101,7 +101,7 @@ describe('HttpRelay', () => {
     expect(responses[0]!.statusCode).toBe(200);
   });
 
-  it('rewrites announced model names to upstream model IDs before relay', async () => {
+  it('rewrites announced service names to upstream service IDs before relay', async () => {
     fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
 
     const responses: SerializedHttpResponse[] = [];
@@ -111,8 +111,8 @@ describe('HttpRelay', () => {
 
     const relay = new HttpRelay(
       makeConfig({
-        allowedModels: ['kimi2.5'],
-        modelRewriteMap: {
+        allowedServices: ['kimi2.5'],
+        serviceRewriteMap: {
           'kimi2.5': 'together/kimi2.5',
         },
       }),
@@ -300,7 +300,7 @@ describe('HttpRelay', () => {
     expect(bodyText).toContain('World');
   });
 
-  it('allows GET requests through model validation', async () => {
+  it('allows GET requests through service validation', async () => {
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ object: 'list', data: [] }), { status: 200 }));
 
     const responses: SerializedHttpResponse[] = [];
@@ -308,7 +308,7 @@ describe('HttpRelay', () => {
       onResponse: (res) => responses.push(res),
     };
 
-    const relay = new HttpRelay(makeConfig({ allowedModels: ['claude-sonnet-4-20250514'] }), callbacks);
+    const relay = new HttpRelay(makeConfig({ allowedServices: ['claude-sonnet-4-20250514'] }), callbacks);
     await relay.handleRequest(makeRequest({
       method: 'GET',
       path: '/v1/models',
@@ -318,7 +318,7 @@ describe('HttpRelay', () => {
     expect(responses[0]!.statusCode).toBe(200);
   });
 
-  it('accepts upstream (full) model names via modelRewriteMap', async () => {
+  it('accepts upstream (full) service names via serviceRewriteMap', async () => {
     fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
 
     const responses: SerializedHttpResponse[] = [];
@@ -328,8 +328,8 @@ describe('HttpRelay', () => {
 
     const relay = new HttpRelay(
       makeConfig({
-        allowedModels: ['kimi-k2.5'],
-        modelRewriteMap: { 'kimi-k2.5': 'moonshotai/kimi-k2.5' },
+        allowedServices: ['kimi-k2.5'],
+        serviceRewriteMap: { 'kimi-k2.5': 'moonshotai/kimi-k2.5' },
       }),
       callbacks,
     );
@@ -348,15 +348,15 @@ describe('HttpRelay', () => {
     expect(parsed.model).toBe('moonshotai/kimi-k2.5');
   });
 
-  it('accepts model names case-insensitively', async () => {
+  it('accepts service names case-insensitively', async () => {
     fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
 
     const responses: SerializedHttpResponse[] = [];
     const callbacks: RelayCallbacks = { onResponse: (res) => responses.push(res) };
 
-    // Provider configured with mixed-case model names (as they appear in upstream APIs)
+    // Provider configured with mixed-case service names (as they appear in upstream APIs)
     const relay = new HttpRelay(
-      makeConfig({ allowedModels: ['DeepSeek-R1', 'Kimi-K2.5'] }),
+      makeConfig({ allowedServices: ['DeepSeek-R1', 'Kimi-K2.5'] }),
       callbacks,
     );
 
@@ -368,6 +368,47 @@ describe('HttpRelay', () => {
 
     expect(responses[0]!.statusCode).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('normalizes body.service to body.model for upstream API compatibility', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
+
+    const responses: SerializedHttpResponse[] = [];
+    const callbacks: RelayCallbacks = { onResponse: (res) => responses.push(res) };
+
+    const relay = new HttpRelay(makeConfig({ allowedServices: ['claude-sonnet-4-20250514'] }), callbacks);
+    // Client sends "service" instead of "model"
+    const req = makeRequest({
+      body: new TextEncoder().encode(JSON.stringify({ service: 'claude-sonnet-4-20250514', messages: [] })),
+    });
+    await relay.handleRequest(req);
+
+    expect(responses[0]!.statusCode).toBe(200);
+    const [, opts] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const parsed = JSON.parse(new TextDecoder().decode(opts.body as Uint8Array)) as Record<string, unknown>;
+    // "service" should be removed, "model" should be set
+    expect(parsed.model).toBe('claude-sonnet-4-20250514');
+    expect(parsed.service).toBeUndefined();
+  });
+
+  it('strips body.service when body.model is already present', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
+
+    const responses: SerializedHttpResponse[] = [];
+    const callbacks: RelayCallbacks = { onResponse: (res) => responses.push(res) };
+
+    const relay = new HttpRelay(makeConfig({ allowedServices: ['claude-sonnet-4-20250514'] }), callbacks);
+    // Client sends both "service" and "model"
+    const req = makeRequest({
+      body: new TextEncoder().encode(JSON.stringify({ model: 'claude-sonnet-4-20250514', service: 'claude-sonnet-4-20250514', messages: [] })),
+    });
+    await relay.handleRequest(req);
+
+    expect(responses[0]!.statusCode).toBe(200);
+    const [, opts] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const parsed = JSON.parse(new TextDecoder().decode(opts.body as Uint8Array)) as Record<string, unknown>;
+    expect(parsed.model).toBe('claude-sonnet-4-20250514');
+    expect(parsed.service).toBeUndefined();
   });
 
   it('tracks active count correctly', async () => {

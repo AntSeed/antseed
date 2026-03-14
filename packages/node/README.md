@@ -27,14 +27,14 @@ import type { Provider, SerializedHttpRequest, SerializedHttpResponse } from '@a
 // Implement the Provider interface (or use an existing plugin)
 const myProvider: Provider = {
   name: 'my-llm',
-  models: ['my-model-v1'],
+  services: ['my-model-v1'],
   pricing: {
     defaults: {
       inputUsdPerMillion: 10,
       outputUsdPerMillion: 10,
     },
   },
-  modelCategories: {
+  serviceCategories: {
     'my-model-v1': ['coding', 'privacy'],
   },
   maxConcurrency: 10,
@@ -99,8 +99,8 @@ if (peers.length > 0) {
 Discovery topics are normalized to improve lookup consistency:
 
 - Provider topic: `antseed:{provider}` with `trim + lowercase`
-- Model topic (canonical): `antseed:model:{model}` with `trim + lowercase`
-- Model topic (search fallback): `antseed:model-search:{model}` with spaces, `-`, `_` removed after canonical normalization (keeps `.`)
+- Model topic (canonical): `antseed:service:{model}` with `trim + lowercase`
+- Model topic (search fallback): `antseed:service-search:{model}` with spaces, `-`, `_` removed after canonical normalization (keeps `.`)
 
 Canonical and search model topics are both used when their keys differ, so variants like `kimi 2.5`, `kimi-2.5`, and `kimi_2.5` can converge in discovery while keeping exact canonical topics.
 
@@ -124,6 +124,7 @@ At a high level, `@antseed/node` currently enforces:
 interface NodeConfig {
   role: 'seller' | 'buyer';
   displayName?: string;       // Optional human-readable name announced in metadata
+  publicAddress?: string;     // Optional public host:port override announced in metadata
   dataDir?: string;           // Default: ~/.antseed
   dhtPort?: number;           // Default: 6881 for seller, 0 (OS-assigned) for buyer
   signalingPort?: number;     // Default: 6882 for seller
@@ -144,11 +145,21 @@ interface NodeConfig {
 |---|---|---|
 | `role` | (required) | `'seller'` to serve requests, `'buyer'` to consume them |
 | `displayName` | unset | Optional node label included in discovery metadata |
+| `publicAddress` | unset | Optional public `host:port` advertised in signed metadata and preferred by buyers over the raw DHT source address |
 | `dataDir` | `~/.antseed` | Directory for identity keys, metering DB, and config |
 | `dhtPort` | `6881` / `0` | UDP port for DHT. Seller defaults to 6881, buyer uses OS-assigned |
 | `signalingPort` | `6882` | TCP port for P2P signaling and incoming connections (seller only) |
 | `bootstrapNodes` | AntSeed nodes | Additional DHT bootstrap nodes merged with the official AntSeed infrastructure |
 | `payments` | disabled | Optional seller-side payment channel + settlement lifecycle wiring |
+
+Use `publicAddress` when the DHT announce source IP is not the address buyers should dial, such as Kubernetes or other load-balanced deployments:
+
+```ts
+const node = new AntseedNode({
+  role: 'seller',
+  publicAddress: 'peer.example.com:6882',
+});
+```
 
 ## On-Chain Settlement Flow
 
@@ -246,19 +257,19 @@ interface Provider {
   name: string;
 
   /** Model IDs this provider supports */
-  models: string[];
+  services: string[];
 
-  /** Pricing in USD per 1M tokens (defaults + optional per-model overrides) */
+  /** Pricing in USD per 1M tokens (defaults + optional per-service overrides) */
   pricing: {
     defaults: { inputUsdPerMillion: number; outputUsdPerMillion: number };
-    models?: Record<string, { inputUsdPerMillion: number; outputUsdPerMillion: number }>;
+    services?: Record<string, { inputUsdPerMillion: number; outputUsdPerMillion: number }>;
   };
 
-  /** Optional per-model discovery tags (e.g., coding/privacy/legal) */
-  modelCategories?: Record<string, string[]>;
+  /** Optional per-service discovery tags (e.g., coding/privacy/legal) */
+  serviceCategories?: Record<string, string[]>;
 
-  /** Optional per-model API protocol support advertised via discovery metadata. */
-  modelApiProtocols?: Record<string, ModelApiProtocol[]>;
+  /** Optional per-service API protocol support advertised via discovery metadata. */
+  serviceApiProtocols?: Record<string, ServiceApiProtocol[]>;
 
   /** Maximum concurrent requests this provider can handle */
   maxConcurrency: number;
@@ -275,11 +286,6 @@ interface Provider {
   /** Optional capabilities beyond plain inference */
   capabilities?: ProviderCapability[];
 
-  /** Optional long-running task endpoint backing `/v1/task` */
-  handleTask?(task: TaskRequest): AsyncIterable<TaskEvent>;
-
-  /** Optional one-shot skill endpoint backing `/v1/skill` */
-  handleSkill?(skill: SkillRequest): Promise<SkillResponse>;
 }
 ```
 
@@ -312,13 +318,13 @@ import type { AntseedProviderPlugin, Provider, SerializedHttpRequest, Serialized
 
 class MyProvider implements Provider {
   readonly name = 'my-provider';
-  readonly models: string[];
+  readonly services: string[];
   readonly pricing: Provider['pricing'];
   readonly maxConcurrency: number;
   private _active = 0;
 
-  constructor(apiKey: string, models: string[], inputUsdPerMillion: number, outputUsdPerMillion: number, maxConcurrency: number) {
-    this.models = models;
+  constructor(apiKey: string, services: string[], inputUsdPerMillion: number, outputUsdPerMillion: number, maxConcurrency: number) {
+    this.services = services;
     this.pricing = {
       defaults: {
         inputUsdPerMillion,
@@ -361,16 +367,16 @@ const plugin: AntseedProviderPlugin = {
   description: 'Provides My LLM capacity on the Antseed Network',
   configSchema: [
     { key: 'MY_API_KEY', label: 'API Key', type: 'secret', required: true, description: 'API key for My LLM' },
-    { key: 'MY_MODELS', label: 'Models', type: 'string[]', required: false, description: 'Comma-separated model list' },
+    { key: 'MY_SERVICES', label: 'Services', type: 'string[]', required: false, description: 'Comma-separated service list' },
     { key: 'MY_INPUT_USD_PER_MILLION', label: 'Input Price', type: 'number', required: false, description: 'Input price in USD per 1M tokens' },
     { key: 'MY_OUTPUT_USD_PER_MILLION', label: 'Output Price', type: 'number', required: false, description: 'Output price in USD per 1M tokens' },
   ],
   createProvider(config: Record<string, string>) {
     const apiKey = config['MY_API_KEY'] ?? '';
-    const models = (config['MY_MODELS'] ?? 'default-model').split(',').map(s => s.trim());
+    const services = (config['MY_SERVICES'] ?? 'default-service').split(',').map(s => s.trim());
     const input = parseFloat(config['MY_INPUT_USD_PER_MILLION'] ?? '10');
     const output = parseFloat(config['MY_OUTPUT_USD_PER_MILLION'] ?? String(input));
-    return new MyProvider(apiKey, models, input, output, 10);
+    return new MyProvider(apiKey, services, input, output, 10);
   },
 };
 

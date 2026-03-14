@@ -1,13 +1,13 @@
 ---
 name: openclaw-antseed
-description: "Connect OpenClaw to the AntSeed P2P AI network as a buyer. Use when: user asks to connect OpenClaw to AntSeed, route OpenClaw through AntSeed, set up AntSeed as a model provider for OpenClaw, or use P2P AI models in OpenClaw. Installs the AntSeed buyer proxy and configures OpenClaw to route LLM requests through the AntSeed peer-to-peer network."
+description: "Connect OpenClaw to the AntSeed P2P AI network as a buyer. Use when: user asks to connect OpenClaw to AntSeed, route OpenClaw through AntSeed, set up AntSeed as a service provider for OpenClaw, or use P2P AI services in OpenClaw. Installs the AntSeed buyer proxy and configures OpenClaw to route LLM requests through the AntSeed peer-to-peer network."
 user-invocable: true
 metadata: { "openclaw": { "emoji": "🌱", "requires": { "bins": ["npm", "openclaw"] } } }
 ---
 
 # Connect OpenClaw to AntSeed P2P Network
 
-Set up AntSeed as a model provider for OpenClaw. This installs a local buyer proxy that connects to the AntSeed peer-to-peer network and routes LLM requests to available providers.
+Set up AntSeed as a service provider for OpenClaw. This installs a local buyer proxy that connects to the AntSeed peer-to-peer network and routes LLM requests to available providers.
 
 ## Architecture
 
@@ -70,9 +70,9 @@ sudo systemctl enable --now antseed-buyer
 
 Verify: `sudo systemctl is-active antseed-buyer`
 
-## Step 3: Configure OpenClaw model provider
+## Step 3: Configure OpenClaw service provider
 
-Ask the user which model they want to use. Available models depend on what providers are active on the network.
+Ask the user which service they want to use. Available services depend on what providers are active on the network.
 
 ### Set the provider
 
@@ -82,9 +82,9 @@ openclaw config set models.providers.antseed.apiKey "antseed-p2p"
 openclaw config set models.providers.antseed.api "anthropic-messages"
 ```
 
-### Add a model
+### Add a service
 
-The model ID must match a model available on the network. Ask the user or suggest common options. Example for Kimi K2.5 via OpenRouter:
+The service ID must match a service available on the network. Ask the user or suggest common options. Example for Kimi K2.5 via OpenRouter:
 
 ```bash
 cat ~/.openclaw/openclaw.json | python3 -c "
@@ -96,8 +96,8 @@ providers['antseed'] = {
     'apiKey': 'antseed-p2p',
     'api': 'anthropic-messages',
     'models': [{
-        'id': 'MODEL_ID_HERE',
-        'name': 'MODEL_DISPLAY_NAME',
+        'id': 'SERVICE_ID_HERE',
+        'name': 'SERVICE_DISPLAY_NAME',
         'reasoning': False,
         'input': ['text'],
         'contextWindow': 131072,
@@ -108,15 +108,15 @@ json.dump(cfg, sys.stdout, indent=2)
 " > /tmp/oc_antseed.json && mv /tmp/oc_antseed.json ~/.openclaw/openclaw.json
 ```
 
-Replace `MODEL_ID_HERE` with the actual model (e.g., `moonshotai/kimi-k2.5`, `anthropic/claude-sonnet-4-20250514`).
+Replace `SERVICE_ID_HERE` with the actual service ID (e.g., `moonshotai/kimi-k2.5`, `anthropic/claude-sonnet-4-20250514`).
 
-### Set as default model
+### Set as default service
 
 ```bash
-openclaw config set agents.defaults.model.primary "antseed/MODEL_ID_HERE"
+openclaw config set agents.defaults.model.primary "antseed/SERVICE_ID_HERE"
 ```
 
-The model reference format is `antseed/<model-id>` where `antseed` is the provider name.
+The service reference format is `antseed/<service-id>` where `antseed` is the provider name.
 
 ## Step 4: Restart and verify
 
@@ -128,7 +128,7 @@ sudo systemctl restart openclaw  # or kill and restart the gateway process
 curl -s http://127.0.0.1:5005/v1/models
 ```
 
-If the proxy returns available models, the connection is working.
+If the proxy returns available services, the connection is working.
 
 ## Bootstrap nodes (optional)
 
@@ -156,16 +156,16 @@ Then restart the buyer proxy.
 
 - [ ] `antseed --version` prints a version
 - [ ] `antseed connect --router local --port 5005` starts without errors
-- [ ] `curl http://127.0.0.1:5005/v1/models` returns available models
+- [ ] `curl http://127.0.0.1:5005/v1/models` returns available services
 - [ ] OpenClaw config has `models.providers.antseed` configured
-- [ ] `agents.defaults.model.primary` is set to `antseed/<model-id>`
-- [ ] OpenClaw gateway responds to messages using the AntSeed model
+- [ ] `agents.defaults.model.primary` is set to `antseed/<service-id>`
+- [ ] OpenClaw gateway responds to messages using the AntSeed service
 
 ## Troubleshooting
 
 - **"No sellers available on the network"**: No providers found via DHT. Add a bootstrap node (see above) or check that providers are running.
 - **"DHT returned 0 results"**: Check internet connectivity and firewall. DHT uses UDP on random high ports. Ensure inbound UDP is allowed.
 - **Slow first request**: DHT discovery takes 5-10 seconds on the first request. Subsequent requests reuse cached peer connections.
-- **Timeouts on large requests**: Some models take longer through P2P routing. Ensure the OpenClaw model config has adequate `maxTokens`.
+- **Timeouts on large requests**: Some services take longer through P2P routing. Ensure the OpenClaw service config has adequate `maxTokens`.
 - **"502 Upstream error"**: The provider's upstream API (OpenRouter, Anthropic) returned an error. Check the provider logs.
-- **Empty responses**: Verify the model ID matches what the provider allows. Mismatched model names result in 403 errors.
+- **Empty responses**: Verify the service ID matches what the provider allows. Mismatched service names result in 403 errors.

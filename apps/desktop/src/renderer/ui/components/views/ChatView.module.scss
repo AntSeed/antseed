@@ -58,6 +58,7 @@
   min-height: 0;
   flex: 1;
   background: var(--chat-area-bg);
+  position: relative;
 }
 
 .chat-messages {
@@ -101,6 +102,23 @@
     margin-left: auto;
     margin-right: auto;
   }
+}
+
+.chat-drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 100;
+  background: var(--drop-overlay-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.chat-drop-overlay-inner {
+  color: var(--text-primary);
+  font-size: 16px;
+  font-weight: 500;
 }
 
 .chat-input-row {
@@ -185,16 +203,16 @@
 }
 
 .chat-text-input {
-  flex: 1;
+  width: 100%;
   background: transparent;
   border: none;
   color: var(--text-primary);
   padding: 0;
   font-size: 17px;
   resize: none;
-  overflow-y: auto;
+  overflow-y: hidden;
   min-height: 26px;
-  max-height: 150px;
+  max-height: 220px;
   line-height: 1.5;
   font-family: var(--font-sans);
 

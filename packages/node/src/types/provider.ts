@@ -33,7 +33,7 @@ export interface ProviderConfig {
   baseUrl: string;
   authHeaderName: string;
   authHeaderValue: string;
-  allowedModels: string[];
+  allowedServices: string[];
   maxConcurrency: number;
   /** Optional dynamic token provider (OAuth, keychain, etc.). */
   tokenProvider?: TokenProvider;

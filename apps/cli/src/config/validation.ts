@@ -3,8 +3,10 @@ import type {
   AntseedConfig,
   TokenPricingUsdPerMillion,
 } from './types.js';
+import { VALID_MIDDLEWARE_POSITIONS } from './types.js';
 
-const MODEL_CATEGORY_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
+const SERVICE_CATEGORY_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
+const MAX_PUBLIC_ADDRESS_LENGTH = 255;
 
 function validatePricingLeaf(
   path: string,
@@ -31,28 +33,28 @@ function validateHierarchicalPricing(
       validatePricingLeaf(`${path}.providers.${provider}.defaults`, providerPricing.defaults, errors);
     }
 
-    for (const [model, modelPricing] of Object.entries(providerPricing.models ?? {})) {
+    for (const [service, servicePricing] of Object.entries(providerPricing.services ?? {})) {
       validatePricingLeaf(
-        `${path}.providers.${provider}.models.${model}`,
-        modelPricing,
+        `${path}.providers.${provider}.services.${service}`,
+        servicePricing,
         errors
       );
     }
   }
 }
 
-function validateSellerModelCategories(
+function validateSellerServiceCategories(
   path: string,
-  categories: AntseedConfig['seller']['modelCategories'] | undefined,
+  categories: AntseedConfig['seller']['serviceCategories'] | undefined,
   errors: string[]
 ): void {
   if (!categories) return;
 
-  for (const [provider, models] of Object.entries(categories)) {
-    for (const [model, tags] of Object.entries(models)) {
-      const modelPath = `${path}.${provider}.${model}`;
+  for (const [provider, services] of Object.entries(categories)) {
+    for (const [service, tags] of Object.entries(services)) {
+      const servicePath = `${path}.${provider}.${service}`;
       if (!Array.isArray(tags) || tags.length === 0) {
-        errors.push(`${modelPath} must be a non-empty string array`);
+        errors.push(`${servicePath} must be a non-empty string array`);
         continue;
       }
 
@@ -60,21 +62,87 @@ function validateSellerModelCategories(
       for (let i = 0; i < tags.length; i += 1) {
         const rawTag = tags[i];
         if (typeof rawTag !== 'string') {
-          errors.push(`${modelPath}[${i}] must be a string`);
+          errors.push(`${servicePath}[${i}] must be a string`);
           continue;
         }
         const tag = rawTag.trim().toLowerCase();
         if (tag.length === 0) {
-          errors.push(`${modelPath}[${i}] must not be empty`);
+          errors.push(`${servicePath}[${i}] must not be empty`);
           continue;
         }
-        if (!MODEL_CATEGORY_PATTERN.test(tag)) {
-          errors.push(`${modelPath}[${i}] must use lowercase letters, digits, or hyphen`);
+        if (!SERVICE_CATEGORY_PATTERN.test(tag)) {
+          errors.push(`${servicePath}[${i}] must use lowercase letters, digits, or hyphen`);
         }
         if (seen.has(tag)) {
-          errors.push(`${modelPath}[${i}] is duplicated`);
+          errors.push(`${servicePath}[${i}] is duplicated`);
         }
         seen.add(tag);
+      }
+    }
+  }
+}
+
+function parsePublicAddress(value: string): { host: string; port: number } | null {
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.length > MAX_PUBLIC_ADDRESS_LENGTH) {
+    return null;
+  }
+
+  const lastColon = trimmed.lastIndexOf(':');
+  if (lastColon <= 0 || lastColon === trimmed.length - 1) {
+    return null;
+  }
+
+  const host = trimmed.slice(0, lastColon).trim();
+  const portText = trimmed.slice(lastColon + 1);
+  if (!/^\d+$/.test(portText)) {
+    return null;
+  }
+
+  const port = Number(portText);
+  if (host.length === 0 || !Number.isInteger(port) || port < 1 || port > 65535) {
+    return null;
+  }
+
+  return { host, port };
+}
+
+function validateSellerMiddleware(
+  path: string,
+  middleware: AntseedConfig['seller']['middleware'] | undefined,
+  errors: string[],
+): void {
+  if (!middleware) return;
+
+  for (let i = 0; i < middleware.length; i += 1) {
+    const entry = middleware[i];
+    const entryPath = `${path}[${i}]`;
+    if (!entry) {
+      errors.push(`${entryPath} must be defined`);
+      continue;
+    }
+    if (typeof entry.file !== 'string' || entry.file.trim().length === 0) {
+      errors.push(`${entryPath}.file must be a non-empty string`);
+    }
+    if (!VALID_MIDDLEWARE_POSITIONS.has(entry.position)) {
+      errors.push(
+        `${entryPath}.position must be one of: system-prepend, system-append, prepend, append`,
+      );
+    }
+    if (entry.role !== undefined && typeof entry.role !== 'string') {
+      errors.push(`${entryPath}.role must be a string when provided`);
+    }
+    if (entry.services !== undefined) {
+      const services = entry.services;
+      if (!Array.isArray(services) || services.length === 0) {
+        errors.push(`${entryPath}.services must be a non-empty string array when provided`);
+        continue;
+      }
+      for (let j = 0; j < services.length; j += 1) {
+        const service = services[j];
+        if (typeof service !== 'string' || service.trim().length === 0) {
+          errors.push(`${entryPath}.services[${j}] must be a non-empty string`);
+        }
       }
     }
   }
@@ -87,7 +155,8 @@ export function validateConfig(config: AntseedConfig): string[] {
   const errors: string[] = [];
 
   validateHierarchicalPricing('seller.pricing', config.seller.pricing, errors);
-  validateSellerModelCategories('seller.modelCategories', config.seller.modelCategories, errors);
+  validateSellerServiceCategories('seller.serviceCategories', config.seller.serviceCategories, errors);
+  validateSellerMiddleware('seller.middleware', config.seller.middleware, errors);
   validateHierarchicalPricing('buyer.maxPricing', config.buyer.maxPricing, errors);
 
   if (!Number.isFinite(config.buyer.minPeerReputation) || config.buyer.minPeerReputation < 0 || config.buyer.minPeerReputation > 100) {
@@ -104,6 +173,13 @@ export function validateConfig(config: AntseedConfig): string[] {
 
   if (!Number.isFinite(config.seller.reserveFloor) || config.seller.reserveFloor < 0) {
     errors.push('seller.reserveFloor must be a non-negative finite number');
+  }
+
+  if (config.seller.publicAddress) {
+    const raw = config.seller.publicAddress.trim();
+    if (parsePublicAddress(raw) === null) {
+      errors.push('seller.publicAddress must be in the form "host:port" with a valid port');
+    }
   }
 
   return errors;

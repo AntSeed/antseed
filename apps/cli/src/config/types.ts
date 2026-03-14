@@ -35,15 +35,15 @@ export interface TokenPricingUsdPerMillion {
 }
 
 /**
- * Provider-level optional defaults and per-model overrides.
+ * Provider-level optional defaults and per-service overrides.
  */
 export interface ProviderPricingConfig {
   defaults?: TokenPricingUsdPerMillion;
-  models?: Record<string, TokenPricingUsdPerMillion>;
+  services?: Record<string, TokenPricingUsdPerMillion>;
 }
 
 /**
- * Hierarchical pricing with global defaults and optional provider/model overrides.
+ * Hierarchical pricing with global defaults and optional provider/service overrides.
  */
 export interface HierarchicalPricingConfig {
   defaults: TokenPricingUsdPerMillion;
@@ -51,9 +51,9 @@ export interface HierarchicalPricingConfig {
 }
 
 /**
- * Optional provider/model category tags for metadata discovery.
+ * Optional provider/service category tags for metadata discovery.
  */
-export interface SellerModelCategoryConfig {
+export interface SellerServiceCategoryConfig {
   [provider: string]: Record<string, string[]>;
 }
 
@@ -61,6 +61,12 @@ export interface SellerModelCategoryConfig {
  * Injection position for a middleware entry.
  */
 export type MiddlewarePosition = 'system-prepend' | 'system-append' | 'prepend' | 'append';
+export const VALID_MIDDLEWARE_POSITIONS: ReadonlySet<MiddlewarePosition> = new Set([
+  'system-prepend',
+  'system-append',
+  'prepend',
+  'append',
+]);
 
 /**
  * A single middleware entry referencing a Markdown file on disk.
@@ -72,8 +78,8 @@ export interface SellerMiddlewareConfig {
   position: MiddlewarePosition;
   /** Role for 'prepend'/'append' positions. Defaults to 'user'. */
   role?: string;
-  /** If set, only inject for requests targeting one of these model IDs. Applies to all models when omitted. */
-  models?: string[];
+  /** If set, only inject for requests targeting one of these service IDs. Applies to all services when omitted. */
+  services?: string[];
 }
 
 /**
@@ -88,8 +94,8 @@ export interface SellerCLIConfig {
   enabledProviders: string[];
   /** Seller offer pricing rules in USD per 1M tokens */
   pricing: HierarchicalPricingConfig;
-  /** Optional provider/model category tags announced in peer metadata */
-  modelCategories?: SellerModelCategoryConfig;
+  /** Optional provider/service category tags announced in peer metadata */
+  serviceCategories?: SellerServiceCategoryConfig;
   /** Optional middleware files to inject into every LLM request. */
   middleware?: SellerMiddlewareConfig[];
   /**
@@ -99,14 +105,22 @@ export interface SellerCLIConfig {
    * There is no opt-out: a confidentiality prompt is always injected when middleware fires.
    */
   middlewareConfidentialityPrompt?: string;
+  /**
+   * Path to a directory containing skill subdirectories for on-demand loading.
+   * Each subdirectory must contain a `SKILL.md` file with YAML frontmatter (name, description).
+   * Skills are loaded dynamically by the LLM via the `antseed_load` tool when needed,
+   * rather than being injected into every request like middleware.
+   * Relative paths are resolved from the config file's directory.
+   */
+  skillsDir?: string;
+  /** Publicly reachable seller address override announced in metadata, e.g. "peer.example.com:6882". */
+  publicAddress?: string;
 }
 
 /**
  * Buyer-specific configuration within the Antseed config.
  */
 export interface BuyerCLIConfig {
-  /** Preferred provider types for purchasing */
-  preferredProviders: string[];
   /** Buyer max willing-to-pay rules in USD per 1M tokens */
   maxPricing: HierarchicalPricingConfig;
   /** Minimum peer reputation score (0-100) */

@@ -41,13 +41,11 @@ test('connect runtime overrides are runtime-only and win over env/config', () =>
 test('connect maps effective buyer config into router runtime env keys', () => {
   const config = createDefaultConfig();
   config.buyer.minPeerReputation = 72;
-  config.buyer.preferredProviders = ['anthropic', 'openai'];
   config.buyer.maxPricing.defaults.inputUsdPerMillion = 21;
   config.buyer.maxPricing.defaults.outputUsdPerMillion = 63;
 
   const runtimeEnv = buildRouterRuntimeEnvFromBuyerConfig(config.buyer);
   assert.equal(runtimeEnv['ANTSEED_MIN_REPUTATION'], '72');
-  assert.equal(runtimeEnv['ANTSEED_PREFERRED_PROVIDERS'], 'anthropic,openai');
 
   const parsed = JSON.parse(runtimeEnv['ANTSEED_MAX_PRICING_JSON'] ?? '{}') as {
     defaults?: { inputUsdPerMillion?: number; outputUsdPerMillion?: number };

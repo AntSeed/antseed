@@ -63,7 +63,6 @@ export function initSettingsModule({
 
     applyConfigFormData({
       proxyPort: safeNumber(buyer.proxyPort, 8377),
-      preferredProviders: safeArray(buyer.preferredProviders).join(', '),
       maxInputUsdPerMillion: safeNumber(buyerMaxPricingDefaults.inputUsdPerMillion, 0),
       maxOutputUsdPerMillion: safeNumber(buyerMaxPricingDefaults.outputUsdPerMillion, 0),
       minRep: safeNumber(buyer.minPeerReputation, 0),
@@ -95,10 +94,6 @@ export function initSettingsModule({
         buyer: {
           ...asRecord(currentConfig.buyer),
           proxyPort: formData.proxyPort,
-          preferredProviders: formData.preferredProviders
-            .split(',')
-            .map((p) => p.trim())
-            .filter((p) => p.length > 0),
           maxPricing: {
             defaults: {
               inputUsdPerMillion: formData.maxInputUsdPerMillion,

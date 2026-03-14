@@ -12,7 +12,7 @@ export function OverviewView({ active }: OverviewViewProps) {
     ovPeers,
     ovDhtHealth,
     ovProxyPort,
-    ovModelCount,
+    ovServiceCount,
     ovLastScan,
     ovPeersCount,
     overviewPeers,
@@ -43,8 +43,8 @@ export function OverviewView({ active }: OverviewViewProps) {
           <p className="stat-value">{ovProxyPort}</p>
         </div>
         <div className="stat-card">
-          <p className="stat-label">Network Models</p>
-          <p className="stat-value">{ovModelCount}</p>
+          <p className="stat-label">Network Services</p>
+          <p className="stat-value">{ovServiceCount}</p>
         </div>
         <div className="stat-card">
           <p className="stat-label">Last Scan</p>
@@ -64,7 +64,7 @@ export function OverviewView({ active }: OverviewViewProps) {
                 <tr>
                   <th>Peer</th>
                   <th>ID</th>
-                  <th>Models</th>
+                  <th>Services</th>
                   <th>Rep</th>
                 </tr>
               </thead>
@@ -80,7 +80,7 @@ export function OverviewView({ active }: OverviewViewProps) {
                     <tr key={peer.peerId}>
                       <td>{peer.displayName || '-'}</td>
                       <td title={peer.peerId}>{formatShortId(peer.peerId)}</td>
-                      <td>{peer.models.join(', ')}</td>
+                      <td>{peer.services.join(', ')}</td>
                       <td>{formatInt(peer.reputation)}</td>
                     </tr>
                   ))

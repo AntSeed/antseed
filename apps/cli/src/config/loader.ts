@@ -5,6 +5,7 @@ import type {
   HierarchicalPricingConfig,
   AntseedConfig,
   ProviderPricingConfig,
+  SellerMiddlewareConfig,
   TokenPricingUsdPerMillion,
 } from './types.js';
 import { createDefaultConfig } from './defaults.js';
@@ -68,13 +69,13 @@ function cloneProviderPricing(
   for (const [provider, cfg] of Object.entries(providers)) {
     out[provider] = {
       ...(cfg.defaults ? { defaults: clonePricing(cfg.defaults) } : {}),
-      ...(cfg.models ? { models: { ...cfg.models } } : {}),
+      ...(cfg.services ? { services: { ...cfg.services } } : {}),
     };
   }
   return out;
 }
 
-function mergeModelPricing(
+function mergeServicePricing(
   defaults: Record<string, TokenPricingUsdPerMillion> | undefined,
   value: unknown
 ): Record<string, TokenPricingUsdPerMillion> | undefined {
@@ -82,10 +83,10 @@ function mergeModelPricing(
     ...(defaults ?? {}),
   };
   if (isRecord(value)) {
-    for (const [model, rawPricing] of Object.entries(value)) {
+    for (const [service, rawPricing] of Object.entries(value)) {
       const parsed = normalizeTokenPricing(rawPricing);
       if (parsed) {
-        out[model] = parsed;
+        out[service] = parsed;
       }
     }
   }
@@ -105,11 +106,11 @@ function mergeProviderPricing(
       const next: ProviderPricingConfig = {
         ...(parsedDefaults ? { defaults: parsedDefaults } : (existing?.defaults ? { defaults: existing.defaults } : {})),
       };
-      const mergedModels = mergeModelPricing(existing?.models, rawCfg['models']);
-      if (mergedModels) {
-        next.models = mergedModels;
+      const mergedServices = mergeServicePricing(existing?.services, rawCfg['services']);
+      if (mergedServices) {
+        next.services = mergedServices;
       }
-      if (next.defaults || next.models) {
+      if (next.defaults || next.services) {
         out[provider] = next;
       }
     }
@@ -134,49 +135,96 @@ function mergeHierarchicalPricing(
   };
 }
 
-function cloneSellerModelCategories(
-  categories: AntseedConfig['seller']['modelCategories'] | undefined
-): AntseedConfig['seller']['modelCategories'] | undefined {
+function cloneSellerServiceCategories(
+  categories: AntseedConfig['seller']['serviceCategories'] | undefined
+): AntseedConfig['seller']['serviceCategories'] | undefined {
   if (!categories) return undefined;
-  const out: NonNullable<AntseedConfig['seller']['modelCategories']> = {};
-  for (const [provider, models] of Object.entries(categories)) {
+  const out: NonNullable<AntseedConfig['seller']['serviceCategories']> = {};
+  for (const [provider, services] of Object.entries(categories)) {
     out[provider] = Object.fromEntries(
-      Object.entries(models).map(([model, tags]) => [model, [...tags]])
+      Object.entries(services).map(([service, tags]) => [service, [...tags]])
     );
   }
   return out;
 }
 
-function mergeSellerModelCategories(
-  defaults: AntseedConfig['seller']['modelCategories'] | undefined,
+function mergeSellerServiceCategories(
+  defaults: AntseedConfig['seller']['serviceCategories'] | undefined,
   value: unknown
-): AntseedConfig['seller']['modelCategories'] | undefined {
-  const out = cloneSellerModelCategories(defaults) ?? {};
+): AntseedConfig['seller']['serviceCategories'] | undefined {
+  const out = cloneSellerServiceCategories(defaults) ?? {};
   if (!isRecord(value)) {
     return Object.keys(out).length > 0 ? out : undefined;
   }
 
   for (const [provider, rawProvider] of Object.entries(value)) {
     if (!isRecord(rawProvider)) continue;
-    const nextModels: Record<string, string[]> = {
+    const nextServices: Record<string, string[]> = {
       ...(out[provider] ?? {}),
     };
-    for (const [model, rawCategories] of Object.entries(rawProvider)) {
+    for (const [service, rawCategories] of Object.entries(rawProvider)) {
       if (!Array.isArray(rawCategories)) continue;
       const normalizedCategories = rawCategories
         .filter((entry): entry is string => typeof entry === 'string')
         .map((entry) => entry.trim())
         .filter((entry) => entry.length > 0);
       if (normalizedCategories.length > 0) {
-        nextModels[model] = normalizedCategories;
+        nextServices[service] = normalizedCategories;
       }
     }
-    if (Object.keys(nextModels).length > 0) {
-      out[provider] = nextModels;
+    if (Object.keys(nextServices).length > 0) {
+      out[provider] = nextServices;
     }
   }
 
   return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function cloneSellerMiddleware(
+  middleware: SellerMiddlewareConfig[] | undefined,
+): SellerMiddlewareConfig[] | undefined {
+  if (!middleware) return undefined;
+  return middleware.map((entry) => ({
+    file: entry.file,
+    position: entry.position,
+    ...(typeof entry.role === 'string' ? { role: entry.role } : {}),
+    ...(entry.services ? { services: [...entry.services] } : {}),
+  }));
+}
+
+function mergeSellerMiddleware(
+  defaults: SellerMiddlewareConfig[] | undefined,
+  value: unknown,
+): SellerMiddlewareConfig[] | undefined {
+  if (!Array.isArray(value)) {
+    return cloneSellerMiddleware(defaults);
+  }
+
+  const merged = value.flatMap((entry): SellerMiddlewareConfig[] => {
+    if (!isRecord(entry)) return [];
+    if (
+      typeof entry['file'] !== 'string'
+      || typeof entry['position'] !== 'string'
+    ) {
+      return [];
+    }
+
+    const services = Array.isArray(entry['services'])
+      ? entry['services']
+        .filter((service): service is string => typeof service === 'string')
+        .map((service) => service.trim())
+        .filter((service) => service.length > 0)
+      : undefined;
+
+    return [{
+      file: entry['file'],
+      position: entry['position'] as SellerMiddlewareConfig['position'],
+      ...(typeof entry['role'] === 'string' ? { role: entry['role'] } : {}),
+      ...(services && services.length > 0 ? { services } : {}),
+    }];
+  });
+
+  return merged;
 }
 
 function mergeSellerConfig(
@@ -189,10 +237,17 @@ function mergeSellerConfig(
       maxConcurrentBuyers: defaults.maxConcurrentBuyers,
       enabledProviders: [...defaults.enabledProviders],
       pricing: mergeHierarchicalPricing(defaults.pricing, undefined),
-      ...(defaults.modelCategories ? { modelCategories: cloneSellerModelCategories(defaults.modelCategories) } : {}),
+      publicAddress: defaults.publicAddress,
+      ...(defaults.middleware ? { middleware: cloneSellerMiddleware(defaults.middleware) } : {}),
+      ...(defaults.middlewareConfidentialityPrompt
+        ? { middlewareConfidentialityPrompt: defaults.middlewareConfidentialityPrompt }
+        : {}),
+      ...(defaults.skillsDir ? { skillsDir: defaults.skillsDir } : {}),
+      ...(defaults.serviceCategories ? { serviceCategories: cloneSellerServiceCategories(defaults.serviceCategories) } : {}),
     };
   }
-  const mergedModelCategories = mergeSellerModelCategories(defaults.modelCategories, value['modelCategories']);
+  const mergedServiceCategories = mergeSellerServiceCategories(defaults.serviceCategories, value['serviceCategories']);
+  const mergedMiddleware = mergeSellerMiddleware(defaults.middleware, value['middleware']);
 
   return {
     reserveFloor: typeof value['reserveFloor'] === 'number'
@@ -205,7 +260,19 @@ function mergeSellerConfig(
       ? value['enabledProviders'].filter((entry): entry is string => typeof entry === 'string')
       : [...defaults.enabledProviders],
     pricing: mergeHierarchicalPricing(defaults.pricing, value['pricing']),
-    ...(mergedModelCategories ? { modelCategories: mergedModelCategories } : {}),
+    publicAddress: typeof value['publicAddress'] === 'string'
+      ? value['publicAddress']
+      : defaults.publicAddress,
+    ...(mergedMiddleware !== undefined ? { middleware: mergedMiddleware } : {}),
+    ...(typeof value['middlewareConfidentialityPrompt'] === 'string'
+      ? { middlewareConfidentialityPrompt: value['middlewareConfidentialityPrompt'] }
+      : (defaults.middlewareConfidentialityPrompt
+        ? { middlewareConfidentialityPrompt: defaults.middlewareConfidentialityPrompt }
+        : {})),
+    ...(typeof value['skillsDir'] === 'string'
+      ? { skillsDir: value['skillsDir'] }
+      : (defaults.skillsDir ? { skillsDir: defaults.skillsDir } : {})),
+    ...(mergedServiceCategories ? { serviceCategories: mergedServiceCategories } : {}),
   };
 }
 
@@ -215,16 +282,12 @@ function mergeBuyerConfig(
 ): AntseedConfig['buyer'] {
   if (!isRecord(value)) {
     return {
-      preferredProviders: [...defaults.preferredProviders],
       maxPricing: mergeHierarchicalPricing(defaults.maxPricing, undefined),
       minPeerReputation: defaults.minPeerReputation,
       proxyPort: defaults.proxyPort,
     };
   }
   return {
-    preferredProviders: Array.isArray(value['preferredProviders'])
-      ? value['preferredProviders'].filter((entry): entry is string => typeof entry === 'string')
-      : [...defaults.preferredProviders],
     maxPricing: mergeHierarchicalPricing(defaults.maxPricing, value['maxPricing']),
     minPeerReputation: typeof value['minPeerReputation'] === 'number'
       ? value['minPeerReputation']

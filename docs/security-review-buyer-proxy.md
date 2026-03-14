@@ -2,7 +2,7 @@
 
 **Date:** 2026-03-08
 **Reviewer:** Automated Security Audit
-**Scope:** `apps/cli/src/proxy/buyer-proxy.ts`, `apps/cli/src/proxy/model-api-adapter.ts`, `packages/node/src/proxy/proxy-mux.ts`, `packages/node/src/proxy/request-codec.ts`, `packages/node/src/payments/buyer-payment-manager.ts`, `packages/node/src/payments/evm/escrow-client.ts`, `packages/node/src/types/buyer.ts`
+**Scope:** `apps/cli/src/proxy/buyer-proxy.ts`, `apps/cli/src/proxy/service-api-adapter.ts`, `packages/node/src/proxy/proxy-mux.ts`, `packages/node/src/proxy/request-codec.ts`, `packages/node/src/payments/buyer-payment-manager.ts`, `packages/node/src/payments/evm/escrow-client.ts`, `packages/node/src/types/buyer.ts`
 
 ---
 

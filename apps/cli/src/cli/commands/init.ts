@@ -87,7 +87,6 @@ export function registerInitCommand(program: Command): void {
       console.log(chalk.bold('Next steps:'))
       console.log(`  ${chalk.cyan('antseed config seller set pricing.defaults.inputUsdPerMillion 12')}`)
       console.log(`  ${chalk.cyan('antseed config seller set pricing.defaults.outputUsdPerMillion 36')}`)
-      console.log(`  ${chalk.cyan('antseed config buyer set preferredProviders \'["anthropic","openai"]\'')}`)
       console.log(`  ${chalk.cyan('antseed config buyer set maxPricing.defaults.inputUsdPerMillion 25')}`)
       console.log(`  ${chalk.cyan('antseed config buyer set maxPricing.defaults.outputUsdPerMillion 75')}`)
       console.log(`  ${chalk.cyan('antseed seed --provider anthropic')}`)

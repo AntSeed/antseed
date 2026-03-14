@@ -4,15 +4,15 @@ set -euo pipefail
 # Setup AntSeed buyer proxy for OpenClaw
 #
 # Usage:
-#   ./setup.sh --model moonshotai/kimi-k2.5 [--port 5005] [--bootstrap HOST:PORT] [--service]
+#   ./setup.sh --service moonshotai/kimi-k2.5 [--port 5005] [--bootstrap HOST:PORT] [--service-flag]
 #
 # Examples:
-#   ./setup.sh --model moonshotai/kimi-k2.5
-#   ./setup.sh --model moonshotai/kimi-k2.5 --port 5005 --bootstrap 108.128.178.49:6882 --service
+#   ./setup.sh --service moonshotai/kimi-k2.5
+#   ./setup.sh --service moonshotai/kimi-k2.5 --port 5005 --bootstrap 108.128.178.49:6882 --service-flag
 
 PORT=5005
-MODEL=""
-MODEL_NAME=""
+SERVICE=""
+SERVICE_NAME=""
 BOOTSTRAP=""
 INSTALL_SERVICE=false
 CONTEXT_WINDOW=131072
@@ -20,18 +20,18 @@ MAX_TOKENS=8192
 
 usage() {
   cat <<EOF
-Usage: $0 --model <model-id> [options]
+Usage: $0 --service <service-id> [options]
 
 Required:
-  --model <id>              Model ID available on the network (e.g., moonshotai/kimi-k2.5)
+  --service <id>            Service ID available on the network (e.g., moonshotai/kimi-k2.5)
 
 Options:
-  --model-name <name>       Display name for the model (default: derived from model ID)
+  --service-name <name>     Display name for the service (default: derived from service ID)
   --port <n>                Buyer proxy port (default: 5005)
   --bootstrap <host:port>   Bootstrap node address (e.g., 108.128.178.49:6882)
-  --context-window <n>      Model context window size (default: 131072)
-  --max-tokens <n>          Model max output tokens (default: 8192)
-  --service                 Install as systemd service
+  --context-window <n>      Service context window size (default: 131072)
+  --max-tokens <n>          Service max output tokens (default: 8192)
+  --service-flag            Install as systemd service
   -h, --help                Show this help
 EOF
   exit 1
@@ -39,25 +39,25 @@ EOF
 
 while [[ $# -gt 0 ]]; do
   case $1 in
-    --model) MODEL="$2"; shift 2 ;;
-    --model-name) MODEL_NAME="$2"; shift 2 ;;
+    --service) SERVICE="$2"; shift 2 ;;
+    --service-name) SERVICE_NAME="$2"; shift 2 ;;
     --port) PORT="$2"; shift 2 ;;
     --bootstrap) BOOTSTRAP="$2"; shift 2 ;;
     --context-window) CONTEXT_WINDOW="$2"; shift 2 ;;
     --max-tokens) MAX_TOKENS="$2"; shift 2 ;;
-    --service) INSTALL_SERVICE=true; shift ;;
+    --service-flag) INSTALL_SERVICE=true; shift ;;
     --help|-h) usage ;;
     *) echo "Unknown option: $1"; usage ;;
   esac
 done
 
-if [ -z "$MODEL" ]; then
-  echo "Error: --model is required"
+if [ -z "$SERVICE" ]; then
+  echo "Error: --service is required"
   usage
 fi
 
-if [ -z "$MODEL_NAME" ]; then
-  MODEL_NAME="$MODEL via AntSeed"
+if [ -z "$SERVICE_NAME" ]; then
+  SERVICE_NAME="$SERVICE via AntSeed"
 fi
 
 echo "==> Installing AntSeed CLI..."
@@ -90,7 +90,7 @@ print('  Added to ~/.antseed/config.json')
   fi
 fi
 
-echo "==> Configuring OpenClaw model provider..."
+echo "==> Configuring OpenClaw service provider..."
 if ! command -v openclaw &>/dev/null; then
   echo "Error: openclaw not found. Install it first: npm install -g openclaw"
   exit 1
@@ -107,15 +107,15 @@ import json, sys
 
 cfg = json.load(open('${OPENCLAW_CONFIG}'))
 
-# Set up model provider
+# Set up service provider
 providers = cfg.setdefault('models', {}).setdefault('providers', {})
 providers['antseed'] = {
     'baseUrl': 'http://127.0.0.1:${PORT}',
     'apiKey': 'antseed-p2p',
     'api': 'anthropic-messages',
     'models': [{
-        'id': '${MODEL}',
-        'name': '${MODEL_NAME}',
+        'id': '${SERVICE}',
+        'name': '${SERVICE_NAME}',
         'reasoning': False,
         'input': ['text'],
         'contextWindow': ${CONTEXT_WINDOW},
@@ -123,12 +123,12 @@ providers['antseed'] = {
     }]
 }
 
-# Set as default model
-cfg.setdefault('agents', {}).setdefault('defaults', {}).setdefault('model', {})['primary'] = 'antseed/${MODEL}'
+# Set as default service
+cfg.setdefault('agents', {}).setdefault('defaults', {}).setdefault('model', {})['primary'] = 'antseed/${SERVICE}'
 
 json.dump(cfg, open('${OPENCLAW_CONFIG}', 'w'), indent=2)
-print('  Provider configured: antseed/${MODEL}')
-print('  Default model set: antseed/${MODEL}')
+print('  Provider configured: antseed/${SERVICE}')
+print('  Default service set: antseed/${SERVICE}')
 "
 
 if [ "$INSTALL_SERVICE" = true ]; then
@@ -161,7 +161,7 @@ else
   echo "==> To start the buyer proxy:"
   echo "  antseed connect --router local --port ${PORT}"
   echo ""
-  echo "  Or install as a service with: $0 --model ${MODEL} --service"
+  echo "  Or install as a service with: $0 --service ${SERVICE} --service-flag"
 fi
 
 echo ""

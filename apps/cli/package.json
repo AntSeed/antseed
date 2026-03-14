@@ -1,6 +1,6 @@
 {
   "name": "@antseed/cli",
-  "version": "0.1.25",
+  "version": "0.1.27",
   "description": "Antseed Network CLI and Web Dashboard",
   "type": "module",
   "files": [
@@ -25,6 +25,7 @@
     "test": "npm run build && node --test dist/config/*.test.js dist/cli/commands/*.test.js dist/proxy/*.test.js"
   },
   "dependencies": {
+    "@antseed/api-adapter": "workspace:*",
     "@antseed/node": "workspace:*",
     "@antseed/provider-core": "workspace:*",
     "@antseed/dashboard": "workspace:*",

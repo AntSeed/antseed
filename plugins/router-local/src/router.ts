@@ -10,12 +10,11 @@ export interface BuyerMaxPricingConfig {
   defaults: TokenPricingUsdPerMillion;
   providers?: Record<string, {
     defaults?: TokenPricingUsdPerMillion;
-    models?: Record<string, TokenPricingUsdPerMillion>;
+    services?: Record<string, TokenPricingUsdPerMillion>;
   }>;
 }
 
 export interface LocalRouterConfig {
-  preferredProviders?: string[];
   minReputation?: number;
   maxPricing?: BuyerMaxPricingConfig;
   maxFailures?: number;
@@ -26,7 +25,6 @@ export interface LocalRouterConfig {
 }
 
 export class LocalRouter implements Router {
-  private readonly _preferredProviders: string[];
   private readonly _minReputation: number;
   private readonly _maxPricing: BuyerMaxPricingConfig;
   private readonly _maxFailures: number;
@@ -36,9 +34,6 @@ export class LocalRouter implements Router {
   private readonly _metrics: PeerMetricsTracker;
 
   constructor(config?: LocalRouterConfig) {
-    this._preferredProviders = (config?.preferredProviders ?? [])
-      .map((provider) => provider.trim())
-      .filter((provider) => provider.length > 0);
     this._minReputation = config?.minReputation ?? 50;
     this._maxPricing = {
       defaults: {
@@ -60,12 +55,11 @@ export class LocalRouter implements Router {
 
   selectPeer(req: SerializedHttpRequest, peers: PeerInfo[]): PeerInfo | null {
     const now = this._now();
-    const requestedModel = this._extractRequestedModel(req);
+    const requestedService = this._extractRequestedService(req);
 
     const candidates: {
       peer: PeerInfo;
       provider: string;
-      providerRank: number;
       offer: TokenPricingUsdPerMillion;
     }[] = [];
 
@@ -84,48 +78,36 @@ export class LocalRouter implements Router {
       }
 
       // Provider availability filter
-      const selectedProvider = this._selectProviderForPeer(peer);
-      if (!selectedProvider) {
+      const provider = this._selectProviderForPeer(peer, requestedService);
+      if (!provider) {
         continue;
       }
 
       // Pricing filter
-      const offer = this._resolvePeerOfferPrice(peer, selectedProvider.provider, requestedModel);
+      const offer = this._resolvePeerOfferPrice(peer, provider, requestedService);
       if (!offer) {
         continue;
       }
 
-      const max = this._resolveBuyerMaxPrice(selectedProvider.provider, requestedModel);
+      const max = this._resolveBuyerMaxPrice(provider, requestedService);
       if (offer.inputUsdPerMillion > max.inputUsdPerMillion || offer.outputUsdPerMillion > max.outputUsdPerMillion) {
         continue;
       }
 
-      candidates.push({
-        peer,
-        provider: selectedProvider.provider,
-        providerRank: selectedProvider.rank,
-        offer,
-      });
+      candidates.push({ peer, provider, offer });
     }
 
     if (candidates.length === 0) return null;
 
-    // Provider preference filtering
-    let providerFiltered = candidates;
-    if (this._preferredProviders.length > 0) {
-      const bestRank = Math.min(...candidates.map((c) => c.providerRank));
-      providerFiltered = candidates.filter((c) => c.providerRank === bestRank);
-    }
-
-    if (providerFiltered.length === 1) {
-      return providerFiltered[0]!.peer;
+    if (candidates.length === 1) {
+      return candidates[0]!.peer;
     }
 
     // Delegate scoring to router-core
-    const scoringInput = providerFiltered.map((c) => ({
+    const scoringInput = candidates.map((c) => ({
       peer: c.peer,
       provider: c.provider,
-      providerRank: c.providerRank,
+      providerRank: 0,
       offer: c.offer,
       metrics: this._metrics.getMetrics(c.peer.peerId),
     }));
@@ -171,7 +153,7 @@ export class LocalRouter implements Router {
     return this._isFiniteNonNegative(p.trustScore) || this._isFiniteNonNegative(p.reputationScore);
   }
 
-  private _extractRequestedModel(req: SerializedHttpRequest): string | null {
+  private _extractRequestedService(req: SerializedHttpRequest): string | null {
     const contentType = req.headers['content-type'] ?? req.headers['Content-Type'] ?? '';
     if (!contentType.toLowerCase().includes('application/json')) {
       return null;
@@ -182,44 +164,39 @@ export class LocalRouter implements Router {
       if (!parsed || typeof parsed !== 'object') {
         return null;
       }
-      const model = (parsed as Record<string, unknown>)['model'];
-      return typeof model === 'string' && model.trim().length > 0 ? model.trim() : null;
+      const service = (parsed as Record<string, unknown>)['model'];
+      return typeof service === 'string' && service.trim().length > 0 ? service.trim() : null;
     } catch {
       return null;
     }
   }
 
-  private _selectProviderForPeer(peer: PeerInfo): { provider: string; rank: number } | null {
+  private _selectProviderForPeer(peer: PeerInfo, requestedService: string | null): string | null {
     const availableProviders = peer.providers
       .map((provider) => provider.trim())
       .filter((provider) => provider.length > 0);
 
-    if (this._preferredProviders.length === 0) {
-      const provider = availableProviders[0];
-      return provider ? { provider, rank: Number.MAX_SAFE_INTEGER } : null;
-    }
-
-    for (let i = 0; i < this._preferredProviders.length; i++) {
-      const preferred = this._preferredProviders[i]!;
-      if (availableProviders.includes(preferred)) {
-        return { provider: preferred, rank: i };
+    if (requestedService && peer.providerPricing) {
+      for (const provider of availableProviders) {
+        const pricing = peer.providerPricing[provider];
+        if (pricing?.services?.[requestedService]) return provider;
       }
     }
 
-    return null;
+    return availableProviders[0] ?? null;
   }
 
   private _resolvePeerOfferPrice(
     peer: PeerInfo,
     provider: string,
-    model: string | null,
+    service: string | null,
   ): TokenPricingUsdPerMillion | null {
     const providerPricing = peer.providerPricing?.[provider];
 
-    if (model) {
-      const modelSpecific = providerPricing?.models?.[model];
-      if (modelSpecific && this._isValidOffer(modelSpecific)) {
-        return modelSpecific;
+    if (service) {
+      const serviceSpecific = providerPricing?.services?.[service];
+      if (serviceSpecific && this._isValidOffer(serviceSpecific)) {
+        return serviceSpecific;
       }
     }
 
@@ -241,13 +218,13 @@ export class LocalRouter implements Router {
     return null;
   }
 
-  private _resolveBuyerMaxPrice(provider: string, model: string | null): TokenPricingUsdPerMillion {
+  private _resolveBuyerMaxPrice(provider: string, service: string | null): TokenPricingUsdPerMillion {
     const providerPricing = this._maxPricing.providers?.[provider];
 
-    if (model) {
-      const modelOverride = providerPricing?.models?.[model];
-      if (modelOverride && this._isValidOffer(modelOverride)) {
-        return modelOverride;
+    if (service) {
+      const serviceOverride = providerPricing?.services?.[service];
+      if (serviceOverride && this._isValidOffer(serviceOverride)) {
+        return serviceOverride;
       }
     }
 

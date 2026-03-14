@@ -57,7 +57,7 @@ const DEV_STATS_URL = 'http://localhost:4000/stats';
 
 function useNetworkStats() {
   const [peerCount, setPeerCount] = useState<number | null>(null);
-  const [modelCount, setModelCount] = useState<number | null>(null);
+  const [serviceCount, setServiceCount] = useState<number | null>(null);
 
   useEffect(() => {
     const refresh = async () => {
@@ -67,10 +67,10 @@ function useNetworkStats() {
           if (!res.ok) continue;
           const data = await res.json();
           const peers = data.peers ?? [];
-          const models = new Set<string>();
-          for (const p of peers) for (const pr of p.providers ?? []) for (const m of pr.models ?? []) models.add(m);
+          const services = new Set<string>();
+          for (const p of peers) for (const pr of p.providers ?? []) for (const m of pr.services ?? []) services.add(m);
           setPeerCount(peers.length);
-          setModelCount(models.size);
+          setServiceCount(services.size);
           return;
         } catch { /* try next */ }
       }
@@ -80,11 +80,11 @@ function useNetworkStats() {
     return () => clearInterval(interval);
   }, []);
 
-  return {peerCount, modelCount};
+  return {peerCount, serviceCount};
 }
 
 function LiveBar() {
-  const {peerCount, modelCount} = useNetworkStats();
+  const {peerCount, serviceCount} = useNetworkStats();
   return (
     <Link to="/network" className={styles.lbar} style={{textDecoration:'none'}}>
       <div className={styles.litem}><span className={styles.ldot}/> <span>Network live</span></div>
@@ -92,9 +92,9 @@ function LiveBar() {
         <div className={styles.ldiv}/>
         <div className={styles.litem}><strong>{peerCount}</strong> ACTIVE PEERS</div>
       </>}
-      {modelCount != null && <>
+      {serviceCount != null && <>
         <div className={styles.ldiv}/>
-        <div className={styles.litem}><strong>{modelCount}</strong> SERVICES LIVE</div>
+        <div className={styles.litem}><strong>{serviceCount}</strong> SERVICES AVAILABLE</div>
       </>}
       <span className={styles.liveArrow}>→</span>
     </Link>
@@ -275,7 +275,7 @@ const FAQ_DATA = [
   {q:'What services are available?', a:"Anything a provider chooses to offer. Specialized inference, domain expertise in legal, medical, finance, video creation, uncensored inference, autonomous agents for code review or compliance, and more. What's available depends on who's online. Check the <a href='/network'>network page</a> for a live view."},
   {q:'How do I earn on AntSeed?', a:"Wrap your expertise in AI and sell it on the network. Set your own price. Video creation, legal analysis, code audits, uncensored inference, autonomous agents — whatever you know how to do. How you deliver is your business — pick the models, build the workflows. The network only measures delivery quality. Every verified delivery builds a track record that belongs to your wallet, not a platform."},
   {q:'Do I need an account or API key?', a:"No. Download AntStation, connect your wallet, and you're on the network. No sign-up, no API key, no credit card."},
-  {q:'What is AntStation?', a:"AntStation is the desktop client for AntSeed. It gives you a chat interface, connects you to the P2P network, and handles model routing. For developers, the AntSeed CLI (@antseed/cli) exposes a local OpenAI-compatible endpoint so your existing tools (Claude Code, Codex, VS Code) can use the network too."},
+  {q:'What is AntStation?', a:"AntStation is the desktop client for AntSeed. It gives you a chat interface, connects you to the P2P network, and handles service routing. For developers, the AntSeed CLI (@antseed/cli) exposes a local OpenAI-compatible endpoint so your existing tools (Claude Code, Codex, VS Code) can use the network too."},
   {q:'How is this different from OpenRouter or other API aggregators?', a:"You don't choose a model — you choose the job you need done. API aggregators are centralized proxies for inference. AntSeed is a peer-to-peer network for AI services — not just inference. Specialized expertise, autonomous agents, uncensored inference. Anyone can provide, anyone can consume. Your request goes directly to the provider. Your reputation is on-chain and belongs to you. No middleman, no logs, no single point of control."},
 ];
 
@@ -415,7 +415,7 @@ export default function Home(): JSX.Element {
           <ul className={styles.agentsBullets}>
             <li>One command: <code>npm install -g @antseed/cli</code></li>
             <li>Works with any OpenAI-compatible client. No code changes</li>
-            <li>Pick models, set routing preferences, or let the network decide</li>
+            <li>Pick services, set routing preferences, or let the network decide</li>
           </ul>
           <Link to="/docs/intro" className={styles.agentsCta}>Read the Docs →</Link>
         </div>
@@ -436,6 +436,8 @@ export default function Home(): JSX.Element {
           </div>
         </div>
       </div>
+
+
 
       {/* Works with your tools */}
       <section className={styles.compat}>

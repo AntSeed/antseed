@@ -52,18 +52,18 @@ export function swapAuthHeader(
 }
 
 /**
- * Validate request against allowed models.
- * Parses JSON body and enforces strict top-level `"model"` allow-list.
- * Requests without a JSON body or without a `model` field are allowed through
- * (e.g. GET /v1/models has no body and needs no model validation).
+ * Validate request against allowed services.
+ * Parses JSON body and checks the `"service"` or `"model"` field against the allow-list.
+ * Requests without a JSON body or without a service/model field are allowed through
+ * (e.g. GET requests have no body and need no validation).
  * Returns null if ok, error string if rejected.
  */
-export function validateRequestModel(
+export function validateRequestService(
   request: SerializedHttpRequest,
-  allowedModels: ReadonlySet<string>
+  allowedServices: ReadonlySet<string>
 ): string | null {
-  // If allowedModels is empty, allow everything
-  if (allowedModels.size === 0) {
+  // If allowedServices is empty, allow everything
+  if (allowedServices.size === 0) {
     return null;
   }
 
@@ -76,24 +76,26 @@ export function validateRequestModel(
   try {
     payload = JSON.parse(new TextDecoder().decode(request.body)) as unknown;
   } catch {
-    // Non-JSON body — no model field to validate, allow through
+    // Non-JSON body — no service field to validate, allow through
     return null;
   }
 
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-    // No model field possible — allow through
+    // No service field possible — allow through
     return null;
   }
 
-  const model = (payload as Record<string, unknown>)["model"];
-  if (typeof model !== "string" || model.trim() === "") {
-    // No model field — allow through (endpoint may not require it)
+  // Accept both "service" (native) and "model" (upstream API compat) fields
+  const obj = payload as Record<string, unknown>;
+  const service = obj["service"] ?? obj["model"];
+  if (typeof service !== "string" || service.trim() === "") {
+    // No service field — allow through (endpoint may not require it)
     return null;
   }
 
-  const normalizedModel = model.trim().toLowerCase();
-  if (!allowedModels.has(normalizedModel)) {
-    return `Model "${model}" is not in the allowed list`;
+  const normalized = service.trim().toLowerCase();
+  if (!allowedServices.has(normalized)) {
+    return `Service "${service}" is not in the allowed list`;
   }
 
   return null;

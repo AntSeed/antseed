@@ -13,6 +13,7 @@ import {
   DHTNode,
   DEFAULT_DHT_CONFIG,
   topicToInfoHash,
+  ANTSEED_WILDCARD_TOPIC,
   HttpMetadataResolver,
   OFFICIAL_BOOTSTRAP_NODES,
   toBootstrapConfig,
@@ -83,7 +84,7 @@ export class NetworkPoller {
       const metadataResolver = new HttpMetadataResolver();
       const discoveredPeers = new Map<string, PeerMetadata>();
 
-      const infoHash = topicToInfoHash('antseed:*');
+      const infoHash = topicToInfoHash(ANTSEED_WILDCARD_TOPIC);
       const endpoints = await dht.lookup(infoHash);
 
       await Promise.allSettled(

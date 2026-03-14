@@ -16,9 +16,9 @@ export type AppActions = {
   abortChat: () => Promise<void>;
   deleteConversation: (convId?: string) => Promise<void>;
   renameConversation: (convId: string, newTitle: string) => void;
-  handleModelChange: (value: string) => void;
-  handleModelFocus: () => void;
-  handleModelBlur: () => void;
+  handleServiceChange: (value: string) => void;
+  handleServiceFocus: () => void;
+  handleServiceBlur: () => void;
   refreshPlugins: () => Promise<void>;
   installPlugin: () => Promise<void>;
 };

@@ -1,8 +1,8 @@
-.model-dropdown {
+.service-dropdown {
   position: relative;
 }
 
-.model-dropdown-trigger {
+.service-dropdown-trigger {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -25,7 +25,7 @@
   }
 }
 
-.model-dropdown-icon {
+.service-dropdown-icon {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -41,14 +41,14 @@
   }
 }
 
-.model-dropdown-label {
+.service-dropdown-label {
   font-size: 14px;
   font-weight: 600;
   color: var(--text-primary);
   white-space: nowrap;
 }
 
-.model-dropdown-menu {
+.service-dropdown-menu {
   position: absolute;
   top: calc(100% + 4px);
   left: 0;
@@ -63,7 +63,7 @@
   padding: 4px;
 }
 
-.model-dropdown-item {
+.service-dropdown-item {
   width: 100%;
   padding: 8px 10px;
   border: none;

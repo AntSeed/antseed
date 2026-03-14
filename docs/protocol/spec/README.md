@@ -24,7 +24,7 @@ Every node in the Antseed Network operates in one or both of the following roles
 
 A **Seller** node provides LLM inference capacity to the network. Sellers:
 
-- Advertise available models, pricing, and capacity
+- Advertise available services, pricing, and capacity
 - Accept inference requests from Buyers
 - Stream inference results back to Buyers
 - Report token usage for metering and billing

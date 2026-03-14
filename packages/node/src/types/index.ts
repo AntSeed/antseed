@@ -11,4 +11,4 @@ export * from './staking.js';
 export * from './report.js';
 export * from './rating.js';
 export * from './plugin-config.js';
-export * from './model-api.js';
+export * from './service-api.js';

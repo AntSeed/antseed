@@ -1,3 +1,10 @@
+export type RequestFormat = 'anthropic' | 'openai';
+
+/** Detect request format from the request path. */
+export function detectRequestFormat(path?: string): RequestFormat {
+  return path?.includes('/chat/completions') ? 'openai' : 'anthropic';
+}
+
 export type MiddlewarePosition =
   | 'system-prepend'   // Prepend to Anthropic system field; or inject system-role msg at top of OpenAI messages
   | 'system-append'    // Append to Anthropic system field; or at end of OpenAI system messages
@@ -10,8 +17,8 @@ export interface ProviderMiddleware {
   position: MiddlewarePosition;
   /** Role for 'prepend'/'append' positions. Default: 'user'. */
   role?: string;
-  /** If set, only inject for requests targeting one of these model IDs. Applies to all models when omitted. */
-  models?: string[];
+  /** If set, only inject for requests targeting one of these service IDs. Applies to all services when omitted. */
+  services?: string[];
 }
 
 /**
@@ -25,7 +32,7 @@ export interface ProviderMiddleware {
 export function applyMiddleware(
   body: Record<string, unknown>,
   middlewares: ProviderMiddleware[],
-  format: 'anthropic' | 'openai' = 'anthropic',
+  format: RequestFormat = 'anthropic',
 ): Record<string, unknown> {
   if (!middlewares.length) return body;
 
@@ -45,7 +52,7 @@ export function applyMiddleware(
 function applySystemMiddleware(
   body: Record<string, unknown>,
   mw: ProviderMiddleware,
-  format: 'anthropic' | 'openai',
+  format: RequestFormat,
 ): Record<string, unknown> {
   const prepend = mw.position === 'system-prepend';
 

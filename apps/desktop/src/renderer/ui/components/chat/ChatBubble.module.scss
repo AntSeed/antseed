@@ -12,56 +12,8 @@
   border: 0;
 
   /* ===================================================================
-     User message (own)
+     Shared markdown styles (apply to both user and assistant bubbles)
      =================================================================== */
-
-  &.own {
-    width: fit-content;
-    margin-left: auto;
-    margin-right: max(0px, calc((100% - 640px) / 2));
-    background: var(--chat-user-bubble);
-    border: 1px solid var(--chat-user-bubble-border);
-    color: var(--text-primary);
-    border-radius: var(--radius);
-    padding: 9px 17px;
-    margin-bottom: 32px;
-    margin-top: 16px;
-
-    .chat-bubble-meta {
-      margin-bottom: 4px;
-      text-align: left;
-      justify-content: flex-start;
-      font-size: 11px;
-    }
-
-    :global {
-      .chat-bubble-content {
-        line-height: 1.7;
-      }
-
-      .chat-image-preview {
-        max-width: 280px;
-        max-height: 200px;
-        border-radius: var(--radius-sm);
-        margin-bottom: 6px;
-        display: block;
-        object-fit: contain;
-      }
-    }
-  }
-
-  /* ===================================================================
-     Assistant message (other)
-     =================================================================== */
-
-  &.other {
-    align-self: stretch;
-    background: transparent;
-    color: var(--text-primary);
-    border-left: 0;
-    border-radius: 0;
-    width: 100%;
-    padding: 0 16px;
 
   :global {
     .chat-bubble-content {
@@ -248,7 +200,57 @@
       display: inline-block;
       margin: 6px 0;
     }
+  }
 
+  /* ===================================================================
+     User message (own)
+     =================================================================== */
+
+  &.own {
+    width: fit-content;
+    margin-left: auto;
+    margin-right: max(0px, calc((100% - 640px) / 2));
+    background: var(--chat-user-bubble);
+    border: 1px solid var(--chat-user-bubble-border);
+    color: var(--text-primary);
+    border-radius: var(--radius);
+    padding: 9px 17px;
+    margin-bottom: 32px;
+    margin-top: 16px;
+
+    .chat-bubble-meta {
+      margin-bottom: 4px;
+      text-align: left;
+      justify-content: flex-start;
+      font-size: 11px;
+    }
+
+    :global {
+      .chat-image-preview {
+        max-width: 280px;
+        max-height: 200px;
+        border-radius: var(--radius-sm);
+        margin-bottom: 6px;
+        display: block;
+        object-fit: contain;
+      }
+    }
+  }
+
+  /* ===================================================================
+     Assistant message (other)
+     =================================================================== */
+
+  &.other {
+    align-self: stretch;
+    background: transparent;
+    color: var(--text-primary);
+    border-left: 0;
+    border-radius: 0;
+    width: 100%;
+    padding: 0 16px;
+
+  :global {
     /* Tool group */
     .tool-group {
       margin: 10px 0 12px;
@@ -581,6 +583,77 @@
 .chat-bubble-stats {
   color: var(--text-faint);
   font-size: inherit;
+}
+
+/* ===================================================================
+   Message action bar (copy, etc.)
+   =================================================================== */
+
+.messageActions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: -4px;
+}
+
+.copyResponseBtn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+
+  &:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+
+}
+
+.copyResponseBtnCopied {
+  color: var(--accent-green, #1fd87a);
+}
+
+/* ===================================================================
+   Radix tooltip
+   =================================================================== */
+
+.tooltipContent {
+  font-size: 11px;
+  line-height: 1;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: #2a2a2c;
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  user-select: none;
+  animation-duration: 0.12s;
+  animation-timing-function: ease-out;
+
+  &[data-state='delayed-open'][data-side='top'] { animation-name: tooltip-slide-down; }
+  &[data-state='delayed-open'][data-side='bottom'] { animation-name: tooltip-slide-up; }
+}
+
+.tooltipArrow {
+  fill: #2a2a2c;
+}
+
+@keyframes tooltip-slide-up {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes tooltip-slide-down {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 /* ===================================================================

@@ -37,7 +37,6 @@ test('effective buyer config precedence is flags > env > config > defaults', () 
 
   const env = {
     ANTSEED_BUYER_MIN_REPUTATION: '45',
-    ANTSEED_BUYER_PREFERRED_PROVIDERS: 'openai,anthropic',
     ANTSEED_BUYER_MAX_INPUT_USD_PER_MILLION: '90',
     ANTSEED_BUYER_MAX_OUTPUT_USD_PER_MILLION: '95',
   } as NodeJS.ProcessEnv;
@@ -47,13 +46,11 @@ test('effective buyer config precedence is flags > env > config > defaults', () 
     env,
     buyerOverrides: {
       minPeerReputation: 55,
-      preferredProviders: ['anthropic', 'openai'],
       maxOutputUsdPerMillion: 99,
     },
   });
 
   assert.equal(effective.minPeerReputation, 55);
-  assert.deepEqual(effective.preferredProviders, ['anthropic', 'openai']);
   assert.equal(effective.maxPricing.defaults.inputUsdPerMillion, 90);
   assert.equal(effective.maxPricing.defaults.outputUsdPerMillion, 99);
 });

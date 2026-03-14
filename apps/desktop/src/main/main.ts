@@ -166,31 +166,11 @@ const DEFAULT_PLUGINS_DIR = path.join(homedir(), '.antseed', 'plugins');
 const DEFAULT_PLUGINS_PACKAGE_JSON = path.join(DEFAULT_PLUGINS_DIR, 'package.json');
 const SAFE_PLUGIN_PACKAGE_PATTERN = /^(@?[a-z0-9][a-z0-9._-]*)(\/[a-z0-9][a-z0-9._-]*)?$/i;
 const PLUGIN_PACKAGE_ALIAS_MAP: Record<string, string> = {
-  anthropic: '@antseed/provider-anthropic',
-  openai: '@antseed/provider-openai',
-  'local-llm': '@antseed/provider-local-llm',
-  'provider-anthropic': '@antseed/provider-anthropic',
-  'provider-openai': '@antseed/provider-openai',
-  'provider-local-llm': '@antseed/provider-local-llm',
-  'antseed-provider-anthropic': '@antseed/provider-anthropic',
-  'antseed-provider-openai': '@antseed/provider-openai',
-  'antseed-provider-local-llm': '@antseed/provider-local-llm',
-  'claude-code': '@antseed/provider-claude-code',
-  'provider-claude-code': '@antseed/provider-claude-code',
-  'antseed-provider-claude-code': '@antseed/provider-claude-code',
-  'claude-oauth': '@antseed/provider-claude-oauth',
-  'provider-claude-oauth': '@antseed/provider-claude-oauth',
   'local': '@antseed/router-local',
   'router-local': '@antseed/router-local',
-  'antseed-router-claude-code': '@antseed/router-local',
   'antseed-router-local': '@antseed/router-local',
 };
 const SCOPED_TO_LEGACY_PLUGIN_PACKAGE_MAP: Record<string, string> = {
-  '@antseed/provider-anthropic': 'antseed-provider-anthropic',
-  '@antseed/provider-openai': 'antseed-provider-openai',
-  '@antseed/provider-local-llm': 'antseed-provider-local-llm',
-  '@antseed/provider-claude-code': 'antseed-provider-claude-code',
-  '@antseed/provider-claude-oauth': 'antseed-provider-claude-oauth',
   '@antseed/router-local': 'antseed-router-local',
 };
 
@@ -483,8 +463,8 @@ function parseConnectRuntimeActivity(lineRaw: string): RuntimeActivityEvent | nu
     return toRuntimeActivity({
       mode: 'connect',
       tone: 'warn',
-      stage: 'model-request',
-      message: 'Loading available models from peers...',
+      stage: 'service-request',
+      message: 'Loading available services from peers...',
       holdMs: 20_000,
     });
   }
@@ -821,8 +801,8 @@ async function ensureDefaultPlugin(packageName: string): Promise<void> {
     return;
   }
   appSetupNeeded = true;
-  mainWindow?.webContents.send('app:setup-step', { step: 'installing', label: 'Installing router plugin...' });
-  appendLog('connect', 'system', `Required plugin "${packageName}" not found. Installing...`);
+  mainWindow?.webContents.send('app:setup-step', { step: 'installing', label: 'Installing router plugin' });
+  appendLog('connect', 'system', `Required plugin "${packageName}" not found. Installing`);
   try {
     // 1. Try copying from the app bundle (production builds — instant, no network)
     const installedFromBundle = await installPluginFromBundle(packageName);
@@ -944,7 +924,6 @@ function defaultDashboardConfig(): DashboardConfig {
       },
     },
     buyer: {
-      preferredProviders: ['anthropic', 'openai', 'claude-code', 'claude-oauth', 'local-llm'],
       maxPricing: {
         defaults: {
           inputUsdPerMillion: 100,
@@ -1024,7 +1003,6 @@ async function loadDashboardConfig(configPath = DEFAULT_CONFIG_PATH): Promise<Da
       },
     },
     buyer: {
-      preferredProviders: asStringArray(buyer.preferredProviders, defaults.buyer.preferredProviders),
       maxPricing: {
         defaults: {
           inputUsdPerMillion: asNumber(

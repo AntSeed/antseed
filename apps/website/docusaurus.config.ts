@@ -24,7 +24,7 @@ const statsProxyPlugin: PluginModule = () => ({
 
 const config: Config = {
   title: 'AntSeed',
-  tagline: 'Private AI. Anonymous. Peer-to-peer.',
+  tagline: 'The Unstoppable AI Economy',
   favicon: 'logo.svg',
   url: 'https://antseed.com',
   baseUrl: '/',
@@ -86,19 +86,65 @@ const config: Config = {
     statsProxyPlugin,
   ],
 
+  headTags: [
+    {
+      tagName: 'script',
+      attributes: {type: 'application/ld+json'},
+      innerHTML: JSON.stringify({
+        '@context': 'https://schema.org',
+        '@type': 'SoftwareApplication',
+        name: 'AntSeed',
+        url: 'https://antseed.com',
+        description:
+          'A peer-to-peer AI services network. Buy or sell AI inference directly — no platform middleman, no vendor lock-in. OpenAI-compatible API, reputation-based routing, TEE attestation.',
+        applicationCategory: 'DeveloperApplication',
+        operatingSystem: 'macOS, Linux, Windows',
+        offers: {
+          '@type': 'Offer',
+          price: '0',
+          priceCurrency: 'USD',
+          description: 'Free and open-source. Pay only for inference consumed.',
+        },
+        creator: {
+          '@type': 'Organization',
+          name: 'AntSeed',
+          url: 'https://antseed.com',
+          sameAs: [
+            'https://github.com/AntSeed/antseed',
+            'https://x.com/antseedai',
+            'https://t.me/antseed',
+          ],
+        },
+        featureList: [
+          'P2P inference routing via DHT',
+          'OpenAI Responses API compatible',
+          'OpenAI Chat Completions API compatible',
+          'Reputation-based provider scoring',
+          'TEE attestation for privacy-preserving inference',
+          'Per-service middleware and prompt injection',
+          'Desktop app (AntStation)',
+          'Agent-to-agent commerce support',
+        ],
+        downloadUrl: 'https://github.com/AntSeed/antseed/releases',
+        softwareVersion: '0.1.25',
+        license: 'https://github.com/AntSeed/antseed/blob/main/LICENSE',
+      }),
+    },
+  ],
+
   themeConfig: {
     metadata: [
       {name: 'google-site-verification', content: '09pzs5Q9kHdpQSNSBpr0vNh9SMq-T8lzhBgH5Zgm6ug'},
-      {name: 'keywords', content: 'private AI, anonymous AI, P2P AI, decentralized AI inference, uncensored AI, AI without account, no signup AI, peer-to-peer AI'},
-      {name: 'description', content: 'Private AI inference with zero data collection. No account, no logs, no middleman. Connect directly to AI providers through an anonymous P2P network.'},
-      {property: 'og:title', content: 'AntSeed — Private AI. Anonymous. Peer-to-peer.'},
-      {property: 'og:description', content: 'Private AI inference with zero data collection. No account, no logs, no middleman.'},
+      {name: 'keywords', content: 'AI marketplace, buy AI services, sell AI services, peer-to-peer AI, decentralized AI inference, anonymous AI, private AI, P2P AI, AI economy'},
+      {name: 'description', content: 'Buy, sell, and build AI services peer-to-peer. Anonymous. Private. No middleman. Network live.'},
+      {property: 'og:title', content: 'AntSeed — The Unstoppable AI Economy'},
+      {property: 'og:description', content: 'Buy, sell, and build AI services peer-to-peer. Anonymous. Private. No middleman. Network live.'},
       {property: 'og:type', content: 'website'},
       {name: 'twitter:card', content: 'summary_large_image'},
       {name: 'twitter:image', content: 'https://antseed.com/og-image.jpg'},
       {property: 'og:image', content: 'https://antseed.com/og-image.jpg'},
-      {name: 'twitter:title', content: 'AntSeed — Private AI. Anonymous. Peer-to-peer.'},
-      {name: 'twitter:description', content: 'Private AI inference with zero data collection. No account, no logs, no middleman.'},
+      {name: 'twitter:title', content: 'AntSeed — The Unstoppable AI Economy'},
+      {name: 'twitter:description', content: 'Buy, sell, and build AI services peer-to-peer. Anonymous. Private. No middleman. Network live.'},
     ],
     colorMode: {
       defaultMode: 'light',

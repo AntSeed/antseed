@@ -126,14 +126,14 @@
   opacity: 0.8;
 }
 
-/* Model grid */
-.modelGrid {
+/* Service grid */
+.serviceGrid {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
 }
 
-.modelTag {
+.serviceTag {
   background: #f5f7fa;
   border: 1px solid #e2e8f0;
   border-radius: 6px;
@@ -204,7 +204,7 @@
   white-space: nowrap;
 }
 
-.peerModels {
+.peerServices {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;

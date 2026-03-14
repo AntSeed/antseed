@@ -9,7 +9,7 @@ function buildMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
     providers: [
       {
         provider: 'anthropic',
-        models: ['claude-3-opus'],
+        services: ['claude-3-opus'],
         defaultPricing: {
           inputUsdPerMillion: 15,
           outputUsdPerMillion: 75,

@@ -14,7 +14,7 @@ describe('provider-claude-code plugin', () => {
     expect(keys).toContain('ANTSEED_INPUT_USD_PER_MILLION');
     expect(keys).toContain('ANTSEED_OUTPUT_USD_PER_MILLION');
     expect(keys).toContain('ANTSEED_MAX_CONCURRENCY');
-    expect(keys).toContain('ANTSEED_ALLOWED_MODELS');
+    expect(keys).toContain('ANTSEED_ALLOWED_SERVICES');
     expect(keys).not.toContain('ANTHROPIC_API_KEY');
     expect(keys).not.toContain('ANTSEED_AUTH_TYPE');
   });

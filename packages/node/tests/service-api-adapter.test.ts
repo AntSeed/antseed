@@ -1,14 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import type { SerializedHttpRequest, SerializedHttpResponse } from '../src/types/http.js';
 import {
-  detectRequestModelApiProtocol,
-  inferProviderDefaultModelApiProtocols,
+  createOpenAIChatToAnthropicStreamingAdapter,
+  createOpenAIChatToResponsesStreamingAdapter,
+  detectRequestServiceApiProtocol,
+  inferProviderDefaultServiceApiProtocols,
   selectTargetProtocolForRequest,
   transformAnthropicMessagesRequestToOpenAIChat,
   transformOpenAIChatResponseToAnthropicMessage,
   transformOpenAIResponsesRequestToOpenAIChat,
   transformOpenAIChatResponseToOpenAIResponses,
-} from '../src/proxy/model-api-adapter.js';
+} from '../src/proxy/service-api-adapter.js';
 
 function makeRequest(overrides?: Partial<SerializedHttpRequest>): SerializedHttpRequest {
   return {
@@ -101,14 +103,14 @@ function parseSseEvents(sseText: string): Array<{ event: string | null; data: st
     });
 }
 
-describe('detectRequestModelApiProtocol', () => {
+describe('detectRequestServiceApiProtocol', () => {
   it('detects anthropic messages from path', () => {
-    expect(detectRequestModelApiProtocol(makeRequest())).toBe('anthropic-messages');
+    expect(detectRequestServiceApiProtocol(makeRequest())).toBe('anthropic-messages');
   });
 
   it('detects openai chat completions from path', () => {
     expect(
-      detectRequestModelApiProtocol(makeRequest({ path: '/v1/chat/completions' })),
+      detectRequestServiceApiProtocol(makeRequest({ path: '/v1/chat/completions' })),
     ).toBe('openai-chat-completions');
   });
 });
@@ -125,13 +127,13 @@ describe('selectTargetProtocolForRequest', () => {
   });
 });
 
-describe('inferProviderDefaultModelApiProtocols', () => {
+describe('inferProviderDefaultServiceApiProtocols', () => {
   it('infers anthropic providers', () => {
-    expect(inferProviderDefaultModelApiProtocols('claude-oauth')).toEqual(['anthropic-messages']);
+    expect(inferProviderDefaultServiceApiProtocols('claude-oauth')).toEqual(['anthropic-messages']);
   });
 
   it('infers openai-style providers', () => {
-    expect(inferProviderDefaultModelApiProtocols('openai')).toEqual(['openai-chat-completions']);
+    expect(inferProviderDefaultServiceApiProtocols('openai')).toEqual(['openai-chat-completions']);
   });
 });
 
@@ -145,7 +147,8 @@ describe('transformAnthropicMessagesRequestToOpenAIChat', () => {
 
     const body = JSON.parse(new TextDecoder().decode(transformed!.request.body)) as Record<string, unknown>;
     expect(body.model).toBe('claude-sonnet');
-    expect(body.stream).toBe(false);
+    expect(body.stream).toBe(true);
+    expect(body.stream_options).toEqual({ include_usage: true });
     expect(Array.isArray(body.messages)).toBe(true);
     expect(Array.isArray(body.tools)).toBe(true);
     expect(body.tool_choice).toEqual({
@@ -225,6 +228,134 @@ describe('transformOpenAIChatResponseToAnthropicMessage', () => {
   });
 });
 
+describe('createOpenAIChatToAnthropicStreamingAdapter', () => {
+  it('converts openai chat deltas into anthropic SSE frames incrementally', () => {
+    const adapter = createOpenAIChatToAnthropicStreamingAdapter({ fallbackModel: 'claude-sonnet' });
+    const start = adapter.adaptStart(makeOpenAIResponse({
+      headers: { 'content-type': 'text/event-stream' },
+      body: new Uint8Array(0),
+    }));
+    expect(start.headers['content-type']).toBe('text/event-stream');
+
+    const chunks = adapter.adaptChunk({
+      requestId: 'req-1',
+      data: new TextEncoder().encode(
+        'data: {"id":"chatcmpl-1","model":"gpt-4.1","choices":[{"delta":{"content":"Hello"},"finish_reason":null}]}\n\n'
+        + 'data: {"choices":[{"delta":{"content":" world"},"finish_reason":"stop"}]}\n\n'
+        + 'data: [DONE]\n\n',
+      ),
+      done: true,
+    });
+    const sseText = chunks.map((chunk) => new TextDecoder().decode(chunk.data)).join('');
+    expect(sseText).toContain('event: message_start');
+    expect(sseText).toContain('event: content_block_delta');
+    expect(sseText).toContain('"text":"Hello"');
+    expect(sseText).toContain('"text":" world"');
+    expect(sseText).toContain('event: message_stop');
+  });
+
+  it('converts streamed tool call deltas into anthropic tool_use events', () => {
+    const adapter = createOpenAIChatToAnthropicStreamingAdapter({ fallbackModel: 'claude-sonnet' });
+    const chunks = adapter.adaptChunk({
+      requestId: 'req-tool',
+      data: new TextEncoder().encode(
+        'data: {"id":"chatcmpl-tool","model":"gpt-4.1","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"write","arguments":"{\\"path\\""}}]},"finish_reason":null}]}\n\n'
+        + 'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":":\\"hello.txt\\"}"}}]},"finish_reason":"tool_calls"}]}\n\n'
+        + 'data: [DONE]\n\n',
+      ),
+      done: true,
+    });
+
+    const sseText = chunks.map((chunk) => new TextDecoder().decode(chunk.data)).join('');
+    expect(sseText).toContain('event: content_block_start');
+    expect(sseText).toContain('"type":"tool_use"');
+    expect(sseText).toContain('"name":"write"');
+    expect(sseText).toContain('event: content_block_delta');
+    expect(sseText).toContain('"type":"input_json_delta"');
+    expect(sseText).toContain('\\"path\\"');
+    expect(sseText).toContain('hello.txt');
+  });
+
+  it('uses block index 0 for tool-only anthropic streams', () => {
+    const adapter = createOpenAIChatToAnthropicStreamingAdapter({ fallbackModel: 'claude-sonnet' });
+    const chunks = adapter.adaptChunk({
+      requestId: 'req-tool-only-index',
+      data: new TextEncoder().encode(
+        'data: {"id":"chatcmpl-tool-only","model":"gpt-4.1","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"write","arguments":"{\\"path\\":\\"hello.txt\\"}"}}]},"finish_reason":"tool_calls"}]}\n\n'
+        + 'data: [DONE]\n\n',
+      ),
+      done: true,
+    });
+
+    const events = parseSseEvents(chunks.map((chunk) => new TextDecoder().decode(chunk.data)).join(''));
+    const toolStart = events.find(
+      (event) => event.event === 'content_block_start' && event.data.includes('"id":"call_1"'),
+    );
+    const toolDelta = events.find(
+      (event) => event.event === 'content_block_delta' && event.data.includes('"partial_json"'),
+    );
+    const toolStop = events.find(
+      (event) => event.event === 'content_block_stop' && event.data.includes('"index":0'),
+    );
+
+    expect(toolStart?.data).toContain('"index":0');
+    expect(toolDelta?.data).toContain('"index":0');
+    expect(toolStop).toBeDefined();
+  });
+
+  it('closes the text block before opening a tool block', () => {
+    const adapter = createOpenAIChatToAnthropicStreamingAdapter({ fallbackModel: 'claude-sonnet' });
+    const chunks = adapter.adaptChunk({
+      requestId: 'req-mixed',
+      data: new TextEncoder().encode(
+        'data: {"id":"chatcmpl-mixed","model":"gpt-4.1","choices":[{"delta":{"content":"Thinking...","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"write","arguments":"{\\"path\\":\\"hello.txt\\"}"}}]},"finish_reason":"tool_calls"}]}\n\n'
+        + 'data: [DONE]\n\n',
+      ),
+      done: true,
+    });
+
+    const events = parseSseEvents(chunks.map((chunk) => new TextDecoder().decode(chunk.data)).join(''));
+    const eventNames = events.map((event) => event.event);
+    const textStopIndex = eventNames.findIndex((event) => event === 'content_block_stop');
+    const toolStartIndex = events.findIndex(
+      (event) => event.event === 'content_block_start' && event.data.includes('"tool_use"'),
+    );
+
+    expect(textStopIndex).toBeGreaterThan(-1);
+    expect(toolStartIndex).toBeGreaterThan(-1);
+    expect(textStopIndex).toBeLessThan(toolStartIndex);
+  });
+
+  it('closes the previous tool block before opening the next tool block', () => {
+    const adapter = createOpenAIChatToAnthropicStreamingAdapter({ fallbackModel: 'claude-sonnet' });
+    const chunks = adapter.adaptChunk({
+      requestId: 'req-multi-tool',
+      data: new TextEncoder().encode(
+        'data: {"id":"chatcmpl-multi","model":"gpt-4.1","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"write","arguments":"{\\"path\\":\\"hello.txt\\"}"}}]},"finish_reason":null}]}\n\n'
+        + 'data: {"choices":[{"delta":{"tool_calls":[{"index":1,"id":"call_2","type":"function","function":{"name":"search","arguments":"{\\"q\\":\\"antseed\\"}"}}]},"finish_reason":"tool_calls"}]}\n\n'
+        + 'data: [DONE]\n\n',
+      ),
+      done: true,
+    });
+
+    const events = parseSseEvents(chunks.map((chunk) => new TextDecoder().decode(chunk.data)).join(''));
+    const firstToolStartIndex = events.findIndex(
+      (event) => event.event === 'content_block_start' && event.data.includes('"id":"call_1"'),
+    );
+    const firstToolStopIndex = events.findIndex(
+      (event) => event.event === 'content_block_stop' && event.data.includes('"index":0'),
+    );
+    const secondToolStartIndex = events.findIndex(
+      (event) => event.event === 'content_block_start' && event.data.includes('"id":"call_2"'),
+    );
+
+    expect(firstToolStartIndex).toBeGreaterThan(-1);
+    expect(firstToolStopIndex).toBeGreaterThan(-1);
+    expect(secondToolStartIndex).toBeGreaterThan(-1);
+    expect(firstToolStopIndex).toBeLessThan(secondToolStartIndex);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // OpenAI Responses API tests
 // ---------------------------------------------------------------------------
@@ -249,10 +380,10 @@ function makeResponsesRequest(overrides?: Partial<SerializedHttpRequest>): Seria
   };
 }
 
-describe('detectRequestModelApiProtocol – responses', () => {
+describe('detectRequestServiceApiProtocol – responses', () => {
   it('detects openai responses from /v1/responses path', () => {
     expect(
-      detectRequestModelApiProtocol(makeResponsesRequest()),
+      detectRequestServiceApiProtocol(makeResponsesRequest()),
     ).toBe('openai-responses');
   });
 });
@@ -330,7 +461,7 @@ describe('transformOpenAIResponsesRequestToOpenAIChat', () => {
     expect(messages[0]).toEqual({ role: 'user', content: 'Hello from input_text' });
   });
 
-  it('records streamRequested but always sends stream: false to upstream', () => {
+  it('preserves streamRequested on the upstream request', () => {
     const request = makeResponsesRequest({
       body: new TextEncoder().encode(JSON.stringify({
         model: 'gpt-4.1',
@@ -342,7 +473,8 @@ describe('transformOpenAIResponsesRequestToOpenAIChat', () => {
     expect(result!.streamRequested).toBe(true);
 
     const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
-    expect(body.stream).toBe(false);
+    expect(body.stream).toBe(true);
+    expect(body.stream_options).toEqual({ include_usage: true });
   });
 
   it('converts Responses API flat tools to Chat Completions nested format', () => {
@@ -499,7 +631,7 @@ describe('transformOpenAIChatResponseToOpenAIResponses', () => {
     expect(functionCall!.arguments).toBe('{"path":"hello.txt"}');
   });
 
-  it('uses fallback model when response has none', () => {
+  it('uses fallback service when response has none', () => {
     const chatResponse = makeOpenAIResponse({
       body: new TextEncoder().encode(JSON.stringify({
         id: 'chatcmpl-x',
@@ -671,5 +803,108 @@ describe('transformOpenAIChatResponseToOpenAIResponses', () => {
     expect(text).toContain('event: error');
     expect(text).toContain('"message":"Rate limit exceeded"');
     expect(text).toContain('"type":"rate_limit_error"');
+  });
+});
+
+describe('createOpenAIChatToResponsesStreamingAdapter', () => {
+  it('converts openai chat deltas into responses SSE frames incrementally', () => {
+    const adapter = createOpenAIChatToResponsesStreamingAdapter({ fallbackModel: 'gpt-4.1' });
+    const start = adapter.adaptStart(makeOpenAIResponse({
+      headers: { 'content-type': 'text/event-stream' },
+      body: new Uint8Array(0),
+    }));
+    expect(start.headers['content-type']).toBe('text/event-stream');
+
+    const chunks = adapter.adaptChunk({
+      requestId: 'req-resp-1',
+      data: new TextEncoder().encode(
+        'data: {"id":"chatcmpl-stream","model":"gpt-4.1","choices":[{"delta":{"content":"Hello"},"finish_reason":null}]}\n\n'
+        + 'data: {"choices":[{"delta":{"content":" world"},"finish_reason":"stop"}]}\n\n'
+        + 'data: [DONE]\n\n',
+      ),
+      done: true,
+    });
+
+    const sseText = chunks.map((chunk) => new TextDecoder().decode(chunk.data)).join('');
+    expect(sseText).toContain('event: response.created');
+    expect(sseText).toContain('event: response.output_text.delta');
+    expect(sseText).toContain('"delta":"Hello"');
+    expect(sseText).toContain('"delta":" world"');
+    expect(sseText).toContain('event: response.completed');
+    expect(sseText).toContain('data: [DONE]');
+  });
+
+  it('converts streamed tool call deltas into responses function_call events', () => {
+    const adapter = createOpenAIChatToResponsesStreamingAdapter({ fallbackModel: 'gpt-4.1' });
+    const chunks = adapter.adaptChunk({
+      requestId: 'req-tool',
+      data: new TextEncoder().encode(
+        'data: {"id":"chatcmpl-tool","model":"gpt-4.1","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"write","arguments":"{\\"path\\""}}]},"finish_reason":null}]}\n\n'
+        + 'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":":\\"hello.txt\\"}"}}]},"finish_reason":"tool_calls"}]}\n\n'
+        + 'data: [DONE]\n\n',
+      ),
+      done: true,
+    });
+
+    const sseText = chunks.map((chunk) => new TextDecoder().decode(chunk.data)).join('');
+    expect(sseText).toContain('event: response.output_item.added');
+    expect(sseText).toContain('"type":"function_call"');
+    expect(sseText).toContain('event: response.function_call_arguments.delta');
+    expect(sseText).toContain('event: response.function_call_arguments.done');
+    expect(sseText).toContain('"name":"write"');
+    expect(sseText).toContain('hello.txt');
+  });
+
+  it('emits response.created first and avoids phantom text items for tool-only streams', () => {
+    const adapter = createOpenAIChatToResponsesStreamingAdapter({ fallbackModel: 'gpt-4.1' });
+    const chunks = adapter.adaptChunk({
+      requestId: 'req-tool-only',
+      data: new TextEncoder().encode(
+        'data: {"id":"chatcmpl-tool","model":"gpt-4.1","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"write","arguments":"{\\"path\\""}}]},"finish_reason":null}]}\n\n'
+        + 'data: {"usage":{"prompt_tokens":7,"completion_tokens":3},"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":":\\"hello.txt\\"}"}}]},"finish_reason":"tool_calls"}]}\n\n'
+        + 'data: [DONE]\n\n',
+      ),
+      done: true,
+    });
+
+    const events = parseSseEvents(chunks.map((chunk) => new TextDecoder().decode(chunk.data)).join(''));
+
+    expect(events[0]?.event).toBe('response.created');
+
+    const firstAdded = events.find((event) => event.event === 'response.output_item.added');
+    expect(firstAdded).toBeDefined();
+    expect(JSON.parse(firstAdded!.data)).toMatchObject({
+      type: 'response.output_item.added',
+      output_index: 0,
+      item: {
+        type: 'function_call',
+        id: 'call_1',
+      },
+    });
+
+    const completed = events.find((event) => event.event === 'response.completed');
+    expect(completed).toBeDefined();
+    expect(JSON.parse(completed!.data)).toMatchObject({
+      type: 'response.completed',
+      response: {
+        output: [{
+          type: 'function_call',
+          id: 'call_1',
+          call_id: 'call_1',
+          name: 'write',
+          arguments: '{"path":"hello.txt"}',
+          status: 'completed',
+        }],
+        output_text: '',
+        usage: {
+          input_tokens: 7,
+          output_tokens: 3,
+          total_tokens: 10,
+        },
+      },
+    });
+
+    expect(events.some((event) => event.event === 'response.output_text.delta')).toBe(false);
+    expect(events.some((event) => event.event === 'response.output_text.done')).toBe(false);
   });
 });

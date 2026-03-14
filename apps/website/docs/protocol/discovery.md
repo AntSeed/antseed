@@ -17,17 +17,17 @@ Sellers announce multiple topic types. Each topic is SHA1-hashed for DHT lookup.
 | Topic Type | Plain Topic String | Key Normalization |
 |---|---|---|
 | Provider | `antseed:{provider}` | `trim + lowercase` |
-| Model (canonical) | `antseed:model:{model}` | `trim + lowercase` |
-| Model (search fallback) | `antseed:model-search:{model}` | `trim + lowercase`, then remove spaces, `-`, `_` (keep `.`) |
+| Model (canonical) | `antseed:service:{model}` | `trim + lowercase` |
+| Model (search fallback) | `antseed:service-search:{model}` | `trim + lowercase`, then remove spaces, `-`, `_` (keep `.`) |
 | Capability | `antseed:{capability}` or `antseed:{capability}:{name}` | `trim + lowercase` |
 
 `model-search` topics are announced only when the compact key differs from the canonical key.
 
 Example:
 
-- `kimi 2.5` -> canonical `antseed:model:kimi 2.5`, search `antseed:model-search:kimi2.5`
-- `kimi-2.5` -> canonical `antseed:model:kimi-2.5`, search `antseed:model-search:kimi2.5`
-- `kimi_2.5` -> canonical `antseed:model:kimi_2.5`, search `antseed:model-search:kimi2.5`
+- `kimi 2.5` -> canonical `antseed:service:kimi 2.5`, search `antseed:service-search:kimi2.5`
+- `kimi-2.5` -> canonical `antseed:service:kimi-2.5`, search `antseed:service-search:kimi2.5`
+- `kimi_2.5` -> canonical `antseed:service:kimi_2.5`, search `antseed:service-search:kimi2.5`
 
 Buyer model discovery queries canonical model topic first, then also queries `model-search` when keys differ.
 
@@ -56,23 +56,24 @@ By default, metadata is fetched from `http://{host}:{port}/metadata` (`metadataP
 ```json title="metadata structure"
 {
   "peerId": "a1b2c3d4...64 hex chars",
-  "version": 4,
+  "version": 5,
   "displayName": "Acme Inference - us-east-1",
+  "publicAddress": "peer.example.com:6882",
   "providers": [{
     "provider": "anthropic",
-    "models": ["claude-sonnet-4-6", "claude-haiku-4-5"],
+    "services": ["claude-sonnet-4-6", "claude-haiku-4-5"],
     "defaultPricing": {
       "inputUsdPerMillion": 3,
       "outputUsdPerMillion": 15
     },
-    "modelPricing": {
+    "servicePricing": {
       "claude-sonnet-4-6": { "inputUsdPerMillion": 3, "outputUsdPerMillion": 15 },
       "claude-haiku-4-5": { "inputUsdPerMillion": 1, "outputUsdPerMillion": 5 }
     },
-    "modelCategories": {
+    "serviceCategories": {
       "claude-sonnet-4-6": ["coding", "privacy"]
     },
-    "modelApiProtocols": {
+    "serviceApiProtocols": {
       "claude-sonnet-4-6": ["anthropic-messages"]
     },
     "maxConcurrency": 5,
@@ -85,6 +86,8 @@ By default, metadata is fetched from `http://{host}:{port}/metadata` (`metadataP
 ```
 
 Recommended category tags: `privacy`, `legal`, `uncensored`, `coding`, `finance`, `tee` (custom tags are allowed).
+
+`publicAddress` is optional. When present, buyers should prefer it over the raw host learned from the DHT announcement. This is intended for deployments where DHT traffic exits from one IP but buyers must connect to another address, such as a Kubernetes load balancer.
 
 ## Peer Scoring
 

@@ -18,13 +18,14 @@ export { loadOrCreateIdentity, type Identity } from './p2p/identity.js';
 export { DHTNode, DEFAULT_DHT_CONFIG } from './discovery/dht-node.js';
 export { OFFICIAL_BOOTSTRAP_NODES, mergeBootstrapNodes, toBootstrapConfig } from './discovery/bootstrap.js';
 export {
-  WELL_KNOWN_MODEL_CATEGORIES,
-  WELL_KNOWN_MODEL_API_PROTOCOLS,
-  type ModelApiProtocol,
+  WELL_KNOWN_SERVICE_CATEGORIES,
+  WELL_KNOWN_SERVICE_API_PROTOCOLS,
+  type ServiceApiProtocol,
   type PeerMetadata,
   type ProviderAnnouncement,
 } from './discovery/peer-metadata.js';
 export { MetadataServer, type MetadataServerConfig } from './discovery/metadata-server.js';
+export { parsePublicAddress, MAX_PUBLIC_ADDRESS_LENGTH, type ParsedPublicAddress } from './discovery/public-address.js';
 export { MeteringStorage } from './metering/storage.js';
 export { BalanceManager } from './payments/balance-manager.js';
 export { BaseEscrowClient, type BaseEscrowConfig } from './payments/evm/escrow-client.js';
@@ -35,8 +36,10 @@ export type { BuyerSessionState, BuyerSessionStatus } from './payments/buyer-pay
 export { ProxyMux } from './proxy/proxy-mux.js';
 export { resolveProvider } from './proxy/provider-detection.js';
 export {
-  detectRequestModelApiProtocol,
-  inferProviderDefaultModelApiProtocols,
+  detectRequestServiceApiProtocol,
+  createOpenAIChatToAnthropicStreamingAdapter,
+  createOpenAIChatToResponsesStreamingAdapter,
+  inferProviderDefaultServiceApiProtocols,
   selectTargetProtocolForRequest,
   transformAnthropicMessagesRequestToOpenAIChat,
   transformOpenAIChatResponseToAnthropicMessage,
@@ -45,7 +48,8 @@ export {
   type TargetProtocolSelection,
   type AnthropicToOpenAIRequestTransformResult,
   type ResponsesToOpenAIRequestTransformResult,
-} from './proxy/model-api-adapter.js';
+  type StreamingResponseAdapter,
+} from './proxy/service-api-adapter.js';
 export { DefaultRouter, type DefaultRouterConfig } from './routing/default-router.js';
 
 export type { AntseedPlugin, AntseedProviderPlugin, AntseedRouterPlugin, PluginConfigKey, ConfigField } from './interfaces/plugin.js'

@@ -67,7 +67,7 @@ Any service a provider chooses to offer. Specialized inference, domain expertise
 
 If a provider offers access to GPT-4 or other closed-source models, you can access them through AntSeed. The protocol is model-agnostic. Availability depends on what providers choose to offer.
 
-### What if a provider goes offline?
+### What if a service goes offline?
 
 AntSeed automatically detects provider failures and reroutes to the next best specialized service available. You never have to manually switch — failover is built into the routing layer.
 

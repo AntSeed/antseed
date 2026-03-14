@@ -1,13 +1,13 @@
 import { verifySignature, hexToBytes } from "../p2p/identity.js";
 import type { DHTNode } from "./dht-node.js";
 import {
-  providerTopic,
-  modelTopic,
-  modelSearchTopic,
+  ANTSEED_WILDCARD_TOPIC,
+  serviceTopic,
+  serviceSearchTopic,
   capabilityTopic,
   topicToInfoHash,
-  normalizeModelTopicKey,
-  normalizeModelSearchTopicKey,
+  normalizeServiceTopicKey,
+  normalizeServiceSearchTopicKey,
 } from "./dht-node.js";
 import type { PeerMetadata } from "./peer-metadata.js";
 import { encodeMetadataForSigning } from "./metadata-codec.js";
@@ -51,25 +51,24 @@ export class PeerLookup {
     this.config = config;
   }
 
-  async findSellers(provider: string): Promise<LookupResult[]> {
-    const topic = providerTopic(provider);
-    const infoHash = topicToInfoHash(topic);
+  async findAll(): Promise<LookupResult[]> {
+    const infoHash = topicToInfoHash(ANTSEED_WILDCARD_TOPIC);
     const peers = await this.config.dht.lookup(infoHash);
     return this.resolveLookupResults(shuffle(peers));
   }
 
-  async findByModel(model: string): Promise<LookupResult[]> {
-    const canonicalTopic = modelTopic(model);
+  async findByService(service: string): Promise<LookupResult[]> {
+    const canonicalTopic = serviceTopic(service);
     const canonicalInfoHash = topicToInfoHash(canonicalTopic);
 
-    const canonicalModelKey = normalizeModelTopicKey(model);
-    const compactModelKey = normalizeModelSearchTopicKey(model);
-    if (compactModelKey === canonicalModelKey) {
+    const canonicalServiceKey = normalizeServiceTopicKey(service);
+    const compactServiceKey = normalizeServiceSearchTopicKey(service);
+    if (compactServiceKey === canonicalServiceKey) {
       const peers = await this.config.dht.lookup(canonicalInfoHash);
       return this.resolveLookupResults(shuffle(peers));
     }
 
-    const compactTopic = modelSearchTopic(model);
+    const compactTopic = serviceSearchTopic(service);
     const compactInfoHash = topicToInfoHash(compactTopic);
     const [canonicalPeers, compactPeers] = await Promise.all([
       this.config.dht.lookup(canonicalInfoHash),

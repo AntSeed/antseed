@@ -10,7 +10,6 @@ export function ConfigView({ active }: ConfigViewProps) {
   const { configMeta, configMessage, configFormData, configSaving, devMode: currentDevMode } = useUiSnapshot();
 
   const [proxyPort, setProxyPort] = useState('8377');
-  const [preferredProviders, setPreferredProviders] = useState('');
   const [maxInput, setMaxInput] = useState('0');
   const [maxOutput, setMaxOutput] = useState('0');
   const [minRep, setMinRep] = useState('0');
@@ -20,7 +19,6 @@ export function ConfigView({ active }: ConfigViewProps) {
   useEffect(() => {
     if (configFormData) {
       setProxyPort(String(configFormData.proxyPort));
-      setPreferredProviders(configFormData.preferredProviders);
       setMaxInput(String(configFormData.maxInputUsdPerMillion));
       setMaxOutput(String(configFormData.maxOutputUsdPerMillion));
       setMinRep(String(configFormData.minRep));
@@ -37,7 +35,6 @@ export function ConfigView({ active }: ConfigViewProps) {
   function handleSave() {
     void actions.saveConfig({
       proxyPort: parseInt(proxyPort, 10) || 8377,
-      preferredProviders,
       maxInputUsdPerMillion: parseFloat(maxInput) || 0,
       maxOutputUsdPerMillion: parseFloat(maxOutput) || 0,
       minRep: parseInt(minRep, 10) || 0,
@@ -65,27 +62,13 @@ export function ConfigView({ active }: ConfigViewProps) {
               <div className="settings-copy">
                 <span className="settings-kicker">Runtime</span>
                 <h4>Proxy Port</h4>
-                <p>Local port used by the buyer proxy for model routing and chat requests.</p>
+                <p>Local port used by the buyer proxy for service routing and chat requests.</p>
               </div>
               <input
                 type="number"
                 className="form-input settings-control"
                 value={proxyPort}
                 onChange={(e) => setProxyPort(e.target.value)}
-                tabIndex={-1}
-              />
-            </label>
-            <label className="settings-item settings-item-wide">
-              <div className="settings-copy">
-                <span className="settings-kicker">Routing</span>
-                <h4>Preferred Providers</h4>
-                <p>Ordered provider preference list, separated by commas.</p>
-              </div>
-              <input
-                type="text"
-                className="form-input settings-control"
-                value={preferredProviders}
-                onChange={(e) => setPreferredProviders(e.target.value)}
                 tabIndex={-1}
               />
             </label>

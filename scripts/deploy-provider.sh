@@ -9,7 +9,7 @@ set -euo pipefail
 #     --api-key sk-... \
 #     --provider-flavor openrouter \
 #     --base-url https://openrouter.ai/api \
-#     --models moonshotai/kimi-k2.5 \
+#     --services moonshotai/kimi-k2.5 \
 #     --upstream-provider Together
 #
 #   ./scripts/deploy-provider.sh --host 1.2.3.4 \
@@ -25,7 +25,7 @@ SSH_USER="ec2-user"
 SERVICE="antseed-provider"
 PROVIDER=""
 API_KEY=""
-MODELS=""
+SERVICES=""
 UPSTREAM_PROVIDER=""
 PROVIDER_FLAVOR=""
 BASE_URL=""
@@ -48,7 +48,7 @@ Options:
   --key <path>                 SSH private key (default: ~/.ssh/antseed-provider.pem)
   --user <user>                SSH user (default: ec2-user)
   --service <name>             systemd service name (default: antseed-provider)
-  --models <list>              Comma-separated model allow-list
+  --services <list>            Comma-separated service allow-list
   --provider-flavor <name>     OpenAI provider flavor (e.g. generic, openrouter)
   --base-url <url>             OpenAI-compatible upstream base URL
   --upstream-provider <name>   OpenRouter upstream provider (e.g. Together, DeepInfra)
@@ -69,7 +69,7 @@ while [[ $# -gt 0 ]]; do
     --service) SERVICE="$2"; shift 2 ;;
     --provider) PROVIDER="$2"; shift 2 ;;
     --api-key) API_KEY="$2"; shift 2 ;;
-    --models) MODELS="$2"; shift 2 ;;
+    --services) SERVICES="$2"; shift 2 ;;
     --provider-flavor) PROVIDER_FLAVOR="$2"; shift 2 ;;
     --base-url) BASE_URL="$2"; shift 2 ;;
     --upstream-provider) UPSTREAM_PROVIDER="$2"; shift 2 ;;
@@ -136,8 +136,8 @@ else
   ENV_LINES="Environment=\"ANTSEED_DEBUG=1\""
   [ -n "$API_KEY_ENV" ] && [ -n "$API_KEY" ] && \
     ENV_LINES="$ENV_LINES\nEnvironment=\"${API_KEY_ENV}=${API_KEY}\""
-  [ -n "$MODELS" ] && \
-    ENV_LINES="$ENV_LINES\nEnvironment=\"ANTSEED_ALLOWED_MODELS=${MODELS}\""
+  [ -n "$SERVICES" ] && \
+    ENV_LINES="$ENV_LINES\nEnvironment=\"ANTSEED_ALLOWED_SERVICES=${SERVICES}\""
   if [ "$PROVIDER" = "openai" ]; then
     [ -n "$PROVIDER_FLAVOR" ] && \
       ENV_LINES="$ENV_LINES\nEnvironment=\"OPENAI_PROVIDER_FLAVOR=${PROVIDER_FLAVOR}\""

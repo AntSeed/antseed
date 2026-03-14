@@ -24,11 +24,11 @@ function mockProvider(): Provider & { lastBody: () => Record<string, unknown> } 
   let _lastBody: Record<string, unknown> = {};
   const p: Provider & { lastBody: () => Record<string, unknown> } = {
     name: 'mock',
-    models: ['model-a', 'model-b'],
+    services: ['service-a', 'service-b'],
     pricing: undefined,
     maxConcurrency: 1,
-    modelCategories: undefined,
-    modelApiProtocols: undefined,
+    serviceCategories: undefined,
+    serviceApiProtocols: undefined,
     getCapacity: () => ({ available: 1, total: 1 }),
     handleRequest: async (req: SerializedHttpRequest): Promise<SerializedHttpResponse> => {
       _lastBody = parseBody(req.body);
@@ -54,82 +54,82 @@ function makeReq(body: Record<string, unknown>, path = '/v1/messages'): Serializ
 function mw(
   content: string,
   position: ProviderMiddleware['position'],
-  models?: string[],
+  services?: string[],
 ): ProviderMiddleware {
-  return models ? { content, position, models } : { content, position };
+  return services ? { content, position, services } : { content, position };
 }
 
 // ---------------------------------------------------------------------------
-// Per-model filtering
+// Per-service filtering
 // ---------------------------------------------------------------------------
 
-// Convenience: strip the confidentiality prompt suffix so per-model filtering
+// Convenience: strip the confidentiality prompt suffix so per-service filtering
 // tests can focus on skill injection without repeating the long prompt string.
 function stripConfidentiality(system: unknown): string {
   return String(system).split(`\n\n${DEFAULT_CONFIDENTIALITY_PROMPT}`)[0];
 }
 
-describe('MiddlewareProvider — per-model filtering', () => {
-  it('applies middleware when request model matches models list', async () => {
+describe('MiddlewareProvider — per-service filtering', () => {
+  it('applies middleware when request service matches services list', async () => {
     const inner = mockProvider();
     const provider = new MiddlewareProvider(inner, [
-      mw('injected', 'system-prepend', ['model-a']),
+      mw('injected', 'system-prepend', ['service-a']),
     ]);
-    await provider.handleRequest(makeReq({ model: 'model-a', system: 'base', messages: [] }));
+    await provider.handleRequest(makeReq({ model: 'service-a', system: 'base', messages: [] }));
     expect(stripConfidentiality(inner.lastBody().system)).toBe('injected\n\nbase');
   });
 
-  it('skips middleware when request model is not in models list', async () => {
+  it('skips middleware when request service is not in services list', async () => {
     const inner = mockProvider();
     const provider = new MiddlewareProvider(inner, [
-      mw('injected', 'system-prepend', ['model-a']),
+      mw('injected', 'system-prepend', ['service-a']),
     ]);
-    await provider.handleRequest(makeReq({ model: 'model-b', system: 'base', messages: [] }));
+    await provider.handleRequest(makeReq({ model: 'service-b', system: 'base', messages: [] }));
     expect(inner.lastBody().system).toBe('base');
   });
 
-  it('applies middleware without models filter to all models', async () => {
+  it('applies middleware without services filter to all services', async () => {
     const inner = mockProvider();
     const provider = new MiddlewareProvider(inner, [
       mw('global', 'system-prepend'),
     ]);
 
-    await provider.handleRequest(makeReq({ model: 'model-a', system: 'base', messages: [] }));
+    await provider.handleRequest(makeReq({ model: 'service-a', system: 'base', messages: [] }));
     expect(stripConfidentiality(inner.lastBody().system)).toBe('global\n\nbase');
 
-    await provider.handleRequest(makeReq({ model: 'model-b', system: 'base', messages: [] }));
+    await provider.handleRequest(makeReq({ model: 'service-b', system: 'base', messages: [] }));
     expect(stripConfidentiality(inner.lastBody().system)).toBe('global\n\nbase');
   });
 
-  it('applies model-scoped and global middleware independently', async () => {
+  it('applies service-scoped and global middleware independently', async () => {
     const inner = mockProvider();
     const provider = new MiddlewareProvider(inner, [
       mw('global', 'system-prepend'),
-      mw('specific', 'system-append', ['model-a']),
+      mw('specific', 'system-append', ['service-a']),
     ]);
 
-    await provider.handleRequest(makeReq({ model: 'model-a', system: 'base', messages: [] }));
+    await provider.handleRequest(makeReq({ model: 'service-a', system: 'base', messages: [] }));
     expect(stripConfidentiality(inner.lastBody().system)).toBe('global\n\nbase\n\nspecific');
 
-    await provider.handleRequest(makeReq({ model: 'model-b', system: 'base', messages: [] }));
+    await provider.handleRequest(makeReq({ model: 'service-b', system: 'base', messages: [] }));
     expect(stripConfidentiality(inner.lastBody().system)).toBe('global\n\nbase');
   });
 
-  it('skips model-scoped middleware when request has no model field', async () => {
+  it('skips service-scoped middleware when request has no service field', async () => {
     const inner = mockProvider();
     const provider = new MiddlewareProvider(inner, [
-      mw('injected', 'system-prepend', ['model-a']),
+      mw('injected', 'system-prepend', ['service-a']),
     ]);
-    // No model field in body — cannot confirm a match, so scoped middleware is skipped
+    // No service field in body — cannot confirm a match, so scoped middleware is skipped
     await provider.handleRequest(makeReq({ system: 'base', messages: [] }));
     expect(inner.lastBody().system).toBe('base');
   });
 
-  it('still applies global middleware when request has no model field', async () => {
+  it('still applies global middleware when request has no service field', async () => {
     const inner = mockProvider();
     const provider = new MiddlewareProvider(inner, [
       mw('global', 'system-prepend'),
-      mw('scoped', 'system-append', ['model-a']),
+      mw('scoped', 'system-append', ['service-a']),
     ]);
     await provider.handleRequest(makeReq({ system: 'base', messages: [] }));
     expect(stripConfidentiality(inner.lastBody().system)).toBe('global\n\nbase');
@@ -138,22 +138,22 @@ describe('MiddlewareProvider — per-model filtering', () => {
   it('returns original request unchanged when all middleware is filtered out', async () => {
     const inner = mockProvider();
     const provider = new MiddlewareProvider(inner, [
-      mw('injected', 'system-prepend', ['model-a']),
+      mw('injected', 'system-prepend', ['service-a']),
     ]);
-    await provider.handleRequest(makeReq({ model: 'model-b', system: 'base', messages: [] }));
+    await provider.handleRequest(makeReq({ model: 'service-b', system: 'base', messages: [] }));
     // Body passed through unmodified — system stays as-is
     expect(inner.lastBody().system).toBe('base');
   });
 
-  it('never applies middleware with an empty models list (should be rejected at config load)', async () => {
-    // models: [] means no model can ever match — the entry is effectively dead.
+  it('never applies middleware with an empty services list (should be rejected at config load)', async () => {
+    // services: [] means no service can ever match — the entry is effectively dead.
     // The CLI layer rejects this at load time; at the MiddlewareProvider level it
     // behaves as a no-op so nothing blows up if the object is constructed directly.
     const inner = mockProvider();
     const provider = new MiddlewareProvider(inner, [
-      { content: 'injected', position: 'system-prepend', models: [] },
+      { content: 'injected', position: 'system-prepend', services: [] },
     ]);
-    await provider.handleRequest(makeReq({ model: 'model-a', system: 'base', messages: [] }));
+    await provider.handleRequest(makeReq({ model: 'service-a', system: 'base', messages: [] }));
     expect(inner.lastBody().system).toBe('base');
   });
 });
@@ -213,8 +213,8 @@ describe('MiddlewareProvider — confidentiality prompt', () => {
 
   it('does not inject the confidentiality prompt when no middleware is applicable', async () => {
     const inner = mockProvider();
-    const provider = new MiddlewareProvider(inner, [mw('skill', 'system-prepend', ['model-a'])]);
-    await provider.handleRequest(makeReq({ model: 'model-b', system: 'base', messages: [] }));
+    const provider = new MiddlewareProvider(inner, [mw('skill', 'system-prepend', ['service-a'])]);
+    await provider.handleRequest(makeReq({ model: 'service-b', system: 'base', messages: [] }));
     const system = inner.lastBody().system as string;
     expect(system).toBe('base');
     expect(system).not.toContain(DEFAULT_CONFIDENTIALITY_PROMPT);

@@ -25,7 +25,6 @@ interface LocalSeederInfo {
 export function buildBuyerRuntimeOverridesFromFlags(options: {
   port?: number
   minPeerReputation?: number
-  preferredProviders?: string[]
   maxInputUsdPerMillion?: number
   maxOutputUsdPerMillion?: number
 }): BuyerRuntimeOverrides {
@@ -35,9 +34,6 @@ export function buildBuyerRuntimeOverridesFromFlags(options: {
   }
   if (options.minPeerReputation !== undefined) {
     overrides.minPeerReputation = options.minPeerReputation
-  }
-  if (options.preferredProviders && options.preferredProviders.length > 0) {
-    overrides.preferredProviders = options.preferredProviders
   }
   if (options.maxInputUsdPerMillion !== undefined) {
     overrides.maxInputUsdPerMillion = options.maxInputUsdPerMillion
@@ -52,9 +48,6 @@ export function buildRouterRuntimeEnvFromBuyerConfig(buyerConfig: BuyerCLIConfig
   const runtimeEnv: Record<string, string> = {
     ANTSEED_MIN_REPUTATION: String(buyerConfig.minPeerReputation),
     ANTSEED_MAX_PRICING_JSON: JSON.stringify(buyerConfig.maxPricing),
-  }
-  if (buyerConfig.preferredProviders.length > 0) {
-    runtimeEnv['ANTSEED_PREFERRED_PROVIDERS'] = buyerConfig.preferredProviders.join(',')
   }
   return runtimeEnv
 }
@@ -329,11 +322,6 @@ export function registerConnectCommand(program: Command): void {
       }
 
       console.log(chalk.bold('Effective buyer settings:'))
-      console.log(
-        chalk.dim(
-          `  preferred providers: ${effectiveBuyerConfig.preferredProviders.length > 0 ? effectiveBuyerConfig.preferredProviders.join(', ') : '(any)'}`
-        )
-      )
       console.log(
         chalk.dim(
           `  max pricing defaults (USD/1M): input=${effectiveBuyerConfig.maxPricing.defaults.inputUsdPerMillion}, output=${effectiveBuyerConfig.maxPricing.defaults.outputUsdPerMillion}`

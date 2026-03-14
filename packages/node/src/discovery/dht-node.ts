@@ -43,26 +43,25 @@ function normalizeTopicSegment(value: string): string {
   return value.trim().toLowerCase();
 }
 
-export function providerTopic(providerName: string): string {
-  return "antseed:" + normalizeTopicSegment(providerName);
+/** Wildcard topic that all peers announce on — used for general discovery. */
+export const ANTSEED_WILDCARD_TOPIC = "antseed:*";
+
+export function normalizeServiceTopicKey(serviceName: string): string {
+  return normalizeTopicSegment(serviceName);
 }
 
-export function normalizeModelTopicKey(modelName: string): string {
-  return normalizeTopicSegment(modelName);
-}
-
-export function normalizeModelSearchTopicKey(modelName: string): string {
-  const canonical = normalizeModelTopicKey(modelName);
+export function normalizeServiceSearchTopicKey(serviceName: string): string {
+  const canonical = normalizeServiceTopicKey(serviceName);
   const compact = canonical.replace(/[\s_-]+/g, "");
   return compact.length > 0 ? compact : canonical;
 }
 
-export function modelTopic(modelName: string): string {
-  return "antseed:model:" + normalizeModelTopicKey(modelName);
+export function serviceTopic(serviceName: string): string {
+  return "antseed:service:" + normalizeServiceTopicKey(serviceName);
 }
 
-export function modelSearchTopic(modelName: string): string {
-  return "antseed:model-search:" + normalizeModelSearchTopicKey(modelName);
+export function serviceSearchTopic(serviceName: string): string {
+  return "antseed:service-search:" + normalizeServiceSearchTopicKey(serviceName);
 }
 
 export function capabilityTopic(capability: string, name?: string): string {

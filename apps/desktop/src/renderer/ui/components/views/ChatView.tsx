@@ -9,11 +9,13 @@ import { useActions } from '../../hooks/useActions';
 import { ChatBubble } from '../chat/ChatBubble';
 import { isToolResultOnlyMessage } from '../chat/chat-utils.js';
 import { WalkingAnt } from '../chat/WalkingAnt';
-import { ModelDropdown } from '../chat/ModelDropdown';
+import { ServiceDropdown } from '../chat/ServiceDropdown';
 import { AntStationStackedLogo } from '../AntStationLogo';
 import styles from './ChatView.module.scss';
 import type { ChatMessage } from '../chat/chat-shared';
 import { buildDisplayMessages } from '../chat/chat-shared';
+
+const MAX_INPUT_HEIGHT = 220;
 
 function getMessageContentKey(content: unknown): string {
   if (typeof content === 'string') {
@@ -51,6 +53,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   const actions = useActions();
   const [inputValue, setInputValue] = useState('');
   const [attachedImage, setAttachedImage] = useState<{ base64: string; mimeType: string; previewUrl: string } | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -103,14 +106,15 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     setAttachedImage(null);
     if (inputRef.current) {
       inputRef.current.style.height = 'auto';
+      inputRef.current.style.overflowY = 'hidden';
       inputRef.current.focus();
     }
     actions.sendMessage(text, attachedImage?.base64, attachedImage?.mimeType);
   }, [inputValue, attachedImage, actions]);
 
-  const handleImageAttach = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const ALLOWED_PASTE_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+
+  const attachImageFile = useCallback((file: File) => {
     const reader = new FileReader();
     reader.onload = () => {
       const dataUrl = reader.result as string;
@@ -119,14 +123,55 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
       setAttachedImage({ base64, mimeType, previewUrl: dataUrl });
     };
     reader.readAsDataURL(file);
+  }, []);
+
+  const handleImageAttach = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    attachImageFile(file);
     // Reset so the same file can be re-attached
     e.target.value = '';
-  }, []);
+  }, [attachImageFile]);
 
   const handleRemoveImage = useCallback(() => {
     setAttachedImage(null);
     if (inputRef.current) inputRef.current.focus();
   }, []);
+
+  const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (!ALLOWED_PASTE_MIME_TYPES.has(item.type)) continue;
+      const file = item.getAsFile();
+      if (!file) continue;
+      e.preventDefault();
+      attachImageFile(file);
+      return;
+    }
+  }, [attachImageFile]);
+
+  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    setIsDragOver(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+      setIsDragOver(false);
+    }
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file && ALLOWED_PASTE_MIME_TYPES.has(file.type)) attachImageFile(file);
+  }, [attachImageFile]);
+
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -141,7 +186,9 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   const handleInput = useCallback(() => {
     if (inputRef.current) {
       inputRef.current.style.height = 'auto';
-      inputRef.current.style.height = `${Math.min(inputRef.current.scrollHeight, 150)}px`;
+      const newHeight = Math.min(inputRef.current.scrollHeight, MAX_INPUT_HEIGHT);
+      inputRef.current.style.height = `${newHeight}px`;
+      inputRef.current.style.overflowY = inputRef.current.scrollHeight > MAX_INPUT_HEIGHT ? 'auto' : 'hidden';
     }
   }, []);
 
@@ -155,13 +202,13 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     <section className={`view view-chat${active ? ' active' : ''}`} role="tabpanel">
       <div className={styles.pageHeader}>
         <div className={styles.pageHeaderLeft}>
-          <ModelDropdown
-            options={snap.chatModelOptions}
-            value={snap.chatSelectedModelValue}
-            disabled={snap.chatModelSelectDisabled}
-            onChange={actions.handleModelChange}
-            onFocus={actions.handleModelFocus}
-            onBlur={actions.handleModelBlur}
+          <ServiceDropdown
+            options={snap.chatServiceOptions}
+            value={snap.chatSelectedServiceValue}
+            disabled={snap.chatServiceSelectDisabled}
+            onChange={actions.handleServiceChange}
+            onFocus={actions.handleServiceFocus}
+            onBlur={actions.handleServiceBlur}
           />
         </div>
         <div className={styles.pageHeaderRight}>
@@ -185,7 +232,19 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
       )}
 
       <div className={styles.chatContainer}>
-        <div className={styles.chatMain}>
+        <div
+          className={styles.chatMain}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+        >
+          {isDragOver && (
+            <div className={styles.chatDropOverlay}>
+              <div className={styles.chatDropOverlayInner}>
+                <span>Drop image here</span>
+              </div>
+            </div>
+          )}
           <div className={styles.chatMessages} ref={scrollRef} data-chat-scroll>
             {showWelcome ? (
               <div className={styles.chatWelcome}>
@@ -200,7 +259,11 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
               ))
             )}
             {snap.chatStreamingMessage ? (
-              <ChatBubble message={snap.chatStreamingMessage as ChatMessage} streaming />
+              <ChatBubble
+                key={`streaming:${snap.chatActiveConversation || 'new'}`}
+                message={snap.chatStreamingMessage as ChatMessage}
+                streaming
+              />
             ) : null}
             {snap.chatSending && snap.chatSendingConversationId === snap.chatActiveConversation && (
               <WalkingAnt elapsedMs={snap.chatThinkingElapsedMs} />
@@ -233,6 +296,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                 onChange={(e) => setInputValue(e.target.value)}
                 onInput={handleInput}
                 onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
               />
               <div className={styles.chatInputBottom}>
                 <div className={styles.chatInputBottomLeft}>

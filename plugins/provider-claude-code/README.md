@@ -25,7 +25,7 @@ No API key configuration is required. The plugin reads credentials from the syst
 | `ANTSEED_INPUT_USD_PER_MILLION` | number | No | 10 | Input token price (USD per 1M) |
 | `ANTSEED_OUTPUT_USD_PER_MILLION` | number | No | 10 | Output token price (USD per 1M) |
 | `ANTSEED_MAX_CONCURRENCY` | number | No | 10 | Max concurrent requests |
-| `ANTSEED_ALLOWED_MODELS` | string[] | No | -- | Comma-separated model allowlist |
+| `ANTSEED_ALLOWED_SERVICES` | string[] | No | -- | Comma-separated service allowlist |
 
 ## How It Works
 

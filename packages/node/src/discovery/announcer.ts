@@ -2,19 +2,19 @@ import type { Identity } from "../p2p/identity.js";
 import { signData } from "../p2p/identity.js";
 import type { DHTNode } from "./dht-node.js";
 import {
-  providerTopic,
-  modelTopic,
-  modelSearchTopic,
+  ANTSEED_WILDCARD_TOPIC,
+  serviceTopic,
+  serviceSearchTopic,
   capabilityTopic,
   topicToInfoHash,
-  normalizeModelTopicKey,
-  normalizeModelSearchTopicKey,
+  normalizeServiceTopicKey,
+  normalizeServiceSearchTopicKey,
 } from "./dht-node.js";
 import type { PeerOffering } from "../types/capability.js";
 import type { PeerMetadata, ProviderAnnouncement } from "./peer-metadata.js";
 import { METADATA_VERSION } from "./peer-metadata.js";
-import type { ModelApiProtocol } from "../types/model-api.js";
-import { isKnownModelApiProtocol } from "../types/model-api.js";
+import type { ServiceApiProtocol } from "../types/service-api.js";
+import { isKnownServiceApiProtocol } from "../types/service-api.js";
 import { encodeMetadataForSigning } from "./metadata-codec.js";
 import { debugWarn } from "../utils/debug.js";
 import { bytesToHex } from "../utils/hex.js";
@@ -26,18 +26,19 @@ export interface AnnouncerConfig {
   dht: DHTNode;
   providers: Array<{
     provider: string;
-    models: string[];
-    modelCategories?: Record<string, string[]>;
-    modelApiProtocols?: Record<string, ModelApiProtocol[]>;
+    services: string[];
+    serviceCategories?: Record<string, string[]>;
+    serviceApiProtocols?: Record<string, ServiceApiProtocol[]>;
     maxConcurrency: number;
   }>;
   displayName?: string;
+  publicAddress?: string;
   region: string;
   pricing: Map<
     string,
     {
       defaults: { inputUsdPerMillion: number; outputUsdPerMillion: number };
-      models?: Record<string, { inputUsdPerMillion: number; outputUsdPerMillion: number }>;
+      services?: Record<string, { inputUsdPerMillion: number; outputUsdPerMillion: number }>;
     }
   >;
   offerings?: PeerOffering[];
@@ -113,21 +114,21 @@ export class PeerAnnouncer {
       };
       const providerAnnouncement: ProviderAnnouncement = {
         provider: p.provider,
-        models: p.models,
+        services: p.services,
         defaultPricing: pricing.defaults,
         maxConcurrency: p.maxConcurrency,
         currentLoad: this.loadMap.get(p.provider) ?? 0,
       };
-      if (pricing.models) {
-        providerAnnouncement.modelPricing = pricing.models;
+      if (pricing.services) {
+        providerAnnouncement.servicePricing = pricing.services;
       }
-      const normalizedModelCategories = this._normalizeModelCategories(p.modelCategories, p.models);
-      if (normalizedModelCategories) {
-        providerAnnouncement.modelCategories = normalizedModelCategories;
+      const normalizedServiceCategories = this._normalizeServiceCategories(p.serviceCategories, p.services);
+      if (normalizedServiceCategories) {
+        providerAnnouncement.serviceCategories = normalizedServiceCategories;
       }
-      const normalizedModelApiProtocols = this._normalizeModelApiProtocols(p.modelApiProtocols, p.models);
-      if (normalizedModelApiProtocols) {
-        providerAnnouncement.modelApiProtocols = normalizedModelApiProtocols;
+      const normalizedServiceApiProtocols = this._normalizeServiceApiProtocols(p.serviceApiProtocols, p.services);
+      if (normalizedServiceApiProtocols) {
+        providerAnnouncement.serviceApiProtocols = normalizedServiceApiProtocols;
       }
       return providerAnnouncement;
     });
@@ -136,6 +137,7 @@ export class PeerAnnouncer {
       peerId: this.config.identity.peerId,
       version: METADATA_VERSION,
       ...(this.config.displayName ? { displayName: this.config.displayName } : {}),
+      ...(this.config.publicAddress ? { publicAddress: this.config.publicAddress } : {}),
       providers,
       region: this.config.region,
       timestamp: Date.now(),
@@ -178,33 +180,32 @@ export class PeerAnnouncer {
   }
 
   private async _announceTopics(providers: ProviderAnnouncement[]): Promise<void> {
-    const announcedModelTopics = new Set<string>();
+    const announcedServiceTopics = new Set<string>();
 
     for (const p of providers) {
-      await this._tryAnnounceTopic(providerTopic(p.provider));
-      for (const model of p.models) {
-        const canonicalModelKey = normalizeModelTopicKey(model);
-        if (!canonicalModelKey) {
+      for (const service of p.services) {
+        const canonicalServiceKey = normalizeServiceTopicKey(service);
+        if (!canonicalServiceKey) {
           continue;
         }
-        const canonicalTopic = modelTopic(canonicalModelKey);
-        if (!announcedModelTopics.has(canonicalTopic)) {
-          announcedModelTopics.add(canonicalTopic);
+        const canonicalTopic = serviceTopic(canonicalServiceKey);
+        if (!announcedServiceTopics.has(canonicalTopic)) {
+          announcedServiceTopics.add(canonicalTopic);
           await this._tryAnnounceTopic(canonicalTopic);
         }
 
-        const compactModelKey = normalizeModelSearchTopicKey(model);
-        if (compactModelKey !== canonicalModelKey) {
-          const compactTopic = modelSearchTopic(compactModelKey);
-          if (!announcedModelTopics.has(compactTopic)) {
-            announcedModelTopics.add(compactTopic);
+        const compactServiceKey = normalizeServiceSearchTopicKey(service);
+        if (compactServiceKey !== canonicalServiceKey) {
+          const compactTopic = serviceSearchTopic(compactServiceKey);
+          if (!announcedServiceTopics.has(compactTopic)) {
+            announcedServiceTopics.add(compactTopic);
             await this._tryAnnounceTopic(compactTopic);
           }
         }
       }
     }
 
-    await this._tryAnnounceTopic(providerTopic("*"));
+    await this._tryAnnounceTopic(ANTSEED_WILDCARD_TOPIC);
 
     if (this.config.offerings) {
       const announcedCapabilities = new Set<string>();
@@ -231,19 +232,19 @@ export class PeerAnnouncer {
     }
   }
 
-  private _normalizeModelCategories(
-    modelCategories: Record<string, string[]> | undefined,
-    supportedModels: string[],
+  private _normalizeServiceCategories(
+    serviceCategories: Record<string, string[]> | undefined,
+    supportedServices: string[],
   ): Record<string, string[]> | undefined {
-    if (!modelCategories) {
+    if (!serviceCategories) {
       return undefined;
     }
 
-    const hasWildcardModels = supportedModels.length === 0;
-    const supportedModelSet = new Set(supportedModels);
+    const hasWildcardServices = supportedServices.length === 0;
+    const supportedServiceSet = new Set(supportedServices);
     const normalized: Record<string, string[]> = {};
-    for (const [model, categories] of Object.entries(modelCategories)) {
-      if (!hasWildcardModels && !supportedModelSet.has(model)) {
+    for (const [service, categories] of Object.entries(serviceCategories)) {
+      if (!hasWildcardServices && !supportedServiceSet.has(service)) {
         continue;
       }
       const deduped = Array.from(
@@ -256,38 +257,38 @@ export class PeerAnnouncer {
       if (deduped.length === 0) {
         continue;
       }
-      normalized[model] = deduped;
+      normalized[service] = deduped;
     }
 
     return Object.keys(normalized).length > 0 ? normalized : undefined;
   }
 
-  private _normalizeModelApiProtocols(
-    modelApiProtocols: Record<string, ModelApiProtocol[]> | undefined,
-    supportedModels: string[],
-  ): Record<string, ModelApiProtocol[]> | undefined {
-    if (!modelApiProtocols) {
+  private _normalizeServiceApiProtocols(
+    serviceApiProtocols: Record<string, ServiceApiProtocol[]> | undefined,
+    supportedServices: string[],
+  ): Record<string, ServiceApiProtocol[]> | undefined {
+    if (!serviceApiProtocols) {
       return undefined;
     }
 
-    const hasWildcardModels = supportedModels.length === 0;
-    const supportedModelSet = new Set(supportedModels);
-    const normalized: Record<string, ModelApiProtocol[]> = {};
-    for (const [model, protocols] of Object.entries(modelApiProtocols)) {
-      if (!hasWildcardModels && !supportedModelSet.has(model)) {
+    const hasWildcardServices = supportedServices.length === 0;
+    const supportedServiceSet = new Set(supportedServices);
+    const normalized: Record<string, ServiceApiProtocol[]> = {};
+    for (const [service, protocols] of Object.entries(serviceApiProtocols)) {
+      if (!hasWildcardServices && !supportedServiceSet.has(service)) {
         continue;
       }
       const deduped = Array.from(
         new Set(
           protocols
             .map((protocol) => protocol.trim().toLowerCase())
-            .filter((protocol): protocol is ModelApiProtocol => isKnownModelApiProtocol(protocol)),
+            .filter((protocol): protocol is ServiceApiProtocol => isKnownServiceApiProtocol(protocol)),
         ),
       );
       if (deduped.length === 0) {
         continue;
       }
-      normalized[model] = deduped;
+      normalized[service] = deduped;
     }
 
     return Object.keys(normalized).length > 0 ? normalized : undefined;

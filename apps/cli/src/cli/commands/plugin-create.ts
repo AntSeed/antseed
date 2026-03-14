@@ -98,7 +98,7 @@ function generateProviderTs(opts: PluginScaffoldOptions): string {
 export function createProvider(config: Record<string, string>): Provider {
   return {
     name: '${opts.name}',
-    models: [],
+    services: [],
     pricing: {
       defaults: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 },
     },

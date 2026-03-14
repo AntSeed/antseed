@@ -1,6 +1,6 @@
 {
   "name": "@antseed/node",
-  "version": "0.2.7",
+  "version": "0.2.9",
   "description": "Antseed Network protocol SDK — P2P inference marketplace",
   "type": "module",
   "files": [
@@ -47,6 +47,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@antseed/api-adapter": "workspace:*",
     "@noble/ed25519": "^2.1.0",
     "@silentbot1/nat-api": "^0.4.9",
     "better-sqlite3": "^12.6.2",
