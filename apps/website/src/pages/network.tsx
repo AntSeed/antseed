@@ -8,7 +8,8 @@ const DEV_STATS_URL = 'http://localhost:4000/stats';
 
 interface ProviderInfo {
   provider: string;
-  services: string[];
+  services?: string[];
+  models?: string[];
   defaultPricing?: {inputUsdPerMillion: number; outputUsdPerMillion: number};
   currentLoad?: number;
   maxConcurrency?: number;
