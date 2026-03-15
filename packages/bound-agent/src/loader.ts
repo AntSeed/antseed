@@ -51,7 +51,7 @@ interface AgentManifest {
   persona?: string;
   guardrails?: string[];
   knowledge?: { name: string; description: string; file: string }[];
-  tools?: { name: string; description: string; parameters: Record<string, unknown>; execute: string }[];
+  tools?: { name: string; description: string; parameters?: Record<string, unknown>; execute: string }[];
   confidentialityPrompt?: string;
 }
 
