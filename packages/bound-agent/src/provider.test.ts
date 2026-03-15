@@ -563,7 +563,11 @@ describe('BoundAgentProvider — streaming', () => {
   it('buffered loop + streamed final response', async () => {
     const inner = mockProvider({
       responses: [
+        // Iteration 1: tool call (non-streaming)
         makeAnthropicToolUseResponse('antseed_load_knowledge', 'tool-1', { name: 'linkedin-posting' }),
+        // Iteration 2: text response, action=done (non-streaming)
+        makeAnthropicTextResponse('Buffered done check.'),
+        // Final: streamed to buyer
         makeAnthropicTextResponse('Streamed response.'),
       ],
     });
@@ -580,7 +584,7 @@ describe('BoundAgentProvider — streaming', () => {
 
     expect(streamStarted).toBe(true);
     expect(res.statusCode).toBe(200);
-    expect(inner.callCount()).toBe(2);
+    expect(inner.callCount()).toBe(3);
   });
 
   it('direct stream for persona-only (no loop needed)', async () => {

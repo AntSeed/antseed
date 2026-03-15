@@ -7,7 +7,6 @@ import type {
 import type { BoundAgentDefinition } from './loader.js';
 import type { BoundAgentTool } from './tools.js';
 import {
-  type RequestFormat,
   detectRequestFormat,
   isToolChoiceForced,
   injectTools,
@@ -17,8 +16,6 @@ import {
   stripInternalToolCalls,
 } from './tools.js';
 import { buildSystemPrompt, injectSystemPrompt } from './system-prompt.js';
-import { parseSSEResponse } from './sse-parser.js';
-import { TOOL_PREFIX } from './tools.js';
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -60,30 +57,6 @@ const DEBUG_ENABLED = isDebugEnabled();
 
 function debugLog(...args: unknown[]): void {
   if (DEBUG_ENABLED) console.log(...args);
-}
-
-/**
- * Check if an SSE chunk contains an internal (antseed_*) tool call.
- * Used during streaming to decide whether to forward chunks to the buyer.
- */
-function chunkHasInternalToolCall(data: Uint8Array, format: RequestFormat): boolean {
-  const text = decoder.decode(data);
-  if (format === 'openai') {
-    // OpenAI: look for "name":"antseed_" in tool_calls deltas
-    for (const line of text.split('\n')) {
-      if (!line.startsWith('data: ') || line === 'data: [DONE]') continue;
-      try {
-        const chunk = JSON.parse(line.slice(6).trimEnd()) as Record<string, unknown>;
-        const choices = chunk.choices as { delta?: { tool_calls?: { function?: { name?: string } }[] } }[] | undefined;
-        const toolCalls = choices?.[0]?.delta?.tool_calls;
-        if (toolCalls?.some(tc => tc.function?.name?.startsWith(TOOL_PREFIX))) return true;
-      } catch { /* ignore */ }
-    }
-  } else {
-    // Anthropic: look for content_block_start with tool_use type and antseed_ name
-    if (text.includes(`"name":"${TOOL_PREFIX}`) || text.includes(`"name": "${TOOL_PREFIX}`)) return true;
-  }
-  return false;
 }
 
 /** Prepare the request body: parse, resolve agent, inject system prompt + tools. */
@@ -179,10 +152,8 @@ export async function runAgentLoop(
 }
 
 /**
- * Streaming agent loop. Every LLM call streams to the buyer in real time.
- * Tool calls are intercepted at the end of each stream, executed, and the
- * next iteration streams again — so the buyer sees tokens arriving live
- * throughout the entire conversation.
+ * Streaming agent loop. Tool iterations are buffered (non-streaming).
+ * The final answer streams live to the buyer.
  */
 export async function runAgentLoopStream(
   inner: Provider,
@@ -198,115 +169,58 @@ export async function runAgentLoopStream(
   let { body } = prepared;
   const format = detectRequestFormat(req.path);
   const maxIterations = options?.maxIterations ?? DEFAULT_MAX_ITERATIONS;
-  let headersSent = false;
+
+  // Tool iterations: non-streaming so internal tool calls are never forwarded.
+  // Track whether any tools were executed to decide if a final streaming call is needed.
+  delete body.stream;
+  let toolsExecuted = false;
 
   for (let i = 0; i < maxIterations; i++) {
-    debugLog(`${reqTag}: stream iteration ${i + 1}/${maxIterations}`);
+    debugLog(`${reqTag}: loop iteration ${i + 1}/${maxIterations}`);
 
-    const isLastAllowedIteration = i === maxIterations - 1;
     const augReq: SerializedHttpRequest = {
       ...req,
-      body: encoder.encode(JSON.stringify({ ...body, stream: true })),
+      body: encoder.encode(JSON.stringify(body)),
     };
 
-    // Stream the call, forwarding chunks to the buyer.
-    // If we detect an antseed_* tool call mid-stream, stop forwarding
-    // so the buyer doesn't try to execute provider-internal tools.
-    let streamResponse: SerializedHttpResponse;
-    let suppressingChunks = false;
-    try {
-      streamResponse = await inner.handleRequestStream!(augReq, {
-        onResponseStart: (res) => {
-          if (!headersSent) {
-            callbacks.onResponseStart(res);
-            headersSent = true;
-          }
-        },
-        onResponseChunk: (chunk) => {
-          if (suppressingChunks) return;
-          if (chunk.done) {
-            // Forward the done chunk so the buyer stream terminates properly.
-            // If we later detect tool calls, the next iteration will send a new stream.
-            callbacks.onResponseChunk(chunk);
-            return;
-          }
-          // Check if this chunk reveals an internal tool call
-          if (chunk.data.length > 0 && chunkHasInternalToolCall(chunk.data, format)) {
-            suppressingChunks = true;
-            return;
-          }
-          callbacks.onResponseChunk(chunk);
-        },
-      });
-    } catch (err) {
-      // If streaming fails, try non-streaming fallback with tool call stripping
-      debugLog(`${reqTag}: stream failed, falling back to non-streaming`);
-      const augReqNonStream: SerializedHttpRequest = {
-        ...req,
-        body: encoder.encode(JSON.stringify({ ...body, stream: false })),
-      };
-      const response = await inner.handleRequest(augReqNonStream);
-      let responseBody: Uint8Array = response.body;
-      try {
-        const parsed = JSON.parse(decoder.decode(response.body)) as Record<string, unknown>;
-        const cleaned = stripInternalToolCalls(parsed, format);
-        responseBody = encoder.encode(JSON.stringify(cleaned));
-      } catch { /* non-JSON — use as-is */ }
-      const cleanedResponse = { ...response, body: responseBody };
-      if (!headersSent) {
-        callbacks.onResponseStart(cleanedResponse);
-        headersSent = true;
-      }
-      callbacks.onResponseChunk({ requestId: req.requestId, data: responseBody, done: true });
-      return cleanedResponse;
-    }
+    const response = await inner.handleRequest(augReq);
 
-    // Parse the buffered SSE response to check for tool calls
     let responseBody: Record<string, unknown>;
     try {
-      responseBody = parseSSEResponse(streamResponse.body, format);
+      responseBody = JSON.parse(decoder.decode(response.body)) as Record<string, unknown>;
     } catch {
-      // Can't parse — treat as done
-      return streamResponse;
+      // Non-JSON — replay as-is
+      callbacks.onResponseStart(response);
+      callbacks.onResponseChunk({ requestId: req.requestId, data: response.body, done: true });
+      return response;
     }
 
     const action = inspectResponse(responseBody, format);
     if (action.type === 'done') {
-      if (suppressingChunks) {
-        // We suppressed chunks (detected internal tool call) but inspectResponse
-        // resolved as done (e.g. mixed buyer+internal calls). Close the buyer's stream.
-        callbacks.onResponseChunk({ requestId: req.requestId, data: new Uint8Array(0), done: true });
+      debugLog(`${reqTag}: loop iteration ${i + 1} done (no internal tool calls)`);
+      if (!toolsExecuted) {
+        // No tools were ever called — replay the buffered response
+        const cleaned = stripInternalToolCalls(responseBody, format);
+        const cleanedResponse = { ...response, body: encoder.encode(JSON.stringify(cleaned)) };
+        callbacks.onResponseStart(cleanedResponse);
+        callbacks.onResponseChunk({ requestId: req.requestId, data: cleanedResponse.body, done: true });
+        return cleanedResponse;
       }
-      debugLog(`${reqTag}: stream iteration ${i + 1} done (no internal tool calls)`);
-      return streamResponse;
-    }
-
-    // Internal tool calls found — execute them
-    debugLog(`${reqTag}: stream iteration ${i + 1} — executing ${action.internalCalls.length} tool(s): ${action.internalCalls.map(c => c.name).join(', ')}`);
-    const results = await executeTools(action.internalCalls, agent.tools);
-    debugLog(`${reqTag}: stream iteration ${i + 1} — tool results: ${results.map(r => `${r.id}:${r.isError ? 'error' : 'ok'}`).join(', ')}`);
-    body = appendToolLoop(body, responseBody, results, format);
-
-    // If this was the last allowed iteration, break to make a final streaming call
-    if (isLastAllowedIteration) {
-      debugLog(`${reqTag}: max iterations (${maxIterations}) reached, making final streaming call`);
+      // Tools were used in previous iterations — stream the final answer
       break;
     }
+
+    toolsExecuted = true;
+    debugLog(`${reqTag}: loop iteration ${i + 1} — executing ${action.internalCalls.length} tool(s): ${action.internalCalls.map(c => c.name).join(', ')}`);
+    const results = await executeTools(action.internalCalls, agent.tools);
+    debugLog(`${reqTag}: loop iteration ${i + 1} — tool results: ${results.map(r => `${r.id}:${r.isError ? 'error' : 'ok'}`).join(', ')}`);
+    body = appendToolLoop(body, responseBody, results, format);
   }
 
-  // Final streaming call after max iterations (or maxIterations=0)
+  // Tools were executed — stream the final answer to the buyer
   const finalReq: SerializedHttpRequest = {
     ...req,
     body: encoder.encode(JSON.stringify({ ...body, stream: true })),
   };
-  return inner.handleRequestStream!(finalReq, {
-    onResponseStart: (res) => {
-      if (!headersSent) {
-        callbacks.onResponseStart(res);
-      }
-    },
-    onResponseChunk: (chunk) => {
-      callbacks.onResponseChunk(chunk);
-    },
-  });
+  return inner.handleRequestStream!(finalReq, callbacks);
 }
