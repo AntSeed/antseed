@@ -73,8 +73,12 @@ function parseOpenAISSE(sseText: string): Record<string, unknown> {
   }
 
   const message: Record<string, unknown> = { role: 'assistant' };
-  if (content) message.content = content;
-  if (toolCalls.length > 0) message.tool_calls = toolCalls;
+  if (toolCalls.length > 0) {
+    message.content = content || null;
+    message.tool_calls = toolCalls;
+  } else {
+    message.content = content;
+  }
 
   return {
     id,
