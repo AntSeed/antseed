@@ -29,8 +29,8 @@ program
   .name('antseed')
   .description('P2P network for AI services')
   .version(version)
-  .option('-c, --config <path>', 'path to config file', '~/.antseed/config.json')
-  .option('--data-dir <path>', 'path to node identity/state directory', '~/.antseed')
+  .option('-c, --config <path>', 'path to config file (env: ANTSEED_CONFIG, default: ~/.antseed/config.json)')
+  .option('--data-dir <path>', 'path to node identity/state directory (env: ANTSEED_DATA_DIR, default: ~/.antseed)')
   .option('-v, --verbose', 'enable verbose logging', false);
 
 registerSeedCommand(program);

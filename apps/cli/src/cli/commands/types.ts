@@ -45,8 +45,14 @@ export function getGlobalOptions(program: Command): GlobalOptions {
     process.env['ANTSEED_DEBUG'] = '1';
   }
 
-  const requestedConfig = resolvePathWithHome(opts['config'] ?? '~/.antseed/config.json', NEW_CONFIG_PATH);
-  const requestedDataDir = resolvePathWithHome(opts['dataDir'] ?? '~/.antseed', NEW_HOME_DIR);
+  const requestedConfig = resolvePathWithHome(
+    opts['config'] ?? process.env['ANTSEED_CONFIG'] ?? '~/.antseed/config.json',
+    NEW_CONFIG_PATH,
+  );
+  const requestedDataDir = resolvePathWithHome(
+    opts['dataDir'] ?? process.env['ANTSEED_DATA_DIR'] ?? '~/.antseed',
+    NEW_HOME_DIR,
+  );
 
   return {
     config: requestedConfig,
