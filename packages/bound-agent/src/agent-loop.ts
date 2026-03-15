@@ -225,16 +225,36 @@ export async function runAgentLoopStream(
     }
 
     const action = inspectResponse(responseBody, format);
-    if (action.type === 'done' || isLastAllowedIteration) {
+    if (action.type === 'done') {
       return streamResponse;
     }
 
-    // Internal tool calls found — execute them and continue
+    // Internal tool calls found — execute them
     debugLog(`${reqTag}: executing ${action.internalCalls.length} tool(s): ${action.internalCalls.map(c => c.name).join(', ')}`);
     const results = await executeTools(action.internalCalls, agent.tools);
     debugLog(`${reqTag}: tool results: ${results.map(r => `${r.id}:${r.isError ? 'error' : 'ok'}`).join(', ')}`);
     body = appendToolLoop(body, responseBody, results, format);
+
+    // If this was the last allowed iteration, break to make a final streaming call
+    if (isLastAllowedIteration) {
+      debugLog(`${reqTag}: max iterations (${maxIterations}) reached, making final streaming call`);
+      break;
+    }
   }
 
-  return { requestId: req.requestId, statusCode: 200, headers: {}, body: new Uint8Array(0) };
+  // Final streaming call after max iterations (or maxIterations=0)
+  const finalReq: SerializedHttpRequest = {
+    ...req,
+    body: encoder.encode(JSON.stringify({ ...body, stream: true })),
+  };
+  return inner.handleRequestStream!(finalReq, {
+    onResponseStart: (res) => {
+      if (!headersSent) {
+        callbacks.onResponseStart(res);
+      }
+    },
+    onResponseChunk: (chunk) => {
+      callbacks.onResponseChunk(chunk);
+    },
+  });
 }
