@@ -782,6 +782,7 @@ export class AntseedNode extends EventEmitter {
           }
         },
         onDead: () => {
+          if (conn.state !== ConnectionState.Open && conn.state !== ConnectionState.Authenticated) return;
           debugWarn(`[Node] Keepalive timeout for ${peerId.slice(0, 12)}...`);
           conn.fail(new Error("Keepalive timeout"));
         },
