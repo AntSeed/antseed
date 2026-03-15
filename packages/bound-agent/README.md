@@ -1,6 +1,6 @@
 # @antseed/bound-agent
 
-Bound agent runtime for AntSeed. Lets seed runners monetize their knowledge by wrapping any provider with a persona, guardrails, and selectively loaded knowledge modules.
+Bound agent runtime for AntSeed. Lets seed runners monetize their knowledge by wrapping any provider with a persona, guardrails, on-demand knowledge modules, and custom tools.
 
 A bound agent is a **read-only, knowledge-augmented AI service**. It doesn't act on the user's behalf — it answers questions using curated expertise that the creator packages and maintains.
 
@@ -74,9 +74,30 @@ my-agent/
 ```typescript
 import { loadBoundAgent, BoundAgentProvider } from '@antseed/bound-agent';
 
-// Single agent for all services
+import { loadBoundAgent, BoundAgentProvider, type BoundAgentTool } from '@antseed/bound-agent';
+
+// Basic: knowledge modules only
 const agent = await loadBoundAgent('./my-agent');
 const boundProvider = new BoundAgentProvider(innerProvider, agent);
+
+// With custom tools
+const fetchPrice: BoundAgentTool = {
+  name: 'fetch_price',
+  description: 'Fetch current price for a product',
+  parameters: {
+    type: 'object',
+    properties: { product: { type: 'string' } },
+    required: ['product'],
+  },
+  execute: async (args) => {
+    const res = await fetch(`https://api.example.com/price/${args.product}`);
+    return await res.text();
+  },
+};
+
+const boundProvider = new BoundAgentProvider(innerProvider, agent, {
+  tools: [fetchPrice],
+});
 
 // Per-service agents
 const socialAgent = await loadBoundAgent('./social-agent');
@@ -84,7 +105,7 @@ const codingAgent = await loadBoundAgent('./coding-agent');
 const boundProvider = new BoundAgentProvider(innerProvider, {
   'social-model-v1': socialAgent,
   'coding-model-v1': codingAgent,
-  '*': socialAgent,  // fallback for unmatched services
+  '*': socialAgent,
 });
 
 node.registerProvider(boundProvider);
@@ -132,6 +153,40 @@ The LLM decides which modules to load based on the conversation. It can:
 
 This keeps the context focused — only the knowledge the LLM judges relevant gets loaded. A buyer asking about LinkedIn won't get X/Twitter knowledge bloating the context.
 
+## Custom tools
+
+Beyond knowledge loading, creators can add custom tools that the LLM can call during the agent loop. Tools are defined with a name, description, JSON Schema parameters, and an async `execute` function.
+
+```typescript
+import type { BoundAgentTool } from '@antseed/bound-agent';
+
+const fetchPrice: BoundAgentTool = {
+  name: 'fetch_price',
+  description: 'Fetch current price for a product',
+  parameters: {
+    type: 'object',
+    properties: { product: { type: 'string' } },
+    required: ['product'],
+  },
+  execute: async (args) => {
+    const res = await fetch(`https://api.example.com/price/${args.product}`);
+    return await res.text();
+  },
+};
+```
+
+Pass custom tools via the options parameter:
+
+```typescript
+new BoundAgentProvider(innerProvider, agentDef, {
+  tools: [fetchPrice, anotherTool],
+});
+```
+
+Tool names are automatically prefixed with `antseed_` when injected (e.g., `fetch_price` becomes `antseed_fetch_price`). The LLM sees all internal tools alongside buyer tools, with system prompt instructions to use `antseed_*` tools for context gathering and buyer tools only as requested.
+
+If a tool's `execute` function throws, the error message is returned to the LLM as an error result so it can recover gracefully.
+
 ## What gets injected
 
 The system prompt is assembled in this order:
@@ -141,6 +196,6 @@ The system prompt is assembled in this order:
 3. **Guardrails** — hard rules
 4. **Confidentiality prompt** — prevents the LLM from revealing injected content
 
-Additionally, when knowledge modules are defined, the `antseed_load_knowledge` tool is added to the request's tool list alongside any buyer-provided tools.
+Additionally, `antseed_*` tools are added to the request's tool list alongside any buyer-provided tools. This includes the built-in `antseed_load_knowledge` (when knowledge modules are defined) and any custom tools passed via options.
 
 The buyer's own system prompt (if any) is preserved after the agent's content.

@@ -87,7 +87,7 @@ The CLI reads matching environment variables and passes them to `createProvider(
 
 ## Adding a Bound Agent
 
-Providers can differentiate their service by wrapping it with a **bound agent** — a read-only, knowledge-augmented AI service that injects a persona, guardrails, and selectively loaded knowledge into buyer requests. The CLI handles this automatically via `@antseed/bound-agent` — no plugin code required.
+Providers can differentiate their service by wrapping it with a **bound agent** — a read-only, knowledge-augmented AI service that injects a persona, guardrails, and on-demand knowledge into buyer requests. Creators can also add custom tools for fetching external data, calling APIs, etc. The CLI handles this automatically via `@antseed/bound-agent` — no plugin code required.
 
 ### Setup
 
