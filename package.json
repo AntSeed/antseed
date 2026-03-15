@@ -16,7 +16,7 @@
   "scripts": {
     "build": "pnpm run build:tier0 && pnpm run build:tier1 && pnpm run build:tier2 && pnpm run build:tier3 && pnpm run build:tier4 && pnpm run build:standalone",
     "build:tier0": "pnpm --filter=@antseed/api-adapter run build && pnpm --filter=@antseed/node run build",
-    "build:tier1": "pnpm --filter=@antseed/provider-core --filter=@antseed/router-core run build",
+    "build:tier1": "pnpm --filter=@antseed/provider-core --filter=@antseed/router-core --filter=@antseed/bound-agent run build",
     "build:tier2": "pnpm --filter='./plugins/*' run build",
     "build:tier3": "pnpm --filter=@antseed/dashboard run build",
     "build:tier4": "pnpm --filter=@antseed/cli run build && pnpm --filter=@antseed/desktop run build",

@@ -5,7 +5,6 @@ import type {
   HierarchicalPricingConfig,
   AntseedConfig,
   ProviderPricingConfig,
-  SellerMiddlewareConfig,
   TokenPricingUsdPerMillion,
 } from './types.js';
 import { createDefaultConfig } from './defaults.js';
@@ -180,51 +179,20 @@ function mergeSellerServiceCategories(
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
-function cloneSellerMiddleware(
-  middleware: SellerMiddlewareConfig[] | undefined,
-): SellerMiddlewareConfig[] | undefined {
-  if (!middleware) return undefined;
-  return middleware.map((entry) => ({
-    file: entry.file,
-    position: entry.position,
-    ...(typeof entry.role === 'string' ? { role: entry.role } : {}),
-    ...(entry.services ? { services: [...entry.services] } : {}),
-  }));
-}
-
-function mergeSellerMiddleware(
-  defaults: SellerMiddlewareConfig[] | undefined,
+function normalizeAgentDir(
   value: unknown,
-): SellerMiddlewareConfig[] | undefined {
-  if (!Array.isArray(value)) {
-    return cloneSellerMiddleware(defaults);
-  }
-
-  const merged = value.flatMap((entry): SellerMiddlewareConfig[] => {
-    if (!isRecord(entry)) return [];
-    if (
-      typeof entry['file'] !== 'string'
-      || typeof entry['position'] !== 'string'
-    ) {
-      return [];
+  fallback?: string | Record<string, string>,
+): { agentDir: string | Record<string, string> } | Record<string, never> {
+  if (typeof value === 'string') return { agentDir: value };
+  if (isRecord(value)) {
+    // Per-service map: { "service-id": "./path", ... }
+    const map: Record<string, string> = {};
+    for (const [key, val] of Object.entries(value)) {
+      if (typeof val === 'string') map[key] = val;
     }
-
-    const services = Array.isArray(entry['services'])
-      ? entry['services']
-        .filter((service): service is string => typeof service === 'string')
-        .map((service) => service.trim())
-        .filter((service) => service.length > 0)
-      : undefined;
-
-    return [{
-      file: entry['file'],
-      position: entry['position'] as SellerMiddlewareConfig['position'],
-      ...(typeof entry['role'] === 'string' ? { role: entry['role'] } : {}),
-      ...(services && services.length > 0 ? { services } : {}),
-    }];
-  });
-
-  return merged;
+    if (Object.keys(map).length > 0) return { agentDir: map };
+  }
+  return fallback ? { agentDir: fallback } : {};
 }
 
 function mergeSellerConfig(
@@ -238,16 +206,11 @@ function mergeSellerConfig(
       enabledProviders: [...defaults.enabledProviders],
       pricing: mergeHierarchicalPricing(defaults.pricing, undefined),
       publicAddress: defaults.publicAddress,
-      ...(defaults.middleware ? { middleware: cloneSellerMiddleware(defaults.middleware) } : {}),
-      ...(defaults.middlewareConfidentialityPrompt
-        ? { middlewareConfidentialityPrompt: defaults.middlewareConfidentialityPrompt }
-        : {}),
-      ...(defaults.skillsDir ? { skillsDir: defaults.skillsDir } : {}),
+      ...(defaults.agentDir ? { agentDir: defaults.agentDir } : {}),
       ...(defaults.serviceCategories ? { serviceCategories: cloneSellerServiceCategories(defaults.serviceCategories) } : {}),
     };
   }
   const mergedServiceCategories = mergeSellerServiceCategories(defaults.serviceCategories, value['serviceCategories']);
-  const mergedMiddleware = mergeSellerMiddleware(defaults.middleware, value['middleware']);
 
   return {
     reserveFloor: typeof value['reserveFloor'] === 'number'
@@ -263,15 +226,7 @@ function mergeSellerConfig(
     publicAddress: typeof value['publicAddress'] === 'string'
       ? value['publicAddress']
       : defaults.publicAddress,
-    ...(mergedMiddleware !== undefined ? { middleware: mergedMiddleware } : {}),
-    ...(typeof value['middlewareConfidentialityPrompt'] === 'string'
-      ? { middlewareConfidentialityPrompt: value['middlewareConfidentialityPrompt'] }
-      : (defaults.middlewareConfidentialityPrompt
-        ? { middlewareConfidentialityPrompt: defaults.middlewareConfidentialityPrompt }
-        : {})),
-    ...(typeof value['skillsDir'] === 'string'
-      ? { skillsDir: value['skillsDir'] }
-      : (defaults.skillsDir ? { skillsDir: defaults.skillsDir } : {})),
+    ...(normalizeAgentDir(value['agentDir'], defaults.agentDir)),
     ...(mergedServiceCategories ? { serviceCategories: mergedServiceCategories } : {}),
   };
 }
