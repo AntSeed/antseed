@@ -87,6 +87,9 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@antseed/api-adapter':
+        specifier: workspace:*
+        version: link:../../packages/api-adapter
       '@antseed/dashboard':
         specifier: workspace:*
         version: link:../dashboard
