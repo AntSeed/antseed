@@ -4,20 +4,20 @@ import type {
   SerializedHttpResponse,
   ProviderStreamCallbacks,
 } from '@antseed/node';
-import type { BoundAgentDefinition } from './loader.js';
-import { type BoundAgentTool, knowledgeTool } from './tools.js';
+import type { AntAgentDefinition } from './loader.js';
+import { type AntAgentTool, knowledgeTool } from './tools.js';
 import { runAgentLoop, runAgentLoopStream, type AgentLoopOptions, type ResolvedAgent } from './agent-loop.js';
 
 type AgentResolver = (body: Record<string, unknown>) => ResolvedAgent | undefined;
 
-export class BoundAgentProvider implements Provider {
+export class AntAgentProvider implements Provider {
   private readonly _inner: Provider;
   private readonly _resolve: AgentResolver;
   private readonly _options: AgentLoopOptions;
 
   constructor(
     inner: Provider,
-    agents: BoundAgentDefinition | Record<string, BoundAgentDefinition>,
+    agents: AntAgentDefinition | Record<string, AntAgentDefinition>,
     options?: AgentLoopOptions,
   ) {
     this._inner = inner;
@@ -49,8 +49,8 @@ export class BoundAgentProvider implements Provider {
 }
 
 /** Build tools list from knowledge + manifest tools + programmatic tools. Done once at construction. */
-function resolveTools(agent: BoundAgentDefinition, extra?: BoundAgentTool[]): BoundAgentTool[] {
-  const tools: BoundAgentTool[] = [];
+function resolveTools(agent: AntAgentDefinition, extra?: AntAgentTool[]): AntAgentTool[] {
+  const tools: AntAgentTool[] = [];
   if (agent.knowledge.length > 0) tools.push(knowledgeTool(agent.knowledge));
   if (agent.tools?.length) tools.push(...agent.tools);
   if (extra) tools.push(...extra);
@@ -64,15 +64,15 @@ function resolveTools(agent: BoundAgentDefinition, extra?: BoundAgentTool[]): Bo
   return tools;
 }
 
-function prepareAgent(agent: BoundAgentDefinition, extra?: BoundAgentTool[]): ResolvedAgent {
+function prepareAgent(agent: AntAgentDefinition, extra?: AntAgentTool[]): ResolvedAgent {
   return { definition: agent, tools: resolveTools(agent, extra) };
 }
 
 function buildResolver(
-  agents: BoundAgentDefinition | Record<string, BoundAgentDefinition>,
-  extraTools?: BoundAgentTool[],
+  agents: AntAgentDefinition | Record<string, AntAgentDefinition>,
+  extraTools?: AntAgentTool[],
 ): AgentResolver {
-  if (isBoundAgentDefinition(agents)) {
+  if (isAntAgentDefinition(agents)) {
     const resolved = prepareAgent(agents, extraTools);
     return () => resolved;
   }
@@ -99,10 +99,10 @@ function buildResolver(
   };
 }
 
-function isBoundAgentDefinition(
-  value: BoundAgentDefinition | Record<string, BoundAgentDefinition>,
-): value is BoundAgentDefinition {
-  return typeof (value as BoundAgentDefinition).name === 'string'
-    && Array.isArray((value as BoundAgentDefinition).guardrails)
-    && Array.isArray((value as BoundAgentDefinition).knowledge);
+function isAntAgentDefinition(
+  value: AntAgentDefinition | Record<string, AntAgentDefinition>,
+): value is AntAgentDefinition {
+  return typeof (value as AntAgentDefinition).name === 'string'
+    && Array.isArray((value as AntAgentDefinition).guardrails)
+    && Array.isArray((value as AntAgentDefinition).knowledge);
 }

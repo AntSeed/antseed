@@ -2,7 +2,7 @@ import type { Command } from 'commander';
 import chalk from 'chalk';
 import { createInterface } from 'node:readline';
 import { resolve, isAbsolute } from 'node:path';
-import { loadBoundAgent, BoundAgentProvider } from '@antseed/bound-agent';
+import { loadAntAgent, AntAgentProvider } from '@antseed/ant-agent';
 import { BaseProvider, StaticTokenProvider } from '@antseed/provider-core';
 import type { SerializedHttpRequest } from '@antseed/node';
 
@@ -62,11 +62,11 @@ function createProvider(config: LLMConfig) {
 export function registerAgentCommand(program: Command): void {
   const agentCmd = program
     .command('agent')
-    .description('Bound agent development tools');
+    .description('Ant agent development tools');
 
   agentCmd
     .command('dev <agentDir>')
-    .description('Test a bound agent locally with an interactive chat')
+    .description('Test an ant agent locally with an interactive chat')
     .option('--endpoint <url>', 'LLM API endpoint (or set OPENAI_BASE_URL / ANTHROPIC_BASE_URL)')
     .option('--api-key <key>', 'API key (or set ANTHROPIC_API_KEY / OPENAI_API_KEY)')
     .option('--model <model>', 'model to use (default: claude-sonnet-4-5-20250929)')
@@ -76,7 +76,7 @@ export function registerAgentCommand(program: Command): void {
       // Load agent
       let agentDef;
       try {
-        agentDef = await loadBoundAgent(agentPath);
+        agentDef = await loadAntAgent(agentPath);
       } catch (err) {
         console.error(chalk.red(`Failed to load agent from ${agentDir}: ${(err as Error).message}`));
         process.exit(1);
@@ -97,7 +97,7 @@ export function registerAgentCommand(program: Command): void {
       console.log();
 
       const innerProvider = createProvider(llmConfig);
-      const provider = new BoundAgentProvider(innerProvider, agentDef);
+      const provider = new AntAgentProvider(innerProvider, agentDef);
 
       // Detect API format from endpoint
       const isOpenAI = !llmConfig.endpoint.includes('anthropic.com');
@@ -105,7 +105,7 @@ export function registerAgentCommand(program: Command): void {
 
       const messages: { role: string; content: string }[] = [];
 
-      console.log(chalk.cyan('Chat with your bound agent. Type "exit" to quit, "clear" to reset.'));
+      console.log(chalk.cyan('Chat with your ant agent. Type "exit" to quit, "clear" to reset.'));
       console.log();
 
       const rl = createInterface({

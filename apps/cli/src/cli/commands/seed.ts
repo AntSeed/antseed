@@ -14,7 +14,7 @@ import { setupShutdownHandler } from '../shutdown.js'
 import { loadProviderPlugin, buildPluginConfig } from '../../plugins/loader.js'
 import { resolveEffectiveSellerConfig, type SellerRuntimeOverrides } from '../../config/effective.js'
 import type { SellerCLIConfig } from '../../config/types.js'
-import { BoundAgentProvider, loadBoundAgent, type BoundAgentDefinition } from '@antseed/bound-agent'
+import { AntAgentProvider, loadAntAgent, type AntAgentDefinition } from '@antseed/ant-agent'
 
 function getStateFile(dataDir: string): string {
   return join(dataDir, 'daemon.state.json')
@@ -339,7 +339,7 @@ export function registerSeedCommand(program: Command): void {
         },
       })
 
-      // Wrap provider with bound agent if configured
+      // Wrap provider with ant agent if configured
       if (effectiveSellerConfig.agentDir) {
         const baseDir = globalOpts.config ? dirname(resolve(globalOpts.config)) : process.cwd()
         const resolvePath = (p: string) => isAbsolute(p) ? p : resolve(baseDir, p)
@@ -347,24 +347,24 @@ export function registerSeedCommand(program: Command): void {
         try {
           if (typeof effectiveSellerConfig.agentDir === 'string') {
             // Single agent for all services
-            const agentDef = await loadBoundAgent(resolvePath(effectiveSellerConfig.agentDir))
-            provider = new BoundAgentProvider(provider, agentDef)
+            const agentDef = await loadAntAgent(resolvePath(effectiveSellerConfig.agentDir))
+            provider = new AntAgentProvider(provider, agentDef)
             const k = agentDef.knowledge.length
-            console.log(chalk.dim(`  bound agent: "${agentDef.name}" (${k} knowledge module${k !== 1 ? 's' : ''})`))
+            console.log(chalk.dim(`  ant agent: "${agentDef.name}" (${k} knowledge module${k !== 1 ? 's' : ''})`))
           } else {
             // Per-service agents
-            const agentMap: Record<string, BoundAgentDefinition> = {}
+            const agentMap: Record<string, AntAgentDefinition> = {}
             for (const [service, dir] of Object.entries(effectiveSellerConfig.agentDir)) {
-              const agentDef = await loadBoundAgent(resolvePath(dir))
+              const agentDef = await loadAntAgent(resolvePath(dir))
               agentMap[service] = agentDef
               const k = agentDef.knowledge.length
               const label = service === '*' ? '(default)' : service
-              console.log(chalk.dim(`  bound agent: "${agentDef.name}" → ${label} (${k} knowledge module${k !== 1 ? 's' : ''})`))
+              console.log(chalk.dim(`  ant agent: "${agentDef.name}" → ${label} (${k} knowledge module${k !== 1 ? 's' : ''})`))
             }
-            provider = new BoundAgentProvider(provider, agentMap)
+            provider = new AntAgentProvider(provider, agentMap)
           }
         } catch (err) {
-          console.error(chalk.red(`Failed to load bound agent: ${(err as Error).message}`))
+          console.error(chalk.red(`Failed to load ant agent: ${(err as Error).message}`))
           process.exit(1)
         }
       }

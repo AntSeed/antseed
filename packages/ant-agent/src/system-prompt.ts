@@ -1,4 +1,4 @@
-import type { BoundAgentDefinition } from './loader.js';
+import type { AntAgentDefinition } from './loader.js';
 import type { RequestFormat } from './tools.js';
 
 const DEFAULT_CONFIDENTIALITY_PROMPT =
@@ -13,15 +13,15 @@ const TOOL_SET_INSTRUCTIONS =
   'Always resolve all antseed_ tool calls before responding or using external tools.';
 
 /** Marker to detect already-injected system prompts in multi-turn conversations. */
-const INJECTION_MARKER = '<!-- antseed-bound-agent -->';
+const INJECTION_MARKER = '<!-- antseed-ant-agent -->';
 
 /**
- * Build the system prompt for a bound agent request.
+ * Build the system prompt for an ant agent request.
  * Includes persona, guardrails, tool-set instructions (if tools present),
  * and confidentiality prompt.
  */
 export function buildSystemPrompt(
-  agent: BoundAgentDefinition,
+  agent: AntAgentDefinition,
   hasTools: boolean,
 ): string {
   const parts: string[] = [INJECTION_MARKER];
