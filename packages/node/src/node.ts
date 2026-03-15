@@ -647,11 +647,12 @@ export class AntseedNode extends EventEmitter {
           callbacks?.onResponseChunk?.(chunk);
 
           if (chunk.data.length > 0) {
-            if (callbacks) {
-              // Streaming mode: chunks already delivered to caller, only track
-              // bytes for duration/idle timeout — skip buffer accumulation so
-              // large streams aren't capped by maxStreamBufferBytes.
+            if (callbacks?.onResponseChunk) {
+              // Streaming mode: chunks already delivered to caller via callback.
+              // Track byte count for the debug timeout log only — do not
+              // enforce maxStreamBufferBytes so large streams aren't rejected.
               streamBufferedBytes += chunk.data.length;
+              streamChunks.push(chunk.data);
             } else {
               // Non-streaming: accumulate chunks for the final response body.
               const nextBufferedBytes = streamBufferedBytes + chunk.data.length;
