@@ -9,7 +9,7 @@ import { useActions } from '../../hooks/useActions';
 import { ChatBubble } from '../chat/ChatBubble';
 import { isToolResultOnlyMessage } from '../chat/chat-utils.js';
 import { WalkingAnt } from '../chat/WalkingAnt';
-import { ServiceDropdown } from '../chat/ServiceDropdown';
+
 import { AntStationStackedLogo } from '../AntStationLogo';
 import styles from './ChatView.module.scss';
 import type { ChatMessage } from '../chat/chat-shared';
@@ -202,23 +202,25 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     <section className={`view view-chat${active ? ' active' : ''}`} role="tabpanel">
       <div className={styles.pageHeader}>
         <div className={styles.pageHeaderLeft}>
-          <ServiceDropdown
-            options={snap.chatServiceOptions}
-            value={snap.chatSelectedServiceValue}
-            disabled={snap.chatServiceSelectDisabled}
-            onChange={actions.handleServiceChange}
-            onFocus={actions.handleServiceFocus}
-            onBlur={actions.handleServiceBlur}
-          />
-        </div>
-        <div className={styles.pageHeaderRight}>
-          {snap.chatRoutedPeer && (
-            <>
-              <span className={styles.chatRoutedLabel}>Routed to:</span>
-              <span className={styles.chatRoutedPeer}>{snap.chatRoutedPeer}</span>
-            </>
+          {snap.chatRoutedPeer ? (
+            <button
+              className={styles.peerServiceIndicator}
+              onClick={() => onSelectView?.('discover')}
+            >
+              <span className={styles.peerName}>{snap.chatRoutedPeer}</span>
+              <span className={styles.serviceSeparator}>·</span>
+              <span className={styles.serviceName}>
+                {snap.chatServiceOptions.find((o) => o.value === snap.chatSelectedServiceValue)?.label || snap.chatSelectedServiceValue || 'Service'}
+              </span>
+              <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={1.5} />
+            </button>
+          ) : (
+            <span className={styles.serviceLabel}>
+              {snap.chatServiceOptions.find((o) => o.value === snap.chatSelectedServiceValue)?.label || 'No peer selected'}
+            </span>
           )}
         </div>
+        <div className={styles.pageHeaderRight} />
       </div>
 
       {showWelcome && (

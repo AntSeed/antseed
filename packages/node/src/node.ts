@@ -466,6 +466,15 @@ export class AntseedNode extends EventEmitter {
     return peers;
   }
 
+  /**
+   * Eagerly open a connection to a peer and wire up the mux.
+   * Subsequent sendRequest / sendRequestStream calls will reuse this connection.
+   */
+  async connectToPeer(peer: PeerInfo): Promise<void> {
+    const conn = await this._getOrCreateConnection(peer);
+    this._getOrCreateMux(peer.peerId, conn);
+  }
+
   async sendRequest(
     peer: PeerInfo,
     req: SerializedHttpRequest,

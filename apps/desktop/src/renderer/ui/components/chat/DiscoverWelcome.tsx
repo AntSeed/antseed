@@ -35,6 +35,7 @@ const FILTERS = [
 
 type CardItem = {
   name: string;
+  peerLabel: string;
   value: string;
   provider: string;
   providerCount: number;
@@ -120,6 +121,7 @@ function inferTags(serviceId: string, protocol: string): string[] {
 function buildCards(options: ChatServiceOptionEntry[]): CardItem[] {
   return options.map((opt) => ({
     name: opt.label || opt.id,
+    peerLabel: opt.peerLabel || '',
     value: opt.value,
     provider: opt.provider,
     providerCount: opt.count,
@@ -314,12 +316,13 @@ function Card({
   item: CardItem;
   onClick: (v: string) => void;
 }) {
-  const providerLabel =
+  const providerLabel = item.peerLabel || (
     item.providerCount === 1
       ? '1 provider'
       : item.providerCount > 1
         ? `${item.providerCount} providers`
-        : '';
+        : ''
+  );
 
   return (
     <div

@@ -343,6 +343,7 @@ type ActiveRun = {
 };
 
 type NetworkPeerAddress = {
+  peerId?: string;
   host: string;
   port: number;
   providers?: string[];
@@ -356,6 +357,8 @@ type ChatServiceCatalogEntry = {
   provider: string;
   protocol: ChatServiceProtocol;
   count: number;
+  peerId?: string;
+  peerLabel?: string;
 };
 
 const ANTSEED_HOME_DIR = path.join(homedir(), '.antseed');
@@ -880,7 +883,7 @@ async function discoverChatServiceCatalog(
     return [];
   }
 
-  const uniqueTargets: Array<{ host: string; port: number }> = [];
+  const uniqueTargets: Array<{ peerId?: string; host: string; port: number }> = [];
   const seen = new Set<string>();
   for (const peer of peers.slice(0, CHAT_SERVICE_SCAN_MAX_PEERS)) {
     const host = normalizeHost(peer.host);
@@ -893,7 +896,7 @@ async function discoverChatServiceCatalog(
       continue;
     }
     seen.add(key);
-    uniqueTargets.push({ host, port });
+    uniqueTargets.push({ peerId: peer.peerId, host, port });
   }
 
   if (uniqueTargets.length === 0) {
@@ -901,30 +904,29 @@ async function discoverChatServiceCatalog(
   }
 
   const responses = await Promise.all(uniqueTargets.map(async (target) => {
-    return await fetchPeerMetadata(target.host, target.port);
+    const metadata = await fetchPeerMetadata(target.host, target.port);
+    return { metadata, peerId: target.peerId };
   }));
 
-  const aggregate = new Map<string, ChatServiceCatalogEntry>();
-  for (const metadata of responses) {
+  // Build per-peer+service entries (no cross-peer aggregation).
+  const results: ChatServiceCatalogEntry[] = [];
+  for (const { metadata, peerId } of responses) {
     if (!metadata) {
       continue;
     }
     const entries = extractChatServiceCatalog(metadata);
+    const peerLabel = peerId ? peerId.slice(0, 12) + '...' : undefined;
     for (const entry of entries) {
-      const key = `${entry.id}\u0000${entry.provider}\u0000${entry.protocol}`;
-      const existing = aggregate.get(key);
-      if (existing) {
-        existing.count += 1;
-        continue;
-      }
-      aggregate.set(key, {
+      results.push({
         ...entry,
         count: 1,
+        peerId,
+        peerLabel,
       });
     }
   }
 
-  return sortChatServiceCatalogEntries(Array.from(aggregate.values()));
+  return sortChatServiceCatalogEntries(results);
 }
 
 
@@ -1621,6 +1623,7 @@ function createBuyerProxyStreamFn(
   onMeta: (meta: AiMessageMeta) => void,
   providerHint: string | null,
   preferredPeerId: string | null,
+  pinnedPeerId?: string | null,
 ): (model: Model<any>, context: Context, options?: StreamOptions) => ReturnType<typeof createAssistantMessageEventStream> {
   return (model, context, options) => {
     const stream = createAssistantMessageEventStream();
@@ -1712,7 +1715,11 @@ function createBuyerProxyStreamFn(
             'content-type': 'application/json',
             'anthropic-version': '2023-06-01',
             ...(providerHint ? { 'x-antseed-provider': providerHint } : {}),
-            ...(preferredPeerId ? { 'x-antseed-prefer-peer': preferredPeerId } : {}),
+            ...(pinnedPeerId
+              ? { 'x-antseed-pin-peer': pinnedPeerId }
+              : preferredPeerId
+                ? { 'x-antseed-prefer-peer': preferredPeerId }
+                : {}),
             ...(options?.headers ?? {}),
           },
           body: requestBodyJson,
@@ -2119,6 +2126,7 @@ function createBuyerProxyOpenAIStreamFn(
   onMeta: (meta: AiMessageMeta) => void,
   providerHint: string | null,
   preferredPeerId: string | null,
+  pinnedPeerId?: string | null,
 ): (model: Model<any>, context: Context, options?: StreamOptions) => ReturnType<typeof createAssistantMessageEventStream> {
   return (model, context, options) => {
     const stream = createAssistantMessageEventStream();
@@ -2207,7 +2215,11 @@ function createBuyerProxyOpenAIStreamFn(
           headers: {
             'content-type': 'application/json',
             ...(providerHint ? { 'x-antseed-provider': providerHint } : {}),
-            ...(preferredPeerId ? { 'x-antseed-prefer-peer': preferredPeerId } : {}),
+            ...(pinnedPeerId
+              ? { 'x-antseed-pin-peer': pinnedPeerId }
+              : preferredPeerId
+                ? { 'x-antseed-prefer-peer': preferredPeerId }
+                : {}),
             ...(options?.headers ?? {}),
           },
           body: requestBodyJson,
@@ -2733,6 +2745,7 @@ export function registerPiChatHandlers({
   const serviceProviderHints = new Map<string, string[]>();
   const serviceProtocolMap = new Map<string, ChatServiceProtocol>();
   const preferredPeerByConversationId = new Map<string, string>();
+  let activePinnedPeerId: string | null = null;
   let serviceCatalogRefreshPromise: Promise<ChatServiceCatalogEntry[]> | null = null;
   let lastServiceCatalogRefreshAt = 0;
 
@@ -2873,11 +2886,11 @@ export function registerPiChatHandlers({
     if (protocol === 'openai-chat-completions') {
       session.agent.streamFn = createBuyerProxyOpenAIStreamFn((meta) => {
         turnMetaQueue.push(meta);
-      }, providerHint, preferredPeerId ?? null);
+      }, providerHint, preferredPeerId ?? null, activePinnedPeerId);
     } else {
       session.agent.streamFn = createBuyerProxyStreamFn((meta) => {
         turnMetaQueue.push(meta);
-      }, providerHint, preferredPeerId ?? null);
+      }, providerHint, preferredPeerId ?? null, activePinnedPeerId);
     }
 
     let turnIndex = 0;
@@ -3252,5 +3265,25 @@ export function registerPiChatHandlers({
     }
     await Promise.all(activeRuns.map((run) => abortAndClearActiveRun(run)));
     return { ok: true };
+  });
+
+  ipcMain.handle('chat:ai-select-peer', async (_event, peerId: string | null) => {
+    activePinnedPeerId = peerId && peerId.trim().length > 0 ? peerId.trim() : null;
+    if (!activePinnedPeerId) {
+      return { ok: true };
+    }
+    // Eager connection warmup via buyer proxy
+    const proxyPort = await resolveProxyPort(configPath);
+    try {
+      const response = await fetch(`http://127.0.0.1:${proxyPort}/_antseed/connect`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ peerId: activePinnedPeerId }),
+      });
+      const result = await response.json() as { ok: boolean; error?: string };
+      return { ok: result.ok, error: result.error };
+    } catch (err) {
+      return { ok: false, error: asErrorMessage(err) };
+    }
   });
 }
