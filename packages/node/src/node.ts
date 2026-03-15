@@ -41,7 +41,9 @@ import {
 import { HttpMetadataResolver } from "./discovery/http-metadata-resolver.js";
 import { ProxyMux } from "./proxy/proxy-mux.js";
 import { PaymentMux } from "./p2p/payment-mux.js";
-import { FrameDecoder } from "./p2p/message-protocol.js";
+import { FrameDecoder, encodeFrame } from "./p2p/message-protocol.js";
+import { KeepaliveManager, buildPongPayload } from "./p2p/keepalive.js";
+import { MessageType } from "./types/protocol.js";
 import type {
   Provider,
   ProviderStreamCallbacks,
@@ -196,6 +198,7 @@ export class AntseedNode extends EventEmitter {
   private _peerLookup: PeerLookup | null = null;
   private _muxes = new Map<PeerId, ProxyMux>();
   private _decoders = new Map<PeerId, FrameDecoder>();
+  private _keepalives = new Map<PeerId, KeepaliveManager>();
   private _nat: NatTraversal | null = null;
   private _metering: MeteringStorage | null = null;
   private _receiptGenerator: ReceiptGenerator | null = null;
@@ -356,6 +359,12 @@ export class AntseedNode extends EventEmitter {
       this._announcer.stopPeriodicAnnounce();
       this._announcer = null;
     }
+
+    // Stop all keepalive managers
+    for (const keepalive of this._keepalives.values()) {
+      keepalive.stop();
+    }
+    this._keepalives.clear();
 
     // Close all proxy muxes
     this._muxes.clear();
@@ -708,6 +717,19 @@ export class AntseedNode extends EventEmitter {
       const proxyMux = this._muxes.get(peerId);
       const paymentMux = this._paymentMuxes.get(peerId);
       for (const frame of frames) {
+        // Keepalive: respond to Ping, dispatch Pong to manager
+        if (frame.type === MessageType.Ping) {
+          conn.send(encodeFrame({
+            type: MessageType.Pong,
+            messageId: frame.messageId,
+            payload: buildPongPayload(frame.payload),
+          }));
+          continue;
+        }
+        if (frame.type === MessageType.Pong) {
+          this._keepalives.get(peerId)?.handlePong(frame.payload);
+          continue;
+        }
         if (paymentMux && PaymentMux.isPaymentMessage(frame.type)) {
           paymentMux.handleFrame(frame).catch((err) => {
             const message = err instanceof Error ? err.message : String(err);
@@ -731,6 +753,9 @@ export class AntseedNode extends EventEmitter {
         // connection finished closing, a new decoder will have been registered.
         // Wiping the maps would evict the live session, so bail out early.
         if (this._decoders.get(peerId) !== decoder) return;
+        // Stop keepalive for this peer
+        this._keepalives.get(peerId)?.stop();
+        this._keepalives.delete(peerId);
         // Flush any in-progress chunked uploads so buffers are not leaked
         this._muxes.get(peerId)?.abortPendingUploads();
         this._muxes.delete(peerId);
@@ -740,6 +765,28 @@ export class AntseedNode extends EventEmitter {
         void this._finalizeSession(peerId, "disconnect");
       }
     });
+
+    // Start keepalive pings on outbound (buyer-initiated) connections to
+    // detect dead peers proactively instead of waiting for a request to fail.
+    if (conn.isInitiator) {
+      const keepalive = new KeepaliveManager({
+        sendPing: (payload: Uint8Array) => {
+          if (conn.state === ConnectionState.Open || conn.state === ConnectionState.Authenticated) {
+            conn.send(encodeFrame({
+              type: MessageType.Ping,
+              messageId: 0,
+              payload,
+            }));
+          }
+        },
+        onDead: () => {
+          debugWarn(`[Node] Keepalive timeout for ${peerId.slice(0, 12)}...`);
+          conn.fail(new Error("Keepalive timeout"));
+        },
+      });
+      this._keepalives.set(peerId, keepalive);
+      keepalive.start();
+    }
   }
 
   private async _startSeller(bootstrapNodes: Array<{ host: string; port: number }>): Promise<void> {
