@@ -73,19 +73,25 @@ my-agent/
 ```typescript
 import { loadBoundAgent, BoundAgentProvider } from '@antseed/bound-agent';
 
-// Load agent definition from disk
+// Single agent for all services
 const agent = await loadBoundAgent('./my-agent');
-
-// Wrap any existing provider
 const boundProvider = new BoundAgentProvider(innerProvider, agent);
 
-// Register with node
+// Per-service agents
+const socialAgent = await loadBoundAgent('./social-agent');
+const codingAgent = await loadBoundAgent('./coding-agent');
+const boundProvider = new BoundAgentProvider(innerProvider, {
+  'social-model-v1': socialAgent,
+  'coding-model-v1': codingAgent,
+  '*': socialAgent,  // fallback for unmatched services
+});
+
 node.registerProvider(boundProvider);
 ```
 
 ### CLI
 
-Add `agentDir` to your antseed config:
+Add `agentDir` to your antseed config. Use a string for a single agent (all services), or a map for per-service agents:
 
 ```json
 {
@@ -95,7 +101,23 @@ Add `agentDir` to your antseed config:
 }
 ```
 
-Then run `antseed seed` as usual. The bound agent wraps your provider automatically.
+Per-service:
+
+```json
+{
+  "seller": {
+    "agentDir": {
+      "social-model-v1": "./agents/social",
+      "coding-model-v1": "./agents/coding",
+      "*": "./agents/default"
+    }
+  }
+}
+```
+
+The `"*"` key is a fallback for services with no explicit agent. Services with no matching agent pass through unchanged.
+
+Then run `antseed seed` as usual.
 
 ## Knowledge selection
 

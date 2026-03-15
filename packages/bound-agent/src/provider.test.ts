@@ -582,3 +582,156 @@ describe('BoundAgentProvider — Provider interface delegation', () => {
     expect(agent.getCapacity()).toEqual({ current: 0, max: 10 });
   });
 });
+
+describe('BoundAgentProvider — per-service agents', () => {
+  function socialAgent(): BoundAgentDefinition {
+    return {
+      name: 'social-agent',
+      persona: 'You are a social media expert.',
+      guardrails: [],
+      knowledge: [
+        { name: 'linkedin', description: 'LinkedIn tips', content: '# LinkedIn\nPost daily.' },
+      ],
+    };
+  }
+
+  function codingAgent(): BoundAgentDefinition {
+    return {
+      name: 'coding-agent',
+      persona: 'You are a coding expert.',
+      guardrails: ['Always explain trade-offs'],
+      knowledge: [],
+    };
+  }
+
+  it('uses different agents for different services', async () => {
+    const inner = mockProvider({
+      responses: [
+        // social agent: selection pass
+        makeAnthropicTextResponse('linkedin'),
+        // social agent: response
+        makeAnthropicTextResponse('Post on LinkedIn daily.'),
+        // coding agent: response (no knowledge, single pass)
+        makeAnthropicTextResponse('Use TypeScript.'),
+      ],
+    });
+
+    const agent = new BoundAgentProvider(inner, {
+      'social-model': socialAgent(),
+      'coding-model': codingAgent(),
+    });
+
+    // Request for social-model
+    const res1 = await agent.handleRequest(makeReq({
+      service: 'social-model',
+      messages: [{ role: 'user', content: 'LinkedIn tips?' }],
+    }));
+    const body1 = parseBody(res1.body);
+    expect((body1.content as { text: string }[])[0]!.text).toBe('Post on LinkedIn daily.');
+
+    // Request for coding-model
+    const res2 = await agent.handleRequest(makeReq({
+      service: 'coding-model',
+      messages: [{ role: 'user', content: 'What language?' }],
+    }));
+
+    // Coding agent injects its persona
+    const codingBody = inner.requestBodies()[2]!;
+    const codingSystem = codingBody.system as string;
+    expect(codingSystem).toContain('You are a coding expert.');
+    expect(codingSystem).toContain('Always explain trade-offs');
+    expect(codingSystem).not.toContain('social media');
+  });
+
+  it('passes through unchanged for unmatched services', async () => {
+    const inner = mockProvider({
+      responses: [makeAnthropicTextResponse('raw response')],
+    });
+
+    const agent = new BoundAgentProvider(inner, {
+      'social-model': socialAgent(),
+    });
+
+    // Request for unknown-model — no agent matches, no default
+    const res = await agent.handleRequest(makeReq({
+      service: 'unknown-model',
+      messages: [{ role: 'user', content: 'hi' }],
+    }));
+
+    expect(inner.callCount()).toBe(1);
+    // Should pass through without system prompt injection
+    const body = inner.requestBodies()[0]!;
+    expect(body.system).toBeUndefined();
+  });
+
+  it('falls back to wildcard agent for unmatched services', async () => {
+    const inner = mockProvider({
+      responses: [makeAnthropicTextResponse('fallback response')],
+    });
+
+    const agent = new BoundAgentProvider(inner, {
+      'social-model': socialAgent(),
+      '*': codingAgent(),
+    });
+
+    // Request for unknown-model — falls back to wildcard
+    await agent.handleRequest(makeReq({
+      service: 'unknown-model',
+      messages: [{ role: 'user', content: 'hi' }],
+    }));
+
+    const body = inner.requestBodies()[0]!;
+    const system = body.system as string;
+    expect(system).toContain('You are a coding expert.');
+  });
+
+  it('resolves agent from model field (OpenAI format)', async () => {
+    const inner = mockProvider({
+      responses: [makeOpenAITextResponse('social response')],
+    });
+
+    const agent = new BoundAgentProvider(inner, {
+      'social-model': socialAgent(),
+    });
+
+    // OpenAI uses "model" not "service"
+    const req = makeReq(
+      { model: 'social-model', messages: [{ role: 'user', content: 'hi' }] },
+      '/v1/chat/completions',
+    );
+
+    // social-agent has knowledge, so selection pass happens first
+    // but for simplicity, mock returns NONE so it just uses base prompt
+    const innerWithSelection = mockProvider({
+      responses: [
+        makeOpenAITextResponse('NONE'),
+        makeOpenAITextResponse('social response'),
+      ],
+    });
+    const agent2 = new BoundAgentProvider(innerWithSelection, {
+      'social-model': socialAgent(),
+    });
+
+    await agent2.handleRequest(req);
+
+    // Response call should have social persona
+    const responseBody = innerWithSelection.requestBodies()[1]!;
+    const messages = responseBody.messages as { role: string; content: string }[];
+    const systemMsg = messages.find(m => m.role === 'system');
+    expect(systemMsg!.content).toContain('social media expert');
+  });
+
+  it('single BoundAgentDefinition still works (backward compat)', async () => {
+    const inner = mockProvider({ responses: [makeAnthropicTextResponse('ok')] });
+    const agent = new BoundAgentProvider(inner, codingAgent());
+
+    await agent.handleRequest(makeReq({
+      service: 'any-service',
+      messages: [{ role: 'user', content: 'hi' }],
+    }));
+
+    const body = inner.requestBodies()[0]!;
+    const system = body.system as string;
+    expect(system).toContain('You are a coding expert.');
+  });
+});

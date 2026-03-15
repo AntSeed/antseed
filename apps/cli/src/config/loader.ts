@@ -179,6 +179,22 @@ function mergeSellerServiceCategories(
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+function normalizeAgentDir(
+  value: unknown,
+  fallback?: string | Record<string, string>,
+): { agentDir: string | Record<string, string> } | Record<string, never> {
+  if (typeof value === 'string') return { agentDir: value };
+  if (isRecord(value)) {
+    // Per-service map: { "service-id": "./path", ... }
+    const map: Record<string, string> = {};
+    for (const [key, val] of Object.entries(value)) {
+      if (typeof val === 'string') map[key] = val;
+    }
+    if (Object.keys(map).length > 0) return { agentDir: map };
+  }
+  return fallback ? { agentDir: fallback } : {};
+}
+
 function mergeSellerConfig(
   defaults: AntseedConfig['seller'],
   value: unknown
@@ -210,9 +226,7 @@ function mergeSellerConfig(
     publicAddress: typeof value['publicAddress'] === 'string'
       ? value['publicAddress']
       : defaults.publicAddress,
-    ...(typeof value['agentDir'] === 'string'
-      ? { agentDir: value['agentDir'] }
-      : (defaults.agentDir ? { agentDir: defaults.agentDir } : {})),
+    ...(normalizeAgentDir(value['agentDir'], defaults.agentDir)),
     ...(mergedServiceCategories ? { serviceCategories: mergedServiceCategories } : {}),
   };
 }

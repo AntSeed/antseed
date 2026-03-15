@@ -43,10 +43,43 @@ function debugLog(...args: unknown[]): void {
   if (DEBUG_ENABLED) console.log(...args);
 }
 
+/** Pre-computed state for a single bound agent definition. */
+interface PreparedAgent {
+  definition: BoundAgentDefinition;
+  confidentialityPrompt: string;
+  baseSystemPrompt: string;
+  knowledgeCatalog: string;
+}
+
+function prepareAgent(agent: BoundAgentDefinition): PreparedAgent {
+  const confidentialityPrompt = agent.confidentialityPrompt ?? DEFAULT_CONFIDENTIALITY_PROMPT;
+
+  const baseParts: string[] = [];
+  if (agent.persona) baseParts.push(agent.persona);
+  if (agent.guardrails.length > 0) {
+    baseParts.push('## Guidelines\n' + agent.guardrails.map(g => `- ${g}`).join('\n'));
+  }
+  baseParts.push(confidentialityPrompt);
+
+  return {
+    definition: agent,
+    confidentialityPrompt,
+    baseSystemPrompt: baseParts.join('\n\n'),
+    knowledgeCatalog: agent.knowledge
+      .map(m => `- ${m.name}: ${m.description}`)
+      .join('\n'),
+  };
+}
+
 /**
  * Wraps any Provider to create a bound agent — a read-only, knowledge-augmented
  * AI service that injects a persona, guardrails, and selectively loaded knowledge
  * into each LLM request.
+ *
+ * Supports per-service agent definitions: different services can have different
+ * personas, guardrails, and knowledge. Pass a single `BoundAgentDefinition` to
+ * apply to all services, or a `Record<string, BoundAgentDefinition>` to map
+ * specific services to specific agents (use `'*'` key as the fallback).
  *
  * Uses a clean two-pass approach:
  *
@@ -56,21 +89,36 @@ function debugLog(...args: unknown[]): void {
  *    selected knowledge + guardrails injected into the system prompt. No tools.
  *
  * When no knowledge modules are defined, it's a single pass (persona + guardrails only).
+ * Requests for services with no matching agent pass through unchanged.
  * The buyer never sees the selection mechanism — streaming is always clean.
  */
 export class BoundAgentProvider implements Provider {
   private readonly _inner: Provider;
-  private readonly _agent: BoundAgentDefinition;
-  private readonly _confidentialityPrompt: string;
-  private readonly _baseSystemPrompt: string;
-  private readonly _knowledgeCatalog: string;
+  private readonly _serviceAgents: Map<string, PreparedAgent>;
+  private readonly _defaultAgent: PreparedAgent | null;
 
-  constructor(inner: Provider, agent: BoundAgentDefinition) {
+  constructor(inner: Provider, agents: BoundAgentDefinition | Record<string, BoundAgentDefinition>) {
     this._inner = inner;
-    this._agent = agent;
-    this._confidentialityPrompt = agent.confidentialityPrompt ?? DEFAULT_CONFIDENTIALITY_PROMPT;
-    this._baseSystemPrompt = this._buildBaseSystemPrompt();
-    this._knowledgeCatalog = this._buildKnowledgeCatalog();
+    this._serviceAgents = new Map();
+
+    let defaultAgent: PreparedAgent | null = null;
+
+    if (isBoundAgentDefinition(agents)) {
+      // Single agent → applies to all services
+      defaultAgent = prepareAgent(agents);
+    } else {
+      // Per-service mapping
+      for (const [service, def] of Object.entries(agents)) {
+        const prepared = prepareAgent(def);
+        if (service === '*') {
+          defaultAgent = prepared;
+        } else {
+          this._serviceAgents.set(service, prepared);
+        }
+      }
+    }
+
+    this._defaultAgent = defaultAgent;
   }
 
   get name() { return this._inner.name; }
@@ -96,7 +144,12 @@ export class BoundAgentProvider implements Provider {
       return this._inner.handleRequest(req);
     }
 
-    const systemPrompt = await this._resolveSystemPrompt(req, body, format);
+    const agent = this._resolveAgent(body);
+    if (!agent) {
+      return this._inner.handleRequest(req);
+    }
+
+    const systemPrompt = await this._resolveSystemPrompt(req, body, format, agent);
     const augmented = this._injectSystem(body, systemPrompt, format);
     return this._inner.handleRequest({
       ...req,
@@ -118,8 +171,13 @@ export class BoundAgentProvider implements Provider {
         return this._inner.handleRequestStream!(req, callbacks);
       }
 
+      const agent = this._resolveAgent(body);
+      if (!agent) {
+        return this._inner.handleRequestStream!(req, callbacks);
+      }
+
       // Selection is always buffered; only the response is streamed
-      const systemPrompt = await this._resolveSystemPrompt(req, body, format);
+      const systemPrompt = await this._resolveSystemPrompt(req, body, format, agent);
       const augmented = this._injectSystem(body, systemPrompt, format);
       return this._inner.handleRequestStream!({
         ...req,
@@ -135,6 +193,19 @@ export class BoundAgentProvider implements Provider {
   }
 
   /**
+   * Resolve the agent for this request based on the service/model in the body.
+   * Returns null if no agent matches (request should pass through unchanged).
+   */
+  private _resolveAgent(body: Record<string, unknown>): PreparedAgent | null {
+    const service = (body.service ?? body.model) as string | undefined;
+    if (service) {
+      const exact = this._serviceAgents.get(service);
+      if (exact) return exact;
+    }
+    return this._defaultAgent;
+  }
+
+  /**
    * Determine the full system prompt for the response call.
    * If the agent has knowledge modules, runs a selection pass first.
    */
@@ -142,61 +213,39 @@ export class BoundAgentProvider implements Provider {
     req: SerializedHttpRequest,
     body: Record<string, unknown>,
     format: RequestFormat,
+    agent: PreparedAgent,
   ): Promise<string> {
-    if (this._agent.knowledge.length === 0) {
+    if (agent.definition.knowledge.length === 0) {
       this._debug(req, 'no knowledge modules; using base system prompt');
-      return this._baseSystemPrompt;
+      return agent.baseSystemPrompt;
     }
 
-    const selected = await this._selectKnowledge(req, body, format);
+    const selected = await this._selectKnowledge(req, body, format, agent);
     if (selected.length === 0) {
       this._debug(req, 'selection returned no modules; using base system prompt');
-      return this._baseSystemPrompt;
+      return agent.baseSystemPrompt;
     }
 
     this._debug(req, `selected ${selected.length} module(s): ${selected.map(m => m.name).join(', ')}`);
-    return this._buildFullSystemPrompt(selected);
-  }
-
-  /**
-   * Build the base system prompt (persona + guardrails + confidentiality).
-   * Used when no knowledge modules are selected or none exist.
-   */
-  private _buildBaseSystemPrompt(): string {
-    const parts: string[] = [];
-    if (this._agent.persona) parts.push(this._agent.persona);
-    if (this._agent.guardrails.length > 0) {
-      parts.push('## Guidelines\n' + this._agent.guardrails.map(g => `- ${g}`).join('\n'));
-    }
-    parts.push(this._confidentialityPrompt);
-    return parts.join('\n\n');
-  }
-
-  /**
-   * Build a knowledge catalog (names + descriptions) for the selection prompt.
-   */
-  private _buildKnowledgeCatalog(): string {
-    return this._agent.knowledge
-      .map(m => `- ${m.name}: ${m.description}`)
-      .join('\n');
+    return this._buildFullSystemPrompt(selected, agent);
   }
 
   /**
    * Build the full system prompt with selected knowledge modules injected.
    */
-  private _buildFullSystemPrompt(selectedModules: KnowledgeModule[]): string {
+  private _buildFullSystemPrompt(selectedModules: KnowledgeModule[], agent: PreparedAgent): string {
     const parts: string[] = [];
-    if (this._agent.persona) parts.push(this._agent.persona);
+    if (agent.definition.persona) parts.push(agent.definition.persona);
 
     const knowledgeSection = selectedModules
       .map(m => `## ${m.name}\n${m.content}`)
       .join('\n\n');
     parts.push(knowledgeSection);
 
-    if (this._agent.guardrails.length > 0) {
-      parts.push('## Guidelines\n' + this._agent.guardrails.map(g => `- ${g}`).join('\n'));
+    if (agent.definition.guardrails.length > 0) {
+      parts.push('## Guidelines\n' + agent.definition.guardrails.map(g => `- ${g}`).join('\n'));
     }
-    parts.push(this._confidentialityPrompt);
+    parts.push(agent.confidentialityPrompt);
     return parts.join('\n\n');
   }
 
@@ -208,11 +257,12 @@ export class BoundAgentProvider implements Provider {
     req: SerializedHttpRequest,
     body: Record<string, unknown>,
     format: RequestFormat,
+    agent: PreparedAgent,
   ): Promise<KnowledgeModule[]> {
     const selectionPrompt =
       'You are a knowledge router. Given the conversation below and the available knowledge modules, ' +
       'determine which modules contain information needed to provide a helpful response.\n\n' +
-      `Available modules:\n${this._knowledgeCatalog}\n\n` +
+      `Available modules:\n${agent.knowledgeCatalog}\n\n` +
       'Respond with ONLY the module names that are relevant, one per line. ' +
       'If no modules are needed to answer the question, respond with "NONE".';
 
@@ -259,22 +309,22 @@ export class BoundAgentProvider implements Provider {
 
       if (response.statusCode !== 200) {
         this._debug(req, `selection call returned ${response.statusCode}; falling back to all modules`);
-        return this._agent.knowledge;
+        return agent.definition.knowledge;
       }
 
       const responseBody = JSON.parse(decoder.decode(response.body)) as Record<string, unknown>;
       const text = this._extractResponseText(responseBody, format);
-      const selected = this._parseModuleSelection(text);
+      const selected = this._parseModuleSelection(text, agent);
 
       if (selected === null) {
         this._debug(req, 'selection parse failed; falling back to all modules');
-        return this._agent.knowledge;
+        return agent.definition.knowledge;
       }
 
       return selected;
     } catch (err) {
       this._debug(req, `selection call failed: ${(err as Error).message}; falling back to all modules`);
-      return this._agent.knowledge;
+      return agent.definition.knowledge;
     }
   }
 
@@ -295,7 +345,7 @@ export class BoundAgentProvider implements Provider {
    * Parse the selection response into matching knowledge modules.
    * Returns null if the response couldn't be parsed (caller should fall back).
    */
-  private _parseModuleSelection(text: string): KnowledgeModule[] | null {
+  private _parseModuleSelection(text: string, agent: PreparedAgent): KnowledgeModule[] | null {
     const trimmed = text.trim();
     if (!trimmed) return null;
     if (trimmed.toUpperCase() === 'NONE') return [];
@@ -308,7 +358,7 @@ export class BoundAgentProvider implements Provider {
     if (names.length === 0) return null;
 
     const selected = names
-      .map(name => this._agent.knowledge.find(m => m.name === name))
+      .map(name => agent.definition.knowledge.find(m => m.name === name))
       .filter((m): m is KnowledgeModule => m !== undefined);
 
     // If we couldn't match any names, treat it as a parse failure
@@ -347,4 +397,14 @@ export class BoundAgentProvider implements Provider {
       system: existing ? `${systemContent}\n\n${existing}` : systemContent,
     };
   }
+}
+
+/**
+ * Type guard to distinguish a single BoundAgentDefinition from a service map.
+ */
+function isBoundAgentDefinition(
+  value: BoundAgentDefinition | Record<string, BoundAgentDefinition>,
+): value is BoundAgentDefinition {
+  return typeof (value as BoundAgentDefinition).name === 'string'
+    && Array.isArray((value as BoundAgentDefinition).guardrails);
 }

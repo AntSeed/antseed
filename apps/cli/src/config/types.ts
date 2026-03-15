@@ -72,12 +72,15 @@ export interface SellerCLIConfig {
   /** Optional provider/service category tags announced in peer metadata */
   serviceCategories?: SellerServiceCategoryConfig;
   /**
-   * Path to a bound agent directory containing `agent.json`.
-   * The agent defines a persona, guardrails, and knowledge modules that are
-   * selectively loaded based on the buyer's request.
+   * Bound agent configuration. Can be:
+   * - A string path to a single agent directory (applies to all services)
+   * - A record mapping service IDs to agent directory paths (per-service agents).
+   *   Use `"*"` key as a fallback for unmatched services.
+   *
+   * Each directory must contain an `agent.json` manifest.
    * Relative paths are resolved from the config file's directory.
    */
-  agentDir?: string;
+  agentDir?: string | Record<string, string>;
   /** Publicly reachable seller address override announced in metadata, e.g. "peer.example.com:6882". */
   publicAddress?: string;
 }
