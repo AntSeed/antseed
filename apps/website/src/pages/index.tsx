@@ -319,7 +319,7 @@ export default function Home(): JSX.Element {
 
       {/* Hero */}
       <section className={styles.hero}>
-        <h1 className={styles.heroTitle}>An Open Network<br/>for AI Services</h1>
+        <h1 className={styles.heroTitle}>An Open Network for AI Services.<br/>Unstoppable by Design.</h1>
         <p className={styles.heroSub}>AI that works. Expertise you own. No middleman.</p>
       </section>
 
