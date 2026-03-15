@@ -104,6 +104,18 @@ describe('injectSystemPrompt', () => {
     expect(systemArr[1].cache_control).toEqual({ type: 'ephemeral' });
   });
 
+  it('handles Anthropic array with empty text blocks', () => {
+    const existing = [
+      { type: 'text', text: '' },
+      { type: 'text' },
+    ];
+    const body = { system: existing, model: 'claude' };
+    const result = injectSystemPrompt(body, systemContent, 'anthropic');
+    const systemArr = result.system as { type: string; text: string }[];
+    expect(systemArr).toHaveLength(1);
+    expect(systemArr[0]).toEqual({ type: 'text', text: systemContent });
+  });
+
   // ─── OpenAI ───────────────────────────────────────────────────
 
   it('wraps existing OpenAI system message as client context', () => {

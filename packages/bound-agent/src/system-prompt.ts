@@ -77,11 +77,11 @@ export function injectSystemPrompt(
       return body;
     }
     const blocks = body.system as { text?: string; cache_control?: unknown }[];
-    const buyerText = blocks.map(b => b.text ?? '').join('\n\n');
+    const buyerText = blocks.map(b => b.text ?? '').join('\n\n').trim();
     if (!buyerText) {
       return { ...body, system: [{ type: 'text', text: systemContent }] };
     }
-    // Preserve cache_control from the last buyer block (Anthropic convention)
+    // Preserve cache_control from the last buyer block that has one
     const lastCache = [...blocks].reverse().find(b => b.cache_control)?.cache_control;
     const wrappedBlock: Record<string, unknown> = { type: 'text', text: wrapClientContext(buyerText) };
     if (lastCache) wrappedBlock.cache_control = lastCache;
