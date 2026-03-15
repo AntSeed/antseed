@@ -279,10 +279,11 @@ export function stripInternalToolCalls(
   const filtered = content.filter(
     block => !(block.type === 'tool_use' && block.name?.startsWith(TOOL_PREFIX)),
   );
+  const wasStripped = filtered.length < content.length;
   const hasRemainingToolUse = filtered.some(b => b.type === 'tool_use');
   return {
     ...responseBody,
     content: filtered,
-    ...(hasRemainingToolUse ? {} : { stop_reason: 'end_turn' }),
+    ...(wasStripped && !hasRemainingToolUse ? { stop_reason: 'end_turn' } : {}),
   };
 }

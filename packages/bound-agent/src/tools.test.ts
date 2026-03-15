@@ -312,6 +312,15 @@ describe('stripInternalToolCalls', () => {
     expect(toolCalls[0].function.name).toBe('buyer_search');
   });
 
+  it('preserves stop_reason when nothing is stripped (Anthropic)', () => {
+    const response = {
+      content: [{ type: 'text', text: 'truncated' }],
+      stop_reason: 'max_tokens',
+    };
+    const stripped = stripInternalToolCalls(response, 'anthropic');
+    expect(stripped.stop_reason).toBe('max_tokens');
+  });
+
   it('no-op for text-only response', () => {
     const response = { content: [{ type: 'text', text: 'hello' }] };
     const stripped = stripInternalToolCalls(response, 'anthropic');
