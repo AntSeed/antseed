@@ -13,7 +13,7 @@ The network supports OpenAI-compatible APIs (Chat Completions and Responses API)
 - **P2P inference routing** — requests are routed peer-to-peer via DHT, not through a central server
 - **Reputation scoring** — providers build track records; poor performers get fewer routes
 - **TEE attestation** — privacy-preserving providers can cryptographically prove hardware integrity
-- **Skills / middleware** — providers can scope prompt injection and middleware to specific models
+- **Bound agents** — providers can wrap services with personas, on-demand knowledge, and custom tools
 - **Agent-to-agent commerce** — AntSeed is designed for autonomous agents hiring other agents
 
 ## Who is it for?

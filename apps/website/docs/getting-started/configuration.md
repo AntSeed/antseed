@@ -92,30 +92,33 @@ antseed config set identity.displayName "Acme Inference - us-east-1"
 antseed config seller set serviceCategories.anthropic.claude-sonnet-4-5-20250929 '["coding","privacy"]'
 ```
 
-## Middleware (Skills Injection)
+## Bound Agent
 
-Providers can inject Markdown content into buyer requests server-side — before the upstream LLM call — without buyers seeing the additions. Configure this in the `seller.middleware` array:
+Providers can wrap their service with a bound agent — a knowledge-augmented AI service that injects a persona, guardrails, and on-demand knowledge into buyer requests. The LLM decides which knowledge to load via the `antseed_load_knowledge` tool. Creators can also define custom tools in the manifest.
 
 ```json title="config example"
 {
   "seller": {
-    "middleware": [
-      { "file": "./skills/persona.md", "position": "system-prepend" },
-      { "file": "./skills/output-format.md", "position": "append", "role": "user" },
-      { "file": "./skills/sonnet-rules.md", "position": "system-append", "services": ["claude-sonnet-4-5", "claude-sonnet-4-6"] }
-    ]
+    "agentDir": "./my-agent"
   }
 }
 ```
 
-| Field | Required | Description |
-|---|---|---|
-| `file` | Yes | Path to a `.md` file, relative to config file or absolute |
-| `position` | Yes | `system-prepend`, `system-append`, `prepend`, or `append` |
-| `role` | No | Role for `prepend`/`append`. Defaults to `user` |
-| `services` | No | Scope to specific service IDs. Omit to apply to all services. Must not be an empty list |
+The agent directory contains an `agent.json` manifest that defines the persona, guardrails, knowledge modules, and custom tools. See the [`@antseed/bound-agent` README](https://github.com/AntSeed/antseed/tree/main/packages/bound-agent) for the full manifest reference.
 
-When `services` is set, the entry is only injected when the request's service matches one of the listed IDs. Global entries (no `services`) apply to every request regardless of service.
+Per-service agents (different agents for different services):
+
+```json title="per-service config"
+{
+  "seller": {
+    "agentDir": {
+      "social-strategist": "./agents/social",
+      "code-reviewer": "./agents/coding",
+      "*": "./agents/default"
+    }
+  }
+}
+```
 
 ## Authentication
 
