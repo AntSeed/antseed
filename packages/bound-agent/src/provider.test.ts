@@ -735,3 +735,87 @@ describe('BoundAgentProvider — per-service agents', () => {
     expect(system).toContain('You are a coding expert.');
   });
 });
+
+describe('BoundAgentProvider — tool message stripping', () => {
+  it('strips tool_use/tool_result from Anthropic messages in selection pass', async () => {
+    const inner = mockProvider({
+      responses: [
+        makeAnthropicTextResponse('linkedin-posting'),
+        makeAnthropicTextResponse('done'),
+      ],
+    });
+    const agent = new BoundAgentProvider(inner, agentWithKnowledge());
+
+    // Conversation with tool_use and tool_result blocks
+    await agent.handleRequest(makeReq({
+      messages: [
+        { role: 'user', content: 'Help me with LinkedIn' },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: 'Let me search.' },
+            { type: 'tool_use', id: 'tool-1', name: 'search', input: { q: 'linkedin' } },
+          ],
+        },
+        {
+          role: 'user',
+          content: [
+            { type: 'tool_result', tool_use_id: 'tool-1', content: 'results here' },
+          ],
+        },
+        { role: 'user', content: 'Now help me post' },
+      ],
+    }));
+
+    // Selection pass (first call) should NOT contain tool_use or tool_result
+    const selBody = inner.requestBodies()[0]!;
+    const selMessages = selBody.messages as Record<string, unknown>[];
+
+    for (const msg of selMessages) {
+      const content = msg.content;
+      if (Array.isArray(content)) {
+        for (const block of content as Record<string, unknown>[]) {
+          expect(block.type).not.toBe('tool_use');
+          expect(block.type).not.toBe('tool_result');
+        }
+      }
+    }
+
+    // tool_result-only message should be fully removed
+    const hasToolResultMsg = selMessages.some(m => {
+      if (!Array.isArray(m.content)) return false;
+      return (m.content as Record<string, unknown>[]).some(b => b.type === 'tool_result');
+    });
+    expect(hasToolResultMsg).toBe(false);
+  });
+
+  it('strips tool-role messages from OpenAI messages in selection pass', async () => {
+    const inner = mockProvider({
+      responses: [
+        makeOpenAITextResponse('linkedin-posting'),
+        makeOpenAITextResponse('done'),
+      ],
+    });
+    const agent = new BoundAgentProvider(inner, agentWithKnowledge());
+
+    await agent.handleRequest(makeReq({
+      messages: [
+        { role: 'user', content: 'Help me' },
+        {
+          role: 'assistant',
+          content: null,
+          tool_calls: [{ id: 'call-1', type: 'function', function: { name: 'search', arguments: '{}' } }],
+        },
+        { role: 'tool', tool_call_id: 'call-1', content: 'results' },
+        { role: 'user', content: 'Now help me post' },
+      ],
+    }, '/v1/chat/completions'));
+
+    // Selection pass should not have tool-role messages or tool_calls
+    const selBody = inner.requestBodies()[0]!;
+    const selMessages = selBody.messages as Record<string, unknown>[];
+
+    expect(selMessages.every(m => m.role !== 'tool')).toBe(true);
+    expect(selMessages.every(m => !m.tool_calls)).toBe(true);
+  });
+});

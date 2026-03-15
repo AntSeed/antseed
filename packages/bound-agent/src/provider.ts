@@ -271,7 +271,10 @@ export class BoundAgentProvider implements Provider {
     if (body.model) serviceFields.model = body.model;
     if (body.service) serviceFields.service = body.service;
 
-    const messages = Array.isArray(body.messages) ? body.messages : [];
+    // Strip tool_use/tool_result messages — the selection LLM doesn't have
+    // tool definitions and the upstream API would reject them.
+    const rawMessages = Array.isArray(body.messages) ? body.messages as Record<string, unknown>[] : [];
+    const messages = stripToolMessages(rawMessages, format);
 
     let selectionBody: Record<string, unknown>;
     if (format === 'openai') {
@@ -281,7 +284,7 @@ export class BoundAgentProvider implements Provider {
         stream: false,
         messages: [
           { role: 'system', content: selectionPrompt },
-          ...(messages as unknown[]),
+          ...messages,
         ],
       };
     } else {
@@ -295,7 +298,7 @@ export class BoundAgentProvider implements Provider {
     }
 
     const selectionReq: SerializedHttpRequest = {
-      requestId: `sel-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      requestId: `sel-${crypto.randomUUID()}`,
       method: 'POST',
       path: req.path,
       headers: { 'content-type': 'application/json' },
@@ -406,5 +409,44 @@ function isBoundAgentDefinition(
   value: BoundAgentDefinition | Record<string, BoundAgentDefinition>,
 ): value is BoundAgentDefinition {
   return typeof (value as BoundAgentDefinition).name === 'string'
-    && Array.isArray((value as BoundAgentDefinition).guardrails);
+    && Array.isArray((value as BoundAgentDefinition).guardrails)
+    && Array.isArray((value as BoundAgentDefinition).knowledge);
+}
+
+/**
+ * Strip tool-related messages from the conversation for the selection pass.
+ *
+ * The selection LLM call has no tool definitions, so forwarding `tool_use`,
+ * `tool_result` (Anthropic) or `tool`-role messages (OpenAI) would cause the
+ * upstream API to reject the request. We also strip `tool_calls` from
+ * assistant messages and filter out `tool_use`/`tool_result` content blocks.
+ */
+function stripToolMessages(
+  messages: Record<string, unknown>[],
+  format: RequestFormat,
+): Record<string, unknown>[] {
+  if (format === 'openai') {
+    return messages
+      .filter(m => m.role !== 'tool')
+      .map(m => {
+        if (m.role === 'assistant' && m.tool_calls) {
+          const { tool_calls: _, ...rest } = m;
+          return rest;
+        }
+        return m;
+      });
+  }
+
+  // Anthropic format: filter out tool_use/tool_result content blocks
+  return messages
+    .map(m => {
+      const content = m.content;
+      if (!Array.isArray(content)) return m;
+      const filtered = (content as Record<string, unknown>[]).filter(
+        block => block.type !== 'tool_use' && block.type !== 'tool_result',
+      );
+      if (filtered.length === 0) return null;
+      return { ...m, content: filtered };
+    })
+    .filter((m): m is Record<string, unknown> => m !== null);
 }
