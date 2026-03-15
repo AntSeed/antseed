@@ -132,6 +132,24 @@ export function validateConfig(config: AntseedConfig): string[] {
     errors.push('seller.reserveFloor must be a non-negative finite number');
   }
 
+  if (config.seller.agentDir !== undefined) {
+    if (typeof config.seller.agentDir === 'string') {
+      if (config.seller.agentDir.trim().length === 0) {
+        errors.push('seller.agentDir must be a non-empty string when provided');
+      }
+    } else {
+      const map = config.seller.agentDir as Record<string, string>;
+      if (Object.keys(map).length === 0) {
+        errors.push('seller.agentDir map must have at least one entry when provided');
+      }
+      for (const [svc, dir] of Object.entries(map)) {
+        if (typeof dir !== 'string' || dir.trim().length === 0) {
+          errors.push(`seller.agentDir["${svc}"] must be a non-empty string`);
+        }
+      }
+    }
+  }
+
   if (config.seller.publicAddress) {
     const raw = config.seller.publicAddress.trim();
     if (parsePublicAddress(raw) === null) {

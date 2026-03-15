@@ -13,6 +13,8 @@ const TOOL_SET_INSTRUCTIONS =
   'All other tools belong to the user — use those only as the user requests. ' +
   'Always resolve all antseed_ tool calls before responding or using external tools.';
 
+const INJECTION_MARKER = '<!-- antseed-bound-agent -->';
+
 function makeAgent(overrides: Partial<BoundAgentDefinition> = {}): BoundAgentDefinition {
   return {
     name: 'test-agent',
@@ -24,6 +26,11 @@ function makeAgent(overrides: Partial<BoundAgentDefinition> = {}): BoundAgentDef
 }
 
 describe('buildSystemPrompt', () => {
+  it('includes injection marker', () => {
+    const result = buildSystemPrompt(makeAgent(), false);
+    expect(result).toContain(INJECTION_MARKER);
+  });
+
   it('includes persona when present', () => {
     const result = buildSystemPrompt(makeAgent({ persona: 'You are a helpful bot.' }), false);
     expect(result).toContain('You are a helpful bot.');
@@ -63,26 +70,17 @@ describe('buildSystemPrompt', () => {
 });
 
 describe('injectSystemPrompt', () => {
-  const systemContent = 'Injected system prompt';
+  const systemContent = `${INJECTION_MARKER}\n\nAgent prompt`;
 
-  it('prepends to Anthropic string system', () => {
-    const body = { system: 'Existing prompt', model: 'claude' };
-    const result = injectSystemPrompt(body, systemContent, 'anthropic');
-    expect(result.system).toBe(`${systemContent}\n\nExisting prompt`);
-    expect(result.model).toBe('claude');
-  });
+  // ─── Anthropic string ─────────────────────────────────────────
 
-  it('prepends to Anthropic array system preserving cache_control', () => {
-    const existing = [
-      { type: 'text', text: 'Cached content', cache_control: { type: 'ephemeral' } },
-    ];
-    const body = { system: existing, model: 'claude' };
+  it('prepends agent prompt before buyer Anthropic string system', () => {
+    const body = { system: 'Buyer prompt', model: 'claude' };
     const result = injectSystemPrompt(body, systemContent, 'anthropic');
-    expect(Array.isArray(result.system)).toBe(true);
-    const systemArr = result.system as { type: string; text: string; cache_control?: unknown }[];
-    expect(systemArr).toHaveLength(2);
-    expect(systemArr[0]).toEqual({ type: 'text', text: systemContent });
-    expect(systemArr[1]).toEqual(existing[0]);
+    const system = result.system as string;
+    expect(system).toContain('Agent prompt');
+    expect(system).toContain('Buyer prompt');
+    expect(system.indexOf('Agent prompt')).toBeLessThan(system.indexOf('Buyer prompt'));
   });
 
   it('creates system when none exists (Anthropic)', () => {
@@ -91,15 +89,72 @@ describe('injectSystemPrompt', () => {
     expect(result.system).toBe(systemContent);
   });
 
-  it('prepends system message in OpenAI format', () => {
+  // ─── Anthropic array ──────────────────────────────────────────
+
+  it('prepends to Anthropic array system preserving cache_control', () => {
+    const existing = [
+      { type: 'text', text: 'Cached content', cache_control: { type: 'ephemeral' } },
+    ];
+    const body = { system: existing, model: 'claude' };
+    const result = injectSystemPrompt(body, systemContent, 'anthropic');
+    const systemArr = result.system as { type: string; text: string; cache_control?: unknown }[];
+    expect(systemArr).toHaveLength(2);
+    expect(systemArr[0]).toEqual({ type: 'text', text: systemContent });
+    expect(systemArr[1]).toEqual(existing[0]);
+  });
+
+  // ─── OpenAI ───────────────────────────────────────────────────
+
+  it('merges into existing OpenAI system message (agent first)', () => {
     const body = {
-      model: 'gpt-4',
-      messages: [{ role: 'user', content: 'Hello' }],
+      messages: [
+        { role: 'system', content: 'Buyer system prompt' },
+        { role: 'user', content: 'Hello' },
+      ],
     };
     const result = injectSystemPrompt(body, systemContent, 'openai');
     const messages = result.messages as { role: string; content: string }[];
+    // Should still be 2 messages, not 3 (merged, not duplicated)
     expect(messages).toHaveLength(2);
-    expect(messages[0]).toEqual({ role: 'system', content: systemContent });
-    expect(messages[1]).toEqual({ role: 'user', content: 'Hello' });
+    expect(messages[0].content).toContain('Agent prompt');
+    expect(messages[0].content).toContain('Buyer system prompt');
+    // Agent comes first
+    expect(messages[0].content.indexOf('Agent prompt')).toBeLessThan(
+      messages[0].content.indexOf('Buyer system prompt'),
+    );
+  });
+
+  it('adds system message when none exists (OpenAI)', () => {
+    const body = { messages: [{ role: 'user', content: 'Hello' }] };
+    const result = injectSystemPrompt(body, systemContent, 'openai');
+    const messages = result.messages as { role: string; content: string }[];
+    expect(messages).toHaveLength(2);
+    expect(messages[0].role).toBe('system');
+    expect(messages[0].content).toBe(systemContent);
+  });
+
+  // ─── Multi-turn deduplication ─────────────────────────────────
+
+  it('skips injection if already present in Anthropic string system', () => {
+    const body = { system: `${systemContent}\n\nBuyer prompt` };
+    const result = injectSystemPrompt(body, systemContent, 'anthropic');
+    expect(result).toBe(body);
+  });
+
+  it('skips injection if already present in Anthropic array system', () => {
+    const body = { system: [{ type: 'text', text: systemContent }] };
+    const result = injectSystemPrompt(body, systemContent, 'anthropic');
+    expect(result).toBe(body);
+  });
+
+  it('skips injection if already present in OpenAI messages', () => {
+    const body = {
+      messages: [
+        { role: 'system', content: `${systemContent}\n\nBuyer prompt` },
+        { role: 'user', content: 'Hello' },
+      ],
+    };
+    const result = injectSystemPrompt(body, systemContent, 'openai');
+    expect(result).toBe(body);
   });
 });
