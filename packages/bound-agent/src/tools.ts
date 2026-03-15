@@ -110,8 +110,14 @@ export function inspectResponse(
 ): LoopAction {
   const allCalls = extractToolCalls(responseBody, format);
   const internalCalls = allCalls.filter(c => c.name.startsWith(TOOL_PREFIX));
+  const hasBuyerCalls = allCalls.length > internalCalls.length;
 
   if (internalCalls.length === 0) return { type: 'done' };
+  // Mixed calls (both internal and buyer) → treat as done.
+  // Re-prompting with unresolved buyer tool calls would cause API validation errors
+  // (every tool_use must have a matching tool_result). Let the buyer handle its tools;
+  // internal calls get stripped by the caller.
+  if (hasBuyerCalls) return { type: 'done' };
   return { type: 'continue', internalCalls };
 }
 

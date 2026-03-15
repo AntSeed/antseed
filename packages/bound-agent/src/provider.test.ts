@@ -310,8 +310,10 @@ describe('BoundAgentProvider — agent loop (Anthropic)', () => {
     expect(content[0]!.name).toBe('search_web');
   });
 
-  it('mixed antseed + buyer tool calls → execute antseed, re-prompt', async () => {
-    // Response has both an antseed tool call and a buyer tool call
+  it('mixed antseed + buyer tool calls → treated as done (no re-prompt)', async () => {
+    // Response has both an antseed tool call and a buyer tool call.
+    // Re-prompting would leave the buyer tool_use without a matching tool_result,
+    // which the API would reject. So mixed calls are treated as done.
     const mixedResponse = makeBody({
       content: [
         { type: 'tool_use', id: 'antseed-1', name: 'antseed_load_knowledge', input: { name: 'linkedin-posting' } },
@@ -319,10 +321,7 @@ describe('BoundAgentProvider — agent loop (Anthropic)', () => {
       ],
     });
     const inner = mockProvider({
-      responses: [
-        mixedResponse,
-        makeAnthropicTextResponse('Done with knowledge.'),
-      ],
+      responses: [mixedResponse],
     });
     const agent = new BoundAgentProvider(inner, agentWithKnowledge());
 
@@ -330,10 +329,14 @@ describe('BoundAgentProvider — agent loop (Anthropic)', () => {
       messages: [{ role: 'user', content: 'help' }],
       tools: [{ name: 'search_web', description: 'Search', input_schema: { type: 'object' } }],
     });
-    await agent.handleRequest(req);
+    const res = await agent.handleRequest(req);
 
-    // Should have looped because antseed tool was present
-    expect(inner.callCount()).toBe(2);
+    // Should NOT loop — returned as-is after 1 call
+    expect(inner.callCount()).toBe(1);
+    // Response still contains both tool calls (buyer handles its own)
+    const body = parseBody(res.body);
+    const content = body.content as { type: string; name: string }[];
+    expect(content).toHaveLength(2);
   });
 
   it('multiple modules loaded in sequence', async () => {

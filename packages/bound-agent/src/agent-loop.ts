@@ -158,14 +158,21 @@ export async function runAgentLoopStream(
   const result = await iterate(inner, req, resolve, options);
   if (!result) return inner.handleRequestStream!(req, callbacks);
 
-  if (!result.maxIterationsHit) {
-    callbacks.onResponseStart(result.response);
-    callbacks.onResponseChunk({ requestId: req.requestId, data: result.response.body, done: true });
-    return result.response;
+  let finalResponse = result.response;
+
+  if (result.maxIterationsHit) {
+    // Strip any remaining internal tool calls before streaming
+    const format = detectRequestFormat(req.path);
+    try {
+      const body = JSON.parse(decoder.decode(finalResponse.body)) as Record<string, unknown>;
+      const cleaned = stripInternalToolCalls(body, format);
+      finalResponse = { ...finalResponse, body: encoder.encode(JSON.stringify(cleaned)) };
+    } catch {
+      // non-JSON — stream as-is
+    }
   }
 
-  // Max iterations — stream the final response as-is
-  callbacks.onResponseStart(result.response);
-  callbacks.onResponseChunk({ requestId: req.requestId, data: result.response.body, done: true });
-  return result.response;
+  callbacks.onResponseStart(finalResponse);
+  callbacks.onResponseChunk({ requestId: req.requestId, data: finalResponse.body, done: true });
+  return finalResponse;
 }

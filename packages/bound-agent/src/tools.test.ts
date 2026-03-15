@@ -167,7 +167,7 @@ describe('inspectResponse', () => {
     }
   });
 
-  it('returns continue when mixed — only internal calls in result (Anthropic)', () => {
+  it('returns done when mixed — buyer calls prevent re-prompt (Anthropic)', () => {
     const response = {
       content: [
         { type: 'tool_use', id: 'tc1', name: 'buyer_search', input: { q: 'test' } },
@@ -175,14 +175,10 @@ describe('inspectResponse', () => {
       ],
     };
     const action = inspectResponse(response, 'anthropic');
-    expect(action.type).toBe('continue');
-    if (action.type === 'continue') {
-      expect(action.internalCalls).toHaveLength(1);
-      expect(action.internalCalls[0].id).toBe('tc2');
-    }
+    expect(action.type).toBe('done');
   });
 
-  it('returns continue when mixed — only internal calls in result (OpenAI)', () => {
+  it('returns done when mixed — buyer calls prevent re-prompt (OpenAI)', () => {
     const response = {
       choices: [{
         message: {
@@ -194,11 +190,7 @@ describe('inspectResponse', () => {
       }],
     };
     const action = inspectResponse(response, 'openai');
-    expect(action.type).toBe('continue');
-    if (action.type === 'continue') {
-      expect(action.internalCalls).toHaveLength(1);
-      expect(action.internalCalls[0].id).toBe('tc2');
-    }
+    expect(action.type).toBe('done');
   });
 });
 
