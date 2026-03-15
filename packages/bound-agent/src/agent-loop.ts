@@ -7,6 +7,7 @@ import type {
 import type { BoundAgentDefinition } from './loader.js';
 import type { BoundAgentTool } from './tools.js';
 import {
+  type RequestFormat,
   detectRequestFormat,
   isToolChoiceForced,
   injectTools,
@@ -17,6 +18,7 @@ import {
 } from './tools.js';
 import { buildSystemPrompt, injectSystemPrompt } from './system-prompt.js';
 import { parseSSEResponse } from './sse-parser.js';
+import { TOOL_PREFIX } from './tools.js';
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -58,6 +60,30 @@ const DEBUG_ENABLED = isDebugEnabled();
 
 function debugLog(...args: unknown[]): void {
   if (DEBUG_ENABLED) console.log(...args);
+}
+
+/**
+ * Check if an SSE chunk contains an internal (antseed_*) tool call.
+ * Used during streaming to decide whether to forward chunks to the buyer.
+ */
+function chunkHasInternalToolCall(data: Uint8Array, format: RequestFormat): boolean {
+  const text = decoder.decode(data);
+  if (format === 'openai') {
+    // OpenAI: look for "name":"antseed_" in tool_calls deltas
+    for (const line of text.split('\n')) {
+      if (!line.startsWith('data: ') || line === 'data: [DONE]') continue;
+      try {
+        const chunk = JSON.parse(line.slice(6).trimEnd()) as Record<string, unknown>;
+        const choices = chunk.choices as { delta?: { tool_calls?: { function?: { name?: string } }[] } }[] | undefined;
+        const toolCalls = choices?.[0]?.delta?.tool_calls;
+        if (toolCalls?.some(tc => tc.function?.name?.startsWith(TOOL_PREFIX))) return true;
+      } catch { /* ignore */ }
+    }
+  } else {
+    // Anthropic: look for content_block_start with tool_use type and antseed_ name
+    if (text.includes(`"name":"${TOOL_PREFIX}`) || text.includes(`"name": "${TOOL_PREFIX}`)) return true;
+  }
+  return false;
 }
 
 /** Prepare the request body: parse, resolve agent, inject system prompt + tools. */
@@ -184,8 +210,10 @@ export async function runAgentLoopStream(
     };
 
     // Stream the call, forwarding chunks to the buyer.
-    // For intermediate iterations, hold back the done marker and done chunk.
+    // If we detect an antseed_* tool call mid-stream, stop forwarding
+    // so the buyer doesn't try to execute provider-internal tools.
     let streamResponse: SerializedHttpResponse;
+    let suppressingChunks = false;
     try {
       streamResponse = await inner.handleRequestStream!(augReq, {
         onResponseStart: (res) => {
@@ -195,7 +223,12 @@ export async function runAgentLoopStream(
           }
         },
         onResponseChunk: (chunk) => {
-          // Always forward to buyer — we'll decide whether to loop after
+          if (suppressingChunks || chunk.done) return;
+          // Check if this chunk reveals an internal tool call
+          if (chunk.data.length > 0 && chunkHasInternalToolCall(chunk.data, format)) {
+            suppressingChunks = true;
+            return;
+          }
           callbacks.onResponseChunk(chunk);
         },
       });
@@ -233,13 +266,14 @@ export async function runAgentLoopStream(
 
     const action = inspectResponse(responseBody, format);
     if (action.type === 'done') {
+      debugLog(`${reqTag}: stream iteration ${i + 1} done (no internal tool calls)`);
       return streamResponse;
     }
 
     // Internal tool calls found — execute them
-    debugLog(`${reqTag}: executing ${action.internalCalls.length} tool(s): ${action.internalCalls.map(c => c.name).join(', ')}`);
+    debugLog(`${reqTag}: stream iteration ${i + 1} — executing ${action.internalCalls.length} tool(s): ${action.internalCalls.map(c => c.name).join(', ')}`);
     const results = await executeTools(action.internalCalls, agent.tools);
-    debugLog(`${reqTag}: tool results: ${results.map(r => `${r.id}:${r.isError ? 'error' : 'ok'}`).join(', ')}`);
+    debugLog(`${reqTag}: stream iteration ${i + 1} — tool results: ${results.map(r => `${r.id}:${r.isError ? 'error' : 'ok'}`).join(', ')}`);
     body = appendToolLoop(body, responseBody, results, format);
 
     // If this was the last allowed iteration, break to make a final streaming call
