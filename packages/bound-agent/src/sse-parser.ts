@@ -29,7 +29,7 @@ function parseOpenAISSE(sseText: string): Record<string, unknown> {
     if (!line.startsWith('data: ') || line === 'data: [DONE]') continue;
     let chunk: Record<string, unknown>;
     try {
-      chunk = JSON.parse(line.slice(6)) as Record<string, unknown>;
+      chunk = JSON.parse(line.slice(6).trimEnd()) as Record<string, unknown>;
     } catch {
       continue;
     }
@@ -117,7 +117,7 @@ function parseAnthropicSSE(sseText: string): Record<string, unknown> {
     const event = currentEvent;
     currentEvent = '';
     try {
-      data = JSON.parse(line.slice(6)) as Record<string, unknown>;
+      data = JSON.parse(line.slice(6).trimEnd()) as Record<string, unknown>;
     } catch {
       continue;
     }
@@ -189,7 +189,7 @@ export function parseSSEResponse(
   // If the body looks like plain JSON (no SSE markers), parse it directly.
   // This handles cases where the provider returns a non-streaming response
   // from a streaming endpoint (e.g. error responses, or testing mocks).
-  if (!text.includes('data: ') && !text.includes('event: ')) {
+  if (!text.split('\n').some(l => l.startsWith('data: ') || l.startsWith('event: '))) {
     try {
       return JSON.parse(text) as Record<string, unknown>;
     } catch {
