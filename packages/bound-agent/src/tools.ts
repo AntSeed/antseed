@@ -69,7 +69,7 @@ export function knowledgeTool(modules: KnowledgeModule[]): BoundAgentTool {
 
 // ─── Tool injection ─────────────────────────────────────────────
 
-function isToolChoiceForced(body: Record<string, unknown>): boolean {
+export function isToolChoiceForced(body: Record<string, unknown>): boolean {
   const tc = body.tool_choice;
   if (tc == null) return false;
   if (tc === 'none') return true;

@@ -8,6 +8,7 @@ import type { BoundAgentDefinition } from './loader.js';
 import type { BoundAgentTool } from './tools.js';
 import {
   detectRequestFormat,
+  isToolChoiceForced,
   injectTools,
   inspectResponse,
   executeTools,
@@ -83,11 +84,11 @@ async function iterate(
   if (!agent) return null;
 
   const { definition, tools } = agent;
-  const hasTools = tools.length > 0;
+  const willInjectTools = tools.length > 0 && !isToolChoiceForced(body);
   const reqTag = `[BoundAgent] ${req.method} ${req.path} (reqId=${req.requestId.slice(0, 8)})`;
-  debugLog(`${reqTag}: resolved agent "${definition.name}" with ${tools.length} tool(s): ${tools.map(t => t.name).join(', ') || 'none'}`);
+  debugLog(`${reqTag}: resolved agent "${definition.name}" with ${tools.length} tool(s): ${tools.map(t => t.name).join(', ') || 'none'}${willInjectTools ? '' : ' (tools skipped)'}`);
 
-  const systemPrompt = buildSystemPrompt(definition, hasTools);
+  const systemPrompt = buildSystemPrompt(definition, willInjectTools);
   body = injectSystemPrompt(body, systemPrompt, format);
   body = injectTools(body, tools, format);
 
