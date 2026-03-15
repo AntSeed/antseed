@@ -331,12 +331,13 @@ describe('BoundAgentProvider — agent loop (Anthropic)', () => {
     });
     const res = await agent.handleRequest(req);
 
-    // Should NOT loop — returned as-is after 1 call
+    // Should NOT loop — returned after 1 call
     expect(inner.callCount()).toBe(1);
-    // Response still contains both tool calls (buyer handles its own)
+    // Internal tool calls stripped, only buyer tool call remains
     const body = parseBody(res.body);
     const content = body.content as { type: string; name: string }[];
-    expect(content).toHaveLength(2);
+    expect(content).toHaveLength(1);
+    expect(content[0]!.name).toBe('search_web');
   });
 
   it('multiple modules loaded in sequence', async () => {

@@ -21,6 +21,7 @@ const decoder = new TextDecoder();
 const DEFAULT_MAX_ITERATIONS = 5;
 
 export interface AgentLoopOptions {
+  /** Maximum tool-call rounds before forcing a final request. Total LLM calls = maxIterations + 1. Default: 5. */
   maxIterations?: number;
 }
 
@@ -103,7 +104,14 @@ async function iterate(
     }
 
     const action = inspectResponse(responseBody, format);
-    if (action.type === 'done') return { response, maxIterationsHit: false };
+    if (action.type === 'done') {
+      // Strip any internal tool calls that may be present in mixed responses
+      const cleaned = stripInternalToolCalls(responseBody, format);
+      return {
+        response: { ...response, body: encoder.encode(JSON.stringify(cleaned)) },
+        maxIterationsHit: false,
+      };
+    }
 
     const results = executeTools(action.internalCalls, agent.knowledge);
     body = appendToolLoop(body, responseBody, results, format);

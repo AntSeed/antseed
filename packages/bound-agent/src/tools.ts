@@ -67,7 +67,9 @@ export function buildKnowledgeToolOpenAI(modules: KnowledgeModule[]): Record<str
  */
 function isToolChoiceForced(body: Record<string, unknown>): boolean {
   const tc = body.tool_choice;
-  if (tc == null || typeof tc === 'string') return false;
+  if (tc == null) return false;
+  if (tc === 'none') return true;
+  if (typeof tc === 'string') return false;
   const obj = tc as Record<string, unknown>;
   if (obj.type === 'tool' && typeof obj.name === 'string') return true;
   if (obj.type === 'function') {
