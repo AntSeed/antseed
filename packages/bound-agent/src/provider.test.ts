@@ -246,7 +246,7 @@ describe('BoundAgentProvider — agent loop (Anthropic)', () => {
       responses: [
         // First call: LLM decides to load knowledge
         makeAnthropicToolUseResponse('antseed_load_knowledge', 'tool-1', { name: 'linkedin-posting' }),
-        // Second call: LLM responds with text
+        // Second call: loop sees text (no more tool calls)
         makeAnthropicTextResponse('Here is how to post on LinkedIn.'),
       ],
     });
@@ -349,7 +349,7 @@ describe('BoundAgentProvider — agent loop (Anthropic)', () => {
         makeAnthropicToolUseResponse('antseed_load_knowledge', 'tool-1', { name: 'linkedin-posting' }),
         // Second: load content-strategy
         makeAnthropicToolUseResponse('antseed_load_knowledge', 'tool-2', { name: 'content-strategy' }),
-        // Third: text response
+        // Third: loop sees text (no more tool calls)
         makeAnthropicTextResponse('Combined answer.'),
       ],
     });
@@ -625,9 +625,9 @@ describe('BoundAgentProvider — per-service agents', () => {
   it('uses different agents for different services', async () => {
     const inner = mockProvider({
       responses: [
-        // social agent: text response (no tool call this time)
+        // social agent: text response (done in 1 call)
         makeAnthropicTextResponse('Post on LinkedIn daily.'),
-        // coding agent: response (no knowledge, single pass)
+        // coding agent: text response (done in 1 call)
         makeAnthropicTextResponse('Use TypeScript.'),
       ],
     });
