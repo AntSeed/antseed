@@ -74,13 +74,13 @@ describe('injectSystemPrompt', () => {
 
   // ─── Anthropic string ─────────────────────────────────────────
 
-  it('prepends agent prompt before buyer Anthropic string system', () => {
+  it('wraps buyer Anthropic string system as client context', () => {
     const body = { system: 'Buyer prompt', model: 'claude' };
     const result = injectSystemPrompt(body, systemContent, 'anthropic');
     const system = result.system as string;
     expect(system).toContain('Agent prompt');
-    expect(system).toContain('Buyer prompt');
-    expect(system.indexOf('Agent prompt')).toBeLessThan(system.indexOf('Buyer prompt'));
+    expect(system).toContain('<client-context>\nBuyer prompt\n</client-context>');
+    expect(system.indexOf('Agent prompt')).toBeLessThan(system.indexOf('client-context'));
   });
 
   it('creates system when none exists (Anthropic)', () => {
@@ -91,7 +91,7 @@ describe('injectSystemPrompt', () => {
 
   // ─── Anthropic array ──────────────────────────────────────────
 
-  it('prepends to Anthropic array system preserving cache_control', () => {
+  it('wraps Anthropic array system as client context preserving cache_control', () => {
     const existing = [
       { type: 'text', text: 'Cached content', cache_control: { type: 'ephemeral' } },
     ];
@@ -100,12 +100,25 @@ describe('injectSystemPrompt', () => {
     const systemArr = result.system as { type: string; text: string; cache_control?: unknown }[];
     expect(systemArr).toHaveLength(2);
     expect(systemArr[0]).toEqual({ type: 'text', text: systemContent });
-    expect(systemArr[1]).toEqual(existing[0]);
+    expect(systemArr[1].text).toContain('<client-context>\nCached content\n</client-context>');
+    expect(systemArr[1].cache_control).toEqual({ type: 'ephemeral' });
+  });
+
+  it('handles Anthropic array with empty text blocks', () => {
+    const existing = [
+      { type: 'text', text: '' },
+      { type: 'text' },
+    ];
+    const body = { system: existing, model: 'claude' };
+    const result = injectSystemPrompt(body, systemContent, 'anthropic');
+    const systemArr = result.system as { type: string; text: string }[];
+    expect(systemArr).toHaveLength(1);
+    expect(systemArr[0]).toEqual({ type: 'text', text: systemContent });
   });
 
   // ─── OpenAI ───────────────────────────────────────────────────
 
-  it('merges into existing OpenAI system message (agent first)', () => {
+  it('wraps existing OpenAI system message as client context', () => {
     const body = {
       messages: [
         { role: 'system', content: 'Buyer system prompt' },
@@ -114,14 +127,9 @@ describe('injectSystemPrompt', () => {
     };
     const result = injectSystemPrompt(body, systemContent, 'openai');
     const messages = result.messages as { role: string; content: string }[];
-    // Should still be 2 messages, not 3 (merged, not duplicated)
     expect(messages).toHaveLength(2);
     expect(messages[0].content).toContain('Agent prompt');
-    expect(messages[0].content).toContain('Buyer system prompt');
-    // Agent comes first
-    expect(messages[0].content.indexOf('Agent prompt')).toBeLessThan(
-      messages[0].content.indexOf('Buyer system prompt'),
-    );
+    expect(messages[0].content).toContain('<client-context>\nBuyer system prompt\n</client-context>');
   });
 
   it('adds system message when none exists (OpenAI)', () => {

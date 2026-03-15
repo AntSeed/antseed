@@ -192,7 +192,7 @@ describe('BoundAgentProvider — persona only (no knowledge)', () => {
     expect(system).not.toContain('antseed_');
   });
 
-  it('preserves buyer system prompt (Anthropic string)', async () => {
+  it('wraps buyer system prompt as client context (Anthropic string)', async () => {
     const inner = mockProvider({ responses: [makeAnthropicTextResponse('ok')] });
     const agent = new BoundAgentProvider(inner, personaOnlyAgent());
 
@@ -204,10 +204,10 @@ describe('BoundAgentProvider — persona only (no knowledge)', () => {
     const body = inner.requestBodies()[0]!;
     const system = body.system as string;
     expect(system).toContain('You are a helpful social media advisor.');
-    expect(system).toContain('Buyer system prompt');
+    expect(system).toContain('<client-context>\nBuyer system prompt\n</client-context>');
   });
 
-  it('preserves buyer system prompt array (prompt caching)', async () => {
+  it('wraps buyer system prompt array as client context preserving cache_control', async () => {
     const inner = mockProvider({ responses: [makeAnthropicTextResponse('ok')] });
     const agent = new BoundAgentProvider(inner, personaOnlyAgent());
 
@@ -222,11 +222,11 @@ describe('BoundAgentProvider — persona only (no knowledge)', () => {
     const body = inner.requestBodies()[0]!;
     const system = body.system as { type: string; text: string; cache_control?: unknown }[];
     expect(Array.isArray(system)).toBe(true);
-    // Agent's system prompt prepended as first block
+    // Agent's system prompt as first block
     expect(system[0]!.text).toContain('You are a helpful social media advisor.');
-    // Buyer's cached block preserved
-    expect(system[1]!.text).toBe('Cached content');
-    expect(system[1]!.cache_control).toBeDefined();
+    // Buyer's content wrapped as client context in second block
+    expect(system[1]!.text).toContain('<client-context>\nCached content\n</client-context>');
+    expect(system[1]!.cache_control).toEqual({ type: 'ephemeral' });
   });
 
   it('no tools are injected into the request', async () => {
