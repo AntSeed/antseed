@@ -719,11 +719,13 @@ export class AntseedNode extends EventEmitter {
       for (const frame of frames) {
         // Keepalive: respond to Ping, dispatch Pong to manager
         if (frame.type === MessageType.Ping) {
-          conn.send(encodeFrame({
-            type: MessageType.Pong,
-            messageId: frame.messageId,
-            payload: buildPongPayload(frame.payload),
-          }));
+          if (conn.state === ConnectionState.Open || conn.state === ConnectionState.Authenticated) {
+            conn.send(encodeFrame({
+              type: MessageType.Pong,
+              messageId: frame.messageId,
+              payload: buildPongPayload(frame.payload),
+            }));
+          }
           continue;
         }
         if (frame.type === MessageType.Pong) {
@@ -784,6 +786,7 @@ export class AntseedNode extends EventEmitter {
           conn.fail(new Error("Keepalive timeout"));
         },
       });
+      this._keepalives.get(peerId)?.stop();
       this._keepalives.set(peerId, keepalive);
       keepalive.start();
     }
