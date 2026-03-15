@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { KnowledgeModule } from './loader.js';
 import {
-  type BoundAgentTool,
+  type AntAgentTool,
   knowledgeTool,
   injectTools,
   inspectResponse,
@@ -16,7 +16,7 @@ const testModules: KnowledgeModule[] = [
   { name: 'faq', description: 'Frequently asked questions', content: 'Q: What? A: That.' },
 ];
 
-const testTools: BoundAgentTool[] = [knowledgeTool(testModules)];
+const testTools: AntAgentTool[] = [knowledgeTool(testModules)];
 
 describe('knowledgeTool', () => {
   it('creates a tool with load_knowledge name', () => {
@@ -52,7 +52,7 @@ describe('injectTools', () => {
   });
 
   it('injects multiple tools', () => {
-    const customTool: BoundAgentTool = {
+    const customTool: AntAgentTool = {
       name: 'fetch_price',
       description: 'Fetch price',
       parameters: { type: 'object', properties: {} },
@@ -215,7 +215,7 @@ describe('executeTools', () => {
   });
 
   it('executes async custom tools', async () => {
-    const customTool: BoundAgentTool = {
+    const customTool: AntAgentTool = {
       name: 'fetch_data',
       description: 'Fetch data',
       parameters: { type: 'object', properties: {} },
@@ -229,7 +229,7 @@ describe('executeTools', () => {
   });
 
   it('catches tool execution errors', async () => {
-    const failingTool: BoundAgentTool = {
+    const failingTool: AntAgentTool = {
       name: 'broken',
       description: 'Broken tool',
       parameters: { type: 'object', properties: {} },

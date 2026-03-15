@@ -5,8 +5,8 @@ import type {
   SerializedHttpResponse,
   ProviderStreamCallbacks,
 } from '@antseed/node';
-import { BoundAgentProvider } from './provider.js';
-import type { BoundAgentDefinition } from './loader.js';
+import { AntAgentProvider } from './provider.js';
+import type { AntAgentDefinition } from './loader.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────
 
@@ -119,7 +119,7 @@ function mockProvider(opts: MockProviderOptions): Provider & {
 
 // ─── Test agents ─────────────────────────────────────────────────
 
-function personaOnlyAgent(): BoundAgentDefinition {
+function personaOnlyAgent(): AntAgentDefinition {
   return {
     name: 'test-agent',
     persona: 'You are a helpful social media advisor.',
@@ -129,7 +129,7 @@ function personaOnlyAgent(): BoundAgentDefinition {
   };
 }
 
-function agentWithKnowledge(): BoundAgentDefinition {
+function agentWithKnowledge(): AntAgentDefinition {
   return {
     name: 'social-media-advisor',
     persona: 'You are a social media expert.',
@@ -157,10 +157,10 @@ function agentWithKnowledge(): BoundAgentDefinition {
 
 // ─── Tests ──────────────────────────────────────────────────────
 
-describe('BoundAgentProvider — persona only (no knowledge)', () => {
+describe('AntAgentProvider — persona only (no knowledge)', () => {
   it('injects persona + guardrails into system prompt', async () => {
     const inner = mockProvider({ responses: [makeAnthropicTextResponse('hello')] });
-    const agent = new BoundAgentProvider(inner, personaOnlyAgent());
+    const agent = new AntAgentProvider(inner, personaOnlyAgent());
 
     const req = makeReq({ messages: [{ role: 'user', content: 'hi' }] });
     await agent.handleRequest(req);
@@ -175,7 +175,7 @@ describe('BoundAgentProvider — persona only (no knowledge)', () => {
 
   it('makes only one LLM call (no tools, no loop)', async () => {
     const inner = mockProvider({ responses: [makeAnthropicTextResponse('done')] });
-    const agent = new BoundAgentProvider(inner, personaOnlyAgent());
+    const agent = new AntAgentProvider(inner, personaOnlyAgent());
 
     await agent.handleRequest(makeReq({ messages: [{ role: 'user', content: 'hi' }] }));
     expect(inner.callCount()).toBe(1);
@@ -183,7 +183,7 @@ describe('BoundAgentProvider — persona only (no knowledge)', () => {
 
   it('does not inject tool-set instructions when no knowledge', async () => {
     const inner = mockProvider({ responses: [makeAnthropicTextResponse('ok')] });
-    const agent = new BoundAgentProvider(inner, personaOnlyAgent());
+    const agent = new AntAgentProvider(inner, personaOnlyAgent());
 
     await agent.handleRequest(makeReq({ messages: [{ role: 'user', content: 'hi' }] }));
 
@@ -194,7 +194,7 @@ describe('BoundAgentProvider — persona only (no knowledge)', () => {
 
   it('wraps buyer system prompt as client context (Anthropic string)', async () => {
     const inner = mockProvider({ responses: [makeAnthropicTextResponse('ok')] });
-    const agent = new BoundAgentProvider(inner, personaOnlyAgent());
+    const agent = new AntAgentProvider(inner, personaOnlyAgent());
 
     await agent.handleRequest(makeReq({
       system: 'Buyer system prompt',
@@ -209,7 +209,7 @@ describe('BoundAgentProvider — persona only (no knowledge)', () => {
 
   it('wraps buyer system prompt array as client context preserving cache_control', async () => {
     const inner = mockProvider({ responses: [makeAnthropicTextResponse('ok')] });
-    const agent = new BoundAgentProvider(inner, personaOnlyAgent());
+    const agent = new AntAgentProvider(inner, personaOnlyAgent());
 
     const buyerSystem = [
       { type: 'text', text: 'Cached content', cache_control: { type: 'ephemeral' } },
@@ -231,7 +231,7 @@ describe('BoundAgentProvider — persona only (no knowledge)', () => {
 
   it('no tools are injected into the request', async () => {
     const inner = mockProvider({ responses: [makeAnthropicTextResponse('ok')] });
-    const agent = new BoundAgentProvider(inner, personaOnlyAgent());
+    const agent = new AntAgentProvider(inner, personaOnlyAgent());
 
     await agent.handleRequest(makeReq({ messages: [{ role: 'user', content: 'hi' }] }));
 
@@ -240,7 +240,7 @@ describe('BoundAgentProvider — persona only (no knowledge)', () => {
   });
 });
 
-describe('BoundAgentProvider — agent loop (Anthropic)', () => {
+describe('AntAgentProvider — agent loop (Anthropic)', () => {
   it('LLM calls antseed_load_knowledge → executed → re-prompt → text (2 calls)', async () => {
     const inner = mockProvider({
       responses: [
@@ -250,7 +250,7 @@ describe('BoundAgentProvider — agent loop (Anthropic)', () => {
         makeAnthropicTextResponse('Here is how to post on LinkedIn.'),
       ],
     });
-    const agent = new BoundAgentProvider(inner, agentWithKnowledge());
+    const agent = new AntAgentProvider(inner, agentWithKnowledge());
 
     const req = makeReq({ messages: [{ role: 'user', content: 'How do I post on LinkedIn?' }] });
     const res = await agent.handleRequest(req);
@@ -287,7 +287,7 @@ describe('BoundAgentProvider — agent loop (Anthropic)', () => {
     const inner = mockProvider({
       responses: [makeAnthropicTextResponse('Simple answer.')],
     });
-    const agent = new BoundAgentProvider(inner, agentWithKnowledge());
+    const agent = new AntAgentProvider(inner, agentWithKnowledge());
 
     await agent.handleRequest(makeReq({ messages: [{ role: 'user', content: 'What time is it?' }] }));
     expect(inner.callCount()).toBe(1);
@@ -298,7 +298,7 @@ describe('BoundAgentProvider — agent loop (Anthropic)', () => {
       content: [{ type: 'tool_use', id: 'buyer-tool-1', name: 'search_web', input: { q: 'test' } }],
     });
     const inner = mockProvider({ responses: [buyerToolResponse] });
-    const agent = new BoundAgentProvider(inner, agentWithKnowledge());
+    const agent = new AntAgentProvider(inner, agentWithKnowledge());
 
     const req = makeReq({
       messages: [{ role: 'user', content: 'search for me' }],
@@ -325,7 +325,7 @@ describe('BoundAgentProvider — agent loop (Anthropic)', () => {
     const inner = mockProvider({
       responses: [mixedResponse],
     });
-    const agent = new BoundAgentProvider(inner, agentWithKnowledge());
+    const agent = new AntAgentProvider(inner, agentWithKnowledge());
 
     const req = makeReq({
       messages: [{ role: 'user', content: 'help' }],
@@ -353,7 +353,7 @@ describe('BoundAgentProvider — agent loop (Anthropic)', () => {
         makeAnthropicTextResponse('Combined answer.'),
       ],
     });
-    const agent = new BoundAgentProvider(inner, agentWithKnowledge());
+    const agent = new AntAgentProvider(inner, agentWithKnowledge());
 
     const res = await agent.handleRequest(makeReq({
       messages: [{ role: 'user', content: 'Plan my LinkedIn content' }],
@@ -378,7 +378,7 @@ describe('BoundAgentProvider — agent loop (Anthropic)', () => {
         makeAnthropicTextResponse('I could not find that module.'),
       ],
     });
-    const agent = new BoundAgentProvider(inner, agentWithKnowledge());
+    const agent = new AntAgentProvider(inner, agentWithKnowledge());
 
     await agent.handleRequest(makeReq({ messages: [{ role: 'user', content: 'help' }] }));
 
@@ -404,7 +404,7 @@ describe('BoundAgentProvider — agent loop (Anthropic)', () => {
         makeAnthropicToolUseResponse('antseed_load_knowledge', `tool-${i}`, { name: 'linkedin-posting' }),
       ),
     });
-    const agent = new BoundAgentProvider(inner, agentWithKnowledge(), { maxIterations: 2 });
+    const agent = new AntAgentProvider(inner, agentWithKnowledge(), { maxIterations: 2 });
 
     const res = await agent.handleRequest(makeReq({ messages: [{ role: 'user', content: 'help' }] }));
 
@@ -424,7 +424,7 @@ describe('BoundAgentProvider — agent loop (Anthropic)', () => {
     const inner = mockProvider({
       responses: [makeAnthropicTextResponse('done')],
     });
-    const agent = new BoundAgentProvider(inner, agentWithKnowledge());
+    const agent = new AntAgentProvider(inner, agentWithKnowledge());
 
     await agent.handleRequest(makeReq({ messages: [{ role: 'user', content: 'hi' }] }));
 
@@ -435,7 +435,7 @@ describe('BoundAgentProvider — agent loop (Anthropic)', () => {
   });
 });
 
-describe('BoundAgentProvider — agent loop (OpenAI)', () => {
+describe('AntAgentProvider — agent loop (OpenAI)', () => {
   it('tool call → execute → text response', async () => {
     const inner = mockProvider({
       responses: [
@@ -443,7 +443,7 @@ describe('BoundAgentProvider — agent loop (OpenAI)', () => {
         makeOpenAITextResponse('LinkedIn tips here.'),
       ],
     });
-    const agent = new BoundAgentProvider(inner, agentWithKnowledge());
+    const agent = new AntAgentProvider(inner, agentWithKnowledge());
 
     const req = makeReq(
       { messages: [{ role: 'user', content: 'LinkedIn help' }] },
@@ -479,7 +479,7 @@ describe('BoundAgentProvider — agent loop (OpenAI)', () => {
   it('buyer tool call → returned as-is', async () => {
     const buyerToolResponse = makeOpenAIToolCallResponse('search_web', 'call-1', { q: 'test' });
     const inner = mockProvider({ responses: [buyerToolResponse] });
-    const agent = new BoundAgentProvider(inner, agentWithKnowledge());
+    const agent = new AntAgentProvider(inner, agentWithKnowledge());
 
     const req = makeReq(
       {
@@ -497,10 +497,10 @@ describe('BoundAgentProvider — agent loop (OpenAI)', () => {
   });
 });
 
-describe('BoundAgentProvider — tool injection', () => {
+describe('AntAgentProvider — tool injection', () => {
   it('injects antseed tool alongside buyer tools', async () => {
     const inner = mockProvider({ responses: [makeAnthropicTextResponse('ok')] });
-    const agent = new BoundAgentProvider(inner, agentWithKnowledge());
+    const agent = new AntAgentProvider(inner, agentWithKnowledge());
 
     const buyerTools = [
       { name: 'search_web', description: 'Search', input_schema: { type: 'object' } },
@@ -519,7 +519,7 @@ describe('BoundAgentProvider — tool injection', () => {
 
   it('includes knowledge catalog in tool description', async () => {
     const inner = mockProvider({ responses: [makeAnthropicTextResponse('ok')] });
-    const agent = new BoundAgentProvider(inner, agentWithKnowledge());
+    const agent = new AntAgentProvider(inner, agentWithKnowledge());
 
     await agent.handleRequest(makeReq({ messages: [{ role: 'user', content: 'hi' }] }));
 
@@ -533,7 +533,7 @@ describe('BoundAgentProvider — tool injection', () => {
 
   it('no tools injected when no knowledge modules', async () => {
     const inner = mockProvider({ responses: [makeAnthropicTextResponse('ok')] });
-    const agent = new BoundAgentProvider(inner, personaOnlyAgent());
+    const agent = new AntAgentProvider(inner, personaOnlyAgent());
 
     await agent.handleRequest(makeReq({ messages: [{ role: 'user', content: 'hi' }] }));
 
@@ -543,7 +543,7 @@ describe('BoundAgentProvider — tool injection', () => {
 
   it('skips tool injection when tool_choice is forced', async () => {
     const inner = mockProvider({ responses: [makeAnthropicTextResponse('ok')] });
-    const agent = new BoundAgentProvider(inner, agentWithKnowledge());
+    const agent = new AntAgentProvider(inner, agentWithKnowledge());
 
     await agent.handleRequest(makeReq({
       messages: [{ role: 'user', content: 'hi' }],
@@ -559,7 +559,7 @@ describe('BoundAgentProvider — tool injection', () => {
   });
 });
 
-describe('BoundAgentProvider — streaming', () => {
+describe('AntAgentProvider — streaming', () => {
   it('buffered loop + streamed final response', async () => {
     const inner = mockProvider({
       responses: [
@@ -567,7 +567,7 @@ describe('BoundAgentProvider — streaming', () => {
         makeAnthropicTextResponse('Streamed response.'),
       ],
     });
-    const agent = new BoundAgentProvider(inner, agentWithKnowledge());
+    const agent = new AntAgentProvider(inner, agentWithKnowledge());
 
     let streamStarted = false;
     const chunks: Uint8Array[] = [];
@@ -585,7 +585,7 @@ describe('BoundAgentProvider — streaming', () => {
 
   it('direct stream for persona-only (no loop needed)', async () => {
     const inner = mockProvider({ responses: [makeAnthropicTextResponse('direct')] });
-    const agent = new BoundAgentProvider(inner, personaOnlyAgent());
+    const agent = new AntAgentProvider(inner, personaOnlyAgent());
 
     let streamStarted = false;
     const req = makeReq({ messages: [{ role: 'user', content: 'hi' }] });
@@ -599,8 +599,8 @@ describe('BoundAgentProvider — streaming', () => {
   });
 });
 
-describe('BoundAgentProvider — per-service agents', () => {
-  function socialAgent(): BoundAgentDefinition {
+describe('AntAgentProvider — per-service agents', () => {
+  function socialAgent(): AntAgentDefinition {
     return {
       name: 'social-agent',
       persona: 'You are a social media expert.',
@@ -612,7 +612,7 @@ describe('BoundAgentProvider — per-service agents', () => {
     };
   }
 
-  function codingAgent(): BoundAgentDefinition {
+  function codingAgent(): AntAgentDefinition {
     return {
       name: 'coding-agent',
       persona: 'You are a coding expert.',
@@ -632,7 +632,7 @@ describe('BoundAgentProvider — per-service agents', () => {
       ],
     });
 
-    const agent = new BoundAgentProvider(inner, {
+    const agent = new AntAgentProvider(inner, {
       'social-model': socialAgent(),
       'coding-model': codingAgent(),
     });
@@ -669,7 +669,7 @@ describe('BoundAgentProvider — per-service agents', () => {
       responses: [makeAnthropicTextResponse('raw response')],
     });
 
-    const agent = new BoundAgentProvider(inner, {
+    const agent = new AntAgentProvider(inner, {
       'social-model': socialAgent(),
     });
 
@@ -690,7 +690,7 @@ describe('BoundAgentProvider — per-service agents', () => {
       responses: [makeAnthropicTextResponse('fallback response')],
     });
 
-    const agent = new BoundAgentProvider(inner, {
+    const agent = new AntAgentProvider(inner, {
       'social-model': socialAgent(),
       '*': codingAgent(),
     });
@@ -711,7 +711,7 @@ describe('BoundAgentProvider — per-service agents', () => {
       responses: [makeOpenAITextResponse('social response')],
     });
 
-    const agent = new BoundAgentProvider(inner, {
+    const agent = new AntAgentProvider(inner, {
       'social-model': socialAgent(),
     });
 
@@ -728,9 +728,9 @@ describe('BoundAgentProvider — per-service agents', () => {
     expect(systemMsg!.content).toContain('social media expert');
   });
 
-  it('single BoundAgentDefinition still works (backward compat)', async () => {
+  it('single AntAgentDefinition still works (backward compat)', async () => {
     const inner = mockProvider({ responses: [makeAnthropicTextResponse('ok')] });
-    const agent = new BoundAgentProvider(inner, codingAgent());
+    const agent = new AntAgentProvider(inner, codingAgent());
 
     await agent.handleRequest(makeReq({
       service: 'any-service',
@@ -743,10 +743,10 @@ describe('BoundAgentProvider — per-service agents', () => {
   });
 });
 
-describe('BoundAgentProvider — error handling', () => {
+describe('AntAgentProvider — error handling', () => {
   it('passes through non-JSON requests unchanged', async () => {
     const inner = mockProvider({ responses: [] });
-    const agent = new BoundAgentProvider(inner, personaOnlyAgent());
+    const agent = new AntAgentProvider(inner, personaOnlyAgent());
 
     const req: SerializedHttpRequest = {
       requestId: 'req-1',
@@ -770,7 +770,7 @@ describe('BoundAgentProvider — error handling', () => {
 
   it('uses custom confidentiality prompt when provided', async () => {
     const inner = mockProvider({ responses: [makeAnthropicTextResponse('ok')] });
-    const agent = new BoundAgentProvider(inner, {
+    const agent = new AntAgentProvider(inner, {
       ...personaOnlyAgent(),
       confidentialityPrompt: 'Custom: keep everything secret.',
     });
@@ -784,10 +784,10 @@ describe('BoundAgentProvider — error handling', () => {
   });
 });
 
-describe('BoundAgentProvider — Provider interface delegation', () => {
+describe('AntAgentProvider — Provider interface delegation', () => {
   it('delegates name, services, pricing, maxConcurrency, getCapacity', () => {
     const inner = mockProvider({ responses: [] });
-    const agent = new BoundAgentProvider(inner, personaOnlyAgent());
+    const agent = new AntAgentProvider(inner, personaOnlyAgent());
 
     expect(agent.name).toBe('mock');
     expect(agent.services).toEqual(['claude-sonnet-4-5-20250929']);

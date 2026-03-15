@@ -4,8 +4,8 @@ import type {
   SerializedHttpResponse,
   ProviderStreamCallbacks,
 } from '@antseed/node';
-import type { BoundAgentDefinition } from './loader.js';
-import type { BoundAgentTool } from './tools.js';
+import type { AntAgentDefinition } from './loader.js';
+import type { AntAgentTool } from './tools.js';
 import {
   type RequestFormat,
   detectRequestFormat,
@@ -29,13 +29,13 @@ export interface AgentLoopOptions {
   /** Maximum tool-call rounds before forcing a final request. Total LLM calls = maxIterations + 1. Default: 5. */
   maxIterations?: number;
   /** Additional tools available to the agent loop. Auto-prefixed with `antseed_`. */
-  tools?: BoundAgentTool[];
+  tools?: AntAgentTool[];
 }
 
 /** Agent definition paired with its pre-built tool list. Created once at construction. */
 export interface ResolvedAgent {
-  definition: BoundAgentDefinition;
-  tools: BoundAgentTool[];
+  definition: AntAgentDefinition;
+  tools: AntAgentTool[];
 }
 
 export type AgentResolver = (body: Record<string, unknown>) => ResolvedAgent | undefined;
@@ -103,7 +103,7 @@ function prepareBody(
 
   const { definition, tools } = agent;
   const willInjectTools = tools.length > 0 && !isToolChoiceForced(body);
-  const reqTag = `[BoundAgent] ${req.method} ${req.path} (reqId=${req.requestId.slice(0, 8)})`;
+  const reqTag = `[AntAgent] ${req.method} ${req.path} (reqId=${req.requestId.slice(0, 8)})`;
   debugLog(`${reqTag}: resolved agent "${definition.name}" with ${tools.length} tool(s): ${tools.map(t => t.name).join(', ') || 'none'}${willInjectTools ? '' : ' (tools skipped)'}`);
 
   const systemPrompt = buildSystemPrompt(definition, willInjectTools);

@@ -85,9 +85,9 @@ configSchema: [
 
 The CLI reads matching environment variables and passes them to `createProvider(config)`.
 
-## Adding a Bound Agent
+## Adding a Ant Agent
 
-Providers can differentiate their service by wrapping it with a **bound agent** — a read-only, knowledge-augmented AI service that injects a persona, guardrails, and on-demand knowledge into buyer requests. Creators can also add custom tools for fetching external data, calling APIs, etc. The CLI handles this automatically via `@antseed/bound-agent` — no plugin code required.
+Providers can differentiate their service by wrapping it with a **ant agent** — a read-only, knowledge-augmented AI service that injects a persona, guardrails, and on-demand knowledge into buyer requests. Creators can also add custom tools for fetching external data, calling APIs, etc. The CLI handles this automatically via `@antseed/ant-agent` — no plugin code required.
 
 ### Setup
 
@@ -134,9 +134,9 @@ Then point your config at the agent directory:
 3. Internal tool calls are executed in a loop until the LLM produces a final text response
 4. The buyer gets a clean streamed response with no internal tools or loop artifacts
 
-The composition chain is: `BoundAgentProvider → BaseProvider`.
+The composition chain is: `AntAgentProvider → BaseProvider`.
 
-See the [`@antseed/bound-agent` README](../../../packages/bound-agent/README.md) for the full manifest reference.
+See the [`@antseed/ant-agent` README](../../../packages/ant-agent/README.md) for the full manifest reference.
 
 ## Publishing
 

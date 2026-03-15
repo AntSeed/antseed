@@ -92,9 +92,9 @@ antseed config set identity.displayName "Acme Inference - us-east-1"
 antseed config seller set serviceCategories.anthropic.claude-sonnet-4-5-20250929 '["coding","privacy"]'
 ```
 
-## Bound Agent
+## Ant Agent
 
-Providers can wrap their service with a bound agent — a knowledge-augmented AI service that injects a persona, guardrails, and on-demand knowledge into buyer requests. The LLM decides which knowledge to load via the `antseed_load_knowledge` tool. Creators can also define custom tools in the manifest.
+Providers can wrap their service with a ant agent — a knowledge-augmented AI service that injects a persona, guardrails, and on-demand knowledge into buyer requests. The LLM decides which knowledge to load via the `antseed_load_knowledge` tool. Creators can also define custom tools in the manifest.
 
 ```json title="config example"
 {
@@ -104,7 +104,7 @@ Providers can wrap their service with a bound agent — a knowledge-augmented AI
 }
 ```
 
-The agent directory contains an `agent.json` manifest that defines the persona, guardrails, knowledge modules, and custom tools. See the [`@antseed/bound-agent` README](https://github.com/AntSeed/antseed/tree/main/packages/bound-agent) for the full manifest reference.
+The agent directory contains an `agent.json` manifest that defines the persona, guardrails, knowledge modules, and custom tools. See the [`@antseed/ant-agent` README](https://github.com/AntSeed/antseed/tree/main/packages/ant-agent) for the full manifest reference.
 
 Per-service agents (different agents for different services):
 

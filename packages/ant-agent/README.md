@@ -1,8 +1,8 @@
-# @antseed/bound-agent
+# @antseed/ant-agent
 
-Bound agent runtime for AntSeed. Lets seed runners monetize their knowledge by wrapping any provider with a persona, guardrails, on-demand knowledge modules, and custom tools.
+Ant agent runtime for AntSeed. Lets seed runners monetize their knowledge by wrapping any provider with a persona, guardrails, on-demand knowledge modules, and custom tools.
 
-A bound agent is a **read-only, knowledge-augmented AI service**. It doesn't act on the user's behalf — it answers questions using curated expertise that the creator packages and maintains.
+An ant agent is a **read-only, knowledge-augmented AI service**. It doesn't act on the user's behalf — it answers questions using curated expertise that the creator packages and maintains.
 
 ## How it works
 
@@ -85,16 +85,16 @@ my-agent/
 ### Programmatic
 
 ```typescript
-import { loadBoundAgent, BoundAgentProvider } from '@antseed/bound-agent';
+import { loadAntAgent, AntAgentProvider } from '@antseed/ant-agent';
 
 // Load agent (knowledge + tools from agent.json)
-const agent = await loadBoundAgent('./my-agent');
-const boundProvider = new BoundAgentProvider(innerProvider, agent);
+const agent = await loadAntAgent('./my-agent');
+const boundProvider = new AntAgentProvider(innerProvider, agent);
 
 // Per-service agents
-const socialAgent = await loadBoundAgent('./social-agent');
-const codingAgent = await loadBoundAgent('./coding-agent');
-const boundProvider = new BoundAgentProvider(innerProvider, {
+const socialAgent = await loadAntAgent('./social-agent');
+const codingAgent = await loadAntAgent('./coding-agent');
+const boundProvider = new AntAgentProvider(innerProvider, {
   'social-model-v1': socialAgent,
   'coding-model-v1': codingAgent,
   '*': socialAgent,
@@ -183,17 +183,17 @@ If a tool's execute function throws, the error message is returned to the LLM as
 Tools can also be added programmatically via the options parameter (useful when tools need access to runtime state):
 
 ```typescript
-import { BoundAgentProvider, loadBoundAgent, type BoundAgentTool } from '@antseed/bound-agent';
+import { AntAgentProvider, loadAntAgent, type AntAgentTool } from '@antseed/ant-agent';
 
-const customTool: BoundAgentTool = {
+const customTool: AntAgentTool = {
   name: 'lookup_user',
   description: 'Look up user details',
   parameters: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
   execute: async (args) => db.users.findById(args.id),
 };
 
-const agent = await loadBoundAgent('./my-agent');
-new BoundAgentProvider(innerProvider, agent, { tools: [customTool] });
+const agent = await loadAntAgent('./my-agent');
+new AntAgentProvider(innerProvider, agent, { tools: [customTool] });
 ```
 
 Manifest tools and programmatic tools are merged together.

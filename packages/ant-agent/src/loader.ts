@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join, isAbsolute, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import type { BoundAgentTool } from './tools.js';
+import type { AntAgentTool } from './tools.js';
 
 export interface KnowledgeModule {
   /** Unique name for this knowledge module. */
@@ -12,7 +12,7 @@ export interface KnowledgeModule {
   content: string;
 }
 
-export interface BoundAgentDefinition {
+export interface AntAgentDefinition {
   /** Agent name. */
   name: string;
   /** Persona / system prompt content (loaded from markdown file). */
@@ -22,13 +22,13 @@ export interface BoundAgentDefinition {
   /** Knowledge modules available for selective loading. */
   knowledge: KnowledgeModule[];
   /** Tools loaded from the manifest (execute files dynamically imported). */
-  tools?: BoundAgentTool[];
+  tools?: AntAgentTool[];
   /** Custom confidentiality prompt. Uses a built-in default when omitted. */
   confidentialityPrompt?: string;
 }
 
 /**
- * Shape of the `agent.json` manifest file in a bound agent directory.
+ * Shape of the `agent.json` manifest file in a ant agent directory.
  *
  * Example:
  * ```json
@@ -56,7 +56,7 @@ interface AgentManifest {
 }
 
 /**
- * Load a bound agent definition from a directory containing `agent.json`.
+ * Load a ant agent definition from a directory containing `agent.json`.
  *
  * The directory structure:
  * ```
@@ -68,7 +68,7 @@ interface AgentManifest {
  *     topic-b.md
  * ```
  */
-export async function loadBoundAgent(agentDir: string): Promise<BoundAgentDefinition> {
+export async function loadAntAgent(agentDir: string): Promise<AntAgentDefinition> {
   const manifestPath = join(agentDir, 'agent.json');
   const raw = await readFile(manifestPath, 'utf-8');
   const manifest: AgentManifest = JSON.parse(raw) as AgentManifest;
@@ -102,7 +102,7 @@ export async function loadBoundAgent(agentDir: string): Promise<BoundAgentDefini
   }
 
   // Load tools
-  const tools: BoundAgentTool[] = [];
+  const tools: AntAgentTool[] = [];
   if (manifest.tools) {
     for (const entry of manifest.tools) {
       if (!entry.name || !entry.description || !entry.execute) {
@@ -111,7 +111,7 @@ export async function loadBoundAgent(agentDir: string): Promise<BoundAgentDefini
       const execPath = isAbsolute(entry.execute)
         ? entry.execute
         : resolve(agentDir, entry.execute);
-      const mod = await import(pathToFileURL(execPath).href) as { default: BoundAgentTool['execute'] };
+      const mod = await import(pathToFileURL(execPath).href) as { default: AntAgentTool['execute'] };
       if (typeof mod.default !== 'function') {
         throw new Error(`Tool "${entry.name}": ${entry.execute} must export a default function`);
       }
