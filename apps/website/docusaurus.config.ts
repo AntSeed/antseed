@@ -24,7 +24,7 @@ const statsProxyPlugin: PluginModule = () => ({
 
 const config: Config = {
   title: 'AntSeed',
-  tagline: 'Private AI. Anonymous. Peer-to-peer.',
+  tagline: 'An open network for AI services. Unstoppable by design.',
   favicon: 'logo.svg',
   url: 'https://antseed.com',
   baseUrl: '/',
