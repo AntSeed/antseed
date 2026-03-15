@@ -27,6 +27,8 @@ export function initDashboardApiModule({
   defaultDashboardPort = 3117,
 }: DashboardApiOptions) {
   let refreshHooks: RefreshHooks | null = null;
+  let dashboardReady = false;
+  let lastDashboardCheck = 0;
 
   function getDashboardPort(): number {
     const port = safeNumber(uiState.dashboardPortValue, defaultDashboardPort);
@@ -45,21 +47,21 @@ export function initDashboardApiModule({
     if (!bridge) return dashboardBridgeError('Desktop bridge unavailable');
 
     if (!bridge.getDashboardData) {
-      if (endpoint === 'network' && bridge.getNetwork) {
+      // Always try legacy fallback for network/peers if new API is unavailable
+      if ((endpoint === 'network' || endpoint === 'peers') && bridge.getNetwork) {
         const legacyNetwork = await bridge.getNetwork(getDashboardPort());
         if (!legacyNetwork.ok) return dashboardBridgeError(legacyNetwork.error ?? 'Failed to query network endpoint');
-        return { ok: true, data: legacyNetwork, error: null, status: 200 };
-      }
-
-      if (endpoint === 'peers' && bridge.getNetwork) {
-        const legacyNetwork = await bridge.getNetwork(getDashboardPort());
-        if (!legacyNetwork.ok) return dashboardBridgeError(legacyNetwork.error ?? 'Failed to query peers endpoint');
-        return {
-          ok: true,
-          data: { peers: safeArray(legacyNetwork.peers), total: safeArray(legacyNetwork.peers).length, degraded: false },
-          error: null,
-          status: 200,
-        };
+        
+        if (endpoint === 'network') {
+          return { ok: true, data: legacyNetwork, error: null, status: 200 };
+        } else {
+          return {
+            ok: true,
+            data: { peers: safeArray(legacyNetwork.peers), total: safeArray(legacyNetwork.peers).length, degraded: false },
+            error: null,
+            status: 200,
+          };
+        }
       }
 
       return dashboardBridgeError('Dashboard data bridge unavailable');
@@ -71,12 +73,44 @@ export function initDashboardApiModule({
       const message = err instanceof Error ? err.message : String(err);
 
       if (message.includes("No handler registered for 'runtime:get-dashboard-data'")) {
-        if (endpoint === 'network' && bridge.getNetwork) {
+        // Consistent legacy fallback for both network and peers
+        if ((endpoint === 'network' || endpoint === 'peers') && bridge.getNetwork) {
           const legacyNetwork = await bridge.getNetwork(getDashboardPort());
           if (!legacyNetwork.ok) return dashboardBridgeError(legacyNetwork.error ?? 'Failed to query network endpoint');
-          return { ok: true, data: legacyNetwork, error: null, status: 200 };
+          
+          if (endpoint === 'network') {
+            return { ok: true, data: legacyNetwork, error: null, status: 200 };
+          } else {
+            return {
+              ok: true,
+              data: { peers: safeArray(legacyNetwork.peers), total: safeArray(legacyNetwork.peers).length, degraded: false },
+              error: null,
+              status: 200,
+            };
+          }
         }
         return dashboardBridgeError('Desktop main process is outdated. Fully quit and relaunch AntSeed Desktop.');
+      }
+
+      // On any API error, try legacy fallback for network/peers data
+      if ((endpoint === 'network' || endpoint === 'peers') && bridge.getNetwork) {
+        try {
+          const legacyNetwork = await bridge.getNetwork(getDashboardPort());
+          if (legacyNetwork.ok) {
+            if (endpoint === 'network') {
+              return { ok: true, data: legacyNetwork, error: null, status: 200 };
+            } else {
+              return {
+                ok: true,
+                data: { peers: safeArray(legacyNetwork.peers), total: safeArray(legacyNetwork.peers).length, degraded: false },
+                error: null,
+                status: 200,
+              };
+            }
+          }
+        } catch {
+          // If legacy fallback also fails, return original error
+        }
       }
 
       return dashboardBridgeError(message);
@@ -110,6 +144,25 @@ export function initDashboardApiModule({
     }
   }
 
+  async function ensureDashboardReady(): Promise<boolean> {
+    const now = Date.now();
+    // Cache readiness check for 5 seconds to avoid hammering the API
+    if (dashboardReady && now - lastDashboardCheck < 5000) {
+      return true;
+    }
+
+    try {
+      const result = await getDashboardData('status');
+      dashboardReady = result.ok;
+      lastDashboardCheck = now;
+      return dashboardReady;
+    } catch {
+      dashboardReady = false;
+      lastDashboardCheck = now;
+      return false;
+    }
+  }
+
   function setRefreshHooks(hooks: RefreshHooks): void {
     refreshHooks = hooks;
   }
@@ -120,11 +173,40 @@ export function initDashboardApiModule({
     const { renderDashboardData, setDashboardRefreshState, refreshChatConversations, refreshChatProxyStatus } =
       refreshHooks;
 
-    setDashboardRefreshState?.(true, 'Refreshing peers and network status...');
+    setDashboardRefreshState?.(true, 'Checking dashboard readiness...');
 
     try {
+      // Ensure dashboard is ready before attempting data fetch
+      const ready = await ensureDashboardReady();
+      if (!ready) {
+        setDashboardRefreshState?.(true, 'Waiting for dashboard service...');
+        // Wait a bit longer for dashboard to start
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        const retryReady = await ensureDashboardReady();
+        if (!retryReady) {
+          // Fall back to showing offline state
+          setDashboardRefreshState?.(false, 'Dashboard service unavailable');
+          return;
+        }
+      }
+
+      // First attempt: Load network and peers data
       setDashboardRefreshState?.(true, 'Loading network and peers...');
-      const [network, peers] = await Promise.all([getDashboardData('network'), getDashboardData('peers')]);
+      let network = await getDashboardData('network');
+      let peers = await getDashboardData('peers');
+
+      // If both network and peers failed, retry once after a short delay
+      if (!network.ok && !peers.ok) {
+        setDashboardRefreshState?.(true, 'Retrying peer discovery...');
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        const retryResults = await Promise.all([
+          getDashboardData('network'),
+          getDashboardData('peers')
+        ]);
+        network = retryResults[0];
+        peers = retryResults[1];
+      }
 
       setDashboardRefreshState?.(true, 'Loading runtime status and settings...');
       const [status, dataSources, config] = await Promise.all([
@@ -150,5 +232,6 @@ export function initDashboardApiModule({
     scanDhtNow,
     setRefreshHooks,
     refreshDashboardData,
+    ensureDashboardReady,
   };
 }

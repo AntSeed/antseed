@@ -52,6 +52,17 @@ function normalizeNetworkData(
       ? { ...defaultNetworkStats(), ...(rawStats as Record<string, unknown>) }
       : defaultNetworkStats();
 
+  // Debug logging to help diagnose peer visibility issues
+  if (typeof console !== 'undefined' && console.debug) {
+    console.debug('[AntSeed] Normalizing network data:', {
+      networkPeersCount: networkPeers.length,
+      daemonPeersCount: daemonPeers.length,
+      networkDataPresent: !!networkData,
+      peersDataPresent: !!peersData,
+      statsPresent: !!rawStats
+    });
+  }
+
   const merged = new Map<string, PeerEntry>();
 
   for (const peer of networkPeers) {
@@ -119,7 +130,9 @@ function normalizeNetworkData(
   }
 
   const peers = Array.from(merged.values())
-    .filter((peer) => peer.services.length > 0)
+    // Don't filter out peers without services - they might still be valid
+    // Only filter out peers with obviously invalid data
+    .filter((peer) => peer.peerId.length > 0 && (peer.host.length > 0 || peer.services.length > 0))
     .sort((a, b) => {
       if (b.reputation !== a.reputation) return b.reputation - a.reputation;
       return b.lastSeen - a.lastSeen;
@@ -134,6 +147,17 @@ function normalizeNetworkData(
         services.add(normalized);
       }
     }
+  }
+
+  // Debug logging for peer count issues
+  if (typeof console !== 'undefined' && console.debug) {
+    console.debug('[AntSeed] Peer processing result:', {
+      mergedPeersCount: merged.size,
+      filteredPeersCount: peers.length,
+      serviceCount: services.size,
+      peersWithServices: peers.filter(p => p.services.length > 0).length,
+      peersWithoutServices: peers.filter(p => p.services.length === 0).length
+    });
   }
 
   stats.totalPeers = peers.length;
@@ -182,6 +206,17 @@ export function initDashboardRenderModule({
     config: { ok: boolean; data: unknown; error?: string | null };
   }): void {
     const networkOk = results.network.ok || results.peers.ok;
+    
+    // Enhanced error logging for debugging
+    if (!networkOk && typeof console !== 'undefined' && console.warn) {
+      console.warn('[AntSeed] Both network and peers endpoints failed:', {
+        networkError: results.network.error,
+        peersError: results.peers.error,
+        networkOk: results.network.ok,
+        peersOk: results.peers.ok
+      });
+    }
+    
     const normalizedNetwork = normalizeNetworkData(
       results.network.ok ? (results.network.data as Record<string, unknown> | null) : null,
       results.peers.ok ? (results.peers.data as Record<string, unknown> | null) : null,
