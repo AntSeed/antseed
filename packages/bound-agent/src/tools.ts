@@ -27,44 +27,48 @@ export type LoopAction =
   | { type: 'continue'; internalCalls: InternalToolCall[] }
   | { type: 'done' };
 
-const KNOWLEDGE_TOOL_NAME = `${TOOL_PREFIX}load_knowledge`;
+/**
+ * A tool that the bound agent can use during the agent loop.
+ * The tool name is automatically prefixed with `antseed_` when injected.
+ */
+export interface BoundAgentTool {
+  /** Tool name (without the antseed_ prefix — it's added automatically). */
+  name: string;
+  /** Description shown to the LLM. */
+  description: string;
+  /** JSON Schema for the tool's parameters. */
+  parameters: Record<string, unknown>;
+  /** Execute the tool and return the result as a string. */
+  execute: (args: Record<string, unknown>) => Promise<string> | string;
+}
 
-const KNOWLEDGE_TOOL_PARAMS = {
-  type: 'object',
-  properties: {
-    name: { type: 'string', description: 'The name of the knowledge module to load.' },
-  },
-  required: ['name'],
-} as const;
-
-function buildKnowledgeToolDescription(modules: KnowledgeModule[]): string {
+/**
+ * Create a knowledge-loading tool from a set of knowledge modules.
+ * The module catalog is embedded in the tool description.
+ */
+export function knowledgeTool(modules: KnowledgeModule[]): BoundAgentTool {
   const catalog = modules.map(m => `- ${m.name}: ${m.description}`).join('\n');
-  return `Load a knowledge module by name to get detailed information.\n\nAvailable modules:\n${catalog}`;
-}
-
-export function buildKnowledgeToolAnthropic(modules: KnowledgeModule[]): Record<string, unknown> {
   return {
-    name: KNOWLEDGE_TOOL_NAME,
-    description: buildKnowledgeToolDescription(modules),
-    input_schema: KNOWLEDGE_TOOL_PARAMS,
-  };
-}
-
-export function buildKnowledgeToolOpenAI(modules: KnowledgeModule[]): Record<string, unknown> {
-  return {
-    type: 'function',
-    function: {
-      name: KNOWLEDGE_TOOL_NAME,
-      description: buildKnowledgeToolDescription(modules),
-      parameters: KNOWLEDGE_TOOL_PARAMS,
+    name: 'load_knowledge',
+    description: `Load a knowledge module by name to get detailed information.\n\nAvailable modules:\n${catalog}`,
+    parameters: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'The name of the knowledge module to load.' },
+      },
+      required: ['name'],
+    },
+    execute: (args) => {
+      const name = args.name as string | undefined;
+      const mod = name ? modules.find(m => m.name === name) : undefined;
+      if (!mod) throw new Error(`Knowledge module "${name ?? ''}" not found.`);
+      return mod.content;
     },
   };
 }
 
-/**
- * Check if tool_choice forces a specific function, making it pointless
- * to inject antseed tools. Covers Anthropic and OpenAI formats.
- */
+// ─── Tool injection ─────────────────────────────────────────────
+
 function isToolChoiceForced(body: Record<string, unknown>): boolean {
   const tc = body.tool_choice;
   if (tc == null) return false;
@@ -79,32 +83,49 @@ function isToolChoiceForced(body: Record<string, unknown>): boolean {
   return false;
 }
 
-/**
- * Inject antseed_* tools into the request body alongside buyer tools.
- * Returns the body unchanged if tool_choice forces a specific function.
- */
-export function injectTools(
-  body: Record<string, unknown>,
-  modules: KnowledgeModule[],
-  format: RequestFormat,
-): Record<string, unknown> {
-  if (modules.length === 0) return body;
-  if (isToolChoiceForced(body)) return body;
+function toolToAnthropic(tool: BoundAgentTool): Record<string, unknown> {
+  return {
+    name: `${TOOL_PREFIX}${tool.name}`,
+    description: tool.description,
+    input_schema: tool.parameters,
+  };
+}
 
-  const toolDef = format === 'openai'
-    ? buildKnowledgeToolOpenAI(modules)
-    : buildKnowledgeToolAnthropic(modules);
-
-  const tools = Array.isArray(body.tools) ? [...(body.tools as unknown[])] : [];
-  tools.push(toolDef);
-  return { ...body, tools };
+function toolToOpenAI(tool: BoundAgentTool): Record<string, unknown> {
+  return {
+    type: 'function',
+    function: {
+      name: `${TOOL_PREFIX}${tool.name}`,
+      description: tool.description,
+      parameters: tool.parameters,
+    },
+  };
 }
 
 /**
+ * Inject antseed_* tools into the request body alongside buyer tools.
+ * Returns the body unchanged if no tools or tool_choice is forced.
+ */
+export function injectTools(
+  body: Record<string, unknown>,
+  tools: BoundAgentTool[],
+  format: RequestFormat,
+): Record<string, unknown> {
+  if (tools.length === 0) return body;
+  if (isToolChoiceForced(body)) return body;
+
+  const convert = format === 'openai' ? toolToOpenAI : toolToAnthropic;
+  const existing = Array.isArray(body.tools) ? [...(body.tools as unknown[])] : [];
+  for (const tool of tools) {
+    existing.push(convert(tool));
+  }
+  return { ...body, tools: existing };
+}
+
+// ─── Response inspection ────────────────────────────────────────
+
+/**
  * Inspect an LLM response body and determine what the agent loop should do.
- *
- * - If there are antseed_* tool calls: continue (execute them)
- * - Otherwise: done (return response to buyer)
  */
 export function inspectResponse(
   responseBody: Record<string, unknown>,
@@ -115,17 +136,10 @@ export function inspectResponse(
   const hasBuyerCalls = allCalls.length > internalCalls.length;
 
   if (internalCalls.length === 0) return { type: 'done' };
-  // Mixed calls (both internal and buyer) → treat as done.
-  // Re-prompting with unresolved buyer tool calls would cause API validation errors
-  // (every tool_use must have a matching tool_result). Let the buyer handle its tools;
-  // internal calls get stripped by the caller.
   if (hasBuyerCalls) return { type: 'done' };
   return { type: 'continue', internalCalls };
 }
 
-/**
- * Extract all tool calls from an LLM response body.
- */
 function extractToolCalls(
   body: Record<string, unknown>,
   format: RequestFormat,
@@ -167,26 +181,33 @@ function extractToolCalls(
   return calls;
 }
 
+// ─── Tool execution ─────────────────────────────────────────────
+
 /**
- * Execute internal tool calls and return results.
- * For v1 only antseed_load_knowledge is supported.
+ * Execute internal tool calls using the registered tool definitions.
  */
-export function executeTools(
+export async function executeTools(
   calls: InternalToolCall[],
-  modules: KnowledgeModule[],
-): ToolResult[] {
-  return calls.map(call => {
-    if (call.name === `${TOOL_PREFIX}load_knowledge`) {
-      const name = call.arguments.name as string | undefined;
-      const module = name ? modules.find(m => m.name === name) : undefined;
-      if (!module) {
-        return { id: call.id, content: `Knowledge module "${name ?? ''}" not found.`, isError: true };
-      }
-      return { id: call.id, content: module.content, isError: false };
+  tools: BoundAgentTool[],
+): Promise<ToolResult[]> {
+  return Promise.all(calls.map(async (call) => {
+    const unprefixed = call.name.startsWith(TOOL_PREFIX)
+      ? call.name.slice(TOOL_PREFIX.length)
+      : call.name;
+    const tool = tools.find(t => t.name === unprefixed);
+    if (!tool) {
+      return { id: call.id, content: `Unknown tool: ${call.name}`, isError: true };
     }
-    return { id: call.id, content: `Unknown tool: ${call.name}`, isError: true };
-  });
+    try {
+      const content = await tool.execute(call.arguments);
+      return { id: call.id, content, isError: false };
+    } catch (err) {
+      return { id: call.id, content: (err as Error).message, isError: true };
+    }
+  }));
 }
+
+// ─── Message appending ──────────────────────────────────────────
 
 /**
  * Append the assistant's response (with tool calls) and tool results
@@ -226,9 +247,10 @@ export function appendToolLoop(
   return { ...body, messages };
 }
 
+// ─── Response stripping ─────────────────────────────────────────
+
 /**
  * Strip antseed_* tool-call blocks from a response body.
- * Only used when max iterations are reached and internal calls are still pending.
  */
 export function stripInternalToolCalls(
   responseBody: Record<string, unknown>,

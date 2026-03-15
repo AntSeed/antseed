@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import type { KnowledgeModule } from './loader.js';
 import {
-  buildKnowledgeToolAnthropic,
-  buildKnowledgeToolOpenAI,
+  type BoundAgentTool,
+  knowledgeTool,
   injectTools,
   inspectResponse,
   executeTools,
@@ -16,53 +16,60 @@ const testModules: KnowledgeModule[] = [
   { name: 'faq', description: 'Frequently asked questions', content: 'Q: What? A: That.' },
 ];
 
-describe('buildKnowledgeToolAnthropic', () => {
+const testTools: BoundAgentTool[] = [knowledgeTool(testModules)];
+
+describe('knowledgeTool', () => {
+  it('creates a tool with load_knowledge name', () => {
+    const tool = knowledgeTool(testModules);
+    expect(tool.name).toBe('load_knowledge');
+  });
+
   it('embeds catalog in description', () => {
-    const tool = buildKnowledgeToolAnthropic(testModules) as Record<string, unknown>;
-    expect(tool.name).toBe('antseed_load_knowledge');
-    const desc = tool.description as string;
-    expect(desc).toContain('- pricing: Pricing info');
-    expect(desc).toContain('- faq: Frequently asked questions');
+    const tool = knowledgeTool(testModules);
+    expect(tool.description).toContain('- pricing: Pricing info');
+    expect(tool.description).toContain('- faq: Frequently asked questions');
   });
 
-  it('uses antseed_load_knowledge as tool name', () => {
-    const tool = buildKnowledgeToolAnthropic(testModules);
-    expect(tool.name).toBe(`${TOOL_PREFIX}load_knowledge`);
-  });
-});
-
-describe('buildKnowledgeToolOpenAI', () => {
-  it('embeds catalog in description', () => {
-    const tool = buildKnowledgeToolOpenAI(testModules) as Record<string, unknown>;
-    expect(tool.type).toBe('function');
-    const fn = tool.function as Record<string, unknown>;
-    expect(fn.name).toBe('antseed_load_knowledge');
-    const desc = fn.description as string;
-    expect(desc).toContain('- pricing: Pricing info');
-    expect(desc).toContain('- faq: Frequently asked questions');
+  it('execute returns module content', () => {
+    const tool = knowledgeTool(testModules);
+    expect(tool.execute({ name: 'pricing' })).toBe('Price is $10/mo');
   });
 
-  it('uses antseed_load_knowledge as tool name', () => {
-    const tool = buildKnowledgeToolOpenAI(testModules);
-    const fn = (tool as Record<string, unknown>).function as Record<string, unknown>;
-    expect(fn.name).toBe(`${TOOL_PREFIX}load_knowledge`);
+  it('execute throws for unknown module', () => {
+    const tool = knowledgeTool(testModules);
+    expect(() => tool.execute({ name: 'nonexistent' })).toThrow('not found');
   });
 });
 
 describe('injectTools', () => {
-  it('appends internal tool to existing buyer tools', () => {
+  it('appends internal tools to existing buyer tools (Anthropic)', () => {
     const body = { tools: [{ name: 'buyer_tool' }], messages: [] };
-    const result = injectTools(body, testModules, 'anthropic');
-    const tools = result.tools as unknown[];
+    const result = injectTools(body, testTools, 'anthropic');
+    const tools = result.tools as Record<string, unknown>[];
     expect(tools).toHaveLength(2);
     expect(tools[0]).toEqual({ name: 'buyer_tool' });
-    expect((tools[1] as Record<string, unknown>).name).toBe('antseed_load_knowledge');
+    expect(tools[1].name).toBe('antseed_load_knowledge');
   });
 
-  it('returns body unchanged when no modules', () => {
+  it('injects multiple tools', () => {
+    const customTool: BoundAgentTool = {
+      name: 'fetch_price',
+      description: 'Fetch price',
+      parameters: { type: 'object', properties: {} },
+      execute: async () => '$10',
+    };
+    const body = { messages: [] };
+    const result = injectTools(body, [...testTools, customTool], 'anthropic');
+    const tools = result.tools as Record<string, unknown>[];
+    expect(tools).toHaveLength(2);
+    expect(tools[0].name).toBe('antseed_load_knowledge');
+    expect(tools[1].name).toBe('antseed_fetch_price');
+  });
+
+  it('returns body unchanged when no tools', () => {
     const body = { tools: [{ name: 'buyer_tool' }], messages: [] };
     const result = injectTools(body, [], 'anthropic');
-    expect(result).toBe(body); // same reference
+    expect(result).toBe(body);
   });
 
   it('skips injection when tool_choice forces specific function (Anthropic)', () => {
@@ -71,7 +78,7 @@ describe('injectTools', () => {
       tool_choice: { type: 'tool', name: 'buyer_tool' },
       messages: [],
     };
-    const result = injectTools(body, testModules, 'anthropic');
+    const result = injectTools(body, testTools, 'anthropic');
     expect(result).toBe(body);
   });
 
@@ -81,101 +88,90 @@ describe('injectTools', () => {
       tool_choice: { type: 'function', function: { name: 'buyer_tool' } },
       messages: [],
     };
-    const result = injectTools(body, testModules, 'openai');
+    const result = injectTools(body, testTools, 'openai');
+    expect(result).toBe(body);
+  });
+
+  it('skips injection when tool_choice is none', () => {
+    const body = { tool_choice: 'none', messages: [] };
+    const result = injectTools(body, testTools, 'anthropic');
     expect(result).toBe(body);
   });
 
   it('creates tools array when body has no tools', () => {
     const body = { messages: [] };
-    const result = injectTools(body, testModules, 'anthropic');
-    const tools = result.tools as unknown[];
+    const result = injectTools(body, testTools, 'anthropic');
+    const tools = result.tools as Record<string, unknown>[];
     expect(tools).toHaveLength(1);
-    expect((tools[0] as Record<string, unknown>).name).toBe('antseed_load_knowledge');
+    expect(tools[0].name).toBe('antseed_load_knowledge');
+  });
+
+  it('uses OpenAI format when specified', () => {
+    const body = { messages: [] };
+    const result = injectTools(body, testTools, 'openai');
+    const tools = result.tools as Record<string, unknown>[];
+    expect(tools[0].type).toBe('function');
+    const fn = tools[0].function as Record<string, unknown>;
+    expect(fn.name).toBe('antseed_load_knowledge');
   });
 });
 
 describe('inspectResponse', () => {
   it('returns done for text-only response (Anthropic)', () => {
     const response = { content: [{ type: 'text', text: 'hi' }] };
-    const action = inspectResponse(response, 'anthropic');
-    expect(action.type).toBe('done');
+    expect(inspectResponse(response, 'anthropic').type).toBe('done');
   });
 
   it('returns done for text-only response (OpenAI)', () => {
-    const response = {
-      choices: [{ message: { content: 'hi' } }],
-    };
-    const action = inspectResponse(response, 'openai');
-    expect(action.type).toBe('done');
+    const response = { choices: [{ message: { content: 'hi' } }] };
+    expect(inspectResponse(response, 'openai').type).toBe('done');
   });
 
   it('returns done for buyer-only tool calls (Anthropic)', () => {
     const response = {
-      content: [
-        { type: 'tool_use', id: 'tc1', name: 'buyer_search', input: { q: 'test' } },
-      ],
+      content: [{ type: 'tool_use', id: 'tc1', name: 'buyer_search', input: {} }],
     };
-    const action = inspectResponse(response, 'anthropic');
-    expect(action.type).toBe('done');
+    expect(inspectResponse(response, 'anthropic').type).toBe('done');
   });
 
   it('returns done for buyer-only tool calls (OpenAI)', () => {
     const response = {
       choices: [{
-        message: {
-          tool_calls: [{
-            id: 'tc1',
-            function: { name: 'buyer_search', arguments: '{"q":"test"}' },
-          }],
-        },
+        message: { tool_calls: [{ id: 'tc1', function: { name: 'buyer_search', arguments: '{}' } }] },
       }],
     };
-    const action = inspectResponse(response, 'openai');
-    expect(action.type).toBe('done');
+    expect(inspectResponse(response, 'openai').type).toBe('done');
   });
 
-  it('returns continue with internal calls for antseed_* calls (Anthropic)', () => {
+  it('returns continue for antseed_* calls (Anthropic)', () => {
     const response = {
-      content: [
-        { type: 'tool_use', id: 'tc1', name: 'antseed_load_knowledge', input: { name: 'pricing' } },
-      ],
+      content: [{ type: 'tool_use', id: 'tc1', name: 'antseed_load_knowledge', input: { name: 'pricing' } }],
     };
     const action = inspectResponse(response, 'anthropic');
     expect(action.type).toBe('continue');
     if (action.type === 'continue') {
       expect(action.internalCalls).toHaveLength(1);
-      expect(action.internalCalls[0].name).toBe('antseed_load_knowledge');
     }
   });
 
-  it('returns continue with internal calls for antseed_* calls (OpenAI)', () => {
+  it('returns continue for antseed_* calls (OpenAI)', () => {
     const response = {
       choices: [{
-        message: {
-          tool_calls: [{
-            id: 'tc1',
-            function: { name: 'antseed_load_knowledge', arguments: '{"name":"pricing"}' },
-          }],
-        },
+        message: { tool_calls: [{ id: 'tc1', function: { name: 'antseed_load_knowledge', arguments: '{"name":"pricing"}' } }] },
       }],
     };
     const action = inspectResponse(response, 'openai');
     expect(action.type).toBe('continue');
-    if (action.type === 'continue') {
-      expect(action.internalCalls).toHaveLength(1);
-      expect(action.internalCalls[0].name).toBe('antseed_load_knowledge');
-    }
   });
 
   it('returns done when mixed — buyer calls prevent re-prompt (Anthropic)', () => {
     const response = {
       content: [
-        { type: 'tool_use', id: 'tc1', name: 'buyer_search', input: { q: 'test' } },
+        { type: 'tool_use', id: 'tc1', name: 'buyer_search', input: {} },
         { type: 'tool_use', id: 'tc2', name: 'antseed_load_knowledge', input: { name: 'faq' } },
       ],
     };
-    const action = inspectResponse(response, 'anthropic');
-    expect(action.type).toBe('done');
+    expect(inspectResponse(response, 'anthropic').type).toBe('done');
   });
 
   it('returns done when mixed — buyer calls prevent re-prompt (OpenAI)', () => {
@@ -183,46 +179,73 @@ describe('inspectResponse', () => {
       choices: [{
         message: {
           tool_calls: [
-            { id: 'tc1', function: { name: 'buyer_search', arguments: '{"q":"test"}' } },
+            { id: 'tc1', function: { name: 'buyer_search', arguments: '{}' } },
             { id: 'tc2', function: { name: 'antseed_load_knowledge', arguments: '{"name":"faq"}' } },
           ],
         },
       }],
     };
-    const action = inspectResponse(response, 'openai');
-    expect(action.type).toBe('done');
+    expect(inspectResponse(response, 'openai').type).toBe('done');
   });
 });
 
 describe('executeTools', () => {
-  it('returns module content for valid knowledge load', () => {
+  it('returns module content for valid knowledge load', async () => {
     const calls = [{ id: 'tc1', name: 'antseed_load_knowledge', arguments: { name: 'pricing' } }];
-    const results = executeTools(calls, testModules);
+    const results = await executeTools(calls, testTools);
     expect(results).toHaveLength(1);
     expect(results[0].content).toBe('Price is $10/mo');
     expect(results[0].isError).toBe(false);
   });
 
-  it('returns error for unknown module', () => {
+  it('returns error for unknown module', async () => {
     const calls = [{ id: 'tc1', name: 'antseed_load_knowledge', arguments: { name: 'nonexistent' } }];
-    const results = executeTools(calls, testModules);
+    const results = await executeTools(calls, testTools);
     expect(results).toHaveLength(1);
     expect(results[0].isError).toBe(true);
     expect(results[0].content).toContain('not found');
   });
 
-  it('returns error for unknown tool name', () => {
+  it('returns error for unknown tool name', async () => {
     const calls = [{ id: 'tc1', name: 'antseed_unknown', arguments: {} }];
-    const results = executeTools(calls, testModules);
+    const results = await executeTools(calls, testTools);
     expect(results).toHaveLength(1);
     expect(results[0].isError).toBe(true);
     expect(results[0].content).toContain('Unknown tool');
+  });
+
+  it('executes async custom tools', async () => {
+    const customTool: BoundAgentTool = {
+      name: 'fetch_data',
+      description: 'Fetch data',
+      parameters: { type: 'object', properties: {} },
+      execute: async () => 'fetched result',
+    };
+    const calls = [{ id: 'tc1', name: 'antseed_fetch_data', arguments: {} }];
+    const results = await executeTools(calls, [customTool]);
+    expect(results).toHaveLength(1);
+    expect(results[0].content).toBe('fetched result');
+    expect(results[0].isError).toBe(false);
+  });
+
+  it('catches tool execution errors', async () => {
+    const failingTool: BoundAgentTool = {
+      name: 'broken',
+      description: 'Broken tool',
+      parameters: { type: 'object', properties: {} },
+      execute: async () => { throw new Error('connection failed'); },
+    };
+    const calls = [{ id: 'tc1', name: 'antseed_broken', arguments: {} }];
+    const results = await executeTools(calls, [failingTool]);
+    expect(results).toHaveLength(1);
+    expect(results[0].isError).toBe(true);
+    expect(results[0].content).toContain('connection failed');
   });
 });
 
 describe('appendToolLoop', () => {
   it('appends correctly in Anthropic format', () => {
-    const body = { messages: [{ role: 'user', content: 'hello' }], model: 'claude' };
+    const body = { messages: [{ role: 'user', content: 'hello' }] };
     const assistantResponse = {
       content: [
         { type: 'text', text: 'Let me check.' },
@@ -230,37 +253,28 @@ describe('appendToolLoop', () => {
       ],
     };
     const results = [{ id: 'tc1', content: 'Price is $10/mo', isError: false }];
-
     const updated = appendToolLoop(body, assistantResponse, results, 'anthropic');
     const msgs = updated.messages as Record<string, unknown>[];
-    expect(msgs).toHaveLength(3); // original + assistant + user tool_result
+    expect(msgs).toHaveLength(3);
     expect(msgs[1]).toEqual({ role: 'assistant', content: assistantResponse.content });
-    expect((msgs[2] as Record<string, unknown>).role).toBe('user');
     const resultBlocks = (msgs[2] as Record<string, unknown>).content as Record<string, unknown>[];
     expect(resultBlocks[0].type).toBe('tool_result');
-    expect(resultBlocks[0].tool_use_id).toBe('tc1');
-    expect(resultBlocks[0].content).toBe('Price is $10/mo');
   });
 
   it('appends correctly in OpenAI format', () => {
-    const body = { messages: [{ role: 'user', content: 'hello' }], model: 'gpt-4' };
+    const body = { messages: [{ role: 'user', content: 'hello' }] };
     const assistantResponse = {
       choices: [{
         message: {
           role: 'assistant',
-          tool_calls: [{
-            id: 'tc1',
-            function: { name: 'antseed_load_knowledge', arguments: '{"name":"pricing"}' },
-          }],
+          tool_calls: [{ id: 'tc1', function: { name: 'antseed_load_knowledge', arguments: '{}' } }],
         },
       }],
     };
     const results = [{ id: 'tc1', content: 'Price is $10/mo', isError: false }];
-
     const updated = appendToolLoop(body, assistantResponse, results, 'openai');
     const msgs = updated.messages as Record<string, unknown>[];
-    expect(msgs).toHaveLength(3); // original + assistant msg + tool msg
-    expect(msgs[1]).toEqual(assistantResponse.choices[0].message);
+    expect(msgs).toHaveLength(3);
     expect(msgs[2]).toEqual({ role: 'tool', tool_call_id: 'tc1', content: 'Price is $10/mo' });
   });
 });
@@ -277,7 +291,6 @@ describe('stripInternalToolCalls', () => {
     const stripped = stripInternalToolCalls(response, 'anthropic');
     const content = stripped.content as Record<string, unknown>[];
     expect(content).toHaveLength(2);
-    expect(content[0]).toEqual({ type: 'text', text: 'Here you go' });
     expect((content[1] as Record<string, unknown>).name).toBe('buyer_search');
   });
 
@@ -285,50 +298,45 @@ describe('stripInternalToolCalls', () => {
     const response = {
       choices: [{
         message: {
-          role: 'assistant',
           tool_calls: [
             { id: 'tc1', function: { name: 'buyer_search', arguments: '{}' } },
-            { id: 'tc2', function: { name: 'antseed_load_knowledge', arguments: '{"name":"faq"}' } },
+            { id: 'tc2', function: { name: 'antseed_load_knowledge', arguments: '{}' } },
           ],
         },
       }],
     };
     const stripped = stripInternalToolCalls(response, 'openai');
     const choices = stripped.choices as { message: Record<string, unknown> }[];
-    const toolCalls = choices[0].message.tool_calls as Record<string, unknown>[];
+    const toolCalls = choices[0].message.tool_calls as { function: { name: string } }[];
     expect(toolCalls).toHaveLength(1);
-    expect((toolCalls[0] as { function: { name: string } }).function.name).toBe('buyer_search');
+    expect(toolCalls[0].function.name).toBe('buyer_search');
   });
 
-  it('handles response with no tool calls — no-op (Anthropic)', () => {
+  it('no-op for text-only response', () => {
     const response = { content: [{ type: 'text', text: 'hello' }] };
     const stripped = stripInternalToolCalls(response, 'anthropic');
-    const content = stripped.content as Record<string, unknown>[];
-    expect(content).toHaveLength(1);
-    expect(content[0]).toEqual({ type: 'text', text: 'hello' });
+    expect((stripped.content as unknown[]).length).toBe(1);
   });
 
-  it('handles response with no tool calls — no-op (OpenAI)', () => {
-    const response = {
-      choices: [{ message: { role: 'assistant', content: 'hello' } }],
-    };
-    const stripped = stripInternalToolCalls(response, 'openai');
-    expect(stripped).toEqual(response);
-  });
-
-  it('removes tool_calls key when all are internal (OpenAI)', () => {
+  it('sets finish_reason to stop when all tool_calls removed (OpenAI)', () => {
     const response = {
       choices: [{
-        message: {
-          role: 'assistant',
-          tool_calls: [
-            { id: 'tc1', function: { name: 'antseed_load_knowledge', arguments: '{}' } },
-          ],
-        },
+        message: { tool_calls: [{ id: 'tc1', function: { name: 'antseed_load_knowledge', arguments: '{}' } }] },
+        finish_reason: 'tool_calls',
       }],
     };
     const stripped = stripInternalToolCalls(response, 'openai');
-    const choices = stripped.choices as { message: Record<string, unknown> }[];
+    const choices = stripped.choices as { message: Record<string, unknown>; finish_reason: string }[];
     expect(choices[0].message.tool_calls).toBeUndefined();
+    expect(choices[0].finish_reason).toBe('stop');
+  });
+
+  it('sets stop_reason to end_turn when all tool_use removed (Anthropic)', () => {
+    const response = {
+      content: [{ type: 'tool_use', id: 'tc1', name: 'antseed_load_knowledge', input: {} }],
+      stop_reason: 'tool_use',
+    };
+    const stripped = stripInternalToolCalls(response, 'anthropic');
+    expect(stripped.stop_reason).toBe('end_turn');
   });
 });

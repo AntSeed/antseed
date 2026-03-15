@@ -6,7 +6,9 @@ import type {
 } from '@antseed/node';
 import type { BoundAgentDefinition } from './loader.js';
 import {
+  type BoundAgentTool,
   detectRequestFormat,
+  knowledgeTool,
   injectTools,
   inspectResponse,
   executeTools,
@@ -23,6 +25,8 @@ const DEFAULT_MAX_ITERATIONS = 5;
 export interface AgentLoopOptions {
   /** Maximum tool-call rounds before forcing a final request. Total LLM calls = maxIterations + 1. Default: 5. */
   maxIterations?: number;
+  /** Additional tools available to the agent loop. Auto-prefixed with `antseed_`. */
+  tools?: BoundAgentTool[];
 }
 
 export type AgentResolver = (body: Record<string, unknown>) => BoundAgentDefinition | undefined;
@@ -49,18 +53,26 @@ function debugLog(...args: unknown[]): void {
   if (DEBUG_ENABLED) console.log(...args);
 }
 
+/** Build the full tool list from knowledge modules + custom tools. */
+function buildTools(agent: BoundAgentDefinition, extra?: BoundAgentTool[]): BoundAgentTool[] {
+  const tools: BoundAgentTool[] = [];
+  if (agent.knowledge.length > 0) {
+    tools.push(knowledgeTool(agent.knowledge));
+  }
+  if (extra) {
+    tools.push(...extra);
+  }
+  return tools;
+}
+
 /** Result of running the agent loop iterations. */
 interface IterationResult {
-  /** The final response to return/stream to the buyer. */
   response: SerializedHttpResponse;
-  /** True if max iterations were hit and the response may still contain internal tool calls. */
   maxIterationsHit: boolean;
 }
 
 /**
  * Core iteration logic shared by buffered and streaming paths.
- * Parses the body once, resolves the agent, injects system prompt + tools,
- * then runs the tool loop until done or max iterations.
  */
 async function iterate(
   inner: Provider,
@@ -75,16 +87,17 @@ async function iterate(
   try {
     body = JSON.parse(decoder.decode(req.body)) as Record<string, unknown>;
   } catch {
-    return null; // non-JSON — caller passes through unchanged
+    return null;
   }
 
   const agent = resolve(body);
-  if (!agent) return null; // no matching agent — caller passes through
+  if (!agent) return null;
 
-  const hasTools = agent.knowledge.length > 0;
+  const tools = buildTools(agent, options?.tools);
+  const hasTools = tools.length > 0;
   const systemPrompt = buildSystemPrompt(agent, hasTools);
   body = injectSystemPrompt(body, systemPrompt, format);
-  body = injectTools(body, agent.knowledge, format);
+  body = injectTools(body, tools, format);
 
   for (let i = 0; i < maxIterations; i++) {
     debugLog(`[BoundAgent] ${req.method} ${req.path} (reqId=${req.requestId.slice(0, 8)}): loop iteration ${i + 1}/${maxIterations}`);
@@ -105,7 +118,6 @@ async function iterate(
 
     const action = inspectResponse(responseBody, format);
     if (action.type === 'done') {
-      // Strip any internal tool calls that may be present in mixed responses
       const cleaned = stripInternalToolCalls(responseBody, format);
       return {
         response: { ...response, body: encoder.encode(JSON.stringify(cleaned)) },
@@ -113,11 +125,10 @@ async function iterate(
       };
     }
 
-    const results = executeTools(action.internalCalls, agent.knowledge);
+    const results = await executeTools(action.internalCalls, tools);
     body = appendToolLoop(body, responseBody, results, format);
   }
 
-  // Max iterations — one final request
   debugLog(`[BoundAgent] max iterations (${maxIterations}) reached`);
   const finalReq: SerializedHttpRequest = {
     ...req,
@@ -141,7 +152,6 @@ export async function runAgentLoop(
 
   if (!result.maxIterationsHit) return result.response;
 
-  // Strip any remaining internal tool calls
   const format = detectRequestFormat(req.path);
   try {
     const body = JSON.parse(decoder.decode(result.response.body)) as Record<string, unknown>;
@@ -170,7 +180,6 @@ export async function runAgentLoopStream(
   let finalResponse = result.response;
 
   if (result.maxIterationsHit) {
-    // Strip any remaining internal tool calls before streaming
     const format = detectRequestFormat(req.path);
     try {
       const body = JSON.parse(decoder.decode(finalResponse.body)) as Record<string, unknown>;
