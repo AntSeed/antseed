@@ -1,5 +1,7 @@
 import { readFile } from 'node:fs/promises';
-import { join, isAbsolute } from 'node:path';
+import { join, isAbsolute, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import type { BoundAgentTool } from './tools.js';
 
 export interface KnowledgeModule {
   /** Unique name for this knowledge module. */
@@ -19,6 +21,8 @@ export interface BoundAgentDefinition {
   guardrails: string[];
   /** Knowledge modules available for selective loading. */
   knowledge: KnowledgeModule[];
+  /** Tools loaded from the manifest (execute files dynamically imported). */
+  tools?: BoundAgentTool[];
   /** Custom confidentiality prompt. Uses a built-in default when omitted. */
   confidentialityPrompt?: string;
 }
@@ -47,6 +51,7 @@ interface AgentManifest {
   persona?: string;
   guardrails?: string[];
   knowledge?: { name: string; description: string; file: string }[];
+  tools?: { name: string; description: string; parameters?: Record<string, unknown>; execute: string }[];
   confidentialityPrompt?: string;
 }
 
@@ -96,11 +101,35 @@ export async function loadBoundAgent(agentDir: string): Promise<BoundAgentDefini
     }
   }
 
+  // Load tools
+  const tools: BoundAgentTool[] = [];
+  if (manifest.tools) {
+    for (const entry of manifest.tools) {
+      if (!entry.name || !entry.description || !entry.execute) {
+        throw new Error(`Tool entry must have "name", "description", and "execute" fields`);
+      }
+      const execPath = isAbsolute(entry.execute)
+        ? entry.execute
+        : resolve(agentDir, entry.execute);
+      const mod = await import(pathToFileURL(execPath).href) as { default: BoundAgentTool['execute'] };
+      if (typeof mod.default !== 'function') {
+        throw new Error(`Tool "${entry.name}": ${entry.execute} must export a default function`);
+      }
+      tools.push({
+        name: entry.name,
+        description: entry.description,
+        parameters: entry.parameters ?? { type: 'object', properties: {} },
+        execute: mod.default,
+      });
+    }
+  }
+
   return {
     name: manifest.name,
     persona,
     guardrails: manifest.guardrails ?? [],
     knowledge,
+    ...(tools.length > 0 ? { tools } : {}),
     confidentialityPrompt: manifest.confidentialityPrompt,
   };
 }

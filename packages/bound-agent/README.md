@@ -23,7 +23,8 @@ my-agent/
   knowledge/           # knowledge modules
     linkedin-posting.md
     content-strategy.md
-    audience-growth.md
+  tools/               # custom tool scripts (optional)
+    fetch-trends.js
 ```
 
 ### agent.json
@@ -46,11 +47,18 @@ my-agent/
       "name": "content-strategy",
       "description": "Content calendars and strategy frameworks",
       "file": "./knowledge/content-strategy.md"
-    },
+    }
+  ],
+  "tools": [
     {
-      "name": "audience-growth",
-      "description": "Growing audience across platforms",
-      "file": "./knowledge/audience-growth.md"
+      "name": "fetch_trends",
+      "description": "Fetch trending topics for a platform",
+      "parameters": {
+        "type": "object",
+        "properties": { "platform": { "type": "string" } },
+        "required": ["platform"]
+      },
+      "execute": "./tools/fetch-trends.js"
     }
   ]
 }
@@ -61,10 +69,15 @@ my-agent/
 | `name` | Yes | Agent name |
 | `persona` | No | Path to markdown file with the agent's system prompt / personality |
 | `guardrails` | No | Array of hard rules the agent must follow |
-| `knowledge` | No | Array of knowledge modules for selective loading |
-| `knowledge[].name` | Yes | Unique identifier used during selection |
+| `knowledge` | No | Array of knowledge modules for on-demand loading |
+| `knowledge[].name` | Yes | Unique identifier for the module |
 | `knowledge[].description` | Yes | Short description — shown to the LLM to decide relevance |
 | `knowledge[].file` | Yes | Path to the markdown file with the full content |
+| `tools` | No | Array of custom tools the LLM can call |
+| `tools[].name` | Yes | Tool name (auto-prefixed with `antseed_`) |
+| `tools[].description` | Yes | Description shown to the LLM |
+| `tools[].parameters` | No | JSON Schema for tool parameters (defaults to empty object) |
+| `tools[].execute` | Yes | Path to a JS file that exports a default function |
 | `confidentialityPrompt` | No | Custom confidentiality instruction (has a sensible default) |
 
 ## Usage
@@ -74,30 +87,9 @@ my-agent/
 ```typescript
 import { loadBoundAgent, BoundAgentProvider } from '@antseed/bound-agent';
 
-import { loadBoundAgent, BoundAgentProvider, type BoundAgentTool } from '@antseed/bound-agent';
-
-// Basic: knowledge modules only
+// Load agent (knowledge + tools from agent.json)
 const agent = await loadBoundAgent('./my-agent');
 const boundProvider = new BoundAgentProvider(innerProvider, agent);
-
-// With custom tools
-const fetchPrice: BoundAgentTool = {
-  name: 'fetch_price',
-  description: 'Fetch current price for a product',
-  parameters: {
-    type: 'object',
-    properties: { product: { type: 'string' } },
-    required: ['product'],
-  },
-  execute: async (args) => {
-    const res = await fetch(`https://api.example.com/price/${args.product}`);
-    return await res.text();
-  },
-};
-
-const boundProvider = new BoundAgentProvider(innerProvider, agent, {
-  tools: [fetchPrice],
-});
 
 // Per-service agents
 const socialAgent = await loadBoundAgent('./social-agent');
@@ -155,37 +147,56 @@ This keeps the context focused — only the knowledge the LLM judges relevant ge
 
 ## Custom tools
 
-Beyond knowledge loading, creators can add custom tools that the LLM can call during the agent loop. Tools are defined with a name, description, JSON Schema parameters, and an async `execute` function.
+Beyond knowledge loading, creators can add custom tools that the LLM can call during the agent loop. Define tools in `agent.json` with an `execute` field pointing to a JS file:
+
+```json
+{
+  "tools": [{
+    "name": "fetch_trends",
+    "description": "Fetch trending topics for a platform",
+    "parameters": {
+      "type": "object",
+      "properties": { "platform": { "type": "string" } },
+      "required": ["platform"]
+    },
+    "execute": "./tools/fetch-trends.js"
+  }]
+}
+```
+
+The JS file exports a default function that receives the tool arguments and returns a string:
+
+```js
+// tools/fetch-trends.js
+export default async function(args) {
+  const res = await fetch(`https://api.example.com/trends/${args.platform}`);
+  return await res.text();
+}
+```
+
+Tool names are automatically prefixed with `antseed_` when injected (e.g., `fetch_trends` becomes `antseed_fetch_trends`). The LLM sees all internal tools alongside buyer tools, with system prompt instructions to use `antseed_*` tools for context gathering and buyer tools only as requested.
+
+If a tool's execute function throws, the error message is returned to the LLM as an error result so it can recover gracefully.
+
+### Programmatic tools
+
+Tools can also be added programmatically via the options parameter (useful when tools need access to runtime state):
 
 ```typescript
-import type { BoundAgentTool } from '@antseed/bound-agent';
+import { BoundAgentProvider, loadBoundAgent, type BoundAgentTool } from '@antseed/bound-agent';
 
-const fetchPrice: BoundAgentTool = {
-  name: 'fetch_price',
-  description: 'Fetch current price for a product',
-  parameters: {
-    type: 'object',
-    properties: { product: { type: 'string' } },
-    required: ['product'],
-  },
-  execute: async (args) => {
-    const res = await fetch(`https://api.example.com/price/${args.product}`);
-    return await res.text();
-  },
+const customTool: BoundAgentTool = {
+  name: 'lookup_user',
+  description: 'Look up user details',
+  parameters: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+  execute: async (args) => db.users.findById(args.id),
 };
+
+const agent = await loadBoundAgent('./my-agent');
+new BoundAgentProvider(innerProvider, agent, { tools: [customTool] });
 ```
 
-Pass custom tools via the options parameter:
-
-```typescript
-new BoundAgentProvider(innerProvider, agentDef, {
-  tools: [fetchPrice, anotherTool],
-});
-```
-
-Tool names are automatically prefixed with `antseed_` when injected (e.g., `fetch_price` becomes `antseed_fetch_price`). The LLM sees all internal tools alongside buyer tools, with system prompt instructions to use `antseed_*` tools for context gathering and buyer tools only as requested.
-
-If a tool's `execute` function throws, the error message is returned to the LLM as an error result so it can recover gracefully.
+Manifest tools and programmatic tools are merged together.
 
 ## What gets injected
 
