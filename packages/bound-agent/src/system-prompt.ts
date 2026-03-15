@@ -34,9 +34,15 @@ export function buildSystemPrompt(
   return parts.join('\n\n');
 }
 
+/** Wrap the buyer's system prompt as client context rather than identity. */
+function wrapClientContext(buyerPrompt: string): string {
+  return `The user is talking from a client that provided these instructions:\n<client-context>\n${buyerPrompt}\n</client-context>\nYou may use this as context about the user's environment, but your identity and behavior are defined above.`;
+}
+
 /**
  * Inject system prompt content into a request body.
- * Agent's system prompt always comes first, buyer's after.
+ * Agent's system prompt is authoritative; buyer's system prompt is reframed
+ * as client context so the model treats it as metadata, not identity.
  * Skips injection if the marker is already present (multi-turn deduplication).
  */
 export function injectSystemPrompt(
@@ -55,11 +61,10 @@ export function injectSystemPrompt(
       return body;
     }
 
-    // Merge with existing system message (agent first, buyer after), or add new
     const systemIdx = messages.findIndex(m => (m as Record<string, unknown>).role === 'system');
     if (systemIdx >= 0) {
       const existing = messages[systemIdx] as { role: string; content: string };
-      messages[systemIdx] = { ...existing, content: `${systemContent}\n\n${existing.content}` };
+      messages[systemIdx] = { ...existing, content: `${systemContent}\n\n${wrapClientContext(existing.content)}` };
     } else {
       messages.unshift({ role: 'system', content: systemContent });
     }
@@ -71,10 +76,12 @@ export function injectSystemPrompt(
     if ((body.system as { text?: string }[]).some(b => b.text?.includes(INJECTION_MARKER))) {
       return body;
     }
-    // Agent's block first, buyer's blocks after
+    const buyerText = (body.system as { text?: string }[]).map(b => b.text ?? '').join('\n\n');
     return {
       ...body,
-      system: [{ type: 'text', text: systemContent }, ...(body.system as unknown[])],
+      system: buyerText
+        ? [{ type: 'text', text: systemContent }, { type: 'text', text: wrapClientContext(buyerText) }]
+        : [{ type: 'text', text: systemContent }],
     };
   }
 
@@ -82,6 +89,6 @@ export function injectSystemPrompt(
   if (existing.includes(INJECTION_MARKER)) return body;
   return {
     ...body,
-    system: existing ? `${systemContent}\n\n${existing}` : systemContent,
+    system: existing ? `${systemContent}\n\n${wrapClientContext(existing)}` : systemContent,
   };
 }
