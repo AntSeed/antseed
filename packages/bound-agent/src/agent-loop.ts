@@ -223,7 +223,13 @@ export async function runAgentLoopStream(
           }
         },
         onResponseChunk: (chunk) => {
-          if (suppressingChunks || chunk.done) return;
+          if (suppressingChunks) return;
+          if (chunk.done) {
+            // Forward the done chunk so the buyer stream terminates properly.
+            // If we later detect tool calls, the next iteration will send a new stream.
+            callbacks.onResponseChunk(chunk);
+            return;
+          }
           // Check if this chunk reveals an internal tool call
           if (chunk.data.length > 0 && chunkHasInternalToolCall(chunk.data, format)) {
             suppressingChunks = true;
