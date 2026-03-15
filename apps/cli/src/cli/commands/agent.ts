@@ -36,12 +36,11 @@ function resolveLLMConfig(options: Record<string, unknown>): LLMConfig {
     process.exit(1);
   }
 
-  // Detect auth header from endpoint
+  // Detect auth header from endpoint — use lowercase to match relay convention
   const isAnthropic = endpoint.includes('anthropic.com');
-  const authHeader = isAnthropic ? 'x-api-key' : 'Authorization';
-  const authValue = isAnthropic ? apiKey : `Bearer ${apiKey}`;
+  const authHeader = isAnthropic ? 'x-api-key' : 'authorization';
 
-  return { endpoint, apiKey: authValue, model, authHeader };
+  return { endpoint, apiKey, model, authHeader };
 }
 
 function createProvider(config: LLMConfig) {
@@ -115,7 +114,7 @@ export function registerAgentCommand(program: Command): void {
       });
 
       const prompt = () => {
-        rl.question(chalk.bold('You: '), async (input) => {
+        rl.question(chalk.bold('You: '), (input) => {
           const trimmed = input.trim();
           if (!trimmed) { prompt(); return; }
           if (trimmed === 'exit' || trimmed === 'quit') { rl.close(); return; }
@@ -128,6 +127,7 @@ export function registerAgentCommand(program: Command): void {
 
           messages.push({ role: 'user', content: trimmed });
 
+          void (async () => {
           // Build request
           let body: Record<string, unknown>;
           if (isOpenAI) {
@@ -173,6 +173,10 @@ export function registerAgentCommand(program: Command): void {
           }
 
           prompt();
+          })().catch((err) => {
+            console.error(chalk.red(`\nError: ${(err as Error).message}\n`));
+            prompt();
+          });
         });
       };
 
