@@ -200,19 +200,26 @@ export async function runAgentLoopStream(
         },
       });
     } catch (err) {
-      // If streaming fails, try non-streaming fallback
+      // If streaming fails, try non-streaming fallback with tool call stripping
       debugLog(`${reqTag}: stream failed, falling back to non-streaming`);
       const augReqNonStream: SerializedHttpRequest = {
         ...req,
         body: encoder.encode(JSON.stringify({ ...body, stream: false })),
       };
       const response = await inner.handleRequest(augReqNonStream);
+      let responseBody: Uint8Array = response.body;
+      try {
+        const parsed = JSON.parse(decoder.decode(response.body)) as Record<string, unknown>;
+        const cleaned = stripInternalToolCalls(parsed, format);
+        responseBody = encoder.encode(JSON.stringify(cleaned));
+      } catch { /* non-JSON — use as-is */ }
+      const cleanedResponse = { ...response, body: responseBody };
       if (!headersSent) {
-        callbacks.onResponseStart(response);
+        callbacks.onResponseStart(cleanedResponse);
         headersSent = true;
       }
-      callbacks.onResponseChunk({ requestId: req.requestId, data: response.body, done: true });
-      return response;
+      callbacks.onResponseChunk({ requestId: req.requestId, data: responseBody, done: true });
+      return cleanedResponse;
     }
 
     // Parse the buffered SSE response to check for tool calls

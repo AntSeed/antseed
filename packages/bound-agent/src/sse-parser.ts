@@ -110,25 +110,27 @@ function parseAnthropicSSE(sseText: string): Record<string, unknown> {
     if (!line.startsWith('data: ')) continue;
 
     let data: Record<string, unknown>;
+    const event = currentEvent;
+    currentEvent = '';
     try {
       data = JSON.parse(line.slice(6)) as Record<string, unknown>;
     } catch {
       continue;
     }
 
-    if (currentEvent === 'message_start') {
+    if (event === 'message_start') {
       const msg = data.message as Record<string, unknown> | undefined;
       if (msg) {
         if (msg.id) id = msg.id as string;
         if (msg.model) model = msg.model as string;
       }
-    } else if (currentEvent === 'content_block_start') {
+    } else if (event === 'content_block_start') {
       const idx = data.index as number;
       const block = data.content_block as Record<string, unknown>;
       if (block) {
         blockBuilders.set(idx, { ...block });
       }
-    } else if (currentEvent === 'content_block_delta') {
+    } else if (event === 'content_block_delta') {
       const idx = data.index as number;
       const delta = data.delta as Record<string, unknown> | undefined;
       const builder = blockBuilders.get(idx);
@@ -139,7 +141,7 @@ function parseAnthropicSSE(sseText: string): Record<string, unknown> {
           builder.input_json = ((builder.input_json as string) ?? '') + delta.partial_json;
         }
       }
-    } else if (currentEvent === 'content_block_stop') {
+    } else if (event === 'content_block_stop') {
       const idx = data.index as number;
       const builder = blockBuilders.get(idx);
       if (builder) {
@@ -155,12 +157,10 @@ function parseAnthropicSSE(sseText: string): Record<string, unknown> {
         contentBlocks[idx] = builder;
         blockBuilders.delete(idx);
       }
-    } else if (currentEvent === 'message_delta') {
+    } else if (event === 'message_delta') {
       const delta = data.delta as Record<string, unknown> | undefined;
       if (delta?.stop_reason) stopReason = delta.stop_reason as string;
     }
-
-    currentEvent = '';
   }
 
   return {
