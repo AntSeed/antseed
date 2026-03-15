@@ -16,6 +16,7 @@ import {
   stripInternalToolCalls,
 } from './tools.js';
 import { buildSystemPrompt, injectSystemPrompt } from './system-prompt.js';
+import { parseSSEResponse } from './sse-parser.js';
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -59,20 +60,11 @@ function debugLog(...args: unknown[]): void {
   if (DEBUG_ENABLED) console.log(...args);
 }
 
-interface IterationResult {
-  response: SerializedHttpResponse;
-  maxIterationsHit: boolean;
-}
-
-async function iterate(
-  inner: Provider,
+/** Prepare the request body: parse, resolve agent, inject system prompt + tools. */
+function prepareBody(
   req: SerializedHttpRequest,
   resolve: AgentResolver,
-  options?: AgentLoopOptions,
-): Promise<IterationResult | null> {
-  const format = detectRequestFormat(req.path);
-  const maxIterations = options?.maxIterations ?? DEFAULT_MAX_ITERATIONS;
-
+): { body: Record<string, unknown>; agent: ResolvedAgent; reqTag: string } | null {
   let body: Record<string, unknown>;
   try {
     body = JSON.parse(decoder.decode(req.body)) as Record<string, unknown>;
@@ -89,75 +81,82 @@ async function iterate(
   debugLog(`${reqTag}: resolved agent "${definition.name}" with ${tools.length} tool(s): ${tools.map(t => t.name).join(', ') || 'none'}${willInjectTools ? '' : ' (tools skipped)'}`);
 
   const systemPrompt = buildSystemPrompt(definition, willInjectTools);
-  body = injectSystemPrompt(body, systemPrompt, format);
-  body = injectTools(body, tools, format);
+  body = injectSystemPrompt(body, systemPrompt, detectRequestFormat(req.path));
+  body = injectTools(body, tools, detectRequestFormat(req.path));
 
-  for (let i = 0; i < maxIterations; i++) {
-    debugLog(`${reqTag}: loop iteration ${i + 1}/${maxIterations}`);
-
-    const augmentedReq: SerializedHttpRequest = {
-      ...req,
-      body: encoder.encode(JSON.stringify(body)),
-    };
-
-    const response = await inner.handleRequest(augmentedReq);
-
-    let responseBody: Record<string, unknown>;
-    try {
-      responseBody = JSON.parse(decoder.decode(response.body)) as Record<string, unknown>;
-    } catch {
-      return { response, maxIterationsHit: false };
-    }
-
-    const action = inspectResponse(responseBody, format);
-    if (action.type === 'done') {
-      const cleaned = stripInternalToolCalls(responseBody, format);
-      return {
-        response: { ...response, body: encoder.encode(JSON.stringify(cleaned)) },
-        maxIterationsHit: false,
-      };
-    }
-
-    debugLog(`${reqTag}: executing ${action.internalCalls.length} tool(s): ${action.internalCalls.map(c => c.name).join(', ')}`);
-    const results = await executeTools(action.internalCalls, tools);
-    debugLog(`${reqTag}: tool results: ${results.map(r => `${r.id}:${r.isError ? 'error' : 'ok'}`).join(', ')}`);
-    body = appendToolLoop(body, responseBody, results, format);
-  }
-
-  debugLog(`${reqTag}: max iterations (${maxIterations}) reached`);
-  const finalReq: SerializedHttpRequest = {
-    ...req,
-    body: encoder.encode(JSON.stringify(body)),
-  };
-  const response = await inner.handleRequest(finalReq);
-  return { response, maxIterationsHit: true };
+  return { body, agent, reqTag };
 }
 
+/**
+ * Non-streaming agent loop. Runs tool iterations buffered, returns final response.
+ */
 export async function runAgentLoop(
   inner: Provider,
   req: SerializedHttpRequest,
   resolve: AgentResolver,
   options?: AgentLoopOptions,
 ): Promise<SerializedHttpResponse> {
-  const result = await iterate(inner, req, resolve, options);
-  if (!result) return inner.handleRequest(req);
+  const prepared = prepareBody(req, resolve);
+  if (!prepared) return inner.handleRequest(req);
 
-  if (!result.maxIterationsHit) return result.response;
-
+  const { agent, reqTag } = prepared;
+  let { body } = prepared;
   const format = detectRequestFormat(req.path);
+  const maxIterations = options?.maxIterations ?? DEFAULT_MAX_ITERATIONS;
+
+  // Force non-streaming for the buffered loop
+  delete body.stream;
+
+  for (let i = 0; i < maxIterations; i++) {
+    debugLog(`${reqTag}: loop iteration ${i + 1}/${maxIterations}`);
+
+    const augReq: SerializedHttpRequest = {
+      ...req,
+      body: encoder.encode(JSON.stringify(body)),
+    };
+
+    const response = await inner.handleRequest(augReq);
+
+    let responseBody: Record<string, unknown>;
+    try {
+      responseBody = JSON.parse(decoder.decode(response.body)) as Record<string, unknown>;
+    } catch {
+      return response;
+    }
+
+    const action = inspectResponse(responseBody, format);
+    if (action.type === 'done') {
+      const cleaned = stripInternalToolCalls(responseBody, format);
+      return { ...response, body: encoder.encode(JSON.stringify(cleaned)) };
+    }
+
+    debugLog(`${reqTag}: executing ${action.internalCalls.length} tool(s): ${action.internalCalls.map(c => c.name).join(', ')}`);
+    const results = await executeTools(action.internalCalls, agent.tools);
+    debugLog(`${reqTag}: tool results: ${results.map(r => `${r.id}:${r.isError ? 'error' : 'ok'}`).join(', ')}`);
+    body = appendToolLoop(body, responseBody, results, format);
+  }
+
+  // Max iterations — one final call
+  debugLog(`${reqTag}: max iterations (${maxIterations}) reached`);
+  const finalReq: SerializedHttpRequest = {
+    ...req,
+    body: encoder.encode(JSON.stringify(body)),
+  };
+  const response = await inner.handleRequest(finalReq);
   try {
-    const body = JSON.parse(decoder.decode(result.response.body)) as Record<string, unknown>;
-    const cleaned = stripInternalToolCalls(body, format);
-    return { ...result.response, body: encoder.encode(JSON.stringify(cleaned)) };
+    const responseBody = JSON.parse(decoder.decode(response.body)) as Record<string, unknown>;
+    const cleaned = stripInternalToolCalls(responseBody, format);
+    return { ...response, body: encoder.encode(JSON.stringify(cleaned)) };
   } catch {
-    return result.response;
+    return response;
   }
 }
 
 /**
- * Run the agent loop and replay the final response through stream callbacks.
- * All iterations (including the final one) are buffered via handleRequest.
- * The completed response is then replayed as a single chunk through callbacks.
+ * Streaming agent loop. Every LLM call streams to the buyer in real time.
+ * Tool calls are intercepted at the end of each stream, executed, and the
+ * next iteration streams again — so the buyer sees tokens arriving live
+ * throughout the entire conversation.
  */
 export async function runAgentLoopStream(
   inner: Provider,
@@ -166,23 +165,103 @@ export async function runAgentLoopStream(
   callbacks: ProviderStreamCallbacks,
   options?: AgentLoopOptions,
 ): Promise<SerializedHttpResponse> {
-  const result = await iterate(inner, req, resolve, options);
-  if (!result) return inner.handleRequestStream!(req, callbacks);
+  const prepared = prepareBody(req, resolve);
+  if (!prepared) return inner.handleRequestStream!(req, callbacks);
 
-  let finalResponse = result.response;
+  const { agent, reqTag } = prepared;
+  let { body } = prepared;
+  const format = detectRequestFormat(req.path);
+  const maxIterations = options?.maxIterations ?? DEFAULT_MAX_ITERATIONS;
+  let headersSent = false;
 
-  if (result.maxIterationsHit) {
-    const format = detectRequestFormat(req.path);
+  for (let i = 0; i < maxIterations; i++) {
+    debugLog(`${reqTag}: stream iteration ${i + 1}/${maxIterations}`);
+
+    const isLastAllowedIteration = i === maxIterations - 1;
+    const augReq: SerializedHttpRequest = {
+      ...req,
+      body: encoder.encode(JSON.stringify({ ...body, stream: true })),
+    };
+
+    // Stream the call, forwarding chunks to the buyer.
+    // For intermediate iterations, hold back the done marker and done chunk.
+    let streamResponse: SerializedHttpResponse;
     try {
-      const body = JSON.parse(decoder.decode(finalResponse.body)) as Record<string, unknown>;
-      const cleaned = stripInternalToolCalls(body, format);
-      finalResponse = { ...finalResponse, body: encoder.encode(JSON.stringify(cleaned)) };
+      streamResponse = await inner.handleRequestStream!(augReq, {
+        onResponseStart: (res) => {
+          if (!headersSent) {
+            callbacks.onResponseStart(res);
+            headersSent = true;
+          }
+        },
+        onResponseChunk: (chunk) => {
+          // Always forward to buyer — we'll decide whether to loop after
+          callbacks.onResponseChunk(chunk);
+        },
+      });
+    } catch (err) {
+      // If streaming fails, try non-streaming fallback with tool call stripping
+      debugLog(`${reqTag}: stream failed, falling back to non-streaming`);
+      const augReqNonStream: SerializedHttpRequest = {
+        ...req,
+        body: encoder.encode(JSON.stringify({ ...body, stream: false })),
+      };
+      const response = await inner.handleRequest(augReqNonStream);
+      let responseBody: Uint8Array = response.body;
+      try {
+        const parsed = JSON.parse(decoder.decode(response.body)) as Record<string, unknown>;
+        const cleaned = stripInternalToolCalls(parsed, format);
+        responseBody = encoder.encode(JSON.stringify(cleaned));
+      } catch { /* non-JSON — use as-is */ }
+      const cleanedResponse = { ...response, body: responseBody };
+      if (!headersSent) {
+        callbacks.onResponseStart(cleanedResponse);
+        headersSent = true;
+      }
+      callbacks.onResponseChunk({ requestId: req.requestId, data: responseBody, done: true });
+      return cleanedResponse;
+    }
+
+    // Parse the buffered SSE response to check for tool calls
+    let responseBody: Record<string, unknown>;
+    try {
+      responseBody = parseSSEResponse(streamResponse.body, format);
     } catch {
-      // non-JSON — stream as-is
+      // Can't parse — treat as done
+      return streamResponse;
+    }
+
+    const action = inspectResponse(responseBody, format);
+    if (action.type === 'done') {
+      return streamResponse;
+    }
+
+    // Internal tool calls found — execute them
+    debugLog(`${reqTag}: executing ${action.internalCalls.length} tool(s): ${action.internalCalls.map(c => c.name).join(', ')}`);
+    const results = await executeTools(action.internalCalls, agent.tools);
+    debugLog(`${reqTag}: tool results: ${results.map(r => `${r.id}:${r.isError ? 'error' : 'ok'}`).join(', ')}`);
+    body = appendToolLoop(body, responseBody, results, format);
+
+    // If this was the last allowed iteration, break to make a final streaming call
+    if (isLastAllowedIteration) {
+      debugLog(`${reqTag}: max iterations (${maxIterations}) reached, making final streaming call`);
+      break;
     }
   }
 
-  callbacks.onResponseStart(finalResponse);
-  callbacks.onResponseChunk({ requestId: req.requestId, data: finalResponse.body, done: true });
-  return finalResponse;
+  // Final streaming call after max iterations (or maxIterations=0)
+  const finalReq: SerializedHttpRequest = {
+    ...req,
+    body: encoder.encode(JSON.stringify({ ...body, stream: true })),
+  };
+  return inner.handleRequestStream!(finalReq, {
+    onResponseStart: (res) => {
+      if (!headersSent) {
+        callbacks.onResponseStart(res);
+      }
+    },
+    onResponseChunk: (chunk) => {
+      callbacks.onResponseChunk(chunk);
+    },
+  });
 }
