@@ -1,5 +1,5 @@
 import type { AntseedProviderPlugin, Provider, ServiceApiProtocol } from '@antseed/node';
-import { BaseProvider, StaticTokenProvider } from '@antseed/provider-core';
+import { BaseProvider, StaticTokenProvider, parseServiceAliasMap } from '@antseed/provider-core';
 
 const SPECIAL_OPENAI_COMPAT_PROVIDERS = ['openrouter'] as const;
 type OpenAiCompatFlavor = 'generic' | (typeof SPECIAL_OPENAI_COMPAT_PROVIDERS)[number];
@@ -75,65 +75,6 @@ function parseJsonObject(raw: string | undefined, key: string): Record<string, u
   return parsed as Record<string, unknown>;
 }
 
-function parseServiceAliasMap(raw: string | undefined): Record<string, string> | undefined {
-  const parsed = parseJsonObject(raw, 'OPENAI_SERVICE_ALIAS_MAP_JSON');
-  if (!parsed) {
-    return undefined;
-  }
-
-  const out: Record<string, string> = {};
-  for (const [announcedServiceRaw, upstreamServiceRaw] of Object.entries(parsed)) {
-    const announcedService = announcedServiceRaw.trim().toLowerCase();
-    if (!announcedService) {
-      continue;
-    }
-    if (typeof upstreamServiceRaw !== 'string' || upstreamServiceRaw.trim().length === 0) {
-      throw new Error(`OPENAI_SERVICE_ALIAS_MAP_JSON entry "${announcedServiceRaw}" must map to a non-empty string`);
-    }
-    out[announcedService] = upstreamServiceRaw.trim();
-  }
-
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
-function normalizeServicePrefix(raw: string | undefined): string | undefined {
-  if (!raw) return undefined;
-  const trimmed = raw.trim();
-  if (!trimmed) return undefined;
-  return trimmed.endsWith('/') ? trimmed : `${trimmed}/`;
-}
-
-function buildServiceRewriteMap(
-  announcedServices: string[],
-  upstreamServicePrefixRaw: string | undefined,
-  serviceAliasMap: Record<string, string> | undefined,
-): Record<string, string> | undefined {
-  const out: Record<string, string> = {};
-  const upstreamServicePrefix = normalizeServicePrefix(upstreamServicePrefixRaw);
-
-  if (upstreamServicePrefix) {
-    const normalizedPrefix = upstreamServicePrefix.toLowerCase();
-    for (const service of announcedServices) {
-      const announced = service.trim();
-      if (!announced) {
-        continue;
-      }
-      const normalizedAnnounced = announced.toLowerCase();
-      const hasPrefix = normalizedAnnounced.startsWith(normalizedPrefix);
-      out[announced.toLowerCase()] = hasPrefix
-        ? announced
-        : `${upstreamServicePrefix}${announced}`;
-    }
-  }
-
-  if (serviceAliasMap) {
-    for (const [announcedService, upstreamService] of Object.entries(serviceAliasMap)) {
-      out[announcedService] = upstreamService;
-    }
-  }
-
-  return Object.keys(out).length > 0 ? out : undefined;
-}
 
 function parseExtraHeaders(raw: string | undefined): Record<string, string> | undefined {
   const parsed = parseJsonObject(raw, 'OPENAI_EXTRA_HEADERS_JSON');
@@ -197,8 +138,6 @@ const plugin: AntseedProviderPlugin = {
     { key: 'OPENAI_BASE_URL', label: 'Base URL', type: 'string', required: false, default: 'https://api.openai.com', description: 'OpenAI-compatible base URL' },
     { key: 'OPENAI_PROVIDER_FLAVOR', label: 'Provider Flavor', type: 'string', required: false, default: 'generic', description: 'Special handling profile: generic | openrouter' },
     { key: 'OPENAI_UPSTREAM_PROVIDER', label: 'Upstream Provider', type: 'string', required: false, description: 'Optional OpenRouter provider selector value' },
-    { key: 'OPENAI_UPSTREAM_SERVICE_PREFIX', label: 'Upstream Service Prefix', type: 'string', required: false, description: 'Optional prefix prepended to announced service names when forwarding upstream (e.g. together/)' },
-    { key: 'OPENAI_SERVICE_ALIAS_MAP_JSON', label: 'Service Alias Map JSON', type: 'string', required: false, description: 'Optional JSON map of announcedService -> upstreamService' },
     { key: 'OPENAI_EXTRA_HEADERS_JSON', label: 'Extra Headers JSON', type: 'string', required: false, description: 'Optional JSON object of extra headers' },
     { key: 'OPENAI_BODY_INJECT_JSON', label: 'Body Inject JSON', type: 'string', required: false, description: 'Optional JSON object merged into request body' },
     { key: 'OPENAI_STRIP_HEADER_PREFIXES', label: 'Strip Header Prefixes', type: 'string[]', required: false, description: 'Comma-separated header prefixes to strip before relay' },
@@ -207,6 +146,7 @@ const plugin: AntseedProviderPlugin = {
     { key: 'ANTSEED_SERVICE_PRICING_JSON', label: 'Service Pricing JSON', type: 'string', required: false, description: 'Per-service pricing JSON' },
     { key: 'ANTSEED_MAX_CONCURRENCY', label: 'Max Concurrency', type: 'number', required: false, default: 10, description: 'Max concurrent requests' },
     { key: 'ANTSEED_ALLOWED_SERVICES', label: 'Allowed Services', type: 'string[]', required: false, description: 'Service allow-list' },
+    { key: 'ANTSEED_SERVICE_ALIAS_MAP_JSON', label: 'Service Alias Map', type: 'string', required: false, description: 'JSON map of announced service → upstream model name (generic, works across all providers)' },
   ],
 
   createProvider(config: Record<string, string>): Provider {
@@ -248,12 +188,7 @@ const plugin: AntseedProviderPlugin = {
 
     const tokenProvider = new StaticTokenProvider(apiKey);
     const serviceApiProtocols = buildServiceApiProtocols(allowedServices, 'openai-chat-completions');
-    const serviceAliasMap = parseServiceAliasMap(config['OPENAI_SERVICE_ALIAS_MAP_JSON']);
-    const serviceRewriteMap = buildServiceRewriteMap(
-      allowedServices,
-      config['OPENAI_UPSTREAM_SERVICE_PREFIX'],
-      serviceAliasMap,
-    );
+    const serviceRewriteMap = parseServiceAliasMap(config['ANTSEED_SERVICE_ALIAS_MAP_JSON']);
 
     return new BaseProvider({
       name: 'openai',

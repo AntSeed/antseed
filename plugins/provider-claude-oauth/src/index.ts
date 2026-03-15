@@ -1,5 +1,5 @@
 import type { AntseedProviderPlugin, ConfigField, ServiceApiProtocol } from '@antseed/node';
-import { BaseProvider, OAuthTokenProvider, StaticTokenProvider } from '@antseed/provider-core';
+import { BaseProvider, OAuthTokenProvider, StaticTokenProvider, parseServiceAliasMap } from '@antseed/provider-core';
 
 const DEFAULT_ANTHROPIC_VERSION = '2023-06-01';
 
@@ -12,6 +12,7 @@ const configSchema: ConfigField[] = [
   { key: 'ANTSEED_OUTPUT_USD_PER_MILLION', label: 'Output Price', type: 'number', required: false, default: 10 },
   { key: 'ANTSEED_MAX_CONCURRENCY', label: 'Max Concurrency', type: 'number', required: false, default: 5 },
   { key: 'ANTSEED_ALLOWED_SERVICES', label: 'Allowed Services', type: 'string[]', required: false },
+  { key: 'ANTSEED_SERVICE_ALIAS_MAP_JSON', label: 'Service Alias Map', type: 'string', required: false, description: 'JSON map of announced service → upstream model name' },
 ];
 
 function buildServiceApiProtocols(
@@ -58,6 +59,7 @@ const plugin: AntseedProviderPlugin = {
     const allowedServices = (config['ANTSEED_ALLOWED_SERVICES'] ?? '')
       .split(',').map(s => s.trim()).filter(Boolean);
     const serviceApiProtocols = buildServiceApiProtocols(allowedServices, 'anthropic-messages');
+    const serviceRewriteMap = parseServiceAliasMap(config['ANTSEED_SERVICE_ALIAS_MAP_JSON']);
 
     return new BaseProvider({
       name: 'claude-oauth',
@@ -80,6 +82,7 @@ const plugin: AntseedProviderPlugin = {
         },
         maxConcurrency,
         allowedServices,
+        serviceRewriteMap,
         retryOn401: true,
       },
     });

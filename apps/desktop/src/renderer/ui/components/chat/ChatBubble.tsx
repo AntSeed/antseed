@@ -152,7 +152,7 @@ function ThinkingBlockView({ block }: { block: ContentBlock }) {
   if (!block.thinking?.trim()) return null;
 
   const thinkingLabel =
-    String(block.name || '').trim() || getMyrmecochoryLabel(block.thinking.length);
+    String(block.name || '').trim() || 'Internal Thoughts';
 
   return (
     <div className={`thinking-block${block.streaming ? ' streaming' : ''}${open ? ' open' : ''}`}>

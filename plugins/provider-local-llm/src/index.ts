@@ -1,5 +1,5 @@
 import type { AntseedProviderPlugin, Provider, ServiceApiProtocol } from '@antseed/node';
-import { BaseProvider, StaticTokenProvider } from '@antseed/provider-core';
+import { BaseProvider, StaticTokenProvider, parseServiceAliasMap } from '@antseed/provider-core';
 
 function parseNonNegativeNumber(raw: string | undefined, key: string, fallback: number): number {
   const parsed = raw === undefined ? fallback : Number.parseFloat(raw);
@@ -30,6 +30,7 @@ const plugin: AntseedProviderPlugin = {
     { key: 'ANTSEED_OUTPUT_USD_PER_MILLION', label: 'Output Price', type: 'number', required: false, default: 0, description: 'Output price in USD per 1M tokens' },
     { key: 'ANTSEED_MAX_CONCURRENCY', label: 'Max Concurrency', type: 'number', required: false, default: 1, description: 'Max concurrent requests' },
     { key: 'ANTSEED_ALLOWED_SERVICES', label: 'Allowed Services', type: 'string[]', required: false, description: 'Service allow-list' },
+    { key: 'ANTSEED_SERVICE_ALIAS_MAP_JSON', label: 'Service Alias Map', type: 'string', required: false, description: 'JSON map of announced service → upstream model name' },
   ],
 
   createProvider(config: Record<string, string>): Provider {
@@ -52,6 +53,7 @@ const plugin: AntseedProviderPlugin = {
       ? config['ANTSEED_ALLOWED_SERVICES'].split(',').map((s: string) => s.trim())
       : [];
     const serviceApiProtocols = buildServiceApiProtocols(allowedServices, 'openai-chat-completions');
+    const serviceRewriteMap = parseServiceAliasMap(config['ANTSEED_SERVICE_ALIAS_MAP_JSON']);
 
     const tokenProvider = apiKey ? new StaticTokenProvider(apiKey) : undefined;
 
@@ -67,6 +69,7 @@ const plugin: AntseedProviderPlugin = {
         tokenProvider,
         maxConcurrency,
         allowedServices,
+        serviceRewriteMap,
       },
     });
   },

@@ -19,6 +19,12 @@ export const TRUSTED_PLUGINS: TrustedPlugin[] = [
     package: '@antseed/provider-claude-code',
   },
   {
+    name: 'claude-oauth',
+    type: 'provider',
+    description: 'Claude OAuth provider (testing only)',
+    package: '@antseed/provider-claude-oauth',
+  },
+  {
     name: 'openai',
     type: 'provider',
     description: 'OpenAI-compatible provider (OpenAI, Together, OpenRouter, API key)',
@@ -33,7 +39,7 @@ export const TRUSTED_PLUGINS: TrustedPlugin[] = [
   {
     name: 'local',
     type: 'router',
-    description: 'Local router for Claude Code, Aider, Codex',
+    description: 'Local router for Claude Code, Codex',
     package: '@antseed/router-local',
   },
 ]
