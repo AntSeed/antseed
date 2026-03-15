@@ -91,16 +91,17 @@ describe('injectSystemPrompt', () => {
 
   // ─── Anthropic array ──────────────────────────────────────────
 
-  it('wraps Anthropic array system as client context', () => {
+  it('wraps Anthropic array system as client context preserving cache_control', () => {
     const existing = [
       { type: 'text', text: 'Cached content', cache_control: { type: 'ephemeral' } },
     ];
     const body = { system: existing, model: 'claude' };
     const result = injectSystemPrompt(body, systemContent, 'anthropic');
-    const systemArr = result.system as { type: string; text: string }[];
+    const systemArr = result.system as { type: string; text: string; cache_control?: unknown }[];
     expect(systemArr).toHaveLength(2);
     expect(systemArr[0]).toEqual({ type: 'text', text: systemContent });
     expect(systemArr[1].text).toContain('<client-context>\nCached content\n</client-context>');
+    expect(systemArr[1].cache_control).toEqual({ type: 'ephemeral' });
   });
 
   // ─── OpenAI ───────────────────────────────────────────────────

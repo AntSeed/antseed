@@ -207,7 +207,7 @@ describe('BoundAgentProvider — persona only (no knowledge)', () => {
     expect(system).toContain('<client-context>\nBuyer system prompt\n</client-context>');
   });
 
-  it('wraps buyer system prompt array as client context', async () => {
+  it('wraps buyer system prompt array as client context preserving cache_control', async () => {
     const inner = mockProvider({ responses: [makeAnthropicTextResponse('ok')] });
     const agent = new BoundAgentProvider(inner, personaOnlyAgent());
 
@@ -220,12 +220,13 @@ describe('BoundAgentProvider — persona only (no knowledge)', () => {
     }));
 
     const body = inner.requestBodies()[0]!;
-    const system = body.system as { type: string; text: string }[];
+    const system = body.system as { type: string; text: string; cache_control?: unknown }[];
     expect(Array.isArray(system)).toBe(true);
     // Agent's system prompt as first block
     expect(system[0]!.text).toContain('You are a helpful social media advisor.');
     // Buyer's content wrapped as client context in second block
     expect(system[1]!.text).toContain('<client-context>\nCached content\n</client-context>');
+    expect(system[1]!.cache_control).toEqual({ type: 'ephemeral' });
   });
 
   it('no tools are injected into the request', async () => {

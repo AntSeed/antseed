@@ -76,12 +76,18 @@ export function injectSystemPrompt(
     if ((body.system as { text?: string }[]).some(b => b.text?.includes(INJECTION_MARKER))) {
       return body;
     }
-    const buyerText = (body.system as { text?: string }[]).map(b => b.text ?? '').join('\n\n');
+    const blocks = body.system as { text?: string; cache_control?: unknown }[];
+    const buyerText = blocks.map(b => b.text ?? '').join('\n\n');
+    if (!buyerText) {
+      return { ...body, system: [{ type: 'text', text: systemContent }] };
+    }
+    // Preserve cache_control from the last buyer block (Anthropic convention)
+    const lastCache = [...blocks].reverse().find(b => b.cache_control)?.cache_control;
+    const wrappedBlock: Record<string, unknown> = { type: 'text', text: wrapClientContext(buyerText) };
+    if (lastCache) wrappedBlock.cache_control = lastCache;
     return {
       ...body,
-      system: buyerText
-        ? [{ type: 'text', text: systemContent }, { type: 'text', text: wrapClientContext(buyerText) }]
-        : [{ type: 'text', text: systemContent }],
+      system: [{ type: 'text', text: systemContent }, wrappedBlock],
     };
   }
 
