@@ -84,12 +84,15 @@ async function iterate(
 
   const { definition, tools } = agent;
   const hasTools = tools.length > 0;
+  const reqTag = `[BoundAgent] ${req.method} ${req.path} (reqId=${req.requestId.slice(0, 8)})`;
+  debugLog(`${reqTag}: resolved agent "${definition.name}" with ${tools.length} tool(s): ${tools.map(t => t.name).join(', ') || 'none'}`);
+
   const systemPrompt = buildSystemPrompt(definition, hasTools);
   body = injectSystemPrompt(body, systemPrompt, format);
   body = injectTools(body, tools, format);
 
   for (let i = 0; i < maxIterations; i++) {
-    debugLog(`[BoundAgent] ${req.method} ${req.path} (reqId=${req.requestId.slice(0, 8)}): loop iteration ${i + 1}/${maxIterations}`);
+    debugLog(`${reqTag}: loop iteration ${i + 1}/${maxIterations}`);
 
     const augmentedReq: SerializedHttpRequest = {
       ...req,
@@ -114,11 +117,13 @@ async function iterate(
       };
     }
 
+    debugLog(`${reqTag}: executing ${action.internalCalls.length} tool(s): ${action.internalCalls.map(c => c.name).join(', ')}`);
     const results = await executeTools(action.internalCalls, tools);
+    debugLog(`${reqTag}: tool results: ${results.map(r => `${r.id}:${r.isError ? 'error' : 'ok'}`).join(', ')}`);
     body = appendToolLoop(body, responseBody, results, format);
   }
 
-  debugLog(`[BoundAgent] max iterations (${maxIterations}) reached`);
+  debugLog(`${reqTag}: max iterations (${maxIterations}) reached`);
   const finalReq: SerializedHttpRequest = {
     ...req,
     body: encoder.encode(JSON.stringify(body)),
