@@ -48,10 +48,11 @@ export class BoundAgentProvider implements Provider {
   }
 }
 
-/** Build tools list from agent definition + custom tools. Done once at construction. */
+/** Build tools list from knowledge + manifest tools + programmatic tools. Done once at construction. */
 function resolveTools(agent: BoundAgentDefinition, extra?: BoundAgentTool[]): BoundAgentTool[] {
   const tools: BoundAgentTool[] = [];
   if (agent.knowledge.length > 0) tools.push(knowledgeTool(agent.knowledge));
+  if (agent.tools?.length) tools.push(...agent.tools);
   if (extra) tools.push(...extra);
   return tools;
 }

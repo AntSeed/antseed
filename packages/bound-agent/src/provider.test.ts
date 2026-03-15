@@ -125,6 +125,7 @@ function personaOnlyAgent(): BoundAgentDefinition {
     persona: 'You are a helpful social media advisor.',
     guardrails: ['Never write posts without explicit request'],
     knowledge: [],
+
   };
 }
 
@@ -150,6 +151,7 @@ function agentWithKnowledge(): BoundAgentDefinition {
         content: '# Content Strategy\nPlanning your content...',
       },
     ],
+
   };
 }
 
@@ -606,6 +608,7 @@ describe('BoundAgentProvider — per-service agents', () => {
       knowledge: [
         { name: 'linkedin', description: 'LinkedIn tips', content: '# LinkedIn\nPost daily.' },
       ],
+  
     };
   }
 
@@ -615,6 +618,7 @@ describe('BoundAgentProvider — per-service agents', () => {
       persona: 'You are a coding expert.',
       guardrails: ['Always explain trade-offs'],
       knowledge: [],
+  
     };
   }
 
