@@ -1,7 +1,7 @@
 import type { Command } from 'commander'
 import chalk from 'chalk'
 import ora from 'ora'
-import { writeFile, unlink, readFile } from 'node:fs/promises'
+import { writeFile, unlink } from 'node:fs/promises'
 import { join, resolve, isAbsolute, dirname } from 'node:path'
 import { homedir } from 'node:os'
 import { getGlobalOptions } from './types.js'
@@ -13,8 +13,8 @@ import { parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
 import { setupShutdownHandler } from '../shutdown.js'
 import { loadProviderPlugin, buildPluginConfig } from '../../plugins/loader.js'
 import { resolveEffectiveSellerConfig, type SellerRuntimeOverrides } from '../../config/effective.js'
-import type { SellerCLIConfig, SellerMiddlewareConfig } from '../../config/types.js'
-import { MiddlewareProvider, AgentProvider, SkillRegistry, type ProviderMiddleware } from '@antseed/provider-core'
+import type { SellerCLIConfig } from '../../config/types.js'
+import { BoundAgentProvider, loadBoundAgent, type BoundAgentDefinition } from '@antseed/bound-agent'
 
 function getStateFile(dataDir: string): string {
   return join(dataDir, 'daemon.state.json')
@@ -169,21 +169,6 @@ function parseRuntimeServiceCategoriesJson(raw: string | undefined): Record<stri
   }
 }
 
-async function loadMiddlewareFiles(
-  configs: SellerMiddlewareConfig[],
-  baseDir: string,
-): Promise<ProviderMiddleware[]> {
-  return Promise.all(
-    configs.map(async (entry) => {
-      if (entry.services !== undefined && entry.services.length === 0) {
-        throw new Error(`Middleware entry "${entry.file}" has an empty services list — remove the field to apply globally or list at least one service ID.`)
-      }
-      const filePath = isAbsolute(entry.file) ? entry.file : resolve(baseDir, entry.file)
-      const content = await readFile(filePath, 'utf-8')
-      return { content, position: entry.position, role: entry.role, services: entry.services } as ProviderMiddleware
-    }),
-  )
-}
 
 export function registerSeedCommand(program: Command): void {
   program
@@ -354,33 +339,33 @@ export function registerSeedCommand(program: Command): void {
         },
       })
 
-      // Wrap provider with middleware if configured
-      const middlewareConfigs = effectiveSellerConfig.middleware ?? []
-      if (middlewareConfigs.length > 0) {
+      // Wrap provider with bound agent if configured
+      if (effectiveSellerConfig.agentDir) {
         const baseDir = globalOpts.config ? dirname(resolve(globalOpts.config)) : process.cwd()
-        try {
-          const middleware = await loadMiddlewareFiles(middlewareConfigs, baseDir)
-          provider = new MiddlewareProvider(provider, middleware, effectiveSellerConfig.middlewareConfidentialityPrompt)
-          console.log(chalk.dim(`  middleware: ${middlewareConfigs.length} file(s) loaded`))
-        } catch (err) {
-          console.error(chalk.red(`Failed to load middleware: ${(err as Error).message}`))
-          process.exit(1)
-        }
-      }
+        const resolvePath = (p: string) => isAbsolute(p) ? p : resolve(baseDir, p)
 
-      // Wrap provider with agent loop for on-demand skill loading
-      if (effectiveSellerConfig.skillsDir) {
-        const baseDir = globalOpts.config ? dirname(resolve(globalOpts.config)) : process.cwd()
-        const skillsPath = isAbsolute(effectiveSellerConfig.skillsDir)
-          ? effectiveSellerConfig.skillsDir
-          : resolve(baseDir, effectiveSellerConfig.skillsDir)
-        const registry = new SkillRegistry()
-        await registry.loadDirectory(skillsPath)
-        if (registry.size > 0) {
-          provider = new AgentProvider(provider, registry)
-          console.log(chalk.dim(`  skills: ${registry.size} skill(s) loaded from ${effectiveSellerConfig.skillsDir}`))
-        } else {
-          console.warn(chalk.yellow(`  skills: no skills loaded from ${effectiveSellerConfig.skillsDir} — check SKILL.md files`))
+        try {
+          if (typeof effectiveSellerConfig.agentDir === 'string') {
+            // Single agent for all services
+            const agentDef = await loadBoundAgent(resolvePath(effectiveSellerConfig.agentDir))
+            provider = new BoundAgentProvider(provider, agentDef)
+            const k = agentDef.knowledge.length
+            console.log(chalk.dim(`  bound agent: "${agentDef.name}" (${k} knowledge module${k !== 1 ? 's' : ''})`))
+          } else {
+            // Per-service agents
+            const agentMap: Record<string, BoundAgentDefinition> = {}
+            for (const [service, dir] of Object.entries(effectiveSellerConfig.agentDir)) {
+              const agentDef = await loadBoundAgent(resolvePath(dir))
+              agentMap[service] = agentDef
+              const k = agentDef.knowledge.length
+              const label = service === '*' ? '(default)' : service
+              console.log(chalk.dim(`  bound agent: "${agentDef.name}" → ${label} (${k} knowledge module${k !== 1 ? 's' : ''})`))
+            }
+            provider = new BoundAgentProvider(provider, agentMap)
+          }
+        } catch (err) {
+          console.error(chalk.red(`Failed to load bound agent: ${(err as Error).message}`))
+          process.exit(1)
         }
       }
 
