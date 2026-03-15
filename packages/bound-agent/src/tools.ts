@@ -241,7 +241,10 @@ export function stripInternalToolCalls(
       msg.tool_calls = (msg.tool_calls as { function: { name: string } }[]).filter(
         tc => !tc.function.name.startsWith(TOOL_PREFIX),
       );
-      if ((msg.tool_calls as unknown[]).length === 0) delete msg.tool_calls;
+      if ((msg.tool_calls as unknown[]).length === 0) {
+        delete msg.tool_calls;
+        return { ...choice, message: msg, finish_reason: 'stop' };
+      }
       return { ...choice, message: msg };
     });
     return { ...responseBody, choices: cleaned };
@@ -252,5 +255,10 @@ export function stripInternalToolCalls(
   const filtered = content.filter(
     block => !(block.type === 'tool_use' && block.name?.startsWith(TOOL_PREFIX)),
   );
-  return { ...responseBody, content: filtered };
+  const hasRemainingToolUse = filtered.some(b => b.type === 'tool_use');
+  return {
+    ...responseBody,
+    content: filtered,
+    ...(hasRemainingToolUse ? {} : { stop_reason: 'end_turn' }),
+  };
 }

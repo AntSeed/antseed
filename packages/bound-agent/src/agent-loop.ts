@@ -145,8 +145,9 @@ export async function runAgentLoop(
 }
 
 /**
- * Run the agent loop with streaming for the final response.
- * All intermediate iterations are buffered. Only the final response is streamed.
+ * Run the agent loop and replay the final response through stream callbacks.
+ * All iterations (including the final one) are buffered via handleRequest.
+ * The completed response is then replayed as a single chunk through callbacks.
  */
 export async function runAgentLoopStream(
   inner: Provider,
