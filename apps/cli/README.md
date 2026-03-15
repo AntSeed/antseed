@@ -121,7 +121,7 @@ Service categories are normalized to lowercase tags. Recommended tags include: `
 
 ### Ant Agent
 
-Providers can wrap their service with a ant agent — a read-only, knowledge-augmented AI service that injects a persona, guardrails, and on-demand loaded knowledge into buyer requests.
+Providers can wrap their service with an ant agent — a read-only, knowledge-augmented AI service that injects a persona, guardrails, and on-demand loaded knowledge into buyer requests.
 
 ```json
 {

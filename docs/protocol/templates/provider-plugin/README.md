@@ -85,7 +85,7 @@ configSchema: [
 
 The CLI reads matching environment variables and passes them to `createProvider(config)`.
 
-## Adding a Ant Agent
+## Adding an Ant Agent
 
 Providers can differentiate their service by wrapping it with a **ant agent** — a read-only, knowledge-augmented AI service that injects a persona, guardrails, and on-demand knowledge into buyer requests. Creators can also add custom tools for fetching external data, calling APIs, etc. The CLI handles this automatically via `@antseed/ant-agent` — no plugin code required.
 

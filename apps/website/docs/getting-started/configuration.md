@@ -94,7 +94,7 @@ antseed config seller set serviceCategories.anthropic.claude-sonnet-4-5-20250929
 
 ## Ant Agent
 
-Providers can wrap their service with a ant agent — a knowledge-augmented AI service that injects a persona, guardrails, and on-demand knowledge into buyer requests. The LLM decides which knowledge to load via the `antseed_load_knowledge` tool. Creators can also define custom tools in the manifest.
+Providers can wrap their service with an ant agent — a knowledge-augmented AI service that injects a persona, guardrails, and on-demand knowledge into buyer requests. The LLM decides which knowledge to load via the `antseed_load_knowledge` tool. Creators can also define custom tools in the manifest.
 
 ```json title="config example"
 {

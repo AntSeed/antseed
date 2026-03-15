@@ -28,7 +28,7 @@ export interface AntAgentDefinition {
 }
 
 /**
- * Shape of the `agent.json` manifest file in a ant agent directory.
+ * Shape of the `agent.json` manifest file in an ant agent directory.
  *
  * Example:
  * ```json
@@ -56,7 +56,7 @@ interface AgentManifest {
 }
 
 /**
- * Load a ant agent definition from a directory containing `agent.json`.
+ * Load an ant agent definition from a directory containing `agent.json`.
  *
  * The directory structure:
  * ```

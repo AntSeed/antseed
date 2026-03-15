@@ -16,7 +16,7 @@ const TOOL_SET_INSTRUCTIONS =
 const INJECTION_MARKER = '<!-- antseed-ant-agent -->';
 
 /**
- * Build the system prompt for a ant agent request.
+ * Build the system prompt for an ant agent request.
  * Includes persona, guardrails, tool-set instructions (if tools present),
  * and confidentiality prompt.
  */
