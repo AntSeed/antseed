@@ -5,9 +5,10 @@ import type {
   ProviderStreamCallbacks,
 } from '@antseed/node';
 import type { BoundAgentDefinition } from './loader.js';
-import { runAgentLoop, runAgentLoopStream, type AgentLoopOptions } from './agent-loop.js';
+import { type BoundAgentTool, knowledgeTool } from './tools.js';
+import { runAgentLoop, runAgentLoopStream, type AgentLoopOptions, type ResolvedAgent } from './agent-loop.js';
 
-type AgentResolver = (body: Record<string, unknown>) => BoundAgentDefinition | undefined;
+type AgentResolver = (body: Record<string, unknown>) => ResolvedAgent | undefined;
 
 export class BoundAgentProvider implements Provider {
   private readonly _inner: Provider;
@@ -21,7 +22,7 @@ export class BoundAgentProvider implements Provider {
   ) {
     this._inner = inner;
     this._options = options ?? {};
-    this._resolve = buildResolver(agents);
+    this._resolve = buildResolver(agents, options?.tools);
   }
 
   get name() { return this._inner.name; }
@@ -47,22 +48,36 @@ export class BoundAgentProvider implements Provider {
   }
 }
 
+/** Build tools list from agent definition + custom tools. Done once at construction. */
+function resolveTools(agent: BoundAgentDefinition, extra?: BoundAgentTool[]): BoundAgentTool[] {
+  const tools: BoundAgentTool[] = [];
+  if (agent.knowledge.length > 0) tools.push(knowledgeTool(agent.knowledge));
+  if (extra) tools.push(...extra);
+  return tools;
+}
+
+function prepareAgent(agent: BoundAgentDefinition, extra?: BoundAgentTool[]): ResolvedAgent {
+  return { definition: agent, tools: resolveTools(agent, extra) };
+}
+
 function buildResolver(
   agents: BoundAgentDefinition | Record<string, BoundAgentDefinition>,
+  extraTools?: BoundAgentTool[],
 ): AgentResolver {
   if (isBoundAgentDefinition(agents)) {
-    const agent = agents;
-    return () => agent;
+    const resolved = prepareAgent(agents, extraTools);
+    return () => resolved;
   }
 
-  const serviceMap = new Map<string, BoundAgentDefinition>();
-  let defaultAgent: BoundAgentDefinition | undefined;
+  const serviceMap = new Map<string, ResolvedAgent>();
+  let defaultAgent: ResolvedAgent | undefined;
 
   for (const [service, def] of Object.entries(agents)) {
+    const resolved = prepareAgent(def, extraTools);
     if (service === '*') {
-      defaultAgent = def;
+      defaultAgent = resolved;
     } else {
-      serviceMap.set(service, def);
+      serviceMap.set(service, resolved);
     }
   }
 

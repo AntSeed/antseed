@@ -83,23 +83,12 @@ function isToolChoiceForced(body: Record<string, unknown>): boolean {
   return false;
 }
 
-function toolToAnthropic(tool: BoundAgentTool): Record<string, unknown> {
-  return {
-    name: `${TOOL_PREFIX}${tool.name}`,
-    description: tool.description,
-    input_schema: tool.parameters,
-  };
-}
-
-function toolToOpenAI(tool: BoundAgentTool): Record<string, unknown> {
-  return {
-    type: 'function',
-    function: {
-      name: `${TOOL_PREFIX}${tool.name}`,
-      description: tool.description,
-      parameters: tool.parameters,
-    },
-  };
+function toApiFormat(tool: BoundAgentTool, format: RequestFormat): Record<string, unknown> {
+  const prefixedName = `${TOOL_PREFIX}${tool.name}`;
+  if (format === 'openai') {
+    return { type: 'function', function: { name: prefixedName, description: tool.description, parameters: tool.parameters } };
+  }
+  return { name: prefixedName, description: tool.description, input_schema: tool.parameters };
 }
 
 /**
@@ -114,10 +103,9 @@ export function injectTools(
   if (tools.length === 0) return body;
   if (isToolChoiceForced(body)) return body;
 
-  const convert = format === 'openai' ? toolToOpenAI : toolToAnthropic;
   const existing = Array.isArray(body.tools) ? [...(body.tools as unknown[])] : [];
   for (const tool of tools) {
-    existing.push(convert(tool));
+    existing.push(toApiFormat(tool, format));
   }
   return { ...body, tools: existing };
 }

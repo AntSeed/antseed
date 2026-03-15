@@ -5,10 +5,9 @@ import type {
   ProviderStreamCallbacks,
 } from '@antseed/node';
 import type { BoundAgentDefinition } from './loader.js';
+import type { BoundAgentTool } from './tools.js';
 import {
-  type BoundAgentTool,
   detectRequestFormat,
-  knowledgeTool,
   injectTools,
   inspectResponse,
   executeTools,
@@ -29,7 +28,13 @@ export interface AgentLoopOptions {
   tools?: BoundAgentTool[];
 }
 
-export type AgentResolver = (body: Record<string, unknown>) => BoundAgentDefinition | undefined;
+/** Agent definition paired with its pre-built tool list. Created once at construction. */
+export interface ResolvedAgent {
+  definition: BoundAgentDefinition;
+  tools: BoundAgentTool[];
+}
+
+export type AgentResolver = (body: Record<string, unknown>) => ResolvedAgent | undefined;
 
 function normalizeDebugValue(value: string | undefined): string {
   return (value ?? '').trim().toLowerCase();
@@ -53,27 +58,11 @@ function debugLog(...args: unknown[]): void {
   if (DEBUG_ENABLED) console.log(...args);
 }
 
-/** Build the full tool list from knowledge modules + custom tools. */
-function buildTools(agent: BoundAgentDefinition, extra?: BoundAgentTool[]): BoundAgentTool[] {
-  const tools: BoundAgentTool[] = [];
-  if (agent.knowledge.length > 0) {
-    tools.push(knowledgeTool(agent.knowledge));
-  }
-  if (extra) {
-    tools.push(...extra);
-  }
-  return tools;
-}
-
-/** Result of running the agent loop iterations. */
 interface IterationResult {
   response: SerializedHttpResponse;
   maxIterationsHit: boolean;
 }
 
-/**
- * Core iteration logic shared by buffered and streaming paths.
- */
 async function iterate(
   inner: Provider,
   req: SerializedHttpRequest,
@@ -93,9 +82,9 @@ async function iterate(
   const agent = resolve(body);
   if (!agent) return null;
 
-  const tools = buildTools(agent, options?.tools);
+  const { definition, tools } = agent;
   const hasTools = tools.length > 0;
-  const systemPrompt = buildSystemPrompt(agent, hasTools);
+  const systemPrompt = buildSystemPrompt(definition, hasTools);
   body = injectSystemPrompt(body, systemPrompt, format);
   body = injectTools(body, tools, format);
 
@@ -138,9 +127,6 @@ async function iterate(
   return { response, maxIterationsHit: true };
 }
 
-/**
- * Run the agent loop for a single request (buffered).
- */
 export async function runAgentLoop(
   inner: Provider,
   req: SerializedHttpRequest,
