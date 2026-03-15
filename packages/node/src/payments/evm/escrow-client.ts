@@ -32,6 +32,9 @@ export interface ReputationData {
   totalVolume:        bigint;
   uniqueBuyersServed: number;
   ageDays:            number;
+  totalSlashed:       bigint;
+  slashCount:         number;
+  antsEarned:         bigint;
 }
 
 const ERC20_ABI = [
@@ -59,7 +62,10 @@ const ESCROW_ABI = [
   // Reputation
   'function rateSeller(address seller, uint8 score) external',
   'function canRate(address buyer, address seller) external view returns (bool)',
-  'function getReputation(address seller) external view returns (tuple(uint256 avgRating, uint256 ratingCount, uint256 stakedAmount, uint256 totalTransactions, uint256 totalVolume, uint256 uniqueBuyersServed, uint256 ageDays))',
+  'function getReputation(address seller) external view returns (tuple(uint256 avgRating, uint256 ratingCount, uint256 stakedAmount, uint256 totalTransactions, uint256 totalVolume, uint256 uniqueBuyersServed, uint256 ageDays, uint256 totalSlashed, uint256 slashCount, uint256 antsEarned))',
+
+  // Slashing
+  'function slashSeller(address seller, address buyer, bytes32 sessionId, string reason) external',
 
   // Views
   'function getBuyerBalance(address buyer) external view returns (uint256 available, uint256 pendingWithdrawal, uint256 withdrawalReadyAt)',
@@ -67,7 +73,7 @@ const ESCROW_ABI = [
 
   // State reads
   'function buyers(address) external view returns (uint256 balance, uint256 withdrawalAmount, uint256 withdrawalRequestedAt, uint256 firstTransactionAt, uint256 uniqueSellersCount)',
-  'function sellers(address) external view returns (uint256 pendingEarnings, uint256 stakedAmount, uint256 stakedSince, uint256 firstTransactionAt, uint256 totalTransactions, uint256 totalVolume, uint256 uniqueBuyersCount)',
+  'function sellers(address) external view returns (uint256 pendingEarnings, uint256 stakedAmount, uint256 stakedSince, uint256 firstTransactionAt, uint256 totalTransactions, uint256 totalVolume, uint256 uniqueBuyersCount, uint256 totalSlashed, uint256 slashCount, uint256 antsEarned)',
   'function hasInteracted(address buyer, address seller) external view returns (bool)',
   'function accumulatedFees() external view returns (uint256)',
   'function platformFeeBps() external view returns (uint16)',
@@ -227,7 +233,23 @@ export class EscrowClient {
       totalVolume:        r.totalVolume as bigint,
       uniqueBuyersServed: Number(r.uniqueBuyersServed),
       ageDays:            Number(r.ageDays),
+      totalSlashed:       r.totalSlashed as bigint,
+      slashCount:         Number(r.slashCount),
+      antsEarned:         r.antsEarned as bigint,
     };
+  }
+
+  async slashSeller(
+    ownerSigner: AbstractSigner,
+    seller: string,
+    buyer: string,
+    sessionId: string,
+    reason: string,
+  ): Promise<string> {
+    const { contract, nonce } = await this._prepareWrite(ownerSigner);
+    return EscrowClient._exec(
+      await contract.getFunction('slashSeller')(seller, buyer, sessionId, reason, { nonce }),
+    );
   }
 
   // ── View helpers ──────────────────────────────────────────────────────────

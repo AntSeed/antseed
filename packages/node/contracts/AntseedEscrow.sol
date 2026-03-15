@@ -8,6 +8,10 @@ interface IERC20 {
     function transfer(address to, uint256 value) external returns (bool);
 }
 
+interface IAntsToken {
+    function mint(address to, uint256 amount) external;
+}
+
 /**
  * @title  AntseedEscrow
  * @notice Pull-payment escrow for the Antseed P2P AI services marketplace.
@@ -58,6 +62,10 @@ contract AntseedEscrow {
     error StakeLocked(uint256 unlocksAt);
     error InsufficientStakedAmount(uint256 have, uint256 need);
 
+    // Slashing
+    error SlashNotOwner();
+    error SlashAlreadySlashed(address seller, bytes32 sessionId);
+
     // Rating
     error RatingOutOfRange(uint8 score);
     error RatingAccountTooNew(uint256 unlocksAt);
@@ -76,6 +84,8 @@ contract AntseedEscrow {
     uint256 public constant MIN_UNIQUE_SELLERS   = 3;
     uint256 public constant MIN_VOTE_SPEND       = 1_000_000;    // 1 USDC (6 dec)
     uint16  public constant MAX_PLATFORM_FEE_BPS = 1_000;        // 10 %
+    uint256 public constant SLASH_BPS            = 1_000;        // 10 %
+    uint256 public constant ANTS_PER_USDC        = 100;          // 100 ANTS (18 dec) per 1 USDC (6 dec) charged
 
     // EIP-712
     bytes32 public constant SPENDING_AUTH_TYPEHASH = keccak256(
@@ -84,8 +94,9 @@ contract AntseedEscrow {
 
     // ── State variables ──────────────────────────────────────────────────────
 
-    IERC20  public immutable usdc;
-    bytes32 public immutable DOMAIN_SEPARATOR;
+    IERC20      public immutable usdc;
+    IAntsToken  public immutable antsToken;
+    bytes32     public immutable DOMAIN_SEPARATOR;
 
     address public owner;
     address public feeCollector;
@@ -111,6 +122,9 @@ contract AntseedEscrow {
         uint256 totalTransactions;
         uint256 totalVolume;          // all-time USDC charged (6 dec)
         uint256 uniqueBuyersCount;
+        uint256 totalSlashed;         // all-time USDC slashed from stake
+        uint256 slashCount;           // number of times slashed
+        uint256 antsEarned;           // all-time ANTS minted to this seller
     }
 
     struct SessionAuth {
@@ -128,6 +142,9 @@ contract AntseedEscrow {
         uint256 totalVolume;
         uint256 uniqueBuyersServed;
         uint256 ageDays;
+        uint256 totalSlashed;
+        uint256 slashCount;
+        uint256 antsEarned;
     }
 
     // ── Mappings ─────────────────────────────────────────────────────────────
@@ -148,6 +165,9 @@ contract AntseedEscrow {
     mapping(address => mapping(address => uint8))   private _lastRating;
     mapping(address => mapping(address => bool))    private _hasRated;
     mapping(address => mapping(address => uint256)) private _lastRatedAt;
+
+    // Slashing: buyer => seller => sessionId => slashed
+    mapping(address => mapping(address => mapping(bytes32 => bool))) private _slashed;
 
     // Reentrancy guard
     bool private _locked;
@@ -171,6 +191,15 @@ contract AntseedEscrow {
 
     event Staked(address indexed seller, uint256 amount);
     event Unstaked(address indexed seller, uint256 amount);
+
+    event Slashed(
+        address indexed seller,
+        address indexed buyer,
+        bytes32 indexed sessionId,
+        uint256 amount,
+        string  reason
+    );
+    event AntsRewarded(address indexed seller, uint256 chargeAmount, uint256 antsAmount);
 
     event SellerRated(address indexed buyer, address indexed seller, uint8 score);
 
@@ -203,14 +232,17 @@ contract AntseedEscrow {
 
     constructor(
         address usdcToken,
+        address antsTokenAddr,
         address initialFeeCollector,
         uint16  initialFeeBps
     ) {
         if (usdcToken           == address(0)) revert ZeroAddress();
+        if (antsTokenAddr       == address(0)) revert ZeroAddress();
         if (initialFeeCollector == address(0)) revert ZeroAddress();
         if (initialFeeBps > MAX_PLATFORM_FEE_BPS) revert FeeTooHigh(initialFeeBps, MAX_PLATFORM_FEE_BPS);
 
         usdc         = IERC20(usdcToken);
+        antsToken    = IAntsToken(antsTokenAddr);
         owner        = msg.sender;
         feeCollector = initialFeeCollector;
         platformFeeBps = initialFeeBps;
@@ -398,6 +430,15 @@ contract AntseedEscrow {
 
         _updateStats(buyer, seller, amount);
 
+        // Mint ANTS reward: amount is in USDC 6-dec, ANTS is 18-dec.
+        // Reward = (amount / 1e6) * ANTS_PER_USDC * 1e18 = amount * ANTS_PER_USDC * 1e12
+        uint256 antsReward = amount * ANTS_PER_USDC * 1e12;
+        if (antsReward > 0) {
+            sellers[seller].antsEarned += antsReward;
+            antsToken.mint(seller, antsReward);
+            emit AntsRewarded(seller, amount, antsReward);
+        }
+
         emit Charged(buyer, seller, sessionId, amount, fee);
     }
 
@@ -455,6 +496,38 @@ contract AntseedEscrow {
         accumulatedFees = 0;
         _safeTransfer(feeCollector, amount);
         emit FeeSwept(feeCollector, amount);
+    }
+
+    // ── Slashing ───────────────────────────────────────────────────────────────
+
+    /**
+     * @notice Slash a seller's stake for proven misbehavior on a specific session.
+     *         Only callable by the contract owner (dispute resolution).
+     *         Each (buyer, seller, sessionId) triple can only be slashed once.
+     *         Slashed USDC goes to the buyer as compensation.
+     */
+    function slashSeller(
+        address seller,
+        address buyer,
+        bytes32 sessionId,
+        string calldata reason
+    ) external onlyOwner nonReentrant {
+        if (_slashed[buyer][seller][sessionId])
+            revert SlashAlreadySlashed(seller, sessionId);
+
+        SellerAccount storage s = sellers[seller];
+        uint256 slashAmount = (s.stakedAmount * SLASH_BPS) / 10_000;
+        if (slashAmount == 0) revert ZeroAmount();
+
+        _slashed[buyer][seller][sessionId] = true;
+        s.stakedAmount  -= slashAmount;
+        s.totalSlashed  += slashAmount;
+        s.slashCount    += 1;
+
+        // Compensate buyer
+        buyers[buyer].balance += slashAmount;
+
+        emit Slashed(seller, buyer, sessionId, slashAmount, reason);
     }
 
     // ── Reputation ───────────────────────────────────────────────────────────
@@ -544,7 +617,10 @@ contract AntseedEscrow {
             totalTransactions:  s.totalTransactions,
             totalVolume:        s.totalVolume,
             uniqueBuyersServed: s.uniqueBuyersCount,
-            ageDays:            ageDays
+            ageDays:            ageDays,
+            totalSlashed:       s.totalSlashed,
+            slashCount:         s.slashCount,
+            antsEarned:         s.antsEarned
         });
     }
 
