@@ -1,6 +1,6 @@
 {
   "name": "@antseed/dashboard",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Antseed Network web dashboard — monitoring and configuration UI",
   "type": "module",
   "files": [
