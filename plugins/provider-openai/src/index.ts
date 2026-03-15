@@ -1,5 +1,5 @@
 import type { AntseedProviderPlugin, Provider, ServiceApiProtocol } from '@antseed/node';
-import { BaseProvider, StaticTokenProvider } from '@antseed/provider-core';
+import { BaseProvider, StaticTokenProvider, parseServiceAliasMap as parseGenericAliasMap } from '@antseed/provider-core';
 
 const SPECIAL_OPENAI_COMPAT_PROVIDERS = ['openrouter'] as const;
 type OpenAiCompatFlavor = 'generic' | (typeof SPECIAL_OPENAI_COMPAT_PROVIDERS)[number];
@@ -207,6 +207,7 @@ const plugin: AntseedProviderPlugin = {
     { key: 'ANTSEED_SERVICE_PRICING_JSON', label: 'Service Pricing JSON', type: 'string', required: false, description: 'Per-service pricing JSON' },
     { key: 'ANTSEED_MAX_CONCURRENCY', label: 'Max Concurrency', type: 'number', required: false, default: 10, description: 'Max concurrent requests' },
     { key: 'ANTSEED_ALLOWED_SERVICES', label: 'Allowed Services', type: 'string[]', required: false, description: 'Service allow-list' },
+    { key: 'ANTSEED_SERVICE_ALIAS_MAP_JSON', label: 'Service Alias Map', type: 'string', required: false, description: 'JSON map of announced service → upstream model name (generic, works across all providers)' },
   ],
 
   createProvider(config: Record<string, string>): Provider {
@@ -248,11 +249,16 @@ const plugin: AntseedProviderPlugin = {
 
     const tokenProvider = new StaticTokenProvider(apiKey);
     const serviceApiProtocols = buildServiceApiProtocols(allowedServices, 'openai-chat-completions');
-    const serviceAliasMap = parseServiceAliasMap(config['OPENAI_SERVICE_ALIAS_MAP_JSON']);
+    // Merge alias maps: generic ANTSEED_SERVICE_ALIAS_MAP_JSON (base) + OpenAI-specific (overrides)
+    const genericAliasMap = parseGenericAliasMap(config['ANTSEED_SERVICE_ALIAS_MAP_JSON']);
+    const openaiAliasMap = parseServiceAliasMap(config['OPENAI_SERVICE_ALIAS_MAP_JSON']);
+    const mergedAliasMap = genericAliasMap || openaiAliasMap
+      ? { ...genericAliasMap, ...openaiAliasMap }
+      : undefined;
     const serviceRewriteMap = buildServiceRewriteMap(
       allowedServices,
       config['OPENAI_UPSTREAM_SERVICE_PREFIX'],
-      serviceAliasMap,
+      mergedAliasMap,
     );
 
     return new BaseProvider({
