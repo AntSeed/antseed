@@ -213,7 +213,6 @@ export async function runAgentLoopStream(
     // If we detect an antseed_* tool call mid-stream, stop forwarding
     // so the buyer doesn't try to execute provider-internal tools.
     let streamResponse: SerializedHttpResponse;
-    let suppressingChunks = false;
     try {
       streamResponse = await inner.handleRequestStream!(augReq, {
         onResponseStart: (res) => {
@@ -223,18 +222,8 @@ export async function runAgentLoopStream(
           }
         },
         onResponseChunk: (chunk) => {
-          if (suppressingChunks) return;
-          if (chunk.done) {
-            // Forward the done chunk so the buyer stream terminates properly.
-            // If we later detect tool calls, the next iteration will send a new stream.
-            callbacks.onResponseChunk(chunk);
-            return;
-          }
-          // Check if this chunk reveals an internal tool call
-          if (chunk.data.length > 0 && chunkHasInternalToolCall(chunk.data, format)) {
-            suppressingChunks = true;
-            return;
-          }
+          // Drop chunks that contain antseed_* tool calls; forward everything else
+          if (chunk.data.length > 0 && chunkHasInternalToolCall(chunk.data, format)) return;
           callbacks.onResponseChunk(chunk);
         },
       });
@@ -272,11 +261,6 @@ export async function runAgentLoopStream(
 
     const action = inspectResponse(responseBody, format);
     if (action.type === 'done') {
-      if (suppressingChunks) {
-        // We suppressed chunks (detected internal tool call) but inspectResponse
-        // resolved as done (e.g. mixed buyer+internal calls). Close the buyer's stream.
-        callbacks.onResponseChunk({ requestId: req.requestId, data: new Uint8Array(0), done: true });
-      }
       debugLog(`${reqTag}: stream iteration ${i + 1} done (no internal tool calls)`);
       return streamResponse;
     }
