@@ -359,9 +359,11 @@ contract AntseedSubPoolRevenueTest is AntseedSubPoolTestBase {
         vm.warp(block.timestamp + 7 days + 1);
         pool.distributeRevenue();
 
-        // Seller1 should get all revenue
-        (,,, uint256 pending) = pool.peerOpts(seller1);
-        assertEq(pending, MONTHLY_FEE);
+        // Seller1 should get all revenue (verify via claim)
+        uint256 balBefore = usdc.balanceOf(seller1);
+        vm.prank(seller1);
+        pool.claimRevenue();
+        assertEq(usdc.balanceOf(seller1) - balBefore, MONTHLY_FEE);
     }
 
     function test_distributeRevenue_proportionalToReputation() public {
@@ -385,12 +387,20 @@ contract AntseedSubPoolRevenueTest is AntseedSubPoolTestBase {
         vm.warp(block.timestamp + 7 days + 1);
         pool.distributeRevenue();
 
-        (,,, uint256 pending1) = pool.peerOpts(seller1);
-        (,,, uint256 pending2) = pool.peerOpts(seller2);
+        // Verify distribution via claims (pull-based accumulator)
+        uint256 bal1Before = usdc.balanceOf(seller1);
+        vm.prank(seller1);
+        pool.claimRevenue();
+        uint256 claimed1 = usdc.balanceOf(seller1) - bal1Before;
+
+        uint256 bal2Before = usdc.balanceOf(seller2);
+        vm.prank(seller2);
+        pool.claimRevenue();
+        uint256 claimed2 = usdc.balanceOf(seller2) - bal2Before;
 
         // seller1 should get 10/40 = 25%, seller2 should get 30/40 = 75%
-        assertEq(pending1, MONTHLY_FEE * 10 / 40);
-        assertEq(pending2, MONTHLY_FEE * 30 / 40);
+        assertEq(claimed1, MONTHLY_FEE * 10 / 40);
+        assertEq(claimed2, MONTHLY_FEE * 30 / 40);
     }
 
     function test_distributeRevenue_zeroReputation() public {
@@ -412,12 +422,15 @@ contract AntseedSubPoolRevenueTest is AntseedSubPoolTestBase {
         vm.warp(block.timestamp + 7 days + 1);
         pool.distributeRevenue();
 
-        (,,, uint256 pending1) = pool.peerOpts(seller1);
-        (,,, uint256 pending2) = pool.peerOpts(seller2);
+        // Verify via claims: seller1 gets all, seller2 gets nothing
+        uint256 bal1Before = usdc.balanceOf(seller1);
+        vm.prank(seller1);
+        pool.claimRevenue();
+        assertEq(usdc.balanceOf(seller1) - bal1Before, MONTHLY_FEE);
 
-        // seller1 gets all, seller2 gets nothing
-        assertEq(pending1, MONTHLY_FEE);
-        assertEq(pending2, 0);
+        vm.prank(seller2);
+        vm.expectRevert(AntseedSubPool.NothingToClaim.selector);
+        pool.claimRevenue();
     }
 
     function test_distributeRevenue_revert_epochNotEnded() public {
@@ -490,9 +503,11 @@ contract AntseedSubPoolRevenueTest is AntseedSubPoolTestBase {
         vm.warp(t2);
         pool.distributeRevenue();
 
-        // Seller should have accumulated revenue from both epochs
-        (,,, uint256 pending) = pool.peerOpts(seller1);
-        assertEq(pending, MONTHLY_FEE * 2);
+        // Seller should have accumulated revenue from both epochs (verify via claim)
+        uint256 balBefore = usdc.balanceOf(seller1);
+        vm.prank(seller1);
+        pool.claimRevenue();
+        assertEq(usdc.balanceOf(seller1) - balBefore, MONTHLY_FEE * 2);
     }
 
     function test_getProjectedRevenue() public {

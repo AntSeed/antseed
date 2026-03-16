@@ -83,6 +83,7 @@ contract AntseedEscrow is EIP712, Pausable {
         bytes32 previousSessionId;
         uint256 reservedAt;
         uint256 settledAmount;
+        uint256 tokenRate;          // Snapshotted at reserve time
         SessionStatus status;
         bool isFirstSign;
         bool isProvenSign;
@@ -244,7 +245,7 @@ contract AntseedEscrow is EIP712, Pausable {
     function executeWithdrawal() external nonReentrant {
         BuyerAccount storage ba = buyers[msg.sender];
         if (ba.withdrawalAmount == 0) revert InvalidAmount();
-        if (block.timestamp < ba.lastActivityAt + BUYER_INACTIVITY_PERIOD) revert InactivityNotReached();
+        if (block.timestamp < ba.withdrawalRequestedAt + SETTLE_TIMEOUT) revert TimeoutNotReached();
 
         uint256 amount = ba.withdrawalAmount;
         ba.withdrawalAmount = 0;
@@ -414,7 +415,7 @@ contract AntseedEscrow is EIP712, Pausable {
             ba.firstSessionAt = block.timestamp;
         }
 
-        // Store session
+        // Store session (snapshot tokenRate at reserve time to prevent manipulation)
         sessions[sessionId] = Session({
             buyer: buyer,
             seller: msg.sender,
@@ -425,6 +426,7 @@ contract AntseedEscrow is EIP712, Pausable {
             previousSessionId: previousSessionId,
             reservedAt: block.timestamp,
             settledAmount: 0,
+            tokenRate: sellers[msg.sender].tokenRate,
             status: SessionStatus.Reserved,
             isFirstSign: isFirstSign,
             isProvenSign: isProvenSign,
@@ -466,7 +468,7 @@ contract AntseedEscrow is EIP712, Pausable {
         if (msg.sender != session.seller) revert NotAuthorized();
 
         SellerAccount storage sa = sellers[msg.sender];
-        uint256 chargeAmount = tokenCount * sa.tokenRate;
+        uint256 chargeAmount = tokenCount * session.tokenRate;
         if (chargeAmount > session.maxAmount) {
             chargeAmount = session.maxAmount;
         }
@@ -522,6 +524,7 @@ contract AntseedEscrow is EIP712, Pausable {
     function settleTimeout(bytes32 sessionId) external nonReentrant {
         Session storage session = sessions[sessionId];
         if (session.status != SessionStatus.Reserved) revert SessionNotReserved();
+        if (msg.sender != session.buyer && msg.sender != session.seller) revert NotAuthorized();
         if (block.timestamp < session.reservedAt + SETTLE_TIMEOUT) revert TimeoutNotReached();
 
         // Return credits

@@ -186,6 +186,14 @@ export class SessionStore {
     stmt.run(tokens, requestCount, now, sessionId);
   }
 
+  getMaxNonce(role: string): number {
+    const stmt = this._db.prepare(
+      'SELECT MAX(nonce) as max_nonce FROM payment_sessions WHERE role = ?',
+    );
+    const row = stmt.get(role) as { max_nonce: number | null } | undefined;
+    return row?.max_nonce ?? 0;
+  }
+
   // ── Timeout queries ───────────────────────────────────────────
 
   getTimedOutSessions(timeoutSeconds: number): StoredSession[] {

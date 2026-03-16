@@ -127,7 +127,8 @@ describe('Proof Chain Integration', () => {
       autoAck: true,
       dataDir: buyerTempDir,
     };
-    buyerManager = new BuyerPaymentManager(buyerIdentity, buyerConfig);
+    const buyerStore = new SessionStore(buyerTempDir);
+    buyerManager = new BuyerPaymentManager(buyerIdentity, buyerConfig, buyerStore);
     // Use a deterministic wallet derived from the identity so EIP-712 sigs are valid
     const { identityToEvmWallet } = await import('../src/payments/evm/keypair.js');
     buyerManager.setSigner(identityToEvmWallet(buyerIdentity));
@@ -150,7 +151,6 @@ describe('Proof Chain Integration', () => {
   });
 
   afterEach(() => {
-    buyerManager.close();
     sellerStore.close();
     rmSync(buyerTempDir, { recursive: true, force: true });
     rmSync(sellerTempDir, { recursive: true, force: true });

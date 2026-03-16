@@ -198,7 +198,7 @@ contract E2EIntegration is Test {
         _reserveProvenSign(seller1, sid1, 10_000, sid2, 5_000_000, 2);
 
         // Verify it's qualified proven
-        (,,,,,,,,,,,, bool isQualified2) = escrow.sessions(sid2);
+        (,,,,,,,,,,,,, bool isQualified2) = escrow.sessions(sid2);
         assertTrue(isQualified2, "Session 2 should be qualified proven");
 
         // 7. Settle session 2 (20000 tokens)
@@ -253,7 +253,7 @@ contract E2EIntegration is Test {
         _reserveProvenSign(seller1, keccak256("qd-s1"), 10_000, provenSid, 5_000_000, 2);
 
         // Verify it's qualified
-        (,,,,,,,,,,,, bool isQualified) = escrow.sessions(provenSid);
+        (,,,,,,,,,,,,, bool isQualified) = escrow.sessions(provenSid);
         assertTrue(isQualified, "proven sign should be qualified");
 
         // Verify qualifiedProvenSignCount incremented on seller1's identity
@@ -280,6 +280,7 @@ contract E2EIntegration is Test {
         uint256 buyerAvailBefore;
         (buyerAvailBefore,,,) = escrow.getBuyerBalance(buyer);
 
+        vm.prank(buyer);
         escrow.settleTimeout(sid);
 
         uint256 buyerAvailAfter;
@@ -440,7 +441,7 @@ contract E2EIntegration is Test {
         vm.prank(seller1);
         escrow.reserve(buyer, sid2, cap, 2, deadline, 0, bytes32(0), sig2);
 
-        (address sBuyer,,,,,,,,,,,,) = escrow.sessions(sid2);
+        (address sBuyer,,,,,,,,,,,,,) = escrow.sessions(sid2);
         assertEq(sBuyer, buyer, "session should be created at cap");
     }
 
@@ -471,7 +472,7 @@ contract E2EIntegration is Test {
         vm.prank(seller1);
         escrow.reserve(buyer, sid2, 5_000_000, 2, deadline2, 10_000, sid1, sig2);
 
-        (address sBuyer,,,,,,,,,,,,) = escrow.sessions(sid2);
+        (address sBuyer,,,,,,,,,,,,,) = escrow.sessions(sid2);
         assertEq(sBuyer, buyer, "proven sign should succeed after cooldown");
     }
 

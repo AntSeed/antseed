@@ -225,8 +225,8 @@ contract AntseedEscrowBuyerTest is AntseedEscrowTestBase {
         vm.prank(buyer);
         escrow.requestWithdrawal(5_000_000);
 
-        // Warp past inactivity period
-        vm.warp(block.timestamp + escrow.BUYER_INACTIVITY_PERIOD() + 1);
+        // Warp past SETTLE_TIMEOUT (request-based timelock)
+        vm.warp(block.timestamp + escrow.SETTLE_TIMEOUT() + 1);
 
         uint256 balBefore = usdc.balanceOf(buyer);
         vm.prank(buyer);
@@ -240,11 +240,11 @@ contract AntseedEscrowBuyerTest is AntseedEscrowTestBase {
         vm.prank(buyer);
         escrow.requestWithdrawal(5_000_000);
 
-        // Warp less than inactivity period
-        vm.warp(block.timestamp + escrow.BUYER_INACTIVITY_PERIOD() - 1);
+        // Warp less than SETTLE_TIMEOUT
+        vm.warp(block.timestamp + escrow.SETTLE_TIMEOUT() - 1);
 
         vm.prank(buyer);
-        vm.expectRevert(AntseedEscrow.InactivityNotReached.selector);
+        vm.expectRevert(AntseedEscrow.TimeoutNotReached.selector);
         escrow.executeWithdrawal();
     }
 
@@ -253,19 +253,17 @@ contract AntseedEscrowBuyerTest is AntseedEscrowTestBase {
         vm.prank(buyer);
         escrow.requestWithdrawal(5_000_000);
 
-        // Warp 80 days
-        vm.warp(block.timestamp + 80 days);
+        // Warp 20 hours (not past SETTLE_TIMEOUT yet)
+        vm.warp(block.timestamp + 20 hours);
 
-        // New deposit resets lastActivityAt
+        // New deposit — does NOT reset the withdrawal timelock (uses withdrawalRequestedAt)
         escrow.setCreditLimitOverride(buyer, 50_000_000);
         vm.prank(buyer);
         escrow.deposit(1_000_000);
 
-        // Warp another 15 days (total 95 from request, but only 15 from last activity)
-        vm.warp(block.timestamp + 15 days);
-
+        // Still within SETTLE_TIMEOUT from request — should revert
         vm.prank(buyer);
-        vm.expectRevert(AntseedEscrow.InactivityNotReached.selector);
+        vm.expectRevert(AntseedEscrow.TimeoutNotReached.selector);
         escrow.executeWithdrawal();
     }
 
@@ -444,6 +442,7 @@ contract AntseedEscrowStakingTest is AntseedEscrowTestBase {
             bytes32 sid = keccak256(abi.encodePacked("ghost", i));
             _reserveFirstSign(seller, sid, 500_000);
             vm.warp(block.timestamp + escrow.SETTLE_TIMEOUT() + 1);
+            vm.prank(buyer);
             escrow.settleTimeout(sid);
         }
 
@@ -517,7 +516,7 @@ contract AntseedEscrowReserveTest is AntseedEscrowTestBase {
         bytes32 sid = keccak256("fs1");
         _reserveFirstSign(seller, sid, 500_000);
 
-        (address sBuyer, address sSeller,,,,,,,,,,, ) = escrow.sessions(sid);
+        (address sBuyer, address sSeller,,,,,,,,,,,, ) = escrow.sessions(sid);
         assertEq(sBuyer, buyer);
         assertEq(sSeller, seller);
     }
@@ -541,7 +540,7 @@ contract AntseedEscrowReserveTest is AntseedEscrowTestBase {
         bytes32 sid2 = keccak256("ps1proven");
         _reserveProvenSign(seller, sid1, 500_000, sid2, 5_000_000);
 
-        (address sBuyer,,,,,,,,,,,bool isProven,) = escrow.sessions(sid2);
+        (address sBuyer,,,,,,,,,,,,bool isProven,) = escrow.sessions(sid2);
         assertEq(sBuyer, buyer);
         assertTrue(isProven);
     }
@@ -601,7 +600,7 @@ contract AntseedEscrowReserveTest is AntseedEscrowTestBase {
         // Proven sign with seller — should be qualified
         _reserveProvenSign(seller, keccak256("qp1"), 500_000, keccak256("qp1q"), 5_000_000);
 
-        (,,,,,,,,,,,, bool isQualified) = escrow.sessions(keccak256("qp1q"));
+        (,,,,,,,,,,,,, bool isQualified) = escrow.sessions(keccak256("qp1q"));
         assertTrue(isQualified);
     }
 
@@ -613,7 +612,7 @@ contract AntseedEscrowReserveTest is AntseedEscrowTestBase {
 
         _reserveProvenSign(seller, keccak256("uq1"), 500_000, keccak256("uq1p"), 5_000_000);
 
-        (,,,,,,,,,,bool isProven, bool isProvenFlag, bool isQualified) = escrow.sessions(keccak256("uq1p"));
+        (,,,,,,,,,,,bool isProven, bool isProvenFlag, bool isQualified) = escrow.sessions(keccak256("uq1p"));
         // isProvenSign should be true, isQualifiedProvenSign should be false
         assertTrue(isProvenFlag);
         assertFalse(isQualified);
@@ -757,7 +756,7 @@ contract AntseedEscrowSettleTest is AntseedEscrowTestBase {
         _settleSession(seller, sid, 1_000_000); // 1M * rate 1 = 1M > 500K → capped
 
         // Check charge was capped at maxAmount
-        (,,uint256 maxAmt,,,,,,uint256 settledAmt,,,,) = escrow.sessions(sid);
+        (,,uint256 maxAmt,,,,,,uint256 settledAmt,,,,,) = escrow.sessions(sid);
         assertEq(settledAmt, maxAmt);
     }
 
@@ -802,6 +801,7 @@ contract AntseedEscrowSettleTest is AntseedEscrowTestBase {
         assertEq(reservedBefore, 500_000);
 
         vm.warp(block.timestamp + escrow.SETTLE_TIMEOUT() + 1);
+        vm.prank(buyer);
         escrow.settleTimeout(sid);
 
         (, uint256 reservedAfter,,) = escrow.getBuyerBalance(buyer);
@@ -812,6 +812,7 @@ contract AntseedEscrowSettleTest is AntseedEscrowTestBase {
         bytes32 sid = keccak256("toe1");
         _reserveFirstSign(seller, sid, 500_000);
 
+        vm.prank(buyer);
         vm.expectRevert(AntseedEscrow.TimeoutNotReached.selector);
         escrow.settleTimeout(sid);
     }
@@ -824,6 +825,7 @@ contract AntseedEscrowSettleTest is AntseedEscrowTestBase {
         AntseedIdentity.ProvenReputation memory repBefore = identity.getReputation(tokenId);
 
         vm.warp(block.timestamp + escrow.SETTLE_TIMEOUT() + 1);
+        vm.prank(buyer);
         escrow.settleTimeout(sid);
 
         AntseedIdentity.ProvenReputation memory repAfter = identity.getReputation(tokenId);
@@ -947,7 +949,7 @@ contract AntseedEscrowAdminTest is AntseedEscrowTestBase {
         escrow.reserve(buyer, sid3, 5_000_000, 3, deadline, 2_000_000, sid2, sig);
 
         // Verify chain is valid
-        (address b3,,,,,,bytes32 prevSid,,,,,,) = escrow.sessions(sid3);
+        (address b3,,,,,,bytes32 prevSid,,,,,,,) = escrow.sessions(sid3);
         assertEq(b3, buyer);
         assertEq(prevSid, sid2);
     }

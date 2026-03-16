@@ -64,12 +64,14 @@ describe('BuyerPaymentManager', () => {
   let tempDir: string;
   let identity: Identity;
   let manager: BuyerPaymentManager;
+  let store: SessionStore;
   let mux: ReturnType<typeof createMockPaymentMux>;
 
   beforeEach(async () => {
     tempDir = mkdtempSync(join(tmpdir(), 'buyer-pm-test-'));
     identity = await createTestIdentity();
-    manager = new BuyerPaymentManager(identity, makeConfig(tempDir));
+    store = new SessionStore(tempDir);
+    manager = new BuyerPaymentManager(identity, makeConfig(tempDir), store);
     // Mock the signer to avoid actual RPC calls
     const wallet = Wallet.createRandom();
     manager.setSigner(wallet);
@@ -77,7 +79,7 @@ describe('BuyerPaymentManager', () => {
   });
 
   afterEach(() => {
-    manager.close();
+    store.close();
     rmSync(tempDir, { recursive: true, force: true });
   });
 
@@ -210,20 +212,21 @@ describe('BuyerPaymentManager', () => {
     const sellerEvmAddr = '0x' + 'ab'.repeat(20);
 
     const sessionId = await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux);
-    manager.close();
+    store.close();
 
     // Reopen the store independently and check persistence
-    const store = new SessionStore(tempDir);
-    const session = store.getSession(sessionId);
+    const checkStore = new SessionStore(tempDir);
+    const session = checkStore.getSession(sessionId);
     expect(session).not.toBeNull();
     expect(session!.peerId).toBe(sellerPeerId);
     expect(session!.role).toBe('buyer');
     expect(session!.authMax).toBe('1000000');
     expect(session!.previousSessionId).toBe(ZERO_SESSION_ID);
-    store.close();
+    checkStore.close();
 
     // Re-create manager with same data dir, authorize again
-    manager = new BuyerPaymentManager(identity, makeConfig(tempDir));
+    store = new SessionStore(tempDir);
+    manager = new BuyerPaymentManager(identity, makeConfig(tempDir), store);
     manager.setSigner(Wallet.createRandom());
     const secondId = await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux);
 

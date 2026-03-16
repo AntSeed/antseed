@@ -49,9 +49,9 @@ export class BuyerPaymentManager {
   private readonly _sessionStore: SessionStore;
   /** In-memory map of active confirmed sessions by seller peerId for fast lookups. */
   private readonly _confirmedPeers = new Set<string>();
-  private _nonceCounter = 0;
+  private _nonceCounter: number;
 
-  constructor(identity: Identity, config: BuyerPaymentConfig) {
+  constructor(identity: Identity, config: BuyerPaymentConfig, sessionStore: SessionStore) {
     this._identity = identity;
     this._config = config;
     this._signer = identityToEvmWallet(identity);
@@ -60,11 +60,10 @@ export class BuyerPaymentManager {
       contractAddress: config.contractAddress,
       usdcAddress: config.usdcAddress,
     });
-    this._sessionStore = new SessionStore(config.dataDir);
+    this._sessionStore = sessionStore;
 
-    // Load existing active sessions into memory
-    // (We can't enumerate all peers from store easily, but the confirmed set
-    // is rebuilt as AuthAcks arrive after reconnection.)
+    // Restore nonce counter from persisted sessions to avoid duplicates across restarts
+    this._nonceCounter = sessionStore.getMaxNonce('buyer');
   }
 
   get signer(): AbstractSigner {
@@ -351,9 +350,4 @@ export class BuyerPaymentManager {
     return identityClient.submitFeedback(this._signer, tokenId, qualityScore, tag);
   }
 
-  // ── Lifecycle ─────────────────────────────────────────────────
-
-  close(): void {
-    this._sessionStore.close();
-  }
 }

@@ -226,6 +226,10 @@ contract AntseedIdentity is ERC721, ERC721URIStorage {
         return addressToTokenId[addr];
     }
 
+    /**
+     * @notice Returns 0 for both unregistered and deregistered peer IDs.
+     *         Use `registered(addr)` to distinguish active from deregistered peers.
+     */
     function getTokenIdByPeerId(bytes32 peerId) external view returns (uint256) {
         return peerIdToTokenId[peerId];
     }

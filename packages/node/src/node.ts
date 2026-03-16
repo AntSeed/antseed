@@ -420,10 +420,6 @@ export class AntseedNode extends EventEmitter {
       this._timeoutCheckerInterval = null;
     }
 
-    if (this._buyerPaymentManager) {
-      this._buyerPaymentManager.close();
-    }
-
     if (this._sessionStore) {
       try {
         this._sessionStore.close();
@@ -959,19 +955,30 @@ export class AntseedNode extends EventEmitter {
     const payments = this._config.payments;
     if (payments?.enabled && payments.rpcUrl && payments.contractAddress && payments.usdcAddress) {
       const paymentsDir = join(this._config.dataDir ?? join(homedir(), ".antseed"), "payments");
-      const buyerPaymentConfig: BuyerPaymentConfig = {
-        rpcUrl: payments.rpcUrl,
-        contractAddress: payments.contractAddress,
-        usdcAddress: payments.usdcAddress,
-        identityAddress: payments.identityAddress ?? '',
-        chainId: payments.chainId ?? 8453,
-        defaultMaxAmountUsdc: BigInt(payments.defaultMaxAmountUsdc ?? "1000000"),
-        defaultAuthDurationSecs: payments.defaultAuthDurationSecs ?? 3600,
-        autoAck: payments.autoAck ?? true,
-        dataDir: paymentsDir,
-      };
-      this._buyerPaymentManager = new BuyerPaymentManager(identity, buyerPaymentConfig);
-      debugLog(`[Node] Buyer payment manager initialized (wallet=${identityToEvmAddress(identity).slice(0, 10)}...)`);
+      // Create shared SessionStore for both buyer and seller payment managers
+      if (!this._sessionStore) {
+        try {
+          this._sessionStore = new SessionStore(paymentsDir);
+          debugLog("[Node] SessionStore initialized (buyer)");
+        } catch (err) {
+          debugWarn(`[Node] SessionStore unavailable: ${err instanceof Error ? err.message : err}`);
+        }
+      }
+      if (this._sessionStore) {
+        const buyerPaymentConfig: BuyerPaymentConfig = {
+          rpcUrl: payments.rpcUrl,
+          contractAddress: payments.contractAddress,
+          usdcAddress: payments.usdcAddress,
+          identityAddress: payments.identityAddress ?? '',
+          chainId: payments.chainId ?? 8453,
+          defaultMaxAmountUsdc: BigInt(payments.defaultMaxAmountUsdc ?? "1000000"),
+          defaultAuthDurationSecs: payments.defaultAuthDurationSecs ?? 3600,
+          autoAck: payments.autoAck ?? true,
+          dataDir: paymentsDir,
+        };
+        this._buyerPaymentManager = new BuyerPaymentManager(identity, buyerPaymentConfig, this._sessionStore);
+        debugLog(`[Node] Buyer payment manager initialized (wallet=${identityToEvmAddress(identity).slice(0, 10)}...)`);
+      }
     }
 
     debugLog(`[Node] Buyer ready — DHT running on port ${this._dht!.getPort()}`);
@@ -1400,13 +1407,15 @@ export class AntseedNode extends EventEmitter {
       debugLog(`[Node] BaseEscrowClient initialized (contract=${payments.contractAddress.slice(0, 10)}...)`);
     }
 
-    // Initialize SessionStore for persistent payment sessions
+    // Initialize SessionStore for persistent payment sessions (shared instance)
     const paymentsDir = join(dataDir, "payments");
-    try {
-      this._sessionStore = new SessionStore(paymentsDir);
-      debugLog("[Node] SessionStore initialized");
-    } catch (err) {
-      debugWarn(`[Node] SessionStore unavailable: ${err instanceof Error ? err.message : err}`);
+    if (!this._sessionStore) {
+      try {
+        this._sessionStore = new SessionStore(paymentsDir);
+        debugLog("[Node] SessionStore initialized");
+      } catch (err) {
+        debugWarn(`[Node] SessionStore unavailable: ${err instanceof Error ? err.message : err}`);
+      }
     }
 
     // Initialize SellerPaymentManager for seller role
