@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState } from 'react';
+import React, { Fragment, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Lexer } from 'marked';
 import type { ChatMessage } from './chat-shared';
@@ -157,24 +157,38 @@ function renderListItemContent(token: MarkdownToken, key: string): ReactNode {
   return normalizeText(token.text ?? token.raw);
 }
 
-function CodeBlock({ code, lang }: { code: string; lang?: string }) {
-  const [copied, setCopied] = useState(false);
-  const langLabel = normalizeText(lang).trim() || 'code';
+export function isHtmlContent(code: string, lang?: string): boolean {
+  const l = normalizeText(lang).trim().toLowerCase();
+  if (l === 'html' || l === 'htm') return true;
+  if (!l || l === 'code') {
+    return /^\s*<!doctype\s+html/i.test(code) || /^\s*<html[\s>]/i.test(code);
+  }
+  return false;
+}
 
+function CopyButton({ code }: { code: string }) {
+  const [copied, setCopied] = React.useState(false);
   const handleCopy = (): void => {
     void navigator.clipboard.writeText(code).then(() => {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1500);
     });
   };
+  return (
+    <button className="chat-code-copy-btn" type="button" onClick={handleCopy}>
+      {copied ? 'Copied!' : 'Copy'}
+    </button>
+  );
+}
+
+function CodeBlock({ code, lang }: { code: string; lang?: string }) {
+  const langLabel = normalizeText(lang).trim() || 'code';
 
   return (
     <div className="chat-code-container">
       <div className="chat-code-header">
         <span className="code-lang">{langLabel}</span>
-        <button className="chat-code-copy-btn" type="button" onClick={handleCopy}>
-          {copied ? 'Copied!' : 'Copy'}
-        </button>
+        <CopyButton code={code} />
       </div>
       <pre>
         <code>{code}</code>

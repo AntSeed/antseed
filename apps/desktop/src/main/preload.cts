@@ -272,6 +272,9 @@ const api = {
   setDebugLogs(enabled: boolean): Promise<{ ok: true }> {
     return ipcRenderer.invoke('desktop:set-debug-logs', enabled) as Promise<{ ok: true }>;
   },
+  openHtmlInBrowser(html: string): Promise<{ ok: boolean }> {
+    return ipcRenderer.invoke('desktop:open-html-in-browser', html) as Promise<{ ok: boolean }>;
+  },
 };
 
 contextBridge.exposeInMainWorld('antseedDesktop', api);

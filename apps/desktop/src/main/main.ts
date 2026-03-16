@@ -1607,6 +1607,19 @@ ipcMain.handle('desktop:set-debug-logs', (_event, enabled: boolean) => {
   return { ok: true };
 });
 
+ipcMain.handle('desktop:open-html-in-browser', async (_event, html: string) => {
+  try {
+    const tmpDir = path.join(app.getPath('temp'), 'antseed-html-preview');
+    await mkdir(tmpDir, { recursive: true });
+    const filePath = path.join(tmpDir, `preview-${Date.now()}.html`);
+    await writeFile(filePath, html, 'utf-8');
+    await shell.openExternal(`file://${filePath}`);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+});
+
 ipcMain.handle('runtime:open-dashboard', async (_event, port?: number) => {
   const openPort = dashboardRuntime.running ? dashboardRuntime.port : toSafeDashboardPort(port);
   await shell.openExternal(`http://127.0.0.1:${openPort}`);

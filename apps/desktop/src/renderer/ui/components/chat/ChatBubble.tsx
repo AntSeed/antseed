@@ -4,7 +4,9 @@ import { HugeiconsIcon } from '@hugeicons/react';
 import { Copy01Icon, Tick02Icon } from '@hugeicons/core-free-icons';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import type { ReactNode } from 'react';
-import { MarkdownContent } from './chat-utils.js';
+import { Lexer } from 'marked';
+import { MarkdownContent, isHtmlContent } from './chat-utils.js';
+import { useHtmlPreview } from './HtmlPreviewContext';
 import styles from './ChatBubble.module.scss';
 import type { ChatMessage, ContentBlock } from './chat-shared';
 import {
@@ -356,6 +358,90 @@ function ToolGroupView({ blocks }: { blocks: ContentBlock[] }) {
   );
 }
 
+function HtmlArtifactCard({ code, label }: { code: string; label?: string }) {
+  const { onPreviewHtml } = useHtmlPreview();
+
+  const handleOpenInBrowser = (): void => {
+    const bridge = (window as unknown as { antseedDesktop?: { openHtmlInBrowser?: (html: string) => Promise<{ ok: boolean }> } }).antseedDesktop;
+    if (bridge?.openHtmlInBrowser) {
+      void bridge.openHtmlInBrowser(code);
+    }
+  };
+
+  return (
+    <div className={styles.htmlArtifactCard}>
+      <div className={styles.htmlArtifactInfo}>
+        <span className={styles.htmlArtifactIcon}>{'</>'}</span>
+        <div className={styles.htmlArtifactLabel}>
+          <span className={styles.htmlArtifactName}>{label || 'HTML'}</span>
+          <span className={styles.htmlArtifactType}>Code · HTML</span>
+        </div>
+      </div>
+      <div className={styles.htmlArtifactActions}>
+        <button type="button" className={styles.htmlArtifactBtn} onClick={() => onPreviewHtml(code)}>
+          Preview
+        </button>
+        <button type="button" className={styles.htmlArtifactBtn} onClick={handleOpenInBrowser}>
+          Open in Browser
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Extract HTML code blocks from markdown text using the marked lexer */
+function collectHtmlCodeBlocksFromText(text: string): { code: string; lang?: string }[] {
+  const htmlBlocks: { code: string; lang?: string }[] = [];
+  const tokens = Lexer.lex(text, { gfm: true, breaks: true });
+  for (const token of tokens) {
+    if (token.type === 'code' && typeof token.text === 'string') {
+      const lang = (token as { lang?: string }).lang;
+      if (isHtmlContent(token.text, lang)) {
+        htmlBlocks.push({ code: token.text, lang });
+      }
+    }
+  }
+  return htmlBlocks;
+}
+
+/** Check if a tool_use block wrote/edited an HTML file */
+function extractHtmlFromToolUse(block: ContentBlock): string | null {
+  if (block.type !== 'tool_use') return null;
+  const kind = getToolKind(block.name);
+  // Write tool: input.content contains the full file content
+  if (kind === 'write' && block.input) {
+    const filePath = String(block.input.file_path || block.input.path || '');
+    const content = String(block.input.content || '');
+    if (
+      (filePath.endsWith('.html') || filePath.endsWith('.htm')) &&
+      content.trim().length > 0
+    ) {
+      return content;
+    }
+    // Also detect HTML even without .html extension if content looks like HTML
+    if (content.trim().length > 0 && isHtmlContent(content)) {
+      return content;
+    }
+  }
+  return null;
+}
+
+/** Extract HTML code blocks from a message's content blocks */
+function collectHtmlCodeBlocks(blocks: ContentBlock[]): { code: string; lang?: string }[] {
+  const htmlBlocks: { code: string; lang?: string }[] = [];
+  for (const block of blocks) {
+    if (block.type === 'text' && typeof block.text === 'string') {
+      htmlBlocks.push(...collectHtmlCodeBlocksFromText(block.text));
+    }
+    // Also check tool_use blocks that write HTML files
+    const toolHtml = extractHtmlFromToolUse(block);
+    if (toolHtml) {
+      htmlBlocks.push({ code: toolHtml, lang: 'html' });
+    }
+  }
+  return htmlBlocks;
+}
+
 function renderAssistantBlocks(blocks: ContentBlock[], streaming = false, messagePrefix = ''): ReactNode[] {
   const nodes: ReactNode[] = [];
   let toolGroup: ContentBlock[] = [];
@@ -381,6 +467,16 @@ function renderAssistantBlocks(blocks: ContentBlock[], streaming = false, messag
   });
 
   flushToolGroup();
+
+  // Append artifact cards for any HTML code blocks or tool-written HTML.
+  // Show them even during streaming so the user can preview partial results.
+  const htmlBlocks = collectHtmlCodeBlocks(blocks);
+  htmlBlocks.forEach((hb, i) => {
+    nodes.push(
+      <HtmlArtifactCard key={`${messagePrefix}-html-artifact-${i}`} code={hb.code} />
+    );
+  });
+
   return nodes;
 }
 
@@ -520,11 +616,26 @@ export function ChatBubble({ message, streaming = false }: ChatBubbleProps) {
       if (Array.isArray(message.content)) {
         return renderAssistantBlocks(message.content as ContentBlock[], isStreamingBubble, messagePrefix);
       }
-      return <MarkdownContent text={String(message.content)} />;
+      // String content from assistant — check for HTML code blocks
+      const text = String(message.content);
+      const nodes: ReactNode[] = [<MarkdownContent key="md" text={text} />];
+      if (!isStreamingBubble) {
+        const htmlBlocks = collectHtmlCodeBlocksFromText(text);
+        htmlBlocks.forEach((hb, i) => {
+          nodes.push(<HtmlArtifactCard key={`html-artifact-${i}`} code={hb.code} />);
+        });
+      }
+      return nodes;
     }
 
     if (typeof message.content === 'string') {
-      return <MarkdownContent text={message.content} />;
+      // User messages — check for HTML code blocks (e.g. uploaded HTML files)
+      const nodes: ReactNode[] = [<MarkdownContent key="md" text={message.content} />];
+      const htmlBlocks = collectHtmlCodeBlocksFromText(message.content);
+      htmlBlocks.forEach((hb, i) => {
+        nodes.push(<HtmlArtifactCard key={`html-artifact-${i}`} code={hb.code} />);
+      });
+      return nodes;
     }
 
     if (Array.isArray(message.content)) {
