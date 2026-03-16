@@ -31,6 +31,12 @@ export const TRUSTED_PLUGINS: TrustedPlugin[] = [
     package: '@antseed/provider-openai',
   },
   {
+    name: 'openai-responses',
+    type: 'provider',
+    description: 'OpenAI Responses provider via Codex auth (testing only)',
+    package: '@antseed/provider-openai-responses',
+  },
+  {
     name: 'local-llm',
     type: 'provider',
     description: 'Local LLM provider (Ollama, llama.cpp)',
