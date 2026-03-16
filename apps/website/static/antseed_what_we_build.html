@@ -1,0 +1,1176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="light">
+<meta name="supported-color-schemes" content="light">
+<title>What We Are Building. AntSeed</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Space+Grotesk:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+:root{
+  --bg:     #F5F5F1;
+  --card:   #ffffff;
+  --black:  #0F0F0E;
+  --grey:   #3a3a3a;
+  --grey-d: #666666;
+  --mint:   #1FD87A;
+  --mint-t: rgba(31,216,122,0.10);
+  --mint-b: rgba(31,216,122,0.22);
+  --sans:   'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --mono:   'JetBrains Mono', 'SF Mono', 'Fira Code', Consolas, monospace;
+}
+
+html { scroll-behavior: smooth; color-scheme: light; }
+
+body {
+  background: var(--bg);
+  color: var(--black);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+  position: relative;
+  background-color: #F5F5F1 !important;
+  color: #0F0F0E !important;
+}
+
+/* ── LAYOUT ── */
+.page      { max-width: 760px; margin: 0 auto; padding: 0 40px; }
+.page-wide { max-width: 1000px; margin: 0 auto; padding: 0 40px; }
+
+/* ── NAV ── */
+nav {
+  position: sticky; top: 0; z-index: 100;
+  background: rgba(245,245,241,0.94);
+  backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--mint-b);
+  padding: 15px 40px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.logo { display: flex; align-items: center; gap: 8px; text-decoration: none; }
+.logo-t { font-family: var(--sans); font-weight: 800; font-size: 17px; letter-spacing: 1px; line-height: 1; }
+.logo-t .ant  { color: var(--black); }
+.logo-t .seed { color: var(--mint); }
+.nav-tag { font-family: var(--mono); font-size: 10px; letter-spacing: 3px; text-transform: uppercase; color: var(--grey-d); }
+
+/* ── TYPOGRAPHY ── */
+.kicker {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: 3.5px;
+  text-transform: uppercase; color: var(--mint);
+  display: flex; align-items: center; gap: 8px; margin-bottom: 16px;
+}
+.kicker::before { content: '//'; opacity: 0.4; }
+
+h2 {
+  font-family: var(--sans); font-weight: 800;
+  font-size: clamp(26px, 3.5vw, 38px);
+  letter-spacing: -1px; line-height: 1.1;
+  color: var(--black); margin-bottom: 18px;
+}
+h2 em { font-style: normal; color: var(--mint); }
+
+h3 {
+  font-family: var(--sans); font-weight: 700;
+  font-size: 18px; letter-spacing: -0.3px;
+  color: var(--black); margin-bottom: 8px;
+}
+
+p { color: var(--grey); line-height: 1.85; margin-bottom: 18px; max-width: 680px; }
+p strong { color: var(--black); font-weight: 600; }
+p:last-child { margin-bottom: 0; }
+
+.pull {
+  border-left: 3px solid var(--mint);
+  padding: 6px 0 6px 28px;
+  margin: 36px 0;
+  font-size: 19px; font-weight: 500; color: var(--black);
+  line-height: 1.55; max-width: 620px;
+}
+.pull em { font-style: normal; color: var(--mint); }
+
+hr { border: none; border-top: 1px solid var(--mint-b); margin: 0; }
+
+/* ── SECTIONS ── */
+.s        { padding: 72px 40px; }
+.s.alt    { background: var(--card); }
+.s.dark   { background: var(--black); }
+.s.dark p { color: rgba(255,255,255,0.5); max-width: 640px; }
+.s.dark h2 { color: white; }
+.s.dark .kicker { color: var(--mint); }
+
+/* ── HERO ── */
+.hero {
+  padding: 100px 40px 88px;
+  max-width: 760px; margin: 0 auto;
+}
+.hero-kicker {
+  font-family: var(--mono); font-size: 11px; letter-spacing: 4px;
+  text-transform: uppercase; color: var(--mint);
+  margin-bottom: 24px; display: flex; align-items: center; gap: 10px;
+}
+.hero-kicker::before { content: '//'; opacity: 0.4; }
+
+.hero h1 {
+  font-family: var(--sans); font-weight: 800;
+  font-size: clamp(40px, 5.5vw, 62px);
+  line-height: 1.05; letter-spacing: -2px;
+  color: var(--black); margin-bottom: 28px;
+}
+.hero h1 em { font-style: normal; color: var(--mint); }
+
+.hero-lead {
+  font-size: 19px; color: var(--grey); line-height: 1.8;
+  margin-bottom: 44px; max-width: 620px;
+}
+.hero-lead strong { color: var(--black); font-weight: 600; }
+
+.hero-bar {
+  display: flex; align-items: center; gap: 28px;
+  padding-top: 28px; border-top: 1px solid var(--mint-b); flex-wrap: wrap;
+}
+.hb-item {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 2px;
+  text-transform: uppercase; color: var(--grey-d);
+  display: flex; align-items: center; gap: 7px;
+}
+.hb-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--mint); flex-shrink: 0; }
+
+/* ── BIG STATEMENT ── */
+.big-statement {
+  background: var(--black);
+  padding: 80px 40px;
+  text-align: center;
+}
+.big-statement-inner { max-width: 800px; margin: 0 auto; }
+.big-statement h2 {
+  font-size: clamp(32px, 5vw, 56px);
+  letter-spacing: -2px; line-height: 1.05;
+  color: white; margin-bottom: 0;
+}
+.big-statement h2 em { color: var(--mint); }
+.big-statement p {
+  color: rgba(255,255,255,0.45); font-size: 17px;
+  margin-top: 20px; max-width: 560px; margin-left: auto; margin-right: auto;
+}
+
+/* ── NUMBERS ── */
+.numbers {
+  display: grid; grid-template-columns: repeat(3,1fr);
+  gap: 2px; background: var(--mint-b);
+  border: 1px solid var(--mint-b); border-radius: 14px; overflow: hidden;
+  margin: 40px 0;
+}
+.num-cell { background: var(--card); padding: 28px 24px; }
+.num-n {
+  font-family: var(--sans); font-weight: 800;
+  font-size: 38px; letter-spacing: -1.5px; color: var(--black);
+  line-height: 1; margin-bottom: 7px;
+}
+.num-n span { color: var(--mint); }
+.num-l { font-family: var(--mono); font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--grey-d); line-height: 1.6; }
+
+/* ── FEATURE GRID ── */
+.feat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 36px; }
+.feat-card {
+  background: var(--bg); border: 1px solid var(--mint-b);
+  border-radius: 12px; padding: 26px 22px;
+}
+.feat-card h3 { font-size: 15px; margin-bottom: 7px; }
+.feat-card p  { font-size: 13.5px; line-height: 1.7; max-width: none; margin: 0; }
+
+/* ── LAYERS SECTION ── */
+.layers-intro { max-width: 760px; margin: 0 auto; padding: 72px 40px 40px; }
+.layers-wrap  { max-width: 1000px; margin: 0 auto; padding: 0 40px 72px; }
+
+.layer {
+  background: var(--card);
+  border: 1px solid rgba(0,0,0,0.08);
+  border-radius: 16px; overflow: hidden;
+  display: grid; grid-template-columns: 1fr 340px;
+  margin-bottom: 12px;
+}
+.layer-left  { padding: 36px 40px; position: relative; z-index: 1; }
+.layer-right {
+  border-left: 1px solid rgba(0,0,0,0.08);
+  display: flex; align-items: center; justify-content: center;
+  padding: 28px; background: #141414; overflow: hidden;
+}
+.wm {
+  position: absolute; right: -8px; bottom: -20px;
+  font-family: var(--sans); font-weight: 800; font-size: 120px;
+  line-height: 1; color: rgba(31,216,122,0.09);
+  pointer-events: none; letter-spacing: -4px; z-index: 0;
+}
+.l-tag {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-family: var(--mono); font-size: 10px; letter-spacing: 2.5px;
+  text-transform: uppercase; color: var(--black);
+  background: white; border: 1px solid var(--black);
+  border-radius: 4px; padding: 4px 10px; margin-bottom: 14px;
+}
+.l-title { font-family: var(--sans); font-weight: 700; font-size: 26px; letter-spacing: -0.5px; color: var(--black); margin-bottom: 6px; }
+.l-sub   { font-size: 13px; color: var(--mint); margin-bottom: 14px; font-weight: 500; font-family: var(--mono); letter-spacing: 0.3px; }
+.l-desc  { font-size: 14px; color: var(--grey); line-height: 1.75; margin-bottom: 20px; max-width: 520px; }
+.l-desc strong { color: var(--black); font-weight: 600; }
+.pills { display: flex; flex-wrap: wrap; gap: 7px; }
+.pill {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.5px;
+  padding: 4px 10px; border-radius: 4px;
+  border: 1px solid rgba(31,216,122,0.2);
+  color: var(--grey-d); background: var(--bg);
+}
+.connector {
+  display: flex; justify-content: center; align-items: center;
+  height: 24px; margin: 4px 0;
+}
+.conn-inner {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--mono); font-size: 9px;
+  letter-spacing: 2px; text-transform: uppercase;
+  background: white; padding: 3px 14px; border-radius: 20px;
+  border: 1px solid var(--mint); color: var(--black);
+}
+.conn-arr { color: var(--mint); font-size: 12px; }
+
+/* service list */
+.svc-list { display: flex; flex-direction: column; gap: 7px; width: 100%; }
+.svc-row  {
+  display: flex; align-items: center; justify-content: space-between;
+  background: #1e1e1e; border: 1px solid rgba(31,216,122,0.15);
+  border-radius: 8px; padding: 10px 14px;
+}
+.svc-name { font-family: var(--sans); font-weight: 600; font-size: 13px; color: rgba(255,255,255,0.88); }
+.svc-jobs { font-family: var(--mono); font-size: 10px; color: rgba(255,255,255,0.4); margin-top: 2px; }
+.svc-sc   { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.svc-sc-nums { display: flex; align-items: baseline; gap: 2px; }
+.svc-n    { font-family: var(--sans); font-weight: 800; font-size: 18px; color: var(--mint); line-height: 1; }
+.svc-d    { font-family: var(--mono); font-size: 10px; color: rgba(255,255,255,0.7); }
+.svc-bar-track { width: 60px; height: 2px; background: rgba(255,255,255,0.08); border-radius: 1px; }
+.svc-bar-fill  { height: 100%; background: var(--mint); border-radius: 1px; opacity: 0.7; }
+
+/* terminal */
+.term { background: #0F0F0E; border-radius: 10px; width: 100%; overflow: hidden; font-family: var(--mono); }
+.term-bar { background: #1a1a1a; padding: 9px 14px; display: flex; align-items: center; gap: 6px; border-bottom: 1px solid rgba(255,255,255,0.06); }
+.td { width: 9px; height: 9px; border-radius: 50%; }
+.td.r{background:#ff5f57} .td.y{background:#ffbd2e} .td.g{background:#28c840}
+.tt { font-size: 10px; color: rgba(255,255,255,0.35); margin-left: 6px; letter-spacing: 1px; }
+.tb { padding: 14px 16px; }
+.tl { font-size: 11px; line-height: 2; display: flex; gap: 12px; }
+.tr { color: rgba(255,255,255,0.25); }
+.tf { color: rgba(255,255,255,0.7); }
+.tc { color: rgba(31,216,122,0.5); }
+
+/* ── WHY DECENTRAL ── */
+.why-why { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; margin-top: 36px; }
+.ww-card {
+  background: var(--card); border: 1px solid var(--mint-b);
+  border-radius: 12px; padding: 26px 22px;
+}
+.ww-card h3 { font-size: 15px; margin-bottom: 7px; display: flex; align-items: center; gap: 8px; }
+.ww-card h3 .dot { width: 4px; height: 4px; border-radius: 50%; background: var(--mint); flex-shrink: 0; }
+.ww-card p  { font-size: 13.5px; line-height: 1.7; max-width: none; margin: 0; }
+
+/* ── AGENTS BIG ── */
+.agents-hero {
+  background: var(--black);
+  padding: 80px 40px;
+}
+.agents-hero-inner { max-width: 760px; margin: 0 auto; }
+.agents-hero h2 { color: white; font-size: clamp(30px, 4vw, 48px); margin-bottom: 20px; }
+.agents-hero h2 em { color: var(--mint); }
+.agents-hero p { color: rgba(255,255,255,0.5); font-size: 17px; max-width: 600px; }
+.agents-hero p strong { color: white; }
+.agents-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; margin-top: 44px; }
+.ag-card {
+  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 12px; padding: 24px 20px;
+}
+.ag-card h3 { font-size: 14px; color: white; margin-bottom: 7px; }
+.ag-card p  { font-size: 13px; color: rgba(255,255,255,0.45); line-height: 1.7; max-width: none; margin: 0; }
+.ag-tag {
+  font-family: var(--mono); font-size: 9px; letter-spacing: 2px;
+  text-transform: uppercase; color: var(--mint);
+  margin-bottom: 10px; opacity: 0.8;
+}
+
+/* ── CTA ── */
+.cta {
+  background: var(--black); padding: 88px 40px; text-align: center;
+  border-top: 1px solid rgba(255,255,255,0.06);
+}
+.cta h2 { color: white; font-size: clamp(30px, 4vw, 48px); max-width: 600px; margin: 0 auto 18px; }
+.cta h2 em { color: var(--mint); }
+.cta p  { color: rgba(255,255,255,0.4); font-size: 16px; max-width: 460px; margin: 0 auto 40px; }
+.cta-row { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+.btn-mint    { background: var(--mint); color: var(--black); font-family: var(--sans); font-weight: 700; font-size: 14px; padding: 13px 28px; border-radius: 8px; text-decoration: none; display: inline-flex; align-items: center; gap: 8px; }
+.btn-white   { background: white; color: var(--black); font-family: var(--sans); font-weight: 700; font-size: 14px; padding: 13px 28px; border-radius: 8px; text-decoration: none; display: inline-flex; align-items: center; gap: 8px; }
+.btn-ghost   { background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.14); color: rgba(255,255,255,0.7); font-family: var(--sans); font-weight: 600; font-size: 14px; padding: 13px 28px; border-radius: 8px; text-decoration: none; }
+
+/* ── TRUST GRID ── */
+.trust-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 36px; }
+.trust-card {
+  background: var(--card); border: 1px solid var(--mint-b);
+  border-radius: 12px; padding: 26px 22px;
+}
+.trust-icon { font-size: 22px; margin-bottom: 10px; }
+.trust-card h3 { font-size: 15px; margin-bottom: 7px; letter-spacing: -0.1px; }
+.trust-card p  { font-size: 13.5px; line-height: 1.75; max-width: none; margin: 0; }
+
+/* ── GTM ── */
+.gtm-steps { display: flex; flex-direction: column; gap: 48px; margin-top: 40px; }
+.gtm-step  { display: grid; grid-template-columns: 48px 1fr; gap: 24px; align-items: start; }
+.gtm-num   {
+  font-family: var(--mono); font-weight: 700; font-size: 11px;
+  letter-spacing: 2px; color: var(--mint);
+  background: var(--mint-t); border: 1px solid var(--mint-b);
+  border-radius: 6px; padding: 8px 0; text-align: center;
+  margin-top: 4px; flex-shrink: 0;
+}
+.gtm-body h3 { font-size: 19px; margin-bottom: 10px; }
+.gtm-body p  { font-size: 14.5px; margin-bottom: 14px; }
+.gtm-tags    { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 16px; }
+.gtm-tag     {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.5px;
+  padding: 4px 11px; border-radius: 4px;
+  border: 1px solid var(--mint-b); color: var(--mint);
+  background: var(--mint-t);
+}
+.gtm-highlight {
+  background: var(--bg); border: 1px solid var(--mint-b);
+  border-left: 3px solid var(--mint);
+  border-radius: 0 8px 8px 0; padding: 18px 20px; margin: 20px 0;
+}
+.gtm-hl-label {
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: 2.5px;
+  text-transform: uppercase; color: var(--mint); margin-bottom: 8px;
+}
+.gtm-hl-text { font-size: 13.5px; color: var(--grey); line-height: 1.8; }
+
+/* ── FAQ ── */
+.faq-list { display: flex; flex-direction: column; }
+.faq-item { border-top: 1px solid var(--mint-b); padding: 28px 0; }
+.faq-item:last-child { border-bottom: 1px solid var(--mint-b); }
+.faq-q {
+  font-family: var(--sans); font-weight: 700; font-size: 17px;
+  letter-spacing: -0.2px; color: var(--black);
+  margin-bottom: 14px; line-height: 1.4;
+  padding-left: 22px; position: relative;
+}
+.faq-q::before { content: '↗'; position: absolute; left: 0; top: 1px; color: var(--mint); font-size: 14px; font-weight: 400; }
+.faq-a { font-size: 15px; color: var(--grey); line-height: 1.85; padding-left: 22px; max-width: 680px; }
+
+/* ── FOOTER ── */
+footer { border-top: 1px solid rgba(255,255,255,0.06); background: var(--black); padding: 28px 40px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px; }
+.fl { font-family: var(--sans); font-weight: 800; font-size: 15px; letter-spacing: 1px; }
+.fl .ant { color: white; } .fl .seed { color: var(--mint); }
+.fc { font-family: var(--mono); font-size: 11px; color: rgba(255,255,255,0.3); letter-spacing: 1px; }
+.fr { font-family: var(--mono); font-size: 11px; color: var(--mint); letter-spacing: 1px; }
+/* ── RESPONSIVE ── */
+@media (max-width: 768px) {
+  /* layout */
+  .page, .page-wide { padding: 0 20px; }
+  .s { padding: 48px 20px; }
+  .layers-intro { padding: 48px 20px 28px; }
+  .layers-wrap  { padding: 0 20px 48px; }
+
+  /* nav */
+  nav { padding: 14px 20px; }
+  .nav-tag { display: none; }
+
+  /* hero */
+  .hero { padding: 56px 20px 52px; }
+  .hero h1 { font-size: 36px; letter-spacing: -1px; }
+  .hero-lead { font-size: 16px; }
+  .hero-bar { gap: 14px; }
+  .hb-item { font-size: 9px; }
+
+  /* big statement */
+  .big-statement { padding: 52px 20px; }
+  .big-statement h2 { font-size: 28px; letter-spacing: -1px; }
+  .big-statement p { font-size: 15px; }
+
+  /* headings */
+  h2 { font-size: 24px; }
+
+  /* numbers row */
+  .numbers { grid-template-columns: 1fr; gap: 2px; }
+  .num-n { font-size: 30px; }
+
+  /* feat grid */
+  .feat-grid { grid-template-columns: 1fr; }
+
+  /* layers */
+  .layer { grid-template-columns: 1fr; }
+  .layer-right { border-left: none; border-top: 1px solid rgba(0,0,0,0.08); min-height: 200px; }
+
+  /* why grid */
+  .why-why { grid-template-columns: 1fr; }
+
+  /* agents grid */
+  .agents-grid { grid-template-columns: 1fr; }
+  .agents-hero { padding: 52px 20px; }
+  .agents-hero h2 { font-size: 26px; }
+  .agents-hero p { font-size: 15px; }
+
+  /* trust / feat cards */
+  .trust-grid { grid-template-columns: 1fr; }
+
+  /* gtm */
+  .gtm-step { grid-template-columns: 36px 1fr; gap: 16px; }
+
+  /* faq */
+  .faq-q { font-size: 15px; }
+  .faq-a { font-size: 14px; }
+
+  /* pull quote */
+  .pull { font-size: 17px; padding-left: 20px; }
+
+  /* bottom AntStation bar */
+  .layers-wrap + div > div { flex-direction: column; gap: 10px; text-align: center; }
+
+  /* cta */
+  .cta { padding: 56px 20px; }
+  .cta-row { flex-direction: column; align-items: center; }
+
+  /* footer */
+  footer { padding: 24px 20px; flex-direction: column; text-align: center; gap: 8px; }
+
+  /* built with banner */
+  nav + div, body > div:first-child { padding: 9px 20px; flex-wrap: wrap; gap: 8px; justify-content: center; }
+}
+</style>
+</head>
+<body>
+
+<!-- BUILT WITH ANSTATION BANNER -->
+<div style="background:var(--black);padding:9px 40px;display:flex;align-items:center;justify-content:center;gap:12px;">
+  <svg width="13" height="17" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M16 11C17.1 11 18 10.015 18 8.8C18 7.585 17.1 6.6 16 6.6C14.9 6.6 14 7.585 14 8.8C14 10.015 14.9 11 16 11Z" fill="#1FD87A"/>
+    <path d="M16 17.6C17.55 17.6 18.8 16.167 18.8 14.4C18.8 12.633 17.55 11.2 16 11.2C14.45 11.2 13.2 12.633 13.2 14.4C13.2 16.167 14.45 17.6 16 17.6Z" fill="#1FD87A"/>
+    <path d="M16 26.8C17.99 26.8 19.6 24.651 19.6 22C19.6 19.349 17.99 17.2 16 17.2C14.01 17.2 12.4 19.349 12.4 22C12.4 24.651 14.01 26.8 16 26.8Z" fill="#1FD87A"/>
+    <path opacity="0.5" d="M14.8 6.8L11.2 2.4" stroke="#1FD87A" stroke-width="0.7" stroke-linecap="round"/>
+    <path opacity="0.5" d="M17.2 6.8L20.8 2.4" stroke="#1FD87A" stroke-width="0.7" stroke-linecap="round"/>
+    <circle cx="11.2" cy="2.4" r="1.1" fill="#1FD87A"/>
+    <circle cx="20.8" cy="2.4" r="1.1" fill="#1FD87A"/>
+  </svg>
+  <span style="font-family:var(--mono);font-size:11px;letter-spacing:2.5px;text-transform:uppercase;color:rgba(255,255,255,0.5);">Built with</span>
+  <span style="font-family:var(--sans);font-weight:700;font-size:13px;letter-spacing:0.5px;color:white;">AntStation</span>
+  <span style="width:1px;height:14px;background:rgba(255,255,255,0.12);display:inline-block;margin:0 4px;"></span>
+  <a href="#" style="font-family:var(--mono);font-size:10.5px;letter-spacing:1.5px;text-transform:uppercase;color:var(--mint);text-decoration:none;">Download →</a>
+</div>
+
+
+<nav>
+  <a href="#" class="logo">
+    <svg width="18" height="24" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M16 11C17.1 11 18 10.015 18 8.8C18 7.585 17.1 6.6 16 6.6C14.9 6.6 14 7.585 14 8.8C14 10.015 14.9 11 16 11Z" fill="#0F0F0E"/>
+      <path d="M16 17.6C17.55 17.6 18.8 16.167 18.8 14.4C18.8 12.633 17.55 11.2 16 11.2C14.45 11.2 13.2 12.633 13.2 14.4C13.2 16.167 14.45 17.6 16 17.6Z" fill="#0F0F0E"/>
+      <path d="M16 26.8C17.99 26.8 19.6 24.651 19.6 22C19.6 19.349 17.99 17.2 16 17.2C14.01 17.2 12.4 19.349 12.4 22C12.4 24.651 14.01 26.8 16 26.8Z" fill="#0F0F0E"/>
+      <path opacity="0.45" d="M14.8 6.8L11.2 2.4" stroke="#0F0F0E" stroke-width="0.7" stroke-linecap="round"/>
+      <path opacity="0.45" d="M17.2 6.8L20.8 2.4" stroke="#0F0F0E" stroke-width="0.7" stroke-linecap="round"/>
+      <circle cx="11.2" cy="2.4" r="1.1" fill="#0F0F0E"/>
+      <circle cx="20.8" cy="2.4" r="1.1" fill="#0F0F0E"/>
+      <path opacity="0.28" d="M14 12.8L7 8.8" stroke="#0F0F0E" stroke-width="0.6" stroke-linecap="round"/>
+      <path opacity="0.28" d="M18 12.8L25 8.8" stroke="#0F0F0E" stroke-width="0.6" stroke-linecap="round"/>
+      <circle cx="7.2" cy="9.8" r="0.9" fill="#0F0F0E"/>
+      <circle cx="24.8" cy="9.8" r="0.9" fill="#0F0F0E"/>
+      <path opacity="0.28" d="M13.2 15.2L5.6 16" stroke="#0F0F0E" stroke-width="0.6" stroke-linecap="round"/>
+      <path opacity="0.28" d="M18.8 15.2L26.4 16" stroke="#0F0F0E" stroke-width="0.6" stroke-linecap="round"/>
+      <circle cx="5.6" cy="16" r="0.9" fill="#0F0F0E"/>
+      <circle cx="26.4" cy="16" r="0.9" fill="#0F0F0E"/>
+      <path opacity="0.28" d="M13.6 20.8L6.4 24" stroke="#0F0F0E" stroke-width="0.6" stroke-linecap="round"/>
+      <path opacity="0.28" d="M18.4 20.8L25.6 24" stroke="#0F0F0E" stroke-width="0.6" stroke-linecap="round"/>
+      <circle cx="6.4" cy="24" r="0.9" fill="#0F0F0E"/>
+      <circle cx="25.6" cy="24" r="0.9" fill="#0F0F0E"/>
+    </svg>
+    <span class="logo-t"><span class="ant">ANT</span><span class="seed">SEED</span></span>
+  </a>
+  <span class="nav-tag">What We Are Building</span>
+</nav>
+
+<!-- ═══════════════════════════════════════════
+     HERO. start big
+═══════════════════════════════════════════ -->
+<div class="hero">
+  <div class="hero-kicker">AntSeed. Protocol to Product</div>
+  <h1>An open network for <em>AI services.</em><br>Unstoppable by design.</h1>
+  <p class="hero-lead">
+    AntSeed is a peer-to-peer network where anyone can offer AI services, access them, and get paid for delivering them
+    with <strong>no login, no central server, no platform taking a cut,</strong> and no kill switch.
+    We build the full stack: from the open P2P protocol all the way to <strong>AntStation</strong>, the desktop client that makes it accessible to everyone.
+  </p>
+  <div class="hero-bar">
+    <div class="hb-item"><span class="hb-dot"></span>Open source protocol</div>
+    <div class="hb-item"><span class="hb-dot"></span>Peer-to-peer</div>
+    <div class="hb-item"><span class="hb-dot"></span>Anonymous by default</div>
+    <div class="hb-item"><span class="hb-dot"></span>On-Chain reputation</div>
+    <div class="hb-item"><span class="hb-dot"></span>AntStation desktop client</div>
+    <div class="hb-item"><span class="hb-dot"></span>Always on</div>
+  </div>
+</div>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════
+     THE BIG PICTURE
+═══════════════════════════════════════════ -->
+<div class="big-statement">
+  <div class="big-statement-inner">
+    <h2>The LLM is not the product.<br><em>The service is.</em></h2>
+    <p>LLMs are converging toward commodity. The scarce asset. the thing agents will actually pay for. is the output quality and expertise behind it. Agents will stop caring which LLM ran underneath and start caring entirely about what came out. AntSeed is where that expertise gets bought and sold.</p>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════
+     THE NETWORK
+═══════════════════════════════════════════ -->
+<section class="s alt">
+  <div class="page">
+    <div class="kicker">The Network</div>
+    <h2>Any AI service. Anyone can offer it. <em>Open to any agent.</em></h2>
+    <p>
+      Providers connect to the network and list what they offer. Buyers discover them, compare on price and reputation, and pay for delivery. No intermediary. No approval process. <strong>Every provider's reputation is built from verified delivery history, not a star rating someone gamed.</strong>
+    </p>
+    <p>
+      A provider can offer a fine-tuned coding assistant, a contract review agent, a raw uncensored LLM, a private LLM inside a TEE where the host machine cannot read the prompts. <strong>If a buyer wants it and a provider can deliver it, the network supports it.</strong>
+    </p>
+    <p>
+      Agents route each task to the best available service. not the same model every time. Research goes to a specialist. Creative work to an uncensored model. Legal questions to a domain expert. The network makes that possible.
+    </p>
+    <p>
+      The network runs on the BitTorrent Mainline DHT. distributed infrastructure with no central point of failure. 
+    </p>
+
+    <div class="numbers">
+      <div class="num-cell">
+        <div class="num-n" style="font-size:22px;letter-spacing:-0.5px;">Network<br>Fee</div>
+        <div class="num-l">Distributed back<br>to stakers.</div>
+      </div>
+      <div class="num-cell">
+        <div class="num-n">0</div>
+        <div class="num-l">Servers between<br>buyer and provider</div>
+      </div>
+      <div class="num-cell">
+        <div class="num-n"><span>∞</span></div>
+        <div class="num-l">Services. any domain,<br>any LLM, any setup</div>
+      </div>
+    </div>
+
+    <div class="feat-grid" style="margin-top:32px;">
+      <div class="feat-card">
+        <h3>No login. No accounts.</h3>
+        <p>Your identity is an Ed25519 key generated on your machine on first launch — it is also your wallet address. No registration. No email. No one can revoke it.</p>
+      </div>
+      <div class="feat-card">
+        <h3>Anonymous by architecture.</h3>
+        <p>There is no server in the middle to log who queried what. Providers connect directly to buyers. Privacy is not a feature. it is what falls out of the design.</p>
+      </div>
+      <div class="feat-card">
+        <h3>Censorship resistant.</h3>
+        <p>No platform decides what services can exist on AntSeed. Any service a provider offers and a buyer pays for is valid. The protocol does not discriminate.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════
+     TRUST
+═══════════════════════════════════════════ -->
+<section class="s alt">
+  <div class="page">
+    <div class="kicker">How Trust Works</div>
+    <h2>Reputation built on <em>proof, not promises.</em></h2>
+    <p>
+      Every provider's score is built from <strong>Proof of Prior Delivery</strong>. a cryptographic mechanism where the buyer's signature on each new session simultaneously authorises payment for the last one and confirms it was delivered. Neither party can inflate the record without the other absorbing the cost. The result is a reputation score that lives on-chain. No platform can revoke it. No algorithm can bury it. It compounds into pricing power no new entrant can shortcut.
+    </p>
+  </div>
+</section>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════
+     THREE LAYERS
+═══════════════════════════════════════════ -->
+<div class="layers-intro">
+  <div class="kicker">How It's Built</div>
+  <h2>Three layers. Built on each other.</h2>
+  <p>
+    The foundation is the unstoppable P2P network. On top sits the open marketplace where any AI service can be offered and proven. On top of that emerge Ant Agents. domain experts packaged as always-on services, with no platform between them and the agents that need them.
+  </p>
+</div>
+
+<div class="layers-wrap">
+
+  <!-- LAYER 01 -->
+  <div class="layer">
+    <div class="layer-left">
+      <div class="wm">01</div>
+      <div class="l-tag">Layer 01 / Infrastructure</div>
+      <div class="l-title">Unstoppable Infrastructure</div>
+      <div class="l-sub">Open source · Peer-to-peer · Anonymous · Always-on</div>
+      <div class="l-desc">
+        No login. No accounts. No central point that can be shut down or censored.
+        <strong>The trustless foundation everything else builds on.</strong>
+        Discovery via BitTorrent DHT. Transport via WebRTC.
+        Any node can join or leave. The network routes around failures.
+      </div>
+      <div class="pills">
+        <span class="pill">Torrent DHT</span>
+        <span class="pill">WebRTC</span>
+        <span class="pill">P2P Network</span>
+        <span class="pill">No KYC</span>
+        <span class="pill">Open Source</span>
+        <span class="pill">TEE Privacy</span>
+        <span class="pill">Censorship Resistant</span>
+      </div>
+    </div>
+    <div class="layer-right">
+      <svg width="300" height="242" viewBox="0 0 260 210" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <line x1="70" y1="50"  x2="190" y2="100" stroke="rgba(31,216,122,0.28)" stroke-width="1"/>
+        <line x1="70" y1="50"  x2="190" y2="150" stroke="rgba(31,216,122,0.22)" stroke-width="1"/>
+        <line x1="70" y1="100" x2="190" y2="50"  stroke="rgba(31,216,122,0.28)" stroke-width="1"/>
+        <line x1="70" y1="100" x2="190" y2="150" stroke="rgba(31,216,122,0.28)" stroke-width="1"/>
+        <line x1="70" y1="150" x2="190" y2="50"  stroke="rgba(31,216,122,0.22)" stroke-width="1"/>
+        <line x1="70" y1="150" x2="190" y2="100" stroke="rgba(31,216,122,0.28)" stroke-width="1"/>
+        <line x1="74" y1="50"  x2="186" y2="50"  stroke="#1FD87A" stroke-width="1.5" stroke-dasharray="5 3"/>
+        <line x1="74" y1="100" x2="186" y2="100" stroke="#1FD87A" stroke-width="1.5" stroke-dasharray="5 3"/>
+        <line x1="74" y1="150" x2="186" y2="150" stroke="#1FD87A" stroke-width="1.5" stroke-dasharray="5 3"/>
+        <circle cx="52" cy="50"  r="22" fill="#15231D" stroke="rgba(31,216,122,0.6)" stroke-width="1.5"/>
+        <text x="52" y="47"  text-anchor="middle" font-family="monospace" font-size="7" font-weight="bold" fill="#1FD87A">PEER</text>
+        <text x="52" y="56"  text-anchor="middle" font-family="monospace" font-size="6" fill="white">provider</text>
+        <circle cx="52" cy="100" r="22" fill="#15231D" stroke="rgba(31,216,122,0.6)" stroke-width="1.5"/>
+        <text x="52" y="97"  text-anchor="middle" font-family="monospace" font-size="7" font-weight="bold" fill="#1FD87A">PEER</text>
+        <text x="52" y="106" text-anchor="middle" font-family="monospace" font-size="6" fill="white">provider</text>
+        <circle cx="52" cy="150" r="22" fill="#15231D" stroke="rgba(31,216,122,0.6)" stroke-width="1.5"/>
+        <text x="52" y="147" text-anchor="middle" font-family="monospace" font-size="7" font-weight="bold" fill="#1FD87A">PEER</text>
+        <text x="52" y="156" text-anchor="middle" font-family="monospace" font-size="6" fill="white">provider</text>
+        <circle cx="208" cy="50"  r="22" fill="#15231D" stroke="rgba(31,216,122,0.6)" stroke-width="1.5"/>
+        <text x="208" y="47"  text-anchor="middle" font-family="monospace" font-size="6.5" font-weight="bold" fill="white">USER</text>
+        <text x="208" y="56"  text-anchor="middle" font-family="monospace" font-size="6" fill="white">consumer</text>
+        <circle cx="208" cy="100" r="22" fill="#15231D" stroke="rgba(31,216,122,0.6)" stroke-width="1.5"/>
+        <text x="208" y="97"  text-anchor="middle" font-family="monospace" font-size="6.5" font-weight="bold" fill="white">USER</text>
+        <text x="208" y="106" text-anchor="middle" font-family="monospace" font-size="6" fill="white">consumer</text>
+        <circle cx="208" cy="150" r="22" fill="#15231D" stroke="rgba(31,216,122,0.6)" stroke-width="1.5"/>
+        <text x="208" y="147" text-anchor="middle" font-family="monospace" font-size="6.5" font-weight="bold" fill="white">USER</text>
+        <text x="208" y="156" text-anchor="middle" font-family="monospace" font-size="6" fill="white">consumer</text>
+        <text x="52"  y="185" text-anchor="middle" font-family="monospace" font-size="8" fill="white">PROVIDERS</text>
+        <text x="208" y="185" text-anchor="middle" font-family="monospace" font-size="8" fill="white">CONSUMERS</text>
+        <rect x="94" y="90" width="72" height="20" rx="4" fill="#15231D" stroke="#1FD87A" stroke-width="1"/>
+        <text x="130" y="104" text-anchor="middle" font-family="monospace" font-size="7.5" font-weight="bold" fill="#1FD87A" letter-spacing="1">DIRECT P2P</text>
+      </svg>
+    </div>
+  </div>
+
+  <div class="connector"><div class="conn-inner"><span class="conn-arr">↑</span> built on top of <span class="conn-arr">↑</span></div></div>
+
+  <!-- LAYER 02 -->
+  <div class="layer">
+    <div class="layer-left">
+      <div class="wm">02</div>
+      <div class="l-tag">Layer 02 / Marketplace</div>
+      <div class="l-title">An Open Marketplace for AI Services</div>
+      <div class="l-sub">Anyone can offer any AI service and monetise it directly</div>
+      <div class="l-desc">
+        Wrap your expertise in AI. Set your own price. Every delivery is verified by
+        <strong>Proof of Prior Delivery</strong>. the buyer's signature on each new session
+        is cryptographic proof the last one was delivered. Reputation is on-chain,
+        permanent, and no platform can take it from you. Providers keep everything
+        beyond the network fee.
+      </div>
+      <div class="pills">
+        <span class="pill">Proof of Prior Delivery</span>
+        <span class="pill">On-Chain Reputation</span>
+        <span class="pill">Expert Services</span>
+        <span class="pill">Uncensored LLMs</span>
+        <span class="pill">TEE Private Inference</span>
+        <span class="pill">Self-Priced</span>
+        <span class="pill">Direct Earning</span>
+      </div>
+    </div>
+    <div class="layer-right">
+      <div class="svc-list">
+        <div class="svc-row">
+          <div><div class="svc-name">Code Review</div><div class="svc-jobs">4,821 verified jobs</div></div>
+          <div class="svc-sc"><div class="svc-sc-nums"><span class="svc-n">9.7</span><span class="svc-d">/10</span></div><div class="svc-bar-track"><div class="svc-bar-fill" style="width:97%"></div></div></div>
+        </div>
+        <div class="svc-row">
+          <div><div class="svc-name">Legal Analysis</div><div class="svc-jobs">2,103 verified jobs</div></div>
+          <div class="svc-sc"><div class="svc-sc-nums"><span class="svc-n">9.5</span><span class="svc-d">/10</span></div><div class="svc-bar-track"><div class="svc-bar-fill" style="width:95%"></div></div></div>
+        </div>
+        <div class="svc-row">
+          <div><div class="svc-name">Website Build</div><div class="svc-jobs">3,241 verified jobs</div></div>
+          <div class="svc-sc"><div class="svc-sc-nums"><span class="svc-n">9.6</span><span class="svc-d">/10</span></div><div class="svc-bar-track"><div class="svc-bar-fill" style="width:96%"></div></div></div>
+        </div>
+        <div class="svc-row">
+          <div><div class="svc-name">Uncensored LLM</div><div class="svc-jobs">6,102 verified jobs</div></div>
+          <div class="svc-sc"><div class="svc-sc-nums"><span class="svc-n">9.1</span><span class="svc-d">/10</span></div><div class="svc-bar-track"><div class="svc-bar-fill" style="width:91%"></div></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="connector"><div class="conn-inner"><span class="conn-arr">↑</span> built on top of <span class="conn-arr">↑</span></div></div>
+
+  <!-- LAYER 03 -->
+  <div class="layer">
+    <div class="layer-left">
+      <div class="wm">03</div>
+      <div class="l-tag">Layer 03 / Ant Agents</div>
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:5px;">
+        <div class="l-title" style="margin-bottom:0;">Ant Agents</div>
+        <span style="font-family:var(--mono);font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--grey-d);background:var(--bg);border:1px solid rgba(0,0,0,0.12);border-radius:4px;padding:3px 9px;white-space:nowrap;">v0.0.1 — evolving fast</span>
+      </div>
+      <div class="l-sub">Packaged expertise · Read-only · Reputation-verified · Always-on</div>
+      <div class="l-desc">
+        Domain experts package their knowledge as always-on agents. A lawyer's 20 years
+        of contract expertise, available at 3am. A security researcher's threat model,
+        queryable by anyone. <strong>Read-only by design</strong>. they observe, reason,
+        and advise. Trust comes from the provider's on-chain delivery record, not a
+        platform vouching for them.
+      </div>
+      <div class="pills">
+        <span class="pill">Read-Only</span>
+        <span class="pill">Knowledge Modules</span>
+        <span class="pill">Domain Expert</span>
+        <span class="pill">No Login</span>
+        <span class="pill">24/7 Available</span>
+        <span class="pill">Reputation-Verified</span>
+      </div>
+    </div>
+    <div class="layer-right">
+      <div class="term">
+        <div class="term-bar"><div class="td r"></div><div class="td y"></div><div class="td g"></div><span class="tt">ant-agent</span></div>
+        <div class="tb">
+          <div class="tl"><span class="tr">├─</span><span class="tf">agent.json</span><span class="tc"># manifest</span></div>
+          <div class="tl"><span class="tr">├─</span><span class="tf">persona.md</span><span class="tc"># identity</span></div>
+          <div class="tl"><span class="tr">├─</span><span class="tf" style="color:rgba(255,255,255,0.45)">knowledge/</span></div>
+          <div class="tl"><span class="tr" style="padding-left:10px">├─</span><span class="tf">contracts.md</span><span class="tc"># domain expertise</span></div>
+          <div class="tl"><span class="tr" style="padding-left:10px">└─</span><span class="tf">case-law.md</span><span class="tc"># curated data</span></div>
+          <div class="tl"><span class="tr">├─</span><span class="tf" style="color:rgba(255,255,255,0.45)">tools/</span></div>
+          <div class="tl"><span class="tr" style="padding-left:10px">└─</span><span class="tf">fetch.js</span><span class="tc"># live data</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /layers-wrap -->
+
+<div style="max-width:1000px;margin:32px auto 32px;padding:0 40px;">
+  <div style="background:var(--black);border-radius:10px;padding:20px 32px;display:flex;align-items:center;justify-content:center;gap:16px;">
+    <span style="font-family:var(--mono);font-size:10px;letter-spacing:2.5px;text-transform:uppercase;color:rgba(255,255,255,0.5);">All accessible via</span>
+    <span style="font-family:var(--sans);font-weight:800;font-size:18px;color:white;letter-spacing:-0.2px;">AntStation</span>
+    <span style="width:1px;height:18px;background:rgba(255,255,255,0.15);display:inline-block;"></span>
+    <span style="font-family:var(--mono);font-size:11px;letter-spacing:0.5px;color:rgba(255,255,255,0.45);">any compatible agent</span>
+  </div>
+</div>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════
+     WHY DECENTRALISED
+═══════════════════════════════════════════ -->
+<section class="s alt">
+  <div class="page">
+    <div class="kicker">Why Decentralised</div>
+    <h2>Three reasons this works <em>better peer-to-peer.</em></h2>
+    <p>A centralised platform could build a marketplace for AI services. But centralisation structurally limits the three properties that let agents always get the best result for each task.</p>
+
+    <div class="why-why">
+      <div class="ww-card">
+        <h3><span class="dot"></span>Agents need an open, always-on network</h3>
+        <p>Autonomous agents need to call AI services at any time, at any volume, without paywalls or rate limits. Load USDC and run. Switch providers freely. Unlock specialised capabilities on demand. No platform controls access.</p>
+      </div>
+      <div class="ww-card">
+        <h3><span class="dot"></span>Access to every kind of service</h3>
+        <p>Any centralised platform can be pressured to restrict services by governments, payment processors, or public opinion. On AntSeed there is no central entity to pressure. Providers offer what they can deliver. The network does not discriminate.</p>
+      </div>
+      <div class="ww-card">
+        <h3><span class="dot"></span>More margin. Permanent reputation.</h3>
+        <p>On a centralised platform your reputation is an asset they control — they can revoke it, bury it, or change the algorithm. On AntSeed your delivery record lives on-chain. The network fee flows back to stakers. In a world of high volume and low margins, that is the difference between a viable business and one that isn't.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════
+     ANT AGENTS. THE ENDGAME
+═══════════════════════════════════════════ -->
+<div class="agents-hero">
+  <div class="agents-hero-inner">
+    <div class="kicker" style="color:var(--mint);margin-bottom:14px;">// The Endgame</div>
+    <h2>Agents don't use one LLM. <em>The best service for every task.</em></h2>
+    <p>
+      You tell your agent: use AntSeed, optimise for each job. It routes a research task to a specialist with 4,800 verified deliveries. Switches to an uncensored model for creative work. Calls a legal Ant Agent for a contract question. Pays per use. No single LLM could do all of this well. <strong>AntSeed lets agents compose the best service for every step, automatically.</strong>
+    </p>
+    <div class="agents-grid">
+      <div class="ag-card">
+        <div class="ag-tag">Open access</div>
+        <h3>Load USDC and run.</h3>
+        <p>No subscriptions, no API keys, no lock-in. The agent pays only for what it uses and switches freely between providers mid-workflow.</p>
+      </div>
+      <div class="ag-card">
+        <div class="ag-tag">Reputation-verified</div>
+        <h3>Select by track record.</h3>
+        <p>Every provider has a verified delivery score on-chain. Agents route by reputation, not by brand. The best provider for each task wins.</p>
+      </div>
+      <div class="ag-card">
+        <div class="ag-tag">Always-on</div>
+        <h3>No single point of failure.</h3>
+        <p>If one peer is unavailable the agent routes to another instantly. No centralised API to go down mid-workflow.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════
+     GO TO MARKET
+═══════════════════════════════════════════ -->
+<section class="s">
+  <div class="page">
+    <div class="kicker">Go To Market</div>
+    <h2>How we solve the <em>chicken and egg problem.</em></h2>
+    <p>
+
+    <div class="gtm-steps">
+
+      <div class="gtm-step">
+        <div class="gtm-num">01</div>
+        <div class="gtm-body">
+          <h3>AntSeed as the first peer</h3>
+          <p>
+            We launch as the sole provider on the network. Raw LLM access, multiple open source models, uncensored options, and TEE-private inference as a service offering. Alongside this, the first Ant Agents go live: a <strong>coding specialist</strong> and a <strong>marketing specialist</strong>, both built and maintained in-house. This proves the economics, sets the quality bar, and gives buyers a reason to use the network before a single external provider has joined.
+          </p>
+          <div class="gtm-tags">
+            <span class="gtm-tag">Raw LLM access</span>
+            <span class="gtm-tag">Uncensored models</span>
+            <span class="gtm-tag">TEE Private Inference (service)</span>
+            <span class="gtm-tag">Coding Ant Agent</span>
+            <span class="gtm-tag">Marketing Ant Agent</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="gtm-step">
+        <div class="gtm-num">02</div>
+        <div class="gtm-body">
+          <h3>The first external providers. YouTube AI creators</h3>
+          <p>
+            There is a large and growing community of YouTube creators who have built deep expertise in AI workflows. specific setups, prompting strategies, agent configurations, tool chains. and who teach these workflows to hundreds of thousands of followers. They already have the audience. They already have the credibility. What they don't have is a direct way to monetise the workflow itself rather than just the video about it.
+          </p>
+          <p>
+            AntSeed gives them exactly that. <strong>We are currently in conversations with the first three YouTube AI creators</strong> to list their workflows as Ant Agents on the network. Their audience becomes buyers. Their expertise becomes a service. They earn every time someone uses it. not just when someone watches their video.
+          </p>
+          <div class="gtm-tags">
+            <span class="gtm-tag">First 3 creators. in progress</span>
+            <span class="gtm-tag">Workflow-as-a-service</span>
+            <span class="gtm-tag">Built-in distribution</span>
+            <span class="gtm-tag">Recurring income for creators</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════
+     FAQ
+═══════════════════════════════════════════ -->
+<section class="s alt">
+  <div class="page">
+    <div class="kicker">Questions</div>
+    <h2>Things people actually ask.</h2>
+    <p style="margin-bottom:48px;">The honest answers, not the fundraising ones.</p>
+
+    <div class="faq-list">
+
+      <div class="faq-item">
+        <div class="faq-q">What happens when LLMs become so good that anyone can do anything?</div>
+        <div class="faq-a">
+          That is exactly what we want. When LLMs become dramatically more capable, costs collapse. better architectures are more efficient, and open source catches up fast. More people can run their own capable LLMs on their own hardware, and those people become AntSeed providers. The supply side grows, not shrinks.
+          <br><br>
+          But "anyone can do anything" does not mean everyone delivers the same result. LLMs are general-purpose engines. The value is in what you build on top. the skills, the workflows, the domain expertise, the data pipelines, the agent orchestration. That work is custom, specialized, and endless. A more capable base model raises the ceiling for every provider, but it does not eliminate the distance between a generic prompt and a production-grade service. There will always be competition. like in any market. and a massive amount of specialized work to package, sell, and improve.
+          <br><br>
+          Meanwhile, AntSeed's infrastructure becomes more valuable, not less. The protocol is purpose-built for peer-to-peer AI communication: discovery, reputation, routing, metering, settlement. As agents multiply and start hiring other agents, they need exactly this. an open market where they can find services by capability, evaluate providers by track record, and pay autonomously. No walled garden scales to that. AntSeed is the native infrastructure for an economy of intelligent machines, and it grows with every new agent and every new capability the market produces.
+          <br><br>
+          Smarter LLMs mean smarter providers, smarter agents, and a larger network. A more capable AI ecosystem means a more capable AntSeed. not a less relevant one.
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-q">Isn't this just like P2P file sharing? Netflix killed that.</div>
+        <div class="faq-a">
+          Netflix and Spotify won because humans are happy to pay a simple subscription for a clean UI. Downloading files was friction. Streaming removed it. People moved on. But that logic only applies to humans who care about experience. Agents don't. An agent has no preference for a polished interface, no reason to care about a brand, no inertia keeping it on a familiar platform. It just needs the service, the price, and the reliability. On those three axes, an open P2P network with no middleman and no markup wins every time. There is no Netflix for AI inference that an agent will choose out of habit.
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-q">Is AntSeed built for agents specifically?</div>
+        <div class="faq-a">
+          It works for humans today and is being used by humans now. But the architecture decisions. USDC-native payments, no account system, open discovery, always-on peers. are all decisions that make the network ideal for agents. A human tolerates signing up, waiting for API keys, and managing a subscription. An agent cannot. The network AntSeed is building is the one autonomous agents will naturally discover and use, because it's the only AI network that works the way agents work: load value, call a service, pay for what you use, change providers freely, unlock new capabilities on demand. No human in the loop required.
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-q">Why would a provider use AntSeed instead of just building their own API?</div>
+        <div class="faq-a">
+          Building your own API means building billing infrastructure, handling support, managing uptime, acquiring customers, and maintaining a reputation system from scratch. That is a startup, not a service. AntSeed gives you distribution. buyers already on the network looking for exactly what you offer. plus a reputation system that makes your track record portable and permanent, plus payments handled at the protocol level. You focus on the thing you're good at. The network handles the rest. And unlike a platform, AntSeed charges a network fee and leaves the relationship between you and your buyers entirely in your hands.
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-q">How is this different from OpenRouter?</div>
+        <div class="faq-a">
+          OpenRouter is a centralised routing layer that aggregates model providers and handles the API calls for you. It is a well-built product — but it is still a company making decisions about which models to list, on what terms, at what margins, based on partnerships they negotiate in their own interest. AntSeed is structurally different. Anyone can offer a service. There is no company deciding who gets listed or who gets buried. Reputation is built by actually delivering good results to real buyers — not by signing a commercial deal with the platform. A domain expert with 3,000 verified deliveries on AntSeed has built something no partnership agreement can replicate. The service quality speaks for itself, on-chain, permanently. OpenRouter routes to models. AntSeed routes to expertise.
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════
+     CTA
+═══════════════════════════════════════════ -->
+<div style="max-width:1000px;margin:0 auto;padding:0 40px 0">
+  <div style="background:#0F0F0E;border-radius:16px;overflow:hidden;border:1px solid rgba(31,216,122,0.15);">
+    <div style="display:flex;align-items:center;gap:24px;padding:28px 36px;border-bottom:1px solid rgba(255,255,255,0.06);">
+      <div>
+        <div style="font-family:var(--mono);font-size:11px;letter-spacing:2px;text-transform:uppercase;color:rgba(255,255,255,0.35);margin-bottom:5px;">All accessible via</div>
+        <div style="font-family:var(--sans);font-weight:800;font-size:26px;letter-spacing:-0.5px;color:white;">AntStation</div>
+      </div>
+      <div style="width:1px;height:44px;background:rgba(255,255,255,0.08);"></div>
+      <div style="font-family:var(--sans);font-size:13px;color:rgba(255,255,255,0.4);max-width:200px;line-height:1.6;">The desktop client for buyers and providers</div>
+      <div style="display:flex;align-items:center;gap:16px;margin-left:auto;">
+        <div style="font-family:var(--mono);font-size:10px;color:rgba(255,255,255,0.3);letter-spacing:1px;text-align:right;line-height:1.8;">macOS 13+<br/>Free · 47 MB</div>
+        <a href="#" style="display:inline-flex;align-items:center;gap:10px;background:white;color:#0F0F0E;font-family:var(--sans);font-weight:800;font-size:14px;padding:13px 24px;border-radius:8px;text-decoration:none;letter-spacing:-0.1px;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+          Download for Mac
+        </a>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:12px;padding:16px 36px;">
+      <span style="font-family:var(--mono);font-size:10px;letter-spacing:2px;text-transform:uppercase;color:rgba(255,255,255,0.25);margin-right:4px;">Also works with</span>
+      <div style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:6px 14px;font-family:var(--sans);font-weight:500;font-size:12px;color:rgba(255,255,255,0.6);">Claude Code</div>
+      <div style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:6px 14px;font-family:var(--sans);font-weight:500;font-size:12px;color:rgba(255,255,255,0.6);">Codex</div>
+      <div style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:6px 14px;font-family:var(--sans);font-weight:500;font-size:12px;color:rgba(255,255,255,0.6);">VS Code</div>
+      <div style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:6px 14px;font-family:var(--sans);font-weight:500;font-size:12px;color:rgba(255,255,255,0.6);">Any OpenAI Client</div>
+      <div style="margin-left:auto;background:rgba(31,216,122,0.08);border:1px solid rgba(31,216,122,0.2);border-radius:6px;padding:6px 16px;font-family:var(--mono);font-size:11px;color:#1FD87A;letter-spacing:0.5px;white-space:nowrap;">npm install -g @antseed/cli</div>
+    </div>
+  </div>
+</div>
+
+<div class="cta" style="margin-top:0;padding-top:72px;">
+  <div class="page" style="max-width:700px">
+    <h2>Build once.<br><em>Earn forever.</em></h2>
+    <p>The network is live. Whether you have expertise to sell, a job that needs doing, or an agent that needs infrastructure. AntSeed is open now.</p>
+    <div class="cta-row">
+      <a href="#" class="btn-ghost">GitHub →</a>
+    </div>
+  </div>
+</div>
+
+<!-- FOOTER -->
+<footer>
+  <span class="fl"><span class="ant">ANT</span><span class="seed">SEED</span></span>
+  <span class="fc">Open source · Peer-to-peer · March 2026</span>
+  <span class="fr">antseed.com</span>
+</footer>
+
+<!-- ANT ANIMATION -->
+<canvas id="antCanvas" style="position:absolute;top:0;left:0;width:100%;pointer-events:none;z-index:50;"></canvas>
+
+<script>
+(function(){
+  const canvas = document.getElementById('antCanvas');
+  const ctx = canvas.getContext('2d');
+
+  function resize(){
+    canvas.width  = document.body.scrollWidth;
+    canvas.height = document.body.scrollHeight;
+  }
+  resize();
+  window.addEventListener('resize', resize);
+  // re-measure after fonts/images load
+  window.addEventListener('load', resize);
+
+  // ── Ant shape ────────────────────────────────────────────────────────────
+  function drawAnt(ctx, x, y, angle, scale, alpha){
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.translate(x, y);
+    ctx.rotate(angle);
+    ctx.scale(scale, scale);
+
+    const c = '#0F0F0E';
+    ctx.fillStyle   = c;
+    ctx.strokeStyle = c;
+    ctx.lineWidth   = 0.6;
+
+    // abdomen
+    ctx.beginPath();
+    ctx.ellipse(0, 7, 2.8, 4.2, 0, 0, Math.PI*2);
+    ctx.fill();
+
+    // thorax
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 2.0, 2.8, 0, 0, Math.PI*2);
+    ctx.fill();
+
+    // head
+    ctx.beginPath();
+    ctx.ellipse(0, -5, 1.8, 2.0, 0, 0, Math.PI*2);
+    ctx.fill();
+
+    // antennae
+    ctx.lineWidth = 0.5;
+    ctx.strokeStyle = c;
+    ctx.beginPath(); ctx.moveTo(-1,-6.5); ctx.lineTo(-3.5,-10); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo( 1,-6.5); ctx.lineTo( 3.5,-10); ctx.stroke();
+    // tips
+    ctx.fillStyle = c;
+    ctx.beginPath(); ctx.arc(-3.5,-10,0.8,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc( 3.5,-10,0.8,0,Math.PI*2); ctx.fill();
+
+    // legs (3 pairs). animated with legPhase
+    ctx.restore();
+  }
+
+  function drawAntFull(ctx, x, y, angle, scale, alpha, t){
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.translate(x, y);
+    ctx.rotate(angle);
+    ctx.scale(scale, scale);
+
+    const c = '#0F0F0E';
+    ctx.strokeStyle = c;
+
+    // leg swing
+    const swing = Math.sin(t * 8) * 3;
+
+    // legs
+    ctx.lineWidth = 0.7;
+    const legPairs = [
+      [-1.5, -1,  4],
+      [-1.5,  0,  6],
+      [-1.5,  2,  5],
+    ];
+    legPairs.forEach(([bx, by, len], i) => {
+      const s = (i % 2 === 0) ? swing : -swing;
+      // left
+      ctx.beginPath();
+      ctx.moveTo(bx, by);
+      ctx.lineTo(bx - len + s, by + len * 0.7);
+      ctx.stroke();
+      // right
+      ctx.beginPath();
+      ctx.moveTo(-bx, by);
+      ctx.lineTo(-bx + len - s, by + len * 0.7);
+      ctx.stroke();
+    });
+
+    ctx.fillStyle = c;
+
+    // abdomen
+    ctx.beginPath(); ctx.ellipse(0, 6.5, 2.6, 3.8, 0, 0, Math.PI*2); ctx.fill();
+
+    // thorax
+    ctx.beginPath(); ctx.ellipse(0, 0.5, 1.8, 2.4, 0, 0, Math.PI*2); ctx.fill();
+
+    // head
+    ctx.beginPath(); ctx.ellipse(0, -4.5, 1.6, 1.8, 0, 0, Math.PI*2); ctx.fill();
+
+    // antennae
+    ctx.lineWidth = 0.5;
+    const aw = Math.sin(t * 4) * 1;
+    ctx.beginPath(); ctx.moveTo(-0.8,-5.8); ctx.lineTo(-3.5 + aw,-9.5); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo( 0.8,-5.8); ctx.lineTo( 3.5 - aw,-9.5); ctx.stroke();
+    ctx.beginPath(); ctx.arc(-3.5+aw,-9.5,0.7,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc( 3.5-aw,-9.5,0.7,0,Math.PI*2); ctx.fill();
+
+    ctx.restore();
+  }
+
+  // ── Ant class ─────────────────────────────────────────────────────────────
+  class Ant {
+    constructor(){
+      this.reset(true);
+    }
+    reset(initial){
+      const W = canvas.width, H = canvas.height;
+      // start from edges
+      const edge = Math.floor(Math.random()*4);
+      if(edge===0){ this.x = Math.random()*W; this.y = -20; }
+      else if(edge===1){ this.x = W+20; this.y = Math.random()*H; }
+      else if(edge===2){ this.x = Math.random()*W; this.y = H+20; }
+      else { this.x = -20; this.y = Math.random()*H; }
+
+      if(initial){
+        this.x = Math.random()*W;
+        this.y = Math.random()*H;
+      }
+
+      // wander toward a random point on the page
+      const tx = Math.random()*W;
+      const ty = Math.random()*H;
+      this.angle = Math.atan2(ty - this.y, tx - this.x) - Math.PI/2;
+      this.angle += (Math.random()-0.5) * Math.PI * 0.6;
+
+      this.speed  = 0.4 + Math.random() * 0.6;
+      this.scale  = 0.9 + Math.random() * 0.7;
+      this.alpha  = 0.07 + Math.random() * 0.10;
+      this.wobble = (Math.random()-0.5) * 0.015;
+      this.life   = 0;
+      this.maxLife = 400 + Math.random() * 600;
+    }
+    update(t){
+      this.angle  += this.wobble + (Math.random()-0.5)*0.02;
+      this.x += Math.sin(this.angle) * this.speed;
+      this.y -= Math.cos(this.angle) * this.speed;
+      this.life++;
+
+      const W = canvas.width, H = canvas.height;
+      const margin = 60;
+      if(this.x < -margin || this.x > W+margin ||
+         this.y < -margin || this.y > H+margin ||
+         this.life > this.maxLife){
+        this.reset(false);
+      }
+    }
+    draw(t){
+      drawAntFull(ctx, this.x, this.y, this.angle, this.scale, this.alpha, t);
+    }
+  }
+
+  // ── Create ants ───────────────────────────────────────────────────────────
+  const NUM_ANTS = 12;
+  const ants = Array.from({length: NUM_ANTS}, () => new Ant());
+
+  // ── Render loop ───────────────────────────────────────────────────────────
+  let t = 0;
+  function loop(){
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    t += 0.016;
+    ants.forEach(a => { a.update(t); a.draw(t); });
+    requestAnimationFrame(loop);
+  }
+  loop();
+})();
+</script>
+
+</body>
+</html>
