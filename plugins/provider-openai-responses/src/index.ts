@@ -64,6 +64,11 @@ interface AuthContext {
   idToken?: string;
 }
 
+interface LoadedAuthContext {
+  auth: AuthContext;
+  persisted: AuthFileShape;
+}
+
 function decodeJwtPayload(token: string): Record<string, unknown> | null {
   const parts = token.split('.');
   if (parts.length < 2) return null;
@@ -84,9 +89,7 @@ function decodeJwtPayload(token: string): Record<string, unknown> | null {
   }
 }
 
-function readAuthContext(authFilePath: string): AuthContext {
-  const raw = readFileSync(authFilePath, 'utf8');
-  const parsed = JSON.parse(raw) as AuthFileShape;
+function parseAuthContext(parsed: AuthFileShape, authFilePath: string): AuthContext {
   const accessToken = typeof parsed.tokens?.access_token === 'string'
     ? parsed.tokens.access_token.trim()
     : '';
@@ -125,6 +128,19 @@ function readAuthContext(authFilePath: string): AuthContext {
   return { accessToken, refreshToken, accountId, expiresAt, idToken };
 }
 
+function readAuthContext(authFilePath: string): AuthContext {
+  return loadAuthContext(authFilePath).auth;
+}
+
+function loadAuthContext(authFilePath: string): LoadedAuthContext {
+  const raw = readFileSync(authFilePath, 'utf8');
+  const parsed = JSON.parse(raw) as AuthFileShape;
+  return {
+    auth: parseAuthContext(parsed, authFilePath),
+    persisted: parsed,
+  };
+}
+
 function getJwtExpiration(token: string): number | undefined {
   const payload = decodeJwtPayload(token);
   const exp = payload?.['exp'];
@@ -138,12 +154,11 @@ function isAuthExpiringSoon(auth: AuthContext): boolean {
   return auth.expiresAt !== undefined && Date.now() >= auth.expiresAt - REFRESH_BUFFER_MS;
 }
 
-function writeAuthContext(authFilePath: string, auth: AuthContext): void {
-  const existing = JSON.parse(readFileSync(authFilePath, 'utf8')) as AuthFileShape;
+function writeAuthContext(authFilePath: string, persisted: AuthFileShape, auth: AuthContext): void {
   const next: AuthFileShape = {
-    ...existing,
+    ...persisted,
     tokens: {
-      ...existing.tokens,
+      ...persisted.tokens,
       access_token: auth.accessToken,
       ...(auth.refreshToken ? { refresh_token: auth.refreshToken } : {}),
       ...(auth.idToken ? { id_token: auth.idToken } : {}),
@@ -158,22 +173,32 @@ function writeAuthContext(authFilePath: string, auth: AuthContext): void {
 }
 
 async function refreshAuthContext(authFilePath: string): Promise<AuthContext> {
-  const current = readAuthContext(authFilePath);
+  const { auth: current, persisted } = loadAuthContext(authFilePath);
   if (!current.refreshToken) {
     throw new Error(`Codex auth file at ${authFilePath} is missing tokens.refresh_token`);
   }
 
-  const response = await fetch(OPENAI_TOKEN_URL, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/x-www-form-urlencoded',
-    },
-    body: new URLSearchParams({
-      grant_type: 'refresh_token',
-      refresh_token: current.refreshToken,
-      client_id: OPENAI_CLIENT_ID,
-    }),
-  });
+  const timeoutSignal = AbortSignal.timeout(FETCH_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(OPENAI_TOKEN_URL, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: current.refreshToken,
+        client_id: OPENAI_CLIENT_ID,
+      }),
+      signal: timeoutSignal,
+    });
+  } catch (error) {
+    if (timeoutSignal.aborted) {
+      throw new Error(`OpenAI Codex token refresh timed out after ${FETCH_TIMEOUT_MS}ms`);
+    }
+    throw error;
+  }
 
   if (!response.ok) {
     const text = await response.text().catch(() => '');
@@ -205,7 +230,7 @@ async function refreshAuthContext(authFilePath: string): Promise<AuthContext> {
     ...(idToken ? { idToken } : {}),
   };
 
-  writeAuthContext(authFilePath, refreshed);
+  writeAuthContext(authFilePath, persisted, refreshed);
   return refreshed;
 }
 
@@ -348,6 +373,7 @@ class CodexResponsesProvider implements Provider {
   private readonly serviceRewriteMap?: Record<string, string>;
   private readonly validationServices: ReadonlySet<string>;
   private authRefreshPromise: Promise<AuthContext> | null = null;
+  private authContext: AuthContext | null = null;
   private activeCount = 0;
 
   constructor(config: {
@@ -450,10 +476,13 @@ class CodexResponsesProvider implements Provider {
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
-        const result = await this.fetchOnce(req, upstreamPath, auth);
+        let result = await this.fetchOnce(req, upstreamPath, auth);
         if (result.response.statusCode === 401) {
           auth = await this.forceRefreshAuthContext();
-          return this.finalizeResult(await this.fetchOnce(req, upstreamPath, auth), callbacks);
+          result = await this.fetchOnce(req, upstreamPath, auth);
+          if (result.response.statusCode === 401) {
+            return this.finalizeResult(result, callbacks);
+          }
         }
         if (!isTransientError(result.response.statusCode) || attempt === MAX_RETRIES) {
           return this.finalizeResult(result, callbacks);
@@ -476,7 +505,11 @@ class CodexResponsesProvider implements Provider {
   }
 
   private async getAuthContext(): Promise<AuthContext> {
-    const auth = readAuthContext(this.authFilePath);
+    if (!this.authContext) {
+      this.authContext = readAuthContext(this.authFilePath);
+    }
+
+    const auth = this.authContext;
     if (!isAuthExpiringSoon(auth)) {
       return auth;
     }
@@ -486,6 +519,10 @@ class CodexResponsesProvider implements Provider {
   private async forceRefreshAuthContext(): Promise<AuthContext> {
     if (!this.authRefreshPromise) {
       this.authRefreshPromise = refreshAuthContext(this.authFilePath)
+        .then((auth) => {
+          this.authContext = auth;
+          return auth;
+        })
         .finally(() => {
           this.authRefreshPromise = null;
         });

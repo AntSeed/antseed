@@ -304,6 +304,74 @@ describe('provider-openai-responses plugin', () => {
     rmSync(dirname(authFile), { recursive: true, force: true });
   });
 
+  it('preserves existing non-token fields when refreshing auth.json', async () => {
+    const expiredToken = makeJwt({
+      exp: Math.floor((Date.now() - 60_000) / 1000),
+      'https://api.openai.com/auth': {
+        chatgpt_account_id: 'acct-old',
+      },
+    });
+    const freshToken = makeJwt({
+      exp: Math.floor((Date.now() + 3600_000) / 1000),
+      'https://api.openai.com/auth': {
+        chatgpt_account_id: 'acct-new',
+      },
+    });
+    const authFile = writeAuthFile({
+      OPENAI_API_KEY: 'legacy',
+      tokens: {
+        access_token: expiredToken,
+        refresh_token: 'refresh-1',
+        account_id: 'acct-old',
+      },
+    });
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        access_token: freshToken,
+        refresh_token: 'refresh-2',
+        expires_in: 3600,
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await refreshAuthContext(authFile);
+
+    const saved = readAuthFile(authFile);
+    expect(saved.OPENAI_API_KEY).toBe('legacy');
+    rmSync(dirname(authFile), { recursive: true, force: true });
+  });
+
+  it('times out token refresh requests', async () => {
+    const expiredToken = makeJwt({
+      exp: Math.floor((Date.now() - 60_000) / 1000),
+      'https://api.openai.com/auth': {
+        chatgpt_account_id: 'acct-old',
+      },
+    });
+    const authFile = writeAuthFile({
+      tokens: {
+        access_token: expiredToken,
+        refresh_token: 'refresh-1',
+        account_id: 'acct-old',
+      },
+    });
+    vi.spyOn(AbortSignal, 'timeout').mockImplementation(() => AbortSignal.abort('timeout'));
+    const fetchMock = vi.fn().mockImplementation(async (_url: string, init?: RequestInit) => {
+      const signal = init?.signal;
+      if (signal?.aborted) {
+        throw new DOMException('The operation was aborted.', 'AbortError');
+      }
+      throw new Error('expected aborted signal');
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await expect(refreshAuthContext(authFile)).rejects.toThrow('timed out');
+    rmSync(dirname(authFile), { recursive: true, force: true });
+  });
+
   it('refreshes before request when access token is expired', async () => {
     const expiredToken = makeJwt({
       exp: Math.floor((Date.now() - 60_000) / 1000),
@@ -431,6 +499,153 @@ describe('provider-openai-responses plugin', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(fetchMock.mock.calls[1]?.[0]).toBe('https://auth.openai.com/oauth/token');
     expect(((fetchMock.mock.calls[2]?.[1] as RequestInit).headers as Record<string, string>)['chatgpt-account-id']).toBe('acct-new');
+    rmSync(dirname(authFile), { recursive: true, force: true });
+  });
+
+  it('retries transient failures that happen after a 401 refresh', async () => {
+    const currentToken = makeJwt({
+      exp: Math.floor((Date.now() + 3600_000) / 1000),
+      'https://api.openai.com/auth': {
+        chatgpt_account_id: 'acct-old',
+      },
+    });
+    const freshToken = makeJwt({
+      exp: Math.floor((Date.now() + 7200_000) / 1000),
+      'https://api.openai.com/auth': {
+        chatgpt_account_id: 'acct-new',
+      },
+    });
+    const authFile = writeAuthFile({
+      tokens: {
+        access_token: currentToken,
+        refresh_token: 'refresh-1',
+        account_id: 'acct-old',
+      },
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('unauthorized', {
+        status: 401,
+        headers: { 'content-type': 'text/plain' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        access_token: freshToken,
+        refresh_token: 'refresh-2',
+        expires_in: 3600,
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response('temporary failure', {
+        status: 503,
+        headers: { 'content-type': 'text/plain' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'resp_2' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: TimerHandler) => {
+      if (typeof fn === 'function') fn();
+      return 0 as unknown as ReturnType<typeof setTimeout>;
+    }) as typeof setTimeout);
+
+    const provider = plugin.createProvider({
+      OPENAI_RESPONSES_AUTH_FILE: authFile,
+      ANTSEED_ALLOWED_SERVICES: 'gpt-5-codex',
+    });
+
+    const response = await provider.handleRequest({
+      requestId: 'req-401-transient',
+      method: 'POST',
+      path: '/v1/responses',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-5-codex',
+        input: 'hello',
+        stream: false,
+      })),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    rmSync(dirname(authFile), { recursive: true, force: true });
+  });
+
+  it('caches auth context between non-refreshing requests', async () => {
+    const initialToken = makeJwt({
+      exp: Math.floor((Date.now() + 3600_000) / 1000),
+      'https://api.openai.com/auth': {
+        chatgpt_account_id: 'acct-initial',
+      },
+    });
+    const changedToken = makeJwt({
+      exp: Math.floor((Date.now() + 3600_000) / 1000),
+      'https://api.openai.com/auth': {
+        chatgpt_account_id: 'acct-changed',
+      },
+    });
+    const authFile = writeAuthFile({
+      tokens: {
+        access_token: initialToken,
+      },
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'resp_1' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'resp_2' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const provider = plugin.createProvider({
+      OPENAI_RESPONSES_AUTH_FILE: authFile,
+      ANTSEED_ALLOWED_SERVICES: 'gpt-5-codex',
+    });
+
+    await provider.handleRequest({
+      requestId: 'req-cache-1',
+      method: 'POST',
+      path: '/v1/responses',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-5-codex',
+        input: 'hello',
+        stream: false,
+      })),
+    });
+
+    writeFileSync(authFile, JSON.stringify({
+      tokens: {
+        access_token: changedToken,
+      },
+    }), 'utf8');
+
+    await provider.handleRequest({
+      requestId: 'req-cache-2',
+      method: 'POST',
+      path: '/v1/responses',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-5-codex',
+        input: 'hello again',
+        stream: false,
+      })),
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(((fetchMock.mock.calls[0]?.[1] as RequestInit).headers as Record<string, string>)['chatgpt-account-id']).toBe('acct-initial');
+    expect(((fetchMock.mock.calls[1]?.[1] as RequestInit).headers as Record<string, string>)['chatgpt-account-id']).toBe('acct-initial');
     rmSync(dirname(authFile), { recursive: true, force: true });
   });
 
