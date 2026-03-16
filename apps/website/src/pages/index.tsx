@@ -386,7 +386,6 @@ export default function Home(): JSX.Element {
       {/* Agents & Developers — full width */}
       <div className={styles.agentsSection}>
         <div className={styles.agentsCopy}>
-          <div className={styles.cardLabel}>// The Endgame</div>
           <h3>Agents use the best service<br/>for every task.</h3>
           <p className={styles.agentsVision}>Your agent routes a research task to a specialist with 4,800 verified deliveries. Switches to an uncensored model for creative work. Calls a legal Ant Agent for a contract question. Pays per use.</p>
           <ul className={styles.agentsBullets}>
