@@ -62,6 +62,13 @@ function debugLog(...args: unknown[]): void {
   if (DEBUG_ENABLED) console.log(...args);
 }
 
+/** Check if an SSE chunk contains an Anthropic message_start event. */
+function chunkHasMessageStart(data: Uint8Array): boolean {
+  const text = decoder.decode(data);
+  return text.includes('event: message_start') || text.includes('"type":"message_start"') || text.includes('"type": "message_start"');
+}
+
+
 /**
  * Check if an SSE chunk contains an internal (antseed_*) tool call.
  * Used during streaming to decide whether to forward chunks to the buyer.
@@ -199,6 +206,7 @@ export async function runAgentLoopStream(
   const format = detectRequestFormat(req.path);
   const maxIterations = options?.maxIterations ?? DEFAULT_MAX_ITERATIONS;
   let headersSent = false;
+  let messageStartSent = false;
 
   for (let i = 0; i < maxIterations; i++) {
     debugLog(`${reqTag}: stream iteration ${i + 1}/${maxIterations}`);
@@ -210,8 +218,9 @@ export async function runAgentLoopStream(
     };
 
     // Stream the call, forwarding chunks to the buyer.
-    // If we detect an antseed_* tool call mid-stream, stop forwarding
-    // so the buyer doesn't try to execute provider-internal tools.
+    // For Anthropic format: suppress message_start on non-first iterations and
+    // message_stop on non-final iterations to maintain one continuous SSE envelope.
+    // For both formats: suppress antseed_* tool call chunks.
     let streamResponse: SerializedHttpResponse;
     let suppressingChunks = false;
     try {
@@ -224,12 +233,18 @@ export async function runAgentLoopStream(
         },
         onResponseChunk: (chunk) => {
           if (suppressingChunks) return;
-          // Check if this chunk reveals an internal tool call
-          if (!chunk.done && chunk.data.length > 0 && chunkHasInternalToolCall(chunk.data, format)) {
-            suppressingChunks = true;
-            return;
+          if (!chunk.done && chunk.data.length > 0) {
+            // Check if this chunk reveals an internal tool call
+            if (chunkHasInternalToolCall(chunk.data, format)) {
+              suppressingChunks = true;
+              return;
+            }
+            if (format === 'anthropic' && chunkHasMessageStart(chunk.data)) {
+              // Suppress message_start if we already sent one (one continuous envelope)
+              if (messageStartSent) return;
+              messageStartSent = true;
+            }
           }
-          // Forward content, buyer tool calls, and done (only if not suppressing)
           callbacks.onResponseChunk(chunk);
         },
       });
@@ -301,6 +316,10 @@ export async function runAgentLoopStream(
       }
     },
     onResponseChunk: (chunk) => {
+      // Anthropic: suppress message_start if we already sent one (continuing the envelope)
+      if (format === 'anthropic' && messageStartSent && !chunk.done && chunk.data.length > 0 && chunkHasMessageStart(chunk.data)) {
+        return;
+      }
       callbacks.onResponseChunk(chunk);
     },
   });
