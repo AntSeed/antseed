@@ -2,17 +2,9 @@ import type { TokenProvider } from '@antseed/node';
 import type { SerializedHttpRequest, SerializedHttpResponse, SerializedHttpResponseChunk } from '@antseed/node';
 import { ANTSEED_STREAMING_RESPONSE_HEADER } from '@antseed/node';
 import { swapAuthHeader, validateRequestService } from './auth-swap.js';
+import { stripRelayRequestHeaders, stripRelayResponseHeaders } from './http-headers.js';
 
-/** Hop-by-hop headers that must not be forwarded. */
-const HOP_BY_HOP_HEADERS = new Set([
-  'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization',
-  'te', 'trailers', 'transfer-encoding', 'upgrade',
-]);
-
-/** Internal headers used only within Antseed routing. */
-const INTERNAL_HEADERS = new Set([
-  'x-antseed-provider',
-]);
+export const DEFAULT_HTTP_TIMEOUT_MS = 120_000;
 
 export interface RelayConfig {
   baseUrl: string;
@@ -155,19 +147,11 @@ export class HttpRelay {
 
       // Build fetch headers, stripping hop-by-hop and provider-specific prefixes
       const stripPrefixes = this._config.stripHeaderPrefixes ?? [];
-      const fetchHeaders: Record<string, string> = {};
-      for (const [key, value] of Object.entries(swappedRequest.headers)) {
-        const lower = key.toLowerCase();
-        if (HOP_BY_HOP_HEADERS.has(lower) || INTERNAL_HEADERS.has(lower) || lower === 'host' || lower === 'content-length' || lower === 'accept-encoding') {
-          continue;
-        }
-        if (stripPrefixes.length > 0 && stripPrefixes.some((p) => lower.startsWith(p))) {
-          continue;
-        }
-        fetchHeaders[key] = value;
-      }
+      const fetchHeaders = stripRelayRequestHeaders(swappedRequest.headers, {
+        stripHeaderPrefixes: stripPrefixes,
+      });
 
-      const timeoutMs = this._config.timeoutMs ?? 120_000;
+      const timeoutMs = this._config.timeoutMs ?? DEFAULT_HTTP_TIMEOUT_MS;
 
       const doFetch = async (headers: Record<string, string>): Promise<Response> => {
         const controller = new AbortController();
@@ -203,13 +187,7 @@ export class HttpRelay {
       // Build response headers, stripping hop-by-hop and encoding headers.
       // Node.js fetch auto-decompresses gzip/br responses, so we must strip
       // content-encoding to prevent the client from double-decompressing.
-      const responseHeaders: Record<string, string> = {};
-      fetchResponse.headers.forEach((value, key) => {
-        const lower = key.toLowerCase();
-        if (!HOP_BY_HOP_HEADERS.has(lower) && lower !== 'content-encoding' && lower !== 'content-length') {
-          responseHeaders[lower] = value;
-        }
-      });
+      const responseHeaders = stripRelayResponseHeaders(fetchResponse);
 
       if (isSSE && fetchResponse.body) {
         responseHeaders[ANTSEED_STREAMING_RESPONSE_HEADER] = '1';

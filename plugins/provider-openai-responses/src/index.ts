@@ -10,7 +10,17 @@ import type {
   SerializedHttpResponse,
   ServiceApiProtocol,
 } from '@antseed/node';
-import { parseServiceAliasMap, validateRequestService } from '@antseed/provider-core';
+import {
+  DEFAULT_HTTP_TIMEOUT_MS,
+  buildServiceApiProtocols,
+  parseCsv,
+  parseNonNegativeNumber,
+  parseServiceAliasMap,
+  parseServicePricingJson,
+  stripRelayRequestHeaders,
+  stripRelayResponseHeaders,
+  validateRequestService,
+} from '@antseed/provider-core';
 
 const DEFAULT_AUTH_FILE = '~/.codex/auth.json';
 const DEFAULT_BASE_URL = 'https://chatgpt.com/backend-api';
@@ -22,78 +32,12 @@ const DEFAULT_MAX_CONCURRENCY = 5;
 const REFRESH_BUFFER_MS = 5 * 60 * 1000;
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000;
-const FETCH_TIMEOUT_MS = 120_000;
+const FETCH_TIMEOUT_MS = DEFAULT_HTTP_TIMEOUT_MS;
 const TRANSIENT_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
 const RESPONSE_PATH_PREFIX = '/v1/responses';
 const UPSTREAM_RESPONSES_PATH = '/codex/responses';
 const MODELS_PATH = '/v1/models';
-const HOP_BY_HOP_HEADERS = new Set([
-  'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization',
-  'te', 'trailers', 'transfer-encoding', 'upgrade',
-]);
-const INTERNAL_HEADERS = new Set(['x-antseed-provider']);
 const AUTH_CLAIM_PATH = 'https://api.openai.com/auth';
-
-function parseNonNegativeNumber(raw: string | undefined, key: string, fallback: number): number {
-  const parsed = raw === undefined ? fallback : Number.parseFloat(raw);
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    throw new Error(`${key} must be a non-negative number`);
-  }
-  return parsed;
-}
-
-function parseServicePricingJson(raw: string | undefined): Provider['pricing']['services'] {
-  if (!raw) return undefined;
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw) as unknown;
-  } catch {
-    throw new Error('ANTSEED_SERVICE_PRICING_JSON must be valid JSON');
-  }
-
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('ANTSEED_SERVICE_PRICING_JSON must be an object map of service -> pricing');
-  }
-
-  const out: NonNullable<Provider['pricing']['services']> = {};
-  for (const [service, pricing] of Object.entries(parsed as Record<string, unknown>)) {
-    if (!pricing || typeof pricing !== 'object' || Array.isArray(pricing)) {
-      throw new Error(`Service pricing for "${service}" must be an object`);
-    }
-    const input = (pricing as Record<string, unknown>)['inputUsdPerMillion'];
-    const output = (pricing as Record<string, unknown>)['outputUsdPerMillion'];
-    if (typeof input !== 'number' || !Number.isFinite(input) || input < 0) {
-      throw new Error(`Service pricing for "${service}" requires non-negative inputUsdPerMillion`);
-    }
-    if (typeof output !== 'number' || !Number.isFinite(output) || output < 0) {
-      throw new Error(`Service pricing for "${service}" requires non-negative outputUsdPerMillion`);
-    }
-    out[service] = { inputUsdPerMillion: input, outputUsdPerMillion: output };
-  }
-
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
-function parseCsv(raw: string | undefined): string[] {
-  if (!raw) return [];
-  return Array.from(
-    new Set(
-      raw
-        .split(',')
-        .map((entry) => entry.trim())
-        .filter((entry) => entry.length > 0),
-    ),
-  );
-}
-
-function buildServiceApiProtocols(
-  services: string[],
-  protocol: ServiceApiProtocol,
-): Record<string, ServiceApiProtocol[]> | undefined {
-  if (services.length === 0) return undefined;
-  return Object.fromEntries(services.map((service) => [service, [protocol]]));
-}
 
 function expandHome(path: string): string {
   if (path === '~') return homedir();
@@ -331,38 +275,6 @@ function replaceRequestedService(
   }
 }
 
-function stripRequestHeaders(headers: Record<string, string>): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(headers)) {
-    const lower = key.toLowerCase();
-    if (
-      HOP_BY_HOP_HEADERS.has(lower)
-      || INTERNAL_HEADERS.has(lower)
-      || lower === 'host'
-      || lower === 'content-length'
-      || lower === 'authorization'
-      || lower === 'chatgpt-account-id'
-      || lower === 'openai-beta'
-      || lower === 'accept-encoding'
-    ) {
-      continue;
-    }
-    out[key] = value;
-  }
-  return out;
-}
-
-function stripResponseHeaders(response: Response): Record<string, string> {
-  const headers: Record<string, string> = {};
-  response.headers.forEach((value, key) => {
-    const lower = key.toLowerCase();
-    if (!HOP_BY_HOP_HEADERS.has(lower) && lower !== 'content-encoding' && lower !== 'content-length') {
-      headers[lower] = value;
-    }
-  });
-  return headers;
-}
-
 function isTransientError(statusCode: number): boolean {
   return TRANSIENT_STATUS_CODES.has(statusCode);
 }
@@ -586,7 +498,9 @@ class CodexResponsesProvider implements Provider {
     upstreamPath: string,
     auth: AuthContext,
   ): Promise<RequestResult> {
-    const fetchHeaders = stripRequestHeaders(req.headers);
+    const fetchHeaders = stripRelayRequestHeaders(req.headers, {
+      stripHeaderNames: ['authorization', 'chatgpt-account-id', 'openai-beta'],
+    });
     fetchHeaders['authorization'] = `Bearer ${auth.accessToken}`;
     fetchHeaders['chatgpt-account-id'] = auth.accountId;
     fetchHeaders['openai-beta'] = 'responses=experimental';
@@ -613,7 +527,7 @@ class CodexResponsesProvider implements Provider {
       throw error;
     }
 
-    const responseHeaders = stripResponseHeaders(response);
+    const responseHeaders = stripRelayResponseHeaders(response);
     const contentType = response.headers.get('content-type') ?? '';
     const isSse = contentType.includes('text/event-stream');
 
