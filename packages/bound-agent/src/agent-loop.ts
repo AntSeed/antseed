@@ -239,10 +239,10 @@ export async function runAgentLoopStream(
               suppressingChunks = true;
               return;
             }
-            if (format === 'anthropic') {
+            if (format === 'anthropic' && chunkHasMessageStart(chunk.data)) {
               // Suppress message_start if we already sent one (one continuous envelope)
-              if (messageStartSent && chunkHasMessageStart(chunk.data)) return;
-              if (chunkHasMessageStart(chunk.data)) messageStartSent = true;
+              if (messageStartSent) return;
+              messageStartSent = true;
             }
           }
           callbacks.onResponseChunk(chunk);
