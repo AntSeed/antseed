@@ -211,7 +211,7 @@ export async function runAgentLoopStream(
   const format = detectRequestFormat(req.path);
   const maxIterations = options?.maxIterations ?? DEFAULT_MAX_ITERATIONS;
   let headersSent = false;
-  let isFirstIteration = true;
+  let messageStartSent = false;
 
   for (let i = 0; i < maxIterations; i++) {
     debugLog(`${reqTag}: stream iteration ${i + 1}/${maxIterations}`);
@@ -228,7 +228,6 @@ export async function runAgentLoopStream(
     // For both formats: suppress antseed_* tool call chunks.
     let streamResponse: SerializedHttpResponse;
     let suppressingChunks = false;
-    const capturedIsFirst = isFirstIteration;
     try {
       streamResponse = await inner.handleRequestStream!(augReq, {
         onResponseStart: (res) => {
@@ -246,8 +245,9 @@ export async function runAgentLoopStream(
               return;
             }
             if (format === 'anthropic') {
-              // Suppress message_start on non-first iterations (one continuous envelope)
-              if (!capturedIsFirst && chunkHasMessageStart(chunk.data)) return;
+              // Suppress message_start if we already sent one (one continuous envelope)
+              if (messageStartSent && chunkHasMessageStart(chunk.data)) return;
+              if (chunkHasMessageStart(chunk.data)) messageStartSent = true;
               // Suppress message_stop — we'll send it when the loop is truly done
               if (chunkHasMessageStop(chunk.data)) return;
             }
@@ -304,7 +304,6 @@ export async function runAgentLoopStream(
     }
 
     // Internal tool calls found — execute them
-    isFirstIteration = false;
     debugLog(`${reqTag}: stream iteration ${i + 1} — executing ${action.internalCalls.length} tool(s): ${action.internalCalls.map(c => c.name).join(', ')}`);
     const results = await executeTools(action.internalCalls, agent.tools);
     debugLog(`${reqTag}: stream iteration ${i + 1} — tool results: ${results.map(r => `${r.id}:${r.isError ? 'error' : 'ok'}`).join(', ')}`);
@@ -329,8 +328,8 @@ export async function runAgentLoopStream(
       }
     },
     onResponseChunk: (chunk) => {
-      // Anthropic: suppress message_start (continuing the envelope from earlier iterations)
-      if (format === 'anthropic' && !chunk.done && chunk.data.length > 0 && chunkHasMessageStart(chunk.data)) {
+      // Anthropic: suppress message_start if we already sent one (continuing the envelope)
+      if (format === 'anthropic' && messageStartSent && !chunk.done && chunk.data.length > 0 && chunkHasMessageStart(chunk.data)) {
         return;
       }
       callbacks.onResponseChunk(chunk);
