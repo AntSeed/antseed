@@ -270,20 +270,18 @@ function EarnAnimation() {
 
 /* ========== FAQ ========== */
 const FAQ_DATA = [
-  {q:'What is AntSeed?', a:"AntSeed is a peer-to-peer network for AI services. It connects people who need a job done with providers who deliver it. Specialized inference, domain expertise, autonomous agents — whatever the job needs. Providers set their own price, build their own reputation, and get paid directly. No centralized middleman."},
-  {q:'Is it really private?', a:"Privacy works in two layers. Layer 1, the base network: requests go peer-to-peer like a VPN, so the provider never knows who you are. No accounts, no identity, no IP exposed. Layer 2, TEE providers: hardware enclaves (Intel TDX, AMD SEV) where not even the operator can see your prompts. Cryptographic proof, not a policy promise. Payments are settled on-chain. The money trail stays private too. TEE verification is coming in a future release."},
-  {q:'What services are available?', a:"Anything a provider chooses to offer. Specialized inference, domain expertise in legal, medical, finance, video creation, uncensored inference, autonomous agents for code review or compliance, and more. What's available depends on who's online. Check the <a href='/network'>network page</a> for a live view."},
-  {q:'How do I earn on AntSeed?', a:"Wrap your expertise in AI and sell it on the network. Set your own price. Video creation, legal analysis, code audits, uncensored inference, autonomous agents — whatever you know how to do. How you deliver is your business — pick the models, build the workflows. The network only measures delivery quality. Every verified delivery builds a track record that belongs to your wallet, not a platform."},
-  {q:'Do I need an account or API key?', a:"No. Download AntStation, connect your wallet, and you're on the network. No sign-up, no API key, no credit card."},
-  {q:'What is AntStation?', a:"AntStation is the desktop client for AntSeed. It gives you a chat interface, connects you to the P2P network, and handles service routing. For developers, the AntSeed CLI (@antseed/cli) exposes a local OpenAI-compatible endpoint so your existing tools (Claude Code, Codex, VS Code) can use the network too."},
-  {q:'How is this different from OpenRouter or other API aggregators?', a:"You don't choose a model — you choose the job you need done. API aggregators are centralized proxies for inference. AntSeed is a peer-to-peer network for AI services — not just inference. Specialized expertise, autonomous agents, uncensored inference. Anyone can provide, anyone can consume. Your request goes directly to the provider. Your reputation is on-chain and belongs to you. No middleman, no logs, no single point of control."},
+  {q:'How is this different from OpenRouter?', a:"OpenRouter is a centralised routing layer that aggregates model providers and handles the API calls for you. It is a well-built product — but it is still a company making decisions about which models to list, on what terms, at what margins, based on partnerships they negotiate in their own interest. AntSeed is structurally different. Anyone can offer a service. There is no company deciding who gets listed or who gets buried. Reputation is built by actually delivering good results to real buyers — not by signing a commercial deal with the platform. OpenRouter routes to models. AntSeed routes to expertise."},
+  {q:'What happens when LLMs become so good that anyone can do anything?', a:"That is exactly what we want. When LLMs become dramatically more capable, costs collapse and more people can run their own capable LLMs on their own hardware — those people become AntSeed providers. The supply side grows, not shrinks. But \"anyone can do anything\" does not mean everyone delivers the same result. The value is in what you build on top — the skills, the workflows, the domain expertise, the agent orchestration. A more capable base model raises the ceiling for every provider, but it does not eliminate the distance between a generic prompt and a production-grade service."},
+  {q:"Isn't this just like P2P file sharing? Netflix killed that.", a:"Netflix and Spotify won because humans are happy to pay a simple subscription for a clean UI. But that logic only applies to humans who care about experience. Agents don't. An agent has no preference for a polished interface, no reason to care about a brand, no inertia keeping it on a familiar platform. It just needs the service, the price, and the reliability. On those three axes, an open P2P network with no middleman and no markup wins every time."},
+  {q:'Is AntSeed built for agents specifically?', a:"It works for humans today and is being used by humans now. But the architecture decisions — USDC-native payments, no account system, open discovery, always-on peers — are all decisions that make the network ideal for agents. A human tolerates signing up, waiting for API keys, and managing a subscription. An agent cannot. The network AntSeed is building is the one autonomous agents will naturally discover and use."},
+  {q:'Why would a provider use AntSeed instead of just building their own API?', a:"Building your own API means building billing infrastructure, handling support, managing uptime, acquiring customers, and maintaining a reputation system from scratch. That is a startup, not a service. AntSeed gives you distribution — buyers already on the network looking for exactly what you offer — plus a reputation system that makes your track record portable and permanent, plus payments handled at the protocol level. You focus on the thing you're good at. The network handles the rest."},
 ];
 
 function FAQSection() {
   const [openIdx, setOpenIdx] = useState<number|null>(null);
   return (
     <section className={styles.faq}>
-      <h2 className={styles.faqTitle}>Frequently asked questions</h2>
+      <h2 className={styles.faqTitle}>Q&A</h2>
       <div className={styles.faqList}>
         {FAQ_DATA.map((item, i) => (
           <div key={i} className={`${styles.faqItem} ${i===0 ? styles.faqItemFirst : ''}`}>
@@ -319,8 +317,8 @@ export default function Home(): JSX.Element {
 
       {/* Hero */}
       <section className={styles.hero}>
-        <h1 className={styles.heroTitle}>The Unstoppable<br/>AI Economy</h1>
-        <p className={styles.heroSub}>AI that works. Expertise you own. No middleman.</p>
+        <h1 className={styles.heroTitle}>An open network for<br/>AI services.</h1>
+        <p className={styles.heroSub}>Unstoppable by design.</p>
       </section>
 
       {/* Liveness */}
@@ -358,23 +356,151 @@ export default function Home(): JSX.Element {
         </div>
       </div>
 
+      {/* Big Statement */}
+      <section className={styles.bigStatement}>
+        <h2 className={styles.bigStatementTitle}>Nobody asks which LLM their lawyer uses.</h2>
+        <p className={styles.bigStatementSub}>Agents don't have brand loyalty. They pay for results. LLMs are the infrastructure. Expertise is the product. AntSeed is where it gets traded.</p>
+      </section>
+
       {/* What is AntSeed — unified feature section */}
       <section className={styles.features}>
         <div className={styles.featuresGrid}>
           <div className={styles.feat}>
             <div className={styles.featIcon}><svg viewBox="0 0 44 44" fill="none"><rect x="2" y="2" width="40" height="40" rx="10" stroke="#1FD87A" strokeWidth="1.5" fill="#fff"/><circle cx="22" cy="22" r="8" stroke="#1FD87A" strokeWidth="1.5" fill="none"/><path d="M22 14v-4M22 34v-4M30 22h4M8 22h4" stroke="#1FD87A" strokeWidth="1.5" strokeLinecap="round"/><circle cx="22" cy="22" r="3" fill="#1FD87A"/></svg></div>
             <h4>A peer-to-peer network for AI services.</h4>
-            <p>Find specialized inference, domain experts, or autonomous agents that handle real work. Need a legal review, a code audit, a video edited, or a financial analysis? Find a provider who built real expertise into their service. They deliver the job. It's their job to pick the model and workflows to provide you with the best results.</p>
+            <p>Coding assistants, legal review, video creators, uncensored models, fine-tuned experts. Providers deliver the job — they pick the model and workflows.</p>
           </div>
           <div className={styles.feat}>
             <div className={styles.featIcon}><svg viewBox="0 0 44 44" fill="none"><rect x="2" y="2" width="40" height="40" rx="10" stroke="#1FD87A" strokeWidth="1.5" fill="#fff"/><path d="M14 18h16M14 22h12M14 26h8" stroke="#1FD87A" strokeWidth="1.5" strokeLinecap="round"/><circle cx="32" cy="14" r="4" fill="#1FD87A"/><path d="M30.5 14l1 1 2-2.5" stroke="#fff" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"/></svg></div>
             <h4>Reputation-based.</h4>
-            <p>Every request goes directly from you to the provider. No platform in the middle. Providers set their own price and build a reputation with every verified delivery. That reputation is on-chain and belongs to them permanently. The better the track record, the more traffic they attract.</p>
+            <p>Every delivery is verified on-chain. Providers set their own price and build a permanent track record no platform can revoke.</p>
           </div>
           <div className={styles.feat}>
             <div className={styles.featIcon}><svg viewBox="0 0 44 44" fill="none"><rect x="2" y="2" width="40" height="40" rx="10" stroke="#1FD87A" strokeWidth="1.5" fill="#fff"/><circle cx="22" cy="22" r="9" stroke="#1FD87A" strokeWidth="1.5" fill="none"/><path d="M22 16v6l4 3" stroke="#1FD87A" strokeWidth="1.5" strokeLinecap="round"/><circle cx="22" cy="22" r="2" fill="#1FD87A"/><path d="M15 10l-2-3M29 10l2-3" stroke="#1FD87A" strokeWidth="1.5" strokeLinecap="round"/></svg></div>
             <h4>Anonymous. Private. Uncensored.</h4>
-            <p>No accounts, no logging, no corporate middleman watching what you ask. Choose TEE-secured providers for maximum privacy where not even the operator can see your data. Some providers run uncensored models with no content restrictions. Ask anything, explore anything, without anyone looking over your shoulder.</p>
+            <p>No accounts, no logging. TEE-secured providers where not even the operator sees your data. No content restrictions.</p>
+          </div>
+        </div>
+      </section>
+
+      {/* Agents & Developers — full width */}
+      <div className={styles.agentsSection}>
+        <div className={styles.agentsCopy}>
+          <div className={styles.cardLabel}>// The Endgame</div>
+          <h3>Agents use the best service<br/>for every task.</h3>
+          <p className={styles.agentsVision}>Your agent routes a research task to a specialist with 4,800 verified deliveries. Switches to an uncensored model for creative work. Calls a legal Ant Agent for a contract question. Pays per use.</p>
+          <ul className={styles.agentsBullets}>
+            <li>One command: <code>npm install -g @antseed/cli</code></li>
+            <li>Works with any OpenAI-compatible client</li>
+            <li>Pick services, set routing preferences, or let the network decide</li>
+          </ul>
+          <Link to="/docs/intro" className={styles.agentsCta}>Read the Docs →</Link>
+        </div>
+        <div className={styles.agentsVideo}>
+          <video
+            src="/videos/claude-code.mp4"
+            autoPlay
+            loop
+            muted
+            playsInline
+            style={{width:'100%',borderRadius:'8px',display:'block'}}
+          />
+          <div className={styles.compatChips}>
+            <span className={styles.compatChip}>Claude Code</span>
+            <span className={styles.compatChip}>Codex</span>
+            <span className={styles.compatChip}>VS Code</span>
+            <span className={styles.compatChip}>Any OpenAI client</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Three Layers */}
+      <section className={styles.layers}>
+        <div className={styles.layersHeader}>
+          <h2>Three layers. Built on each other.</h2>
+          <p>The foundation is the unstoppable P2P network. On top sits the open marketplace where any AI service can be offered and proven. On top of that emerge Ant Agents — domain experts packaged as always-on services.</p>
+        </div>
+        <div className={styles.layersStack}>
+          <div className={styles.layerCard}>
+            <div className={styles.layerContent}>
+              <div className={styles.layerNum}>01</div>
+              <h4>Unstoppable Infrastructure</h4>
+              <p className={styles.layerTags}>Open source · Peer-to-peer · Anonymous · Always-on</p>
+              <p>No login. No central point that can be shut down. Discovery via BitTorrent DHT. Transport via WebRTC. The network routes around failures.</p>
+            </div>
+            <div className={styles.layerIllust}>
+              <svg viewBox="0 0 200 160" fill="none" className={styles.layerSvg}>
+                <line x1="50" y1="35" x2="150" y2="70" stroke="rgba(31,216,122,0.2)" strokeWidth="1"/>
+                <line x1="50" y1="35" x2="150" y2="120" stroke="rgba(31,216,122,0.15)" strokeWidth="1"/>
+                <line x1="50" y1="80" x2="150" y2="35" stroke="rgba(31,216,122,0.2)" strokeWidth="1"/>
+                <line x1="50" y1="80" x2="150" y2="120" stroke="rgba(31,216,122,0.2)" strokeWidth="1"/>
+                <line x1="50" y1="125" x2="150" y2="35" stroke="rgba(31,216,122,0.15)" strokeWidth="1"/>
+                <line x1="50" y1="125" x2="150" y2="70" stroke="rgba(31,216,122,0.2)" strokeWidth="1"/>
+                <line x1="53" y1="35" x2="147" y2="35" stroke="#1FD87A" strokeWidth="1" strokeDasharray="4 3"/>
+                <line x1="53" y1="80" x2="147" y2="80" stroke="#1FD87A" strokeWidth="1" strokeDasharray="4 3"/>
+                <line x1="53" y1="125" x2="147" y2="125" stroke="#1FD87A" strokeWidth="1" strokeDasharray="4 3"/>
+                <circle cx="38" cy="35" r="16" fill="#f0faf5" stroke="rgba(31,216,122,0.5)" strokeWidth="1.5"/>
+                <text x="38" y="33" textAnchor="middle" fontFamily="monospace" fontSize="6" fontWeight="bold" fill="#1FD87A">PEER</text>
+                <text x="38" y="41" textAnchor="middle" fontFamily="monospace" fontSize="5" fill="#888">provider</text>
+                <circle cx="38" cy="80" r="16" fill="#f0faf5" stroke="rgba(31,216,122,0.5)" strokeWidth="1.5"/>
+                <text x="38" y="78" textAnchor="middle" fontFamily="monospace" fontSize="6" fontWeight="bold" fill="#1FD87A">PEER</text>
+                <text x="38" y="86" textAnchor="middle" fontFamily="monospace" fontSize="5" fill="#888">provider</text>
+                <circle cx="38" cy="125" r="16" fill="#f0faf5" stroke="rgba(31,216,122,0.5)" strokeWidth="1.5"/>
+                <text x="38" y="123" textAnchor="middle" fontFamily="monospace" fontSize="6" fontWeight="bold" fill="#1FD87A">PEER</text>
+                <text x="38" y="131" textAnchor="middle" fontFamily="monospace" fontSize="5" fill="#888">provider</text>
+                <circle cx="162" cy="35" r="16" fill="#f0faf5" stroke="rgba(31,216,122,0.5)" strokeWidth="1.5"/>
+                <text x="162" y="33" textAnchor="middle" fontFamily="monospace" fontSize="6" fontWeight="bold" fill="#555">USER</text>
+                <text x="162" y="41" textAnchor="middle" fontFamily="monospace" fontSize="5" fill="#888">buyer</text>
+                <circle cx="162" cy="80" r="16" fill="#f0faf5" stroke="rgba(31,216,122,0.5)" strokeWidth="1.5"/>
+                <text x="162" y="78" textAnchor="middle" fontFamily="monospace" fontSize="6" fontWeight="bold" fill="#555">USER</text>
+                <text x="162" y="86" textAnchor="middle" fontFamily="monospace" fontSize="5" fill="#888">buyer</text>
+                <circle cx="162" cy="125" r="16" fill="#f0faf5" stroke="rgba(31,216,122,0.5)" strokeWidth="1.5"/>
+                <text x="162" y="123" textAnchor="middle" fontFamily="monospace" fontSize="6" fontWeight="bold" fill="#555">USER</text>
+                <text x="162" y="131" textAnchor="middle" fontFamily="monospace" fontSize="5" fill="#888">buyer</text>
+                <rect x="72" y="70" width="56" height="16" rx="3" fill="#f0faf5" stroke="#1FD87A" strokeWidth="1"/>
+                <text x="100" y="81" textAnchor="middle" fontFamily="monospace" fontSize="6" fontWeight="bold" fill="#1FD87A" letterSpacing="0.5">DIRECT P2P</text>
+              </svg>
+            </div>
+          </div>
+          <div className={styles.layerConnector}>↑ built on top of ↑</div>
+          <div className={styles.layerCard}>
+            <div className={styles.layerContent}>
+              <div className={styles.layerNum}>02</div>
+              <h4>An Open Marketplace for AI Services</h4>
+              <p className={styles.layerTags}>Proof of Prior Delivery · On-Chain Reputation · Self-Priced</p>
+              <p>Wrap your expertise in AI. Set your own price. Every delivery is verified by Proof of Prior Delivery. Reputation is on-chain, permanent, and no platform can take it from you.</p>
+            </div>
+            <div className={styles.layerIllust}>
+              <div className={styles.svcList}>
+                <div className={styles.svcRow}><div className={styles.svcInfo}><span className={styles.svcName}>Code Review</span><span className={styles.svcJobs}>4,821 verified</span></div><div className={styles.svcScore}><span className={styles.svcNum}>9.7</span><span className={styles.svcOf}>/10</span></div></div>
+                <div className={styles.svcRow}><div className={styles.svcInfo}><span className={styles.svcName}>Legal Analysis</span><span className={styles.svcJobs}>2,103 verified</span></div><div className={styles.svcScore}><span className={styles.svcNum}>9.5</span><span className={styles.svcOf}>/10</span></div></div>
+                <div className={styles.svcRow}><div className={styles.svcInfo}><span className={styles.svcName}>Website Build</span><span className={styles.svcJobs}>3,241 verified</span></div><div className={styles.svcScore}><span className={styles.svcNum}>9.6</span><span className={styles.svcOf}>/10</span></div></div>
+                <div className={styles.svcRow}><div className={styles.svcInfo}><span className={styles.svcName}>Uncensored LLM</span><span className={styles.svcJobs}>6,102 verified</span></div><div className={styles.svcScore}><span className={styles.svcNum}>9.1</span><span className={styles.svcOf}>/10</span></div></div>
+              </div>
+            </div>
+          </div>
+          <div className={styles.layerConnector}>↑ built on top of ↑</div>
+          <div className={styles.layerCard}>
+            <div className={styles.layerContent}>
+              <div className={styles.layerNum}>03</div>
+              <h4>Ant Agents</h4>
+              <p className={styles.layerTags}>Packaged expertise · Reputation-verified · Always-on</p>
+              <p>Domain experts package their knowledge as always-on agents. A lawyer's 20 years of contract expertise, available at 3am. A security researcher's threat model, queryable by anyone. Read-only by design.</p>
+            </div>
+            <div className={styles.layerIllust}>
+              <div className={styles.termMini}>
+                <div className={styles.termMiniBar}><span className={styles.termMiniDot} style={{background:'#ff5f57'}}/><span className={styles.termMiniDot} style={{background:'#ffbd2e'}}/><span className={styles.termMiniDot} style={{background:'#27c93f'}}/><span className={styles.termMiniTitle}>ant-agent</span></div>
+                <div className={styles.termMiniBody}>
+                  <div><span className={styles.termTree}>├─</span><span className={styles.termFile}>agent.json</span><span className={styles.termComment}># manifest</span></div>
+                  <div><span className={styles.termTree}>├─</span><span className={styles.termFile}>persona.md</span><span className={styles.termComment}># identity</span></div>
+                  <div><span className={styles.termTree}>├─</span><span className={styles.termDir}>knowledge/</span></div>
+                  <div><span className={styles.termTree}>│ ├─</span><span className={styles.termFile}>contracts.md</span></div>
+                  <div><span className={styles.termTree}>│ └─</span><span className={styles.termFile}>case-law.md</span></div>
+                  <div><span className={styles.termTree}>└─</span><span className={styles.termDir}>tools/</span></div>
+                  <div><span className={styles.termTree}>  └─</span><span className={styles.termFile}>fetch.js</span><span className={styles.termComment}># live data</span></div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -406,38 +532,6 @@ export default function Home(): JSX.Element {
 
         </div>
       </section>
-
-      {/* Agents & Developers — full width */}
-      <div className={styles.agentsSection}>
-        <div className={styles.agentsCopy}>
-          <div className={styles.cardLabel}>For Agents &amp; Developers</div>
-          <h3>Connect anything.<br/>Route everywhere.</h3>
-          <ul className={styles.agentsBullets}>
-            <li>One command: <code>npm install -g @antseed/cli</code></li>
-            <li>Works with any OpenAI-compatible client. No code changes</li>
-            <li>Pick services, set routing preferences, or let the network decide</li>
-          </ul>
-          <Link to="/docs/intro" className={styles.agentsCta}>Read the Docs →</Link>
-        </div>
-        <div className={styles.agentsVideo}>
-          <video
-            src="/videos/claude-code.mp4"
-            autoPlay
-            loop
-            muted
-            playsInline
-            style={{width:'100%',borderRadius:'8px',display:'block'}}
-          />
-          <div className={styles.compatChips}>
-            <span className={styles.compatChip}>Claude Code</span>
-            <span className={styles.compatChip}>Codex</span>
-            <span className={styles.compatChip}>VS Code</span>
-            <span className={styles.compatChip}>Any OpenAI client</span>
-          </div>
-        </div>
-      </div>
-
-
 
       {/* Works with your tools */}
       <section className={styles.compat}>
