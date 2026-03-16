@@ -383,6 +383,10 @@ importers:
         version: 1.6.1(@types/node@20.19.33)(sass@1.97.3)(terser@5.46.0)
 
   packages/provider-core:
+    dependencies:
+      bottleneck:
+        specifier: ^2.19.5
+        version: 2.19.5
     devDependencies:
       '@antseed/node':
         specifier: workspace:*
@@ -4900,6 +4904,9 @@ packages:
 
   borsh@0.7.0:
     resolution: {integrity: sha512-CLCsZGIBCFnPtkNnieW/a8wmreDmfUtjU2m9yHrzPXIlNbqVs0AQrSatSG6vdNYUqdc83tkQi2eHfF98ubzQLA==}
+
+  bottleneck@2.19.5:
+    resolution: {integrity: sha512-VHiNCbI1lKdl44tGrhNfU3lup0Tj/ZBMJB5/2ZbNXRCPuRCO7ed2mgcK4r17y+KB2EfuYuRaVlwNbAeaWGSpbw==}
 
   bowser@2.14.1:
     resolution: {integrity: sha512-tzPjzCxygAKWFOJP011oxFHs57HzIhOEracIgAePE4pqB3LikALKnSzUyU4MGs9/iCEUuHlAJTjTc5M+u7YEGg==}
@@ -16734,6 +16741,8 @@ snapshots:
       bs58: 4.0.1
       text-encoding-utf-8: 1.0.2
     optional: true
+
+  bottleneck@2.19.5: {}
 
   bowser@2.14.1: {}
 

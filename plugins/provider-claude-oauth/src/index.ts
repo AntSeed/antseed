@@ -13,6 +13,7 @@ const configSchema: ConfigField[] = [
   { key: 'ANTSEED_MAX_CONCURRENCY', label: 'Max Concurrency', type: 'number', required: false, default: 5 },
   { key: 'ANTSEED_ALLOWED_SERVICES', label: 'Allowed Services', type: 'string[]', required: false },
   { key: 'ANTSEED_SERVICE_ALIAS_MAP_JSON', label: 'Service Alias Map', type: 'string', required: false, description: 'JSON map of announced service → upstream model name' },
+  { key: 'ANTSEED_THROTTLE_MIN_TIME_MS', label: 'Throttle Min Time', type: 'number', required: false, description: 'Minimum ms between upstream requests (e.g. 1000)' },
 ];
 
 function buildServiceApiProtocols(
@@ -60,6 +61,7 @@ const plugin: AntseedProviderPlugin = {
       .split(',').map(s => s.trim()).filter(Boolean);
     const serviceApiProtocols = buildServiceApiProtocols(allowedServices, 'anthropic-messages');
     const serviceRewriteMap = parseServiceAliasMap(config['ANTSEED_SERVICE_ALIAS_MAP_JSON']);
+    const throttleMinTime = parseInt(config['ANTSEED_THROTTLE_MIN_TIME_MS'] ?? '0', 10);
 
     return new BaseProvider({
       name: 'claude-oauth',
@@ -84,6 +86,7 @@ const plugin: AntseedProviderPlugin = {
         allowedServices,
         serviceRewriteMap,
         retryOn401: true,
+        ...(throttleMinTime > 0 ? { throttle: { minTime: throttleMinTime, maxConcurrent: 1 } } : {}),
       },
     });
   },
