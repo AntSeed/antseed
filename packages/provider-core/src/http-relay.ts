@@ -12,6 +12,7 @@ export interface RelayConfig {
   authHeaderValue: string;
   tokenProvider?: TokenProvider;
   extraHeaders?: Record<string, string>;
+  extraHeadersProvider?: () => Promise<Record<string, string> | undefined>;
   maxConcurrency: number;
   allowedServices: string[];
   timeoutMs?: number;
@@ -27,6 +28,8 @@ export interface RelayConfig {
   retryOn5xx?: number;
   /** Base delay in ms for 5xx retries. Default: 1000. */
   retryBaseDelayMs?: number;
+  /** Additional status codes eligible for retry. */
+  retryStatusCodes?: number[];
 }
 
 export interface RelayCallbacks {
@@ -106,6 +109,18 @@ export class HttpRelay {
         const headerValue = isBearer ? `Bearer ${freshToken}` : freshToken;
         effectiveConfig = { ...effectiveConfig, authHeaderValue: headerValue };
       }
+      if (this._config.extraHeadersProvider) {
+        const providedHeaders = await this._config.extraHeadersProvider();
+        if (providedHeaders && Object.keys(providedHeaders).length > 0) {
+          effectiveConfig = {
+            ...effectiveConfig,
+            extraHeaders: {
+              ...(effectiveConfig.extraHeaders ?? {}),
+              ...providedHeaders,
+            },
+          };
+        }
+      }
 
       // Swap auth headers
       let swappedRequest = swapAuthHeader(request, effectiveConfig);
@@ -169,13 +184,46 @@ export class HttpRelay {
               : undefined,
             signal: controller.signal,
           });
+        } catch (error) {
+          if (controller.signal.aborted) {
+            throw new Error(`Upstream request timed out after ${timeoutMs}ms`);
+          }
+          throw error;
         } finally {
           clearTimeout(timeout);
         }
       };
 
       let currentHeaders = fetchHeaders;
-      let fetchResponse = await doFetch(currentHeaders);
+      const maxRetries = this._config.retryOn5xx ?? 0;
+      const baseDelay = this._config.retryBaseDelayMs ?? 1000;
+      const retryableStatusCodes = new Set(this._config.retryStatusCodes ?? []);
+
+      const fetchWithRetries = async (): Promise<Response> => {
+        let lastError: unknown;
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+          if (attempt > 0) {
+            const delay = baseDelay * (2 ** (attempt - 1));
+            await new Promise((resolve) => setTimeout(resolve, delay));
+          }
+
+          try {
+            const response = await doFetch(currentHeaders);
+            if (attempt === maxRetries || (response.status < 500 && !retryableStatusCodes.has(response.status))) {
+              return response;
+            }
+          } catch (error) {
+            lastError = error;
+            if (attempt === maxRetries) {
+              throw error;
+            }
+          }
+        }
+
+        throw (lastError instanceof Error ? lastError : new Error('Upstream request failed after retries'));
+      };
+
+      let fetchResponse = await fetchWithRetries();
 
       if (fetchResponse.status === 401 && this._config.retryOn401 && this._config.tokenProvider?.forceRefresh) {
         const refreshedToken = await this._config.tokenProvider.forceRefresh();
@@ -183,19 +231,16 @@ export class HttpRelay {
         const newHeaderValue = isBearer ? `Bearer ${refreshedToken}` : refreshedToken;
         currentHeaders = { ...currentHeaders };
         currentHeaders[this._config.authHeaderName] = newHeaderValue;
-        fetchResponse = await doFetch(currentHeaders);
-      }
-
-      // Retry on 5xx with exponential backoff
-      const maxRetries = this._config.retryOn5xx ?? 0;
-      const baseDelay = this._config.retryBaseDelayMs ?? 1000;
-      if (maxRetries > 0 && fetchResponse.status >= 500) {
-        for (let attempt = 0; attempt < maxRetries; attempt++) {
-          const delay = baseDelay * (2 ** attempt);
-          await new Promise(r => setTimeout(r, delay));
-          fetchResponse = await doFetch(currentHeaders);
-          if (fetchResponse.status < 500) break;
+        if (this._config.extraHeadersProvider) {
+          const providedHeaders = await this._config.extraHeadersProvider();
+          if (providedHeaders) {
+            currentHeaders = {
+              ...currentHeaders,
+              ...providedHeaders,
+            };
+          }
         }
+        fetchResponse = await fetchWithRetries();
       }
 
       const contentType = fetchResponse.headers.get('content-type') ?? '';

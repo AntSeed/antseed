@@ -107,7 +107,7 @@ describe('provider-openai-responses plugin', () => {
     })).toBe(true);
   });
 
-  it('returns local models list', async () => {
+  it('returns 404 for unsupported paths like /v1/models', async () => {
     const authFile = writeAuthFile({
       tokens: {
         access_token: makeJwt({}),
@@ -127,9 +127,7 @@ describe('provider-openai-responses plugin', () => {
       body: new Uint8Array(0),
     });
 
-    expect(response.statusCode).toBe(200);
-    const parsed = JSON.parse(new TextDecoder().decode(response.body)) as { data: Array<{ id: string }> };
-    expect(parsed.data.map((entry) => entry.id)).toEqual(['gpt-5-codex', 'o4-mini']);
+    expect(response.statusCode).toBe(404);
     rmSync(dirname(authFile), { recursive: true, force: true });
   });
 
