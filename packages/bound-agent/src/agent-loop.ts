@@ -68,11 +68,6 @@ function chunkHasMessageStart(data: Uint8Array): boolean {
   return text.includes('event: message_start') || text.includes('"type":"message_start"') || text.includes('"type": "message_start"');
 }
 
-/** Check if an SSE chunk contains an Anthropic message_stop event. */
-function chunkHasMessageStop(data: Uint8Array): boolean {
-  const text = decoder.decode(data);
-  return text.includes('event: message_stop') || text.includes('"type":"message_stop"') || text.includes('"type": "message_stop"');
-}
 
 /**
  * Check if an SSE chunk contains an internal (antseed_*) tool call.
@@ -248,8 +243,6 @@ export async function runAgentLoopStream(
               // Suppress message_start if we already sent one (one continuous envelope)
               if (messageStartSent && chunkHasMessageStart(chunk.data)) return;
               if (chunkHasMessageStart(chunk.data)) messageStartSent = true;
-              // Suppress message_stop — we'll send it when the loop is truly done
-              if (chunkHasMessageStop(chunk.data)) return;
             }
           }
           callbacks.onResponseChunk(chunk);
@@ -289,11 +282,6 @@ export async function runAgentLoopStream(
 
     const action = inspectResponse(responseBody, format);
     if (action.type === 'done') {
-      // Send the suppressed message_stop for Anthropic to close the envelope
-      if (format === 'anthropic') {
-        const stopEvent = encoder.encode('event: message_stop\ndata: {"type":"message_stop"}\n\n');
-        callbacks.onResponseChunk({ requestId: req.requestId, data: stopEvent, done: false });
-      }
       if (suppressingChunks) {
         // We suppressed chunks (detected internal tool call) but inspectResponse
         // resolved as done (e.g. mixed buyer+internal calls). Close the buyer's stream.
