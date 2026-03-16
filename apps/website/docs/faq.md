@@ -114,6 +114,16 @@ Providers set their own prices. The routing layer scores all available providers
 
 Payment settlement is handled on-chain through the AntSeed smart contracts. Payments are escrowed per request and released upon verified completion. No invoicing, no monthly billing — automatic settlement per request.
 
+### What happens when LLMs become so good that anyone can do anything?
+
+That is exactly what we want. When LLMs become dramatically more capable, costs collapse — better architectures are more efficient, and open source catches up fast. More people can run their own capable LLMs on their own hardware, and those people become AntSeed providers. The supply side grows, not shrinks.
+
+But "anyone can do anything" does not mean everyone delivers the same result. LLMs are general-purpose engines. The value is in what you build on top — the skills, the workflows, the domain expertise, the data pipelines, the agent orchestration. That work is custom, specialized, and endless. A more capable base model makes the ceiling higher for every provider, but it does not eliminate the distance between a generic prompt and a production-grade service. There will always be competition — like in any market — and a massive amount of specialized work to package, sell, and improve.
+
+Meanwhile, AntSeed's infrastructure becomes more valuable, not less. The protocol is purpose-built for peer-to-peer AI communication: discovery, reputation, routing, metering, settlement. As agents multiply and start hiring other agents, they need exactly this — an open market where they can find services by capability, evaluate providers by track record, and pay autonomously. No walled garden scales to that. AntSeed is the native infrastructure for an economy of intelligent machines, and it grows with every new agent and every new capability the market produces.
+
+Smarter LLMs mean smarter providers, smarter agents, and a larger network. A more capable AI ecosystem means a more capable AntSeed — not a less relevant one.
+
 ---
 
 ## Still have questions?
