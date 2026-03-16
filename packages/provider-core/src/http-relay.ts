@@ -190,15 +190,16 @@ export class HttpRelay {
         }
       };
 
-      let fetchResponse = await doFetch(fetchHeaders);
+      let currentHeaders = fetchHeaders;
+      let fetchResponse = await doFetch(currentHeaders);
 
       if (fetchResponse.status === 401 && this._config.retryOn401 && this._config.tokenProvider?.forceRefresh) {
         const refreshedToken = await this._config.tokenProvider.forceRefresh();
         const isBearer = this._config.authHeaderName === 'authorization';
         const newHeaderValue = isBearer ? `Bearer ${refreshedToken}` : refreshedToken;
-        const retryHeaders = { ...fetchHeaders };
-        retryHeaders[this._config.authHeaderName] = newHeaderValue;
-        fetchResponse = await doFetch(retryHeaders);
+        currentHeaders = { ...currentHeaders };
+        currentHeaders[this._config.authHeaderName] = newHeaderValue;
+        fetchResponse = await doFetch(currentHeaders);
       }
 
       // Retry on 5xx with exponential backoff
@@ -208,7 +209,7 @@ export class HttpRelay {
         for (let attempt = 0; attempt < maxRetries; attempt++) {
           const delay = baseDelay * (2 ** attempt);
           await new Promise(r => setTimeout(r, delay));
-          fetchResponse = await doFetch(fetchHeaders);
+          fetchResponse = await doFetch(currentHeaders);
           if (fetchResponse.status < 500) break;
         }
       }
