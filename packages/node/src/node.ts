@@ -51,29 +51,27 @@ import type {
 import type { Router } from "./interfaces/buyer-router.js";
 import { NatTraversal } from "./p2p/nat-traversal.js";
 import { signUtf8Ed25519 } from "./p2p/identity.js";
-import { verifyMessage, getBytes } from "ethers";
+// verifyMessage/getBytes removed — no longer needed after SpendingAuth refactor
 import {
   BalanceManager,
   type PaymentConfig,
   type PaymentMethod,
   BaseEscrowClient,
-  identityToEvmWallet,
-  buildLockMessageHash,
   buildReceiptMessage,
   buildAckMessage,
   signMessageEd25519,
   verifyMessageEd25519,
+  SessionStore,
 } from "./payments/index.js";
 import type {
-  SessionLockAuthPayload,
+  SpendingAuthPayload,
   BuyerAckPayload,
-  SessionEndPayload,
-  TopUpAuthPayload,
 } from "./types/protocol.js";
 import { hexToBytes, bytesToHex } from "./utils/hex.js";
 import { debugLog, debugWarn } from "./utils/debug.js";
 import { parsePublicAddress } from "./discovery/public-address.js";
 import { BuyerPaymentManager, type BuyerPaymentConfig } from "./payments/buyer-payment-manager.js";
+import { SellerPaymentManager, type SellerPaymentConfig } from "./payments/seller-payment-manager.js";
 import { identityToEvmAddress } from "./payments/evm/keypair.js";
 
 export type { Provider, ProviderStreamCallbacks };
@@ -101,6 +99,16 @@ export interface NodePaymentsConfig {
   contractAddress?: string;
   /** USDC token contract address */
   usdcAddress?: string;
+  /** AntseedIdentity contract address */
+  identityAddress?: string;
+  /** Chain ID for EIP-712 domain. Default: 8453 (Base) */
+  chainId?: number;
+  /** Default maximum USDC per spending auth. Default: 1000000 (1 USDC) */
+  defaultMaxAmountUsdc?: string;
+  /** Default auth duration in seconds. Default: 3600 */
+  defaultAuthDurationSecs?: number;
+  /** Auto-acknowledge seller receipts. Default: true */
+  autoAck?: boolean;
 }
 
 export interface NodeConfig {
@@ -212,6 +220,12 @@ export class AntseedNode extends EventEmitter {
   private _settlementTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** Buyer-side payment manager (initialized when buyer has payment config). */
   private _buyerPaymentManager: BuyerPaymentManager | null = null;
+  /** Seller-side payment manager (initialized when seller has payment config). */
+  private _sellerPaymentManager: SellerPaymentManager | null = null;
+  /** Shared session store for payment persistence. */
+  private _sessionStore: SessionStore | null = null;
+  /** Periodic timeout checker interval. */
+  private _timeoutCheckerInterval: ReturnType<typeof setInterval> | null = null;
   /** Tracks which seller peers the buyer has already initiated a lock for. */
   private _buyerLockedPeers = new Set<string>();
 
@@ -401,11 +415,30 @@ export class AntseedNode extends EventEmitter {
       this._metering = null;
     }
 
+    if (this._timeoutCheckerInterval) {
+      clearInterval(this._timeoutCheckerInterval);
+      this._timeoutCheckerInterval = null;
+    }
+
+    if (this._buyerPaymentManager) {
+      this._buyerPaymentManager.close();
+    }
+
+    if (this._sessionStore) {
+      try {
+        this._sessionStore.close();
+      } catch {
+        // ignore close errors
+      }
+      this._sessionStore = null;
+    }
+
     this._peerLookup = null;
     this._receiptGenerator = null;
     this._balanceManager = null;
     this._escrowClient = null;
     this._buyerPaymentManager = null;
+    this._sellerPaymentManager = null;
     this._buyerLockedPeers.clear();
     this._started = false;
     this.emit("stopped");
@@ -444,19 +477,11 @@ export class AntseedNode extends EventEmitter {
 
 
     // Optional reputation verification: replace claimed data with verified on-chain data
+    // TODO: getReputation now lives on IdentityClient (takes tokenId, not address).
+    // Wire IdentityClient into AntseedNode to restore on-chain reputation verification.
     if (this._escrowClient) {
-      for (const p of peers) {
-        if (p.evmAddress && p.onChainReputation !== undefined) {
-          try {
-            const rep = await this._escrowClient.getReputation(p.evmAddress);
-            p.onChainReputation = rep.weightedAverage;
-            p.onChainSessionCount = rep.sessionCount;
-            p.onChainDisputeCount = rep.disputeCount;
-            p.trustScore = rep.weightedAverage;
-          } catch {
-            // Use claimed data if verification fails
-          }
-        }
+      for (const _p of peers) {
+        // Skipped: IdentityClient not yet wired into AntseedNode
       }
     }
 
@@ -763,7 +788,10 @@ export class AntseedNode extends EventEmitter {
         this._muxes.delete(peerId);
         this._paymentMuxes.delete(peerId);
         this._decoders.delete(peerId);
-        // Handle buyer disconnect (ghost scenario)
+        // Handle buyer disconnect
+        if (this._sellerPaymentManager) {
+          this._sellerPaymentManager.onBuyerDisconnect(peerId);
+        }
         void this._finalizeSession(peerId, "disconnect");
       }
     });
@@ -930,11 +958,17 @@ export class AntseedNode extends EventEmitter {
     // Initialize buyer-side payment manager if payments config is provided
     const payments = this._config.payments;
     if (payments?.enabled && payments.rpcUrl && payments.contractAddress && payments.usdcAddress) {
+      const paymentsDir = join(this._config.dataDir ?? join(homedir(), ".antseed"), "payments");
       const buyerPaymentConfig: BuyerPaymentConfig = {
-        defaultLockAmountUSDC: payments.defaultEscrowAmountUSDC ?? "1000000",
         rpcUrl: payments.rpcUrl,
         contractAddress: payments.contractAddress,
         usdcAddress: payments.usdcAddress,
+        identityAddress: payments.identityAddress ?? '',
+        chainId: payments.chainId ?? 8453,
+        defaultMaxAmountUsdc: BigInt(payments.defaultMaxAmountUsdc ?? "1000000"),
+        defaultAuthDurationSecs: payments.defaultAuthDurationSecs ?? 3600,
+        autoAck: payments.autoAck ?? true,
+        dataDir: paymentsDir,
       };
       this._buyerPaymentManager = new BuyerPaymentManager(identity, buyerPaymentConfig);
       debugLog(`[Node] Buyer payment manager initialized (wallet=${identityToEvmAddress(identity).slice(0, 10)}...)`);
@@ -950,27 +984,33 @@ export class AntseedNode extends EventEmitter {
 
     // Create PaymentMux alongside ProxyMux (seller-side)
     const paymentMux = new PaymentMux(conn);
-    paymentMux.onSessionLockAuth((payload) => {
-      void this._handleSessionLockAuth(buyerPeerId, payload, paymentMux);
-    });
-    paymentMux.onBuyerAck((payload) => {
-      void this._handleBuyerAck(buyerPeerId, payload);
-    });
-    paymentMux.onSessionEnd((payload) => {
-      void this._handleSessionEnd(buyerPeerId, payload);
-    });
-    paymentMux.onTopUpAuth((payload) => {
-      void this._handleTopUpAuth(buyerPeerId, payload);
-    });
+    if (this._sellerPaymentManager) {
+      const spm = this._sellerPaymentManager;
+      paymentMux.onSpendingAuth((payload) => {
+        void spm.handleSpendingAuth(buyerPeerId, payload.buyerEvmAddr, payload, paymentMux);
+      });
+      paymentMux.onBuyerAck((payload) => {
+        void spm.handleBuyerAck(buyerPeerId, payload);
+      });
+    } else {
+      paymentMux.onSpendingAuth((payload) => {
+        void this._handleSpendingAuth(buyerPeerId, payload, paymentMux);
+      });
+      paymentMux.onBuyerAck((payload) => {
+        void this._handleBuyerAck(buyerPeerId, payload);
+      });
+    }
     this._paymentMuxes.set(buyerPeerId, paymentMux);
 
     // Register the ProxyMux request handler that routes to providers
     mux.onProxyRequest(async (request: SerializedHttpRequest) => {
       debugLog(`[Node] Seller received request: ${request.method} ${request.path} (reqId=${request.requestId.slice(0, 8)})`);
 
-      // Reject with 402 if lock not committed and escrow client is configured
+      // Reject with 402 if no active payment session and escrow client is configured
+      const spmAuthorized = this._sellerPaymentManager?.hasSession(buyerPeerId) ?? false;
       const session = this._sessions.get(buyerPeerId);
-      if (this._escrowClient && (!session || !session.lockCommitted)) {
+      const legacyAuthorized = session?.lockCommitted ?? false;
+      if (this._escrowClient && !spmAuthorized && !legacyAuthorized) {
         debugWarn(`[Node] Rejecting request from ${buyerPeerId.slice(0, 12)}... — lock not committed`);
         mux.sendProxyResponse({
           requestId: request.requestId,
@@ -1080,10 +1120,21 @@ export class AntseedNode extends EventEmitter {
           responseBody.length,
         );
 
-        // Generate bilateral receipt after each request if lock committed (Task 3)
-        const currentSession = this._sessions.get(buyerPeerId);
-        if (currentSession?.lockCommitted) {
-          await this._sendBilateralReceipt(buyerPeerId, currentSession, requestPricing, responseBody, paymentMux);
+        // Generate bilateral receipt after each request
+        if (this._sellerPaymentManager?.hasSession(buyerPeerId)) {
+          // Estimate cost in USDC base units
+          const receiptTokens = this._estimateTokens(request.body.length, responseBody.length);
+          const costUSD =
+            (receiptTokens.inputTokens * requestPricing.inputUsdPerMillion +
+              receiptTokens.outputTokens * requestPricing.outputUsdPerMillion) /
+            1_000_000;
+          const costBaseUnits = BigInt(Math.round(costUSD * 1_000_000));
+          await this._sellerPaymentManager.sendReceipt(buyerPeerId, paymentMux, responseBody, costBaseUnits);
+        } else {
+          const currentSession = this._sessions.get(buyerPeerId);
+          if (currentSession?.lockCommitted) {
+            await this._sendBilateralReceipt(buyerPeerId, currentSession, requestPricing, responseBody, paymentMux);
+          }
         }
       } finally {
         this._adjustProviderLoad(provider.name, -1);
@@ -1349,12 +1400,45 @@ export class AntseedNode extends EventEmitter {
       debugLog(`[Node] BaseEscrowClient initialized (contract=${payments.contractAddress.slice(0, 10)}...)`);
     }
 
+    // Initialize SessionStore for persistent payment sessions
+    const paymentsDir = join(dataDir, "payments");
+    try {
+      this._sessionStore = new SessionStore(paymentsDir);
+      debugLog("[Node] SessionStore initialized");
+    } catch (err) {
+      debugWarn(`[Node] SessionStore unavailable: ${err instanceof Error ? err.message : err}`);
+    }
+
+    // Initialize SellerPaymentManager for seller role
+    if (this._config.role === 'seller' && this._identity && this._sessionStore &&
+        payments.rpcUrl && payments.contractAddress && payments.usdcAddress) {
+      const sellerConfig: SellerPaymentConfig = {
+        rpcUrl: payments.rpcUrl,
+        contractAddress: payments.contractAddress,
+        usdcAddress: payments.usdcAddress,
+        chainId: payments.chainId ?? 8453,
+        dataDir: paymentsDir,
+      };
+      this._sellerPaymentManager = new SellerPaymentManager(this._identity, sellerConfig, this._sessionStore);
+      debugLog(`[Node] SellerPaymentManager initialized`);
+
+      // Startup recovery: check for timed-out sessions
+      await this._sellerPaymentManager.checkTimeouts();
+
+      // Start periodic timeout checker (every 60s)
+      this._timeoutCheckerInterval = setInterval(() => {
+        void this._sellerPaymentManager?.checkTimeouts();
+      }, 60_000);
+      if (typeof (this._timeoutCheckerInterval as { unref?: () => void }).unref === "function") {
+        (this._timeoutCheckerInterval as { unref: () => void }).unref();
+      }
+    }
+
     if (!this._metering) {
       debugWarn("[Node] Payments enabled but metering storage is unavailable; skipping balance manager wiring");
       return;
     }
 
-    const paymentsDir = join(dataDir, "payments");
     this._balanceManager = new BalanceManager();
     await this._balanceManager.load(paymentsDir).catch((err) => {
       debugWarn(`[Node] Failed to load payment balances: ${err instanceof Error ? err.message : err}`);
@@ -1392,27 +1476,10 @@ export class AntseedNode extends EventEmitter {
       this._settlementTimers.delete(buyerPeerId);
     }
 
-    // Bilateral-aware disconnect handling (ghost scenario - Task 7)
+    // Ghost scenario handling: disputes removed from protocol.
+    // Ghost sessions are now handled by settleTimeout expiry on-chain.
     if (session.lockCommitted && this._escrowClient && this._identity && reason === "disconnect") {
-      const sellerWallet = identityToEvmWallet(this._identity);
-      const sessionIdHex = "0x" + bytesToHex(session.sessionIdBytes);
-
-      try {
-        if (session.lastAckedTotal > 0n) {
-          // Buyer acked some work — open dispute with last acked total
-          debugLog(`[Node] Ghost buyer — opening dispute with lastAckedTotal=${session.lastAckedTotal}`);
-          await this._escrowClient.openDispute(sellerWallet, sessionIdHex, session.lastAckedTotal);
-        } else if (session.runningTotal > 0n) {
-          // No acks but work was done — open dispute with running total
-          debugLog(`[Node] Ghost buyer — opening dispute with runningTotal=${session.runningTotal}`);
-          await this._escrowClient.openDispute(sellerWallet, sessionIdHex, session.runningTotal);
-        } else {
-          // No work done — lock expires after 1 hour automatically
-          debugLog(`[Node] Ghost buyer — no work done, lock will expire`);
-        }
-      } catch (err) {
-        debugWarn(`[Node] Failed to handle ghost buyer for session ${session.sessionId}: ${err instanceof Error ? err.message : err}`);
-      }
+      debugLog(`[Node] Ghost buyer for session ${session.sessionId} — lock will expire via settleTimeout`);
 
       this._sessions.delete(buyerPeerId);
       this.emit("session:finalized", {
@@ -1556,38 +1623,21 @@ export class AntseedNode extends EventEmitter {
   // ── Seller-side bilateral payment handlers ─────────────────────
 
   /**
-   * Handle SessionLockAuth from buyer (Task 2).
-   * Recovers buyer address, commits lock on-chain, initializes bilateral state.
+   * Handle SpendingAuth from buyer.
+   * Verifies buyer's EIP-712 spending authorization and acknowledges.
    */
-  private async _handleSessionLockAuth(
+  private async _handleSpendingAuth(
     buyerPeerId: string,
-    payload: SessionLockAuthPayload,
+    payload: SpendingAuthPayload,
     paymentMux: PaymentMux,
   ): Promise<void> {
     if (!this._identity || !this._escrowClient) {
-      paymentMux.sendSessionLockReject({
-        sessionId: payload.sessionId,
-        reason: "Escrow client not configured",
-      });
+      debugWarn(`[Node] Cannot process SpendingAuth — escrow client not configured`);
       return;
     }
 
     try {
-      const sellerWallet = identityToEvmWallet(this._identity);
-      const lockedAmount = BigInt(payload.lockedAmount);
-
-      // Recover buyer address from ECDSA signature
-      const lockMsgHash = buildLockMessageHash(payload.sessionId, sellerWallet.address, lockedAmount);
-      const buyerEvmAddress = verifyMessage(getBytes(lockMsgHash), payload.buyerSig);
-
-      // Submit commit_lock on-chain
-      const txHash = await this._escrowClient.commitLock(
-        sellerWallet,
-        buyerEvmAddress,
-        payload.sessionId,
-        lockedAmount,
-        payload.buyerSig,
-      );
+      const maxAmount = BigInt(payload.maxAmountUsdc);
 
       // Initialize or update bilateral session state
       let session: SellerSessionState | null | undefined = this._sessions.get(buyerPeerId);
@@ -1595,31 +1645,26 @@ export class AntseedNode extends EventEmitter {
         session = this._getOrCreateSellerSession(buyerPeerId, this._providers[0]?.name ?? "unknown");
       }
       if (session) {
-        // Override sessionId with the one from the lock auth (buyer-chosen)
         session.sessionId = payload.sessionId;
         session.sessionIdBytes = hexToBytes(payload.sessionId.replace(/^0x/, ""));
         session.lockCommitted = true;
-        session.lockedAmount = lockedAmount;
+        session.lockedAmount = maxAmount;
         session.runningTotal = 0n;
         session.ackedRequestCount = 0;
         session.lastAckedTotal = 0n;
         session.awaitingAck = false;
-        session.buyerEvmAddress = buyerEvmAddress;
+        session.buyerEvmAddress = payload.buyerEvmAddr;
       }
 
-      debugLog(`[Node] Lock committed for buyer ${buyerPeerId.slice(0, 12)}... amount=${lockedAmount} tx=${txHash.slice(0, 12)}...`);
+      debugLog(`[Node] SpendingAuth accepted for buyer ${buyerPeerId.slice(0, 12)}... maxAmount=${maxAmount}`);
 
-      paymentMux.sendSessionLockConfirm({
+      paymentMux.sendAuthAck({
         sessionId: payload.sessionId,
-        txSignature: txHash,
+        nonce: payload.nonce,
       });
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
-      debugWarn(`[Node] Failed to commit lock for ${buyerPeerId.slice(0, 12)}...: ${reason}`);
-      paymentMux.sendSessionLockReject({
-        sessionId: payload.sessionId,
-        reason,
-      });
+      debugWarn(`[Node] Failed to process SpendingAuth for ${buyerPeerId.slice(0, 12)}...: ${reason}`);
     }
   }
 
@@ -1674,9 +1719,9 @@ export class AntseedNode extends EventEmitter {
       const additionalAmount = session.lockedAmount; // Request same amount again
       paymentMux.sendTopUpRequest({
         sessionId: session.sessionId,
-        additionalAmount: additionalAmount.toString(),
-        currentRunningTotal: session.runningTotal.toString(),
-        currentLockedAmount: session.lockedAmount.toString(),
+        currentUsed: session.runningTotal.toString(),
+        currentMax: session.lockedAmount.toString(),
+        requestedAdditional: additionalAmount.toString(),
       });
       debugLog(`[Node] TopUpRequest sent for session ${session.sessionId.slice(0, 8)}... (running=${session.runningTotal}, locked=${session.lockedAmount})`);
     }
@@ -1719,91 +1764,9 @@ export class AntseedNode extends EventEmitter {
     }
   }
 
-  /**
-   * Handle SessionEnd from buyer (Task 5).
-   * Submits settlement on-chain and cleans up.
-   */
-  private async _handleSessionEnd(buyerPeerId: string, payload: SessionEndPayload): Promise<void> {
-    const session = this._sessions.get(buyerPeerId);
-    if (!session || !session.lockCommitted) {
-      debugWarn(`[Node] Received SessionEnd for unknown/uncommitted session from ${buyerPeerId.slice(0, 12)}...`);
-      return;
-    }
-
-    if (!this._identity || !this._escrowClient) {
-      debugWarn(`[Node] Cannot process SessionEnd — escrow client not available`);
-      return;
-    }
-
-    try {
-      const sellerWallet = identityToEvmWallet(this._identity);
-      const sessionIdHex = "0x" + bytesToHex(session.sessionIdBytes);
-
-      // Submit settlement on-chain with buyer's ECDSA signature and score
-      const txHash = await this._escrowClient.settle(
-        sellerWallet,
-        sessionIdHex,
-        BigInt(payload.runningTotal),
-        payload.score,
-        payload.buyerSig,
-      );
-
-      debugLog(`[Node] Session settled on-chain: ${session.sessionId.slice(0, 8)}... tx=${txHash.slice(0, 12)}... score=${payload.score}`);
-
-      // Clean up session
-      this._sessions.delete(buyerPeerId);
-      const timer = this._settlementTimers.get(buyerPeerId);
-      if (timer) {
-        clearTimeout(timer);
-        this._settlementTimers.delete(buyerPeerId);
-      }
-
-      this.emit("session:settled", {
-        buyerPeerId,
-        sessionId: session.sessionId,
-        runningTotal: payload.runningTotal,
-        score: payload.score,
-        txHash,
-      });
-    } catch (err) {
-      debugWarn(`[Node] Failed to settle session ${session.sessionId}: ${err instanceof Error ? err.message : err}`);
-    }
-  }
-
-  /**
-   * Handle TopUpAuth from buyer (Task 6).
-   * Calls extendLock on-chain and updates session.
-   */
-  private async _handleTopUpAuth(buyerPeerId: string, payload: TopUpAuthPayload): Promise<void> {
-    const session = this._sessions.get(buyerPeerId);
-    if (!session || !session.lockCommitted) {
-      debugWarn(`[Node] Received TopUpAuth for unknown/uncommitted session from ${buyerPeerId.slice(0, 12)}...`);
-      return;
-    }
-
-    if (!this._identity || !this._escrowClient) {
-      debugWarn(`[Node] Cannot process TopUpAuth — escrow client not available`);
-      return;
-    }
-
-    try {
-      const sellerWallet = identityToEvmWallet(this._identity);
-      const sessionIdHex = "0x" + bytesToHex(session.sessionIdBytes);
-      const additionalAmount = BigInt(payload.additionalAmount);
-
-      const txHash = await this._escrowClient.extendLock(
-        sellerWallet,
-        sessionIdHex,
-        additionalAmount,
-        payload.buyerSig,
-      );
-
-      session.lockedAmount += additionalAmount;
-      debugLog(`[Node] TopUp committed: session=${session.sessionId.slice(0, 8)}... additional=${additionalAmount} newTotal=${session.lockedAmount} tx=${txHash.slice(0, 12)}...`);
-    } catch (err) {
-      debugWarn(`[Node] Failed to extend lock for session ${session.sessionId}: ${err instanceof Error ? err.message : err}`);
-    }
-  }
+  // NOTE: SessionEnd and TopUpAuth handlers removed in bilateral protocol v2.
+  // Settlement is now handled via the seller calling charge() on-chain using
+  // the buyer's SpendingAuth EIP-712 signature. See PRD-03 for new flow.
 
   // ── Buyer-side payment helpers ─────────────────────────────────
 
@@ -1821,12 +1784,8 @@ export class AntseedNode extends EventEmitter {
     const bpm = this._buyerPaymentManager;
     if (!bpm) return pmux;
 
-    pmux.onSessionLockConfirm((payload) => {
-      bpm.handleLockConfirm(peerId, payload);
-    });
-
-    pmux.onSessionLockReject((payload) => {
-      bpm.handleLockReject(peerId, payload);
+    pmux.onAuthAck((payload) => {
+      bpm.handleAuthAck(peerId, payload);
     });
 
     pmux.onSellerReceipt((receipt) => {
@@ -1841,8 +1800,8 @@ export class AntseedNode extends EventEmitter {
   }
 
   /**
-   * Initiate a lock with a seller peer. Creates PaymentMux, signs lock auth,
-   * and waits for confirmation before returning.
+   * Initiate a spending auth with a seller peer. Creates PaymentMux, signs
+   * EIP-712 SpendingAuth, and waits for AuthAck before returning.
    */
   private async _initiateBuyerLock(peer: PeerInfo, conn: PeerConnection): Promise<void> {
     const bpm = this._buyerPaymentManager;
@@ -1856,19 +1815,19 @@ export class AntseedNode extends EventEmitter {
     // Determine seller EVM address — prefer from peer metadata
     const sellerEvmAddress = peer.evmAddress ?? "";
     if (!sellerEvmAddress) {
-      debugWarn(`[Node] Seller ${peer.peerId.slice(0, 12)}... has no EVM address; skipping lock initiation`);
+      debugWarn(`[Node] Seller ${peer.peerId.slice(0, 12)}... has no EVM address; skipping auth initiation`);
       return;
     }
 
     try {
-      await bpm.initiateLock(peer.peerId, sellerEvmAddress, pmux);
-      debugLog(`[Node] Lock initiated for seller ${peer.peerId.slice(0, 12)}..., waiting for confirmation...`);
+      await bpm.authorizeSpending(peer.peerId, sellerEvmAddress, pmux);
+      debugLog(`[Node] SpendingAuth sent to seller ${peer.peerId.slice(0, 12)}..., waiting for AuthAck...`);
 
-      // Wait for lock confirmation (polls every 200ms, 30s timeout)
+      // Wait for AuthAck (polls every 200ms, 30s timeout)
       await this._waitForLockConfirmation(peer.peerId);
-      debugLog(`[Node] Lock confirmed for seller ${peer.peerId.slice(0, 12)}...`);
+      debugLog(`[Node] AuthAck received from seller ${peer.peerId.slice(0, 12)}...`);
     } catch (err) {
-      debugWarn(`[Node] Lock initiation/confirmation failed for ${peer.peerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
+      debugWarn(`[Node] Auth initiation/confirmation failed for ${peer.peerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
       // Remove from locked set so next request can retry
       this._buyerLockedPeers.delete(peer.peerId);
     }
@@ -1900,25 +1859,15 @@ export class AntseedNode extends EventEmitter {
   }
 
   /**
-   * End all active buyer payment sessions (called during shutdown).
+   * Clean up buyer payment sessions on shutdown.
+   * Sessions are persisted in SessionStore and will be resumed on next connect.
    */
   private async _endAllBuyerSessions(): Promise<void> {
     const bpm = this._buyerPaymentManager;
     if (!bpm) return;
-
-    const sessions = bpm.getActiveSessions();
-    if (sessions.length === 0) return;
-
-    debugLog(`[Node] Ending ${sessions.length} buyer payment session(s)...`);
-    await Promise.allSettled(
-      sessions.map((session) => {
-        const pmux = this._paymentMuxes.get(session.sellerPeerId as PeerId);
-        if (pmux) {
-          return bpm.endSession(session.sellerPeerId, pmux, 80);
-        }
-        return Promise.resolve();
-      }),
-    );
+    // Sessions persist in SQLite; no explicit end needed.
+    // The buyer will reference them as previousSession on next connect.
+    debugLog(`[Node] Buyer sessions persisted for next reconnection`);
   }
 
   private _resolvePublicAddress(result: LookupResult): string {

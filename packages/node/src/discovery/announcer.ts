@@ -158,14 +158,8 @@ export class PeerAnnouncer {
       metadata.evmAddress = evmAddress;
 
       if (includeOnChainReputation) {
-        try {
-          const reputation = await this.config.escrowClient.getReputation(evmAddress);
-          metadata.onChainReputation = reputation.weightedAverage;
-          metadata.onChainSessionCount = reputation.sessionCount;
-          metadata.onChainDisputeCount = reputation.disputeCount;
-        } catch {
-          // Silently continue without reputation data
-        }
+        // TODO: getReputation now lives on IdentityClient (takes tokenId, not address).
+        // Wire IdentityClient into Announcer config to restore on-chain reputation lookup.
       } else if (this._latestMetadata) {
         metadata.onChainReputation = this._latestMetadata.onChainReputation;
         metadata.onChainSessionCount = this._latestMetadata.onChainSessionCount;

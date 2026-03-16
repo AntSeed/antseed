@@ -1,4 +1,3 @@
-import type { BaseEscrowClient } from "../payments/evm/escrow-client.js";
 import type { PeerMetadata } from "./peer-metadata.js";
 
 export interface ReputationVerification {
@@ -20,35 +19,18 @@ export interface ReputationVerification {
 
 /**
  * Verify a peer's claimed on-chain reputation against the Base contract.
- * Queries the escrow contract using the peer's evmAddress and compares
+ * Queries the identity contract using the peer's tokenId and compares
  * claimed vs actual reputation values.
+ *
+ * TODO: Reimplement using IdentityClient.getReputation(tokenId) once
+ * IdentityClient is wired into the discovery layer. The old implementation
+ * used BaseEscrowClient.getReputation(address) which has been removed.
  */
 export async function verifyReputation(
-  escrowClient: BaseEscrowClient,
-  metadata: PeerMetadata,
+  _metadata: PeerMetadata,
 ): Promise<ReputationVerification> {
-  if (!metadata.evmAddress) {
-    throw new Error("Metadata does not contain an evmAddress");
-  }
-
-  const reputation = await escrowClient.getReputation(metadata.evmAddress);
-
-  const actualReputation = reputation.weightedAverage;
-  const actualSessionCount = reputation.sessionCount;
-  const actualDisputeCount = reputation.disputeCount;
-
-  const valid =
-    metadata.onChainReputation === actualReputation &&
-    metadata.onChainSessionCount === actualSessionCount &&
-    metadata.onChainDisputeCount === actualDisputeCount;
-
-  return {
-    valid,
-    actualReputation,
-    actualSessionCount,
-    actualDisputeCount,
-    claimedReputation: metadata.onChainReputation,
-    claimedSessionCount: metadata.onChainSessionCount,
-    claimedDisputeCount: metadata.onChainDisputeCount,
-  };
+  // TODO: Wire IdentityClient to restore on-chain reputation verification.
+  // IdentityClient.getReputation takes a tokenId (not address) and returns
+  // ProvenReputation { firstSignCount, qualifiedProvenSignCount, ... }.
+  throw new Error("verifyReputation is not yet implemented with IdentityClient");
 }

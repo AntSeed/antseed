@@ -1,5 +1,5 @@
 import * as ed from "@noble/ed25519";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir, stat, chmod } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import {
@@ -18,6 +18,20 @@ const CONFIG_DIR = join(homedir(), ".antseed");
 const PRIVATE_KEY_FILE = "identity.key";
 const ED25519_PKCS8_SEED_PREFIX = Buffer.from("302e020100300506032b657004220420", "hex");
 const ED25519_SPKI_PUBLIC_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
+
+async function ensureSecurePermissions(filePath: string): Promise<void> {
+  if (process.platform === 'win32') return;
+  try {
+    const stats = await stat(filePath);
+    const mode = stats.mode & 0o777;
+    if (mode !== 0o600) {
+      await chmod(filePath, 0o600);
+      console.warn(`[security] Fixed identity file permissions to 0600: ${filePath}`);
+    }
+  } catch {
+    // File might not exist yet
+  }
+}
 
 export interface Identity {
   peerId: PeerId;
@@ -38,6 +52,7 @@ export async function loadOrCreateIdentity(configDir?: string): Promise<Identity
     const privateKey = hexToBytes(hexKey);
     const publicKey = await ed.getPublicKeyAsync(privateKey);
     const peerId = toPeerId(bytesToHex(publicKey));
+    await ensureSecurePermissions(keyPath);
     return { peerId, privateKey, publicKey };
   } catch {
     // Key doesn't exist — generate a new one.
@@ -47,6 +62,10 @@ export async function loadOrCreateIdentity(configDir?: string): Promise<Identity
 
     await mkdir(dir, { recursive: true });
     await writeFile(keyPath, bytesToHex(privateKey), { mode: 0o600 });
+    await ensureSecurePermissions(keyPath);
+
+    console.warn('[security] IMPORTANT: Back up your identity file — it controls your EVM wallet, stake, and earnings.');
+    console.warn(`[security] Identity file: ${keyPath}`);
 
     return { peerId, privateKey, publicKey };
   }

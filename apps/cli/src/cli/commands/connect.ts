@@ -7,7 +7,7 @@ import { homedir } from 'node:os'
 import { createConnection } from 'node:net'
 import { getGlobalOptions } from './types.js'
 import { loadConfig } from '../../config/loader.js'
-import { AntseedNode, BaseEscrowClient, loadOrCreateIdentity, identityToEvmAddress, getInstance } from '@antseed/node'
+import { AntseedNode, loadOrCreateIdentity, identityToEvmAddress, getInstance } from '@antseed/node'
 import type { NodePaymentsConfig } from '@antseed/node'
 import { OFFICIAL_BOOTSTRAP_NODES, parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
 import { setupShutdownHandler } from '../shutdown.js'
@@ -15,6 +15,7 @@ import { loadRouterPlugin, buildPluginConfig } from '../../plugins/loader.js'
 import { BuyerProxy } from '../../proxy/buyer-proxy.js'
 import { resolveEffectiveBuyerConfig, type BuyerRuntimeOverrides } from '../../config/effective.js'
 import type { BuyerCLIConfig } from '../../config/types.js'
+import { createEscrowClient } from '../payment-utils.js'
 
 interface LocalSeederInfo {
   dhtPort: number
@@ -357,12 +358,8 @@ export function registerConnectCommand(program: Command): void {
         try {
           const identity = await loadOrCreateIdentity(globalOpts.dataDir)
           const address = identityToEvmAddress(identity)
-          const escrowClient = new BaseEscrowClient({
-            rpcUrl: config.payments.crypto.rpcUrl,
-            contractAddress: config.payments.crypto.escrowContractAddress,
-            usdcAddress: config.payments.crypto.usdcContractAddress,
-          })
-          const account = await escrowClient.getBuyerAccount(address)
+          const escrowClient = createEscrowClient(config)
+          const account = await escrowClient.getBuyerBalance(address)
           console.log(chalk.dim(`Wallet: ${address}`))
           const availUsdc = Number(account.available) / 1_000_000
           console.log(chalk.dim(`Escrow available: ${availUsdc.toFixed(6)} USDC`))
