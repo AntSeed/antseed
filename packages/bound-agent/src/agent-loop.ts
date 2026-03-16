@@ -62,6 +62,18 @@ function debugLog(...args: unknown[]): void {
   if (DEBUG_ENABLED) console.log(...args);
 }
 
+/** Check if an SSE chunk contains an Anthropic message_start event. */
+function chunkHasMessageStart(data: Uint8Array): boolean {
+  const text = decoder.decode(data);
+  return text.includes('event: message_start') || text.includes('"type":"message_start"') || text.includes('"type": "message_start"');
+}
+
+/** Check if an SSE chunk contains an Anthropic message_stop event. */
+function chunkHasMessageStop(data: Uint8Array): boolean {
+  const text = decoder.decode(data);
+  return text.includes('event: message_stop') || text.includes('"type":"message_stop"') || text.includes('"type": "message_stop"');
+}
+
 /**
  * Check if an SSE chunk contains an internal (antseed_*) tool call.
  * Used during streaming to decide whether to forward chunks to the buyer.
@@ -199,6 +211,7 @@ export async function runAgentLoopStream(
   const format = detectRequestFormat(req.path);
   const maxIterations = options?.maxIterations ?? DEFAULT_MAX_ITERATIONS;
   let headersSent = false;
+  let isFirstIteration = true;
 
   for (let i = 0; i < maxIterations; i++) {
     debugLog(`${reqTag}: stream iteration ${i + 1}/${maxIterations}`);
@@ -210,10 +223,12 @@ export async function runAgentLoopStream(
     };
 
     // Stream the call, forwarding chunks to the buyer.
-    // If we detect an antseed_* tool call mid-stream, stop forwarding
-    // so the buyer doesn't try to execute provider-internal tools.
+    // For Anthropic format: suppress message_start on non-first iterations and
+    // message_stop on non-final iterations to maintain one continuous SSE envelope.
+    // For both formats: suppress antseed_* tool call chunks.
     let streamResponse: SerializedHttpResponse;
     let suppressingChunks = false;
+    const capturedIsFirst = isFirstIteration;
     try {
       streamResponse = await inner.handleRequestStream!(augReq, {
         onResponseStart: (res) => {
@@ -224,12 +239,19 @@ export async function runAgentLoopStream(
         },
         onResponseChunk: (chunk) => {
           if (suppressingChunks) return;
-          // Check if this chunk reveals an internal tool call
-          if (!chunk.done && chunk.data.length > 0 && chunkHasInternalToolCall(chunk.data, format)) {
-            suppressingChunks = true;
-            return;
+          if (!chunk.done && chunk.data.length > 0) {
+            // Check if this chunk reveals an internal tool call
+            if (chunkHasInternalToolCall(chunk.data, format)) {
+              suppressingChunks = true;
+              return;
+            }
+            if (format === 'anthropic') {
+              // Suppress message_start on non-first iterations (one continuous envelope)
+              if (!capturedIsFirst && chunkHasMessageStart(chunk.data)) return;
+              // Suppress message_stop — we'll send it when the loop is truly done
+              if (chunkHasMessageStop(chunk.data)) return;
+            }
           }
-          // Forward content, buyer tool calls, and done (only if not suppressing)
           callbacks.onResponseChunk(chunk);
         },
       });
@@ -267,6 +289,11 @@ export async function runAgentLoopStream(
 
     const action = inspectResponse(responseBody, format);
     if (action.type === 'done') {
+      // Send the suppressed message_stop for Anthropic to close the envelope
+      if (format === 'anthropic') {
+        const stopEvent = encoder.encode('event: message_stop\ndata: {"type":"message_stop"}\n\n');
+        callbacks.onResponseChunk({ requestId: req.requestId, data: stopEvent, done: false });
+      }
       if (suppressingChunks) {
         // We suppressed chunks (detected internal tool call) but inspectResponse
         // resolved as done (e.g. mixed buyer+internal calls). Close the buyer's stream.
@@ -277,6 +304,7 @@ export async function runAgentLoopStream(
     }
 
     // Internal tool calls found — execute them
+    isFirstIteration = false;
     debugLog(`${reqTag}: stream iteration ${i + 1} — executing ${action.internalCalls.length} tool(s): ${action.internalCalls.map(c => c.name).join(', ')}`);
     const results = await executeTools(action.internalCalls, agent.tools);
     debugLog(`${reqTag}: stream iteration ${i + 1} — tool results: ${results.map(r => `${r.id}:${r.isError ? 'error' : 'ok'}`).join(', ')}`);
@@ -301,6 +329,10 @@ export async function runAgentLoopStream(
       }
     },
     onResponseChunk: (chunk) => {
+      // Anthropic: suppress message_start (continuing the envelope from earlier iterations)
+      if (format === 'anthropic' && !chunk.done && chunk.data.length > 0 && chunkHasMessageStart(chunk.data)) {
+        return;
+      }
       callbacks.onResponseChunk(chunk);
     },
   });
