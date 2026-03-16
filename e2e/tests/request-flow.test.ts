@@ -81,9 +81,9 @@ describe('Request flow: buyer sends request to seller via P2P', () => {
 
     const discoveredSeller = peers.find((p) => p.peerId === sellerNode!.peerId);
     expect(discoveredSeller).toBeDefined();
-    expect(discoveredSeller!.defaultInputUsdPerMillion).toBeGreaterThanOrEqual(0);
-    expect(discoveredSeller!.defaultOutputUsdPerMillion).toBeGreaterThanOrEqual(0);
-    expect(discoveredSeller!.providerPricing).toBeDefined();
+    expect(discoveredSeller!.services.length).toBeGreaterThan(0);
+    expect(discoveredSeller!.services[0]!.pricing.inputUsdPerMillion).toBeGreaterThanOrEqual(0);
+    expect(discoveredSeller!.services[0]!.pricing.outputUsdPerMillion).toBeGreaterThanOrEqual(0);
 
     return { mockProvider, discoveredSeller: discoveredSeller! };
   }

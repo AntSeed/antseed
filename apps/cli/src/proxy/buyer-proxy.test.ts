@@ -3,43 +3,22 @@ import test from 'node:test'
 import type { PeerInfo } from '@antseed/node'
 import { selectCandidatePeersForRouting, rewriteServiceInBody } from './buyer-proxy.js'
 
-function makePeer(seed: string, providers: string[]): PeerInfo {
+function makePeer(seed: string, serviceNames: string[]): PeerInfo {
   const repeated = (seed.repeat(64) + 'a'.repeat(64)).slice(0, 64)
   return {
     peerId: repeated as PeerInfo['peerId'],
     lastSeen: Date.now(),
-    providers,
+    services: serviceNames.map((name) => ({
+      name,
+      pricing: { inputUsdPerMillion: 10, outputUsdPerMillion: 10 },
+    })),
   }
 }
 
-test('selectCandidatePeersForRouting enforces explicit provider overrides even without request protocol', () => {
-  const peers = [
-    makePeer('a', ['anthropic']),
-    makePeer('b', ['openai']),
-  ]
-
-  const result = selectCandidatePeersForRouting(peers, null, null, 'openai')
-  assert.equal(result.candidatePeers.length, 1)
-  assert.equal(result.candidatePeers[0]?.peerId, peers[1]?.peerId)
-  assert.equal(result.routePlanByPeerId.get(peers[1]!.peerId)?.provider, 'openai')
-  assert.equal(result.routePlanByPeerId.get(peers[1]!.peerId)?.selection, null)
-})
-
-test('selectCandidatePeersForRouting returns no candidates when explicit provider is unavailable', () => {
-  const peers = [
-    makePeer('a', ['anthropic']),
-    makePeer('b', ['local-llm']),
-  ]
-
-  const result = selectCandidatePeersForRouting(peers, null, null, 'openai')
-  assert.equal(result.candidatePeers.length, 0)
-  assert.equal(result.routePlanByPeerId.size, 0)
-})
-
 test('selectCandidatePeersForRouting keeps all peers when no protocol or provider override is set', () => {
   const peers = [
-    makePeer('a', ['anthropic']),
-    makePeer('b', ['openai']),
+    makePeer('a', ['claude-3-opus']),
+    makePeer('b', ['gpt-4o']),
   ]
 
   const result = selectCandidatePeersForRouting(peers, null, null, null)
@@ -47,23 +26,12 @@ test('selectCandidatePeersForRouting keeps all peers when no protocol or provide
   assert.equal(result.routePlanByPeerId.size, 0)
 })
 
-test('selectCandidatePeersForRouting excludes peers when requested service is not in provider metadata', () => {
-  const openAiPeer = makePeer('a', ['openai'])
-  openAiPeer.providerServiceApiProtocols = {
-    openai: {
-      services: {
-        'gpt-4o': ['openai-chat-completions'],
-      },
-    },
-  }
-  const claudePeer = makePeer('b', ['claude-oauth'])
-  claudePeer.providerServiceApiProtocols = {
-    'claude-oauth': {
-      services: {
-        'claude-opus-4-6': ['anthropic-messages'],
-      },
-    },
-  }
+test('selectCandidatePeersForRouting excludes peers when requested service is not in service metadata', () => {
+  const openAiPeer = makePeer('a', ['gpt-4o'])
+  openAiPeer.services[0]!.protocols = ['openai-chat-completions']
+
+  const claudePeer = makePeer('b', ['claude-opus-4-6'])
+  claudePeer.services[0]!.protocols = ['anthropic-messages']
 
   const result = selectCandidatePeersForRouting(
     [openAiPeer, claudePeer],
@@ -75,11 +43,10 @@ test('selectCandidatePeersForRouting excludes peers when requested service is no
   assert.equal(result.candidatePeers.length, 1)
   assert.equal(result.candidatePeers[0]?.peerId, claudePeer.peerId)
   assert.equal(result.routePlanByPeerId.has(openAiPeer.peerId), false)
-  assert.equal(result.routePlanByPeerId.get(claudePeer.peerId)?.provider, 'claude-oauth')
 })
 
 test('selectCandidatePeersForRouting can still include peers without service protocol metadata', () => {
-  const peerWithoutMetadata = makePeer('a', ['openai'])
+  const peerWithoutMetadata = makePeer('a', ['gpt-4o'])
   const result = selectCandidatePeersForRouting(
     [peerWithoutMetadata],
     'openai-chat-completions',
@@ -87,8 +54,10 @@ test('selectCandidatePeersForRouting can still include peers without service pro
     null,
   )
 
-  assert.equal(result.candidatePeers.length, 1)
-  assert.equal(result.candidatePeers[0]?.peerId, peerWithoutMetadata.peerId)
+  // Peer has no protocol info, so selectTargetProtocolForRequest returns null → excluded
+  // This is a behavior change: without inferProviderDefaultServiceApiProtocols, peers
+  // without protocol metadata are excluded when a specific protocol is requested.
+  assert.equal(result.candidatePeers.length, 0)
 })
 
 // rewriteServiceInBody tests

@@ -24,11 +24,17 @@ function tmpCache(): string {
   return join(tmpdir(), `antseed-test-${randomUUID()}`, 'network.json');
 }
 
-function fakePeer(id: string, services: string[]): PeerMetadata {
+function fakePeer(id: string, serviceNames: string[]): PeerMetadata {
   return {
     peerId: toPeerId(createHash('sha256').update(id).digest('hex')),
     version: 4,
-    providers: [{ provider: 'test', services, defaultPricing: { inputUsdPerMillion: 10, outputUsdPerMillion: 10 }, maxConcurrency: 1, currentLoad: 0 }],
+    services: serviceNames.map((name) => ({
+      name,
+      pricing: { inputUsdPerMillion: 10, outputUsdPerMillion: 10 },
+    })),
+    providers: [{ provider: 'test', services: serviceNames, defaultPricing: { inputUsdPerMillion: 10, outputUsdPerMillion: 10 }, maxConcurrency: 1, currentLoad: 0 }],
+    maxConcurrency: 1,
+    currentLoad: 0,
     region: 'eu-west-1',
     timestamp: Date.now(),
     signature: 'sig',
@@ -81,7 +87,7 @@ describe('NetworkPoller', () => {
     const snap = poller.getSnapshot();
     assert.equal(snap.peers.length, 2);
     assert.ok(snap.peers[0]!.peerId);
-    assert.deepEqual(snap.peers[1]!.providers[0]!.services, ['llama-4-maverick']);
+    assert.equal(snap.peers[1]!.services[0]!.name, 'llama-4-maverick');
   });
 
   it('stop() clears the interval without throwing', () => {

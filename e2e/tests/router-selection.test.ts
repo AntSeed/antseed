@@ -6,19 +6,14 @@ function makePeer(overrides?: Partial<PeerInfo>): PeerInfo {
   return {
     peerId: 'a'.repeat(64) as any,
     lastSeen: Date.now(),
-    providers: ['anthropic'],
+    services: [
+      {
+        name: 'claude-3-opus',
+        pricing: { inputUsdPerMillion: 10, outputUsdPerMillion: 10 },
+      },
+    ],
     reputationScore: 80,
     trustScore: 80,
-    defaultInputUsdPerMillion: 10,
-    defaultOutputUsdPerMillion: 10,
-    providerPricing: {
-      anthropic: {
-        defaults: {
-          inputUsdPerMillion: 10,
-          outputUsdPerMillion: 10,
-        },
-      },
-    },
     maxConcurrency: 10,
     currentLoad: 1,
     ...overrides,
@@ -79,7 +74,7 @@ describe('LocalRouter peer selection hardening', () => {
     expect(selected?.peerId).toBe(lowIdPeer.peerId);
   });
 
-  it('falls back to provider defaults for unknown service instead of rejecting peer', () => {
+  it('falls back to first service pricing for unknown service instead of rejecting peer', () => {
     const router = new LocalRouter({
       maxPricing: {
         defaults: {
@@ -90,22 +85,10 @@ describe('LocalRouter peer selection hardening', () => {
     });
 
     const peer = makePeer({
-      providerPricing: {
-        anthropic: {
-          defaults: {
-            inputUsdPerMillion: 5,
-            outputUsdPerMillion: 5,
-          },
-          services: {
-            'known-service': {
-              inputUsdPerMillion: 7,
-              outputUsdPerMillion: 7,
-            },
-          },
-        },
-      },
-      defaultInputUsdPerMillion: 5,
-      defaultOutputUsdPerMillion: 5,
+      services: [
+        { name: 'known-service', pricing: { inputUsdPerMillion: 7, outputUsdPerMillion: 7 } },
+        { name: 'claude-3-opus', pricing: { inputUsdPerMillion: 5, outputUsdPerMillion: 5 } },
+      ],
     });
 
     const reqUnknownService: SerializedHttpRequest = {

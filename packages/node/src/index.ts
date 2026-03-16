@@ -23,6 +23,7 @@ export {
   type ServiceApiProtocol,
   type PeerMetadata,
   type ProviderAnnouncement,
+  type ServiceAnnouncement,
 } from './discovery/peer-metadata.js';
 export { MetadataServer, type MetadataServerConfig } from './discovery/metadata-server.js';
 export { parsePublicAddress, MAX_PUBLIC_ADDRESS_LENGTH, type ParsedPublicAddress } from './discovery/public-address.js';

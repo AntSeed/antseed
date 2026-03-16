@@ -21,8 +21,8 @@ export class DefaultRouter implements Router {
     if (eligible.length === 0) return null;
 
     eligible.sort((a, b) => {
-      const priceA = a.defaultInputUsdPerMillion ?? Infinity;
-      const priceB = b.defaultInputUsdPerMillion ?? Infinity;
+      const priceA = this._minInputPrice(a);
+      const priceB = this._minInputPrice(b);
       if (priceA !== priceB) return priceA - priceB;
       // Prefer higher trust scores (descending)
       const trustA = this._effectiveReputation(a);
@@ -67,6 +67,17 @@ export class DefaultRouter implements Router {
     }
 
     return this._isFiniteNonNegative(peer.trustScore) || this._isFiniteNonNegative(peer.reputationScore);
+  }
+
+  private _minInputPrice(peer: PeerInfo): number {
+    if (peer.services.length === 0) return Infinity;
+    let min = Infinity;
+    for (const s of peer.services) {
+      if (this._isFiniteNonNegative(s.pricing.inputUsdPerMillion) && s.pricing.inputUsdPerMillion < min) {
+        min = s.pricing.inputUsdPerMillion;
+      }
+    }
+    return min;
   }
 
   private _isFiniteNonNegative(value: number | undefined): value is number {

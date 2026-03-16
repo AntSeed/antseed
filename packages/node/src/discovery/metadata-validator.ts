@@ -23,11 +23,11 @@ export interface ValidationError {
 export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
   const errors: ValidationError[] = [];
 
-  // version
-  if (metadata.version !== METADATA_VERSION) {
+  // version: accept current and all backward-compatible versions
+  if (metadata.version < 1 || metadata.version > METADATA_VERSION) {
     errors.push({
       field: "version",
-      message: `Expected version ${METADATA_VERSION}, got ${metadata.version}`,
+      message: `Expected version 1-${METADATA_VERSION}, got ${metadata.version}`,
     });
   }
 
@@ -94,21 +94,33 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
     });
   }
 
-  // providers count
-  if (metadata.providers.length === 0) {
-    errors.push({
-      field: "providers",
-      message: "Must have at least one provider",
-    });
-  } else if (metadata.providers.length > MAX_PROVIDERS) {
-    errors.push({
-      field: "providers",
-      message: `Provider count ${metadata.providers.length} exceeds max ${MAX_PROVIDERS}`,
-    });
+  // v6+ uses services; legacy uses providers
+  const isServiceCentric = metadata.version >= 6;
+  if (!isServiceCentric) {
+    // providers count (legacy validation)
+    if (metadata.providers.length === 0) {
+      errors.push({
+        field: "providers",
+        message: "Must have at least one provider",
+      });
+    } else if (metadata.providers.length > MAX_PROVIDERS) {
+      errors.push({
+        field: "providers",
+        message: `Provider count ${metadata.providers.length} exceeds max ${MAX_PROVIDERS}`,
+      });
+    }
+  } else {
+    // services count (v6+ validation)
+    if ((metadata.services ?? []).length === 0) {
+      errors.push({
+        field: "services",
+        message: "Must have at least one service",
+      });
+    }
   }
 
-  // each provider
-  for (let i = 0; i < metadata.providers.length; i++) {
+  // each provider (legacy validation only)
+  if (!isServiceCentric) for (let i = 0; i < metadata.providers.length; i++) {
     const p = metadata.providers[i]!;
     const hasWildcardServices = p.services.length === 0;
 

@@ -17,6 +17,31 @@ function validMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
   return {
     peerId: 'a'.repeat(64) as any,
     version: METADATA_VERSION,
+    services: [
+      {
+        name: 'claude-3-opus',
+        pricing: {
+          inputUsdPerMillion: 15,
+          outputUsdPerMillion: 75,
+        },
+      },
+    ],
+    providers: [],
+    maxConcurrency: 10,
+    currentLoad: 3,
+    region: 'us-east-1',
+    timestamp: Date.now(),
+    signature: 'b'.repeat(128),
+    ...overrides,
+  };
+}
+
+/** Create legacy v5 metadata for testing provider-centric validation paths. */
+function validLegacyMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
+  return {
+    peerId: 'a'.repeat(64) as any,
+    version: 5,
+    services: [],
     providers: [
       {
         provider: 'anthropic',
@@ -29,6 +54,8 @@ function validMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
         currentLoad: 3,
       },
     ],
+    maxConcurrency: 10,
+    currentLoad: 3,
     region: 'us-east-1',
     timestamp: Date.now(),
     signature: 'b'.repeat(128),
@@ -42,8 +69,13 @@ describe('validateMetadata', () => {
     expect(errors).toEqual([]);
   });
 
-  it('should reject wrong version', () => {
+  it('should reject version higher than current', () => {
     const errors = validateMetadata(validMetadata({ version: 99 }));
+    expect(errors.some((e) => e.field === 'version')).toBe(true);
+  });
+
+  it('should reject version 0', () => {
+    const errors = validateMetadata(validMetadata({ version: 0 }));
     expect(errors.some((e) => e.field === 'version')).toBe(true);
   });
 
@@ -77,12 +109,17 @@ describe('validateMetadata', () => {
     expect(errors.some((e) => e.field === 'timestamp')).toBe(true);
   });
 
-  it('should reject zero providers', () => {
-    const errors = validateMetadata(validMetadata({ providers: [] }));
+  it('should reject zero services (v6)', () => {
+    const errors = validateMetadata(validMetadata({ services: [] }));
+    expect(errors.some((e) => e.field === 'services')).toBe(true);
+  });
+
+  it('should reject zero providers (legacy v5)', () => {
+    const errors = validateMetadata(validLegacyMetadata({ providers: [] }));
     expect(errors.some((e) => e.field === 'providers')).toBe(true);
   });
 
-  it('should reject too many providers', () => {
+  it('should reject too many providers (legacy v5)', () => {
     const providers = Array.from({ length: MAX_PROVIDERS + 1 }, (_, i) => ({
       provider: `p${i}`,
       services: ['m'],
@@ -93,14 +130,14 @@ describe('validateMetadata', () => {
       maxConcurrency: 1,
       currentLoad: 0,
     }));
-    const errors = validateMetadata(validMetadata({ providers }));
+    const errors = validateMetadata(validLegacyMetadata({ providers }));
     expect(errors.some((e) => e.field === 'providers')).toBe(true);
   });
 
-  it('should reject too many services per provider', () => {
+  it('should reject too many services per provider (legacy v5)', () => {
     const services = Array.from({ length: MAX_SERVICES_PER_PROVIDER + 1 }, (_, i) => `service-${i}`);
     const errors = validateMetadata(
-      validMetadata({
+      validLegacyMetadata({
         providers: [
           {
             provider: 'test',
@@ -118,9 +155,9 @@ describe('validateMetadata', () => {
     expect(errors.some((e) => e.field.includes('services'))).toBe(true);
   });
 
-  it('should reject service name exceeding max length', () => {
+  it('should reject service name exceeding max length (legacy v5)', () => {
     const errors = validateMetadata(
-      validMetadata({
+      validLegacyMetadata({
         providers: [
           {
             provider: 'test',
@@ -138,10 +175,10 @@ describe('validateMetadata', () => {
     expect(errors.some((e) => e.field.includes('services'))).toBe(true);
   });
 
-  it('should reject servicePricing entries with service names exceeding max length', () => {
+  it('should reject servicePricing entries with service names exceeding max length (legacy v5)', () => {
     const longServiceName = 'x'.repeat(MAX_SERVICE_NAME_LENGTH + 1);
     const errors = validateMetadata(
-      validMetadata({
+      validLegacyMetadata({
         providers: [
           {
             provider: 'test',
@@ -165,9 +202,9 @@ describe('validateMetadata', () => {
     expect(errors.some((e) => e.field.includes('servicePricing'))).toBe(true);
   });
 
-  it('should reject negative default input price', () => {
+  it('should reject negative default input price (legacy v5)', () => {
     const errors = validateMetadata(
-      validMetadata({
+      validLegacyMetadata({
         providers: [
           {
             provider: 'test',
@@ -185,9 +222,9 @@ describe('validateMetadata', () => {
     expect(errors.some((e) => e.field.includes('defaultPricing.inputUsdPerMillion'))).toBe(true);
   });
 
-  it('should reject negative default output price', () => {
+  it('should reject negative default output price (legacy v5)', () => {
     const errors = validateMetadata(
-      validMetadata({
+      validLegacyMetadata({
         providers: [
           {
             provider: 'test',
@@ -205,9 +242,9 @@ describe('validateMetadata', () => {
     expect(errors.some((e) => e.field.includes('defaultPricing.outputUsdPerMillion'))).toBe(true);
   });
 
-  it('should reject service pricing entries with missing output half', () => {
+  it('should reject service pricing entries with missing output half (legacy v5)', () => {
     const errors = validateMetadata(
-      validMetadata({
+      validLegacyMetadata({
         providers: [
           {
             provider: 'test',
@@ -230,9 +267,9 @@ describe('validateMetadata', () => {
     expect(errors.some((e) => e.field.includes('servicePricing.m.outputUsdPerMillion'))).toBe(true);
   });
 
-  it('should reject maxConcurrency < 1', () => {
+  it('should reject maxConcurrency < 1 (legacy v5)', () => {
     const errors = validateMetadata(
-      validMetadata({
+      validLegacyMetadata({
         providers: [
           {
             provider: 'test',
@@ -250,9 +287,9 @@ describe('validateMetadata', () => {
     expect(errors.some((e) => e.field.includes('maxConcurrency'))).toBe(true);
   });
 
-  it('should reject currentLoad > maxConcurrency', () => {
+  it('should reject currentLoad > maxConcurrency (legacy v5)', () => {
     const errors = validateMetadata(
-      validMetadata({
+      validLegacyMetadata({
         providers: [
           {
             provider: 'test',
@@ -310,8 +347,8 @@ describe('validateMetadata', () => {
     expect(errors.some((e) => e.field === 'publicAddress')).toBe(true);
   });
 
-  it('should reject categories for a service not listed by provider', () => {
-    const errors = validateMetadata(validMetadata({
+  it('should reject categories for a service not listed by provider (legacy v5)', () => {
+    const errors = validateMetadata(validLegacyMetadata({
       providers: [
         {
           provider: 'test',
@@ -331,8 +368,8 @@ describe('validateMetadata', () => {
     expect(errors.some((e) => e.field.includes('serviceCategories.m2'))).toBe(true);
   });
 
-  it('should allow service categories when provider declares wildcard services', () => {
-    const errors = validateMetadata(validMetadata({
+  it('should allow service categories when provider declares wildcard services (legacy v5)', () => {
+    const errors = validateMetadata(validLegacyMetadata({
       providers: [
         {
           provider: 'test',
@@ -352,8 +389,8 @@ describe('validateMetadata', () => {
     expect(errors.some((e) => e.field.includes('serviceCategories.any-model'))).toBe(false);
   });
 
-  it('should reject invalid service category value', () => {
-    const errors = validateMetadata(validMetadata({
+  it('should reject invalid service category value (legacy v5)', () => {
+    const errors = validateMetadata(validLegacyMetadata({
       providers: [
         {
           provider: 'test',
@@ -373,9 +410,9 @@ describe('validateMetadata', () => {
     expect(errors.some((e) => e.field.includes('serviceCategories.m1'))).toBe(true);
   });
 
-  it('should reject service category entries with service names exceeding max length', () => {
+  it('should reject service category entries with service names exceeding max length (legacy v5)', () => {
     const longServiceName = 'x'.repeat(MAX_SERVICE_NAME_LENGTH + 1);
-    const errors = validateMetadata(validMetadata({
+    const errors = validateMetadata(validLegacyMetadata({
       providers: [
         {
           provider: 'test',
@@ -395,8 +432,8 @@ describe('validateMetadata', () => {
     expect(errors.some((e) => e.field.includes('serviceCategories'))).toBe(true);
   });
 
-  it('should reject service API protocols for a service not listed by provider', () => {
-    const errors = validateMetadata(validMetadata({
+  it('should reject service API protocols for a service not listed by provider (legacy v5)', () => {
+    const errors = validateMetadata(validLegacyMetadata({
       providers: [
         {
           provider: 'test',
@@ -416,8 +453,8 @@ describe('validateMetadata', () => {
     expect(errors.some((e) => e.field.includes('serviceApiProtocols.m2'))).toBe(true);
   });
 
-  it('should allow service API protocols when provider declares wildcard services', () => {
-    const errors = validateMetadata(validMetadata({
+  it('should allow service API protocols when provider declares wildcard services (legacy v5)', () => {
+    const errors = validateMetadata(validLegacyMetadata({
       providers: [
         {
           provider: 'test',
@@ -437,8 +474,8 @@ describe('validateMetadata', () => {
     expect(errors.some((e) => e.field.includes('serviceApiProtocols.any-model'))).toBe(false);
   });
 
-  it('should reject unsupported service API protocol values', () => {
-    const errors = validateMetadata(validMetadata({
+  it('should reject unsupported service API protocol values (legacy v5)', () => {
+    const errors = validateMetadata(validLegacyMetadata({
       providers: [
         {
           provider: 'test',
@@ -458,8 +495,8 @@ describe('validateMetadata', () => {
     expect(errors.some((e) => e.field.includes('serviceApiProtocols.m1'))).toBe(true);
   });
 
-  it('should reject too many service API protocols per service', () => {
-    const errors = validateMetadata(validMetadata({
+  it('should reject too many service API protocols per service (legacy v5)', () => {
+    const errors = validateMetadata(validLegacyMetadata({
       providers: [
         {
           provider: 'test',
@@ -481,9 +518,9 @@ describe('validateMetadata', () => {
     expect(errors.some((e) => e.field.includes('serviceApiProtocols.m1'))).toBe(true);
   });
 
-  it('should reject service API protocol entries with service names exceeding max length', () => {
+  it('should reject service API protocol entries with service names exceeding max length (legacy v5)', () => {
     const longServiceName = 'x'.repeat(MAX_SERVICE_NAME_LENGTH + 1);
-    const errors = validateMetadata(validMetadata({
+    const errors = validateMetadata(validLegacyMetadata({
       providers: [
         {
           provider: 'test',

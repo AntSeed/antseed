@@ -6,19 +6,14 @@ function makePeer(overrides?: Partial<PeerInfo>): PeerInfo {
   return {
     peerId: 'a'.repeat(64) as PeerInfo['peerId'],
     lastSeen: Date.now(),
-    providers: ['anthropic'],
+    services: [
+      {
+        name: 'claude-3-opus',
+        pricing: { inputUsdPerMillion: 10, outputUsdPerMillion: 10 },
+      },
+    ],
     reputationScore: 80,
     trustScore: 80,
-    defaultInputUsdPerMillion: 10,
-    defaultOutputUsdPerMillion: 10,
-    providerPricing: {
-      anthropic: {
-        defaults: {
-          inputUsdPerMillion: 10,
-          outputUsdPerMillion: 10,
-        },
-      },
-    },
     maxConcurrency: 10,
     currentLoad: 1,
     ...overrides,
@@ -37,7 +32,7 @@ function makeRequest(service?: string): SerializedHttpRequest {
 }
 
 describe('LocalRouter', () => {
-  it('selects cheapest peer regardless of provider name', () => {
+  it('selects cheapest peer regardless of service name', () => {
     const router = new LocalRouter({
       maxPricing: {
         defaults: { inputUsdPerMillion: 1_000, outputUsdPerMillion: 1_000 },
@@ -46,25 +41,15 @@ describe('LocalRouter', () => {
 
     const expensive = makePeer({
       peerId: '1'.repeat(64) as PeerInfo['peerId'],
-      providers: ['anthropic'],
-      providerPricing: {
-        anthropic: {
-          defaults: { inputUsdPerMillion: 100, outputUsdPerMillion: 100 },
-        },
-      },
-      defaultInputUsdPerMillion: 100,
-      defaultOutputUsdPerMillion: 100,
+      services: [
+        { name: 'claude-3-opus', pricing: { inputUsdPerMillion: 100, outputUsdPerMillion: 100 } },
+      ],
     });
     const cheap = makePeer({
       peerId: '2'.repeat(64) as PeerInfo['peerId'],
-      providers: ['openai'],
-      providerPricing: {
-        openai: {
-          defaults: { inputUsdPerMillion: 1, outputUsdPerMillion: 1 },
-        },
-      },
-      defaultInputUsdPerMillion: 1,
-      defaultOutputUsdPerMillion: 1,
+      services: [
+        { name: 'gpt-4o', pricing: { inputUsdPerMillion: 1, outputUsdPerMillion: 1 } },
+      ],
     });
 
     const selected = router.selectPeer(makeRequest('claude-sonnet-4-5-20250929'), [expensive, cheap]);
@@ -80,19 +65,15 @@ describe('LocalRouter', () => {
 
     const overpricedOutputPeer = makePeer({
       peerId: '1'.repeat(64) as PeerInfo['peerId'],
-      providerPricing: {
-        anthropic: {
-          defaults: { inputUsdPerMillion: 5, outputUsdPerMillion: 20 },
-        },
-      },
-      defaultInputUsdPerMillion: 5,
-      defaultOutputUsdPerMillion: 20,
+      services: [
+        { name: 'claude-3-opus', pricing: { inputUsdPerMillion: 5, outputUsdPerMillion: 20 } },
+      ],
     });
 
     expect(router.selectPeer(makeRequest('claude-sonnet-4-5-20250929'), [overpricedOutputPeer])).toBeNull();
   });
 
-  it('uses service-specific seller offer pricing when request service is present', () => {
+  it('uses service-specific pricing when request service matches', () => {
     const router = new LocalRouter({
       maxPricing: {
         defaults: { inputUsdPerMillion: 1_000, outputUsdPerMillion: 1_000 },
@@ -101,36 +82,24 @@ describe('LocalRouter', () => {
 
     const peerA = makePeer({
       peerId: '1'.repeat(64) as PeerInfo['peerId'],
-      providerPricing: {
-        anthropic: {
-          defaults: { inputUsdPerMillion: 10, outputUsdPerMillion: 10 },
-          services: {
-            'service-a': { inputUsdPerMillion: 90, outputUsdPerMillion: 90 },
-          },
-        },
-      },
-      defaultInputUsdPerMillion: 10,
-      defaultOutputUsdPerMillion: 10,
+      services: [
+        { name: 'service-a', pricing: { inputUsdPerMillion: 90, outputUsdPerMillion: 90 } },
+        { name: 'claude-3-opus', pricing: { inputUsdPerMillion: 10, outputUsdPerMillion: 10 } },
+      ],
     });
     const peerB = makePeer({
       peerId: '2'.repeat(64) as PeerInfo['peerId'],
-      providerPricing: {
-        anthropic: {
-          defaults: { inputUsdPerMillion: 20, outputUsdPerMillion: 20 },
-          services: {
-            'service-a': { inputUsdPerMillion: 5, outputUsdPerMillion: 5 },
-          },
-        },
-      },
-      defaultInputUsdPerMillion: 20,
-      defaultOutputUsdPerMillion: 20,
+      services: [
+        { name: 'service-a', pricing: { inputUsdPerMillion: 5, outputUsdPerMillion: 5 } },
+        { name: 'claude-3-opus', pricing: { inputUsdPerMillion: 20, outputUsdPerMillion: 20 } },
+      ],
     });
 
     const selected = router.selectPeer(makeRequest('service-a'), [peerA, peerB]);
     expect(selected?.peerId).toBe(peerB.peerId);
   });
 
-  it('falls back to provider defaults when request service is absent', () => {
+  it('falls back to first service pricing when request service is absent', () => {
     const router = new LocalRouter({
       maxPricing: {
         defaults: { inputUsdPerMillion: 1_000, outputUsdPerMillion: 1_000 },
@@ -139,26 +108,15 @@ describe('LocalRouter', () => {
 
     const expensiveDefault = makePeer({
       peerId: '1'.repeat(64) as PeerInfo['peerId'],
-      providerPricing: {
-        anthropic: {
-          defaults: { inputUsdPerMillion: 40, outputUsdPerMillion: 40 },
-          services: {
-            'service-a': { inputUsdPerMillion: 1, outputUsdPerMillion: 1 },
-          },
-        },
-      },
-      defaultInputUsdPerMillion: 40,
-      defaultOutputUsdPerMillion: 40,
+      services: [
+        { name: 'claude-3-opus', pricing: { inputUsdPerMillion: 40, outputUsdPerMillion: 40 } },
+      ],
     });
     const cheapDefault = makePeer({
       peerId: '2'.repeat(64) as PeerInfo['peerId'],
-      providerPricing: {
-        anthropic: {
-          defaults: { inputUsdPerMillion: 5, outputUsdPerMillion: 5 },
-        },
-      },
-      defaultInputUsdPerMillion: 5,
-      defaultOutputUsdPerMillion: 5,
+      services: [
+        { name: 'claude-3-opus', pricing: { inputUsdPerMillion: 5, outputUsdPerMillion: 5 } },
+      ],
     });
 
     const selected = router.selectPeer(makeRequest(undefined), [expensiveDefault, cheapDefault]);
@@ -237,43 +195,37 @@ describe('LocalRouter', () => {
     expect(selected?.peerId).toBe(newSeller.peerId);
   });
 
-  it('ignores empty provider entries when selecting a peer provider', () => {
+  it('ignores empty service entries when selecting a peer service', () => {
     const router = new LocalRouter();
-    const malformedProviders = makePeer({
+    const malformedServices = makePeer({
       peerId: '1'.repeat(64) as PeerInfo['peerId'],
-      providers: ['', 'anthropic'],
+      services: [
+        { name: '', pricing: { inputUsdPerMillion: 10, outputUsdPerMillion: 10 } },
+        { name: 'claude-3-opus', pricing: { inputUsdPerMillion: 10, outputUsdPerMillion: 10 } },
+      ],
     });
 
-    const selected = router.selectPeer(makeRequest(), [malformedProviders]);
-    expect(selected?.peerId).toBe(malformedProviders.peerId);
+    const selected = router.selectPeer(makeRequest(), [malformedServices]);
+    expect(selected?.peerId).toBe(malformedServices.peerId);
   });
 
-  it('selects correct provider for pricing on multi-provider peer', () => {
+  it('selects correct service for pricing on multi-service peer', () => {
     const router = new LocalRouter({
       maxPricing: {
         defaults: { inputUsdPerMillion: 50, outputUsdPerMillion: 50 },
       },
     });
 
-    // Peer has two providers: anthropic (expensive) and openai (cheap)
+    // Peer has two services: claude (expensive) and gpt-4o (cheap)
     const multiPeer = makePeer({
       peerId: '1'.repeat(64) as PeerInfo['peerId'],
-      providers: ['anthropic', 'openai'],
-      providerPricing: {
-        anthropic: {
-          defaults: { inputUsdPerMillion: 100, outputUsdPerMillion: 100 },
-          services: { 'claude-sonnet-4-5-20250929': { inputUsdPerMillion: 100, outputUsdPerMillion: 100 } },
-        },
-        openai: {
-          defaults: { inputUsdPerMillion: 10, outputUsdPerMillion: 10 },
-          services: { 'gpt-4o': { inputUsdPerMillion: 10, outputUsdPerMillion: 10 } },
-        },
-      },
-      defaultInputUsdPerMillion: 100,
-      defaultOutputUsdPerMillion: 100,
+      services: [
+        { name: 'claude-sonnet-4-5-20250929', pricing: { inputUsdPerMillion: 100, outputUsdPerMillion: 100 } },
+        { name: 'gpt-4o', pricing: { inputUsdPerMillion: 10, outputUsdPerMillion: 10 } },
+      ],
     });
 
-    // Requesting gpt-4o should use openai pricing (10), not anthropic (100 > max 50)
+    // Requesting gpt-4o should use gpt-4o pricing (10), within max 50
     const selected = router.selectPeer(makeRequest('gpt-4o'), [multiPeer]);
     expect(selected?.peerId).toBe(multiPeer.peerId);
   });

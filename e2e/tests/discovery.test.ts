@@ -85,12 +85,9 @@ describe('Discovery: seller announces, buyer discovers via DHT', () => {
 
     const sellerPeer = peers.find((p) => p.peerId === sellerPeerId);
     expect(sellerPeer).toBeDefined();
-    expect(sellerPeer!.providerPricing).toBeDefined();
-    const anthropicPricing = sellerPeer!.providerPricing?.['anthropic'];
-    expect(anthropicPricing).toBeDefined();
-    expect(anthropicPricing?.defaults.inputUsdPerMillion).toBeGreaterThanOrEqual(0);
-    expect(anthropicPricing?.defaults.outputUsdPerMillion).toBeGreaterThanOrEqual(0);
-    expect(sellerPeer!.defaultInputUsdPerMillion).toBeGreaterThanOrEqual(0);
-    expect(sellerPeer!.defaultOutputUsdPerMillion).toBeGreaterThanOrEqual(0);
+    expect(sellerPeer!.services.length).toBeGreaterThan(0);
+    const firstService = sellerPeer!.services[0]!;
+    expect(firstService.pricing.inputUsdPerMillion).toBeGreaterThanOrEqual(0);
+    expect(firstService.pricing.outputUsdPerMillion).toBeGreaterThanOrEqual(0);
   });
 });

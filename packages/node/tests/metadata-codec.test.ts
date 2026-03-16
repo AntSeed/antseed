@@ -2,10 +2,41 @@ import { describe, it, expect } from 'vitest';
 import { encodeMetadata, decodeMetadata, encodeMetadataForSigning } from '../src/discovery/metadata-codec.js';
 import { METADATA_VERSION, type PeerMetadata } from '../src/discovery/peer-metadata.js';
 
-function makeMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
+function makeV6Metadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
   return {
     peerId: 'a'.repeat(64) as any,
     version: METADATA_VERSION,
+    services: [
+      {
+        name: 'claude-3-opus',
+        pricing: {
+          inputUsdPerMillion: 15,
+          outputUsdPerMillion: 75,
+        },
+      },
+      {
+        name: 'claude-3-sonnet',
+        pricing: {
+          inputUsdPerMillion: 3,
+          outputUsdPerMillion: 15,
+        },
+      },
+    ],
+    providers: [],
+    maxConcurrency: 10,
+    currentLoad: 3,
+    region: 'us-east-1',
+    timestamp: 1700000000000,
+    signature: 'b'.repeat(128),
+    ...overrides,
+  };
+}
+
+function makeLegacyMetadata(version: number, overrides?: Partial<PeerMetadata>): PeerMetadata {
+  return {
+    peerId: 'a'.repeat(64) as any,
+    version,
+    services: [],
     providers: [
       {
         provider: 'anthropic',
@@ -24,6 +55,8 @@ function makeMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
         currentLoad: 3,
       },
     ],
+    maxConcurrency: 10,
+    currentLoad: 3,
     region: 'us-east-1',
     timestamp: 1700000000000,
     signature: 'b'.repeat(128),
@@ -31,129 +64,74 @@ function makeMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
   };
 }
 
-describe('encodeMetadata / decodeMetadata', () => {
-  it('should round-trip a basic metadata object', () => {
-    const original = makeMetadata();
+describe('v6 service-centric encodeMetadata / decodeMetadata', () => {
+  it('should round-trip a basic v6 metadata object', () => {
+    const original = makeV6Metadata();
     const encoded = encodeMetadata(original);
     const decoded = decodeMetadata(encoded);
 
-    expect(decoded.version).toBe(original.version);
+    expect(decoded.version).toBe(METADATA_VERSION);
     expect(decoded.peerId).toBe(original.peerId);
     expect(decoded.region).toBe(original.region);
     expect(decoded.timestamp).toBe(original.timestamp);
     expect(decoded.signature).toBe(original.signature);
-    expect(decoded.providers).toHaveLength(1);
-    expect(decoded.providers[0]!.provider).toBe('anthropic');
-    expect(decoded.providers[0]!.services).toEqual(['claude-3-opus', 'claude-3-sonnet']);
-    expect(decoded.providers[0]!.maxConcurrency).toBe(10);
-    expect(decoded.providers[0]!.currentLoad).toBe(3);
+    expect(decoded.services).toHaveLength(2);
+    expect(decoded.services[0]!.name).toBe('claude-3-opus');
+    expect(decoded.services[1]!.name).toBe('claude-3-sonnet');
+    expect(decoded.maxConcurrency).toBe(10);
+    expect(decoded.currentLoad).toBe(3);
+    expect(decoded.providers).toEqual([]);
   });
 
-  it('should handle float32 precision for prices', () => {
-    const original = makeMetadata();
-    const encoded = encodeMetadata(original);
-    const decoded = decodeMetadata(encoded);
-    // Float32 has limited precision — allow small delta
-    expect(decoded.providers[0]!.defaultPricing.inputUsdPerMillion).toBeCloseTo(15, 3);
-    expect(decoded.providers[0]!.defaultPricing.outputUsdPerMillion).toBeCloseTo(75, 3);
-    expect(decoded.providers[0]!.servicePricing?.['claude-3-opus']?.inputUsdPerMillion).toBeCloseTo(18, 3);
-    expect(decoded.providers[0]!.servicePricing?.['claude-3-opus']?.outputUsdPerMillion).toBeCloseTo(90, 3);
-  });
-
-  it('should round-trip multiple providers', () => {
-    const original = makeMetadata({
-      providers: [
-        {
-          provider: 'openai',
-          services: ['gpt-4'],
-          defaultPricing: {
-            inputUsdPerMillion: 10,
-            outputUsdPerMillion: 30,
-          },
-          maxConcurrency: 5,
-          currentLoad: 0,
-        },
-        {
-          provider: 'anthropic',
-          services: ['claude-3-haiku'],
-          defaultPricing: {
-            inputUsdPerMillion: 1,
-            outputUsdPerMillion: 5,
-          },
-          servicePricing: {
-            'claude-3-haiku': {
-              inputUsdPerMillion: 0.9,
-              outputUsdPerMillion: 4.5,
-            },
-          },
-          maxConcurrency: 20,
-          currentLoad: 10,
-        },
-      ],
-    });
+  it('should handle float32 precision for service prices', () => {
+    const original = makeV6Metadata();
     const decoded = decodeMetadata(encodeMetadata(original));
-    expect(decoded.providers).toHaveLength(2);
-    expect(decoded.providers[0]!.provider).toBe('openai');
-    expect(decoded.providers[1]!.provider).toBe('anthropic');
+    expect(decoded.services[0]!.pricing.inputUsdPerMillion).toBeCloseTo(15, 3);
+    expect(decoded.services[0]!.pricing.outputUsdPerMillion).toBeCloseTo(75, 3);
   });
 
-  it('should round-trip zero providers', () => {
-    const original = makeMetadata({ providers: [] });
-    const decoded = decodeMetadata(encodeMetadata(original));
-    expect(decoded.providers).toHaveLength(0);
-  });
-
-  it('should round-trip empty services list', () => {
-    const original = makeMetadata({
-      providers: [
-        {
-          provider: 'test',
-          services: [],
-          defaultPricing: {
-            inputUsdPerMillion: 0,
-            outputUsdPerMillion: 0,
-          },
-          maxConcurrency: 1,
-          currentLoad: 0,
-        },
-      ],
-    });
-    const decoded = decodeMetadata(encodeMetadata(original));
-    expect(decoded.providers[0]!.services).toEqual([]);
-  });
-
-  it('should round-trip display name, service categories, and service API protocols', () => {
-    const original = makeMetadata({
+  it('should round-trip services with protocols and categories', () => {
+    const original = makeV6Metadata({
       displayName: 'Node A',
       publicAddress: 'peer.example.com:6882',
-      providers: [
+      services: [
         {
-          provider: 'anthropic',
-          services: ['claude-3-opus'],
-          defaultPricing: {
-            inputUsdPerMillion: 15,
-            outputUsdPerMillion: 75,
-          },
-          serviceCategories: {
-            'claude-3-opus': ['privacy', 'coding'],
-          },
-          serviceApiProtocols: {
-            'claude-3-opus': ['openai-chat-completions', 'anthropic-messages'],
-          },
-          maxConcurrency: 10,
-          currentLoad: 3,
+          name: 'claude-3-opus',
+          pricing: { inputUsdPerMillion: 15, outputUsdPerMillion: 75 },
+          protocols: ['openai-chat-completions', 'anthropic-messages'],
+          categories: ['privacy', 'coding'],
         },
       ],
     });
     const decoded = decodeMetadata(encodeMetadata(original));
     expect(decoded.displayName).toBe('Node A');
     expect(decoded.publicAddress).toBe('peer.example.com:6882');
-    expect(decoded.providers[0]!.serviceCategories?.['claude-3-opus']).toEqual(['coding', 'privacy']);
-    expect(decoded.providers[0]!.serviceApiProtocols?.['claude-3-opus']).toEqual(['anthropic-messages', 'openai-chat-completions']);
+    expect(decoded.services[0]!.protocols).toEqual(['anthropic-messages', 'openai-chat-completions']);
+    expect(decoded.services[0]!.categories).toEqual(['coding', 'privacy']);
   });
 
-  it('should decode offerings and optional trailer fields after v2 provider pricing payload', () => {
-    const original = makeMetadata({
+  it('should round-trip zero services', () => {
+    const original = makeV6Metadata({ services: [] });
+    const decoded = decodeMetadata(encodeMetadata(original));
+    expect(decoded.services).toHaveLength(0);
+  });
+
+  it('should round-trip services without protocols or categories', () => {
+    const original = makeV6Metadata({
+      services: [
+        {
+          name: 'gpt-4',
+          pricing: { inputUsdPerMillion: 10, outputUsdPerMillion: 30 },
+        },
+      ],
+    });
+    const decoded = decodeMetadata(encodeMetadata(original));
+    expect(decoded.services[0]!.protocols).toBeUndefined();
+    expect(decoded.services[0]!.categories).toBeUndefined();
+  });
+
+  it('should round-trip offerings and on-chain data with v6', () => {
+    const original = makeV6Metadata({
       offerings: [
         {
           capability: 'skill',
@@ -175,26 +153,86 @@ describe('encodeMetadata / decodeMetadata', () => {
     expect(decoded.onChainSessionCount).toBe(123);
     expect(decoded.onChainDisputeCount).toBe(2);
   });
+});
 
-  it('should retain backward-compatible binary layout for metadata version 2', () => {
-    const v2 = makeMetadata({
-      version: 2,
-      displayName: 'legacy',
+describe('v5 backward-compatible decoding', () => {
+  it('should decode v5 provider-centric metadata and convert to services', () => {
+    const original = makeLegacyMetadata(5, {
+      publicAddress: 'peer.example.com:6882',
+    });
+    const encoded = encodeMetadata(original);
+    const decoded = decodeMetadata(encoded);
+
+    expect(decoded.version).toBe(5);
+    // Legacy providers should be preserved
+    expect(decoded.providers).toHaveLength(1);
+    expect(decoded.providers[0]!.provider).toBe('anthropic');
+    expect(decoded.providers[0]!.services).toEqual(['claude-3-opus', 'claude-3-sonnet']);
+    // Services should be flattened from providers
+    expect(decoded.services).toHaveLength(2);
+    expect(decoded.services[0]!.name).toBe('claude-3-opus');
+    expect(decoded.services[0]!.pricing.inputUsdPerMillion).toBeCloseTo(18, 3); // service pricing
+    expect(decoded.services[1]!.name).toBe('claude-3-sonnet');
+    expect(decoded.services[1]!.pricing.inputUsdPerMillion).toBeCloseTo(15, 3); // default pricing
+    // Peer-level concurrency is summed from providers
+    expect(decoded.maxConcurrency).toBe(10);
+    expect(decoded.currentLoad).toBe(3);
+  });
+
+  it('should decode v5 with multiple providers and flatten services', () => {
+    const original = makeLegacyMetadata(5, {
+      providers: [
+        {
+          provider: 'openai',
+          services: ['gpt-4'],
+          defaultPricing: { inputUsdPerMillion: 10, outputUsdPerMillion: 30 },
+          maxConcurrency: 5,
+          currentLoad: 0,
+        },
+        {
+          provider: 'anthropic',
+          services: ['claude-3-haiku'],
+          defaultPricing: { inputUsdPerMillion: 1, outputUsdPerMillion: 5 },
+          maxConcurrency: 20,
+          currentLoad: 10,
+        },
+      ],
+    });
+    const decoded = decodeMetadata(encodeMetadata(original));
+    expect(decoded.providers).toHaveLength(2);
+    expect(decoded.services).toHaveLength(2);
+    expect(decoded.services[0]!.name).toBe('gpt-4');
+    expect(decoded.services[1]!.name).toBe('claude-3-haiku');
+    expect(decoded.maxConcurrency).toBe(25);
+    expect(decoded.currentLoad).toBe(10);
+  });
+
+  it('should decode v5 with service categories and protocols', () => {
+    const original = makeLegacyMetadata(5, {
+      displayName: 'Node A',
+      publicAddress: 'peer.example.com:6882',
       providers: [
         {
           provider: 'anthropic',
           services: ['claude-3-opus'],
-          defaultPricing: {
-            inputUsdPerMillion: 15,
-            outputUsdPerMillion: 75,
-          },
-          serviceCategories: {
-            'claude-3-opus': ['coding'],
-          },
+          defaultPricing: { inputUsdPerMillion: 15, outputUsdPerMillion: 75 },
+          serviceCategories: { 'claude-3-opus': ['privacy', 'coding'] },
+          serviceApiProtocols: { 'claude-3-opus': ['openai-chat-completions', 'anthropic-messages'] },
           maxConcurrency: 10,
           currentLoad: 3,
         },
       ],
+    });
+    const decoded = decodeMetadata(encodeMetadata(original));
+    expect(decoded.services[0]!.categories).toEqual(['coding', 'privacy']);
+    expect(decoded.services[0]!.protocols).toEqual(['anthropic-messages', 'openai-chat-completions']);
+  });
+});
+
+describe('legacy backward-compatible binary layout', () => {
+  it('should retain backward-compatible binary layout for metadata version 2', () => {
+    const v2 = makeLegacyMetadata(2, {
+      displayName: 'legacy',
     });
     const decoded = decodeMetadata(encodeMetadata(v2));
     expect(decoded.version).toBe(2);
@@ -204,19 +242,13 @@ describe('encodeMetadata / decodeMetadata', () => {
   });
 
   it('should retain backward-compatible binary layout for metadata version 3', () => {
-    const v3 = makeMetadata({
-      version: 3,
+    const v3 = makeLegacyMetadata(3, {
       providers: [
         {
           provider: 'openai',
           services: ['service-a'],
-          defaultPricing: {
-            inputUsdPerMillion: 1,
-            outputUsdPerMillion: 2,
-          },
-          serviceApiProtocols: {
-            'service-a': ['openai-chat-completions'],
-          },
+          defaultPricing: { inputUsdPerMillion: 1, outputUsdPerMillion: 2 },
+          serviceApiProtocols: { 'service-a': ['openai-chat-completions'] },
           maxConcurrency: 3,
           currentLoad: 1,
         },
@@ -228,8 +260,7 @@ describe('encodeMetadata / decodeMetadata', () => {
   });
 
   it('should retain backward-compatible binary layout for metadata version 4', () => {
-    const v4 = makeMetadata({
-      version: 4,
+    const v4 = makeLegacyMetadata(4, {
       publicAddress: 'peer.example.com:6882',
     });
     const decoded = decodeMetadata(encodeMetadata(v4));
@@ -240,7 +271,7 @@ describe('encodeMetadata / decodeMetadata', () => {
 
 describe('encodeMetadataForSigning', () => {
   it('should produce a shorter buffer than encodeMetadata (no signature)', () => {
-    const metadata = makeMetadata();
+    const metadata = makeV6Metadata();
     const forSigning = encodeMetadataForSigning(metadata);
     const full = encodeMetadata(metadata);
     // Full includes 64 bytes of signature
@@ -248,7 +279,7 @@ describe('encodeMetadataForSigning', () => {
   });
 
   it('should produce deterministic output for the same input', () => {
-    const metadata = makeMetadata();
+    const metadata = makeV6Metadata();
     const a = encodeMetadataForSigning(metadata);
     const b = encodeMetadataForSigning(metadata);
     expect(a).toEqual(b);

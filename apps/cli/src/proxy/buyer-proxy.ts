@@ -18,7 +18,6 @@ import {
   createOpenAIChatToAnthropicStreamingAdapter,
   createOpenAIChatToResponsesStreamingAdapter,
   detectRequestServiceApiProtocol,
-  inferProviderDefaultServiceApiProtocols,
   type ServiceApiProtocol,
   selectTargetProtocolForRequest,
   type StreamingResponseAdapter,
@@ -94,6 +93,7 @@ export type CandidatePeerRouteSelection = {
   routePlanByPeerId: Map<string, PeerProtocolRoutePlan>
 }
 
+/** @deprecated Kept as fallback for backward compat with older headers. */
 function getExplicitProviderOverride(request: SerializedHttpRequest): string | null {
   const provider = request.headers['x-antseed-provider']?.trim().toLowerCase()
   return provider && provider.length > 0 ? provider : null
@@ -117,96 +117,78 @@ function getPreferredPeerIdHint(request: SerializedHttpRequest): string | null {
   return header
 }
 
-function getPeerProviderProtocols(
+function getPeerServiceProtocols(
   peer: PeerInfo,
-  provider: string,
   requestedService: string | null,
 ): ServiceApiProtocol[] {
   const normalizedRequestedService = requestedService?.trim()
-  const fromMetadata = (
-    peer as PeerInfo & {
-      providerServiceApiProtocols?: Record<string, { services: Record<string, ServiceApiProtocol[]> }>
-    }
-  ).providerServiceApiProtocols?.[provider]?.services
-  if (fromMetadata) {
+
+  if (peer.services.length > 0) {
     if (normalizedRequestedService) {
-      const directMatchKey = Object.keys(fromMetadata).find(
-        (key) => key.toLowerCase() === normalizedRequestedService.toLowerCase(),
+      const match = peer.services.find(
+        (s) => s.name.toLowerCase() === normalizedRequestedService.toLowerCase(),
       )
-      if (directMatchKey && fromMetadata[directMatchKey]?.length) {
+      if (match?.protocols?.length) {
         log(
-          `Service match: peer ${peer.peerId.slice(0, 8)} provider=${provider} service="${normalizedRequestedService}" `
-          + `→ [${fromMetadata[directMatchKey]!.join(',')}]`,
+          `Service match: peer ${peer.peerId.slice(0, 8)} service="${normalizedRequestedService}" `
+          + `→ [${match.protocols.join(',')}]`,
         )
-        return Array.from(new Set(fromMetadata[directMatchKey]!))
+        return Array.from(new Set(match.protocols))
       }
 
-      if (Object.keys(fromMetadata).length > 0) {
+      // Strict miss: peer has service metadata but not for this service
+      if (peer.services.some((s) => s.protocols && s.protocols.length > 0)) {
         log(
-          `Service strict-miss: peer ${peer.peerId.slice(0, 8)} provider=${provider} service="${normalizedRequestedService}" `
+          `Service strict-miss: peer ${peer.peerId.slice(0, 8)} service="${normalizedRequestedService}" `
           + 'not in metadata; excluding from route candidates.',
         )
         return []
       }
     }
 
-    const merged = Object.values(fromMetadata).flat()
+    // Merge all service protocols
+    const merged = peer.services.flatMap((s) => s.protocols ?? [])
     if (merged.length > 0) {
       if (requestedService) {
         log(
-          `Service hint miss: peer ${peer.peerId.slice(0, 8)} provider=${provider} service="${requestedService}" not in metadata; falling back to provider protocol set [${Array.from(new Set(merged)).join(',')}]`,
+          `Service hint miss: peer ${peer.peerId.slice(0, 8)} service="${requestedService}" not in metadata; falling back to peer protocol set [${Array.from(new Set(merged)).join(',')}]`,
         )
       }
       return Array.from(new Set(merged))
     }
   }
 
-  const inferred = inferProviderDefaultServiceApiProtocols(provider)
-  log(`No metadata: peer ${peer.peerId.slice(0, 8)} provider=${provider} → inferred [${inferred.join(',')}]`)
-  return inferred
+  log(`No metadata: peer ${peer.peerId.slice(0, 8)} → no protocol info`)
+  return []
 }
 
 function resolvePeerRoutePlan(
   peer: PeerInfo,
   requestProtocol: ServiceApiProtocol | null,
   requestedService: string | null,
-  explicitProvider: string | null,
+  _explicitProvider: string | null,
 ): PeerProtocolRoutePlan | null {
-  const providers = peer.providers
-    .map((provider) => provider.trim().toLowerCase())
-    .filter((provider) => provider.length > 0)
+  // Use the first available service name as the "provider" label for route plans
+  const serviceNames = peer.services
+    .map((s) => s.name.trim().toLowerCase())
+    .filter((name) => name.length > 0)
 
-  if (providers.length === 0) {
+  if (serviceNames.length === 0) {
     return null
   }
 
-  if (explicitProvider && !providers.includes(explicitProvider)) {
-    return null
-  }
-
-  const candidates = explicitProvider ? [explicitProvider] : providers
+  const serviceName = serviceNames[0]!
 
   if (!requestProtocol) {
-    const provider = candidates[0]
-    return provider ? { provider, selection: null } : null
+    return { provider: serviceName, selection: null }
   }
 
-  let transformedFallback: PeerProtocolRoutePlan | null = null
-  for (const provider of candidates) {
-    const supportedProtocols = getPeerProviderProtocols(peer, provider, requestedService)
-    const selection = selectTargetProtocolForRequest(requestProtocol, supportedProtocols)
-    if (!selection) {
-      continue
-    }
-    if (!selection.requiresTransform) {
-      return { provider, selection }
-    }
-    if (!transformedFallback) {
-      transformedFallback = { provider, selection }
-    }
+  const supportedProtocols = getPeerServiceProtocols(peer, requestedService)
+  const selection = selectTargetProtocolForRequest(requestProtocol, supportedProtocols)
+  if (!selection) {
+    return null
   }
-
-  return transformedFallback
+  return { provider: serviceName, selection }
 }
 
 export function selectCandidatePeersForRouting(
@@ -372,19 +354,16 @@ function parseJsonUsage(body: Uint8Array): { inputTokens: number; outputTokens: 
   }
 }
 
-function pickProviderForPeer(peer: PeerInfo, request: SerializedHttpRequest): string {
-  const explicit = getExplicitProviderOverride(request)
-  if (explicit) {
-    return explicit
+function pickServiceForPeer(peer: PeerInfo, request: SerializedHttpRequest): string {
+  const service = extractRequestedService(request)
+  if (service) {
+    const match = peer.services.find((s) => s.name === service)
+    if (match) return match.name
   }
 
-  if (request.path.startsWith('/v1/messages') && peer.providers.includes('anthropic')) {
-    return 'anthropic'
-  }
-
-  const first = peer.providers[0]?.trim()
-  if (first && first.length > 0) {
-    return first.toLowerCase()
+  const first = peer.services[0]
+  if (first) {
+    return first.name
   }
 
   return 'unknown'
@@ -505,7 +484,7 @@ function summarizeMessageShape(messagesRaw: unknown): string {
 function summarizeRequestShape(request: SerializedHttpRequest): string {
   const contentType = (request.headers['content-type'] ?? request.headers['Content-Type'] ?? '').toLowerCase()
   const accept = (request.headers['accept'] ?? request.headers['Accept'] ?? '').toLowerCase()
-  const providerHeader = request.headers['x-antseed-provider'] ?? 'none'
+  const providerHeader = request.headers['x-antseed-provider'] ?? request.headers['x-antseed-service'] ?? 'none'
   const preferPeerHeader = request.headers['x-antseed-prefer-peer'] ?? 'none'
   const service = extractRequestedService(request) ?? 'none'
   const wantsStreaming = requestWantsStreaming(request.headers, request.body)
@@ -606,30 +585,34 @@ function setPeerIdentityHeaders(headers: Record<string, string>, selectedPeer: P
   if (selectedPeer.publicAddress) {
     headers['x-antseed-peer-address'] = selectedPeer.publicAddress
   }
-  if (selectedPeer.providers.length > 0) {
-    headers['x-antseed-peer-providers'] = selectedPeer.providers.join(',')
+  if (selectedPeer.services.length > 0) {
+    headers['x-antseed-peer-services'] = selectedPeer.services.map((s) => s.name).join(',')
   }
 }
 
-function resolvePeerPricing(peer: PeerInfo, provider: string, service: string | null): { inputUsdPerMillion: number | null; outputUsdPerMillion: number | null } {
-  const providerPricing = peer.providerPricing?.[provider]
-  if (providerPricing) {
-    const servicePricing = service ? providerPricing.services?.[service] : undefined
-    if (servicePricing) {
+function resolvePeerPricing(peer: PeerInfo, service: string | null): { inputUsdPerMillion: number | null; outputUsdPerMillion: number | null } {
+  if (service) {
+    const match = peer.services.find((s) => s.name === service)
+    if (match) {
       return {
-        inputUsdPerMillion: toFiniteNumberOrNull(servicePricing.inputUsdPerMillion),
-        outputUsdPerMillion: toFiniteNumberOrNull(servicePricing.outputUsdPerMillion),
+        inputUsdPerMillion: toFiniteNumberOrNull(match.pricing.inputUsdPerMillion),
+        outputUsdPerMillion: toFiniteNumberOrNull(match.pricing.outputUsdPerMillion),
       }
     }
+  }
+
+  // Fall back to first service
+  const first = peer.services[0]
+  if (first) {
     return {
-      inputUsdPerMillion: toFiniteNumberOrNull(providerPricing.defaults.inputUsdPerMillion),
-      outputUsdPerMillion: toFiniteNumberOrNull(providerPricing.defaults.outputUsdPerMillion),
+      inputUsdPerMillion: toFiniteNumberOrNull(first.pricing.inputUsdPerMillion),
+      outputUsdPerMillion: toFiniteNumberOrNull(first.pricing.outputUsdPerMillion),
     }
   }
 
   return {
-    inputUsdPerMillion: toFiniteNumberOrNull(peer.defaultInputUsdPerMillion),
-    outputUsdPerMillion: toFiniteNumberOrNull(peer.defaultOutputUsdPerMillion),
+    inputUsdPerMillion: null,
+    outputUsdPerMillion: null,
   }
 }
 
@@ -639,9 +622,9 @@ function computeResponseTelemetry(
   responseBody: Uint8Array,
   selectedPeer: PeerInfo,
 ): ResponseTelemetry {
-  const provider = pickProviderForPeer(selectedPeer, request)
+  const provider = pickServiceForPeer(selectedPeer, request)
   const service = extractRequestedService(request)
-  const pricing = resolvePeerPricing(selectedPeer, provider, service)
+  const pricing = resolvePeerPricing(selectedPeer, service)
   const contentType = (responseHeaders['content-type'] ?? '').toLowerCase()
 
   const usageFromBody = contentType.includes('text/event-stream')
@@ -1070,25 +1053,47 @@ export class BuyerProxy {
         }
       }
 
-      const providers = typeof parsed.provider === 'string' && parsed.provider.trim().length > 0
-        ? [parsed.provider.trim()]
-        : []
       const defaultInputUsdPerMillion = Number(parsed.defaultInputUsdPerMillion)
       const defaultOutputUsdPerMillion = Number(parsed.defaultOutputUsdPerMillion)
-      const providerPricing = parsed.providerPricing && typeof parsed.providerPricing === 'object'
-        ? (parsed.providerPricing as PeerInfo['providerPricing'])
-        : undefined
+      const inputPrice = Number.isFinite(defaultInputUsdPerMillion) ? defaultInputUsdPerMillion : 0
+      const outputPrice = Number.isFinite(defaultOutputUsdPerMillion) ? defaultOutputUsdPerMillion : 0
 
       const peerId = parsed.peerId.toLowerCase()
+
+      // Build services from legacy provider pricing if available, otherwise create a generic service
+      const services: PeerInfo['services'] = []
+      if (parsed.providerPricing && typeof parsed.providerPricing === 'object') {
+        for (const providerEntry of Object.values(parsed.providerPricing as Record<string, unknown>)) {
+          if (!providerEntry || typeof providerEntry !== 'object') continue
+          const entry = providerEntry as { defaults?: { inputUsdPerMillion?: number; outputUsdPerMillion?: number }; services?: Record<string, { inputUsdPerMillion?: number; outputUsdPerMillion?: number }> }
+          if (entry.services) {
+            for (const [serviceName, pricing] of Object.entries(entry.services)) {
+              services.push({
+                name: serviceName,
+                pricing: {
+                  inputUsdPerMillion: pricing.inputUsdPerMillion ?? inputPrice,
+                  outputUsdPerMillion: pricing.outputUsdPerMillion ?? outputPrice,
+                },
+              })
+            }
+          }
+        }
+      }
+      if (services.length === 0) {
+        const providerName = typeof parsed.provider === 'string' && parsed.provider.trim().length > 0
+          ? parsed.provider.trim()
+          : 'unknown'
+        services.push({
+          name: providerName,
+          pricing: { inputUsdPerMillion: inputPrice, outputUsdPerMillion: outputPrice },
+        })
+      }
 
       return {
         peerId: peerId as PeerInfo['peerId'],
         lastSeen: Date.now(),
         publicAddress: `127.0.0.1:${Math.floor(signalingPort)}`,
-        providers,
-        defaultInputUsdPerMillion: Number.isFinite(defaultInputUsdPerMillion) ? defaultInputUsdPerMillion : 0,
-        defaultOutputUsdPerMillion: Number.isFinite(defaultOutputUsdPerMillion) ? defaultOutputUsdPerMillion : 0,
-        ...(providerPricing ? { providerPricing } : {}),
+        services,
       }
     } catch {
       return null
@@ -1174,16 +1179,17 @@ export class BuyerProxy {
     }
 
     const summarize = (peer: PeerInfo): string => {
-      const providers = peer.providers
-        .map((provider) => provider.trim())
-        .filter((provider) => provider.length > 0)
+      const serviceNames = peer.services
+        .map((s) => s.name.trim())
+        .filter((name) => name.length > 0)
       const trust = Number.isFinite(peer.trustScore) ? String(peer.trustScore) : 'n/a'
       const rep = Number.isFinite(peer.reputationScore) ? String(peer.reputationScore) : 'n/a'
       const onChain = Number.isFinite(peer.onChainReputation) ? String(peer.onChainReputation) : 'n/a'
-      const input = Number.isFinite(peer.defaultInputUsdPerMillion) ? String(peer.defaultInputUsdPerMillion) : 'n/a'
-      const output = Number.isFinite(peer.defaultOutputUsdPerMillion) ? String(peer.defaultOutputUsdPerMillion) : 'n/a'
+      const firstPricing = peer.services[0]?.pricing
+      const input = firstPricing && Number.isFinite(firstPricing.inputUsdPerMillion) ? String(firstPricing.inputUsdPerMillion) : 'n/a'
+      const output = firstPricing && Number.isFinite(firstPricing.outputUsdPerMillion) ? String(firstPricing.outputUsdPerMillion) : 'n/a'
 
-      return `${peer.peerId.slice(0, 8)} providers=[${providers.join(',') || 'none'}] trust=${trust} rep=${rep} onchain=${onChain} in=${input} out=${output}`
+      return `${peer.peerId.slice(0, 8)} services=[${serviceNames.join(',') || 'none'}] trust=${trust} rep=${rep} onchain=${onChain} in=${input} out=${output}`
     }
 
     const samples = peers.slice(0, 5).map((peer) => summarize(peer)).join(' | ')

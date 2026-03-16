@@ -92,12 +92,12 @@ export function registerBrowseCommand(program: Command): void {
           table.push([
             peer.displayName ?? chalk.dim('n/a'),
             chalk.dim(peer.peerId.slice(0, 12) + '...'),
-            peer.providers.join(', '),
-            peer.defaultInputUsdPerMillion !== undefined
-              ? `$${peer.defaultInputUsdPerMillion.toFixed(2)}`
+            peer.services.map((s) => s.name).join(', '),
+            peer.services[0]?.pricing.inputUsdPerMillion !== undefined
+              ? `$${peer.services[0].pricing.inputUsdPerMillion.toFixed(2)}`
               : chalk.dim('n/a'),
-            peer.defaultOutputUsdPerMillion !== undefined
-              ? `$${peer.defaultOutputUsdPerMillion.toFixed(2)}`
+            peer.services[0]?.pricing.outputUsdPerMillion !== undefined
+              ? `$${peer.services[0].pricing.outputUsdPerMillion.toFixed(2)}`
               : chalk.dim('n/a'),
             repColor(repLabel),
             load,

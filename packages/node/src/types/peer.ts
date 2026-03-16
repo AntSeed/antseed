@@ -22,17 +22,11 @@ export interface TokenPricingUsdPerMillion {
   outputUsdPerMillion: number;
 }
 
-export interface ProviderPricingMatrixEntry {
-  defaults: TokenPricingUsdPerMillion;
-  services?: Record<string, TokenPricingUsdPerMillion>;
-}
-
-export interface ProviderServiceCategoryMatrixEntry {
-  services: Record<string, string[]>;
-}
-
-export interface ProviderServiceApiProtocolMatrixEntry {
-  services: Record<string, ServiceApiProtocol[]>;
+export interface PeerServiceInfo {
+  name: string;
+  pricing: TokenPricingUsdPerMillion;
+  protocols?: ServiceApiProtocol[];
+  categories?: string[];
 }
 
 /** Information about a known peer. */
@@ -45,20 +39,10 @@ export interface PeerInfo {
   publicAddress?: string;
   /** Last seen timestamp (Unix ms). */
   lastSeen: number;
-  /** LLM providers this peer is offering (empty if buyer-only). */
-  providers: string[];
+  /** Services this peer is offering (empty if buyer-only). */
+  services: PeerServiceInfo[];
   /** Reputation score (0-100). */
   reputationScore?: number;
-  /** Provider/service-aware pricing map announced by seller. */
-  providerPricing?: Record<string, ProviderPricingMatrixEntry>;
-  /** Provider/service category tags announced by seller. */
-  providerServiceCategories?: Record<string, ProviderServiceCategoryMatrixEntry>;
-  /** Provider/service API protocols announced by seller. */
-  providerServiceApiProtocols?: Record<string, ProviderServiceApiProtocolMatrixEntry>;
-  /** Deterministic fallback default input price (USD per 1M tokens). */
-  defaultInputUsdPerMillion?: number;
-  /** Deterministic fallback default output price (USD per 1M tokens). */
-  defaultOutputUsdPerMillion?: number;
   /** Maximum concurrent requests the peer can handle. */
   maxConcurrency?: number;
   /** Current number of requests the peer is handling. */

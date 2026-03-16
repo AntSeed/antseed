@@ -11,7 +11,7 @@ import {
   normalizeServiceSearchTopicKey,
 } from "./dht-node.js";
 import type { PeerOffering } from "../types/capability.js";
-import type { PeerMetadata, ProviderAnnouncement } from "./peer-metadata.js";
+import type { PeerMetadata, ProviderAnnouncement, ServiceAnnouncement } from "./peer-metadata.js";
 import { METADATA_VERSION } from "./peer-metadata.js";
 import type { ServiceApiProtocol } from "../types/service-api.js";
 import { isKnownServiceApiProtocol } from "../types/service-api.js";
@@ -63,7 +63,7 @@ export class PeerAnnouncer {
     const metadata = await this._buildSignedMetadata(true);
     this._latestMetadata = metadata;
 
-    await this._announceTopics(metadata.providers);
+    await this._announceTopics(metadata.services);
   }
 
   /**
@@ -133,12 +133,26 @@ export class PeerAnnouncer {
       return providerAnnouncement;
     });
 
+    // Flatten providers into service announcements
+    const services = this._flattenProvidersToServices(providers);
+
+    // Aggregate peer-level concurrency and load
+    let totalMaxConcurrency = 0;
+    let totalCurrentLoad = 0;
+    for (const p of providers) {
+      totalMaxConcurrency += p.maxConcurrency;
+      totalCurrentLoad += p.currentLoad;
+    }
+
     const metadata: PeerMetadata = {
       peerId: this.config.identity.peerId,
       version: METADATA_VERSION,
       ...(this.config.displayName ? { displayName: this.config.displayName } : {}),
       ...(this.config.publicAddress ? { publicAddress: this.config.publicAddress } : {}),
-      providers,
+      services,
+      providers: [],
+      maxConcurrency: totalMaxConcurrency,
+      currentLoad: totalCurrentLoad,
       region: this.config.region,
       timestamp: Date.now(),
       signature: "",
@@ -179,28 +193,26 @@ export class PeerAnnouncer {
     return metadata;
   }
 
-  private async _announceTopics(providers: ProviderAnnouncement[]): Promise<void> {
+  private async _announceTopics(services: ServiceAnnouncement[]): Promise<void> {
     const announcedServiceTopics = new Set<string>();
 
-    for (const p of providers) {
-      for (const service of p.services) {
-        const canonicalServiceKey = normalizeServiceTopicKey(service);
-        if (!canonicalServiceKey) {
-          continue;
-        }
-        const canonicalTopic = serviceTopic(canonicalServiceKey);
-        if (!announcedServiceTopics.has(canonicalTopic)) {
-          announcedServiceTopics.add(canonicalTopic);
-          await this._tryAnnounceTopic(canonicalTopic);
-        }
+    for (const s of services) {
+      const canonicalServiceKey = normalizeServiceTopicKey(s.name);
+      if (!canonicalServiceKey) {
+        continue;
+      }
+      const canonicalTopic = serviceTopic(canonicalServiceKey);
+      if (!announcedServiceTopics.has(canonicalTopic)) {
+        announcedServiceTopics.add(canonicalTopic);
+        await this._tryAnnounceTopic(canonicalTopic);
+      }
 
-        const compactServiceKey = normalizeServiceSearchTopicKey(service);
-        if (compactServiceKey !== canonicalServiceKey) {
-          const compactTopic = serviceSearchTopic(compactServiceKey);
-          if (!announcedServiceTopics.has(compactTopic)) {
-            announcedServiceTopics.add(compactTopic);
-            await this._tryAnnounceTopic(compactTopic);
-          }
+      const compactServiceKey = normalizeServiceSearchTopicKey(s.name);
+      if (compactServiceKey !== canonicalServiceKey) {
+        const compactTopic = serviceSearchTopic(compactServiceKey);
+        if (!announcedServiceTopics.has(compactTopic)) {
+          announcedServiceTopics.add(compactTopic);
+          await this._tryAnnounceTopic(compactTopic);
         }
       }
     }
@@ -292,5 +304,38 @@ export class PeerAnnouncer {
     }
 
     return Object.keys(normalized).length > 0 ? normalized : undefined;
+  }
+
+  private _flattenProvidersToServices(providers: ProviderAnnouncement[]): ServiceAnnouncement[] {
+    const services: ServiceAnnouncement[] = [];
+    const seen = new Set<string>();
+
+    for (const p of providers) {
+      for (const serviceName of p.services) {
+        if (seen.has(serviceName)) continue;
+        seen.add(serviceName);
+
+        const pricing = p.servicePricing?.[serviceName] ?? p.defaultPricing;
+        const categories = p.serviceCategories?.[serviceName];
+        const protocols = p.serviceApiProtocols?.[serviceName];
+
+        const announcement: ServiceAnnouncement = {
+          name: serviceName,
+          pricing: {
+            inputUsdPerMillion: pricing.inputUsdPerMillion,
+            outputUsdPerMillion: pricing.outputUsdPerMillion,
+          },
+        };
+        if (protocols && protocols.length > 0) {
+          announcement.protocols = protocols;
+        }
+        if (categories && categories.length > 0) {
+          announcement.categories = categories;
+        }
+        services.push(announcement);
+      }
+    }
+
+    return services;
   }
 }

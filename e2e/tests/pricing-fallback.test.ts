@@ -19,19 +19,11 @@ function makePeer(overrides?: Partial<PeerInfo>): PeerInfo {
   return {
     peerId: 'a'.repeat(64) as PeerInfo['peerId'],
     lastSeen: Date.now(),
-    providers: ['anthropic'],
+    services: [
+      { name: 'claude-3-opus', pricing: { inputUsdPerMillion: 15, outputUsdPerMillion: 15 } },
+    ],
     trustScore: 80,
     reputationScore: 80,
-    defaultInputUsdPerMillion: 15,
-    defaultOutputUsdPerMillion: 15,
-    providerPricing: {
-      anthropic: {
-        defaults: {
-          inputUsdPerMillion: 15,
-          outputUsdPerMillion: 15,
-        },
-      },
-    },
     maxConcurrency: 10,
     currentLoad: 0,
     ...overrides,
@@ -39,7 +31,7 @@ function makePeer(overrides?: Partial<PeerInfo>): PeerInfo {
 }
 
 describe('pricing fallback hierarchy', () => {
-  it('uses service -> provider default -> peer default fallback order and enforces input/output max checks', () => {
+  it('uses service-specific pricing when available and enforces input/output max checks', () => {
     const router = new LocalRouter({
       maxPricing: {
         defaults: {
@@ -51,70 +43,44 @@ describe('pricing fallback hierarchy', () => {
 
     const serviceSpecificPeer = makePeer({
       peerId: '1'.repeat(64) as PeerInfo['peerId'],
-      providerPricing: {
-        anthropic: {
-          defaults: {
-            inputUsdPerMillion: 20,
-            outputUsdPerMillion: 20,
-          },
-          services: {
-            'service-a': {
-              inputUsdPerMillion: 5,
-              outputUsdPerMillion: 7,
-            },
-          },
-        },
-      },
-      defaultInputUsdPerMillion: 20,
-      defaultOutputUsdPerMillion: 20,
+      services: [
+        { name: 'service-a', pricing: { inputUsdPerMillion: 5, outputUsdPerMillion: 7 } },
+        { name: 'claude-3-opus', pricing: { inputUsdPerMillion: 20, outputUsdPerMillion: 20 } },
+      ],
     });
 
-    const providerDefaultPeer = makePeer({
+    const defaultPricingPeer = makePeer({
       peerId: '2'.repeat(64) as PeerInfo['peerId'],
-      providerPricing: {
-        anthropic: {
-          defaults: {
-            inputUsdPerMillion: 12,
-            outputUsdPerMillion: 14,
-          },
-        },
-      },
-      defaultInputUsdPerMillion: 12,
-      defaultOutputUsdPerMillion: 14,
+      services: [
+        { name: 'claude-3-opus', pricing: { inputUsdPerMillion: 12, outputUsdPerMillion: 14 } },
+      ],
     });
 
-    const peerDefaultOnly = makePeer({
+    const singleServicePeer = makePeer({
       peerId: '3'.repeat(64) as PeerInfo['peerId'],
-      providerPricing: undefined,
-      defaultInputUsdPerMillion: 10,
-      defaultOutputUsdPerMillion: 11,
+      services: [
+        { name: 'claude-3-opus', pricing: { inputUsdPerMillion: 10, outputUsdPerMillion: 11 } },
+      ],
     });
 
     const outputTooHigh = makePeer({
       peerId: '4'.repeat(64) as PeerInfo['peerId'],
-      providerPricing: {
-        anthropic: {
-          defaults: {
-            inputUsdPerMillion: 10,
-            outputUsdPerMillion: 80,
-          },
-        },
-      },
-      defaultInputUsdPerMillion: 10,
-      defaultOutputUsdPerMillion: 80,
+      services: [
+        { name: 'claude-3-opus', pricing: { inputUsdPerMillion: 10, outputUsdPerMillion: 80 } },
+      ],
     });
 
-    // service-specific
+    // service-specific pricing
     const selectedServiceSpecific = router.selectPeer(makeRequest('service-a'), [serviceSpecificPeer]);
     expect(selectedServiceSpecific?.peerId).toBe(serviceSpecificPeer.peerId);
 
-    // provider defaults (no service-specific entry)
-    const selectedProviderDefault = router.selectPeer(makeRequest('service-b'), [providerDefaultPeer]);
-    expect(selectedProviderDefault?.peerId).toBe(providerDefaultPeer.peerId);
+    // fallback to first service pricing when service not found
+    const selectedDefault = router.selectPeer(makeRequest('service-b'), [defaultPricingPeer]);
+    expect(selectedDefault?.peerId).toBe(defaultPricingPeer.peerId);
 
-    // peer defaults (no provider pricing map)
-    const selectedPeerDefault = router.selectPeer(makeRequest('service-c'), [peerDefaultOnly]);
-    expect(selectedPeerDefault?.peerId).toBe(peerDefaultOnly.peerId);
+    // single service peer fallback
+    const selectedSingle = router.selectPeer(makeRequest('service-c'), [singleServicePeer]);
+    expect(selectedSingle?.peerId).toBe(singleServicePeer.peerId);
 
     // output max price enforcement
     const selectedRejected = router.selectPeer(makeRequest('service-b'), [outputTooHigh]);

@@ -3,14 +3,15 @@ import { DefaultRouter } from '../src/routing/default-router.js';
 import type { PeerInfo } from '../src/types/peer.js';
 import type { SerializedHttpRequest } from '../src/types/http.js';
 
-function makePeer(overrides?: Partial<PeerInfo>): PeerInfo {
+function makePeer(overrides?: Partial<PeerInfo> & { defaultInputUsdPerMillion?: number }): PeerInfo {
+  const { defaultInputUsdPerMillion, ...rest } = overrides ?? {};
+  const inputPrice = defaultInputUsdPerMillion ?? 10;
   return {
     peerId: ('a'.repeat(64)) as any,
     lastSeen: Date.now(),
-    providers: ['anthropic'],
+    services: [{ name: 'claude-3-opus', pricing: { inputUsdPerMillion: inputPrice, outputUsdPerMillion: inputPrice } }],
     reputationScore: 80,
-    defaultInputUsdPerMillion: 10,
-    ...overrides,
+    ...rest,
   };
 }
 
@@ -96,10 +97,10 @@ describe('DefaultRouter', () => {
       expect(selected?.peerId).toBe('a'.repeat(64));
     });
 
-    it('should treat missing defaultInputUsdPerMillion as Infinity', () => {
+    it('should treat empty services as Infinity price', () => {
       const router = new DefaultRouter();
       const withPrice = makePeer({ peerId: 'a'.repeat(64) as any, defaultInputUsdPerMillion: 500 });
-      const noPrice = makePeer({ peerId: 'b'.repeat(64) as any, defaultInputUsdPerMillion: undefined });
+      const noPrice = makePeer({ peerId: 'b'.repeat(64) as any, services: [] });
       const selected = router.selectPeer(dummyReq, [withPrice, noPrice]);
       expect(selected!.peerId).toBe('a'.repeat(64));
     });

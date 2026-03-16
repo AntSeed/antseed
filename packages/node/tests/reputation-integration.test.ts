@@ -7,18 +7,18 @@ function makeMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
   return {
     peerId: 'a'.repeat(64) as any,
     version: METADATA_VERSION,
-    providers: [
+    services: [
       {
-        provider: 'anthropic',
-        services: ['claude-3-opus'],
-        defaultPricing: {
+        name: 'claude-3-opus',
+        pricing: {
           inputUsdPerMillion: 15,
           outputUsdPerMillion: 75,
         },
-        maxConcurrency: 10,
-        currentLoad: 3,
       },
     ],
+    providers: [],
+    maxConcurrency: 10,
+    currentLoad: 3,
     region: 'us-east-1',
     timestamp: 1700000000000,
     signature: 'b'.repeat(128),
@@ -45,8 +45,8 @@ describe('Reputation Integration', () => {
     expect(decoded.peerId).toBe(original.peerId);
     expect(decoded.region).toBe(original.region);
     expect(decoded.timestamp).toBe(original.timestamp);
-    expect(decoded.providers).toHaveLength(1);
-    expect(decoded.providers[0]!.provider).toBe('anthropic');
+    expect(decoded.services).toHaveLength(1);
+    expect(decoded.services[0]!.name).toBe('claude-3-opus');
   });
 
   it('should decode metadata without reputation fields (backward compat)', () => {
@@ -77,7 +77,10 @@ describe('Reputation Integration', () => {
     const peerInfo: PeerInfo = {
       peerId: metadata.peerId,
       lastSeen: metadata.timestamp,
-      providers: metadata.providers.map((p) => p.provider),
+      services: (metadata.services ?? []).map((s) => ({
+        name: s.name,
+        pricing: { ...s.pricing },
+      })),
       publicAddress: '1.2.3.4:6882',
       evmAddress: metadata.evmAddress,
       onChainReputation: metadata.onChainReputation,
@@ -105,7 +108,7 @@ describe('Reputation Integration', () => {
     const peer: PeerInfo = {
       peerId: 'a'.repeat(64) as any,
       lastSeen: Date.now(),
-      providers: ['anthropic'],
+      services: [{ name: 'claude-3-opus', pricing: { inputUsdPerMillion: 15, outputUsdPerMillion: 75 } }],
       onChainReputation: 88,
       trustScore: 70,
       reputationScore: 60,
@@ -125,7 +128,7 @@ describe('Reputation Integration', () => {
     const peerWithTrust: PeerInfo = {
       peerId: 'a'.repeat(64) as any,
       lastSeen: Date.now(),
-      providers: ['anthropic'],
+      services: [],
       trustScore: 75,
       reputationScore: 60,
     };
@@ -133,14 +136,14 @@ describe('Reputation Integration', () => {
     const peerWithRepOnly: PeerInfo = {
       peerId: 'b'.repeat(64) as any,
       lastSeen: Date.now(),
-      providers: ['openai'],
+      services: [],
       reputationScore: 55,
     };
 
     const peerWithNothing: PeerInfo = {
       peerId: 'c'.repeat(64) as any,
       lastSeen: Date.now(),
-      providers: ['openai'],
+      services: [],
     };
 
     expect(effectiveReputation(peerWithTrust)).toBe(75);

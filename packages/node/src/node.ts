@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { Identity } from "./p2p/identity.js";
 import { loadOrCreateIdentity } from "./p2p/identity.js";
 import type { PeerId } from "./types/peer.js";
-import type { PeerInfo, TokenPricingUsdPerMillion } from "./types/peer.js";
+import type { PeerInfo } from "./types/peer.js";
 import {
   ANTSEED_STREAMING_RESPONSE_HEADER,
   type SerializedHttpRequest,
@@ -461,7 +461,7 @@ export class AntseedNode extends EventEmitter {
     }
 
     for (const p of peers) {
-      debugLog(`[Node]   peer ${p.peerId.slice(0, 12)}... providers=[${p.providers.join(",")}] addr=${p.publicAddress ?? "?"}`);
+      debugLog(`[Node]   peer ${p.peerId.slice(0, 12)}... services=[${p.services.map((s) => s.name).join(",")}] addr=${p.publicAddress ?? "?"}`);
     }
     return peers;
   }
@@ -1930,62 +1930,19 @@ export class AntseedNode extends EventEmitter {
   }
 
   private _lookupResultToPeerInfo(result: LookupResult): PeerInfo {
-    const providers = result.metadata.providers.map((p) => p.provider);
-    const firstProvider = result.metadata.providers[0];
-    const providerPricingEntries: NonNullable<PeerInfo["providerPricing"]> = {};
-    const providerServiceCategoryEntries: NonNullable<PeerInfo["providerServiceCategories"]> = {};
-    const providerServiceApiProtocolEntries: NonNullable<PeerInfo["providerServiceApiProtocols"]> = {};
-
-    for (const providerAnnouncement of result.metadata.providers) {
-      const serviceEntries: Record<string, TokenPricingUsdPerMillion> = {};
-      for (const service of providerAnnouncement.services) {
-        serviceEntries[service] =
-          providerAnnouncement.servicePricing?.[service] ?? providerAnnouncement.defaultPricing;
-      }
-      providerPricingEntries[providerAnnouncement.provider] = {
-        defaults: {
-          inputUsdPerMillion: providerAnnouncement.defaultPricing.inputUsdPerMillion,
-          outputUsdPerMillion: providerAnnouncement.defaultPricing.outputUsdPerMillion,
-        },
-        ...(Object.keys(serviceEntries).length > 0 ? { services: serviceEntries } : {}),
-      };
-
-      if (providerAnnouncement.serviceCategories && Object.keys(providerAnnouncement.serviceCategories).length > 0) {
-        providerServiceCategoryEntries[providerAnnouncement.provider] = {
-          services: Object.fromEntries(
-            Object.entries(providerAnnouncement.serviceCategories)
-              .map(([service, categories]) => [service, [...categories]]),
-          ),
-        };
-      }
-
-      if (providerAnnouncement.serviceApiProtocols && Object.keys(providerAnnouncement.serviceApiProtocols).length > 0) {
-        providerServiceApiProtocolEntries[providerAnnouncement.provider] = {
-          services: Object.fromEntries(
-            Object.entries(providerAnnouncement.serviceApiProtocols)
-              .map(([service, protocols]) => [service, [...protocols]]),
-          ),
-        };
-      }
-    }
-
-    const hasProviderPricing = Object.keys(providerPricingEntries).length > 0;
-    const hasProviderServiceCategories = Object.keys(providerServiceCategoryEntries).length > 0;
-    const hasProviderServiceApiProtocols = Object.keys(providerServiceApiProtocolEntries).length > 0;
-
     return {
       peerId: result.metadata.peerId,
       displayName: result.metadata.displayName,
       lastSeen: result.metadata.timestamp,
-      providers,
+      services: (result.metadata.services ?? []).map((s) => ({
+        name: s.name,
+        pricing: { ...s.pricing },
+        ...(s.protocols && s.protocols.length > 0 ? { protocols: [...s.protocols] } : {}),
+        ...(s.categories && s.categories.length > 0 ? { categories: [...s.categories] } : {}),
+      })),
       publicAddress: this._resolvePublicAddress(result),
-      ...(hasProviderPricing ? { providerPricing: providerPricingEntries } : {}),
-      ...(hasProviderServiceCategories ? { providerServiceCategories: providerServiceCategoryEntries } : {}),
-      ...(hasProviderServiceApiProtocols ? { providerServiceApiProtocols: providerServiceApiProtocolEntries } : {}),
-      defaultInputUsdPerMillion: firstProvider?.defaultPricing.inputUsdPerMillion,
-      defaultOutputUsdPerMillion: firstProvider?.defaultPricing.outputUsdPerMillion,
-      maxConcurrency: firstProvider?.maxConcurrency,
-      currentLoad: firstProvider?.currentLoad,
+      maxConcurrency: result.metadata.maxConcurrency,
+      currentLoad: result.metadata.currentLoad,
       evmAddress: result.metadata.evmAddress,
       onChainReputation: result.metadata.onChainReputation,
       onChainSessionCount: result.metadata.onChainSessionCount,

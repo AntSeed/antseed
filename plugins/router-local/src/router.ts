@@ -77,24 +77,24 @@ export class LocalRouter implements Router {
         continue;
       }
 
-      // Provider availability filter
-      const provider = this._selectProviderForPeer(peer, requestedService);
-      if (!provider) {
+      // Service availability filter
+      const service = this._selectServiceForPeer(peer, requestedService);
+      if (!service) {
         continue;
       }
 
       // Pricing filter
-      const offer = this._resolvePeerOfferPrice(peer, provider, requestedService);
+      const offer = this._resolvePeerOfferPrice(peer, requestedService);
       if (!offer) {
         continue;
       }
 
-      const max = this._resolveBuyerMaxPrice(provider, requestedService);
+      const max = this._resolveBuyerMaxPrice(requestedService);
       if (offer.inputUsdPerMillion > max.inputUsdPerMillion || offer.outputUsdPerMillion > max.outputUsdPerMillion) {
         continue;
       }
 
-      candidates.push({ peer, provider, offer });
+      candidates.push({ peer, provider: service, offer });
     }
 
     if (candidates.length === 0) return null;
@@ -171,66 +171,59 @@ export class LocalRouter implements Router {
     }
   }
 
-  private _selectProviderForPeer(peer: PeerInfo, requestedService: string | null): string | null {
-    const availableProviders = peer.providers
-      .map((provider) => provider.trim())
-      .filter((provider) => provider.length > 0);
+  private _selectServiceForPeer(peer: PeerInfo, requestedService: string | null): string | null {
+    const validServices = peer.services.filter((s) => s.name.trim().length > 0);
+    if (validServices.length === 0) return null;
 
-    if (requestedService && peer.providerPricing) {
-      for (const provider of availableProviders) {
-        const pricing = peer.providerPricing[provider];
-        if (pricing?.services?.[requestedService]) return provider;
-      }
+    if (requestedService) {
+      const match = validServices.find((s) => s.name === requestedService);
+      if (match) return match.name;
     }
 
-    return availableProviders[0] ?? null;
+    return validServices[0]?.name ?? null;
   }
 
   private _resolvePeerOfferPrice(
     peer: PeerInfo,
-    provider: string,
     service: string | null,
   ): TokenPricingUsdPerMillion | null {
-    const providerPricing = peer.providerPricing?.[provider];
-
     if (service) {
-      const serviceSpecific = providerPricing?.services?.[service];
-      if (serviceSpecific && this._isValidOffer(serviceSpecific)) {
-        return serviceSpecific;
+      const match = peer.services.find((s) => s.name === service);
+      if (match && this._isValidOffer(match.pricing)) {
+        return match.pricing;
       }
     }
 
-    const providerDefaults = providerPricing?.defaults;
-    if (providerDefaults && this._isValidOffer(providerDefaults)) {
-      return providerDefaults;
-    }
-
-    if (
-      this._isFiniteNonNegative(peer.defaultInputUsdPerMillion) &&
-      this._isFiniteNonNegative(peer.defaultOutputUsdPerMillion)
-    ) {
-      return {
-        inputUsdPerMillion: peer.defaultInputUsdPerMillion,
-        outputUsdPerMillion: peer.defaultOutputUsdPerMillion,
-      };
+    // Fall back to first service pricing
+    const first = peer.services[0];
+    if (first && this._isValidOffer(first.pricing)) {
+      return first.pricing;
     }
 
     return null;
   }
 
-  private _resolveBuyerMaxPrice(provider: string, service: string | null): TokenPricingUsdPerMillion {
-    const providerPricing = this._maxPricing.providers?.[provider];
-
+  private _resolveBuyerMaxPrice(service: string | null): TokenPricingUsdPerMillion {
     if (service) {
-      const serviceOverride = providerPricing?.services?.[service];
-      if (serviceOverride && this._isValidOffer(serviceOverride)) {
-        return serviceOverride;
+      // Check provider-keyed config for backward compat
+      if (this._maxPricing.providers) {
+        for (const providerPricing of Object.values(this._maxPricing.providers)) {
+          const serviceOverride = providerPricing.services?.[service];
+          if (serviceOverride && this._isValidOffer(serviceOverride)) {
+            return serviceOverride;
+          }
+        }
       }
     }
 
-    const providerDefaults = providerPricing?.defaults;
-    if (providerDefaults && this._isValidOffer(providerDefaults)) {
-      return providerDefaults;
+    // Check provider defaults
+    if (this._maxPricing.providers) {
+      for (const providerPricing of Object.values(this._maxPricing.providers)) {
+        const providerDefaults = providerPricing.defaults;
+        if (providerDefaults && this._isValidOffer(providerDefaults)) {
+          return providerDefaults;
+        }
+      }
     }
 
     return this._maxPricing.defaults;
