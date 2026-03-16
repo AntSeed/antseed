@@ -22,6 +22,7 @@ const DEFAULT_MAX_CONCURRENCY = 5;
 const REFRESH_BUFFER_MS = 5 * 60 * 1000;
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000;
+const FETCH_TIMEOUT_MS = 120_000;
 const TRANSIENT_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
 const RESPONSE_PATH_PREFIX = '/v1/responses';
 const UPSTREAM_RESPONSES_PATH = '/codex/responses';
@@ -415,6 +416,12 @@ function concatChunks(chunks: Uint8Array[]): Uint8Array {
 
 interface RequestResult {
   response: SerializedHttpResponse;
+  streamStart?: SerializedHttpResponse;
+  streamChunks?: Array<{
+    requestId: string;
+    data: Uint8Array;
+    done: boolean;
+  }>;
 }
 
 class CodexResponsesProvider implements Provider {
@@ -531,17 +538,13 @@ class CodexResponsesProvider implements Provider {
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
-        const result = await this.fetchOnce(req, upstreamPath, auth, callbacks);
+        const result = await this.fetchOnce(req, upstreamPath, auth);
         if (result.response.statusCode === 401) {
           auth = await this.forceRefreshAuthContext();
-          const retryAfterRefresh = await this.fetchOnce(req, upstreamPath, auth, callbacks);
-          if (retryAfterRefresh.response.statusCode !== 401) {
-            return retryAfterRefresh;
-          }
-          return retryAfterRefresh;
+          return this.finalizeResult(await this.fetchOnce(req, upstreamPath, auth), callbacks);
         }
         if (!isTransientError(result.response.statusCode) || attempt === MAX_RETRIES) {
-          return result;
+          return this.finalizeResult(result, callbacks);
         }
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
@@ -582,7 +585,6 @@ class CodexResponsesProvider implements Provider {
     req: SerializedHttpRequest,
     upstreamPath: string,
     auth: AuthContext,
-    callbacks?: ProviderStreamCallbacks,
   ): Promise<RequestResult> {
     const fetchHeaders = stripRequestHeaders(req.headers);
     fetchHeaders['authorization'] = `Bearer ${auth.accessToken}`;
@@ -592,13 +594,24 @@ class CodexResponsesProvider implements Provider {
       fetchHeaders['content-type'] = 'application/json';
     }
 
-    const response = await fetch(`${this.baseUrl}${upstreamPath}`, {
-      method: req.method,
-      headers: fetchHeaders,
-      body: req.method !== 'GET' && req.method !== 'HEAD'
-        ? Buffer.from(req.body)
-        : undefined,
-    });
+    const timeoutSignal = AbortSignal.timeout(FETCH_TIMEOUT_MS);
+
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}${upstreamPath}`, {
+        method: req.method,
+        headers: fetchHeaders,
+        body: req.method !== 'GET' && req.method !== 'HEAD'
+          ? Buffer.from(req.body)
+          : undefined,
+        signal: timeoutSignal,
+      });
+    } catch (error) {
+      if (timeoutSignal.aborted) {
+        throw new Error(`OpenAI Responses upstream request timed out after ${FETCH_TIMEOUT_MS}ms`);
+      }
+      throw error;
+    }
 
     const responseHeaders = stripResponseHeaders(response);
     const contentType = response.headers.get('content-type') ?? '';
@@ -611,23 +624,23 @@ class CodexResponsesProvider implements Provider {
         headers: responseHeaders,
         body: new Uint8Array(0),
       };
-      callbacks?.onResponseStart(responseStart);
 
       const reader = response.body.getReader();
       const streamChunks: Uint8Array[] = [];
+      const serializedChunks: NonNullable<RequestResult['streamChunks']> = [];
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         streamChunks.push(value);
-        callbacks?.onResponseChunk({
+        serializedChunks.push({
           requestId: req.requestId,
           data: value,
           done: false,
         });
       }
 
-      callbacks?.onResponseChunk({
+      serializedChunks.push({
         requestId: req.requestId,
         data: new Uint8Array(0),
         done: true,
@@ -638,6 +651,8 @@ class CodexResponsesProvider implements Provider {
           ...responseStart,
           body: concatChunks(streamChunks),
         },
+        streamStart: responseStart,
+        streamChunks: serializedChunks,
       };
     }
 
@@ -649,6 +664,22 @@ class CodexResponsesProvider implements Provider {
         body: new Uint8Array(await response.arrayBuffer()),
       },
     };
+  }
+
+  private finalizeResult(
+    result: RequestResult,
+    callbacks?: ProviderStreamCallbacks,
+  ): RequestResult {
+    if (!callbacks || !result.streamStart || !result.streamChunks) {
+      return result;
+    }
+
+    callbacks.onResponseStart(result.streamStart);
+    for (const chunk of result.streamChunks) {
+      callbacks.onResponseChunk(chunk);
+    }
+
+    return result;
   }
 }
 

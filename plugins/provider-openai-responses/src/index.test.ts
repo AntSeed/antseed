@@ -492,6 +492,137 @@ describe('provider-openai-responses plugin', () => {
     expect(new TextDecoder().decode(response.body)).toContain('[DONE]');
     rmSync(dirname(authFile), { recursive: true, force: true });
   });
+
+  it('does not emit SSE callbacks for retryable attempts', async () => {
+    const authFile = writeAuthFile({
+      tokens: {
+        access_token: makeJwt({}),
+        account_id: 'acct-file',
+      },
+    });
+    const retryStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('event: response.created\ndata: {"id":"resp_retry"}\n\n'));
+        controller.close();
+      },
+    });
+    const successStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('event: response.created\ndata: {"id":"resp_final"}\n\n'));
+        controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
+        controller.close();
+      },
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(retryStream, {
+        status: 503,
+        headers: { 'content-type': 'text/event-stream' },
+      }))
+      .mockResolvedValueOnce(new Response(successStream, {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: TimerHandler) => {
+      if (typeof fn === 'function') fn();
+      return 0 as unknown as ReturnType<typeof setTimeout>;
+    }) as typeof setTimeout);
+
+    const provider = plugin.createProvider({
+      OPENAI_RESPONSES_AUTH_FILE: authFile,
+      ANTSEED_ALLOWED_SERVICES: 'gpt-5-codex',
+    });
+
+    const starts: Array<{ statusCode: number }> = [];
+    const chunks: SerializedChunk[] = [];
+    const response = await provider.handleRequestStream(
+      {
+        requestId: 'req-stream-retry',
+        method: 'POST',
+        path: '/v1/responses',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: new TextEncoder().encode(JSON.stringify({
+          model: 'gpt-5-codex',
+          input: 'hello',
+          stream: true,
+        })),
+      },
+      {
+        onResponseStart: (start) => starts.push({ statusCode: start.statusCode }),
+        onResponseChunk: (chunk) => chunks.push({
+          done: chunk.done,
+          text: new TextDecoder().decode(chunk.data),
+        }),
+      },
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(starts).toEqual([{ statusCode: 200 }]);
+    expect(chunks.some((chunk) => chunk.text.includes('resp_retry'))).toBe(false);
+    expect(chunks.some((chunk) => chunk.text.includes('resp_final'))).toBe(true);
+    expect(new TextDecoder().decode(response.body)).toContain('resp_final');
+    rmSync(dirname(authFile), { recursive: true, force: true });
+  });
+
+  it('returns a 502 after upstream timeout retries are exhausted', async () => {
+    const authFile = writeAuthFile({
+      tokens: {
+        access_token: makeJwt({}),
+        account_id: 'acct-file',
+      },
+    });
+    vi.spyOn(AbortSignal, 'timeout').mockImplementation(() => AbortSignal.abort('timeout'));
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: TimerHandler) => {
+      if (typeof fn === 'function') fn();
+      return 0 as unknown as ReturnType<typeof setTimeout>;
+    }) as typeof setTimeout);
+    const fetchMock = vi.fn().mockImplementation(async (_url: string, init?: RequestInit) => {
+      const signal = init?.signal;
+      return await new Promise<Response>((_resolve, reject) => {
+        if (!signal) {
+          reject(new Error('missing signal'));
+          return;
+        }
+        if (signal.aborted) {
+          reject(new DOMException('The operation was aborted.', 'AbortError'));
+          return;
+        }
+        const onAbort = () => {
+          reject(new DOMException('The operation was aborted.', 'AbortError'));
+        };
+        signal.addEventListener('abort', onAbort, { once: true });
+      });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const provider = plugin.createProvider({
+      OPENAI_RESPONSES_AUTH_FILE: authFile,
+      ANTSEED_ALLOWED_SERVICES: 'gpt-5-codex',
+    });
+
+    const pendingResponse = provider.handleRequest({
+      requestId: 'req-timeout',
+      method: 'POST',
+      path: '/v1/responses',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-5-codex',
+        input: 'hello',
+        stream: false,
+      })),
+    });
+    const response = await pendingResponse;
+
+    expect(response.statusCode).toBe(502);
+    expect(new TextDecoder().decode(response.body)).toContain('timed out');
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    rmSync(dirname(authFile), { recursive: true, force: true });
+  });
 });
 
 interface SerializedChunk {
