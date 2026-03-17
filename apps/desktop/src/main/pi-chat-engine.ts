@@ -3104,7 +3104,6 @@ export function registerPiChatHandlers({
         return { ok: false, error: 'Aborted' };
       }
       const message = asErrorMessage(error);
-      preferredPeerByConversationId.delete(conversationId);
       sendToRenderer('chat:ai-stream-error', { conversationId, error: message });
       appendSystemLog(`Pi chat error: ${message}`);
       return { ok: false, error: message };
@@ -3212,9 +3211,13 @@ export function registerPiChatHandlers({
     return { ok: true, data: conversation };
   });
 
-  ipcMain.handle('chat:ai-create-conversation', async (_event, service: string, provider?: string) => {
+  ipcMain.handle('chat:ai-create-conversation', async (_event, service: string, provider?: string, peerId?: string) => {
     const conversation = await store.create(service, provider);
-    preferredPeerByConversationId.delete(conversation.id);
+    if (peerId && peerId.trim().length > 0) {
+      preferredPeerByConversationId.set(conversation.id, peerId.trim());
+    } else {
+      preferredPeerByConversationId.delete(conversation.id);
+    }
     return { ok: true, data: conversation };
   });
 

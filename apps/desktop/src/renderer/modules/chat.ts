@@ -1024,7 +1024,7 @@ export function initChatModule({
     }
 
     try {
-      const result = await bridge.chatAiCreateConversation(selection.id);
+      const result = await bridge.chatAiCreateConversation(selection.id, undefined, uiState.chatSelectedPeerId || undefined);
       if (result.ok && result.data) {
         const conversationId = getConversationId(result.data);
         if (!conversationId) {
