@@ -1900,6 +1900,7 @@ registerPiChatHandlers({
     }
     return snapshot.peers
       .map((peer) => ({
+        peerId: typeof peer.peerId === "string" ? peer.peerId : "",
         host: typeof peer.host === "string" ? peer.host.trim() : "",
         port: Number(peer.port) || 0,
         providers: Array.isArray(peer.providers) ? peer.providers.map((provider) => String(provider)) : [],

@@ -331,6 +331,7 @@ type ActiveRun = {
 };
 
 type NetworkPeerAddress = {
+  peerId?: string;
   host: string;
   port: number;
   providers?: string[];
@@ -344,6 +345,8 @@ type ChatServiceCatalogEntry = {
   provider: string;
   protocol: ChatServiceProtocol;
   count: number;
+  peerId?: string;
+  peerLabel?: string;
 };
 
 const ANTSEED_HOME_DIR = path.join(homedir(), '.antseed');
@@ -785,7 +788,7 @@ async function discoverChatServiceCatalog(
     return [];
   }
 
-  const uniqueTargets: Array<{ host: string; port: number }> = [];
+  const uniqueTargets: Array<{ peerId?: string; host: string; port: number }> = [];
   const seen = new Set<string>();
   for (const peer of peers.slice(0, CHAT_SERVICE_SCAN_MAX_PEERS)) {
     const host = normalizeHost(peer.host);
@@ -798,7 +801,7 @@ async function discoverChatServiceCatalog(
       continue;
     }
     seen.add(key);
-    uniqueTargets.push({ host, port });
+    uniqueTargets.push({ peerId: peer.peerId, host, port });
   }
 
   if (uniqueTargets.length === 0) {
@@ -806,30 +809,29 @@ async function discoverChatServiceCatalog(
   }
 
   const responses = await Promise.all(uniqueTargets.map(async (target) => {
-    return await fetchPeerMetadata(target.host, target.port);
+    const metadata = await fetchPeerMetadata(target.host, target.port);
+    return { metadata, peerId: target.peerId };
   }));
 
-  const aggregate = new Map<string, ChatServiceCatalogEntry>();
-  for (const metadata of responses) {
+  // Build per-peer+service entries (no cross-peer aggregation).
+  const results: ChatServiceCatalogEntry[] = [];
+  for (const { metadata, peerId } of responses) {
     if (!metadata) {
       continue;
     }
     const entries = extractChatServiceCatalog(metadata);
+    const peerLabel = peerId ? peerId.slice(0, 12) + '...' : undefined;
     for (const entry of entries) {
-      const key = `${entry.id}\u0000${entry.provider}\u0000${entry.protocol}`;
-      const existing = aggregate.get(key);
-      if (existing) {
-        existing.count += 1;
-        continue;
-      }
-      aggregate.set(key, {
+      results.push({
         ...entry,
         count: 1,
+        peerId,
+        peerLabel,
       });
     }
   }
 
-  return sortChatServiceCatalogEntries(Array.from(aggregate.values()));
+  return sortChatServiceCatalogEntries(results);
 }
 
 
@@ -1072,7 +1074,7 @@ function makeProxyService(
 ): Model<any> {
   const headers: Record<string, string> = {};
   if (providerHint) headers['x-antseed-provider'] = providerHint;
-  if (preferredPeerId) headers['x-antseed-prefer-peer'] = preferredPeerId;
+  if (preferredPeerId) headers['x-antseed-pin-peer'] = preferredPeerId;
 
   // The OpenAI SDK appends API paths (e.g. /responses, /chat/completions)
   // to baseUrl, so include /v1 to match the buyer proxy's expected paths.
@@ -1909,7 +1911,6 @@ export function registerPiChatHandlers({
         return { ok: false, error: 'Aborted' };
       }
       const message = asErrorMessage(error);
-      preferredPeerByConversationId.delete(conversationId);
       sendToRenderer('chat:ai-stream-error', { conversationId, error: message });
       appendSystemLog(`Pi chat error: ${message}`);
       return { ok: false, error: message };
@@ -2038,9 +2039,13 @@ export function registerPiChatHandlers({
     return { ok: true, data: conversation };
   });
 
-  ipcMain.handle('chat:ai-create-conversation', async (_event, service: string, provider?: string) => {
+  ipcMain.handle('chat:ai-create-conversation', async (_event, service: string, provider?: string, peerId?: string) => {
     const conversation = await store.create(service, provider);
-    preferredPeerByConversationId.delete(conversation.id);
+    if (peerId && peerId.trim().length > 0) {
+      preferredPeerByConversationId.set(conversation.id, peerId.trim());
+    } else {
+      preferredPeerByConversationId.delete(conversation.id);
+    }
     return { ok: true, data: conversation };
   });
 
@@ -2080,5 +2085,26 @@ export function registerPiChatHandlers({
     }
     await Promise.all(activeRuns.map((run) => abortAndClearActiveRun(run)));
     return { ok: true };
+  });
+
+  ipcMain.handle('chat:ai-select-peer', async (_event, peerId: string | null) => {
+    const normalizedPeerId = peerId && peerId.trim().length > 0 ? peerId.trim() : null;
+    if (!normalizedPeerId) {
+      preferredPeerByConversationId.clear();
+      return { ok: true };
+    }
+    // Eager connection warmup via buyer proxy
+    const proxyPort = await resolveProxyPort(configPath);
+    try {
+      const response = await fetch(`http://127.0.0.1:${proxyPort}/_antseed/connect`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ peerId: normalizedPeerId }),
+      });
+      const result = await response.json() as { ok: boolean; error?: string };
+      return { ok: result.ok, error: result.error };
+    } catch (err) {
+      return { ok: false, error: asErrorMessage(err) };
+    }
   });
 }

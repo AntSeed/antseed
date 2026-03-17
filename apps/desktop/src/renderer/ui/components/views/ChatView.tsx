@@ -4,12 +4,13 @@ import { Add01Icon } from '@hugeicons/core-free-icons';
 import { ArrowUp02Icon } from '@hugeicons/core-free-icons';
 import { ComputerTerminal01Icon } from '@hugeicons/core-free-icons';
 import { ArrowRight01Icon } from '@hugeicons/core-free-icons';
+import { RepeatIcon } from '@hugeicons/core-free-icons';
 import { useUiSnapshot } from '../../hooks/useUiSnapshot';
 import { useActions } from '../../hooks/useActions';
 import { ChatBubble } from '../chat/ChatBubble';
 import { isToolResultOnlyMessage } from '../chat/chat-utils.js';
 import { WalkingAnt } from '../chat/WalkingAnt';
-import { ServiceDropdown } from '../chat/ServiceDropdown';
+
 import { AntStationStackedLogo } from '../AntStationLogo';
 import styles from './ChatView.module.scss';
 import type { ChatMessage } from '../chat/chat-shared';
@@ -201,22 +202,24 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   return (
     <section className={`view view-chat${active ? ' active' : ''}`} role="tabpanel">
       <div className={styles.pageHeader}>
-        <div className={styles.pageHeaderLeft}>
-          <ServiceDropdown
-            options={snap.chatServiceOptions}
-            value={snap.chatSelectedServiceValue}
-            disabled={snap.chatServiceSelectDisabled}
-            onChange={actions.handleServiceChange}
-            onFocus={actions.handleServiceFocus}
-            onBlur={actions.handleServiceBlur}
-          />
-        </div>
+        <div className={styles.pageHeaderLeft} />
         <div className={styles.pageHeaderRight}>
-          {snap.chatRoutedPeer && (
-            <>
-              <span className={styles.chatRoutedLabel}>Routed to:</span>
-              <span className={styles.chatRoutedPeer}>{snap.chatRoutedPeer}</span>
-            </>
+          {snap.chatRoutedPeer ? (
+            <button
+              className={styles.peerServiceIndicator}
+              onClick={() => { actions.clearPinnedPeer(); onSelectView?.('discover'); }}
+            >
+              <span className={styles.peerName}>{snap.chatRoutedPeer}</span>
+              <span className={styles.serviceSeparator}>·</span>
+              <span className={styles.serviceName}>
+                {snap.chatServiceOptions.find((o) => o.value === snap.chatSelectedServiceValue)?.label || snap.chatSelectedServiceValue || 'Service'}
+              </span>
+              <HugeiconsIcon icon={RepeatIcon} size={14} strokeWidth={1.5} />
+            </button>
+          ) : (
+            <span className={styles.serviceLabel}>
+              {snap.chatServiceOptions.find((o) => o.value === snap.chatSelectedServiceValue)?.label || 'No peer selected'}
+            </span>
           )}
         </div>
       </div>
