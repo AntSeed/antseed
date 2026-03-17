@@ -207,7 +207,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
           {snap.chatRoutedPeer ? (
             <button
               className={styles.peerServiceIndicator}
-              onClick={() => onSelectView?.('discover')}
+              onClick={() => { actions.clearPinnedPeer(); onSelectView?.('discover'); }}
             >
               <span className={styles.peerName}>{snap.chatRoutedPeer}</span>
               <span className={styles.serviceSeparator}>·</span>

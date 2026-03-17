@@ -67,6 +67,7 @@ export type ChatModuleApi = {
   handleServiceChange: (value: string) => void;
   handleServiceFocus: () => void;
   handleServiceBlur: () => void;
+  clearPinnedPeer: () => void;
 };
 
 export function initChatModule({
@@ -1243,6 +1244,15 @@ export function initChatModule({
     }
   }
 
+  function clearPinnedPeer(): void {
+    uiState.chatSelectedPeerId = '';
+    uiState.chatRoutedPeer = '';
+    if (bridge?.chatAiSelectPeer) {
+      void bridge.chatAiSelectPeer(null).catch(() => undefined);
+    }
+    notifyUiStateChanged();
+  }
+
   // ---------------------------------------------------------------------------
   // Bridge callbacks
   // ---------------------------------------------------------------------------
@@ -1626,5 +1636,6 @@ export function initChatModule({
     handleServiceChange,
     handleServiceFocus,
     handleServiceBlur,
+    clearPinnedPeer,
   };
 }

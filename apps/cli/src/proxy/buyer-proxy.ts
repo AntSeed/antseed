@@ -1217,7 +1217,14 @@ export class BuyerProxy {
 
     if (path === '/_antseed/connect' && method === 'POST') {
       const chunks: Buffer[] = []
+      let totalSize = 0
       for await (const chunk of req) {
+        totalSize += (chunk as Buffer).length
+        if (totalSize > 8192) {
+          res.writeHead(413, { 'content-type': 'application/json' })
+          res.end(JSON.stringify({ ok: false, error: 'Request body too large' }))
+          return
+        }
         chunks.push(chunk as Buffer)
       }
       let peerId: string

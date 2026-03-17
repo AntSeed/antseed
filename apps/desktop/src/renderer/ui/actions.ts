@@ -19,6 +19,7 @@ export type AppActions = {
   handleServiceChange: (value: string) => void;
   handleServiceFocus: () => void;
   handleServiceBlur: () => void;
+  clearPinnedPeer: () => void;
   refreshPlugins: () => Promise<void>;
   installPlugin: () => Promise<void>;
 };
