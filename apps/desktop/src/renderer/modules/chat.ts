@@ -1332,6 +1332,30 @@ export function initChatModule({
       return `stream-${blockType}-${String(index)}`;
     }
 
+    function findLastStreamingThinkingBlock(blocks: ContentBlock[], index: number | string): ContentBlock | undefined {
+      const contentIndex = String(index);
+      for (let i = blocks.length - 1; i >= 0; i -= 1) {
+        const block = blocks[i];
+        if (
+          block?.type === 'thinking' &&
+          String(block.details?.streamContentIndex ?? '') === contentIndex &&
+          block.streaming
+        ) {
+          return block;
+        }
+      }
+      for (let i = blocks.length - 1; i >= 0; i -= 1) {
+        const block = blocks[i];
+        if (
+          block?.type === 'thinking' &&
+          String(block.details?.streamContentIndex ?? '') === contentIndex
+        ) {
+          return block;
+        }
+      }
+      return undefined;
+    }
+
     function findLastStreamingBlockByType(blocks: ContentBlock[], type: string): ContentBlock | undefined {
       for (let i = blocks.length - 1; i >= 0; i -= 1) {
         const block = blocks[i];
@@ -1392,12 +1416,14 @@ export function initChatModule({
           );
           updateStreamingMessage(data.conversationId, (message) => {
             const blocks = getStreamingBlocks(message);
+            const thinkingInstance = blocks.filter((block) => block?.type === 'thinking').length;
             blocks.push({
               type: 'thinking',
-              renderKey: createStreamingRenderKey('thinking', blocks.length),
-              id: getStreamingBlockId('thinking', data.index),
+              renderKey: createStreamingRenderKey('thinking', `${data.index}-${thinkingInstance}`),
+              id: getStreamingBlockId('thinking', `${data.index}-${thinkingInstance}`),
               name: thinkingLabel,
               thinking: '',
+              details: { streamContentIndex: String(data.index) },
               streaming: true,
             });
             message.content = blocks;
@@ -1434,11 +1460,7 @@ export function initChatModule({
         } else if (data.blockType === 'thinking') {
           updateStreamingMessage(data.conversationId, (message) => {
             const blocks = message.content as ContentBlock[];
-            const thinkingBlock = blocks.find(
-              (block) =>
-                block?.type === 'thinking' &&
-                block.id === getStreamingBlockId('thinking', data.index),
-            );
+            const thinkingBlock = findLastStreamingThinkingBlock(blocks, data.index);
             if (thinkingBlock && thinkingBlock.type === 'thinking') {
               thinkingBlock.thinking = `${String(thinkingBlock.thinking || '')}${data.text}`;
               thinkingBlock.streaming = true;
@@ -1461,9 +1483,7 @@ export function initChatModule({
         } else if (data.blockType === 'thinking') {
           updateStreamingMessage(data.conversationId, (message) => {
             const blocks = message.content as ContentBlock[];
-            const thinkingBlock = blocks.find(
-              (block) => block.type === 'thinking' && block.id === getStreamingBlockId('thinking', data.index),
-            );
+            const thinkingBlock = findLastStreamingThinkingBlock(blocks, data.index);
             if (thinkingBlock && thinkingBlock.type === 'thinking') {
               thinkingBlock.streaming = false;
             }

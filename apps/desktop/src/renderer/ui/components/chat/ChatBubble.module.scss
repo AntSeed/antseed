@@ -253,84 +253,79 @@
   :global {
     /* Tool group */
     .tool-group {
+      position: relative;
       margin: 10px 0 12px;
       border: 1px solid var(--border);
       border-radius: var(--radius-sm);
-      overflow: hidden;
-      background: var(--bg-card-alt);
+      background: var(--bg-card);
     }
 
     .tool-group-header-btn {
+      position: absolute;
+      top: -8px;
+      left: 8px;
       appearance: none;
-      width: 100%;
       border: 0;
-      border-bottom: 1px solid var(--border);
-      background: var(--bg-surface);
-      display: flex;
+      background: var(--bg-primary);
+      display: inline-flex;
       align-items: center;
-      gap: 7px;
-      padding: 7px 10px;
-      font-size: 12px;
-      font-weight: 600;
+      gap: 4px;
+      padding: 0 6px;
+      font-size: 10px;
+      font-weight: 500;
       color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
+      line-height: 16px;
       cursor: pointer;
-      text-align: left;
       user-select: none;
+      z-index: 1;
     }
 
     .tool-group-header-btn:hover {
-      background: var(--bg-hover);
+      color: var(--text-secondary);
     }
 
     .tool-group-chevron {
-      font-size: 14px;
+      font-size: 7px;
       line-height: 1;
-      transition: transform 0.2s ease;
-      transform: rotate(90deg);
+      transition: transform 0.15s;
+      transform: rotate(0deg);
       display: inline-block;
       flex-shrink: 0;
     }
 
-    .tool-group-header-btn.collapsed .tool-group-chevron {
-      transform: rotate(0deg);
-    }
-
-    .tool-group-header-btn.collapsed {
-      border-bottom-color: transparent;
+    .tool-group.open .tool-group-chevron {
+      transform: rotate(90deg);
     }
 
     .tool-group-label {
       flex-shrink: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
     }
 
-    .tool-group-summary {
-      font-weight: 400;
-      opacity: 0.55;
-      text-transform: none;
-      letter-spacing: 0;
-      text-overflow: ellipsis;
+    .tool-group-preview {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 14px 10px 8px;
       min-width: 0;
-      white-space: nowrap;
-      overflow: hidden;
     }
 
-    .tool-group-spacer {
+    .tool-group-preview-text {
       flex: 1;
+      min-width: 0;
+      font-size: 12px;
+      line-height: 1.4;
+      color: var(--text-muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .tool-group-status {
-      font-size: 11px;
-      font-weight: 600;
-      padding: 2px 7px;
-      border-radius: 20px;
-      text-transform: none;
-      letter-spacing: 0;
-
+      flex-shrink: 0;
+      font-size: 12px;
+      font-weight: 500;
+      padding: 1px 6px;
+      border-radius: 999px;
       &.running { color: var(--accent-blue);  background: color-mix(in srgb, var(--accent-blue) 14%, transparent); }
       &.success { color: var(--accent-green); background: color-mix(in srgb, var(--accent-green) 14%, transparent); }
       &.error   { color: var(--danger);       background: color-mix(in srgb, var(--danger) 14%, transparent); }
@@ -357,6 +352,10 @@
       flex-direction: column;
     }
 
+    .tool-group.open .tool-group-preview {
+      display: none;
+    }
+
     .tool-inline {
       overflow: hidden;
       border-top: 1px solid var(--border);
@@ -375,8 +374,12 @@
       align-items: center;
       gap: 8px;
       min-height: 24px;
-      padding: 9px 12px;
+      padding: 10px 10px;
       text-align: left;
+      cursor: default;
+    }
+
+    .tool-inline-row.has-inline-diff {
       cursor: default;
     }
 
@@ -480,33 +483,36 @@
 
     /* Thinking blocks */
     .thinking-block {
+      position: relative;
       margin: 8px 0;
       border: 1px solid var(--border);
       border-radius: var(--radius-sm);
-      overflow: hidden;
     }
 
     .thinking-block-header {
-      display: flex;
+      position: absolute;
+      top: -8px;
+      left: 8px;
+      display: inline-flex;
       align-items: center;
-      gap: 6px;
-      width: 100%;
-      padding: 6px 10px;
-      background: var(--bg-surface);
+      gap: 4px;
+      padding: 0 6px;
+      background: var(--bg-primary);
       border: 0;
       cursor: pointer;
-      font-size: 12px;
+      font-size: 10px;
       color: var(--text-muted);
-      text-align: left;
+      line-height: 16px;
       user-select: none;
+      z-index: 1;
     }
 
     .thinking-block-header:hover {
-      background: var(--bg-hover);
+      color: var(--text-secondary);
     }
 
     .thinking-block-triangle {
-      font-size: 8px;
+      font-size: 7px;
       transition: transform 0.15s;
     }
 
@@ -514,18 +520,47 @@
       transform: rotate(90deg);
     }
 
+    .thinking-block-preview {
+      padding: 14px 10px 8px;
+      font-size: 12px;
+      line-height: 1.4;
+      color: var(--text-muted);
+      max-height: calc(14px + 1.4em + 8px);
+      overflow: hidden;
+
+      :global(.thinking-block-preview-md) {
+        display: inline;
+
+        p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote, pre {
+          display: inline;
+          margin: 0;
+          padding: 0;
+          font-size: inherit;
+          font-weight: inherit;
+        }
+
+        code {
+          font-size: 0.9em;
+          padding: 1px 3px;
+          background: var(--bg-hover);
+          border-radius: 3px;
+        }
+      }
+    }
+
+    .thinking-block.open .thinking-block-preview {
+      display: none;
+    }
+
     .thinking-block-body {
       display: none;
-      padding: 10px 12px;
-      border-top: 1px solid var(--border);
+      padding: 14px 10px 8px;
       font-size: 13px;
       line-height: 1.5;
       color: var(--text-secondary);
       max-height: 400px;
       overflow-y: auto;
-      white-space: pre-wrap;
       word-break: break-word;
-      background: var(--bg-card-alt);
     }
 
     .thinking-block.open .thinking-block-body {
@@ -818,6 +853,15 @@
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.5;
+}
+
+.toolInlineDiff {
+  padding: 0 0 10px;
+  border-top: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  background: color-mix(in srgb, var(--bg-card-alt) 72%, transparent);
 }
 
 .diffLine {

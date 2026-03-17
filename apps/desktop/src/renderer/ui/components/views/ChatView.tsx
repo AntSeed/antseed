@@ -61,8 +61,6 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   const fileInputId = useId();
   const prevInputDisabled = useRef<boolean>(snap.chatInputDisabled);
   const isUserScrolledUp = useRef(false);
-  const prevMessageCount = useRef(0);
-
   const visibleMessages = useMemo(() => {
     const msgs = Array.isArray(snap.chatMessages) ? (snap.chatMessages as ChatMessage[]) : [];
     return buildDisplayMessages(msgs).filter((msg) => !isToolResultOnlyMessage(msg));
@@ -80,15 +78,35 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     return () => el.removeEventListener('scroll', handleScroll);
   }, []);
 
-  // Auto-scroll only when new messages arrive and user hasn't scrolled up
+  // Keep the view pinned to the bottom while the user is already at the bottom.
+  // This covers streaming updates, tool diffs, and other in-place content growth.
   useEffect(() => {
-    const count = visibleMessages.length;
-    const isNew = count > prevMessageCount.current;
-    prevMessageCount.current = count;
-    if (isNew && !isUserScrolledUp.current && scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    const el = scrollRef.current;
+    if (!el || isUserScrolledUp.current) {
+      return;
     }
-  }, [visibleMessages]);
+
+    const scrollToBottom = (): void => {
+      el.scrollTop = el.scrollHeight;
+    };
+
+    scrollToBottom();
+
+    if (typeof ResizeObserver === 'undefined') {
+      return;
+    }
+
+    const observer = new ResizeObserver(() => {
+      if (!isUserScrolledUp.current) {
+        scrollToBottom();
+      }
+    });
+
+    observer.observe(el);
+    Array.from(el.children).forEach((child) => observer.observe(child));
+
+    return () => observer.disconnect();
+  }, [visibleMessages, snap.chatStreamingMessage, snap.chatSending]);
 
   // Re-focus the input when it transitions from disabled → enabled (e.g. after AI response completes)
   useEffect(() => {

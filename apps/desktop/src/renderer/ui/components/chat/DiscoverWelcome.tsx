@@ -241,7 +241,6 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
 
   return (
     <div className={styles.discover}>
-      {/* Header */}
       <div className={styles.header}>
         <h1 className={styles.heading}>
           What do you need <span className={styles.headingAccent}>AI</span> for?
@@ -252,7 +251,7 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
         </p>
       </div>
 
-      {/* Filter pills */}
+      {/*
       <div className={styles.filters}>
         {FILTERS.map((f) => (
           <button
@@ -264,6 +263,7 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
           </button>
         ))}
       </div>
+      */}
 
       {/* Scrollable cards area */}
       <div className={styles.cardsScroll}>
