@@ -2090,6 +2090,7 @@ export function registerPiChatHandlers({
   ipcMain.handle('chat:ai-select-peer', async (_event, peerId: string | null) => {
     const normalizedPeerId = peerId && peerId.trim().length > 0 ? peerId.trim() : null;
     if (!normalizedPeerId) {
+      preferredPeerByConversationId.clear();
       return { ok: true };
     }
     // Eager connection warmup via buyer proxy
