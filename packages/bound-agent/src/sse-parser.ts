@@ -178,6 +178,105 @@ function parseAnthropicSSE(sseText: string): Record<string, unknown> {
 }
 
 /**
+ * Parse OpenAI Responses API SSE format into a non-streaming response object.
+ *
+ * Responses SSE uses named events:
+ *   event: response.created / response.output_item.added /
+ *          response.output_text.delta / response.function_call_arguments.delta /
+ *          response.output_item.done / response.completed
+ */
+function parseOpenAIResponsesSSE(sseText: string): Record<string, unknown> {
+  let id = '';
+  let model = '';
+  let status = 'completed';
+  const outputItems: Record<string, unknown>[] = [];
+
+  // Track in-progress output items by index
+  const builders: Map<number, Record<string, unknown>> = new Map();
+
+  const lines = sseText.split('\n');
+  let currentEvent = '';
+
+  for (const line of lines) {
+    if (line.startsWith('event: ')) {
+      currentEvent = line.slice(7).trim();
+      continue;
+    }
+    if (!line.startsWith('data: ') || line === 'data: [DONE]') continue;
+
+    let data: Record<string, unknown>;
+    const event = currentEvent;
+    currentEvent = '';
+    try {
+      data = JSON.parse(line.slice(6).trimEnd()) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+
+    if (event === 'response.created' || event === 'response.completed') {
+      if (data.id) id = data.id as string;
+      if (data.model) model = data.model as string;
+      if (data.status) status = data.status as string;
+      // If response.completed has output, use it directly
+      if (event === 'response.completed' && Array.isArray(data.output)) {
+        return data;
+      }
+    } else if (event === 'response.output_item.added') {
+      const idx = data.output_index as number;
+      const item = data.item as Record<string, unknown>;
+      if (item) {
+        builders.set(idx, { ...item });
+      }
+    } else if (event === 'response.output_text.delta') {
+      const idx = data.output_index as number;
+      const builder = builders.get(idx);
+      if (builder && typeof data.delta === 'string') {
+        // Accumulate text in the message's content part
+        const content = builder.content as { type: string; text: string }[] | undefined;
+        if (content && content.length > 0) {
+          const part = content[content.length - 1]!;
+          part.text = (part.text ?? '') + data.delta;
+        }
+      }
+    } else if (event === 'response.content_part.added') {
+      const idx = data.output_index as number;
+      const builder = builders.get(idx);
+      const part = data.part as Record<string, unknown>;
+      if (builder && part) {
+        if (!Array.isArray(builder.content)) builder.content = [];
+        (builder.content as unknown[]).push({ ...part });
+      }
+    } else if (event === 'response.function_call_arguments.delta') {
+      const idx = data.output_index as number;
+      const builder = builders.get(idx);
+      if (builder && typeof data.delta === 'string') {
+        builder.arguments = ((builder.arguments as string) ?? '') + data.delta;
+      }
+    } else if (event === 'response.output_item.done') {
+      const idx = data.output_index as number;
+      const item = data.item as Record<string, unknown>;
+      if (item) {
+        outputItems[idx] = item;
+        builders.delete(idx);
+      }
+    }
+  }
+
+  // Fill in any remaining builders that didn't get a done event
+  for (const [idx, builder] of builders) {
+    if (!outputItems[idx]) outputItems[idx] = builder;
+  }
+
+  return {
+    id,
+    object: 'response',
+    model,
+    output: outputItems.filter(Boolean),
+    status,
+  };
+}
+
+/**
  * Parse raw SSE bytes into a structured response object.
  */
 export function parseSSEResponse(
@@ -197,6 +296,7 @@ export function parseSSEResponse(
     }
   }
 
+  if (format === 'openai-responses') return parseOpenAIResponsesSSE(text);
   return format === 'openai' ? parseOpenAISSE(text) : parseAnthropicSSE(text);
 }
 

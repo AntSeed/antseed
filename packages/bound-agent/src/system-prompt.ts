@@ -50,6 +50,15 @@ export function injectSystemPrompt(
   systemContent: string,
   format: RequestFormat,
 ): Record<string, unknown> {
+  if (format === 'openai-responses') {
+    const existing = typeof body.instructions === 'string' ? body.instructions : '';
+    if (existing.includes(INJECTION_MARKER)) return body;
+    return {
+      ...body,
+      instructions: existing ? `${systemContent}\n\n${wrapClientContext(existing)}` : systemContent,
+    };
+  }
+
   if (format === 'openai') {
     const messages = Array.isArray(body.messages) ? [...(body.messages as unknown[])] : [];
 
