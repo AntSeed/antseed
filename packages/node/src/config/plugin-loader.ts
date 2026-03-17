@@ -20,6 +20,7 @@ export interface LoadedRouter {
  */
 export async function loadPluginModule(packageName: string, pluginsDir: string): Promise<AntseedPlugin> {
   const { join, resolve } = await import('node:path')
+  const { pathToFileURL } = await import('node:url')
   const pluginPath = join(pluginsDir, 'node_modules', packageName, 'dist', 'index.js')
   const resolved = resolve(pluginPath)
 
@@ -29,7 +30,7 @@ export async function loadPluginModule(packageName: string, pluginsDir: string):
 
   let mod: { default?: unknown }
   try {
-    mod = await import(resolved) as { default?: unknown }
+    mod = await import(pathToFileURL(resolved).href) as { default?: unknown }
   } catch (err) {
     const cause = err instanceof Error ? err.message : String(err)
     throw new Error(`Plugin "${packageName}" failed to load from ${resolved}: ${cause}`)

@@ -732,9 +732,19 @@ async function listInstalledPlugins(): Promise<InstalledPlugin[]> {
 }
 
 function resolveNpmBin(): string {
-  // Electron apps on macOS get a restricted PATH that may not include npm.
-  // Check common locations before falling back to plain 'npm'.
+  const envNpmExecPath = process.env['npm_execpath']?.trim();
+  if (envNpmExecPath && existsSync(envNpmExecPath)) {
+    return process.execPath;
+  }
+
+  // Electron apps often get a restricted PATH, so check common install
+  // locations across macOS, Linux, and Windows before falling back.
   const candidates = [
+    path.join(path.dirname(process.execPath), 'npm.cmd'),
+    path.join(path.dirname(process.execPath), 'npm'),
+    path.join(process.env['ProgramFiles'] ?? 'C:\\Program Files', 'nodejs', 'npm.cmd'),
+    path.join(process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)', 'nodejs', 'npm.cmd'),
+    path.join(process.env['APPDATA'] ?? '', 'npm', 'npm.cmd'),
     '/usr/local/bin/npm',          // Homebrew (Intel Mac)
     '/opt/homebrew/bin/npm',       // Homebrew (Apple Silicon)
     '/usr/bin/npm',                // System
@@ -750,15 +760,23 @@ async function installPluginDependency(packageSpec: string): Promise<void> {
   await ensurePluginsDirectory();
   const npmBin = resolveNpmBin();
   appendLog('connect', 'system', `Installing "${packageSpec}" via ${npmBin}...`);
-  await execFileAsync(npmBin, ['install', '--ignore-scripts', packageSpec], {
+  const npmArgs = npmBin === process.execPath && process.env['npm_execpath']
+    ? [process.env['npm_execpath'], 'install', '--ignore-scripts', packageSpec]
+    : ['install', '--ignore-scripts', packageSpec];
+
+  await execFileAsync(npmBin, npmArgs, {
     cwd: DEFAULT_PLUGINS_DIR,
     timeout: 120_000, // 2-minute hard limit
     env: {
       ...process.env,
       PATH: [
+        path.join(path.dirname(process.execPath)),
+        path.join(process.env['ProgramFiles'] ?? 'C:\\Program Files', 'nodejs'),
+        path.join(process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)', 'nodejs'),
+        path.join(process.env['APPDATA'] ?? '', 'npm'),
         '/usr/local/bin', '/opt/homebrew/bin', '/usr/bin', '/bin',
         process.env['PATH'] ?? '',
-      ].join(':'),
+      ].filter((segment) => segment.length > 0).join(path.delimiter),
     },
   });
 }
@@ -791,7 +809,8 @@ async function installPluginFromBundle(packageName: string): Promise<boolean> {
 
 function isPluginInstalled(packageName: string): boolean {
   const pluginDir = path.join(DEFAULT_PLUGINS_DIR, 'node_modules', packageName);
-  return existsSync(path.join(pluginDir, 'package.json'));
+  return existsSync(path.join(pluginDir, 'package.json'))
+    && existsSync(path.join(pluginDir, 'dist', 'index.js'));
 }
 
 async function ensureDefaultPlugin(packageName: string): Promise<void> {
@@ -1887,6 +1906,31 @@ registerPiChatHandlers({
   },
   configPath: ACTIVE_CONFIG_PATH,
   isBuyerRuntimeRunning: () => getCombinedProcessState().some((state) => state.mode === "connect" && state.running),
+  ensureBuyerRuntimeStarted: async () => {
+    const connectState = getCombinedProcessState().find((state) => state.mode === 'connect');
+    if (connectState?.running) {
+      return true;
+    }
+
+    const startOptions: StartOptions = {
+      mode: 'connect',
+      router: 'local',
+      ...(desktopDebugEnabled ? { verbose: true } : {}),
+      env: desktopDebugEnabled ? { ANTSEED_DEBUG: '1' } : undefined,
+    };
+
+    try {
+      await processManager.start(startOptions);
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.toLowerCase().includes('already running')) {
+        return true;
+      }
+      appendLog('connect', 'system', `Chat-triggered buyer runtime start failed: ${message}`);
+      return false;
+    }
+  },
   appendSystemLog: (line) => {
     appendLog("dashboard", "system", line);
   },

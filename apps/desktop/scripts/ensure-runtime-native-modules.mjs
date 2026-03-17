@@ -102,19 +102,31 @@ function resolveNpmCli() {
       ['config', 'get', 'prefix'],
       { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
     ).trim();
-    const fromPrefix = path.resolve(prefix, 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js');
-    if (existsSync(fromPrefix)) {
-      return fromPrefix;
+    const prefixCandidates = process.platform === 'win32'
+      ? [
+          path.resolve(prefix, 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+          path.resolve(prefix, '..', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+        ]
+      : [path.resolve(prefix, 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js')];
+    for (const candidate of prefixCandidates) {
+      if (existsSync(candidate)) {
+        return candidate;
+      }
     }
   } catch {
     // fall through
   }
 
-  const commonCandidates = [
+  const commonCandidates = process.platform === 'win32'
+    ? [
+        path.resolve(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+        path.resolve(path.dirname(process.execPath), '..', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+      ]
+    : [
     '/usr/local/lib/node_modules/npm/bin/npm-cli.js',
     '/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js',
     path.resolve(path.dirname(process.execPath), '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
-  ];
+      ];
   for (const candidate of commonCandidates) {
     if (existsSync(candidate)) {
       return candidate;

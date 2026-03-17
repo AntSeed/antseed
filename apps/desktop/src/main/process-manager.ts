@@ -1,6 +1,7 @@
 import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
+import path from 'node:path';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -145,7 +146,7 @@ function resolveChildNodePath(): string {
       paths.push(unpacked);
     }
   }
-  return paths.join(':');
+  return paths.join(path.delimiter);
 }
 
 function detectNodeArch(nodeBinary: string): string | null {
@@ -402,7 +403,7 @@ export class ProcessManager {
     }
     const extraNodePath = resolveChildNodePath();
     if (extraNodePath) {
-      childEnv['NODE_PATH'] = extraNodePath + (childEnv['NODE_PATH'] ? `:${childEnv['NODE_PATH']}` : '');
+      childEnv['NODE_PATH'] = extraNodePath + (childEnv['NODE_PATH'] ? `${path.delimiter}${childEnv['NODE_PATH']}` : '');
     }
 
     const child = spawn(executable, executableArgs, {
@@ -495,7 +496,7 @@ export class ProcessManager {
     }
     const extraNodePath = resolveChildNodePath();
     if (extraNodePath) {
-      childEnv['NODE_PATH'] = extraNodePath + (childEnv['NODE_PATH'] ? `:${childEnv['NODE_PATH']}` : '');
+      childEnv['NODE_PATH'] = extraNodePath + (childEnv['NODE_PATH'] ? `${path.delimiter}${childEnv['NODE_PATH']}` : '');
     }
 
     this.onLog(mode, 'system', `Running command: ${executableArgs.join(' ')}`);
