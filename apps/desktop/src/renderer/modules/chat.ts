@@ -140,13 +140,17 @@ export function initChatModule({
     return { id, label, provider, protocol, count, peerId, peerLabel };
   }
 
-  function encodeChatServiceSelection(serviceId: string, provider: string | null): string {
+  function encodeChatServiceSelection(serviceId: string, provider: string | null, peerId?: string): string {
     const normalizedServiceId = normalizeChatServiceId(serviceId);
     if (!normalizedServiceId) return '';
     const normalizedProvider = normalizeProviderId(provider);
-    return normalizedProvider
+    const base = normalizedProvider
       ? `${normalizedProvider}${CHAT_SERVICE_SELECTION_SEPARATOR}${normalizedServiceId}`
       : normalizedServiceId;
+    const normalizedPeerId = peerId?.trim();
+    return normalizedPeerId
+      ? `${base}${CHAT_SERVICE_SELECTION_SEPARATOR}${normalizedPeerId}`
+      : base;
   }
 
   function decodeChatServiceSelection(value: unknown): ChatServiceSelection {
@@ -633,7 +637,7 @@ export function initChatModule({
       id: entry.id,
       provider: normalizeProviderId(entry.provider),
       label: entry.label,
-      value: encodeChatServiceSelection(entry.id, entry.provider),
+      value: encodeChatServiceSelection(entry.id, entry.provider, entry.peerId),
     }));
 
     const preferred =
@@ -672,7 +676,7 @@ export function initChatModule({
       provider: entry.provider,
       protocol: entry.protocol,
       count: entry.count,
-      value: encodeChatServiceSelection(entry.id, entry.provider),
+      value: encodeChatServiceSelection(entry.id, entry.provider, entry.peerId),
       peerId: entry.peerId,
       peerLabel: entry.peerLabel,
     }));
