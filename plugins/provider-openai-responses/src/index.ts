@@ -293,6 +293,23 @@ function prepareRequestBody(
     }
     delete parsed.service;
 
+    // Strip parameters the Codex backend doesn't support.
+    delete parsed.max_output_tokens;
+
+    // The Codex backend requires `instructions` as a top-level field.
+    // Some clients (e.g. pi's openai-responses provider) send the system
+    // prompt as a developer/system message in `input` instead. Extract it
+    // and move to `instructions` so the request is accepted.
+    if (!parsed.instructions && Array.isArray(parsed.input)) {
+      const input = parsed.input as Array<Record<string, unknown>>;
+      const sysIdx = input.findIndex((m) => m.role === 'system' || m.role === 'developer');
+      if (sysIdx >= 0) {
+        const sysMsg = input[sysIdx]!;
+        parsed.instructions = typeof sysMsg.content === 'string' ? sysMsg.content : '';
+        input.splice(sysIdx, 1);
+      }
+    }
+
     return {
       ...request,
       body: new TextEncoder().encode(JSON.stringify(parsed)),

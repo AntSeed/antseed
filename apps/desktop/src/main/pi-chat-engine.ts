@@ -10,18 +10,11 @@ import type { AgentSession, AgentSessionEvent, ToolDefinition } from '@mariozech
 import { ANTSTATION_SYSTEM_PROMPT } from './chat-system-prompt.js';
 import {
   AuthStorage,
-  bashTool,
   createAgentSession,
   DefaultResourceLoader,
-  editTool,
-  findTool,
-  grepTool,
-  lsTool,
   ModelRegistry,
-  readTool,
   SessionManager,
   SettingsManager,
-  writeTool,
 } from '@mariozechner/pi-coding-agent';
 import type {
   AssistantMessage,
@@ -33,9 +26,6 @@ import type {
   ToolResultMessage,
   Usage,
 } from '@mariozechner/pi-ai';
-import { createBuyerProxyAnthropicStreamFn } from './chat-proxy/anthropic.js';
-import { createBuyerProxyOpenAIStreamFn } from './chat-proxy/openai-chat.js';
-import { createBuyerProxyResponsesStreamFn } from './chat-proxy/openai-responses.js';
 
 type TextBlock = { type: 'text'; text: string };
 type ThinkingBlock = { type: 'thinking'; thinking: string };
@@ -361,16 +351,14 @@ const CHAT_DATA_DIR = path.join(ANTSEED_HOME_DIR, 'chat');
 const CHAT_SESSIONS_DIR = path.join(CHAT_DATA_DIR, 'sessions');
 const CHAT_WORKSPACE_DIR = path.join(ANTSEED_HOME_DIR, 'projects');
 const CHAT_AGENT_DIR = path.join(CHAT_DATA_DIR, 'pi-agent');
+
 const DEFAULT_PROXY_PORT = 8377;
 const DEFAULT_CHAT_SERVICE = 'claude-sonnet-4-20250514';
 const PROXY_PROVIDER_ID = 'antseed-proxy';
 const PROXY_RUNTIME_API_KEY = 'antseed-local';
+
 const CHAT_SYSTEM_PROMPT_ENV = 'ANTSEED_CHAT_SYSTEM_PROMPT';
 const CHAT_SYSTEM_PROMPT_FILE_ENV = 'ANTSEED_CHAT_SYSTEM_PROMPT_FILE';
-const CHAT_STREAM_TOTAL_TIMEOUT_ENV = 'ANTSEED_CHAT_STREAM_TOTAL_TIMEOUT_MS';
-const CHAT_STREAM_IDLE_TIMEOUT_ENV = 'ANTSEED_CHAT_STREAM_IDLE_TIMEOUT_MS';
-const DEFAULT_CHAT_STREAM_TOTAL_TIMEOUT_MS = 240_000;
-const DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS = 45_000;
 const CHAT_SERVICE_METADATA_FETCH_TIMEOUT_MS = 2_500;
 const CHAT_SERVICE_SCAN_MAX_PEERS = 20;
 const CHAT_SERVICE_MAX_OPTIONS = 120;
@@ -387,13 +375,6 @@ function normalizeTokenCount(value: unknown): number {
   return Math.floor(parsed);
 }
 
-function resolveTimeoutMs(raw: string | undefined, fallback: number): number {
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return fallback;
-  }
-  return Math.min(Math.max(Math.floor(parsed), 1_000), 30 * 60 * 1_000);
-}
 
 function normalizeOptionalNumber(value: unknown): number | undefined {
   const parsed = Number(value);
@@ -1086,17 +1067,27 @@ function makeProxyService(
   serviceId: string,
   port: number,
   protocol: ChatServiceProtocol = 'anthropic-messages',
+  providerHint?: string | null,
+  preferredPeerId?: string | null,
 ): Model<any> {
+  const headers: Record<string, string> = {};
+  if (providerHint) headers['x-antseed-provider'] = providerHint;
+  if (preferredPeerId) headers['x-antseed-prefer-peer'] = preferredPeerId;
+
+  // The OpenAI SDK appends API paths (e.g. /responses, /chat/completions)
+  // to baseUrl, so include /v1 to match the buyer proxy's expected paths.
+  const needsV1 = protocol === 'openai-responses' || protocol === 'openai-chat-completions';
   const base = {
     id: serviceId,
     name: serviceId,
     provider: PROXY_PROVIDER_ID,
-    baseUrl: `http://127.0.0.1:${port}`,
+    baseUrl: needsV1 ? `http://127.0.0.1:${port}/v1` : `http://127.0.0.1:${port}`,
     reasoning: true,
     input: ['text', 'image'] as ('text' | 'image')[],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 200_000,
     maxTokens: 16_384,
+    headers,
   };
 
   if (protocol === 'openai-chat-completions') {
@@ -1659,7 +1650,7 @@ export function registerPiChatHandlers({
       providerOverride,
     );
     const protocol = await resolveProtocolForSend(serviceId);
-    const proxyModel = makeProxyService(serviceId, proxyPort, protocol);
+    const proxyModel = makeProxyService(serviceId, proxyPort, protocol, providerHint, preferredPeerId);
 
     const authStorage = AuthStorage.inMemory();
     authStorage.setRuntimeApiKey(PROXY_PROVIDER_ID, PROXY_RUNTIME_API_KEY);
@@ -1686,15 +1677,6 @@ export function registerPiChatHandlers({
       authStorage,
       modelRegistry,
       model: proxyModel,
-      tools: [
-        readTool,
-        bashTool,
-        editTool,
-        writeTool,
-        grepTool,
-        findTool,
-        lsTool,
-      ],
       customTools: [webFetchTool],
       resourceLoader,
     });
@@ -1709,45 +1691,10 @@ export function registerPiChatHandlers({
 
     const turnMetaQueue: AiMessageMeta[] = [];
     const toolArgsById = new Map<string, Record<string, unknown>>();
-    const totalTimeoutMs = resolveTimeoutMs(
-      process.env[CHAT_STREAM_TOTAL_TIMEOUT_ENV],
-      DEFAULT_CHAT_STREAM_TOTAL_TIMEOUT_MS,
-    );
-    const idleTimeoutMs = resolveTimeoutMs(
-      process.env[CHAT_STREAM_IDLE_TIMEOUT_ENV],
-      DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS,
-    );
-    if (protocol === 'openai-chat-completions') {
-      session.agent.streamFn = createBuyerProxyOpenAIStreamFn(
-        (meta) => {
-          turnMetaQueue.push(meta);
-        },
-        providerHint,
-        preferredPeerId ?? null,
-        totalTimeoutMs,
-        idleTimeoutMs,
-      );
-    } else if (protocol === 'openai-responses') {
-      session.agent.streamFn = createBuyerProxyResponsesStreamFn(
-        (meta) => {
-          turnMetaQueue.push(meta);
-        },
-        providerHint,
-        preferredPeerId ?? null,
-        totalTimeoutMs,
-        idleTimeoutMs,
-      );
-    } else {
-      session.agent.streamFn = createBuyerProxyAnthropicStreamFn(
-        (meta) => {
-          turnMetaQueue.push(meta);
-        },
-        providerHint,
-        preferredPeerId ?? null,
-        totalTimeoutMs,
-        idleTimeoutMs,
-      );
-    }
+    // Pi's native streaming handles all API formats (anthropic-messages,
+    // openai-completions, openai-responses) via model.api + model.baseUrl.
+    // No custom streamFn needed — the buyer proxy at model.baseUrl is a
+    // transparent HTTP proxy that speaks the same API as the upstream provider.
 
     let turnIndex = 0;
     let userPersisted = false;
@@ -1929,17 +1876,8 @@ export function registerPiChatHandlers({
       }
 
       if (event.type === 'agent_end') {
-        if (pendingAssistantMessage) {
-          sendToRenderer('chat:ai-done', {
-            conversationId,
-            message: pendingAssistantMessage,
-          });
-          pendingAssistantMessage = null;
-        }
-        if (!streamDone) {
-          streamDone = true;
-          sendToRenderer('chat:ai-stream-done', { conversationId });
-        }
+        // Don't finalize here — auto-retry may follow with a new agent_start.
+        // The post-session.prompt code handles final chat:ai-done / chat:ai-stream-done.
       }
     });
 
