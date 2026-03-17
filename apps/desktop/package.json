@@ -1,7 +1,7 @@
 {
   "name": "@antseed/desktop",
   "productName": "AntSeed Desktop",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "private": true,
   "description": "Desktop app for AntSeed",
   "author": "AntSeed <hello@antseed.com>",
