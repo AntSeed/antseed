@@ -358,8 +358,8 @@ export default function Home(): JSX.Element {
 
       {/* Big Statement */}
       <section className={styles.bigStatement}>
-        <h2 className={styles.bigStatementTitle}>Nobody asks which LLM their lawyer uses.</h2>
-        <p className={styles.bigStatementSub}>Agents don't have brand loyalty. They pay for results. LLMs are the infrastructure. Expertise is the product. AntSeed is where it gets traded.</p>
+        <h2 className={styles.bigStatementTitle}>Agents don't have a favorite model. They have a budget and a deadline.</h2>
+        <p className={styles.bigStatementSub}>They'll route to whoever delivers. Reputation is the signal. Price is the lever. AntSeed is the network where both are set by the provider and verified by the protocol.</p>
       </section>
 
       {/* What is AntSeed — unified feature section */}
