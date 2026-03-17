@@ -98,7 +98,11 @@ function readPluginPackageVersion(pkgName: string): string | null {
   try {
     const pluginsDir = getPluginsDir()
     const pkgJsonPath = join(pluginsDir, 'node_modules', pkgName, 'package.json')
-    const raw = readFileSync(pkgJsonPath, 'utf8')
+    const resolved = path.resolve(pkgJsonPath)
+    if (!resolved.startsWith(path.resolve(pluginsDir))) {
+      return null
+    }
+    const raw = readFileSync(resolved, 'utf8')
     return (JSON.parse(raw) as { version?: string }).version ?? null
   } catch {
     return null

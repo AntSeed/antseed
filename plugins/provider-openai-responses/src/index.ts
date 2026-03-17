@@ -305,7 +305,18 @@ function prepareRequestBody(
       const sysIdx = input.findIndex((m) => m.role === 'system' || m.role === 'developer');
       if (sysIdx >= 0) {
         const sysMsg = input[sysIdx]!;
-        parsed.instructions = typeof sysMsg.content === 'string' ? sysMsg.content : '';
+        let instructionText: string;
+        if (typeof sysMsg.content === 'string') {
+          instructionText = sysMsg.content;
+        } else if (Array.isArray(sysMsg.content)) {
+          instructionText = (sysMsg.content as Array<{ type?: string; text?: string }>)
+            .filter((c) => c.type === 'text' && typeof c.text === 'string')
+            .map((c) => c.text as string)
+            .join('');
+        } else {
+          instructionText = '';
+        }
+        parsed.instructions = instructionText;
         input.splice(sysIdx, 1);
       }
     }
