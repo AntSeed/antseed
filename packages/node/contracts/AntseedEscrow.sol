@@ -83,6 +83,7 @@ contract AntseedEscrow is EIP712, Pausable {
         bytes32 previousSessionId;
         uint256 reservedAt;
         uint256 settledAmount;
+        uint256 settledTokenCount;  // Tokens delivered (for proof chain validation)
         uint256 tokenRate;          // Snapshotted at reserve time
         SessionStatus status;
         bool isFirstSign;
@@ -233,7 +234,9 @@ contract AntseedEscrow is EIP712, Pausable {
     function requestWithdrawal(uint256 amount) external {
         if (amount == 0) revert InvalidAmount();
         BuyerAccount storage ba = buyers[msg.sender];
-        uint256 available = ba.balance - ba.reserved - ba.withdrawalAmount;
+        // Must cancel existing withdrawal request before creating a new one
+        if (ba.withdrawalAmount > 0) revert InvalidAmount();
+        uint256 available = ba.balance - ba.reserved;
         if (available < amount) revert InsufficientBalance();
 
         ba.withdrawalAmount = amount;
@@ -391,6 +394,7 @@ contract AntseedEscrow is EIP712, Pausable {
             Session storage prevSession = sessions[previousSessionId];
             if (prevSession.status != SessionStatus.Settled) revert InvalidProofChain();
             if (prevSession.buyer != buyer || prevSession.seller != msg.sender) revert InvalidProofChain();
+            if (previousConsumption != prevSession.settledTokenCount) revert InvalidProofChain();
             if (previousConsumption < MIN_TOKEN_THRESHOLD) revert InvalidProofChain();
 
             // Cooldown check
@@ -426,6 +430,7 @@ contract AntseedEscrow is EIP712, Pausable {
             previousSessionId: previousSessionId,
             reservedAt: block.timestamp,
             settledAmount: 0,
+            settledTokenCount: 0,
             tokenRate: sellers[msg.sender].tokenRate,
             status: SessionStatus.Reserved,
             isFirstSign: isFirstSign,
@@ -499,6 +504,7 @@ contract AntseedEscrow is EIP712, Pausable {
 
         // Update session
         session.settledAmount = chargeAmount;
+        session.settledTokenCount = tokenCount;
         session.status = SessionStatus.Settled;
 
         // Transfer platform fee to protocol reserve
@@ -524,19 +530,21 @@ contract AntseedEscrow is EIP712, Pausable {
     function settleTimeout(bytes32 sessionId) external nonReentrant {
         Session storage session = sessions[sessionId];
         if (session.status != SessionStatus.Reserved) revert SessionNotReserved();
-        if (msg.sender != session.buyer && msg.sender != session.seller) revert NotAuthorized();
+        if (msg.sender != session.buyer && msg.sender != session.seller && msg.sender != owner) revert NotAuthorized();
         if (block.timestamp < session.reservedAt + SETTLE_TIMEOUT) revert TimeoutNotReached();
 
         // Return credits
         BuyerAccount storage ba = buyers[session.buyer];
         ba.reserved -= session.maxAmount;
 
-        // Record ghost on identity
+        // Record ghost on identity (skip if seller deregistered to avoid locking buyer funds)
         uint256 sellerTokenId = identityContract.getTokenId(session.seller);
-        identityContract.updateReputation(
-            sellerTokenId,
-            IAntseedIdentity.ReputationUpdate({ updateType: 3, tokenVolume: 0 })
-        );
+        if (sellerTokenId != 0) {
+            identityContract.updateReputation(
+                sellerTokenId,
+                IAntseedIdentity.ReputationUpdate({ updateType: 3, tokenVolume: 0 })
+            );
+        }
 
         session.status = SessionStatus.TimedOut;
 

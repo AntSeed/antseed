@@ -516,7 +516,7 @@ contract AntseedEscrowReserveTest is AntseedEscrowTestBase {
         bytes32 sid = keccak256("fs1");
         _reserveFirstSign(seller, sid, 500_000);
 
-        (address sBuyer, address sSeller,,,,,,,,,,,, ) = escrow.sessions(sid);
+        (address sBuyer, address sSeller,,,,,,,,,,,,, ) = escrow.sessions(sid);
         assertEq(sBuyer, buyer);
         assertEq(sSeller, seller);
     }
@@ -540,7 +540,7 @@ contract AntseedEscrowReserveTest is AntseedEscrowTestBase {
         bytes32 sid2 = keccak256("ps1proven");
         _reserveProvenSign(seller, sid1, 500_000, sid2, 5_000_000);
 
-        (address sBuyer,,,,,,,,,,,,bool isProven,) = escrow.sessions(sid2);
+        (address sBuyer,,,,,,,,,,,,,bool isProven,) = escrow.sessions(sid2);
         assertEq(sBuyer, buyer);
         assertTrue(isProven);
     }
@@ -600,7 +600,7 @@ contract AntseedEscrowReserveTest is AntseedEscrowTestBase {
         // Proven sign with seller — should be qualified
         _reserveProvenSign(seller, keccak256("qp1"), 500_000, keccak256("qp1q"), 5_000_000);
 
-        (,,,,,,,,,,,,, bool isQualified) = escrow.sessions(keccak256("qp1q"));
+        (,,,,,,,,,,,,,, bool isQualified) = escrow.sessions(keccak256("qp1q"));
         assertTrue(isQualified);
     }
 
@@ -612,7 +612,7 @@ contract AntseedEscrowReserveTest is AntseedEscrowTestBase {
 
         _reserveProvenSign(seller, keccak256("uq1"), 500_000, keccak256("uq1p"), 5_000_000);
 
-        (,,,,,,,,,,,bool isProven, bool isProvenFlag, bool isQualified) = escrow.sessions(keccak256("uq1p"));
+        (,,,,,,,,,,,,bool isProven, bool isProvenFlag, bool isQualified) = escrow.sessions(keccak256("uq1p"));
         // isProvenSign should be true, isQualifiedProvenSign should be false
         assertTrue(isProvenFlag);
         assertFalse(isQualified);
@@ -756,7 +756,7 @@ contract AntseedEscrowSettleTest is AntseedEscrowTestBase {
         _settleSession(seller, sid, 1_000_000); // 1M * rate 1 = 1M > 500K → capped
 
         // Check charge was capped at maxAmount
-        (,,uint256 maxAmt,,,,,,uint256 settledAmt,,,,,) = escrow.sessions(sid);
+        (,,uint256 maxAmt,,,,,,uint256 settledAmt,,,,,,) = escrow.sessions(sid);
         assertEq(settledAmt, maxAmt);
     }
 
@@ -949,7 +949,7 @@ contract AntseedEscrowAdminTest is AntseedEscrowTestBase {
         escrow.reserve(buyer, sid3, 5_000_000, 3, deadline, 2_000_000, sid2, sig);
 
         // Verify chain is valid
-        (address b3,,,,,,bytes32 prevSid,,,,,,,) = escrow.sessions(sid3);
+        (address b3,,,,,,bytes32 prevSid,,,,,,,,) = escrow.sessions(sid3);
         assertEq(b3, buyer);
         assertEq(prevSid, sid2);
     }

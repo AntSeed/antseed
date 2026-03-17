@@ -73,6 +73,8 @@ import { parsePublicAddress } from "./discovery/public-address.js";
 import { BuyerPaymentManager, type BuyerPaymentConfig } from "./payments/buyer-payment-manager.js";
 import { SellerPaymentManager, type SellerPaymentConfig } from "./payments/seller-payment-manager.js";
 import { identityToEvmAddress } from "./payments/evm/keypair.js";
+import { IdentityClient } from "./payments/evm/identity-client.js";
+import { verifyReputation } from "./discovery/reputation-verifier.js";
 
 export type { Provider, ProviderStreamCallbacks };
 export type { Router };
@@ -212,6 +214,7 @@ export class AntseedNode extends EventEmitter {
   private _receiptGenerator: ReceiptGenerator | null = null;
   private _balanceManager: BalanceManager | null = null;
   private _escrowClient: BaseEscrowClient | null = null;
+  private _identityClient: IdentityClient | null = null;
   private _paymentMuxes = new Map<PeerId, PaymentMux>();
   private _providerLoadCounts = new Map<string, number>();
   private _metadataRefreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -433,6 +436,7 @@ export class AntseedNode extends EventEmitter {
     this._receiptGenerator = null;
     this._balanceManager = null;
     this._escrowClient = null;
+    this._identityClient = null;
     this._buyerPaymentManager = null;
     this._sellerPaymentManager = null;
     this._buyerLockedPeers.clear();
@@ -473,11 +477,29 @@ export class AntseedNode extends EventEmitter {
 
 
     // Optional reputation verification: replace claimed data with verified on-chain data
-    // TODO: getReputation now lives on IdentityClient (takes tokenId, not address).
-    // Wire IdentityClient into AntseedNode to restore on-chain reputation verification.
-    if (this._escrowClient) {
-      for (const _p of peers) {
-        // Skipped: IdentityClient not yet wired into AntseedNode
+    if (this._identityClient) {
+      for (const p of peers) {
+        if (!p.evmAddress) continue;
+        try {
+          const metadata: import("./discovery/peer-metadata.js").PeerMetadata = {
+            peerId: p.peerId,
+            version: 0,
+            providers: [],
+            region: "",
+            timestamp: 0,
+            signature: "",
+            evmAddress: p.evmAddress,
+            onChainReputation: p.onChainReputation,
+            onChainSessionCount: p.onChainSessionCount,
+            onChainDisputeCount: p.onChainDisputeCount,
+          };
+          const result = await verifyReputation(this._identityClient, metadata);
+          p.onChainReputation = result.actualReputation;
+          p.onChainSessionCount = result.actualSessionCount;
+          p.onChainDisputeCount = result.actualDisputeCount;
+        } catch {
+          // Identity contract lookup failed for this peer — keep claimed data
+        }
       }
     }
 
@@ -905,6 +927,7 @@ export class AntseedNode extends EventEmitter {
         ),
         reannounceIntervalMs: DEFAULT_DHT_CONFIG.reannounceIntervalMs,
         signalingPort: actualSignalingPort,
+        ...(this._identityClient ? { identityClient: this._identityClient } : {}),
       };
       this._announcer = new PeerAnnouncer(announcerConfig);
       this._announcer.startPeriodicAnnounce();
@@ -1405,6 +1428,15 @@ export class AntseedNode extends EventEmitter {
         usdcAddress: payments.usdcAddress,
       });
       debugLog(`[Node] BaseEscrowClient initialized (contract=${payments.contractAddress.slice(0, 10)}...)`);
+    }
+
+    // Initialize IdentityClient if identity contract address is provided
+    if (payments.rpcUrl && payments.identityAddress) {
+      this._identityClient = new IdentityClient({
+        rpcUrl: payments.rpcUrl,
+        contractAddress: payments.identityAddress,
+      });
+      debugLog(`[Node] IdentityClient initialized (contract=${payments.identityAddress.slice(0, 10)}...)`);
     }
 
     // Initialize SessionStore for persistent payment sessions (shared instance)

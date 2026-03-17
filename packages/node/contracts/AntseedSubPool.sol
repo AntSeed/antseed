@@ -258,10 +258,21 @@ contract AntseedSubPool {
         emit PeerOptedIn(msg.sender, tokenId);
     }
 
-    function optOut(uint256 tokenId) external {
+    function optOut(uint256 tokenId) external nonReentrant {
         PeerOpt storage opt = peerOpts[msg.sender];
         if (!opt.optedIn) revert NotOptedIn();
         if (opt.tokenId != tokenId) revert InvalidAmount();
+
+        // Auto-claim any pending revenue before opting out
+        IAntseedIdentity.ProvenReputation memory rep = identityContract.getReputation(opt.tokenId);
+        uint256 weight = uint256(rep.qualifiedProvenSignCount);
+        uint256 earned = (weight * (rewardPerTokenStored - peerRewardPerTokenPaid[msg.sender])) / 1e18;
+        uint256 claimable = opt.pendingRevenue + earned;
+        if (claimable > 0) {
+            opt.pendingRevenue = 0;
+            peerRewardPerTokenPaid[msg.sender] = rewardPerTokenStored;
+            _safeTransfer(msg.sender, claimable);
+        }
 
         opt.optedIn = false;
 
