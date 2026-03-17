@@ -4,6 +4,7 @@ import { Add01Icon } from '@hugeicons/core-free-icons';
 import { ArrowUp02Icon } from '@hugeicons/core-free-icons';
 import { ComputerTerminal01Icon } from '@hugeicons/core-free-icons';
 import { ArrowRight01Icon } from '@hugeicons/core-free-icons';
+import { RepeatIcon } from '@hugeicons/core-free-icons';
 import { useUiSnapshot } from '../../hooks/useUiSnapshot';
 import { useActions } from '../../hooks/useActions';
 import { ChatBubble } from '../chat/ChatBubble';
@@ -201,7 +202,8 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   return (
     <section className={`view view-chat${active ? ' active' : ''}`} role="tabpanel">
       <div className={styles.pageHeader}>
-        <div className={styles.pageHeaderLeft}>
+        <div className={styles.pageHeaderLeft} />
+        <div className={styles.pageHeaderRight}>
           {snap.chatRoutedPeer ? (
             <button
               className={styles.peerServiceIndicator}
@@ -212,7 +214,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
               <span className={styles.serviceName}>
                 {snap.chatServiceOptions.find((o) => o.value === snap.chatSelectedServiceValue)?.label || snap.chatSelectedServiceValue || 'Service'}
               </span>
-              <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={1.5} />
+              <HugeiconsIcon icon={RepeatIcon} size={14} strokeWidth={1.5} />
             </button>
           ) : (
             <span className={styles.serviceLabel}>
@@ -220,7 +222,6 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
             </span>
           )}
         </div>
-        <div className={styles.pageHeaderRight} />
       </div>
 
       {showWelcome && (

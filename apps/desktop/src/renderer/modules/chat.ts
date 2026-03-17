@@ -423,7 +423,11 @@ export function initChatModule({
     parts.push(`updated ${formatChatDateTime(conv.updatedAt)}`);
 
     uiState.chatThreadMeta = parts.join(' · ');
-    if (lastServingPeerId) {
+    // When a peer is pinned, always show it — don't switch based on response metadata.
+    if (uiState.chatSelectedPeerId) {
+      const pinnedOption = uiState.chatServiceOptions.find((o) => o.peerId === uiState.chatSelectedPeerId);
+      uiState.chatRoutedPeer = pinnedOption?.peerLabel || uiState.chatSelectedPeerId.slice(0, 8);
+    } else if (lastServingPeerId) {
       const knownPeer = Array.isArray(uiState.lastPeers)
         ? uiState.lastPeers.find((p) => p.peerId === lastServingPeerId)
         : undefined;

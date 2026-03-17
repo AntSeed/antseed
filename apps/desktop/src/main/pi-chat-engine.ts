@@ -3059,7 +3059,7 @@ export function registerPiChatHandlers({
           const proxyMeta = turnMetaQueue.shift();
           const parsedMeta = parseAssistantMetaFromSessionEvent(message, proxyMeta);
           const peerId = normalizePeerId(parsedMeta.peerId);
-          if (peerId) {
+          if (peerId && !activePinnedPeerId) {
             preferredPeerByConversationId.set(conversationId, peerId);
           }
           const assistantMessage = message as AssistantMessage & { meta?: AiMessageMeta };
@@ -3115,7 +3115,9 @@ export function registerPiChatHandlers({
         return { ok: false, error: 'Aborted' };
       }
       const message = asErrorMessage(error);
-      preferredPeerByConversationId.delete(conversationId);
+      if (!activePinnedPeerId) {
+        preferredPeerByConversationId.delete(conversationId);
+      }
       sendToRenderer('chat:ai-stream-error', { conversationId, error: message });
       appendSystemLog(`Pi chat error: ${message}`);
       return { ok: false, error: message };
