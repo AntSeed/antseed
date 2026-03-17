@@ -11,7 +11,7 @@ import { AntseedNode, BaseEscrowClient, loadOrCreateIdentity, identityToEvmAddre
 import type { NodePaymentsConfig } from '@antseed/node'
 import { OFFICIAL_BOOTSTRAP_NODES, parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
 import { setupShutdownHandler } from '../shutdown.js'
-import { loadRouterPlugin, buildPluginConfig } from '../../plugins/loader.js'
+import { loadRouterPlugin, buildPluginConfig, getPackageVersions } from '../../plugins/loader.js'
 import { BuyerProxy } from '../../proxy/buyer-proxy.js'
 import { resolveEffectiveBuyerConfig, type BuyerRuntimeOverrides } from '../../config/effective.js'
 import type { BuyerCLIConfig } from '../../config/types.js'
@@ -321,6 +321,13 @@ export function registerConnectCommand(program: Command): void {
         }
       }
 
+      const routerName = options.instance
+        ? (await getInstance(join(homedir(), '.antseed', 'config.json'), options.instance))?.package
+        : options.router as string | undefined
+      const versions = getPackageVersions(routerName ?? undefined)
+      if (Object.keys(versions).length > 0) {
+        console.log(chalk.dim(`Package versions: ${Object.entries(versions).map(([k, v]) => `${k}@${v}`).join(', ')}`))
+      }
       console.log(chalk.bold('Effective buyer settings:'))
       console.log(
         chalk.dim(

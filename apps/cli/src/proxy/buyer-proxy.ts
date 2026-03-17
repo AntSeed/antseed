@@ -1646,6 +1646,12 @@ export class BuyerProxy {
               selectedPeer,
               requestForPeer.requestId,
             )
+            // Ensure content-type is set for SSE — some upstream APIs (e.g. Codex)
+            // omit it, which can cause the client's fetch body reader to not
+            // detect end-of-stream properly.
+            if (!streamingHeaders['content-type']) {
+              streamingHeaders['content-type'] = 'text/event-stream'
+            }
             res.writeHead(adaptedStartResponse.statusCode, streamingHeaders)
             if (adaptedStartResponse.body.length > 0) {
               res.write(Buffer.from(adaptedStartResponse.body))

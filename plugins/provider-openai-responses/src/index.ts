@@ -293,6 +293,34 @@ function prepareRequestBody(
     }
     delete parsed.service;
 
+    // Strip parameters the Codex backend doesn't support.
+    delete parsed.max_output_tokens;
+
+    // The Codex backend requires `instructions` as a top-level field.
+    // Some clients (e.g. pi's openai-responses provider) send the system
+    // prompt as a developer/system message in `input` instead. Extract it
+    // and move to `instructions` so the request is accepted.
+    if (!parsed.instructions && Array.isArray(parsed.input)) {
+      const input = parsed.input as Array<Record<string, unknown>>;
+      const sysIdx = input.findIndex((m) => m.role === 'system' || m.role === 'developer');
+      if (sysIdx >= 0) {
+        const sysMsg = input[sysIdx]!;
+        let instructionText: string;
+        if (typeof sysMsg.content === 'string') {
+          instructionText = sysMsg.content;
+        } else if (Array.isArray(sysMsg.content)) {
+          instructionText = (sysMsg.content as Array<{ type?: string; text?: string }>)
+            .filter((c) => c.type === 'text' && typeof c.text === 'string')
+            .map((c) => c.text as string)
+            .join('');
+        } else {
+          instructionText = '';
+        }
+        parsed.instructions = instructionText;
+        input.splice(sysIdx, 1);
+      }
+    }
+
     return {
       ...request,
       body: new TextEncoder().encode(JSON.stringify(parsed)),
@@ -403,6 +431,7 @@ class OpenAIResponsesProvider implements Provider {
         authHeaderValue: 'Bearer ignored',
         tokenProvider,
         extraHeaders: {
+          'accept': 'text/event-stream',
           'openai-beta': 'responses=experimental',
         },
         extraHeadersProvider: async () => {

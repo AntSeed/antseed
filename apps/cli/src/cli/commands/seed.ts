@@ -11,7 +11,7 @@ import { AntseedNode, type Provider, getInstance } from '@antseed/node'
 import type { PaymentConfig } from '@antseed/node/payments'
 import { parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
 import { setupShutdownHandler } from '../shutdown.js'
-import { loadProviderPlugin, buildPluginConfig } from '../../plugins/loader.js'
+import { loadProviderPlugin, buildPluginConfig, getPackageVersions } from '../../plugins/loader.js'
 import { resolveEffectiveSellerConfig, type SellerRuntimeOverrides } from '../../config/effective.js'
 import type { SellerCLIConfig } from '../../config/types.js'
 import { BoundAgentProvider, loadBoundAgent, type BoundAgentDefinition } from '@antseed/bound-agent'
@@ -298,6 +298,10 @@ export function registerSeedCommand(program: Command): void {
       const runtimeServiceCategories = parseRuntimeServiceCategoriesJson(runtimeProviderPricing['ANTSEED_SERVICE_CATEGORIES_JSON'])
       if (runtimeServiceCategories) {
         provider.serviceCategories = runtimeServiceCategories
+      }
+      const versions = getPackageVersions(providerName)
+      if (Object.keys(versions).length > 0) {
+        console.log(chalk.dim(`Package versions: ${Object.entries(versions).map(([k, v]) => `${k}@${v}`).join(', ')}`))
       }
       console.log(chalk.bold('Effective seller settings:'))
       console.log(chalk.dim(`  provider: ${providerName}`))

@@ -1,6 +1,6 @@
 import type { RendererUiState } from '../core/state';
 import type { BadgeTone } from '../core/state';
-import { notifyUiStateChanged } from '../core/store';
+import { notifyUiStateChanged, notifyUiStateChangedSync } from '../core/store';
 import type { DesktopBridge } from '../types/bridge';
 import type {
   ChatMessage,
@@ -523,7 +523,7 @@ export function initChatModule({
 
   function setStreamingMessage(message: ChatMessage | null): void {
     uiState.chatStreamingMessage = message ? cloneStreamingMessage(message) : null;
-    notifyUiStateChanged();
+    notifyUiStateChangedSync();
     if (message) queueScrollChatToBottom();
   }
 

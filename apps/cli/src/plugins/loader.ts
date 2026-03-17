@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import path, { join } from 'node:path'
 import { getPluginsDir } from './manager.js'
 import { TRUSTED_PLUGINS } from './registry.js'
@@ -87,6 +88,44 @@ export function buildPluginConfig(
     Object.assign(config, runtimeOverrides)
   }
   return config
+}
+
+/**
+ * Read the installed version of a package from the plugins directory.
+ * Returns the version string or null if not found.
+ */
+function readPluginPackageVersion(pkgName: string): string | null {
+  try {
+    const pluginsDir = getPluginsDir()
+    const pkgJsonPath = join(pluginsDir, 'node_modules', pkgName, 'package.json')
+    const resolved = path.resolve(pkgJsonPath)
+    if (!resolved.startsWith(path.resolve(pluginsDir))) {
+      return null
+    }
+    const raw = readFileSync(resolved, 'utf8')
+    return (JSON.parse(raw) as { version?: string }).version ?? null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Returns version info for core packages and a named plugin.
+ * Useful for startup logging.
+ */
+export function getPackageVersions(pluginName?: string): Record<string, string> {
+  const versions: Record<string, string> = {}
+  const corePackages = ['@antseed/node', '@antseed/provider-core', '@antseed/router-core']
+  for (const pkg of corePackages) {
+    const v = readPluginPackageVersion(pkg)
+    if (v) versions[pkg] = v
+  }
+  if (pluginName) {
+    const pkgName = resolvePackageName(pluginName)
+    const v = readPluginPackageVersion(pkgName)
+    if (v) versions[pkgName] = v
+  }
+  return versions
 }
 
 /** Map legacy package names to current names */
