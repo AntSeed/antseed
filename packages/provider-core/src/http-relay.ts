@@ -244,7 +244,8 @@ export class HttpRelay {
       }
 
       const contentType = fetchResponse.headers.get('content-type') ?? '';
-      const isSSE = contentType.includes('text/event-stream');
+      const acceptedSSE = (currentHeaders['accept'] ?? '').includes('text/event-stream');
+      const isSSE = contentType.includes('text/event-stream') || (acceptedSSE && !contentType);
 
       // Build response headers, stripping hop-by-hop and encoding headers.
       // Node.js fetch auto-decompresses gzip/br responses, so we must strip

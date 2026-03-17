@@ -403,6 +403,7 @@ class OpenAIResponsesProvider implements Provider {
         authHeaderValue: 'Bearer ignored',
         tokenProvider,
         extraHeaders: {
+          'accept': 'text/event-stream',
           'openai-beta': 'responses=experimental',
         },
         extraHeadersProvider: async () => {
