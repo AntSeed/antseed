@@ -3,13 +3,14 @@ import test from 'node:test'
 import { TRUSTED_PLUGINS } from '../../plugins/registry.js'
 import { buildPluginConfig, LEGACY_PACKAGE_MAP } from '../../plugins/loader.js'
 
-test('TRUSTED_PLUGINS contains 6 official plugins', () => {
-  assert.equal(TRUSTED_PLUGINS.length, 6)
+test('TRUSTED_PLUGINS contains 7 official plugins', () => {
+  assert.equal(TRUSTED_PLUGINS.length, 7)
   const names = TRUSTED_PLUGINS.map(p => p.name)
   assert.ok(names.includes('anthropic'))
   assert.ok(names.includes('claude-code'))
   assert.ok(names.includes('claude-oauth'))
   assert.ok(names.includes('openai'))
+  assert.ok(names.includes('openai-responses'))
   assert.ok(names.includes('local-llm'))
   assert.ok(names.includes('local'))
 })

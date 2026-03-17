@@ -1,7 +1,7 @@
 {
   "name": "@antseed/desktop",
   "productName": "AntSeed Desktop",
-  "version": "0.1.11",
+  "version": "0.1.13",
   "private": true,
   "description": "Desktop app for AntSeed",
   "author": "AntSeed <hello@antseed.com>",
@@ -36,6 +36,7 @@
     "dist:linux": "npm run build && npm run prepare-dist && electron-builder --linux"
   },
   "dependencies": {
+    "@antseed/api-adapter": "workspace:*",
     "@antseed/dashboard": "workspace:*",
     "@antseed/node": "workspace:*",
     "@fastify/cors": "^10.0.0",

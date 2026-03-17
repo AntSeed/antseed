@@ -1,7 +1,7 @@
 {
-  "name": "@antseed/provider-anthropic",
-  "version": "0.1.19",
-  "description": "Anthropic API key provider plugin for Antseed",
+  "name": "@antseed/provider-openai-responses",
+  "version": "0.1.8",
+  "description": "OpenAI Responses provider plugin for Antseed via Codex backend auth",
   "type": "module",
   "files": [
     "dist"
@@ -21,8 +21,8 @@
     "@antseed/node": ">=0.1.0"
   },
   "devDependencies": {
+    "@antseed/node": "workspace:*",
     "typescript": "^5.5.0",
-    "vitest": "^2.0.0",
-    "@antseed/node": "workspace:*"
+    "vitest": "^2.0.0"
   }
 }

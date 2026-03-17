@@ -2,17 +2,9 @@ import type { TokenProvider } from '@antseed/node';
 import type { SerializedHttpRequest, SerializedHttpResponse, SerializedHttpResponseChunk } from '@antseed/node';
 import { ANTSEED_STREAMING_RESPONSE_HEADER } from '@antseed/node';
 import { swapAuthHeader, validateRequestService } from './auth-swap.js';
+import { stripRelayRequestHeaders, stripRelayResponseHeaders } from './http-headers.js';
 
-/** Hop-by-hop headers that must not be forwarded. */
-const HOP_BY_HOP_HEADERS = new Set([
-  'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization',
-  'te', 'trailers', 'transfer-encoding', 'upgrade',
-]);
-
-/** Internal headers used only within Antseed routing. */
-const INTERNAL_HEADERS = new Set([
-  'x-antseed-provider',
-]);
+export const DEFAULT_HTTP_TIMEOUT_MS = 120_000;
 
 export interface RelayConfig {
   baseUrl: string;
@@ -20,6 +12,7 @@ export interface RelayConfig {
   authHeaderValue: string;
   tokenProvider?: TokenProvider;
   extraHeaders?: Record<string, string>;
+  extraHeadersProvider?: () => Promise<Record<string, string> | undefined>;
   maxConcurrency: number;
   allowedServices: string[];
   timeoutMs?: number;
@@ -31,6 +24,12 @@ export interface RelayConfig {
   injectJsonFields?: Record<string, unknown>;
   /** If true, retry once with a force-refreshed token on 401. Only meaningful for providers with a refreshable tokenProvider (e.g. OAuth). */
   retryOn401?: boolean;
+  /** Retry on 500/502/503/504 with exponential backoff. Default: 0 (no retries). */
+  retryOn5xx?: number;
+  /** Base delay in ms for 5xx retries. Default: 1000. */
+  retryBaseDelayMs?: number;
+  /** Additional status codes eligible for retry. */
+  retryStatusCodes?: number[];
 }
 
 export interface RelayCallbacks {
@@ -110,6 +109,18 @@ export class HttpRelay {
         const headerValue = isBearer ? `Bearer ${freshToken}` : freshToken;
         effectiveConfig = { ...effectiveConfig, authHeaderValue: headerValue };
       }
+      if (this._config.extraHeadersProvider) {
+        const providedHeaders = await this._config.extraHeadersProvider();
+        if (providedHeaders && Object.keys(providedHeaders).length > 0) {
+          effectiveConfig = {
+            ...effectiveConfig,
+            extraHeaders: {
+              ...(effectiveConfig.extraHeaders ?? {}),
+              ...providedHeaders,
+            },
+          };
+        }
+      }
 
       // Swap auth headers
       let swappedRequest = swapAuthHeader(request, effectiveConfig);
@@ -155,19 +166,11 @@ export class HttpRelay {
 
       // Build fetch headers, stripping hop-by-hop and provider-specific prefixes
       const stripPrefixes = this._config.stripHeaderPrefixes ?? [];
-      const fetchHeaders: Record<string, string> = {};
-      for (const [key, value] of Object.entries(swappedRequest.headers)) {
-        const lower = key.toLowerCase();
-        if (HOP_BY_HOP_HEADERS.has(lower) || INTERNAL_HEADERS.has(lower) || lower === 'host' || lower === 'content-length' || lower === 'accept-encoding') {
-          continue;
-        }
-        if (stripPrefixes.length > 0 && stripPrefixes.some((p) => lower.startsWith(p))) {
-          continue;
-        }
-        fetchHeaders[key] = value;
-      }
+      const fetchHeaders = stripRelayRequestHeaders(swappedRequest.headers, {
+        stripHeaderPrefixes: stripPrefixes,
+      });
 
-      const timeoutMs = this._config.timeoutMs ?? 120_000;
+      const timeoutMs = this._config.timeoutMs ?? DEFAULT_HTTP_TIMEOUT_MS;
 
       const doFetch = async (headers: Record<string, string>): Promise<Response> => {
         const controller = new AbortController();
@@ -181,35 +184,73 @@ export class HttpRelay {
               : undefined,
             signal: controller.signal,
           });
+        } catch (error) {
+          if (controller.signal.aborted) {
+            throw new Error(`Upstream request timed out after ${timeoutMs}ms`);
+          }
+          throw error;
         } finally {
           clearTimeout(timeout);
         }
       };
 
-      let fetchResponse = await doFetch(fetchHeaders);
+      let currentHeaders = fetchHeaders;
+      const maxRetries = this._config.retryOn5xx ?? 0;
+      const baseDelay = this._config.retryBaseDelayMs ?? 1000;
+      const retryableStatusCodes = new Set(this._config.retryStatusCodes ?? []);
+
+      const fetchWithRetries = async (): Promise<Response> => {
+        let lastError: unknown;
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+          if (attempt > 0) {
+            const delay = baseDelay * (2 ** (attempt - 1));
+            await new Promise((resolve) => setTimeout(resolve, delay));
+          }
+
+          try {
+            const response = await doFetch(currentHeaders);
+            if (attempt === maxRetries || (response.status < 500 && !retryableStatusCodes.has(response.status))) {
+              return response;
+            }
+          } catch (error) {
+            lastError = error;
+            if (attempt === maxRetries) {
+              throw error;
+            }
+          }
+        }
+
+        throw (lastError instanceof Error ? lastError : new Error('Upstream request failed after retries'));
+      };
+
+      let fetchResponse = await fetchWithRetries();
 
       if (fetchResponse.status === 401 && this._config.retryOn401 && this._config.tokenProvider?.forceRefresh) {
         const refreshedToken = await this._config.tokenProvider.forceRefresh();
         const isBearer = this._config.authHeaderName === 'authorization';
         const newHeaderValue = isBearer ? `Bearer ${refreshedToken}` : refreshedToken;
-        const retryHeaders = { ...fetchHeaders };
-        retryHeaders[this._config.authHeaderName] = newHeaderValue;
-        fetchResponse = await doFetch(retryHeaders);
+        currentHeaders = { ...currentHeaders };
+        currentHeaders[this._config.authHeaderName] = newHeaderValue;
+        if (this._config.extraHeadersProvider) {
+          const providedHeaders = await this._config.extraHeadersProvider();
+          if (providedHeaders) {
+            currentHeaders = {
+              ...currentHeaders,
+              ...providedHeaders,
+            };
+          }
+        }
+        fetchResponse = await fetchWithRetries();
       }
 
       const contentType = fetchResponse.headers.get('content-type') ?? '';
-      const isSSE = contentType.includes('text/event-stream');
+      const acceptedSSE = (currentHeaders['accept'] ?? '').includes('text/event-stream');
+      const isSSE = contentType.includes('text/event-stream') || (acceptedSSE && !contentType && fetchResponse.status >= 200 && fetchResponse.status < 300);
 
       // Build response headers, stripping hop-by-hop and encoding headers.
       // Node.js fetch auto-decompresses gzip/br responses, so we must strip
       // content-encoding to prevent the client from double-decompressing.
-      const responseHeaders: Record<string, string> = {};
-      fetchResponse.headers.forEach((value, key) => {
-        const lower = key.toLowerCase();
-        if (!HOP_BY_HOP_HEADERS.has(lower) && lower !== 'content-encoding' && lower !== 'content-length') {
-          responseHeaders[lower] = value;
-        }
-      });
+      const responseHeaders = stripRelayResponseHeaders(fetchResponse);
 
       if (isSSE && fetchResponse.body) {
         responseHeaders[ANTSEED_STREAMING_RESPONSE_HEADER] = '1';

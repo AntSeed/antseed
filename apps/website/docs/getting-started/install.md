@@ -31,6 +31,7 @@ antseed v0.1.24
 | `@antseed/provider-anthropic` | Anthropic API key provider |
 | `@antseed/provider-claude-code` | Claude Code keychain provider |
 | `@antseed/provider-openai` | OpenAI-compatible provider (OpenAI, Together, OpenRouter) |
+| `@antseed/provider-openai-responses` | OpenAI Responses provider via Codex auth (testing only) |
 | `@antseed/provider-claude-oauth` | Claude OAuth provider |
 | `@antseed/provider-local-llm` | Local LLM provider (Ollama/llama.cpp) |
 | `@antseed/router-local` | Local router for CLI tools |

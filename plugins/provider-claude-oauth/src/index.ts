@@ -84,6 +84,8 @@ const plugin: AntseedProviderPlugin = {
         allowedServices,
         serviceRewriteMap,
         retryOn401: true,
+        retryOn5xx: 2,
+        retryBaseDelayMs: 1000,
       },
     });
   },

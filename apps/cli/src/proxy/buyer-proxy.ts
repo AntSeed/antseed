@@ -785,15 +785,15 @@ function isLoopbackPeer(peer: PeerInfo): boolean {
 }
 
 /**
- * Rewrite the `model` field in a JSON request body.
+ * Rewrite the `service` (and `model` for upstream LLM API compat) fields in a JSON request body.
  * Also updates `content-length` if present in headers.
  * Returns the original body/headers unchanged if the body is not JSON,
  * is empty, or cannot be parsed.
  */
-export function rewriteModelInBody(
+export function rewriteServiceInBody(
   body: Uint8Array,
   headers: Record<string, string>,
-  model: string,
+  service: string,
 ): { body: Uint8Array; headers: Record<string, string> } {
   const contentType = (headers['content-type'] ?? headers['Content-Type'] ?? '').toLowerCase()
   if (!contentType.includes('application/json') || body.length === 0) {
@@ -805,7 +805,8 @@ export function rewriteModelInBody(
       return { body, headers }
     }
     const obj = parsed as Record<string, unknown>
-    obj['model'] = model
+    obj['service'] = service
+    obj['model'] = service
     const rewritten = new TextEncoder().encode(JSON.stringify(obj))
     const updatedHeaders = { ...headers }
     if ('content-length' in updatedHeaders) {
@@ -1309,7 +1310,7 @@ export class BuyerProxy {
     const effectivePinnedService = this._pinnedService
     const effectivePinnedPeer = this._pinnedPeer
     if (effectivePinnedService) {
-      const { body: rewrittenBody, headers: rewrittenHeaders } = rewriteModelInBody(
+      const { body: rewrittenBody, headers: rewrittenHeaders } = rewriteServiceInBody(
         serializedReq.body,
         serializedReq.headers,
         effectivePinnedService,
@@ -1726,6 +1727,12 @@ export class BuyerProxy {
               selectedPeer,
               requestForPeer.requestId,
             )
+            // Ensure content-type is set for SSE — some upstream APIs (e.g. Codex)
+            // omit it, which can cause the client's fetch body reader to not
+            // detect end-of-stream properly.
+            if (!streamingHeaders['content-type']) {
+              streamingHeaders['content-type'] = 'text/event-stream'
+            }
             res.writeHead(adaptedStartResponse.statusCode, streamingHeaders)
             if (adaptedStartResponse.body.length > 0) {
               res.write(Buffer.from(adaptedStartResponse.body))

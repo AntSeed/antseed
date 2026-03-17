@@ -87,6 +87,9 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@antseed/api-adapter':
+        specifier: workspace:*
+        version: link:../../packages/api-adapter
       '@antseed/dashboard':
         specifier: workspace:*
         version: link:../dashboard
@@ -471,6 +474,22 @@ importers:
         version: 2.1.9(@types/node@22.7.5)(sass@1.97.3)(terser@5.46.0)
 
   plugins/provider-openai:
+    dependencies:
+      '@antseed/provider-core':
+        specifier: workspace:*
+        version: link:../../packages/provider-core
+    devDependencies:
+      '@antseed/node':
+        specifier: workspace:*
+        version: link:../../packages/node
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.0.0
+        version: 2.1.9(@types/node@22.7.5)(sass@1.97.3)(terser@5.46.0)
+
+  plugins/provider-openai-responses:
     dependencies:
       '@antseed/provider-core':
         specifier: workspace:*

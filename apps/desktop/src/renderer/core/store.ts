@@ -11,6 +11,18 @@ let cachedSnapshotVersion = -1;
 let cachedSnapshot: RendererUiState | null = null;
 let notifyPending = false;
 
+function invalidateSnapshot(): void {
+  version += 1;
+  cachedSnapshotVersion = -1;
+  cachedSnapshot = null;
+}
+
+function emitListeners(): void {
+  for (const listener of listeners) {
+    listener();
+  }
+}
+
 export function initStore(state: RendererUiState): void {
   stateRef = state;
   version = 0;
@@ -19,18 +31,22 @@ export function initStore(state: RendererUiState): void {
 }
 
 export function notifyUiStateChanged(): void {
-  version += 1;
-  cachedSnapshotVersion = -1;
-  cachedSnapshot = null;
+  invalidateSnapshot();
   if (!notifyPending) {
     notifyPending = true;
     setTimeout(() => {
       notifyPending = false;
-      for (const listener of listeners) {
-        listener();
-      }
+      emitListeners();
     }, 0);
   }
+}
+
+export function notifyUiStateChangedSync(): void {
+  invalidateSnapshot();
+  if (notifyPending) {
+    notifyPending = false;
+  }
+  emitListeners();
 }
 
 export function subscribe(listener: Listener): () => void {
