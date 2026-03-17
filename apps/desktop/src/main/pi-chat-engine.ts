@@ -1623,7 +1623,6 @@ function createBuyerProxyStreamFn(
   onMeta: (meta: AiMessageMeta) => void,
   providerHint: string | null,
   preferredPeerId: string | null,
-  pinnedPeerId?: string | null,
 ): (model: Model<any>, context: Context, options?: StreamOptions) => ReturnType<typeof createAssistantMessageEventStream> {
   return (model, context, options) => {
     const stream = createAssistantMessageEventStream();
@@ -1715,11 +1714,7 @@ function createBuyerProxyStreamFn(
             'content-type': 'application/json',
             'anthropic-version': '2023-06-01',
             ...(providerHint ? { 'x-antseed-provider': providerHint } : {}),
-            ...(pinnedPeerId
-              ? { 'x-antseed-pin-peer': pinnedPeerId }
-              : preferredPeerId
-                ? { 'x-antseed-prefer-peer': preferredPeerId }
-                : {}),
+            ...(preferredPeerId ? { 'x-antseed-pin-peer': preferredPeerId } : {}),
             ...(options?.headers ?? {}),
           },
           body: requestBodyJson,
@@ -2126,7 +2121,6 @@ function createBuyerProxyOpenAIStreamFn(
   onMeta: (meta: AiMessageMeta) => void,
   providerHint: string | null,
   preferredPeerId: string | null,
-  pinnedPeerId?: string | null,
 ): (model: Model<any>, context: Context, options?: StreamOptions) => ReturnType<typeof createAssistantMessageEventStream> {
   return (model, context, options) => {
     const stream = createAssistantMessageEventStream();
@@ -2215,11 +2209,7 @@ function createBuyerProxyOpenAIStreamFn(
           headers: {
             'content-type': 'application/json',
             ...(providerHint ? { 'x-antseed-provider': providerHint } : {}),
-            ...(pinnedPeerId
-              ? { 'x-antseed-pin-peer': pinnedPeerId }
-              : preferredPeerId
-                ? { 'x-antseed-prefer-peer': preferredPeerId }
-                : {}),
+            ...(preferredPeerId ? { 'x-antseed-pin-peer': preferredPeerId } : {}),
             ...(options?.headers ?? {}),
           },
           body: requestBodyJson,
@@ -2745,7 +2735,6 @@ export function registerPiChatHandlers({
   const serviceProviderHints = new Map<string, string[]>();
   const serviceProtocolMap = new Map<string, ChatServiceProtocol>();
   const preferredPeerByConversationId = new Map<string, string>();
-  let activePinnedPeerId: string | null = null;
   let serviceCatalogRefreshPromise: Promise<ChatServiceCatalogEntry[]> | null = null;
   let lastServiceCatalogRefreshAt = 0;
 
@@ -2886,11 +2875,11 @@ export function registerPiChatHandlers({
     if (protocol === 'openai-chat-completions') {
       session.agent.streamFn = createBuyerProxyOpenAIStreamFn((meta) => {
         turnMetaQueue.push(meta);
-      }, providerHint, preferredPeerId ?? null, activePinnedPeerId);
+      }, providerHint, preferredPeerId ?? null);
     } else {
       session.agent.streamFn = createBuyerProxyStreamFn((meta) => {
         turnMetaQueue.push(meta);
-      }, providerHint, preferredPeerId ?? null, activePinnedPeerId);
+      }, providerHint, preferredPeerId ?? null);
     }
 
     let turnIndex = 0;
@@ -3059,7 +3048,7 @@ export function registerPiChatHandlers({
           const proxyMeta = turnMetaQueue.shift();
           const parsedMeta = parseAssistantMetaFromSessionEvent(message, proxyMeta);
           const peerId = normalizePeerId(parsedMeta.peerId);
-          if (peerId && !activePinnedPeerId) {
+          if (peerId) {
             preferredPeerByConversationId.set(conversationId, peerId);
           }
           const assistantMessage = message as AssistantMessage & { meta?: AiMessageMeta };
@@ -3115,9 +3104,7 @@ export function registerPiChatHandlers({
         return { ok: false, error: 'Aborted' };
       }
       const message = asErrorMessage(error);
-      if (!activePinnedPeerId) {
-        preferredPeerByConversationId.delete(conversationId);
-      }
+      preferredPeerByConversationId.delete(conversationId);
       sendToRenderer('chat:ai-stream-error', { conversationId, error: message });
       appendSystemLog(`Pi chat error: ${message}`);
       return { ok: false, error: message };
@@ -3270,8 +3257,8 @@ export function registerPiChatHandlers({
   });
 
   ipcMain.handle('chat:ai-select-peer', async (_event, peerId: string | null) => {
-    activePinnedPeerId = peerId && peerId.trim().length > 0 ? peerId.trim() : null;
-    if (!activePinnedPeerId) {
+    const normalizedPeerId = peerId && peerId.trim().length > 0 ? peerId.trim() : null;
+    if (!normalizedPeerId) {
       return { ok: true };
     }
     // Eager connection warmup via buyer proxy
@@ -3280,7 +3267,7 @@ export function registerPiChatHandlers({
       const response = await fetch(`http://127.0.0.1:${proxyPort}/_antseed/connect`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ peerId: activePinnedPeerId }),
+        body: JSON.stringify({ peerId: normalizedPeerId }),
       });
       const result = await response.json() as { ok: boolean; error?: string };
       return { ok: result.ok, error: result.error };
