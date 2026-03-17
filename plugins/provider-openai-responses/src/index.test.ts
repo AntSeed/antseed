@@ -215,6 +215,48 @@ describe('provider-openai-responses plugin', () => {
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     const body = JSON.parse(new TextDecoder().decode((init.body as Uint8Array) ?? new Uint8Array(0))) as { model: string };
     expect(body.model).toBe('gpt-5-codex');
+    expect(body.store).toBe(false);
+    rmSync(dirname(authFile), { recursive: true, force: true });
+  });
+
+  it('preserves an explicit store value from the caller', async () => {
+    const authFile = writeAuthFile({
+      tokens: {
+        access_token: makeJwt({}),
+        account_id: 'acct-file',
+      },
+    });
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ id: 'resp_1' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const provider = plugin.createProvider({
+      OPENAI_RESPONSES_AUTH_FILE: authFile,
+      ANTSEED_ALLOWED_SERVICES: 'gpt-5-codex',
+    });
+
+    await provider.handleRequest({
+      requestId: 'req-store',
+      method: 'POST',
+      path: '/v1/responses',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-5-codex',
+        input: 'hello',
+        store: true,
+        stream: false,
+      })),
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(new TextDecoder().decode((init.body as Uint8Array) ?? new Uint8Array(0))) as { store: boolean };
+    expect(body.store).toBe(true);
     rmSync(dirname(authFile), { recursive: true, force: true });
   });
 

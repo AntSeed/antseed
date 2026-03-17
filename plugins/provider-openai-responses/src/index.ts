@@ -278,7 +278,7 @@ function prepareRequestBody(
 
   try {
     const parsed = JSON.parse(new TextDecoder().decode(request.body)) as Record<string, unknown>;
-    parsed.store = false;
+    parsed.store ??= false;
 
     const requestedService = (parsed.model ?? parsed.service) as string | undefined;
     if (serviceRewriteMap && typeof requestedService === 'string' && requestedService.trim().length > 0) {
@@ -388,9 +388,13 @@ class OpenAIResponsesProvider implements Provider {
 
     const tokenProvider = new CodexAuthTokenProvider(config.authFilePath);
     const relayBaseUrl = `${config.baseUrl.replace(/\/+$/, '')}/codex`;
+    const relayAllowedServices = [
+      ...config.services,
+      ...Object.values(config.serviceRewriteMap ?? {}),
+    ];
     this.inner = new BaseProvider({
       name: config.name,
-      services: config.services,
+      services: relayAllowedServices,
       pricing: config.pricing,
       ...(config.serviceApiProtocols ? { serviceApiProtocols: config.serviceApiProtocols } : {}),
       relay: {
@@ -411,9 +415,8 @@ class OpenAIResponsesProvider implements Provider {
           };
         },
         maxConcurrency: config.maxConcurrency,
-        allowedServices: config.services,
+        allowedServices: relayAllowedServices,
         timeoutMs: FETCH_TIMEOUT_MS,
-        ...(config.serviceRewriteMap ? { serviceRewriteMap: config.serviceRewriteMap } : {}),
         retryOn401: true,
         retryOn5xx: 3,
         retryBaseDelayMs: 1000,
