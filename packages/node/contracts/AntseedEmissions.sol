@@ -308,7 +308,7 @@ contract AntseedEmissions {
             EPOCH_DURATION = value;
         }
         else if (key == keccak256("HALVING_INTERVAL")) {
-            if (value == 0) revert InvalidAddress();
+            if (value == 0) revert InvalidValue();
             HALVING_INTERVAL = value;
         }
         else if (key == keccak256("MAX_SELLER_SHARE_PCT")) MAX_SELLER_SHARE_PCT = value;
