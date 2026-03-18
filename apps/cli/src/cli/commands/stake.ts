@@ -60,15 +60,12 @@ export function registerStakeCommand(program: Command): void {
       const globalOpts = getGlobalOptions(program);
       const config = await loadConfig(globalOpts.config);
 
-      const { wallet, address } = await loadCryptoContext(globalOpts.dataDir);
-      const escrowClient = createEscrowClient(config);
-
-      console.log(chalk.dim(`Wallet: ${address}`));
-
-      // Show current stake info
       const spinner = ora('Fetching stake info...').start();
 
       try {
+        const { wallet, address } = await loadCryptoContext(globalOpts.dataDir);
+        const escrowClient = createEscrowClient(config);
+        console.log(chalk.dim(`Wallet: ${address}`));
         const account = await escrowClient.getSellerAccount(address);
         if (account.stake === 0n) {
           spinner.fail(chalk.yellow('No active stake to withdraw.'));
