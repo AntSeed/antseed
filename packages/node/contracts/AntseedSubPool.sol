@@ -311,6 +311,7 @@ contract AntseedSubPool {
 
         uint256 revenue = currentEpochRevenue;
         uint256 peerCount = optedInPeers.length;
+        bool distributed = false;
 
         if (revenue > 0 && peerCount > 0) {
             // Settle all peers using their CURRENT weight before changing rewardPerTokenStored
@@ -333,15 +334,19 @@ contract AntseedSubPool {
             }
 
             if (totalWeight > 0) {
-                // Accumulate reward per weight unit (scaled by 1e18 for precision)
                 rewardPerTokenStored += (revenue * 1e18) / totalWeight;
+                distributed = true;
             }
         }
 
-        emit RevenueDistributed(currentEpoch, revenue, peerCount);
+        // Only reset revenue if distributed; otherwise carry forward to next epoch
+        if (distributed) {
+            currentEpochRevenue = 0;
+        }
+
+        emit RevenueDistributed(currentEpoch, distributed ? revenue : 0, peerCount);
 
         // Advance epoch
-        currentEpochRevenue = 0;
         epochStart = block.timestamp;
         currentEpoch++;
     }
