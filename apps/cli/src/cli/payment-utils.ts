@@ -13,6 +13,14 @@ import {
 } from '@antseed/node/payments';
 import type { Identity } from '@antseed/node';
 
+/** Format ANTS token amounts (18 decimals) to human-readable string. */
+export function formatAnts(baseUnits: bigint): string {
+  const whole = baseUnits / 10n ** 18n;
+  const frac = baseUnits % 10n ** 18n;
+  const fracStr = frac.toString().padStart(18, '0').replace(/0+$/, '').slice(0, 6) || '0';
+  return `${whole}.${fracStr}`;
+}
+
 /** Format USDC base units (6 decimals) to human-readable string. */
 export function formatUsdc(baseUnits: bigint): string {
   const whole = baseUnits / 1_000_000n;

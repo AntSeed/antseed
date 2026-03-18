@@ -6,15 +6,8 @@ import { loadConfig } from '../../config/loader.js';
 import {
   createEmissionsClient,
   loadCryptoContext,
+  formatAnts,
 } from '../payment-utils.js';
-
-/** Format ANTS token amounts (18 decimals). */
-function formatAnts(baseUnits: bigint): string {
-  const whole = baseUnits / 10n ** 18n;
-  const frac = baseUnits % 10n ** 18n;
-  const fracStr = frac.toString().padStart(18, '0').replace(/0+$/, '').slice(0, 6) || '0';
-  return `${whole}.${fracStr}`;
-}
 
 export function registerEmissionsCommand(program: Command): void {
   const emissions = program
