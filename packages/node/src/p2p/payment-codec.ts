@@ -11,7 +11,12 @@ const decoder = new TextDecoder();
 
 // --- Validation helpers ---
 
+const MAX_PAYLOAD_SIZE = 65536; // 64KB
+
 function parseJson(data: Uint8Array): Record<string, unknown> {
+  if (data.byteLength > MAX_PAYLOAD_SIZE) {
+    throw new Error(`Payment payload too large: ${data.byteLength} bytes (max ${MAX_PAYLOAD_SIZE})`);
+  }
   const raw: unknown = JSON.parse(decoder.decode(data));
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
     throw new Error('Expected JSON object');
