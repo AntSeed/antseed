@@ -224,13 +224,10 @@ export class BuyerPaymentManager {
       debugWarn(`[BuyerPayment] Receipt runningTotal not monotonic: new=${newTotal} prev=${prevTotal}`);
       return;
     }
-
-    // Validate receipt doesn't exceed authorized max
-    const authMax = BigInt(session.authMax);
-    if (newTotal > authMax) {
-      debugWarn(`[BuyerPayment] Receipt runningTotal ${newTotal} exceeds authMax ${authMax}`);
-      return;
-    }
+    // Note: we don't compare token count against authMax (USDC) here because
+    // they're in different units (tokens vs USDC base units). The on-chain
+    // settle() caps chargeAmount = min(tokenCount * tokenRate, maxAmount),
+    // so the buyer's EIP-712 signature is the real USDC protection.
 
     debugLog(`[BuyerPayment] Receipt: session=${session.sessionId.slice(0, 18)}... total=${receipt.runningTotal} count=${receipt.requestCount}`);
 
