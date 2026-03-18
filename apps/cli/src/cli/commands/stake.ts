@@ -27,14 +27,12 @@ export function registerStakeCommand(program: Command): void {
         process.exit(1);
       }
 
-      const { wallet, address } = await loadCryptoContext(globalOpts.dataDir);
-      const escrowClient = createEscrowClient(config);
-      const identityClient = createIdentityClient(config);
-
-      // Verify registration
       const spinner = ora('Verifying registration...').start();
 
       try {
+        const { wallet, address } = await loadCryptoContext(globalOpts.dataDir);
+        const escrowClient = createEscrowClient(config);
+        const identityClient = createIdentityClient(config);
         const isReg = await identityClient.isRegistered(address);
         if (!isReg) {
           spinner.fail(chalk.red('Not registered. Run: antseed register'));

@@ -17,15 +17,12 @@ export function registerRegisterCommand(program: Command): void {
       const globalOpts = getGlobalOptions(program);
       const config = await loadConfig(globalOpts.config);
 
-      const { wallet, address } = await loadCryptoContext(globalOpts.dataDir);
-      const identityClient = createIdentityClient(config);
-
-      console.log(chalk.dim(`Wallet: ${address}`));
-
-      // Check if already registered
       const spinner = ora('Checking registration status...').start();
 
       try {
+        const { wallet, address } = await loadCryptoContext(globalOpts.dataDir);
+        const identityClient = createIdentityClient(config);
+        console.log(chalk.dim(`Wallet: ${address}`));
         const alreadyRegistered = await identityClient.isRegistered(address);
         if (alreadyRegistered) {
           const tokenId = await identityClient.getTokenId(address);
