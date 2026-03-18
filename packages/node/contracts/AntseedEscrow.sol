@@ -471,6 +471,7 @@ contract AntseedEscrow is EIP712, Pausable {
         Session storage session = sessions[sessionId];
         if (session.status != SessionStatus.Reserved) revert SessionNotReserved();
         if (msg.sender != session.seller) revert NotAuthorized();
+        if (block.timestamp > session.deadline) revert SessionExpired();
 
         SellerAccount storage sa = sellers[msg.sender];
         uint256 chargeAmount = tokenCount * session.tokenRate;
