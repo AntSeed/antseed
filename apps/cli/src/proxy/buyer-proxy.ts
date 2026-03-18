@@ -1421,6 +1421,12 @@ export class BuyerProxy {
     const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504])
 
     if (explicitPeerId) {
+      // Pinned peers must use fresh discovery data so IP changes are picked up
+      const cacheAgeMs = Date.now() - this._cacheLastUpdatedAtMs
+      if (cacheAgeMs > this._peerCacheTtlMs) {
+        await refreshPeerSelection(`pinned peer with stale cache (${cacheAgeMs}ms old)`)
+      }
+
       let pinnedRoutingPeers = routingPeers
       let pinnedRoutePlans = routingPlans
       let selectedPeer = pinnedRoutingPeers.find((p) => p.peerId.toLowerCase() === explicitPeerId) ?? null

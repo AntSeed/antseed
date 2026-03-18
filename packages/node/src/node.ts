@@ -1488,8 +1488,23 @@ export class AntseedNode extends EventEmitter {
     }
 
     const existing = this._connectionManager.getConnection(peer.peerId);
+    let endpointChanged = false;
+
+    // Check if the peer's endpoint has changed (e.g. IP rotation)
+    if (existing && peer.publicAddress) {
+      const currentEndpoint = ConnectionManager.resolvePeerEndpoint(peer.peerId);
+      const parts = peer.publicAddress.split(":");
+      const newHost = parts[0]!;
+      const newPort = parseInt(parts[1] ?? "6882", 10);
+      if (currentEndpoint && (currentEndpoint.host !== newHost || currentEndpoint.port !== newPort)) {
+        debugLog(`[Node] Peer ${peer.peerId.slice(0, 12)}... endpoint changed from ${currentEndpoint.host}:${currentEndpoint.port} to ${newHost}:${newPort}, reconnecting`);
+        existing.close();
+        endpointChanged = true;
+      }
+    }
+
     if (
-      existing &&
+      existing && !endpointChanged &&
       existing.state !== ConnectionState.Closed &&
       existing.state !== ConnectionState.Failed
     ) {
