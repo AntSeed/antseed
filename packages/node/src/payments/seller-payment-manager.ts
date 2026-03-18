@@ -112,6 +112,7 @@ export class SellerPaymentManager {
           debugLog(`[SellerPayment] Settling prior session ${priorSession.sessionId.slice(0, 18)}... tokens=${prevConsumption}`);
           await this._escrowClient.settle(this._signer, priorSession.sessionId, prevConsumption);
           this._sessionStore.updateSessionStatus(priorSession.sessionId, 'settled', prevConsumption.toString());
+          this._topUpRequested.delete(priorSession.sessionId);
         } catch (err) {
           debugWarn(`[SellerPayment] Failed to settle prior session: ${err instanceof Error ? err.message : err}`);
           // Continue with reserve even if settle fails — the new auth itself
@@ -319,6 +320,7 @@ export class SellerPaymentManager {
         await this._escrowClient.settleTimeout(this._signer, session.sessionId);
         this._sessionStore.updateSessionStatus(session.sessionId, 'timeout');
         this._activeBuyers.delete(session.peerId);
+        this._topUpRequested.delete(session.sessionId);
         debugLog(`[SellerPayment] Timed-out session ${session.sessionId.slice(0, 18)}... settled`);
       } catch (err) {
         debugWarn(`[SellerPayment] Failed to settle timeout for ${session.sessionId.slice(0, 18)}...: ${err instanceof Error ? err.message : err}`);
