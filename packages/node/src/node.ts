@@ -1490,12 +1490,13 @@ export class AntseedNode extends EventEmitter {
     const existing = this._connectionManager.getConnection(peer.peerId);
     let endpointChanged = false;
 
-    // Check if the peer's endpoint has changed (e.g. IP rotation)
+    // Check if the peer's endpoint has changed (e.g. IP rotation).
+    // Only applies to outbound connections where we registered the endpoint;
+    // inbound connections (peer connected to us) have no registered endpoint
+    // and are not subject to pinned-peer routing.
     if (existing && peer.publicAddress) {
       const currentEndpoint = ConnectionManager.resolvePeerEndpoint(peer.peerId);
-      const parts = peer.publicAddress.split(":");
-      const newHost = parts[0]!;
-      const newPort = parseInt(parts[1] ?? "6882", 10);
+      const { host: newHost, port: newPort } = parsePeerAddress(peer.publicAddress);
       if (currentEndpoint && (currentEndpoint.host !== newHost || currentEndpoint.port !== newPort)) {
         debugLog(`[Node] Peer ${peer.peerId.slice(0, 12)}... endpoint changed from ${currentEndpoint.host}:${currentEndpoint.port} to ${newHost}:${newPort}, reconnecting`);
         existing.close();
@@ -1530,9 +1531,7 @@ export class AntseedNode extends EventEmitter {
 
     // Register the peer endpoint so ConnectionManager can resolve it
     if (peer.publicAddress) {
-      const parts = peer.publicAddress.split(":");
-      const host = parts[0]!;
-      const port = parseInt(parts[1] ?? "6882", 10);
+      const { host, port } = parsePeerAddress(peer.publicAddress);
       this._connectionManager.registerPeerEndpoint(peer.peerId, { host, port });
       debugLog(`[Node] Connecting to ${peer.peerId.slice(0, 12)}... at ${host}:${port}`);
     } else {
@@ -2049,6 +2048,11 @@ export class AntseedNode extends EventEmitter {
       (timer as { unref: () => void }).unref();
     }
   }
+}
+
+function parsePeerAddress(address: string): { host: string; port: number } {
+  const parts = address.split(":");
+  return { host: parts[0]!, port: parseInt(parts[1] ?? "6882", 10) };
 }
 
 function concatChunks(chunks: Uint8Array[]): Uint8Array {

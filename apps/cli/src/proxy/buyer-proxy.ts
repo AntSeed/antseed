@@ -1421,7 +1421,9 @@ export class BuyerProxy {
     const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504])
 
     if (explicitPeerId) {
-      // Pinned peers must use fresh discovery data so IP changes are picked up
+      // Pinned peers must use fresh discovery data so IP changes are picked up.
+      // Safe with the hasForcedRefresh guard: if an earlier refresh already ran
+      // this request, the cache is already fresh and cacheAgeMs will be < TTL.
       const cacheAgeMs = Date.now() - this._cacheLastUpdatedAtMs
       if (cacheAgeMs > this._peerCacheTtlMs) {
         await refreshPeerSelection(`pinned peer with stale cache (${cacheAgeMs}ms old)`)
