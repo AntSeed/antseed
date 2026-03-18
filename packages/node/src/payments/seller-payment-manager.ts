@@ -102,10 +102,14 @@ export class SellerPaymentManager {
       const priorSession = this._sessionStore.getActiveSessionByPeer(buyerPeerId, 'seller');
       if (priorSession && priorSession.status === 'active') {
         try {
-          const prevConsumption = BigInt(payload.previousConsumption);
-          debugLog(`[SellerPayment] Settling prior session ${priorSession.sessionId.slice(0, 18)}... tokens=${prevConsumption}`);
-          await this._escrowClient.settle(this._signer, priorSession.sessionId, prevConsumption);
-          this._sessionStore.updateSessionStatus(priorSession.sessionId, 'settled', prevConsumption.toString());
+          // Use the higher of buyer's claimed consumption and our receipt records
+          // to prevent buyer under-reporting (which would short-change the seller)
+          const buyerClaimed = BigInt(payload.previousConsumption);
+          const sellerRecorded = BigInt(priorSession.tokensDelivered);
+          const settleAmount = buyerClaimed > sellerRecorded ? buyerClaimed : sellerRecorded;
+          debugLog(`[SellerPayment] Settling prior session ${priorSession.sessionId.slice(0, 18)}... tokens=${settleAmount} (buyer=${buyerClaimed} seller=${sellerRecorded})`);
+          await this._escrowClient.settle(this._signer, priorSession.sessionId, settleAmount);
+          this._sessionStore.updateSessionStatus(priorSession.sessionId, 'settled', settleAmount.toString());
         } catch (err) {
           debugWarn(`[SellerPayment] Failed to settle prior session: ${err instanceof Error ? err.message : err}`);
           // Continue with reserve even if settle fails — the new auth itself
