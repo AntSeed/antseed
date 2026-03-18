@@ -90,7 +90,7 @@ if (existsSync(cliDestDir)) {
 mkdirSync(path.dirname(bundleOutput), { recursive: true });
 
 console.log('[prepare-dist] Bundling CLI with esbuild...');
-execFileSync(process.execPath, [esbuildEntry,
+execFileSync(esbuildEntry, [
   'src/cli/index.ts',
   '--bundle',
   '--platform=node',
