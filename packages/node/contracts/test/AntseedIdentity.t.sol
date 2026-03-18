@@ -4,6 +4,14 @@ pragma solidity ^0.8.24;
 import "forge-std/Test.sol";
 import "../AntseedIdentity.sol";
 
+contract MockEscrowForIdentity {
+    mapping(address => uint256) public stakeOf;
+    function setStake(address seller, uint256 amount) external { stakeOf[seller] = amount; }
+    function sellers(address seller) external view returns (uint256 stake, uint256 earnings, uint256 stakedAt, uint256 tokenRate) {
+        return (stakeOf[seller], 0, 0, 0);
+    }
+}
+
 contract AntseedIdentityTest is Test {
     AntseedIdentity public identity;
     address public owner;
@@ -140,5 +148,33 @@ contract AntseedIdentityTest is Test {
         uint256 tokenId = identity.register(peerId1, "ipfs://meta1");
 
         assertEq(identity.getPeerId(tokenId), peerId1);
+    }
+
+    function test_deregister_revert_activeStake() public {
+        MockEscrowForIdentity mockEscrow = new MockEscrowForIdentity();
+        identity.setEscrowContract(address(mockEscrow));
+
+        vm.prank(peer1);
+        uint256 tokenId = identity.register(peerId1, "ipfs://meta1");
+
+        // Set active stake
+        mockEscrow.setStake(peer1, 100_000_000);
+
+        vm.prank(peer1);
+        vm.expectRevert(AntseedIdentity.ActiveStake.selector);
+        identity.deregister(tokenId);
+    }
+
+    function test_deregister_allowedAfterUnstake() public {
+        MockEscrowForIdentity mockEscrow = new MockEscrowForIdentity();
+        identity.setEscrowContract(address(mockEscrow));
+
+        vm.prank(peer1);
+        uint256 tokenId = identity.register(peerId1, "ipfs://meta1");
+
+        // No stake — deregister should succeed
+        vm.prank(peer1);
+        identity.deregister(tokenId);
+        assertFalse(identity.isRegistered(peer1));
     }
 }

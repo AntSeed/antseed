@@ -4,6 +4,10 @@ pragma solidity ^0.8.24;
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
 
+interface IAntseedEscrow {
+    function sellers(address) external view returns (uint256 stake, uint256 earnings, uint256 stakedAt, uint256 tokenRate);
+}
+
 contract AntseedIdentity is ERC721, ERC721URIStorage {
     address public owner;
     address public escrowContract;
@@ -112,7 +116,11 @@ contract AntseedIdentity is ERC721, ERC721URIStorage {
 
     function deregister(uint256 tokenId) external {
         if (ownerOf(tokenId) != msg.sender) revert NotTokenOwner();
-        // Future: check escrow for active stake
+        // Prevent reputation laundering: cannot deregister while staked
+        if (escrowContract != address(0)) {
+            (uint256 stake,,,) = IAntseedEscrow(escrowContract).sellers(msg.sender);
+            if (stake > 0) revert ActiveStake();
+        }
 
         address peer = ownerOf(tokenId);
         bytes32 peerId = tokenIdToPeerId[tokenId];
