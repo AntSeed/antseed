@@ -194,6 +194,15 @@ export class SessionStore {
     return row?.max_nonce ?? 0;
   }
 
+  /** List all sessions, optionally filtered by status, ordered by most recent first. */
+  listAllSessions(limit = 100): StoredSession[] {
+    const stmt = this._db.prepare(
+      'SELECT * FROM payment_sessions ORDER BY updated_at DESC LIMIT ?',
+    );
+    const rows = stmt.all(limit) as SessionRow[];
+    return rows.map(rowToSession);
+  }
+
   // ── Timeout queries ───────────────────────────────────────────
 
   getTimedOutSessions(timeoutSeconds: number): StoredSession[] {

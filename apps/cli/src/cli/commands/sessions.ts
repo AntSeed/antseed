@@ -47,13 +47,7 @@ export function registerSessionsCommand(program: Command): void {
         const statusFilter = options.status as string | undefined;
         const roleFilter = options.role as string | undefined;
 
-        // Use timed-out sessions query with a very large timeout to get all sessions,
-        // plus we can get active sessions too.
-        const activeSessions: StoredSession[] = [];
-        const timedOutSessions = store.getTimedOutSessions(999_999_999);
-
-        // Combine active (not timed out) and timed out
-        const allSessions = [...activeSessions, ...timedOutSessions];
+        const allSessions = store.listAllSessions(limit * 2);
 
         // Apply filters
         let filtered = allSessions;
