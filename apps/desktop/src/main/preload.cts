@@ -247,6 +247,14 @@ const api = {
     ipcRenderer.on('chat:ai-tool-result', listener);
     return () => ipcRenderer.off('chat:ai-tool-result', listener);
   },
+  onBrowserPreviewOpen(handler: (data: { url: string }) => void): () => void {
+    const listener = (_: unknown, data: { url: string }) => handler(data);
+    ipcRenderer.on('browser-preview:open', listener);
+    return () => ipcRenderer.off('browser-preview:open', listener);
+  },
+  sendBrowserPreviewElementSelected(data: { selector: string; tagName: string; text: string; attributes: Record<string, string> }): void {
+    ipcRenderer.send('browser-preview:element-selected', data);
+  },
   onFullscreenChange(handler: (isFullscreen: boolean) => void): () => void {
     const listener = (_: unknown, isFullscreen: boolean) => handler(isFullscreen);
     ipcRenderer.on('fullscreen-change', listener);

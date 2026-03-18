@@ -127,6 +127,8 @@ export type DesktopBridge = {
   onChatAiToolExecuting?: (handler: (data: { conversationId: string; toolUseId: string; name: string; input: Record<string, unknown> }) => void) => () => void;
   onChatAiToolUpdate?: (handler: (data: { conversationId: string; toolUseId: string; name: string; input: Record<string, unknown>; output: string; details?: Record<string, unknown> }) => void) => () => void;
   onChatAiToolResult?: (handler: (data: { conversationId: string; toolUseId: string; output: string; isError: boolean; details?: Record<string, unknown> }) => void) => () => void;
+  onBrowserPreviewOpen?: (handler: (data: { url: string }) => void) => () => void;
+  sendBrowserPreviewElementSelected?: (data: { selector: string; tagName: string; text: string; attributes: Record<string, string> }) => void;
   onFullscreenChange?: (handler: (isFullscreen: boolean) => void) => () => void;
   onWindowFocusChange?: (handler: (isFocused: boolean) => void) => () => void;
   getAppSetupStatus?: () => Promise<{ needed: boolean; complete: boolean }>;

@@ -1630,6 +1630,20 @@ export function initChatModule({
       });
     }
 
+    if (bridge.onBrowserPreviewOpen) {
+      bridge.onBrowserPreviewOpen((data) => {
+        uiState.browserPreviewUrl = data.url;
+        notifyUiStateChanged();
+      });
+    }
+
+    // Expose API for triggering browser preview programmatically (used by tool, testing)
+    (window as unknown as Record<string, unknown>).__antseedOpenPreview = (url: string) => {
+      uiState.browserPreviewUrl = url;
+      notifyUiStateChanged();
+    };
+
+
     if (bridge.onChatAiStreamDone) {
       bridge.onChatAiStreamDone((data) => {
         const shouldClearSending = data.conversationId === uiState.chatSendingConversationId;
