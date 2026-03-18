@@ -43,10 +43,28 @@ export interface StoredReceipt {
 export class SessionStore {
   private _db: Database.Database;
 
+  // ── Cached prepared statements (compiled once, reused every call) ──
+  private readonly _stmts: {
+    upsert: Database.Statement;
+    getById: Database.Statement;
+    getActiveByPeer: Database.Statement;
+    getLatestByPeer: Database.Statement;
+    updateStatusWithAmount: Database.Statement;
+    updateStatus: Database.Statement;
+    updateTokens: Database.Statement;
+    getMaxNonce: Database.Statement;
+    listAll: Database.Statement;
+    getTimedOut: Database.Statement;
+    insertReceipt: Database.Statement;
+    getReceipts: Database.Statement;
+    updateReceiptAck: Database.Statement;
+  };
+
   constructor(dataDir: string) {
     this._db = new Database(join(dataDir, 'sessions.db'));
     this._db.pragma('journal_mode = WAL');
     this._createTables();
+    this._stmts = this._prepareStatements();
   }
 
   private _createTables(): void {
@@ -67,14 +85,11 @@ export class SessionStore {
         reserved_at INTEGER NOT NULL,
         settled_at INTEGER,
         settled_amount TEXT,
-        status TEXT NOT NULL DEFAULT '${SESSION_STATUS.ACTIVE}',
+        status TEXT NOT NULL DEFAULT 'active',
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       );
 
-      CREATE INDEX IF NOT EXISTS idx_ps_peer_role ON payment_sessions(peer_id, role);
-      CREATE INDEX IF NOT EXISTS idx_ps_status ON payment_sessions(status);
-      CREATE INDEX IF NOT EXISTS idx_ps_updated ON payment_sessions(updated_at);
       CREATE INDEX IF NOT EXISTS idx_sessions_peer_role_status ON payment_sessions(peer_id, role, status);
       CREATE INDEX IF NOT EXISTS idx_sessions_status_updated ON payment_sessions(status, updated_at);
 
@@ -90,36 +105,81 @@ export class SessionStore {
         FOREIGN KEY (session_id) REFERENCES payment_sessions(session_id)
       );
 
-      CREATE INDEX IF NOT EXISTS idx_pr_session ON payment_receipts(session_id);
       CREATE INDEX IF NOT EXISTS idx_receipts_session ON payment_receipts(session_id);
     `);
+  }
+
+  private _prepareStatements() {
+    return {
+      upsert: this._db.prepare(`
+        INSERT INTO payment_sessions (
+          session_id, peer_id, role, seller_evm_addr, buyer_evm_addr,
+          nonce, auth_max, deadline, previous_session_id, previous_consumption,
+          tokens_delivered, request_count, reserved_at, settled_at, settled_amount,
+          status, created_at, updated_at
+        ) VALUES (
+          @sessionId, @peerId, @role, @sellerEvmAddr, @buyerEvmAddr,
+          @nonce, @authMax, @deadline, @previousSessionId, @previousConsumption,
+          @tokensDelivered, @requestCount, @reservedAt, @settledAt, @settledAmount,
+          @status, @createdAt, @updatedAt
+        )
+        ON CONFLICT(session_id) DO UPDATE SET
+          tokens_delivered = @tokensDelivered,
+          request_count = @requestCount,
+          settled_at = @settledAt,
+          settled_amount = @settledAmount,
+          status = @status,
+          updated_at = @updatedAt
+      `),
+      getById: this._db.prepare(
+        'SELECT * FROM payment_sessions WHERE session_id = ?',
+      ),
+      getActiveByPeer: this._db.prepare(
+        'SELECT * FROM payment_sessions WHERE peer_id = ? AND role = ? AND status = ? ORDER BY created_at DESC LIMIT 1',
+      ),
+      getLatestByPeer: this._db.prepare(
+        'SELECT * FROM payment_sessions WHERE peer_id = ? AND role = ? ORDER BY created_at DESC LIMIT 1',
+      ),
+      updateStatusWithAmount: this._db.prepare(
+        'UPDATE payment_sessions SET status = ?, settled_at = ?, settled_amount = ?, updated_at = ? WHERE session_id = ?',
+      ),
+      updateStatus: this._db.prepare(
+        'UPDATE payment_sessions SET status = ?, updated_at = ? WHERE session_id = ?',
+      ),
+      updateTokens: this._db.prepare(
+        'UPDATE payment_sessions SET tokens_delivered = ?, request_count = ?, updated_at = ? WHERE session_id = ?',
+      ),
+      getMaxNonce: this._db.prepare(
+        'SELECT MAX(nonce) as max_nonce FROM payment_sessions WHERE role = ?',
+      ),
+      listAll: this._db.prepare(
+        'SELECT * FROM payment_sessions ORDER BY updated_at DESC LIMIT ?',
+      ),
+      getTimedOut: this._db.prepare(
+        'SELECT * FROM payment_sessions WHERE status = ? AND updated_at < ? ORDER BY updated_at LIMIT 100',
+      ),
+      insertReceipt: this._db.prepare(`
+        INSERT INTO payment_receipts (
+          session_id, running_total, request_count, response_hash,
+          seller_sig, buyer_ack_sig, created_at
+        ) VALUES (
+          @sessionId, @runningTotal, @requestCount, @responseHash,
+          @sellerSig, @buyerAckSig, @createdAt
+        )
+      `),
+      getReceipts: this._db.prepare(
+        'SELECT * FROM payment_receipts WHERE session_id = ? ORDER BY created_at',
+      ),
+      updateReceiptAck: this._db.prepare(
+        'UPDATE payment_receipts SET buyer_ack_sig = ? WHERE session_id = ? AND running_total = ? AND request_count = ?',
+      ),
+    };
   }
 
   // ── Session CRUD ──────────────────────────────────────────────
 
   upsertSession(session: StoredSession): void {
-    const stmt = this._db.prepare(`
-      INSERT INTO payment_sessions (
-        session_id, peer_id, role, seller_evm_addr, buyer_evm_addr,
-        nonce, auth_max, deadline, previous_session_id, previous_consumption,
-        tokens_delivered, request_count, reserved_at, settled_at, settled_amount,
-        status, created_at, updated_at
-      ) VALUES (
-        @sessionId, @peerId, @role, @sellerEvmAddr, @buyerEvmAddr,
-        @nonce, @authMax, @deadline, @previousSessionId, @previousConsumption,
-        @tokensDelivered, @requestCount, @reservedAt, @settledAt, @settledAmount,
-        @status, @createdAt, @updatedAt
-      )
-      ON CONFLICT(session_id) DO UPDATE SET
-        tokens_delivered = @tokensDelivered,
-        request_count = @requestCount,
-        settled_at = @settledAt,
-        settled_amount = @settledAmount,
-        status = @status,
-        updated_at = @updatedAt
-    `);
-
-    stmt.run({
+    this._stmts.upsert.run({
       sessionId: session.sessionId,
       peerId: session.peerId,
       role: session.role,
@@ -142,64 +202,41 @@ export class SessionStore {
   }
 
   getSession(sessionId: string): StoredSession | null {
-    const stmt = this._db.prepare('SELECT * FROM payment_sessions WHERE session_id = ?');
-    const row = stmt.get(sessionId) as SessionRow | undefined;
+    const row = this._stmts.getById.get(sessionId) as SessionRow | undefined;
     return row ? rowToSession(row) : null;
   }
 
   getActiveSessionByPeer(peerId: string, role: string): StoredSession | null {
-    const stmt = this._db.prepare(
-      `SELECT * FROM payment_sessions WHERE peer_id = ? AND role = ? AND status = '${SESSION_STATUS.ACTIVE}' ORDER BY created_at DESC LIMIT 1`,
-    );
-    const row = stmt.get(peerId, role) as SessionRow | undefined;
+    const row = this._stmts.getActiveByPeer.get(peerId, role, SESSION_STATUS.ACTIVE) as SessionRow | undefined;
     return row ? rowToSession(row) : null;
   }
 
   getLatestSession(peerId: string, role: string): StoredSession | null {
-    const stmt = this._db.prepare(
-      'SELECT * FROM payment_sessions WHERE peer_id = ? AND role = ? ORDER BY created_at DESC LIMIT 1',
-    );
-    const row = stmt.get(peerId, role) as SessionRow | undefined;
+    const row = this._stmts.getLatestByPeer.get(peerId, role) as SessionRow | undefined;
     return row ? rowToSession(row) : null;
   }
 
   updateSessionStatus(sessionId: string, status: string, settledAmount?: string): void {
     const now = Date.now();
     if (settledAmount !== undefined) {
-      const stmt = this._db.prepare(
-        'UPDATE payment_sessions SET status = ?, settled_at = ?, settled_amount = ?, updated_at = ? WHERE session_id = ?',
-      );
-      stmt.run(status, now, settledAmount, now, sessionId);
+      this._stmts.updateStatusWithAmount.run(status, now, settledAmount, now, sessionId);
     } else {
-      const stmt = this._db.prepare(
-        'UPDATE payment_sessions SET status = ?, updated_at = ? WHERE session_id = ?',
-      );
-      stmt.run(status, now, sessionId);
+      this._stmts.updateStatus.run(status, now, sessionId);
     }
   }
 
   updateTokensDelivered(sessionId: string, tokens: string, requestCount: number): void {
-    const now = Date.now();
-    const stmt = this._db.prepare(
-      'UPDATE payment_sessions SET tokens_delivered = ?, request_count = ?, updated_at = ? WHERE session_id = ?',
-    );
-    stmt.run(tokens, requestCount, now, sessionId);
+    this._stmts.updateTokens.run(tokens, requestCount, Date.now(), sessionId);
   }
 
   getMaxNonce(role: string): number {
-    const stmt = this._db.prepare(
-      'SELECT MAX(nonce) as max_nonce FROM payment_sessions WHERE role = ?',
-    );
-    const row = stmt.get(role) as { max_nonce: number | null } | undefined;
+    const row = this._stmts.getMaxNonce.get(role) as { max_nonce: number | null } | undefined;
     return row?.max_nonce ?? 0;
   }
 
-  /** List all sessions, optionally filtered by status, ordered by most recent first. */
+  /** List all sessions ordered by most recent first. */
   listAllSessions(limit = 100): StoredSession[] {
-    const stmt = this._db.prepare(
-      'SELECT * FROM payment_sessions ORDER BY updated_at DESC LIMIT ?',
-    );
-    const rows = stmt.all(limit) as SessionRow[];
+    const rows = this._stmts.listAll.all(limit) as SessionRow[];
     return rows.map(rowToSession);
   }
 
@@ -207,27 +244,14 @@ export class SessionStore {
 
   getTimedOutSessions(timeoutSeconds: number): StoredSession[] {
     const cutoff = Date.now() - timeoutSeconds * 1000;
-    const stmt = this._db.prepare(
-      `SELECT * FROM payment_sessions WHERE status = '${SESSION_STATUS.ACTIVE}' AND updated_at < ? ORDER BY updated_at LIMIT 100`,
-    );
-    const rows = stmt.all(cutoff) as SessionRow[];
+    const rows = this._stmts.getTimedOut.all(SESSION_STATUS.ACTIVE, cutoff) as SessionRow[];
     return rows.map(rowToSession);
   }
 
   // ── Receipt CRUD ──────────────────────────────────────────────
 
   insertReceipt(receipt: Omit<StoredReceipt, 'id'>): void {
-    const stmt = this._db.prepare(`
-      INSERT INTO payment_receipts (
-        session_id, running_total, request_count, response_hash,
-        seller_sig, buyer_ack_sig, created_at
-      ) VALUES (
-        @sessionId, @runningTotal, @requestCount, @responseHash,
-        @sellerSig, @buyerAckSig, @createdAt
-      )
-    `);
-
-    stmt.run({
+    this._stmts.insertReceipt.run({
       sessionId: receipt.sessionId,
       runningTotal: receipt.runningTotal,
       requestCount: receipt.requestCount,
@@ -239,10 +263,7 @@ export class SessionStore {
   }
 
   getReceipts(sessionId: string): StoredReceipt[] {
-    const stmt = this._db.prepare(
-      'SELECT * FROM payment_receipts WHERE session_id = ? ORDER BY created_at',
-    );
-    const rows = stmt.all(sessionId) as ReceiptRow[];
+    const rows = this._stmts.getReceipts.all(sessionId) as ReceiptRow[];
     return rows.map(rowToReceipt);
   }
 
@@ -260,11 +281,9 @@ export class SessionStore {
     txn();
   }
 
+  /** Update receipt ack directly by composite key (no load-all-then-filter). */
   updateReceiptAck(sessionId: string, runningTotal: string, requestCount: number, buyerAckSig: string): void {
-    const stmt = this._db.prepare(
-      'UPDATE payment_receipts SET buyer_ack_sig = ? WHERE session_id = ? AND running_total = ? AND request_count = ?',
-    );
-    stmt.run(buyerAckSig, sessionId, runningTotal, requestCount);
+    this._stmts.updateReceiptAck.run(buyerAckSig, sessionId, runningTotal, requestCount);
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────

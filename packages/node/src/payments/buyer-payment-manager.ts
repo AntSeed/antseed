@@ -302,13 +302,14 @@ export class BuyerPaymentManager {
 
   // ── Queries ───────────────────────────────────────────────────
 
+  /** Check if a session has been confirmed via AuthAck. */
   isAuthorized(sellerPeerId: string): boolean {
     return this._confirmedPeers.has(sellerPeerId);
   }
 
-  /** Check if a session has been confirmed (for polling). */
+  /** Alias for isAuthorized (used by polling loop). */
   isLockConfirmed(sellerPeerId: string): boolean {
-    return this._confirmedPeers.has(sellerPeerId);
+    return this.isAuthorized(sellerPeerId);
   }
 
   /** Check if the lock was explicitly rejected (not just never-contacted). */

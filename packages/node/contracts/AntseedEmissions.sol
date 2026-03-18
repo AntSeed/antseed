@@ -156,11 +156,13 @@ contract AntseedEmissions {
     //                   SYNTHETIX REWARD ACCUMULATORS
     // ═══════════════════════════════════════════════════════════════════
 
-    function _updateSellerReward() internal {
-        // Clamp to epoch boundary — accrual beyond epoch end uses a stale rate
+    function _clampedNow() private view returns (uint256) {
         uint256 epochEnd = epochStart + EPOCH_DURATION;
-        uint256 clampedTime = block.timestamp < epochEnd ? block.timestamp : epochEnd;
-        _updateSellerRewardTo(clampedTime);
+        return block.timestamp < epochEnd ? block.timestamp : epochEnd;
+    }
+
+    function _updateSellerReward() internal {
+        _updateSellerRewardTo(_clampedNow());
     }
 
     function _updateSellerRewardTo(uint256 timestamp) internal {
@@ -187,9 +189,7 @@ contract AntseedEmissions {
     }
 
     function _updateBuyerReward() internal {
-        uint256 epochEnd = epochStart + EPOCH_DURATION;
-        uint256 clampedTime = block.timestamp < epochEnd ? block.timestamp : epochEnd;
-        _updateBuyerRewardTo(clampedTime);
+        _updateBuyerRewardTo(_clampedNow());
     }
 
     function _updateBuyerRewardTo(uint256 timestamp) internal {
@@ -247,9 +247,7 @@ contract AntseedEmissions {
 
     function pendingEmissions(address account) external view returns (uint256 seller, uint256 buyer) {
         // Calculate without mutating state (view-safe)
-        // Clamp to epoch boundary to avoid over-reporting
-        uint256 epochEnd = epochStart + EPOCH_DURATION;
-        uint256 clampedTime = block.timestamp < epochEnd ? block.timestamp : epochEnd;
+        uint256 clampedTime = _clampedNow();
 
         SellerReward memory sr = sellerRewards[account];
         uint256 sellerRPP = sellerRewardPerPointStored;

@@ -270,19 +270,13 @@ export class SellerPaymentManager {
         return;
       }
 
-      // Find the latest receipt for this session and store the ack
-      const receipts = this._sessionStore.getReceipts(session.sessionId);
-      const matchingReceipt = receipts.find(
-        (r) => r.runningTotal === payload.runningTotal && r.requestCount === payload.requestCount,
+      // Store the ack directly via targeted UPDATE (no-op if no matching receipt)
+      this._sessionStore.updateReceiptAck(
+        session.sessionId,
+        payload.runningTotal,
+        payload.requestCount,
+        payload.buyerSig,
       );
-      if (matchingReceipt && matchingReceipt.id !== undefined) {
-        this._sessionStore.updateReceiptAck(
-          session.sessionId,
-          payload.runningTotal,
-          payload.requestCount,
-          payload.buyerSig,
-        );
-      }
 
       debugLog(`[SellerPayment] BuyerAck received: session=${session.sessionId.slice(0, 18)}... count=${payload.requestCount} total=${payload.runningTotal}`);
     } catch (err) {
