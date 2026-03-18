@@ -253,6 +253,9 @@ contract AntseedSubPool {
             pendingRevenue: 0
         });
         peerRewardPerTokenPaid[msg.sender] = rewardPerTokenStored;
+        // Snapshot initial weight from current reputation
+        IAntseedIdentity.ProvenReputation memory rep = identityContract.getReputation(tokenId);
+        peerSnapshotWeight[msg.sender] = uint256(rep.qualifiedProvenSignCount);
 
         optedInPeers.push(msg.sender);
         emit PeerOptedIn(msg.sender, tokenId);
@@ -263,9 +266,8 @@ contract AntseedSubPool {
         if (!opt.optedIn) revert NotOptedIn();
         if (opt.tokenId != tokenId) revert InvalidAmount();
 
-        // Auto-claim any pending revenue before opting out
-        IAntseedIdentity.ProvenReputation memory rep = identityContract.getReputation(opt.tokenId);
-        uint256 weight = uint256(rep.qualifiedProvenSignCount);
+        // Auto-claim any pending revenue before opting out (use snapshot weight)
+        uint256 weight = peerSnapshotWeight[msg.sender];
         uint256 earned = (weight * (rewardPerTokenStored - peerRewardPerTokenPaid[msg.sender])) / 1e18;
         uint256 claimable = opt.pendingRevenue + earned;
         if (claimable > 0) {
@@ -301,6 +303,8 @@ contract AntseedSubPool {
     uint256 public rewardPerTokenStored;
     // Snapshot of rewardPerToken at last claim per peer
     mapping(address => uint256) public peerRewardPerTokenPaid;
+    // Weight snapshot: locked at distributeRevenue() to prevent retroactive over-claims
+    mapping(address => uint256) public peerSnapshotWeight;
 
     function distributeRevenue() external nonReentrant {
         if (block.timestamp < epochStart + epochDuration) revert EpochNotEnded();
@@ -309,12 +313,23 @@ contract AntseedSubPool {
         uint256 peerCount = optedInPeers.length;
 
         if (revenue > 0 && peerCount > 0) {
-            // Calculate total weight from reputation
+            // Settle all peers using their CURRENT weight before changing rewardPerTokenStored
             uint256 totalWeight = 0;
             for (uint256 i = 0; i < peerCount; i++) {
-                PeerOpt storage opt = peerOpts[optedInPeers[i]];
+                address peer = optedInPeers[i];
+                uint256 w = peerSnapshotWeight[peer];
+                if (w > 0) {
+                    // Settle earned with old snapshot weight before updating
+                    uint256 earned = (w * (rewardPerTokenStored - peerRewardPerTokenPaid[peer])) / 1e18;
+                    peerOpts[peer].pendingRevenue += earned;
+                    peerRewardPerTokenPaid[peer] = rewardPerTokenStored;
+                }
+                // Snapshot current reputation as weight for the new epoch
+                PeerOpt storage opt = peerOpts[peer];
                 IAntseedIdentity.ProvenReputation memory rep = identityContract.getReputation(opt.tokenId);
-                totalWeight += uint256(rep.qualifiedProvenSignCount);
+                uint256 newWeight = uint256(rep.qualifiedProvenSignCount);
+                peerSnapshotWeight[peer] = newWeight;
+                totalWeight += newWeight;
             }
 
             if (totalWeight > 0) {
@@ -335,9 +350,8 @@ contract AntseedSubPool {
         PeerOpt storage opt = peerOpts[msg.sender];
         if (!opt.optedIn) revert NotOptedIn();
 
-        // Calculate earned since last claim using accumulated rewardPerToken
-        IAntseedIdentity.ProvenReputation memory rep = identityContract.getReputation(opt.tokenId);
-        uint256 weight = uint256(rep.qualifiedProvenSignCount);
+        // Use snapshotted weight (locked at distribution time), not live reputation
+        uint256 weight = peerSnapshotWeight[msg.sender];
         uint256 earned = (weight * (rewardPerTokenStored - peerRewardPerTokenPaid[msg.sender])) / 1e18;
         uint256 amount = opt.pendingRevenue + earned;
         if (amount == 0) revert NothingToClaim();
@@ -354,16 +368,17 @@ contract AntseedSubPool {
         PeerOpt storage opt = peerOpts[seller];
         if (!opt.optedIn) return 0;
 
-        // Already-earned from previous epochs (accumulated via rewardPerToken)
-        IAntseedIdentity.ProvenReputation memory rep = identityContract.getReputation(opt.tokenId);
-        uint256 weight = uint256(rep.qualifiedProvenSignCount);
+        // Already-earned from previous epochs (use snapshot weight)
+        uint256 weight = peerSnapshotWeight[seller];
         uint256 earned = (weight * (rewardPerTokenStored - peerRewardPerTokenPaid[seller])) / 1e18;
         uint256 pending = opt.pendingRevenue + earned;
 
-        // Project current epoch share
+        // Project current epoch share (use live reputation for projection)
+        IAntseedIdentity.ProvenReputation memory rep = identityContract.getReputation(opt.tokenId);
+        uint256 liveWeight = uint256(rep.qualifiedProvenSignCount);
         uint256 revenue = currentEpochRevenue;
         uint256 peerCount = optedInPeers.length;
-        if (revenue == 0 || peerCount == 0 || weight == 0) return pending;
+        if (revenue == 0 || peerCount == 0 || liveWeight == 0) return pending;
 
         uint256 totalWeight = 0;
         for (uint256 i = 0; i < peerCount; i++) {
@@ -373,7 +388,7 @@ contract AntseedSubPool {
         }
 
         if (totalWeight == 0) return pending;
-        return pending + (revenue * weight) / totalWeight;
+        return pending + (revenue * liveWeight) / totalWeight;
     }
 
     // ═══════════════════════════════════════════════════════════════════
