@@ -180,6 +180,7 @@ contract AntseedIdentity is ERC721, ERC721URIStorage {
         bytes32 tag2
     ) external {
         if (_ownerOf(agentId) == address(0)) revert InvalidToken();
+        if (!registered[msg.sender]) revert NotAuthorized();
         _feedback[agentId][msg.sender].push(FeedbackEntry({
             client: msg.sender,
             value: value,

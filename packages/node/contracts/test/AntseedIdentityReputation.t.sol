@@ -5,6 +5,10 @@ import "forge-std/Test.sol";
 import "../AntseedIdentity.sol";
 
 contract AntseedIdentityReputationTest is Test {
+    // Support receiving ERC721 tokens (needed for register() via _safeMint)
+    function onERC721Received(address, address, uint256, bytes calldata) external pure returns (bytes4) {
+        return this.onERC721Received.selector;
+    }
     AntseedIdentity public identity;
     address public peer1 = address(0x1);
     bytes32 public peerId1 = keccak256("peer1");
@@ -19,6 +23,18 @@ contract AntseedIdentityReputationTest is Test {
         identity.setEscrowContract(address(this));
         vm.prank(peer1);
         tokenId = identity.register(peerId1, "ipfs://meta");
+        // Register feedback clients (required for giveFeedback access control)
+        vm.prank(client1);
+        identity.register(keccak256("client1"), "");
+        vm.prank(client2);
+        identity.register(keccak256("client2"), "");
+        // Register test contract itself as a peer for direct giveFeedback calls
+        identity.register(keccak256("testcontract"), "");
+    }
+
+    // Mock sellers() for IAntseedEscrow interface (required by deregister)
+    function sellers(address) external pure returns (uint256, uint256, uint256, uint256) {
+        return (0, 0, 0, 0);
     }
 
     // ── Reputation tests ──
