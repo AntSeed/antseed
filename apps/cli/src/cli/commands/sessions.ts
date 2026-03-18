@@ -2,7 +2,6 @@ import type { Command } from 'commander';
 import chalk from 'chalk';
 import { getGlobalOptions } from './types.js';
 import { openSessionStore } from '../payment-utils.js';
-import type { StoredSession } from '@antseed/node';
 
 /** Abbreviate a session/peer ID to a short form. */
 function short(id: string, len = 10): string {
