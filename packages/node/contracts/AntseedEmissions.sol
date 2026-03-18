@@ -115,16 +115,30 @@ contract AntseedEmissions {
     function advanceEpoch() external {
         if (block.timestamp < epochStart + EPOCH_DURATION) revert EpochNotEnded();
 
+        // Process all missed epochs (not just one) to prevent over-accrual
+        // at a stale emission rate when epochs are skipped
+        uint256 maxIterations = 52; // cap to prevent gas exhaustion
+        while (block.timestamp >= epochStart + EPOCH_DURATION && maxIterations > 0) {
+            maxIterations--;
+
+            uint256 epochEnd = epochStart + EPOCH_DURATION;
+
+            // Clamp accrual to epoch boundary (not block.timestamp)
+            _updateSellerRewardTo(epochEnd);
+            _updateBuyerRewardTo(epochEnd);
+
+            // Accumulate reserve for this epoch
+            uint256 epochEmission = _calcEpochEmission(currentEpoch);
+            reserveAccumulated += (epochEmission * RESERVE_SHARE_PCT) / 100;
+
+            currentEpoch++;
+            currentEmissionRate = _calcEmissionRate(currentEpoch);
+            epochStart = epochEnd;
+        }
+
+        // Accrue any remaining time in the new current epoch
         _updateSellerReward();
         _updateBuyerReward();
-
-        // Accumulate reserve for this epoch
-        uint256 epochEmission = _calcEpochEmission(currentEpoch);
-        reserveAccumulated += (epochEmission * RESERVE_SHARE_PCT) / 100;
-
-        currentEpoch++;
-        currentEmissionRate = _calcEmissionRate(currentEpoch);
-        epochStart = block.timestamp;
 
         emit EpochAdvanced(currentEpoch, _calcEpochEmission(currentEpoch));
     }
@@ -142,12 +156,19 @@ contract AntseedEmissions {
     // ═══════════════════════════════════════════════════════════════════
 
     function _updateSellerReward() internal {
-        if (totalSellerPoints > 0) {
-            uint256 elapsed = block.timestamp - sellerLastUpdateTime;
+        // Clamp to epoch boundary — accrual beyond epoch end uses a stale rate
+        uint256 epochEnd = epochStart + EPOCH_DURATION;
+        uint256 clampedTime = block.timestamp < epochEnd ? block.timestamp : epochEnd;
+        _updateSellerRewardTo(clampedTime);
+    }
+
+    function _updateSellerRewardTo(uint256 timestamp) internal {
+        if (totalSellerPoints > 0 && timestamp > sellerLastUpdateTime) {
+            uint256 elapsed = timestamp - sellerLastUpdateTime;
             uint256 sellerEmissionRate = (currentEmissionRate * SELLER_SHARE_PCT) / 100;
             sellerRewardPerPointStored += (sellerEmissionRate * elapsed * 1e18) / totalSellerPoints;
         }
-        sellerLastUpdateTime = block.timestamp;
+        sellerLastUpdateTime = timestamp;
     }
 
     function _updateSellerAccount(address seller) internal {
@@ -165,12 +186,18 @@ contract AntseedEmissions {
     }
 
     function _updateBuyerReward() internal {
-        if (totalBuyerPoints > 0) {
-            uint256 elapsed = block.timestamp - buyerLastUpdateTime;
+        uint256 epochEnd = epochStart + EPOCH_DURATION;
+        uint256 clampedTime = block.timestamp < epochEnd ? block.timestamp : epochEnd;
+        _updateBuyerRewardTo(clampedTime);
+    }
+
+    function _updateBuyerRewardTo(uint256 timestamp) internal {
+        if (totalBuyerPoints > 0 && timestamp > buyerLastUpdateTime) {
+            uint256 elapsed = timestamp - buyerLastUpdateTime;
             uint256 buyerEmissionRate = (currentEmissionRate * BUYER_SHARE_PCT) / 100;
             buyerRewardPerPointStored += (buyerEmissionRate * elapsed * 1e18) / totalBuyerPoints;
         }
-        buyerLastUpdateTime = block.timestamp;
+        buyerLastUpdateTime = timestamp;
     }
 
     function _updateBuyerAccount(address buyer) internal {
@@ -219,10 +246,14 @@ contract AntseedEmissions {
 
     function pendingEmissions(address account) external view returns (uint256 seller, uint256 buyer) {
         // Calculate without mutating state (view-safe)
+        // Clamp to epoch boundary to avoid over-reporting
+        uint256 epochEnd = epochStart + EPOCH_DURATION;
+        uint256 clampedTime = block.timestamp < epochEnd ? block.timestamp : epochEnd;
+
         SellerReward memory sr = sellerRewards[account];
         uint256 sellerRPP = sellerRewardPerPointStored;
-        if (totalSellerPoints > 0) {
-            uint256 elapsed = block.timestamp - sellerLastUpdateTime;
+        if (totalSellerPoints > 0 && clampedTime > sellerLastUpdateTime) {
+            uint256 elapsed = clampedTime - sellerLastUpdateTime;
             uint256 sellerEmRate = (currentEmissionRate * SELLER_SHARE_PCT) / 100;
             sellerRPP += (sellerEmRate * elapsed * 1e18) / totalSellerPoints;
         }
@@ -231,8 +262,8 @@ contract AntseedEmissions {
         // Same for buyer
         BuyerReward memory br = buyerRewards[account];
         uint256 buyerRPP = buyerRewardPerPointStored;
-        if (totalBuyerPoints > 0) {
-            uint256 elapsed = block.timestamp - buyerLastUpdateTime;
+        if (totalBuyerPoints > 0 && clampedTime > buyerLastUpdateTime) {
+            uint256 elapsed = clampedTime - buyerLastUpdateTime;
             uint256 buyerEmRate = (currentEmissionRate * BUYER_SHARE_PCT) / 100;
             buyerRPP += (buyerEmRate * elapsed * 1e18) / totalBuyerPoints;
         }

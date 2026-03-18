@@ -354,8 +354,9 @@ contract E2EIntegration is Test {
         (uint256 buyerPoints,,) = emissions.buyerRewards(buyer);
         assertGt(buyerPoints, 0, "buyer should have emission points");
 
-        // vm.warp(1 second) — let some rewards accumulate
-        vm.warp(block.timestamp + 1);
+        // Advance epoch so accrued rewards become claimable
+        // (epoch boundary clamping means rewards stop accruing until epoch is advanced)
+        emissions.advanceEpoch();
 
         // Seller claims emissions — verify ANTS minted
         vm.prank(seller1);
