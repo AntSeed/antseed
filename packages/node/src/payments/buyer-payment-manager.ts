@@ -215,6 +215,21 @@ export class BuyerPaymentManager {
       return;
     }
 
+    // Validate monotonic increase: runningTotal must exceed previous
+    const newTotal = BigInt(receipt.runningTotal);
+    const prevTotal = BigInt(session.tokensDelivered);
+    if (newTotal <= prevTotal) {
+      debugWarn(`[BuyerPayment] Receipt runningTotal not monotonic: new=${newTotal} prev=${prevTotal}`);
+      return;
+    }
+
+    // Validate receipt doesn't exceed authorized max
+    const authMax = BigInt(session.authMax);
+    if (newTotal > authMax) {
+      debugWarn(`[BuyerPayment] Receipt runningTotal ${newTotal} exceeds authMax ${authMax}`);
+      return;
+    }
+
     // Update tokens delivered
     this._sessionStore.updateTokensDelivered(
       session.sessionId,
