@@ -738,18 +738,22 @@ function resolveNpmBin(): string {
   }
 
   // Electron apps often get a restricted PATH, so check common install
-  // locations across macOS, Linux, and Windows before falling back.
-  const candidates = [
-    path.join(path.dirname(process.execPath), 'npm.cmd'),
-    path.join(path.dirname(process.execPath), 'npm'),
-    path.join(process.env['ProgramFiles'] ?? 'C:\\Program Files', 'nodejs', 'npm.cmd'),
-    path.join(process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)', 'nodejs', 'npm.cmd'),
-    path.join(process.env['APPDATA'] ?? '', 'npm', 'npm.cmd'),
-    '/usr/local/bin/npm',          // Homebrew (Intel Mac)
-    '/opt/homebrew/bin/npm',       // Homebrew (Apple Silicon)
-    '/usr/bin/npm',                // System
-    path.join(homedir(), '.nvm', 'alias', 'default', 'bin', 'npm'), // nvm symlink
-  ];
+  // locations before falling back.
+  const isWindows = process.platform === 'win32';
+  const candidates = isWindows
+    ? [
+        path.join(path.dirname(process.execPath), 'npm.cmd'),
+        path.join(process.env['ProgramFiles'] ?? 'C:\\Program Files', 'nodejs', 'npm.cmd'),
+        path.join(process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)', 'nodejs', 'npm.cmd'),
+        path.join(process.env['APPDATA'] ?? '', 'npm', 'npm.cmd'),
+      ]
+    : [
+        path.join(path.dirname(process.execPath), 'npm'),
+        '/usr/local/bin/npm',          // Homebrew (Intel Mac)
+        '/opt/homebrew/bin/npm',       // Homebrew (Apple Silicon)
+        '/usr/bin/npm',                // System
+        path.join(homedir(), '.nvm', 'alias', 'default', 'bin', 'npm'), // nvm symlink
+      ];
   for (const candidate of candidates) {
     if (existsSync(candidate)) return candidate;
   }
@@ -770,11 +774,14 @@ async function installPluginDependency(packageSpec: string): Promise<void> {
     env: {
       ...process.env,
       PATH: [
-        path.join(path.dirname(process.execPath)),
-        path.join(process.env['ProgramFiles'] ?? 'C:\\Program Files', 'nodejs'),
-        path.join(process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)', 'nodejs'),
-        path.join(process.env['APPDATA'] ?? '', 'npm'),
-        '/usr/local/bin', '/opt/homebrew/bin', '/usr/bin', '/bin',
+        path.dirname(process.execPath),
+        ...(process.platform === 'win32'
+          ? [
+              path.join(process.env['ProgramFiles'] ?? 'C:\\Program Files', 'nodejs'),
+              path.join(process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)', 'nodejs'),
+              path.join(process.env['APPDATA'] ?? '', 'npm'),
+            ]
+          : ['/usr/local/bin', '/opt/homebrew/bin', '/usr/bin', '/bin']),
         process.env['PATH'] ?? '',
       ].filter((segment) => segment.length > 0).join(path.delimiter),
     },
