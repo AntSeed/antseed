@@ -250,7 +250,9 @@ contract AntseedEscrow is EIP712, Pausable {
         if (ba.withdrawalAmount == 0) revert InvalidAmount();
         if (block.timestamp < ba.withdrawalRequestedAt + SETTLE_TIMEOUT) revert TimeoutNotReached();
 
-        uint256 amount = ba.withdrawalAmount;
+        // Cap withdrawal at available balance in case settlements reduced it
+        uint256 available = ba.balance - ba.reserved;
+        uint256 amount = ba.withdrawalAmount > available ? available : ba.withdrawalAmount;
         ba.withdrawalAmount = 0;
         ba.withdrawalRequestedAt = 0;
         ba.balance -= amount;
