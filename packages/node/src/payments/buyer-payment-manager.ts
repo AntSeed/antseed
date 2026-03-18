@@ -49,6 +49,8 @@ export class BuyerPaymentManager {
   private readonly _sessionStore: SessionStore;
   /** In-memory map of active confirmed sessions by seller peerId for fast lookups. */
   private readonly _confirmedPeers = new Set<string>();
+  /** Peers that explicitly rejected our spending auth. */
+  private readonly _rejectedPeers = new Set<string>();
   private _nonceCounter: number;
 
   constructor(identity: Identity, config: BuyerPaymentConfig, sessionStore: SessionStore) {
@@ -312,10 +314,15 @@ export class BuyerPaymentManager {
     return this._confirmedPeers.has(sellerPeerId);
   }
 
-  /** Check if no session exists (lock was rejected or never sent). */
+  /** Check if the lock was explicitly rejected (not just never-contacted). */
   isLockRejected(sellerPeerId: string): boolean {
-    const session = this._sessionStore.getActiveSessionByPeer(sellerPeerId, 'buyer');
-    return !session;
+    return this._rejectedPeers.has(sellerPeerId);
+  }
+
+  /** Mark a peer as having rejected our spending auth. */
+  markRejected(sellerPeerId: string): void {
+    this._rejectedPeers.add(sellerPeerId);
+    debugLog(`[BuyerPayment] Peer ${sellerPeerId.slice(0, 12)}... marked as rejected`);
   }
 
   getSessionHistory(sellerPeerId: string): StoredSession[] {
