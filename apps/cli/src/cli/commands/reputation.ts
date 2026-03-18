@@ -17,6 +17,10 @@ export function registerReputationCommand(program: Command): void {
 
       let address: string;
       if (targetAddress) {
+        if (!/^0x[0-9a-fA-F]{40}$/.test(targetAddress)) {
+          console.error(chalk.red('Error: Invalid Ethereum address format. Expected 0x followed by 40 hex characters.'));
+          process.exit(1);
+        }
         address = targetAddress;
       } else {
         const identity = await loadOrCreateIdentity(globalOpts.dataDir);
