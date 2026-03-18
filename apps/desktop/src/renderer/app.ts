@@ -406,6 +406,8 @@ registerActions({
   approveSessionPayment: () => { chatApi.approveSessionPayment().catch(() => {}); },
   cancelSessionPayment: () => chatApi.cancelSessionPayment(),
   refreshCredits: () => void creditsApi.refreshCredits(),
+  refreshWorkspace: chatApi.refreshWorkspace,
+  chooseWorkspace: chatApi.chooseWorkspace,
   refreshPlugins: refreshPluginInventory,
   installPlugin: () => {
     const packageName = resolveRouterPackageName(

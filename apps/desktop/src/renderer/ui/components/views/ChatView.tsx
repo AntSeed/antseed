@@ -64,6 +64,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   const [isDragOver, setIsDragOver] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewFraction, setPreviewFraction] = useState(DEFAULT_PREVIEW_FRACTION);
+  const [previewTargetUrl, setPreviewTargetUrl] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -81,6 +82,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   const previewUrl = snap.browserPreviewUrl;
   useEffect(() => {
     if (previewUrl) {
+      setPreviewTargetUrl(previewUrl);
       setPreviewOpen(true);
     }
   }, [previewUrl]);
@@ -278,7 +280,11 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     visibleMessages.length === 0 &&
     !snap.chatStreamingMessage;
 
-  const previewActive = previewOpen && !!previewUrl;
+  const previewActive = previewOpen;
+  const workspacePath = snap.chatWorkspacePath || snap.chatWorkspaceDefaultPath;
+  const workspaceLabel = workspacePath
+    ? workspacePath.length > 52 ? `...${workspacePath.slice(-52)}` : workspacePath
+    : 'No workspace selected';
 
   // Compute widths for split view
   const chatStyle = previewActive
@@ -292,16 +298,22 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     <section className={`view view-chat${active ? ' active' : ''}`} role="tabpanel">
       <div className={styles.pageHeader}>
         <div className={styles.pageHeaderLeft}>
-          {previewUrl && (
-            <button
-              className={`${styles.previewToggle} ${previewActive ? styles.previewToggleActive : ''}`}
-              onClick={() => setPreviewOpen((v) => !v)}
-              title={previewActive ? 'Close preview' : 'Open preview'}
-            >
-              <HugeiconsIcon icon={BrowserIcon} size={15} strokeWidth={1.5} />
-              <span>Preview</span>
-            </button>
-          )}
+          <button
+            className={styles.workspaceButton}
+            onClick={() => void actions.chooseWorkspace()}
+            title={workspacePath || 'Choose workspace'}
+          >
+            <HugeiconsIcon icon={ComputerTerminal01Icon} size={15} strokeWidth={1.5} />
+            <span className={styles.workspaceLabel}>{workspaceLabel}</span>
+          </button>
+          <button
+            className={`${styles.previewToggle} ${previewActive ? styles.previewToggleActive : ''}`}
+            onClick={() => setPreviewOpen((v) => !v)}
+            title={previewActive ? 'Close preview' : 'Open preview'}
+          >
+            <HugeiconsIcon icon={BrowserIcon} size={15} strokeWidth={1.5} />
+            <span>{previewTargetUrl ? 'Preview' : 'Workspace'}</span>
+          </button>
         </div>
         <div className={styles.pageHeaderRight}>
           {snap.chatRoutedPeer ? (
@@ -452,8 +464,9 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
             />
             <div style={previewStyle}>
               <BrowserPreview
-                url={previewUrl}
+                url={previewTargetUrl}
                 onClose={handleClosePreview}
+                onNavigate={setPreviewTargetUrl}
                 onElementSelected={handleElementSelected}
               />
             </div>

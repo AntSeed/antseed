@@ -34,8 +34,9 @@ type ConsoleEntry = {
 };
 
 type BrowserPreviewProps = {
-  url: string;
+  url: string | null;
   onClose: () => void;
+  onNavigate: (url: string) => void;
   onElementSelected?: (info: {
     selector: string;
     tagName: string;
@@ -146,9 +147,10 @@ const ELEMENT_PICKER_POLL = `
 })();
 `;
 
-export function BrowserPreview({ url, onClose, onElementSelected }: BrowserPreviewProps) {
+export function BrowserPreview({ url, onClose, onNavigate, onElementSelected }: BrowserPreviewProps) {
   const webviewRef = useRef<WebviewElement | null>(null);
-  const [displayUrl, setDisplayUrl] = useState(url);
+  const [displayUrl, setDisplayUrl] = useState(url ?? 'http://localhost:3000');
+  const [pageTitle, setPageTitle] = useState('Workspace Preview');
   const [canGoBack, setCanGoBack] = useState(false);
   const [canGoForward, setCanGoForward] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -161,6 +163,8 @@ export function BrowserPreview({ url, onClose, onElementSelected }: BrowserPrevi
   const [consoleFilter, setConsoleFilter] = useState<'all' | 'error' | 'warn'>('all');
   const pickerPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const consoleScrollRef = useRef<HTMLDivElement>(null);
+
+  const hasUrl = Boolean(url && url.trim().length > 0);
 
   // Update webview when url prop changes
   useEffect(() => {
@@ -175,7 +179,9 @@ export function BrowserPreview({ url, onClose, onElementSelected }: BrowserPrevi
         // webview not ready yet
       }
     }
-    setDisplayUrl(url);
+    if (url) {
+      setDisplayUrl(url);
+    }
   }, [url]);
 
   useEffect(() => {
@@ -183,9 +189,17 @@ export function BrowserPreview({ url, onClose, onElementSelected }: BrowserPrevi
     if (!webview) return;
 
     const handleNavigate = () => {
-      setDisplayUrl(webview.getURL());
+      const nextUrl = webview.getURL();
+      setDisplayUrl(nextUrl);
+      onNavigate(nextUrl);
       setCanGoBack(webview.canGoBack());
       setCanGoForward(webview.canGoForward());
+    };
+
+    const handleTitleUpdate = (e: Event) => {
+      const ev = e as Event & { title?: string };
+      const nextTitle = typeof ev.title === 'string' ? ev.title.trim() : '';
+      setPageTitle(nextTitle || 'Workspace Preview');
     };
 
     const handleStartLoading = () => {
@@ -220,6 +234,7 @@ export function BrowserPreview({ url, onClose, onElementSelected }: BrowserPrevi
     webview.addEventListener('did-stop-loading', handleStopLoading);
     webview.addEventListener('did-fail-load', handleFailLoad);
     webview.addEventListener('console-message', handleConsoleMessage);
+    webview.addEventListener('page-title-updated', handleTitleUpdate);
 
     return () => {
       webview.removeEventListener('did-navigate', handleNavigate);
@@ -228,8 +243,9 @@ export function BrowserPreview({ url, onClose, onElementSelected }: BrowserPrevi
       webview.removeEventListener('did-stop-loading', handleStopLoading);
       webview.removeEventListener('did-fail-load', handleFailLoad);
       webview.removeEventListener('console-message', handleConsoleMessage);
+      webview.removeEventListener('page-title-updated', handleTitleUpdate);
     };
-  }, []);
+  }, [onNavigate]);
 
   // Auto-scroll console
   useEffect(() => {
@@ -247,16 +263,16 @@ export function BrowserPreview({ url, onClose, onElementSelected }: BrowserPrevi
   const handleUrlSubmit = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
       if (e.key !== 'Enter') return;
-      const webview = webviewRef.current;
-      if (!webview) return;
       let target = displayUrl.trim();
+      if (!target) return;
       if (target && !target.match(/^https?:\/\//)) {
         target = `http://${target}`;
-        setDisplayUrl(target);
       }
-      webview.loadURL(target);
+      setDisplayUrl(target);
+      onNavigate(target);
+      webviewRef.current?.loadURL(target);
     },
-    [displayUrl],
+    [displayUrl, onNavigate],
   );
 
   const goBack = useCallback(() => webviewRef.current?.goBack(), []);
@@ -297,8 +313,20 @@ export function BrowserPreview({ url, onClose, onElementSelected }: BrowserPrevi
   }, [darkMode]);
 
   const copyUrl = useCallback(() => {
+    if (!displayUrl.trim()) return;
     navigator.clipboard.writeText(displayUrl).catch(() => {});
   }, [displayUrl]);
+
+  const openTypedUrl = useCallback(() => {
+    let target = displayUrl.trim();
+    if (!target) return;
+    if (!target.match(/^https?:\/\//)) {
+      target = `http://${target}`;
+    }
+    setDisplayUrl(target);
+    onNavigate(target);
+    webviewRef.current?.loadURL(target);
+  }, [displayUrl, onNavigate]);
 
   const togglePicker = useCallback(() => {
     const webview = webviewRef.current;
@@ -350,6 +378,25 @@ export function BrowserPreview({ url, onClose, onElementSelected }: BrowserPrevi
     return e.level === consoleFilter;
   });
 
+  const statusLabel = loadError
+    ? 'Error'
+    : isLoading
+      ? 'Loading'
+      : hasUrl
+        ? mobileMode
+          ? 'Mobile'
+          : 'Ready'
+        : 'Idle';
+
+  const hostLabel = (() => {
+    try {
+      const parsed = new URL(displayUrl);
+      return parsed.host || parsed.pathname;
+    } catch {
+      return displayUrl.trim() || 'No URL selected';
+    }
+  })();
+
   const webviewStyle: React.CSSProperties = mobileMode
     ? {
         width: MOBILE_WIDTH,
@@ -385,22 +432,28 @@ export function BrowserPreview({ url, onClose, onElementSelected }: BrowserPrevi
           onChange={(e) => setDisplayUrl(e.target.value)}
           onKeyDown={handleUrlSubmit}
           spellCheck={false}
+          placeholder="Enter a localhost URL or website"
         />
+        <button className={styles.openBtn} onClick={openTypedUrl} disabled={!displayUrl.trim()} title="Open URL">
+          Open
+        </button>
         {/* Device & utility buttons */}
         <button
           className={`${styles.navBtn} ${darkMode ? styles.navBtnActive : ''}`}
           onClick={toggleDarkMode}
           title={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}
+          disabled={!hasUrl}
         >
           <HugeiconsIcon icon={darkMode ? Sun02Icon : Moon02Icon} size={16} strokeWidth={1.5} />
         </button>
-        <button className={styles.navBtn} onClick={copyUrl} title="Copy URL">
+        <button className={styles.navBtn} onClick={copyUrl} title="Copy URL" disabled={!hasUrl}>
           <HugeiconsIcon icon={Copy01Icon} size={16} strokeWidth={1.5} />
         </button>
         <button
           className={`${styles.navBtn} ${mobileMode ? styles.navBtnActive : ''}`}
           onClick={toggleMobile}
           title={mobileMode ? 'Desktop viewport' : 'Mobile viewport'}
+          disabled={!hasUrl}
         >
           <HugeiconsIcon icon={SmartPhone01Icon} size={16} strokeWidth={1.5} />
         </button>
@@ -408,6 +461,7 @@ export function BrowserPreview({ url, onClose, onElementSelected }: BrowserPrevi
           className={`${styles.pickerBtn} ${pickerActive ? styles.pickerBtnActive : ''}`}
           onClick={togglePicker}
           title={pickerActive ? 'Cancel element picker' : 'Select an element'}
+          disabled={!hasUrl}
         >
           <svg
             width="16"
@@ -427,15 +481,54 @@ export function BrowserPreview({ url, onClose, onElementSelected }: BrowserPrevi
           <HugeiconsIcon icon={Cancel01Icon} size={16} strokeWidth={1.5} />
         </button>
       </div>
+      <div className={styles.statusBar}>
+        <div className={styles.statusMeta}>
+          <span className={`${styles.statusBadge} ${loadError ? styles.statusBadgeError : isLoading ? styles.statusBadgeLoading : styles.statusBadgeReady}`}>
+            {statusLabel}
+          </span>
+          <span className={styles.statusTitle}>{pageTitle}</span>
+        </div>
+        <span className={styles.statusHost}>{hostLabel}</span>
+      </div>
 
       {/* Webview */}
       <div className={`${styles.webviewContainer} ${mobileMode ? styles.webviewMobile : ''}`}>
-        <webview
-          ref={webviewRef}
-          src={url}
-          allowpopups={true}
-          style={{ ...webviewStyle, display: loadError ? 'none' : undefined }}
-        />
+        {hasUrl ? (
+          <webview
+            ref={webviewRef}
+            src={url ?? undefined}
+            allowpopups={true}
+            style={{ ...webviewStyle, display: loadError ? 'none' : undefined }}
+          />
+        ) : null}
+        {hasUrl && isLoading && !loadError && (
+          <div className={styles.loadingOverlay}>
+            <div className={styles.loadingCard}>
+              <div className={styles.loadingSpinner} />
+              <div className={styles.loadingText}>Loading preview...</div>
+            </div>
+          </div>
+        )}
+        {!hasUrl && (
+          <div className={styles.emptyState}>
+            <div className={styles.emptyStateEyebrow}>Workspace Preview</div>
+            <div className={styles.emptyStateTitle}>Open a site beside the chat</div>
+            <div className={styles.emptyStateCopy}>
+              Paste a localhost URL, open a deployed page, or let the assistant launch a dev server and send it here.
+            </div>
+            <div className={styles.emptyStateActions}>
+              <button className={styles.emptyStateAction} onClick={() => { setDisplayUrl('http://localhost:3000'); onNavigate('http://localhost:3000'); }}>
+                localhost:3000
+              </button>
+              <button className={styles.emptyStateAction} onClick={() => { setDisplayUrl('http://localhost:5173'); onNavigate('http://localhost:5173'); }}>
+                localhost:5173
+              </button>
+              <button className={styles.emptyStateAction} onClick={() => { setDisplayUrl('http://localhost:4173'); onNavigate('http://localhost:4173'); }}>
+                localhost:4173
+              </button>
+            </div>
+          </div>
+        )}
         {loadError && (
           <div className={styles.loadError}>
             <div className={styles.loadErrorIcon}>!</div>

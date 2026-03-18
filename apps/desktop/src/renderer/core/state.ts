@@ -166,6 +166,8 @@ export type RendererUiState = {
 
   // --- Browser preview ---
   browserPreviewUrl: string | null;
+  chatWorkspacePath: string;
+  chatWorkspaceDefaultPath: string;
 
   // --- Streaming indicator ---
   chatStreamingIndicatorText: string;
@@ -291,6 +293,8 @@ export function createInitialUiState(): RendererUiState {
 
     // Browser preview
     browserPreviewUrl: null,
+    chatWorkspacePath: '',
+    chatWorkspaceDefaultPath: '',
 
     // Streaming indicator
     chatStreamingIndicatorText: '',

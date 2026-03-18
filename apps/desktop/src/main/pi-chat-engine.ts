@@ -3,7 +3,7 @@ import type { IpcMain } from 'electron';
 import { type Static, Type } from '@sinclair/typebox';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, stat, unlink } from 'node:fs/promises';
+import { mkdir, readFile, stat, unlink, writeFile } from 'node:fs/promises';
 import { createConnection } from 'node:net';
 import { homedir } from 'node:os';
 import path from 'node:path';
@@ -376,6 +376,35 @@ const StartDevServerParams = Type.Object({
 /** Track running dev servers so we can kill them on new starts. */
 const runningDevServers = new Map<string, { pid: number; kill: () => void }>();
 
+function getDevServerShell(command: string): { file: string; args: string[] } {
+  if (process.platform === 'win32') {
+    const comspec = process.env['ComSpec']?.trim() || 'cmd.exe';
+    return {
+      file: comspec,
+      args: ['/d', '/s', '/c', command],
+    };
+  }
+
+  const shell = process.env['SHELL']?.trim() || '/bin/bash';
+  return {
+    file: shell,
+    args: ['-lc', command],
+  };
+}
+
+function killDetachedDevServer(pid: number): void {
+  if (process.platform === 'win32') {
+    const killer = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], {
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    killer.unref();
+    return;
+  }
+
+  process.kill(-pid, 'SIGTERM');
+}
+
 function waitForPort(port: number, timeoutMs: number, signal?: AbortSignal): Promise<boolean> {
   return new Promise((resolve) => {
     const deadline = Date.now() + timeoutMs;
@@ -426,12 +455,22 @@ const startDevServerTool: ToolDefinition = {
 
     let output = '';
 
-    const child = spawn('bash', ['-c', command], {
+    const shellCommand = getDevServerShell(command);
+    const child = spawn(shellCommand.file, shellCommand.args, {
       cwd,
       detached: true, // new process group — immune to parent signals
       stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env, BROWSER: 'none', FORCE_COLOR: '0' },
+      windowsHide: true,
     });
+
+    if (!child.pid) {
+      return {
+        content: [{ type: 'text', text: `Failed to start dev server for command: ${command}` }],
+        details: { cwd, command, error: 'missing child pid' },
+        isError: true,
+      };
+    }
 
     // Unref so the Electron process can exit even if the dev server is still running
     child.unref();
@@ -442,14 +481,24 @@ const startDevServerTool: ToolDefinition = {
       if (output.length > 32_000) output = output.slice(-16_000);
     };
 
+    let spawnError: string | null = null;
+    let exitCode: number | null = null;
+
     child.stdout?.on('data', collectOutput);
     child.stderr?.on('data', collectOutput);
+    child.on('error', (error) => {
+      spawnError = error.message;
+      output += `\n[spawn error] ${error.message}`;
+    });
+    child.on('exit', (code) => {
+      exitCode = code;
+    });
 
     const killFn = () => {
-      try { process.kill(-child.pid!, 'SIGTERM'); } catch { /* ignore */ }
+      try { killDetachedDevServer(child.pid!); } catch { /* ignore */ }
     };
 
-    runningDevServers.set(cwd, { pid: child.pid!, kill: killFn });
+    runningDevServers.set(cwd, { pid: child.pid, kill: killFn });
 
     // Wait for the server to become ready
     const startTime = Date.now();
@@ -489,6 +538,20 @@ const startDevServerTool: ToolDefinition = {
       return {
         content: [{ type: 'text', text: `Dev server running at ${foundUrl} (pid ${child.pid})` }],
         details: { url: foundUrl, pid: child.pid, cwd },
+      };
+    }
+
+    if (spawnError || exitCode !== null) {
+      const tail = output.slice(-2000);
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Dev server failed to stay running for command "${command}".\n\nOutput tail:\n${tail}`,
+          },
+        ],
+        details: { pid: child.pid, cwd, command, spawnError, exitCode, outputTail: tail },
+        isError: true,
       };
     }
 
@@ -553,6 +616,7 @@ const CHAT_DATA_DIR = path.join(ANTSEED_HOME_DIR, 'chat');
 const CHAT_SESSIONS_DIR = path.join(CHAT_DATA_DIR, 'sessions');
 const CHAT_WORKSPACE_DIR = path.join(ANTSEED_HOME_DIR, 'projects');
 const CHAT_AGENT_DIR = path.join(CHAT_DATA_DIR, 'pi-agent');
+const CHAT_WORKSPACE_STATE_FILE = path.join(CHAT_DATA_DIR, 'workspace.json');
 
 const DEFAULT_PROXY_PORT = 8377;
 const DEFAULT_CHAT_SERVICE = 'claude-sonnet-4-20250514';
@@ -565,6 +629,40 @@ const CHAT_SERVICE_SCAN_MAX_PEERS = 20;
 const CHAT_SERVICE_MAX_OPTIONS = 120;
 const CHAT_SERVICE_MAX_OPTIONS_PER_PROVIDER = 40;
 const CHAT_SERVICE_CACHE_REFRESH_DEBOUNCE_MS = 60_000;
+
+let currentChatWorkspaceDir = CHAT_WORKSPACE_DIR;
+
+function getCurrentChatWorkspaceDir(): string {
+  return currentChatWorkspaceDir;
+}
+
+async function loadChatWorkspaceDir(): Promise<string> {
+  try {
+    const raw = await readFile(CHAT_WORKSPACE_STATE_FILE, 'utf8');
+    const parsed = JSON.parse(raw) as { path?: unknown };
+    const savedPath = typeof parsed.path === 'string' ? parsed.path.trim() : '';
+    if (savedPath && existsSync(savedPath)) {
+      currentChatWorkspaceDir = savedPath;
+    }
+  } catch {
+    // Keep default workspace dir.
+  }
+  return currentChatWorkspaceDir;
+}
+
+async function persistChatWorkspaceDir(workspaceDir: string): Promise<string> {
+  const trimmed = workspaceDir.trim();
+  if (!trimmed) {
+    throw new Error('Workspace path is required');
+  }
+  if (!existsSync(trimmed)) {
+    throw new Error(`Workspace does not exist: ${trimmed}`);
+  }
+  await mkdir(CHAT_DATA_DIR, { recursive: true });
+  await writeFile(CHAT_WORKSPACE_STATE_FILE, JSON.stringify({ path: trimmed }, null, 2), 'utf8');
+  currentChatWorkspaceDir = trimmed;
+  return currentChatWorkspaceDir;
+}
 
 function normalizeTokenCount(value: unknown): number {
   const parsed = Number(value);
@@ -1287,7 +1385,6 @@ function extractToolCallFromPartial(
 
 class PiConversationStore {
   private readonly sessionsDir = CHAT_SESSIONS_DIR;
-  private readonly workspaceDir = CHAT_WORKSPACE_DIR;
   private readonly ready: Promise<void>;
   private readonly pathCache = new Map<string, string>();
   private readonly pendingManagers = new Map<string, SessionManager>();
@@ -1298,13 +1395,19 @@ class PiConversationStore {
 
   private async ensureDirs(): Promise<void> {
     await mkdir(this.sessionsDir, { recursive: true });
-    await mkdir(this.workspaceDir, { recursive: true });
     await mkdir(CHAT_AGENT_DIR, { recursive: true });
   }
 
-  private async listSessionPaths(): Promise<SessionPathInfo[]> {
+  private async ensureWorkspaceDir(): Promise<string> {
     await this.ready;
-    const sessions = await SessionManager.list(this.workspaceDir, this.sessionsDir);
+    const workspaceDir = getCurrentChatWorkspaceDir();
+    await mkdir(workspaceDir, { recursive: true });
+    return workspaceDir;
+  }
+
+  private async listSessionPaths(): Promise<SessionPathInfo[]> {
+    const workspaceDir = await this.ensureWorkspaceDir();
+    const sessions = await SessionManager.list(workspaceDir, this.sessionsDir);
     const infos = sessions.map((entry) => ({ id: entry.id, path: entry.path }));
     this.pathCache.clear();
     for (const info of infos) {
@@ -1429,8 +1532,8 @@ class PiConversationStore {
   }
 
   async create(service?: string, provider?: string): Promise<AiConversation> {
-    await this.ready;
-    const manager = SessionManager.create(this.workspaceDir, this.sessionsDir);
+    const workspaceDir = await this.ensureWorkspaceDir();
+    const manager = SessionManager.create(workspaceDir, this.sessionsDir);
     const providerId = normalizeProviderId(provider);
     const modelProvider = providerId && inferProviderProtocol(providerId) ? providerId : PROXY_PROVIDER_ID;
     manager.appendModelChange(modelProvider, normalizeServiceId(service));
@@ -1570,6 +1673,7 @@ export function registerPiChatHandlers({
   appendSystemLog,
   getNetworkPeers,
 }: RegisterPiChatHandlersOptions): void {
+  void loadChatWorkspaceDir().catch(() => {});
   const store = new PiConversationStore();
   const activeRunsByConversation = new Map<string, ActiveRun>();
   const serviceProviderHints = new Map<string, string[]>();
@@ -1706,9 +1810,10 @@ export function registerPiChatHandlers({
     // one-shot session.agent.setSystemPrompt call would be overridden.)
     // Priority: user override (env/config) → AntStation default.
     const userSystemPrompt = await resolveSystemPrompt(configPath);
-    const settingsManager = SettingsManager.create(CHAT_WORKSPACE_DIR, CHAT_AGENT_DIR);
+    const chatWorkspaceDir = getCurrentChatWorkspaceDir();
+    const settingsManager = SettingsManager.create(chatWorkspaceDir, CHAT_AGENT_DIR);
     const resourceLoader = new DefaultResourceLoader({
-      cwd: CHAT_WORKSPACE_DIR,
+      cwd: chatWorkspaceDir,
       agentDir: CHAT_AGENT_DIR,
       settingsManager,
       systemPrompt: userSystemPrompt ?? ANTSTATION_SYSTEM_PROMPT,
@@ -1716,7 +1821,7 @@ export function registerPiChatHandlers({
     await resourceLoader.reload();
 
     const { session } = await createAgentSession({
-      cwd: CHAT_WORKSPACE_DIR,
+      cwd: chatWorkspaceDir,
       agentDir: CHAT_AGENT_DIR,
       sessionManager,
       authStorage,
@@ -2023,6 +2128,28 @@ export function registerPiChatHandlers({
   ipcMain.handle('chat:ai-list-conversations', async () => {
     const conversations = await store.list();
     return { ok: true, data: conversations };
+  });
+
+  ipcMain.handle('chat:ai-get-workspace', async () => {
+    const workspaceDir = await loadChatWorkspaceDir();
+    return {
+      ok: true,
+      data: {
+        current: workspaceDir,
+        default: CHAT_WORKSPACE_DIR,
+      },
+    };
+  });
+
+  ipcMain.handle('chat:ai-set-workspace', async (_event, workspaceDir: string) => {
+    const current = await persistChatWorkspaceDir(workspaceDir);
+    return {
+      ok: true,
+      data: {
+        current,
+        default: CHAT_WORKSPACE_DIR,
+      },
+    };
   });
 
   ipcMain.handle('chat:ai-get-conversation', async (_event, id: string) => {

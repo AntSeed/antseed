@@ -186,6 +186,15 @@ const api = {
   chatAiGetProxyStatus(): Promise<{ ok: boolean; data: { running: boolean; port: number } }> {
     return ipcRenderer.invoke('chat:ai-get-proxy-status');
   },
+  chatAiGetWorkspace(): Promise<{ ok: boolean; data?: { current: string; default: string }; error?: string }> {
+    return ipcRenderer.invoke('chat:ai-get-workspace');
+  },
+  chatAiSetWorkspace(workspacePath: string): Promise<{ ok: boolean; data?: { current: string; default: string }; error?: string }> {
+    return ipcRenderer.invoke('chat:ai-set-workspace', workspacePath);
+  },
+  pickDirectory(): Promise<{ ok: boolean; path: string | null }> {
+    return ipcRenderer.invoke('desktop:pick-directory');
+  },
   onChatAiDone(handler: (data: { conversationId: string; message: { role: string; content: unknown; createdAt?: number; meta?: Record<string, unknown> } }) => void): () => void {
     const listener = (_: unknown, data: { conversationId: string; message: { role: string; content: unknown; createdAt?: number; meta?: Record<string, unknown> } }) => handler(data);
     ipcRenderer.on('chat:ai-done', listener);
