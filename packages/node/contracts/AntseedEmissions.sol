@@ -74,6 +74,7 @@ contract AntseedEmissions {
     error NoReserveDestination();
     error NoReserve();
     error InvalidAddress();
+    error InvalidValue();
     error InvalidSharePercentages();
 
     // ─── Modifiers ───
@@ -302,8 +303,14 @@ contract AntseedEmissions {
     }
 
     function setConstant(bytes32 key, uint256 value) external onlyOwner {
-        if (key == keccak256("EPOCH_DURATION")) EPOCH_DURATION = value;
-        else if (key == keccak256("HALVING_INTERVAL")) HALVING_INTERVAL = value;
+        if (key == keccak256("EPOCH_DURATION")) {
+            if (value == 0) revert InvalidValue();
+            EPOCH_DURATION = value;
+        }
+        else if (key == keccak256("HALVING_INTERVAL")) {
+            if (value == 0) revert InvalidAddress();
+            HALVING_INTERVAL = value;
+        }
         else if (key == keccak256("MAX_SELLER_SHARE_PCT")) MAX_SELLER_SHARE_PCT = value;
         else revert NotAuthorized();
 
