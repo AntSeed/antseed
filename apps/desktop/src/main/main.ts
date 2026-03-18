@@ -731,10 +731,12 @@ async function listInstalledPlugins(): Promise<InstalledPlugin[]> {
   }
 }
 
-function resolveNpmBin(): string {
+interface NpmInvocation { bin: string; leadingArgs: string[] }
+
+function resolveNpmInvocation(): NpmInvocation {
   const envNpmExecPath = process.env['npm_execpath']?.trim();
   if (envNpmExecPath && existsSync(envNpmExecPath)) {
-    return process.execPath;
+    return { bin: process.execPath, leadingArgs: [envNpmExecPath] };
   }
 
   // Electron apps often get a restricted PATH, so check common install
@@ -745,7 +747,9 @@ function resolveNpmBin(): string {
         path.join(path.dirname(process.execPath), 'npm.cmd'),
         path.join(process.env['ProgramFiles'] ?? 'C:\\Program Files', 'nodejs', 'npm.cmd'),
         path.join(process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)', 'nodejs', 'npm.cmd'),
-        path.join(process.env['APPDATA'] ?? '', 'npm', 'npm.cmd'),
+        ...(process.env['APPDATA']
+          ? [path.join(process.env['APPDATA'], 'npm', 'npm.cmd')]
+          : []),
       ]
     : [
         path.join(path.dirname(process.execPath), 'npm'),
@@ -755,20 +759,17 @@ function resolveNpmBin(): string {
         path.join(homedir(), '.nvm', 'alias', 'default', 'bin', 'npm'), // nvm symlink
       ];
   for (const candidate of candidates) {
-    if (existsSync(candidate)) return candidate;
+    if (existsSync(candidate)) return { bin: candidate, leadingArgs: [] };
   }
-  return 'npm'; // fallback — rely on PATH
+  return { bin: 'npm', leadingArgs: [] }; // fallback — rely on PATH
 }
 
 async function installPluginDependency(packageSpec: string): Promise<void> {
   await ensurePluginsDirectory();
-  const npmBin = resolveNpmBin();
-  appendLog('connect', 'system', `Installing "${packageSpec}" via ${npmBin}...`);
-  const npmArgs = npmBin === process.execPath && process.env['npm_execpath']
-    ? [process.env['npm_execpath'], 'install', '--ignore-scripts', packageSpec]
-    : ['install', '--ignore-scripts', packageSpec];
+  const npm = resolveNpmInvocation();
+  appendLog('connect', 'system', `Installing "${packageSpec}" via ${npm.bin}...`);
 
-  await execFileAsync(npmBin, npmArgs, {
+  await execFileAsync(npm.bin, [...npm.leadingArgs, 'install', '--ignore-scripts', packageSpec], {
     cwd: DEFAULT_PLUGINS_DIR,
     timeout: 120_000, // 2-minute hard limit
     env: {
@@ -779,7 +780,9 @@ async function installPluginDependency(packageSpec: string): Promise<void> {
           ? [
               path.join(process.env['ProgramFiles'] ?? 'C:\\Program Files', 'nodejs'),
               path.join(process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)', 'nodejs'),
-              path.join(process.env['APPDATA'] ?? '', 'npm'),
+              ...(process.env['APPDATA']
+                ? [path.join(process.env['APPDATA'], 'npm')]
+                : []),
             ]
           : ['/usr/local/bin', '/opt/homebrew/bin', '/usr/bin', '/bin']),
         process.env['PATH'] ?? '',
@@ -837,7 +840,7 @@ async function ensureDefaultPlugin(packageName: string): Promise<void> {
     } else {
       // 2. Try local monorepo source (dev builds)
       const localSource = await resolveLocalPluginSource(packageName);
-      appendLog('connect', 'system', localSource ? `Using local source: ${localSource}` : `Using npm registry (${resolveNpmBin()})...`);
+      appendLog('connect', 'system', localSource ? `Using local source: ${localSource}` : `Using npm registry (${resolveNpmInvocation().bin})...`);
       if (localSource) {
         await installPluginDependency(toFileInstallSpec(packageName, localSource));
       } else {

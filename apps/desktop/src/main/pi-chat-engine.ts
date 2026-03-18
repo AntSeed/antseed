@@ -1612,8 +1612,12 @@ export function registerPiChatHandlers({
   const waitForBuyerProxy = async (port: number, timeoutMs = 20_000): Promise<boolean> => {
     const startedAt = Date.now();
     while (Date.now() - startedAt < timeoutMs) {
-      if (await isProxyAvailable(port)) {
-        return true;
+      try {
+        if (await isProxyAvailable(port)) {
+          return true;
+        }
+      } catch {
+        // transient error — keep polling
       }
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
