@@ -409,6 +409,8 @@ registerActions({
   handleServiceFocus: chatApi.handleServiceFocus,
   handleServiceBlur: chatApi.handleServiceBlur,
   clearPinnedPeer: chatApi.clearPinnedPeer,
+  refreshWorkspace: chatApi.refreshWorkspace,
+  chooseWorkspace: chatApi.chooseWorkspace,
   refreshPlugins: refreshPluginInventory,
   installPlugin: () => {
     const packageName = resolveRouterPackageName(

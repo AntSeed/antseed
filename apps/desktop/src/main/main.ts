@@ -7,6 +7,7 @@ import {
   dialog,
   nativeImage,
   type MenuItemConstructorOptions,
+  type OpenDialogOptions,
 } from 'electron';
 import electronUpdater from 'electron-updater';
 const { autoUpdater } = electronUpdater;
@@ -1159,6 +1160,7 @@ function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      webviewTag: true,
     },
     ...macosWindowChrome,
   });
@@ -1635,6 +1637,22 @@ ipcMain.handle('runtime:open-dashboard', async (_event, port?: number) => {
 ipcMain.handle('runtime:clear-logs', async () => {
   logBuffer.length = 0;
   return { ok: true };
+});
+
+ipcMain.handle('desktop:pick-directory', async () => {
+  const dialogOptions: OpenDialogOptions = {
+    properties: ['openDirectory'],
+    title: 'Select Workspace Folder',
+    buttonLabel: 'Use Folder',
+  };
+  const result = mainWindow
+    ? await dialog.showOpenDialog(mainWindow, dialogOptions)
+    : await dialog.showOpenDialog(dialogOptions);
+
+  return {
+    ok: !result.canceled,
+    path: result.canceled ? null : (result.filePaths[0] ?? null),
+  };
 });
 
 ipcMain.handle('app:get-setup-status', () => ({

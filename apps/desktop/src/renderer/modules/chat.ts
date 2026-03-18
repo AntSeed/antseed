@@ -57,6 +57,8 @@ type ChatModuleOptions = {
 export type ChatModuleApi = {
   refreshChatProxyStatus: () => Promise<void>;
   refreshChatConversations: () => Promise<void>;
+  refreshWorkspace: () => Promise<void>;
+  chooseWorkspace: () => Promise<void>;
   createNewConversation: () => Promise<void>;
   startNewChat: () => void;
   deleteConversation: (convId?: string) => Promise<void>;
@@ -903,6 +905,47 @@ export function initChatModule({
     }
   }
 
+  async function refreshWorkspace(): Promise<void> {
+    if (!bridge?.chatAiGetWorkspace) return;
+
+    try {
+      const result = await bridge.chatAiGetWorkspace();
+      if (result.ok && result.data) {
+        uiState.chatWorkspacePath = result.data.current;
+        uiState.chatWorkspaceDefaultPath = result.data.default;
+        notifyUiStateChanged();
+      }
+    } catch {
+      // Workspace selection unavailable
+    }
+  }
+
+  async function chooseWorkspace(): Promise<void> {
+    if (!bridge?.pickDirectory || !bridge.chatAiSetWorkspace) return;
+
+    try {
+      const picked = await bridge.pickDirectory();
+      if (!picked.ok || !picked.path) {
+        return;
+      }
+
+      const result = await bridge.chatAiSetWorkspace(picked.path);
+      if (!result.ok || !result.data) {
+        showChatError(result.error || 'Failed to set workspace');
+        return;
+      }
+
+      uiState.chatWorkspacePath = result.data.current;
+      uiState.chatWorkspaceDefaultPath = result.data.default;
+      uiState.chatError = null;
+      startNewChat();
+      await refreshChatConversations();
+      notifyUiStateChanged();
+    } catch (err) {
+      reportChatError(err, 'Failed to set workspace');
+    }
+  }
+
   async function openConversation(convId: string): Promise<void> {
     if (!bridge || !bridge.chatAiGetConversation) return;
 
@@ -1262,6 +1305,7 @@ export function initChatModule({
   // ---------------------------------------------------------------------------
 
   if (bridge) {
+    void refreshWorkspace();
     // --- Non-streaming callbacks ---
 
     if (bridge.onChatAiDone) {
@@ -1562,6 +1606,20 @@ export function initChatModule({
       });
     }
 
+    if (bridge.onBrowserPreviewOpen) {
+      bridge.onBrowserPreviewOpen((data) => {
+        uiState.browserPreviewUrl = data.url;
+        notifyUiStateChanged();
+      });
+    }
+
+    // Expose API for triggering browser preview programmatically (used by tool, testing)
+    (window as unknown as Record<string, unknown>).__antseedOpenPreview = (url: string) => {
+      uiState.browserPreviewUrl = url;
+      notifyUiStateChanged();
+    };
+
+
     if (bridge.onChatAiStreamDone) {
       bridge.onChatAiStreamDone((data) => {
         const shouldClearSending = data.conversationId === uiState.chatSendingConversationId;
@@ -1650,6 +1708,8 @@ export function initChatModule({
   return {
     refreshChatProxyStatus,
     refreshChatConversations,
+    refreshWorkspace,
+    chooseWorkspace,
     createNewConversation,
     startNewChat,
     deleteConversation,

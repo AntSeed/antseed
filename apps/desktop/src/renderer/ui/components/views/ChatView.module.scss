@@ -18,6 +18,65 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+}
+
+.workspace-button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 420px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-light);
+  border-radius: 999px;
+  padding: 5px 12px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+
+  &:hover {
+    border-color: rgba(31, 216, 122, 0.35);
+    color: var(--text-primary);
+    background: rgba(31, 216, 122, 0.07);
+  }
+}
+
+.workspace-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-family: var(--font-mono, monospace);
+}
+
+.preview-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: none;
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-muted);
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+
+  &:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+  }
+}
+
+.preview-toggle-active {
+  color: var(--accent-green);
+  border-color: var(--accent-green);
+
+  &:hover {
+    color: var(--accent-green);
+  }
 }
 
 .page-header-right {
@@ -83,6 +142,7 @@
 
 .chat-container {
   display: flex;
+  flex-direction: row;
   flex: 1;
   min-height: 0;
   overflow: hidden;
@@ -93,8 +153,23 @@
   flex-direction: column;
   min-height: 0;
   flex: 1;
+  min-width: 0;
   background: var(--chat-area-bg);
   position: relative;
+}
+
+.divider {
+  width: 5px;
+  cursor: col-resize;
+  background: var(--border);
+  flex-shrink: 0;
+  position: relative;
+  transition: background 0.15s;
+
+  &:hover,
+  &:active {
+    background: var(--accent-green);
+  }
 }
 
 .chat-messages {

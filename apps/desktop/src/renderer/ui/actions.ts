@@ -20,6 +20,8 @@ export type AppActions = {
   handleServiceFocus: () => void;
   handleServiceBlur: () => void;
   clearPinnedPeer: () => void;
+  refreshWorkspace: () => Promise<void>;
+  chooseWorkspace: () => Promise<void>;
   refreshPlugins: () => Promise<void>;
   installPlugin: () => Promise<void>;
 };

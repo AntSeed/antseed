@@ -140,6 +140,11 @@ export type RendererUiState = {
   chatAbortVisible: boolean;
   chatServiceSelectDisabled: boolean;
 
+  // --- Browser preview ---
+  browserPreviewUrl: string | null;
+  chatWorkspacePath: string;
+  chatWorkspaceDefaultPath: string;
+
   // --- Streaming indicator ---
   chatStreamingIndicatorText: string;
   chatStreamingActive: boolean;
@@ -244,6 +249,11 @@ export function createInitialUiState(): RendererUiState {
     chatSendDisabled: false,
     chatAbortVisible: false,
     chatServiceSelectDisabled: false,
+
+    // Browser preview
+    browserPreviewUrl: null,
+    chatWorkspacePath: '',
+    chatWorkspaceDefaultPath: '',
 
     // Streaming indicator
     chatStreamingIndicatorText: '',
