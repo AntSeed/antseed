@@ -2,8 +2,9 @@ import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:c
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+const { dirname, join, resolve } = path;
 
 export type RuntimeMode = 'connect' | 'dashboard';
 
