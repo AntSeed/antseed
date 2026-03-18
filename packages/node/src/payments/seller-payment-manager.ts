@@ -45,6 +45,8 @@ export class SellerPaymentManager {
   private readonly _sessionStore: SessionStore;
   /** In-memory cache of active buyer peerIds for fast has-session checks. */
   private readonly _activeBuyers = new Set<string>();
+  /** Debounce: track sessions that already sent a top-up request. */
+  private readonly _topUpRequested = new Set<string>();
 
   constructor(identity: Identity, config: SellerPaymentConfig, sessionStore: SessionStore) {
     this._identity = identity;
@@ -226,9 +228,10 @@ export class SellerPaymentManager {
 
     debugLog(`[SellerPayment] Receipt sent: session=${session.sessionId.slice(0, 18)}... total=${newTotal} count=${newRequestCount}`);
 
-    // TopUpRequest if > 80% consumed
+    // TopUpRequest if > 80% consumed (send at most once per session)
     const authMax = BigInt(session.authMax);
-    if (authMax > 0n && newTotal * 100n > authMax * 80n) {
+    if (authMax > 0n && newTotal * 100n > authMax * 80n && !this._topUpRequested.has(session.sessionId)) {
+      this._topUpRequested.add(session.sessionId);
       const additionalAmount = authMax; // Request same amount again
       paymentMux.sendTopUpRequest({
         sessionId: session.sessionId,
