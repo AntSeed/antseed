@@ -239,7 +239,7 @@ contract AntseedEmissions {
         buyer = br.pendingReward + (br.points * (buyerRPP - br.rewardPerPointPaid)) / 1e18;
     }
 
-    function flushReserve() external {
+    function flushReserve() external onlyOwner {
         if (reserveDestination == address(0)) revert NoReserveDestination();
         uint256 amount = reserveAccumulated;
         if (amount == 0) revert NoReserve();
