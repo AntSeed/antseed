@@ -503,9 +503,15 @@ contract AntseedEscrow is EIP712, Pausable {
             uniqueSellersCharged[session.buyer]++;
         }
 
+        // Derive effective token count from the capped charge to prevent
+        // emission inflation via uncapped tokenCount argument
+        uint256 effectiveTokenCount = (session.tokenRate > 0)
+            ? chargeAmount / session.tokenRate
+            : 0;
+
         // Update session
         session.settledAmount = chargeAmount;
-        session.settledTokenCount = tokenCount;
+        session.settledTokenCount = effectiveTokenCount;
         session.status = SessionStatus.Settled;
 
         // Transfer platform fee to protocol reserve
@@ -513,15 +519,15 @@ contract AntseedEscrow is EIP712, Pausable {
             _safeTransfer(protocolReserve, platformFee);
         }
 
-        // Accrue emission points
+        // Accrue emission points using capped effective token count
         if (address(emissionsContract) != address(0)) {
             if (session.isQualifiedProvenSign) {
                 uint256 effectiveProven = _effectiveProvenSigns(msg.sender);
-                emissionsContract.accrueSellerPoints(msg.sender, effectiveProven * tokenCount);
+                emissionsContract.accrueSellerPoints(msg.sender, effectiveProven * effectiveTokenCount);
             }
             if (session.isProvenSign || session.isQualifiedProvenSign) {
                 uint256 diversityMult = uniqueSellersCharged[session.buyer];
-                emissionsContract.accrueBuyerPoints(session.buyer, tokenCount * diversityMult);
+                emissionsContract.accrueBuyerPoints(session.buyer, effectiveTokenCount * diversityMult);
             }
         }
 
