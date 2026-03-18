@@ -346,8 +346,8 @@ contract AntseedSubPool {
 
         emit RevenueDistributed(currentEpoch, distributed ? revenue : 0, peerCount);
 
-        // Advance epoch
-        epochStart = block.timestamp;
+        // Advance epoch (use precise boundary to prevent compounding drift)
+        epochStart = epochStart + epochDuration;
         currentEpoch++;
     }
 
