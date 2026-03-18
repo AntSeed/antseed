@@ -43,7 +43,7 @@
     "ensure:native": "node scripts/ensure-node-native-modules.mjs",
     "build": "tsc",
     "pretest": "npm run ensure:native",
-    "test": "\"$npm_node_execpath\" ./node_modules/vitest/vitest.mjs run",
+    "test": "node ./node_modules/vitest/vitest.mjs run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
