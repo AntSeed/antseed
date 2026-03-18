@@ -22,6 +22,8 @@ export interface SessionInfo {
   previousSessionId: string;
   reservedAt: bigint;
   settledAmount: bigint;
+  settledTokenCount: bigint;
+  tokenRate: bigint;
   status: number;
   isFirstSign: boolean;
   isProvenSign: boolean;
@@ -65,7 +67,7 @@ const ESCROW_ABI = [
   'function getBuyerCreditLimit(address buyer) external view returns (uint256)',
   'function getSellerAccount(address seller) external view returns (uint256 stake, uint256 earnings, uint256 stakedAt, uint256 tokenRate)',
   'function domainSeparator() external view returns (bytes32)',
-  'function sessions(bytes32 sessionId) external view returns (address buyer, address seller, uint256 maxAmount, uint256 nonce, uint256 deadline, uint256 previousConsumption, bytes32 previousSessionId, uint256 reservedAt, uint256 settledAmount, uint8 status, bool isFirstSign, bool isProvenSign, bool isQualifiedProvenSign)',
+  'function sessions(bytes32 sessionId) external view returns (address buyer, address seller, uint256 maxAmount, uint256 nonce, uint256 deadline, uint256 previousConsumption, bytes32 previousSessionId, uint256 reservedAt, uint256 settledAmount, uint256 settledTokenCount, uint256 tokenRate, uint8 status, bool isFirstSign, bool isProvenSign, bool isQualifiedProvenSign)',
 ] as const;
 
 const ERC20_ABI = [
@@ -255,10 +257,12 @@ export class BaseEscrowClient extends BaseEvmClient {
       previousSessionId: result[6],
       reservedAt: result[7],
       settledAmount: result[8],
-      status: Number(result[9]),
-      isFirstSign: result[10],
-      isProvenSign: result[11],
-      isQualifiedProvenSign: result[12],
+      settledTokenCount: result[9],
+      tokenRate: result[10],
+      status: Number(result[11]),
+      isFirstSign: result[12],
+      isProvenSign: result[13],
+      isQualifiedProvenSign: result[14],
     };
   }
 
