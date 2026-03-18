@@ -230,25 +230,23 @@ export class BuyerPaymentManager {
       return;
     }
 
-    // Update tokens delivered
-    this._sessionStore.updateTokensDelivered(
+    debugLog(`[BuyerPayment] Receipt: session=${session.sessionId.slice(0, 18)}... total=${receipt.runningTotal} count=${receipt.requestCount}`);
+
+    // Atomically update tokens delivered and store receipt
+    this._sessionStore.updateDeliveredAndInsertReceipt(
       session.sessionId,
       receipt.runningTotal,
       receipt.requestCount,
+      {
+        sessionId: session.sessionId,
+        runningTotal: receipt.runningTotal,
+        requestCount: receipt.requestCount,
+        responseHash: receipt.responseHash,
+        sellerSig: receipt.sellerSig,
+        buyerAckSig: null,
+        createdAt: Date.now(),
+      },
     );
-
-    debugLog(`[BuyerPayment] Receipt: session=${session.sessionId.slice(0, 18)}... total=${receipt.runningTotal} count=${receipt.requestCount}`);
-
-    // Store receipt
-    this._sessionStore.insertReceipt({
-      sessionId: session.sessionId,
-      runningTotal: receipt.runningTotal,
-      requestCount: receipt.requestCount,
-      responseHash: receipt.responseHash,
-      sellerSig: receipt.sellerSig,
-      buyerAckSig: null,
-      createdAt: Date.now(),
-    });
 
     // Auto-ack if configured
     if (this._config.autoAck) {

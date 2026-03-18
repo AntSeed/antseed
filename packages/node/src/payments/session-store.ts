@@ -237,6 +237,20 @@ export class SessionStore {
     return rows.map(rowToReceipt);
   }
 
+  /** Atomically update tokens delivered and insert receipt in a single transaction. */
+  updateDeliveredAndInsertReceipt(
+    sessionId: string,
+    tokens: string,
+    requestCount: number,
+    receipt: Omit<StoredReceipt, 'id'>,
+  ): void {
+    const txn = this._db.transaction(() => {
+      this.updateTokensDelivered(sessionId, tokens, requestCount);
+      this.insertReceipt(receipt);
+    });
+    txn();
+  }
+
   updateReceiptAck(sessionId: string, runningTotal: string, requestCount: number, buyerAckSig: string): void {
     const stmt = this._db.prepare(
       'UPDATE payment_receipts SET buyer_ack_sig = ? WHERE session_id = ? AND running_total = ? AND request_count = ?',
