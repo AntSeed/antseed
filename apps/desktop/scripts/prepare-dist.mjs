@@ -17,11 +17,13 @@
 
 import { readdirSync, lstatSync, readlinkSync, rmSync, cpSync, existsSync, mkdirSync, chmodSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const require = createRequire(import.meta.url);
 const appDir = path.resolve(__dirname, '..');
 const nmDir = path.join(appDir, 'node_modules');
 
@@ -80,7 +82,7 @@ for (const entry of entries) {
 const cliDir = path.resolve(appDir, '..', 'cli');
 const cliDestDir = path.join(appDir, 'cli-dist');
 const bundleOutput = path.join(cliDestDir, 'cli', 'index.js');
-const esbinPath = path.resolve(appDir, '..', '..', 'node_modules', '.bin', 'esbuild');
+const esbuildEntry = require.resolve('esbuild/bin/esbuild');
 
 if (existsSync(cliDestDir)) {
   rmSync(cliDestDir, { recursive: true });
@@ -88,7 +90,7 @@ if (existsSync(cliDestDir)) {
 mkdirSync(path.dirname(bundleOutput), { recursive: true });
 
 console.log('[prepare-dist] Bundling CLI with esbuild...');
-execFileSync(esbinPath, [
+execFileSync(esbuildEntry, [
   'src/cli/index.ts',
   '--bundle',
   '--platform=node',

@@ -1,17 +1,21 @@
 export {
   createOpenAIChatToAnthropicStreamingAdapter,
   createOpenAIChatToResponsesStreamingAdapter,
+  createOpenAIResponsesToChatStreamingAdapter,
   detectRequestServiceApiProtocol,
   inferProviderDefaultServiceApiProtocols,
   selectTargetProtocolForRequest,
   transformAnthropicMessagesRequestToOpenAIChat,
+  transformOpenAIChatRequestToOpenAIResponses,
   transformOpenAIChatResponseToAnthropicMessage,
-  transformOpenAIResponsesRequestToOpenAIChat,
   transformOpenAIChatResponseToOpenAIResponses,
+  transformOpenAIResponsesRequestToOpenAIChat,
+  transformOpenAIResponsesResponseToOpenAIChat,
 } from '@antseed/api-adapter'
 
 export type {
   AnthropicToOpenAIRequestTransformResult,
+  ChatToResponsesRequestTransformResult,
   ResponsesToOpenAIRequestTransformResult,
   SerializedHttpResponse,
   SerializedHttpResponseChunk,

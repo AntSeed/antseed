@@ -55,6 +55,29 @@ function makeOpenAIToolCallResponse(toolName: string, toolId: string, args: unkn
   });
 }
 
+function makeResponsesTextResponse(text: string): Uint8Array {
+  return makeBody({
+    id: 'resp-1',
+    object: 'response',
+    output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text }] }],
+    status: 'completed',
+  });
+}
+
+function makeResponsesFunctionCallResponse(toolName: string, callId: string, args: unknown): Uint8Array {
+  return makeBody({
+    id: 'resp-1',
+    object: 'response',
+    output: [{
+      type: 'function_call',
+      call_id: callId,
+      name: toolName,
+      arguments: JSON.stringify(args),
+    }],
+    status: 'completed',
+  });
+}
+
 // ─── Mock provider ──────────────────────────────────────────────
 
 interface MockProviderOptions {
@@ -494,6 +517,149 @@ describe('BoundAgentProvider — agent loop (OpenAI)', () => {
     const result = parseBody(res.body);
     const choices = result.choices as { message: { tool_calls: { function: { name: string } }[] } }[];
     expect(choices[0]!.message.tool_calls[0]!.function.name).toBe('search_web');
+  });
+});
+
+describe('BoundAgentProvider — agent loop (OpenAI Responses)', () => {
+  it('tool call → execute → text response', async () => {
+    const inner = mockProvider({
+      responses: [
+        makeResponsesFunctionCallResponse('antseed_load_knowledge', 'call-1', { name: 'linkedin-posting' }),
+        makeResponsesTextResponse('LinkedIn tips here.'),
+      ],
+    });
+    const agent = new BoundAgentProvider(inner, agentWithKnowledge());
+
+    const req = makeReq(
+      { input: [{ role: 'user', content: 'LinkedIn help' }] },
+      '/v1/responses',
+    );
+    const res = await agent.handleRequest(req);
+
+    expect(inner.callCount()).toBe(2);
+
+    // First call should have tools injected (flat function format)
+    const firstBody = inner.requestBodies()[0]!;
+    const tools = firstBody.tools as { type: string; name: string }[];
+    expect(tools.some(t => t.name === 'antseed_load_knowledge')).toBe(true);
+    expect(tools[0]!.type).toBe('function');
+    // Should NOT have nested function property (flat Responses API format)
+    expect((tools[0] as Record<string, unknown>).function).toBeUndefined();
+
+    // Instructions should have persona
+    const instructions = firstBody.instructions as string;
+    expect(instructions).toContain('You are a social media expert.');
+
+    // Second call should have function_call + function_call_output in input
+    const secondBody = inner.requestBodies()[1]!;
+    const input = secondBody.input as Record<string, unknown>[];
+    const funcOutput = input.find(i => i.type === 'function_call_output');
+    expect(funcOutput).toBeDefined();
+    expect((funcOutput as Record<string, unknown>).output).toContain('LinkedIn Posting');
+
+    // Response content
+    const result = parseBody(res.body);
+    const output = result.output as { type: string; content?: { type: string; text: string }[] }[];
+    expect(output[0]!.content![0]!.text).toBe('LinkedIn tips here.');
+  });
+
+  it('text only response — single call, no loop', async () => {
+    const inner = mockProvider({
+      responses: [makeResponsesTextResponse('Simple answer.')],
+    });
+    const agent = new BoundAgentProvider(inner, agentWithKnowledge());
+
+    await agent.handleRequest(makeReq(
+      { input: 'What time is it?' },
+      '/v1/responses',
+    ));
+    expect(inner.callCount()).toBe(1);
+  });
+
+  it('buyer function call only — returned as-is', async () => {
+    const buyerFuncCall = makeBody({
+      id: 'resp-1',
+      object: 'response',
+      output: [{ type: 'function_call', call_id: 'call-1', name: 'search_web', arguments: '{"q":"test"}' }],
+      status: 'completed',
+    });
+    const inner = mockProvider({ responses: [buyerFuncCall] });
+    const agent = new BoundAgentProvider(inner, agentWithKnowledge());
+
+    const req = makeReq(
+      {
+        input: [{ role: 'user', content: 'search for me' }],
+        tools: [{ type: 'function', name: 'search_web', description: 'Search', parameters: { type: 'object' } }],
+      },
+      '/v1/responses',
+    );
+    const res = await agent.handleRequest(req);
+
+    expect(inner.callCount()).toBe(1);
+    const result = parseBody(res.body);
+    const output = result.output as { type: string; name: string }[];
+    expect(output[0]!.name).toBe('search_web');
+  });
+
+  it('mixed antseed + buyer function calls → treated as done', async () => {
+    const mixedResponse = makeBody({
+      id: 'resp-1',
+      object: 'response',
+      output: [
+        { type: 'function_call', call_id: 'call-1', name: 'antseed_load_knowledge', arguments: '{"name":"linkedin-posting"}' },
+        { type: 'function_call', call_id: 'call-2', name: 'search_web', arguments: '{"q":"linkedin"}' },
+      ],
+    });
+    const inner = mockProvider({ responses: [mixedResponse] });
+    const agent = new BoundAgentProvider(inner, agentWithKnowledge());
+
+    const req = makeReq(
+      {
+        input: [{ role: 'user', content: 'help' }],
+        tools: [{ type: 'function', name: 'search_web', description: 'Search', parameters: { type: 'object' } }],
+      },
+      '/v1/responses',
+    );
+    const res = await agent.handleRequest(req);
+
+    expect(inner.callCount()).toBe(1);
+    const body = parseBody(res.body);
+    const output = body.output as { type: string; name: string }[];
+    // Internal calls stripped, only buyer call remains
+    const functionCalls = output.filter(i => i.type === 'function_call');
+    expect(functionCalls).toHaveLength(1);
+    expect(functionCalls[0]!.name).toBe('search_web');
+  });
+
+  it('wraps buyer instructions as client context', async () => {
+    const inner = mockProvider({ responses: [makeResponsesTextResponse('ok')] });
+    const agent = new BoundAgentProvider(inner, personaOnlyAgent());
+
+    await agent.handleRequest(makeReq(
+      {
+        input: 'hi',
+        instructions: 'Buyer instructions here',
+      },
+      '/v1/responses',
+    ));
+
+    const body = inner.requestBodies()[0]!;
+    const instructions = body.instructions as string;
+    expect(instructions).toContain('You are a helpful social media advisor.');
+    expect(instructions).toContain('<client-context>\nBuyer instructions here\n</client-context>');
+  });
+
+  it('string input is preserved (not wrapped in array)', async () => {
+    const inner = mockProvider({ responses: [makeResponsesTextResponse('ok')] });
+    const agent = new BoundAgentProvider(inner, personaOnlyAgent());
+
+    await agent.handleRequest(makeReq(
+      { input: 'hello there' },
+      '/v1/responses',
+    ));
+
+    const body = inner.requestBodies()[0]!;
+    expect(body.input).toBe('hello there');
   });
 });
 

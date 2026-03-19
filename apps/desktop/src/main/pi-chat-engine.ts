@@ -10,34 +10,22 @@ import type { AgentSession, AgentSessionEvent, ToolDefinition } from '@mariozech
 import { ANTSTATION_SYSTEM_PROMPT } from './chat-system-prompt.js';
 import {
   AuthStorage,
-  bashTool,
   createAgentSession,
   DefaultResourceLoader,
-  editTool,
-  findTool,
-  grepTool,
-  lsTool,
   ModelRegistry,
-  readTool,
   SessionManager,
   SettingsManager,
-  writeTool,
 } from '@mariozechner/pi-coding-agent';
 import type {
   AssistantMessage,
   AssistantMessageEvent,
-  Context,
   ImageContent,
   Message,
   Model,
-  StreamOptions,
   TextContent,
-  Tool,
   ToolResultMessage,
   Usage,
 } from '@mariozechner/pi-ai';
-import { createAssistantMessageEventStream } from '@mariozechner/pi-ai';
-import { resolveRequestMaxTokens } from './chat-request-budget.js';
 
 type TextBlock = { type: 'text'; text: string };
 type ThinkingBlock = { type: 'thinking'; thinking: string };
@@ -327,6 +315,7 @@ type RegisterPiChatHandlersOptions = {
   sendToRenderer: (channel: string, payload: unknown) => void;
   configPath: string;
   isBuyerRuntimeRunning: () => boolean;
+  ensureBuyerRuntimeStarted?: () => Promise<boolean>;
   appendSystemLog: (line: string) => void;
   getNetworkPeers?: () => Promise<NetworkPeerAddress[]>;
 };
@@ -343,12 +332,13 @@ type ActiveRun = {
 };
 
 type NetworkPeerAddress = {
+  peerId?: string;
   host: string;
   port: number;
   providers?: string[];
 };
 
-type ChatServiceProtocol = 'anthropic-messages' | 'openai-chat-completions';
+type ChatServiceProtocol = 'anthropic-messages' | 'openai-chat-completions' | 'openai-responses';
 
 type ChatServiceCatalogEntry = {
   id: string;
@@ -356,6 +346,8 @@ type ChatServiceCatalogEntry = {
   provider: string;
   protocol: ChatServiceProtocol;
   count: number;
+  peerId?: string;
+  peerLabel?: string;
 };
 
 const ANTSEED_HOME_DIR = path.join(homedir(), '.antseed');
@@ -363,16 +355,14 @@ const CHAT_DATA_DIR = path.join(ANTSEED_HOME_DIR, 'chat');
 const CHAT_SESSIONS_DIR = path.join(CHAT_DATA_DIR, 'sessions');
 const CHAT_WORKSPACE_DIR = path.join(ANTSEED_HOME_DIR, 'projects');
 const CHAT_AGENT_DIR = path.join(CHAT_DATA_DIR, 'pi-agent');
+
 const DEFAULT_PROXY_PORT = 8377;
 const DEFAULT_CHAT_SERVICE = 'claude-sonnet-4-20250514';
 const PROXY_PROVIDER_ID = 'antseed-proxy';
 const PROXY_RUNTIME_API_KEY = 'antseed-local';
+
 const CHAT_SYSTEM_PROMPT_ENV = 'ANTSEED_CHAT_SYSTEM_PROMPT';
 const CHAT_SYSTEM_PROMPT_FILE_ENV = 'ANTSEED_CHAT_SYSTEM_PROMPT_FILE';
-const CHAT_STREAM_TOTAL_TIMEOUT_ENV = 'ANTSEED_CHAT_STREAM_TOTAL_TIMEOUT_MS';
-const CHAT_STREAM_IDLE_TIMEOUT_ENV = 'ANTSEED_CHAT_STREAM_IDLE_TIMEOUT_MS';
-const DEFAULT_CHAT_STREAM_TOTAL_TIMEOUT_MS = 240_000;
-const DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS = 45_000;
 const CHAT_SERVICE_METADATA_FETCH_TIMEOUT_MS = 2_500;
 const CHAT_SERVICE_SCAN_MAX_PEERS = 20;
 const CHAT_SERVICE_MAX_OPTIONS = 120;
@@ -380,7 +370,6 @@ const CHAT_SERVICE_MAX_OPTIONS_PER_PROVIDER = 40;
 const CHAT_SERVICE_CACHE_FILE = path.join(CHAT_DATA_DIR, 'service-catalog-cache.json');
 const CHAT_SERVICE_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
 const CHAT_SERVICE_CACHE_REFRESH_DEBOUNCE_MS = 60_000;
-const OPENAI_REASONING_FIELDS = ['reasoning_content', 'reasoning', 'reasoning_text'] as const;
 
 function normalizeTokenCount(value: unknown): number {
   const parsed = Number(value);
@@ -390,13 +379,6 @@ function normalizeTokenCount(value: unknown): number {
   return Math.floor(parsed);
 }
 
-function resolveTimeoutMs(raw: string | undefined, fallback: number): number {
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return fallback;
-  }
-  return Math.min(Math.max(Math.floor(parsed), 1_000), 30 * 60 * 1_000);
-}
 
 function normalizeOptionalNumber(value: unknown): number | undefined {
   const parsed = Number(value);
@@ -406,95 +388,15 @@ function normalizeOptionalNumber(value: unknown): number | undefined {
   return parsed;
 }
 
-function parseTokenSource(value: unknown): AiMessageMeta['tokenSource'] {
-  const normalized = String(value ?? '').trim().toLowerCase();
-  if (normalized === 'usage' || normalized === 'estimated') {
-    return normalized;
-  }
-  return 'unknown';
-}
-
-function parseHeaderNumber(headers: Headers, key: string): number | undefined {
-  const value = headers.get(key);
-  if (!value || value.trim().length === 0) {
-    return undefined;
-  }
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return undefined;
-  }
-  return parsed;
-}
-
-function parseHeaderCsv(headers: Headers, key: string): string[] | undefined {
-  const raw = headers.get(key);
-  if (!raw || raw.trim().length === 0) {
-    return undefined;
-  }
-  const values = raw
-    .split(',')
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0);
-  return values.length > 0 ? values : undefined;
-}
-
-function parseProxyMeta(response: Response, requestStartedAt: number): AiMessageMeta {
-  const peerIdRaw = response.headers.get('x-antseed-peer-id');
-  const peerAddressRaw = response.headers.get('x-antseed-peer-address');
-  const peerProvidersRaw = parseHeaderCsv(response.headers, 'x-antseed-peer-providers');
-  const providerRaw = response.headers.get('x-antseed-provider');
-  const serviceRaw = response.headers.get('x-antseed-service');
-  const requestIdRaw = response.headers.get('request-id') ?? response.headers.get('x-request-id');
-  const routeRequestIdRaw = response.headers.get('x-antseed-request-id');
-
-  const inputTokens = normalizeTokenCount(parseHeaderNumber(response.headers, 'x-antseed-input-tokens'));
-  const outputTokens = normalizeTokenCount(parseHeaderNumber(response.headers, 'x-antseed-output-tokens'));
-  const headerTotalTokens = normalizeTokenCount(parseHeaderNumber(response.headers, 'x-antseed-total-tokens'));
-  const totalTokens = headerTotalTokens > 0 ? headerTotalTokens : inputTokens + outputTokens;
-
-  const inputUsdPerMillion = normalizeOptionalNumber(parseHeaderNumber(response.headers, 'x-antseed-input-usd-per-million'));
-  const outputUsdPerMillion = normalizeOptionalNumber(parseHeaderNumber(response.headers, 'x-antseed-output-usd-per-million'));
-  const estimatedCostUsd = normalizeOptionalNumber(parseHeaderNumber(response.headers, 'x-antseed-estimated-cost-usd'));
-  const peerReputation = normalizeOptionalNumber(parseHeaderNumber(response.headers, 'x-antseed-peer-reputation'));
-  const peerTrustScore = normalizeOptionalNumber(parseHeaderNumber(response.headers, 'x-antseed-peer-trust-score'));
-  const peerCurrentLoad = normalizeOptionalNumber(parseHeaderNumber(response.headers, 'x-antseed-peer-current-load'));
-  const peerMaxConcurrency = normalizeOptionalNumber(parseHeaderNumber(response.headers, 'x-antseed-peer-max-concurrency'));
-  const latencyFromHeader = normalizeOptionalNumber(parseHeaderNumber(response.headers, 'x-antseed-latency-ms'));
-
-  const latencyMs = latencyFromHeader !== undefined
-    ? Math.max(0, Math.floor(latencyFromHeader))
-    : Math.max(0, Date.now() - requestStartedAt);
-
-  return {
-    peerId: typeof peerIdRaw === 'string' && peerIdRaw.trim().length > 0 ? peerIdRaw.trim() : undefined,
-    peerAddress: typeof peerAddressRaw === 'string' && peerAddressRaw.trim().length > 0 ? peerAddressRaw.trim() : undefined,
-    peerProviders: peerProvidersRaw,
-    peerReputation,
-    peerTrustScore,
-    peerCurrentLoad,
-    peerMaxConcurrency,
-    provider: typeof providerRaw === 'string' && providerRaw.trim().length > 0 ? providerRaw.trim() : undefined,
-    service: typeof serviceRaw === 'string' && serviceRaw.trim().length > 0 ? serviceRaw.trim() : undefined,
-    requestId: typeof requestIdRaw === 'string' && requestIdRaw.trim().length > 0 ? requestIdRaw.trim() : undefined,
-    routeRequestId: typeof routeRequestIdRaw === 'string' && routeRequestIdRaw.trim().length > 0 ? routeRequestIdRaw.trim() : undefined,
-    latencyMs,
-    inputTokens,
-    outputTokens,
-    totalTokens,
-    tokenSource: parseTokenSource(response.headers.get('x-antseed-token-source')),
-    inputUsdPerMillion,
-    outputUsdPerMillion,
-    estimatedCostUsd,
-  };
-}
-
 function normalizeServiceId(service?: string): string {
   const trimmed = String(service ?? '').trim();
   return trimmed.length > 0 ? trimmed : DEFAULT_CHAT_SERVICE;
 }
 
 function isChatServiceProtocol(value: unknown): value is ChatServiceProtocol {
-  return value === 'anthropic-messages' || value === 'openai-chat-completions';
+  return value === 'anthropic-messages'
+    || value === 'openai-chat-completions'
+    || value === 'openai-responses';
 }
 
 function normalizeProviderId(value: unknown): string | null {
@@ -506,6 +408,9 @@ function normalizeProviderId(value: unknown): string | null {
 }
 
 function inferProviderProtocol(provider: string): ChatServiceProtocol | null {
+  if (provider === 'openai-responses') {
+    return 'openai-responses';
+  }
   if (provider === 'openai' || provider === 'openrouter' || provider === 'local-llm') {
     return 'openai-chat-completions';
   }
@@ -762,7 +667,11 @@ async function writeChatServiceCatalogCache(entries: ChatServiceCatalogEntry[]):
 
 function sortChatServiceCatalogEntries(entries: ChatServiceCatalogEntry[]): ChatServiceCatalogEntry[] {
   const protocolRank = (protocol: ChatServiceProtocol): number => (
-    protocol === 'anthropic-messages' ? 0 : 1
+    protocol === 'anthropic-messages'
+      ? 0
+      : protocol === 'openai-chat-completions'
+        ? 1
+        : 2
   );
 
   return entries.sort((a, b) => {
@@ -880,7 +789,7 @@ async function discoverChatServiceCatalog(
     return [];
   }
 
-  const uniqueTargets: Array<{ host: string; port: number }> = [];
+  const uniqueTargets: Array<{ peerId?: string; host: string; port: number }> = [];
   const seen = new Set<string>();
   for (const peer of peers.slice(0, CHAT_SERVICE_SCAN_MAX_PEERS)) {
     const host = normalizeHost(peer.host);
@@ -893,7 +802,7 @@ async function discoverChatServiceCatalog(
       continue;
     }
     seen.add(key);
-    uniqueTargets.push({ host, port });
+    uniqueTargets.push({ peerId: peer.peerId, host, port });
   }
 
   if (uniqueTargets.length === 0) {
@@ -901,30 +810,29 @@ async function discoverChatServiceCatalog(
   }
 
   const responses = await Promise.all(uniqueTargets.map(async (target) => {
-    return await fetchPeerMetadata(target.host, target.port);
+    const metadata = await fetchPeerMetadata(target.host, target.port);
+    return { metadata, peerId: target.peerId };
   }));
 
-  const aggregate = new Map<string, ChatServiceCatalogEntry>();
-  for (const metadata of responses) {
+  // Build per-peer+service entries (no cross-peer aggregation).
+  const results: ChatServiceCatalogEntry[] = [];
+  for (const { metadata, peerId } of responses) {
     if (!metadata) {
       continue;
     }
     const entries = extractChatServiceCatalog(metadata);
+    const peerLabel = peerId ? peerId.slice(0, 12) + '...' : undefined;
     for (const entry of entries) {
-      const key = `${entry.id}\u0000${entry.provider}\u0000${entry.protocol}`;
-      const existing = aggregate.get(key);
-      if (existing) {
-        existing.count += 1;
-        continue;
-      }
-      aggregate.set(key, {
+      results.push({
         ...entry,
         count: 1,
+        peerId,
+        peerLabel,
       });
     }
   }
 
-  return sortChatServiceCatalogEntries(Array.from(aggregate.values()));
+  return sortChatServiceCatalogEntries(results);
 }
 
 
@@ -992,6 +900,10 @@ function convertToolContentToText(content: Array<TextContent | { type: 'image'; 
     parts.push(`[image:${block.mimeType}]`);
   }
   return parts.join('\n').trim();
+}
+
+function isToolArgumentsObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function convertPiMessageToUiBlocks(message: Message): string | ContentBlock[] {
@@ -1158,17 +1070,27 @@ function makeProxyService(
   serviceId: string,
   port: number,
   protocol: ChatServiceProtocol = 'anthropic-messages',
+  providerHint?: string | null,
+  preferredPeerId?: string | null,
 ): Model<any> {
+  const headers: Record<string, string> = {};
+  if (providerHint) headers['x-antseed-provider'] = providerHint;
+  if (preferredPeerId) headers['x-antseed-pin-peer'] = preferredPeerId;
+
+  // The OpenAI SDK appends API paths (e.g. /responses, /chat/completions)
+  // to baseUrl, so include /v1 to match the buyer proxy's expected paths.
+  const needsV1 = protocol === 'openai-responses' || protocol === 'openai-chat-completions';
   const base = {
     id: serviceId,
     name: serviceId,
     provider: PROXY_PROVIDER_ID,
-    baseUrl: `http://127.0.0.1:${port}`,
+    baseUrl: needsV1 ? `http://127.0.0.1:${port}/v1` : `http://127.0.0.1:${port}`,
     reasoning: true,
     input: ['text', 'image'] as ('text' | 'image')[],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 200_000,
     maxTokens: 16_384,
+    headers,
   };
 
   if (protocol === 'openai-chat-completions') {
@@ -1186,109 +1108,14 @@ function makeProxyService(
     };
   }
 
+  if (protocol === 'openai-responses') {
+    return {
+      ...base,
+      api: 'openai-responses' as const,
+    };
+  }
+
   return { ...base, api: 'anthropic-messages' as const };
-}
-
-function mapStopReason(value: unknown): AssistantMessage['stopReason'] {
-  const normalized = String(value ?? '').trim().toLowerCase();
-  if (normalized === 'end_turn' || normalized === 'stop' || normalized === 'stop_sequence') {
-    return 'stop';
-  }
-  if (normalized === 'max_tokens' || normalized === 'length') {
-    return 'length';
-  }
-  if (normalized === 'tool_use' || normalized === 'tooluse') {
-    return 'toolUse';
-  }
-  return 'stop';
-}
-
-function escapeJsonControlCharactersInStrings(raw: string): string {
-  let out = '';
-  let inString = false;
-  let escaped = false;
-
-  for (let index = 0; index < raw.length; index += 1) {
-    const char = raw[index];
-    if (!char) {
-      continue;
-    }
-    if (!inString) {
-      if (char === '"') {
-        inString = true;
-      }
-      out += char;
-      continue;
-    }
-
-    if (escaped) {
-      out += char;
-      escaped = false;
-      continue;
-    }
-
-    if (char === '\\') {
-      out += char;
-      escaped = true;
-      continue;
-    }
-
-    if (char === '"') {
-      out += char;
-      inString = false;
-      continue;
-    }
-
-    const code = char.charCodeAt(0);
-    if (code < 0x20) {
-      if (char === '\n') out += '\\n';
-      else if (char === '\r') out += '\\r';
-      else if (char === '\t') out += '\\t';
-      else if (char === '\b') out += '\\b';
-      else if (char === '\f') out += '\\f';
-      else out += `\\u${code.toString(16).padStart(4, '0')}`;
-      continue;
-    }
-
-    out += char;
-  }
-
-  return out;
-}
-
-function isToolArgumentsObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function parseToolJson(raw: string): Record<string, unknown> | undefined {
-  const trimmed = raw.trim();
-  if (trimmed.length === 0) {
-    return undefined;
-  }
-
-  const parseObject = (value: string): Record<string, unknown> | undefined => {
-    try {
-      const parsed = JSON.parse(value);
-      if (isToolArgumentsObject(parsed)) {
-        return parsed;
-      }
-    } catch {
-      return undefined;
-    }
-    return undefined;
-  };
-
-  const direct = parseObject(trimmed);
-  if (direct) {
-    return direct;
-  }
-
-  const repaired = parseObject(escapeJsonControlCharactersInStrings(trimmed));
-  if (repaired) {
-    return repaired;
-  }
-
-  return undefined;
 }
 
 function convertUserMessageForUi(message: Message): AiChatMessage {
@@ -1348,174 +1175,6 @@ function mergeAssistantMessagesForUi(base: AiChatMessage | null, next: AiChatMes
     },
     content: [...baseContent, ...nextContent],
   };
-}
-
-function anthropicContentFromUser(content: Extract<Message, { role: 'user' }>['content']): unknown {
-  if (typeof content === 'string') {
-    return content;
-  }
-  const blocks: unknown[] = [];
-  for (const block of content) {
-    if (block.type === 'text') {
-      const text = String(block.text ?? '');
-      if (text.length === 0) {
-        continue;
-      }
-      blocks.push({ type: 'text', text });
-      continue;
-    }
-    blocks.push({
-      type: 'image',
-      source: {
-        type: 'base64',
-        media_type: block.mimeType,
-        data: block.data,
-      },
-    });
-  }
-  return blocks;
-}
-
-function anthropicContentFromAssistant(content: AssistantMessage['content']): unknown[] {
-  const blocks: unknown[] = [];
-  for (const block of content) {
-    // Skip undefined holes from unhandled SSE block types (e.g. redacted_thinking).
-    if (!block) {
-      continue;
-    }
-    if (block.type === 'text') {
-      const text = String(block.text ?? '');
-      if (text.length === 0) {
-        continue;
-      }
-      blocks.push({ type: 'text', text });
-      continue;
-    }
-    // Strip thinking blocks: the proxy routes to arbitrary services (OpenRouter,
-    // local LLMs, etc.) that do not understand Anthropic-format thinking blocks.
-    // Echoing them back causes broken multi-turn conversations.
-    if (block.type === 'thinking') {
-      continue;
-    }
-    blocks.push({
-      type: 'tool_use',
-      id: block.id,
-      name: block.name,
-      input: block.arguments ?? {},
-    });
-  }
-  return blocks;
-}
-
-function anthropicContentFromToolResult(message: ToolResultMessage): unknown[] {
-  const content = convertToolContentToText(message.content);
-  return [{
-    type: 'tool_result',
-    tool_use_id: message.toolCallId,
-    content: content.length > 0 ? content : '(no tool output)',
-    is_error: message.isError,
-  }];
-}
-
-function getAssistantToolUseIds(content: unknown[]): string[] {
-  const ids: string[] = [];
-  for (const block of content) {
-    if (!block || typeof block !== 'object') continue;
-    const typedBlock = block as { type?: unknown; id?: unknown };
-    if (typedBlock.type !== 'tool_use') continue;
-    const id = String(typedBlock.id ?? '').trim();
-    if (id.length > 0) ids.push(id);
-  }
-  return ids;
-}
-
-function getToolResultIdFromAnthropicBlock(block: unknown): string | null {
-  if (!block || typeof block !== 'object') return null;
-  const typedBlock = block as { type?: unknown; tool_use_id?: unknown };
-  if (typedBlock.type !== 'tool_result') return null;
-  const id = String(typedBlock.tool_use_id ?? '').trim();
-  return id.length > 0 ? id : null;
-}
-
-function convertContextMessagesToAnthropic(messages: Message[]): Array<Record<string, unknown>> {
-  const converted: Array<Record<string, unknown>> = [];
-  for (let index = 0; index < messages.length; index += 1) {
-    const message = messages[index]!;
-    if (message.role === 'user') {
-      const content = anthropicContentFromUser(message.content);
-      if (typeof content === 'string' && content.length === 0) {
-        continue;
-      }
-      if (Array.isArray(content) && content.length === 0) {
-        continue;
-      }
-      converted.push({
-        role: 'user',
-        content,
-      });
-      continue;
-    }
-    if (message.role === 'assistant') {
-      let content = anthropicContentFromAssistant(message.content);
-      const toolUseIds = getAssistantToolUseIds(content);
-      if (toolUseIds.length > 0) {
-        const nextMessage = messages[index + 1];
-        if (!nextMessage || nextMessage.role !== 'toolResult') {
-          content = content.filter((block) => {
-            if (!block || typeof block !== 'object') return false;
-            const typedBlock = block as { type?: unknown };
-            return typedBlock.type !== 'tool_use';
-          });
-        }
-      }
-      if (content.length === 0) {
-        converted.push({
-          role: 'assistant',
-          content: [{ type: 'text', text: '…' }],
-        });
-        continue;
-      }
-      converted.push({
-        role: 'assistant',
-        content,
-      });
-      continue;
-    }
-    if (message.role === 'toolResult') {
-      const contentBlocks: unknown[] = [];
-      let toolIndex = index;
-      while (toolIndex < messages.length) {
-        const toolMessage = messages[toolIndex];
-        if (!toolMessage || toolMessage.role !== 'toolResult') break;
-        contentBlocks.push(...anthropicContentFromToolResult(toolMessage as ToolResultMessage));
-        toolIndex += 1;
-      }
-      index = toolIndex - 1;
-      const filteredBlocks = contentBlocks.filter((block) => {
-        const toolUseId = getToolResultIdFromAnthropicBlock(block);
-        return toolUseId !== null;
-      });
-      if (filteredBlocks.length === 0) {
-        continue;
-      }
-      converted.push({
-        role: 'user',
-        content: filteredBlocks,
-      });
-    }
-  }
-  return converted;
-}
-
-function convertToolsToAnthropic(tools?: Tool[]): Array<Record<string, unknown>> | undefined {
-  if (!Array.isArray(tools) || tools.length === 0) {
-    return undefined;
-  }
-  return tools.map((tool) => ({
-    name: tool.name,
-    description: tool.description,
-    input_schema: tool.parameters,
-  }));
 }
 
 async function isPortReachable(port: number, timeoutMs = 700): Promise<boolean> {
@@ -1614,833 +1273,6 @@ function extractToolCallFromPartial(
     id: block.id || `tool-${String(contentIndex)}`,
     name: block.name || 'tool',
     arguments: (block.arguments ?? {}) as Record<string, unknown>,
-  };
-}
-
-function createBuyerProxyStreamFn(
-  onMeta: (meta: AiMessageMeta) => void,
-  providerHint: string | null,
-  preferredPeerId: string | null,
-): (model: Model<any>, context: Context, options?: StreamOptions) => ReturnType<typeof createAssistantMessageEventStream> {
-  return (model, context, options) => {
-    const stream = createAssistantMessageEventStream();
-    const totalTimeoutMs = resolveTimeoutMs(process.env[CHAT_STREAM_TOTAL_TIMEOUT_ENV], DEFAULT_CHAT_STREAM_TOTAL_TIMEOUT_MS);
-    const idleTimeoutMs = resolveTimeoutMs(process.env[CHAT_STREAM_IDLE_TIMEOUT_ENV], DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS);
-    const timeoutController = new AbortController();
-    const parentSignal = options?.signal;
-    let timeoutErrorMessage: string | null = null;
-    let totalTimeout: ReturnType<typeof setTimeout> | null = null;
-    let idleTimeout: ReturnType<typeof setTimeout> | null = null;
-
-    const clearIdleTimeout = (): void => {
-      if (!idleTimeout) return;
-      clearTimeout(idleTimeout);
-      idleTimeout = null;
-    };
-    const clearTotalTimeout = (): void => {
-      if (!totalTimeout) return;
-      clearTimeout(totalTimeout);
-      totalTimeout = null;
-    };
-    const triggerTimeoutAbort = (message: string): void => {
-      if (timeoutController.signal.aborted) return;
-      timeoutErrorMessage = message;
-      timeoutController.abort();
-    };
-    const resetIdleTimeout = (): void => {
-      clearIdleTimeout();
-      idleTimeout = setTimeout(() => {
-        triggerTimeoutAbort(`Proxy stream idle timeout after ${String(idleTimeoutMs)}ms`);
-      }, idleTimeoutMs);
-    };
-
-    totalTimeout = setTimeout(() => {
-      triggerTimeoutAbort(`Proxy stream timed out after ${String(totalTimeoutMs)}ms`);
-    }, totalTimeoutMs);
-
-    const onParentAbort = (): void => {
-      if (timeoutController.signal.aborted) return;
-      timeoutController.abort();
-    };
-    if (parentSignal) {
-      if (parentSignal.aborted) {
-        timeoutController.abort();
-      } else {
-        parentSignal.addEventListener('abort', onParentAbort, { once: true });
-      }
-    }
-
-    void (async () => {
-      const startedAt = Date.now();
-      const message: AssistantMessage = {
-        role: 'assistant',
-        api: model.api,
-        provider: model.provider,
-        model: model.id,
-        content: [],
-        usage: ensureUsageShape(),
-        stopReason: 'stop',
-        timestamp: Date.now(),
-      };
-
-      const url = `${String(model.baseUrl).replace(/\/+$/, '')}/v1/messages`;
-      const requestBody = {
-        model: model.id,
-        max_tokens: resolveRequestMaxTokens(model, options),
-        stream: true,
-        ...(context.systemPrompt ? { system: context.systemPrompt } : {}),
-        ...(context.tools ? { tools: convertToolsToAnthropic(context.tools) } : {}),
-        messages: convertContextMessagesToAnthropic(context.messages),
-      };
-      const requestBodyJson = JSON.stringify(requestBody);
-
-      let responseMeta: AiMessageMeta | undefined;
-
-      const setUsage = (usageData: unknown): void => {
-        const next = toUsage(usageData);
-        if (next.input > 0) message.usage.input = next.input;
-        if (next.output > 0) message.usage.output = next.output;
-        if (next.cacheRead > 0) message.usage.cacheRead = next.cacheRead;
-        if (next.cacheWrite > 0) message.usage.cacheWrite = next.cacheWrite;
-        if (next.totalTokens > 0) message.usage.totalTokens = next.totalTokens;
-      };
-
-      try {
-        const response = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            'anthropic-version': '2023-06-01',
-            ...(providerHint ? { 'x-antseed-provider': providerHint } : {}),
-            ...(preferredPeerId ? { 'x-antseed-prefer-peer': preferredPeerId } : {}),
-            ...(options?.headers ?? {}),
-          },
-          body: requestBodyJson,
-          signal: timeoutController.signal,
-        });
-
-        responseMeta = parseProxyMeta(response, startedAt);
-
-        if (!response.ok) {
-          const errorText = await response.text().catch(() => '');
-          throw new Error(`Proxy returned ${response.status}: ${errorText.slice(0, 280)}`);
-        }
-
-        stream.push({ type: 'start', partial: message });
-
-        const contentType = response.headers.get('content-type') ?? '';
-        if (!contentType.includes('text/event-stream')) {
-          const payload = await response.json() as {
-            content?: Array<{
-              type: string;
-              text?: string;
-              thinking?: string;
-              id?: string;
-              name?: string;
-              input?: Record<string, unknown>;
-            }>;
-            usage?: unknown;
-            stop_reason?: string;
-          };
-          setUsage(payload.usage);
-
-          const blocks = payload.content ?? [];
-          for (let index = 0; index < blocks.length; index += 1) {
-            const block = blocks[index];
-            if (!block) {
-              continue;
-            }
-            if (block.type === 'text') {
-              const text = String(block.text ?? '');
-              message.content.push({ type: 'text', text });
-              stream.push({ type: 'text_start', contentIndex: index, partial: message });
-              stream.push({ type: 'text_delta', contentIndex: index, delta: text, partial: message });
-              stream.push({ type: 'text_end', contentIndex: index, content: text, partial: message });
-              continue;
-            }
-            if (block.type === 'thinking') {
-              const thinking = String(block.thinking ?? '');
-              message.content.push({ type: 'thinking', thinking });
-              stream.push({ type: 'thinking_start', contentIndex: index, partial: message });
-              stream.push({ type: 'thinking_delta', contentIndex: index, delta: thinking, partial: message });
-              stream.push({ type: 'thinking_end', contentIndex: index, content: thinking, partial: message });
-              continue;
-            }
-            if (block.type === 'tool_use') {
-              const toolCall = {
-                type: 'toolCall' as const,
-                id: String(block.id ?? `tool-${String(index)}`),
-                name: String(block.name ?? 'tool'),
-                arguments: (block.input ?? {}) as Record<string, unknown>,
-              };
-              message.content.push(toolCall);
-              stream.push({ type: 'toolcall_start', contentIndex: index, partial: message });
-              stream.push({ type: 'toolcall_end', contentIndex: index, toolCall, partial: message });
-            }
-          }
-
-          message.stopReason = mapStopReason(payload.stop_reason);
-          message.usage.totalTokens = message.usage.totalTokens > 0
-            ? message.usage.totalTokens
-            : message.usage.input + message.usage.output + message.usage.cacheRead + message.usage.cacheWrite;
-          stream.push({ type: 'done', reason: message.stopReason === 'toolUse' ? 'toolUse' : (message.stopReason === 'length' ? 'length' : 'stop'), message });
-          onMeta({
-            ...responseMeta,
-            inputTokens: responseMeta.inputTokens || message.usage.input,
-            outputTokens: responseMeta.outputTokens || message.usage.output,
-            totalTokens: responseMeta.totalTokens || message.usage.totalTokens,
-            tokenSource: responseMeta.tokenSource === 'unknown' ? 'usage' : responseMeta.tokenSource,
-          });
-          stream.end();
-          return;
-        }
-
-        const reader = response.body?.getReader();
-        if (!reader) {
-          throw new Error('Proxy response is missing stream body');
-        }
-
-        let sseBuffer = '';
-        const decoder = new TextDecoder();
-        const toolJsonByContentIndex = new Map<number, string>();
-
-        resetIdleTimeout();
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          resetIdleTimeout();
-
-          const chunkText = decoder.decode(value, { stream: true });
-          sseBuffer += chunkText;
-          const lines = sseBuffer.split('\n');
-          sseBuffer = lines.pop() ?? '';
-
-          for (const rawLine of lines) {
-            const line = rawLine.trim();
-            if (!line.startsWith('data:')) {
-              continue;
-            }
-            const payloadText = line.slice(5).trim();
-            if (payloadText.length === 0 || payloadText === '[DONE]') {
-              continue;
-            }
-            let payload: Record<string, unknown>;
-            try {
-              payload = JSON.parse(payloadText) as Record<string, unknown>;
-            } catch {
-              continue;
-            }
-
-            const eventType = String(payload.type ?? '');
-            if (eventType === 'message_start') {
-              setUsage((payload.message as Record<string, unknown> | undefined)?.usage);
-              continue;
-            }
-
-            if (eventType === 'content_block_start') {
-              const index = Number(payload.index ?? 0);
-              const block = (payload.content_block ?? {}) as Record<string, unknown>;
-              const blockType = String(block.type ?? 'text');
-
-              if (blockType === 'text') {
-                const text = String(block.text ?? '');
-                message.content[index] = { type: 'text', text };
-                stream.push({ type: 'text_start', contentIndex: index, partial: message });
-                if (text.length > 0) {
-                  stream.push({ type: 'text_delta', contentIndex: index, delta: text, partial: message });
-                }
-                continue;
-              }
-
-              if (blockType === 'thinking') {
-                const thinking = String(block.thinking ?? '');
-                message.content[index] = { type: 'thinking', thinking };
-                stream.push({ type: 'thinking_start', contentIndex: index, partial: message });
-                if (thinking.length > 0) {
-                  stream.push({ type: 'thinking_delta', contentIndex: index, delta: thinking, partial: message });
-                }
-                continue;
-              }
-
-              if (blockType === 'tool_use') {
-                const toolCall = {
-                  type: 'toolCall' as const,
-                  id: String(block.id ?? `tool-${String(index)}`),
-                  name: String(block.name ?? 'tool'),
-                  arguments: (block.input ?? {}) as Record<string, unknown>,
-                };
-                message.content[index] = toolCall;
-                toolJsonByContentIndex.set(index, '');
-                stream.push({ type: 'toolcall_start', contentIndex: index, partial: message });
-              } else {
-                // Unknown block type (e.g. redacted_thinking, signature).
-                // Fill the index so later blocks don't create sparse holes
-                // in the content array. Use an empty thinking block as a
-                // no-op placeholder that anthropicContentFromAssistant strips.
-                message.content[index] = { type: 'thinking', thinking: '' };
-              }
-              continue;
-            }
-
-            if (eventType === 'content_block_delta') {
-              const index = Number(payload.index ?? 0);
-              const delta = (payload.delta ?? {}) as Record<string, unknown>;
-              const deltaType = String(delta.type ?? '');
-
-              if (deltaType === 'text_delta') {
-                const current = message.content[index];
-                const nextDelta = String(delta.text ?? '');
-                if (current && current.type === 'text') {
-                  current.text += nextDelta;
-                }
-                stream.push({ type: 'text_delta', contentIndex: index, delta: nextDelta, partial: message });
-                continue;
-              }
-
-              if (deltaType === 'thinking_delta') {
-                const current = message.content[index];
-                const nextDelta = String(delta.thinking ?? '');
-                if (current && current.type === 'thinking') {
-                  current.thinking += nextDelta;
-                }
-                stream.push({ type: 'thinking_delta', contentIndex: index, delta: nextDelta, partial: message });
-                continue;
-              }
-
-              if (deltaType === 'input_json_delta') {
-                const nextDelta = String(delta.partial_json ?? '');
-                const previous = toolJsonByContentIndex.get(index) ?? '';
-                const merged = `${previous}${nextDelta}`;
-                toolJsonByContentIndex.set(index, merged);
-                const current = message.content[index];
-                if (current && current.type === 'toolCall') {
-                  const parsed = parseToolJson(merged);
-                  if (parsed) {
-                    current.arguments = parsed;
-                  }
-                }
-                stream.push({ type: 'toolcall_delta', contentIndex: index, delta: nextDelta, partial: message });
-              }
-              continue;
-            }
-
-            if (eventType === 'content_block_stop') {
-              const index = Number(payload.index ?? 0);
-              const current = message.content[index];
-              if (!current) continue;
-
-              if (current.type === 'text') {
-                stream.push({ type: 'text_end', contentIndex: index, content: current.text, partial: message });
-              } else if (current.type === 'thinking') {
-                stream.push({ type: 'thinking_end', contentIndex: index, content: current.thinking, partial: message });
-              } else if (current.type === 'toolCall') {
-                const merged = toolJsonByContentIndex.get(index) ?? '';
-                const parsed = parseToolJson(merged);
-                if (parsed) {
-                  current.arguments = parsed;
-                }
-                stream.push({ type: 'toolcall_end', contentIndex: index, toolCall: current, partial: message });
-              }
-              continue;
-            }
-
-            if (eventType === 'message_delta' || eventType === 'message_stop') {
-              setUsage(payload.usage);
-              setUsage((payload.message as Record<string, unknown> | undefined)?.usage);
-              const delta = payload.delta as Record<string, unknown> | undefined;
-              if (delta?.stop_reason !== undefined) {
-                message.stopReason = mapStopReason(delta.stop_reason);
-              }
-            }
-          }
-        }
-
-        message.usage.totalTokens = message.usage.totalTokens > 0
-          ? message.usage.totalTokens
-          : message.usage.input + message.usage.output + message.usage.cacheRead + message.usage.cacheWrite;
-
-        const doneReason: 'stop' | 'length' | 'toolUse' = message.stopReason === 'toolUse'
-          ? 'toolUse'
-          : (message.stopReason === 'length' ? 'length' : 'stop');
-        stream.push({ type: 'done', reason: doneReason, message });
-        onMeta({
-          ...responseMeta,
-          inputTokens: responseMeta?.inputTokens || message.usage.input,
-          outputTokens: responseMeta?.outputTokens || message.usage.output,
-          totalTokens: responseMeta?.totalTokens || message.usage.totalTokens,
-          tokenSource: responseMeta?.tokenSource === 'unknown' ? 'usage' : responseMeta?.tokenSource,
-        });
-        stream.end();
-      } catch (error) {
-        const aborted = Boolean(parentSignal?.aborted);
-        const errorMessage = timeoutErrorMessage
-          ?? (error instanceof Error ? error.message : String(error));
-        const failed: AssistantMessage = {
-          ...message,
-          stopReason: aborted ? 'aborted' : 'error',
-          errorMessage,
-          timestamp: Date.now(),
-        };
-        // Emit meta even on error so peer info is available in the UI.
-        if (responseMeta) {
-          onMeta(responseMeta);
-        }
-        stream.push({
-          type: 'error',
-          reason: aborted ? 'aborted' : 'error',
-          error: failed,
-        });
-        stream.end();
-      } finally {
-        clearIdleTimeout();
-        clearTotalTimeout();
-        if (parentSignal) {
-          parentSignal.removeEventListener('abort', onParentAbort);
-        }
-      }
-    })();
-
-    return stream;
-  };
-}
-
-// ---------------------------------------------------------------------------
-// OpenAI Chat Completions – context converters (pi-ai Message[] → OpenAI format)
-// ---------------------------------------------------------------------------
-
-function openaiContentFromUser(content: Extract<Message, { role: 'user' }>['content']): unknown {
-  if (typeof content === 'string') {
-    return content;
-  }
-  const parts: unknown[] = [];
-  for (const block of content) {
-    if (block.type === 'text') {
-      const text = String(block.text ?? '');
-      if (text.length > 0) parts.push({ type: 'text', text });
-    } else {
-      parts.push({
-        type: 'image_url',
-        image_url: { url: `data:${block.mimeType};base64,${block.data}` },
-      });
-    }
-  }
-  return parts;
-}
-
-function convertContextMessagesToOpenAI(messages: Message[]): Array<Record<string, unknown>> {
-  const converted: Array<Record<string, unknown>> = [];
-  for (let index = 0; index < messages.length; index += 1) {
-    const message = messages[index]!;
-    if (message.role === 'user') {
-      const content = openaiContentFromUser(message.content);
-      if (typeof content === 'string' && content.length === 0) continue;
-      if (Array.isArray(content) && content.length === 0) continue;
-      converted.push({ role: 'user', content });
-      continue;
-    }
-    if (message.role === 'assistant') {
-      let textContent = '';
-      const toolCalls: Array<Record<string, unknown>> = [];
-      for (const block of message.content) {
-        if (!block) continue;
-        if (block.type === 'text') {
-          textContent += block.text ?? '';
-        } else if (block.type === 'thinking') {
-          // Skip thinking blocks — upstream OpenAI endpoints don't understand them
-          continue;
-        } else if (block.type === 'toolCall') {
-          toolCalls.push({
-            id: block.id,
-            type: 'function',
-            function: {
-              name: block.name,
-              arguments: JSON.stringify(block.arguments ?? {}),
-            },
-          });
-        }
-      }
-      // If assistant had tool_calls but no next toolResult, strip the calls
-      if (toolCalls.length > 0) {
-        const nextMessage = messages[index + 1];
-        if (!nextMessage || nextMessage.role !== 'toolResult') {
-          converted.push({ role: 'assistant', content: textContent || '…' });
-          continue;
-        }
-      }
-      const entry: Record<string, unknown> = { role: 'assistant' };
-      if (textContent.length > 0 || toolCalls.length === 0) {
-        entry.content = textContent || '…';
-      }
-      if (toolCalls.length > 0) {
-        entry.tool_calls = toolCalls;
-      }
-      converted.push(entry);
-      continue;
-    }
-    if (message.role === 'toolResult') {
-      let toolIndex = index;
-      while (toolIndex < messages.length) {
-        const toolMessage = messages[toolIndex];
-        if (!toolMessage || toolMessage.role !== 'toolResult') break;
-        const toolResult = toolMessage as ToolResultMessage;
-        const content = convertToolContentToText(toolResult.content);
-        converted.push({
-          role: 'tool',
-          tool_call_id: toolResult.toolCallId,
-          content: content.length > 0 ? content : '(no tool output)',
-        });
-        toolIndex += 1;
-      }
-      index = toolIndex - 1;
-    }
-  }
-  return converted;
-}
-
-function convertToolsToOpenAI(tools?: Tool[]): Array<Record<string, unknown>> | undefined {
-  if (!Array.isArray(tools) || tools.length === 0) {
-    return undefined;
-  }
-  return tools.map((tool) => ({
-    type: 'function',
-    function: {
-      name: tool.name,
-      description: tool.description,
-      parameters: tool.parameters,
-    },
-  }));
-}
-
-// ---------------------------------------------------------------------------
-// OpenAI Chat Completions – custom stream function with proxy meta extraction
-// ---------------------------------------------------------------------------
-
-function createBuyerProxyOpenAIStreamFn(
-  onMeta: (meta: AiMessageMeta) => void,
-  providerHint: string | null,
-  preferredPeerId: string | null,
-): (model: Model<any>, context: Context, options?: StreamOptions) => ReturnType<typeof createAssistantMessageEventStream> {
-  return (model, context, options) => {
-    const stream = createAssistantMessageEventStream();
-    const totalTimeoutMs = resolveTimeoutMs(process.env[CHAT_STREAM_TOTAL_TIMEOUT_ENV], DEFAULT_CHAT_STREAM_TOTAL_TIMEOUT_MS);
-    const idleTimeoutMs = resolveTimeoutMs(process.env[CHAT_STREAM_IDLE_TIMEOUT_ENV], DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS);
-    const timeoutController = new AbortController();
-    const parentSignal = options?.signal;
-    let timeoutErrorMessage: string | null = null;
-    let totalTimeout: ReturnType<typeof setTimeout> | null = null;
-    let idleTimeout: ReturnType<typeof setTimeout> | null = null;
-
-    const clearIdleTimeout = (): void => {
-      if (!idleTimeout) return;
-      clearTimeout(idleTimeout);
-      idleTimeout = null;
-    };
-    const clearTotalTimeout = (): void => {
-      if (!totalTimeout) return;
-      clearTimeout(totalTimeout);
-      totalTimeout = null;
-    };
-    const triggerTimeoutAbort = (msg: string): void => {
-      if (timeoutController.signal.aborted) return;
-      timeoutErrorMessage = msg;
-      timeoutController.abort();
-    };
-    const resetIdleTimeout = (): void => {
-      clearIdleTimeout();
-      idleTimeout = setTimeout(() => {
-        triggerTimeoutAbort(`Proxy stream idle timeout after ${String(idleTimeoutMs)}ms`);
-      }, idleTimeoutMs);
-    };
-
-    totalTimeout = setTimeout(() => {
-      triggerTimeoutAbort(`Proxy stream timed out after ${String(totalTimeoutMs)}ms`);
-    }, totalTimeoutMs);
-
-    const onParentAbort = (): void => {
-      if (timeoutController.signal.aborted) return;
-      timeoutController.abort();
-    };
-    if (parentSignal) {
-      if (parentSignal.aborted) {
-        timeoutController.abort();
-      } else {
-        parentSignal.addEventListener('abort', onParentAbort, { once: true });
-      }
-    }
-
-    void (async () => {
-      const startedAt = Date.now();
-      const message: AssistantMessage = {
-        role: 'assistant',
-        api: model.api,
-        provider: model.provider,
-        model: model.id,
-        content: [],
-        usage: ensureUsageShape(),
-        stopReason: 'stop',
-        timestamp: Date.now(),
-      };
-
-      const url = `${String(model.baseUrl).replace(/\/+$/, '')}/v1/chat/completions`;
-      const openaiMessages = convertContextMessagesToOpenAI(context.messages);
-      if (context.systemPrompt) {
-        openaiMessages.unshift({ role: 'system', content: context.systemPrompt });
-      }
-      const requestBody: Record<string, unknown> = {
-        model: model.id,
-        messages: openaiMessages,
-        stream: true,
-        stream_options: { include_usage: true },
-        max_tokens: resolveRequestMaxTokens(model, options),
-      };
-      const openaiTools = convertToolsToOpenAI(context.tools);
-      if (openaiTools) {
-        requestBody.tools = openaiTools;
-      }
-      const requestBodyJson = JSON.stringify(requestBody);
-
-      let responseMeta: AiMessageMeta | undefined;
-
-      try {
-        const response = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            ...(providerHint ? { 'x-antseed-provider': providerHint } : {}),
-            ...(preferredPeerId ? { 'x-antseed-prefer-peer': preferredPeerId } : {}),
-            ...(options?.headers ?? {}),
-          },
-          body: requestBodyJson,
-          signal: timeoutController.signal,
-        });
-
-        responseMeta = parseProxyMeta(response, startedAt);
-
-        if (!response.ok) {
-          const errorText = await response.text().catch(() => '');
-          throw new Error(`Proxy returned ${response.status}: ${errorText.slice(0, 280)}`);
-        }
-
-        stream.push({ type: 'start', partial: message });
-
-        const reader = response.body?.getReader();
-        if (!reader) {
-          throw new Error('Proxy response is missing stream body');
-        }
-
-        let sseBuffer = '';
-        const decoder = new TextDecoder();
-        let currentTextOrThinkBlock: AssistantMessage['content'][number] | null = null;
-        let currentTextOrThinkIndex = -1;
-        const blocks = message.content;
-        const blockIndex = (): number => blocks.length - 1;
-        const toolJsonByBlockIndex = new Map<number, string>();
-        // Map from OpenAI tool_calls[].index → our content block index,
-        // so interleaved parallel tool call deltas resolve correctly.
-        const toolCallIndexToBlockIndex = new Map<number, number>();
-
-        const finishTextOrThinkBlock = (): void => {
-          if (!currentTextOrThinkBlock) return;
-          if (currentTextOrThinkBlock.type === 'text') {
-            stream.push({ type: 'text_end', contentIndex: currentTextOrThinkIndex, content: currentTextOrThinkBlock.text, partial: message });
-          } else if (currentTextOrThinkBlock.type === 'thinking') {
-            stream.push({ type: 'thinking_end', contentIndex: currentTextOrThinkIndex, content: currentTextOrThinkBlock.thinking, partial: message });
-          }
-          currentTextOrThinkBlock = null;
-          currentTextOrThinkIndex = -1;
-        };
-
-        resetIdleTimeout();
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          resetIdleTimeout();
-
-          const chunkText = decoder.decode(value, { stream: true });
-          sseBuffer += chunkText;
-          const lines = sseBuffer.split('\n');
-          sseBuffer = lines.pop() ?? '';
-
-          for (const rawLine of lines) {
-            const line = rawLine.trim();
-            if (!line.startsWith('data:')) continue;
-            const payloadText = line.slice(5).trim();
-            if (payloadText.length === 0 || payloadText === '[DONE]') continue;
-
-            let chunk: Record<string, unknown>;
-            try {
-              chunk = JSON.parse(payloadText) as Record<string, unknown>;
-            } catch {
-              continue;
-            }
-
-            // Usage (sent with stream_options.include_usage)
-            const usage = chunk.usage as Record<string, unknown> | undefined;
-            if (usage) {
-              const promptTokens = Number(usage.prompt_tokens ?? 0);
-              const completionTokens = Number(usage.completion_tokens ?? 0);
-              const promptDetails = usage.prompt_tokens_details as Record<string, unknown> | undefined;
-              const cachedTokens = Number(promptDetails?.cached_tokens ?? 0);
-              // reasoning_tokens is a subset of completion_tokens, not additive
-              const inputTokens = promptTokens - cachedTokens;
-              message.usage.input = inputTokens;
-              message.usage.output = completionTokens;
-              message.usage.cacheRead = cachedTokens;
-              message.usage.totalTokens = inputTokens + completionTokens + cachedTokens;
-            }
-
-            const choices = chunk.choices as Array<Record<string, unknown>> | undefined;
-            const choice = choices?.[0];
-            if (!choice) continue;
-
-            if (choice.finish_reason) {
-              message.stopReason = mapStopReason(choice.finish_reason);
-            }
-
-            const delta = choice.delta as Record<string, unknown> | undefined;
-            if (!delta) continue;
-
-            // Text content
-            if (delta.content !== null && delta.content !== undefined && String(delta.content).length > 0) {
-              const textDelta = String(delta.content);
-              if (!currentTextOrThinkBlock || currentTextOrThinkBlock.type !== 'text') {
-                finishTextOrThinkBlock();
-                const textBlock = { type: 'text' as const, text: '' };
-                currentTextOrThinkBlock = textBlock;
-                blocks.push(textBlock);
-                currentTextOrThinkIndex = blockIndex();
-                stream.push({ type: 'text_start', contentIndex: currentTextOrThinkIndex, partial: message });
-              }
-              if (currentTextOrThinkBlock.type === 'text') {
-                currentTextOrThinkBlock.text += textDelta;
-                stream.push({ type: 'text_delta', contentIndex: currentTextOrThinkIndex, delta: textDelta, partial: message });
-              }
-            }
-
-            // Reasoning / thinking content
-            let foundReasoning: string | null = null;
-            for (const field of OPENAI_REASONING_FIELDS) {
-              const val = delta[field];
-              if (val !== null && val !== undefined && String(val).length > 0) {
-                foundReasoning = String(val);
-                break;
-              }
-            }
-            if (foundReasoning) {
-              if (!currentTextOrThinkBlock || currentTextOrThinkBlock.type !== 'thinking') {
-                finishTextOrThinkBlock();
-                const thinkBlock = { type: 'thinking' as const, thinking: '' };
-                currentTextOrThinkBlock = thinkBlock;
-                blocks.push(thinkBlock);
-                currentTextOrThinkIndex = blockIndex();
-                stream.push({ type: 'thinking_start', contentIndex: currentTextOrThinkIndex, partial: message });
-              }
-              if (currentTextOrThinkBlock.type === 'thinking') {
-                currentTextOrThinkBlock.thinking += foundReasoning;
-                stream.push({ type: 'thinking_delta', contentIndex: currentTextOrThinkIndex, delta: foundReasoning, partial: message });
-              }
-            }
-
-            // Tool calls — keyed by tc.index (not id) to handle interleaved parallel calls
-            const toolCalls = delta.tool_calls as Array<Record<string, unknown>> | undefined;
-            if (toolCalls) {
-              for (const tc of toolCalls) {
-                const tcIndex = Number(tc.index ?? 0);
-                const tcId = tc.id as string | undefined;
-                const tcFunc = tc.function as Record<string, unknown> | undefined;
-                let blkIdx = toolCallIndexToBlockIndex.get(tcIndex);
-                if (blkIdx === undefined) {
-                  // First delta for this tool call index — create the block
-                  finishTextOrThinkBlock();
-                  const toolBlock = {
-                    type: 'toolCall' as const,
-                    id: tcId ?? '',
-                    name: (tcFunc?.name as string) ?? '',
-                    arguments: {} as Record<string, unknown>,
-                  };
-                  blocks.push(toolBlock);
-                  blkIdx = blockIndex();
-                  toolCallIndexToBlockIndex.set(tcIndex, blkIdx);
-                  toolJsonByBlockIndex.set(blkIdx, '');
-                  stream.push({ type: 'toolcall_start', contentIndex: blkIdx, partial: message });
-                }
-                const block = blocks[blkIdx];
-                if (block && block.type === 'toolCall') {
-                  if (tcId) block.id = tcId;
-                  if (tcFunc?.name) block.name = tcFunc.name as string;
-                  let argsDelta = '';
-                  if (tcFunc?.arguments) {
-                    argsDelta = String(tcFunc.arguments);
-                    const merged = (toolJsonByBlockIndex.get(blkIdx) ?? '') + argsDelta;
-                    toolJsonByBlockIndex.set(blkIdx, merged);
-                    const parsed = parseToolJson(merged);
-                    if (parsed) block.arguments = parsed;
-                  }
-                  stream.push({ type: 'toolcall_delta', contentIndex: blkIdx, delta: argsDelta, partial: message });
-                }
-              }
-            }
-          }
-        }
-
-        // Finish any open text/thinking block
-        finishTextOrThinkBlock();
-        // Finish all open tool call blocks
-        for (const [, blkIdx] of toolCallIndexToBlockIndex) {
-          const block = blocks[blkIdx];
-          if (block && block.type === 'toolCall') {
-            const merged = toolJsonByBlockIndex.get(blkIdx) ?? '';
-            const parsed = parseToolJson(merged);
-            if (parsed) block.arguments = parsed;
-            stream.push({ type: 'toolcall_end', contentIndex: blkIdx, toolCall: block, partial: message });
-          }
-        }
-
-        message.usage.totalTokens = message.usage.totalTokens > 0
-          ? message.usage.totalTokens
-          : message.usage.input + message.usage.output + message.usage.cacheRead + message.usage.cacheWrite;
-
-        const doneReason: 'stop' | 'length' | 'toolUse' = message.stopReason === 'toolUse'
-          ? 'toolUse'
-          : (message.stopReason === 'length' ? 'length' : 'stop');
-        stream.push({ type: 'done', reason: doneReason, message });
-        onMeta({
-          ...responseMeta,
-          inputTokens: responseMeta?.inputTokens || message.usage.input,
-          outputTokens: responseMeta?.outputTokens || message.usage.output,
-          totalTokens: responseMeta?.totalTokens || message.usage.totalTokens,
-          tokenSource: responseMeta?.tokenSource === 'unknown' ? 'usage' : responseMeta?.tokenSource,
-        });
-        stream.end();
-      } catch (error) {
-        const aborted = Boolean(parentSignal?.aborted);
-        const errorMessage = timeoutErrorMessage
-          ?? (error instanceof Error ? error.message : String(error));
-        const failed: AssistantMessage = {
-          ...message,
-          stopReason: aborted ? 'aborted' : 'error',
-          errorMessage,
-          timestamp: Date.now(),
-        };
-        if (responseMeta) {
-          onMeta(responseMeta);
-        }
-        stream.push({
-          type: 'error',
-          reason: aborted ? 'aborted' : 'error',
-          error: failed,
-        });
-        stream.end();
-      } finally {
-        clearIdleTimeout();
-        clearTotalTimeout();
-        if (parentSignal) {
-          parentSignal.removeEventListener('abort', onParentAbort);
-        }
-      }
-    })();
-
-    return stream;
   };
 }
 
@@ -2725,6 +1557,7 @@ export function registerPiChatHandlers({
   sendToRenderer,
   configPath,
   isBuyerRuntimeRunning,
+  ensureBuyerRuntimeStarted,
   appendSystemLog,
   getNetworkPeers,
 }: RegisterPiChatHandlersOptions): void {
@@ -2773,10 +1606,22 @@ export function registerPiChatHandlers({
   };
 
   const isProxyAvailable = async (port: number): Promise<boolean> => {
-    if (isBuyerRuntimeRunning()) {
-      return true;
-    }
     return await isPortReachable(port);
+  };
+
+  const waitForBuyerProxy = async (port: number, timeoutMs = 20_000): Promise<boolean> => {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      try {
+        if (await isProxyAvailable(port)) {
+          return true;
+        }
+      } catch {
+        // transient error — keep polling
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    return false;
   };
 
   const runStreamingPrompt = async (
@@ -2801,7 +1646,27 @@ export function registerPiChatHandlers({
     }
 
     const proxyPort = await resolveProxyPort(configPath);
-    if (!(await isProxyAvailable(proxyPort))) {
+    const runtimeRunning = isBuyerRuntimeRunning();
+    let proxyAvailable = await isProxyAvailable(proxyPort);
+    if (!proxyAvailable && ensureBuyerRuntimeStarted) {
+      if (runtimeRunning) {
+        appendSystemLog(`Buyer runtime is running. Waiting for proxy :${proxyPort}...`);
+      } else {
+        appendSystemLog(`Buyer proxy offline on port ${proxyPort}; attempting to start Buyer runtime...`);
+      }
+      try {
+        const started = runtimeRunning ? true : await ensureBuyerRuntimeStarted();
+        if (started) {
+          if (!runtimeRunning) {
+            appendSystemLog(`Buyer runtime start requested. Waiting for proxy :${proxyPort}...`);
+          }
+          proxyAvailable = await waitForBuyerProxy(proxyPort);
+        }
+      } catch (error) {
+        appendSystemLog(`Buyer runtime auto-start failed: ${asErrorMessage(error)}`);
+      }
+    }
+    if (!proxyAvailable) {
       return {
         ok: false,
         error: `Buyer proxy is not reachable on port ${proxyPort}. Start Buyer runtime or fix buyer.proxyPort in config.`,
@@ -2814,13 +1679,14 @@ export function registerPiChatHandlers({
     }
 
     const context = sessionManager.buildSessionContext();
+
     const serviceId = normalizeServiceId(serviceOverride || context.model?.modelId);
     const preferredPeerId = preferredPeerByConversationId.get(conversationId) ?? null;
     const providerHint = resolveProviderHintForService(
       providerOverride,
     );
-    const protocol = serviceProtocolMap.get(serviceId.toLowerCase()) ?? 'anthropic-messages';
-    const proxyModel = makeProxyService(serviceId, proxyPort, protocol);
+    const protocol = await resolveProtocolForSend(serviceId);
+    const proxyModel = makeProxyService(serviceId, proxyPort, protocol, providerHint, preferredPeerId);
 
     const authStorage = AuthStorage.inMemory();
     authStorage.setRuntimeApiKey(PROXY_PROVIDER_ID, PROXY_RUNTIME_API_KEY);
@@ -2847,15 +1713,6 @@ export function registerPiChatHandlers({
       authStorage,
       modelRegistry,
       model: proxyModel,
-      tools: [
-        readTool,
-        bashTool,
-        editTool,
-        writeTool,
-        grepTool,
-        findTool,
-        lsTool,
-      ],
       customTools: [webFetchTool],
       resourceLoader,
     });
@@ -2870,15 +1727,10 @@ export function registerPiChatHandlers({
 
     const turnMetaQueue: AiMessageMeta[] = [];
     const toolArgsById = new Map<string, Record<string, unknown>>();
-    if (protocol === 'openai-chat-completions') {
-      session.agent.streamFn = createBuyerProxyOpenAIStreamFn((meta) => {
-        turnMetaQueue.push(meta);
-      }, providerHint, preferredPeerId ?? null);
-    } else {
-      session.agent.streamFn = createBuyerProxyStreamFn((meta) => {
-        turnMetaQueue.push(meta);
-      }, providerHint, preferredPeerId ?? null);
-    }
+    // Pi's native streaming handles all API formats (anthropic-messages,
+    // openai-completions, openai-responses) via model.api + model.baseUrl.
+    // No custom streamFn needed — the buyer proxy at model.baseUrl is a
+    // transparent HTTP proxy that speaks the same API as the upstream provider.
 
     let turnIndex = 0;
     let userPersisted = false;
@@ -3060,17 +1912,8 @@ export function registerPiChatHandlers({
       }
 
       if (event.type === 'agent_end') {
-        if (pendingAssistantMessage) {
-          sendToRenderer('chat:ai-done', {
-            conversationId,
-            message: pendingAssistantMessage,
-          });
-          pendingAssistantMessage = null;
-        }
-        if (!streamDone) {
-          streamDone = true;
-          sendToRenderer('chat:ai-stream-done', { conversationId });
-        }
+        // Don't finalize here — auto-retry may follow with a new agent_start.
+        // The post-session.prompt code handles final chat:ai-done / chat:ai-stream-done.
       }
     });
 
@@ -3102,7 +1945,6 @@ export function registerPiChatHandlers({
         return { ok: false, error: 'Aborted' };
       }
       const message = asErrorMessage(error);
-      preferredPeerByConversationId.delete(conversationId);
       sendToRenderer('chat:ai-stream-error', { conversationId, error: message });
       appendSystemLog(`Pi chat error: ${message}`);
       return { ok: false, error: message };
@@ -3144,6 +1986,27 @@ export function registerPiChatHandlers({
     });
 
     return await serviceCatalogRefreshPromise;
+  };
+
+  const resolveProtocolForSend = async (serviceId: string): Promise<ChatServiceProtocol> => {
+    const normalizedServiceId = serviceId.trim().toLowerCase();
+    const existing = serviceProtocolMap.get(normalizedServiceId);
+    if (existing) {
+      return existing;
+    }
+
+    const cached = await readChatServiceCatalogCache();
+    if (cached) {
+      updateServiceProviderHints(serviceProviderHints, cached.entries);
+      updateServiceProtocolMap(serviceProtocolMap, cached.entries);
+      const hydrated = serviceProtocolMap.get(normalizedServiceId);
+      if (hydrated) {
+        return hydrated;
+      }
+    }
+
+    const refreshed = await refreshServiceCatalogFromNetwork(true);
+    return refreshed.find((entry) => entry.id.trim().toLowerCase() === normalizedServiceId)?.protocol ?? 'anthropic-messages';
   };
 
   ipcMain.handle('chat:ai-get-proxy-status', async () => {
@@ -3210,9 +2073,13 @@ export function registerPiChatHandlers({
     return { ok: true, data: conversation };
   });
 
-  ipcMain.handle('chat:ai-create-conversation', async (_event, service: string, provider?: string) => {
+  ipcMain.handle('chat:ai-create-conversation', async (_event, service: string, provider?: string, peerId?: string) => {
     const conversation = await store.create(service, provider);
-    preferredPeerByConversationId.delete(conversation.id);
+    if (peerId && peerId.trim().length > 0) {
+      preferredPeerByConversationId.set(conversation.id, peerId.trim());
+    } else {
+      preferredPeerByConversationId.delete(conversation.id);
+    }
     return { ok: true, data: conversation };
   });
 
@@ -3252,5 +2119,26 @@ export function registerPiChatHandlers({
     }
     await Promise.all(activeRuns.map((run) => abortAndClearActiveRun(run)));
     return { ok: true };
+  });
+
+  ipcMain.handle('chat:ai-select-peer', async (_event, peerId: string | null) => {
+    const normalizedPeerId = peerId && peerId.trim().length > 0 ? peerId.trim() : null;
+    if (!normalizedPeerId) {
+      preferredPeerByConversationId.clear();
+      return { ok: true };
+    }
+    // Eager connection warmup via buyer proxy
+    const proxyPort = await resolveProxyPort(configPath);
+    try {
+      const response = await fetch(`http://127.0.0.1:${proxyPort}/_antseed/connect`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ peerId: normalizedPeerId }),
+      });
+      const result = await response.json() as { ok: boolean; error?: string };
+      return { ok: result.ok, error: result.error };
+    } catch (err) {
+      return { ok: false, error: asErrorMessage(err) };
+    }
   });
 }

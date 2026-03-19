@@ -1,6 +1,6 @@
 import type { RendererUiState } from '../core/state';
 import type { BadgeTone } from '../core/state';
-import { notifyUiStateChanged } from '../core/store';
+import { notifyUiStateChanged, notifyUiStateChangedSync } from '../core/store';
 import type { DesktopBridge } from '../types/bridge';
 import type {
   ChatMessage,
@@ -67,6 +67,7 @@ export type ChatModuleApi = {
   handleServiceChange: (value: string) => void;
   handleServiceFocus: () => void;
   handleServiceBlur: () => void;
+  clearPinnedPeer: () => void;
 };
 
 export function initChatModule({
@@ -82,7 +83,7 @@ export function initChatModule({
 
   type NormalizedChatServiceEntry = Required<
     Pick<ChatServiceCatalogEntry, 'id' | 'label' | 'provider' | 'protocol' | 'count'>
-  >;
+  > & { peerId: string; peerLabel: string };
   type ChatServiceSelection = { id: string; provider: string | null };
   type ChatServiceOption = ChatServiceSelection & { label: string; value: string };
 
@@ -127,23 +128,29 @@ export function initChatModule({
 
   function normalizeChatServiceEntry(raw: unknown): NormalizedChatServiceEntry | null {
     if (!raw || typeof raw !== 'object') return null;
-    const entry = raw as ChatServiceCatalogEntry;
+    const entry = raw as ChatServiceCatalogEntry & { peerId?: string; peerLabel?: string };
     const id = normalizeChatServiceId(entry.id);
     if (!id) return null;
     const provider = String(entry.provider ?? '').trim().toLowerCase() || 'unknown';
     const protocol = String(entry.protocol ?? '').trim().toLowerCase() || 'unknown';
     const count = Math.max(0, Math.floor(Number(entry.count) || 0));
+    const peerId = String(entry.peerId ?? '').trim();
+    const peerLabel = String(entry.peerLabel ?? '').trim() || (peerId ? peerId.slice(0, 12) + '...' : '');
     const label = String(entry.label ?? '').trim() || `${id} · ${provider}`;
-    return { id, label, provider, protocol, count };
+    return { id, label, provider, protocol, count, peerId, peerLabel };
   }
 
-  function encodeChatServiceSelection(serviceId: string, provider: string | null): string {
+  function encodeChatServiceSelection(serviceId: string, provider: string | null, peerId?: string): string {
     const normalizedServiceId = normalizeChatServiceId(serviceId);
     if (!normalizedServiceId) return '';
     const normalizedProvider = normalizeProviderId(provider);
-    return normalizedProvider
+    const base = normalizedProvider
       ? `${normalizedProvider}${CHAT_SERVICE_SELECTION_SEPARATOR}${normalizedServiceId}`
       : normalizedServiceId;
+    const normalizedPeerId = peerId?.trim();
+    return normalizedPeerId
+      ? `${base}${CHAT_SERVICE_SELECTION_SEPARATOR}${normalizedPeerId}`
+      : base;
   }
 
   function decodeChatServiceSelection(value: unknown): ChatServiceSelection {
@@ -421,7 +428,11 @@ export function initChatModule({
     parts.push(`updated ${formatChatDateTime(conv.updatedAt)}`);
 
     uiState.chatThreadMeta = parts.join(' · ');
-    if (lastServingPeerId) {
+    // When a peer is pinned, always show it — don't switch based on response metadata.
+    if (uiState.chatSelectedPeerId) {
+      const pinnedOption = uiState.chatServiceOptions.find((o) => o.peerId === uiState.chatSelectedPeerId);
+      uiState.chatRoutedPeer = pinnedOption?.peerLabel || uiState.chatSelectedPeerId.slice(0, 8);
+    } else if (lastServingPeerId) {
       const knownPeer = Array.isArray(uiState.lastPeers)
         ? uiState.lastPeers.find((p) => p.peerId === lastServingPeerId)
         : undefined;
@@ -523,7 +534,7 @@ export function initChatModule({
 
   function setStreamingMessage(message: ChatMessage | null): void {
     uiState.chatStreamingMessage = message ? cloneStreamingMessage(message) : null;
-    notifyUiStateChanged();
+    notifyUiStateChangedSync();
     if (message) queueScrollChatToBottom();
   }
 
@@ -611,7 +622,7 @@ export function initChatModule({
 
     const unique = new Map<string, NormalizedChatServiceEntry>();
     for (const entry of entries) {
-      const key = `${entry.provider}${CHAT_SERVICE_SELECTION_SEPARATOR}${entry.id}`;
+      const key = `${entry.peerId || entry.provider}${CHAT_SERVICE_SELECTION_SEPARATOR}${entry.id}`;
       if (!entry.id || unique.has(key)) continue;
       unique.set(key, entry);
     }
@@ -626,7 +637,7 @@ export function initChatModule({
       id: entry.id,
       provider: normalizeProviderId(entry.provider),
       label: entry.label,
-      value: encodeChatServiceSelection(entry.id, entry.provider),
+      value: encodeChatServiceSelection(entry.id, entry.provider, entry.peerId),
     }));
 
     const preferred =
@@ -665,7 +676,9 @@ export function initChatModule({
       provider: entry.provider,
       protocol: entry.protocol,
       count: entry.count,
-      value: encodeChatServiceSelection(entry.id, entry.provider),
+      value: encodeChatServiceSelection(entry.id, entry.provider, entry.peerId),
+      peerId: entry.peerId,
+      peerLabel: entry.peerLabel,
     }));
 
     uiState.chatSelectedServiceValue = preferred;
@@ -1011,7 +1024,7 @@ export function initChatModule({
     }
 
     try {
-      const result = await bridge.chatAiCreateConversation(selection.id);
+      const result = await bridge.chatAiCreateConversation(selection.id, undefined, uiState.chatSelectedPeerId || undefined);
       if (result.ok && result.data) {
         const conversationId = getConversationId(result.data);
         if (!conversationId) {
@@ -1210,6 +1223,15 @@ export function initChatModule({
   function handleServiceChange(value: string): void {
     uiState.chatSelectedServiceValue = value;
     pendingServiceOptions = null;
+
+    // Extract peerId from the selected option and trigger eager connection
+    const selectedOption = uiState.chatServiceOptions.find((o) => o.value === value);
+    const peerId = selectedOption?.peerId || '';
+    uiState.chatSelectedPeerId = peerId;
+    if (peerId && bridge?.chatAiSelectPeer) {
+      void bridge.chatAiSelectPeer(peerId).catch(() => undefined);
+    }
+
     notifyUiStateChanged();
   }
 
@@ -1224,6 +1246,15 @@ export function initChatModule({
       pendingServiceOptions = null;
       applyChatServiceOptions(pending);
     }
+  }
+
+  function clearPinnedPeer(): void {
+    uiState.chatSelectedPeerId = '';
+    uiState.chatRoutedPeer = '';
+    if (bridge?.chatAiSelectPeer) {
+      void bridge.chatAiSelectPeer(null).catch(() => undefined);
+    }
+    notifyUiStateChanged();
   }
 
   // ---------------------------------------------------------------------------
@@ -1301,6 +1332,30 @@ export function initChatModule({
       return `stream-${blockType}-${String(index)}`;
     }
 
+    function findLastStreamingThinkingBlock(blocks: ContentBlock[], index: number | string): ContentBlock | undefined {
+      const contentIndex = String(index);
+      for (let i = blocks.length - 1; i >= 0; i -= 1) {
+        const block = blocks[i];
+        if (
+          block?.type === 'thinking' &&
+          String(block.details?.streamContentIndex ?? '') === contentIndex &&
+          block.streaming
+        ) {
+          return block;
+        }
+      }
+      for (let i = blocks.length - 1; i >= 0; i -= 1) {
+        const block = blocks[i];
+        if (
+          block?.type === 'thinking' &&
+          String(block.details?.streamContentIndex ?? '') === contentIndex
+        ) {
+          return block;
+        }
+      }
+      return undefined;
+    }
+
     function findLastStreamingBlockByType(blocks: ContentBlock[], type: string): ContentBlock | undefined {
       for (let i = blocks.length - 1; i >= 0; i -= 1) {
         const block = blocks[i];
@@ -1361,12 +1416,14 @@ export function initChatModule({
           );
           updateStreamingMessage(data.conversationId, (message) => {
             const blocks = getStreamingBlocks(message);
+            const thinkingInstance = blocks.filter((block) => block?.type === 'thinking').length;
             blocks.push({
               type: 'thinking',
-              renderKey: createStreamingRenderKey('thinking', blocks.length),
-              id: getStreamingBlockId('thinking', data.index),
+              renderKey: createStreamingRenderKey('thinking', `${data.index}-${thinkingInstance}`),
+              id: getStreamingBlockId('thinking', `${data.index}-${thinkingInstance}`),
               name: thinkingLabel,
               thinking: '',
+              details: { streamContentIndex: String(data.index) },
               streaming: true,
             });
             message.content = blocks;
@@ -1403,11 +1460,7 @@ export function initChatModule({
         } else if (data.blockType === 'thinking') {
           updateStreamingMessage(data.conversationId, (message) => {
             const blocks = message.content as ContentBlock[];
-            const thinkingBlock = blocks.find(
-              (block) =>
-                block?.type === 'thinking' &&
-                block.id === getStreamingBlockId('thinking', data.index),
-            );
+            const thinkingBlock = findLastStreamingThinkingBlock(blocks, data.index);
             if (thinkingBlock && thinkingBlock.type === 'thinking') {
               thinkingBlock.thinking = `${String(thinkingBlock.thinking || '')}${data.text}`;
               thinkingBlock.streaming = true;
@@ -1430,9 +1483,7 @@ export function initChatModule({
         } else if (data.blockType === 'thinking') {
           updateStreamingMessage(data.conversationId, (message) => {
             const blocks = message.content as ContentBlock[];
-            const thinkingBlock = blocks.find(
-              (block) => block.type === 'thinking' && block.id === getStreamingBlockId('thinking', data.index),
-            );
+            const thinkingBlock = findLastStreamingThinkingBlock(blocks, data.index);
             if (thinkingBlock && thinkingBlock.type === 'thinking') {
               thinkingBlock.streaming = false;
             }
@@ -1609,5 +1660,6 @@ export function initChatModule({
     handleServiceChange,
     handleServiceFocus,
     handleServiceBlur,
+    clearPinnedPeer,
   };
 }

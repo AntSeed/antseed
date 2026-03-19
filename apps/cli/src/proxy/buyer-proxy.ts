@@ -17,6 +17,7 @@ import type {
 import {
   createOpenAIChatToAnthropicStreamingAdapter,
   createOpenAIChatToResponsesStreamingAdapter,
+  createOpenAIResponsesToChatStreamingAdapter,
   detectRequestServiceApiProtocol,
   inferProviderDefaultServiceApiProtocols,
   type ServiceApiProtocol,
@@ -24,9 +25,11 @@ import {
   type StreamingResponseAdapter,
   type TargetProtocolSelection,
   transformAnthropicMessagesRequestToOpenAIChat,
+  transformOpenAIChatRequestToOpenAIResponses,
   transformOpenAIChatResponseToAnthropicMessage,
-  transformOpenAIResponsesRequestToOpenAIChat,
   transformOpenAIChatResponseToOpenAIResponses,
+  transformOpenAIResponsesRequestToOpenAIChat,
+  transformOpenAIResponsesResponseToOpenAIChat,
 } from './service-api-adapter.js'
 
 export interface BuyerProxyConfig {
@@ -1191,11 +1194,92 @@ export class BuyerProxy {
     return `Discovered ${peers.length} peer(s): ${samples}${suffix}`
   }
 
+  private async _handleControlPlane(
+    req: IncomingMessage,
+    res: ServerResponse,
+    method: string,
+    path: string,
+  ): Promise<void> {
+    if (path === '/_antseed/peers' && method === 'GET') {
+      const peers = await this._getPeers()
+      const payload = peers.map((p) => ({
+        peerId: p.peerId,
+        displayName: p.displayName,
+        publicAddress: p.publicAddress,
+        providers: p.providers,
+        providerPricing: p.providerPricing,
+        providerServiceCategories: p.providerServiceCategories,
+        providerServiceApiProtocols: p.providerServiceApiProtocols,
+        reputationScore: p.reputationScore,
+        trustScore: p.trustScore,
+        lastSeen: p.lastSeen,
+      }))
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ ok: true, peers: payload }))
+      return
+    }
+
+    if (path === '/_antseed/connect' && method === 'POST') {
+      const chunks: Buffer[] = []
+      let totalSize = 0
+      for await (const chunk of req) {
+        totalSize += (chunk as Buffer).length
+        if (totalSize > 8192) {
+          res.writeHead(413, { 'content-type': 'application/json' })
+          res.end(JSON.stringify({ ok: false, error: 'Request body too large' }))
+          return
+        }
+        chunks.push(chunk as Buffer)
+      }
+      let peerId: string
+      try {
+        const body = JSON.parse(Buffer.concat(chunks).toString())
+        peerId = String(body.peerId ?? '')
+      } catch {
+        res.writeHead(400, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: false, error: 'Invalid JSON body' }))
+        return
+      }
+      if (!peerId) {
+        res.writeHead(400, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: false, error: 'Missing peerId' }))
+        return
+      }
+      const peers = await this._getPeers()
+      const peer = peers.find((p) => p.peerId === peerId)
+      if (!peer) {
+        res.writeHead(404, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: false, error: 'Peer not found in cache' }))
+        return
+      }
+      try {
+        await this._node.connectToPeer(peer)
+        log(`Eager connection established to ${peerId.slice(0, 12)}...`)
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: true }))
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        log(`Eager connection failed for ${peerId.slice(0, 12)}...: ${message}`)
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: false, error: message }))
+      }
+      return
+    }
+
+    res.writeHead(404, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ ok: false, error: 'Unknown control-plane endpoint' }))
+  }
+
   private async _handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const method = req.method ?? 'GET'
     const path = req.url ?? '/'
 
     log(`${method} ${path}`)
+
+    // Control-plane endpoints — handle before collecting proxy body
+    if (path.startsWith('/_antseed/')) {
+      return this._handleControlPlane(req, res, method, path)
+    }
 
     // Collect request body
     const chunks: Buffer[] = []
@@ -1340,6 +1424,14 @@ export class BuyerProxy {
     const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504])
 
     if (explicitPeerId) {
+      // Pinned peers must use fresh discovery data so IP changes are picked up.
+      // Safe with the hasForcedRefresh guard: if an earlier refresh already ran
+      // this request, the cache is already fresh and cacheAgeMs will be < TTL.
+      const cacheAgeMs = Date.now() - this._cacheLastUpdatedAtMs
+      if (cacheAgeMs > this._peerCacheTtlMs) {
+        await refreshPeerSelection(`pinned peer with stale cache (${cacheAgeMs}ms old)`)
+      }
+
       let pinnedRoutingPeers = routingPeers
       let pinnedRoutePlans = routingPlans
       let selectedPeer = pinnedRoutingPeers.find((p) => p.peerId.toLowerCase() === explicitPeerId) ?? null
@@ -1616,6 +1708,34 @@ export class BuyerProxy {
             fallbackModel: transformed.requestedModel,
           })
         }
+      } else if (
+        requestProtocol === 'openai-chat-completions'
+        && selectedRoutePlan.selection.targetProtocol === 'openai-responses'
+      ) {
+        log(`Applying protocol adapter openai-chat-completions -> openai-responses via provider "${selectedRoutePlan.provider}"`)
+        const transformed = transformOpenAIChatRequestToOpenAIResponses(requestForPeer)
+        if (!transformed) {
+          res.writeHead(502, { 'content-type': 'text/plain' })
+          res.end('Failed to transform Chat Completions request for selected provider protocol')
+          return { done: true }
+        }
+        requestForPeer = {
+          ...transformed.request,
+          headers: {
+            ...transformed.request.headers,
+            'x-antseed-provider': selectedRoutePlan.provider,
+          },
+        }
+        adaptResponse = (response: SerializedHttpResponse) =>
+          transformOpenAIResponsesResponseToOpenAIChat(response, {
+            fallbackModel: transformed.requestedModel,
+            streamRequested: transformed.streamRequested,
+          })
+        if (transformed.streamRequested) {
+          streamResponseAdapter = createOpenAIResponsesToChatStreamingAdapter({
+            fallbackModel: transformed.requestedModel,
+          })
+        }
       } else {
         res.writeHead(502, { 'content-type': 'text/plain' })
         res.end('Unsupported protocol transformation path')
@@ -1646,6 +1766,12 @@ export class BuyerProxy {
               selectedPeer,
               requestForPeer.requestId,
             )
+            // Ensure content-type is set for SSE — some upstream APIs (e.g. Codex)
+            // omit it, which can cause the client's fetch body reader to not
+            // detect end-of-stream properly.
+            if (!streamingHeaders['content-type']) {
+              streamingHeaders['content-type'] = 'text/event-stream'
+            }
             res.writeHead(adaptedStartResponse.statusCode, streamingHeaders)
             if (adaptedStartResponse.body.length > 0) {
               res.write(Buffer.from(adaptedStartResponse.body))
