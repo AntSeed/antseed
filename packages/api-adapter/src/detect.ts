@@ -54,5 +54,8 @@ export function selectTargetProtocolForRequest(
   if (requestProtocol === 'openai-responses' && supportedProtocols.includes('openai-chat-completions')) {
     return { targetProtocol: 'openai-chat-completions', requiresTransform: true };
   }
+  if (requestProtocol === 'openai-chat-completions' && supportedProtocols.includes('openai-responses')) {
+    return { targetProtocol: 'openai-responses', requiresTransform: true };
+  }
   return null;
 }
