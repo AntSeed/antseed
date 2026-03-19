@@ -277,6 +277,27 @@ export async function registerApiRoutes(
     return reply.send({ success: true, stats: dhtQueryService.getNetworkStats() });
   });
 
+  // GET /api/network/peer/:peerId - Look up a specific peer via DHT
+  app.get<{ Params: { peerId: string } }>('/api/network/peer/:peerId', async (req, reply) => {
+    if (!dhtQueryService) {
+      return reply.code(503).send({ error: 'DHT query service not available' });
+    }
+    const peer = await dhtQueryService.lookupPeer(req.params.peerId);
+    if (!peer) {
+      return reply.code(404).send({ error: 'Peer not found' });
+    }
+    return reply.send(peer);
+  });
+
+  // POST /api/network/peer/:peerId/touch - Mark a peer as recently active
+  app.post<{ Params: { peerId: string } }>('/api/network/peer/:peerId/touch', async (req, reply) => {
+    if (!dhtQueryService) {
+      return reply.code(503).send({ error: 'DHT query service not available' });
+    }
+    dhtQueryService.touchPeer(req.params.peerId);
+    return reply.send({ ok: true });
+  });
+
   // GET /api/sessions - Session history
   app.get<{
     Querystring: { limit?: number; offset?: number; status?: string };

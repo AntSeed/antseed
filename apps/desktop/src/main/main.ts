@@ -1886,6 +1886,41 @@ ipcMain.handle('runtime:get-network', async (_event, port?: number) => {
   return fetchNetworkSnapshot(activePort);
 });
 
+ipcMain.handle('runtime:lookup-peer', async (_event, peerId: string, port?: number) => {
+  if (typeof peerId !== 'string' || peerId.trim().length === 0) {
+    return { ok: false, peer: null, error: 'Invalid peerId' };
+  }
+  const requestedPort = toSafeDashboardPort(port);
+  await ensureDashboardRuntime(requestedPort);
+  const activePort = dashboardRuntime.running ? dashboardRuntime.port : requestedPort;
+  try {
+    const response = await fetch(`http://127.0.0.1:${activePort}/api/network/peer/${encodeURIComponent(peerId.trim())}`, {
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) {
+      return { ok: false, peer: null, error: `Peer not found (${response.status})` };
+    }
+    const peer = await response.json();
+    return { ok: true, peer, error: null };
+  } catch (err) {
+    return { ok: false, peer: null, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+
+ipcMain.handle('runtime:touch-peer', async (_event, peerId: string, port?: number) => {
+  if (typeof peerId !== 'string' || peerId.trim().length === 0) return;
+  const requestedPort = toSafeDashboardPort(port);
+  const activePort = dashboardRuntime.running ? dashboardRuntime.port : requestedPort;
+  try {
+    await fetch(`http://127.0.0.1:${activePort}/api/network/peer/${encodeURIComponent(peerId.trim())}/touch`, {
+      method: 'POST',
+      signal: AbortSignal.timeout(5_000),
+    });
+  } catch {
+    // Best-effort — don't propagate touch failures.
+  }
+});
+
 ipcMain.handle(
   'runtime:get-dashboard-data',
   async (

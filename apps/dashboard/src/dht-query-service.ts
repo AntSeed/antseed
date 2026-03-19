@@ -36,6 +36,8 @@ export interface NetworkStats {
 }
 
 const SCAN_INTERVAL_MS = 30_000;
+/** Peers not seen for this long are evicted from the cache. */
+const PEER_TTL_MS = 5 * 60_000;
 
 function serviceNamesFromMetadata(
   metadata: Pick<PeerMetadata, 'providers'> | null | undefined,
@@ -236,14 +238,107 @@ export class DHTQueryService {
       }),
     );
 
-    // Update cache
-    this.peers.clear();
+    // Merge discovered peers into cache (update existing, add new).
     for (const [id, peer] of discoveredPeers) {
       this.peers.set(id, peer);
     }
 
-    this.lastScanAt = Date.now();
+    // Evict peers not seen within the TTL window.
+    const now = Date.now();
+    for (const [id, peer] of this.peers) {
+      if (now - peer.lastSeen > PEER_TTL_MS) {
+        this.peers.delete(id);
+      }
+    }
+
+    this.lastScanAt = now;
     this.events.emit('peers_updated', this.getNetworkPeers());
+  }
+
+  /**
+   * Mark a peer as recently active (e.g. after communicating with it).
+   * Prevents TTL eviction for peers we know are alive.
+   */
+  touchPeer(peerId: string): void {
+    const peer = this.peers.get(peerId);
+    if (peer) {
+      peer.lastSeen = Date.now();
+    }
+  }
+
+  /** Return a cached peer by ID, or null if not in the cache. */
+  getPeer(peerId: string): NetworkPeer | null {
+    return this.peers.get(peerId) ?? null;
+  }
+
+  /**
+   * Look up a specific peer via DHT. If the peer is already cached and fresh,
+   * returns it immediately. Otherwise performs a targeted DHT lookup and
+   * resolves metadata. The result is merged into the cache.
+   */
+  async lookupPeer(peerId: string): Promise<NetworkPeer | null> {
+    // Return cached if fresh (seen within last scan interval).
+    const cached = this.peers.get(peerId);
+    if (cached && Date.now() - cached.lastSeen < SCAN_INTERVAL_MS) {
+      return cached;
+    }
+
+    if (!this.dhtNode) return cached ?? null;
+
+    // Perform a full wildcard lookup and search for the specific peer.
+    const infoHash = topicToInfoHash(ANTSEED_WILDCARD_TOPIC);
+    let endpoints: Awaited<ReturnType<DHTNode['lookup']>> = [];
+    try {
+      endpoints = await this.dhtNode.lookup(infoHash);
+    } catch {
+      return cached ?? null;
+    }
+
+    for (const ep of endpoints) {
+      let metadata: PeerMetadata | null = null;
+      try {
+        metadata = await this.metadataResolver.resolve(ep);
+      } catch {
+        continue;
+      }
+
+      const resolvedId = metadata?.peerId ?? `${ep.host}:${ep.port}`;
+      if (resolvedId !== peerId) continue;
+
+      const summaryPricing = this.resolveSummaryPricing(metadata);
+      let capacityMsgPerHour = 0;
+      if (metadata?.providers) {
+        for (const pa of metadata.providers) {
+          capacityMsgPerHour += pa.maxConcurrency * 60;
+        }
+      }
+
+      const existing = this.peers.get(peerId);
+      const services = resolveNetworkPeerServices(metadata, existing?.services);
+      const displayName =
+        typeof metadata?.displayName === 'string' && metadata.displayName.trim().length > 0
+          ? metadata.displayName.trim()
+          : (existing?.displayName ?? `${ep.host}:${ep.port}`);
+
+      const peer: NetworkPeer = {
+        peerId,
+        displayName,
+        host: ep.host,
+        port: ep.port,
+        services,
+        inputUsdPerMillion: summaryPricing.inputUsdPerMillion || (existing?.inputUsdPerMillion ?? 0),
+        outputUsdPerMillion: summaryPricing.outputUsdPerMillion || (existing?.outputUsdPerMillion ?? 0),
+        capacityMsgPerHour: capacityMsgPerHour || (existing?.capacityMsgPerHour ?? 0),
+        reputation: metadata ? 100 : 50,
+        lastSeen: Date.now(),
+        source: 'dht',
+      };
+
+      this.peers.set(peerId, peer);
+      return peer;
+    }
+
+    return cached ?? null;
   }
 
   getNetworkPeers(): NetworkPeer[] {
