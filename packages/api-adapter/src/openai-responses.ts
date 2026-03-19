@@ -626,7 +626,6 @@ export function transformOpenAIResponsesResponseToOpenAIChat(
 
   let textContent = '';
   const toolCalls: unknown[] = [];
-  let toolIndex = 0;
 
   for (const item of output) {
     if (item.type === 'message' && Array.isArray(item.content)) {
@@ -643,7 +642,6 @@ export function transformOpenAIResponsesResponseToOpenAIChat(
           name: typeof item.name === 'string' ? item.name : '',
           arguments: typeof item.arguments === 'string' ? item.arguments : JSON.stringify(item.arguments ?? {}),
         },
-        index: toolIndex++,
       });
     }
   }
@@ -685,12 +683,13 @@ export function createOpenAIResponsesToChatStreamingAdapter(
   let responseModel = options.fallbackModel ?? 'unknown';
   const toolNames = new Map<number, string>();
   const emitted: Array<{ data: string }> = [];
+  const createdTimestamp = Math.floor(Date.now() / 1000);
 
   const pushChatChunk = (delta: Record<string, unknown>, finishReason?: string | null, usage?: Record<string, unknown>): void => {
     const chunk: Record<string, unknown> = {
       id: responseId || `chatcmpl-${Date.now()}`,
       object: 'chat.completion.chunk', model: responseModel,
-      created: Math.floor(Date.now() / 1000),
+      created: createdTimestamp,
       choices: [{ index: 0, delta, finish_reason: finishReason ?? null }],
     };
     if (usage) chunk.usage = usage;
@@ -762,10 +761,13 @@ export function createOpenAIResponsesToChatStreamingAdapter(
           const resp = data.response as Record<string, unknown> | undefined;
           const hasToolCalls = toolNames.size > 0;
           const usage = resp?.usage as Record<string, unknown> | undefined;
+          const promptTokens = typeof usage?.input_tokens === 'number' ? usage.input_tokens : 0;
+          const completionTokens = typeof usage?.output_tokens === 'number' ? usage.output_tokens : 0;
+          const totalTokens = typeof usage?.total_tokens === 'number' ? usage.total_tokens : promptTokens + completionTokens;
           pushChatChunk({}, hasToolCalls ? 'tool_calls' : 'stop', usage ? {
-            prompt_tokens: usage.input_tokens ?? 0,
-            completion_tokens: usage.output_tokens ?? 0,
-            total_tokens: usage.total_tokens ?? 0,
+            prompt_tokens: promptTokens,
+            completion_tokens: completionTokens,
+            total_tokens: totalTokens,
           } : undefined);
           // Don't emit [DONE] here — the API sends a separate [DONE] sentinel
           // which the handler at the top of the loop will forward.
