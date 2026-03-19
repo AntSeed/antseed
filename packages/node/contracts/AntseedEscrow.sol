@@ -300,6 +300,7 @@ contract AntseedEscrow is EIP712, Pausable {
     }
 
     function setTokenRate(uint256 rate) external {
+        if (rate == 0) revert InvalidAmount();
         SellerAccount storage sa = sellers[msg.sender];
         if (sa.stake == 0) revert InsufficientStake();
         sa.tokenRate = rate;
@@ -364,6 +365,7 @@ contract AntseedEscrow is EIP712, Pausable {
         if (sessions[sessionId].status != SessionStatus.None) revert SessionExists();
         if (block.timestamp > deadline) revert SessionExpired();
         if (sellers[msg.sender].stake < MIN_SELLER_STAKE) revert InsufficientStake();
+        if (sellers[msg.sender].tokenRate == 0) revert InvalidAmount();
 
         // EIP-712 signature verification
         bytes32 structHash = keccak256(
