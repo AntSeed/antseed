@@ -106,21 +106,23 @@ export class SellerPaymentManager {
         const buyerClaimed = BigInt(payload.previousConsumption);
         const sellerDelivered = BigInt(priorSession.tokensDelivered);
 
-        // Always settle on-chain with seller's delivery records (get paid for actual work)
-        // Then check if buyer's claim matches — if not, reject the new SpendingAuth
+        // Settle with buyer's claimed value — proof chain requires
+        // previousConsumption == settledTokenCount on-chain.
+        // We do NOT use max(seller, buyer) because that would let the seller
+        // overcharge the buyer for tokens the buyer may not have received.
         try {
-          const settleAmount = sellerDelivered > buyerClaimed ? sellerDelivered : buyerClaimed;
-          debugLog(`[SellerPayment] Settling prior session ${priorSession.sessionId.slice(0, 18)}... tokens=${settleAmount} (buyer=${buyerClaimed} seller=${sellerDelivered})`);
-          await this._escrowClient.settle(this._signer, priorSession.sessionId, settleAmount);
-          this._sessionStore.updateSessionStatus(priorSession.sessionId, 'settled', settleAmount.toString());
+          debugLog(`[SellerPayment] Settling prior session ${priorSession.sessionId.slice(0, 18)}... tokens=${buyerClaimed} (seller delivered=${sellerDelivered})`);
+          await this._escrowClient.settle(this._signer, priorSession.sessionId, buyerClaimed);
+          this._sessionStore.updateSessionStatus(priorSession.sessionId, 'settled', buyerClaimed.toString());
           this._topUpRequested.delete(priorSession.sessionId);
         } catch (err) {
           debugWarn(`[SellerPayment] Failed to settle prior session: ${err instanceof Error ? err.message : err}`);
         }
 
-        // If buyer understated consumption, reject the new SpendingAuth.
-        // The on-chain settledTokenCount won't match buyer's previousConsumption,
-        // so reserve() would revert anyway. Buyer must re-sign with correct value.
+        // If buyer significantly understated consumption (> 20% gap), reject the
+        // new SpendingAuth. Seller accepts the loss on this session but refuses to
+        // continue serving a dishonest buyer. The 20% tolerance accounts for receipt
+        // delivery timing (buyer may not have received the final receipt).
         if (sellerDelivered > 0n && buyerClaimed < sellerDelivered * 80n / 100n) {
           debugWarn(
             `[SellerPayment] Rejecting SpendingAuth — buyer under-reports consumption: ` +
