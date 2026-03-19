@@ -149,13 +149,14 @@ export class SellerPaymentManager {
         payload.buyerSig,
       );
 
-      // Eagerly cache tokenRate for receipt capping and top-up threshold
-      if (this._tokenRate === null) {
-        try {
-          const account = await this._escrowClient.getSellerAccount(sellerEvmAddr);
-          this._tokenRate = account.tokenRate;
-        } catch { this._tokenRate = 1n; }
-      }
+      // Refresh tokenRate from on-chain on every new session — the seller may
+      // have called setTokenRate() between sessions. A stale cache would cause
+      // effectiveTokenCap to diverge from the contract's snapshotted rate,
+      // breaking the proof chain (tokensDelivered != settledTokenCount).
+      try {
+        const account = await this._escrowClient.getSellerAccount(sellerEvmAddr);
+        this._tokenRate = account.tokenRate;
+      } catch { if (this._tokenRate === null) this._tokenRate = 1n; }
 
       // 4. Store new session
       const now = Date.now();

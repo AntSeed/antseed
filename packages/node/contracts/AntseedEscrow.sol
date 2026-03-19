@@ -395,7 +395,8 @@ contract AntseedEscrow is EIP712, Pausable {
             if (maxAmount > FIRST_SIGN_CAP) revert FirstSignCapExceeded();
 
         } else {
-            // Proven sign: validate proof chain
+            // Proven sign: validate proof chain — must chain from latest session
+            if (previousSessionId != latestSessionId[buyer][msg.sender]) revert InvalidProofChain();
             Session storage prevSession = sessions[previousSessionId];
             if (prevSession.status != SessionStatus.Settled) revert InvalidProofChain();
             if (prevSession.buyer != buyer || prevSession.seller != msg.sender) revert InvalidProofChain();
