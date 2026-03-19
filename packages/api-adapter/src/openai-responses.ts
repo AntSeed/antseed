@@ -494,9 +494,11 @@ function convertChatMessagesToResponsesInput(
     }
 
     if (role === 'tool') {
+      const rawCallId = typeof msg.tool_call_id === 'string' ? msg.tool_call_id : '';
+      const fcCallId = rawCallId.startsWith('fc_') ? rawCallId : `fc_${rawCallId}`;
       input.push({
         type: 'function_call_output',
-        call_id: typeof msg.tool_call_id === 'string' ? msg.tool_call_id : '',
+        call_id: fcCallId,
         output: typeof msg.content === 'string' ? msg.content : toStringContent(msg.content),
       });
       continue;
@@ -510,10 +512,13 @@ function convertChatMessagesToResponsesInput(
       }
       for (const tc of msg.tool_calls as Record<string, unknown>[]) {
         const fn = (tc.function ?? {}) as Record<string, unknown>;
+        // Responses API requires function call IDs to start with 'fc_'
+        const rawId = typeof tc.id === 'string' ? tc.id : '';
+        const fcId = rawId.startsWith('fc_') ? rawId : `fc_${rawId}`;
         input.push({
           type: 'function_call',
-          id: typeof tc.id === 'string' ? tc.id : '',
-          call_id: typeof tc.id === 'string' ? tc.id : '',
+          id: fcId,
+          call_id: fcId,
           name: typeof fn.name === 'string' ? fn.name : '',
           arguments: typeof fn.arguments === 'string' ? fn.arguments : JSON.stringify(fn.arguments ?? {}),
         });
@@ -635,8 +640,10 @@ export function transformOpenAIResponsesResponseToOpenAIChat(
         }
       }
     } else if (item.type === 'function_call') {
+      const rawId = typeof item.call_id === 'string' ? item.call_id : (typeof item.id === 'string' ? item.id : '');
+      const chatId = rawId.startsWith('fc_') ? rawId.slice(3) : rawId;
       toolCalls.push({
-        id: typeof item.call_id === 'string' ? item.call_id : (typeof item.id === 'string' ? item.id : ''),
+        id: chatId,
         type: 'function',
         function: {
           name: typeof item.name === 'string' ? item.name : '',
@@ -738,9 +745,11 @@ export function createOpenAIResponsesToChatStreamingAdapter(
             const outputIndex = typeof data.output_index === 'number' ? data.output_index : 0;
             const name = typeof item.name === 'string' ? item.name : '';
             toolNames.set(outputIndex, name);
+            const rawCallId = typeof item.call_id === 'string' ? item.call_id : '';
+            const chatCallId = rawCallId.startsWith('fc_') ? rawCallId.slice(3) : rawCallId;
             pushChatChunk({
               tool_calls: [{
-                index: outputIndex, id: typeof item.call_id === 'string' ? item.call_id : '',
+                index: outputIndex, id: chatCallId,
                 type: 'function', function: { name, arguments: '' },
               }],
             });
