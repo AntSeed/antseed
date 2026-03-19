@@ -58,16 +58,10 @@ import {
   type PaymentMethod,
   BaseEscrowClient,
   buildReceiptMessage,
-  buildAckMessage,
   signMessageEd25519,
-  verifyMessageEd25519,
   SessionStore,
 } from "./payments/index.js";
-import type {
-  SpendingAuthPayload,
-  BuyerAckPayload,
-} from "./types/protocol.js";
-import { hexToBytes, bytesToHex } from "./utils/hex.js";
+import { bytesToHex } from "./utils/hex.js";
 import { debugLog, debugWarn } from "./utils/debug.js";
 import { parsePublicAddress } from "./discovery/public-address.js";
 import { BuyerPaymentManager, type BuyerPaymentConfig } from "./payments/buyer-payment-manager.js";
@@ -1023,11 +1017,10 @@ export class AntseedNode extends EventEmitter {
         void spm.handleBuyerAck(buyerPeerId, payload);
       });
     } else {
-      paymentMux.onSpendingAuth((payload) => {
-        void this._handleSpendingAuth(buyerPeerId, payload, paymentMux);
-      });
-      paymentMux.onBuyerAck((payload) => {
-        void this._handleBuyerAck(buyerPeerId, payload);
+      // No SellerPaymentManager — reject SpendingAuth to prevent
+      // accepting payment claims without EIP-712 signature verification
+      paymentMux.onSpendingAuth(() => {
+        debugWarn(`[Node] SpendingAuth rejected — SellerPaymentManager not configured`);
       });
     }
     this._paymentMuxes.set(buyerPeerId, paymentMux);
@@ -1663,51 +1656,9 @@ export class AntseedNode extends EventEmitter {
 
   // ── Seller-side bilateral payment handlers ─────────────────────
 
-  /**
-   * Handle SpendingAuth from buyer.
-   * Verifies buyer's EIP-712 spending authorization and acknowledges.
-   */
-  private async _handleSpendingAuth(
-    buyerPeerId: string,
-    payload: SpendingAuthPayload,
-    paymentMux: PaymentMux,
-  ): Promise<void> {
-    if (!this._identity || !this._escrowClient) {
-      debugWarn(`[Node] Cannot process SpendingAuth — escrow client not configured`);
-      return;
-    }
-
-    try {
-      const maxAmount = BigInt(payload.maxAmountUsdc);
-
-      // Initialize or update bilateral session state
-      let session: SellerSessionState | null | undefined = this._sessions.get(buyerPeerId);
-      if (!session) {
-        session = this._getOrCreateSellerSession(buyerPeerId, this._providers[0]?.name ?? "unknown");
-      }
-      if (session) {
-        session.sessionId = payload.sessionId;
-        session.sessionIdBytes = hexToBytes(payload.sessionId.replace(/^0x/, ""));
-        session.lockCommitted = true;
-        session.lockedAmount = maxAmount;
-        session.runningTotal = 0n;
-        session.ackedRequestCount = 0;
-        session.lastAckedTotal = 0n;
-        session.awaitingAck = false;
-        session.buyerEvmAddress = payload.buyerEvmAddr;
-      }
-
-      debugLog(`[Node] SpendingAuth accepted for buyer ${buyerPeerId.slice(0, 12)}... maxAmount=${maxAmount}`);
-
-      paymentMux.sendAuthAck({
-        sessionId: payload.sessionId,
-        nonce: payload.nonce,
-      });
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
-      debugWarn(`[Node] Failed to process SpendingAuth for ${buyerPeerId.slice(0, 12)}...: ${reason}`);
-    }
-  }
+  // Legacy _handleSpendingAuth and _handleBuyerAck removed — SpendingAuth
+  // is now only accepted via SellerPaymentManager which verifies EIP-712
+  // signatures on-chain. Without SellerPaymentManager, SpendingAuth is rejected.
 
   /**
    * Generate and send a bilateral receipt after processing a request (Task 3).
@@ -1765,43 +1716,6 @@ export class AntseedNode extends EventEmitter {
         requestedAdditional: additionalAmount.toString(),
       });
       debugLog(`[Node] TopUpRequest sent for session ${session.sessionId.slice(0, 8)}... (running=${session.runningTotal}, locked=${session.lockedAmount})`);
-    }
-  }
-
-  /**
-   * Handle BuyerAck (Task 4).
-   * Verifies buyer's Ed25519 ack signature and updates session state.
-   */
-  private async _handleBuyerAck(buyerPeerId: string, payload: BuyerAckPayload): Promise<void> {
-    const session = this._sessions.get(buyerPeerId);
-    if (!session || !session.lockCommitted) {
-      debugWarn(`[Node] Received BuyerAck for unknown/uncommitted session from ${buyerPeerId.slice(0, 12)}...`);
-      return;
-    }
-
-    try {
-      // Verify buyer's Ed25519 ack signature
-      const buyerPublicKey = hexToBytes(buyerPeerId);
-      const ackMsg = buildAckMessage(
-        session.sessionIdBytes,
-        BigInt(payload.runningTotal),
-        payload.requestCount,
-      );
-      const sigBytes = hexToBytes(payload.buyerSig);
-      const valid = await verifyMessageEd25519(buyerPublicKey, sigBytes, ackMsg);
-
-      if (!valid) {
-        debugWarn(`[Node] Invalid BuyerAck signature from ${buyerPeerId.slice(0, 12)}...`);
-        return;
-      }
-
-      session.ackedRequestCount = payload.requestCount;
-      session.lastAckedTotal = BigInt(payload.runningTotal);
-      session.awaitingAck = false;
-
-      debugLog(`[Node] BuyerAck received: requestCount=${payload.requestCount} runningTotal=${payload.runningTotal}`);
-    } catch (err) {
-      debugWarn(`[Node] Failed to process BuyerAck: ${err instanceof Error ? err.message : err}`);
     }
   }
 
