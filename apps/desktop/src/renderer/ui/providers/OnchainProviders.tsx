@@ -8,9 +8,10 @@ import { OnchainKitProvider } from '@coinbase/onchainkit';
 const wagmiConfig = createConfig({
   chains: [base],
   connectors: [
+    // EOA mode: QR code scan with Coinbase Wallet mobile app (no popup/passkey needed)
     coinbaseWallet({
       appName: 'AntSeed Desktop',
-      preference: 'smartWalletOnly',
+      preference: 'eoaOnly',
     }),
   ],
   transports: {

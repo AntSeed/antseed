@@ -1144,6 +1144,16 @@ function createWindow(): void {
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    // Allow Coinbase wallet popups (QR code, auth flows)
+    if (
+      url.includes('coinbase.com') ||
+      url.includes('wallet.coinbase.com') ||
+      url.includes('keys.coinbase.com') ||
+      url.startsWith('about:blank')  // Coinbase SDK opens about:blank first
+    ) {
+      return { action: 'allow' };
+    }
+    // All other links open in system browser
     void shell.openExternal(url);
     return { action: 'deny' };
   });
