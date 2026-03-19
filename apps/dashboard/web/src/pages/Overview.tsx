@@ -199,7 +199,7 @@ export function Overview() {
           label="Earnings Today"
           value={`$${parseFloat(status.earningsToday).toFixed(2)}`}
           color="var(--accent-green)"
-          sub={earnings ? `$${parseFloat(earnings.thisMonth).toFixed(2)} this month` : undefined}
+          sub={earnings ? `$${parseFloat(earnings.thisMonth ?? '0').toFixed(2)} this month` : undefined}
         />
         <StatCard
           label="Tokens Today"

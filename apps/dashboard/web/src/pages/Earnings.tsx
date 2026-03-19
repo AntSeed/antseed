@@ -63,16 +63,16 @@ export function Earnings() {
         <div className="stat-card">
           <div className="stat-label">Today</div>
           <div className="stat-value" style={{ color: 'var(--accent-green)' }}>
-            ${parseFloat(earnings.today).toFixed(2)}
+            ${parseFloat(earnings.today ?? '0').toFixed(2)}
           </div>
         </div>
         <div className="stat-card">
           <div className="stat-label">This Week</div>
-          <div className="stat-value">${parseFloat(earnings.thisWeek).toFixed(2)}</div>
+          <div className="stat-value">${parseFloat(earnings.thisWeek ?? '0').toFixed(2)}</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">This Month</div>
-          <div className="stat-value">${parseFloat(earnings.thisMonth).toFixed(2)}</div>
+          <div className="stat-value">${parseFloat(earnings.thisMonth ?? '0').toFixed(2)}</div>
         </div>
       </div>
 
