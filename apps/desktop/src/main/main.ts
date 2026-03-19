@@ -292,7 +292,9 @@ async function ensureSecureIdentity(): Promise<void> {
       if (migratedHex) {
         await saveEncryptedIdentity(migratedHex);
         secureIdentity = identityFromHex(migratedHex);
-        await unlink(PLAINTEXT_IDENTITY_PATH).catch(() => {});
+        await unlink(PLAINTEXT_IDENTITY_PATH).catch((unlinkErr) => {
+          console.warn(`[desktop] Failed to delete plaintext identity file after migration: ${unlinkErr instanceof Error ? unlinkErr.message : String(unlinkErr)}. Delete ${PLAINTEXT_IDENTITY_PATH} manually.`);
+        });
         console.log(`[desktop] secure identity migrated from plaintext: ${secureIdentity.peerId.slice(0, 12)}...`);
         return;
       }
