@@ -60,6 +60,16 @@ The Ed25519 private key is the root of trust for your node. It serves two critic
 
 Compromising this key means an attacker can impersonate your node **and** drain your on-chain funds. Losing it means losing both your peer identity and access to any deposited USDC.
 
+### Recommended: Minimize On-Chain Exposure
+
+Keep only the minimum balance needed for active operations in the derived wallet. Periodically sweep earnings to a separate cold wallet that is **not** derived from the node identity:
+
+1. **Sellers:** After each settlement cycle, withdraw accumulated USDC to a hardware wallet or multisig. Don't let large balances accumulate in the hot wallet.
+2. **Buyers:** Deposit only what you need for your current session. Top up as needed rather than pre-loading large amounts.
+3. **Back up your identity key** in a secure offline location — it's the only way to recover both your PeerId and your on-chain wallet.
+
+### Storage Options
+
 | Environment | Protection |
 |---|---|
 | **Desktop app** | Encrypted at rest via OS keychain (macOS Keychain / Windows DPAPI / Linux libsecret). Plaintext file deleted after migration. |
