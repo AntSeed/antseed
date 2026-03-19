@@ -488,7 +488,8 @@ function convertChatMessagesToResponsesInput(
     const role = typeof msg.role === 'string' ? msg.role : '';
 
     if (role === 'system') {
-      instructions = (instructions ?? '') + toStringContent(msg.content);
+      const text = toStringContent(msg.content);
+      instructions = instructions !== undefined ? `${instructions}\n\n${text}` : text;
       continue;
     }
 
@@ -607,7 +608,17 @@ export function transformOpenAIResponsesResponseToOpenAIChat(
   const parsed = parseJsonObject(response.body);
   if (!parsed) return response;
 
-  if (response.statusCode >= 400) return response;
+  if (response.statusCode >= 400) {
+    if (options.streamRequested) {
+      const errorBody = parsed.error && typeof parsed.error === 'object' ? { error: parsed.error } : parsed;
+      return {
+        ...response,
+        headers: { ...response.headers, 'content-type': 'text/event-stream', 'cache-control': 'no-cache' },
+        body: encodeText(`data: ${JSON.stringify(errorBody)}\n\ndata: [DONE]\n\n`),
+      };
+    }
+    return response;
+  }
 
   const output = Array.isArray(parsed.output) ? parsed.output as Record<string, unknown>[] : [];
   const model = typeof parsed.model === 'string' ? parsed.model : (options.fallbackModel ?? 'unknown');
@@ -651,11 +662,12 @@ export function transformOpenAIResponsesResponseToOpenAIChat(
       },
       finish_reason: toolCalls.length > 0 ? 'tool_calls' : 'stop',
     }],
-    usage: {
-      prompt_tokens: typeof usage.input_tokens === 'number' ? usage.input_tokens : 0,
-      completion_tokens: typeof usage.output_tokens === 'number' ? usage.output_tokens : 0,
-      total_tokens: typeof usage.total_tokens === 'number' ? usage.total_tokens : 0,
-    },
+    usage: (() => {
+      const promptTokens = typeof usage.input_tokens === 'number' ? usage.input_tokens : 0;
+      const completionTokens = typeof usage.output_tokens === 'number' ? usage.output_tokens : 0;
+      const totalTokens = typeof usage.total_tokens === 'number' ? usage.total_tokens : promptTokens + completionTokens;
+      return { prompt_tokens: promptTokens, completion_tokens: completionTokens, total_tokens: totalTokens };
+    })(),
   };
 
   return {
@@ -755,7 +767,8 @@ export function createOpenAIResponsesToChatStreamingAdapter(
             completion_tokens: usage.output_tokens ?? 0,
             total_tokens: usage.total_tokens ?? 0,
           } : undefined);
-          emitted.push({ data: 'data: [DONE]\n\n' });
+          // Don't emit [DONE] here — the API sends a separate [DONE] sentinel
+          // which the handler at the top of the loop will forward.
           continue;
         }
       }
