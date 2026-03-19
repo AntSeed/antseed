@@ -47,6 +47,8 @@ export class SellerPaymentManager {
   private readonly _activeBuyers = new Set<string>();
   /** Debounce: track sessions that already sent a top-up request. */
   private readonly _topUpRequested = new Set<string>();
+  /** Cached seller tokenRate (fetched once from escrow, used for top-up threshold). */
+  private _tokenRate: bigint | null = null;
 
   constructor(identity: Identity, config: SellerPaymentConfig, sessionStore: SessionStore) {
     this._identity = identity;
@@ -241,9 +243,18 @@ export class SellerPaymentManager {
 
     debugLog(`[SellerPayment] Receipt sent: session=${session.sessionId.slice(0, 18)}... total=${newTotal} count=${newRequestCount}`);
 
-    // TopUpRequest if > 80% consumed (send at most once per session)
+    // TopUpRequest if > 80% of USDC cap consumed (send at most once per session)
+    // Convert token count to USDC equivalent using cached tokenRate
     const authMax = BigInt(session.authMax);
-    if (authMax > 0n && newTotal * 100n > authMax * 80n && !this._topUpRequested.has(session.sessionId)) {
+    if (this._tokenRate === null) {
+      try {
+        const sellerAddr = identityToEvmAddress(this._identity);
+        const account = await this._escrowClient.getSellerAccount(sellerAddr);
+        this._tokenRate = account.tokenRate;
+      } catch { this._tokenRate = 1n; }
+    }
+    const usdcConsumed = newTotal * this._tokenRate;
+    if (authMax > 0n && usdcConsumed * 100n > authMax * 80n && !this._topUpRequested.has(session.sessionId)) {
       this._topUpRequested.add(session.sessionId);
       const additionalAmount = authMax; // Request same amount again
       paymentMux.sendTopUpRequest({
