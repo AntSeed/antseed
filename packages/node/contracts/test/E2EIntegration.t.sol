@@ -133,7 +133,7 @@ contract E2EIntegration is Test {
     }
 
     function _reserveFirstSign(address _seller, bytes32 sessionId, uint256 maxAmount) internal {
-        uint256 deadline = block.timestamp + 3600;
+        uint256 deadline = block.timestamp + 90000;
         bytes memory sig = _signSpendingAuth(buyerPk, _seller, sessionId, maxAmount, 1, deadline, 0, bytes32(0));
         vm.prank(_seller);
         escrow.reserve(buyer, sessionId, maxAmount, 1, deadline, 0, bytes32(0), sig);
@@ -162,7 +162,7 @@ contract E2EIntegration is Test {
         uint256 maxAmount,
         uint256 nonce
     ) internal {
-        uint256 deadline = block.timestamp + 3600;
+        uint256 deadline = block.timestamp + 90000;
         bytes memory sig = _signSpendingAuth(
             buyerPk, _seller, newSessionId, maxAmount, nonce, deadline, prevConsumption, prevSessionId
         );
@@ -427,7 +427,7 @@ contract E2EIntegration is Test {
 
         uint256 overCap = escrow.FIRST_SIGN_CAP() + 1;
         bytes32 sid = keccak256("cap-over");
-        uint256 deadline = block.timestamp + 3600;
+        uint256 deadline = block.timestamp + 90000;
         bytes memory sig = _signSpendingAuth(buyerPk, seller1, sid, overCap, 1, deadline, 0, bytes32(0));
 
         // 1. Try to reserve with maxAmount > FIRST_SIGN_CAP — reverts
@@ -459,7 +459,7 @@ contract E2EIntegration is Test {
 
         // Immediately try proven sign — reverts CooldownNotElapsed
         bytes32 sid2 = keccak256("cd-s2");
-        uint256 deadline = block.timestamp + 3600;
+        uint256 deadline = block.timestamp + 90000;
         bytes memory sig = _signSpendingAuth(buyerPk, seller1, sid2, 5_000_000, 2, deadline, 10_000, sid1);
 
         vm.prank(seller1);
@@ -468,7 +468,7 @@ contract E2EIntegration is Test {
 
         // vm.warp(8 days), retry — succeeds
         vm.warp(block.timestamp + 8 days);
-        uint256 deadline2 = block.timestamp + 3600;
+        uint256 deadline2 = block.timestamp + 90000;
         bytes memory sig2 = _signSpendingAuth(buyerPk, seller1, sid2, 5_000_000, 2, deadline2, 10_000, sid1);
         vm.prank(seller1);
         escrow.reserve(buyer, sid2, 5_000_000, 2, deadline2, 10_000, sid1, sig2);

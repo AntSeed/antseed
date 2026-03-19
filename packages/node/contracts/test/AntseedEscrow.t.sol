@@ -93,7 +93,7 @@ abstract contract AntseedEscrowTestBase is Test {
     }
 
     function _reserveFirstSign(address _seller, bytes32 sessionId, uint256 maxAmount) internal {
-        uint256 deadline = block.timestamp + 3600;
+        uint256 deadline = block.timestamp + 90000;
         bytes memory sig = _signSpendingAuth(buyerPk, _seller, sessionId, maxAmount, 1, deadline, 0, bytes32(0));
         vm.prank(_seller);
         escrow.reserve(buyer, sessionId, maxAmount, 1, deadline, 0, bytes32(0), sig);
@@ -125,7 +125,7 @@ abstract contract AntseedEscrowTestBase is Test {
     ) internal {
         // Warp past cooldown
         vm.warp(block.timestamp + escrow.PROVEN_SIGN_COOLDOWN() + 1);
-        uint256 deadline = block.timestamp + 3600;
+        uint256 deadline = block.timestamp + 90000;
         bytes memory sig = _signSpendingAuth(
             buyerPk, _seller, newSessionId, maxAmount, 2, deadline, prevConsumption, prevSessionId
         );
@@ -524,7 +524,7 @@ contract AntseedEscrowReserveTest is AntseedEscrowTestBase {
     function test_reserve_firstSign_revert_overCap() public {
         bytes32 sid = keccak256("fscap");
         uint256 overCap = escrow.FIRST_SIGN_CAP() + 1;
-        uint256 deadline = block.timestamp + 3600;
+        uint256 deadline = block.timestamp + 90000;
         bytes memory sig = _signSpendingAuth(buyerPk, seller, sid, overCap, 1, deadline, 0, bytes32(0));
         vm.prank(seller);
         vm.expectRevert(AntseedEscrow.FirstSignCapExceeded.selector);
@@ -553,7 +553,7 @@ contract AntseedEscrowReserveTest is AntseedEscrowTestBase {
         // Use wrong previousSessionId
         bytes32 wrongPrev = keccak256("nonexistent");
         bytes32 sid2 = keccak256("ic2");
-        uint256 deadline = block.timestamp + 3600;
+        uint256 deadline = block.timestamp + 90000;
         bytes memory sig = _signSpendingAuth(buyerPk, seller, sid2, 5_000_000, 2, deadline, 500_000, wrongPrev);
         vm.prank(seller);
         vm.expectRevert(AntseedEscrow.InvalidProofChain.selector);
@@ -569,7 +569,7 @@ contract AntseedEscrowReserveTest is AntseedEscrowTestBase {
         // prevConsumption below MIN_TOKEN_THRESHOLD
         uint256 lowConsumption = escrow.MIN_TOKEN_THRESHOLD() - 1;
         bytes32 sid2 = keccak256("mt2");
-        uint256 deadline = block.timestamp + 3600;
+        uint256 deadline = block.timestamp + 90000;
         bytes memory sig = _signSpendingAuth(buyerPk, seller, sid2, 5_000_000, 2, deadline, lowConsumption, sid1);
         vm.prank(seller);
         vm.expectRevert(AntseedEscrow.InvalidProofChain.selector);
@@ -582,7 +582,7 @@ contract AntseedEscrowReserveTest is AntseedEscrowTestBase {
 
         // Don't warp — cooldown not elapsed
         bytes32 sid2 = keccak256("cd2");
-        uint256 deadline = block.timestamp + 3600;
+        uint256 deadline = block.timestamp + 90000;
         bytes memory sig = _signSpendingAuth(buyerPk, seller, sid2, 5_000_000, 2, deadline, 500_000, sid1);
         vm.prank(seller);
         vm.expectRevert(AntseedEscrow.CooldownNotElapsed.selector);
@@ -620,7 +620,7 @@ contract AntseedEscrowReserveTest is AntseedEscrowTestBase {
 
     function test_reserve_revert_invalidSig() public {
         bytes32 sid = keccak256("isig");
-        uint256 deadline = block.timestamp + 3600;
+        uint256 deadline = block.timestamp + 90000;
         // Sign with wrong key
         bytes memory sig = _signSpendingAuth(0xDEAD, seller, sid, 500_000, 1, deadline, 0, bytes32(0));
         vm.prank(seller);
@@ -631,6 +631,15 @@ contract AntseedEscrowReserveTest is AntseedEscrowTestBase {
     function test_reserve_revert_expired() public {
         bytes32 sid = keccak256("exp");
         uint256 deadline = block.timestamp - 1; // past
+        bytes memory sig = _signSpendingAuth(buyerPk, seller, sid, 500_000, 1, deadline, 0, bytes32(0));
+        vm.prank(seller);
+        vm.expectRevert(AntseedEscrow.SessionExpired.selector);
+        escrow.reserve(buyer, sid, 500_000, 1, deadline, 0, bytes32(0), sig);
+    }
+
+    function test_reserve_revert_shortDeadline() public {
+        bytes32 sid = keccak256("short");
+        uint256 deadline = block.timestamp + 3600; // 1h < SETTLE_TIMEOUT (24h)
         bytes memory sig = _signSpendingAuth(buyerPk, seller, sid, 500_000, 1, deadline, 0, bytes32(0));
         vm.prank(seller);
         vm.expectRevert(AntseedEscrow.SessionExpired.selector);
@@ -654,7 +663,7 @@ contract AntseedEscrowReserveTest is AntseedEscrowTestBase {
 
         // Reserve 9M, leaving only 1M available
         bytes32 sid1 = keccak256("ib0");
-        uint256 deadline = block.timestamp + 3600;
+        uint256 deadline = block.timestamp + 90000;
         bytes memory sig1 = _signSpendingAuth(buyer2Pk, seller, sid1, 900_000, 1, deadline, 0, bytes32(0));
         vm.prank(seller);
         escrow.reserve(buyer2, sid1, 900_000, 1, deadline, 0, bytes32(0), sig1);
@@ -666,7 +675,7 @@ contract AntseedEscrowReserveTest is AntseedEscrowTestBase {
         // Simpler: reserve the full remaining amount, then try one more.
         for (uint256 i = 1; i <= 9; i++) {
             bytes32 sid = keccak256(abi.encodePacked("ib", i));
-            uint256 dl = block.timestamp + 3600;
+            uint256 dl = block.timestamp + 90000;
             bytes memory s = _signSpendingAuth(buyer2Pk, seller, sid, 1_000_000, uint256(i) + 1, dl, 0, bytes32(0));
             vm.prank(seller);
             escrow.reserve(buyer2, sid, 1_000_000, uint256(i) + 1, dl, 0, bytes32(0), s);
@@ -674,7 +683,7 @@ contract AntseedEscrowReserveTest is AntseedEscrowTestBase {
         // Now: reserved = 900K + 9*1M = 9.9M, available = 10M - 9.9M = 100K
 
         bytes32 sidFinal = keccak256("ibFinal");
-        uint256 dlFinal = block.timestamp + 3600;
+        uint256 dlFinal = block.timestamp + 90000;
         bytes memory sigFinal = _signSpendingAuth(buyer2Pk, seller, sidFinal, 200_000, 99, dlFinal, 0, bytes32(0));
         vm.prank(seller);
         vm.expectRevert(AntseedEscrow.InsufficientBalance.selector);
@@ -685,7 +694,7 @@ contract AntseedEscrowReserveTest is AntseedEscrowTestBase {
         bytes32 sid = keccak256("dup");
         _reserveFirstSign(seller, sid, 500_000);
 
-        uint256 deadline = block.timestamp + 3600;
+        uint256 deadline = block.timestamp + 90000;
         bytes memory sig = _signSpendingAuth(buyerPk, seller2, sid, 500_000, 1, deadline, 0, bytes32(0));
         vm.prank(seller2);
         vm.expectRevert(AntseedEscrow.SessionExists.selector);
@@ -699,7 +708,7 @@ contract AntseedEscrowReserveTest is AntseedEscrowTestBase {
         // nobody has no stake
 
         bytes32 sid = keccak256("ns");
-        uint256 deadline = block.timestamp + 3600;
+        uint256 deadline = block.timestamp + 90000;
         bytes memory sig = _signSpendingAuth(buyerPk, nobody, sid, 500_000, 1, deadline, 0, bytes32(0));
         vm.prank(nobody);
         vm.expectRevert(AntseedEscrow.InsufficientStake.selector);
@@ -883,7 +892,7 @@ contract AntseedEscrowAdminTest is AntseedEscrowTestBase {
 
         // Reserve should revert when paused
         bytes32 sid = keccak256("paused");
-        uint256 deadline = block.timestamp + 3600;
+        uint256 deadline = block.timestamp + 90000;
         bytes memory sig = _signSpendingAuth(buyerPk, seller, sid, 500_000, 1, deadline, 0, bytes32(0));
         vm.prank(seller);
         vm.expectRevert(Pausable.EnforcedPause.selector);
@@ -943,7 +952,7 @@ contract AntseedEscrowAdminTest is AntseedEscrowTestBase {
         // Session 3: proven sign chained to session 2
         bytes32 sid3 = keccak256("chain3");
         vm.warp(block.timestamp + escrow.PROVEN_SIGN_COOLDOWN() + 1);
-        uint256 deadline = block.timestamp + 3600;
+        uint256 deadline = block.timestamp + 90000;
         bytes memory sig = _signSpendingAuth(buyerPk, seller, sid3, 5_000_000, 3, deadline, 2_000_000, sid2);
         vm.prank(seller);
         escrow.reserve(buyer, sid3, 5_000_000, 3, deadline, 2_000_000, sid2, sig);

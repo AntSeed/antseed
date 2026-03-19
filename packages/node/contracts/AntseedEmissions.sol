@@ -258,6 +258,13 @@ contract AntseedEmissions {
         }
         seller = sr.pendingReward + (sr.points * (sellerRPP - sr.rewardPerPointPaid)) / 1e18;
 
+        // Apply per-seller cap (mirrors claimEmissions logic)
+        uint256 maxSellerReward =
+            (_calcEpochEmission(currentEpoch) * SELLER_SHARE_PCT * MAX_SELLER_SHARE_PCT) / 10000;
+        if (seller > maxSellerReward) {
+            seller = maxSellerReward;
+        }
+
         // Same for buyer
         BuyerReward memory br = buyerRewards[account];
         uint256 buyerRPP = buyerRewardPerPointStored;

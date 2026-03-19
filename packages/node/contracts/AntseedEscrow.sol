@@ -122,7 +122,7 @@ contract AntseedEscrow is EIP712, Pausable {
     mapping(address => SellerAccount) public sellers;
     mapping(address => uint256) public uniqueSellersCharged;
     mapping(address => mapping(address => bool)) private _buyerSellerPairs;
-    mapping(address => mapping(address => uint256)) public firstSessionTimestamp;
+
     mapping(address => mapping(address => bytes32)) public latestSessionId;
     mapping(address => uint256) public creditLimitOverride;
 
@@ -364,6 +364,7 @@ contract AntseedEscrow is EIP712, Pausable {
         // Basic validation
         if (sessions[sessionId].status != SessionStatus.None) revert SessionExists();
         if (block.timestamp > deadline) revert SessionExpired();
+        if (deadline < block.timestamp + SETTLE_TIMEOUT) revert SessionExpired();
         if (sellers[msg.sender].stake < MIN_SELLER_STAKE) revert InsufficientStake();
         if (sellers[msg.sender].tokenRate == 0) revert InvalidAmount();
 
@@ -392,7 +393,7 @@ contract AntseedEscrow is EIP712, Pausable {
         if (isFirstSign) {
             // First sign: enforce cap
             if (maxAmount > FIRST_SIGN_CAP) revert FirstSignCapExceeded();
-            firstSessionTimestamp[buyer][msg.sender] = block.timestamp;
+
         } else {
             // Proven sign: validate proof chain
             Session storage prevSession = sessions[previousSessionId];
@@ -542,7 +543,9 @@ contract AntseedEscrow is EIP712, Pausable {
         Session storage session = sessions[sessionId];
         if (session.status != SessionStatus.Reserved) revert SessionNotReserved();
         if (msg.sender != session.buyer && msg.sender != session.seller && msg.sender != owner) revert NotAuthorized();
-        if (block.timestamp < session.reservedAt + SETTLE_TIMEOUT) revert TimeoutNotReached();
+        // Allow timeout if either: (a) SETTLE_TIMEOUT elapsed, or (b) deadline passed
+        // This prevents limbo if deadline < reservedAt + SETTLE_TIMEOUT
+        if (block.timestamp < session.reservedAt + SETTLE_TIMEOUT && block.timestamp <= session.deadline) revert TimeoutNotReached();
 
         // Return credits
         BuyerAccount storage ba = buyers[session.buyer];

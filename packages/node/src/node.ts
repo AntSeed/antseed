@@ -989,7 +989,7 @@ export class AntseedNode extends EventEmitter {
           identityAddress: payments.identityAddress ?? '',
           chainId: payments.chainId ?? 8453,
           defaultMaxAmountUsdc: BigInt(payments.defaultMaxAmountUsdc ?? "1000000"),
-          defaultAuthDurationSecs: payments.defaultAuthDurationSecs ?? 3600,
+          defaultAuthDurationSecs: payments.defaultAuthDurationSecs ?? 90000, // Must exceed SETTLE_TIMEOUT (24h)
           autoAck: payments.autoAck ?? true,
           dataDir: paymentsDir,
         };
