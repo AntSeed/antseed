@@ -91,7 +91,7 @@ function PeerRow({ peer, isSelf }: { peer: PeerInfo; isSelf: boolean }) {
         <SourceBadge source={peer.source} />
       </div>
       <div className="peer-row-providers">
-        {peer.providers.map((p) => (
+        {(peer.providers ?? []).map((p) => (
           <span key={p} className={`provider-chip provider-${p}`}>{p}</span>
         ))}
       </div>
@@ -170,7 +170,7 @@ export function Overview() {
   const capacityPercent = status.capacityUsedPercent ?? 0;
   const peers: PeerInfo[] = (network?.peers ?? []).map((p) => ({
     peerId: p.peerId,
-    providers: p.providers,
+    providers: p.providers ?? [],
     capacityMsgPerHour: p.capacityMsgPerHour,
     inputUsdPerMillion: p.inputUsdPerMillion,
     outputUsdPerMillion: p.outputUsdPerMillion,
