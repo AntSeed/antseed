@@ -201,6 +201,10 @@ export class BuyerPaymentManager {
       debugWarn(`[BuyerPayment] Receipt for unknown seller: ${sellerPeerId.slice(0, 12)}...`);
       return;
     }
+    if (session.sessionId !== receipt.sessionId) {
+      debugWarn(`[BuyerPayment] Receipt session ID mismatch: active=${session.sessionId.slice(0, 18)}... receipt=${receipt.sessionId.slice(0, 18)}... — discarding stale receipt`);
+      return;
+    }
 
     // Verify seller's Ed25519 signature
     try {

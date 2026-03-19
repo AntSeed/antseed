@@ -91,6 +91,8 @@ contract AntseedEmissions {
     // ─── Constructor ───
     constructor(address _antsToken, uint256 _initialEmission, uint256 _epochDuration) {
         if (_antsToken == address(0)) revert InvalidAddress();
+        if (_initialEmission == 0) revert InvalidValue();
+        if (_epochDuration == 0) revert InvalidValue();
         owner = msg.sender;
         antsToken = IANTSToken(_antsToken);
         INITIAL_EMISSION = _initialEmission;
