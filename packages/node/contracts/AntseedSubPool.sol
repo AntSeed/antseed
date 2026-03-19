@@ -323,8 +323,10 @@ contract AntseedSubPool {
                     // Settle earned with old snapshot weight before updating
                     uint256 earned = (w * (rewardPerTokenStored - peerRewardPerTokenPaid[peer])) / 1e18;
                     peerOpts[peer].pendingRevenue += earned;
-                    peerRewardPerTokenPaid[peer] = rewardPerTokenStored;
                 }
+                // Always sync paid marker — even for zero-weight peers — so they
+                // can't retroactively claim deltas from epochs they didn't participate in.
+                peerRewardPerTokenPaid[peer] = rewardPerTokenStored;
                 // Snapshot current reputation as weight for the new epoch
                 PeerOpt storage opt = peerOpts[peer];
                 IAntseedIdentity.ProvenReputation memory rep = identityContract.getReputation(opt.tokenId);
