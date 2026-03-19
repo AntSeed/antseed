@@ -103,20 +103,30 @@ export class SellerPaymentManager {
       // 2. Settle prior session if exists
       const priorSession = this._sessionStore.getActiveSessionByPeer(buyerPeerId, 'seller');
       if (priorSession && priorSession.status === 'active') {
+        const buyerClaimed = BigInt(payload.previousConsumption);
+        const sellerDelivered = BigInt(priorSession.tokensDelivered);
+
+        // Always settle on-chain with seller's delivery records (get paid for actual work)
+        // Then check if buyer's claim matches — if not, reject the new SpendingAuth
         try {
-          // Must settle with buyer's claimed value — the proof chain requires
-          // previousConsumption == prevSession.settledTokenCount on-chain.
-          // Buyer under-reporting is bounded by the first-sign cap and the
-          // seller can refuse to reserve if the claim seems too low.
-          const prevConsumption = BigInt(payload.previousConsumption);
-          debugLog(`[SellerPayment] Settling prior session ${priorSession.sessionId.slice(0, 18)}... tokens=${prevConsumption}`);
-          await this._escrowClient.settle(this._signer, priorSession.sessionId, prevConsumption);
-          this._sessionStore.updateSessionStatus(priorSession.sessionId, 'settled', prevConsumption.toString());
+          const settleAmount = sellerDelivered > buyerClaimed ? sellerDelivered : buyerClaimed;
+          debugLog(`[SellerPayment] Settling prior session ${priorSession.sessionId.slice(0, 18)}... tokens=${settleAmount} (buyer=${buyerClaimed} seller=${sellerDelivered})`);
+          await this._escrowClient.settle(this._signer, priorSession.sessionId, settleAmount);
+          this._sessionStore.updateSessionStatus(priorSession.sessionId, 'settled', settleAmount.toString());
           this._topUpRequested.delete(priorSession.sessionId);
         } catch (err) {
           debugWarn(`[SellerPayment] Failed to settle prior session: ${err instanceof Error ? err.message : err}`);
-          // Continue with reserve even if settle fails — the new auth itself
-          // references previousConsumption for on-chain verification.
+        }
+
+        // If buyer understated consumption, reject the new SpendingAuth.
+        // The on-chain settledTokenCount won't match buyer's previousConsumption,
+        // so reserve() would revert anyway. Buyer must re-sign with correct value.
+        if (sellerDelivered > 0n && buyerClaimed < sellerDelivered * 80n / 100n) {
+          debugWarn(
+            `[SellerPayment] Rejecting SpendingAuth — buyer under-reports consumption: ` +
+            `claimed=${buyerClaimed} delivered=${sellerDelivered}`
+          );
+          return;
         }
       }
 
