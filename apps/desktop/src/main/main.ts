@@ -2,7 +2,6 @@ import {
   app,
   BrowserWindow,
   ipcMain,
-  safeStorage,
   shell,
   Menu,
   dialog,
@@ -11,7 +10,7 @@ import {
 } from 'electron';
 import electronUpdater from 'electron-updater';
 const { autoUpdater } = electronUpdater;
-import { readFile, writeFile, readdir, mkdir, cp, unlink } from 'node:fs/promises';
+import { readFile, writeFile, readdir, mkdir, cp } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { execFile as execFileCallback } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -28,11 +27,6 @@ import {
 } from './process-manager.js';
 import { registerPiChatHandlers } from './pi-chat-engine.js';
 import { WalletConnectManager } from './walletconnect.js';
-import type { Identity } from '@antseed/node';
-import { hexToBytes, bytesToHex, toPeerId } from '@antseed/node';
-import * as ed from '@noble/ed25519';
-import { sha512 } from '@noble/hashes/sha512';
-ed.etc.sha512Sync = (...m: Uint8Array[]) => sha512(ed.etc.concatBytes(...m));
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -204,124 +198,6 @@ const DASHBOARD_ENDPOINTS: ReadonlySet<DashboardEndpoint> = new Set([
 let mainWindow: BrowserWindow | null = null;
 const logBuffer: LogEvent[] = [];
 let lastRuntimeActivityHash = '';
-
-// ── Secure Identity (Electron safeStorage) ──
-// Uses Electron's safeStorage API to encrypt the identity private key at rest.
-// The encrypted blob is stored in a file; the OS keychain protects the encryption key.
-
-const ENCRYPTED_IDENTITY_PATH = path.join(homedir(), '.antseed', 'identity.enc');
-const PLAINTEXT_IDENTITY_PATH = path.join(homedir(), '.antseed', 'identity.key');
-
-let secureIdentity: Identity | null = null;
-let secureIdentityPromise: Promise<void> | null = null;
-let _safeStorageReady: boolean | null = null;
-
-function safeStorageAvailable(): boolean {
-  if (_safeStorageReady === null) {
-    try {
-      _safeStorageReady = safeStorage.isEncryptionAvailable();
-    } catch {
-      _safeStorageReady = false;
-    }
-  }
-  return _safeStorageReady;
-}
-
-function identityFromHex(hex: string): Identity {
-  const privateKey = hexToBytes(hex);
-  const publicKey = ed.getPublicKey(privateKey);
-  return { peerId: toPeerId(bytesToHex(publicKey)), privateKey, publicKey };
-}
-
-async function loadEncryptedIdentity(): Promise<string | null> {
-  try {
-    const encrypted = await readFile(ENCRYPTED_IDENTITY_PATH);
-    const decrypted = safeStorage.decryptString(encrypted);
-    const trimmed = decrypted.trim();
-    return trimmed.length > 0 ? trimmed : null;
-  } catch {
-    return null;
-  }
-}
-
-async function saveEncryptedIdentity(hexKey: string): Promise<void> {
-  const encrypted = safeStorage.encryptString(hexKey);
-  await mkdir(path.dirname(ENCRYPTED_IDENTITY_PATH), { recursive: true });
-  await writeFile(ENCRYPTED_IDENTITY_PATH, encrypted, { mode: 0o600 });
-}
-
-function secureIdentityEnv(): Record<string, string> {
-  if (!secureIdentity) return {};
-  return { ANTSEED_IDENTITY_HEX: bytesToHex(secureIdentity.privateKey) };
-}
-
-async function ensureSecureIdentity(): Promise<void> {
-  if (secureIdentity) return;
-  if (secureIdentityPromise) {
-    await secureIdentityPromise;
-    return;
-  }
-
-  const attempt = (async () => {
-    try {
-      if (!safeStorageAvailable()) {
-        console.warn('[desktop] safeStorage not available — skipping secure identity');
-        return;
-      }
-
-      // 1. Try loading from encrypted store
-      const encHex = await loadEncryptedIdentity();
-      if (encHex) {
-        secureIdentity = identityFromHex(encHex);
-        console.log(`[desktop] secure identity loaded from encrypted store: ${secureIdentity.peerId.slice(0, 12)}...`);
-        return;
-      }
-
-      // 2. Migrate existing plaintext file identity into encrypted store
-      let migratedHex: string | null = null;
-      try {
-        const raw = await readFile(PLAINTEXT_IDENTITY_PATH, 'utf-8');
-        const trimmed = raw.trim();
-        if (trimmed.length > 0) {
-          migratedHex = trimmed;
-        }
-      } catch {
-        // No existing file identity.
-      }
-
-      if (migratedHex) {
-        await saveEncryptedIdentity(migratedHex);
-        secureIdentity = identityFromHex(migratedHex);
-        await unlink(PLAINTEXT_IDENTITY_PATH).catch((unlinkErr) => {
-          console.warn(`[desktop] Failed to delete plaintext identity file after migration: ${unlinkErr instanceof Error ? unlinkErr.message : String(unlinkErr)}. Delete ${PLAINTEXT_IDENTITY_PATH} manually.`);
-        });
-        console.log(`[desktop] secure identity migrated from plaintext: ${secureIdentity.peerId.slice(0, 12)}...`);
-        return;
-      }
-
-      // 3. No identity anywhere — create fresh and encrypt
-      const privateKey = ed.utils.randomPrivateKey();
-      const newHex = bytesToHex(privateKey);
-      await saveEncryptedIdentity(newHex);
-      secureIdentity = identityFromHex(newHex);
-      console.log(`[desktop] secure identity created: ${secureIdentity.peerId.slice(0, 12)}...`);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(`[desktop] secure identity init failed: ${message}`);
-    }
-  })();
-
-  secureIdentityPromise = attempt;
-  try {
-    await attempt;
-  } finally {
-    // Reset on transient failure so a subsequent call can retry.
-    // If safeStorage is permanently unavailable, keep the promise so we don't re-warn.
-    if (!secureIdentity && safeStorageAvailable() && secureIdentityPromise === attempt) {
-      secureIdentityPromise = null;
-    }
-  }
-}
 
 let appSetupNeeded = false;
 let appSetupComplete = false;
@@ -1717,15 +1593,12 @@ ipcMain.handle('runtime:start', async (_event, options: StartOptions) => {
     };
   }
 
-  await ensureSecureIdentity();
-
   const startOptions: StartOptions = {
     ...options,
     ...(desktopDebugEnabled ? { verbose: true } : {}),
     env: {
       ...(options.env ?? {}),
       ...(desktopDebugEnabled ? { ANTSEED_DEBUG: '1' } : {}),
-      ...secureIdentityEnv(),
     },
   };
   if (desktopDebugEnabled) {
@@ -1778,22 +1651,6 @@ ipcMain.handle('app:get-setup-status', () => ({
   needed: appSetupNeeded,
   complete: appSetupComplete,
 }));
-
-ipcMain.handle('identity:get', async () => {
-  try {
-    await ensureSecureIdentity();
-    if (!secureIdentity) {
-      return { ok: false, data: null, error: 'Identity not available (safeStorage may not be ready)' };
-    }
-    return {
-      ok: true,
-      data: { peerId: secureIdentity.peerId },
-      error: null,
-    };
-  } catch (err) {
-    return { ok: false, data: null, error: err instanceof Error ? err.message : String(err) };
-  }
-});
 
 ipcMain.handle('plugins:list', async () => {
   try {
@@ -2065,16 +1922,11 @@ registerPiChatHandlers({
       return true;
     }
 
-    await ensureSecureIdentity();
-
     const startOptions: StartOptions = {
       mode: 'connect',
       router: 'local',
       ...(desktopDebugEnabled ? { verbose: true } : {}),
-      env: {
-        ...(desktopDebugEnabled ? { ANTSEED_DEBUG: '1' } : {}),
-        ...secureIdentityEnv(),
-      },
+      env: desktopDebugEnabled ? { ANTSEED_DEBUG: '1' } : undefined,
     };
 
     try {
@@ -2135,11 +1987,6 @@ app.whenReady().then(() => {
   createApplicationMenu();
 
   createWindow();
-
-  // Pre-load identity from encrypted store so it's ready before the first CLI spawn.
-  void ensureSecureIdentity().catch(() => {
-    // Failure is logged inside ensureSecureIdentity; CLI falls back to file-based identity.
-  });
 
   void startDashboardRuntime().catch(() => {
     // Failure is already logged to renderer/system log.

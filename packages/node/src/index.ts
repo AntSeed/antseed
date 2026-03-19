@@ -14,14 +14,7 @@ export type { Router } from './interfaces/buyer-router.js';
 export * from './types/index.js';
 
 // Submodule re-exports (commonly used)
-export {
-  loadOrCreateIdentity,
-  type Identity,
-  type IdentityStore,
-  FileIdentityStore,
-  hexToBytes,
-  bytesToHex,
-} from './p2p/identity.js';
+export { loadOrCreateIdentity, type Identity } from './p2p/identity.js';
 export { DHTNode, DEFAULT_DHT_CONFIG } from './discovery/dht-node.js';
 export { OFFICIAL_BOOTSTRAP_NODES, mergeBootstrapNodes, toBootstrapConfig } from './discovery/bootstrap.js';
 export {

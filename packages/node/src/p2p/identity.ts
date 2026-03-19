@@ -26,87 +26,30 @@ export interface Identity {
 }
 
 /**
- * Pluggable storage backend for identity private keys.
+ * Load an existing identity from disk, or create and persist a new one.
+ * The private key is stored as hex in ~/.antseed/identity.key.
  */
-export interface IdentityStore {
-  /** Load the private key hex string, or return null if not found. */
-  load(): Promise<string | null>;
-  /** Persist the private key hex string. */
-  save(hexKey: string): Promise<void>;
-}
+export async function loadOrCreateIdentity(configDir?: string): Promise<Identity> {
+  const dir = configDir ?? CONFIG_DIR;
+  const keyPath = join(dir, PRIVATE_KEY_FILE);
 
-/**
- * Stores identity private key as a hex file on disk (default behavior).
- */
-export class FileIdentityStore implements IdentityStore {
-  private readonly keyPath: string;
-  private readonly dir: string;
-
-  constructor(configDir?: string) {
-    this.dir = configDir ?? CONFIG_DIR;
-    this.keyPath = join(this.dir, PRIVATE_KEY_FILE);
-  }
-
-  async load(): Promise<string | null> {
-    try {
-      const hexKey = (await readFile(this.keyPath, "utf-8")).trim();
-      return hexKey.length > 0 ? hexKey : null;
-    } catch {
-      return null;
-    }
-  }
-
-  async save(hexKey: string): Promise<void> {
-    await mkdir(this.dir, { recursive: true });
-    await writeFile(this.keyPath, hexKey, { mode: 0o600 });
-  }
-}
-
-/** Environment variable for passing identity hex from a parent process (e.g. desktop → CLI). */
-const IDENTITY_HEX_ENV = 'ANTSEED_IDENTITY_HEX';
-
-/**
- * Load an existing identity or create and persist a new one.
- *
- * Accepts either a config directory path (legacy file-based storage)
- * or an IdentityStore instance for pluggable backends (e.g. keytar).
- *
- * If the ANTSEED_IDENTITY_HEX env var is set, it is used directly
- * (e.g. when the desktop app injects identity from the keychain).
- */
-export async function loadOrCreateIdentity(configDirOrStore?: string | IdentityStore): Promise<Identity> {
-  // Check for identity injected via environment (desktop → CLI child process).
-  // The CLI clears the variable after reading to limit exposure in /proc/<pid>/environ.
-  const envHex = process.env[IDENTITY_HEX_ENV]?.trim();
-  if (envHex && envHex.length === 64) {
-    delete process.env[IDENTITY_HEX_ENV];
-    const privateKey = hexToBytes(envHex);
+  try {
+    const hexKey = (await readFile(keyPath, "utf-8")).trim();
+    const privateKey = hexToBytes(hexKey);
     const publicKey = await ed.getPublicKeyAsync(privateKey);
     const peerId = toPeerId(bytesToHex(publicKey));
     return { peerId, privateKey, publicKey };
-  }
-
-  const store: IdentityStore =
-    configDirOrStore === undefined || typeof configDirOrStore === 'string'
-      ? new FileIdentityStore(configDirOrStore)
-      : configDirOrStore;
-
-  const existingHex = await store.load();
-  if (existingHex) {
-    const privateKey = hexToBytes(existingHex);
+  } catch {
+    // Key doesn't exist — generate a new one.
+    const privateKey = ed.utils.randomPrivateKey();
     const publicKey = await ed.getPublicKeyAsync(privateKey);
     const peerId = toPeerId(bytesToHex(publicKey));
+
+    await mkdir(dir, { recursive: true });
+    await writeFile(keyPath, bytesToHex(privateKey), { mode: 0o600 });
+
     return { peerId, privateKey, publicKey };
   }
-
-  // Key doesn't exist — generate a new one.
-  const privateKey = ed.utils.randomPrivateKey();
-  const publicKey = await ed.getPublicKeyAsync(privateKey);
-  const peerId = toPeerId(bytesToHex(publicKey));
-
-  await store.save(bytesToHex(privateKey));
-
-  return { peerId, privateKey, publicKey };
 }
 
 /** Sign arbitrary data with the local identity's private key. */
