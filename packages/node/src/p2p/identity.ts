@@ -76,8 +76,10 @@ const IDENTITY_HEX_ENV = 'ANTSEED_IDENTITY_HEX';
  */
 export async function loadOrCreateIdentity(configDirOrStore?: string | IdentityStore): Promise<Identity> {
   // Check for identity injected via environment (desktop → CLI child process).
+  // The CLI clears the variable after reading to limit exposure in /proc/<pid>/environ.
   const envHex = process.env[IDENTITY_HEX_ENV]?.trim();
-  if (envHex && envHex.length > 0) {
+  if (envHex && envHex.length === 64) {
+    delete process.env[IDENTITY_HEX_ENV];
     const privateKey = hexToBytes(envHex);
     const publicKey = await ed.getPublicKeyAsync(privateKey);
     const peerId = toPeerId(bytesToHex(publicKey));

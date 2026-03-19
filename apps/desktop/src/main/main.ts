@@ -313,8 +313,9 @@ async function ensureSecureIdentity(): Promise<void> {
   try {
     await attempt;
   } finally {
-    // Reset on failure so a subsequent call can retry.
-    if (!secureIdentity && secureIdentityPromise === attempt) {
+    // Reset on transient failure so a subsequent call can retry.
+    // If safeStorage is permanently unavailable, keep the promise so we don't re-warn.
+    if (!secureIdentity && safeStorageAvailable() && secureIdentityPromise === attempt) {
       secureIdentityPromise = null;
     }
   }
