@@ -156,6 +156,9 @@ importers:
       fastify:
         specifier: ^5.7.4
         version: 5.7.4
+      keytar:
+        specifier: ^7.9.0
+        version: 7.9.0
       marked:
         specifier: ^17.0.4
         version: 17.0.4
