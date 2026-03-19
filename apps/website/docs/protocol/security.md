@@ -74,7 +74,7 @@ Keep only the minimum balance needed for active operations in the derived wallet
 |---|---|
 | **Desktop app** | Encrypted at rest via OS keychain (macOS Keychain / Windows DPAPI / Linux libsecret). Plaintext file deleted after migration. |
 | **Server (recommended)** | Inject via `ANTSEED_IDENTITY_HEX` env var from a secrets manager. The variable is cleared from the process environment immediately after read. |
-| **Server (default)** | Plaintext file at `~/.antseed/identity.key` with `0600` permissions. |
+| **Server (default)** | ⚠️ Plaintext file at `~/.antseed/identity.key` with `0600` permissions. **Not recommended** — any process running as your user can read the key and access your on-chain funds. Use a secrets manager instead. |
 | **Custom** | Implement the `IdentityStore` interface for KMS, HSM, or any backend. |
 
 ## Best Practices

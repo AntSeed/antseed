@@ -33,7 +33,7 @@ Identity loading follows this priority:
 |---|---|---|
 | **Environment variable** | Set `ANTSEED_IDENTITY_HEX` to 64 hex chars | Server deployments with secrets managers (AWS SSM, Vault) |
 | **Encrypted file** | `~/.antseed/identity.enc` (AntSeed Desktop only) | Desktop users — encrypted via OS keychain |
-| **Plaintext file** | `~/.antseed/identity.key` with `0600` permissions | CLI on trusted machines |
+| **Plaintext file** ⚠️ | `~/.antseed/identity.key` with `0600` permissions | **Not recommended** — use env var or encrypted store instead |
 | **Custom store** | Implement `IdentityStore` interface in `@antseed/node` | Custom integrations (KMS, HSM, etc.) |
 
 ### Environment Variable (Recommended for Servers)
@@ -56,7 +56,11 @@ The variable is cleared from the process environment immediately after the node 
 
 AntSeed Desktop encrypts the identity at rest using the OS keychain (macOS Keychain / Windows DPAPI / Linux libsecret). On first launch, any existing plaintext `identity.key` is migrated to the encrypted store (`identity.enc`) and the plaintext file is deleted.
 
-### Plaintext File (Default CLI)
+### Plaintext File (Default CLI — Not Recommended)
+
+:::danger Unsafe for production
+The plaintext file stores your private key unencrypted on disk. Since this key also controls your on-chain wallet, any process running as your user can read it and access your funds. Use `ANTSEED_IDENTITY_HEX` with a secrets manager or the Desktop app's encrypted storage instead.
+:::
 
 Generated automatically on first run. The private key seed is stored as 64 hex characters in `~/.antseed/identity.key` with `0600` permissions.
 
