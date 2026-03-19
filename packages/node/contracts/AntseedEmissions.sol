@@ -226,9 +226,12 @@ contract AntseedEmissions {
         uint256 sellerReward = sellerRewards[msg.sender].pendingReward;
         uint256 buyerReward = buyerRewards[msg.sender].pendingReward;
 
-        // Enforce per-seller cap (MAX_SELLER_SHARE_PCT of seller pool for current epoch)
+        // Enforce per-seller cap (MAX_SELLER_SHARE_PCT of seller pool).
+        // Use INITIAL_EMISSION (not current epoch) so the cap doesn't shrink
+        // after halvings — otherwise infrequent claimers who accumulate across
+        // a halving boundary lose rewards to the reserve unfairly.
         uint256 maxSellerReward =
-            (_calcEpochEmission(currentEpoch) * SELLER_SHARE_PCT * MAX_SELLER_SHARE_PCT) / 10000;
+            (INITIAL_EMISSION * SELLER_SHARE_PCT * MAX_SELLER_SHARE_PCT) / 10000;
         if (sellerReward > maxSellerReward) {
             uint256 excess = sellerReward - maxSellerReward;
             sellerReward = maxSellerReward;
@@ -260,7 +263,7 @@ contract AntseedEmissions {
 
         // Apply per-seller cap (mirrors claimEmissions logic)
         uint256 maxSellerReward =
-            (_calcEpochEmission(currentEpoch) * SELLER_SHARE_PCT * MAX_SELLER_SHARE_PCT) / 10000;
+            (INITIAL_EMISSION * SELLER_SHARE_PCT * MAX_SELLER_SHARE_PCT) / 10000;
         if (seller > maxSellerReward) {
             seller = maxSellerReward;
         }

@@ -124,6 +124,7 @@ contract AntseedEscrow is EIP712, Pausable {
     mapping(address => mapping(address => bool)) private _buyerSellerPairs;
 
     mapping(address => mapping(address => bytes32)) public latestSessionId;
+    mapping(address => uint256) public activeSessionCount;
     mapping(address => uint256) public creditLimitOverride;
 
     // ─── Events ─────────────────────────────────────────────────────────
@@ -153,6 +154,7 @@ contract AntseedEscrow is EIP712, Pausable {
     error NotRegistered();
     error NotAuthorized();
     error Reentrancy();
+    error ActiveSessions();
     error TimeoutNotReached();
     error InactivityNotReached();
     error InvalidFee();
@@ -309,6 +311,7 @@ contract AntseedEscrow is EIP712, Pausable {
     function unstake() external nonReentrant {
         SellerAccount storage sa = sellers[msg.sender];
         if (sa.stake == 0) revert InsufficientStake();
+        if (activeSessionCount[msg.sender] > 0) revert ActiveSessions();
 
         uint256 slashAmount = _calculateSlash(msg.sender);
         uint256 payout = sa.stake - slashAmount;
@@ -444,8 +447,9 @@ contract AntseedEscrow is EIP712, Pausable {
             isQualifiedProvenSign: isQualifiedProvenSign
         });
 
-        // Update latest session for this buyer-seller pair
+        // Update latest session and active count for this buyer-seller pair
         latestSessionId[buyer][msg.sender] = sessionId;
+        activeSessionCount[msg.sender]++;
 
         // Update reputation on identity contract
         uint256 sellerTokenId = identityContract.getTokenId(msg.sender);
@@ -519,6 +523,7 @@ contract AntseedEscrow is EIP712, Pausable {
         session.settledAmount = chargeAmount;
         session.settledTokenCount = effectiveTokenCount;
         session.status = SessionStatus.Settled;
+        activeSessionCount[msg.sender]--;
 
         // Transfer platform fee to protocol reserve
         if (platformFee > 0 && protocolReserve != address(0)) {
@@ -562,6 +567,7 @@ contract AntseedEscrow is EIP712, Pausable {
         }
 
         session.status = SessionStatus.TimedOut;
+        activeSessionCount[session.seller]--;
 
         emit SettledTimeout(sessionId, session.buyer, session.seller);
     }
