@@ -166,7 +166,7 @@ export function Overview() {
 
   if (!status) return <div className="loading"><div className="loading-spinner" /><span>Loading dashboard...</span></div>;
 
-  const chartData = earnings?.daily.map((d) => ({ date: d.date, amount: parseFloat(d.amount) })) ?? [];
+  const chartData = (earnings?.daily ?? []).map((d) => ({ date: d.date, amount: parseFloat(d.amount) }));
   const capacityPercent = status.capacityUsedPercent ?? 0;
   const peers: PeerInfo[] = (network?.peers ?? []).map((p) => ({
     peerId: p.peerId,

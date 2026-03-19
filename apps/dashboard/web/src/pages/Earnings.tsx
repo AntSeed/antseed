@@ -31,12 +31,12 @@ export function Earnings() {
 
   if (!earnings) return <div className="loading">Loading...</div>;
 
-  const lineData = earnings.daily.map((d) => ({
+  const lineData = (earnings.daily ?? []).map((d) => ({
     date: d.date,
     amount: parseFloat(d.amount),
   }));
 
-  const pieData = earnings.byProvider.map((p) => ({
+  const pieData = (earnings.byProvider ?? []).map((p) => ({
     name: p.provider,
     value: parseFloat(p.amount),
   }));
