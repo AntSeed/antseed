@@ -37,7 +37,7 @@ export interface NetworkStats {
 
 const SCAN_INTERVAL_MS = 30_000;
 /** Peers not seen for this long are evicted from the cache. */
-const PEER_TTL_MS = 5 * 60_000;
+export const PEER_TTL_MS = 5 * 60_000;
 
 function serviceNamesFromMetadata(
   metadata: Pick<PeerMetadata, 'providers'> | null | undefined,
