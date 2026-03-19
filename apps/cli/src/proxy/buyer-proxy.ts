@@ -979,6 +979,36 @@ export class BuyerProxy {
     this._cachedPeers = incoming
     this._cacheLastUpdatedAtMs = Date.now()
     this._cacheMutationEpoch += 1
+    this._persistPeersToState()
+  }
+
+  private _persistPeersToState(): void {
+    // Write discovered peers to buyer.state.json so the dashboard can read them
+    // without running its own DHT node.
+    const peers = this._cachedPeers.map((p) => ({
+      peerId: p.peerId,
+      displayName: p.displayName ?? null,
+      publicAddress: p.publicAddress ?? null,
+      providers: p.providers,
+      defaultInputUsdPerMillion: p.defaultInputUsdPerMillion ?? 0,
+      defaultOutputUsdPerMillion: p.defaultOutputUsdPerMillion ?? 0,
+      maxConcurrency: p.maxConcurrency ?? 0,
+      lastSeen: p.lastSeen,
+    }))
+    // Fire-and-forget merge into buyer.state.json — best effort, don't block routing.
+    void (async () => {
+      try {
+        let existing: Record<string, unknown> = {}
+        try {
+          const raw = await readFile(BUYER_STATE_FILE, 'utf-8')
+          existing = JSON.parse(raw) as Record<string, unknown>
+        } catch { /* file doesn't exist yet */ }
+        const data = { ...existing, discoveredPeers: peers, peersUpdatedAt: Date.now() }
+        const tmp = join(homedir(), '.antseed', `.buyer.state.${randomUUID()}.json.tmp`)
+        await writeFile(tmp, JSON.stringify(data, null, 2))
+        await rename(tmp, BUYER_STATE_FILE)
+      } catch { /* non-fatal */ }
+    })()
   }
 
   private _evictPeer(peerId: string): void {

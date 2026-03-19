@@ -168,6 +168,7 @@ type InstalledPlugin = {
 
 const DEFAULT_DASHBOARD_PORT = 3117;
 const DEFAULT_CONFIG_PATH = path.join(homedir(), '.antseed', 'config.json');
+const DEFAULT_BUYER_STATE_PATH = path.join(homedir(), '.antseed', 'buyer.state.json');
 const DEFAULT_PLUGINS_DIR = path.join(homedir(), '.antseed', 'plugins');
 const DEFAULT_PLUGINS_PACKAGE_JSON = path.join(DEFAULT_PLUGINS_DIR, 'package.json');
 const SAFE_PLUGIN_PACKAGE_PATTERN = /^(@?[a-z0-9][a-z0-9._-]*)(\/[a-z0-9][a-z0-9._-]*)?$/i;
@@ -1214,7 +1215,10 @@ async function startDashboardRuntime(port?: number): Promise<void> {
 
     try {
       const config = await loadDashboardConfig(ACTIVE_CONFIG_PATH);
-      dashboardServer = await createDashboardServer(config, targetPort, { configPath: ACTIVE_CONFIG_PATH });
+      dashboardServer = await createDashboardServer(config, targetPort, {
+        configPath: ACTIVE_CONFIG_PATH,
+        buyerStateFile: DEFAULT_BUYER_STATE_PATH,
+      });
       await dashboardServer.start();
 
       dashboardRuntime.running = true;
