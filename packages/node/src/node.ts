@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import type { Identity } from "./p2p/identity.js";
+import type { Identity, IdentityStore } from "./p2p/identity.js";
 import { loadOrCreateIdentity } from "./p2p/identity.js";
 import type { PeerId } from "./types/peer.js";
 import type { PeerInfo, TokenPricingUsdPerMillion } from "./types/peer.js";
@@ -126,6 +126,8 @@ export interface NodeConfig {
   dhtOperationTimeoutMs?: number;
   /** Optional seller-side payment runtime wiring. */
   payments?: NodePaymentsConfig;
+  /** Pluggable identity storage backend. When set, takes precedence over dataDir for identity loading. */
+  identityStore?: IdentityStore;
 }
 
 interface SellerSessionState {
@@ -305,7 +307,7 @@ export class AntseedNode extends EventEmitter {
     const dataDir = this._config.dataDir ?? join(homedir(), ".antseed");
 
     // Load or create identity
-    this._identity = await loadOrCreateIdentity(dataDir);
+    this._identity = await loadOrCreateIdentity(this._config.identityStore ?? dataDir);
     debugLog(`[Node] Identity loaded: ${this._identity.peerId.slice(0, 12)}...`);
 
     // Determine bootstrap nodes — merge official + any user-configured nodes unless
