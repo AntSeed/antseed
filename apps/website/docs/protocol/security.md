@@ -51,6 +51,17 @@ All communication happens over an untrusted network. Every trust-critical operat
 | Metadata fetch timeout | 2 s |
 | Max inbound connections per IP | 10 |
 
+## Identity Key Protection
+
+The Ed25519 private key is the root of trust for your node — it signs metadata, connection handshakes, and metering receipts, and derives your EVM wallet address.
+
+| Environment | Protection |
+|---|---|
+| **Desktop app** | Encrypted at rest via OS keychain (macOS Keychain / Windows DPAPI / Linux libsecret). Plaintext file deleted after migration. |
+| **Server (recommended)** | Inject via `ANTSEED_IDENTITY_HEX` env var from a secrets manager. The variable is cleared from the process environment immediately after read. |
+| **Server (default)** | Plaintext file at `~/.antseed/identity.key` with `0600` permissions. |
+| **Custom** | Implement the `IdentityStore` interface for KMS, HSM, or any backend. |
+
 ## Best Practices
 
 1. Keep `allowPrivateIPs=false` in production.
@@ -58,3 +69,5 @@ All communication happens over an untrusted network. Every trust-critical operat
 3. Prefer WebRTC transport for end-to-end encryption.
 4. Use dedicated wallets for escrow operations.
 5. Tune upload/stream caps if workloads are predictable.
+6. On servers, use `ANTSEED_IDENTITY_HEX` with a secrets manager instead of storing keys on disk.
+7. Back up your identity key — losing it means a new PeerId and EVM wallet address.

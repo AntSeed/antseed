@@ -126,6 +126,7 @@ interface NodeConfig {
   displayName?: string;       // Optional human-readable name announced in metadata
   publicAddress?: string;     // Optional public host:port override announced in metadata
   dataDir?: string;           // Default: ~/.antseed
+  identityStore?: IdentityStore; // Pluggable identity storage backend
   dhtPort?: number;           // Default: 6881 for seller, 0 (OS-assigned) for buyer
   signalingPort?: number;     // Default: 6882 for seller
   bootstrapNodes?: Array<{ host: string; port: number }>;
@@ -147,6 +148,7 @@ interface NodeConfig {
 | `displayName` | unset | Optional node label included in discovery metadata |
 | `publicAddress` | unset | Optional public `host:port` advertised in signed metadata and preferred by buyers over the raw DHT source address |
 | `dataDir` | `~/.antseed` | Directory for identity keys, metering DB, and config |
+| `identityStore` | `FileIdentityStore` | Pluggable identity storage backend (see [Identity Storage](#identity-storage)) |
 | `dhtPort` | `6881` / `0` | UDP port for DHT. Seller defaults to 6881, buyer uses OS-assigned |
 | `signalingPort` | `6882` | TCP port for P2P signaling and incoming connections (seller only) |
 | `bootstrapNodes` | AntSeed nodes | Additional DHT bootstrap nodes merged with the official AntSeed infrastructure |
@@ -160,6 +162,72 @@ const node = new AntseedNode({
   publicAddress: 'peer.example.com:6882',
 });
 ```
+
+## Identity Storage
+
+Every node has an Ed25519 identity keypair. The private key seed (32 bytes, stored as 64 hex characters) is used to sign metadata, connection handshakes, and metering receipts. Your PeerId is the hex-encoded public key.
+
+### Storage Backends
+
+Identity loading follows this priority:
+
+1. **Environment variable** — if `ANTSEED_IDENTITY_HEX` is set (64 hex chars), it is used directly and cleared from the environment immediately after read. Useful for injecting keys from secrets managers without touching disk.
+2. **IdentityStore** — if `identityStore` is passed in `NodeConfig`, it is used to load/save the key.
+3. **File** — default. Reads/writes `identity.key` in `dataDir` (`~/.antseed/` by default) with `0600` permissions.
+
+If no identity is found, a new keypair is generated and persisted via the active store.
+
+### File Store (Default)
+
+```ts
+import { AntseedNode, FileIdentityStore } from '@antseed/node';
+
+const node = new AntseedNode({
+  role: 'seller',
+  // These are equivalent — FileIdentityStore is the default:
+  identityStore: new FileIdentityStore('/path/to/config-dir'),
+  // dataDir: '/path/to/config-dir',
+});
+```
+
+### Environment Variable
+
+Pass the private key hex from a secrets manager (AWS SSM, HashiCorp Vault, etc.):
+
+```bash
+export ANTSEED_IDENTITY_HEX="$(vault kv get -field=key secret/antseed/identity)"
+antseed seed --provider anthropic
+```
+
+The variable is cleared from the process environment immediately after consumption.
+
+### Custom Store
+
+Implement the `IdentityStore` interface for any backend:
+
+```ts
+import { AntseedNode, type IdentityStore } from '@antseed/node';
+
+class VaultIdentityStore implements IdentityStore {
+  async load(): Promise<string | null> {
+    // Read 64-char hex string from your backend
+    return await vault.getSecret('antseed-identity');
+  }
+  async save(hexKey: string): Promise<void> {
+    // Persist the 64-char hex string
+    await vault.putSecret('antseed-identity', hexKey);
+  }
+}
+
+const node = new AntseedNode({
+  role: 'seller',
+  identityStore: new VaultIdentityStore(),
+});
+```
+
+### Desktop App
+
+The AntSeed Desktop app encrypts the identity at rest using Electron's `safeStorage` API. The encryption key is stored in the OS keychain (macOS Keychain / Windows DPAPI / Linux libsecret) and the encrypted blob is stored at `~/.antseed/identity.enc`. On first launch, any existing plaintext `identity.key` is migrated to the encrypted store and deleted.
 
 ## On-Chain Settlement Flow
 
