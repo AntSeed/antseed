@@ -149,6 +149,14 @@ export class SellerPaymentManager {
         payload.buyerSig,
       );
 
+      // Eagerly cache tokenRate for receipt capping and top-up threshold
+      if (this._tokenRate === null) {
+        try {
+          const account = await this._escrowClient.getSellerAccount(sellerEvmAddr);
+          this._tokenRate = account.tokenRate;
+        } catch { this._tokenRate = 1n; }
+      }
+
       // 4. Store new session
       const now = Date.now();
       const session: StoredSession = {
@@ -204,8 +212,18 @@ export class SellerPaymentManager {
       return;
     }
 
-    // Update tokens
-    const newTotal = BigInt(session.tokensDelivered) + tokensDelivered;
+    // Update tokens — cap at the effective token limit so the receipt total
+    // always matches what settle() will store as settledTokenCount on-chain.
+    // Without this cap, the buyer's previousConsumption (from tokensDelivered)
+    // would exceed settledTokenCount (= maxAmount / tokenRate), breaking the
+    // proof chain with InvalidProofChain on the next reserve().
+    const authMax = BigInt(session.authMax);
+    const tokenRate = this._tokenRate ?? 1n;
+    const effectiveTokenCap = tokenRate > 0n ? authMax / tokenRate : authMax;
+    let newTotal = BigInt(session.tokensDelivered) + tokensDelivered;
+    if (newTotal > effectiveTokenCap) {
+      newTotal = effectiveTokenCap;
+    }
     const newRequestCount = session.requestCount + 1;
     this._sessionStore.updateTokensDelivered(session.sessionId, newTotal.toString(), newRequestCount);
 
@@ -244,16 +262,7 @@ export class SellerPaymentManager {
     debugLog(`[SellerPayment] Receipt sent: session=${session.sessionId.slice(0, 18)}... total=${newTotal} count=${newRequestCount}`);
 
     // TopUpRequest if > 80% of USDC cap consumed (send at most once per session)
-    // Convert token count to USDC equivalent using cached tokenRate
-    const authMax = BigInt(session.authMax);
-    if (this._tokenRate === null) {
-      try {
-        const sellerAddr = identityToEvmAddress(this._identity);
-        const account = await this._escrowClient.getSellerAccount(sellerAddr);
-        this._tokenRate = account.tokenRate;
-      } catch { this._tokenRate = 1n; }
-    }
-    const usdcConsumed = newTotal * this._tokenRate;
+    const usdcConsumed = newTotal * tokenRate;
     if (authMax > 0n && usdcConsumed * 100n > authMax * 80n && !this._topUpRequested.has(session.sessionId)) {
       this._topUpRequested.add(session.sessionId);
       const additionalAmount = authMax; // Request same amount again
