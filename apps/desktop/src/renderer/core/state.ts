@@ -51,6 +51,8 @@ export type ChatServiceOptionEntry = {
   protocol: string;
   count: number;
   value: string;
+  peerId: string;
+  peerLabel: string;
 };
 
 export type RendererUiState = {
@@ -129,6 +131,7 @@ export type RendererUiState = {
   chatRoutedPeer: string;
   chatServiceOptions: ChatServiceOptionEntry[];
   chatSelectedServiceValue: string;
+  chatSelectedPeerId: string;
   chatServiceStatus: BadgeState;
   chatProxyStatus: BadgeState;
   chatDeleteVisible: boolean;
@@ -233,6 +236,7 @@ export function createInitialUiState(): RendererUiState {
     chatRoutedPeer: '',
     chatServiceOptions: [],
     chatSelectedServiceValue: '',
+    chatSelectedPeerId: '',
     chatServiceStatus: { tone: 'idle', label: 'Services idle' },
     chatProxyStatus: { tone: 'idle', label: 'Proxy offline' },
     chatDeleteVisible: false,

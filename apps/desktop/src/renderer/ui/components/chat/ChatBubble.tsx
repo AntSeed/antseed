@@ -150,22 +150,26 @@ function StreamingMarkdown({ text }: { text: string }) {
 }
 
 function ThinkingBlockView({ block }: { block: ContentBlock }) {
-  const [open, setOpen] = useState(false);
+  const [manualToggle, setManualToggle] = useState<boolean | null>(null);
+  const isOpen = manualToggle ?? true;
 
   if (!block.thinking?.trim()) return null;
 
-  const thinkingLabel =
-    String(block.name || '').trim() || 'Internal Thoughts';
+  const thinkingText = String(block.thinking || '');
+  const previewLength = 120;
+  const preview = thinkingText.length > previewLength
+    ? `${thinkingText.slice(0, previewLength).trimEnd()}...`
+    : thinkingText;
 
   return (
-    <div className={`thinking-block${block.streaming ? ' streaming' : ''}${open ? ' open' : ''}`}>
+    <div className={`thinking-block${block.streaming ? ' streaming' : ''}${isOpen ? ' open' : ''}`}>
       <button
         type="button"
         className="thinking-block-header"
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => setManualToggle((prev) => !(prev ?? true))}
       >
         <span className="thinking-block-triangle">▶</span>
-        <span>{thinkingLabel}</span>
+        <span>Internal Thoughts</span>
         {block.streaming ? (
           <span className="thinking-dots" aria-hidden="true">
             <span />
@@ -174,7 +178,35 @@ function ThinkingBlockView({ block }: { block: ContentBlock }) {
           </span>
         ) : null}
       </button>
-      <div className="thinking-block-body">{block.thinking}</div>
+      {!isOpen && (
+        <div className="thinking-block-preview">
+          <MarkdownContent text={preview} className="thinking-block-preview-md" />
+        </div>
+      )}
+      <div className="thinking-block-body">
+        {block.streaming
+          ? <StreamingMarkdown text={thinkingText} />
+          : <MarkdownContent text={thinkingText} className="thinking-block-markdown" />}
+      </div>
+    </div>
+  );
+}
+
+function ToolDiffInline({ diff }: { diff: string }) {
+  return (
+    <div className={styles.toolInlineDiff}>
+      {diff.split('\n').map((line, index) => {
+        let cls = styles.diffContext;
+        if (line.startsWith('+') && !line.startsWith('+++')) cls = styles.diffAdded;
+        else if (line.startsWith('-') && !line.startsWith('---')) cls = styles.diffRemoved;
+        else if (line.startsWith('@@')) cls = styles.diffHunk;
+        else if (line.startsWith('+++') || line.startsWith('---')) cls = styles.diffFile;
+        return (
+          <div key={`${index}-${line.slice(0, 12)}`} className={`${styles.diffLine} ${cls}`}>
+            {line}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -271,51 +303,73 @@ function ToolModal({ item, onClose }: { item: ToolRenderItem; onClose: () => voi
 }
 
 function ToolGroupView({ blocks }: { blocks: ContentBlock[] }) {
-  const [collapsed, setCollapsed] = useState(true);
+  const [manualToggle, setManualToggle] = useState<boolean | null>(null);
   const [modalItem, setModalItem] = useState<ToolRenderItem | null>(null);
+  const wasRunningRef = useRef(false);
   const items = useMemo(
     () => blocks.map((block, index) => buildToolRenderItem(block, index)),
     [blocks],
   );
 
   const anyRunning = items.some((item) => item.status === 'running');
-  const anyError = !anyRunning && items.some((item) => item.status === 'error');
-  const groupStatus: 'running' | 'success' = anyRunning ? 'running' : 'success';
-  const groupStatusLabel = anyRunning ? 'Running' : 'Done';
-  const label = `${items.length} tool${items.length === 1 ? '' : 's'} used`;
-  const toolSummary = items
+  const anyError = items.some((item) => item.status === 'error');
+
+  // Auto-collapse when tools finish running
+  if (wasRunningRef.current && !anyRunning) {
+    wasRunningRef.current = false;
+  }
+  if (anyRunning) wasRunningRef.current = true;
+
+  // Open while running (unless user manually closed), collapsed when done (unless user manually opened)
+  const isOpen = manualToggle ?? anyRunning;
+
+  const groupStatus: 'running' | 'success' | 'error' = anyRunning ? 'running' : anyError ? 'error' : 'success';
+  const groupStatusLabel = anyRunning ? 'Running' : anyError ? 'Error' : 'Done';
+  const label = `Tools (${items.length})`;
+  const runningSummary = items
     .filter((item) => item.status === 'running')
     .map((item) => item.label)
     .join(' / ');
+  const preview = items
+    .slice(0, 3)
+    .map((item) => item.label)
+    .join(' • ');
+  const previewSuffix = items.length > 3 ? ` +${items.length - 3} more` : '';
 
   return (
     <>
-      <div className="tool-group">
+      <div className={`tool-group${anyRunning ? ' streaming' : ''}${isOpen ? ' open' : ''}`}>
         <button
           type="button"
-          className={`tool-group-header-btn${collapsed ? ' collapsed' : ''}`}
-          onClick={() => setCollapsed((v) => !v)}
+          className="tool-group-header-btn"
+          onClick={() => setManualToggle((prev) => !(prev ?? anyRunning))}
         >
           <span className="tool-group-chevron">›</span>
           <span className="tool-group-label">{label}</span>
-          {toolSummary ? <span className="tool-group-summary">{toolSummary}</span> : null}
           {anyRunning ? (
             <span className="thinking-dots" aria-hidden="true">
               <span /><span /><span />
             </span>
           ) : null}
-          <span className="tool-group-spacer" />
-          <span className={`tool-group-status ${groupStatus}`}>{groupStatusLabel}</span>
         </button>
-        <div className={`tool-group-list-wrap${collapsed ? ' collapsed' : ''}`}>
+        {!isOpen ? (
+          <div className="tool-group-preview">
+            <span className="tool-group-preview-text">
+              {runningSummary || preview}
+              {previewSuffix}
+            </span>
+            <span className={`tool-group-status ${groupStatus}`}>{groupStatusLabel}</span>
+          </div>
+        ) : null}
+        <div className={`tool-group-list-wrap${isOpen ? '' : ' collapsed'}`}>
           <div className="tool-group-list-inner">
             <div className="tool-group-list">
               {items.map((item) => {
-                const hasDetail =
-                  item.diff.length > 0 || item.output.trim().length > 0;
+                const hasInlineDiff = item.kind === 'edit' && item.diff.length > 0;
+                const hasDetail = !hasInlineDiff && (item.diff.length > 0 || item.output.trim().length > 0);
 
                 const statusNode =
-                  item.kind === 'edit' && item.diff.length > 0 ? (
+                  hasInlineDiff ? (
                     <span className={`tool-inline-status ${item.status}`}>
                       <span className="diff-additions">+{item.additions}</span>
                       {' / '}
@@ -337,7 +391,7 @@ function ToolGroupView({ blocks }: { blocks: ContentBlock[] }) {
                   <div key={item.id} className="tool-inline">
                     <button
                       type="button"
-                      className={`tool-inline-row${hasDetail ? ' expandable' : ''}`}
+                      className={`tool-inline-row${hasDetail ? ' expandable' : ''}${hasInlineDiff ? ' has-inline-diff' : ''}`}
                       onClick={() => hasDetail && setModalItem(item)}
                     >
                       <span className={`tool-inline-dot ${item.status}`} />
@@ -345,6 +399,7 @@ function ToolGroupView({ blocks }: { blocks: ContentBlock[] }) {
                       {statusNode}
                       <span className={`tool-inline-open${hasDetail ? '' : ' hidden'}`}>↗</span>
                     </button>
+                    {hasInlineDiff ? <ToolDiffInline diff={item.diff} /> : null}
                   </div>
                 );
               })}

@@ -114,12 +114,13 @@ export type DesktopBridge = {
   chatAiListConversations?: () => Promise<{ ok: boolean; data: unknown[] }>;
   chatAiListServices?: () => Promise<{ ok: boolean; data?: unknown[]; error?: string }>;
   chatAiGetConversation?: (id: string) => Promise<{ ok: boolean; data?: unknown; error?: string }>;
-  chatAiCreateConversation?: (service: string, provider?: string) => Promise<{ ok: boolean; data?: unknown; error?: string }>;
+  chatAiCreateConversation?: (service: string, provider?: string, peerId?: string) => Promise<{ ok: boolean; data?: unknown; error?: string }>;
   chatAiDeleteConversation?: (id: string) => Promise<{ ok: boolean }>;
   chatAiRenameConversation?: (id: string, title: string) => Promise<{ ok: boolean; error?: string }>;
   chatAiSend?: (conversationId: string, message: string, service?: string, provider?: string, imageBase64?: string, imageMimeType?: string) => Promise<{ ok: boolean; error?: string }>;
   chatAiSendStream?: (conversationId: string, message: string, service?: string, provider?: string, imageBase64?: string, imageMimeType?: string) => Promise<{ ok: boolean; error?: string }>;
   chatAiAbort?: () => Promise<{ ok: boolean }>;
+  chatAiSelectPeer?: (peerId: string | null) => Promise<{ ok: boolean; error?: string }>;
   chatAiGetProxyStatus?: () => Promise<{ ok: boolean; data: { running: boolean; port: number } }>;
   onChatAiDone?: (handler: (data: { conversationId: string; message: { role: string; content: unknown; createdAt?: number; meta?: Record<string, unknown> } }) => void) => () => void;
   onChatAiError?: (handler: (data: { conversationId: string; error: string }) => void) => () => void;

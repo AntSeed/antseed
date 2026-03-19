@@ -59,6 +59,12 @@ function formatChatTime(timestamp: unknown): string {
   return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
+function shortServiceName(service: unknown): string {
+  const raw = String(service || '').trim();
+  if (!raw) return '';
+  return raw.replace(/^claude-/, '').replace(/-20\d{6,}/, '');
+}
+
 function ConvContextMenu({
   convId,
   convTitle,
@@ -163,6 +169,9 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
             const isActive = id === chatActiveConversation;
             const updatedLabel = Number(conv.updatedAt) > 0 ? formatChatTime(conv.updatedAt) : 'n/a';
             const title = String(conv.title || '');
+            const peerLabel = String(conv.peerLabel || '').trim();
+            const serviceLabel = shortServiceName(conv.service);
+            const metaLabel = [peerLabel, serviceLabel].filter(Boolean).join(' • ');
 
             return (
               <div
@@ -189,6 +198,7 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
                     </button>
                   </div>
                 </div>
+                {metaLabel ? <div className={styles.chatConvPreview}>{metaLabel}</div> : null}
                 {menuOpenId === id && (
                   <ConvContextMenu
                     convId={id}
