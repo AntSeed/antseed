@@ -53,7 +53,12 @@ All communication happens over an untrusted network. Every trust-critical operat
 
 ## Identity Key Protection
 
-The Ed25519 private key is the root of trust for your node — it signs metadata, connection handshakes, and metering receipts, and derives your EVM wallet address.
+The Ed25519 private key is the root of trust for your node. It serves two critical roles:
+
+1. **P2P identity** — signs metadata, connection handshakes, and metering receipts
+2. **On-chain wallet** — an EVM wallet (secp256k1) is deterministically derived from the Ed25519 seed via `keccak256(seed || "evm-payment-key")`. This wallet holds escrow deposits, receives seller earnings, and signs payment authorizations (EIP-712 spending auth).
+
+Compromising this key means an attacker can impersonate your node **and** drain your on-chain funds. Losing it means losing both your peer identity and access to any deposited USDC.
 
 | Environment | Protection |
 |---|---|

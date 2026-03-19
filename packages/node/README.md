@@ -165,7 +165,12 @@ const node = new AntseedNode({
 
 ## Identity Storage
 
-Every node has an Ed25519 identity keypair. The private key seed (32 bytes, stored as 64 hex characters) is used to sign metadata, connection handshakes, and metering receipts. Your PeerId is the hex-encoded public key.
+Every node has an Ed25519 identity keypair. The private key seed (32 bytes, stored as 64 hex characters) serves two roles:
+
+1. **P2P identity** — signs metadata, connection handshakes, and metering receipts. Your PeerId is the hex-encoded public key.
+2. **On-chain wallet** — an EVM wallet (secp256k1) is deterministically derived from the Ed25519 seed via `keccak256(seed || "evm-payment-key")`. This wallet holds escrow deposits, receives seller earnings, and signs payment authorizations.
+
+> **Important:** Losing your identity key means losing both your peer identity and access to any on-chain funds tied to the derived wallet.
 
 ### Storage Backends
 

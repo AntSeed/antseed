@@ -21,6 +21,10 @@ Ready to connect
 
 Your node identity is an Ed25519 keypair. Your PeerId is the hex-encoded 32-byte public key (64 lowercase hex characters). Set `identity.displayName` in config to control the human-readable name announced in peer metadata.
 
+:::warning Single Key, Two Roles
+Your identity key is used for **both** P2P operations (signing metadata, connection handshakes, metering receipts) **and** on-chain payments. An EVM wallet (secp256k1) is deterministically derived from your Ed25519 seed — this is the wallet that holds escrow deposits, receives seller earnings, and signs payment authorizations. Losing your identity key means losing access to your on-chain funds.
+:::
+
 ### Storage
 
 Identity loading follows this priority:
