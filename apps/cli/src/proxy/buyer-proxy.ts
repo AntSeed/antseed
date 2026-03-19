@@ -17,6 +17,7 @@ import type {
 import {
   createOpenAIChatToAnthropicStreamingAdapter,
   createOpenAIChatToResponsesStreamingAdapter,
+  createOpenAIResponsesToChatStreamingAdapter,
   detectRequestServiceApiProtocol,
   inferProviderDefaultServiceApiProtocols,
   type ServiceApiProtocol,
@@ -24,9 +25,11 @@ import {
   type StreamingResponseAdapter,
   type TargetProtocolSelection,
   transformAnthropicMessagesRequestToOpenAIChat,
+  transformOpenAIChatRequestToOpenAIResponses,
   transformOpenAIChatResponseToAnthropicMessage,
-  transformOpenAIResponsesRequestToOpenAIChat,
   transformOpenAIChatResponseToOpenAIResponses,
+  transformOpenAIResponsesRequestToOpenAIChat,
+  transformOpenAIResponsesResponseToOpenAIChat,
 } from './service-api-adapter.js'
 
 export interface BuyerProxyConfig {
@@ -1702,6 +1705,34 @@ export class BuyerProxy {
           })
         if (transformed.streamRequested) {
           streamResponseAdapter = createOpenAIChatToResponsesStreamingAdapter({
+            fallbackModel: transformed.requestedModel,
+          })
+        }
+      } else if (
+        requestProtocol === 'openai-chat-completions'
+        && selectedRoutePlan.selection.targetProtocol === 'openai-responses'
+      ) {
+        log(`Applying protocol adapter openai-chat-completions -> openai-responses via provider "${selectedRoutePlan.provider}"`)
+        const transformed = transformOpenAIChatRequestToOpenAIResponses(requestForPeer)
+        if (!transformed) {
+          res.writeHead(502, { 'content-type': 'text/plain' })
+          res.end('Failed to transform Chat Completions request for selected provider protocol')
+          return { done: true }
+        }
+        requestForPeer = {
+          ...transformed.request,
+          headers: {
+            ...transformed.request.headers,
+            'x-antseed-provider': selectedRoutePlan.provider,
+          },
+        }
+        adaptResponse = (response: SerializedHttpResponse) =>
+          transformOpenAIResponsesResponseToOpenAIChat(response, {
+            fallbackModel: transformed.requestedModel,
+            streamRequested: transformed.streamRequested,
+          })
+        if (transformed.streamRequested) {
+          streamResponseAdapter = createOpenAIResponsesToChatStreamingAdapter({
             fallbackModel: transformed.requestedModel,
           })
         }
