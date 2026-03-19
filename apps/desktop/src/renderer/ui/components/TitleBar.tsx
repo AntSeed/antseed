@@ -3,6 +3,7 @@ import { HugeiconsIcon } from '@hugeicons/react';
 import { Sun02Icon } from '@hugeicons/core-free-icons';
 import { Moon02Icon } from '@hugeicons/core-free-icons';
 import { AntStationLogo } from './AntStationLogo';
+import { WalletBadge } from './WalletBadge';
 import styles from './TitleBar.module.scss';
 
 const THEME_STORAGE_KEY = 'antseed:theme';
@@ -53,6 +54,7 @@ export function TitleBar() {
             Update to v{updateReady}
           </button>
         )}
+        <WalletBadge />
         <button
           className={styles.titleBarThemeToggle}
           onClick={() => setIsDark((d) => !d)}

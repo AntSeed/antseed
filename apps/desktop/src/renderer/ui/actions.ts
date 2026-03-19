@@ -21,6 +21,7 @@ export type AppActions = {
   handleServiceBlur: () => void;
   refreshPlugins: () => Promise<void>;
   installPlugin: () => Promise<void>;
+  onPaymentComplete: (callbackId: string) => void;
 };
 
 let _actions: AppActions | null = null;

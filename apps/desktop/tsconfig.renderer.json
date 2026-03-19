@@ -6,6 +6,7 @@
     "jsx": "react-jsx",
     "strict": true,
     "noImplicitAny": false,
+    "skipLibCheck": true,
     "types": ["vite/client"]
   },
   "include": ["src/renderer/**/*"]

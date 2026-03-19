@@ -272,6 +272,9 @@ const api = {
   setDebugLogs(enabled: boolean): Promise<{ ok: true }> {
     return ipcRenderer.invoke('desktop:set-debug-logs', enabled) as Promise<{ ok: true }>;
   },
+  sendSpendingAuth(payload: Record<string, unknown>): Promise<{ ok: boolean; error?: string }> {
+    return ipcRenderer.invoke('wallet:send-spending-auth', payload) as Promise<{ ok: boolean; error?: string }>;
+  },
 };
 
 contextBridge.exposeInMainWorld('antseedDesktop', api);

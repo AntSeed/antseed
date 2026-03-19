@@ -1,0 +1,78 @@
+.paymentBubble {
+  max-width: 420px;
+  margin: 12px auto;
+}
+
+.bubbleContent {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  padding: 16px 20px;
+}
+
+.bubbleText {
+  font-size: 14px;
+  color: var(--text-primary);
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+
+.bubbleHint {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+.bubbleIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: white;
+  font-size: 12px;
+  margin-right: 8px;
+}
+
+.bubbleAction {
+  margin-top: 8px;
+}
+
+.bubbleActions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.authDetails {
+  margin-bottom: 12px;
+}
+
+.authInfo {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+  font-size: 13px;
+}
+
+.authLabel {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.authValue {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.topUpWrapper {
+  // Inherits paymentBubble styling
+}

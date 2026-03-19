@@ -26,7 +26,6 @@ import {
   type StartOptions,
 } from './process-manager.js';
 import { registerPiChatHandlers } from './pi-chat-engine.js';
-import { WalletConnectManager } from './walletconnect.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1828,55 +1827,12 @@ ipcMain.handle('wallet:get-info', async (_event, port?: number): Promise<{ ok: b
   }
 });
 
-ipcMain.handle('wallet:deposit', async (_event, amount: string) => {
-  const numericAmount = Number(amount);
-  if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
-    return { ok: false, error: 'Invalid deposit amount' };
-  }
-  appendLog('dashboard', 'system', `Deposit requested: ${amount} USDC. Run 'antseed deposit ${amount}' in terminal.`);
-  return { ok: true, message: `Deposit of ${amount} USDC logged. Use CLI to execute: antseed deposit ${amount}` };
-});
 
-ipcMain.handle('wallet:withdraw', async (_event, amount: string) => {
-  const numericAmount = Number(amount);
-  if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
-    return { ok: false, error: 'Invalid withdrawal amount' };
-  }
-  appendLog('dashboard', 'system', `Withdrawal requested: ${amount} USDC. Run 'antseed withdraw ${amount}' in terminal.`);
-  return { ok: true, message: `Withdrawal of ${amount} USDC logged. Use CLI to execute: antseed withdraw ${amount}` };
-});
-
-// ── WalletConnect IPC Handlers ──
-
-const walletConnectManager = new WalletConnectManager();
-
-walletConnectManager.on('state', (state: unknown) => {
-  mainWindow?.webContents.send('wallet:wc-state-changed', state);
-});
-
-ipcMain.handle('wallet:wc-state', async () => {
-  return { ok: true, data: walletConnectManager.state };
-});
-
-ipcMain.handle('wallet:wc-connect', async () => {
-  try {
-    const uri = await walletConnectManager.connect();
-    if (!uri) {
-      return { ok: false, error: 'WalletConnect not initialized. Set WALLETCONNECT_PROJECT_ID environment variable.' };
-    }
-    return { ok: true, data: { uri } };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
-  }
-});
-
-ipcMain.handle('wallet:wc-disconnect', async () => {
-  try {
-    await walletConnectManager.disconnect();
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
-  }
+// ── Wallet: SpendingAuth IPC ──
+ipcMain.handle('wallet:send-spending-auth', async (_event, payload) => {
+  console.log('[Wallet] SpendingAuth received:', JSON.stringify(payload).slice(0, 200));
+  // TODO: Wire to BuyerPaymentManager.authorizeSpending via the running CLI subprocess
+  return { ok: true };
 });
 
 // ── AI Chat IPC Handlers ──
@@ -1967,14 +1923,6 @@ app.whenReady().then(() => {
   ipcMain.handle('app:install-update', () => {
     autoUpdater.quitAndInstall(false, true);
   });
-
-  // Initialize WalletConnect if project ID is configured
-  const wcProjectId = process.env['WALLETCONNECT_PROJECT_ID'] ?? '';
-  if (wcProjectId.length > 0) {
-    void walletConnectManager.init(wcProjectId).catch((err) => {
-      console.error('[WalletConnect] init failed:', err instanceof Error ? err.message : String(err));
-    });
-  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

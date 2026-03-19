@@ -1,5 +1,6 @@
 import { createRoot, type Root } from 'react-dom/client';
 import { AppShell } from './AppShell';
+import { OnchainProviders } from './providers/OnchainProviders';
 
 let root: Root | null = null;
 
@@ -13,5 +14,9 @@ export function mountAppShell(): void {
     root = createRoot(container);
   }
 
-  root.render(<AppShell />);
+  root.render(
+    <OnchainProviders>
+      <AppShell />
+    </OnchainProviders>
+  );
 }

@@ -139,4 +139,5 @@ export type DesktopBridge = {
   onAppSetupStep?: (handler: (data: { step: string; label: string }) => void) => () => void;
   onAppSetupComplete?: (handler: () => void) => () => void;
   setDebugLogs?: (enabled: boolean) => Promise<{ ok: true }>;
+  sendSpendingAuth?: (payload: Record<string, unknown>) => Promise<{ ok: boolean; error?: string }>;
 };

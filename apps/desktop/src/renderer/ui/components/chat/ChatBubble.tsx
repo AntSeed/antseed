@@ -13,6 +13,9 @@ import {
   getMyrmecochoryLabel,
   toToolDisplayName,
 } from './chat-shared';
+import { isPaymentBubble } from './payment-types';
+import { PaymentBubble } from './PaymentBubble';
+import { getActions } from '../../actions';
 
 type ToolRenderItem = {
   id: string;
@@ -544,6 +547,18 @@ export function ChatBubble({ message, streaming = false }: ChatBubbleProps) {
         <span className={styles.chatBubbleStats}>{metaParts.join(' · ')}</span>
       </button>
     ) : null;
+
+  if (isPaymentBubble(message)) {
+    return (
+      <PaymentBubble
+        message={message}
+        onComplete={(callbackId) => {
+          const actions = getActions();
+          actions.onPaymentComplete?.(callbackId);
+        }}
+      />
+    );
+  }
 
   return (
     <div className={`${styles.chatBubble} ${message.role === 'user' ? styles.own : styles.other}`}>

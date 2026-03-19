@@ -1,3 +1,4 @@
+import '@coinbase/onchainkit/styles.css';
 import { initChatModule } from './modules/chat';
 import { initSettingsModule } from './modules/settings';
 import { initRuntimeModule } from './modules/runtime';
@@ -408,6 +409,7 @@ registerActions({
   handleServiceChange: chatApi.handleServiceChange,
   handleServiceFocus: chatApi.handleServiceFocus,
   handleServiceBlur: chatApi.handleServiceBlur,
+  onPaymentComplete: chatApi.onPaymentComplete,
   refreshPlugins: refreshPluginInventory,
   installPlugin: () => {
     const packageName = resolveRouterPackageName(

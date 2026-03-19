@@ -6,6 +6,7 @@ import type {
   ChatMessage,
   ContentBlock,
 } from '../ui/components/chat/chat-shared';
+import type { PaymentReadiness } from './payment-state';
 import {
   cloneContentBlock,
   countBlocks,
@@ -67,6 +68,8 @@ export type ChatModuleApi = {
   handleServiceChange: (value: string) => void;
   handleServiceFocus: () => void;
   handleServiceBlur: () => void;
+  onPaymentComplete: (callbackId: string) => void;
+  setPaymentReadiness: (readiness: PaymentReadiness) => void;
 };
 
 export function initChatModule({
@@ -110,6 +113,11 @@ export function initChatModule({
   let serviceSelectFocused = false;
   const localConversationMessages = new Map<string, ChatMessage[]>();
   const streamingMessagesByConversation = new Map<string, ChatMessage>();
+
+  // Payment flow state
+  let pendingMessage: { text: string; imageBase64?: string; imageMimeType?: string } | null = null;
+  let pendingPaymentCallbackId: string | null = null;
+  let currentPaymentReadiness: PaymentReadiness = { ready: true };
 
   // ---------------------------------------------------------------------------
   // Normalization helpers
@@ -1086,6 +1094,31 @@ export function initChatModule({
     const content = text.trim();
     if (content.length === 0 && !imageBase64) return;
 
+    // Payment readiness check (only when payment state is not ready)
+    if (!currentPaymentReadiness.ready) {
+      // Store the pending message
+      pendingMessage = { text, imageBase64, imageMimeType };
+
+      // Inject payment bubble into chat
+      const callbackId = `payment-${Date.now()}`;
+      pendingPaymentCallbackId = callbackId;
+
+      const paymentMessage: ChatMessage = {
+        role: 'system',
+        content: '',
+        createdAt: Date.now(),
+        meta: {
+          paymentAction: currentPaymentReadiness.action,
+          callbackId,
+          ...currentPaymentReadiness.meta,
+        },
+      };
+
+      uiState.chatMessages = [...uiState.chatMessages, paymentMessage];
+      notifyUiStateChanged();
+      return; // Don't send yet
+    }
+
     // If no active conversation, create one first then send
     if (!uiState.chatActiveConversation) {
       setChatSending(true);
@@ -1585,6 +1618,26 @@ export function initChatModule({
   }
 
   // ---------------------------------------------------------------------------
+  // Payment flow handlers
+  // ---------------------------------------------------------------------------
+
+  function onPaymentComplete(callbackId: string): void {
+    if (callbackId !== pendingPaymentCallbackId) return;
+    pendingPaymentCallbackId = null;
+
+    if (pendingMessage) {
+      const { text, imageBase64, imageMimeType } = pendingMessage;
+      pendingMessage = null;
+      // Re-trigger sendMessage now that payment is ready
+      sendMessage(text, imageBase64, imageMimeType);
+    }
+  }
+
+  function setPaymentReadiness(readiness: PaymentReadiness): void {
+    currentPaymentReadiness = readiness;
+  }
+
+  // ---------------------------------------------------------------------------
   // Initial state
   // ---------------------------------------------------------------------------
 
@@ -1609,5 +1662,7 @@ export function initChatModule({
     handleServiceChange,
     handleServiceFocus,
     handleServiceBlur,
+    onPaymentComplete,
+    setPaymentReadiness,
   };
 }

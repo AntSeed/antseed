@@ -1,0 +1,41 @@
+:root {
+  --ock-bg-default: var(--bg-primary);
+  --ock-bg-default-hover: var(--bg-secondary);
+  --ock-bg-default-active: var(--bg-secondary);
+  --ock-bg-alternate: var(--bg-secondary);
+  --ock-bg-alternate-hover: var(--bg-primary);
+  --ock-bg-alternate-active: var(--bg-primary);
+  --ock-bg-inverse: var(--text-primary);
+  --ock-bg-primary: var(--accent);
+  --ock-bg-primary-hover: #19c06a;
+  --ock-bg-primary-active: #15a85e;
+  --ock-bg-secondary: var(--bg-secondary);
+  --ock-bg-secondary-hover: var(--bg-primary);
+  --ock-bg-error: var(--danger);
+  --ock-text-foreground: var(--text-primary);
+  --ock-text-foreground-muted: var(--text-secondary);
+  --ock-text-inverse: var(--bg-primary);
+  --ock-text-error: var(--danger);
+  --ock-text-primary: var(--accent);
+  --ock-text-success: var(--accent);
+  --ock-text-disabled: var(--text-muted);
+  --ock-border-radius: var(--radius-sm);
+  --ock-border-radius-inner: 6px;
+  --ock-font-family: var(--font-sans);
+  --ock-line-primary: var(--border);
+  --ock-line-default: var(--border);
+}
+
+body.dark-theme {
+  --ock-bg-default: var(--bg-primary);
+  --ock-bg-default-hover: var(--bg-secondary);
+  --ock-bg-alternate: var(--bg-secondary);
+  --ock-bg-inverse: var(--text-primary);
+  --ock-bg-primary: var(--accent);
+  --ock-bg-primary-hover: #19c06a;
+  --ock-text-foreground: var(--text-primary);
+  --ock-text-foreground-muted: var(--text-secondary);
+  --ock-text-inverse: #1c1c1e;
+  --ock-line-primary: var(--border);
+  --ock-line-default: var(--border);
+}
