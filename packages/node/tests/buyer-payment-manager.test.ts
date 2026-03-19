@@ -224,13 +224,17 @@ describe('BuyerPaymentManager', () => {
     expect(session!.previousSessionId).toBe(ZERO_SESSION_ID);
     checkStore.close();
 
-    // Re-create manager with same data dir, authorize again
+    // Mark first session as settled with tokens delivered (required for proof chain)
     store = new SessionStore(tempDir);
+    store.updateTokensDelivered(sessionId, '500', 1);
+    store.updateSessionStatus(sessionId, 'settled', '500');
+
+    // Re-create manager with same data dir, authorize again
     manager = new BuyerPaymentManager(identity, makeConfig(tempDir), store);
     manager.setSigner(Wallet.createRandom());
     const secondId = await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux);
 
-    // Second session references the first
+    // Second session references the first (now settled)
     const sent = mux.sentSpendingAuths[mux.sentSpendingAuths.length - 1] as Record<string, unknown>;
     expect(sent.previousSessionId).toBe(sessionId);
   });

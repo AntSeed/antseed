@@ -94,12 +94,19 @@ export class BuyerPaymentManager {
   ): Promise<string> {
     const amount = maxAmount ?? this._config.defaultMaxAmountUsdc;
 
-    // Load latest session to build proof chain
+    // Load latest session to build proof chain.
+    // Only chain if the session is settled or active-with-delivery (the seller
+    // will settle it on-chain before reserving the new one).
+    // Fall back to first-sign for timed-out/ghost sessions.
     const latestSession = this._sessionStore.getLatestSession(sellerPeerId, 'buyer');
-    const previousConsumption = latestSession
+    const canChain = latestSession
+      && latestSession.status !== 'timeout'
+      && latestSession.status !== 'ghost'
+      && BigInt(latestSession.tokensDelivered) > 0n;
+    const previousConsumption = canChain
       ? BigInt(latestSession.tokensDelivered)
       : 0n;
-    const previousSessionId = latestSession
+    const previousSessionId = canChain
       ? latestSession.sessionId
       : ZERO_SESSION_ID;
 
