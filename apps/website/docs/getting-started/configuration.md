@@ -19,8 +19,46 @@ Ready to connect
 
 ## Identity
 
-Your node identity is an Ed25519 keypair. The private key seed is stored as 64 hex characters in `~/.antseed/identity.key` with `0600` permissions. Your PeerId is the hex-encoded 32-byte public key (64 lowercase hex characters).  
-Set `identity.displayName` in config to control the human-readable name announced in peer metadata.
+Your node identity is an Ed25519 keypair. Your PeerId is the hex-encoded 32-byte public key (64 lowercase hex characters). Set `identity.displayName` in config to control the human-readable name announced in peer metadata.
+
+### Storage
+
+Identity loading follows this priority:
+
+| Method | How | Best for |
+|---|---|---|
+| **Environment variable** | Set `ANTSEED_IDENTITY_HEX` to 64 hex chars | Server deployments with secrets managers (AWS SSM, Vault) |
+| **Encrypted file** | `~/.antseed/identity.enc` (AntSeed Desktop only) | Desktop users — encrypted via OS keychain |
+| **Plaintext file** | `~/.antseed/identity.key` with `0600` permissions | CLI on trusted machines |
+| **Custom store** | Implement `IdentityStore` interface in `@antseed/node` | Custom integrations (KMS, HSM, etc.) |
+
+### Environment Variable (Recommended for Servers)
+
+Pass the private key from a secrets manager so it never touches disk:
+
+```bash
+# From HashiCorp Vault
+export ANTSEED_IDENTITY_HEX="$(vault kv get -field=key secret/antseed/identity)"
+antseed seed --provider anthropic
+
+# From AWS SSM Parameter Store
+export ANTSEED_IDENTITY_HEX="$(aws ssm get-parameter --name /antseed/identity --with-decryption --query Parameter.Value --output text)"
+antseed seed --provider anthropic
+```
+
+The variable is cleared from the process environment immediately after the node reads it.
+
+### Desktop App
+
+AntSeed Desktop encrypts the identity at rest using the OS keychain (macOS Keychain / Windows DPAPI / Linux libsecret). On first launch, any existing plaintext `identity.key` is migrated to the encrypted store (`identity.enc`) and the plaintext file is deleted.
+
+### Plaintext File (Default CLI)
+
+Generated automatically on first run. The private key seed is stored as 64 hex characters in `~/.antseed/identity.key` with `0600` permissions.
+
+:::tip Key Backup
+Back up your identity key before migrating servers. Your PeerId (and derived EVM wallet address) are tied to this key — losing it means a new identity on the network.
+:::
 
 ## Selling AI Services
 
