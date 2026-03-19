@@ -288,7 +288,7 @@ import type {
 } from '@antseed/node';
 
 // Identity & P2P
-import { loadOrCreateIdentity, type Identity } from '@antseed/node';
+import { loadOrCreateIdentity, type Identity, type IdentityStore, FileIdentityStore } from '@antseed/node';
 import { NatTraversal, type NatMapping, type NatTraversalResult } from '@antseed/node';
 
 // Discovery

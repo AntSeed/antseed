@@ -29,12 +29,13 @@ Your identity key is used for **both** P2P operations (signing metadata, connect
 
 Identity loading follows this priority:
 
-| Method | How | Best for |
-|---|---|---|
-| **Environment variable** | Set `ANTSEED_IDENTITY_HEX` to 64 hex chars | Server deployments with secrets managers (AWS SSM, Vault) |
-| **Encrypted file** | `~/.antseed/identity.enc` (AntSeed Desktop only) | Desktop users — encrypted via OS keychain |
-| **Plaintext file** ⚠️ | `~/.antseed/identity.key` with `0600` permissions | **Not recommended** — use env var or encrypted store instead |
-| **Custom store** | Implement `IdentityStore` interface in `@antseed/node` | Custom integrations (KMS, HSM, etc.) |
+| Priority | Method | How | Best for |
+|---|---|---|---|
+| 1 | **Environment variable** | Set `ANTSEED_IDENTITY_HEX` to 64 hex chars | Server deployments with secrets managers (AWS SSM, Vault) |
+| 2 | **Custom store** | Pass an `IdentityStore` via `NodeConfig.identityStore` | Custom integrations (KMS, HSM, Desktop safeStorage) |
+| 3 | **Plaintext file** ⚠️ | `~/.antseed/identity.key` with `0600` permissions | **Not recommended** — use env var or custom store instead |
+
+The env var always takes precedence, regardless of other configuration. If no env var is set, `identityStore` is used if provided, otherwise the default `FileIdentityStore` reads from disk.
 
 ### Environment Variable (Recommended for Servers)
 
