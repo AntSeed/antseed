@@ -11,7 +11,7 @@ import {
 } from 'electron';
 import electronUpdater from 'electron-updater';
 const { autoUpdater } = electronUpdater;
-import { readFile, writeFile, readdir, mkdir, cp, unlink } from 'node:fs/promises';
+import { readFile, writeFile, readdir, mkdir, cp, unlink, rename } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { execFile as execFileCallback } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -246,8 +246,11 @@ async function loadEncryptedIdentity(): Promise<string | null> {
 
 async function saveEncryptedIdentity(hexKey: string): Promise<void> {
   const encrypted = safeStorage.encryptString(hexKey);
-  await mkdir(path.dirname(ENCRYPTED_IDENTITY_PATH), { recursive: true });
-  await writeFile(ENCRYPTED_IDENTITY_PATH, encrypted, { mode: 0o600 });
+  const dir = path.dirname(ENCRYPTED_IDENTITY_PATH);
+  const tmpPath = ENCRYPTED_IDENTITY_PATH + '.tmp';
+  await mkdir(dir, { recursive: true });
+  await writeFile(tmpPath, encrypted, { mode: 0o600 });
+  await rename(tmpPath, ENCRYPTED_IDENTITY_PATH);
 }
 
 function secureIdentityEnv(): Record<string, string> {
@@ -282,8 +285,10 @@ async function ensureSecureIdentity(): Promise<void> {
       try {
         const raw = await readFile(PLAINTEXT_IDENTITY_PATH, 'utf-8');
         const trimmed = raw.trim();
-        if (trimmed.length > 0) {
+        if (trimmed.length === 64) {
           migratedHex = trimmed;
+        } else if (trimmed.length > 0) {
+          console.warn(`[desktop] Plaintext identity file has unexpected length (${trimmed.length} chars, expected 64); skipping migration.`);
         }
       } catch {
         // No existing file identity.
@@ -293,7 +298,7 @@ async function ensureSecureIdentity(): Promise<void> {
         await saveEncryptedIdentity(migratedHex);
         secureIdentity = identityFromHex(migratedHex);
         await unlink(PLAINTEXT_IDENTITY_PATH).catch((unlinkErr) => {
-          console.warn(`[desktop] Failed to delete plaintext identity file after migration: ${unlinkErr instanceof Error ? unlinkErr.message : String(unlinkErr)}. Delete ${PLAINTEXT_IDENTITY_PATH} manually.`);
+          console.warn(`[desktop] Failed to delete plaintext identity after migration: ${unlinkErr instanceof Error ? unlinkErr.message : String(unlinkErr)}. Delete ${PLAINTEXT_IDENTITY_PATH} manually.`);
         });
         console.log(`[desktop] secure identity migrated from plaintext: ${secureIdentity.peerId.slice(0, 12)}...`);
         return;
