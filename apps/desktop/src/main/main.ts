@@ -47,7 +47,7 @@ import {
   type DashboardNetworkPeer,
 } from './peer-cache.js';
 import { createWindow, createApplicationMenu, getMainWindow } from './window.js';
-import { readConfig, mergeConfig, readNodeStatus } from './config-io.js';
+import { ensureConfig, readConfig, mergeConfig, readNodeStatus } from './config-io.js';
 
 // Re-export types that may be used by other main-process modules
 export type { LogEvent, RuntimeActivityEvent } from './log-parser.js';
@@ -673,6 +673,9 @@ app.whenReady().then(() => {
     app.dock.setIcon(APP_ICON_PATH);
   }
   createApplicationMenu(APP_NAME, APP_ICON_PATH);
+
+  // Ensure config.json exists before anything else (first launch).
+  void ensureConfig(ACTIVE_CONFIG_PATH).catch(() => {});
 
   createWindow({ appName: APP_NAME, appIconPath: APP_ICON_PATH, isDev, rendererUrl });
 
