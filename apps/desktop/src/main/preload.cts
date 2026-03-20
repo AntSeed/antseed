@@ -283,6 +283,12 @@ const api = {
   setDebugLogs(enabled: boolean): Promise<{ ok: true }> {
     return ipcRenderer.invoke('desktop:set-debug-logs', enabled) as Promise<{ ok: true }>;
   },
+  creditsGetInfo() {
+    return ipcRenderer.invoke('credits:get-info');
+  },
+  paymentsSignSpendingAuth: (params: unknown) => ipcRenderer.invoke('payments:sign-spending-auth', params),
+  paymentsGetPeerInfo: (peerId: string) => ipcRenderer.invoke('payments:get-peer-info', peerId),
+  paymentsOpenPortal: () => ipcRenderer.invoke('payments:open-portal'),
 };
 
 contextBridge.exposeInMainWorld('antseedDesktop', api);

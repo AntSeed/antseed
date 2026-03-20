@@ -28,6 +28,7 @@
     "@antseed/api-adapter": "workspace:*",
     "@antseed/bound-agent": "workspace:*",
     "@antseed/node": "workspace:*",
+    "@antseed/payments": "workspace:*",
     "@antseed/provider-core": "workspace:*",
     "@antseed/dashboard": "workspace:*",
     "chalk": "^5.6.2",

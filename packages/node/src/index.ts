@@ -36,6 +36,8 @@ export { MeteringStorage } from './metering/storage.js';
 export { BalanceManager } from './payments/balance-manager.js';
 export { BaseEscrowClient, type BaseEscrowConfig } from './payments/evm/escrow-client.js';
 export { identityToEvmWallet, identityToEvmAddress } from './payments/evm/keypair.js';
+export { signSpendingAuth, makeEscrowDomain } from './payments/evm/signatures.js';
+export type { SpendingAuthMessage } from './payments/evm/signatures.js';
 export { NatTraversal, type NatMapping, type NatTraversalResult } from './p2p/nat-traversal.js';
 export { BuyerPaymentManager } from './payments/buyer-payment-manager.js';
 export type { BuyerPaymentConfig } from './payments/buyer-payment-manager.js';

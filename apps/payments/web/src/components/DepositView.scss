@@ -1,0 +1,99 @@
+.deposit-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+}
+
+.deposit-tab {
+  flex: 1;
+  padding: 6px 0;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+
+  &:hover {
+    color: var(--text-primary);
+  }
+}
+
+.deposit-tab-active {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+.deposit-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.deposit-wallet-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  background: rgba(31, 216, 122, 0.06);
+  border: 1px solid rgba(31, 216, 122, 0.2);
+  border-radius: 8px;
+}
+
+.deposit-wallet-label {
+  font-size: 12px;
+  color: var(--accent-green);
+  font-weight: 600;
+}
+
+.deposit-wallet-address {
+  font-size: 12px;
+  font-family: monospace;
+  color: var(--text-primary);
+}
+
+.crossmint-setup {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.crossmint-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.crossmint-desc {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+
+  code {
+    background: var(--bg-primary);
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-size: 12px;
+  }
+}
+
+.crossmint-code {
+  display: block;
+  padding: 10px 12px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--accent-green);
+  font-family: monospace;
+}
+
+.crossmint-ready {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}

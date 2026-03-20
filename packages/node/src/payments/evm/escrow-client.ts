@@ -47,6 +47,7 @@ export interface SellerAccountInfo {
 const ESCROW_ABI = [
   // Buyer operations
   'function deposit(uint256 amount) external',
+  'function depositFor(address buyer, uint256 amount) external',
   'function requestWithdrawal(uint256 amount) external',
   'function executeWithdrawal() external',
   'function cancelWithdrawal() external',
@@ -110,6 +111,22 @@ export class BaseEscrowClient extends BaseEvmClient {
     const contract = new Contract(this._contractAddress, ESCROW_ABI, connected);
     const depositNonce = await this._reserveNonce(signerAddress);
     const tx = await contract.getFunction('deposit')(amount, { nonce: depositNonce });
+    const receipt = await tx.wait();
+    if (!receipt) throw new Error('Transaction was dropped or replaced');
+    return receipt.hash;
+  }
+
+  async depositFor(signer: AbstractSigner, buyer: string, amount: bigint): Promise<string> {
+    const connected = this._ensureConnected(signer);
+    const signerAddress = await connected.getAddress();
+    const usdc = new Contract(this._usdcAddress, ERC20_ABI, connected);
+    const approveNonce = await this._reserveNonce(signerAddress);
+    const approveTx = await usdc.getFunction('approve')(this._contractAddress, amount, { nonce: approveNonce });
+    const approveReceipt = await approveTx.wait();
+    if (!approveReceipt) throw new Error('Transaction was dropped or replaced');
+    const contract = new Contract(this._contractAddress, ESCROW_ABI, connected);
+    const depositNonce = await this._reserveNonce(signerAddress);
+    const tx = await contract.getFunction('depositFor')(buyer, amount, { nonce: depositNonce });
     const receipt = await tx.wait();
     if (!receipt) throw new Error('Transaction was dropped or replaced');
     return receipt.hash;

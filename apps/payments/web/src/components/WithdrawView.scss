@@ -1,0 +1,38 @@
+.withdraw-pending {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.withdraw-pending-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px;
+  background: rgba(251, 191, 36, 0.08);
+  border: 1px solid rgba(251, 191, 36, 0.2);
+  border-radius: 8px;
+}
+
+.withdraw-pending-label {
+  font-size: 13px;
+  color: var(--accent-amber);
+}
+
+.withdraw-pending-amount {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--accent-amber);
+}
+
+.withdraw-request {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.withdraw-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}

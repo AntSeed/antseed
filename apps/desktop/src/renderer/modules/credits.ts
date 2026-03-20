@@ -1,0 +1,82 @@
+import type { RendererUiState } from '../core/state';
+import { notifyUiStateChanged } from '../core/store';
+import type { DesktopBridge } from '../types/bridge';
+
+type CreditsModuleOptions = {
+  bridge?: DesktopBridge;
+  uiState: RendererUiState;
+};
+
+export type CreditsModuleApi = {
+  refreshCredits: () => Promise<void>;
+  startPeriodicRefresh: () => void;
+  stopPeriodicRefresh: () => void;
+  getAvailableUsdc: () => string;
+};
+
+const CREDITS_REFRESH_INTERVAL_MS = 60_000;
+
+export function initCreditsModule({ bridge, uiState }: CreditsModuleOptions): CreditsModuleApi {
+  let refreshTimer: ReturnType<typeof setInterval> | null = null;
+
+  async function refreshCredits(): Promise<void> {
+    if (!bridge?.creditsGetInfo) return;
+
+    try {
+      const result = await bridge.creditsGetInfo();
+      if (result.ok && result.data) {
+        // Only notify if values actually changed
+        const changed =
+          uiState.creditsAvailableUsdc !== result.data.availableUsdc ||
+          uiState.creditsReservedUsdc !== result.data.reservedUsdc ||
+          uiState.creditsTotalUsdc !== result.data.balanceUsdc ||
+          uiState.creditsEvmAddress !== result.data.evmAddress;
+
+        uiState.creditsAvailableUsdc = result.data.availableUsdc;
+        uiState.creditsReservedUsdc = result.data.reservedUsdc;
+        uiState.creditsTotalUsdc = result.data.balanceUsdc;
+        uiState.creditsPendingWithdrawalUsdc = result.data.pendingWithdrawalUsdc;
+        uiState.creditsCreditLimitUsdc = result.data.creditLimitUsdc;
+        uiState.creditsEvmAddress = result.data.evmAddress;
+        uiState.creditsLastRefreshedAt = Date.now();
+
+        // Low balance detection
+        const available = parseFloat(uiState.creditsAvailableUsdc);
+        const reserved = parseFloat(uiState.creditsReservedUsdc);
+        const lowBalance = available > 0 && (available < 1.0 || (reserved > 0 && available < reserved));
+        if (uiState.chatLowBalanceWarning !== lowBalance) {
+          uiState.chatLowBalanceWarning = lowBalance;
+        }
+
+        if (changed) notifyUiStateChanged();
+      }
+    } catch {
+      // Silently fail — cached values remain
+    }
+  }
+
+  function onWindowFocus(): void {
+    void refreshCredits();
+  }
+
+  function startPeriodicRefresh(): void {
+    if (refreshTimer) return;
+    void refreshCredits();
+    refreshTimer = setInterval(() => void refreshCredits(), CREDITS_REFRESH_INTERVAL_MS);
+    window.addEventListener('focus', onWindowFocus);
+  }
+
+  function stopPeriodicRefresh(): void {
+    if (refreshTimer) {
+      clearInterval(refreshTimer);
+      refreshTimer = null;
+    }
+    window.removeEventListener('focus', onWindowFocus);
+  }
+
+  function getAvailableUsdc(): string {
+    return uiState.creditsAvailableUsdc;
+  }
+
+  return { refreshCredits, startPeriodicRefresh, stopPeriodicRefresh, getAvailableUsdc };
+}

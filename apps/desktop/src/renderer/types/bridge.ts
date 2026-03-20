@@ -133,4 +133,34 @@ export type DesktopBridge = {
   onAppSetupStep?: (handler: (data: { step: string; label: string }) => void) => () => void;
   onAppSetupComplete?: (handler: () => void) => () => void;
   setDebugLogs?: (enabled: boolean) => Promise<{ ok: true }>;
+  creditsGetInfo?: () => Promise<{ ok: boolean; data: { evmAddress: string | null; balanceUsdc: string; reservedUsdc: string; availableUsdc: string; pendingWithdrawalUsdc: string; creditLimitUsdc: string } | null; error: string | null }>;
+
+  paymentsSignSpendingAuth?: (params: {
+    sellerEvmAddress: string;
+    sessionId: string;
+    maxAmountBaseUnits: string;
+    nonce: number;
+    deadline: number;
+    previousConsumption: string;
+    previousSessionId: string;
+  }) => Promise<{ ok: boolean; data?: { signature: string; buyerEvmAddress: string }; error?: string }>;
+
+  paymentsGetPeerInfo?: (peerId: string) => Promise<{
+    ok: boolean;
+    data?: {
+      peerId: string;
+      displayName: string | null;
+      reputation: number;
+      onChainReputation: number | null;
+      onChainSessionCount: number | null;
+      onChainDisputeCount: number | null;
+      evmAddress: string | null;
+      timestamp: number | null;
+      providers: string[];
+      services: string[];
+    };
+    error?: string;
+  }>;
+
+  paymentsOpenPortal?: () => Promise<{ ok: boolean; url?: string; error?: string }>;
 };

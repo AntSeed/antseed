@@ -9,6 +9,7 @@ import {
   resolveRouterPackageName,
 } from './modules/plugin-setup';
 import { initAppSetupModule } from './modules/app-setup';
+import { initCreditsModule } from './modules/credits';
 import { mountAppShell } from './ui/mount';
 import { registerActions } from './ui/actions';
 import {
@@ -115,6 +116,9 @@ const chatApi = initChatModule({
 });
 
 initAppSetupModule({ uiState, bridge: bridge ?? null });
+
+const creditsApi = initCreditsModule({ bridge: bridge as DesktopBridge, uiState });
+creditsApi.startPeriodicRefresh();
 
 /* ------------------------------------------------------------------ */
 /*  Runtime activity helpers                                           */
@@ -399,12 +403,18 @@ registerActions({
   handleServiceFocus: chatApi.handleServiceFocus,
   handleServiceBlur: chatApi.handleServiceBlur,
   clearPinnedPeer: chatApi.clearPinnedPeer,
+  approveSessionPayment: () => chatApi.approveSessionPayment(),
+  cancelSessionPayment: () => chatApi.cancelSessionPayment(),
+  refreshCredits: () => void creditsApi.refreshCredits(),
   refreshPlugins: refreshPluginInventory,
   installPlugin: () => {
     const packageName = resolveRouterPackageName(
       uiState.pluginHints.router || uiState.connectRouterValue,
     );
     return installPluginPackage(packageName);
+  },
+  openPaymentsPortal: () => {
+    void bridge?.paymentsOpenPortal?.();
   },
 });
 

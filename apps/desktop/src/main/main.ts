@@ -16,8 +16,9 @@ import {
   type StartOptions,
 } from './process-manager.js';
 import { registerPiChatHandlers } from './pi-chat-engine.js';
-import { WalletConnectManager } from './walletconnect.js';
 import { ensureSecureIdentity, secureIdentityEnv, getSecureIdentity } from './identity.js';
+import { identityToEvmAddress, identityToEvmWallet, BaseEscrowClient, signSpendingAuth, makeEscrowDomain } from '@antseed/node';
+import { createServer as createPaymentsServer } from '@antseed/payments';
 import type { LogEvent, RuntimeActivityEvent } from './log-parser.js';
 import { parseRuntimeActivityFromLog } from './log-parser.js';
 import {
@@ -230,6 +231,50 @@ onPeersChanged(() => {
 });
 const processManager = new ProcessManager((mode, stream, line) => {
   appendLog(mode, stream, line);
+});
+
+// ── Payments Portal ──
+
+let paymentsServer: Awaited<ReturnType<typeof createPaymentsServer>> | null = null;
+const PAYMENTS_PORT = Number(process.env['ANTSEED_PAYMENTS_PORT']) || 3118;
+
+async function startPaymentsPortal(): Promise<void> {
+  if (paymentsServer) return;
+  try {
+    await ensureSecureIdentity();
+    const identityHex = secureIdentityEnv().ANTSEED_IDENTITY_HEX;
+    paymentsServer = await createPaymentsServer({
+      port: PAYMENTS_PORT,
+      identityHex,
+    });
+    await paymentsServer.listen({ port: PAYMENTS_PORT, host: '127.0.0.1' });
+    console.log(`[desktop] Payments portal running at http://127.0.0.1:${PAYMENTS_PORT}`);
+  } catch (err) {
+    console.error('[desktop] Failed to start payments portal:', err instanceof Error ? err.message : String(err));
+    paymentsServer = null;
+  }
+}
+
+async function stopPaymentsPortal(): Promise<void> {
+  if (!paymentsServer) return;
+  try {
+    await paymentsServer.close();
+  } catch {
+    // Already closed
+  }
+  paymentsServer = null;
+}
+
+ipcMain.handle('payments:open-portal', async () => {
+  try {
+    await startPaymentsPortal();
+    const url = `http://127.0.0.1:${PAYMENTS_PORT}`;
+    const { default: open } = await import('open');
+    await open(url);
+    return { ok: true, url };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
 });
 
 function getCombinedProcessState(): RuntimeProcessState[] {
@@ -494,6 +539,7 @@ ipcMain.handle(
     }
     try {
       const merged = await mergeConfig(safeConfig, ACTIVE_CONFIG_PATH);
+      cachedCryptoConfig = null; // Invalidate cached crypto config
       return { ok: true, data: { config: merged }, error: null, status: 200 };
     } catch (err) {
       return { ok: false, data: null, error: err instanceof Error ? err.message : String(err), status: null };
@@ -501,101 +547,186 @@ ipcMain.handle(
   },
 );
 
-// ── Wallet IPC Handlers ──
+// ── Credits / Escrow Balance ──
 
-type WalletInfo = {
-  address: string | null;
-  chainId: string;
-  balanceETH: string;
-  balanceUSDC: string;
-  escrow: {
-    deposited: string;
-    committed: string;
-    available: string;
-  };
+type CreditsInfo = {
+  evmAddress: string | null;
+  balanceUsdc: string;
+  reservedUsdc: string;
+  availableUsdc: string;
+  pendingWithdrawalUsdc: string;
+  creditLimitUsdc: string;
 };
 
-ipcMain.handle('wallet:get-info', async (): Promise<{ ok: boolean; data: WalletInfo | null; error: string | null }> => {
-  try {
-    const [status, config] = await Promise.all([
-      readNodeStatus(ACTIVE_CONFIG_PATH),
-      readConfig(ACTIVE_CONFIG_PATH),
-    ]);
+function formatUsdc6(baseUnits: bigint): string {
+  const whole = baseUnits / 1_000_000n;
+  const frac = (baseUnits % 1_000_000n).toString().padStart(6, '0').replace(/0+$/, '') || '0';
+  return `${whole}.${frac}`;
+}
 
-    const identity = asRecord(config.identity);
-    const payments = asRecord(config.payments);
-    const walletAddress = asString(status.walletAddress as string, '') || asString(identity.walletAddress as string, '');
+let cachedCreditsInfo: CreditsInfo | null = null;
+
+// Cached crypto config — invalidated on config update
+let cachedCryptoConfig: { rpcUrl: string; escrowAddress: string; usdcAddress: string; chainId: number } | null = null;
+
+async function loadCachedCryptoConfig(): Promise<typeof cachedCryptoConfig> {
+  if (cachedCryptoConfig) return cachedCryptoConfig;
+  const config = await readConfig(ACTIVE_CONFIG_PATH);
+  const payments = asRecord(config.payments);
+  const crypto = asRecord(payments.crypto);
+  const rpcUrl = asString(crypto.rpcUrl as string, '');
+  const escrowAddress = asString(crypto.escrowContractAddress as string, '');
+  const usdcAddress = asString(crypto.usdcContractAddress as string, '');
+  const chainId = Number(asString(crypto.chainId as string, '8453'));
+  if (!rpcUrl || !escrowAddress || !usdcAddress) return null;
+  cachedCryptoConfig = { rpcUrl, escrowAddress, usdcAddress, chainId };
+  return cachedCryptoConfig;
+}
+
+async function refreshCreditsInfo(): Promise<CreditsInfo> {
+  const identity = getSecureIdentity();
+  if (!identity) {
+    return { evmAddress: null, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
+  }
+
+  const evmAddress = identityToEvmAddress(identity);
+  const cc = await loadCachedCryptoConfig();
+
+  if (!cc) {
+    return { evmAddress, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
+  }
+
+  const client = new BaseEscrowClient({ rpcUrl: cc.rpcUrl, contractAddress: cc.escrowAddress, usdcAddress: cc.usdcAddress });
+
+  try {
+    const [balance, creditLimit] = await Promise.all([
+      client.getBuyerBalance(evmAddress),
+      client.getBuyerCreditLimit(evmAddress),
+    ]);
+    const info: CreditsInfo = {
+      evmAddress,
+      balanceUsdc: formatUsdc6(balance.available + balance.reserved),
+      reservedUsdc: formatUsdc6(balance.reserved),
+      availableUsdc: formatUsdc6(balance.available),
+      pendingWithdrawalUsdc: formatUsdc6(balance.pendingWithdrawal),
+      creditLimitUsdc: formatUsdc6(creditLimit),
+    };
+    cachedCreditsInfo = info;
+    return info;
+  } catch (err) {
+    console.error('[credits] Failed to fetch escrow balance:', err instanceof Error ? err.message : String(err));
+    if (cachedCreditsInfo) return cachedCreditsInfo;
+    return { evmAddress, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
+  }
+}
+
+ipcMain.handle('credits:get-info', async (): Promise<{ ok: boolean; data: CreditsInfo | null; error: string | null }> => {
+  try {
+    await ensureSecureIdentity();
+    const info = await refreshCreditsInfo();
+    return { ok: true, data: info, error: null };
+  } catch (err) {
+    return { ok: false, data: null, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+
+// FIRST_SIGN_CAP: 1 USDC = 1,000,000 base units. Main process enforces this cap
+// to prevent a compromised renderer from signing unbounded spending authorizations.
+const MAX_SPENDING_AUTH_BASE_UNITS = 1_000_000n;
+const MAX_DEADLINE_SECONDS = 7 * 24 * 60 * 60; // 7 days
+const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+const BYTES32_RE = /^0x[0-9a-fA-F]{64}$/;
+
+ipcMain.handle('payments:sign-spending-auth', async (_event, params: {
+  sellerEvmAddress: string;
+  sessionId: string;
+  maxAmountBaseUnits: string;
+  nonce: number;
+  deadline: number;
+  previousConsumption: string;
+  previousSessionId: string;
+}) => {
+  try {
+    // Validate renderer-supplied parameters at the trust boundary
+    if (!ETH_ADDRESS_RE.test(params.sellerEvmAddress)) {
+      return { ok: false, error: 'Invalid seller EVM address' };
+    }
+    if (!BYTES32_RE.test(params.sessionId)) {
+      return { ok: false, error: 'Invalid session ID format' };
+    }
+    const maxAmount = BigInt(params.maxAmountBaseUnits);
+    if (maxAmount <= 0n || maxAmount > MAX_SPENDING_AUTH_BASE_UNITS) {
+      return { ok: false, error: `maxAmount exceeds cap (${MAX_SPENDING_AUTH_BASE_UNITS} base units)` };
+    }
+    const now = Math.floor(Date.now() / 1000);
+    if (params.deadline < now || params.deadline > now + MAX_DEADLINE_SECONDS) {
+      return { ok: false, error: 'Deadline out of acceptable range' };
+    }
+
+    await ensureSecureIdentity();
+    const identity = getSecureIdentity();
+    if (!identity) {
+      return { ok: false, error: 'Identity not available' };
+    }
+
+    const cc = await loadCachedCryptoConfig();
+    if (!cc) {
+      return { ok: false, error: 'No escrow contract configured' };
+    }
+
+    const wallet = identityToEvmWallet(identity);
+    const domain = makeEscrowDomain(cc.chainId, cc.escrowAddress);
+
+    const signature = await signSpendingAuth(wallet, domain, {
+      seller: params.sellerEvmAddress,
+      sessionId: params.sessionId,
+      maxAmount,
+      nonce: params.nonce,
+      deadline: params.deadline,
+      previousConsumption: BigInt(params.previousConsumption),
+      previousSessionId: params.previousSessionId,
+    });
+
+    const buyerEvmAddress = identityToEvmAddress(identity);
 
     return {
       ok: true,
       data: {
-        address: walletAddress || null,
-        chainId: asString(payments.chainId as string, 'base-sepolia'),
-        balanceETH: '0.00',
-        balanceUSDC: '0.00',
-        escrow: {
-          deposited: '0.00',
-          committed: '0.00',
-          available: '0.00',
-        },
+        signature,
+        buyerEvmAddress,
       },
-      error: null,
     };
-  } catch (err) {
-    return {
-      ok: false,
-      data: null,
-      error: err instanceof Error ? err.message : String(err),
-    };
-  }
-});
-
-ipcMain.handle('wallet:deposit', async (_event, amount: string) => {
-  const numericAmount = Number(amount);
-  if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
-    return { ok: false, error: 'Invalid deposit amount' };
-  }
-  appendLog('connect', 'system', `Deposit requested: ${amount} USDC. Run 'antseed deposit ${amount}' in terminal.`);
-  return { ok: true, message: `Deposit of ${amount} USDC logged. Use CLI to execute: antseed deposit ${amount}` };
-});
-
-ipcMain.handle('wallet:withdraw', async (_event, amount: string) => {
-  const numericAmount = Number(amount);
-  if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
-    return { ok: false, error: 'Invalid withdrawal amount' };
-  }
-  appendLog('connect', 'system', `Withdrawal requested: ${amount} USDC. Run 'antseed withdraw ${amount}' in terminal.`);
-  return { ok: true, message: `Withdrawal of ${amount} USDC logged. Use CLI to execute: antseed withdraw ${amount}` };
-});
-
-// ── WalletConnect IPC Handlers ──
-
-const walletConnectManager = new WalletConnectManager();
-
-walletConnectManager.on('state', (state: unknown) => {
-  getMainWindow()?.webContents.send('wallet:wc-state-changed', state);
-});
-
-ipcMain.handle('wallet:wc-state', async () => {
-  return { ok: true, data: walletConnectManager.state };
-});
-
-ipcMain.handle('wallet:wc-connect', async () => {
-  try {
-    const uri = await walletConnectManager.connect();
-    if (!uri) {
-      return { ok: false, error: 'WalletConnect not initialized. Set WALLETCONNECT_PROJECT_ID environment variable.' };
-    }
-    return { ok: true, data: { uri } };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 });
 
-ipcMain.handle('wallet:wc-disconnect', async () => {
+ipcMain.handle('payments:get-peer-info', async (_event, peerId: string) => {
   try {
-    await walletConnectManager.disconnect();
-    return { ok: true };
+    if (typeof peerId !== 'string' || peerId.trim().length === 0) {
+      return { ok: false, error: 'Invalid peerId' };
+    }
+    await refreshPeerCache();
+    const peer = lookupPeer(peerId.trim());
+    if (!peer) {
+      return { ok: false, error: 'Peer not found' };
+    }
+
+    return {
+      ok: true,
+      data: {
+        peerId: peer.peerId,
+        displayName: peer.displayName ?? null,
+        reputation: peer.reputation ?? 0,
+        onChainReputation: (peer as Record<string, unknown>).onChainReputation ?? null,
+        onChainSessionCount: (peer as Record<string, unknown>).onChainSessionCount ?? null,
+        onChainDisputeCount: (peer as Record<string, unknown>).onChainDisputeCount ?? null,
+        evmAddress: (peer as Record<string, unknown>).evmAddress ?? null,
+        timestamp: (peer as Record<string, unknown>).timestamp ?? null,
+        providers: peer.providers ?? [],
+        services: peer.services ?? [],
+      },
+    };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -694,6 +825,8 @@ app.whenReady().then(() => {
     // Failure is logged inside ensureSecureIdentity; CLI falls back to file-based identity.
   });
 
+  // Payments portal starts lazily on first open (via payments:open-portal IPC)
+
   void ensureDefaultPlugin('@antseed/router-local', {
     getAppSetupNeeded: () => appSetupNeeded,
     setAppSetupNeeded: (v) => { appSetupNeeded = v; },
@@ -732,14 +865,6 @@ app.whenReady().then(() => {
     autoUpdater.quitAndInstall(false, true);
   });
 
-  // Initialize WalletConnect if project ID is configured
-  const wcProjectId = process.env['WALLETCONNECT_PROJECT_ID'] ?? '';
-  if (wcProjectId.length > 0) {
-    void walletConnectManager.init(wcProjectId).catch((err) => {
-      console.error('[WalletConnect] init failed:', err instanceof Error ? err.message : String(err));
-    });
-  }
-
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow({ appName: APP_NAME, appIconPath: APP_ICON_PATH, isDev, rendererUrl });
@@ -763,13 +888,15 @@ app.on('before-quit', (event) => {
   event.preventDefault();
   isQuitting = true;
 
-  void processManager.stopAll().finally(() => {
-    app.quit();
-  });
+  void processManager.stopAll()
+    .then(() => stopPaymentsPortal())
+    .finally(() => {
+      app.quit();
+    });
 });
 
 // Ensure child processes are cleaned up if the main process receives SIGTERM
 // (e.g. dev runner Ctrl+C kills Electron before before-quit fires).
 process.on('SIGTERM', () => {
-  void processManager.stopAll().finally(() => process.exit(0));
+  void Promise.all([processManager.stopAll(), stopPaymentsPortal()]).finally(() => process.exit(0));
 });
