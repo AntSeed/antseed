@@ -60,6 +60,7 @@ const DATA_CHANNEL_LABEL = "antseed-data";
 const LINE_SEPARATOR = "\n";
 const INITIAL_LINE_TIMEOUT_MS = 10_000;
 const MAX_INITIAL_LINE_BYTES = 8 * 1024;
+const TCP_KEEPALIVE_INITIAL_DELAY_MS = 10_000;
 
 /** Represents a single P2P connection. */
 export class PeerConnection extends EventEmitter {
@@ -123,6 +124,7 @@ export class PeerConnection extends EventEmitter {
 
   attachRawSocket(socket: Socket, initialData?: Uint8Array): void {
     this._rawSocket = socket;
+    socket.setKeepAlive(true, TCP_KEEPALIVE_INITIAL_DELAY_MS);
 
     socket.on("data", (chunk: Buffer) => {
       this.emit("message", new Uint8Array(chunk));
@@ -345,6 +347,7 @@ export class ConnectionManager extends EventEmitter {
         return;
       }
       this._ipConnectionCounts.set(ip, current + 1);
+      socket.setKeepAlive(true, TCP_KEEPALIVE_INITIAL_DELAY_MS);
       socket.once('close', () => {
         const count = this._ipConnectionCounts.get(ip) ?? 1;
         if (count <= 1) {
@@ -465,6 +468,7 @@ export class ConnectionManager extends EventEmitter {
     endpoint: PeerEndpoint,
   ): void {
     const signalingSocket = net.connect({ host: endpoint.host, port: endpoint.port });
+    signalingSocket.setKeepAlive(true, TCP_KEEPALIVE_INITIAL_DELAY_MS);
     conn.attachSignalingSocket(signalingSocket);
 
     let rtc: NativeRtcPeerConnection | null = null;
@@ -522,6 +526,7 @@ export class ConnectionManager extends EventEmitter {
     endpoint: PeerEndpoint,
   ): void {
     const socket = net.connect({ host: endpoint.host, port: endpoint.port });
+    socket.setKeepAlive(true, TCP_KEEPALIVE_INITIAL_DELAY_MS);
 
     socket.once("connect", () => {
       this._sendLine(socket, {
