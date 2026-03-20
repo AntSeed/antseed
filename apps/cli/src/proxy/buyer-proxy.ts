@@ -994,16 +994,28 @@ export class BuyerProxy {
   private _persistPeersToState(): void {
     // Write discovered peers to buyer.state.json so the dashboard can read them
     // without running its own DHT node.
-    const peers = this._cachedPeers.map((p) => ({
-      peerId: p.peerId,
-      displayName: p.displayName ?? null,
-      publicAddress: p.publicAddress ?? null,
-      providers: p.providers,
-      defaultInputUsdPerMillion: p.defaultInputUsdPerMillion ?? 0,
-      defaultOutputUsdPerMillion: p.defaultOutputUsdPerMillion ?? 0,
-      maxConcurrency: p.maxConcurrency ?? 0,
-      lastSeen: p.lastSeen,
-    }))
+    const peers = this._cachedPeers.map((p) => {
+      // Extract service names from providerPricing entries.
+      const services: string[] = []
+      if (p.providerPricing) {
+        for (const entry of Object.values(p.providerPricing)) {
+          if (entry.services) {
+            services.push(...Object.keys(entry.services))
+          }
+        }
+      }
+      return {
+        peerId: p.peerId,
+        displayName: p.displayName ?? null,
+        publicAddress: p.publicAddress ?? null,
+        providers: p.providers,
+        services,
+        defaultInputUsdPerMillion: p.defaultInputUsdPerMillion ?? 0,
+        defaultOutputUsdPerMillion: p.defaultOutputUsdPerMillion ?? 0,
+        maxConcurrency: p.maxConcurrency ?? 0,
+        lastSeen: p.lastSeen,
+      }
+    })
     this._mergeStateFile({ discoveredPeers: peers, peersUpdatedAt: Date.now() })
   }
 

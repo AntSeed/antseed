@@ -3,9 +3,11 @@ import { DEFAULT_BUYER_STATE_PATH } from './constants.js';
 
 export type DashboardNetworkPeer = {
   peerId: string;
+  displayName: string | null;
   host: string;
   port: number;
   providers: string[];
+  services: string[];
   inputUsdPerMillion: number;
   outputUsdPerMillion: number;
   capacityMsgPerHour: number;
@@ -68,16 +70,25 @@ export function parsePeerFromRaw(pr: Record<string, unknown>): DashboardNetworkP
     peerPort = lastColon > -1 ? Number(addr.slice(lastColon + 1)) || 0 : 0;
   }
 
+  const displayName = typeof pr.displayName === 'string' && pr.displayName.trim().length > 0
+    ? pr.displayName.trim()
+    : null;
+
+  const providers = Array.isArray(pr.providers)
+    ? (pr.providers as unknown[]).filter((s): s is string => typeof s === 'string')
+    : [];
+
+  const services = Array.isArray(pr.services)
+    ? (pr.services as unknown[]).filter((s): s is string => typeof s === 'string')
+    : [];
+
   return {
     peerId: pr.peerId as string,
+    displayName,
     host: peerHost,
     port: peerPort,
-    providers: Array.isArray(pr.providers)
-      ? (pr.providers as unknown[]).flatMap((p) =>
-          // Handle both plain strings (from buyer.state.json) and provider objects with services sub-arrays (from DHT metadata).
-          typeof p === 'string' ? [p] : (p && typeof p === 'object' && Array.isArray((p as Record<string, unknown>).services) ? ((p as Record<string, unknown>).services as unknown[]).filter((s): s is string => typeof s === 'string') : [])
-        )
-      : [],
+    providers,
+    services,
     inputUsdPerMillion: Number(pr.defaultInputUsdPerMillion) || 0,
     outputUsdPerMillion: Number(pr.defaultOutputUsdPerMillion) || 0,
     capacityMsgPerHour: (Number(pr.maxConcurrency) || 0) * 60,
@@ -113,7 +124,9 @@ export async function refreshPeerCache(): Promise<void> {
       seenInFile.add(peer.peerId);
       const existing = peerCache.get(peer.peerId);
       if (existing) {
+        peer.displayName = peer.displayName ?? existing.displayName;
         peer.providers = peer.providers.length > 0 ? peer.providers : existing.providers;
+        peer.services = peer.services.length > 0 ? peer.services : existing.services;
         peer.inputUsdPerMillion = peer.inputUsdPerMillion || existing.inputUsdPerMillion;
         peer.outputUsdPerMillion = peer.outputUsdPerMillion || existing.outputUsdPerMillion;
         peer.capacityMsgPerHour = peer.capacityMsgPerHour || existing.capacityMsgPerHour;
