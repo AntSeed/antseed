@@ -130,11 +130,6 @@ type DashboardNetworkStats = {
   healthReason?: string;
 };
 
-type DashboardNetworkSnapshot = {
-  peers: DashboardNetworkPeer[];
-  stats: DashboardNetworkStats;
-};
-
 type DashboardNetworkResult = {
   ok: boolean;
   peers: DashboardNetworkPeer[];
@@ -1536,63 +1531,6 @@ async function fetchDashboardData(
   }
 }
 
-async function scanDashboardNetwork(port?: number): Promise<DashboardApiResult> {
-  const safePort = toSafeDashboardPort(port);
-  const url = `http://127.0.0.1:${safePort}/api/network/scan`;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => {
-    controller.abort();
-  }, DASHBOARD_FETCH_TIMEOUT_MS);
-
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-      },
-      signal: controller.signal,
-    });
-
-    let payload: unknown = null;
-    const contentType = response.headers.get('content-type') ?? '';
-    if (contentType.includes('application/json')) {
-      payload = await response.json();
-    } else {
-      payload = await response.text();
-    }
-
-    if (!response.ok) {
-      return {
-        ok: false,
-        data: payload,
-        error: errorMessageFromPayload(payload) ?? `dashboard api returned ${response.status}`,
-        status: response.status,
-      };
-    }
-
-    return {
-      ok: true,
-      data: payload,
-      error: null,
-      status: response.status,
-    };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const normalized = message.toLowerCase();
-    const error = normalized.includes('abort')
-      ? `dashboard network scan timed out after ${String(DASHBOARD_FETCH_TIMEOUT_MS)}ms`
-      : message;
-    return {
-      ok: false,
-      data: null,
-      error,
-      status: null,
-    };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
 async function updateDashboardConfig(
   config: Record<string, unknown>,
   port?: number,
@@ -1654,27 +1592,61 @@ async function updateDashboardConfig(
   }
 }
 
-async function fetchNetworkSnapshot(port?: number): Promise<DashboardNetworkResult> {
-  const response = await fetchDashboardData('network', port);
-  if (!response.ok || !response.data || typeof response.data !== 'object') {
+/** Read peers directly from buyer.state.json instead of going through the dashboard HTTP API. */
+async function readNetworkPeersFromFile(): Promise<DashboardNetworkResult> {
+  try {
+    const raw = await readFile(DEFAULT_BUYER_STATE_PATH, 'utf-8');
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const rawPeers = Array.isArray(parsed.discoveredPeers) ? parsed.discoveredPeers : [];
+
+    const peers: DashboardNetworkPeer[] = [];
+    for (const p of rawPeers) {
+      if (!p || typeof p !== 'object') continue;
+      const pr = p as Record<string, unknown>;
+      if (typeof pr.peerId !== 'string') continue;
+
+      let peerHost = '';
+      let peerPort = 0;
+      if (typeof pr.publicAddress === 'string') {
+        const addr = pr.publicAddress as string;
+        const lastColon = addr.lastIndexOf(':');
+        peerHost = lastColon > -1 ? addr.slice(0, lastColon) : addr;
+        peerPort = lastColon > -1 ? Number(addr.slice(lastColon + 1)) || 0 : 0;
+      }
+
+      peers.push({
+        peerId: pr.peerId as string,
+        host: peerHost,
+        port: peerPort,
+        providers: Array.isArray(pr.providers) ? pr.providers.filter((s: unknown) => typeof s === 'string') : [],
+        inputUsdPerMillion: Number(pr.defaultInputUsdPerMillion) || 0,
+        outputUsdPerMillion: Number(pr.defaultOutputUsdPerMillion) || 0,
+        capacityMsgPerHour: (Number(pr.maxConcurrency) || 0) * 60,
+        reputation: 100,
+        lastSeen: Number(pr.lastSeen) || Date.now(),
+        source: 'dht',
+      });
+    }
+
     return {
-      ok: false,
+      ok: true,
+      peers,
+      stats: {
+        ...defaultNetworkStats(),
+        totalPeers: peers.length,
+        dhtHealthy: peers.length > 0,
+        lastScanAt: Number(parsed.peersUpdatedAt) || null,
+      },
+      error: null,
+    };
+  } catch {
+    return {
+      ok: true,
       peers: [],
       stats: defaultNetworkStats(),
-      error: response.error ?? 'dashboard network api error',
+      error: null,
     };
   }
-
-  const payload = response.data as Partial<DashboardNetworkSnapshot>;
-  const peers = Array.isArray(payload.peers) ? payload.peers : [];
-  const stats = payload.stats ?? defaultNetworkStats();
-
-  return {
-    ok: true,
-    peers,
-    stats,
-    error: null,
-  };
 }
 
 async function ensureDashboardRuntime(targetPort?: number): Promise<void> {
@@ -1883,11 +1855,8 @@ ipcMain.handle('plugins:install', async (_event, packageName: string) => {
   }
 });
 
-ipcMain.handle('runtime:get-network', async (_event, port?: number) => {
-  const requestedPort = toSafeDashboardPort(port);
-  await ensureDashboardRuntime(requestedPort);
-  const activePort = dashboardRuntime.running ? dashboardRuntime.port : requestedPort;
-  return fetchNetworkSnapshot(activePort);
+ipcMain.handle('runtime:get-network', async () => {
+  return readNetworkPeersFromFile();
 });
 
 ipcMain.handle(
@@ -2102,10 +2071,7 @@ registerPiChatHandlers({
     appendLog("dashboard", "system", line);
   },
   getNetworkPeers: async () => {
-    const requestedPort = dashboardRuntime.port;
-    await ensureDashboardRuntime(requestedPort);
-    const activePort = dashboardRuntime.running ? dashboardRuntime.port : requestedPort;
-    const snapshot = await fetchNetworkSnapshot(activePort);
+    const snapshot = await readNetworkPeersFromFile();
     if (!snapshot.ok) {
       return [];
     }
@@ -2123,11 +2089,10 @@ registerPiChatHandlers({
   },
 });
 
-ipcMain.handle('runtime:scan-network', async (_event, port?: number) => {
-  const requestedPort = toSafeDashboardPort(port);
-  await ensureDashboardRuntime(requestedPort);
-  const activePort = dashboardRuntime.running ? dashboardRuntime.port : requestedPort;
-  return scanDashboardNetwork(activePort);
+ipcMain.handle('runtime:scan-network', async () => {
+  // The buyer runtime handles peer discovery; just return the current state.
+  const snapshot = await readNetworkPeersFromFile();
+  return { ok: snapshot.ok, data: snapshot, error: snapshot.error, status: 200 };
 });
 
 app.whenReady().then(() => {
