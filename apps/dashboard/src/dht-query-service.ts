@@ -194,21 +194,37 @@ export class DHTQueryService {
       const now = Date.now();
       for (const p of rawPeers) {
         if (!p || typeof p !== 'object' || typeof (p as Record<string, unknown>).peerId !== 'string') continue;
-        const raw = p as Record<string, unknown>;
-        const peerId = String(raw.peerId);
+        const peerRaw = p as Record<string, unknown>;
+        const peerId = String(peerRaw.peerId);
         const existing = this.peers.get(peerId);
+
+        // Parse host:port from publicAddress, handling IPv6 brackets.
+        let host = existing?.host ?? '';
+        let port = existing?.port ?? 0;
+        if (typeof peerRaw.publicAddress === 'string') {
+          const addr = peerRaw.publicAddress as string;
+          const lastColon = addr.lastIndexOf(':');
+          host = lastColon > -1 ? addr.slice(0, lastColon) : addr;
+          port = lastColon > -1 ? Number(addr.slice(lastColon + 1)) || 0 : 0;
+        }
+
+        // Extract service names from providers (array of objects with services sub-array).
+        const services = resolveNetworkPeerServices(
+          Array.isArray(peerRaw.providers) ? { providers: peerRaw.providers } as Pick<PeerMetadata, 'providers'> : null,
+          existing?.services,
+        );
 
         this.peers.set(peerId, {
           peerId,
-          displayName: typeof raw.displayName === 'string' ? raw.displayName : (existing?.displayName ?? null),
-          host: typeof raw.publicAddress === 'string' ? raw.publicAddress.split(':')[0] ?? '' : (existing?.host ?? ''),
-          port: typeof raw.publicAddress === 'string' ? Number(raw.publicAddress.split(':')[1]) || 0 : (existing?.port ?? 0),
-          services: Array.isArray(raw.providers) ? raw.providers.filter((s: unknown) => typeof s === 'string') : (existing?.services ?? []),
-          inputUsdPerMillion: Number(raw.defaultInputUsdPerMillion) || (existing?.inputUsdPerMillion ?? 0),
-          outputUsdPerMillion: Number(raw.defaultOutputUsdPerMillion) || (existing?.outputUsdPerMillion ?? 0),
-          capacityMsgPerHour: (Number(raw.maxConcurrency) || 0) * 60 || (existing?.capacityMsgPerHour ?? 0),
+          displayName: typeof peerRaw.displayName === 'string' ? peerRaw.displayName : (existing?.displayName ?? null),
+          host,
+          port,
+          services,
+          inputUsdPerMillion: Number(peerRaw.defaultInputUsdPerMillion) || (existing?.inputUsdPerMillion ?? 0),
+          outputUsdPerMillion: Number(peerRaw.defaultOutputUsdPerMillion) || (existing?.outputUsdPerMillion ?? 0),
+          capacityMsgPerHour: (Number(peerRaw.maxConcurrency) || 0) * 60 || (existing?.capacityMsgPerHour ?? 0),
           reputation: existing?.reputation ?? 100,
-          lastSeen: Number(raw.lastSeen) || now,
+          lastSeen: Number(peerRaw.lastSeen) || now,
           source: 'dht',
         });
       }
