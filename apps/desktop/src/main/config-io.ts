@@ -37,51 +37,75 @@ export async function ensureConfig(configPath = DEFAULT_CONFIG_PATH): Promise<vo
 }
 
 /**
- * Read config.json and return parsed config with safe defaults.
+ * Read config.json and return parsed config.
+ * Distinguishes "file not found" (returns {}) from "corrupt JSON" (throws).
  */
 export async function readConfig(configPath = DEFAULT_CONFIG_PATH): Promise<Record<string, unknown>> {
+  let raw: string;
   try {
-    const raw = await readFile(configPath, 'utf-8');
-    return JSON.parse(raw) as Record<string, unknown>;
-  } catch {
-    return {};
+    raw = await readFile(configPath, 'utf-8');
+  } catch (err) {
+    // File doesn't exist — return empty (first-run scenario).
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      return {};
+    }
+    throw err;
   }
+  // Parse errors propagate — corrupt config should not be silently swallowed.
+  return JSON.parse(raw) as Record<string, unknown>;
 }
 
+// Serialise config writes to prevent concurrent read-modify-write races.
+let configWriteChain: Promise<void> = Promise.resolve();
+
 /**
- * Merge a partial config into the existing config.json (read-modify-write, atomic).
+ * Merge a partial config into the existing config.json (serialised, atomic).
  */
 export async function mergeConfig(
   patch: Record<string, unknown>,
   configPath = DEFAULT_CONFIG_PATH,
 ): Promise<Record<string, unknown>> {
-  const existing = await readConfig(configPath);
-  const merged = { ...existing };
+  let result: Record<string, unknown> = {};
 
-  // Deep-merge top-level keys (one level deep).
-  for (const [key, value] of Object.entries(patch)) {
-    if (value && typeof value === 'object' && !Array.isArray(value)
-        && existing[key] && typeof existing[key] === 'object' && !Array.isArray(existing[key])) {
-      merged[key] = { ...(existing[key] as Record<string, unknown>), ...(value as Record<string, unknown>) };
-    } else {
-      merged[key] = value;
+  const op = configWriteChain.then(async () => {
+    const existing = await readConfig(configPath);
+    const merged = { ...existing };
+
+    for (const [key, value] of Object.entries(patch)) {
+      if (value && typeof value === 'object' && !Array.isArray(value)
+          && existing[key] && typeof existing[key] === 'object' && !Array.isArray(existing[key])) {
+        merged[key] = { ...(existing[key] as Record<string, unknown>), ...(value as Record<string, unknown>) };
+      } else {
+        merged[key] = value;
+      }
     }
-  }
 
-  const dir = path.dirname(configPath);
-  await mkdir(dir, { recursive: true });
-  const tmp = path.join(dir, `.config.${randomUUID()}.json.tmp`);
-  await writeFile(tmp, JSON.stringify(merged, null, 2));
-  await rename(tmp, configPath);
+    const dir = path.dirname(configPath);
+    await mkdir(dir, { recursive: true });
+    const tmp = path.join(dir, `.config.${randomUUID()}.json.tmp`);
+    await writeFile(tmp, JSON.stringify(merged, null, 2));
+    await rename(tmp, configPath);
 
-  return merged;
+    result = merged;
+  }).catch(() => { /* non-fatal */ });
+
+  configWriteChain = op;
+  await op;
+  return result;
+}
+
+/**
+ * Resolve the data directory from a config path.
+ */
+function resolveDataDir(configPath: string): string {
+  return path.dirname(configPath);
 }
 
 /**
  * Read the daemon (seller) state file.
  */
-export async function readDaemonState(statePath?: string): Promise<Record<string, unknown>> {
-  const file = statePath ?? path.join(path.dirname(DEFAULT_CONFIG_PATH), 'daemon.state.json');
+export async function readDaemonState(configPath = DEFAULT_CONFIG_PATH): Promise<Record<string, unknown>> {
+  const file = path.join(resolveDataDir(configPath), 'daemon.state.json');
   try {
     const raw = await readFile(file, 'utf-8');
     return JSON.parse(raw) as Record<string, unknown>;
@@ -91,17 +115,17 @@ export async function readDaemonState(statePath?: string): Promise<Record<string
 }
 
 /**
- * Build a status-like object from daemon.state.json, matching what the
- * dashboard's /api/status endpoint returns.
+ * Build a status-like object from daemon.state.json.
+ * Uses the same data directory as the config path so ANTSEED_CONFIG_PATH is respected.
  */
-export async function readNodeStatus(statePath?: string): Promise<Record<string, unknown>> {
-  const state = await readDaemonState(statePath);
+export async function readNodeStatus(configPath = DEFAULT_CONFIG_PATH): Promise<Record<string, unknown>> {
+  const state = await readDaemonState(configPath);
   return {
     state: asString(state.state as string, 'idle'),
     daemonAlive: state.state === 'seeding' || state.state === 'connected',
     peerId: asString(state.peerId as string, ''),
     walletAddress: asString(state.walletAddress as string, ''),
-    peerCount: asNumber(state.activeSessions, 0),
+    peerCount: 0, // Desktop is buyer-only; seller's activeSessions is not meaningful here.
     activeSessions: asNumber(state.activeSessions, 0),
     capacityUsedPercent: asNumber(state.capacityUsedPercent, 0),
     earningsToday: asString(state.earningsToday as string, '0.00'),

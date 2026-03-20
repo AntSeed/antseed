@@ -419,7 +419,7 @@ ipcMain.handle(
     // Serve status, config, and network directly from files — no dashboard needed.
     if (endpoint === 'status') {
       try {
-        const data = await readNodeStatus();
+        const data = await readNodeStatus(ACTIVE_CONFIG_PATH);
         return { ok: true, data, error: null, status: 200 } satisfies ApiResult;
       } catch (err) {
         return { ok: false, data: null, error: err instanceof Error ? err.message : String(err), status: null } satisfies ApiResult;
@@ -436,12 +436,16 @@ ipcMain.handle(
     }
 
     if (endpoint === 'network' || endpoint === 'peers') {
-      await refreshPeerCache();
-      const snapshot = getNetworkSnapshot();
-      if (endpoint === 'peers') {
-        return { ok: true, data: { peers: snapshot.peers, total: snapshot.peers.length, degraded: false }, error: null, status: 200 } satisfies ApiResult;
-      }
+      try {
+        await refreshPeerCache();
+        const snapshot = getNetworkSnapshot();
+        if (endpoint === 'peers') {
+          return { ok: true, data: { peers: snapshot.peers, total: snapshot.peers.length, degraded: false }, error: null, status: 200 } satisfies ApiResult;
+        }
       return { ok: true, data: snapshot, error: null, status: 200 } satisfies ApiResult;
+      } catch (err) {
+        return { ok: false, data: null, error: err instanceof Error ? err.message : String(err), status: null } satisfies ApiResult;
+      }
     }
 
     if (endpoint === 'data-sources') {
@@ -514,7 +518,7 @@ type WalletInfo = {
 ipcMain.handle('wallet:get-info', async (): Promise<{ ok: boolean; data: WalletInfo | null; error: string | null }> => {
   try {
     const [status, config] = await Promise.all([
-      readNodeStatus(),
+      readNodeStatus(ACTIVE_CONFIG_PATH),
       readConfig(ACTIVE_CONFIG_PATH),
     ]);
 
