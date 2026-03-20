@@ -116,6 +116,7 @@ type DashboardNetworkPeer = {
   reputation: number;
   lastSeen: number;
   source: 'dht' | 'daemon';
+  online: boolean;
 };
 
 type DashboardNetworkStats = {
@@ -1592,12 +1593,11 @@ async function updateDashboardConfig(
   }
 }
 
-/** Read peers directly from buyer.state.json instead of going through the dashboard HTTP API. */
 // ── Desktop Peer Cache ──
-// In-memory peer cache fed by buyer.state.json. Supports merge, TTL eviction,
-// touchPeer (keep alive), and lookupPeer (find by ID).
+// In-memory peer cache fed by buyer.state.json. Peers are never removed —
+// they're marked offline when not seen for longer than the TTL.
 
-const PEER_TTL_MS = 5 * 60_000;
+const PEER_ONLINE_TTL_MS = 5 * 60_000;
 const peerCache = new Map<string, DashboardNetworkPeer>();
 let peerCacheLastScanAt: number | null = null;
 
@@ -1624,11 +1624,15 @@ function parsePeerFromRaw(pr: Record<string, unknown>): DashboardNetworkPeer | n
     reputation: 100,
     lastSeen: Number(pr.lastSeen) || Date.now(),
     source: 'dht',
+    online: true,
   };
 }
 
-/** Refresh peer cache from buyer.state.json — merge new, evict stale. */
+/** Refresh peer cache from buyer.state.json — merge new, mark stale as offline. */
 async function refreshPeerCache(): Promise<void> {
+  // Track which peers are in the current file snapshot.
+  const seenInFile = new Set<string>();
+
   try {
     const raw = await readFile(DEFAULT_BUYER_STATE_PATH, 'utf-8');
     const parsed = JSON.parse(raw) as Record<string, unknown>;
@@ -1639,16 +1643,16 @@ async function refreshPeerCache(): Promise<void> {
       const peer = parsePeerFromRaw(p as Record<string, unknown>);
       if (!peer) continue;
 
+      seenInFile.add(peer.peerId);
       const existing = peerCache.get(peer.peerId);
-      // Merge: keep better data from existing if new data is empty.
       if (existing) {
         peer.providers = peer.providers.length > 0 ? peer.providers : existing.providers;
         peer.inputUsdPerMillion = peer.inputUsdPerMillion || existing.inputUsdPerMillion;
         peer.outputUsdPerMillion = peer.outputUsdPerMillion || existing.outputUsdPerMillion;
         peer.capacityMsgPerHour = peer.capacityMsgPerHour || existing.capacityMsgPerHour;
-        // Keep the more recent lastSeen.
         peer.lastSeen = Math.max(peer.lastSeen, existing.lastSeen);
       }
+      peer.online = true;
       peerCache.set(peer.peerId, peer);
     }
 
@@ -1657,11 +1661,11 @@ async function refreshPeerCache(): Promise<void> {
     // File doesn't exist yet — buyer runtime may not be running.
   }
 
-  // Evict stale peers.
+  // Mark peers not in the current file snapshot as offline if stale.
   const now = Date.now();
   for (const [id, peer] of peerCache) {
-    if (now - peer.lastSeen > PEER_TTL_MS) {
-      peerCache.delete(id);
+    if (!seenInFile.has(id)) {
+      peer.online = now - peer.lastSeen < PEER_ONLINE_TTL_MS;
     }
   }
 }
@@ -1674,7 +1678,7 @@ function getNetworkSnapshot(): DashboardNetworkResult {
     stats: {
       ...defaultNetworkStats(),
       totalPeers: peers.length,
-      dhtHealthy: peers.length > 0,
+      dhtHealthy: peers.some((p) => p.online),
       lastScanAt: peerCacheLastScanAt,
     },
     error: null,
@@ -1682,13 +1686,13 @@ function getNetworkSnapshot(): DashboardNetworkResult {
 }
 
 /**
- * Mark a peer as recently active. Prevents TTL eviction for peers
- * we know are alive (e.g. after a chat response).
+ * Mark a peer as recently active and online (e.g. after a chat response).
  */
 function touchPeer(peerId: string): boolean {
   const peer = peerCache.get(peerId);
   if (peer) {
     peer.lastSeen = Date.now();
+    peer.online = true;
     return true;
   }
   return false;
