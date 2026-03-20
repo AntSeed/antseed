@@ -429,9 +429,12 @@ ipcMain.handle(
       }
     }
 
-    if (endpoint === 'network') {
+    if (endpoint === 'network' || endpoint === 'peers') {
       await refreshPeerCache();
       const snapshot = getNetworkSnapshot();
+      if (endpoint === 'peers') {
+        return { ok: true, data: { peers: snapshot.peers, total: snapshot.peers.length, degraded: false }, error: null, status: 200 } satisfies ApiResult;
+      }
       return { ok: true, data: snapshot, error: null, status: 200 } satisfies ApiResult;
     }
 
