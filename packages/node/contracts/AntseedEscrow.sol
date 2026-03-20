@@ -126,6 +126,7 @@ contract AntseedEscrow is EIP712, Pausable {
     mapping(address => mapping(address => bytes32)) public latestSessionId;
     mapping(address => uint256) public activeSessionCount;
     mapping(address => uint256) public creditLimitOverride;
+    mapping(address => mapping(address => uint256)) public firstSessionTimestamp; // buyer → seller → first session time
 
     // ─── Events ─────────────────────────────────────────────────────────
     event Deposited(address indexed buyer, uint256 amount);
@@ -396,6 +397,10 @@ contract AntseedEscrow is EIP712, Pausable {
         if (isFirstSign) {
             // First sign: enforce cap
             if (maxAmount > FIRST_SIGN_CAP) revert FirstSignCapExceeded();
+            // Record first-ever session timestamp for this buyer-seller pair
+            if (firstSessionTimestamp[buyer][msg.sender] == 0) {
+                firstSessionTimestamp[buyer][msg.sender] = block.timestamp;
+            }
 
         } else {
             // Proven sign: validate proof chain — must chain from latest session
@@ -406,8 +411,9 @@ contract AntseedEscrow is EIP712, Pausable {
             if (previousConsumption != prevSession.settledTokenCount) revert InvalidProofChain();
             if (previousConsumption < MIN_TOKEN_THRESHOLD) revert InvalidProofChain();
 
-            // Cooldown check
-            if (block.timestamp < prevSession.reservedAt + PROVEN_SIGN_COOLDOWN) revert CooldownNotElapsed();
+            // Cooldown check: must wait PROVEN_SIGN_COOLDOWN from the first-ever session
+            uint256 firstTime = firstSessionTimestamp[buyer][msg.sender];
+            if (firstTime == 0 || block.timestamp < firstTime + PROVEN_SIGN_COOLDOWN) revert CooldownNotElapsed();
 
             isProvenSign = true;
             // Qualified if buyer has interacted with enough unique sellers
@@ -478,6 +484,7 @@ contract AntseedEscrow is EIP712, Pausable {
     // ═══════════════════════════════════════════════════════════════════
 
     function settle(bytes32 sessionId, uint256 tokenCount) external nonReentrant {
+        if (tokenCount == 0) revert InvalidAmount();
         Session storage session = sessions[sessionId];
         if (session.status != SessionStatus.Reserved) revert SessionNotReserved();
         if (msg.sender != session.seller) revert NotAuthorized();

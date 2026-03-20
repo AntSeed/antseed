@@ -49,6 +49,7 @@ contract AntseedSubPool {
         uint256 tokenId; // AntseedIdentity token
         uint256 lastClaimedEpoch;
         uint256 pendingRevenue;
+        uint256 optedInAt; // timestamp when peer opted in
     }
 
     // ─── State Variables ─────────────────────────────────────────────────
@@ -250,7 +251,8 @@ contract AntseedSubPool {
             optedIn: true,
             tokenId: tokenId,
             lastClaimedEpoch: currentEpoch,
-            pendingRevenue: 0
+            pendingRevenue: 0,
+            optedInAt: block.timestamp
         });
         peerRewardPerTokenPaid[msg.sender] = rewardPerTokenStored;
         // Snapshot initial weight from current reputation
@@ -318,17 +320,25 @@ contract AntseedSubPool {
             uint256 totalWeight = 0;
             for (uint256 i = 0; i < peerCount; i++) {
                 address peer = optedInPeers[i];
+                PeerOpt storage opt = peerOpts[peer];
+
+                // Skip peers who opted in during the current epoch (mid-epoch opt-in)
+                if (opt.optedInAt > epochStart) {
+                    // Still sync their paid marker so they start fresh next epoch
+                    peerRewardPerTokenPaid[peer] = rewardPerTokenStored;
+                    continue;
+                }
+
                 uint256 w = peerSnapshotWeight[peer];
                 if (w > 0) {
                     // Settle earned with old snapshot weight before updating
                     uint256 earned = (w * (rewardPerTokenStored - peerRewardPerTokenPaid[peer])) / 1e18;
-                    peerOpts[peer].pendingRevenue += earned;
+                    opt.pendingRevenue += earned;
                 }
                 // Always sync paid marker — even for zero-weight peers — so they
                 // can't retroactively claim deltas from epochs they didn't participate in.
                 peerRewardPerTokenPaid[peer] = rewardPerTokenStored;
                 // Snapshot current reputation as weight for the new epoch
-                PeerOpt storage opt = peerOpts[peer];
                 IAntseedIdentity.ProvenReputation memory rep = identityContract.getReputation(opt.tokenId);
                 uint256 newWeight = uint256(rep.qualifiedProvenSignCount);
                 peerSnapshotWeight[peer] = newWeight;

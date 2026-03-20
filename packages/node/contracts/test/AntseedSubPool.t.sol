@@ -466,7 +466,7 @@ contract AntseedSubPoolRevenueTest is AntseedSubPoolTestBase {
         assertEq(balAfter - balBefore, MONTHLY_FEE);
 
         // Pending should be zeroed
-        (,,, uint256 pending) = pool.peerOpts(seller1);
+        (,,, uint256 pending,) = pool.peerOpts(seller1);
         assertEq(pending, 0);
     }
 
