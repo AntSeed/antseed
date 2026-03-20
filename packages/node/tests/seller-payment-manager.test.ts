@@ -134,6 +134,12 @@ describe('SellerPaymentManager', () => {
     vi.spyOn(escrow, 'reserve').mockResolvedValue('0xreserve-hash');
     vi.spyOn(escrow, 'settle').mockResolvedValue('0xsettle-hash');
     vi.spyOn(escrow, 'settleTimeout').mockResolvedValue('0xtimeout-hash');
+    vi.spyOn(escrow, 'getSellerAccount').mockResolvedValue({
+      stake: 100000000n,
+      earnings: 0n,
+      stakedAt: BigInt(Date.now()),
+      tokenRate: 1n,
+    });
 
     mux = createMockPaymentMux();
   });

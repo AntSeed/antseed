@@ -148,6 +148,12 @@ describe('Proof Chain Integration', () => {
     vi.spyOn(sellerManager.escrowClient, 'reserve').mockResolvedValue('0xreserve');
     vi.spyOn(sellerManager.escrowClient, 'settle').mockResolvedValue('0xsettle');
     vi.spyOn(sellerManager.escrowClient, 'settleTimeout').mockResolvedValue('0xtimeout');
+    vi.spyOn(sellerManager.escrowClient, 'getSellerAccount').mockResolvedValue({
+      stake: 100000000n,
+      earnings: 0n,
+      stakedAt: BigInt(Date.now()),
+      tokenRate: 1n,
+    });
   });
 
   afterEach(() => {
