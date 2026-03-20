@@ -239,7 +239,7 @@ contract AntseedEscrow is EIP712, Pausable {
         BuyerAccount storage ba = buyers[msg.sender];
         // Must cancel existing withdrawal request before creating a new one
         if (ba.withdrawalAmount > 0) revert InvalidAmount();
-        uint256 available = ba.balance - ba.reserved;
+        uint256 available = ba.balance - ba.reserved - ba.withdrawalAmount;
         if (available < amount) revert InsufficientBalance();
 
         ba.withdrawalAmount = amount;
