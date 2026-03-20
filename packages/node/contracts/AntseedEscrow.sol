@@ -662,13 +662,25 @@ contract AntseedEscrow is EIP712, Pausable {
         else if (key == keccak256("MIN_SELLER_STAKE")) MIN_SELLER_STAKE = value;
         else if (key == keccak256("MIN_TOKEN_THRESHOLD")) MIN_TOKEN_THRESHOLD = value;
         else if (key == keccak256("BUYER_DIVERSITY_THRESHOLD")) BUYER_DIVERSITY_THRESHOLD = value;
-        else if (key == keccak256("PROVEN_SIGN_COOLDOWN")) PROVEN_SIGN_COOLDOWN = value;
-        else if (key == keccak256("BUYER_INACTIVITY_PERIOD")) BUYER_INACTIVITY_PERIOD = value;
-        else if (key == keccak256("SETTLE_TIMEOUT")) SETTLE_TIMEOUT = value;
+        else if (key == keccak256("PROVEN_SIGN_COOLDOWN")) {
+            if (value < 1 days) revert InvalidAmount();
+            PROVEN_SIGN_COOLDOWN = value;
+        }
+        else if (key == keccak256("BUYER_INACTIVITY_PERIOD")) {
+            if (value < 1 days) revert InvalidAmount();
+            BUYER_INACTIVITY_PERIOD = value;
+        }
+        else if (key == keccak256("SETTLE_TIMEOUT")) {
+            if (value < 1 hours) revert InvalidAmount();
+            SETTLE_TIMEOUT = value;
+        }
         else if (key == keccak256("REPUTATION_CAP_COEFFICIENT")) REPUTATION_CAP_COEFFICIENT = value;
         else if (key == keccak256("SLASH_RATIO_THRESHOLD")) SLASH_RATIO_THRESHOLD = value;
         else if (key == keccak256("SLASH_GHOST_THRESHOLD")) SLASH_GHOST_THRESHOLD = value;
-        else if (key == keccak256("SLASH_INACTIVITY_DAYS")) SLASH_INACTIVITY_DAYS = value;
+        else if (key == keccak256("SLASH_INACTIVITY_DAYS")) {
+            if (value < 1 days) revert InvalidAmount();
+            SLASH_INACTIVITY_DAYS = value;
+        }
         else if (key == keccak256("PLATFORM_FEE_BPS")) {
             if (value > MAX_PLATFORM_FEE_BPS) revert InvalidFee();
             PLATFORM_FEE_BPS = value;

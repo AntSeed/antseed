@@ -335,10 +335,11 @@ export class BuyerPaymentManager {
   }
 
   getSessionHistory(sellerPeerId: string): StoredSession[] {
-    // Return all sessions for this peer
     const sessions: StoredSession[] = [];
+    const seen = new Set<string>();
     let session = this._sessionStore.getLatestSession(sellerPeerId, 'buyer');
-    while (session) {
+    while (session && !seen.has(session.sessionId)) {
+      seen.add(session.sessionId);
       sessions.unshift(session);
       if (session.previousSessionId === ZERO_SESSION_ID) break;
       session = this._sessionStore.getSession(session.previousSessionId);
