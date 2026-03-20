@@ -94,6 +94,9 @@ export class BuyerPaymentManager {
   ): Promise<string> {
     const amount = maxAmount ?? this._config.defaultMaxAmountUsdc;
 
+    // Clear confirmation state so we wait for a fresh AuthAck on the new session
+    this._confirmedPeers.delete(sellerPeerId);
+
     // Load latest session to build proof chain.
     // Only chain if the session is settled or active-with-delivery (the seller
     // will settle it on-chain before reserving the new one).

@@ -49,6 +49,8 @@ export class SellerPaymentManager {
   private readonly _topUpRequested = new Set<string>();
   /** Cached seller tokenRate (fetched once from escrow, used for top-up threshold). */
   private _tokenRate: bigint | null = null;
+  /** Per-buyer mutex to prevent concurrent handleSpendingAuth for the same buyer. */
+  private readonly _buyerLocks = new Map<string, Promise<void>>();
 
   constructor(identity: Identity, config: SellerPaymentConfig, sessionStore: SessionStore) {
     this._identity = identity;
@@ -82,6 +84,21 @@ export class SellerPaymentManager {
    * 4. Store and send AuthAck
    */
   async handleSpendingAuth(
+    buyerPeerId: string,
+    buyerEvmAddr: string,
+    payload: SpendingAuthPayload,
+    paymentMux: PaymentMux,
+  ): Promise<void> {
+    // Per-buyer mutex: serialize concurrent auths for the same buyer
+    const existing = this._buyerLocks.get(buyerPeerId);
+    const lock = (existing ?? Promise.resolve()).then(() =>
+      this._handleSpendingAuthInner(buyerPeerId, buyerEvmAddr, payload, paymentMux),
+    );
+    this._buyerLocks.set(buyerPeerId, lock.catch(() => {}));
+    return lock;
+  }
+
+  private async _handleSpendingAuthInner(
     buyerPeerId: string,
     buyerEvmAddr: string,
     payload: SpendingAuthPayload,
@@ -142,8 +159,16 @@ export class SellerPaymentManager {
         }
       }
 
-      // 3. Reserve new session on-chain
+      // 3. Fetch tokenRate BEFORE reserve so a failure here doesn't orphan
+      //    an on-chain reservation the seller can't serve.
       const sellerEvmAddr = identityToEvmAddress(this._identity);
+      const account = await this._escrowClient.getSellerAccount(sellerEvmAddr);
+      this._tokenRate = account.tokenRate;
+      if (this._tokenRate === 0n) {
+        throw new Error('Token rate is 0 — set rate with antseed setTokenRate before serving');
+      }
+
+      // 4. Reserve new session on-chain
       debugLog(`[SellerPayment] Reserving session ${payload.sessionId.slice(0, 18)}... on-chain`);
       await this._escrowClient.reserve(
         this._signer,
@@ -157,17 +182,7 @@ export class SellerPaymentManager {
         payload.buyerSig,
       );
 
-      // Refresh tokenRate from on-chain on every new session — the seller may
-      // have called setTokenRate() between sessions. A stale cache would cause
-      // effectiveTokenCap to diverge from the contract's snapshotted rate,
-      // breaking the proof chain (tokensDelivered != settledTokenCount).
-      const account = await this._escrowClient.getSellerAccount(sellerEvmAddr);
-      this._tokenRate = account.tokenRate;
-      if (this._tokenRate === 0n) {
-        throw new Error('Token rate is 0 — set rate with antseed setTokenRate before serving');
-      }
-
-      // 4. Store new session
+      // 5. Store new session
       const now = Date.now();
       const session: StoredSession = {
         sessionId: payload.sessionId,
@@ -192,7 +207,7 @@ export class SellerPaymentManager {
       this._sessionStore.upsertSession(session);
       this._activeBuyers.add(buyerPeerId);
 
-      // 5. Send AuthAck
+      // 6. Send AuthAck
       paymentMux.sendAuthAck({
         sessionId: payload.sessionId,
         nonce: payload.nonce,

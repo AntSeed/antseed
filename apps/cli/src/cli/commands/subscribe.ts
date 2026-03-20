@@ -27,14 +27,14 @@ export function registerSubscribeCommand(program: Command): void {
         process.exit(1);
       }
 
-      const { wallet, address } = await loadCryptoContext(globalOpts.dataDir);
-      const subPoolClient = createSubPoolClient(config);
-
-      console.log(chalk.dim(`Wallet: ${address}`));
-
       const spinner = ora('Fetching tier info...').start();
 
       try {
+        const { wallet, address } = await loadCryptoContext(globalOpts.dataDir);
+        const subPoolClient = createSubPoolClient(config);
+
+        console.log(chalk.dim(`Wallet: ${address}`));
+
         const tier = await subPoolClient.getTier(tierId);
         if (!tier.active) {
           spinner.fail(chalk.red(`Tier ${tierId} is not active.`));
@@ -61,12 +61,12 @@ export function registerSubscribeCommand(program: Command): void {
       const globalOpts = getGlobalOptions(program);
       const config = await loadConfig(globalOpts.config);
 
-      const { address } = await loadCryptoContext(globalOpts.dataDir);
-      const subPoolClient = createSubPoolClient(config);
-
       const spinner = ora('Checking subscription...').start();
 
       try {
+        const { address } = await loadCryptoContext(globalOpts.dataDir);
+        const subPoolClient = createSubPoolClient(config);
+
         const [active, remaining] = await Promise.all([
           subPoolClient.isSubscriptionActive(address),
           subPoolClient.getRemainingDailyBudget(address),
@@ -99,14 +99,14 @@ export function registerSubscribeCommand(program: Command): void {
       const globalOpts = getGlobalOptions(program);
       const config = await loadConfig(globalOpts.config);
 
-      const { wallet, address } = await loadCryptoContext(globalOpts.dataDir);
-      const subPoolClient = createSubPoolClient(config);
-
-      console.log(chalk.dim(`Wallet: ${address}`));
-
       const spinner = ora('Cancelling subscription...').start();
 
       try {
+        const { wallet, address } = await loadCryptoContext(globalOpts.dataDir);
+        const subPoolClient = createSubPoolClient(config);
+
+        console.log(chalk.dim(`Wallet: ${address}`));
+
         const txHash = await subPoolClient.cancelSubscription(wallet);
         spinner.succeed(chalk.green('Subscription cancelled'));
         console.log(chalk.dim(`Transaction: ${txHash}`));

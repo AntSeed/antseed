@@ -42,6 +42,7 @@ contract AntseedSubPool {
         uint256 expiresAt;
         uint256 tokensUsedToday;
         uint256 lastResetDay; // day number (block.timestamp / 1 days)
+        bool cancelled;
     }
 
     struct PeerOpt {
@@ -171,6 +172,7 @@ contract AntseedSubPool {
         sub.expiresAt = block.timestamp + 30 days;
         sub.tokensUsedToday = 0;
         sub.lastResetDay = block.timestamp / 1 days;
+        sub.cancelled = false;
 
         emit Subscribed(msg.sender, tierId, sub.expiresAt);
     }
@@ -178,6 +180,7 @@ contract AntseedSubPool {
     function renewSubscription() external nonReentrant {
         Subscription storage sub = subscriptions[msg.sender];
         if (sub.expiresAt == 0) revert NotSubscribed();
+        if (sub.cancelled) revert NotAuthorized();
         if (sub.expiresAt < block.timestamp) revert SubscriptionExpired();
 
         Tier storage tier = tiers[sub.tierId];
@@ -194,6 +197,7 @@ contract AntseedSubPool {
     function cancelSubscription() external {
         Subscription storage sub = subscriptions[msg.sender];
         if (sub.expiresAt == 0 || sub.expiresAt < block.timestamp) revert NotSubscribed();
+        sub.cancelled = true;
         // No refund, subscription remains active until expiresAt
         emit Cancelled(msg.sender);
     }
