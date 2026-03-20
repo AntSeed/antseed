@@ -294,8 +294,8 @@ export async function registerApiRoutes(
     if (!dhtQueryService) {
       return reply.code(503).send({ error: 'DHT query service not available' });
     }
-    dhtQueryService.touchPeer(req.params.peerId);
-    return reply.send({ ok: true });
+    const touched = dhtQueryService.touchPeer(req.params.peerId);
+    return reply.send({ ok: touched });
   });
 
   // GET /api/sessions - Session history

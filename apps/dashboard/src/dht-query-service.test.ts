@@ -113,23 +113,24 @@ test('getPeer returns cached peer', () => {
   assert.equal(result?.peerId, 'abc123');
 });
 
-test('touchPeer updates lastSeen', () => {
+test('touchPeer updates lastSeen and returns true', () => {
   const service = createService();
   const oldTime = Date.now() - 120_000;
   const peer = makePeer({ peerId: 'abc123', lastSeen: oldTime });
   internalPeers(service).set('abc123', peer);
 
-  service.touchPeer('abc123');
+  const result = service.touchPeer('abc123');
+  assert.equal(result, true);
 
   const updated = service.getPeer('abc123');
   assert.ok(updated!.lastSeen > oldTime, 'lastSeen should be updated');
   assert.ok(Date.now() - updated!.lastSeen < 1000, 'lastSeen should be recent');
 });
 
-test('touchPeer is a no-op for unknown peers', () => {
+test('touchPeer returns false for unknown peers', () => {
   const service = createService();
-  // Should not throw.
-  service.touchPeer('nonexistent');
+  const result = service.touchPeer('nonexistent');
+  assert.equal(result, false);
   assert.equal(service.getPeer('nonexistent'), null);
 });
 

@@ -258,12 +258,15 @@ export class DHTQueryService {
   /**
    * Mark a peer as recently active (e.g. after communicating with it).
    * Prevents TTL eviction for peers we know are alive.
+   * Returns true if the peer was found in cache, false otherwise.
    */
-  touchPeer(peerId: string): void {
+  touchPeer(peerId: string): boolean {
     const peer = this.peers.get(peerId);
     if (peer) {
       peer.lastSeen = Date.now();
+      return true;
     }
+    return false;
   }
 
   /** Return a cached peer by ID, or null if not in the cache. */
@@ -273,8 +276,9 @@ export class DHTQueryService {
 
   /**
    * Look up a specific peer via DHT. If the peer is already cached and fresh,
-   * returns it immediately. Otherwise performs a targeted DHT lookup and
-   * resolves metadata. The result is merged into the cache.
+   * returns it immediately. Otherwise performs a wildcard DHT lookup, resolves
+   * all endpoint metadata in parallel (keeping the cache warm), and returns
+   * the target peer if found.
    */
   async lookupPeer(peerId: string): Promise<NetworkPeer | null> {
     // Return cached if fresh (seen within last scan interval).
@@ -285,7 +289,6 @@ export class DHTQueryService {
 
     if (!this.dhtNode) return cached ?? null;
 
-    // Perform a full wildcard lookup and search for the specific peer.
     const infoHash = topicToInfoHash(ANTSEED_WILDCARD_TOPIC);
     let endpoints: Awaited<ReturnType<DHTNode['lookup']>> = [];
     try {
@@ -294,51 +297,50 @@ export class DHTQueryService {
       return cached ?? null;
     }
 
-    for (const ep of endpoints) {
-      let metadata: PeerMetadata | null = null;
-      try {
-        metadata = await this.metadataResolver.resolve(ep);
-      } catch {
-        continue;
-      }
-
-      const resolvedId = metadata?.peerId ?? `${ep.host}:${ep.port}`;
-      if (resolvedId !== peerId) continue;
-
-      const summaryPricing = this.resolveSummaryPricing(metadata);
-      let capacityMsgPerHour = 0;
-      if (metadata?.providers) {
-        for (const pa of metadata.providers) {
-          capacityMsgPerHour += pa.maxConcurrency * 60;
+    // Resolve all endpoints in parallel (same pattern as scanNow) and merge
+    // every discovered peer into the cache — not just the target.
+    await Promise.all(
+      endpoints.map(async (ep) => {
+        let metadata: PeerMetadata | null = null;
+        try {
+          metadata = await this.metadataResolver.resolve(ep);
+        } catch {
+          return;
         }
-      }
 
-      const existing = this.peers.get(peerId);
-      const services = resolveNetworkPeerServices(metadata, existing?.services);
-      const displayName =
-        typeof metadata?.displayName === 'string' && metadata.displayName.trim().length > 0
-          ? metadata.displayName.trim()
-          : (existing?.displayName ?? `${ep.host}:${ep.port}`);
+        const resolvedId = metadata?.peerId ?? `${ep.host}:${ep.port}`;
+        const summaryPricing = this.resolveSummaryPricing(metadata);
+        let capacityMsgPerHour = 0;
+        if (metadata?.providers) {
+          for (const pa of metadata.providers) {
+            capacityMsgPerHour += pa.maxConcurrency * 60;
+          }
+        }
 
-      const peer: NetworkPeer = {
-        peerId,
-        displayName,
-        host: ep.host,
-        port: ep.port,
-        services,
-        inputUsdPerMillion: summaryPricing.inputUsdPerMillion || (existing?.inputUsdPerMillion ?? 0),
-        outputUsdPerMillion: summaryPricing.outputUsdPerMillion || (existing?.outputUsdPerMillion ?? 0),
-        capacityMsgPerHour: capacityMsgPerHour || (existing?.capacityMsgPerHour ?? 0),
-        reputation: metadata ? 100 : 50,
-        lastSeen: Date.now(),
-        source: 'dht',
-      };
+        const existing = this.peers.get(resolvedId);
+        const services = resolveNetworkPeerServices(metadata, existing?.services);
+        const displayName =
+          typeof metadata?.displayName === 'string' && metadata.displayName.trim().length > 0
+            ? metadata.displayName.trim()
+            : (existing?.displayName ?? `${ep.host}:${ep.port}`);
 
-      this.peers.set(peerId, peer);
-      return peer;
-    }
+        this.peers.set(resolvedId, {
+          peerId: resolvedId,
+          displayName,
+          host: ep.host,
+          port: ep.port,
+          services,
+          inputUsdPerMillion: summaryPricing.inputUsdPerMillion ?? (existing?.inputUsdPerMillion ?? 0),
+          outputUsdPerMillion: summaryPricing.outputUsdPerMillion ?? (existing?.outputUsdPerMillion ?? 0),
+          capacityMsgPerHour: capacityMsgPerHour || (existing?.capacityMsgPerHour ?? 0),
+          reputation: metadata ? 100 : 50,
+          lastSeen: Date.now(),
+          source: 'dht',
+        });
+      }),
+    );
 
-    return cached ?? null;
+    return this.peers.get(peerId) ?? cached ?? null;
   }
 
   getNetworkPeers(): NetworkPeer[] {
