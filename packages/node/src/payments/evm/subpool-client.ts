@@ -52,11 +52,13 @@ export class SubPoolClient extends BaseEvmClient {
     const usdc = new Contract(this._usdcAddress, ERC20_ABI, connected);
     const approveNonce = await this._reserveNonce(signerAddress);
     const approveTx = await usdc.getFunction('approve')(this._contractAddress, monthlyFee, { nonce: approveNonce });
-    await approveTx.wait();
+    const approveReceipt = await approveTx.wait();
+    if (!approveReceipt) throw new Error('Transaction was dropped or replaced');
 
     const nonce = await this._reserveNonce(signerAddress);
     const tx = await contract.getFunction('subscribe')(tierId, { nonce });
     const receipt = await tx.wait();
+    if (!receipt) throw new Error('Transaction was dropped or replaced');
     return receipt.hash;
   }
 
@@ -68,12 +70,14 @@ export class SubPoolClient extends BaseEvmClient {
     const usdc = new Contract(this._usdcAddress, ERC20_ABI, connected);
     const approveNonce = await this._reserveNonce(signerAddress);
     const approveTx = await usdc.getFunction('approve')(this._contractAddress, monthlyFee, { nonce: approveNonce });
-    await approveTx.wait();
+    const approveReceipt = await approveTx.wait();
+    if (!approveReceipt) throw new Error('Transaction was dropped or replaced');
 
     const contract = new Contract(this._contractAddress, SUBPOOL_ABI, connected);
     const nonce = await this._reserveNonce(signerAddress);
     const tx = await contract.getFunction('renewSubscription')({ nonce });
     const receipt = await tx.wait();
+    if (!receipt) throw new Error('Transaction was dropped or replaced');
     return receipt.hash;
   }
 
@@ -84,6 +88,7 @@ export class SubPoolClient extends BaseEvmClient {
     const nonce = await this._reserveNonce(signerAddress);
     const tx = await contract.getFunction('cancelSubscription')({ nonce });
     const receipt = await tx.wait();
+    if (!receipt) throw new Error('Transaction was dropped or replaced');
     return receipt.hash;
   }
 
@@ -104,6 +109,7 @@ export class SubPoolClient extends BaseEvmClient {
     const nonce = await this._reserveNonce(signerAddress);
     const tx = await contract.getFunction('recordTokenUsage')(buyer, tokens, { nonce });
     const receipt = await tx.wait();
+    if (!receipt) throw new Error('Transaction was dropped or replaced');
     return receipt.hash;
   }
 
@@ -116,6 +122,7 @@ export class SubPoolClient extends BaseEvmClient {
     const nonce = await this._reserveNonce(signerAddress);
     const tx = await contract.getFunction('optIn')(tokenId, { nonce });
     const receipt = await tx.wait();
+    if (!receipt) throw new Error('Transaction was dropped or replaced');
     return receipt.hash;
   }
 
@@ -126,6 +133,7 @@ export class SubPoolClient extends BaseEvmClient {
     const nonce = await this._reserveNonce(signerAddress);
     const tx = await contract.getFunction('optOut')(tokenId, { nonce });
     const receipt = await tx.wait();
+    if (!receipt) throw new Error('Transaction was dropped or replaced');
     return receipt.hash;
   }
 
@@ -138,6 +146,7 @@ export class SubPoolClient extends BaseEvmClient {
     const nonce = await this._reserveNonce(signerAddress);
     const tx = await contract.getFunction('claimRevenue')({ nonce });
     const receipt = await tx.wait();
+    if (!receipt) throw new Error('Transaction was dropped or replaced');
     return receipt.hash;
   }
 

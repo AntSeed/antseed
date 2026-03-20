@@ -42,6 +42,7 @@ export class EmissionsClient extends BaseEvmClient {
     const nonce = await this._reserveNonce(signerAddress);
     const tx = await contract.getFunction('advanceEpoch')({ nonce });
     const receipt = await tx.wait();
+    if (!receipt) throw new Error('Transaction was dropped or replaced');
     return receipt.hash;
   }
 
@@ -52,6 +53,7 @@ export class EmissionsClient extends BaseEvmClient {
     const nonce = await this._reserveNonce(signerAddress);
     const tx = await contract.getFunction('claimEmissions')({ nonce });
     const receipt = await tx.wait();
+    if (!receipt) throw new Error('Transaction was dropped or replaced');
     return receipt.hash;
   }
 
@@ -84,6 +86,7 @@ export class EmissionsClient extends BaseEvmClient {
     const nonce = await this._reserveNonce(signerAddress);
     const tx = await contract.getFunction('flushReserve')({ nonce });
     const receipt = await tx.wait();
+    if (!receipt) throw new Error('Transaction was dropped or replaced');
     return receipt.hash;
   }
 }

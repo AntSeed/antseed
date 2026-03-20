@@ -105,11 +105,13 @@ export class BaseEscrowClient extends BaseEvmClient {
     const usdc = new Contract(this._usdcAddress, ERC20_ABI, connected);
     const approveNonce = await this._reserveNonce(signerAddress);
     const approveTx = await usdc.getFunction('approve')(this._contractAddress, amount, { nonce: approveNonce });
-    await approveTx.wait();
+    const approveReceipt = await approveTx.wait();
+    if (!approveReceipt) throw new Error('Transaction was dropped or replaced');
     const contract = new Contract(this._contractAddress, ESCROW_ABI, connected);
     const depositNonce = await this._reserveNonce(signerAddress);
     const tx = await contract.getFunction('deposit')(amount, { nonce: depositNonce });
     const receipt = await tx.wait();
+    if (!receipt) throw new Error('Transaction was dropped or replaced');
     return receipt.hash;
   }
 
@@ -117,6 +119,7 @@ export class BaseEscrowClient extends BaseEvmClient {
     const { contract, nonce } = await this._prepareEscrowWrite(signer);
     const tx = await contract.getFunction('requestWithdrawal')(amount, { nonce });
     const receipt = await tx.wait();
+    if (!receipt) throw new Error('Transaction was dropped or replaced');
     return receipt.hash;
   }
 
@@ -124,6 +127,7 @@ export class BaseEscrowClient extends BaseEvmClient {
     const { contract, nonce } = await this._prepareEscrowWrite(signer);
     const tx = await contract.getFunction('executeWithdrawal')({ nonce });
     const receipt = await tx.wait();
+    if (!receipt) throw new Error('Transaction was dropped or replaced');
     return receipt.hash;
   }
 
@@ -131,6 +135,7 @@ export class BaseEscrowClient extends BaseEvmClient {
     const { contract, nonce } = await this._prepareEscrowWrite(signer);
     const tx = await contract.getFunction('cancelWithdrawal')({ nonce });
     const receipt = await tx.wait();
+    if (!receipt) throw new Error('Transaction was dropped or replaced');
     return receipt.hash;
   }
 
@@ -142,11 +147,13 @@ export class BaseEscrowClient extends BaseEvmClient {
     const usdc = new Contract(this._usdcAddress, ERC20_ABI, connected);
     const approveNonce = await this._reserveNonce(signerAddress);
     const approveTx = await usdc.getFunction('approve')(this._contractAddress, amount, { nonce: approveNonce });
-    await approveTx.wait();
+    const approveReceipt = await approveTx.wait();
+    if (!approveReceipt) throw new Error('Transaction was dropped or replaced');
     const contract = new Contract(this._contractAddress, ESCROW_ABI, connected);
     const stakeNonce = await this._reserveNonce(signerAddress);
     const tx = await contract.getFunction('stake')(amount, { nonce: stakeNonce });
     const receipt = await tx.wait();
+    if (!receipt) throw new Error('Transaction was dropped or replaced');
     return receipt.hash;
   }
 
@@ -154,6 +161,7 @@ export class BaseEscrowClient extends BaseEvmClient {
     const { contract, nonce } = await this._prepareEscrowWrite(signer);
     const tx = await contract.getFunction('unstake')({ nonce });
     const receipt = await tx.wait();
+    if (!receipt) throw new Error('Transaction was dropped or replaced');
     return receipt.hash;
   }
 
@@ -161,6 +169,7 @@ export class BaseEscrowClient extends BaseEvmClient {
     const { contract, nonce } = await this._prepareEscrowWrite(signer);
     const tx = await contract.getFunction('setTokenRate')(rate, { nonce });
     const receipt = await tx.wait();
+    if (!receipt) throw new Error('Transaction was dropped or replaced');
     return receipt.hash;
   }
 
@@ -168,6 +177,7 @@ export class BaseEscrowClient extends BaseEvmClient {
     const { contract, nonce } = await this._prepareEscrowWrite(signer);
     const tx = await contract.getFunction('claimEarnings')({ nonce });
     const receipt = await tx.wait();
+    if (!receipt) throw new Error('Transaction was dropped or replaced');
     return receipt.hash;
   }
 
@@ -191,6 +201,7 @@ export class BaseEscrowClient extends BaseEvmClient {
       { nonce: txNonce },
     );
     const receipt = await tx.wait();
+    if (!receipt) throw new Error('Transaction was dropped or replaced');
     return receipt.hash;
   }
 
@@ -202,6 +213,7 @@ export class BaseEscrowClient extends BaseEvmClient {
     const { contract, nonce } = await this._prepareEscrowWrite(signer);
     const tx = await contract.getFunction('settle')(sessionId, tokenCount, { nonce });
     const receipt = await tx.wait();
+    if (!receipt) throw new Error('Transaction was dropped or replaced');
     return receipt.hash;
   }
 
@@ -212,6 +224,7 @@ export class BaseEscrowClient extends BaseEvmClient {
     const { contract, nonce } = await this._prepareEscrowWrite(signer);
     const tx = await contract.getFunction('settleTimeout')(sessionId, { nonce });
     const receipt = await tx.wait();
+    if (!receipt) throw new Error('Transaction was dropped or replaced');
     return receipt.hash;
   }
 

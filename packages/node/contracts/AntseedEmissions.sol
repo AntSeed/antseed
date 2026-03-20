@@ -310,6 +310,7 @@ contract AntseedEmissions {
     }
 
     function setReserveDestination(address _dest) external onlyOwner {
+        if (_dest == address(0)) revert InvalidAddress();
         reserveDestination = _dest;
     }
 

@@ -65,6 +65,7 @@ export class IdentityClient extends BaseEvmClient {
     const peerIdBytes = keccak256(toUtf8Bytes(peerId));
     const tx = await contract.getFunction('register')(peerIdBytes, metadataURI, { nonce });
     const receipt = await tx.wait();
+    if (!receipt) throw new Error('Transaction was dropped or replaced');
     return receipt.hash;
   }
 
@@ -75,6 +76,7 @@ export class IdentityClient extends BaseEvmClient {
     const nonce = await this._reserveNonce(signerAddress);
     const tx = await contract.getFunction('deregister')(tokenId, { nonce });
     const receipt = await tx.wait();
+    if (!receipt) throw new Error('Transaction was dropped or replaced');
     return receipt.hash;
   }
 
@@ -85,6 +87,7 @@ export class IdentityClient extends BaseEvmClient {
     const nonce = await this._reserveNonce(signerAddress);
     const tx = await contract.getFunction('updateMetadata')(tokenId, metadataURI, { nonce });
     const receipt = await tx.wait();
+    if (!receipt) throw new Error('Transaction was dropped or replaced');
     return receipt.hash;
   }
 
@@ -96,6 +99,7 @@ export class IdentityClient extends BaseEvmClient {
     const tagBytes = encodeBytes32String(tag);
     const tx = await contract.getFunction('giveFeedback')(agentId, value, 0, tagBytes, tagBytes, { nonce });
     const receipt = await tx.wait();
+    if (!receipt) throw new Error('Transaction was dropped or replaced');
     return receipt.hash;
   }
 

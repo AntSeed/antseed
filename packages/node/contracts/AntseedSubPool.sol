@@ -413,6 +413,7 @@ contract AntseedSubPool {
     // ═══════════════════════════════════════════════════════════════════
 
     function setEscrowContract(address _escrow) external onlyOwner {
+        if (_escrow == address(0)) revert InvalidAddress();
         escrowContract = _escrow;
     }
 

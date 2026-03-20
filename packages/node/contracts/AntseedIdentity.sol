@@ -67,6 +67,7 @@ contract AntseedIdentity is ERC721, ERC721URIStorage {
     error ActiveStake();
     error InvalidIndex();
     error AlreadyRevoked();
+    error InvalidAmount();
 
     event PeerRegistered(uint256 indexed tokenId, address indexed peer, bytes32 indexed peerId);
     event PeerDeregistered(uint256 indexed tokenId, address indexed peer);
@@ -192,9 +193,13 @@ contract AntseedIdentity is ERC721, ERC721URIStorage {
             revoked: false
         }));
         FeedbackSummary storage summary = _feedbackSummary[agentId][tag1];
+        if (summary.count == 0) {
+            summary.summaryValueDecimals = valueDecimals;
+        } else {
+            if (valueDecimals != summary.summaryValueDecimals) revert InvalidAmount();
+        }
         summary.count++;
         summary.summaryValue += int256(value);
-        summary.summaryValueDecimals = valueDecimals;
         if (!_isClient[agentId][msg.sender]) {
             _feedbackClients[agentId].push(msg.sender);
             _isClient[agentId][msg.sender] = true;

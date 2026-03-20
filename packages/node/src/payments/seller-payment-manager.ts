@@ -161,10 +161,11 @@ export class SellerPaymentManager {
       // have called setTokenRate() between sessions. A stale cache would cause
       // effectiveTokenCap to diverge from the contract's snapshotted rate,
       // breaking the proof chain (tokensDelivered != settledTokenCount).
-      try {
-        const account = await this._escrowClient.getSellerAccount(sellerEvmAddr);
-        this._tokenRate = account.tokenRate;
-      } catch { if (this._tokenRate === null) this._tokenRate = 1n; }
+      const account = await this._escrowClient.getSellerAccount(sellerEvmAddr);
+      this._tokenRate = account.tokenRate;
+      if (this._tokenRate === 0n) {
+        throw new Error('Token rate is 0 — set rate with antseed setTokenRate before serving');
+      }
 
       // 4. Store new session
       const now = Date.now();
