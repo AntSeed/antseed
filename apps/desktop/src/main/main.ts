@@ -641,9 +641,11 @@ registerPiChatHandlers({
     return snapshot.peers
       .map((peer: DashboardNetworkPeer) => ({
         peerId: typeof peer.peerId === "string" ? peer.peerId : "",
+        displayName: peer.displayName ?? undefined,
         host: typeof peer.host === "string" ? peer.host.trim() : "",
         port: Number(peer.port) || 0,
         providers: Array.isArray(peer.providers) ? peer.providers.map((provider) => String(provider)) : [],
+        services: Array.isArray(peer.services) ? peer.services.map((s) => String(s)) : [],
       }))
       .filter((peer) => peer.host.length > 0
         && isPublicMetadataHost(peer.host)

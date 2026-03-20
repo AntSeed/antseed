@@ -855,7 +855,7 @@ export class BuyerProxy {
   constructor(config: BuyerProxyConfig) {
     this._node = config.node
     this._port = config.port
-    this._bgRefreshIntervalMs = config.backgroundRefreshIntervalMs ?? 5 * 60_000
+    this._bgRefreshIntervalMs = config.backgroundRefreshIntervalMs ?? 30_000
     this._peerCacheTtlMs = Math.max(0, config.peerCacheTtlMs ?? 30_000)
     this._pinnedPeer = config.pinnedPeerId?.toLowerCase() ?? null
     this._pinnedService = config.pinnedService?.trim() ?? null
