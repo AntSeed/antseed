@@ -469,6 +469,10 @@ function initializeBridge(): void {
     }
   });
 
+  bridge.onPeersChanged?.(() => {
+    void chatApi.refreshChatServiceOptions();
+  });
+
   bridge.onState?.((processes) => {
     renderProcesses(processes);
     syncBuyerRuntimeOverview(processes);

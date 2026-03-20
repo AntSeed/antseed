@@ -102,6 +102,7 @@ export type DesktopBridge = {
   onLog?: (handler: (event: LogEvent) => void) => () => void;
   onState?: (handler: (states: RuntimeProcessState[]) => void) => () => void;
   onRuntimeActivity?: (handler: (event: RuntimeActivityEvent) => void) => () => void;
+  onPeersChanged?: (handler: () => void) => () => void;
 
   chatAiListConversations?: () => Promise<{ ok: boolean; data: unknown[] }>;
   chatAiListServices?: () => Promise<{ ok: boolean; data?: unknown[]; error?: string }>;

@@ -136,6 +136,11 @@ const api = {
     ipcRenderer.on('runtime:log', listener);
     return () => ipcRenderer.off('runtime:log', listener);
   },
+  onPeersChanged(handler: () => void): () => void {
+    const listener = () => handler();
+    ipcRenderer.on('peers:changed', listener);
+    return () => ipcRenderer.off('peers:changed', listener);
+  },
   onState(handler: (states: RuntimeProcessState[]) => void): () => void {
     const listener = (_: unknown, states: RuntimeProcessState[]) => handler(states);
     ipcRenderer.on('runtime:state', listener);

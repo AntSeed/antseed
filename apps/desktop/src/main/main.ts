@@ -44,6 +44,7 @@ import {
   getNetworkSnapshot,
   touchPeer,
   lookupPeer,
+  onPeersChanged,
   type DashboardNetworkPeer,
 } from './peer-cache.js';
 import { createWindow, createApplicationMenu, getMainWindow } from './window.js';
@@ -222,6 +223,11 @@ function appendLog(mode: RuntimeMode, stream: 'stdout' | 'stderr' | 'system', li
 
 // Wire up callbacks for extracted modules
 setPluginAppendLog(appendLog);
+
+// When the peer set changes, tell the renderer to refresh the service catalog.
+onPeersChanged(() => {
+  getMainWindow()?.webContents.send('peers:changed');
+});
 const processManager = new ProcessManager((mode, stream, line) => {
   appendLog(mode, stream, line);
 });

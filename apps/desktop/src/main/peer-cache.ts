@@ -43,6 +43,33 @@ const REFRESH_MIN_INTERVAL_MS = 5_000;
 const peerCache = new Map<string, DashboardNetworkPeer>();
 let peerCacheLastScanAt: number | null = null;
 let peerCacheLastRefreshAt = 0;
+let peerCacheLastSignature = '';
+const peersChangedListeners: Array<() => void> = [];
+
+/** Register a callback invoked when the peer set changes (new peers or services). */
+export function onPeersChanged(listener: () => void): void {
+  peersChangedListeners.push(listener);
+}
+
+function computePeerSignature(): string {
+  // Fast hash: sorted peer IDs + their service lists.
+  const parts: string[] = [];
+  for (const [id, peer] of peerCache) {
+    parts.push(`${id}:${peer.services.join(',')}`);
+  }
+  parts.sort();
+  return parts.join('|');
+}
+
+function emitIfChanged(): void {
+  const sig = computePeerSignature();
+  if (sig !== peerCacheLastSignature) {
+    peerCacheLastSignature = sig;
+    for (const listener of peersChangedListeners) {
+      try { listener(); } catch { /* ignore */ }
+    }
+  }
+}
 
 export function defaultNetworkStats(): DashboardNetworkStats {
   return {
@@ -147,6 +174,8 @@ export async function refreshPeerCache(): Promise<void> {
       peer.online = now - peer.lastSeen < PEER_ONLINE_TTL_MS;
     }
   }
+
+  emitIfChanged();
 }
 
 export function getNetworkSnapshot(): DashboardNetworkResult {
