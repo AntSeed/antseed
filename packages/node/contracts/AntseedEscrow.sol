@@ -279,7 +279,8 @@ contract AntseedEscrow is EIP712, Pausable {
         returns (uint256 available, uint256 reserved, uint256 pendingWithdrawal, uint256 lastActivity)
     {
         BuyerAccount storage ba = buyers[buyer];
-        available = ba.balance - ba.reserved - ba.withdrawalAmount;
+        uint256 locked = ba.reserved + ba.withdrawalAmount;
+        available = ba.balance > locked ? ba.balance - locked : 0;
         reserved = ba.reserved;
         pendingWithdrawal = ba.withdrawalAmount;
         lastActivity = ba.lastActivityAt;
