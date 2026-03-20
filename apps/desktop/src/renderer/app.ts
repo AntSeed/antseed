@@ -95,7 +95,7 @@ const { populateSettingsForm, saveConfig } = initSettingsModule({
   updateDashboardConfig: updateDashboardConfig as (
     config: Record<string, unknown>,
   ) => Promise<{ ok: boolean; data: unknown; error?: string | null; status?: number | null }>,
-  setDebugLogs: (enabled: boolean) => bridge?.setDebugLogs(enabled) ?? Promise.resolve(),
+  setDebugLogs: (enabled: boolean) => bridge?.setDebugLogs?.(enabled) ?? Promise.resolve(),
 });
 
 const {

@@ -59,16 +59,14 @@ type NetworkSnapshot = {
   error: string | null;
 };
 
-type DashboardEndpoint = 'status' | 'network' | 'peers' | 'config' | 'data-sources';
+type DataEndpoint = 'status' | 'network' | 'peers' | 'config' | 'data-sources';
 
-type DashboardDataResult = {
+type DataResult = {
   ok: boolean;
   data: unknown | null;
   error: string | null;
   status: number | null;
 };
-
-type DashboardUpdateResult = DashboardDataResult;
 
 type PluginInfo = {
   package: string;
@@ -113,20 +111,19 @@ const api = {
   getNetwork(port?: number): Promise<NetworkSnapshot> {
     return ipcRenderer.invoke('runtime:get-network', port) as Promise<NetworkSnapshot>;
   },
-  getDashboardData(
-    endpoint: DashboardEndpoint,
+  getData(
+    endpoint: DataEndpoint,
     options?: { port?: number; query?: Record<string, string | number | boolean> },
-  ): Promise<DashboardDataResult> {
-    return ipcRenderer.invoke('runtime:get-dashboard-data', endpoint, options) as Promise<DashboardDataResult>;
+  ): Promise<DataResult> {
+    return ipcRenderer.invoke('runtime:get-data', endpoint, options) as Promise<DataResult>;
   },
-  updateDashboardConfig(
+  updateConfig(
     config: Record<string, unknown>,
-    options?: { port?: number },
-  ): Promise<DashboardUpdateResult> {
-    return ipcRenderer.invoke('runtime:update-dashboard-config', config, options) as Promise<DashboardUpdateResult>;
+  ): Promise<DataResult> {
+    return ipcRenderer.invoke('runtime:update-config', config) as Promise<DataResult>;
   },
-  scanNetwork(port?: number): Promise<DashboardDataResult> {
-    return ipcRenderer.invoke('runtime:scan-network', port) as Promise<DashboardDataResult>;
+  scanNetwork(): Promise<DataResult> {
+    return ipcRenderer.invoke('runtime:scan-network') as Promise<DataResult>;
   },
   lookupPeer(peerId: string): Promise<{ ok: boolean; peer: unknown; error: string | null }> {
     return ipcRenderer.invoke('runtime:lookup-peer', peerId) as Promise<{ ok: boolean; peer: unknown; error: string | null }>;

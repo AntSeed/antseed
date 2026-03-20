@@ -33,7 +33,12 @@ import {
   resolveLocalPluginSource,
   type InstalledPlugin,
 } from './plugins.js';
-import type { DashboardApiResult } from './dashboard-proxy.js';
+type ApiResult = {
+  ok: boolean;
+  data: unknown | null;
+  error: string | null;
+  status: number | null;
+};
 import {
   refreshPeerCache,
   getNetworkSnapshot,
@@ -47,7 +52,6 @@ import { readConfig, mergeConfig, readNodeStatus } from './config-io.js';
 // Re-export types that may be used by other main-process modules
 export type { LogEvent, RuntimeActivityEvent } from './log-parser.js';
 export type { DashboardNetworkPeer, DashboardNetworkStats, DashboardNetworkResult } from './peer-cache.js';
-export type { DashboardApiResult, DashboardRuntimeState } from './dashboard-proxy.js';
 export type { InstalledPlugin } from './plugins.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -400,7 +404,7 @@ ipcMain.handle('runtime:touch-peer', (_event, peerId: string) => {
 });
 
 ipcMain.handle(
-  'runtime:get-dashboard-data',
+  'runtime:get-data',
   async (
     _event,
     endpoint: string,
@@ -410,29 +414,29 @@ ipcMain.handle(
     if (endpoint === 'status') {
       try {
         const data = await readNodeStatus();
-        return { ok: true, data, error: null, status: 200 } satisfies DashboardApiResult;
+        return { ok: true, data, error: null, status: 200 } satisfies ApiResult;
       } catch (err) {
-        return { ok: false, data: null, error: err instanceof Error ? err.message : String(err), status: null } satisfies DashboardApiResult;
+        return { ok: false, data: null, error: err instanceof Error ? err.message : String(err), status: null } satisfies ApiResult;
       }
     }
 
     if (endpoint === 'config') {
       try {
         const config = await readConfig(ACTIVE_CONFIG_PATH);
-        return { ok: true, data: { config }, error: null, status: 200 } satisfies DashboardApiResult;
+        return { ok: true, data: { config }, error: null, status: 200 } satisfies ApiResult;
       } catch (err) {
-        return { ok: false, data: null, error: err instanceof Error ? err.message : String(err), status: null } satisfies DashboardApiResult;
+        return { ok: false, data: null, error: err instanceof Error ? err.message : String(err), status: null } satisfies ApiResult;
       }
     }
 
     if (endpoint === 'network') {
       await refreshPeerCache();
       const snapshot = getNetworkSnapshot();
-      return { ok: true, data: snapshot, error: null, status: 200 } satisfies DashboardApiResult;
+      return { ok: true, data: snapshot, error: null, status: 200 } satisfies ApiResult;
     }
 
     if (endpoint === 'data-sources') {
-      return { ok: true, data: { configPath: ACTIVE_CONFIG_PATH }, error: null, status: 200 } satisfies DashboardApiResult;
+      return { ok: true, data: { configPath: ACTIVE_CONFIG_PATH }, error: null, status: 200 } satisfies ApiResult;
     }
 
     // Sessions/earnings are seller-only — not needed in the desktop (buyer) app.
@@ -441,7 +445,7 @@ ipcMain.handle(
       data: null,
       error: `Endpoint "${endpoint}" is not available in the desktop app`,
       status: null,
-    } satisfies DashboardApiResult;
+    } satisfies ApiResult;
   },
 );
 
@@ -469,8 +473,8 @@ function sanitizeDashboardConfigPayload(raw: unknown): Record<string, unknown> {
 }
 
 ipcMain.handle(
-  'runtime:update-dashboard-config',
-  async (_event, config: Record<string, unknown>): Promise<DashboardApiResult> => {
+  'runtime:update-config',
+  async (_event, config: Record<string, unknown>): Promise<ApiResult> => {
     const safeConfig = sanitizeDashboardConfigPayload(config);
     if (Object.keys(safeConfig).length === 0) {
       return { ok: false, data: null, error: 'No valid config keys provided', status: null };
