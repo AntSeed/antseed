@@ -347,6 +347,8 @@ export class ConnectionManager extends EventEmitter {
         return;
       }
       this._ipConnectionCounts.set(ip, current + 1);
+      // Keepalive set here for all inbound sockets (WebRTC signaling + TCP).
+      // TCP ("intro") sockets will have it re-applied in attachRawSocket — harmless.
       socket.setKeepAlive(true, TCP_KEEPALIVE_INITIAL_DELAY_MS);
       socket.once('close', () => {
         const count = this._ipConnectionCounts.get(ip) ?? 1;
@@ -526,7 +528,6 @@ export class ConnectionManager extends EventEmitter {
     endpoint: PeerEndpoint,
   ): void {
     const socket = net.connect({ host: endpoint.host, port: endpoint.port });
-    socket.setKeepAlive(true, TCP_KEEPALIVE_INITIAL_DELAY_MS);
 
     socket.once("connect", () => {
       this._sendLine(socket, {
