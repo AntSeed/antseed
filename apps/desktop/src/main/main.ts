@@ -44,7 +44,6 @@ import {
   stopDashboardRuntime,
   ensureDashboardRuntime,
   fetchDashboardData,
-  updateDashboardConfig,
   toSafeDashboardEndpoint,
   sanitizeDashboardQuery,
   type DashboardApiResult,
@@ -57,6 +56,7 @@ import {
   type DashboardNetworkPeer,
 } from './peer-cache.js';
 import { createWindow, createApplicationMenu, getMainWindow } from './window.js';
+import { readConfig, mergeConfig, readNodeStatus } from './config-io.js';
 
 // Re-export types that may be used by other main-process modules
 export type { LogEvent, RuntimeActivityEvent } from './log-parser.js';
@@ -468,6 +468,36 @@ ipcMain.handle(
     endpoint: string,
     options?: { port?: number; query?: Record<string, unknown> },
   ) => {
+    // Serve status, config, and network directly from files — no dashboard needed.
+    if (endpoint === 'status') {
+      try {
+        const data = await readNodeStatus();
+        return { ok: true, data, error: null, status: 200 } satisfies DashboardApiResult;
+      } catch (err) {
+        return { ok: false, data: null, error: err instanceof Error ? err.message : String(err), status: null } satisfies DashboardApiResult;
+      }
+    }
+
+    if (endpoint === 'config') {
+      try {
+        const config = await readConfig(ACTIVE_CONFIG_PATH);
+        return { ok: true, data: { config }, error: null, status: 200 } satisfies DashboardApiResult;
+      } catch (err) {
+        return { ok: false, data: null, error: err instanceof Error ? err.message : String(err), status: null } satisfies DashboardApiResult;
+      }
+    }
+
+    if (endpoint === 'network') {
+      await refreshPeerCache();
+      const snapshot = getNetworkSnapshot();
+      return { ok: true, data: snapshot, error: null, status: 200 } satisfies DashboardApiResult;
+    }
+
+    if (endpoint === 'data-sources') {
+      return { ok: true, data: { configPath: ACTIVE_CONFIG_PATH }, error: null, status: 200 } satisfies DashboardApiResult;
+    }
+
+    // Sessions and earnings still require the metering DB via the dashboard.
     const safeEndpoint = toSafeDashboardEndpoint(endpoint);
     if (!safeEndpoint) {
       return {
@@ -512,15 +542,17 @@ function sanitizeDashboardConfigPayload(raw: unknown): Record<string, unknown> {
 
 ipcMain.handle(
   'runtime:update-dashboard-config',
-  async (_event, config: Record<string, unknown>, options?: { port?: number }): Promise<DashboardApiResult> => {
+  async (_event, config: Record<string, unknown>): Promise<DashboardApiResult> => {
     const safeConfig = sanitizeDashboardConfigPayload(config);
     if (Object.keys(safeConfig).length === 0) {
       return { ok: false, data: null, error: 'No valid config keys provided', status: null };
     }
-    const requestedPort = toSafeDashboardPort(options?.port);
-    await ensureDashboardRuntime(ACTIVE_CONFIG_PATH, requestedPort);
-    const activePort = getActiveDashboardPort(requestedPort);
-    return updateDashboardConfig(safeConfig, activePort);
+    try {
+      const merged = await mergeConfig(safeConfig, ACTIVE_CONFIG_PATH);
+      return { ok: true, data: { config: merged }, error: null, status: 200 };
+    } catch (err) {
+      return { ok: false, data: null, error: err instanceof Error ? err.message : String(err), status: null };
+    }
   },
 );
 
@@ -538,23 +570,16 @@ type WalletInfo = {
   };
 };
 
-ipcMain.handle('wallet:get-info', async (_event, port?: number): Promise<{ ok: boolean; data: WalletInfo | null; error: string | null }> => {
+ipcMain.handle('wallet:get-info', async (): Promise<{ ok: boolean; data: WalletInfo | null; error: string | null }> => {
   try {
-    const requestedPort = toSafeDashboardPort(port);
-    await ensureDashboardRuntime(ACTIVE_CONFIG_PATH, requestedPort);
-    const activePort = getActiveDashboardPort(requestedPort);
-
-    const [statusResult, configResult] = await Promise.all([
-      fetchDashboardData('status', activePort),
-      fetchDashboardData('config', activePort),
+    const [status, config] = await Promise.all([
+      readNodeStatus(),
+      readConfig(ACTIVE_CONFIG_PATH),
     ]);
 
-    const statusData = statusResult.ok ? asRecord(statusResult.data) : {};
-    const configData = configResult.ok ? asRecord(asRecord(configResult.data).config ?? configResult.data) : {};
-    const identity = asRecord(configData.identity);
-    const payments = asRecord(configData.payments);
-
-    const walletAddress = asString(statusData.walletAddress as string, '') || asString(identity.walletAddress as string, '');
+    const identity = asRecord(config.identity);
+    const payments = asRecord(config.payments);
+    const walletAddress = asString(status.walletAddress as string, '') || asString(identity.walletAddress as string, '');
 
     return {
       ok: true,
