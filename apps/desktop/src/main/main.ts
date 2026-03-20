@@ -2,7 +2,6 @@ import {
   app,
   BrowserWindow,
   ipcMain,
-  shell,
 } from 'electron';
 import electronUpdater from 'electron-updater';
 const { autoUpdater } = electronUpdater;
@@ -34,20 +33,7 @@ import {
   resolveLocalPluginSource,
   type InstalledPlugin,
 } from './plugins.js';
-import {
-  setDashboardCallbacks,
-  getDashboardRuntime,
-  getActiveDashboardPort,
-  toSafeDashboardPort,
-  isAddressInUseError,
-  startDashboardRuntime,
-  stopDashboardRuntime,
-  ensureDashboardRuntime,
-  fetchDashboardData,
-  toSafeDashboardEndpoint,
-  sanitizeDashboardQuery,
-  type DashboardApiResult,
-} from './dashboard-proxy.js';
+import type { DashboardApiResult } from './dashboard-proxy.js';
 import {
   refreshPeerCache,
   getNetworkSnapshot,
@@ -232,28 +218,12 @@ function appendLog(mode: RuntimeMode, stream: 'stdout' | 'stderr' | 'system', li
 
 // Wire up callbacks for extracted modules
 setPluginAppendLog(appendLog);
-setDashboardCallbacks(appendLog, emitRuntimeState);
-
 const processManager = new ProcessManager((mode, stream, line) => {
   appendLog(mode, stream, line);
 });
 
-function getDashboardProcessState(): RuntimeProcessState {
-  const rt = getDashboardRuntime();
-  return {
-    mode: 'dashboard',
-    running: rt.running,
-    pid: rt.running ? process.pid : null,
-    startedAt: rt.startedAt,
-    lastExitCode: rt.lastExitCode,
-    lastError: rt.lastError,
-  };
-}
-
 function getCombinedProcessState(): RuntimeProcessState[] {
-  const processStates = processManager.getState().filter((state) => state.mode !== 'dashboard');
-  processStates.push(getDashboardProcessState());
-  return processStates;
+  return processManager.getState();
 }
 
 // ── IPC Handlers ──
@@ -267,23 +237,6 @@ ipcMain.handle('runtime:get-state', async () => {
 });
 
 ipcMain.handle('runtime:start', async (_event, options: StartOptions) => {
-  if (options.mode === 'dashboard') {
-    try {
-      await startDashboardRuntime(ACTIVE_CONFIG_PATH, options.dashboardPort);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (!isAddressInUseError(message)) {
-        throw err;
-      }
-      appendLog('dashboard', 'system', 'Dashboard port already in use; reusing existing local data service.');
-    }
-    return {
-      state: getDashboardProcessState(),
-      processes: getCombinedProcessState(),
-      daemonState: processManager.getDaemonStateSnapshot(),
-    };
-  }
-
   await ensureSecureIdentity();
 
   const startOptions: StartOptions = {
@@ -308,15 +261,6 @@ ipcMain.handle('runtime:start', async (_event, options: StartOptions) => {
 });
 
 ipcMain.handle('runtime:stop', async (_event, mode: RuntimeMode) => {
-  if (mode === 'dashboard') {
-    await stopDashboardRuntime('manual stop');
-    return {
-      state: getDashboardProcessState(),
-      processes: getCombinedProcessState(),
-      daemonState: processManager.getDaemonStateSnapshot(),
-    };
-  }
-
   const state = await processManager.stop(mode);
   return {
     state,
@@ -327,12 +271,6 @@ ipcMain.handle('runtime:stop', async (_event, mode: RuntimeMode) => {
 
 ipcMain.handle('desktop:set-debug-logs', (_event, enabled: boolean) => {
   desktopDebugEnabled = Boolean(enabled);
-  return { ok: true };
-});
-
-ipcMain.handle('runtime:open-dashboard', async (_event, port?: number) => {
-  const openPort = getActiveDashboardPort(port);
-  await shell.openExternal(`http://127.0.0.1:${openPort}`);
   return { ok: true };
 });
 
@@ -466,7 +404,7 @@ ipcMain.handle(
   async (
     _event,
     endpoint: string,
-    options?: { port?: number; query?: Record<string, unknown> },
+    _options?: { port?: number; query?: Record<string, unknown> },
   ) => {
     // Serve status, config, and network directly from files — no dashboard needed.
     if (endpoint === 'status') {
@@ -497,23 +435,13 @@ ipcMain.handle(
       return { ok: true, data: { configPath: ACTIVE_CONFIG_PATH }, error: null, status: 200 } satisfies DashboardApiResult;
     }
 
-    // Sessions and earnings still require the metering DB via the dashboard.
-    const safeEndpoint = toSafeDashboardEndpoint(endpoint);
-    if (!safeEndpoint) {
-      return {
-        ok: false,
-        data: null,
-        error: `Unsupported dashboard endpoint: ${endpoint}`,
-        status: null,
-      } satisfies DashboardApiResult;
-    }
-
-    const requestedPort = toSafeDashboardPort(options?.port);
-    await ensureDashboardRuntime(ACTIVE_CONFIG_PATH, requestedPort);
-
-    const safeQuery = sanitizeDashboardQuery(options?.query);
-    const activePort = getActiveDashboardPort(requestedPort);
-    return fetchDashboardData(safeEndpoint, activePort, safeQuery);
+    // Sessions/earnings are seller-only — not needed in the desktop (buyer) app.
+    return {
+      ok: false,
+      data: null,
+      error: `Endpoint "${endpoint}" is not available in the desktop app`,
+      status: null,
+    } satisfies DashboardApiResult;
   },
 );
 
@@ -744,10 +672,6 @@ app.whenReady().then(() => {
     // Failure is logged inside ensureSecureIdentity; CLI falls back to file-based identity.
   });
 
-  void startDashboardRuntime(ACTIVE_CONFIG_PATH).catch(() => {
-    // Failure is already logged to renderer/system log.
-  });
-
   void ensureDefaultPlugin('@antseed/router-local', {
     getAppSetupNeeded: () => appSetupNeeded,
     setAppSetupNeeded: (v) => { appSetupNeeded = v; },
@@ -803,10 +727,7 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
-    void Promise.allSettled([
-      stopDashboardRuntime('window close'),
-      processManager.stopAll(),
-    ]).finally(() => app.quit());
+    void processManager.stopAll().finally(() => app.quit());
   }
 });
 
@@ -820,10 +741,7 @@ app.on('before-quit', (event) => {
   event.preventDefault();
   isQuitting = true;
 
-  void Promise.allSettled([
-    stopDashboardRuntime('app shutdown'),
-    processManager.stopAll(),
-  ]).finally(() => {
+  void processManager.stopAll().finally(() => {
     app.quit();
   });
 });
@@ -831,8 +749,5 @@ app.on('before-quit', (event) => {
 // Ensure child processes are cleaned up if the main process receives SIGTERM
 // (e.g. dev runner Ctrl+C kills Electron before before-quit fires).
 process.on('SIGTERM', () => {
-  void Promise.allSettled([
-    stopDashboardRuntime('SIGTERM'),
-    processManager.stopAll(),
-  ]).finally(() => process.exit(0));
+  void processManager.stopAll().finally(() => process.exit(0));
 });
