@@ -72,7 +72,11 @@ export function parsePeerFromRaw(pr: Record<string, unknown>): DashboardNetworkP
     peerId: pr.peerId as string,
     host: peerHost,
     port: peerPort,
-    providers: Array.isArray(pr.providers) ? pr.providers.filter((s: unknown) => typeof s === 'string') : [],
+    providers: Array.isArray(pr.providers)
+      ? (pr.providers as Array<Record<string, unknown>>).flatMap((p) =>
+          Array.isArray(p.services) ? p.services.filter((s: unknown) => typeof s === 'string') : []
+        )
+      : [],
     inputUsdPerMillion: Number(pr.defaultInputUsdPerMillion) || 0,
     outputUsdPerMillion: Number(pr.defaultOutputUsdPerMillion) || 0,
     capacityMsgPerHour: (Number(pr.maxConcurrency) || 0) * 60,
