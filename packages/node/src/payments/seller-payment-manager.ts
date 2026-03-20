@@ -60,6 +60,12 @@ export class SellerPaymentManager {
       usdcAddress: config.usdcAddress,
     });
     this._sessionStore = sessionStore;
+
+    // Hydrate _activeBuyers from persisted sessions so hasSession() works after restart
+    const activeSessions = this._sessionStore.getActiveSessions('seller');
+    for (const session of activeSessions) {
+      this._activeBuyers.add(session.peerId);
+    }
   }
 
   get escrowClient(): BaseEscrowClient {
@@ -119,6 +125,8 @@ export class SellerPaymentManager {
           this._topUpRequested.delete(priorSession.sessionId);
         } catch (err) {
           debugWarn(`[SellerPayment] Failed to settle prior session: ${err instanceof Error ? err.message : err}`);
+          // Do NOT proceed to reserve — proof chain is broken. Buyer will timeout and retry.
+          return;
         }
 
         // If buyer significantly understated consumption (> 20% gap), reject the

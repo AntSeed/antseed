@@ -716,6 +716,7 @@ contract AntseedEscrow is EIP712, Pausable {
     }
 
     function setEmissionsContract(address _emissions) external onlyOwner {
+        if (_emissions == address(0)) revert InvalidAddress();
         emissionsContract = IAntseedEmissions(_emissions);
     }
 

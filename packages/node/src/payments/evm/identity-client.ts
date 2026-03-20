@@ -1,4 +1,4 @@
-import { Contract, encodeBytes32String, type AbstractSigner } from 'ethers';
+import { Contract, encodeBytes32String, keccak256, toUtf8Bytes, type AbstractSigner } from 'ethers';
 import { BaseEvmClient } from './base-evm-client.js';
 
 export interface IdentityClientConfig {
@@ -62,7 +62,7 @@ export class IdentityClient extends BaseEvmClient {
     const signerAddress = await connected.getAddress();
     const contract = new Contract(this._contractAddress, IDENTITY_ABI, connected);
     const nonce = await this._reserveNonce(signerAddress);
-    const peerIdBytes = encodeBytes32String(peerId);
+    const peerIdBytes = keccak256(toUtf8Bytes(peerId));
     const tx = await contract.getFunction('register')(peerIdBytes, metadataURI, { nonce });
     const receipt = await tx.wait();
     return receipt.hash;
@@ -114,7 +114,7 @@ export class IdentityClient extends BaseEvmClient {
 
   async getTokenIdByPeerId(peerId: string): Promise<number> {
     const contract = new Contract(this._contractAddress, IDENTITY_ABI, this._provider);
-    const peerIdBytes = encodeBytes32String(peerId);
+    const peerIdBytes = keccak256(toUtf8Bytes(peerId));
     const result = await contract.getFunction('getTokenIdByPeerId')(peerIdBytes);
     return Number(result);
   }

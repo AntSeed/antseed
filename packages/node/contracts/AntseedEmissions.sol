@@ -76,8 +76,11 @@ contract AntseedEmissions {
     error InvalidAddress();
     error InvalidValue();
     error InvalidSharePercentages();
+    error Reentrancy();
 
     // ─── Modifiers ───
+    bool private _locked;
+
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
         _;
@@ -86,6 +89,13 @@ contract AntseedEmissions {
     modifier onlyEscrow() {
         if (msg.sender != escrowContract) revert NotAuthorized();
         _;
+    }
+
+    modifier nonReentrant() {
+        if (_locked) revert Reentrancy();
+        _locked = true;
+        _;
+        _locked = false;
     }
 
     // ─── Constructor ───
@@ -221,7 +231,7 @@ contract AntseedEmissions {
     //                        CLAIMING & RESERVE
     // ═══════════════════════════════════════════════════════════════════
 
-    function claimEmissions() external {
+    function claimEmissions() external nonReentrant {
         _updateSellerAccount(msg.sender);
         _updateBuyerAccount(msg.sender);
 
@@ -281,7 +291,7 @@ contract AntseedEmissions {
         buyer = br.pendingReward + (br.points * (buyerRPP - br.rewardPerPointPaid)) / 1e18;
     }
 
-    function flushReserve() external onlyOwner {
+    function flushReserve() external onlyOwner nonReentrant {
         if (reserveDestination == address(0)) revert NoReserveDestination();
         uint256 amount = reserveAccumulated;
         if (amount == 0) revert NoReserve();

@@ -45,6 +45,14 @@ export class SessionStore {
   private _db: Database.Database;
 
   // ── Cached prepared statements (compiled once, reused every call) ──
+  /** Cached transaction function for updateDeliveredAndInsertReceipt (compiled once). */
+  private readonly _updateDeliveredAndInsertReceiptTxn: (
+    sessionId: string,
+    tokens: string,
+    requestCount: number,
+    receipt: Omit<StoredReceipt, 'id'>,
+  ) => void;
+
   private readonly _stmts: {
     upsert: Database.Statement;
     getById: Database.Statement;
@@ -59,6 +67,7 @@ export class SessionStore {
     insertReceipt: Database.Statement;
     getReceipts: Database.Statement;
     updateReceiptAck: Database.Statement;
+    getActiveSessions: Database.Statement;
   };
 
   constructor(dataDir: string) {
@@ -67,6 +76,12 @@ export class SessionStore {
     this._db.pragma('journal_mode = WAL');
     this._createTables();
     this._stmts = this._prepareStatements();
+    this._updateDeliveredAndInsertReceiptTxn = this._db.transaction(
+      (sessionId: string, tokens: string, requestCount: number, receipt: Omit<StoredReceipt, 'id'>) => {
+        this.updateTokensDelivered(sessionId, tokens, requestCount);
+        this.insertReceipt(receipt);
+      },
+    );
   }
 
   private _createTables(): void {
@@ -175,6 +190,9 @@ export class SessionStore {
       updateReceiptAck: this._db.prepare(
         'UPDATE payment_receipts SET buyer_ack_sig = ? WHERE session_id = ? AND running_total = ? AND request_count = ?',
       ),
+      getActiveSessions: this._db.prepare(
+        'SELECT * FROM payment_sessions WHERE role = ? AND status = ? ORDER BY created_at DESC',
+      ),
     };
   }
 
@@ -242,6 +260,12 @@ export class SessionStore {
     return rows.map(rowToSession);
   }
 
+  /** Get all active sessions for a given role (buyer or seller). */
+  getActiveSessions(role: string): StoredSession[] {
+    const rows = this._stmts.getActiveSessions.all(role, SESSION_STATUS.ACTIVE) as SessionRow[];
+    return rows.map(rowToSession);
+  }
+
   // ── Timeout queries ───────────────────────────────────────────
 
   getTimedOutSessions(timeoutSeconds: number): StoredSession[] {
@@ -276,11 +300,7 @@ export class SessionStore {
     requestCount: number,
     receipt: Omit<StoredReceipt, 'id'>,
   ): void {
-    const txn = this._db.transaction(() => {
-      this.updateTokensDelivered(sessionId, tokens, requestCount);
-      this.insertReceipt(receipt);
-    });
-    txn();
+    this._updateDeliveredAndInsertReceiptTxn(sessionId, tokens, requestCount, receipt);
   }
 
   /** Update receipt ack directly by composite key (no load-all-then-filter). */

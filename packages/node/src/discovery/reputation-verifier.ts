@@ -56,10 +56,16 @@ export async function verifyReputation(
     reputation.unqualifiedProvenSignCount;
   const actualDisputeCount = reputation.ghostCount;
 
+  // Always compare against on-chain data when evmAddress is present.
+  // If peer omits reputation fields, treat as unverified — prevents bypass
+  // by simply not claiming any values.
   const valid =
-    (metadata.onChainReputation == null || metadata.onChainReputation === actualReputation) &&
-    (metadata.onChainSessionCount == null || metadata.onChainSessionCount === actualSessionCount) &&
-    (metadata.onChainDisputeCount == null || metadata.onChainDisputeCount === actualDisputeCount);
+    metadata.onChainReputation !== undefined &&
+    metadata.onChainSessionCount !== undefined &&
+    metadata.onChainDisputeCount !== undefined &&
+    metadata.onChainReputation === actualReputation &&
+    metadata.onChainSessionCount === actualSessionCount &&
+    metadata.onChainDisputeCount === actualDisputeCount;
 
   return {
     valid,
