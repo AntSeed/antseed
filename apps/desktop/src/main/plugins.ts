@@ -292,25 +292,21 @@ export async function ensureDefaultPlugin(
   packageName: string,
   ctx: EnsureDefaultPluginContext,
 ): Promise<void> {
-  console.log(`[plugins] ensureDefaultPlugin: checking ${packageName}`);
   if (isPluginInstalled(packageName)) {
     ctx.setAppSetupNeeded(false);
     ctx.setAppSetupComplete(true);
     return;
   }
   ctx.setAppSetupNeeded(true);
-  console.log(`[plugins] plugin not installed, starting install...`);
   ctx.getMainWindow()?.webContents.send('app:setup-step', { step: 'installing', label: 'Installing router plugin' });
   ctx.appendLog('connect', 'system', `Required plugin "${packageName}" not found. Installing`);
   try {
     // 1. Try copying from the app bundle (production builds — instant, no network)
-    console.log(`[plugins] trying bundle install...`);
     const installedFromBundle = await installPluginFromBundle(packageName);
     if (installedFromBundle) {
       ctx.appendLog('connect', 'system', `Installed plugin "${packageName}" from app bundle.`);
     } else {
       // 2. Try local monorepo source (dev builds)
-      console.log(`[plugins] no bundle, trying local source...`);
       const localSource = await resolveLocalPluginSource(packageName);
       ctx.appendLog('connect', 'system', localSource ? `Using local source: ${localSource}` : `Using npm registry (${resolveNpmInvocation().bin})...`);
       if (localSource) {
@@ -320,14 +316,12 @@ export async function ensureDefaultPlugin(
         await installPluginDependency(packageName);
       }
     }
-    console.log(`[plugins] install complete`);
     ctx.appendLog('connect', 'system', `Installed plugin "${packageName}".`);
     ctx.setAppSetupComplete(true);
     ctx.getMainWindow()?.webContents.send('app:setup-step', { step: 'done', label: 'Router plugin ready' });
     ctx.getMainWindow()?.webContents.send('app:setup-complete');
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error(`[plugins] install failed: ${message}`);
     ctx.appendLog('connect', 'system', `Failed to auto-install plugin "${packageName}": ${message}`);
     ctx.getMainWindow()?.webContents.send('app:setup-step', { step: 'error', label: 'Failed to install router plugin' });
     // Do NOT emit app:setup-complete on failure — the onAppSetupComplete handler

@@ -694,7 +694,6 @@ app.whenReady().then(() => {
     // Failure is logged inside ensureSecureIdentity; CLI falls back to file-based identity.
   });
 
-  console.log('[main] calling ensureDefaultPlugin');
   void ensureDefaultPlugin('@antseed/router-local', {
     getAppSetupNeeded: () => appSetupNeeded,
     setAppSetupNeeded: (v) => { appSetupNeeded = v; },
@@ -702,8 +701,8 @@ app.whenReady().then(() => {
     setAppSetupComplete: (v) => { appSetupComplete = v; },
     getMainWindow,
     appendLog,
-  }).catch((err) => {
-    console.error('[main] ensureDefaultPlugin failed:', err instanceof Error ? err.message : String(err));
+  }).catch(() => {
+    // Failure is already logged via appendLog inside ensureDefaultPlugin.
   });
 
   // Auto-update: check for updates silently on launch and every 4 hours

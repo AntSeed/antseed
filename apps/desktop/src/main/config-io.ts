@@ -66,6 +66,7 @@ export async function mergeConfig(
   configPath = DEFAULT_CONFIG_PATH,
 ): Promise<Record<string, unknown>> {
   let result: Record<string, unknown> = {};
+  let writeError: Error | null = null;
 
   const op = configWriteChain.then(async () => {
     const existing = await readConfig(configPath);
@@ -87,10 +88,13 @@ export async function mergeConfig(
     await rename(tmp, configPath);
 
     result = merged;
-  }).catch(() => { /* non-fatal */ });
+  }).catch((err) => {
+    writeError = err instanceof Error ? err : new Error(String(err));
+  });
 
   configWriteChain = op;
   await op;
+  if (writeError) throw writeError;
   return result;
 }
 

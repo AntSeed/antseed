@@ -46,9 +46,13 @@ let peerCacheLastRefreshAt = 0;
 let peerCacheLastSignature = '';
 const peersChangedListeners: Array<() => void> = [];
 
-/** Register a callback invoked when the peer set changes (new peers or services). */
-export function onPeersChanged(listener: () => void): void {
+/** Register a callback invoked when the peer set changes. Returns an unsubscribe function. */
+export function onPeersChanged(listener: () => void): () => void {
   peersChangedListeners.push(listener);
+  return () => {
+    const idx = peersChangedListeners.indexOf(listener);
+    if (idx >= 0) peersChangedListeners.splice(idx, 1);
+  };
 }
 
 function computePeerSignature(): string {
