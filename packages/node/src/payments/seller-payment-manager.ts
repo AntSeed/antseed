@@ -233,7 +233,6 @@ export class SellerPaymentManager {
       throw new Error('Token rate unavailable — cannot send receipt without on-chain rate');
     }
     const effectiveTokenCap = authMax / tokenRate;
-    const effectiveTokenCap = tokenRate > 0n ? authMax / tokenRate : authMax;
     let newTotal = BigInt(session.tokensDelivered) + tokensDelivered;
     if (newTotal > effectiveTokenCap) {
       newTotal = effectiveTokenCap;
