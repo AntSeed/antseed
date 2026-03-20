@@ -1584,7 +1584,7 @@ export class BuyerProxy {
 
       if (!selectedPeer) {
         selectedPeer = router
-          ? router.selectPeer(serializedReq, availableCandidates)
+          ? (router.selectPeer(serializedReq, availableCandidates) ?? availableCandidates[0] ?? null)
           : availableCandidates[0] ?? null
       }
 
