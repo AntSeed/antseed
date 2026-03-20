@@ -48,20 +48,12 @@ export type DataEndpoint =
   | 'config'
   | 'data-sources';
 
-/** @deprecated Use DataEndpoint instead */
-export type DashboardEndpoint = DataEndpoint;
-
 export type DataResult<T = unknown> = {
   ok: boolean;
   data: T | null;
   error: string | null;
   status: number | null;
 };
-
-/** @deprecated Use DataResult instead */
-export type DashboardDataResult<T = unknown> = DataResult<T>;
-/** @deprecated Use DataResult instead */
-export type DashboardUpdateResult<T = unknown> = DataResult<T>;
 
 export type PluginInfo = {
   package: string;

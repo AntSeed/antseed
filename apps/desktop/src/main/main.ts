@@ -330,10 +330,10 @@ ipcMain.handle('plugins:install', async (_event, packageName: string) => {
   }
 
   try {
-    appendLog('dashboard', 'system', `Installing plugin "${normalized}"...`);
+    appendLog('connect', 'system', `Installing plugin "${normalized}"...`);
     await installPluginDependency(normalized);
     const plugins = await listInstalledPlugins();
-    appendLog('dashboard', 'system', `Installed plugin "${normalized}".`);
+    appendLog('connect', 'system', `Installed plugin "${normalized}".`);
     return { ok: true, package: normalized, plugins, error: null };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -342,14 +342,14 @@ ipcMain.handle('plugins:install', async (_event, packageName: string) => {
     if (legacyPackageName) {
       try {
         const aliasSpec = toNpmAliasInstallSpec(normalized, legacyPackageName);
-        appendLog('dashboard', 'system', `Registry install failed; retrying via legacy alias: ${aliasSpec}`);
+        appendLog('connect', 'system', `Registry install failed; retrying via legacy alias: ${aliasSpec}`);
         await installPluginDependency(aliasSpec);
         const plugins = await listInstalledPlugins();
-        appendLog('dashboard', 'system', `Installed plugin "${normalized}" using legacy package alias "${legacyPackageName}".`);
+        appendLog('connect', 'system', `Installed plugin "${normalized}" using legacy package alias "${legacyPackageName}".`);
         return { ok: true, package: normalized, plugins, error: null };
       } catch (legacyErr) {
         const legacyMessage = legacyErr instanceof Error ? legacyErr.message : String(legacyErr);
-        appendLog('dashboard', 'system', `Legacy alias install failed for "${normalized}": ${legacyMessage}`);
+        appendLog('connect', 'system', `Legacy alias install failed for "${normalized}": ${legacyMessage}`);
       }
     }
 
@@ -357,14 +357,14 @@ ipcMain.handle('plugins:install', async (_event, packageName: string) => {
 
     if (localSource) {
       try {
-        appendLog('dashboard', 'system', `Registry install failed; retrying from local source: ${localSource}`);
+        appendLog('connect', 'system', `Registry install failed; retrying from local source: ${localSource}`);
         await installPluginDependency(toFileInstallSpec(normalized, localSource));
         const plugins = await listInstalledPlugins();
-        appendLog('dashboard', 'system', `Installed plugin "${normalized}" from local source.`);
+        appendLog('connect', 'system', `Installed plugin "${normalized}" from local source.`);
         return { ok: true, package: normalized, plugins, error: null };
       } catch (localErr) {
         const localMessage = localErr instanceof Error ? localErr.message : String(localErr);
-        appendLog('dashboard', 'system', `Local plugin install failed for "${normalized}": ${localMessage}`);
+        appendLog('connect', 'system', `Local plugin install failed for "${normalized}": ${localMessage}`);
         return {
           ok: false,
           package: normalized,
@@ -374,7 +374,7 @@ ipcMain.handle('plugins:install', async (_event, packageName: string) => {
       }
     }
 
-    appendLog('dashboard', 'system', `Plugin install failed for "${normalized}": ${message}`);
+    appendLog('connect', 'system', `Plugin install failed for "${normalized}": ${message}`);
     return {
       ok: false,
       package: normalized,
@@ -542,7 +542,7 @@ ipcMain.handle('wallet:deposit', async (_event, amount: string) => {
   if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
     return { ok: false, error: 'Invalid deposit amount' };
   }
-  appendLog('dashboard', 'system', `Deposit requested: ${amount} USDC. Run 'antseed deposit ${amount}' in terminal.`);
+  appendLog('connect', 'system', `Deposit requested: ${amount} USDC. Run 'antseed deposit ${amount}' in terminal.`);
   return { ok: true, message: `Deposit of ${amount} USDC logged. Use CLI to execute: antseed deposit ${amount}` };
 });
 
@@ -551,7 +551,7 @@ ipcMain.handle('wallet:withdraw', async (_event, amount: string) => {
   if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
     return { ok: false, error: 'Invalid withdrawal amount' };
   }
-  appendLog('dashboard', 'system', `Withdrawal requested: ${amount} USDC. Run 'antseed withdraw ${amount}' in terminal.`);
+  appendLog('connect', 'system', `Withdrawal requested: ${amount} USDC. Run 'antseed withdraw ${amount}' in terminal.`);
   return { ok: true, message: `Withdrawal of ${amount} USDC logged. Use CLI to execute: antseed withdraw ${amount}` };
 });
 
@@ -627,7 +627,7 @@ registerPiChatHandlers({
     }
   },
   appendSystemLog: (line) => {
-    appendLog("dashboard", "system", line);
+    appendLog("connect", "system", line);
   },
   getNetworkPeers: async () => {
     await refreshPeerCache();
