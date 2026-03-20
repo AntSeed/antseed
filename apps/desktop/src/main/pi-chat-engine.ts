@@ -1767,13 +1767,14 @@ export function registerPiChatHandlers({
     }
   };
 
+  let lastServiceCatalogEntries: ChatServiceCatalogEntry[] = [];
+
   const refreshServiceCatalogFromNetwork = async (force = false): Promise<ChatServiceCatalogEntry[]> => {
     if (!force && serviceCatalogRefreshPromise) {
       return await serviceCatalogRefreshPromise;
     }
     if (!force && Date.now() - lastServiceCatalogRefreshAt < CHAT_SERVICE_CACHE_REFRESH_DEBOUNCE_MS) {
-      // Return current in-memory catalog if fresh enough.
-      return [];
+      return lastServiceCatalogEntries;
     }
 
     serviceCatalogRefreshPromise = (async () => {
@@ -1782,6 +1783,7 @@ export function registerPiChatHandlers({
       updateServiceProviderHints(serviceProviderHints, limited);
       updateServiceProtocolMap(serviceProtocolMap, limited);
       lastServiceCatalogRefreshAt = Date.now();
+      lastServiceCatalogEntries = limited;
       return limited;
     })().finally(() => {
       serviceCatalogRefreshPromise = null;
