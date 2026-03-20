@@ -937,8 +937,8 @@ export class BuyerProxy {
     }
   }
 
-  /** Serialised read-modify-write to buyer.state.json. */
-  private _mergeStateFile(patch: Record<string, unknown>): void {
+  /** Serialised read-modify-write to buyer.state.json. Returns the queued write promise. */
+  private _mergeStateFile(patch: Record<string, unknown>): Promise<void> {
     this._stateWriteChain = this._stateWriteChain.then(async () => {
       try {
         const dir = join(homedir(), '.antseed')
@@ -958,6 +958,7 @@ export class BuyerProxy {
         // non-fatal
       }
     }).catch(() => {})
+    return this._stateWriteChain
   }
 
   private async _writeStateFile(state: 'connected' | 'stopped'): Promise<void> {
@@ -967,7 +968,7 @@ export class BuyerProxy {
     const sessionOverrides = state === 'connected'
       ? { pinnedService: this._pinnedService, pinnedPeerId: this._pinnedPeer }
       : {}
-    this._mergeStateFile({
+    await this._mergeStateFile({
       state,
       pid: process.pid,
       port: this._port,
