@@ -119,7 +119,7 @@ function normalizeNetworkData(
   }
 
   const peers = Array.from(merged.values())
-    .filter((peer) => peer.services.length > 0)
+    .filter((peer) => peer.services.length > 0 || peer.providers.length > 0)
     .sort((a, b) => {
       if (b.reputation !== a.reputation) return b.reputation - a.reputation;
       return b.lastSeen - a.lastSeen;
