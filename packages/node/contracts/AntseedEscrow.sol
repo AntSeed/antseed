@@ -57,6 +57,7 @@ contract AntseedEscrow is EIP712, Pausable {
     uint256 public PROVEN_SIGN_COOLDOWN = 7 days;
     uint256 public BUYER_INACTIVITY_PERIOD = 90 days;
     uint256 public SETTLE_TIMEOUT = 24 hours;
+    uint256 public WITHDRAWAL_DELAY = 48 hours;
     uint256 public REPUTATION_CAP_COEFFICIENT = 20;
     uint256 public SLASH_RATIO_THRESHOLD = 30;
     uint256 public SLASH_GHOST_THRESHOLD = 5;
@@ -251,7 +252,7 @@ contract AntseedEscrow is EIP712, Pausable {
     function executeWithdrawal() external nonReentrant {
         BuyerAccount storage ba = buyers[msg.sender];
         if (ba.withdrawalAmount == 0) revert InvalidAmount();
-        if (block.timestamp < ba.withdrawalRequestedAt + SETTLE_TIMEOUT) revert TimeoutNotReached();
+        if (block.timestamp < ba.withdrawalRequestedAt + WITHDRAWAL_DELAY) revert TimeoutNotReached();
 
         // Cap withdrawal at available balance in case settlements reduced it
         uint256 available = ba.balance - ba.reserved;
@@ -673,6 +674,10 @@ contract AntseedEscrow is EIP712, Pausable {
         else if (key == keccak256("SETTLE_TIMEOUT")) {
             if (value < 1 hours) revert InvalidAmount();
             SETTLE_TIMEOUT = value;
+        }
+        else if (key == keccak256("WITHDRAWAL_DELAY")) {
+            if (value < 1 hours) revert InvalidAmount();
+            WITHDRAWAL_DELAY = value;
         }
         else if (key == keccak256("REPUTATION_CAP_COEFFICIENT")) REPUTATION_CAP_COEFFICIENT = value;
         else if (key == keccak256("SLASH_RATIO_THRESHOLD")) SLASH_RATIO_THRESHOLD = value;

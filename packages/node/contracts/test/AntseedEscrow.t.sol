@@ -226,7 +226,7 @@ contract AntseedEscrowBuyerTest is AntseedEscrowTestBase {
         escrow.requestWithdrawal(5_000_000);
 
         // Warp past SETTLE_TIMEOUT (request-based timelock)
-        vm.warp(block.timestamp + escrow.SETTLE_TIMEOUT() + 1);
+        vm.warp(block.timestamp + escrow.WITHDRAWAL_DELAY() + 1);
 
         uint256 balBefore = usdc.balanceOf(buyer);
         vm.prank(buyer);
@@ -241,7 +241,7 @@ contract AntseedEscrowBuyerTest is AntseedEscrowTestBase {
         escrow.requestWithdrawal(5_000_000);
 
         // Warp less than SETTLE_TIMEOUT
-        vm.warp(block.timestamp + escrow.SETTLE_TIMEOUT() - 1);
+        vm.warp(block.timestamp + escrow.WITHDRAWAL_DELAY() - 1);
 
         vm.prank(buyer);
         vm.expectRevert(AntseedEscrow.TimeoutNotReached.selector);
@@ -441,7 +441,7 @@ contract AntseedEscrowStakingTest is AntseedEscrowTestBase {
         for (uint256 i = 0; i < 5; i++) {
             bytes32 sid = keccak256(abi.encodePacked("ghost", i));
             _reserveFirstSign(seller, sid, 500_000);
-            vm.warp(block.timestamp + escrow.SETTLE_TIMEOUT() + 1);
+            vm.warp(block.timestamp + escrow.WITHDRAWAL_DELAY() + 1);
             vm.prank(buyer);
             escrow.settleTimeout(sid);
         }
@@ -809,7 +809,7 @@ contract AntseedEscrowSettleTest is AntseedEscrowTestBase {
         (, uint256 reservedBefore,,) = escrow.getBuyerBalance(buyer);
         assertEq(reservedBefore, 500_000);
 
-        vm.warp(block.timestamp + escrow.SETTLE_TIMEOUT() + 1);
+        vm.warp(block.timestamp + escrow.WITHDRAWAL_DELAY() + 1);
         vm.prank(buyer);
         escrow.settleTimeout(sid);
 
@@ -833,7 +833,7 @@ contract AntseedEscrowSettleTest is AntseedEscrowTestBase {
         uint256 tokenId = identity.getTokenId(seller);
         AntseedIdentity.ProvenReputation memory repBefore = identity.getReputation(tokenId);
 
-        vm.warp(block.timestamp + escrow.SETTLE_TIMEOUT() + 1);
+        vm.warp(block.timestamp + escrow.WITHDRAWAL_DELAY() + 1);
         vm.prank(buyer);
         escrow.settleTimeout(sid);
 
@@ -860,7 +860,7 @@ contract AntseedEscrowAdminTest is AntseedEscrowTestBase {
 
     function test_setConstant_settleTimeout() public {
         escrow.setConstant(keccak256("SETTLE_TIMEOUT"), 48 hours);
-        assertEq(escrow.SETTLE_TIMEOUT(), 48 hours);
+        assertEq(escrow.WITHDRAWAL_DELAY(), 48 hours);
     }
 
     function test_setConstant_revert_notOwner() public {
