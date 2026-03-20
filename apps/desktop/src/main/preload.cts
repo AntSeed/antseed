@@ -128,6 +128,12 @@ const api = {
   scanNetwork(port?: number): Promise<DashboardDataResult> {
     return ipcRenderer.invoke('runtime:scan-network', port) as Promise<DashboardDataResult>;
   },
+  lookupPeer(peerId: string): Promise<{ ok: boolean; peer: unknown; error: string | null }> {
+    return ipcRenderer.invoke('runtime:lookup-peer', peerId) as Promise<{ ok: boolean; peer: unknown; error: string | null }>;
+  },
+  touchPeer(peerId: string): void {
+    void ipcRenderer.invoke('runtime:touch-peer', peerId);
+  },
   onLog(handler: (event: LogEvent) => void): () => void {
     const listener = (_: unknown, event: LogEvent) => handler(event);
     ipcRenderer.on('runtime:log', listener);

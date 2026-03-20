@@ -841,6 +841,8 @@ export class BuyerProxy {
   private _stateFileWatcher: FSWatcher | null = null
   private _stateWatchDebounce: ReturnType<typeof setTimeout> | null = null
 
+  private _stateWriteChain: Promise<void> = Promise.resolve()
+
   private _cachedPeers: PeerInfo[] = []
   private _cacheLastUpdatedAtMs = 0
   private _cacheMutationEpoch = 0
@@ -935,36 +937,43 @@ export class BuyerProxy {
     }
   }
 
-  private async _writeStateFile(state: 'connected' | 'stopped'): Promise<void> {
-    try {
-      const dir = join(homedir(), '.antseed')
-      await mkdir(dir, { recursive: true })
-      let existing: Record<string, unknown> = {}
+  /** Serialised read-modify-write to buyer.state.json. Returns the queued write promise. */
+  private _mergeStateFile(patch: Record<string, unknown>): Promise<void> {
+    this._stateWriteChain = this._stateWriteChain.then(async () => {
       try {
-        const raw = await readFile(BUYER_STATE_FILE, 'utf-8')
-        existing = JSON.parse(raw) as Record<string, unknown>
+        const dir = join(homedir(), '.antseed')
+        await mkdir(dir, { recursive: true })
+        let existing: Record<string, unknown> = {}
+        try {
+          const raw = await readFile(BUYER_STATE_FILE, 'utf-8')
+          existing = JSON.parse(raw) as Record<string, unknown>
+        } catch {
+          // file doesn't exist yet
+        }
+        const data = { ...existing, ...patch }
+        const tmp = join(homedir(), '.antseed', `.buyer.state.${randomUUID()}.json.tmp`)
+        await writeFile(tmp, JSON.stringify(data, null, 2))
+        await rename(tmp, BUYER_STATE_FILE)
       } catch {
-        // file doesn't exist yet
+        // non-fatal
       }
-      // When stopping, preserve whatever pinnedService/pinnedPeerId is already
-      // in the file — the debounce may have been cancelled before
-      // _reloadSessionOverrides could commit the latest CLI-written values.
-      const sessionOverrides = state === 'connected'
-        ? { pinnedService: this._pinnedService, pinnedPeerId: this._pinnedPeer }
-        : {}
-      const data = {
-        ...existing,
-        state,
-        pid: process.pid,
-        port: this._port,
-        ...sessionOverrides,
-      }
-      const tmp = join(homedir(), '.antseed', `.buyer.state.${randomUUID()}.json.tmp`)
-      await writeFile(tmp, JSON.stringify(data, null, 2))
-      await rename(tmp, BUYER_STATE_FILE)
-    } catch {
-      // non-fatal
-    }
+    }).catch(() => {})
+    return this._stateWriteChain
+  }
+
+  private async _writeStateFile(state: 'connected' | 'stopped'): Promise<void> {
+    // When stopping, preserve whatever pinnedService/pinnedPeerId is already
+    // in the file — the debounce may have been cancelled before
+    // _reloadSessionOverrides could commit the latest CLI-written values.
+    const sessionOverrides = state === 'connected'
+      ? { pinnedService: this._pinnedService, pinnedPeerId: this._pinnedPeer }
+      : {}
+    await this._mergeStateFile({
+      state,
+      pid: process.pid,
+      port: this._port,
+      ...sessionOverrides,
+    })
   }
 
   private _startBackgroundRefresh(): void {
@@ -979,6 +988,23 @@ export class BuyerProxy {
     this._cachedPeers = incoming
     this._cacheLastUpdatedAtMs = Date.now()
     this._cacheMutationEpoch += 1
+    this._persistPeersToState()
+  }
+
+  private _persistPeersToState(): void {
+    // Write discovered peers to buyer.state.json so the dashboard can read them
+    // without running its own DHT node.
+    const peers = this._cachedPeers.map((p) => ({
+      peerId: p.peerId,
+      displayName: p.displayName ?? null,
+      publicAddress: p.publicAddress ?? null,
+      providers: p.providers,
+      defaultInputUsdPerMillion: p.defaultInputUsdPerMillion ?? 0,
+      defaultOutputUsdPerMillion: p.defaultOutputUsdPerMillion ?? 0,
+      maxConcurrency: p.maxConcurrency ?? 0,
+      lastSeen: p.lastSeen,
+    }))
+    this._mergeStateFile({ discoveredPeers: peers, peersUpdatedAt: Date.now() })
   }
 
   private _evictPeer(peerId: string): void {
