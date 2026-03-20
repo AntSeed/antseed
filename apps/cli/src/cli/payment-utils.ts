@@ -117,6 +117,7 @@ export function createSubPoolClient(config: AntseedConfig): SubPoolClient {
   return new SubPoolClient({
     rpcUrl: crypto.rpcUrl,
     contractAddress: crypto.subPoolContractAddress,
+    usdcAddress: crypto.usdcContractAddress,
   });
 }
 

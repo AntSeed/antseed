@@ -484,9 +484,15 @@ contract AntseedEscrow is EIP712, Pausable {
         if (block.timestamp > session.deadline) revert SessionExpired();
 
         SellerAccount storage sa = sellers[msg.sender];
-        uint256 chargeAmount = tokenCount * session.tokenRate;
-        if (chargeAmount > session.maxAmount) {
+        // Compute charge with overflow protection: check cap before multiplying
+        uint256 chargeAmount;
+        if (session.tokenRate > 0 && tokenCount > session.maxAmount / session.tokenRate) {
             chargeAmount = session.maxAmount;
+        } else {
+            chargeAmount = tokenCount * session.tokenRate;
+            if (chargeAmount > session.maxAmount) {
+                chargeAmount = session.maxAmount;
+            }
         }
 
         uint256 platformFee = 0;

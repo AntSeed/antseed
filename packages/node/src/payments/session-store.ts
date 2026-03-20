@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 export const SESSION_STATUS = {
@@ -61,6 +62,7 @@ export class SessionStore {
   };
 
   constructor(dataDir: string) {
+    mkdirSync(dataDir, { recursive: true });
     this._db = new Database(join(dataDir, 'sessions.db'));
     this._db.pragma('journal_mode = WAL');
     this._createTables();

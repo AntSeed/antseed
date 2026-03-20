@@ -4,7 +4,12 @@ import { BaseEvmClient } from './base-evm-client.js';
 export interface SubPoolClientConfig {
   rpcUrl: string;
   contractAddress: string;
+  usdcAddress: string;
 }
+
+const ERC20_ABI = [
+  'function approve(address spender, uint256 amount) external returns (bool)',
+] as const;
 
 const SUBPOOL_ABI = [
   'function subscribe(uint256 tierId) external',
@@ -28,8 +33,11 @@ const SUBPOOL_ABI = [
 ] as const;
 
 export class SubPoolClient extends BaseEvmClient {
+  private readonly _usdcAddress: string;
+
   constructor(config: SubPoolClientConfig) {
     super(config.rpcUrl, config.contractAddress);
+    this._usdcAddress = config.usdcAddress;
   }
 
   // ─── Subscription Methods ──────────────────────────────────────────
@@ -38,15 +46,30 @@ export class SubPoolClient extends BaseEvmClient {
     const connected = this._ensureConnected(signer);
     const signerAddress = await connected.getAddress();
     const contract = new Contract(this._contractAddress, SUBPOOL_ABI, connected);
+
+    // Fetch tier fee and approve USDC
+    const [monthlyFee] = await contract.getFunction('getTier')(tierId);
+    const usdc = new Contract(this._usdcAddress, ERC20_ABI, connected);
+    const approveNonce = await this._reserveNonce(signerAddress);
+    const approveTx = await usdc.getFunction('approve')(this._contractAddress, monthlyFee, { nonce: approveNonce });
+    await approveTx.wait();
+
     const nonce = await this._reserveNonce(signerAddress);
     const tx = await contract.getFunction('subscribe')(tierId, { nonce });
     const receipt = await tx.wait();
     return receipt.hash;
   }
 
-  async renewSubscription(signer: AbstractSigner): Promise<string> {
+  async renewSubscription(signer: AbstractSigner, monthlyFee: bigint): Promise<string> {
     const connected = this._ensureConnected(signer);
     const signerAddress = await connected.getAddress();
+
+    // Approve USDC for renewal
+    const usdc = new Contract(this._usdcAddress, ERC20_ABI, connected);
+    const approveNonce = await this._reserveNonce(signerAddress);
+    const approveTx = await usdc.getFunction('approve')(this._contractAddress, monthlyFee, { nonce: approveNonce });
+    await approveTx.wait();
+
     const contract = new Contract(this._contractAddress, SUBPOOL_ABI, connected);
     const nonce = await this._reserveNonce(signerAddress);
     const tx = await contract.getFunction('renewSubscription')({ nonce });

@@ -343,12 +343,20 @@ export class SellerPaymentManager {
       if (session.status !== 'active') continue;
 
       try {
-        debugLog(`[SellerPayment] Settling timed-out session ${session.sessionId.slice(0, 18)}...`);
-        await this._escrowClient.settleTimeout(this._signer, session.sessionId);
-        this._sessionStore.updateSessionStatus(session.sessionId, 'timeout');
+        const delivered = BigInt(session.tokensDelivered);
+        if (delivered > 0n) {
+          // Seller delivered tokens — settle normally to get paid and avoid ghost penalty
+          debugLog(`[SellerPayment] Settling timed-out session ${session.sessionId.slice(0, 18)}... with ${delivered} tokens delivered`);
+          await this._escrowClient.settle(this._signer, session.sessionId, delivered);
+          this._sessionStore.updateSessionStatus(session.sessionId, 'settled', delivered.toString());
+        } else {
+          // No delivery — use settleTimeout (records ghost, releases buyer funds)
+          debugLog(`[SellerPayment] Settling timed-out session ${session.sessionId.slice(0, 18)}... (no delivery)`);
+          await this._escrowClient.settleTimeout(this._signer, session.sessionId);
+          this._sessionStore.updateSessionStatus(session.sessionId, 'timeout');
+        }
         this._activeBuyers.delete(session.peerId);
         this._topUpRequested.delete(session.sessionId);
-        debugLog(`[SellerPayment] Timed-out session ${session.sessionId.slice(0, 18)}... settled`);
       } catch (err) {
         debugWarn(`[SellerPayment] Failed to settle timeout for ${session.sessionId.slice(0, 18)}...: ${err instanceof Error ? err.message : err}`);
       }

@@ -115,11 +115,11 @@ export interface PaymentsCLIConfig {
     escrowContractAddress: string;
     /** USDC token contract address */
     usdcContractAddress: string;
-    /** AntseedIdentity contract address */
+    /** Deployed AntseedIdentity contract address */
     identityContractAddress?: string;
-    /** AntseedEmissions contract address */
+    /** Deployed AntseedEmissions contract address */
     emissionsContractAddress?: string;
-    /** AntseedSubPool contract address */
+    /** Deployed AntseedSubPool contract address */
     subPoolContractAddress?: string;
     /** Default lock amount per session in human-readable USDC (e.g. "1" = 1 USDC) */
     defaultLockAmountUSDC?: string;
