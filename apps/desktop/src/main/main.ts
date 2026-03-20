@@ -1593,60 +1593,110 @@ async function updateDashboardConfig(
 }
 
 /** Read peers directly from buyer.state.json instead of going through the dashboard HTTP API. */
-async function readNetworkPeersFromFile(): Promise<DashboardNetworkResult> {
+// ── Desktop Peer Cache ──
+// In-memory peer cache fed by buyer.state.json. Supports merge, TTL eviction,
+// touchPeer (keep alive), and lookupPeer (find by ID).
+
+const PEER_TTL_MS = 5 * 60_000;
+const peerCache = new Map<string, DashboardNetworkPeer>();
+let peerCacheLastScanAt: number | null = null;
+
+function parsePeerFromRaw(pr: Record<string, unknown>): DashboardNetworkPeer | null {
+  if (typeof pr.peerId !== 'string') return null;
+
+  let peerHost = '';
+  let peerPort = 0;
+  if (typeof pr.publicAddress === 'string') {
+    const addr = pr.publicAddress as string;
+    const lastColon = addr.lastIndexOf(':');
+    peerHost = lastColon > -1 ? addr.slice(0, lastColon) : addr;
+    peerPort = lastColon > -1 ? Number(addr.slice(lastColon + 1)) || 0 : 0;
+  }
+
+  return {
+    peerId: pr.peerId as string,
+    host: peerHost,
+    port: peerPort,
+    providers: Array.isArray(pr.providers) ? pr.providers.filter((s: unknown) => typeof s === 'string') : [],
+    inputUsdPerMillion: Number(pr.defaultInputUsdPerMillion) || 0,
+    outputUsdPerMillion: Number(pr.defaultOutputUsdPerMillion) || 0,
+    capacityMsgPerHour: (Number(pr.maxConcurrency) || 0) * 60,
+    reputation: 100,
+    lastSeen: Number(pr.lastSeen) || Date.now(),
+    source: 'dht',
+  };
+}
+
+/** Refresh peer cache from buyer.state.json — merge new, evict stale. */
+async function refreshPeerCache(): Promise<void> {
   try {
     const raw = await readFile(DEFAULT_BUYER_STATE_PATH, 'utf-8');
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     const rawPeers = Array.isArray(parsed.discoveredPeers) ? parsed.discoveredPeers : [];
 
-    const peers: DashboardNetworkPeer[] = [];
     for (const p of rawPeers) {
       if (!p || typeof p !== 'object') continue;
-      const pr = p as Record<string, unknown>;
-      if (typeof pr.peerId !== 'string') continue;
+      const peer = parsePeerFromRaw(p as Record<string, unknown>);
+      if (!peer) continue;
 
-      let peerHost = '';
-      let peerPort = 0;
-      if (typeof pr.publicAddress === 'string') {
-        const addr = pr.publicAddress as string;
-        const lastColon = addr.lastIndexOf(':');
-        peerHost = lastColon > -1 ? addr.slice(0, lastColon) : addr;
-        peerPort = lastColon > -1 ? Number(addr.slice(lastColon + 1)) || 0 : 0;
+      const existing = peerCache.get(peer.peerId);
+      // Merge: keep better data from existing if new data is empty.
+      if (existing) {
+        peer.providers = peer.providers.length > 0 ? peer.providers : existing.providers;
+        peer.inputUsdPerMillion = peer.inputUsdPerMillion || existing.inputUsdPerMillion;
+        peer.outputUsdPerMillion = peer.outputUsdPerMillion || existing.outputUsdPerMillion;
+        peer.capacityMsgPerHour = peer.capacityMsgPerHour || existing.capacityMsgPerHour;
+        // Keep the more recent lastSeen.
+        peer.lastSeen = Math.max(peer.lastSeen, existing.lastSeen);
       }
-
-      peers.push({
-        peerId: pr.peerId as string,
-        host: peerHost,
-        port: peerPort,
-        providers: Array.isArray(pr.providers) ? pr.providers.filter((s: unknown) => typeof s === 'string') : [],
-        inputUsdPerMillion: Number(pr.defaultInputUsdPerMillion) || 0,
-        outputUsdPerMillion: Number(pr.defaultOutputUsdPerMillion) || 0,
-        capacityMsgPerHour: (Number(pr.maxConcurrency) || 0) * 60,
-        reputation: 100,
-        lastSeen: Number(pr.lastSeen) || Date.now(),
-        source: 'dht',
-      });
+      peerCache.set(peer.peerId, peer);
     }
 
-    return {
-      ok: true,
-      peers,
-      stats: {
-        ...defaultNetworkStats(),
-        totalPeers: peers.length,
-        dhtHealthy: peers.length > 0,
-        lastScanAt: Number(parsed.peersUpdatedAt) || null,
-      },
-      error: null,
-    };
+    peerCacheLastScanAt = Number(parsed.peersUpdatedAt) || Date.now();
   } catch {
-    return {
-      ok: true,
-      peers: [],
-      stats: defaultNetworkStats(),
-      error: null,
-    };
+    // File doesn't exist yet — buyer runtime may not be running.
   }
+
+  // Evict stale peers.
+  const now = Date.now();
+  for (const [id, peer] of peerCache) {
+    if (now - peer.lastSeen > PEER_TTL_MS) {
+      peerCache.delete(id);
+    }
+  }
+}
+
+function getNetworkSnapshot(): DashboardNetworkResult {
+  const peers = Array.from(peerCache.values());
+  return {
+    ok: true,
+    peers,
+    stats: {
+      ...defaultNetworkStats(),
+      totalPeers: peers.length,
+      dhtHealthy: peers.length > 0,
+      lastScanAt: peerCacheLastScanAt,
+    },
+    error: null,
+  };
+}
+
+/**
+ * Mark a peer as recently active. Prevents TTL eviction for peers
+ * we know are alive (e.g. after a chat response).
+ */
+function touchPeer(peerId: string): boolean {
+  const peer = peerCache.get(peerId);
+  if (peer) {
+    peer.lastSeen = Date.now();
+    return true;
+  }
+  return false;
+}
+
+/** Look up a peer by ID from the in-memory cache. */
+function lookupPeer(peerId: string): DashboardNetworkPeer | null {
+  return peerCache.get(peerId) ?? null;
 }
 
 async function ensureDashboardRuntime(targetPort?: number): Promise<void> {
@@ -1856,7 +1906,22 @@ ipcMain.handle('plugins:install', async (_event, packageName: string) => {
 });
 
 ipcMain.handle('runtime:get-network', async () => {
-  return readNetworkPeersFromFile();
+  await refreshPeerCache();
+  return getNetworkSnapshot();
+});
+
+ipcMain.handle('runtime:lookup-peer', async (_event, peerId: string) => {
+  if (typeof peerId !== 'string' || peerId.trim().length === 0) {
+    return { ok: false, peer: null, error: 'Invalid peerId' };
+  }
+  await refreshPeerCache();
+  const peer = lookupPeer(peerId.trim());
+  return { ok: Boolean(peer), peer, error: peer ? null : 'Peer not found' };
+});
+
+ipcMain.handle('runtime:touch-peer', (_event, peerId: string) => {
+  if (typeof peerId !== 'string' || peerId.trim().length === 0) return { ok: false };
+  return { ok: touchPeer(peerId.trim()) };
 });
 
 ipcMain.handle(
@@ -2071,7 +2136,8 @@ registerPiChatHandlers({
     appendLog("dashboard", "system", line);
   },
   getNetworkPeers: async () => {
-    const snapshot = await readNetworkPeersFromFile();
+    await refreshPeerCache();
+    const snapshot = getNetworkSnapshot();
     if (!snapshot.ok) {
       return [];
     }
@@ -2091,7 +2157,8 @@ registerPiChatHandlers({
 
 ipcMain.handle('runtime:scan-network', async () => {
   // The buyer runtime handles peer discovery; just return the current state.
-  const snapshot = await readNetworkPeersFromFile();
+  await refreshPeerCache();
+  const snapshot = getNetworkSnapshot();
   return { ok: snapshot.ok, data: snapshot, error: snapshot.error, status: 200 };
 });
 
