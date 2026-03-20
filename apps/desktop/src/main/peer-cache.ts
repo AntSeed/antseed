@@ -1,6 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import path from 'node:path';
+import { DEFAULT_BUYER_STATE_PATH } from './constants.js';
 
 export type DashboardNetworkPeer = {
   peerId: string;
@@ -36,10 +35,12 @@ export type DashboardNetworkResult = {
 };
 
 export const PEER_ONLINE_TTL_MS = 5 * 60_000;
-export const DEFAULT_BUYER_STATE_PATH = path.join(homedir(), '.antseed', 'buyer.state.json');
+
+const REFRESH_MIN_INTERVAL_MS = 5_000;
 
 const peerCache = new Map<string, DashboardNetworkPeer>();
 let peerCacheLastScanAt: number | null = null;
+let peerCacheLastRefreshAt = 0;
 
 export function defaultNetworkStats(): DashboardNetworkStats {
   return {
@@ -84,6 +85,13 @@ export function parsePeerFromRaw(pr: Record<string, unknown>): DashboardNetworkP
 
 /** Refresh peer cache from buyer.state.json — merge new, mark stale as offline. */
 export async function refreshPeerCache(): Promise<void> {
+  // Skip if refreshed recently — the buyer runtime only writes every ~5 min.
+  const now = Date.now();
+  if (now - peerCacheLastRefreshAt < REFRESH_MIN_INTERVAL_MS) {
+    return;
+  }
+  peerCacheLastRefreshAt = now;
+
   // Track which peers are in the current file snapshot.
   const seenInFile = new Set<string>();
 
@@ -116,7 +124,6 @@ export async function refreshPeerCache(): Promise<void> {
   }
 
   // Mark peers not in the current file snapshot as offline if stale.
-  const now = Date.now();
   for (const [id, peer] of peerCache) {
     if (!seenInFile.has(id)) {
       peer.online = now - peer.lastSeen < PEER_ONLINE_TTL_MS;

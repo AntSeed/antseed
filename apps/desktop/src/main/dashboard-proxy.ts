@@ -1,13 +1,10 @@
 import { readFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import path from 'node:path';
 import { createDashboardServer, type DashboardConfig, type DashboardServer } from '@antseed/dashboard';
-import type { RuntimeMode } from './process-manager.js';
+import { DEFAULT_CONFIG_PATH, DEFAULT_BUYER_STATE_PATH, DEFAULT_DASHBOARD_PORT } from './constants.js';
+import type { AppendLogFn } from './utils.js';
+import { asRecord, asString, asNumber, asStringArray } from './utils.js';
 
-const DEFAULT_CONFIG_PATH = path.join(homedir(), '.antseed', 'config.json');
-const DEFAULT_BUYER_STATE_PATH = path.join(homedir(), '.antseed', 'buyer.state.json');
-
-export const DEFAULT_DASHBOARD_PORT = 3117;
+export { DEFAULT_DASHBOARD_PORT };
 export const DASHBOARD_FETCH_TIMEOUT_MS = 10_000;
 
 export type DashboardEndpoint = 'status' | 'network' | 'peers' | 'sessions' | 'earnings' | 'config' | 'data-sources';
@@ -39,10 +36,8 @@ export const DASHBOARD_ENDPOINTS: ReadonlySet<DashboardEndpoint> = new Set([
   'data-sources',
 ]);
 
-export type AppendLogFn = (mode: RuntimeMode, stream: 'stdout' | 'stderr' | 'system', line: string) => void;
 export type EmitRuntimeStateFn = () => void;
 
-// Helpers shared with main.ts — accept them via setDashboardCallbacks
 let _appendLog: AppendLogFn = () => {};
 let _emitRuntimeState: EmitRuntimeStateFn = () => {};
 
@@ -51,35 +46,8 @@ export function setDashboardCallbacks(appendLog: AppendLogFn, emitRuntimeState: 
   _emitRuntimeState = emitRuntimeState;
 }
 
-// Utility helpers used by loadDashboardConfig — imported from main.ts or inlined
-function asRecord(value: unknown): Record<string, unknown> {
-  if (value && typeof value === 'object') {
-    return value as Record<string, unknown>;
-  }
-  return {};
-}
-
-function asString(value: unknown, fallback: string): string {
-  return typeof value === 'string' && value.trim().length > 0 ? value : fallback;
-}
-
-function asNumber(value: unknown, fallback: number): number {
-  const parsed = Number(value);
-  if (Number.isFinite(parsed)) {
-    return parsed;
-  }
-  return fallback;
-}
-
-function asStringArray(value: unknown, fallback: string[]): string[] {
-  if (!Array.isArray(value)) {
-    return fallback;
-  }
-  return value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
-}
-
 let dashboardServer: DashboardServer | null = null;
-export const dashboardRuntime: DashboardRuntimeState = {
+const dashboardRuntime: DashboardRuntimeState = {
   running: false,
   port: DEFAULT_DASHBOARD_PORT,
   startedAt: null,
@@ -88,6 +56,16 @@ export const dashboardRuntime: DashboardRuntimeState = {
 };
 let dashboardStartPromise: Promise<void> | null = null;
 let dashboardPortInUseUntilMs = 0;
+
+/** Read-only snapshot of the dashboard runtime state. */
+export function getDashboardRuntime(): Readonly<DashboardRuntimeState> {
+  return dashboardRuntime;
+}
+
+/** Return the active dashboard port (running port or fallback). */
+export function getActiveDashboardPort(fallback?: number): number {
+  return dashboardRuntime.running ? dashboardRuntime.port : toSafeDashboardPort(fallback);
+}
 const DASHBOARD_PORT_IN_USE_RETRY_COOLDOWN_MS = 60_000;
 
 export function toSafeDashboardPort(port?: number): number {

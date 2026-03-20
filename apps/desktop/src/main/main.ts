@@ -6,7 +6,6 @@ import {
 } from 'electron';
 import electronUpdater from 'electron-updater';
 const { autoUpdater } = electronUpdater;
-import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isIP } from 'node:net';
@@ -37,7 +36,8 @@ import {
 } from './plugins.js';
 import {
   setDashboardCallbacks,
-  dashboardRuntime,
+  getDashboardRuntime,
+  getActiveDashboardPort,
   toSafeDashboardPort,
   isAddressInUseError,
   startDashboardRuntime,
@@ -113,7 +113,8 @@ const APP_ICON_PATH = resolveAppIconPath();
 // in some surfaces because the underlying bundle is Electron.app.
 app.setName(APP_NAME);
 
-const DEFAULT_CONFIG_PATH = path.join(homedir(), '.antseed', 'config.json');
+import { DEFAULT_CONFIG_PATH } from './constants.js';
+import { asRecord, asString } from './utils.js';
 
 function resolveActiveConfigPath(): string {
   const explicit = process.env['ANTSEED_CONFIG_PATH']?.trim();
@@ -131,17 +132,6 @@ let lastRuntimeActivityHash = '';
 
 let appSetupNeeded = false;
 let appSetupComplete = false;
-
-function asRecord(value: unknown): Record<string, unknown> {
-  if (value && typeof value === 'object') {
-    return value as Record<string, unknown>;
-  }
-  return {};
-}
-
-function asString(value: unknown, fallback: string): string {
-  return typeof value === 'string' && value.trim().length > 0 ? value : fallback;
-}
 
 function isPublicMetadataHost(rawHost: string): boolean {
   const host = rawHost.trim();
@@ -249,13 +239,14 @@ const processManager = new ProcessManager((mode, stream, line) => {
 });
 
 function getDashboardProcessState(): RuntimeProcessState {
+  const rt = getDashboardRuntime();
   return {
     mode: 'dashboard',
-    running: dashboardRuntime.running,
-    pid: dashboardRuntime.running ? process.pid : null,
-    startedAt: dashboardRuntime.startedAt,
-    lastExitCode: dashboardRuntime.lastExitCode,
-    lastError: dashboardRuntime.lastError,
+    running: rt.running,
+    pid: rt.running ? process.pid : null,
+    startedAt: rt.startedAt,
+    lastExitCode: rt.lastExitCode,
+    lastError: rt.lastError,
   };
 }
 
@@ -340,7 +331,7 @@ ipcMain.handle('desktop:set-debug-logs', (_event, enabled: boolean) => {
 });
 
 ipcMain.handle('runtime:open-dashboard', async (_event, port?: number) => {
-  const openPort = dashboardRuntime.running ? dashboardRuntime.port : toSafeDashboardPort(port);
+  const openPort = getActiveDashboardPort(port);
   await shell.openExternal(`http://127.0.0.1:${openPort}`);
   return { ok: true };
 });
@@ -491,7 +482,7 @@ ipcMain.handle(
     await ensureDashboardRuntime(ACTIVE_CONFIG_PATH, requestedPort);
 
     const safeQuery = sanitizeDashboardQuery(options?.query);
-    const activePort = dashboardRuntime.running ? dashboardRuntime.port : requestedPort;
+    const activePort = getActiveDashboardPort(requestedPort);
     return fetchDashboardData(safeEndpoint, activePort, safeQuery);
   },
 );
@@ -528,7 +519,7 @@ ipcMain.handle(
     }
     const requestedPort = toSafeDashboardPort(options?.port);
     await ensureDashboardRuntime(ACTIVE_CONFIG_PATH, requestedPort);
-    const activePort = dashboardRuntime.running ? dashboardRuntime.port : requestedPort;
+    const activePort = getActiveDashboardPort(requestedPort);
     return updateDashboardConfig(safeConfig, activePort);
   },
 );
@@ -551,7 +542,7 @@ ipcMain.handle('wallet:get-info', async (_event, port?: number): Promise<{ ok: b
   try {
     const requestedPort = toSafeDashboardPort(port);
     await ensureDashboardRuntime(ACTIVE_CONFIG_PATH, requestedPort);
-    const activePort = dashboardRuntime.running ? dashboardRuntime.port : requestedPort;
+    const activePort = getActiveDashboardPort(requestedPort);
 
     const [statusResult, configResult] = await Promise.all([
       fetchDashboardData('status', activePort),
@@ -794,13 +785,15 @@ app.on('window-all-closed', () => {
   }
 });
 
+let isQuitting = false;
+
 app.on('before-quit', (event) => {
-  if ((app as unknown as { __antseedStopping?: boolean }).__antseedStopping) {
+  if (isQuitting) {
     return;
   }
 
   event.preventDefault();
-  (app as unknown as { __antseedStopping?: boolean }).__antseedStopping = true;
+  isQuitting = true;
 
   void Promise.allSettled([
     stopDashboardRuntime('app shutdown'),

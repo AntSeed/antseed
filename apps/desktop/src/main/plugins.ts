@@ -5,7 +5,7 @@ import { promisify } from 'node:util';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import type { BrowserWindow } from 'electron';
-import type { RuntimeMode } from './process-manager.js';
+import type { AppendLogFn } from './utils.js';
 
 const execFileAsync = promisify(execFileCallback);
 
@@ -25,8 +25,6 @@ export type InstalledPlugin = {
   package: string;
   version: string;
 };
-
-export type AppendLogFn = (mode: RuntimeMode, stream: 'stdout' | 'stderr' | 'system', line: string) => void;
 
 export interface EnsureDefaultPluginContext {
   getAppSetupNeeded: () => boolean;

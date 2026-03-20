@@ -61,12 +61,16 @@ export function secureIdentityEnv(): Record<string, string> {
   return { ANTSEED_IDENTITY_HEX: bytesToHex(secureIdentity.privateKey) };
 }
 
+const MAX_IDENTITY_RETRIES = 3;
+let identityRetryCount = 0;
+
 export async function ensureSecureIdentity(): Promise<void> {
   if (secureIdentity) return;
   if (secureIdentityPromise) {
     await secureIdentityPromise;
     return;
   }
+  if (identityRetryCount >= MAX_IDENTITY_RETRIES) return;
 
   const attempt = (async () => {
     try {
@@ -123,9 +127,10 @@ export async function ensureSecureIdentity(): Promise<void> {
   try {
     await attempt;
   } finally {
-    // Reset on transient failure so a subsequent call can retry.
+    // Reset on transient failure so a subsequent call can retry (up to MAX_IDENTITY_RETRIES).
     // If safeStorage is permanently unavailable, keep the promise so we don't re-warn.
     if (!secureIdentity && safeStorageAvailable() && secureIdentityPromise === attempt) {
+      identityRetryCount++;
       secureIdentityPromise = null;
     }
   }
