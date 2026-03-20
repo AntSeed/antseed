@@ -1,4 +1,4 @@
-export type RuntimeMode = 'connect' | 'dashboard';
+export type RuntimeMode = 'connect';
 
 export type RuntimeProcessState = {
   mode: RuntimeMode;

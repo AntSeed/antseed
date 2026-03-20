@@ -208,16 +208,6 @@ function updateRuntimeActivityFromLog(mode: string, lineRaw: string): void {
     }
   }
 
-  if (mode === 'dashboard') {
-    if (line.includes('running on http://127.0.0.1')) {
-      setRuntimeActivity('active', 'Local data service ready.', 3_000);
-      return;
-    }
-    if (line.includes('failed to start')) {
-      setRuntimeActivity('warn', 'Local data service start fallback in progress...', 8_000);
-      return;
-    }
-  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -480,7 +470,6 @@ function initializeBridge(): void {
   });
 
   bridge.onState?.((processes) => {
-    const wasDashboardRunning = uiState.dashboardRunning;
     renderProcesses(processes);
     syncBuyerRuntimeOverview(processes);
     syncRuntimeActivityFromProcesses(processes);
@@ -492,29 +481,7 @@ function initializeBridge(): void {
     }
 
     renderPluginSetupState();
-
-    const nowDashboardRunning = isModeRunning('dashboard', processes);
-    if (nowDashboardRunning !== wasDashboardRunning) {
-      void refreshDashboardData(processes);
-    }
   });
-
-  if (bridge.start) {
-    setRuntimeActivity('warn', 'Starting local data service...', 8_000);
-    void bridge.start({
-      mode: 'dashboard',
-      dashboardPort: getDashboardPort(),
-    }).catch((err) => {
-      const message = err instanceof Error ? err.message : String(err);
-      if (isProxyPortOccupiedMessage(message)) {
-        appendSystemLog(UI_MESSAGES.localServicePortInUse);
-        setRuntimeActivity('active', UI_MESSAGES.localServicePortInUse, 6_000);
-        return;
-      }
-      appendSystemLog(`Background data service start failed: ${message}`);
-      setRuntimeActivity('bad', `Data service start failed: ${message}`, 10_000);
-    });
-  }
 
   void (async () => {
     await refreshAll('startup');

@@ -59,14 +59,11 @@ export type RendererUiState = {
   // --- Process / runtime state ---
   processes: RuntimeProcessState[];
   refreshing: boolean;
-  dashboardRunning: boolean;
   daemonState: DaemonStateSnapshot | null;
 
   // --- Runtime display ---
   connectState: string;
   connectBadge: BadgeState;
-  dashboardState: string;
-  dashboardBadge: BadgeState;
   connectWarning: string | null;
   runtimeActivity: { tone: BadgeTone; message: string };
 
@@ -164,14 +161,11 @@ export function createInitialUiState(): RendererUiState {
     // Process / runtime
     processes: [],
     refreshing: false,
-    dashboardRunning: false,
     daemonState: null,
 
     // Runtime display
     connectState: '',
     connectBadge: { tone: 'idle', label: 'Stopped' },
-    dashboardState: '',
-    dashboardBadge: { tone: 'idle', label: 'Stopped' },
     connectWarning: null,
     runtimeActivity: { tone: 'idle', message: 'Idle' },
 
