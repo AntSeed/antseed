@@ -108,8 +108,23 @@ export function initChatModule({
   // Monotonic nonce counter — seeded from timestamp, incremented per use
   let nonceCounter = Math.floor(Date.now() / 1000) * 1000;
 
+  type PendingSpendingAuth = {
+    sessionId: string;
+    signature: string;
+    buyerEvmAddress: string;
+    maxAmountBaseUnits: string;
+    nonce: number;
+    deadline: number;
+  };
+
   let pendingPaymentMessage: { text: string; imageBase64?: string; imageMimeType?: string } | null = null;
   const approvedPeerSessions = new Set<string>();
+  // Stores the latest signed SpendingAuth per peer — the buyer runtime reads this
+  // via IPC to submit the on-chain reservation when the session actually starts.
+  // TODO: Wire this to the buyer runtime via a new IPC channel so the SpendingAuth
+  // is forwarded to the peer via PaymentMux.sendSpendingAuth(). Currently the buyer
+  // runtime's BuyerPaymentManager handles auth automatically for configured peers.
+  const peerSpendingAuths = new Map<string, PendingSpendingAuth>();
 
   let activeConversation: ChatConversation | null = null;
   let activeStreamTurn: number | null = null;
@@ -1752,6 +1767,16 @@ export function initChatModule({
       if (!result.ok || !result.data) {
         throw new Error(result.error || 'Failed to sign spending authorization');
       }
+
+      // Store the signed auth for the buyer runtime to forward to the peer
+      peerSpendingAuths.set(uiState.chatPaymentApprovalPeerId, {
+        sessionId,
+        signature: result.data.signature,
+        buyerEvmAddress: result.data.buyerEvmAddress,
+        maxAmountBaseUnits,
+        nonce,
+        deadline,
+      });
 
       approvedPeerSessions.add(uiState.chatPaymentApprovalPeerId);
 

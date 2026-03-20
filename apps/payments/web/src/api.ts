@@ -2,9 +2,20 @@ import type { BalanceData, PaymentConfig } from './types';
 
 const BASE = '';
 
+// Read bearer token from URL param (injected by the desktop app when opening the portal)
+function getBearerToken(): string | null {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('token');
+}
+
 async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
+  const token = getBearerToken();
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token && options?.method === 'POST') {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
   const res = await fetch(`${BASE}${url}`, {
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     ...options,
   });
   if (!res.ok) {

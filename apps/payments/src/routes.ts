@@ -13,6 +13,13 @@ function formatUsdc6(baseUnits: bigint): string {
   return `${whole}.${frac}`;
 }
 
+/** Parse a decimal USDC string to base units (6 decimals) without floating-point. */
+function parseUsdc6(s: string): bigint {
+  const [whole = '0', frac = ''] = s.split('.');
+  const fracPadded = frac.slice(0, 6).padEnd(6, '0');
+  return BigInt(whole) * 1_000_000n + BigInt(fracPadded);
+}
+
 function createClient(config: PaymentCryptoConfig): BaseEscrowClient {
   return new BaseEscrowClient({
     rpcUrl: config.rpcUrl,
@@ -87,7 +94,7 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
     }
 
     try {
-      const baseUnits = BigInt(Math.round(parseFloat(amount) * 1_000_000));
+      const baseUnits = parseUsdc6(amount);
       const client = getClient()!;
       const txHash = await client.requestWithdrawal(ctx.cryptoCtx.wallet, baseUnits);
       return { ok: true, txHash };
