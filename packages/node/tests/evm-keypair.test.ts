@@ -1,16 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import { isAddress, verifyMessage, getBytes, solidityPackedKeccak256 } from 'ethers';
+import { isAddress, verifyTypedData } from 'ethers';
 import { identityToEvmWallet, identityToEvmAddress } from '../src/payments/evm/keypair.js';
 import {
-  buildLockMessageHash,
-  buildSettlementMessageHash,
-  buildExtendLockMessageHash,
-  signMessageEcdsa,
+  signSpendingAuth,
+  makeEscrowDomain,
+  SPENDING_AUTH_TYPES,
   buildReceiptMessage,
   buildAckMessage,
   signMessageEd25519,
   verifyMessageEd25519,
 } from '../src/payments/evm/signatures.js';
+import type { SpendingAuthMessage } from '../src/payments/evm/signatures.js';
 import { loadOrCreateIdentity } from '../src/p2p/identity.js';
 import { tmpdir } from 'node:os';
 import { mkdtemp } from 'node:fs/promises';
@@ -58,60 +58,88 @@ describe('EVM keypair from identity', () => {
   });
 });
 
-describe('ECDSA signature helpers', () => {
-  it('sign and recover round-trip for lock message', async () => {
+describe('EIP-712 SpendingAuth signature helpers', () => {
+  const CHAIN_ID = 31337; // Hardhat local
+  const CONTRACT = '0x5FbDB2315678afecb367f032d93F642f64180aa3';
+
+  it('signSpendingAuth produces a recoverable EIP-712 signature', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'lch-test-'));
     const identity = await loadOrCreateIdentity(dir);
     const wallet = identityToEvmWallet(identity);
+    const domain = makeEscrowDomain(CHAIN_ID, CONTRACT);
 
-    const sessionId = '0x' + '01'.repeat(32);
-    const seller = '0x' + 'ab'.repeat(20);
-    const amount = 1_000_000n;
+    const msg: SpendingAuthMessage = {
+      seller: '0x' + 'ab'.repeat(20),
+      sessionId: '0x' + '01'.repeat(32),
+      maxAmount: 1_000_000n,
+      nonce: 1,
+      deadline: 1700000000,
+      previousConsumption: 0n,
+      previousSessionId: '0x' + '00'.repeat(32),
+    };
 
-    const messageHash = buildLockMessageHash(sessionId, seller, amount);
-    const sig = await signMessageEcdsa(wallet, messageHash);
+    const sig = await signSpendingAuth(wallet, domain, msg);
+    expect(typeof sig).toBe('string');
+    expect(sig.length).toBeGreaterThan(0);
 
-    const recoveredAddress = verifyMessage(getBytes(messageHash), sig);
-    expect(recoveredAddress.toLowerCase()).toBe(wallet.address.toLowerCase());
+    // Recover signer via verifyTypedData
+    const recovered = verifyTypedData(domain, SPENDING_AUTH_TYPES, msg, sig);
+    expect(recovered.toLowerCase()).toBe(wallet.address.toLowerCase());
   });
 
-  it('buildLockMessageHash produces correct keccak256 with domain byte 0x01', () => {
-    const sessionId = '0x' + '01'.repeat(32);
-    const seller = '0x' + 'ab'.repeat(20);
-    const amount = 500_000n;
-
-    const hash = buildLockMessageHash(sessionId, seller, amount);
-    const expected = solidityPackedKeccak256(
-      ['bytes1', 'bytes32', 'address', 'uint256'],
-      ['0x01', sessionId, seller, amount],
-    );
-    expect(hash).toBe(expected);
+  it('makeEscrowDomain returns correct domain fields', () => {
+    const domain = makeEscrowDomain(CHAIN_ID, CONTRACT);
+    expect(domain.name).toBe('AntseedEscrow');
+    expect(domain.version).toBe('1');
+    expect(domain.chainId).toBe(CHAIN_ID);
+    expect(domain.verifyingContract).toBe(CONTRACT);
   });
 
-  it('buildSettlementMessageHash produces correct hash', () => {
-    const sessionId = '0x' + '02'.repeat(32);
-    const runningTotal = 400_000n;
-    const score = 85;
+  it('different messages produce different signatures', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'lch-test-'));
+    const identity = await loadOrCreateIdentity(dir);
+    const wallet = identityToEvmWallet(identity);
+    const domain = makeEscrowDomain(CHAIN_ID, CONTRACT);
 
-    const hash = buildSettlementMessageHash(sessionId, runningTotal, score);
-    const expected = solidityPackedKeccak256(
-      ['bytes32', 'uint256', 'uint8'],
-      [sessionId, runningTotal, score],
-    );
-    expect(hash).toBe(expected);
+    const msg1: SpendingAuthMessage = {
+      seller: '0x' + 'ab'.repeat(20),
+      sessionId: '0x' + '01'.repeat(32),
+      maxAmount: 1_000_000n,
+      nonce: 1,
+      deadline: 1700000000,
+      previousConsumption: 0n,
+      previousSessionId: '0x' + '00'.repeat(32),
+    };
+
+    const msg2: SpendingAuthMessage = {
+      ...msg1,
+      maxAmount: 2_000_000n,
+    };
+
+    const sig1 = await signSpendingAuth(wallet, domain, msg1);
+    const sig2 = await signSpendingAuth(wallet, domain, msg2);
+    expect(sig1).not.toBe(sig2);
   });
 
-  it('buildExtendLockMessageHash produces correct hash with domain byte 0x02', () => {
-    const sessionId = '0x' + '03'.repeat(32);
-    const seller = '0x' + 'cd'.repeat(20);
-    const additionalAmount = 200_000n;
+  it('different nonces produce different signatures', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'lch-test-'));
+    const identity = await loadOrCreateIdentity(dir);
+    const wallet = identityToEvmWallet(identity);
+    const domain = makeEscrowDomain(CHAIN_ID, CONTRACT);
 
-    const hash = buildExtendLockMessageHash(sessionId, seller, additionalAmount);
-    const expected = solidityPackedKeccak256(
-      ['bytes1', 'bytes32', 'address', 'uint256'],
-      ['0x02', sessionId, seller, additionalAmount],
-    );
-    expect(hash).toBe(expected);
+    const msg: SpendingAuthMessage = {
+      seller: '0x' + 'ab'.repeat(20),
+      sessionId: '0x' + '01'.repeat(32),
+      maxAmount: 1_000_000n,
+      nonce: 1,
+      deadline: 1700000000,
+      previousConsumption: 0n,
+      previousSessionId: '0x' + '00'.repeat(32),
+    };
+
+    const sig1 = await signSpendingAuth(wallet, domain, msg);
+    const sig2 = await signSpendingAuth(wallet, domain, { ...msg, nonce: 2 });
+    expect(sig1).not.toBe(sig2);
   });
 });
 

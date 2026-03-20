@@ -50,8 +50,8 @@ export function registerWithdrawCommand(program: Command): void {
       const spinner = ora('Withdrawing USDC from escrow...').start();
 
       try {
-        const txHash = await escrowClient.withdraw(wallet, amountBaseUnits);
-        spinner.succeed(chalk.green(`Withdrew ${amountFloat} USDC from escrow`));
+        const txHash = await escrowClient.requestWithdrawal(wallet, amountBaseUnits);
+        spinner.succeed(chalk.green(`Withdrawal requested for ${amountFloat} USDC`));
         console.log(chalk.dim(`Transaction: ${txHash}`));
       } catch (err) {
         spinner.fail(chalk.red(`Withdrawal failed: ${(err as Error).message}`));

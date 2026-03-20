@@ -1,49 +1,48 @@
-import { type AbstractSigner, solidityPackedKeccak256, getBytes } from 'ethers';
+import { type AbstractSigner, type TypedDataDomain } from 'ethers';
 import type { Identity } from '../../p2p/identity.js';
 import { signData, verifySignature } from '../../p2p/identity.js';
 
 // =========================================================================
-// ECDSA signatures (on-chain) — verified by contract via ecrecover
+// EIP-712 Spending Authorization (on-chain) — verified by contract
 // =========================================================================
 
-export function buildLockMessageHash(
-  sessionId: string,
-  seller: string,
-  amount: bigint,
-): string {
-  return solidityPackedKeccak256(
-    ['bytes1', 'bytes32', 'address', 'uint256'],
-    ['0x01', sessionId, seller, amount],
-  );
+export const SPENDING_AUTH_TYPES = {
+  SpendingAuth: [
+    { name: 'seller', type: 'address' },
+    { name: 'sessionId', type: 'bytes32' },
+    { name: 'maxAmount', type: 'uint256' },
+    { name: 'nonce', type: 'uint256' },
+    { name: 'deadline', type: 'uint256' },
+    { name: 'previousConsumption', type: 'uint256' },
+    { name: 'previousSessionId', type: 'bytes32' },
+  ],
+};
+
+export interface SpendingAuthMessage {
+  seller: string;
+  sessionId: string;
+  maxAmount: bigint;
+  nonce: number;
+  deadline: number;
+  previousConsumption: bigint;
+  previousSessionId: string;
 }
 
-export function buildSettlementMessageHash(
-  sessionId: string,
-  runningTotal: bigint,
-  score: number,
-): string {
-  return solidityPackedKeccak256(
-    ['bytes32', 'uint256', 'uint8'],
-    [sessionId, runningTotal, score],
-  );
+export function makeEscrowDomain(chainId: number, contractAddress: string): TypedDataDomain {
+  return {
+    name: 'AntseedEscrow',
+    version: '1',
+    chainId,
+    verifyingContract: contractAddress,
+  };
 }
 
-export function buildExtendLockMessageHash(
-  sessionId: string,
-  seller: string,
-  additionalAmount: bigint,
-): string {
-  return solidityPackedKeccak256(
-    ['bytes1', 'bytes32', 'address', 'uint256'],
-    ['0x02', sessionId, seller, additionalAmount],
-  );
-}
-
-export async function signMessageEcdsa(
+export async function signSpendingAuth(
   signer: AbstractSigner,
-  messageHash: string,
+  domain: TypedDataDomain,
+  msg: SpendingAuthMessage,
 ): Promise<string> {
-  return signer.signMessage(getBytes(messageHash));
+  return signer.signTypedData(domain, SPENDING_AUTH_TYPES, msg);
 }
 
 // =========================================================================

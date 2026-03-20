@@ -19,6 +19,7 @@ import { encodeMetadataForSigning } from "./metadata-codec.js";
 import { debugWarn } from "../utils/debug.js";
 import { bytesToHex } from "../utils/hex.js";
 import type { BaseEscrowClient } from "../payments/evm/escrow-client.js";
+import type { IdentityClient } from "../payments/evm/identity-client.js";
 import { identityToEvmAddress } from "../payments/evm/keypair.js";
 
 export interface AnnouncerConfig {
@@ -45,6 +46,7 @@ export interface AnnouncerConfig {
   stakeAmountUSDC?: number;
   trustScore?: number;
   escrowClient?: BaseEscrowClient;
+  identityClient?: IdentityClient;
   reannounceIntervalMs: number;
   signalingPort: number;
 }
@@ -157,14 +159,18 @@ export class PeerAnnouncer {
       const evmAddress = identityToEvmAddress(this.config.identity);
       metadata.evmAddress = evmAddress;
 
-      if (includeOnChainReputation) {
+      if (includeOnChainReputation && this.config.identityClient) {
         try {
-          const reputation = await this.config.escrowClient.getReputation(evmAddress);
-          metadata.onChainReputation = reputation.weightedAverage;
-          metadata.onChainSessionCount = reputation.sessionCount;
-          metadata.onChainDisputeCount = reputation.disputeCount;
+          const tokenId = await this.config.identityClient.getTokenId(evmAddress);
+          const reputation = await this.config.identityClient.getReputation(tokenId);
+          metadata.onChainReputation = reputation.qualifiedProvenSignCount;
+          metadata.onChainSessionCount =
+            reputation.firstSignCount +
+            reputation.qualifiedProvenSignCount +
+            reputation.unqualifiedProvenSignCount;
+          metadata.onChainDisputeCount = reputation.ghostCount;
         } catch {
-          // Silently continue without reputation data
+          // Identity contract lookup failed — skip on-chain reputation for this cycle
         }
       } else if (this._latestMetadata) {
         metadata.onChainReputation = this._latestMetadata.onChainReputation;
