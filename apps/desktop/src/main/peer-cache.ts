@@ -73,8 +73,9 @@ export function parsePeerFromRaw(pr: Record<string, unknown>): DashboardNetworkP
     host: peerHost,
     port: peerPort,
     providers: Array.isArray(pr.providers)
-      ? (pr.providers as Array<Record<string, unknown>>).flatMap((p) =>
-          Array.isArray(p.services) ? p.services.filter((s: unknown) => typeof s === 'string') : []
+      ? (pr.providers as unknown[]).flatMap((p) =>
+          // Handle both plain strings (from buyer.state.json) and provider objects with services sub-arrays (from DHT metadata).
+          typeof p === 'string' ? [p] : (p && typeof p === 'object' && Array.isArray((p as Record<string, unknown>).services) ? ((p as Record<string, unknown>).services as unknown[]).filter((s): s is string => typeof s === 'string') : [])
         )
       : [],
     inputUsdPerMillion: Number(pr.defaultInputUsdPerMillion) || 0,
