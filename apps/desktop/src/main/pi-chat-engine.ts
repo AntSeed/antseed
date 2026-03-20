@@ -2,8 +2,8 @@ import { app, BrowserWindow } from 'electron';
 import type { IpcMain } from 'electron';
 import { type Static, Type } from '@sinclair/typebox';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, stat, unlink, writeFile } from 'node:fs/promises';
-import { createConnection, isIP } from 'node:net';
+import { mkdir, readFile, stat, unlink } from 'node:fs/promises';
+import { createConnection } from 'node:net';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import type { AgentSession, AgentSessionEvent, ToolDefinition } from '@mariozechner/pi-coding-agent';
@@ -333,9 +333,11 @@ type ActiveRun = {
 
 type NetworkPeerAddress = {
   peerId?: string;
+  displayName?: string;
   host: string;
   port: number;
   providers?: string[];
+  services?: string[];
 };
 
 type ChatServiceProtocol = 'anthropic-messages' | 'openai-chat-completions' | 'openai-responses';
@@ -363,12 +365,9 @@ const PROXY_RUNTIME_API_KEY = 'antseed-local';
 
 const CHAT_SYSTEM_PROMPT_ENV = 'ANTSEED_CHAT_SYSTEM_PROMPT';
 const CHAT_SYSTEM_PROMPT_FILE_ENV = 'ANTSEED_CHAT_SYSTEM_PROMPT_FILE';
-const CHAT_SERVICE_METADATA_FETCH_TIMEOUT_MS = 2_500;
 const CHAT_SERVICE_SCAN_MAX_PEERS = 20;
 const CHAT_SERVICE_MAX_OPTIONS = 120;
 const CHAT_SERVICE_MAX_OPTIONS_PER_PROVIDER = 40;
-const CHAT_SERVICE_CACHE_FILE = path.join(CHAT_DATA_DIR, 'service-catalog-cache.json');
-const CHAT_SERVICE_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
 const CHAT_SERVICE_CACHE_REFRESH_DEBOUNCE_MS = 60_000;
 
 function normalizeTokenCount(value: unknown): number {
@@ -420,84 +419,8 @@ function inferProviderProtocol(provider: string): ChatServiceProtocol | null {
   return null;
 }
 
-function normalizeHost(value: unknown): string | null {
-  if (typeof value !== 'string') {
-    return null;
-  }
-  const host = value.trim();
-  return host.length > 0 ? host : null;
-}
 
-function isPublicMetadataHost(rawHost: string): boolean {
-  const host = rawHost.trim().toLowerCase();
-  if (host.length === 0 || host === 'localhost' || host.endsWith('.local') || host.includes('/') || host.includes('@')) {
-    return false;
-  }
 
-  const ipVersion = isIP(host);
-  if (ipVersion === 0) {
-    return false;
-  }
-
-  if (ipVersion === 4) {
-    const parts = host.split('.').map((part) => Number(part));
-    if (parts.length !== 4 || parts.some((part) => !Number.isFinite(part) || part < 0 || part > 255)) {
-      return false;
-    }
-    const a = parts[0] ?? 0;
-    const b = parts[1] ?? 0;
-    if (a === 10) return false;
-    if (a === 127) return false;
-    if (a === 172 && b >= 16 && b <= 31) return false;
-    if (a === 192 && b === 168) return false;
-    if (a === 169 && b === 254) return false;
-    if (a === 100 && b >= 64 && b <= 127) return false;
-    if (a === 198 && (b === 18 || b === 19)) return false;
-    if (a === 0) return false;
-    return true;
-  }
-
-  if (host === '::1' || host === '::' || host.startsWith('::ffff:')) {
-    return false;
-  }
-
-  if (
-    host.startsWith('fe80:') ||
-    host.startsWith('fe81:') ||
-    host.startsWith('fe82:') ||
-    host.startsWith('fe83:') ||
-    host.startsWith('fe84:') ||
-    host.startsWith('fe85:') ||
-    host.startsWith('fe86:') ||
-    host.startsWith('fe87:') ||
-    host.startsWith('fe88:') ||
-    host.startsWith('fe89:') ||
-    host.startsWith('fe8a:') ||
-    host.startsWith('fe8b:') ||
-    host.startsWith('fe8c:') ||
-    host.startsWith('fe8d:') ||
-    host.startsWith('fe8e:') ||
-    host.startsWith('fe8f:') ||
-    host.startsWith('fc') ||
-    host.startsWith('fd')
-  ) {
-    return false;
-  }
-
-  return true;
-}
-
-function normalizePort(value: unknown): number | null {
-  const port = Number(value);
-  if (!Number.isFinite(port)) {
-    return null;
-  }
-  const normalized = Math.floor(port);
-  if (normalized < 1 || normalized > 65535) {
-    return null;
-  }
-  return normalized;
-}
 
 function normalizeServiceValue(value: unknown): string | null {
   if (typeof value !== 'string') {
@@ -514,27 +437,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-function resolveProtocolForService(
-  provider: string,
-  matrixRaw: unknown,
-  serviceId: string,
-): ChatServiceProtocol | null {
-  const matrix = asRecord(matrixRaw);
-  if (matrix) {
-    const targetKey = serviceId.trim().toLowerCase();
-    for (const [key, value] of Object.entries(matrix)) {
-      if (key.trim().toLowerCase() !== targetKey || !Array.isArray(value)) {
-        continue;
-      }
-      for (const protocolCandidate of value) {
-        if (isChatServiceProtocol(protocolCandidate)) {
-          return protocolCandidate;
-        }
-      }
-    }
-  }
-  return inferProviderProtocol(provider);
-}
+
 
 function updateServiceProviderHints(
   serviceProviderHints: Map<string, string[]>,
@@ -631,40 +534,6 @@ function normalizeChatServiceCatalogEntries(rawEntries: unknown[]): ChatServiceC
   return sortChatServiceCatalogEntries([...deduped.values()]);
 }
 
-async function readChatServiceCatalogCache(): Promise<{ updatedAt: number; entries: ChatServiceCatalogEntry[] } | null> {
-  try {
-    const raw = await readFile(CHAT_SERVICE_CACHE_FILE, 'utf-8');
-    const parsed = JSON.parse(raw) as { updatedAt?: unknown; entries?: unknown };
-    const updatedAt = Number(parsed.updatedAt);
-    if (!Number.isFinite(updatedAt) || updatedAt <= 0) {
-      return null;
-    }
-    const entries = normalizeChatServiceCatalogEntries(Array.isArray(parsed.entries) ? parsed.entries : []);
-    if (entries.length === 0) {
-      return null;
-    }
-    return {
-      updatedAt: Math.floor(updatedAt),
-      entries: limitChatServiceCatalogEntries(entries),
-    };
-  } catch {
-    return null;
-  }
-}
-
-async function writeChatServiceCatalogCache(entries: ChatServiceCatalogEntry[]): Promise<void> {
-  const normalized = limitChatServiceCatalogEntries(normalizeChatServiceCatalogEntries(entries));
-  if (normalized.length === 0) {
-    return;
-  }
-  await mkdir(CHAT_DATA_DIR, { recursive: true });
-  const payload = {
-    updatedAt: Date.now(),
-    entries: normalized,
-  };
-  await writeFile(CHAT_SERVICE_CACHE_FILE, JSON.stringify(payload, null, 2), 'utf-8');
-}
-
 function sortChatServiceCatalogEntries(entries: ChatServiceCatalogEntry[]): ChatServiceCatalogEntry[] {
   const protocolRank = (protocol: ChatServiceProtocol): number => (
     protocol === 'anthropic-messages'
@@ -711,70 +580,10 @@ function limitChatServiceCatalogEntries(entries: ChatServiceCatalogEntry[]): Cha
   return limited;
 }
 
-async function fetchPeerMetadata(host: string, port: number): Promise<Record<string, unknown> | null> {
-  if (!isPublicMetadataHost(host)) {
-    return null;
-  }
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), CHAT_SERVICE_METADATA_FETCH_TIMEOUT_MS);
-  try {
-    const response = await fetch(`http://${host}:${String(port)}/metadata`, {
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      return null;
-    }
-    const payload = await response.json();
-    return asRecord(payload);
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-function extractChatServiceCatalog(metadata: Record<string, unknown>): Omit<ChatServiceCatalogEntry, 'count'>[] {
-  const providersRaw = metadata.providers;
-
-  if (!Array.isArray(providersRaw)) {
-    return [];
-  }
-
-  const services: Omit<ChatServiceCatalogEntry, 'count'>[] = [];
-  for (const providerEntry of providersRaw) {
-    const providerRecord = asRecord(providerEntry);
-    if (!providerRecord) {
-      continue;
-    }
-    const providerId = normalizeProviderId(providerRecord.provider);
-    if (!providerId) {
-      continue;
-    }
-    const serviceListRaw = providerRecord.services /* || providerRecord.models */;
-    if (!Array.isArray(serviceListRaw)) {
-      continue;
-    }
-    for (const serviceRaw of serviceListRaw) {
-      const serviceId = normalizeServiceValue(serviceRaw);
-      if (!serviceId) {
-        continue;
-      }
-      const protocol = resolveProtocolForService(providerId, providerRecord.serviceApiProtocols, serviceId);
-      if (!protocol) {
-        continue;
-      }
-      services.push({
-        id: serviceId,
-        label: serviceId,
-        provider: providerId,
-        protocol,
-      });
-    }
-  }
-  return services;
-}
-
+/**
+ * Build the chat service catalog directly from peer data (already in buyer.state.json).
+ * No HTTP metadata fetches needed — providers and services are in the peer list.
+ */
 async function discoverChatServiceCatalog(
   getNetworkPeers?: () => Promise<NetworkPeerAddress[]>,
 ): Promise<ChatServiceCatalogEntry[]> {
@@ -789,46 +598,50 @@ async function discoverChatServiceCatalog(
     return [];
   }
 
-  const uniqueTargets: Array<{ peerId?: string; host: string; port: number }> = [];
-  const seen = new Set<string>();
-  for (const peer of peers.slice(0, CHAT_SERVICE_SCAN_MAX_PEERS)) {
-    const host = normalizeHost(peer.host);
-    const port = normalizePort(peer.port);
-    if (!host || !port) {
-      continue;
-    }
-    const key = `${host}:${String(port)}`;
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    uniqueTargets.push({ peerId: peer.peerId, host, port });
-  }
-
-  if (uniqueTargets.length === 0) {
-    return [];
-  }
-
-  const responses = await Promise.all(uniqueTargets.map(async (target) => {
-    const metadata = await fetchPeerMetadata(target.host, target.port);
-    return { metadata, peerId: target.peerId };
-  }));
-
-  // Build per-peer+service entries (no cross-peer aggregation).
   const results: ChatServiceCatalogEntry[] = [];
-  for (const { metadata, peerId } of responses) {
-    if (!metadata) {
-      continue;
-    }
-    const entries = extractChatServiceCatalog(metadata);
-    const peerLabel = peerId ? peerId.slice(0, 12) + '...' : undefined;
-    for (const entry of entries) {
-      results.push({
-        ...entry,
-        count: 1,
-        peerId,
-        peerLabel,
-      });
+  for (const peer of peers.slice(0, CHAT_SERVICE_SCAN_MAX_PEERS)) {
+    const peerId = peer.peerId;
+    const peerLabel = peer.displayName
+      ? `${peer.displayName} (${peerId?.slice(0, 8) ?? ''})`
+      : peerId ? peerId.slice(0, 12) + '...' : undefined;
+
+    const providerList = peer.providers ?? [];
+    const serviceList = peer.services ?? [];
+
+    if (serviceList.length > 0) {
+      // Use explicit service names when available.
+      for (const serviceId of serviceList) {
+        // Infer provider from the service name or fall back to the first provider.
+        const provider = providerList.find((p) => inferProviderProtocol(p) !== null) ?? providerList[0] ?? 'unknown';
+        const protocol = inferProviderProtocol(provider);
+        if (!protocol) continue;
+
+        results.push({
+          id: serviceId,
+          label: serviceId,
+          provider,
+          protocol,
+          count: 1,
+          peerId,
+          peerLabel,
+        });
+      }
+    } else if (providerList.length > 0) {
+      // No services listed — create one entry per provider as a fallback.
+      for (const provider of providerList) {
+        const protocol = inferProviderProtocol(provider);
+        if (!protocol) continue;
+
+        results.push({
+          id: provider,
+          label: provider,
+          provider,
+          protocol,
+          count: 1,
+          peerId,
+          peerLabel,
+        });
+      }
     }
   }
 
@@ -1954,32 +1767,23 @@ export function registerPiChatHandlers({
     }
   };
 
+  let lastServiceCatalogEntries: ChatServiceCatalogEntry[] = [];
+
   const refreshServiceCatalogFromNetwork = async (force = false): Promise<ChatServiceCatalogEntry[]> => {
-    const now = Date.now();
     if (!force && serviceCatalogRefreshPromise) {
       return await serviceCatalogRefreshPromise;
     }
-    if (!force && now - lastServiceCatalogRefreshAt < CHAT_SERVICE_CACHE_REFRESH_DEBOUNCE_MS) {
-      const cached = await readChatServiceCatalogCache();
-      if (cached) {
-        return cached.entries;
-      }
+    if (!force && Date.now() - lastServiceCatalogRefreshAt < CHAT_SERVICE_CACHE_REFRESH_DEBOUNCE_MS) {
+      return lastServiceCatalogEntries;
     }
 
     serviceCatalogRefreshPromise = (async () => {
-      const peers = getNetworkPeers
-        ? await getNetworkPeers().catch(() => [] as NetworkPeerAddress[])
-        : ([] as NetworkPeerAddress[]);
-
-      const getPeers = async (): Promise<NetworkPeerAddress[]> => peers;
-
-      const servicesFromMetadata = await discoverChatServiceCatalog(getPeers);
-
-      const limited = limitChatServiceCatalogEntries(normalizeChatServiceCatalogEntries(servicesFromMetadata));
+      const entries = await discoverChatServiceCatalog(getNetworkPeers);
+      const limited = limitChatServiceCatalogEntries(normalizeChatServiceCatalogEntries(entries));
       updateServiceProviderHints(serviceProviderHints, limited);
       updateServiceProtocolMap(serviceProtocolMap, limited);
-      void writeChatServiceCatalogCache(limited).catch(() => undefined);
       lastServiceCatalogRefreshAt = Date.now();
+      lastServiceCatalogEntries = limited;
       return limited;
     })().finally(() => {
       serviceCatalogRefreshPromise = null;
@@ -1993,16 +1797,6 @@ export function registerPiChatHandlers({
     const existing = serviceProtocolMap.get(normalizedServiceId);
     if (existing) {
       return existing;
-    }
-
-    const cached = await readChatServiceCatalogCache();
-    if (cached) {
-      updateServiceProviderHints(serviceProviderHints, cached.entries);
-      updateServiceProtocolMap(serviceProtocolMap, cached.entries);
-      const hydrated = serviceProtocolMap.get(normalizedServiceId);
-      if (hydrated) {
-        return hydrated;
-      }
     }
 
     const refreshed = await refreshServiceCatalogFromNetwork(true);
@@ -2023,40 +1817,10 @@ export function registerPiChatHandlers({
 
   ipcMain.handle('chat:ai-list-services', async () => {
     try {
-      const cached = await readChatServiceCatalogCache();
-      if (cached) {
-        updateServiceProviderHints(serviceProviderHints, cached.entries);
-        updateServiceProtocolMap(serviceProtocolMap, cached.entries);
-        const cacheAgeMs = Date.now() - cached.updatedAt;
-        if (cacheAgeMs <= CHAT_SERVICE_CACHE_MAX_AGE_MS) {
-          if (cacheAgeMs > CHAT_SERVICE_CACHE_REFRESH_DEBOUNCE_MS) {
-            void refreshServiceCatalogFromNetwork(false).catch((error) => {
-              appendSystemLog(`Background service catalog refresh failed: ${asErrorMessage(error)}`);
-            });
-          }
-          return {
-            ok: true,
-            data: cached.entries,
-          };
-        }
-      }
-      const limitedServices = await refreshServiceCatalogFromNetwork(true);
-      if (limitedServices.length === 0 && cached) {
-        return {
-          ok: true,
-          data: cached.entries,
-        };
-      }
-      return {
-        ok: true,
-        data: limitedServices,
-      };
+      const entries = await refreshServiceCatalogFromNetwork(false);
+      return { ok: true, data: entries };
     } catch (error) {
-      return {
-        ok: false,
-        data: [] as ChatServiceCatalogEntry[],
-        error: asErrorMessage(error),
-      };
+      return { ok: false, data: [] as ChatServiceCatalogEntry[], error: asErrorMessage(error) };
     }
   });
 

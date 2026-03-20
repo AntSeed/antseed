@@ -3,9 +3,11 @@ import { DEFAULT_BUYER_STATE_PATH } from './constants.js';
 
 export type DashboardNetworkPeer = {
   peerId: string;
+  displayName: string | null;
   host: string;
   port: number;
   providers: string[];
+  services: string[];
   inputUsdPerMillion: number;
   outputUsdPerMillion: number;
   capacityMsgPerHour: number;
@@ -41,6 +43,37 @@ const REFRESH_MIN_INTERVAL_MS = 5_000;
 const peerCache = new Map<string, DashboardNetworkPeer>();
 let peerCacheLastScanAt: number | null = null;
 let peerCacheLastRefreshAt = 0;
+let peerCacheLastSignature = '';
+const peersChangedListeners: Array<() => void> = [];
+
+/** Register a callback invoked when the peer set changes. Returns an unsubscribe function. */
+export function onPeersChanged(listener: () => void): () => void {
+  peersChangedListeners.push(listener);
+  return () => {
+    const idx = peersChangedListeners.indexOf(listener);
+    if (idx >= 0) peersChangedListeners.splice(idx, 1);
+  };
+}
+
+function computePeerSignature(): string {
+  // Fast hash: sorted peer IDs + their service lists.
+  const parts: string[] = [];
+  for (const [id, peer] of peerCache) {
+    parts.push(`${id}:${peer.services.join(',')}`);
+  }
+  parts.sort();
+  return parts.join('|');
+}
+
+function emitIfChanged(): void {
+  const sig = computePeerSignature();
+  if (sig !== peerCacheLastSignature) {
+    peerCacheLastSignature = sig;
+    for (const listener of peersChangedListeners) {
+      try { listener(); } catch { /* ignore */ }
+    }
+  }
+}
 
 export function defaultNetworkStats(): DashboardNetworkStats {
   return {
@@ -68,15 +101,25 @@ export function parsePeerFromRaw(pr: Record<string, unknown>): DashboardNetworkP
     peerPort = lastColon > -1 ? Number(addr.slice(lastColon + 1)) || 0 : 0;
   }
 
+  const displayName = typeof pr.displayName === 'string' && pr.displayName.trim().length > 0
+    ? pr.displayName.trim()
+    : null;
+
+  const providers = Array.isArray(pr.providers)
+    ? (pr.providers as unknown[]).filter((s): s is string => typeof s === 'string')
+    : [];
+
+  const services = Array.isArray(pr.services)
+    ? (pr.services as unknown[]).filter((s): s is string => typeof s === 'string')
+    : [];
+
   return {
     peerId: pr.peerId as string,
+    displayName,
     host: peerHost,
     port: peerPort,
-    providers: Array.isArray(pr.providers)
-      ? (pr.providers as Array<Record<string, unknown>>).flatMap((p) =>
-          Array.isArray(p.services) ? p.services.filter((s: unknown) => typeof s === 'string') : []
-        )
-      : [],
+    providers,
+    services,
     inputUsdPerMillion: Number(pr.defaultInputUsdPerMillion) || 0,
     outputUsdPerMillion: Number(pr.defaultOutputUsdPerMillion) || 0,
     capacityMsgPerHour: (Number(pr.maxConcurrency) || 0) * 60,
@@ -112,7 +155,9 @@ export async function refreshPeerCache(): Promise<void> {
       seenInFile.add(peer.peerId);
       const existing = peerCache.get(peer.peerId);
       if (existing) {
+        peer.displayName = peer.displayName ?? existing.displayName;
         peer.providers = peer.providers.length > 0 ? peer.providers : existing.providers;
+        peer.services = peer.services.length > 0 ? peer.services : existing.services;
         peer.inputUsdPerMillion = peer.inputUsdPerMillion || existing.inputUsdPerMillion;
         peer.outputUsdPerMillion = peer.outputUsdPerMillion || existing.outputUsdPerMillion;
         peer.capacityMsgPerHour = peer.capacityMsgPerHour || existing.capacityMsgPerHour;
@@ -133,6 +178,8 @@ export async function refreshPeerCache(): Promise<void> {
       peer.online = now - peer.lastSeen < PEER_ONLINE_TTL_MS;
     }
   }
+
+  emitIfChanged();
 }
 
 export function getNetworkSnapshot(): DashboardNetworkResult {

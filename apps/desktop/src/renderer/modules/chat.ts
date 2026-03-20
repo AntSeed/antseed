@@ -55,6 +55,7 @@ type ChatModuleOptions = {
 };
 
 export type ChatModuleApi = {
+  refreshChatServiceOptions: () => Promise<void>;
   refreshChatProxyStatus: () => Promise<void>;
   refreshChatConversations: () => Promise<void>;
   createNewConversation: () => Promise<void>;
@@ -1648,6 +1649,7 @@ export function initChatModule({
   // ---------------------------------------------------------------------------
 
   return {
+    refreshChatServiceOptions,
     refreshChatProxyStatus,
     refreshChatConversations,
     createNewConversation,

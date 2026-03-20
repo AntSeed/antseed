@@ -265,41 +265,9 @@ export function parseConnectRuntimeActivity(lineRaw: string): RuntimeActivityEve
   return null;
 }
 
-export function parseDashboardRuntimeActivity(lineRaw: string): RuntimeActivityEvent | null {
-  const line = stripAnsi(lineRaw).trim().toLowerCase();
-  if (line.length === 0) {
-    return null;
-  }
-
-  if (line.includes('embedded dashboard engine running on http://127.0.0.1')) {
-    return toRuntimeActivity({
-      mode: 'dashboard',
-      tone: 'active',
-      stage: 'dashboard-ready',
-      message: 'Local data service is ready.',
-      holdMs: 10_000,
-    });
-  }
-
-  if (line.includes('address already in use') || line.includes('eaddrinuse')) {
-    return toRuntimeActivity({
-      mode: 'dashboard',
-      tone: 'warn',
-      stage: 'dashboard-reuse',
-      message: 'Local data service port is busy; using existing service.',
-      holdMs: 20_000,
-    });
-  }
-
-  return null;
-}
-
 export function parseRuntimeActivityFromLog(event: LogEvent): RuntimeActivityEvent | null {
   if (event.mode === 'connect') {
     return parseConnectRuntimeActivity(event.line);
-  }
-  if (event.mode === 'dashboard') {
-    return parseDashboardRuntimeActivity(event.line);
   }
   return null;
 }

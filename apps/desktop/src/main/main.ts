@@ -2,7 +2,6 @@ import {
   app,
   BrowserWindow,
   ipcMain,
-  shell,
 } from 'electron';
 import electronUpdater from 'electron-updater';
 const { autoUpdater } = electronUpdater;
@@ -34,34 +33,26 @@ import {
   resolveLocalPluginSource,
   type InstalledPlugin,
 } from './plugins.js';
-import {
-  setDashboardCallbacks,
-  getDashboardRuntime,
-  getActiveDashboardPort,
-  toSafeDashboardPort,
-  isAddressInUseError,
-  startDashboardRuntime,
-  stopDashboardRuntime,
-  ensureDashboardRuntime,
-  fetchDashboardData,
-  updateDashboardConfig,
-  toSafeDashboardEndpoint,
-  sanitizeDashboardQuery,
-  type DashboardApiResult,
-} from './dashboard-proxy.js';
+type ApiResult = {
+  ok: boolean;
+  data: unknown | null;
+  error: string | null;
+  status: number | null;
+};
 import {
   refreshPeerCache,
   getNetworkSnapshot,
   touchPeer,
   lookupPeer,
+  onPeersChanged,
   type DashboardNetworkPeer,
 } from './peer-cache.js';
 import { createWindow, createApplicationMenu, getMainWindow } from './window.js';
+import { ensureConfig, readConfig, mergeConfig, readNodeStatus } from './config-io.js';
 
 // Re-export types that may be used by other main-process modules
 export type { LogEvent, RuntimeActivityEvent } from './log-parser.js';
 export type { DashboardNetworkPeer, DashboardNetworkStats, DashboardNetworkResult } from './peer-cache.js';
-export type { DashboardApiResult, DashboardRuntimeState } from './dashboard-proxy.js';
 export type { InstalledPlugin } from './plugins.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -232,28 +223,17 @@ function appendLog(mode: RuntimeMode, stream: 'stdout' | 'stderr' | 'system', li
 
 // Wire up callbacks for extracted modules
 setPluginAppendLog(appendLog);
-setDashboardCallbacks(appendLog, emitRuntimeState);
 
+// When the peer set changes, tell the renderer to refresh the service catalog.
+onPeersChanged(() => {
+  getMainWindow()?.webContents.send('peers:changed');
+});
 const processManager = new ProcessManager((mode, stream, line) => {
   appendLog(mode, stream, line);
 });
 
-function getDashboardProcessState(): RuntimeProcessState {
-  const rt = getDashboardRuntime();
-  return {
-    mode: 'dashboard',
-    running: rt.running,
-    pid: rt.running ? process.pid : null,
-    startedAt: rt.startedAt,
-    lastExitCode: rt.lastExitCode,
-    lastError: rt.lastError,
-  };
-}
-
 function getCombinedProcessState(): RuntimeProcessState[] {
-  const processStates = processManager.getState().filter((state) => state.mode !== 'dashboard');
-  processStates.push(getDashboardProcessState());
-  return processStates;
+  return processManager.getState();
 }
 
 // ── IPC Handlers ──
@@ -267,23 +247,6 @@ ipcMain.handle('runtime:get-state', async () => {
 });
 
 ipcMain.handle('runtime:start', async (_event, options: StartOptions) => {
-  if (options.mode === 'dashboard') {
-    try {
-      await startDashboardRuntime(ACTIVE_CONFIG_PATH, options.dashboardPort);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (!isAddressInUseError(message)) {
-        throw err;
-      }
-      appendLog('dashboard', 'system', 'Dashboard port already in use; reusing existing local data service.');
-    }
-    return {
-      state: getDashboardProcessState(),
-      processes: getCombinedProcessState(),
-      daemonState: processManager.getDaemonStateSnapshot(),
-    };
-  }
-
   await ensureSecureIdentity();
 
   const startOptions: StartOptions = {
@@ -308,15 +271,6 @@ ipcMain.handle('runtime:start', async (_event, options: StartOptions) => {
 });
 
 ipcMain.handle('runtime:stop', async (_event, mode: RuntimeMode) => {
-  if (mode === 'dashboard') {
-    await stopDashboardRuntime('manual stop');
-    return {
-      state: getDashboardProcessState(),
-      processes: getCombinedProcessState(),
-      daemonState: processManager.getDaemonStateSnapshot(),
-    };
-  }
-
   const state = await processManager.stop(mode);
   return {
     state,
@@ -327,12 +281,6 @@ ipcMain.handle('runtime:stop', async (_event, mode: RuntimeMode) => {
 
 ipcMain.handle('desktop:set-debug-logs', (_event, enabled: boolean) => {
   desktopDebugEnabled = Boolean(enabled);
-  return { ok: true };
-});
-
-ipcMain.handle('runtime:open-dashboard', async (_event, port?: number) => {
-  const openPort = getActiveDashboardPort(port);
-  await shell.openExternal(`http://127.0.0.1:${openPort}`);
   return { ok: true };
 });
 
@@ -388,10 +336,10 @@ ipcMain.handle('plugins:install', async (_event, packageName: string) => {
   }
 
   try {
-    appendLog('dashboard', 'system', `Installing plugin "${normalized}"...`);
+    appendLog('connect', 'system', `Installing plugin "${normalized}"...`);
     await installPluginDependency(normalized);
     const plugins = await listInstalledPlugins();
-    appendLog('dashboard', 'system', `Installed plugin "${normalized}".`);
+    appendLog('connect', 'system', `Installed plugin "${normalized}".`);
     return { ok: true, package: normalized, plugins, error: null };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -400,14 +348,14 @@ ipcMain.handle('plugins:install', async (_event, packageName: string) => {
     if (legacyPackageName) {
       try {
         const aliasSpec = toNpmAliasInstallSpec(normalized, legacyPackageName);
-        appendLog('dashboard', 'system', `Registry install failed; retrying via legacy alias: ${aliasSpec}`);
+        appendLog('connect', 'system', `Registry install failed; retrying via legacy alias: ${aliasSpec}`);
         await installPluginDependency(aliasSpec);
         const plugins = await listInstalledPlugins();
-        appendLog('dashboard', 'system', `Installed plugin "${normalized}" using legacy package alias "${legacyPackageName}".`);
+        appendLog('connect', 'system', `Installed plugin "${normalized}" using legacy package alias "${legacyPackageName}".`);
         return { ok: true, package: normalized, plugins, error: null };
       } catch (legacyErr) {
         const legacyMessage = legacyErr instanceof Error ? legacyErr.message : String(legacyErr);
-        appendLog('dashboard', 'system', `Legacy alias install failed for "${normalized}": ${legacyMessage}`);
+        appendLog('connect', 'system', `Legacy alias install failed for "${normalized}": ${legacyMessage}`);
       }
     }
 
@@ -415,14 +363,14 @@ ipcMain.handle('plugins:install', async (_event, packageName: string) => {
 
     if (localSource) {
       try {
-        appendLog('dashboard', 'system', `Registry install failed; retrying from local source: ${localSource}`);
+        appendLog('connect', 'system', `Registry install failed; retrying from local source: ${localSource}`);
         await installPluginDependency(toFileInstallSpec(normalized, localSource));
         const plugins = await listInstalledPlugins();
-        appendLog('dashboard', 'system', `Installed plugin "${normalized}" from local source.`);
+        appendLog('connect', 'system', `Installed plugin "${normalized}" from local source.`);
         return { ok: true, package: normalized, plugins, error: null };
       } catch (localErr) {
         const localMessage = localErr instanceof Error ? localErr.message : String(localErr);
-        appendLog('dashboard', 'system', `Local plugin install failed for "${normalized}": ${localMessage}`);
+        appendLog('connect', 'system', `Local plugin install failed for "${normalized}": ${localMessage}`);
         return {
           ok: false,
           package: normalized,
@@ -432,7 +380,7 @@ ipcMain.handle('plugins:install', async (_event, packageName: string) => {
       }
     }
 
-    appendLog('dashboard', 'system', `Plugin install failed for "${normalized}": ${message}`);
+    appendLog('connect', 'system', `Plugin install failed for "${normalized}": ${message}`);
     return {
       ok: false,
       package: normalized,
@@ -462,28 +410,55 @@ ipcMain.handle('runtime:touch-peer', (_event, peerId: string) => {
 });
 
 ipcMain.handle(
-  'runtime:get-dashboard-data',
+  'runtime:get-data',
   async (
     _event,
     endpoint: string,
-    options?: { port?: number; query?: Record<string, unknown> },
+    _options?: { port?: number; query?: Record<string, unknown> },
   ) => {
-    const safeEndpoint = toSafeDashboardEndpoint(endpoint);
-    if (!safeEndpoint) {
-      return {
-        ok: false,
-        data: null,
-        error: `Unsupported dashboard endpoint: ${endpoint}`,
-        status: null,
-      } satisfies DashboardApiResult;
+    // Serve status, config, and network directly from files — no dashboard needed.
+    if (endpoint === 'status') {
+      try {
+        const data = await readNodeStatus(ACTIVE_CONFIG_PATH);
+        return { ok: true, data, error: null, status: 200 } satisfies ApiResult;
+      } catch (err) {
+        return { ok: false, data: null, error: err instanceof Error ? err.message : String(err), status: null } satisfies ApiResult;
+      }
     }
 
-    const requestedPort = toSafeDashboardPort(options?.port);
-    await ensureDashboardRuntime(ACTIVE_CONFIG_PATH, requestedPort);
+    if (endpoint === 'config') {
+      try {
+        const config = await readConfig(ACTIVE_CONFIG_PATH);
+        return { ok: true, data: { config }, error: null, status: 200 } satisfies ApiResult;
+      } catch (err) {
+        return { ok: false, data: null, error: err instanceof Error ? err.message : String(err), status: null } satisfies ApiResult;
+      }
+    }
 
-    const safeQuery = sanitizeDashboardQuery(options?.query);
-    const activePort = getActiveDashboardPort(requestedPort);
-    return fetchDashboardData(safeEndpoint, activePort, safeQuery);
+    if (endpoint === 'network' || endpoint === 'peers') {
+      try {
+        await refreshPeerCache();
+        const snapshot = getNetworkSnapshot();
+        if (endpoint === 'peers') {
+          return { ok: true, data: { peers: snapshot.peers, total: snapshot.peers.length, degraded: false }, error: null, status: 200 } satisfies ApiResult;
+        }
+      return { ok: true, data: snapshot, error: null, status: 200 } satisfies ApiResult;
+      } catch (err) {
+        return { ok: false, data: null, error: err instanceof Error ? err.message : String(err), status: null } satisfies ApiResult;
+      }
+    }
+
+    if (endpoint === 'data-sources') {
+      return { ok: true, data: { configPath: ACTIVE_CONFIG_PATH }, error: null, status: 200 } satisfies ApiResult;
+    }
+
+    // Sessions/earnings are seller-only — not needed in the desktop (buyer) app.
+    return {
+      ok: false,
+      data: null,
+      error: `Endpoint "${endpoint}" is not available in the desktop app`,
+      status: null,
+    } satisfies ApiResult;
   },
 );
 
@@ -511,16 +486,18 @@ function sanitizeDashboardConfigPayload(raw: unknown): Record<string, unknown> {
 }
 
 ipcMain.handle(
-  'runtime:update-dashboard-config',
-  async (_event, config: Record<string, unknown>, options?: { port?: number }): Promise<DashboardApiResult> => {
+  'runtime:update-config',
+  async (_event, config: Record<string, unknown>): Promise<ApiResult> => {
     const safeConfig = sanitizeDashboardConfigPayload(config);
     if (Object.keys(safeConfig).length === 0) {
       return { ok: false, data: null, error: 'No valid config keys provided', status: null };
     }
-    const requestedPort = toSafeDashboardPort(options?.port);
-    await ensureDashboardRuntime(ACTIVE_CONFIG_PATH, requestedPort);
-    const activePort = getActiveDashboardPort(requestedPort);
-    return updateDashboardConfig(safeConfig, activePort);
+    try {
+      const merged = await mergeConfig(safeConfig, ACTIVE_CONFIG_PATH);
+      return { ok: true, data: { config: merged }, error: null, status: 200 };
+    } catch (err) {
+      return { ok: false, data: null, error: err instanceof Error ? err.message : String(err), status: null };
+    }
   },
 );
 
@@ -538,23 +515,16 @@ type WalletInfo = {
   };
 };
 
-ipcMain.handle('wallet:get-info', async (_event, port?: number): Promise<{ ok: boolean; data: WalletInfo | null; error: string | null }> => {
+ipcMain.handle('wallet:get-info', async (): Promise<{ ok: boolean; data: WalletInfo | null; error: string | null }> => {
   try {
-    const requestedPort = toSafeDashboardPort(port);
-    await ensureDashboardRuntime(ACTIVE_CONFIG_PATH, requestedPort);
-    const activePort = getActiveDashboardPort(requestedPort);
-
-    const [statusResult, configResult] = await Promise.all([
-      fetchDashboardData('status', activePort),
-      fetchDashboardData('config', activePort),
+    const [status, config] = await Promise.all([
+      readNodeStatus(ACTIVE_CONFIG_PATH),
+      readConfig(ACTIVE_CONFIG_PATH),
     ]);
 
-    const statusData = statusResult.ok ? asRecord(statusResult.data) : {};
-    const configData = configResult.ok ? asRecord(asRecord(configResult.data).config ?? configResult.data) : {};
-    const identity = asRecord(configData.identity);
-    const payments = asRecord(configData.payments);
-
-    const walletAddress = asString(statusData.walletAddress as string, '') || asString(identity.walletAddress as string, '');
+    const identity = asRecord(config.identity);
+    const payments = asRecord(config.payments);
+    const walletAddress = asString(status.walletAddress as string, '') || asString(identity.walletAddress as string, '');
 
     return {
       ok: true,
@@ -585,7 +555,7 @@ ipcMain.handle('wallet:deposit', async (_event, amount: string) => {
   if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
     return { ok: false, error: 'Invalid deposit amount' };
   }
-  appendLog('dashboard', 'system', `Deposit requested: ${amount} USDC. Run 'antseed deposit ${amount}' in terminal.`);
+  appendLog('connect', 'system', `Deposit requested: ${amount} USDC. Run 'antseed deposit ${amount}' in terminal.`);
   return { ok: true, message: `Deposit of ${amount} USDC logged. Use CLI to execute: antseed deposit ${amount}` };
 });
 
@@ -594,7 +564,7 @@ ipcMain.handle('wallet:withdraw', async (_event, amount: string) => {
   if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
     return { ok: false, error: 'Invalid withdrawal amount' };
   }
-  appendLog('dashboard', 'system', `Withdrawal requested: ${amount} USDC. Run 'antseed withdraw ${amount}' in terminal.`);
+  appendLog('connect', 'system', `Withdrawal requested: ${amount} USDC. Run 'antseed withdraw ${amount}' in terminal.`);
   return { ok: true, message: `Withdrawal of ${amount} USDC logged. Use CLI to execute: antseed withdraw ${amount}` };
 });
 
@@ -670,7 +640,7 @@ registerPiChatHandlers({
     }
   },
   appendSystemLog: (line) => {
-    appendLog("dashboard", "system", line);
+    appendLog("connect", "system", line);
   },
   getNetworkPeers: async () => {
     await refreshPeerCache();
@@ -681,9 +651,11 @@ registerPiChatHandlers({
     return snapshot.peers
       .map((peer: DashboardNetworkPeer) => ({
         peerId: typeof peer.peerId === "string" ? peer.peerId : "",
+        displayName: peer.displayName ?? undefined,
         host: typeof peer.host === "string" ? peer.host.trim() : "",
         port: Number(peer.port) || 0,
         providers: Array.isArray(peer.providers) ? peer.providers.map((provider) => String(provider)) : [],
+        services: Array.isArray(peer.services) ? peer.services.map((s) => String(s)) : [],
       }))
       .filter((peer) => peer.host.length > 0
         && isPublicMetadataHost(peer.host)
@@ -712,15 +684,14 @@ app.whenReady().then(() => {
   }
   createApplicationMenu(APP_NAME, APP_ICON_PATH);
 
+  // Ensure config.json exists before anything else (first launch).
+  void ensureConfig(ACTIVE_CONFIG_PATH).catch(() => {});
+
   createWindow({ appName: APP_NAME, appIconPath: APP_ICON_PATH, isDev, rendererUrl });
 
   // Pre-load identity from encrypted store so it's ready before the first CLI spawn.
   void ensureSecureIdentity().catch(() => {
     // Failure is logged inside ensureSecureIdentity; CLI falls back to file-based identity.
-  });
-
-  void startDashboardRuntime(ACTIVE_CONFIG_PATH).catch(() => {
-    // Failure is already logged to renderer/system log.
   });
 
   void ensureDefaultPlugin('@antseed/router-local', {
@@ -778,10 +749,7 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
-    void Promise.allSettled([
-      stopDashboardRuntime('window close'),
-      processManager.stopAll(),
-    ]).finally(() => app.quit());
+    void processManager.stopAll().finally(() => app.quit());
   }
 });
 
@@ -795,10 +763,7 @@ app.on('before-quit', (event) => {
   event.preventDefault();
   isQuitting = true;
 
-  void Promise.allSettled([
-    stopDashboardRuntime('app shutdown'),
-    processManager.stopAll(),
-  ]).finally(() => {
+  void processManager.stopAll().finally(() => {
     app.quit();
   });
 });
@@ -806,8 +771,5 @@ app.on('before-quit', (event) => {
 // Ensure child processes are cleaned up if the main process receives SIGTERM
 // (e.g. dev runner Ctrl+C kills Electron before before-quit fires).
 process.on('SIGTERM', () => {
-  void Promise.allSettled([
-    stopDashboardRuntime('SIGTERM'),
-    processManager.stopAll(),
-  ]).finally(() => process.exit(0));
+  void processManager.stopAll().finally(() => process.exit(0));
 });
