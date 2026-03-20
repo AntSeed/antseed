@@ -228,7 +228,11 @@ export class SellerPaymentManager {
     // would exceed settledTokenCount (= maxAmount / tokenRate), breaking the
     // proof chain with InvalidProofChain on the next reserve().
     const authMax = BigInt(session.authMax);
-    const tokenRate = this._tokenRate ?? 1n;
+    const tokenRate = this._tokenRate;
+    if (tokenRate === null || tokenRate === 0n) {
+      throw new Error('Token rate unavailable — cannot send receipt without on-chain rate');
+    }
+    const effectiveTokenCap = authMax / tokenRate;
     const effectiveTokenCap = tokenRate > 0n ? authMax / tokenRate : authMax;
     let newTotal = BigInt(session.tokensDelivered) + tokensDelivered;
     if (newTotal > effectiveTokenCap) {
