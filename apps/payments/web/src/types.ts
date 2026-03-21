@@ -9,6 +9,7 @@ export interface BalanceData {
 
 export interface PaymentConfig {
   chainId: string;
+  evmChainId: number;
   rpcUrl: string;
   escrowContractAddress: string;
   usdcContractAddress: string;

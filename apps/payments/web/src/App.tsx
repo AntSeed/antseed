@@ -118,7 +118,7 @@ export function App() {
         {/* ── Content ── */}
         <div className="portal-content">
           {activeTab === 'overview' && <BalanceView balance={balance} />}
-          {activeTab === 'deposit' && <DepositView config={config} onDeposited={refreshBalance} />}
+          {activeTab === 'deposit' && <DepositView config={config} buyerEvmAddress={balance?.evmAddress ?? null} onDeposited={refreshBalance} />}
           {activeTab === 'withdraw' && <WithdrawView balance={balance} onAction={refreshBalance} />}
         </div>
       </div>

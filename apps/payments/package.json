@@ -23,7 +23,8 @@
     "@fastify/cors": "^10.0.0",
     "@fastify/static": "^9.0.0",
     "ethers": "^6.13.0",
-    "fastify": "^5.7.4"
+    "fastify": "^5.7.4",
+    "thirdweb": "^5.119.1"
   },
   "devDependencies": {
     "@noble/ed25519": "^2.1.0",

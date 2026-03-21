@@ -87,6 +87,18 @@
   font-weight: 500;
 }
 
+.deposit-pay-embed {
+  border-radius: var(--radius);
+  overflow: hidden;
+  border: 1px solid var(--card-border);
+
+  // Override thirdweb iframe sizing
+  iframe {
+    width: 100% !important;
+    min-height: 380px;
+  }
+}
+
 .deposit-card-coming {
   display: flex;
   flex-direction: column;

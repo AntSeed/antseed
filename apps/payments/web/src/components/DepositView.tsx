@@ -1,9 +1,13 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
+import { PayEmbed } from 'thirdweb/react';
+import { prepareContractCall, getContract, defineChain, toUnits } from 'thirdweb';
+import { thirdwebClient } from '../thirdweb';
 import type { PaymentConfig } from '../types';
 import './DepositView.scss';
 
 interface DepositViewProps {
   config: PaymentConfig | null;
+  buyerEvmAddress: string | null;
   onDeposited: () => void;
 }
 
@@ -21,7 +25,7 @@ const ERC20_ABI = [
 
 type DepositMethod = 'crypto' | 'card';
 
-export function DepositView({ config, onDeposited }: DepositViewProps) {
+export function DepositView({ config, buyerEvmAddress, onDeposited }: DepositViewProps) {
   const [method, setMethod] = useState<DepositMethod>('crypto');
 
   return (
@@ -48,14 +52,14 @@ export function DepositView({ config, onDeposited }: DepositViewProps) {
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="1" y="3" width="14" height="10" rx="2" stroke="currentColor" strokeWidth="1.2"/><line x1="1" y1="6.5" x2="15" y2="6.5" stroke="currentColor" strokeWidth="1.2"/><line x1="4" y1="9.5" x2="8" y2="9.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/></svg>
             </span>
             <span className="deposit-method-label">Credit Card</span>
-            <span className="deposit-method-desc">Via Crossmint</span>
+            <span className="deposit-method-desc">Visa, Mastercard, etc.</span>
           </button>
         </div>
 
         {method === 'crypto' ? (
           <CryptoDeposit config={config} onDeposited={onDeposited} />
         ) : (
-          <CrossmintDeposit config={config} />
+          <CardDeposit config={config} buyerEvmAddress={buyerEvmAddress} onDeposited={onDeposited} />
         )}
       </div>
     </div>
@@ -199,31 +203,92 @@ function CryptoDeposit({ config, onDeposited }: { config: PaymentConfig | null; 
   );
 }
 
-/* ── Crossmint ── */
+/* ── Credit Card Deposit (thirdweb Pay) ── */
 
-function CrossmintDeposit({ config }: { config: PaymentConfig | null }) {
-  if (!config || !config.crossmintConfigured) {
+function CardDeposit({ config, buyerEvmAddress, onDeposited }: {
+  config: PaymentConfig | null;
+  buyerEvmAddress: string | null;
+  onDeposited: () => void;
+}) {
+  const [amount, setAmount] = useState('10');
+
+  const chain = useMemo(() => {
+    if (!config) return null;
+    return defineChain(config.evmChainId);
+  }, [config]);
+
+  const escrowContract = useMemo(() => {
+    if (!config || !chain) return null;
+    return getContract({
+      client: thirdwebClient,
+      chain,
+      address: config.escrowContractAddress,
+    });
+  }, [config, chain]);
+
+  const depositTx = useMemo(() => {
+    if (!escrowContract || !buyerEvmAddress || !amount || parseFloat(amount) <= 0) return null;
+    return prepareContractCall({
+      contract: escrowContract,
+      method: 'function depositFor(address buyer, uint256 amount) external',
+      params: [buyerEvmAddress, toUnits(amount, 6)],
+      // Pay with USDC — thirdweb handles fiat→USDC conversion
+      erc20Value: {
+        amountWei: toUnits(amount, 6),
+        tokenAddress: config!.usdcContractAddress,
+      },
+    });
+  }, [escrowContract, buyerEvmAddress, amount, config]);
+
+  if (!config) {
     return (
       <div className="deposit-form">
-        <div className="deposit-card-coming">
-          <div className="deposit-card-coming-icon">
-            <svg width="20" height="20" viewBox="0 0 16 16" fill="none"><rect x="1" y="3" width="14" height="10" rx="2" stroke="currentColor" strokeWidth="1.2"/><line x1="1" y1="6.5" x2="15" y2="6.5" stroke="currentColor" strokeWidth="1.2"/><line x1="4" y1="9.5" x2="8" y2="9.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/></svg>
-          </div>
-          <div className="deposit-card-coming-title">Credit card deposits coming soon</div>
-          <div className="deposit-card-coming-desc">
-            Crossmint integration will enable direct credit card to escrow deposits.
-          </div>
-        </div>
+        <span className="hint">Loading configuration...</span>
       </div>
     );
   }
 
   return (
     <div className="deposit-form">
-      <div className="deposit-card-coming">
-        <div className="deposit-card-coming-title">Credit card deposit</div>
-        <div className="deposit-card-coming-desc">Crossmint checkout ready.</div>
+      <div className="input-group">
+        <label className="input-label">Amount (USDC)</label>
+        <input
+          className="input-field"
+          type="number"
+          min="10"
+          step="1"
+          placeholder="10"
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+        />
+        <span className="hint">Minimum first deposit: 10 USDC. Paid via credit card.</span>
       </div>
+
+      {depositTx ? (
+        <div className="deposit-pay-embed">
+          <PayEmbed
+            client={thirdwebClient}
+            payOptions={{
+              mode: 'transaction',
+              transaction: depositTx,
+              metadata: {
+                name: 'AntSeed Credits',
+                image: 'https://antseed.com/img/antseed-mark.png',
+              },
+              onPurchaseSuccess: () => {
+                onDeposited();
+              },
+            }}
+            theme="light"
+          />
+        </div>
+      ) : (
+        <div className="hint" style={{ textAlign: 'center', padding: '16px 0' }}>
+          {!buyerEvmAddress
+            ? 'Identity not loaded — restart the desktop app.'
+            : 'Enter an amount to continue.'}
+        </div>
+      )}
     </div>
   );
 }
