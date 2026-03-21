@@ -42,6 +42,7 @@ export type ConfigFormData = {
   minRep: number;
   paymentMethod: string;
   devMode: boolean;
+  requireManualApproval: boolean;
 };
 
 export type ChatServiceOptionEntry = {

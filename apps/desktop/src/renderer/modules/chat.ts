@@ -1157,6 +1157,7 @@ export function initChatModule({
     );
     const isPaidService = selectedService && selectedService.protocol !== 'free';
     const hasCredits = uiState.creditsAvailableUsdc !== '0' && uiState.creditsAvailableUsdc !== '';
+    const requireManualApproval = uiState.configFormData?.requireManualApproval ?? false;
 
     if (isPaidService && !hasCredits) {
       uiState.chatError = 'No credits available. Add credits to use paid services.';
@@ -1165,7 +1166,7 @@ export function initChatModule({
     }
 
     const approvalKey = selectedService.peerId || selectedService.value;
-    if (isPaidService && hasCredits && !uiState.chatPaymentApprovalVisible && !isSessionApproved(approvalKey)) {
+    if (requireManualApproval && isPaidService && hasCredits && !uiState.chatPaymentApprovalVisible && !isSessionApproved(approvalKey)) {
         uiState.chatPaymentApprovalVisible = true;
       uiState.chatPaymentApprovalPeerId = approvalKey;
       uiState.chatPaymentApprovalPeerName = selectedService.peerLabel || selectedService.label || selectedService.id || selectedService.peerId.slice(0, 12);
