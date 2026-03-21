@@ -201,6 +201,7 @@ function CryptoDeposit({ config, onDeposited }: { config: PaymentConfig | null; 
 
 const TRANSAK_API_KEY = '0bb5929f-38a6-4f2b-99e8-c46defc6d854';
 const TRANSAK_ENV = 'STAGING'; // Change to 'PRODUCTION' when live
+const TRANSAK_WIDGET_URL = 'https://global-stg.transak.com'; // staging; production: https://global.transak.com
 
 /**
  * Encode depositFor(address,uint256) calldata.
@@ -236,37 +237,48 @@ function CardDeposit({ config, buyerEvmAddress, onDeposited }: {
       const amountBaseUnits = (parseFloat(amount) * 1_000_000).toFixed(0);
       const calldata = encodeDepositForCalldata(buyerEvmAddress, amountBaseUnits);
 
-      const transak = new Transak({
+      const baseUrl = TRANSAK_ENV === 'STAGING'
+        ? 'https://global-stg.transak.com'
+        : 'https://global.transak.com';
+
+      // Build full Transak One widget URL with all params
+      const queryParams = new URLSearchParams({
         apiKey: TRANSAK_API_KEY,
-        environment: TRANSAK_ENV as 'STAGING' | 'PRODUCTION',
-        // Transak One params for smart contract call
-        smartContractAddress: config.escrowContractAddress,
-        calldata,
+        referrerDomain: window.location.origin,
         cryptoCurrencyCode: 'USDC',
         network: 'base',
         walletAddress: buyerEvmAddress,
-        estimatedGasLimit: 150000,
-        fiatAmount: parseFloat(amount),
+        fiatAmount: amount,
         fiatCurrency: 'USD',
-        disableWalletAddressForm: true,
-        isTransakOne: true,
+        disableWalletAddressForm: 'true',
+        smartContractAddress: config.escrowContractAddress,
+        calldata,
+        estimatedGasLimit: '150000',
+        isTransakOne: 'true',
       });
+
+      const widgetUrl = `${baseUrl}?${queryParams.toString()}`;
+
+      const transak = new Transak({
+        widgetUrl,
+        referrer: window.location.origin,
+      } as Record<string, unknown>);
 
       transak.init();
 
-      // Listen for success
-      transak.on('TRANSAK_ORDER_SUCCESSFUL', () => {
+      // SDK v4 uses static event listeners
+      Transak.on('TRANSAK_ORDER_SUCCESSFUL', () => {
         transak.close();
         setLoading(false);
         onDeposited();
       });
 
-      transak.on('TRANSAK_ORDER_FAILED', () => {
+      Transak.on('TRANSAK_ORDER_FAILED', () => {
         transak.close();
         setLoading(false);
       });
 
-      transak.on('TRANSAK_WIDGET_CLOSE', () => {
+      Transak.on('TRANSAK_WIDGET_CLOSE', () => {
         setLoading(false);
       });
     } catch (err) {

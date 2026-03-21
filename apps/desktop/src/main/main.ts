@@ -602,6 +602,9 @@ async function refreshCreditsInfo(): Promise<CreditsInfo> {
 
   const evmAddress = identityToEvmAddress(identity);
   const cc = await loadCachedCryptoConfig();
+  if (!cc) {
+    return { evmAddress, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
+  }
 
   const client = new BaseEscrowClient({ rpcUrl: cc.rpcUrl, contractAddress: cc.escrowAddress, usdcAddress: cc.usdcAddress });
 
@@ -677,6 +680,9 @@ ipcMain.handle('payments:sign-spending-auth', async (_event, params: {
     }
 
     const cc = await loadCachedCryptoConfig();
+    if (!cc) {
+      return { ok: false, error: 'No escrow contract configured' };
+    }
 
     const wallet = identityToEvmWallet(identity);
     const domain = makeEscrowDomain(cc.chainId, cc.escrowAddress);
