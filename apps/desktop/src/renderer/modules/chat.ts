@@ -1164,9 +1164,11 @@ export function initChatModule({
       return;
     }
 
-    if (isPaidService && hasCredits && !uiState.chatPaymentApprovalVisible && !isSessionApproved(selectedService.peerId)) {
+    const approvalKey = selectedService.peerId || selectedService.value;
+    if (isPaidService && hasCredits && !uiState.chatPaymentApprovalVisible && !isSessionApproved(approvalKey)) {
+      console.log('[payment] Showing approval card, approvalKey=' + JSON.stringify(approvalKey) + ', peerLabel=' + JSON.stringify(selectedService.peerLabel));
       uiState.chatPaymentApprovalVisible = true;
-      uiState.chatPaymentApprovalPeerId = selectedService.peerId;
+      uiState.chatPaymentApprovalPeerId = approvalKey;
       uiState.chatPaymentApprovalPeerName = selectedService.peerLabel || selectedService.label || selectedService.id || selectedService.peerId.slice(0, 12);
       uiState.chatPaymentApprovalAmount = FIRST_SIGN_CAP_USDC;
       uiState.chatPaymentApprovalLoading = true; // Disable Approve until peer info loads
@@ -1736,8 +1738,8 @@ export function initChatModule({
   // ---------------------------------------------------------------------------
 
   async function approveSessionPayment(): Promise<void> {
-    appendSystemLog('[payment] approveSessionPayment called, peerId=' + (uiState.chatPaymentApprovalPeerId || 'null'));
-    if (!uiState.chatPaymentApprovalPeerId) return;
+    console.log('[payment] approveSessionPayment ENTERED, peerId=' + (uiState.chatPaymentApprovalPeerId || 'null'));
+    if (!uiState.chatPaymentApprovalPeerId) { console.log('[payment] early return — no peerId'); return; }
 
     uiState.chatPaymentApprovalLoading = true;
     uiState.chatPaymentApprovalError = null;
