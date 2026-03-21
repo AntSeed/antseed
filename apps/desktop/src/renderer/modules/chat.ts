@@ -1156,7 +1156,7 @@ export function initChatModule({
       (opt) => opt.value === uiState.chatSelectedServiceValue
     );
     const isPaidService = selectedService && selectedService.protocol !== 'free';
-    const hasCredits = parseFloat(uiState.creditsAvailableUsdc) > 0;
+    const hasCredits = uiState.creditsAvailableUsdc !== '0' && uiState.creditsAvailableUsdc !== '';
 
     if (isPaidService && !hasCredits) {
       uiState.chatError = 'No credits available. Add credits to use paid services.';
@@ -1169,8 +1169,12 @@ export function initChatModule({
       uiState.chatPaymentApprovalPeerId = selectedService.peerId;
       uiState.chatPaymentApprovalPeerName = selectedService.peerLabel || selectedService.peerId.slice(0, 12);
       uiState.chatPaymentApprovalAmount = FIRST_SIGN_CAP_USDC;
+      uiState.chatPaymentApprovalLoading = true; // Disable Approve until peer info loads
       pendingPaymentMessage = { text, imageBase64, imageMimeType };
-      void fetchPeerInfo(selectedService.peerId);
+      void fetchPeerInfo(selectedService.peerId).finally(() => {
+        uiState.chatPaymentApprovalLoading = false;
+        notifyUiStateChanged();
+      });
       notifyUiStateChanged();
       return;
     }

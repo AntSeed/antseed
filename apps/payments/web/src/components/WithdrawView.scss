@@ -1,28 +1,52 @@
-.withdraw-pending {
+.withdraw {
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
 
-.withdraw-pending-info {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px;
-  background: rgba(251, 191, 36, 0.08);
-  border: 1px solid rgba(251, 191, 36, 0.2);
-  border-radius: 8px;
-}
-
-.withdraw-pending-label {
+.withdraw-loading {
   font-size: 13px;
-  color: var(--accent-amber);
+  color: var(--text-muted);
+  padding: 12px 0;
 }
 
-.withdraw-pending-amount {
-  font-size: 16px;
-  font-weight: 700;
-  color: var(--accent-amber);
+.withdraw-pending {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.withdraw-pending-banner {
+  display: flex;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--amber-dim);
+  border: 1px solid var(--amber-border);
+  border-radius: var(--radius-sm);
+}
+
+.withdraw-pending-banner-icon {
+  color: var(--amber);
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.withdraw-pending-banner-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.withdraw-pending-banner-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--amber);
+  font-family: var(--font-mono);
+}
+
+.withdraw-pending-banner-desc {
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 .withdraw-request {
@@ -35,4 +59,11 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.withdraw-note {
+  font-size: 12px;
+  color: var(--text-faint);
+  text-align: center;
+  padding-top: 4px;
 }

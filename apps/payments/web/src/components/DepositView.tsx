@@ -19,53 +19,65 @@ const ERC20_ABI = [
   'function balanceOf(address owner) external view returns (uint256)',
 ];
 
-type DepositTab = 'crypto' | 'card';
+type DepositMethod = 'crypto' | 'card';
 
 export function DepositView({ config, onDeposited }: DepositViewProps) {
-  const [activeTab, setActiveTab] = useState<DepositTab>('crypto');
+  const [method, setMethod] = useState<DepositMethod>('crypto');
 
   if (!config) {
     return (
       <div className="card">
-        <div className="card-title">Deposit</div>
-        <p className="hint">Loading configuration...</p>
+        <div className="card-section-title">Deposit USDC</div>
+        <div className="deposit-loading">Loading payment configuration...</div>
       </div>
     );
   }
 
   return (
-    <div className="card">
-      <div className="card-title">Deposit</div>
-      <div className="deposit-tabs">
-        <button
-          className={`deposit-tab ${activeTab === 'crypto' ? 'deposit-tab-active' : ''}`}
-          onClick={() => setActiveTab('crypto')}
-        >
-          Crypto
-        </button>
-        <button
-          className={`deposit-tab ${activeTab === 'card' ? 'deposit-tab-active' : ''}`}
-          onClick={() => setActiveTab('card')}
-        >
-          Credit Card
-        </button>
-      </div>
+    <div className="deposit">
+      <div className="card">
+        <div className="card-section-title">Deposit USDC</div>
 
-      {activeTab === 'crypto' ? (
-        <CryptoDeposit config={config} onDeposited={onDeposited} />
-      ) : (
-        <CrossmintDeposit config={config} onDeposited={onDeposited} />
-      )}
+        <div className="deposit-methods">
+          <button
+            className={`deposit-method ${method === 'crypto' ? 'deposit-method--active' : ''}`}
+            onClick={() => setMethod('crypto')}
+          >
+            <span className="deposit-method-icon">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 1L1 4.5V11.5L8 15L15 11.5V4.5L8 1Z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round"/><path d="M1 4.5L8 8M8 8L15 4.5M8 8V15" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round"/></svg>
+            </span>
+            <span className="deposit-method-label">Crypto Wallet</span>
+            <span className="deposit-method-desc">MetaMask, Coinbase, etc.</span>
+          </button>
+          <button
+            className={`deposit-method ${method === 'card' ? 'deposit-method--active' : ''}`}
+            onClick={() => setMethod('card')}
+          >
+            <span className="deposit-method-icon">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="1" y="3" width="14" height="10" rx="2" stroke="currentColor" strokeWidth="1.2"/><line x1="1" y1="6.5" x2="15" y2="6.5" stroke="currentColor" strokeWidth="1.2"/><line x1="4" y1="9.5" x2="8" y2="9.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/></svg>
+            </span>
+            <span className="deposit-method-label">Credit Card</span>
+            <span className="deposit-method-desc">Via Crossmint</span>
+          </button>
+        </div>
+
+        {method === 'crypto' ? (
+          <CryptoDeposit config={config} onDeposited={onDeposited} />
+        ) : (
+          <CrossmintDeposit config={config} />
+        )}
+      </div>
     </div>
   );
 }
 
-/* ── Crypto Deposit ─────────────────────────────────────────── */
+/* ── Crypto Deposit ── */
 
 function CryptoDeposit({ config, onDeposited }: { config: PaymentConfig; onDeposited: () => void }) {
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [amount, setAmount] = useState('');
   const [loading, setLoading] = useState(false);
+  const [step, setStep] = useState<string | null>(null);
   const [status, setStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   const connectWallet = useCallback(async () => {
@@ -79,14 +91,12 @@ function CryptoDeposit({ config, onDeposited }: { config: PaymentConfig; onDepos
       setLoading(true);
       setStatus(null);
 
-      // Request accounts
       const accounts = await ethereum.request({ method: 'eth_requestAccounts' }) as string[];
       if (!accounts || accounts.length === 0) {
         setStatus({ type: 'error', message: 'No accounts found.' });
         return;
       }
 
-      // Check chain
       const chainId = await ethereum.request({ method: 'eth_chainId' }) as string;
       if (parseInt(chainId, 16) !== BASE_CHAIN_ID) {
         try {
@@ -95,7 +105,7 @@ function CryptoDeposit({ config, onDeposited }: { config: PaymentConfig; onDepos
             params: [{ chainId: BASE_CHAIN_ID_HEX }],
           });
         } catch {
-          setStatus({ type: 'error', message: 'Please switch to Base network (chainId 8453) in your wallet.' });
+          setStatus({ type: 'error', message: 'Please switch to Base network in your wallet.' });
           return;
         }
       }
@@ -121,27 +131,26 @@ function CryptoDeposit({ config, onDeposited }: { config: PaymentConfig; onDepos
       const { BrowserProvider, Contract, parseUnits } = await import('ethers');
       const provider = new BrowserProvider(ethereum as never);
       const signer = await provider.getSigner();
-
       const usdcAmount = parseUnits(amount, 6);
 
-      // Step 1: Approve USDC
-      setStatus({ type: 'success', message: 'Step 1/2: Approving USDC...' });
+      setStep('Approving USDC spend...');
       const usdc = new Contract(config.usdcContractAddress, ERC20_ABI, signer);
       const approveTx = await usdc.getFunction('approve')(config.escrowContractAddress, usdcAmount);
       const approveReceipt = await approveTx.wait();
       if (!approveReceipt) throw new Error('Approval transaction was dropped or replaced');
 
-      // Step 2: Deposit
-      setStatus({ type: 'success', message: 'Step 2/2: Depositing...' });
+      setStep('Depositing to escrow...');
       const escrow = new Contract(config.escrowContractAddress, ESCROW_ABI, signer);
       const depositTx = await escrow.getFunction('deposit')(usdcAmount);
       const receipt = await depositTx.wait();
       if (!receipt) throw new Error('Deposit transaction was dropped or replaced');
 
-      setStatus({ type: 'success', message: `Deposit successful! TX: ${receipt.hash}` });
+      setStep(null);
+      setStatus({ type: 'success', message: `Deposit confirmed: ${receipt.hash}` });
       setAmount('');
       onDeposited();
     } catch (err) {
+      setStep(null);
       setStatus({ type: 'error', message: err instanceof Error ? err.message : String(err) });
     } finally {
       setLoading(false);
@@ -149,17 +158,19 @@ function CryptoDeposit({ config, onDeposited }: { config: PaymentConfig; onDepos
   }, [walletAddress, amount, config, onDeposited]);
 
   return (
-    <div className="deposit-section">
+    <div className="deposit-form">
       {!walletAddress ? (
         <button className="btn-primary" onClick={connectWallet} disabled={loading}>
           {loading ? 'Connecting...' : 'Connect Wallet'}
         </button>
       ) : (
         <>
-          <div className="deposit-wallet-info">
-            <span className="deposit-wallet-label">Connected</span>
-            <span className="deposit-wallet-address">{walletAddress.slice(0, 6)}...{walletAddress.slice(-4)}</span>
+          <div className="deposit-connected">
+            <div className="deposit-connected-dot" />
+            <span className="deposit-connected-addr">{walletAddress.slice(0, 6)}...{walletAddress.slice(-4)}</span>
+            <span className="deposit-connected-label">Connected</span>
           </div>
+
           <div className="input-group">
             <label className="input-label">Amount (USDC)</label>
             <input
@@ -174,51 +185,50 @@ function CryptoDeposit({ config, onDeposited }: { config: PaymentConfig; onDepos
             />
             <span className="hint">Minimum first deposit: 10 USDC</span>
           </div>
+
           <button
             className="btn-primary"
             onClick={handleDeposit}
             disabled={loading || !amount || parseFloat(amount) <= 0}
           >
-            {loading ? 'Processing...' : 'Deposit'}
+            {step || (loading ? 'Processing...' : 'Deposit USDC')}
           </button>
         </>
       )}
 
       {status && (
-        <p className={`status-msg ${status.type === 'success' ? 'status-success' : 'status-error'}`}>
+        <div className={`status-msg ${status.type === 'success' ? 'status-success' : 'status-error'}`}>
           {status.message}
-        </p>
+        </div>
       )}
     </div>
   );
 }
 
-/* ── Crossmint Credit Card ──────────────────────────────────── */
+/* ── Crossmint ── */
 
-function CrossmintDeposit({ config, onDeposited: _onDeposited }: { config: PaymentConfig; onDeposited: () => void }) {
+function CrossmintDeposit({ config }: { config: PaymentConfig }) {
   if (!config.crossmintConfigured) {
     return (
-      <div className="deposit-section">
-        <div className="crossmint-setup">
-          <h3 className="crossmint-title">Credit Card Deposits</h3>
-          <p className="crossmint-desc">
-            To enable credit card deposits, configure your Crossmint API key:
-          </p>
-          <code className="crossmint-code">ANTSEED_CROSSMINT_API_KEY=your_key</code>
-          <p className="crossmint-desc">
-            Crossmint's Pay API will call <code>depositFor(buyerAddress, amount)</code> on
-            the escrow contract, funding your account directly from a credit card.
-          </p>
+      <div className="deposit-form">
+        <div className="deposit-card-coming">
+          <div className="deposit-card-coming-icon">
+            <svg width="20" height="20" viewBox="0 0 16 16" fill="none"><rect x="1" y="3" width="14" height="10" rx="2" stroke="currentColor" strokeWidth="1.2"/><line x1="1" y1="6.5" x2="15" y2="6.5" stroke="currentColor" strokeWidth="1.2"/><line x1="4" y1="9.5" x2="8" y2="9.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/></svg>
+          </div>
+          <div className="deposit-card-coming-title">Credit card deposits coming soon</div>
+          <div className="deposit-card-coming-desc">
+            Crossmint integration will enable direct credit card to escrow deposits.
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="deposit-section">
-      <div className="crossmint-ready">
-        <h3 className="crossmint-title">Deposit via Credit Card</h3>
-        <p className="hint">Crossmint integration ready. Credit card checkout coming soon.</p>
+    <div className="deposit-form">
+      <div className="deposit-card-coming">
+        <div className="deposit-card-coming-title">Credit card deposit</div>
+        <div className="deposit-card-coming-desc">Crossmint checkout ready.</div>
       </div>
     </div>
   );

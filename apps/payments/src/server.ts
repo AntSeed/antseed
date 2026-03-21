@@ -43,14 +43,15 @@ export async function createServer(options: PaymentsServerOptions) {
 
   // Serve static web files
   const webDir = path.resolve(__dirname, 'web');
+  let staticRegistered = false;
   try {
     await fastify.register(fastifyStatic, {
       root: webDir,
       prefix: '/',
-      wildcard: false,
     });
+    staticRegistered = true;
   } catch {
-    // Web dir may not exist in dev mode
+    // Web dir may not exist in dev mode or CLI headless use
   }
 
   // Load crypto context
@@ -64,8 +65,11 @@ export async function createServer(options: PaymentsServerOptions) {
     });
 
     // Load config for contract addresses
+    // dataDir is the .antseed directory itself (e.g. ~/.antseed), not the parent
     try {
-      const cfgPath = path.join(options.dataDir || homedir(), '.antseed', 'config.json');
+      const cfgPath = options.dataDir
+        ? path.join(options.dataDir, 'config.json')
+        : path.join(homedir(), '.antseed', 'config.json');
       const raw = await readFile(cfgPath, 'utf-8');
       const config = JSON.parse(raw) as Record<string, unknown>;
       const payments = (config.payments ?? {}) as Record<string, unknown>;
@@ -86,10 +90,15 @@ export async function createServer(options: PaymentsServerOptions) {
 
   registerRoutes(fastify, { cryptoCtx, cryptoConfig });
 
-  // SPA fallback — serve index.html for non-API routes
-  fastify.setNotFoundHandler((_request, reply) => {
-    void reply.sendFile('index.html');
-  });
+  // SPA fallback — only if static files are available (reply.sendFile requires fastifyStatic)
+  if (staticRegistered) {
+    fastify.setNotFoundHandler((request, reply) => {
+      if (request.url.startsWith('/api/') || request.url.startsWith('/assets/')) {
+        return reply.status(404).send({ error: 'Not found' });
+      }
+      void reply.sendFile('index.html');
+    });
+  }
 
   // Expose bearer token for authorized consumers (desktop app injects it via URL param)
   (fastify as unknown as { bearerToken: string }).bearerToken = bearerToken;
