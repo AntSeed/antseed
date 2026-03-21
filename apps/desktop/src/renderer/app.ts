@@ -403,7 +403,7 @@ registerActions({
   handleServiceFocus: chatApi.handleServiceFocus,
   handleServiceBlur: chatApi.handleServiceBlur,
   clearPinnedPeer: chatApi.clearPinnedPeer,
-  approveSessionPayment: () => chatApi.approveSessionPayment(),
+  approveSessionPayment: () => { console.log('[app] calling chatApi.approveSessionPayment'); chatApi.approveSessionPayment().catch(err => console.error('[app] approveSessionPayment error:', err)); },
   cancelSessionPayment: () => chatApi.cancelSessionPayment(),
   refreshCredits: () => void creditsApi.refreshCredits(),
   refreshPlugins: refreshPluginInventory,

@@ -69,7 +69,7 @@ export type ChatModuleApi = {
   handleServiceFocus: () => void;
   handleServiceBlur: () => void;
   clearPinnedPeer: () => void;
-  approveSessionPayment: () => void;
+  approveSessionPayment: () => Promise<void>;
   cancelSessionPayment: () => void;
 };
 
@@ -1833,7 +1833,7 @@ export function initChatModule({
     handleServiceFocus,
     handleServiceBlur,
     clearPinnedPeer,
-    approveSessionPayment: () => void approveSessionPayment(),
+    approveSessionPayment,
     cancelSessionPayment,
   };
 }

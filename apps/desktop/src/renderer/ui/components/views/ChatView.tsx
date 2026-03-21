@@ -300,8 +300,8 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
             peerInfo={snap.chatPaymentApprovalPeerInfo}
             loading={snap.chatPaymentApprovalLoading}
             error={snap.chatPaymentApprovalError}
-            onApprove={() => actions.approveSessionPayment?.()}
-            onCancel={() => actions.cancelSessionPayment?.()}
+            onApprove={() => { console.log('[ChatView] Approve clicked, action exists:', !!actions.approveSessionPayment); actions.approveSessionPayment?.(); }}
+            onCancel={() => { console.log('[ChatView] Cancel clicked'); actions.cancelSessionPayment?.(); }}
           />
           <LowBalanceWarning
             visible={snap.chatLowBalanceWarning}
