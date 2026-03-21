@@ -13,5 +13,5 @@ export interface PaymentConfig {
   rpcUrl: string;
   escrowContractAddress: string;
   usdcContractAddress: string;
-  crossmintConfigured: boolean;
+  evmAddress: string | null;
 }

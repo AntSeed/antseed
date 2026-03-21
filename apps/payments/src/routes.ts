@@ -70,7 +70,7 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
       rpcUrl: ctx.cryptoConfig.rpcUrl,
       escrowContractAddress: ctx.cryptoConfig.escrowContractAddress,
       usdcContractAddress: ctx.cryptoConfig.usdcContractAddress,
-      crossmintConfigured: false, // TODO: set to true once Crossmint project is onboarded
+      evmAddress: ctx.cryptoCtx?.evmAddress ?? null,
     };
   });
 
