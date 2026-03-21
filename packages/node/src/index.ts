@@ -47,6 +47,7 @@ export { SessionStore } from './payments/session-store.js';
 export type { StoredSession, StoredReceipt } from './payments/session-store.js';
 export { getChainConfig, resolveChainConfig, DEFAULT_CHAIN_ID, CHAIN_CONFIGS } from './payments/chain-config.js';
 export type { ChainConfig } from './payments/chain-config.js';
+export { formatUsdc, parseUsdc } from './payments/usdc-utils.js';
 export { ProxyMux } from './proxy/proxy-mux.js';
 export { resolveProvider } from './proxy/provider-detection.js';
 export {

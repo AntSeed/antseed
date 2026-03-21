@@ -17,7 +17,7 @@ import {
 } from './process-manager.js';
 import { registerPiChatHandlers } from './pi-chat-engine.js';
 import { ensureSecureIdentity, secureIdentityEnv, getSecureIdentity } from './identity.js';
-import { identityToEvmAddress, identityToEvmWallet, BaseEscrowClient, signSpendingAuth, makeEscrowDomain, resolveChainConfig } from '@antseed/node';
+import { identityToEvmAddress, identityToEvmWallet, BaseEscrowClient, signSpendingAuth, makeEscrowDomain, resolveChainConfig, formatUsdc } from '@antseed/node';
 import { createServer as createPaymentsServer } from '@antseed/payments';
 import type { LogEvent, RuntimeActivityEvent } from './log-parser.js';
 import { parseRuntimeActivityFromLog } from './log-parser.js';
@@ -562,11 +562,8 @@ type CreditsInfo = {
   creditLimitUsdc: string;
 };
 
-function formatUsdc6(baseUnits: bigint): string {
-  const whole = baseUnits / 1_000_000n;
-  const frac = (baseUnits % 1_000_000n).toString().padStart(6, '0').replace(/0+$/, '') || '0';
-  return `${whole}.${frac}`;
-}
+// Use shared formatUsdc from @antseed/node
+const formatUsdc6 = formatUsdc;
 
 let cachedCreditsInfo: CreditsInfo | null = null;
 

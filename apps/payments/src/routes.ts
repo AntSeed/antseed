@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { CryptoContext, PaymentCryptoConfig } from './crypto-context.js';
-import { BaseEscrowClient, type ChainConfig } from '@antseed/node';
+import { BaseEscrowClient, formatUsdc, parseUsdc, type ChainConfig } from '@antseed/node';
 
 interface RouteContext {
   cryptoCtx: CryptoContext | null;
@@ -8,18 +8,9 @@ interface RouteContext {
   chainConfig: ChainConfig;
 }
 
-function formatUsdc6(baseUnits: bigint): string {
-  const whole = baseUnits / 1_000_000n;
-  const frac = (baseUnits % 1_000_000n).toString().padStart(6, '0').replace(/0+$/, '') || '0';
-  return `${whole}.${frac}`;
-}
-
-/** Parse a decimal USDC string to base units (6 decimals) without floating-point. */
-function parseUsdc6(s: string): bigint {
-  const [whole = '0', frac = ''] = s.split('.');
-  const fracPadded = frac.slice(0, 6).padEnd(6, '0');
-  return BigInt(whole) * 1_000_000n + BigInt(fracPadded);
-}
+// Use shared utilities from @antseed/node
+const formatUsdc6 = formatUsdc;
+const parseUsdc6 = parseUsdc;
 
 function createClient(config: PaymentCryptoConfig): BaseEscrowClient {
   return new BaseEscrowClient({

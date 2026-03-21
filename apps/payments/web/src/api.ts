@@ -3,9 +3,12 @@ import type { BalanceData, PaymentConfig } from './types';
 const BASE = '';
 
 // Read bearer token from URL param (injected by the desktop app when opening the portal)
+// Cached after first read — URL doesn't change during the session.
+let _cachedToken: string | null | undefined;
 function getBearerToken(): string | null {
-  const params = new URLSearchParams(window.location.search);
-  return params.get('token');
+  if (_cachedToken !== undefined) return _cachedToken;
+  _cachedToken = new URLSearchParams(window.location.search).get('token');
+  return _cachedToken;
 }
 
 async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {

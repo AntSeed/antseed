@@ -100,31 +100,11 @@ export function initChatModule({
   // Module-local state
   // ---------------------------------------------------------------------------
 
-  // FIRST_SIGN_CAP from the escrow contract: 1 USDC = 1,000,000 base units
+  // FIRST_SIGN_CAP from the escrow contract: 1 USDC
   const FIRST_SIGN_CAP_USDC = '1.00';
-  const FIRST_SIGN_CAP_BASE_UNITS = '1000000';
-  const ZERO_SESSION_ID = '0x' + '0'.repeat(64);
-
-  // Monotonic nonce counter — seeded from timestamp, incremented per use
-  let nonceCounter = Math.floor(Date.now() / 1000) * 1000;
-
-  type PendingSpendingAuth = {
-    sessionId: string;
-    signature: string;
-    buyerEvmAddress: string;
-    maxAmountBaseUnits: string;
-    nonce: number;
-    deadline: number;
-  };
 
   let pendingPaymentMessage: { text: string; imageBase64?: string; imageMimeType?: string } | null = null;
   const approvedPeerSessions = new Set<string>();
-  // Stores the latest signed SpendingAuth per peer — the buyer runtime reads this
-  // via IPC to submit the on-chain reservation when the session actually starts.
-  // TODO: Wire this to the buyer runtime via a new IPC channel so the SpendingAuth
-  // is forwarded to the peer via PaymentMux.sendSpendingAuth(). Currently the buyer
-  // runtime's BuyerPaymentManager handles auth automatically for configured peers.
-  const peerSpendingAuths = new Map<string, PendingSpendingAuth>();
 
   let activeConversation: ChatConversation | null = null;
   let activeStreamTurn: number | null = null;
@@ -1165,20 +1145,18 @@ export function initChatModule({
       return;
     }
 
-    const approvalKey = selectedService.peerId || selectedService.value;
-    if (requireManualApproval && isPaidService && hasCredits && !uiState.chatPaymentApprovalVisible && !isSessionApproved(approvalKey)) {
+    if (requireManualApproval && isPaidService && selectedService && hasCredits && !uiState.chatPaymentApprovalVisible) {
+      const approvalKey = selectedService.peerId || selectedService.value;
+      if (!isSessionApproved(approvalKey)) {
         uiState.chatPaymentApprovalVisible = true;
-      uiState.chatPaymentApprovalPeerId = approvalKey;
-      uiState.chatPaymentApprovalPeerName = selectedService.peerLabel || selectedService.label || selectedService.id || selectedService.peerId.slice(0, 12);
-      uiState.chatPaymentApprovalAmount = FIRST_SIGN_CAP_USDC;
-      uiState.chatPaymentApprovalLoading = true; // Disable Approve until peer info loads
-      pendingPaymentMessage = { text, imageBase64, imageMimeType };
-      void fetchPeerInfo(selectedService.peerId).finally(() => {
-        uiState.chatPaymentApprovalLoading = false;
+        uiState.chatPaymentApprovalPeerId = approvalKey;
+        uiState.chatPaymentApprovalPeerName = selectedService.peerLabel || selectedService.label || selectedService.id || selectedService.peerId.slice(0, 12);
+        uiState.chatPaymentApprovalAmount = FIRST_SIGN_CAP_USDC;
+        pendingPaymentMessage = { text, imageBase64, imageMimeType };
+        void fetchPeerInfo(selectedService.peerId);
         notifyUiStateChanged();
-      });
-      notifyUiStateChanged();
-      return;
+        return;
+      }
     }
 
     if (uiState.chatSending) {
@@ -1740,67 +1718,20 @@ export function initChatModule({
   async function approveSessionPayment(): Promise<void> {
     if (!uiState.chatPaymentApprovalPeerId) return;
 
-    uiState.chatPaymentApprovalLoading = true;
+    // Mark session as approved — the buyer runtime's BuyerPaymentManager
+    // handles the actual SpendingAuth signing and on-chain reservation
+    // automatically when the message is sent through the proxy.
+    approvedPeerSessions.add(uiState.chatPaymentApprovalPeerId);
+
+    uiState.chatPaymentApprovalVisible = false;
+    uiState.chatPaymentApprovalLoading = false;
     uiState.chatPaymentApprovalError = null;
     notifyUiStateChanged();
 
-    try {
-      const peerInfo = uiState.chatPaymentApprovalPeerInfo;
-      const sellerEvmAddress = peerInfo?.evmAddress;
-
-      // If the peer has an EVM address and the signing bridge is available,
-      // sign a SpendingAuth. Otherwise, just approve — the buyer runtime's
-      // BuyerPaymentManager handles the actual payment flow automatically.
-      if (sellerEvmAddress && bridge?.paymentsSignSpendingAuth) {
-        const sessionIdBytes = new Uint8Array(32);
-        crypto.getRandomValues(sessionIdBytes);
-        const sessionId = '0x' + Array.from(sessionIdBytes).map(b => b.toString(16).padStart(2, '0')).join('');
-
-        const maxAmountBaseUnits = FIRST_SIGN_CAP_BASE_UNITS;
-        const nonce = ++nonceCounter;
-        const deadline = Math.floor(Date.now() / 1000) + 86400;
-
-        const result = await bridge.paymentsSignSpendingAuth({
-          sellerEvmAddress,
-          sessionId,
-          maxAmountBaseUnits,
-          nonce,
-          deadline,
-          previousConsumption: '0',
-          previousSessionId: ZERO_SESSION_ID,
-        });
-
-        if (result.ok && result.data) {
-          peerSpendingAuths.set(uiState.chatPaymentApprovalPeerId, {
-            sessionId,
-            signature: result.data.signature,
-            buyerEvmAddress: result.data.buyerEvmAddress,
-            maxAmountBaseUnits,
-            nonce,
-            deadline,
-          });
-        }
-      }
-
-      approvedPeerSessions.add(uiState.chatPaymentApprovalPeerId);
-      appendSystemLog('[payment] Session approved for peer ' + uiState.chatPaymentApprovalPeerId.slice(0, 12));
-
-      uiState.chatPaymentApprovalVisible = false;
-      uiState.chatPaymentApprovalLoading = false;
-      notifyUiStateChanged();
-
-      if (pendingPaymentMessage) {
-        const msg = pendingPaymentMessage;
-        pendingPaymentMessage = null;
-        appendSystemLog('[payment] Sending pending message after approval');
-        sendMessage(msg.text, msg.imageBase64, msg.imageMimeType);
-      }
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      appendSystemLog('[payment] Approve failed: ' + errMsg);
-      uiState.chatPaymentApprovalError = errMsg;
-      uiState.chatPaymentApprovalLoading = false;
-      notifyUiStateChanged();
+    if (pendingPaymentMessage) {
+      const msg = pendingPaymentMessage;
+      pendingPaymentMessage = null;
+      sendMessage(msg.text, msg.imageBase64, msg.imageMimeType);
     }
   }
 
