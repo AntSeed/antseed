@@ -55,6 +55,26 @@
   gap: 12px;
 }
 
+.deposit-connect-wrapper {
+  display: flex;
+  justify-content: center;
+  padding: 4px 0;
+}
+
+.deposit-wrong-chain {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+}
+
+.deposit-wrong-chain-text {
+  font-size: 13px;
+  color: var(--danger);
+  text-align: center;
+}
+
 .deposit-connected {
   display: flex;
   align-items: center;

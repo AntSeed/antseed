@@ -1,4 +1,11 @@
 import { useState, useCallback } from 'react';
+import { ConnectButton } from '@rainbow-me/rainbowkit';
+import {
+  useAccount,
+  useWriteContract,
+  useWaitForTransactionReceipt,
+} from 'wagmi';
+import { parseUnits } from 'viem';
 import type { PaymentConfig } from '../types';
 import './DepositView.scss';
 
@@ -7,17 +14,28 @@ interface DepositViewProps {
   onDeposited: () => void;
 }
 
-const BASE_CHAIN_ID = 8453;
-const BASE_CHAIN_ID_HEX = '0x2105';
-
 const ESCROW_ABI = [
-  'function deposit(uint256 amount) external',
-];
+  {
+    name: 'deposit',
+    type: 'function',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'amount', type: 'uint256' }],
+    outputs: [],
+  },
+] as const;
 
 const ERC20_ABI = [
-  'function approve(address spender, uint256 amount) external returns (bool)',
-  'function balanceOf(address owner) external view returns (uint256)',
-];
+  {
+    name: 'approve',
+    type: 'function',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'spender', type: 'address' },
+      { name: 'amount', type: 'uint256' },
+    ],
+    outputs: [{ name: '', type: 'bool' }],
+  },
+] as const;
 
 type DepositMethod = 'crypto' | 'card';
 
@@ -62,103 +80,100 @@ export function DepositView({ config, onDeposited }: DepositViewProps) {
   );
 }
 
-/* ── Crypto Deposit ── */
+/* ── Crypto Deposit (wagmi + RainbowKit) ── */
 
 function CryptoDeposit({ config, onDeposited }: { config: PaymentConfig | null; onDeposited: () => void }) {
-  const [walletAddress, setWalletAddress] = useState<string | null>(null);
+  const { address, isConnected, chain } = useAccount();
   const [amount, setAmount] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [step, setStep] = useState<string | null>(null);
+  const [step, setStep] = useState<'idle' | 'approving' | 'depositing'>('idle');
   const [status, setStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
-  const connectWallet = useCallback(async () => {
-    const ethereum = (window as unknown as { ethereum?: { request: (args: { method: string; params?: unknown[] }) => Promise<unknown> } }).ethereum;
-    if (!ethereum) {
-      setStatus({ type: 'error', message: 'No wallet detected. Install MetaMask or another Web3 wallet.' });
-      return;
-    }
+  // Approve USDC spend
+  const { writeContract: writeApprove, data: approveTxHash } = useWriteContract();
+  const { isSuccess: approveConfirmed } = useWaitForTransactionReceipt({
+    hash: approveTxHash,
+  });
 
-    try {
-      setLoading(true);
-      setStatus(null);
+  // Deposit to escrow
+  const { writeContract: writeDeposit, data: depositTxHash } = useWriteContract();
+  const { isSuccess: depositConfirmed } = useWaitForTransactionReceipt({
+    hash: depositTxHash,
+  });
 
-      const accounts = await ethereum.request({ method: 'eth_requestAccounts' }) as string[];
-      if (!accounts || accounts.length === 0) {
-        setStatus({ type: 'error', message: 'No accounts found.' });
-        return;
-      }
-
-      const chainId = await ethereum.request({ method: 'eth_chainId' }) as string;
-      if (parseInt(chainId, 16) !== BASE_CHAIN_ID) {
-        try {
-          await ethereum.request({
-            method: 'wallet_switchEthereumChain',
-            params: [{ chainId: BASE_CHAIN_ID_HEX }],
-          });
-        } catch {
-          setStatus({ type: 'error', message: 'Please switch to Base network in your wallet.' });
-          return;
-        }
-      }
-
-      setWalletAddress(accounts[0] ?? null);
-    } catch (err) {
-      setStatus({ type: 'error', message: err instanceof Error ? err.message : String(err) });
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  // Check if user is on the correct chain
+  const expectedChainId = config?.evmChainId;
+  const wrongChain = isConnected && chain && expectedChainId && chain.id !== expectedChainId;
 
   const handleDeposit = useCallback(async () => {
-    if (!walletAddress || !amount || parseFloat(amount) <= 0 || !config) return;
+    if (!address || !amount || parseFloat(amount) <= 0 || !config) return;
 
-    const ethereum = (window as unknown as { ethereum?: { request: (args: { method: string; params?: unknown[] }) => Promise<unknown> } }).ethereum;
-    if (!ethereum) return;
-
-    setLoading(true);
     setStatus(null);
+    const usdcAmount = parseUnits(amount, 6);
 
     try {
-      const { BrowserProvider, Contract, parseUnits } = await import('ethers');
-      const provider = new BrowserProvider(ethereum as never);
-      const signer = await provider.getSigner();
-      const usdcAmount = parseUnits(amount, 6);
-
-      setStep('Approving USDC spend...');
-      const usdc = new Contract(config.usdcContractAddress, ERC20_ABI, signer);
-      const approveTx = await usdc.getFunction('approve')(config.escrowContractAddress, usdcAmount);
-      const approveReceipt = await approveTx.wait();
-      if (!approveReceipt) throw new Error('Approval transaction was dropped or replaced');
-
-      setStep('Depositing to escrow...');
-      const escrow = new Contract(config.escrowContractAddress, ESCROW_ABI, signer);
-      const depositTx = await escrow.getFunction('deposit')(usdcAmount);
-      const receipt = await depositTx.wait();
-      if (!receipt) throw new Error('Deposit transaction was dropped or replaced');
-
-      setStep(null);
-      setStatus({ type: 'success', message: `Deposit confirmed: ${receipt.hash}` });
-      setAmount('');
-      onDeposited();
+      // Step 1: Approve
+      setStep('approving');
+      writeApprove({
+        address: config.usdcContractAddress as `0x${string}`,
+        abi: ERC20_ABI,
+        functionName: 'approve',
+        args: [config.escrowContractAddress as `0x${string}`, usdcAmount],
+      }, {
+        onSuccess: () => {
+          // Step 2: Deposit (after approve tx is submitted)
+          setStep('depositing');
+          writeDeposit({
+            address: config.escrowContractAddress as `0x${string}`,
+            abi: ESCROW_ABI,
+            functionName: 'deposit',
+            args: [usdcAmount],
+          }, {
+            onSuccess: () => {
+              setStep('idle');
+              setStatus({ type: 'success', message: 'Deposit submitted! Waiting for confirmation...' });
+              setAmount('');
+              onDeposited();
+            },
+            onError: (err) => {
+              setStep('idle');
+              setStatus({ type: 'error', message: err.message.split('\n')[0] ?? err.message });
+            },
+          });
+        },
+        onError: (err) => {
+          setStep('idle');
+          setStatus({ type: 'error', message: err.message.split('\n')[0] ?? err.message });
+        },
+      });
     } catch (err) {
-      setStep(null);
+      setStep('idle');
       setStatus({ type: 'error', message: err instanceof Error ? err.message : String(err) });
-    } finally {
-      setLoading(false);
     }
-  }, [walletAddress, amount, config, onDeposited]);
+  }, [address, amount, config, writeApprove, writeDeposit, onDeposited]);
+
+  // Show deposit confirmed status
+  if (depositConfirmed && depositTxHash && status?.type !== 'success') {
+    setStatus({ type: 'success', message: `Deposit confirmed: ${depositTxHash}` });
+  }
 
   return (
     <div className="deposit-form">
-      {!walletAddress ? (
-        <button className="btn-primary" onClick={connectWallet} disabled={loading}>
-          {loading ? 'Connecting...' : 'Connect Wallet'}
-        </button>
+      {!isConnected ? (
+        <div className="deposit-connect-wrapper">
+          <ConnectButton />
+        </div>
+      ) : wrongChain ? (
+        <div className="deposit-wrong-chain">
+          <div className="deposit-wrong-chain-text">
+            Please switch to the correct network in your wallet.
+          </div>
+          <ConnectButton />
+        </div>
       ) : (
         <>
           <div className="deposit-connected">
             <div className="deposit-connected-dot" />
-            <span className="deposit-connected-addr">{walletAddress.slice(0, 6)}...{walletAddress.slice(-4)}</span>
+            <span className="deposit-connected-addr">{address?.slice(0, 6)}...{address?.slice(-4)}</span>
             <span className="deposit-connected-label">Connected</span>
           </div>
 
@@ -172,7 +187,7 @@ function CryptoDeposit({ config, onDeposited }: { config: PaymentConfig | null; 
               placeholder="10.00"
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
-              disabled={loading}
+              disabled={step !== 'idle'}
             />
             <span className="hint">Minimum first deposit: 10 USDC</span>
           </div>
@@ -180,9 +195,11 @@ function CryptoDeposit({ config, onDeposited }: { config: PaymentConfig | null; 
           <button
             className="btn-primary"
             onClick={handleDeposit}
-            disabled={loading || !amount || parseFloat(amount) <= 0 || !config}
+            disabled={step !== 'idle' || !amount || parseFloat(amount) <= 0 || !config}
           >
-            {step || (loading ? 'Processing...' : 'Deposit USDC')}
+            {step === 'approving' ? 'Approving USDC...' :
+             step === 'depositing' ? 'Depositing...' :
+             'Deposit USDC'}
           </button>
         </>
       )}

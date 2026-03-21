@@ -22,8 +22,12 @@
     "@antseed/node": "workspace:*",
     "@fastify/cors": "^10.0.0",
     "@fastify/static": "^9.0.0",
+    "@rainbow-me/rainbowkit": "^2.2.10",
+    "@tanstack/react-query": "^5.94.5",
     "ethers": "^6.13.0",
-    "fastify": "^5.7.4"
+    "fastify": "^5.7.4",
+    "viem": "^2.47.6",
+    "wagmi": "^3.5.0"
   },
   "devDependencies": {
     "@noble/ed25519": "^2.1.0",
