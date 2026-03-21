@@ -24,15 +24,6 @@ type DepositMethod = 'crypto' | 'card';
 export function DepositView({ config, onDeposited }: DepositViewProps) {
   const [method, setMethod] = useState<DepositMethod>('crypto');
 
-  if (!config) {
-    return (
-      <div className="card">
-        <div className="card-section-title">Deposit USDC</div>
-        <div className="deposit-loading">Loading payment configuration...</div>
-      </div>
-    );
-  }
-
   return (
     <div className="deposit">
       <div className="card">
@@ -73,7 +64,7 @@ export function DepositView({ config, onDeposited }: DepositViewProps) {
 
 /* ── Crypto Deposit ── */
 
-function CryptoDeposit({ config, onDeposited }: { config: PaymentConfig; onDeposited: () => void }) {
+function CryptoDeposit({ config, onDeposited }: { config: PaymentConfig | null; onDeposited: () => void }) {
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [amount, setAmount] = useState('');
   const [loading, setLoading] = useState(false);
@@ -119,7 +110,7 @@ function CryptoDeposit({ config, onDeposited }: { config: PaymentConfig; onDepos
   }, []);
 
   const handleDeposit = useCallback(async () => {
-    if (!walletAddress || !amount || parseFloat(amount) <= 0) return;
+    if (!walletAddress || !amount || parseFloat(amount) <= 0 || !config) return;
 
     const ethereum = (window as unknown as { ethereum?: { request: (args: { method: string; params?: unknown[] }) => Promise<unknown> } }).ethereum;
     if (!ethereum) return;
@@ -189,10 +180,13 @@ function CryptoDeposit({ config, onDeposited }: { config: PaymentConfig; onDepos
           <button
             className="btn-primary"
             onClick={handleDeposit}
-            disabled={loading || !amount || parseFloat(amount) <= 0}
+            disabled={loading || !amount || parseFloat(amount) <= 0 || !config}
           >
             {step || (loading ? 'Processing...' : 'Deposit USDC')}
           </button>
+          {!config && (
+            <span className="hint">Run <code style={{ fontSize: 12 }}>antseed init</code> to configure payment settings.</span>
+          )}
         </>
       )}
 
@@ -207,8 +201,8 @@ function CryptoDeposit({ config, onDeposited }: { config: PaymentConfig; onDepos
 
 /* ── Crossmint ── */
 
-function CrossmintDeposit({ config }: { config: PaymentConfig }) {
-  if (!config.crossmintConfigured) {
+function CrossmintDeposit({ config }: { config: PaymentConfig | null }) {
+  if (!config || !config.crossmintConfigured) {
     return (
       <div className="deposit-form">
         <div className="deposit-card-coming">

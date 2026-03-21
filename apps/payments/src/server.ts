@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { readFile } from 'node:fs/promises';
+import { resolveChainConfig } from '@antseed/node';
 import { registerRoutes } from './routes.js';
 import { loadCryptoContext, type CryptoContext, type PaymentCryptoConfig } from './crypto-context.js';
 
@@ -29,12 +30,9 @@ export async function createServer(options: PaymentsServerOptions) {
 
   // Authenticate API requests with bearer token (skip for static files and GET /api/config)
   fastify.addHook('onRequest', async (request, reply) => {
-    // Allow static file serving and health checks
     if (!request.url.startsWith('/api/')) return;
-    // Allow unauthenticated config read only (public contract addresses)
     if (request.method === 'GET' && request.url.startsWith('/api/config')) return;
     if (request.method === 'GET' && request.url.startsWith('/api/transactions')) return;
-    // All other API requests require bearer token (balance, withdrawals)
     const auth = request.headers.authorization;
     if (auth !== `Bearer ${bearerToken}`) {
       return reply.status(401).send({ ok: false, error: 'Unauthorized' });
@@ -54,43 +52,47 @@ export async function createServer(options: PaymentsServerOptions) {
     // Web dir may not exist in dev mode or CLI headless use
   }
 
-  // Load crypto context
+  // Load crypto context (identity)
   let cryptoCtx: CryptoContext | null = null;
-  let cryptoConfig: PaymentCryptoConfig | null = null;
-
   try {
     cryptoCtx = await loadCryptoContext({
       identityHex: options.identityHex,
       dataDir: options.dataDir,
     });
-
-    // Load config for contract addresses
-    // dataDir is the .antseed directory itself (e.g. ~/.antseed), not the parent
-    try {
-      const cfgPath = options.dataDir
-        ? path.join(options.dataDir, 'config.json')
-        : path.join(homedir(), '.antseed', 'config.json');
-      const raw = await readFile(cfgPath, 'utf-8');
-      const config = JSON.parse(raw) as Record<string, unknown>;
-      const payments = (config.payments ?? {}) as Record<string, unknown>;
-      const crypto = (payments.crypto ?? {}) as Record<string, unknown>;
-      if (crypto.rpcUrl && crypto.escrowContractAddress && crypto.usdcContractAddress) {
-        cryptoConfig = {
-          rpcUrl: String(crypto.rpcUrl),
-          escrowContractAddress: String(crypto.escrowContractAddress),
-          usdcContractAddress: String(crypto.usdcContractAddress),
-        };
-      }
-    } catch {
-      // Config not available
-    }
   } catch (err) {
     console.warn('[payments] Failed to load crypto context:', err instanceof Error ? err.message : String(err));
   }
 
-  registerRoutes(fastify, { cryptoCtx, cryptoConfig });
+  // Resolve chain config: protocol defaults + user overrides from config.json
+  let userOverrides: Record<string, unknown> = {};
+  try {
+    const cfgPath = options.dataDir
+      ? path.join(options.dataDir, 'config.json')
+      : path.join(homedir(), '.antseed', 'config.json');
+    const raw = await readFile(cfgPath, 'utf-8');
+    const config = JSON.parse(raw) as Record<string, unknown>;
+    const payments = (config.payments ?? {}) as Record<string, unknown>;
+    userOverrides = (payments.crypto ?? {}) as Record<string, unknown>;
+  } catch {
+    // No config file — use protocol defaults
+  }
 
-  // SPA fallback — only if static files are available (reply.sendFile requires fastifyStatic)
+  const chainConfig = resolveChainConfig({
+    chainId: userOverrides.chainId as string | undefined,
+    rpcUrl: userOverrides.rpcUrl as string | undefined,
+    escrowContractAddress: userOverrides.escrowContractAddress as string | undefined,
+    usdcContractAddress: userOverrides.usdcContractAddress as string | undefined,
+  });
+
+  const cryptoConfig: PaymentCryptoConfig = {
+    rpcUrl: chainConfig.rpcUrl,
+    escrowContractAddress: chainConfig.escrowContractAddress,
+    usdcContractAddress: chainConfig.usdcContractAddress,
+  };
+
+  registerRoutes(fastify, { cryptoCtx, cryptoConfig, chainConfig });
+
+  // SPA fallback — only if static files are available
   if (staticRegistered) {
     fastify.setNotFoundHandler((request, reply) => {
       if (request.url.startsWith('/api/') || request.url.startsWith('/assets/')) {
@@ -100,7 +102,6 @@ export async function createServer(options: PaymentsServerOptions) {
     });
   }
 
-  // Expose bearer token for authorized consumers (desktop app injects it via URL param)
   (fastify as unknown as { bearerToken: string }).bearerToken = bearerToken;
 
   return fastify;

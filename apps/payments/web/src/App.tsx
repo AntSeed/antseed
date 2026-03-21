@@ -5,11 +5,6 @@ import { BalanceView } from './components/BalanceView';
 import { DepositView } from './components/DepositView';
 import { WithdrawView } from './components/WithdrawView';
 
-function truncateAddress(addr: string): string {
-  if (addr.length <= 10) return addr;
-  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
-}
-
 function AntIcon({ size = 24 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -28,17 +23,39 @@ function AntIcon({ size = 24 }: { size?: number }) {
   );
 }
 
+function ThemeToggle({ isDark, onToggle }: { isDark: boolean; onToggle: () => void }) {
+  return (
+    <button className="theme-toggle" onClick={onToggle} title={isDark ? 'Switch to light' : 'Switch to dark'}>
+      {isDark ? (
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="3" stroke="currentColor" strokeWidth="1.2"/><path d="M8 2V3.5M8 12.5V14M2 8H3.5M12.5 8H14M3.8 3.8L4.8 4.8M11.2 11.2L12.2 12.2M3.8 12.2L4.8 11.2M11.2 4.8L12.2 3.8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/></svg>
+      ) : (
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M13.5 10A5.5 5.5 0 016 2.5 5.5 5.5 0 108 13.5a5.5 5.5 0 005.5-3.5z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round"/></svg>
+      )}
+    </button>
+  );
+}
+
 export function App() {
   const [activeTab, setActiveTab] = useState<'overview' | 'deposit' | 'withdraw'>('deposit');
   const [balance, setBalance] = useState<BalanceData | null>(null);
   const [config, setConfig] = useState<PaymentConfig | null>(null);
+  const [isDark, setIsDark] = useState(() => {
+    const saved = localStorage.getItem('antseed-payments-theme');
+    if (saved) return saved === 'dark';
+    return window.matchMedia('(prefers-color-scheme: dark)').matches;
+  });
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
+    localStorage.setItem('antseed-payments-theme', isDark ? 'dark' : 'light');
+  }, [isDark]);
 
   const refreshBalance = useCallback(async () => {
     try {
       const data = await getBalance();
       setBalance(data);
     } catch {
-      // Balance not available yet — that's OK, show deposit UI anyway
+      // Balance not available yet
     }
   }, []);
 
@@ -50,38 +67,30 @@ export function App() {
   const available = balance ? parseFloat(balance.available) : 0;
   const reserved = balance ? parseFloat(balance.reserved) : 0;
   const creditLimit = balance ? parseFloat(balance.creditLimit) : 0;
-  const hasBalance = balance !== null;
 
   return (
-    <div className="portal">
-      {/* ── Header ── */}
-      <header className="portal-header">
-        <div className="portal-brand">
-          <AntIcon size={22} />
-          <span className="portal-title">AntSeed</span>
-        </div>
-        <div className="portal-header-right">
-          <div className="portal-network-badge">
-            <span className="portal-network-dot" />
-            Base
+    <div className="portal-page">
+      <div className="portal-box">
+        {/* ── Header ── */}
+        <div className="portal-header">
+          <div className="portal-brand">
+            <AntIcon size={20} />
+            <span className="portal-title">AntSeed</span>
           </div>
-          {balance?.evmAddress && (
-            <span className="portal-address" title={balance.evmAddress}>
-              {truncateAddress(balance.evmAddress)}
-            </span>
-          )}
+          <div className="portal-header-right">
+            <ThemeToggle isDark={isDark} onToggle={() => setIsDark(d => !d)} />
+            <div className="portal-network">
+              <span className="portal-network-dot" />
+              Base
+            </div>
+          </div>
         </div>
-      </header>
 
-      {/* ── Body ── */}
-      <div className="portal-body">
-        {/* ── Balance bar (shows zeroes if no balance yet) ── */}
+        {/* ── Balance bar ── */}
         <div className="balance-bar">
           <div className="balance-bar-item">
             <span className="balance-bar-label">Available</span>
-            <span className="balance-bar-value balance-bar-value--accent">
-              ${available.toFixed(2)}
-            </span>
+            <span className="balance-bar-value balance-bar-value--accent">${available.toFixed(2)}</span>
           </div>
           <div className="balance-bar-item">
             <span className="balance-bar-label">Reserved</span>
@@ -95,42 +104,33 @@ export function App() {
 
         {/* ── Tabs ── */}
         <nav className="tabs">
-          <button
-            className={`tab ${activeTab === 'overview' ? 'tab-active' : ''}`}
-            onClick={() => setActiveTab('overview')}
-          >
-            Overview
-          </button>
-          <button
-            className={`tab ${activeTab === 'deposit' ? 'tab-active' : ''}`}
-            onClick={() => setActiveTab('deposit')}
-          >
-            Deposit
-          </button>
-          <button
-            className={`tab ${activeTab === 'withdraw' ? 'tab-active' : ''}`}
-            onClick={() => setActiveTab('withdraw')}
-          >
-            Withdraw
-          </button>
+          {(['overview', 'deposit', 'withdraw'] as const).map(tab => (
+            <button
+              key={tab}
+              className={`tab ${activeTab === tab ? 'tab-active' : ''}`}
+              onClick={() => setActiveTab(tab)}
+            >
+              {tab.charAt(0).toUpperCase() + tab.slice(1)}
+            </button>
+          ))}
         </nav>
 
-        {/* ── Tab content ── */}
-        <main>
+        {/* ── Content ── */}
+        <div className="portal-content">
           {activeTab === 'overview' && <BalanceView balance={balance} />}
           {activeTab === 'deposit' && <DepositView config={config} onDeposited={refreshBalance} />}
           {activeTab === 'withdraw' && <WithdrawView balance={balance} onAction={refreshBalance} />}
-        </main>
+        </div>
       </div>
 
       {/* ── Footer ── */}
-      <footer className="portal-footer">
-        <span className="portal-footer-left">AntSeed Payments</span>
-        <div className="portal-footer-right">
-          <a href="https://antseed.com" target="_blank" rel="noopener noreferrer" className="portal-footer-link">antseed.com</a>
-          <a href="https://docs.antseed.com" target="_blank" rel="noopener noreferrer" className="portal-footer-link">Docs</a>
+      <div className="portal-footer">
+        <span>AntSeed Payments</span>
+        <div className="portal-footer-links">
+          <a href="https://antseed.com" target="_blank" rel="noopener noreferrer">antseed.com</a>
+          <a href="https://docs.antseed.com" target="_blank" rel="noopener noreferrer">Docs</a>
         </div>
-      </footer>
+      </div>
     </div>
   );
 }

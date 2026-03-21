@@ -17,7 +17,7 @@ import {
 } from './process-manager.js';
 import { registerPiChatHandlers } from './pi-chat-engine.js';
 import { ensureSecureIdentity, secureIdentityEnv, getSecureIdentity } from './identity.js';
-import { identityToEvmAddress, identityToEvmWallet, BaseEscrowClient, signSpendingAuth, makeEscrowDomain } from '@antseed/node';
+import { identityToEvmAddress, identityToEvmWallet, BaseEscrowClient, signSpendingAuth, makeEscrowDomain, resolveChainConfig } from '@antseed/node';
 import { createServer as createPaymentsServer } from '@antseed/payments';
 import type { LogEvent, RuntimeActivityEvent } from './log-parser.js';
 import { parseRuntimeActivityFromLog } from './log-parser.js';
@@ -570,20 +570,27 @@ function formatUsdc6(baseUnits: bigint): string {
 
 let cachedCreditsInfo: CreditsInfo | null = null;
 
-// Cached crypto config — invalidated on config update
+// Cached crypto config — invalidated on config update. Uses protocol defaults
+// from resolveChainConfig with optional user overrides from config.json.
 let cachedCryptoConfig: { rpcUrl: string; escrowAddress: string; usdcAddress: string; chainId: number } | null = null;
 
 async function loadCachedCryptoConfig(): Promise<typeof cachedCryptoConfig> {
   if (cachedCryptoConfig) return cachedCryptoConfig;
-  const config = await readConfig(ACTIVE_CONFIG_PATH);
-  const payments = asRecord(config.payments);
-  const crypto = asRecord(payments.crypto);
-  const rpcUrl = asString(crypto.rpcUrl as string, '');
-  const escrowAddress = asString(crypto.escrowContractAddress as string, '');
-  const usdcAddress = asString(crypto.usdcContractAddress as string, '');
-  const chainId = Number(asString(crypto.chainId as string, '8453'));
-  if (!rpcUrl || !escrowAddress || !usdcAddress) return null;
-  cachedCryptoConfig = { rpcUrl, escrowAddress, usdcAddress, chainId };
+  let overrides: Record<string, unknown> = {};
+  try {
+    const config = await readConfig(ACTIVE_CONFIG_PATH);
+    const payments = asRecord(config.payments);
+    overrides = asRecord(payments.crypto);
+  } catch {
+    // No config — use protocol defaults
+  }
+  const cc = resolveChainConfig({
+    chainId: asString(overrides.chainId as string, '') || undefined,
+    rpcUrl: asString(overrides.rpcUrl as string, '') || undefined,
+    escrowContractAddress: asString(overrides.escrowContractAddress as string, '') || undefined,
+    usdcContractAddress: asString(overrides.usdcContractAddress as string, '') || undefined,
+  });
+  cachedCryptoConfig = { rpcUrl: cc.rpcUrl, escrowAddress: cc.escrowContractAddress, usdcAddress: cc.usdcContractAddress, chainId: cc.evmChainId };
   return cachedCryptoConfig;
 }
 
@@ -595,10 +602,6 @@ async function refreshCreditsInfo(): Promise<CreditsInfo> {
 
   const evmAddress = identityToEvmAddress(identity);
   const cc = await loadCachedCryptoConfig();
-
-  if (!cc) {
-    return { evmAddress, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
-  }
 
   const client = new BaseEscrowClient({ rpcUrl: cc.rpcUrl, contractAddress: cc.escrowAddress, usdcAddress: cc.usdcAddress });
 
@@ -674,9 +677,6 @@ ipcMain.handle('payments:sign-spending-auth', async (_event, params: {
     }
 
     const cc = await loadCachedCryptoConfig();
-    if (!cc) {
-      return { ok: false, error: 'No escrow contract configured' };
-    }
 
     const wallet = identityToEvmWallet(identity);
     const domain = makeEscrowDomain(cc.chainId, cc.escrowAddress);

@@ -1,9 +1,3 @@
-.deposit {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
 .deposit-loading {
   font-size: 13px;
   color: var(--text-muted);
@@ -14,27 +8,24 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
-  margin-bottom: 20px;
+  margin-bottom: 18px;
 }
 
 .deposit-method {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   padding: 16px 12px;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  background: var(--input-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
   cursor: pointer;
   transition: all 0.15s;
   font-family: inherit;
   text-align: center;
 
-  &:hover {
-    background: var(--bg-card-hover);
-    border-color: var(--border-strong);
-  }
+  &:hover { border-color: var(--input-border); }
 
   &--active {
     border-color: var(--accent-border);
@@ -44,11 +35,7 @@
 
 .deposit-method-icon {
   color: var(--text-muted);
-  display: flex;
-
-  .deposit-method--active & {
-    color: var(--accent);
-  }
+  .deposit-method--active & { color: var(--accent); }
 }
 
 .deposit-method-label {
@@ -65,7 +52,7 @@
 .deposit-form {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
 }
 
 .deposit-connected {
@@ -75,7 +62,7 @@
   padding: 10px 14px;
   background: var(--accent-dim);
   border: 1px solid var(--accent-border);
-  border-radius: var(--radius-sm);
+  border-radius: 8px;
 }
 
 .deposit-connected-dot {
@@ -89,14 +76,14 @@
 
 .deposit-connected-addr {
   font-size: 12px;
-  font-family: var(--font-mono);
+  font-family: 'SF Mono', 'Fira Code', monospace;
   color: var(--text-primary);
 }
 
 .deposit-connected-label {
   margin-left: auto;
   font-size: 11px;
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 500;
 }
 
@@ -105,14 +92,11 @@
   flex-direction: column;
   align-items: center;
   text-align: center;
-  padding: 28px 16px;
-  gap: 8px;
+  padding: 24px 16px;
+  gap: 6px;
 }
 
-.deposit-card-coming-icon {
-  color: var(--text-faint);
-  margin-bottom: 4px;
-}
+.deposit-card-coming-icon { color: var(--text-faint); margin-bottom: 2px; }
 
 .deposit-card-coming-title {
   font-size: 14px;

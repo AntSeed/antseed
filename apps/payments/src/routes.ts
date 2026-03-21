@@ -1,10 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 import type { CryptoContext, PaymentCryptoConfig } from './crypto-context.js';
-import { BaseEscrowClient } from '@antseed/node';
+import { BaseEscrowClient, type ChainConfig } from '@antseed/node';
 
 interface RouteContext {
   cryptoCtx: CryptoContext | null;
-  cryptoConfig: PaymentCryptoConfig | null;
+  cryptoConfig: PaymentCryptoConfig;
+  chainConfig: ChainConfig;
 }
 
 function formatUsdc6(baseUnits: bigint): string {
@@ -32,14 +33,13 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
   // Shared escrow client — reused across requests (stateless, only holds RPC URL + ABI)
   let escrowClient: BaseEscrowClient | null = null;
   function getClient(): BaseEscrowClient | null {
-    if (!ctx.cryptoConfig) return null;
     if (!escrowClient) escrowClient = createClient(ctx.cryptoConfig);
     return escrowClient;
   }
 
   fastify.get('/api/balance', async (_request, reply) => {
-    if (!ctx.cryptoCtx || !ctx.cryptoConfig) {
-      return reply.status(503).send({ ok: false, error: 'Crypto context not configured' });
+    if (!ctx.cryptoCtx) {
+      return reply.status(503).send({ ok: false, error: 'Identity not configured — run antseed init' });
     }
 
     try {
@@ -63,13 +63,10 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
     }
   });
 
-  fastify.get('/api/config', async (_request, reply) => {
-    if (!ctx.cryptoConfig) {
-      return reply.status(503).send({ ok: false, error: 'Crypto config not available' });
-    }
-
+  fastify.get('/api/config', async () => {
     return {
-      chainId: 'base-mainnet',
+      chainId: ctx.chainConfig.chainId,
+      evmChainId: ctx.chainConfig.evmChainId,
       rpcUrl: ctx.cryptoConfig.rpcUrl,
       escrowContractAddress: ctx.cryptoConfig.escrowContractAddress,
       usdcContractAddress: ctx.cryptoConfig.usdcContractAddress,
@@ -83,8 +80,8 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
   });
 
   fastify.post('/api/withdraw/request', async (request, reply) => {
-    if (!ctx.cryptoCtx || !ctx.cryptoConfig) {
-      return reply.status(503).send({ ok: false, error: 'Crypto context not configured' });
+    if (!ctx.cryptoCtx) {
+      return reply.status(503).send({ ok: false, error: 'Identity not configured — run antseed init' });
     }
 
     const body = request.body as { amount?: string } | null;
@@ -104,8 +101,8 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
   });
 
   fastify.post('/api/withdraw/execute', async (_request, reply) => {
-    if (!ctx.cryptoCtx || !ctx.cryptoConfig) {
-      return reply.status(503).send({ ok: false, error: 'Crypto context not configured' });
+    if (!ctx.cryptoCtx) {
+      return reply.status(503).send({ ok: false, error: 'Identity not configured — run antseed init' });
     }
 
     try {
@@ -118,8 +115,8 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
   });
 
   fastify.post('/api/withdraw/cancel', async (_request, reply) => {
-    if (!ctx.cryptoCtx || !ctx.cryptoConfig) {
-      return reply.status(503).send({ ok: false, error: 'Crypto context not configured' });
+    if (!ctx.cryptoCtx) {
+      return reply.status(503).send({ ok: false, error: 'Identity not configured — run antseed init' });
     }
 
     try {
