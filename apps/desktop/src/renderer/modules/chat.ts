@@ -1167,7 +1167,7 @@ export function initChatModule({
     if (isPaidService && hasCredits && !uiState.chatPaymentApprovalVisible && !isSessionApproved(selectedService.peerId)) {
       uiState.chatPaymentApprovalVisible = true;
       uiState.chatPaymentApprovalPeerId = selectedService.peerId;
-      uiState.chatPaymentApprovalPeerName = selectedService.peerLabel || selectedService.peerId.slice(0, 12);
+      uiState.chatPaymentApprovalPeerName = selectedService.peerLabel || selectedService.label || selectedService.id || selectedService.peerId.slice(0, 12);
       uiState.chatPaymentApprovalAmount = FIRST_SIGN_CAP_USDC;
       uiState.chatPaymentApprovalLoading = true; // Disable Approve until peer info loads
       pendingPaymentMessage = { text, imageBase64, imageMimeType };
@@ -1736,7 +1736,7 @@ export function initChatModule({
   // ---------------------------------------------------------------------------
 
   async function approveSessionPayment(): Promise<void> {
-    if (!bridge?.paymentsSignSpendingAuth || !uiState.chatPaymentApprovalPeerId) return;
+    if (!uiState.chatPaymentApprovalPeerId) return;
 
     uiState.chatPaymentApprovalLoading = true;
     uiState.chatPaymentApprovalError = null;
@@ -1746,41 +1746,39 @@ export function initChatModule({
       const peerInfo = uiState.chatPaymentApprovalPeerInfo;
       const sellerEvmAddress = peerInfo?.evmAddress;
 
-      if (!sellerEvmAddress) {
-        throw new Error('Peer EVM address not available. Cannot sign spending authorization.');
+      // If the peer has an EVM address and the signing bridge is available,
+      // sign a SpendingAuth. Otherwise, just approve — the buyer runtime's
+      // BuyerPaymentManager handles the actual payment flow automatically.
+      if (sellerEvmAddress && bridge?.paymentsSignSpendingAuth) {
+        const sessionIdBytes = new Uint8Array(32);
+        crypto.getRandomValues(sessionIdBytes);
+        const sessionId = '0x' + Array.from(sessionIdBytes).map(b => b.toString(16).padStart(2, '0')).join('');
+
+        const maxAmountBaseUnits = FIRST_SIGN_CAP_BASE_UNITS;
+        const nonce = ++nonceCounter;
+        const deadline = Math.floor(Date.now() / 1000) + 86400;
+
+        const result = await bridge.paymentsSignSpendingAuth({
+          sellerEvmAddress,
+          sessionId,
+          maxAmountBaseUnits,
+          nonce,
+          deadline,
+          previousConsumption: '0',
+          previousSessionId: ZERO_SESSION_ID,
+        });
+
+        if (result.ok && result.data) {
+          peerSpendingAuths.set(uiState.chatPaymentApprovalPeerId, {
+            sessionId,
+            signature: result.data.signature,
+            buyerEvmAddress: result.data.buyerEvmAddress,
+            maxAmountBaseUnits,
+            nonce,
+            deadline,
+          });
+        }
       }
-
-      const sessionIdBytes = new Uint8Array(32);
-      crypto.getRandomValues(sessionIdBytes);
-      const sessionId = '0x' + Array.from(sessionIdBytes).map(b => b.toString(16).padStart(2, '0')).join('');
-
-      const maxAmountBaseUnits = FIRST_SIGN_CAP_BASE_UNITS;
-      const nonce = ++nonceCounter;
-      const deadline = Math.floor(Date.now() / 1000) + 86400;
-
-      const result = await bridge.paymentsSignSpendingAuth({
-        sellerEvmAddress,
-        sessionId,
-        maxAmountBaseUnits,
-        nonce,
-        deadline,
-        previousConsumption: '0',
-        previousSessionId: ZERO_SESSION_ID,
-      });
-
-      if (!result.ok || !result.data) {
-        throw new Error(result.error || 'Failed to sign spending authorization');
-      }
-
-      // Store the signed auth for the buyer runtime to forward to the peer
-      peerSpendingAuths.set(uiState.chatPaymentApprovalPeerId, {
-        sessionId,
-        signature: result.data.signature,
-        buyerEvmAddress: result.data.buyerEvmAddress,
-        maxAmountBaseUnits,
-        nonce,
-        deadline,
-      });
 
       approvedPeerSessions.add(uiState.chatPaymentApprovalPeerId);
 

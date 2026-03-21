@@ -29,67 +29,57 @@ export function SessionApprovalCard({
 }: SessionApprovalCardProps) {
   if (!visible) return null;
 
-  const displayName = peerName || 'Unknown peer';
+  const displayName = peerName || 'Peer';
 
   return (
-    <div className={styles.approvalCard}>
-      <div className={styles.approvalHeader}>
-        <span className={styles.approvalTitle}>Session Approval Required</span>
+    <div className={styles.bubbleWrapper}>
+      <div className={styles.bubbleAvatar}>
+        <span className={styles.bubbleAvatarLetter}>{displayName.charAt(0).toUpperCase()}</span>
       </div>
+      <div className={styles.bubble}>
+        <div className={styles.bubbleName}>{displayName}</div>
 
-      {peerInfo && (
-        <div className={styles.peerStats}>
-          <div className={styles.statItem}>
-            <span className={styles.statValue}>{peerInfo.reputation}</span>
-            <span className={styles.statLabel}>Reputation</span>
+        {peerInfo && (
+          <div className={styles.peerStats}>
+            <span className={styles.statChip}>{peerInfo.reputation} rep</span>
+            {peerInfo.sessionCount !== null && (
+              <span className={styles.statChip}>{peerInfo.sessionCount} sessions</span>
+            )}
+            {peerInfo.networkAgeDays !== null && (
+              <span className={styles.statChip}>{peerInfo.networkAgeDays}d in network</span>
+            )}
+            {peerInfo.disputeCount !== null && peerInfo.disputeCount > 0 && (
+              <span className={`${styles.statChip} ${styles.statChipWarn}`}>{peerInfo.disputeCount} disputes</span>
+            )}
           </div>
-          {peerInfo.sessionCount !== null && (
-            <div className={styles.statItem}>
-              <span className={styles.statValue}>{peerInfo.sessionCount}</span>
-              <span className={styles.statLabel}>Sessions</span>
-            </div>
-          )}
-          {peerInfo.networkAgeDays !== null && (
-            <div className={styles.statItem}>
-              <span className={styles.statValue}>{peerInfo.networkAgeDays}d</span>
-              <span className={styles.statLabel}>In Network</span>
-            </div>
-          )}
-          {peerInfo.disputeCount !== null && peerInfo.disputeCount > 0 && (
-            <div className={`${styles.statItem} ${styles.statWarn}`}>
-              <span className={styles.statValue}>{peerInfo.disputeCount}</span>
-              <span className={styles.statLabel}>Disputes</span>
-            </div>
-          )}
+        )}
+
+        <p className={styles.bubbleText}>
+          To start your session, approve a pre-deposit of{' '}
+          <strong>${amount}</strong>.
+          This is deducted from your credits.
+        </p>
+
+        {error && (
+          <div className={styles.bubbleError}>{error}</div>
+        )}
+
+        <div className={styles.bubbleActions}>
+          <button
+            className={styles.approveBtn}
+            onClick={onApprove}
+            disabled={loading}
+          >
+            {loading ? 'Approving...' : 'Approve'}
+          </button>
+          <button
+            className={styles.cancelBtn}
+            onClick={onCancel}
+            disabled={loading}
+          >
+            Cancel
+          </button>
         </div>
-      )}
-
-      <p className={styles.approvalMessage}>
-        To start your session, approve a pre-deposit of{' '}
-        <strong>${amount}</strong> to{' '}
-        <strong>{displayName}</strong>.
-        This is deducted from your credits.
-      </p>
-
-      {error && (
-        <div className={styles.approvalError}>{error}</div>
-      )}
-
-      <div className={styles.approvalActions}>
-        <button
-          className={styles.approveBtn}
-          onClick={onApprove}
-          disabled={loading}
-        >
-          {loading ? 'Signing...' : 'Approve'}
-        </button>
-        <button
-          className={styles.cancelBtn}
-          onClick={onCancel}
-          disabled={loading}
-        >
-          Cancel
-        </button>
       </div>
     </div>
   );
