@@ -6,7 +6,7 @@ export function registerPaymentsCommand(program: Command): void {
     .description('Launch the buyer payments portal')
     .option('-p, --port <port>', 'Portal port', '3118')
     .action(async (options: { port: string }) => {
-      const port = Number(options.port) || 3118;
+      const port = Number(options.port) > 0 ? Number(options.port) : 3118;
 
       try {
         const { createServer } = await import('@antseed/payments');

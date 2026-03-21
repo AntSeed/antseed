@@ -31,9 +31,10 @@ export async function createServer(options: PaymentsServerOptions) {
   fastify.addHook('onRequest', async (request, reply) => {
     // Allow static file serving and health checks
     if (!request.url.startsWith('/api/')) return;
-    // Allow unauthenticated balance and config reads (not sensitive)
-    if (request.method === 'GET') return;
-    // Require bearer token for all write operations (withdrawals)
+    // Allow unauthenticated config read only (public contract addresses)
+    if (request.method === 'GET' && request.url.startsWith('/api/config')) return;
+    if (request.method === 'GET' && request.url.startsWith('/api/transactions')) return;
+    // All other API requests require bearer token (balance, withdrawals)
     const auth = request.headers.authorization;
     if (auth !== `Bearer ${bearerToken}`) {
       return reply.status(401).send({ ok: false, error: 'Unauthorized' });

@@ -11,7 +11,7 @@ function getBearerToken(): string | null {
 async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
   const token = getBearerToken();
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (token && options?.method === 'POST') {
+  if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }
   const res = await fetch(`${BASE}${url}`, {
