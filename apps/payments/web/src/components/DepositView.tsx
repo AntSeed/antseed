@@ -49,14 +49,14 @@ export function DepositView({ config, buyerEvmAddress, onDeposited }: DepositVie
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="1" y="3" width="14" height="10" rx="2" stroke="currentColor" strokeWidth="1.2"/><line x1="1" y1="6.5" x2="15" y2="6.5" stroke="currentColor" strokeWidth="1.2"/><line x1="4" y1="9.5" x2="8" y2="9.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/></svg>
             </span>
             <span className="deposit-method-label">Credit Card</span>
-            <span className="deposit-method-desc">Coming soon</span>
+            <span className="deposit-method-desc">Visa, Mastercard, etc.</span>
           </button>
         </div>
 
         {method === 'crypto' ? (
           <CryptoDeposit config={config} onDeposited={onDeposited} />
         ) : (
-          <CardDepositPlaceholder />
+          <CardDeposit config={config} buyerEvmAddress={buyerEvmAddress} onDeposited={onDeposited} />
         )}
       </div>
     </div>
@@ -197,21 +197,113 @@ function CryptoDeposit({ config, onDeposited }: { config: PaymentConfig | null; 
   );
 }
 
-/* ── Credit Card (coming soon) ── */
+/* ── Credit Card Deposit (Transak One) ── */
 
-function CardDepositPlaceholder() {
+const TRANSAK_API_KEY = '0bb5929f-38a6-4f2b-99e8-c46defc6d854';
+const TRANSAK_ENV = 'STAGING'; // Change to 'PRODUCTION' when live
+
+/**
+ * Encode depositFor(address,uint256) calldata.
+ * Function selector: keccak256("depositFor(address,uint256)") = first 4 bytes
+ * We compute it manually to avoid importing ethers just for this.
+ */
+function encodeDepositForCalldata(buyerAddress: string, amountBaseUnits: string): string {
+  // depositFor(address,uint256) selector
+  const selector = '0x2f4f21e2'; // keccak256("depositFor(address,uint256)")[:4]
+  // Pad address to 32 bytes (remove 0x, pad left with zeros)
+  const addressPadded = buyerAddress.slice(2).toLowerCase().padStart(64, '0');
+  // Pad amount to 32 bytes (convert to hex, pad left)
+  const amountHex = BigInt(amountBaseUnits).toString(16).padStart(64, '0');
+  return selector + addressPadded + amountHex;
+}
+
+function CardDeposit({ config, buyerEvmAddress, onDeposited }: {
+  config: PaymentConfig | null;
+  buyerEvmAddress: string | null;
+  onDeposited: () => void;
+}) {
+  const [amount, setAmount] = useState('10');
+  const [loading, setLoading] = useState(false);
+
+  const handlePayWithCard = useCallback(async () => {
+    if (!config || !buyerEvmAddress || !amount || parseFloat(amount) <= 0) return;
+
+    setLoading(true);
+
+    try {
+      const { Transak } = await import('@transak/transak-sdk');
+
+      const amountBaseUnits = (parseFloat(amount) * 1_000_000).toFixed(0);
+      const calldata = encodeDepositForCalldata(buyerEvmAddress, amountBaseUnits);
+
+      const transak = new Transak({
+        apiKey: TRANSAK_API_KEY,
+        environment: TRANSAK_ENV as 'STAGING' | 'PRODUCTION',
+        // Transak One params for smart contract call
+        smartContractAddress: config.escrowContractAddress,
+        calldata,
+        cryptoCurrencyCode: 'USDC',
+        network: 'base',
+        walletAddress: buyerEvmAddress,
+        estimatedGasLimit: 150000,
+        fiatAmount: parseFloat(amount),
+        fiatCurrency: 'USD',
+        disableWalletAddressForm: true,
+        isTransakOne: true,
+      });
+
+      transak.init();
+
+      // Listen for success
+      transak.on('TRANSAK_ORDER_SUCCESSFUL', () => {
+        transak.close();
+        setLoading(false);
+        onDeposited();
+      });
+
+      transak.on('TRANSAK_ORDER_FAILED', () => {
+        transak.close();
+        setLoading(false);
+      });
+
+      transak.on('TRANSAK_WIDGET_CLOSE', () => {
+        setLoading(false);
+      });
+    } catch (err) {
+      console.error('[transak] Failed to open:', err);
+      setLoading(false);
+    }
+  }, [config, buyerEvmAddress, amount, onDeposited]);
+
   return (
     <div className="deposit-form">
-      <div className="deposit-card-coming">
-        <div className="deposit-card-coming-icon">
-          <svg width="20" height="20" viewBox="0 0 16 16" fill="none"><rect x="1" y="3" width="14" height="10" rx="2" stroke="currentColor" strokeWidth="1.2"/><line x1="1" y1="6.5" x2="15" y2="6.5" stroke="currentColor" strokeWidth="1.2"/><line x1="4" y1="9.5" x2="8" y2="9.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/></svg>
-        </div>
-        <div className="deposit-card-coming-title">Credit card deposits coming soon</div>
-        <div className="deposit-card-coming-desc">
-          Direct credit card to escrow deposits are being integrated.
-          For now, use the crypto wallet option.
-        </div>
+      <div className="input-group">
+        <label className="input-label">Amount (USD)</label>
+        <input
+          className="input-field"
+          type="number"
+          min="10"
+          step="1"
+          placeholder="10"
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+        />
+        <span className="hint">Minimum: $10. Paid via credit card, deposited as USDC to your escrow.</span>
       </div>
+
+      <button
+        className="btn-primary"
+        onClick={handlePayWithCard}
+        disabled={loading || !amount || parseFloat(amount) < 10 || !buyerEvmAddress}
+      >
+        {loading ? 'Opening checkout...' : 'Pay with Credit Card'}
+      </button>
+
+      {!buyerEvmAddress && (
+        <span className="hint" style={{ textAlign: 'center', display: 'block' }}>
+          Identity not loaded — restart the desktop app.
+        </span>
+      )}
     </div>
   );
 }
