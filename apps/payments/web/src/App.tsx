@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { BalanceData, PaymentConfig } from './types';
 import { getBalance, getConfig } from './api';
-import { BalanceView } from './components/BalanceView';
 import { DepositView } from './components/DepositView';
 import { WithdrawView } from './components/WithdrawView';
 
@@ -36,7 +35,6 @@ function ThemeToggle({ isDark, onToggle }: { isDark: boolean; onToggle: () => vo
 }
 
 export function App() {
-  const [activeTab, setActiveTab] = useState<'overview' | 'deposit' | 'withdraw'>('deposit');
   const [balance, setBalance] = useState<BalanceData | null>(null);
   const [config, setConfig] = useState<PaymentConfig | null>(null);
   const [isDark, setIsDark] = useState(() => {
@@ -67,6 +65,7 @@ export function App() {
   const available = balance ? parseFloat(balance.available) : 0;
   const reserved = balance ? parseFloat(balance.reserved) : 0;
   const creditLimit = balance ? parseFloat(balance.creditLimit) : 0;
+  const buyerEvmAddress = config?.evmAddress ?? balance?.evmAddress ?? null;
 
   return (
     <div className="portal-page">
@@ -102,24 +101,14 @@ export function App() {
           </div>
         </div>
 
-        {/* ── Tabs ── */}
-        <nav className="tabs">
-          {(['overview', 'deposit', 'withdraw'] as const).map(tab => (
-            <button
-              key={tab}
-              className={`tab ${activeTab === tab ? 'tab-active' : ''}`}
-              onClick={() => setActiveTab(tab)}
-            >
-              {tab.charAt(0).toUpperCase() + tab.slice(1)}
-            </button>
-          ))}
-        </nav>
+        {/* ── Deposit ── */}
+        <div className="portal-section">
+          <DepositView config={config} onDeposited={refreshBalance} />
+        </div>
 
-        {/* ── Content ── */}
-        <div className="portal-content">
-          {activeTab === 'overview' && <BalanceView balance={balance} />}
-          {activeTab === 'deposit' && <DepositView config={config} buyerEvmAddress={config?.evmAddress ?? balance?.evmAddress ?? null} onDeposited={refreshBalance} />}
-          {activeTab === 'withdraw' && <WithdrawView balance={balance} onAction={refreshBalance} />}
+        {/* ── Withdraw ── */}
+        <div className="portal-section">
+          <WithdrawView balance={balance} onAction={refreshBalance} />
         </div>
       </div>
 
