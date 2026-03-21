@@ -1736,6 +1736,7 @@ export function initChatModule({
   // ---------------------------------------------------------------------------
 
   async function approveSessionPayment(): Promise<void> {
+    appendSystemLog('[payment] approveSessionPayment called, peerId=' + (uiState.chatPaymentApprovalPeerId || 'null'));
     if (!uiState.chatPaymentApprovalPeerId) return;
 
     uiState.chatPaymentApprovalLoading = true;
@@ -1781,6 +1782,7 @@ export function initChatModule({
       }
 
       approvedPeerSessions.add(uiState.chatPaymentApprovalPeerId);
+      appendSystemLog('[payment] Session approved for peer ' + uiState.chatPaymentApprovalPeerId.slice(0, 12));
 
       uiState.chatPaymentApprovalVisible = false;
       uiState.chatPaymentApprovalLoading = false;
@@ -1789,10 +1791,13 @@ export function initChatModule({
       if (pendingPaymentMessage) {
         const msg = pendingPaymentMessage;
         pendingPaymentMessage = null;
+        appendSystemLog('[payment] Sending pending message after approval');
         sendMessage(msg.text, msg.imageBase64, msg.imageMimeType);
       }
     } catch (err) {
-      uiState.chatPaymentApprovalError = err instanceof Error ? err.message : String(err);
+      const errMsg = err instanceof Error ? err.message : String(err);
+      appendSystemLog('[payment] Approve failed: ' + errMsg);
+      uiState.chatPaymentApprovalError = errMsg;
       uiState.chatPaymentApprovalLoading = false;
       notifyUiStateChanged();
     }

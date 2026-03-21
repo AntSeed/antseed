@@ -32,54 +32,30 @@ export function SessionApprovalCard({
   const displayName = peerName || 'Peer';
 
   return (
-    <div className={styles.bubbleWrapper}>
-      <div className={styles.bubbleAvatar}>
-        <span className={styles.bubbleAvatarLetter}>{displayName.charAt(0).toUpperCase()}</span>
-      </div>
-      <div className={styles.bubble}>
-        <div className={styles.bubbleName}>{displayName}</div>
+    <div className={styles.approval}>
+      <div className={styles.approvalMeta}>{displayName}</div>
 
-        {peerInfo && (
-          <div className={styles.peerStats}>
-            <span className={styles.statChip}>{peerInfo.reputation} rep</span>
-            {peerInfo.sessionCount !== null && (
-              <span className={styles.statChip}>{peerInfo.sessionCount} sessions</span>
-            )}
-            {peerInfo.networkAgeDays !== null && (
-              <span className={styles.statChip}>{peerInfo.networkAgeDays}d in network</span>
-            )}
-            {peerInfo.disputeCount !== null && peerInfo.disputeCount > 0 && (
-              <span className={`${styles.statChip} ${styles.statChipWarn}`}>{peerInfo.disputeCount} disputes</span>
-            )}
-          </div>
-        )}
-
-        <p className={styles.bubbleText}>
-          To start your session, approve a pre-deposit of{' '}
-          <strong>${amount}</strong>.
-          This is deducted from your credits.
-        </p>
-
-        {error && (
-          <div className={styles.bubbleError}>{error}</div>
-        )}
-
-        <div className={styles.bubbleActions}>
-          <button
-            className={styles.approveBtn}
-            onClick={onApprove}
-            disabled={loading}
-          >
-            {loading ? 'Approving...' : 'Approve'}
-          </button>
-          <button
-            className={styles.cancelBtn}
-            onClick={onCancel}
-            disabled={loading}
-          >
-            Cancel
-          </button>
+      {peerInfo && (peerInfo.reputation > 0 || peerInfo.sessionCount !== null) && (
+        <div className={styles.approvalStats}>
+          {peerInfo.reputation > 0 && <span>{peerInfo.reputation} reputation</span>}
+          {peerInfo.sessionCount !== null && <span>{peerInfo.sessionCount} sessions</span>}
+          {peerInfo.networkAgeDays !== null && <span>{peerInfo.networkAgeDays}d in network</span>}
         </div>
+      )}
+
+      <div className={styles.approvalText}>
+        To start your session, approve a pre-deposit of <strong>${amount}</strong> to <strong>{displayName}</strong>. This is deducted from your credits.
+      </div>
+
+      {error && <div className={styles.approvalError}>{error}</div>}
+
+      <div className={styles.approvalActions}>
+        <button className={styles.approveBtn} onClick={onApprove} disabled={loading}>
+          {loading ? 'Approving...' : 'Approve'}
+        </button>
+        <button className={styles.cancelBtn} onClick={onCancel} disabled={loading}>
+          Cancel
+        </button>
       </div>
     </div>
   );
