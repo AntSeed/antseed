@@ -7,7 +7,7 @@ import { homedir } from 'node:os'
 import { createConnection } from 'node:net'
 import { getGlobalOptions } from './types.js'
 import { loadConfig } from '../../config/loader.js'
-import { AntseedNode, BaseEscrowClient, loadOrCreateIdentity, identityToEvmAddress, getInstance } from '@antseed/node'
+import { AntseedNode, BaseEscrowClient, loadOrCreateIdentity, identityToEvmAddress, getInstance, resolveChainConfig } from '@antseed/node'
 import type { NodePaymentsConfig } from '@antseed/node'
 import { OFFICIAL_BOOTSTRAP_NODES, parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
 import { setupShutdownHandler } from '../shutdown.js'
@@ -293,31 +293,38 @@ export function registerConnectCommand(program: Command): void {
 
       const nodeSpinner = ora('Connecting to P2P network...').start()
 
-      // Build payment config from CLI config if available and reachable
+      // Build payment config — use protocol chain defaults + user overrides
       let paymentsConfig: NodePaymentsConfig | undefined
       const settlementEnv = parseOptionalBoolEnv(process.env['ANTSEED_ENABLE_SETTLEMENT'])
-      const crypto = config.payments?.crypto
-      let settlementEnabled = settlementEnv ?? Boolean(crypto)
+      const cryptoOverrides = config.payments?.crypto
+      // Resolve chain config with protocol defaults (always available)
+      const chainConfig = resolveChainConfig({
+        chainId: cryptoOverrides?.chainId,
+        rpcUrl: cryptoOverrides?.rpcUrl,
+        escrowContractAddress: cryptoOverrides?.escrowContractAddress,
+        usdcContractAddress: cryptoOverrides?.usdcContractAddress,
+      })
+      let settlementEnabled = settlementEnv ?? true
 
-      if (settlementEnabled && crypto && settlementEnv !== true) {
-        const rpcUp = await isRpcReachable(crypto.rpcUrl)
+      if (settlementEnabled && settlementEnv !== true) {
+        const rpcUp = await isRpcReachable(chainConfig.rpcUrl)
         if (!rpcUp) {
           settlementEnabled = false
-          console.log(chalk.yellow(`Payments disabled: RPC node unreachable at ${crypto.rpcUrl}`))
+          console.log(chalk.yellow(`Payments disabled: RPC node unreachable at ${chainConfig.rpcUrl}`))
           console.log(chalk.dim('Start your chain node or set ANTSEED_ENABLE_SETTLEMENT=true to force-enable payments.'))
         }
       }
 
-      if (settlementEnabled && crypto) {
+      if (settlementEnabled) {
         paymentsConfig = {
           enabled: true,
-          rpcUrl: crypto.rpcUrl,
-          contractAddress: crypto.escrowContractAddress,
-          usdcAddress: crypto.usdcContractAddress,
-          defaultEscrowAmountUSDC: crypto.defaultLockAmountUSDC
-            ? String(Math.round(parseFloat(crypto.defaultLockAmountUSDC) * 1_000_000))
+          rpcUrl: chainConfig.rpcUrl,
+          contractAddress: chainConfig.escrowContractAddress,
+          usdcAddress: chainConfig.usdcContractAddress,
+          defaultEscrowAmountUSDC: cryptoOverrides?.defaultLockAmountUSDC
+            ? String(Math.round(parseFloat(cryptoOverrides.defaultLockAmountUSDC) * 1_000_000))
             : '1000000',
-          platformFeeRate: config.payments.platformFeeRate,
+          platformFeeRate: config.payments?.platformFeeRate,
         }
       }
 
@@ -360,14 +367,14 @@ export function registerConnectCommand(program: Command): void {
       }
 
       // Display available USDC balance only if payments are active
-      if (paymentsConfig?.enabled && config.payments?.crypto) {
+      if (paymentsConfig?.enabled) {
         try {
           const identity = await loadOrCreateIdentity(globalOpts.dataDir)
           const address = identityToEvmAddress(identity)
           const escrowClient = new BaseEscrowClient({
-            rpcUrl: config.payments.crypto.rpcUrl,
-            contractAddress: config.payments.crypto.escrowContractAddress,
-            usdcAddress: config.payments.crypto.usdcContractAddress,
+            rpcUrl: chainConfig.rpcUrl,
+            contractAddress: chainConfig.escrowContractAddress,
+            usdcAddress: chainConfig.usdcContractAddress,
           })
           const account = await escrowClient.getBuyerBalance(address)
           console.log(chalk.dim(`Wallet: ${address}`))
