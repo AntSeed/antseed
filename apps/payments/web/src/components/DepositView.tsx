@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import {
   useAccount,
@@ -11,15 +11,19 @@ import './DepositView.scss';
 
 interface DepositViewProps {
   config: PaymentConfig | null;
+  buyerAddress: string | null;
   onDeposited: () => void;
 }
 
 const ESCROW_ABI = [
   {
-    name: 'deposit',
+    name: 'depositFor',
     type: 'function',
     stateMutability: 'nonpayable',
-    inputs: [{ name: 'amount', type: 'uint256' }],
+    inputs: [
+      { name: 'buyer', type: 'address' },
+      { name: 'amount', type: 'uint256' },
+    ],
     outputs: [],
   },
 ] as const;
@@ -39,7 +43,7 @@ const ERC20_ABI = [
 
 type DepositMethod = 'crypto' | 'card';
 
-export function DepositView({ config, onDeposited }: DepositViewProps) {
+export function DepositView({ config, buyerAddress, onDeposited }: DepositViewProps) {
   const [method, setMethod] = useState<DepositMethod>('crypto');
 
   return (
@@ -71,7 +75,7 @@ export function DepositView({ config, onDeposited }: DepositViewProps) {
         </div>
 
         {method === 'crypto' ? (
-          <CryptoDeposit config={config} onDeposited={onDeposited} />
+          <CryptoDeposit config={config} buyerAddress={buyerAddress} onDeposited={onDeposited} />
         ) : (
           <CardDepositPlaceholder />
         )}
@@ -82,79 +86,99 @@ export function DepositView({ config, onDeposited }: DepositViewProps) {
 
 /* ── Crypto Deposit (wagmi + RainbowKit) ── */
 
-function CryptoDeposit({ config, onDeposited }: { config: PaymentConfig | null; onDeposited: () => void }) {
+function CryptoDeposit({ config, buyerAddress, onDeposited }: {
+  config: PaymentConfig | null;
+  buyerAddress: string | null;
+  onDeposited: () => void;
+}) {
   const { address, isConnected, chain } = useAccount();
-  const [amount, setAmount] = useState('');
-  const [step, setStep] = useState<'idle' | 'approving' | 'depositing'>('idle');
-  const [status, setStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [amount, setAmount] = useState('10');
+  const [step, setStep] = useState<'idle' | 'approving' | 'depositing' | 'done'>('idle');
+  const [error, setError] = useState<string | null>(null);
 
-  // Approve USDC spend
-  const { writeContract: writeApprove, data: approveTxHash } = useWriteContract();
+  const expectedChainId = config?.evmChainId;
+  const wrongChain = isConnected && chain && expectedChainId && chain.id !== expectedChainId;
+  const depositTarget = buyerAddress ?? address; // Use identity address if available, fallback to wallet
+
+  // Step 1: Approve USDC
+  const {
+    writeContract: writeApprove,
+    data: approveTxHash,
+    reset: resetApprove,
+  } = useWriteContract();
+
   const { isSuccess: approveConfirmed } = useWaitForTransactionReceipt({
     hash: approveTxHash,
   });
 
-  // Deposit to escrow
-  const { writeContract: writeDeposit, data: depositTxHash } = useWriteContract();
+  // Step 2: Deposit
+  const {
+    writeContract: writeDeposit,
+    data: depositTxHash,
+    reset: resetDeposit,
+  } = useWriteContract();
+
   const { isSuccess: depositConfirmed } = useWaitForTransactionReceipt({
     hash: depositTxHash,
   });
 
-  // Check if user is on the correct chain
-  const expectedChainId = config?.evmChainId;
-  const wrongChain = isConnected && chain && expectedChainId && chain.id !== expectedChainId;
-
-  const handleDeposit = useCallback(async () => {
-    if (!address || !amount || parseFloat(amount) <= 0 || !config) return;
-
-    setStatus(null);
-    const usdcAmount = parseUnits(amount, 6);
-
-    try {
-      // Step 1: Approve
-      setStep('approving');
-      writeApprove({
-        address: config.usdcContractAddress as `0x${string}`,
-        abi: ERC20_ABI,
-        functionName: 'approve',
-        args: [config.escrowContractAddress as `0x${string}`, usdcAmount],
+  // When approve confirms, trigger deposit
+  useEffect(() => {
+    if (approveConfirmed && step === 'approving' && config && depositTarget) {
+      setStep('depositing');
+      const usdcAmount = parseUnits(amount, 6);
+      writeDeposit({
+        address: config.escrowContractAddress as `0x${string}`,
+        abi: ESCROW_ABI,
+        functionName: 'depositFor',
+        args: [depositTarget as `0x${string}`, usdcAmount],
       }, {
-        onSuccess: () => {
-          // Step 2: Deposit (after approve tx is submitted)
-          setStep('depositing');
-          writeDeposit({
-            address: config.escrowContractAddress as `0x${string}`,
-            abi: ESCROW_ABI,
-            functionName: 'deposit',
-            args: [usdcAmount],
-          }, {
-            onSuccess: () => {
-              setStep('idle');
-              setStatus({ type: 'success', message: 'Deposit submitted! Waiting for confirmation...' });
-              setAmount('');
-              onDeposited();
-            },
-            onError: (err) => {
-              setStep('idle');
-              setStatus({ type: 'error', message: err.message.split('\n')[0] ?? err.message });
-            },
-          });
-        },
         onError: (err) => {
           setStep('idle');
-          setStatus({ type: 'error', message: err.message.split('\n')[0] ?? err.message });
+          setError(err.message.split('\n')[0] ?? err.message);
         },
       });
-    } catch (err) {
-      setStep('idle');
-      setStatus({ type: 'error', message: err instanceof Error ? err.message : String(err) });
     }
-  }, [address, amount, config, writeApprove, writeDeposit, onDeposited]);
+  }, [approveConfirmed, step, config, depositTarget, amount, writeDeposit]);
 
-  // Show deposit confirmed status
-  if (depositConfirmed && depositTxHash && status?.type !== 'success') {
-    setStatus({ type: 'success', message: `Deposit confirmed: ${depositTxHash}` });
-  }
+  // When deposit confirms, show success
+  useEffect(() => {
+    if (depositConfirmed && step === 'depositing') {
+      setStep('done');
+      onDeposited();
+    }
+  }, [depositConfirmed, step, onDeposited]);
+
+  const handleDeposit = useCallback(() => {
+    if (!address || !amount || parseFloat(amount) <= 0 || !config || !depositTarget) return;
+
+    setError(null);
+    setStep('approving');
+    resetApprove();
+    resetDeposit();
+
+    const usdcAmount = parseUnits(amount, 6);
+
+    writeApprove({
+      address: config.usdcContractAddress as `0x${string}`,
+      abi: ERC20_ABI,
+      functionName: 'approve',
+      args: [config.escrowContractAddress as `0x${string}`, usdcAmount],
+    }, {
+      onError: (err) => {
+        setStep('idle');
+        setError(err.message.split('\n')[0] ?? err.message);
+      },
+    });
+  }, [address, amount, config, depositTarget, writeApprove, resetApprove, resetDeposit]);
+
+  const resetForm = useCallback(() => {
+    setStep('idle');
+    setError(null);
+    setAmount('10');
+    resetApprove();
+    resetDeposit();
+  }, [resetApprove, resetDeposit]);
 
   return (
     <div className="deposit-form">
@@ -169,8 +193,29 @@ function CryptoDeposit({ config, onDeposited }: { config: PaymentConfig | null; 
           </div>
           <ConnectButton />
         </div>
+      ) : step === 'done' ? (
+        <div className="deposit-success">
+          <div className="deposit-success-icon">&#10003;</div>
+          <div className="deposit-success-title">Deposit confirmed!</div>
+          <div className="deposit-success-hash">{depositTxHash?.slice(0, 18)}...</div>
+          {depositTarget && depositTarget !== address && (
+            <div className="deposit-success-note">
+              Credits added to {depositTarget.slice(0, 6)}...{depositTarget.slice(-4)}
+            </div>
+          )}
+          <button className="btn-outline" onClick={resetForm} style={{ marginTop: 12 }}>
+            Deposit more
+          </button>
+        </div>
       ) : (
         <>
+          {depositTarget && depositTarget !== address && (
+            <div className="deposit-target-info">
+              <span className="deposit-target-label">Depositing for</span>
+              <span className="deposit-target-addr">{depositTarget.slice(0, 6)}...{depositTarget.slice(-4)}</span>
+            </div>
+          )}
+
           <div className="deposit-connected">
             <div className="deposit-connected-dot" />
             <span className="deposit-connected-addr">{address?.slice(0, 6)}...{address?.slice(-4)}</span>
@@ -204,9 +249,9 @@ function CryptoDeposit({ config, onDeposited }: { config: PaymentConfig | null; 
         </>
       )}
 
-      {status && (
-        <div className={`status-msg ${status.type === 'success' ? 'status-success' : 'status-error'}`}>
-          {status.message}
+      {error && (
+        <div className="status-msg status-error">
+          {error}
         </div>
       )}
     </div>

@@ -103,7 +103,7 @@ export function App() {
 
         {/* ── Deposit ── */}
         <div className="portal-section">
-          <DepositView config={config} onDeposited={refreshBalance} />
+          <DepositView config={config} buyerAddress={config?.evmAddress ?? null} onDeposited={refreshBalance} />
         </div>
 
         {/* ── Withdraw ── */}
