@@ -20,6 +20,8 @@ export type AppActions = {
   handleServiceFocus: () => void;
   handleServiceBlur: () => void;
   clearPinnedPeer: () => void;
+  approvePaymentSession: () => void;
+  rejectPaymentSession: () => void;
   refreshPlugins: () => Promise<void>;
   installPlugin: () => Promise<void>;
 };

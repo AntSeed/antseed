@@ -67,6 +67,13 @@ const ESCROW_ABI = [
   'function getBuyerCreditLimit(address buyer) external view returns (uint256)',
   'function getSellerAccount(address seller) external view returns (uint256 stake, uint256 earnings, uint256 stakedAt, uint256 tokenRate)',
   'function domainSeparator() external view returns (bytes32)',
+  'function FIRST_SIGN_CAP() external view returns (uint256)',
+  'function MIN_TOKEN_THRESHOLD() external view returns (uint256)',
+  'function PROVEN_SIGN_COOLDOWN() external view returns (uint256)',
+  'function BUYER_DIVERSITY_THRESHOLD() external view returns (uint256)',
+  'function latestSessionId(address buyer, address seller) external view returns (bytes32)',
+  'function firstSessionTimestamp(address buyer, address seller) external view returns (uint256)',
+  'function uniqueSellersCharged(address buyer) external view returns (uint256)',
   'function sessions(bytes32 sessionId) external view returns (address buyer, address seller, uint256 maxAmount, uint256 nonce, uint256 deadline, uint256 previousConsumption, bytes32 previousSessionId, uint256 reservedAt, uint256 settledAmount, uint256 settledTokenCount, uint256 tokenRate, uint8 status, bool isFirstSign, bool isProvenSign, bool isQualifiedProvenSign)',
 ] as const;
 
@@ -282,6 +289,81 @@ export class BaseEscrowClient extends BaseEvmClient {
   async domainSeparator(): Promise<string> {
     const contract = new Contract(this._contractAddress, ESCROW_ABI, this._provider);
     return contract.getFunction('domainSeparator')() as Promise<string>;
+  }
+
+  async getFirstSignCap(): Promise<bigint> {
+    const contract = new Contract(this._contractAddress, ESCROW_ABI, this._provider);
+    return contract.getFunction('FIRST_SIGN_CAP')() as Promise<bigint>;
+  }
+
+  async getLatestSessionId(buyerAddr: string, sellerAddr: string): Promise<string> {
+    const contract = new Contract(this._contractAddress, ESCROW_ABI, this._provider);
+    return contract.getFunction('latestSessionId')(buyerAddr, sellerAddr) as Promise<string>;
+  }
+
+  async getFirstSessionTimestamp(buyerAddr: string, sellerAddr: string): Promise<bigint> {
+    const contract = new Contract(this._contractAddress, ESCROW_ABI, this._provider);
+    return contract.getFunction('firstSessionTimestamp')(buyerAddr, sellerAddr) as Promise<bigint>;
+  }
+
+  async getUniqueSellersCharged(buyerAddr: string): Promise<bigint> {
+    const contract = new Contract(this._contractAddress, ESCROW_ABI, this._provider);
+    return contract.getFunction('uniqueSellersCharged')(buyerAddr) as Promise<bigint>;
+  }
+
+  async getProvenSignCooldown(): Promise<bigint> {
+    const contract = new Contract(this._contractAddress, ESCROW_ABI, this._provider);
+    return contract.getFunction('PROVEN_SIGN_COOLDOWN')() as Promise<bigint>;
+  }
+
+  async getMinTokenThreshold(): Promise<bigint> {
+    const contract = new Contract(this._contractAddress, ESCROW_ABI, this._provider);
+    return contract.getFunction('MIN_TOKEN_THRESHOLD')() as Promise<bigint>;
+  }
+
+  /**
+   * Fetch all data the buyer needs to display a payment approval card.
+   * Batches multiple view calls in parallel.
+   */
+  async getBuyerApprovalContext(buyerAddr: string, sellerAddr: string): Promise<{
+    buyerBalance: BuyerBalanceInfo;
+    sellerAccount: SellerAccountInfo;
+    firstSignCap: bigint;
+    latestSessionId: string;
+    firstSessionTimestamp: bigint;
+    isFirstSign: boolean;
+    cooldownRemainingSecs: number;
+  }> {
+    const ZERO_BYTES32 = '0x' + '00'.repeat(32);
+
+    const [buyerBalance, sellerAccount, firstSignCap, latestSessId, firstSessTs, cooldown] = await Promise.all([
+      this.getBuyerBalance(buyerAddr),
+      this.getSellerAccount(sellerAddr),
+      this.getFirstSignCap(),
+      this.getLatestSessionId(buyerAddr, sellerAddr),
+      this.getFirstSessionTimestamp(buyerAddr, sellerAddr),
+      this.getProvenSignCooldown(),
+    ]);
+
+    const isFirstSign = latestSessId === ZERO_BYTES32;
+    const nowSecs = BigInt(Math.floor(Date.now() / 1000));
+    let cooldownRemainingSecs = 0;
+    if (!isFirstSign && firstSessTs > 0n) {
+      const cooldownEnd = firstSessTs + cooldown;
+      if (cooldownEnd > nowSecs) {
+        cooldownRemainingSecs = Number(cooldownEnd - nowSecs);
+      }
+    }
+
+    return {
+      buyerBalance,
+      sellerAccount,
+      firstSignCap,
+      latestSessionId: latestSessId,
+      firstSessionTimestamp: firstSessTs,
+      isFirstSign,
+      cooldownRemainingSecs,
+    };
   }
 
   async getUSDCBalance(ownerAddr: string): Promise<bigint> {

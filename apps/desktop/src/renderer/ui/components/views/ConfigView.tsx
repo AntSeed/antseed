@@ -14,6 +14,7 @@ export function ConfigView({ active }: ConfigViewProps) {
   const [maxOutput, setMaxOutput] = useState('0');
   const [minRep, setMinRep] = useState('0');
   const [paymentMethod, setPaymentMethod] = useState('crypto');
+  const [requireManualApproval, setRequireManualApproval] = useState(true);
   const [devMode, setDevMode] = useState(false);
 
   useEffect(() => {
@@ -23,6 +24,7 @@ export function ConfigView({ active }: ConfigViewProps) {
       setMaxOutput(String(configFormData.maxOutputUsdPerMillion));
       setMinRep(String(configFormData.minRep));
       setPaymentMethod(configFormData.paymentMethod);
+      setRequireManualApproval(configFormData.requireManualApproval);
       setDevMode(configFormData.devMode);
       return;
     }
@@ -39,6 +41,7 @@ export function ConfigView({ active }: ConfigViewProps) {
       maxOutputUsdPerMillion: parseFloat(maxOutput) || 0,
       minRep: parseInt(minRep, 10) || 0,
       paymentMethod: paymentMethod || 'crypto',
+      requireManualApproval,
       devMode,
     });
   }
@@ -121,26 +124,29 @@ export function ConfigView({ active }: ConfigViewProps) {
           </div>
         </article>
 
-        <article className="panel settings-panel settings-panel-hidden" aria-hidden="true">
+        <article className="panel settings-panel">
           <div className="panel-head">
             <h3>Payment Settings</h3>
           </div>
           <div className="settings-stack">
-            <label className="settings-item">
+            <div className="settings-item">
               <div className="settings-copy">
-                <span className="settings-kicker">Settlement</span>
-                <h4>Preferred Payment Method</h4>
-                <p>Current desktop flow supports crypto settlement.</p>
+                <span className="settings-kicker">Sessions</span>
+                <h4>Manual Approval</h4>
+                <p>When enabled, you'll see a confirmation card before authorizing payment to a new peer. Shows deposit amount, peer rate, and your balance.</p>
               </div>
-              <select
-                className="form-input settings-control"
-                value={paymentMethod}
-                onChange={(e) => setPaymentMethod(e.target.value)}
-                tabIndex={-1}
+              <button
+                type="button"
+                className={`settings-switch${requireManualApproval ? ' is-on' : ''}`}
+                aria-pressed={requireManualApproval}
+                onClick={() => setRequireManualApproval((v) => !v)}
               >
-                <option value="crypto">Crypto (USDC)</option>
-              </select>
-            </label>
+                <span className="settings-switch-track">
+                  <span className="settings-switch-thumb" />
+                </span>
+                <span className="settings-switch-label">{requireManualApproval ? 'On' : 'Off'}</span>
+              </button>
+            </div>
           </div>
         </article>
 

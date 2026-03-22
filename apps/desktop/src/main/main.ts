@@ -16,7 +16,6 @@ import {
   type StartOptions,
 } from './process-manager.js';
 import { registerPiChatHandlers } from './pi-chat-engine.js';
-import { WalletConnectManager } from './walletconnect.js';
 import { ensureSecureIdentity, secureIdentityEnv, getSecureIdentity } from './identity.js';
 import type { LogEvent, RuntimeActivityEvent } from './log-parser.js';
 import { parseRuntimeActivityFromLog } from './log-parser.js';
@@ -232,6 +231,43 @@ const processManager = new ProcessManager((mode, stream, line) => {
   appendLog(mode, stream, line);
 });
 
+// Pending payment approval requests from the CLI child process, keyed by peerId.
+const pendingPaymentApprovals = new Map<string, {
+  resolve: (decision: { approved: boolean }) => void;
+}>();
+
+// When the CLI requests payment approval, forward to the renderer and wait.
+processManager.onPaymentApprovalRequest = async (info) => {
+  const peerId = typeof info.peerId === 'string' ? info.peerId : '';
+  const win = getMainWindow();
+  if (!win) {
+    return { approved: false };
+  }
+
+  return new Promise<{ approved: boolean }>((resolve) => {
+    pendingPaymentApprovals.set(peerId, { resolve });
+    win.webContents.send('payments:approval-required', info);
+
+    // Timeout after 60s if user doesn't respond
+    setTimeout(() => {
+      if (pendingPaymentApprovals.has(peerId)) {
+        pendingPaymentApprovals.delete(peerId);
+        resolve({ approved: false });
+      }
+    }, 60_000);
+  });
+};
+
+// Renderer sends approval/rejection back
+ipcMain.handle('payments:approve-session', async (_event, peerId: string, approved: boolean) => {
+  const pending = pendingPaymentApprovals.get(peerId);
+  if (pending) {
+    pendingPaymentApprovals.delete(peerId);
+    pending.resolve({ approved });
+  }
+  return { ok: true };
+});
+
 function getCombinedProcessState(): RuntimeProcessState[] {
   return processManager.getState();
 }
@@ -249,6 +285,14 @@ ipcMain.handle('runtime:get-state', async () => {
 ipcMain.handle('runtime:start', async (_event, options: StartOptions) => {
   await ensureSecureIdentity();
 
+  // Check if manual payment approval is enabled
+  let manualApproval = true; // default: on
+  try {
+    const config = await readConfig(ACTIVE_CONFIG_PATH);
+    const payments = config.payments && typeof config.payments === 'object' ? config.payments as Record<string, unknown> : {};
+    manualApproval = payments.requireManualApproval !== false;
+  } catch { /* use default */ }
+
   const startOptions: StartOptions = {
     ...options,
     ...(desktopDebugEnabled ? { verbose: true } : {}),
@@ -256,6 +300,7 @@ ipcMain.handle('runtime:start', async (_event, options: StartOptions) => {
       ...(options.env ?? {}),
       ...(desktopDebugEnabled ? { ANTSEED_DEBUG: '1' } : {}),
       ...secureIdentityEnv(),
+      ...(manualApproval ? { ANTSEED_PAYMENT_APPROVAL_IPC: '1' } : {}),
     },
   };
   if (desktopDebugEnabled) {
@@ -568,39 +613,6 @@ ipcMain.handle('wallet:withdraw', async (_event, amount: string) => {
   return { ok: true, message: `Withdrawal of ${amount} USDC logged. Use CLI to execute: antseed withdraw ${amount}` };
 });
 
-// ── WalletConnect IPC Handlers ──
-
-const walletConnectManager = new WalletConnectManager();
-
-walletConnectManager.on('state', (state: unknown) => {
-  getMainWindow()?.webContents.send('wallet:wc-state-changed', state);
-});
-
-ipcMain.handle('wallet:wc-state', async () => {
-  return { ok: true, data: walletConnectManager.state };
-});
-
-ipcMain.handle('wallet:wc-connect', async () => {
-  try {
-    const uri = await walletConnectManager.connect();
-    if (!uri) {
-      return { ok: false, error: 'WalletConnect not initialized. Set WALLETCONNECT_PROJECT_ID environment variable.' };
-    }
-    return { ok: true, data: { uri } };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
-  }
-});
-
-ipcMain.handle('wallet:wc-disconnect', async () => {
-  try {
-    await walletConnectManager.disconnect();
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
-  }
-});
-
 // ── AI Chat IPC Handlers ──
 registerPiChatHandlers({
   ipcMain,
@@ -617,6 +629,13 @@ registerPiChatHandlers({
 
     await ensureSecureIdentity();
 
+    let chatManualApproval = true;
+    try {
+      const cfg = await readConfig(ACTIVE_CONFIG_PATH);
+      const pay = cfg.payments && typeof cfg.payments === 'object' ? cfg.payments as Record<string, unknown> : {};
+      chatManualApproval = pay.requireManualApproval !== false;
+    } catch { /* default */ }
+
     const startOptions: StartOptions = {
       mode: 'connect',
       router: 'local',
@@ -624,6 +643,7 @@ registerPiChatHandlers({
       env: {
         ...(desktopDebugEnabled ? { ANTSEED_DEBUG: '1' } : {}),
         ...secureIdentityEnv(),
+        ...(chatManualApproval ? { ANTSEED_PAYMENT_APPROVAL_IPC: '1' } : {}),
       },
     };
 
@@ -731,14 +751,6 @@ app.whenReady().then(() => {
   ipcMain.handle('app:install-update', () => {
     autoUpdater.quitAndInstall(false, true);
   });
-
-  // Initialize WalletConnect if project ID is configured
-  const wcProjectId = process.env['WALLETCONNECT_PROJECT_ID'] ?? '';
-  if (wcProjectId.length > 0) {
-    void walletConnectManager.init(wcProjectId).catch((err) => {
-      console.error('[WalletConnect] init failed:', err instanceof Error ? err.message : String(err));
-    });
-  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

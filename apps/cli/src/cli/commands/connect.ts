@@ -341,12 +341,45 @@ export function registerConnectCommand(program: Command): void {
       }
       console.log('')
 
+      // When running under the desktop (IPC mode), enable interactive payment approval
+      // via structured JSON lines on stdout/stdin.
+      const paymentApprovalIpc = process.env['ANTSEED_PAYMENT_APPROVAL_IPC'] === '1'
+      const onPaymentApproval = paymentApprovalIpc
+        ? async (info: Parameters<NonNullable<import('@antseed/node').NodeConfig['onPaymentApproval']>>[0]) => {
+            // Write request as a structured JSON line the desktop can intercept
+            const request = JSON.stringify({ __antseed_payment_approval_request: info })
+            process.stdout.write(request + '\n')
+
+            // Wait for response on stdin
+            return new Promise<{ approved: boolean }>((resolve) => {
+              const onData = (chunk: Buffer): void => {
+                const lines = chunk.toString().split('\n')
+                for (const line of lines) {
+                  const trimmed = line.trim()
+                  if (!trimmed) continue
+                  try {
+                    const parsed = JSON.parse(trimmed) as Record<string, unknown>
+                    const response = parsed.__antseed_payment_approval_response as { approved: boolean } | undefined
+                    if (response && typeof response.approved === 'boolean') {
+                      process.stdin.removeListener('data', onData)
+                      resolve({ approved: response.approved })
+                      return
+                    }
+                  } catch { /* not JSON, ignore */ }
+                }
+              }
+              process.stdin.on('data', onData)
+            })
+          }
+        : undefined
+
       const node = new AntseedNode({
         role: 'buyer',
         bootstrapNodes,
         allowPrivateIPs: true,
         dataDir: globalOpts.dataDir,
         payments: paymentsConfig,
+        onPaymentApproval,
       })
 
       node.setRouter(router)

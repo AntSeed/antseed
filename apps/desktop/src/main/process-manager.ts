@@ -352,6 +352,9 @@ export class ProcessManager {
     ['connect', { mode: 'connect', running: false, pid: null, startedAt: null, lastExitCode: null, lastError: null }],
   ]);
 
+  /** Called when the CLI child process requests payment approval via structured JSON on stdout. */
+  onPaymentApprovalRequest: ((info: Record<string, unknown>) => Promise<{ approved: boolean }>) | null = null;
+
   constructor(
     private readonly onLog: (mode: RuntimeMode, stream: 'stdout' | 'stderr' | 'system', line: string) => void,
   ) {}
@@ -422,6 +425,22 @@ export class ProcessManager {
     child.stdout.on('data', (chunk: string) => {
       for (const line of chunk.split(/\r?\n/)) {
         if (line.trim().length > 0) {
+          // Intercept structured payment approval requests from the CLI
+          if (this.onPaymentApprovalRequest && line.includes('__antseed_payment_approval_request')) {
+            try {
+              const parsed = JSON.parse(line) as Record<string, unknown>;
+              const request = parsed.__antseed_payment_approval_request as Record<string, unknown> | undefined;
+              if (request) {
+                void this.onPaymentApprovalRequest(request).then((decision) => {
+                  const response = JSON.stringify({ __antseed_payment_approval_response: decision });
+                  child.stdin.write(response + '\n');
+                }).catch(() => {
+                  child.stdin.write(JSON.stringify({ __antseed_payment_approval_response: { approved: false } }) + '\n');
+                });
+                continue; // Don't log the structured JSON to the UI
+              }
+            } catch { /* not valid JSON, fall through to normal log */ }
+          }
           this.onLog(mode, 'stdout', line);
         }
       }

@@ -4,6 +4,7 @@ import type {
   SellerReceiptPayload,
   BuyerAckPayload,
   TopUpRequestPayload,
+  PaymentRequiredPayload,
 } from '../types/protocol.js';
 
 const encoder = new TextEncoder();
@@ -114,5 +115,20 @@ export function decodeTopUpRequest(data: Uint8Array): TopUpRequestPayload {
     currentUsed: requireString(obj, 'currentUsed'),
     currentMax: requireString(obj, 'currentMax'),
     requestedAdditional: requireString(obj, 'requestedAdditional'),
+  };
+}
+
+export function encodePaymentRequired(payload: PaymentRequiredPayload): Uint8Array {
+  return encoder.encode(JSON.stringify(payload));
+}
+
+export function decodePaymentRequired(data: Uint8Array): PaymentRequiredPayload {
+  const obj = parseJson(data);
+  return {
+    sellerEvmAddr: requireString(obj, 'sellerEvmAddr'),
+    tokenRate: requireString(obj, 'tokenRate'),
+    firstSignCap: requireString(obj, 'firstSignCap'),
+    suggestedAmount: requireString(obj, 'suggestedAmount'),
+    requestId: requireString(obj, 'requestId'),
   };
 }

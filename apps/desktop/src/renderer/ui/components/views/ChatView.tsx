@@ -10,6 +10,7 @@ import { useActions } from '../../hooks/useActions';
 import { ChatBubble } from '../chat/ChatBubble';
 import { isToolResultOnlyMessage } from '../chat/chat-utils.js';
 import { WalkingAnt } from '../chat/WalkingAnt';
+import { PaymentApprovalCard } from '../chat/PaymentApprovalCard';
 
 import { AntStationStackedLogo } from '../AntStationLogo';
 import styles from './ChatView.module.scss';
@@ -290,6 +291,14 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
               <WalkingAnt elapsedMs={snap.chatThinkingElapsedMs} />
             )}
           </div>
+
+          {snap.chatPaymentApprovalVisible && snap.chatPaymentApprovalInfo && (
+            <PaymentApprovalCard
+              info={snap.chatPaymentApprovalInfo as Record<string, unknown>}
+              onApprove={() => actions.approvePaymentSession()}
+              onReject={() => actions.rejectPaymentSession()}
+            />
+          )}
 
           <div className={styles.chatInputArea}>
             {attachedImage && (

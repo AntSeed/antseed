@@ -6,15 +6,26 @@ import type {
   SellerReceiptPayload,
   BuyerAckPayload,
   TopUpRequestPayload,
+  PaymentRequiredPayload,
 } from '../types/protocol.js';
 import { encodeFrame } from './message-protocol.js';
 import type { FramedMessage } from '../types/protocol.js';
 import * as codec from './payment-codec.js';
+import { debugLog } from '../utils/debug.js';
+
+const MESSAGE_TYPE_NAME: Record<number, string> = {
+  [MessageType.SpendingAuth]: 'SpendingAuth',
+  [MessageType.AuthAck]: 'AuthAck',
+  [MessageType.SellerReceipt]: 'SellerReceipt',
+  [MessageType.BuyerAck]: 'BuyerAck',
+  [MessageType.TopUpRequest]: 'TopUpRequest',
+  [MessageType.PaymentRequired]: 'PaymentRequired',
+};
 
 export type PaymentMessageHandler<T> = (payload: T) => void | Promise<void>;
 
 /**
- * Multiplexes bilateral payment messages over a PeerConnection.
+ * Multiplexes payment messages over a PeerConnection.
  * Register handlers for each message type, then call handleFrame()
  * when a payment-range frame arrives.
  */
@@ -28,6 +39,7 @@ export class PaymentMux {
   private _onSellerReceipt?: PaymentMessageHandler<SellerReceiptPayload>;
   private _onBuyerAck?: PaymentMessageHandler<BuyerAckPayload>;
   private _onTopUpRequest?: PaymentMessageHandler<TopUpRequestPayload>;
+  private _onPaymentRequired?: PaymentMessageHandler<PaymentRequiredPayload>;
 
   constructor(connection: PeerConnection) {
     this._connection = connection;
@@ -49,6 +61,9 @@ export class PaymentMux {
   onTopUpRequest(handler: PaymentMessageHandler<TopUpRequestPayload>): void {
     this._onTopUpRequest = handler;
   }
+  onPaymentRequired(handler: PaymentMessageHandler<PaymentRequiredPayload>): void {
+    this._onPaymentRequired = handler;
+  }
 
   // --- Sending ---
   sendSpendingAuth(payload: SpendingAuthPayload): void {
@@ -66,12 +81,18 @@ export class PaymentMux {
   sendTopUpRequest(payload: TopUpRequestPayload): void {
     this._send(MessageType.TopUpRequest, codec.encodeTopUpRequest(payload));
   }
+  sendPaymentRequired(payload: PaymentRequiredPayload): void {
+    this._send(MessageType.PaymentRequired, codec.encodePaymentRequired(payload));
+  }
 
   // --- Receiving ---
   /**
    * Returns true if this frame is a payment message and was handled.
    */
   async handleFrame(frame: FramedMessage): Promise<boolean> {
+    const name = MESSAGE_TYPE_NAME[frame.type];
+    if (!name) return false;
+    debugLog(`[PaymentMux] ← recv ${name} (${frame.payload.length}b)`);
     switch (frame.type) {
       case MessageType.SpendingAuth:
         await this._onSpendingAuth?.(codec.decodeSpendingAuth(frame.payload));
@@ -88,6 +109,9 @@ export class PaymentMux {
       case MessageType.TopUpRequest:
         await this._onTopUpRequest?.(codec.decodeTopUpRequest(frame.payload));
         return true;
+      case MessageType.PaymentRequired:
+        await this._onPaymentRequired?.(codec.decodePaymentRequired(frame.payload));
+        return true;
       default:
         return false;
     }
@@ -99,6 +123,7 @@ export class PaymentMux {
   }
 
   private _send(type: MessageType, payload: Uint8Array): void {
+    debugLog(`[PaymentMux] → send ${MESSAGE_TYPE_NAME[type] ?? `0x${type.toString(16)}`} (${payload.length}b)`);
     const frame = encodeFrame({
       type,
       messageId: this._messageIdCounter++ & 0xffffffff,

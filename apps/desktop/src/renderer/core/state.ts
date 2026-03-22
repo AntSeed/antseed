@@ -41,6 +41,7 @@ export type ConfigFormData = {
   maxOutputUsdPerMillion: number;
   minRep: number;
   paymentMethod: string;
+  requireManualApproval: boolean;
   devMode: boolean;
 };
 
@@ -136,6 +137,11 @@ export type RendererUiState = {
   chatSendDisabled: boolean;
   chatAbortVisible: boolean;
   chatServiceSelectDisabled: boolean;
+
+  // --- Payment approval ---
+  chatPaymentApprovalVisible: boolean;
+  chatPaymentApprovalPeerId: string;
+  chatPaymentApprovalInfo: Record<string, unknown> | null;
 
   // --- Streaming indicator ---
   chatStreamingIndicatorText: string;
@@ -238,6 +244,11 @@ export function createInitialUiState(): RendererUiState {
     chatSendDisabled: false,
     chatAbortVisible: false,
     chatServiceSelectDisabled: false,
+
+    // Payment approval
+    chatPaymentApprovalVisible: false,
+    chatPaymentApprovalPeerId: '',
+    chatPaymentApprovalInfo: null,
 
     // Streaming indicator
     chatStreamingIndicatorText: '',

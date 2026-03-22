@@ -1645,6 +1645,42 @@ export function initChatModule({
   void refreshChatServiceOptions();
 
   // ---------------------------------------------------------------------------
+  // Payment approval (reactive — driven by seller's PaymentRequired)
+  // ---------------------------------------------------------------------------
+
+  if (bridge.onPaymentApprovalRequired) {
+    bridge.onPaymentApprovalRequired((_event, info) => {
+      const peerId = typeof info.peerId === 'string' ? info.peerId : '';
+      uiState.chatPaymentApprovalVisible = true;
+      uiState.chatPaymentApprovalPeerId = peerId;
+      uiState.chatPaymentApprovalInfo = info;
+      notifyUiStateChanged();
+    });
+  }
+
+  function approvePaymentSession(): void {
+    const peerId = uiState.chatPaymentApprovalPeerId;
+    uiState.chatPaymentApprovalVisible = false;
+    uiState.chatPaymentApprovalPeerId = '';
+    uiState.chatPaymentApprovalInfo = null;
+    notifyUiStateChanged();
+    if (bridge.approvePaymentSession) {
+      void bridge.approvePaymentSession(peerId, true);
+    }
+  }
+
+  function rejectPaymentSession(): void {
+    const peerId = uiState.chatPaymentApprovalPeerId;
+    uiState.chatPaymentApprovalVisible = false;
+    uiState.chatPaymentApprovalPeerId = '';
+    uiState.chatPaymentApprovalInfo = null;
+    notifyUiStateChanged();
+    if (bridge.approvePaymentSession) {
+      void bridge.approvePaymentSession(peerId, false);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Public API
   // ---------------------------------------------------------------------------
 
@@ -1663,5 +1699,7 @@ export function initChatModule({
     handleServiceFocus,
     handleServiceBlur,
     clearPinnedPeer,
+    approvePaymentSession,
+    rejectPaymentSession,
   };
 }

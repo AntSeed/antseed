@@ -330,4 +330,47 @@ describe('SellerPaymentManager', () => {
     expect(manager.hasSession(buyerIdentity.peerId)).toBe(true);
     expect(manager.hasSession('nonexistent-peer')).toBe(false);
   });
+
+  // ── Payment negotiation (PaymentRequired) ───────────────────
+
+  it('test_init: caches tokenRate and firstSignCap from escrow', async () => {
+    vi.spyOn(manager.escrowClient, 'getFirstSignCap').mockResolvedValue(1_000_000n);
+
+    await manager.init();
+
+    const req = manager.getPaymentRequirements('test-req-1');
+    expect(req).not.toBeNull();
+    expect(req!.tokenRate).toBe('1'); // from mocked getSellerAccount
+    expect(req!.firstSignCap).toBe('1000000');
+    expect(req!.suggestedAmount).toBe('1000000');
+    expect(req!.requestId).toBe('test-req-1');
+    expect(req!.sellerEvmAddr).toBe(identityToEvmAddress(sellerIdentity));
+  });
+
+  it('test_getPaymentRequirements_beforeInit: returns null when on-chain data not cached', () => {
+    // init() not called, so tokenRate and firstSignCap are null
+    const req = manager.getPaymentRequirements('test-req-2');
+    expect(req).toBeNull();
+  });
+
+  it('test_init_handles_rpc_failure: does not throw, getPaymentRequirements returns null', async () => {
+    vi.spyOn(manager.escrowClient, 'getSellerAccount').mockRejectedValue(new Error('RPC unreachable'));
+    vi.spyOn(manager.escrowClient, 'getFirstSignCap').mockRejectedValue(new Error('RPC unreachable'));
+
+    // Should not throw
+    await manager.init();
+
+    const req = manager.getPaymentRequirements('test-req-3');
+    expect(req).toBeNull();
+  });
+
+  it('test_getPaymentRequirements_includes_requestId: correlates with the triggering request', async () => {
+    vi.spyOn(manager.escrowClient, 'getFirstSignCap').mockResolvedValue(2_000_000n);
+    await manager.init();
+
+    const req1 = manager.getPaymentRequirements('req-aaa');
+    const req2 = manager.getPaymentRequirements('req-bbb');
+    expect(req1!.requestId).toBe('req-aaa');
+    expect(req2!.requestId).toBe('req-bbb');
+  });
 });

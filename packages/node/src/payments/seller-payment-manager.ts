@@ -49,6 +49,8 @@ export class SellerPaymentManager {
   private readonly _topUpRequested = new Set<string>();
   /** Cached seller tokenRate (fetched once from escrow, used for top-up threshold). */
   private _tokenRate: bigint | null = null;
+  /** Cached FIRST_SIGN_CAP from escrow contract. */
+  private _firstSignCap: bigint | null = null;
   /** Per-buyer mutex to prevent concurrent handleSpendingAuth for the same buyer. */
   private readonly _buyerLocks = new Map<string, Promise<void>>();
 
@@ -394,6 +396,51 @@ export class SellerPaymentManager {
 
   hasSession(buyerPeerId: string): boolean {
     return this._activeBuyers.has(buyerPeerId);
+  }
+
+  /**
+   * Pre-fetch on-chain data (tokenRate, FIRST_SIGN_CAP) so PaymentRequired
+   * messages can be sent without blocking on RPC calls.
+   */
+  async init(): Promise<void> {
+    try {
+      const sellerEvmAddr = identityToEvmAddress(this._identity);
+      const [account, firstSignCap] = await Promise.all([
+        this._escrowClient.getSellerAccount(sellerEvmAddr),
+        this._escrowClient.getFirstSignCap(),
+      ]);
+      this._tokenRate = account.tokenRate;
+      this._firstSignCap = firstSignCap;
+      debugLog(`[SellerPayment] Cached on-chain data: tokenRate=${this._tokenRate} firstSignCap=${this._firstSignCap}`);
+    } catch (err) {
+      debugWarn(`[SellerPayment] Failed to pre-fetch on-chain data: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
+  /**
+   * Build the PaymentRequired payload for a buyer that doesn't have a session.
+   * Returns null if on-chain data isn't available yet.
+   */
+  getPaymentRequirements(requestId: string): {
+    sellerEvmAddr: string;
+    tokenRate: string;
+    firstSignCap: string;
+    suggestedAmount: string;
+    requestId: string;
+  } | null {
+    const sellerEvmAddr = identityToEvmAddress(this._identity);
+    const tokenRate = this._tokenRate;
+    const firstSignCap = this._firstSignCap;
+    if (tokenRate === null || firstSignCap === null) {
+      return null;
+    }
+    return {
+      sellerEvmAddr,
+      tokenRate: tokenRate.toString(),
+      firstSignCap: firstSignCap.toString(),
+      suggestedAmount: firstSignCap.toString(),
+      requestId,
+    };
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────

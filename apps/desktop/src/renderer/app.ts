@@ -399,6 +399,8 @@ registerActions({
   handleServiceFocus: chatApi.handleServiceFocus,
   handleServiceBlur: chatApi.handleServiceBlur,
   clearPinnedPeer: chatApi.clearPinnedPeer,
+  approvePaymentSession: chatApi.approvePaymentSession,
+  rejectPaymentSession: chatApi.rejectPaymentSession,
   refreshPlugins: refreshPluginInventory,
   installPlugin: () => {
     const packageName = resolveRouterPackageName(

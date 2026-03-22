@@ -12,12 +12,13 @@ export enum MessageType {
   HttpRequestChunk = 0x25,
   HttpRequestEnd   = 0x26,
 
-  // --- Bilateral Payment Protocol (0x50-0x5F) ---
+  // --- Payment Protocol (0x50-0x5F) ---
   SpendingAuth = 0x50,
   AuthAck = 0x51,
   SellerReceipt = 0x53,
   BuyerAck = 0x54,
   TopUpRequest = 0x55,
+  PaymentRequired = 0x56,
 
   // Report message types
   PeerReport = 0x60,
@@ -113,4 +114,21 @@ export interface TopUpRequestPayload {
   currentMax: string;
   /** Additional USDC amount requested (base units) */
   requestedAdditional: string;
+}
+
+/**
+ * Seller tells buyer what's needed to start a payment session.
+ * Sent via PaymentMux alongside the HTTP 402 response.
+ */
+export interface PaymentRequiredPayload {
+  /** Seller's EVM address for the SpendingAuth */
+  sellerEvmAddr: string;
+  /** Seller's token rate in USDC base units per token (from escrow contract) */
+  tokenRate: string;
+  /** FIRST_SIGN_CAP from escrow contract (USDC base units) */
+  firstSignCap: string;
+  /** Suggested auth amount in USDC base units (= firstSignCap for first sign) */
+  suggestedAmount: string;
+  /** The requestId that triggered the 402, so the buyer can correlate */
+  requestId: string;
 }
