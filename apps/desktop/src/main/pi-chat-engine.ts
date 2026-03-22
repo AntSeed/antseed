@@ -2,7 +2,7 @@ import { app, BrowserWindow } from 'electron';
 import type { IpcMain } from 'electron';
 import { type Static, Type } from '@sinclair/typebox';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, stat, unlink } from 'node:fs/promises';
+import { mkdir, readFile, stat, unlink, writeFile } from 'node:fs/promises';
 import { createConnection } from 'node:net';
 import { homedir } from 'node:os';
 import path from 'node:path';
