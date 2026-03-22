@@ -36,6 +36,8 @@ export { MeteringStorage } from './metering/storage.js';
 export { BalanceManager } from './payments/balance-manager.js';
 export { BaseEscrowClient, type BaseEscrowConfig } from './payments/evm/escrow-client.js';
 export { identityToEvmWallet, identityToEvmAddress } from './payments/evm/keypair.js';
+export { signSpendingAuth, makeEscrowDomain } from './payments/evm/signatures.js';
+export type { SpendingAuthMessage } from './payments/evm/signatures.js';
 export { NatTraversal, type NatMapping, type NatTraversalResult } from './p2p/nat-traversal.js';
 export { BuyerPaymentManager } from './payments/buyer-payment-manager.js';
 export type { BuyerPaymentConfig } from './payments/buyer-payment-manager.js';
@@ -43,6 +45,9 @@ export { SellerPaymentManager } from './payments/seller-payment-manager.js';
 export type { SellerPaymentConfig } from './payments/seller-payment-manager.js';
 export { SessionStore } from './payments/session-store.js';
 export type { StoredSession, StoredReceipt } from './payments/session-store.js';
+export { getChainConfig, resolveChainConfig, DEFAULT_CHAIN_ID, CHAIN_CONFIGS } from './payments/chain-config.js';
+export type { ChainConfig } from './payments/chain-config.js';
+export { formatUsdc, parseUsdc } from './payments/usdc-utils.js';
 export { ProxyMux } from './proxy/proxy-mux.js';
 export { resolveProvider } from './proxy/provider-detection.js';
 export {

@@ -2,6 +2,8 @@ import { useState, useMemo, useCallback } from 'react';
 import Skeleton from 'react-loading-skeleton';
 import 'react-loading-skeleton/dist/skeleton.css';
 import type { ChatServiceOptionEntry } from '../../../core/state';
+import { useUiSnapshot } from '../../hooks/useUiSnapshot';
+import { useActions } from '../../hooks/useActions';
 import styles from './DiscoverWelcome.module.scss';
 
 /* ── Tag colour map (from Figma design tokens) ──────────────────────── */
@@ -220,6 +222,9 @@ type DiscoverWelcomeProps = {
 
 export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWelcomeProps) {
   const [activeFilter, setActiveFilter] = useState('All');
+  const { creditsAvailableUsdc } = useUiSnapshot();
+  const actions = useActions();
+  const hasCredits = parseFloat(creditsAvailableUsdc) > 0;
 
   const hasNetworkData = serviceOptions.length > 0;
   const cards = useMemo(
@@ -249,6 +254,14 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
           Pick a service or agent to start. Filter by what you need.
           Everything is anonymous — no account required.
         </p>
+        {!hasCredits && (
+          <button
+            className={styles.addCreditsBtn}
+            onClick={() => actions.openPaymentsPortal?.()}
+          >
+            Add Credits to use paid services
+          </button>
+        )}
       </div>
 
       {/*

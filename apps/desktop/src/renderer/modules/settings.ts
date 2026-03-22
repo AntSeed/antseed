@@ -67,7 +67,7 @@ export function initSettingsModule({
       maxOutputUsdPerMillion: safeNumber(buyerMaxPricingDefaults.outputUsdPerMillion, 0),
       minRep: safeNumber(buyer.minPeerReputation, 0),
       paymentMethod: safeString(payments.preferredMethod, 'crypto'),
-      requireManualApproval: payments.requireManualApproval !== false, // default: on
+      requireManualApproval: Boolean(buyer.requireManualApproval),
       devMode: uiState.devMode,
     });
     notifyUiStateChanged();
@@ -102,11 +102,11 @@ export function initSettingsModule({
             },
           },
           minPeerReputation: formData.minRep,
+          requireManualApproval: formData.requireManualApproval,
         },
         payments: {
           ...asRecord(currentConfig.payments),
           preferredMethod: formData.paymentMethod || 'crypto',
-          requireManualApproval: formData.requireManualApproval,
         },
       };
 

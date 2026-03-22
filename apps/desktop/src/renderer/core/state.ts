@@ -114,6 +114,32 @@ export type RendererUiState = {
   pluginInstallBtnDisabled: boolean;
   pluginRefreshBtnDisabled: boolean;
 
+  // --- Credits / Payments ---
+  creditsAvailableUsdc: string;
+  creditsReservedUsdc: string;
+  creditsTotalUsdc: string;
+  creditsPendingWithdrawalUsdc: string;
+  creditsCreditLimitUsdc: string;
+  creditsEvmAddress: string | null;
+  creditsLoading: boolean;
+  creditsLastRefreshedAt: number;
+
+  // --- Session approval ---
+  chatPaymentApprovalVisible: boolean;
+  chatPaymentApprovalPeerId: string | null;
+  chatPaymentApprovalPeerName: string | null;
+  chatPaymentApprovalAmount: string;
+  chatPaymentApprovalPeerInfo: {
+    reputation: number;
+    sessionCount: number | null;
+    disputeCount: number | null;
+    networkAgeDays: number | null;
+    evmAddress: string | null;
+  } | null;
+  chatPaymentApprovalLoading: boolean;
+  chatPaymentApprovalError: string | null;
+  chatLowBalanceWarning: boolean;
+
   // --- Chat display ---
   chatActiveConversation: string | null;
   chatConversationTitle: string;
@@ -137,11 +163,6 @@ export type RendererUiState = {
   chatSendDisabled: boolean;
   chatAbortVisible: boolean;
   chatServiceSelectDisabled: boolean;
-
-  // --- Payment approval ---
-  chatPaymentApprovalVisible: boolean;
-  chatPaymentApprovalPeerId: string;
-  chatPaymentApprovalInfo: Record<string, unknown> | null;
 
   // --- Streaming indicator ---
   chatStreamingIndicatorText: string;
@@ -221,6 +242,26 @@ export function createInitialUiState(): RendererUiState {
     pluginInstallBtnDisabled: true,
     pluginRefreshBtnDisabled: true,
 
+    // Credits / Payments
+    creditsAvailableUsdc: '0',
+    creditsReservedUsdc: '0',
+    creditsTotalUsdc: '0',
+    creditsPendingWithdrawalUsdc: '0',
+    creditsCreditLimitUsdc: '0',
+    creditsEvmAddress: null,
+    creditsLoading: false,
+    creditsLastRefreshedAt: 0,
+
+    // Session approval
+    chatPaymentApprovalVisible: false,
+    chatPaymentApprovalPeerId: null,
+    chatPaymentApprovalPeerName: null,
+    chatPaymentApprovalAmount: '1.00',
+    chatPaymentApprovalPeerInfo: null,
+    chatPaymentApprovalLoading: false,
+    chatPaymentApprovalError: null,
+    chatLowBalanceWarning: false,
+
     // Chat
     chatActiveConversation: null,
     chatConversationTitle: 'Conversation',
@@ -244,11 +285,6 @@ export function createInitialUiState(): RendererUiState {
     chatSendDisabled: false,
     chatAbortVisible: false,
     chatServiceSelectDisabled: false,
-
-    // Payment approval
-    chatPaymentApprovalVisible: false,
-    chatPaymentApprovalPeerId: '',
-    chatPaymentApprovalInfo: null,
 
     // Streaming indicator
     chatStreamingIndicatorText: '',

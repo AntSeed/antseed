@@ -95,6 +95,9 @@ export interface BuyerCLIConfig {
   minPeerReputation: number;
   /** Local proxy listen port */
   proxyPort: number;
+  /** When true, user must manually approve each paid session in the desktop app.
+   *  When false (default), the buyer runtime auto-signs SpendingAuth. */
+  requireManualApproval?: boolean;
 }
 
 /**

@@ -289,6 +289,12 @@ const api = {
   approvePaymentSession(peerId: string, approved: boolean): Promise<{ ok: boolean }> {
     return ipcRenderer.invoke('payments:approve-session', peerId, approved) as Promise<{ ok: boolean }>;
   },
+  creditsGetInfo() {
+    return ipcRenderer.invoke('credits:get-info');
+  },
+  paymentsSignSpendingAuth: (params: unknown) => ipcRenderer.invoke('payments:sign-spending-auth', params),
+  paymentsGetPeerInfo: (peerId: string) => ipcRenderer.invoke('payments:get-peer-info', peerId),
+  paymentsOpenPortal: () => ipcRenderer.invoke('payments:open-portal'),
 };
 
 contextBridge.exposeInMainWorld('antseedDesktop', api);

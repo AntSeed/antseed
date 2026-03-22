@@ -42,6 +42,28 @@
   max-width: 440px;
 }
 
+.add-credits-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 8px 18px;
+  border-radius: 8px;
+  border: 1px solid var(--accent-green);
+  background: transparent;
+  color: var(--accent-green);
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.15s ease;
+
+  &:hover {
+    background: var(--accent-green);
+    color: #ffffff;
+  }
+}
+
 /* ── Filter pills ───────────────────────────────────────────────────── */
 
 .filters {

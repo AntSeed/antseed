@@ -7,7 +7,7 @@ import { homedir } from 'node:os'
 import { getGlobalOptions } from './types.js'
 import { loadConfig } from '../../config/loader.js'
 import type { CLIProviderConfig } from '../../config/types.js'
-import { AntseedNode, type Provider, getInstance } from '@antseed/node'
+import { AntseedNode, type Provider, getInstance, resolveChainConfig } from '@antseed/node'
 import type { PaymentConfig } from '@antseed/node/payments'
 import { parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
 import { setupShutdownHandler } from '../shutdown.js'
@@ -259,16 +259,22 @@ export function registerSeedCommand(program: Command): void {
       const sellerWalletAddress = process.env['ANTSEED_SELLER_WALLET_ADDRESS']
 
       let paymentConfig: PaymentConfig | null = null
-      if (preferredMethod === 'crypto' && config.payments.crypto) {
+      if (preferredMethod === 'crypto') {
+        const cc = resolveChainConfig({
+          chainId: config.payments.crypto?.chainId,
+          rpcUrl: config.payments.crypto?.rpcUrl,
+          escrowContractAddress: config.payments.crypto?.escrowContractAddress,
+          usdcContractAddress: config.payments.crypto?.usdcContractAddress,
+        })
         const defaultLockAmountUSDCBaseUnits = toUSDCBaseUnits(
-          config.payments.crypto.defaultLockAmountUSDC ?? defaultEscrowAmountUSDC,
+          config.payments.crypto?.defaultLockAmountUSDC ?? defaultEscrowAmountUSDC,
           defaultEscrowAmountUSDCBaseUnits,
         )
         const cryptoConfig: NonNullable<PaymentConfig['crypto']> = {
-          chainId: config.payments.crypto.chainId,
-          rpcUrl: config.payments.crypto.rpcUrl,
-          contractAddress: config.payments.crypto.escrowContractAddress,
-          usdcAddress: config.payments.crypto.usdcContractAddress,
+          chainId: cc.chainId,
+          rpcUrl: cc.rpcUrl,
+          contractAddress: cc.escrowContractAddress,
+          usdcAddress: cc.usdcContractAddress,
           defaultLockAmountUSDC: defaultLockAmountUSDCBaseUnits,
         }
 

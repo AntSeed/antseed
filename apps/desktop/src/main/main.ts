@@ -17,6 +17,8 @@ import {
 } from './process-manager.js';
 import { registerPiChatHandlers } from './pi-chat-engine.js';
 import { ensureSecureIdentity, secureIdentityEnv, getSecureIdentity } from './identity.js';
+import { identityToEvmAddress, identityToEvmWallet, BaseEscrowClient, signSpendingAuth, makeEscrowDomain, resolveChainConfig, formatUsdc } from '@antseed/node';
+import { createServer as createPaymentsServer } from '@antseed/payments';
 import type { LogEvent, RuntimeActivityEvent } from './log-parser.js';
 import { parseRuntimeActivityFromLog } from './log-parser.js';
 import {
@@ -59,7 +61,7 @@ const __dirname = path.dirname(__filename);
 
 const isDev = Boolean(process.env['VITE_DEV_SERVER_URL']);
 const rendererUrl = process.env['VITE_DEV_SERVER_URL'] ?? `file://${path.join(__dirname, '../renderer/index.html')}`;
-const APP_NAME = 'AntSeed Desktop';
+const APP_NAME = 'AntStation Desktop';
 const DESKTOP_DEBUG_ENV = 'ANTSEED_DESKTOP_DEBUG';
 const DESKTOP_DEBUG_FLAGS = new Set(['--debug-runtime', '--desktop-debug']);
 
@@ -69,6 +71,16 @@ function isTruthyEnv(value: string | undefined): boolean {
   }
   const normalized = value.trim().toLowerCase();
   return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
+}
+
+async function isManualApprovalEnabled(): Promise<boolean> {
+  try {
+    const config = await readConfig(ACTIVE_CONFIG_PATH);
+    const buyer = config.buyer && typeof config.buyer === 'object' ? config.buyer as Record<string, unknown> : {};
+    return Boolean(buyer.requireManualApproval);
+  } catch {
+    return false;
+  }
 }
 
 function hasDesktopDebugFlag(argv: string[]): boolean {
@@ -268,6 +280,54 @@ ipcMain.handle('payments:approve-session', async (_event, peerId: string, approv
   return { ok: true };
 });
 
+// ── Payments Portal ──
+
+let paymentsServer: Awaited<ReturnType<typeof createPaymentsServer>> | null = null;
+const PAYMENTS_PORT = Number(process.env['ANTSEED_PAYMENTS_PORT']) || 3118;
+
+async function startPaymentsPortal(): Promise<void> {
+  if (paymentsServer) return;
+  try {
+    await ensureSecureIdentity();
+    const identityHex = secureIdentityEnv().ANTSEED_IDENTITY_HEX;
+    paymentsServer = await createPaymentsServer({
+      port: PAYMENTS_PORT,
+      identityHex,
+    });
+    await paymentsServer.listen({ port: PAYMENTS_PORT, host: '127.0.0.1' });
+    console.log(`[desktop] Payments portal running at http://127.0.0.1:${PAYMENTS_PORT}`);
+  } catch (err) {
+    console.error('[desktop] Failed to start payments portal:', err instanceof Error ? err.message : String(err));
+    paymentsServer = null;
+  }
+}
+
+async function stopPaymentsPortal(): Promise<void> {
+  if (!paymentsServer) return;
+  try {
+    await paymentsServer.close();
+  } catch {
+    // Already closed
+  }
+  paymentsServer = null;
+}
+
+ipcMain.handle('payments:open-portal', async () => {
+  try {
+    await startPaymentsPortal();
+    // Pass bearer token via URL param so the portal frontend can authenticate POST requests
+    const token = paymentsServer ? (paymentsServer as unknown as { bearerToken?: string }).bearerToken : '';
+    const url = token
+      ? `http://127.0.0.1:${PAYMENTS_PORT}?token=${token}`
+      : `http://127.0.0.1:${PAYMENTS_PORT}`;
+    const { default: open } = await import('open');
+    await open(url);
+    return { ok: true, url };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+
 function getCombinedProcessState(): RuntimeProcessState[] {
   return processManager.getState();
 }
@@ -285,13 +345,7 @@ ipcMain.handle('runtime:get-state', async () => {
 ipcMain.handle('runtime:start', async (_event, options: StartOptions) => {
   await ensureSecureIdentity();
 
-  // Check if manual payment approval is enabled
-  let manualApproval = true; // default: on
-  try {
-    const config = await readConfig(ACTIVE_CONFIG_PATH);
-    const payments = config.payments && typeof config.payments === 'object' ? config.payments as Record<string, unknown> : {};
-    manualApproval = payments.requireManualApproval !== false;
-  } catch { /* use default */ }
+  const manualApproval = await isManualApprovalEnabled();
 
   const startOptions: StartOptions = {
     ...options,
@@ -539,6 +593,7 @@ ipcMain.handle(
     }
     try {
       const merged = await mergeConfig(safeConfig, ACTIVE_CONFIG_PATH);
+      cachedCryptoConfig = null; // Invalidate cached crypto config
       return { ok: true, data: { config: merged }, error: null, status: 200 };
     } catch (err) {
       return { ok: false, data: null, error: err instanceof Error ? err.message : String(err), status: null };
@@ -546,71 +601,198 @@ ipcMain.handle(
   },
 );
 
-// ── Wallet IPC Handlers ──
+// ── Credits / Escrow Balance ──
 
-type WalletInfo = {
-  address: string | null;
-  chainId: string;
-  balanceETH: string;
-  balanceUSDC: string;
-  escrow: {
-    deposited: string;
-    committed: string;
-    available: string;
-  };
+type CreditsInfo = {
+  evmAddress: string | null;
+  balanceUsdc: string;
+  reservedUsdc: string;
+  availableUsdc: string;
+  pendingWithdrawalUsdc: string;
+  creditLimitUsdc: string;
 };
 
-ipcMain.handle('wallet:get-info', async (): Promise<{ ok: boolean; data: WalletInfo | null; error: string | null }> => {
-  try {
-    const [status, config] = await Promise.all([
-      readNodeStatus(ACTIVE_CONFIG_PATH),
-      readConfig(ACTIVE_CONFIG_PATH),
-    ]);
+// Use shared formatUsdc from @antseed/node
+const formatUsdc6 = formatUsdc;
 
-    const identity = asRecord(config.identity);
+let cachedCreditsInfo: CreditsInfo | null = null;
+
+// Cached crypto config — invalidated on config update. Uses protocol defaults
+// from resolveChainConfig with optional user overrides from config.json.
+let cachedCryptoConfig: { rpcUrl: string; escrowAddress: string; usdcAddress: string; chainId: number } | null = null;
+
+async function loadCachedCryptoConfig(): Promise<typeof cachedCryptoConfig> {
+  if (cachedCryptoConfig) return cachedCryptoConfig;
+  let overrides: Record<string, unknown> = {};
+  try {
+    const config = await readConfig(ACTIVE_CONFIG_PATH);
     const payments = asRecord(config.payments);
-    const walletAddress = asString(status.walletAddress as string, '') || asString(identity.walletAddress as string, '');
+    overrides = asRecord(payments.crypto);
+  } catch {
+    // No config — use protocol defaults
+  }
+  const cc = resolveChainConfig({
+    chainId: asString(overrides.chainId as string, '') || undefined,
+    rpcUrl: asString(overrides.rpcUrl as string, '') || undefined,
+    escrowContractAddress: asString(overrides.escrowContractAddress as string, '') || undefined,
+    usdcContractAddress: asString(overrides.usdcContractAddress as string, '') || undefined,
+  });
+  cachedCryptoConfig = { rpcUrl: cc.rpcUrl, escrowAddress: cc.escrowContractAddress, usdcAddress: cc.usdcContractAddress, chainId: cc.evmChainId };
+  return cachedCryptoConfig;
+}
+
+async function refreshCreditsInfo(): Promise<CreditsInfo> {
+  const identity = getSecureIdentity();
+  if (!identity) {
+    return { evmAddress: null, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
+  }
+
+  const evmAddress = identityToEvmAddress(identity);
+  const cc = await loadCachedCryptoConfig();
+  if (!cc) {
+    return { evmAddress, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
+  }
+
+  const client = new BaseEscrowClient({ rpcUrl: cc.rpcUrl, contractAddress: cc.escrowAddress, usdcAddress: cc.usdcAddress });
+
+  try {
+    const [balance, creditLimit] = await Promise.all([
+      client.getBuyerBalance(evmAddress),
+      client.getBuyerCreditLimit(evmAddress),
+    ]);
+    const info: CreditsInfo = {
+      evmAddress,
+      balanceUsdc: formatUsdc6(balance.available + balance.reserved),
+      reservedUsdc: formatUsdc6(balance.reserved),
+      availableUsdc: formatUsdc6(balance.available),
+      pendingWithdrawalUsdc: formatUsdc6(balance.pendingWithdrawal),
+      creditLimitUsdc: formatUsdc6(creditLimit),
+    };
+    cachedCreditsInfo = info;
+    return info;
+  } catch (err) {
+    console.error('[credits] Failed to fetch escrow balance:', err instanceof Error ? err.message : String(err));
+    if (cachedCreditsInfo) return cachedCreditsInfo;
+    return { evmAddress, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
+  }
+}
+
+ipcMain.handle('credits:get-info', async (): Promise<{ ok: boolean; data: CreditsInfo | null; error: string | null }> => {
+  try {
+    await ensureSecureIdentity();
+    const info = await refreshCreditsInfo();
+    return { ok: true, data: info, error: null };
+  } catch (err) {
+    return { ok: false, data: null, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+
+// FIRST_SIGN_CAP: 1 USDC = 1,000,000 base units. Main process enforces this cap
+// to prevent a compromised renderer from signing unbounded spending authorizations.
+const MAX_SPENDING_AUTH_BASE_UNITS = 1_000_000n;
+const MAX_DEADLINE_SECONDS = 7 * 24 * 60 * 60; // 7 days
+const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+const BYTES32_RE = /^0x[0-9a-fA-F]{64}$/;
+
+ipcMain.handle('payments:sign-spending-auth', async (_event, params: {
+  sellerEvmAddress: string;
+  sessionId: string;
+  maxAmountBaseUnits: string;
+  nonce: number;
+  deadline: number;
+  previousConsumption: string;
+  previousSessionId: string;
+}) => {
+  try {
+    // Validate renderer-supplied parameters at the trust boundary
+    if (!ETH_ADDRESS_RE.test(params.sellerEvmAddress)) {
+      return { ok: false, error: 'Invalid seller EVM address' };
+    }
+    if (!BYTES32_RE.test(params.sessionId)) {
+      return { ok: false, error: 'Invalid session ID format' };
+    }
+    const maxAmount = BigInt(params.maxAmountBaseUnits);
+    if (maxAmount <= 0n || maxAmount > MAX_SPENDING_AUTH_BASE_UNITS) {
+      return { ok: false, error: `maxAmount exceeds cap (${MAX_SPENDING_AUTH_BASE_UNITS} base units)` };
+    }
+    if (!Number.isInteger(params.nonce) || params.nonce < 0) {
+      return { ok: false, error: 'Invalid nonce' };
+    }
+    if (!BYTES32_RE.test(params.previousSessionId)) {
+      return { ok: false, error: 'Invalid previousSessionId format' };
+    }
+    const now = Math.floor(Date.now() / 1000);
+    if (params.deadline < now || params.deadline > now + MAX_DEADLINE_SECONDS) {
+      return { ok: false, error: 'Deadline out of acceptable range' };
+    }
+
+    await ensureSecureIdentity();
+    const identity = getSecureIdentity();
+    if (!identity) {
+      return { ok: false, error: 'Identity not available' };
+    }
+
+    const cc = await loadCachedCryptoConfig();
+    if (!cc) {
+      return { ok: false, error: 'No escrow contract configured' };
+    }
+
+    const wallet = identityToEvmWallet(identity);
+    const domain = makeEscrowDomain(cc.chainId, cc.escrowAddress);
+
+    const signature = await signSpendingAuth(wallet, domain, {
+      seller: params.sellerEvmAddress,
+      sessionId: params.sessionId,
+      maxAmount,
+      nonce: params.nonce,
+      deadline: params.deadline,
+      previousConsumption: BigInt(params.previousConsumption),
+      previousSessionId: params.previousSessionId,
+    });
+
+    const buyerEvmAddress = identityToEvmAddress(identity);
 
     return {
       ok: true,
       data: {
-        address: walletAddress || null,
-        chainId: asString(payments.chainId as string, 'base-sepolia'),
-        balanceETH: '0.00',
-        balanceUSDC: '0.00',
-        escrow: {
-          deposited: '0.00',
-          committed: '0.00',
-          available: '0.00',
-        },
+        signature,
+        buyerEvmAddress,
       },
-      error: null,
     };
   } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+
+ipcMain.handle('payments:get-peer-info', async (_event, peerId: string) => {
+  try {
+    if (typeof peerId !== 'string' || peerId.trim().length === 0) {
+      return { ok: false, error: 'Invalid peerId' };
+    }
+    await refreshPeerCache();
+    const peer = lookupPeer(peerId.trim());
+    if (!peer) {
+      return { ok: false, error: 'Peer not found' };
+    }
+
     return {
-      ok: false,
-      data: null,
-      error: err instanceof Error ? err.message : String(err),
+      ok: true,
+      data: {
+        peerId: peer.peerId,
+        displayName: peer.displayName ?? null,
+        reputation: peer.reputation ?? 0,
+        onChainReputation: (peer as Record<string, unknown>).onChainReputation ?? null,
+        onChainSessionCount: (peer as Record<string, unknown>).onChainSessionCount ?? null,
+        onChainDisputeCount: (peer as Record<string, unknown>).onChainDisputeCount ?? null,
+        evmAddress: (peer as Record<string, unknown>).evmAddress ?? null,
+        timestamp: (peer as Record<string, unknown>).timestamp ?? null,
+        providers: peer.providers ?? [],
+        services: peer.services ?? [],
+      },
     };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
-});
-
-ipcMain.handle('wallet:deposit', async (_event, amount: string) => {
-  const numericAmount = Number(amount);
-  if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
-    return { ok: false, error: 'Invalid deposit amount' };
-  }
-  appendLog('connect', 'system', `Deposit requested: ${amount} USDC. Run 'antseed deposit ${amount}' in terminal.`);
-  return { ok: true, message: `Deposit of ${amount} USDC logged. Use CLI to execute: antseed deposit ${amount}` };
-});
-
-ipcMain.handle('wallet:withdraw', async (_event, amount: string) => {
-  const numericAmount = Number(amount);
-  if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
-    return { ok: false, error: 'Invalid withdrawal amount' };
-  }
-  appendLog('connect', 'system', `Withdrawal requested: ${amount} USDC. Run 'antseed withdraw ${amount}' in terminal.`);
-  return { ok: true, message: `Withdrawal of ${amount} USDC logged. Use CLI to execute: antseed withdraw ${amount}` };
 });
 
 // ── AI Chat IPC Handlers ──
@@ -629,12 +811,7 @@ registerPiChatHandlers({
 
     await ensureSecureIdentity();
 
-    let chatManualApproval = true;
-    try {
-      const cfg = await readConfig(ACTIVE_CONFIG_PATH);
-      const pay = cfg.payments && typeof cfg.payments === 'object' ? cfg.payments as Record<string, unknown> : {};
-      chatManualApproval = pay.requireManualApproval !== false;
-    } catch { /* default */ }
+    const chatManualApproval = await isManualApprovalEnabled();
 
     const startOptions: StartOptions = {
       mode: 'connect',
@@ -714,6 +891,8 @@ app.whenReady().then(() => {
     // Failure is logged inside ensureSecureIdentity; CLI falls back to file-based identity.
   });
 
+  // Payments portal starts lazily on first open (via payments:open-portal IPC)
+
   void ensureDefaultPlugin('@antseed/router-local', {
     getAppSetupNeeded: () => appSetupNeeded,
     setAppSetupNeeded: (v) => { appSetupNeeded = v; },
@@ -775,13 +954,15 @@ app.on('before-quit', (event) => {
   event.preventDefault();
   isQuitting = true;
 
-  void processManager.stopAll().finally(() => {
-    app.quit();
-  });
+  void processManager.stopAll()
+    .then(() => stopPaymentsPortal())
+    .finally(() => {
+      app.quit();
+    });
 });
 
 // Ensure child processes are cleaned up if the main process receives SIGTERM
 // (e.g. dev runner Ctrl+C kills Electron before before-quit fires).
 process.on('SIGTERM', () => {
-  void processManager.stopAll().finally(() => process.exit(0));
+  void Promise.all([processManager.stopAll(), stopPaymentsPortal()]).finally(() => process.exit(0));
 });
