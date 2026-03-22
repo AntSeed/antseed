@@ -24,6 +24,7 @@ export {
 } from './detect.js';
 
 export {
+  extractUsage,
   parseJsonObject,
   toNonNegativeInt,
   type StreamingResponseAdapter,

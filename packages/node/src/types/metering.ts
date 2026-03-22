@@ -15,7 +15,7 @@ export interface TokenCount {
   /** Total estimated tokens */
   totalTokens: number;
   /** The estimation method used */
-  method: 'content-length' | 'chunk-accumulation' | 'fallback';
+  method: 'content-length' | 'chunk-accumulation' | 'provider-usage' | 'fallback';
   /**
    * Confidence level of the estimate.
    * 'high' = Content-Length header was present.
