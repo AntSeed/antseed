@@ -7,7 +7,7 @@ import { homedir } from 'node:os'
 import { createConnection } from 'node:net'
 import { getGlobalOptions } from './types.js'
 import { loadConfig } from '../../config/loader.js'
-import { AntseedNode, BaseEscrowClient, loadOrCreateIdentity, identityToEvmAddress, getInstance, resolveChainConfig } from '@antseed/node'
+import { AntseedNode, BaseEscrowClient, identityToEvmAddress, getInstance, resolveChainConfig } from '@antseed/node'
 import type { NodePaymentsConfig } from '@antseed/node'
 import { OFFICIAL_BOOTSTRAP_NODES, parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
 import { setupShutdownHandler } from '../shutdown.js'
@@ -369,7 +369,7 @@ export function registerConnectCommand(program: Command): void {
       // Display available USDC balance only if payments are active
       if (paymentsConfig?.enabled) {
         try {
-          const identity = await loadOrCreateIdentity(globalOpts.dataDir)
+          const identity = node.identity!
           const address = identityToEvmAddress(identity)
           const escrowClient = new BaseEscrowClient({
             rpcUrl: chainConfig.rpcUrl,
