@@ -10,6 +10,15 @@ import type {
 import { encodeFrame } from './message-protocol.js';
 import type { FramedMessage } from '../types/protocol.js';
 import * as codec from './payment-codec.js';
+import { debugLog } from '../utils/debug.js';
+
+const MESSAGE_TYPE_NAME: Record<number, string> = {
+  [MessageType.SpendingAuth]: 'SpendingAuth',
+  [MessageType.AuthAck]: 'AuthAck',
+  [MessageType.SellerReceipt]: 'SellerReceipt',
+  [MessageType.BuyerAck]: 'BuyerAck',
+  [MessageType.TopUpRequest]: 'TopUpRequest',
+};
 
 export type PaymentMessageHandler<T> = (payload: T) => void | Promise<void>;
 
@@ -72,6 +81,9 @@ export class PaymentMux {
    * Returns true if this frame is a payment message and was handled.
    */
   async handleFrame(frame: FramedMessage): Promise<boolean> {
+    const name = MESSAGE_TYPE_NAME[frame.type];
+    if (!name) return false;
+    debugLog(`[PaymentMux] ← recv ${name} (${frame.payload.length}b)`);
     switch (frame.type) {
       case MessageType.SpendingAuth:
         await this._onSpendingAuth?.(codec.decodeSpendingAuth(frame.payload));
@@ -99,6 +111,7 @@ export class PaymentMux {
   }
 
   private _send(type: MessageType, payload: Uint8Array): void {
+    debugLog(`[PaymentMux] → send ${MESSAGE_TYPE_NAME[type] ?? `0x${type.toString(16)}`} (${payload.length}b)`);
     const frame = encodeFrame({
       type,
       messageId: this._messageIdCounter++ & 0xffffffff,

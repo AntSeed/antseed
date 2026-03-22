@@ -68,6 +68,7 @@ export function initSettingsModule({
       minRep: safeNumber(buyer.minPeerReputation, 0),
       paymentMethod: safeString(payments.preferredMethod, 'crypto'),
       devMode: uiState.devMode,
+      requireManualApproval: Boolean(buyer.requireManualApproval),
     });
     notifyUiStateChanged();
   }
@@ -101,6 +102,7 @@ export function initSettingsModule({
             },
           },
           minPeerReputation: formData.minRep,
+          requireManualApproval: formData.requireManualApproval,
         },
         payments: {
           ...asRecord(currentConfig.payments),

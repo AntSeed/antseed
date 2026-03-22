@@ -235,6 +235,30 @@ contract AntseedEscrow is EIP712, Pausable {
         emit Deposited(msg.sender, amount);
     }
 
+    /**
+     * @notice Deposit USDC on behalf of a buyer (for fiat ramps like Crossmint).
+     * @param buyer The address to credit.
+     * @param amount USDC amount in base units (6 decimals).
+     * @dev Permissionless — any address can deposit for any buyer. Intentional for
+     *      fiat ramp integrations (Crossmint) where a third party pays on behalf.
+     *      Griefing surface: attacker can front-run firstSessionAt for new users.
+     *      Impact is bounded (TIME_BONUS ~0.5 USDC/day, MIN_BUYER_DEPOSIT = 10 USDC).
+     *      Add onlyFiatRamp modifier if stricter access control is needed.
+     */
+    function depositFor(address buyer, uint256 amount) external nonReentrant {
+        if (amount == 0) revert InvalidAmount();
+        BuyerAccount storage ba = buyers[buyer];
+        if (ba.balance == 0 && amount < MIN_BUYER_DEPOSIT) revert BelowMinDeposit();
+        if (ba.balance + amount > getBuyerCreditLimit(buyer)) revert CreditLimitExceeded();
+
+        _safeTransferFrom(msg.sender, address(this), amount);
+        ba.balance += amount;
+        ba.lastActivityAt = block.timestamp;
+        if (ba.firstSessionAt == 0) ba.firstSessionAt = block.timestamp;
+
+        emit Deposited(buyer, amount);
+    }
+
     function requestWithdrawal(uint256 amount) external {
         if (amount == 0) revert InvalidAmount();
         BuyerAccount storage ba = buyers[msg.sender];

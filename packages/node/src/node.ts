@@ -14,7 +14,7 @@ import {
   type SerializedHttpResponseChunk,
 } from "./types/http.js";
 import type { ConnectionConfig } from "./types/connection.js";
-import type { MeteringEvent, SessionMetrics } from "./types/metering.js";
+import type { MeteringEvent, SessionMetrics, TokenCount } from "./types/metering.js";
 import { MeteringStorage } from "./metering/storage.js";
 import { ReceiptGenerator } from "./metering/receipt-generator.js";
 import { ConnectionState } from "./types/connection.js";
@@ -57,11 +57,9 @@ import {
   type PaymentConfig,
   type PaymentMethod,
   BaseEscrowClient,
-  buildReceiptMessage,
-  signMessageEd25519,
   SessionStore,
 } from "./payments/index.js";
-import { bytesToHex } from "./utils/hex.js";
+import { parseJsonObject, extractUsage } from "@antseed/api-adapter";
 import { debugLog, debugWarn } from "./utils/debug.js";
 import { parsePublicAddress } from "./discovery/public-address.js";
 import { BuyerPaymentManager, type BuyerPaymentConfig } from "./payments/buyer-payment-manager.js";
@@ -73,6 +71,35 @@ import { verifyReputation } from "./discovery/reputation-verifier.js";
 export type { Provider, ProviderStreamCallbacks };
 export type { Router };
 export type { BuyerPaymentConfig };
+
+/**
+ * Extract actual token usage from an LLM provider response body.
+ * Handles both JSON and SSE (streaming) responses. Returns zeros
+ * if usage data is not found (caller should fall back to estimation).
+ */
+function parseResponseUsage(body: Uint8Array): { inputTokens: number; outputTokens: number } {
+  const parsed = parseJsonObject(body);
+  if (parsed) {
+    return extractUsage(parsed);
+  }
+  // SSE streaming: scan data lines for a usage object
+  const text = new TextDecoder().decode(body);
+  let inputTokens = 0;
+  let outputTokens = 0;
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('data:')) continue;
+    const payload = trimmed.slice(5).trim();
+    if (!payload || payload === '[DONE]') continue;
+    try {
+      const event = JSON.parse(payload) as Record<string, unknown>;
+      const usage = extractUsage(event);
+      if (usage.inputTokens > 0) inputTokens = Math.max(inputTokens, usage.inputTokens);
+      if (usage.outputTokens > 0) outputTokens = Math.max(outputTokens, usage.outputTokens);
+    } catch { /* skip non-JSON lines */ }
+  }
+  return { inputTokens, outputTokens };
+}
 
 export interface NodePaymentsConfig {
   /** Enable seller-side payment channels and automatic settlement. */
@@ -144,18 +171,6 @@ interface SellerSessionState {
   totalLatencyMs: number;
   totalCostCents: number;
   provider: string;
-
-  // --- Bilateral payment state ---
-  lockCommitted: boolean;
-  lockedAmount: bigint;
-  runningTotal: bigint;
-  ackedRequestCount: number;
-  lastAckedTotal: bigint;
-  awaitingAck: boolean;
-  buyerEvmAddress: string | null;
-
-  // Legacy fields
-  channelId?: string;
   settling?: boolean;
 }
 
@@ -169,10 +184,6 @@ export interface SellerSessionSnapshot {
   totalTokens: number;
   avgLatencyMs: number;
   settling: boolean;
-  lockCommitted: boolean;
-  lockedAmountUSDC: string;
-  runningTotalUSDC: string;
-  ackedRequestCount: number;
 }
 
 export interface RequestStreamResponseMetadata {
@@ -290,10 +301,6 @@ export class AntseedNode extends EventEmitter {
         totalTokens: session.totalTokens,
         avgLatencyMs: session.totalRequests > 0 ? session.totalLatencyMs / session.totalRequests : 0,
         settling: Boolean(session.settling),
-        lockCommitted: session.lockCommitted,
-        lockedAmountUSDC: session.lockedAmount.toString(),
-        runningTotalUSDC: session.runningTotal.toString(),
-        ackedRequestCount: session.ackedRequestCount,
       });
     }
     return snapshots;
@@ -553,6 +560,7 @@ export class AntseedNode extends EventEmitter {
 
     // Buyer-side: initiate lock and wait for confirmation on first request to a new peer
     if (this._buyerPaymentManager && !this._buyerLockedPeers.has(peer.peerId)) {
+      debugLog(`[Node] First request to peer ${peer.peerId.slice(0, 12)}... — initiating payment lock`);
       await this._initiateBuyerLock(peer, conn);
     }
 
@@ -1042,10 +1050,8 @@ export class AntseedNode extends EventEmitter {
 
       // Reject with 402 if no active payment session and escrow client is configured
       const spmAuthorized = this._sellerPaymentManager?.hasSession(buyerPeerId) ?? false;
-      const session = this._sessions.get(buyerPeerId);
-      const legacyAuthorized = session?.lockCommitted ?? false;
-      if (this._escrowClient && !spmAuthorized && !legacyAuthorized) {
-        debugWarn(`[Node] Rejecting request from ${buyerPeerId.slice(0, 12)}... — lock not committed`);
+      if (this._escrowClient && !spmAuthorized) {
+        debugWarn(`[Node] Rejecting request from ${buyerPeerId.slice(0, 12)}... — no payment session (402)`);
         mux.sendProxyResponse({
           requestId: request.requestId,
           statusCode: 402,
@@ -1152,23 +1158,15 @@ export class AntseedNode extends EventEmitter {
           latencyMs,
           request.body.length,
           responseBody.length,
+          responseBody,
         );
 
-        // Generate bilateral receipt after each request
+        // Send receipt to buyer after each request
         if (this._sellerPaymentManager?.hasSession(buyerPeerId)) {
-          // Estimate cost in USDC base units
-          const receiptTokens = this._estimateTokens(request.body.length, responseBody.length);
-          const costUSD =
-            (receiptTokens.inputTokens * requestPricing.inputUsdPerMillion +
-              receiptTokens.outputTokens * requestPricing.outputUsdPerMillion) /
-            1_000_000;
-          const costBaseUnits = BigInt(Math.round(costUSD * 1_000_000));
-          await this._sellerPaymentManager.sendReceipt(buyerPeerId, paymentMux, responseBody, costBaseUnits);
-        } else {
-          const currentSession = this._sessions.get(buyerPeerId);
-          if (currentSession?.lockCommitted) {
-            await this._sendBilateralReceipt(buyerPeerId, currentSession, requestPricing, responseBody, paymentMux);
-          }
+          const usage = parseResponseUsage(responseBody);
+          const totalTokens = usage.inputTokens + usage.outputTokens;
+          debugLog(`[Node] Sending receipt: buyer=${buyerPeerId.slice(0, 12)}... tokens=${totalTokens} (in=${usage.inputTokens} out=${usage.outputTokens})`);
+          await this._sellerPaymentManager.sendReceipt(buyerPeerId, paymentMux, responseBody, BigInt(totalTokens));
         }
       } finally {
         this._adjustProviderLoad(provider.name, -1);
@@ -1276,13 +1274,6 @@ export class AntseedNode extends EventEmitter {
         totalLatencyMs: 0,
         totalCostCents: 0,
         provider: providerName,
-        lockCommitted: false,
-        lockedAmount: 0n,
-        runningTotal: 0n,
-        ackedRequestCount: 0,
-        lastAckedTotal: 0n,
-        awaitingAck: false,
-        buyerEvmAddress: null,
       };
       this._sessions.set(buyerPeerId, session);
     }
@@ -1309,10 +1300,11 @@ export class AntseedNode extends EventEmitter {
   }
 
   /** Estimate tokens from byte lengths (rough: ~4 chars per token). */
-  private _estimateTokens(inputBytes: number, outputBytes: number) {
+  /** Fallback token estimation from byte lengths (~4 bytes per token). */
+  private _estimateTokens(inputBytes: number, outputBytes: number): TokenCount {
     const inputTokens = Math.max(1, Math.round(inputBytes / 4));
     const outputTokens = Math.max(1, Math.round(outputBytes / 4));
-    return { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens };
+    return { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens, method: 'content-length', confidence: 'low' };
   }
 
   private async _recordMetering(
@@ -1324,12 +1316,31 @@ export class AntseedNode extends EventEmitter {
     latencyMs: number,
     inputBytes: number,
     outputBytes: number,
+    responseBody: Uint8Array,
   ): Promise<void> {
     if (!this._identity) return;
 
     const sellerPeerId = this._identity.peerId;
     const isSSE = request.headers["accept"]?.includes("text/event-stream") ?? false;
-    const tokens = this._estimateTokens(inputBytes, outputBytes);
+
+    // Use actual token counts from provider response when available,
+    // falling back to byte-based estimation.
+    const providerUsage = parseResponseUsage(responseBody);
+    let tokens: TokenCount;
+    if (providerUsage.inputTokens > 0 || providerUsage.outputTokens > 0) {
+      const totalTokens = providerUsage.inputTokens + providerUsage.outputTokens;
+      tokens = {
+        inputTokens: providerUsage.inputTokens,
+        outputTokens: providerUsage.outputTokens,
+        totalTokens,
+        method: 'provider-usage',
+        confidence: 'high',
+      };
+      debugLog(`[Node] Metering: provider-usage tokens=${totalTokens} (in=${providerUsage.inputTokens} out=${providerUsage.outputTokens})`);
+    } else {
+      tokens = this._estimateTokens(inputBytes, outputBytes);
+      debugLog(`[Node] Metering: estimated tokens=${tokens.totalTokens} from ${inputBytes}+${outputBytes} bytes`);
+    }
 
     // Get or create session for this buyer
     const session = this._getOrCreateSellerSession(buyerPeerId, providerName);
@@ -1521,19 +1532,6 @@ export class AntseedNode extends EventEmitter {
       this._settlementTimers.delete(buyerPeerId);
     }
 
-    // Ghost scenario handling: disputes removed from protocol.
-    // Ghost sessions are now handled by settleTimeout expiry on-chain.
-    if (session.lockCommitted && this._escrowClient && this._identity && reason === "disconnect") {
-      debugLog(`[Node] Ghost buyer for session ${session.sessionId} — lock will expire via settleTimeout`);
-
-      this._sessions.delete(buyerPeerId);
-      this.emit("session:finalized", {
-        buyerPeerId,
-        sessionId: session.sessionId,
-        reason: "ghost-disconnect",
-      });
-      return;
-    }
 
     if (!this._metering || !this._identity) {
       this._sessions.delete(buyerPeerId);
@@ -1678,75 +1676,6 @@ export class AntseedNode extends EventEmitter {
     this._muxes.set(peerId, mux);
     return mux;
   }
-
-  // ── Seller-side bilateral payment handlers ─────────────────────
-
-  // Legacy _handleSpendingAuth and _handleBuyerAck removed — SpendingAuth
-  // is now only accepted via SellerPaymentManager which verifies EIP-712
-  // signatures on-chain. Without SellerPaymentManager, SpendingAuth is rejected.
-
-  /**
-   * Generate and send a bilateral receipt after processing a request (Task 3).
-   */
-  private async _sendBilateralReceipt(
-    _buyerPeerId: string,
-    session: SellerSessionState,
-    providerPricingUsdPerMillion: { inputUsdPerMillion: number; outputUsdPerMillion: number },
-    responseBody: Uint8Array,
-    paymentMux: PaymentMux,
-  ): Promise<void> {
-    if (!this._identity) return;
-
-    // Calculate incremental cost in USDC base units (6 decimals)
-    // Estimate tokens from response body size
-    const tokens = this._estimateTokens(0, responseBody.length);
-    const costUSD =
-      (tokens.inputTokens * providerPricingUsdPerMillion.inputUsdPerMillion +
-        tokens.outputTokens * providerPricingUsdPerMillion.outputUsdPerMillion) /
-      1_000_000;
-    const costBaseUnits = BigInt(Math.round(costUSD * 1_000_000));
-
-    // Update running total
-    session.runningTotal += costBaseUnits;
-
-    // SHA-256 hash of response body for proof of work
-    const responseHash = createHash("sha256").update(responseBody).digest();
-
-    // Build receipt message and sign with Ed25519
-    const receiptMsg = buildReceiptMessage(
-      session.sessionIdBytes,
-      session.runningTotal,
-      session.totalRequests,
-      new Uint8Array(responseHash),
-    );
-    const sellerSig = await signMessageEd25519(this._identity, receiptMsg);
-
-    paymentMux.sendSellerReceipt({
-      sessionId: session.sessionId,
-      runningTotal: session.runningTotal.toString(),
-      requestCount: session.totalRequests,
-      responseHash: bytesToHex(new Uint8Array(responseHash)),
-      sellerSig: bytesToHex(sellerSig),
-    });
-
-    session.awaitingAck = true;
-
-    // Send TopUpRequest if running total > 80% of locked amount
-    if (session.lockedAmount > 0n && session.runningTotal * 100n > session.lockedAmount * 80n) {
-      const additionalAmount = session.lockedAmount; // Request same amount again
-      paymentMux.sendTopUpRequest({
-        sessionId: session.sessionId,
-        currentUsed: session.runningTotal.toString(),
-        currentMax: session.lockedAmount.toString(),
-        requestedAdditional: additionalAmount.toString(),
-      });
-      debugLog(`[Node] TopUpRequest sent for session ${session.sessionId.slice(0, 8)}... (running=${session.runningTotal}, locked=${session.lockedAmount})`);
-    }
-  }
-
-  // NOTE: SessionEnd and TopUpAuth handlers removed in bilateral protocol v2.
-  // Settlement is now handled via the seller calling charge() on-chain using
-  // the buyer's SpendingAuth EIP-712 signature. See PRD-03 for new flow.
 
   // ── Buyer-side payment helpers ─────────────────────────────────
 

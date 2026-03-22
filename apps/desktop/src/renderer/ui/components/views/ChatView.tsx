@@ -10,6 +10,8 @@ import { useActions } from '../../hooks/useActions';
 import { ChatBubble } from '../chat/ChatBubble';
 import { isToolResultOnlyMessage } from '../chat/chat-utils.js';
 import { WalkingAnt } from '../chat/WalkingAnt';
+import { SessionApprovalCard } from '../chat/SessionApprovalCard';
+import { LowBalanceWarning } from '../chat/LowBalanceWarning';
 
 import { AntStationStackedLogo } from '../AntStationLogo';
 import styles from './ChatView.module.scss';
@@ -290,6 +292,22 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
               <WalkingAnt elapsedMs={snap.chatThinkingElapsedMs} />
             )}
           </div>
+
+          <SessionApprovalCard
+            visible={snap.chatPaymentApprovalVisible}
+            peerName={snap.chatPaymentApprovalPeerName}
+            amount={snap.chatPaymentApprovalAmount}
+            peerInfo={snap.chatPaymentApprovalPeerInfo}
+            loading={snap.chatPaymentApprovalLoading}
+            error={snap.chatPaymentApprovalError}
+            onApprove={() => actions.approveSessionPayment?.()}
+            onCancel={() => actions.cancelSessionPayment?.()}
+          />
+          <LowBalanceWarning
+            visible={snap.chatLowBalanceWarning}
+            availableUsdc={snap.creditsAvailableUsdc}
+            onAddCredits={() => actions.openPaymentsPortal?.()}
+          />
 
           <div className={styles.chatInputArea}>
             {attachedImage && (

@@ -7,27 +7,11 @@ export type {
   Transaction,
   PaymentConfig,
   CryptoPaymentConfig,
-  SettlementResult,
-  DisputeStatus,
-  PaymentDispute,
 } from './types.js';
 
 // Balance tracking (local transaction history)
 export { BalanceManager } from './balance-manager.js';
 export type { UnifiedBalance } from './balance-manager.js';
-
-// Off-chain settlement calculation
-export { calculateSettlement, isSettlementWithinEscrow, calculateRefund } from './settlement.js';
-
-// Off-chain dispute detection
-export {
-  createDispute,
-  detectDiscrepancy,
-  resolveDispute,
-  isDisputeExpired,
-  calculateDisputedAmount,
-  DISPUTE_TIMEOUT_MS,
-} from './disputes.js';
 
 // Base EVM client
 export { BaseEvmClient } from './evm/base-evm-client.js';
@@ -46,8 +30,6 @@ export {
   verifyMessageEd25519,
 } from './evm/signatures.js';
 export type { SpendingAuthMessage } from './evm/signatures.js';
-export { getWalletInfo, getAddress } from './evm/wallet.js';
-
 // ANTS token
 export { ANTSTokenClient } from './evm/ants-token-client.js';
 export type { ANTSTokenClientConfig } from './evm/ants-token-client.js';

@@ -69,6 +69,8 @@ export type ChatModuleApi = {
   handleServiceFocus: () => void;
   handleServiceBlur: () => void;
   clearPinnedPeer: () => void;
+  approveSessionPayment: () => Promise<void>;
+  cancelSessionPayment: () => void;
 };
 
 export function initChatModule({
@@ -98,6 +100,12 @@ export function initChatModule({
   // Module-local state
   // ---------------------------------------------------------------------------
 
+  // FIRST_SIGN_CAP from the escrow contract: 1 USDC
+  const FIRST_SIGN_CAP_USDC = '1.00';
+
+  let pendingPaymentMessage: { text: string; imageBase64?: string; imageMimeType?: string } | null = null;
+  const approvedPeerSessions = new Set<string>();
+
   let activeConversation: ChatConversation | null = null;
   let activeStreamTurn: number | null = null;
   let activeStreamStartedAt = 0;
@@ -112,6 +120,37 @@ export function initChatModule({
   let serviceSelectFocused = false;
   const localConversationMessages = new Map<string, ChatMessage[]>();
   const streamingMessagesByConversation = new Map<string, ChatMessage>();
+
+  // ---------------------------------------------------------------------------
+  // Payment approval helpers
+  // ---------------------------------------------------------------------------
+
+  function isSessionApproved(peerId: string): boolean {
+    return approvedPeerSessions.has(peerId);
+  }
+
+  async function fetchPeerInfo(peerId: string): Promise<void> {
+    if (!bridge?.paymentsGetPeerInfo) return;
+    try {
+      const result = await bridge.paymentsGetPeerInfo(peerId);
+      if (result.ok && result.data) {
+        const now = Date.now() / 1000;
+        const timestamp = result.data.timestamp || now;
+        const ageDays = Math.floor((now - timestamp) / 86400);
+
+        uiState.chatPaymentApprovalPeerInfo = {
+          reputation: result.data.onChainReputation ?? result.data.reputation ?? 0,
+          sessionCount: result.data.onChainSessionCount ?? null,
+          disputeCount: result.data.onChainDisputeCount ?? null,
+          networkAgeDays: ageDays > 0 ? ageDays : null,
+          evmAddress: result.data.evmAddress ?? null,
+        };
+        notifyUiStateChanged();
+      }
+    } catch {
+      // Silently fail — card shows without peer info
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // Normalization helpers
@@ -1092,6 +1131,34 @@ export function initChatModule({
   function sendMessage(text: string, imageBase64?: string, imageMimeType?: string): void {
     if (!bridge) return;
 
+    // Payment gate for paid services
+    const selectedService = uiState.chatServiceOptions.find(
+      (opt) => opt.value === uiState.chatSelectedServiceValue
+    );
+    const isPaidService = selectedService && selectedService.protocol !== 'free';
+    const hasCredits = uiState.creditsAvailableUsdc !== '0' && uiState.creditsAvailableUsdc !== '';
+    const requireManualApproval = uiState.configFormData?.requireManualApproval ?? false;
+
+    if (isPaidService && !hasCredits) {
+      uiState.chatError = 'No credits available. Add credits to use paid services.';
+      notifyUiStateChanged();
+      return;
+    }
+
+    if (requireManualApproval && isPaidService && selectedService && hasCredits && !uiState.chatPaymentApprovalVisible) {
+      const approvalKey = selectedService.peerId || selectedService.value;
+      if (!isSessionApproved(approvalKey)) {
+        uiState.chatPaymentApprovalVisible = true;
+        uiState.chatPaymentApprovalPeerId = approvalKey;
+        uiState.chatPaymentApprovalPeerName = selectedService.peerLabel || selectedService.label || selectedService.id || selectedService.peerId.slice(0, 12);
+        uiState.chatPaymentApprovalAmount = FIRST_SIGN_CAP_USDC;
+        pendingPaymentMessage = { text, imageBase64, imageMimeType };
+        void fetchPeerInfo(selectedService.peerId);
+        notifyUiStateChanged();
+        return;
+      }
+    }
+
     if (uiState.chatSending) {
       showChatError('Another chat request is already in progress.');
       return;
@@ -1645,6 +1712,41 @@ export function initChatModule({
   void refreshChatServiceOptions();
 
   // ---------------------------------------------------------------------------
+  // Payment approval actions
+  // ---------------------------------------------------------------------------
+
+  async function approveSessionPayment(): Promise<void> {
+    if (!uiState.chatPaymentApprovalPeerId) return;
+
+    // Mark session as approved — the buyer runtime's BuyerPaymentManager
+    // handles the actual SpendingAuth signing and on-chain reservation
+    // automatically when the message is sent through the proxy.
+    approvedPeerSessions.add(uiState.chatPaymentApprovalPeerId);
+
+    uiState.chatPaymentApprovalVisible = false;
+    uiState.chatPaymentApprovalLoading = false;
+    uiState.chatPaymentApprovalError = null;
+    notifyUiStateChanged();
+
+    if (pendingPaymentMessage) {
+      const msg = pendingPaymentMessage;
+      pendingPaymentMessage = null;
+      sendMessage(msg.text, msg.imageBase64, msg.imageMimeType);
+    }
+  }
+
+  function cancelSessionPayment(): void {
+    uiState.chatPaymentApprovalVisible = false;
+    uiState.chatPaymentApprovalPeerId = null;
+    uiState.chatPaymentApprovalPeerName = null;
+    uiState.chatPaymentApprovalPeerInfo = null;
+    uiState.chatPaymentApprovalLoading = false;
+    uiState.chatPaymentApprovalError = null;
+    pendingPaymentMessage = null;
+    notifyUiStateChanged();
+  }
+
+  // ---------------------------------------------------------------------------
   // Public API
   // ---------------------------------------------------------------------------
 
@@ -1663,5 +1765,7 @@ export function initChatModule({
     handleServiceFocus,
     handleServiceBlur,
     clearPinnedPeer,
+    approveSessionPayment,
+    cancelSessionPayment,
   };
 }

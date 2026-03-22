@@ -39,6 +39,7 @@
     "@antseed/api-adapter": "workspace:*",
     "@antseed/dashboard": "workspace:*",
     "@antseed/node": "workspace:*",
+    "@antseed/payments": "workspace:*",
     "@fastify/cors": "^10.0.0",
     "@fastify/static": "^9.0.0",
     "@fastify/websocket": "^11.2.0",
@@ -48,7 +49,6 @@
     "@radix-ui/react-tooltip": "^1.2.8",
     "@silentbot1/nat-api": "^0.4.9",
     "@sinclair/typebox": "^0.34.48",
-    "@walletconnect/ethereum-provider": "^2.17.0",
     "better-sqlite3": "^12.6.2",
     "bittorrent-dht": "^11.0.11",
     "chalk": "^5.6.2",
@@ -63,7 +63,6 @@
     "node-datachannel": "^0.7.0",
     "open": "^11.0.0",
     "ora": "^9.3.0",
-    "qrcode": "^1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
