@@ -47,6 +47,7 @@ export function createWindow(config: WindowConfig): void {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      webviewTag: true,
     },
     ...macosWindowChrome,
   });
