@@ -954,6 +954,12 @@ app.on('before-quit', (event) => {
   event.preventDefault();
   isQuitting = true;
 
+  // Reject all pending payment approvals so CLI processes aren't left hanging
+  for (const [, pending] of pendingPaymentApprovals) {
+    pending.resolve({ approved: false });
+  }
+  pendingPaymentApprovals.clear();
+
   void processManager.stopAll()
     .then(() => stopPaymentsPortal())
     .finally(() => {
