@@ -14,7 +14,11 @@ export function registerPaymentsCommand(program: Command): void {
         const server = await createServer({ port, identityHex });
         await server.listen({ port, host: '127.0.0.1' });
 
-        console.log(`Payments portal running at http://127.0.0.1:${port}`);
+        const token = (server as unknown as { bearerToken?: string }).bearerToken ?? '';
+        const url = token
+          ? `http://127.0.0.1:${port}?token=${token}`
+          : `http://127.0.0.1:${port}`;
+        console.log(`Payments portal running at ${url}`);
         console.log('Press Ctrl+C to stop.');
       } catch (err) {
         console.error('Failed to start payments portal:', err instanceof Error ? err.message : String(err));

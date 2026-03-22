@@ -665,6 +665,12 @@ ipcMain.handle('payments:sign-spending-auth', async (_event, params: {
     if (maxAmount <= 0n || maxAmount > MAX_SPENDING_AUTH_BASE_UNITS) {
       return { ok: false, error: `maxAmount exceeds cap (${MAX_SPENDING_AUTH_BASE_UNITS} base units)` };
     }
+    if (!Number.isInteger(params.nonce) || params.nonce < 0) {
+      return { ok: false, error: 'Invalid nonce' };
+    }
+    if (!BYTES32_RE.test(params.previousSessionId)) {
+      return { ok: false, error: 'Invalid previousSessionId format' };
+    }
     const now = Math.floor(Date.now() / 1000);
     if (params.deadline < now || params.deadline > now + MAX_DEADLINE_SECONDS) {
       return { ok: false, error: 'Deadline out of acceptable range' };

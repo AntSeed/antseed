@@ -560,6 +560,7 @@ export class AntseedNode extends EventEmitter {
 
     // Buyer-side: initiate lock and wait for confirmation on first request to a new peer
     if (this._buyerPaymentManager && !this._buyerLockedPeers.has(peer.peerId)) {
+      debugLog(`[Node] First request to peer ${peer.peerId.slice(0, 12)}... — initiating payment lock`);
       await this._initiateBuyerLock(peer, conn);
     }
 
@@ -1050,7 +1051,7 @@ export class AntseedNode extends EventEmitter {
       // Reject with 402 if no active payment session and escrow client is configured
       const spmAuthorized = this._sellerPaymentManager?.hasSession(buyerPeerId) ?? false;
       if (this._escrowClient && !spmAuthorized) {
-        debugWarn(`[Node] Rejecting request from ${buyerPeerId.slice(0, 12)}... — lock not committed`);
+        debugWarn(`[Node] Rejecting request from ${buyerPeerId.slice(0, 12)}... — no payment session (402)`);
         mux.sendProxyResponse({
           requestId: request.requestId,
           statusCode: 402,
@@ -1164,6 +1165,7 @@ export class AntseedNode extends EventEmitter {
         if (this._sellerPaymentManager?.hasSession(buyerPeerId)) {
           const usage = parseResponseUsage(responseBody);
           const totalTokens = usage.inputTokens + usage.outputTokens;
+          debugLog(`[Node] Sending receipt: buyer=${buyerPeerId.slice(0, 12)}... tokens=${totalTokens} (in=${usage.inputTokens} out=${usage.outputTokens})`);
           await this._sellerPaymentManager.sendReceipt(buyerPeerId, paymentMux, responseBody, BigInt(totalTokens));
         }
       } finally {
@@ -1334,8 +1336,10 @@ export class AntseedNode extends EventEmitter {
         method: 'provider-usage',
         confidence: 'high',
       };
+      debugLog(`[Node] Metering: provider-usage tokens=${totalTokens} (in=${providerUsage.inputTokens} out=${providerUsage.outputTokens})`);
     } else {
       tokens = this._estimateTokens(inputBytes, outputBytes);
+      debugLog(`[Node] Metering: estimated tokens=${tokens.totalTokens} from ${inputBytes}+${outputBytes} bytes`);
     }
 
     // Get or create session for this buyer
