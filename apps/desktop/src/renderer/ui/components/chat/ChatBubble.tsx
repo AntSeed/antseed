@@ -302,6 +302,7 @@ function ToolModal({ item, onClose }: { item: ToolRenderItem; onClose: () => voi
 function ToolGroupView({ blocks }: { blocks: ContentBlock[] }) {
   const [manualToggle, setManualToggle] = useState<boolean | null>(null);
   const [modalItem, setModalItem] = useState<ToolRenderItem | null>(null);
+  const wasRunningRef = useRef(false);
   const items = useMemo(
     () => blocks.map((block, index) => buildToolRenderItem(block, index)),
     [blocks],
@@ -309,7 +310,16 @@ function ToolGroupView({ blocks }: { blocks: ContentBlock[] }) {
 
   const anyRunning = items.some((item) => item.status === 'running');
   const anyError = items.some((item) => item.status === 'error');
-  const isOpen = manualToggle ?? true;
+
+  // Auto-collapse when tools finish running
+  if (wasRunningRef.current && !anyRunning) {
+    wasRunningRef.current = false;
+  }
+  if (anyRunning) wasRunningRef.current = true;
+
+  // Open while running (unless user manually closed), collapsed when done (unless user manually opened)
+  const isOpen = manualToggle ?? anyRunning;
+
   const groupStatus: 'running' | 'success' | 'error' = anyRunning ? 'running' : anyError ? 'error' : 'success';
   const groupStatusLabel = anyRunning ? 'Running' : anyError ? 'Error' : 'Done';
   const label = `Tools (${items.length})`;
@@ -329,7 +339,7 @@ function ToolGroupView({ blocks }: { blocks: ContentBlock[] }) {
         <button
           type="button"
           className="tool-group-header-btn"
-          onClick={() => setManualToggle((prev) => !(prev ?? true))}
+          onClick={() => setManualToggle((prev) => !(prev ?? anyRunning))}
         >
           <span className="tool-group-chevron">›</span>
           <span className="tool-group-label">{label}</span>

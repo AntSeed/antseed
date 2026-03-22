@@ -369,7 +369,7 @@ export function registerConnectCommand(program: Command): void {
             contractAddress: config.payments.crypto.escrowContractAddress,
             usdcAddress: config.payments.crypto.usdcContractAddress,
           })
-          const account = await escrowClient.getBuyerAccount(address)
+          const account = await escrowClient.getBuyerBalance(address)
           console.log(chalk.dim(`Wallet: ${address}`))
           const availUsdc = Number(account.available) / 1_000_000
           console.log(chalk.dim(`Escrow available: ${availUsdc.toFixed(6)} USDC`))

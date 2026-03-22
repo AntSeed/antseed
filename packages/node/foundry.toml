@@ -1,0 +1,16 @@
+[profile.default]
+src = "contracts"
+test = "contracts/test"
+out = "contracts/out"
+cache_path = "contracts/cache_forge"
+libs = ["/Users/shahafan/Development/antseed/.claude/worktrees/reactive-stargazing-valley/node_modules", "node_modules", "lib"]
+solc_version = "0.8.24"
+optimizer = true
+optimizer_runs = 200
+via_ir = true
+ffi = false
+
+[fmt]
+line_length = 120
+tab_width = 4
+bracket_spacing = true

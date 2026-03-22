@@ -2,7 +2,6 @@
 export {
   AntseedNode,
   type NodeConfig,
-  type BuyerPaymentConfig,
   type NodePaymentsConfig,
   type RequestStreamCallbacks,
   type RequestStreamResponseMetadata,
@@ -14,7 +13,14 @@ export type { Router } from './interfaces/buyer-router.js';
 export * from './types/index.js';
 
 // Submodule re-exports (commonly used)
-export { loadOrCreateIdentity, type Identity } from './p2p/identity.js';
+export {
+  loadOrCreateIdentity,
+  type Identity,
+  type IdentityStore,
+  FileIdentityStore,
+  hexToBytes,
+  bytesToHex,
+} from './p2p/identity.js';
 export { DHTNode, DEFAULT_DHT_CONFIG } from './discovery/dht-node.js';
 export { OFFICIAL_BOOTSTRAP_NODES, mergeBootstrapNodes, toBootstrapConfig } from './discovery/bootstrap.js';
 export {
@@ -32,7 +38,11 @@ export { BaseEscrowClient, type BaseEscrowConfig } from './payments/evm/escrow-c
 export { identityToEvmWallet, identityToEvmAddress } from './payments/evm/keypair.js';
 export { NatTraversal, type NatMapping, type NatTraversalResult } from './p2p/nat-traversal.js';
 export { BuyerPaymentManager } from './payments/buyer-payment-manager.js';
-export type { BuyerSessionState, BuyerSessionStatus } from './payments/buyer-payment-manager.js';
+export type { BuyerPaymentConfig } from './payments/buyer-payment-manager.js';
+export { SellerPaymentManager } from './payments/seller-payment-manager.js';
+export type { SellerPaymentConfig } from './payments/seller-payment-manager.js';
+export { SessionStore } from './payments/session-store.js';
+export type { StoredSession, StoredReceipt } from './payments/session-store.js';
 export { ProxyMux } from './proxy/proxy-mux.js';
 export { resolveProvider } from './proxy/provider-detection.js';
 export {

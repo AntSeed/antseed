@@ -1,72 +1,59 @@
 import { randomBytes } from 'node:crypto';
-import { type AbstractSigner, Wallet } from 'ethers';
+import { type AbstractSigner, encodeBytes32String } from 'ethers';
 import type { Identity } from '../p2p/identity.js';
 import type { PaymentMux } from '../p2p/payment-mux.js';
 import type {
-  SessionLockConfirmPayload,
-  SessionLockRejectPayload,
+  AuthAckPayload,
   SellerReceiptPayload,
   TopUpRequestPayload,
 } from '../types/protocol.js';
 import { BaseEscrowClient } from './evm/escrow-client.js';
+import { IdentityClient } from './evm/identity-client.js';
 import { identityToEvmWallet, identityToEvmAddress } from './evm/keypair.js';
 import {
-  buildLockMessageHash,
-  buildSettlementMessageHash,
-  buildExtendLockMessageHash,
-  signMessageEcdsa,
+  signSpendingAuth,
+  makeEscrowDomain,
   buildAckMessage,
   signMessageEd25519,
+  verifyMessageEd25519,
+  buildReceiptMessage,
 } from './evm/signatures.js';
+import type { SpendingAuthMessage } from './evm/signatures.js';
 import { bytesToHex, hexToBytes } from '../utils/hex.js';
 import { debugLog, debugWarn } from '../utils/debug.js';
+import { SessionStore, type StoredSession } from './session-store.js';
 
 export interface BuyerPaymentConfig {
-  /** Default lock amount in USDC base units (6 decimals). e.g. "1000000" = 1 USDC */
-  defaultLockAmountUSDC: string;
-  /** Base JSON-RPC endpoint */
   rpcUrl: string;
-  /** Deployed AntseedEscrow contract address */
   contractAddress: string;
-  /** USDC token contract address */
   usdcAddress: string;
-  /** Auto-acknowledge seller receipts. Default: true */
-  autoAck?: boolean;
-  /** Auto-approve top-up requests. Default: true */
-  autoTopUp?: boolean;
-  /** Maximum total amount the buyer will commit per session (USDC base units). Default: "10000000" (10 USDC) */
-  maxSessionBudgetUSDC?: string;
+  identityAddress: string;
+  chainId: number;
+  defaultMaxAmountUsdc: bigint;
+  defaultAuthDurationSecs: number;
+  autoAck: boolean;
+  dataDir: string;
 }
 
-export type BuyerSessionStatus = 'pending' | 'confirmed' | 'active' | 'ending' | 'ended';
-
-export interface BuyerSessionState {
-  sessionId: string;
-  sellerPeerId: string;
-  sellerEvmAddress: string;
-  lockedAmount: bigint;
-  status: BuyerSessionStatus;
-  txSignature: string | null;
-  lastRunningTotal: bigint;
-  lastRequestCount: number;
-  createdAt: number;
-  updatedAt: number;
-}
+const ZERO_SESSION_ID = '0x' + '0'.repeat(64);
 
 /**
- * Manages buyer-side bilateral payment sessions across seller connections.
- *
- * Handles the full lifecycle: lock initiation, receipt acknowledgement,
- * top-up approval, and session settlement.
+ * Manages buyer-side payment sessions using EIP-712 SpendingAuth
+ * with persistent session storage.
  */
 export class BuyerPaymentManager {
   private readonly _identity: Identity;
   private _signer: AbstractSigner;
   private readonly _escrowClient: BaseEscrowClient;
   private readonly _config: BuyerPaymentConfig;
-  private readonly _sessions = new Map<string, BuyerSessionState>();
+  private readonly _sessionStore: SessionStore;
+  /** In-memory map of active confirmed sessions by seller peerId for fast lookups. */
+  private readonly _confirmedPeers = new Set<string>();
+  /** Peers that explicitly rejected our spending auth. */
+  private readonly _rejectedPeers = new Set<string>();
+  private _nonceCounter: number;
 
-  constructor(identity: Identity, config: BuyerPaymentConfig) {
+  constructor(identity: Identity, config: BuyerPaymentConfig, sessionStore: SessionStore) {
     this._identity = identity;
     this._config = config;
     this._signer = identityToEvmWallet(identity);
@@ -75,18 +62,16 @@ export class BuyerPaymentManager {
       contractAddress: config.contractAddress,
       usdcAddress: config.usdcAddress,
     });
+    this._sessionStore = sessionStore;
+
+    // Restore nonce counter from persisted sessions to avoid duplicates across restarts
+    this._nonceCounter = sessionStore.getMaxNonce('buyer');
   }
 
   get signer(): AbstractSigner {
     return this._signer;
   }
 
-  /** @deprecated Use .signer instead */
-  get wallet(): Wallet {
-    return this._signer as Wallet;
-  }
-
-  /** Replace the signer at runtime (e.g. with a WalletConnect signer). */
   setSigner(signer: AbstractSigner): void {
     this._signer = signer;
   }
@@ -95,137 +80,190 @@ export class BuyerPaymentManager {
     return this._escrowClient;
   }
 
-  /** Get a snapshot of all active sessions. */
-  getActiveSessions(): BuyerSessionState[] {
-    return [...this._sessions.values()].filter(
-      (s) => s.status !== 'ended',
-    );
-  }
-
-  /** Get the session for a given seller peer, if it exists. */
-  getSession(sellerPeerId: string): BuyerSessionState | undefined {
-    return this._sessions.get(sellerPeerId);
-  }
-
-  // ── Lock initiation ─────────────────────────────────────────────
+  // ── Spending Authorization ────────────────────────────────────
 
   /**
-   * Generate a session ID, sign a lock authorization, and send it
-   * to the seller via PaymentMux.
+   * Sign and send an EIP-712 SpendingAuth to a seller.
+   * Loads the latest session to build the proof chain.
    */
-  async initiateLock(
+  async authorizeSpending(
     sellerPeerId: string,
-    sellerEvmAddress: string,
+    sellerEvmAddr: string,
     paymentMux: PaymentMux,
-    lockAmount?: string,
+    maxAmount?: bigint,
   ): Promise<string> {
-    const amount = lockAmount ?? this._config.defaultLockAmountUSDC;
-    const amountBigInt = BigInt(amount);
+    const amount = maxAmount ?? this._config.defaultMaxAmountUsdc;
 
-    // Generate a 32-byte session ID as 0x-prefixed hex (bytes32)
+    // Clear confirmation state so we wait for a fresh AuthAck on the new session
+    this._confirmedPeers.delete(sellerPeerId);
+
+    // Load latest session to build proof chain.
+    // Only chain if the session is settled or active-with-delivery (the seller
+    // will settle it on-chain before reserving the new one).
+    // Fall back to first-sign for timed-out/ghost sessions.
+    const latestSession = this._sessionStore.getLatestSession(sellerPeerId, 'buyer');
+    const canChain = latestSession
+      && latestSession.status !== 'timeout'
+      && latestSession.status !== 'ghost'
+      && BigInt(latestSession.tokensDelivered) > 0n;
+    const previousConsumption = canChain
+      ? BigInt(latestSession.tokensDelivered)
+      : 0n;
+    const previousSessionId = canChain
+      ? latestSession.sessionId
+      : ZERO_SESSION_ID;
+
+    // Generate a 32-byte session ID
     const sessionIdBytes = randomBytes(32);
     const sessionId = '0x' + sessionIdBytes.toString('hex');
 
-    debugLog(`[BuyerPayment] Initiating lock: session=${sessionId.slice(0, 18)}... seller=${sellerPeerId.slice(0, 12)}... amount=${amount}`);
+    const nonce = ++this._nonceCounter;
+    const deadline = Math.floor(Date.now() / 1000) + this._config.defaultAuthDurationSecs;
 
-    // Sign the lock message with ECDSA (for on-chain verification)
-    const messageHash = buildLockMessageHash(sessionId, sellerEvmAddress, amountBigInt);
-    const buyerSig = await signMessageEcdsa(this._signer, messageHash);
+    debugLog(`[BuyerPayment] authorizeSpending: session=${sessionId.slice(0, 18)}... seller=${sellerPeerId.slice(0, 12)}... amount=${amount}`);
 
-    // Store session state
-    const now = Date.now();
-    const session: BuyerSessionState = {
+    // Sign EIP-712 SpendingAuth
+    const domain = makeEscrowDomain(this._config.chainId, this._config.contractAddress);
+    const msg: SpendingAuthMessage = {
+      seller: sellerEvmAddr,
       sessionId,
-      sellerPeerId,
-      sellerEvmAddress,
-      lockedAmount: amountBigInt,
-      status: 'pending',
-      txSignature: null,
-      lastRunningTotal: 0n,
-      lastRequestCount: 0,
+      maxAmount: amount,
+      nonce,
+      deadline,
+      previousConsumption,
+      previousSessionId,
+    };
+    const buyerSig = await signSpendingAuth(this._signer, domain, msg);
+    const buyerEvmAddr = identityToEvmAddress(this._identity);
+
+    // Store session
+    const now = Date.now();
+    const session: StoredSession = {
+      sessionId,
+      peerId: sellerPeerId,
+      role: 'buyer',
+      sellerEvmAddr,
+      buyerEvmAddr,
+      nonce,
+      authMax: amount.toString(),
+      deadline,
+      previousSessionId,
+      previousConsumption: previousConsumption.toString(),
+      tokensDelivered: '0',
+      requestCount: 0,
+      reservedAt: now,
+      settledAt: null,
+      settledAmount: null,
+      status: 'active',
       createdAt: now,
       updatedAt: now,
     };
-    this._sessions.set(sellerPeerId, session);
+    this._sessionStore.upsertSession(session);
 
-    // Send the lock auth message
-    paymentMux.sendSessionLockAuth({
+    // Send SpendingAuth via PaymentMux
+    paymentMux.sendSpendingAuth({
       sessionId,
-      lockedAmount: amount,
+      maxAmountUsdc: amount.toString(),
+      nonce,
+      deadline,
       buyerSig,
+      buyerEvmAddr,
+      previousConsumption: previousConsumption.toString(),
+      previousSessionId,
     });
 
     return sessionId;
   }
 
-  // ── Lock confirmation / rejection handlers ──────────────────────
+  // ── AuthAck handler ───────────────────────────────────────────
 
-  /**
-   * Called when the seller confirms the lock was committed on-chain.
-   */
-  handleLockConfirm(sellerPeerId: string, payload: SessionLockConfirmPayload): void {
-    const session = this._sessions.get(sellerPeerId);
+  handleAuthAck(sellerPeerId: string, payload: AuthAckPayload): void {
+    const session = this._sessionStore.getActiveSessionByPeer(sellerPeerId, 'buyer');
     if (!session) {
-      debugWarn(`[BuyerPayment] Lock confirm for unknown seller: ${sellerPeerId.slice(0, 12)}...`);
+      debugWarn(`[BuyerPayment] AuthAck for unknown seller: ${sellerPeerId.slice(0, 12)}...`);
       return;
     }
     if (session.sessionId !== payload.sessionId) {
-      debugWarn(`[BuyerPayment] Lock confirm session mismatch: expected=${session.sessionId.slice(0, 18)}... got=${payload.sessionId.slice(0, 18)}...`);
+      debugWarn(`[BuyerPayment] AuthAck session mismatch: expected=${session.sessionId.slice(0, 18)}... got=${payload.sessionId.slice(0, 18)}...`);
       return;
     }
 
-    session.status = 'confirmed';
-    session.txSignature = payload.txSignature;
-    session.updatedAt = Date.now();
-    debugLog(`[BuyerPayment] Lock confirmed: session=${session.sessionId.slice(0, 18)}... tx=${payload.txSignature.slice(0, 12)}...`);
+    this._confirmedPeers.add(sellerPeerId);
+    debugLog(`[BuyerPayment] AuthAck confirmed: session=${session.sessionId.slice(0, 18)}...`);
   }
 
-  /**
-   * Called when the seller rejects the lock.
-   */
-  handleLockReject(sellerPeerId: string, payload: SessionLockRejectPayload): void {
-    const session = this._sessions.get(sellerPeerId);
-    if (!session) {
-      debugWarn(`[BuyerPayment] Lock reject for unknown seller: ${sellerPeerId.slice(0, 12)}...`);
-      return;
-    }
+  // ── Seller Receipt handler ────────────────────────────────────
 
-    debugWarn(`[BuyerPayment] Lock rejected: session=${session.sessionId.slice(0, 18)}... reason=${payload.reason}`);
-    this._sessions.delete(sellerPeerId);
-  }
-
-  // ── Receipt handling ────────────────────────────────────────────
-
-  /**
-   * Handle a running-total receipt from the seller.
-   * If autoAck is enabled, automatically counter-sign and send BuyerAck.
-   */
   async handleSellerReceipt(
     sellerPeerId: string,
     receipt: SellerReceiptPayload,
     paymentMux: PaymentMux,
   ): Promise<void> {
-    const session = this._sessions.get(sellerPeerId);
+    const session = this._sessionStore.getActiveSessionByPeer(sellerPeerId, 'buyer');
     if (!session) {
       debugWarn(`[BuyerPayment] Receipt for unknown seller: ${sellerPeerId.slice(0, 12)}...`);
       return;
     }
-
-    if (session.status === 'confirmed') {
-      session.status = 'active';
+    if (session.sessionId !== receipt.sessionId) {
+      debugWarn(`[BuyerPayment] Receipt session ID mismatch: active=${session.sessionId.slice(0, 18)}... receipt=${receipt.sessionId.slice(0, 18)}... — discarding stale receipt`);
+      return;
     }
 
-    // Update running total
-    session.lastRunningTotal = BigInt(receipt.runningTotal);
-    session.lastRequestCount = receipt.requestCount;
-    session.updatedAt = Date.now();
+    // Verify seller's Ed25519 signature
+    try {
+      const sellerPublicKey = hexToBytes(sellerPeerId);
+      const sessionIdBytes = hexToBytes(receipt.sessionId.replace(/^0x/, ''));
+      const responseHashBytes = hexToBytes(receipt.responseHash);
+      const receiptMsg = buildReceiptMessage(
+        sessionIdBytes,
+        BigInt(receipt.runningTotal),
+        receipt.requestCount,
+        responseHashBytes,
+      );
+      const sigBytes = hexToBytes(receipt.sellerSig);
+      const valid = await verifyMessageEd25519(sellerPublicKey, sigBytes, receiptMsg);
+      if (!valid) {
+        debugWarn(`[BuyerPayment] Invalid seller receipt signature from ${sellerPeerId.slice(0, 12)}...`);
+        return;
+      }
+    } catch (err) {
+      debugWarn(`[BuyerPayment] Failed to verify receipt: ${err instanceof Error ? err.message : err}`);
+      return;
+    }
+
+    // Validate monotonic increase: runningTotal must exceed previous
+    const newTotal = BigInt(receipt.runningTotal);
+    const prevTotal = BigInt(session.tokensDelivered);
+    if (newTotal <= prevTotal) {
+      debugWarn(`[BuyerPayment] Receipt runningTotal not monotonic: new=${newTotal} prev=${prevTotal}`);
+      return;
+    }
+    // Note: we don't compare token count against authMax (USDC) here because
+    // they're in different units (tokens vs USDC base units). The on-chain
+    // settle() caps chargeAmount = min(tokenCount * tokenRate, maxAmount),
+    // so the buyer's EIP-712 signature is the real USDC protection.
 
     debugLog(`[BuyerPayment] Receipt: session=${session.sessionId.slice(0, 18)}... total=${receipt.runningTotal} count=${receipt.requestCount}`);
 
-    const autoAck = this._config.autoAck ?? true;
-    if (autoAck) {
-      // Build ack message and sign with Ed25519
-      const sessionIdBytes = hexToBytes(session.sessionId.startsWith('0x') ? session.sessionId.slice(2) : session.sessionId);
+    // Atomically update tokens delivered and store receipt
+    this._sessionStore.updateDeliveredAndInsertReceipt(
+      session.sessionId,
+      receipt.runningTotal,
+      receipt.requestCount,
+      {
+        sessionId: session.sessionId,
+        runningTotal: receipt.runningTotal,
+        requestCount: receipt.requestCount,
+        responseHash: receipt.responseHash,
+        sellerSig: receipt.sellerSig,
+        buyerAckSig: null,
+        createdAt: Date.now(),
+      },
+    );
+
+    // Auto-ack if configured
+    if (this._config.autoAck) {
+      const sessionIdBytes = hexToBytes(session.sessionId.replace(/^0x/, ''));
       const ackMsg = buildAckMessage(
         sessionIdBytes,
         BigInt(receipt.runningTotal),
@@ -245,170 +283,104 @@ export class BuyerPaymentManager {
     }
   }
 
-  // ── Top-up handling ─────────────────────────────────────────────
+  // ── TopUp handler ─────────────────────────────────────────────
 
-  /**
-   * Handle a top-up request from the seller.
-   * If autoTopUp is enabled and budget allows, sign and send TopUpAuth.
-   * Otherwise, end the session.
-   */
   async handleTopUpRequest(
     sellerPeerId: string,
     request: TopUpRequestPayload,
     paymentMux: PaymentMux,
   ): Promise<void> {
-    const session = this._sessions.get(sellerPeerId);
+    const session = this._sessionStore.getActiveSessionByPeer(sellerPeerId, 'buyer');
     if (!session) {
       debugWarn(`[BuyerPayment] Top-up for unknown seller: ${sellerPeerId.slice(0, 12)}...`);
       return;
     }
 
-    const additionalAmount = BigInt(request.additionalAmount);
-    const maxBudget = BigInt(this._config.maxSessionBudgetUSDC ?? '10000000');
-    const newTotal = session.lockedAmount + additionalAmount;
-    const autoTopUp = this._config.autoTopUp ?? true;
+    debugLog(`[BuyerPayment] TopUp request: session=${session.sessionId.slice(0, 18)}... currentUsed=${request.currentUsed} currentMax=${request.currentMax}`);
 
-    debugLog(`[BuyerPayment] Top-up request: session=${session.sessionId.slice(0, 18)}... additional=${request.additionalAmount} newTotal=${newTotal}`);
+    // Sign a new SpendingAuth with increased cap
+    const currentMax = BigInt(session.authMax);
+    const additionalAmount = BigInt(request.requestedAdditional);
+    const newMax = currentMax + additionalAmount;
 
-    if (autoTopUp && newTotal <= maxBudget) {
-      // Check on-chain balance
-      const buyerAddr = identityToEvmAddress(this._identity);
-      const account = await this._escrowClient.getBuyerAccount(buyerAddr);
-      if (account.available >= additionalAmount) {
-        // Sign extend-lock authorization
-        const messageHash = buildExtendLockMessageHash(
-          session.sessionId,
-          session.sellerEvmAddress,
-          additionalAmount,
-        );
-        const buyerSig = await signMessageEcdsa(this._signer, messageHash);
-
-        session.lockedAmount = newTotal;
-        session.updatedAt = Date.now();
-
-        paymentMux.sendTopUpAuth({
-          sessionId: session.sessionId,
-          additionalAmount: request.additionalAmount,
-          buyerSig,
-        });
-
-        debugLog(`[BuyerPayment] Top-up authorized: session=${session.sessionId.slice(0, 18)}...`);
-        return;
-      }
-
-      debugWarn(`[BuyerPayment] Insufficient balance for top-up. Available=${account.available}, requested=${additionalAmount}`);
-    }
-
-    // Cannot or will not top up — end the session
-    debugLog(`[BuyerPayment] Declining top-up, ending session=${session.sessionId.slice(0, 18)}...`);
-    await this.endSession(sellerPeerId, paymentMux, 80);
-  }
-
-  // ── Session end ─────────────────────────────────────────────────
-
-  /**
-   * End a session with the given seller. Signs a settlement message
-   * with ECDSA and sends SessionEnd.
-   */
-  async endSession(
-    sellerPeerId: string,
-    paymentMux: PaymentMux,
-    score: number = 80,
-  ): Promise<void> {
-    const session = this._sessions.get(sellerPeerId);
-    if (!session) {
-      debugWarn(`[BuyerPayment] Cannot end session for unknown seller: ${sellerPeerId.slice(0, 12)}...`);
-      return;
-    }
-
-    if (session.status === 'ending' || session.status === 'ended') {
-      return;
-    }
-
-    session.status = 'ending';
-    session.updatedAt = Date.now();
-
-    debugLog(`[BuyerPayment] Ending session=${session.sessionId.slice(0, 18)}... total=${session.lastRunningTotal} score=${score}`);
-
-    // Sign settlement message with ECDSA
-    const messageHash = buildSettlementMessageHash(
-      session.sessionId,
-      session.lastRunningTotal,
-      score,
+    // The new auth embeds the current consumption as previousConsumption
+    await this.authorizeSpending(
+      sellerPeerId,
+      session.sellerEvmAddr,
+      paymentMux,
+      newMax,
     );
-    const buyerSig = await signMessageEcdsa(this._signer, messageHash);
 
-    paymentMux.sendSessionEnd({
-      sessionId: session.sessionId,
-      runningTotal: session.lastRunningTotal.toString(),
-      requestCount: session.lastRequestCount,
-      score,
-      buyerSig,
-    });
-
-    session.status = 'ended';
-    session.updatedAt = Date.now();
-    debugLog(`[BuyerPayment] Session ended: ${session.sessionId.slice(0, 18)}...`);
+    debugLog(`[BuyerPayment] TopUp authorized: new auth sent with max=${newMax}`);
   }
 
-  // ── Escrow operations ───────────────────────────────────────────
+  // ── Queries ───────────────────────────────────────────────────
 
-  /**
-   * Deposit USDC into the escrow contract.
-   * @param amount Amount in USDC base units (6 decimals).
-   */
+  /** Check if a session has been confirmed via AuthAck. */
+  isAuthorized(sellerPeerId: string): boolean {
+    return this._confirmedPeers.has(sellerPeerId);
+  }
+
+  /** Alias for isAuthorized (used by polling loop). */
+  isLockConfirmed(sellerPeerId: string): boolean {
+    return this.isAuthorized(sellerPeerId);
+  }
+
+  /** Check if the lock was explicitly rejected (not just never-contacted). */
+  isLockRejected(sellerPeerId: string): boolean {
+    return this._rejectedPeers.has(sellerPeerId);
+  }
+
+  /** Mark a peer as having rejected our spending auth. */
+  markRejected(sellerPeerId: string): void {
+    this._rejectedPeers.add(sellerPeerId);
+    debugLog(`[BuyerPayment] Peer ${sellerPeerId.slice(0, 12)}... marked as rejected`);
+  }
+
+  getSessionHistory(sellerPeerId: string): StoredSession[] {
+    const sessions: StoredSession[] = [];
+    const seen = new Set<string>();
+    let session = this._sessionStore.getLatestSession(sellerPeerId, 'buyer');
+    while (session && !seen.has(session.sessionId)) {
+      seen.add(session.sessionId);
+      sessions.unshift(session);
+      if (session.previousSessionId === ZERO_SESSION_ID) break;
+      session = this._sessionStore.getSession(session.previousSessionId);
+    }
+    return sessions;
+  }
+
+  // ── Escrow operations ─────────────────────────────────────────
+
   async deposit(amount: bigint): Promise<string> {
     debugLog(`[BuyerPayment] Depositing ${amount} to escrow`);
     return this._escrowClient.deposit(this._signer, amount);
   }
 
-  /**
-   * Withdraw USDC from the escrow contract.
-   * @param amount Amount in USDC base units (6 decimals).
-   */
   async withdraw(amount: bigint): Promise<string> {
-    debugLog(`[BuyerPayment] Withdrawing ${amount} from escrow`);
-    return this._escrowClient.withdraw(this._signer, amount);
+    debugLog(`[BuyerPayment] Requesting withdrawal of ${amount} from escrow`);
+    return this._escrowClient.requestWithdrawal(this._signer, amount);
   }
 
-  /**
-   * Get the buyer's on-chain escrow balance.
-   */
-  async getBalance(): Promise<{ deposited: bigint; committed: bigint; available: bigint }> {
+  async getBalance(): Promise<{ available: bigint; reserved: bigint }> {
     const buyerAddr = identityToEvmAddress(this._identity);
-    return this._escrowClient.getBuyerAccount(buyerAddr);
+    const info = await this._escrowClient.getBuyerBalance(buyerAddr);
+    return { available: info.available, reserved: info.reserved };
   }
 
-  // ── Dispute helpers ─────────────────────────────────────────────
+  // ── Feedback (Task 6) ─────────────────────────────────────────
 
-  /**
-   * Release an expired lock (buyer reclaims funds).
-   */
-  async releaseExpiredLock(sessionId: string): Promise<string> {
-    debugLog(`[BuyerPayment] Releasing expired lock: session=${sessionId.slice(0, 18)}...`);
-    return this._escrowClient.releaseExpiredLock(this._signer, sessionId);
+  async submitFeedback(
+    sellerPeerId: string,
+    qualityScore: number,
+    identityClient: IdentityClient,
+  ): Promise<string | null> {
+    const session = this._sessionStore.getLatestSession(sellerPeerId, 'buyer');
+    if (!session || session.status !== 'settled') return null;
+
+    const tokenId = await identityClient.getTokenId(session.sellerEvmAddr);
+    const tag = encodeBytes32String('quality');
+    return identityClient.submitFeedback(this._signer, tokenId, qualityScore, tag);
   }
 
-  /**
-   * Respond to a dispute opened by the seller.
-   */
-  async respondToDispute(sessionId: string): Promise<string> {
-    debugLog(`[BuyerPayment] Responding to dispute: session=${sessionId.slice(0, 18)}...`);
-    return this._escrowClient.respondDispute(this._signer, sessionId);
-  }
-
-  /**
-   * Check if a session lock has been confirmed (for polling).
-   */
-  isLockConfirmed(sellerPeerId: string): boolean {
-    const session = this._sessions.get(sellerPeerId);
-    return session?.status === 'confirmed' || session?.status === 'active';
-  }
-
-  /**
-   * Check if a session lock has been rejected (for polling).
-   */
-  isLockRejected(sellerPeerId: string): boolean {
-    return !this._sessions.has(sellerPeerId);
-  }
 }

@@ -10,14 +10,14 @@ function mockConnection(): PeerConnection {
 
 describe('PaymentMux', () => {
   describe('isPaymentMessage correctly identifies range', () => {
-    it('returns true for 0x50-0x58', () => {
-      for (let type = 0x50; type <= 0x58; type++) {
+    it('returns true for 0x50-0x55', () => {
+      for (let type = 0x50; type <= 0x55; type++) {
         expect(PaymentMux.isPaymentMessage(type)).toBe(true);
       }
     });
 
-    it('returns true for 0x59-0x5F (rest of payment range)', () => {
-      for (let type = 0x59; type <= 0x5f; type++) {
+    it('returns true for 0x56-0x5F (rest of payment range)', () => {
+      for (let type = 0x56; type <= 0x5f; type++) {
         expect(PaymentMux.isPaymentMessage(type)).toBe(true);
       }
     });
@@ -54,21 +54,44 @@ describe('PaymentMux', () => {
   });
 
   describe('handleFrame dispatches to correct handler', () => {
-    it('dispatches SessionLockAuth', async () => {
+    it('dispatches SpendingAuth', async () => {
       const conn = mockConnection();
       const mux = new PaymentMux(conn);
       const handler = vi.fn();
-      mux.onSessionLockAuth(handler);
+      mux.onSpendingAuth(handler);
 
       const payload = {
         sessionId: 'a'.repeat(64),
-        lockedAmount: '1000000',
+        maxAmountUsdc: '1000000',
+        nonce: 1,
+        deadline: 1700000000,
         buyerSig: 'b'.repeat(128),
+        buyerEvmAddr: '0x' + 'ab'.repeat(20),
+        previousConsumption: '0',
+        previousSessionId: '0x' + '00'.repeat(32),
       };
       const frame: FramedMessage = {
-        type: MessageType.SessionLockAuth,
+        type: MessageType.SpendingAuth,
         messageId: 1,
-        payload: codec.encodeSessionLockAuth(payload),
+        payload: codec.encodeSpendingAuth(payload),
+      };
+
+      const result = await mux.handleFrame(frame);
+      expect(result).toBe(true);
+      expect(handler).toHaveBeenCalledWith(payload);
+    });
+
+    it('dispatches AuthAck', async () => {
+      const conn = mockConnection();
+      const mux = new PaymentMux(conn);
+      const handler = vi.fn();
+      mux.onAuthAck(handler);
+
+      const payload = { sessionId: 'a'.repeat(64), nonce: 42 };
+      const frame: FramedMessage = {
+        type: MessageType.AuthAck,
+        messageId: 1,
+        payload: codec.encodeAuthAck(payload),
       };
 
       const result = await mux.handleFrame(frame);
@@ -123,45 +146,22 @@ describe('PaymentMux', () => {
       expect(handler).toHaveBeenCalledWith(payload);
     });
 
-    it('dispatches SessionEnd', async () => {
+    it('dispatches TopUpRequest', async () => {
       const conn = mockConnection();
       const mux = new PaymentMux(conn);
       const handler = vi.fn();
-      mux.onSessionEnd(handler);
+      mux.onTopUpRequest(handler);
 
       const payload = {
         sessionId: 'a'.repeat(64),
-        runningTotal: '500000',
-        requestCount: 5,
-        score: 85,
-        buyerSig: 'f'.repeat(128),
+        currentUsed: '400000',
+        currentMax: '500000',
+        requestedAdditional: '500000',
       };
       const frame: FramedMessage = {
-        type: MessageType.SessionEnd,
+        type: MessageType.TopUpRequest,
         messageId: 4,
-        payload: codec.encodeSessionEnd(payload),
-      };
-
-      const result = await mux.handleFrame(frame);
-      expect(result).toBe(true);
-      expect(handler).toHaveBeenCalledWith(payload);
-    });
-
-    it('dispatches DisputeNotify', async () => {
-      const conn = mockConnection();
-      const mux = new PaymentMux(conn);
-      const handler = vi.fn();
-      mux.onDisputeNotify(handler);
-
-      const payload = {
-        sessionId: 'a'.repeat(64),
-        reason: 'Unacknowledged service',
-        txSignature: 'tx456',
-      };
-      const frame: FramedMessage = {
-        type: MessageType.DisputeNotify,
-        messageId: 5,
-        payload: codec.encodeDisputeNotify(payload),
+        payload: codec.encodeTopUpRequest(payload),
       };
 
       const result = await mux.handleFrame(frame);
@@ -175,13 +175,18 @@ describe('PaymentMux', () => {
 
       const payload = {
         sessionId: 'a'.repeat(64),
-        lockedAmount: '1000000',
+        maxAmountUsdc: '1000000',
+        nonce: 1,
+        deadline: 1700000000,
         buyerSig: 'b'.repeat(128),
+        buyerEvmAddr: '0x' + 'ab'.repeat(20),
+        previousConsumption: '0',
+        previousSessionId: '0x' + '00'.repeat(32),
       };
       const frame: FramedMessage = {
-        type: MessageType.SessionLockAuth,
+        type: MessageType.SpendingAuth,
         messageId: 1,
-        payload: codec.encodeSessionLockAuth(payload),
+        payload: codec.encodeSpendingAuth(payload),
       };
 
       const result = await mux.handleFrame(frame);

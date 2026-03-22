@@ -51,6 +51,32 @@ All communication happens over an untrusted network. Every trust-critical operat
 | Metadata fetch timeout | 2 s |
 | Max inbound connections per IP | 10 |
 
+## Identity Key Protection
+
+The Ed25519 private key is the root of trust for your node. It serves two critical roles:
+
+1. **P2P identity** — signs metadata, connection handshakes, and metering receipts
+2. **On-chain wallet** — an EVM wallet (secp256k1) is deterministically derived from the Ed25519 seed via `keccak256(seed || "evm-payment-key")`. This wallet holds escrow deposits, receives seller earnings, and signs payment authorizations (EIP-712 spending auth).
+
+Compromising this key means an attacker can impersonate your node **and** drain your on-chain funds. Losing it means losing both your peer identity and access to any deposited USDC.
+
+### Recommended: Minimize On-Chain Exposure
+
+Keep only the minimum balance needed for active operations in the derived wallet. Periodically sweep earnings to a separate cold wallet that is **not** derived from the node identity:
+
+1. **Sellers:** After each settlement cycle, withdraw accumulated USDC to a hardware wallet or multisig. Don't let large balances accumulate in the hot wallet.
+2. **Buyers:** Deposit only what you need for your current session. Top up as needed rather than pre-loading large amounts.
+3. **Back up your identity key** in a secure offline location — it's the only way to recover both your PeerId and your on-chain wallet.
+
+### Storage Options
+
+| Environment | Protection |
+|---|---|
+| **Desktop app** | Encrypted at rest via OS keychain (macOS Keychain / Windows DPAPI / Linux libsecret). Plaintext file deleted after migration. |
+| **Server (recommended)** | Inject via `ANTSEED_IDENTITY_HEX` env var from a secrets manager. The variable is cleared from the process environment immediately after read. |
+| **Server (default)** | ⚠️ Plaintext file at `~/.antseed/identity.key` with `0600` permissions. **Not recommended** — any process running as your user can read the key and access your on-chain funds. Use a secrets manager instead. |
+| **Custom** | Implement the `IdentityStore` interface for KMS, HSM, or any backend. |
+
 ## Best Practices
 
 1. Keep `allowPrivateIPs=false` in production.
@@ -58,3 +84,5 @@ All communication happens over an untrusted network. Every trust-critical operat
 3. Prefer WebRTC transport for end-to-end encryption.
 4. Use dedicated wallets for escrow operations.
 5. Tune upload/stream caps if workloads are predictable.
+6. On servers, use `ANTSEED_IDENTITY_HEX` with a secrets manager instead of storing keys on disk.
+7. Back up your identity key — losing it means a new PeerId and EVM wallet address.

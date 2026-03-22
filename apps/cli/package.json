@@ -1,6 +1,6 @@
 {
   "name": "@antseed/cli",
-  "version": "0.1.41",
+  "version": "0.1.43",
   "description": "Antseed Network CLI and Web Dashboard",
   "type": "module",
   "files": [
@@ -13,9 +13,9 @@
     "antseed": "./dist/cli/index.js"
   },
   "scripts": {
-    "prebuild": "rm -rf dist",
+    "prebuild": "node ../../scripts/remove-paths.mjs dist",
     "build": "tsc",
-    "postbuild": "chmod +x dist/cli/index.js",
+    "postbuild": "node ../../scripts/fix-executable.mjs dist/cli/index.js",
     "build:bundle": "esbuild src/cli/index.ts --bundle --platform=node --format=esm --outfile=dist/bundle.mjs --external:better-sqlite3 --external:node-datachannel --external:koffi --external:keytar --banner:js='#!/usr/bin/env node'",
     "dev": "tsx watch src/cli/index.ts",
     "start:seed": "node dist/cli/index.js seed",

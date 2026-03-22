@@ -20,6 +20,12 @@ export interface DashboardServer {
 
 export interface DashboardServerOptions {
   configPath?: string;
+  /**
+   * Path to buyer.state.json. When provided, the dashboard reads peers
+   * from this file (written by the buyer runtime) instead of running
+   * its own standalone DHT node.
+   */
+  buyerStateFile?: string;
 }
 
 /**
@@ -40,8 +46,12 @@ export async function createDashboardServer(
   // Deny cross-origin requests
   await app.register(fastifyCors, { origin: false });
 
-  // Create DHTQueryService for live network visibility
-  const dhtQueryService = new DHTQueryService(config);
+  // Create DHTQueryService for network visibility.
+  // When buyerStateFile is provided, peers are read from the buyer runtime's
+  // state file instead of running a standalone DHT node.
+  const dhtQueryService = new DHTQueryService(config, {
+    buyerStateFile: options?.buyerStateFile,
+  });
 
   // Serve built dashboard static files.
   // __dirname resolves to antseed-dashboard/dist/ at runtime;

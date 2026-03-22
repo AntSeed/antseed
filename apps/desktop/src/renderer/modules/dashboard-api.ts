@@ -1,14 +1,14 @@
-import type { DashboardDataResult, DesktopBridge } from '../types/bridge';
+import type { DataResult, DesktopBridge } from '../types/bridge';
 import type { RendererUiState } from '../core/state';
 import { safeNumber, safeArray } from '../core/safe';
 
 type RefreshHooks = {
   renderDashboardData: (payload: {
-    network: DashboardDataResult;
-    peers: DashboardDataResult;
-    status: DashboardDataResult;
-    dataSources: DashboardDataResult;
-    config: DashboardDataResult;
+    network: DataResult;
+    peers: DataResult;
+    status: DataResult;
+    dataSources: DataResult;
+    config: DataResult;
   }) => void;
   setDashboardRefreshState?: (busy: boolean, stage: string) => void;
   refreshChatConversations: () => Promise<void> | void;
@@ -34,79 +34,55 @@ export function initDashboardApiModule({
     return Math.floor(port);
   }
 
-  function dashboardBridgeError(message: string): DashboardDataResult {
+  function errorResult(message: string): DataResult {
     return { ok: false, data: null, error: message, status: null };
   }
 
   async function getDashboardData(
     endpoint: 'status' | 'network' | 'peers' | 'config' | 'data-sources',
     query: Record<string, string | number | boolean> | undefined = undefined,
-  ): Promise<DashboardDataResult> {
-    if (!bridge) return dashboardBridgeError('Desktop bridge unavailable');
+  ): Promise<DataResult> {
+    if (!bridge) return errorResult('Desktop bridge unavailable');
 
-    if (!bridge.getDashboardData) {
-      if (endpoint === 'network' && bridge.getNetwork) {
-        const legacyNetwork = await bridge.getNetwork(getDashboardPort());
-        if (!legacyNetwork.ok) return dashboardBridgeError(legacyNetwork.error ?? 'Failed to query network endpoint');
-        return { ok: true, data: legacyNetwork, error: null, status: 200 };
+    // New bridge API (getData)
+    if (bridge.getData) {
+      try {
+        return await bridge.getData(endpoint, { port: getDashboardPort(), query });
+      } catch (err) {
+        return errorResult(err instanceof Error ? err.message : String(err));
       }
-
-      if (endpoint === 'peers' && bridge.getNetwork) {
-        const legacyNetwork = await bridge.getNetwork(getDashboardPort());
-        if (!legacyNetwork.ok) return dashboardBridgeError(legacyNetwork.error ?? 'Failed to query peers endpoint');
-        return {
-          ok: true,
-          data: { peers: safeArray(legacyNetwork.peers), total: safeArray(legacyNetwork.peers).length, degraded: false },
-          error: null,
-          status: 200,
-        };
-      }
-
-      return dashboardBridgeError('Dashboard data bridge unavailable');
     }
 
-    try {
-      return await bridge.getDashboardData(endpoint, { port: getDashboardPort(), query });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-
-      if (message.includes("No handler registered for 'runtime:get-dashboard-data'")) {
-        if (endpoint === 'network' && bridge.getNetwork) {
-          const legacyNetwork = await bridge.getNetwork(getDashboardPort());
-          if (!legacyNetwork.ok) return dashboardBridgeError(legacyNetwork.error ?? 'Failed to query network endpoint');
-          return { ok: true, data: legacyNetwork, error: null, status: 200 };
-        }
-        return dashboardBridgeError('Desktop main process is outdated. Fully quit and relaunch AntSeed Desktop.');
+    // Legacy fallback: getNetwork for network/peers endpoints
+    if ((endpoint === 'network' || endpoint === 'peers') && bridge.getNetwork) {
+      const legacyNetwork = await bridge.getNetwork(getDashboardPort());
+      if (!legacyNetwork.ok) return errorResult(legacyNetwork.error ?? 'Failed to query network');
+      if (endpoint === 'peers') {
+        return { ok: true, data: { peers: safeArray(legacyNetwork.peers), total: safeArray(legacyNetwork.peers).length, degraded: false }, error: null, status: 200 };
       }
+      return { ok: true, data: legacyNetwork, error: null, status: 200 };
+    }
 
-      return dashboardBridgeError(message);
+    return errorResult('Data bridge unavailable');
+  }
+
+  async function scanDhtNow(): Promise<DataResult> {
+    if (!bridge) return errorResult('Desktop bridge unavailable');
+    if (!bridge.scanNetwork) return errorResult('Scan not available');
+    try {
+      return await bridge.scanNetwork();
+    } catch (err) {
+      return errorResult(err instanceof Error ? err.message : String(err));
     }
   }
 
-  async function scanDhtNow(): Promise<DashboardDataResult> {
-    if (!bridge) return dashboardBridgeError('Desktop bridge unavailable');
-    if (!bridge.scanNetwork)
-      return dashboardBridgeError('Desktop main process does not support DHT scan yet. Rebuild and relaunch app.');
-
+  async function updateDashboardConfig(config: Record<string, unknown>): Promise<DataResult> {
+    if (!bridge) return errorResult('Desktop bridge unavailable');
+    if (!bridge.updateConfig) return errorResult('Config update not available');
     try {
-      return await bridge.scanNetwork(getDashboardPort());
+      return await bridge.updateConfig(config);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return dashboardBridgeError(message);
-    }
-  }
-
-  async function updateDashboardConfig(config: Record<string, unknown>): Promise<DashboardDataResult> {
-    if (!bridge) return dashboardBridgeError('Desktop bridge unavailable');
-    if (!bridge.updateDashboardConfig) {
-      return dashboardBridgeError('Dashboard config update bridge unavailable');
-    }
-
-    try {
-      return await bridge.updateDashboardConfig(config, { port: getDashboardPort() });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return dashboardBridgeError(message);
+      return errorResult(err instanceof Error ? err.message : String(err));
     }
   }
 

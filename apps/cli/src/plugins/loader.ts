@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import path, { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { getPluginsDir } from './manager.js'
 import { TRUSTED_PLUGINS } from './registry.js'
 import type { AntseedProviderPlugin, AntseedRouterPlugin, PluginConfigKey } from '@antseed/node'
@@ -28,7 +29,7 @@ async function loadPlugin<T>(
 
   let mod: { default?: unknown }
   try {
-    mod = await import(resolved) as { default?: unknown }
+    mod = await import(pathToFileURL(resolved).href) as { default?: unknown }
   } catch (err) {
     const cause = err instanceof Error ? err.message : String(err)
     if (

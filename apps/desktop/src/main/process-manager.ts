@@ -1,10 +1,12 @@
 import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export type RuntimeMode = 'connect' | 'dashboard';
+const { dirname, join, resolve } = path;
+
+export type RuntimeMode = 'connect';
 
 export interface RuntimeProcessState {
   mode: RuntimeMode;
@@ -35,7 +37,6 @@ export interface CliCommandResult {
   stderr: string;
 }
 
-const DEFAULT_DASHBOARD_PORT = 3117;
 const MIN_NODE_MAJOR_VERSION = 20;
 const DEFAULT_CLI_COMMAND = 'antseed';
 const CLI_COMMAND_ENV = 'ANTSEED_CLI_BIN';
@@ -145,7 +146,7 @@ function resolveChildNodePath(): string {
       paths.push(unpacked);
     }
   }
-  return paths.join(':');
+  return paths.join(path.delimiter);
 }
 
 function detectNodeArch(nodeBinary: string): string | null {
@@ -336,9 +337,6 @@ function resolveCommandArgs(opts: StartOptions): string[] {
       args.push('--data-dir', resolveConnectDataDir());
       args.push('connect', '--router', normalizeRouterIdentifier(opts.router));
       break;
-    case 'dashboard':
-      args.push('dashboard', '--port', String(opts.dashboardPort ?? DEFAULT_DASHBOARD_PORT), '--no-open');
-      break;
     default:
       throw new Error(`Unsupported runtime mode: ${String(opts.mode)}`);
   }
@@ -352,7 +350,6 @@ export class ProcessManager {
   private runtimeNativeAlignmentPromise: Promise<void> | null = null;
   private readonly states = new Map<RuntimeMode, RuntimeProcessState>([
     ['connect', { mode: 'connect', running: false, pid: null, startedAt: null, lastExitCode: null, lastError: null }],
-    ['dashboard', { mode: 'dashboard', running: false, pid: null, startedAt: null, lastExitCode: null, lastError: null }],
   ]);
 
   constructor(
@@ -402,7 +399,7 @@ export class ProcessManager {
     }
     const extraNodePath = resolveChildNodePath();
     if (extraNodePath) {
-      childEnv['NODE_PATH'] = extraNodePath + (childEnv['NODE_PATH'] ? `:${childEnv['NODE_PATH']}` : '');
+      childEnv['NODE_PATH'] = extraNodePath + (childEnv['NODE_PATH'] ? `${path.delimiter}${childEnv['NODE_PATH']}` : '');
     }
 
     const child = spawn(executable, executableArgs, {
@@ -482,7 +479,7 @@ export class ProcessManager {
     return { ...state };
   }
 
-  async runCliCommand(args: string[], mode: RuntimeMode = 'dashboard'): Promise<CliCommandResult> {
+  async runCliCommand(args: string[], mode: RuntimeMode = 'connect'): Promise<CliCommandResult> {
     const cliExecution = resolveCliExecution();
     const executable = cliExecution.executable;
     const executableArgs = [...cliExecution.executableArgsPrefix, ...args];
@@ -495,7 +492,7 @@ export class ProcessManager {
     }
     const extraNodePath = resolveChildNodePath();
     if (extraNodePath) {
-      childEnv['NODE_PATH'] = extraNodePath + (childEnv['NODE_PATH'] ? `:${childEnv['NODE_PATH']}` : '');
+      childEnv['NODE_PATH'] = extraNodePath + (childEnv['NODE_PATH'] ? `${path.delimiter}${childEnv['NODE_PATH']}` : '');
     }
 
     this.onLog(mode, 'system', `Running command: ${executableArgs.join(' ')}`);
@@ -708,7 +705,6 @@ export class ProcessManager {
   }
 
   async stopAll(): Promise<void> {
-    await this.stop('dashboard');
     await this.stop('connect');
   }
 }
