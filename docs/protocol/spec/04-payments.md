@@ -1,241 +1,323 @@
-# 04 - Payments
+# 04 - Payments: Proof of Prior Delivery
 
-This document specifies the bilateral payment protocol for the Antseed Network, covering settlement, session lifecycle, disputes, crypto escrow, and balance tracking using Base/EVM.
+This document specifies the payment, proof, and reputation protocol for the AntSeed P2P AI compute network. Payments use USDC on Base with EIP-712 spending authorizations. Proof of delivery is established through a cryptographic chain where each new authorization simultaneously pays for the current session and proves delivery of the previous one.
 
-> **Implementation status (2026-02-22):** On-chain bilateral USDC escrow settlement is implemented in `@antseed/node` and `AntseedEscrow.sol` on Base.
-
-## 1. Settlement
-
-Settlement uses bilateral receipts with running totals and dual signatures. Both the buyer and seller maintain a running total of the session cost, signed by both parties.
-
-### Bilateral Receipt Settlement
-
-After each request, the seller sends a receipt containing:
-- Session ID (bytes32)
-- Running total (cumulative USDC cost in base units)
-- Request count
-- Response hash (SHA-256 of response body)
-- Seller Ed25519 signature
-
-The buyer verifies and counter-signs with a BuyerAck containing:
-- Session ID
-- Running total
-- Request count
-- Buyer Ed25519 signature
-
-### Off-chain Settlement Calculation
+## 1. Session Lifecycle (Reserve → Serve → Settle)
 
 ```
-calculateSettlement(sessionId, receipts, platformFeeRate) -> SettlementResult
+BUYER                              SELLER                           ON-CHAIN
+  │                                  │                                │
+  │ ─ SpendingAuth ────────────────► │                                │
+  │   {previousConsumption: 0,       │                                │
+  │    previousSessionId: ∅,         │ ── reserve(s1) ──────────────►│
+  │    maxAmount: $1}                │    first sign, $1 cap          │ ← credits locked
+  │                                  │                                │
+  │ ◄── AuthAck ─────────────────── │                                │
+  │                                  │                                │
+  │ ══ SERVE ═══════════════════════ │                                │
+  │   requests flow                  │   tokens accumulate            │
+  │   ◄── SellerReceipt (per req) ── │   running total + hash         │
+  │   ── BuyerAck ──────────────── ►│   bilateral proof              │
+  │                                  │                                │
+  │ ── [disconnect] ────────────── ►│                                │
+  │                                  │   (waits up to 24h)            │
+  │                                  │                                │
+  │ ─ SpendingAuth ────────────────►│                                │
+  │   {previousConsumption: 15420,   │ ── settle(s1, 15420 tokens) ─►│ ← charges actual
+  │    previousSessionId: s1,        │ ── reserve(s2) ──────────────►│ ← new lock
+  │    maxAmount: $8}                │    proven sign, full cap       │
+  │                                  │                                │
+  │ ◄── AuthAck ─────────────────── │                                │
+  │                                  │                                │
+  │   ... cycle continues ...        │                                │
+  │                                  │                                │
+  │ ── [never returns] ─────────── ►│                                │
+  │                                  │   (24h passes)                 │
+  │                                  │ ── settleTimeout(sN) ────────►│ ← credits returned
+  │                                  │                                │   ghost recorded
 ```
 
-Computes the final cost for a session from receipt totals. Used for off-chain cost estimation.
+### Reserve
 
-Pricing is resolved during request handling from dual offer rates:
+The buyer signs an EIP-712 `SpendingAuth` and sends it to the seller over P2P. The seller verifies the signature and calls `reserve()` on-chain, which locks buyer credits for this session. If the auth includes a `previousSessionId`, the seller atomically settles the prior session in the same call.
 
-```
-requestCostUsd =
-  (inputTokens * inputUsdPerMillion + outputTokens * outputUsdPerMillion) / 1_000_000
-```
+### Serve
 
-The per-request `requestCostUsd` is converted to `costCents` and persisted in each receipt. Settlement then sums receipt costs.
+During the session, the seller sends a `SellerReceipt` after each request containing the running token total, request count, and response hash. The buyer verifies and responds with a `BuyerAck`. These bilateral receipts form an off-chain audit trail.
 
-### Helper Functions
+When `tokensDelivered / authMax > 0.80`, the seller sends a `TopUpRequest`. The buyer may sign a new `SpendingAuth` with a higher cap.
 
-**isSettlementWithinEscrow(settlementCostUSD, escrowAmountUSD) -> boolean**
+### Settle
 
-Returns `true` if `settlementCostUSD <= escrowAmountUSD`.
+Settlement is triggered by the buyer's NEXT `SpendingAuth` — the `previousConsumption` field IS the settlement amount for the prior session. The seller calls `settle(previousSessionId, previousConsumption)` on-chain, which converts tokens to credits at the seller's published rate, deducts the platform fee, and returns unused reservation to the buyer.
 
-**calculateRefund(escrowAmountUSD, settlementCostUSD) -> number**
+If the buyer never returns within 24 hours, the seller calls `settleTimeout()`. This returns all reserved credits to the buyer in full and records a ghost event against the seller's reputation. No reputation accrual occurs for timed-out sessions.
 
-Returns `max(0, escrowAmountUSD - settlementCostUSD)`.
-
-## 2. Session Lifecycle
-
-Sessions follow a bilateral lifecycle managed on-chain:
+## 2. SpendingAuth (EIP-712)
 
 ```
-Lock -> Active -> Settled | Disputed | Expired
+SpendingAuth(
+  address seller,
+  bytes32 sessionId,
+  uint256 maxAmount,
+  uint256 nonce,
+  uint256 deadline,
+  uint256 previousConsumption,
+  bytes32 previousSessionId
+)
 ```
 
-| State | Description |
+| Field | Description |
 |---|---|
-| `Lock` | Buyer signs lock authorization; seller commits on-chain via `commit_lock` |
-| `Active` | Lock committed, requests being served with bilateral receipts |
-| `Settled` | Both parties agree on running total; seller submits `settle` on-chain with buyer's ECDSA signature and reputation score |
-| `Disputed` | Seller opens dispute on-chain with last acked running total |
-| `Expired` | Lock expires after 1 hour if no activity; buyer reclaims funds |
+| `seller` | EVM address of the seller being authorized to charge |
+| `sessionId` | Random bytes32 identifying this session |
+| `maxAmount` | Maximum USDC (6 decimals) the seller can charge for this session |
+| `nonce` | Monotonically increasing per buyer-seller pair |
+| `deadline` | Unix timestamp after which this auth expires |
+| `previousConsumption` | Tokens delivered in the PREVIOUS session (0 for first session) |
+| `previousSessionId` | Session ID of the previous session (zero bytes for first session) |
 
-### Lock Flow
+The buyer signs this struct using EIP-712 typed data. The seller recovers the buyer address via ECDSA and submits the auth + signature to `reserve()`.
 
-1. Buyer generates session ID (random bytes32) and signs lock message with ECDSA
-2. Buyer sends `SessionLockAuth` (0x50) to seller via P2P
-3. Seller recovers buyer address via `ecrecover`, calls `commit_lock` on-chain
-4. Seller sends `SessionLockConfirm` (0x51) or `SessionLockReject` (0x52) back
-5. If confirmed, session enters Active state
+## 3. Proof Chain
 
-### Top-Up Flow
+Each `SpendingAuth` forms a link in an unforgeable chain:
 
-When running total exceeds 80% of locked amount:
-1. Seller sends `TopUpRequest` (0x55) to buyer
-2. Buyer signs `extend_lock` authorization with ECDSA
-3. Buyer sends `TopUpAuth` (0x58) to seller
-4. Seller calls `extend_lock` on-chain
+1. **Session 1** (first sign): `previousConsumption = 0`, `previousSessionId = 0x00`. This is a blind trust — capped at $1.
+2. **Session 2** (proven sign): `previousConsumption = 15420`, `previousSessionId = s1`. The buyer signing this proves they received 15,420 tokens in session 1. The seller settles session 1 for that amount.
+3. **Session N**: Each auth proves delivery of session N-1 and authorizes session N.
 
-### Settlement Flow
+The chain is unforgeable because:
+- Only the buyer can sign a `SpendingAuth` (ECDSA signature verified on-chain)
+- The `previousSessionId` must reference a valid Reserved session between the same buyer-seller pair
+- The `previousConsumption` is the buyer's attestation of tokens received — they have no incentive to overstate
 
-1. Buyer signs settlement message (session ID, running total, score) with ECDSA
-2. Buyer sends `SessionEnd` (0x56) to seller
-3. Seller calls `settle` on-chain with buyer's signature and score
-4. Contract transfers running total to seller, refunds remainder to buyer
-5. Reputation score recorded on-chain
+## 4. Sign Types
 
-## 3. Dispute Resolution
+### First Sign
 
-### Lock Expiry
+- `previousConsumption == 0` and `previousSessionId == 0x00`
+- Maximum `maxAmount` capped at `FIRST_SIGN_CAP` (default: 1 USDC)
+- No proof of prior delivery — blind trust from the buyer
+- Records `firstSignCount++` on seller's reputation
 
-- Locks expire after 1 hour if no settlement occurs
-- Buyer can call `release_expired_lock` to reclaim funds after expiry
+### Proven Sign
 
-### Dispute Window
+- `previousConsumption > 0` and `previousSessionId` references a valid prior session
+- Requires `previousConsumption >= MIN_TOKEN_THRESHOLD` (default: 1000 tokens)
+- Requires `PROVEN_SIGN_COOLDOWN` (default: 7 days) elapsed since the buyer's first session with this seller
+- Full `maxAmount` allowed (no cap beyond buyer balance)
 
-- If buyer disconnects (ghost scenario), seller opens dispute with last acked running total
-- 24-hour dispute window for buyer to respond
-- If buyer does not respond, dispute resolves in seller's favor
+### Qualified Proven Sign
 
-### Ghost Buyer Handling
+A proven sign becomes "qualified" when the buyer has been charged by at least `BUYER_DIVERSITY_THRESHOLD` (default: 3) unique sellers. This prevents a single colluding buyer-seller pair from farming reputation. Records `qualifiedProvenSignCount++` and adds to `totalQualifiedTokenVolume`.
 
-When a buyer disconnects unexpectedly:
-- If buyer acked some work: seller opens dispute with `lastAckedTotal`
-- If no acks but work was done: seller opens dispute with `runningTotal`
-- If no work done: lock expires naturally after 1 hour
+An unqualified proven sign (buyer has used fewer than 3 sellers) still settles payment normally but does not contribute to the seller's qualified reputation or emission points.
 
-## 4. Reputation
+## 5. Anti-Gaming Defences
 
-On-chain weighted reputation score based on session history:
-- Recorded via the `settle` function alongside each settlement
-- Score range: 0-100 (provided by buyer at session end)
-- Weighted average stored on-chain per seller address
-- Tracks: session count, dispute count, weighted average score
-- Buyers verify claimed reputation against on-chain data during peer discovery
+Seven independent layers make wash trading economically irrational at every scale.
 
-## 5. Crypto Escrow
+| Layer | Mechanism | Default | Configurable Constant |
+|---|---|---|---|
+| Buyer diversity | Proven sign only qualifies if buyer has been charged by N unique sellers | 3 sellers | `BUYER_DIVERSITY_THRESHOLD` |
+| Minimum deposit | Buyers must deposit at least N USDC to participate | 10 USDC | `MIN_BUYER_DEPOSIT` |
+| Dynamic credit limits | Buyer balance cap grows with real usage (see below) | 10 USDC base | `BASE_CREDIT_LIMIT`, `PEER_INTERACTION_BONUS`, `TIME_BONUS`, `PROVEN_SESSION_BONUS`, `FEEDBACK_BONUS`, `MAX_CREDIT_LIMIT` |
+| Inactivity lock | Buyer balance locked after N days of inactivity | 90 days | `BUYER_INACTIVITY_PERIOD` |
+| Cooldown | Time between first session and first proven sign per buyer-seller pair | 7 days | `PROVEN_SIGN_COOLDOWN` |
+| Minimum tokens | Proven sign requires previousConsumption above threshold | 1000 tokens | `MIN_TOKEN_THRESHOLD` |
+| Stake-proportional cap | `effectiveProvenSigns = min(actual, stake * k)` | k = 20 | `REPUTATION_CAP_COEFFICIENT` |
 
-The `AntseedEscrow.sol` Solidity contract on Base holds USDC funds in escrow during sessions.
+### Dynamic Credit Limits
 
-### Token
+A buyer's maximum escrow balance grows organically with real network participation:
 
-- **Token:** ERC-20 USDC on Base
-- **Decimals:** 6
+```
+buyerCreditLimit(B) = min(
+  BASE_CREDIT_LIMIT
+  + PEER_INTERACTION_BONUS * uniqueSellersCharged(B)
+  + TIME_BONUS * daysSinceFirstSession(B)
+  + PROVEN_SESSION_BONUS * provenBuyCount(B)
+  + FEEDBACK_BONUS * feedbacksSubmitted(B),
+  MAX_CREDIT_LIMIT
+)
+```
 
-### Contract Functions
+The owner can override individual buyer limits via `setCreditLimitOverride(address, uint256)`. The `deposit()` function enforces `balance + amount <= buyerCreditLimit(msg.sender)`.
 
-| Function | Description |
-|---|---|
-| `deposit(amount)` | Buyer deposits USDC into their escrow account |
-| `withdraw(amount)` | Buyer withdraws available (uncommitted) USDC |
-| `commit_lock(buyer, sessionId, amount, buyerSig)` | Seller commits a buyer-signed lock on-chain |
-| `extend_lock(sessionId, additionalAmount, buyerSig)` | Seller extends lock with buyer authorization |
-| `settle(sessionId, runningTotal, score, buyerSig)` | Seller submits settlement with buyer's ECDSA signature |
-| `open_dispute(sessionId, claimedAmount)` | Seller opens dispute for ghost buyer scenario |
-| `respond_dispute(sessionId)` | Buyer responds to dispute |
-| `release_expired_lock(sessionId)` | Buyer reclaims funds from expired lock |
-| `get_buyer_account(buyer)` | Read buyer's deposited/committed/available balances |
-| `get_session(sessionId)` | Read session state |
-| `get_reputation(seller)` | Read seller's on-chain reputation |
+## 6. Staking and Slashing
 
-## 6. Signature Verification
+### Staking
 
-### ECDSA (On-chain)
+Sellers must stake USDC via `stake(amount)` to accept paid sessions. A registered but unstaked peer (has AntseedIdentity NFT but zero stake) cannot have `reserve()` called — the transaction reverts. Minimum stake: `MIN_SELLER_STAKE` (default: 10 USDC).
 
-Used for lock authorization, settlement, and extend-lock messages. Verified on-chain via `ecrecover`.
+### Slashing Conditions (computed at `unstake()`)
 
-Message hashes built with `solidityPackedKeccak256`:
-- **Lock:** `keccak256(sessionId, seller, amount)`
-- **Settlement:** `keccak256(sessionId, runningTotal, score)`
-- **Extend Lock:** `keccak256(sessionId, seller, additionalAmount)`
+| Condition | Slash % | Rationale |
+|---|---|---|
+| `qualifiedProvenSignCount == 0`, total signs > 0 | 100% | No real delivery proven |
+| Qualified proven ratio < 30% | 50% | Most sessions unproven |
+| 5+ ghost events, no subsequent proven signs | 100% | Persistent failure to deliver |
+| Good ratio, no qualified activity in last 30 days | 20% | Stale inactive peer |
+| Clean ratio, recent proven activity | 0% | Healthy peer |
 
-### Ed25519 (Off-chain P2P)
+Slashed funds are sent to the protocol reserve address (configurable via `setProtocolReserve(address)`).
 
-Used for bilateral receipt signing and acknowledgement between peers. Not verified on-chain.
+## 7. Reputation
 
-## 7. Account Structure
+Peer reputation is stored on-chain in `AntseedIdentity` with two layers:
 
-On-chain storage uses Solidity mappings:
-- `buyerAccounts[address]` -> `{ deposited, committed }`
-- `sessions[bytes32]` -> `{ buyer, seller, lockedAmount, status, createdAt }`
-- `reputation[address]` -> `{ totalWeightedScore, sessionCount, disputeCount }`
+### Custom Proof Chain Reputation (updated by AntseedEscrow)
 
-## 8. Wallet Management
+Per-peer counters updated atomically during `reserve()` and `settle()`:
+- `firstSignCount` — number of first-sign sessions
+- `qualifiedProvenSignCount` — number of qualified proven signs
+- `unqualifiedProvenSignCount` — proven signs from buyers below diversity threshold
+- `totalQualifiedTokenVolume` — total tokens delivered in qualified proven sessions
+- `lastProvenAt` — timestamp of last proven sign
+- `ghostCount` — number of timed-out sessions
 
-Ed25519 identity keypair is derived to an EVM address:
-1. Take Ed25519 public key (32 bytes)
-2. Apply `keccak256` hash
-3. Take last 20 bytes as EVM address
-4. Derive deterministic EVM private key for ECDSA signing via `Wallet` from ethers.js
+### ERC-8004 Feedback Registry (buyer submissions)
 
-Functions:
-- `identityToEvmWallet(identity)` -> ethers.Wallet (for ECDSA signing)
-- `identityToEvmAddress(identity)` -> 0x-prefixed EVM address
-- `getWalletInfo(identity, rpcUrl, usdcAddress, chainId)` -> WalletInfo with ETH and USDC balances
+Generic buyer feedback signals implementing the ERC-8004 standard:
+- `giveFeedback(agentId, value, valueDecimals, tag1, tag2, endpoint, feedbackURI, feedbackHash)`
+- `getSummary(agentId, client, tag)` — aggregated count and value
+- `readFeedback(agentId, client, index)` — individual entries
+- `revokeFeedback(agentId, index)` — submitter only
 
-## 9. Balance Tracking
+Tags by convention: `"quality"`, `"latency"`, `"accuracy"`, `"reliability"`.
 
-### On-chain Buyer Accounts
+### Combined Trust Score
 
-Each buyer has an on-chain account in the escrow contract:
-- `deposited`: total USDC deposited
-- `committed`: total USDC locked in active sessions
-- `available`: `deposited - committed` (available for new locks or withdrawal)
+```
+onChainTrustScore(P) = w1 * provenDeliveryRate(P)   ← custom reputation (proof chain)
+                      + w2 * qualityScore(P)          ← ERC-8004 feedback signals
+```
 
-### Local Transaction History
+Off-chain metrics (uptime, latency, flag rate) remain in the node's local trust score calculation for routing but are not part of the contract system.
 
-The `BalanceManager` maintains a local transaction history for display purposes.
+## 8. Emission Distribution (ANTS Token)
 
-| TransactionType | Description |
-|---|---|
-| `escrow_lock` | USDC locked into escrow for a session |
-| `escrow_release` | Escrowed USDC released to seller on settlement |
-| `escrow_refund` | Escrowed USDC refunded to buyer |
-| `dispute_resolution` | Transaction recorded for dispute resolution |
+### ANTS Token
 
-## 10. P2P Messages
+ERC-20 on Base. No pre-mine. No initial supply. All ANTS distributed through verified work over 10 years.
 
-Bilateral payment messages use message types 0x50-0x58:
+**Phase 1 (current):** Non-transferable. `transfer()` and `transferFrom()` revert. Participants earn and claim but cannot trade. Owner calls `enableTransfers()` (one-way toggle) when the network matures.
+
+Mint authority restricted to `AntseedEmissions` contract (`setEmissionsContract()` — one-time setter).
+
+### Emission Schedule
+
+- Epoch emission: `e_e = e_0 / 2^(e/h)` — halving every ~6 months
+- Epoch duration: configurable (default 1 week, 26 epochs per halving interval)
+- `advanceEpoch()` callable by anyone when epoch duration has passed
+
+### Emission Split
+
+| Bucket | Default | Purpose |
+|---|---|---|
+| Seller share | 65% | Rewards proven delivery |
+| Buyer share | 25% | Rewards network usage and feedback |
+| Reserve share | 10% | Future use (subscription pool staking, liquidity) |
+
+Reserve accumulates in the emissions contract until `setReserveDestination(address)` is called.
+
+### Points System
+
+**Seller points** (accumulated on each `settle()` call):
+```
+sellerPointsDelta = E(P) * V(P) * feedbackMultiplier(P)
+
+where:
+  E(P) = min(Q(P), k * S(P))            ← stake-capped qualified proven signs
+  V(P) = qualified token volume           ← real tokens delivered in this settlement
+  feedbackMultiplier(P) =                 ← from ERC-8004 buyer feedback
+    0.5x   if avgFeedback < -50
+    0.75x  if avgFeedback < 0
+    1.0x   if no feedback
+    1.25x  if avgFeedback > 50
+    1.5x   if avgFeedback > 80
+```
+
+**Buyer points** (accumulated on each proven session sign + feedback):
+```
+buyerPointsDelta = usagePoints + feedbackPoints + diversityBonus
+
+where:
+  usagePoints    = provenBuyVolume                   ← tokens in this proven sign
+  feedbackPoints = FEEDBACK_WEIGHT per submission     ← flat bonus for on-chain feedback
+  diversityBonus = usagePoints * min(uniqueSellers / BASE_DIVERSITY, MAX_DIVERSITY_MULT)
+```
+
+### Gas-Efficient Distribution (Synthetix Reward-Per-Point)
+
+No loops. O(1) per interaction. Global accumulator tracks reward-per-point:
+
+```
+// On every settle() — O(1):
+rewardPerPointStored += (currentEmissionRate * timeSinceLastUpdate) / totalNetworkPoints;
+seller.pendingReward += seller.points * (rewardPerPointStored - seller.rewardPerPointPaid);
+seller.rewardPerPointPaid = rewardPerPointStored;
+seller.points += pointsDelta;
+totalNetworkPoints += pointsDelta;
+```
+
+Same pattern for buyers with a separate accumulator (`buyerRewardPerPointStored`).
+
+**Claiming** (`claimEmissions()`): mints accrued ANTS to caller. 15% per-seller cap enforced — excess redistributed to reserve.
+
+**Epoch advancement** (`advanceEpoch()`): callable by anyone. Flushes current epoch accrual, computes new emission rate, updates `epochStart`.
+
+## 9. Subscription Pool
+
+Separate contract (`AntseedSubPool`) managing subscription-based access. Evolves independently from the core escrow/proof system.
+
+- `subscribe(tier)` — buyer pays monthly fee in USDC
+- `cancelSubscription()` — stops at end of current period
+- `setTier(tierId, monthlyFee, dailyTokenBudget)` — owner configures tiers
+- `optIn(tokenId)` / `optOut(tokenId)` — peers opt in/out of serving subscribers (requires AntseedIdentity)
+- `claimRevenue(tokenId)` — peer claims share proportional to proven delivery reputation
+- `distributionEpoch()` — callable by anyone, distributes current epoch revenue
+- Daily token budget enforcement per subscriber
+
+## 10. Contract Architecture
+
+```
+ANTSToken (ERC-20)        ── mint restricted to AntseedEmissions
+AntseedIdentity (ERC-721) ── soulbound NFT, dual lookup, reputation, ERC-8004 feedback
+AntseedEscrow             ── Reserve→Settle, proof chain, staking, slashing, anti-gaming
+AntseedEmissions          ── epoch halving, Synthetix reward-per-point, 65/25/10 split
+AntseedSubPool            ── subscription tiers, daily budgets, revenue distribution
+```
+
+Contracts reference each other by address (set at deployment, updateable by owner). No inheritance between contracts — only interface calls.
+
+**Interaction flow:**
+- `AntseedEscrow` calls `AntseedIdentity.updateReputation()` on reserve/settle
+- `AntseedEscrow` calls `AntseedEmissions.accrueSellerPoints()` / `accrueBuyerPoints()` on settle
+- `AntseedEmissions` calls `ANTSToken.mint()` on claim
+- `AntseedSubPool` reads from `AntseedIdentity` (reputation) and `AntseedEscrow` (proven stats)
+
+## 11. P2P Messages
 
 | Type | Name | Direction | Description |
 |---|---|---|---|
-| 0x50 | `SessionLockAuth` | Buyer -> Seller | Buyer's signed lock authorization |
-| 0x51 | `SessionLockConfirm` | Seller -> Buyer | Lock committed on-chain |
-| 0x52 | `SessionLockReject` | Seller -> Buyer | Lock rejected |
-| 0x53 | `SellerReceipt` | Seller -> Buyer | Running-total receipt after each request |
-| 0x54 | `BuyerAck` | Buyer -> Seller | Buyer acknowledges receipt |
-| 0x55 | `TopUpRequest` | Seller -> Buyer | Request additional lock funds |
-| 0x56 | `SessionEnd` | Buyer -> Seller | Buyer initiates settlement |
-| 0x58 | `TopUpAuth` | Buyer -> Seller | Buyer authorizes top-up |
+| 0x50 | `SpendingAuth` | Buyer → Seller | EIP-712 signed spending authorization |
+| 0x51 | `AuthAck` | Seller → Buyer | Reservation confirmed |
+| 0x53 | `SellerReceipt` | Seller → Buyer | Running-total receipt after each request |
+| 0x54 | `BuyerAck` | Buyer → Seller | Buyer acknowledges receipt |
+| 0x55 | `TopUpRequest` | Seller → Buyer | Request additional authorization |
 
-## 11. Off-chain Dispute Detection
+## 12. Session Persistence
 
-The off-chain dispute detection module (`disputes.ts`) provides helper functions for detecting discrepancies between buyer and seller receipt totals. This is retained for local discrepancy analysis.
+Session state is persisted to SQLite in the node SDK, ensuring proof chains survive node restarts. Schema:
 
-### Constants
+- `sessions` table: session_id, peer_id, role, EVM addresses, nonce, auth_max, deadline, previous_session_id, previous_consumption, tokens_delivered, request_count, timestamps, status
+- `receipts` table: session_id, running_total, request_count, response_hash, seller_sig, buyer_ack_sig, timestamp
 
-| Constant | Value | Description |
+## 13. Supported Chains
+
+| Chain ID | Network | Purpose |
 |---|---|---|
-| `DISPUTE_TIMEOUT_MS` | `259200000` (72 hours) | Time after which an unresolved off-chain dispute expires |
-
-### Functions
-
-- `createDispute(channel, initiatorPeerId, reason, buyerReceipts, sellerReceipts)` -> PaymentDispute
-- `detectDiscrepancy(buyerReceipts, sellerReceipts, thresholdPercent)` -> DiscrepancyResult
-- `resolveDispute(dispute, resolution)` -> PaymentDispute
-- `isDisputeExpired(dispute)` -> boolean
-- `calculateDisputedAmount(buyerReceipts, sellerReceipts)` -> number
-
-## 12. Supported Chains
-
-| ChainId | Network |
-|---|---|
-| `base-local` | Local Base dev chain (Anvil) |
-| `base-sepolia` | Base Sepolia testnet |
-| `base-mainnet` | Base mainnet |
+| `base-sepolia` | Base Sepolia testnet | Testing and development |
+| `base-mainnet` | Base mainnet | Production |

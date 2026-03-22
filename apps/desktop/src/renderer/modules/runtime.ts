@@ -67,23 +67,15 @@ export function initRuntimeModule({ uiState }: RuntimeModuleOptions) {
     }
 
     const badge: ProcessBadgeState = processInfo.lastError ? 'error' : 'stopped';
-    if (mode === 'dashboard') {
-      uiState.dashboardRunning = false;
-    }
     return { stateText: segments.join(' | '), badge };
   }
 
   function renderProcesses(processes: RuntimeProcessState[]): void {
     uiState.processes = Array.isArray(processes) ? processes : [];
-    uiState.dashboardRunning = isModeRunning('dashboard', uiState.processes);
 
     const connect = computeProcessState('connect', processByMode('connect'));
     uiState.connectState = connect.stateText;
     uiState.connectBadge = processBadgeToDisplay(connect.badge);
-
-    const dashboard = computeProcessState('dashboard', processByMode('dashboard'));
-    uiState.dashboardState = dashboard.stateText;
-    uiState.dashboardBadge = processBadgeToDisplay(dashboard.badge);
 
     notifyUiStateChanged();
   }
@@ -97,7 +89,7 @@ export function initRuntimeModule({ uiState }: RuntimeModuleOptions) {
 
   function appendSystemLog(message: string): void {
     appendLog({
-      mode: 'dashboard' as const,
+      mode: 'connect' as const,
       stream: 'system' as const,
       line: message,
       timestamp: Date.now(),

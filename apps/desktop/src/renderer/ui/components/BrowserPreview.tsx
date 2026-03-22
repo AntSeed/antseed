@@ -505,7 +505,7 @@ export function BrowserPreview({ url, onClose, onNavigate, onElementSelected }: 
           <div className={styles.loadingOverlay}>
             <div className={styles.loadingCard}>
               <div className={styles.loadingSpinner} />
-              <div className={styles.loadingText}>Loading preview…</div>
+              <div className={styles.loadingText}>Loading preview...</div>
             </div>
           </div>
         )}

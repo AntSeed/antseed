@@ -1,5 +1,5 @@
-import type { BaseEscrowClient } from "../payments/evm/escrow-client.js";
 import type { PeerMetadata } from "./peer-metadata.js";
+import type { IdentityClient } from "../payments/evm/identity-client.js";
 
 export interface ReputationVerification {
   /** Whether the claimed reputation matches on-chain data. */
@@ -20,24 +20,49 @@ export interface ReputationVerification {
 
 /**
  * Verify a peer's claimed on-chain reputation against the Base contract.
- * Queries the escrow contract using the peer's evmAddress and compares
- * claimed vs actual reputation values.
+ * Queries the identity contract using the peer's EVM address to look up
+ * the tokenId, then fetches ProvenReputation and compares claimed vs actual.
+ *
+ * Returns valid=true with zeroed actuals if the peer has no evmAddress
+ * (cannot verify without an address).
  */
 export async function verifyReputation(
-  escrowClient: BaseEscrowClient,
+  identityClient: IdentityClient,
   metadata: PeerMetadata,
 ): Promise<ReputationVerification> {
   if (!metadata.evmAddress) {
-    throw new Error("Metadata does not contain an evmAddress");
+    return {
+      valid: true,
+      actualReputation: 0,
+      actualSessionCount: 0,
+      actualDisputeCount: 0,
+      claimedReputation: metadata.onChainReputation,
+      claimedSessionCount: metadata.onChainSessionCount,
+      claimedDisputeCount: metadata.onChainDisputeCount,
+    };
   }
 
-  const reputation = await escrowClient.getReputation(metadata.evmAddress);
+  const tokenId = await identityClient.getTokenId(metadata.evmAddress);
+  const reputation = await identityClient.getReputation(tokenId);
 
-  const actualReputation = reputation.weightedAverage;
-  const actualSessionCount = reputation.sessionCount;
-  const actualDisputeCount = reputation.disputeCount;
+  // Map ProvenReputation fields to the verification format:
+  // - qualifiedProvenSignCount is the primary reputation metric
+  // - firstSignCount + qualifiedProvenSignCount + unqualifiedProvenSignCount = total sessions
+  // - ghostCount maps to dispute count (sessions where provider went silent)
+  const actualReputation = reputation.qualifiedProvenSignCount;
+  const actualSessionCount =
+    reputation.firstSignCount +
+    reputation.qualifiedProvenSignCount +
+    reputation.unqualifiedProvenSignCount;
+  const actualDisputeCount = reputation.ghostCount;
 
+  // Always compare against on-chain data when evmAddress is present.
+  // If peer omits reputation fields, treat as unverified — prevents bypass
+  // by simply not claiming any values.
   const valid =
+    metadata.onChainReputation !== undefined &&
+    metadata.onChainSessionCount !== undefined &&
+    metadata.onChainDisputeCount !== undefined &&
     metadata.onChainReputation === actualReputation &&
     metadata.onChainSessionCount === actualSessionCount &&
     metadata.onChainDisputeCount === actualDisputeCount;

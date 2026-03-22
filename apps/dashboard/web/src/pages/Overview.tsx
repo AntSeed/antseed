@@ -91,7 +91,7 @@ function PeerRow({ peer, isSelf }: { peer: PeerInfo; isSelf: boolean }) {
         <SourceBadge source={peer.source} />
       </div>
       <div className="peer-row-providers">
-        {peer.providers.map((p) => (
+        {(peer.providers ?? []).map((p) => (
           <span key={p} className={`provider-chip provider-${p}`}>{p}</span>
         ))}
       </div>
@@ -166,11 +166,11 @@ export function Overview() {
 
   if (!status) return <div className="loading"><div className="loading-spinner" /><span>Loading dashboard...</span></div>;
 
-  const chartData = earnings?.daily.map((d) => ({ date: d.date, amount: parseFloat(d.amount) })) ?? [];
+  const chartData = (earnings?.daily ?? []).map((d) => ({ date: d.date, amount: parseFloat(d.amount) }));
   const capacityPercent = status.capacityUsedPercent ?? 0;
   const peers: PeerInfo[] = (network?.peers ?? []).map((p) => ({
     peerId: p.peerId,
-    providers: p.providers,
+    providers: p.providers ?? [],
     capacityMsgPerHour: p.capacityMsgPerHour,
     inputUsdPerMillion: p.inputUsdPerMillion,
     outputUsdPerMillion: p.outputUsdPerMillion,
@@ -199,7 +199,7 @@ export function Overview() {
           label="Earnings Today"
           value={`$${parseFloat(status.earningsToday).toFixed(2)}`}
           color="var(--accent-green)"
-          sub={earnings ? `$${parseFloat(earnings.thisMonth).toFixed(2)} this month` : undefined}
+          sub={earnings ? `$${parseFloat(earnings.thisMonth ?? '0').toFixed(2)} this month` : undefined}
         />
         <StatCard
           label="Tokens Today"

@@ -1,4 +1,4 @@
-export type RuntimeMode = 'connect' | 'dashboard';
+export type RuntimeMode = 'connect';
 
 export type RuntimeProcessState = {
   mode: RuntimeMode;
@@ -41,21 +41,14 @@ export type RuntimeSnapshot = {
   logs: LogEvent[];
 };
 
-export type DashboardEndpoint =
+export type DataEndpoint =
   | 'status'
   | 'network'
   | 'peers'
   | 'config'
   | 'data-sources';
 
-export type DashboardDataResult<T = unknown> = {
-  ok: boolean;
-  data: T | null;
-  error: string | null;
-  status: number | null;
-};
-
-export type DashboardUpdateResult<T = unknown> = {
+export type DataResult<T = unknown> = {
   ok: boolean;
   data: T | null;
   error: string | null;
@@ -97,19 +90,19 @@ export type DesktopBridge = {
   pluginsInstall?: (packageName: string) => Promise<PluginInstallResult>;
 
   getNetwork?: (port?: number) => Promise<{ ok: boolean; peers?: unknown[]; error?: string | null; [key: string]: unknown }>;
-  getDashboardData?: (
-    endpoint: DashboardEndpoint,
+  getData?: (
+    endpoint: DataEndpoint,
     options?: { port?: number; query?: Record<string, string | number | boolean> }
-  ) => Promise<DashboardDataResult>;
-  updateDashboardConfig?: (
+  ) => Promise<DataResult>;
+  updateConfig?: (
     config: Record<string, unknown>,
-    options?: { port?: number }
-  ) => Promise<DashboardUpdateResult>;
-  scanNetwork?: (port?: number) => Promise<DashboardDataResult>;
+  ) => Promise<DataResult>;
+  scanNetwork?: () => Promise<DataResult>;
 
   onLog?: (handler: (event: LogEvent) => void) => () => void;
   onState?: (handler: (states: RuntimeProcessState[]) => void) => () => void;
   onRuntimeActivity?: (handler: (event: RuntimeActivityEvent) => void) => () => void;
+  onPeersChanged?: (handler: () => void) => () => void;
 
   chatAiListConversations?: () => Promise<{ ok: boolean; data: unknown[] }>;
   chatAiListServices?: () => Promise<{ ok: boolean; data?: unknown[]; error?: string }>;

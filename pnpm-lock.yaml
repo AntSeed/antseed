@@ -369,6 +369,9 @@ importers:
         specifier: ^7.9.0
         version: 7.9.0
     devDependencies:
+      '@openzeppelin/contracts':
+        specifier: ^5.6.1
+        version: 5.6.1
       '@types/better-sqlite3':
         specifier: ^7.6.13
         version: 7.6.13
@@ -2783,6 +2786,9 @@ packages:
     resolution: {integrity: sha512-mJd2Z5TjYWq/ttPLLGqArdtnC74J6bOzg4rMDnN+p1xTacZ2yPRCk2y0oSWQtygLR9YVQXgOcONrwtnk3JupxQ==}
     engines: {node: ^12.13.0 || ^14.15.0 || >=16.0.0}
     deprecated: This functionality has been moved to @npmcli/fs
+
+  '@openzeppelin/contracts@5.6.1':
+    resolution: {integrity: sha512-Ly6SlsVJ3mj+b18W3R8gNufB7dTICT105fJhodGAGgyC2oqnBAhqSiNDJ8V8DLY05cCz81GLI0CU5vNYA1EC/w==}
 
   '@parcel/watcher-android-arm64@2.5.6':
     resolution: {integrity: sha512-YQxSS34tPF/6ZG7r/Ih9xy+kP/WwediEUsqmtf0cuCV5TPPKw/PQHRhueUo6JdeFJaqV3pyjm0GdYjZotbRt/A==}
@@ -13521,6 +13527,8 @@ snapshots:
     dependencies:
       mkdirp: 1.0.4
       rimraf: 3.0.2
+
+  '@openzeppelin/contracts@5.6.1': {}
 
   '@parcel/watcher-android-arm64@2.5.6':
     optional: true

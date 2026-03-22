@@ -45,7 +45,7 @@ export function registerBalanceCommand(program: Command): void {
       const spinner = ora('Fetching balance...').start();
 
       try {
-        const account = await escrowClient.getBuyerAccount(address);
+        const account = await escrowClient.getBuyerBalance(address);
         const usdcBalance = await escrowClient.getUSDCBalance(address);
 
         spinner.stop();
@@ -54,9 +54,9 @@ export function registerBalanceCommand(program: Command): void {
           console.log(JSON.stringify({
             address,
             walletUSDC: formatUsdc(usdcBalance),
-            escrowDeposited: formatUsdc(account.deposited),
-            escrowCommitted: formatUsdc(account.committed),
             escrowAvailable: formatUsdc(account.available),
+            escrowReserved: formatUsdc(account.reserved),
+            escrowPendingWithdrawal: formatUsdc(account.pendingWithdrawal),
           }, null, 2));
           return;
         }
@@ -66,9 +66,9 @@ export function registerBalanceCommand(program: Command): void {
         console.log(chalk.bold('USDC Balance (wallet): ') + chalk.green(formatUsdc(usdcBalance) + ' USDC'));
         console.log('');
         console.log(chalk.bold('Escrow Account:'));
-        console.log(`  Deposited:  ${chalk.green(formatUsdc(account.deposited) + ' USDC')}`);
-        console.log(`  Committed:  ${chalk.yellow(formatUsdc(account.committed) + ' USDC')}`);
-        console.log(`  Available:  ${chalk.green(formatUsdc(account.available) + ' USDC')}`);
+        console.log(`  Available:           ${chalk.green(formatUsdc(account.available) + ' USDC')}`);
+        console.log(`  Reserved:            ${chalk.yellow(formatUsdc(account.reserved) + ' USDC')}`);
+        console.log(`  Pending Withdrawal:  ${chalk.yellow(formatUsdc(account.pendingWithdrawal) + ' USDC')}`);
       } catch (err) {
         spinner.fail(chalk.red(`Failed to fetch balance: ${(err as Error).message}`));
         process.exit(1);

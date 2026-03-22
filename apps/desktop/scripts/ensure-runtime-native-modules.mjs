@@ -123,9 +123,9 @@ function resolveNpmCli() {
         path.resolve(path.dirname(process.execPath), '..', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
       ]
     : [
-    '/usr/local/lib/node_modules/npm/bin/npm-cli.js',
-    '/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js',
-    path.resolve(path.dirname(process.execPath), '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+        '/usr/local/lib/node_modules/npm/bin/npm-cli.js',
+        '/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js',
+        path.resolve(path.dirname(process.execPath), '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
       ];
   for (const candidate of commonCandidates) {
     if (existsSync(candidate)) {

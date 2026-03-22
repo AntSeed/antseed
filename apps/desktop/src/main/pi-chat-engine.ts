@@ -1,13 +1,13 @@
 import { app, BrowserWindow } from 'electron';
 import type { IpcMain } from 'electron';
 import { type Static, Type } from '@sinclair/typebox';
-import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, stat, unlink, writeFile } from 'node:fs/promises';
-import { createConnection, isIP } from 'node:net';
+import { mkdir, readFile, stat, unlink } from 'node:fs/promises';
+import { createConnection } from 'node:net';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import type { AgentSession, AgentSessionEvent, ToolDefinition } from '@mariozechner/pi-coding-agent';
+import { createBrowserPreviewTool, startDevServerTool } from './browser-preview-tools.js';
 import { ANTSTATION_SYSTEM_PROMPT } from './chat-system-prompt.js';
 import {
   AuthStorage,
@@ -311,263 +311,6 @@ const webFetchTool: ToolDefinition = {
   },
 };
 
-const BrowserPreviewParams = Type.Object({
-  url: Type.String({
-    description: 'The URL to open in the browser preview panel (e.g. http://localhost:3000).',
-  }),
-});
-
-function createBrowserPreviewTool(
-  sendToRenderer: (channel: string, payload: unknown) => void,
-): ToolDefinition {
-  return {
-    name: 'open_browser_preview',
-    label: 'Browser Preview',
-    description:
-      'Open a URL in the built-in browser preview panel beside the chat. ' +
-      'Use this when working on web development to let the user see their website, ' +
-      'app, or UI live alongside the conversation. The preview panel is an embedded ' +
-      'browser that renders the page — ideal for localhost dev servers (e.g. ' +
-      'http://localhost:3000, http://localhost:5173) or any URL the user is building. ' +
-      'Call this tool after starting a dev server with start_dev_server, when making ' +
-      'visible UI changes, or when the user asks to preview their work.',
-    parameters: BrowserPreviewParams,
-    async execute(_toolCallId, params) {
-      const { url } = params as Static<typeof BrowserPreviewParams>;
-      try {
-        new URL(url);
-      } catch {
-        return {
-          content: [{ type: 'text', text: `Invalid URL: ${url}` }],
-          details: { url, error: 'invalid URL' },
-          isError: true,
-        };
-      }
-      sendToRenderer('browser-preview:open', { url });
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Opened browser preview for ${url}. The user can now see the page in the panel to the right of this chat.`,
-          },
-        ],
-        details: { url },
-      };
-    },
-  };
-}
-
-const StartDevServerParams = Type.Object({
-  command: Type.String({
-    description:
-      'The shell command to start the dev server, e.g. "pnpm run dev", "npm run dev", "npx vite", "docusaurus start".',
-  }),
-  cwd: Type.String({
-    description: 'Absolute path to the project directory where the command should run.',
-  }),
-  port: Type.Optional(
-    Type.Number({
-      description:
-        'Expected port the server will listen on. If omitted, the tool scans the output for a URL.',
-    }),
-  ),
-});
-
-/** Track running dev servers so we can kill them on new starts. */
-const runningDevServers = new Map<string, { pid: number; kill: () => void }>();
-
-function getDevServerShell(command: string): { file: string; args: string[] } {
-  if (process.platform === 'win32') {
-    const comspec = process.env['ComSpec']?.trim() || 'cmd.exe';
-    return {
-      file: comspec,
-      args: ['/d', '/s', '/c', command],
-    };
-  }
-
-  const shell = process.env['SHELL']?.trim() || '/bin/bash';
-  return {
-    file: shell,
-    args: ['-lc', command],
-  };
-}
-
-function killDetachedDevServer(pid: number): void {
-  if (process.platform === 'win32') {
-    const killer = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], {
-      stdio: 'ignore',
-      windowsHide: true,
-    });
-    killer.unref();
-    return;
-  }
-
-  process.kill(-pid, 'SIGTERM');
-}
-
-function waitForPort(port: number, timeoutMs: number, signal?: AbortSignal): Promise<boolean> {
-  return new Promise((resolve) => {
-    const deadline = Date.now() + timeoutMs;
-    const check = () => {
-      if (signal?.aborted) { resolve(false); return; }
-      if (Date.now() > deadline) { resolve(false); return; }
-      const sock = createConnection({ host: '127.0.0.1', port });
-      sock.on('connect', () => { sock.destroy(); resolve(true); });
-      sock.on('error', () => { setTimeout(check, 500); });
-    };
-    check();
-  });
-}
-
-function extractUrlFromOutput(output: string): string | null {
-  // Match common dev server URL patterns
-  const m = output.match(/https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0):\d+\/?/);
-  return m ? m[0].replace('0.0.0.0', 'localhost') : null;
-}
-
-const startDevServerTool: ToolDefinition = {
-  name: 'start_dev_server',
-  label: 'Start Dev Server',
-  description:
-    'Start a development server as a persistent background process. The server runs in ' +
-    'a detached session so it survives tool timeouts. Use this instead of bash for any ' +
-    'long-running dev server (npm run dev, pnpm run dev, vite, next dev, docusaurus start, etc.). ' +
-    'The tool waits for the server to be ready and returns the URL. After this, call ' +
-    'open_browser_preview with the returned URL to show it in the preview panel.',
-  parameters: StartDevServerParams,
-  async execute(_toolCallId, params, signal) {
-    const { command, cwd, port: expectedPort } = params as Static<typeof StartDevServerParams>;
-
-    if (!existsSync(cwd)) {
-      return {
-        content: [{ type: 'text', text: `Directory does not exist: ${cwd}` }],
-        details: { cwd, error: 'directory not found' },
-        isError: true,
-      };
-    }
-
-    // Kill any previously started server in the same directory
-    const prev = runningDevServers.get(cwd);
-    if (prev) {
-      try { prev.kill(); } catch { /* ignore */ }
-      runningDevServers.delete(cwd);
-    }
-
-    let output = '';
-
-    const shellCommand = getDevServerShell(command);
-    const child = spawn(shellCommand.file, shellCommand.args, {
-      cwd,
-      detached: true, // new process group — immune to parent signals
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, BROWSER: 'none', FORCE_COLOR: '0' },
-      windowsHide: true,
-    });
-
-    if (!child.pid) {
-      return {
-        content: [{ type: 'text', text: `Failed to start dev server for command: ${command}` }],
-        details: { cwd, command, error: 'missing child pid' },
-        isError: true,
-      };
-    }
-
-    // Unref so the Electron process can exit even if the dev server is still running
-    child.unref();
-
-    const collectOutput = (chunk: Buffer) => {
-      output += chunk.toString();
-      // Cap collected output to avoid unbounded memory
-      if (output.length > 32_000) output = output.slice(-16_000);
-    };
-
-    let spawnError: string | null = null;
-    let exitCode: number | null = null;
-
-    child.stdout?.on('data', collectOutput);
-    child.stderr?.on('data', collectOutput);
-    child.on('error', (error) => {
-      spawnError = error.message;
-      output += `\n[spawn error] ${error.message}`;
-    });
-    child.on('exit', (code) => {
-      exitCode = code;
-    });
-
-    const killFn = () => {
-      try { killDetachedDevServer(child.pid!); } catch { /* ignore */ }
-    };
-
-    runningDevServers.set(cwd, { pid: child.pid, kill: killFn });
-
-    // Wait for the server to become ready
-    const startTime = Date.now();
-    const maxWaitMs = 30_000;
-
-    // If we know the port, poll for it
-    if (expectedPort) {
-      const ready = await waitForPort(expectedPort, maxWaitMs, signal ?? undefined);
-      if (ready) {
-        const url = `http://localhost:${expectedPort}`;
-        return {
-          content: [{ type: 'text', text: `Dev server running at ${url} (pid ${child.pid})` }],
-          details: { url, pid: child.pid, cwd },
-        };
-      }
-    }
-
-    // Otherwise, watch the output for a URL
-    const foundUrl = await new Promise<string | null>((resolve) => {
-      const deadline = startTime + maxWaitMs;
-
-      const poll = () => {
-        if (signal?.aborted) { resolve(null); return; }
-        const url = extractUrlFromOutput(output);
-        if (url) { resolve(url); return; }
-        if (Date.now() > deadline) { resolve(null); return; }
-        setTimeout(poll, 500);
-      };
-      poll();
-    });
-
-    if (foundUrl) {
-      // Give it a tiny bit more time after URL appears (compilation may still be running)
-      const port = parseInt(new URL(foundUrl).port, 10);
-      if (port) await waitForPort(port, 10_000, signal ?? undefined);
-
-      return {
-        content: [{ type: 'text', text: `Dev server running at ${foundUrl} (pid ${child.pid})` }],
-        details: { url: foundUrl, pid: child.pid, cwd },
-      };
-    }
-
-    if (spawnError || exitCode !== null) {
-      const tail = output.slice(-2000);
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Dev server failed to stay running for command "${command}".\n\nOutput tail:\n${tail}`,
-          },
-        ],
-        details: { pid: child.pid, cwd, command, spawnError, exitCode, outputTail: tail },
-        isError: true,
-      };
-    }
-
-    // Server didn't produce a URL — return what we have
-    const tail = output.slice(-2000);
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `Dev server started (pid ${child.pid}) but no URL detected within ${maxWaitMs / 1000}s.\n\nOutput tail:\n${tail}`,
-        },
-      ],
-      details: { pid: child.pid, cwd, outputTail: tail },
-    };
-  },
-};
 
 type RegisterPiChatHandlersOptions = {
   ipcMain: IpcMain;
@@ -592,9 +335,11 @@ type ActiveRun = {
 
 type NetworkPeerAddress = {
   peerId?: string;
+  displayName?: string;
   host: string;
   port: number;
   providers?: string[];
+  services?: string[];
 };
 
 type ChatServiceProtocol = 'anthropic-messages' | 'openai-chat-completions' | 'openai-responses';
@@ -623,12 +368,9 @@ const PROXY_RUNTIME_API_KEY = 'antseed-local';
 
 const CHAT_SYSTEM_PROMPT_ENV = 'ANTSEED_CHAT_SYSTEM_PROMPT';
 const CHAT_SYSTEM_PROMPT_FILE_ENV = 'ANTSEED_CHAT_SYSTEM_PROMPT_FILE';
-const CHAT_SERVICE_METADATA_FETCH_TIMEOUT_MS = 2_500;
 const CHAT_SERVICE_SCAN_MAX_PEERS = 20;
 const CHAT_SERVICE_MAX_OPTIONS = 120;
 const CHAT_SERVICE_MAX_OPTIONS_PER_PROVIDER = 40;
-const CHAT_SERVICE_CACHE_FILE = path.join(CHAT_DATA_DIR, 'service-catalog-cache.json');
-const CHAT_SERVICE_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
 const CHAT_SERVICE_CACHE_REFRESH_DEBOUNCE_MS = 60_000;
 
 let currentChatWorkspaceDir = CHAT_WORKSPACE_DIR;
@@ -714,84 +456,8 @@ function inferProviderProtocol(provider: string): ChatServiceProtocol | null {
   return null;
 }
 
-function normalizeHost(value: unknown): string | null {
-  if (typeof value !== 'string') {
-    return null;
-  }
-  const host = value.trim();
-  return host.length > 0 ? host : null;
-}
 
-function isPublicMetadataHost(rawHost: string): boolean {
-  const host = rawHost.trim().toLowerCase();
-  if (host.length === 0 || host === 'localhost' || host.endsWith('.local') || host.includes('/') || host.includes('@')) {
-    return false;
-  }
 
-  const ipVersion = isIP(host);
-  if (ipVersion === 0) {
-    return false;
-  }
-
-  if (ipVersion === 4) {
-    const parts = host.split('.').map((part) => Number(part));
-    if (parts.length !== 4 || parts.some((part) => !Number.isFinite(part) || part < 0 || part > 255)) {
-      return false;
-    }
-    const a = parts[0] ?? 0;
-    const b = parts[1] ?? 0;
-    if (a === 10) return false;
-    if (a === 127) return false;
-    if (a === 172 && b >= 16 && b <= 31) return false;
-    if (a === 192 && b === 168) return false;
-    if (a === 169 && b === 254) return false;
-    if (a === 100 && b >= 64 && b <= 127) return false;
-    if (a === 198 && (b === 18 || b === 19)) return false;
-    if (a === 0) return false;
-    return true;
-  }
-
-  if (host === '::1' || host === '::' || host.startsWith('::ffff:')) {
-    return false;
-  }
-
-  if (
-    host.startsWith('fe80:') ||
-    host.startsWith('fe81:') ||
-    host.startsWith('fe82:') ||
-    host.startsWith('fe83:') ||
-    host.startsWith('fe84:') ||
-    host.startsWith('fe85:') ||
-    host.startsWith('fe86:') ||
-    host.startsWith('fe87:') ||
-    host.startsWith('fe88:') ||
-    host.startsWith('fe89:') ||
-    host.startsWith('fe8a:') ||
-    host.startsWith('fe8b:') ||
-    host.startsWith('fe8c:') ||
-    host.startsWith('fe8d:') ||
-    host.startsWith('fe8e:') ||
-    host.startsWith('fe8f:') ||
-    host.startsWith('fc') ||
-    host.startsWith('fd')
-  ) {
-    return false;
-  }
-
-  return true;
-}
-
-function normalizePort(value: unknown): number | null {
-  const port = Number(value);
-  if (!Number.isFinite(port)) {
-    return null;
-  }
-  const normalized = Math.floor(port);
-  if (normalized < 1 || normalized > 65535) {
-    return null;
-  }
-  return normalized;
-}
 
 function normalizeServiceValue(value: unknown): string | null {
   if (typeof value !== 'string') {
@@ -808,27 +474,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-function resolveProtocolForService(
-  provider: string,
-  matrixRaw: unknown,
-  serviceId: string,
-): ChatServiceProtocol | null {
-  const matrix = asRecord(matrixRaw);
-  if (matrix) {
-    const targetKey = serviceId.trim().toLowerCase();
-    for (const [key, value] of Object.entries(matrix)) {
-      if (key.trim().toLowerCase() !== targetKey || !Array.isArray(value)) {
-        continue;
-      }
-      for (const protocolCandidate of value) {
-        if (isChatServiceProtocol(protocolCandidate)) {
-          return protocolCandidate;
-        }
-      }
-    }
-  }
-  return inferProviderProtocol(provider);
-}
+
 
 function updateServiceProviderHints(
   serviceProviderHints: Map<string, string[]>,
@@ -925,40 +571,6 @@ function normalizeChatServiceCatalogEntries(rawEntries: unknown[]): ChatServiceC
   return sortChatServiceCatalogEntries([...deduped.values()]);
 }
 
-async function readChatServiceCatalogCache(): Promise<{ updatedAt: number; entries: ChatServiceCatalogEntry[] } | null> {
-  try {
-    const raw = await readFile(CHAT_SERVICE_CACHE_FILE, 'utf-8');
-    const parsed = JSON.parse(raw) as { updatedAt?: unknown; entries?: unknown };
-    const updatedAt = Number(parsed.updatedAt);
-    if (!Number.isFinite(updatedAt) || updatedAt <= 0) {
-      return null;
-    }
-    const entries = normalizeChatServiceCatalogEntries(Array.isArray(parsed.entries) ? parsed.entries : []);
-    if (entries.length === 0) {
-      return null;
-    }
-    return {
-      updatedAt: Math.floor(updatedAt),
-      entries: limitChatServiceCatalogEntries(entries),
-    };
-  } catch {
-    return null;
-  }
-}
-
-async function writeChatServiceCatalogCache(entries: ChatServiceCatalogEntry[]): Promise<void> {
-  const normalized = limitChatServiceCatalogEntries(normalizeChatServiceCatalogEntries(entries));
-  if (normalized.length === 0) {
-    return;
-  }
-  await mkdir(CHAT_DATA_DIR, { recursive: true });
-  const payload = {
-    updatedAt: Date.now(),
-    entries: normalized,
-  };
-  await writeFile(CHAT_SERVICE_CACHE_FILE, JSON.stringify(payload, null, 2), 'utf-8');
-}
-
 function sortChatServiceCatalogEntries(entries: ChatServiceCatalogEntry[]): ChatServiceCatalogEntry[] {
   const protocolRank = (protocol: ChatServiceProtocol): number => (
     protocol === 'anthropic-messages'
@@ -1005,70 +617,10 @@ function limitChatServiceCatalogEntries(entries: ChatServiceCatalogEntry[]): Cha
   return limited;
 }
 
-async function fetchPeerMetadata(host: string, port: number): Promise<Record<string, unknown> | null> {
-  if (!isPublicMetadataHost(host)) {
-    return null;
-  }
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), CHAT_SERVICE_METADATA_FETCH_TIMEOUT_MS);
-  try {
-    const response = await fetch(`http://${host}:${String(port)}/metadata`, {
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      return null;
-    }
-    const payload = await response.json();
-    return asRecord(payload);
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-function extractChatServiceCatalog(metadata: Record<string, unknown>): Omit<ChatServiceCatalogEntry, 'count'>[] {
-  const providersRaw = metadata.providers;
-
-  if (!Array.isArray(providersRaw)) {
-    return [];
-  }
-
-  const services: Omit<ChatServiceCatalogEntry, 'count'>[] = [];
-  for (const providerEntry of providersRaw) {
-    const providerRecord = asRecord(providerEntry);
-    if (!providerRecord) {
-      continue;
-    }
-    const providerId = normalizeProviderId(providerRecord.provider);
-    if (!providerId) {
-      continue;
-    }
-    const serviceListRaw = providerRecord.services /* || providerRecord.models */;
-    if (!Array.isArray(serviceListRaw)) {
-      continue;
-    }
-    for (const serviceRaw of serviceListRaw) {
-      const serviceId = normalizeServiceValue(serviceRaw);
-      if (!serviceId) {
-        continue;
-      }
-      const protocol = resolveProtocolForService(providerId, providerRecord.serviceApiProtocols, serviceId);
-      if (!protocol) {
-        continue;
-      }
-      services.push({
-        id: serviceId,
-        label: serviceId,
-        provider: providerId,
-        protocol,
-      });
-    }
-  }
-  return services;
-}
-
+/**
+ * Build the chat service catalog directly from peer data (already in buyer.state.json).
+ * No HTTP metadata fetches needed — providers and services are in the peer list.
+ */
 async function discoverChatServiceCatalog(
   getNetworkPeers?: () => Promise<NetworkPeerAddress[]>,
 ): Promise<ChatServiceCatalogEntry[]> {
@@ -1083,46 +635,50 @@ async function discoverChatServiceCatalog(
     return [];
   }
 
-  const uniqueTargets: Array<{ peerId?: string; host: string; port: number }> = [];
-  const seen = new Set<string>();
-  for (const peer of peers.slice(0, CHAT_SERVICE_SCAN_MAX_PEERS)) {
-    const host = normalizeHost(peer.host);
-    const port = normalizePort(peer.port);
-    if (!host || !port) {
-      continue;
-    }
-    const key = `${host}:${String(port)}`;
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    uniqueTargets.push({ peerId: peer.peerId, host, port });
-  }
-
-  if (uniqueTargets.length === 0) {
-    return [];
-  }
-
-  const responses = await Promise.all(uniqueTargets.map(async (target) => {
-    const metadata = await fetchPeerMetadata(target.host, target.port);
-    return { metadata, peerId: target.peerId };
-  }));
-
-  // Build per-peer+service entries (no cross-peer aggregation).
   const results: ChatServiceCatalogEntry[] = [];
-  for (const { metadata, peerId } of responses) {
-    if (!metadata) {
-      continue;
-    }
-    const entries = extractChatServiceCatalog(metadata);
-    const peerLabel = peerId ? peerId.slice(0, 12) + '...' : undefined;
-    for (const entry of entries) {
-      results.push({
-        ...entry,
-        count: 1,
-        peerId,
-        peerLabel,
-      });
+  for (const peer of peers.slice(0, CHAT_SERVICE_SCAN_MAX_PEERS)) {
+    const peerId = peer.peerId;
+    const peerLabel = peer.displayName
+      ? `${peer.displayName} (${peerId?.slice(0, 8) ?? ''})`
+      : peerId ? peerId.slice(0, 12) + '...' : undefined;
+
+    const providerList = peer.providers ?? [];
+    const serviceList = peer.services ?? [];
+
+    if (serviceList.length > 0) {
+      // Use explicit service names when available.
+      for (const serviceId of serviceList) {
+        // Infer provider from the service name or fall back to the first provider.
+        const provider = providerList.find((p) => inferProviderProtocol(p) !== null) ?? providerList[0] ?? 'unknown';
+        const protocol = inferProviderProtocol(provider);
+        if (!protocol) continue;
+
+        results.push({
+          id: serviceId,
+          label: serviceId,
+          provider,
+          protocol,
+          count: 1,
+          peerId,
+          peerLabel,
+        });
+      }
+    } else if (providerList.length > 0) {
+      // No services listed — create one entry per provider as a fallback.
+      for (const provider of providerList) {
+        const protocol = inferProviderProtocol(provider);
+        if (!protocol) continue;
+
+        results.push({
+          id: provider,
+          label: provider,
+          provider,
+          protocol,
+          count: 1,
+          peerId,
+          peerLabel,
+        });
+      }
     }
   }
 
@@ -1912,8 +1468,12 @@ export function registerPiChatHandlers({
   const waitForBuyerProxy = async (port: number, timeoutMs = 20_000): Promise<boolean> => {
     const startedAt = Date.now();
     while (Date.now() - startedAt < timeoutMs) {
-      if (await isProxyAvailable(port)) {
-        return true;
+      try {
+        if (await isProxyAvailable(port)) {
+          return true;
+        }
+      } catch {
+        // transient error — keep polling
       }
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
@@ -2251,32 +1811,23 @@ export function registerPiChatHandlers({
     }
   };
 
+  let lastServiceCatalogEntries: ChatServiceCatalogEntry[] = [];
+
   const refreshServiceCatalogFromNetwork = async (force = false): Promise<ChatServiceCatalogEntry[]> => {
-    const now = Date.now();
     if (!force && serviceCatalogRefreshPromise) {
       return await serviceCatalogRefreshPromise;
     }
-    if (!force && now - lastServiceCatalogRefreshAt < CHAT_SERVICE_CACHE_REFRESH_DEBOUNCE_MS) {
-      const cached = await readChatServiceCatalogCache();
-      if (cached) {
-        return cached.entries;
-      }
+    if (!force && Date.now() - lastServiceCatalogRefreshAt < CHAT_SERVICE_CACHE_REFRESH_DEBOUNCE_MS) {
+      return lastServiceCatalogEntries;
     }
 
     serviceCatalogRefreshPromise = (async () => {
-      const peers = getNetworkPeers
-        ? await getNetworkPeers().catch(() => [] as NetworkPeerAddress[])
-        : ([] as NetworkPeerAddress[]);
-
-      const getPeers = async (): Promise<NetworkPeerAddress[]> => peers;
-
-      const servicesFromMetadata = await discoverChatServiceCatalog(getPeers);
-
-      const limited = limitChatServiceCatalogEntries(normalizeChatServiceCatalogEntries(servicesFromMetadata));
+      const entries = await discoverChatServiceCatalog(getNetworkPeers);
+      const limited = limitChatServiceCatalogEntries(normalizeChatServiceCatalogEntries(entries));
       updateServiceProviderHints(serviceProviderHints, limited);
       updateServiceProtocolMap(serviceProtocolMap, limited);
-      void writeChatServiceCatalogCache(limited).catch(() => undefined);
       lastServiceCatalogRefreshAt = Date.now();
+      lastServiceCatalogEntries = limited;
       return limited;
     })().finally(() => {
       serviceCatalogRefreshPromise = null;
@@ -2290,16 +1841,6 @@ export function registerPiChatHandlers({
     const existing = serviceProtocolMap.get(normalizedServiceId);
     if (existing) {
       return existing;
-    }
-
-    const cached = await readChatServiceCatalogCache();
-    if (cached) {
-      updateServiceProviderHints(serviceProviderHints, cached.entries);
-      updateServiceProtocolMap(serviceProtocolMap, cached.entries);
-      const hydrated = serviceProtocolMap.get(normalizedServiceId);
-      if (hydrated) {
-        return hydrated;
-      }
     }
 
     const refreshed = await refreshServiceCatalogFromNetwork(true);
@@ -2320,40 +1861,10 @@ export function registerPiChatHandlers({
 
   ipcMain.handle('chat:ai-list-services', async () => {
     try {
-      const cached = await readChatServiceCatalogCache();
-      if (cached) {
-        updateServiceProviderHints(serviceProviderHints, cached.entries);
-        updateServiceProtocolMap(serviceProtocolMap, cached.entries);
-        const cacheAgeMs = Date.now() - cached.updatedAt;
-        if (cacheAgeMs <= CHAT_SERVICE_CACHE_MAX_AGE_MS) {
-          if (cacheAgeMs > CHAT_SERVICE_CACHE_REFRESH_DEBOUNCE_MS) {
-            void refreshServiceCatalogFromNetwork(false).catch((error) => {
-              appendSystemLog(`Background service catalog refresh failed: ${asErrorMessage(error)}`);
-            });
-          }
-          return {
-            ok: true,
-            data: cached.entries,
-          };
-        }
-      }
-      const limitedServices = await refreshServiceCatalogFromNetwork(true);
-      if (limitedServices.length === 0 && cached) {
-        return {
-          ok: true,
-          data: cached.entries,
-        };
-      }
-      return {
-        ok: true,
-        data: limitedServices,
-      };
+      const entries = await refreshServiceCatalogFromNetwork(false);
+      return { ok: true, data: entries };
     } catch (error) {
-      return {
-        ok: false,
-        data: [] as ChatServiceCatalogEntry[],
-        error: asErrorMessage(error),
-      };
+      return { ok: false, data: [] as ChatServiceCatalogEntry[], error: asErrorMessage(error) };
     }
   });
 

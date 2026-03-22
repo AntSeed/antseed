@@ -32,11 +32,11 @@ export interface SessionsResponse {
 
 /** Response type for GET /api/earnings */
 export interface EarningsResponse {
-  today: string;
-  thisWeek: string;
-  thisMonth: string;
-  daily: Array<{ date: string; amount: string }>;
-  byProvider: Array<{ provider: string; amount: string }>;
+  today?: string;
+  thisWeek?: string;
+  thisMonth?: string;
+  daily?: Array<{ date: string; amount: string }>;
+  byProvider?: Array<{ provider: string; amount: string }>;
 }
 
 /** A peer discovered via the DHT network */
