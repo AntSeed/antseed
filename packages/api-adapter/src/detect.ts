@@ -2,6 +2,7 @@ import type { SerializedHttpRequest, ServiceApiProtocol } from './types.js';
 
 const ANTHROPIC_PROVIDER_NAMES = new Set(['anthropic', 'claude-code', 'claude-oauth']);
 const OPENAI_CHAT_PROVIDER_NAMES = new Set(['openai', 'local-llm']);
+const OPENAI_RESPONSES_PROVIDER_NAMES = new Set(['openai-responses']);
 
 export interface TargetProtocolSelection {
   targetProtocol: ServiceApiProtocol;
@@ -37,6 +38,7 @@ export function inferProviderDefaultServiceApiProtocols(providerName: string): S
   if (normalized.length === 0) return [];
   if (ANTHROPIC_PROVIDER_NAMES.has(normalized)) return ['anthropic-messages'];
   if (OPENAI_CHAT_PROVIDER_NAMES.has(normalized)) return ['openai-chat-completions'];
+  if (OPENAI_RESPONSES_PROVIDER_NAMES.has(normalized)) return ['openai-responses'];
   return [];
 }
 

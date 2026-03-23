@@ -11,7 +11,6 @@ import { ChatBubble } from '../chat/ChatBubble';
 import { isToolResultOnlyMessage } from '../chat/chat-utils.js';
 import { WalkingAnt } from '../chat/WalkingAnt';
 import { SessionApprovalCard } from '../chat/SessionApprovalCard';
-import { LowBalanceWarning } from '../chat/LowBalanceWarning';
 
 import { AntStationStackedLogo } from '../AntStationLogo';
 import styles from './ChatView.module.scss';
@@ -291,31 +290,30 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
             {snap.chatSending && snap.chatSendingConversationId === snap.chatActiveConversation && (
               <WalkingAnt elapsedMs={snap.chatThinkingElapsedMs} />
             )}
+            <SessionApprovalCard
+              visible={snap.chatPaymentApprovalVisible}
+              peerName={snap.chatPaymentApprovalPeerName}
+              amount={snap.chatPaymentApprovalAmount}
+              peerInfo={snap.chatPaymentApprovalPeerInfo}
+              loading={snap.chatPaymentApprovalLoading}
+              error={snap.chatPaymentApprovalError}
+              onApprove={() => actions.approvePaymentSession()}
+              onAddCredits={() => actions.openPaymentsPortal?.()}
+              onCancel={() => actions.rejectPaymentSession()}
+            />
           </div>
 
-          <SessionApprovalCard
-            visible={snap.chatPaymentApprovalVisible}
-            peerName={snap.chatPaymentApprovalPeerName}
-            amount={snap.chatPaymentApprovalAmount}
-            peerInfo={snap.chatPaymentApprovalPeerInfo}
-            loading={snap.chatPaymentApprovalLoading}
-            error={snap.chatPaymentApprovalError}
-            onApprove={() => actions.approveSessionPayment?.()}
-            onCancel={() => actions.cancelSessionPayment?.()}
-          />
-          <LowBalanceWarning
-            visible={snap.chatLowBalanceWarning}
-            availableUsdc={snap.creditsAvailableUsdc}
-            onAddCredits={() => actions.openPaymentsPortal?.()}
-          />
 
           <div className={styles.chatInputArea}>
+            {snap.chatError && <div className={styles.chatError}>{snap.chatError}</div>}
+
             {attachedImage && (
               <div className={styles.chatImageAttachPreview}>
                 <img src={attachedImage.previewUrl} alt="Attached" className={styles.chatImageAttachThumb} />
                 <button className={styles.chatImageRemoveBtn} onClick={handleRemoveImage} title="Remove image">✕</button>
               </div>
             )}
+
             <div className={styles.chatInputRow}>
               <input
                 ref={fileInputRef}
@@ -360,8 +358,6 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
               </div>
             </div>
           </div>
-
-          {snap.chatError && <div className={styles.chatError}>{snap.chatError}</div>}
         </div>
       </div>
     </section>

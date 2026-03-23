@@ -6,6 +6,7 @@ import type {
   SellerReceiptPayload,
   BuyerAckPayload,
   TopUpRequestPayload,
+  PaymentRequiredPayload,
 } from '../types/protocol.js';
 import { encodeFrame } from './message-protocol.js';
 import type { FramedMessage } from '../types/protocol.js';
@@ -18,12 +19,13 @@ const MESSAGE_TYPE_NAME: Record<number, string> = {
   [MessageType.SellerReceipt]: 'SellerReceipt',
   [MessageType.BuyerAck]: 'BuyerAck',
   [MessageType.TopUpRequest]: 'TopUpRequest',
+  [MessageType.PaymentRequired]: 'PaymentRequired',
 };
 
 export type PaymentMessageHandler<T> = (payload: T) => void | Promise<void>;
 
 /**
- * Multiplexes bilateral payment messages over a PeerConnection.
+ * Multiplexes payment messages over a PeerConnection.
  * Register handlers for each message type, then call handleFrame()
  * when a payment-range frame arrives.
  */
@@ -37,6 +39,7 @@ export class PaymentMux {
   private _onSellerReceipt?: PaymentMessageHandler<SellerReceiptPayload>;
   private _onBuyerAck?: PaymentMessageHandler<BuyerAckPayload>;
   private _onTopUpRequest?: PaymentMessageHandler<TopUpRequestPayload>;
+  private _onPaymentRequired?: PaymentMessageHandler<PaymentRequiredPayload>;
 
   constructor(connection: PeerConnection) {
     this._connection = connection;
@@ -58,6 +61,9 @@ export class PaymentMux {
   onTopUpRequest(handler: PaymentMessageHandler<TopUpRequestPayload>): void {
     this._onTopUpRequest = handler;
   }
+  onPaymentRequired(handler: PaymentMessageHandler<PaymentRequiredPayload>): void {
+    this._onPaymentRequired = handler;
+  }
 
   // --- Sending ---
   sendSpendingAuth(payload: SpendingAuthPayload): void {
@@ -74,6 +80,9 @@ export class PaymentMux {
   }
   sendTopUpRequest(payload: TopUpRequestPayload): void {
     this._send(MessageType.TopUpRequest, codec.encodeTopUpRequest(payload));
+  }
+  sendPaymentRequired(payload: PaymentRequiredPayload): void {
+    this._send(MessageType.PaymentRequired, codec.encodePaymentRequired(payload));
   }
 
   // --- Receiving ---
@@ -99,6 +108,9 @@ export class PaymentMux {
         return true;
       case MessageType.TopUpRequest:
         await this._onTopUpRequest?.(codec.decodeTopUpRequest(frame.payload));
+        return true;
+      case MessageType.PaymentRequired:
+        await this._onPaymentRequired?.(codec.decodePaymentRequired(frame.payload));
         return true;
       default:
         return false;

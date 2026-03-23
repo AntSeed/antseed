@@ -368,7 +368,6 @@ const CHAT_SYSTEM_PROMPT_FILE_ENV = 'ANTSEED_CHAT_SYSTEM_PROMPT_FILE';
 const CHAT_SERVICE_SCAN_MAX_PEERS = 20;
 const CHAT_SERVICE_MAX_OPTIONS = 120;
 const CHAT_SERVICE_MAX_OPTIONS_PER_PROVIDER = 40;
-const CHAT_SERVICE_CACHE_REFRESH_DEBOUNCE_MS = 60_000;
 
 function normalizeTokenCount(value: unknown): number {
   const parsed = Number(value);
@@ -587,15 +586,34 @@ function limitChatServiceCatalogEntries(entries: ChatServiceCatalogEntry[]): Cha
 async function discoverChatServiceCatalog(
   getNetworkPeers?: () => Promise<NetworkPeerAddress[]>,
 ): Promise<ChatServiceCatalogEntry[]> {
-  if (!getNetworkPeers) {
-    return [];
-  }
-
+  // Read peers directly from buyer.state.json for immediate availability.
+  // Falls back to the getNetworkPeers callback if the file isn't available.
   let peers: NetworkPeerAddress[] = [];
   try {
-    peers = await getNetworkPeers();
+    const { readFile } = await import('node:fs/promises');
+    const { DEFAULT_BUYER_STATE_PATH } = await import('./constants.js');
+    const raw = await readFile(DEFAULT_BUYER_STATE_PATH, 'utf-8');
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const rawPeers = Array.isArray(parsed.discoveredPeers) ? parsed.discoveredPeers : [];
+    peers = rawPeers
+      .filter((p): p is Record<string, unknown> => p !== null && typeof p === 'object')
+      .map((p) => ({
+        peerId: typeof p.peerId === 'string' ? p.peerId : '',
+        displayName: typeof p.displayName === 'string' ? p.displayName : undefined,
+        host: '',
+        port: 0,
+        providers: Array.isArray(p.providers) ? p.providers.map(String) : [],
+        services: Array.isArray(p.services) ? p.services.map(String) : [],
+      }))
+      .filter((p) => p.peerId.length > 0);
   } catch {
-    return [];
+    // File not ready yet — try the callback
+    if (!getNetworkPeers) return [];
+    try {
+      peers = await getNetworkPeers();
+    } catch {
+      return [];
+    }
   }
 
   const results: ChatServiceCatalogEntry[] = [];
@@ -1379,8 +1397,6 @@ export function registerPiChatHandlers({
   const serviceProviderHints = new Map<string, string[]>();
   const serviceProtocolMap = new Map<string, ChatServiceProtocol>();
   const preferredPeerByConversationId = new Map<string, string>();
-  let serviceCatalogRefreshPromise: Promise<ChatServiceCatalogEntry[]> | null = null;
-  let lastServiceCatalogRefreshAt = 0;
 
   const clearActiveRun = (run: ActiveRun | null): void => {
     if (!run) {
@@ -1708,6 +1724,25 @@ export function registerPiChatHandlers({
           return;
         }
         if (message.role === 'assistant') {
+          // Detect payment errors from the provider's 402 JSON response
+          const msgAny = message as unknown as Record<string, unknown>;
+          const rawContent = Array.isArray(msgAny.content)
+            ? (msgAny.content as Array<Record<string, unknown>>).map((b) => String(b.text ?? '')).join('')
+            : String(msgAny.content ?? '');
+          let paymentBody: Record<string, unknown> | null = null;
+          try { paymentBody = JSON.parse(rawContent) as Record<string, unknown>; } catch { /* not JSON */ }
+          if (paymentBody?.error === 'payment_required') {
+            const suggestedAmount = typeof paymentBody.suggestedAmount === 'string'
+              ? paymentBody.suggestedAmount : '100000';
+            sendToRenderer('chat:ai-stream-error', {
+              conversationId,
+              error: `payment_required:${suggestedAmount}`,
+            });
+            const activeRun = activeRunsByConversation.get(conversationId);
+            if (activeRun) void abortAndClearActiveRun(activeRun);
+            return;
+          }
+
           const proxyMeta = turnMetaQueue.shift();
           const parsedMeta = parseAssistantMetaFromSessionEvent(message, proxyMeta);
           const peerId = normalizePeerId(parsedMeta.peerId);
@@ -1738,6 +1773,29 @@ export function registerPiChatHandlers({
         ? [{ type: 'image', data: imageBase64, mimeType: imageMimeType }]
         : [];
       await session.prompt(trimmedMessage || ' ', { images: images.length > 0 ? images : undefined });
+
+      // Check if the agent received a 402 payment_required response.
+      // The node returns JSON with "error":"payment_required" which the agent
+      // treats as a completed turn with empty/error content.
+      if (pendingAssistantMessage) {
+        const lastMsg = pendingAssistantMessage as AiChatMessage;
+        const c = lastMsg.content;
+        const lastText = typeof c === 'string' ? c : Array.isArray(c)
+          ? c.map((b) => typeof b === 'object' && b !== null && 'text' in b ? String(b.text) : '').join('')
+          : '';
+        let payBody: Record<string, unknown> | null = null;
+        try { payBody = JSON.parse(lastText) as Record<string, unknown>; } catch { /* not JSON */ }
+        if (payBody?.error === 'payment_required') {
+          const amt = typeof payBody.suggestedAmount === 'string' ? payBody.suggestedAmount : '100000';
+          pendingAssistantMessage = null;
+          sendToRenderer('chat:ai-stream-error', {
+            conversationId,
+            error: `payment_required:${amt}`,
+          });
+          return { ok: false, error: 'Payment required' };
+        }
+      }
+
       if (pendingAssistantMessage) {
         sendToRenderer('chat:ai-done', {
           conversationId,
@@ -1768,12 +1826,15 @@ export function registerPiChatHandlers({
   };
 
   let lastServiceCatalogEntries: ChatServiceCatalogEntry[] = [];
+  let lastServiceCatalogRefreshAt = 0;
+  const SERVICE_CATALOG_DEBOUNCE_MS = 5_000;
+  let serviceCatalogRefreshPromise: Promise<ChatServiceCatalogEntry[]> | null = null;
 
-  const refreshServiceCatalogFromNetwork = async (force = false): Promise<ChatServiceCatalogEntry[]> => {
-    if (!force && serviceCatalogRefreshPromise) {
-      return await serviceCatalogRefreshPromise;
-    }
-    if (!force && Date.now() - lastServiceCatalogRefreshAt < CHAT_SERVICE_CACHE_REFRESH_DEBOUNCE_MS) {
+  const refreshServiceCatalogFromNetwork = async (): Promise<ChatServiceCatalogEntry[]> => {
+    // Deduplicate concurrent calls
+    if (serviceCatalogRefreshPromise) return serviceCatalogRefreshPromise;
+    // Debounce rapid calls (e.g. UI refreshes)
+    if (Date.now() - lastServiceCatalogRefreshAt < SERVICE_CATALOG_DEBOUNCE_MS && lastServiceCatalogEntries.length > 0) {
       return lastServiceCatalogEntries;
     }
 
@@ -1785,11 +1846,9 @@ export function registerPiChatHandlers({
       lastServiceCatalogRefreshAt = Date.now();
       lastServiceCatalogEntries = limited;
       return limited;
-    })().finally(() => {
-      serviceCatalogRefreshPromise = null;
-    });
+    })().finally(() => { serviceCatalogRefreshPromise = null; });
 
-    return await serviceCatalogRefreshPromise;
+    return serviceCatalogRefreshPromise;
   };
 
   const resolveProtocolForSend = async (serviceId: string): Promise<ChatServiceProtocol> => {
@@ -1799,7 +1858,7 @@ export function registerPiChatHandlers({
       return existing;
     }
 
-    const refreshed = await refreshServiceCatalogFromNetwork(true);
+    const refreshed = await refreshServiceCatalogFromNetwork();
     return refreshed.find((entry) => entry.id.trim().toLowerCase() === normalizedServiceId)?.protocol ?? 'anthropic-messages';
   };
 
@@ -1817,7 +1876,7 @@ export function registerPiChatHandlers({
 
   ipcMain.handle('chat:ai-list-services', async () => {
     try {
-      const entries = await refreshServiceCatalogFromNetwork(false);
+      const entries = await refreshServiceCatalogFromNetwork();
       return { ok: true, data: entries };
     } catch (error) {
       return { ok: false, data: [] as ChatServiceCatalogEntry[], error: asErrorMessage(error) };

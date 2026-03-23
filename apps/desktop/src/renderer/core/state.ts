@@ -41,8 +41,8 @@ export type ConfigFormData = {
   maxOutputUsdPerMillion: number;
   minRep: number;
   paymentMethod: string;
-  devMode: boolean;
   requireManualApproval: boolean;
+  devMode: boolean;
 };
 
 export type ChatServiceOptionEntry = {

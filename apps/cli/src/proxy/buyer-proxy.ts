@@ -169,6 +169,9 @@ export class BuyerProxy {
       })
     })
     this._startBackgroundRefresh()
+    // Trigger initial peer discovery immediately so the desktop can show
+    // services without waiting for the first request or 5-minute interval.
+    void this._refreshPeersNow().catch(() => {})
     await this._writeStateFile('connected')
     this._watchStateFile()
   }

@@ -329,6 +329,9 @@ textarea {
   border-radius: var(--radius);
   padding: 16px;
   overflow-x: auto;
+  pre {
+    max-height: 400px;
+  }
 }
 
 .panel-head {

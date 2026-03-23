@@ -28,6 +28,10 @@ export interface SellerPaymentConfig {
   dataDir: string;
   /** Timeout in seconds before a disconnected session is considered ghost. Default: 86400 (24h). */
   settleTimeoutSecs?: number;
+  /** Suggested USDC amount (base units) for first-sign sessions. Default: 100000 ($0.10). */
+  firstSignAmountUsdc?: string;
+  /** Suggested USDC amount (base units) for proven-sign sessions. Default: 100000 ($0.10). */
+  provenSignAmountUsdc?: string;
 }
 
 /** Default settle timeout: 24 hours. */
@@ -49,6 +53,8 @@ export class SellerPaymentManager {
   private readonly _topUpRequested = new Set<string>();
   /** Cached seller tokenRate (fetched once from escrow, used for top-up threshold). */
   private _tokenRate: bigint | null = null;
+  /** Cached FIRST_SIGN_CAP from escrow contract. */
+  private _firstSignCap: bigint | null = null;
   /** Per-buyer mutex to prevent concurrent handleSpendingAuth for the same buyer. */
   private readonly _buyerLocks = new Map<string, Promise<void>>();
 
@@ -394,6 +400,82 @@ export class SellerPaymentManager {
 
   hasSession(buyerPeerId: string): boolean {
     return this._activeBuyers.has(buyerPeerId);
+  }
+
+  /** Minimum interval between init retry attempts. */
+  private _lastInitAttemptMs = 0;
+  private static readonly INIT_RETRY_INTERVAL_MS = 30_000;
+
+  /**
+   * Pre-fetch on-chain data (tokenRate, FIRST_SIGN_CAP) so PaymentRequired
+   * messages can be sent without blocking on RPC calls.
+   */
+  async init(): Promise<void> {
+    this._lastInitAttemptMs = Date.now();
+    try {
+      const sellerEvmAddr = identityToEvmAddress(this._identity);
+      const [account, firstSignCap] = await Promise.all([
+        this._escrowClient.getSellerAccount(sellerEvmAddr),
+        this._escrowClient.getFirstSignCap(),
+      ]);
+      this._tokenRate = account.tokenRate;
+      this._firstSignCap = firstSignCap;
+      debugLog(`[SellerPayment] Cached on-chain data: tokenRate=${this._tokenRate} firstSignCap=${this._firstSignCap}`);
+    } catch (err) {
+      debugWarn(`[SellerPayment] Failed to pre-fetch on-chain data: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
+  /** Retry init if on-chain data is missing and enough time has passed. */
+  async ensureInitialized(): Promise<void> {
+    if (this._tokenRate !== null && this._firstSignCap !== null) return;
+    if (Date.now() - this._lastInitAttemptMs < SellerPaymentManager.INIT_RETRY_INTERVAL_MS) return;
+    await this.init();
+  }
+
+  private static readonly DEFAULT_SUGGESTED_AMOUNT = 100_000n; // $0.10
+
+  /**
+   * Build the PaymentRequired payload for a buyer that doesn't have a session.
+   * Returns null if on-chain data isn't available yet.
+   * For returning buyers (proven-sign eligible), uses the configured proven-sign
+   * amount instead of the first-sign amount (both default to $0.10).
+   */
+  getPaymentRequirements(
+    requestId: string,
+    buyerPeerId?: string,
+    pricing?: { inputUsdPerMillion?: number; outputUsdPerMillion?: number },
+  ): import('../types/protocol.js').PaymentRequiredPayload | null {
+    const sellerEvmAddr = identityToEvmAddress(this._identity);
+    const tokenRate = this._tokenRate;
+    const firstSignCap = this._firstSignCap;
+    if (tokenRate === null || firstSignCap === null) {
+      return null;
+    }
+
+    const defaultAmount = SellerPaymentManager.DEFAULT_SUGGESTED_AMOUNT;
+    const firstSignAmount = this._config.firstSignAmountUsdc
+      ? BigInt(this._config.firstSignAmountUsdc) : defaultAmount;
+    const provenSignAmount = this._config.provenSignAmountUsdc
+      ? BigInt(this._config.provenSignAmountUsdc) : defaultAmount;
+
+    let suggestedAmount = firstSignAmount;
+    if (buyerPeerId) {
+      const priorSession = this._sessionStore.getLatestSession(buyerPeerId, 'seller');
+      if (priorSession && BigInt(priorSession.tokensDelivered) > 0n) {
+        suggestedAmount = provenSignAmount;
+      }
+    }
+
+    return {
+      sellerEvmAddr,
+      tokenRate: tokenRate.toString(),
+      firstSignCap: firstSignCap.toString(),
+      suggestedAmount: suggestedAmount.toString(),
+      requestId,
+      ...(pricing?.inputUsdPerMillion != null ? { inputUsdPerMillion: pricing.inputUsdPerMillion } : {}),
+      ...(pricing?.outputUsdPerMillion != null ? { outputUsdPerMillion: pricing.outputUsdPerMillion } : {}),
+    };
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────
