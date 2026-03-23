@@ -591,6 +591,9 @@ async function loadCachedCryptoConfig(): Promise<typeof cachedCryptoConfig> {
   return cachedCryptoConfig;
 }
 
+let creditsRpcFailCount = 0;
+const CREDITS_RPC_BACKOFF_THRESHOLD = 3;
+
 async function refreshCreditsInfo(): Promise<CreditsInfo> {
   const identity = getSecureIdentity();
   if (!identity) {
@@ -603,6 +606,12 @@ async function refreshCreditsInfo(): Promise<CreditsInfo> {
     return { evmAddress, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
   }
 
+  // Back off after repeated RPC failures to avoid spamming logs
+  if (creditsRpcFailCount >= CREDITS_RPC_BACKOFF_THRESHOLD) {
+    if (cachedCreditsInfo) return cachedCreditsInfo;
+    return { evmAddress, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
+  }
+
   const client = new BaseEscrowClient({ rpcUrl: cc.rpcUrl, contractAddress: cc.escrowAddress, usdcAddress: cc.usdcAddress });
 
   try {
@@ -610,6 +619,7 @@ async function refreshCreditsInfo(): Promise<CreditsInfo> {
       client.getBuyerBalance(evmAddress),
       client.getBuyerCreditLimit(evmAddress),
     ]);
+    creditsRpcFailCount = 0; // Reset on success
     const info: CreditsInfo = {
       evmAddress,
       balanceUsdc: formatUsdc6(balance.available + balance.reserved),
@@ -621,7 +631,11 @@ async function refreshCreditsInfo(): Promise<CreditsInfo> {
     cachedCreditsInfo = info;
     return info;
   } catch (err) {
-    console.error('[credits] Failed to fetch escrow balance:', err instanceof Error ? err.message : String(err));
+    creditsRpcFailCount++;
+    if (creditsRpcFailCount <= 1) {
+      try { console.warn('[credits] Escrow RPC unavailable:', err instanceof Error ? err.message : String(err)); }
+      catch { /* EPIPE — ignore */ }
+    }
     if (cachedCreditsInfo) return cachedCreditsInfo;
     return { evmAddress, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
   }
@@ -913,3 +927,8 @@ app.on('before-quit', (event) => {
 process.on('SIGTERM', () => {
   void Promise.all([processManager.stopAll(), stopPaymentsPortal()]).finally(() => process.exit(0));
 });
+
+// Suppress EPIPE errors from console.error/console.warn when the dev terminal
+// pipe is closed (e.g. Ctrl+C in the terminal while Electron is still running).
+process.stdout?.on('error', () => {});
+process.stderr?.on('error', () => {});
