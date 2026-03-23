@@ -1196,7 +1196,14 @@ export function initChatModule({
             const errorMsg = typeof result.error === 'string' ? result.error : '';
             const isPaymentError = /payment.required|insufficient.*balance|escrow.*balance|402/i.test(errorMsg);
             if (isPaymentError) {
-              uiState.chatError = 'This service requires payment. Add credits to your escrow to continue.';
+              uiState.chatMessages = [
+                ...uiState.chatMessages,
+                {
+                  role: 'assistant',
+                  content: 'This service requires payment. Add credits to your escrow to continue.',
+                  createdAt: Date.now(),
+                },
+              ];
               uiState.chatLowBalanceWarning = true;
               notifyUiStateChanged();
             } else {
@@ -1668,10 +1675,17 @@ export function initChatModule({
           if (data.error !== 'Request aborted') {
             const errStr = typeof data.error === 'string' ? data.error : '';
             if (/payment.required|insufficient.*balance|escrow.*balance|402/i.test(errStr)) {
-              uiState.chatError = 'This service requires payment. Add credits to your escrow to continue.';
+              // Show as assistant chat bubble so it's visible in the conversation
+              uiState.chatMessages = [
+                ...uiState.chatMessages,
+                {
+                  role: 'assistant',
+                  content: 'This service requires payment. Add credits to your escrow to continue.',
+                  createdAt: Date.now(),
+                },
+              ];
               uiState.chatLowBalanceWarning = true;
               notifyUiStateChanged();
-              // Abort any remaining agent retries
               if (bridge.chatAiAbort) void bridge.chatAiAbort().catch(() => {});
             } else {
               showChatError(data.error);
