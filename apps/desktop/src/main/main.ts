@@ -599,7 +599,9 @@ async function loadCachedCryptoConfig(): Promise<typeof cachedCryptoConfig> {
 }
 
 let creditsRpcFailCount = 0;
+let creditsRpcLastFailAt = 0;
 const CREDITS_RPC_BACKOFF_THRESHOLD = 3;
+const CREDITS_RPC_RETRY_COOLDOWN_MS = 60_000;
 
 async function refreshCreditsInfo(): Promise<CreditsInfo> {
   const identity = getSecureIdentity();
@@ -613,10 +615,15 @@ async function refreshCreditsInfo(): Promise<CreditsInfo> {
     return { evmAddress, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
   }
 
-  // Back off after repeated RPC failures to avoid spamming logs
+  // Back off after repeated RPC failures; retry after cooldown so transient
+  // outages don't permanently disable balance display for the session.
   if (creditsRpcFailCount >= CREDITS_RPC_BACKOFF_THRESHOLD) {
-    if (cachedCreditsInfo) return cachedCreditsInfo;
-    return { evmAddress, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
+    if (Date.now() - creditsRpcLastFailAt < CREDITS_RPC_RETRY_COOLDOWN_MS) {
+      if (cachedCreditsInfo) return cachedCreditsInfo;
+      return { evmAddress, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
+    }
+    // Cooldown elapsed — allow a retry attempt
+    creditsRpcFailCount = 0;
   }
 
   const client = new BaseEscrowClient({ rpcUrl: cc.rpcUrl, contractAddress: cc.escrowAddress, usdcAddress: cc.usdcAddress });
@@ -639,6 +646,7 @@ async function refreshCreditsInfo(): Promise<CreditsInfo> {
     return info;
   } catch (err) {
     creditsRpcFailCount++;
+    creditsRpcLastFailAt = Date.now();
     if (creditsRpcFailCount <= 1) {
       try { console.warn('[credits] Escrow RPC unavailable:', err instanceof Error ? err.message : String(err)); }
       catch { /* EPIPE — ignore */ }

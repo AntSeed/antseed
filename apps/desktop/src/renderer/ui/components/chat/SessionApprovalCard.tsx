@@ -30,10 +30,10 @@ export function SessionApprovalCard({
   onAddCredits,
   onCancel,
 }: SessionApprovalCardProps) {
-  if (!visible) return null;
-
   const { creditsAvailableUsdc } = useUiSnapshot();
   const hasCredits = parseFloat(creditsAvailableUsdc) >= parseFloat(amount || '0');
+
+  if (!visible) return null;
   const displayName = peerName || 'this service';
 
   return (

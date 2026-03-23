@@ -140,6 +140,26 @@ export function initChatModule({
     }
   }
 
+  /**
+   * Show the payment approval card with peer context from the currently
+   * selected service, and kick off a fetchPeerInfo call for reputation data.
+   */
+  function showPaymentApprovalCard(amountBaseUnits: string): void {
+    const selectedService = uiState.chatServiceOptions.find(
+      (opt) => opt.value === uiState.chatSelectedServiceValue,
+    );
+    uiState.chatPaymentApprovalVisible = true;
+    uiState.chatPaymentApprovalAmount = (Number(amountBaseUnits) / 1_000_000).toFixed(2);
+    uiState.chatPaymentApprovalPeerId = selectedService?.peerId ?? null;
+    uiState.chatPaymentApprovalPeerName = selectedService?.peerLabel ?? selectedService?.label ?? null;
+    uiState.chatPaymentApprovalPeerInfo = null;
+    uiState.chatPaymentApprovalError = null;
+    notifyUiStateChanged();
+    if (selectedService?.peerId) {
+      void fetchPeerInfo(selectedService.peerId);
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Normalization helpers
   // ---------------------------------------------------------------------------
@@ -1193,9 +1213,7 @@ export function initChatModule({
             const errorMsg = typeof result.error === 'string' ? result.error : '';
             const paymentMatch2 = /^payment_required:(\d+)$/i.exec(errorMsg);
             if (paymentMatch2) {
-              uiState.chatPaymentApprovalVisible = true;
-              uiState.chatPaymentApprovalAmount = (Number(paymentMatch2[1]) / 1_000_000).toFixed(2);
-              notifyUiStateChanged();
+              showPaymentApprovalCard(paymentMatch2[1]);
             } else {
               reportChatError(result.error, 'Request failed');
             }
@@ -1666,10 +1684,7 @@ export function initChatModule({
             const errStr = typeof data.error === 'string' ? data.error : '';
             const paymentMatch = /^payment_required:(\d+)$/i.exec(errStr);
             if (paymentMatch) {
-              const amount = (Number(paymentMatch[1]) / 1_000_000).toFixed(2);
-              uiState.chatPaymentApprovalVisible = true;
-              uiState.chatPaymentApprovalAmount = amount;
-              notifyUiStateChanged();
+              showPaymentApprovalCard(paymentMatch[1]);
               if (bridge.chatAiAbort) void bridge.chatAiAbort().catch(() => {});
             } else {
               showChatError(data.error);
