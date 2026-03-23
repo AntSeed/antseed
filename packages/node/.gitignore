@@ -26,4 +26,5 @@ pnpm-debug.log*
 # Foundry
 contracts/out/
 contracts/cache_forge/
+broadcast/Deploy.s.sol/31337/
 lib/
