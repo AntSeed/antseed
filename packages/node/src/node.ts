@@ -262,6 +262,9 @@ export class AntseedNode extends EventEmitter {
     resolve: (payload: PaymentRequiredPayload) => void;
     timer: ReturnType<typeof setTimeout>;
   }>();
+  /** Buffered PaymentRequired that arrived before _doNegotiatePayment registered its listener.
+   *  This handles the race where 402 + PaymentRequired arrive in the same I/O tick. */
+  private _bufferedPaymentRequired = new Map<string, PaymentRequiredPayload>();
   /** Per-peer mutex to prevent concurrent payment negotiations. */
   private _paymentNegotiationLocks = new Map<string, Promise<void>>();
 
@@ -1758,7 +1761,10 @@ export class AntseedNode extends EventEmitter {
         this._pendingPaymentRequired.delete(peerId);
         pending.resolve(payload);
       } else {
-        debugLog(`[Node] PaymentRequired from ${peerId.slice(0, 12)}... but no pending negotiation`);
+        // Buffer: 402 and PaymentRequired can arrive in the same I/O tick,
+        // before _doNegotiatePayment registers its listener.
+        this._bufferedPaymentRequired.set(peerId, payload);
+        debugLog(`[Node] PaymentRequired from ${peerId.slice(0, 12)}... buffered (listener not yet registered)`);
       }
     });
 
@@ -1796,9 +1802,15 @@ export class AntseedNode extends EventEmitter {
 
     const pmux = this._getOrCreateBuyerPaymentMux(peer.peerId, conn);
 
-    // Wait for PaymentRequired message from seller (should arrive alongside the 402)
+    // Check if PaymentRequired was already buffered (arrives in same I/O tick as 402)
+    const buffered = this._bufferedPaymentRequired.get(peer.peerId);
+    if (buffered) {
+      this._bufferedPaymentRequired.delete(peer.peerId);
+      debugLog(`[Node] Using buffered PaymentRequired from ${peer.peerId.slice(0, 12)}...`);
+    }
+
     const PAYMENT_REQUIRED_TIMEOUT_MS = 10_000;
-    const requirements = await new Promise<PaymentRequiredPayload>((resolve, reject) => {
+    const requirements = buffered ?? await new Promise<PaymentRequiredPayload>((resolve, reject) => {
       const timer = setTimeout(() => {
         this._pendingPaymentRequired.delete(peer.peerId);
         reject(new Error(`PaymentRequired timeout from seller ${peer.peerId.slice(0, 12)}...`));
