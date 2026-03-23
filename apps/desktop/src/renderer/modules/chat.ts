@@ -1193,7 +1193,15 @@ export function initChatModule({
           }
 
           if (!result.ok) {
-            reportChatError(result.error, 'Request failed');
+            const errorMsg = typeof result.error === 'string' ? result.error : '';
+            const isPaymentError = /payment.required|insufficient.*balance|escrow.*balance|402/i.test(errorMsg);
+            if (isPaymentError) {
+              uiState.chatError = 'This service requires payment. Add credits to your escrow to continue.';
+              uiState.chatLowBalanceWarning = true;
+              notifyUiStateChanged();
+            } else {
+              reportChatError(result.error, 'Request failed');
+            }
             setChatSending(false);
           } else if (uiState.chatSending) {
             // Fallback timeout in case stream completion event is missed
