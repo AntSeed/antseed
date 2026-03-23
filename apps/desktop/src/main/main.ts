@@ -7,6 +7,7 @@ import electronUpdater from 'electron-updater';
 const { autoUpdater } = electronUpdater;
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { randomBytes } from 'node:crypto';
 import { isIP } from 'node:net';
 import { existsSync } from 'node:fs';
 import {
@@ -844,7 +845,6 @@ const chatEngine = registerPiChatHandlers({
 // Manual payment approval: sign SpendingAuth and set it for the next request
 ipcMain.handle('chat:approve-payment', async (_event, conversationId: string) => {
   const paymentInfo = chatEngine.getCachedPaymentRequired(conversationId);
-  console.log(`[approve-payment] conversationId="${conversationId}" cached=${!!paymentInfo} sellerEvmAddr=${(paymentInfo as Record<string, unknown> | null)?.sellerEvmAddr ?? 'NONE'}`);
   if (!paymentInfo) {
     return { ok: false, error: 'No pending payment for this conversation' };
   }
@@ -885,7 +885,6 @@ ipcMain.handle('chat:approve-payment', async (_event, conversationId: string) =>
     const maxAmount = BigInt(String(paymentInfo.suggestedAmount ?? '100000'));
 
     // Generate session parameters
-    const { randomBytes } = await import('node:crypto');
     const sessionIdBytes = randomBytes(32);
     const sessionId = '0x' + sessionIdBytes.toString('hex');
     const nonce = Date.now(); // simple nonce

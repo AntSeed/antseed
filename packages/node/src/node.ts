@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import { createHash, randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -1918,7 +1919,6 @@ export class AntseedNode extends EventEmitter {
     }
 
     try {
-      const { readFile } = await import('node:fs/promises');
       const configPath = this._config.configPath
         ?? join(this._config.dataDir ?? join(homedir(), '.antseed'), 'config.json');
       const raw = await readFile(configPath, 'utf-8');

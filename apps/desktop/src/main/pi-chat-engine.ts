@@ -1752,7 +1752,6 @@ export function registerPiChatHandlers({
           // Detect payment errors from the provider's 402 JSON response
           const msgAny = message as unknown as Record<string, unknown>;
           const errorMsg = typeof msgAny.errorMessage === 'string' ? msgAny.errorMessage : '';
-          console.log(`[chat-engine] message_end: errorMessage="${errorMsg}" contentKeys=${Object.keys(msgAny).join(',')}`);
           const rawContent = Array.isArray(msgAny.content)
             ? (msgAny.content as Array<Record<string, unknown>>).map((b) => String(b.text ?? '')).join('')
             : String(msgAny.content ?? '');
@@ -1883,7 +1882,6 @@ export function registerPiChatHandlers({
         return { ok: false, error: 'Aborted' };
       }
       const message = asErrorMessage(error);
-      console.log(`[chat-engine] catch error: "${message.slice(0, 300)}"`);
       // Map insufficient balance / 402 errors to payment_required format
       // so the renderer shows the Add Credits card
       const isPaymentError = /insufficient.*balance|escrow.*balance|402.*payment/i.test(message);
@@ -1894,10 +1892,8 @@ export function registerPiChatHandlers({
         if (jsonStart >= 0) {
           try { payBody = JSON.parse(message.slice(jsonStart)) as Record<string, unknown>; } catch { /* not JSON */ }
         }
-        console.log(`[chat-engine] payment error: payBody.sellerEvmAddr=${payBody?.sellerEvmAddr ?? 'NONE'}`);
         if (payBody?.sellerEvmAddr) {
           cachedPaymentRequired.set(conversationId, payBody);
-          console.log(`[chat-engine] cached payment for ${conversationId}`);
         }
         const amt = typeof payBody?.suggestedAmount === 'string' ? payBody.suggestedAmount : '0';
         if (!payBody?.sellerEvmAddr && amt !== '0') {
@@ -1998,6 +1994,8 @@ export function registerPiChatHandlers({
 
   ipcMain.handle('chat:ai-delete-conversation', async (_event, id: string) => {
     preferredPeerByConversationId.delete(id);
+    cachedPaymentRequired.delete(id);
+    pendingSpendingAuth.delete(id);
     await store.delete(id);
     return { ok: true };
   });
