@@ -1759,6 +1759,27 @@ export function registerPiChatHandlers({
         ? [{ type: 'image', data: imageBase64, mimeType: imageMimeType }]
         : [];
       await session.prompt(trimmedMessage || ' ', { images: images.length > 0 ? images : undefined });
+
+      // Check if the agent received a 402 payment_required response.
+      // The node returns JSON with "error":"payment_required" which the agent
+      // treats as a completed turn with empty/error content.
+      let lastAssistantText = '';
+      const lastMsg = pendingAssistantMessage as AiChatMessage | null;
+      if (lastMsg) {
+        const c = lastMsg.content;
+        lastAssistantText = typeof c === 'string' ? c : Array.isArray(c)
+          ? c.map((b) => typeof b === 'object' && b !== null && 'text' in b ? String(b.text) : '').join('')
+          : '';
+      }
+      if (/payment_required/i.test(lastAssistantText)) {
+        pendingAssistantMessage = null;
+        sendToRenderer('chat:ai-stream-error', {
+          conversationId,
+          error: 'Payment required (402). Add credits to your escrow to use this service.',
+        });
+        return { ok: false, error: 'Payment required' };
+      }
+
       if (pendingAssistantMessage) {
         sendToRenderer('chat:ai-done', {
           conversationId,
