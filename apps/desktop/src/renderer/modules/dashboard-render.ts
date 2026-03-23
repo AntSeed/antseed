@@ -305,7 +305,7 @@ export function initDashboardRenderModule({
 
       const pluginCount = safeArray((config as Record<string, unknown> | null)?.plugins).length;
       uiState.configMeta = { tone: 'active', label: `${pluginCount} plugins` };
-      uiState.configMessage = { text: 'Settings loaded from dashboard API.', type: 'info' };
+      uiState.configMessage = { text: 'Config loaded from config.json', type: 'info' };
     } else {
       uiState.configMessage = { text: `Unable to load config: ${results.config.error ?? 'unknown error'}`, type: 'error' };
       uiState.configMeta = { tone: 'warn', label: 'config unavailable' };

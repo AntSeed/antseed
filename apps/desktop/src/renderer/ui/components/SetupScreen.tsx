@@ -65,7 +65,7 @@ export function SetupScreen() {
   const networkDone = level >= 2 || hasServices;
   const serviceActive = level >= 2 && !hasServices;
 
-  const connectLabel = level === 1 ? (msg || 'Connecting to P2P network...') : 'Connecting to P2P network';
+  const connectLabel = level <= 1 ? (msg || 'Connecting to P2P network...') : 'Connected to P2P network';
   const serviceLabel = serviceActive ? 'Loading services...' : 'Loading services';
 
   return (

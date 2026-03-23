@@ -903,10 +903,12 @@ function makeProxyService(
   protocol: ChatServiceProtocol = 'anthropic-messages',
   providerHint?: string | null,
   preferredPeerId?: string | null,
+  spendingAuth?: string | null,
 ): Model<any> {
   const headers: Record<string, string> = {};
   if (providerHint) headers['x-antseed-provider'] = providerHint;
   if (preferredPeerId) headers['x-antseed-pin-peer'] = preferredPeerId;
+  if (spendingAuth) headers['x-antseed-spending-auth'] = spendingAuth;
 
   // The OpenAI SDK appends API paths (e.g. /responses, /chat/completions)
   // to baseUrl, so include /v1 to match the buyer proxy's expected paths.
@@ -1391,12 +1393,32 @@ export function registerPiChatHandlers({
   ensureBuyerRuntimeStarted,
   appendSystemLog,
   getNetworkPeers,
-}: RegisterPiChatHandlersOptions): void {
+}: RegisterPiChatHandlersOptions): {
+  setPendingSpendingAuth: (conversationId: string, authBase64: string) => void;
+  getCachedPaymentRequired: (conversationId: string) => Record<string, unknown> | null;
+} {
   const store = new PiConversationStore();
   const activeRunsByConversation = new Map<string, ActiveRun>();
   const serviceProviderHints = new Map<string, string[]>();
+  /** Pending signed SpendingAuth to inject as header on the next request for a conversation. */
+  const pendingSpendingAuth = new Map<string, string>();
+  /** Cached payment-required info from 402 responses, keyed by conversationId. */
+  const cachedPaymentRequired = new Map<string, Record<string, unknown>>();
   const serviceProtocolMap = new Map<string, ChatServiceProtocol>();
   const preferredPeerByConversationId = new Map<string, string>();
+
+  const cacheFallbackPaymentRequired = (conversationId: string, suggestedAmount: string): void => {
+    const peerId = preferredPeerByConversationId.get(conversationId) ?? null;
+    if (!peerId) {
+      return;
+    }
+    const existing = cachedPaymentRequired.get(conversationId) ?? {};
+    cachedPaymentRequired.set(conversationId, {
+      ...existing,
+      peerId,
+      suggestedAmount,
+    });
+  };
 
   const clearActiveRun = (run: ActiveRun | null): void => {
     if (!run) {
@@ -1515,7 +1537,10 @@ export function registerPiChatHandlers({
       providerOverride,
     );
     const protocol = await resolveProtocolForSend(serviceId);
-    const proxyModel = makeProxyService(serviceId, proxyPort, protocol, providerHint, preferredPeerId);
+    // Inject pending spending auth header if the user approved a payment for this conversation
+    const spendingAuth = pendingSpendingAuth.get(conversationId) ?? null;
+    if (spendingAuth) pendingSpendingAuth.delete(conversationId);
+    const proxyModel = makeProxyService(serviceId, proxyPort, protocol, providerHint, preferredPeerId, spendingAuth);
 
     const authStorage = AuthStorage.inMemory();
     authStorage.setRuntimeApiKey(PROXY_PROVIDER_ID, PROXY_RUNTIME_API_KEY);
@@ -1726,14 +1751,50 @@ export function registerPiChatHandlers({
         if (message.role === 'assistant') {
           // Detect payment errors from the provider's 402 JSON response
           const msgAny = message as unknown as Record<string, unknown>;
+          const errorMsg = typeof msgAny.errorMessage === 'string' ? msgAny.errorMessage : '';
           const rawContent = Array.isArray(msgAny.content)
             ? (msgAny.content as Array<Record<string, unknown>>).map((b) => String(b.text ?? '')).join('')
             : String(msgAny.content ?? '');
+
+          // Check errorMessage first (Pi agent may put "402 {"error":"payment_required",...}" there)
+          if (/402.*payment_required|payment_required/i.test(errorMsg) || /402.*payment_required|payment_required/i.test(rawContent)) {
+            // Try to parse the full payment body from content, errorMessage, or embedded JSON
+            let paymentBody: Record<string, unknown> | null = null;
+            try { paymentBody = JSON.parse(rawContent) as Record<string, unknown>; } catch { /* not JSON */ }
+            if (!paymentBody || !paymentBody.sellerEvmAddr) {
+              try { paymentBody = JSON.parse(errorMsg) as Record<string, unknown>; } catch { /* not JSON */ }
+            }
+            // SDK wraps the body as "402 {json}" — extract the embedded JSON
+            if (!paymentBody || !paymentBody.sellerEvmAddr) {
+              const jsonStart = errorMsg.indexOf('{');
+              if (jsonStart >= 0) {
+                try { paymentBody = JSON.parse(errorMsg.slice(jsonStart)) as Record<string, unknown>; } catch { /* not JSON */ }
+              }
+            }
+            const suggestedAmount = typeof paymentBody?.suggestedAmount === 'string'
+              ? paymentBody.suggestedAmount : '100000';
+            if (paymentBody?.sellerEvmAddr) {
+              cachedPaymentRequired.set(conversationId, paymentBody);
+            } else {
+              cacheFallbackPaymentRequired(conversationId, suggestedAmount);
+            }
+            sendToRenderer('chat:ai-stream-error', {
+              conversationId,
+              error: `payment_required:${suggestedAmount}`,
+            });
+            const activeRun = activeRunsByConversation.get(conversationId);
+            if (activeRun) void abortAndClearActiveRun(activeRun);
+            return;
+          }
+
+          // Also check if the response body itself is a payment_required JSON
           let paymentBody: Record<string, unknown> | null = null;
           try { paymentBody = JSON.parse(rawContent) as Record<string, unknown>; } catch { /* not JSON */ }
           if (paymentBody?.error === 'payment_required') {
             const suggestedAmount = typeof paymentBody.suggestedAmount === 'string'
               ? paymentBody.suggestedAmount : '100000';
+            // Cache payment info so the approve IPC handler can build the SpendingAuth
+            cachedPaymentRequired.set(conversationId, paymentBody);
             sendToRenderer('chat:ai-stream-error', {
               conversationId,
               error: `payment_required:${suggestedAmount}`,
@@ -1787,6 +1848,11 @@ export function registerPiChatHandlers({
         try { payBody = JSON.parse(lastText) as Record<string, unknown>; } catch { /* not JSON */ }
         if (payBody?.error === 'payment_required') {
           const amt = typeof payBody.suggestedAmount === 'string' ? payBody.suggestedAmount : '100000';
+          if (payBody.sellerEvmAddr) {
+            cachedPaymentRequired.set(conversationId, payBody);
+          } else {
+            cacheFallbackPaymentRequired(conversationId, amt);
+          }
           pendingAssistantMessage = null;
           sendToRenderer('chat:ai-stream-error', {
             conversationId,
@@ -1816,7 +1882,27 @@ export function registerPiChatHandlers({
         return { ok: false, error: 'Aborted' };
       }
       const message = asErrorMessage(error);
-      sendToRenderer('chat:ai-stream-error', { conversationId, error: message });
+      // Map insufficient balance / 402 errors to payment_required format
+      // so the renderer shows the Add Credits card
+      const isPaymentError = /insufficient.*balance|escrow.*balance|402.*payment/i.test(message);
+      if (isPaymentError) {
+        // Try to extract the payment_required JSON from the error message (SDK wraps it as "402 {json}")
+        let payBody: Record<string, unknown> | null = null;
+        const jsonStart = message.indexOf('{');
+        if (jsonStart >= 0) {
+          try { payBody = JSON.parse(message.slice(jsonStart)) as Record<string, unknown>; } catch { /* not JSON */ }
+        }
+        if (payBody?.sellerEvmAddr) {
+          cachedPaymentRequired.set(conversationId, payBody);
+        }
+        const amt = typeof payBody?.suggestedAmount === 'string' ? payBody.suggestedAmount : '0';
+        if (!payBody?.sellerEvmAddr && amt !== '0') {
+          cacheFallbackPaymentRequired(conversationId, amt);
+        }
+        sendToRenderer('chat:ai-stream-error', { conversationId, error: `payment_required:${amt}` });
+      } else {
+        sendToRenderer('chat:ai-stream-error', { conversationId, error: message });
+      }
       appendSystemLog(`Pi chat error: ${message}`);
       return { ok: false, error: message };
     } finally {
@@ -1908,6 +1994,8 @@ export function registerPiChatHandlers({
 
   ipcMain.handle('chat:ai-delete-conversation', async (_event, id: string) => {
     preferredPeerByConversationId.delete(id);
+    cachedPaymentRequired.delete(id);
+    pendingSpendingAuth.delete(id);
     await store.delete(id);
     return { ok: true };
   });
@@ -1964,4 +2052,13 @@ export function registerPiChatHandlers({
       return { ok: false, error: asErrorMessage(err) };
     }
   });
+
+  return {
+    setPendingSpendingAuth: (conversationId: string, authBase64: string) => {
+      pendingSpendingAuth.set(conversationId, authBase64);
+    },
+    getCachedPaymentRequired: (conversationId: string) => {
+      return cachedPaymentRequired.get(conversationId) ?? null;
+    },
+  };
 }

@@ -95,6 +95,46 @@ type ProtocolTransformStrategy = {
   createStreamAdapter: (opts: { fallbackModel: string | null }) => StreamingResponseAdapter
 }
 
+function adaptOpenAICompatibleErrorResponse(
+  response: SerializedHttpResponse,
+  requestProtocol: ServiceApiProtocol | null,
+): SerializedHttpResponse {
+  if (response.statusCode !== 402) {
+    return response;
+  }
+  if (requestProtocol !== 'openai-responses' && requestProtocol !== 'openai-chat-completions') {
+    return response;
+  }
+
+  let parsed: Record<string, unknown> | null = null
+  try {
+    parsed = JSON.parse(Buffer.from(response.body).toString('utf-8')) as Record<string, unknown>
+  } catch {
+    return response
+  }
+
+  if (!parsed || parsed.error !== 'payment_required') {
+    return response
+  }
+
+  const wrappedError = {
+    error: {
+      ...parsed,
+      type: 'payment_required',
+      message: JSON.stringify(parsed),
+    },
+  }
+
+  return {
+    ...response,
+    headers: {
+      ...response.headers,
+      'content-type': 'application/json',
+    },
+    body: Buffer.from(JSON.stringify(wrappedError)),
+  }
+}
+
 const PROTOCOL_TRANSFORMS: Record<string, ProtocolTransformStrategy> = {
   'anthropic-messages→openai-chat-completions': {
     transformRequest: transformAnthropicMessagesRequestToOpenAIChat,
@@ -993,6 +1033,7 @@ export class BuyerProxy {
         if (!streamed && adaptResponse) {
           responseForClient = adaptResponse(response)
         }
+        responseForClient = adaptOpenAICompatibleErrorResponse(responseForClient, requestProtocol)
 
         const latencyMs = Date.now() - startTime
         log(`Response: ${responseForClient.statusCode} (${latencyMs}ms, ${responseForClient.body.length} bytes)`)
@@ -1060,6 +1101,7 @@ export class BuyerProxy {
         if (adaptResponse) {
           response = adaptResponse(response)
         }
+        response = adaptOpenAICompatibleErrorResponse(response, requestProtocol)
         const latencyMs = Date.now() - startTime
 
         log(`Response: ${response.statusCode} (${latencyMs}ms, ${response.body.length} bytes)`)

@@ -407,35 +407,55 @@ registerActions({
   handleServiceBlur: chatApi.handleServiceBlur,
   clearPinnedPeer: chatApi.clearPinnedPeer,
   approvePaymentSession: () => {
-    // Dismiss the card and resend the last user message — the node will
-    // auto-negotiate on retry since the peer is now in _manuallyApprovedPeers.
-    uiState.chatPaymentApprovalVisible = false;
-    uiState.chatPaymentApprovalPeerId = null;
-    uiState.chatPaymentApprovalPeerName = null;
-    uiState.chatPaymentApprovalPeerInfo = null;
-    uiState.chatPaymentApprovalLoading = false;
-    uiState.chatPaymentApprovalError = null;
+    const convId = uiState.chatActiveConversation;
+    if (!convId || uiState.chatSending) return;
+
+    // Sign the SpendingAuth via IPC, then resend
+    uiState.chatPaymentApprovalLoading = true;
     notifyUiStateChanged();
-    // Guard: don't resend if another message is already in flight
-    if (uiState.chatSending) return;
-    // Resend the last user message
-    const messages = uiState.chatMessages as Array<{ role: string; content: unknown }>;
-    const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user');
-    if (lastUserMsg) {
-      if (typeof lastUserMsg.content === 'string') {
-        chatApi.sendMessage(lastUserMsg.content);
-      } else if (Array.isArray(lastUserMsg.content)) {
-        // Multipart message (image + text) — extract parts for resend
-        const parts = lastUserMsg.content as Array<Record<string, unknown>>;
-        const textPart = parts.find((p) => p.type === 'text');
-        const imagePart = parts.find((p) => p.type === 'image') as Record<string, unknown> | undefined;
-        const text = typeof textPart?.text === 'string' ? textPart.text : '';
-        const source = imagePart?.source as Record<string, unknown> | undefined;
-        const imageBase64 = typeof source?.data === 'string' ? source.data : undefined;
-        const imageMimeType = typeof source?.media_type === 'string' ? source.media_type : undefined;
-        chatApi.sendMessage(text, imageBase64, imageMimeType);
+
+    void (async () => {
+      try {
+        const result = await bridge?.chatApprovePayment?.(convId);
+        if (!result?.ok) {
+          uiState.chatPaymentApprovalError = result?.error ?? 'Failed to sign payment';
+          uiState.chatPaymentApprovalLoading = false;
+          notifyUiStateChanged();
+          return;
+        }
+
+        // Dismiss card and resend
+        uiState.chatPaymentApprovalVisible = false;
+        uiState.chatPaymentApprovalPeerId = null;
+        uiState.chatPaymentApprovalPeerName = null;
+        uiState.chatPaymentApprovalPeerInfo = null;
+        uiState.chatPaymentApprovalLoading = false;
+        uiState.chatPaymentApprovalError = null;
+        notifyUiStateChanged();
+
+        // Resend the last user message — the spending auth header will be injected
+        const messages = uiState.chatMessages as Array<{ role: string; content: unknown }>;
+        const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user');
+        if (lastUserMsg) {
+          if (typeof lastUserMsg.content === 'string') {
+            chatApi.sendMessage(lastUserMsg.content);
+          } else if (Array.isArray(lastUserMsg.content)) {
+            const parts = lastUserMsg.content as Array<Record<string, unknown>>;
+            const textPart = parts.find((p) => p.type === 'text');
+            const imagePart = parts.find((p) => p.type === 'image') as Record<string, unknown> | undefined;
+            const text = typeof textPart?.text === 'string' ? textPart.text : '';
+            const source = imagePart?.source as Record<string, unknown> | undefined;
+            const imageBase64 = typeof source?.data === 'string' ? source.data : undefined;
+            const imageMimeType = typeof source?.media_type === 'string' ? source.media_type : undefined;
+            chatApi.sendMessage(text, imageBase64, imageMimeType);
+          }
+        }
+      } catch (err) {
+        uiState.chatPaymentApprovalError = err instanceof Error ? err.message : String(err);
+        uiState.chatPaymentApprovalLoading = false;
+        notifyUiStateChanged();
       }
-    }
+    })();
   },
   rejectPaymentSession: () => {
     uiState.chatPaymentApprovalVisible = false;
