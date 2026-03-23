@@ -776,9 +776,11 @@ export function initChatModule({
     setServiceCatalogStatus('warn', 'Loading services...');
     setRuntimeActivity('warn', 'Loading service catalog from peers...');
     setServiceSelectLoading(true);
+    console.log('[chat] refreshChatServiceOptions: fetching...');
 
     try {
       const result = await listChatServicesWithTimeout(refreshToken);
+      console.log(`[chat] refreshChatServiceOptions: ok=${result.ok} entries=${Array.isArray(result.data) ? result.data.length : 0} error=${result.error ?? 'none'}`);
       if (refreshToken !== serviceRefreshToken) return;
 
       if (!result.ok || !Array.isArray(result.data)) {

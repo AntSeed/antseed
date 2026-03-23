@@ -594,8 +594,14 @@ async function discoverChatServiceCatalog(
   let peers: NetworkPeerAddress[] = [];
   try {
     peers = await getNetworkPeers();
-  } catch {
+  } catch (err) {
+    console.log(`[services] getNetworkPeers failed: ${err instanceof Error ? err.message : String(err)}`);
     return [];
+  }
+
+  console.log(`[services] Found ${peers.length} peer(s) from network`);
+  for (const p of peers.slice(0, 5)) {
+    console.log(`[services]   peer ${p.peerId?.slice(0, 12)}... providers=[${(p.providers ?? []).join(',')}] services=[${(p.services ?? []).join(',')}]`);
   }
 
   const results: ChatServiceCatalogEntry[] = [];
@@ -1778,8 +1784,11 @@ export function registerPiChatHandlers({
     }
 
     serviceCatalogRefreshPromise = (async () => {
+      console.log(`[services] Refreshing service catalog (force=${force})...`);
       const entries = await discoverChatServiceCatalog(getNetworkPeers);
+      console.log(`[services] Raw entries: ${entries.length}`);
       const limited = limitChatServiceCatalogEntries(normalizeChatServiceCatalogEntries(entries));
+      console.log(`[services] Normalized+limited: ${limited.length} services`);
       updateServiceProviderHints(serviceProviderHints, limited);
       updateServiceProtocolMap(serviceProtocolMap, limited);
       lastServiceCatalogRefreshAt = Date.now();
