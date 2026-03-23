@@ -48,11 +48,11 @@ export function SessionApprovalCard({
       {error && <div className={styles.approvalError}>{error}</div>}
 
       <div className={styles.approvalActions}>
-        <button className={styles.approveBtn} onClick={onApprove} disabled={loading}>
-          {loading ? 'Approving...' : 'Approve & Send'}
+        <button className={styles.approveBtn} onClick={onApprove}>
+          Add Credits
         </button>
-        <button className={styles.cancelBtn} onClick={onCancel} disabled={loading}>
-          Cancel
+        <button className={styles.approveBtn} onClick={onCancel}>
+          Retry
         </button>
       </div>
     </div>
