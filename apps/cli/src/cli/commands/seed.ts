@@ -346,11 +346,12 @@ export function registerSeedCommand(program: Command): void {
           defaultEscrowAmountUSDC: defaultEscrowAmountUSDCBaseUnits,
           sellerWalletAddress,
           paymentConfig,
-          // Top-level fields required by the node for escrow client initialization
+          // Top-level fields required by the node for escrow client + EIP-712 domain
           ...(paymentConfig?.crypto ? {
             rpcUrl: paymentConfig.crypto.rpcUrl,
             contractAddress: paymentConfig.crypto.contractAddress,
             usdcAddress: paymentConfig.crypto.usdcAddress,
+            chainId: resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).evmChainId,
           } : {}),
         },
       })
