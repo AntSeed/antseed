@@ -1666,7 +1666,16 @@ export function initChatModule({
           }
 
           if (data.error !== 'Request aborted') {
-            showChatError(data.error);
+            const errStr = typeof data.error === 'string' ? data.error : '';
+            if (/payment.required|insufficient.*balance|escrow.*balance|402/i.test(errStr)) {
+              uiState.chatError = 'This service requires payment. Add credits to your escrow to continue.';
+              uiState.chatLowBalanceWarning = true;
+              notifyUiStateChanged();
+              // Abort any remaining agent retries
+              if (bridge.chatAiAbort) void bridge.chatAiAbort().catch(() => {});
+            } else {
+              showChatError(data.error);
+            }
             appendSystemLog(`AI Chat error: ${data.error}`);
           }
         } else if (shouldClearSending) {
