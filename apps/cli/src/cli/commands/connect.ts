@@ -348,59 +348,12 @@ export function registerConnectCommand(program: Command): void {
       }
       console.log('')
 
-      // When running under the desktop (IPC mode), enable interactive payment approval
-      // via structured JSON lines on stdout/stdin. Uses a single shared stdin listener
-      // to avoid accumulating per-peer listeners.
-      const paymentApprovalIpc = process.env['ANTSEED_PAYMENT_APPROVAL_IPC'] === '1'
-      const pendingApprovals = new Map<string, {
-        resolve: (decision: { approved: boolean }) => void
-        timer: ReturnType<typeof setTimeout>
-      }>()
-
-      if (paymentApprovalIpc) {
-        process.stdin.setEncoding('utf8')
-        process.stdin.on('data', (chunk: string) => {
-          for (const line of chunk.split('\n')) {
-            const trimmed = line.trim()
-            if (!trimmed) continue
-            try {
-              const parsed = JSON.parse(trimmed) as Record<string, unknown>
-              const response = parsed.__antseed_payment_approval_response as { approved: boolean; peerId?: string } | undefined
-              if (response && typeof response.approved === 'boolean' && response.peerId) {
-                const pending = pendingApprovals.get(response.peerId)
-                if (pending) {
-                  clearTimeout(pending.timer)
-                  pendingApprovals.delete(response.peerId)
-                  pending.resolve({ approved: response.approved })
-                }
-              }
-            } catch { /* not JSON, ignore */ }
-          }
-        })
-      }
-
-      const onPaymentApproval = paymentApprovalIpc
-        ? async (info: Parameters<NonNullable<import('@antseed/node').NodeConfig['onPaymentApproval']>>[0]) => {
-            const request = JSON.stringify({ __antseed_payment_approval_request: info })
-            process.stdout.write(request + '\n')
-
-            return new Promise<{ approved: boolean }>((resolve) => {
-              const timer = setTimeout(() => {
-                pendingApprovals.delete(info.peerId)
-                resolve({ approved: false })
-              }, 60_000)
-              pendingApprovals.set(info.peerId, { resolve, timer })
-            })
-          }
-        : undefined
-
       const node = new AntseedNode({
         role: 'buyer',
         bootstrapNodes,
         allowPrivateIPs: true,
         dataDir: globalOpts.dataDir,
         payments: paymentsConfig,
-        onPaymentApproval,
       })
 
       node.setRouter(router)

@@ -73,16 +73,6 @@ function isTruthyEnv(value: string | undefined): boolean {
   return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
 }
 
-async function isManualApprovalEnabled(): Promise<boolean> {
-  try {
-    const config = await readConfig(ACTIVE_CONFIG_PATH);
-    const buyer = config.buyer && typeof config.buyer === 'object' ? config.buyer as Record<string, unknown> : {};
-    return Boolean(buyer.requireManualApproval);
-  } catch {
-    return false;
-  }
-}
-
 function hasDesktopDebugFlag(argv: string[]): boolean {
   for (const arg of argv) {
     if (DESKTOP_DEBUG_FLAGS.has(arg.trim().toLowerCase())) {
@@ -243,51 +233,6 @@ const processManager = new ProcessManager((mode, stream, line) => {
   appendLog(mode, stream, line);
 });
 
-// Pending payment approval requests from the CLI child process, keyed by peerId.
-const pendingPaymentApprovals = new Map<string, {
-  resolve: (decision: { approved: boolean }) => void;
-  timer: ReturnType<typeof setTimeout>;
-}>();
-
-// When the CLI requests payment approval, forward to the renderer and wait.
-processManager.onPaymentApprovalRequest = async (info) => {
-  const peerId = typeof info.peerId === 'string' ? info.peerId : '';
-  const win = getMainWindow();
-  if (!win) {
-    return { approved: false };
-  }
-
-  return new Promise<{ approved: boolean }>((resolve) => {
-    // Evict any stale entry for the same peer (e.g. two processes encountering the same seller)
-    const existing = pendingPaymentApprovals.get(peerId);
-    if (existing) {
-      clearTimeout(existing.timer);
-      existing.resolve({ approved: false });
-      pendingPaymentApprovals.delete(peerId);
-    }
-
-    const timer = setTimeout(() => {
-      if (pendingPaymentApprovals.has(peerId)) {
-        pendingPaymentApprovals.delete(peerId);
-        resolve({ approved: false });
-      }
-    }, 60_000);
-    pendingPaymentApprovals.set(peerId, { resolve, timer });
-    win.webContents.send('payments:approval-required', info);
-  });
-};
-
-// Renderer sends approval/rejection back
-ipcMain.handle('payments:approve-session', async (_event, peerId: string, approved: boolean) => {
-  const pending = pendingPaymentApprovals.get(peerId);
-  if (pending) {
-    clearTimeout(pending.timer);
-    pendingPaymentApprovals.delete(peerId);
-    pending.resolve({ approved });
-  }
-  return { ok: true };
-});
-
 // ── Payments Portal ──
 
 let paymentsServer: Awaited<ReturnType<typeof createPaymentsServer>> | null = null;
@@ -353,8 +298,6 @@ ipcMain.handle('runtime:get-state', async () => {
 ipcMain.handle('runtime:start', async (_event, options: StartOptions) => {
   await ensureSecureIdentity();
 
-  const manualApproval = await isManualApprovalEnabled();
-
   const startOptions: StartOptions = {
     ...options,
     ...(desktopDebugEnabled ? { verbose: true } : {}),
@@ -362,7 +305,6 @@ ipcMain.handle('runtime:start', async (_event, options: StartOptions) => {
       ...(options.env ?? {}),
       ...(desktopDebugEnabled ? { ANTSEED_DEBUG: '1' } : {}),
       ...secureIdentityEnv(),
-      ...(manualApproval ? { ANTSEED_PAYMENT_APPROVAL_IPC: '1' } : {}),
     },
   };
   if (desktopDebugEnabled) {
@@ -819,8 +761,6 @@ registerPiChatHandlers({
 
     await ensureSecureIdentity();
 
-    const chatManualApproval = await isManualApprovalEnabled();
-
     const startOptions: StartOptions = {
       mode: 'connect',
       router: 'local',
@@ -828,7 +768,6 @@ registerPiChatHandlers({
       env: {
         ...(desktopDebugEnabled ? { ANTSEED_DEBUG: '1' } : {}),
         ...secureIdentityEnv(),
-        ...(chatManualApproval ? { ANTSEED_PAYMENT_APPROVAL_IPC: '1' } : {}),
       },
     };
 
@@ -961,13 +900,6 @@ app.on('before-quit', (event) => {
 
   event.preventDefault();
   isQuitting = true;
-
-  // Reject all pending payment approvals so CLI processes aren't left hanging
-  for (const [, pending] of pendingPaymentApprovals) {
-    clearTimeout(pending.timer);
-    pending.resolve({ approved: false });
-  }
-  pendingPaymentApprovals.clear();
 
   void processManager.stopAll()
     .then(() => stopPaymentsPortal())

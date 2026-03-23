@@ -165,23 +165,11 @@ export interface NodeConfig {
   /** Pluggable identity storage backend. When set, takes precedence over dataDir for identity loading. */
   identityStore?: IdentityStore;
   /**
-   * Called when a seller requires payment before serving requests.
-   * Return `{ approved: true }` to sign the SpendingAuth, or `{ approved: false }` to abort.
-   * If not set, the node auto-approves all payment requests.
+   * When true, the node returns 402 with a JSON body containing payment info
+   * instead of auto-negotiating. The caller can then show the user a prompt
+   * and retry the request once approved (the retry auto-negotiates).
    */
-  onPaymentApproval?: (info: {
-    peerId: string;
-    sellerEvmAddr: string;
-    tokenRate: string;
-    firstSignCap: string;
-    suggestedAmount: string;
-    /** Buyer's available USDC in escrow (base units), null if RPC unavailable */
-    buyerAvailableUsdc: string | null;
-    /** Whether this is the first session with this seller */
-    isFirstSign: boolean | null;
-    /** Seconds until proven-sign cooldown elapses (0 = ready) */
-    cooldownRemainingSecs: number | null;
-  }) => Promise<{ approved: boolean }>;
+  requireManualApproval?: boolean;
 }
 
 interface SellerSessionState {
@@ -272,6 +260,8 @@ export class AntseedNode extends EventEmitter {
   private _bufferedPaymentRequired = new Map<string, PaymentRequiredPayload>();
   /** Per-peer mutex to prevent concurrent payment negotiations. */
   private _paymentNegotiationLocks = new Map<string, Promise<void>>();
+  /** Peers the caller has manually approved by retrying after a 402. */
+  private _manuallyApprovedPeers = new Set<string>();
 
   constructor(config: NodeConfig) {
     super();
@@ -793,7 +783,51 @@ export class AntseedNode extends EventEmitter {
     const response = await executeRequest();
 
     if (response.statusCode === 402 && needsPaymentNegotiation) {
+      // When requireManualApproval is set and the peer hasn't been approved yet,
+      // return the 402 with enriched payment info so the HTTP caller can show a
+      // prompt. The caller approves by simply retrying — at which point the peer
+      // is in _manuallyApprovedPeers and we auto-negotiate.
+      if (this._config.requireManualApproval && !this._manuallyApprovedPeers.has(peer.peerId)) {
+        debugLog(`[Node] Got 402 from ${peer.peerId.slice(0, 12)}... — returning to caller (requireManualApproval)`);
+        // Wait briefly for the PaymentRequired payload so we can enrich the 402 body
+        const ENRICH_TIMEOUT_MS = 3_000;
+        const buffered = this._bufferedPaymentRequired.get(peer.peerId);
+        const paymentPayload = buffered ?? await new Promise<PaymentRequiredPayload | null>((resolve) => {
+          const timer = setTimeout(() => {
+            this._pendingPaymentRequired.delete(peer.peerId);
+            resolve(null);
+          }, ENRICH_TIMEOUT_MS);
+          this._pendingPaymentRequired.set(peer.peerId, {
+            resolve: (payload) => { clearTimeout(timer); resolve(payload); },
+            reject: () => { clearTimeout(timer); resolve(null); },
+            timer,
+          });
+        });
+        if (buffered) this._bufferedPaymentRequired.delete(peer.peerId);
+
+        if (paymentPayload) {
+          const enrichedBody = JSON.stringify({
+            error: 'payment_required',
+            peerId: peer.peerId,
+            sellerEvmAddr: paymentPayload.sellerEvmAddr,
+            tokenRate: paymentPayload.tokenRate,
+            firstSignCap: paymentPayload.firstSignCap,
+            suggestedAmount: paymentPayload.suggestedAmount,
+          });
+          return {
+            ...response,
+            headers: { ...response.headers, 'content-type': 'application/json' },
+            body: new TextEncoder().encode(enrichedBody),
+          };
+        }
+        // If we didn't get payment info, return original 402
+        return response;
+      }
+
+      // Auto-negotiate (either requireManualApproval is off, or peer was already approved)
       debugLog(`[Node] Got 402 from ${peer.peerId.slice(0, 12)}... — negotiating payment`);
+      // Mark peer as manually approved on retry so future requests skip the prompt
+      this._manuallyApprovedPeers.add(peer.peerId);
       try {
         await this._negotiatePayment(peer, conn);
         debugLog(`[Node] Payment negotiated with ${peer.peerId.slice(0, 12)}... — retrying request`);
@@ -1136,11 +1170,18 @@ export class AntseedNode extends EventEmitter {
         );
         if (requirements) {
           debugLog(`[Node] No payment session for ${buyerPeerId.slice(0, 12)}... — sending 402 + PaymentRequired`);
+          const paymentBody = JSON.stringify({
+            error: 'payment_required',
+            sellerEvmAddr: requirements.sellerEvmAddr,
+            tokenRate: requirements.tokenRate,
+            firstSignCap: requirements.firstSignCap,
+            suggestedAmount: requirements.suggestedAmount,
+          });
           mux.sendProxyResponse({
             requestId: request.requestId,
             statusCode: 402,
-            headers: { "content-type": "text/plain" },
-            body: new TextEncoder().encode("Payment required: no active session"),
+            headers: { "content-type": "application/json" },
+            body: new TextEncoder().encode(paymentBody),
           });
           paymentMux.sendPaymentRequired(requirements);
         } else {
@@ -1150,8 +1191,11 @@ export class AntseedNode extends EventEmitter {
           mux.sendProxyResponse({
             requestId: request.requestId,
             statusCode: 402,
-            headers: { "content-type": "text/plain" },
-            body: new TextEncoder().encode("Payment required: seller not ready, try again later"),
+            headers: { "content-type": "application/json" },
+            body: new TextEncoder().encode(JSON.stringify({
+              error: 'payment_required',
+              message: 'Seller not ready, try again later',
+            })),
           });
         }
         return;
@@ -1915,14 +1959,6 @@ export class AntseedNode extends EventEmitter {
 
     this.emit('payment:required', approvalInfo);
 
-    if (this._config.onPaymentApproval) {
-      debugLog(`[Node] Waiting for payment approval from user for peer ${peer.peerId.slice(0, 12)}...`);
-      const decision = await this._config.onPaymentApproval(approvalInfo);
-      if (!decision.approved) {
-        throw new Error(`Payment rejected by user for peer ${peer.peerId.slice(0, 12)}...`);
-      }
-      debugLog(`[Node] Payment approved by user for peer ${peer.peerId.slice(0, 12)}...`);
-    }
     try {
       await bpm.authorizeSpending(peer.peerId, requirements.sellerEvmAddr, pmux, amount);
       debugLog(`[Node] SpendingAuth sent to seller ${peer.peerId.slice(0, 12)}..., waiting for AuthAck...`);

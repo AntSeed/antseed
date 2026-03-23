@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
+import { contextBridge, ipcRenderer } from 'electron';
 import type { RuntimeMode, RuntimeProcessState, StartOptions } from './process-manager.js';
 
 type LogEvent = {
@@ -282,13 +282,6 @@ const api = {
   },
   setDebugLogs(enabled: boolean): Promise<{ ok: true }> {
     return ipcRenderer.invoke('desktop:set-debug-logs', enabled) as Promise<{ ok: true }>;
-  },
-  onPaymentApprovalRequired(listener: (_event: IpcRendererEvent, info: Record<string, unknown>) => void): () => void {
-    ipcRenderer.on('payments:approval-required', listener);
-    return () => ipcRenderer.off('payments:approval-required', listener);
-  },
-  approvePaymentSession(peerId: string, approved: boolean): Promise<{ ok: boolean }> {
-    return ipcRenderer.invoke('payments:approve-session', peerId, approved) as Promise<{ ok: boolean }>;
   },
   creditsGetInfo() {
     return ipcRenderer.invoke('credits:get-info');

@@ -108,7 +108,7 @@ describe('Payment negotiation: seller sends PaymentRequired on 402', () => {
 
     expect(response.statusCode).toBe(402);
     const body = new TextDecoder().decode(response.body);
-    expect(body).toContain('Payment required');
+    expect(body).toContain('payment_required');
 
     // Seller's provider was NOT called (request rejected before routing)
     expect(mockProvider.requestCount).toBe(0);

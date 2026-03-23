@@ -1133,8 +1133,8 @@ export function initChatModule({
       return;
     }
 
-    // Payment approval is now reactive — handled by the node's PaymentRequired
-    // flow via onPaymentApprovalRequired IPC, not pre-emptively gated here.
+    // Payment approval is handled by the node's 402-based flow — the caller
+    // catches the 402 JSON response, shows the approval card, and retries.
 
     if (uiState.chatSending) {
       showChatError('Another chat request is already in progress.');
@@ -1689,53 +1689,6 @@ export function initChatModule({
   void refreshChatServiceOptions();
 
   // ---------------------------------------------------------------------------
-  // Payment approval (reactive — driven by seller's PaymentRequired)
-  // ---------------------------------------------------------------------------
-
-  if (bridge.onPaymentApprovalRequired) {
-    bridge.onPaymentApprovalRequired((_event, info) => {
-      // Clear stale data from any previous approval
-      uiState.chatPaymentApprovalPeerInfo = null;
-      uiState.chatPaymentApprovalError = null;
-
-      const peerId = typeof info.peerId === 'string' ? info.peerId : null;
-      // suggestedAmount is already capped by the node to min(seller suggestion, buyer balance, firstSignCap).
-      // Zero balance is rejected before reaching this callback.
-      const amount = typeof info.suggestedAmount === 'string'
-        ? (Number(info.suggestedAmount) / 1_000_000).toFixed(2)
-        : '0.10';
-
-      uiState.chatPaymentApprovalVisible = true;
-      uiState.chatPaymentApprovalPeerId = peerId;
-      uiState.chatPaymentApprovalPeerName = peerId ? peerId.slice(0, 12) + '...' : null;
-      uiState.chatPaymentApprovalAmount = amount;
-
-      notifyUiStateChanged();
-
-      if (peerId) {
-        void fetchPeerInfo(peerId);
-      }
-    });
-  }
-
-  function resolvePaymentSession(approved: boolean): void {
-    const peerId = uiState.chatPaymentApprovalPeerId;
-    uiState.chatPaymentApprovalVisible = false;
-    uiState.chatPaymentApprovalPeerId = null;
-    uiState.chatPaymentApprovalPeerName = null;
-    uiState.chatPaymentApprovalPeerInfo = null;
-    uiState.chatPaymentApprovalLoading = false;
-    uiState.chatPaymentApprovalError = null;
-    notifyUiStateChanged();
-    if (bridge.approvePaymentSession && peerId) {
-      void bridge.approvePaymentSession(peerId, approved);
-    }
-  }
-
-  function approvePaymentSession(): void { resolvePaymentSession(true); }
-  function rejectPaymentSession(): void { resolvePaymentSession(false); }
-
-  // ---------------------------------------------------------------------------
   // Public API
   // ---------------------------------------------------------------------------
 
@@ -1754,7 +1707,5 @@ export function initChatModule({
     handleServiceFocus,
     handleServiceBlur,
     clearPinnedPeer,
-    approvePaymentSession,
-    rejectPaymentSession,
   };
 }
