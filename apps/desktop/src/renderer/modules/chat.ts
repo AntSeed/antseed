@@ -1699,21 +1699,16 @@ export function initChatModule({
       uiState.chatPaymentApprovalError = null;
 
       const peerId = typeof info.peerId === 'string' ? info.peerId : null;
+      // suggestedAmount is already capped by the node to min(seller suggestion, buyer balance, firstSignCap).
+      // Zero balance is rejected before reaching this callback.
       const amount = typeof info.suggestedAmount === 'string'
         ? (Number(info.suggestedAmount) / 1_000_000).toFixed(2)
         : '0.10';
-      const buyerBalance = typeof info.buyerAvailableUsdc === 'string'
-        ? (Number(info.buyerAvailableUsdc) / 1_000_000).toFixed(2)
-        : null;
 
       uiState.chatPaymentApprovalVisible = true;
       uiState.chatPaymentApprovalPeerId = peerId;
       uiState.chatPaymentApprovalPeerName = peerId ? peerId.slice(0, 12) + '...' : null;
       uiState.chatPaymentApprovalAmount = amount;
-
-      if (buyerBalance !== null && parseFloat(buyerBalance) < parseFloat(amount)) {
-        uiState.chatPaymentApprovalError = `Insufficient balance ($${buyerBalance} available). Add credits first.`;
-      }
 
       notifyUiStateChanged();
 

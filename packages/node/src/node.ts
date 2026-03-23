@@ -1882,20 +1882,8 @@ export class AntseedNode extends EventEmitter {
       }
     }
 
-    // Build approval info for the callback / event
-    const approvalInfo = {
-      peerId: peer.peerId,
-      sellerEvmAddr: requirements.sellerEvmAddr,
-      tokenRate: requirements.tokenRate,
-      firstSignCap: requirements.firstSignCap,
-      suggestedAmount: requirements.suggestedAmount,
-      buyerAvailableUsdc: approvalContext ? approvalContext.buyerBalance.available.toString() : null,
-      isFirstSign: approvalContext?.isFirstSign ?? null,
-      cooldownRemainingSecs: approvalContext?.cooldownRemainingSecs ?? null,
-    };
-
-    // Cap amount before showing approval UI so the user sees the real number
-    // and we fail fast on zero balance instead of after they click Approve.
+    // Cap amount before building approval info so the displayed amount
+    // matches what will actually be signed via authorizeSpending.
     let amount = BigInt(requirements.suggestedAmount);
     if (approvalContext) {
       const available = approvalContext.buyerBalance.available;
@@ -1909,8 +1897,17 @@ export class AntseedNode extends EventEmitter {
       throw new Error(`Insufficient escrow balance to authorize payment to ${peer.peerId.slice(0, 12)}...`);
     }
 
-    // If an approval callback is configured (desktop), wait for user decision.
-    // Otherwise auto-approve (CLI headless mode).
+    const approvalInfo = {
+      peerId: peer.peerId,
+      sellerEvmAddr: requirements.sellerEvmAddr,
+      tokenRate: requirements.tokenRate,
+      firstSignCap: requirements.firstSignCap,
+      suggestedAmount: amount.toString(),
+      buyerAvailableUsdc: approvalContext ? approvalContext.buyerBalance.available.toString() : null,
+      isFirstSign: approvalContext?.isFirstSign ?? null,
+      cooldownRemainingSecs: approvalContext?.cooldownRemainingSecs ?? null,
+    };
+
     if (this._config.onPaymentApproval) {
       debugLog(`[Node] Waiting for payment approval from user for peer ${peer.peerId.slice(0, 12)}...`);
       const decision = await this._config.onPaymentApproval(approvalInfo);
