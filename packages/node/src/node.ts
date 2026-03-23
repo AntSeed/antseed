@@ -169,7 +169,6 @@ export interface NodeConfig {
    * instead of auto-negotiating. The caller can then show the user a prompt
    * and retry the request once approved (the retry auto-negotiates).
    */
-  requireManualApproval?: boolean;
 }
 
 interface SellerSessionState {
@@ -261,7 +260,6 @@ export class AntseedNode extends EventEmitter {
   /** Per-peer mutex to prevent concurrent payment negotiations. */
   private _paymentNegotiationLocks = new Map<string, Promise<void>>();
   /** Peers the caller has manually approved by retrying after a 402. */
-  private _manuallyApprovedPeers = new Set<string>();
 
   constructor(config: NodeConfig) {
     super();
@@ -783,51 +781,9 @@ export class AntseedNode extends EventEmitter {
     const response = await executeRequest();
 
     if (response.statusCode === 402 && needsPaymentNegotiation) {
-      // When requireManualApproval is set and the peer hasn't been approved yet,
-      // return the 402 with enriched payment info so the HTTP caller can show a
-      // prompt. The caller approves by simply retrying — at which point the peer
-      // is in _manuallyApprovedPeers and we auto-negotiate.
-      if (this._config.requireManualApproval && !this._manuallyApprovedPeers.has(peer.peerId)) {
-        debugLog(`[Node] Got 402 from ${peer.peerId.slice(0, 12)}... — returning to caller (requireManualApproval)`);
-        // Wait briefly for the PaymentRequired payload so we can enrich the 402 body
-        const ENRICH_TIMEOUT_MS = 3_000;
-        const buffered = this._bufferedPaymentRequired.get(peer.peerId);
-        const paymentPayload = buffered ?? await new Promise<PaymentRequiredPayload | null>((resolve) => {
-          const timer = setTimeout(() => {
-            this._pendingPaymentRequired.delete(peer.peerId);
-            resolve(null);
-          }, ENRICH_TIMEOUT_MS);
-          this._pendingPaymentRequired.set(peer.peerId, {
-            resolve: (payload) => { clearTimeout(timer); resolve(payload); },
-            reject: () => { clearTimeout(timer); resolve(null); },
-            timer,
-          });
-        });
-        if (buffered) this._bufferedPaymentRequired.delete(peer.peerId);
-
-        if (paymentPayload) {
-          const enrichedBody = JSON.stringify({
-            error: 'payment_required',
-            peerId: peer.peerId,
-            sellerEvmAddr: paymentPayload.sellerEvmAddr,
-            tokenRate: paymentPayload.tokenRate,
-            firstSignCap: paymentPayload.firstSignCap,
-            suggestedAmount: paymentPayload.suggestedAmount,
-          });
-          return {
-            ...response,
-            headers: { ...response.headers, 'content-type': 'application/json' },
-            body: new TextEncoder().encode(enrichedBody),
-          };
-        }
-        // If we didn't get payment info, return original 402
-        return response;
-      }
-
-      // Auto-negotiate (either requireManualApproval is off, or peer was already approved)
-      debugLog(`[Node] Got 402 from ${peer.peerId.slice(0, 12)}... — negotiating payment`);
-      // Mark peer as manually approved on retry so future requests skip the prompt
-      this._manuallyApprovedPeers.add(peer.peerId);
+      // Auto-negotiate: sign SpendingAuth and retry. If buyer has insufficient
+      // balance, the negotiation throws and the error surfaces to the caller.
+      debugLog(`[Node] Got 402 from ${peer.peerId.slice(0, 12)}... — auto-negotiating payment`);
       try {
         await this._negotiatePayment(peer, conn);
         debugLog(`[Node] Payment negotiated with ${peer.peerId.slice(0, 12)}... — retrying request`);
@@ -1966,6 +1922,14 @@ export class AntseedNode extends EventEmitter {
       await this._waitForLockConfirmation(peer.peerId);
       debugLog(`[Node] AuthAck received from seller ${peer.peerId.slice(0, 12)}...`);
       this._buyerLockedPeers.add(peer.peerId);
+
+      // Notify listeners what was signed
+      this.emit('payment:signed', {
+        peerId: peer.peerId,
+        sellerEvmAddr: requirements.sellerEvmAddr,
+        amount: amount.toString(),
+        tokenRate: requirements.tokenRate,
+      });
     } catch (err) {
       debugWarn(`[Node] Payment negotiation failed for ${peer.peerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
       throw err;
