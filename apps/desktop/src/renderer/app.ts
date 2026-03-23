@@ -272,6 +272,9 @@ function requireBridgeMethod<K extends keyof DesktopBridge>(
 
 async function ensureConnectRuntimeStarted(): Promise<void> {
   if (!bridge?.start || isModeRunning('connect')) return;
+  // Don't start until plugin setup is resolved — starting without the router
+  // plugin causes the CLI to exit immediately with "plugin not found".
+  if (uiState.appSetupStatusKnown && uiState.appSetupNeeded && !uiState.appSetupComplete) return;
 
   try {
     setRuntimeActivity('warn', 'Starting buyer runtime...', 8_000);
