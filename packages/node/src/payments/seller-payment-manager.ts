@@ -438,7 +438,8 @@ export class SellerPaymentManager {
   /**
    * Build the PaymentRequired payload for a buyer that doesn't have a session.
    * Returns null if on-chain data isn't available yet.
-   * For returning buyers (proven-sign), suggests a higher amount than FIRST_SIGN_CAP.
+   * For returning buyers (proven-sign eligible), uses the configured proven-sign
+   * amount instead of the first-sign amount (both default to $0.10).
    */
   getPaymentRequirements(
     requestId: string,
