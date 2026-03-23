@@ -416,11 +416,25 @@ registerActions({
     uiState.chatPaymentApprovalLoading = false;
     uiState.chatPaymentApprovalError = null;
     notifyUiStateChanged();
+    // Guard: don't resend if another message is already in flight
+    if (uiState.chatSending) return;
     // Resend the last user message
     const messages = uiState.chatMessages as Array<{ role: string; content: unknown }>;
     const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user');
-    if (lastUserMsg && typeof lastUserMsg.content === 'string') {
-      chatApi.sendMessage(lastUserMsg.content);
+    if (lastUserMsg) {
+      if (typeof lastUserMsg.content === 'string') {
+        chatApi.sendMessage(lastUserMsg.content);
+      } else if (Array.isArray(lastUserMsg.content)) {
+        // Multipart message (image + text) — extract parts for resend
+        const parts = lastUserMsg.content as Array<Record<string, unknown>>;
+        const textPart = parts.find((p) => p.type === 'text');
+        const imagePart = parts.find((p) => p.type === 'image') as Record<string, unknown> | undefined;
+        const text = typeof textPart?.text === 'string' ? textPart.text : '';
+        const source = imagePart?.source as Record<string, unknown> | undefined;
+        const imageBase64 = typeof source?.data === 'string' ? source.data : undefined;
+        const imageMimeType = typeof source?.media_type === 'string' ? source.media_type : undefined;
+        chatApi.sendMessage(text, imageBase64, imageMimeType);
+      }
     }
   },
   rejectPaymentSession: () => {

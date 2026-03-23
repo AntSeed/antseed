@@ -776,11 +776,8 @@ export function initChatModule({
     setServiceCatalogStatus('warn', 'Loading services...');
     setRuntimeActivity('warn', 'Loading service catalog from peers...');
     setServiceSelectLoading(true);
-    console.log('[chat] refreshChatServiceOptions: fetching...');
-
     try {
       const result = await listChatServicesWithTimeout(refreshToken);
-      console.log(`[chat] refreshChatServiceOptions: ok=${result.ok} entries=${Array.isArray(result.data) ? result.data.length : 0} error=${result.error ?? 'none'}`);
       if (refreshToken !== serviceRefreshToken) return;
 
       if (!result.ok || !Array.isArray(result.data)) {
@@ -1194,12 +1191,10 @@ export function initChatModule({
 
           if (!result.ok) {
             const errorMsg = typeof result.error === 'string' ? result.error : '';
-            const isPaymentError = /payment.required|insufficient.*balance|escrow.*balance|402/i.test(errorMsg);
-            if (isPaymentError) {
-              const paymentMatch2 = /payment_required:(\d+)/i.exec(errorMsg);
-              const baseUnits2 = paymentMatch2?.[1] ?? '100000';
+            const paymentMatch2 = /^payment_required:(\d+)$/i.exec(errorMsg);
+            if (paymentMatch2) {
               uiState.chatPaymentApprovalVisible = true;
-              uiState.chatPaymentApprovalAmount = (Number(baseUnits2) / 1_000_000).toFixed(2);
+              uiState.chatPaymentApprovalAmount = (Number(paymentMatch2[1]) / 1_000_000).toFixed(2);
               notifyUiStateChanged();
             } else {
               reportChatError(result.error, 'Request failed');
@@ -1669,10 +1664,9 @@ export function initChatModule({
 
           if (data.error !== 'Request aborted') {
             const errStr = typeof data.error === 'string' ? data.error : '';
-            const paymentMatch = /payment_required:(\d+)/i.exec(errStr);
-            if (paymentMatch || /payment.required|insufficient.*balance|escrow.*balance|402/i.test(errStr)) {
-              const baseUnits = paymentMatch?.[1] ?? '100000';
-              const amount = (Number(baseUnits) / 1_000_000).toFixed(2);
+            const paymentMatch = /^payment_required:(\d+)$/i.exec(errStr);
+            if (paymentMatch) {
+              const amount = (Number(paymentMatch[1]) / 1_000_000).toFixed(2);
               uiState.chatPaymentApprovalVisible = true;
               uiState.chatPaymentApprovalAmount = amount;
               notifyUiStateChanged();

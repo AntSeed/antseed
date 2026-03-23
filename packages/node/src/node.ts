@@ -164,11 +164,6 @@ export interface NodeConfig {
   payments?: NodePaymentsConfig;
   /** Pluggable identity storage backend. When set, takes precedence over dataDir for identity loading. */
   identityStore?: IdentityStore;
-  /**
-   * When true, the node returns 402 with a JSON body containing payment info
-   * instead of auto-negotiating. The caller can then show the user a prompt
-   * and retry the request once approved (the retry auto-negotiates).
-   */
 }
 
 interface SellerSessionState {

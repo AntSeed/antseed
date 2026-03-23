@@ -11,7 +11,6 @@ import { ChatBubble } from '../chat/ChatBubble';
 import { isToolResultOnlyMessage } from '../chat/chat-utils.js';
 import { WalkingAnt } from '../chat/WalkingAnt';
 import { SessionApprovalCard } from '../chat/SessionApprovalCard';
-import { LowBalanceWarning } from '../chat/LowBalanceWarning';
 
 import { AntStationStackedLogo } from '../AntStationLogo';
 import styles from './ChatView.module.scss';

@@ -616,11 +616,6 @@ async function discoverChatServiceCatalog(
     }
   }
 
-  console.log(`[services] Found ${peers.length} peer(s)`);
-  for (const p of peers.slice(0, 5)) {
-    console.log(`[services]   peer ${p.peerId?.slice(0, 12)}... providers=[${(p.providers ?? []).join(',')}] services=[${(p.services ?? []).join(',')}]`);
-  }
-
   const results: ChatServiceCatalogEntry[] = [];
   for (const peer of peers.slice(0, CHAT_SERVICE_SCAN_MAX_PEERS)) {
     const peerId = peer.peerId;
@@ -1729,26 +1724,20 @@ export function registerPiChatHandlers({
           return;
         }
         if (message.role === 'assistant') {
-          // Detect payment errors from the provider's error response
+          // Detect payment errors from the provider's 402 JSON response
           const msgAny = message as unknown as Record<string, unknown>;
-          const errorMsg = typeof msgAny.errorMessage === 'string' ? msgAny.errorMessage : '';
-          if (/402|payment.required/i.test(errorMsg)) {
-            // Try to extract suggestedAmount from the error message or raw content
-            let suggestedAmount = '100000'; // default $0.10
-            try {
-              // The message content may contain the raw 402 JSON body
-              const rawContent = Array.isArray(msgAny.content)
-                ? (msgAny.content as Array<Record<string, unknown>>).map((b) => String(b.text ?? '')).join('')
-                : String(msgAny.content ?? '');
-              const match = /"suggestedAmount"\s*:\s*"(\d+)"/.exec(rawContent);
-              if (match?.[1]) suggestedAmount = match[1];
-            } catch { /* use default */ }
-
+          const rawContent = Array.isArray(msgAny.content)
+            ? (msgAny.content as Array<Record<string, unknown>>).map((b) => String(b.text ?? '')).join('')
+            : String(msgAny.content ?? '');
+          let paymentBody: Record<string, unknown> | null = null;
+          try { paymentBody = JSON.parse(rawContent) as Record<string, unknown>; } catch { /* not JSON */ }
+          if (paymentBody?.error === 'payment_required') {
+            const suggestedAmount = typeof paymentBody.suggestedAmount === 'string'
+              ? paymentBody.suggestedAmount : '100000';
             sendToRenderer('chat:ai-stream-error', {
               conversationId,
               error: `payment_required:${suggestedAmount}`,
             });
-            // Abort any remaining agent turns
             const activeRun = activeRunsByConversation.get(conversationId);
             if (activeRun) void abortAndClearActiveRun(activeRun);
             return;
@@ -1785,26 +1774,26 @@ export function registerPiChatHandlers({
         : [];
       await session.prompt(trimmedMessage || ' ', { images: images.length > 0 ? images : undefined });
 
-      console.log('[chat-engine] prompt completed — pendingMsg:', pendingAssistantMessage ? 'yes' : 'null');
-
       // Check if the agent received a 402 payment_required response.
       // The node returns JSON with "error":"payment_required" which the agent
       // treats as a completed turn with empty/error content.
-      let lastAssistantText = '';
-      const lastMsg = pendingAssistantMessage as AiChatMessage | null;
-      if (lastMsg) {
+      if (pendingAssistantMessage) {
+        const lastMsg = pendingAssistantMessage as AiChatMessage;
         const c = lastMsg.content;
-        lastAssistantText = typeof c === 'string' ? c : Array.isArray(c)
+        const lastText = typeof c === 'string' ? c : Array.isArray(c)
           ? c.map((b) => typeof b === 'object' && b !== null && 'text' in b ? String(b.text) : '').join('')
           : '';
-      }
-      if (/payment_required/i.test(lastAssistantText)) {
-        pendingAssistantMessage = null;
-        sendToRenderer('chat:ai-stream-error', {
-          conversationId,
-          error: 'Payment required (402). Add credits to your escrow to use this service.',
-        });
-        return { ok: false, error: 'Payment required' };
+        let payBody: Record<string, unknown> | null = null;
+        try { payBody = JSON.parse(lastText) as Record<string, unknown>; } catch { /* not JSON */ }
+        if (payBody?.error === 'payment_required') {
+          const amt = typeof payBody.suggestedAmount === 'string' ? payBody.suggestedAmount : '100000';
+          pendingAssistantMessage = null;
+          sendToRenderer('chat:ai-stream-error', {
+            conversationId,
+            error: `payment_required:${amt}`,
+          });
+          return { ok: false, error: 'Payment required' };
+        }
       }
 
       if (pendingAssistantMessage) {
@@ -1827,13 +1816,7 @@ export function registerPiChatHandlers({
         return { ok: false, error: 'Aborted' };
       }
       const message = asErrorMessage(error);
-      console.log('[chat-engine] catch block — error:', message);
-      // Detect payment-related errors (402 from seller, insufficient balance, etc.)
-      const isPaymentError = /402|payment.required|insufficient.*balance|escrow/i.test(message);
-      const displayMessage = isPaymentError
-        ? 'Payment required (402). Add credits to your escrow to use this service.'
-        : message;
-      sendToRenderer('chat:ai-stream-error', { conversationId, error: displayMessage });
+      sendToRenderer('chat:ai-stream-error', { conversationId, error: message });
       appendSystemLog(`Pi chat error: ${message}`);
       return { ok: false, error: message };
     } finally {
@@ -1842,12 +1825,30 @@ export function registerPiChatHandlers({
     }
   };
 
+  let lastServiceCatalogEntries: ChatServiceCatalogEntry[] = [];
+  let lastServiceCatalogRefreshAt = 0;
+  const SERVICE_CATALOG_DEBOUNCE_MS = 5_000;
+  let serviceCatalogRefreshPromise: Promise<ChatServiceCatalogEntry[]> | null = null;
+
   const refreshServiceCatalogFromNetwork = async (): Promise<ChatServiceCatalogEntry[]> => {
-    const entries = await discoverChatServiceCatalog(getNetworkPeers);
-    const limited = limitChatServiceCatalogEntries(normalizeChatServiceCatalogEntries(entries));
-    updateServiceProviderHints(serviceProviderHints, limited);
-    updateServiceProtocolMap(serviceProtocolMap, limited);
-    return limited;
+    // Deduplicate concurrent calls
+    if (serviceCatalogRefreshPromise) return serviceCatalogRefreshPromise;
+    // Debounce rapid calls (e.g. UI refreshes)
+    if (Date.now() - lastServiceCatalogRefreshAt < SERVICE_CATALOG_DEBOUNCE_MS && lastServiceCatalogEntries.length > 0) {
+      return lastServiceCatalogEntries;
+    }
+
+    serviceCatalogRefreshPromise = (async () => {
+      const entries = await discoverChatServiceCatalog(getNetworkPeers);
+      const limited = limitChatServiceCatalogEntries(normalizeChatServiceCatalogEntries(entries));
+      updateServiceProviderHints(serviceProviderHints, limited);
+      updateServiceProtocolMap(serviceProtocolMap, limited);
+      lastServiceCatalogRefreshAt = Date.now();
+      lastServiceCatalogEntries = limited;
+      return limited;
+    })().finally(() => { serviceCatalogRefreshPromise = null; });
+
+    return serviceCatalogRefreshPromise;
   };
 
   const resolveProtocolForSend = async (serviceId: string): Promise<ChatServiceProtocol> => {
