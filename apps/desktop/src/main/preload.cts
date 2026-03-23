@@ -289,6 +289,7 @@ const api = {
   paymentsSignSpendingAuth: (params: unknown) => ipcRenderer.invoke('payments:sign-spending-auth', params),
   paymentsGetPeerInfo: (peerId: string) => ipcRenderer.invoke('payments:get-peer-info', peerId),
   paymentsOpenPortal: () => ipcRenderer.invoke('payments:open-portal'),
+  chatApprovePayment: (conversationId: string) => ipcRenderer.invoke('chat:approve-payment', conversationId) as Promise<{ ok: boolean; error?: string }>,
 };
 
 contextBridge.exposeInMainWorld('antseedDesktop', api);

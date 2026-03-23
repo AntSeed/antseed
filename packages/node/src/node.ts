@@ -12,6 +12,7 @@ import {
   type SerializedHttpRequest,
   type SerializedHttpResponse,
   type SerializedHttpResponseChunk,
+  ANTSEED_SPENDING_AUTH_HEADER,
 } from "./types/http.js";
 import type { ConnectionConfig } from "./types/connection.js";
 import type { MeteringEvent, SessionMetrics, TokenCount } from "./types/metering.js";
@@ -102,6 +103,15 @@ function parseResponseUsage(body: Uint8Array): { inputTokens: number; outputToke
   return { inputTokens, outputTokens };
 }
 
+function parsePaymentRequiredBody(body: Uint8Array): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>;
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 export interface NodePaymentsConfig {
   /** Enable seller-side payment channels and automatic settlement. */
   enabled?: boolean;
@@ -164,6 +174,13 @@ export interface NodeConfig {
   payments?: NodePaymentsConfig;
   /** Pluggable identity storage backend. When set, takes precedence over dataDir for identity loading. */
   identityStore?: IdentityStore;
+  /** Optional explicit config.json path for runtime config reloads. */
+  configPath?: string;
+  /**
+   * When true, the node returns the 402 to the caller instead of auto-signing.
+   * The caller can then sign externally and retry with x-antseed-spending-auth header.
+   */
+  requireManualApproval?: boolean;
 }
 
 interface SellerSessionState {
@@ -583,10 +600,22 @@ export class AntseedNode extends EventEmitter {
     debugLog(`[Node] Connection to ${peer.peerId.slice(0, 12)}... state=${conn.state}`);
     const mux = this._getOrCreateMux(peer.peerId, conn);
 
+    // Extract and strip x-antseed-spending-auth header if present (manual approval flow)
+    const externalSpendingAuth = req.headers[ANTSEED_SPENDING_AUTH_HEADER] ?? null;
+    if (externalSpendingAuth) {
+      const { [ANTSEED_SPENDING_AUTH_HEADER]: _, ...cleanHeaders } = req.headers;
+      req = { ...req, headers: cleanHeaders };
+    }
+
     // If we already have a payment session with this peer, skip negotiation.
-    // Otherwise, send the request and handle 402 reactively.
     const needsPaymentNegotiation = this._buyerPaymentManager
       && !this._buyerLockedPeers.has(peer.peerId);
+
+    // If an external spending auth was provided, apply it before sending the request.
+    if (externalSpendingAuth && needsPaymentNegotiation) {
+      debugLog(`[Node] Applying external spending auth for ${peer.peerId.slice(0, 12)}...`);
+      await this._applyExternalSpendingAuth(peer, conn, externalSpendingAuth);
+    }
 
     const startTime = Date.now();
 
@@ -775,16 +804,71 @@ export class AntseedNode extends EventEmitter {
     // wait for the seller's PaymentRequired message, negotiate, and retry.
     const response = await executeRequest();
 
-    if (response.statusCode === 402 && needsPaymentNegotiation) {
-      // Auto-negotiate: sign SpendingAuth and retry. If buyer has insufficient
-      // balance, the negotiation throws and the error surfaces to the caller.
+    if (response.statusCode === 402 && needsPaymentNegotiation && !externalSpendingAuth) {
+      const manualApproval = await this._isManualApprovalEnabled();
+      const directPaymentBody = parsePaymentRequiredBody(response.body);
+      const responseAlreadyHasRequirements = Boolean(directPaymentBody?.sellerEvmAddr);
+      const waitMs = manualApproval ? 10_000 : 2_000;
+      const buffered = responseAlreadyHasRequirements
+        ? null
+        : await this._awaitPaymentRequired(peer.peerId, conn, waitMs);
+      if (buffered) this._bufferedPaymentRequired.delete(peer.peerId);
+
+      // Helper: return enriched 402 so the caller can show an approval / add-credits card
+      const returnPaymentRequired = (reason: string): SerializedHttpResponse => {
+        debugLog(`[Node] Got 402 from ${peer.peerId.slice(0, 12)}... — returning to caller (${reason})`);
+        if (responseAlreadyHasRequirements) {
+          return response;
+        }
+        if (buffered) {
+          const enrichedBody = JSON.stringify({
+            error: 'payment_required',
+            peerId: peer.peerId,
+            sellerEvmAddr: buffered.sellerEvmAddr,
+            tokenRate: buffered.tokenRate,
+            firstSignCap: buffered.firstSignCap,
+            suggestedAmount: buffered.suggestedAmount,
+          });
+          return {
+            ...response,
+            headers: { ...response.headers, 'content-type': 'application/json' },
+            body: new TextEncoder().encode(enrichedBody),
+          };
+        }
+        return response;
+      };
+
+      // If manual approval is on, always return the 402 to the caller
+      if (manualApproval) {
+        return returnPaymentRequired(responseAlreadyHasRequirements ? 'manual approval (direct body)' : 'manual approval');
+      }
+
+      // Auto mode: check if we can actually pay before attempting negotiation
+      if (!this._escrowClient || !this._identity || !this._buyerPaymentManager) {
+        return returnPaymentRequired('no escrow configured');
+      }
+
+      // Check on-chain balance — if insufficient, return 402 instead of failing mid-negotiate
+      try {
+        const buyerAddr = identityToEvmAddress(this._identity);
+        const balance = await this._escrowClient.getBuyerBalance(buyerAddr);
+        if (balance.available <= 0n) {
+          return returnPaymentRequired('insufficient credits');
+        }
+      } catch (err) {
+        debugWarn(`[Node] Failed to check buyer balance: ${err instanceof Error ? err.message : err}`);
+        // Fall through to negotiate — let it fail naturally if balance is truly insufficient
+      }
+
+      // Auto-negotiate: sign SpendingAuth internally and retry
+      // Re-buffer the PaymentRequired so _doNegotiatePayment can consume it
+      if (buffered) this._bufferedPaymentRequired.set(peer.peerId, buffered);
       debugLog(`[Node] Got 402 from ${peer.peerId.slice(0, 12)}... — auto-negotiating payment`);
       try {
         await this._negotiatePayment(peer, conn);
         debugLog(`[Node] Payment negotiated with ${peer.peerId.slice(0, 12)}... — retrying request`);
         return executeRequest();
       } catch (err) {
-        // Negotiation failed — remove from locked set so next request can retry
         this._buyerLockedPeers.delete(peer.peerId);
         throw err;
       }
@@ -1022,6 +1106,9 @@ export class AntseedNode extends EventEmitter {
     const dhtPort = this._config.dhtPort ?? 0;
     debugLog(`[Node] Starting buyer — DHT port=${dhtPort}`);
 
+    const dataDir = this._config.dataDir ?? join(homedir(), ".antseed");
+    await this._initializePayments(dataDir);
+
     // Start DHT with ephemeral port
     this._dht = new DHTNode(this._createDHTConfig(dhtPort, bootstrapNodes));
     await this._dht.start();
@@ -1048,7 +1135,7 @@ export class AntseedNode extends EventEmitter {
     // Initialize buyer-side payment manager if payments config is provided
     const payments = this._config.payments;
     if (payments?.enabled && payments.rpcUrl && payments.contractAddress && payments.usdcAddress) {
-      const paymentsDir = join(this._config.dataDir ?? join(homedir(), ".antseed"), "payments");
+      const paymentsDir = join(dataDir, "payments");
       // Create shared SessionStore for both buyer and seller payment managers
       if (!this._sessionStore) {
         try {
@@ -1821,6 +1908,164 @@ export class AntseedNode extends EventEmitter {
    * the seller's real requirements, and wait for AuthAck.
    * Uses a per-peer mutex so concurrent requests wait for the first negotiation.
    */
+
+  /** Read requireManualApproval from config.json so changes take effect without restart. */
+  private async _isManualApprovalEnabled(): Promise<boolean> {
+    try {
+      const { readFile } = await import('node:fs/promises');
+      const configPath = this._config.configPath
+        ?? join(this._config.dataDir ?? join(homedir(), '.antseed'), 'config.json');
+      const raw = await readFile(configPath, 'utf-8');
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      const buyer = parsed.buyer && typeof parsed.buyer === 'object' ? parsed.buyer as Record<string, unknown> : {};
+      return Boolean(buyer.requireManualApproval);
+    } catch {
+      return Boolean(this._config.requireManualApproval);
+    }
+  }
+
+  /**
+   * Wait for the seller's PaymentRequired payload for a given peer.
+   * Returns a buffered payload immediately when available, otherwise waits up to timeoutMs.
+   */
+  private async _awaitPaymentRequired(
+    peerId: PeerId,
+    conn: PeerConnection,
+    timeoutMs: number,
+  ): Promise<PaymentRequiredPayload | null> {
+    const buffered = this._bufferedPaymentRequired.get(peerId);
+    if (buffered) {
+      return buffered;
+    }
+
+    // Ensure the buyer-side PaymentMux exists before waiting so incoming frames
+    // are captured even when 402 and PaymentRequired arrive close together.
+    this._getOrCreateBuyerPaymentMux(peerId, conn);
+
+    return await new Promise<PaymentRequiredPayload | null>((resolve) => {
+      const already = this._bufferedPaymentRequired.get(peerId);
+      if (already) {
+        resolve(already);
+        return;
+      }
+
+      const existing = this._pendingPaymentRequired.get(peerId);
+      if (existing) {
+        const wrapper = {
+          resolve: (payload: PaymentRequiredPayload) => {
+            clearTimeout(existing.timer);
+            clearTimeout(wrapper.timer);
+            this._pendingPaymentRequired.delete(peerId);
+            existing.resolve(payload);
+            resolve(payload);
+          },
+          reject: (err: Error) => {
+            clearTimeout(existing.timer);
+            clearTimeout(wrapper.timer);
+            this._pendingPaymentRequired.delete(peerId);
+            existing.reject(err);
+            resolve(null);
+          },
+          timer: setTimeout(() => {
+            if (this._pendingPaymentRequired.get(peerId) === wrapper) {
+              this._pendingPaymentRequired.delete(peerId);
+            }
+            resolve(null);
+          }, timeoutMs),
+        };
+        this._pendingPaymentRequired.set(peerId, wrapper);
+        return;
+      }
+
+      const timer = setTimeout(() => {
+        this._pendingPaymentRequired.delete(peerId);
+        resolve(null);
+      }, timeoutMs);
+      this._pendingPaymentRequired.set(peerId, {
+        resolve: (payload) => {
+          clearTimeout(timer);
+          resolve(payload);
+        },
+        reject: () => {
+          clearTimeout(timer);
+          resolve(null);
+        },
+        timer,
+      });
+    });
+  }
+
+  /**
+   * Apply a pre-signed SpendingAuth from the x-antseed-spending-auth header.
+   * Sends it to the seller via PaymentMux and waits for AuthAck.
+   */
+  private async _applyExternalSpendingAuth(
+    peer: PeerInfo,
+    conn: PeerConnection,
+    headerValue: string,
+  ): Promise<void> {
+    const pmux = this._getOrCreateBuyerPaymentMux(peer.peerId, conn);
+
+    let payload: {
+      sessionId: string;
+      maxAmountUsdc: string;
+      nonce: number;
+      deadline: number;
+      buyerSig: string;
+      buyerEvmAddr: string;
+      sellerEvmAddr?: string;
+      previousConsumption: string;
+      previousSessionId: string;
+    };
+    try {
+      const decoded = Buffer.from(headerValue, 'base64').toString('utf-8');
+      payload = JSON.parse(decoded);
+    } catch {
+      throw new Error('Invalid x-antseed-spending-auth header: failed to decode');
+    }
+
+    debugLog(`[Node] External SpendingAuth: session=${payload.sessionId.slice(0, 18)}... amount=${payload.maxAmountUsdc}`);
+
+    // Store session so handleAuthAck can find it
+    if (this._sessionStore) {
+      const sellerEvmAddr = payload.sellerEvmAddr ?? '';
+      this._sessionStore.upsertSession({
+        sessionId: payload.sessionId,
+        peerId: peer.peerId,
+        role: 'buyer',
+        sellerEvmAddr,
+        buyerEvmAddr: payload.buyerEvmAddr,
+        nonce: payload.nonce,
+        authMax: payload.maxAmountUsdc,
+        deadline: payload.deadline,
+        previousSessionId: payload.previousSessionId,
+        previousConsumption: payload.previousConsumption,
+        tokensDelivered: '0',
+        requestCount: 0,
+        reservedAt: Date.now(),
+        settledAt: null,
+        settledAmount: null,
+        status: 'active',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    }
+
+    // Send the pre-signed SpendingAuth to the seller
+    pmux.sendSpendingAuth(payload);
+    debugLog(`[Node] External SpendingAuth sent to seller ${peer.peerId.slice(0, 12)}..., waiting for AuthAck...`);
+
+    await this._waitForLockConfirmation(peer.peerId);
+    debugLog(`[Node] AuthAck received from seller ${peer.peerId.slice(0, 12)}...`);
+    this._buyerLockedPeers.add(peer.peerId);
+
+    this.emit('payment:signed', {
+      peerId: peer.peerId,
+      sellerEvmAddr: payload.sellerEvmAddr ?? '',
+      amount: payload.maxAmountUsdc,
+    });
+  }
+
   private async _negotiatePayment(peer: PeerInfo, conn: PeerConnection): Promise<void> {
     // Per-peer mutex: if another request is already negotiating, wait for it
     const existing = this._paymentNegotiationLocks.get(peer.peerId);
@@ -1840,7 +2085,9 @@ export class AntseedNode extends EventEmitter {
 
   private async _doNegotiatePayment(peer: PeerInfo, conn: PeerConnection): Promise<void> {
     const bpm = this._buyerPaymentManager;
-    if (!bpm) return;
+    if (!bpm) {
+      throw new Error('Insufficient escrow balance to authorize payment — no escrow contract configured');
+    }
 
     // If already locked from a previous successful negotiation, skip
     if (this._buyerLockedPeers.has(peer.peerId)) return;

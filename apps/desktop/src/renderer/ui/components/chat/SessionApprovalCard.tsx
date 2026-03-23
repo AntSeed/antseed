@@ -31,7 +31,9 @@ export function SessionApprovalCard({
   onCancel,
 }: SessionApprovalCardProps) {
   const { creditsAvailableUsdc } = useUiSnapshot();
-  const hasCredits = parseFloat(creditsAvailableUsdc) >= parseFloat(amount || '0');
+  const balance = parseFloat(creditsAvailableUsdc);
+  const required = parseFloat(amount || '0');
+  const hasCredits = balance > 0 && balance >= required;
 
   if (!visible) return null;
   const displayName = peerName || 'this service';

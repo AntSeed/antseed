@@ -61,6 +61,8 @@ export function initSettingsModule({
     const buyerMaxPricingDefaults = asRecord(buyerMaxPricing.defaults);
     const payments = asRecord(configObj.payments);
 
+    const crypto = asRecord(payments.crypto);
+
     applyConfigFormData({
       proxyPort: safeNumber(buyer.proxyPort, 8377),
       maxInputUsdPerMillion: safeNumber(buyerMaxPricingDefaults.inputUsdPerMillion, 0),
@@ -69,6 +71,10 @@ export function initSettingsModule({
       paymentMethod: safeString(payments.preferredMethod, 'crypto'),
       requireManualApproval: Boolean(buyer.requireManualApproval),
       devMode: uiState.devMode,
+      cryptoChainId: safeString(crypto.chainId, ''),
+      cryptoRpcUrl: safeString(crypto.rpcUrl, ''),
+      cryptoEscrowAddress: safeString(crypto.escrowContractAddress, ''),
+      cryptoUsdcAddress: safeString(crypto.usdcContractAddress, ''),
     });
     notifyUiStateChanged();
   }
@@ -107,6 +113,15 @@ export function initSettingsModule({
         payments: {
           ...asRecord(currentConfig.payments),
           preferredMethod: formData.paymentMethod || 'crypto',
+          ...(formData.cryptoChainId || formData.cryptoRpcUrl || formData.cryptoEscrowAddress || formData.cryptoUsdcAddress ? {
+            crypto: {
+              ...asRecord(asRecord(currentConfig.payments)?.crypto),
+              ...(formData.cryptoChainId ? { chainId: formData.cryptoChainId } : {}),
+              ...(formData.cryptoRpcUrl ? { rpcUrl: formData.cryptoRpcUrl } : {}),
+              ...(formData.cryptoEscrowAddress ? { escrowContractAddress: formData.cryptoEscrowAddress } : {}),
+              ...(formData.cryptoUsdcAddress ? { usdcContractAddress: formData.cryptoUsdcAddress } : {}),
+            },
+          } : {}),
         },
       };
 

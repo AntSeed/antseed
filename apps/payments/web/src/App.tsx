@@ -105,11 +105,6 @@ export function App() {
         <div className="portal-section">
           <DepositView config={config} buyerAddress={config?.evmAddress ?? null} onDeposited={refreshBalance} />
         </div>
-
-        {/* ── Withdraw ── */}
-        <div className="portal-section">
-          <WithdrawView balance={balance} onAction={refreshBalance} />
-        </div>
       </div>
 
       {/* ── Footer ── */}
