@@ -407,7 +407,8 @@ registerActions({
   handleServiceBlur: chatApi.handleServiceBlur,
   clearPinnedPeer: chatApi.clearPinnedPeer,
   approvePaymentSession: () => {
-    // Dismiss the approval card — the 402-based retry flow will handle negotiation
+    // Dismiss the card and resend the last user message — the node will
+    // auto-negotiate on retry since the peer is now in _manuallyApprovedPeers.
     uiState.chatPaymentApprovalVisible = false;
     uiState.chatPaymentApprovalPeerId = null;
     uiState.chatPaymentApprovalPeerName = null;
@@ -415,6 +416,12 @@ registerActions({
     uiState.chatPaymentApprovalLoading = false;
     uiState.chatPaymentApprovalError = null;
     notifyUiStateChanged();
+    // Resend the last user message
+    const messages = uiState.chatMessages as Array<{ role: string; content: unknown }>;
+    const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user');
+    if (lastUserMsg && typeof lastUserMsg.content === 'string') {
+      chatApi.sendMessage(lastUserMsg.content);
+    }
   },
   rejectPaymentSession: () => {
     uiState.chatPaymentApprovalVisible = false;

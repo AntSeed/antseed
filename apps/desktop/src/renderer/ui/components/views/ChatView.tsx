@@ -291,21 +291,18 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
             {snap.chatSending && snap.chatSendingConversationId === snap.chatActiveConversation && (
               <WalkingAnt elapsedMs={snap.chatThinkingElapsedMs} />
             )}
+            <SessionApprovalCard
+              visible={snap.chatPaymentApprovalVisible}
+              peerName={snap.chatPaymentApprovalPeerName}
+              amount={snap.chatPaymentApprovalAmount}
+              peerInfo={snap.chatPaymentApprovalPeerInfo}
+              loading={snap.chatPaymentApprovalLoading}
+              error={snap.chatPaymentApprovalError}
+              onApprove={() => actions.approvePaymentSession()}
+              onCancel={() => actions.rejectPaymentSession()}
+            />
           </div>
 
-          <SessionApprovalCard
-            visible={snap.chatPaymentApprovalVisible}
-            peerName={snap.chatPaymentApprovalPeerName}
-            amount={snap.chatPaymentApprovalAmount}
-            peerInfo={snap.chatPaymentApprovalPeerInfo}
-            loading={snap.chatPaymentApprovalLoading}
-            error={snap.chatPaymentApprovalError}
-            onApprove={() => {
-              actions.openPaymentsPortal?.();
-              actions.rejectPaymentSession();
-            }}
-            onCancel={() => actions.rejectPaymentSession()}
-          />
 
           <div className={styles.chatInputArea}>
             {snap.chatError && <div className={styles.chatError}>{snap.chatError}</div>}
