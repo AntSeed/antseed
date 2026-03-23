@@ -1729,6 +1729,20 @@ export function registerPiChatHandlers({
           return;
         }
         if (message.role === 'assistant') {
+          // Detect payment errors from the provider's error response
+          const msgAny = message as unknown as Record<string, unknown>;
+          const errorMsg = typeof msgAny.errorMessage === 'string' ? msgAny.errorMessage : '';
+          if (/402|payment.required/i.test(errorMsg)) {
+            sendToRenderer('chat:ai-stream-error', {
+              conversationId,
+              error: 'Payment required (402). Add credits to your escrow to use this service.',
+            });
+            // Abort any remaining agent turns
+            const activeRun = activeRunsByConversation.get(conversationId);
+            if (activeRun) void abortAndClearActiveRun(activeRun);
+            return;
+          }
+
           const proxyMeta = turnMetaQueue.shift();
           const parsedMeta = parseAssistantMetaFromSessionEvent(message, proxyMeta);
           const peerId = normalizePeerId(parsedMeta.peerId);
@@ -1759,6 +1773,8 @@ export function registerPiChatHandlers({
         ? [{ type: 'image', data: imageBase64, mimeType: imageMimeType }]
         : [];
       await session.prompt(trimmedMessage || ' ', { images: images.length > 0 ? images : undefined });
+
+      console.log('[chat-engine] prompt completed — pendingMsg:', pendingAssistantMessage ? 'yes' : 'null');
 
       // Check if the agent received a 402 payment_required response.
       // The node returns JSON with "error":"payment_required" which the agent
@@ -1800,6 +1816,7 @@ export function registerPiChatHandlers({
         return { ok: false, error: 'Aborted' };
       }
       const message = asErrorMessage(error);
+      console.log('[chat-engine] catch block — error:', message);
       // Detect payment-related errors (402 from seller, insufficient balance, etc.)
       const isPaymentError = /402|payment.required|insufficient.*balance|escrow/i.test(message);
       const displayMessage = isPaymentError
