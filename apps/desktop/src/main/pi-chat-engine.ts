@@ -1733,9 +1733,20 @@ export function registerPiChatHandlers({
           const msgAny = message as unknown as Record<string, unknown>;
           const errorMsg = typeof msgAny.errorMessage === 'string' ? msgAny.errorMessage : '';
           if (/402|payment.required/i.test(errorMsg)) {
+            // Try to extract suggestedAmount from the error message or raw content
+            let suggestedAmount = '100000'; // default $0.10
+            try {
+              // The message content may contain the raw 402 JSON body
+              const rawContent = Array.isArray(msgAny.content)
+                ? (msgAny.content as Array<Record<string, unknown>>).map((b) => String(b.text ?? '')).join('')
+                : String(msgAny.content ?? '');
+              const match = /"suggestedAmount"\s*:\s*"(\d+)"/.exec(rawContent);
+              if (match?.[1]) suggestedAmount = match[1];
+            } catch { /* use default */ }
+
             sendToRenderer('chat:ai-stream-error', {
               conversationId,
-              error: 'Payment required (402). Add credits to your escrow to use this service.',
+              error: `payment_required:${suggestedAmount}`,
             });
             // Abort any remaining agent turns
             const activeRun = activeRunsByConversation.get(conversationId);

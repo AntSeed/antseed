@@ -300,13 +300,11 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
             peerInfo={snap.chatPaymentApprovalPeerInfo}
             loading={snap.chatPaymentApprovalLoading}
             error={snap.chatPaymentApprovalError}
-            onApprove={() => actions.approvePaymentSession()}
+            onApprove={() => {
+              actions.openPaymentsPortal?.();
+              actions.rejectPaymentSession();
+            }}
             onCancel={() => actions.rejectPaymentSession()}
-          />
-          <LowBalanceWarning
-            visible={snap.chatLowBalanceWarning}
-            availableUsdc={snap.creditsAvailableUsdc}
-            onAddCredits={() => actions.openPaymentsPortal?.()}
           />
 
           <div className={styles.chatInputArea}>

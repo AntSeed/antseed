@@ -30,33 +30,52 @@ export function SessionApprovalCard({
   if (!visible) return null;
 
   const displayName = peerName || 'Peer';
+  const isPaymentRequired = !peerInfo && !loading;
 
   return (
     <div className={styles.approval}>
-      <div className={styles.approvalMeta}>{displayName}</div>
+      {isPaymentRequired ? (
+        <>
+          <div className={styles.approvalText}>
+            This service requires a <strong>${amount} USDC</strong> pre-deposit to start a session. Add credits to your escrow to continue.
+          </div>
+          <div className={styles.approvalActions}>
+            <button className={styles.approveBtn} onClick={onApprove}>
+              Add Credits
+            </button>
+            <button className={styles.cancelBtn} onClick={onCancel}>
+              Dismiss
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className={styles.approvalMeta}>{displayName}</div>
 
-      {peerInfo && (peerInfo.reputation > 0 || peerInfo.sessionCount !== null) && (
-        <div className={styles.approvalStats}>
-          {peerInfo.reputation > 0 && <span>{peerInfo.reputation} reputation</span>}
-          {peerInfo.sessionCount !== null && <span>{peerInfo.sessionCount} sessions</span>}
-          {peerInfo.networkAgeDays !== null && <span>{peerInfo.networkAgeDays}d in network</span>}
-        </div>
+          {peerInfo && (peerInfo.reputation > 0 || peerInfo.sessionCount !== null) && (
+            <div className={styles.approvalStats}>
+              {peerInfo.reputation > 0 && <span>{peerInfo.reputation} reputation</span>}
+              {peerInfo.sessionCount !== null && <span>{peerInfo.sessionCount} sessions</span>}
+              {peerInfo.networkAgeDays !== null && <span>{peerInfo.networkAgeDays}d in network</span>}
+            </div>
+          )}
+
+          <div className={styles.approvalText}>
+            To start your session, approve a pre-deposit of <strong>${amount}</strong> to <strong>{displayName}</strong>. This is deducted from your credits.
+          </div>
+
+          {error && <div className={styles.approvalError}>{error}</div>}
+
+          <div className={styles.approvalActions}>
+            <button className={styles.approveBtn} onClick={onApprove} disabled={loading}>
+              {loading ? 'Approving...' : 'Approve'}
+            </button>
+            <button className={styles.cancelBtn} onClick={onCancel} disabled={loading}>
+              Cancel
+            </button>
+          </div>
+        </>
       )}
-
-      <div className={styles.approvalText}>
-        To start your session, approve a pre-deposit of <strong>${amount}</strong> to <strong>{displayName}</strong>. This is deducted from your credits.
-      </div>
-
-      {error && <div className={styles.approvalError}>{error}</div>}
-
-      <div className={styles.approvalActions}>
-        <button className={styles.approveBtn} onClick={onApprove} disabled={loading}>
-          {loading ? 'Approving...' : 'Approve'}
-        </button>
-        <button className={styles.cancelBtn} onClick={onCancel} disabled={loading}>
-          Cancel
-        </button>
-      </div>
     </div>
   );
 }

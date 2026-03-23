@@ -1196,15 +1196,10 @@ export function initChatModule({
             const errorMsg = typeof result.error === 'string' ? result.error : '';
             const isPaymentError = /payment.required|insufficient.*balance|escrow.*balance|402/i.test(errorMsg);
             if (isPaymentError) {
-              uiState.chatMessages = [
-                ...uiState.chatMessages,
-                {
-                  role: 'assistant',
-                  content: 'This service requires payment. Add credits to your escrow to continue.',
-                  createdAt: Date.now(),
-                },
-              ];
-              uiState.chatLowBalanceWarning = true;
+              const paymentMatch2 = /payment_required:(\d+)/i.exec(errorMsg);
+              const baseUnits2 = paymentMatch2?.[1] ?? '100000';
+              uiState.chatPaymentApprovalVisible = true;
+              uiState.chatPaymentApprovalAmount = (Number(baseUnits2) / 1_000_000).toFixed(2);
               notifyUiStateChanged();
             } else {
               reportChatError(result.error, 'Request failed');
@@ -1674,17 +1669,12 @@ export function initChatModule({
 
           if (data.error !== 'Request aborted') {
             const errStr = typeof data.error === 'string' ? data.error : '';
-            if (/payment.required|insufficient.*balance|escrow.*balance|402/i.test(errStr)) {
-              // Show as assistant chat bubble so it's visible in the conversation
-              uiState.chatMessages = [
-                ...uiState.chatMessages,
-                {
-                  role: 'assistant',
-                  content: 'This service requires payment. Add credits to your escrow to continue.',
-                  createdAt: Date.now(),
-                },
-              ];
-              uiState.chatLowBalanceWarning = true;
+            const paymentMatch = /payment_required:(\d+)/i.exec(errStr);
+            if (paymentMatch || /payment.required|insufficient.*balance|escrow.*balance|402/i.test(errStr)) {
+              const baseUnits = paymentMatch?.[1] ?? '100000';
+              const amount = (Number(baseUnits) / 1_000_000).toFixed(2);
+              uiState.chatPaymentApprovalVisible = true;
+              uiState.chatPaymentApprovalAmount = amount;
               notifyUiStateChanged();
               if (bridge.chatAiAbort) void bridge.chatAiAbort().catch(() => {});
             } else {
