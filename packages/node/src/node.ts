@@ -1884,7 +1884,12 @@ export class AntseedNode extends EventEmitter {
 
     // Cap amount before building approval info so the displayed amount
     // matches what will actually be signed via authorizeSpending.
-    let amount = BigInt(requirements.suggestedAmount);
+    let amount: bigint;
+    try {
+      amount = BigInt(requirements.suggestedAmount);
+    } catch {
+      throw new Error(`Invalid suggestedAmount from seller ${peer.peerId.slice(0, 12)}...: "${requirements.suggestedAmount}"`);
+    }
     if (approvalContext) {
       const available = approvalContext.buyerBalance.available;
       if (amount > available) amount = available;
@@ -1908,6 +1913,8 @@ export class AntseedNode extends EventEmitter {
       cooldownRemainingSecs: approvalContext?.cooldownRemainingSecs ?? null,
     };
 
+    this.emit('payment:required', approvalInfo);
+
     if (this._config.onPaymentApproval) {
       debugLog(`[Node] Waiting for payment approval from user for peer ${peer.peerId.slice(0, 12)}...`);
       const decision = await this._config.onPaymentApproval(approvalInfo);
@@ -1916,8 +1923,6 @@ export class AntseedNode extends EventEmitter {
       }
       debugLog(`[Node] Payment approved by user for peer ${peer.peerId.slice(0, 12)}...`);
     }
-
-    this.emit('payment:required', approvalInfo);
     try {
       await bpm.authorizeSpending(peer.peerId, requirements.sellerEvmAddr, pmux, amount);
       debugLog(`[Node] SpendingAuth sent to seller ${peer.peerId.slice(0, 12)}..., waiting for AuthAck...`);
