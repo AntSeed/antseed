@@ -587,19 +587,37 @@ function limitChatServiceCatalogEntries(entries: ChatServiceCatalogEntry[]): Cha
 async function discoverChatServiceCatalog(
   getNetworkPeers?: () => Promise<NetworkPeerAddress[]>,
 ): Promise<ChatServiceCatalogEntry[]> {
-  if (!getNetworkPeers) {
-    return [];
-  }
-
+  // Read peers directly from buyer.state.json for immediate availability.
+  // Falls back to the getNetworkPeers callback if the file isn't available.
   let peers: NetworkPeerAddress[] = [];
   try {
-    peers = await getNetworkPeers();
-  } catch (err) {
-    console.log(`[services] getNetworkPeers failed: ${err instanceof Error ? err.message : String(err)}`);
-    return [];
+    const { readFile } = await import('node:fs/promises');
+    const { DEFAULT_BUYER_STATE_PATH } = await import('./constants.js');
+    const raw = await readFile(DEFAULT_BUYER_STATE_PATH, 'utf-8');
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const rawPeers = Array.isArray(parsed.discoveredPeers) ? parsed.discoveredPeers : [];
+    peers = rawPeers
+      .filter((p): p is Record<string, unknown> => p !== null && typeof p === 'object')
+      .map((p) => ({
+        peerId: typeof p.peerId === 'string' ? p.peerId : '',
+        displayName: typeof p.displayName === 'string' ? p.displayName : undefined,
+        host: '',
+        port: 0,
+        providers: Array.isArray(p.providers) ? p.providers.map(String) : [],
+        services: Array.isArray(p.services) ? p.services.map(String) : [],
+      }))
+      .filter((p) => p.peerId.length > 0);
+  } catch {
+    // File not ready yet — try the callback
+    if (!getNetworkPeers) return [];
+    try {
+      peers = await getNetworkPeers();
+    } catch {
+      return [];
+    }
   }
 
-  console.log(`[services] Found ${peers.length} peer(s) from network`);
+  console.log(`[services] Found ${peers.length} peer(s)`);
   for (const p of peers.slice(0, 5)) {
     console.log(`[services]   peer ${p.peerId?.slice(0, 12)}... providers=[${(p.providers ?? []).join(',')}] services=[${(p.services ?? []).join(',')}]`);
   }
