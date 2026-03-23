@@ -260,6 +260,7 @@ export class AntseedNode extends EventEmitter {
   /** Pending PaymentRequired payloads from sellers, keyed by peerId. Resolvers waiting for them. */
   private _pendingPaymentRequired = new Map<string, {
     resolve: (payload: PaymentRequiredPayload) => void;
+    reject: (err: Error) => void;
     timer: ReturnType<typeof setTimeout>;
   }>();
   /** Buffered PaymentRequired that arrived before _doNegotiatePayment registered its listener.
@@ -861,6 +862,15 @@ export class AntseedNode extends EventEmitter {
         this._muxes.delete(peerId);
         this._paymentMuxes.delete(peerId);
         this._bufferedPaymentRequired.delete(peerId);
+        // Cancel any in-flight PaymentRequired wait so _doNegotiatePayment
+        // fails immediately instead of blocking for 10s on a dead connection.
+        const pendingPR = this._pendingPaymentRequired.get(peerId);
+        if (pendingPR) {
+          clearTimeout(pendingPR.timer);
+          this._pendingPaymentRequired.delete(peerId);
+          pendingPR.reject(new Error(`Peer ${peerId.slice(0, 12)}... disconnected during payment negotiation`));
+        }
+        this._paymentNegotiationLocks.delete(peerId);
         this._decoders.delete(peerId);
         // Handle buyer disconnect
         if (this._sellerPaymentManager) {
@@ -1825,7 +1835,7 @@ export class AntseedNode extends EventEmitter {
         this._pendingPaymentRequired.delete(peer.peerId);
         reject(new Error(`PaymentRequired timeout from seller ${peer.peerId.slice(0, 12)}...`));
       }, PAYMENT_REQUIRED_TIMEOUT_MS);
-      this._pendingPaymentRequired.set(peer.peerId, { resolve, timer });
+      this._pendingPaymentRequired.set(peer.peerId, { resolve, reject, timer });
     });
 
     debugLog(`[Node] PaymentRequired from ${peer.peerId.slice(0, 12)}...: rate=${requirements.tokenRate} cap=${requirements.firstSignCap} suggested=${requirements.suggestedAmount}`);
