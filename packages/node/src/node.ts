@@ -860,6 +860,7 @@ export class AntseedNode extends EventEmitter {
         this._muxes.get(peerId)?.abortPendingUploads();
         this._muxes.delete(peerId);
         this._paymentMuxes.delete(peerId);
+        this._bufferedPaymentRequired.delete(peerId);
         this._decoders.delete(peerId);
         // Handle buyer disconnect
         if (this._sellerPaymentManager) {
