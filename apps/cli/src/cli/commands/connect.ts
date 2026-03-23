@@ -321,6 +321,7 @@ export function registerConnectCommand(program: Command): void {
           rpcUrl: chainConfig.rpcUrl,
           contractAddress: chainConfig.escrowContractAddress,
           usdcAddress: chainConfig.usdcContractAddress,
+          chainId: chainConfig.evmChainId,
           defaultEscrowAmountUSDC: cryptoOverrides?.defaultLockAmountUSDC
             ? String(Math.round(parseFloat(cryptoOverrides.defaultLockAmountUSDC) * 1_000_000))
             : '1000000',

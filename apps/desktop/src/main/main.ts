@@ -599,7 +599,14 @@ async function loadCachedCryptoConfig(): Promise<typeof cachedCryptoConfig> {
     const payments = asRecord(config.payments);
     overrides = asRecord(payments.crypto);
   } catch {
-    // No config — use protocol defaults
+    // No config — no crypto config available
+  }
+  // Only resolve if the user has explicitly configured a chain or escrow address.
+  // Without explicit config, there's no escrow to query — return null so callers
+  // skip RPC calls instead of hitting a default contract that may not exist.
+  const hasExplicitConfig = overrides.chainId || overrides.rpcUrl || overrides.escrowContractAddress;
+  if (!hasExplicitConfig) {
+    return null;
   }
   const cc = resolveChainConfig({
     chainId: asString(overrides.chainId as string, '') || undefined,
@@ -610,6 +617,11 @@ async function loadCachedCryptoConfig(): Promise<typeof cachedCryptoConfig> {
   cachedCryptoConfig = { rpcUrl: cc.rpcUrl, escrowAddress: cc.escrowContractAddress, usdcAddress: cc.usdcContractAddress, chainId: cc.evmChainId };
   return cachedCryptoConfig;
 }
+
+let creditsRpcFailCount = 0;
+let creditsRpcLastFailAt = 0;
+const CREDITS_RPC_BACKOFF_THRESHOLD = 3;
+const CREDITS_RPC_RETRY_COOLDOWN_MS = 60_000;
 
 async function refreshCreditsInfo(): Promise<CreditsInfo> {
   const identity = getSecureIdentity();
@@ -623,6 +635,17 @@ async function refreshCreditsInfo(): Promise<CreditsInfo> {
     return { evmAddress, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
   }
 
+  // Back off after repeated RPC failures; retry after cooldown so transient
+  // outages don't permanently disable balance display for the session.
+  if (creditsRpcFailCount >= CREDITS_RPC_BACKOFF_THRESHOLD) {
+    if (Date.now() - creditsRpcLastFailAt < CREDITS_RPC_RETRY_COOLDOWN_MS) {
+      if (cachedCreditsInfo) return cachedCreditsInfo;
+      return { evmAddress, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
+    }
+    // Cooldown elapsed — allow a retry attempt
+    creditsRpcFailCount = 0;
+  }
+
   const client = new BaseEscrowClient({ rpcUrl: cc.rpcUrl, contractAddress: cc.escrowAddress, usdcAddress: cc.usdcAddress });
 
   try {
@@ -630,6 +653,7 @@ async function refreshCreditsInfo(): Promise<CreditsInfo> {
       client.getBuyerBalance(evmAddress),
       client.getBuyerCreditLimit(evmAddress),
     ]);
+    creditsRpcFailCount = 0; // Reset on success
     const info: CreditsInfo = {
       evmAddress,
       balanceUsdc: formatUsdc6(balance.available + balance.reserved),
@@ -641,7 +665,12 @@ async function refreshCreditsInfo(): Promise<CreditsInfo> {
     cachedCreditsInfo = info;
     return info;
   } catch (err) {
-    console.error('[credits] Failed to fetch escrow balance:', err instanceof Error ? err.message : String(err));
+    creditsRpcFailCount++;
+    creditsRpcLastFailAt = Date.now();
+    if (creditsRpcFailCount <= 1) {
+      try { console.warn('[credits] Escrow RPC unavailable:', err instanceof Error ? err.message : String(err)); }
+      catch { /* EPIPE — ignore */ }
+    }
     if (cachedCreditsInfo) return cachedCreditsInfo;
     return { evmAddress, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
   }
@@ -835,7 +864,7 @@ ipcMain.handle('runtime:scan-network', async () => {
   return { ok: snapshot.ok, data: snapshot, error: snapshot.error, status: 200 };
 });
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   app.setName(APP_NAME);
   app.setAboutPanelOptions({
     applicationName: APP_NAME,
@@ -849,7 +878,9 @@ app.whenReady().then(() => {
   createApplicationMenu(APP_NAME, APP_ICON_PATH);
 
   // Ensure config.json exists before anything else (first launch).
-  void ensureConfig(ACTIVE_CONFIG_PATH).catch(() => {});
+  // Must complete before creating the window — the renderer auto-starts the
+  // buyer runtime which needs config.json to find the router plugin.
+  await ensureConfig(ACTIVE_CONFIG_PATH).catch(() => {});
 
   createWindow({ appName: APP_NAME, appIconPath: APP_ICON_PATH, isDev, rendererUrl });
 
@@ -933,3 +964,8 @@ app.on('before-quit', (event) => {
 process.on('SIGTERM', () => {
   void Promise.all([processManager.stopAll(), stopPaymentsPortal()]).finally(() => process.exit(0));
 });
+
+// Suppress EPIPE errors from console.error/console.warn when the dev terminal
+// pipe is closed (e.g. Ctrl+C in the terminal while Electron is still running).
+process.stdout?.on('error', () => {});
+process.stderr?.on('error', () => {});

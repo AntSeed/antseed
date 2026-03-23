@@ -67,8 +67,8 @@ export function initSettingsModule({
       maxOutputUsdPerMillion: safeNumber(buyerMaxPricingDefaults.outputUsdPerMillion, 0),
       minRep: safeNumber(buyer.minPeerReputation, 0),
       paymentMethod: safeString(payments.preferredMethod, 'crypto'),
-      devMode: uiState.devMode,
       requireManualApproval: Boolean(buyer.requireManualApproval),
+      devMode: uiState.devMode,
     });
     notifyUiStateChanged();
   }

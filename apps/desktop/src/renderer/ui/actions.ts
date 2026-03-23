@@ -20,14 +20,14 @@ export type AppActions = {
   handleServiceFocus: () => void;
   handleServiceBlur: () => void;
   clearPinnedPeer: () => void;
+  approvePaymentSession: () => void;
+  rejectPaymentSession: () => void;
   refreshCredits: () => void;
   refreshWorkspace: () => Promise<void>;
   chooseWorkspace: () => Promise<void>;
   refreshPlugins: () => Promise<void>;
   installPlugin: () => Promise<void>;
   openPaymentsPortal?: () => void;
-  approveSessionPayment?: () => Promise<void>;
-  cancelSessionPayment?: () => void;
 };
 
 let _actions: AppActions | null = null;

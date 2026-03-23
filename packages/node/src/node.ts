@@ -44,6 +44,7 @@ import { PaymentMux } from "./p2p/payment-mux.js";
 import { FrameDecoder, encodeFrame } from "./p2p/message-protocol.js";
 import { KeepaliveManager, buildPongPayload } from "./p2p/keepalive.js";
 import { MessageType } from "./types/protocol.js";
+import type { PaymentRequiredPayload } from "./types/protocol.js";
 import type {
   Provider,
   ProviderStreamCallbacks,
@@ -132,6 +133,10 @@ export interface NodePaymentsConfig {
   defaultAuthDurationSecs?: number;
   /** Auto-acknowledge seller receipts. Default: true */
   autoAck?: boolean;
+  /** Suggested USDC amount (base units) for first-sign sessions. Default: 100000 ($0.10). */
+  firstSignAmountUsdc?: string;
+  /** Suggested USDC amount (base units) for proven-sign sessions. Default: 100000 ($0.10). */
+  provenSignAmountUsdc?: string;
 }
 
 export interface NodeConfig {
@@ -236,8 +241,20 @@ export class AntseedNode extends EventEmitter {
   private _sessionStore: SessionStore | null = null;
   /** Periodic timeout checker interval. */
   private _timeoutCheckerInterval: ReturnType<typeof setInterval> | null = null;
-  /** Tracks which seller peers the buyer has already initiated a lock for. */
+  /** Tracks which seller peers the buyer has already negotiated payment for. */
   private _buyerLockedPeers = new Set<string>();
+  /** Pending PaymentRequired payloads from sellers, keyed by peerId. Resolvers waiting for them. */
+  private _pendingPaymentRequired = new Map<string, {
+    resolve: (payload: PaymentRequiredPayload) => void;
+    reject: (err: Error) => void;
+    timer: ReturnType<typeof setTimeout>;
+  }>();
+  /** Buffered PaymentRequired that arrived before _doNegotiatePayment registered its listener.
+   *  This handles the race where 402 + PaymentRequired arrive in the same I/O tick. */
+  private _bufferedPaymentRequired = new Map<string, PaymentRequiredPayload>();
+  /** Per-peer mutex to prevent concurrent payment negotiations. */
+  private _paymentNegotiationLocks = new Map<string, Promise<void>>();
+  /** Peers the caller has manually approved by retrying after a 402. */
 
   constructor(config: NodeConfig) {
     super();
@@ -443,6 +460,14 @@ export class AntseedNode extends EventEmitter {
     this._buyerPaymentManager = null;
     this._sellerPaymentManager = null;
     this._buyerLockedPeers.clear();
+    // Clean up payment negotiation state
+    for (const [, pending] of this._pendingPaymentRequired) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error('Node stopped'));
+    }
+    this._pendingPaymentRequired.clear();
+    this._bufferedPaymentRequired.clear();
+    this._paymentNegotiationLocks.clear();
     this._started = false;
     this.emit("stopped");
   }
@@ -558,14 +583,14 @@ export class AntseedNode extends EventEmitter {
     debugLog(`[Node] Connection to ${peer.peerId.slice(0, 12)}... state=${conn.state}`);
     const mux = this._getOrCreateMux(peer.peerId, conn);
 
-    // Buyer-side: initiate lock and wait for confirmation on first request to a new peer
-    if (this._buyerPaymentManager && !this._buyerLockedPeers.has(peer.peerId)) {
-      debugLog(`[Node] First request to peer ${peer.peerId.slice(0, 12)}... — initiating payment lock`);
-      await this._initiateBuyerLock(peer, conn);
-    }
+    // If we already have a payment session with this peer, skip negotiation.
+    // Otherwise, send the request and handle 402 reactively.
+    const needsPaymentNegotiation = this._buyerPaymentManager
+      && !this._buyerLockedPeers.has(peer.peerId);
 
     const startTime = Date.now();
-    return new Promise<SerializedHttpResponse>((resolve, reject) => {
+
+    const executeRequest = (): Promise<SerializedHttpResponse> => new Promise<SerializedHttpResponse>((resolve, reject) => {
       const timeoutMs = this._config.requestTimeoutMs ?? 30_000;
       const maxStreamBufferBytes = Math.max(1, this._config.maxStreamBufferBytes ?? 16 * 1024 * 1024);
       const maxStreamDurationMs = Math.max(1, this._config.maxStreamDurationMs ?? 5 * 60_000);
@@ -745,6 +770,27 @@ export class AntseedNode extends EventEmitter {
         },
       );
     });
+
+    // Execute the request. If we get a 402 and payment negotiation is needed,
+    // wait for the seller's PaymentRequired message, negotiate, and retry.
+    const response = await executeRequest();
+
+    if (response.statusCode === 402 && needsPaymentNegotiation) {
+      // Auto-negotiate: sign SpendingAuth and retry. If buyer has insufficient
+      // balance, the negotiation throws and the error surfaces to the caller.
+      debugLog(`[Node] Got 402 from ${peer.peerId.slice(0, 12)}... — auto-negotiating payment`);
+      try {
+        await this._negotiatePayment(peer, conn);
+        debugLog(`[Node] Payment negotiated with ${peer.peerId.slice(0, 12)}... — retrying request`);
+        return executeRequest();
+      } catch (err) {
+        // Negotiation failed — remove from locked set so next request can retry
+        this._buyerLockedPeers.delete(peer.peerId);
+        throw err;
+      }
+    }
+
+    return response;
   }
 
   private _createDHTConfig(port: number, bootstrapNodes: Array<{ host: string; port: number }>): DHTNodeConfig {
@@ -818,6 +864,18 @@ export class AntseedNode extends EventEmitter {
         this._muxes.get(peerId)?.abortPendingUploads();
         this._muxes.delete(peerId);
         this._paymentMuxes.delete(peerId);
+        this._bufferedPaymentRequired.delete(peerId);
+        // Cancel any in-flight PaymentRequired wait so _doNegotiatePayment
+        // fails immediately instead of blocking for 10s on a dead connection.
+        const pendingPR = this._pendingPaymentRequired.get(peerId);
+        if (pendingPR) {
+          clearTimeout(pendingPR.timer);
+          this._pendingPaymentRequired.delete(peerId);
+          pendingPR.reject(new Error(`Peer ${peerId.slice(0, 12)}... disconnected during payment negotiation`));
+        }
+        // Don't delete _paymentNegotiationLocks here — the pending rejection
+        // causes _doNegotiatePayment to throw, and its finally block owns cleanup.
+        // Deleting here would race with a new negotiation started on reconnect.
         this._decoders.delete(peerId);
         // Handle buyer disconnect
         if (this._sellerPaymentManager) {
@@ -1013,7 +1071,7 @@ export class AntseedNode extends EventEmitter {
           dataDir: paymentsDir,
         };
         this._buyerPaymentManager = new BuyerPaymentManager(identity, buyerPaymentConfig, this._sessionStore);
-        debugLog(`[Node] Buyer payment manager initialized (wallet=${identityToEvmAddress(identity).slice(0, 10)}...)`);
+        debugLog(`[Node] Buyer payment manager initialized (wallet=${identityToEvmAddress(identity).slice(0, 10)}... chainId=${buyerPaymentConfig.chainId} contract=${buyerPaymentConfig.contractAddress.slice(0, 10)}...)`);
       }
     }
 
@@ -1048,16 +1106,49 @@ export class AntseedNode extends EventEmitter {
     mux.onProxyRequest(async (request: SerializedHttpRequest) => {
       debugLog(`[Node] Seller received request: ${request.method} ${request.path} (reqId=${request.requestId.slice(0, 8)})`);
 
-      // Reject with 402 if no active payment session and escrow client is configured
+      // Reject with 402 if no active payment session and escrow client is configured.
+      // Also send PaymentRequired via PaymentMux so the buyer knows what to sign.
       const spmAuthorized = this._sellerPaymentManager?.hasSession(buyerPeerId) ?? false;
       if (this._escrowClient && !spmAuthorized) {
-        debugWarn(`[Node] Rejecting request from ${buyerPeerId.slice(0, 12)}... — no payment session (402)`);
-        mux.sendProxyResponse({
-          requestId: request.requestId,
-          statusCode: 402,
-          headers: { "content-type": "text/plain" },
-          body: new TextEncoder().encode("Payment required: session lock not committed"),
-        });
+        // Pass buyerPeerId so seller can suggest higher amount for returning buyers,
+        // and include per-direction pricing from the first registered provider.
+        // Retry init if it failed at startup (e.g. RPC was unreachable)
+        await this._sellerPaymentManager?.ensureInitialized();
+        const firstProvider = this._providers[0];
+        const providerPricing = firstProvider?.pricing?.defaults;
+        const requirements = this._sellerPaymentManager?.getPaymentRequirements(
+          request.requestId, buyerPeerId, providerPricing,
+        );
+        if (requirements) {
+          debugLog(`[Node] No payment session for ${buyerPeerId.slice(0, 12)}... — sending 402 + PaymentRequired`);
+          const paymentBody = JSON.stringify({
+            error: 'payment_required',
+            sellerEvmAddr: requirements.sellerEvmAddr,
+            tokenRate: requirements.tokenRate,
+            firstSignCap: requirements.firstSignCap,
+            suggestedAmount: requirements.suggestedAmount,
+          });
+          mux.sendProxyResponse({
+            requestId: request.requestId,
+            statusCode: 402,
+            headers: { "content-type": "application/json" },
+            body: new TextEncoder().encode(paymentBody),
+          });
+          paymentMux.sendPaymentRequired(requirements);
+        } else {
+          // init() failed — on-chain data not cached. Tell buyer to retry
+          // rather than letting them wait 10s for a PaymentRequired that won't come.
+          debugWarn(`[Node] No payment session and seller not ready (init failed?) — returning 402`);
+          mux.sendProxyResponse({
+            requestId: request.requestId,
+            statusCode: 402,
+            headers: { "content-type": "application/json" },
+            body: new TextEncoder().encode(JSON.stringify({
+              error: 'payment_required',
+              message: 'Seller not ready, try again later',
+            })),
+          });
+        }
         return;
       }
 
@@ -1474,8 +1565,11 @@ export class AntseedNode extends EventEmitter {
         usdcAddress: payments.usdcAddress,
         chainId: payments.chainId ?? 8453,
         dataDir: paymentsDir,
+        firstSignAmountUsdc: payments.firstSignAmountUsdc,
+        provenSignAmountUsdc: payments.provenSignAmountUsdc,
       };
       this._sellerPaymentManager = new SellerPaymentManager(this._identity, sellerConfig, this._sessionStore);
+      await this._sellerPaymentManager.init();
       debugLog(`[Node] SellerPaymentManager initialized`);
 
       // Startup recovery: check for timed-out sessions
@@ -1705,40 +1799,135 @@ export class AntseedNode extends EventEmitter {
       void bpm.handleTopUpRequest(peerId, request, pmux);
     });
 
+    pmux.onPaymentRequired((payload) => {
+      const pending = this._pendingPaymentRequired.get(peerId);
+      if (pending) {
+        clearTimeout(pending.timer);
+        this._pendingPaymentRequired.delete(peerId);
+        pending.resolve(payload);
+      } else {
+        // Buffer: 402 and PaymentRequired can arrive in the same I/O tick,
+        // before _doNegotiatePayment registers its listener.
+        this._bufferedPaymentRequired.set(peerId, payload);
+        debugLog(`[Node] PaymentRequired from ${peerId.slice(0, 12)}... buffered (listener not yet registered)`);
+      }
+    });
+
     return pmux;
   }
 
   /**
-   * Initiate a spending auth with a seller peer. Creates PaymentMux, signs
-   * EIP-712 SpendingAuth, and waits for AuthAck before returning.
+   * Wait for the seller's PaymentRequired message, sign a SpendingAuth with
+   * the seller's real requirements, and wait for AuthAck.
+   * Uses a per-peer mutex so concurrent requests wait for the first negotiation.
    */
-  private async _initiateBuyerLock(peer: PeerInfo, conn: PeerConnection): Promise<void> {
-    const bpm = this._buyerPaymentManager;
-    if (!bpm) return;
-
-    // Mark as locked so we don't re-initiate
-    this._buyerLockedPeers.add(peer.peerId);
-
-    const pmux = this._getOrCreateBuyerPaymentMux(peer.peerId, conn);
-
-    // Determine seller EVM address — prefer from peer metadata
-    const sellerEvmAddress = peer.evmAddress ?? "";
-    if (!sellerEvmAddress) {
-      debugWarn(`[Node] Seller ${peer.peerId.slice(0, 12)}... has no EVM address; skipping auth initiation`);
+  private async _negotiatePayment(peer: PeerInfo, conn: PeerConnection): Promise<void> {
+    // Per-peer mutex: if another request is already negotiating, wait for it
+    const existing = this._paymentNegotiationLocks.get(peer.peerId);
+    if (existing) {
+      await existing;
       return;
     }
 
+    const negotiation = this._doNegotiatePayment(peer, conn);
+    this._paymentNegotiationLocks.set(peer.peerId, negotiation);
     try {
-      await bpm.authorizeSpending(peer.peerId, sellerEvmAddress, pmux);
+      await negotiation;
+    } finally {
+      this._paymentNegotiationLocks.delete(peer.peerId);
+    }
+  }
+
+  private async _doNegotiatePayment(peer: PeerInfo, conn: PeerConnection): Promise<void> {
+    const bpm = this._buyerPaymentManager;
+    if (!bpm) return;
+
+    // If already locked from a previous successful negotiation, skip
+    if (this._buyerLockedPeers.has(peer.peerId)) return;
+
+    const pmux = this._getOrCreateBuyerPaymentMux(peer.peerId, conn);
+
+    // Check if PaymentRequired was already buffered (arrives in same I/O tick as 402)
+    const buffered = this._bufferedPaymentRequired.get(peer.peerId);
+    if (buffered) {
+      this._bufferedPaymentRequired.delete(peer.peerId);
+      debugLog(`[Node] Using buffered PaymentRequired from ${peer.peerId.slice(0, 12)}...`);
+    }
+
+    const PAYMENT_REQUIRED_TIMEOUT_MS = 10_000;
+    const requirements = buffered ?? await new Promise<PaymentRequiredPayload>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this._pendingPaymentRequired.delete(peer.peerId);
+        reject(new Error(`PaymentRequired timeout from seller ${peer.peerId.slice(0, 12)}...`));
+      }, PAYMENT_REQUIRED_TIMEOUT_MS);
+      this._pendingPaymentRequired.set(peer.peerId, { resolve, reject, timer });
+    });
+
+    debugLog(`[Node] PaymentRequired from ${peer.peerId.slice(0, 12)}...: rate=${requirements.tokenRate} cap=${requirements.firstSignCap} suggested=${requirements.suggestedAmount}`);
+
+    // Fetch on-chain context so the UI can show the buyer real data
+    let approvalContext: Awaited<ReturnType<import('./payments/evm/escrow-client.js').BaseEscrowClient['getBuyerApprovalContext']>> | null = null;
+    if (this._escrowClient && this._identity) {
+      try {
+        const buyerAddr = identityToEvmAddress(this._identity);
+        approvalContext = await this._escrowClient.getBuyerApprovalContext(buyerAddr, requirements.sellerEvmAddr);
+        debugLog(`[Node] Approval context: balance=${approvalContext.buyerBalance.available} isFirstSign=${approvalContext.isFirstSign} cooldown=${approvalContext.cooldownRemainingSecs}s`);
+      } catch (err) {
+        debugWarn(`[Node] Failed to fetch approval context: ${err instanceof Error ? err.message : err}`);
+      }
+    }
+
+    // Cap amount before building approval info so the displayed amount
+    // matches what will actually be signed via authorizeSpending.
+    let amount: bigint;
+    try {
+      amount = BigInt(requirements.suggestedAmount);
+    } catch {
+      throw new Error(`Invalid suggestedAmount from seller ${peer.peerId.slice(0, 12)}...: "${requirements.suggestedAmount}"`);
+    }
+    if (approvalContext) {
+      const available = approvalContext.buyerBalance.available;
+      if (amount > available) amount = available;
+      if (approvalContext.isFirstSign) {
+        const cap = approvalContext.firstSignCap;
+        if (amount > cap) amount = cap;
+      }
+    }
+    if (amount <= 0n) {
+      throw new Error(`Insufficient escrow balance to authorize payment to ${peer.peerId.slice(0, 12)}...`);
+    }
+
+    const approvalInfo = {
+      peerId: peer.peerId,
+      sellerEvmAddr: requirements.sellerEvmAddr,
+      tokenRate: requirements.tokenRate,
+      firstSignCap: requirements.firstSignCap,
+      suggestedAmount: amount.toString(),
+      buyerAvailableUsdc: approvalContext ? approvalContext.buyerBalance.available.toString() : null,
+      isFirstSign: approvalContext?.isFirstSign ?? null,
+      cooldownRemainingSecs: approvalContext?.cooldownRemainingSecs ?? null,
+    };
+
+    this.emit('payment:required', approvalInfo);
+
+    try {
+      await bpm.authorizeSpending(peer.peerId, requirements.sellerEvmAddr, pmux, amount);
       debugLog(`[Node] SpendingAuth sent to seller ${peer.peerId.slice(0, 12)}..., waiting for AuthAck...`);
 
-      // Wait for AuthAck (polls every 200ms, 30s timeout)
       await this._waitForLockConfirmation(peer.peerId);
       debugLog(`[Node] AuthAck received from seller ${peer.peerId.slice(0, 12)}...`);
+      this._buyerLockedPeers.add(peer.peerId);
+
+      // Notify listeners what was signed
+      this.emit('payment:signed', {
+        peerId: peer.peerId,
+        sellerEvmAddr: requirements.sellerEvmAddr,
+        amount: amount.toString(),
+        tokenRate: requirements.tokenRate,
+      });
     } catch (err) {
-      debugWarn(`[Node] Auth initiation/confirmation failed for ${peer.peerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
-      // Remove from locked set so next request can retry
-      this._buyerLockedPeers.delete(peer.peerId);
+      debugWarn(`[Node] Payment negotiation failed for ${peer.peerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
+      throw err;
     }
   }
 

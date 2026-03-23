@@ -272,6 +272,9 @@ function requireBridgeMethod<K extends keyof DesktopBridge>(
 
 async function ensureConnectRuntimeStarted(): Promise<void> {
   if (!bridge?.start || isModeRunning('connect')) return;
+  // Don't start until plugin setup is resolved — starting without the router
+  // plugin causes the CLI to exit immediately with "plugin not found".
+  if (uiState.appSetupStatusKnown && uiState.appSetupNeeded && !uiState.appSetupComplete) return;
 
   try {
     setRuntimeActivity('warn', 'Starting buyer runtime...', 8_000);
@@ -403,8 +406,46 @@ registerActions({
   handleServiceFocus: chatApi.handleServiceFocus,
   handleServiceBlur: chatApi.handleServiceBlur,
   clearPinnedPeer: chatApi.clearPinnedPeer,
-  approveSessionPayment: () => { chatApi.approveSessionPayment().catch(() => {}); },
-  cancelSessionPayment: () => chatApi.cancelSessionPayment(),
+  approvePaymentSession: () => {
+    // Dismiss the card and resend the last user message — the node will
+    // auto-negotiate on retry since the peer is now in _manuallyApprovedPeers.
+    uiState.chatPaymentApprovalVisible = false;
+    uiState.chatPaymentApprovalPeerId = null;
+    uiState.chatPaymentApprovalPeerName = null;
+    uiState.chatPaymentApprovalPeerInfo = null;
+    uiState.chatPaymentApprovalLoading = false;
+    uiState.chatPaymentApprovalError = null;
+    notifyUiStateChanged();
+    // Guard: don't resend if another message is already in flight
+    if (uiState.chatSending) return;
+    // Resend the last user message
+    const messages = uiState.chatMessages as Array<{ role: string; content: unknown }>;
+    const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user');
+    if (lastUserMsg) {
+      if (typeof lastUserMsg.content === 'string') {
+        chatApi.sendMessage(lastUserMsg.content);
+      } else if (Array.isArray(lastUserMsg.content)) {
+        // Multipart message (image + text) — extract parts for resend
+        const parts = lastUserMsg.content as Array<Record<string, unknown>>;
+        const textPart = parts.find((p) => p.type === 'text');
+        const imagePart = parts.find((p) => p.type === 'image') as Record<string, unknown> | undefined;
+        const text = typeof textPart?.text === 'string' ? textPart.text : '';
+        const source = imagePart?.source as Record<string, unknown> | undefined;
+        const imageBase64 = typeof source?.data === 'string' ? source.data : undefined;
+        const imageMimeType = typeof source?.media_type === 'string' ? source.media_type : undefined;
+        chatApi.sendMessage(text, imageBase64, imageMimeType);
+      }
+    }
+  },
+  rejectPaymentSession: () => {
+    uiState.chatPaymentApprovalVisible = false;
+    uiState.chatPaymentApprovalPeerId = null;
+    uiState.chatPaymentApprovalPeerName = null;
+    uiState.chatPaymentApprovalPeerInfo = null;
+    uiState.chatPaymentApprovalLoading = false;
+    uiState.chatPaymentApprovalError = null;
+    notifyUiStateChanged();
+  },
   refreshCredits: () => void creditsApi.refreshCredits(),
   refreshWorkspace: chatApi.refreshWorkspace,
   chooseWorkspace: chatApi.chooseWorkspace,
