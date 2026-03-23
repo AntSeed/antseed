@@ -133,6 +133,10 @@ export interface NodePaymentsConfig {
   defaultAuthDurationSecs?: number;
   /** Auto-acknowledge seller receipts. Default: true */
   autoAck?: boolean;
+  /** Suggested USDC amount (base units) for first-sign sessions. Default: 100000 ($0.10). */
+  firstSignAmountUsdc?: string;
+  /** Suggested USDC amount (base units) for proven-sign sessions. Default: 100000 ($0.10). */
+  provenSignAmountUsdc?: string;
 }
 
 export interface NodeConfig {
@@ -1566,6 +1570,8 @@ export class AntseedNode extends EventEmitter {
         usdcAddress: payments.usdcAddress,
         chainId: payments.chainId ?? 8453,
         dataDir: paymentsDir,
+        firstSignAmountUsdc: payments.firstSignAmountUsdc,
+        provenSignAmountUsdc: payments.provenSignAmountUsdc,
       };
       this._sellerPaymentManager = new SellerPaymentManager(this._identity, sellerConfig, this._sessionStore);
       await this._sellerPaymentManager.init();

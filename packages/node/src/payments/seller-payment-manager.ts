@@ -28,6 +28,10 @@ export interface SellerPaymentConfig {
   dataDir: string;
   /** Timeout in seconds before a disconnected session is considered ghost. Default: 86400 (24h). */
   settleTimeoutSecs?: number;
+  /** Suggested USDC amount (base units) for first-sign sessions. Default: 100000 ($0.10). */
+  firstSignAmountUsdc?: string;
+  /** Suggested USDC amount (base units) for proven-sign sessions. Default: 100000 ($0.10). */
+  provenSignAmountUsdc?: string;
 }
 
 /** Default settle timeout: 24 hours. */
@@ -429,10 +433,7 @@ export class SellerPaymentManager {
     await this.init();
   }
 
-  /** Default first-sign suggested amount: $0.10 USDC (base units). */
-  private static readonly FIRST_SIGN_SUGGESTED_AMOUNT = 100_000n;
-  /** Default proven-sign suggested amount: $0.10 USDC (base units). */
-  private static readonly PROVEN_SIGN_SUGGESTED_AMOUNT = 100_000n;
+  private static readonly DEFAULT_SUGGESTED_AMOUNT = 100_000n; // $0.10
 
   /**
    * Build the PaymentRequired payload for a buyer that doesn't have a session.
@@ -451,16 +452,17 @@ export class SellerPaymentManager {
       return null;
     }
 
-    // Suggest small cent-level amounts to minimize buyer risk.
-    // First-sign and proven-sign both default to $0.10; the contract's
-    // FIRST_SIGN_CAP ($1.00) is the maximum, not the suggestion.
-    let suggestedAmount = SellerPaymentManager.FIRST_SIGN_SUGGESTED_AMOUNT;
+    const defaultAmount = SellerPaymentManager.DEFAULT_SUGGESTED_AMOUNT;
+    const firstSignAmount = this._config.firstSignAmountUsdc
+      ? BigInt(this._config.firstSignAmountUsdc) : defaultAmount;
+    const provenSignAmount = this._config.provenSignAmountUsdc
+      ? BigInt(this._config.provenSignAmountUsdc) : defaultAmount;
+
+    let suggestedAmount = firstSignAmount;
     if (buyerPeerId) {
       const priorSession = this._sessionStore.getLatestSession(buyerPeerId, 'seller');
       if (priorSession && BigInt(priorSession.tokensDelivered) > 0n) {
-        // For returning buyers the first-sign cap no longer applies,
-        // so we suggest a small flat amount for incremental top-ups.
-        suggestedAmount = SellerPaymentManager.PROVEN_SIGN_SUGGESTED_AMOUNT;
+        suggestedAmount = provenSignAmount;
       }
     }
 

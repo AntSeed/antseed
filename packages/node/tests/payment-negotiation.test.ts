@@ -502,6 +502,53 @@ describe('SellerPaymentManager proven-sign suggested amount', () => {
     expect(req!.inputUsdPerMillion).toBeUndefined();
     expect(req!.outputUsdPerMillion).toBeUndefined();
   });
+
+  it('uses config-driven amounts when set', async () => {
+    // Create manager with custom amounts
+    const customConfig: SellerPaymentConfig = {
+      rpcUrl: 'http://127.0.0.1:8545',
+      contractAddress: CONTRACT_ADDR,
+      usdcAddress: USDC_ADDR,
+      chainId: CHAIN_ID,
+      dataDir: tempDir,
+      firstSignAmountUsdc: '50000',   // $0.05
+      provenSignAmountUsdc: '500000', // $0.50
+    };
+    const customManager = new SellerPaymentManager(sellerIdentity, customConfig, store);
+    vi.spyOn(customManager.escrowClient, 'getSellerAccount').mockResolvedValue({
+      stake: 100_000_000n, earnings: 0n, stakedAt: BigInt(Date.now()), tokenRate: 500n,
+    });
+    vi.spyOn(customManager.escrowClient, 'getFirstSignCap').mockResolvedValue(1_000_000n);
+    await customManager.init();
+
+    // First-sign: uses config value
+    const first = customManager.getPaymentRequirements('req-5', 'new-buyer');
+    expect(first!.suggestedAmount).toBe('50000');
+
+    // Proven-sign: uses config value
+    store.upsertSession({
+      sessionId: '0x' + 'cc'.repeat(32),
+      peerId: 'returning-buyer-2',
+      role: 'seller',
+      sellerEvmAddr: identityToEvmAddress(sellerIdentity),
+      buyerEvmAddr: '0x' + 'dd'.repeat(20),
+      nonce: 1,
+      authMax: '50000',
+      deadline: Math.floor(Date.now() / 1000) + 3600,
+      previousSessionId: '0x' + '00'.repeat(32),
+      previousConsumption: '0',
+      tokensDelivered: '100',
+      requestCount: 2,
+      reservedAt: Date.now(),
+      settledAt: null,
+      settledAmount: null,
+      status: 'settled',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+    const proven = customManager.getPaymentRequirements('req-6', 'returning-buyer-2');
+    expect(proven!.suggestedAmount).toBe('500000');
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════
