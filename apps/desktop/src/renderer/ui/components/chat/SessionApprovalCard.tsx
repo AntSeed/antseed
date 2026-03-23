@@ -1,3 +1,4 @@
+import { useUiSnapshot } from '../../hooks/useUiSnapshot';
 import styles from './SessionApprovalCard.module.scss';
 
 type SessionApprovalCardProps = {
@@ -14,6 +15,7 @@ type SessionApprovalCardProps = {
   loading: boolean;
   error: string | null;
   onApprove: () => void;
+  onAddCredits: () => void;
   onCancel: () => void;
 };
 
@@ -25,16 +27,22 @@ export function SessionApprovalCard({
   loading,
   error,
   onApprove,
+  onAddCredits,
   onCancel,
 }: SessionApprovalCardProps) {
   if (!visible) return null;
 
+  const { creditsAvailableUsdc } = useUiSnapshot();
+  const hasCredits = parseFloat(creditsAvailableUsdc) >= parseFloat(amount || '0');
   const displayName = peerName || 'this service';
 
   return (
     <div className={styles.approval}>
       <div className={styles.approvalText}>
-        A <strong>${amount} USDC</strong> pre-deposit is required to start a session with <strong>{displayName}</strong>.
+        {hasCredits
+          ? <>Approve a <strong>${amount} USDC</strong> pre-deposit to start a session with <strong>{displayName}</strong>. This is reserved from your escrow balance.</>
+          : <>A <strong>${amount} USDC</strong> pre-deposit is required to use <strong>{displayName}</strong>. Add credits to your escrow first.</>
+        }
       </div>
 
       {peerInfo && (peerInfo.reputation > 0 || peerInfo.sessionCount !== null) && (
@@ -48,11 +56,17 @@ export function SessionApprovalCard({
       {error && <div className={styles.approvalError}>{error}</div>}
 
       <div className={styles.approvalActions}>
-        <button className={styles.approveBtn} onClick={onApprove}>
-          Add Credits
-        </button>
-        <button className={styles.approveBtn} onClick={onCancel}>
-          Retry
+        {hasCredits ? (
+          <button className={styles.approveBtn} onClick={onApprove} disabled={loading}>
+            {loading ? 'Approving...' : 'Approve'}
+          </button>
+        ) : (
+          <button className={styles.approveBtn} onClick={onAddCredits}>
+            Add Credits
+          </button>
+        )}
+        <button className={styles.cancelBtn} onClick={onCancel} disabled={loading}>
+          Cancel
         </button>
       </div>
     </div>
