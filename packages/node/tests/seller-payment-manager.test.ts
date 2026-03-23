@@ -342,7 +342,7 @@ describe('SellerPaymentManager', () => {
     expect(req).not.toBeNull();
     expect(req!.tokenRate).toBe('1'); // from mocked getSellerAccount
     expect(req!.firstSignCap).toBe('1000000');
-    expect(req!.suggestedAmount).toBe('1000000');
+    expect(req!.suggestedAmount).toBe('100000'); // $0.10 first-sign suggested
     expect(req!.requestId).toBe('test-req-1');
     expect(req!.sellerEvmAddr).toBe(identityToEvmAddress(sellerIdentity));
   });

@@ -182,7 +182,7 @@ describe('SellerPaymentManager PaymentRequired', () => {
     expect(req).not.toBeNull();
     expect(req!.tokenRate).toBe('500');
     expect(req!.firstSignCap).toBe('1000000');
-    expect(req!.suggestedAmount).toBe('1000000');
+    expect(req!.suggestedAmount).toBe('100000'); // $0.10 first-sign suggested
     expect(req!.sellerEvmAddr).toBe(identityToEvmAddress(sellerIdentity));
   });
 
@@ -202,13 +202,14 @@ describe('SellerPaymentManager PaymentRequired', () => {
     expect(manager.getPaymentRequirements('req-bbb')!.requestId).toBe('req-bbb');
   });
 
-  it('suggestedAmount equals firstSignCap', async () => {
+  it('suggestedAmount is independent of firstSignCap', async () => {
     vi.spyOn(manager.escrowClient, 'getFirstSignCap').mockResolvedValue(3_000_000n);
     await manager.init();
 
     const req = manager.getPaymentRequirements('req-1');
-    expect(req!.suggestedAmount).toBe('3000000');
-    expect(req!.firstSignCap).toBe('3000000');
+    // suggestedAmount is the fixed cent-level default, not the contract cap
+    expect(req!.suggestedAmount).toBe('100000'); // $0.10
+    expect(req!.firstSignCap).toBe('3000000'); // contract cap still reported
   });
 });
 
@@ -449,10 +450,10 @@ describe('SellerPaymentManager proven-sign suggested amount', () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it('suggests firstSignCap for new buyers (no prior session)', async () => {
+  it('suggests cent-level amount for new buyers (first-sign)', async () => {
     await manager.init();
     const req = manager.getPaymentRequirements('req-1', 'unknown-buyer');
-    expect(req!.suggestedAmount).toBe('1000000'); // firstSignCap
+    expect(req!.suggestedAmount).toBe('100000'); // $0.10
   });
 
   it('suggests higher amount for returning buyers with delivered tokens', async () => {

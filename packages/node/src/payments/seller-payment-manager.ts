@@ -429,6 +429,8 @@ export class SellerPaymentManager {
     await this.init();
   }
 
+  /** Default first-sign suggested amount: $0.10 USDC (base units). */
+  private static readonly FIRST_SIGN_SUGGESTED_AMOUNT = 100_000n;
   /** Default proven-sign suggested amount: $0.10 USDC (base units). */
   private static readonly PROVEN_SIGN_SUGGESTED_AMOUNT = 100_000n;
 
@@ -449,8 +451,9 @@ export class SellerPaymentManager {
       return null;
     }
 
-    // Suggest higher amount for returning buyers (proven-sign eligible)
-    let suggestedAmount = firstSignCap;
+    // Suggest small cent-level amounts — the contract's FIRST_SIGN_CAP is the
+    // maximum for first-sign, but we suggest less to minimize buyer risk.
+    let suggestedAmount = SellerPaymentManager.FIRST_SIGN_SUGGESTED_AMOUNT;
     if (buyerPeerId) {
       const priorSession = this._sessionStore.getLatestSession(buyerPeerId, 'seller');
       if (priorSession && BigInt(priorSession.tokensDelivered) > 0n) {
