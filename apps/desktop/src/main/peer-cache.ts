@@ -132,9 +132,10 @@ export function parsePeerFromRaw(pr: Record<string, unknown>): DashboardNetworkP
 
 /** Refresh peer cache from buyer.state.json — merge new, mark stale as offline. */
 export async function refreshPeerCache(): Promise<void> {
-  // Skip if refreshed recently — the buyer runtime only writes every ~5 min.
   const now = Date.now();
-  if (now - peerCacheLastRefreshAt < REFRESH_MIN_INTERVAL_MS) {
+  // Use a shorter debounce until we've found at least one peer (startup phase).
+  const interval = peerCache.size === 0 ? 1_000 : REFRESH_MIN_INTERVAL_MS;
+  if (now - peerCacheLastRefreshAt < interval) {
     return;
   }
   peerCacheLastRefreshAt = now;
