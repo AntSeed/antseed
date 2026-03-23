@@ -1800,7 +1800,12 @@ export function registerPiChatHandlers({
         return { ok: false, error: 'Aborted' };
       }
       const message = asErrorMessage(error);
-      sendToRenderer('chat:ai-stream-error', { conversationId, error: message });
+      // Detect payment-related errors (402 from seller, insufficient balance, etc.)
+      const isPaymentError = /402|payment.required|insufficient.*balance|escrow/i.test(message);
+      const displayMessage = isPaymentError
+        ? 'Payment required (402). Add credits to your escrow to use this service.'
+        : message;
+      sendToRenderer('chat:ai-stream-error', { conversationId, error: displayMessage });
       appendSystemLog(`Pi chat error: ${message}`);
       return { ok: false, error: message };
     } finally {
