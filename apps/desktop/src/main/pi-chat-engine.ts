@@ -368,7 +368,6 @@ const CHAT_SYSTEM_PROMPT_FILE_ENV = 'ANTSEED_CHAT_SYSTEM_PROMPT_FILE';
 const CHAT_SERVICE_SCAN_MAX_PEERS = 20;
 const CHAT_SERVICE_MAX_OPTIONS = 120;
 const CHAT_SERVICE_MAX_OPTIONS_PER_PROVIDER = 40;
-const CHAT_SERVICE_CACHE_REFRESH_DEBOUNCE_MS = 60_000;
 
 function normalizeTokenCount(value: unknown): number {
   const parsed = Number(value);
@@ -1403,8 +1402,6 @@ export function registerPiChatHandlers({
   const serviceProviderHints = new Map<string, string[]>();
   const serviceProtocolMap = new Map<string, ChatServiceProtocol>();
   const preferredPeerByConversationId = new Map<string, string>();
-  let serviceCatalogRefreshPromise: Promise<ChatServiceCatalogEntry[]> | null = null;
-  let lastServiceCatalogRefreshAt = 0;
 
   const clearActiveRun = (run: ActiveRun | null): void => {
     if (!run) {
@@ -1791,32 +1788,12 @@ export function registerPiChatHandlers({
     }
   };
 
-  let lastServiceCatalogEntries: ChatServiceCatalogEntry[] = [];
-
-  const refreshServiceCatalogFromNetwork = async (force = false): Promise<ChatServiceCatalogEntry[]> => {
-    if (!force && serviceCatalogRefreshPromise) {
-      return await serviceCatalogRefreshPromise;
-    }
-    if (!force && Date.now() - lastServiceCatalogRefreshAt < CHAT_SERVICE_CACHE_REFRESH_DEBOUNCE_MS) {
-      return lastServiceCatalogEntries;
-    }
-
-    serviceCatalogRefreshPromise = (async () => {
-      console.log(`[services] Refreshing service catalog (force=${force})...`);
-      const entries = await discoverChatServiceCatalog(getNetworkPeers);
-      console.log(`[services] Raw entries: ${entries.length}`);
-      const limited = limitChatServiceCatalogEntries(normalizeChatServiceCatalogEntries(entries));
-      console.log(`[services] Normalized+limited: ${limited.length} services`);
-      updateServiceProviderHints(serviceProviderHints, limited);
-      updateServiceProtocolMap(serviceProtocolMap, limited);
-      lastServiceCatalogRefreshAt = Date.now();
-      lastServiceCatalogEntries = limited;
-      return limited;
-    })().finally(() => {
-      serviceCatalogRefreshPromise = null;
-    });
-
-    return await serviceCatalogRefreshPromise;
+  const refreshServiceCatalogFromNetwork = async (): Promise<ChatServiceCatalogEntry[]> => {
+    const entries = await discoverChatServiceCatalog(getNetworkPeers);
+    const limited = limitChatServiceCatalogEntries(normalizeChatServiceCatalogEntries(entries));
+    updateServiceProviderHints(serviceProviderHints, limited);
+    updateServiceProtocolMap(serviceProtocolMap, limited);
+    return limited;
   };
 
   const resolveProtocolForSend = async (serviceId: string): Promise<ChatServiceProtocol> => {
@@ -1826,7 +1803,7 @@ export function registerPiChatHandlers({
       return existing;
     }
 
-    const refreshed = await refreshServiceCatalogFromNetwork(true);
+    const refreshed = await refreshServiceCatalogFromNetwork();
     return refreshed.find((entry) => entry.id.trim().toLowerCase() === normalizedServiceId)?.protocol ?? 'anthropic-messages';
   };
 
@@ -1844,7 +1821,7 @@ export function registerPiChatHandlers({
 
   ipcMain.handle('chat:ai-list-services', async () => {
     try {
-      const entries = await refreshServiceCatalogFromNetwork(false);
+      const entries = await refreshServiceCatalogFromNetwork();
       return { ok: true, data: entries };
     } catch (error) {
       return { ok: false, data: [] as ChatServiceCatalogEntry[], error: asErrorMessage(error) };
