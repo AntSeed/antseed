@@ -310,12 +310,15 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
           />
 
           <div className={styles.chatInputArea}>
+            {snap.chatError && <div className={styles.chatError}>{snap.chatError}</div>}
+
             {attachedImage && (
               <div className={styles.chatImageAttachPreview}>
                 <img src={attachedImage.previewUrl} alt="Attached" className={styles.chatImageAttachThumb} />
                 <button className={styles.chatImageRemoveBtn} onClick={handleRemoveImage} title="Remove image">✕</button>
               </div>
             )}
+
             <div className={styles.chatInputRow}>
               <input
                 ref={fileInputRef}
@@ -360,8 +363,6 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
               </div>
             </div>
           </div>
-
-          {snap.chatError && <div className={styles.chatError}>{snap.chatError}</div>}
         </div>
       </div>
     </section>
