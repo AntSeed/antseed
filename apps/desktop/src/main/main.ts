@@ -579,7 +579,14 @@ async function loadCachedCryptoConfig(): Promise<typeof cachedCryptoConfig> {
     const payments = asRecord(config.payments);
     overrides = asRecord(payments.crypto);
   } catch {
-    // No config — use protocol defaults
+    // No config — no crypto config available
+  }
+  // Only resolve if the user has explicitly configured a chain or escrow address.
+  // Without explicit config, there's no escrow to query — return null so callers
+  // skip RPC calls instead of hitting a default contract that may not exist.
+  const hasExplicitConfig = overrides.chainId || overrides.rpcUrl || overrides.escrowContractAddress;
+  if (!hasExplicitConfig) {
+    return null;
   }
   const cc = resolveChainConfig({
     chainId: asString(overrides.chainId as string, '') || undefined,
