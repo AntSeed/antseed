@@ -364,3 +364,163 @@ describe('BaseEscrowClient.getBuyerApprovalContext', () => {
     expect(calls).toContain('getProvenSignCooldown');
   });
 });
+
+// ═══════════════════════════════════════════════════════════════
+// PaymentRequired buffering (race condition: 402 + PR same tick)
+// ═══════════════════════════════════════════════════════════════
+
+describe('PaymentMux PaymentRequired buffering', () => {
+  it('handler fires immediately when listener is registered first', async () => {
+    const conn = mockConnection();
+    const mux = new PaymentMux(conn);
+    const received: PaymentRequiredPayload[] = [];
+
+    mux.onPaymentRequired((payload) => received.push(payload));
+
+    const frame: FramedMessage = {
+      type: MessageType.PaymentRequired,
+      messageId: 1,
+      payload: codec.encodePaymentRequired(SAMPLE_PAYMENT_REQUIRED),
+    };
+    await mux.handleFrame(frame);
+
+    expect(received).toHaveLength(1);
+    expect(received[0]!.requestId).toBe(SAMPLE_PAYMENT_REQUIRED.requestId);
+  });
+
+  it('multiple PaymentRequired frames dispatch to handler in order', async () => {
+    const conn = mockConnection();
+    const mux = new PaymentMux(conn);
+    const received: string[] = [];
+
+    mux.onPaymentRequired((payload) => received.push(payload.requestId));
+
+    for (const id of ['req-1', 'req-2', 'req-3']) {
+      const payload = { ...SAMPLE_PAYMENT_REQUIRED, requestId: id };
+      await mux.handleFrame({
+        type: MessageType.PaymentRequired,
+        messageId: 1,
+        payload: codec.encodePaymentRequired(payload),
+      });
+    }
+
+    expect(received).toEqual(['req-1', 'req-2', 'req-3']);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// Seller: proven-sign suggested amount
+// ═══════════════════════════════════════════════════════════════
+
+describe('SellerPaymentManager proven-sign suggested amount', () => {
+  let tempDir: string;
+  let store: SessionStore;
+  let sellerIdentity: Identity;
+  let manager: SellerPaymentManager;
+
+  beforeEach(async () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'seller-proven-'));
+    store = new SessionStore(tempDir);
+    sellerIdentity = await createTestIdentity();
+
+    const config: SellerPaymentConfig = {
+      rpcUrl: 'http://127.0.0.1:8545',
+      contractAddress: CONTRACT_ADDR,
+      usdcAddress: USDC_ADDR,
+      chainId: CHAIN_ID,
+      dataDir: tempDir,
+    };
+    manager = new SellerPaymentManager(sellerIdentity, config, store);
+
+    vi.spyOn(manager.escrowClient, 'reserve').mockResolvedValue('0xhash');
+    vi.spyOn(manager.escrowClient, 'settle').mockResolvedValue('0xhash');
+    vi.spyOn(manager.escrowClient, 'settleTimeout').mockResolvedValue('0xhash');
+    vi.spyOn(manager.escrowClient, 'getSellerAccount').mockResolvedValue({
+      stake: 100_000_000n,
+      earnings: 0n,
+      stakedAt: BigInt(Date.now()),
+      tokenRate: 500n,
+    });
+    vi.spyOn(manager.escrowClient, 'getFirstSignCap').mockResolvedValue(1_000_000n);
+  });
+
+  afterEach(() => {
+    store.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('suggests firstSignCap for new buyers (no prior session)', async () => {
+    await manager.init();
+    const req = manager.getPaymentRequirements('req-1', 'unknown-buyer');
+    expect(req!.suggestedAmount).toBe('1000000'); // firstSignCap
+  });
+
+  it('suggests higher amount for returning buyers with delivered tokens', async () => {
+    await manager.init();
+
+    // Insert a prior session with delivered tokens
+    store.upsertSession({
+      sessionId: '0x' + 'aa'.repeat(32),
+      peerId: 'returning-buyer',
+      role: 'seller',
+      sellerEvmAddr: identityToEvmAddress(sellerIdentity),
+      buyerEvmAddr: '0x' + 'bb'.repeat(20),
+      nonce: 1,
+      authMax: '1000000',
+      deadline: Math.floor(Date.now() / 1000) + 3600,
+      previousSessionId: '0x' + '00'.repeat(32),
+      previousConsumption: '0',
+      tokensDelivered: '500',
+      requestCount: 5,
+      reservedAt: Date.now(),
+      settledAt: null,
+      settledAmount: null,
+      status: 'settled',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+
+    const req = manager.getPaymentRequirements('req-2', 'returning-buyer');
+    expect(BigInt(req!.suggestedAmount)).toBeGreaterThan(1_000_000n);
+  });
+
+  it('includes per-direction pricing when provided', async () => {
+    await manager.init();
+    const req = manager.getPaymentRequirements('req-3', undefined, {
+      inputUsdPerMillion: 3.0,
+      outputUsdPerMillion: 15.0,
+    });
+    expect(req!.inputUsdPerMillion).toBe(3.0);
+    expect(req!.outputUsdPerMillion).toBe(15.0);
+  });
+
+  it('omits pricing fields when not provided', async () => {
+    await manager.init();
+    const req = manager.getPaymentRequirements('req-4');
+    expect(req!.inputUsdPerMillion).toBeUndefined();
+    expect(req!.outputUsdPerMillion).toBeUndefined();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// Codec: PaymentRequired with optional pricing fields
+// ═══════════════════════════════════════════════════════════════
+
+describe('PaymentRequired codec with pricing', () => {
+  it('round-trips with per-direction pricing', () => {
+    const payload: PaymentRequiredPayload = {
+      ...SAMPLE_PAYMENT_REQUIRED,
+      inputUsdPerMillion: 3.0,
+      outputUsdPerMillion: 15.0,
+    };
+    const decoded = codec.decodePaymentRequired(codec.encodePaymentRequired(payload));
+    expect(decoded.inputUsdPerMillion).toBe(3.0);
+    expect(decoded.outputUsdPerMillion).toBe(15.0);
+  });
+
+  it('round-trips without pricing (fields absent)', () => {
+    const decoded = codec.decodePaymentRequired(codec.encodePaymentRequired(SAMPLE_PAYMENT_REQUIRED));
+    expect(decoded.inputUsdPerMillion).toBeUndefined();
+    expect(decoded.outputUsdPerMillion).toBeUndefined();
+  });
+});

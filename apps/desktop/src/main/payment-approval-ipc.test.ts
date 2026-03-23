@@ -153,6 +153,24 @@ test('request and response round-trip preserves all fields', () => {
   assert.equal(parseApprovalResponse(responseLine, 'other-peer'), null);
 });
 
+// ── Concurrent approval correlation ──
+
+test('concurrent approvals: each response matches only its peerId', () => {
+  const peerA = 'peer-aaaa';
+  const peerB = 'peer-bbbb';
+
+  const responseA = buildApprovalResponse(true, peerA);
+  const responseB = buildApprovalResponse(false, peerB);
+
+  // A's response only matches A
+  assert.deepEqual(parseApprovalResponse(responseA, peerA), { approved: true });
+  assert.equal(parseApprovalResponse(responseA, peerB), null);
+
+  // B's response only matches B
+  assert.deepEqual(parseApprovalResponse(responseB, peerB), { approved: false });
+  assert.equal(parseApprovalResponse(responseB, peerA), null);
+});
+
 // ── USDC formatting (matching component logic) ──
 
 function formatUsdc(baseUnits: string | null | undefined): string {

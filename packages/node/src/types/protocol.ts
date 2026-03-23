@@ -127,8 +127,11 @@ export interface PaymentRequiredPayload {
   tokenRate: string;
   /** FIRST_SIGN_CAP from escrow contract (USDC base units) */
   firstSignCap: string;
-  /** Suggested auth amount in USDC base units (= firstSignCap for first sign) */
+  /** Suggested auth amount in USDC base units */
   suggestedAmount: string;
   /** The requestId that triggered the 402, so the buyer can correlate */
   requestId: string;
+  /** Per-direction pricing from seller metadata (USD per 1M tokens), if available */
+  inputUsdPerMillion?: number;
+  outputUsdPerMillion?: number;
 }

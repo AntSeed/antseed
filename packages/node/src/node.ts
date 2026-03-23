@@ -473,6 +473,14 @@ export class AntseedNode extends EventEmitter {
     this._buyerPaymentManager = null;
     this._sellerPaymentManager = null;
     this._buyerLockedPeers.clear();
+    // Clean up payment negotiation state
+    for (const [, pending] of this._pendingPaymentRequired) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error('Node stopped'));
+    }
+    this._pendingPaymentRequired.clear();
+    this._bufferedPaymentRequired.clear();
+    this._paymentNegotiationLocks.clear();
     this._started = false;
     this.emit("stopped");
   }
@@ -782,9 +790,15 @@ export class AntseedNode extends EventEmitter {
 
     if (response.statusCode === 402 && needsPaymentNegotiation) {
       debugLog(`[Node] Got 402 from ${peer.peerId.slice(0, 12)}... — negotiating payment`);
-      await this._negotiatePayment(peer, conn);
-      debugLog(`[Node] Payment negotiated with ${peer.peerId.slice(0, 12)}... — retrying request`);
-      return executeRequest();
+      try {
+        await this._negotiatePayment(peer, conn);
+        debugLog(`[Node] Payment negotiated with ${peer.peerId.slice(0, 12)}... — retrying request`);
+        return executeRequest();
+      } catch (err) {
+        // Negotiation failed — remove from locked set so next request can retry
+        this._buyerLockedPeers.delete(peer.peerId);
+        throw err;
+      }
     }
 
     return response;
@@ -1105,7 +1119,15 @@ export class AntseedNode extends EventEmitter {
       // Also send PaymentRequired via PaymentMux so the buyer knows what to sign.
       const spmAuthorized = this._sellerPaymentManager?.hasSession(buyerPeerId) ?? false;
       if (this._escrowClient && !spmAuthorized) {
-        const requirements = this._sellerPaymentManager?.getPaymentRequirements(request.requestId);
+        // Pass buyerPeerId so seller can suggest higher amount for returning buyers,
+        // and include per-direction pricing from the first registered provider.
+        // Retry init if it failed at startup (e.g. RPC was unreachable)
+        await this._sellerPaymentManager?.ensureInitialized();
+        const firstProvider = this._providers[0];
+        const providerPricing = firstProvider?.pricing?.defaults;
+        const requirements = this._sellerPaymentManager?.getPaymentRequirements(
+          request.requestId, buyerPeerId, providerPricing,
+        );
         if (requirements) {
           debugLog(`[Node] No payment session for ${buyerPeerId.slice(0, 12)}... — sending 402 + PaymentRequired`);
           mux.sendProxyResponse({

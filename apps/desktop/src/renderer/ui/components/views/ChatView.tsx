@@ -300,8 +300,8 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
             peerInfo={snap.chatPaymentApprovalPeerInfo}
             loading={snap.chatPaymentApprovalLoading}
             error={snap.chatPaymentApprovalError}
-            onApprove={() => actions.approveSessionPayment?.()}
-            onCancel={() => actions.cancelSessionPayment?.()}
+            onApprove={() => actions.approvePaymentSession()}
+            onCancel={() => actions.rejectPaymentSession()}
           />
           <LowBalanceWarning
             visible={snap.chatLowBalanceWarning}

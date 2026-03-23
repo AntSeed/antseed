@@ -405,8 +405,6 @@ registerActions({
   clearPinnedPeer: chatApi.clearPinnedPeer,
   approvePaymentSession: chatApi.approvePaymentSession,
   rejectPaymentSession: chatApi.rejectPaymentSession,
-  approveSessionPayment: () => { chatApi.approveSessionPayment().catch(() => {}); },
-  cancelSessionPayment: () => chatApi.cancelSessionPayment(),
   refreshCredits: () => void creditsApi.refreshCredits(),
   refreshPlugins: refreshPluginInventory,
   installPlugin: () => {

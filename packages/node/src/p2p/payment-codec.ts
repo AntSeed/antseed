@@ -124,11 +124,14 @@ export function encodePaymentRequired(payload: PaymentRequiredPayload): Uint8Arr
 
 export function decodePaymentRequired(data: Uint8Array): PaymentRequiredPayload {
   const obj = parseJson(data);
-  return {
+  const result: PaymentRequiredPayload = {
     sellerEvmAddr: requireString(obj, 'sellerEvmAddr'),
     tokenRate: requireString(obj, 'tokenRate'),
     firstSignCap: requireString(obj, 'firstSignCap'),
     suggestedAmount: requireString(obj, 'suggestedAmount'),
     requestId: requireString(obj, 'requestId'),
   };
+  if (typeof obj.inputUsdPerMillion === 'number') result.inputUsdPerMillion = obj.inputUsdPerMillion;
+  if (typeof obj.outputUsdPerMillion === 'number') result.outputUsdPerMillion = obj.outputUsdPerMillion;
+  return result;
 }

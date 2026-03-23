@@ -398,11 +398,16 @@ export class SellerPaymentManager {
     return this._activeBuyers.has(buyerPeerId);
   }
 
+  /** Minimum interval between init retry attempts. */
+  private _lastInitAttemptMs = 0;
+  private static readonly INIT_RETRY_INTERVAL_MS = 30_000;
+
   /**
    * Pre-fetch on-chain data (tokenRate, FIRST_SIGN_CAP) so PaymentRequired
    * messages can be sent without blocking on RPC calls.
    */
   async init(): Promise<void> {
+    this._lastInitAttemptMs = Date.now();
     try {
       const sellerEvmAddr = identityToEvmAddress(this._identity);
       const [account, firstSignCap] = await Promise.all([
@@ -417,29 +422,50 @@ export class SellerPaymentManager {
     }
   }
 
+  /** Retry init if on-chain data is missing and enough time has passed. */
+  async ensureInitialized(): Promise<void> {
+    if (this._tokenRate !== null && this._firstSignCap !== null) return;
+    if (Date.now() - this._lastInitAttemptMs < SellerPaymentManager.INIT_RETRY_INTERVAL_MS) return;
+    await this.init();
+  }
+
+  /** Default proven-sign suggested amount: 5 USDC (base units). */
+  private static readonly PROVEN_SIGN_SUGGESTED_AMOUNT = 5_000_000n;
+
   /**
    * Build the PaymentRequired payload for a buyer that doesn't have a session.
    * Returns null if on-chain data isn't available yet.
+   * For returning buyers (proven-sign), suggests a higher amount than FIRST_SIGN_CAP.
    */
-  getPaymentRequirements(requestId: string): {
-    sellerEvmAddr: string;
-    tokenRate: string;
-    firstSignCap: string;
-    suggestedAmount: string;
-    requestId: string;
-  } | null {
+  getPaymentRequirements(
+    requestId: string,
+    buyerPeerId?: string,
+    pricing?: { inputUsdPerMillion?: number; outputUsdPerMillion?: number },
+  ): import('../types/protocol.js').PaymentRequiredPayload | null {
     const sellerEvmAddr = identityToEvmAddress(this._identity);
     const tokenRate = this._tokenRate;
     const firstSignCap = this._firstSignCap;
     if (tokenRate === null || firstSignCap === null) {
       return null;
     }
+
+    // Suggest higher amount for returning buyers (proven-sign eligible)
+    let suggestedAmount = firstSignCap;
+    if (buyerPeerId) {
+      const priorSession = this._sessionStore.getLatestSession(buyerPeerId, 'seller');
+      if (priorSession && BigInt(priorSession.tokensDelivered) > 0n) {
+        suggestedAmount = SellerPaymentManager.PROVEN_SIGN_SUGGESTED_AMOUNT;
+      }
+    }
+
     return {
       sellerEvmAddr,
       tokenRate: tokenRate.toString(),
       firstSignCap: firstSignCap.toString(),
-      suggestedAmount: firstSignCap.toString(),
+      suggestedAmount: suggestedAmount.toString(),
       requestId,
+      ...(pricing?.inputUsdPerMillion != null ? { inputUsdPerMillion: pricing.inputUsdPerMillion } : {}),
+      ...(pricing?.outputUsdPerMillion != null ? { outputUsdPerMillion: pricing.outputUsdPerMillion } : {}),
     };
   }
 
