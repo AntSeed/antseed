@@ -1076,7 +1076,7 @@ export class AntseedNode extends EventEmitter {
           dataDir: paymentsDir,
         };
         this._buyerPaymentManager = new BuyerPaymentManager(identity, buyerPaymentConfig, this._sessionStore);
-        debugLog(`[Node] Buyer payment manager initialized (wallet=${identityToEvmAddress(identity).slice(0, 10)}...)`);
+        debugLog(`[Node] Buyer payment manager initialized (wallet=${identityToEvmAddress(identity).slice(0, 10)}... chainId=${buyerPaymentConfig.chainId} contract=${buyerPaymentConfig.contractAddress.slice(0, 10)}...)`);
       }
     }
 
