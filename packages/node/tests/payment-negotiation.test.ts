@@ -481,7 +481,8 @@ describe('SellerPaymentManager proven-sign suggested amount', () => {
     });
 
     const req = manager.getPaymentRequirements('req-2', 'returning-buyer');
-    expect(BigInt(req!.suggestedAmount)).toBeGreaterThan(1_000_000n);
+    // Proven-sign suggested amount ($0.10) differs from first-sign cap ($1.00)
+    expect(req!.suggestedAmount).toBe('100000');
   });
 
   it('includes per-direction pricing when provided', async () => {

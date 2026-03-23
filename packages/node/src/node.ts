@@ -884,7 +884,9 @@ export class AntseedNode extends EventEmitter {
           this._pendingPaymentRequired.delete(peerId);
           pendingPR.reject(new Error(`Peer ${peerId.slice(0, 12)}... disconnected during payment negotiation`));
         }
-        this._paymentNegotiationLocks.delete(peerId);
+        // Don't delete _paymentNegotiationLocks here — the pending rejection
+        // causes _doNegotiatePayment to throw, and its finally block owns cleanup.
+        // Deleting here would race with a new negotiation started on reconnect.
         this._decoders.delete(peerId);
         // Handle buyer disconnect
         if (this._sellerPaymentManager) {
@@ -1908,6 +1910,9 @@ export class AntseedNode extends EventEmitter {
         const cap = approvalContext.firstSignCap;
         if (amount > cap) amount = cap;
       }
+    }
+    if (amount <= 0n) {
+      throw new Error(`Insufficient escrow balance to authorize payment to ${peer.peerId.slice(0, 12)}...`);
     }
     try {
       await bpm.authorizeSpending(peer.peerId, requirements.sellerEvmAddr, pmux, amount);

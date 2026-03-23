@@ -429,8 +429,8 @@ export class SellerPaymentManager {
     await this.init();
   }
 
-  /** Default proven-sign suggested amount: 5 USDC (base units). */
-  private static readonly PROVEN_SIGN_SUGGESTED_AMOUNT = 5_000_000n;
+  /** Default proven-sign suggested amount: $0.10 USDC (base units). */
+  private static readonly PROVEN_SIGN_SUGGESTED_AMOUNT = 100_000n;
 
   /**
    * Build the PaymentRequired payload for a buyer that doesn't have a session.

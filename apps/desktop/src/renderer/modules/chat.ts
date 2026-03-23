@@ -1694,11 +1694,14 @@ export function initChatModule({
 
   if (bridge.onPaymentApprovalRequired) {
     bridge.onPaymentApprovalRequired((_event, info) => {
+      // Clear stale data from any previous approval
+      uiState.chatPaymentApprovalPeerInfo = null;
+      uiState.chatPaymentApprovalError = null;
+
       const peerId = typeof info.peerId === 'string' ? info.peerId : null;
       const amount = typeof info.suggestedAmount === 'string'
         ? (Number(info.suggestedAmount) / 1_000_000).toFixed(2)
-        : '1.00';
-      const isFirstSign = info.isFirstSign !== false;
+        : '0.10';
       const buyerBalance = typeof info.buyerAvailableUsdc === 'string'
         ? (Number(info.buyerAvailableUsdc) / 1_000_000).toFixed(2)
         : null;
@@ -1708,14 +1711,12 @@ export function initChatModule({
       uiState.chatPaymentApprovalPeerName = peerId ? peerId.slice(0, 12) + '...' : null;
       uiState.chatPaymentApprovalAmount = amount;
 
-      // Show insufficient balance warning
       if (buyerBalance !== null && parseFloat(buyerBalance) < parseFloat(amount)) {
         uiState.chatPaymentApprovalError = `Insufficient balance ($${buyerBalance} available). Add credits first.`;
       }
 
       notifyUiStateChanged();
 
-      // Fetch full peer info (reputation, session count, etc.)
       if (peerId) {
         void fetchPeerInfo(peerId);
       }
@@ -1726,6 +1727,8 @@ export function initChatModule({
     const peerId = uiState.chatPaymentApprovalPeerId;
     uiState.chatPaymentApprovalVisible = false;
     uiState.chatPaymentApprovalPeerId = null;
+    uiState.chatPaymentApprovalPeerName = null;
+    uiState.chatPaymentApprovalPeerInfo = null;
     uiState.chatPaymentApprovalLoading = false;
     uiState.chatPaymentApprovalError = null;
     notifyUiStateChanged();
