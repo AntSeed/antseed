@@ -258,6 +258,14 @@ processManager.onPaymentApprovalRequest = async (info) => {
   }
 
   return new Promise<{ approved: boolean }>((resolve) => {
+    // Evict any stale entry for the same peer (e.g. two processes encountering the same seller)
+    const existing = pendingPaymentApprovals.get(peerId);
+    if (existing) {
+      clearTimeout(existing.timer);
+      existing.resolve({ approved: false });
+      pendingPaymentApprovals.delete(peerId);
+    }
+
     const timer = setTimeout(() => {
       if (pendingPaymentApprovals.has(peerId)) {
         pendingPaymentApprovals.delete(peerId);

@@ -456,7 +456,7 @@ describe('SellerPaymentManager proven-sign suggested amount', () => {
     expect(req!.suggestedAmount).toBe('100000'); // $0.10
   });
 
-  it('suggests higher amount for returning buyers with delivered tokens', async () => {
+  it('suggests flat proven-sign amount ($0.10) for returning buyers with delivered tokens', async () => {
     await manager.init();
 
     // Insert a prior session with delivered tokens

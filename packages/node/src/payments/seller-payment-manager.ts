@@ -451,12 +451,15 @@ export class SellerPaymentManager {
       return null;
     }
 
-    // Suggest small cent-level amounts — the contract's FIRST_SIGN_CAP is the
-    // maximum for first-sign, but we suggest less to minimize buyer risk.
+    // Suggest small cent-level amounts to minimize buyer risk.
+    // First-sign and proven-sign both default to $0.10; the contract's
+    // FIRST_SIGN_CAP ($1.00) is the maximum, not the suggestion.
     let suggestedAmount = SellerPaymentManager.FIRST_SIGN_SUGGESTED_AMOUNT;
     if (buyerPeerId) {
       const priorSession = this._sessionStore.getLatestSession(buyerPeerId, 'seller');
       if (priorSession && BigInt(priorSession.tokensDelivered) > 0n) {
+        // For returning buyers the first-sign cap no longer applies,
+        // so we suggest a small flat amount for incremental top-ups.
         suggestedAmount = SellerPaymentManager.PROVEN_SIGN_SUGGESTED_AMOUNT;
       }
     }

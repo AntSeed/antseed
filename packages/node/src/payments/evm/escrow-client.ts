@@ -69,12 +69,9 @@ const ESCROW_ABI = [
   'function getSellerAccount(address seller) external view returns (uint256 stake, uint256 earnings, uint256 stakedAt, uint256 tokenRate)',
   'function domainSeparator() external view returns (bytes32)',
   'function FIRST_SIGN_CAP() external view returns (uint256)',
-  'function MIN_TOKEN_THRESHOLD() external view returns (uint256)',
   'function PROVEN_SIGN_COOLDOWN() external view returns (uint256)',
-  'function BUYER_DIVERSITY_THRESHOLD() external view returns (uint256)',
   'function latestSessionId(address buyer, address seller) external view returns (bytes32)',
   'function firstSessionTimestamp(address buyer, address seller) external view returns (uint256)',
-  'function uniqueSellersCharged(address buyer) external view returns (uint256)',
   'function sessions(bytes32 sessionId) external view returns (address buyer, address seller, uint256 maxAmount, uint256 nonce, uint256 deadline, uint256 previousConsumption, bytes32 previousSessionId, uint256 reservedAt, uint256 settledAmount, uint256 settledTokenCount, uint256 tokenRate, uint8 status, bool isFirstSign, bool isProvenSign, bool isQualifiedProvenSign)',
 ] as const;
 
@@ -323,20 +320,11 @@ export class BaseEscrowClient extends BaseEvmClient {
     return contract.getFunction('firstSessionTimestamp')(buyerAddr, sellerAddr) as Promise<bigint>;
   }
 
-  async getUniqueSellersCharged(buyerAddr: string): Promise<bigint> {
-    const contract = new Contract(this._contractAddress, ESCROW_ABI, this._provider);
-    return contract.getFunction('uniqueSellersCharged')(buyerAddr) as Promise<bigint>;
-  }
-
   async getProvenSignCooldown(): Promise<bigint> {
     const contract = new Contract(this._contractAddress, ESCROW_ABI, this._provider);
     return contract.getFunction('PROVEN_SIGN_COOLDOWN')() as Promise<bigint>;
   }
 
-  async getMinTokenThreshold(): Promise<bigint> {
-    const contract = new Contract(this._contractAddress, ESCROW_ABI, this._provider);
-    return contract.getFunction('MIN_TOKEN_THRESHOLD')() as Promise<bigint>;
-  }
 
   /**
    * Fetch all data the buyer needs to display a payment approval card.
