@@ -432,11 +432,15 @@ export class ProcessManager {
               const request = parsed.__antseed_payment_approval_request as Record<string, unknown> | undefined;
               if (request) {
                 const reqPeerId = typeof request.peerId === 'string' ? request.peerId : '';
+                const writeResponse = (data: Record<string, unknown>): void => {
+                  if (!child.stdin.writable) return;
+                  try { child.stdin.write(JSON.stringify({ __antseed_payment_approval_response: data }) + '\n'); }
+                  catch { /* child exited */ }
+                };
                 void this.onPaymentApprovalRequest(request).then((decision) => {
-                  const response = JSON.stringify({ __antseed_payment_approval_response: { ...decision, peerId: reqPeerId } });
-                  child.stdin.write(response + '\n');
+                  writeResponse({ ...decision, peerId: reqPeerId });
                 }).catch(() => {
-                  child.stdin.write(JSON.stringify({ __antseed_payment_approval_response: { approved: false, peerId: reqPeerId } }) + '\n');
+                  writeResponse({ approved: false, peerId: reqPeerId });
                 });
                 continue; // Don't log the structured JSON to the UI
               }

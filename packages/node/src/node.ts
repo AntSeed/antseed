@@ -1894,20 +1894,8 @@ export class AntseedNode extends EventEmitter {
       cooldownRemainingSecs: approvalContext?.cooldownRemainingSecs ?? null,
     };
 
-    // If an approval callback is configured (desktop), wait for user decision.
-    // Otherwise auto-approve (CLI headless mode).
-    if (this._config.onPaymentApproval) {
-      debugLog(`[Node] Waiting for payment approval from user for peer ${peer.peerId.slice(0, 12)}...`);
-      const decision = await this._config.onPaymentApproval(approvalInfo);
-      if (!decision.approved) {
-        throw new Error(`Payment rejected by user for peer ${peer.peerId.slice(0, 12)}...`);
-      }
-      debugLog(`[Node] Payment approved by user for peer ${peer.peerId.slice(0, 12)}...`);
-    }
-
-    this.emit('payment:required', approvalInfo);
-
-    // Determine the auth amount: seller's suggestion, capped by contract limits and buyer balance
+    // Cap amount before showing approval UI so the user sees the real number
+    // and we fail fast on zero balance instead of after they click Approve.
     let amount = BigInt(requirements.suggestedAmount);
     if (approvalContext) {
       const available = approvalContext.buyerBalance.available;
@@ -1920,6 +1908,19 @@ export class AntseedNode extends EventEmitter {
     if (amount <= 0n) {
       throw new Error(`Insufficient escrow balance to authorize payment to ${peer.peerId.slice(0, 12)}...`);
     }
+
+    // If an approval callback is configured (desktop), wait for user decision.
+    // Otherwise auto-approve (CLI headless mode).
+    if (this._config.onPaymentApproval) {
+      debugLog(`[Node] Waiting for payment approval from user for peer ${peer.peerId.slice(0, 12)}...`);
+      const decision = await this._config.onPaymentApproval(approvalInfo);
+      if (!decision.approved) {
+        throw new Error(`Payment rejected by user for peer ${peer.peerId.slice(0, 12)}...`);
+      }
+      debugLog(`[Node] Payment approved by user for peer ${peer.peerId.slice(0, 12)}...`);
+    }
+
+    this.emit('payment:required', approvalInfo);
     try {
       await bpm.authorizeSpending(peer.peerId, requirements.sellerEvmAddr, pmux, amount);
       debugLog(`[Node] SpendingAuth sent to seller ${peer.peerId.slice(0, 12)}..., waiting for AuthAck...`);
