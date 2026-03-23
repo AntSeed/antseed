@@ -20,15 +20,15 @@ function isPaymentApprovalRequest(line: string): Record<string, unknown> | null 
   return null;
 }
 
-function buildApprovalResponse(approved: boolean): string {
-  return JSON.stringify({ [APPROVAL_RESPONSE_KEY]: { approved } });
+function buildApprovalResponse(approved: boolean, peerId: string): string {
+  return JSON.stringify({ [APPROVAL_RESPONSE_KEY]: { approved, peerId } });
 }
 
-function parseApprovalResponse(line: string): { approved: boolean } | null {
+function parseApprovalResponse(line: string, expectedPeerId: string): { approved: boolean } | null {
   try {
     const parsed = JSON.parse(line) as Record<string, unknown>;
-    const response = parsed[APPROVAL_RESPONSE_KEY] as { approved: boolean } | undefined;
-    if (response && typeof response.approved === 'boolean') {
+    const response = parsed[APPROVAL_RESPONSE_KEY] as { approved: boolean; peerId?: string } | undefined;
+    if (response && typeof response.approved === 'boolean' && response.peerId === expectedPeerId) {
       return { approved: response.approved };
     }
   } catch { /* not JSON */ }
@@ -76,43 +76,51 @@ test('isPaymentApprovalRequest returns null for array value', () => {
 
 // ── Response building ──
 
-test('buildApprovalResponse creates approved response', () => {
-  const response = buildApprovalResponse(true);
+test('buildApprovalResponse creates approved response with peerId', () => {
+  const response = buildApprovalResponse(true, 'peer-abc');
   const parsed = JSON.parse(response) as Record<string, unknown>;
-  const inner = parsed[APPROVAL_RESPONSE_KEY] as { approved: boolean };
+  const inner = parsed[APPROVAL_RESPONSE_KEY] as { approved: boolean; peerId: string };
   assert.equal(inner.approved, true);
+  assert.equal(inner.peerId, 'peer-abc');
 });
 
-test('buildApprovalResponse creates rejected response', () => {
-  const response = buildApprovalResponse(false);
+test('buildApprovalResponse creates rejected response with peerId', () => {
+  const response = buildApprovalResponse(false, 'peer-xyz');
   const parsed = JSON.parse(response) as Record<string, unknown>;
-  const inner = parsed[APPROVAL_RESPONSE_KEY] as { approved: boolean };
+  const inner = parsed[APPROVAL_RESPONSE_KEY] as { approved: boolean; peerId: string };
   assert.equal(inner.approved, false);
+  assert.equal(inner.peerId, 'peer-xyz');
 });
 
 // ── Response parsing ──
 
-test('parseApprovalResponse parses approved response', () => {
-  const line = buildApprovalResponse(true);
-  const result = parseApprovalResponse(line);
+test('parseApprovalResponse parses approved response for matching peerId', () => {
+  const line = buildApprovalResponse(true, 'peer-abc');
+  const result = parseApprovalResponse(line, 'peer-abc');
   assert.deepEqual(result, { approved: true });
 });
 
+test('parseApprovalResponse returns null for non-matching peerId', () => {
+  const line = buildApprovalResponse(true, 'peer-abc');
+  const result = parseApprovalResponse(line, 'peer-xyz');
+  assert.equal(result, null);
+});
+
 test('parseApprovalResponse parses rejected response', () => {
-  const line = buildApprovalResponse(false);
-  const result = parseApprovalResponse(line);
+  const line = buildApprovalResponse(false, 'peer-abc');
+  const result = parseApprovalResponse(line, 'peer-abc');
   assert.deepEqual(result, { approved: false });
 });
 
 test('parseApprovalResponse returns null for non-response', () => {
-  assert.equal(parseApprovalResponse('hello'), null);
-  assert.equal(parseApprovalResponse('{}'), null);
-  assert.equal(parseApprovalResponse('{"other": true}'), null);
+  assert.equal(parseApprovalResponse('hello', 'any'), null);
+  assert.equal(parseApprovalResponse('{}', 'any'), null);
+  assert.equal(parseApprovalResponse('{"other": true}', 'any'), null);
 });
 
 test('parseApprovalResponse rejects missing approved field', () => {
-  const line = JSON.stringify({ [APPROVAL_RESPONSE_KEY]: { other: true } });
-  assert.equal(parseApprovalResponse(line), null);
+  const line = JSON.stringify({ [APPROVAL_RESPONSE_KEY]: { other: true, peerId: 'p' } });
+  assert.equal(parseApprovalResponse(line, 'p'), null);
 });
 
 // ── Round-trip ──
@@ -136,10 +144,13 @@ test('request and response round-trip preserves all fields', () => {
   assert.equal(parsedRequest!.peerId, info.peerId);
   assert.equal(parsedRequest!.cooldownRemainingSecs, 86400);
 
-  // Desktop sends response
-  const responseLine = buildApprovalResponse(true);
-  const parsedResponse = parseApprovalResponse(responseLine);
+  // Desktop sends response with peerId correlation
+  const responseLine = buildApprovalResponse(true, info.peerId);
+  const parsedResponse = parseApprovalResponse(responseLine, info.peerId);
   assert.deepEqual(parsedResponse, { approved: true });
+
+  // Different peerId should not match
+  assert.equal(parseApprovalResponse(responseLine, 'other-peer'), null);
 });
 
 // ── USDC formatting (matching component logic) ──

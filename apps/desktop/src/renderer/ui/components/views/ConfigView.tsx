@@ -14,7 +14,7 @@ export function ConfigView({ active }: ConfigViewProps) {
   const [maxOutput, setMaxOutput] = useState('0');
   const [minRep, setMinRep] = useState('0');
   const [paymentMethod, setPaymentMethod] = useState('crypto');
-  const [requireManualApproval, setRequireManualApproval] = useState(true);
+  const [requireManualApproval, setRequireManualApproval] = useState(false);
   const [devMode, setDevMode] = useState(false);
 
   useEffect(() => {

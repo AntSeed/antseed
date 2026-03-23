@@ -366,8 +366,9 @@ export function registerConnectCommand(program: Command): void {
                   if (!trimmed) continue
                   try {
                     const parsed = JSON.parse(trimmed) as Record<string, unknown>
-                    const response = parsed.__antseed_payment_approval_response as { approved: boolean } | undefined
-                    if (response && typeof response.approved === 'boolean') {
+                    const response = parsed.__antseed_payment_approval_response as { approved: boolean; peerId?: string } | undefined
+                    if (response && typeof response.approved === 'boolean'
+                        && response.peerId === info.peerId) {
                       clearTimeout(timeout)
                       process.stdin.removeListener('data', onData)
                       resolve({ approved: response.approved })
