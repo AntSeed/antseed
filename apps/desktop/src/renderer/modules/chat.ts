@@ -1122,21 +1122,8 @@ export function initChatModule({
     if (!bridge) return;
 
     // Payment gate for paid services
-    const selectedService = uiState.chatServiceOptions.find(
-      (opt) => opt.value === uiState.chatSelectedServiceValue
-    );
-    const isPaidService = selectedService && selectedService.protocol !== 'free';
-    const hasCredits = uiState.creditsAvailableUsdc !== '0' && uiState.creditsAvailableUsdc !== '';
-    const requireManualApproval = uiState.configFormData?.requireManualApproval ?? false;
-
-    if (isPaidService && !hasCredits) {
-      uiState.chatError = 'No credits available. Add credits to use paid services.';
-      notifyUiStateChanged();
-      return;
-    }
-
-    // Payment approval is handled by the node's 402-based flow — the caller
-    // catches the 402 JSON response, shows the approval card, and retries.
+    // Payment is handled by the node's 402-based flow — no pre-blocking here.
+    // If the seller requires payment, the node returns a 402 with payment info.
 
     if (uiState.chatSending) {
       showChatError('Another chat request is already in progress.');
