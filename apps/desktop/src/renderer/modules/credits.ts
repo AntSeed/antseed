@@ -59,6 +59,8 @@ export function initCreditsModule({ bridge, uiState }: CreditsModuleOptions): Cr
           && !uiState.chatPaymentApprovalLoading
           && !uiState.chatSending
           && !manualApproval
+          && Number.isFinite(required)
+          && required > 0
           && available >= required
         ) {
           getActions().approvePaymentSession();

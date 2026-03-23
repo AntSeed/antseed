@@ -119,9 +119,9 @@ function adaptOpenAICompatibleErrorResponse(
 
   const wrappedError = {
     error: {
+      ...parsed,
       type: 'payment_required',
       message: JSON.stringify(parsed),
-      ...parsed,
     },
   }
 

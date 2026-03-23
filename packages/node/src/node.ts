@@ -266,6 +266,7 @@ export class AntseedNode extends EventEmitter {
     reject: (err: Error) => void;
     timer: ReturnType<typeof setTimeout>;
   }>();
+  private _manualApprovalCache: { value: boolean; at: number } | null = null;
   /** Buffered PaymentRequired that arrived before _doNegotiatePayment registered its listener.
    *  This handles the race where 402 + PaymentRequired arrive in the same I/O tick. */
   private _bufferedPaymentRequired = new Map<string, PaymentRequiredPayload>();
@@ -1911,6 +1912,11 @@ export class AntseedNode extends EventEmitter {
 
   /** Read requireManualApproval from config.json so changes take effect without restart. */
   private async _isManualApprovalEnabled(): Promise<boolean> {
+    const now = Date.now();
+    if (this._manualApprovalCache && now - this._manualApprovalCache.at < 5_000) {
+      return this._manualApprovalCache.value;
+    }
+
     try {
       const { readFile } = await import('node:fs/promises');
       const configPath = this._config.configPath
@@ -1918,9 +1924,13 @@ export class AntseedNode extends EventEmitter {
       const raw = await readFile(configPath, 'utf-8');
       const parsed = JSON.parse(raw) as Record<string, unknown>;
       const buyer = parsed.buyer && typeof parsed.buyer === 'object' ? parsed.buyer as Record<string, unknown> : {};
-      return Boolean(buyer.requireManualApproval);
+      const value = Boolean(buyer.requireManualApproval);
+      this._manualApprovalCache = { value, at: now };
+      return value;
     } catch {
-      return Boolean(this._config.requireManualApproval);
+      const value = Boolean(this._config.requireManualApproval);
+      this._manualApprovalCache = { value, at: now };
+      return value;
     }
   }
 
@@ -1955,18 +1965,23 @@ export class AntseedNode extends EventEmitter {
           resolve: (payload: PaymentRequiredPayload) => {
             clearTimeout(existing.timer);
             clearTimeout(wrapper.timer);
-            this._pendingPaymentRequired.delete(peerId);
+            if (this._pendingPaymentRequired.get(peerId) === wrapper) {
+              this._pendingPaymentRequired.delete(peerId);
+            }
             existing.resolve(payload);
             resolve(payload);
           },
           reject: (err: Error) => {
             clearTimeout(existing.timer);
             clearTimeout(wrapper.timer);
-            this._pendingPaymentRequired.delete(peerId);
+            if (this._pendingPaymentRequired.get(peerId) === wrapper) {
+              this._pendingPaymentRequired.delete(peerId);
+            }
             existing.reject(err);
             resolve(null);
           },
           timer: setTimeout(() => {
+            clearTimeout(existing.timer);
             if (this._pendingPaymentRequired.get(peerId) === wrapper) {
               this._pendingPaymentRequired.delete(peerId);
             }
@@ -1978,16 +1993,24 @@ export class AntseedNode extends EventEmitter {
       }
 
       const timer = setTimeout(() => {
-        this._pendingPaymentRequired.delete(peerId);
+        if (this._pendingPaymentRequired.get(peerId)?.timer === timer) {
+          this._pendingPaymentRequired.delete(peerId);
+        }
         resolve(null);
       }, timeoutMs);
       this._pendingPaymentRequired.set(peerId, {
         resolve: (payload) => {
           clearTimeout(timer);
+          if (this._pendingPaymentRequired.get(peerId)?.timer === timer) {
+            this._pendingPaymentRequired.delete(peerId);
+          }
           resolve(payload);
         },
         reject: () => {
           clearTimeout(timer);
+          if (this._pendingPaymentRequired.get(peerId)?.timer === timer) {
+            this._pendingPaymentRequired.delete(peerId);
+          }
           resolve(null);
         },
         timer,
@@ -2086,7 +2109,7 @@ export class AntseedNode extends EventEmitter {
   private async _doNegotiatePayment(peer: PeerInfo, conn: PeerConnection): Promise<void> {
     const bpm = this._buyerPaymentManager;
     if (!bpm) {
-      throw new Error('Insufficient escrow balance to authorize payment — no escrow contract configured');
+      throw new Error('Payment negotiation unavailable — no escrow contract configured');
     }
 
     // If already locked from a previous successful negotiation, skip
