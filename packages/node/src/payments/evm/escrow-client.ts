@@ -332,7 +332,6 @@ export class BaseEscrowClient extends BaseEvmClient {
    */
   async getBuyerApprovalContext(buyerAddr: string, sellerAddr: string): Promise<{
     buyerBalance: BuyerBalanceInfo;
-    sellerAccount: SellerAccountInfo;
     firstSignCap: bigint;
     latestSessionId: string;
     firstSessionTimestamp: bigint;
@@ -341,9 +340,8 @@ export class BaseEscrowClient extends BaseEvmClient {
   }> {
     const ZERO_BYTES32 = '0x' + '00'.repeat(32);
 
-    const [buyerBalance, sellerAccount, firstSignCap, latestSessId, firstSessTs, cooldown] = await Promise.all([
+    const [buyerBalance, firstSignCap, latestSessId, firstSessTs, cooldown] = await Promise.all([
       this.getBuyerBalance(buyerAddr),
-      this.getSellerAccount(sellerAddr),
       this.getFirstSignCap(),
       this.getLatestSessionId(buyerAddr, sellerAddr),
       this.getFirstSessionTimestamp(buyerAddr, sellerAddr),
@@ -362,7 +360,6 @@ export class BaseEscrowClient extends BaseEvmClient {
 
     return {
       buyerBalance,
-      sellerAccount,
       firstSignCap,
       latestSessionId: latestSessId,
       firstSessionTimestamp: firstSessTs,

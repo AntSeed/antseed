@@ -255,12 +255,6 @@ describe('BaseEscrowClient.getBuyerApprovalContext', () => {
       pendingWithdrawal: 0n,
       lastActivityAt: 0n,
     });
-    vi.spyOn(escrow, 'getSellerAccount').mockResolvedValue({
-      stake: 100_000_000n,
-      earnings: 0n,
-      stakedAt: BigInt(Date.now()),
-      tokenRate: 1000n,
-    });
     vi.spyOn(escrow, 'getFirstSignCap').mockResolvedValue(1_000_000n);
     vi.spyOn(escrow, 'getLatestSessionId').mockResolvedValue(ZERO_BYTES32);
     vi.spyOn(escrow, 'getFirstSessionTimestamp').mockResolvedValue(0n);
@@ -270,7 +264,6 @@ describe('BaseEscrowClient.getBuyerApprovalContext', () => {
     expect(ctx.isFirstSign).toBe(true);
     expect(ctx.cooldownRemainingSecs).toBe(0);
     expect(ctx.buyerBalance.available).toBe(10_000_000n);
-    expect(ctx.sellerAccount.tokenRate).toBe(1000n);
     expect(ctx.firstSignCap).toBe(1_000_000n);
   });
 
@@ -284,12 +277,6 @@ describe('BaseEscrowClient.getBuyerApprovalContext', () => {
       reserved: 1_000_000n,
       pendingWithdrawal: 0n,
       lastActivityAt: nowSecs,
-    });
-    vi.spyOn(escrow, 'getSellerAccount').mockResolvedValue({
-      stake: 50_000_000n,
-      earnings: 100_000n,
-      stakedAt: BigInt(Date.now()),
-      tokenRate: 500n,
     });
     vi.spyOn(escrow, 'getFirstSignCap').mockResolvedValue(1_000_000n);
     vi.spyOn(escrow, 'getLatestSessionId').mockResolvedValue('0x' + 'aa'.repeat(32));
@@ -312,9 +299,6 @@ describe('BaseEscrowClient.getBuyerApprovalContext', () => {
     vi.spyOn(escrow, 'getBuyerBalance').mockResolvedValue({
       available: 5_000_000n, reserved: 0n, pendingWithdrawal: 0n, lastActivityAt: 0n,
     });
-    vi.spyOn(escrow, 'getSellerAccount').mockResolvedValue({
-      stake: 50_000_000n, earnings: 0n, stakedAt: BigInt(Date.now()), tokenRate: 500n,
-    });
     vi.spyOn(escrow, 'getFirstSignCap').mockResolvedValue(1_000_000n);
     vi.spyOn(escrow, 'getLatestSessionId').mockResolvedValue('0x' + 'bb'.repeat(32));
     vi.spyOn(escrow, 'getFirstSessionTimestamp').mockResolvedValue(tenDaysAgo);
@@ -332,10 +316,6 @@ describe('BaseEscrowClient.getBuyerApprovalContext', () => {
     vi.spyOn(escrow, 'getBuyerBalance').mockImplementation(async () => {
       calls.push('getBuyerBalance');
       return { available: 0n, reserved: 0n, pendingWithdrawal: 0n, lastActivityAt: 0n };
-    });
-    vi.spyOn(escrow, 'getSellerAccount').mockImplementation(async () => {
-      calls.push('getSellerAccount');
-      return { stake: 0n, earnings: 0n, stakedAt: 0n, tokenRate: 0n };
     });
     vi.spyOn(escrow, 'getFirstSignCap').mockImplementation(async () => {
       calls.push('getFirstSignCap');
@@ -355,10 +335,9 @@ describe('BaseEscrowClient.getBuyerApprovalContext', () => {
     });
 
     await escrow.getBuyerApprovalContext('0xbuyer', '0xseller');
-    // All 6 view calls should have been made
-    expect(calls).toHaveLength(6);
+    // All 5 view calls should have been made
+    expect(calls).toHaveLength(5);
     expect(calls).toContain('getBuyerBalance');
-    expect(calls).toContain('getSellerAccount');
     expect(calls).toContain('getFirstSignCap');
     expect(calls).toContain('getLatestSessionId');
     expect(calls).toContain('getFirstSessionTimestamp');
