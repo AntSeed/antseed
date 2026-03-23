@@ -829,7 +829,7 @@ ipcMain.handle('runtime:scan-network', async () => {
   return { ok: snapshot.ok, data: snapshot, error: snapshot.error, status: 200 };
 });
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   app.setName(APP_NAME);
   app.setAboutPanelOptions({
     applicationName: APP_NAME,
@@ -843,7 +843,9 @@ app.whenReady().then(() => {
   createApplicationMenu(APP_NAME, APP_ICON_PATH);
 
   // Ensure config.json exists before anything else (first launch).
-  void ensureConfig(ACTIVE_CONFIG_PATH).catch(() => {});
+  // Must complete before creating the window — the renderer auto-starts the
+  // buyer runtime which needs config.json to find the router plugin.
+  await ensureConfig(ACTIVE_CONFIG_PATH).catch(() => {});
 
   createWindow({ appName: APP_NAME, appIconPath: APP_ICON_PATH, isDev, rendererUrl });
 
