@@ -246,6 +246,7 @@ const processManager = new ProcessManager((mode, stream, line) => {
 // Pending payment approval requests from the CLI child process, keyed by peerId.
 const pendingPaymentApprovals = new Map<string, {
   resolve: (decision: { approved: boolean }) => void;
+  timer: ReturnType<typeof setTimeout>;
 }>();
 
 // When the CLI requests payment approval, forward to the renderer and wait.
@@ -257,16 +258,14 @@ processManager.onPaymentApprovalRequest = async (info) => {
   }
 
   return new Promise<{ approved: boolean }>((resolve) => {
-    pendingPaymentApprovals.set(peerId, { resolve });
-    win.webContents.send('payments:approval-required', info);
-
-    // Timeout after 60s if user doesn't respond
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       if (pendingPaymentApprovals.has(peerId)) {
         pendingPaymentApprovals.delete(peerId);
         resolve({ approved: false });
       }
     }, 60_000);
+    pendingPaymentApprovals.set(peerId, { resolve, timer });
+    win.webContents.send('payments:approval-required', info);
   });
 };
 
@@ -274,6 +273,7 @@ processManager.onPaymentApprovalRequest = async (info) => {
 ipcMain.handle('payments:approve-session', async (_event, peerId: string, approved: boolean) => {
   const pending = pendingPaymentApprovals.get(peerId);
   if (pending) {
+    clearTimeout(pending.timer);
     pendingPaymentApprovals.delete(peerId);
     pending.resolve({ approved });
   }
@@ -956,6 +956,7 @@ app.on('before-quit', (event) => {
 
   // Reject all pending payment approvals so CLI processes aren't left hanging
   for (const [, pending] of pendingPaymentApprovals) {
+    clearTimeout(pending.timer);
     pending.resolve({ approved: false });
   }
   pendingPaymentApprovals.clear();

@@ -1094,17 +1094,26 @@ export class AntseedNode extends EventEmitter {
       // Also send PaymentRequired via PaymentMux so the buyer knows what to sign.
       const spmAuthorized = this._sellerPaymentManager?.hasSession(buyerPeerId) ?? false;
       if (this._escrowClient && !spmAuthorized) {
-        debugLog(`[Node] No payment session for ${buyerPeerId.slice(0, 12)}... — sending 402 + PaymentRequired`);
-        mux.sendProxyResponse({
-          requestId: request.requestId,
-          statusCode: 402,
-          headers: { "content-type": "text/plain" },
-          body: new TextEncoder().encode("Payment required: no active session"),
-        });
-        // Send requirements via PaymentMux so buyer can sign informed SpendingAuth
         const requirements = this._sellerPaymentManager?.getPaymentRequirements(request.requestId);
         if (requirements) {
+          debugLog(`[Node] No payment session for ${buyerPeerId.slice(0, 12)}... — sending 402 + PaymentRequired`);
+          mux.sendProxyResponse({
+            requestId: request.requestId,
+            statusCode: 402,
+            headers: { "content-type": "text/plain" },
+            body: new TextEncoder().encode("Payment required: no active session"),
+          });
           paymentMux.sendPaymentRequired(requirements);
+        } else {
+          // init() failed — on-chain data not cached. Tell buyer to retry
+          // rather than letting them wait 10s for a PaymentRequired that won't come.
+          debugWarn(`[Node] No payment session and seller not ready (init failed?) — returning 402`);
+          mux.sendProxyResponse({
+            requestId: request.requestId,
+            statusCode: 402,
+            headers: { "content-type": "text/plain" },
+            body: new TextEncoder().encode("Payment required: seller not ready, try again later"),
+          });
         }
         return;
       }
@@ -1857,11 +1866,15 @@ export class AntseedNode extends EventEmitter {
 
     this.emit('payment:required', approvalInfo);
 
-    // Determine the auth amount: use seller's suggestion, capped at FIRST_SIGN_CAP for first sign
+    // Determine the auth amount: seller's suggestion, capped by contract limits and buyer balance
     let amount = BigInt(requirements.suggestedAmount);
-    if (approvalContext?.isFirstSign) {
-      const cap = approvalContext.firstSignCap;
-      if (amount > cap) amount = cap;
+    if (approvalContext) {
+      const available = approvalContext.buyerBalance.available;
+      if (amount > available) amount = available;
+      if (approvalContext.isFirstSign) {
+        const cap = approvalContext.firstSignCap;
+        if (amount > cap) amount = cap;
+      }
     }
     try {
       await bpm.authorizeSpending(peer.peerId, requirements.sellerEvmAddr, pmux, amount);
