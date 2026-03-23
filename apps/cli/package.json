@@ -1,6 +1,6 @@
 {
   "name": "@antseed/cli",
-  "version": "0.1.43",
+  "version": "0.1.47",
   "description": "Antseed Network CLI and Web Dashboard",
   "type": "module",
   "files": [
@@ -28,7 +28,6 @@
     "@antseed/api-adapter": "workspace:*",
     "@antseed/bound-agent": "workspace:*",
     "@antseed/node": "workspace:*",
-    "@antseed/payments": "workspace:*",
     "@antseed/provider-core": "workspace:*",
     "@antseed/dashboard": "workspace:*",
     "chalk": "^5.6.2",

@@ -25,9 +25,6 @@ importers:
       '@antseed/node':
         specifier: workspace:*
         version: link:../../packages/node
-      '@antseed/payments':
-        specifier: workspace:*
-        version: link:../payments
       '@antseed/provider-core':
         specifier: workspace:*
         version: link:../../packages/provider-core
