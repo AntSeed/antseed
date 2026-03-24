@@ -9,6 +9,7 @@ import electronUpdater from 'electron-updater';
 const { autoUpdater } = electronUpdater;
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { randomBytes } from 'node:crypto';
 import { isIP } from 'node:net';
 import { existsSync } from 'node:fs';
 import {
@@ -564,6 +565,9 @@ ipcMain.handle(
     try {
       const merged = await mergeConfig(safeConfig, ACTIVE_CONFIG_PATH);
       cachedCryptoConfig = null; // Invalidate cached crypto config
+      creditsRpcFailCount = 0; // Reset backoff so new config is tried immediately
+      // Restart payments portal if running so it picks up new escrow/chain config
+      void stopPaymentsPortal().catch(() => {});
       return { ok: true, data: { config: merged }, error: null, status: 200 };
     } catch (err) {
       return { ok: false, data: null, error: err instanceof Error ? err.message : String(err), status: null };
@@ -690,6 +694,7 @@ ipcMain.handle('credits:get-info', async (): Promise<{ ok: boolean; data: Credit
 // to prevent a compromised renderer from signing unbounded spending authorizations.
 const MAX_SPENDING_AUTH_BASE_UNITS = 1_000_000n;
 const MAX_DEADLINE_SECONDS = 7 * 24 * 60 * 60; // 7 days
+const DEFAULT_SPENDING_AUTH_DURATION_SECONDS = 25 * 60 * 60; // must exceed escrow SETTLE_TIMEOUT (24h)
 const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 const BYTES32_RE = /^0x[0-9a-fA-F]{64}$/;
 
@@ -795,7 +800,7 @@ ipcMain.handle('payments:get-peer-info', async (_event, peerId: string) => {
 });
 
 // ── AI Chat IPC Handlers ──
-registerPiChatHandlers({
+const chatEngine = registerPiChatHandlers({
   ipcMain,
   sendToRenderer: (channel, payload) => {
     getMainWindow()?.webContents.send(channel, payload);
@@ -855,6 +860,86 @@ registerPiChatHandlers({
         && peer.port > 0
         && peer.port <= 65535);
   },
+});
+
+// Manual payment approval: sign SpendingAuth and set it for the next request
+ipcMain.handle('chat:approve-payment', async (_event, conversationId: string) => {
+  const paymentInfo = chatEngine.getCachedPaymentRequired(conversationId);
+  if (!paymentInfo) {
+    return { ok: false, error: 'No pending payment for this conversation' };
+  }
+
+  try {
+    await ensureSecureIdentity();
+    const identity = getSecureIdentity();
+    if (!identity) {
+      return { ok: false, error: 'Identity not available' };
+    }
+
+    const cc = await loadCachedCryptoConfig();
+    if (!cc) {
+      return { ok: false, error: 'No escrow contract configured' };
+    }
+
+    const wallet = identityToEvmWallet(identity);
+    const domain = makeEscrowDomain(cc.chainId, cc.escrowAddress);
+    const buyerEvmAddr = wallet.address;
+
+    let sellerEvmAddr = String(paymentInfo.sellerEvmAddr ?? '');
+    if (!sellerEvmAddr) {
+      const peerId = typeof paymentInfo.peerId === 'string' ? paymentInfo.peerId.trim() : '';
+      if (peerId) {
+        await refreshPeerCache();
+        const peer = lookupPeer(peerId);
+        const resolvedEvm = typeof (peer as Record<string, unknown> | undefined)?.evmAddress === 'string'
+          ? String((peer as Record<string, unknown>).evmAddress).trim()
+          : '';
+        if (resolvedEvm) {
+          sellerEvmAddr = resolvedEvm;
+        }
+      }
+    }
+    if (!sellerEvmAddr) {
+      return { ok: false, error: 'No seller EVM address available for this payment' };
+    }
+    const maxAmount = BigInt(String(paymentInfo.suggestedAmount ?? '100000'));
+
+    // Generate session parameters
+    const sessionIdBytes = randomBytes(32);
+    const sessionId = '0x' + sessionIdBytes.toString('hex');
+    const nonce = Date.now(); // simple nonce
+    const deadline = Math.floor(Date.now() / 1000) + DEFAULT_SPENDING_AUTH_DURATION_SECONDS;
+
+    const signature = await signSpendingAuth(wallet, domain, {
+      seller: sellerEvmAddr,
+      sessionId,
+      maxAmount,
+      nonce,
+      deadline,
+      previousConsumption: 0n,
+      previousSessionId: '0x' + '00'.repeat(32),
+    });
+
+    // Build the header payload
+    const authPayload = {
+      sessionId,
+      maxAmountUsdc: maxAmount.toString(),
+      nonce,
+      deadline,
+      buyerSig: signature,
+      buyerEvmAddr,
+      sellerEvmAddr,
+      previousConsumption: '0',
+      previousSessionId: '0x' + '00'.repeat(32),
+    };
+
+    const authBase64 = Buffer.from(JSON.stringify(authPayload)).toString('base64');
+    chatEngine.setPendingSpendingAuth(conversationId, authBase64);
+
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
 });
 
 ipcMain.handle('runtime:scan-network', async () => {

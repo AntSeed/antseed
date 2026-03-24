@@ -33,6 +33,9 @@ const baseEntries: NavEntry[] = [
   { label: 'Discover', view: 'discover', icon: DiscoverCircleIcon },
   { label: 'Network', view: 'overview', icon: HierarchySquare03Icon },
   { label: 'External Clients', view: 'external-clients', icon: ComputerTerminal01Icon },
+];
+
+const configEntries: NavEntry[] = [
   { label: 'Settings', view: 'config', icon: Settings02Icon },
 ];
 
@@ -219,7 +222,7 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
 export function Sidebar({ activeView, onSelectView }: SidebarProps) {
   const actions = useActions();
   const { devMode, chatActiveConversation } = useUiSnapshot();
-  const navEntries = devMode ? [...baseEntries, ...devEntries] : baseEntries;
+  const navEntries = devMode ? [...baseEntries, ...devEntries, ...configEntries] : [...baseEntries, ...configEntries];
 
   return (
     <aside className={styles.sidebar}>

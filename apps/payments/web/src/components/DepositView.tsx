@@ -203,6 +203,9 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
               Credits added to {depositTarget.slice(0, 6)}...{depositTarget.slice(-4)}
             </div>
           )}
+          <div className="deposit-success-note">
+            Your credits are now available. You can return to AntSeed Desktop to continue.
+          </div>
           <button className="btn-outline" onClick={resetForm} style={{ marginTop: 12 }}>
             Deposit more
           </button>

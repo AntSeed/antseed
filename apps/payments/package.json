@@ -1,8 +1,10 @@
 {
   "name": "@antseed/payments",
-  "version": "0.1.0",
-  "private": true,
+  "version": "0.1.3",
   "description": "Buyer payments portal for AntSeed",
+  "files": [
+    "dist"
+  ],
   "type": "module",
   "main": "dist/index.js",
   "exports": {

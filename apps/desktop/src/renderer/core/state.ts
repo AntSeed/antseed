@@ -43,6 +43,10 @@ export type ConfigFormData = {
   paymentMethod: string;
   requireManualApproval: boolean;
   devMode: boolean;
+  cryptoChainId: string;
+  cryptoRpcUrl: string;
+  cryptoEscrowAddress: string;
+  cryptoUsdcAddress: string;
 };
 
 export type ChatServiceOptionEntry = {

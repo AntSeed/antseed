@@ -354,7 +354,9 @@ export function registerConnectCommand(program: Command): void {
         bootstrapNodes,
         allowPrivateIPs: true,
         dataDir: globalOpts.dataDir,
+        configPath: globalOpts.config,
         payments: paymentsConfig,
+        requireManualApproval: effectiveBuyerConfig.requireManualApproval,
       })
 
       node.setRouter(router)
