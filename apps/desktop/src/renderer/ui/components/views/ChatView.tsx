@@ -52,6 +52,15 @@ function getMessageKey(message: ChatMessage, index: number): string {
   return `${message.role}:${createdAt}:${getMessageContentKey(message.content)}:${index}`;
 }
 
+function getPathTail(value: string | null | undefined): string {
+  const trimmed = String(value || '').trim().replace(/[\\/]+$/, '');
+  if (!trimmed) {
+    return 'Workspace';
+  }
+  const parts = trimmed.split(/[\\/]/);
+  return parts[parts.length - 1] || trimmed;
+}
+
 function getGitChangeCount(status: ChatWorkspaceGitStatus): number {
   return status.stagedFiles + status.modifiedFiles + status.untrackedFiles;
 }
@@ -72,10 +81,11 @@ function getGitStatusSummary(status: ChatWorkspaceGitStatus): string {
 
 function getGitStatusTitle(status: ChatWorkspaceGitStatus): string {
   if (!status.available) {
-    return status.error || 'Selected workspace is not in a git repository.';
+    return status.error || 'Git status for the selected workspace. This workspace is shared across chats.';
   }
 
   const details = [
+    'Git status for the selected workspace. This workspace is shared across chats.',
     status.rootPath ? `Repo: ${status.rootPath}` : null,
     `Staged: ${status.stagedFiles}`,
     `Modified: ${status.modifiedFiles}`,
@@ -327,6 +337,12 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   const gitStatusBranch = gitStatus.available
     ? (gitStatus.branch || (gitStatus.isDetached ? 'detached' : 'no-branch'))
     : 'No git repo';
+  const gitStatusRepoLabel = gitStatus.rootPath
+    ? getPathTail(gitStatus.rootPath)
+    : getPathTail(workspacePath);
+  const gitStatusDetailLabel = gitStatus.available
+    ? `${gitStatusBranch} · ${gitStatusSummary}`
+    : gitStatusSummary;
   const gitStatusToneClass = !gitStatus.available
     ? styles.gitStatusPillMissing
     : getGitChangeCount(gitStatus) > 0 || gitStatus.behind > 0
@@ -489,8 +505,8 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                   onClick={() => void actions.refreshWorkspaceGitStatus()}
                   title={gitStatusTitle}
                 >
-                  <span className={styles.gitStatusBranch}>{gitStatusBranch}</span>
-                  <span className={styles.gitStatusSummary}>{gitStatusSummary}</span>
+                  <span className={styles.gitStatusBranch}>{gitStatusRepoLabel}</span>
+                  <span className={styles.gitStatusSummary}>{gitStatusDetailLabel}</span>
                 </button>
                 <label className={styles.permissionControl}>
                   <span className={styles.permissionLabel}>Permissions</span>

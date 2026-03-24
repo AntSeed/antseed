@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, shell } from 'electron';
 import type { IpcMain } from 'electron';
 import { type Static, Type } from '@sinclair/typebox';
 import { execFile as execFileCallback, spawn } from 'node:child_process';
@@ -325,18 +325,17 @@ function createBrowserPreviewTool(
     name: 'open_browser_preview',
     label: 'Browser Preview',
     description:
-      'Open a URL in the built-in browser preview panel beside the chat. ' +
-      'Use this when working on web development to let the user see their website, ' +
-      'app, or UI live alongside the conversation. The preview panel is an embedded ' +
-      'browser that renders the page — ideal for localhost dev servers (e.g. ' +
-      'http://localhost:3000, http://localhost:5173) or any URL the user is building. ' +
+      'Open a preview URL for the user. Localhost dev servers (for example ' +
+      'http://localhost:3000 or http://localhost:5173) open in the user\'s system ' +
+      'browser. Non-local URLs open in the built-in preview panel beside the chat. ' +
       'Call this tool after starting a dev server with start_dev_server, when making ' +
       'visible UI changes, or when the user asks to preview their work.',
     parameters: BrowserPreviewParams,
     async execute(_toolCallId, params) {
       const { url } = params as Static<typeof BrowserPreviewParams>;
+      let parsedUrl: URL;
       try {
-        new URL(url);
+        parsedUrl = new URL(url);
       } catch {
         return {
           content: [{ type: 'text', text: `Invalid URL: ${url}` }],
@@ -344,6 +343,28 @@ function createBrowserPreviewTool(
           isError: true,
         };
       }
+
+      const host = parsedUrl.hostname.trim().toLowerCase();
+      const isLocalPreview =
+        host === 'localhost'
+        || host === '127.0.0.1'
+        || host === '[::1]'
+        || host === '::1'
+        || host.endsWith('.localhost');
+
+      if (isLocalPreview) {
+        await shell.openExternal(url);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Opened ${url} in your browser.`,
+            },
+          ],
+          details: { url, mode: 'external-browser' },
+        };
+      }
+
       sendToRenderer('browser-preview:open', { url });
       return {
         content: [
