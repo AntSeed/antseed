@@ -107,7 +107,7 @@ Configuration is stored at `~/.antseed/config.json`. Key sections:
 | `providers` | Configured provider API keys and endpoints |
 | `seller` | Reserve floor, max concurrent buyers, pricing, enabled providers, model category tags |
 | `buyer` | Preferred providers, max pricing, min peer reputation, proxy port |
-| `payments` | Payment method, platform fee rate, chain config (Base) |
+| `payments` | Payment method, escrow chain config (chainId, rpcUrl, contract addresses) |
 | `network` | Bootstrap nodes |
 | `plugins` | Installed plugin packages |
 
