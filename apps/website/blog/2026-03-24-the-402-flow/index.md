@@ -9,7 +9,9 @@ image: /og-image.jpg
 date: 2026-03-24
 ---
 
-HTTP 402 Payment Required has been in the HTTP spec since 1997 — "reserved for future use." Nearly three decades later, it remains the only HTTP status code that was defined but never given a standard mechanism. No one agreed on what the payment payload should look like, how the negotiation should work, or who should facilitate it.
+HTTP 402 Payment Required has been in the HTTP spec since 1997 — "reserved for future use." For nearly three decades, no one agreed on what the payment payload should look like, how the negotiation should work, or who should facilitate it. That changed recently. Coinbase shipped x402, Stripe and Tempo launched the Machine Payments Protocol (MPP), and several smaller projects have proposed their own 402 conventions.
+
+All of these give 402 a mechanism. They differ in architecture — specifically, in who sits between buyer and seller, and whether that intermediary is required.
 
 AntSeed uses 402 as the trigger for fully decentralized payment negotiation between peers. No payment gateway, no relay, no facilitator. The entire flow — from the initial 402 response to the on-chain reserve transaction to the retried request — happens over a single WebRTC DataChannel that's already open for proxy traffic.
 
@@ -99,7 +101,7 @@ Once the authorization is active, payment messages continue to flow alongside pr
 
 - **TopUpRequest (0x55):** When cumulative usage exceeds 80% of `maxAmount`, the seller sends a TopUpRequest. The buyer can sign a new SpendingAuth with additional funds, extending the session without interruption. If the buyer doesn't top up, the seller can finish the current request but will 402 the next one.
 
-These messages are interleaved with proxy traffic. A streaming AI response might produce dozens of `HttpResponseChunk` (0x22) frames between two `SellerReceipt` (0x52) frames. The mux handles this naturally — the `type` byte routes each frame to the correct handler regardless of ordering.
+These messages are interleaved with proxy traffic. A streaming AI response might produce dozens of `HttpResponseChunk` (0x22) frames between two `SellerReceipt` (0x53) frames. The mux handles this naturally — the `type` byte routes each frame to the correct handler regardless of ordering.
 
 ## Manual Mode: HTTP Header
 
@@ -117,15 +119,41 @@ Both modes produce the same EIP-712 `SpendingAuth` structure. Both send it throu
 
 This means the seller implementation is mode-agnostic. It receives a SpendingAuth, verifies it, and reserves. It doesn't know or care whether a human approved it or a node signed it autonomously.
 
-## Comparison to x402
+## Comparison to x402 and MPP
 
-Coinbase's x402 protocol also uses HTTP 402 as a payment trigger. The key architectural difference is settlement.
+Three protocols now give HTTP 402 a concrete mechanism. They solve different problems and make different architectural tradeoffs.
 
-In x402, a facilitator sits between buyer and seller. The buyer pays the facilitator, the facilitator verifies payment, and the facilitator tells the seller to proceed. Settlement flows through the facilitator's infrastructure. This is a practical design for consumer payments, but it reintroduces the intermediary that decentralized systems are designed to eliminate.
+### x402 (Coinbase)
 
-In AntSeed, the seller calls `reserve()` and later `settle()` directly on the escrow contract. No entity holds or routes funds on anyone's behalf. The buyer's deposit sits in the escrow contract; the seller's authorization lets them draw against it. The only intermediary is the smart contract itself — immutable, auditable, and controlled by neither party.
+x402 introduces a facilitator between buyer and seller. The buyer constructs a payment payload and sends it with the request. The seller forwards this payload to a facilitator (Coinbase, or a third-party implementation) for verification and settlement. The facilitator validates the payment, executes the on-chain transaction, and confirms back to the seller.
 
-This is a deliberate tradeoff. x402's facilitator model enables features like refunds and dispute resolution that AntSeed's contract doesn't natively support. But for machine-to-machine payment where both sides are programmatic and the service is delivered immediately (an AI API response), the facilitator adds latency and trust assumptions without proportional benefit.
+This is a practical design for adding payments to existing HTTP APIs with minimal server-side changes. The facilitator abstracts away blockchain complexity — the seller doesn't need to interact with a contract directly.
+
+The tradeoff is the intermediary itself. The facilitator holds transient custody during settlement, must remain available for every paid request, and represents a single point of failure. For centralized services adding a payment layer, this is acceptable. For a P2P network where there is no central operator to run the facilitator, it's a structural mismatch.
+
+### MPP (Stripe + Tempo)
+
+The Machine Payments Protocol takes a different approach. MPP uses sessions: the buyer pre-authorizes a spending limit, funds are held in a session account, and individual requests settle automatically against that session without per-request on-chain transactions. Settlement is batched and runs on Tempo, a purpose-built L1 with sub-second finality and fixed fees.
+
+MPP's session model is closer to AntSeed's SpendingAuth in spirit — both pre-authorize a spending cap and settle periodically rather than per-request. The key difference is the settlement layer. MPP requires Tempo as the chain; AntSeed settles on any EVM chain with a USDC escrow contract (currently Base). MPP also integrates with Stripe's existing payment infrastructure, enabling fiat rails alongside crypto — a feature AntSeed doesn't attempt.
+
+### AntSeed
+
+AntSeed has no facilitator and no dedicated settlement chain. The buyer signs an EIP-712 SpendingAuth that authorizes a specific seller to draw up to `maxAmount` from the buyer's escrow deposit. The seller calls `reserve()` directly on the escrow contract. Settlement happens lazily — triggered by the buyer's next SpendingAuth, which simultaneously proves delivery of the previous session and authorizes the next one.
+
+The bilateral accounting (SellerReceipt + BuyerAck) runs over the same DataChannel as proxy traffic, giving both sides real-time usage visibility without on-chain reads. The transport cost is zero — payment messages are multiplexed alongside existing proxy frames.
+
+| | **x402** | **MPP** | **AntSeed** |
+|---|---|---|---|
+| Intermediary | Facilitator (Coinbase) | Stripe + Tempo L1 | None (smart contract only) |
+| Settlement | Facilitator executes tx | Batched on Tempo | Seller calls reserve()/settle() directly |
+| Per-request on-chain cost | 1 tx per request | Batched (amortized) | 0 (1 tx per session, reused across requests) |
+| Session model | Per-request | Pre-authorized session | Pre-authorized SpendingAuth |
+| Transport | HTTP headers | HTTP headers | Binary frames on existing DataChannel |
+| Chain dependency | Multi-chain | Tempo L1 only | Any EVM chain |
+| Proof of delivery | None | None | Built-in (proof-of-prior-delivery chain) |
+
+The architectural distinction that matters most for P2P compute is the last row. x402 and MPP handle payment — they confirm that money moved. Neither protocol proves that the service was actually delivered. AntSeed's SpendingAuth chain does both: each authorization is simultaneously a payment and a cryptographic attestation of prior delivery. This is what enables on-chain reputation to emerge directly from settlement, without a separate reporting system.
 
 ## Why This Matters
 
@@ -133,4 +161,4 @@ The mux design means payment negotiation adds zero infrastructure overhead. Ther
 
 When a buyer connects to a new seller for the first time, the 402 flow adds a one-time 2-5 second delay for the on-chain transaction. Every subsequent request on that connection is served at full speed, with bilateral accounting flowing alongside proxy traffic as background noise on the mux.
 
-The 402 status code waited 29 years for a mechanism. This is ours: a binary frame on an open DataChannel, an EIP-712 signature, and a single smart contract call. No gateway, no relay, no facilitator.
+HTTP 402 now has competing mechanisms. x402 adds a facilitator. MPP adds a dedicated chain. AntSeed adds neither — a binary frame on an open DataChannel, an EIP-712 signature, and a single smart contract call. No gateway, no relay, no facilitator.
