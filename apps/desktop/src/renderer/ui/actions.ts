@@ -1,4 +1,5 @@
 import type { ConfigFormData } from '../core/state';
+import type { ChatPermissionMode } from '../types/bridge';
 
 export type AppActions = {
   startConnect: () => Promise<void>;
@@ -24,7 +25,9 @@ export type AppActions = {
   rejectPaymentSession: () => void;
   refreshCredits: () => void;
   refreshWorkspace: () => Promise<void>;
+  refreshWorkspaceGitStatus: () => Promise<void>;
   chooseWorkspace: () => Promise<void>;
+  setChatPermissionMode: (mode: ChatPermissionMode) => void;
   refreshPlugins: () => Promise<void>;
   installPlugin: () => Promise<void>;
   openPaymentsPortal?: () => void;

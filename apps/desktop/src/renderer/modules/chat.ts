@@ -1,7 +1,11 @@
 import type { RendererUiState } from '../core/state';
 import type { BadgeTone } from '../core/state';
 import { notifyUiStateChanged, notifyUiStateChangedSync } from '../core/store';
-import type { DesktopBridge } from '../types/bridge';
+import type {
+  ChatPermissionMode,
+  ChatWorkspaceGitStatus,
+  DesktopBridge,
+} from '../types/bridge';
 import type {
   ChatMessage,
   ContentBlock,
@@ -59,6 +63,7 @@ export type ChatModuleApi = {
   refreshChatProxyStatus: () => Promise<void>;
   refreshChatConversations: () => Promise<void>;
   refreshWorkspace: () => Promise<void>;
+  refreshWorkspaceGitStatus: () => Promise<void>;
   chooseWorkspace: () => Promise<void>;
   createNewConversation: () => Promise<void>;
   startNewChat: () => void;
@@ -67,6 +72,7 @@ export type ChatModuleApi = {
   openConversation: (convId: string) => Promise<void>;
   sendMessage: (text: string, imageBase64?: string, imageMimeType?: string) => void;
   abortChat: () => Promise<void>;
+  setPermissionMode: (mode: ChatPermissionMode) => void;
   handleServiceChange: (value: string) => void;
   handleServiceFocus: () => void;
   handleServiceBlur: () => void;
@@ -961,10 +967,60 @@ export function initChatModule({
         uiState.chatWorkspacePath = result.data.current;
         uiState.chatWorkspaceDefaultPath = result.data.default;
         notifyUiStateChanged();
+        await refreshWorkspaceGitStatus();
       }
     } catch {
       // Workspace selection unavailable
     }
+  }
+
+  async function refreshWorkspaceGitStatus(): Promise<void> {
+    if (!bridge?.chatAiGetWorkspaceGitStatus) return;
+
+    try {
+      const result = await bridge.chatAiGetWorkspaceGitStatus();
+      if (result.ok && result.data) {
+        uiState.chatWorkspaceGitStatus = result.data as ChatWorkspaceGitStatus;
+      } else {
+        uiState.chatWorkspaceGitStatus = {
+          ...uiState.chatWorkspaceGitStatus,
+          available: false,
+          rootPath: null,
+          branch: null,
+          isDetached: false,
+          ahead: 0,
+          behind: 0,
+          stagedFiles: 0,
+          modifiedFiles: 0,
+          untrackedFiles: 0,
+          error: result.error || null,
+        };
+      }
+      notifyUiStateChanged();
+    } catch (error) {
+      uiState.chatWorkspaceGitStatus = {
+        ...uiState.chatWorkspaceGitStatus,
+        available: false,
+        rootPath: null,
+        branch: null,
+        isDetached: false,
+        ahead: 0,
+        behind: 0,
+        stagedFiles: 0,
+        modifiedFiles: 0,
+        untrackedFiles: 0,
+        error: error instanceof Error ? error.message : String(error),
+      };
+      notifyUiStateChanged();
+    }
+  }
+
+  function setPermissionMode(mode: ChatPermissionMode): void {
+    if (uiState.chatPermissionMode === mode) {
+      return;
+    }
+    uiState.chatPermissionMode = mode;
+    notifyUiStateChanged();
   }
 
   async function chooseWorkspace(): Promise<void> {
@@ -987,6 +1043,7 @@ export function initChatModule({
       uiState.chatError = null;
       startNewChat();
       await refreshChatConversations();
+      await refreshWorkspaceGitStatus();
       notifyUiStateChanged();
     } catch (err) {
       reportChatError(err, 'Failed to set workspace');
@@ -1235,10 +1292,19 @@ export function initChatModule({
 
     if (bridge.chatAiSendStream) {
       const sendStreamRequest = async () =>
-        await bridge.chatAiSendStream!(convId, content || ' ', selection.id || undefined, undefined, imageBase64, imageMimeType);
+        await bridge.chatAiSendStream!(
+          convId,
+          content || ' ',
+          selection.id || undefined,
+          undefined,
+          imageBase64,
+          imageMimeType,
+          uiState.chatPermissionMode,
+        );
 
       void (async () => {
         try {
+          void refreshWorkspaceGitStatus();
           let result = await sendStreamRequest();
           if (
             !result.ok &&
@@ -1363,6 +1429,7 @@ export function initChatModule({
 
   if (bridge) {
     void refreshWorkspace();
+    void refreshWorkspaceGitStatus();
     // --- Non-streaming callbacks ---
 
     if (bridge.onChatAiDone) {
@@ -1386,6 +1453,7 @@ export function initChatModule({
             notifyUiStateChanged();
         }
         void refreshChatConversations();
+        void refreshWorkspaceGitStatus();
       });
     }
 
@@ -1722,6 +1790,7 @@ export function initChatModule({
         }
 
         void refreshChatConversations();
+        void refreshWorkspaceGitStatus();
       });
     }
 
@@ -1755,6 +1824,7 @@ export function initChatModule({
           setChatSending(false);
           notifyUiStateChanged();
         }
+        void refreshWorkspaceGitStatus();
       });
     }
   }
@@ -1776,6 +1846,7 @@ export function initChatModule({
     refreshChatProxyStatus,
     refreshChatConversations,
     refreshWorkspace,
+    refreshWorkspaceGitStatus,
     chooseWorkspace,
     createNewConversation,
     startNewChat,
@@ -1784,6 +1855,7 @@ export function initChatModule({
     openConversation,
     sendMessage,
     abortChat,
+    setPermissionMode,
     handleServiceChange,
     handleServiceFocus,
     handleServiceBlur,

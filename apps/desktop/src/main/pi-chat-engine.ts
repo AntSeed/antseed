@@ -1,12 +1,13 @@
 import { app, BrowserWindow } from 'electron';
 import type { IpcMain } from 'electron';
 import { type Static, Type } from '@sinclair/typebox';
-import { spawn } from 'node:child_process';
+import { execFile as execFileCallback, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, stat, unlink, writeFile } from 'node:fs/promises';
 import { createConnection } from 'node:net';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import type { AgentSession, AgentSessionEvent, ToolDefinition } from '@mariozechner/pi-coding-agent';
 import { ANTSTATION_SYSTEM_PROMPT } from './chat-system-prompt.js';
 import {
@@ -600,6 +601,7 @@ type NetworkPeerAddress = {
 };
 
 type ChatServiceProtocol = 'anthropic-messages' | 'openai-chat-completions' | 'openai-responses';
+type ChatPermissionMode = 'default' | 'full-access';
 
 type ChatServiceCatalogEntry = {
   id: string;
@@ -628,6 +630,33 @@ const CHAT_SYSTEM_PROMPT_FILE_ENV = 'ANTSEED_CHAT_SYSTEM_PROMPT_FILE';
 const CHAT_SERVICE_SCAN_MAX_PEERS = 20;
 const CHAT_SERVICE_MAX_OPTIONS = 120;
 const CHAT_SERVICE_MAX_OPTIONS_PER_PROVIDER = 40;
+const CHAT_DEFAULT_ACTIVE_TOOL_NAMES = [
+  'read',
+  'grep',
+  'find',
+  'ls',
+  'edit',
+  'write',
+  'web_fetch',
+  'open_browser_preview',
+  'start_dev_server',
+] as const;
+const CHAT_FULL_ACCESS_TOOL_NAMES = [...CHAT_DEFAULT_ACTIVE_TOOL_NAMES, 'bash'] as const;
+
+type ChatWorkspaceGitStatus = {
+  available: boolean;
+  rootPath: string | null;
+  branch: string | null;
+  isDetached: boolean;
+  ahead: number;
+  behind: number;
+  stagedFiles: number;
+  modifiedFiles: number;
+  untrackedFiles: number;
+  error: string | null;
+};
+
+const execFileAsync = promisify(execFileCallback);
 
 let currentChatWorkspaceDir = CHAT_WORKSPACE_DIR;
 
@@ -661,6 +690,110 @@ async function persistChatWorkspaceDir(workspaceDir: string): Promise<string> {
   await writeFile(CHAT_WORKSPACE_STATE_FILE, JSON.stringify({ path: trimmed }, null, 2), 'utf8');
   currentChatWorkspaceDir = trimmed;
   return currentChatWorkspaceDir;
+}
+
+function normalizeChatPermissionMode(value: unknown): ChatPermissionMode {
+  return value === 'full-access' ? 'full-access' : 'default';
+}
+
+function resolveChatActiveToolNames(permissionMode: ChatPermissionMode): string[] {
+  return permissionMode === 'full-access'
+    ? [...CHAT_FULL_ACCESS_TOOL_NAMES]
+    : [...CHAT_DEFAULT_ACTIVE_TOOL_NAMES];
+}
+
+async function getWorkspaceGitStatus(workspaceDir: string): Promise<ChatWorkspaceGitStatus> {
+  if (!workspaceDir.trim()) {
+    return {
+      available: false,
+      rootPath: null,
+      branch: null,
+      isDetached: false,
+      ahead: 0,
+      behind: 0,
+      stagedFiles: 0,
+      modifiedFiles: 0,
+      untrackedFiles: 0,
+      error: 'Workspace path is empty',
+    };
+  }
+
+  try {
+    const [{ stdout: rootStdout }, { stdout: statusStdout }] = await Promise.all([
+      execFileAsync('git', ['rev-parse', '--show-toplevel'], {
+        cwd: workspaceDir,
+        encoding: 'utf8',
+        windowsHide: true,
+        maxBuffer: 1024 * 1024,
+      }),
+      execFileAsync('git', ['status', '--porcelain=2', '--branch'], {
+        cwd: workspaceDir,
+        encoding: 'utf8',
+        windowsHide: true,
+        maxBuffer: 1024 * 1024,
+      }),
+    ]);
+
+    const result: ChatWorkspaceGitStatus = {
+      available: true,
+      rootPath: rootStdout.trim() || null,
+      branch: null,
+      isDetached: false,
+      ahead: 0,
+      behind: 0,
+      stagedFiles: 0,
+      modifiedFiles: 0,
+      untrackedFiles: 0,
+      error: null,
+    };
+
+    for (const line of statusStdout.split(/\r?\n/)) {
+      if (!line) continue;
+      if (line.startsWith('# branch.head ')) {
+        const head = line.slice('# branch.head '.length).trim();
+        result.isDetached = head === '(detached)';
+        result.branch = result.isDetached ? 'detached' : head;
+        continue;
+      }
+      if (line.startsWith('# branch.ab ')) {
+        const match = /# branch\.ab \+(\d+) -(\d+)/.exec(line);
+        if (match) {
+          result.ahead = Number(match[1]) || 0;
+          result.behind = Number(match[2]) || 0;
+        }
+        continue;
+      }
+      if (line.startsWith('1 ') || line.startsWith('2 ') || line.startsWith('u ')) {
+        const fields = line.split(' ');
+        const xy = fields[1] ?? '..';
+        const x = xy[0] ?? '.';
+        const y = xy[1] ?? '.';
+        if (x !== '.') result.stagedFiles += 1;
+        if (y !== '.') result.modifiedFiles += 1;
+        continue;
+      }
+      if (line.startsWith('? ')) {
+        result.untrackedFiles += 1;
+      }
+    }
+
+    return result;
+  } catch (error) {
+    const message = asErrorMessage(error);
+    const isNoRepo = /not a git repository|no such file or directory/i.test(message);
+    return {
+      available: false,
+      rootPath: null,
+      branch: null,
+      isDetached: false,
+      ahead: 0,
+      behind: 0,
+      stagedFiles: 0,
+      modifiedFiles: 0,
+      untrackedFiles: 0,
+      error: isNoRepo ? null : message,
+    };
+  }
 }
 
 function normalizeTokenCount(value: unknown): number {
@@ -1782,6 +1915,7 @@ export function registerPiChatHandlers({
     providerOverride?: string,
     imageBase64?: string,
     imageMimeType?: string,
+    permissionModeValue?: ChatPermissionMode,
   ): Promise<{ ok: boolean; error?: string }> => {
     const trimmedMessage = userMessage.trim();
     if (trimmedMessage.length === 0 && !imageBase64) {
@@ -1832,6 +1966,7 @@ export function registerPiChatHandlers({
     const context = sessionManager.buildSessionContext();
 
     const serviceId = normalizeServiceId(serviceOverride || context.model?.modelId);
+    const permissionMode = normalizeChatPermissionMode(permissionModeValue);
     const preferredPeerId = preferredPeerByConversationId.get(conversationId) ?? null;
     const providerHint = resolveProviderHintForService(
       providerOverride,
@@ -1873,6 +2008,7 @@ export function registerPiChatHandlers({
     });
 
     await session.setModel(proxyModel);
+    session.setActiveToolsByName(resolveChatActiveToolNames(permissionMode));
     session.agent.sessionId = conversationId;
 
     const existingUserMessages = session.messages.filter((message) => message.role === 'user').length;
@@ -2286,6 +2422,21 @@ export function registerPiChatHandlers({
     };
   });
 
+  ipcMain.handle('chat:ai-get-workspace-git-status', async () => {
+    try {
+      const workspaceDir = await loadChatWorkspaceDir();
+      return {
+        ok: true,
+        data: await getWorkspaceGitStatus(workspaceDir),
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: asErrorMessage(error),
+      };
+    }
+  });
+
   ipcMain.handle('chat:ai-set-workspace', async (_event, workspaceDir: string) => {
     const current = await persistChatWorkspaceDir(workspaceDir);
     return {
@@ -2334,15 +2485,15 @@ export function registerPiChatHandlers({
 
   ipcMain.handle(
     'chat:ai-send-stream',
-    async (_event, conversationId: string, userMessage: string, service?: string, provider?: string, imageBase64?: string, imageMimeType?: string) => {
-      return await runStreamingPrompt(conversationId, userMessage, service, provider, imageBase64, imageMimeType);
+    async (_event, conversationId: string, userMessage: string, service?: string, provider?: string, imageBase64?: string, imageMimeType?: string, permissionMode?: ChatPermissionMode) => {
+      return await runStreamingPrompt(conversationId, userMessage, service, provider, imageBase64, imageMimeType, permissionMode);
     },
   );
 
   ipcMain.handle(
     'chat:ai-send',
-    async (_event, conversationId: string, userMessage: string, service?: string, provider?: string, imageBase64?: string, imageMimeType?: string) => {
-      return await runStreamingPrompt(conversationId, userMessage, service, provider, imageBase64, imageMimeType);
+    async (_event, conversationId: string, userMessage: string, service?: string, provider?: string, imageBase64?: string, imageMimeType?: string, permissionMode?: ChatPermissionMode) => {
+      return await runStreamingPrompt(conversationId, userMessage, service, provider, imageBase64, imageMimeType, permissionMode);
     },
   );
 

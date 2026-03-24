@@ -1,4 +1,10 @@
-import type { DaemonStateSnapshot, LogEvent, RuntimeProcessState } from '../types/bridge';
+import type {
+  ChatPermissionMode,
+  ChatWorkspaceGitStatus,
+  DaemonStateSnapshot,
+  LogEvent,
+  RuntimeProcessState,
+} from '../types/bridge';
 import type { ChatMessage } from '../ui/components/chat/chat-shared';
 
 export type BadgeTone = 'active' | 'idle' | 'warn' | 'bad';
@@ -171,8 +177,10 @@ export type RendererUiState = {
   // --- Browser preview ---
   browserPreviewUrl: string | null;
   browserPreviewRequestId: number;
+  chatPermissionMode: ChatPermissionMode;
   chatWorkspacePath: string;
   chatWorkspaceDefaultPath: string;
+  chatWorkspaceGitStatus: ChatWorkspaceGitStatus;
 
   // --- Streaming indicator ---
   chatStreamingIndicatorText: string;
@@ -299,8 +307,21 @@ export function createInitialUiState(): RendererUiState {
     // Browser preview
     browserPreviewUrl: null,
     browserPreviewRequestId: 0,
+    chatPermissionMode: 'default',
     chatWorkspacePath: '',
     chatWorkspaceDefaultPath: '',
+    chatWorkspaceGitStatus: {
+      available: false,
+      rootPath: null,
+      branch: null,
+      isDetached: false,
+      ahead: 0,
+      behind: 0,
+      stagedFiles: 0,
+      modifiedFiles: 0,
+      untrackedFiles: 0,
+      error: null,
+    },
 
     // Streaming indicator
     chatStreamingIndicatorText: '',

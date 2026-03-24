@@ -270,6 +270,92 @@
   gap: 8px;
 }
 
+.chat-composer-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.git-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  border-radius: 999px;
+  border: 1px solid var(--border-light);
+  background: rgba(255, 255, 255, 0.04);
+  padding: 5px 10px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.07);
+  }
+}
+
+.git-status-pill-clean {
+  border-color: rgba(31, 216, 122, 0.28);
+}
+
+.git-status-pill-dirty {
+  border-color: rgba(255, 184, 77, 0.32);
+}
+
+.git-status-pill-missing {
+  border-color: rgba(255, 255, 255, 0.1);
+  opacity: 0.78;
+}
+
+.git-status-branch {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+}
+
+.git-status-summary {
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.permission-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.permission-label {
+  color: var(--text-muted);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.permission-select {
+  appearance: none;
+  min-width: 138px;
+  border-radius: 999px;
+  border: 1px solid var(--border-light);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  padding: 5px 12px;
+  font-size: 12px;
+  cursor: pointer;
+
+  &:focus {
+    outline: none;
+    border-color: rgba(31, 216, 122, 0.4);
+  }
+}
+
 .chat-image-attach-preview {
   display: flex;
   align-items: flex-start;
@@ -390,6 +476,28 @@
 
   &:disabled {
     opacity: 0.3;
+  }
+}
+
+@media (max-width: 720px) {
+  .chat-composer-meta {
+    align-items: stretch;
+  }
+
+  .git-status-pill {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .permission-control {
+    width: 100%;
+    margin-left: 0;
+    justify-content: space-between;
+  }
+
+  .permission-select {
+    min-width: 0;
+    width: 160px;
   }
 }
 

@@ -171,11 +171,11 @@ const api = {
   chatAiRenameConversation(id: string, title: string): Promise<{ ok: boolean; error?: string }> {
     return ipcRenderer.invoke('chat:ai-rename-conversation', id, title);
   },
-  chatAiSend(conversationId: string, message: string, service?: string, provider?: string, imageBase64?: string, imageMimeType?: string): Promise<{ ok: boolean; error?: string }> {
-    return ipcRenderer.invoke('chat:ai-send', conversationId, message, service, provider, imageBase64, imageMimeType);
+  chatAiSend(conversationId: string, message: string, service?: string, provider?: string, imageBase64?: string, imageMimeType?: string, permissionMode?: 'default' | 'full-access'): Promise<{ ok: boolean; error?: string }> {
+    return ipcRenderer.invoke('chat:ai-send', conversationId, message, service, provider, imageBase64, imageMimeType, permissionMode);
   },
-  chatAiSendStream(conversationId: string, message: string, service?: string, provider?: string, imageBase64?: string, imageMimeType?: string): Promise<{ ok: boolean; error?: string }> {
-    return ipcRenderer.invoke('chat:ai-send-stream', conversationId, message, service, provider, imageBase64, imageMimeType);
+  chatAiSendStream(conversationId: string, message: string, service?: string, provider?: string, imageBase64?: string, imageMimeType?: string, permissionMode?: 'default' | 'full-access'): Promise<{ ok: boolean; error?: string }> {
+    return ipcRenderer.invoke('chat:ai-send-stream', conversationId, message, service, provider, imageBase64, imageMimeType, permissionMode);
   },
   chatAiAbort(): Promise<{ ok: boolean }> {
     return ipcRenderer.invoke('chat:ai-abort');
@@ -188,6 +188,24 @@ const api = {
   },
   chatAiGetWorkspace(): Promise<{ ok: boolean; data?: { current: string; default: string }; error?: string }> {
     return ipcRenderer.invoke('chat:ai-get-workspace');
+  },
+  chatAiGetWorkspaceGitStatus(): Promise<{
+    ok: boolean;
+    data?: {
+      available: boolean;
+      rootPath: string | null;
+      branch: string | null;
+      isDetached: boolean;
+      ahead: number;
+      behind: number;
+      stagedFiles: number;
+      modifiedFiles: number;
+      untrackedFiles: number;
+      error: string | null;
+    };
+    error?: string;
+  }> {
+    return ipcRenderer.invoke('chat:ai-get-workspace-git-status');
   },
   chatAiSetWorkspace(workspacePath: string): Promise<{ ok: boolean; data?: { current: string; default: string }; error?: string }> {
     return ipcRenderer.invoke('chat:ai-set-workspace', workspacePath);

@@ -19,6 +19,7 @@ import { AntStationStackedLogo } from '../AntStationLogo';
 import styles from './ChatView.module.scss';
 import type { ChatMessage } from '../chat/chat-shared';
 import { buildDisplayMessages } from '../chat/chat-shared';
+import type { ChatPermissionMode, ChatWorkspaceGitStatus } from '../../../types/bridge';
 
 const MAX_INPUT_HEIGHT = 220;
 const PREVIEW_MIN_WIDTH = 280;
@@ -49,6 +50,41 @@ function getMessageKey(message: ChatMessage, index: number): string {
   }
   const createdAt = Number(message.createdAt) || 0;
   return `${message.role}:${createdAt}:${getMessageContentKey(message.content)}:${index}`;
+}
+
+function getGitChangeCount(status: ChatWorkspaceGitStatus): number {
+  return status.stagedFiles + status.modifiedFiles + status.untrackedFiles;
+}
+
+function getGitStatusSummary(status: ChatWorkspaceGitStatus): string {
+  if (!status.available) {
+    return status.error ? 'Git unavailable' : 'No repo';
+  }
+
+  const parts: string[] = [];
+  if (status.ahead > 0) parts.push(`+${status.ahead}`);
+  if (status.behind > 0) parts.push(`-${status.behind}`);
+
+  const changes = getGitChangeCount(status);
+  parts.push(changes > 0 ? `${changes} dirty` : 'clean');
+  return parts.join(' ');
+}
+
+function getGitStatusTitle(status: ChatWorkspaceGitStatus): string {
+  if (!status.available) {
+    return status.error || 'Selected workspace is not in a git repository.';
+  }
+
+  const details = [
+    status.rootPath ? `Repo: ${status.rootPath}` : null,
+    `Staged: ${status.stagedFiles}`,
+    `Modified: ${status.modifiedFiles}`,
+    `Untracked: ${status.untrackedFiles}`,
+    `Ahead: ${status.ahead}`,
+    `Behind: ${status.behind}`,
+  ].filter(Boolean);
+
+  return details.join('\n');
 }
 
 type ChatViewProps = {
@@ -286,6 +322,17 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   const workspaceLabel = workspacePath
     ? workspacePath.length > 52 ? `...${workspacePath.slice(-52)}` : workspacePath
     : 'No workspace selected';
+  const gitStatus = snap.chatWorkspaceGitStatus;
+  const gitStatusSummary = getGitStatusSummary(gitStatus);
+  const gitStatusBranch = gitStatus.available
+    ? (gitStatus.branch || (gitStatus.isDetached ? 'detached' : 'no-branch'))
+    : 'No git repo';
+  const gitStatusToneClass = !gitStatus.available
+    ? styles.gitStatusPillMissing
+    : getGitChangeCount(gitStatus) > 0 || gitStatus.behind > 0
+      ? styles.gitStatusPillDirty
+      : styles.gitStatusPillClean;
+  const gitStatusTitle = getGitStatusTitle(gitStatus);
 
   // Compute widths for split view
   const chatStyle = previewActive
@@ -435,6 +482,29 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                 onKeyDown={handleKeyDown}
                 onPaste={handlePaste}
               />
+              <div className={styles.chatComposerMeta}>
+                <button
+                  type="button"
+                  className={`${styles.gitStatusPill} ${gitStatusToneClass}`}
+                  onClick={() => void actions.refreshWorkspaceGitStatus()}
+                  title={gitStatusTitle}
+                >
+                  <span className={styles.gitStatusBranch}>{gitStatusBranch}</span>
+                  <span className={styles.gitStatusSummary}>{gitStatusSummary}</span>
+                </button>
+                <label className={styles.permissionControl}>
+                  <span className={styles.permissionLabel}>Permissions</span>
+                  <select
+                    className={styles.permissionSelect}
+                    value={snap.chatPermissionMode}
+                    onChange={(e) => actions.setChatPermissionMode(e.target.value as ChatPermissionMode)}
+                    title="Choose the tool permissions for the next chat turn"
+                  >
+                    <option value="default">Default</option>
+                    <option value="full-access">Full Access</option>
+                  </select>
+                </label>
+              </div>
               <div className={styles.chatInputBottom}>
                 <div className={styles.chatInputBottomLeft}>
                   <button
