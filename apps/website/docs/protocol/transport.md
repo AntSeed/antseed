@@ -119,7 +119,7 @@ Buyer                           Seller                          Chain
   │   [check balance, sign]       │                               │
   │                               │                               │
   ├── SpendingAuth (0x50) ───────>│                               │
-  │   (EIP-712 signature)        │                               │
+  │    (EIP-712 signature)        │                               │
   │                               ├── reserve() ─────────────────>│
   │                               │<── tx confirmed ──────────────┤
   │                               │                               │

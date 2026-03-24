@@ -34,14 +34,14 @@ Buyer                          Seller                         Chain
   │                              │                              │
   │  === NEXT SESSION =========  │                              │
   │                              │                              │
-  ├── SpendingAuth(N+1) ───────>│                              │
+  ├── SpendingAuth(N+1) ─────-──>│                              │
   │   previousConsumption = X    │                              │
   │   previousSessionId = N      │                              │
   │                              ├── reserve(auth) ────────────>│
-  │                              │   settles session N           │
-  │                              │   (seller paid, excess        │
-  │                              │    returned to buyer)         │
-  │                              │   locks credits for N+1       │
+  │                              │   settles session N          │
+  │                              │   (seller paid, excess       │
+  │                              │    returned to buyer)        │
+  │                              │   locks credits for N+1      │
   │                              │<──── confirmed ──────────────┤
   │                              │                              │
 ```
