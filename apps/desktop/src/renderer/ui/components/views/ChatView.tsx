@@ -97,6 +97,25 @@ function getGitStatusTitle(status: ChatWorkspaceGitStatus): string {
   return details.join('\n');
 }
 
+type PermissionModeDetails = {
+  optionLabel: string;
+  agenda: string;
+  title: string;
+};
+
+const PERMISSION_MODE_DETAILS: Record<ChatPermissionMode, PermissionModeDetails> = {
+  default: {
+    optionLabel: 'Inspect & Preview',
+    agenda: 'Read and search the workspace, inspect pages, and preview URLs. No edits, shell, or dev servers.',
+    title: 'Safer mode for understanding the repo and previewing results without editing files or running commands.',
+  },
+  'full-access': {
+    optionLabel: 'Full Access',
+    agenda: 'Inspect, edit files, run commands, start dev servers, and preview the result in one chat flow.',
+    title: 'Editing mode with shell, write, and dev-server access for the next chat turn.',
+  },
+};
+
 type ChatViewProps = {
   active: boolean;
   onSelectView?: (view: import('../../types').ViewName) => void;
@@ -343,6 +362,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   const gitStatusDetailLabel = gitStatus.available
     ? `${gitStatusBranch} · ${gitStatusSummary}`
     : gitStatusSummary;
+  const permissionModeDetails = PERMISSION_MODE_DETAILS[snap.chatPermissionMode];
   const gitStatusToneClass = !gitStatus.available
     ? styles.gitStatusPillMissing
     : getGitChangeCount(gitStatus) > 0 || gitStatus.behind > 0
@@ -509,17 +529,21 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                   <span className={styles.gitStatusSummary}>{gitStatusDetailLabel}</span>
                 </button>
                 <label className={styles.permissionControl}>
-                  <span className={styles.permissionLabel}>Permissions</span>
+                  <span className={styles.permissionLabel}>Mode</span>
                   <select
                     className={styles.permissionSelect}
                     value={snap.chatPermissionMode}
                     onChange={(e) => actions.setChatPermissionMode(e.target.value as ChatPermissionMode)}
-                    title="Choose the tool permissions for the next chat turn"
+                    title={permissionModeDetails.title}
                   >
-                    <option value="default">Default</option>
-                    <option value="full-access">Full Access</option>
+                    <option value="default">{PERMISSION_MODE_DETAILS.default.optionLabel}</option>
+                    <option value="full-access">{PERMISSION_MODE_DETAILS['full-access'].optionLabel}</option>
                   </select>
                 </label>
+              </div>
+              <div className={styles.permissionAgenda} title={permissionModeDetails.title}>
+                <span className={styles.permissionAgendaLabel}>Agenda</span>
+                <span className={styles.permissionAgendaText}>{permissionModeDetails.agenda}</span>
               </div>
               <div className={styles.chatInputBottom}>
                 <div className={styles.chatInputBottomLeft}>

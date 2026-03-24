@@ -1348,7 +1348,15 @@ export function initChatModule({
       void (async () => {
         try {
           const sendRequest = async () =>
-            await bridge.chatAiSend!(convId, content || ' ', selection.id || undefined, undefined, imageBase64, imageMimeType);
+            await bridge.chatAiSend!(
+              convId,
+              content || ' ',
+              selection.id || undefined,
+              undefined,
+              imageBase64,
+              imageMimeType,
+              uiState.chatPermissionMode,
+            );
 
           let result = await sendRequest();
           if (

@@ -356,6 +356,32 @@
   }
 }
 
+.permission-agenda {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.permission-agenda-label {
+  color: var(--text-muted);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.permission-agenda-text {
+  min-width: 0;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .chat-image-attach-preview {
   display: flex;
   align-items: flex-start;
@@ -498,6 +524,15 @@
   .permission-select {
     min-width: 0;
     width: 160px;
+  }
+
+  .permission-agenda {
+    width: 100%;
+    align-items: flex-start;
+  }
+
+  .permission-agenda-text {
+    white-space: normal;
   }
 }
 

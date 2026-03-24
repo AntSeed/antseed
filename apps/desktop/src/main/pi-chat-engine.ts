@@ -9,7 +9,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import type { AgentSession, AgentSessionEvent, ToolDefinition } from '@mariozechner/pi-coding-agent';
-import { ANTSTATION_SYSTEM_PROMPT } from './chat-system-prompt.js';
+import { buildAntstationSystemPrompt } from './chat-system-prompt.js';
 import {
   AuthStorage,
   createAgentSession,
@@ -656,13 +656,16 @@ const CHAT_DEFAULT_ACTIVE_TOOL_NAMES = [
   'grep',
   'find',
   'ls',
-  'edit',
-  'write',
   'web_fetch',
   'open_browser_preview',
-  'start_dev_server',
 ] as const;
-const CHAT_FULL_ACCESS_TOOL_NAMES = [...CHAT_DEFAULT_ACTIVE_TOOL_NAMES, 'bash'] as const;
+const CHAT_FULL_ACCESS_TOOL_NAMES = [
+  ...CHAT_DEFAULT_ACTIVE_TOOL_NAMES,
+  'edit',
+  'write',
+  'start_dev_server',
+  'bash',
+] as const;
 
 type ChatWorkspaceGitStatus = {
   available: boolean;
@@ -2013,7 +2016,7 @@ export function registerPiChatHandlers({
       cwd: chatWorkspaceDir,
       agentDir: CHAT_AGENT_DIR,
       settingsManager,
-      systemPrompt: userSystemPrompt ?? ANTSTATION_SYSTEM_PROMPT,
+      systemPrompt: buildAntstationSystemPrompt(userSystemPrompt, permissionMode),
     });
     await resourceLoader.reload();
 
