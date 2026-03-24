@@ -4,14 +4,18 @@ pragma solidity ^0.8.24;
 import "forge-std/Script.sol";
 
 // Minimal interfaces for post-deploy wiring — avoids import clashes
-// from contracts that re-declare IERC20/IAntseedIdentity locally.
+// from contracts that re-declare IERC20 locally.
 
-interface ISetEscrow {
-    function setEscrowContract(address) external;
+interface ISetSessions {
+    function setSessionsContract(address) external;
 }
 
 interface ISetEmissions {
     function setEmissionsContract(address) external;
+}
+
+interface ISetProtocolReserve {
+    function setProtocolReserve(address) external;
 }
 
 /**
@@ -31,7 +35,6 @@ contract Deploy is Script {
 
         // Read bytecodes from compiled artifacts
         bytes memory usdcBytecode = vm.getCode("MockUSDC.sol:MockUSDC");
-        bytes memory identityBytecode = vm.getCode("AntseedIdentity.sol:AntseedIdentity");
         bytes memory tokenBytecode = vm.getCode("ANTSToken.sol:ANTSToken");
 
         vm.startBroadcast(deployerPrivateKey);
@@ -42,7 +45,11 @@ contract Deploy is Script {
         require(usdc != address(0), "MockUSDC deploy failed");
         console.log("MockUSDC:           ", usdc);
 
-        // 2. AntseedIdentity
+        // 2. AntseedIdentity(usdc)
+        bytes memory identityBytecode = abi.encodePacked(
+            vm.getCode("AntseedIdentity.sol:AntseedIdentity"),
+            abi.encode(usdc)
+        );
         address identity;
         assembly { identity := create(0, add(identityBytecode, 0x20), mload(identityBytecode)) }
         require(identity != address(0), "Identity deploy failed");
@@ -54,17 +61,27 @@ contract Deploy is Script {
         require(antsToken != address(0), "ANTSToken deploy failed");
         console.log("ANTSToken:          ", antsToken);
 
-        // 4. AntseedEscrow(usdc, identity)
-        bytes memory escrowBytecode = abi.encodePacked(
-            vm.getCode("AntseedEscrow.sol:AntseedEscrow"),
-            abi.encode(usdc, identity)
+        // 4. AntseedDeposits(usdc)
+        bytes memory depositsBytecode = abi.encodePacked(
+            vm.getCode("AntseedDeposits.sol:AntseedDeposits"),
+            abi.encode(usdc)
         );
-        address escrow;
-        assembly { escrow := create(0, add(escrowBytecode, 0x20), mload(escrowBytecode)) }
-        require(escrow != address(0), "Escrow deploy failed");
-        console.log("AntseedEscrow:      ", escrow);
+        address deposits;
+        assembly { deposits := create(0, add(depositsBytecode, 0x20), mload(depositsBytecode)) }
+        require(deposits != address(0), "Deposits deploy failed");
+        console.log("AntseedDeposits:    ", deposits);
 
-        // 5. AntseedEmissions(antsToken, initialEmission, epochDuration)
+        // 5. AntseedSessions(deposits, identity)
+        bytes memory sessionsBytecode = abi.encodePacked(
+            vm.getCode("AntseedSessions.sol:AntseedSessions"),
+            abi.encode(deposits, identity)
+        );
+        address sessions;
+        assembly { sessions := create(0, add(sessionsBytecode, 0x20), mload(sessionsBytecode)) }
+        require(sessions != address(0), "Sessions deploy failed");
+        console.log("AntseedSessions:    ", sessions);
+
+        // 6. AntseedEmissions(antsToken, initialEmission, epochDuration)
         bytes memory emissionsBytecode = abi.encodePacked(
             vm.getCode("AntseedEmissions.sol:AntseedEmissions"),
             abi.encode(antsToken, uint256(1_000_000e18), uint256(7 days))
@@ -74,7 +91,7 @@ contract Deploy is Script {
         require(emissions != address(0), "Emissions deploy failed");
         console.log("AntseedEmissions:   ", emissions);
 
-        // 6. AntseedSubPool(usdc, identity)
+        // 7. AntseedSubPool(usdc, identity)
         bytes memory subPoolBytecode = abi.encodePacked(
             vm.getCode("AntseedSubPool.sol:AntseedSubPool"),
             abi.encode(usdc, identity)
@@ -85,11 +102,13 @@ contract Deploy is Script {
         console.log("AntseedSubPool:     ", subPool);
 
         // ---- Wire contracts together ----
-        ISetEscrow(identity).setEscrowContract(escrow);
+        ISetSessions(deposits).setSessionsContract(sessions);
+        ISetSessions(identity).setSessionsContract(sessions);
+        ISetProtocolReserve(identity).setProtocolReserve(address(0xFEE));
         ISetEmissions(antsToken).setEmissionsContract(emissions);
-        ISetEmissions(escrow).setEmissionsContract(emissions);
-        ISetEscrow(emissions).setEscrowContract(escrow);
-        ISetEscrow(subPool).setEscrowContract(escrow);
+        ISetEmissions(sessions).setEmissionsContract(emissions);
+        ISetSessions(emissions).setSessionsContract(sessions);
+        ISetProtocolReserve(sessions).setProtocolReserve(address(0xFEE));
 
         vm.stopBroadcast();
 

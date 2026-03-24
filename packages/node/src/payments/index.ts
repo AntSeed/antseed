@@ -16,13 +16,23 @@ export type { UnifiedBalance } from './balance-manager.js';
 // Base EVM client
 export { BaseEvmClient } from './evm/base-evm-client.js';
 
-// Base/EVM integration
-export { BaseEscrowClient } from './evm/escrow-client.js';
-export type { BaseEscrowConfig, SessionInfo, BuyerBalanceInfo, SellerAccountInfo } from './evm/escrow-client.js';
+// Deposits client (buyer deposits + seller earnings)
+export { DepositsClient } from './evm/deposits-client.js';
+export type { DepositsClientConfig, BuyerBalanceInfo } from './evm/deposits-client.js';
+
+// Sessions client (reserve, settle, timeout)
+export { SessionsClient } from './evm/sessions-client.js';
+export type { SessionsClientConfig, SessionInfo } from './evm/sessions-client.js';
+
+// Identity client (registration, reputation, staking)
+export { IdentityClient } from './evm/identity-client.js';
+export type { IdentityClientConfig, ProvenReputation, FeedbackSummary, SellerAccountInfo } from './evm/identity-client.js';
+
+// EVM keypair utilities
 export { identityToEvmWallet, identityToEvmAddress } from './evm/keypair.js';
 export {
   signSpendingAuth,
-  makeEscrowDomain,
+  makeSessionsDomain,
   SPENDING_AUTH_TYPES,
   signMessageEd25519,
   buildReceiptMessage,
@@ -30,6 +40,7 @@ export {
   verifyMessageEd25519,
 } from './evm/signatures.js';
 export type { SpendingAuthMessage } from './evm/signatures.js';
+
 // ANTS token
 export { ANTSTokenClient } from './evm/ants-token-client.js';
 export type { ANTSTokenClientConfig } from './evm/ants-token-client.js';
@@ -37,10 +48,6 @@ export type { ANTSTokenClientConfig } from './evm/ants-token-client.js';
 // Emissions
 export { EmissionsClient } from './evm/emissions-client.js';
 export type { EmissionsClientConfig } from './evm/emissions-client.js';
-
-// Identity
-export { IdentityClient } from './evm/identity-client.js';
-export type { IdentityClientConfig, ProvenReputation, FeedbackSummary } from './evm/identity-client.js';
 
 // Subscription Pool
 export { SubPoolClient } from './evm/subpool-client.js';

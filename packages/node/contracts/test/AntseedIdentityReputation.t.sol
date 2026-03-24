@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
 import "../AntseedIdentity.sol";
+import "../MockUSDC.sol";
 
 contract AntseedIdentityReputationTest is Test {
     // Support receiving ERC721 tokens (needed for register() via _safeMint)
@@ -10,6 +11,7 @@ contract AntseedIdentityReputationTest is Test {
         return this.onERC721Received.selector;
     }
     AntseedIdentity public identity;
+    MockUSDC public usdc;
     address public peer1 = address(0x1);
     bytes32 public peerId1 = keccak256("peer1");
     uint256 public tokenId;
@@ -19,8 +21,9 @@ contract AntseedIdentityReputationTest is Test {
     bytes32 public tag = bytes32("quality");
 
     function setUp() public {
-        identity = new AntseedIdentity();
-        identity.setEscrowContract(address(this));
+        usdc = new MockUSDC();
+        identity = new AntseedIdentity(address(usdc));
+        identity.setSessionsContract(address(this));
         vm.prank(peer1);
         tokenId = identity.register(peerId1, "ipfs://meta");
         // Register feedback clients (required for giveFeedback access control)

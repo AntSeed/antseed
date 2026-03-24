@@ -18,7 +18,7 @@ import {
 } from './process-manager.js';
 import { registerPiChatHandlers } from './pi-chat-engine.js';
 import { ensureSecureIdentity, secureIdentityEnv, getSecureIdentity } from './identity.js';
-import { identityToEvmAddress, identityToEvmWallet, BaseEscrowClient, signSpendingAuth, makeEscrowDomain, resolveChainConfig, formatUsdc } from '@antseed/node';
+import { identityToEvmAddress, identityToEvmWallet, DepositsClient, signSpendingAuth, makeSessionsDomain, resolveChainConfig, formatUsdc } from '@antseed/node';
 import { createServer as createPaymentsServer } from '@antseed/payments';
 import type { LogEvent, RuntimeActivityEvent } from './log-parser.js';
 import { parseRuntimeActivityFromLog } from './log-parser.js';
@@ -546,7 +546,7 @@ ipcMain.handle(
       const merged = await mergeConfig(safeConfig, ACTIVE_CONFIG_PATH);
       cachedCryptoConfig = null; // Invalidate cached crypto config
       creditsRpcFailCount = 0; // Reset backoff so new config is tried immediately
-      // Restart payments portal if running so it picks up new escrow/chain config
+      // Restart payments portal if running so it picks up new contract/chain config
       void stopPaymentsPortal().catch(() => {});
       return { ok: true, data: { config: merged }, error: null, status: 200 };
     } catch (err) {
@@ -555,7 +555,7 @@ ipcMain.handle(
   },
 );
 
-// ── Credits / Escrow Balance ──
+// ── Credits / Deposits Balance ──
 
 type CreditsInfo = {
   evmAddress: string | null;
@@ -573,7 +573,7 @@ let cachedCreditsInfo: CreditsInfo | null = null;
 
 // Cached crypto config — invalidated on config update. Uses protocol defaults
 // from resolveChainConfig with optional user overrides from config.json.
-let cachedCryptoConfig: { rpcUrl: string; escrowAddress: string; usdcAddress: string; chainId: number } | null = null;
+let cachedCryptoConfig: { rpcUrl: string; depositsAddress: string; sessionsAddress: string; usdcAddress: string; chainId: number } | null = null;
 
 async function loadCachedCryptoConfig(): Promise<typeof cachedCryptoConfig> {
   if (cachedCryptoConfig) return cachedCryptoConfig;
@@ -585,20 +585,21 @@ async function loadCachedCryptoConfig(): Promise<typeof cachedCryptoConfig> {
   } catch {
     // No config — no crypto config available
   }
-  // Only resolve if the user has explicitly configured a chain or escrow address.
-  // Without explicit config, there's no escrow to query — return null so callers
+  // Only resolve if the user has explicitly configured a chain or contract address.
+  // Without explicit config, there's no contract to query — return null so callers
   // skip RPC calls instead of hitting a default contract that may not exist.
-  const hasExplicitConfig = overrides.chainId || overrides.rpcUrl || overrides.escrowContractAddress;
+  const hasExplicitConfig = overrides.chainId || overrides.rpcUrl || overrides.depositsContractAddress || overrides.sessionsContractAddress;
   if (!hasExplicitConfig) {
     return null;
   }
   const cc = resolveChainConfig({
     chainId: asString(overrides.chainId as string, '') || undefined,
     rpcUrl: asString(overrides.rpcUrl as string, '') || undefined,
-    escrowContractAddress: asString(overrides.escrowContractAddress as string, '') || undefined,
+    depositsContractAddress: asString(overrides.depositsContractAddress as string, '') || undefined,
+    sessionsContractAddress: asString(overrides.sessionsContractAddress as string, '') || undefined,
     usdcContractAddress: asString(overrides.usdcContractAddress as string, '') || undefined,
   });
-  cachedCryptoConfig = { rpcUrl: cc.rpcUrl, escrowAddress: cc.escrowContractAddress, usdcAddress: cc.usdcContractAddress, chainId: cc.evmChainId };
+  cachedCryptoConfig = { rpcUrl: cc.rpcUrl, depositsAddress: cc.depositsContractAddress, sessionsAddress: cc.sessionsContractAddress, usdcAddress: cc.usdcContractAddress, chainId: cc.evmChainId };
   return cachedCryptoConfig;
 }
 
@@ -630,12 +631,12 @@ async function refreshCreditsInfo(): Promise<CreditsInfo> {
     creditsRpcFailCount = 0;
   }
 
-  const client = new BaseEscrowClient({ rpcUrl: cc.rpcUrl, contractAddress: cc.escrowAddress, usdcAddress: cc.usdcAddress });
+  const depositsClient = new DepositsClient({ rpcUrl: cc.rpcUrl, contractAddress: cc.depositsAddress, usdcAddress: cc.usdcAddress });
 
   try {
     const [balance, creditLimit] = await Promise.all([
-      client.getBuyerBalance(evmAddress),
-      client.getBuyerCreditLimit(evmAddress),
+      depositsClient.getBuyerBalance(evmAddress),
+      depositsClient.getBuyerCreditLimit(evmAddress),
     ]);
     creditsRpcFailCount = 0; // Reset on success
     const info: CreditsInfo = {
@@ -652,7 +653,7 @@ async function refreshCreditsInfo(): Promise<CreditsInfo> {
     creditsRpcFailCount++;
     creditsRpcLastFailAt = Date.now();
     if (creditsRpcFailCount <= 1) {
-      try { console.warn('[credits] Escrow RPC unavailable:', err instanceof Error ? err.message : String(err)); }
+      try { console.warn('[credits] Deposits RPC unavailable:', err instanceof Error ? err.message : String(err)); }
       catch { /* EPIPE — ignore */ }
     }
     if (cachedCreditsInfo) return cachedCreditsInfo;
@@ -718,11 +719,11 @@ ipcMain.handle('payments:sign-spending-auth', async (_event, params: {
 
     const cc = await loadCachedCryptoConfig();
     if (!cc) {
-      return { ok: false, error: 'No escrow contract configured' };
+      return { ok: false, error: 'No sessions contract configured' };
     }
 
     const wallet = identityToEvmWallet(identity);
-    const domain = makeEscrowDomain(cc.chainId, cc.escrowAddress);
+    const domain = makeSessionsDomain(cc.chainId, cc.sessionsAddress);
 
     const signature = await signSpendingAuth(wallet, domain, {
       seller: params.sellerEvmAddress,
@@ -858,11 +859,11 @@ ipcMain.handle('chat:approve-payment', async (_event, conversationId: string) =>
 
     const cc = await loadCachedCryptoConfig();
     if (!cc) {
-      return { ok: false, error: 'No escrow contract configured' };
+      return { ok: false, error: 'No sessions contract configured' };
     }
 
     const wallet = identityToEvmWallet(identity);
-    const domain = makeEscrowDomain(cc.chainId, cc.escrowAddress);
+    const domain = makeSessionsDomain(cc.chainId, cc.sessionsAddress);
     const buyerEvmAddr = wallet.address;
 
     let sellerEvmAddr = String(paymentInfo.sellerEvmAddr ?? '');

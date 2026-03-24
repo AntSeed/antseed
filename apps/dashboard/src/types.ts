@@ -32,7 +32,7 @@ export interface DashboardConfig {
     crypto?: {
       chainId: string;
       rpcUrl: string;
-      escrowContractAddress: string;
+      depositsContractAddress: string;
       usdcContractAddress: string;
       defaultLockAmountUSDC?: string;
     };

@@ -45,7 +45,8 @@ export type ConfigFormData = {
   devMode: boolean;
   cryptoChainId: string;
   cryptoRpcUrl: string;
-  cryptoEscrowAddress: string;
+  cryptoDepositsAddress: string;
+  cryptoSessionsAddress: string;
   cryptoUsdcAddress: string;
 };
 

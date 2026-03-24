@@ -126,7 +126,7 @@ export interface ConfigResponse {
       crypto?: {
         chainId: 'base' | 'arbitrum';
         rpcUrl: string;
-        escrowContractAddress: string;
+        depositsContractAddress: string;
         usdcContractAddress: string;
       };
     };

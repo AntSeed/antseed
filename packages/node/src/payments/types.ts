@@ -43,8 +43,10 @@ export interface CryptoPaymentConfig {
   chainId: ChainId;
   /** Base JSON-RPC URL (e.g. http://127.0.0.1:8545 for anvil) */
   rpcUrl: string;
-  /** Deployed AntseedEscrow contract address */
-  contractAddress: string;
+  /** Deployed AntseedDeposits contract address */
+  depositsContractAddress: string;
+  /** Deployed AntseedSessions contract address */
+  sessionsContractAddress: string;
   /** USDC token contract address */
   usdcAddress: string;
   /** Default lock amount for new sessions (USDC base units as string, e.g. "1000000" = 1 USDC) */

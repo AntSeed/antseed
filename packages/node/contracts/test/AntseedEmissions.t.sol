@@ -23,7 +23,7 @@ contract AntseedEmissionsTest is Test {
         emissions = new AntseedEmissions(address(token), INITIAL_EMISSION, EPOCH_DURATION);
         token.setEmissionsContract(address(emissions));
         // Allow test contract to call accrue functions
-        emissions.setEscrowContract(address(this));
+        emissions.setSessionsContract(address(this));
         emissions.setReserveDestination(reserveDest);
     }
 
@@ -300,10 +300,10 @@ contract AntseedEmissionsTest is Test {
         emissions.setSharePercentages(60, 20, 10);
     }
 
-    function test_setEscrowContract_onlyOwner() public {
+    function test_setSessionsContract_onlyOwner() public {
         vm.prank(seller1);
         vm.expectRevert(AntseedEmissions.NotOwner.selector);
-        emissions.setEscrowContract(address(0x99));
+        emissions.setSessionsContract(address(0x99));
     }
 
     function test_setConstant() public {
@@ -316,7 +316,7 @@ contract AntseedEmissionsTest is Test {
         assertEq(emissions.owner(), seller1);
 
         vm.prank(seller1);
-        emissions.setEscrowContract(address(0x99));
-        assertEq(emissions.escrowContract(), address(0x99));
+        emissions.setSessionsContract(address(0x99));
+        assertEq(emissions.sessionsContract(), address(0x99));
     }
 }

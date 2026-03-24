@@ -57,7 +57,7 @@ contract AntseedSubPool {
     IERC20 public immutable usdc;
     IAntseedIdentity public identityContract;
     address public owner;
-    address public escrowContract;
+    address public sessionsContract;
     bool private _locked;
 
     mapping(uint256 => Tier) public tiers;
@@ -223,7 +223,7 @@ contract AntseedSubPool {
     }
 
     function recordTokenUsage(address buyer, uint256 tokens) external {
-        if (msg.sender != escrowContract && msg.sender != owner) revert NotAuthorized();
+        if (msg.sender != sessionsContract && msg.sender != owner) revert NotAuthorized();
         Subscription storage sub = subscriptions[buyer];
         if (sub.expiresAt <= block.timestamp) revert SubscriptionExpired();
 
@@ -416,9 +416,9 @@ contract AntseedSubPool {
     //                        ADMIN
     // ═══════════════════════════════════════════════════════════════════
 
-    function setEscrowContract(address _escrow) external onlyOwner {
-        if (_escrow == address(0)) revert InvalidAddress();
-        escrowContract = _escrow;
+    function setSessionsContract(address _sessions) external onlyOwner {
+        if (_sessions == address(0)) revert InvalidAddress();
+        sessionsContract = _sessions;
     }
 
     function setEpochDuration(uint256 duration) external onlyOwner {

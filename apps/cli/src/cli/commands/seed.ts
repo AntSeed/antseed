@@ -263,7 +263,8 @@ export function registerSeedCommand(program: Command): void {
         const cc = resolveChainConfig({
           chainId: config.payments.crypto?.chainId,
           rpcUrl: config.payments.crypto?.rpcUrl,
-          escrowContractAddress: config.payments.crypto?.escrowContractAddress,
+          depositsContractAddress: config.payments.crypto?.depositsContractAddress,
+          sessionsContractAddress: config.payments.crypto?.sessionsContractAddress,
           usdcContractAddress: config.payments.crypto?.usdcContractAddress,
         })
         const defaultLockAmountUSDCBaseUnits = toUSDCBaseUnits(
@@ -273,7 +274,8 @@ export function registerSeedCommand(program: Command): void {
         const cryptoConfig: NonNullable<PaymentConfig['crypto']> = {
           chainId: cc.chainId,
           rpcUrl: cc.rpcUrl,
-          contractAddress: cc.escrowContractAddress,
+          depositsContractAddress: cc.depositsContractAddress,
+          sessionsContractAddress: cc.sessionsContractAddress,
           usdcAddress: cc.usdcContractAddress,
           defaultLockAmountUSDC: defaultLockAmountUSDCBaseUnits,
         }
@@ -346,10 +348,11 @@ export function registerSeedCommand(program: Command): void {
           defaultEscrowAmountUSDC: defaultEscrowAmountUSDCBaseUnits,
           sellerWalletAddress,
           paymentConfig,
-          // Top-level fields required by the node for escrow client + EIP-712 domain
+          // Top-level fields required by the node for contract clients + EIP-712 domain
           ...(paymentConfig?.crypto ? {
             rpcUrl: paymentConfig.crypto.rpcUrl,
-            contractAddress: paymentConfig.crypto.contractAddress,
+            depositsContractAddress: paymentConfig.crypto.depositsContractAddress,
+            sessionsContractAddress: paymentConfig.crypto.sessionsContractAddress,
             usdcAddress: paymentConfig.crypto.usdcAddress,
             chainId: resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).evmChainId,
           } : {}),

@@ -4,7 +4,8 @@ export interface ChainConfig {
   chainId: ChainId;
   evmChainId: number;
   rpcUrl: string;
-  escrowContractAddress: string;
+  depositsContractAddress: string;
+  sessionsContractAddress: string;
   usdcContractAddress: string;
   identityContractAddress?: string;
   emissionsContractAddress?: string;
@@ -21,21 +22,24 @@ const CHAIN_CONFIGS: Record<ChainId, ChainConfig> = {
     chainId: 'base-mainnet',
     evmChainId: 8453,
     rpcUrl: 'https://mainnet.base.org',
-    escrowContractAddress: '0x0000000000000000000000000000000000000000', // TODO: deploy and fill
+    depositsContractAddress: '0x0000000000000000000000000000000000000000', // TODO: deploy and fill
+    sessionsContractAddress: '0x0000000000000000000000000000000000000000', // TODO: deploy and fill
     usdcContractAddress: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', // USDC on Base
   },
   'base-sepolia': {
     chainId: 'base-sepolia',
     evmChainId: 84532,
     rpcUrl: 'https://sepolia.base.org',
-    escrowContractAddress: '0x0000000000000000000000000000000000000000', // TODO: deploy and fill
+    depositsContractAddress: '0x0000000000000000000000000000000000000000', // TODO: deploy and fill
+    sessionsContractAddress: '0x0000000000000000000000000000000000000000', // TODO: deploy and fill
     usdcContractAddress: '0x036CbD53842c5426634e7929541eC2318f3dCF7e', // USDC on Base Sepolia
   },
   'base-local': {
     chainId: 'base-local',
     evmChainId: 31337,
     rpcUrl: 'http://127.0.0.1:8545',
-    escrowContractAddress: '0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9',
+    depositsContractAddress: '0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0', // Placeholder — filled by deploy script
+    sessionsContractAddress: '0x0165878A594ca255338adfa4d48449f69242Eb8F', // Placeholder — filled by deploy script
     usdcContractAddress: '0x5FbDB2315678afecb367f032d93F642f64180aa3',
     identityContractAddress: '0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512',
     emissionsContractAddress: '0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9',
@@ -62,7 +66,8 @@ export function getChainConfig(chainId?: ChainId | string): ChainConfig {
 export function resolveChainConfig(overrides?: {
   chainId?: ChainId | string;
   rpcUrl?: string;
-  escrowContractAddress?: string;
+  depositsContractAddress?: string;
+  sessionsContractAddress?: string;
   usdcContractAddress?: string;
   identityContractAddress?: string;
   emissionsContractAddress?: string;
@@ -72,7 +77,8 @@ export function resolveChainConfig(overrides?: {
   return {
     ...base,
     ...(overrides?.rpcUrl ? { rpcUrl: overrides.rpcUrl } : {}),
-    ...(overrides?.escrowContractAddress ? { escrowContractAddress: overrides.escrowContractAddress } : {}),
+    ...(overrides?.depositsContractAddress ? { depositsContractAddress: overrides.depositsContractAddress } : {}),
+    ...(overrides?.sessionsContractAddress ? { sessionsContractAddress: overrides.sessionsContractAddress } : {}),
     ...(overrides?.usdcContractAddress ? { usdcContractAddress: overrides.usdcContractAddress } : {}),
     ...(overrides?.identityContractAddress ? { identityContractAddress: overrides.identityContractAddress } : {}),
     ...(overrides?.emissionsContractAddress ? { emissionsContractAddress: overrides.emissionsContractAddress } : {}),

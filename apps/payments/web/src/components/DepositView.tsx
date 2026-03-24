@@ -128,7 +128,7 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
       setStep('depositing');
       const usdcAmount = parseUnits(amount, 6);
       writeDeposit({
-        address: config.escrowContractAddress as `0x${string}`,
+        address: config.depositsContractAddress as `0x${string}`,
         abi: ESCROW_ABI,
         functionName: 'depositFor',
         args: [depositTarget as `0x${string}`, usdcAmount],
@@ -163,7 +163,7 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
       address: config.usdcContractAddress as `0x${string}`,
       abi: ERC20_ABI,
       functionName: 'approve',
-      args: [config.escrowContractAddress as `0x${string}`, usdcAmount],
+      args: [config.depositsContractAddress as `0x${string}`, usdcAmount],
     }, {
       onError: (err) => {
         setStep('idle');

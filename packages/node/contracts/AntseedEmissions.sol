@@ -15,7 +15,7 @@ contract AntseedEmissions {
     // ─── Configuration (all owner-settable) ───
     address public owner;
     IANTSToken public antsToken;
-    address public escrowContract;
+    address public sessionsContract;
     address public reserveDestination;
 
     uint256 public EPOCH_DURATION;
@@ -86,8 +86,8 @@ contract AntseedEmissions {
         _;
     }
 
-    modifier onlyEscrow() {
-        if (msg.sender != escrowContract) revert NotAuthorized();
+    modifier onlySessions() {
+        if (msg.sender != sessionsContract) revert NotAuthorized();
         _;
     }
 
@@ -193,7 +193,7 @@ contract AntseedEmissions {
         sr.rewardPerPointPaid = sellerRewardPerPointStored;
     }
 
-    function accrueSellerPoints(address seller, uint256 pointsDelta) external onlyEscrow {
+    function accrueSellerPoints(address seller, uint256 pointsDelta) external onlySessions {
         _updateSellerAccount(seller);
         sellerRewards[seller].points += pointsDelta;
         totalSellerPoints += pointsDelta;
@@ -220,7 +220,7 @@ contract AntseedEmissions {
         br.rewardPerPointPaid = buyerRewardPerPointStored;
     }
 
-    function accrueBuyerPoints(address buyer, uint256 pointsDelta) external onlyEscrow {
+    function accrueBuyerPoints(address buyer, uint256 pointsDelta) external onlySessions {
         _updateBuyerAccount(buyer);
         buyerRewards[buyer].points += pointsDelta;
         totalBuyerPoints += pointsDelta;
@@ -304,9 +304,9 @@ contract AntseedEmissions {
     //                        ADMIN FUNCTIONS
     // ═══════════════════════════════════════════════════════════════════
 
-    function setEscrowContract(address _escrow) external onlyOwner {
-        if (_escrow == address(0)) revert InvalidAddress();
-        escrowContract = _escrow;
+    function setSessionsContract(address _sessions) external onlyOwner {
+        if (_sessions == address(0)) revert InvalidAddress();
+        sessionsContract = _sessions;
     }
 
     function setReserveDestination(address _dest) external onlyOwner {
