@@ -126,7 +126,7 @@ const config: Config = {
           'Agent-to-agent commerce support',
         ],
         downloadUrl: 'https://github.com/AntSeed/antseed/releases',
-        softwareVersion: '0.1.25',
+        softwareVersion: '0.1.49',
         license: 'https://github.com/AntSeed/antseed/blob/main/LICENSE',
       }),
     },
