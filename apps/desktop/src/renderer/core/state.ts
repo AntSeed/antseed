@@ -170,6 +170,7 @@ export type RendererUiState = {
 
   // --- Browser preview ---
   browserPreviewUrl: string | null;
+  browserPreviewRequestId: number;
   chatWorkspacePath: string;
   chatWorkspaceDefaultPath: string;
 
@@ -297,6 +298,7 @@ export function createInitialUiState(): RendererUiState {
 
     // Browser preview
     browserPreviewUrl: null,
+    browserPreviewRequestId: 0,
     chatWorkspacePath: '',
     chatWorkspaceDefaultPath: '',
 

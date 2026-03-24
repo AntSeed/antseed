@@ -1666,6 +1666,7 @@ export function initChatModule({
     if (bridge.onBrowserPreviewOpen) {
       bridge.onBrowserPreviewOpen((data) => {
         uiState.browserPreviewUrl = data.url;
+        uiState.browserPreviewRequestId += 1;
         notifyUiStateChanged();
       });
     }
@@ -1673,6 +1674,7 @@ export function initChatModule({
     // Expose API for triggering browser preview programmatically (used by tool, testing)
     (window as unknown as Record<string, unknown>).__antseedOpenPreview = (url: string) => {
       uiState.browserPreviewUrl = url;
+      uiState.browserPreviewRequestId += 1;
       notifyUiStateChanged();
     };
 

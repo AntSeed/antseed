@@ -80,12 +80,13 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
 
   // Open preview when the tool triggers via state
   const previewUrl = snap.browserPreviewUrl;
+  const previewRequestId = snap.browserPreviewRequestId;
   useEffect(() => {
     if (previewUrl) {
       setPreviewTargetUrl(previewUrl);
       setPreviewOpen(true);
     }
-  }, [previewUrl]);
+  }, [previewUrl, previewRequestId]);
 
   // Track whether the user has scrolled away from the bottom
   useEffect(() => {

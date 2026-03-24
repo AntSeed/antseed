@@ -67,6 +67,24 @@ const ELEMENT_PICKER_INJECT = `
 
   let lastTarget = null;
 
+  function cleanup() {
+    overlay.remove();
+    highlight.remove();
+    window.__antseedPickerActive = false;
+    if (window.__antseedPickerCleanup === cleanup) {
+      window.__antseedPickerCleanup = null;
+    }
+    document.removeEventListener('keydown', handleKeydown);
+  }
+
+  function handleKeydown(e) {
+    if (e.key === 'Escape') {
+      cleanup();
+    }
+  }
+
+  window.__antseedPickerCleanup = cleanup;
+
   function getSelector(el) {
     if (el.id) return '#' + CSS.escape(el.id);
     let path = '';
@@ -119,20 +137,11 @@ const ELEMENT_PICKER_INJECT = `
       text: (lastTarget.textContent || '').trim().slice(0, 300),
       attributes: getAttrs(lastTarget),
     };
-    overlay.remove();
-    highlight.remove();
-    window.__antseedPickerActive = false;
+    cleanup();
     window.__antseedPickerResult = info;
   });
 
-  document.addEventListener('keydown', function handler(e) {
-    if (e.key === 'Escape') {
-      overlay.remove();
-      highlight.remove();
-      window.__antseedPickerActive = false;
-      document.removeEventListener('keydown', handler);
-    }
-  });
+  document.addEventListener('keydown', handleKeydown);
 })();
 `;
 
@@ -335,7 +344,7 @@ export function BrowserPreview({ url, onClose, onNavigate, onElementSelected }: 
     if (pickerActive) {
       webview
         .executeJavaScript(
-          `const o=document.getElementById('__antseed-picker-overlay');const h=document.getElementById('__antseed-picker-highlight');if(o)o.remove();if(h)h.remove();window.__antseedPickerActive=false;`,
+          `const cleanup=window.__antseedPickerCleanup;if(typeof cleanup==='function'){cleanup();}else{const o=document.getElementById('__antseed-picker-overlay');const h=document.getElementById('__antseed-picker-highlight');if(o)o.remove();if(h)h.remove();window.__antseedPickerActive=false;}`,
         )
         .catch(() => {});
       if (pickerPollRef.current) {
