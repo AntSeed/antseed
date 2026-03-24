@@ -169,9 +169,9 @@ antseed plugin config <instance-id>
 ## Development
 
 \`\`\`bash
-npm install
-npm run build
-npm test
+pnpm install
+pnpm run build
+pnpm test
 \`\`\`
 `
 }
