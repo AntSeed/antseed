@@ -40,6 +40,14 @@ Max payload size: 64 MB. Frames exceeding this are rejected.
 | 0x22 | HttpResponseChunk | Seller -> Buyer: streaming chunk |
 | 0x23 | HttpResponseEnd | Seller -> Buyer: final chunk |
 | 0x24 | HttpResponseError | Seller -> Buyer: error |
+| 0x25 | HttpRequestChunk | Buyer -> Seller: chunked upload body |
+| 0x26 | HttpRequestEnd | Buyer -> Seller: chunked upload end |
+| 0x50 | SpendingAuth | Buyer -> Seller: EIP-712 spending authorization |
+| 0x51 | AuthAck | Seller -> Buyer: reserve() confirmed |
+| 0x53 | SellerReceipt | Seller -> Buyer: running-total receipt |
+| 0x54 | BuyerAck | Buyer -> Seller: receipt acknowledgement |
+| 0x55 | TopUpRequest | Seller -> Buyer: request additional auth |
+| 0x56 | PaymentRequired | Seller -> Buyer: 402 payment terms |
 | 0xF0 | Disconnect | Graceful disconnect |
 | 0xFF | Error | Protocol-level error |
 
@@ -80,10 +88,10 @@ Payment messages use the type range 0x50-0x5F. All payment payloads are JSON-enc
 |---|---|---|---|
 | 0x50 | SpendingAuth | Buyer → Seller | EIP-712 signed spending authorization |
 | 0x51 | AuthAck | Seller → Buyer | Seller confirms on-chain reserve() succeeded |
-| 0x52 | SellerReceipt | Seller → Buyer | Seller reports usage/charge during or after serve |
-| 0x53 | BuyerAck | Buyer → Seller | Buyer acknowledges receipt |
-| 0x54 | TopUpRequest | Seller → Buyer | Seller requests additional spending authorization |
-| 0x55 | PaymentRequired | Seller → Buyer | 402 trigger with payment terms |
+| 0x53 | SellerReceipt | Seller → Buyer | Seller reports usage/charge during or after serve |
+| 0x54 | BuyerAck | Buyer → Seller | Buyer acknowledges receipt |
+| 0x55 | TopUpRequest | Seller → Buyer | Seller requests additional spending authorization |
+| 0x56 | PaymentRequired | Seller → Buyer | 402 trigger with payment terms |
 
 ## PaymentMux
 
@@ -93,7 +101,7 @@ The `messageId` field links payment messages to their originating proxy request.
 
 ## 402 Payment Negotiation
 
-When a buyer sends a request to a seller with no active spending authorization, the seller responds with HTTP 402 and a PaymentRequired (0x55) message. Two negotiation modes handle what happens next.
+When a buyer sends a request to a seller with no active spending authorization, the seller responds with HTTP 402 and a PaymentRequired (0x56) message. Two negotiation modes handle what happens next.
 
 ### Auto Mode
 

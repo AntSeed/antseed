@@ -17,7 +17,7 @@ AntSeed uses 402 as the trigger for fully decentralized payment negotiation betw
 
 ## The Trigger
 
-A buyer connects to a seller peer and sends an HTTP request (proxied over WebRTC as a binary-framed `HttpRequest` message, type 0x20). If no spending authorization exists for this buyer-seller pair, the seller responds with HTTP 402 and a `PaymentRequired` message (type 0x55) containing the terms:
+A buyer connects to a seller peer and sends an HTTP request (proxied over WebRTC as a binary-framed `HttpRequest` message, type 0x20). If no spending authorization exists for this buyer-seller pair, the seller responds with HTTP 402 and a `PaymentRequired` message (type 0x56) containing the terms:
 
 ```json
 {
@@ -73,7 +73,7 @@ When the buyer node receives a 402 + PaymentRequired, auto mode handles everythi
 Buyer                           Seller                     Chain
   │                               │                          │
   ├── 0x20 HttpRequest ──────────>│                          │
-  │<── 0x55 PaymentRequired ──────┤                          │
+  │<── 0x56 PaymentRequired ──────┤                          │
   │                               │                          │
   │  [check balance]              │                          │
   │  [sign EIP-712]               │                          │
@@ -93,11 +93,11 @@ Total added latency for the payment negotiation: roughly 2-5 seconds, dominated 
 
 Once the authorization is active, payment messages continue to flow alongside proxy traffic on the same channel:
 
-- **SellerReceipt (0x52):** The seller periodically reports cumulative usage against the authorized `maxAmount`. This gives the buyer real-time visibility into spend without requiring on-chain reads.
+- **SellerReceipt (0x53):** The seller periodically reports cumulative usage against the authorized `maxAmount`. This gives the buyer real-time visibility into spend without requiring on-chain reads.
 
-- **BuyerAck (0x53):** The buyer acknowledges each receipt. This creates a bilateral accounting trail — both sides agree on usage at each checkpoint.
+- **BuyerAck (0x54):** The buyer acknowledges each receipt. This creates a bilateral accounting trail — both sides agree on usage at each checkpoint.
 
-- **TopUpRequest (0x54):** When cumulative usage exceeds 80% of `maxAmount`, the seller sends a TopUpRequest. The buyer can sign a new SpendingAuth with additional funds, extending the session without interruption. If the buyer doesn't top up, the seller can finish the current request but will 402 the next one.
+- **TopUpRequest (0x55):** When cumulative usage exceeds 80% of `maxAmount`, the seller sends a TopUpRequest. The buyer can sign a new SpendingAuth with additional funds, extending the session without interruption. If the buyer doesn't top up, the seller can finish the current request but will 402 the next one.
 
 These messages are interleaved with proxy traffic. A streaming AI response might produce dozens of `HttpResponseChunk` (0x22) frames between two `SellerReceipt` (0x52) frames. The mux handles this naturally — the `type` byte routes each frame to the correct handler regardless of ordering.
 
