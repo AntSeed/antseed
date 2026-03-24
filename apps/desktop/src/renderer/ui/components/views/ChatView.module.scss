@@ -382,6 +382,12 @@
   white-space: nowrap;
 }
 
+.shared-workspace-note {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .chat-image-attach-preview {
   display: flex;
   align-items: flex-start;
@@ -533,6 +539,10 @@
 
   .permission-agenda-text {
     white-space: normal;
+  }
+
+  .shared-workspace-note {
+    width: 100%;
   }
 }
 

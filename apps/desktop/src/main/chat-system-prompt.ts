@@ -19,8 +19,8 @@ const TOOL_DESCRIPTIONS = {
 type ToolName = keyof typeof TOOL_DESCRIPTIONS;
 
 const MODE_LABELS: Record<ChatPermissionMode, string> = {
-  default: 'Inspect and Preview',
-  'full-access': 'Full Access',
+  default: 'Inspect & Preview',
+  'full-access': 'Edit + Run',
 };
 
 const MODE_TOOL_NAMES: Record<ChatPermissionMode, readonly ToolName[]> = {

@@ -110,11 +110,15 @@ const PERMISSION_MODE_DETAILS: Record<ChatPermissionMode, PermissionModeDetails>
     title: 'Safer mode for understanding the repo and previewing results without editing files or running commands.',
   },
   'full-access': {
-    optionLabel: 'Full Access',
+    optionLabel: 'Edit + Run',
     agenda: 'Inspect, edit files, run commands, start dev servers, and preview the result in one chat flow.',
-    title: 'Editing mode with shell, write, and dev-server access for the next chat turn.',
+    title: 'Editing mode with file edits, shell commands, and dev-server access for the next chat turn.',
   },
 };
+
+const SHARED_WORKSPACE_NOTE = 'Workspace selection is shared across chats.';
+const SHARED_WORKSPACE_TITLE =
+  'Repo and directory context are shared across chats until you choose a different workspace.';
 
 type ChatViewProps = {
   active: boolean;
@@ -544,6 +548,9 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
               <div className={styles.permissionAgenda} title={permissionModeDetails.title}>
                 <span className={styles.permissionAgendaLabel}>Agenda</span>
                 <span className={styles.permissionAgendaText}>{permissionModeDetails.agenda}</span>
+              </div>
+              <div className={styles.sharedWorkspaceNote} title={SHARED_WORKSPACE_TITLE}>
+                {SHARED_WORKSPACE_NOTE}
               </div>
               <div className={styles.chatInputBottom}>
                 <div className={styles.chatInputBottomLeft}>
