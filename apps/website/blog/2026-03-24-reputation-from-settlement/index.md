@@ -9,8 +9,6 @@ image: /og-image.jpg
 date: 2026-03-24
 ---
 
-# Reputation from Settlement
-
 Most DePIN reputation systems fall into two categories: self-reported metrics (trivially gameable — a node reports its own uptime, latency, and success rate) or validator-based attestations (introduces a trusted third party whose incentives may not align with the network). Both approaches fail at the fundamental thing reputation is supposed to do: distinguish real service delivery from fake activity.
 
 AntSeed takes a different approach. Reputation is not a separate system. It is a side effect of payment settlement.
@@ -59,7 +57,7 @@ Sellers stake USDC to accept paid sessions. The stake is not just a routing sign
 
 - **100% slash** if the seller has zero qualified proven signs. This is the harshest penalty and targets pure farming: staking to appear legitimate without ever delivering qualifying service.
 - **50% slash** if fewer than 30% of the seller's total proven signs are qualified. This targets a subtler strategy: doing some real work but primarily farming unqualified sessions with controlled buyers.
-- **20% slash** if the seller has no proven sign in the last 90 days. This penalizes stale participation — staking to occupy network capacity without active delivery.
+- **20% slash** if the seller has no qualified activity in the last 30 days. This penalizes stale participation — staking to occupy network capacity without active delivery.
 - **0% slash** for sellers with a clean record: at least 30% qualified ratio and recent activity.
 
 The slash conditions create a clear economic calculus. If you stake $1,000 and never deliver qualified service, you lose $1,000. This makes reputation farming expensive even if an attacker finds a way to bypass the per-session defenses. The cost of the attack includes not just the operational overhead of maintaining Sybil infrastructure, but the capital at risk from slashing.

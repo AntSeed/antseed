@@ -66,10 +66,10 @@ verifyingContract:  <escrow contract address>
 | `maxAmount` | `uint256` | Maximum USDC (6 decimals) the seller may charge |
 | `nonce` | `uint256` | Buyer's current nonce; incremented on each reserve |
 | `deadline` | `uint256` | Unix timestamp after which this auth expires |
-| `previousConsumption` | `uint256` | Actual USDC consumed in the previous session |
+| `previousConsumption` | `uint256` | Tokens delivered in the previous session |
 | `previousSessionId` | `bytes32` | Session ID of the previous session (`bytes32(0)` if first) |
 
-The `previousConsumption` and `previousSessionId` fields form the **proof chain**. When the buyer signs a SpendingAuth attesting that the previous session consumed X tokens worth Y USDC, they are providing a cryptographic proof of delivery that the contract verifies during `reserve()`.
+The `previousConsumption` and `previousSessionId` fields form the **proof chain**. When the buyer signs a SpendingAuth attesting that the previous session delivered X tokens, they are providing a cryptographic proof of delivery that the contract verifies during `reserve()`.
 
 ## Proof Chain
 
@@ -84,7 +84,7 @@ Session 1 (First Sign)
 
 Session 2 (Proven Sign)
   previousSessionId:   session1.id
-  previousConsumption: 15420  (actual tokens consumed)
+  previousConsumption: 15420  (tokens delivered in session 1)
   maxAmount:           uncapped
   Trust basis:         Buyer proved session 1 delivery on-chain
 

@@ -66,9 +66,10 @@ Sellers stake USDC to accept paid sessions. Stake is locked for the duration of 
 | Condition | Slash Rate | Rationale |
 |---|---|---|
 | Zero qualified proven signs | 100% | Staked but never delivered qualifying service |
+| 5+ ghost events, no subsequent proven signs | 100% | Persistent failure to deliver |
 | Qualified ratio < 30% (`qualifiedProvenSignCount / totalProvenSigns < 0.3`) | 50% | Majority of activity was unqualified (likely farming) |
-| Stale: no proven sign in last 90 days | 20% | Staked without recent activity |
-| Clean + recent: ≥30% qualified ratio and proven sign within 90 days | 0% | Normal operation |
+| Stale: no qualified activity in last 30 days | 20% | Staked without recent activity |
+| Clean + recent: ≥30% qualified ratio and qualified activity within 30 days | 0% | Normal operation |
 
 Slash conditions are evaluated in order; the first match applies. Slashed funds are sent to the protocol reserve.
 
