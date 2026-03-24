@@ -4,14 +4,14 @@ title: "Proof of Prior Delivery"
 authors: [antseed]
 tags: [protocol, payments, cryptography, mechanism-design]
 description: How AntSeed's payment protocol creates an unforgeable chain where each spending authorization simultaneously pays for the current session and proves delivery of the previous one.
-keywords: [proof of delivery, EIP-712, payment protocol, P2P payments, DePIN payments, escrow, spending authorization]
+keywords: [proof of delivery, EIP-712, payment protocol, P2P payments, escrow, spending authorization]
 image: /og-image.jpg
 date: 2026-03-24
 ---
 
 In peer-to-peer compute markets, proving service delivery is the hard problem. Not routing, not pricing, not discovery — proving that a seller actually delivered what they were paid for, without a trusted intermediary watching the exchange.
 
-Most DePIN projects sidestep this. They use self-reported metrics (trivially gameable), trusted validators (re-introducing the centralization they claim to eliminate), or optimistic assumptions with dispute windows (which require honest majorities and active monitoring). These are reasonable engineering tradeoffs, but they're not proofs. They're social mechanisms dressed up as cryptographic ones.
+Most decentralized compute projects sidestep this. They use self-reported metrics (trivially gameable), trusted validators (re-introducing the centralization they claim to eliminate), or optimistic assumptions with dispute windows (which require honest majorities and active monitoring). These are reasonable engineering tradeoffs, but they're not proofs. They're social mechanisms dressed up as cryptographic ones.
 
 AntSeed takes a different approach. The payment protocol produces unforgeable delivery proofs as a natural byproduct of continued usage. No validators, no oracles, no dispute games. If a buyer keeps paying a seller, the chain of payments *is* the proof of delivery.
 

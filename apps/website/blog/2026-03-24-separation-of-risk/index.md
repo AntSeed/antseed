@@ -2,14 +2,14 @@
 slug: separation-of-risk
 title: "Separation of Risk"
 authors: [antseed]
-tags: [security, wallet-architecture, DePIN, key-management]
+tags: [security, wallet-architecture, P2P, key-management]
 description: How AntSeed separates signing identity from funding wallet to eliminate private key exposure in decentralized AI compute.
-keywords: [wallet security, signing identity, funding wallet, EIP-712, session keys, DePIN security, key management]
+keywords: [wallet security, signing identity, funding wallet, EIP-712, session keys, P2P payments, key management]
 image: /og-image.jpg
 date: 2026-03-24
 ---
 
-Most DePIN protocols force a hard tradeoff: either run a hot wallet with real funds so your node can transact autonomously, or introduce custodial key management and hope the operator doesn't disappear. Both options have well-understood failure modes. Hot wallets get drained. Custodians get hacked, or worse, rug.
+Any P2P network with on-chain payments faces the same tradeoff: either run a hot wallet with real funds so your node can transact autonomously, or introduce custodial key management and hope the operator doesn't disappear. Both options have well-understood failure modes. Hot wallets get drained. Custodians get hacked, or worse, rug.
 
 AntSeed sidesteps this by splitting the problem into two independent concerns: the key that signs payment authorizations and the wallet that holds funds. They are cryptographically unrelated. Compromising one does not compromise the other.
 
@@ -29,7 +29,7 @@ The **funding wallet** is completely separate. It can be a hardware wallet, a mu
 
 ## Why the Split Matters
 
-Consider what happens when a node is compromised in a traditional DePIN setup. The attacker gets the private key. That key controls a wallet with funds — staked tokens, earned revenue, operational float. The attacker drains it. The operator's total exposure is whatever was in that wallet.
+Consider what happens when a node is compromised in a typical P2P network with on-chain payments. The attacker gets the private key. That key controls a wallet with funds — staked tokens, earned revenue, operational float. The attacker drains it. The operator's total exposure is whatever was in that wallet.
 
 With AntSeed's separation, a compromised node yields the signing identity's private key. The attacker can sign SpendingAuth messages against the current escrow balance. That's it. They cannot access the funding wallet. They cannot deposit more funds. They cannot withdraw from escrow (withdrawals go to the signing identity's address, which the attacker controls, but only the existing escrow balance is at risk).
 
@@ -39,7 +39,7 @@ This is a meaningful difference. In practice, a buyer's escrow balance might be 
 
 ### Comparison with Existing Approaches
 
-**Hot wallets** — The standard DePIN approach. A single key holds funds and signs transactions. Node compromise means full fund exposure. Operators mitigate by keeping balances low, but this requires constant manual rebalancing and still leaves a window of exposure after each deposit.
+**Hot wallets** — The common approach in decentralized networks. A single key holds funds and signs transactions. Node compromise means full fund exposure. Operators mitigate by keeping balances low, but this requires constant manual rebalancing and still leaves a window of exposure after each deposit.
 
 **Custodial solutions** — A third party manages keys on behalf of the operator. This solves the hot wallet problem by introducing a trust dependency. The custodian becomes a single point of failure and a high-value target. It also requires the operator to trust that the custodian won't freeze, lose, or misappropriate funds.
 

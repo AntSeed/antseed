@@ -4,12 +4,12 @@ title: "Reputation from Settlement"
 authors: [antseed]
 tags: [reputation, mechanism-design, Sybil-resistance, game-theory]
 description: How AntSeed derives on-chain reputation directly from payment settlement — no oracles, no validators, no self-reporting.
-keywords: [reputation system, Sybil resistance, proof of delivery, mechanism design, DePIN reputation, anti-gaming, staking slashing]
+keywords: [reputation system, Sybil resistance, proof of delivery, mechanism design, P2P reputation, anti-gaming, staking slashing]
 image: /og-image.jpg
 date: 2026-03-24
 ---
 
-Most DePIN reputation systems fall into two categories: self-reported metrics (trivially gameable — a node reports its own uptime, latency, and success rate) or validator-based attestations (introduces a trusted third party whose incentives may not align with the network). Both approaches fail at the fundamental thing reputation is supposed to do: distinguish real service delivery from fake activity.
+Reputation in decentralized networks typically falls into two categories: self-reported metrics (trivially gameable — a node reports its own uptime, latency, and success rate) or validator-based attestations (introduces a trusted third party whose incentives may not align with the network). Both approaches fail at the fundamental thing reputation is supposed to do: distinguish real service delivery from fake activity.
 
 AntSeed takes a different approach. Reputation is not a separate system. It is a side effect of payment settlement.
 
