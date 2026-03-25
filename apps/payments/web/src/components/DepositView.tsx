@@ -15,7 +15,7 @@ interface DepositViewProps {
   onDeposited: () => void;
 }
 
-const ESCROW_ABI = [
+const DEPOSITS_ABI = [
   {
     name: 'depositFor',
     type: 'function',
@@ -128,8 +128,8 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
       setStep('depositing');
       const usdcAmount = parseUnits(amount, 6);
       writeDeposit({
-        address: config.escrowContractAddress as `0x${string}`,
-        abi: ESCROW_ABI,
+        address: config.depositsContractAddress as `0x${string}`,
+        abi: DEPOSITS_ABI,
         functionName: 'depositFor',
         args: [depositTarget as `0x${string}`, usdcAmount],
       }, {
@@ -163,7 +163,7 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
       address: config.usdcContractAddress as `0x${string}`,
       abi: ERC20_ABI,
       functionName: 'approve',
-      args: [config.escrowContractAddress as `0x${string}`, usdcAmount],
+      args: [config.depositsContractAddress as `0x${string}`, usdcAmount],
     }, {
       onError: (err) => {
         setStep('idle');
@@ -272,7 +272,7 @@ function CardDepositPlaceholder() {
         </div>
         <div className="deposit-card-coming-title">Credit card deposits coming soon</div>
         <div className="deposit-card-coming-desc">
-          Direct credit card to escrow deposits are being integrated.
+          Direct credit card deposits are being integrated.
           For now, use the crypto wallet option.
         </div>
       </div>

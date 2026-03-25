@@ -6,8 +6,9 @@ import { loadConfig } from '../../config/loader.js';
 import { loadOrCreateIdentity, identityToEvmAddress } from '@antseed/node';
 import { checkSellerReadiness, checkBuyerReadiness } from '@antseed/node/payments';
 import {
-  createEscrowClient,
+  createDepositsClient,
   createIdentityClient,
+  createStakingClient,
 } from '../payment-utils.js';
 
 export function registerSetupCommand(program: Command): void {
@@ -35,11 +36,12 @@ export function registerSetupCommand(program: Command): void {
       const spinner = ora('Running readiness checks...').start();
 
       try {
-        const escrowClient = createEscrowClient(config);
+        const depositsClient = createDepositsClient(config);
 
         if (role === 'provider') {
           const identityClient = createIdentityClient(config);
-          const checks = await checkSellerReadiness(identity, escrowClient, identityClient);
+          const stakingClient = createStakingClient(config);
+          const checks = await checkSellerReadiness(identity, identityClient, stakingClient);
           spinner.stop();
 
           console.log(chalk.bold('Provider Readiness:\n'));
@@ -61,7 +63,7 @@ export function registerSetupCommand(program: Command): void {
             console.log(chalk.yellow('Some checks failed. Follow the suggestions above to complete setup.'));
           }
         } else {
-          const checks = await checkBuyerReadiness(identity, escrowClient);
+          const checks = await checkBuyerReadiness(identity, depositsClient);
           spinner.stop();
 
           console.log(chalk.bold('Buyer Readiness:\n'));

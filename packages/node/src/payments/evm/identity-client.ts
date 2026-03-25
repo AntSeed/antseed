@@ -45,10 +45,11 @@ const IDENTITY_ABI = [
   'function getFeedbackCount(uint256 agentId, address client) external view returns (uint256)',
 
   // Admin
-  'function setEscrowContract(address _escrow) external',
-  'function escrowContract() external view returns (address)',
+  'function setSessionsContract(address _sessions) external',
+  'function sessionsContract() external view returns (address)',
   'function owner() external view returns (address)',
 ] as const;
+
 
 export class IdentityClient extends BaseEvmClient {
   constructor(config: IdentityClientConfig) {

@@ -25,17 +25,17 @@ Every AntSeed node starts with a single Ed25519 seed. From this seed, two indepe
 
 The signing identity is app-managed. It lives on the node, signs payment authorizations, and does nothing else. Critically, it never holds funds. There is no reason to send ETH or USDC to this address. It exists only to produce signatures.
 
-The **funding wallet** is completely separate. It can be a hardware wallet, a multisig, a smart contract wallet — anything the user controls. It interacts with the escrow contract exactly once per deposit cycle, calling `depositFor(signingIdentityAddress, amount)` to credit the signing identity's escrow balance. After that, the funding wallet has no further role.
+The **funding wallet** is completely separate. It can be a hardware wallet, a multisig, a smart contract wallet — anything the user controls. It interacts with the AntseedDeposits contract exactly once per deposit cycle, calling `depositFor(signingIdentityAddress, amount)` to credit the signing identity's deposit balance. After that, the funding wallet has no further role.
 
 ## Why the Split Matters
 
 Consider what happens when a node is compromised in a typical P2P network with on-chain payments. The attacker gets the private key. That key controls a wallet with funds — staked tokens, earned revenue, operational float. The attacker drains it. The operator's total exposure is whatever was in that wallet.
 
-With AntSeed's separation, a compromised node yields the signing identity's private key. The attacker can sign SpendingAuth messages against the current escrow balance. That's it. They cannot access the funding wallet. They cannot deposit more funds. They cannot withdraw from escrow (withdrawals go to the signing identity's address, which the attacker controls, but only the existing escrow balance is at risk).
+With AntSeed's separation, a compromised node yields the signing identity's private key. The attacker can sign SpendingAuth messages against the current deposit balance. That's it. They cannot access the funding wallet. They cannot deposit more funds. They cannot withdraw from AntseedDeposits (withdrawals go to the signing identity's address, which the attacker controls, but only the existing deposit balance is at risk).
 
-The maximum loss from a node compromise is the current escrow balance — money the user explicitly allocated for spending. The funding wallet, which may hold significantly more, is untouched.
+The maximum loss from a node compromise is the current deposit balance — money the user explicitly allocated for spending. The funding wallet, which may hold significantly more, is untouched.
 
-This is a meaningful difference. In practice, a buyer's escrow balance might be $20-50 of USDC for an active session. Their funding wallet might hold thousands. The separation turns a potentially catastrophic breach into a bounded, recoverable loss.
+This is a meaningful difference. In practice, a buyer's deposit balance might be $20-50 of USDC for an active session. Their funding wallet might hold thousands. The separation turns a potentially catastrophic breach into a bounded, recoverable loss.
 
 ### Comparison with Existing Approaches
 
@@ -43,9 +43,9 @@ This is a meaningful difference. In practice, a buyer's escrow balance might be 
 
 **Custodial solutions** — A third party manages keys on behalf of the operator. This solves the hot wallet problem by introducing a trust dependency. The custodian becomes a single point of failure and a high-value target. It also requires the operator to trust that the custodian won't freeze, lose, or misappropriate funds.
 
-**ERC-4337 session keys** — The closest parallel to AntSeed's approach. Session keys allow a delegated signer to execute transactions within defined bounds. AntSeed's SpendingAuth serves a similar function but is purpose-built for metered compute: each authorization is scoped to a specific seller, capped at a maximum amount, and expires at a deadline. There is no generalized transaction execution — the signing identity can only authorize a seller to pull from escrow, nothing else.
+**ERC-4337 session keys** — The closest parallel to AntSeed's approach. Session keys allow a delegated signer to execute transactions within defined bounds. AntSeed's SpendingAuth serves a similar function but is purpose-built for metered compute: each authorization is scoped to a specific seller, capped at a maximum amount, and expires at a deadline. There is no generalized transaction execution — the signing identity can only authorize a seller to pull from the buyer's deposit, nothing else.
 
-The key difference from session keys is that AntSeed's signing identity is not a delegate of the funding wallet. It is an independent identity with its own address. The funding wallet deposits into escrow on the signing identity's behalf, but there is no on-chain delegation relationship between them. The signing identity cannot initiate transactions from the funding wallet under any circumstances.
+The key difference from session keys is that AntSeed's signing identity is not a delegate of the funding wallet. It is an independent identity with its own address. The funding wallet deposits into AntseedDeposits on the signing identity's behalf, but there is no on-chain delegation relationship between them. The signing identity cannot initiate transactions from the funding wallet under any circumstances.
 
 ## Desktop Implementation
 
@@ -53,22 +53,22 @@ The desktop app encrypts the Ed25519 seed at rest using Electron's `safeStorage`
 
 On first launch after upgrading from an older version, the app detects a plaintext `identity.key` file, encrypts it via `safeStorage`, writes the encrypted version, and deletes the plaintext original. This migration is automatic and requires no user action.
 
-The funding wallet never touches the application. A user can deposit into escrow from a Ledger, a Trezor, a Safe multisig, or any other wallet. The deposit transaction is a standard ERC-20 approval + `depositFor()` call that can be executed from any interface — the AntSeed app, Etherscan, a script. The application has no knowledge of the funding wallet's private key and no mechanism to request it.
+The funding wallet never touches the application. A user can deposit into AntseedDeposits from a Ledger, a Trezor, a Safe multisig, or any other wallet. The deposit transaction is a standard ERC-20 approval + `depositFor()` call that can be executed from any interface — the AntSeed app, Etherscan, a script. The application has no knowledge of the funding wallet's private key and no mechanism to request it.
 
 ## Auto-Mode: Unattended Signing Without Fund Risk
 
 The separation of signing identity from funding wallet is what makes auto-mode practical.
 
-In auto-mode, when a buyer's node receives a 402 Payment Required response from a seller, it signs a SpendingAuth internally and returns it without user interaction. The seller submits the SpendingAuth on-chain via `reserve()`, which locks the authorized amount in escrow. The request proceeds.
+In auto-mode, when a buyer's node receives a 402 Payment Required response from a seller, it signs a SpendingAuth internally and returns it without user interaction. The seller submits the SpendingAuth on-chain via `reserve()` on AntseedSessions, which locks the authorized amount from the buyer's deposit. The request proceeds.
 
-Without separation of risk, auto-mode would mean giving an unattended process the ability to spend from a wallet with real funds. That is a non-starter for most operators. With separation, auto-mode means giving an unattended process the ability to authorize spending from a pre-funded escrow balance that the user explicitly allocated. The bounds are clear:
+Without separation of risk, auto-mode would mean giving an unattended process the ability to spend from a wallet with real funds. That is a non-starter for most operators. With separation, auto-mode means giving an unattended process the ability to authorize spending from a pre-funded deposit balance that the user explicitly allocated. The bounds are clear:
 
 - **Per-authorization cap**: each SpendingAuth specifies a `maxAmount` the seller can reserve
 - **Deadline**: each SpendingAuth expires at a specific block timestamp
 - **Seller-scoped**: each SpendingAuth is valid only for a specific seller address
-- **Balance-bounded**: total spending cannot exceed the escrow balance, regardless of how many SpendingAuths are signed
+- **Balance-bounded**: total spending cannot exceed the deposit balance, regardless of how many SpendingAuths are signed
 
-If the node is compromised while running in auto-mode, the attacker can sign SpendingAuths against the escrow balance. They cannot exceed it. They cannot access the funding wallet. The user can stop the bleeding by not depositing more.
+If the node is compromised while running in auto-mode, the attacker can sign SpendingAuths against the deposit balance. They cannot exceed it. They cannot access the funding wallet. The user can stop the bleeding by not depositing more.
 
 Manual mode is also supported for interactive use. In this flow, the 402 response propagates to the desktop UI, the user reviews the amount and seller, and explicitly approves the signature. The desktop app decrypts the seed from the OS keychain, signs, and returns the SpendingAuth. Same on-chain outcome, different trust model.
 

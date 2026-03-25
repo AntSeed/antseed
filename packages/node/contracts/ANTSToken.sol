@@ -2,14 +2,13 @@
 pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
 
-contract ANTSToken is ERC20 {
-    address public owner;
+contract ANTSToken is ERC20, Ownable {
     address public emissionsContract;
     bool public emissionsContractSet;
     bool public transfersEnabled;       // Phase 1: false. One-way toggle to true.
 
-    error NotOwner();
     error NotEmissionsContract();
     error EmissionsAlreadySet();
     error InvalidAddress();
@@ -18,15 +17,8 @@ contract ANTSToken is ERC20 {
 
     event EmissionsContractSet(address indexed emissionsContract);
     event TransfersEnabled();
-    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
-    modifier onlyOwner() {
-        if (msg.sender != owner) revert NotOwner();
-        _;
-    }
-
-    constructor() ERC20("AntSeed", "ANTS") {
-        owner = msg.sender;
+    constructor() ERC20("AntSeed", "ANTS") Ownable(msg.sender) {
         transfersEnabled = false;   // Phase 1: non-transferable
     }
 
@@ -59,11 +51,5 @@ contract ANTSToken is ERC20 {
         // Allow minting (from emissions contract) regardless of transfer state
         if (from != address(0) && !transfersEnabled) revert TransfersNotEnabled();
         super._update(from, to, value);
-    }
-
-    function transferOwnership(address newOwner) external onlyOwner {
-        if (newOwner == address(0)) revert InvalidAddress();
-        emit OwnershipTransferred(owner, newOwner);
-        owner = newOwner;
     }
 }

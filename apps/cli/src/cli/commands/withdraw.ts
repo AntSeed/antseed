@@ -5,7 +5,7 @@ import { getGlobalOptions } from './types.js';
 import { loadConfig } from '../../config/loader.js';
 import {
   loadOrCreateIdentity,
-  BaseEscrowClient,
+  DepositsClient,
   identityToEvmWallet,
   identityToEvmAddress,
 } from '@antseed/node';
@@ -13,7 +13,7 @@ import {
 export function registerWithdrawCommand(program: Command): void {
   program
     .command('withdraw <amount>')
-    .description('Withdraw USDC from the escrow contract (amount in human-readable USDC, e.g. "5" = 5 USDC)')
+    .description('Withdraw USDC from the deposits contract (amount in human-readable USDC, e.g. "5" = 5 USDC)')
     .action(async (amount: string) => {
       const globalOpts = getGlobalOptions(program);
       const config = await loadConfig(globalOpts.config);
@@ -38,19 +38,19 @@ export function registerWithdrawCommand(program: Command): void {
       const wallet = identityToEvmWallet(identity);
       const address = identityToEvmAddress(identity);
 
-      const escrowClient = new BaseEscrowClient({
+      const depositsClient = new DepositsClient({
         rpcUrl: payments.crypto.rpcUrl,
-        contractAddress: payments.crypto.escrowContractAddress,
+        contractAddress: payments.crypto.depositsContractAddress,
         usdcAddress: payments.crypto.usdcContractAddress,
       });
 
       console.log(chalk.dim(`Wallet: ${address}`));
       console.log(chalk.dim(`Amount: ${amountFloat} USDC (${amountBaseUnits} base units)`));
 
-      const spinner = ora('Withdrawing USDC from escrow...').start();
+      const spinner = ora('Withdrawing USDC from deposits contract...').start();
 
       try {
-        const txHash = await escrowClient.requestWithdrawal(wallet, amountBaseUnits);
+        const txHash = await depositsClient.requestWithdrawal(wallet, amountBaseUnits);
         spinner.succeed(chalk.green(`Withdrawal requested for ${amountFloat} USDC`));
         console.log(chalk.dim(`Transaction: ${txHash}`));
       } catch (err) {

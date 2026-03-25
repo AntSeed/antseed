@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { CryptoContext, PaymentCryptoConfig } from './crypto-context.js';
-import { BaseEscrowClient, formatUsdc, parseUsdc, type ChainConfig } from '@antseed/node';
+import { DepositsClient, formatUsdc, parseUsdc, type ChainConfig } from '@antseed/node';
 
 interface RouteContext {
   cryptoCtx: CryptoContext | null;
@@ -12,20 +12,20 @@ interface RouteContext {
 const formatUsdc6 = formatUsdc;
 const parseUsdc6 = parseUsdc;
 
-function createClient(config: PaymentCryptoConfig): BaseEscrowClient {
-  return new BaseEscrowClient({
+function createClient(config: PaymentCryptoConfig): DepositsClient {
+  return new DepositsClient({
     rpcUrl: config.rpcUrl,
-    contractAddress: config.escrowContractAddress,
+    contractAddress: config.depositsContractAddress,
     usdcAddress: config.usdcContractAddress,
   });
 }
 
 export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): void {
-  // Shared escrow client — reused across requests (stateless, only holds RPC URL + ABI)
-  let escrowClient: BaseEscrowClient | null = null;
-  function getClient(): BaseEscrowClient | null {
-    if (!escrowClient) escrowClient = createClient(ctx.cryptoConfig);
-    return escrowClient;
+  // Shared deposits client — reused across requests (stateless, only holds RPC URL + ABI)
+  let depositsClient: DepositsClient | null = null;
+  function getClient(): DepositsClient | null {
+    if (!depositsClient) depositsClient = createClient(ctx.cryptoConfig);
+    return depositsClient;
   }
 
   fastify.get('/api/balance', async (_request, reply) => {
@@ -59,7 +59,7 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
       chainId: ctx.chainConfig.chainId,
       evmChainId: ctx.chainConfig.evmChainId,
       rpcUrl: ctx.cryptoConfig.rpcUrl,
-      escrowContractAddress: ctx.cryptoConfig.escrowContractAddress,
+      depositsContractAddress: ctx.cryptoConfig.depositsContractAddress,
       usdcContractAddress: ctx.cryptoConfig.usdcContractAddress,
       evmAddress: ctx.cryptoCtx?.evmAddress ?? null,
     };

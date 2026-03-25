@@ -12,7 +12,7 @@ import type { SpendingAuthPayload, BuyerAckPayload } from '../src/types/protocol
 import { bytesToHex } from '../src/utils/hex.js';
 import { toPeerId } from '../src/types/peer.js';
 import { identityToEvmWallet, identityToEvmAddress } from '../src/payments/evm/keypair.js';
-import { signSpendingAuth, makeEscrowDomain, buildAckMessage, signMessageEd25519 } from '../src/payments/evm/signatures.js';
+import { signSpendingAuth, makeSessionsDomain, buildAckMessage, signMessageEd25519 } from '../src/payments/evm/signatures.js';
 import type { SpendingAuthMessage } from '../src/payments/evm/signatures.js';
 import { hexToBytes } from '../src/utils/hex.js';
 
@@ -77,7 +77,7 @@ async function buildSpendingAuth(
   const sellerEvmAddr = identityToEvmAddress(sellerIdentity);
   const buyerEvmAddr = buyerWallet.address;
 
-  const domain = makeEscrowDomain(CHAIN_ID, CONTRACT_ADDR);
+  const domain = makeSessionsDomain(CHAIN_ID, CONTRACT_ADDR);
   const msg: SpendingAuthMessage = {
     seller: sellerEvmAddr,
     sessionId,
@@ -121,7 +121,8 @@ describe('SellerPaymentManager', () => {
 
     const config: SellerPaymentConfig = {
       rpcUrl: 'http://127.0.0.1:8545',
-      contractAddress: CONTRACT_ADDR,
+      sessionsContractAddress: CONTRACT_ADDR,
+      stakingContractAddress: '0x' + 'cc'.repeat(20),
       usdcAddress: '0x' + 'ee'.repeat(20),
       chainId: CHAIN_ID,
       dataDir: tempDir,
@@ -129,14 +130,12 @@ describe('SellerPaymentManager', () => {
     };
     manager = new SellerPaymentManager(sellerIdentity, config, store);
 
-    // Mock escrow client methods to avoid actual RPC calls
-    const escrow = manager.escrowClient;
-    vi.spyOn(escrow, 'reserve').mockResolvedValue('0xreserve-hash');
-    vi.spyOn(escrow, 'settle').mockResolvedValue('0xsettle-hash');
-    vi.spyOn(escrow, 'settleTimeout').mockResolvedValue('0xtimeout-hash');
-    vi.spyOn(escrow, 'getSellerAccount').mockResolvedValue({
+    // Mock sessions client methods to avoid actual RPC calls
+    vi.spyOn(manager.sessionsClient, 'reserve').mockResolvedValue('0xreserve-hash');
+    vi.spyOn(manager.sessionsClient, 'settle').mockResolvedValue('0xsettle-hash');
+    vi.spyOn(manager.sessionsClient, 'settleTimeout').mockResolvedValue('0xtimeout-hash');
+    vi.spyOn(manager.stakingClient, 'getSellerAccount').mockResolvedValue({
       stake: 100000000n,
-      earnings: 0n,
       stakedAt: BigInt(Date.now()),
       tokenRate: 1n,
     });
@@ -157,7 +156,7 @@ describe('SellerPaymentManager', () => {
     await manager.handleSpendingAuth(buyerIdentity.peerId, buyerEvmAddr, payload, mux);
 
     // Verify reserve was called
-    expect(manager.escrowClient.reserve).toHaveBeenCalledOnce();
+    expect(manager.sessionsClient.reserve).toHaveBeenCalledOnce();
 
     // Verify AuthAck sent
     expect(mux.sentAuthAcks.length).toBe(1);
@@ -195,9 +194,9 @@ describe('SellerPaymentManager', () => {
     await manager.handleSpendingAuth(buyerIdentity.peerId, buyerEvmAddr, payload2, mux);
 
     // Verify settle was called for prior session
-    expect(manager.escrowClient.settle).toHaveBeenCalledOnce();
+    expect(manager.sessionsClient.settle).toHaveBeenCalledOnce();
     // Verify reserve was called twice (once per session)
-    expect(manager.escrowClient.reserve).toHaveBeenCalledTimes(2);
+    expect(manager.sessionsClient.reserve).toHaveBeenCalledTimes(2);
 
     // Prior session should be settled
     const prior = store.getSession(sessionId1);
@@ -296,7 +295,7 @@ describe('SellerPaymentManager', () => {
     expect(session!.status).toBe('active');
 
     // Settle was NOT called
-    expect(manager.escrowClient.settle).not.toHaveBeenCalled();
+    expect(manager.sessionsClient.settle).not.toHaveBeenCalled();
   });
 
   it('test_checkTimeouts: timed-out sessions detected', async () => {
@@ -314,7 +313,7 @@ describe('SellerPaymentManager', () => {
 
     await manager.checkTimeouts();
 
-    expect(manager.escrowClient.settleTimeout).toHaveBeenCalledOnce();
+    expect(manager.sessionsClient.settleTimeout).toHaveBeenCalledOnce();
     const session = store.getSession(sessionId);
     expect(session!.status).toBe('timeout');
   });
@@ -333,8 +332,8 @@ describe('SellerPaymentManager', () => {
 
   // ── Payment negotiation (PaymentRequired) ───────────────────
 
-  it('test_init: caches tokenRate and firstSignCap from escrow', async () => {
-    vi.spyOn(manager.escrowClient, 'getFirstSignCap').mockResolvedValue(1_000_000n);
+  it('test_init: caches tokenRate and firstSignCap from staking', async () => {
+    vi.spyOn(manager.sessionsClient, 'getFirstSignCap').mockResolvedValue(1_000_000n);
 
     await manager.init();
 
@@ -354,8 +353,8 @@ describe('SellerPaymentManager', () => {
   });
 
   it('test_init_handles_rpc_failure: does not throw, getPaymentRequirements returns null', async () => {
-    vi.spyOn(manager.escrowClient, 'getSellerAccount').mockRejectedValue(new Error('RPC unreachable'));
-    vi.spyOn(manager.escrowClient, 'getFirstSignCap').mockRejectedValue(new Error('RPC unreachable'));
+    vi.spyOn(manager.stakingClient, 'getSellerAccount').mockRejectedValue(new Error('RPC unreachable'));
+    vi.spyOn(manager.sessionsClient, 'getFirstSignCap').mockRejectedValue(new Error('RPC unreachable'));
 
     // Should not throw
     await manager.init();
@@ -365,7 +364,7 @@ describe('SellerPaymentManager', () => {
   });
 
   it('test_getPaymentRequirements_includes_requestId: correlates with the triggering request', async () => {
-    vi.spyOn(manager.escrowClient, 'getFirstSignCap').mockResolvedValue(2_000_000n);
+    vi.spyOn(manager.sessionsClient, 'getFirstSignCap').mockResolvedValue(2_000_000n);
     await manager.init();
 
     const req1 = manager.getPaymentRequirements('req-aaa');

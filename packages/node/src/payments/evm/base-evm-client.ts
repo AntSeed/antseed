@@ -1,4 +1,10 @@
-import { JsonRpcProvider, type AbstractSigner } from 'ethers';
+import { Contract, JsonRpcProvider, type AbstractSigner, type InterfaceAbi } from 'ethers';
+
+export const ERC20_ABI = [
+  'function approve(address spender, uint256 amount) external returns (bool)',
+  'function balanceOf(address owner) external view returns (uint256)',
+  'function allowance(address owner, address spender) external view returns (uint256)',
+] as const;
 
 export abstract class BaseEvmClient {
   protected readonly _provider: JsonRpcProvider;
@@ -17,6 +23,46 @@ export abstract class BaseEvmClient {
   protected _ensureConnected(signer: AbstractSigner): AbstractSigner {
     if (signer.provider) return signer;
     return signer.connect(this._provider);
+  }
+
+  /**
+   * Execute a write transaction: connect signer, reserve nonce, send, wait for receipt.
+   */
+  protected async _execWrite(
+    signer: AbstractSigner,
+    abi: InterfaceAbi,
+    method: string,
+    ...args: unknown[]
+  ): Promise<string> {
+    const connected = this._ensureConnected(signer);
+    const signerAddress = await connected.getAddress();
+    const nonce = await this._reserveNonce(signerAddress);
+    const contract = new Contract(this._contractAddress, abi, connected);
+    const tx = await contract.getFunction(method)(...args, { nonce });
+    const receipt = await tx.wait();
+    if (!receipt) throw new Error('Transaction was dropped or replaced');
+    return receipt.hash;
+  }
+
+  /**
+   * Approve USDC spending then execute a contract method.
+   */
+  protected async _approveAndExec(
+    signer: AbstractSigner,
+    usdcAddress: string,
+    amount: bigint,
+    abi: InterfaceAbi,
+    method: string,
+    ...args: unknown[]
+  ): Promise<string> {
+    const connected = this._ensureConnected(signer);
+    const signerAddress = await connected.getAddress();
+    const usdc = new Contract(usdcAddress, ERC20_ABI, connected);
+    const approveNonce = await this._reserveNonce(signerAddress);
+    const approveTx = await usdc.getFunction('approve')(this._contractAddress, amount, { nonce: approveNonce });
+    const approveReceipt = await approveTx.wait();
+    if (!approveReceipt) throw new Error('Approve transaction was dropped or replaced');
+    return this._execWrite(signer, abi, method, ...args);
   }
 
   protected async _reserveNonce(address: string): Promise<number> {

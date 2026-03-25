@@ -22,7 +22,7 @@ Ready to connect
 Your node identity is an Ed25519 keypair. Your PeerId is the hex-encoded 32-byte public key (64 lowercase hex characters). Set `identity.displayName` in config to control the human-readable name announced in peer metadata.
 
 :::warning Single Key, Two Roles
-Your identity key is used for **both** P2P operations (signing metadata, connection handshakes, metering receipts) **and** on-chain payments. An EVM wallet (secp256k1) is deterministically derived from your Ed25519 seed — this is the wallet that holds escrow deposits, receives seller earnings, and signs payment authorizations. Losing your identity key means losing access to your on-chain funds.
+Your identity key is used for **both** P2P operations (signing metadata, connection handshakes, metering receipts) **and** on-chain payments. An EVM wallet (secp256k1) is deterministically derived from your Ed25519 seed — this is the wallet that holds deposits in AntseedDeposits, receives seller earnings, and signs payment authorizations. Losing your identity key means losing access to your on-chain funds.
 :::
 
 ### Storage
@@ -107,7 +107,7 @@ Configuration is stored at `~/.antseed/config.json`. Key sections:
 | `providers` | Configured provider API keys and endpoints |
 | `seller` | Reserve floor, max concurrent buyers, pricing, enabled providers, model category tags |
 | `buyer` | Preferred providers, max pricing, min peer reputation, proxy port |
-| `payments` | Payment method, escrow chain config (chainId, rpcUrl, contract addresses) |
+| `payments` | Payment method, chain config (chainId, rpcUrl, contract addresses for deposits, sessions, staking) |
 | `network` | Bootstrap nodes |
 | `plugins` | Installed plugin packages |
 

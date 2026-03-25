@@ -3,28 +3,26 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
 import "../AntseedIdentity.sol";
-
-contract MockEscrowForIdentity {
-    mapping(address => uint256) public stakeOf;
-    function setStake(address seller, uint256 amount) external { stakeOf[seller] = amount; }
-    function sellers(address seller) external view returns (uint256 stake, uint256 earnings, uint256 stakedAt, uint256 tokenRate) {
-        return (stakeOf[seller], 0, 0, 0);
-    }
-}
+import "../AntseedStaking.sol";
+import "../MockUSDC.sol";
 
 contract AntseedIdentityTest is Test {
     AntseedIdentity public identity;
+    AntseedStaking public staking;
+    MockUSDC public usdc;
     address public owner;
     address public peer1 = address(0x1);
     address public peer2 = address(0x2);
-    address public escrow = address(0x3);
 
     bytes32 public peerId1 = keccak256("peer1");
     bytes32 public peerId2 = keccak256("peer2");
 
     function setUp() public {
         owner = address(this);
+        usdc = new MockUSDC();
         identity = new AntseedIdentity();
+        staking = new AntseedStaking(address(usdc), address(identity));
+        identity.setStakingContract(address(staking));
     }
 
     function test_register() public {
@@ -113,15 +111,15 @@ contract AntseedIdentityTest is Test {
         identity.safeTransferFrom(peer1, peer2, tokenId);
     }
 
-    function test_setEscrowContract() public {
-        identity.setEscrowContract(escrow);
-        assertEq(identity.escrowContract(), escrow);
+    function test_setSessionsContract() public {
+        identity.setSessionsContract(address(0x99));
+        assertEq(identity.sessionsContract(), address(0x99));
     }
 
-    function test_setEscrowContract_revert_notOwner() public {
+    function test_setSessionsContract_revert_notOwner() public {
         vm.prank(peer1);
-        vm.expectRevert(AntseedIdentity.NotOwner.selector);
-        identity.setEscrowContract(escrow);
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", peer1));
+        identity.setSessionsContract(address(0x99));
     }
 
     function test_getTokenId() public {
@@ -151,14 +149,16 @@ contract AntseedIdentityTest is Test {
     }
 
     function test_deregister_revert_activeStake() public {
-        MockEscrowForIdentity mockEscrow = new MockEscrowForIdentity();
-        identity.setEscrowContract(address(mockEscrow));
+        uint256 stakeAmount = 10_000_000;
+        usdc.mint(peer1, stakeAmount);
 
         vm.prank(peer1);
         uint256 tokenId = identity.register(peerId1, "ipfs://meta1");
 
-        // Set active stake
-        mockEscrow.setStake(peer1, 100_000_000);
+        vm.startPrank(peer1);
+        usdc.approve(address(staking), stakeAmount);
+        staking.stake(stakeAmount);
+        vm.stopPrank();
 
         vm.prank(peer1);
         vm.expectRevert(AntseedIdentity.ActiveStake.selector);
@@ -166,15 +166,65 @@ contract AntseedIdentityTest is Test {
     }
 
     function test_deregister_allowedAfterUnstake() public {
-        MockEscrowForIdentity mockEscrow = new MockEscrowForIdentity();
-        identity.setEscrowContract(address(mockEscrow));
+        uint256 stakeAmount = 10_000_000;
+        usdc.mint(peer1, stakeAmount);
 
         vm.prank(peer1);
         uint256 tokenId = identity.register(peerId1, "ipfs://meta1");
 
-        // No stake — deregister should succeed
+        // Stake then unstake
+        vm.startPrank(peer1);
+        usdc.approve(address(staking), stakeAmount);
+        staking.stake(stakeAmount);
+        staking.unstake();
+        vm.stopPrank();
+
+        // Now deregister should succeed
         vm.prank(peer1);
         identity.deregister(tokenId);
         assertFalse(identity.isRegistered(peer1));
+    }
+
+    function test_stake() public {
+        uint256 stakeAmount = 10_000_000;
+        usdc.mint(peer1, stakeAmount);
+
+        vm.prank(peer1);
+        identity.register(peerId1, "ipfs://meta1");
+
+        vm.startPrank(peer1);
+        usdc.approve(address(staking), stakeAmount);
+        staking.stake(stakeAmount);
+        vm.stopPrank();
+
+        (uint256 stake,,) = staking.getSellerAccount(peer1);
+        assertEq(stake, stakeAmount);
+    }
+
+    function test_stake_revert_notRegistered() public {
+        uint256 stakeAmount = 10_000_000;
+        usdc.mint(peer1, stakeAmount);
+
+        vm.startPrank(peer1);
+        usdc.approve(address(staking), stakeAmount);
+        vm.expectRevert(AntseedStaking.NotRegistered.selector);
+        staking.stake(stakeAmount);
+        vm.stopPrank();
+    }
+
+    function test_setTokenRate() public {
+        uint256 stakeAmount = 10_000_000;
+        usdc.mint(peer1, stakeAmount);
+
+        vm.prank(peer1);
+        identity.register(peerId1, "ipfs://meta1");
+
+        vm.startPrank(peer1);
+        usdc.approve(address(staking), stakeAmount);
+        staking.stake(stakeAmount);
+        staking.setTokenRate(100);
+        vm.stopPrank();
+
+        assertEq(staking.getTokenRate(peer1), 100);
     }
 }

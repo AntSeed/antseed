@@ -123,9 +123,9 @@ export interface TopUpRequestPayload {
 export interface PaymentRequiredPayload {
   /** Seller's EVM address for the SpendingAuth */
   sellerEvmAddr: string;
-  /** Seller's token rate in USDC base units per token (from escrow contract) */
+  /** Seller's token rate in USDC base units per token (from staking contract) */
   tokenRate: string;
-  /** FIRST_SIGN_CAP from escrow contract (USDC base units) */
+  /** FIRST_SIGN_CAP from sessions contract (USDC base units) */
   firstSignCap: string;
   /** Suggested auth amount in USDC base units */
   suggestedAmount: string;

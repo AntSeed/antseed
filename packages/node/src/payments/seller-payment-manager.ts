@@ -6,11 +6,12 @@ import type {
   SpendingAuthPayload,
   BuyerAckPayload,
 } from '../types/protocol.js';
-import { BaseEscrowClient } from './evm/escrow-client.js';
+import { SessionsClient } from './evm/sessions-client.js';
+import { StakingClient } from './evm/staking-client.js';
 import { identityToEvmWallet, identityToEvmAddress } from './evm/keypair.js';
 import {
   SPENDING_AUTH_TYPES,
-  makeEscrowDomain,
+  makeSessionsDomain,
   buildReceiptMessage,
   buildAckMessage,
   signMessageEd25519,
@@ -22,7 +23,8 @@ import { SessionStore, type StoredSession } from './session-store.js';
 
 export interface SellerPaymentConfig {
   rpcUrl: string;
-  contractAddress: string;
+  sessionsContractAddress: string;
+  stakingContractAddress: string;
   usdcAddress: string;
   chainId: number;
   dataDir: string;
@@ -44,16 +46,17 @@ const DEFAULT_SETTLE_TIMEOUT_SECS = 86400;
 export class SellerPaymentManager {
   private readonly _identity: Identity;
   private readonly _signer: AbstractSigner;
-  private readonly _escrowClient: BaseEscrowClient;
+  private readonly _sessionsClient: SessionsClient;
+  private readonly _stakingClient: StakingClient;
   private readonly _config: SellerPaymentConfig;
   private readonly _sessionStore: SessionStore;
   /** In-memory cache of active buyer peerIds for fast has-session checks. */
   private readonly _activeBuyers = new Set<string>();
   /** Debounce: track sessions that already sent a top-up request. */
   private readonly _topUpRequested = new Set<string>();
-  /** Cached seller tokenRate (fetched once from escrow, used for top-up threshold). */
+  /** Cached seller tokenRate (fetched once from staking contract, used for top-up threshold). */
   private _tokenRate: bigint | null = null;
-  /** Cached FIRST_SIGN_CAP from escrow contract. */
+  /** Cached FIRST_SIGN_CAP from sessions contract. */
   private _firstSignCap: bigint | null = null;
   /** Per-buyer mutex to prevent concurrent handleSpendingAuth for the same buyer. */
   private readonly _buyerLocks = new Map<string, Promise<void>>();
@@ -62,9 +65,13 @@ export class SellerPaymentManager {
     this._identity = identity;
     this._config = config;
     this._signer = identityToEvmWallet(identity);
-    this._escrowClient = new BaseEscrowClient({
+    this._sessionsClient = new SessionsClient({
       rpcUrl: config.rpcUrl,
-      contractAddress: config.contractAddress,
+      contractAddress: config.sessionsContractAddress,
+    });
+    this._stakingClient = new StakingClient({
+      rpcUrl: config.rpcUrl,
+      contractAddress: config.stakingContractAddress,
       usdcAddress: config.usdcAddress,
     });
     this._sessionStore = sessionStore;
@@ -76,8 +83,12 @@ export class SellerPaymentManager {
     }
   }
 
-  get escrowClient(): BaseEscrowClient {
-    return this._escrowClient;
+  get sessionsClient(): SessionsClient {
+    return this._sessionsClient;
+  }
+
+  get stakingClient(): StakingClient {
+    return this._stakingClient;
   }
 
   // ── SpendingAuth handler (settle-then-reserve) ────────────────
@@ -112,7 +123,7 @@ export class SellerPaymentManager {
   ): Promise<void> {
     try {
       // 1. Verify EIP-712 signature
-      const domain = makeEscrowDomain(this._config.chainId, this._config.contractAddress);
+      const domain = makeSessionsDomain(this._config.chainId, this._config.sessionsContractAddress);
       const msg = {
         seller: identityToEvmAddress(this._identity),
         sessionId: payload.sessionId,
@@ -143,7 +154,7 @@ export class SellerPaymentManager {
         // overcharge the buyer for tokens the buyer may not have received.
         try {
           debugLog(`[SellerPayment] Settling prior session ${priorSession.sessionId.slice(0, 18)}... tokens=${buyerClaimed} (seller delivered=${sellerDelivered})`);
-          await this._escrowClient.settle(this._signer, priorSession.sessionId, buyerClaimed);
+          await this._sessionsClient.settle(this._signer, priorSession.sessionId, buyerClaimed);
           this._sessionStore.updateSessionStatus(priorSession.sessionId, 'settled', buyerClaimed.toString());
           this._topUpRequested.delete(priorSession.sessionId);
         } catch (err) {
@@ -168,7 +179,7 @@ export class SellerPaymentManager {
       // 3. Fetch tokenRate BEFORE reserve so a failure here doesn't orphan
       //    an on-chain reservation the seller can't serve.
       const sellerEvmAddr = identityToEvmAddress(this._identity);
-      const account = await this._escrowClient.getSellerAccount(sellerEvmAddr);
+      const account = await this._stakingClient.getSellerAccount(sellerEvmAddr);
       this._tokenRate = account.tokenRate;
       if (this._tokenRate === 0n) {
         throw new Error('Token rate is 0 — set rate with antseed setTokenRate before serving');
@@ -176,7 +187,7 @@ export class SellerPaymentManager {
 
       // 4. Reserve new session on-chain
       debugLog(`[SellerPayment] Reserving session ${payload.sessionId.slice(0, 18)}... on-chain`);
-      await this._escrowClient.reserve(
+      await this._sessionsClient.reserve(
         this._signer,
         buyerEvmAddr,
         payload.sessionId,
@@ -380,12 +391,12 @@ export class SellerPaymentManager {
         if (delivered > 0n) {
           // Seller delivered tokens — settle normally to get paid and avoid ghost penalty
           debugLog(`[SellerPayment] Settling timed-out session ${session.sessionId.slice(0, 18)}... with ${delivered} tokens delivered`);
-          await this._escrowClient.settle(this._signer, session.sessionId, delivered);
+          await this._sessionsClient.settle(this._signer, session.sessionId, delivered);
           this._sessionStore.updateSessionStatus(session.sessionId, 'settled', delivered.toString());
         } else {
           // No delivery — use settleTimeout (records ghost, releases buyer funds)
           debugLog(`[SellerPayment] Settling timed-out session ${session.sessionId.slice(0, 18)}... (no delivery)`);
-          await this._escrowClient.settleTimeout(this._signer, session.sessionId);
+          await this._sessionsClient.settleTimeout(this._signer, session.sessionId);
           this._sessionStore.updateSessionStatus(session.sessionId, 'timeout');
         }
         this._activeBuyers.delete(session.peerId);
@@ -415,8 +426,8 @@ export class SellerPaymentManager {
     try {
       const sellerEvmAddr = identityToEvmAddress(this._identity);
       const [account, firstSignCap] = await Promise.all([
-        this._escrowClient.getSellerAccount(sellerEvmAddr),
-        this._escrowClient.getFirstSignCap(),
+        this._stakingClient.getSellerAccount(sellerEvmAddr),
+        this._sessionsClient.getFirstSignCap(),
       ]);
       this._tokenRate = account.tokenRate;
       this._firstSignCap = firstSignCap;

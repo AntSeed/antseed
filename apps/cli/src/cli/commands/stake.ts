@@ -4,7 +4,7 @@ import ora from 'ora';
 import { getGlobalOptions } from './types.js';
 import { loadConfig } from '../../config/loader.js';
 import {
-  createEscrowClient,
+  createStakingClient,
   createIdentityClient,
   loadCryptoContext,
   formatUsdc,
@@ -31,7 +31,7 @@ export function registerStakeCommand(program: Command): void {
 
       try {
         const { wallet, address } = await loadCryptoContext(globalOpts.dataDir);
-        const escrowClient = createEscrowClient(config);
+        const stakingClient = createStakingClient(config);
         const identityClient = createIdentityClient(config);
         const isReg = await identityClient.isRegistered(address);
         if (!isReg) {
@@ -44,7 +44,7 @@ export function registerStakeCommand(program: Command): void {
         console.log(chalk.dim(`Amount: ${amountFloat} USDC (${amountBaseUnits} base units)`));
 
         spinner.text = 'Staking USDC...';
-        const txHash = await escrowClient.stake(wallet, amountBaseUnits);
+        const txHash = await stakingClient.stake(wallet, amountBaseUnits);
         spinner.succeed(chalk.green(`Staked ${amountFloat} USDC`));
         console.log(chalk.dim(`Transaction: ${txHash}`));
       } catch (err) {
@@ -64,19 +64,18 @@ export function registerStakeCommand(program: Command): void {
 
       try {
         const { wallet, address } = await loadCryptoContext(globalOpts.dataDir);
-        const escrowClient = createEscrowClient(config);
+        const stakingClient = createStakingClient(config);
         console.log(chalk.dim(`Wallet: ${address}`));
-        const account = await escrowClient.getSellerAccount(address);
+        const account = await stakingClient.getSellerAccount(address);
         if (account.stake === 0n) {
           spinner.fail(chalk.yellow('No active stake to withdraw.'));
           return;
         }
 
         console.log(chalk.dim(`Current stake: ${formatUsdc(account.stake)} USDC`));
-        console.log(chalk.dim(`Earnings: ${formatUsdc(account.earnings)} USDC`));
 
         spinner.text = 'Unstaking...';
-        const txHash = await escrowClient.unstake(wallet);
+        const txHash = await stakingClient.unstake(wallet);
         spinner.succeed(chalk.green('Unstaked successfully'));
         console.log(chalk.dim(`Transaction: ${txHash}`));
       } catch (err) {

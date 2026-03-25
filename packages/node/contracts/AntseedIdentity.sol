@@ -3,21 +3,28 @@ pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
 
-interface IAntseedEscrow {
-    function sellers(address) external view returns (uint256 stake, uint256 earnings, uint256 stakedAt, uint256 tokenRate);
-}
+import {IAntseedStaking} from "./interfaces/IAntseedStaking.sol";
 
-contract AntseedIdentity is ERC721, ERC721URIStorage {
-    address public owner;
-    address public escrowContract;
+/**
+ * @title AntseedIdentity
+ * @notice Peer identity NFTs with reputation and feedback (ERC-8004).
+ *         Stable contract. Staking lives in AntseedStaking, sessions in AntseedSessions.
+ */
+contract AntseedIdentity is ERC721, ERC721URIStorage, Ownable {
+    // ─── Core State ─────────────────────────────────────────────────────
+    address public sessionsContract;
+    address public stakingContract;
     uint256 private _nextTokenId;
 
+    // ─── Identity Mappings ──────────────────────────────────────────────
     mapping(address => uint256) public addressToTokenId;
     mapping(bytes32 => uint256) public peerIdToTokenId;
     mapping(uint256 => bytes32) public tokenIdToPeerId;
     mapping(address => bool) public registered;
 
+    // ─── Reputation ─────────────────────────────────────────────────────
     struct ProvenReputation {
         uint64 firstSignCount;
         uint64 qualifiedProvenSignCount;
@@ -29,16 +36,16 @@ contract AntseedIdentity is ERC721, ERC721URIStorage {
 
     mapping(uint256 => ProvenReputation) private _reputation;
 
-    // ERC-8004 Reputation Registry
-    mapping(uint256 => mapping(address => FeedbackEntry[])) private _feedback;
-    mapping(uint256 => mapping(bytes32 => FeedbackSummary)) private _feedbackSummary;
-    mapping(uint256 => address[]) private _feedbackClients;
-    mapping(uint256 => mapping(address => bool)) private _isClient;
-
     struct ReputationUpdate {
         uint8 updateType;        // 0=firstSign, 1=qualifiedProven, 2=unqualifiedProven, 3=ghost
         uint256 tokenVolume;     // tokens delivered (for proven signs)
     }
+
+    // ─── ERC-8004 Feedback ──────────────────────────────────────────────
+    mapping(uint256 => mapping(address => FeedbackEntry[])) private _feedback;
+    mapping(uint256 => mapping(bytes32 => FeedbackSummary)) private _feedbackSummary;
+    mapping(uint256 => address[]) private _feedbackClients;
+    mapping(uint256 => mapping(address => bool)) private _isClient;
 
     struct FeedbackEntry {
         address client;
@@ -56,7 +63,7 @@ contract AntseedIdentity is ERC721, ERC721URIStorage {
         uint8 summaryValueDecimals;
     }
 
-    error NotOwner();
+    // ─── Errors ─────────────────────────────────────────────────────────
     error NotAuthorized();
     error InvalidAddress();
     error InvalidToken();
@@ -69,20 +76,16 @@ contract AntseedIdentity is ERC721, ERC721URIStorage {
     error AlreadyRevoked();
     error InvalidAmount();
 
+    // ─── Events ─────────────────────────────────────────────────────────
     event PeerRegistered(uint256 indexed tokenId, address indexed peer, bytes32 indexed peerId);
     event PeerDeregistered(uint256 indexed tokenId, address indexed peer);
-    event EscrowContractSet(address indexed escrowContract);
-    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+    event SessionsContractSet(address indexed sessionsContract);
+    event StakingContractSet(address indexed stakingContract);
     event FeedbackGiven(uint256 indexed agentId, address indexed client, int128 value, bytes32 indexed tag);
     event FeedbackRevoked(uint256 indexed agentId, address indexed client, uint256 index);
 
-    modifier onlyOwner() {
-        if (msg.sender != owner) revert NotOwner();
-        _;
-    }
-
-    constructor() ERC721("AntseedIdentity", "ANTID") {
-        owner = msg.sender;
+    // ─── Constructor ────────────────────────────────────────────────────
+    constructor() ERC721("AntseedIdentity", "ANTID") Ownable(msg.sender) {
         _nextTokenId = 1;
     }
 
@@ -91,6 +94,10 @@ contract AntseedIdentity is ERC721, ERC721URIStorage {
         if (from != address(0) && to != address(0)) revert NonTransferable();
         return super._update(to, tokenId, auth);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //                        REGISTRATION
+    // ═══════════════════════════════════════════════════════════════════
 
     function register(bytes32 peerId, string calldata metadataURI) external returns (uint256) {
         if (registered[msg.sender]) revert AlreadyRegistered();
@@ -118,8 +125,8 @@ contract AntseedIdentity is ERC721, ERC721URIStorage {
     function deregister(uint256 tokenId) external {
         if (ownerOf(tokenId) != msg.sender) revert NotTokenOwner();
         // Prevent reputation laundering: cannot deregister while staked
-        if (escrowContract != address(0)) {
-            (uint256 stake,,,) = IAntseedEscrow(escrowContract).sellers(msg.sender);
+        if (stakingContract != address(0)) {
+            uint256 stake = IAntseedStaking(stakingContract).getStake(msg.sender);
             if (stake > 0) revert ActiveStake();
         }
 
@@ -137,22 +144,12 @@ contract AntseedIdentity is ERC721, ERC721URIStorage {
         emit PeerDeregistered(tokenId, peer);
     }
 
-    function setEscrowContract(address _escrow) external {
-        if (msg.sender != owner) revert NotOwner();
-        if (_escrow == address(0)) revert InvalidAddress();
-        escrowContract = _escrow;
-        emit EscrowContractSet(_escrow);
-    }
-
-    function transferOwnership(address newOwner) external {
-        if (msg.sender != owner) revert NotOwner();
-        if (newOwner == address(0)) revert InvalidAddress();
-        emit OwnershipTransferred(owner, newOwner);
-        owner = newOwner;
-    }
+    // ═══════════════════════════════════════════════════════════════════
+    //                        REPUTATION
+    // ═══════════════════════════════════════════════════════════════════
 
     function updateReputation(uint256 tokenId, ReputationUpdate calldata update) external {
-        if (msg.sender != escrowContract) revert NotAuthorized();
+        if (msg.sender != sessionsContract) revert NotAuthorized();
         if (_ownerOf(tokenId) == address(0)) revert InvalidToken();
 
         ProvenReputation storage rep = _reputation[tokenId];
@@ -172,6 +169,10 @@ contract AntseedIdentity is ERC721, ERC721URIStorage {
     function getReputation(uint256 tokenId) external view returns (ProvenReputation memory) {
         return _reputation[tokenId];
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //                        FEEDBACK (ERC-8004)
+    // ═══════════════════════════════════════════════════════════════════
 
     function giveFeedback(
         uint256 agentId,
@@ -233,6 +234,10 @@ contract AntseedIdentity is ERC721, ERC721URIStorage {
         return _feedback[agentId][client].length;
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    //                        VIEW HELPERS
+    // ═══════════════════════════════════════════════════════════════════
+
     function isRegistered(address addr) external view returns (bool) {
         return registered[addr];
     }
@@ -241,10 +246,6 @@ contract AntseedIdentity is ERC721, ERC721URIStorage {
         return addressToTokenId[addr];
     }
 
-    /**
-     * @notice Returns 0 for both unregistered and deregistered peer IDs.
-     *         Use `registered(addr)` to distinguish active from deregistered peers.
-     */
     function getTokenIdByPeerId(bytes32 peerId) external view returns (uint256) {
         return peerIdToTokenId[peerId];
     }
@@ -260,4 +261,21 @@ contract AntseedIdentity is ERC721, ERC721URIStorage {
     function supportsInterface(bytes4 interfaceId) public view override(ERC721, ERC721URIStorage) returns (bool) {
         return super.supportsInterface(interfaceId);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //                        ADMIN
+    // ═══════════════════════════════════════════════════════════════════
+
+    function setSessionsContract(address _sessions) external onlyOwner {
+        if (_sessions == address(0)) revert InvalidAddress();
+        sessionsContract = _sessions;
+        emit SessionsContractSet(_sessions);
+    }
+
+    function setStakingContract(address _staking) external onlyOwner {
+        if (_staking == address(0)) revert InvalidAddress();
+        stakingContract = _staking;
+        emit StakingContractSet(_staking);
+    }
+
 }

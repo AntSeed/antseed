@@ -59,7 +59,9 @@ import {
   BalanceManager,
   type PaymentConfig,
   type PaymentMethod,
-  BaseEscrowClient,
+  DepositsClient,
+  SessionsClient,
+  StakingClient,
   SessionStore,
 } from "./payments/index.js";
 import { parseJsonObject, extractUsage } from "@antseed/api-adapter";
@@ -122,20 +124,24 @@ export interface NodePaymentsConfig {
   platformFeeRate?: number;
   /** Idle time before a session is finalized and settled. Default: 30000ms */
   settlementIdleMs?: number;
-  /** Default escrow amount in USDC units. Default: "1" */
-  defaultEscrowAmountUSDC?: string;
-  /** Optional seller wallet address for auto-funded escrow deposit. */
+  /** Default deposit amount in USDC units. Default: "1" */
+  defaultDepositAmountUSDC?: string;
+  /** Optional seller wallet address for auto-funded deposit. */
   sellerWalletAddress?: string;
   /** Settlement backend configuration (crypto). */
   paymentConfig?: PaymentConfig | null;
   /** Base JSON-RPC URL (e.g. http://127.0.0.1:8545 for anvil) */
   rpcUrl?: string;
-  /** Deployed AntseedEscrow contract address */
-  contractAddress?: string;
+  /** Deployed AntseedDeposits contract address */
+  depositsAddress?: string;
+  /** Deployed AntseedSessions contract address */
+  sessionsAddress?: string;
   /** USDC token contract address */
   usdcAddress?: string;
   /** AntseedIdentity contract address */
   identityAddress?: string;
+  /** AntseedStaking contract address */
+  stakingAddress?: string;
   /** Chain ID for EIP-712 domain. Default: 8453 (Base) */
   chainId?: number;
   /** Default maximum USDC per spending auth. Default: 1000000 (1 USDC) */
@@ -243,7 +249,9 @@ export class AntseedNode extends EventEmitter {
   private _metering: MeteringStorage | null = null;
   private _receiptGenerator: ReceiptGenerator | null = null;
   private _balanceManager: BalanceManager | null = null;
-  private _escrowClient: BaseEscrowClient | null = null;
+  private _depositsClient: DepositsClient | null = null;
+  private _sessionsClient: SessionsClient | null = null;
+  private _stakingClient: StakingClient | null = null;
   private _identityClient: IdentityClient | null = null;
   private _paymentMuxes = new Map<PeerId, PaymentMux>();
   private _providerLoadCounts = new Map<string, number>();
@@ -474,7 +482,9 @@ export class AntseedNode extends EventEmitter {
     this._peerLookup = null;
     this._receiptGenerator = null;
     this._balanceManager = null;
-    this._escrowClient = null;
+    this._depositsClient = null;
+    this._sessionsClient = null;
+    this._stakingClient = null;
     this._identityClient = null;
     this._buyerPaymentManager = null;
     this._sellerPaymentManager = null;
@@ -846,14 +856,14 @@ export class AntseedNode extends EventEmitter {
       }
 
       // Auto mode: check if we can actually pay before attempting negotiation
-      if (!this._escrowClient || !this._identity || !this._buyerPaymentManager) {
-        return returnPaymentRequired('no escrow configured');
+      if (!this._depositsClient || !this._identity || !this._buyerPaymentManager) {
+        return returnPaymentRequired('no deposits configured');
       }
 
       // Check on-chain balance — if insufficient, return 402 instead of failing mid-negotiate
       try {
         const buyerAddr = identityToEvmAddress(this._identity);
-        const balance = await this._escrowClient.getBuyerBalance(buyerAddr);
+        const balance = await this._depositsClient.getBuyerBalance(buyerAddr);
         if (balance.available <= 0n) {
           return returnPaymentRequired('insufficient credits');
         }
@@ -1085,6 +1095,7 @@ export class AntseedNode extends EventEmitter {
         reannounceIntervalMs: DEFAULT_DHT_CONFIG.reannounceIntervalMs,
         signalingPort: actualSignalingPort,
         ...(this._identityClient ? { identityClient: this._identityClient } : {}),
+        ...(this._stakingClient ? { paymentsEnabled: true } : {}),
       };
       this._announcer = new PeerAnnouncer(announcerConfig);
       this._announcer.startPeriodicAnnounce();
@@ -1136,7 +1147,7 @@ export class AntseedNode extends EventEmitter {
 
     // Initialize buyer-side payment manager if payments config is provided
     const payments = this._config.payments;
-    if (payments?.enabled && payments.rpcUrl && payments.contractAddress && payments.usdcAddress) {
+    if (payments?.enabled && payments.rpcUrl && payments.depositsAddress && payments.sessionsAddress && payments.usdcAddress) {
       const paymentsDir = join(dataDir, "payments");
       // Create shared SessionStore for both buyer and seller payment managers
       if (!this._sessionStore) {
@@ -1150,7 +1161,8 @@ export class AntseedNode extends EventEmitter {
       if (this._sessionStore) {
         const buyerPaymentConfig: BuyerPaymentConfig = {
           rpcUrl: payments.rpcUrl,
-          contractAddress: payments.contractAddress,
+          depositsContractAddress: payments.depositsAddress,
+          sessionsContractAddress: payments.sessionsAddress,
           usdcAddress: payments.usdcAddress,
           identityAddress: payments.identityAddress ?? '',
           chainId: payments.chainId ?? 8453,
@@ -1160,7 +1172,7 @@ export class AntseedNode extends EventEmitter {
           dataDir: paymentsDir,
         };
         this._buyerPaymentManager = new BuyerPaymentManager(identity, buyerPaymentConfig, this._sessionStore);
-        debugLog(`[Node] Buyer payment manager initialized (wallet=${identityToEvmAddress(identity).slice(0, 10)}... chainId=${buyerPaymentConfig.chainId} contract=${buyerPaymentConfig.contractAddress.slice(0, 10)}...)`);
+        debugLog(`[Node] Buyer payment manager initialized (wallet=${identityToEvmAddress(identity).slice(0, 10)}... chainId=${buyerPaymentConfig.chainId} deposits=${buyerPaymentConfig.depositsContractAddress.slice(0, 10)}...)`);
       }
     }
 
@@ -1195,10 +1207,10 @@ export class AntseedNode extends EventEmitter {
     mux.onProxyRequest(async (request: SerializedHttpRequest) => {
       debugLog(`[Node] Seller received request: ${request.method} ${request.path} (reqId=${request.requestId.slice(0, 8)})`);
 
-      // Reject with 402 if no active payment session and escrow client is configured.
+      // Reject with 402 if no active payment session and sessions client is configured.
       // Also send PaymentRequired via PaymentMux so the buyer knows what to sign.
       const spmAuthorized = this._sellerPaymentManager?.hasSession(buyerPeerId) ?? false;
-      if (this._escrowClient && !spmAuthorized) {
+      if (this._sessionsClient && !spmAuthorized) {
         // Pass buyerPeerId so seller can suggest higher amount for returning buyers,
         // and include per-direction pricing from the first registered provider.
         // Retry init if it failed at startup (e.g. RPC was unreachable)
@@ -1615,17 +1627,36 @@ export class AntseedNode extends EventEmitter {
       return;
     }
 
-    // Initialize BaseEscrowClient if Base config is provided
-    if (payments.rpcUrl && payments.contractAddress && payments.usdcAddress) {
-      this._escrowClient = new BaseEscrowClient({
+    // Initialize DepositsClient
+    if (payments.rpcUrl && payments.depositsAddress && payments.usdcAddress) {
+      this._depositsClient = new DepositsClient({
         rpcUrl: payments.rpcUrl,
-        contractAddress: payments.contractAddress,
+        contractAddress: payments.depositsAddress,
         usdcAddress: payments.usdcAddress,
       });
-      debugLog(`[Node] BaseEscrowClient initialized (contract=${payments.contractAddress.slice(0, 10)}...)`);
+      debugLog(`[Node] DepositsClient initialized (contract=${payments.depositsAddress.slice(0, 10)}...)`);
     }
 
-    // Initialize IdentityClient if identity contract address is provided
+    // Initialize SessionsClient
+    if (payments.rpcUrl && payments.sessionsAddress) {
+      this._sessionsClient = new SessionsClient({
+        rpcUrl: payments.rpcUrl,
+        contractAddress: payments.sessionsAddress,
+      });
+      debugLog(`[Node] SessionsClient initialized (contract=${payments.sessionsAddress.slice(0, 10)}...)`);
+    }
+
+    // Initialize StakingClient
+    if (payments.rpcUrl && payments.stakingAddress && payments.usdcAddress) {
+      this._stakingClient = new StakingClient({
+        rpcUrl: payments.rpcUrl,
+        contractAddress: payments.stakingAddress,
+        usdcAddress: payments.usdcAddress,
+      });
+      debugLog(`[Node] StakingClient initialized (contract=${payments.stakingAddress.slice(0, 10)}...)`);
+    }
+
+    // Initialize IdentityClient
     if (payments.rpcUrl && payments.identityAddress) {
       this._identityClient = new IdentityClient({
         rpcUrl: payments.rpcUrl,
@@ -1647,10 +1678,11 @@ export class AntseedNode extends EventEmitter {
 
     // Initialize SellerPaymentManager for seller role
     if (this._config.role === 'seller' && this._identity && this._sessionStore &&
-        payments.rpcUrl && payments.contractAddress && payments.usdcAddress) {
+        payments.rpcUrl && payments.sessionsAddress && payments.stakingAddress && payments.usdcAddress) {
       const sellerConfig: SellerPaymentConfig = {
         rpcUrl: payments.rpcUrl,
-        contractAddress: payments.contractAddress,
+        sessionsContractAddress: payments.sessionsAddress,
+        stakingContractAddress: payments.stakingAddress,
         usdcAddress: payments.usdcAddress,
         chainId: payments.chainId ?? 8453,
         dataDir: paymentsDir,
@@ -2109,7 +2141,7 @@ export class AntseedNode extends EventEmitter {
   private async _doNegotiatePayment(peer: PeerInfo, conn: PeerConnection): Promise<void> {
     const bpm = this._buyerPaymentManager;
     if (!bpm) {
-      throw new Error('Payment negotiation unavailable — no escrow contract configured');
+      throw new Error('Payment negotiation unavailable — no sessions contract configured');
     }
 
     // If already locked from a previous successful negotiation, skip
@@ -2136,11 +2168,11 @@ export class AntseedNode extends EventEmitter {
     debugLog(`[Node] PaymentRequired from ${peer.peerId.slice(0, 12)}...: rate=${requirements.tokenRate} cap=${requirements.firstSignCap} suggested=${requirements.suggestedAmount}`);
 
     // Fetch on-chain context so the UI can show the buyer real data
-    let approvalContext: Awaited<ReturnType<import('./payments/evm/escrow-client.js').BaseEscrowClient['getBuyerApprovalContext']>> | null = null;
-    if (this._escrowClient && this._identity) {
+    let approvalContext: Awaited<ReturnType<import('./payments/evm/sessions-client.js').SessionsClient['getBuyerApprovalContext']>> | null = null;
+    if (this._sessionsClient && this._depositsClient && this._identity) {
       try {
         const buyerAddr = identityToEvmAddress(this._identity);
-        approvalContext = await this._escrowClient.getBuyerApprovalContext(buyerAddr, requirements.sellerEvmAddr);
+        approvalContext = await this._sessionsClient.getBuyerApprovalContext(buyerAddr, requirements.sellerEvmAddr, this._depositsClient);
         debugLog(`[Node] Approval context: balance=${approvalContext.buyerBalance.available} isFirstSign=${approvalContext.isFirstSign} cooldown=${approvalContext.cooldownRemainingSecs}s`);
       } catch (err) {
         debugWarn(`[Node] Failed to fetch approval context: ${err instanceof Error ? err.message : err}`);
@@ -2164,7 +2196,7 @@ export class AntseedNode extends EventEmitter {
       }
     }
     if (amount <= 0n) {
-      throw new Error(`Insufficient escrow balance to authorize payment to ${peer.peerId.slice(0, 12)}...`);
+      throw new Error(`Insufficient deposit balance to authorize payment to ${peer.peerId.slice(0, 12)}...`);
     }
 
     const approvalInfo = {

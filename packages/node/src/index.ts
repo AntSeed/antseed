@@ -34,9 +34,12 @@ export { MetadataServer, type MetadataServerConfig } from './discovery/metadata-
 export { parsePublicAddress, MAX_PUBLIC_ADDRESS_LENGTH, type ParsedPublicAddress } from './discovery/public-address.js';
 export { MeteringStorage } from './metering/storage.js';
 export { BalanceManager } from './payments/balance-manager.js';
-export { BaseEscrowClient, type BaseEscrowConfig } from './payments/evm/escrow-client.js';
+export { DepositsClient, type DepositsClientConfig, type BuyerBalanceInfo } from './payments/evm/deposits-client.js';
+export { SessionsClient, type SessionsClientConfig, type SessionInfo } from './payments/evm/sessions-client.js';
+export { IdentityClient, type IdentityClientConfig } from './payments/evm/identity-client.js';
+export { StakingClient, type StakingClientConfig, type SellerAccountInfo } from './payments/evm/staking-client.js';
 export { identityToEvmWallet, identityToEvmAddress } from './payments/evm/keypair.js';
-export { signSpendingAuth, makeEscrowDomain } from './payments/evm/signatures.js';
+export { signSpendingAuth, makeSessionsDomain } from './payments/evm/signatures.js';
 export type { SpendingAuthMessage } from './payments/evm/signatures.js';
 export { NatTraversal, type NatMapping, type NatTraversalResult } from './p2p/nat-traversal.js';
 export { BuyerPaymentManager } from './payments/buyer-payment-manager.js';

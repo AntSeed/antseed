@@ -1,6 +1,8 @@
 import type { AntseedConfig } from '../config/types.js';
 import {
-  BaseEscrowClient,
+  DepositsClient,
+  SessionsClient,
+  StakingClient,
   loadOrCreateIdentity,
   identityToEvmWallet,
   identityToEvmAddress,
@@ -67,14 +69,25 @@ export function requireCryptoConfig(config: AntseedConfig): NonNullable<AntseedC
 }
 
 /**
- * Create a BaseEscrowClient from the CLI config.
+ * Create a DepositsClient from the CLI config.
  */
-export function createEscrowClient(config: AntseedConfig): BaseEscrowClient {
+export function createDepositsClient(config: AntseedConfig): DepositsClient {
   const crypto = requireCryptoConfig(config);
-  return new BaseEscrowClient({
+  return new DepositsClient({
     rpcUrl: crypto.rpcUrl,
-    contractAddress: crypto.escrowContractAddress,
+    contractAddress: crypto.depositsContractAddress,
     usdcAddress: crypto.usdcContractAddress,
+  });
+}
+
+/**
+ * Create a SessionsClient from the CLI config.
+ */
+export function createSessionsClient(config: AntseedConfig): SessionsClient {
+  const crypto = requireCryptoConfig(config);
+  return new SessionsClient({
+    rpcUrl: crypto.rpcUrl,
+    contractAddress: crypto.sessionsContractAddress,
   });
 }
 
@@ -89,6 +102,21 @@ export function createIdentityClient(config: AntseedConfig): IdentityClient {
   return new IdentityClient({
     rpcUrl: crypto.rpcUrl,
     contractAddress: crypto.identityContractAddress,
+  });
+}
+
+/**
+ * Create a StakingClient from the CLI config.
+ */
+export function createStakingClient(config: AntseedConfig): StakingClient {
+  const crypto = requireCryptoConfig(config);
+  if (!crypto.stakingContractAddress) {
+    throw new Error('No staking contract address configured. Set payments.crypto.stakingContractAddress in your config file.');
+  }
+  return new StakingClient({
+    rpcUrl: crypto.rpcUrl,
+    contractAddress: crypto.stakingContractAddress,
+    usdcAddress: crypto.usdcContractAddress,
   });
 }
 

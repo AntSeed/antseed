@@ -23,7 +23,7 @@ contract AntseedEmissionsTest is Test {
         emissions = new AntseedEmissions(address(token), INITIAL_EMISSION, EPOCH_DURATION);
         token.setEmissionsContract(address(emissions));
         // Allow test contract to call accrue functions
-        emissions.setEscrowContract(address(this));
+        emissions.setSessionsContract(address(this));
         emissions.setReserveDestination(reserveDest);
     }
 
@@ -109,7 +109,7 @@ contract AntseedEmissionsTest is Test {
         assertApproxEqAbs(sellerPending, expected, 1e6); // small rounding tolerance
     }
 
-    function test_accrueSellerPoints_revert_notEscrow() public {
+    function test_accrueSellerPoints_revert_notSessions() public {
         vm.prank(seller1);
         vm.expectRevert(AntseedEmissions.NotAuthorized.selector);
         emissions.accrueSellerPoints(seller1, 100);
@@ -128,7 +128,7 @@ contract AntseedEmissionsTest is Test {
         assertApproxEqAbs(buyerPending, expected, 1e6);
     }
 
-    function test_accrueBuyerPoints_revert_notEscrow() public {
+    function test_accrueBuyerPoints_revert_notSessions() public {
         vm.prank(buyer1);
         vm.expectRevert(AntseedEmissions.NotAuthorized.selector);
         emissions.accrueBuyerPoints(buyer1, 100);
@@ -300,10 +300,10 @@ contract AntseedEmissionsTest is Test {
         emissions.setSharePercentages(60, 20, 10);
     }
 
-    function test_setEscrowContract_onlyOwner() public {
+    function test_setSessionsContract_onlyOwner() public {
         vm.prank(seller1);
-        vm.expectRevert(AntseedEmissions.NotOwner.selector);
-        emissions.setEscrowContract(address(0x99));
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", seller1));
+        emissions.setSessionsContract(address(0x99));
     }
 
     function test_setConstant() public {
@@ -316,7 +316,7 @@ contract AntseedEmissionsTest is Test {
         assertEq(emissions.owner(), seller1);
 
         vm.prank(seller1);
-        emissions.setEscrowContract(address(0x99));
-        assertEq(emissions.escrowContract(), address(0x99));
+        emissions.setSessionsContract(address(0x99));
+        assertEq(emissions.sessionsContract(), address(0x99));
     }
 }

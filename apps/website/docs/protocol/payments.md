@@ -7,7 +7,7 @@ hide_title: true
 
 # Payments
 
-Buyers pre-deposit USDC into an on-chain escrow contract. Each session follows a Reserve-Serve-Settle lifecycle where credits are locked, requests flow freely over the P2P transport, and settlement happens lazily when the buyer starts their next session.
+Buyers pre-deposit USDC into the on-chain AntseedDeposits contract. Each session follows a Reserve-Serve-Settle lifecycle where credits are locked via AntseedSessions, requests flow freely over the P2P transport, and settlement happens lazily when the buyer starts their next session.
 
 The key primitive is the **SpendingAuth** — an EIP-712 signed authorization that simultaneously authorizes the current session and proves delivery of the previous one.
 
@@ -53,10 +53,10 @@ Settlement of session N is triggered atomically during `reserve()` for session N
 The SpendingAuth is the buyer's signed authorization for a session. It is an [EIP-712](https://eips.ethereum.org/EIPS/eip-712) typed data signature verified on-chain.
 
 ```text title="EIP-712 domain"
-name:               "AntSeedEscrow"
+name:               "AntSeedSessions"
 version:            "1"
 chainId:            <deployment chain>
-verifyingContract:  <escrow contract address>
+verifyingContract:  <sessions contract address>
 ```
 
 | Field | Type | Description |
@@ -182,13 +182,13 @@ The signing identity (Ed25519) and the funding wallet (secp256k1/EVM) are separa
 
 ### Funding
 
-The escrow contract provides `depositFor(address buyer, uint256 amount)`, allowing any address to fund a buyer's deposit. This decouples the funding source from the node identity — a team treasury, a hardware wallet, or another contract can fund the node without exposing the node's private key.
+The AntseedDeposits contract provides `depositFor(address buyer, uint256 amount)`, allowing any address to fund a buyer's deposit. This decouples the funding source from the node identity — a team treasury, a hardware wallet, or another contract can fund the node without exposing the node's private key.
 
 USDC on Base. 6 decimal places. All on-chain amounts are in USDC atomic units (1 USDC = 1,000,000).
 
 ## Supported Chains
 
-| Chain | Chain ID | Status | Escrow Contract |
+| Chain | Chain ID | Status | Contracts |
 |---|---|---|---|
 | `base-sepolia` | 84532 | Testnet | Deployed |
 | `base-mainnet` | 8453 | Production | Planned |

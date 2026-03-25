@@ -7,12 +7,12 @@ import type {
   SellerReceiptPayload,
   TopUpRequestPayload,
 } from '../types/protocol.js';
-import { BaseEscrowClient } from './evm/escrow-client.js';
+import { DepositsClient } from './evm/deposits-client.js';
 import { IdentityClient } from './evm/identity-client.js';
 import { identityToEvmWallet, identityToEvmAddress } from './evm/keypair.js';
 import {
   signSpendingAuth,
-  makeEscrowDomain,
+  makeSessionsDomain,
   buildAckMessage,
   signMessageEd25519,
   verifyMessageEd25519,
@@ -25,7 +25,8 @@ import { SessionStore, type StoredSession } from './session-store.js';
 
 export interface BuyerPaymentConfig {
   rpcUrl: string;
-  contractAddress: string;
+  depositsContractAddress: string;
+  sessionsContractAddress: string;
   usdcAddress: string;
   identityAddress: string;
   chainId: number;
@@ -44,7 +45,7 @@ const ZERO_SESSION_ID = '0x' + '0'.repeat(64);
 export class BuyerPaymentManager {
   private readonly _identity: Identity;
   private _signer: AbstractSigner;
-  private readonly _escrowClient: BaseEscrowClient;
+  private readonly _depositsClient: DepositsClient;
   private readonly _config: BuyerPaymentConfig;
   private readonly _sessionStore: SessionStore;
   /** In-memory map of active confirmed sessions by seller peerId for fast lookups. */
@@ -57,9 +58,9 @@ export class BuyerPaymentManager {
     this._identity = identity;
     this._config = config;
     this._signer = identityToEvmWallet(identity);
-    this._escrowClient = new BaseEscrowClient({
+    this._depositsClient = new DepositsClient({
       rpcUrl: config.rpcUrl,
-      contractAddress: config.contractAddress,
+      contractAddress: config.depositsContractAddress,
       usdcAddress: config.usdcAddress,
     });
     this._sessionStore = sessionStore;
@@ -76,8 +77,8 @@ export class BuyerPaymentManager {
     this._signer = signer;
   }
 
-  get escrowClient(): BaseEscrowClient {
-    return this._escrowClient;
+  get depositsClient(): DepositsClient {
+    return this._depositsClient;
   }
 
   // ── Spending Authorization ────────────────────────────────────
@@ -123,7 +124,7 @@ export class BuyerPaymentManager {
     debugLog(`[BuyerPayment] authorizeSpending: session=${sessionId.slice(0, 18)}... seller=${sellerPeerId.slice(0, 12)}... amount=${amount}`);
 
     // Sign EIP-712 SpendingAuth
-    const domain = makeEscrowDomain(this._config.chainId, this._config.contractAddress);
+    const domain = makeSessionsDomain(this._config.chainId, this._config.sessionsContractAddress);
     const msg: SpendingAuthMessage = {
       seller: sellerEvmAddr,
       sessionId,
@@ -350,21 +351,21 @@ export class BuyerPaymentManager {
     return sessions;
   }
 
-  // ── Escrow operations ─────────────────────────────────────────
+  // ── Deposit operations ──────────────────────────────────────────
 
   async deposit(amount: bigint): Promise<string> {
-    debugLog(`[BuyerPayment] Depositing ${amount} to escrow`);
-    return this._escrowClient.deposit(this._signer, amount);
+    debugLog(`[BuyerPayment] Depositing ${amount} to deposits`);
+    return this._depositsClient.deposit(this._signer, amount);
   }
 
   async withdraw(amount: bigint): Promise<string> {
-    debugLog(`[BuyerPayment] Requesting withdrawal of ${amount} from escrow`);
-    return this._escrowClient.requestWithdrawal(this._signer, amount);
+    debugLog(`[BuyerPayment] Requesting withdrawal of ${amount} from deposits`);
+    return this._depositsClient.requestWithdrawal(this._signer, amount);
   }
 
   async getBalance(): Promise<{ available: bigint; reserved: bigint }> {
     const buyerAddr = identityToEvmAddress(this._identity);
-    const info = await this._escrowClient.getBuyerBalance(buyerAddr);
+    const info = await this._depositsClient.getBuyerBalance(buyerAddr);
     return { available: info.available, reserved: info.reserved };
   }
 

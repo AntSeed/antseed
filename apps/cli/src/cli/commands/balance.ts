@@ -5,7 +5,7 @@ import { getGlobalOptions } from './types.js';
 import { loadConfig } from '../../config/loader.js';
 import {
   loadOrCreateIdentity,
-  BaseEscrowClient,
+  DepositsClient,
   identityToEvmAddress,
 } from '@antseed/node';
 
@@ -20,7 +20,7 @@ function formatUsdc(baseUnits: bigint): string {
 export function registerBalanceCommand(program: Command): void {
   program
     .command('balance')
-    .description('Show escrow balance for your wallet')
+    .description('Show deposits balance for your wallet')
     .option('--json', 'output as JSON', false)
     .action(async (options) => {
       const globalOpts = getGlobalOptions(program);
@@ -36,17 +36,17 @@ export function registerBalanceCommand(program: Command): void {
       const identity = await loadOrCreateIdentity(globalOpts.dataDir);
       const address = identityToEvmAddress(identity);
 
-      const escrowClient = new BaseEscrowClient({
+      const depositsClient = new DepositsClient({
         rpcUrl: payments.crypto.rpcUrl,
-        contractAddress: payments.crypto.escrowContractAddress,
+        contractAddress: payments.crypto.depositsContractAddress,
         usdcAddress: payments.crypto.usdcContractAddress,
       });
 
       const spinner = ora('Fetching balance...').start();
 
       try {
-        const account = await escrowClient.getBuyerBalance(address);
-        const usdcBalance = await escrowClient.getUSDCBalance(address);
+        const account = await depositsClient.getBuyerBalance(address);
+        const usdcBalance = await depositsClient.getUSDCBalance(address);
 
         spinner.stop();
 
@@ -54,9 +54,9 @@ export function registerBalanceCommand(program: Command): void {
           console.log(JSON.stringify({
             address,
             walletUSDC: formatUsdc(usdcBalance),
-            escrowAvailable: formatUsdc(account.available),
-            escrowReserved: formatUsdc(account.reserved),
-            escrowPendingWithdrawal: formatUsdc(account.pendingWithdrawal),
+            depositsAvailable: formatUsdc(account.available),
+            depositsReserved: formatUsdc(account.reserved),
+            depositsPendingWithdrawal: formatUsdc(account.pendingWithdrawal),
           }, null, 2));
           return;
         }
@@ -65,7 +65,7 @@ export function registerBalanceCommand(program: Command): void {
         console.log('');
         console.log(chalk.bold('USDC Balance (wallet): ') + chalk.green(formatUsdc(usdcBalance) + ' USDC'));
         console.log('');
-        console.log(chalk.bold('Escrow Account:'));
+        console.log(chalk.bold('Deposits Account:'));
         console.log(`  Available:           ${chalk.green(formatUsdc(account.available) + ' USDC')}`);
         console.log(`  Reserved:            ${chalk.yellow(formatUsdc(account.reserved) + ' USDC')}`);
         console.log(`  Pending Withdrawal:  ${chalk.yellow(formatUsdc(account.pendingWithdrawal) + ' USDC')}`);

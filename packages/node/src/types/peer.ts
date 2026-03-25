@@ -67,10 +67,10 @@ export interface PeerInfo {
   trustScore?: number;
   /** EVM address of the peer (0x-prefixed hex). */
   evmAddress?: string;
-  /** On-chain reputation score (0-100) from the Base escrow contract. */
+  /** On-chain reputation score (0-100) from the Base identity contract. */
   onChainReputation?: number;
-  /** On-chain session count from the Base escrow contract. */
+  /** On-chain session count from the Base identity contract. */
   onChainSessionCount?: number;
-  /** On-chain dispute count from the Base escrow contract. */
+  /** On-chain dispute count from the Base identity contract. */
   onChainDisputeCount?: number;
 }

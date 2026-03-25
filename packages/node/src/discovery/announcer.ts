@@ -18,7 +18,7 @@ import { isKnownServiceApiProtocol } from "../types/service-api.js";
 import { encodeMetadataForSigning } from "./metadata-codec.js";
 import { debugWarn } from "../utils/debug.js";
 import { bytesToHex } from "../utils/hex.js";
-import type { BaseEscrowClient } from "../payments/evm/escrow-client.js";
+// Announcer uses identityClient for on-chain reputation and staking checks
 import type { IdentityClient } from "../payments/evm/identity-client.js";
 import { identityToEvmAddress } from "../payments/evm/keypair.js";
 
@@ -45,7 +45,8 @@ export interface AnnouncerConfig {
   offerings?: PeerOffering[];
   stakeAmountUSDC?: number;
   trustScore?: number;
-  escrowClient?: BaseEscrowClient;
+  /** @deprecated Use identityClient for payments-enabled checks */
+  paymentsEnabled?: boolean;
   identityClient?: IdentityClient;
   reannounceIntervalMs: number;
   signalingPort: number;
@@ -155,7 +156,7 @@ export class PeerAnnouncer {
       metadata.trustScore = this.config.trustScore;
     }
 
-    if (this.config.escrowClient) {
+    if (this.config.paymentsEnabled) {
       const evmAddress = identityToEvmAddress(this.config.identity);
       metadata.evmAddress = evmAddress;
 

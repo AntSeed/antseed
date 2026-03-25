@@ -1,0 +1,6 @@
+{
+  "solidity.remappings": [
+    "@openzeppelin/=node_modules/@openzeppelin/",
+    "forge-std/=packages/node/lib/forge-std/src/"
+  ]
+}

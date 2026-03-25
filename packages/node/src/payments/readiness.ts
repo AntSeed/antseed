@@ -1,6 +1,7 @@
 import { type Identity } from '../p2p/identity.js';
-import { type BaseEscrowClient } from './evm/escrow-client.js';
+import { type DepositsClient } from './evm/deposits-client.js';
 import { type IdentityClient } from './evm/identity-client.js';
+import { type StakingClient } from './evm/staking-client.js';
 import { identityToEvmAddress } from './evm/keypair.js';
 import { formatEther } from 'ethers';
 
@@ -13,14 +14,14 @@ export interface ReadinessCheck {
 
 export async function checkSellerReadiness(
   identity: Identity,
-  escrowClient: BaseEscrowClient,
   identityClient: IdentityClient,
+  stakingClient: StakingClient,
 ): Promise<ReadinessCheck[]> {
   const checks: ReadinessCheck[] = [];
   const evmAddr = identityToEvmAddress(identity);
 
   // 1. ETH for gas
-  const ethBalance = await escrowClient.provider.getBalance(evmAddr);
+  const ethBalance = await stakingClient.provider.getBalance(evmAddr);
   checks.push({
     name: 'Gas balance',
     passed: ethBalance > 0n,
@@ -39,7 +40,7 @@ export async function checkSellerReadiness(
   });
 
   // 3. Staked
-  const account = await escrowClient.getSellerAccount(evmAddr);
+  const account = await stakingClient.getSellerAccount(evmAddr);
   const hasStake = account.stake > 0n;
   checks.push({
     name: 'Stake',
@@ -60,13 +61,13 @@ export async function checkSellerReadiness(
 
 export async function checkBuyerReadiness(
   identity: Identity,
-  escrowClient: BaseEscrowClient,
+  depositsClient: DepositsClient,
 ): Promise<ReadinessCheck[]> {
   const checks: ReadinessCheck[] = [];
   const evmAddr = identityToEvmAddress(identity);
 
   // 1. ETH for gas
-  const ethBalance = await escrowClient.provider.getBalance(evmAddr);
+  const ethBalance = await depositsClient.provider.getBalance(evmAddr);
   checks.push({
     name: 'Gas balance',
     passed: ethBalance > 0n,
@@ -75,14 +76,14 @@ export async function checkBuyerReadiness(
       : `No ETH for gas. Send ETH to ${evmAddr}`,
   });
 
-  // 2. USDC in escrow
-  const balance = await escrowClient.getBuyerBalance(evmAddr);
+  // 2. USDC in deposits
+  const balance = await depositsClient.getBuyerBalance(evmAddr);
   checks.push({
-    name: 'Escrow balance',
+    name: 'Deposit balance',
     passed: balance.available > 0n,
     message: balance.available > 0n
       ? `Available: ${balance.available}`
-      : 'No USDC in escrow. Run: antseed deposit <amount>',
+      : 'No USDC deposited. Run: antseed deposit <amount>',
     command: balance.available > 0n ? undefined : 'antseed deposit 10',
   });
 

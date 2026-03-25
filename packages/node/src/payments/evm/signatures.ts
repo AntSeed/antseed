@@ -28,9 +28,9 @@ export interface SpendingAuthMessage {
   previousSessionId: string;
 }
 
-export function makeEscrowDomain(chainId: number, contractAddress: string): TypedDataDomain {
+export function makeSessionsDomain(chainId: number, contractAddress: string): TypedDataDomain {
   return {
-    name: 'AntseedEscrow',
+    name: 'AntseedSessions',
     version: '1',
     chainId,
     verifyingContract: contractAddress,

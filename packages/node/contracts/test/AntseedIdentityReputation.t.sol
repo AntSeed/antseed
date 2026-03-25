@@ -20,7 +20,7 @@ contract AntseedIdentityReputationTest is Test {
 
     function setUp() public {
         identity = new AntseedIdentity();
-        identity.setEscrowContract(address(this));
+        identity.setSessionsContract(address(this));
         vm.prank(peer1);
         tokenId = identity.register(peerId1, "ipfs://meta");
         // Register feedback clients (required for giveFeedback access control)
@@ -32,7 +32,7 @@ contract AntseedIdentityReputationTest is Test {
         identity.register(keccak256("testcontract"), "");
     }
 
-    // Mock sellers() for IAntseedEscrow interface (required by deregister)
+    // Mock sellers() for IAntseedSessions interface (required by deregister)
     function sellers(address) external pure returns (uint256, uint256, uint256, uint256) {
         return (0, 0, 0, 0);
     }
@@ -65,7 +65,7 @@ contract AntseedIdentityReputationTest is Test {
         assertEq(rep.ghostCount, 1);
     }
 
-    function test_updateReputation_revert_notEscrow() public {
+    function test_updateReputation_revert_notSessions() public {
         vm.prank(peer1);
         vm.expectRevert(AntseedIdentity.NotAuthorized.selector);
         identity.updateReputation(tokenId, AntseedIdentity.ReputationUpdate(0, 0));
