@@ -3,7 +3,7 @@ pragma solidity ^0.8.24;
 
 /**
  * @title MockUSDC
- * @notice Minimal ERC20 used for local escrow integration tests and examples.
+ * @notice Minimal ERC20 used for local integration tests and examples.
  */
 contract MockUSDC {
     string public constant name = "Mock USD Coin";

@@ -332,7 +332,7 @@ describe('SellerPaymentManager', () => {
 
   // ── Payment negotiation (PaymentRequired) ───────────────────
 
-  it('test_init: caches tokenRate and firstSignCap from escrow', async () => {
+  it('test_init: caches tokenRate and firstSignCap from staking', async () => {
     vi.spyOn(manager.sessionsClient, 'getFirstSignCap').mockResolvedValue(1_000_000n);
 
     await manager.init();

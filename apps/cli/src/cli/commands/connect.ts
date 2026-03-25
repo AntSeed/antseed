@@ -324,7 +324,7 @@ export function registerConnectCommand(program: Command): void {
           sessionsAddress: chainConfig.sessionsContractAddress,
           usdcAddress: chainConfig.usdcContractAddress,
           chainId: chainConfig.evmChainId,
-          defaultEscrowAmountUSDC: cryptoOverrides?.defaultLockAmountUSDC
+          defaultDepositAmountUSDC: cryptoOverrides?.defaultLockAmountUSDC
             ? String(Math.round(parseFloat(cryptoOverrides.defaultLockAmountUSDC) * 1_000_000))
             : '1000000',
           platformFeeRate: config.payments?.platformFeeRate,

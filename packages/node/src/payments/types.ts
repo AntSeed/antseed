@@ -17,9 +17,9 @@ export interface WalletInfo {
 }
 
 export type TransactionType =
-  | 'escrow_lock'
-  | 'escrow_release'
-  | 'escrow_refund'
+  | 'deposit_lock'
+  | 'deposit_release'
+  | 'deposit_refund'
   | 'dispute_resolution';
 
 export interface Transaction {

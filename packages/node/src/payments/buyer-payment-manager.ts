@@ -351,15 +351,15 @@ export class BuyerPaymentManager {
     return sessions;
   }
 
-  // ── Escrow operations ─────────────────────────────────────────
+  // ── Deposit operations ──────────────────────────────────────────
 
   async deposit(amount: bigint): Promise<string> {
-    debugLog(`[BuyerPayment] Depositing ${amount} to escrow`);
+    debugLog(`[BuyerPayment] Depositing ${amount} to deposits`);
     return this._depositsClient.deposit(this._signer, amount);
   }
 
   async withdraw(amount: bigint): Promise<string> {
-    debugLog(`[BuyerPayment] Requesting withdrawal of ${amount} from escrow`);
+    debugLog(`[BuyerPayment] Requesting withdrawal of ${amount} from deposits`);
     return this._depositsClient.requestWithdrawal(this._signer, amount);
   }
 

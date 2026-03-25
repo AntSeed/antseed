@@ -301,7 +301,7 @@ describe('Proof Chain Integration', () => {
     expect(history[1].previousConsumption).toBe(s1.totalTokens);
     expect(history[2].previousConsumption).toBe(s2.totalTokens);
 
-    // Verify escrow interactions
+    // Verify on-chain interactions
     // reserve called 3 times (once per session)
     expect(sellerManager.sessionsClient.reserve).toHaveBeenCalledTimes(3);
     // settle called 2 times (session 1 settled before session 2, session 2 before session 3)

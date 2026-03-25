@@ -54,9 +54,9 @@ export class SellerPaymentManager {
   private readonly _activeBuyers = new Set<string>();
   /** Debounce: track sessions that already sent a top-up request. */
   private readonly _topUpRequested = new Set<string>();
-  /** Cached seller tokenRate (fetched once from escrow, used for top-up threshold). */
+  /** Cached seller tokenRate (fetched once from staking contract, used for top-up threshold). */
   private _tokenRate: bigint | null = null;
-  /** Cached FIRST_SIGN_CAP from escrow contract. */
+  /** Cached FIRST_SIGN_CAP from sessions contract. */
   private _firstSignCap: bigint | null = null;
   /** Per-buyer mutex to prevent concurrent handleSpendingAuth for the same buyer. */
   private readonly _buyerLocks = new Map<string, Promise<void>>();

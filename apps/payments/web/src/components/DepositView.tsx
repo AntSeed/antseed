@@ -272,7 +272,7 @@ function CardDepositPlaceholder() {
         </div>
         <div className="deposit-card-coming-title">Credit card deposits coming soon</div>
         <div className="deposit-card-coming-desc">
-          Direct credit card to escrow deposits are being integrated.
+          Direct credit card deposits are being integrated.
           For now, use the crypto wallet option.
         </div>
       </div>

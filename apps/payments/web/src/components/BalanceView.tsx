@@ -71,7 +71,7 @@ export function BalanceView({ balance }: BalanceViewProps) {
       </div>
 
       <div className="overview-address-card">
-        <span className="overview-address-label">Escrow Address</span>
+        <span className="overview-address-label">Deposits Address</span>
         <span className="overview-address-value">{balance.evmAddress}</span>
       </div>
     </div>

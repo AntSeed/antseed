@@ -4,7 +4,7 @@ import type { WalletInfo, Transaction, TransactionType } from './types.js';
 
 export interface UnifiedBalance {
   cryptoUSDC: number;
-  inEscrowUSDC: number;
+  inDepositsUSDC: number;
   totalUSD: number;
 }
 
@@ -13,14 +13,14 @@ export class BalanceManager {
 
   getBalance(
     walletInfo: WalletInfo | null,
-    inEscrowUSDC: number,
+    inDepositsUSDC: number,
   ): UnifiedBalance {
     const cryptoUSDC = walletInfo ? parseFloat(walletInfo.balanceUSDC) : 0;
-    const totalUSD = cryptoUSDC + inEscrowUSDC;
+    const totalUSD = cryptoUSDC + inDepositsUSDC;
 
     return {
       cryptoUSDC,
-      inEscrowUSDC,
+      inDepositsUSDC,
       totalUSD,
     };
   }
@@ -47,14 +47,14 @@ export class BalanceManager {
 
   getTotalEarnings(since?: number): number {
     return this.transactions
-      .filter((tx) => tx.type === 'escrow_release')
+      .filter((tx) => tx.type === 'deposit_release')
       .filter((tx) => (since !== undefined ? tx.timestamp >= since : true))
       .reduce((sum, tx) => sum + tx.amountUSD, 0);
   }
 
   getTotalSpending(since?: number): number {
     return this.transactions
-      .filter((tx) => tx.type === 'escrow_lock')
+      .filter((tx) => tx.type === 'deposit_lock')
       .filter((tx) => (since !== undefined ? tx.timestamp >= since : true))
       .reduce((sum, tx) => sum + tx.amountUSD, 0);
   }

@@ -42,8 +42,8 @@ export function SessionApprovalCard({
     <div className={styles.approval}>
       <div className={styles.approvalText}>
         {hasCredits
-          ? <>Approve a <strong>${amount} USDC</strong> pre-deposit to start a session with <strong>{displayName}</strong>. This is reserved from your escrow balance.</>
-          : <>A <strong>${amount} USDC</strong> pre-deposit is required to use <strong>{displayName}</strong>. Add credits to your escrow first.</>
+          ? <>Approve a <strong>${amount} USDC</strong> pre-deposit to start a session with <strong>{displayName}</strong>. This is reserved from your deposit balance.</>
+          : <>A <strong>${amount} USDC</strong> pre-deposit is required to use <strong>{displayName}</strong>. Add credits to your deposits first.</>
         }
       </div>
 

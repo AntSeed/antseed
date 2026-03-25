@@ -88,7 +88,7 @@ describe('EIP-712 SpendingAuth signature helpers', () => {
   });
 
   it('makeSessionsDomain returns correct domain fields', () => {
-    // Domain name changed from AntseedEscrow to AntseedSessions in contract split
+    // Domain name matches the on-chain EIP712 constructor: AntseedSessions
     const domain = makeSessionsDomain(CHAIN_ID, CONTRACT);
     expect(domain.name).toBe('AntseedSessions');
     expect(domain.version).toBe('1');

@@ -252,8 +252,8 @@ export function registerSeedCommand(program: Command): void {
         : undefined
 
       const preferredMethod = config.payments.preferredMethod
-      const defaultEscrowAmountUSDC = process.env['ANTSEED_DEFAULT_ESCROW_USDC'] ?? config.payments.crypto?.defaultLockAmountUSDC ?? '1'
-      const defaultEscrowAmountUSDCBaseUnits = toUSDCBaseUnits(defaultEscrowAmountUSDC, '1000000')
+      const defaultDepositAmountUSDC = process.env['ANTSEED_DEFAULT_DEPOSIT_USDC'] ?? config.payments.crypto?.defaultLockAmountUSDC ?? '1'
+      const defaultDepositAmountUSDCBaseUnits = toUSDCBaseUnits(defaultDepositAmountUSDC, '1000000')
       const settlementIdleMsRaw = process.env['ANTSEED_SETTLEMENT_IDLE_MS']
       const settlementIdleMs = settlementIdleMsRaw ? parseInt(settlementIdleMsRaw, 10) : 30_000
       const sellerWalletAddress = process.env['ANTSEED_SELLER_WALLET_ADDRESS']
@@ -268,8 +268,8 @@ export function registerSeedCommand(program: Command): void {
           usdcContractAddress: config.payments.crypto?.usdcContractAddress,
         })
         const defaultLockAmountUSDCBaseUnits = toUSDCBaseUnits(
-          config.payments.crypto?.defaultLockAmountUSDC ?? defaultEscrowAmountUSDC,
-          defaultEscrowAmountUSDCBaseUnits,
+          config.payments.crypto?.defaultLockAmountUSDC ?? defaultDepositAmountUSDC,
+          defaultDepositAmountUSDCBaseUnits,
         )
         const cryptoConfig: NonNullable<PaymentConfig['crypto']> = {
           chainId: cc.chainId,
@@ -345,7 +345,7 @@ export function registerSeedCommand(program: Command): void {
           paymentMethod: preferredMethod,
           platformFeeRate: config.payments.platformFeeRate,
           settlementIdleMs: Number.isFinite(settlementIdleMs) ? settlementIdleMs : 30_000,
-          defaultEscrowAmountUSDC: defaultEscrowAmountUSDCBaseUnits,
+          defaultDepositAmountUSDC: defaultDepositAmountUSDCBaseUnits,
           sellerWalletAddress,
           paymentConfig,
           // Top-level fields required by the node for contract clients + EIP-712 domain

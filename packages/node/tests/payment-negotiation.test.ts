@@ -229,7 +229,7 @@ describe('SessionsClient.getBuyerApprovalContext', () => {
   let mockDepositsClient: { getBuyerBalance: ReturnType<typeof vi.fn> };
 
   beforeEach(async () => {
-    tempDir = mkdtempSync(join(tmpdir(), 'escrow-ctx-'));
+    tempDir = mkdtempSync(join(tmpdir(), 'sessions-ctx-'));
     store = new SessionStore(tempDir);
     sellerIdentity = await createTestIdentity();
 

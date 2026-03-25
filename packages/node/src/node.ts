@@ -124,9 +124,9 @@ export interface NodePaymentsConfig {
   platformFeeRate?: number;
   /** Idle time before a session is finalized and settled. Default: 30000ms */
   settlementIdleMs?: number;
-  /** Default escrow amount in USDC units. Default: "1" */
-  defaultEscrowAmountUSDC?: string;
-  /** Optional seller wallet address for auto-funded escrow deposit. */
+  /** Default deposit amount in USDC units. Default: "1" */
+  defaultDepositAmountUSDC?: string;
+  /** Optional seller wallet address for auto-funded deposit. */
   sellerWalletAddress?: string;
   /** Settlement backend configuration (crypto). */
   paymentConfig?: PaymentConfig | null;
@@ -1207,7 +1207,7 @@ export class AntseedNode extends EventEmitter {
     mux.onProxyRequest(async (request: SerializedHttpRequest) => {
       debugLog(`[Node] Seller received request: ${request.method} ${request.path} (reqId=${request.requestId.slice(0, 8)})`);
 
-      // Reject with 402 if no active payment session and escrow client is configured.
+      // Reject with 402 if no active payment session and sessions client is configured.
       // Also send PaymentRequired via PaymentMux so the buyer knows what to sign.
       const spmAuthorized = this._sellerPaymentManager?.hasSession(buyerPeerId) ?? false;
       if (this._sessionsClient && !spmAuthorized) {

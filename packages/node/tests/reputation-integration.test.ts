@@ -158,8 +158,8 @@ describe('Reputation Integration', () => {
       onChainDisputeCount: 3,
     });
 
-    // Mock escrow client
-    const mockEscrowClient = {
+    // Mock identity client
+    const mockIdentityClient = {
       getReputation: async (_addr: string) => ({
         totalWeightedScore: 4000n,
         totalWeight: 50n,
@@ -169,7 +169,7 @@ describe('Reputation Integration', () => {
       }),
     } as any;
 
-    const result = await verifyReputation(mockEscrowClient, metadata);
+    const result = await verifyReputation(mockIdentityClient, metadata);
 
     expect(result.valid).toBe(true);
     expect(result.actualReputation).toBe(80);
@@ -187,7 +187,7 @@ describe('Reputation Integration', () => {
       onChainDisputeCount: 3,
     });
 
-    const mismatchResult = await verifyReputation(mockEscrowClient, mismatchedMetadata);
+    const mismatchResult = await verifyReputation(mockIdentityClient, mismatchedMetadata);
     expect(mismatchResult.valid).toBe(false);
     expect(mismatchResult.actualReputation).toBe(80);
     expect(mismatchResult.claimedReputation).toBe(90);
