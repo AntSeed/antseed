@@ -9,7 +9,7 @@ The buyer-seller flow enforces:
 1. **Peer authenticity** — every node is identified by a unique Ed25519 keypair; all trust-critical messages are signed.
 2. **Metadata integrity** — discovery metadata is signed and freshness-checked before use.
 3. **Bounded resource usage** — frame sizes, upload caps, stream durations, and connection counts are hard-limited.
-4. **Billing accountability** — usage is tracked via bilateral signed receipts and settled through on-chain escrow.
+4. **Billing accountability** — usage is tracked via bilateral signed receipts and settled through on-chain deposits and sessions contracts.
 5. **Fail-closed behavior** — timeouts and disconnects deterministically finalize sessions without hanging state.
 
 ## 2. Trust Boundaries
@@ -20,7 +20,7 @@ The buyer-seller flow enforces:
 | DHT network | No — verified via signatures | Peer endpoints and topic results |
 | Metadata fetch | No — verified via signatures + freshness | Signed peer metadata payload |
 | P2P transport (WebRTC/TCP) | Authenticated via intro envelopes | Request/response frames, payment frames |
-| On-chain escrow | Trust-minimized (contract + chain consensus) | Session locks, settlement balances, disputes |
+| On-chain contracts | Trust-minimized (contract + chain consensus) | Deposits, session locks, settlement balances, disputes |
 
 ## 3. Buyer → Seller Flow and Controls
 
@@ -52,7 +52,7 @@ The buyer-seller flow enforces:
 
 ### 3.4 Request Routing and Metering
 
-- Seller rejects requests with `402` when escrow is configured and lock is not committed.
+- Seller rejects requests with `402` when payments are configured and lock is not committed.
 - Session state tracked per buyer and finalized on disconnect, idle timeout, or shutdown.
 - Seller emits bilateral receipts after each request with `runningTotal` tracking.
 - Buyer acks receipts with Ed25519 signatures (auto-ack enabled by default).
@@ -65,7 +65,7 @@ The buyer-seller flow enforces:
 - Buyer and seller exchange Ed25519-signed running-total artifacts off-chain.
 - Settlement submits buyer ECDSA authorization plus score.
 - On buyer disconnect with committed lock: seller opens dispute using `lastAckedTotal` or `runningTotal`.
-- Escrow client maintains per-address nonce cursor to prevent local tx nonce reuse.
+- Sessions client maintains per-address nonce cursor to prevent local tx nonce reuse.
 
 ## 4. Cryptographic Control Plane
 
@@ -82,7 +82,7 @@ The buyer-seller flow enforces:
 1. Keep `allowPrivateIPs=false` in production.
 2. Keep metadata signature verification and freshness checks enabled (both on by default).
 3. Prefer WebRTC transport for end-to-end encryption.
-4. Use dedicated wallets for escrow operations and monitor settlement events.
+4. Use dedicated wallets for deposit and settlement operations and monitor settlement events.
 5. Persist and back up metering/payment state for audit and incident reconstruction.
 6. Keep upload/stream caps at defaults or tighter for internet-facing sellers.
 

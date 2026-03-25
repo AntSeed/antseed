@@ -4,7 +4,7 @@ title: "Proof of Prior Delivery"
 authors: [antseed]
 tags: [protocol, payments, cryptography, mechanism-design]
 description: How AntSeed's payment protocol creates an unforgeable chain where each spending authorization simultaneously pays for the current session and proves delivery of the previous one.
-keywords: [proof of delivery, EIP-712, payment protocol, P2P payments, escrow, spending authorization]
+keywords: [proof of delivery, EIP-712, payment protocol, P2P payments, deposits, spending authorization]
 image: /og-image.jpg
 date: 2026-03-24
 ---
@@ -24,7 +24,7 @@ The primitive is the **SpendingAuth** — an EIP-712 typed data signature that t
 - `previousConsumption` — the actual USDC consumed in the prior session
 - `previousSessionId` — the session ID being attested to
 
-When a buyer signs `previousConsumption = 15420` (15,420 USDC atomic units, i.e., $0.015420), they are cryptographically attesting that the seller delivered 15,420 units worth of service in the previous session. This signature is verified on-chain when the seller calls `reserve()` on the escrow contract.
+When a buyer signs `previousConsumption = 15420` (15,420 USDC atomic units, i.e., $0.015420), they are cryptographically attesting that the seller delivered 15,420 units worth of service in the previous session. This signature is verified on-chain when the seller calls `reserve()` on the AntseedSessions contract.
 
 The SpendingAuth is simultaneously a payment authorization *and* a delivery receipt. One signature, two functions. The buyer can't authorize a new session without settling the previous one, and settling the previous one requires attesting to what was delivered.
 
@@ -96,6 +96,6 @@ The proof chain creates two properties that are hard to achieve in P2P markets:
 
 **Trust bootstrapping without oracles.** A new seller starts with First Sign caps, proves delivery through buyer attestations, and builds uncapped trust — all without any third party vouching for them. The proof is in the payment chain itself. A buyer who has proven deliveries with three or more distinct sellers reaches Qualified Proven Sign status, which carries additional reputation weight and signals genuine network participation rather than a sybil pair trading with itself.
 
-The mechanism is simple in retrospect: make the buyer's next payment contingent on attesting to the seller's previous delivery. The buyer can't pay without proving, and the proof is a standard ECDSA signature verified by a standard smart contract. No new cryptographic assumptions, no trusted hardware, no validator set. Just signatures, escrow, and aligned incentives.
+The mechanism is simple in retrospect: make the buyer's next payment contingent on attesting to the seller's previous delivery. The buyer can't pay without proving, and the proof is a standard ECDSA signature verified by a standard smart contract. No new cryptographic assumptions, no trusted hardware, no validator set. Just signatures, deposits, sessions, and aligned incentives.
 
 [Read the full payment protocol specification](/docs/payments)

@@ -22,15 +22,15 @@ The domain-separated derivation ensures the two keypairs are cryptographically i
 
 ## Signing Identity vs Funding Wallet
 
-The EVM wallet derived from the node seed is the **signing identity**. It is used exclusively to sign EIP-712 `SpendingAuth` messages that authorize a seller to pull payment from escrow. It never holds funds.
+The EVM wallet derived from the node seed is the **signing identity**. It is used exclusively to sign EIP-712 `SpendingAuth` messages that authorize a seller to pull payment from the buyer's deposit. It never holds funds.
 
-The **funding wallet** is any external wallet the user controls — hardware wallet, multisig, or EOA. It deposits USDC into the escrow contract via `depositFor(buyer, amount)`, where `buyer` is the signing identity's address. The funding wallet has no ongoing role after deposit.
+The **funding wallet** is any external wallet the user controls — hardware wallet, multisig, or EOA. It deposits USDC into the AntseedDeposits contract via `depositFor(buyer, amount)`, where `buyer` is the signing identity's address. The funding wallet has no ongoing role after deposit.
 
 This separation means:
 
 - The signing identity can run unattended without risking the funding wallet
 - The funding wallet never interacts with the application
-- Worst-case exposure from a compromised signing identity is bounded by the current escrow balance
+- Worst-case exposure from a compromised signing identity is bounded by the current deposit balance
 
 ## Key Storage
 
@@ -54,13 +54,13 @@ Both modes produce identical on-chain outcomes. The difference is whether the si
 
 | Scenario | Signing Identity Exposed | Funding Wallet Exposed | Maximum Loss |
 |---|---|---|---|
-| **Node compromised** | Yes | No | Current escrow balance |
-| **Signing key extracted** | Yes | No | Current escrow balance |
-| **Funding wallet compromised** | No | Yes | Funding wallet balance (escrow unaffected once deposited) |
-| **Both compromised** | Yes | Yes | Escrow balance + funding wallet balance |
-| **Escrow contract exploit** | N/A | N/A | All deposited funds across all users |
+| **Node compromised** | Yes | No | Current deposit balance |
+| **Signing key extracted** | Yes | No | Current deposit balance |
+| **Funding wallet compromised** | No | Yes | Funding wallet balance (deposits unaffected once deposited) |
+| **Both compromised** | Yes | Yes | Deposit balance + funding wallet balance |
+| **Deposits contract exploit** | N/A | N/A | All deposited funds across all users |
 
-In the common attack surface — node compromise — the funding wallet is never at risk. The attacker can sign SpendingAuths against the existing escrow balance but cannot access the funding wallet or deposit additional funds.
+In the common attack surface — node compromise — the funding wallet is never at risk. The attacker can sign SpendingAuths against the existing deposit balance but cannot access the funding wallet or deposit additional funds.
 
 ## Protocol-Level Controls
 
@@ -97,8 +97,8 @@ All communication happens over an untrusted network. Every trust-critical operat
 
 ## Best Practices
 
-1. Use `depositFor()` from a hardware wallet or multisig. Never fund the signing identity directly.
-2. Deposit only what you need for a session. Top up as needed rather than pre-loading large amounts.
+1. Use `depositFor()` on AntseedDeposits from a hardware wallet or multisig. Never fund the signing identity directly.
+2. Deposit only what you need for a session. Top up as needed rather than pre-loading large amounts into AntseedDeposits.
 3. Keep `allowPrivateIPs=false` in production.
 4. Keep signature verification and stale metadata rejection enabled (both on by default).
 5. Prefer WebRTC transport for end-to-end encryption.

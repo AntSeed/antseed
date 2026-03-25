@@ -112,7 +112,7 @@ Providers set their own prices. The routing layer scores all available providers
 
 ### How do providers get paid?
 
-Buyers pre-deposit USDC into an on-chain escrow contract. Each session is authorized by an EIP-712 SpendingAuth that caps the seller's charge. Settlement is lazy — triggered when the buyer starts their next session (which simultaneously proves delivery of the previous one) or after a 24-hour timeout. No invoicing, no monthly billing — automatic settlement per session.
+Buyers pre-deposit USDC into the on-chain AntseedDeposits contract. Each session is authorized by an EIP-712 SpendingAuth that caps the seller's charge. The seller calls `reserve()` on AntseedSessions to lock funds. Settlement is lazy — triggered when the buyer starts their next session (which simultaneously proves delivery of the previous one) or after a 24-hour timeout. No invoicing, no monthly billing — automatic settlement per session.
 
 ---
 

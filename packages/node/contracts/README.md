@@ -7,7 +7,9 @@ Five Solidity contracts implementing the Proof of Prior Delivery payment, identi
 ```
 ANTSToken (ERC-20)        ── phase-locked transfers, mint restricted to AntseedEmissions
 AntseedIdentity (ERC-721) ── soulbound peer identity, dual lookup, reputation, ERC-8004 feedback
-AntseedEscrow             ── Reserve→Settle, proof chain, staking, slashing, anti-gaming
+AntseedDeposits           ── buyer USDC deposits, credit limits, withdrawal timelock
+AntseedSessions           ── Reserve→Settle, proof chain, anti-gaming
+AntseedStaking            ── seller stake, slashing conditions
 AntseedEmissions          ── epoch halving, Synthetix reward-per-point, 65/25/10 split
 AntseedSubPool            ── subscription tiers, daily budgets, revenue distribution
 ```
@@ -15,10 +17,11 @@ AntseedSubPool            ── subscription tiers, daily budgets, revenue dist
 Contracts reference each other by address set at deployment. No inheritance — only interface calls.
 
 ```
-AntseedEscrow ──calls──► AntseedIdentity.updateReputation()
-AntseedEscrow ──calls──► AntseedEmissions.accrueSellerPoints() / accrueBuyerPoints()
+AntseedSessions ──calls──► AntseedIdentity.updateReputation()
+AntseedSessions ──calls──► AntseedEmissions.accrueSellerPoints() / accrueBuyerPoints()
+AntseedSessions ──reads──► AntseedDeposits (buyer balances) + AntseedStaking (seller stake)
 AntseedEmissions ──calls──► ANTSToken.mint()
-AntseedSubPool ──reads──► AntseedIdentity (reputation) + AntseedEscrow (proven stats)
+AntseedSubPool ──reads──► AntseedIdentity (reputation) + AntseedSessions (proven stats)
 ```
 
 ## Build
@@ -44,7 +47,7 @@ Expected: 173 tests across 6 test files.
 | `ANTSToken.t.sol` | 19 |
 | `AntseedIdentity.t.sol` | 15 |
 | `AntseedIdentityReputation.t.sol` | 18 |
-| `AntseedEscrow.t.sol` | 58 |
+| `AntseedSessions.t.sol` | 58 |
 | `AntseedSubPool.t.sol` | 41 |
 | `AntseedEmissions.t.sol` | 22 |
 
@@ -72,10 +75,10 @@ Soulbound ERC-721 with dual lookup and two reputation layers.
 - Dual lookup: `addressToTokenId` + `peerIdToTokenId`
 - Views: `isRegistered(address)`, `getTokenId(address)`, `getTokenIdByPeerId(bytes32)`, `getPeerId(uint256)`
 
-**Custom Reputation (updated by AntseedEscrow):**
-- `updateReputation(uint256 tokenId, ReputationUpdate calldata)` — restricted to escrow contract
+**Custom Reputation (updated by AntseedSessions):**
+- `updateReputation(uint256 tokenId, ReputationUpdate calldata)` — restricted to sessions contract
 - `getReputation(uint256 tokenId)` → `ProvenReputation`
-- `setEscrowContract(address)` — owner-only, authorizes caller
+- `setSessionsContract(address)` — owner-only, authorizes caller
 - Fields: `firstSignCount`, `qualifiedProvenSignCount`, `unqualifiedProvenSignCount`, `ghostCount`, `totalQualifiedTokenVolume`, `lastProvenAt`
 
 **ERC-8004 Feedback Registry:**
@@ -84,9 +87,9 @@ Soulbound ERC-721 with dual lookup and two reputation layers.
 - `readFeedback(uint256 agentId, address client, uint256 index)` → FeedbackEntry
 - `revokeFeedback(uint256 agentId, uint256 index)` — submitter only
 
-### AntseedEscrow.sol
+### AntseedDeposits.sol
 
-Core escrow with EIP-712 spending authorizations, proof chain, staking, slashing, and anti-gaming.
+Buyer USDC deposit management with dynamic credit limits and withdrawal timelock.
 
 **Buyer operations:**
 - `deposit(uint256 amount)` — USDC deposit, enforces `MIN_BUYER_DEPOSIT` and dynamic credit limit
@@ -94,15 +97,17 @@ Core escrow with EIP-712 spending authorizations, proof chain, staking, slashing
 - `executeWithdrawal()` — after `BUYER_INACTIVITY_PERIOD` of no activity
 - `cancelWithdrawal()`
 - `getBuyerBalance(address)` → available, reserved, pendingWithdrawal
+- `setCreditLimitOverride(address, uint256)` — owner overrides buyer limit
+
+### AntseedSessions.sol
+
+Session lifecycle with EIP-712 spending authorizations, proof chain, and anti-gaming.
 
 **Seller operations:**
-- `stake(uint256 amount)` — locks USDC, requires registered AntseedIdentity
-- `unstake()` — runs 5-tier slash check, returns `stake - slashAmount`
 - `reserve(SpendingAuth calldata auth, bytes calldata buyerSig)` — validates EIP-712 sig, classifies sign type, locks buyer credits, updates reputation
 - `settle(bytes32 sessionId, uint256 tokenCount)` — charges actual consumption, deducts platform fee, releases remainder
 - `settleTimeout(bytes32 sessionId)` — after `SETTLE_TIMEOUT` (24h), returns credits to buyer, records ghost
 - `claimEarnings()` — withdraw accumulated earnings
-- `setCreditLimitOverride(address, uint256)` — owner overrides buyer limit
 
 **EIP-712 SpendingAuth type:**
 ```
@@ -116,6 +121,13 @@ SpendingAuth(address seller, bytes32 sessionId, uint256 maxAmount, uint256 nonce
 - `setProtocolReserve(address)` — slashed funds destination
 - `pause()` / `unpause()` — emergency circuit breaker
 
+### AntseedStaking.sol
+
+Seller USDC staking with 5-tier slash conditions.
+
+- `stake(uint256 amount)` — locks USDC, requires registered AntseedIdentity
+- `unstake()` — runs 5-tier slash check, returns `stake - slashAmount`
+
 ### AntseedSubPool.sol
 
 Subscription management with daily budgets and epoch-based revenue distribution.
@@ -128,7 +140,7 @@ Subscription management with daily budgets and epoch-based revenue distribution.
 - `claimRevenue(uint256 tokenId)` — claim share proportional to proven reputation
 - `distributionEpoch()` — callable by anyone, distributes current epoch revenue
 
-Reads from AntseedIdentity (reputation weighting) and AntseedEscrow (delivery verification).
+Reads from AntseedIdentity (reputation weighting) and AntseedSessions (delivery verification).
 
 ### AntseedEmissions.sol
 
@@ -138,7 +150,7 @@ ANTS emission controller using the Synthetix reward-per-point pattern. O(1) gas 
 - `advanceEpoch()` — callable by anyone when `EPOCH_DURATION` has passed
 - `getEpochInfo()` → current epoch, emission amount, time remaining
 
-**Point accrual (restricted to AntseedEscrow):**
+**Point accrual (restricted to AntseedSessions):**
 - `accrueSellerPoints(address seller, uint256 pointsDelta)`
 - `accrueBuyerPoints(address buyer, uint256 pointsDelta)`
 
@@ -154,15 +166,17 @@ ANTS emission controller using the Synthetix reward-per-point pattern. O(1) gas 
 
 1. **AntseedIdentity** — deploy first (no dependencies)
 2. **ANTSToken** — deploy (no dependencies)
-3. **AntseedEscrow** — deploy with `(usdcAddress, identityAddress)`, then call `identity.setEscrowContract(escrow)`
-4. **AntseedEmissions** — deploy with `(antsTokenAddress, escrowAddress)`, then call `antsToken.setEmissionsContract(emissions)` and `escrow.setEmissionsContract(emissions)`
-5. **AntseedSubPool** — deploy with `(usdcAddress, identityAddress, escrowAddress)`, then optionally set as reserve destination on emissions
+3. **AntseedDeposits** — deploy with `(usdcAddress)`
+4. **AntseedStaking** — deploy with `(usdcAddress, identityAddress)`
+5. **AntseedSessions** — deploy with `(usdcAddress, identityAddress, depositsAddress, stakingAddress)`, then call `identity.setSessionsContract(sessions)`
+6. **AntseedEmissions** — deploy with `(antsTokenAddress, sessionsAddress)`, then call `antsToken.setEmissionsContract(emissions)` and `sessions.setEmissionsContract(emissions)`
+7. **AntseedSubPool** — deploy with `(usdcAddress, identityAddress, sessionsAddress)`, then optionally set as reserve destination on emissions
 
 ## Configuration
 
 All constants are configurable by the contract owner via `setConstant()` or dedicated setters.
 
-### AntseedEscrow
+### AntseedDeposits / AntseedSessions / AntseedStaking
 
 | Constant | Default | Description |
 |---|---|---|

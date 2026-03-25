@@ -59,13 +59,13 @@ This matters because WebRTC DataChannel setup has real cost. ICE negotiation, DT
 
 When the buyer node receives a 402 + PaymentRequired, auto mode handles everything internally — the application never sees the 402.
 
-1. **Balance check.** The buyer node queries the escrow contract to verify it has sufficient deposited balance for the suggested amount.
+1. **Balance check.** The buyer node queries the AntseedDeposits contract to verify it has sufficient deposited balance for the suggested amount.
 
-2. **Sign SpendingAuth.** The buyer constructs an EIP-712 typed data structure (`SpendingAuth`) containing the seller's address, the token contract, the authorized `maxAmount`, and a nonce. The buyer's embedded wallet signs it. This signature authorizes the seller to charge up to `maxAmount` from the buyer's escrow deposit — but the buyer never sends funds directly. The seller must call `reserve()` to claim them.
+2. **Sign SpendingAuth.** The buyer constructs an EIP-712 typed data structure (`SpendingAuth`) containing the seller's address, the token contract, the authorized `maxAmount`, and a nonce. The buyer's embedded wallet signs it. This signature authorizes the seller to charge up to `maxAmount` from the buyer's deposit balance — but the buyer never sends funds directly. The seller must call `reserve()` on AntseedSessions to claim them.
 
 3. **Send 0x50.** The signed SpendingAuth is JSON-encoded and sent as a payment frame (type 0x50) on the same DataChannel. The `messageId` matches the original request that triggered the 402, maintaining correlation.
 
-4. **On-chain reserve.** The seller receives the SpendingAuth, verifies the EIP-712 signature, and calls `reserve(buyerAddr, maxAmount, signature)` on the `AntseedEscrow` contract. This locks `maxAmount` of the buyer's deposit for this seller. The transaction confirms on-chain (Base L2 — typical confirmation time 2-3 seconds).
+4. **On-chain reserve.** The seller receives the SpendingAuth, verifies the EIP-712 signature, and calls `reserve(buyerAddr, maxAmount, signature)` on the `AntseedSessions` contract. This locks `maxAmount` of the buyer's deposit for this seller. The transaction confirms on-chain (Base L2 — typical confirmation time 2-3 seconds).
 
 5. **AuthAck 0x51.** Once the reserve transaction confirms, the seller sends an `AuthAck` (type 0x51) back to the buyer with the transaction hash. The buyer now knows the authorization is active.
 
@@ -115,7 +115,7 @@ The header is an internal transport mechanism. It never reaches the seller's HTT
 
 ## Convergence
 
-Both modes produce the same EIP-712 `SpendingAuth` structure. Both send it through the same PaymentMux. Both result in the same `reserve()` call on the same escrow contract. The only difference is where the signature originates — the node's embedded wallet (auto) or the user's keychain wallet (manual).
+Both modes produce the same EIP-712 `SpendingAuth` structure. Both send it through the same PaymentMux. Both result in the same `reserve()` call on the same AntseedSessions contract. The only difference is where the signature originates — the node's embedded wallet (auto) or the user's keychain wallet (manual).
 
 This means the seller implementation is mode-agnostic. It receives a SpendingAuth, verifies it, and reserves. It doesn't know or care whether a human approved it or a node signed it autonomously.
 
@@ -135,22 +135,22 @@ The tradeoff is the intermediary itself. The facilitator holds transient custody
 
 The Machine Payments Protocol takes a different approach. MPP uses sessions: the buyer pre-authorizes a spending limit, funds are held in a session account, and individual requests settle automatically against that session without per-request on-chain transactions. Settlement is batched and runs on Tempo, a purpose-built L1 with sub-second finality and fixed fees.
 
-MPP's session model is closer to AntSeed's SpendingAuth in spirit — both pre-authorize a spending cap and settle periodically rather than per-request. The key difference is the settlement layer. MPP requires Tempo as the chain; AntSeed settles on any EVM chain with a USDC escrow contract (currently Base). MPP also integrates with Stripe's existing payment infrastructure, enabling fiat rails alongside crypto — a feature AntSeed doesn't attempt.
+MPP's session model is closer to AntSeed's SpendingAuth in spirit — both pre-authorize a spending cap and settle periodically rather than per-request. The key difference is the settlement layer. MPP requires Tempo as the chain; AntSeed settles on any EVM chain with USDC and the protocol contracts (currently Base). MPP also integrates with Stripe's existing payment infrastructure, enabling fiat rails alongside crypto — a feature AntSeed doesn't attempt.
 
 ### AntSeed
 
-AntSeed has no facilitator and no dedicated settlement chain. The buyer signs an EIP-712 SpendingAuth that authorizes a specific seller to draw up to `maxAmount` from the buyer's escrow deposit. The seller calls `reserve()` directly on the escrow contract. Settlement happens lazily — triggered by the buyer's next SpendingAuth, which simultaneously proves delivery of the previous session and authorizes the next one.
+AntSeed has no facilitator and no dedicated settlement chain. The buyer signs an EIP-712 SpendingAuth that authorizes a specific seller to draw up to `maxAmount` from the buyer's deposit balance. The seller calls `reserve()` directly on the AntseedSessions contract. Settlement happens lazily — triggered by the buyer's next SpendingAuth, which simultaneously proves delivery of the previous session and authorizes the next one.
 
 The bilateral accounting (SellerReceipt + BuyerAck) runs over the same DataChannel as proxy traffic, giving both sides real-time usage visibility without on-chain reads. The transport cost is zero — payment messages are multiplexed alongside existing proxy frames.
 
 | | **x402** | **MPP** | **AntSeed** |
 |---|---|---|---|
 | Intermediary | Facilitator (Coinbase) | Stripe + Tempo L1 | None (smart contract only) |
-| Settlement | Facilitator executes tx | Batched on Tempo | Seller calls reserve()/settle() directly |
+| Settlement | Facilitator executes tx | Batched on Tempo | Seller calls reserve()/settle() on AntseedSessions directly |
 | Per-request on-chain cost | 1 tx per request | Batched (amortized) | 0 (1 tx per session, reused across requests) |
 | Session model | Per-request | Pre-authorized session | Pre-authorized SpendingAuth |
 | Transport | HTTP headers | HTTP headers | Binary frames on existing DataChannel |
-| Chain dependency | Multi-chain | Tempo L1 only | Any EVM chain |
+| Chain dependency | Multi-chain | Tempo L1 only | Any EVM chain with USDC |
 | Proof of delivery | None | None | Built-in (proof-of-prior-delivery chain) |
 
 The architectural distinction that matters most for P2P compute is the last row. x402 and MPP handle payment — they confirm that money moved. Neither protocol proves that the service was actually delivered. AntSeed's SpendingAuth chain does both: each authorization is simultaneously a payment and a cryptographic attestation of prior delivery. This is what enables on-chain reputation to emerge directly from settlement, without a separate reporting system.

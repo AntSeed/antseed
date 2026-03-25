@@ -17,7 +17,7 @@ AntSeed takes a different approach. Reputation is not a separate system. It is a
 
 ## Reputation as a Side Effect
 
-The AntSeed escrow contract maintains per-seller reputation counters: `firstSignCount`, `qualifiedProvenSignCount`, `totalQualifiedTokenVolume`, and `ghostCount`. These counters are updated atomically inside the `reserve()` and `settle()` functions — the same contract calls that handle payment.
+The AntSeed sessions contract (AntseedSessions) maintains per-seller reputation counters: `firstSignCount`, `qualifiedProvenSignCount`, `totalQualifiedTokenVolume`, and `ghostCount`. These counters are updated atomically inside the `reserve()` and `settle()` functions — the same contract calls that handle payment.
 
 There is no separate reputation oracle. There is no reporting step. There is no delay between service delivery and reputation update. When a seller settles a proven session, their reputation counter increments in the same transaction that moves funds. The reputation data is unforgeable because it derives from the proof-of-prior-delivery chain: each proven sign references a prior settlement, creating a cryptographic linkage that cannot be fabricated without actual on-chain payment history.
 
@@ -37,7 +37,7 @@ No single mechanism is sufficient against determined attackers. AntSeed layers s
 
 **Buyer diversity** requires 3 unique sellers before proven signs qualify. This prevents the simplest attack: a single colluding buyer-seller pair cycling funds. The cost to bypass this is real payments to 3 other sellers, which represents genuine economic activity in the network. An attacker controlling multiple seller addresses still needs to stake each one independently.
 
-**Minimum deposit** sets a $10 USDC floor to open an escrow account. This is not a large amount, but it prices out the cheapest form of Sybil attack: creating thousands of zero-cost addresses to manufacture diversity. At $10 per account, creating enough fake buyers to satisfy diversity requirements for a farming operation has a concrete and scaling cost.
+**Minimum deposit** sets a $10 USDC floor to open a deposit account. This is not a large amount, but it prices out the cheapest form of Sybil attack: creating thousands of zero-cost addresses to manufacture diversity. At $10 per account, creating enough fake buyers to satisfy diversity requirements for a farming operation has a concrete and scaling cost.
 
 **Dynamic credit limits** prevent a new account from dumping large amounts of capital on day one. Credit grows as a function of interaction count, account age, proven session history, and feedback scores. A fresh Sybil account starts with minimal credit regardless of how much USDC backs it. This means that even a well-funded attacker must invest time — not just money — to scale up.
 
@@ -84,7 +84,7 @@ ANTS tokens are non-transferable until network maturity. This is a deliberate de
 
 The key insight behind this system is that reputation does not need its own infrastructure. If your payment protocol already proves delivery — if settlement requires cryptographic evidence that service was rendered — then reputation is just the accumulated record of those proofs.
 
-Every additional system you bolt on (oracles, validators, reporting layers, attestation networks) introduces new trust assumptions and new attack surfaces. AntSeed's reputation has exactly the same trust assumptions as its payment protocol: the escrow contract is correct, and the proof-of-prior-delivery chain is valid. No more, no less.
+Every additional system you bolt on (oracles, validators, reporting layers, attestation networks) introduces new trust assumptions and new attack surfaces. AntSeed's reputation has exactly the same trust assumptions as its payment protocol: the protocol contracts are correct, and the proof-of-prior-delivery chain is valid. No more, no less.
 
 The anti-gaming layers exist not because the core mechanism is weak, but because any system with economic incentives will attract adversarial behavior. Each layer raises the cost of attack along a different dimension — capital, time, operational complexity, diversity of real network participation. The goal is not to make gaming impossible (it never is) but to make it more expensive than honest participation.
 

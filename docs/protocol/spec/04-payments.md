@@ -130,7 +130,7 @@ Seven independent layers make wash trading economically irrational at every scal
 
 ### Dynamic Credit Limits
 
-A buyer's maximum escrow balance grows organically with real network participation:
+A buyer's maximum deposit balance grows organically with real network participation:
 
 ```
 buyerCreditLimit(B) = min(
@@ -149,7 +149,7 @@ The owner can override individual buyer limits via `setCreditLimitOverride(addre
 
 ### Staking
 
-Sellers must stake USDC via `stake(amount)` to accept paid sessions. A registered but unstaked peer (has AntseedIdentity NFT but zero stake) cannot have `reserve()` called — the transaction reverts. Minimum stake: `MIN_SELLER_STAKE` (default: 10 USDC).
+Sellers must stake USDC via `stake(amount)` on `AntseedStaking` to accept paid sessions. A registered but unstaked peer (has AntseedIdentity NFT but zero stake) cannot have `reserve()` called — the transaction reverts. Minimum stake: `MIN_SELLER_STAKE` (default: 10 USDC).
 
 ### Slashing Conditions (computed at `unstake()`)
 
@@ -167,7 +167,7 @@ Slashed funds are sent to the protocol reserve address (configurable via `setPro
 
 Peer reputation is stored on-chain in `AntseedIdentity` with two layers:
 
-### Custom Proof Chain Reputation (updated by AntseedEscrow)
+### Custom Proof Chain Reputation (updated by AntseedSessions)
 
 Per-peer counters updated atomically during `reserve()` and `settle()`:
 - `firstSignCount` — number of first-sign sessions
@@ -270,7 +270,7 @@ Same pattern for buyers with a separate accumulator (`buyerRewardPerPointStored`
 
 ## 9. Subscription Pool
 
-Separate contract (`AntseedSubPool`) managing subscription-based access. Evolves independently from the core escrow/proof system.
+Separate contract (`AntseedSubPool`) managing subscription-based access. Evolves independently from the core deposits/sessions/proof system.
 
 - `subscribe(tier)` — buyer pays monthly fee in USDC
 - `cancelSubscription()` — stops at end of current period
@@ -285,7 +285,9 @@ Separate contract (`AntseedSubPool`) managing subscription-based access. Evolves
 ```
 ANTSToken (ERC-20)        ── mint restricted to AntseedEmissions
 AntseedIdentity (ERC-721) ── soulbound NFT, dual lookup, reputation, ERC-8004 feedback
-AntseedEscrow             ── Reserve→Settle, proof chain, staking, slashing, anti-gaming
+AntseedDeposits           ── buyer USDC deposits, credit limits, withdrawal timelock
+AntseedSessions           ── Reserve→Settle, proof chain, anti-gaming
+AntseedStaking            ── seller stake, slashing conditions
 AntseedEmissions          ── epoch halving, Synthetix reward-per-point, 65/25/10 split
 AntseedSubPool            ── subscription tiers, daily budgets, revenue distribution
 ```
@@ -293,10 +295,11 @@ AntseedSubPool            ── subscription tiers, daily budgets, revenue dist
 Contracts reference each other by address (set at deployment, updateable by owner). No inheritance between contracts — only interface calls.
 
 **Interaction flow:**
-- `AntseedEscrow` calls `AntseedIdentity.updateReputation()` on reserve/settle
-- `AntseedEscrow` calls `AntseedEmissions.accrueSellerPoints()` / `accrueBuyerPoints()` on settle
+- `AntseedSessions` calls `AntseedIdentity.updateReputation()` on reserve/settle
+- `AntseedSessions` calls `AntseedEmissions.accrueSellerPoints()` / `accrueBuyerPoints()` on settle
+- `AntseedSessions` reads from `AntseedDeposits` (buyer balances) and `AntseedStaking` (seller stake)
 - `AntseedEmissions` calls `ANTSToken.mint()` on claim
-- `AntseedSubPool` reads from `AntseedIdentity` (reputation) and `AntseedEscrow` (proven stats)
+- `AntseedSubPool` reads from `AntseedIdentity` (reputation) and `AntseedSessions` (proven stats)
 
 ## 11. P2P Messages
 

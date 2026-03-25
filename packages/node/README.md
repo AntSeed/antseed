@@ -135,7 +135,7 @@ interface NodeConfig {
     paymentMethod?: 'crypto';
     platformFeeRate?: number;
     settlementIdleMs?: number;
-    defaultEscrowAmountUSDC?: string;
+    defaultSessionAmountUSDC?: string;
     sellerWalletAddress?: string;
     paymentConfig?: PaymentConfig | null;
   };
@@ -239,7 +239,7 @@ The AntSeed Desktop app encrypts the identity at rest using Electron's `safeStor
 When `payments.enabled=true` in seller mode:
 
 1. A per-buyer payment session is created via `BuyerPaymentManager`.
-2. Escrow is funded on-chain at session start.
+2. Deposit balance is locked on-chain at session start.
 3. Usage receipts are generated during request handling.
 4. On idle/session finalization, `calculateSettlement` computes cost from receipts and settles on-chain via:
    - `SessionsClient.settle(sessionId, tokenCount)`
@@ -254,7 +254,7 @@ const node = new AntseedNode({
     enabled: true,
     paymentMethod: 'crypto',
     platformFeeRate: 0.05,
-    defaultEscrowAmountUSDC: '1',
+    defaultSessionAmountUSDC: '1',
     sellerWalletAddress: '0xSeller...',
     paymentConfig: {
       crypto: {
@@ -263,7 +263,7 @@ const node = new AntseedNode({
         depositsContractAddress: process.env.DEPOSITS_ADDRESS!,
         sessionsContractAddress: process.env.SESSIONS_ADDRESS!,
         usdcContractAddress: process.env.USDC_ADDRESS!,
-        autoFundEscrow: true,
+        autoFundDeposit: true,
       },
     },
   },
@@ -302,7 +302,7 @@ import type { PeerMetadata, ProviderAnnouncement } from '@antseed/node';
 import { MeteringStorage } from '@antseed/node';
 import { BalanceManager } from '@antseed/node';
 import { BuyerPaymentManager, calculateSettlement } from '@antseed/node/payments';
-import { BaseEscrowClient } from '@antseed/node';
+import { BaseSessionsClient } from '@antseed/node';
 
 // Routing & Proxy
 import { ProxyMux } from '@antseed/node';

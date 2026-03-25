@@ -38,7 +38,7 @@ antseed config buyer set minPeerReputation 50
 antseed config buyer set proxyPort 8377
 ```
 
-## Step 4: Fund the escrow (optional, for paid network)
+## Step 4: Fund your deposit (optional, for paid network)
 
 If the network requires USDC settlement:
 
@@ -46,11 +46,11 @@ If the network requires USDC settlement:
 # Check wallet balance
 antseed balance
 
-# Deposit USDC into escrow for session locks
+# Deposit USDC into AntseedDeposits for session locks
 antseed deposit 5
 ```
 
-The balance command shows wallet USDC, escrowed USDC, committed (locked in active sessions), and available to spend.
+The balance command shows wallet USDC, deposited USDC, committed (locked in active sessions), and available to spend.
 
 ## Step 5: Start the proxy
 

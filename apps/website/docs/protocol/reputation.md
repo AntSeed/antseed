@@ -11,7 +11,7 @@ AntSeed derives on-chain reputation directly from payment settlement. Reputation
 
 ## On-Chain Reputation Counters
 
-Each seller address maintains the following counters in the escrow contract, updated atomically during settlement:
+Each seller address maintains the following counters in the sessions contract, updated atomically during settlement:
 
 | Counter | Updated During | Description |
 |---|---|---|
@@ -40,7 +40,7 @@ Seven layers prevent reputation farming and Sybil attacks:
 | Layer | Mechanism | Attack Prevented |
 |---|---|---|
 | Buyer diversity | Proven sign only qualifies if buyer has transacted with ≥3 unique sellers | 1:1 collusion between a single buyer-seller pair |
-| Minimum deposit | $10 USDC minimum to open escrow | Low-cost Sybil account creation |
+| Minimum deposit | $10 USDC minimum to open a deposit account | Low-cost Sybil account creation |
 | Dynamic credit limits | Credit grows with interaction history | Capital dumping on day one |
 | Inactivity lock | 90 days without settlement locks the account | Dormant Sybil accounts accumulating passive benefits |
 | Cooldown per pair | 7-day minimum between first session and first proven sign for each buyer-seller pair | Rapid-fire session farming |

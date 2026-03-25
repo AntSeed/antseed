@@ -2,7 +2,7 @@
 
 **Date:** 2026-03-08
 **Reviewer:** Automated Security Audit
-**Scope:** `apps/cli/src/proxy/buyer-proxy.ts`, `apps/cli/src/proxy/service-api-adapter.ts`, `packages/node/src/proxy/proxy-mux.ts`, `packages/node/src/proxy/request-codec.ts`, `packages/node/src/payments/buyer-payment-manager.ts`, `packages/node/src/payments/evm/escrow-client.ts`, `packages/node/src/types/buyer.ts`
+**Scope:** `apps/cli/src/proxy/buyer-proxy.ts`, `apps/cli/src/proxy/service-api-adapter.ts`, `packages/node/src/proxy/proxy-mux.ts`, `packages/node/src/proxy/request-codec.ts`, `packages/node/src/payments/buyer-payment-manager.ts`, `packages/node/src/payments/evm/sessions-client.ts`, `packages/node/src/types/buyer.ts`
 
 ---
 
@@ -142,7 +142,7 @@
 ### [VERIFY-002] Auto-Acknowledge Receipts Without Amount Validation
 
 - **Location**: `packages/node/src/payments/buyer-payment-manager.ts:183-214` (`handleSellerReceipt`)
-- **Question**: When `autoAck` is enabled (default: `true`), the buyer automatically counter-signs every seller receipt without verifying that the `runningTotal` is reasonable relative to actual usage. A malicious seller could inflate `runningTotal` beyond actual costs, and the buyer would sign an acknowledgment that could later be used in on-chain settlement for a larger amount. **Verify**: Does the on-chain escrow contract cap settlement at `lockedAmount`? If so, the blast radius is limited to the locked amount. If not, this is a High severity financial loss vector.
+- **Question**: When `autoAck` is enabled (default: `true`), the buyer automatically counter-signs every seller receipt without verifying that the `runningTotal` is reasonable relative to actual usage. A malicious seller could inflate `runningTotal` beyond actual costs, and the buyer would sign an acknowledgment that could later be used in on-chain settlement for a larger amount. **Verify**: Does the on-chain sessions contract cap settlement at `lockedAmount`? If so, the blast radius is limited to the locked amount. If not, this is a High severity financial loss vector.
   ```typescript
   // packages/node/src/payments/buyer-payment-manager.ts:193-213
   const autoAck = this._config.autoAck ?? true;
