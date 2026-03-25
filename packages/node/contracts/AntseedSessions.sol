@@ -4,6 +4,8 @@ pragma solidity ^0.8.24;
 import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 interface IAntseedDeposits {
     function lockForSession(address buyer, uint256 amount) external;
@@ -46,11 +48,19 @@ interface IAntseedEmissions {
  *         Holds NO USDC — orchestrates between AntseedDeposits and AntseedIdentity.
  *         This contract is swappable: deploy a new version and re-point Deposits + Identity.
  */
-contract AntseedSessions is EIP712, Pausable {
+contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     // ─── EIP-712 ────────────────────────────────────────────────────────
     bytes32 public constant SPENDING_AUTH_TYPEHASH = keccak256(
         "SpendingAuth(address seller,bytes32 sessionId,uint256 maxAmount,uint256 nonce,uint256 deadline,uint256 previousConsumption,bytes32 previousSessionId)"
     );
+
+    // ─── Constant Keys for setConstant ─────────────────────────────────
+    bytes32 private constant KEY_FIRST_SIGN_CAP = keccak256("FIRST_SIGN_CAP");
+    bytes32 private constant KEY_MIN_TOKEN_THRESHOLD = keccak256("MIN_TOKEN_THRESHOLD");
+    bytes32 private constant KEY_BUYER_DIVERSITY_THRESHOLD = keccak256("BUYER_DIVERSITY_THRESHOLD");
+    bytes32 private constant KEY_PROVEN_SIGN_COOLDOWN = keccak256("PROVEN_SIGN_COOLDOWN");
+    bytes32 private constant KEY_SETTLE_TIMEOUT = keccak256("SETTLE_TIMEOUT");
+    bytes32 private constant KEY_PLATFORM_FEE_BPS = keccak256("PLATFORM_FEE_BPS");
 
     // ─── Configurable Constants ─────────────────────────────────────────
     uint256 public FIRST_SIGN_CAP = 1_000_000;
@@ -87,9 +97,7 @@ contract AntseedSessions is EIP712, Pausable {
     IAntseedIdentity public identityContract;
     IAntseedStaking public stakingContract;
     IAntseedEmissions public emissionsContract;
-    address public owner;
     address public protocolReserve;
-    bool private _locked;
 
     mapping(bytes32 => Session) public sessions;
     mapping(address => mapping(address => bytes32)) public latestSessionId;
@@ -102,7 +110,6 @@ contract AntseedSessions is EIP712, Pausable {
     event ConstantUpdated(bytes32 indexed key, uint256 value);
 
     // ─── Custom Errors ──────────────────────────────────────────────────
-    error NotOwner();
     error InvalidAddress();
     error InvalidAmount();
     error InvalidSession();
@@ -112,33 +119,21 @@ contract AntseedSessions is EIP712, Pausable {
     error SessionExpired();
     error InsufficientBalance();
     error NotAuthorized();
-    error Reentrancy();
     error TimeoutNotReached();
     error InvalidFee();
     error FirstSignCapExceeded();
     error CooldownNotElapsed();
     error InvalidProofChain();
 
-    // ─── Modifiers ──────────────────────────────────────────────────────
-    modifier onlyOwner() {
-        if (msg.sender != owner) revert NotOwner();
-        _;
-    }
-
-    modifier nonReentrant() {
-        if (_locked) revert Reentrancy();
-        _locked = true;
-        _;
-        _locked = false;
-    }
-
     // ─── Constructor ────────────────────────────────────────────────────
-    constructor(address _deposits, address _identity, address _staking) EIP712("AntseedSessions", "1") {
+    constructor(address _deposits, address _identity, address _staking)
+        EIP712("AntseedSessions", "1")
+        Ownable(msg.sender)
+    {
         if (_deposits == address(0) || _identity == address(0) || _staking == address(0)) revert InvalidAddress();
         depositsContract = IAntseedDeposits(_deposits);
         identityContract = IAntseedIdentity(_identity);
         stakingContract = IAntseedStaking(_staking);
-        owner = msg.sender;
     }
 
     // ─── Domain Separator Helper ────────────────────────────────────────
@@ -323,7 +318,7 @@ contract AntseedSessions is EIP712, Pausable {
     function settleTimeout(bytes32 sessionId) external nonReentrant {
         Session storage session = sessions[sessionId];
         if (session.status != SessionStatus.Reserved) revert SessionNotReserved();
-        if (msg.sender != session.buyer && msg.sender != session.seller && msg.sender != owner) revert NotAuthorized();
+        if (msg.sender != session.buyer && msg.sender != session.seller && msg.sender != owner()) revert NotAuthorized();
         if (block.timestamp < session.reservedAt + SETTLE_TIMEOUT && block.timestamp <= session.deadline) revert TimeoutNotReached();
 
         // Return credits via Deposits
@@ -373,29 +368,24 @@ contract AntseedSessions is EIP712, Pausable {
     }
 
     function setConstant(bytes32 key, uint256 value) external onlyOwner {
-        if (key == keccak256("FIRST_SIGN_CAP")) FIRST_SIGN_CAP = value;
-        else if (key == keccak256("MIN_TOKEN_THRESHOLD")) MIN_TOKEN_THRESHOLD = value;
-        else if (key == keccak256("BUYER_DIVERSITY_THRESHOLD")) BUYER_DIVERSITY_THRESHOLD = value;
-        else if (key == keccak256("PROVEN_SIGN_COOLDOWN")) {
+        if (key == KEY_FIRST_SIGN_CAP) FIRST_SIGN_CAP = value;
+        else if (key == KEY_MIN_TOKEN_THRESHOLD) MIN_TOKEN_THRESHOLD = value;
+        else if (key == KEY_BUYER_DIVERSITY_THRESHOLD) BUYER_DIVERSITY_THRESHOLD = value;
+        else if (key == KEY_PROVEN_SIGN_COOLDOWN) {
             if (value < 1 days) revert InvalidAmount();
             PROVEN_SIGN_COOLDOWN = value;
         }
-        else if (key == keccak256("SETTLE_TIMEOUT")) {
+        else if (key == KEY_SETTLE_TIMEOUT) {
             if (value < 1 hours) revert InvalidAmount();
             SETTLE_TIMEOUT = value;
         }
-        else if (key == keccak256("PLATFORM_FEE_BPS")) {
+        else if (key == KEY_PLATFORM_FEE_BPS) {
             if (value > MAX_PLATFORM_FEE_BPS) revert InvalidFee();
             PLATFORM_FEE_BPS = value;
         }
         else revert InvalidAmount();
 
         emit ConstantUpdated(key, value);
-    }
-
-    function transferOwnership(address newOwner) external onlyOwner {
-        if (newOwner == address(0)) revert InvalidAddress();
-        owner = newOwner;
     }
 
     function pause() external onlyOwner {

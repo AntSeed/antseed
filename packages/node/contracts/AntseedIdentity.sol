@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
 
 interface IAntseedStakingForIdentity {
     function getStake(address seller) external view returns (uint256);
@@ -13,9 +14,8 @@ interface IAntseedStakingForIdentity {
  * @notice Peer identity NFTs with reputation and feedback (ERC-8004).
  *         Stable contract. Staking lives in AntseedStaking, sessions in AntseedSessions.
  */
-contract AntseedIdentity is ERC721, ERC721URIStorage {
+contract AntseedIdentity is ERC721, ERC721URIStorage, Ownable {
     // ─── Core State ─────────────────────────────────────────────────────
-    address public owner;
     address public sessionsContract;
     address public stakingContract;
     uint256 private _nextTokenId;
@@ -66,7 +66,6 @@ contract AntseedIdentity is ERC721, ERC721URIStorage {
     }
 
     // ─── Errors ─────────────────────────────────────────────────────────
-    error NotOwner();
     error NotAuthorized();
     error InvalidAddress();
     error InvalidToken();
@@ -84,19 +83,11 @@ contract AntseedIdentity is ERC721, ERC721URIStorage {
     event PeerDeregistered(uint256 indexed tokenId, address indexed peer);
     event SessionsContractSet(address indexed sessionsContract);
     event StakingContractSet(address indexed stakingContract);
-    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
     event FeedbackGiven(uint256 indexed agentId, address indexed client, int128 value, bytes32 indexed tag);
     event FeedbackRevoked(uint256 indexed agentId, address indexed client, uint256 index);
 
-    // ─── Modifiers ──────────────────────────────────────────────────────
-    modifier onlyOwner() {
-        if (msg.sender != owner) revert NotOwner();
-        _;
-    }
-
     // ─── Constructor ────────────────────────────────────────────────────
-    constructor() ERC721("AntseedIdentity", "ANTID") {
-        owner = msg.sender;
+    constructor() ERC721("AntseedIdentity", "ANTID") Ownable(msg.sender) {
         _nextTokenId = 1;
     }
 
@@ -289,10 +280,4 @@ contract AntseedIdentity is ERC721, ERC721URIStorage {
         emit StakingContractSet(_staking);
     }
 
-    function transferOwnership(address newOwner) external {
-        if (msg.sender != owner) revert NotOwner();
-        if (newOwner == address(0)) revert InvalidAddress();
-        emit OwnershipTransferred(owner, newOwner);
-        owner = newOwner;
-    }
 }

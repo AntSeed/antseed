@@ -118,7 +118,7 @@ contract AntseedIdentityTest is Test {
 
     function test_setSessionsContract_revert_notOwner() public {
         vm.prank(peer1);
-        vm.expectRevert(AntseedIdentity.NotOwner.selector);
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", peer1));
         identity.setSessionsContract(address(0x99));
     }
 

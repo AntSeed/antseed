@@ -1,23 +1,33 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-interface IERC20 {
-    function transferFrom(address from, address to, uint256 value) external returns (bool);
-    function transfer(address to, uint256 value) external returns (bool);
-    function balanceOf(address account) external view returns (uint256);
-}
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /**
  * @title AntseedDeposits
  * @notice Buyer USDC custody with credit limits, withdrawal timelocks, and seller earnings.
  *         Stable contract — holds funds. Session logic lives in AntseedSessions (swappable).
  */
-contract AntseedDeposits {
+contract AntseedDeposits is Ownable, ReentrancyGuard {
+    using SafeERC20 for IERC20;
+
     // ─── State ───────────────────────────────────────────────────────────
     IERC20 public immutable usdc;
-    address public owner;
     address public sessionsContract;
-    bool private _locked;
+
+    // ─── Constant Keys ───────────────────────────────────────────────────
+    bytes32 private constant KEY_MIN_BUYER_DEPOSIT = keccak256("MIN_BUYER_DEPOSIT");
+    bytes32 private constant KEY_WITHDRAWAL_DELAY = keccak256("WITHDRAWAL_DELAY");
+    bytes32 private constant KEY_BUYER_INACTIVITY_PERIOD = keccak256("BUYER_INACTIVITY_PERIOD");
+    bytes32 private constant KEY_BASE_CREDIT_LIMIT = keccak256("BASE_CREDIT_LIMIT");
+    bytes32 private constant KEY_PEER_INTERACTION_BONUS = keccak256("PEER_INTERACTION_BONUS");
+    bytes32 private constant KEY_TIME_BONUS = keccak256("TIME_BONUS");
+    bytes32 private constant KEY_PROVEN_SESSION_BONUS = keccak256("PROVEN_SESSION_BONUS");
+    bytes32 private constant KEY_FEEDBACK_BONUS = keccak256("FEEDBACK_BONUS");
+    bytes32 private constant KEY_MAX_CREDIT_LIMIT = keccak256("MAX_CREDIT_LIMIT");
 
     // ─── Configurable Constants ─────────────────────────────────────────
     uint256 public MIN_BUYER_DEPOSIT = 10_000_000;
@@ -58,7 +68,6 @@ contract AntseedDeposits {
     event ConstantUpdated(bytes32 indexed key, uint256 value);
 
     // ─── Custom Errors ──────────────────────────────────────────────────
-    error NotOwner();
     error NotAuthorized();
     error InvalidAmount();
     error InvalidAddress();
@@ -66,32 +75,17 @@ contract AntseedDeposits {
     error TimeoutNotReached();
     error BelowMinDeposit();
     error CreditLimitExceeded();
-    error TransferFailed();
-    error Reentrancy();
 
     // ─── Modifiers ──────────────────────────────────────────────────────
-    modifier onlyOwner() {
-        if (msg.sender != owner) revert NotOwner();
-        _;
-    }
-
     modifier onlySessions() {
         if (msg.sender != sessionsContract) revert NotAuthorized();
         _;
     }
 
-    modifier nonReentrant() {
-        if (_locked) revert Reentrancy();
-        _locked = true;
-        _;
-        _locked = false;
-    }
-
     // ─── Constructor ────────────────────────────────────────────────────
-    constructor(address _usdc) {
+    constructor(address _usdc) Ownable(msg.sender) {
         if (_usdc == address(0)) revert InvalidAddress();
         usdc = IERC20(_usdc);
-        owner = msg.sender;
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -127,7 +121,7 @@ contract AntseedDeposits {
         uint256 creditLimit = getBuyerCreditLimit(msg.sender);
         if (ba.balance + amount > creditLimit) revert CreditLimitExceeded();
 
-        _safeTransferFrom(msg.sender, address(this), amount);
+        usdc.safeTransferFrom(msg.sender, address(this), amount);
         ba.balance += amount;
         ba.lastActivityAt = block.timestamp;
 
@@ -140,7 +134,7 @@ contract AntseedDeposits {
         if (ba.balance == 0 && amount < MIN_BUYER_DEPOSIT) revert BelowMinDeposit();
         if (ba.balance + amount > getBuyerCreditLimit(buyer)) revert CreditLimitExceeded();
 
-        _safeTransferFrom(msg.sender, address(this), amount);
+        usdc.safeTransferFrom(msg.sender, address(this), amount);
         ba.balance += amount;
         ba.lastActivityAt = block.timestamp;
 
@@ -171,7 +165,7 @@ contract AntseedDeposits {
         ba.withdrawalRequestedAt = 0;
         ba.balance -= amount;
 
-        _safeTransfer(msg.sender, amount);
+        usdc.safeTransfer(msg.sender, amount);
 
         emit WithdrawalExecuted(msg.sender, amount);
     }
@@ -206,7 +200,7 @@ contract AntseedDeposits {
         if (amount == 0) revert InvalidAmount();
 
         sellerEarnings[msg.sender] = 0;
-        _safeTransfer(msg.sender, amount);
+        usdc.safeTransfer(msg.sender, amount);
 
         emit EarningsClaimed(msg.sender, amount);
     }
@@ -260,34 +254,12 @@ contract AntseedDeposits {
         }
 
         if (platformFee > 0 && protocolReserve != address(0)) {
-            _safeTransfer(protocolReserve, platformFee);
+            usdc.safeTransfer(protocolReserve, platformFee);
         }
     }
 
     function releaseLock(address buyer, uint256 amount) external onlySessions {
         buyers[buyer].reserved -= amount;
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    //                        INTERNAL HELPERS
-    // ═══════════════════════════════════════════════════════════════════
-
-    function _safeTransferFrom(address from, address to, uint256 value) private {
-        (bool ok, bytes memory ret) = address(usdc).call(
-            abi.encodeWithSelector(IERC20.transferFrom.selector, from, to, value)
-        );
-        if (!ok || (ret.length > 0 && !abi.decode(ret, (bool)))) {
-            revert TransferFailed();
-        }
-    }
-
-    function _safeTransfer(address to, uint256 value) private {
-        (bool ok, bytes memory ret) = address(usdc).call(
-            abi.encodeWithSelector(IERC20.transfer.selector, to, value)
-        );
-        if (!ok || (ret.length > 0 && !abi.decode(ret, (bool)))) {
-            revert TransferFailed();
-        }
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -304,28 +276,23 @@ contract AntseedDeposits {
     }
 
     function setConstant(bytes32 key, uint256 value) external onlyOwner {
-        if (key == keccak256("MIN_BUYER_DEPOSIT")) MIN_BUYER_DEPOSIT = value;
-        else if (key == keccak256("WITHDRAWAL_DELAY")) {
+        if (key == KEY_MIN_BUYER_DEPOSIT) MIN_BUYER_DEPOSIT = value;
+        else if (key == KEY_WITHDRAWAL_DELAY) {
             if (value < 1 hours) revert InvalidAmount();
             WITHDRAWAL_DELAY = value;
         }
-        else if (key == keccak256("BUYER_INACTIVITY_PERIOD")) {
+        else if (key == KEY_BUYER_INACTIVITY_PERIOD) {
             if (value < 1 days) revert InvalidAmount();
             BUYER_INACTIVITY_PERIOD = value;
         }
-        else if (key == keccak256("BASE_CREDIT_LIMIT")) BASE_CREDIT_LIMIT = value;
-        else if (key == keccak256("PEER_INTERACTION_BONUS")) PEER_INTERACTION_BONUS = value;
-        else if (key == keccak256("TIME_BONUS")) TIME_BONUS = value;
-        else if (key == keccak256("PROVEN_SESSION_BONUS")) PROVEN_SESSION_BONUS = value;
-        else if (key == keccak256("FEEDBACK_BONUS")) FEEDBACK_BONUS = value;
-        else if (key == keccak256("MAX_CREDIT_LIMIT")) MAX_CREDIT_LIMIT = value;
+        else if (key == KEY_BASE_CREDIT_LIMIT) BASE_CREDIT_LIMIT = value;
+        else if (key == KEY_PEER_INTERACTION_BONUS) PEER_INTERACTION_BONUS = value;
+        else if (key == KEY_TIME_BONUS) TIME_BONUS = value;
+        else if (key == KEY_PROVEN_SESSION_BONUS) PROVEN_SESSION_BONUS = value;
+        else if (key == KEY_FEEDBACK_BONUS) FEEDBACK_BONUS = value;
+        else if (key == KEY_MAX_CREDIT_LIMIT) MAX_CREDIT_LIMIT = value;
         else revert InvalidAmount();
 
         emit ConstantUpdated(key, value);
-    }
-
-    function transferOwnership(address newOwner) external onlyOwner {
-        if (newOwner == address(0)) revert InvalidAddress();
-        owner = newOwner;
     }
 }

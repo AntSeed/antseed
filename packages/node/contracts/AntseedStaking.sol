@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-interface IERC20 {
-    function transferFrom(address from, address to, uint256 value) external returns (bool);
-    function transfer(address to, uint256 value) external returns (bool);
-}
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 interface IAntseedIdentityForStaking {
     function isRegistered(address addr) external view returns (bool);
@@ -26,14 +26,14 @@ interface IAntseedIdentityForStaking {
  * @notice Seller staking, token rates, active session tracking, and slashing.
  *         Stable contract — holds seller stake USDC. Reads reputation from AntseedIdentity.
  */
-contract AntseedStaking {
+contract AntseedStaking is Ownable, ReentrancyGuard {
+    using SafeERC20 for IERC20;
+
     // ─── State ───────────────────────────────────────────────────────────
     IERC20 public immutable usdc;
     IAntseedIdentityForStaking public identityContract;
-    address public owner;
     address public sessionsContract;
     address public protocolReserve;
-    bool private _locked;
 
     // ─── Structs ────────────────────────────────────────────────────────
     struct SellerAccount {
@@ -53,46 +53,37 @@ contract AntseedStaking {
     uint256 public SLASH_GHOST_THRESHOLD = 5;
     uint256 public SLASH_INACTIVITY_DAYS = 30 days;
 
+    // ─── Constant Keys ──────────────────────────────────────────────────
+    bytes32 private constant KEY_MIN_SELLER_STAKE = keccak256("MIN_SELLER_STAKE");
+    bytes32 private constant KEY_REPUTATION_CAP_COEFFICIENT = keccak256("REPUTATION_CAP_COEFFICIENT");
+    bytes32 private constant KEY_SLASH_RATIO_THRESHOLD = keccak256("SLASH_RATIO_THRESHOLD");
+    bytes32 private constant KEY_SLASH_GHOST_THRESHOLD = keccak256("SLASH_GHOST_THRESHOLD");
+    bytes32 private constant KEY_SLASH_INACTIVITY_DAYS = keccak256("SLASH_INACTIVITY_DAYS");
+
     // ─── Events ─────────────────────────────────────────────────────────
     event Staked(address indexed seller, uint256 amount);
     event Unstaked(address indexed seller, uint256 amount, uint256 slashed);
     event ConstantUpdated(bytes32 indexed key, uint256 value);
 
     // ─── Custom Errors ──────────────────────────────────────────────────
-    error NotOwner();
     error NotAuthorized();
     error InvalidAmount();
     error InvalidAddress();
     error InsufficientStake();
     error NotRegistered();
     error ActiveSessions();
-    error TransferFailed();
-    error Reentrancy();
 
     // ─── Modifiers ──────────────────────────────────────────────────────
-    modifier onlyOwner() {
-        if (msg.sender != owner) revert NotOwner();
-        _;
-    }
-
     modifier onlySessions() {
         if (msg.sender != sessionsContract) revert NotAuthorized();
         _;
     }
 
-    modifier nonReentrant() {
-        if (_locked) revert Reentrancy();
-        _locked = true;
-        _;
-        _locked = false;
-    }
-
     // ─── Constructor ────────────────────────────────────────────────────
-    constructor(address _usdc, address _identity) {
+    constructor(address _usdc, address _identity) Ownable(msg.sender) {
         if (_usdc == address(0) || _identity == address(0)) revert InvalidAddress();
         usdc = IERC20(_usdc);
         identityContract = IAntseedIdentityForStaking(_identity);
-        owner = msg.sender;
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -103,7 +94,7 @@ contract AntseedStaking {
         if (amount == 0) revert InvalidAmount();
         if (!identityContract.isRegistered(msg.sender)) revert NotRegistered();
 
-        _safeTransferFrom(msg.sender, address(this), amount);
+        usdc.safeTransferFrom(msg.sender, address(this), amount);
 
         SellerAccount storage sa = sellers[msg.sender];
         sa.stake += amount;
@@ -132,10 +123,10 @@ contract AntseedStaking {
         sa.stakedAt = 0;
 
         if (payout > 0) {
-            _safeTransfer(msg.sender, payout);
+            usdc.safeTransfer(msg.sender, payout);
         }
         if (slashAmount > 0 && protocolReserve != address(0)) {
-            _safeTransfer(protocolReserve, slashAmount);
+            usdc.safeTransfer(protocolReserve, slashAmount);
         }
 
         emit Unstaked(msg.sender, stakeAmount, slashAmount);
@@ -227,24 +218,6 @@ contract AntseedStaking {
         return 0;
     }
 
-    function _safeTransferFrom(address from, address to, uint256 value) private {
-        (bool ok, bytes memory ret) = address(usdc).call(
-            abi.encodeWithSelector(IERC20.transferFrom.selector, from, to, value)
-        );
-        if (!ok || (ret.length > 0 && !abi.decode(ret, (bool)))) {
-            revert TransferFailed();
-        }
-    }
-
-    function _safeTransfer(address to, uint256 value) private {
-        (bool ok, bytes memory ret) = address(usdc).call(
-            abi.encodeWithSelector(IERC20.transfer.selector, to, value)
-        );
-        if (!ok || (ret.length > 0 && !abi.decode(ret, (bool)))) {
-            revert TransferFailed();
-        }
-    }
-
     // ═══════════════════════════════════════════════════════════════════
     //                        ADMIN
     // ═══════════════════════════════════════════════════════════════════
@@ -265,21 +238,16 @@ contract AntseedStaking {
     }
 
     function setConstant(bytes32 key, uint256 value) external onlyOwner {
-        if (key == keccak256("MIN_SELLER_STAKE")) MIN_SELLER_STAKE = value;
-        else if (key == keccak256("REPUTATION_CAP_COEFFICIENT")) REPUTATION_CAP_COEFFICIENT = value;
-        else if (key == keccak256("SLASH_RATIO_THRESHOLD")) SLASH_RATIO_THRESHOLD = value;
-        else if (key == keccak256("SLASH_GHOST_THRESHOLD")) SLASH_GHOST_THRESHOLD = value;
-        else if (key == keccak256("SLASH_INACTIVITY_DAYS")) {
+        if (key == KEY_MIN_SELLER_STAKE) MIN_SELLER_STAKE = value;
+        else if (key == KEY_REPUTATION_CAP_COEFFICIENT) REPUTATION_CAP_COEFFICIENT = value;
+        else if (key == KEY_SLASH_RATIO_THRESHOLD) SLASH_RATIO_THRESHOLD = value;
+        else if (key == KEY_SLASH_GHOST_THRESHOLD) SLASH_GHOST_THRESHOLD = value;
+        else if (key == KEY_SLASH_INACTIVITY_DAYS) {
             if (value < 1 days) revert InvalidAmount();
             SLASH_INACTIVITY_DAYS = value;
         }
         else revert InvalidAmount();
 
         emit ConstantUpdated(key, value);
-    }
-
-    function transferOwnership(address newOwner) external onlyOwner {
-        if (newOwner == address(0)) revert InvalidAddress();
-        owner = newOwner;
     }
 }
