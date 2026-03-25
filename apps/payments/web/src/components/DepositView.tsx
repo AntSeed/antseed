@@ -15,7 +15,7 @@ interface DepositViewProps {
   onDeposited: () => void;
 }
 
-const ESCROW_ABI = [
+const DEPOSITS_ABI = [
   {
     name: 'depositFor',
     type: 'function',
@@ -129,7 +129,7 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
       const usdcAmount = parseUnits(amount, 6);
       writeDeposit({
         address: config.depositsContractAddress as `0x${string}`,
-        abi: ESCROW_ABI,
+        abi: DEPOSITS_ABI,
         functionName: 'depositFor',
         args: [depositTarget as `0x${string}`, usdcAmount],
       }, {
