@@ -25,6 +25,9 @@ interface IAntseedIdentity {
     function updateReputation(uint256 tokenId, ReputationUpdate calldata update) external;
     function getTokenId(address addr) external view returns (uint256);
     function isRegistered(address addr) external view returns (bool);
+}
+
+interface IAntseedStaking {
     function getStake(address seller) external view returns (uint256);
     function getTokenRate(address seller) external view returns (uint256);
     function isStakedAboveMin(address seller) external view returns (bool);
@@ -82,6 +85,7 @@ contract AntseedSessions is EIP712, Pausable {
     // ─── State Variables ────────────────────────────────────────────────
     IAntseedDeposits public depositsContract;
     IAntseedIdentity public identityContract;
+    IAntseedStaking public stakingContract;
     IAntseedEmissions public emissionsContract;
     address public owner;
     address public protocolReserve;
@@ -129,10 +133,11 @@ contract AntseedSessions is EIP712, Pausable {
     }
 
     // ─── Constructor ────────────────────────────────────────────────────
-    constructor(address _deposits, address _identity) EIP712("AntseedSessions", "1") {
-        if (_deposits == address(0) || _identity == address(0)) revert InvalidAddress();
+    constructor(address _deposits, address _identity, address _staking) EIP712("AntseedSessions", "1") {
+        if (_deposits == address(0) || _identity == address(0) || _staking == address(0)) revert InvalidAddress();
         depositsContract = IAntseedDeposits(_deposits);
         identityContract = IAntseedIdentity(_identity);
+        stakingContract = IAntseedStaking(_staking);
         owner = msg.sender;
     }
 
@@ -159,8 +164,8 @@ contract AntseedSessions is EIP712, Pausable {
         if (sessions[sessionId].status != SessionStatus.None) revert SessionExists();
         if (block.timestamp > deadline) revert SessionExpired();
         if (deadline < block.timestamp + SETTLE_TIMEOUT) revert SessionExpired();
-        if (!identityContract.isStakedAboveMin(msg.sender)) revert InsufficientBalance();
-        uint256 tokenRate = identityContract.getTokenRate(msg.sender);
+        if (!stakingContract.isStakedAboveMin(msg.sender)) revert InsufficientBalance();
+        uint256 tokenRate = stakingContract.getTokenRate(msg.sender);
         if (tokenRate == 0) revert InvalidAmount();
 
         // EIP-712 signature verification
@@ -230,7 +235,7 @@ contract AntseedSessions is EIP712, Pausable {
         });
 
         latestSessionId[buyer][msg.sender] = sessionId;
-        identityContract.incrementActiveSessions(msg.sender);
+        stakingContract.incrementActiveSessions(msg.sender);
 
         // Update reputation
         uint256 sellerTokenId = identityContract.getTokenId(msg.sender);
@@ -304,7 +309,7 @@ contract AntseedSessions is EIP712, Pausable {
         session.settledAmount = chargeAmount;
         session.settledTokenCount = effectiveTokenCount;
         session.status = SessionStatus.Settled;
-        identityContract.decrementActiveSessions(msg.sender);
+        stakingContract.decrementActiveSessions(msg.sender);
 
         // Accrue emission points
         if (address(emissionsContract) != address(0)) {
@@ -339,7 +344,7 @@ contract AntseedSessions is EIP712, Pausable {
         }
 
         session.status = SessionStatus.TimedOut;
-        identityContract.decrementActiveSessions(session.seller);
+        stakingContract.decrementActiveSessions(session.seller);
 
         emit SettledTimeout(sessionId, session.buyer, session.seller);
     }
@@ -356,6 +361,11 @@ contract AntseedSessions is EIP712, Pausable {
     function setIdentityContract(address _identity) external onlyOwner {
         if (_identity == address(0)) revert InvalidAddress();
         identityContract = IAntseedIdentity(_identity);
+    }
+
+    function setStakingContract(address _staking) external onlyOwner {
+        if (_staking == address(0)) revert InvalidAddress();
+        stakingContract = IAntseedStaking(_staking);
     }
 
     function setEmissionsContract(address _emissions) external onlyOwner {

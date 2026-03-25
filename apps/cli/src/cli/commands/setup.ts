@@ -8,6 +8,7 @@ import { checkSellerReadiness, checkBuyerReadiness } from '@antseed/node/payment
 import {
   createDepositsClient,
   createIdentityClient,
+  createStakingClient,
 } from '../payment-utils.js';
 
 export function registerSetupCommand(program: Command): void {
@@ -39,7 +40,8 @@ export function registerSetupCommand(program: Command): void {
 
         if (role === 'provider') {
           const identityClient = createIdentityClient(config);
-          const checks = await checkSellerReadiness(identity, identityClient);
+          const stakingClient = createStakingClient(config);
+          const checks = await checkSellerReadiness(identity, identityClient, stakingClient);
           spinner.stop();
 
           console.log(chalk.bold('Provider Readiness:\n'));

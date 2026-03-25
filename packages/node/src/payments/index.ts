@@ -24,9 +24,13 @@ export type { DepositsClientConfig, BuyerBalanceInfo } from './evm/deposits-clie
 export { SessionsClient } from './evm/sessions-client.js';
 export type { SessionsClientConfig, SessionInfo } from './evm/sessions-client.js';
 
-// Identity client (registration, reputation, staking)
+// Identity client (registration, reputation)
 export { IdentityClient } from './evm/identity-client.js';
-export type { IdentityClientConfig, ProvenReputation, FeedbackSummary, SellerAccountInfo } from './evm/identity-client.js';
+export type { IdentityClientConfig, ProvenReputation, FeedbackSummary } from './evm/identity-client.js';
+
+// Staking client (seller staking, token rate, slashing)
+export { StakingClient } from './evm/staking-client.js';
+export type { StakingClientConfig, SellerAccountInfo } from './evm/staking-client.js';
 
 // EVM keypair utilities
 export { identityToEvmWallet, identityToEvmAddress } from './evm/keypair.js';

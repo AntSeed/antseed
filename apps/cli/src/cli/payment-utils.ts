@@ -2,6 +2,7 @@ import type { AntseedConfig } from '../config/types.js';
 import {
   DepositsClient,
   SessionsClient,
+  StakingClient,
   loadOrCreateIdentity,
   identityToEvmWallet,
   identityToEvmAddress,
@@ -101,6 +102,20 @@ export function createIdentityClient(config: AntseedConfig): IdentityClient {
   return new IdentityClient({
     rpcUrl: crypto.rpcUrl,
     contractAddress: crypto.identityContractAddress,
+  });
+}
+
+/**
+ * Create a StakingClient from the CLI config.
+ */
+export function createStakingClient(config: AntseedConfig): StakingClient {
+  const crypto = requireCryptoConfig(config);
+  if (!crypto.stakingContractAddress) {
+    throw new Error('No staking contract address configured. Set payments.crypto.stakingContractAddress in your config file.');
+  }
+  return new StakingClient({
+    rpcUrl: crypto.rpcUrl,
+    contractAddress: crypto.stakingContractAddress,
     usdcAddress: crypto.usdcContractAddress,
   });
 }

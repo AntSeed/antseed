@@ -7,7 +7,7 @@ import type {
   BuyerAckPayload,
 } from '../types/protocol.js';
 import { SessionsClient } from './evm/sessions-client.js';
-import { IdentityClient } from './evm/identity-client.js';
+import { StakingClient } from './evm/staking-client.js';
 import { identityToEvmWallet, identityToEvmAddress } from './evm/keypair.js';
 import {
   SPENDING_AUTH_TYPES,
@@ -24,7 +24,7 @@ import { SessionStore, type StoredSession } from './session-store.js';
 export interface SellerPaymentConfig {
   rpcUrl: string;
   sessionsContractAddress: string;
-  identityContractAddress: string;
+  stakingContractAddress: string;
   usdcAddress: string;
   chainId: number;
   dataDir: string;
@@ -47,7 +47,7 @@ export class SellerPaymentManager {
   private readonly _identity: Identity;
   private readonly _signer: AbstractSigner;
   private readonly _sessionsClient: SessionsClient;
-  private readonly _identityClient: IdentityClient;
+  private readonly _stakingClient: StakingClient;
   private readonly _config: SellerPaymentConfig;
   private readonly _sessionStore: SessionStore;
   /** In-memory cache of active buyer peerIds for fast has-session checks. */
@@ -69,9 +69,9 @@ export class SellerPaymentManager {
       rpcUrl: config.rpcUrl,
       contractAddress: config.sessionsContractAddress,
     });
-    this._identityClient = new IdentityClient({
+    this._stakingClient = new StakingClient({
       rpcUrl: config.rpcUrl,
-      contractAddress: config.identityContractAddress,
+      contractAddress: config.stakingContractAddress,
       usdcAddress: config.usdcAddress,
     });
     this._sessionStore = sessionStore;
@@ -87,8 +87,8 @@ export class SellerPaymentManager {
     return this._sessionsClient;
   }
 
-  get identityClient(): IdentityClient {
-    return this._identityClient;
+  get stakingClient(): StakingClient {
+    return this._stakingClient;
   }
 
   // ── SpendingAuth handler (settle-then-reserve) ────────────────
@@ -179,7 +179,7 @@ export class SellerPaymentManager {
       // 3. Fetch tokenRate BEFORE reserve so a failure here doesn't orphan
       //    an on-chain reservation the seller can't serve.
       const sellerEvmAddr = identityToEvmAddress(this._identity);
-      const account = await this._identityClient.getSellerAccount(sellerEvmAddr);
+      const account = await this._stakingClient.getSellerAccount(sellerEvmAddr);
       this._tokenRate = account.tokenRate;
       if (this._tokenRate === 0n) {
         throw new Error('Token rate is 0 — set rate with antseed setTokenRate before serving');
@@ -426,7 +426,7 @@ export class SellerPaymentManager {
     try {
       const sellerEvmAddr = identityToEvmAddress(this._identity);
       const [account, firstSignCap] = await Promise.all([
-        this._identityClient.getSellerAccount(sellerEvmAddr),
+        this._stakingClient.getSellerAccount(sellerEvmAddr),
         this._sessionsClient.getFirstSignCap(),
       ]);
       this._tokenRate = account.tokenRate;

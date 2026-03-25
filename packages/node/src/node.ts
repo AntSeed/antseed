@@ -61,6 +61,7 @@ import {
   type PaymentMethod,
   DepositsClient,
   SessionsClient,
+  StakingClient,
   SessionStore,
 } from "./payments/index.js";
 import { parseJsonObject, extractUsage } from "@antseed/api-adapter";
@@ -139,6 +140,8 @@ export interface NodePaymentsConfig {
   usdcAddress?: string;
   /** AntseedIdentity contract address */
   identityAddress?: string;
+  /** AntseedStaking contract address */
+  stakingAddress?: string;
   /** Chain ID for EIP-712 domain. Default: 8453 (Base) */
   chainId?: number;
   /** Default maximum USDC per spending auth. Default: 1000000 (1 USDC) */
@@ -248,6 +251,7 @@ export class AntseedNode extends EventEmitter {
   private _balanceManager: BalanceManager | null = null;
   private _depositsClient: DepositsClient | null = null;
   private _sessionsClient: SessionsClient | null = null;
+  private _stakingClient: StakingClient | null = null;
   private _identityClient: IdentityClient | null = null;
   private _paymentMuxes = new Map<PeerId, PaymentMux>();
   private _providerLoadCounts = new Map<string, number>();
@@ -480,6 +484,7 @@ export class AntseedNode extends EventEmitter {
     this._balanceManager = null;
     this._depositsClient = null;
     this._sessionsClient = null;
+    this._stakingClient = null;
     this._identityClient = null;
     this._buyerPaymentManager = null;
     this._sellerPaymentManager = null;
@@ -1090,6 +1095,7 @@ export class AntseedNode extends EventEmitter {
         reannounceIntervalMs: DEFAULT_DHT_CONFIG.reannounceIntervalMs,
         signalingPort: actualSignalingPort,
         ...(this._identityClient ? { identityClient: this._identityClient } : {}),
+        ...(this._stakingClient ? { paymentsEnabled: true } : {}),
       };
       this._announcer = new PeerAnnouncer(announcerConfig);
       this._announcer.startPeriodicAnnounce();
@@ -1640,12 +1646,21 @@ export class AntseedNode extends EventEmitter {
       debugLog(`[Node] SessionsClient initialized (contract=${payments.sessionsAddress.slice(0, 10)}...)`);
     }
 
-    // Initialize IdentityClient if identity contract address is provided
+    // Initialize StakingClient
+    if (payments.rpcUrl && payments.stakingAddress && payments.usdcAddress) {
+      this._stakingClient = new StakingClient({
+        rpcUrl: payments.rpcUrl,
+        contractAddress: payments.stakingAddress,
+        usdcAddress: payments.usdcAddress,
+      });
+      debugLog(`[Node] StakingClient initialized (contract=${payments.stakingAddress.slice(0, 10)}...)`);
+    }
+
+    // Initialize IdentityClient
     if (payments.rpcUrl && payments.identityAddress) {
       this._identityClient = new IdentityClient({
         rpcUrl: payments.rpcUrl,
         contractAddress: payments.identityAddress,
-        usdcAddress: payments.usdcAddress,
       });
       debugLog(`[Node] IdentityClient initialized (contract=${payments.identityAddress.slice(0, 10)}...)`);
     }
@@ -1663,11 +1678,11 @@ export class AntseedNode extends EventEmitter {
 
     // Initialize SellerPaymentManager for seller role
     if (this._config.role === 'seller' && this._identity && this._sessionStore &&
-        payments.rpcUrl && payments.sessionsAddress && payments.identityAddress && payments.usdcAddress) {
+        payments.rpcUrl && payments.sessionsAddress && payments.stakingAddress && payments.usdcAddress) {
       const sellerConfig: SellerPaymentConfig = {
         rpcUrl: payments.rpcUrl,
         sessionsContractAddress: payments.sessionsAddress,
-        identityContractAddress: payments.identityAddress,
+        stakingContractAddress: payments.stakingAddress,
         usdcAddress: payments.usdcAddress,
         chainId: payments.chainId ?? 8453,
         dataDir: paymentsDir,

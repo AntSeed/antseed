@@ -3,10 +3,12 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
 import "../AntseedIdentity.sol";
+import "../AntseedStaking.sol";
 import "../MockUSDC.sol";
 
 contract AntseedIdentityTest is Test {
     AntseedIdentity public identity;
+    AntseedStaking public staking;
     MockUSDC public usdc;
     address public owner;
     address public peer1 = address(0x1);
@@ -18,7 +20,9 @@ contract AntseedIdentityTest is Test {
     function setUp() public {
         owner = address(this);
         usdc = new MockUSDC();
-        identity = new AntseedIdentity(address(usdc));
+        identity = new AntseedIdentity();
+        staking = new AntseedStaking(address(usdc), address(identity));
+        identity.setStakingContract(address(staking));
     }
 
     function test_register() public {
@@ -152,8 +156,8 @@ contract AntseedIdentityTest is Test {
         uint256 tokenId = identity.register(peerId1, "ipfs://meta1");
 
         vm.startPrank(peer1);
-        usdc.approve(address(identity), stakeAmount);
-        identity.stake(stakeAmount);
+        usdc.approve(address(staking), stakeAmount);
+        staking.stake(stakeAmount);
         vm.stopPrank();
 
         vm.prank(peer1);
@@ -170,9 +174,9 @@ contract AntseedIdentityTest is Test {
 
         // Stake then unstake
         vm.startPrank(peer1);
-        usdc.approve(address(identity), stakeAmount);
-        identity.stake(stakeAmount);
-        identity.unstake();
+        usdc.approve(address(staking), stakeAmount);
+        staking.stake(stakeAmount);
+        staking.unstake();
         vm.stopPrank();
 
         // Now deregister should succeed
@@ -189,11 +193,11 @@ contract AntseedIdentityTest is Test {
         identity.register(peerId1, "ipfs://meta1");
 
         vm.startPrank(peer1);
-        usdc.approve(address(identity), stakeAmount);
-        identity.stake(stakeAmount);
+        usdc.approve(address(staking), stakeAmount);
+        staking.stake(stakeAmount);
         vm.stopPrank();
 
-        (uint256 stake,,) = identity.getSellerAccount(peer1);
+        (uint256 stake,,) = staking.getSellerAccount(peer1);
         assertEq(stake, stakeAmount);
     }
 
@@ -202,9 +206,9 @@ contract AntseedIdentityTest is Test {
         usdc.mint(peer1, stakeAmount);
 
         vm.startPrank(peer1);
-        usdc.approve(address(identity), stakeAmount);
-        vm.expectRevert(AntseedIdentity.NotRegistered.selector);
-        identity.stake(stakeAmount);
+        usdc.approve(address(staking), stakeAmount);
+        vm.expectRevert(AntseedStaking.NotRegistered.selector);
+        staking.stake(stakeAmount);
         vm.stopPrank();
     }
 
@@ -216,11 +220,11 @@ contract AntseedIdentityTest is Test {
         identity.register(peerId1, "ipfs://meta1");
 
         vm.startPrank(peer1);
-        usdc.approve(address(identity), stakeAmount);
-        identity.stake(stakeAmount);
-        identity.setTokenRate(100);
+        usdc.approve(address(staking), stakeAmount);
+        staking.stake(stakeAmount);
+        staking.setTokenRate(100);
         vm.stopPrank();
 
-        assertEq(identity.getTokenRate(peer1), 100);
+        assertEq(staking.getTokenRate(peer1), 100);
     }
 }

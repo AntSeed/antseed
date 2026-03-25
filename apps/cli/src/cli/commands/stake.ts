@@ -4,7 +4,7 @@ import ora from 'ora';
 import { getGlobalOptions } from './types.js';
 import { loadConfig } from '../../config/loader.js';
 import {
-  createIdentityClient,
+  createStakingClient,
   loadCryptoContext,
   formatUsdc,
   parseUsdcToBaseUnits,
@@ -30,8 +30,8 @@ export function registerStakeCommand(program: Command): void {
 
       try {
         const { wallet, address } = await loadCryptoContext(globalOpts.dataDir);
-        const identityClient = createIdentityClient(config);
-        const isReg = await identityClient.isRegistered(address);
+        const stakingClient = createStakingClient(config);
+        const isReg = await stakingClient.isRegistered(address);
         if (!isReg) {
           spinner.fail(chalk.red('Not registered. Run: antseed register'));
           process.exit(1);
@@ -42,7 +42,7 @@ export function registerStakeCommand(program: Command): void {
         console.log(chalk.dim(`Amount: ${amountFloat} USDC (${amountBaseUnits} base units)`));
 
         spinner.text = 'Staking USDC...';
-        const txHash = await identityClient.stake(wallet, amountBaseUnits);
+        const txHash = await stakingClient.stake(wallet, amountBaseUnits);
         spinner.succeed(chalk.green(`Staked ${amountFloat} USDC`));
         console.log(chalk.dim(`Transaction: ${txHash}`));
       } catch (err) {
@@ -62,9 +62,9 @@ export function registerStakeCommand(program: Command): void {
 
       try {
         const { wallet, address } = await loadCryptoContext(globalOpts.dataDir);
-        const identityClient = createIdentityClient(config);
+        const stakingClient = createStakingClient(config);
         console.log(chalk.dim(`Wallet: ${address}`));
-        const account = await identityClient.getSellerAccount(address);
+        const account = await stakingClient.getSellerAccount(address);
         if (account.stake === 0n) {
           spinner.fail(chalk.yellow('No active stake to withdraw.'));
           return;
@@ -73,7 +73,7 @@ export function registerStakeCommand(program: Command): void {
         console.log(chalk.dim(`Current stake: ${formatUsdc(account.stake)} USDC`));
 
         spinner.text = 'Unstaking...';
-        const txHash = await identityClient.unstake(wallet);
+        const txHash = await stakingClient.unstake(wallet);
         spinner.succeed(chalk.green('Unstaked successfully'));
         console.log(chalk.dim(`Transaction: ${txHash}`));
       } catch (err) {

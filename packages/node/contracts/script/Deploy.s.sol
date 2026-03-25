@@ -18,6 +18,10 @@ interface ISetProtocolReserve {
     function setProtocolReserve(address) external;
 }
 
+interface ISetStaking {
+    function setStakingContract(address) external;
+}
+
 /**
  * @title Deploy
  * @notice Deploys the full AntSeed protocol to a local anvil chain.
@@ -47,11 +51,8 @@ contract Deploy is Script {
         require(usdc != address(0), "MockUSDC deploy failed");
         console.log("MockUSDC:           ", usdc);
 
-        // 2. AntseedIdentity(usdc)
-        bytes memory identityBytecode = abi.encodePacked(
-            vm.getCode("AntseedIdentity.sol:AntseedIdentity"),
-            abi.encode(usdc)
-        );
+        // 2. AntseedIdentity (no constructor args)
+        bytes memory identityBytecode = vm.getCode("AntseedIdentity.sol:AntseedIdentity");
         address identity;
         assembly { identity := create(0, add(identityBytecode, 0x20), mload(identityBytecode)) }
         require(identity != address(0), "Identity deploy failed");
@@ -63,7 +64,17 @@ contract Deploy is Script {
         require(antsToken != address(0), "ANTSToken deploy failed");
         console.log("ANTSToken:          ", antsToken);
 
-        // 4. AntseedDeposits(usdc)
+        // 4. AntseedStaking(usdc, identity)
+        bytes memory stakingBytecode = abi.encodePacked(
+            vm.getCode("AntseedStaking.sol:AntseedStaking"),
+            abi.encode(usdc, identity)
+        );
+        address staking;
+        assembly { staking := create(0, add(stakingBytecode, 0x20), mload(stakingBytecode)) }
+        require(staking != address(0), "Staking deploy failed");
+        console.log("AntseedStaking:     ", staking);
+
+        // 5. AntseedDeposits(usdc)
         bytes memory depositsBytecode = abi.encodePacked(
             vm.getCode("AntseedDeposits.sol:AntseedDeposits"),
             abi.encode(usdc)
@@ -73,10 +84,10 @@ contract Deploy is Script {
         require(deposits != address(0), "Deposits deploy failed");
         console.log("AntseedDeposits:    ", deposits);
 
-        // 5. AntseedSessions(deposits, identity)
+        // 6. AntseedSessions(deposits, identity, staking)
         bytes memory sessionsBytecode = abi.encodePacked(
             vm.getCode("AntseedSessions.sol:AntseedSessions"),
-            abi.encode(deposits, identity)
+            abi.encode(deposits, identity, staking)
         );
         address sessions;
         assembly { sessions := create(0, add(sessionsBytecode, 0x20), mload(sessionsBytecode)) }
@@ -106,7 +117,9 @@ contract Deploy is Script {
         // ---- Wire contracts together ----
         ISetSessions(deposits).setSessionsContract(sessions);
         ISetSessions(identity).setSessionsContract(sessions);
-        ISetProtocolReserve(identity).setProtocolReserve(protocolReserve);
+        ISetStaking(identity).setStakingContract(staking);
+        ISetSessions(staking).setSessionsContract(sessions);
+        ISetProtocolReserve(staking).setProtocolReserve(protocolReserve);
         ISetEmissions(antsToken).setEmissionsContract(emissions);
         ISetEmissions(sessions).setEmissionsContract(emissions);
         ISetSessions(emissions).setSessionsContract(sessions);

@@ -118,6 +118,8 @@ export interface PaymentsCLIConfig {
     depositsContractAddress: string;
     /** Deployed AntseedSessions contract address */
     sessionsContractAddress: string;
+    /** Deployed AntseedStaking contract address */
+    stakingContractAddress?: string;
     /** USDC token contract address */
     usdcContractAddress: string;
     /** Deployed AntseedIdentity contract address */
