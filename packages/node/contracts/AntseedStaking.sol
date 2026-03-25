@@ -6,20 +6,7 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
-interface IAntseedIdentityForStaking {
-    function isRegistered(address addr) external view returns (bool);
-    function getTokenId(address addr) external view returns (uint256);
-
-    struct ProvenReputation {
-        uint64 firstSignCount;
-        uint64 qualifiedProvenSignCount;
-        uint64 unqualifiedProvenSignCount;
-        uint64 ghostCount;
-        uint256 totalQualifiedTokenVolume;
-        uint64 lastProvenAt;
-    }
-    function getReputation(uint256 tokenId) external view returns (ProvenReputation memory);
-}
+import {IAntseedIdentity} from "./interfaces/IAntseedIdentity.sol";
 
 /**
  * @title AntseedStaking
@@ -31,7 +18,7 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
 
     // ─── State ───────────────────────────────────────────────────────────
     IERC20 public immutable usdc;
-    IAntseedIdentityForStaking public identityContract;
+    IAntseedIdentity public identityContract;
     address public sessionsContract;
     address public protocolReserve;
 
@@ -83,7 +70,7 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
     constructor(address _usdc, address _identity) Ownable(msg.sender) {
         if (_usdc == address(0) || _identity == address(0)) revert InvalidAddress();
         usdc = IERC20(_usdc);
-        identityContract = IAntseedIdentityForStaking(_identity);
+        identityContract = IAntseedIdentity(_identity);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -162,7 +149,7 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
 
     function effectiveProvenSigns(address seller) external view returns (uint256) {
         uint256 sellerTokenId = identityContract.getTokenId(seller);
-        IAntseedIdentityForStaking.ProvenReputation memory rep = identityContract.getReputation(sellerTokenId);
+        IAntseedIdentity.ProvenReputation memory rep = identityContract.getReputation(sellerTokenId);
 
         uint256 qualifiedCount = uint256(rep.qualifiedProvenSignCount);
         uint256 stakeCap = (sellers[seller].stake * REPUTATION_CAP_COEFFICIENT) / 1_000_000;
@@ -186,7 +173,7 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
 
     function _calculateSlash(address seller) internal view returns (uint256) {
         uint256 sellerTokenId = identityContract.getTokenId(seller);
-        IAntseedIdentityForStaking.ProvenReputation memory rep = identityContract.getReputation(sellerTokenId);
+        IAntseedIdentity.ProvenReputation memory rep = identityContract.getReputation(sellerTokenId);
 
         uint256 totalSigns = uint256(rep.qualifiedProvenSignCount) + uint256(rep.unqualifiedProvenSignCount);
         uint256 Q = uint256(rep.qualifiedProvenSignCount);
@@ -229,7 +216,7 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
 
     function setIdentityContract(address _identity) external onlyOwner {
         if (_identity == address(0)) revert InvalidAddress();
-        identityContract = IAntseedIdentityForStaking(_identity);
+        identityContract = IAntseedIdentity(_identity);
     }
 
     function setProtocolReserve(address _reserve) external onlyOwner {

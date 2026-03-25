@@ -4,9 +4,7 @@ pragma solidity ^0.8.24;
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
-interface IANTSToken {
-    function mint(address to, uint256 amount) external;
-}
+import {IANTSToken} from "./interfaces/IANTSToken.sol";
 
 /**
  * @title AntseedEmissions

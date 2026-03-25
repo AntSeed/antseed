@@ -5,9 +5,7 @@ import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
-interface IAntseedStakingForIdentity {
-    function getStake(address seller) external view returns (uint256);
-}
+import {IAntseedStaking} from "./interfaces/IAntseedStaking.sol";
 
 /**
  * @title AntseedIdentity
@@ -128,7 +126,7 @@ contract AntseedIdentity is ERC721, ERC721URIStorage, Ownable {
         if (ownerOf(tokenId) != msg.sender) revert NotTokenOwner();
         // Prevent reputation laundering: cannot deregister while staked
         if (stakingContract != address(0)) {
-            uint256 stake = IAntseedStakingForIdentity(stakingContract).getStake(msg.sender);
+            uint256 stake = IAntseedStaking(stakingContract).getStake(msg.sender);
             if (stake > 0) revert ActiveStake();
         }
 

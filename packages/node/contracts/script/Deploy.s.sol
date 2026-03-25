@@ -3,24 +3,7 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Script.sol";
 
-// Minimal interfaces for post-deploy wiring — avoids import clashes
-// from contracts that re-declare IERC20 locally.
-
-interface ISetSessions {
-    function setSessionsContract(address) external;
-}
-
-interface ISetEmissions {
-    function setEmissionsContract(address) external;
-}
-
-interface ISetProtocolReserve {
-    function setProtocolReserve(address) external;
-}
-
-interface ISetStaking {
-    function setStakingContract(address) external;
-}
+import {ISetSessions, ISetEmissions, ISetProtocolReserve, ISetStaking} from "../interfaces/IAntseedWiring.sol";
 
 /**
  * @title Deploy

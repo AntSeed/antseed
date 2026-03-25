@@ -6,20 +6,7 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-interface IAntseedIdentity {
-    struct ProvenReputation {
-        uint64 firstSignCount;
-        uint64 qualifiedProvenSignCount;
-        uint64 unqualifiedProvenSignCount;
-        uint64 ghostCount;
-        uint256 totalQualifiedTokenVolume;
-        uint64 lastProvenAt;
-    }
-
-    function getReputation(uint256 tokenId) external view returns (ProvenReputation memory);
-    function isRegistered(address addr) external view returns (bool);
-    function getTokenId(address addr) external view returns (uint256);
-}
+import {IAntseedIdentity} from "./interfaces/IAntseedIdentity.sol";
 
 /**
  * @title AntseedSubPool

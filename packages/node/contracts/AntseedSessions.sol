@@ -7,40 +7,10 @@ import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
-interface IAntseedDeposits {
-    function lockForSession(address buyer, uint256 amount) external;
-    function chargeAndCreditEarnings(
-        address buyer, address seller, uint256 chargeAmount, uint256 reservedAmount,
-        uint256 platformFee, address protocolReserve, bool isProvenSign
-    ) external;
-    function releaseLock(address buyer, uint256 amount) external;
-    function uniqueSellersCharged(address buyer) external view returns (uint256);
-}
-
-interface IAntseedIdentity {
-    struct ReputationUpdate {
-        uint8 updateType;
-        uint256 tokenVolume;
-    }
-
-    function updateReputation(uint256 tokenId, ReputationUpdate calldata update) external;
-    function getTokenId(address addr) external view returns (uint256);
-    function isRegistered(address addr) external view returns (bool);
-}
-
-interface IAntseedStaking {
-    function validateSeller(address seller) external view returns (uint256 tokenRate);
-    function getStake(address seller) external view returns (uint256);
-    function getTokenRate(address seller) external view returns (uint256);
-    function isStakedAboveMin(address seller) external view returns (bool);
-    function incrementActiveSessions(address seller) external;
-    function decrementActiveSessions(address seller) external;
-}
-
-interface IAntseedEmissions {
-    function accrueSellerPoints(address seller, uint256 pointsDelta) external;
-    function accrueBuyerPoints(address buyer, uint256 pointsDelta) external;
-}
+import {IAntseedDeposits} from "./interfaces/IAntseedDeposits.sol";
+import {IAntseedIdentity} from "./interfaces/IAntseedIdentity.sol";
+import {IAntseedStaking} from "./interfaces/IAntseedStaking.sol";
+import {IAntseedEmissions} from "./interfaces/IAntseedEmissions.sol";
 
 /**
  * @title AntseedSessions
