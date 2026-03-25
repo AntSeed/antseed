@@ -10,7 +10,7 @@ import {IAntseedIdentity} from "./interfaces/IAntseedIdentity.sol";
 
 /**
  * @title AntseedStaking
- * @notice Seller staking, token rates, active session tracking, and slashing.
+ * @notice Seller staking, active session tracking, and slashing.
  *         Stable contract — holds seller stake USDC. Reads reputation from AntseedIdentity.
  */
 contract AntseedStaking is Ownable, ReentrancyGuard {
@@ -26,7 +26,6 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
     struct SellerAccount {
         uint256 stake;
         uint256 stakedAt;
-        uint256 tokenRate;
     }
 
     // ─── Storage ────────────────────────────────────────────────────────
@@ -90,11 +89,17 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
         emit Staked(msg.sender, amount);
     }
 
-    function setTokenRate(uint256 rate) external {
-        if (rate == 0) revert InvalidAmount();
-        SellerAccount storage sa = sellers[msg.sender];
-        if (sa.stake == 0) revert InsufficientStake();
-        sa.tokenRate = rate;
+    function stakeFor(address seller, uint256 amount) external nonReentrant {
+        if (amount == 0) revert InvalidAmount();
+        if (!identityContract.isRegistered(seller)) revert NotRegistered();
+
+        usdc.safeTransferFrom(msg.sender, address(this), amount);
+
+        SellerAccount storage sa = sellers[seller];
+        sa.stake += amount;
+        sa.stakedAt = block.timestamp;
+
+        emit Staked(seller, amount);
     }
 
     function unstake() external nonReentrant {
@@ -120,18 +125,12 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
     }
 
     // ─── View Helpers ───────────────────────────────────────────────────
-    function validateSeller(address seller) external view returns (uint256 tokenRate) {
-        if (sellers[seller].stake < MIN_SELLER_STAKE) revert InsufficientStake();
-        if (sellers[seller].tokenRate == 0) revert InvalidAmount();
-        return sellers[seller].tokenRate;
+    function validateSeller(address seller) external view returns (bool) {
+        return sellers[seller].stake >= MIN_SELLER_STAKE;
     }
 
     function getStake(address seller) external view returns (uint256) {
         return sellers[seller].stake;
-    }
-
-    function getTokenRate(address seller) external view returns (uint256) {
-        return sellers[seller].tokenRate;
     }
 
     function isStakedAboveMin(address seller) external view returns (bool) {
@@ -141,20 +140,20 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
     function getSellerAccount(address seller)
         external
         view
-        returns (uint256 stakeAmt, uint256 stakedAt, uint256 tokenRate)
+        returns (uint256 stakeAmt, uint256 stakedAt)
     {
         SellerAccount storage sa = sellers[seller];
-        return (sa.stake, sa.stakedAt, sa.tokenRate);
+        return (sa.stake, sa.stakedAt);
     }
 
-    function effectiveProvenSigns(address seller) external view returns (uint256) {
+    function effectiveSettlements(address seller) external view returns (uint256) {
         uint256 sellerTokenId = identityContract.getTokenId(seller);
-        IAntseedIdentity.ProvenReputation memory rep = identityContract.getReputation(sellerTokenId);
+        IAntseedIdentity.Reputation memory rep = identityContract.getReputation(sellerTokenId);
 
-        uint256 qualifiedCount = uint256(rep.qualifiedProvenSignCount);
+        uint256 sessionCount = uint256(rep.sessionCount);
         uint256 stakeCap = (sellers[seller].stake * REPUTATION_CAP_COEFFICIENT) / 1_000_000;
 
-        return qualifiedCount < stakeCap ? qualifiedCount : stakeCap;
+        return sessionCount < stakeCap ? sessionCount : stakeCap;
     }
 
     // ─── Privileged — Sessions Only ─────────────────────────────────────
@@ -173,35 +172,29 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
 
     function _calculateSlash(address seller) internal view returns (uint256) {
         uint256 sellerTokenId = identityContract.getTokenId(seller);
-        IAntseedIdentity.ProvenReputation memory rep = identityContract.getReputation(sellerTokenId);
+        IAntseedIdentity.Reputation memory rep = identityContract.getReputation(sellerTokenId);
 
-        uint256 totalSigns = uint256(rep.qualifiedProvenSignCount) + uint256(rep.unqualifiedProvenSignCount);
-        uint256 Q = uint256(rep.qualifiedProvenSignCount);
+        uint256 sessions = uint256(rep.sessionCount);
+        uint256 ghosts = uint256(rep.ghostCount);
         uint256 stakeAmt = sellers[seller].stake;
 
-        // Tier 1: no qualified proven signs but has total signs
-        if (Q == 0 && totalSigns > 0) return stakeAmt;
+        // Tier 1: ghosts >= threshold AND zero sessions → full slash
+        if (ghosts >= SLASH_GHOST_THRESHOLD && sessions == 0) return stakeAmt;
 
-        // Tier 2: has qualified but ratio below threshold
-        if (Q > 0 && totalSigns > 0) {
-            uint256 ratio = (Q * 100) / totalSigns;
-            if (ratio < SLASH_RATIO_THRESHOLD) return stakeAmt / 2;
+        // Tier 2: sessions > 0 but ghost ratio high → half slash
+        if (sessions > 0 && ghosts > 0) {
+            uint256 ghostRatio = (ghosts * 100) / (sessions + ghosts);
+            if (ghostRatio >= SLASH_RATIO_THRESHOLD) return stakeAmt / 2;
         }
 
-        // Tier 3: too many ghosts and no qualified
-        if (uint256(rep.ghostCount) >= SLASH_GHOST_THRESHOLD && Q == 0) return stakeAmt;
-
-        // Tier 4: good ratio but inactive
-        if (Q > 0 && totalSigns > 0) {
-            uint256 ratio = (Q * 100) / totalSigns;
-            if (ratio >= SLASH_RATIO_THRESHOLD && rep.lastProvenAt > 0) {
-                if (block.timestamp > uint256(rep.lastProvenAt) + SLASH_INACTIVITY_DAYS) {
-                    return stakeAmt / 5;
-                }
+        // Tier 3: sessions > 0 but inactive → 20% slash
+        if (sessions > 0 && rep.lastSettledAt > 0) {
+            if (block.timestamp > uint256(rep.lastSettledAt) + SLASH_INACTIVITY_DAYS) {
+                return stakeAmt / 5;
             }
         }
 
-        // Tier 5: no slash
+        // Tier 4: no slash
         return 0;
     }
 

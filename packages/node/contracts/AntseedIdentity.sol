@@ -25,20 +25,22 @@ contract AntseedIdentity is ERC721, ERC721URIStorage, Ownable {
     mapping(address => bool) public registered;
 
     // ─── Reputation ─────────────────────────────────────────────────────
-    struct ProvenReputation {
-        uint64 firstSignCount;
-        uint64 qualifiedProvenSignCount;
-        uint64 unqualifiedProvenSignCount;
+    struct Reputation {
+        uint64 sessionCount;
         uint64 ghostCount;
-        uint256 totalQualifiedTokenVolume;
-        uint64 lastProvenAt;
+        uint256 totalSettledVolume;
+        uint128 totalInputTokens;
+        uint128 totalOutputTokens;
+        uint64 lastSettledAt;
     }
 
-    mapping(uint256 => ProvenReputation) private _reputation;
+    mapping(uint256 => Reputation) private _reputation;
 
     struct ReputationUpdate {
-        uint8 updateType;        // 0=firstSign, 1=qualifiedProven, 2=unqualifiedProven, 3=ghost
-        uint256 tokenVolume;     // tokens delivered (for proven signs)
+        uint8 updateType;        // 0=settlement, 1=ghost
+        uint256 settledVolume;
+        uint128 inputTokens;
+        uint128 outputTokens;
     }
 
     // ─── ERC-8004 Feedback ──────────────────────────────────────────────
@@ -152,21 +154,19 @@ contract AntseedIdentity is ERC721, ERC721URIStorage, Ownable {
         if (msg.sender != sessionsContract) revert NotAuthorized();
         if (_ownerOf(tokenId) == address(0)) revert InvalidToken();
 
-        ProvenReputation storage rep = _reputation[tokenId];
+        Reputation storage rep = _reputation[tokenId];
         if (update.updateType == 0) {
-            rep.firstSignCount++;
+            rep.sessionCount++;
+            rep.totalSettledVolume += update.settledVolume;
+            rep.totalInputTokens += update.inputTokens;
+            rep.totalOutputTokens += update.outputTokens;
+            rep.lastSettledAt = uint64(block.timestamp);
         } else if (update.updateType == 1) {
-            rep.qualifiedProvenSignCount++;
-            rep.totalQualifiedTokenVolume += update.tokenVolume;
-            rep.lastProvenAt = uint64(block.timestamp);
-        } else if (update.updateType == 2) {
-            rep.unqualifiedProvenSignCount++;
-        } else if (update.updateType == 3) {
             rep.ghostCount++;
         }
     }
 
-    function getReputation(uint256 tokenId) external view returns (ProvenReputation memory) {
+    function getReputation(uint256 tokenId) external view returns (Reputation memory) {
         return _reputation[tokenId];
     }
 

@@ -39,66 +39,51 @@ contract AntseedIdentityReputationTest is Test {
 
     // ── Reputation tests ──
 
-    function test_updateReputation_firstSign() public {
-        identity.updateReputation(tokenId, AntseedIdentity.ReputationUpdate(0, 0));
-        AntseedIdentity.ProvenReputation memory rep = identity.getReputation(tokenId);
-        assertEq(rep.firstSignCount, 1);
-    }
-
-    function test_updateReputation_qualifiedProven() public {
-        identity.updateReputation(tokenId, AntseedIdentity.ReputationUpdate(1, 10000));
-        AntseedIdentity.ProvenReputation memory rep = identity.getReputation(tokenId);
-        assertEq(rep.qualifiedProvenSignCount, 1);
-        assertEq(rep.totalQualifiedTokenVolume, 10000);
-        assertEq(rep.lastProvenAt, block.timestamp);
-    }
-
-    function test_updateReputation_unqualifiedProven() public {
-        identity.updateReputation(tokenId, AntseedIdentity.ReputationUpdate(2, 0));
-        AntseedIdentity.ProvenReputation memory rep = identity.getReputation(tokenId);
-        assertEq(rep.unqualifiedProvenSignCount, 1);
+    function test_updateReputation_settlement() public {
+        identity.updateReputation(tokenId, AntseedIdentity.ReputationUpdate(0, 1000000, 500, 1200));
+        AntseedIdentity.Reputation memory rep = identity.getReputation(tokenId);
+        assertEq(rep.sessionCount, 1);
+        assertEq(rep.totalSettledVolume, 1000000);
+        assertEq(rep.totalInputTokens, 500);
+        assertEq(rep.totalOutputTokens, 1200);
+        assertEq(rep.lastSettledAt, block.timestamp);
     }
 
     function test_updateReputation_ghost() public {
-        identity.updateReputation(tokenId, AntseedIdentity.ReputationUpdate(3, 0));
-        AntseedIdentity.ProvenReputation memory rep = identity.getReputation(tokenId);
+        identity.updateReputation(tokenId, AntseedIdentity.ReputationUpdate(1, 0, 0, 0));
+        AntseedIdentity.Reputation memory rep = identity.getReputation(tokenId);
         assertEq(rep.ghostCount, 1);
     }
 
     function test_updateReputation_revert_notSessions() public {
         vm.prank(peer1);
         vm.expectRevert(AntseedIdentity.NotAuthorized.selector);
-        identity.updateReputation(tokenId, AntseedIdentity.ReputationUpdate(0, 0));
+        identity.updateReputation(tokenId, AntseedIdentity.ReputationUpdate(0, 1000000, 500, 1200));
     }
 
     function test_updateReputation_revert_invalidToken() public {
         vm.expectRevert(AntseedIdentity.InvalidToken.selector);
-        identity.updateReputation(999, AntseedIdentity.ReputationUpdate(0, 0));
+        identity.updateReputation(999, AntseedIdentity.ReputationUpdate(0, 1000000, 500, 1200));
     }
 
     function test_getReputation_allFields() public {
-        // 2 firstSigns
-        identity.updateReputation(tokenId, AntseedIdentity.ReputationUpdate(0, 0));
-        identity.updateReputation(tokenId, AntseedIdentity.ReputationUpdate(0, 0));
-        // 3 qualifiedProven with volumes
-        identity.updateReputation(tokenId, AntseedIdentity.ReputationUpdate(1, 5000));
-        identity.updateReputation(tokenId, AntseedIdentity.ReputationUpdate(1, 3000));
-        identity.updateReputation(tokenId, AntseedIdentity.ReputationUpdate(1, 2000));
-        // 1 unqualifiedProven
-        identity.updateReputation(tokenId, AntseedIdentity.ReputationUpdate(2, 0));
+        // 3 settlements with different volumes
+        identity.updateReputation(tokenId, AntseedIdentity.ReputationUpdate(0, 5000, 500, 800));
+        identity.updateReputation(tokenId, AntseedIdentity.ReputationUpdate(0, 3000, 300, 600));
+        identity.updateReputation(tokenId, AntseedIdentity.ReputationUpdate(0, 2000, 200, 400));
         // 4 ghosts
-        identity.updateReputation(tokenId, AntseedIdentity.ReputationUpdate(3, 0));
-        identity.updateReputation(tokenId, AntseedIdentity.ReputationUpdate(3, 0));
-        identity.updateReputation(tokenId, AntseedIdentity.ReputationUpdate(3, 0));
-        identity.updateReputation(tokenId, AntseedIdentity.ReputationUpdate(3, 0));
+        identity.updateReputation(tokenId, AntseedIdentity.ReputationUpdate(1, 0, 0, 0));
+        identity.updateReputation(tokenId, AntseedIdentity.ReputationUpdate(1, 0, 0, 0));
+        identity.updateReputation(tokenId, AntseedIdentity.ReputationUpdate(1, 0, 0, 0));
+        identity.updateReputation(tokenId, AntseedIdentity.ReputationUpdate(1, 0, 0, 0));
 
-        AntseedIdentity.ProvenReputation memory rep = identity.getReputation(tokenId);
-        assertEq(rep.firstSignCount, 2);
-        assertEq(rep.qualifiedProvenSignCount, 3);
-        assertEq(rep.unqualifiedProvenSignCount, 1);
+        AntseedIdentity.Reputation memory rep = identity.getReputation(tokenId);
+        assertEq(rep.sessionCount, 3);
         assertEq(rep.ghostCount, 4);
-        assertEq(rep.totalQualifiedTokenVolume, 10000);
-        assertEq(rep.lastProvenAt, block.timestamp);
+        assertEq(rep.totalSettledVolume, 10000);
+        assertEq(rep.totalInputTokens, 1000);
+        assertEq(rep.totalOutputTokens, 1800);
+        assertEq(rep.lastSettledAt, block.timestamp);
     }
 
     // ── ERC-8004 Feedback tests ──

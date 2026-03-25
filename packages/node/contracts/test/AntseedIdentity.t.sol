@@ -197,7 +197,7 @@ contract AntseedIdentityTest is Test {
         staking.stake(stakeAmount);
         vm.stopPrank();
 
-        (uint256 stake,,) = staking.getSellerAccount(peer1);
+        (uint256 stake,) = staking.getSellerAccount(peer1);
         assertEq(stake, stakeAmount);
     }
 
@@ -212,19 +212,17 @@ contract AntseedIdentityTest is Test {
         vm.stopPrank();
     }
 
-    function test_setTokenRate() public {
+    function test_stakeFor() public {
         uint256 stakeAmount = 10_000_000;
-        usdc.mint(peer1, stakeAmount);
+        usdc.mint(address(this), stakeAmount);
 
         vm.prank(peer1);
         identity.register(peerId1, "ipfs://meta1");
 
-        vm.startPrank(peer1);
         usdc.approve(address(staking), stakeAmount);
-        staking.stake(stakeAmount);
-        staking.setTokenRate(100);
-        vm.stopPrank();
+        staking.stakeFor(peer1, stakeAmount);
 
-        assertEq(staking.getTokenRate(peer1), 100);
+        (uint256 stake,) = staking.getSellerAccount(peer1);
+        assertEq(stake, stakeAmount);
     }
 }

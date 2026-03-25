@@ -5,8 +5,6 @@ import {
   signSpendingAuth,
   makeSessionsDomain,
   SPENDING_AUTH_TYPES,
-  buildReceiptMessage,
-  buildAckMessage,
   signMessageEd25519,
   verifyMessageEd25519,
 } from '../src/payments/evm/signatures.js';
@@ -71,11 +69,11 @@ describe('EIP-712 SpendingAuth signature helpers', () => {
     const msg: SpendingAuthMessage = {
       seller: '0x' + 'ab'.repeat(20),
       sessionId: '0x' + '01'.repeat(32),
-      maxAmount: 1_000_000n,
+      cumulativeAmount: 1_000_000n,
+      cumulativeInputTokens: 500n,
+      cumulativeOutputTokens: 200n,
       nonce: 1,
       deadline: 1700000000,
-      previousConsumption: 0n,
-      previousSessionId: '0x' + '00'.repeat(32),
     };
 
     const sig = await signSpendingAuth(wallet, domain, msg);
@@ -91,7 +89,7 @@ describe('EIP-712 SpendingAuth signature helpers', () => {
     // Domain name matches the on-chain EIP712 constructor: AntseedSessions
     const domain = makeSessionsDomain(CHAIN_ID, CONTRACT);
     expect(domain.name).toBe('AntseedSessions');
-    expect(domain.version).toBe('1');
+    expect(domain.version).toBe('2');
     expect(domain.chainId).toBe(CHAIN_ID);
     expect(domain.verifyingContract).toBe(CONTRACT);
   });
@@ -105,16 +103,16 @@ describe('EIP-712 SpendingAuth signature helpers', () => {
     const msg1: SpendingAuthMessage = {
       seller: '0x' + 'ab'.repeat(20),
       sessionId: '0x' + '01'.repeat(32),
-      maxAmount: 1_000_000n,
+      cumulativeAmount: 1_000_000n,
+      cumulativeInputTokens: 0n,
+      cumulativeOutputTokens: 0n,
       nonce: 1,
       deadline: 1700000000,
-      previousConsumption: 0n,
-      previousSessionId: '0x' + '00'.repeat(32),
     };
 
     const msg2: SpendingAuthMessage = {
       ...msg1,
-      maxAmount: 2_000_000n,
+      cumulativeAmount: 2_000_000n,
     };
 
     const sig1 = await signSpendingAuth(wallet, domain, msg1);
@@ -131,11 +129,11 @@ describe('EIP-712 SpendingAuth signature helpers', () => {
     const msg: SpendingAuthMessage = {
       seller: '0x' + 'ab'.repeat(20),
       sessionId: '0x' + '01'.repeat(32),
-      maxAmount: 1_000_000n,
+      cumulativeAmount: 1_000_000n,
+      cumulativeInputTokens: 0n,
+      cumulativeOutputTokens: 0n,
       nonce: 1,
       deadline: 1700000000,
-      previousConsumption: 0n,
-      previousSessionId: '0x' + '00'.repeat(32),
     };
 
     const sig1 = await signSpendingAuth(wallet, domain, msg);
@@ -145,28 +143,6 @@ describe('EIP-712 SpendingAuth signature helpers', () => {
 });
 
 describe('Ed25519 off-chain signatures', () => {
-  it('buildReceiptMessage produces 76-byte message', () => {
-    const sessionId = new Uint8Array(32).fill(1);
-    const runningTotal = 1_000_000n;
-    const requestCount = 5;
-    const responseHash = new Uint8Array(32).fill(0xab);
-
-    const msg = buildReceiptMessage(sessionId, runningTotal, requestCount, responseHash);
-    expect(msg.length).toBe(76);
-    expect(msg.slice(0, 32)).toEqual(sessionId);
-    expect(msg.slice(44, 76)).toEqual(responseHash);
-  });
-
-  it('buildAckMessage produces 44-byte message', () => {
-    const sessionId = new Uint8Array(32).fill(2);
-    const runningTotal = 500_000n;
-    const requestCount = 3;
-
-    const msg = buildAckMessage(sessionId, runningTotal, requestCount);
-    expect(msg.length).toBe(44);
-    expect(msg.slice(0, 32)).toEqual(sessionId);
-  });
-
   it('Ed25519 sign and verify round-trip', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'lch-test-'));
     const identity = await loadOrCreateIdentity(dir);

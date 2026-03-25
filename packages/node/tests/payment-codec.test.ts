@@ -2,22 +2,21 @@ import { describe, it, expect } from 'vitest';
 import {
   encodeSpendingAuth, decodeSpendingAuth,
   encodeAuthAck, decodeAuthAck,
-  encodeSellerReceipt, decodeSellerReceipt,
-  encodeBuyerAck, decodeBuyerAck,
-  encodeTopUpRequest, decodeTopUpRequest,
+  encodePaymentRequired, decodePaymentRequired,
+  encodeNeedAuth, decodeNeedAuth,
 } from '../src/p2p/payment-codec.js';
 
 describe('payment codec round-trips', () => {
   it('SpendingAuth', () => {
     const payload = {
       sessionId: 'a'.repeat(64),
-      maxAmountUsdc: '1000000',
+      cumulativeAmount: '1000000',
+      cumulativeInputTokens: '500',
+      cumulativeOutputTokens: '200',
       nonce: 1,
       deadline: 1700000000,
       buyerSig: 'b'.repeat(128),
       buyerEvmAddr: '0x' + 'ab'.repeat(20),
-      previousConsumption: '0',
-      previousSessionId: '0x' + '00'.repeat(32),
     };
     const encoded = encodeSpendingAuth(payload);
     const decoded = decodeSpendingAuth(encoded);
@@ -29,34 +28,41 @@ describe('payment codec round-trips', () => {
     expect(decodeAuthAck(encodeAuthAck(payload))).toEqual(payload);
   });
 
-  it('SellerReceipt', () => {
+  it('PaymentRequired', () => {
     const payload = {
-      sessionId: 'a'.repeat(64),
-      runningTotal: '500000',
-      requestCount: 5,
-      responseHash: 'c'.repeat(64),
-      sellerSig: 'd'.repeat(128),
+      sellerEvmAddr: '0x' + 'ab'.repeat(20),
+      minBudgetPerRequest: '10000',
+      suggestedAmount: '100000',
+      requestId: 'req-123',
     };
-    expect(decodeSellerReceipt(encodeSellerReceipt(payload))).toEqual(payload);
+    const encoded = encodePaymentRequired(payload);
+    const decoded = decodePaymentRequired(encoded);
+    expect(decoded).toEqual(payload);
   });
 
-  it('BuyerAck', () => {
+  it('PaymentRequired with optional pricing fields', () => {
     const payload = {
-      sessionId: 'a'.repeat(64),
-      runningTotal: '500000',
-      requestCount: 5,
-      buyerSig: 'e'.repeat(128),
+      sellerEvmAddr: '0x' + 'ab'.repeat(20),
+      minBudgetPerRequest: '10000',
+      suggestedAmount: '100000',
+      requestId: 'req-456',
+      inputUsdPerMillion: 3000,
+      outputUsdPerMillion: 15000,
     };
-    expect(decodeBuyerAck(encodeBuyerAck(payload))).toEqual(payload);
+    const encoded = encodePaymentRequired(payload);
+    const decoded = decodePaymentRequired(encoded);
+    expect(decoded).toEqual(payload);
   });
 
-  it('TopUpRequest', () => {
+  it('NeedAuth', () => {
     const payload = {
       sessionId: 'a'.repeat(64),
-      currentUsed: '400000',
-      currentMax: '500000',
-      requestedAdditional: '500000',
+      requiredCumulativeAmount: '500000',
+      currentAcceptedCumulative: '200000',
+      deposit: '1000000',
     };
-    expect(decodeTopUpRequest(encodeTopUpRequest(payload))).toEqual(payload);
+    const encoded = encodeNeedAuth(payload);
+    const decoded = decodeNeedAuth(encoded);
+    expect(decoded).toEqual(payload);
   });
 });

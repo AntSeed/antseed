@@ -21,7 +21,7 @@ export interface ReputationVerification {
 /**
  * Verify a peer's claimed on-chain reputation against the Base contract.
  * Queries the identity contract using the peer's EVM address to look up
- * the tokenId, then fetches ProvenReputation and compares claimed vs actual.
+ * the tokenId, then fetches Reputation and compares claimed vs actual.
  *
  * Returns valid=true with zeroed actuals if the peer has no evmAddress
  * (cannot verify without an address).
@@ -45,15 +45,12 @@ export async function verifyReputation(
   const tokenId = await identityClient.getTokenId(metadata.evmAddress);
   const reputation = await identityClient.getReputation(tokenId);
 
-  // Map ProvenReputation fields to the verification format:
-  // - qualifiedProvenSignCount is the primary reputation metric
-  // - firstSignCount + qualifiedProvenSignCount + unqualifiedProvenSignCount = total sessions
+  // Map Reputation fields to the verification format:
+  // - sessionCount is the total completed sessions
   // - ghostCount maps to dispute count (sessions where provider went silent)
-  const actualReputation = reputation.qualifiedProvenSignCount;
-  const actualSessionCount =
-    reputation.firstSignCount +
-    reputation.qualifiedProvenSignCount +
-    reputation.unqualifiedProvenSignCount;
+  // - Use sessionCount as the reputation metric (higher = more trusted)
+  const actualReputation = reputation.sessionCount;
+  const actualSessionCount = reputation.sessionCount;
   const actualDisputeCount = reputation.ghostCount;
 
   // Always compare against on-chain data when evmAddress is present.

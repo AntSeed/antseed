@@ -682,11 +682,11 @@ const BYTES32_RE = /^0x[0-9a-fA-F]{64}$/;
 ipcMain.handle('payments:sign-spending-auth', async (_event, params: {
   sellerEvmAddress: string;
   sessionId: string;
-  maxAmountBaseUnits: string;
+  cumulativeAmountBaseUnits: string;
+  cumulativeInputTokens: string;
+  cumulativeOutputTokens: string;
   nonce: number;
   deadline: number;
-  previousConsumption: string;
-  previousSessionId: string;
 }) => {
   try {
     // Validate renderer-supplied parameters at the trust boundary
@@ -696,15 +696,20 @@ ipcMain.handle('payments:sign-spending-auth', async (_event, params: {
     if (!BYTES32_RE.test(params.sessionId)) {
       return { ok: false, error: 'Invalid session ID format' };
     }
-    const maxAmount = BigInt(params.maxAmountBaseUnits);
-    if (maxAmount <= 0n || maxAmount > MAX_SPENDING_AUTH_BASE_UNITS) {
-      return { ok: false, error: `maxAmount exceeds cap (${MAX_SPENDING_AUTH_BASE_UNITS} base units)` };
+    const cumulativeAmount = BigInt(params.cumulativeAmountBaseUnits);
+    if (cumulativeAmount <= 0n || cumulativeAmount > MAX_SPENDING_AUTH_BASE_UNITS) {
+      return { ok: false, error: `cumulativeAmount exceeds cap (${MAX_SPENDING_AUTH_BASE_UNITS} base units)` };
     }
     if (!Number.isInteger(params.nonce) || params.nonce < 0) {
       return { ok: false, error: 'Invalid nonce' };
     }
-    if (!BYTES32_RE.test(params.previousSessionId)) {
-      return { ok: false, error: 'Invalid previousSessionId format' };
+    const cumulativeInputTokens = BigInt(params.cumulativeInputTokens);
+    if (cumulativeInputTokens < 0n) {
+      return { ok: false, error: 'cumulativeInputTokens must be non-negative' };
+    }
+    const cumulativeOutputTokens = BigInt(params.cumulativeOutputTokens);
+    if (cumulativeOutputTokens < 0n) {
+      return { ok: false, error: 'cumulativeOutputTokens must be non-negative' };
     }
     const now = Math.floor(Date.now() / 1000);
     if (params.deadline < now || params.deadline > now + MAX_DEADLINE_SECONDS) {
@@ -728,11 +733,11 @@ ipcMain.handle('payments:sign-spending-auth', async (_event, params: {
     const signature = await signSpendingAuth(wallet, domain, {
       seller: params.sellerEvmAddress,
       sessionId: params.sessionId,
-      maxAmount,
+      cumulativeAmount,
+      cumulativeInputTokens,
+      cumulativeOutputTokens,
       nonce: params.nonce,
       deadline: params.deadline,
-      previousConsumption: BigInt(params.previousConsumption),
-      previousSessionId: params.previousSessionId,
     });
 
     const buyerEvmAddress = identityToEvmAddress(identity);
@@ -843,7 +848,11 @@ const chatEngine = registerPiChatHandlers({
   },
 });
 
-// Manual payment approval: sign SpendingAuth and set it for the next request
+// Manual payment approval: sign the initial SpendingAuth and set it for the next request.
+// This only gates the initial session creation — once the user approves and the session
+// is established (reserve on-chain + AuthAck), subsequent per-request SpendingAuth
+// updates are handled automatically by BuyerPaymentManager.signPerRequestAuth()
+// without additional user interaction.
 ipcMain.handle('chat:approve-payment', async (_event, conversationId: string) => {
   const paymentInfo = chatEngine.getCachedPaymentRequired(conversationId);
   if (!paymentInfo) {
@@ -883,7 +892,7 @@ ipcMain.handle('chat:approve-payment', async (_event, conversationId: string) =>
     if (!sellerEvmAddr) {
       return { ok: false, error: 'No seller EVM address available for this payment' };
     }
-    const maxAmount = BigInt(String(paymentInfo.suggestedAmount ?? '100000'));
+    const cumulativeAmount = BigInt(String(paymentInfo.minBudgetPerRequest ?? paymentInfo.suggestedAmount ?? '100000'));
 
     // Generate session parameters
     const sessionIdBytes = randomBytes(32);
@@ -894,24 +903,24 @@ ipcMain.handle('chat:approve-payment', async (_event, conversationId: string) =>
     const signature = await signSpendingAuth(wallet, domain, {
       seller: sellerEvmAddr,
       sessionId,
-      maxAmount,
+      cumulativeAmount,
+      cumulativeInputTokens: 0n,
+      cumulativeOutputTokens: 0n,
       nonce,
       deadline,
-      previousConsumption: 0n,
-      previousSessionId: '0x' + '00'.repeat(32),
     });
 
     // Build the header payload
     const authPayload = {
       sessionId,
-      maxAmountUsdc: maxAmount.toString(),
+      cumulativeAmount: cumulativeAmount.toString(),
       nonce,
       deadline,
       buyerSig: signature,
       buyerEvmAddr,
       sellerEvmAddr,
-      previousConsumption: '0',
-      previousSessionId: '0x' + '00'.repeat(32),
+      cumulativeInputTokens: '0',
+      cumulativeOutputTokens: '0',
     };
 
     const authBase64 = Buffer.from(JSON.stringify(authPayload)).toString('base64');

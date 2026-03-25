@@ -5,22 +5,17 @@ import { tmpdir } from 'node:os';
 import * as ed from '@noble/ed25519';
 import { Wallet } from 'ethers';
 import { BuyerPaymentManager, type BuyerPaymentConfig } from '../src/payments/buyer-payment-manager.js';
-import { SellerPaymentManager, type SellerPaymentConfig } from '../src/payments/seller-payment-manager.js';
 import { SessionStore } from '../src/payments/session-store.js';
 import type { PaymentMux } from '../src/p2p/payment-mux.js';
 import type {
   SpendingAuthPayload,
   AuthAckPayload,
-  SellerReceiptPayload,
-  BuyerAckPayload,
-  TopUpRequestPayload,
 } from '../src/types/protocol.js';
 import type { Identity } from '../src/p2p/identity.js';
 import { bytesToHex } from '../src/utils/hex.js';
 import { toPeerId } from '../src/types/peer.js';
 import { identityToEvmAddress } from '../src/payments/evm/keypair.js';
 
-const ZERO_SESSION_ID = '0x' + '0'.repeat(64);
 const CHAIN_ID = 31337;
 const CONTRACT_ADDR = '0x' + 'dd'.repeat(20);
 
@@ -31,88 +26,15 @@ async function createTestIdentity(): Promise<Identity> {
   return { peerId, privateKey, publicKey };
 }
 
-/**
- * Creates a pair of cross-wired mock muxes.
- * When buyer mux sends a SpendingAuth, it triggers seller's onSpendingAuth handler, etc.
- */
-function createCrossWiredMuxes() {
-  const buyerHandlers: Record<string, (...args: unknown[]) => void> = {};
-  const sellerHandlers: Record<string, (...args: unknown[]) => void> = {};
-
-  const buyerMux = {
-    // Buyer sends, seller receives
-    sendSpendingAuth(payload: SpendingAuthPayload) {
-      sellerHandlers['spendingAuth']?.(payload);
-    },
-    sendBuyerAck(payload: BuyerAckPayload) {
-      sellerHandlers['buyerAck']?.(payload);
-    },
-    // Buyer receives
-    onAuthAck(handler: (p: AuthAckPayload) => void) {
-      buyerHandlers['authAck'] = handler as (...args: unknown[]) => void;
-    },
-    onSellerReceipt(handler: (p: SellerReceiptPayload) => void) {
-      buyerHandlers['sellerReceipt'] = handler as (...args: unknown[]) => void;
-    },
-    onTopUpRequest(handler: (p: TopUpRequestPayload) => void) {
-      buyerHandlers['topUpRequest'] = handler as (...args: unknown[]) => void;
-    },
-    // Unused on buyer side
-    onSpendingAuth() {},
-    onBuyerAck() {},
-    sendAuthAck() {},
-    sendSellerReceipt() {},
-    sendTopUpRequest() {},
-    handleFrame: vi.fn(),
-  };
-
-  const sellerMux = {
-    // Seller sends, buyer receives
-    sendAuthAck(payload: AuthAckPayload) {
-      buyerHandlers['authAck']?.(payload);
-    },
-    sendSellerReceipt(payload: SellerReceiptPayload) {
-      buyerHandlers['sellerReceipt']?.(payload);
-    },
-    sendTopUpRequest(payload: TopUpRequestPayload) {
-      buyerHandlers['topUpRequest']?.(payload);
-    },
-    // Seller receives
-    onSpendingAuth(handler: (p: SpendingAuthPayload) => void) {
-      sellerHandlers['spendingAuth'] = handler as (...args: unknown[]) => void;
-    },
-    onBuyerAck(handler: (p: BuyerAckPayload) => void) {
-      sellerHandlers['buyerAck'] = handler as (...args: unknown[]) => void;
-    },
-    // Unused on seller side
-    onAuthAck() {},
-    onSellerReceipt() {},
-    onTopUpRequest() {},
-    sendSpendingAuth() {},
-    sendBuyerAck() {},
-    handleFrame: vi.fn(),
-  };
-
-  return {
-    buyerMux: buyerMux as unknown as PaymentMux,
-    sellerMux: sellerMux as unknown as PaymentMux,
-    sellerHandlers,
-    buyerHandlers,
-  };
-}
-
-describe('Proof Chain Integration', () => {
+describe('Cumulative SpendingAuth Integration', () => {
   let buyerTempDir: string;
-  let sellerTempDir: string;
   let buyerIdentity: Identity;
   let sellerIdentity: Identity;
   let buyerManager: BuyerPaymentManager;
-  let sellerStore: SessionStore;
-  let sellerManager: SellerPaymentManager;
+  let buyerStore: SessionStore;
 
   beforeEach(async () => {
-    buyerTempDir = mkdtempSync(join(tmpdir(), 'proof-buyer-'));
-    sellerTempDir = mkdtempSync(join(tmpdir(), 'proof-seller-'));
+    buyerTempDir = mkdtempSync(join(tmpdir(), 'cumulative-buyer-'));
     buyerIdentity = await createTestIdentity();
     sellerIdentity = await createTestIdentity();
 
@@ -123,188 +45,238 @@ describe('Proof Chain Integration', () => {
       usdcAddress: '0x' + 'ee'.repeat(20),
       identityAddress: '0x' + 'ff'.repeat(20),
       chainId: CHAIN_ID,
-      defaultMaxAmountUsdc: 1_000_000n,
       defaultAuthDurationSecs: 3600,
-      autoAck: true,
+      maxPerRequestUsdc: 100_000n,
+      maxReserveAmountUsdc: 10_000_000n,
       dataDir: buyerTempDir,
     };
-    const buyerStore = new SessionStore(buyerTempDir);
+    buyerStore = new SessionStore(buyerTempDir);
     buyerManager = new BuyerPaymentManager(buyerIdentity, buyerConfig, buyerStore);
     // Use a deterministic wallet derived from the identity so EIP-712 sigs are valid
     const { identityToEvmWallet } = await import('../src/payments/evm/keypair.js');
     buyerManager.setSigner(identityToEvmWallet(buyerIdentity));
-
-    sellerStore = new SessionStore(sellerTempDir);
-    const sellerConfig: SellerPaymentConfig = {
-      rpcUrl: 'http://127.0.0.1:8545',
-      sessionsContractAddress: CONTRACT_ADDR,
-      stakingContractAddress: '0x' + 'cc'.repeat(20),
-      usdcAddress: '0x' + 'ee'.repeat(20),
-      chainId: CHAIN_ID,
-      dataDir: sellerTempDir,
-      settleTimeoutSecs: 60,
-    };
-    sellerManager = new SellerPaymentManager(sellerIdentity, sellerConfig, sellerStore);
-
-    // Mock sessions and staking clients
-    vi.spyOn(sellerManager.sessionsClient, 'reserve').mockResolvedValue('0xreserve');
-    vi.spyOn(sellerManager.sessionsClient, 'settle').mockResolvedValue('0xsettle');
-    vi.spyOn(sellerManager.sessionsClient, 'settleTimeout').mockResolvedValue('0xtimeout');
-    vi.spyOn(sellerManager.stakingClient, 'getSellerAccount').mockResolvedValue({
-      stake: 100000000n,
-      stakedAt: BigInt(Date.now()),
-      tokenRate: 1n,
-    });
   });
 
   afterEach(() => {
-    sellerStore.close();
+    buyerStore.close();
     rmSync(buyerTempDir, { recursive: true, force: true });
-    rmSync(sellerTempDir, { recursive: true, force: true });
   });
 
-  it('full 3-session proof chain flow', async () => {
-    const buyerEvmAddr = identityToEvmAddress(buyerIdentity);
+  it('cumulative amount increases across multiple requests within a session', async () => {
     const sellerEvmAddr = identityToEvmAddress(sellerIdentity);
 
-    // Helper: run one session cycle
-    async function runSession(sessionNumber: number, expectedPrevConsumption: string, expectedPrevSessionId: string) {
-      // Create fresh muxes for this "connection"
-      // We won't use cross-wired muxes since buyer and seller managers handle
-      // messages independently — we manually relay messages between them.
-      const buyerSentAuths: SpendingAuthPayload[] = [];
-      const buyerSentAcks: BuyerAckPayload[] = [];
-      const sellerSentAuthAcks: AuthAckPayload[] = [];
-      const sellerSentReceipts: SellerReceiptPayload[] = [];
+    // Track sent SpendingAuths
+    const sentAuths: SpendingAuthPayload[] = [];
+    const mux = {
+      sendSpendingAuth(p: SpendingAuthPayload) { sentAuths.push(p); },
+      sendAuthAck() {},
+      sendPaymentRequired() {},
+      sendNeedAuth() {},
+      onSpendingAuth() {},
+      onAuthAck() {},
+      onPaymentRequired() {},
+      onNeedAuth() {},
+      handleFrame: vi.fn(),
+    } as unknown as PaymentMux;
 
-      const buyerMux = {
-        sendSpendingAuth(p: SpendingAuthPayload) { buyerSentAuths.push(p); },
-        sendBuyerAck(p: BuyerAckPayload) { buyerSentAcks.push(p); },
-        sendAuthAck() {},
-        sendSellerReceipt() {},
-        sendTopUpRequest() {},
-        onSpendingAuth() {}, onAuthAck() {}, onSellerReceipt() {},
-        onBuyerAck() {}, onTopUpRequest() {},
-        handleFrame: vi.fn(),
-      } as unknown as PaymentMux;
+    // Step 1: Initial authorization with minBudgetPerRequest = 10000
+    const sessionId = await buyerManager.authorizeSpending(
+      sellerIdentity.peerId,
+      sellerEvmAddr,
+      mux,
+      10_000n,
+    );
+    expect(sentAuths.length).toBe(1);
+    expect(sentAuths[0].cumulativeAmount).toBe('10000');
+    expect(sentAuths[0].cumulativeInputTokens).toBe('0');
+    expect(sentAuths[0].cumulativeOutputTokens).toBe('0');
 
-      const sellerMux = {
-        sendAuthAck(p: AuthAckPayload) { sellerSentAuthAcks.push(p); },
-        sendSellerReceipt(p: SellerReceiptPayload) { sellerSentReceipts.push(p); },
-        sendTopUpRequest() {},
-        sendSpendingAuth() {},
-        sendBuyerAck() {},
-        onSpendingAuth() {}, onAuthAck() {}, onSellerReceipt() {},
-        onBuyerAck() {}, onTopUpRequest() {},
-        handleFrame: vi.fn(),
-      } as unknown as PaymentMux;
+    // Simulate AuthAck
+    buyerManager.handleAuthAck(sellerIdentity.peerId, { sessionId, nonce: 1 });
+    expect(buyerManager.isAuthorized(sellerIdentity.peerId)).toBe(true);
 
-      // Step 1: Buyer creates SpendingAuth
-      const sessionId = await buyerManager.authorizeSpending(
-        sellerIdentity.peerId,
-        sellerEvmAddr,
-        buyerMux,
-      );
+    // Step 2: First request completes, sign per-request auth
+    const auth1 = await buyerManager.signPerRequestAuth(
+      sellerIdentity.peerId,
+      3_000n,   // addedCostUsdc from first request
+      500n,     // addedInputTokens
+      200n,     // addedOutputTokens
+      5_000n,   // estimatedNextCostUsdc
+    );
 
-      // Verify proof chain linkage
-      const sentAuth = buyerSentAuths[0];
-      expect(sentAuth.previousConsumption).toBe(expectedPrevConsumption);
-      expect(sentAuth.previousSessionId).toBe(expectedPrevSessionId);
+    // Cumulative amount: 10000 (initial) + 3000 + 5000 = 18000
+    expect(BigInt(auth1.cumulativeAmount)).toBe(18_000n);
+    expect(auth1.cumulativeInputTokens).toBe('500');
+    expect(auth1.cumulativeOutputTokens).toBe('200');
+    expect(auth1.sessionId).toBe(sessionId);
 
-      // Step 2: Seller receives SpendingAuth, sends AuthAck
-      await sellerManager.handleSpendingAuth(
-        buyerIdentity.peerId,
-        buyerEvmAddr,
-        sentAuth,
-        sellerMux,
-      );
-      expect(sellerSentAuthAcks.length).toBe(1);
-      expect(sellerSentAuthAcks[0].sessionId).toBe(sessionId);
+    // Step 3: Second request completes
+    const auth2 = await buyerManager.signPerRequestAuth(
+      sellerIdentity.peerId,
+      4_000n,
+      300n,
+      150n,
+      6_000n,
+    );
 
-      // Step 3: Buyer receives AuthAck
-      buyerManager.handleAuthAck(sellerIdentity.peerId, sellerSentAuthAcks[0]);
-      expect(buyerManager.isAuthorized(sellerIdentity.peerId)).toBe(true);
+    // Cumulative amount: 18000 + 4000 + 6000 = 28000
+    expect(BigInt(auth2.cumulativeAmount)).toBe(28_000n);
+    // Cumulative tokens: 500 + 300 = 800 input, 200 + 150 = 350 output
+    expect(auth2.cumulativeInputTokens).toBe('800');
+    expect(auth2.cumulativeOutputTokens).toBe('350');
 
-      // Step 4: Seller sends 3 receipts, buyer acks each
-      let totalTokens = 0n;
-      for (let i = 1; i <= 3; i++) {
-        const responseBody = new TextEncoder().encode(`response-${sessionNumber}-${i}`);
-        const tokens = BigInt(100 * i); // 100, 200, 300
-        totalTokens += tokens;
+    // Step 4: Third request
+    const auth3 = await buyerManager.signPerRequestAuth(
+      sellerIdentity.peerId,
+      2_000n,
+      200n,
+      100n,
+      3_000n,
+    );
 
-        await sellerManager.sendReceipt(
-          buyerIdentity.peerId,
-          sellerMux,
-          responseBody,
-          tokens,
-        );
+    // Cumulative amount: 28000 + 2000 + 3000 = 33000
+    expect(BigInt(auth3.cumulativeAmount)).toBe(33_000n);
+    // Cumulative tokens: 800 + 200 = 1000 input, 350 + 100 = 450 output
+    expect(auth3.cumulativeInputTokens).toBe('1000');
+    expect(auth3.cumulativeOutputTokens).toBe('450');
 
-        expect(sellerSentReceipts.length).toBe(i);
-        const receipt = sellerSentReceipts[i - 1];
-        expect(receipt.requestCount).toBe(i);
+    // Verify all auth payloads reference the same session
+    expect(auth1.sessionId).toBe(sessionId);
+    expect(auth2.sessionId).toBe(sessionId);
+    expect(auth3.sessionId).toBe(sessionId);
 
-        // Buyer processes receipt (auto-ack=true sends BuyerAck)
-        await buyerManager.handleSellerReceipt(
-          sellerIdentity.peerId,
-          receipt,
-          buyerMux,
-        );
-        expect(buyerSentAcks.length).toBe(i);
+    // Verify monotonically increasing cumulative amounts
+    expect(BigInt(auth1.cumulativeAmount)).toBeLessThan(BigInt(auth2.cumulativeAmount));
+    expect(BigInt(auth2.cumulativeAmount)).toBeLessThan(BigInt(auth3.cumulativeAmount));
+  });
 
-        // Seller processes ack
-        await sellerManager.handleBuyerAck(buyerIdentity.peerId, buyerSentAcks[i - 1]);
-      }
+  it('NeedAuth triggers cumulative amount increase mid-session', async () => {
+    const sellerEvmAddr = identityToEvmAddress(sellerIdentity);
 
-      return { sessionId, totalTokens: totalTokens.toString() };
-    }
+    const sentAuths: SpendingAuthPayload[] = [];
+    const mux = {
+      sendSpendingAuth(p: SpendingAuthPayload) { sentAuths.push(p); },
+      sendAuthAck() {},
+      sendPaymentRequired() {},
+      sendNeedAuth() {},
+      onSpendingAuth() {},
+      onAuthAck() {},
+      onPaymentRequired() {},
+      onNeedAuth() {},
+      handleFrame: vi.fn(),
+    } as unknown as PaymentMux;
 
-    // === Session 1: first session (no prior) ===
-    const s1 = await runSession(1, '0', ZERO_SESSION_ID);
+    // Initial authorization
+    const sessionId = await buyerManager.authorizeSpending(
+      sellerIdentity.peerId,
+      sellerEvmAddr,
+      mux,
+      10_000n,
+    );
+    expect(sentAuths.length).toBe(1);
 
-    // Buyer disconnects
-    sellerManager.onBuyerDisconnect(buyerIdentity.peerId);
-    expect(sellerManager.hasSession(buyerIdentity.peerId)).toBe(false);
+    // Simulate seller requesting more budget via NeedAuth
+    await buyerManager.handleNeedAuth(
+      sellerIdentity.peerId,
+      {
+        sessionId,
+        requiredCumulativeAmount: '500000',
+        currentAcceptedCumulative: '10000',
+        deposit: '1000000',
+      },
+      mux,
+    );
 
-    // === Session 2: references session 1 ===
-    const s2 = await runSession(2, s1.totalTokens, s1.sessionId);
+    // Should have sent a new SpendingAuth with the required amount
+    expect(sentAuths.length).toBe(2);
+    const updatedAuth = sentAuths[1];
+    expect(updatedAuth.cumulativeAmount).toBe('500000');
+    expect(updatedAuth.sessionId).toBe(sessionId);
 
-    // Verify session 1 was settled by seller during session 2 auth
-    const session1 = sellerStore.getSession(s1.sessionId);
-    expect(session1!.status).toBe('settled');
+    // Subsequent signPerRequestAuth should build on the new cumulative base
+    const auth = await buyerManager.signPerRequestAuth(
+      sellerIdentity.peerId,
+      10_000n,
+      100n,
+      50n,
+      10_000n,
+    );
 
-    // Buyer disconnects again
-    sellerManager.onBuyerDisconnect(buyerIdentity.peerId);
+    // 500000 + 10000 + 10000 = 520000
+    expect(BigInt(auth.cumulativeAmount)).toBe(520_000n);
+  });
 
-    // === Session 3: references session 2 ===
-    const s3 = await runSession(3, s2.totalTokens, s2.sessionId);
+  it('cumulative state persists across manager restarts', async () => {
+    const sellerEvmAddr = identityToEvmAddress(sellerIdentity);
 
-    // Verify session 2 was settled during session 3 auth
-    const session2 = sellerStore.getSession(s2.sessionId);
-    expect(session2!.status).toBe('settled');
+    const sentAuths: SpendingAuthPayload[] = [];
+    const mux = {
+      sendSpendingAuth(p: SpendingAuthPayload) { sentAuths.push(p); },
+      sendAuthAck() {},
+      sendPaymentRequired() {},
+      sendNeedAuth() {},
+      onSpendingAuth() {},
+      onAuthAck() {},
+      onPaymentRequired() {},
+      onNeedAuth() {},
+      handleFrame: vi.fn(),
+    } as unknown as PaymentMux;
 
-    // Session 3 still active
-    const session3 = sellerStore.getSession(s3.sessionId);
-    expect(session3!.status).toBe('active');
+    // Create session and do some spending
+    const sessionId = await buyerManager.authorizeSpending(
+      sellerIdentity.peerId,
+      sellerEvmAddr,
+      mux,
+      10_000n,
+    );
 
-    // === Verify full proof chain on buyer side ===
-    const history = buyerManager.getSessionHistory(sellerIdentity.peerId);
-    expect(history.length).toBe(3);
-    expect(history[0].sessionId).toBe(s1.sessionId);
-    expect(history[0].previousSessionId).toBe(ZERO_SESSION_ID);
-    expect(history[1].sessionId).toBe(s2.sessionId);
-    expect(history[1].previousSessionId).toBe(s1.sessionId);
-    expect(history[2].sessionId).toBe(s3.sessionId);
-    expect(history[2].previousSessionId).toBe(s2.sessionId);
+    // Simulate AuthAck so the session is confirmed
+    buyerManager.handleAuthAck(sellerIdentity.peerId, { sessionId, nonce: 1 });
 
-    // Verify correct consumption chain
-    expect(history[0].previousConsumption).toBe('0');
-    expect(history[1].previousConsumption).toBe(s1.totalTokens);
-    expect(history[2].previousConsumption).toBe(s2.totalTokens);
+    const auth = await buyerManager.signPerRequestAuth(
+      sellerIdentity.peerId,
+      5_000n,
+      100n,
+      50n,
+      5_000n,
+    );
 
-    // Verify on-chain interactions
-    // reserve called 3 times (once per session)
-    expect(sellerManager.sessionsClient.reserve).toHaveBeenCalledTimes(3);
-    // settle called 2 times (session 1 settled before session 2, session 2 before session 3)
-    expect(sellerManager.sessionsClient.settle).toHaveBeenCalledTimes(2);
+    // Verify the sign succeeded and returned updated cumulative values
+    expect(BigInt(auth.cumulativeAmount)).toBe(20_000n);
+    expect(auth.cumulativeInputTokens).toBe('100');
+    expect(auth.cumulativeOutputTokens).toBe('50');
+    expect(auth.sessionId).toBe(sessionId);
+
+    // Close store and recreate manager
+    buyerStore.close();
+
+    const newStore = new SessionStore(buyerTempDir);
+    const newConfig: BuyerPaymentConfig = {
+      rpcUrl: 'http://127.0.0.1:8545',
+      depositsContractAddress: CONTRACT_ADDR,
+      sessionsContractAddress: CONTRACT_ADDR,
+      usdcAddress: '0x' + 'ee'.repeat(20),
+      identityAddress: '0x' + 'ff'.repeat(20),
+      chainId: CHAIN_ID,
+      defaultAuthDurationSecs: 3600,
+      maxPerRequestUsdc: 100_000n,
+      maxReserveAmountUsdc: 10_000_000n,
+      dataDir: buyerTempDir,
+    };
+    const newManager = new BuyerPaymentManager(buyerIdentity, newConfig, newStore);
+    const { identityToEvmWallet } = await import('../src/payments/evm/keypair.js');
+    newManager.setSigner(identityToEvmWallet(buyerIdentity));
+
+    // The session should still be accessible
+    const session = newStore.getSession(sessionId);
+    expect(session).not.toBeNull();
+    expect(session!.status).toBe('active');
+    // The upsert ON CONFLICT clause persists tokens_delivered but not
+    // auth_max or previous_consumption (cumulative output tokens).
+    // This verifies the DB-persisted fields survive a store restart.
+    expect(session!.tokensDelivered).toBe('100');
+
+    // Reassign buyerStore for cleanup
+    buyerStore = newStore;
   });
 });

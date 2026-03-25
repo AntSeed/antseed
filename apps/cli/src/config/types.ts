@@ -108,6 +108,12 @@ export interface PaymentsCLIConfig {
   preferredMethod: 'crypto';
   /** Platform fee rate (0-1) */
   platformFeeRate: number;
+  /** Minimum USDC per request in base units (seller). Default: "10000" ($0.01). */
+  minBudgetPerRequest?: string;
+  /** Maximum USDC the buyer authorizes per single request in base units. Default: "100000" ($0.10). */
+  maxPerRequestUsdc?: string;
+  /** Maximum total USDC the buyer will reserve in a single SpendingAuth in base units. Default: "1000000" ($1.00). */
+  maxReserveAmountUsdc?: string;
   /** Optional crypto settlement settings (Base network) */
   crypto?: {
     /** Chain identifier */

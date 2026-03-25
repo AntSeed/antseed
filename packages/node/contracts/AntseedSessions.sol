@@ -10,68 +10,53 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IAntseedDeposits} from "./interfaces/IAntseedDeposits.sol";
 import {IAntseedIdentity} from "./interfaces/IAntseedIdentity.sol";
 import {IAntseedStaking} from "./interfaces/IAntseedStaking.sol";
-import {IAntseedEmissions} from "./interfaces/IAntseedEmissions.sol";
 
 /**
  * @title AntseedSessions
- * @notice Session lifecycle with Proof of Prior Delivery and EIP-712 spending authorizations.
+ * @notice Session lifecycle with cumulative streaming model and EIP-712 spending authorizations.
  *         Holds NO USDC — orchestrates between AntseedDeposits and AntseedIdentity.
  *         This contract is swappable: deploy a new version and re-point Deposits + Identity.
  */
 contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     // ─── EIP-712 ────────────────────────────────────────────────────────
     bytes32 public constant SPENDING_AUTH_TYPEHASH = keccak256(
-        "SpendingAuth(address seller,bytes32 sessionId,uint256 maxAmount,uint256 nonce,uint256 deadline,uint256 previousConsumption,bytes32 previousSessionId)"
+        "SpendingAuth(address seller,bytes32 sessionId,uint256 cumulativeAmount,uint256 cumulativeInputTokens,uint256 cumulativeOutputTokens,uint256 nonce,uint256 deadline)"
     );
 
     // ─── Constant Keys for setConstant ─────────────────────────────────
     bytes32 private constant KEY_FIRST_SIGN_CAP = keccak256("FIRST_SIGN_CAP");
-    bytes32 private constant KEY_MIN_TOKEN_THRESHOLD = keccak256("MIN_TOKEN_THRESHOLD");
-    bytes32 private constant KEY_BUYER_DIVERSITY_THRESHOLD = keccak256("BUYER_DIVERSITY_THRESHOLD");
-    bytes32 private constant KEY_PROVEN_SIGN_COOLDOWN = keccak256("PROVEN_SIGN_COOLDOWN");
-    bytes32 private constant KEY_SETTLE_TIMEOUT = keccak256("SETTLE_TIMEOUT");
+    bytes32 private constant KEY_CLOSE_GRACE_PERIOD = keccak256("CLOSE_GRACE_PERIOD");
     bytes32 private constant KEY_PLATFORM_FEE_BPS = keccak256("PLATFORM_FEE_BPS");
 
     // ─── Configurable Constants ─────────────────────────────────────────
     uint256 public FIRST_SIGN_CAP = 1_000_000;
-    uint256 public MIN_TOKEN_THRESHOLD = 1000;
-    uint256 public BUYER_DIVERSITY_THRESHOLD = 3;
-    uint256 public PROVEN_SIGN_COOLDOWN = 7 days;
-    uint256 public SETTLE_TIMEOUT = 24 hours;
+    uint256 public CLOSE_GRACE_PERIOD = 2 hours;
     uint256 public PLATFORM_FEE_BPS = 500;
     uint256 public MAX_PLATFORM_FEE_BPS = 1000;
 
     // ─── Enums & Structs ────────────────────────────────────────────────
-    enum SessionStatus { None, Reserved, Settled, TimedOut }
+    enum SessionStatus { None, Active, Settled, TimedOut }
 
     struct Session {
         address buyer;
         address seller;
-        uint256 maxAmount;
+        uint256 deposit;
+        uint256 settled;
+        uint128 settledInputTokens;
+        uint128 settledOutputTokens;
         uint256 nonce;
         uint256 deadline;
-        uint256 previousConsumption;
-        bytes32 previousSessionId;
-        uint256 reservedAt;
-        uint256 settledAmount;
-        uint256 settledTokenCount;
-        uint256 tokenRate;
+        uint256 settledAt;
         SessionStatus status;
-        bool isFirstSign;
-        bool isProvenSign;
-        bool isQualifiedProvenSign;
     }
 
     // ─── State Variables ────────────────────────────────────────────────
     IAntseedDeposits public depositsContract;
     IAntseedIdentity public identityContract;
     IAntseedStaking public stakingContract;
-    IAntseedEmissions public emissionsContract;
     address public protocolReserve;
 
     mapping(bytes32 => Session) public sessions;
-    mapping(address => mapping(address => bytes32)) public latestSessionId;
-    mapping(address => mapping(address => uint256)) public firstSessionTimestamp;
 
     // ─── Events ─────────────────────────────────────────────────────────
     event Reserved(bytes32 indexed sessionId, address indexed buyer, address indexed seller, uint256 maxAmount);
@@ -92,12 +77,11 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     error TimeoutNotReached();
     error InvalidFee();
     error FirstSignCapExceeded();
-    error CooldownNotElapsed();
-    error InvalidProofChain();
+    error SellerNotStaked();
 
     // ─── Constructor ────────────────────────────────────────────────────
     constructor(address _deposits, address _identity, address _staking)
-        EIP712("AntseedSessions", "1")
+        EIP712("AntseedSessions", "2")
         Ownable(msg.sender)
     {
         if (_deposits == address(0) || _identity == address(0) || _staking == address(0)) revert InvalidAddress();
@@ -121,187 +105,147 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         uint256 maxAmount,
         uint256 nonce,
         uint256 deadline,
-        uint256 previousConsumption,
-        bytes32 previousSessionId,
         bytes calldata buyerSig
     ) external nonReentrant whenNotPaused {
         // Basic validation
-        if (sessions[sessionId].status != SessionStatus.None) revert SessionExists();
         if (block.timestamp > deadline) revert SessionExpired();
-        if (deadline < block.timestamp + SETTLE_TIMEOUT) revert SessionExpired();
-        uint256 tokenRate = stakingContract.validateSeller(msg.sender);
+        if (!stakingContract.isStakedAboveMin(msg.sender)) revert SellerNotStaked();
 
-        // EIP-712 signature verification
+        // EIP-712 signature verification (cumulative fields = 0 for reserve)
         bytes32 structHash = keccak256(
             abi.encode(
                 SPENDING_AUTH_TYPEHASH,
                 msg.sender,
                 sessionId,
-                maxAmount,
+                uint256(0),
+                uint256(0),
+                uint256(0),
                 nonce,
-                deadline,
-                previousConsumption,
-                previousSessionId
+                deadline
             )
         );
         bytes32 digest = _hashTypedDataV4(structHash);
         address recovered = ECDSA.recover(digest, buyerSig);
         if (recovered != buyer) revert InvalidSignature();
 
-        // Classify session type
-        bool isFirstSign = (previousConsumption == 0 && previousSessionId == bytes32(0));
-        bool isProvenSign = false;
-        bool isQualifiedProvenSign = false;
+        Session storage existing = sessions[sessionId];
 
-        if (isFirstSign) {
+        if (existing.status == SessionStatus.Active) {
+            // Top-up path: add to existing deposit
+            if (existing.buyer != buyer || existing.seller != msg.sender) revert NotAuthorized();
+            depositsContract.lockForSession(buyer, maxAmount);
+            existing.deposit += maxAmount;
+            emit Reserved(sessionId, buyer, msg.sender, existing.deposit);
+        } else if (existing.status == SessionStatus.None) {
+            // Create path: new session
             if (maxAmount > FIRST_SIGN_CAP) revert FirstSignCapExceeded();
-            if (firstSessionTimestamp[buyer][msg.sender] == 0) {
-                firstSessionTimestamp[buyer][msg.sender] = block.timestamp;
-            }
+            depositsContract.lockForSession(buyer, maxAmount);
+
+            sessions[sessionId] = Session({
+                buyer: buyer,
+                seller: msg.sender,
+                deposit: maxAmount,
+                settled: 0,
+                settledInputTokens: 0,
+                settledOutputTokens: 0,
+                nonce: nonce,
+                deadline: deadline,
+                settledAt: 0,
+                status: SessionStatus.Active
+            });
+
+            stakingContract.incrementActiveSessions(msg.sender);
+            emit Reserved(sessionId, buyer, msg.sender, maxAmount);
         } else {
-            if (previousSessionId != latestSessionId[buyer][msg.sender]) revert InvalidProofChain();
-            Session storage prevSession = sessions[previousSessionId];
-            if (prevSession.status != SessionStatus.Settled) revert InvalidProofChain();
-            if (prevSession.buyer != buyer || prevSession.seller != msg.sender) revert InvalidProofChain();
-            if (previousConsumption != prevSession.settledTokenCount) revert InvalidProofChain();
-            if (previousConsumption < MIN_TOKEN_THRESHOLD) revert InvalidProofChain();
-
-            uint256 firstTime = firstSessionTimestamp[buyer][msg.sender];
-            if (firstTime == 0 || block.timestamp < firstTime + PROVEN_SIGN_COOLDOWN) revert CooldownNotElapsed();
-
-            isProvenSign = true;
-            if (depositsContract.uniqueSellersCharged(buyer) >= BUYER_DIVERSITY_THRESHOLD) {
-                isQualifiedProvenSign = true;
-            }
+            revert SessionExists();
         }
-
-        // Lock buyer funds via Deposits
-        depositsContract.lockForSession(buyer, maxAmount);
-
-        // Store session
-        sessions[sessionId] = Session({
-            buyer: buyer,
-            seller: msg.sender,
-            maxAmount: maxAmount,
-            nonce: nonce,
-            deadline: deadline,
-            previousConsumption: previousConsumption,
-            previousSessionId: previousSessionId,
-            reservedAt: block.timestamp,
-            settledAmount: 0,
-            settledTokenCount: 0,
-            tokenRate: tokenRate,
-            status: SessionStatus.Reserved,
-            isFirstSign: isFirstSign,
-            isProvenSign: isProvenSign,
-            isQualifiedProvenSign: isQualifiedProvenSign
-        });
-
-        latestSessionId[buyer][msg.sender] = sessionId;
-        stakingContract.incrementActiveSessions(msg.sender);
-
-        // Update reputation
-        uint256 sellerTokenId = identityContract.getTokenId(msg.sender);
-        if (isFirstSign) {
-            identityContract.updateReputation(
-                sellerTokenId,
-                IAntseedIdentity.ReputationUpdate({ updateType: 0, tokenVolume: 0 })
-            );
-        } else if (isQualifiedProvenSign) {
-            identityContract.updateReputation(
-                sellerTokenId,
-                IAntseedIdentity.ReputationUpdate({ updateType: 1, tokenVolume: previousConsumption })
-            );
-        } else if (isProvenSign) {
-            identityContract.updateReputation(
-                sellerTokenId,
-                IAntseedIdentity.ReputationUpdate({ updateType: 2, tokenVolume: 0 })
-            );
-        }
-
-        emit Reserved(sessionId, buyer, msg.sender, maxAmount);
     }
 
     // ═══════════════════════════════════════════════════════════════════
     //                        CORE — SETTLE
     // ═══════════════════════════════════════════════════════════════════
 
-    function settle(bytes32 sessionId, uint256 tokenCount) external nonReentrant {
-        if (tokenCount == 0) revert InvalidAmount();
+    function settle(
+        bytes32 sessionId,
+        uint256 cumulativeAmount,
+        uint256 cumulativeInputTokens,
+        uint256 cumulativeOutputTokens,
+        uint256 nonce,
+        uint256 deadline,
+        bytes calldata buyerSig
+    ) external nonReentrant {
         Session storage session = sessions[sessionId];
-        if (session.status != SessionStatus.Reserved) revert SessionNotReserved();
+        if (session.status != SessionStatus.Active) revert SessionNotReserved();
         if (msg.sender != session.seller) revert NotAuthorized();
-        if (block.timestamp > session.deadline) revert SessionExpired();
+        if (block.timestamp > deadline) revert SessionExpired();
+        if (cumulativeAmount > session.deposit) revert InvalidAmount();
 
-        // Compute charge with overflow protection
-        uint256 chargeAmount;
-        if (session.tokenRate > 0 && tokenCount > session.maxAmount / session.tokenRate) {
-            chargeAmount = session.maxAmount;
-        } else {
-            chargeAmount = tokenCount * session.tokenRate;
-            if (chargeAmount > session.maxAmount) {
-                chargeAmount = session.maxAmount;
-            }
-        }
+        // EIP-712 buyer signature verification
+        bytes32 structHash = keccak256(
+            abi.encode(
+                SPENDING_AUTH_TYPEHASH,
+                msg.sender,
+                sessionId,
+                cumulativeAmount,
+                cumulativeInputTokens,
+                cumulativeOutputTokens,
+                nonce,
+                deadline
+            )
+        );
+        bytes32 digest = _hashTypedDataV4(structHash);
+        address recovered = ECDSA.recover(digest, buyerSig);
+        if (recovered != session.buyer) revert InvalidSignature();
 
+        // Compute platform fee
         uint256 platformFee = 0;
-        if (chargeAmount > 0) {
-            platformFee = (chargeAmount * PLATFORM_FEE_BPS) / 10000;
+        if (cumulativeAmount > 0) {
+            platformFee = (cumulativeAmount * PLATFORM_FEE_BPS) / 10000;
         }
 
         // Charge buyer and credit seller earnings via Deposits
         depositsContract.chargeAndCreditEarnings(
             session.buyer,
             msg.sender,
-            chargeAmount,
-            session.maxAmount,
+            cumulativeAmount,
+            session.deposit,
             platformFee,
-            protocolReserve,
-            session.isProvenSign || session.isQualifiedProvenSign
+            protocolReserve
         );
 
-        // Derive effective token count from capped charge
-        uint256 effectiveTokenCount = (session.tokenRate > 0)
-            ? chargeAmount / session.tokenRate
-            : 0;
-
         // Update session
-        session.settledAmount = chargeAmount;
-        session.settledTokenCount = effectiveTokenCount;
+        session.settled = cumulativeAmount;
+        session.settledInputTokens = uint128(cumulativeInputTokens);
+        session.settledOutputTokens = uint128(cumulativeOutputTokens);
+        session.nonce = nonce;
+        session.settledAt = block.timestamp;
         session.status = SessionStatus.Settled;
         stakingContract.decrementActiveSessions(msg.sender);
 
-        // Accrue emission points
-        if (address(emissionsContract) != address(0)) {
-            if (session.isQualifiedProvenSign) {
-                emissionsContract.accrueSellerPoints(msg.sender, effectiveTokenCount);
-            }
-            if (session.isProvenSign || session.isQualifiedProvenSign) {
-                uint256 diversityMult = depositsContract.uniqueSellersCharged(session.buyer);
-                emissionsContract.accrueBuyerPoints(session.buyer, effectiveTokenCount * diversityMult);
-            }
+        // Update reputation with settlement data
+        uint256 sellerTokenId = identityContract.getTokenId(msg.sender);
+        if (sellerTokenId != 0) {
+            identityContract.updateReputation(
+                sellerTokenId,
+                IAntseedIdentity.ReputationUpdate({
+                    updateType: 0,
+                    settledVolume: cumulativeAmount,
+                    inputTokens: uint128(cumulativeInputTokens),
+                    outputTokens: uint128(cumulativeOutputTokens)
+                })
+            );
         }
 
-        emit Settled(sessionId, msg.sender, chargeAmount, platformFee);
+        emit Settled(sessionId, msg.sender, cumulativeAmount, platformFee);
     }
 
     function settleTimeout(bytes32 sessionId) external nonReentrant {
         Session storage session = sessions[sessionId];
-        if (session.status != SessionStatus.Reserved) revert SessionNotReserved();
-        if (msg.sender != session.buyer && msg.sender != session.seller && msg.sender != owner()) revert NotAuthorized();
-        if (block.timestamp < session.reservedAt + SETTLE_TIMEOUT && block.timestamp <= session.deadline) revert TimeoutNotReached();
+        if (session.status != SessionStatus.Active) revert SessionNotReserved();
+        if (block.timestamp < session.deadline + CLOSE_GRACE_PERIOD) revert TimeoutNotReached();
 
-        // Return credits via Deposits
-        depositsContract.releaseLock(session.buyer, session.maxAmount);
-
-        // Record ghost on identity
-        uint256 sellerTokenId = identityContract.getTokenId(session.seller);
-        if (sellerTokenId != 0) {
-            identityContract.updateReputation(
-                sellerTokenId,
-                IAntseedIdentity.ReputationUpdate({ updateType: 3, tokenVolume: 0 })
-            );
-        }
+        // Release full deposit via Deposits
+        depositsContract.releaseLock(session.buyer, session.deposit);
 
         session.status = SessionStatus.TimedOut;
         stakingContract.decrementActiveSessions(session.seller);
@@ -328,10 +272,6 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         stakingContract = IAntseedStaking(_staking);
     }
 
-    function setEmissionsContract(address _emissions) external onlyOwner {
-        emissionsContract = IAntseedEmissions(_emissions);
-    }
-
     function setProtocolReserve(address _reserve) external onlyOwner {
         if (_reserve == address(0)) revert InvalidAddress();
         protocolReserve = _reserve;
@@ -339,15 +279,9 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
 
     function setConstant(bytes32 key, uint256 value) external onlyOwner {
         if (key == KEY_FIRST_SIGN_CAP) FIRST_SIGN_CAP = value;
-        else if (key == KEY_MIN_TOKEN_THRESHOLD) MIN_TOKEN_THRESHOLD = value;
-        else if (key == KEY_BUYER_DIVERSITY_THRESHOLD) BUYER_DIVERSITY_THRESHOLD = value;
-        else if (key == KEY_PROVEN_SIGN_COOLDOWN) {
-            if (value < 1 days) revert InvalidAmount();
-            PROVEN_SIGN_COOLDOWN = value;
-        }
-        else if (key == KEY_SETTLE_TIMEOUT) {
-            if (value < 1 hours) revert InvalidAmount();
-            SETTLE_TIMEOUT = value;
+        else if (key == KEY_CLOSE_GRACE_PERIOD) {
+            if (value < 30 minutes) revert InvalidAmount();
+            CLOSE_GRACE_PERIOD = value;
         }
         else if (key == KEY_PLATFORM_FEE_BPS) {
             if (value > MAX_PLATFORM_FEE_BPS) revert InvalidFee();

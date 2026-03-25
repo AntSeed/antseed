@@ -15,10 +15,8 @@ export enum MessageType {
   // --- Payment Protocol (0x50-0x5F) ---
   SpendingAuth = 0x50,
   AuthAck = 0x51,
-  SellerReceipt = 0x53,
-  BuyerAck = 0x54,
-  TopUpRequest = 0x55,
   PaymentRequired = 0x56,
+  NeedAuth = 0x58,
 
   // Report message types
   PeerReport = 0x60,
@@ -48,22 +46,16 @@ export const MAX_PAYLOAD_SIZE = 64 * 1024 * 1024;
  * Buyer authorizes spending via EIP-712 signed SpendingAuth.
  */
 export interface SpendingAuthPayload {
-  /** 32-byte session ID as hex string */
   sessionId: string;
-  /** Maximum amount in USDC base units (6 decimals) */
-  maxAmountUsdc: string;
-  /** Replay-protection nonce */
+  cumulativeAmount: string;
+  cumulativeInputTokens: string;
+  cumulativeOutputTokens: string;
   nonce: number;
-  /** Unix timestamp deadline */
   deadline: number;
-  /** Buyer's EIP-712 signature as hex */
   buyerSig: string;
-  /** Buyer's EVM address */
   buyerEvmAddr: string;
-  /** Token consumption from the previous session (USDC base units) */
-  previousConsumption: string;
-  /** Previous session ID (bytes32 hex, 0x00..00 for first sign) */
-  previousSessionId: string;
+  /** Reserve amount for initial auth (USDC base units). Only set on first auth. */
+  reserveAmount?: string;
 }
 
 /**
@@ -75,63 +67,24 @@ export interface AuthAckPayload {
 }
 
 /**
- * Running-total receipt signed by seller after processing a request.
- * Each receipt supersedes the previous one.
- */
-export interface SellerReceiptPayload {
-  sessionId: string;
-  /** Cumulative cost of all requests in this session (USDC base units) */
-  runningTotal: string;
-  /** Number of requests processed so far */
-  requestCount: number;
-  /** SHA-256 hash of the response body (hex) for proof of work */
-  responseHash: string;
-  /** Seller's Ed25519 signature over (sessionId || runningTotal || requestCount || responseHash) */
-  sellerSig: string;
-}
-
-/**
- * Buyer acknowledges the seller's receipt by counter-signing.
- */
-export interface BuyerAckPayload {
-  sessionId: string;
-  /** Must match seller's runningTotal */
-  runningTotal: string;
-  /** Must match seller's requestCount */
-  requestCount: number;
-  /** Buyer's Ed25519 signature over (sessionId || runningTotal || requestCount) */
-  buyerSig: string;
-}
-
-/**
- * Seller requests additional funds when budget is running low.
- */
-export interface TopUpRequestPayload {
-  sessionId: string;
-  /** Current total used so far (USDC base units) */
-  currentUsed: string;
-  /** Current max authorized (USDC base units) */
-  currentMax: string;
-  /** Additional USDC amount requested (base units) */
-  requestedAdditional: string;
-}
-
-/**
  * Seller tells buyer what's needed to start a payment session.
  * Sent via PaymentMux alongside the HTTP 402 response.
  */
 export interface PaymentRequiredPayload {
-  /** Seller's EVM address for the SpendingAuth */
   sellerEvmAddr: string;
-  /** Seller's token rate in USDC base units per token (from staking contract) */
-  tokenRate: string;
-  /** FIRST_SIGN_CAP from sessions contract (USDC base units) */
-  firstSignCap: string;
-  /** Suggested auth amount in USDC base units */
+  minBudgetPerRequest: string;
   suggestedAmount: string;
-  /** The requestId that triggered the 402, so the buyer can correlate */
   requestId: string;
-  /** Per-direction pricing from seller metadata (USD per 1M tokens), if available */
   inputUsdPerMillion?: number;
   outputUsdPerMillion?: number;
+}
+
+/**
+ * Seller tells buyer that the current cumulative authorization is insufficient.
+ */
+export interface NeedAuthPayload {
+  sessionId: string;
+  requiredCumulativeAmount: string;
+  currentAcceptedCumulative: string;
+  deposit: string;
 }

@@ -1,10 +1,8 @@
 import type {
   SpendingAuthPayload,
   AuthAckPayload,
-  SellerReceiptPayload,
-  BuyerAckPayload,
-  TopUpRequestPayload,
   PaymentRequiredPayload,
+  NeedAuthPayload,
 } from '../types/protocol.js';
 
 const encoder = new TextEncoder();
@@ -51,15 +49,11 @@ export function encodeAuthAck(payload: AuthAckPayload): Uint8Array {
   return encoder.encode(JSON.stringify(payload));
 }
 
-export function encodeSellerReceipt(payload: SellerReceiptPayload): Uint8Array {
+export function encodePaymentRequired(payload: PaymentRequiredPayload): Uint8Array {
   return encoder.encode(JSON.stringify(payload));
 }
 
-export function encodeBuyerAck(payload: BuyerAckPayload): Uint8Array {
-  return encoder.encode(JSON.stringify(payload));
-}
-
-export function encodeTopUpRequest(payload: TopUpRequestPayload): Uint8Array {
+export function encodeNeedAuth(payload: NeedAuthPayload): Uint8Array {
   return encoder.encode(JSON.stringify(payload));
 }
 
@@ -69,13 +63,13 @@ export function decodeSpendingAuth(data: Uint8Array): SpendingAuthPayload {
   const obj = parseJson(data);
   return {
     sessionId: requireString(obj, 'sessionId'),
-    maxAmountUsdc: requireString(obj, 'maxAmountUsdc'),
+    cumulativeAmount: requireString(obj, 'cumulativeAmount'),
+    cumulativeInputTokens: requireString(obj, 'cumulativeInputTokens'),
+    cumulativeOutputTokens: requireString(obj, 'cumulativeOutputTokens'),
     nonce: requireNumber(obj, 'nonce'),
     deadline: requireNumber(obj, 'deadline'),
     buyerSig: requireString(obj, 'buyerSig'),
     buyerEvmAddr: requireString(obj, 'buyerEvmAddr'),
-    previousConsumption: requireString(obj, 'previousConsumption'),
-    previousSessionId: requireString(obj, 'previousSessionId'),
   };
 }
 
@@ -87,51 +81,25 @@ export function decodeAuthAck(data: Uint8Array): AuthAckPayload {
   };
 }
 
-export function decodeSellerReceipt(data: Uint8Array): SellerReceiptPayload {
-  const obj = parseJson(data);
-  return {
-    sessionId: requireString(obj, 'sessionId'),
-    runningTotal: requireString(obj, 'runningTotal'),
-    requestCount: requireNumber(obj, 'requestCount'),
-    responseHash: requireString(obj, 'responseHash'),
-    sellerSig: requireString(obj, 'sellerSig'),
-  };
-}
-
-export function decodeBuyerAck(data: Uint8Array): BuyerAckPayload {
-  const obj = parseJson(data);
-  return {
-    sessionId: requireString(obj, 'sessionId'),
-    runningTotal: requireString(obj, 'runningTotal'),
-    requestCount: requireNumber(obj, 'requestCount'),
-    buyerSig: requireString(obj, 'buyerSig'),
-  };
-}
-
-export function decodeTopUpRequest(data: Uint8Array): TopUpRequestPayload {
-  const obj = parseJson(data);
-  return {
-    sessionId: requireString(obj, 'sessionId'),
-    currentUsed: requireString(obj, 'currentUsed'),
-    currentMax: requireString(obj, 'currentMax'),
-    requestedAdditional: requireString(obj, 'requestedAdditional'),
-  };
-}
-
-export function encodePaymentRequired(payload: PaymentRequiredPayload): Uint8Array {
-  return encoder.encode(JSON.stringify(payload));
-}
-
 export function decodePaymentRequired(data: Uint8Array): PaymentRequiredPayload {
   const obj = parseJson(data);
   const result: PaymentRequiredPayload = {
     sellerEvmAddr: requireString(obj, 'sellerEvmAddr'),
-    tokenRate: requireString(obj, 'tokenRate'),
-    firstSignCap: requireString(obj, 'firstSignCap'),
+    minBudgetPerRequest: requireString(obj, 'minBudgetPerRequest'),
     suggestedAmount: requireString(obj, 'suggestedAmount'),
     requestId: requireString(obj, 'requestId'),
   };
   if (typeof obj.inputUsdPerMillion === 'number') result.inputUsdPerMillion = obj.inputUsdPerMillion;
   if (typeof obj.outputUsdPerMillion === 'number') result.outputUsdPerMillion = obj.outputUsdPerMillion;
   return result;
+}
+
+export function decodeNeedAuth(data: Uint8Array): NeedAuthPayload {
+  const obj = parseJson(data);
+  return {
+    sessionId: requireString(obj, 'sessionId'),
+    requiredCumulativeAmount: requireString(obj, 'requiredCumulativeAmount'),
+    currentAcceptedCumulative: requireString(obj, 'currentAcceptedCumulative'),
+    deposit: requireString(obj, 'deposit'),
+  };
 }

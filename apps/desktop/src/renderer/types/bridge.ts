@@ -139,11 +139,11 @@ export type DesktopBridge = {
   paymentsSignSpendingAuth?: (params: {
     sellerEvmAddress: string;
     sessionId: string;
-    maxAmountBaseUnits: string;
+    cumulativeAmountBaseUnits: string;
+    cumulativeInputTokens: string;
+    cumulativeOutputTokens: string;
     nonce: number;
     deadline: number;
-    previousConsumption: string;
-    previousSessionId: string;
   }) => Promise<{ ok: boolean; data?: { signature: string; buyerEvmAddress: string }; error?: string }>;
 
   paymentsGetPeerInfo?: (peerId: string) => Promise<{

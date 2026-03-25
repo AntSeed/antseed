@@ -15,7 +15,6 @@ const fakeIdentity: Identity = {
 function mockStakingClient(overrides: {
   ethBalance?: bigint;
   sellerStake?: bigint;
-  sellerTokenRate?: bigint;
 } = {}): StakingClient {
   return {
     provider: {
@@ -24,7 +23,6 @@ function mockStakingClient(overrides: {
     getSellerAccount: vi.fn().mockResolvedValue({
       stake: overrides.sellerStake ?? 10_000_000n,
       stakedAt: 0n,
-      tokenRate: overrides.sellerTokenRate ?? 100n,
     }),
   } as unknown as StakingClient;
 }
@@ -61,7 +59,7 @@ describe('checkSellerReadiness', () => {
 
     const checks = await checkSellerReadiness(fakeIdentity, identity, staking);
 
-    expect(checks).toHaveLength(4);
+    expect(checks).toHaveLength(3);
     expect(checks.every(c => c.passed)).toBe(true);
     expect(checks.every(c => c.command === undefined)).toBe(true);
   });
@@ -99,16 +97,6 @@ describe('checkSellerReadiness', () => {
     expect(stakeCheck.command).toBe('antseed stake 10');
   });
 
-  it('fails token rate check when rate is zero', async () => {
-    const staking = mockStakingClient({ sellerTokenRate: 0n });
-    const identity = mockIdentityClient();
-
-    const checks = await checkSellerReadiness(fakeIdentity, identity, staking);
-
-    const rateCheck = checks.find(c => c.name === 'Token rate')!;
-    expect(rateCheck.passed).toBe(false);
-    expect(rateCheck.message).toBe('Token rate not set');
-  });
 });
 
 describe('checkBuyerReadiness', () => {

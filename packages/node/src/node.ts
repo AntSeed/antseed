@@ -106,6 +106,27 @@ function parseResponseUsage(body: Uint8Array): { inputTokens: number; outputToke
   return { inputTokens, outputTokens };
 }
 
+/**
+ * Compute request cost in USDC base units (6 decimals) from token counts and USD pricing.
+ * pricing.inputUsdPerMillion / pricing.outputUsdPerMillion are in USD per million tokens.
+ * Returns cost in base units (1 USDC = 1_000_000).
+ */
+function computeCostUsdc(
+  inputTokens: number,
+  outputTokens: number,
+  pricing: { inputUsdPerMillion: number; outputUsdPerMillion: number },
+): bigint {
+  // USD cost = tokens * (usdPerMillion / 1_000_000)
+  // USDC base units = USD cost * 1_000_000
+  // Combined: base units = tokens * usdPerMillion / 1_000_000 * 1_000_000 = tokens * usdPerMillion
+  // But usdPerMillion is a float, so compute in float then round
+  const costUsd =
+    (inputTokens * pricing.inputUsdPerMillion + outputTokens * pricing.outputUsdPerMillion) / 1_000_000;
+  // Convert to USDC base units (6 decimals)
+  const costBaseUnits = Math.max(0, Math.round(costUsd * 1_000_000));
+  return BigInt(costBaseUnits);
+}
+
 function parsePaymentRequiredBody(body: Uint8Array): Record<string, unknown> | null {
   try {
     const parsed = JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>;
@@ -144,16 +165,16 @@ export interface NodePaymentsConfig {
   stakingAddress?: string;
   /** Chain ID for EIP-712 domain. Default: 8453 (Base) */
   chainId?: number;
-  /** Default maximum USDC per spending auth. Default: 1000000 (1 USDC) */
+  /** Default maximum USDC per spending auth. Default: 100000 ($0.10) */
   defaultMaxAmountUsdc?: string;
-  /** Default auth duration in seconds. Default: 3600 */
+  /** Default auth duration in seconds. Default: 90000 */
   defaultAuthDurationSecs?: number;
-  /** Auto-acknowledge seller receipts. Default: true */
-  autoAck?: boolean;
-  /** Suggested USDC amount (base units) for first-sign sessions. Default: 100000 ($0.10). */
-  firstSignAmountUsdc?: string;
-  /** Suggested USDC amount (base units) for proven-sign sessions. Default: 100000 ($0.10). */
-  provenSignAmountUsdc?: string;
+  /** Minimum USDC per request (base units) for seller. Default: "10000" ($0.01). */
+  minBudgetPerRequest?: string;
+  /** Maximum USDC the buyer authorizes per single request (base units). Default: "100000" ($0.10). */
+  maxPerRequestUsdc?: string;
+  /** Maximum total USDC the buyer will reserve in a single SpendingAuth (base units). Default: "10000000" ($10.00). */
+  maxReserveAmountUsdc?: string;
 }
 
 export interface NodeConfig {
@@ -282,6 +303,16 @@ export class AntseedNode extends EventEmitter {
   /** Per-peer mutex to prevent concurrent payment negotiations. */
   private _paymentNegotiationLocks = new Map<string, Promise<void>>();
   /** Peers the caller has manually approved by retrying after a 402. */
+  /** Peers that have already sent their first request after session establishment.
+   *  Used to distinguish whether per-request SpendingAuth should be attached. */
+  private _buyerFirstRequestSent = new Set<string>();
+  /** Per-peer last response cost headers from the seller, used for per-request auth. */
+  private _lastResponseCost = new Map<string, {
+    costUsdc: bigint;
+    inputTokens: bigint;
+    outputTokens: bigint;
+    cumulativeCost: bigint;
+  }>();
 
   constructor(config: NodeConfig) {
     super();
@@ -489,6 +520,8 @@ export class AntseedNode extends EventEmitter {
     this._buyerPaymentManager = null;
     this._sellerPaymentManager = null;
     this._buyerLockedPeers.clear();
+    this._buyerFirstRequestSent.clear();
+    this._lastResponseCost.clear();
     // Clean up payment negotiation state
     for (const [, pending] of this._pendingPaymentRequired) {
       clearTimeout(pending.timer);
@@ -627,6 +660,19 @@ export class AntseedNode extends EventEmitter {
     if (externalSpendingAuth && needsPaymentNegotiation) {
       debugLog(`[Node] Applying external spending auth for ${peer.peerId.slice(0, 12)}...`);
       await this._applyExternalSpendingAuth(peer, conn, externalSpendingAuth);
+    }
+
+    // Send per-request SpendingAuth for subsequent requests (after the initial
+    // session was established). The first request is covered by the initial
+    // SpendingAuth from _doNegotiatePayment; skip it here.
+    const alreadyLocked = this._buyerLockedPeers.has(peer.peerId);
+    if (alreadyLocked && this._buyerPaymentManager && !externalSpendingAuth) {
+      if (this._buyerFirstRequestSent.has(peer.peerId)) {
+        await this._sendPerRequestAuth(peer, conn);
+      } else {
+        // First request after session open — initial SpendingAuth already sent
+        this._buyerFirstRequestSent.add(peer.peerId);
+      }
     }
 
     const startTime = Date.now();
@@ -837,8 +883,7 @@ export class AntseedNode extends EventEmitter {
             error: 'payment_required',
             peerId: peer.peerId,
             sellerEvmAddr: buffered.sellerEvmAddr,
-            tokenRate: buffered.tokenRate,
-            firstSignCap: buffered.firstSignCap,
+            minBudgetPerRequest: buffered.minBudgetPerRequest,
             suggestedAmount: buffered.suggestedAmount,
           });
           return {
@@ -873,8 +918,23 @@ export class AntseedNode extends EventEmitter {
       }
 
       // Auto-negotiate: sign SpendingAuth internally and retry
-      // Re-buffer the PaymentRequired so _doNegotiatePayment can consume it
-      if (buffered) this._bufferedPaymentRequired.set(peer.peerId, buffered);
+      // Re-buffer the PaymentRequired so _doNegotiatePayment can consume it.
+      // When the 402 body already contained requirements (responseAlreadyHasRequirements),
+      // construct a PaymentRequiredPayload from the body so _doNegotiatePayment doesn't
+      // need to wait for the PaymentMux frame (which may have already been lost).
+      if (buffered) {
+        this._bufferedPaymentRequired.set(peer.peerId, buffered);
+      } else if (responseAlreadyHasRequirements && directPaymentBody) {
+        const bodyRequirements: PaymentRequiredPayload = {
+          sellerEvmAddr: String(directPaymentBody.sellerEvmAddr ?? ''),
+          minBudgetPerRequest: String(directPaymentBody.minBudgetPerRequest ?? '10000'),
+          suggestedAmount: String(directPaymentBody.suggestedAmount ?? '100000'),
+          requestId: req.requestId,
+          ...(directPaymentBody.inputUsdPerMillion != null ? { inputUsdPerMillion: Number(directPaymentBody.inputUsdPerMillion) } : {}),
+          ...(directPaymentBody.outputUsdPerMillion != null ? { outputUsdPerMillion: Number(directPaymentBody.outputUsdPerMillion) } : {}),
+        };
+        this._bufferedPaymentRequired.set(peer.peerId, bodyRequirements);
+      }
       debugLog(`[Node] Got 402 from ${peer.peerId.slice(0, 12)}... — auto-negotiating payment`);
       try {
         await this._negotiatePayment(peer, conn);
@@ -884,6 +944,14 @@ export class AntseedNode extends EventEmitter {
         this._buyerLockedPeers.delete(peer.peerId);
         throw err;
       }
+    }
+
+    // Parse seller cost headers from the response for per-request auth tracking.
+    // For streaming responses, the seller doesn't inject cost headers, so we
+    // estimate cost locally from the response body and peer pricing.
+    this._parseCostHeaders(peer.peerId, response);
+    if (!this._lastResponseCost.has(peer.peerId) && response.body.length > 0) {
+      this._estimateCostFromResponse(peer, response);
     }
 
     return response;
@@ -973,6 +1041,9 @@ export class AntseedNode extends EventEmitter {
         // causes _doNegotiatePayment to throw, and its finally block owns cleanup.
         // Deleting here would race with a new negotiation started on reconnect.
         this._decoders.delete(peerId);
+        // Clean up buyer-side per-request auth tracking on disconnect
+        this._buyerFirstRequestSent.delete(peerId);
+        this._lastResponseCost.delete(peerId);
         // Handle buyer disconnect
         if (this._sellerPaymentManager) {
           this._sellerPaymentManager.onBuyerDisconnect(peerId);
@@ -1166,9 +1237,9 @@ export class AntseedNode extends EventEmitter {
           usdcAddress: payments.usdcAddress,
           identityAddress: payments.identityAddress ?? '',
           chainId: payments.chainId ?? 8453,
-          defaultMaxAmountUsdc: BigInt(payments.defaultMaxAmountUsdc ?? "1000000"),
           defaultAuthDurationSecs: payments.defaultAuthDurationSecs ?? 90000, // Must exceed SETTLE_TIMEOUT (24h)
-          autoAck: payments.autoAck ?? true,
+          maxPerRequestUsdc: BigInt(payments.maxPerRequestUsdc ?? payments.defaultMaxAmountUsdc ?? "100000"),  // $0.10 default
+          maxReserveAmountUsdc: BigInt(payments.maxReserveAmountUsdc ?? "10000000"),  // $10.00 default
           dataDir: paymentsDir,
         };
         this._buyerPaymentManager = new BuyerPaymentManager(identity, buyerPaymentConfig, this._sessionStore);
@@ -1189,10 +1260,15 @@ export class AntseedNode extends EventEmitter {
     if (this._sellerPaymentManager) {
       const spm = this._sellerPaymentManager;
       paymentMux.onSpendingAuth((payload) => {
-        void spm.handleSpendingAuth(buyerPeerId, payload.buyerEvmAddr, payload, paymentMux);
-      });
-      paymentMux.onBuyerAck((payload) => {
-        void spm.handleBuyerAck(buyerPeerId, payload);
+        // handleSpendingAuth handles both initial (sends AuthAck) and subsequent
+        // per-request auths (validates monotonic increase, no AuthAck).
+        void spm.handleSpendingAuth(buyerPeerId, payload.buyerEvmAddr, payload, paymentMux)
+          .then((status) => {
+            if (status === 'rejected') {
+              debugWarn(`[Node] SpendingAuth rejected for buyer ${buyerPeerId.slice(0, 12)}... — notifying via payment:auth-rejected event`);
+              this.emit('payment:auth-rejected', { buyerPeerId, reason: 'invalid_or_non_monotonic' });
+            }
+          });
       });
     } else {
       // No SellerPaymentManager — reject SpendingAuth to prevent
@@ -1213,8 +1289,6 @@ export class AntseedNode extends EventEmitter {
       if (this._sessionsClient && !spmAuthorized) {
         // Pass buyerPeerId so seller can suggest higher amount for returning buyers,
         // and include per-direction pricing from the first registered provider.
-        // Retry init if it failed at startup (e.g. RPC was unreachable)
-        await this._sellerPaymentManager?.ensureInitialized();
         const firstProvider = this._providers[0];
         const providerPricing = firstProvider?.pricing?.defaults;
         const requirements = this._sellerPaymentManager?.getPaymentRequirements(
@@ -1225,8 +1299,7 @@ export class AntseedNode extends EventEmitter {
           const paymentBody = JSON.stringify({
             error: 'payment_required',
             sellerEvmAddr: requirements.sellerEvmAddr,
-            tokenRate: requirements.tokenRate,
-            firstSignCap: requirements.firstSignCap,
+            minBudgetPerRequest: requirements.minBudgetPerRequest,
             suggestedAmount: requirements.suggestedAmount,
           });
           mux.sendProxyResponse({
@@ -1237,9 +1310,7 @@ export class AntseedNode extends EventEmitter {
           });
           paymentMux.sendPaymentRequired(requirements);
         } else {
-          // init() failed — on-chain data not cached. Tell buyer to retry
-          // rather than letting them wait 10s for a PaymentRequired that won't come.
-          debugWarn(`[Node] No payment session and seller not ready (init failed?) — returning 402`);
+          debugWarn(`[Node] No payment session — returning 402`);
           mux.sendProxyResponse({
             requestId: request.requestId,
             statusCode: 402,
@@ -1310,7 +1381,9 @@ export class AntseedNode extends EventEmitter {
           responseBody = response.body;
           debugLog(`[Node] Provider responded: status=${statusCode} (${Date.now() - startTime}ms, ${responseBody.length}b)`);
           if (!streamedResponseStarted) {
-            mux.sendProxyResponse(response);
+            // Inject cost headers before sending response (non-streamed only)
+            const responseToSend = this._injectCostHeaders(response, provider, request, buyerPeerId);
+            mux.sendProxyResponse(responseToSend);
           }
         } catch (err) {
           const message = err instanceof Error ? err.message : "Internal error";
@@ -1353,12 +1426,30 @@ export class AntseedNode extends EventEmitter {
           responseBody,
         );
 
-        // Send receipt to buyer after each request
+        // Inject cost headers and record spend for cumulative voucher model
         if (this._sellerPaymentManager?.hasSession(buyerPeerId)) {
           const usage = parseResponseUsage(responseBody);
-          const totalTokens = usage.inputTokens + usage.outputTokens;
-          debugLog(`[Node] Sending receipt: buyer=${buyerPeerId.slice(0, 12)}... tokens=${totalTokens} (in=${usage.inputTokens} out=${usage.outputTokens})`);
-          await this._sellerPaymentManager.sendReceipt(buyerPeerId, paymentMux, responseBody, BigInt(totalTokens));
+          const costUsdc = computeCostUsdc(usage.inputTokens, usage.outputTokens, requestPricing);
+          const session = this._sellerPaymentManager.getSessionByPeer(buyerPeerId);
+          if (session) {
+            this._sellerPaymentManager.recordSpend(session.sessionId, costUsdc);
+            const cumulativeSpend = this._sellerPaymentManager.getCumulativeSpend(session.sessionId);
+            debugLog(`[Node] Cost recorded: buyer=${buyerPeerId.slice(0, 12)}... cost=${costUsdc} cumulative=${cumulativeSpend} (in=${usage.inputTokens} out=${usage.outputTokens})`);
+
+            // Check if remaining budget is running low; proactively request more auth
+            const accepted = this._sellerPaymentManager.getAcceptedCumulative(session.sessionId);
+            const remainingBudget = accepted - cumulativeSpend;
+            const estimatedNextRequestCost = costUsdc > 0n ? costUsdc : 1n;
+            if (remainingBudget < estimatedNextRequestCost) {
+              debugLog(`[Node] Budget low for ${buyerPeerId.slice(0, 12)}... remaining=${remainingBudget} estimated=${estimatedNextRequestCost} — sending NeedAuth`);
+              paymentMux.sendNeedAuth({
+                sessionId: session.sessionId,
+                requiredCumulativeAmount: (cumulativeSpend + estimatedNextRequestCost * 2n).toString(),
+                currentAcceptedCumulative: accepted.toString(),
+                deposit: cumulativeSpend.toString(),
+              });
+            }
+          }
         }
       } finally {
         this._adjustProviderLoad(provider.name, -1);
@@ -1678,19 +1769,15 @@ export class AntseedNode extends EventEmitter {
 
     // Initialize SellerPaymentManager for seller role
     if (this._config.role === 'seller' && this._identity && this._sessionStore &&
-        payments.rpcUrl && payments.sessionsAddress && payments.stakingAddress && payments.usdcAddress) {
+        payments.rpcUrl && payments.sessionsAddress) {
       const sellerConfig: SellerPaymentConfig = {
         rpcUrl: payments.rpcUrl,
         sessionsContractAddress: payments.sessionsAddress,
-        stakingContractAddress: payments.stakingAddress,
-        usdcAddress: payments.usdcAddress,
         chainId: payments.chainId ?? 8453,
         dataDir: paymentsDir,
-        firstSignAmountUsdc: payments.firstSignAmountUsdc,
-        provenSignAmountUsdc: payments.provenSignAmountUsdc,
+        ...(payments.minBudgetPerRequest ? { minBudgetPerRequest: payments.minBudgetPerRequest } : {}),
       };
       this._sellerPaymentManager = new SellerPaymentManager(this._identity, sellerConfig, this._sessionStore);
-      await this._sellerPaymentManager.init();
       debugLog(`[Node] SellerPaymentManager initialized`);
 
       // Startup recovery: check for timed-out sessions
@@ -1912,12 +1999,8 @@ export class AntseedNode extends EventEmitter {
       bpm.handleAuthAck(peerId, payload);
     });
 
-    pmux.onSellerReceipt((receipt) => {
-      void bpm.handleSellerReceipt(peerId, receipt, pmux);
-    });
-
-    pmux.onTopUpRequest((request) => {
-      void bpm.handleTopUpRequest(peerId, request, pmux);
+    pmux.onNeedAuth((payload) => {
+      void bpm.handleNeedAuth(peerId, payload, pmux);
     });
 
     pmux.onPaymentRequired((payload) => {
@@ -2063,14 +2146,14 @@ export class AntseedNode extends EventEmitter {
 
     let payload: {
       sessionId: string;
-      maxAmountUsdc: string;
+      cumulativeAmount: string;
+      cumulativeInputTokens: string;
+      cumulativeOutputTokens: string;
       nonce: number;
       deadline: number;
       buyerSig: string;
       buyerEvmAddr: string;
       sellerEvmAddr?: string;
-      previousConsumption: string;
-      previousSessionId: string;
     };
     try {
       const decoded = Buffer.from(headerValue, 'base64').toString('utf-8');
@@ -2079,7 +2162,7 @@ export class AntseedNode extends EventEmitter {
       throw new Error('Invalid x-antseed-spending-auth header: failed to decode');
     }
 
-    debugLog(`[Node] External SpendingAuth: session=${payload.sessionId.slice(0, 18)}... amount=${payload.maxAmountUsdc}`);
+    debugLog(`[Node] External SpendingAuth: session=${payload.sessionId.slice(0, 18)}... amount=${payload.cumulativeAmount}`);
 
     // Store session so handleAuthAck can find it
     if (this._sessionStore) {
@@ -2091,10 +2174,10 @@ export class AntseedNode extends EventEmitter {
         sellerEvmAddr,
         buyerEvmAddr: payload.buyerEvmAddr,
         nonce: payload.nonce,
-        authMax: payload.maxAmountUsdc,
+        authMax: payload.cumulativeAmount,
         deadline: payload.deadline,
-        previousSessionId: payload.previousSessionId,
-        previousConsumption: payload.previousConsumption,
+        previousSessionId: '0x' + '0'.repeat(64),
+        previousConsumption: '0',
         tokensDelivered: '0',
         requestCount: 0,
         reservedAt: Date.now(),
@@ -2117,7 +2200,7 @@ export class AntseedNode extends EventEmitter {
     this.emit('payment:signed', {
       peerId: peer.peerId,
       sellerEvmAddr: payload.sellerEvmAddr ?? '',
-      amount: payload.maxAmountUsdc,
+      amount: payload.cumulativeAmount,
     });
   }
 
@@ -2165,49 +2248,35 @@ export class AntseedNode extends EventEmitter {
       this._pendingPaymentRequired.set(peer.peerId, { resolve, reject, timer });
     });
 
-    debugLog(`[Node] PaymentRequired from ${peer.peerId.slice(0, 12)}...: rate=${requirements.tokenRate} cap=${requirements.firstSignCap} suggested=${requirements.suggestedAmount}`);
+    debugLog(`[Node] PaymentRequired from ${peer.peerId.slice(0, 12)}...: minBudgetPerRequest=${requirements.minBudgetPerRequest} suggested=${requirements.suggestedAmount}`);
 
-    // Fetch on-chain context so the UI can show the buyer real data
-    let approvalContext: Awaited<ReturnType<import('./payments/evm/sessions-client.js').SessionsClient['getBuyerApprovalContext']>> | null = null;
-    if (this._sessionsClient && this._depositsClient && this._identity) {
-      try {
-        const buyerAddr = identityToEvmAddress(this._identity);
-        approvalContext = await this._sessionsClient.getBuyerApprovalContext(buyerAddr, requirements.sellerEvmAddr, this._depositsClient);
-        debugLog(`[Node] Approval context: balance=${approvalContext.buyerBalance.available} isFirstSign=${approvalContext.isFirstSign} cooldown=${approvalContext.cooldownRemainingSecs}s`);
-      } catch (err) {
-        debugWarn(`[Node] Failed to fetch approval context: ${err instanceof Error ? err.message : err}`);
-      }
+    // Validate that seller's per-request minimum is within buyer's configured limit
+    const minBudgetPerRequest = BigInt(requirements.minBudgetPerRequest);
+    if (minBudgetPerRequest > bpm.maxPerRequestUsdc) {
+      throw new Error(
+        `Seller ${peer.peerId.slice(0, 12)}... minBudgetPerRequest=${minBudgetPerRequest} exceeds buyer maxPerRequestUsdc=${bpm.maxPerRequestUsdc}`,
+      );
     }
 
-    // Cap amount before building approval info so the displayed amount
-    // matches what will actually be signed via authorizeSpending.
+    // Cap amount at buyer's maxReserveAmountUsdc
     let amount: bigint;
     try {
       amount = BigInt(requirements.suggestedAmount);
     } catch {
       throw new Error(`Invalid suggestedAmount from seller ${peer.peerId.slice(0, 12)}...: "${requirements.suggestedAmount}"`);
     }
-    if (approvalContext) {
-      const available = approvalContext.buyerBalance.available;
-      if (amount > available) amount = available;
-      if (approvalContext.isFirstSign) {
-        const cap = approvalContext.firstSignCap;
-        if (amount > cap) amount = cap;
-      }
+    if (amount > bpm.maxReserveAmountUsdc) {
+      amount = bpm.maxReserveAmountUsdc;
     }
     if (amount <= 0n) {
-      throw new Error(`Insufficient deposit balance to authorize payment to ${peer.peerId.slice(0, 12)}...`);
+      throw new Error(`Invalid reserve amount for payment to ${peer.peerId.slice(0, 12)}...`);
     }
 
     const approvalInfo = {
       peerId: peer.peerId,
       sellerEvmAddr: requirements.sellerEvmAddr,
-      tokenRate: requirements.tokenRate,
-      firstSignCap: requirements.firstSignCap,
+      minBudgetPerRequest: requirements.minBudgetPerRequest,
       suggestedAmount: amount.toString(),
-      buyerAvailableUsdc: approvalContext ? approvalContext.buyerBalance.available.toString() : null,
-      isFirstSign: approvalContext?.isFirstSign ?? null,
-      cooldownRemainingSecs: approvalContext?.cooldownRemainingSecs ?? null,
     };
 
     this.emit('payment:required', approvalInfo);
@@ -2225,7 +2294,6 @@ export class AntseedNode extends EventEmitter {
         peerId: peer.peerId,
         sellerEvmAddr: requirements.sellerEvmAddr,
         amount: amount.toString(),
-        tokenRate: requirements.tokenRate,
       });
     } catch (err) {
       debugWarn(`[Node] Payment negotiation failed for ${peer.peerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
@@ -2372,6 +2440,127 @@ export class AntseedNode extends EventEmitter {
   private _unrefTimer(timer: ReturnType<typeof setTimeout>): void {
     if (typeof (timer as { unref?: () => void }).unref === "function") {
       (timer as { unref: () => void }).unref();
+    }
+  }
+
+  /**
+   * Inject cost headers into a non-streamed response before sending to buyer.
+   */
+  private _injectCostHeaders(
+    response: SerializedHttpResponse,
+    provider: Provider,
+    request: SerializedHttpRequest,
+    buyerPeerId: string,
+  ): SerializedHttpResponse {
+    const spm = this._sellerPaymentManager;
+    if (!spm || !spm.hasSession(buyerPeerId)) return response;
+
+    const usage = parseResponseUsage(response.body);
+    const pricing = this._resolveProviderPricing(provider, request);
+    const costUsdc = computeCostUsdc(usage.inputTokens, usage.outputTokens, pricing);
+    const session = spm.getSessionByPeer(buyerPeerId);
+    const cumulativeCost = session ? spm.getCumulativeSpend(session.sessionId) : 0n;
+
+    return {
+      ...response,
+      headers: {
+        ...response.headers,
+        'x-antseed-input-tokens': String(usage.inputTokens),
+        'x-antseed-output-tokens': String(usage.outputTokens),
+        'x-antseed-cost': costUsdc.toString(),
+        'x-antseed-cumulative-cost': cumulativeCost.toString(),
+      },
+    };
+  }
+
+  /**
+   * Parse seller cost headers from a response and store them for per-request auth.
+   */
+  private _parseCostHeaders(peerId: string, response: SerializedHttpResponse): void {
+    const costHeader = response.headers['x-antseed-cost'];
+    if (!costHeader) return;
+
+    try {
+      this._lastResponseCost.set(peerId, {
+        costUsdc: BigInt(costHeader),
+        inputTokens: BigInt(response.headers['x-antseed-input-tokens'] ?? '0'),
+        outputTokens: BigInt(response.headers['x-antseed-output-tokens'] ?? '0'),
+        cumulativeCost: BigInt(response.headers['x-antseed-cumulative-cost'] ?? '0'),
+      });
+    } catch {
+      // Ignore malformed headers
+    }
+  }
+
+  /**
+   * Estimate cost from response body when seller cost headers are missing
+   * (e.g., streaming responses where _injectCostHeaders is not called).
+   * Uses parseResponseUsage to extract token counts from the response body,
+   * then computes cost using the peer's announced pricing.
+   */
+  private _estimateCostFromResponse(peer: PeerInfo, response: SerializedHttpResponse): void {
+    const inputPricePerM = peer.defaultInputUsdPerMillion;
+    const outputPricePerM = peer.defaultOutputUsdPerMillion;
+    if (inputPricePerM == null && outputPricePerM == null) return;
+
+    const usage = parseResponseUsage(response.body);
+    // If no token counts found in the response body, fall back to byte-based estimate
+    let inputTokens = usage.inputTokens;
+    let outputTokens = usage.outputTokens;
+    if (inputTokens === 0 && outputTokens === 0 && response.body.length > 0) {
+      // Rough estimate: ~4 bytes per token for output
+      outputTokens = Math.ceil(response.body.length / 4);
+    }
+
+    const pricing = {
+      inputUsdPerMillion: inputPricePerM ?? 0,
+      outputUsdPerMillion: outputPricePerM ?? 0,
+    };
+    const costUsdc = computeCostUsdc(inputTokens, outputTokens, pricing);
+
+    this._lastResponseCost.set(peer.peerId, {
+      costUsdc,
+      inputTokens: BigInt(inputTokens),
+      outputTokens: BigInt(outputTokens),
+      cumulativeCost: 0n, // Unknown for estimated costs
+    });
+
+    debugLog(
+      `[Node] Estimated cost for ${peer.peerId.slice(0, 12)}...: ` +
+      `cost=${costUsdc} (in=${inputTokens} out=${outputTokens}, estimated=${usage.inputTokens === 0 && usage.outputTokens === 0})`,
+    );
+  }
+
+  /**
+   * Sign and send a per-request SpendingAuth before sending the next request to a seller.
+   */
+  private async _sendPerRequestAuth(peer: PeerInfo, conn: PeerConnection): Promise<void> {
+    const bpm = this._buyerPaymentManager;
+    if (!bpm) return;
+
+    const pmux = this._getOrCreateBuyerPaymentMux(peer.peerId, conn);
+
+    // Get cost from the previous response
+    const lastCost = this._lastResponseCost.get(peer.peerId);
+    const addedCostUsdc = lastCost?.costUsdc ?? 0n;
+    const addedInputTokens = lastCost?.inputTokens ?? 0n;
+    const addedOutputTokens = lastCost?.outputTokens ?? 0n;
+    // Estimate next request cost as the same as last request
+    const estimatedNextCostUsdc = addedCostUsdc > 0n ? addedCostUsdc : 1n;
+
+    try {
+      const payload = await bpm.signPerRequestAuth(
+        peer.peerId,
+        addedCostUsdc,
+        addedInputTokens,
+        addedOutputTokens,
+        estimatedNextCostUsdc,
+      );
+      pmux.sendSpendingAuth(payload);
+      debugLog(`[Node] Per-request SpendingAuth sent to ${peer.peerId.slice(0, 12)}... cumulative=${payload.cumulativeAmount}`);
+    } catch (err) {
+      debugWarn(`[Node] Failed to send per-request SpendingAuth: ${err instanceof Error ? err.message : err}`);
+      throw err;
     }
   }
 }

@@ -26,7 +26,7 @@ export type { SessionsClientConfig, SessionInfo } from './evm/sessions-client.js
 
 // Identity client (registration, reputation)
 export { IdentityClient } from './evm/identity-client.js';
-export type { IdentityClientConfig, ProvenReputation, FeedbackSummary } from './evm/identity-client.js';
+export type { IdentityClientConfig, Reputation, FeedbackSummary } from './evm/identity-client.js';
 
 // Staking client (seller staking, token rate, slashing)
 export { StakingClient } from './evm/staking-client.js';
@@ -39,8 +39,6 @@ export {
   makeSessionsDomain,
   SPENDING_AUTH_TYPES,
   signMessageEd25519,
-  buildReceiptMessage,
-  buildAckMessage,
   verifyMessageEd25519,
 } from './evm/signatures.js';
 export type { SpendingAuthMessage } from './evm/signatures.js';

@@ -104,7 +104,6 @@ contract Deploy is Script {
         ISetSessions(staking).setSessionsContract(sessions);
         ISetProtocolReserve(staking).setProtocolReserve(protocolReserve);
         ISetEmissions(antsToken).setEmissionsContract(emissions);
-        ISetEmissions(sessions).setEmissionsContract(emissions);
         ISetSessions(emissions).setSessionsContract(sessions);
         ISetProtocolReserve(sessions).setProtocolReserve(protocolReserve);
         ISetSessions(subPool).setSessionsContract(sessions);

@@ -56,12 +56,12 @@ export function registerReputationCommand(program: Command): void {
             address,
             tokenId,
             reputation: {
-              firstSignCount: reputation.firstSignCount,
-              qualifiedProvenSignCount: reputation.qualifiedProvenSignCount,
-              unqualifiedProvenSignCount: reputation.unqualifiedProvenSignCount,
+              sessionCount: reputation.sessionCount,
               ghostCount: reputation.ghostCount,
-              totalQualifiedTokenVolume: reputation.totalQualifiedTokenVolume.toString(),
-              lastProvenAt: reputation.lastProvenAt,
+              totalSettledVolume: reputation.totalSettledVolume.toString(),
+              totalInputTokens: reputation.totalInputTokens.toString(),
+              totalOutputTokens: reputation.totalOutputTokens.toString(),
+              lastSettledAt: reputation.lastSettledAt,
             },
             feedback: {
               quality: {
@@ -76,14 +76,14 @@ export function registerReputationCommand(program: Command): void {
         console.log(chalk.bold(`Reputation for ${address.slice(0, 10)}...\n`));
         console.log(`  Token ID:                    ${chalk.cyan(String(tokenId))}`);
         console.log('');
-        console.log(chalk.bold('  Proof Chain:'));
-        console.log(`    First signs:               ${chalk.green(String(reputation.firstSignCount))}`);
-        console.log(`    Qualified proven signs:     ${chalk.green(String(reputation.qualifiedProvenSignCount))}`);
-        console.log(`    Unqualified proven signs:   ${chalk.yellow(String(reputation.unqualifiedProvenSignCount))}`);
+        console.log(chalk.bold('  Settlement History:'));
+        console.log(`    Settled sessions:           ${chalk.green(String(reputation.sessionCount))}`);
         console.log(`    Ghost sessions:             ${chalk.red(String(reputation.ghostCount))}`);
-        console.log(`    Total qualified volume:     ${chalk.dim(reputation.totalQualifiedTokenVolume.toString() + ' tokens')}`);
-        if (reputation.lastProvenAt > 0) {
-          console.log(`    Last proven at:             ${chalk.dim(new Date(reputation.lastProvenAt * 1000).toISOString())}`);
+        console.log(`    Total settled volume:        ${chalk.dim(reputation.totalSettledVolume.toString() + ' USDC base units')}`);
+        console.log(`    Total input tokens:          ${chalk.dim(reputation.totalInputTokens.toString())}`);
+        console.log(`    Total output tokens:         ${chalk.dim(reputation.totalOutputTokens.toString())}`);
+        if (reputation.lastSettledAt > 0) {
+          console.log(`    Last settled at:             ${chalk.dim(new Date(reputation.lastSettledAt * 1000).toISOString())}`);
         }
         console.log('');
         console.log(chalk.bold('  Feedback:'));

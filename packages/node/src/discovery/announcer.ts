@@ -164,11 +164,8 @@ export class PeerAnnouncer {
         try {
           const tokenId = await this.config.identityClient.getTokenId(evmAddress);
           const reputation = await this.config.identityClient.getReputation(tokenId);
-          metadata.onChainReputation = reputation.qualifiedProvenSignCount;
-          metadata.onChainSessionCount =
-            reputation.firstSignCount +
-            reputation.qualifiedProvenSignCount +
-            reputation.unqualifiedProvenSignCount;
+          metadata.onChainReputation = reputation.sessionCount;
+          metadata.onChainSessionCount = reputation.sessionCount;
           metadata.onChainDisputeCount = reputation.ghostCount;
         } catch {
           // Identity contract lookup failed — skip on-chain reputation for this cycle

@@ -25,7 +25,6 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
     bytes32 private constant KEY_BASE_CREDIT_LIMIT = keccak256("BASE_CREDIT_LIMIT");
     bytes32 private constant KEY_PEER_INTERACTION_BONUS = keccak256("PEER_INTERACTION_BONUS");
     bytes32 private constant KEY_TIME_BONUS = keccak256("TIME_BONUS");
-    bytes32 private constant KEY_PROVEN_SESSION_BONUS = keccak256("PROVEN_SESSION_BONUS");
     bytes32 private constant KEY_FEEDBACK_BONUS = keccak256("FEEDBACK_BONUS");
     bytes32 private constant KEY_MAX_CREDIT_LIMIT = keccak256("MAX_CREDIT_LIMIT");
 
@@ -36,7 +35,6 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
     uint256 public BASE_CREDIT_LIMIT = 50_000_000;
     uint256 public PEER_INTERACTION_BONUS = 5_000_000;
     uint256 public TIME_BONUS = 500_000;
-    uint256 public PROVEN_SESSION_BONUS = 10_000_000;
     uint256 public FEEDBACK_BONUS = 2_000_000;
     uint256 public MAX_CREDIT_LIMIT = 500_000_000;
 
@@ -48,7 +46,6 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
         uint256 withdrawalRequestedAt;
         uint256 lastActivityAt;
         uint256 firstSessionAt;
-        uint256 provenBuyCount;
         uint256 feedbackCount;
     }
 
@@ -105,7 +102,6 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
         uint256 limit = BASE_CREDIT_LIMIT
             + PEER_INTERACTION_BONUS * uniqueSellers
             + TIME_BONUS * daysSinceFirst
-            + PROVEN_SESSION_BONUS * ba.provenBuyCount
             + FEEDBACK_BONUS * ba.feedbackCount;
 
         if (limit > MAX_CREDIT_LIMIT) limit = MAX_CREDIT_LIMIT;
@@ -230,8 +226,7 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
         uint256 chargeAmount,
         uint256 reservedAmount,
         uint256 platformFee,
-        address protocolReserve,
-        bool isProvenSign
+        address protocolReserve
     ) external onlySessions nonReentrant {
         if (chargeAmount > reservedAmount) revert InvalidAmount();
         if (platformFee > chargeAmount) revert InvalidAmount();
@@ -240,9 +235,6 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
         ba.balance -= chargeAmount;
         ba.reserved -= reservedAmount;
         ba.lastActivityAt = block.timestamp;
-        if (isProvenSign) {
-            ba.provenBuyCount++;
-        }
 
         uint256 sellerPayout = chargeAmount - platformFee;
         sellerEarnings[seller] += sellerPayout;
@@ -288,7 +280,6 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
         else if (key == KEY_BASE_CREDIT_LIMIT) BASE_CREDIT_LIMIT = value;
         else if (key == KEY_PEER_INTERACTION_BONUS) PEER_INTERACTION_BONUS = value;
         else if (key == KEY_TIME_BONUS) TIME_BONUS = value;
-        else if (key == KEY_PROVEN_SESSION_BONUS) PROVEN_SESSION_BONUS = value;
         else if (key == KEY_FEEDBACK_BONUS) FEEDBACK_BONUS = value;
         else if (key == KEY_MAX_CREDIT_LIMIT) MAX_CREDIT_LIMIT = value;
         else revert InvalidAmount();

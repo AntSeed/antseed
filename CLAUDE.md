@@ -80,6 +80,67 @@ and resolved via the workspace.
 - Both extend shared infrastructure from provider-core / router-core
 - The CLI loads plugins dynamically via the registry in apps/cli/src/plugins/registry.ts
 
+## Smart Contracts
+```
+packages/node/contracts/
+├── interfaces/          Shared Solidity interfaces (IAntseed*.sol)
+├── AntseedIdentity.sol  Peer registration, reputation (ERC-721, ERC-8004)
+├── AntseedStaking.sol   Seller staking, slashing (holds stake USDC)
+├── AntseedDeposits.sol  Buyer deposits, seller earnings (holds buyer USDC)
+├── AntseedSessions.sol  Session lifecycle, cumulative SpendingAuth (swappable, no USDC)
+├── AntseedEmissions.sol ANTS token emissions
+├── AntseedSubPool.sol   Subscription pool
+├── ANTSToken.sol        ANTS ERC-20 token
+└── MockUSDC.sol         Test USDC
+```
+All contracts use OpenZeppelin Ownable, ReentrancyGuard, SafeERC20.
+Build/test: `cd packages/node/contracts && forge build && forge test`
+
+### Payment Flow (Cumulative Streaming SpendingAuth)
+1. Buyer deposits USDC into AntseedDeposits
+2. Seller calls `reserve()` on AntseedSessions with buyer's EIP-712 sig → locks deposit
+3. On every request, buyer signs cumulative SpendingAuth (amount + input/output tokens)
+4. Seller accumulates auths off-chain, calls `settle()` with latest buyer-signed auth
+5. `settle()` charges buyer, credits seller earnings, releases remaining deposit, updates reputation
+6. If seller disappears: `settleTimeout()` (permissionless after 2h) releases buyer funds
+
+EIP-712 domain: name="AntseedSessions", version="2"
+
+### Contract Separation Design
+- **Stable contracts** (Identity, Staking, Deposits) hold funds and rarely change
+- **Swappable contract** (Sessions) holds no USDC — can be redeployed by re-pointing stable contracts
+- Buyer never needs gas — all on-chain actions are seller-initiated or permissionless
+
+## Local Testing (Full Payment Flow)
+
+Prerequisites: `anvil` (from Foundry) and `cast` must be installed.
+
+```bash
+# 1. Start local chain
+anvil &
+
+# 2. Build everything
+pnpm run build
+
+# 3. Deploy contracts + fund wallets + register seller + stake + deposit
+./scripts/setup-local-test.sh
+
+# 4. Start seller (in a separate terminal)
+node apps/cli/dist/cli/index.js --data-dir ~/.antseed-seller seed \
+  --provider openai-responses --verbose --config ~/.antseed-seller/config.json
+
+# 5. Start desktop (in a separate terminal)
+cd apps/desktop && npm run dev
+```
+
+In the desktop app, go to Settings > Chain Config and set:
+- Chain ID: `base-local`
+- RPC URL: `http://127.0.0.1:8545`
+- Deposits: `0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9`
+- Sessions: `0x5FC8d32690cc91D4c39d9d3abcBD16989F875707`
+
+Then start a chat — the payment flow (reserve → per-request SpendingAuth → settle) runs automatically.
+
 ## Native Modules
 packages/node has native dependencies (better-sqlite3, node-datachannel).
 After install, a postinstall script patches ethers type declarations.

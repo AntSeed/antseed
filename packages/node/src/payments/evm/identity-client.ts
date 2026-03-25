@@ -6,13 +6,13 @@ export interface IdentityClientConfig {
   contractAddress: string;
 }
 
-export interface ProvenReputation {
-  firstSignCount: number;
-  qualifiedProvenSignCount: number;
-  unqualifiedProvenSignCount: number;
+export interface Reputation {
+  sessionCount: number;
   ghostCount: number;
-  totalQualifiedTokenVolume: bigint;
-  lastProvenAt: number;
+  totalSettledVolume: bigint;
+  totalInputTokens: bigint;
+  totalOutputTokens: bigint;
+  lastSettledAt: number;
 }
 
 export interface FeedbackSummary {
@@ -34,8 +34,8 @@ const IDENTITY_ABI = [
   'function getPeerId(uint256 tokenId) external view returns (bytes32)',
 
   // Reputation
-  'function getReputation(uint256 tokenId) external view returns (uint64 firstSignCount, uint64 qualifiedProvenSignCount, uint64 unqualifiedProvenSignCount, uint64 ghostCount, uint256 totalQualifiedTokenVolume, uint64 lastProvenAt)',
-  'function updateReputation(uint256 tokenId, tuple(uint8 updateType, uint256 tokenVolume) update) external',
+  'function getReputation(uint256 tokenId) external view returns (uint64 sessionCount, uint64 ghostCount, uint256 totalSettledVolume, uint128 totalInputTokens, uint128 totalOutputTokens, uint64 lastSettledAt)',
+  'function updateReputation(uint256 tokenId, tuple(uint8 updateType, uint256 settledVolume, uint128 inputTokens, uint128 outputTokens) update) external',
 
   // Feedback (ERC-8004)
   'function giveFeedback(uint256 agentId, int128 value, uint8 valueDecimals, bytes32 tag1, bytes32 tag2) external',
@@ -129,20 +129,20 @@ export class IdentityClient extends BaseEvmClient {
     return contract.getFunction('getPeerId')(tokenId);
   }
 
-  async getReputation(tokenId: number): Promise<ProvenReputation> {
+  async getReputation(tokenId: number): Promise<Reputation> {
     const contract = new Contract(this._contractAddress, IDENTITY_ABI, this._provider);
     const result = await contract.getFunction('getReputation')(tokenId);
     return {
-      firstSignCount: Number(result[0]),
-      qualifiedProvenSignCount: Number(result[1]),
-      unqualifiedProvenSignCount: Number(result[2]),
-      ghostCount: Number(result[3]),
-      totalQualifiedTokenVolume: result[4] as bigint,
-      lastProvenAt: Number(result[5]),
+      sessionCount: Number(result[0]),
+      ghostCount: Number(result[1]),
+      totalSettledVolume: result[2] as bigint,
+      totalInputTokens: result[3] as bigint,
+      totalOutputTokens: result[4] as bigint,
+      lastSettledAt: Number(result[5]),
     };
   }
 
-  async getReputationByPeerId(peerId: string): Promise<ProvenReputation> {
+  async getReputationByPeerId(peerId: string): Promise<Reputation> {
     const tokenId = await this.getTokenIdByPeerId(peerId);
     return this.getReputation(tokenId);
   }

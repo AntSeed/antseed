@@ -232,8 +232,8 @@ contract AntseedSubPool is Ownable, ReentrancyGuard {
         });
         peerRewardPerTokenPaid[msg.sender] = rewardPerTokenStored;
         // Snapshot initial weight from current reputation
-        IAntseedIdentity.ProvenReputation memory rep = identityContract.getReputation(tokenId);
-        peerSnapshotWeight[msg.sender] = uint256(rep.qualifiedProvenSignCount);
+        IAntseedIdentity.Reputation memory rep = identityContract.getReputation(tokenId);
+        peerSnapshotWeight[msg.sender] = uint256(rep.sessionCount);
 
         optedInPeers.push(msg.sender);
         emit PeerOptedIn(msg.sender, tokenId);
@@ -315,8 +315,8 @@ contract AntseedSubPool is Ownable, ReentrancyGuard {
                 // can't retroactively claim deltas from epochs they didn't participate in.
                 peerRewardPerTokenPaid[peer] = rewardPerTokenStored;
                 // Snapshot current reputation as weight for the new epoch
-                IAntseedIdentity.ProvenReputation memory rep = identityContract.getReputation(opt.tokenId);
-                uint256 newWeight = uint256(rep.qualifiedProvenSignCount);
+                IAntseedIdentity.Reputation memory rep = identityContract.getReputation(opt.tokenId);
+                uint256 newWeight = uint256(rep.sessionCount);
                 peerSnapshotWeight[peer] = newWeight;
                 totalWeight += newWeight;
             }
@@ -367,8 +367,8 @@ contract AntseedSubPool is Ownable, ReentrancyGuard {
         uint256 pending = opt.pendingRevenue + earned;
 
         // Project current epoch share (use live reputation for projection)
-        IAntseedIdentity.ProvenReputation memory rep = identityContract.getReputation(opt.tokenId);
-        uint256 liveWeight = uint256(rep.qualifiedProvenSignCount);
+        IAntseedIdentity.Reputation memory rep = identityContract.getReputation(opt.tokenId);
+        uint256 liveWeight = uint256(rep.sessionCount);
         uint256 revenue = currentEpochRevenue;
         uint256 peerCount = optedInPeers.length;
         if (revenue == 0 || peerCount == 0 || liveWeight == 0) return pending;
@@ -376,8 +376,8 @@ contract AntseedSubPool is Ownable, ReentrancyGuard {
         uint256 totalWeight = 0;
         for (uint256 i = 0; i < peerCount; i++) {
             PeerOpt storage p = peerOpts[optedInPeers[i]];
-            IAntseedIdentity.ProvenReputation memory r = identityContract.getReputation(p.tokenId);
-            totalWeight += uint256(r.qualifiedProvenSignCount);
+            IAntseedIdentity.Reputation memory r = identityContract.getReputation(p.tokenId);
+            totalWeight += uint256(r.sessionCount);
         }
 
         if (totalWeight == 0) return pending;
