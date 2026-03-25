@@ -124,6 +124,7 @@ contract Deploy is Script {
         ISetEmissions(sessions).setEmissionsContract(emissions);
         ISetSessions(emissions).setSessionsContract(sessions);
         ISetProtocolReserve(sessions).setProtocolReserve(protocolReserve);
+        ISetSessions(subPool).setSessionsContract(sessions);
 
         vm.stopBroadcast();
 

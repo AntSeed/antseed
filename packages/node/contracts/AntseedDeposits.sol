@@ -253,6 +253,12 @@ contract AntseedDeposits {
         uint256 sellerPayout = chargeAmount - platformFee;
         sellerEarnings[seller] += sellerPayout;
 
+        // Track buyer-seller diversity for credit limit calculation
+        if (!_buyerSellerPairs[buyer][seller]) {
+            _buyerSellerPairs[buyer][seller] = true;
+            uniqueSellersCharged[buyer]++;
+        }
+
         if (platformFee > 0 && protocolReserve != address(0)) {
             _safeTransfer(protocolReserve, platformFee);
         }
@@ -260,13 +266,6 @@ contract AntseedDeposits {
 
     function releaseLock(address buyer, uint256 amount) external onlySessions {
         buyers[buyer].reserved -= amount;
-    }
-
-    function trackDiversity(address buyer, address seller) external onlySessions {
-        if (!_buyerSellerPairs[buyer][seller]) {
-            _buyerSellerPairs[buyer][seller] = true;
-            uniqueSellersCharged[buyer]++;
-        }
     }
 
     // ═══════════════════════════════════════════════════════════════════

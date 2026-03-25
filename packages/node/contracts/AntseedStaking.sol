@@ -142,6 +142,12 @@ contract AntseedStaking {
     }
 
     // ─── View Helpers ───────────────────────────────────────────────────
+    function validateSeller(address seller) external view returns (uint256 tokenRate) {
+        if (sellers[seller].stake < MIN_SELLER_STAKE) revert InsufficientStake();
+        if (sellers[seller].tokenRate == 0) revert InvalidAmount();
+        return sellers[seller].tokenRate;
+    }
+
     function getStake(address seller) external view returns (uint256) {
         return sellers[seller].stake;
     }

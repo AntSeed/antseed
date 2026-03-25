@@ -1,4 +1,5 @@
-import { Contract, type AbstractSigner } from 'ethers';
+import { Contract } from 'ethers';
+import type { AbstractSigner } from 'ethers';
 import { BaseEvmClient } from './base-evm-client.js';
 import type { BuyerBalanceInfo } from './deposits-client.js';
 
@@ -55,47 +56,19 @@ export class SessionsClient extends BaseEvmClient {
     previousSessionId: string,
     buyerSig: string,
   ): Promise<string> {
-    const connected = this._ensureConnected(signer);
-    const signerAddress = await connected.getAddress();
-    const txNonce = await this._reserveNonce(signerAddress);
-    const contract = new Contract(this._contractAddress, SESSIONS_ABI, connected);
-    const tx = await contract.getFunction('reserve')(
+    return this._execWrite(
+      signer, SESSIONS_ABI, 'reserve',
       buyer, sessionId, maxAmount, nonce, deadline,
       previousConsumption, previousSessionId, buyerSig,
-      { nonce: txNonce },
     );
-    const receipt = await tx.wait();
-    if (!receipt) throw new Error('Transaction was dropped or replaced');
-    return receipt.hash;
   }
 
-  async settle(
-    signer: AbstractSigner,
-    sessionId: string,
-    tokenCount: bigint,
-  ): Promise<string> {
-    const connected = this._ensureConnected(signer);
-    const signerAddress = await connected.getAddress();
-    const nonce = await this._reserveNonce(signerAddress);
-    const contract = new Contract(this._contractAddress, SESSIONS_ABI, connected);
-    const tx = await contract.getFunction('settle')(sessionId, tokenCount, { nonce });
-    const receipt = await tx.wait();
-    if (!receipt) throw new Error('Transaction was dropped or replaced');
-    return receipt.hash;
+  async settle(signer: AbstractSigner, sessionId: string, tokenCount: bigint): Promise<string> {
+    return this._execWrite(signer, SESSIONS_ABI, 'settle', sessionId, tokenCount);
   }
 
-  async settleTimeout(
-    signer: AbstractSigner,
-    sessionId: string,
-  ): Promise<string> {
-    const connected = this._ensureConnected(signer);
-    const signerAddress = await connected.getAddress();
-    const nonce = await this._reserveNonce(signerAddress);
-    const contract = new Contract(this._contractAddress, SESSIONS_ABI, connected);
-    const tx = await contract.getFunction('settleTimeout')(sessionId, { nonce });
-    const receipt = await tx.wait();
-    if (!receipt) throw new Error('Transaction was dropped or replaced');
-    return receipt.hash;
+  async settleTimeout(signer: AbstractSigner, sessionId: string): Promise<string> {
+    return this._execWrite(signer, SESSIONS_ABI, 'settleTimeout', sessionId);
   }
 
   // ─── View Functions ─────────────────────────────────────────────────
@@ -147,10 +120,6 @@ export class SessionsClient extends BaseEvmClient {
     return contract.getFunction('PROVEN_SIGN_COOLDOWN')() as Promise<bigint>;
   }
 
-  /**
-   * Fetch all data the buyer needs to display a payment approval card.
-   * Requires a deposits client reference for balance data.
-   */
   async getBuyerApprovalContext(
     buyerAddr: string,
     sellerAddr: string,

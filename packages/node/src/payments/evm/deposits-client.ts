@@ -1,5 +1,6 @@
-import { Contract, type AbstractSigner } from 'ethers';
-import { BaseEvmClient } from './base-evm-client.js';
+import { Contract } from 'ethers';
+import type { AbstractSigner } from 'ethers';
+import { BaseEvmClient, ERC20_ABI } from './base-evm-client.js';
 
 export interface DepositsClientConfig {
   rpcUrl: string;
@@ -27,12 +28,6 @@ const DEPOSITS_ABI = [
   'function uniqueSellersCharged(address buyer) external view returns (uint256)',
 ] as const;
 
-const ERC20_ABI = [
-  'function approve(address spender, uint256 amount) external returns (bool)',
-  'function balanceOf(address owner) external view returns (uint256)',
-  'function allowance(address owner, address spender) external view returns (uint256)',
-] as const;
-
 export class DepositsClient extends BaseEvmClient {
   private readonly _usdcAddress: string;
 
@@ -46,81 +41,29 @@ export class DepositsClient extends BaseEvmClient {
   // ─── Buyer Operations ──────────────────────────────────────────────
 
   async deposit(signer: AbstractSigner, amount: bigint): Promise<string> {
-    const connected = this._ensureConnected(signer);
-    const signerAddress = await connected.getAddress();
-    const usdc = new Contract(this._usdcAddress, ERC20_ABI, connected);
-    const approveNonce = await this._reserveNonce(signerAddress);
-    const approveTx = await usdc.getFunction('approve')(this._contractAddress, amount, { nonce: approveNonce });
-    const approveReceipt = await approveTx.wait();
-    if (!approveReceipt) throw new Error('Transaction was dropped or replaced');
-    const contract = new Contract(this._contractAddress, DEPOSITS_ABI, connected);
-    const depositNonce = await this._reserveNonce(signerAddress);
-    const tx = await contract.getFunction('deposit')(amount, { nonce: depositNonce });
-    const receipt = await tx.wait();
-    if (!receipt) throw new Error('Transaction was dropped or replaced');
-    return receipt.hash;
+    return this._approveAndExec(signer, this._usdcAddress, amount, DEPOSITS_ABI, 'deposit', amount);
   }
 
   async depositFor(signer: AbstractSigner, buyer: string, amount: bigint): Promise<string> {
-    const connected = this._ensureConnected(signer);
-    const signerAddress = await connected.getAddress();
-    const usdc = new Contract(this._usdcAddress, ERC20_ABI, connected);
-    const approveNonce = await this._reserveNonce(signerAddress);
-    const approveTx = await usdc.getFunction('approve')(this._contractAddress, amount, { nonce: approveNonce });
-    const approveReceipt = await approveTx.wait();
-    if (!approveReceipt) throw new Error('Transaction was dropped or replaced');
-    const contract = new Contract(this._contractAddress, DEPOSITS_ABI, connected);
-    const depositNonce = await this._reserveNonce(signerAddress);
-    const tx = await contract.getFunction('depositFor')(buyer, amount, { nonce: depositNonce });
-    const receipt = await tx.wait();
-    if (!receipt) throw new Error('Transaction was dropped or replaced');
-    return receipt.hash;
+    return this._approveAndExec(signer, this._usdcAddress, amount, DEPOSITS_ABI, 'depositFor', buyer, amount);
   }
 
   async requestWithdrawal(signer: AbstractSigner, amount: bigint): Promise<string> {
-    const connected = this._ensureConnected(signer);
-    const signerAddress = await connected.getAddress();
-    const contract = new Contract(this._contractAddress, DEPOSITS_ABI, connected);
-    const nonce = await this._reserveNonce(signerAddress);
-    const tx = await contract.getFunction('requestWithdrawal')(amount, { nonce });
-    const receipt = await tx.wait();
-    if (!receipt) throw new Error('Transaction was dropped or replaced');
-    return receipt.hash;
+    return this._execWrite(signer, DEPOSITS_ABI, 'requestWithdrawal', amount);
   }
 
   async executeWithdrawal(signer: AbstractSigner): Promise<string> {
-    const connected = this._ensureConnected(signer);
-    const signerAddress = await connected.getAddress();
-    const contract = new Contract(this._contractAddress, DEPOSITS_ABI, connected);
-    const nonce = await this._reserveNonce(signerAddress);
-    const tx = await contract.getFunction('executeWithdrawal')({ nonce });
-    const receipt = await tx.wait();
-    if (!receipt) throw new Error('Transaction was dropped or replaced');
-    return receipt.hash;
+    return this._execWrite(signer, DEPOSITS_ABI, 'executeWithdrawal');
   }
 
   async cancelWithdrawal(signer: AbstractSigner): Promise<string> {
-    const connected = this._ensureConnected(signer);
-    const signerAddress = await connected.getAddress();
-    const contract = new Contract(this._contractAddress, DEPOSITS_ABI, connected);
-    const nonce = await this._reserveNonce(signerAddress);
-    const tx = await contract.getFunction('cancelWithdrawal')({ nonce });
-    const receipt = await tx.wait();
-    if (!receipt) throw new Error('Transaction was dropped or replaced');
-    return receipt.hash;
+    return this._execWrite(signer, DEPOSITS_ABI, 'cancelWithdrawal');
   }
 
   // ─── Seller Earnings ────────────────────────────────────────────────
 
   async claimEarnings(signer: AbstractSigner): Promise<string> {
-    const connected = this._ensureConnected(signer);
-    const signerAddress = await connected.getAddress();
-    const contract = new Contract(this._contractAddress, DEPOSITS_ABI, connected);
-    const nonce = await this._reserveNonce(signerAddress);
-    const tx = await contract.getFunction('claimEarnings')({ nonce });
-    const receipt = await tx.wait();
-    if (!receipt) throw new Error('Transaction was dropped or replaced');
-    return receipt.hash;
+    return this._execWrite(signer, DEPOSITS_ABI, 'claimEarnings');
   }
 
   async getSellerEarnings(sellerAddr: string): Promise<bigint> {

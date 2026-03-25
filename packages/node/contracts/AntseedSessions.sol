@@ -12,7 +12,6 @@ interface IAntseedDeposits {
         uint256 platformFee, address protocolReserve, bool isProvenSign
     ) external;
     function releaseLock(address buyer, uint256 amount) external;
-    function trackDiversity(address buyer, address seller) external;
     function uniqueSellersCharged(address buyer) external view returns (uint256);
 }
 
@@ -28,6 +27,7 @@ interface IAntseedIdentity {
 }
 
 interface IAntseedStaking {
+    function validateSeller(address seller) external view returns (uint256 tokenRate);
     function getStake(address seller) external view returns (uint256);
     function getTokenRate(address seller) external view returns (uint256);
     function isStakedAboveMin(address seller) external view returns (bool);
@@ -164,9 +164,7 @@ contract AntseedSessions is EIP712, Pausable {
         if (sessions[sessionId].status != SessionStatus.None) revert SessionExists();
         if (block.timestamp > deadline) revert SessionExpired();
         if (deadline < block.timestamp + SETTLE_TIMEOUT) revert SessionExpired();
-        if (!stakingContract.isStakedAboveMin(msg.sender)) revert InsufficientBalance();
-        uint256 tokenRate = stakingContract.getTokenRate(msg.sender);
-        if (tokenRate == 0) revert InvalidAmount();
+        uint256 tokenRate = stakingContract.validateSeller(msg.sender);
 
         // EIP-712 signature verification
         bytes32 structHash = keccak256(
@@ -296,9 +294,6 @@ contract AntseedSessions is EIP712, Pausable {
             protocolReserve,
             session.isProvenSign || session.isQualifiedProvenSign
         );
-
-        // Track diversity
-        depositsContract.trackDiversity(session.buyer, msg.sender);
 
         // Derive effective token count from capped charge
         uint256 effectiveTokenCount = (session.tokenRate > 0)
