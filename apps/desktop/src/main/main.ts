@@ -806,6 +806,37 @@ const chatEngine = registerPiChatHandlers({
     getMainWindow()?.webContents.send(channel, payload);
   },
   configPath: ACTIVE_CONFIG_PATH,
+  isBuyerRuntimeRunning: () => getCombinedProcessState().some((state) => state.mode === "connect" && state.running),
+  ensureBuyerRuntimeStarted: async () => {
+    const connectState = getCombinedProcessState().find((state) => state.mode === 'connect');
+    if (connectState?.running) {
+      return true;
+    }
+
+    await ensureSecureIdentity();
+
+    const startOptions: StartOptions = {
+      mode: 'connect',
+      router: 'local',
+      ...(desktopDebugEnabled ? { verbose: true } : {}),
+      env: {
+        ...(desktopDebugEnabled ? { ANTSEED_DEBUG: '1' } : {}),
+        ...secureIdentityEnv(),
+      },
+    };
+
+    try {
+      await processManager.start(startOptions);
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.toLowerCase().includes('already running')) {
+        return true;
+      }
+      appendLog('connect', 'system', `Chat-triggered buyer runtime start failed: ${message}`);
+      return false;
+    }
+  },
   appendSystemLog: (line) => {
     appendLog("connect", "system", line);
   },
