@@ -115,7 +115,7 @@ At a high level, `@antseed/node` currently enforces:
 - Signed discovery metadata verification and staleness checks
 - Signed connection intro envelopes with replay protection
 - Frame, stream, and upload limits to reduce DoS exposure
-- Escrow-aware request gating (`402` if lock is not committed when escrow is enabled)
+- Payment-aware request gating (`402` if no session is reserved when payments are enabled)
 - Signed bilateral receipts (Ed25519) plus on-chain payment authorization (ECDSA)
 
 ## Node Configuration
@@ -168,7 +168,7 @@ const node = new AntseedNode({
 Every node has an Ed25519 identity keypair. The private key seed (32 bytes, stored as 64 hex characters) serves two roles:
 
 1. **P2P identity** — signs metadata, connection handshakes, and metering receipts. Your PeerId is the hex-encoded public key.
-2. **On-chain wallet** — an EVM wallet (secp256k1) is deterministically derived from the Ed25519 seed via `keccak256(seed || "evm-payment-key")`. This wallet holds escrow deposits, receives seller earnings, and signs payment authorizations.
+2. **On-chain wallet** — an EVM wallet (secp256k1) is deterministically derived from the Ed25519 seed via `keccak256(seed || "evm-payment-key")`. This wallet holds deposits, stakes, receives seller earnings, and signs payment authorizations.
 
 > **Important:** Losing your identity key means losing both your peer identity and access to any on-chain funds tied to the derived wallet.
 
@@ -242,8 +242,8 @@ When `payments.enabled=true` in seller mode:
 2. Escrow is funded on-chain at session start.
 3. Usage receipts are generated during request handling.
 4. On idle/session finalization, `calculateSettlement` computes cost from receipts and settles on-chain via:
-   - `BaseEscrowClient.settle(sessionId, sellerAmount, platformAmount)`
-5. Any unused escrow is refunded to the buyer by contract logic in the same settlement transaction.
+   - `SessionsClient.settle(sessionId, tokenCount)`
+5. Any unused reservation is refunded to the buyer by contract logic in the same settlement transaction.
 
 Minimal crypto config:
 
@@ -260,7 +260,8 @@ const node = new AntseedNode({
       crypto: {
         chainId: 'base',
         rpcUrl: process.env.RPC_URL!,
-        escrowContractAddress: process.env.ESCROW_ADDRESS!,
+        depositsContractAddress: process.env.DEPOSITS_ADDRESS!,
+        sessionsContractAddress: process.env.SESSIONS_ADDRESS!,
         usdcContractAddress: process.env.USDC_ADDRESS!,
         autoFundEscrow: true,
       },

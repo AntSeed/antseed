@@ -118,7 +118,8 @@ describe('Proof Chain Integration', () => {
 
     const buyerConfig: BuyerPaymentConfig = {
       rpcUrl: 'http://127.0.0.1:8545',
-      contractAddress: CONTRACT_ADDR,
+      depositsContractAddress: CONTRACT_ADDR,
+      sessionsContractAddress: CONTRACT_ADDR,
       usdcAddress: '0x' + 'ee'.repeat(20),
       identityAddress: '0x' + 'ff'.repeat(20),
       chainId: CHAIN_ID,
@@ -136,7 +137,8 @@ describe('Proof Chain Integration', () => {
     sellerStore = new SessionStore(sellerTempDir);
     const sellerConfig: SellerPaymentConfig = {
       rpcUrl: 'http://127.0.0.1:8545',
-      contractAddress: CONTRACT_ADDR,
+      sessionsContractAddress: CONTRACT_ADDR,
+      stakingContractAddress: '0x' + 'cc'.repeat(20),
       usdcAddress: '0x' + 'ee'.repeat(20),
       chainId: CHAIN_ID,
       dataDir: sellerTempDir,
@@ -144,13 +146,12 @@ describe('Proof Chain Integration', () => {
     };
     sellerManager = new SellerPaymentManager(sellerIdentity, sellerConfig, sellerStore);
 
-    // Mock escrow client
-    vi.spyOn(sellerManager.escrowClient, 'reserve').mockResolvedValue('0xreserve');
-    vi.spyOn(sellerManager.escrowClient, 'settle').mockResolvedValue('0xsettle');
-    vi.spyOn(sellerManager.escrowClient, 'settleTimeout').mockResolvedValue('0xtimeout');
-    vi.spyOn(sellerManager.escrowClient, 'getSellerAccount').mockResolvedValue({
+    // Mock sessions and staking clients
+    vi.spyOn(sellerManager.sessionsClient, 'reserve').mockResolvedValue('0xreserve');
+    vi.spyOn(sellerManager.sessionsClient, 'settle').mockResolvedValue('0xsettle');
+    vi.spyOn(sellerManager.sessionsClient, 'settleTimeout').mockResolvedValue('0xtimeout');
+    vi.spyOn(sellerManager.stakingClient, 'getSellerAccount').mockResolvedValue({
       stake: 100000000n,
-      earnings: 0n,
       stakedAt: BigInt(Date.now()),
       tokenRate: 1n,
     });
@@ -302,8 +303,8 @@ describe('Proof Chain Integration', () => {
 
     // Verify escrow interactions
     // reserve called 3 times (once per session)
-    expect(sellerManager.escrowClient.reserve).toHaveBeenCalledTimes(3);
+    expect(sellerManager.sessionsClient.reserve).toHaveBeenCalledTimes(3);
     // settle called 2 times (session 1 settled before session 2, session 2 before session 3)
-    expect(sellerManager.escrowClient.settle).toHaveBeenCalledTimes(2);
+    expect(sellerManager.sessionsClient.settle).toHaveBeenCalledTimes(2);
   });
 });

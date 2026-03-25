@@ -5,6 +5,7 @@ import { getGlobalOptions } from './types.js';
 import { loadConfig } from '../../config/loader.js';
 import {
   createStakingClient,
+  createIdentityClient,
   loadCryptoContext,
   formatUsdc,
   parseUsdcToBaseUnits,
@@ -31,7 +32,8 @@ export function registerStakeCommand(program: Command): void {
       try {
         const { wallet, address } = await loadCryptoContext(globalOpts.dataDir);
         const stakingClient = createStakingClient(config);
-        const isReg = await stakingClient.isRegistered(address);
+        const identityClient = createIdentityClient(config);
+        const isReg = await identityClient.isRegistered(address);
         if (!isReg) {
           spinner.fail(chalk.red('Not registered. Run: antseed register'));
           process.exit(1);

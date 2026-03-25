@@ -147,19 +147,19 @@ describe('SellerPaymentManager PaymentRequired', () => {
 
     const config: SellerPaymentConfig = {
       rpcUrl: 'http://127.0.0.1:8545',
-      contractAddress: CONTRACT_ADDR,
+      sessionsContractAddress: CONTRACT_ADDR,
+      stakingContractAddress: '0x' + 'cc'.repeat(20),
       usdcAddress: USDC_ADDR,
       chainId: CHAIN_ID,
       dataDir: tempDir,
     };
     manager = new SellerPaymentManager(sellerIdentity, config, store);
 
-    vi.spyOn(manager.escrowClient, 'reserve').mockResolvedValue('0xhash');
-    vi.spyOn(manager.escrowClient, 'settle').mockResolvedValue('0xhash');
-    vi.spyOn(manager.escrowClient, 'settleTimeout').mockResolvedValue('0xhash');
-    vi.spyOn(manager.escrowClient, 'getSellerAccount').mockResolvedValue({
+    vi.spyOn(manager.sessionsClient, 'reserve').mockResolvedValue('0xhash');
+    vi.spyOn(manager.sessionsClient, 'settle').mockResolvedValue('0xhash');
+    vi.spyOn(manager.sessionsClient, 'settleTimeout').mockResolvedValue('0xhash');
+    vi.spyOn(manager.stakingClient, 'getSellerAccount').mockResolvedValue({
       stake: 100_000_000n,
-      earnings: 0n,
       stakedAt: BigInt(Date.now()),
       tokenRate: 500n,
     });
@@ -175,7 +175,7 @@ describe('SellerPaymentManager PaymentRequired', () => {
   });
 
   it('init caches tokenRate and firstSignCap', async () => {
-    vi.spyOn(manager.escrowClient, 'getFirstSignCap').mockResolvedValue(1_000_000n);
+    vi.spyOn(manager.sessionsClient, 'getFirstSignCap').mockResolvedValue(1_000_000n);
     await manager.init();
 
     const req = manager.getPaymentRequirements('req-1');
@@ -187,15 +187,15 @@ describe('SellerPaymentManager PaymentRequired', () => {
   });
 
   it('init survives RPC failure gracefully', async () => {
-    vi.spyOn(manager.escrowClient, 'getSellerAccount').mockRejectedValue(new Error('RPC down'));
-    vi.spyOn(manager.escrowClient, 'getFirstSignCap').mockRejectedValue(new Error('RPC down'));
+    vi.spyOn(manager.stakingClient, 'getSellerAccount').mockRejectedValue(new Error('RPC down'));
+    vi.spyOn(manager.sessionsClient, 'getFirstSignCap').mockRejectedValue(new Error('RPC down'));
 
     await manager.init(); // should not throw
     expect(manager.getPaymentRequirements('req-1')).toBeNull();
   });
 
   it('getPaymentRequirements includes the triggering requestId', async () => {
-    vi.spyOn(manager.escrowClient, 'getFirstSignCap').mockResolvedValue(1_000_000n);
+    vi.spyOn(manager.sessionsClient, 'getFirstSignCap').mockResolvedValue(1_000_000n);
     await manager.init();
 
     expect(manager.getPaymentRequirements('req-aaa')!.requestId).toBe('req-aaa');
@@ -203,7 +203,7 @@ describe('SellerPaymentManager PaymentRequired', () => {
   });
 
   it('suggestedAmount is independent of firstSignCap', async () => {
-    vi.spyOn(manager.escrowClient, 'getFirstSignCap').mockResolvedValue(3_000_000n);
+    vi.spyOn(manager.sessionsClient, 'getFirstSignCap').mockResolvedValue(3_000_000n);
     await manager.init();
 
     const req = manager.getPaymentRequirements('req-1');
@@ -217,15 +217,16 @@ describe('SellerPaymentManager PaymentRequired', () => {
 // Buyer: on-chain approval context
 // ═══════════════════════════════════════════════════════════════
 
-describe('BaseEscrowClient.getBuyerApprovalContext', () => {
-  // We test via SellerPaymentManager's escrowClient since we can't easily
-  // instantiate BaseEscrowClient without a real provider. The manager
+describe('SessionsClient.getBuyerApprovalContext', () => {
+  // We test via SellerPaymentManager's sessionsClient since we can't easily
+  // instantiate SessionsClient without a real provider. The manager
   // exposes its client for spying.
 
   let tempDir: string;
   let store: SessionStore;
   let sellerIdentity: Identity;
   let manager: SellerPaymentManager;
+  let mockDepositsClient: { getBuyerBalance: ReturnType<typeof vi.fn> };
 
   beforeEach(async () => {
     tempDir = mkdtempSync(join(tmpdir(), 'escrow-ctx-'));
@@ -234,12 +235,16 @@ describe('BaseEscrowClient.getBuyerApprovalContext', () => {
 
     const config: SellerPaymentConfig = {
       rpcUrl: 'http://127.0.0.1:8545',
-      contractAddress: CONTRACT_ADDR,
+      sessionsContractAddress: CONTRACT_ADDR,
+      stakingContractAddress: '0x' + 'cc'.repeat(20),
       usdcAddress: USDC_ADDR,
       chainId: CHAIN_ID,
       dataDir: tempDir,
     };
     manager = new SellerPaymentManager(sellerIdentity, config, store);
+    mockDepositsClient = {
+      getBuyerBalance: vi.fn(),
+    };
   });
 
   afterEach(() => {
@@ -248,19 +253,19 @@ describe('BaseEscrowClient.getBuyerApprovalContext', () => {
   });
 
   it('returns isFirstSign=true when latestSessionId is zero', async () => {
-    const escrow = manager.escrowClient;
-    vi.spyOn(escrow, 'getBuyerBalance').mockResolvedValue({
+    const sessions = manager.sessionsClient;
+    mockDepositsClient.getBuyerBalance.mockResolvedValue({
       available: 10_000_000n,
       reserved: 0n,
       pendingWithdrawal: 0n,
       lastActivityAt: 0n,
     });
-    vi.spyOn(escrow, 'getFirstSignCap').mockResolvedValue(1_000_000n);
-    vi.spyOn(escrow, 'getLatestSessionId').mockResolvedValue(ZERO_BYTES32);
-    vi.spyOn(escrow, 'getFirstSessionTimestamp').mockResolvedValue(0n);
-    vi.spyOn(escrow, 'getProvenSignCooldown').mockResolvedValue(604800n); // 7 days
+    vi.spyOn(sessions, 'getFirstSignCap').mockResolvedValue(1_000_000n);
+    vi.spyOn(sessions, 'getLatestSessionId').mockResolvedValue(ZERO_BYTES32);
+    vi.spyOn(sessions, 'getFirstSessionTimestamp').mockResolvedValue(0n);
+    vi.spyOn(sessions, 'getProvenSignCooldown').mockResolvedValue(604800n); // 7 days
 
-    const ctx = await escrow.getBuyerApprovalContext('0xbuyer', '0xseller');
+    const ctx = await sessions.getBuyerApprovalContext('0xbuyer', '0xseller', mockDepositsClient);
     expect(ctx.isFirstSign).toBe(true);
     expect(ctx.cooldownRemainingSecs).toBe(0);
     expect(ctx.buyerBalance.available).toBe(10_000_000n);
@@ -268,22 +273,22 @@ describe('BaseEscrowClient.getBuyerApprovalContext', () => {
   });
 
   it('returns isFirstSign=false with cooldown when prior session exists', async () => {
-    const escrow = manager.escrowClient;
+    const sessions = manager.sessionsClient;
     const nowSecs = BigInt(Math.floor(Date.now() / 1000));
     const threeDaysAgo = nowSecs - 259200n; // 3 days ago
 
-    vi.spyOn(escrow, 'getBuyerBalance').mockResolvedValue({
+    mockDepositsClient.getBuyerBalance.mockResolvedValue({
       available: 5_000_000n,
       reserved: 1_000_000n,
       pendingWithdrawal: 0n,
       lastActivityAt: nowSecs,
     });
-    vi.spyOn(escrow, 'getFirstSignCap').mockResolvedValue(1_000_000n);
-    vi.spyOn(escrow, 'getLatestSessionId').mockResolvedValue('0x' + 'aa'.repeat(32));
-    vi.spyOn(escrow, 'getFirstSessionTimestamp').mockResolvedValue(threeDaysAgo);
-    vi.spyOn(escrow, 'getProvenSignCooldown').mockResolvedValue(604800n); // 7 days
+    vi.spyOn(sessions, 'getFirstSignCap').mockResolvedValue(1_000_000n);
+    vi.spyOn(sessions, 'getLatestSessionId').mockResolvedValue('0x' + 'aa'.repeat(32));
+    vi.spyOn(sessions, 'getFirstSessionTimestamp').mockResolvedValue(threeDaysAgo);
+    vi.spyOn(sessions, 'getProvenSignCooldown').mockResolvedValue(604800n); // 7 days
 
-    const ctx = await escrow.getBuyerApprovalContext('0xbuyer', '0xseller');
+    const ctx = await sessions.getBuyerApprovalContext('0xbuyer', '0xseller', mockDepositsClient);
     expect(ctx.isFirstSign).toBe(false);
     expect(ctx.latestSessionId).toBe('0x' + 'aa'.repeat(32));
     // Cooldown: 7 days - 3 days = ~4 days remaining
@@ -292,49 +297,49 @@ describe('BaseEscrowClient.getBuyerApprovalContext', () => {
   });
 
   it('returns cooldownRemainingSecs=0 when cooldown has elapsed', async () => {
-    const escrow = manager.escrowClient;
+    const sessions = manager.sessionsClient;
     const nowSecs = BigInt(Math.floor(Date.now() / 1000));
     const tenDaysAgo = nowSecs - 864000n; // 10 days ago
 
-    vi.spyOn(escrow, 'getBuyerBalance').mockResolvedValue({
+    mockDepositsClient.getBuyerBalance.mockResolvedValue({
       available: 5_000_000n, reserved: 0n, pendingWithdrawal: 0n, lastActivityAt: 0n,
     });
-    vi.spyOn(escrow, 'getFirstSignCap').mockResolvedValue(1_000_000n);
-    vi.spyOn(escrow, 'getLatestSessionId').mockResolvedValue('0x' + 'bb'.repeat(32));
-    vi.spyOn(escrow, 'getFirstSessionTimestamp').mockResolvedValue(tenDaysAgo);
-    vi.spyOn(escrow, 'getProvenSignCooldown').mockResolvedValue(604800n);
+    vi.spyOn(sessions, 'getFirstSignCap').mockResolvedValue(1_000_000n);
+    vi.spyOn(sessions, 'getLatestSessionId').mockResolvedValue('0x' + 'bb'.repeat(32));
+    vi.spyOn(sessions, 'getFirstSessionTimestamp').mockResolvedValue(tenDaysAgo);
+    vi.spyOn(sessions, 'getProvenSignCooldown').mockResolvedValue(604800n);
 
-    const ctx = await escrow.getBuyerApprovalContext('0xbuyer', '0xseller');
+    const ctx = await sessions.getBuyerApprovalContext('0xbuyer', '0xseller', mockDepositsClient);
     expect(ctx.isFirstSign).toBe(false);
     expect(ctx.cooldownRemainingSecs).toBe(0);
   });
 
   it('batches all view calls in parallel', async () => {
-    const escrow = manager.escrowClient;
+    const sessions = manager.sessionsClient;
     const calls: string[] = [];
 
-    vi.spyOn(escrow, 'getBuyerBalance').mockImplementation(async () => {
+    mockDepositsClient.getBuyerBalance.mockImplementation(async () => {
       calls.push('getBuyerBalance');
       return { available: 0n, reserved: 0n, pendingWithdrawal: 0n, lastActivityAt: 0n };
     });
-    vi.spyOn(escrow, 'getFirstSignCap').mockImplementation(async () => {
+    vi.spyOn(sessions, 'getFirstSignCap').mockImplementation(async () => {
       calls.push('getFirstSignCap');
       return 0n;
     });
-    vi.spyOn(escrow, 'getLatestSessionId').mockImplementation(async () => {
+    vi.spyOn(sessions, 'getLatestSessionId').mockImplementation(async () => {
       calls.push('getLatestSessionId');
       return ZERO_BYTES32;
     });
-    vi.spyOn(escrow, 'getFirstSessionTimestamp').mockImplementation(async () => {
+    vi.spyOn(sessions, 'getFirstSessionTimestamp').mockImplementation(async () => {
       calls.push('getFirstSessionTimestamp');
       return 0n;
     });
-    vi.spyOn(escrow, 'getProvenSignCooldown').mockImplementation(async () => {
+    vi.spyOn(sessions, 'getProvenSignCooldown').mockImplementation(async () => {
       calls.push('getProvenSignCooldown');
       return 0n;
     });
 
-    await escrow.getBuyerApprovalContext('0xbuyer', '0xseller');
+    await sessions.getBuyerApprovalContext('0xbuyer', '0xseller', mockDepositsClient);
     // All 5 view calls should have been made
     expect(calls).toHaveLength(5);
     expect(calls).toContain('getBuyerBalance');
@@ -405,23 +410,23 @@ describe('SellerPaymentManager proven-sign suggested amount', () => {
 
     const config: SellerPaymentConfig = {
       rpcUrl: 'http://127.0.0.1:8545',
-      contractAddress: CONTRACT_ADDR,
+      sessionsContractAddress: CONTRACT_ADDR,
+      stakingContractAddress: '0x' + 'cc'.repeat(20),
       usdcAddress: USDC_ADDR,
       chainId: CHAIN_ID,
       dataDir: tempDir,
     };
     manager = new SellerPaymentManager(sellerIdentity, config, store);
 
-    vi.spyOn(manager.escrowClient, 'reserve').mockResolvedValue('0xhash');
-    vi.spyOn(manager.escrowClient, 'settle').mockResolvedValue('0xhash');
-    vi.spyOn(manager.escrowClient, 'settleTimeout').mockResolvedValue('0xhash');
-    vi.spyOn(manager.escrowClient, 'getSellerAccount').mockResolvedValue({
+    vi.spyOn(manager.sessionsClient, 'reserve').mockResolvedValue('0xhash');
+    vi.spyOn(manager.sessionsClient, 'settle').mockResolvedValue('0xhash');
+    vi.spyOn(manager.sessionsClient, 'settleTimeout').mockResolvedValue('0xhash');
+    vi.spyOn(manager.stakingClient, 'getSellerAccount').mockResolvedValue({
       stake: 100_000_000n,
-      earnings: 0n,
       stakedAt: BigInt(Date.now()),
       tokenRate: 500n,
     });
-    vi.spyOn(manager.escrowClient, 'getFirstSignCap').mockResolvedValue(1_000_000n);
+    vi.spyOn(manager.sessionsClient, 'getFirstSignCap').mockResolvedValue(1_000_000n);
   });
 
   afterEach(() => {
@@ -486,7 +491,8 @@ describe('SellerPaymentManager proven-sign suggested amount', () => {
     // Create manager with custom amounts
     const customConfig: SellerPaymentConfig = {
       rpcUrl: 'http://127.0.0.1:8545',
-      contractAddress: CONTRACT_ADDR,
+      sessionsContractAddress: CONTRACT_ADDR,
+      stakingContractAddress: '0x' + 'cc'.repeat(20),
       usdcAddress: USDC_ADDR,
       chainId: CHAIN_ID,
       dataDir: tempDir,
@@ -494,10 +500,10 @@ describe('SellerPaymentManager proven-sign suggested amount', () => {
       provenSignAmountUsdc: '500000', // $0.50
     };
     const customManager = new SellerPaymentManager(sellerIdentity, customConfig, store);
-    vi.spyOn(customManager.escrowClient, 'getSellerAccount').mockResolvedValue({
-      stake: 100_000_000n, earnings: 0n, stakedAt: BigInt(Date.now()), tokenRate: 500n,
+    vi.spyOn(customManager.stakingClient, 'getSellerAccount').mockResolvedValue({
+      stake: 100_000_000n, stakedAt: BigInt(Date.now()), tokenRate: 500n,
     });
-    vi.spyOn(customManager.escrowClient, 'getFirstSignCap').mockResolvedValue(1_000_000n);
+    vi.spyOn(customManager.sessionsClient, 'getFirstSignCap').mockResolvedValue(1_000_000n);
     await customManager.init();
 
     // First-sign: uses config value

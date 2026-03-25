@@ -3,7 +3,7 @@ import { isAddress, verifyTypedData } from 'ethers';
 import { identityToEvmWallet, identityToEvmAddress } from '../src/payments/evm/keypair.js';
 import {
   signSpendingAuth,
-  makeEscrowDomain,
+  makeSessionsDomain,
   SPENDING_AUTH_TYPES,
   buildReceiptMessage,
   buildAckMessage,
@@ -66,7 +66,7 @@ describe('EIP-712 SpendingAuth signature helpers', () => {
     const dir = await mkdtemp(join(tmpdir(), 'lch-test-'));
     const identity = await loadOrCreateIdentity(dir);
     const wallet = identityToEvmWallet(identity);
-    const domain = makeEscrowDomain(CHAIN_ID, CONTRACT);
+    const domain = makeSessionsDomain(CHAIN_ID, CONTRACT);
 
     const msg: SpendingAuthMessage = {
       seller: '0x' + 'ab'.repeat(20),
@@ -87,9 +87,10 @@ describe('EIP-712 SpendingAuth signature helpers', () => {
     expect(recovered.toLowerCase()).toBe(wallet.address.toLowerCase());
   });
 
-  it('makeEscrowDomain returns correct domain fields', () => {
-    const domain = makeEscrowDomain(CHAIN_ID, CONTRACT);
-    expect(domain.name).toBe('AntseedEscrow');
+  it('makeSessionsDomain returns correct domain fields', () => {
+    // Domain name changed from AntseedEscrow to AntseedSessions in contract split
+    const domain = makeSessionsDomain(CHAIN_ID, CONTRACT);
+    expect(domain.name).toBe('AntseedSessions');
     expect(domain.version).toBe('1');
     expect(domain.chainId).toBe(CHAIN_ID);
     expect(domain.verifyingContract).toBe(CONTRACT);
@@ -99,7 +100,7 @@ describe('EIP-712 SpendingAuth signature helpers', () => {
     const dir = await mkdtemp(join(tmpdir(), 'lch-test-'));
     const identity = await loadOrCreateIdentity(dir);
     const wallet = identityToEvmWallet(identity);
-    const domain = makeEscrowDomain(CHAIN_ID, CONTRACT);
+    const domain = makeSessionsDomain(CHAIN_ID, CONTRACT);
 
     const msg1: SpendingAuthMessage = {
       seller: '0x' + 'ab'.repeat(20),
@@ -125,7 +126,7 @@ describe('EIP-712 SpendingAuth signature helpers', () => {
     const dir = await mkdtemp(join(tmpdir(), 'lch-test-'));
     const identity = await loadOrCreateIdentity(dir);
     const wallet = identityToEvmWallet(identity);
-    const domain = makeEscrowDomain(CHAIN_ID, CONTRACT);
+    const domain = makeSessionsDomain(CHAIN_ID, CONTRACT);
 
     const msg: SpendingAuthMessage = {
       seller: '0x' + 'ab'.repeat(20),
