@@ -470,7 +470,6 @@ registerActions({
   refreshWorkspace: chatApi.refreshWorkspace,
   refreshWorkspaceGitStatus: chatApi.refreshWorkspaceGitStatus,
   chooseWorkspace: chatApi.chooseWorkspace,
-  setChatPermissionMode: chatApi.setPermissionMode,
   refreshPlugins: refreshPluginInventory,
   installPlugin: () => {
     const packageName = resolveRouterPackageName(

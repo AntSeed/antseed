@@ -73,8 +73,6 @@ export type PluginInstallResult = {
   error: string | null;
 };
 
-export type ChatPermissionMode = 'default' | 'full-access';
-
 export type ChatWorkspaceGitStatus = {
   available: boolean;
   rootPath: string | null;
@@ -125,8 +123,8 @@ export type DesktopBridge = {
   chatAiCreateConversation?: (service: string, provider?: string, peerId?: string) => Promise<{ ok: boolean; data?: unknown; error?: string }>;
   chatAiDeleteConversation?: (id: string) => Promise<{ ok: boolean }>;
   chatAiRenameConversation?: (id: string, title: string) => Promise<{ ok: boolean; error?: string }>;
-  chatAiSend?: (conversationId: string, message: string, service?: string, provider?: string, imageBase64?: string, imageMimeType?: string, permissionMode?: ChatPermissionMode) => Promise<{ ok: boolean; error?: string }>;
-  chatAiSendStream?: (conversationId: string, message: string, service?: string, provider?: string, imageBase64?: string, imageMimeType?: string, permissionMode?: ChatPermissionMode) => Promise<{ ok: boolean; error?: string }>;
+  chatAiSend?: (conversationId: string, message: string, service?: string, provider?: string, imageBase64?: string, imageMimeType?: string) => Promise<{ ok: boolean; error?: string }>;
+  chatAiSendStream?: (conversationId: string, message: string, service?: string, provider?: string, imageBase64?: string, imageMimeType?: string) => Promise<{ ok: boolean; error?: string }>;
   chatApprovePayment?: (conversationId: string) => Promise<{ ok: boolean; error?: string }>;
   chatAiAbort?: () => Promise<{ ok: boolean }>;
   chatAiSelectPeer?: (peerId: string | null) => Promise<{ ok: boolean; error?: string }>;

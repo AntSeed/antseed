@@ -1,5 +1,4 @@
 import type {
-  ChatPermissionMode,
   ChatWorkspaceGitStatus,
   DaemonStateSnapshot,
   LogEvent,
@@ -177,7 +176,6 @@ export type RendererUiState = {
   // --- Browser preview ---
   browserPreviewUrl: string | null;
   browserPreviewRequestId: number;
-  chatPermissionMode: ChatPermissionMode;
   chatWorkspacePath: string;
   chatWorkspaceDefaultPath: string;
   chatWorkspaceGitStatus: ChatWorkspaceGitStatus;
@@ -307,7 +305,6 @@ export function createInitialUiState(): RendererUiState {
     // Browser preview
     browserPreviewUrl: null,
     browserPreviewRequestId: 0,
-    chatPermissionMode: 'default',
     chatWorkspacePath: '',
     chatWorkspaceDefaultPath: '',
     chatWorkspaceGitStatus: {

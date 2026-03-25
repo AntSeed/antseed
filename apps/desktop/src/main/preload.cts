@@ -171,11 +171,11 @@ const api = {
   chatAiRenameConversation(id: string, title: string): Promise<{ ok: boolean; error?: string }> {
     return ipcRenderer.invoke('chat:ai-rename-conversation', id, title);
   },
-  chatAiSend(conversationId: string, message: string, service?: string, provider?: string, imageBase64?: string, imageMimeType?: string, permissionMode?: 'default' | 'full-access'): Promise<{ ok: boolean; error?: string }> {
-    return ipcRenderer.invoke('chat:ai-send', conversationId, message, service, provider, imageBase64, imageMimeType, permissionMode);
+  chatAiSend(conversationId: string, message: string, service?: string, provider?: string, imageBase64?: string, imageMimeType?: string): Promise<{ ok: boolean; error?: string }> {
+    return ipcRenderer.invoke('chat:ai-send', conversationId, message, service, provider, imageBase64, imageMimeType);
   },
-  chatAiSendStream(conversationId: string, message: string, service?: string, provider?: string, imageBase64?: string, imageMimeType?: string, permissionMode?: 'default' | 'full-access'): Promise<{ ok: boolean; error?: string }> {
-    return ipcRenderer.invoke('chat:ai-send-stream', conversationId, message, service, provider, imageBase64, imageMimeType, permissionMode);
+  chatAiSendStream(conversationId: string, message: string, service?: string, provider?: string, imageBase64?: string, imageMimeType?: string): Promise<{ ok: boolean; error?: string }> {
+    return ipcRenderer.invoke('chat:ai-send-stream', conversationId, message, service, provider, imageBase64, imageMimeType);
   },
   chatAiAbort(): Promise<{ ok: boolean }> {
     return ipcRenderer.invoke('chat:ai-abort');

@@ -622,7 +622,6 @@ type NetworkPeerAddress = {
 };
 
 type ChatServiceProtocol = 'anthropic-messages' | 'openai-chat-completions' | 'openai-responses';
-type ChatPermissionMode = 'default' | 'full-access';
 
 type ChatServiceCatalogEntry = {
   id: string;
@@ -651,21 +650,6 @@ const CHAT_SYSTEM_PROMPT_FILE_ENV = 'ANTSEED_CHAT_SYSTEM_PROMPT_FILE';
 const CHAT_SERVICE_SCAN_MAX_PEERS = 20;
 const CHAT_SERVICE_MAX_OPTIONS = 120;
 const CHAT_SERVICE_MAX_OPTIONS_PER_PROVIDER = 40;
-const CHAT_DEFAULT_ACTIVE_TOOL_NAMES = [
-  'read',
-  'grep',
-  'find',
-  'ls',
-  'web_fetch',
-  'open_browser_preview',
-] as const;
-const CHAT_FULL_ACCESS_TOOL_NAMES = [
-  ...CHAT_DEFAULT_ACTIVE_TOOL_NAMES,
-  'edit',
-  'write',
-  'start_dev_server',
-  'bash',
-] as const;
 
 type ChatWorkspaceGitStatus = {
   available: boolean;
@@ -714,16 +698,6 @@ async function persistChatWorkspaceDir(workspaceDir: string): Promise<string> {
   await writeFile(CHAT_WORKSPACE_STATE_FILE, JSON.stringify({ path: trimmed }, null, 2), 'utf8');
   currentChatWorkspaceDir = trimmed;
   return currentChatWorkspaceDir;
-}
-
-function normalizeChatPermissionMode(value: unknown): ChatPermissionMode {
-  return value === 'full-access' ? 'full-access' : 'default';
-}
-
-function resolveChatActiveToolNames(permissionMode: ChatPermissionMode): string[] {
-  return permissionMode === 'full-access'
-    ? [...CHAT_FULL_ACCESS_TOOL_NAMES]
-    : [...CHAT_DEFAULT_ACTIVE_TOOL_NAMES];
 }
 
 async function getWorkspaceGitStatus(workspaceDir: string): Promise<ChatWorkspaceGitStatus> {
@@ -1939,7 +1913,6 @@ export function registerPiChatHandlers({
     providerOverride?: string,
     imageBase64?: string,
     imageMimeType?: string,
-    permissionModeValue?: ChatPermissionMode,
   ): Promise<{ ok: boolean; error?: string }> => {
     const trimmedMessage = userMessage.trim();
     if (trimmedMessage.length === 0 && !imageBase64) {
@@ -1990,7 +1963,6 @@ export function registerPiChatHandlers({
     const context = sessionManager.buildSessionContext();
 
     const serviceId = normalizeServiceId(serviceOverride || context.model?.modelId);
-    const permissionMode = normalizeChatPermissionMode(permissionModeValue);
     const preferredPeerId = preferredPeerByConversationId.get(conversationId) ?? null;
     const providerHint = resolveProviderHintForService(
       providerOverride,
@@ -2016,7 +1988,7 @@ export function registerPiChatHandlers({
       cwd: chatWorkspaceDir,
       agentDir: CHAT_AGENT_DIR,
       settingsManager,
-      systemPrompt: buildAntstationSystemPrompt(userSystemPrompt, permissionMode),
+      systemPrompt: buildAntstationSystemPrompt(userSystemPrompt),
     });
     await resourceLoader.reload();
 
@@ -2032,7 +2004,6 @@ export function registerPiChatHandlers({
     });
 
     await session.setModel(proxyModel);
-    session.setActiveToolsByName(resolveChatActiveToolNames(permissionMode));
     session.agent.sessionId = conversationId;
 
     const existingUserMessages = session.messages.filter((message) => message.role === 'user').length;
@@ -2509,15 +2480,15 @@ export function registerPiChatHandlers({
 
   ipcMain.handle(
     'chat:ai-send-stream',
-    async (_event, conversationId: string, userMessage: string, service?: string, provider?: string, imageBase64?: string, imageMimeType?: string, permissionMode?: ChatPermissionMode) => {
-      return await runStreamingPrompt(conversationId, userMessage, service, provider, imageBase64, imageMimeType, permissionMode);
+    async (_event, conversationId: string, userMessage: string, service?: string, provider?: string, imageBase64?: string, imageMimeType?: string) => {
+      return await runStreamingPrompt(conversationId, userMessage, service, provider, imageBase64, imageMimeType);
     },
   );
 
   ipcMain.handle(
     'chat:ai-send',
-    async (_event, conversationId: string, userMessage: string, service?: string, provider?: string, imageBase64?: string, imageMimeType?: string, permissionMode?: ChatPermissionMode) => {
-      return await runStreamingPrompt(conversationId, userMessage, service, provider, imageBase64, imageMimeType, permissionMode);
+    async (_event, conversationId: string, userMessage: string, service?: string, provider?: string, imageBase64?: string, imageMimeType?: string) => {
+      return await runStreamingPrompt(conversationId, userMessage, service, provider, imageBase64, imageMimeType);
     },
   );
 

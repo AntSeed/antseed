@@ -2,7 +2,6 @@ import type { RendererUiState } from '../core/state';
 import type { BadgeTone } from '../core/state';
 import { notifyUiStateChanged, notifyUiStateChangedSync } from '../core/store';
 import type {
-  ChatPermissionMode,
   ChatWorkspaceGitStatus,
   DesktopBridge,
 } from '../types/bridge';
@@ -72,7 +71,6 @@ export type ChatModuleApi = {
   openConversation: (convId: string) => Promise<void>;
   sendMessage: (text: string, imageBase64?: string, imageMimeType?: string) => void;
   abortChat: () => Promise<void>;
-  setPermissionMode: (mode: ChatPermissionMode) => void;
   handleServiceChange: (value: string) => void;
   handleServiceFocus: () => void;
   handleServiceBlur: () => void;
@@ -1015,14 +1013,6 @@ export function initChatModule({
     }
   }
 
-  function setPermissionMode(mode: ChatPermissionMode): void {
-    if (uiState.chatPermissionMode === mode) {
-      return;
-    }
-    uiState.chatPermissionMode = mode;
-    notifyUiStateChanged();
-  }
-
   async function chooseWorkspace(): Promise<void> {
     if (!bridge?.pickDirectory || !bridge.chatAiSetWorkspace) return;
 
@@ -1299,7 +1289,6 @@ export function initChatModule({
           undefined,
           imageBase64,
           imageMimeType,
-          uiState.chatPermissionMode,
         );
 
       void (async () => {
@@ -1355,7 +1344,6 @@ export function initChatModule({
               undefined,
               imageBase64,
               imageMimeType,
-              uiState.chatPermissionMode,
             );
 
           let result = await sendRequest();
@@ -1863,7 +1851,6 @@ export function initChatModule({
     openConversation,
     sendMessage,
     abortChat,
-    setPermissionMode,
     handleServiceChange,
     handleServiceFocus,
     handleServiceBlur,
