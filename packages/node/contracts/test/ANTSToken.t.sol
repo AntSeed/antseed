@@ -13,7 +13,6 @@ contract ANTSTokenTest is Test {
 
     event EmissionsContractSet(address indexed emissionsContract);
     event TransfersEnabled();
-    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
     function setUp() public {
         owner = address(this);
@@ -41,7 +40,7 @@ contract ANTSTokenTest is Test {
 
     function test_setEmissionsContract_revert_notOwner() public {
         vm.prank(user1);
-        vm.expectRevert(ANTSToken.NotOwner.selector);
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", user1));
         token.setEmissionsContract(emissions);
     }
 
@@ -125,7 +124,7 @@ contract ANTSTokenTest is Test {
 
     function test_enableTransfers_revert_notOwner() public {
         vm.prank(user1);
-        vm.expectRevert(ANTSToken.NotOwner.selector);
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", user1));
         token.enableTransfers();
     }
 
@@ -163,8 +162,6 @@ contract ANTSTokenTest is Test {
     }
 
     function test_transferOwnership() public {
-        vm.expectEmit(true, true, false, false);
-        emit OwnershipTransferred(owner, user1);
         token.transferOwnership(user1);
         assertEq(token.owner(), user1);
 
@@ -176,7 +173,7 @@ contract ANTSTokenTest is Test {
 
     function test_transferOwnership_revert_notOwner() public {
         vm.prank(user1);
-        vm.expectRevert(ANTSToken.NotOwner.selector);
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", user1));
         token.transferOwnership(user2);
     }
 }

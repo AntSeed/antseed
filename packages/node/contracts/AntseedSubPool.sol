@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-interface IERC20 {
-    function transferFrom(address from, address to, uint256 value) external returns (bool);
-    function transfer(address to, uint256 value) external returns (bool);
-    function balanceOf(address account) external view returns (uint256);
-}
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 interface IAntseedIdentity {
     struct ProvenReputation {
@@ -28,7 +27,9 @@ interface IAntseedIdentity {
  *         budgets, and epoch-based revenue distribution to opted-in peers
  *         proportional to their proven reputation.
  */
-contract AntseedSubPool {
+contract AntseedSubPool is Ownable, ReentrancyGuard {
+    using SafeERC20 for IERC20;
+
     // ─── Structs ─────────────────────────────────────────────────────────
     struct Tier {
         uint256 monthlyFee; // USDC base units
@@ -56,9 +57,7 @@ contract AntseedSubPool {
     // ─── State Variables ─────────────────────────────────────────────────
     IERC20 public immutable usdc;
     IAntseedIdentity public identityContract;
-    address public owner;
     address public sessionsContract;
-    bool private _locked;
 
     mapping(uint256 => Tier) public tiers;
     uint256 public tierCount;
@@ -83,7 +82,6 @@ contract AntseedSubPool {
     event TokenUsageRecorded(address indexed buyer, uint256 tokens);
 
     // ─── Custom Errors ───────────────────────────────────────────────────
-    error NotOwner();
     error InvalidAddress();
     error InvalidAmount();
     error InvalidTier();
@@ -96,31 +94,18 @@ contract AntseedSubPool {
     error EpochNotEnded();
     error NothingToClaim();
     error DailyBudgetExceeded();
-    error Reentrancy();
-    error TransferFailed();
     error AlreadySubscribed();
     error NotAuthorized();
 
-    // ─── Modifiers ───────────────────────────────────────────────────────
-    modifier onlyOwner() {
-        if (msg.sender != owner) revert NotOwner();
-        _;
-    }
-
-    modifier nonReentrant() {
-        if (_locked) revert Reentrancy();
-        _locked = true;
-        _;
-        _locked = false;
-    }
-
     // ─── Constructor ─────────────────────────────────────────────────────
-    constructor(address _usdc, address _identity) {
+    constructor(address _usdc, address _identity)
+        Ownable(msg.sender)
+        ReentrancyGuard()
+    {
         if (_usdc == address(0)) revert InvalidAddress();
         if (_identity == address(0)) revert InvalidAddress();
         usdc = IERC20(_usdc);
         identityContract = IAntseedIdentity(_identity);
-        owner = msg.sender;
         epochDuration = 7 days;
         epochStart = block.timestamp;
         currentEpoch = 1;
@@ -164,7 +149,7 @@ contract AntseedSubPool {
         Subscription storage sub = subscriptions[msg.sender];
         if (sub.expiresAt > block.timestamp) revert AlreadySubscribed();
 
-        _safeTransferFrom(msg.sender, address(this), tier.monthlyFee);
+        usdc.safeTransferFrom(msg.sender, address(this), tier.monthlyFee);
         currentEpochRevenue += tier.monthlyFee;
 
         sub.tierId = tierId;
@@ -186,7 +171,7 @@ contract AntseedSubPool {
         Tier storage tier = tiers[sub.tierId];
         if (!tier.active) revert TierNotActive();
 
-        _safeTransferFrom(msg.sender, address(this), tier.monthlyFee);
+        usdc.safeTransferFrom(msg.sender, address(this), tier.monthlyFee);
         currentEpochRevenue += tier.monthlyFee;
 
         sub.expiresAt += 30 days;
@@ -223,7 +208,7 @@ contract AntseedSubPool {
     }
 
     function recordTokenUsage(address buyer, uint256 tokens) external {
-        if (msg.sender != sessionsContract && msg.sender != owner) revert NotAuthorized();
+        if (msg.sender != sessionsContract && msg.sender != owner()) revert NotAuthorized();
         Subscription storage sub = subscriptions[buyer];
         if (sub.expiresAt <= block.timestamp) revert SubscriptionExpired();
 
@@ -279,7 +264,7 @@ contract AntseedSubPool {
         if (claimable > 0) {
             opt.pendingRevenue = 0;
             peerRewardPerTokenPaid[msg.sender] = rewardPerTokenStored;
-            _safeTransfer(msg.sender, claimable);
+            usdc.safeTransfer(msg.sender, claimable);
         }
 
         opt.optedIn = false;
@@ -381,7 +366,7 @@ contract AntseedSubPool {
         opt.lastClaimedEpoch = currentEpoch;
         peerRewardPerTokenPaid[msg.sender] = rewardPerTokenStored;
 
-        _safeTransfer(msg.sender, amount);
+        usdc.safeTransfer(msg.sender, amount);
         emit RevenueClaimed(msg.sender, amount);
     }
 
@@ -429,30 +414,5 @@ contract AntseedSubPool {
     function setIdentityContract(address _identity) external onlyOwner {
         if (_identity == address(0)) revert InvalidAddress();
         identityContract = IAntseedIdentity(_identity);
-    }
-
-    function transferOwnership(address newOwner) external onlyOwner {
-        if (newOwner == address(0)) revert InvalidAddress();
-        owner = newOwner;
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    //                        INTERNAL HELPERS
-    // ═══════════════════════════════════════════════════════════════════
-
-    function _safeTransferFrom(address from, address to, uint256 value) private {
-        (bool ok, bytes memory ret) = address(usdc).call(
-            abi.encodeWithSelector(IERC20.transferFrom.selector, from, to, value)
-        );
-        if (!ok || (ret.length > 0 && !abi.decode(ret, (bool)))) {
-            revert TransferFailed();
-        }
-    }
-
-    function _safeTransfer(address to, uint256 value) private {
-        (bool ok, bytes memory ret) = address(usdc).call(abi.encodeWithSelector(IERC20.transfer.selector, to, value));
-        if (!ok || (ret.length > 0 && !abi.decode(ret, (bool)))) {
-            revert TransferFailed();
-        }
     }
 }

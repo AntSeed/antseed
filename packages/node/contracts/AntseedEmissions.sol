@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+
 interface IANTSToken {
     function mint(address to, uint256 amount) external;
 }
@@ -11,9 +14,8 @@ interface IANTSToken {
  *         Epoch-based emission with halving, O(1) gas per interaction,
  *         configurable seller/buyer/reserve split.
  */
-contract AntseedEmissions {
+contract AntseedEmissions is Ownable, ReentrancyGuard {
     // ─── Configuration (all owner-settable) ───
-    address public owner;
     IANTSToken public antsToken;
     address public sessionsContract;
     address public reserveDestination;
@@ -58,6 +60,11 @@ contract AntseedEmissions {
     // ─── Reserve ───
     uint256 public reserveAccumulated;
 
+    // ─── setConstant key constants ───
+    bytes32 private constant KEY_EPOCH_DURATION = keccak256("EPOCH_DURATION");
+    bytes32 private constant KEY_HALVING_INTERVAL = keccak256("HALVING_INTERVAL");
+    bytes32 private constant KEY_MAX_SELLER_SHARE_PCT = keccak256("MAX_SELLER_SHARE_PCT");
+
     // ─── Events ───
     event EpochAdvanced(uint256 indexed epoch, uint256 emission);
     event SellerPointsAccrued(address indexed seller, uint256 pointsDelta);
@@ -67,7 +74,6 @@ contract AntseedEmissions {
     event ConstantUpdated(bytes32 indexed key, uint256 value);
 
     // ─── Custom Errors ───
-    error NotOwner();
     error NotAuthorized();
     error EpochNotEnded();
     error InvalidShareSum();
@@ -76,34 +82,21 @@ contract AntseedEmissions {
     error InvalidAddress();
     error InvalidValue();
     error InvalidSharePercentages();
-    error Reentrancy();
 
     // ─── Modifiers ───
-    bool private _locked;
-
-    modifier onlyOwner() {
-        if (msg.sender != owner) revert NotOwner();
-        _;
-    }
-
     modifier onlySessions() {
         if (msg.sender != sessionsContract) revert NotAuthorized();
         _;
     }
 
-    modifier nonReentrant() {
-        if (_locked) revert Reentrancy();
-        _locked = true;
-        _;
-        _locked = false;
-    }
-
     // ─── Constructor ───
-    constructor(address _antsToken, uint256 _initialEmission, uint256 _epochDuration) {
+    constructor(address _antsToken, uint256 _initialEmission, uint256 _epochDuration)
+        Ownable(msg.sender)
+        ReentrancyGuard()
+    {
         if (_antsToken == address(0)) revert InvalidAddress();
         if (_initialEmission == 0) revert InvalidValue();
         if (_epochDuration == 0) revert InvalidValue();
-        owner = msg.sender;
         antsToken = IANTSToken(_antsToken);
         INITIAL_EMISSION = _initialEmission;
         EPOCH_DURATION = _epochDuration;
@@ -324,22 +317,17 @@ contract AntseedEmissions {
     }
 
     function setConstant(bytes32 key, uint256 value) external onlyOwner {
-        if (key == keccak256("EPOCH_DURATION")) {
+        if (key == KEY_EPOCH_DURATION) {
             if (value == 0) revert InvalidValue();
             EPOCH_DURATION = value;
         }
-        else if (key == keccak256("HALVING_INTERVAL")) {
+        else if (key == KEY_HALVING_INTERVAL) {
             if (value == 0) revert InvalidValue();
             HALVING_INTERVAL = value;
         }
-        else if (key == keccak256("MAX_SELLER_SHARE_PCT")) MAX_SELLER_SHARE_PCT = value;
+        else if (key == KEY_MAX_SELLER_SHARE_PCT) MAX_SELLER_SHARE_PCT = value;
         else revert NotAuthorized();
 
         emit ConstantUpdated(key, value);
-    }
-
-    function transferOwnership(address newOwner) external onlyOwner {
-        if (newOwner == address(0)) revert InvalidAddress();
-        owner = newOwner;
     }
 }

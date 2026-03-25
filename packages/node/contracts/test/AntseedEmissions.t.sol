@@ -302,7 +302,7 @@ contract AntseedEmissionsTest is Test {
 
     function test_setSessionsContract_onlyOwner() public {
         vm.prank(seller1);
-        vm.expectRevert(AntseedEmissions.NotOwner.selector);
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", seller1));
         emissions.setSessionsContract(address(0x99));
     }
 
