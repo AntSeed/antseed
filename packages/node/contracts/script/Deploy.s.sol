@@ -33,6 +33,8 @@ contract Deploy is Script {
             uint256(0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80) // anvil account 0
         );
 
+        address protocolReserve = vm.envOr("PROTOCOL_RESERVE", vm.addr(deployerPrivateKey));
+
         // Read bytecodes from compiled artifacts
         bytes memory usdcBytecode = vm.getCode("MockUSDC.sol:MockUSDC");
         bytes memory tokenBytecode = vm.getCode("ANTSToken.sol:ANTSToken");
@@ -104,11 +106,11 @@ contract Deploy is Script {
         // ---- Wire contracts together ----
         ISetSessions(deposits).setSessionsContract(sessions);
         ISetSessions(identity).setSessionsContract(sessions);
-        ISetProtocolReserve(identity).setProtocolReserve(address(0xFEE));
+        ISetProtocolReserve(identity).setProtocolReserve(protocolReserve);
         ISetEmissions(antsToken).setEmissionsContract(emissions);
         ISetEmissions(sessions).setEmissionsContract(emissions);
         ISetSessions(emissions).setSessionsContract(sessions);
-        ISetProtocolReserve(sessions).setProtocolReserve(address(0xFEE));
+        ISetProtocolReserve(sessions).setProtocolReserve(protocolReserve);
 
         vm.stopBroadcast();
 

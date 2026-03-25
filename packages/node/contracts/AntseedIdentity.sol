@@ -268,6 +268,7 @@ contract AntseedIdentity is ERC721, ERC721URIStorage {
     }
 
     function decrementActiveSessions(address seller) external onlySessions {
+        if (activeSessionCount[seller] == 0) revert InvalidAmount();
         activeSessionCount[seller]--;
     }
 

@@ -23,7 +23,7 @@ contract AntseedDeposits {
     uint256 public MIN_BUYER_DEPOSIT = 10_000_000;
     uint256 public WITHDRAWAL_DELAY = 48 hours;
     uint256 public BUYER_INACTIVITY_PERIOD = 90 days;
-    uint256 public BASE_CREDIT_LIMIT = 10_000_000;
+    uint256 public BASE_CREDIT_LIMIT = 50_000_000;
     uint256 public PEER_INTERACTION_BONUS = 5_000_000;
     uint256 public TIME_BONUS = 500_000;
     uint256 public PROVEN_SESSION_BONUS = 10_000_000;
@@ -143,7 +143,6 @@ contract AntseedDeposits {
         _safeTransferFrom(msg.sender, address(this), amount);
         ba.balance += amount;
         ba.lastActivityAt = block.timestamp;
-        if (ba.firstSessionAt == 0) ba.firstSessionAt = block.timestamp;
 
         emit Deposited(buyer, amount);
     }
@@ -222,6 +221,8 @@ contract AntseedDeposits {
 
     function lockForSession(address buyer, uint256 amount) external onlySessions {
         BuyerAccount storage ba = buyers[buyer];
+        uint256 available = ba.balance - ba.reserved - ba.withdrawalAmount;
+        if (available < amount) revert InsufficientBalance();
         ba.reserved += amount;
         ba.lastActivityAt = block.timestamp;
         if (ba.firstSessionAt == 0) {
@@ -238,6 +239,9 @@ contract AntseedDeposits {
         address protocolReserve,
         bool isProvenSign
     ) external onlySessions nonReentrant {
+        if (chargeAmount > reservedAmount) revert InvalidAmount();
+        if (platformFee > chargeAmount) revert InvalidAmount();
+
         BuyerAccount storage ba = buyers[buyer];
         ba.balance -= chargeAmount;
         ba.reserved -= reservedAmount;
