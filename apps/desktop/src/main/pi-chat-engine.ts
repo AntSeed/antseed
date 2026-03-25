@@ -595,8 +595,6 @@ type RegisterPiChatHandlersOptions = {
   ipcMain: IpcMain;
   sendToRenderer: (channel: string, payload: unknown) => void;
   configPath: string;
-  isBuyerRuntimeRunning: () => boolean;
-  ensureBuyerRuntimeStarted?: () => Promise<boolean>;
   appendSystemLog: (line: string) => void;
   getNetworkPeers?: () => Promise<NetworkPeerAddress[]>;
 };
@@ -1845,8 +1843,6 @@ export function registerPiChatHandlers({
   ipcMain,
   sendToRenderer,
   configPath,
-  isBuyerRuntimeRunning,
-  ensureBuyerRuntimeStarted,
   appendSystemLog,
   getNetworkPeers,
 }: RegisterPiChatHandlersOptions): {
@@ -1917,21 +1913,6 @@ export function registerPiChatHandlers({
     return await isPortReachable(port);
   };
 
-  const waitForBuyerProxy = async (port: number, timeoutMs = 20_000): Promise<boolean> => {
-    const startedAt = Date.now();
-    while (Date.now() - startedAt < timeoutMs) {
-      try {
-        if (await isProxyAvailable(port)) {
-          return true;
-        }
-      } catch {
-        // transient error — keep polling
-      }
-      await new Promise((resolve) => setTimeout(resolve, 500));
-    }
-    return false;
-  };
-
   const runStreamingPrompt = async (
     conversationId: string,
     userMessage: string,
@@ -1955,27 +1936,8 @@ export function registerPiChatHandlers({
     }
 
     const proxyPort = await resolveProxyPort(configPath);
-    const runtimeRunning = isBuyerRuntimeRunning();
-    let proxyAvailable = await isProxyAvailable(proxyPort);
-    if (!proxyAvailable && ensureBuyerRuntimeStarted) {
-      if (runtimeRunning) {
-        appendSystemLog(`Buyer runtime is running. Waiting for proxy :${proxyPort}...`);
-      } else {
-        appendSystemLog(`Buyer proxy offline on port ${proxyPort}; attempting to start Buyer runtime...`);
-      }
-      try {
-        const started = runtimeRunning ? true : await ensureBuyerRuntimeStarted();
-        if (started) {
-          if (!runtimeRunning) {
-            appendSystemLog(`Buyer runtime start requested. Waiting for proxy :${proxyPort}...`);
-          }
-          proxyAvailable = await waitForBuyerProxy(proxyPort);
-        }
-      } catch (error) {
-        appendSystemLog(`Buyer runtime auto-start failed: ${asErrorMessage(error)}`);
-      }
-    }
-    if (!proxyAvailable) {
+    // TODO: Revisit chat-triggered runtime start after we align on the desktop mode flow.
+    if (!(await isProxyAvailable(proxyPort))) {
       return {
         ok: false,
         error: `Buyer proxy is not reachable on port ${proxyPort}. Start Buyer runtime or fix buyer.proxyPort in config.`,
