@@ -85,7 +85,7 @@ describe('BuyerPaymentManager', () => {
     expect(mux.sentSpendingAuths.length).toBe(1);
 
     const sent = mux.sentSpendingAuths[0] as Record<string, unknown>;
-    expect(sent.cumulativeAmount).toBe('50000');
+    expect(sent.cumulativeAmount).toBe('0');
     expect(sent.cumulativeInputTokens).toBe('0');
     expect(sent.cumulativeOutputTokens).toBe('0');
     expect(sent.sessionId).toBe(sessionId);
@@ -149,8 +149,8 @@ describe('BuyerPaymentManager', () => {
       5_000n,     // estimatedNextCostUsdc
     );
 
-    // cumulativeAmount should be initial (10000) + addedCost (5000) + estimatedNext (5000) = 20000
-    expect(BigInt(payload.cumulativeAmount)).toBe(20_000n);
+    // cumulativeAmount should be initial (0) + addedCost (5000) + estimatedNext (5000) = 10000
+    expect(BigInt(payload.cumulativeAmount)).toBe(10_000n);
     expect(payload.cumulativeInputTokens).toBe('100');
     expect(payload.cumulativeOutputTokens).toBe('50');
     expect(payload.buyerSig).toBeTypeOf('string');
@@ -171,8 +171,8 @@ describe('BuyerPaymentManager', () => {
       80_000n,
     );
 
-    // Should be capped: initial (10000) + maxPerRequestUsdc (100000) = 110000
-    expect(BigInt(payload.cumulativeAmount)).toBe(110_000n);
+    // Should be capped: initial (0) + maxPerRequestUsdc (100000) = 100000
+    expect(BigInt(payload.cumulativeAmount)).toBe(100_000n);
   });
 
   it('signPerRequestAuth throws if no active session', async () => {
@@ -348,7 +348,7 @@ describe('BuyerPaymentManager', () => {
     expect(session).not.toBeNull();
     expect(session!.peerId).toBe(sellerPeerId);
     expect(session!.role).toBe('buyer');
-    expect(session!.authMax).toBe('10000');
+    expect(session!.authMax).toBe('0');
     checkStore.close();
 
     // Re-create manager with same data dir, authorize again

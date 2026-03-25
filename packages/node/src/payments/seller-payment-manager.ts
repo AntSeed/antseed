@@ -354,15 +354,10 @@ export class SellerPaymentManager {
     const accepted = this._acceptedCumulative.get(sessionId) ?? 0n;
 
     if (accepted === 0n) {
-      // Session opened but no requests served — release buyer funds
-      debugLog(`[SellerPayment] Settling zero-cumulative session ${sessionId.slice(0, 18)}... via settleTimeout`);
-      try {
-        await this._sessionsClient.settleTimeout(this._signer, sessionId);
-        this._sessionStore.updateSessionStatus(sessionId, 'timeout');
-      } catch (err) {
-        debugWarn(`[SellerPayment] Failed to settleTimeout: ${err instanceof Error ? err.message : err}`);
-        return;
-      }
+      // Session opened but no requests served — cannot call settleTimeout() here because
+      // the contract requires deadline + CLOSE_GRACE_PERIOD to have passed.
+      // Leave it for checkTimeouts() which validates the timeout threshold first.
+      debugLog(`[SellerPayment] Zero-cumulative session ${sessionId.slice(0, 18)}... — deferring to timeout checker`);
     } else {
       // Settle with the latest buyer-signed auth
       const latestAuth = this._latestAuth.get(sessionId);

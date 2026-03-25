@@ -140,12 +140,14 @@ export class BuyerPaymentManager {
 
     debugLog(`[BuyerPayment] authorizeSpending: session=${sessionId.slice(0, 18)}... seller=${sellerPeerId.slice(0, 12)}... amount=${minBudgetPerRequest}`);
 
-    // Sign EIP-712 SpendingAuth with cumulative values starting at minBudgetPerRequest
+    // Sign EIP-712 SpendingAuth with cumulative=0 for on-chain reserve() verification.
+    // The contract's reserve() hardcodes cumulativeAmount=0 in the structHash.
+    // The seller uses reserveAmount (separate field) as the deposit amount.
     const domain = makeSessionsDomain(this._config.chainId, this._config.sessionsContractAddress);
     const msg: SpendingAuthMessage = {
       seller: sellerEvmAddr,
       sessionId,
-      cumulativeAmount: minBudgetPerRequest,
+      cumulativeAmount: 0n,
       cumulativeInputTokens: 0n,
       cumulativeOutputTokens: 0n,
       nonce,
@@ -154,8 +156,8 @@ export class BuyerPaymentManager {
     const buyerSig = await signSpendingAuth(this._signer, domain, msg);
     const buyerEvmAddr = identityToEvmAddress(this._identity);
 
-    // Initialize cumulative maps
-    this._cumulativeAmount.set(sellerPeerId, minBudgetPerRequest);
+    // Initialize cumulative maps at 0 — first per-request auth will increment
+    this._cumulativeAmount.set(sellerPeerId, 0n);
     this._cumulativeInputTokens.set(sellerPeerId, 0n);
     this._cumulativeOutputTokens.set(sellerPeerId, 0n);
 
@@ -168,7 +170,7 @@ export class BuyerPaymentManager {
       sellerEvmAddr,
       buyerEvmAddr,
       nonce,
-      authMax: minBudgetPerRequest.toString(),
+      authMax: '0',
       deadline,
       previousSessionId: '0x' + '0'.repeat(64),
       previousConsumption: '0',
@@ -186,7 +188,7 @@ export class BuyerPaymentManager {
     // Send SpendingAuth via PaymentMux
     paymentMux.sendSpendingAuth({
       sessionId,
-      cumulativeAmount: minBudgetPerRequest.toString(),
+      cumulativeAmount: '0',
       cumulativeInputTokens: '0',
       cumulativeOutputTokens: '0',
       nonce,

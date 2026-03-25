@@ -180,7 +180,7 @@ describe('Full Payment Flow Integration', () => {
       200n,     // addedOutputTokens
       20_000n,  // estimatedNextCost
     );
-    expect(BigInt(auth1.cumulativeAmount)).toBeGreaterThan(minBudget);
+    expect(BigInt(auth1.cumulativeAmount)).toBeGreaterThan(0n);
     expect(auth1.cumulativeInputTokens).toBe('500');
     expect(auth1.cumulativeOutputTokens).toBe('200');
 
@@ -243,7 +243,7 @@ describe('Full Payment Flow Integration', () => {
 
     await doInitialHandshake(50_000n);
 
-    const amounts: bigint[] = [50_000n]; // initial
+    const amounts: bigint[] = [0n]; // initial cumulative is 0
 
     for (let i = 0; i < 5; i++) {
       const auth = await buyer.signPerRequestAuth(
@@ -344,8 +344,8 @@ describe('Full Payment Flow Integration', () => {
     // The SpendingAuth payload should include reserveAmount
     expect(initialAuth.reserveAmount).toBe('10000000'); // maxReserveAmountUsdc
 
-    // And cumulativeAmount should be the minBudgetPerRequest
-    expect(initialAuth.cumulativeAmount).toBe('50000');
+    // And cumulativeAmount should be 0 (initial reserve auth)
+    expect(initialAuth.cumulativeAmount).toBe('0');
   });
 
   it('seller sends AuthAck only on first SpendingAuth, not subsequent', async () => {
@@ -388,16 +388,14 @@ describe('Full Payment Flow Integration', () => {
     await doInitialHandshake(50_000n);
 
     // Settle without any per-request auths (no spend recorded)
-    // The accepted cumulative from the initial auth is 50_000n (non-zero),
-    // so this will call settle(), not settleTimeout().
-    // For settleTimeout to trigger, acceptedCumulative must be 0.
-    // This happens when the session was opened but no further auths were accepted.
-    // Since the initial SpendingAuth sets acceptedCumulative = minBudget = 50000,
-    // we need to test the timeout path differently:
+    // The initial auth now has cumulativeAmount=0, so the seller's
+    // acceptedCumulative is 0 — settleSession defers to timeout checker
+    // (neither settle nor settleTimeout is called immediately).
     await seller.settleSession(buyerPeerId);
 
-    // With initial cumulative > 0, settle() is called (not settleTimeout)
-    expect(seller.sessionsClient.settle).toHaveBeenCalledOnce();
+    // With initial cumulative = 0, neither settle nor settleTimeout is called
+    expect(seller.sessionsClient.settle).not.toHaveBeenCalled();
+    expect(seller.sessionsClient.settleTimeout).not.toHaveBeenCalled();
   });
 
   it('buyer handleAuthAck ignores mismatched sessionId', async () => {

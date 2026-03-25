@@ -87,7 +87,7 @@ describe('Cumulative SpendingAuth Integration', () => {
       10_000n,
     );
     expect(sentAuths.length).toBe(1);
-    expect(sentAuths[0].cumulativeAmount).toBe('10000');
+    expect(sentAuths[0].cumulativeAmount).toBe('0');
     expect(sentAuths[0].cumulativeInputTokens).toBe('0');
     expect(sentAuths[0].cumulativeOutputTokens).toBe('0');
 
@@ -104,8 +104,8 @@ describe('Cumulative SpendingAuth Integration', () => {
       5_000n,   // estimatedNextCostUsdc
     );
 
-    // Cumulative amount: 10000 (initial) + 3000 + 5000 = 18000
-    expect(BigInt(auth1.cumulativeAmount)).toBe(18_000n);
+    // Cumulative amount: 0 (initial) + 3000 + 5000 = 8000
+    expect(BigInt(auth1.cumulativeAmount)).toBe(8_000n);
     expect(auth1.cumulativeInputTokens).toBe('500');
     expect(auth1.cumulativeOutputTokens).toBe('200');
     expect(auth1.sessionId).toBe(sessionId);
@@ -119,8 +119,8 @@ describe('Cumulative SpendingAuth Integration', () => {
       6_000n,
     );
 
-    // Cumulative amount: 18000 + 4000 + 6000 = 28000
-    expect(BigInt(auth2.cumulativeAmount)).toBe(28_000n);
+    // Cumulative amount: 8000 + 4000 + 6000 = 18000
+    expect(BigInt(auth2.cumulativeAmount)).toBe(18_000n);
     // Cumulative tokens: 500 + 300 = 800 input, 200 + 150 = 350 output
     expect(auth2.cumulativeInputTokens).toBe('800');
     expect(auth2.cumulativeOutputTokens).toBe('350');
@@ -134,8 +134,8 @@ describe('Cumulative SpendingAuth Integration', () => {
       3_000n,
     );
 
-    // Cumulative amount: 28000 + 2000 + 3000 = 33000
-    expect(BigInt(auth3.cumulativeAmount)).toBe(33_000n);
+    // Cumulative amount: 18000 + 2000 + 3000 = 23000
+    expect(BigInt(auth3.cumulativeAmount)).toBe(23_000n);
     // Cumulative tokens: 800 + 200 = 1000 input, 350 + 100 = 450 output
     expect(auth3.cumulativeInputTokens).toBe('1000');
     expect(auth3.cumulativeOutputTokens).toBe('450');
@@ -242,7 +242,7 @@ describe('Cumulative SpendingAuth Integration', () => {
     );
 
     // Verify the sign succeeded and returned updated cumulative values
-    expect(BigInt(auth.cumulativeAmount)).toBe(20_000n);
+    expect(BigInt(auth.cumulativeAmount)).toBe(10_000n);
     expect(auth.cumulativeInputTokens).toBe('100');
     expect(auth.cumulativeOutputTokens).toBe('50');
     expect(auth.sessionId).toBe(sessionId);

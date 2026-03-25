@@ -1446,7 +1446,7 @@ export class AntseedNode extends EventEmitter {
                 sessionId: session.sessionId,
                 requiredCumulativeAmount: (cumulativeSpend + estimatedNextRequestCost * 2n).toString(),
                 currentAcceptedCumulative: accepted.toString(),
-                deposit: cumulativeSpend.toString(),
+                deposit: session.authMax ?? '0',
               });
             }
           }
