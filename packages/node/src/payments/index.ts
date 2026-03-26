@@ -40,8 +40,12 @@ export {
   SPENDING_AUTH_TYPES,
   signMessageEd25519,
   verifyMessageEd25519,
+  computeMetadataHash,
+  encodeMetadata,
+  ZERO_METADATA,
+  ZERO_METADATA_HASH,
 } from './evm/signatures.js';
-export type { SpendingAuthMessage } from './evm/signatures.js';
+export type { SpendingAuthMessage, SpendingAuthMetadata } from './evm/signatures.js';
 
 // ANTS token
 export { ANTSTokenClient } from './evm/ants-token-client.js';

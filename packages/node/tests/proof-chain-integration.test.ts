@@ -15,9 +15,16 @@ import type { Identity } from '../src/p2p/identity.js';
 import { bytesToHex } from '../src/utils/hex.js';
 import { toPeerId } from '../src/types/peer.js';
 import { identityToEvmAddress } from '../src/payments/evm/keypair.js';
+import { AbiCoder } from 'ethers';
 
 const CHAIN_ID = 31337;
 const CONTRACT_ADDR = '0x' + 'dd'.repeat(20);
+
+function decodeMetadataTokens(metadata: string): { inputTokens: bigint; outputTokens: bigint } {
+  const coder = AbiCoder.defaultAbiCoder();
+  const [inputTokens, outputTokens] = coder.decode(['uint256', 'uint256', 'uint256', 'uint256'], metadata);
+  return { inputTokens, outputTokens };
+}
 
 async function createTestIdentity(): Promise<Identity> {
   const privateKey = ed.utils.randomPrivateKey();
@@ -88,8 +95,8 @@ describe('Cumulative SpendingAuth Integration', () => {
     );
     expect(sentAuths.length).toBe(1);
     expect(sentAuths[0].cumulativeAmount).toBe('0');
-    expect(sentAuths[0].cumulativeInputTokens).toBe('0');
-    expect(sentAuths[0].cumulativeOutputTokens).toBe('0');
+    expect(sentAuths[0].metadataHash).toBeTypeOf('string');
+    expect(sentAuths[0].metadata).toBeTypeOf('string');
 
     // Simulate AuthAck
     buyerManager.handleAuthAck(sellerIdentity.peerId, { sessionId, nonce: 1 });
@@ -106,8 +113,9 @@ describe('Cumulative SpendingAuth Integration', () => {
 
     // Cumulative amount: 0 (initial) + 3000 + 5000 = 8000
     expect(BigInt(auth1.cumulativeAmount)).toBe(8_000n);
-    expect(auth1.cumulativeInputTokens).toBe('500');
-    expect(auth1.cumulativeOutputTokens).toBe('200');
+    const meta1 = decodeMetadataTokens(auth1.metadata);
+    expect(meta1.inputTokens).toBe(500n);
+    expect(meta1.outputTokens).toBe(200n);
     expect(auth1.sessionId).toBe(sessionId);
 
     // Step 3: Second request completes
@@ -122,8 +130,9 @@ describe('Cumulative SpendingAuth Integration', () => {
     // Cumulative amount: 8000 + 4000 + 6000 = 18000
     expect(BigInt(auth2.cumulativeAmount)).toBe(18_000n);
     // Cumulative tokens: 500 + 300 = 800 input, 200 + 150 = 350 output
-    expect(auth2.cumulativeInputTokens).toBe('800');
-    expect(auth2.cumulativeOutputTokens).toBe('350');
+    const meta2 = decodeMetadataTokens(auth2.metadata);
+    expect(meta2.inputTokens).toBe(800n);
+    expect(meta2.outputTokens).toBe(350n);
 
     // Step 4: Third request
     const auth3 = await buyerManager.signPerRequestAuth(
@@ -137,8 +146,9 @@ describe('Cumulative SpendingAuth Integration', () => {
     // Cumulative amount: 18000 + 2000 + 3000 = 23000
     expect(BigInt(auth3.cumulativeAmount)).toBe(23_000n);
     // Cumulative tokens: 800 + 200 = 1000 input, 350 + 100 = 450 output
-    expect(auth3.cumulativeInputTokens).toBe('1000');
-    expect(auth3.cumulativeOutputTokens).toBe('450');
+    const meta3 = decodeMetadataTokens(auth3.metadata);
+    expect(meta3.inputTokens).toBe(1000n);
+    expect(meta3.outputTokens).toBe(450n);
 
     // Verify all auth payloads reference the same session
     expect(auth1.sessionId).toBe(sessionId);
@@ -243,8 +253,9 @@ describe('Cumulative SpendingAuth Integration', () => {
 
     // Verify the sign succeeded and returned updated cumulative values
     expect(BigInt(auth.cumulativeAmount)).toBe(10_000n);
-    expect(auth.cumulativeInputTokens).toBe('100');
-    expect(auth.cumulativeOutputTokens).toBe('50');
+    const authMeta = decodeMetadataTokens(auth.metadata);
+    expect(authMeta.inputTokens).toBe(100n);
+    expect(authMeta.outputTokens).toBe(50n);
     expect(auth.sessionId).toBe(sessionId);
 
     // Close store and recreate manager

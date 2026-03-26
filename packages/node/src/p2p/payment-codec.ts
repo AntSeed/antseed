@@ -61,16 +61,19 @@ export function encodeNeedAuth(payload: NeedAuthPayload): Uint8Array {
 
 export function decodeSpendingAuth(data: Uint8Array): SpendingAuthPayload {
   const obj = parseJson(data);
-  return {
+  const result: SpendingAuthPayload = {
     sessionId: requireString(obj, 'sessionId'),
     cumulativeAmount: requireString(obj, 'cumulativeAmount'),
-    cumulativeInputTokens: requireString(obj, 'cumulativeInputTokens'),
-    cumulativeOutputTokens: requireString(obj, 'cumulativeOutputTokens'),
-    nonce: requireNumber(obj, 'nonce'),
-    deadline: requireNumber(obj, 'deadline'),
+    metadataHash: requireString(obj, 'metadataHash'),
+    metadata: requireString(obj, 'metadata'),
     buyerSig: requireString(obj, 'buyerSig'),
     buyerEvmAddr: requireString(obj, 'buyerEvmAddr'),
   };
+  // Optional reserve params (only on initial auth)
+  if (typeof obj.reserveAmount === 'string') result.reserveAmount = obj.reserveAmount;
+  if (typeof obj.reserveNonce === 'number') result.reserveNonce = obj.reserveNonce;
+  if (typeof obj.reserveDeadline === 'number') result.reserveDeadline = obj.reserveDeadline;
+  return result;
 }
 
 export function decodeAuthAck(data: Uint8Array): AuthAckPayload {

@@ -14,10 +14,7 @@ interface IAntseedSessions {
     function settle(
         bytes32 sessionId,
         uint256 cumulativeAmount,
-        uint256 cumulativeInputTokens,
-        uint256 cumulativeOutputTokens,
-        uint256 nonce,
-        uint256 deadline,
+        bytes calldata metadata,
         bytes calldata buyerSig
     ) external;
 

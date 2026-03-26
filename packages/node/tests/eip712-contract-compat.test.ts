@@ -4,6 +4,8 @@ import {
   SPENDING_AUTH_TYPES,
   makeSessionsDomain,
   signSpendingAuth,
+  computeMetadataHash,
+  ZERO_METADATA_HASH,
   type SpendingAuthMessage,
 } from '../src/payments/evm/signatures.js';
 import { identityToEvmWallet } from '../src/payments/evm/keypair.js';
@@ -15,9 +17,9 @@ import { join } from 'node:path';
 describe('EIP-712 Contract Compatibility', () => {
   it('SPENDING_AUTH_TYPES typehash matches contract format', () => {
     // The contract computes:
-    // keccak256("SpendingAuth(address seller,bytes32 sessionId,uint256 cumulativeAmount,uint256 cumulativeInputTokens,uint256 cumulativeOutputTokens,uint256 nonce,uint256 deadline)")
+    // keccak256("SpendingAuth(bytes32 sessionId,uint256 cumulativeAmount,bytes32 metadataHash)")
     const expectedTypeString =
-      'SpendingAuth(address seller,bytes32 sessionId,uint256 cumulativeAmount,uint256 cumulativeInputTokens,uint256 cumulativeOutputTokens,uint256 nonce,uint256 deadline)';
+      'SpendingAuth(bytes32 sessionId,uint256 cumulativeAmount,bytes32 metadataHash)';
     const expectedHash = keccak256(toUtf8Bytes(expectedTypeString));
 
     // Verify our TS type definition produces the same encoding
@@ -30,20 +32,16 @@ describe('EIP-712 Contract Compatibility', () => {
 
   it('TS type string has exactly the right field order and types', () => {
     const fields = SPENDING_AUTH_TYPES.SpendingAuth;
-    expect(fields).toHaveLength(7);
-    expect(fields[0]).toEqual({ name: 'seller', type: 'address' });
-    expect(fields[1]).toEqual({ name: 'sessionId', type: 'bytes32' });
-    expect(fields[2]).toEqual({ name: 'cumulativeAmount', type: 'uint256' });
-    expect(fields[3]).toEqual({ name: 'cumulativeInputTokens', type: 'uint256' });
-    expect(fields[4]).toEqual({ name: 'cumulativeOutputTokens', type: 'uint256' });
-    expect(fields[5]).toEqual({ name: 'nonce', type: 'uint256' });
-    expect(fields[6]).toEqual({ name: 'deadline', type: 'uint256' });
+    expect(fields).toHaveLength(3);
+    expect(fields[0]).toEqual({ name: 'sessionId', type: 'bytes32' });
+    expect(fields[1]).toEqual({ name: 'cumulativeAmount', type: 'uint256' });
+    expect(fields[2]).toEqual({ name: 'metadataHash', type: 'bytes32' });
   });
 
-  it('domain version is "2" matching contract constructor', () => {
+  it('domain version is "4" matching contract constructor', () => {
     const domain = makeSessionsDomain(31337, '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
     expect(domain.name).toBe('AntseedSessions');
-    expect(domain.version).toBe('2');
+    expect(domain.version).toBe('4');
     expect(domain.chainId).toBe(31337);
     expect(domain.verifyingContract).toBe('0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
   });
@@ -68,13 +66,9 @@ describe('EIP-712 Contract Compatibility', () => {
       const domain = makeSessionsDomain(31337, '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
 
       const msg: SpendingAuthMessage = {
-        seller: '0x' + 'ab'.repeat(20),
         sessionId: '0x' + '01'.repeat(32),
         cumulativeAmount: 0n,
-        cumulativeInputTokens: 0n,
-        cumulativeOutputTokens: 0n,
-        nonce: 1,
-        deadline: Math.floor(Date.now() / 1000) + 3600,
+        metadataHash: ZERO_METADATA_HASH,
       };
 
       const sig = await signSpendingAuth(wallet, domain, msg);
@@ -93,13 +87,9 @@ describe('EIP-712 Contract Compatibility', () => {
       const domain = makeSessionsDomain(31337, '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
 
       const msg: SpendingAuthMessage = {
-        seller: '0x' + 'ab'.repeat(20),
         sessionId: '0x' + '01'.repeat(32),
-        cumulativeAmount: 500000n, // $0.50
-        cumulativeInputTokens: 5000n,
-        cumulativeOutputTokens: 12000n,
-        nonce: 1,
-        deadline: Math.floor(Date.now() / 1000) + 3600,
+        cumulativeAmount: 500000n,
+        metadataHash: computeMetadataHash({ cumulativeInputTokens: 5000n, cumulativeOutputTokens: 12000n, cumulativeLatencyMs: 0n, cumulativeRequestCount: 0n }),
       };
 
       const sig = await signSpendingAuth(wallet, domain, msg);
@@ -118,13 +108,9 @@ describe('EIP-712 Contract Compatibility', () => {
       const domain = makeSessionsDomain(31337, '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
 
       const baseMsg: SpendingAuthMessage = {
-        seller: '0x' + 'ab'.repeat(20),
         sessionId: '0x' + '01'.repeat(32),
         cumulativeAmount: 100000n,
-        cumulativeInputTokens: 1000n,
-        cumulativeOutputTokens: 2000n,
-        nonce: 1,
-        deadline: Math.floor(Date.now() / 1000) + 3600,
+        metadataHash: computeMetadataHash({ cumulativeInputTokens: 1000n, cumulativeOutputTokens: 2000n, cumulativeLatencyMs: 0n, cumulativeRequestCount: 0n }),
       };
 
       const sig1 = await signSpendingAuth(wallet, domain, baseMsg);
@@ -146,13 +132,9 @@ describe('EIP-712 Contract Compatibility', () => {
       const domain = makeSessionsDomain(31337, '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
 
       const baseMsg: SpendingAuthMessage = {
-        seller: '0x' + 'ab'.repeat(20),
         sessionId: '0x' + '01'.repeat(32),
         cumulativeAmount: 100000n,
-        cumulativeInputTokens: 0n,
-        cumulativeOutputTokens: 0n,
-        nonce: 1,
-        deadline: Math.floor(Date.now() / 1000) + 3600,
+        metadataHash: ZERO_METADATA_HASH,
       };
 
       const sig1 = await signSpendingAuth(wallet, domain, baseMsg);
@@ -179,13 +161,9 @@ describe('EIP-712 Contract Compatibility', () => {
 
       const domain = makeSessionsDomain(31337, '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
       const msg: SpendingAuthMessage = {
-        seller: '0x' + 'ab'.repeat(20),
         sessionId: '0x' + '01'.repeat(32),
         cumulativeAmount: 100000n,
-        cumulativeInputTokens: 0n,
-        cumulativeOutputTokens: 0n,
-        nonce: 1,
-        deadline: Math.floor(Date.now() / 1000) + 3600,
+        metadataHash: ZERO_METADATA_HASH,
       };
 
       // Sign with wallet1

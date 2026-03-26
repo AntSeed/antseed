@@ -137,13 +137,9 @@ export type DesktopBridge = {
   creditsGetInfo?: () => Promise<{ ok: boolean; data: { evmAddress: string | null; balanceUsdc: string; reservedUsdc: string; availableUsdc: string; pendingWithdrawalUsdc: string; creditLimitUsdc: string } | null; error: string | null }>;
 
   paymentsSignSpendingAuth?: (params: {
-    sellerEvmAddress: string;
     sessionId: string;
     cumulativeAmountBaseUnits: string;
-    cumulativeInputTokens: string;
-    cumulativeOutputTokens: string;
-    nonce: number;
-    deadline: number;
+    metadataHash: string;
   }) => Promise<{ ok: boolean; data?: { signature: string; buyerEvmAddress: string }; error?: string }>;
 
   paymentsGetPeerInfo?: (peerId: string) => Promise<{

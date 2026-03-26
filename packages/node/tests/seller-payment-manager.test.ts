@@ -11,8 +11,8 @@ import type { SpendingAuthPayload } from '../src/types/protocol.js';
 import { bytesToHex } from '../src/utils/hex.js';
 import { toPeerId } from '../src/types/peer.js';
 import { identityToEvmWallet, identityToEvmAddress } from '../src/payments/evm/keypair.js';
-import { signSpendingAuth, makeSessionsDomain } from '../src/payments/evm/signatures.js';
-import type { SpendingAuthMessage } from '../src/payments/evm/signatures.js';
+import { signSpendingAuth, makeSessionsDomain, computeMetadataHash, encodeMetadata, ZERO_METADATA_HASH } from '../src/payments/evm/signatures.js';
+import type { SpendingAuthMessage, SpendingAuthMetadata } from '../src/payments/evm/signatures.js';
 
 const CHAIN_ID = 31337;
 const CONTRACT_ADDR = '0x' + 'dd'.repeat(20);
@@ -66,31 +66,35 @@ async function buildSpendingAuth(
   const nonce = opts.nonce ?? 1;
   const deadline = opts.deadline ?? Math.floor(Date.now() / 1000) + 3600;
 
+  const meta: SpendingAuthMetadata = {
+    cumulativeInputTokens,
+    cumulativeOutputTokens,
+    cumulativeLatencyMs: 0n,
+    cumulativeRequestCount: 0n,
+  };
+  const metadataHashHex = computeMetadataHash(meta);
+  const encodedMetadata = encodeMetadata(meta);
+
   const buyerWallet = identityToEvmWallet(buyerIdentity);
-  const sellerEvmAddr = identityToEvmAddress(sellerIdentity);
   const buyerEvmAddr = buyerWallet.address;
 
   const domain = makeSessionsDomain(CHAIN_ID, CONTRACT_ADDR);
   const msg: SpendingAuthMessage = {
-    seller: sellerEvmAddr,
     sessionId,
     cumulativeAmount,
-    cumulativeInputTokens,
-    cumulativeOutputTokens,
-    nonce,
-    deadline,
+    metadataHash: metadataHashHex,
   };
   const buyerSig = await signSpendingAuth(buyerWallet, domain, msg);
 
   return {
     sessionId,
     cumulativeAmount: cumulativeAmount.toString(),
-    cumulativeInputTokens: cumulativeInputTokens.toString(),
-    cumulativeOutputTokens: cumulativeOutputTokens.toString(),
-    nonce,
-    deadline,
+    metadataHash: metadataHashHex,
+    metadata: encodedMetadata,
     buyerSig,
     buyerEvmAddr,
+    reserveNonce: nonce,
+    reserveDeadline: deadline,
   };
 }
 

@@ -2147,13 +2147,16 @@ export class AntseedNode extends EventEmitter {
     let payload: {
       sessionId: string;
       cumulativeAmount: string;
-      cumulativeInputTokens: string;
-      cumulativeOutputTokens: string;
-      nonce: number;
-      deadline: number;
+      metadataHash: string;
+      metadata: string;
       buyerSig: string;
       buyerEvmAddr: string;
       sellerEvmAddr?: string;
+      reserveNonce?: number;
+      reserveDeadline?: number;
+      // Legacy fields (ignored but accepted for backward compat)
+      nonce?: number;
+      deadline?: number;
     };
     try {
       const decoded = Buffer.from(headerValue, 'base64').toString('utf-8');
@@ -2167,15 +2170,17 @@ export class AntseedNode extends EventEmitter {
     // Store session so handleAuthAck can find it
     if (this._sessionStore) {
       const sellerEvmAddr = payload.sellerEvmAddr ?? '';
+      const reserveNonce = payload.reserveNonce ?? payload.nonce ?? 0;
+      const reserveDeadline = payload.reserveDeadline ?? payload.deadline ?? (Math.floor(Date.now() / 1000) + 3600);
       this._sessionStore.upsertSession({
         sessionId: payload.sessionId,
         peerId: peer.peerId,
         role: 'buyer',
         sellerEvmAddr,
         buyerEvmAddr: payload.buyerEvmAddr,
-        nonce: payload.nonce,
+        nonce: reserveNonce,
         authMax: payload.cumulativeAmount,
-        deadline: payload.deadline,
+        deadline: reserveDeadline,
         previousSessionId: '0x' + '0'.repeat(64),
         previousConsumption: '0',
         tokensDelivered: '0',

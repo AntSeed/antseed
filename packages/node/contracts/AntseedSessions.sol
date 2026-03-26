@@ -20,7 +20,7 @@ import {IAntseedStaking} from "./interfaces/IAntseedStaking.sol";
 contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     // ─── EIP-712 ────────────────────────────────────────────────────────
     bytes32 public constant SPENDING_AUTH_TYPEHASH = keccak256(
-        "SpendingAuth(address seller,bytes32 sessionId,uint256 cumulativeAmount,uint256 cumulativeInputTokens,uint256 cumulativeOutputTokens,uint256 nonce,uint256 deadline)"
+        "SpendingAuth(bytes32 sessionId,uint256 cumulativeAmount,bytes32 metadataHash)"
     );
 
     // ─── Constant Keys for setConstant ─────────────────────────────────
@@ -44,6 +44,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         uint256 settled;
         uint128 settledInputTokens;
         uint128 settledOutputTokens;
+        bytes32 settledMetadataHash;
         uint256 nonce;
         uint256 deadline;
         uint256 settledAt;
@@ -81,7 +82,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
 
     // ─── Constructor ────────────────────────────────────────────────────
     constructor(address _deposits, address _identity, address _staking)
-        EIP712("AntseedSessions", "2")
+        EIP712("AntseedSessions", "4")
         Ownable(msg.sender)
     {
         if (_deposits == address(0) || _identity == address(0) || _staking == address(0)) revert InvalidAddress();
@@ -112,16 +113,13 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         if (!stakingContract.isStakedAboveMin(msg.sender)) revert SellerNotStaked();
 
         // EIP-712 signature verification (cumulative fields = 0 for reserve)
+        bytes32 zeroMetadataHash = keccak256(abi.encode(uint256(0), uint256(0), uint256(0), uint256(0)));
         bytes32 structHash = keccak256(
             abi.encode(
                 SPENDING_AUTH_TYPEHASH,
-                msg.sender,
                 sessionId,
                 uint256(0),
-                uint256(0),
-                uint256(0),
-                nonce,
-                deadline
+                zeroMetadataHash
             )
         );
         bytes32 digest = _hashTypedDataV4(structHash);
@@ -149,6 +147,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
                 settled: 0,
                 settledInputTokens: 0,
                 settledOutputTokens: 0,
+                settledMetadataHash: bytes32(0),
                 nonce: nonce,
                 deadline: deadline,
                 settledAt: 0,
@@ -169,34 +168,30 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     function settle(
         bytes32 sessionId,
         uint256 cumulativeAmount,
-        uint256 cumulativeInputTokens,
-        uint256 cumulativeOutputTokens,
-        uint256 nonce,
-        uint256 deadline,
+        bytes calldata metadata,
         bytes calldata buyerSig
     ) external nonReentrant {
         Session storage session = sessions[sessionId];
         if (session.status != SessionStatus.Active) revert SessionNotReserved();
         if (msg.sender != session.seller) revert NotAuthorized();
-        if (block.timestamp > deadline) revert SessionExpired();
         if (cumulativeAmount > session.deposit) revert InvalidAmount();
 
-        // EIP-712 buyer signature verification
+        // Compute metadataHash from raw metadata and verify EIP-712 buyer signature
+        bytes32 metadataHash = keccak256(metadata);
         bytes32 structHash = keccak256(
             abi.encode(
                 SPENDING_AUTH_TYPEHASH,
-                msg.sender,
                 sessionId,
                 cumulativeAmount,
-                cumulativeInputTokens,
-                cumulativeOutputTokens,
-                nonce,
-                deadline
+                metadataHash
             )
         );
         bytes32 digest = _hashTypedDataV4(structHash);
         address recovered = ECDSA.recover(digest, buyerSig);
         if (recovered != session.buyer) revert InvalidSignature();
+
+        // Decode input/output tokens from metadata for reputation
+        (uint256 inputTokens, uint256 outputTokens,,) = abi.decode(metadata, (uint256, uint256, uint256, uint256));
 
         // Compute platform fee
         uint256 platformFee = 0;
@@ -216,9 +211,9 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
 
         // Update session
         session.settled = cumulativeAmount;
-        session.settledInputTokens = uint128(cumulativeInputTokens);
-        session.settledOutputTokens = uint128(cumulativeOutputTokens);
-        session.nonce = nonce;
+        session.settledInputTokens = uint128(inputTokens);
+        session.settledOutputTokens = uint128(outputTokens);
+        session.settledMetadataHash = metadataHash;
         session.settledAt = block.timestamp;
         session.status = SessionStatus.Settled;
         stakingContract.decrementActiveSessions(msg.sender);
@@ -231,8 +226,8 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
                 IAntseedIdentity.ReputationUpdate({
                     updateType: 0,
                     settledVolume: cumulativeAmount,
-                    inputTokens: uint128(cumulativeInputTokens),
-                    outputTokens: uint128(cumulativeOutputTokens)
+                    inputTokens: uint128(inputTokens),
+                    outputTokens: uint128(outputTokens)
                 })
             );
         }

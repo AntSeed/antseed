@@ -7,6 +7,8 @@ import {
   SPENDING_AUTH_TYPES,
   signMessageEd25519,
   verifyMessageEd25519,
+  computeMetadataHash,
+  ZERO_METADATA_HASH,
 } from '../src/payments/evm/signatures.js';
 import type { SpendingAuthMessage } from '../src/payments/evm/signatures.js';
 import { loadOrCreateIdentity } from '../src/p2p/identity.js';
@@ -67,13 +69,9 @@ describe('EIP-712 SpendingAuth signature helpers', () => {
     const domain = makeSessionsDomain(CHAIN_ID, CONTRACT);
 
     const msg: SpendingAuthMessage = {
-      seller: '0x' + 'ab'.repeat(20),
       sessionId: '0x' + '01'.repeat(32),
       cumulativeAmount: 1_000_000n,
-      cumulativeInputTokens: 500n,
-      cumulativeOutputTokens: 200n,
-      nonce: 1,
-      deadline: 1700000000,
+      metadataHash: computeMetadataHash({ cumulativeInputTokens: 500n, cumulativeOutputTokens: 200n, cumulativeLatencyMs: 0n, cumulativeRequestCount: 0n }),
     };
 
     const sig = await signSpendingAuth(wallet, domain, msg);
@@ -89,7 +87,7 @@ describe('EIP-712 SpendingAuth signature helpers', () => {
     // Domain name matches the on-chain EIP712 constructor: AntseedSessions
     const domain = makeSessionsDomain(CHAIN_ID, CONTRACT);
     expect(domain.name).toBe('AntseedSessions');
-    expect(domain.version).toBe('2');
+    expect(domain.version).toBe('4');
     expect(domain.chainId).toBe(CHAIN_ID);
     expect(domain.verifyingContract).toBe(CONTRACT);
   });
@@ -101,13 +99,9 @@ describe('EIP-712 SpendingAuth signature helpers', () => {
     const domain = makeSessionsDomain(CHAIN_ID, CONTRACT);
 
     const msg1: SpendingAuthMessage = {
-      seller: '0x' + 'ab'.repeat(20),
       sessionId: '0x' + '01'.repeat(32),
       cumulativeAmount: 1_000_000n,
-      cumulativeInputTokens: 0n,
-      cumulativeOutputTokens: 0n,
-      nonce: 1,
-      deadline: 1700000000,
+      metadataHash: ZERO_METADATA_HASH,
     };
 
     const msg2: SpendingAuthMessage = {
@@ -120,24 +114,20 @@ describe('EIP-712 SpendingAuth signature helpers', () => {
     expect(sig1).not.toBe(sig2);
   });
 
-  it('different nonces produce different signatures', async () => {
+  it('different session IDs produce different signatures', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'lch-test-'));
     const identity = await loadOrCreateIdentity(dir);
     const wallet = identityToEvmWallet(identity);
     const domain = makeSessionsDomain(CHAIN_ID, CONTRACT);
 
     const msg: SpendingAuthMessage = {
-      seller: '0x' + 'ab'.repeat(20),
       sessionId: '0x' + '01'.repeat(32),
       cumulativeAmount: 1_000_000n,
-      cumulativeInputTokens: 0n,
-      cumulativeOutputTokens: 0n,
-      nonce: 1,
-      deadline: 1700000000,
+      metadataHash: ZERO_METADATA_HASH,
     };
 
     const sig1 = await signSpendingAuth(wallet, domain, msg);
-    const sig2 = await signSpendingAuth(wallet, domain, { ...msg, nonce: 2 });
+    const sig2 = await signSpendingAuth(wallet, domain, { ...msg, sessionId: '0x' + '02'.repeat(32) });
     expect(sig1).not.toBe(sig2);
   });
 });

@@ -14,6 +14,7 @@ export interface SessionInfo {
   settled: bigint;
   settledInputTokens: bigint;
   settledOutputTokens: bigint;
+  settledMetadataHash: string;
   nonce: bigint;
   deadline: bigint;
   settledAt: bigint;
@@ -22,11 +23,11 @@ export interface SessionInfo {
 
 const SESSIONS_ABI = [
   'function reserve(address buyer, bytes32 sessionId, uint256 maxAmount, uint256 nonce, uint256 deadline, bytes calldata buyerSig) external',
-  'function settle(bytes32 sessionId, uint256 cumulativeAmount, uint256 cumulativeInputTokens, uint256 cumulativeOutputTokens, uint256 nonce, uint256 deadline, bytes calldata buyerSig) external',
+  'function settle(bytes32 sessionId, uint256 cumulativeAmount, bytes calldata metadata, bytes calldata buyerSig) external',
   'function settleTimeout(bytes32 sessionId) external',
   'function domainSeparator() external view returns (bytes32)',
   'function FIRST_SIGN_CAP() external view returns (uint256)',
-  'function sessions(bytes32 sessionId) external view returns (address buyer, address seller, uint256 deposit, uint256 settled, uint256 settledInputTokens, uint256 settledOutputTokens, uint256 nonce, uint256 deadline, uint256 settledAt, uint8 status)',
+  'function sessions(bytes32 sessionId) external view returns (address buyer, address seller, uint256 deposit, uint256 settled, uint256 settledInputTokens, uint256 settledOutputTokens, bytes32 settledMetadataHash, uint256 nonce, uint256 deadline, uint256 settledAt, uint8 status)',
 ] as const;
 
 export class SessionsClient extends BaseEvmClient {
@@ -55,16 +56,12 @@ export class SessionsClient extends BaseEvmClient {
     signer: AbstractSigner,
     sessionId: string,
     cumulativeAmount: bigint,
-    cumulativeInputTokens: bigint,
-    cumulativeOutputTokens: bigint,
-    nonce: bigint,
-    deadline: bigint,
+    metadata: string,
     buyerSig: string,
   ): Promise<string> {
     return this._execWrite(
       signer, SESSIONS_ABI, 'settle',
-      sessionId, cumulativeAmount, cumulativeInputTokens,
-      cumulativeOutputTokens, nonce, deadline, buyerSig,
+      sessionId, cumulativeAmount, metadata, buyerSig,
     );
   }
 
@@ -84,10 +81,11 @@ export class SessionsClient extends BaseEvmClient {
       settled: result[3],
       settledInputTokens: result[4],
       settledOutputTokens: result[5],
-      nonce: result[6],
-      deadline: result[7],
-      settledAt: result[8],
-      status: Number(result[9]),
+      settledMetadataHash: result[6],
+      nonce: result[7],
+      deadline: result[8],
+      settledAt: result[9],
+      status: Number(result[10]),
     };
   }
 

@@ -13,8 +13,12 @@ import { identityToEvmWallet, identityToEvmAddress } from './evm/keypair.js';
 import {
   signSpendingAuth,
   makeSessionsDomain,
+  computeMetadataHash,
+  encodeMetadata,
+  ZERO_METADATA,
+  ZERO_METADATA_HASH,
 } from './evm/signatures.js';
-import type { SpendingAuthMessage } from './evm/signatures.js';
+import type { SpendingAuthMessage, SpendingAuthMetadata } from './evm/signatures.js';
 import { debugLog, debugWarn } from '../utils/debug.js';
 import { SessionStore, type StoredSession } from './session-store.js';
 
@@ -57,11 +61,8 @@ export class BuyerPaymentManager {
   /** sellerPeerId -> cumulative USDC amount in the latest SpendingAuth */
   private readonly _cumulativeAmount = new Map<string, bigint>();
 
-  /** sellerPeerId -> cumulative input tokens reported by seller */
-  private readonly _cumulativeInputTokens = new Map<string, bigint>();
-
-  /** sellerPeerId -> cumulative output tokens reported by seller */
-  private readonly _cumulativeOutputTokens = new Map<string, bigint>();
+  /** sellerPeerId -> cumulative metadata for SpendingAuth */
+  private readonly _metadata = new Map<string, SpendingAuthMetadata>();
 
   constructor(identity: Identity, config: BuyerPaymentConfig, sessionStore: SessionStore) {
     this._identity = identity;
@@ -91,8 +92,12 @@ export class BuyerPaymentManager {
       // tokensDelivered stores cumulative input tokens (repurposed field)
       // previousConsumption stores cumulative output tokens (repurposed field)
       // For new sessions these will be 0; for hydrated sessions we restore from stored values
-      this._cumulativeInputTokens.set(peerId, BigInt(session.tokensDelivered));
-      this._cumulativeOutputTokens.set(peerId, BigInt(session.previousConsumption));
+      this._metadata.set(peerId, {
+        cumulativeInputTokens: BigInt(session.tokensDelivered),
+        cumulativeOutputTokens: BigInt(session.previousConsumption),
+        cumulativeLatencyMs: 0n,
+        cumulativeRequestCount: BigInt(session.requestCount),
+      });
     }
   }
 
@@ -143,23 +148,21 @@ export class BuyerPaymentManager {
     // Sign EIP-712 SpendingAuth with cumulative=0 for on-chain reserve() verification.
     // The contract's reserve() hardcodes cumulativeAmount=0 in the structHash.
     // The seller uses reserveAmount (separate field) as the deposit amount.
+    // nonce/deadline are passed as separate reserve params, not in the EIP-712 signature.
     const domain = makeSessionsDomain(this._config.chainId, this._config.sessionsContractAddress);
+    const zeroMetadata = { ...ZERO_METADATA };
+    const zeroEncodedMetadata = encodeMetadata(zeroMetadata);
     const msg: SpendingAuthMessage = {
-      seller: sellerEvmAddr,
       sessionId,
       cumulativeAmount: 0n,
-      cumulativeInputTokens: 0n,
-      cumulativeOutputTokens: 0n,
-      nonce,
-      deadline,
+      metadataHash: ZERO_METADATA_HASH,
     };
     const buyerSig = await signSpendingAuth(this._signer, domain, msg);
     const buyerEvmAddr = identityToEvmAddress(this._identity);
 
     // Initialize cumulative maps at 0 — first per-request auth will increment
     this._cumulativeAmount.set(sellerPeerId, 0n);
-    this._cumulativeInputTokens.set(sellerPeerId, 0n);
-    this._cumulativeOutputTokens.set(sellerPeerId, 0n);
+    this._metadata.set(sellerPeerId, { ...ZERO_METADATA });
 
     // Store session
     const now = Date.now();
@@ -189,13 +192,13 @@ export class BuyerPaymentManager {
     paymentMux.sendSpendingAuth({
       sessionId,
       cumulativeAmount: '0',
-      cumulativeInputTokens: '0',
-      cumulativeOutputTokens: '0',
-      nonce,
-      deadline,
+      metadataHash: ZERO_METADATA_HASH,
+      metadata: zeroEncodedMetadata,
       buyerSig,
       buyerEvmAddr,
       reserveAmount: this._config.maxReserveAmountUsdc.toString(),
+      reserveNonce: nonce,
+      reserveDeadline: deadline,
     });
 
     return sessionId;
@@ -230,19 +233,22 @@ export class BuyerPaymentManager {
     addedInputTokens: bigint,
     addedOutputTokens: bigint,
     estimatedNextCostUsdc: bigint,
+    addedLatencyMs?: bigint,
   ): Promise<SpendingAuthPayload> {
     const session = this._sessionStore.getActiveSessionByPeer(sellerPeerId, 'buyer');
     if (!session) {
       throw new Error(`[BuyerPayment] No active session for seller ${sellerPeerId.slice(0, 12)}... — call authorizeSpending() first`);
     }
 
-    // Update cumulative token counts
-    const prevInputTokens = this._cumulativeInputTokens.get(sellerPeerId) ?? 0n;
-    const prevOutputTokens = this._cumulativeOutputTokens.get(sellerPeerId) ?? 0n;
-    const newInputTokens = prevInputTokens + addedInputTokens;
-    const newOutputTokens = prevOutputTokens + addedOutputTokens;
-    this._cumulativeInputTokens.set(sellerPeerId, newInputTokens);
-    this._cumulativeOutputTokens.set(sellerPeerId, newOutputTokens);
+    // Update cumulative metadata
+    const prev = this._metadata.get(sellerPeerId) ?? { ...ZERO_METADATA };
+    const newMeta: SpendingAuthMetadata = {
+      cumulativeInputTokens: prev.cumulativeInputTokens + addedInputTokens,
+      cumulativeOutputTokens: prev.cumulativeOutputTokens + addedOutputTokens,
+      cumulativeLatencyMs: prev.cumulativeLatencyMs + (addedLatencyMs ?? 0n),
+      cumulativeRequestCount: prev.cumulativeRequestCount + 1n,
+    };
+    this._metadata.set(sellerPeerId, newMeta);
 
     // Calculate amount increment, capping at maxPerRequestUsdc
     let increment = addedCostUsdc + estimatedNextCostUsdc;
@@ -260,16 +266,16 @@ export class BuyerPaymentManager {
     }
     this._cumulativeAmount.set(sellerPeerId, newAmount);
 
-    // Sign EIP-712 SpendingAuth with updated cumulative values
+    // Compute metadata hash and encode metadata
+    const metadataHashHex = computeMetadataHash(newMeta);
+    const encodedMetadata = encodeMetadata(newMeta);
+
+    // Sign EIP-712 SpendingAuth with metadataHash (3-field)
     const domain = makeSessionsDomain(this._config.chainId, this._config.sessionsContractAddress);
     const msg: SpendingAuthMessage = {
-      seller: session.sellerEvmAddr,
       sessionId: session.sessionId,
       cumulativeAmount: newAmount,
-      cumulativeInputTokens: newInputTokens,
-      cumulativeOutputTokens: newOutputTokens,
-      nonce: session.nonce,
-      deadline: session.deadline,
+      metadataHash: metadataHashHex,
     };
     const buyerSig = await signSpendingAuth(this._signer, domain, msg);
 
@@ -277,18 +283,17 @@ export class BuyerPaymentManager {
     this._sessionStore.upsertSession({
       ...session,
       authMax: newAmount.toString(),
-      tokensDelivered: newInputTokens.toString(),
-      previousConsumption: newOutputTokens.toString(),
+      tokensDelivered: newMeta.cumulativeInputTokens.toString(),
+      previousConsumption: newMeta.cumulativeOutputTokens.toString(),
+      requestCount: Number(newMeta.cumulativeRequestCount),
       updatedAt: Date.now(),
     });
 
     const payload: SpendingAuthPayload = {
       sessionId: session.sessionId,
       cumulativeAmount: newAmount.toString(),
-      cumulativeInputTokens: newInputTokens.toString(),
-      cumulativeOutputTokens: newOutputTokens.toString(),
-      nonce: session.nonce,
-      deadline: session.deadline,
+      metadataHash: metadataHashHex,
+      metadata: encodedMetadata,
       buyerSig,
       buyerEvmAddr: session.buyerEvmAddr,
     };
@@ -327,19 +332,16 @@ export class BuyerPaymentManager {
     // Update cumulative amount
     this._cumulativeAmount.set(sellerPeerId, requiredCumulativeAmount);
 
-    // Sign new SpendingAuth with the required cumulative amount
-    const currentInputTokens = this._cumulativeInputTokens.get(sellerPeerId) ?? 0n;
-    const currentOutputTokens = this._cumulativeOutputTokens.get(sellerPeerId) ?? 0n;
+    // Sign new SpendingAuth with the required cumulative amount and current metadata
+    const currentMeta = this._metadata.get(sellerPeerId) ?? { ...ZERO_METADATA };
+    const metadataHashHex = computeMetadataHash(currentMeta);
+    const encodedMetadata = encodeMetadata(currentMeta);
 
     const domain = makeSessionsDomain(this._config.chainId, this._config.sessionsContractAddress);
     const msg: SpendingAuthMessage = {
-      seller: session.sellerEvmAddr,
       sessionId: session.sessionId,
       cumulativeAmount: requiredCumulativeAmount,
-      cumulativeInputTokens: currentInputTokens,
-      cumulativeOutputTokens: currentOutputTokens,
-      nonce: session.nonce,
-      deadline: session.deadline,
+      metadataHash: metadataHashHex,
     };
     const buyerSig = await signSpendingAuth(this._signer, domain, msg);
 
@@ -354,10 +356,8 @@ export class BuyerPaymentManager {
     paymentMux.sendSpendingAuth({
       sessionId: session.sessionId,
       cumulativeAmount: requiredCumulativeAmount.toString(),
-      cumulativeInputTokens: currentInputTokens.toString(),
-      cumulativeOutputTokens: currentOutputTokens.toString(),
-      nonce: session.nonce,
-      deadline: session.deadline,
+      metadataHash: metadataHashHex,
+      metadata: encodedMetadata,
       buyerSig,
       buyerEvmAddr: session.buyerEvmAddr,
     });

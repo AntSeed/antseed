@@ -63,10 +63,8 @@ describe('PaymentMux', () => {
       const payload = {
         sessionId: 'a'.repeat(64),
         cumulativeAmount: '1000000',
-        cumulativeInputTokens: '500',
-        cumulativeOutputTokens: '200',
-        nonce: 1,
-        deadline: 1700000000,
+        metadataHash: '0x' + 'cc'.repeat(32),
+        metadata: '0x' + 'dd'.repeat(128),
         buyerSig: 'b'.repeat(128),
         buyerEvmAddr: '0x' + 'ab'.repeat(20),
       };
@@ -152,10 +150,8 @@ describe('PaymentMux', () => {
       const payload = {
         sessionId: 'a'.repeat(64),
         cumulativeAmount: '1000000',
-        cumulativeInputTokens: '0',
-        cumulativeOutputTokens: '0',
-        nonce: 1,
-        deadline: 1700000000,
+        metadataHash: '0x' + 'cc'.repeat(32),
+        metadata: '0x' + 'dd'.repeat(128),
         buyerSig: 'b'.repeat(128),
         buyerEvmAddr: '0x' + 'ab'.repeat(20),
       };
@@ -197,10 +193,8 @@ describe('PaymentMux', () => {
       const payload = {
         sessionId: 'a'.repeat(64),
         cumulativeAmount: '1000000',
-        cumulativeInputTokens: '0',
-        cumulativeOutputTokens: '0',
-        nonce: 1,
-        deadline: 1700000000,
+        metadataHash: '0x' + 'cc'.repeat(32),
+        metadata: '0x' + 'dd'.repeat(128),
         buyerSig: 'b'.repeat(128),
         buyerEvmAddr: '0x' + 'ab'.repeat(20),
       };

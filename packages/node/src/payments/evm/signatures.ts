@@ -1,4 +1,4 @@
-import { type AbstractSigner, type TypedDataDomain } from 'ethers';
+import { type AbstractSigner, type TypedDataDomain, AbiCoder, keccak256 } from 'ethers';
 import type { Identity } from '../../p2p/identity.js';
 import { signData, verifySignature } from '../../p2p/identity.js';
 
@@ -8,30 +8,50 @@ import { signData, verifySignature } from '../../p2p/identity.js';
 
 export const SPENDING_AUTH_TYPES = {
   SpendingAuth: [
-    { name: 'seller', type: 'address' },
     { name: 'sessionId', type: 'bytes32' },
     { name: 'cumulativeAmount', type: 'uint256' },
-    { name: 'cumulativeInputTokens', type: 'uint256' },
-    { name: 'cumulativeOutputTokens', type: 'uint256' },
-    { name: 'nonce', type: 'uint256' },
-    { name: 'deadline', type: 'uint256' },
+    { name: 'metadataHash', type: 'bytes32' },
   ],
 };
 
 export interface SpendingAuthMessage {
-  seller: string;
   sessionId: string;
   cumulativeAmount: bigint;
+  metadataHash: string; // bytes32 hex
+}
+
+export interface SpendingAuthMetadata {
   cumulativeInputTokens: bigint;
   cumulativeOutputTokens: bigint;
-  nonce: number;
-  deadline: number;
+  cumulativeLatencyMs: bigint;
+  cumulativeRequestCount: bigint;
 }
+
+export function encodeMetadata(metadata: SpendingAuthMetadata): string {
+  const coder = AbiCoder.defaultAbiCoder();
+  return coder.encode(
+    ['uint256', 'uint256', 'uint256', 'uint256'],
+    [metadata.cumulativeInputTokens, metadata.cumulativeOutputTokens, metadata.cumulativeLatencyMs, metadata.cumulativeRequestCount],
+  );
+}
+
+export function computeMetadataHash(metadata: SpendingAuthMetadata): string {
+  return keccak256(encodeMetadata(metadata));
+}
+
+export const ZERO_METADATA: SpendingAuthMetadata = {
+  cumulativeInputTokens: 0n,
+  cumulativeOutputTokens: 0n,
+  cumulativeLatencyMs: 0n,
+  cumulativeRequestCount: 0n,
+};
+
+export const ZERO_METADATA_HASH: string = computeMetadataHash(ZERO_METADATA);
 
 export function makeSessionsDomain(chainId: number, contractAddress: string): TypedDataDomain {
   return {
     name: 'AntseedSessions',
-    version: '2',
+    version: '4',
     chainId,
     verifyingContract: contractAddress,
   };

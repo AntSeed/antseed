@@ -48,14 +48,16 @@ export const MAX_PAYLOAD_SIZE = 64 * 1024 * 1024;
 export interface SpendingAuthPayload {
   sessionId: string;
   cumulativeAmount: string;
-  cumulativeInputTokens: string;
-  cumulativeOutputTokens: string;
-  nonce: number;
-  deadline: number;
+  metadataHash: string;       // bytes32 hex
+  metadata: string;           // hex-encoded abi.encode(inputTokens, outputTokens, latencyMs, requestCount)
   buyerSig: string;
   buyerEvmAddr: string;
   /** Reserve amount for initial auth (USDC base units). Only set on first auth. */
   reserveAmount?: string;
+  /** Nonce for initial auth — used by seller for reserve() call. Not part of EIP-712 signature. */
+  reserveNonce?: number;
+  /** Deadline for initial auth — used by seller for reserve() call. Not part of EIP-712 signature. */
+  reserveDeadline?: number;
 }
 
 /**

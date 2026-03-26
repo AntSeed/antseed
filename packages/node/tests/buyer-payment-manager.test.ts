@@ -86,8 +86,8 @@ describe('BuyerPaymentManager', () => {
 
     const sent = mux.sentSpendingAuths[0] as Record<string, unknown>;
     expect(sent.cumulativeAmount).toBe('0');
-    expect(sent.cumulativeInputTokens).toBe('0');
-    expect(sent.cumulativeOutputTokens).toBe('0');
+    expect(sent.metadataHash).toBeTypeOf('string');
+    expect(sent.metadata).toBeTypeOf('string');
     expect(sent.sessionId).toBe(sessionId);
     expect(sent.buyerSig).toBeTypeOf('string');
     expect(sent.buyerEvmAddr).toBeTypeOf('string');
@@ -151,8 +151,8 @@ describe('BuyerPaymentManager', () => {
 
     // cumulativeAmount should be initial (0) + addedCost (5000) + estimatedNext (5000) = 10000
     expect(BigInt(payload.cumulativeAmount)).toBe(10_000n);
-    expect(payload.cumulativeInputTokens).toBe('100');
-    expect(payload.cumulativeOutputTokens).toBe('50');
+    expect(payload.metadataHash).toBeTypeOf('string');
+    expect(payload.metadata).toBeTypeOf('string');
     expect(payload.buyerSig).toBeTypeOf('string');
   });
 

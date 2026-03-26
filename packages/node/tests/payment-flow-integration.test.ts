@@ -12,6 +12,13 @@ import type { Identity } from '../src/p2p/identity.js';
 import { bytesToHex } from '../src/utils/hex.js';
 import { toPeerId } from '../src/types/peer.js';
 import { identityToEvmAddress, identityToEvmWallet } from '../src/payments/evm/keypair.js';
+import { AbiCoder } from 'ethers';
+
+function decodeMetadataTokens(metadata: string): { inputTokens: bigint; outputTokens: bigint } {
+  const coder = AbiCoder.defaultAbiCoder();
+  const [inputTokens, outputTokens] = coder.decode(['uint256', 'uint256', 'uint256', 'uint256'], metadata);
+  return { inputTokens, outputTokens };
+}
 
 // ── Helpers ──────────────────────────────────────────────────
 
@@ -181,8 +188,9 @@ describe('Full Payment Flow Integration', () => {
       20_000n,  // estimatedNextCost
     );
     expect(BigInt(auth1.cumulativeAmount)).toBeGreaterThan(0n);
-    expect(auth1.cumulativeInputTokens).toBe('500');
-    expect(auth1.cumulativeOutputTokens).toBe('200');
+    const meta1 = decodeMetadataTokens(auth1.metadata);
+    expect(meta1.inputTokens).toBe(500n);
+    expect(meta1.outputTokens).toBe(200n);
 
     // Seller validates and accepts
     const valid1 = await seller.validateAndAcceptAuth(buyerPeerId, auth1);
@@ -198,8 +206,9 @@ describe('Full Payment Flow Integration', () => {
       25_000n,
     );
     expect(BigInt(auth2.cumulativeAmount)).toBeGreaterThan(BigInt(auth1.cumulativeAmount));
-    expect(auth2.cumulativeInputTokens).toBe('1300'); // 500 + 800
-    expect(auth2.cumulativeOutputTokens).toBe('550'); // 200 + 350
+    const meta2 = decodeMetadataTokens(auth2.metadata);
+    expect(meta2.inputTokens).toBe(1300n); // 500 + 800
+    expect(meta2.outputTokens).toBe(550n); // 200 + 350
 
     const valid2 = await seller.validateAndAcceptAuth(buyerPeerId, auth2);
     expect(valid2).toBe(true);
@@ -214,8 +223,9 @@ describe('Full Payment Flow Integration', () => {
       15_000n,
     );
     expect(BigInt(auth3.cumulativeAmount)).toBeGreaterThan(BigInt(auth2.cumulativeAmount));
-    expect(auth3.cumulativeInputTokens).toBe('1600'); // 1300 + 300
-    expect(auth3.cumulativeOutputTokens).toBe('700'); // 550 + 150
+    const meta3 = decodeMetadataTokens(auth3.metadata);
+    expect(meta3.inputTokens).toBe(1600n); // 1300 + 300
+    expect(meta3.outputTokens).toBe(700n); // 550 + 150
 
     const valid3 = await seller.validateAndAcceptAuth(buyerPeerId, auth3);
     expect(valid3).toBe(true);
@@ -233,7 +243,7 @@ describe('Full Payment Flow Integration', () => {
     const settledAmount = settleCall[2] as bigint;
     expect(settledAmount).toBe(BigInt(auth3.cumulativeAmount));
     // Verify signature is non-empty
-    const settledSig = settleCall[7] as string;
+    const settledSig = settleCall[4] as string;
     expect(settledSig).toBeTruthy();
     expect(settledSig.length).toBeGreaterThan(2); // more than just "0x"
   });
@@ -298,16 +308,19 @@ describe('Full Payment Flow Integration', () => {
     await doInitialHandshake(50_000n);
 
     const auth1 = await buyer.signPerRequestAuth(sellerPeerId, 10_000n, 1000n, 500n, 10_000n);
-    expect(auth1.cumulativeInputTokens).toBe('1000');
-    expect(auth1.cumulativeOutputTokens).toBe('500');
+    const tMeta1 = decodeMetadataTokens(auth1.metadata);
+    expect(tMeta1.inputTokens).toBe(1000n);
+    expect(tMeta1.outputTokens).toBe(500n);
 
     const auth2 = await buyer.signPerRequestAuth(sellerPeerId, 10_000n, 2000n, 1500n, 10_000n);
-    expect(auth2.cumulativeInputTokens).toBe('3000'); // 1000 + 2000
-    expect(auth2.cumulativeOutputTokens).toBe('2000'); // 500 + 1500
+    const tMeta2 = decodeMetadataTokens(auth2.metadata);
+    expect(tMeta2.inputTokens).toBe(3000n); // 1000 + 2000
+    expect(tMeta2.outputTokens).toBe(2000n); // 500 + 1500
 
     const auth3 = await buyer.signPerRequestAuth(sellerPeerId, 10_000n, 500n, 300n, 10_000n);
-    expect(auth3.cumulativeInputTokens).toBe('3500'); // 3000 + 500
-    expect(auth3.cumulativeOutputTokens).toBe('2300'); // 2000 + 300
+    const tMeta3 = decodeMetadataTokens(auth3.metadata);
+    expect(tMeta3.inputTokens).toBe(3500n); // 3000 + 500
+    expect(tMeta3.outputTokens).toBe(2300n); // 2000 + 300
   });
 
   it('settle uses latest buyer signature (not initial)', async () => {
@@ -330,7 +343,7 @@ describe('Full Payment Flow Integration', () => {
 
     const settleCall = (seller.sessionsClient.settle as ReturnType<typeof vi.fn>).mock.calls[0]!;
     const settledAmount = settleCall[2] as bigint;
-    const settledSig = settleCall[7] as string;
+    const settledSig = settleCall[4] as string;
 
     // Should use auth2's cumulative amount (the latest), not auth1's or the initial
     expect(settledAmount).toBe(BigInt(auth2.cumulativeAmount));
@@ -428,16 +441,17 @@ describe('Full Payment Flow Integration', () => {
     const buyerEvmAddr = identityToEvmAddress(buyerIdentity);
     const sellerPeerId = sellerIdentity.peerId;
 
+    const { ZERO_METADATA_HASH, encodeMetadata, ZERO_METADATA } = await import('../src/payments/evm/signatures.js');
     const badAuth: SpendingAuthPayload = {
       sessionId: '0x' + '01'.repeat(32),
       cumulativeAmount: '50000',
-      cumulativeInputTokens: '0',
-      cumulativeOutputTokens: '0',
-      nonce: 1,
-      deadline: Math.floor(Date.now() / 1000) + 3600,
+      metadataHash: ZERO_METADATA_HASH,
+      metadata: encodeMetadata(ZERO_METADATA),
       buyerSig: '0x' + 'aa'.repeat(65), // garbage signature
       buyerEvmAddr,
       reserveAmount: '10000000',
+      reserveNonce: 1,
+      reserveDeadline: Math.floor(Date.now() / 1000) + 3600,
     };
 
     const result = await seller.handleSpendingAuth(buyerPeerId, buyerEvmAddr, badAuth, sellerMux);

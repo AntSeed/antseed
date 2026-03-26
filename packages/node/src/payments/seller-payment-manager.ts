@@ -50,8 +50,8 @@ export class SellerPaymentManager {
   /** sessionId -> total USDC spent so far (sum of recordSpend calls) */
   private readonly _spent = new Map<string, bigint>();
 
-  /** sessionId -> latest buyer-signed SpendingAuth (sig + cumulative values) for settle() */
-  private readonly _latestAuth = new Map<string, { buyerSig: string; cumulativeAmount: bigint; cumulativeInputTokens: bigint; cumulativeOutputTokens: bigint; nonce: bigint; deadline: bigint }>();
+  /** sessionId -> latest buyer-signed SpendingAuth (sig + cumulative values + metadata) for settle() */
+  private readonly _latestAuth = new Map<string, { buyerSig: string; cumulativeAmount: bigint; metadataHash: string; metadata: string }>();
 
   constructor(identity: Identity, config: SellerPaymentConfig, sessionStore: SessionStore) {
     this._identity = identity;
@@ -109,16 +109,12 @@ export class SellerPaymentManager {
     paymentMux: PaymentMux,
   ): Promise<'accepted' | 'reserved' | 'rejected'> {
     try {
-      // 1. Verify EIP-712 signature
+      // 1. Verify EIP-712 signature (3-field SpendingAuth with metadataHash)
       const domain = makeSessionsDomain(this._config.chainId, this._config.sessionsContractAddress);
       const msg = {
-        seller: identityToEvmAddress(this._identity),
         sessionId: payload.sessionId,
         cumulativeAmount: BigInt(payload.cumulativeAmount),
-        cumulativeInputTokens: BigInt(payload.cumulativeInputTokens),
-        cumulativeOutputTokens: BigInt(payload.cumulativeOutputTokens),
-        nonce: payload.nonce,
-        deadline: payload.deadline,
+        metadataHash: payload.metadataHash,
       };
 
       const recoveredAddr = verifyTypedData(domain, SPENDING_AUTH_TYPES, msg, payload.buyerSig);
@@ -137,13 +133,15 @@ export class SellerPaymentManager {
         // ── First SpendingAuth: reserve on-chain ──
         debugLog(`[SellerPayment] Reserving session ${sessionId.slice(0, 18)}... on-chain`);
         const reserveAmount = payload.reserveAmount ? BigInt(payload.reserveAmount) : cumulativeAmount;
+        const reserveNonce = payload.reserveNonce ?? 0;
+        const reserveDeadline = payload.reserveDeadline ?? (Math.floor(Date.now() / 1000) + 3600);
         await this._sessionsClient.reserve(
           this._signer,
           buyerEvmAddr,
           sessionId,
           reserveAmount,
-          BigInt(payload.nonce),
-          BigInt(payload.deadline),
+          BigInt(reserveNonce),
+          BigInt(reserveDeadline),
           payload.buyerSig,
         );
 
@@ -156,9 +154,9 @@ export class SellerPaymentManager {
           role: 'seller',
           sellerEvmAddr,
           buyerEvmAddr,
-          nonce: payload.nonce,
+          nonce: reserveNonce,
           authMax: payload.cumulativeAmount,
-          deadline: payload.deadline,
+          deadline: reserveDeadline,
           previousSessionId: '',
           previousConsumption: '0',
           tokensDelivered: '0',
@@ -178,17 +176,15 @@ export class SellerPaymentManager {
         this._latestAuth.set(sessionId, {
           buyerSig: payload.buyerSig,
           cumulativeAmount,
-          cumulativeInputTokens: BigInt(payload.cumulativeInputTokens),
-          cumulativeOutputTokens: BigInt(payload.cumulativeOutputTokens),
-          nonce: BigInt(payload.nonce),
-          deadline: BigInt(payload.deadline),
+          metadataHash: payload.metadataHash,
+          metadata: payload.metadata,
         });
         this._activeBuyers.add(buyerPeerId);
 
         // Send AuthAck
         paymentMux.sendAuthAck({
           sessionId,
-          nonce: payload.nonce,
+          nonce: reserveNonce,
         });
 
         debugLog(`[SellerPayment] AuthAck sent for session ${sessionId.slice(0, 18)}...`);
@@ -208,10 +204,8 @@ export class SellerPaymentManager {
         this._latestAuth.set(sessionId, {
           buyerSig: payload.buyerSig,
           cumulativeAmount,
-          cumulativeInputTokens: BigInt(payload.cumulativeInputTokens),
-          cumulativeOutputTokens: BigInt(payload.cumulativeOutputTokens),
-          nonce: BigInt(payload.nonce),
-          deadline: BigInt(payload.deadline),
+          metadataHash: payload.metadataHash,
+          metadata: payload.metadata,
         });
 
         // Persist latest auth to SessionStore (authMax = latest cumulativeAmount)
@@ -256,16 +250,12 @@ export class SellerPaymentManager {
       return false;
     }
 
-    // Verify EIP-712 signature
+    // Verify EIP-712 signature (3-field SpendingAuth with metadataHash)
     const domain = makeSessionsDomain(this._config.chainId, this._config.sessionsContractAddress);
     const msg = {
-      seller: identityToEvmAddress(this._identity),
       sessionId: auth.sessionId,
       cumulativeAmount: BigInt(auth.cumulativeAmount),
-      cumulativeInputTokens: BigInt(auth.cumulativeInputTokens),
-      cumulativeOutputTokens: BigInt(auth.cumulativeOutputTokens),
-      nonce: auth.nonce,
-      deadline: auth.deadline,
+      metadataHash: auth.metadataHash,
     };
 
     try {
@@ -293,10 +283,8 @@ export class SellerPaymentManager {
       this._latestAuth.set(sessionId, {
         buyerSig: auth.buyerSig,
         cumulativeAmount: newCumulative,
-        cumulativeInputTokens: BigInt(auth.cumulativeInputTokens),
-        cumulativeOutputTokens: BigInt(auth.cumulativeOutputTokens),
-        nonce: BigInt(auth.nonce),
-        deadline: BigInt(auth.deadline),
+        metadataHash: auth.metadataHash,
+        metadata: auth.metadata,
       });
 
       // Persist latest auth to SessionStore
@@ -366,10 +354,7 @@ export class SellerPaymentManager {
           this._signer,
           sessionId,
           latestAuth.cumulativeAmount,
-          latestAuth.cumulativeInputTokens,
-          latestAuth.cumulativeOutputTokens,
-          latestAuth.nonce,
-          latestAuth.deadline,
+          latestAuth.metadata,
           latestAuth.buyerSig,
         );
         this._sessionStore.updateSessionStatus(sessionId, 'settled', latestAuth.cumulativeAmount.toString());
@@ -443,8 +428,8 @@ export class SellerPaymentManager {
         } else if (accepted > 0n) {
           // Before grace period but session has accepted cumulative.
           // Check if deadline is approaching — settle before it expires.
-          const latestAuth = this._latestAuth.get(session.sessionId);
-          const authDeadline = latestAuth ? Number(latestAuth.deadline) : deadline;
+          // Use session deadline (from reserve params) since deadline is no longer in SpendingAuth
+          const authDeadline = deadline;
           if (nowSecs < authDeadline) {
             // Auth deadline still valid — settle to claim payment
             debugLog(`[SellerPayment] Session ${session.sessionId.slice(0, 18)}... settling before deadline (cumulative=${accepted})`);

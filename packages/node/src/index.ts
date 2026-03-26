@@ -39,8 +39,8 @@ export { SessionsClient, type SessionsClientConfig, type SessionInfo } from './p
 export { IdentityClient, type IdentityClientConfig } from './payments/evm/identity-client.js';
 export { StakingClient, type StakingClientConfig, type SellerAccountInfo } from './payments/evm/staking-client.js';
 export { identityToEvmWallet, identityToEvmAddress } from './payments/evm/keypair.js';
-export { signSpendingAuth, makeSessionsDomain } from './payments/evm/signatures.js';
-export type { SpendingAuthMessage } from './payments/evm/signatures.js';
+export { signSpendingAuth, makeSessionsDomain, computeMetadataHash, encodeMetadata, ZERO_METADATA, ZERO_METADATA_HASH } from './payments/evm/signatures.js';
+export type { SpendingAuthMessage, SpendingAuthMetadata } from './payments/evm/signatures.js';
 export { NatTraversal, type NatMapping, type NatTraversalResult } from './p2p/nat-traversal.js';
 export { BuyerPaymentManager } from './payments/buyer-payment-manager.js';
 export type { BuyerPaymentConfig } from './payments/buyer-payment-manager.js';

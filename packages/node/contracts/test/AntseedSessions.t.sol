@@ -40,7 +40,7 @@ contract AntseedSessionsTest is Test {
 
     // EIP-712 typehash (must match contract)
     bytes32 constant SPENDING_AUTH_TYPEHASH = keccak256(
-        "SpendingAuth(address seller,bytes32 sessionId,uint256 cumulativeAmount,uint256 cumulativeInputTokens,uint256 cumulativeOutputTokens,uint256 nonce,uint256 deadline)"
+        "SpendingAuth(bytes32 sessionId,uint256 cumulativeAmount,bytes32 metadataHash)"
     );
 
     function setUp() public {
@@ -107,29 +107,30 @@ contract AntseedSessionsTest is Test {
 
     function signSpendingAuth(
         uint256 pk,
-        address _seller,
         bytes32 sessionId,
         uint256 cumulativeAmount,
         uint256 cumulativeInputTokens,
-        uint256 cumulativeOutputTokens,
-        uint256 nonce,
-        uint256 deadline
+        uint256 cumulativeOutputTokens
     ) internal view returns (bytes memory) {
+        bytes32 metadataHash = keccak256(abi.encode(cumulativeInputTokens, cumulativeOutputTokens, uint256(0), uint256(0)));
         bytes32 structHash = keccak256(
             abi.encode(
                 SPENDING_AUTH_TYPEHASH,
-                _seller,
                 sessionId,
                 cumulativeAmount,
-                cumulativeInputTokens,
-                cumulativeOutputTokens,
-                nonce,
-                deadline
+                metadataHash
             )
         );
         bytes32 digest = _hashTypedData(structHash);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digest);
         return abi.encodePacked(r, s, v);
+    }
+
+    function encodeMetadata(
+        uint256 cumulativeInputTokens,
+        uint256 cumulativeOutputTokens
+    ) internal pure returns (bytes memory) {
+        return abi.encode(cumulativeInputTokens, cumulativeOutputTokens, uint256(0), uint256(0));
     }
 
     function _hashTypedData(bytes32 structHash) internal view returns (bytes32) {
@@ -149,7 +150,7 @@ contract AntseedSessionsTest is Test {
 
         // Sign initial SpendingAuth with cumulative fields = 0
         bytes memory sig = signSpendingAuth(
-            BUYER_PK, seller, SESSION_ID, 0, 0, 0, nonce, deadline
+            BUYER_PK, SESSION_ID, 0, 0, 0
         );
 
         // Seller calls reserve
@@ -164,6 +165,7 @@ contract AntseedSessionsTest is Test {
             uint256 sSettled,
             uint128 sInputTokens,
             uint128 sOutputTokens,
+            ,
             uint256 sNonce,
             uint256 sDeadline,
             uint256 sSettledAt,
@@ -200,7 +202,7 @@ contract AntseedSessionsTest is Test {
 
         // Initial reserve: 50 USDC
         bytes memory sig1 = signSpendingAuth(
-            BUYER_PK, seller, SESSION_ID, 0, 0, 0, nonce1, deadline
+            BUYER_PK, SESSION_ID, 0, 0, 0
         );
         vm.prank(seller);
         sessions.reserve(buyer, SESSION_ID, USDC_50, nonce1, deadline, sig1);
@@ -208,13 +210,13 @@ contract AntseedSessionsTest is Test {
         // Top-up: 30 USDC (new signature with same sessionId)
         uint256 nonce2 = 2;
         bytes memory sig2 = signSpendingAuth(
-            BUYER_PK, seller, SESSION_ID, 0, 0, 0, nonce2, deadline
+            BUYER_PK, SESSION_ID, 0, 0, 0
         );
         vm.prank(seller);
         sessions.reserve(buyer, SESSION_ID, USDC_30, nonce2, deadline, sig2);
 
         // Assert session deposit accumulated
-        (,, uint256 sDeposit,,,,,,, AntseedSessions.SessionStatus sStatus) = sessions.sessions(SESSION_ID);
+        (,, uint256 sDeposit,,,,,,,, AntseedSessions.SessionStatus sStatus) = sessions.sessions(SESSION_ID);
         assertEq(sDeposit, USDC_50 + USDC_30); // 80 USDC
         assertTrue(sStatus == AntseedSessions.SessionStatus.Active);
 
@@ -236,7 +238,7 @@ contract AntseedSessionsTest is Test {
 
         // Reserve 100 USDC
         bytes memory reserveSig = signSpendingAuth(
-            BUYER_PK, seller, SESSION_ID, 0, 0, 0, nonce, deadline
+            BUYER_PK, SESSION_ID, 0, 0, 0
         );
         vm.prank(seller);
         sessions.reserve(buyer, SESSION_ID, USDC_100, nonce, deadline, reserveSig);
@@ -249,11 +251,11 @@ contract AntseedSessionsTest is Test {
         uint256 outputTokens = 2000;
 
         bytes memory settleSig = signSpendingAuth(
-            BUYER_PK, seller, SESSION_ID, cumulativeAmount, inputTokens, outputTokens, settleNonce, settleDeadline
+            BUYER_PK, SESSION_ID, cumulativeAmount, inputTokens, outputTokens
         );
 
         vm.prank(seller);
-        sessions.settle(SESSION_ID, cumulativeAmount, inputTokens, outputTokens, settleNonce, settleDeadline, settleSig);
+        sessions.settle(SESSION_ID, cumulativeAmount, encodeMetadata(inputTokens, outputTokens), settleSig);
 
         // Assert session state
         (
@@ -263,6 +265,7 @@ contract AntseedSessionsTest is Test {
             uint256 sSettled,
             uint128 sInputTokens,
             uint128 sOutputTokens,
+            ,
             ,
             ,
             uint256 sSettledAt,
@@ -310,7 +313,7 @@ contract AntseedSessionsTest is Test {
 
         // Reserve 100 USDC
         bytes memory sig = signSpendingAuth(
-            BUYER_PK, seller, SESSION_ID, 0, 0, 0, nonce, deadline
+            BUYER_PK, SESSION_ID, 0, 0, 0
         );
         vm.prank(seller);
         sessions.reserve(buyer, SESSION_ID, USDC_100, nonce, deadline, sig);
@@ -323,7 +326,7 @@ contract AntseedSessionsTest is Test {
         sessions.settleTimeout(SESSION_ID);
 
         // Assert session state
-        (,,, uint256 sSettled,,,,,, AntseedSessions.SessionStatus sStatus) = sessions.sessions(SESSION_ID);
+        (,,, uint256 sSettled,,,,,,, AntseedSessions.SessionStatus sStatus) = sessions.sessions(SESSION_ID);
         assertTrue(sStatus == AntseedSessions.SessionStatus.TimedOut);
         assertEq(sSettled, 0);
 
@@ -346,7 +349,7 @@ contract AntseedSessionsTest is Test {
 
         // Reserve 100 USDC
         bytes memory reserveSig = signSpendingAuth(
-            BUYER_PK, seller, SESSION_ID, 0, 0, 0, nonce, deadline
+            BUYER_PK, SESSION_ID, 0, 0, 0
         );
         vm.prank(seller);
         sessions.reserve(buyer, SESSION_ID, USDC_100, nonce, deadline, reserveSig);
@@ -354,12 +357,12 @@ contract AntseedSessionsTest is Test {
         // Try to settle with 150 USDC (exceeds 100 deposit)
         uint256 settleNonce = 2;
         bytes memory settleSig = signSpendingAuth(
-            BUYER_PK, seller, SESSION_ID, USDC_150, 0, 0, settleNonce, deadline
+            BUYER_PK, SESSION_ID, USDC_150, 0, 0
         );
 
         vm.prank(seller);
         vm.expectRevert(AntseedSessions.InvalidAmount.selector);
-        sessions.settle(SESSION_ID, USDC_150, 0, 0, settleNonce, deadline, settleSig);
+        sessions.settle(SESSION_ID, USDC_150, encodeMetadata(0, 0), settleSig);
     }
 
     function test_settle_revert_invalidSignature() public {
@@ -371,7 +374,7 @@ contract AntseedSessionsTest is Test {
 
         // Reserve
         bytes memory reserveSig = signSpendingAuth(
-            BUYER_PK, seller, SESSION_ID, 0, 0, 0, nonce, deadline
+            BUYER_PK, SESSION_ID, 0, 0, 0
         );
         vm.prank(seller);
         sessions.reserve(buyer, SESSION_ID, USDC_100, nonce, deadline, reserveSig);
@@ -379,12 +382,12 @@ contract AntseedSessionsTest is Test {
         // Sign settle with RANDOM key (not the buyer)
         uint256 settleNonce = 2;
         bytes memory badSig = signSpendingAuth(
-            RANDOM_PK, seller, SESSION_ID, USDC_60, 0, 0, settleNonce, deadline
+            RANDOM_PK, SESSION_ID, USDC_60, 0, 0
         );
 
         vm.prank(seller);
         vm.expectRevert(AntseedSessions.InvalidSignature.selector);
-        sessions.settle(SESSION_ID, USDC_60, 0, 0, settleNonce, deadline, badSig);
+        sessions.settle(SESSION_ID, USDC_60, encodeMetadata(0, 0), badSig);
     }
 
     function test_settle_revert_nonActiveSession() public {
@@ -396,26 +399,26 @@ contract AntseedSessionsTest is Test {
 
         // Reserve and settle
         bytes memory reserveSig = signSpendingAuth(
-            BUYER_PK, seller, SESSION_ID, 0, 0, 0, nonce, deadline
+            BUYER_PK, SESSION_ID, 0, 0, 0
         );
         vm.prank(seller);
         sessions.reserve(buyer, SESSION_ID, USDC_100, nonce, deadline, reserveSig);
 
         uint256 settleNonce = 2;
         bytes memory settleSig = signSpendingAuth(
-            BUYER_PK, seller, SESSION_ID, USDC_60, 0, 0, settleNonce, deadline
+            BUYER_PK, SESSION_ID, USDC_60, 0, 0
         );
         vm.prank(seller);
-        sessions.settle(SESSION_ID, USDC_60, 0, 0, settleNonce, deadline, settleSig);
+        sessions.settle(SESSION_ID, USDC_60, encodeMetadata(0, 0), settleSig);
 
         // Try to settle again — session is already Settled
         uint256 settleNonce2 = 3;
         bytes memory settleSig2 = signSpendingAuth(
-            BUYER_PK, seller, SESSION_ID, USDC_30, 0, 0, settleNonce2, deadline
+            BUYER_PK, SESSION_ID, USDC_30, 0, 0
         );
         vm.prank(seller);
         vm.expectRevert(AntseedSessions.SessionNotReserved.selector);
-        sessions.settle(SESSION_ID, USDC_30, 0, 0, settleNonce2, deadline, settleSig2);
+        sessions.settle(SESSION_ID, USDC_30, encodeMetadata(0, 0), settleSig2);
     }
 
     function test_reserve_revert_firstSignCapExceeded() public {
@@ -430,7 +433,7 @@ contract AntseedSessionsTest is Test {
         uint256 deadline = block.timestamp + 1 hours;
 
         bytes memory sig = signSpendingAuth(
-            BUYER_PK, seller, SESSION_ID, 0, 0, 0, nonce, deadline
+            BUYER_PK, SESSION_ID, 0, 0, 0
         );
 
         vm.prank(seller);
@@ -448,7 +451,7 @@ contract AntseedSessionsTest is Test {
 
         // Try to reserve 50 USDC but buyer only has 10 USDC available
         bytes memory sig = signSpendingAuth(
-            BUYER_PK, seller, SESSION_ID, 0, 0, 0, nonce, deadline
+            BUYER_PK, SESSION_ID, 0, 0, 0
         );
 
         vm.prank(seller);
@@ -456,7 +459,7 @@ contract AntseedSessionsTest is Test {
         sessions.reserve(buyer, SESSION_ID, USDC_50, nonce, deadline, sig);
     }
 
-    function test_settle_revert_expiredDeadline() public {
+    function test_settle_succeeds_afterSessionDeadline() public {
         createBuyer(BUYER_PK, USDC_100);
         createSeller(SELLER_PK);
 
@@ -465,21 +468,25 @@ contract AntseedSessionsTest is Test {
 
         // Reserve with valid deadline
         bytes memory reserveSig = signSpendingAuth(
-            BUYER_PK, seller, SESSION_ID, 0, 0, 0, nonce, deadline
+            BUYER_PK, SESSION_ID, 0, 0, 0
         );
         vm.prank(seller);
         sessions.reserve(buyer, SESSION_ID, USDC_100, nonce, deadline, reserveSig);
 
-        // Sign settle with a past deadline
-        uint256 pastDeadline = block.timestamp - 1;
-        uint256 settleNonce = 2;
+        // Warp past session deadline — settle should still succeed
+        // (deadline is no longer checked in settle; only cumulative monotonicity matters)
+        vm.warp(deadline + 1);
+
         bytes memory settleSig = signSpendingAuth(
-            BUYER_PK, seller, SESSION_ID, USDC_60, 0, 0, settleNonce, pastDeadline
+            BUYER_PK, SESSION_ID, USDC_60, 0, 0
         );
 
         vm.prank(seller);
-        vm.expectRevert(AntseedSessions.SessionExpired.selector);
-        sessions.settle(SESSION_ID, USDC_60, 0, 0, settleNonce, pastDeadline, settleSig);
+        sessions.settle(SESSION_ID, USDC_60, encodeMetadata(0, 0), settleSig);
+
+        (,,, uint256 sSettled,,,,,,, AntseedSessions.SessionStatus sStatus) = sessions.sessions(SESSION_ID);
+        assertTrue(sStatus == AntseedSessions.SessionStatus.Settled);
+        assertEq(sSettled, USDC_60);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -495,7 +502,7 @@ contract AntseedSessionsTest is Test {
 
         // Reserve
         bytes memory reserveSig = signSpendingAuth(
-            BUYER_PK, seller, SESSION_ID, 0, 0, 0, nonce, deadline
+            BUYER_PK, SESSION_ID, 0, 0, 0
         );
         vm.prank(seller);
         sessions.reserve(buyer, SESSION_ID, USDC_50, nonce, deadline, reserveSig);
@@ -503,15 +510,15 @@ contract AntseedSessionsTest is Test {
         // Settle the session
         uint256 settleNonce = 2;
         bytes memory settleSig = signSpendingAuth(
-            BUYER_PK, seller, SESSION_ID, USDC_30, 1000, 500, settleNonce, deadline
+            BUYER_PK, SESSION_ID, USDC_30, 1000, 500
         );
         vm.prank(seller);
-        sessions.settle(SESSION_ID, USDC_30, 1000, 500, settleNonce, deadline, settleSig);
+        sessions.settle(SESSION_ID, USDC_30, encodeMetadata(1000, 500), settleSig);
 
         // Try to reserve again on the now-Settled session
         uint256 nonce3 = 3;
         bytes memory sig3 = signSpendingAuth(
-            BUYER_PK, seller, SESSION_ID, 0, 0, 0, nonce3, deadline
+            BUYER_PK, SESSION_ID, 0, 0, 0
         );
         vm.prank(seller);
         vm.expectRevert(AntseedSessions.SessionExists.selector);
@@ -526,7 +533,7 @@ contract AntseedSessionsTest is Test {
         uint256 deadline = block.timestamp + 1 hours;
 
         bytes memory sig = signSpendingAuth(
-            BUYER_PK, seller, SESSION_ID, 0, 0, 0, nonce, deadline
+            BUYER_PK, SESSION_ID, 0, 0, 0
         );
         vm.prank(seller);
         sessions.reserve(buyer, SESSION_ID, USDC_50, nonce, deadline, sig);
@@ -539,7 +546,7 @@ contract AntseedSessionsTest is Test {
         uint256 nonce2 = 2;
         uint256 deadline2 = block.timestamp + 1 hours;
         bytes memory sig2 = signSpendingAuth(
-            BUYER_PK, seller, SESSION_ID, 0, 0, 0, nonce2, deadline2
+            BUYER_PK, SESSION_ID, 0, 0, 0
         );
         vm.prank(seller);
         vm.expectRevert(AntseedSessions.SessionExists.selector);
@@ -560,7 +567,7 @@ contract AntseedSessionsTest is Test {
         uint256 deadline = block.timestamp + 1 hours;
 
         bytes memory sig = signSpendingAuth(
-            BUYER_PK, seller, SESSION_ID, 0, 0, 0, nonce, deadline
+            BUYER_PK, SESSION_ID, 0, 0, 0
         );
 
         vm.prank(seller);
@@ -580,7 +587,7 @@ contract AntseedSessionsTest is Test {
         uint256 pastDeadline = block.timestamp - 1;
 
         bytes memory sig = signSpendingAuth(
-            BUYER_PK, seller, SESSION_ID, 0, 0, 0, nonce, pastDeadline
+            BUYER_PK, SESSION_ID, 0, 0, 0
         );
 
         vm.prank(seller);
@@ -600,7 +607,7 @@ contract AntseedSessionsTest is Test {
         uint256 deadline = block.timestamp + 1 hours;
 
         bytes memory reserveSig = signSpendingAuth(
-            BUYER_PK, seller, SESSION_ID, 0, 0, 0, nonce, deadline
+            BUYER_PK, SESSION_ID, 0, 0, 0
         );
         vm.prank(seller);
         sessions.reserve(buyer, SESSION_ID, USDC_100, nonce, deadline, reserveSig);
@@ -608,10 +615,10 @@ contract AntseedSessionsTest is Test {
         // Settle for full amount
         uint256 settleNonce = 2;
         bytes memory settleSig = signSpendingAuth(
-            BUYER_PK, seller, SESSION_ID, USDC_100, 10000, 5000, settleNonce, deadline
+            BUYER_PK, SESSION_ID, USDC_100, 10000, 5000
         );
         vm.prank(seller);
-        sessions.settle(SESSION_ID, USDC_100, 10000, 5000, settleNonce, deadline, settleSig);
+        sessions.settle(SESSION_ID, USDC_100, encodeMetadata(10000, 5000), settleSig);
 
         // Buyer should have 0 available (full deposit charged), 0 reserved
         (uint256 available, uint256 reserved,,) = deposits.getBuyerBalance(buyer);
@@ -619,7 +626,7 @@ contract AntseedSessionsTest is Test {
         assertEq(available, 0);
 
         // Verify settled amount
-        (,,, uint256 sSettled,,,,,, AntseedSessions.SessionStatus sStatus) = sessions.sessions(SESSION_ID);
+        (,,, uint256 sSettled,,,,,,, AntseedSessions.SessionStatus sStatus) = sessions.sessions(SESSION_ID);
         assertEq(sSettled, USDC_100);
         assertTrue(sStatus == AntseedSessions.SessionStatus.Settled);
     }
@@ -636,7 +643,7 @@ contract AntseedSessionsTest is Test {
         uint256 deadline = block.timestamp + 1 hours;
 
         bytes memory reserveSig = signSpendingAuth(
-            BUYER_PK, seller, SESSION_ID, 0, 0, 0, nonce, deadline
+            BUYER_PK, SESSION_ID, 0, 0, 0
         );
         vm.prank(seller);
         sessions.reserve(buyer, SESSION_ID, USDC_100, nonce, deadline, reserveSig);
@@ -644,10 +651,10 @@ contract AntseedSessionsTest is Test {
         // Settle with cumulativeAmount = 0
         uint256 settleNonce = 2;
         bytes memory settleSig = signSpendingAuth(
-            BUYER_PK, seller, SESSION_ID, 0, 0, 0, settleNonce, deadline
+            BUYER_PK, SESSION_ID, 0, 0, 0
         );
         vm.prank(seller);
-        sessions.settle(SESSION_ID, 0, 0, 0, settleNonce, deadline, settleSig);
+        sessions.settle(SESSION_ID, 0, encodeMetadata(0, 0), settleSig);
 
         // Full deposit should be released back to buyer
         (uint256 available, uint256 reserved,,) = deposits.getBuyerBalance(buyer);
@@ -658,7 +665,7 @@ contract AntseedSessionsTest is Test {
         assertEq(deposits.sellerEarnings(seller), 0);
 
         // Session settled
-        (,,, uint256 sSettled,,,,,, AntseedSessions.SessionStatus sStatus) = sessions.sessions(SESSION_ID);
+        (,,, uint256 sSettled,,,,,,, AntseedSessions.SessionStatus sStatus) = sessions.sessions(SESSION_ID);
         assertEq(sSettled, 0);
         assertTrue(sStatus == AntseedSessions.SessionStatus.Settled);
     }
@@ -675,7 +682,7 @@ contract AntseedSessionsTest is Test {
         uint256 deadline = block.timestamp + 1 hours;
 
         bytes memory reserveSig = signSpendingAuth(
-            BUYER_PK, seller, SESSION_ID, 0, 0, 0, nonce, deadline
+            BUYER_PK, SESSION_ID, 0, 0, 0
         );
         vm.prank(seller);
         sessions.reserve(buyer, SESSION_ID, USDC_100, nonce, deadline, reserveSig);
@@ -686,10 +693,10 @@ contract AntseedSessionsTest is Test {
 
         uint256 settleNonce = 2;
         bytes memory settleSig = signSpendingAuth(
-            BUYER_PK, seller, SESSION_ID, chargeAmount, 0, 0, settleNonce, deadline
+            BUYER_PK, SESSION_ID, chargeAmount, 0, 0
         );
         vm.prank(seller);
-        sessions.settle(SESSION_ID, chargeAmount, 0, 0, settleNonce, deadline, settleSig);
+        sessions.settle(SESSION_ID, chargeAmount, encodeMetadata(0, 0), settleSig);
 
         // Verify seller earnings = charge - platformFee
         assertEq(deposits.sellerEarnings(seller), expectedSellerPayout);
@@ -710,7 +717,7 @@ contract AntseedSessionsTest is Test {
         uint256 deadline = block.timestamp + 1 hours;
 
         bytes memory reserveSig = signSpendingAuth(
-            BUYER_PK, seller, SESSION_ID, 0, 0, 0, nonce, deadline
+            BUYER_PK, SESSION_ID, 0, 0, 0
         );
         vm.prank(seller);
         sessions.reserve(buyer, SESSION_ID, USDC_100, nonce, deadline, reserveSig);
@@ -719,10 +726,10 @@ contract AntseedSessionsTest is Test {
         uint256 inputToks = 7500;
         uint256 outputToks = 3200;
         bytes memory settleSig = signSpendingAuth(
-            BUYER_PK, seller, SESSION_ID, USDC_50, inputToks, outputToks, settleNonce, deadline
+            BUYER_PK, SESSION_ID, USDC_50, inputToks, outputToks
         );
         vm.prank(seller);
-        sessions.settle(SESSION_ID, USDC_50, inputToks, outputToks, settleNonce, deadline, settleSig);
+        sessions.settle(SESSION_ID, USDC_50, encodeMetadata(inputToks, outputToks), settleSig);
 
         uint256 sellerTokenId = identity.getTokenId(seller);
         AntseedIdentity.Reputation memory rep = identity.getReputation(sellerTokenId);
@@ -744,7 +751,7 @@ contract AntseedSessionsTest is Test {
         uint256 deadline = block.timestamp + 1 hours;
 
         bytes memory sig = signSpendingAuth(
-            BUYER_PK, seller, SESSION_ID, 0, 0, 0, nonce, deadline
+            BUYER_PK, SESSION_ID, 0, 0, 0
         );
         vm.prank(seller);
         sessions.reserve(buyer, SESSION_ID, USDC_100, nonce, deadline, sig);
@@ -756,7 +763,7 @@ contract AntseedSessionsTest is Test {
         vm.prank(randomUser);
         sessions.settleTimeout(SESSION_ID);
 
-        (,,,,,,,,, AntseedSessions.SessionStatus sStatus) = sessions.sessions(SESSION_ID);
+        (,,,,,,,,,, AntseedSessions.SessionStatus sStatus) = sessions.sessions(SESSION_ID);
         assertTrue(sStatus == AntseedSessions.SessionStatus.TimedOut);
 
         // Full deposit released to buyer
@@ -885,7 +892,7 @@ contract AntseedSessionsTest is Test {
         uint256 deadline = block.timestamp + 1 hours;
 
         bytes memory sig = signSpendingAuth(
-            BUYER_PK, seller, SESSION_ID, 0, 0, 0, nonce, deadline
+            BUYER_PK, SESSION_ID, 0, 0, 0
         );
 
         vm.prank(seller);
@@ -904,13 +911,13 @@ contract AntseedSessionsTest is Test {
         uint256 deadline = block.timestamp + 1 hours;
 
         bytes memory sig = signSpendingAuth(
-            BUYER_PK, seller, SESSION_ID, 0, 0, 0, nonce, deadline
+            BUYER_PK, SESSION_ID, 0, 0, 0
         );
 
         vm.prank(seller);
         sessions.reserve(buyer, SESSION_ID, USDC_50, nonce, deadline, sig);
 
-        (,,,,,,,,, AntseedSessions.SessionStatus sStatus) = sessions.sessions(SESSION_ID);
+        (,,,,,,,,,, AntseedSessions.SessionStatus sStatus) = sessions.sessions(SESSION_ID);
         assertTrue(sStatus == AntseedSessions.SessionStatus.Active);
     }
 
@@ -948,7 +955,7 @@ contract AntseedSessionsTest is Test {
         uint256 deadline = block.timestamp + 1 hours;
 
         bytes memory sig = signSpendingAuth(
-            BUYER_PK, seller, SESSION_ID, 0, 0, 0, nonce, deadline
+            BUYER_PK, SESSION_ID, 0, 0, 0
         );
         vm.prank(seller);
         sessions.reserve(buyer, SESSION_ID, USDC_100, nonce, deadline, sig);
@@ -966,7 +973,7 @@ contract AntseedSessionsTest is Test {
         uint256 deadline = block.timestamp + 1 hours;
 
         // Initial reserve
-        bytes memory sig1 = signSpendingAuth(BUYER_PK, seller, SESSION_ID, 0, 0, 0, nonce1, deadline);
+        bytes memory sig1 = signSpendingAuth(BUYER_PK, SESSION_ID, 0, 0, 0);
         vm.prank(seller);
         sessions.reserve(buyer, SESSION_ID, USDC_50, nonce1, deadline, sig1);
 
@@ -975,7 +982,7 @@ contract AntseedSessionsTest is Test {
 
         // Top-up should revert — deadline expired
         uint256 nonce2 = 2;
-        bytes memory sig2 = signSpendingAuth(BUYER_PK, seller, SESSION_ID, 0, 0, 0, nonce2, deadline);
+        bytes memory sig2 = signSpendingAuth(BUYER_PK, SESSION_ID, 0, 0, 0);
         vm.prank(seller);
         vm.expectRevert(AntseedSessions.SessionExpired.selector);
         sessions.reserve(buyer, SESSION_ID, USDC_30, nonce2, deadline, sig2);
