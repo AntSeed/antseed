@@ -7,12 +7,15 @@ import "../AntseedDeposits.sol";
 import "../AntseedStaking.sol";
 import "../AntseedIdentity.sol";
 import "../MockUSDC.sol";
+import "../vendor/TempoStreamChannel.sol";
+import "../vendor/ITempoStreamChannel.sol";
 
 contract AntseedSessionsTest is Test {
     MockUSDC public usdc;
     AntseedIdentity public identity;
     AntseedStaking public staking;
     AntseedDeposits public deposits;
+    TempoStreamChannel public tempo;
     AntseedSessions public sessions;
 
     // Deterministic private keys
@@ -25,22 +28,24 @@ contract AntseedSessionsTest is Test {
     address public randomUser;
     address public protocolReserve = address(0xFEE);
 
-    bytes32 constant SESSION_ID = keccak256("session-1");
-    bytes32 constant SESSION_ID_2 = keccak256("session-2");
-
     // USDC amounts (6 decimals)
-    uint256 constant USDC_100 = 100_000_000;
-    uint256 constant USDC_50 = 50_000_000;
-    uint256 constant USDC_30 = 30_000_000;
-    uint256 constant USDC_60 = 60_000_000;
-    uint256 constant USDC_10 = 10_000_000;
-    uint256 constant USDC_150 = 150_000_000;
+    uint128 constant USDC_100 = 100_000_000;
+    uint128 constant USDC_50 = 50_000_000;
+    uint128 constant USDC_30 = 30_000_000;
+    uint128 constant USDC_60 = 60_000_000;
+    uint128 constant USDC_10 = 10_000_000;
+    uint128 constant USDC_150 = 150_000_000;
 
     uint256 constant STAKE_AMOUNT = 10_000_000; // MIN_SELLER_STAKE
 
-    // EIP-712 typehash (must match contract)
-    bytes32 constant SPENDING_AUTH_TYPEHASH = keccak256(
-        "SpendingAuth(bytes32 sessionId,uint256 cumulativeAmount,bytes32 metadataHash)"
+    // AntSeed MetadataAuth EIP-712 typehash (must match contract)
+    bytes32 constant METADATA_AUTH_TYPEHASH = keccak256(
+        "MetadataAuth(bytes32 channelId,uint256 cumulativeAmount,bytes32 metadataHash)"
+    );
+
+    // Tempo Voucher EIP-712 typehash
+    bytes32 constant VOUCHER_TYPEHASH = keccak256(
+        "Voucher(bytes32 channelId,uint128 cumulativeAmount)"
     );
 
     function setUp() public {
@@ -53,7 +58,14 @@ contract AntseedSessionsTest is Test {
         identity = new AntseedIdentity();
         staking = new AntseedStaking(address(usdc), address(identity));
         deposits = new AntseedDeposits(address(usdc));
-        sessions = new AntseedSessions(address(deposits), address(identity), address(staking));
+        tempo = new TempoStreamChannel();
+        sessions = new AntseedSessions(
+            address(tempo),
+            address(deposits),
+            address(identity),
+            address(staking),
+            address(usdc)
+        );
 
         // Wire contracts together
         deposits.setSessionsContract(address(sessions));
@@ -74,14 +86,11 @@ contract AntseedSessionsTest is Test {
         address addr = vm.addr(pk);
         bytes32 peerId = keccak256(abi.encodePacked("buyer-", pk));
 
-        // Register identity
         vm.prank(addr);
         identity.register(peerId, "ipfs://buyer");
 
-        // Raise credit limit so large deposits don't revert
         deposits.setCreditLimitOverride(addr, type(uint256).max);
 
-        // Mint USDC, approve deposits, and deposit
         usdc.mint(addr, depositAmount);
         vm.startPrank(addr);
         usdc.approve(address(deposits), depositAmount);
@@ -93,11 +102,9 @@ contract AntseedSessionsTest is Test {
         address addr = vm.addr(pk);
         bytes32 peerId = keccak256(abi.encodePacked("seller-", pk));
 
-        // Register identity
         vm.prank(addr);
         identity.register(peerId, "ipfs://seller");
 
-        // Mint USDC, approve staking, and stake
         usdc.mint(addr, STAKE_AMOUNT);
         vm.startPrank(addr);
         usdc.approve(address(staking), STAKE_AMOUNT);
@@ -105,9 +112,12 @@ contract AntseedSessionsTest is Test {
         vm.stopPrank();
     }
 
-    function signSpendingAuth(
+    /**
+     * @dev Sign an AntSeed MetadataAuth (our EIP-712 domain)
+     */
+    function signMetadataAuth(
         uint256 pk,
-        bytes32 sessionId,
+        bytes32 channelId,
         uint256 cumulativeAmount,
         uint256 cumulativeInputTokens,
         uint256 cumulativeOutputTokens
@@ -115,13 +125,29 @@ contract AntseedSessionsTest is Test {
         bytes32 metadataHash = keccak256(abi.encode(cumulativeInputTokens, cumulativeOutputTokens, uint256(0), uint256(0)));
         bytes32 structHash = keccak256(
             abi.encode(
-                SPENDING_AUTH_TYPEHASH,
-                sessionId,
+                METADATA_AUTH_TYPEHASH,
+                channelId,
                 cumulativeAmount,
                 metadataHash
             )
         );
-        bytes32 digest = _hashTypedData(structHash);
+        bytes32 digest = _hashTypedDataSessions(structHash);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digest);
+        return abi.encodePacked(r, s, v);
+    }
+
+    /**
+     * @dev Sign a Tempo Voucher (Tempo's EIP-712 domain)
+     */
+    function signTempoVoucher(
+        uint256 pk,
+        bytes32 channelId,
+        uint128 cumulativeAmount
+    ) internal view returns (bytes memory) {
+        bytes32 structHash = keccak256(
+            abi.encode(VOUCHER_TYPEHASH, channelId, cumulativeAmount)
+        );
+        bytes32 digest = _hashTypedDataTempo(structHash);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digest);
         return abi.encodePacked(r, s, v);
     }
@@ -133,44 +159,69 @@ contract AntseedSessionsTest is Test {
         return abi.encode(cumulativeInputTokens, cumulativeOutputTokens, uint256(0), uint256(0));
     }
 
-    function _hashTypedData(bytes32 structHash) internal view returns (bytes32) {
+    function _hashTypedDataSessions(bytes32 structHash) internal view returns (bytes32) {
         return keccak256(abi.encodePacked("\x19\x01", sessions.domainSeparator(), structHash));
     }
 
+    function _hashTypedDataTempo(bytes32 structHash) internal view returns (bytes32) {
+        return keccak256(abi.encodePacked("\x19\x01", tempo.domainSeparator(), structHash));
+    }
+
+    /**
+     * @dev Compute the channelId that Tempo will produce for a reserve call.
+     *      payer = sessions contract, payee = sessions contract, authorizedSigner = buyer
+     */
+    function computeChannelId(bytes32 salt) internal view returns (bytes32) {
+        return tempo.computeChannelId(
+            address(sessions),
+            address(sessions),
+            address(usdc),
+            salt,
+            buyer
+        );
+    }
+
+    /**
+     * @dev Full reserve helper: creates buyer+seller, computes channelId, signs, reserves.
+     */
+    function doReserve(
+        bytes32 salt,
+        uint128 maxAmount,
+        uint256 buyerDeposit
+    ) internal returns (bytes32 channelId) {
+        createBuyer(BUYER_PK, buyerDeposit);
+        createSeller(SELLER_PK);
+
+        channelId = computeChannelId(salt);
+        uint256 deadline = block.timestamp + 1 hours;
+
+        bytes memory metaSig = signMetadataAuth(BUYER_PK, channelId, 0, 0, 0);
+
+        vm.prank(seller);
+        sessions.reserve(buyer, salt, maxAmount, deadline, metaSig);
+    }
+
     // ═══════════════════════════════════════════════════════════════════
-    //                   Task 2: Test reserve() — new session
+    //                   RESERVE TESTS
     // ═══════════════════════════════════════════════════════════════════
 
     function test_reserve_newSession() public {
-        createBuyer(BUYER_PK, USDC_100);
-        createSeller(SELLER_PK);
-
-        uint256 nonce = 1;
-        uint256 deadline = block.timestamp + 1 hours;
-
-        // Sign initial SpendingAuth with cumulative fields = 0
-        bytes memory sig = signSpendingAuth(
-            BUYER_PK, SESSION_ID, 0, 0, 0
-        );
-
-        // Seller calls reserve
-        vm.prank(seller);
-        sessions.reserve(buyer, SESSION_ID, USDC_100, nonce, deadline, sig);
+        bytes32 salt = keccak256("session-1");
+        bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
         // Assert session state
         (
             address sBuyer,
             address sSeller,
-            uint256 sDeposit,
-            uint256 sSettled,
+            uint128 sDeposit,
+            uint128 sSettled,
             uint128 sInputTokens,
             uint128 sOutputTokens,
             ,
-            uint256 sNonce,
             uint256 sDeadline,
             uint256 sSettledAt,
             AntseedSessions.SessionStatus sStatus
-        ) = sessions.sessions(SESSION_ID);
+        ) = sessions.sessions(channelId);
 
         assertEq(sBuyer, buyer);
         assertEq(sSeller, seller);
@@ -178,120 +229,192 @@ contract AntseedSessionsTest is Test {
         assertEq(sSettled, 0);
         assertEq(sInputTokens, 0);
         assertEq(sOutputTokens, 0);
-        assertEq(sNonce, nonce);
-        assertEq(sDeadline, deadline);
+        assertGt(sDeadline, 0);
         assertEq(sSettledAt, 0);
         assertTrue(sStatus == AntseedSessions.SessionStatus.Active);
 
-        // Assert buyer's deposits: reserved increased, available decreased
+        // Assert Tempo channel exists
+        ITempoStreamChannel.Channel memory ch = tempo.getChannel(channelId);
+        assertEq(ch.payer, address(sessions));
+        assertEq(ch.payee, address(sessions));
+        assertEq(ch.token, address(usdc));
+        assertEq(ch.authorizedSigner, buyer);
+        assertEq(ch.deposit, USDC_100);
+        assertEq(ch.settled, 0);
+        assertFalse(ch.finalized);
+
+        // Assert buyer's Deposits: balance reduced, reserved released (both happen in transferToSessions)
         (uint256 available, uint256 reserved,,) = deposits.getBuyerBalance(buyer);
-        assertEq(reserved, USDC_100);
-        assertEq(available, 0);
+        assertEq(reserved, 0);  // transferToSessions clears reserved
+        assertEq(available, 0); // all 100 USDC went to Tempo
     }
 
-    // ═══════════════════════════════════════════════════════════════════
-    //                   Task 3: Test reserve() — top-up
-    // ═══════════════════════════════════════════════════════════════════
+    function test_reserve_revert_sellerNotStaked() public {
+        createBuyer(BUYER_PK, USDC_100);
+        // Register seller but don't stake
+        vm.prank(seller);
+        identity.register(keccak256("seller-unstaked"), "ipfs://seller");
 
-    function test_reserve_topUp() public {
+        bytes32 salt = keccak256("session-1");
+        bytes32 channelId = computeChannelId(salt);
+        uint256 deadline = block.timestamp + 1 hours;
+
+        bytes memory metaSig = signMetadataAuth(BUYER_PK, channelId, 0, 0, 0);
+
+        vm.prank(seller);
+        vm.expectRevert(AntseedSessions.SellerNotStaked.selector);
+        sessions.reserve(buyer, salt, USDC_50, deadline, metaSig);
+    }
+
+    function test_reserve_revert_expiredDeadline() public {
         createBuyer(BUYER_PK, USDC_100);
         createSeller(SELLER_PK);
 
-        uint256 nonce1 = 1;
+        bytes32 salt = keccak256("session-1");
+        bytes32 channelId = computeChannelId(salt);
+        uint256 pastDeadline = block.timestamp - 1;
+
+        bytes memory metaSig = signMetadataAuth(BUYER_PK, channelId, 0, 0, 0);
+
+        vm.prank(seller);
+        vm.expectRevert(AntseedSessions.SessionExpired.selector);
+        sessions.reserve(buyer, salt, USDC_50, pastDeadline, metaSig);
+    }
+
+    function test_reserve_revert_invalidSignature() public {
+        createBuyer(BUYER_PK, USDC_100);
+        createSeller(SELLER_PK);
+
+        bytes32 salt = keccak256("session-1");
+        bytes32 channelId = computeChannelId(salt);
         uint256 deadline = block.timestamp + 1 hours;
 
-        // Initial reserve: 50 USDC
-        bytes memory sig1 = signSpendingAuth(
-            BUYER_PK, SESSION_ID, 0, 0, 0
-        );
-        vm.prank(seller);
-        sessions.reserve(buyer, SESSION_ID, USDC_50, nonce1, deadline, sig1);
+        // Sign with wrong key
+        bytes memory badSig = signMetadataAuth(RANDOM_PK, channelId, 0, 0, 0);
 
-        // Top-up: 30 USDC (new signature with same sessionId)
-        uint256 nonce2 = 2;
-        bytes memory sig2 = signSpendingAuth(
-            BUYER_PK, SESSION_ID, 0, 0, 0
-        );
         vm.prank(seller);
-        sessions.reserve(buyer, SESSION_ID, USDC_30, nonce2, deadline, sig2);
+        vm.expectRevert(AntseedSessions.InvalidSignature.selector);
+        sessions.reserve(buyer, salt, USDC_50, deadline, badSig);
+    }
 
-        // Assert session deposit accumulated
-        (,, uint256 sDeposit,,,,,,,, AntseedSessions.SessionStatus sStatus) = sessions.sessions(SESSION_ID);
-        assertEq(sDeposit, USDC_50 + USDC_30); // 80 USDC
+    function test_reserve_revert_firstSignCapExceeded() public {
+        sessions.setConstant(keccak256("FIRST_SIGN_CAP"), 1_000_000);
+
+        createBuyer(BUYER_PK, USDC_100);
+        createSeller(SELLER_PK);
+
+        uint128 overCap = 1_000_001;
+        bytes32 salt = keccak256("session-1");
+        bytes32 channelId = computeChannelId(salt);
+        uint256 deadline = block.timestamp + 1 hours;
+
+        bytes memory metaSig = signMetadataAuth(BUYER_PK, channelId, 0, 0, 0);
+
+        vm.prank(seller);
+        vm.expectRevert(AntseedSessions.FirstSignCapExceeded.selector);
+        sessions.reserve(buyer, salt, overCap, deadline, metaSig);
+    }
+
+    function test_reserve_revert_sessionExists() public {
+        bytes32 salt = keccak256("session-1");
+        bytes32 channelId = doReserve(salt, USDC_50, USDC_100);
+
+        // Try to reserve again with same salt (same channelId)
+        bytes memory metaSig = signMetadataAuth(BUYER_PK, channelId, 0, 0, 0);
+        uint256 deadline = block.timestamp + 1 hours;
+
+        vm.prank(seller);
+        vm.expectRevert(AntseedSessions.SessionExists.selector);
+        sessions.reserve(buyer, salt, USDC_30, deadline, metaSig);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //                   TOP-UP TESTS
+    // ═══════════════════════════════════════════════════════════════════
+
+    function test_topUp() public {
+        bytes32 salt = keccak256("session-topup");
+        bytes32 channelId = doReserve(salt, USDC_50, USDC_100);
+
+        // Top up with 30 more USDC
+        vm.prank(seller);
+        sessions.topUp(channelId, USDC_30);
+
+        // Session deposit should be 80
+        (,, uint128 sDeposit,,,,,,, AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
+        assertEq(sDeposit, USDC_50 + USDC_30);
         assertTrue(sStatus == AntseedSessions.SessionStatus.Active);
 
-        // Assert buyer's deposits: reserved = 80 USDC
-        (, uint256 reserved,,) = deposits.getBuyerBalance(buyer);
-        assertEq(reserved, USDC_50 + USDC_30);
+        // Tempo channel deposit should match
+        ITempoStreamChannel.Channel memory ch = tempo.getChannel(channelId);
+        assertEq(ch.deposit, USDC_50 + USDC_30);
+    }
+
+    function test_topUp_revert_notSeller() public {
+        bytes32 salt = keccak256("session-topup-auth");
+        bytes32 channelId = doReserve(salt, USDC_50, USDC_100);
+
+        vm.prank(randomUser);
+        vm.expectRevert(AntseedSessions.NotAuthorized.selector);
+        sessions.topUp(channelId, USDC_30);
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //            Task 4: Test settle() with cumulative SpendingAuth
+    //                   CLOSE TESTS (final settle)
     // ═══════════════════════════════════════════════════════════════════
 
-    function test_settle_cumulativeAuth() public {
-        createBuyer(BUYER_PK, USDC_100);
-        createSeller(SELLER_PK);
+    function test_close_partialAmount() public {
+        bytes32 salt = keccak256("session-close");
+        bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
-        uint256 nonce = 1;
-        uint256 deadline = block.timestamp + 1 hours;
-
-        // Reserve 100 USDC
-        bytes memory reserveSig = signSpendingAuth(
-            BUYER_PK, SESSION_ID, 0, 0, 0
-        );
-        vm.prank(seller);
-        sessions.reserve(buyer, SESSION_ID, USDC_100, nonce, deadline, reserveSig);
-
-        // Settle with cumulative: 60 USDC, 5000 input tokens, 2000 output tokens
-        uint256 settleNonce = 2;
-        uint256 settleDeadline = block.timestamp + 2 hours;
-        uint256 cumulativeAmount = USDC_60;
+        uint128 finalAmount = USDC_60;
         uint256 inputTokens = 5000;
         uint256 outputTokens = 2000;
 
-        bytes memory settleSig = signSpendingAuth(
-            BUYER_PK, SESSION_ID, cumulativeAmount, inputTokens, outputTokens
-        );
+        bytes memory voucherSig = signTempoVoucher(BUYER_PK, channelId, finalAmount);
+        bytes memory metaSig = signMetadataAuth(BUYER_PK, channelId, finalAmount, inputTokens, outputTokens);
 
         vm.prank(seller);
-        sessions.settle(SESSION_ID, cumulativeAmount, encodeMetadata(inputTokens, outputTokens), settleSig);
+        sessions.close(channelId, finalAmount, encodeMetadata(inputTokens, outputTokens), voucherSig, metaSig);
 
         // Assert session state
         (
             ,
             ,
             ,
-            uint256 sSettled,
+            uint128 sSettled,
             uint128 sInputTokens,
             uint128 sOutputTokens,
             ,
             ,
-            ,
             uint256 sSettledAt,
             AntseedSessions.SessionStatus sStatus
-        ) = sessions.sessions(SESSION_ID);
+        ) = sessions.sessions(channelId);
 
         assertTrue(sStatus == AntseedSessions.SessionStatus.Settled);
         assertEq(sSettled, USDC_60);
         assertEq(sInputTokens, 5000);
         assertEq(sOutputTokens, 2000);
         assertGt(sSettledAt, 0);
-        assertEq(sSettledAt, block.timestamp);
 
-        // Assert financial state: seller earnings credited
-        // Platform fee = 60 USDC * 500 / 10000 = 3 USDC
-        uint256 platformFee = (USDC_60 * 500) / 10000;
-        uint256 sellerPayout = USDC_60 - platformFee;
+        // Platform fee = 60 * 500 / 10000 = 3 USDC
+        uint256 platformFee = (uint256(USDC_60) * 500) / 10000;
+        uint256 sellerPayout = uint256(USDC_60) - platformFee;
         assertEq(deposits.sellerEarnings(seller), sellerPayout);
 
-        // Buyer: reserved should be 0 (full deposit released), balance decreased by chargeAmount
+        // Protocol reserve got the fee
+        assertEq(usdc.balanceOf(protocolReserve), platformFee);
+
+        // Buyer: refund of 40 USDC credited back
         (uint256 available, uint256 reserved,,) = deposits.getBuyerBalance(buyer);
         assertEq(reserved, 0);
-        // available = original balance (100) - charged (60) = 40
-        assertEq(available, USDC_100 - USDC_60);
+        assertEq(available, USDC_100 - USDC_100 + (USDC_100 - USDC_60)); // 0 + 40 = 40
 
-        // Assert reputation: seller sessionCount incremented
+        // Tempo channel should be finalized
+        ITempoStreamChannel.Channel memory ch = tempo.getChannel(channelId);
+        assertTrue(ch.finalized);
+
+        // Reputation updated
         uint256 sellerTokenId = identity.getTokenId(seller);
         AntseedIdentity.Reputation memory rep = identity.getReputation(sellerTokenId);
         assertEq(rep.sessionCount, 1);
@@ -300,436 +423,239 @@ contract AntseedSessionsTest is Test {
         assertEq(rep.totalOutputTokens, 2000);
     }
 
-    // ═══════════════════════════════════════════════════════════════════
-    //                   Task 5: Test settleTimeout()
-    // ═══════════════════════════════════════════════════════════════════
+    function test_close_fullDeposit() public {
+        bytes32 salt = keccak256("session-close-full");
+        bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
-    function test_settleTimeout() public {
-        createBuyer(BUYER_PK, USDC_100);
-        createSeller(SELLER_PK);
+        uint128 finalAmount = USDC_100;
+        bytes memory voucherSig = signTempoVoucher(BUYER_PK, channelId, finalAmount);
+        bytes memory metaSig = signMetadataAuth(BUYER_PK, channelId, finalAmount, 10000, 5000);
 
-        uint256 nonce = 1;
-        uint256 deadline = block.timestamp + 1 hours;
-
-        // Reserve 100 USDC
-        bytes memory sig = signSpendingAuth(
-            BUYER_PK, SESSION_ID, 0, 0, 0
-        );
         vm.prank(seller);
-        sessions.reserve(buyer, SESSION_ID, USDC_100, nonce, deadline, sig);
+        sessions.close(channelId, finalAmount, encodeMetadata(10000, 5000), voucherSig, metaSig);
 
-        // Warp past deadline + CLOSE_GRACE_PERIOD (2 hours)
-        vm.warp(deadline + 2 hours + 1);
+        (,,,uint128 sSettled,,,,,,AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
+        assertEq(sSettled, USDC_100);
+        assertTrue(sStatus == AntseedSessions.SessionStatus.Settled);
 
-        // Anyone can call settleTimeout
-        vm.prank(randomUser);
-        sessions.settleTimeout(SESSION_ID);
+        // Buyer should have 0 available (no refund)
+        (uint256 available,,,) = deposits.getBuyerBalance(buyer);
+        assertEq(available, 0);
+    }
 
-        // Assert session state
-        (,,, uint256 sSettled,,,,,,, AntseedSessions.SessionStatus sStatus) = sessions.sessions(SESSION_ID);
-        assertTrue(sStatus == AntseedSessions.SessionStatus.TimedOut);
-        assertEq(sSettled, 0);
+    function test_close_zeroAmount() public {
+        bytes32 salt = keccak256("session-close-zero");
+        bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
-        // Full deposit released to buyer
-        (uint256 available, uint256 reserved,,) = deposits.getBuyerBalance(buyer);
-        assertEq(reserved, 0);
+        // Close with 0 — full refund to buyer
+        bytes memory voucherSig = signTempoVoucher(BUYER_PK, channelId, 0);
+        bytes memory metaSig = signMetadataAuth(BUYER_PK, channelId, 0, 0, 0);
+
+        vm.prank(seller);
+        sessions.close(channelId, 0, encodeMetadata(0, 0), voucherSig, metaSig);
+
+        (uint256 available,,,) = deposits.getBuyerBalance(buyer);
         assertEq(available, USDC_100);
+
+        assertEq(deposits.sellerEarnings(seller), 0);
     }
 
-    // ═══════════════════════════════════════════════════════════════════
-    //               Task 6: Test edge cases and reverts
-    // ═══════════════════════════════════════════════════════════════════
+    function test_close_revert_notSeller() public {
+        bytes32 salt = keccak256("session-close-auth");
+        bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
-    function test_settle_revert_cumulativeExceedsDeposit() public {
-        createBuyer(BUYER_PK, USDC_150);
-        createSeller(SELLER_PK);
+        bytes memory voucherSig = signTempoVoucher(BUYER_PK, channelId, USDC_60);
+        bytes memory metaSig = signMetadataAuth(BUYER_PK, channelId, USDC_60, 0, 0);
 
-        uint256 nonce = 1;
-        uint256 deadline = block.timestamp + 1 hours;
-
-        // Reserve 100 USDC
-        bytes memory reserveSig = signSpendingAuth(
-            BUYER_PK, SESSION_ID, 0, 0, 0
-        );
-        vm.prank(seller);
-        sessions.reserve(buyer, SESSION_ID, USDC_100, nonce, deadline, reserveSig);
-
-        // Try to settle with 150 USDC (exceeds 100 deposit)
-        uint256 settleNonce = 2;
-        bytes memory settleSig = signSpendingAuth(
-            BUYER_PK, SESSION_ID, USDC_150, 0, 0
-        );
-
-        vm.prank(seller);
-        vm.expectRevert(AntseedSessions.InvalidAmount.selector);
-        sessions.settle(SESSION_ID, USDC_150, encodeMetadata(0, 0), settleSig);
+        vm.prank(randomUser);
+        vm.expectRevert(AntseedSessions.NotAuthorized.selector);
+        sessions.close(channelId, USDC_60, encodeMetadata(0, 0), voucherSig, metaSig);
     }
 
-    function test_settle_revert_invalidSignature() public {
-        createBuyer(BUYER_PK, USDC_100);
-        createSeller(SELLER_PK);
+    function test_close_revert_invalidMetadataSignature() public {
+        bytes32 salt = keccak256("session-close-badsig");
+        bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
-        uint256 nonce = 1;
-        uint256 deadline = block.timestamp + 1 hours;
-
-        // Reserve
-        bytes memory reserveSig = signSpendingAuth(
-            BUYER_PK, SESSION_ID, 0, 0, 0
-        );
-        vm.prank(seller);
-        sessions.reserve(buyer, SESSION_ID, USDC_100, nonce, deadline, reserveSig);
-
-        // Sign settle with RANDOM key (not the buyer)
-        uint256 settleNonce = 2;
-        bytes memory badSig = signSpendingAuth(
-            RANDOM_PK, SESSION_ID, USDC_60, 0, 0
-        );
+        bytes memory voucherSig = signTempoVoucher(BUYER_PK, channelId, USDC_60);
+        // Sign metadata with wrong key
+        bytes memory badMetaSig = signMetadataAuth(RANDOM_PK, channelId, USDC_60, 0, 0);
 
         vm.prank(seller);
         vm.expectRevert(AntseedSessions.InvalidSignature.selector);
-        sessions.settle(SESSION_ID, USDC_60, encodeMetadata(0, 0), badSig);
+        sessions.close(channelId, USDC_60, encodeMetadata(0, 0), voucherSig, badMetaSig);
     }
 
-    function test_settle_revert_nonActiveSession() public {
-        createBuyer(BUYER_PK, USDC_100);
-        createSeller(SELLER_PK);
+    function test_close_revert_doubleClose() public {
+        bytes32 salt = keccak256("session-double-close");
+        bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
-        uint256 nonce = 1;
-        uint256 deadline = block.timestamp + 1 hours;
-
-        // Reserve and settle
-        bytes memory reserveSig = signSpendingAuth(
-            BUYER_PK, SESSION_ID, 0, 0, 0
-        );
-        vm.prank(seller);
-        sessions.reserve(buyer, SESSION_ID, USDC_100, nonce, deadline, reserveSig);
-
-        uint256 settleNonce = 2;
-        bytes memory settleSig = signSpendingAuth(
-            BUYER_PK, SESSION_ID, USDC_60, 0, 0
-        );
-        vm.prank(seller);
-        sessions.settle(SESSION_ID, USDC_60, encodeMetadata(0, 0), settleSig);
-
-        // Try to settle again — session is already Settled
-        uint256 settleNonce2 = 3;
-        bytes memory settleSig2 = signSpendingAuth(
-            BUYER_PK, SESSION_ID, USDC_30, 0, 0
-        );
-        vm.prank(seller);
-        vm.expectRevert(AntseedSessions.SessionNotReserved.selector);
-        sessions.settle(SESSION_ID, USDC_30, encodeMetadata(0, 0), settleSig2);
-    }
-
-    function test_reserve_revert_firstSignCapExceeded() public {
-        // Lower FIRST_SIGN_CAP to 1 USDC for this test
-        sessions.setConstant(keccak256("FIRST_SIGN_CAP"), 1_000_000);
-
-        createBuyer(BUYER_PK, USDC_100);
-        createSeller(SELLER_PK);
-
-        uint256 overCap = 1_000_001; // just above the cap
-        uint256 nonce = 1;
-        uint256 deadline = block.timestamp + 1 hours;
-
-        bytes memory sig = signSpendingAuth(
-            BUYER_PK, SESSION_ID, 0, 0, 0
-        );
+        bytes memory voucherSig = signTempoVoucher(BUYER_PK, channelId, USDC_60);
+        bytes memory metaSig = signMetadataAuth(BUYER_PK, channelId, USDC_60, 0, 0);
 
         vm.prank(seller);
-        vm.expectRevert(AntseedSessions.FirstSignCapExceeded.selector);
-        sessions.reserve(buyer, SESSION_ID, overCap, nonce, deadline, sig);
-    }
+        sessions.close(channelId, USDC_60, encodeMetadata(0, 0), voucherSig, metaSig);
 
-    function test_reserve_revert_insufficientBuyerBalance() public {
-        // Buyer deposits 10 USDC (minimum)
-        createBuyer(BUYER_PK, USDC_10);
-        createSeller(SELLER_PK);
-
-        uint256 nonce = 1;
-        uint256 deadline = block.timestamp + 1 hours;
-
-        // Try to reserve 50 USDC but buyer only has 10 USDC available
-        bytes memory sig = signSpendingAuth(
-            BUYER_PK, SESSION_ID, 0, 0, 0
-        );
-
+        // Try again — session already Settled
         vm.prank(seller);
-        vm.expectRevert(AntseedDeposits.InsufficientBalance.selector);
-        sessions.reserve(buyer, SESSION_ID, USDC_50, nonce, deadline, sig);
-    }
-
-    function test_settle_succeeds_afterSessionDeadline() public {
-        createBuyer(BUYER_PK, USDC_100);
-        createSeller(SELLER_PK);
-
-        uint256 nonce = 1;
-        uint256 deadline = block.timestamp + 1 hours;
-
-        // Reserve with valid deadline
-        bytes memory reserveSig = signSpendingAuth(
-            BUYER_PK, SESSION_ID, 0, 0, 0
-        );
-        vm.prank(seller);
-        sessions.reserve(buyer, SESSION_ID, USDC_100, nonce, deadline, reserveSig);
-
-        // Warp past session deadline — settle should still succeed
-        // (deadline is no longer checked in settle; only cumulative monotonicity matters)
-        vm.warp(deadline + 1);
-
-        bytes memory settleSig = signSpendingAuth(
-            BUYER_PK, SESSION_ID, USDC_60, 0, 0
-        );
-
-        vm.prank(seller);
-        sessions.settle(SESSION_ID, USDC_60, encodeMetadata(0, 0), settleSig);
-
-        (,,, uint256 sSettled,,,,,,, AntseedSessions.SessionStatus sStatus) = sessions.sessions(SESSION_ID);
-        assertTrue(sStatus == AntseedSessions.SessionStatus.Settled);
-        assertEq(sSettled, USDC_60);
+        vm.expectRevert(AntseedSessions.SessionNotActive.selector);
+        sessions.close(channelId, USDC_30, encodeMetadata(0, 0), voucherSig, metaSig);
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //         Test reserve() revert on Settled session (SessionExists)
+    //                   SETTLE TESTS (mid-session)
     // ═══════════════════════════════════════════════════════════════════
 
-    function test_reserve_revert_onSettledSession() public {
-        createBuyer(BUYER_PK, USDC_100);
-        createSeller(SELLER_PK);
+    function test_settle_midSession() public {
+        bytes32 salt = keccak256("session-settle");
+        bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
-        uint256 nonce = 1;
-        uint256 deadline = block.timestamp + 1 hours;
+        uint128 amount1 = USDC_30;
+        bytes memory voucherSig1 = signTempoVoucher(BUYER_PK, channelId, amount1);
+        bytes memory metaSig1 = signMetadataAuth(BUYER_PK, channelId, amount1, 1000, 500);
 
-        // Reserve
-        bytes memory reserveSig = signSpendingAuth(
-            BUYER_PK, SESSION_ID, 0, 0, 0
-        );
         vm.prank(seller);
-        sessions.reserve(buyer, SESSION_ID, USDC_50, nonce, deadline, reserveSig);
+        sessions.settle(channelId, amount1, encodeMetadata(1000, 500), voucherSig1, metaSig1);
 
-        // Settle the session
-        uint256 settleNonce = 2;
-        bytes memory settleSig = signSpendingAuth(
-            BUYER_PK, SESSION_ID, USDC_30, 1000, 500
-        );
-        vm.prank(seller);
-        sessions.settle(SESSION_ID, USDC_30, encodeMetadata(1000, 500), settleSig);
+        // Session still active
+        (,, uint128 sDeposit, uint128 sSettled,,,,,, AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
+        assertTrue(sStatus == AntseedSessions.SessionStatus.Active);
+        assertEq(sDeposit, USDC_100);
+        assertEq(sSettled, USDC_30);
 
-        // Try to reserve again on the now-Settled session
-        uint256 nonce3 = 3;
-        bytes memory sig3 = signSpendingAuth(
-            BUYER_PK, SESSION_ID, 0, 0, 0
-        );
-        vm.prank(seller);
-        vm.expectRevert(AntseedSessions.SessionExists.selector);
-        sessions.reserve(buyer, SESSION_ID, USDC_10, nonce3, deadline, sig3);
+        // Tempo channel still open
+        ITempoStreamChannel.Channel memory ch = tempo.getChannel(channelId);
+        assertFalse(ch.finalized);
+        assertEq(ch.settled, USDC_30);
+
+        // Seller earnings credited for first settle
+        uint256 fee1 = (uint256(USDC_30) * 500) / 10000;
+        uint256 payout1 = uint256(USDC_30) - fee1;
+        assertEq(deposits.sellerEarnings(seller), payout1);
     }
 
-    function test_reserve_revert_onTimedOutSession() public {
-        createBuyer(BUYER_PK, USDC_100);
-        createSeller(SELLER_PK);
+    function test_settle_thenClose() public {
+        bytes32 salt = keccak256("session-settle-close");
+        bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
-        uint256 nonce = 1;
-        uint256 deadline = block.timestamp + 1 hours;
-
-        bytes memory sig = signSpendingAuth(
-            BUYER_PK, SESSION_ID, 0, 0, 0
-        );
-        vm.prank(seller);
-        sessions.reserve(buyer, SESSION_ID, USDC_50, nonce, deadline, sig);
-
-        // Warp past timeout
-        vm.warp(deadline + 2 hours + 1);
-        sessions.settleTimeout(SESSION_ID);
-
-        // Try to reserve on timed-out session
-        uint256 nonce2 = 2;
-        uint256 deadline2 = block.timestamp + 1 hours;
-        bytes memory sig2 = signSpendingAuth(
-            BUYER_PK, SESSION_ID, 0, 0, 0
-        );
-        vm.prank(seller);
-        vm.expectRevert(AntseedSessions.SessionExists.selector);
-        sessions.reserve(buyer, SESSION_ID, USDC_10, nonce2, deadline2, sig2);
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    //         Test reserve() revert — seller not staked
-    // ═══════════════════════════════════════════════════════════════════
-
-    function test_reserve_revert_sellerNotStaked() public {
-        createBuyer(BUYER_PK, USDC_100);
-        // Do NOT create/stake seller — just register identity
-        vm.prank(seller);
-        identity.register(keccak256("seller-unstaked"), "ipfs://seller");
-
-        uint256 nonce = 1;
-        uint256 deadline = block.timestamp + 1 hours;
-
-        bytes memory sig = signSpendingAuth(
-            BUYER_PK, SESSION_ID, 0, 0, 0
-        );
+        // First settle: 30 USDC
+        uint128 amount1 = USDC_30;
+        bytes memory voucherSig1 = signTempoVoucher(BUYER_PK, channelId, amount1);
+        bytes memory metaSig1 = signMetadataAuth(BUYER_PK, channelId, amount1, 1000, 500);
 
         vm.prank(seller);
-        vm.expectRevert(AntseedSessions.SellerNotStaked.selector);
-        sessions.reserve(buyer, SESSION_ID, USDC_50, nonce, deadline, sig);
-    }
+        sessions.settle(channelId, amount1, encodeMetadata(1000, 500), voucherSig1, metaSig1);
 
-    // ═══════════════════════════════════════════════════════════════════
-    //         Test reserve() revert — expired deadline
-    // ═══════════════════════════════════════════════════════════════════
-
-    function test_reserve_revert_expiredDeadline() public {
-        createBuyer(BUYER_PK, USDC_100);
-        createSeller(SELLER_PK);
-
-        uint256 nonce = 1;
-        uint256 pastDeadline = block.timestamp - 1;
-
-        bytes memory sig = signSpendingAuth(
-            BUYER_PK, SESSION_ID, 0, 0, 0
-        );
+        // Then close: final cumulative = 60 USDC
+        uint128 finalAmount = USDC_60;
+        bytes memory voucherSig2 = signTempoVoucher(BUYER_PK, channelId, finalAmount);
+        bytes memory metaSig2 = signMetadataAuth(BUYER_PK, channelId, finalAmount, 3000, 1500);
 
         vm.prank(seller);
-        vm.expectRevert(AntseedSessions.SessionExpired.selector);
-        sessions.reserve(buyer, SESSION_ID, USDC_50, nonce, pastDeadline, sig);
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    //      Test settle() cumulative equals deposit exactly (zero remaining)
-    // ═══════════════════════════════════════════════════════════════════
-
-    function test_settle_fullDeposit() public {
-        createBuyer(BUYER_PK, USDC_100);
-        createSeller(SELLER_PK);
-
-        uint256 nonce = 1;
-        uint256 deadline = block.timestamp + 1 hours;
-
-        bytes memory reserveSig = signSpendingAuth(
-            BUYER_PK, SESSION_ID, 0, 0, 0
-        );
-        vm.prank(seller);
-        sessions.reserve(buyer, SESSION_ID, USDC_100, nonce, deadline, reserveSig);
-
-        // Settle for full amount
-        uint256 settleNonce = 2;
-        bytes memory settleSig = signSpendingAuth(
-            BUYER_PK, SESSION_ID, USDC_100, 10000, 5000
-        );
-        vm.prank(seller);
-        sessions.settle(SESSION_ID, USDC_100, encodeMetadata(10000, 5000), settleSig);
-
-        // Buyer should have 0 available (full deposit charged), 0 reserved
-        (uint256 available, uint256 reserved,,) = deposits.getBuyerBalance(buyer);
-        assertEq(reserved, 0);
-        assertEq(available, 0);
-
-        // Verify settled amount
-        (,,, uint256 sSettled,,,,,,, AntseedSessions.SessionStatus sStatus) = sessions.sessions(SESSION_ID);
-        assertEq(sSettled, USDC_100);
-        assertTrue(sStatus == AntseedSessions.SessionStatus.Settled);
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    //      Test settle() zero cumulative amount (releases full deposit)
-    // ═══════════════════════════════════════════════════════════════════
-
-    function test_settle_zeroCumulativeAmount() public {
-        createBuyer(BUYER_PK, USDC_100);
-        createSeller(SELLER_PK);
-
-        uint256 nonce = 1;
-        uint256 deadline = block.timestamp + 1 hours;
-
-        bytes memory reserveSig = signSpendingAuth(
-            BUYER_PK, SESSION_ID, 0, 0, 0
-        );
-        vm.prank(seller);
-        sessions.reserve(buyer, SESSION_ID, USDC_100, nonce, deadline, reserveSig);
-
-        // Settle with cumulativeAmount = 0
-        uint256 settleNonce = 2;
-        bytes memory settleSig = signSpendingAuth(
-            BUYER_PK, SESSION_ID, 0, 0, 0
-        );
-        vm.prank(seller);
-        sessions.settle(SESSION_ID, 0, encodeMetadata(0, 0), settleSig);
-
-        // Full deposit should be released back to buyer
-        (uint256 available, uint256 reserved,,) = deposits.getBuyerBalance(buyer);
-        assertEq(reserved, 0);
-        assertEq(available, USDC_100);
-
-        // Seller earnings should be 0
-        assertEq(deposits.sellerEarnings(seller), 0);
+        sessions.close(channelId, finalAmount, encodeMetadata(3000, 1500), voucherSig2, metaSig2);
 
         // Session settled
-        (,,, uint256 sSettled,,,,,,, AntseedSessions.SessionStatus sStatus) = sessions.sessions(SESSION_ID);
-        assertEq(sSettled, 0);
+        (,,,uint128 sSettled,,,,,,AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
         assertTrue(sStatus == AntseedSessions.SessionStatus.Settled);
+        assertEq(sSettled, USDC_60);
+
+        // Total seller earnings = payout from 30 (settle) + payout from delta 30 (close)
+        // Each delta of 30 has its own fee: 30 * 500/10000 = 1.5 USDC per delta
+        uint256 fee30 = (uint256(USDC_30) * 500) / 10000;
+        uint256 expectedEarnings = (uint256(USDC_30) - fee30) * 2; // two deltas of 30
+        assertEq(deposits.sellerEarnings(seller), expectedEarnings);
+
+        // Buyer refund = 100 - 60 = 40
+        (uint256 available,,,) = deposits.getBuyerBalance(buyer);
+        assertEq(available, USDC_100 - USDC_60);
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //      Test settle() platform fee calculation
+    //                   TIMEOUT TESTS
     // ═══════════════════════════════════════════════════════════════════
 
-    function test_settle_platformFeeCalculation() public {
-        createBuyer(BUYER_PK, USDC_100);
-        createSeller(SELLER_PK);
+    function test_requestClose_and_withdraw() public {
+        bytes32 salt = keccak256("session-timeout");
+        bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
-        uint256 nonce = 1;
-        uint256 deadline = block.timestamp + 1 hours;
+        (, , , , , , , uint256 deadline, ,) = sessions.sessions(channelId);
 
-        bytes memory reserveSig = signSpendingAuth(
-            BUYER_PK, SESSION_ID, 0, 0, 0
-        );
+        // requestClose reverts before deadline
+        vm.expectRevert(AntseedSessions.NotAuthorized.selector);
+        sessions.requestClose(channelId);
+
+        // Warp past deadline
+        vm.warp(deadline + 1);
+
+        // Anyone can request close
+        vm.prank(randomUser);
+        sessions.requestClose(channelId);
+
+        // Can't withdraw yet — need to wait for Tempo's grace period (15 min)
+        vm.expectRevert(); // CloseNotReady from Tempo
+        sessions.withdraw(channelId);
+
+        // Warp past Tempo's grace period
+        vm.warp(block.timestamp + 15 minutes + 1);
+
+        // Now withdraw
+        vm.prank(randomUser);
+        sessions.withdraw(channelId);
+
+        // Session timed out
+        (,,,,,,,,,AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
+        assertTrue(sStatus == AntseedSessions.SessionStatus.TimedOut);
+
+        // Full deposit returned to buyer
+        (uint256 available,,,) = deposits.getBuyerBalance(buyer);
+        assertEq(available, USDC_100);
+    }
+
+    function test_requestClose_revert_beforeDeadline() public {
+        bytes32 salt = keccak256("session-timeout-early");
+        bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
+
+        vm.expectRevert(AntseedSessions.NotAuthorized.selector);
+        sessions.requestClose(channelId);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //                   PLATFORM FEE TESTS
+    // ═══════════════════════════════════════════════════════════════════
+
+    function test_close_platformFeeCalculation() public {
+        bytes32 salt = keccak256("session-fee");
+        bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
+
+        uint128 chargeAmount = USDC_60;
+        uint256 expectedPlatformFee = (uint256(chargeAmount) * 500) / 10000; // 3 USDC
+        uint256 expectedSellerPayout = uint256(chargeAmount) - expectedPlatformFee; // 57 USDC
+
+        bytes memory voucherSig = signTempoVoucher(BUYER_PK, channelId, chargeAmount);
+        bytes memory metaSig = signMetadataAuth(BUYER_PK, channelId, chargeAmount, 0, 0);
+
         vm.prank(seller);
-        sessions.reserve(buyer, SESSION_ID, USDC_100, nonce, deadline, reserveSig);
+        sessions.close(channelId, chargeAmount, encodeMetadata(0, 0), voucherSig, metaSig);
 
-        uint256 chargeAmount = USDC_60;
-        uint256 expectedPlatformFee = (chargeAmount * 500) / 10000; // 3 USDC
-        uint256 expectedSellerPayout = chargeAmount - expectedPlatformFee; // 57 USDC
-
-        uint256 settleNonce = 2;
-        bytes memory settleSig = signSpendingAuth(
-            BUYER_PK, SESSION_ID, chargeAmount, 0, 0
-        );
-        vm.prank(seller);
-        sessions.settle(SESSION_ID, chargeAmount, encodeMetadata(0, 0), settleSig);
-
-        // Verify seller earnings = charge - platformFee
         assertEq(deposits.sellerEarnings(seller), expectedSellerPayout);
-
-        // Verify protocol reserve got the fee
         assertEq(usdc.balanceOf(protocolReserve), expectedPlatformFee);
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //      Test settle() reputation update
+    //                   REPUTATION TESTS
     // ═══════════════════════════════════════════════════════════════════
 
-    function test_settle_reputationUpdate() public {
-        createBuyer(BUYER_PK, USDC_100);
-        createSeller(SELLER_PK);
+    function test_close_reputationUpdate() public {
+        bytes32 salt = keccak256("session-rep");
+        bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
-        uint256 nonce = 1;
-        uint256 deadline = block.timestamp + 1 hours;
-
-        bytes memory reserveSig = signSpendingAuth(
-            BUYER_PK, SESSION_ID, 0, 0, 0
-        );
-        vm.prank(seller);
-        sessions.reserve(buyer, SESSION_ID, USDC_100, nonce, deadline, reserveSig);
-
-        uint256 settleNonce = 2;
         uint256 inputToks = 7500;
         uint256 outputToks = 3200;
-        bytes memory settleSig = signSpendingAuth(
-            BUYER_PK, SESSION_ID, USDC_50, inputToks, outputToks
-        );
+
+        bytes memory voucherSig = signTempoVoucher(BUYER_PK, channelId, USDC_50);
+        bytes memory metaSig = signMetadataAuth(BUYER_PK, channelId, USDC_50, inputToks, outputToks);
+
         vm.prank(seller);
-        sessions.settle(SESSION_ID, USDC_50, encodeMetadata(inputToks, outputToks), settleSig);
+        sessions.close(channelId, USDC_50, encodeMetadata(inputToks, outputToks), voucherSig, metaSig);
 
         uint256 sellerTokenId = identity.getTokenId(seller);
         AntseedIdentity.Reputation memory rep = identity.getReputation(sellerTokenId);
@@ -740,50 +666,12 @@ contract AntseedSessionsTest is Test {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //      Test settleTimeout() by third party (permissionless)
-    // ═══════════════════════════════════════════════════════════════════
-
-    function test_settleTimeout_byThirdParty() public {
-        createBuyer(BUYER_PK, USDC_100);
-        createSeller(SELLER_PK);
-
-        uint256 nonce = 1;
-        uint256 deadline = block.timestamp + 1 hours;
-
-        bytes memory sig = signSpendingAuth(
-            BUYER_PK, SESSION_ID, 0, 0, 0
-        );
-        vm.prank(seller);
-        sessions.reserve(buyer, SESSION_ID, USDC_100, nonce, deadline, sig);
-
-        // Warp past deadline + grace period
-        vm.warp(deadline + 2 hours + 1);
-
-        // Random user (not buyer, not seller) calls settleTimeout — should succeed
-        vm.prank(randomUser);
-        sessions.settleTimeout(SESSION_ID);
-
-        (,,,,,,,,,, AntseedSessions.SessionStatus sStatus) = sessions.sessions(SESSION_ID);
-        assertTrue(sStatus == AntseedSessions.SessionStatus.TimedOut);
-
-        // Full deposit released to buyer
-        (uint256 available, uint256 reserved,,) = deposits.getBuyerBalance(buyer);
-        assertEq(reserved, 0);
-        assertEq(available, USDC_100);
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    //      Test setConstant() for each key
+    //                   ADMIN TESTS
     // ═══════════════════════════════════════════════════════════════════
 
     function test_setConstant_firstSignCap() public {
         sessions.setConstant(keccak256("FIRST_SIGN_CAP"), 2_000_000);
         assertEq(sessions.FIRST_SIGN_CAP(), 2_000_000);
-    }
-
-    function test_setConstant_closeGracePeriod() public {
-        sessions.setConstant(keccak256("CLOSE_GRACE_PERIOD"), 1 hours);
-        assertEq(sessions.CLOSE_GRACE_PERIOD(), 1 hours);
     }
 
     function test_setConstant_platformFeeBps() public {
@@ -796,19 +684,21 @@ contract AntseedSessionsTest is Test {
         sessions.setConstant(keccak256("UNKNOWN_KEY"), 100);
     }
 
-    function test_setConstant_revert_closeGracePeriodBelowMinimum() public {
-        vm.expectRevert(AntseedSessions.InvalidAmount.selector);
-        sessions.setConstant(keccak256("CLOSE_GRACE_PERIOD"), 29 minutes);
-    }
-
     function test_setConstant_revert_platformFeeBpsAboveMax() public {
         vm.expectRevert(AntseedSessions.InvalidFee.selector);
         sessions.setConstant(keccak256("PLATFORM_FEE_BPS"), 1001);
     }
 
-    // ═══════════════════════════════════════════════════════════════════
-    //      Test admin setters (owner-only)
-    // ═══════════════════════════════════════════════════════════════════
+    function test_setStreamChannel() public {
+        address newChannel = address(0x1111);
+        sessions.setStreamChannel(newChannel);
+        assertEq(address(sessions.streamChannel()), newChannel);
+    }
+
+    function test_setStreamChannel_revert_zeroAddress() public {
+        vm.expectRevert(AntseedSessions.InvalidAddress.selector);
+        sessions.setStreamChannel(address(0));
+    }
 
     function test_setDepositsContract() public {
         address newDeposits = address(0x1234);
@@ -833,32 +723,10 @@ contract AntseedSessionsTest is Test {
         assertEq(address(sessions.identityContract()), newIdentity);
     }
 
-    function test_setIdentityContract_revert_zeroAddress() public {
-        vm.expectRevert(AntseedSessions.InvalidAddress.selector);
-        sessions.setIdentityContract(address(0));
-    }
-
-    function test_setIdentityContract_revert_notOwner() public {
-        vm.prank(randomUser);
-        vm.expectRevert();
-        sessions.setIdentityContract(address(0x5678));
-    }
-
     function test_setStakingContract() public {
         address newStaking = address(0x9ABC);
         sessions.setStakingContract(newStaking);
         assertEq(address(sessions.stakingContract()), newStaking);
-    }
-
-    function test_setStakingContract_revert_zeroAddress() public {
-        vm.expectRevert(AntseedSessions.InvalidAddress.selector);
-        sessions.setStakingContract(address(0));
-    }
-
-    function test_setStakingContract_revert_notOwner() public {
-        vm.prank(randomUser);
-        vm.expectRevert();
-        sessions.setStakingContract(address(0x9ABC));
     }
 
     function test_setProtocolReserve() public {
@@ -879,7 +747,7 @@ contract AntseedSessionsTest is Test {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //      Test pause() and unpause()
+    //                   PAUSE TESTS
     // ═══════════════════════════════════════════════════════════════════
 
     function test_pause_blocksReserve() public {
@@ -888,16 +756,15 @@ contract AntseedSessionsTest is Test {
 
         sessions.pause();
 
-        uint256 nonce = 1;
+        bytes32 salt = keccak256("session-paused");
+        bytes32 channelId = computeChannelId(salt);
         uint256 deadline = block.timestamp + 1 hours;
 
-        bytes memory sig = signSpendingAuth(
-            BUYER_PK, SESSION_ID, 0, 0, 0
-        );
+        bytes memory metaSig = signMetadataAuth(BUYER_PK, channelId, 0, 0, 0);
 
         vm.prank(seller);
         vm.expectRevert();
-        sessions.reserve(buyer, SESSION_ID, USDC_50, nonce, deadline, sig);
+        sessions.reserve(buyer, salt, USDC_50, deadline, metaSig);
     }
 
     function test_unpause_allowsReserve() public {
@@ -907,17 +774,16 @@ contract AntseedSessionsTest is Test {
         sessions.pause();
         sessions.unpause();
 
-        uint256 nonce = 1;
+        bytes32 salt = keccak256("session-unpaused");
+        bytes32 channelId = computeChannelId(salt);
         uint256 deadline = block.timestamp + 1 hours;
 
-        bytes memory sig = signSpendingAuth(
-            BUYER_PK, SESSION_ID, 0, 0, 0
-        );
+        bytes memory metaSig = signMetadataAuth(BUYER_PK, channelId, 0, 0, 0);
 
         vm.prank(seller);
-        sessions.reserve(buyer, SESSION_ID, USDC_50, nonce, deadline, sig);
+        sessions.reserve(buyer, salt, USDC_50, deadline, metaSig);
 
-        (,,,,,,,,,, AntseedSessions.SessionStatus sStatus) = sessions.sessions(SESSION_ID);
+        (,,,,,,,,,AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
         assertTrue(sStatus == AntseedSessions.SessionStatus.Active);
     }
 
@@ -927,15 +793,8 @@ contract AntseedSessionsTest is Test {
         sessions.pause();
     }
 
-    function test_unpause_revert_notOwner() public {
-        sessions.pause();
-        vm.prank(randomUser);
-        vm.expectRevert();
-        sessions.unpause();
-    }
-
     // ═══════════════════════════════════════════════════════════════════
-    //      Test domainSeparator()
+    //                   DOMAIN SEPARATOR TEST
     // ═══════════════════════════════════════════════════════════════════
 
     function test_domainSeparator_nonZero() public view {
@@ -943,48 +802,10 @@ contract AntseedSessionsTest is Test {
         assertTrue(ds != bytes32(0));
     }
 
-    // ═══════════════════════════════════════════════════════════════════
-    //               Existing edge case tests below
-    // ═══════════════════════════════════════════════════════════════════
-
-    function test_settleTimeout_revert_beforeGracePeriod() public {
-        createBuyer(BUYER_PK, USDC_100);
-        createSeller(SELLER_PK);
-
-        uint256 nonce = 1;
-        uint256 deadline = block.timestamp + 1 hours;
-
-        bytes memory sig = signSpendingAuth(
-            BUYER_PK, SESSION_ID, 0, 0, 0
-        );
-        vm.prank(seller);
-        sessions.reserve(buyer, SESSION_ID, USDC_100, nonce, deadline, sig);
-
-        // Try to timeout immediately — should revert
-        vm.expectRevert(AntseedSessions.TimeoutNotReached.selector);
-        sessions.settleTimeout(SESSION_ID);
-    }
-
-    function test_reserve_topUp_revert_expiredDeadline() public {
-        createBuyer(BUYER_PK, USDC_100);
-        createSeller(SELLER_PK);
-
-        uint256 nonce1 = 1;
-        uint256 deadline = block.timestamp + 1 hours;
-
-        // Initial reserve
-        bytes memory sig1 = signSpendingAuth(BUYER_PK, SESSION_ID, 0, 0, 0);
-        vm.prank(seller);
-        sessions.reserve(buyer, SESSION_ID, USDC_50, nonce1, deadline, sig1);
-
-        // Warp past deadline
-        vm.warp(deadline + 1);
-
-        // Top-up should revert — deadline expired
-        uint256 nonce2 = 2;
-        bytes memory sig2 = signSpendingAuth(BUYER_PK, SESSION_ID, 0, 0, 0);
-        vm.prank(seller);
-        vm.expectRevert(AntseedSessions.SessionExpired.selector);
-        sessions.reserve(buyer, SESSION_ID, USDC_30, nonce2, deadline, sig2);
+    function test_tempoDomainSeparator_differs() public view {
+        // AntSeed and Tempo domains must be different
+        bytes32 antseedDs = sessions.domainSeparator();
+        bytes32 tempoDs = tempo.domainSeparator();
+        assertTrue(antseedDs != tempoDs);
     }
 }

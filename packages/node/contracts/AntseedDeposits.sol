@@ -254,6 +254,46 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
         buyers[buyer].reserved -= amount;
     }
 
+    /**
+     * @notice Credit back refunded USDC to buyer's available balance.
+     *         Used when Tempo refunds unspent USDC on close/withdraw.
+     *         The buyer's balance and reserved were already reduced in transferToSessions.
+     *         The USDC has been sent back to this contract by Sessions.
+     * @param buyer      The buyer address
+     * @param creditBack The USDC amount being credited back (refund from Tempo)
+     */
+    function creditBuyerRefund(address buyer, uint256 creditBack) external onlySessions {
+        BuyerAccount storage ba = buyers[buyer];
+        ba.balance += creditBack;
+        ba.lastActivityAt = block.timestamp;
+    }
+
+    /**
+     * @notice Transfer USDC from this contract to Sessions contract for Tempo channel funding.
+     *         Called by Sessions during reserve/topUp after lockForSession.
+     *         The buyer's balance is reduced (USDC physically leaves this contract).
+     *         reserved is also reduced since the lock is now enforced by Tempo.
+     * @param buyer  The buyer whose balance to debit
+     * @param to     The Sessions contract address
+     * @param amount USDC amount to transfer
+     */
+    function transferToSessions(address buyer, address to, uint256 amount) external onlySessions nonReentrant {
+        BuyerAccount storage ba = buyers[buyer];
+        ba.balance -= amount;
+        ba.reserved -= amount;
+        usdc.safeTransfer(to, amount);
+    }
+
+    /**
+     * @notice Credit seller earnings. Called by Sessions after Tempo settle/close
+     *         when USDC has been received from Tempo and forwarded to this contract.
+     * @param seller The seller address
+     * @param amount The amount to credit
+     */
+    function creditEarnings(address seller, uint256 amount) external onlySessions {
+        sellerEarnings[seller] += amount;
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     //                        ADMIN FUNCTIONS
     // ═══════════════════════════════════════════════════════════════════

@@ -67,17 +67,24 @@ contract Deploy is Script {
         require(deposits != address(0), "Deposits deploy failed");
         console.log("AntseedDeposits:    ", deposits);
 
-        // 6. AntseedSessions(deposits, identity, staking)
+        // 6. TempoStreamChannel (no constructor args)
+        bytes memory tempoBytecode = vm.getCode("TempoStreamChannel.sol:TempoStreamChannel");
+        address tempo;
+        assembly { tempo := create(0, add(tempoBytecode, 0x20), mload(tempoBytecode)) }
+        require(tempo != address(0), "TempoStreamChannel deploy failed");
+        console.log("TempoStreamChannel: ", tempo);
+
+        // 7. AntseedSessions(streamChannel, deposits, identity, staking, usdc)
         bytes memory sessionsBytecode = abi.encodePacked(
             vm.getCode("AntseedSessions.sol:AntseedSessions"),
-            abi.encode(deposits, identity, staking)
+            abi.encode(tempo, deposits, identity, staking, usdc)
         );
         address sessions;
         assembly { sessions := create(0, add(sessionsBytecode, 0x20), mload(sessionsBytecode)) }
         require(sessions != address(0), "Sessions deploy failed");
         console.log("AntseedSessions:    ", sessions);
 
-        // 6. AntseedEmissions(antsToken, initialEmission, epochDuration)
+        // 8. AntseedEmissions(antsToken, initialEmission, epochDuration)
         bytes memory emissionsBytecode = abi.encodePacked(
             vm.getCode("AntseedEmissions.sol:AntseedEmissions"),
             abi.encode(antsToken, uint256(1_000_000e18), uint256(7 days))
@@ -87,7 +94,7 @@ contract Deploy is Script {
         require(emissions != address(0), "Emissions deploy failed");
         console.log("AntseedEmissions:   ", emissions);
 
-        // 7. AntseedSubPool(usdc, identity)
+        // 9. AntseedSubPool(usdc, identity)
         bytes memory subPoolBytecode = abi.encodePacked(
             vm.getCode("AntseedSubPool.sol:AntseedSubPool"),
             abi.encode(usdc, identity)

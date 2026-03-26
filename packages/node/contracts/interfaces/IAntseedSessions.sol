@@ -4,19 +4,34 @@ pragma solidity ^0.8.24;
 interface IAntseedSessions {
     function reserve(
         address buyer,
-        bytes32 sessionId,
-        uint256 maxAmount,
-        uint256 nonce,
+        bytes32 salt,
+        uint128 maxAmount,
         uint256 deadline,
-        bytes calldata buyerSig
+        bytes calldata buyerMetaSig
+    ) external;
+
+    function topUp(
+        bytes32 channelId,
+        uint128 additionalAmount
     ) external;
 
     function settle(
-        bytes32 sessionId,
-        uint256 cumulativeAmount,
+        bytes32 channelId,
+        uint128 cumulativeAmount,
         bytes calldata metadata,
-        bytes calldata buyerSig
+        bytes calldata tempoVoucherSig,
+        bytes calldata metadataAuthSig
     ) external;
 
-    function settleTimeout(bytes32 sessionId) external;
+    function close(
+        bytes32 channelId,
+        uint128 finalAmount,
+        bytes calldata metadata,
+        bytes calldata tempoVoucherSig,
+        bytes calldata metadataAuthSig
+    ) external;
+
+    function requestClose(bytes32 channelId) external;
+
+    function withdraw(bytes32 channelId) external;
 }
