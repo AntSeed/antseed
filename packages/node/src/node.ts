@@ -961,12 +961,27 @@ export class AntseedNode extends EventEmitter {
       }
     }
 
-    // Parse seller cost headers from the response for per-request auth tracking.
-    // For streaming responses, the seller doesn't inject cost headers, so we
-    // estimate cost locally from the response body and peer pricing.
+    // Buyer-side cost verification: always estimate locally from response body,
+    // then compare with seller's claimed cost headers. Use the lower of the two
+    // (with 2x tolerance for input token estimation inaccuracy).
+    this._estimateCostFromResponse(peer, response);
+    const buyerEstimate = this._lastResponseCost.get(peer.peerId);
     this._parseCostHeaders(peer.peerId, response);
-    if (!this._lastResponseCost.has(peer.peerId) && response.body.length > 0) {
-      this._estimateCostFromResponse(peer, response);
+    const sellerClaimed = this._lastResponseCost.get(peer.peerId);
+    if (buyerEstimate && sellerClaimed && sellerClaimed !== buyerEstimate) {
+      // Cap seller's claimed cost at 2x the buyer's estimate
+      const maxAcceptable = buyerEstimate.costUsdc * 2n;
+      if (sellerClaimed.costUsdc > maxAcceptable && maxAcceptable > 0n) {
+        debugWarn(
+          `[Node] Seller cost ${sellerClaimed.costUsdc} exceeds 2x buyer estimate ${buyerEstimate.costUsdc} — capping`,
+        );
+        this._lastResponseCost.set(peer.peerId, {
+          ...sellerClaimed,
+          costUsdc: maxAcceptable,
+          inputTokens: buyerEstimate.inputTokens,
+          outputTokens: buyerEstimate.outputTokens,
+        });
+      }
     }
 
     return response;

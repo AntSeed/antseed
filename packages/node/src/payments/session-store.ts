@@ -114,6 +114,22 @@ export class SessionStore {
       );
 
       CREATE INDEX IF NOT EXISTS idx_sessions_peer_role_status ON payment_sessions(peer_id, role, status);
+    `);
+
+    // Migration: add columns for persisted auth sigs (v0.2.28+)
+    const cols = this._db.pragma('table_info(payment_sessions)') as Array<{ name: string }>;
+    const colNames = new Set(cols.map(c => c.name));
+    if (!colNames.has('latest_buyer_sig')) {
+      this._db.exec('ALTER TABLE payment_sessions ADD COLUMN latest_buyer_sig TEXT');
+    }
+    if (!colNames.has('latest_metadata_auth_sig')) {
+      this._db.exec('ALTER TABLE payment_sessions ADD COLUMN latest_metadata_auth_sig TEXT');
+    }
+    if (!colNames.has('latest_metadata')) {
+      this._db.exec('ALTER TABLE payment_sessions ADD COLUMN latest_metadata TEXT');
+    }
+
+    this._db.exec(`
       CREATE INDEX IF NOT EXISTS idx_sessions_status_updated ON payment_sessions(status, updated_at);
 
       CREATE TABLE IF NOT EXISTS payment_receipts (

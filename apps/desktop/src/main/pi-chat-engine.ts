@@ -1892,12 +1892,18 @@ export function registerPiChatHandlers({
         if (jsonStart >= 0) {
           try { payBody = JSON.parse(message.slice(jsonStart)) as Record<string, unknown>; } catch { /* not JSON */ }
         }
+        const amt = typeof payBody?.suggestedAmount === 'string' ? payBody.suggestedAmount : '100000';
         if (payBody?.sellerEvmAddr) {
           cachedPaymentRequired.set(conversationId, payBody);
-        }
-        const amt = typeof payBody?.suggestedAmount === 'string' ? payBody.suggestedAmount : '0';
-        if (!payBody?.sellerEvmAddr && amt !== '0') {
-          cacheFallbackPaymentRequired(conversationId, amt);
+        } else {
+          // Cache what we have — sellerEvmAddr will be resolved from peer cache
+          // in the approve-payment handler if needed
+          const peerId = preferredPeerByConversationId.get(conversationId) ?? '';
+          cachedPaymentRequired.set(conversationId, {
+            ...(payBody ?? {}),
+            peerId,
+            suggestedAmount: amt,
+          });
         }
         sendToRenderer('chat:ai-stream-error', { conversationId, error: `payment_required:${amt}` });
       } else {

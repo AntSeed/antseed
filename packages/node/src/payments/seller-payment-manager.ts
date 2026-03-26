@@ -208,11 +208,25 @@ export class SellerPaymentManager {
         debugLog(`[SellerPayment] AuthAck sent for channel ${channelId.slice(0, 18)}...`);
         return 'reserved';
       } else {
-        // ── Subsequent SpendingAuth: validate monotonic increase ──
-        if (cumulativeAmount <= existingCumulative) {
+        // ── Subsequent SpendingAuth: validate monotonic (equal = idempotent retransmit) ──
+        if (cumulativeAmount < existingCumulative) {
           debugWarn(
             `[SellerPayment] Rejecting non-monotonic SpendingAuth: ` +
             `new=${cumulativeAmount} existing=${existingCumulative} channel=${channelId.slice(0, 18)}...`,
+          );
+          return 'rejected';
+        }
+        if (cumulativeAmount === existingCumulative) {
+          debugLog(`[SellerPayment] Idempotent SpendingAuth (same cumulative=${cumulativeAmount}) — accepted`);
+          return 'accepted';
+        }
+
+        // Reject if buyer's cumulative doesn't cover what the seller has already spent
+        const spent = this._spent.get(channelId) ?? 0n;
+        if (cumulativeAmount < spent) {
+          debugWarn(
+            `[SellerPayment] Rejecting underfunded SpendingAuth: ` +
+            `cumulative=${cumulativeAmount} < spent=${spent} channel=${channelId.slice(0, 18)}...`,
           );
           return 'rejected';
         }

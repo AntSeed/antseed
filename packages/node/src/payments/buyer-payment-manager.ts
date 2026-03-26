@@ -246,10 +246,10 @@ export class BuyerPaymentManager {
     };
     this._metadata.set(sellerPeerId, newMeta);
 
-    // Calculate amount increment, capping at maxPerRequestUsdc
+    // Calculate amount increment — always at least 1 base unit to ensure monotonic increase
     let increment = addedCostUsdc + estimatedNextCostUsdc;
+    if (increment === 0n) increment = 1n;
     if (increment > this._config.maxPerRequestUsdc) {
-      debugLog(`[BuyerPayment] Capping per-request increment from ${increment} to ${this._config.maxPerRequestUsdc}`);
       increment = this._config.maxPerRequestUsdc;
     }
 

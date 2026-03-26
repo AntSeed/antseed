@@ -830,10 +830,7 @@ const chatEngine = registerPiChatHandlers({
 // updates are handled automatically by BuyerPaymentManager.signPerRequestAuth()
 // without additional user interaction.
 ipcMain.handle('chat:approve-payment', async (_event, conversationId: string) => {
-  const paymentInfo = chatEngine.getCachedPaymentRequired(conversationId);
-  if (!paymentInfo) {
-    return { ok: false, error: 'No pending payment for this conversation' };
-  }
+  const paymentInfo = chatEngine.getCachedPaymentRequired(conversationId) ?? {};
 
   try {
     await ensureSecureIdentity();
@@ -869,10 +866,10 @@ ipcMain.handle('chat:approve-payment', async (_event, conversationId: string) =>
       return { ok: false, error: 'No seller EVM address available for this payment' };
     }
 
-    // Generate channel parameters
-    const channelIdBytes = randomBytes(32);
-    const channelId = '0x' + channelIdBytes.toString('hex');
+    // Generate random salt and compute deterministic channelId
     const salt = '0x' + randomBytes(32).toString('hex');
+    const { computeChannelId } = await import('@antseed/node');
+    const channelId = computeChannelId(buyerEvmAddr, sellerEvmAddr, salt);
     const deadline = Math.floor(Date.now() / 1000) + DEFAULT_SPENDING_AUTH_DURATION_SECONDS;
 
     // For initial reserve, sign MetadataAuth with cumAmount=0.
