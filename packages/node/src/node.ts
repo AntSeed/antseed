@@ -158,8 +158,6 @@ export interface NodePaymentsConfig {
   depositsAddress?: string;
   /** Deployed AntseedSessions contract address */
   sessionsAddress?: string;
-  /** Tempo StreamChannel contract address (needed for Tempo voucher EIP-712 domain) */
-  streamChannelAddress?: string;
   /** USDC token contract address */
   usdcAddress?: string;
   /** ERC-8004 IdentityRegistry contract address */
@@ -902,7 +900,6 @@ export class AntseedNode extends EventEmitter {
             sellerEvmAddr: buffered.sellerEvmAddr,
             minBudgetPerRequest: buffered.minBudgetPerRequest,
             suggestedAmount: buffered.suggestedAmount,
-            streamChannelAddress: buffered.streamChannelAddress,
           });
           return {
             ...response,
@@ -948,7 +945,6 @@ export class AntseedNode extends EventEmitter {
           minBudgetPerRequest: String(directPaymentBody.minBudgetPerRequest ?? '10000'),
           suggestedAmount: String(directPaymentBody.suggestedAmount ?? '100000'),
           requestId: req.requestId,
-          streamChannelAddress: String(directPaymentBody.streamChannelAddress ?? ''),
           ...(directPaymentBody.inputUsdPerMillion != null ? { inputUsdPerMillion: Number(directPaymentBody.inputUsdPerMillion) } : {}),
           ...(directPaymentBody.outputUsdPerMillion != null ? { outputUsdPerMillion: Number(directPaymentBody.outputUsdPerMillion) } : {}),
         };
@@ -1253,7 +1249,6 @@ export class AntseedNode extends EventEmitter {
           rpcUrl: payments.rpcUrl,
           depositsContractAddress: payments.depositsAddress,
           sessionsContractAddress: payments.sessionsAddress,
-          streamChannelAddress: payments.streamChannelAddress ?? '',
           usdcAddress: payments.usdcAddress,
           identityRegistryAddress: payments.identityRegistryAddress ?? '',
           chainId: payments.chainId ?? 8453,
@@ -1321,7 +1316,6 @@ export class AntseedNode extends EventEmitter {
             sellerEvmAddr: requirements.sellerEvmAddr,
             minBudgetPerRequest: requirements.minBudgetPerRequest,
             suggestedAmount: requirements.suggestedAmount,
-            streamChannelAddress: requirements.streamChannelAddress,
           });
           mux.sendProxyResponse({
             requestId: request.requestId,
@@ -1803,7 +1797,6 @@ export class AntseedNode extends EventEmitter {
       const sellerConfig: SellerPaymentConfig = {
         rpcUrl: payments.rpcUrl,
         sessionsContractAddress: payments.sessionsAddress,
-        streamChannelAddress: payments.streamChannelAddress ?? '',
         chainId: payments.chainId ?? 8453,
         dataDir: paymentsDir,
         ...(payments.minBudgetPerRequest ? { minBudgetPerRequest: payments.minBudgetPerRequest } : {}),
@@ -2180,7 +2173,6 @@ export class AntseedNode extends EventEmitter {
       cumulativeAmount: string;
       metadataHash: string;
       metadata: string;
-      tempoVoucherSig: string;
       metadataAuthSig: string;
       buyerEvmAddr: string;
       sellerEvmAddr?: string;
@@ -2218,7 +2210,7 @@ export class AntseedNode extends EventEmitter {
         settledAt: null,
         settledAmount: null,
         status: 'active',
-        latestTempoVoucherSig: null,
+        latestBuyerSig: null,
         latestMetadataAuthSig: null,
         latestMetadata: null,
         createdAt: Date.now(),

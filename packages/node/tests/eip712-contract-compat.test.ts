@@ -2,15 +2,11 @@ import { describe, it, expect } from 'vitest';
 import { keccak256, toUtf8Bytes, verifyTypedData } from 'ethers';
 import {
   METADATA_AUTH_TYPES,
-  TEMPO_VOUCHER_TYPES,
   makeSessionsDomain,
-  makeTempoChannelDomain,
   signMetadataAuth,
-  signTempoVoucher,
   computeMetadataHash,
   ZERO_METADATA_HASH,
   type MetadataAuthMessage,
-  type TempoVoucherMessage,
 } from '../src/payments/evm/signatures.js';
 import { identityToEvmWallet } from '../src/payments/evm/keypair.js';
 import { loadOrCreateIdentity } from '../src/p2p/identity.js';
@@ -34,18 +30,6 @@ describe('EIP-712 Contract Compatibility', () => {
     expect(tsHash).toBe(expectedHash);
   });
 
-  it('TEMPO_VOUCHER_TYPES typehash matches Tempo contract format', () => {
-    const expectedTypeString =
-      'Voucher(bytes32 channelId,uint128 cumulativeAmount)';
-    const expectedHash = keccak256(toUtf8Bytes(expectedTypeString));
-
-    const fields = TEMPO_VOUCHER_TYPES.Voucher;
-    const tsTypeString = `Voucher(${fields.map((f) => `${f.type} ${f.name}`).join(',')})`;
-    const tsHash = keccak256(toUtf8Bytes(tsTypeString));
-
-    expect(tsHash).toBe(expectedHash);
-  });
-
   it('TS MetadataAuth type string has exactly the right field order and types', () => {
     const fields = METADATA_AUTH_TYPES.MetadataAuth;
     expect(fields).toHaveLength(3);
@@ -54,27 +38,12 @@ describe('EIP-712 Contract Compatibility', () => {
     expect(fields[2]).toEqual({ name: 'metadataHash', type: 'bytes32' });
   });
 
-  it('TS Tempo Voucher type string has exactly the right field order and types', () => {
-    const fields = TEMPO_VOUCHER_TYPES.Voucher;
-    expect(fields).toHaveLength(2);
-    expect(fields[0]).toEqual({ name: 'channelId', type: 'bytes32' });
-    expect(fields[1]).toEqual({ name: 'cumulativeAmount', type: 'uint128' });
-  });
-
-  it('AntSeed domain version is "5" matching contract constructor', () => {
+  it('AntSeed domain version is "6" matching contract constructor', () => {
     const domain = makeSessionsDomain(31337, '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
     expect(domain.name).toBe('AntseedSessions');
-    expect(domain.version).toBe('5');
+    expect(domain.version).toBe('6');
     expect(domain.chainId).toBe(31337);
     expect(domain.verifyingContract).toBe('0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
-  });
-
-  it('Tempo domain has correct name and version', () => {
-    const domain = makeTempoChannelDomain(31337, '0x0165878A594ca255338adfa4d48449f69242Eb8F');
-    expect(domain.name).toBe('Tempo Stream Channel');
-    expect(domain.version).toBe('1');
-    expect(domain.chainId).toBe(31337);
-    expect(domain.verifyingContract).toBe('0x0165878A594ca255338adfa4d48449f69242Eb8F');
   });
 
   it('domain separator is deterministic for same inputs', () => {
@@ -125,26 +94,6 @@ describe('EIP-712 Contract Compatibility', () => {
 
       const sig = await signMetadataAuth(wallet, domain, msg);
       const recovered = verifyTypedData(domain, METADATA_AUTH_TYPES, msg, sig);
-      expect(recovered.toLowerCase()).toBe(wallet.address.toLowerCase());
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  it('Tempo voucher signs and recovers correctly', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'eip712-test-'));
-    try {
-      const identity = await loadOrCreateIdentity(dir);
-      const wallet = identityToEvmWallet(identity);
-      const domain = makeTempoChannelDomain(31337, '0x0165878A594ca255338adfa4d48449f69242Eb8F');
-
-      const msg: TempoVoucherMessage = {
-        channelId: '0x' + '01'.repeat(32),
-        cumulativeAmount: 500000n,
-      };
-
-      const sig = await signTempoVoucher(wallet, domain, msg);
-      const recovered = verifyTypedData(domain, TEMPO_VOUCHER_TYPES, msg, sig);
       expect(recovered.toLowerCase()).toBe(wallet.address.toLowerCase());
     } finally {
       await rm(dir, { recursive: true, force: true });

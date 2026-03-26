@@ -300,7 +300,6 @@ function makePaymentsConfig(rpcUrl: string, overrides?: Partial<NodePaymentsConf
     stakingAddress: '0x' + 'bb'.repeat(20),
     usdcAddress: '0x' + 'ee'.repeat(20),
     identityRegistryAddress: '0x' + 'aa'.repeat(20),
-    streamChannelAddress: '0x' + 'ff'.repeat(20),
     chainId: 31337,
     minBudgetPerRequest: '10000', // $0.01
     maxPerRequestUsdc: '100000', // $0.10
@@ -482,7 +481,7 @@ describe('Streaming payment flow E2E', () => {
     const salt = '0x' + Array.from(new Uint8Array(32), () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0')).join('');
     const deadline = Math.floor(Date.now() / 1000) + 90000;
 
-    // For initial reserve, sign MetadataAuth with cumAmount=0. No Tempo voucher needed.
+    // For initial reserve, sign MetadataAuth with cumAmount=0.
     const metadataAuthSig = await signMetadataAuth(buyerSigner, sessionsDomain, {
       channelId,
       cumulativeAmount: 0n,
@@ -495,7 +494,6 @@ describe('Streaming payment flow E2E', () => {
       cumulativeAmount: '0',
       metadataHash: ZERO_METADATA_HASH,
       metadata: encodeMetadata(ZERO_METADATA),
-      tempoVoucherSig: '',
       metadataAuthSig,
       buyerEvmAddr,
       sellerEvmAddr,

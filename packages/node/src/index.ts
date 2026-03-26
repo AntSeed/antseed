@@ -43,18 +43,16 @@ export { identityToEvmWallet, identityToEvmAddress } from './payments/evm/keypai
 export {
   signMetadataAuth,
   signSpendingAuth,
-  signTempoVoucher,
   makeSessionsDomain,
-  makeTempoChannelDomain,
   METADATA_AUTH_TYPES,
   SPENDING_AUTH_TYPES,
-  TEMPO_VOUCHER_TYPES,
   computeMetadataHash,
   encodeMetadata,
+  computeChannelId,
   ZERO_METADATA,
   ZERO_METADATA_HASH,
 } from './payments/evm/signatures.js';
-export type { MetadataAuthMessage, SpendingAuthMessage, TempoVoucherMessage, SpendingAuthMetadata } from './payments/evm/signatures.js';
+export type { MetadataAuthMessage, SpendingAuthMessage, SpendingAuthMetadata } from './payments/evm/signatures.js';
 export { NatTraversal, type NatMapping, type NatTraversalResult } from './p2p/nat-traversal.js';
 export { BuyerPaymentManager } from './payments/buyer-payment-manager.js';
 export type { BuyerPaymentConfig } from './payments/buyer-payment-manager.js';

@@ -11,16 +11,14 @@ import { DepositsClient } from './evm/deposits-client.js';
 import { identityToEvmWallet, identityToEvmAddress } from './evm/keypair.js';
 import {
   signMetadataAuth,
-  signTempoVoucher,
   makeSessionsDomain,
-  makeTempoChannelDomain,
   computeMetadataHash,
   encodeMetadata,
   ZERO_METADATA,
   ZERO_METADATA_HASH,
   computeChannelId,
 } from './evm/signatures.js';
-import type { MetadataAuthMessage, TempoVoucherMessage, SpendingAuthMetadata } from './evm/signatures.js';
+import type { MetadataAuthMessage, SpendingAuthMetadata } from './evm/signatures.js';
 import { debugLog, debugWarn } from '../utils/debug.js';
 import { SessionStore, type StoredSession } from './session-store.js';
 
@@ -33,7 +31,6 @@ export interface BuyerPaymentConfig {
   rpcUrl: string;
   depositsContractAddress: string;
   sessionsContractAddress: string;
-  streamChannelAddress: string;
   usdcAddress: string;
   identityRegistryAddress: string;
   chainId: number;
@@ -136,23 +133,16 @@ export class BuyerPaymentManager {
     this._confirmedPeers.delete(sellerPeerId);
 
     // Generate random salt and compute deterministic channelId
-    // Must match: TempoStreamChannel.computeChannelId(sessions, sessions, usdc, salt, buyer)
+    // Must match: AntseedSessions.computeChannelId(buyer, seller, salt)
     const salt = '0x' + randomBytes(32).toString('hex');
     const buyerEvmAddr = identityToEvmAddress(this._identity);
-    const channelId = computeChannelId(
-      this._config.sessionsContractAddress,
-      this._config.usdcAddress,
-      salt,
-      buyerEvmAddr,
-      this._config.streamChannelAddress,
-      this._config.chainId,
-    );
+    const channelId = computeChannelId(buyerEvmAddr, sellerEvmAddr, salt);
     const deadline = Math.floor(Date.now() / 1000) + this._config.defaultAuthDurationSecs;
 
     debugLog(`[BuyerPayment] authorizeSpending: channel=${channelId.slice(0, 18)}... seller=${sellerPeerId.slice(0, 12)}... amount=${minBudgetPerRequest}`);
 
     // Sign MetadataAuth with cumulative=0 for on-chain reserve() verification.
-    // For initial reserve, only MetadataAuth is needed (no Tempo voucher).
+    // For initial reserve, only MetadataAuth is needed.
     const sessionsDomain = makeSessionsDomain(this._config.chainId, this._config.sessionsContractAddress);
     const zeroMetadata = { ...ZERO_METADATA };
     const zeroEncodedMetadata = encodeMetadata(zeroMetadata);
@@ -186,7 +176,7 @@ export class BuyerPaymentManager {
       settledAt: null,
       settledAmount: null,
       status: 'active',
-      latestTempoVoucherSig: null,
+      latestBuyerSig: null,
       latestMetadataAuthSig: null,
       latestMetadata: null,
       createdAt: now,
@@ -200,7 +190,6 @@ export class BuyerPaymentManager {
       cumulativeAmount: '0',
       metadataHash: ZERO_METADATA_HASH,
       metadata: zeroEncodedMetadata,
-      tempoVoucherSig: '', // No Tempo voucher needed for initial reserve
       metadataAuthSig,
       buyerEvmAddr,
       reserveSalt: salt,
@@ -277,8 +266,7 @@ export class BuyerPaymentManager {
     const metadataHashHex = computeMetadataHash(newMeta);
     const encodedMetadata = encodeMetadata(newMeta);
 
-    // Sign TWO EIP-712 signatures:
-    // 1. AntSeed MetadataAuth (reputation attestation)
+    // Sign EIP-712 MetadataAuth (covers amount + metadata for both payment and reputation)
     const sessionsDomain = makeSessionsDomain(this._config.chainId, this._config.sessionsContractAddress);
     const metadataMsg: MetadataAuthMessage = {
       channelId: session.sessionId,
@@ -286,14 +274,6 @@ export class BuyerPaymentManager {
       metadataHash: metadataHashHex,
     };
     const metadataAuthSig = await signMetadataAuth(this._signer, sessionsDomain, metadataMsg);
-
-    // 2. Tempo Voucher (payment authorization)
-    const tempoDomain = makeTempoChannelDomain(this._config.chainId, this._config.streamChannelAddress);
-    const voucherMsg: TempoVoucherMessage = {
-      channelId: session.sessionId,
-      cumulativeAmount: newAmount,
-    };
-    const tempoVoucherSig = await signTempoVoucher(this._signer, tempoDomain, voucherMsg);
 
     // Persist updated cumulative values to SessionStore
     this._sessionStore.upsertSession({
@@ -310,7 +290,6 @@ export class BuyerPaymentManager {
       cumulativeAmount: newAmount.toString(),
       metadataHash: metadataHashHex,
       metadata: encodedMetadata,
-      tempoVoucherSig,
       metadataAuthSig,
       buyerEvmAddr: session.buyerEvmAddr,
     };
@@ -358,12 +337,11 @@ export class BuyerPaymentManager {
     // Update cumulative amount
     this._cumulativeAmount.set(sellerPeerId, requiredCumulativeAmount);
 
-    // Sign TWO sigs with the required cumulative amount and current metadata
+    // Sign MetadataAuth with the required cumulative amount and current metadata
     const currentMeta = this._metadata.get(sellerPeerId) ?? { ...ZERO_METADATA };
     const metadataHashHex = computeMetadataHash(currentMeta);
     const encodedMetadata = encodeMetadata(currentMeta);
 
-    // 1. MetadataAuth
     const sessionsDomain = makeSessionsDomain(this._config.chainId, this._config.sessionsContractAddress);
     const metadataMsg: MetadataAuthMessage = {
       channelId: session.sessionId,
@@ -371,14 +349,6 @@ export class BuyerPaymentManager {
       metadataHash: metadataHashHex,
     };
     const metadataAuthSig = await signMetadataAuth(this._signer, sessionsDomain, metadataMsg);
-
-    // 2. Tempo Voucher
-    const tempoDomain = makeTempoChannelDomain(this._config.chainId, this._config.streamChannelAddress);
-    const voucherMsg: TempoVoucherMessage = {
-      channelId: session.sessionId,
-      cumulativeAmount: requiredCumulativeAmount,
-    };
-    const tempoVoucherSig = await signTempoVoucher(this._signer, tempoDomain, voucherMsg);
 
     // Persist updated values
     this._sessionStore.upsertSession({
@@ -394,7 +364,6 @@ export class BuyerPaymentManager {
         cumulativeAmount: requiredCumulativeAmount.toString(),
         metadataHash: metadataHashHex,
         metadata: encodedMetadata,
-        tempoVoucherSig,
         metadataAuthSig,
         buyerEvmAddr: session.buyerEvmAddr,
       });

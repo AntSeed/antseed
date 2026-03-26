@@ -41,20 +41,18 @@ export { identityToEvmWallet, identityToEvmAddress } from './evm/keypair.js';
 export {
   signMetadataAuth,
   signSpendingAuth,
-  signTempoVoucher,
   makeSessionsDomain,
-  makeTempoChannelDomain,
   METADATA_AUTH_TYPES,
   SPENDING_AUTH_TYPES,
-  TEMPO_VOUCHER_TYPES,
   signMessageEd25519,
   verifyMessageEd25519,
   computeMetadataHash,
   encodeMetadata,
+  computeChannelId,
   ZERO_METADATA,
   ZERO_METADATA_HASH,
 } from './evm/signatures.js';
-export type { MetadataAuthMessage, SpendingAuthMessage, TempoVoucherMessage, SpendingAuthMetadata } from './evm/signatures.js';
+export type { MetadataAuthMessage, SpendingAuthMessage, SpendingAuthMetadata } from './evm/signatures.js';
 
 // ANTS token
 export { ANTSTokenClient } from './evm/ants-token-client.js';

@@ -54,14 +54,12 @@ function createMockPaymentMux(): PaymentMux & {
 
 const CHAIN_ID = 31337;
 const SESSIONS_CONTRACT = '0x' + 'cc'.repeat(20);
-const STREAM_CHANNEL_ADDR = '0x' + 'bb'.repeat(20);
 
 function makeBuyerConfig(dataDir: string): BuyerPaymentConfig {
   return {
     rpcUrl: 'http://127.0.0.1:8545',
     depositsContractAddress: '0x' + 'dd'.repeat(20),
     sessionsContractAddress: SESSIONS_CONTRACT,
-    streamChannelAddress: STREAM_CHANNEL_ADDR,
     usdcAddress: '0x' + 'ee'.repeat(20),
     identityRegistryAddress: '0x' + 'ff'.repeat(20),
     chainId: CHAIN_ID,
@@ -76,7 +74,6 @@ function makeSellerConfig(dataDir: string): SellerPaymentConfig {
   return {
     rpcUrl: 'http://127.0.0.1:8545',
     sessionsContractAddress: SESSIONS_CONTRACT,
-    streamChannelAddress: STREAM_CHANNEL_ADDR,
     chainId: CHAIN_ID,
     dataDir,
     minBudgetPerRequest: '50000', // $0.05
@@ -115,7 +112,7 @@ describe('Full Payment Flow Integration', () => {
     seller = new SellerPaymentManager(sellerIdentity, makeSellerConfig(sellerDir), sellerStore);
     vi.spyOn(seller.sessionsClient, 'reserve').mockResolvedValue('0xreservehash');
     vi.spyOn(seller.sessionsClient, 'close').mockResolvedValue('0xclosehash');
-    vi.spyOn(seller.sessionsClient, 'requestClose').mockResolvedValue('0xrequestclosehash');
+    vi.spyOn(seller.sessionsClient, 'requestTimeout').mockResolvedValue('0xrequestclosehash');
     vi.spyOn(seller.sessionsClient, 'withdraw').mockResolvedValue('0xwithdrawhash');
 
     buyerMux = createMockPaymentMux();
@@ -243,16 +240,13 @@ describe('Full Payment Flow Integration', () => {
 
     expect(seller.sessionsClient.close).toHaveBeenCalledOnce();
     const closeCall = (seller.sessionsClient.close as ReturnType<typeof vi.fn>).mock.calls[0]!;
-    // close(signer, channelId, cumulativeAmount, metadata, tempoVoucherSig, metadataAuthSig)
+    // close(signer, channelId, cumulativeAmount, metadata, buyerSig)
     const settledAmount = closeCall[2] as bigint;
     expect(settledAmount).toBe(BigInt(auth3.cumulativeAmount));
-    // Verify both signatures are non-empty
-    const tempoVoucherSig = closeCall[4] as string;
-    expect(tempoVoucherSig).toBeTruthy();
-    expect(tempoVoucherSig.length).toBeGreaterThan(2);
-    const metadataAuthSig = closeCall[5] as string;
-    expect(metadataAuthSig).toBeTruthy();
-    expect(metadataAuthSig.length).toBeGreaterThan(2);
+    // Verify buyer signature is non-empty
+    const buyerSig = closeCall[4] as string;
+    expect(buyerSig).toBeTruthy();
+    expect(buyerSig.length).toBeGreaterThan(2);
   });
 
   it('cumulative amounts are strictly monotonically increasing', async () => {
@@ -350,11 +344,11 @@ describe('Full Payment Flow Integration', () => {
 
     const closeCall = (seller.sessionsClient.close as ReturnType<typeof vi.fn>).mock.calls[0]!;
     const settledAmount = closeCall[2] as bigint;
-    const tempoVoucherSig = closeCall[4] as string;
+    const buyerSig = closeCall[4] as string;
 
     // Should use auth2's cumulative amount (the latest), not auth1's or the initial
     expect(settledAmount).toBe(BigInt(auth2.cumulativeAmount));
-    expect(tempoVoucherSig).toBe(auth2.tempoVoucherSig);
+    expect(buyerSig).toBe(auth2.metadataAuthSig);
   });
 
   it('reserve sends reserveAmount from buyer config, not cumulativeAmount', async () => {
@@ -415,7 +409,7 @@ describe('Full Payment Flow Integration', () => {
 
     // With initial cumulative = 0, neither settle nor settleTimeout is called
     expect(seller.sessionsClient.close).not.toHaveBeenCalled();
-    expect(seller.sessionsClient.requestClose).not.toHaveBeenCalled();
+    expect(seller.sessionsClient.requestTimeout).not.toHaveBeenCalled();
   });
 
   it('buyer handleAuthAck ignores mismatched channelId', async () => {
@@ -453,7 +447,6 @@ describe('Full Payment Flow Integration', () => {
       cumulativeAmount: '50000',
       metadataHash: ZERO_METADATA_HASH,
       metadata: encodeMetadata(ZERO_METADATA),
-      tempoVoucherSig: '0x' + 'aa'.repeat(65), // garbage signature
       metadataAuthSig: '0x' + 'bb'.repeat(65), // garbage signature
       buyerEvmAddr,
       reserveMaxAmount: '10000000',
@@ -522,7 +515,7 @@ describe('Settlement edge cases', () => {
     seller = new SellerPaymentManager(sellerIdentity, makeSellerConfig(sellerDir), sellerStore);
     vi.spyOn(seller.sessionsClient, 'reserve').mockResolvedValue('0xreservehash');
     vi.spyOn(seller.sessionsClient, 'close').mockResolvedValue('0xclosehash');
-    vi.spyOn(seller.sessionsClient, 'requestClose').mockResolvedValue('0xrequestclosehash');
+    vi.spyOn(seller.sessionsClient, 'requestTimeout').mockResolvedValue('0xrequestclosehash');
     vi.spyOn(seller.sessionsClient, 'withdraw').mockResolvedValue('0xwithdrawhash');
 
     buyerMux = createMockPaymentMux();
@@ -565,7 +558,7 @@ describe('Settlement edge cases', () => {
   it('settleSession is no-op for unknown buyer', async () => {
     await seller.settleSession('unknown-peer');
     expect(seller.sessionsClient.close).not.toHaveBeenCalled();
-    expect(seller.sessionsClient.requestClose).not.toHaveBeenCalled();
+    expect(seller.sessionsClient.requestTimeout).not.toHaveBeenCalled();
   });
 
   it('recordSpend is no-op for unknown channelId', () => {

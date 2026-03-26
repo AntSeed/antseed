@@ -124,8 +124,6 @@ export interface PaymentsCLIConfig {
     depositsContractAddress: string;
     /** Deployed AntseedSessions contract address */
     sessionsContractAddress: string;
-    /** Deployed Tempo StreamChannel contract address */
-    streamChannelAddress?: string;
     /** Deployed AntseedStaking contract address */
     stakingContractAddress?: string;
     /** USDC token contract address */

@@ -3,17 +3,14 @@ import { isAddress, verifyTypedData } from 'ethers';
 import { identityToEvmWallet, identityToEvmAddress } from '../src/payments/evm/keypair.js';
 import {
   signMetadataAuth,
-  signTempoVoucher,
   makeSessionsDomain,
-  makeTempoChannelDomain,
   METADATA_AUTH_TYPES,
-  TEMPO_VOUCHER_TYPES,
   signMessageEd25519,
   verifyMessageEd25519,
   computeMetadataHash,
   ZERO_METADATA_HASH,
 } from '../src/payments/evm/signatures.js';
-import type { MetadataAuthMessage, TempoVoucherMessage } from '../src/payments/evm/signatures.js';
+import type { MetadataAuthMessage } from '../src/payments/evm/signatures.js';
 import { loadOrCreateIdentity } from '../src/p2p/identity.js';
 import { tmpdir } from 'node:os';
 import { mkdtemp } from 'node:fs/promises';
@@ -61,10 +58,9 @@ describe('EVM keypair from identity', () => {
   });
 });
 
-describe('EIP-712 MetadataAuth + Tempo Voucher signature helpers', () => {
+describe('EIP-712 MetadataAuth signature helpers', () => {
   const CHAIN_ID = 31337; // Hardhat local
   const CONTRACT = '0x5FbDB2315678afecb367f032d93F642f64180aa3';
-  const STREAM_CHANNEL = '0x0165878A594ca255338adfa4d48449f69242Eb8F';
 
   it('signMetadataAuth produces a recoverable EIP-712 signature', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'lch-test-'));
@@ -87,39 +83,12 @@ describe('EIP-712 MetadataAuth + Tempo Voucher signature helpers', () => {
     expect(recovered.toLowerCase()).toBe(wallet.address.toLowerCase());
   });
 
-  it('signTempoVoucher produces a recoverable EIP-712 signature', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'lch-test-'));
-    const identity = await loadOrCreateIdentity(dir);
-    const wallet = identityToEvmWallet(identity);
-    const domain = makeTempoChannelDomain(CHAIN_ID, STREAM_CHANNEL);
-
-    const msg: TempoVoucherMessage = {
-      channelId: '0x' + '01'.repeat(32),
-      cumulativeAmount: 1_000_000n,
-    };
-
-    const sig = await signTempoVoucher(wallet, domain, msg);
-    expect(typeof sig).toBe('string');
-    expect(sig.length).toBeGreaterThan(0);
-
-    const recovered = verifyTypedData(domain, TEMPO_VOUCHER_TYPES, msg, sig);
-    expect(recovered.toLowerCase()).toBe(wallet.address.toLowerCase());
-  });
-
   it('makeSessionsDomain returns correct domain fields', () => {
     const domain = makeSessionsDomain(CHAIN_ID, CONTRACT);
     expect(domain.name).toBe('AntseedSessions');
-    expect(domain.version).toBe('5');
+    expect(domain.version).toBe('6');
     expect(domain.chainId).toBe(CHAIN_ID);
     expect(domain.verifyingContract).toBe(CONTRACT);
-  });
-
-  it('makeTempoChannelDomain returns correct domain fields', () => {
-    const domain = makeTempoChannelDomain(CHAIN_ID, STREAM_CHANNEL);
-    expect(domain.name).toBe('Tempo Stream Channel');
-    expect(domain.version).toBe('1');
-    expect(domain.chainId).toBe(CHAIN_ID);
-    expect(domain.verifyingContract).toBe(STREAM_CHANNEL);
   });
 
   it('different messages produce different MetadataAuth signatures', async () => {

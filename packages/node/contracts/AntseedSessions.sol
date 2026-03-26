@@ -9,7 +9,6 @@ import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
-import {ITempoStreamChannel} from "./vendor/ITempoStreamChannel.sol";
 import {IAntseedDeposits} from "./interfaces/IAntseedDeposits.sol";
 import {IAntseedStats} from "./interfaces/IAntseedStats.sol";
 import {IAntseedStaking} from "./interfaces/IAntseedStaking.sol";
@@ -17,61 +16,55 @@ import {IAntseedEmissions} from "./interfaces/IAntseedEmissions.sol";
 
 /**
  * @title AntseedSessions
- * @notice Session lifecycle wrapping Tempo's StreamChannel for payments.
- *         All USDC flows through Tempo's audited escrow contract.
- *         This contract adds AntSeed metadata signing + stats on top.
+ * @notice Session lifecycle with built-in cumulative payment channels.
+ *         USDC is held in this contract during active sessions.
  *
- *         Architecture:
- *         - This contract is the **payer** on all Tempo channels (deposits USDC into Tempo).
- *         - This contract is also the **payee** on all Tempo channels (receives settled USDC).
- *         - The buyer's EVM address is set as the `authorizedSigner` (signs Tempo vouchers off-chain).
- *         - On settle/close, USDC arrives here and is forwarded to seller (via Deposits earnings)
- *           and refunded to buyer (via Deposits creditBuyerRefund).
+ *         The buyer signs a single EIP-712 MetadataAuth on every request:
+ *         - cumulativeAmount: total USDC authorized so far
+ *         - metadataHash: hash of (inputTokens, outputTokens, latencyMs, requestCount)
  *
  *         Money flow:
- *           reserve:  Deposits → Sessions → Tempo channel (escrow)
- *           settle:   Tempo channel → Sessions → Deposits (seller earnings)
- *           close:    Tempo channel → Sessions → Deposits (seller earnings + buyer refund)
- *           withdraw: Tempo channel → Sessions → Deposits (buyer refund)
- *
- *         The buyer also signs an AntSeed MetadataAuth (separate EIP-712 domain) that
- *         attests to token counts for stats tracking.
+ *           reserve:  Deposits → Sessions (escrow)
+ *           settle:   Sessions → Deposits (seller earnings)
+ *           close:    Sessions → Deposits (seller earnings + buyer refund)
+ *           timeout:  Sessions → Deposits (buyer refund)
  *
  *         Contract is swappable: deploy a new version and re-point Deposits + Stats.
  */
 contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
-    // ─── EIP-712 (AntSeed metadata domain) ────────────────────────────
+    // ─── EIP-712 ─────────────────────────────────────────────────────
     bytes32 public constant METADATA_AUTH_TYPEHASH = keccak256(
         "MetadataAuth(bytes32 channelId,uint256 cumulativeAmount,bytes32 metadataHash)"
     );
 
-    // ─── Constant Keys for setConstant ────────────────────────────────
+    // ─── Constant Keys for setConstant ──────────────────────────────
     bytes32 private constant KEY_FIRST_SIGN_CAP = keccak256("FIRST_SIGN_CAP");
     bytes32 private constant KEY_PLATFORM_FEE_BPS = keccak256("PLATFORM_FEE_BPS");
 
-    // ─── Configurable Constants ───────────────────────────────────────
+    // ─── Configurable Constants ─────────────────────────────────────
     uint256 public FIRST_SIGN_CAP = 1_000_000;
     uint256 public PLATFORM_FEE_BPS = 500;
     uint256 public MAX_PLATFORM_FEE_BPS = 1000;
+    uint256 public TIMEOUT_GRACE_PERIOD = 15 minutes;
 
-    // ─── Enums & Structs ──────────────────────────────────────────────
+    // ─── Enums & Structs ────────────────────────────────────────────
     enum SessionStatus { None, Active, Settled, TimedOut }
 
     struct Session {
         address buyer;
         address seller;
-        uint128 deposit;              // total USDC locked from Deposits into Tempo
+        uint128 deposit;              // total USDC escrowed in this contract
         uint128 settled;              // last settled cumulative amount
         bytes32 metadataHash;         // latest metadata hash (for auditability)
         uint256 deadline;
         uint256 settledAt;
+        uint256 closeRequestedAt;     // timestamp when timeout was requested (0 = not requested)
         SessionStatus status;
     }
 
-    // ─── State Variables ──────────────────────────────────────────────
-    ITempoStreamChannel public streamChannel;
+    // ─── State Variables ────────────────────────────────────────────
     IAntseedDeposits public depositsContract;
     IAntseedStats public statsContract;
     IAntseedStaking public stakingContract;
@@ -81,15 +74,15 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
 
     mapping(bytes32 => Session) public sessions;
 
-    // ─── Events ───────────────────────────────────────────────────────
+    // ─── Events ─────────────────────────────────────────────────────
     event Reserved(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint128 maxAmount);
     event SessionSettled(bytes32 indexed channelId, address indexed seller, uint128 cumulativeAmount, uint256 platformFee);
     event SessionClosed(bytes32 indexed channelId, address indexed seller, uint128 finalAmount, uint256 platformFee);
-    event SessionCloseRequested(bytes32 indexed channelId);
-    event SessionWithdrawn(bytes32 indexed channelId, address indexed buyer);
+    event TimeoutRequested(bytes32 indexed channelId);
+    event SessionTimedOut(bytes32 indexed channelId, address indexed buyer);
     event ConstantUpdated(bytes32 indexed key, uint256 value);
 
-    // ─── Custom Errors ────────────────────────────────────────────────
+    // ─── Custom Errors ──────────────────────────────────────────────
     error InvalidAddress();
     error InvalidAmount();
     error InvalidSignature();
@@ -101,32 +94,40 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     error FirstSignCapExceeded();
     error SellerNotStaked();
     error FinalAmountBelowSettled();
+    error TimeoutNotReady();
 
-    // ─── Constructor ──────────────────────────────────────────────────
+    // ─── Constructor ────────────────────────────────────────────────
     constructor(
-        address _streamChannel,
         address _deposits,
         address _stats,
         address _staking,
         address _usdc
     )
-        EIP712("AntseedSessions", "5")
+        EIP712("AntseedSessions", "6")
         Ownable(msg.sender)
     {
-        if (_streamChannel == address(0) || _deposits == address(0) ||
-            _stats == address(0) || _staking == address(0) || _usdc == address(0))
+        if (_deposits == address(0) || _stats == address(0) ||
+            _staking == address(0) || _usdc == address(0))
             revert InvalidAddress();
 
-        streamChannel = ITempoStreamChannel(_streamChannel);
         depositsContract = IAntseedDeposits(_deposits);
         statsContract = IAntseedStats(_stats);
         stakingContract = IAntseedStaking(_staking);
         usdc = IERC20(_usdc);
     }
 
-    // ─── Domain Separator Helper ──────────────────────────────────────
+    // ─── Domain Separator Helper ────────────────────────────────────
     function domainSeparator() external view returns (bytes32) {
         return _domainSeparatorV4();
+    }
+
+    // ─── Channel ID computation ─────────────────────────────────────
+    function computeChannelId(
+        address buyer,
+        address seller,
+        bytes32 salt
+    ) public pure returns (bytes32) {
+        return keccak256(abi.encode(buyer, seller, salt));
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -134,57 +135,39 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     // ═══════════════════════════════════════════════════════════════════
 
     /**
-     * @notice Open a Tempo payment channel for a session.
-     *         Seller calls this. USDC is pulled from Deposits → Sessions → Tempo.
+     * @notice Open a payment session. Seller calls this.
+     *         USDC is pulled from buyer's Deposits balance into this contract.
      *
-     *         On the Tempo channel:
-     *         - payer = this contract (deposits USDC into escrow)
-     *         - payee = this contract (receives USDC on settle/close)
-     *         - authorizedSigner = buyer (signs Tempo vouchers off-chain)
-     *
-     * @param buyer          The buyer's address (authorizedSigner on Tempo channel)
-     * @param salt           Random salt for deterministic channel ID
-     * @param maxAmount      USDC amount to lock (pulled from buyer's Deposits balance)
-     * @param deadline       Session deadline (for timeout protection)
-     * @param buyerMetaSig   Buyer's MetadataAuth signature (cumAmount=0) as reserve proof
+     * @param buyer        The buyer's address (signs MetadataAuth off-chain)
+     * @param salt         Random salt for deterministic channel ID
+     * @param maxAmount    USDC amount to lock
+     * @param deadline     Session deadline (for timeout protection)
+     * @param buyerSig     Buyer's MetadataAuth signature (cumAmount=0) as reserve proof
      */
     function reserve(
         address buyer,
         bytes32 salt,
         uint128 maxAmount,
         uint256 deadline,
-        bytes calldata buyerMetaSig
+        bytes calldata buyerSig
     ) external nonReentrant whenNotPaused {
         if (block.timestamp > deadline) revert SessionExpired();
         if (!stakingContract.isStakedAboveMin(msg.sender)) revert SellerNotStaked();
         if (maxAmount == 0) revert InvalidAmount();
 
-        // Compute the channel ID that Tempo will produce
-        // payer = this, payee = this, token = usdc, authorizedSigner = buyer
-        bytes32 channelId = streamChannel.computeChannelId(
-            address(this),
-            address(this),
-            address(usdc),
-            salt,
-            buyer
-        );
+        bytes32 channelId = computeChannelId(buyer, msg.sender, salt);
 
         if (sessions[channelId].status != SessionStatus.None) revert SessionExists();
         if (maxAmount > FIRST_SIGN_CAP) revert FirstSignCapExceeded();
 
-        // Verify buyer MetadataAuth signature (cumulativeAmount=0, empty metadata = reserve proof)
+        // Verify buyer signature (cumulativeAmount=0, zero metadata = reserve proof)
         bytes32 zeroMetadataHash = keccak256(abi.encode(uint256(0), uint256(0), uint256(0), uint256(0)));
-        _verifyMetadataAuth(channelId, 0, zeroMetadataHash, buyer, buyerMetaSig);
+        _verifyMetadataAuth(channelId, 0, zeroMetadataHash, buyer, buyerSig);
 
-        // Pull USDC from Deposits → this contract
+        // Pull USDC from Deposits → this contract (escrow)
         depositsContract.lockForSession(buyer, maxAmount);
         depositsContract.transferToSessions(buyer, address(this), maxAmount);
 
-        // Approve Tempo and open channel (this contract is both payer and payee)
-        usdc.approve(address(streamChannel), maxAmount);
-        streamChannel.open(address(this), address(usdc), maxAmount, salt, buyer);
-
-        // Store session (seller tracked here, not on Tempo)
         sessions[channelId] = Session({
             buyer: buyer,
             seller: msg.sender,
@@ -193,6 +176,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
             metadataHash: bytes32(0),
             deadline: deadline,
             settledAt: 0,
+            closeRequestedAt: 0,
             status: SessionStatus.Active
         });
 
@@ -204,11 +188,6 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     //                        CORE — TOP UP
     // ═══════════════════════════════════════════════════════════════════
 
-    /**
-     * @notice Add more USDC to an existing Tempo channel.
-     * @param channelId         The Tempo channel ID (also our session key)
-     * @param additionalAmount  Additional USDC to lock
-     */
     function topUp(bytes32 channelId, uint128 additionalAmount) external nonReentrant whenNotPaused {
         Session storage session = sessions[channelId];
         if (session.status != SessionStatus.Active) revert SessionNotActive();
@@ -219,9 +198,6 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         depositsContract.lockForSession(session.buyer, additionalAmount);
         depositsContract.transferToSessions(session.buyer, address(this), additionalAmount);
 
-        usdc.approve(address(streamChannel), additionalAmount);
-        streamChannel.topUp(channelId, additionalAmount);
-
         session.deposit += additionalAmount;
         emit Reserved(channelId, session.buyer, session.seller, session.deposit);
     }
@@ -231,137 +207,81 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     // ═══════════════════════════════════════════════════════════════════
 
     /**
-     * @notice Settle partial payment via Tempo + update AntSeed reputation.
-     *         Seller submits two buyer signatures:
-     *         1. Tempo voucher sig (authorizes USDC transfer via Tempo)
-     *         2. AntSeed MetadataAuth sig (attests to token counts for stats)
+     * @notice Settle partial payment. Seller submits buyer's MetadataAuth signature.
+     *         The delta USDC is distributed to seller (minus platform fee).
+     *         Session stays active for more requests.
      *
-     *         Tempo's settle() transfers the delta to this contract (we are payee).
-     *         We then forward seller payout to Deposits as earnings.
-     *         Channel stays open for more requests.
-     *
-     * @param channelId        The Tempo channel / session ID
-     * @param cumulativeAmount Cumulative USDC amount (Tempo voucher)
-     * @param metadata         ABI-encoded (inputTokens, outputTokens, 0, 0)
-     * @param tempoVoucherSig  Buyer's Tempo Voucher EIP-712 signature
-     * @param metadataAuthSig  Buyer's AntSeed MetadataAuth EIP-712 signature
+     * @param channelId        Session ID
+     * @param cumulativeAmount Cumulative USDC amount authorized by buyer
+     * @param metadata         ABI-encoded (inputTokens, outputTokens, latencyMs, requestCount)
+     * @param buyerSig         Buyer's MetadataAuth EIP-712 signature
      */
     function settle(
         bytes32 channelId,
         uint128 cumulativeAmount,
         bytes calldata metadata,
-        bytes calldata tempoVoucherSig,
-        bytes calldata metadataAuthSig
+        bytes calldata buyerSig
     ) external nonReentrant {
         Session storage session = sessions[channelId];
         if (session.status != SessionStatus.Active) revert SessionNotActive();
         if (msg.sender != session.seller) revert NotAuthorized();
+        if (cumulativeAmount <= session.settled) revert InvalidAmount();
+        if (cumulativeAmount > session.deposit) revert InvalidAmount();
 
-        // Verify AntSeed MetadataAuth signature
         bytes32 metadataHash = keccak256(metadata);
-        _verifyMetadataAuth(channelId, cumulativeAmount, metadataHash, session.buyer, metadataAuthSig);
+        _verifyMetadataAuth(channelId, cumulativeAmount, metadataHash, session.buyer, buyerSig);
 
-        // Cache pre-settle amount for delta computation
-        uint128 prevSettled = session.settled;
+        uint128 delta = cumulativeAmount - session.settled;
 
-        // Call Tempo settle — delta USDC is transferred to this contract (we are payee)
-        streamChannel.settle(channelId, cumulativeAmount, tempoVoucherSig);
+        _distributeDelta(session, delta);
 
-        // Compute delta and distribute
-        uint128 delta = cumulativeAmount - prevSettled;
-        uint256 platformFee = 0;
-        if (delta > 0) {
-            platformFee = (uint256(delta) * PLATFORM_FEE_BPS) / 10000;
-            uint256 sellerPayout = uint256(delta) - platformFee;
-
-            // Send platform fee to protocol reserve
-            if (platformFee > 0 && protocolReserve != address(0)) {
-                usdc.safeTransfer(protocolReserve, platformFee);
-            } else {
-                sellerPayout += platformFee; // no reserve configured — seller gets full amount
-            }
-
-            // Forward seller payout to Deposits and credit earnings
-            if (sellerPayout > 0) {
-                usdc.safeTransfer(address(depositsContract), sellerPayout);
-                depositsContract.creditEarnings(session.seller, sellerPayout);
-            }
-        }
-
-        // Update session state
         session.settled = cumulativeAmount;
         session.metadataHash = metadataHash;
         session.settledAt = block.timestamp;
 
         _recordStatsAndEmissions(session, delta, metadata);
 
-        emit SessionSettled(channelId, session.seller, cumulativeAmount, platformFee);
+        emit SessionSettled(channelId, session.seller, cumulativeAmount, _lastPlatformFee);
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //                        CORE — CLOSE (final settle)
+    //                        CORE — CLOSE (final settle + refund)
     // ═══════════════════════════════════════════════════════════════════
 
     /**
-     * @notice Close the Tempo channel with a final settlement.
-     *         Tempo sends settled USDC + refund back to this contract.
-     *         We distribute: seller earnings → Deposits, buyer refund → Deposits.
+     * @notice Close the session with a final settlement.
+     *         Seller earnings and buyer refund are sent to Deposits.
      *
-     * @param channelId        The Tempo channel / session ID
-     * @param finalAmount      Final cumulative USDC amount
-     * @param metadata         ABI-encoded (inputTokens, outputTokens, 0, 0)
-     * @param tempoVoucherSig  Buyer's Tempo Voucher EIP-712 signature
-     * @param metadataAuthSig  Buyer's AntSeed MetadataAuth EIP-712 signature
+     * @param channelId    Session ID
+     * @param finalAmount  Final cumulative USDC amount
+     * @param metadata     ABI-encoded (inputTokens, outputTokens, latencyMs, requestCount)
+     * @param buyerSig     Buyer's MetadataAuth EIP-712 signature
      */
     function close(
         bytes32 channelId,
         uint128 finalAmount,
         bytes calldata metadata,
-        bytes calldata tempoVoucherSig,
-        bytes calldata metadataAuthSig
+        bytes calldata buyerSig
     ) external nonReentrant {
         Session storage session = sessions[channelId];
         if (session.status != SessionStatus.Active) revert SessionNotActive();
         if (msg.sender != session.seller) revert NotAuthorized();
         if (finalAmount < session.settled) revert FinalAmountBelowSettled();
+        if (finalAmount > session.deposit) revert InvalidAmount();
 
-        // Verify AntSeed MetadataAuth signature
         bytes32 metadataHash = keccak256(metadata);
-        _verifyMetadataAuth(channelId, finalAmount, metadataHash, session.buyer, metadataAuthSig);
+        _verifyMetadataAuth(channelId, finalAmount, metadataHash, session.buyer, buyerSig);
 
-        // Decode metadata for reputation
-        // Call Tempo close — all USDC (settled delta + refund) comes back to this contract
-        streamChannel.close(channelId, finalAmount, tempoVoucherSig);
-
-        // Compute amounts
-        uint128 delta = finalAmount > session.settled ? finalAmount - session.settled : 0;
+        uint128 delta = finalAmount - session.settled;
         uint128 refund = session.deposit - finalAmount;
 
-        // Distribute seller payout from delta
-        uint256 platformFee = 0;
-        if (delta > 0) {
-            platformFee = (uint256(delta) * PLATFORM_FEE_BPS) / 10000;
-            uint256 sellerPayout = uint256(delta) - platformFee;
+        _distributeDelta(session, delta);
 
-            if (platformFee > 0 && protocolReserve != address(0)) {
-                usdc.safeTransfer(protocolReserve, platformFee);
-            } else {
-                sellerPayout += platformFee; // no reserve configured — seller gets full amount
-            }
-
-            if (sellerPayout > 0) {
-                usdc.safeTransfer(address(depositsContract), sellerPayout);
-                depositsContract.creditEarnings(session.seller, sellerPayout);
-            }
-        }
-
-        // Return refund to buyer's Deposits balance
         if (refund > 0) {
             usdc.safeTransfer(address(depositsContract), refund);
             depositsContract.creditBuyerRefund(session.buyer, refund);
         }
 
-        // Update session state
         session.settled = finalAmount;
         session.metadataHash = metadataHash;
         session.settledAt = block.timestamp;
@@ -370,55 +290,49 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
 
         _recordStatsAndEmissions(session, delta, metadata);
 
-        emit SessionClosed(channelId, session.seller, finalAmount, platformFee);
+        emit SessionClosed(channelId, session.seller, finalAmount, _lastPlatformFee);
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //                  TIMEOUT — REQUEST CLOSE + WITHDRAW
+    //                        TIMEOUT
     // ═══════════════════════════════════════════════════════════════════
 
     /**
-     * @notice Request Tempo channel closure. Starts Tempo's 15-min grace period.
-     *         Permissionless after session deadline — anyone can call.
-     *         This contract is the payer on Tempo, so requestClose() works.
+     * @notice Request session timeout. Permissionless after deadline.
+     *         Starts a grace period before funds can be withdrawn.
      */
-    function requestClose(bytes32 channelId) external {
+    function requestTimeout(bytes32 channelId) external {
         Session storage session = sessions[channelId];
         if (session.status != SessionStatus.Active) revert SessionNotActive();
         if (block.timestamp <= session.deadline) revert NotAuthorized();
+        if (session.closeRequestedAt != 0) revert InvalidAmount(); // already requested
 
-        streamChannel.requestClose(channelId);
-        emit SessionCloseRequested(channelId);
+        session.closeRequestedAt = block.timestamp;
+        emit TimeoutRequested(channelId);
     }
 
     /**
-     * @notice Withdraw remaining funds after Tempo's grace period expires.
-     *         Returns all unspent USDC to buyer's Deposits balance.
-     *         Permissionless — anyone can call once Tempo allows withdrawal.
+     * @notice Withdraw remaining funds after timeout grace period.
+     *         Returns unspent USDC to buyer's Deposits balance.
+     *         Permissionless after grace period expires.
      */
     function withdraw(bytes32 channelId) external nonReentrant {
         Session storage session = sessions[channelId];
         if (session.status != SessionStatus.Active) revert SessionNotActive();
+        if (session.closeRequestedAt == 0) revert TimeoutNotReady();
+        if (block.timestamp < session.closeRequestedAt + TIMEOUT_GRACE_PERIOD) revert TimeoutNotReady();
 
-        uint128 deposit = session.deposit;
-        uint128 settled = session.settled;
-        address buyer = session.buyer;
+        uint128 refund = session.deposit - session.settled;
 
-        // Call Tempo withdraw — unspent USDC returns to this contract (payer)
-        streamChannel.withdraw(channelId);
-
-        uint128 refund = deposit - settled;
-
-        // Return refund to buyer's Deposits balance
         if (refund > 0) {
             usdc.safeTransfer(address(depositsContract), refund);
-            depositsContract.creditBuyerRefund(buyer, refund);
+            depositsContract.creditBuyerRefund(session.buyer, refund);
         }
 
         session.status = SessionStatus.TimedOut;
         stakingContract.decrementActiveSessions(session.seller);
 
-        // Record ghost (seller disappeared / timed out)
+        // Record ghost
         uint256 agentId = stakingContract.getAgentId(session.seller);
         if (agentId != 0) {
             statsContract.updateStats(agentId, IAntseedStats.StatsUpdate({
@@ -431,12 +345,36 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
             }));
         }
 
-        emit SessionWithdrawn(channelId, buyer);
+        emit SessionTimedOut(channelId, session.buyer);
     }
 
     // ═══════════════════════════════════════════════════════════════════
     //                        INTERNAL HELPERS
     // ═══════════════════════════════════════════════════════════════════
+
+    /// @dev Temporary storage for platform fee (avoids stack-too-deep in settle/close)
+    uint256 private _lastPlatformFee;
+
+    function _distributeDelta(Session storage session, uint128 delta) internal {
+        _lastPlatformFee = 0;
+        if (delta == 0) return;
+
+        uint256 platformFee = (uint256(delta) * PLATFORM_FEE_BPS) / 10000;
+        uint256 sellerPayout = uint256(delta) - platformFee;
+
+        if (platformFee > 0 && protocolReserve != address(0)) {
+            usdc.safeTransfer(protocolReserve, platformFee);
+        } else {
+            sellerPayout += platformFee;
+        }
+
+        if (sellerPayout > 0) {
+            usdc.safeTransfer(address(depositsContract), sellerPayout);
+            depositsContract.creditEarnings(session.seller, sellerPayout);
+        }
+
+        _lastPlatformFee = platformFee;
+    }
 
     function _recordStatsAndEmissions(
         Session storage session,
@@ -486,11 +424,6 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     //                        ADMIN FUNCTIONS
     // ═══════════════════════════════════════════════════════════════════
 
-    function setStreamChannel(address _streamChannel) external onlyOwner {
-        if (_streamChannel == address(0)) revert InvalidAddress();
-        streamChannel = ITempoStreamChannel(_streamChannel);
-    }
-
     function setDepositsContract(address _deposits) external onlyOwner {
         if (_deposits == address(0)) revert InvalidAddress();
         depositsContract = IAntseedDeposits(_deposits);
@@ -502,7 +435,6 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     }
 
     function setEmissionsContract(address _emissions) external onlyOwner {
-        // Allow address(0) to disable emissions
         emissionsContract = IAntseedEmissions(_emissions);
     }
 

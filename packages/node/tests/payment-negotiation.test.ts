@@ -27,14 +27,12 @@ async function createTestIdentity(): Promise<Identity> {
 
 const CHAIN_ID = 31337;
 const CONTRACT_ADDR = '0x' + 'dd'.repeat(20);
-const STREAM_CHANNEL_ADDR = '0x' + 'aa'.repeat(20);
 
 const SAMPLE_PAYMENT_REQUIRED: PaymentRequiredPayload = {
   sellerEvmAddr: '0x' + 'ab'.repeat(20),
   minBudgetPerRequest: '10000',
   suggestedAmount: '100000',
   requestId: 'req-' + 'a'.repeat(32),
-  streamChannelAddress: STREAM_CHANNEL_ADDR,
 };
 
 // ═══════════════════════════════════════════════════════════════
@@ -66,14 +64,12 @@ describe('PaymentRequired codec', () => {
       minBudgetPerRequest: '10000',
       suggestedAmount: '1500000',
       requestId: 'abc-123',
-      streamChannelAddress: STREAM_CHANNEL_ADDR,
-    };
+        };
     const decoded = codec.decodePaymentRequired(codec.encodePaymentRequired(payload));
     expect(decoded.sellerEvmAddr).toBe(payload.sellerEvmAddr);
     expect(decoded.minBudgetPerRequest).toBe(payload.minBudgetPerRequest);
     expect(decoded.suggestedAmount).toBe(payload.suggestedAmount);
     expect(decoded.requestId).toBe(payload.requestId);
-    expect(decoded.streamChannelAddress).toBe(payload.streamChannelAddress);
   });
 });
 
@@ -147,15 +143,14 @@ describe('SellerPaymentManager PaymentRequired', () => {
     const config: SellerPaymentConfig = {
       rpcUrl: 'http://127.0.0.1:8545',
       sessionsContractAddress: CONTRACT_ADDR,
-      streamChannelAddress: STREAM_CHANNEL_ADDR,
-      chainId: CHAIN_ID,
+          chainId: CHAIN_ID,
       dataDir: tempDir,
     };
     manager = new SellerPaymentManager(sellerIdentity, config, store);
 
     vi.spyOn(manager.sessionsClient, 'reserve').mockResolvedValue('0xhash');
     vi.spyOn(manager.sessionsClient, 'close').mockResolvedValue('0xhash');
-    vi.spyOn(manager.sessionsClient, 'requestClose').mockResolvedValue('0xhash');
+    vi.spyOn(manager.sessionsClient, 'requestTimeout').mockResolvedValue('0xhash');
     vi.spyOn(manager.sessionsClient, 'withdraw').mockResolvedValue('0xhash');
   });
 
@@ -181,8 +176,7 @@ describe('SellerPaymentManager PaymentRequired', () => {
     const customConfig: SellerPaymentConfig = {
       rpcUrl: 'http://127.0.0.1:8545',
       sessionsContractAddress: CONTRACT_ADDR,
-      streamChannelAddress: STREAM_CHANNEL_ADDR,
-      chainId: CHAIN_ID,
+          chainId: CHAIN_ID,
       dataDir: tempDir,
       minBudgetPerRequest: '50000',
     };
@@ -254,15 +248,14 @@ describe('SellerPaymentManager suggested amount', () => {
     const config: SellerPaymentConfig = {
       rpcUrl: 'http://127.0.0.1:8545',
       sessionsContractAddress: CONTRACT_ADDR,
-      streamChannelAddress: STREAM_CHANNEL_ADDR,
-      chainId: CHAIN_ID,
+          chainId: CHAIN_ID,
       dataDir: tempDir,
     };
     manager = new SellerPaymentManager(sellerIdentity, config, store);
 
     vi.spyOn(manager.sessionsClient, 'reserve').mockResolvedValue('0xhash');
     vi.spyOn(manager.sessionsClient, 'close').mockResolvedValue('0xhash');
-    vi.spyOn(manager.sessionsClient, 'requestClose').mockResolvedValue('0xhash');
+    vi.spyOn(manager.sessionsClient, 'requestTimeout').mockResolvedValue('0xhash');
     vi.spyOn(manager.sessionsClient, 'withdraw').mockResolvedValue('0xhash');
   });
 
@@ -350,8 +343,7 @@ describe('Budget mismatch rejection', () => {
       rpcUrl: 'http://127.0.0.1:8545',
       depositsContractAddress: '0x' + 'dd'.repeat(20),
       sessionsContractAddress: CONTRACT_ADDR,
-      streamChannelAddress: STREAM_CHANNEL_ADDR,
-      usdcAddress: '0x' + 'ee'.repeat(20),
+          usdcAddress: '0x' + 'ee'.repeat(20),
       identityRegistryAddress: '0x' + 'ff'.repeat(20),
       chainId: CHAIN_ID,
       defaultAuthDurationSecs: 3600,
@@ -399,8 +391,7 @@ describe('Budget mismatch rejection', () => {
       rpcUrl: 'http://127.0.0.1:8545',
       depositsContractAddress: '0x' + 'dd'.repeat(20),
       sessionsContractAddress: CONTRACT_ADDR,
-      streamChannelAddress: STREAM_CHANNEL_ADDR,
-      usdcAddress: '0x' + 'ee'.repeat(20),
+          usdcAddress: '0x' + 'ee'.repeat(20),
       identityRegistryAddress: '0x' + 'ff'.repeat(20),
       chainId: CHAIN_ID,
       defaultAuthDurationSecs: 3600,
@@ -448,8 +439,7 @@ describe('Budget mismatch rejection', () => {
       rpcUrl: 'http://127.0.0.1:8545',
       depositsContractAddress: '0x' + 'dd'.repeat(20),
       sessionsContractAddress: CONTRACT_ADDR,
-      streamChannelAddress: STREAM_CHANNEL_ADDR,
-      usdcAddress: '0x' + 'ee'.repeat(20),
+          usdcAddress: '0x' + 'ee'.repeat(20),
       identityRegistryAddress: '0x' + 'ff'.repeat(20),
       chainId: CHAIN_ID,
       defaultAuthDurationSecs: 3600,

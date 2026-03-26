@@ -256,11 +256,11 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
 
     /**
      * @notice Credit back refunded USDC to buyer's available balance.
-     *         Used when Tempo refunds unspent USDC on close/withdraw.
+     *         Used when Sessions refunds unspent USDC on close/withdraw.
      *         The buyer's balance and reserved were already reduced in transferToSessions.
      *         The USDC has been sent back to this contract by Sessions.
      * @param buyer      The buyer address
-     * @param creditBack The USDC amount being credited back (refund from Tempo)
+     * @param creditBack The USDC amount being credited back (refund from Sessions)
      */
     function creditBuyerRefund(address buyer, uint256 creditBack) external onlySessions {
         BuyerAccount storage ba = buyers[buyer];
@@ -269,10 +269,10 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
     }
 
     /**
-     * @notice Transfer USDC from this contract to Sessions contract for Tempo channel funding.
+     * @notice Transfer USDC from this contract to Sessions contract for channel funding.
      *         Called by Sessions during reserve/topUp after lockForSession.
      *         The buyer's balance is reduced (USDC physically leaves this contract).
-     *         reserved is also reduced since the lock is now enforced by Tempo.
+     *         reserved is also reduced since the lock is now enforced by Sessions.
      * @param buyer  The buyer whose balance to debit
      * @param to     The Sessions contract address
      * @param amount USDC amount to transfer
@@ -285,8 +285,7 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
     }
 
     /**
-     * @notice Credit seller earnings. Called by Sessions after Tempo settle/close
-     *         when USDC has been received from Tempo and forwarded to this contract.
+     * @notice Credit seller earnings. Called by Sessions after settle/close.
      * @param seller The seller address
      * @param amount The amount to credit
      */

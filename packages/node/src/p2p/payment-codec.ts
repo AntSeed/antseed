@@ -58,7 +58,6 @@ export function decodeSpendingAuth(data: Uint8Array): SpendingAuthPayload {
     cumulativeAmount: requireString(obj, 'cumulativeAmount'),
     metadataHash: requireString(obj, 'metadataHash'),
     metadata: requireString(obj, 'metadata'),
-    tempoVoucherSig: typeof obj.tempoVoucherSig === 'string' ? obj.tempoVoucherSig : '', // empty on initial reserve
     metadataAuthSig: requireString(obj, 'metadataAuthSig'),
     buyerEvmAddr: requireString(obj, 'buyerEvmAddr'),
   };
@@ -83,7 +82,6 @@ export function decodePaymentRequired(data: Uint8Array): PaymentRequiredPayload 
     minBudgetPerRequest: requireString(obj, 'minBudgetPerRequest'),
     suggestedAmount: requireString(obj, 'suggestedAmount'),
     requestId: requireString(obj, 'requestId'),
-    streamChannelAddress: requireString(obj, 'streamChannelAddress'),
   };
   if (typeof obj.inputUsdPerMillion === 'number') result.inputUsdPerMillion = obj.inputUsdPerMillion;
   if (typeof obj.outputUsdPerMillion === 'number') result.outputUsdPerMillion = obj.outputUsdPerMillion;

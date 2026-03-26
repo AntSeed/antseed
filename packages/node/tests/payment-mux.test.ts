@@ -65,7 +65,6 @@ describe('PaymentMux', () => {
         cumulativeAmount: '1000000',
         metadataHash: '0x' + 'cc'.repeat(32),
         metadata: '0x' + 'dd'.repeat(128),
-        tempoVoucherSig: '0x' + 'bb'.repeat(65),
         metadataAuthSig: '0x' + 'ee'.repeat(65),
         buyerEvmAddr: '0x' + 'ab'.repeat(20),
       };
@@ -109,7 +108,6 @@ describe('PaymentMux', () => {
         minBudgetPerRequest: '10000',
         suggestedAmount: '100000',
         requestId: 'req-123',
-        streamChannelAddress: '0x' + 'ff'.repeat(20),
       };
       const frame: FramedMessage = {
         type: MessageType.PaymentRequired,
@@ -154,7 +152,6 @@ describe('PaymentMux', () => {
         cumulativeAmount: '1000000',
         metadataHash: '0x' + 'cc'.repeat(32),
         metadata: '0x' + 'dd'.repeat(128),
-        tempoVoucherSig: '0x' + 'bb'.repeat(65),
         metadataAuthSig: '0x' + 'ee'.repeat(65),
         buyerEvmAddr: '0x' + 'ab'.repeat(20),
       };
@@ -198,7 +195,6 @@ describe('PaymentMux', () => {
         cumulativeAmount: '1000000',
         metadataHash: '0x' + 'cc'.repeat(32),
         metadata: '0x' + 'dd'.repeat(128),
-        tempoVoucherSig: '0x' + 'bb'.repeat(65),
         metadataAuthSig: '0x' + 'ee'.repeat(65),
         buyerEvmAddr: '0x' + 'ab'.repeat(20),
       };

@@ -23,14 +23,14 @@ export interface SessionInfo {
 const SESSIONS_ABI = [
   'function reserve(address buyer, bytes32 salt, uint128 maxAmount, uint256 deadline, bytes buyerMetaSig) external',
   'function topUp(bytes32 channelId, uint128 additionalAmount) external',
-  'function settle(bytes32 channelId, uint128 cumulativeAmount, bytes metadata, bytes tempoVoucherSig, bytes metadataAuthSig) external',
-  'function close(bytes32 channelId, uint128 finalAmount, bytes metadata, bytes tempoVoucherSig, bytes metadataAuthSig) external',
-  'function requestClose(bytes32 channelId) external',
+  'function settle(bytes32 channelId, uint128 cumulativeAmount, bytes metadata, bytes buyerSig) external',
+  'function close(bytes32 channelId, uint128 finalAmount, bytes metadata, bytes buyerSig) external',
+  'function requestTimeout(bytes32 channelId) external',
   'function withdraw(bytes32 channelId) external',
   'function sessions(bytes32 channelId) external view returns (address buyer, address seller, uint128 deposit, uint128 settled, uint128 settledInputTokens, uint128 settledOutputTokens, bytes32 settledMetadataHash, uint256 deadline, uint256 settledAt, uint8 status)',
+  'function computeChannelId(address buyer, address seller, bytes32 salt) external pure returns (bytes32)',
   'function domainSeparator() external view returns (bytes32)',
   'function FIRST_SIGN_CAP() external view returns (uint256)',
-  'function streamChannel() external view returns (address)',
 ] as const;
 
 export class SessionsClient extends BaseEvmClient {
@@ -74,12 +74,11 @@ export class SessionsClient extends BaseEvmClient {
     channelId: string,
     cumulativeAmount: bigint,
     metadata: string,
-    tempoVoucherSig: string,
-    metadataAuthSig: string,
+    buyerSig: string,
   ): Promise<string> {
     return this._execWrite(
       signer, SESSIONS_ABI, 'settle',
-      channelId, cumulativeAmount, metadata, tempoVoucherSig, metadataAuthSig,
+      channelId, cumulativeAmount, metadata, buyerSig,
     );
   }
 
@@ -90,19 +89,18 @@ export class SessionsClient extends BaseEvmClient {
     channelId: string,
     finalAmount: bigint,
     metadata: string,
-    tempoVoucherSig: string,
-    metadataAuthSig: string,
+    buyerSig: string,
   ): Promise<string> {
     return this._execWrite(
       signer, SESSIONS_ABI, 'close',
-      channelId, finalAmount, metadata, tempoVoucherSig, metadataAuthSig,
+      channelId, finalAmount, metadata, buyerSig,
     );
   }
 
-  // ─── Timeout — Request Close + Withdraw ──────────────────────────────
+  // ─── Timeout — Request Timeout + Withdraw ──────────────────────────────
 
-  async requestClose(signer: AbstractSigner, channelId: string): Promise<string> {
-    return this._execWrite(signer, SESSIONS_ABI, 'requestClose', channelId);
+  async requestTimeout(signer: AbstractSigner, channelId: string): Promise<string> {
+    return this._execWrite(signer, SESSIONS_ABI, 'requestTimeout', channelId);
   }
 
   async withdraw(signer: AbstractSigner, channelId: string): Promise<string> {
@@ -138,8 +136,8 @@ export class SessionsClient extends BaseEvmClient {
     return contract.getFunction('FIRST_SIGN_CAP')() as Promise<bigint>;
   }
 
-  async getStreamChannelAddress(): Promise<string> {
+  async computeChannelId(buyer: string, seller: string, salt: string): Promise<string> {
     const contract = new Contract(this._contractAddress, SESSIONS_ABI, this._provider);
-    return contract.getFunction('streamChannel')() as Promise<string>;
+    return contract.getFunction('computeChannelId')(buyer, seller, salt) as Promise<string>;
   }
 }

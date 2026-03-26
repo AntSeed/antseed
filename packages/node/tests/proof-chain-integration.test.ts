@@ -19,7 +19,6 @@ import { AbiCoder } from 'ethers';
 
 const CHAIN_ID = 31337;
 const CONTRACT_ADDR = '0x' + 'dd'.repeat(20);
-const STREAM_CHANNEL_ADDR = '0x' + 'ee'.repeat(20);
 
 function decodeMetadataTokens(metadata: string): { inputTokens: bigint; outputTokens: bigint } {
   const coder = AbiCoder.defaultAbiCoder();
@@ -50,7 +49,6 @@ describe('Cumulative SpendingAuth Integration', () => {
       rpcUrl: 'http://127.0.0.1:8545',
       depositsContractAddress: CONTRACT_ADDR,
       sessionsContractAddress: CONTRACT_ADDR,
-      streamChannelAddress: STREAM_CHANNEL_ADDR,
       usdcAddress: '0x' + 'ee'.repeat(20),
       identityRegistryAddress: '0x' + 'ff'.repeat(20),
       chainId: CHAIN_ID,
@@ -268,7 +266,6 @@ describe('Cumulative SpendingAuth Integration', () => {
       rpcUrl: 'http://127.0.0.1:8545',
       depositsContractAddress: CONTRACT_ADDR,
       sessionsContractAddress: CONTRACT_ADDR,
-      streamChannelAddress: STREAM_CHANNEL_ADDR,
       usdcAddress: '0x' + 'ee'.repeat(20),
       identityRegistryAddress: '0x' + 'ff'.repeat(20),
       chainId: CHAIN_ID,

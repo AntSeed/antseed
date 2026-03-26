@@ -84,11 +84,10 @@ and resolved via the workspace.
 ```
 packages/node/contracts/
 ├── interfaces/              Shared Solidity interfaces (IAntseed*.sol, IERC8004Registry.sol)
-├── vendor/                  Tempo StreamChannel (audited, MIT)
 ├── AntseedStats.sol         Per-agent session metrics keyed by ERC-8004 agentId
 ├── AntseedStaking.sol       Seller staking, slashing (holds stake USDC, binds to agentId)
 ├── AntseedDeposits.sol      Buyer deposits, seller earnings (holds buyer USDC)
-├── AntseedSessions.sol      Session lifecycle wrapping Tempo StreamChannel (swappable)
+├── AntseedSessions.sol      Session lifecycle, cumulative SpendingAuth (swappable, holds session USDC)
 ├── AntseedEmissions.sol     ANTS token emissions (USDC volume-based)
 ├── AntseedSubPool.sol       Subscription pool
 ├── MockERC8004Registry.sol  Mock ERC-8004 IdentityRegistry (local testing only)

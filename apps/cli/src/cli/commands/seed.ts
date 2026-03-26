@@ -265,7 +265,6 @@ export function registerSeedCommand(program: Command): void {
           rpcUrl: config.payments.crypto?.rpcUrl,
           depositsContractAddress: config.payments.crypto?.depositsContractAddress,
           sessionsContractAddress: config.payments.crypto?.sessionsContractAddress,
-          streamChannelAddress: config.payments.crypto?.streamChannelAddress,
           usdcContractAddress: config.payments.crypto?.usdcContractAddress,
         })
         const defaultLockAmountUSDCBaseUnits = toUSDCBaseUnits(

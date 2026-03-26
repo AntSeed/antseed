@@ -18,17 +18,6 @@ export const METADATA_AUTH_TYPES = {
 export const SPENDING_AUTH_TYPES = METADATA_AUTH_TYPES;
 
 // =========================================================================
-// EIP-712 Types — Tempo Voucher (payment authorization)
-// =========================================================================
-
-export const TEMPO_VOUCHER_TYPES = {
-  Voucher: [
-    { name: 'channelId', type: 'bytes32' },
-    { name: 'cumulativeAmount', type: 'uint128' },
-  ],
-};
-
-// =========================================================================
 // Message interfaces
 // =========================================================================
 
@@ -40,11 +29,6 @@ export interface MetadataAuthMessage {
 
 /** @deprecated Use MetadataAuthMessage */
 export type SpendingAuthMessage = MetadataAuthMessage;
-
-export interface TempoVoucherMessage {
-  channelId: string;
-  cumulativeAmount: bigint;
-}
 
 // =========================================================================
 // Metadata encoding
@@ -79,28 +63,22 @@ export const ZERO_METADATA: SpendingAuthMetadata = {
 export const ZERO_METADATA_HASH: string = computeMetadataHash(ZERO_METADATA);
 
 // =========================================================================
-// Tempo channel ID computation (must match TempoStreamChannel.computeChannelId)
+// Channel ID computation (must match AntseedSessions.computeChannelId)
 // =========================================================================
 
 /**
- * Compute the deterministic channelId that Tempo's StreamChannel will produce.
- * Must match: keccak256(abi.encode(payer, payee, token, salt, authorizedSigner, streamChannelAddress, chainId))
- *
- * In our architecture: payer = sessionsAddress, payee = sessionsAddress,
- * token = usdcAddress, authorizedSigner = buyerAddress.
+ * Compute the deterministic channelId.
+ * Must match: keccak256(abi.encode(buyer, seller, salt))
  */
 export function computeChannelId(
-  sessionsAddress: string,
-  usdcAddress: string,
+  buyer: string,
+  seller: string,
   salt: string,
-  buyerAddress: string,
-  streamChannelAddress: string,
-  chainId: number,
 ): string {
   const coder = AbiCoder.defaultAbiCoder();
   return keccak256(coder.encode(
-    ['address', 'address', 'address', 'bytes32', 'address', 'address', 'uint256'],
-    [sessionsAddress, sessionsAddress, usdcAddress, salt, buyerAddress, streamChannelAddress, chainId],
+    ['address', 'address', 'bytes32'],
+    [buyer, seller, salt],
   ));
 }
 
@@ -111,18 +89,9 @@ export function computeChannelId(
 export function makeSessionsDomain(chainId: number, contractAddress: string): TypedDataDomain {
   return {
     name: 'AntseedSessions',
-    version: '5',
+    version: '6',
     chainId,
     verifyingContract: contractAddress,
-  };
-}
-
-export function makeTempoChannelDomain(chainId: number, channelAddress: string): TypedDataDomain {
-  return {
-    name: 'Tempo Stream Channel',
-    version: '1',
-    chainId,
-    verifyingContract: channelAddress,
   };
 }
 
@@ -140,14 +109,6 @@ export async function signMetadataAuth(
 
 /** @deprecated Use signMetadataAuth */
 export const signSpendingAuth = signMetadataAuth;
-
-export async function signTempoVoucher(
-  signer: AbstractSigner,
-  domain: TypedDataDomain,
-  msg: TempoVoucherMessage,
-): Promise<string> {
-  return signer.signTypedData(domain, TEMPO_VOUCHER_TYPES, msg);
-}
 
 // =========================================================================
 // Ed25519 signatures (off-chain P2P)

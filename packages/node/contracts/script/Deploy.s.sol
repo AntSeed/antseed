@@ -75,17 +75,10 @@ contract Deploy is Script {
         require(deposits != address(0), "Deposits deploy failed");
         console.log("AntseedDeposits:      ", deposits);
 
-        // 7. TempoStreamChannel (no constructor args)
-        bytes memory tempoBytecode = vm.getCode("TempoStreamChannel.sol:TempoStreamChannel");
-        address tempo;
-        assembly { tempo := create(0, add(tempoBytecode, 0x20), mload(tempoBytecode)) }
-        require(tempo != address(0), "TempoStreamChannel deploy failed");
-        console.log("TempoStreamChannel:   ", tempo);
-
-        // 8. AntseedSessions(streamChannel, deposits, stats, staking, usdc)
+        // 7. AntseedSessions(deposits, stats, staking, usdc)
         bytes memory sessionsBytecode = abi.encodePacked(
             vm.getCode("AntseedSessions.sol:AntseedSessions"),
-            abi.encode(tempo, deposits, stats, staking, usdc)
+            abi.encode(deposits, stats, staking, usdc)
         );
         address sessions;
         assembly { sessions := create(0, add(sessionsBytecode, 0x20), mload(sessionsBytecode)) }

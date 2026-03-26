@@ -8,8 +8,6 @@ import "../AntseedStaking.sol";
 import "../AntseedStats.sol";
 import "../MockERC8004Registry.sol";
 import "../MockUSDC.sol";
-import "../vendor/TempoStreamChannel.sol";
-import "../vendor/ITempoStreamChannel.sol";
 
 contract AntseedSessionsTest is Test {
     MockUSDC public usdc;
@@ -17,7 +15,6 @@ contract AntseedSessionsTest is Test {
     AntseedStats public stats;
     AntseedStaking public staking;
     AntseedDeposits public deposits;
-    TempoStreamChannel public tempo;
     AntseedSessions public sessions;
 
     // Deterministic private keys
@@ -45,11 +42,6 @@ contract AntseedSessionsTest is Test {
         "MetadataAuth(bytes32 channelId,uint256 cumulativeAmount,bytes32 metadataHash)"
     );
 
-    // Tempo Voucher EIP-712 typehash
-    bytes32 constant VOUCHER_TYPEHASH = keccak256(
-        "Voucher(bytes32 channelId,uint128 cumulativeAmount)"
-    );
-
     function setUp() public {
         buyer = vm.addr(BUYER_PK);
         seller = vm.addr(SELLER_PK);
@@ -61,9 +53,7 @@ contract AntseedSessionsTest is Test {
         stats = new AntseedStats();
         staking = new AntseedStaking(address(usdc), address(registry), address(stats));
         deposits = new AntseedDeposits(address(usdc));
-        tempo = new TempoStreamChannel();
         sessions = new AntseedSessions(
-            address(tempo),
             address(deposits),
             address(stats),
             address(staking),
@@ -115,7 +105,7 @@ contract AntseedSessionsTest is Test {
     }
 
     /**
-     * @dev Sign an AntSeed MetadataAuth (our EIP-712 domain)
+     * @dev Sign an AntSeed MetadataAuth (our EIP-712 domain, version "6")
      */
     function signMetadataAuth(
         uint256 pk,
@@ -138,22 +128,6 @@ contract AntseedSessionsTest is Test {
         return abi.encodePacked(r, s, v);
     }
 
-    /**
-     * @dev Sign a Tempo Voucher (Tempo's EIP-712 domain)
-     */
-    function signTempoVoucher(
-        uint256 pk,
-        bytes32 channelId,
-        uint128 cumulativeAmount
-    ) internal view returns (bytes memory) {
-        bytes32 structHash = keccak256(
-            abi.encode(VOUCHER_TYPEHASH, channelId, cumulativeAmount)
-        );
-        bytes32 digest = _hashTypedDataTempo(structHash);
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digest);
-        return abi.encodePacked(r, s, v);
-    }
-
     function encodeMetadata(
         uint256 cumulativeInputTokens,
         uint256 cumulativeOutputTokens
@@ -165,22 +139,11 @@ contract AntseedSessionsTest is Test {
         return keccak256(abi.encodePacked("\x19\x01", sessions.domainSeparator(), structHash));
     }
 
-    function _hashTypedDataTempo(bytes32 structHash) internal view returns (bytes32) {
-        return keccak256(abi.encodePacked("\x19\x01", tempo.domainSeparator(), structHash));
-    }
-
     /**
-     * @dev Compute the channelId that Tempo will produce for a reserve call.
-     *      payer = sessions contract, payee = sessions contract, authorizedSigner = buyer
+     * @dev Compute the channelId: keccak256(abi.encode(buyer, seller, salt))
      */
     function computeChannelId(bytes32 salt) internal view returns (bytes32) {
-        return tempo.computeChannelId(
-            address(sessions),
-            address(sessions),
-            address(usdc),
-            salt,
-            buyer
-        );
+        return sessions.computeChannelId(buyer, seller, salt);
     }
 
     /**
@@ -220,6 +183,7 @@ contract AntseedSessionsTest is Test {
             ,
             uint256 sDeadline,
             uint256 sSettledAt,
+            ,
             AntseedSessions.SessionStatus sStatus
         ) = sessions.sessions(channelId);
 
@@ -231,20 +195,13 @@ contract AntseedSessionsTest is Test {
         assertEq(sSettledAt, 0);
         assertTrue(sStatus == AntseedSessions.SessionStatus.Active);
 
-        // Assert Tempo channel exists
-        ITempoStreamChannel.Channel memory ch = tempo.getChannel(channelId);
-        assertEq(ch.payer, address(sessions));
-        assertEq(ch.payee, address(sessions));
-        assertEq(ch.token, address(usdc));
-        assertEq(ch.authorizedSigner, buyer);
-        assertEq(ch.deposit, USDC_100);
-        assertEq(ch.settled, 0);
-        assertFalse(ch.finalized);
+        // USDC held in Sessions contract
+        assertEq(usdc.balanceOf(address(sessions)), USDC_100);
 
         // Assert buyer's Deposits: balance reduced, reserved released (both happen in transferToSessions)
         (uint256 available, uint256 reserved,,) = deposits.getBuyerBalance(buyer);
         assertEq(reserved, 0);  // transferToSessions clears reserved
-        assertEq(available, 0); // all 100 USDC went to Tempo
+        assertEq(available, 0); // all 100 USDC went to Sessions
     }
 
     function test_reserve_revert_sellerNotStaked() public {
@@ -339,13 +296,12 @@ contract AntseedSessionsTest is Test {
         sessions.topUp(channelId, USDC_30);
 
         // Session deposit should be 80
-        (,, uint128 sDeposit,,,,, AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
+        (,, uint128 sDeposit,,,,,, AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
         assertEq(sDeposit, USDC_50 + USDC_30);
         assertTrue(sStatus == AntseedSessions.SessionStatus.Active);
 
-        // Tempo channel deposit should match
-        ITempoStreamChannel.Channel memory ch = tempo.getChannel(channelId);
-        assertEq(ch.deposit, USDC_50 + USDC_30);
+        // Sessions contract holds the USDC
+        assertEq(usdc.balanceOf(address(sessions)), USDC_50 + USDC_30);
     }
 
     function test_topUp_revert_notSeller() public {
@@ -369,11 +325,10 @@ contract AntseedSessionsTest is Test {
         uint256 inputTokens = 5000;
         uint256 outputTokens = 2000;
 
-        bytes memory voucherSig = signTempoVoucher(BUYER_PK, channelId, finalAmount);
         bytes memory metaSig = signMetadataAuth(BUYER_PK, channelId, finalAmount, inputTokens, outputTokens);
 
         vm.prank(seller);
-        sessions.close(channelId, finalAmount, encodeMetadata(inputTokens, outputTokens), voucherSig, metaSig);
+        sessions.close(channelId, finalAmount, encodeMetadata(inputTokens, outputTokens), metaSig);
 
         // Assert session state
         (
@@ -384,6 +339,7 @@ contract AntseedSessionsTest is Test {
             ,
             ,
             uint256 sSettledAt,
+            ,
             AntseedSessions.SessionStatus sStatus
         ) = sessions.sessions(channelId);
 
@@ -404,10 +360,6 @@ contract AntseedSessionsTest is Test {
         assertEq(reserved, 0);
         assertEq(available, USDC_100 - USDC_100 + (USDC_100 - USDC_60)); // 0 + 40 = 40
 
-        // Tempo channel should be finalized
-        ITempoStreamChannel.Channel memory ch = tempo.getChannel(channelId);
-        assertTrue(ch.finalized);
-
         // Stats updated
         uint256 sellerAgentId = staking.getAgentId(seller);
         IAntseedStats.AgentStats memory s = stats.getStats(sellerAgentId);
@@ -422,13 +374,12 @@ contract AntseedSessionsTest is Test {
         bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
         uint128 finalAmount = USDC_100;
-        bytes memory voucherSig = signTempoVoucher(BUYER_PK, channelId, finalAmount);
         bytes memory metaSig = signMetadataAuth(BUYER_PK, channelId, finalAmount, 10000, 5000);
 
         vm.prank(seller);
-        sessions.close(channelId, finalAmount, encodeMetadata(10000, 5000), voucherSig, metaSig);
+        sessions.close(channelId, finalAmount, encodeMetadata(10000, 5000), metaSig);
 
-        (,,,uint128 sSettled,,,,AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
+        (,,,uint128 sSettled,,,,,AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
         assertEq(sSettled, USDC_100);
         assertTrue(sStatus == AntseedSessions.SessionStatus.Settled);
 
@@ -442,11 +393,10 @@ contract AntseedSessionsTest is Test {
         bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
         // Close with 0 — full refund to buyer
-        bytes memory voucherSig = signTempoVoucher(BUYER_PK, channelId, 0);
         bytes memory metaSig = signMetadataAuth(BUYER_PK, channelId, 0, 0, 0);
 
         vm.prank(seller);
-        sessions.close(channelId, 0, encodeMetadata(0, 0), voucherSig, metaSig);
+        sessions.close(channelId, 0, encodeMetadata(0, 0), metaSig);
 
         (uint256 available,,,) = deposits.getBuyerBalance(buyer);
         assertEq(available, USDC_100);
@@ -458,41 +408,39 @@ contract AntseedSessionsTest is Test {
         bytes32 salt = keccak256("session-close-auth");
         bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
-        bytes memory voucherSig = signTempoVoucher(BUYER_PK, channelId, USDC_60);
         bytes memory metaSig = signMetadataAuth(BUYER_PK, channelId, USDC_60, 0, 0);
 
         vm.prank(randomUser);
         vm.expectRevert(AntseedSessions.NotAuthorized.selector);
-        sessions.close(channelId, USDC_60, encodeMetadata(0, 0), voucherSig, metaSig);
+        sessions.close(channelId, USDC_60, encodeMetadata(0, 0), metaSig);
     }
 
     function test_close_revert_invalidMetadataSignature() public {
         bytes32 salt = keccak256("session-close-badsig");
         bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
-        bytes memory voucherSig = signTempoVoucher(BUYER_PK, channelId, USDC_60);
         // Sign metadata with wrong key
         bytes memory badMetaSig = signMetadataAuth(RANDOM_PK, channelId, USDC_60, 0, 0);
 
         vm.prank(seller);
         vm.expectRevert(AntseedSessions.InvalidSignature.selector);
-        sessions.close(channelId, USDC_60, encodeMetadata(0, 0), voucherSig, badMetaSig);
+        sessions.close(channelId, USDC_60, encodeMetadata(0, 0), badMetaSig);
     }
 
     function test_close_revert_doubleClose() public {
         bytes32 salt = keccak256("session-double-close");
         bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
-        bytes memory voucherSig = signTempoVoucher(BUYER_PK, channelId, USDC_60);
         bytes memory metaSig = signMetadataAuth(BUYER_PK, channelId, USDC_60, 0, 0);
 
         vm.prank(seller);
-        sessions.close(channelId, USDC_60, encodeMetadata(0, 0), voucherSig, metaSig);
+        sessions.close(channelId, USDC_60, encodeMetadata(0, 0), metaSig);
 
         // Try again — session already Settled
+        bytes memory metaSig2 = signMetadataAuth(BUYER_PK, channelId, USDC_30, 0, 0);
         vm.prank(seller);
         vm.expectRevert(AntseedSessions.SessionNotActive.selector);
-        sessions.close(channelId, USDC_30, encodeMetadata(0, 0), voucherSig, metaSig);
+        sessions.close(channelId, USDC_30, encodeMetadata(0, 0), metaSig2);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -504,22 +452,16 @@ contract AntseedSessionsTest is Test {
         bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
         uint128 amount1 = USDC_30;
-        bytes memory voucherSig1 = signTempoVoucher(BUYER_PK, channelId, amount1);
         bytes memory metaSig1 = signMetadataAuth(BUYER_PK, channelId, amount1, 1000, 500);
 
         vm.prank(seller);
-        sessions.settle(channelId, amount1, encodeMetadata(1000, 500), voucherSig1, metaSig1);
+        sessions.settle(channelId, amount1, encodeMetadata(1000, 500), metaSig1);
 
         // Session still active
-        (,, uint128 sDeposit, uint128 sSettled,,,, AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
+        (,, uint128 sDeposit, uint128 sSettled,,,,, AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
         assertTrue(sStatus == AntseedSessions.SessionStatus.Active);
         assertEq(sDeposit, USDC_100);
         assertEq(sSettled, USDC_30);
-
-        // Tempo channel still open
-        ITempoStreamChannel.Channel memory ch = tempo.getChannel(channelId);
-        assertFalse(ch.finalized);
-        assertEq(ch.settled, USDC_30);
 
         // Seller earnings credited for first settle
         uint256 fee1 = (uint256(USDC_30) * 500) / 10000;
@@ -533,22 +475,20 @@ contract AntseedSessionsTest is Test {
 
         // First settle: 30 USDC
         uint128 amount1 = USDC_30;
-        bytes memory voucherSig1 = signTempoVoucher(BUYER_PK, channelId, amount1);
         bytes memory metaSig1 = signMetadataAuth(BUYER_PK, channelId, amount1, 1000, 500);
 
         vm.prank(seller);
-        sessions.settle(channelId, amount1, encodeMetadata(1000, 500), voucherSig1, metaSig1);
+        sessions.settle(channelId, amount1, encodeMetadata(1000, 500), metaSig1);
 
         // Then close: final cumulative = 60 USDC
         uint128 finalAmount = USDC_60;
-        bytes memory voucherSig2 = signTempoVoucher(BUYER_PK, channelId, finalAmount);
         bytes memory metaSig2 = signMetadataAuth(BUYER_PK, channelId, finalAmount, 3000, 1500);
 
         vm.prank(seller);
-        sessions.close(channelId, finalAmount, encodeMetadata(3000, 1500), voucherSig2, metaSig2);
+        sessions.close(channelId, finalAmount, encodeMetadata(3000, 1500), metaSig2);
 
         // Session settled
-        (,,,uint128 sSettled,,,,AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
+        (,,,uint128 sSettled,,,,,AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
         assertTrue(sStatus == AntseedSessions.SessionStatus.Settled);
         assertEq(sSettled, USDC_60);
 
@@ -567,28 +507,28 @@ contract AntseedSessionsTest is Test {
     //                   TIMEOUT TESTS
     // ═══════════════════════════════════════════════════════════════════
 
-    function test_requestClose_and_withdraw() public {
+    function test_requestTimeout_and_withdraw() public {
         bytes32 salt = keccak256("session-timeout");
         bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
-        (, , , , , uint256 deadline, ,) = sessions.sessions(channelId);
+        (, , , , , uint256 deadline, , ,) = sessions.sessions(channelId);
 
-        // requestClose reverts before deadline
+        // requestTimeout reverts before deadline
         vm.expectRevert(AntseedSessions.NotAuthorized.selector);
-        sessions.requestClose(channelId);
+        sessions.requestTimeout(channelId);
 
         // Warp past deadline
         vm.warp(deadline + 1);
 
-        // Anyone can request close
+        // Anyone can request timeout
         vm.prank(randomUser);
-        sessions.requestClose(channelId);
+        sessions.requestTimeout(channelId);
 
-        // Can't withdraw yet — need to wait for Tempo's grace period (15 min)
-        vm.expectRevert(); // CloseNotReady from Tempo
+        // Can't withdraw yet — need to wait for grace period (15 min)
+        vm.expectRevert(AntseedSessions.TimeoutNotReady.selector);
         sessions.withdraw(channelId);
 
-        // Warp past Tempo's grace period
+        // Warp past grace period
         vm.warp(block.timestamp + 15 minutes + 1);
 
         // Now withdraw
@@ -596,7 +536,7 @@ contract AntseedSessionsTest is Test {
         sessions.withdraw(channelId);
 
         // Session timed out
-        (,,,,,,,AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
+        (,,,,,,,,AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
         assertTrue(sStatus == AntseedSessions.SessionStatus.TimedOut);
 
         // Full deposit returned to buyer
@@ -604,12 +544,24 @@ contract AntseedSessionsTest is Test {
         assertEq(available, USDC_100);
     }
 
-    function test_requestClose_revert_beforeDeadline() public {
+    function test_requestTimeout_revert_beforeDeadline() public {
         bytes32 salt = keccak256("session-timeout-early");
         bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
         vm.expectRevert(AntseedSessions.NotAuthorized.selector);
-        sessions.requestClose(channelId);
+        sessions.requestTimeout(channelId);
+    }
+
+    function test_withdraw_revert_withoutRequestTimeout() public {
+        bytes32 salt = keccak256("session-timeout-no-request");
+        bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
+
+        (, , , , , uint256 deadline, , ,) = sessions.sessions(channelId);
+        vm.warp(deadline + 16 minutes);
+
+        // withdraw without calling requestTimeout first
+        vm.expectRevert(AntseedSessions.TimeoutNotReady.selector);
+        sessions.withdraw(channelId);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -624,11 +576,10 @@ contract AntseedSessionsTest is Test {
         uint256 expectedPlatformFee = (uint256(chargeAmount) * 500) / 10000; // 3 USDC
         uint256 expectedSellerPayout = uint256(chargeAmount) - expectedPlatformFee; // 57 USDC
 
-        bytes memory voucherSig = signTempoVoucher(BUYER_PK, channelId, chargeAmount);
         bytes memory metaSig = signMetadataAuth(BUYER_PK, channelId, chargeAmount, 0, 0);
 
         vm.prank(seller);
-        sessions.close(channelId, chargeAmount, encodeMetadata(0, 0), voucherSig, metaSig);
+        sessions.close(channelId, chargeAmount, encodeMetadata(0, 0), metaSig);
 
         assertEq(deposits.sellerEarnings(seller), expectedSellerPayout);
         assertEq(usdc.balanceOf(protocolReserve), expectedPlatformFee);
@@ -645,11 +596,10 @@ contract AntseedSessionsTest is Test {
         uint256 inputToks = 7500;
         uint256 outputToks = 3200;
 
-        bytes memory voucherSig = signTempoVoucher(BUYER_PK, channelId, USDC_50);
         bytes memory metaSig = signMetadataAuth(BUYER_PK, channelId, USDC_50, inputToks, outputToks);
 
         vm.prank(seller);
-        sessions.close(channelId, USDC_50, encodeMetadata(inputToks, outputToks), voucherSig, metaSig);
+        sessions.close(channelId, USDC_50, encodeMetadata(inputToks, outputToks), metaSig);
 
         uint256 sellerAgentId = staking.getAgentId(seller);
         IAntseedStats.AgentStats memory s = stats.getStats(sellerAgentId);
@@ -683,17 +633,6 @@ contract AntseedSessionsTest is Test {
         sessions.setConstant(keccak256("PLATFORM_FEE_BPS"), 1001);
     }
 
-    function test_setStreamChannel() public {
-        address newChannel = address(0x1111);
-        sessions.setStreamChannel(newChannel);
-        assertEq(address(sessions.streamChannel()), newChannel);
-    }
-
-    function test_setStreamChannel_revert_zeroAddress() public {
-        vm.expectRevert(AntseedSessions.InvalidAddress.selector);
-        sessions.setStreamChannel(address(0));
-    }
-
     function test_setDepositsContract() public {
         address newDeposits = address(0x1234);
         sessions.setDepositsContract(newDeposits);
@@ -717,10 +656,20 @@ contract AntseedSessionsTest is Test {
         assertEq(address(sessions.statsContract()), newStats);
     }
 
+    function test_setStatsContract_revert_zeroAddress() public {
+        vm.expectRevert(AntseedSessions.InvalidAddress.selector);
+        sessions.setStatsContract(address(0));
+    }
+
     function test_setStakingContract() public {
         address newStaking = address(0x9ABC);
         sessions.setStakingContract(newStaking);
         assertEq(address(sessions.stakingContract()), newStaking);
+    }
+
+    function test_setStakingContract_revert_zeroAddress() public {
+        vm.expectRevert(AntseedSessions.InvalidAddress.selector);
+        sessions.setStakingContract(address(0));
     }
 
     function test_setProtocolReserve() public {
@@ -777,7 +726,7 @@ contract AntseedSessionsTest is Test {
         vm.prank(seller);
         sessions.reserve(buyer, salt, USDC_50, deadline, metaSig);
 
-        (,,,,,,,AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
+        (,,,,,,,,AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
         assertTrue(sStatus == AntseedSessions.SessionStatus.Active);
     }
 
@@ -794,12 +743,5 @@ contract AntseedSessionsTest is Test {
     function test_domainSeparator_nonZero() public view {
         bytes32 ds = sessions.domainSeparator();
         assertTrue(ds != bytes32(0));
-    }
-
-    function test_tempoDomainSeparator_differs() public view {
-        // AntSeed and Tempo domains must be different
-        bytes32 antseedDs = sessions.domainSeparator();
-        bytes32 tempoDs = tempo.domainSeparator();
-        assertTrue(antseedDs != tempoDs);
     }
 }

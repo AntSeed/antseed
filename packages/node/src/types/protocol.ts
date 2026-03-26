@@ -43,17 +43,15 @@ export const MAX_PAYLOAD_SIZE = 64 * 1024 * 1024;
 // ─── Bilateral Payment Messages ─────────────────────────────────
 
 /**
- * Buyer authorizes spending via two EIP-712 signatures:
- * 1. Tempo voucher sig — authorizes USDC transfer via Tempo StreamChannel
- * 2. AntSeed MetadataAuth sig — attests to token counts for reputation
+ * Buyer authorizes spending via a single EIP-712 MetadataAuth signature.
+ * The signature covers channelId, cumulativeAmount, and metadataHash.
  */
 export interface SpendingAuthPayload {
-  channelId: string;            // Tempo channel ID (was sessionId)
+  channelId: string;
   cumulativeAmount: string;
   metadataHash: string;         // bytes32 hex
   metadata: string;             // hex-encoded abi.encode(inputTokens, outputTokens, latencyMs, requestCount)
-  tempoVoucherSig: string;      // Tempo EIP-712 voucher signature
-  metadataAuthSig: string;      // AntSeed EIP-712 metadata auth signature
+  metadataAuthSig: string;      // EIP-712 MetadataAuth signature (covers amount + metadata)
   buyerEvmAddr: string;
   // Only for initial reserve
   reserveSalt?: string;
@@ -77,7 +75,6 @@ export interface PaymentRequiredPayload {
   minBudgetPerRequest: string;
   suggestedAmount: string;
   requestId: string;
-  streamChannelAddress: string;  // Tempo StreamChannel contract address (buyer needs for voucher domain)
   inputUsdPerMillion?: number;
   outputUsdPerMillion?: number;
 }

@@ -41,7 +41,6 @@ function makeConfig(dataDir: string): BuyerPaymentConfig {
     rpcUrl: 'http://127.0.0.1:8545',
     depositsContractAddress: '0x' + 'dd'.repeat(20),
     sessionsContractAddress: '0x' + 'cc'.repeat(20),
-    streamChannelAddress: '0x' + 'aa'.repeat(20),
     usdcAddress: '0x' + 'ee'.repeat(20),
     identityRegistryAddress: '0x' + 'ff'.repeat(20),
     chainId: 31337,
@@ -91,7 +90,6 @@ describe('BuyerPaymentManager', () => {
     expect(sent.metadata).toBeTypeOf('string');
     expect(sent.channelId).toBe(channelId);
     expect(sent.metadataAuthSig).toBeTypeOf('string');
-    expect(sent.tempoVoucherSig).toBe(''); // No Tempo voucher for initial reserve
     expect(sent.buyerEvmAddr).toBeTypeOf('string');
   });
 
@@ -155,8 +153,6 @@ describe('BuyerPaymentManager', () => {
     expect(payload.metadataHash).toBeTypeOf('string');
     expect(payload.metadata).toBeTypeOf('string');
     expect(payload.metadataAuthSig).toBeTypeOf('string');
-    expect(payload.tempoVoucherSig).toBeTypeOf('string');
-    expect(payload.tempoVoucherSig.length).toBeGreaterThan(0); // Non-empty for per-request
   });
 
   it('signPerRequestAuth caps increment at maxPerRequestUsdc', async () => {
@@ -202,7 +198,6 @@ describe('BuyerPaymentManager', () => {
     const sent = mux.sentSpendingAuths[0] as Record<string, unknown>;
     expect(sent.cumulativeAmount).toBe('500000');
     expect(sent.channelId).toBe(channelId);
-    expect(sent.tempoVoucherSig).toBeTypeOf('string');
     expect(sent.metadataAuthSig).toBeTypeOf('string');
   });
 

@@ -11,12 +11,11 @@ import type { SpendingAuthPayload } from '../src/types/protocol.js';
 import { bytesToHex } from '../src/utils/hex.js';
 import { toPeerId } from '../src/types/peer.js';
 import { identityToEvmWallet, identityToEvmAddress } from '../src/payments/evm/keypair.js';
-import { signMetadataAuth, signTempoVoucher, makeSessionsDomain, makeTempoChannelDomain, computeMetadataHash, encodeMetadata, ZERO_METADATA_HASH } from '../src/payments/evm/signatures.js';
-import type { MetadataAuthMessage, TempoVoucherMessage, SpendingAuthMetadata } from '../src/payments/evm/signatures.js';
+import { signMetadataAuth, makeSessionsDomain, computeMetadataHash, encodeMetadata, ZERO_METADATA_HASH } from '../src/payments/evm/signatures.js';
+import type { MetadataAuthMessage, SpendingAuthMetadata } from '../src/payments/evm/signatures.js';
 
 const CHAIN_ID = 31337;
 const CONTRACT_ADDR = '0x' + 'dd'.repeat(20);
-const STREAM_CHANNEL_ADDR = '0x' + 'aa'.repeat(20);
 
 async function createTestIdentity(): Promise<Identity> {
   const privateKey = ed.utils.randomPrivateKey();
@@ -83,16 +82,11 @@ async function buildSpendingAuth(
   const metadataMsg: MetadataAuthMessage = { channelId, cumulativeAmount, metadataHash: metadataHashHex };
   const metadataAuthSig = await signMetadataAuth(buyerWallet, sessionsDomain, metadataMsg);
 
-  const tempoDomain = makeTempoChannelDomain(CHAIN_ID, STREAM_CHANNEL_ADDR);
-  const voucherMsg: TempoVoucherMessage = { channelId, cumulativeAmount };
-  const tempoVoucherSig = await signTempoVoucher(buyerWallet, tempoDomain, voucherMsg);
-
   return {
     channelId,
     cumulativeAmount: cumulativeAmount.toString(),
     metadataHash: metadataHashHex,
     metadata: encodedMetadata,
-    tempoVoucherSig,
     metadataAuthSig,
     buyerEvmAddr,
     reserveSalt: salt,
@@ -122,7 +116,6 @@ describe('SellerPaymentManager', () => {
     const config: SellerPaymentConfig = {
       rpcUrl: 'http://127.0.0.1:8545',
       sessionsContractAddress: CONTRACT_ADDR,
-      streamChannelAddress: STREAM_CHANNEL_ADDR,
       chainId: CHAIN_ID,
       dataDir: tempDir,
     };
@@ -130,7 +123,7 @@ describe('SellerPaymentManager', () => {
 
     vi.spyOn(manager.sessionsClient, 'reserve').mockResolvedValue('0xreserve-hash');
     vi.spyOn(manager.sessionsClient, 'close').mockResolvedValue('0xclose-hash');
-    vi.spyOn(manager.sessionsClient, 'requestClose').mockResolvedValue('0xrequestclose-hash');
+    vi.spyOn(manager.sessionsClient, 'requestTimeout').mockResolvedValue('0xrequesttimeout-hash');
     vi.spyOn(manager.sessionsClient, 'withdraw').mockResolvedValue('0xwithdraw-hash');
 
     mux = createMockPaymentMux();
@@ -202,7 +195,6 @@ describe('SellerPaymentManager', () => {
     const config2: SellerPaymentConfig = {
       rpcUrl: 'http://127.0.0.1:8545',
       sessionsContractAddress: CONTRACT_ADDR,
-      streamChannelAddress: STREAM_CHANNEL_ADDR,
       chainId: CHAIN_ID,
       dataDir: tempDir,
       settleOnDisconnect: false,
@@ -238,14 +230,13 @@ describe('SellerPaymentManager', () => {
     expect(manager.hasSession('nonexistent-peer')).toBe(false);
   });
 
-  it('test_getPaymentRequirements: returns payload with streamChannelAddress', () => {
+  it('test_getPaymentRequirements: returns payment requirements payload', () => {
     const req = manager.getPaymentRequirements('test-req-1');
     expect(req).not.toBeNull();
     expect(req.suggestedAmount).toBe('100000');
     expect(req.requestId).toBe('test-req-1');
     expect(req.sellerEvmAddr).toBe(identityToEvmAddress(sellerIdentity));
     expect(req.minBudgetPerRequest).toBeDefined();
-    expect(req.streamChannelAddress).toBe(STREAM_CHANNEL_ADDR);
   });
 
   it('test_getPaymentRequirements_includes_requestId: correlates with the triggering request', () => {
