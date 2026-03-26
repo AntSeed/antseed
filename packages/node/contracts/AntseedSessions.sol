@@ -133,6 +133,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         if (existing.status == SessionStatus.Active) {
             // Top-up path: add to existing deposit
             if (existing.buyer != buyer || existing.seller != msg.sender) revert NotAuthorized();
+            if (block.timestamp > existing.deadline) revert SessionExpired();
             depositsContract.lockForSession(buyer, maxAmount);
             existing.deposit += maxAmount;
             emit Reserved(sessionId, buyer, msg.sender, existing.deposit);

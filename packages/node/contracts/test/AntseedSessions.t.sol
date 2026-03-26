@@ -957,4 +957,27 @@ contract AntseedSessionsTest is Test {
         vm.expectRevert(AntseedSessions.TimeoutNotReached.selector);
         sessions.settleTimeout(SESSION_ID);
     }
+
+    function test_reserve_topUp_revert_expiredDeadline() public {
+        createBuyer(BUYER_PK, USDC_100);
+        createSeller(SELLER_PK);
+
+        uint256 nonce1 = 1;
+        uint256 deadline = block.timestamp + 1 hours;
+
+        // Initial reserve
+        bytes memory sig1 = signSpendingAuth(BUYER_PK, seller, SESSION_ID, 0, 0, 0, nonce1, deadline);
+        vm.prank(seller);
+        sessions.reserve(buyer, SESSION_ID, USDC_50, nonce1, deadline, sig1);
+
+        // Warp past deadline
+        vm.warp(deadline + 1);
+
+        // Top-up should revert — deadline expired
+        uint256 nonce2 = 2;
+        bytes memory sig2 = signSpendingAuth(BUYER_PK, seller, SESSION_ID, 0, 0, 0, nonce2, deadline);
+        vm.prank(seller);
+        vm.expectRevert(AntseedSessions.SessionExpired.selector);
+        sessions.reserve(buyer, SESSION_ID, USDC_30, nonce2, deadline, sig2);
+    }
 }

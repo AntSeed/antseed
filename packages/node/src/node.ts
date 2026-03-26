@@ -1238,8 +1238,8 @@ export class AntseedNode extends EventEmitter {
           identityAddress: payments.identityAddress ?? '',
           chainId: payments.chainId ?? 8453,
           defaultAuthDurationSecs: payments.defaultAuthDurationSecs ?? 90000, // Must exceed SETTLE_TIMEOUT (24h)
-          maxPerRequestUsdc: BigInt(payments.maxPerRequestUsdc ?? payments.defaultMaxAmountUsdc ?? "100000"),  // $0.10 default
-          maxReserveAmountUsdc: BigInt(payments.maxReserveAmountUsdc ?? "10000000"),  // $10.00 default
+          maxPerRequestUsdc: BigInt(payments.maxPerRequestUsdc ?? "100000"),  // $0.10 default
+          maxReserveAmountUsdc: BigInt(payments.maxReserveAmountUsdc ?? "1000000"),  // $1.00 default — matches FIRST_SIGN_CAP
           dataDir: paymentsDir,
         };
         this._buyerPaymentManager = new BuyerPaymentManager(identity, buyerPaymentConfig, this._sessionStore);
