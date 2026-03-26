@@ -43,6 +43,41 @@ jobs:
       - name: Test
         run: pnpm -r run test
 
+  e2e-payment:
+    name: E2E Payment Flow
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build tier 0 (node)
+        run: pnpm run build:tier0
+
+      - name: Install Forge dependencies
+        run: cd packages/node && forge install foundry-rs/forge-std --no-commit
+
+      - name: Start Anvil
+        run: anvil &
+
+      - name: Run E2E payment flow
+        run: node e2e/scripts/full-payment-flow.mjs
+        timeout-minutes: 3
+
   typecheck:
     name: Typecheck
     runs-on: ubuntu-latest

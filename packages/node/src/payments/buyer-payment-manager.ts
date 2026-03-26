@@ -376,18 +376,21 @@ export class BuyerPaymentManager {
       updatedAt: Date.now(),
     });
 
-    // Send via PaymentMux
-    paymentMux.sendSpendingAuth({
-      channelId: session.sessionId,
-      cumulativeAmount: requiredCumulativeAmount.toString(),
-      metadataHash: metadataHashHex,
-      metadata: encodedMetadata,
-      tempoVoucherSig,
-      metadataAuthSig,
-      buyerEvmAddr: session.buyerEvmAddr,
-    });
-
-    debugLog(`[BuyerPayment] NeedAuth responded: new cumulativeAmount=${requiredCumulativeAmount}`);
+    // Send via PaymentMux (connection may have closed between NeedAuth receipt and now)
+    try {
+      paymentMux.sendSpendingAuth({
+        channelId: session.sessionId,
+        cumulativeAmount: requiredCumulativeAmount.toString(),
+        metadataHash: metadataHashHex,
+        metadata: encodedMetadata,
+        tempoVoucherSig,
+        metadataAuthSig,
+        buyerEvmAddr: session.buyerEvmAddr,
+      });
+      debugLog(`[BuyerPayment] NeedAuth responded: new cumulativeAmount=${requiredCumulativeAmount}`);
+    } catch {
+      debugLog(`[BuyerPayment] NeedAuth: connection closed before SpendingAuth could be sent`);
+    }
   }
 
   // ── Queries ───────────────────────────────────────────────────
