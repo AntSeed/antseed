@@ -318,6 +318,17 @@ export class BuyerProxy {
   }
 
   private _replacePeers(incoming: PeerInfo[]): void {
+    const incomingById = new Map(incoming.map((p) => [p.peerId, p]))
+
+    // Carry forward previously known peers that are missing from this scan,
+    // preserving their lastSeen timestamp. A missed DHT scan doesn't mean
+    // the peer is unavailable — it just wasn't discovered this time.
+    for (const prev of this._cachedPeers) {
+      if (!incomingById.has(prev.peerId)) {
+        incoming.push({ ...prev })
+      }
+    }
+
     this._cachedPeers = incoming
     this._cacheLastUpdatedAtMs = Date.now()
     this._cacheMutationEpoch += 1
@@ -358,6 +369,7 @@ export class BuyerProxy {
     if (this._cachedPeers.length < before) {
       this._cacheLastUpdatedAtMs = Date.now()
       this._cacheMutationEpoch += 1
+      this._persistPeersToState()
       log(`Evicted failing peer ${peerId.slice(0, 12)}... from cache (${this._cachedPeers.length} remaining)`)
     }
   }
