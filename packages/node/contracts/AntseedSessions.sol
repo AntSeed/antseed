@@ -63,9 +63,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         address seller;
         uint128 deposit;              // total USDC locked from Deposits into Tempo
         uint128 settled;              // last settled cumulative amount
-        uint128 settledInputTokens;
-        uint128 settledOutputTokens;
-        bytes32 settledMetadataHash;
+        bytes32 metadataHash;         // latest metadata hash (for auditability)
         uint256 deadline;
         uint256 settledAt;
         SessionStatus status;
@@ -189,9 +187,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
             seller: msg.sender,
             deposit: maxAmount,
             settled: 0,
-            settledInputTokens: 0,
-            settledOutputTokens: 0,
-            settledMetadataHash: bytes32(0),
+            metadataHash: bytes32(0),
             deadline: deadline,
             settledAt: 0,
             status: SessionStatus.Active
@@ -262,12 +258,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         bytes32 metadataHash = keccak256(metadata);
         _verifyMetadataAuth(channelId, cumulativeAmount, metadataHash, session.buyer, metadataAuthSig);
 
-        // Decode metadata for reputation
-        (uint256 inputTokens, uint256 outputTokens,,) = abi.decode(metadata, (uint256, uint256, uint256, uint256));
-
-        // Cache pre-settle values for delta reputation
-        uint128 prevInputTokens = session.settledInputTokens;
-        uint128 prevOutputTokens = session.settledOutputTokens;
+        // Cache pre-settle amount for delta computation
         uint128 prevSettled = session.settled;
 
         // Call Tempo settle — delta USDC is transferred to this contract (we are payee)
@@ -294,21 +285,20 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
 
         // Update session state
         session.settled = cumulativeAmount;
-        session.settledInputTokens = uint128(inputTokens);
-        session.settledOutputTokens = uint128(outputTokens);
-        session.settledMetadataHash = metadataHash;
+        session.metadataHash = metadataHash;
         session.settledAt = block.timestamp;
 
-        // Update Identity reputation (delta values)
+        // Update Identity reputation — decode tokens from metadata
         uint256 sellerTokenId = identityContract.getTokenId(session.seller);
         if (sellerTokenId != 0) {
+            (uint256 inputTokens, uint256 outputTokens,,) = abi.decode(metadata, (uint256, uint256, uint256, uint256));
             identityContract.updateReputation(
                 sellerTokenId,
                 IAntseedIdentity.ReputationUpdate({
                     updateType: 0,
                     settledVolume: delta,
-                    inputTokens: uint128(inputTokens) - prevInputTokens,
-                    outputTokens: uint128(outputTokens) - prevOutputTokens
+                    inputTokens: uint128(inputTokens),
+                    outputTokens: uint128(outputTokens)
                 })
             );
         }
@@ -347,10 +337,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         _verifyMetadataAuth(channelId, finalAmount, metadataHash, session.buyer, metadataAuthSig);
 
         // Decode metadata for reputation
-        (uint256 inputTokens, uint256 outputTokens,,) = abi.decode(metadata, (uint256, uint256, uint256, uint256));
-
         // Call Tempo close — all USDC (settled delta + refund) comes back to this contract
-        // since we are both payer and payee
         streamChannel.close(channelId, finalAmount, tempoVoucherSig);
 
         // Compute amounts
@@ -381,16 +368,15 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
 
         // Update session state
         session.settled = finalAmount;
-        session.settledInputTokens = uint128(inputTokens);
-        session.settledOutputTokens = uint128(outputTokens);
-        session.settledMetadataHash = metadataHash;
+        session.metadataHash = metadataHash;
         session.settledAt = block.timestamp;
         session.status = SessionStatus.Settled;
         stakingContract.decrementActiveSessions(session.seller);
 
-        // Update reputation (cumulative values for final close)
+        // Update Identity reputation — decode tokens from metadata
         uint256 sellerTokenId = identityContract.getTokenId(session.seller);
         if (sellerTokenId != 0) {
+            (uint256 inputTokens, uint256 outputTokens,,) = abi.decode(metadata, (uint256, uint256, uint256, uint256));
             identityContract.updateReputation(
                 sellerTokenId,
                 IAntseedIdentity.ReputationUpdate({

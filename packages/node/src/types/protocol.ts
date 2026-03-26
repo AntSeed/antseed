@@ -43,20 +43,21 @@ export const MAX_PAYLOAD_SIZE = 64 * 1024 * 1024;
 // ─── Bilateral Payment Messages ─────────────────────────────────
 
 /**
- * Buyer authorizes spending via EIP-712 signed SpendingAuth.
+ * Buyer authorizes spending via two EIP-712 signatures:
+ * 1. Tempo voucher sig — authorizes USDC transfer via Tempo StreamChannel
+ * 2. AntSeed MetadataAuth sig — attests to token counts for reputation
  */
 export interface SpendingAuthPayload {
-  sessionId: string;
+  channelId: string;            // Tempo channel ID (was sessionId)
   cumulativeAmount: string;
-  metadataHash: string;       // bytes32 hex
-  metadata: string;           // hex-encoded abi.encode(inputTokens, outputTokens, latencyMs, requestCount)
-  buyerSig: string;
+  metadataHash: string;         // bytes32 hex
+  metadata: string;             // hex-encoded abi.encode(inputTokens, outputTokens, latencyMs, requestCount)
+  tempoVoucherSig: string;      // Tempo EIP-712 voucher signature
+  metadataAuthSig: string;      // AntSeed EIP-712 metadata auth signature
   buyerEvmAddr: string;
-  /** Reserve amount for initial auth (USDC base units). Only set on first auth. */
-  reserveAmount?: string;
-  /** Nonce for initial auth — used by seller for reserve() call. Not part of EIP-712 signature. */
-  reserveNonce?: number;
-  /** Deadline for initial auth — used by seller for reserve() call. Not part of EIP-712 signature. */
+  // Only for initial reserve
+  reserveSalt?: string;
+  reserveMaxAmount?: string;
   reserveDeadline?: number;
 }
 
@@ -64,8 +65,7 @@ export interface SpendingAuthPayload {
  * Seller acknowledges the spending authorization was reserved on-chain.
  */
 export interface AuthAckPayload {
-  sessionId: string;
-  nonce: number;
+  channelId: string;
 }
 
 /**
@@ -77,6 +77,7 @@ export interface PaymentRequiredPayload {
   minBudgetPerRequest: string;
   suggestedAmount: string;
   requestId: string;
+  streamChannelAddress: string;  // Tempo StreamChannel contract address (buyer needs for voucher domain)
   inputUsdPerMillion?: number;
   outputUsdPerMillion?: number;
 }
@@ -85,7 +86,7 @@ export interface PaymentRequiredPayload {
  * Seller tells buyer that the current cumulative authorization is insufficient.
  */
 export interface NeedAuthPayload {
-  sessionId: string;
+  channelId: string;
   requiredCumulativeAmount: string;
   currentAcceptedCumulative: string;
   deposit: string;

@@ -15,19 +15,22 @@ export interface SessionInfo {
   settledInputTokens: bigint;
   settledOutputTokens: bigint;
   settledMetadataHash: string;
-  nonce: bigint;
   deadline: bigint;
   settledAt: bigint;
   status: number;
 }
 
 const SESSIONS_ABI = [
-  'function reserve(address buyer, bytes32 sessionId, uint256 maxAmount, uint256 nonce, uint256 deadline, bytes calldata buyerSig) external',
-  'function settle(bytes32 sessionId, uint256 cumulativeAmount, bytes calldata metadata, bytes calldata buyerSig) external',
-  'function settleTimeout(bytes32 sessionId) external',
+  'function reserve(address buyer, bytes32 salt, uint128 maxAmount, uint256 deadline, bytes buyerMetaSig) external',
+  'function topUp(bytes32 channelId, uint128 additionalAmount) external',
+  'function settle(bytes32 channelId, uint128 cumulativeAmount, bytes metadata, bytes tempoVoucherSig, bytes metadataAuthSig) external',
+  'function close(bytes32 channelId, uint128 finalAmount, bytes metadata, bytes tempoVoucherSig, bytes metadataAuthSig) external',
+  'function requestClose(bytes32 channelId) external',
+  'function withdraw(bytes32 channelId) external',
+  'function sessions(bytes32 channelId) external view returns (address buyer, address seller, uint128 deposit, uint128 settled, uint128 settledInputTokens, uint128 settledOutputTokens, bytes32 settledMetadataHash, uint256 deadline, uint256 settledAt, uint8 status)',
   'function domainSeparator() external view returns (bytes32)',
   'function FIRST_SIGN_CAP() external view returns (uint256)',
-  'function sessions(bytes32 sessionId) external view returns (address buyer, address seller, uint256 deposit, uint256 settled, uint256 settledInputTokens, uint256 settledOutputTokens, bytes32 settledMetadataHash, uint256 nonce, uint256 deadline, uint256 settledAt, uint8 status)',
+  'function streamChannel() external view returns (address)',
 ] as const;
 
 export class SessionsClient extends BaseEvmClient {
@@ -35,45 +38,82 @@ export class SessionsClient extends BaseEvmClient {
     super(config.rpcUrl, config.contractAddress);
   }
 
-  // ─── Core — Reserve & Settle ────────────────────────────────────────
+  // ─── Core — Reserve ──────────────────────────────────────────────────
 
   async reserve(
     signer: AbstractSigner,
     buyer: string,
-    sessionId: string,
+    salt: string,
     maxAmount: bigint,
-    nonce: bigint,
     deadline: bigint,
-    buyerSig: string,
+    buyerMetaSig: string,
   ): Promise<string> {
     return this._execWrite(
       signer, SESSIONS_ABI, 'reserve',
-      buyer, sessionId, maxAmount, nonce, deadline, buyerSig,
+      buyer, salt, maxAmount, deadline, buyerMetaSig,
     );
   }
+
+  // ─── Core — Top Up ───────────────────────────────────────────────────
+
+  async topUp(
+    signer: AbstractSigner,
+    channelId: string,
+    additionalAmount: bigint,
+  ): Promise<string> {
+    return this._execWrite(
+      signer, SESSIONS_ABI, 'topUp',
+      channelId, additionalAmount,
+    );
+  }
+
+  // ─── Core — Settle (mid-session checkpoint) ──────────────────────────
 
   async settle(
     signer: AbstractSigner,
-    sessionId: string,
+    channelId: string,
     cumulativeAmount: bigint,
     metadata: string,
-    buyerSig: string,
+    tempoVoucherSig: string,
+    metadataAuthSig: string,
   ): Promise<string> {
     return this._execWrite(
       signer, SESSIONS_ABI, 'settle',
-      sessionId, cumulativeAmount, metadata, buyerSig,
+      channelId, cumulativeAmount, metadata, tempoVoucherSig, metadataAuthSig,
     );
   }
 
-  async settleTimeout(signer: AbstractSigner, sessionId: string): Promise<string> {
-    return this._execWrite(signer, SESSIONS_ABI, 'settleTimeout', sessionId);
+  // ─── Core — Close (final settle) ────────────────────────────────────
+
+  async close(
+    signer: AbstractSigner,
+    channelId: string,
+    finalAmount: bigint,
+    metadata: string,
+    tempoVoucherSig: string,
+    metadataAuthSig: string,
+  ): Promise<string> {
+    return this._execWrite(
+      signer, SESSIONS_ABI, 'close',
+      channelId, finalAmount, metadata, tempoVoucherSig, metadataAuthSig,
+    );
+  }
+
+  // ─── Timeout — Request Close + Withdraw ──────────────────────────────
+
+  async requestClose(signer: AbstractSigner, channelId: string): Promise<string> {
+    return this._execWrite(signer, SESSIONS_ABI, 'requestClose', channelId);
+  }
+
+  async withdraw(signer: AbstractSigner, channelId: string): Promise<string> {
+    return this._execWrite(signer, SESSIONS_ABI, 'withdraw', channelId);
   }
 
   // ─── View Functions ─────────────────────────────────────────────────
 
-  async getSession(sessionId: string): Promise<SessionInfo> {
+  async getSession(channelId: string): Promise<SessionInfo> {
     const contract = new Contract(this._contractAddress, SESSIONS_ABI, this._provider);
-    const result = await contract.getFunction('sessions')(sessionId);
+    const result = await contract.getFunction('sessions')(channelId);
     return {
       buyer: result[0],
       seller: result[1],
@@ -82,10 +122,9 @@ export class SessionsClient extends BaseEvmClient {
       settledInputTokens: result[4],
       settledOutputTokens: result[5],
       settledMetadataHash: result[6],
-      nonce: result[7],
-      deadline: result[8],
-      settledAt: result[9],
-      status: Number(result[10]),
+      deadline: result[7],
+      settledAt: result[8],
+      status: Number(result[9]),
     };
   }
 
@@ -99,4 +138,8 @@ export class SessionsClient extends BaseEvmClient {
     return contract.getFunction('FIRST_SIGN_CAP')() as Promise<bigint>;
   }
 
+  async getStreamChannelAddress(): Promise<string> {
+    const contract = new Contract(this._contractAddress, SESSIONS_ABI, this._provider);
+    return contract.getFunction('streamChannel')() as Promise<string>;
+  }
 }

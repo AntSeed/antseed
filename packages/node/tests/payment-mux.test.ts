@@ -61,11 +61,12 @@ describe('PaymentMux', () => {
       mux.onSpendingAuth(handler);
 
       const payload = {
-        sessionId: 'a'.repeat(64),
+        channelId: '0x' + 'aa'.repeat(32),
         cumulativeAmount: '1000000',
         metadataHash: '0x' + 'cc'.repeat(32),
         metadata: '0x' + 'dd'.repeat(128),
-        buyerSig: 'b'.repeat(128),
+        tempoVoucherSig: '0x' + 'bb'.repeat(65),
+        metadataAuthSig: '0x' + 'ee'.repeat(65),
         buyerEvmAddr: '0x' + 'ab'.repeat(20),
       };
       const frame: FramedMessage = {
@@ -85,7 +86,7 @@ describe('PaymentMux', () => {
       const handler = vi.fn();
       mux.onAuthAck(handler);
 
-      const payload = { sessionId: 'a'.repeat(64), nonce: 42 };
+      const payload = { channelId: '0x' + 'aa'.repeat(32) };
       const frame: FramedMessage = {
         type: MessageType.AuthAck,
         messageId: 1,
@@ -108,6 +109,7 @@ describe('PaymentMux', () => {
         minBudgetPerRequest: '10000',
         suggestedAmount: '100000',
         requestId: 'req-123',
+        streamChannelAddress: '0x' + 'ff'.repeat(20),
       };
       const frame: FramedMessage = {
         type: MessageType.PaymentRequired,
@@ -127,7 +129,7 @@ describe('PaymentMux', () => {
       mux.onNeedAuth(handler);
 
       const payload = {
-        sessionId: 'a'.repeat(64),
+        channelId: '0x' + 'aa'.repeat(32),
         requiredCumulativeAmount: '500000',
         currentAcceptedCumulative: '200000',
         deposit: '1000000',
@@ -148,11 +150,12 @@ describe('PaymentMux', () => {
       const mux = new PaymentMux(conn);
 
       const payload = {
-        sessionId: 'a'.repeat(64),
+        channelId: '0x' + 'aa'.repeat(32),
         cumulativeAmount: '1000000',
         metadataHash: '0x' + 'cc'.repeat(32),
         metadata: '0x' + 'dd'.repeat(128),
-        buyerSig: 'b'.repeat(128),
+        tempoVoucherSig: '0x' + 'bb'.repeat(65),
+        metadataAuthSig: '0x' + 'ee'.repeat(65),
         buyerEvmAddr: '0x' + 'ab'.repeat(20),
       };
       const frame: FramedMessage = {
@@ -172,7 +175,7 @@ describe('PaymentMux', () => {
       const mux = new PaymentMux(conn);
 
       const payload = {
-        sessionId: 'a'.repeat(64),
+        channelId: '0x' + 'aa'.repeat(32),
         requiredCumulativeAmount: '500000',
         currentAcceptedCumulative: '200000',
         deposit: '1000000',
@@ -191,11 +194,12 @@ describe('PaymentMux', () => {
       const mux = new PaymentMux(conn);
 
       const payload = {
-        sessionId: 'a'.repeat(64),
+        channelId: '0x' + 'aa'.repeat(32),
         cumulativeAmount: '1000000',
         metadataHash: '0x' + 'cc'.repeat(32),
         metadata: '0x' + 'dd'.repeat(128),
-        buyerSig: 'b'.repeat(128),
+        tempoVoucherSig: '0x' + 'bb'.repeat(65),
+        metadataAuthSig: '0x' + 'ee'.repeat(65),
         buyerEvmAddr: '0x' + 'ab'.repeat(20),
       };
       mux.sendSpendingAuth(payload);

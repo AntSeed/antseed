@@ -11,14 +11,16 @@ import { DepositsClient } from './evm/deposits-client.js';
 import { IdentityClient } from './evm/identity-client.js';
 import { identityToEvmWallet, identityToEvmAddress } from './evm/keypair.js';
 import {
-  signSpendingAuth,
+  signMetadataAuth,
+  signTempoVoucher,
   makeSessionsDomain,
+  makeTempoChannelDomain,
   computeMetadataHash,
   encodeMetadata,
   ZERO_METADATA,
   ZERO_METADATA_HASH,
 } from './evm/signatures.js';
-import type { SpendingAuthMessage, SpendingAuthMetadata } from './evm/signatures.js';
+import type { MetadataAuthMessage, TempoVoucherMessage, SpendingAuthMetadata } from './evm/signatures.js';
 import { debugLog, debugWarn } from '../utils/debug.js';
 import { SessionStore, type StoredSession } from './session-store.js';
 
@@ -31,6 +33,7 @@ export interface BuyerPaymentConfig {
   rpcUrl: string;
   depositsContractAddress: string;
   sessionsContractAddress: string;
+  streamChannelAddress: string;
   usdcAddress: string;
   identityAddress: string;
   chainId: number;
@@ -56,7 +59,6 @@ export class BuyerPaymentManager {
   private readonly _confirmedPeers = new Set<string>();
   /** Peers that explicitly rejected our spending auth. */
   private readonly _rejectedPeers = new Set<string>();
-  private _nonceCounter: number;
 
   /** sellerPeerId -> cumulative USDC amount in the latest SpendingAuth */
   private readonly _cumulativeAmount = new Map<string, bigint>();
@@ -74,9 +76,6 @@ export class BuyerPaymentManager {
       usdcAddress: config.usdcAddress,
     });
     this._sessionStore = sessionStore;
-
-    // Restore nonce counter from persisted sessions to avoid duplicates across restarts
-    this._nonceCounter = sessionStore.getMaxNonce('buyer');
 
     // Hydrate cumulative maps from persisted active sessions
     this._hydrateFromStore();
@@ -136,43 +135,41 @@ export class BuyerPaymentManager {
     // Clear confirmation state so we wait for a fresh AuthAck on the new session
     this._confirmedPeers.delete(sellerPeerId);
 
-    // Generate a 32-byte session ID
-    const sessionIdBytes = randomBytes(32);
-    const sessionId = '0x' + sessionIdBytes.toString('hex');
+    // Generate a 32-byte channel ID (replaces sessionId in Tempo wrapper)
+    const channelIdBytes = randomBytes(32);
+    const channelId = '0x' + channelIdBytes.toString('hex');
 
-    const nonce = ++this._nonceCounter;
+    const salt = '0x' + randomBytes(32).toString('hex');
     const deadline = Math.floor(Date.now() / 1000) + this._config.defaultAuthDurationSecs;
 
-    debugLog(`[BuyerPayment] authorizeSpending: session=${sessionId.slice(0, 18)}... seller=${sellerPeerId.slice(0, 12)}... amount=${minBudgetPerRequest}`);
+    debugLog(`[BuyerPayment] authorizeSpending: channel=${channelId.slice(0, 18)}... seller=${sellerPeerId.slice(0, 12)}... amount=${minBudgetPerRequest}`);
 
-    // Sign EIP-712 SpendingAuth with cumulative=0 for on-chain reserve() verification.
-    // The contract's reserve() hardcodes cumulativeAmount=0 in the structHash.
-    // The seller uses reserveAmount (separate field) as the deposit amount.
-    // nonce/deadline are passed as separate reserve params, not in the EIP-712 signature.
-    const domain = makeSessionsDomain(this._config.chainId, this._config.sessionsContractAddress);
+    // Sign MetadataAuth with cumulative=0 for on-chain reserve() verification.
+    // For initial reserve, only MetadataAuth is needed (no Tempo voucher).
+    const sessionsDomain = makeSessionsDomain(this._config.chainId, this._config.sessionsContractAddress);
     const zeroMetadata = { ...ZERO_METADATA };
     const zeroEncodedMetadata = encodeMetadata(zeroMetadata);
-    const msg: SpendingAuthMessage = {
-      sessionId,
+    const metadataMsg: MetadataAuthMessage = {
+      channelId,
       cumulativeAmount: 0n,
       metadataHash: ZERO_METADATA_HASH,
     };
-    const buyerSig = await signSpendingAuth(this._signer, domain, msg);
+    const metadataAuthSig = await signMetadataAuth(this._signer, sessionsDomain, metadataMsg);
     const buyerEvmAddr = identityToEvmAddress(this._identity);
 
     // Initialize cumulative maps at 0 — first per-request auth will increment
     this._cumulativeAmount.set(sellerPeerId, 0n);
     this._metadata.set(sellerPeerId, { ...ZERO_METADATA });
 
-    // Store session
+    // Store session (sessionId in store maps to channelId)
     const now = Date.now();
     const session: StoredSession = {
-      sessionId,
+      sessionId: channelId,
       peerId: sellerPeerId,
       role: 'buyer',
       sellerEvmAddr,
       buyerEvmAddr,
-      nonce,
+      nonce: 0,
       authMax: '0',
       deadline,
       previousSessionId: '0x' + '0'.repeat(64),
@@ -188,20 +185,21 @@ export class BuyerPaymentManager {
     };
     this._sessionStore.upsertSession(session);
 
-    // Send SpendingAuth via PaymentMux
+    // Send SpendingAuth via PaymentMux — initial reserve only needs MetadataAuth sig
     paymentMux.sendSpendingAuth({
-      sessionId,
+      channelId,
       cumulativeAmount: '0',
       metadataHash: ZERO_METADATA_HASH,
       metadata: zeroEncodedMetadata,
-      buyerSig,
+      tempoVoucherSig: '', // No Tempo voucher needed for initial reserve
+      metadataAuthSig,
       buyerEvmAddr,
-      reserveAmount: this._config.maxReserveAmountUsdc.toString(),
-      reserveNonce: nonce,
+      reserveSalt: salt,
+      reserveMaxAmount: this._config.maxReserveAmountUsdc.toString(),
       reserveDeadline: deadline,
     });
 
-    return sessionId;
+    return channelId;
   }
 
   // ── AuthAck handler ───────────────────────────────────────────
@@ -212,13 +210,13 @@ export class BuyerPaymentManager {
       debugWarn(`[BuyerPayment] AuthAck for unknown seller: ${sellerPeerId.slice(0, 12)}...`);
       return;
     }
-    if (session.sessionId !== payload.sessionId) {
-      debugWarn(`[BuyerPayment] AuthAck session mismatch: expected=${session.sessionId.slice(0, 18)}... got=${payload.sessionId.slice(0, 18)}...`);
+    if (session.sessionId !== payload.channelId) {
+      debugWarn(`[BuyerPayment] AuthAck channel mismatch: expected=${session.sessionId.slice(0, 18)}... got=${payload.channelId.slice(0, 18)}...`);
       return;
     }
 
     this._confirmedPeers.add(sellerPeerId);
-    debugLog(`[BuyerPayment] AuthAck confirmed: session=${session.sessionId.slice(0, 18)}...`);
+    debugLog(`[BuyerPayment] AuthAck confirmed: channel=${session.sessionId.slice(0, 18)}...`);
   }
 
   // ── Per-request authorization ──────────────────────────────────
@@ -270,14 +268,23 @@ export class BuyerPaymentManager {
     const metadataHashHex = computeMetadataHash(newMeta);
     const encodedMetadata = encodeMetadata(newMeta);
 
-    // Sign EIP-712 SpendingAuth with metadataHash (3-field)
-    const domain = makeSessionsDomain(this._config.chainId, this._config.sessionsContractAddress);
-    const msg: SpendingAuthMessage = {
-      sessionId: session.sessionId,
+    // Sign TWO EIP-712 signatures:
+    // 1. AntSeed MetadataAuth (reputation attestation)
+    const sessionsDomain = makeSessionsDomain(this._config.chainId, this._config.sessionsContractAddress);
+    const metadataMsg: MetadataAuthMessage = {
+      channelId: session.sessionId,
       cumulativeAmount: newAmount,
       metadataHash: metadataHashHex,
     };
-    const buyerSig = await signSpendingAuth(this._signer, domain, msg);
+    const metadataAuthSig = await signMetadataAuth(this._signer, sessionsDomain, metadataMsg);
+
+    // 2. Tempo Voucher (payment authorization)
+    const tempoDomain = makeTempoChannelDomain(this._config.chainId, this._config.streamChannelAddress);
+    const voucherMsg: TempoVoucherMessage = {
+      channelId: session.sessionId,
+      cumulativeAmount: newAmount,
+    };
+    const tempoVoucherSig = await signTempoVoucher(this._signer, tempoDomain, voucherMsg);
 
     // Persist updated cumulative values to SessionStore
     this._sessionStore.upsertSession({
@@ -290,11 +297,12 @@ export class BuyerPaymentManager {
     });
 
     const payload: SpendingAuthPayload = {
-      sessionId: session.sessionId,
+      channelId: session.sessionId,
       cumulativeAmount: newAmount.toString(),
       metadataHash: metadataHashHex,
       metadata: encodedMetadata,
-      buyerSig,
+      tempoVoucherSig,
+      metadataAuthSig,
       buyerEvmAddr: session.buyerEvmAddr,
     };
 
@@ -327,23 +335,32 @@ export class BuyerPaymentManager {
       return;
     }
 
-    debugLog(`[BuyerPayment] NeedAuth: session=${session.sessionId.slice(0, 18)}... required=${requiredCumulativeAmount}`);
+    debugLog(`[BuyerPayment] NeedAuth: channel=${session.sessionId.slice(0, 18)}... required=${requiredCumulativeAmount}`);
 
     // Update cumulative amount
     this._cumulativeAmount.set(sellerPeerId, requiredCumulativeAmount);
 
-    // Sign new SpendingAuth with the required cumulative amount and current metadata
+    // Sign TWO sigs with the required cumulative amount and current metadata
     const currentMeta = this._metadata.get(sellerPeerId) ?? { ...ZERO_METADATA };
     const metadataHashHex = computeMetadataHash(currentMeta);
     const encodedMetadata = encodeMetadata(currentMeta);
 
-    const domain = makeSessionsDomain(this._config.chainId, this._config.sessionsContractAddress);
-    const msg: SpendingAuthMessage = {
-      sessionId: session.sessionId,
+    // 1. MetadataAuth
+    const sessionsDomain = makeSessionsDomain(this._config.chainId, this._config.sessionsContractAddress);
+    const metadataMsg: MetadataAuthMessage = {
+      channelId: session.sessionId,
       cumulativeAmount: requiredCumulativeAmount,
       metadataHash: metadataHashHex,
     };
-    const buyerSig = await signSpendingAuth(this._signer, domain, msg);
+    const metadataAuthSig = await signMetadataAuth(this._signer, sessionsDomain, metadataMsg);
+
+    // 2. Tempo Voucher
+    const tempoDomain = makeTempoChannelDomain(this._config.chainId, this._config.streamChannelAddress);
+    const voucherMsg: TempoVoucherMessage = {
+      channelId: session.sessionId,
+      cumulativeAmount: requiredCumulativeAmount,
+    };
+    const tempoVoucherSig = await signTempoVoucher(this._signer, tempoDomain, voucherMsg);
 
     // Persist updated values
     this._sessionStore.upsertSession({
@@ -354,11 +371,12 @@ export class BuyerPaymentManager {
 
     // Send via PaymentMux
     paymentMux.sendSpendingAuth({
-      sessionId: session.sessionId,
+      channelId: session.sessionId,
       cumulativeAmount: requiredCumulativeAmount.toString(),
       metadataHash: metadataHashHex,
       metadata: encodedMetadata,
-      buyerSig,
+      tempoVoucherSig,
+      metadataAuthSig,
       buyerEvmAddr: session.buyerEvmAddr,
     });
 

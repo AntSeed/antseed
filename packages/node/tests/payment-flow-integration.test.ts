@@ -54,12 +54,14 @@ function createMockPaymentMux(): PaymentMux & {
 
 const CHAIN_ID = 31337;
 const SESSIONS_CONTRACT = '0x' + 'cc'.repeat(20);
+const STREAM_CHANNEL_ADDR = '0x' + 'bb'.repeat(20);
 
 function makeBuyerConfig(dataDir: string): BuyerPaymentConfig {
   return {
     rpcUrl: 'http://127.0.0.1:8545',
     depositsContractAddress: '0x' + 'dd'.repeat(20),
     sessionsContractAddress: SESSIONS_CONTRACT,
+    streamChannelAddress: STREAM_CHANNEL_ADDR,
     usdcAddress: '0x' + 'ee'.repeat(20),
     identityAddress: '0x' + 'ff'.repeat(20),
     chainId: CHAIN_ID,
@@ -74,6 +76,7 @@ function makeSellerConfig(dataDir: string): SellerPaymentConfig {
   return {
     rpcUrl: 'http://127.0.0.1:8545',
     sessionsContractAddress: SESSIONS_CONTRACT,
+    streamChannelAddress: STREAM_CHANNEL_ADDR,
     chainId: CHAIN_ID,
     dataDir,
     minBudgetPerRequest: '50000', // $0.05
@@ -111,8 +114,9 @@ describe('Full Payment Flow Integration', () => {
 
     seller = new SellerPaymentManager(sellerIdentity, makeSellerConfig(sellerDir), sellerStore);
     vi.spyOn(seller.sessionsClient, 'reserve').mockResolvedValue('0xreservehash');
-    vi.spyOn(seller.sessionsClient, 'settle').mockResolvedValue('0xsettlehash');
-    vi.spyOn(seller.sessionsClient, 'settleTimeout').mockResolvedValue('0xtimeouthash');
+    vi.spyOn(seller.sessionsClient, 'close').mockResolvedValue('0xclosehash');
+    vi.spyOn(seller.sessionsClient, 'requestClose').mockResolvedValue('0xrequestclosehash');
+    vi.spyOn(seller.sessionsClient, 'withdraw').mockResolvedValue('0xwithdrawhash');
 
     buyerMux = createMockPaymentMux();
     sellerMux = createMockPaymentMux();
@@ -153,7 +157,7 @@ describe('Full Payment Flow Integration', () => {
     );
     expect(result).toBe('reserved');
     expect(sellerMux.sentAuthAcks).toHaveLength(1);
-    expect(sellerMux.sentAuthAcks[0]!.sessionId).toBe(sessionId);
+    expect(sellerMux.sentAuthAcks[0]!.channelId).toBe(sessionId);
 
     // Step 3: Buyer receives AuthAck
     buyer.handleAuthAck(sellerPeerId, sellerMux.sentAuthAcks[0]!);
@@ -237,15 +241,18 @@ describe('Full Payment Flow Integration', () => {
     // ── Settlement ──
     await seller.settleSession(buyerPeerId);
 
-    expect(seller.sessionsClient.settle).toHaveBeenCalledOnce();
-    const settleCall = (seller.sessionsClient.settle as ReturnType<typeof vi.fn>).mock.calls[0]!;
-    // settle(signer, sessionId, cumulativeAmount, inputTokens, outputTokens, nonce, deadline, buyerSig)
-    const settledAmount = settleCall[2] as bigint;
+    expect(seller.sessionsClient.close).toHaveBeenCalledOnce();
+    const closeCall = (seller.sessionsClient.close as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    // close(signer, channelId, cumulativeAmount, metadata, tempoVoucherSig, metadataAuthSig)
+    const settledAmount = closeCall[2] as bigint;
     expect(settledAmount).toBe(BigInt(auth3.cumulativeAmount));
-    // Verify signature is non-empty
-    const settledSig = settleCall[4] as string;
-    expect(settledSig).toBeTruthy();
-    expect(settledSig.length).toBeGreaterThan(2); // more than just "0x"
+    // Verify both signatures are non-empty
+    const tempoVoucherSig = closeCall[4] as string;
+    expect(tempoVoucherSig).toBeTruthy();
+    expect(tempoVoucherSig.length).toBeGreaterThan(2);
+    const metadataAuthSig = closeCall[5] as string;
+    expect(metadataAuthSig).toBeTruthy();
+    expect(metadataAuthSig.length).toBeGreaterThan(2);
   });
 
   it('cumulative amounts are strictly monotonically increasing', async () => {
@@ -341,13 +348,13 @@ describe('Full Payment Flow Integration', () => {
     // Settle
     await seller.settleSession(buyerPeerId);
 
-    const settleCall = (seller.sessionsClient.settle as ReturnType<typeof vi.fn>).mock.calls[0]!;
-    const settledAmount = settleCall[2] as bigint;
-    const settledSig = settleCall[4] as string;
+    const closeCall = (seller.sessionsClient.close as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    const settledAmount = closeCall[2] as bigint;
+    const tempoVoucherSig = closeCall[4] as string;
 
     // Should use auth2's cumulative amount (the latest), not auth1's or the initial
     expect(settledAmount).toBe(BigInt(auth2.cumulativeAmount));
-    expect(settledSig).toBe(auth2.buyerSig);
+    expect(tempoVoucherSig).toBe(auth2.tempoVoucherSig);
   });
 
   it('reserve sends reserveAmount from buyer config, not cumulativeAmount', async () => {
@@ -355,7 +362,7 @@ describe('Full Payment Flow Integration', () => {
 
     const initialAuth = buyerMux.sentSpendingAuths[0]!;
     // The SpendingAuth payload should include reserveAmount
-    expect(initialAuth.reserveAmount).toBe('10000000'); // maxReserveAmountUsdc
+    expect(initialAuth.reserveMaxAmount).toBe('10000000'); // maxReserveAmountUsdc
 
     // And cumulativeAmount should be 0 (initial reserve auth)
     expect(initialAuth.cumulativeAmount).toBe('0');
@@ -407,11 +414,11 @@ describe('Full Payment Flow Integration', () => {
     await seller.settleSession(buyerPeerId);
 
     // With initial cumulative = 0, neither settle nor settleTimeout is called
-    expect(seller.sessionsClient.settle).not.toHaveBeenCalled();
-    expect(seller.sessionsClient.settleTimeout).not.toHaveBeenCalled();
+    expect(seller.sessionsClient.close).not.toHaveBeenCalled();
+    expect(seller.sessionsClient.requestClose).not.toHaveBeenCalled();
   });
 
-  it('buyer handleAuthAck ignores mismatched sessionId', async () => {
+  it('buyer handleAuthAck ignores mismatched channelId', async () => {
     const sellerPeerId = sellerIdentity.peerId;
     const sellerEvmAddr = identityToEvmAddress(sellerIdentity);
 
@@ -422,17 +429,16 @@ describe('Full Payment Flow Integration', () => {
       50_000n,
     );
 
-    // Send AuthAck with wrong sessionId
+    // Send AuthAck with wrong channelId
     buyer.handleAuthAck(sellerPeerId, {
-      sessionId: '0x' + 'ff'.repeat(32),
-      nonce: 1,
+      channelId: '0x' + 'ff'.repeat(32),
     });
 
     // Should NOT be authorized
     expect(buyer.isAuthorized(sellerPeerId)).toBe(false);
 
     // Now send correct AuthAck
-    buyer.handleAuthAck(sellerPeerId, { sessionId, nonce: 1 });
+    buyer.handleAuthAck(sellerPeerId, { channelId: sessionId });
     expect(buyer.isAuthorized(sellerPeerId)).toBe(true);
   });
 
@@ -443,14 +449,15 @@ describe('Full Payment Flow Integration', () => {
 
     const { ZERO_METADATA_HASH, encodeMetadata, ZERO_METADATA } = await import('../src/payments/evm/signatures.js');
     const badAuth: SpendingAuthPayload = {
-      sessionId: '0x' + '01'.repeat(32),
+      channelId: '0x' + '01'.repeat(32),
       cumulativeAmount: '50000',
       metadataHash: ZERO_METADATA_HASH,
       metadata: encodeMetadata(ZERO_METADATA),
-      buyerSig: '0x' + 'aa'.repeat(65), // garbage signature
+      tempoVoucherSig: '0x' + 'aa'.repeat(65), // garbage signature
+      metadataAuthSig: '0x' + 'bb'.repeat(65), // garbage signature
       buyerEvmAddr,
-      reserveAmount: '10000000',
-      reserveNonce: 1,
+      reserveMaxAmount: '10000000',
+      reserveSalt: '0x' + '01'.repeat(32),
       reserveDeadline: Math.floor(Date.now() / 1000) + 3600,
     };
 
@@ -475,8 +482,7 @@ describe('Full Payment Flow Integration', () => {
     const sellerEvmAddr = identityToEvmAddress(sellerIdentity);
     await buyer.authorizeSpending(sellerPeerId, sellerEvmAddr, buyerMux, 50_000n);
     buyer.handleAuthAck(sellerPeerId, {
-      sessionId: buyerMux.sentSpendingAuths[0]!.sessionId,
-      nonce: 1,
+      channelId: buyerMux.sentSpendingAuths[0]!.channelId,
     });
 
     // Try to increment by a lot — should cap at maxReserveAmountUsdc
@@ -515,8 +521,9 @@ describe('Settlement edge cases', () => {
 
     seller = new SellerPaymentManager(sellerIdentity, makeSellerConfig(sellerDir), sellerStore);
     vi.spyOn(seller.sessionsClient, 'reserve').mockResolvedValue('0xreservehash');
-    vi.spyOn(seller.sessionsClient, 'settle').mockResolvedValue('0xsettlehash');
-    vi.spyOn(seller.sessionsClient, 'settleTimeout').mockResolvedValue('0xtimeouthash');
+    vi.spyOn(seller.sessionsClient, 'close').mockResolvedValue('0xclosehash');
+    vi.spyOn(seller.sessionsClient, 'requestClose').mockResolvedValue('0xrequestclosehash');
+    vi.spyOn(seller.sessionsClient, 'withdraw').mockResolvedValue('0xwithdrawhash');
 
     buyerMux = createMockPaymentMux();
     sellerMux = createMockPaymentMux();
@@ -552,16 +559,16 @@ describe('Settlement edge cases', () => {
     // Wait for the fire-and-forget settle to complete
     await new Promise((r) => setTimeout(r, 50));
 
-    expect(seller.sessionsClient.settle).toHaveBeenCalledOnce();
+    expect(seller.sessionsClient.close).toHaveBeenCalledOnce();
   });
 
   it('settleSession is no-op for unknown buyer', async () => {
     await seller.settleSession('unknown-peer');
-    expect(seller.sessionsClient.settle).not.toHaveBeenCalled();
-    expect(seller.sessionsClient.settleTimeout).not.toHaveBeenCalled();
+    expect(seller.sessionsClient.close).not.toHaveBeenCalled();
+    expect(seller.sessionsClient.requestClose).not.toHaveBeenCalled();
   });
 
-  it('recordSpend is no-op for unknown sessionId', () => {
+  it('recordSpend is no-op for unknown channelId', () => {
     // Should not throw
     seller.recordSpend('0x' + 'ff'.repeat(32), 1000n);
   });

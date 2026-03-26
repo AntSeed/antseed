@@ -9,11 +9,12 @@ import {
 describe('payment codec round-trips', () => {
   it('SpendingAuth', () => {
     const payload = {
-      sessionId: 'a'.repeat(64),
+      channelId: '0x' + 'aa'.repeat(32),
       cumulativeAmount: '1000000',
       metadataHash: '0x' + 'cc'.repeat(32),
       metadata: '0x' + 'dd'.repeat(128),
-      buyerSig: 'b'.repeat(128),
+      tempoVoucherSig: '0x' + 'bb'.repeat(65),
+      metadataAuthSig: '0x' + 'ee'.repeat(65),
       buyerEvmAddr: '0x' + 'ab'.repeat(20),
     };
     const encoded = encodeSpendingAuth(payload);
@@ -22,7 +23,7 @@ describe('payment codec round-trips', () => {
   });
 
   it('AuthAck', () => {
-    const payload = { sessionId: 'a'.repeat(64), nonce: 42 };
+    const payload = { channelId: '0x' + 'aa'.repeat(32) };
     expect(decodeAuthAck(encodeAuthAck(payload))).toEqual(payload);
   });
 
@@ -32,6 +33,7 @@ describe('payment codec round-trips', () => {
       minBudgetPerRequest: '10000',
       suggestedAmount: '100000',
       requestId: 'req-123',
+      streamChannelAddress: '0x' + 'ff'.repeat(20),
     };
     const encoded = encodePaymentRequired(payload);
     const decoded = decodePaymentRequired(encoded);
@@ -44,6 +46,7 @@ describe('payment codec round-trips', () => {
       minBudgetPerRequest: '10000',
       suggestedAmount: '100000',
       requestId: 'req-456',
+      streamChannelAddress: '0x' + 'ff'.repeat(20),
       inputUsdPerMillion: 3000,
       outputUsdPerMillion: 15000,
     };
@@ -54,7 +57,7 @@ describe('payment codec round-trips', () => {
 
   it('NeedAuth', () => {
     const payload = {
-      sessionId: 'a'.repeat(64),
+      channelId: '0x' + 'aa'.repeat(32),
       requiredCumulativeAmount: '500000',
       currentAcceptedCumulative: '200000',
       deposit: '1000000',

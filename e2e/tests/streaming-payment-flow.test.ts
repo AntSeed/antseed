@@ -467,43 +467,40 @@ describe('Streaming payment flow E2E', () => {
     expect(bpm).not.toBeNull();
 
     // Use the BuyerPaymentManager to create a signed auth manually
-    const { signSpendingAuth, makeSessionsDomain, identityToEvmAddress, identityToEvmWallet } = await import('@antseed/node');
+    const { signMetadataAuth, makeSessionsDomain, identityToEvmAddress, identityToEvmWallet, ZERO_METADATA_HASH, encodeMetadata, ZERO_METADATA } = await import('@antseed/node');
     const buyerIdentity = buyerNode!.identity!;
     const buyerSigner = identityToEvmWallet(buyerIdentity);
     const buyerEvmAddr = identityToEvmAddress(buyerIdentity);
     const sellerEvmAddr = body402.sellerEvmAddr as string;
 
-    const sessionIdBytes = new Uint8Array(32);
-    crypto.getRandomValues(sessionIdBytes);
-    const sessionId = '0x' + Array.from(sessionIdBytes, b => b.toString(16).padStart(2, '0')).join('');
+    const channelIdBytes = new Uint8Array(32);
+    crypto.getRandomValues(channelIdBytes);
+    const channelId = '0x' + Array.from(channelIdBytes, b => b.toString(16).padStart(2, '0')).join('');
 
-    const domain = makeSessionsDomain(31337, '0x' + 'cc'.repeat(20));
-    const nonce = 999;
+    const sessionsDomain = makeSessionsDomain(31337, '0x' + 'cc'.repeat(20));
+    const salt = '0x' + Array.from(new Uint8Array(32), () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0')).join('');
     const deadline = Math.floor(Date.now() / 1000) + 90000;
-    const amount = 100000n; // $0.10
 
-    const sig = await signSpendingAuth(buyerSigner, domain, {
-      seller: sellerEvmAddr,
-      sessionId,
-      cumulativeAmount: amount,
-      cumulativeInputTokens: 0n,
-      cumulativeOutputTokens: 0n,
-      nonce,
-      deadline,
+    // For initial reserve, sign MetadataAuth with cumAmount=0. No Tempo voucher needed.
+    const metadataAuthSig = await signMetadataAuth(buyerSigner, sessionsDomain, {
+      channelId,
+      cumulativeAmount: 0n,
+      metadataHash: ZERO_METADATA_HASH,
     });
 
     // Encode as base64 JSON and place in x-antseed-spending-auth header
     const authPayload = {
-      sessionId,
-      cumulativeAmount: amount.toString(),
-      cumulativeInputTokens: '0',
-      cumulativeOutputTokens: '0',
-      nonce,
-      deadline,
-      buyerSig: sig,
+      channelId,
+      cumulativeAmount: '0',
+      metadataHash: ZERO_METADATA_HASH,
+      metadata: encodeMetadata(ZERO_METADATA),
+      tempoVoucherSig: '',
+      metadataAuthSig,
       buyerEvmAddr,
       sellerEvmAddr,
-      reserveAmount: '10000000',
+      reserveSalt: salt,
+      reserveMaxAmount: '10000000',
+      reserveDeadline: deadline,
     };
     const headerValue = Buffer.from(JSON.stringify(authPayload)).toString('base64');
 

@@ -215,8 +215,6 @@ contract AntseedSessionsTest is Test {
             address sSeller,
             uint128 sDeposit,
             uint128 sSettled,
-            uint128 sInputTokens,
-            uint128 sOutputTokens,
             ,
             uint256 sDeadline,
             uint256 sSettledAt,
@@ -227,8 +225,6 @@ contract AntseedSessionsTest is Test {
         assertEq(sSeller, seller);
         assertEq(sDeposit, USDC_100);
         assertEq(sSettled, 0);
-        assertEq(sInputTokens, 0);
-        assertEq(sOutputTokens, 0);
         assertGt(sDeadline, 0);
         assertEq(sSettledAt, 0);
         assertTrue(sStatus == AntseedSessions.SessionStatus.Active);
@@ -341,7 +337,7 @@ contract AntseedSessionsTest is Test {
         sessions.topUp(channelId, USDC_30);
 
         // Session deposit should be 80
-        (,, uint128 sDeposit,,,,,,, AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
+        (,, uint128 sDeposit,,,,, AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
         assertEq(sDeposit, USDC_50 + USDC_30);
         assertTrue(sStatus == AntseedSessions.SessionStatus.Active);
 
@@ -383,8 +379,6 @@ contract AntseedSessionsTest is Test {
             ,
             ,
             uint128 sSettled,
-            uint128 sInputTokens,
-            uint128 sOutputTokens,
             ,
             ,
             uint256 sSettledAt,
@@ -393,8 +387,6 @@ contract AntseedSessionsTest is Test {
 
         assertTrue(sStatus == AntseedSessions.SessionStatus.Settled);
         assertEq(sSettled, USDC_60);
-        assertEq(sInputTokens, 5000);
-        assertEq(sOutputTokens, 2000);
         assertGt(sSettledAt, 0);
 
         // Platform fee = 60 * 500 / 10000 = 3 USDC
@@ -434,7 +426,7 @@ contract AntseedSessionsTest is Test {
         vm.prank(seller);
         sessions.close(channelId, finalAmount, encodeMetadata(10000, 5000), voucherSig, metaSig);
 
-        (,,,uint128 sSettled,,,,,,AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
+        (,,,uint128 sSettled,,,,AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
         assertEq(sSettled, USDC_100);
         assertTrue(sStatus == AntseedSessions.SessionStatus.Settled);
 
@@ -517,7 +509,7 @@ contract AntseedSessionsTest is Test {
         sessions.settle(channelId, amount1, encodeMetadata(1000, 500), voucherSig1, metaSig1);
 
         // Session still active
-        (,, uint128 sDeposit, uint128 sSettled,,,,,, AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
+        (,, uint128 sDeposit, uint128 sSettled,,,, AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
         assertTrue(sStatus == AntseedSessions.SessionStatus.Active);
         assertEq(sDeposit, USDC_100);
         assertEq(sSettled, USDC_30);
@@ -554,7 +546,7 @@ contract AntseedSessionsTest is Test {
         sessions.close(channelId, finalAmount, encodeMetadata(3000, 1500), voucherSig2, metaSig2);
 
         // Session settled
-        (,,,uint128 sSettled,,,,,,AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
+        (,,,uint128 sSettled,,,,AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
         assertTrue(sStatus == AntseedSessions.SessionStatus.Settled);
         assertEq(sSettled, USDC_60);
 
@@ -577,7 +569,7 @@ contract AntseedSessionsTest is Test {
         bytes32 salt = keccak256("session-timeout");
         bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
-        (, , , , , , , uint256 deadline, ,) = sessions.sessions(channelId);
+        (, , , , , uint256 deadline, ,) = sessions.sessions(channelId);
 
         // requestClose reverts before deadline
         vm.expectRevert(AntseedSessions.NotAuthorized.selector);
@@ -602,7 +594,7 @@ contract AntseedSessionsTest is Test {
         sessions.withdraw(channelId);
 
         // Session timed out
-        (,,,,,,,,,AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
+        (,,,,,,,AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
         assertTrue(sStatus == AntseedSessions.SessionStatus.TimedOut);
 
         // Full deposit returned to buyer
@@ -783,7 +775,7 @@ contract AntseedSessionsTest is Test {
         vm.prank(seller);
         sessions.reserve(buyer, salt, USDC_50, deadline, metaSig);
 
-        (,,,,,,,,,AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
+        (,,,,,,,AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
         assertTrue(sStatus == AntseedSessions.SessionStatus.Active);
     }
 

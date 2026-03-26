@@ -11,11 +11,12 @@ import type { SpendingAuthPayload } from '../src/types/protocol.js';
 import { bytesToHex } from '../src/utils/hex.js';
 import { toPeerId } from '../src/types/peer.js';
 import { identityToEvmWallet, identityToEvmAddress } from '../src/payments/evm/keypair.js';
-import { signSpendingAuth, makeSessionsDomain, computeMetadataHash, encodeMetadata, ZERO_METADATA_HASH } from '../src/payments/evm/signatures.js';
-import type { SpendingAuthMessage, SpendingAuthMetadata } from '../src/payments/evm/signatures.js';
+import { signMetadataAuth, signTempoVoucher, makeSessionsDomain, makeTempoChannelDomain, computeMetadataHash, encodeMetadata, ZERO_METADATA_HASH } from '../src/payments/evm/signatures.js';
+import type { MetadataAuthMessage, TempoVoucherMessage, SpendingAuthMetadata } from '../src/payments/evm/signatures.js';
 
 const CHAIN_ID = 31337;
 const CONTRACT_ADDR = '0x' + 'dd'.repeat(20);
+const STREAM_CHANNEL_ADDR = '0x' + 'aa'.repeat(20);
 
 async function createTestIdentity(): Promise<Identity> {
   const privateKey = ed.utils.randomPrivateKey();
@@ -47,23 +48,23 @@ function createMockPaymentMux(): PaymentMux & {
   };
 }
 
-/** Build a valid SpendingAuth payload signed by the buyer's EVM wallet. */
+/** Build a valid SpendingAuth payload signed by the buyer's EVM wallet with dual sigs. */
 async function buildSpendingAuth(
   buyerIdentity: Identity,
-  sellerIdentity: Identity,
-  sessionId: string,
+  _sellerIdentity: Identity,
+  channelId: string,
   opts: {
     cumulativeAmount?: bigint;
     cumulativeInputTokens?: bigint;
     cumulativeOutputTokens?: bigint;
-    nonce?: number;
+    salt?: string;
     deadline?: number;
   } = {},
 ): Promise<SpendingAuthPayload> {
   const cumulativeAmount = opts.cumulativeAmount ?? 1_000_000n;
   const cumulativeInputTokens = opts.cumulativeInputTokens ?? 0n;
   const cumulativeOutputTokens = opts.cumulativeOutputTokens ?? 0n;
-  const nonce = opts.nonce ?? 1;
+  const salt = opts.salt ?? '0x' + '01'.repeat(32);
   const deadline = opts.deadline ?? Math.floor(Date.now() / 1000) + 3600;
 
   const meta: SpendingAuthMetadata = {
@@ -78,27 +79,29 @@ async function buildSpendingAuth(
   const buyerWallet = identityToEvmWallet(buyerIdentity);
   const buyerEvmAddr = buyerWallet.address;
 
-  const domain = makeSessionsDomain(CHAIN_ID, CONTRACT_ADDR);
-  const msg: SpendingAuthMessage = {
-    sessionId,
-    cumulativeAmount,
-    metadataHash: metadataHashHex,
-  };
-  const buyerSig = await signSpendingAuth(buyerWallet, domain, msg);
+  const sessionsDomain = makeSessionsDomain(CHAIN_ID, CONTRACT_ADDR);
+  const metadataMsg: MetadataAuthMessage = { channelId, cumulativeAmount, metadataHash: metadataHashHex };
+  const metadataAuthSig = await signMetadataAuth(buyerWallet, sessionsDomain, metadataMsg);
+
+  const tempoDomain = makeTempoChannelDomain(CHAIN_ID, STREAM_CHANNEL_ADDR);
+  const voucherMsg: TempoVoucherMessage = { channelId, cumulativeAmount };
+  const tempoVoucherSig = await signTempoVoucher(buyerWallet, tempoDomain, voucherMsg);
 
   return {
-    sessionId,
+    channelId,
     cumulativeAmount: cumulativeAmount.toString(),
     metadataHash: metadataHashHex,
     metadata: encodedMetadata,
-    buyerSig,
+    tempoVoucherSig,
+    metadataAuthSig,
     buyerEvmAddr,
-    reserveNonce: nonce,
+    reserveSalt: salt,
+    reserveMaxAmount: '10000000',
     reserveDeadline: deadline,
   };
 }
 
-function makeSessionId(n: number): string {
+function makeChannelId(n: number): string {
   return '0x' + n.toString(16).padStart(2, '0').repeat(32);
 }
 
@@ -119,15 +122,16 @@ describe('SellerPaymentManager', () => {
     const config: SellerPaymentConfig = {
       rpcUrl: 'http://127.0.0.1:8545',
       sessionsContractAddress: CONTRACT_ADDR,
+      streamChannelAddress: STREAM_CHANNEL_ADDR,
       chainId: CHAIN_ID,
       dataDir: tempDir,
     };
     manager = new SellerPaymentManager(sellerIdentity, config, store);
 
-    // Mock sessions client methods to avoid actual RPC calls
     vi.spyOn(manager.sessionsClient, 'reserve').mockResolvedValue('0xreserve-hash');
-    vi.spyOn(manager.sessionsClient, 'settle').mockResolvedValue('0xsettle-hash');
-    vi.spyOn(manager.sessionsClient, 'settleTimeout').mockResolvedValue('0xtimeout-hash');
+    vi.spyOn(manager.sessionsClient, 'close').mockResolvedValue('0xclose-hash');
+    vi.spyOn(manager.sessionsClient, 'requestClose').mockResolvedValue('0xrequestclose-hash');
+    vi.spyOn(manager.sessionsClient, 'withdraw').mockResolvedValue('0xwithdraw-hash');
 
     mux = createMockPaymentMux();
   });
@@ -138,171 +142,110 @@ describe('SellerPaymentManager', () => {
   });
 
   it('test_handleSpendingAuth_firstSign: calls reserve, sends AuthAck', async () => {
-    const sessionId = makeSessionId(1);
+    const channelId = makeChannelId(1);
     const buyerEvmAddr = identityToEvmAddress(buyerIdentity);
-    const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, sessionId);
+    const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId);
 
     await manager.handleSpendingAuth(buyerIdentity.peerId, buyerEvmAddr, payload, mux);
 
-    // Verify reserve was called
     expect(manager.sessionsClient.reserve).toHaveBeenCalledOnce();
-
-    // Verify AuthAck sent
     expect(mux.sentAuthAcks.length).toBe(1);
     const ack = mux.sentAuthAcks[0] as Record<string, unknown>;
-    expect(ack.sessionId).toBe(sessionId);
+    expect(ack.channelId).toBe(channelId);
 
-    // Verify session stored
-    const session = store.getSession(sessionId);
+    const session = store.getSession(channelId);
     expect(session).not.toBeNull();
     expect(session!.role).toBe('seller');
     expect(session!.status).toBe('active');
-
-    // Verify hasSession
     expect(manager.hasSession(buyerIdentity.peerId)).toBe(true);
   });
 
   it('test_handleSpendingAuth_subsequent: validates monotonic increase', async () => {
     const buyerEvmAddr = identityToEvmAddress(buyerIdentity);
-    const sessionId = makeSessionId(2);
+    const channelId = makeChannelId(2);
 
-    // First auth
-    const payload1 = await buildSpendingAuth(buyerIdentity, sellerIdentity, sessionId, {
-      cumulativeAmount: 100_000n,
-    });
+    const payload1 = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { cumulativeAmount: 100_000n });
     await manager.handleSpendingAuth(buyerIdentity.peerId, buyerEvmAddr, payload1, mux);
 
-    // Subsequent auth with higher cumulative
-    const payload2 = await buildSpendingAuth(buyerIdentity, sellerIdentity, sessionId, {
-      cumulativeAmount: 200_000n,
-    });
+    const payload2 = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { cumulativeAmount: 200_000n });
     await manager.handleSpendingAuth(buyerIdentity.peerId, buyerEvmAddr, payload2, mux);
 
-    // Only the initial auth triggers AuthAck
     expect(mux.sentAuthAcks.length).toBe(1);
-
-    // Accepted cumulative should be updated
-    expect(manager.getAcceptedCumulative(sessionId)).toBe(200_000n);
+    expect(manager.getAcceptedCumulative(channelId)).toBe(200_000n);
   });
 
   it('test_recordSpend: tracks cumulative spend', async () => {
     const buyerEvmAddr = identityToEvmAddress(buyerIdentity);
-    const sessionId = makeSessionId(3);
-    const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, sessionId);
+    const channelId = makeChannelId(3);
+    const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId);
     await manager.handleSpendingAuth(buyerIdentity.peerId, buyerEvmAddr, payload, mux);
 
-    manager.recordSpend(sessionId, 50_000n);
-    expect(manager.getCumulativeSpend(sessionId)).toBe(50_000n);
+    manager.recordSpend(channelId, 50_000n);
+    expect(manager.getCumulativeSpend(channelId)).toBe(50_000n);
 
-    manager.recordSpend(sessionId, 30_000n);
-    expect(manager.getCumulativeSpend(sessionId)).toBe(80_000n);
+    manager.recordSpend(channelId, 30_000n);
+    expect(manager.getCumulativeSpend(channelId)).toBe(80_000n);
   });
 
   it('test_getSessionByPeer: returns active session', async () => {
     const buyerEvmAddr = identityToEvmAddress(buyerIdentity);
-    const sessionId = makeSessionId(4);
-    const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, sessionId);
+    const channelId = makeChannelId(4);
+    const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId);
     await manager.handleSpendingAuth(buyerIdentity.peerId, buyerEvmAddr, payload, mux);
 
     const session = manager.getSessionByPeer(buyerIdentity.peerId);
     expect(session).not.toBeNull();
-    expect(session!.sessionId).toBe(sessionId);
+    expect(session!.sessionId).toBe(channelId);
   });
 
-  it('test_onBuyerDisconnect: session persisted, not settled when settleOnDisconnect=false', async () => {
-    // Create manager with settleOnDisconnect=false
+  it('test_onBuyerDisconnect: session persisted, not closed when settleOnDisconnect=false', async () => {
     const config2: SellerPaymentConfig = {
       rpcUrl: 'http://127.0.0.1:8545',
       sessionsContractAddress: CONTRACT_ADDR,
+      streamChannelAddress: STREAM_CHANNEL_ADDR,
       chainId: CHAIN_ID,
       dataDir: tempDir,
       settleOnDisconnect: false,
     };
     const manager2 = new SellerPaymentManager(sellerIdentity, config2, store);
     vi.spyOn(manager2.sessionsClient, 'reserve').mockResolvedValue('0xreserve-hash');
-    vi.spyOn(manager2.sessionsClient, 'settle').mockResolvedValue('0xsettle-hash');
+    vi.spyOn(manager2.sessionsClient, 'close').mockResolvedValue('0xclose-hash');
 
     const buyerEvmAddr = identityToEvmAddress(buyerIdentity);
-    const sessionId = makeSessionId(5);
-    const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, sessionId);
+    const channelId = makeChannelId(5);
+    const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId);
     await manager2.handleSpendingAuth(buyerIdentity.peerId, buyerEvmAddr, payload, mux);
 
     expect(manager2.hasSession(buyerIdentity.peerId)).toBe(true);
-
     manager2.onBuyerDisconnect(buyerIdentity.peerId);
-
-    // hasSession should return false (removed from in-memory set)
     expect(manager2.hasSession(buyerIdentity.peerId)).toBe(false);
 
-    // But session still persisted in store and still active
-    const session = store.getSession(sessionId);
+    const session = store.getSession(channelId);
     expect(session).not.toBeNull();
     expect(session!.status).toBe('active');
-
-    // Settle was NOT called
-    expect(manager2.sessionsClient.settle).not.toHaveBeenCalled();
-  });
-
-  it('test_checkTimeouts: post-grace sessions use settleTimeout (not settle)', async () => {
-    const buyerEvmAddr = identityToEvmAddress(buyerIdentity);
-    const sessionId = makeSessionId(6);
-    // Build SpendingAuth with a deadline that's already 3 hours in the past
-    // so deadline + CLOSE_GRACE_PERIOD (2h) = 1 hour ago → past grace period
-    const oldDeadline = Math.floor(Date.now() / 1000) - (3 * 60 * 60);
-    const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, sessionId, {
-      deadline: oldDeadline,
-    });
-    await manager.handleSpendingAuth(buyerIdentity.peerId, buyerEvmAddr, payload, mux);
-
-    await manager.checkTimeouts();
-
-    // Past grace period: settleTimeout is called (not settle — settle would revert)
-    expect(manager.sessionsClient.settleTimeout).toHaveBeenCalledOnce();
-    expect(manager.sessionsClient.settle).not.toHaveBeenCalled();
-    const session = store.getSession(sessionId);
-    expect(session!.status).toBe('timeout');
-  });
-
-  it('test_checkTimeouts: pre-deadline sessions with cumulative > 0 are settled', async () => {
-    const buyerEvmAddr = identityToEvmAddress(buyerIdentity);
-    const sessionId = makeSessionId(7);
-    // Build SpendingAuth with a deadline 1 hour from now — still valid
-    const futureDeadline = Math.floor(Date.now() / 1000) + 3600;
-    const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, sessionId, {
-      deadline: futureDeadline,
-    });
-    await manager.handleSpendingAuth(buyerIdentity.peerId, buyerEvmAddr, payload, mux);
-
-    // Simulate disconnect detected — checkTimeouts sees valid deadline, tries settle
-    await manager.checkTimeouts();
-
-    // Auth deadline still valid → settle is called to claim payment
-    expect(manager.sessionsClient.settle).toHaveBeenCalledOnce();
-    const session = store.getSession(sessionId);
-    expect(session!.status).toBe('settled');
+    expect(manager2.sessionsClient.close).not.toHaveBeenCalled();
   });
 
   it('test_hasSession: returns true/false correctly', async () => {
     const buyerEvmAddr = identityToEvmAddress(buyerIdentity);
     expect(manager.hasSession(buyerIdentity.peerId)).toBe(false);
 
-    const sessionId = makeSessionId(7);
-    const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, sessionId);
+    const channelId = makeChannelId(7);
+    const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId);
     await manager.handleSpendingAuth(buyerIdentity.peerId, buyerEvmAddr, payload, mux);
 
     expect(manager.hasSession(buyerIdentity.peerId)).toBe(true);
     expect(manager.hasSession('nonexistent-peer')).toBe(false);
   });
 
-  // ── Payment negotiation (PaymentRequired) ───────────────────
-
-  it('test_getPaymentRequirements: returns payload without init', () => {
+  it('test_getPaymentRequirements: returns payload with streamChannelAddress', () => {
     const req = manager.getPaymentRequirements('test-req-1');
     expect(req).not.toBeNull();
-    expect(req.suggestedAmount).toBe('100000'); // $0.10 default
+    expect(req.suggestedAmount).toBe('100000');
     expect(req.requestId).toBe('test-req-1');
     expect(req.sellerEvmAddr).toBe(identityToEvmAddress(sellerIdentity));
     expect(req.minBudgetPerRequest).toBeDefined();
+    expect(req.streamChannelAddress).toBe(STREAM_CHANNEL_ADDR);
   });
 
   it('test_getPaymentRequirements_includes_requestId: correlates with the triggering request', () => {
@@ -314,20 +257,14 @@ describe('SellerPaymentManager', () => {
 
   it('test_validateAndAcceptAuth: accepts monotonic increase', async () => {
     const buyerEvmAddr = identityToEvmAddress(buyerIdentity);
-    const sessionId = makeSessionId(8);
+    const channelId = makeChannelId(8);
 
-    // Establish session
-    const payload1 = await buildSpendingAuth(buyerIdentity, sellerIdentity, sessionId, {
-      cumulativeAmount: 100_000n,
-    });
+    const payload1 = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { cumulativeAmount: 100_000n });
     await manager.handleSpendingAuth(buyerIdentity.peerId, buyerEvmAddr, payload1, mux);
 
-    // Validate and accept a higher auth
-    const payload2 = await buildSpendingAuth(buyerIdentity, sellerIdentity, sessionId, {
-      cumulativeAmount: 200_000n,
-    });
+    const payload2 = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { cumulativeAmount: 200_000n });
     const accepted = await manager.validateAndAcceptAuth(buyerIdentity.peerId, payload2);
     expect(accepted).toBe(true);
-    expect(manager.getAcceptedCumulative(sessionId)).toBe(200_000n);
+    expect(manager.getAcceptedCumulative(channelId)).toBe(200_000n);
   });
 });

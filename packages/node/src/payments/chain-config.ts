@@ -6,6 +6,7 @@ export interface ChainConfig {
   rpcUrl: string;
   depositsContractAddress: string;
   sessionsContractAddress: string;
+  streamChannelAddress: string;
   stakingContractAddress?: string;
   usdcContractAddress: string;
   identityContractAddress?: string;
@@ -25,6 +26,7 @@ const CHAIN_CONFIGS: Record<ChainId, ChainConfig> = {
     rpcUrl: 'https://mainnet.base.org',
     depositsContractAddress: '0x0000000000000000000000000000000000000000', // TODO: deploy and fill
     sessionsContractAddress: '0x0000000000000000000000000000000000000000', // TODO: deploy and fill
+    streamChannelAddress: '0x0000000000000000000000000000000000000000', // TODO: deploy and fill
     usdcContractAddress: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', // USDC on Base
   },
   'base-sepolia': {
@@ -33,6 +35,7 @@ const CHAIN_CONFIGS: Record<ChainId, ChainConfig> = {
     rpcUrl: 'https://sepolia.base.org',
     depositsContractAddress: '0x0000000000000000000000000000000000000000', // TODO: deploy and fill
     sessionsContractAddress: '0x0000000000000000000000000000000000000000', // TODO: deploy and fill
+    streamChannelAddress: '0x0000000000000000000000000000000000000000', // TODO: deploy and fill
     usdcContractAddress: '0x036CbD53842c5426634e7929541eC2318f3dCF7e', // USDC on Base Sepolia
   },
   'base-local': {
@@ -41,6 +44,7 @@ const CHAIN_CONFIGS: Record<ChainId, ChainConfig> = {
     rpcUrl: 'http://127.0.0.1:8545',
     depositsContractAddress: '0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9',
     sessionsContractAddress: '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707',
+    streamChannelAddress: '0x0165878A594ca255338adfa4d48449f69242Eb8F',
     stakingContractAddress: '0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9',
     usdcContractAddress: '0x5FbDB2315678afecb367f032d93F642f64180aa3',
     identityContractAddress: '0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512',
@@ -70,6 +74,7 @@ export function resolveChainConfig(overrides?: {
   rpcUrl?: string;
   depositsContractAddress?: string;
   sessionsContractAddress?: string;
+  streamChannelAddress?: string;
   stakingContractAddress?: string;
   usdcContractAddress?: string;
   identityContractAddress?: string;
@@ -82,6 +87,7 @@ export function resolveChainConfig(overrides?: {
     ...(overrides?.rpcUrl ? { rpcUrl: overrides.rpcUrl } : {}),
     ...(overrides?.depositsContractAddress ? { depositsContractAddress: overrides.depositsContractAddress } : {}),
     ...(overrides?.sessionsContractAddress ? { sessionsContractAddress: overrides.sessionsContractAddress } : {}),
+    ...(overrides?.streamChannelAddress ? { streamChannelAddress: overrides.streamChannelAddress } : {}),
     ...(overrides?.stakingContractAddress ? { stakingContractAddress: overrides.stakingContractAddress } : {}),
     ...(overrides?.usdcContractAddress ? { usdcContractAddress: overrides.usdcContractAddress } : {}),
     ...(overrides?.identityContractAddress ? { identityContractAddress: overrides.identityContractAddress } : {}),

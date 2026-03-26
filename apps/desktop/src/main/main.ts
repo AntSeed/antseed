@@ -18,7 +18,7 @@ import {
 } from './process-manager.js';
 import { registerPiChatHandlers } from './pi-chat-engine.js';
 import { ensureSecureIdentity, secureIdentityEnv, getSecureIdentity } from './identity.js';
-import { identityToEvmAddress, identityToEvmWallet, DepositsClient, signSpendingAuth, makeSessionsDomain, resolveChainConfig, formatUsdc, encodeMetadata, ZERO_METADATA_HASH, ZERO_METADATA } from '@antseed/node';
+import { identityToEvmAddress, identityToEvmWallet, DepositsClient, signMetadataAuth, makeSessionsDomain, makeTempoChannelDomain, resolveChainConfig, formatUsdc, encodeMetadata, ZERO_METADATA_HASH, ZERO_METADATA } from '@antseed/node';
 import { createServer as createPaymentsServer } from '@antseed/payments';
 import type { LogEvent, RuntimeActivityEvent } from './log-parser.js';
 import { parseRuntimeActivityFromLog } from './log-parser.js';
@@ -678,14 +678,15 @@ const DEFAULT_SPENDING_AUTH_DURATION_SECONDS = 25 * 60 * 60; // must exceed escr
 const BYTES32_RE = /^0x[0-9a-fA-F]{64}$/;
 
 ipcMain.handle('payments:sign-spending-auth', async (_event, params: {
-  sessionId: string;
+  channelId: string;
   cumulativeAmountBaseUnits: string;
   metadataHash: string;
+  streamChannelAddress: string;
 }) => {
   try {
     // Validate renderer-supplied parameters at the trust boundary
-    if (!BYTES32_RE.test(params.sessionId)) {
-      return { ok: false, error: 'Invalid session ID format' };
+    if (!BYTES32_RE.test(params.channelId)) {
+      return { ok: false, error: 'Invalid channel ID format' };
     }
     const cumulativeAmount = BigInt(params.cumulativeAmountBaseUnits);
     if (cumulativeAmount <= 0n || cumulativeAmount > MAX_SPENDING_AUTH_BASE_UNITS) {
@@ -707,12 +708,21 @@ ipcMain.handle('payments:sign-spending-auth', async (_event, params: {
     }
 
     const wallet = identityToEvmWallet(identity);
-    const domain = makeSessionsDomain(cc.chainId, cc.sessionsAddress);
 
-    const signature = await signSpendingAuth(wallet, domain, {
-      sessionId: params.sessionId,
+    // Sign MetadataAuth (AntSeed domain)
+    const sessionsDomain = makeSessionsDomain(cc.chainId, cc.sessionsAddress);
+    const metadataAuthSig = await signMetadataAuth(wallet, sessionsDomain, {
+      channelId: params.channelId,
       cumulativeAmount,
       metadataHash: params.metadataHash,
+    });
+
+    // Sign Tempo Voucher (Tempo StreamChannel domain)
+    const { signTempoVoucher } = await import('@antseed/node');
+    const tempoDomain = makeTempoChannelDomain(cc.chainId, params.streamChannelAddress);
+    const tempoVoucherSig = await signTempoVoucher(wallet, tempoDomain, {
+      channelId: params.channelId,
+      cumulativeAmount,
     });
 
     const buyerEvmAddress = identityToEvmAddress(identity);
@@ -720,7 +730,8 @@ ipcMain.handle('payments:sign-spending-auth', async (_event, params: {
     return {
       ok: true,
       data: {
-        signature,
+        metadataAuthSig,
+        tempoVoucherSig,
         buyerEvmAddress,
       },
     };
@@ -847,7 +858,7 @@ ipcMain.handle('chat:approve-payment', async (_event, conversationId: string) =>
     }
 
     const wallet = identityToEvmWallet(identity);
-    const domain = makeSessionsDomain(cc.chainId, cc.sessionsAddress);
+    const sessionsDomain = makeSessionsDomain(cc.chainId, cc.sessionsAddress);
     const buyerEvmAddr = wallet.address;
 
     let sellerEvmAddr = String(paymentInfo.sellerEvmAddr ?? '');
@@ -867,31 +878,32 @@ ipcMain.handle('chat:approve-payment', async (_event, conversationId: string) =>
     if (!sellerEvmAddr) {
       return { ok: false, error: 'No seller EVM address available for this payment' };
     }
-    const cumulativeAmount = BigInt(String(paymentInfo.minBudgetPerRequest ?? paymentInfo.suggestedAmount ?? '100000'));
 
-    // Generate session parameters
-    const sessionIdBytes = randomBytes(32);
-    const sessionId = '0x' + sessionIdBytes.toString('hex');
-    const nonce = Date.now(); // simple nonce
+    // Generate channel parameters
+    const channelIdBytes = randomBytes(32);
+    const channelId = '0x' + channelIdBytes.toString('hex');
+    const salt = '0x' + randomBytes(32).toString('hex');
     const deadline = Math.floor(Date.now() / 1000) + DEFAULT_SPENDING_AUTH_DURATION_SECONDS;
 
+    // For initial reserve, sign MetadataAuth with cumAmount=0. No Tempo voucher needed.
     const zeroEncodedMetadata = encodeMetadata(ZERO_METADATA);
-    const signature = await signSpendingAuth(wallet, domain, {
-      sessionId,
-      cumulativeAmount,
+    const metadataAuthSig = await signMetadataAuth(wallet, sessionsDomain, {
+      channelId,
+      cumulativeAmount: 0n,
       metadataHash: ZERO_METADATA_HASH,
     });
 
     // Build the header payload
     const authPayload = {
-      sessionId,
-      cumulativeAmount: cumulativeAmount.toString(),
-      buyerSig: signature,
+      channelId,
+      cumulativeAmount: '0',
+      tempoVoucherSig: '', // No Tempo voucher needed for initial reserve
+      metadataAuthSig,
       buyerEvmAddr,
       sellerEvmAddr,
       metadataHash: ZERO_METADATA_HASH,
       metadata: zeroEncodedMetadata,
-      reserveNonce: nonce,
+      reserveSalt: salt,
       reserveDeadline: deadline,
     };
 

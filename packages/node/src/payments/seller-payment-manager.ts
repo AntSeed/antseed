@@ -8,8 +8,10 @@ import type {
 import { SessionsClient } from './evm/sessions-client.js';
 import { identityToEvmWallet, identityToEvmAddress } from './evm/keypair.js';
 import {
-  SPENDING_AUTH_TYPES,
+  METADATA_AUTH_TYPES,
+  TEMPO_VOUCHER_TYPES,
   makeSessionsDomain,
+  makeTempoChannelDomain,
 } from './evm/signatures.js';
 import { debugLog, debugWarn } from '../utils/debug.js';
 import { SessionStore, type StoredSession } from './session-store.js';
@@ -17,6 +19,7 @@ import { SessionStore, type StoredSession } from './session-store.js';
 export interface SellerPaymentConfig {
   rpcUrl: string;
   sessionsContractAddress: string;
+  streamChannelAddress: string;
   chainId: number;
   dataDir: string;
   /** Minimum USDC per request (base units). Default: "10000" ($0.01). */
@@ -28,10 +31,20 @@ export interface SellerPaymentConfig {
 /** Default minimum budget per request: $0.01 USDC (base units). */
 const DEFAULT_MIN_BUDGET_PER_REQUEST = '10000';
 
+/** Stored auth entry for both Tempo voucher and AntSeed MetadataAuth signatures. */
+interface LatestAuth {
+  tempoVoucherSig: string;
+  metadataAuthSig: string;
+  cumulativeAmount: bigint;
+  metadataHash: string;
+  metadata: string;
+}
+
 /**
- * Manages seller-side payment sessions using cumulative streaming vouchers.
- * The buyer sends a SpendingAuth with a monotonically increasing cumulativeAmount
- * on every request. The seller tracks spending locally and settles once at session end.
+ * Manages seller-side payment sessions wrapping Tempo StreamChannel.
+ * The buyer sends dual signatures (Tempo voucher + AntSeed MetadataAuth)
+ * with a monotonically increasing cumulativeAmount on every request.
+ * The seller tracks spending locally and settles/closes via the contract at session end.
  */
 export class SellerPaymentManager {
   private readonly _identity: Identity;
@@ -44,14 +57,14 @@ export class SellerPaymentManager {
   /** Per-buyer mutex to prevent concurrent handleSpendingAuth for the same buyer. */
   private readonly _buyerLocks = new Map<string, Promise<void>>();
 
-  /** sessionId -> highest accepted cumulativeAmount from buyer's SpendingAuth */
+  /** channelId -> highest accepted cumulativeAmount from buyer's SpendingAuth */
   private readonly _acceptedCumulative = new Map<string, bigint>();
 
-  /** sessionId -> total USDC spent so far (sum of recordSpend calls) */
+  /** channelId -> total USDC spent so far (sum of recordSpend calls) */
   private readonly _spent = new Map<string, bigint>();
 
-  /** sessionId -> latest buyer-signed SpendingAuth (sig + cumulative values + metadata) for settle() */
-  private readonly _latestAuth = new Map<string, { buyerSig: string; cumulativeAmount: bigint; metadataHash: string; metadata: string }>();
+  /** channelId -> latest buyer-signed auth (both sigs + cumulative values + metadata) for settle/close */
+  private readonly _latestAuth = new Map<string, LatestAuth>();
 
   constructor(identity: Identity, config: SellerPaymentConfig, sessionStore: SessionStore) {
     this._identity = identity;
@@ -78,12 +91,12 @@ export class SellerPaymentManager {
     return this._sessionsClient;
   }
 
-  // ── SpendingAuth handler (cumulative voucher model) ─────────
+  // ── SpendingAuth handler (dual-signature model) ─────────────
 
   /**
    * Handle incoming SpendingAuth from a buyer.
-   * First auth: verify, reserve on-chain, send AuthAck.
-   * Subsequent: verify, validate monotonic increase, persist.
+   * First auth: verify MetadataAuth, reserve on-chain, send AuthAck.
+   * Subsequent: verify both signatures (Tempo voucher + MetadataAuth), validate monotonic increase, persist.
    */
   async handleSpendingAuth(
     buyerPeerId: string,
@@ -109,52 +122,67 @@ export class SellerPaymentManager {
     paymentMux: PaymentMux,
   ): Promise<'accepted' | 'reserved' | 'rejected'> {
     try {
-      // 1. Verify EIP-712 signature (3-field SpendingAuth with metadataHash)
-      const domain = makeSessionsDomain(this._config.chainId, this._config.sessionsContractAddress);
-      const msg = {
-        sessionId: payload.sessionId,
-        cumulativeAmount: BigInt(payload.cumulativeAmount),
+      const channelId = payload.channelId;
+      const cumulativeAmount = BigInt(payload.cumulativeAmount);
+      const existingCumulative = this._acceptedCumulative.get(channelId);
+
+      // 1. Always verify AntSeed MetadataAuth signature
+      const sessionsDomain = makeSessionsDomain(this._config.chainId, this._config.sessionsContractAddress);
+      const metadataMsg = {
+        channelId,
+        cumulativeAmount,
         metadataHash: payload.metadataHash,
       };
 
-      const recoveredAddr = verifyTypedData(domain, SPENDING_AUTH_TYPES, msg, payload.buyerSig);
-      if (recoveredAddr.toLowerCase() !== buyerEvmAddr.toLowerCase()) {
-        debugWarn(`[SellerPayment] Invalid SpendingAuth signature: recovered=${recoveredAddr} expected=${buyerEvmAddr}`);
+      const metadataRecovered = verifyTypedData(sessionsDomain, METADATA_AUTH_TYPES, metadataMsg, payload.metadataAuthSig);
+      if (metadataRecovered.toLowerCase() !== buyerEvmAddr.toLowerCase()) {
+        debugWarn(`[SellerPayment] Invalid MetadataAuth signature: recovered=${metadataRecovered} expected=${buyerEvmAddr}`);
         return 'rejected';
+      }
+
+      // 2. For subsequent auths, also verify Tempo voucher signature
+      if (existingCumulative !== undefined && cumulativeAmount > 0n) {
+        const tempoDomain = makeTempoChannelDomain(this._config.chainId, this._config.streamChannelAddress);
+        const voucherMsg = {
+          channelId,
+          cumulativeAmount,
+        };
+        const voucherRecovered = verifyTypedData(tempoDomain, TEMPO_VOUCHER_TYPES, voucherMsg, payload.tempoVoucherSig);
+        if (voucherRecovered.toLowerCase() !== buyerEvmAddr.toLowerCase()) {
+          debugWarn(`[SellerPayment] Invalid Tempo voucher signature: recovered=${voucherRecovered} expected=${buyerEvmAddr}`);
+          return 'rejected';
+        }
       }
 
       debugLog(`[SellerPayment] SpendingAuth verified for buyer ${buyerPeerId.slice(0, 12)}...`);
 
-      const sessionId = payload.sessionId;
-      const cumulativeAmount = BigInt(payload.cumulativeAmount);
-      const existingCumulative = this._acceptedCumulative.get(sessionId);
-
       if (existingCumulative === undefined) {
         // ── First SpendingAuth: reserve on-chain ──
-        debugLog(`[SellerPayment] Reserving session ${sessionId.slice(0, 18)}... on-chain`);
-        const reserveAmount = payload.reserveAmount ? BigInt(payload.reserveAmount) : cumulativeAmount;
-        const reserveNonce = payload.reserveNonce ?? 0;
+        // The contract's reserve() only needs the MetadataAuth sig (cumulativeAmount=0).
+        // No Tempo voucher is needed for reserve.
+        debugLog(`[SellerPayment] Reserving channel ${channelId.slice(0, 18)}... on-chain`);
+        const reserveMaxAmount = payload.reserveMaxAmount ? BigInt(payload.reserveMaxAmount) : cumulativeAmount;
+        const reserveSalt = payload.reserveSalt ?? channelId; // salt should be provided by buyer
         const reserveDeadline = payload.reserveDeadline ?? (Math.floor(Date.now() / 1000) + 3600);
         await this._sessionsClient.reserve(
           this._signer,
           buyerEvmAddr,
-          sessionId,
-          reserveAmount,
-          BigInt(reserveNonce),
+          reserveSalt,
+          reserveMaxAmount,
           BigInt(reserveDeadline),
-          payload.buyerSig,
+          payload.metadataAuthSig,
         );
 
-        // Store new session
+        // Store new session (sessionId field stores channelId for backward compat)
         const now = Date.now();
         const sellerEvmAddr = identityToEvmAddress(this._identity);
         const session: StoredSession = {
-          sessionId,
+          sessionId: channelId,
           peerId: buyerPeerId,
           role: 'seller',
           sellerEvmAddr,
           buyerEvmAddr,
-          nonce: reserveNonce,
+          nonce: 0,
           authMax: payload.cumulativeAmount,
           deadline: reserveDeadline,
           previousSessionId: '',
@@ -171,10 +199,11 @@ export class SellerPaymentManager {
         this._sessionStore.upsertSession(session);
 
         // Initialize tracking maps
-        this._acceptedCumulative.set(sessionId, cumulativeAmount);
-        this._spent.set(sessionId, 0n);
-        this._latestAuth.set(sessionId, {
-          buyerSig: payload.buyerSig,
+        this._acceptedCumulative.set(channelId, cumulativeAmount);
+        this._spent.set(channelId, 0n);
+        this._latestAuth.set(channelId, {
+          tempoVoucherSig: payload.tempoVoucherSig,
+          metadataAuthSig: payload.metadataAuthSig,
           cumulativeAmount,
           metadataHash: payload.metadataHash,
           metadata: payload.metadata,
@@ -183,40 +212,40 @@ export class SellerPaymentManager {
 
         // Send AuthAck
         paymentMux.sendAuthAck({
-          sessionId,
-          nonce: reserveNonce,
+          channelId,
         });
 
-        debugLog(`[SellerPayment] AuthAck sent for session ${sessionId.slice(0, 18)}...`);
+        debugLog(`[SellerPayment] AuthAck sent for channel ${channelId.slice(0, 18)}...`);
         return 'reserved';
       } else {
         // ── Subsequent SpendingAuth: validate monotonic increase ──
         if (cumulativeAmount <= existingCumulative) {
           debugWarn(
             `[SellerPayment] Rejecting non-monotonic SpendingAuth: ` +
-            `new=${cumulativeAmount} existing=${existingCumulative} session=${sessionId.slice(0, 18)}...`,
+            `new=${cumulativeAmount} existing=${existingCumulative} channel=${channelId.slice(0, 18)}...`,
           );
           return 'rejected';
         }
 
         // Update tracking
-        this._acceptedCumulative.set(sessionId, cumulativeAmount);
-        this._latestAuth.set(sessionId, {
-          buyerSig: payload.buyerSig,
+        this._acceptedCumulative.set(channelId, cumulativeAmount);
+        this._latestAuth.set(channelId, {
+          tempoVoucherSig: payload.tempoVoucherSig,
+          metadataAuthSig: payload.metadataAuthSig,
           cumulativeAmount,
           metadataHash: payload.metadataHash,
           metadata: payload.metadata,
         });
 
         // Persist latest auth to SessionStore (authMax = latest cumulativeAmount)
-        const session = this._sessionStore.getSession(sessionId);
+        const session = this._sessionStore.getSession(channelId);
         if (session) {
           session.authMax = payload.cumulativeAmount;
           session.updatedAt = Date.now();
           this._sessionStore.upsertSession(session);
         }
 
-        debugLog(`[SellerPayment] Budget updated: session=${sessionId.slice(0, 18)}... cumulative=${cumulativeAmount}`);
+        debugLog(`[SellerPayment] Budget updated: channel=${channelId.slice(0, 18)}... cumulative=${cumulativeAmount}`);
         // No on-chain call. No AuthAck.
         return 'accepted';
       }
@@ -243,33 +272,51 @@ export class SellerPaymentManager {
       return false;
     }
 
-    const sessionId = session.sessionId;
-    const existingCumulative = this._acceptedCumulative.get(sessionId);
+    const channelId = session.sessionId; // sessionId field stores channelId
+    const existingCumulative = this._acceptedCumulative.get(channelId);
     if (existingCumulative === undefined) {
-      debugWarn(`[SellerPayment] validateAndAcceptAuth: no tracked cumulative for session ${sessionId.slice(0, 18)}...`);
+      debugWarn(`[SellerPayment] validateAndAcceptAuth: no tracked cumulative for channel ${channelId.slice(0, 18)}...`);
       return false;
     }
 
-    // Verify EIP-712 signature (3-field SpendingAuth with metadataHash)
-    const domain = makeSessionsDomain(this._config.chainId, this._config.sessionsContractAddress);
-    const msg = {
-      sessionId: auth.sessionId,
+    // Verify AntSeed MetadataAuth signature
+    const sessionsDomain = makeSessionsDomain(this._config.chainId, this._config.sessionsContractAddress);
+    const metadataMsg = {
+      channelId: auth.channelId,
       cumulativeAmount: BigInt(auth.cumulativeAmount),
       metadataHash: auth.metadataHash,
     };
 
     try {
-      const recoveredAddr = verifyTypedData(domain, SPENDING_AUTH_TYPES, msg, auth.buyerSig);
-      if (recoveredAddr.toLowerCase() !== auth.buyerEvmAddr.toLowerCase()) {
-        debugWarn(`[SellerPayment] validateAndAcceptAuth: invalid signature`);
+      const recovered = verifyTypedData(sessionsDomain, METADATA_AUTH_TYPES, metadataMsg, auth.metadataAuthSig);
+      if (recovered.toLowerCase() !== auth.buyerEvmAddr.toLowerCase()) {
+        debugWarn(`[SellerPayment] validateAndAcceptAuth: invalid MetadataAuth signature`);
         return false;
       }
     } catch {
-      debugWarn(`[SellerPayment] validateAndAcceptAuth: signature verification failed`);
+      debugWarn(`[SellerPayment] validateAndAcceptAuth: MetadataAuth verification failed`);
       return false;
     }
 
+    // Also verify Tempo voucher for non-zero amounts
     const newCumulative = BigInt(auth.cumulativeAmount);
+    if (newCumulative > 0n) {
+      const tempoDomain = makeTempoChannelDomain(this._config.chainId, this._config.streamChannelAddress);
+      const voucherMsg = {
+        channelId: auth.channelId,
+        cumulativeAmount: newCumulative,
+      };
+      try {
+        const recovered = verifyTypedData(tempoDomain, TEMPO_VOUCHER_TYPES, voucherMsg, auth.tempoVoucherSig);
+        if (recovered.toLowerCase() !== auth.buyerEvmAddr.toLowerCase()) {
+          debugWarn(`[SellerPayment] validateAndAcceptAuth: invalid Tempo voucher signature`);
+          return false;
+        }
+      } catch {
+        debugWarn(`[SellerPayment] validateAndAcceptAuth: Tempo voucher verification failed`);
+        return false;
+      }
+    }
 
     // Check monotonic: strictly greater, or equal (idempotent retransmit)
     if (newCumulative < existingCumulative) {
@@ -279,16 +326,17 @@ export class SellerPaymentManager {
 
     // Update if strictly greater
     if (newCumulative > existingCumulative) {
-      this._acceptedCumulative.set(sessionId, newCumulative);
-      this._latestAuth.set(sessionId, {
-        buyerSig: auth.buyerSig,
+      this._acceptedCumulative.set(channelId, newCumulative);
+      this._latestAuth.set(channelId, {
+        tempoVoucherSig: auth.tempoVoucherSig,
+        metadataAuthSig: auth.metadataAuthSig,
         cumulativeAmount: newCumulative,
         metadataHash: auth.metadataHash,
         metadata: auth.metadata,
       });
 
       // Persist latest auth to SessionStore
-      const storedSession = this._sessionStore.getSession(sessionId);
+      const storedSession = this._sessionStore.getSession(channelId);
       if (storedSession) {
         storedSession.authMax = auth.cumulativeAmount;
         storedSession.updatedAt = Date.now();
@@ -297,8 +345,8 @@ export class SellerPaymentManager {
     }
 
     // Check available budget
-    const accepted = this._acceptedCumulative.get(sessionId)!;
-    const spent = this._spent.get(sessionId) ?? 0n;
+    const accepted = this._acceptedCumulative.get(channelId)!;
+    const spent = this._spent.get(channelId) ?? 0n;
     return accepted >= spent;
   }
 
@@ -310,7 +358,7 @@ export class SellerPaymentManager {
   recordSpend(sessionId: string, costUsdc: bigint): void {
     const current = this._spent.get(sessionId);
     if (current === undefined) {
-      debugWarn(`[SellerPayment] recordSpend: unknown sessionId ${sessionId.slice(0, 18)}...`);
+      debugWarn(`[SellerPayment] recordSpend: unknown channelId ${sessionId.slice(0, 18)}...`);
       return;
     }
 
@@ -324,7 +372,8 @@ export class SellerPaymentManager {
   // ── Settlement ──────────────────────────────────────────────
 
   /**
-   * Settle a completed session on-chain using the latest buyer-signed SpendingAuth.
+   * Close a completed session on-chain using the latest buyer-signed dual signatures.
+   * Uses close() for final settlement (releases remaining deposit to buyer).
    */
   async settleSession(buyerPeerId: string): Promise<void> {
     const session = this._sessionStore.getActiveSessionByPeer(buyerPeerId, 'seller');
@@ -333,41 +382,41 @@ export class SellerPaymentManager {
       return;
     }
 
-    const sessionId = session.sessionId;
-    const accepted = this._acceptedCumulative.get(sessionId) ?? 0n;
+    const channelId = session.sessionId;
+    const accepted = this._acceptedCumulative.get(channelId) ?? 0n;
 
     if (accepted === 0n) {
-      // Session opened but no requests served — cannot call settleTimeout() here because
-      // the contract requires deadline + CLOSE_GRACE_PERIOD to have passed.
-      // Leave it for checkTimeouts() which validates the timeout threshold first.
-      debugLog(`[SellerPayment] Zero-cumulative session ${sessionId.slice(0, 18)}... — deferring to timeout checker`);
+      // Session opened but no requests served — cannot close without a voucher.
+      // Leave it for checkTimeouts() which uses requestClose → withdraw.
+      debugLog(`[SellerPayment] Zero-cumulative channel ${channelId.slice(0, 18)}... — deferring to timeout checker`);
     } else {
-      // Settle with the latest buyer-signed auth
-      const latestAuth = this._latestAuth.get(sessionId);
-      if (!latestAuth || !latestAuth.buyerSig) {
-        debugWarn(`[SellerPayment] No buyer signature stored for session ${sessionId.slice(0, 18)}... — cannot settle`);
+      // Close with the latest buyer-signed auth (final settlement)
+      const latestAuth = this._latestAuth.get(channelId);
+      if (!latestAuth || !latestAuth.tempoVoucherSig || !latestAuth.metadataAuthSig) {
+        debugWarn(`[SellerPayment] No buyer signatures stored for channel ${channelId.slice(0, 18)}... — cannot close`);
         return;
       }
-      debugLog(`[SellerPayment] Settling session ${sessionId.slice(0, 18)}... cumulative=${latestAuth.cumulativeAmount}`);
+      debugLog(`[SellerPayment] Closing channel ${channelId.slice(0, 18)}... cumulative=${latestAuth.cumulativeAmount}`);
       try {
-        await this._sessionsClient.settle(
+        await this._sessionsClient.close(
           this._signer,
-          sessionId,
+          channelId,
           latestAuth.cumulativeAmount,
           latestAuth.metadata,
-          latestAuth.buyerSig,
+          latestAuth.tempoVoucherSig,
+          latestAuth.metadataAuthSig,
         );
-        this._sessionStore.updateSessionStatus(sessionId, 'settled', latestAuth.cumulativeAmount.toString());
+        this._sessionStore.updateSessionStatus(channelId, 'settled', latestAuth.cumulativeAmount.toString());
       } catch (err) {
-        debugWarn(`[SellerPayment] Failed to settle session: ${err instanceof Error ? err.message : err}`);
+        debugWarn(`[SellerPayment] Failed to close channel: ${err instanceof Error ? err.message : err}`);
         return;
       }
     }
 
     // Clean up maps
-    this._acceptedCumulative.delete(sessionId);
-    this._spent.delete(sessionId);
-    this._latestAuth.delete(sessionId);
+    this._acceptedCumulative.delete(channelId);
+    this._spent.delete(channelId);
+    this._latestAuth.delete(channelId);
     this._activeBuyers.delete(buyerPeerId);
   }
 
@@ -382,10 +431,10 @@ export class SellerPaymentManager {
     if (settleOnDisconnect) {
       const accepted = this._acceptedCumulative.get(session.sessionId) ?? 0n;
       if (accepted > 0n) {
-        debugLog(`[SellerPayment] Buyer ${buyerPeerId.slice(0, 12)}... disconnected — settling immediately`);
+        debugLog(`[SellerPayment] Buyer ${buyerPeerId.slice(0, 12)}... disconnected — closing channel immediately`);
         // Fire and forget settlement
         this.settleSession(buyerPeerId).catch((err) => {
-          debugWarn(`[SellerPayment] Failed to settle on disconnect: ${err instanceof Error ? err.message : err}`);
+          debugWarn(`[SellerPayment] Failed to close on disconnect: ${err instanceof Error ? err.message : err}`);
         });
         return;
       }
@@ -393,53 +442,69 @@ export class SellerPaymentManager {
 
     // Preserve session for reconnect; timeout checker handles ghost scenarios
     this._activeBuyers.delete(buyerPeerId);
-    debugLog(`[SellerPayment] Buyer ${buyerPeerId.slice(0, 12)}... disconnected — session ${session.sessionId.slice(0, 18)}... preserved for reconnect`);
+    debugLog(`[SellerPayment] Buyer ${buyerPeerId.slice(0, 12)}... disconnected — channel ${session.sessionId.slice(0, 18)}... preserved for reconnect`);
   }
 
   // ── Timeout management ────────────────────────────────────────
 
   /**
-   * Check for and settle timed-out sessions.
+   * Check for and handle timed-out sessions.
+   * For expired sessions: requestClose → withdraw (after Tempo grace period).
    * Called periodically and on startup for recovery.
    */
   async checkTimeouts(): Promise<void> {
-    // Check all active sessions — use the session's actual deadline + CLOSE_GRACE_PERIOD (2h)
-    // to determine if on-chain settleTimeout() will succeed, instead of a separate config timer.
-    const CLOSE_GRACE_PERIOD_SECS = 2 * 60 * 60; // 2 hours — matches contract default
+    // Tempo has a 15-minute grace period after requestClose.
+    // We use the session deadline as the trigger — once past deadline, call requestClose.
+    // On the next check cycle (after 15 min), call withdraw.
+    const TEMPO_GRACE_PERIOD_SECS = 15 * 60; // 15 minutes — matches Tempo default
     const nowSecs = Math.floor(Date.now() / 1000);
     const activeSessions = this._sessionStore.getActiveSessions('seller');
 
     for (const session of activeSessions) {
       const deadline = session.deadline;
-      const deadlinePlusGrace = deadline + CLOSE_GRACE_PERIOD_SECS;
       const accepted = this._acceptedCumulative.get(session.sessionId) ?? 0n;
 
       try {
-        if (nowSecs >= deadlinePlusGrace) {
-          // Past deadline + grace: settle() would revert (SessionExpired).
-          // Must use settleTimeout() — releases full deposit, no payment to seller.
-          debugLog(`[SellerPayment] Session ${session.sessionId.slice(0, 18)}... past grace period — calling settleTimeout`);
-          await this._sessionsClient.settleTimeout(this._signer, session.sessionId);
-          this._sessionStore.updateSessionStatus(session.sessionId, 'timeout');
-          this._acceptedCumulative.delete(session.sessionId);
-          this._spent.delete(session.sessionId);
-          this._latestAuth.delete(session.sessionId);
-          this._activeBuyers.delete(session.peerId);
-        } else if (accepted > 0n) {
-          // Before grace period but session has accepted cumulative.
-          // Check if deadline is approaching — settle before it expires.
-          // Use session deadline (from reserve params) since deadline is no longer in SpendingAuth
-          const authDeadline = deadline;
-          if (nowSecs < authDeadline) {
-            // Auth deadline still valid — settle to claim payment
-            debugLog(`[SellerPayment] Session ${session.sessionId.slice(0, 18)}... settling before deadline (cumulative=${accepted})`);
+        if (nowSecs > deadline) {
+          // Past deadline: try to close normally if we have auths, otherwise requestClose→withdraw
+          if (accepted > 0n) {
+            // Try to close with latest auth first
+            debugLog(`[SellerPayment] Channel ${session.sessionId.slice(0, 18)}... past deadline — attempting close`);
             await this.settleSession(session.peerId);
+          } else {
+            // No auths received — requestClose then withdraw
+            const deadlinePlusGrace = deadline + TEMPO_GRACE_PERIOD_SECS;
+            if (nowSecs >= deadlinePlusGrace) {
+              // Grace period passed — withdraw
+              debugLog(`[SellerPayment] Channel ${session.sessionId.slice(0, 18)}... past grace period — calling withdraw`);
+              try {
+                await this._sessionsClient.withdraw(this._signer, session.sessionId);
+              } catch {
+                // withdraw may fail if requestClose hasn't been called yet — try that first
+                debugLog(`[SellerPayment] Withdraw failed, trying requestClose first for ${session.sessionId.slice(0, 18)}...`);
+                await this._sessionsClient.requestClose(this._signer, session.sessionId);
+                // Will withdraw on next cycle
+                continue;
+              }
+              this._sessionStore.updateSessionStatus(session.sessionId, 'timeout');
+              this._acceptedCumulative.delete(session.sessionId);
+              this._spent.delete(session.sessionId);
+              this._latestAuth.delete(session.sessionId);
+              this._activeBuyers.delete(session.peerId);
+            } else {
+              // Call requestClose to start Tempo's grace period
+              debugLog(`[SellerPayment] Channel ${session.sessionId.slice(0, 18)}... past deadline — calling requestClose`);
+              try {
+                await this._sessionsClient.requestClose(this._signer, session.sessionId);
+              } catch {
+                // May already have been requested — ignore
+              }
+            }
           }
-          // If auth deadline already passed, we can't settle — wait for grace period → settleTimeout
         }
-        // If deadline hasn't passed and no accepted cumulative, skip — session is still active
+        // If deadline hasn't passed, skip — session is still active
       } catch (err) {
-        debugWarn(`[SellerPayment] Failed to process session ${session.sessionId.slice(0, 18)}...: ${err instanceof Error ? err.message : err}`);
+        debugWarn(`[SellerPayment] Failed to process channel ${session.sessionId.slice(0, 18)}...: ${err instanceof Error ? err.message : err}`);
       }
     }
   }
@@ -469,8 +534,7 @@ export class SellerPaymentManager {
 
   /**
    * Build the PaymentRequired payload for a buyer that doesn't have a session.
-   * Never returns null — no longer depends on on-chain data.
-   * For returning buyers (proven history), uses the configured proven-sign amount.
+   * Includes streamChannelAddress so the buyer can compute the Tempo voucher domain.
    */
   getPaymentRequirements(
     requestId: string,
@@ -495,6 +559,7 @@ export class SellerPaymentManager {
       minBudgetPerRequest,
       suggestedAmount: suggestedAmount.toString(),
       requestId,
+      streamChannelAddress: this._config.streamChannelAddress,
       ...(pricing?.inputUsdPerMillion != null ? { inputUsdPerMillion: pricing.inputUsdPerMillion } : {}),
       ...(pricing?.outputUsdPerMillion != null ? { outputUsdPerMillion: pricing.outputUsdPerMillion } : {}),
     };

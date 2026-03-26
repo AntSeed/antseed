@@ -157,6 +157,8 @@ export interface NodePaymentsConfig {
   depositsAddress?: string;
   /** Deployed AntseedSessions contract address */
   sessionsAddress?: string;
+  /** Tempo StreamChannel contract address (needed for Tempo voucher EIP-712 domain) */
+  streamChannelAddress?: string;
   /** USDC token contract address */
   usdcAddress?: string;
   /** AntseedIdentity contract address */
@@ -885,6 +887,7 @@ export class AntseedNode extends EventEmitter {
             sellerEvmAddr: buffered.sellerEvmAddr,
             minBudgetPerRequest: buffered.minBudgetPerRequest,
             suggestedAmount: buffered.suggestedAmount,
+            streamChannelAddress: buffered.streamChannelAddress,
           });
           return {
             ...response,
@@ -930,6 +933,7 @@ export class AntseedNode extends EventEmitter {
           minBudgetPerRequest: String(directPaymentBody.minBudgetPerRequest ?? '10000'),
           suggestedAmount: String(directPaymentBody.suggestedAmount ?? '100000'),
           requestId: req.requestId,
+          streamChannelAddress: String(directPaymentBody.streamChannelAddress ?? ''),
           ...(directPaymentBody.inputUsdPerMillion != null ? { inputUsdPerMillion: Number(directPaymentBody.inputUsdPerMillion) } : {}),
           ...(directPaymentBody.outputUsdPerMillion != null ? { outputUsdPerMillion: Number(directPaymentBody.outputUsdPerMillion) } : {}),
         };
@@ -1234,6 +1238,7 @@ export class AntseedNode extends EventEmitter {
           rpcUrl: payments.rpcUrl,
           depositsContractAddress: payments.depositsAddress,
           sessionsContractAddress: payments.sessionsAddress,
+          streamChannelAddress: payments.streamChannelAddress ?? '',
           usdcAddress: payments.usdcAddress,
           identityAddress: payments.identityAddress ?? '',
           chainId: payments.chainId ?? 8453,
@@ -1301,6 +1306,7 @@ export class AntseedNode extends EventEmitter {
             sellerEvmAddr: requirements.sellerEvmAddr,
             minBudgetPerRequest: requirements.minBudgetPerRequest,
             suggestedAmount: requirements.suggestedAmount,
+            streamChannelAddress: requirements.streamChannelAddress,
           });
           mux.sendProxyResponse({
             requestId: request.requestId,
@@ -1443,7 +1449,7 @@ export class AntseedNode extends EventEmitter {
             if (remainingBudget < estimatedNextRequestCost) {
               debugLog(`[Node] Budget low for ${buyerPeerId.slice(0, 12)}... remaining=${remainingBudget} estimated=${estimatedNextRequestCost} — sending NeedAuth`);
               paymentMux.sendNeedAuth({
-                sessionId: session.sessionId,
+                channelId: session.sessionId,
                 requiredCumulativeAmount: (cumulativeSpend + estimatedNextRequestCost * 2n).toString(),
                 currentAcceptedCumulative: accepted.toString(),
                 deposit: session.authMax ?? '0',
@@ -1773,6 +1779,7 @@ export class AntseedNode extends EventEmitter {
       const sellerConfig: SellerPaymentConfig = {
         rpcUrl: payments.rpcUrl,
         sessionsContractAddress: payments.sessionsAddress,
+        streamChannelAddress: payments.streamChannelAddress ?? '',
         chainId: payments.chainId ?? 8453,
         dataDir: paymentsDir,
         ...(payments.minBudgetPerRequest ? { minBudgetPerRequest: payments.minBudgetPerRequest } : {}),
@@ -2145,18 +2152,17 @@ export class AntseedNode extends EventEmitter {
     const pmux = this._getOrCreateBuyerPaymentMux(peer.peerId, conn);
 
     let payload: {
-      sessionId: string;
+      channelId: string;
       cumulativeAmount: string;
       metadataHash: string;
       metadata: string;
-      buyerSig: string;
+      tempoVoucherSig: string;
+      metadataAuthSig: string;
       buyerEvmAddr: string;
       sellerEvmAddr?: string;
-      reserveNonce?: number;
+      reserveSalt?: string;
+      reserveMaxAmount?: string;
       reserveDeadline?: number;
-      // Legacy fields (ignored but accepted for backward compat)
-      nonce?: number;
-      deadline?: number;
     };
     try {
       const decoded = Buffer.from(headerValue, 'base64').toString('utf-8');
@@ -2165,20 +2171,19 @@ export class AntseedNode extends EventEmitter {
       throw new Error('Invalid x-antseed-spending-auth header: failed to decode');
     }
 
-    debugLog(`[Node] External SpendingAuth: session=${payload.sessionId.slice(0, 18)}... amount=${payload.cumulativeAmount}`);
+    debugLog(`[Node] External SpendingAuth: channel=${payload.channelId.slice(0, 18)}... amount=${payload.cumulativeAmount}`);
 
     // Store session so handleAuthAck can find it
     if (this._sessionStore) {
       const sellerEvmAddr = payload.sellerEvmAddr ?? '';
-      const reserveNonce = payload.reserveNonce ?? payload.nonce ?? 0;
-      const reserveDeadline = payload.reserveDeadline ?? payload.deadline ?? (Math.floor(Date.now() / 1000) + 3600);
+      const reserveDeadline = payload.reserveDeadline ?? (Math.floor(Date.now() / 1000) + 3600);
       this._sessionStore.upsertSession({
-        sessionId: payload.sessionId,
+        sessionId: payload.channelId,
         peerId: peer.peerId,
         role: 'buyer',
         sellerEvmAddr,
         buyerEvmAddr: payload.buyerEvmAddr,
-        nonce: reserveNonce,
+        nonce: 0,
         authMax: payload.cumulativeAmount,
         deadline: reserveDeadline,
         previousSessionId: '0x' + '0'.repeat(64),

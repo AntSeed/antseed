@@ -19,6 +19,7 @@ import { AbiCoder } from 'ethers';
 
 const CHAIN_ID = 31337;
 const CONTRACT_ADDR = '0x' + 'dd'.repeat(20);
+const STREAM_CHANNEL_ADDR = '0x' + 'ee'.repeat(20);
 
 function decodeMetadataTokens(metadata: string): { inputTokens: bigint; outputTokens: bigint } {
   const coder = AbiCoder.defaultAbiCoder();
@@ -49,6 +50,7 @@ describe('Cumulative SpendingAuth Integration', () => {
       rpcUrl: 'http://127.0.0.1:8545',
       depositsContractAddress: CONTRACT_ADDR,
       sessionsContractAddress: CONTRACT_ADDR,
+      streamChannelAddress: STREAM_CHANNEL_ADDR,
       usdcAddress: '0x' + 'ee'.repeat(20),
       identityAddress: '0x' + 'ff'.repeat(20),
       chainId: CHAIN_ID,
@@ -87,7 +89,7 @@ describe('Cumulative SpendingAuth Integration', () => {
     } as unknown as PaymentMux;
 
     // Step 1: Initial authorization with minBudgetPerRequest = 10000
-    const sessionId = await buyerManager.authorizeSpending(
+    const channelId = await buyerManager.authorizeSpending(
       sellerIdentity.peerId,
       sellerEvmAddr,
       mux,
@@ -99,7 +101,7 @@ describe('Cumulative SpendingAuth Integration', () => {
     expect(sentAuths[0].metadata).toBeTypeOf('string');
 
     // Simulate AuthAck
-    buyerManager.handleAuthAck(sellerIdentity.peerId, { sessionId, nonce: 1 });
+    buyerManager.handleAuthAck(sellerIdentity.peerId, { channelId });
     expect(buyerManager.isAuthorized(sellerIdentity.peerId)).toBe(true);
 
     // Step 2: First request completes, sign per-request auth
@@ -116,7 +118,7 @@ describe('Cumulative SpendingAuth Integration', () => {
     const meta1 = decodeMetadataTokens(auth1.metadata);
     expect(meta1.inputTokens).toBe(500n);
     expect(meta1.outputTokens).toBe(200n);
-    expect(auth1.sessionId).toBe(sessionId);
+    expect(auth1.channelId).toBe(channelId);
 
     // Step 3: Second request completes
     const auth2 = await buyerManager.signPerRequestAuth(
@@ -150,10 +152,10 @@ describe('Cumulative SpendingAuth Integration', () => {
     expect(meta3.inputTokens).toBe(1000n);
     expect(meta3.outputTokens).toBe(450n);
 
-    // Verify all auth payloads reference the same session
-    expect(auth1.sessionId).toBe(sessionId);
-    expect(auth2.sessionId).toBe(sessionId);
-    expect(auth3.sessionId).toBe(sessionId);
+    // Verify all auth payloads reference the same channel
+    expect(auth1.channelId).toBe(channelId);
+    expect(auth2.channelId).toBe(channelId);
+    expect(auth3.channelId).toBe(channelId);
 
     // Verify monotonically increasing cumulative amounts
     expect(BigInt(auth1.cumulativeAmount)).toBeLessThan(BigInt(auth2.cumulativeAmount));
@@ -177,7 +179,7 @@ describe('Cumulative SpendingAuth Integration', () => {
     } as unknown as PaymentMux;
 
     // Initial authorization
-    const sessionId = await buyerManager.authorizeSpending(
+    const channelId = await buyerManager.authorizeSpending(
       sellerIdentity.peerId,
       sellerEvmAddr,
       mux,
@@ -189,7 +191,7 @@ describe('Cumulative SpendingAuth Integration', () => {
     await buyerManager.handleNeedAuth(
       sellerIdentity.peerId,
       {
-        sessionId,
+        channelId,
         requiredCumulativeAmount: '500000',
         currentAcceptedCumulative: '10000',
         deposit: '1000000',
@@ -201,7 +203,7 @@ describe('Cumulative SpendingAuth Integration', () => {
     expect(sentAuths.length).toBe(2);
     const updatedAuth = sentAuths[1];
     expect(updatedAuth.cumulativeAmount).toBe('500000');
-    expect(updatedAuth.sessionId).toBe(sessionId);
+    expect(updatedAuth.channelId).toBe(channelId);
 
     // Subsequent signPerRequestAuth should build on the new cumulative base
     const auth = await buyerManager.signPerRequestAuth(
@@ -233,7 +235,7 @@ describe('Cumulative SpendingAuth Integration', () => {
     } as unknown as PaymentMux;
 
     // Create session and do some spending
-    const sessionId = await buyerManager.authorizeSpending(
+    const channelId = await buyerManager.authorizeSpending(
       sellerIdentity.peerId,
       sellerEvmAddr,
       mux,
@@ -241,7 +243,7 @@ describe('Cumulative SpendingAuth Integration', () => {
     );
 
     // Simulate AuthAck so the session is confirmed
-    buyerManager.handleAuthAck(sellerIdentity.peerId, { sessionId, nonce: 1 });
+    buyerManager.handleAuthAck(sellerIdentity.peerId, { channelId });
 
     const auth = await buyerManager.signPerRequestAuth(
       sellerIdentity.peerId,
@@ -256,7 +258,7 @@ describe('Cumulative SpendingAuth Integration', () => {
     const authMeta = decodeMetadataTokens(auth.metadata);
     expect(authMeta.inputTokens).toBe(100n);
     expect(authMeta.outputTokens).toBe(50n);
-    expect(auth.sessionId).toBe(sessionId);
+    expect(auth.channelId).toBe(channelId);
 
     // Close store and recreate manager
     buyerStore.close();
@@ -266,6 +268,7 @@ describe('Cumulative SpendingAuth Integration', () => {
       rpcUrl: 'http://127.0.0.1:8545',
       depositsContractAddress: CONTRACT_ADDR,
       sessionsContractAddress: CONTRACT_ADDR,
+      streamChannelAddress: STREAM_CHANNEL_ADDR,
       usdcAddress: '0x' + 'ee'.repeat(20),
       identityAddress: '0x' + 'ff'.repeat(20),
       chainId: CHAIN_ID,
@@ -279,7 +282,7 @@ describe('Cumulative SpendingAuth Integration', () => {
     newManager.setSigner(identityToEvmWallet(buyerIdentity));
 
     // The session should still be accessible
-    const session = newStore.getSession(sessionId);
+    const session = newStore.getSession(channelId);
     expect(session).not.toBeNull();
     expect(session!.status).toBe('active');
     // The upsert ON CONFLICT clause persists tokens_delivered but not

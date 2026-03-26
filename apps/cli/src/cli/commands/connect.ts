@@ -303,6 +303,7 @@ export function registerConnectCommand(program: Command): void {
         rpcUrl: cryptoOverrides?.rpcUrl,
         depositsContractAddress: cryptoOverrides?.depositsContractAddress,
         sessionsContractAddress: cryptoOverrides?.sessionsContractAddress,
+        streamChannelAddress: cryptoOverrides?.streamChannelAddress,
         usdcContractAddress: cryptoOverrides?.usdcContractAddress,
       })
       let settlementEnabled = settlementEnv ?? true

@@ -41,6 +41,7 @@ function makeConfig(dataDir: string): BuyerPaymentConfig {
     rpcUrl: 'http://127.0.0.1:8545',
     depositsContractAddress: '0x' + 'dd'.repeat(20),
     sessionsContractAddress: '0x' + 'cc'.repeat(20),
+    streamChannelAddress: '0x' + 'aa'.repeat(20),
     usdcAddress: '0x' + 'ee'.repeat(20),
     identityAddress: '0x' + 'ff'.repeat(20),
     chainId: 31337,
@@ -74,22 +75,23 @@ describe('BuyerPaymentManager', () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it('authorizeSpending sends SpendingAuth with minBudgetPerRequest as initial cumulativeAmount', async () => {
+  it('authorizeSpending sends SpendingAuth with channelId and dual sigs', async () => {
     const sellerPeerId = 'seller-peer-001';
     const sellerEvmAddr = '0x' + 'ab'.repeat(20);
     const minBudget = 50_000n;
 
-    const sessionId = await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux, minBudget);
+    const channelId = await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux, minBudget);
 
-    expect(sessionId).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(channelId).toMatch(/^0x[0-9a-f]{64}$/);
     expect(mux.sentSpendingAuths.length).toBe(1);
 
     const sent = mux.sentSpendingAuths[0] as Record<string, unknown>;
     expect(sent.cumulativeAmount).toBe('0');
     expect(sent.metadataHash).toBeTypeOf('string');
     expect(sent.metadata).toBeTypeOf('string');
-    expect(sent.sessionId).toBe(sessionId);
-    expect(sent.buyerSig).toBeTypeOf('string');
+    expect(sent.channelId).toBe(channelId);
+    expect(sent.metadataAuthSig).toBeTypeOf('string');
+    expect(sent.tempoVoucherSig).toBe(''); // No Tempo voucher for initial reserve
     expect(sent.buyerEvmAddr).toBeTypeOf('string');
   });
 
@@ -98,9 +100,9 @@ describe('BuyerPaymentManager', () => {
     const sellerEvmAddr = '0x' + 'ab'.repeat(20);
     const tooLarge = 200_000n; // exceeds maxPerRequestUsdc (100_000)
 
-    const sessionId = await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux, tooLarge);
+    const channelId = await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux, tooLarge);
 
-    expect(sessionId).toBe('');
+    expect(channelId).toBe('');
     expect(mux.sentSpendingAuths.length).toBe(0);
   });
 
@@ -108,10 +110,10 @@ describe('BuyerPaymentManager', () => {
     const sellerPeerId = 'seller-peer-003';
     const sellerEvmAddr = '0x' + 'ab'.repeat(20);
 
-    const sessionId = await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux, 10_000n);
+    const channelId = await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux, 10_000n);
     expect(manager.isAuthorized(sellerPeerId)).toBe(false);
 
-    manager.handleAuthAck(sellerPeerId, { sessionId, nonce: 1 });
+    manager.handleAuthAck(sellerPeerId, { channelId });
     expect(manager.isAuthorized(sellerPeerId)).toBe(true);
   });
 
@@ -122,23 +124,22 @@ describe('BuyerPaymentManager', () => {
 
     expect(manager.isAuthorized(peerId1)).toBe(false);
 
-    const sid = await manager.authorizeSpending(peerId1, evmAddr, mux, 10_000n);
+    const cid = await manager.authorizeSpending(peerId1, evmAddr, mux, 10_000n);
     // Still not authorized until AuthAck
     expect(manager.isAuthorized(peerId1)).toBe(false);
 
-    manager.handleAuthAck(peerId1, { sessionId: sid, nonce: 1 });
+    manager.handleAuthAck(peerId1, { channelId: cid });
     expect(manager.isAuthorized(peerId1)).toBe(true);
     expect(manager.isAuthorized(peerId2)).toBe(false);
   });
 
-  it('signPerRequestAuth increments cumulative values', async () => {
+  it('signPerRequestAuth increments cumulative values and produces dual sigs', async () => {
     const sellerPeerId = 'seller-peer-perreq';
     const sellerEvmAddr = '0x' + 'ab'.repeat(20);
 
     await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux, 10_000n);
     manager.handleAuthAck(sellerPeerId, {
-      sessionId: (mux.sentSpendingAuths[0] as Record<string, unknown>).sessionId as string,
-      nonce: 1,
+      channelId: (mux.sentSpendingAuths[0] as Record<string, unknown>).channelId as string,
     });
 
     const payload = await manager.signPerRequestAuth(
@@ -153,7 +154,9 @@ describe('BuyerPaymentManager', () => {
     expect(BigInt(payload.cumulativeAmount)).toBe(10_000n);
     expect(payload.metadataHash).toBeTypeOf('string');
     expect(payload.metadata).toBeTypeOf('string');
-    expect(payload.buyerSig).toBeTypeOf('string');
+    expect(payload.metadataAuthSig).toBeTypeOf('string');
+    expect(payload.tempoVoucherSig).toBeTypeOf('string');
+    expect(payload.tempoVoucherSig.length).toBeGreaterThan(0); // Non-empty for per-request
   });
 
   it('signPerRequestAuth caps increment at maxPerRequestUsdc', async () => {
@@ -185,11 +188,11 @@ describe('BuyerPaymentManager', () => {
     const sellerPeerId = 'seller-peer-needauth';
     const sellerEvmAddr = '0x' + 'ab'.repeat(20);
 
-    const sessionId = await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux, 10_000n);
+    const channelId = await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux, 10_000n);
     mux.sentSpendingAuths.length = 0; // clear initial auth
 
     await manager.handleNeedAuth(sellerPeerId, {
-      sessionId,
+      channelId,
       requiredCumulativeAmount: '500000',
       currentAcceptedCumulative: '10000',
       deposit: '1000000',
@@ -198,18 +201,20 @@ describe('BuyerPaymentManager', () => {
     expect(mux.sentSpendingAuths.length).toBe(1);
     const sent = mux.sentSpendingAuths[0] as Record<string, unknown>;
     expect(sent.cumulativeAmount).toBe('500000');
-    expect(sent.sessionId).toBe(sessionId);
+    expect(sent.channelId).toBe(channelId);
+    expect(sent.tempoVoucherSig).toBeTypeOf('string');
+    expect(sent.metadataAuthSig).toBeTypeOf('string');
   });
 
   it('handleNeedAuth rejects if requiredCumulativeAmount exceeds maxReserveAmountUsdc', async () => {
     const sellerPeerId = 'seller-peer-needauth-reject';
     const sellerEvmAddr = '0x' + 'ab'.repeat(20);
 
-    await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux, 10_000n);
+    const channelId = await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux, 10_000n);
     mux.sentSpendingAuths.length = 0;
 
     await manager.handleNeedAuth(sellerPeerId, {
-      sessionId: (mux.sentSpendingAuths[0] as Record<string, unknown>)?.sessionId as string ?? 'dummy',
+      channelId,
       requiredCumulativeAmount: '99999999999', // way over maxReserveAmountUsdc (10000000)
       currentAcceptedCumulative: '10000',
       deposit: '1000000',
@@ -223,7 +228,7 @@ describe('BuyerPaymentManager', () => {
     mux.sentSpendingAuths.length = 0;
 
     await manager.handleNeedAuth('unknown-seller', {
-      sessionId: '0x' + '00'.repeat(32),
+      channelId: '0x' + '00'.repeat(32),
       requiredCumulativeAmount: '500000',
       currentAcceptedCumulative: '10000',
       deposit: '1000000',
@@ -310,15 +315,11 @@ describe('BuyerPaymentManager', () => {
   });
 
   it('parseResponseCost returns null for non-numeric token values with valid cost', () => {
-    // If token headers are non-numeric but cost is valid,
-    // BigInt() will throw and the catch block returns null
     const result = BuyerPaymentManager.parseResponseCost({
       'x-antseed-cost': '5000',
       'x-antseed-input-tokens': 'not-a-number',
     });
 
-    // This will either return null (if BigInt throws) or handle gracefully
-    // Based on the implementation: BigInt('not-a-number') throws, caught by catch -> null
     expect(result).toBeNull();
   });
 
@@ -339,12 +340,12 @@ describe('BuyerPaymentManager', () => {
     const sellerPeerId = 'seller-peer-persist';
     const sellerEvmAddr = '0x' + 'ab'.repeat(20);
 
-    const sessionId = await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux, 10_000n);
+    const channelId = await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux, 10_000n);
     store.close();
 
     // Reopen the store independently and check persistence
     const checkStore = new SessionStore(tempDir);
-    const session = checkStore.getSession(sessionId);
+    const session = checkStore.getSession(channelId);
     expect(session).not.toBeNull();
     expect(session!.peerId).toBe(sellerPeerId);
     expect(session!.role).toBe('buyer');
@@ -359,6 +360,6 @@ describe('BuyerPaymentManager', () => {
     const mux2 = createMockPaymentMux();
     const secondId = await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux2, 10_000n);
     expect(secondId).toMatch(/^0x[0-9a-f]{64}$/);
-    expect(secondId).not.toBe(sessionId); // New session ID
+    expect(secondId).not.toBe(channelId); // New channel ID
   });
 });

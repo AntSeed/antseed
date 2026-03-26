@@ -51,6 +51,7 @@ const IDENTITY_ADDRESS = "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512";
 const STAKING_ADDRESS  = "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9";
 const DEPOSITS_ADDRESS = "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9";
 const SESSIONS_ADDRESS = "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707";
+const STREAM_CHANNEL_ADDRESS = "0x0165878A594ca255338adfa4d48449f69242Eb8F";
 
 const FUND_ETH = "2ether";
 const USDC_MINT_AMOUNT = "100000000"; // 100 USDC (6 decimals)
@@ -395,6 +396,7 @@ async function main() {
         rpcUrl: RPC_URL,
         depositsAddress: DEPOSITS_ADDRESS,
         sessionsAddress: SESSIONS_ADDRESS,
+        streamChannelAddress: STREAM_CHANNEL_ADDRESS,
         stakingAddress: STAKING_ADDRESS,
         identityAddress: IDENTITY_ADDRESS,
         usdcAddress: USDC_ADDRESS,
@@ -430,6 +432,7 @@ async function main() {
         rpcUrl: RPC_URL,
         depositsAddress: DEPOSITS_ADDRESS,
         sessionsAddress: SESSIONS_ADDRESS,
+        streamChannelAddress: STREAM_CHANNEL_ADDRESS,
         stakingAddress: STAKING_ADDRESS,
         identityAddress: IDENTITY_ADDRESS,
         usdcAddress: USDC_ADDRESS,
