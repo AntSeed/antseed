@@ -19,6 +19,7 @@ import {
   encodeMetadata,
   ZERO_METADATA,
   ZERO_METADATA_HASH,
+  computeChannelId,
 } from './evm/signatures.js';
 import type { MetadataAuthMessage, TempoVoucherMessage, SpendingAuthMetadata } from './evm/signatures.js';
 import { debugLog, debugWarn } from '../utils/debug.js';
@@ -135,11 +136,18 @@ export class BuyerPaymentManager {
     // Clear confirmation state so we wait for a fresh AuthAck on the new session
     this._confirmedPeers.delete(sellerPeerId);
 
-    // Generate a 32-byte channel ID (replaces sessionId in Tempo wrapper)
-    const channelIdBytes = randomBytes(32);
-    const channelId = '0x' + channelIdBytes.toString('hex');
-
+    // Generate random salt and compute deterministic channelId
+    // Must match: TempoStreamChannel.computeChannelId(sessions, sessions, usdc, salt, buyer)
     const salt = '0x' + randomBytes(32).toString('hex');
+    const buyerEvmAddr = identityToEvmAddress(this._identity);
+    const channelId = computeChannelId(
+      this._config.sessionsContractAddress,
+      this._config.usdcAddress,
+      salt,
+      buyerEvmAddr,
+      this._config.streamChannelAddress,
+      this._config.chainId,
+    );
     const deadline = Math.floor(Date.now() / 1000) + this._config.defaultAuthDurationSecs;
 
     debugLog(`[BuyerPayment] authorizeSpending: channel=${channelId.slice(0, 18)}... seller=${sellerPeerId.slice(0, 12)}... amount=${minBudgetPerRequest}`);
@@ -155,7 +163,6 @@ export class BuyerPaymentManager {
       metadataHash: ZERO_METADATA_HASH,
     };
     const metadataAuthSig = await signMetadataAuth(this._signer, sessionsDomain, metadataMsg);
-    const buyerEvmAddr = identityToEvmAddress(this._identity);
 
     // Initialize cumulative maps at 0 — first per-request auth will increment
     this._cumulativeAmount.set(sellerPeerId, 0n);

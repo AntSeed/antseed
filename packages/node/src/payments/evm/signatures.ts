@@ -79,6 +79,32 @@ export const ZERO_METADATA: SpendingAuthMetadata = {
 export const ZERO_METADATA_HASH: string = computeMetadataHash(ZERO_METADATA);
 
 // =========================================================================
+// Tempo channel ID computation (must match TempoStreamChannel.computeChannelId)
+// =========================================================================
+
+/**
+ * Compute the deterministic channelId that Tempo's StreamChannel will produce.
+ * Must match: keccak256(abi.encode(payer, payee, token, salt, authorizedSigner, streamChannelAddress, chainId))
+ *
+ * In our architecture: payer = sessionsAddress, payee = sessionsAddress,
+ * token = usdcAddress, authorizedSigner = buyerAddress.
+ */
+export function computeChannelId(
+  sessionsAddress: string,
+  usdcAddress: string,
+  salt: string,
+  buyerAddress: string,
+  streamChannelAddress: string,
+  chainId: number,
+): string {
+  const coder = AbiCoder.defaultAbiCoder();
+  return keccak256(coder.encode(
+    ['address', 'address', 'address', 'bytes32', 'address', 'address', 'uint256'],
+    [sessionsAddress, sessionsAddress, usdcAddress, salt, buyerAddress, streamChannelAddress, chainId],
+  ));
+}
+
+// =========================================================================
 // EIP-712 Domain helpers
 // =========================================================================
 
