@@ -1458,7 +1458,14 @@ export class AntseedNode extends EventEmitter {
 
         // Inject cost headers and record spend for cumulative voucher model
         if (this._sellerPaymentManager?.hasSession(buyerPeerId)) {
-          const usage = parseResponseUsage(responseBody);
+          let usage = parseResponseUsage(responseBody);
+          // Fall back to byte-based estimation when provider doesn't report usage
+          if (usage.inputTokens === 0 && usage.outputTokens === 0) {
+            usage = {
+              inputTokens: Math.ceil(request.body.length / 4),
+              outputTokens: Math.ceil(responseBody.length / 4),
+            };
+          }
           const costUsdc = computeCostUsdc(usage.inputTokens, usage.outputTokens, requestPricing);
           const session = this._sellerPaymentManager.getSessionByPeer(buyerPeerId);
           if (session) {
