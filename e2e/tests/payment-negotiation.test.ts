@@ -80,6 +80,7 @@ describe('Payment negotiation: seller sends PaymentRequired on 402', () => {
         sessionsAddress: '0x' + 'cc'.repeat(20),
         stakingAddress: '0x' + 'bb'.repeat(20),
         usdcAddress: '0x' + 'ee'.repeat(20),
+        streamChannelAddress: '0x' + 'ff'.repeat(20),
       },
     });
     sellerNode.registerProvider(mockProvider);
@@ -180,6 +181,7 @@ describe('Payment negotiation: seller sends PaymentRequired on 402', () => {
         sessionsAddress: '0x' + 'cc'.repeat(20),
         stakingAddress: '0x' + 'bb'.repeat(20),
         usdcAddress: '0x' + 'ee'.repeat(20),
+        streamChannelAddress: '0x' + 'ff'.repeat(20),
       },
     });
     sellerNode.registerProvider(mockProvider);
@@ -201,6 +203,7 @@ describe('Payment negotiation: seller sends PaymentRequired on 402', () => {
         sessionsAddress: '0x' + 'cc'.repeat(20),
         stakingAddress: '0x' + 'bb'.repeat(20),
         usdcAddress: '0x' + 'ee'.repeat(20),
+        streamChannelAddress: '0x' + 'ff'.repeat(20),
       },
     });
     await buyerNode.start();

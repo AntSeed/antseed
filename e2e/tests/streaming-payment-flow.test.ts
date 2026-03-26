@@ -300,6 +300,7 @@ function makePaymentsConfig(rpcUrl: string, overrides?: Partial<NodePaymentsConf
     stakingAddress: '0x' + 'bb'.repeat(20),
     usdcAddress: '0x' + 'ee'.repeat(20),
     identityAddress: '0x' + 'aa'.repeat(20),
+    streamChannelAddress: '0x' + 'ff'.repeat(20),
     chainId: 31337,
     minBudgetPerRequest: '10000', // $0.01
     maxPerRequestUsdc: '100000', // $0.10
