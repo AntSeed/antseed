@@ -69,7 +69,7 @@ jobs:
         run: pnpm run build:tier0
 
       - name: Install Forge dependencies
-        run: cd packages/node && forge install foundry-rs/forge-std --no-commit
+        run: cd packages/node && forge install foundry-rs/forge-std
 
       - name: Start Anvil
         run: anvil &
