@@ -4,13 +4,15 @@ set -e
 DEPLOYER=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
 RPC=http://127.0.0.1:8545
 
-# Contract addresses (deterministic from anvil nonce 0)
-USDC=0x5FbDB2315678afecb367f032d93F642f64180aa3
-IDENTITY=0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
-STAKING=0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9
-DEPOSITS=0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9
-STREAM_CHANNEL=0x5FC8d32690cc91D4c39d9d3abcBD16989F875707
-SESSIONS=0x0165878A594ca255338adfa4d48449f69242Eb8F
+# Contract addresses (deterministic from anvil nonce sequence)
+USDC=0x5FbDB2315678afecb367f032d93F642f64180aa3          # nonce 0
+REGISTRY=0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512      # nonce 1 — MockERC8004Registry
+# ANTSToken = nonce 2 (unused here)
+STATS=0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9         # nonce 3
+STAKING=0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9       # nonce 4
+DEPOSITS=0x5FC8d32690cc91D4c39d9d3abcBD16989F875707      # nonce 5
+STREAM_CHANNEL=0x0165878A594ca255338adfa4d48449f69242Eb8F # nonce 6
+SESSIONS=0xa513E6E4b8f2a923D98304ec87F64353C4D5C853       # nonce 7
 
 cd /Users/shahafan/Development/antseed
 
@@ -43,7 +45,8 @@ cat > ~/.antseed-seller/config.json << EOF
       "sessionsContractAddress": "$SESSIONS",
       "stakingContractAddress": "$STAKING",
       "usdcContractAddress": "$USDC",
-      "identityContractAddress": "$IDENTITY"
+      "identityRegistryAddress": "$REGISTRY",
+      "statsAddress": "$STATS"
     }
   },
   "providers": [
@@ -82,14 +85,17 @@ cast send --rpc-url $RPC --private-key $DEPLOYER $USDC "mint(address,uint256)" $
 echo "Done"
 
 echo ""
-echo "=== Step 6: Register seller identity ==="
-cast send --rpc-url $RPC --private-key $SELLER_KEY $IDENTITY "register(bytes32,string)" "0x${SELLER_PEER}" "" > /dev/null
+echo "=== Step 6: Register seller identity (ERC-8004) ==="
+cast send --rpc-url $RPC --private-key $SELLER_KEY $REGISTRY "register()" > /dev/null
+# agentId=1 for first registration on fresh chain
+AGENT_ID=1
+cast send --rpc-url $RPC --private-key $SELLER_KEY $REGISTRY "setMetadata(uint256,string,bytes)" $AGENT_ID "antseed.peerId" "0x${SELLER_PEER}" > /dev/null
 echo "Done"
 
 echo ""
 echo "=== Step 7: Seller stake 50 USDC ==="
 cast send --rpc-url $RPC --private-key $SELLER_KEY $USDC "approve(address,uint256)" $STAKING 50000000 > /dev/null
-cast send --rpc-url $RPC --private-key $SELLER_KEY $STAKING "stake(uint256)" 50000000 > /dev/null
+cast send --rpc-url $RPC --private-key $SELLER_KEY $STAKING "stake(uint256,uint256)" $AGENT_ID 50000000 > /dev/null
 echo "Done"
 
 echo ""
@@ -111,7 +117,8 @@ echo "=== All set! ==="
 echo ""
 echo "Contract addresses:"
 echo "  USDC:      $USDC"
-echo "  Identity:  $IDENTITY"
+echo "  Registry:  $REGISTRY"
+echo "  Stats:     $STATS"
 echo "  Staking:   $STAKING"
 echo "  Deposits:  $DEPOSITS"
 echo "  Sessions:  $SESSIONS"

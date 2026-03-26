@@ -14,14 +14,15 @@ export interface SellerAccountInfo {
 }
 
 const STAKING_ABI = [
-  'function stake(uint256 amount) external',
-  'function stakeFor(address seller, uint256 amount) external',
+  'function stake(uint256 agentId, uint256 amount) external',
+  'function stakeFor(address seller, uint256 agentId, uint256 amount) external',
   'function unstake() external',
   'function validateSeller(address seller) external view returns (bool)',
   'function getSellerAccount(address seller) external view returns (uint256 stake, uint256 stakedAt)',
   'function getStake(address seller) external view returns (uint256)',
   'function isStakedAboveMin(address seller) external view returns (bool)',
   'function activeSessionCount(address seller) external view returns (uint256)',
+  'function getAgentId(address seller) external view returns (uint256)',
 ] as const;
 
 export class StakingClient extends BaseEvmClient {
@@ -32,12 +33,12 @@ export class StakingClient extends BaseEvmClient {
     this._usdcAddress = config.usdcAddress;
   }
 
-  async stake(signer: AbstractSigner, amount: bigint): Promise<string> {
-    return this._approveAndExec(signer, this._usdcAddress, amount, STAKING_ABI, 'stake', amount);
+  async stake(signer: AbstractSigner, agentId: number, amount: bigint): Promise<string> {
+    return this._approveAndExec(signer, this._usdcAddress, amount, STAKING_ABI, 'stake', agentId, amount);
   }
 
-  async stakeFor(signer: AbstractSigner, seller: string, amount: bigint): Promise<string> {
-    return this._approveAndExec(signer, this._usdcAddress, amount, STAKING_ABI, 'stakeFor', seller, amount);
+  async stakeFor(signer: AbstractSigner, seller: string, agentId: number, amount: bigint): Promise<string> {
+    return this._approveAndExec(signer, this._usdcAddress, amount, STAKING_ABI, 'stakeFor', seller, agentId, amount);
   }
 
   async unstake(signer: AbstractSigner): Promise<string> {
@@ -66,5 +67,11 @@ export class StakingClient extends BaseEvmClient {
   async isStakedAboveMin(sellerAddr: string): Promise<boolean> {
     const contract = new Contract(this._contractAddress, STAKING_ABI, this._provider);
     return contract.getFunction('isStakedAboveMin')(sellerAddr) as Promise<boolean>;
+  }
+
+  async getAgentId(sellerAddr: string): Promise<number> {
+    const contract = new Contract(this._contractAddress, STAKING_ABI, this._provider);
+    const result = await contract.getFunction('getAgentId')(sellerAddr);
+    return Number(result);
   }
 }

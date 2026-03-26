@@ -11,14 +11,15 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 import {ITempoStreamChannel} from "./vendor/ITempoStreamChannel.sol";
 import {IAntseedDeposits} from "./interfaces/IAntseedDeposits.sol";
-import {IAntseedIdentity} from "./interfaces/IAntseedIdentity.sol";
+import {IAntseedStats} from "./interfaces/IAntseedStats.sol";
 import {IAntseedStaking} from "./interfaces/IAntseedStaking.sol";
+import {IAntseedEmissions} from "./interfaces/IAntseedEmissions.sol";
 
 /**
  * @title AntseedSessions
  * @notice Session lifecycle wrapping Tempo's StreamChannel for payments.
  *         All USDC flows through Tempo's audited escrow contract.
- *         This contract adds AntSeed metadata signing + reputation on top.
+ *         This contract adds AntSeed metadata signing + stats on top.
  *
  *         Architecture:
  *         - This contract is the **payer** on all Tempo channels (deposits USDC into Tempo).
@@ -34,9 +35,9 @@ import {IAntseedStaking} from "./interfaces/IAntseedStaking.sol";
  *           withdraw: Tempo channel → Sessions → Deposits (buyer refund)
  *
  *         The buyer also signs an AntSeed MetadataAuth (separate EIP-712 domain) that
- *         attests to token counts for reputation tracking.
+ *         attests to token counts for stats tracking.
  *
- *         Contract is swappable: deploy a new version and re-point Deposits + Identity.
+ *         Contract is swappable: deploy a new version and re-point Deposits + Stats.
  */
 contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -72,8 +73,9 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     // ─── State Variables ──────────────────────────────────────────────
     ITempoStreamChannel public streamChannel;
     IAntseedDeposits public depositsContract;
-    IAntseedIdentity public identityContract;
+    IAntseedStats public statsContract;
     IAntseedStaking public stakingContract;
+    IAntseedEmissions public emissionsContract;
     IERC20 public usdc;
     address public protocolReserve;
 
@@ -103,7 +105,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     constructor(
         address _streamChannel,
         address _deposits,
-        address _identity,
+        address _stats,
         address _staking,
         address _usdc
     )
@@ -111,12 +113,12 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         Ownable(msg.sender)
     {
         if (_streamChannel == address(0) || _deposits == address(0) ||
-            _identity == address(0) || _staking == address(0) || _usdc == address(0))
+            _stats == address(0) || _staking == address(0) || _usdc == address(0))
             revert InvalidAddress();
 
         streamChannel = ITempoStreamChannel(_streamChannel);
         depositsContract = IAntseedDeposits(_deposits);
-        identityContract = IAntseedIdentity(_identity);
+        statsContract = IAntseedStats(_stats);
         stakingContract = IAntseedStaking(_staking);
         usdc = IERC20(_usdc);
     }
@@ -231,7 +233,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
      * @notice Settle partial payment via Tempo + update AntSeed reputation.
      *         Seller submits two buyer signatures:
      *         1. Tempo voucher sig (authorizes USDC transfer via Tempo)
-     *         2. AntSeed MetadataAuth sig (attests to token counts for reputation)
+     *         2. AntSeed MetadataAuth sig (attests to token counts for stats)
      *
      *         Tempo's settle() transfers the delta to this contract (we are payee).
      *         We then forward seller payout to Deposits as earnings.
@@ -288,20 +290,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         session.metadataHash = metadataHash;
         session.settledAt = block.timestamp;
 
-        // Update Identity reputation — decode tokens from metadata
-        uint256 sellerTokenId = identityContract.getTokenId(session.seller);
-        if (sellerTokenId != 0) {
-            (uint256 inputTokens, uint256 outputTokens,,) = abi.decode(metadata, (uint256, uint256, uint256, uint256));
-            identityContract.updateReputation(
-                sellerTokenId,
-                IAntseedIdentity.ReputationUpdate({
-                    updateType: 0,
-                    settledVolume: delta,
-                    inputTokens: uint128(inputTokens),
-                    outputTokens: uint128(outputTokens)
-                })
-            );
-        }
+        _recordStatsAndEmissions(session, delta, metadata);
 
         emit SessionSettled(channelId, session.seller, cumulativeAmount, platformFee);
     }
@@ -373,20 +362,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         session.status = SessionStatus.Settled;
         stakingContract.decrementActiveSessions(session.seller);
 
-        // Update Identity reputation — decode tokens from metadata
-        uint256 sellerTokenId = identityContract.getTokenId(session.seller);
-        if (sellerTokenId != 0) {
-            (uint256 inputTokens, uint256 outputTokens,,) = abi.decode(metadata, (uint256, uint256, uint256, uint256));
-            identityContract.updateReputation(
-                sellerTokenId,
-                IAntseedIdentity.ReputationUpdate({
-                    updateType: 0,
-                    settledVolume: finalAmount,
-                    inputTokens: uint128(inputTokens),
-                    outputTokens: uint128(outputTokens)
-                })
-            );
-        }
+        _recordStatsAndEmissions(session, delta, metadata);
 
         emit SessionClosed(channelId, session.seller, finalAmount, platformFee);
     }
@@ -436,12 +412,49 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         session.status = SessionStatus.TimedOut;
         stakingContract.decrementActiveSessions(session.seller);
 
+        // Record ghost (seller disappeared / timed out)
+        uint256 agentId = stakingContract.getAgentId(session.seller);
+        if (agentId != 0) {
+            statsContract.updateStats(agentId, IAntseedStats.StatsUpdate({
+                updateType: 1,
+                volumeUsdc: 0,
+                inputTokens: 0,
+                outputTokens: 0,
+                latencyMs: 0,
+                requestCount: 0
+            }));
+        }
+
         emit SessionWithdrawn(channelId, buyer);
     }
 
     // ═══════════════════════════════════════════════════════════════════
     //                        INTERNAL HELPERS
     // ═══════════════════════════════════════════════════════════════════
+
+    function _recordStatsAndEmissions(
+        Session storage session,
+        uint128 delta,
+        bytes calldata metadata
+    ) internal {
+        uint256 agentId = stakingContract.getAgentId(session.seller);
+        if (agentId != 0) {
+            (uint256 inputTokens, uint256 outputTokens, uint256 latencyMs, uint256 requestCount) =
+                abi.decode(metadata, (uint256, uint256, uint256, uint256));
+            statsContract.updateStats(agentId, IAntseedStats.StatsUpdate({
+                updateType: 0,
+                volumeUsdc: delta,
+                inputTokens: uint128(inputTokens),
+                outputTokens: uint128(outputTokens),
+                latencyMs: uint64(latencyMs),
+                requestCount: uint64(requestCount)
+            }));
+        }
+        if (delta > 0 && address(emissionsContract) != address(0)) {
+            emissionsContract.accrueSellerPoints(session.seller, delta);
+            emissionsContract.accrueBuyerPoints(session.buyer, delta);
+        }
+    }
 
     function _verifyMetadataAuth(
         bytes32 channelId,
@@ -477,9 +490,14 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         depositsContract = IAntseedDeposits(_deposits);
     }
 
-    function setIdentityContract(address _identity) external onlyOwner {
-        if (_identity == address(0)) revert InvalidAddress();
-        identityContract = IAntseedIdentity(_identity);
+    function setStatsContract(address _stats) external onlyOwner {
+        if (_stats == address(0)) revert InvalidAddress();
+        statsContract = IAntseedStats(_stats);
+    }
+
+    function setEmissionsContract(address _emissions) external onlyOwner {
+        // Allow address(0) to disable emissions
+        emissionsContract = IAntseedEmissions(_emissions);
     }
 
     function setStakingContract(address _staking) external onlyOwner {

@@ -6,19 +6,22 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
-import {IAntseedIdentity} from "./interfaces/IAntseedIdentity.sol";
+import {IERC8004Registry} from "./interfaces/IERC8004Registry.sol";
+import {IAntseedStats} from "./interfaces/IAntseedStats.sol";
 
 /**
  * @title AntseedStaking
  * @notice Seller staking, active session tracking, and slashing.
- *         Stable contract — holds seller stake USDC. Reads reputation from AntseedIdentity.
+ *         Stable contract — holds seller stake USDC. Reads stats from AntseedStats.
+ *         Binds each seller's stake to their ERC-8004 agentId.
  */
 contract AntseedStaking is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     // ─── State ───────────────────────────────────────────────────────────
     IERC20 public immutable usdc;
-    IAntseedIdentity public identityContract;
+    IERC8004Registry public identityRegistry;
+    IAntseedStats public statsContract;
     address public sessionsContract;
     address public protocolReserve;
 
@@ -31,6 +34,7 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
     // ─── Storage ────────────────────────────────────────────────────────
     mapping(address => SellerAccount) public sellers;
     mapping(address => uint256) public activeSessionCount;
+    mapping(address => uint256) public sellerAgentId;
 
     // ─── Configurable Constants ─────────────────────────────────────────
     uint256 public MIN_SELLER_STAKE = 10_000_000;
@@ -47,7 +51,7 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
     bytes32 private constant KEY_SLASH_INACTIVITY_DAYS = keccak256("SLASH_INACTIVITY_DAYS");
 
     // ─── Events ─────────────────────────────────────────────────────────
-    event Staked(address indexed seller, uint256 amount);
+    event Staked(address indexed seller, uint256 indexed agentId, uint256 amount);
     event Unstaked(address indexed seller, uint256 amount, uint256 slashed);
     event ConstantUpdated(bytes32 indexed key, uint256 value);
 
@@ -56,8 +60,8 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
     error InvalidAmount();
     error InvalidAddress();
     error InsufficientStake();
-    error NotRegistered();
     error ActiveSessions();
+    error NotAgentOwner();
 
     // ─── Modifiers ──────────────────────────────────────────────────────
     modifier onlySessions() {
@@ -66,40 +70,43 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
     }
 
     // ─── Constructor ────────────────────────────────────────────────────
-    constructor(address _usdc, address _identity) Ownable(msg.sender) {
-        if (_usdc == address(0) || _identity == address(0)) revert InvalidAddress();
+    constructor(address _usdc, address _identityRegistry, address _stats) Ownable(msg.sender) {
+        if (_usdc == address(0) || _identityRegistry == address(0) || _stats == address(0)) revert InvalidAddress();
         usdc = IERC20(_usdc);
-        identityContract = IAntseedIdentity(_identity);
+        identityRegistry = IERC8004Registry(_identityRegistry);
+        statsContract = IAntseedStats(_stats);
     }
 
     // ═══════════════════════════════════════════════════════════════════
     //                        SELLER OPERATIONS
     // ═══════════════════════════════════════════════════════════════════
 
-    function stake(uint256 amount) external nonReentrant {
+    function stake(uint256 agentId, uint256 amount) external nonReentrant {
         if (amount == 0) revert InvalidAmount();
-        if (!identityContract.isRegistered(msg.sender)) revert NotRegistered();
+        if (identityRegistry.ownerOf(agentId) != msg.sender) revert NotAgentOwner();
 
         usdc.safeTransferFrom(msg.sender, address(this), amount);
 
         SellerAccount storage sa = sellers[msg.sender];
         sa.stake += amount;
         sa.stakedAt = block.timestamp;
+        sellerAgentId[msg.sender] = agentId;
 
-        emit Staked(msg.sender, amount);
+        emit Staked(msg.sender, agentId, amount);
     }
 
-    function stakeFor(address seller, uint256 amount) external nonReentrant {
+    function stakeFor(address seller, uint256 agentId, uint256 amount) external nonReentrant {
         if (amount == 0) revert InvalidAmount();
-        if (!identityContract.isRegistered(seller)) revert NotRegistered();
+        if (identityRegistry.ownerOf(agentId) != seller) revert NotAgentOwner();
 
         usdc.safeTransferFrom(msg.sender, address(this), amount);
 
         SellerAccount storage sa = sellers[seller];
         sa.stake += amount;
         sa.stakedAt = block.timestamp;
+        sellerAgentId[seller] = agentId;
 
-        emit Staked(seller, amount);
+        emit Staked(seller, agentId, amount);
     }
 
     function unstake() external nonReentrant {
@@ -113,6 +120,7 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
         uint256 stakeAmount = sa.stake;
         sa.stake = 0;
         sa.stakedAt = 0;
+        sellerAgentId[msg.sender] = 0;
 
         if (payout > 0) {
             usdc.safeTransfer(msg.sender, payout);
@@ -146,11 +154,16 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
         return (sa.stake, sa.stakedAt);
     }
 
-    function effectiveSettlements(address seller) external view returns (uint256) {
-        uint256 sellerTokenId = identityContract.getTokenId(seller);
-        IAntseedIdentity.Reputation memory rep = identityContract.getReputation(sellerTokenId);
+    function getAgentId(address seller) external view returns (uint256) {
+        return sellerAgentId[seller];
+    }
 
-        uint256 sessionCount = uint256(rep.sessionCount);
+    function effectiveSettlements(address seller) external view returns (uint256) {
+        uint256 agentId = sellerAgentId[seller];
+        if (agentId == 0) return 0;
+        IAntseedStats.AgentStats memory stats = statsContract.getStats(agentId);
+
+        uint256 sessionCount = uint256(stats.sessionCount);
         uint256 stakeCap = (sellers[seller].stake * REPUTATION_CAP_COEFFICIENT) / 1_000_000;
 
         return sessionCount < stakeCap ? sessionCount : stakeCap;
@@ -171,11 +184,12 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
     // ═══════════════════════════════════════════════════════════════════
 
     function _calculateSlash(address seller) internal view returns (uint256) {
-        uint256 sellerTokenId = identityContract.getTokenId(seller);
-        IAntseedIdentity.Reputation memory rep = identityContract.getReputation(sellerTokenId);
+        uint256 agentId = sellerAgentId[seller];
+        if (agentId == 0) return 0;
+        IAntseedStats.AgentStats memory stats = statsContract.getStats(agentId);
 
-        uint256 sessions = uint256(rep.sessionCount);
-        uint256 ghosts = uint256(rep.ghostCount);
+        uint256 sessions = uint256(stats.sessionCount);
+        uint256 ghosts = uint256(stats.ghostCount);
         uint256 stakeAmt = sellers[seller].stake;
 
         // Tier 1: ghosts >= threshold AND zero sessions → full slash
@@ -188,8 +202,8 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
         }
 
         // Tier 3: sessions > 0 but inactive → 20% slash
-        if (sessions > 0 && rep.lastSettledAt > 0) {
-            if (block.timestamp > uint256(rep.lastSettledAt) + SLASH_INACTIVITY_DAYS) {
+        if (sessions > 0 && stats.lastSettledAt > 0) {
+            if (block.timestamp > uint256(stats.lastSettledAt) + SLASH_INACTIVITY_DAYS) {
                 return stakeAmt / 5;
             }
         }
@@ -207,9 +221,14 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
         sessionsContract = _sessions;
     }
 
-    function setIdentityContract(address _identity) external onlyOwner {
-        if (_identity == address(0)) revert InvalidAddress();
-        identityContract = IAntseedIdentity(_identity);
+    function setIdentityRegistry(address _registry) external onlyOwner {
+        if (_registry == address(0)) revert InvalidAddress();
+        identityRegistry = IERC8004Registry(_registry);
+    }
+
+    function setStatsContract(address _stats) external onlyOwner {
+        if (_stats == address(0)) revert InvalidAddress();
+        statsContract = IAntseedStats(_stats);
     }
 
     function setProtocolReserve(address _reserve) external onlyOwner {

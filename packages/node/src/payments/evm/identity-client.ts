@@ -1,4 +1,4 @@
-import { Contract, encodeBytes32String, keccak256, toUtf8Bytes, type AbstractSigner } from 'ethers';
+import { Contract, type AbstractSigner } from 'ethers';
 import { BaseEvmClient } from './base-evm-client.js';
 
 export interface IdentityClientConfig {
@@ -6,48 +6,19 @@ export interface IdentityClientConfig {
   contractAddress: string;
 }
 
-export interface Reputation {
-  sessionCount: number;
-  ghostCount: number;
-  totalSettledVolume: bigint;
-  totalInputTokens: bigint;
-  totalOutputTokens: bigint;
-  lastSettledAt: number;
-}
-
-export interface FeedbackSummary {
-  count: number;
-  summaryValue: bigint;
-  summaryValueDecimals: number;
-}
-
-const IDENTITY_ABI = [
+const IDENTITY_REGISTRY_ABI = [
   // Registration
-  'function register(bytes32 peerId, string metadataURI) external returns (uint256)',
-  'function deregister(uint256 tokenId) external',
-  'function updateMetadata(uint256 tokenId, string metadataURI) external',
+  'function register() external returns (uint256)',
+  'function register(string uri) external returns (uint256)',
 
   // View — identity lookups
-  'function isRegistered(address addr) external view returns (bool)',
-  'function getTokenId(address addr) external view returns (uint256)',
-  'function getTokenIdByPeerId(bytes32 peerId) external view returns (uint256)',
-  'function getPeerId(uint256 tokenId) external view returns (bytes32)',
+  'function ownerOf(uint256 agentId) external view returns (address)',
+  'function balanceOf(address owner) external view returns (uint256)',
 
-  // Reputation
-  'function getReputation(uint256 tokenId) external view returns (uint64 sessionCount, uint64 ghostCount, uint256 totalSettledVolume, uint128 totalInputTokens, uint128 totalOutputTokens, uint64 lastSettledAt)',
-  'function updateReputation(uint256 tokenId, tuple(uint8 updateType, uint256 settledVolume, uint128 inputTokens, uint128 outputTokens) update) external',
-
-  // Feedback (ERC-8004)
-  'function giveFeedback(uint256 agentId, int128 value, uint8 valueDecimals, bytes32 tag1, bytes32 tag2) external',
-  'function getSummary(uint256 agentId, bytes32 tag) external view returns (uint256 count, int256 summaryValue, uint8 summaryValueDecimals)',
-  'function readFeedback(uint256 agentId, address client, uint256 index) external view returns (tuple(address client, int128 value, uint8 valueDecimals, bytes32 tag1, bytes32 tag2, uint64 timestamp, bool revoked))',
-  'function revokeFeedback(uint256 agentId, uint256 index) external',
-  'function getFeedbackCount(uint256 agentId, address client) external view returns (uint256)',
-
-  // Admin
-  'function setSessionsContract(address _sessions) external',
-  'function sessionsContract() external view returns (address)',
-  'function owner() external view returns (address)',
+  // Metadata
+  'function setMetadata(uint256 agentId, string key, bytes value) external',
+  'function getMetadata(uint256 agentId, string key) external view returns (bytes)',
+  'function setAgentURI(uint256 agentId, string uri) external',
 ] as const;
 
 
@@ -58,103 +29,68 @@ export class IdentityClient extends BaseEvmClient {
 
   // ── Write methods ──────────────────────────────────────────────────
 
-  async register(signer: AbstractSigner, peerId: string, metadataURI: string): Promise<string> {
+  /**
+   * Register a new agent identity via ERC-8004 IdentityRegistry.
+   * Optionally sets the antseed.peerId metadata key.
+   * Returns the new agentId.
+   */
+  async register(signer: AbstractSigner, peerId?: string, metadataURI?: string): Promise<number> {
     const connected = this._ensureConnected(signer);
     const signerAddress = await connected.getAddress();
-    const contract = new Contract(this._contractAddress, IDENTITY_ABI, connected);
+    const contract = new Contract(this._contractAddress, IDENTITY_REGISTRY_ABI, connected);
+
+    let tx: { wait(): Promise<{ hash: string; logs: Array<{ topics: string[]; data: string }> } | null> };
     const nonce = await this._reserveNonce(signerAddress);
-    const peerIdBytes = keccak256(toUtf8Bytes(peerId));
-    const tx = await contract.getFunction('register')(peerIdBytes, metadataURI, { nonce });
+    if (metadataURI) {
+      tx = await contract.getFunction('register(string)')(metadataURI, { nonce });
+    } else {
+      tx = await contract.getFunction('register()')({ nonce });
+    }
     const receipt = await tx.wait();
     if (!receipt) throw new Error('Transaction was dropped or replaced');
-    return receipt.hash;
+
+    // Extract agentId from Transfer event (ERC-721 Transfer(address,address,uint256))
+    const transferTopic = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+    const transferLog = receipt.logs.find((l) => l.topics?.[0] === transferTopic);
+    const rawAgentId = transferLog?.topics?.[3];
+    const agentId = rawAgentId ? Number(BigInt(rawAgentId)) : 0;
+
+    // Set peerId metadata if provided
+    if (peerId && agentId > 0) {
+      const encoder = new TextEncoder();
+      const peerIdBytes = encoder.encode(peerId);
+      const metaNonce = await this._reserveNonce(signerAddress);
+      const metaTx = await contract.getFunction('setMetadata')(agentId, 'antseed.peerId', peerIdBytes, { nonce: metaNonce });
+      await metaTx.wait();
+    }
+
+    return agentId;
   }
 
-  async deregister(signer: AbstractSigner, tokenId: number): Promise<string> {
-    const connected = this._ensureConnected(signer);
-    const signerAddress = await connected.getAddress();
-    const contract = new Contract(this._contractAddress, IDENTITY_ABI, connected);
-    const nonce = await this._reserveNonce(signerAddress);
-    const tx = await contract.getFunction('deregister')(tokenId, { nonce });
-    const receipt = await tx.wait();
-    if (!receipt) throw new Error('Transaction was dropped or replaced');
-    return receipt.hash;
+  async setMetadata(signer: AbstractSigner, agentId: number, key: string, value: Uint8Array): Promise<string> {
+    return this._execWrite(signer, IDENTITY_REGISTRY_ABI, 'setMetadata', agentId, key, value);
   }
 
-  async updateMetadata(signer: AbstractSigner, tokenId: number, metadataURI: string): Promise<string> {
-    const connected = this._ensureConnected(signer);
-    const signerAddress = await connected.getAddress();
-    const contract = new Contract(this._contractAddress, IDENTITY_ABI, connected);
-    const nonce = await this._reserveNonce(signerAddress);
-    const tx = await contract.getFunction('updateMetadata')(tokenId, metadataURI, { nonce });
-    const receipt = await tx.wait();
-    if (!receipt) throw new Error('Transaction was dropped or replaced');
-    return receipt.hash;
-  }
-
-  async submitFeedback(signer: AbstractSigner, agentId: number, value: number, tag: string): Promise<string> {
-    const connected = this._ensureConnected(signer);
-    const signerAddress = await connected.getAddress();
-    const contract = new Contract(this._contractAddress, IDENTITY_ABI, connected);
-    const nonce = await this._reserveNonce(signerAddress);
-    const tagBytes = encodeBytes32String(tag);
-    const tx = await contract.getFunction('giveFeedback')(agentId, value, 0, tagBytes, tagBytes, { nonce });
-    const receipt = await tx.wait();
-    if (!receipt) throw new Error('Transaction was dropped or replaced');
-    return receipt.hash;
+  async setAgentURI(signer: AbstractSigner, agentId: number, uri: string): Promise<string> {
+    return this._execWrite(signer, IDENTITY_REGISTRY_ABI, 'setAgentURI', agentId, uri);
   }
 
   // ── View methods ───────────────────────────────────────────────────
 
   async isRegistered(address: string): Promise<boolean> {
-    const contract = new Contract(this._contractAddress, IDENTITY_ABI, this._provider);
-    return contract.getFunction('isRegistered')(address);
+    const contract = new Contract(this._contractAddress, IDENTITY_REGISTRY_ABI, this._provider);
+    const balance = await contract.getFunction('balanceOf')(address);
+    return Number(balance) > 0;
   }
 
-  async getTokenId(address: string): Promise<number> {
-    const contract = new Contract(this._contractAddress, IDENTITY_ABI, this._provider);
-    const result = await contract.getFunction('getTokenId')(address);
-    return Number(result);
+  async getAgentWallet(agentId: number): Promise<string> {
+    const contract = new Contract(this._contractAddress, IDENTITY_REGISTRY_ABI, this._provider);
+    return contract.getFunction('ownerOf')(agentId) as Promise<string>;
   }
 
-  async getTokenIdByPeerId(peerId: string): Promise<number> {
-    const contract = new Contract(this._contractAddress, IDENTITY_ABI, this._provider);
-    const peerIdBytes = keccak256(toUtf8Bytes(peerId));
-    const result = await contract.getFunction('getTokenIdByPeerId')(peerIdBytes);
-    return Number(result);
-  }
-
-  async getPeerId(tokenId: number): Promise<string> {
-    const contract = new Contract(this._contractAddress, IDENTITY_ABI, this._provider);
-    return contract.getFunction('getPeerId')(tokenId);
-  }
-
-  async getReputation(tokenId: number): Promise<Reputation> {
-    const contract = new Contract(this._contractAddress, IDENTITY_ABI, this._provider);
-    const result = await contract.getFunction('getReputation')(tokenId);
-    return {
-      sessionCount: Number(result[0]),
-      ghostCount: Number(result[1]),
-      totalSettledVolume: result[2] as bigint,
-      totalInputTokens: result[3] as bigint,
-      totalOutputTokens: result[4] as bigint,
-      lastSettledAt: Number(result[5]),
-    };
-  }
-
-  async getReputationByPeerId(peerId: string): Promise<Reputation> {
-    const tokenId = await this.getTokenIdByPeerId(peerId);
-    return this.getReputation(tokenId);
-  }
-
-  async getFeedbackSummary(agentId: number, tag: string): Promise<FeedbackSummary> {
-    const contract = new Contract(this._contractAddress, IDENTITY_ABI, this._provider);
-    const tagBytes = encodeBytes32String(tag);
-    const result = await contract.getFunction('getSummary')(agentId, tagBytes);
-    return {
-      count: Number(result[0]),
-      summaryValue: result[1] as bigint,
-      summaryValueDecimals: Number(result[2]),
-    };
+  async getMetadata(agentId: number, key: string): Promise<Uint8Array> {
+    const contract = new Contract(this._contractAddress, IDENTITY_REGISTRY_ABI, this._provider);
+    const result = await contract.getFunction('getMetadata')(agentId, key);
+    return new Uint8Array(Buffer.from(result.slice(2), 'hex'));
   }
 }

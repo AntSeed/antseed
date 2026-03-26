@@ -5,14 +5,16 @@ import "forge-std/Test.sol";
 import "../AntseedSessions.sol";
 import "../AntseedDeposits.sol";
 import "../AntseedStaking.sol";
-import "../AntseedIdentity.sol";
+import "../AntseedStats.sol";
+import "../MockERC8004Registry.sol";
 import "../MockUSDC.sol";
 import "../vendor/TempoStreamChannel.sol";
 import "../vendor/ITempoStreamChannel.sol";
 
 contract AntseedSessionsTest is Test {
     MockUSDC public usdc;
-    AntseedIdentity public identity;
+    MockERC8004Registry public registry;
+    AntseedStats public stats;
     AntseedStaking public staking;
     AntseedDeposits public deposits;
     TempoStreamChannel public tempo;
@@ -55,22 +57,22 @@ contract AntseedSessionsTest is Test {
 
         // Deploy contracts
         usdc = new MockUSDC();
-        identity = new AntseedIdentity();
-        staking = new AntseedStaking(address(usdc), address(identity));
+        registry = new MockERC8004Registry();
+        stats = new AntseedStats();
+        staking = new AntseedStaking(address(usdc), address(registry), address(stats));
         deposits = new AntseedDeposits(address(usdc));
         tempo = new TempoStreamChannel();
         sessions = new AntseedSessions(
             address(tempo),
             address(deposits),
-            address(identity),
+            address(stats),
             address(staking),
             address(usdc)
         );
 
         // Wire contracts together
         deposits.setSessionsContract(address(sessions));
-        identity.setSessionsContract(address(sessions));
-        identity.setStakingContract(address(staking));
+        stats.setSessionsContract(address(sessions));
         staking.setSessionsContract(address(sessions));
         sessions.setProtocolReserve(protocolReserve);
 
@@ -84,10 +86,10 @@ contract AntseedSessionsTest is Test {
 
     function createBuyer(uint256 pk, uint256 depositAmount) internal {
         address addr = vm.addr(pk);
-        bytes32 peerId = keccak256(abi.encodePacked("buyer-", pk));
 
+        // Register on MockERC8004Registry
         vm.prank(addr);
-        identity.register(peerId, "ipfs://buyer");
+        registry.register();
 
         deposits.setCreditLimitOverride(addr, type(uint256).max);
 
@@ -100,15 +102,15 @@ contract AntseedSessionsTest is Test {
 
     function createSeller(uint256 pk) internal {
         address addr = vm.addr(pk);
-        bytes32 peerId = keccak256(abi.encodePacked("seller-", pk));
 
+        // Register on MockERC8004Registry and stake with agentId
         vm.prank(addr);
-        identity.register(peerId, "ipfs://seller");
+        uint256 agentId = registry.register();
 
         usdc.mint(addr, STAKE_AMOUNT);
         vm.startPrank(addr);
         usdc.approve(address(staking), STAKE_AMOUNT);
-        staking.stake(STAKE_AMOUNT);
+        staking.stake(agentId, STAKE_AMOUNT);
         vm.stopPrank();
     }
 
@@ -249,7 +251,7 @@ contract AntseedSessionsTest is Test {
         createBuyer(BUYER_PK, USDC_100);
         // Register seller but don't stake
         vm.prank(seller);
-        identity.register(keccak256("seller-unstaked"), "ipfs://seller");
+        registry.register();
 
         bytes32 salt = keccak256("session-1");
         bytes32 channelId = computeChannelId(salt);
@@ -406,13 +408,13 @@ contract AntseedSessionsTest is Test {
         ITempoStreamChannel.Channel memory ch = tempo.getChannel(channelId);
         assertTrue(ch.finalized);
 
-        // Reputation updated
-        uint256 sellerTokenId = identity.getTokenId(seller);
-        AntseedIdentity.Reputation memory rep = identity.getReputation(sellerTokenId);
-        assertEq(rep.sessionCount, 1);
-        assertEq(rep.totalSettledVolume, USDC_60);
-        assertEq(rep.totalInputTokens, 5000);
-        assertEq(rep.totalOutputTokens, 2000);
+        // Stats updated
+        uint256 sellerAgentId = staking.getAgentId(seller);
+        IAntseedStats.AgentStats memory s = stats.getStats(sellerAgentId);
+        assertEq(s.sessionCount, 1);
+        assertEq(s.totalVolumeUsdc, USDC_60);
+        assertEq(s.totalInputTokens, 5000);
+        assertEq(s.totalOutputTokens, 2000);
     }
 
     function test_close_fullDeposit() public {
@@ -633,10 +635,10 @@ contract AntseedSessionsTest is Test {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //                   REPUTATION TESTS
+    //                   STATS TESTS
     // ═══════════════════════════════════════════════════════════════════
 
-    function test_close_reputationUpdate() public {
+    function test_close_statsUpdate() public {
         bytes32 salt = keccak256("session-rep");
         bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
@@ -649,12 +651,12 @@ contract AntseedSessionsTest is Test {
         vm.prank(seller);
         sessions.close(channelId, USDC_50, encodeMetadata(inputToks, outputToks), voucherSig, metaSig);
 
-        uint256 sellerTokenId = identity.getTokenId(seller);
-        AntseedIdentity.Reputation memory rep = identity.getReputation(sellerTokenId);
-        assertEq(rep.sessionCount, 1);
-        assertEq(rep.totalSettledVolume, USDC_50);
-        assertEq(rep.totalInputTokens, inputToks);
-        assertEq(rep.totalOutputTokens, outputToks);
+        uint256 sellerAgentId = staking.getAgentId(seller);
+        IAntseedStats.AgentStats memory s = stats.getStats(sellerAgentId);
+        assertEq(s.sessionCount, 1);
+        assertEq(s.totalVolumeUsdc, USDC_50);
+        assertEq(s.totalInputTokens, inputToks);
+        assertEq(s.totalOutputTokens, outputToks);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -709,10 +711,10 @@ contract AntseedSessionsTest is Test {
         sessions.setDepositsContract(address(0x1234));
     }
 
-    function test_setIdentityContract() public {
-        address newIdentity = address(0x5678);
-        sessions.setIdentityContract(newIdentity);
-        assertEq(address(sessions.identityContract()), newIdentity);
+    function test_setStatsContract() public {
+        address newStats = address(0x5678);
+        sessions.setStatsContract(newStats);
+        assertEq(address(sessions.statsContract()), newStats);
     }
 
     function test_setStakingContract() public {

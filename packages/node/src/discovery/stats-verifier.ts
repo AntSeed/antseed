@@ -1,14 +1,15 @@
 import type { PeerMetadata } from "./peer-metadata.js";
-import type { IdentityClient } from "../payments/evm/identity-client.js";
+import type { StatsClient } from "../payments/evm/stats-client.js";
+import type { StakingClient } from "../payments/evm/staking-client.js";
 
-export interface ReputationVerification {
-  /** Whether the claimed reputation matches on-chain data. */
+export interface StatsVerification {
+  /** Whether the claimed stats match on-chain data. */
   valid: boolean;
-  /** The actual on-chain reputation score (weighted average). */
+  /** The actual on-chain reputation score (session count). */
   actualReputation: number;
   /** The actual on-chain session count. */
   actualSessionCount: number;
-  /** The actual on-chain dispute count. */
+  /** The actual on-chain ghost/dispute count. */
   actualDisputeCount: number;
   /** The claimed on-chain reputation score from metadata. */
   claimedReputation?: number;
@@ -19,17 +20,18 @@ export interface ReputationVerification {
 }
 
 /**
- * Verify a peer's claimed on-chain reputation against the Base contract.
- * Queries the identity contract using the peer's EVM address to look up
- * the tokenId, then fetches Reputation and compares claimed vs actual.
+ * Verify a peer's claimed on-chain stats against the AntseedStats contract.
+ * Uses the staking client to look up the agentId from the peer's EVM address,
+ * then fetches stats from the StatsClient and compares claimed vs actual.
  *
  * Returns valid=true with zeroed actuals if the peer has no evmAddress
  * (cannot verify without an address).
  */
-export async function verifyReputation(
-  identityClient: IdentityClient,
+export async function verifyStats(
+  statsClient: StatsClient,
+  stakingClient: StakingClient,
   metadata: PeerMetadata,
-): Promise<ReputationVerification> {
+): Promise<StatsVerification> {
   if (!metadata.evmAddress) {
     return {
       valid: true,
@@ -42,19 +44,19 @@ export async function verifyReputation(
     };
   }
 
-  const tokenId = await identityClient.getTokenId(metadata.evmAddress);
-  const reputation = await identityClient.getReputation(tokenId);
+  const agentId = await stakingClient.getAgentId(metadata.evmAddress);
+  const stats = await statsClient.getStats(agentId);
 
-  // Map Reputation fields to the verification format:
+  // Map AgentStats fields to the verification format:
   // - sessionCount is the total completed sessions
   // - ghostCount maps to dispute count (sessions where provider went silent)
   // - Use sessionCount as the reputation metric (higher = more trusted)
-  const actualReputation = reputation.sessionCount;
-  const actualSessionCount = reputation.sessionCount;
-  const actualDisputeCount = reputation.ghostCount;
+  const actualReputation = stats.sessionCount;
+  const actualSessionCount = stats.sessionCount;
+  const actualDisputeCount = stats.ghostCount;
 
   // Always compare against on-chain data when evmAddress is present.
-  // If peer omits reputation fields, treat as unverified — prevents bypass
+  // If peer omits stats fields, treat as unverified — prevents bypass
   // by simply not claiming any values.
   const valid =
     metadata.onChainReputation !== undefined &&

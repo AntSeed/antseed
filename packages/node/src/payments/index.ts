@@ -24,9 +24,13 @@ export type { DepositsClientConfig, BuyerBalanceInfo } from './evm/deposits-clie
 export { SessionsClient } from './evm/sessions-client.js';
 export type { SessionsClientConfig, SessionInfo } from './evm/sessions-client.js';
 
-// Identity client (registration, reputation)
+// Identity client (ERC-8004 IdentityRegistry)
 export { IdentityClient } from './evm/identity-client.js';
-export type { IdentityClientConfig, Reputation, FeedbackSummary } from './evm/identity-client.js';
+export type { IdentityClientConfig } from './evm/identity-client.js';
+
+// Stats client (AntseedStats)
+export { StatsClient } from './evm/stats-client.js';
+export type { StatsClientConfig, AgentStats } from './evm/stats-client.js';
 
 // Staking client (seller staking, token rate, slashing)
 export { StakingClient } from './evm/staking-client.js';

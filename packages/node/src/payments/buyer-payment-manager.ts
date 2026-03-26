@@ -8,7 +8,6 @@ import type {
   NeedAuthPayload,
 } from '../types/protocol.js';
 import { DepositsClient } from './evm/deposits-client.js';
-import { IdentityClient } from './evm/identity-client.js';
 import { identityToEvmWallet, identityToEvmAddress } from './evm/keypair.js';
 import {
   signMetadataAuth,
@@ -36,7 +35,7 @@ export interface BuyerPaymentConfig {
   sessionsContractAddress: string;
   streamChannelAddress: string;
   usdcAddress: string;
-  identityAddress: string;
+  identityRegistryAddress: string;
   chainId: number;
   defaultAuthDurationSecs: number;
   /** Max USDC to pre-authorize per request increment (base units). Default: 100000 ($0.10). */
@@ -454,22 +453,6 @@ export class BuyerPaymentManager {
     const buyerAddr = identityToEvmAddress(this._identity);
     const info = await this._depositsClient.getBuyerBalance(buyerAddr);
     return { available: info.available, reserved: info.reserved };
-  }
-
-  // ── Feedback ───────────────────────────────────────────────────
-
-  async submitFeedback(
-    sellerPeerId: string,
-    qualityScore: number,
-    identityClient: IdentityClient,
-  ): Promise<string | null> {
-    const session = this._sessionStore.getLatestSession(sellerPeerId, 'buyer');
-    if (!session || session.status !== 'settled') return null;
-
-    const tokenId = await identityClient.getTokenId(session.sellerEvmAddr);
-    const { encodeBytes32String } = await import('ethers');
-    const tag = encodeBytes32String('quality');
-    return identityClient.submitFeedback(this._signer, tokenId, qualityScore, tag);
   }
 
   // ── Response cost parsing ──────────────────────────────────────

@@ -2,12 +2,14 @@
 pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
-import "../AntseedIdentity.sol";
 import "../AntseedStaking.sol";
+import "../AntseedStats.sol";
+import "../MockERC8004Registry.sol";
 import "../MockUSDC.sol";
 
 contract AntseedStakingTest is Test {
-    AntseedIdentity public identity;
+    MockERC8004Registry public registry;
+    AntseedStats public stats;
     AntseedStaking public staking;
     MockUSDC public usdc;
 
@@ -17,8 +19,8 @@ contract AntseedStakingTest is Test {
     address public thirdParty = address(0x3);
     address public reserve = address(0x4);
 
-    bytes32 public peerId1 = keccak256("seller1");
-    bytes32 public peerId2 = keccak256("seller2");
+    uint256 public sellerAgentId;
+    uint256 public seller2AgentId;
 
     uint256 public constant MIN_STAKE = 10_000_000; // 10 USDC
     uint256 public constant LARGE_STAKE = 100_000_000; // 100 USDC
@@ -26,22 +28,22 @@ contract AntseedStakingTest is Test {
     function setUp() public {
         owner = address(this);
         usdc = new MockUSDC();
-        identity = new AntseedIdentity();
-        staking = new AntseedStaking(address(usdc), address(identity));
+        registry = new MockERC8004Registry();
+        stats = new AntseedStats();
+        staking = new AntseedStaking(address(usdc), address(registry), address(stats));
 
-        // Wire: this test contract is the sessionsContract on both Identity and Staking
-        // so we can call updateReputation and increment/decrement sessions directly
-        identity.setSessionsContract(address(this));
-        identity.setStakingContract(address(staking));
+        // Wire: this test contract is the sessionsContract on both Stats and Staking
+        // so we can call updateStats and increment/decrement sessions directly
+        stats.setSessionsContract(address(this));
         staking.setSessionsContract(address(this));
         staking.setProtocolReserve(reserve);
 
-        // Register sellers
+        // Register sellers on MockERC8004Registry
         vm.prank(seller);
-        identity.register(peerId1, "ipfs://seller1");
+        sellerAgentId = registry.register();
 
         vm.prank(seller2);
-        identity.register(peerId2, "ipfs://seller2");
+        seller2AgentId = registry.register();
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -49,27 +51,32 @@ contract AntseedStakingTest is Test {
     // ═══════════════════════════════════════════════════════════════════
 
     function _stakeAs(address who, uint256 amount) internal {
+        uint256 agentId;
+        if (who == seller) agentId = sellerAgentId;
+        else if (who == seller2) agentId = seller2AgentId;
+        else revert("Unknown seller in _stakeAs");
+
         usdc.mint(who, amount);
         vm.startPrank(who);
         usdc.approve(address(staking), amount);
-        staking.stake(amount);
+        staking.stake(agentId, amount);
         vm.stopPrank();
     }
 
-    function _addGhosts(uint256 tokenId, uint256 count) internal {
+    function _addGhosts(uint256 agentId, uint256 count) internal {
         for (uint256 i = 0; i < count; i++) {
-            identity.updateReputation(
-                tokenId,
-                AntseedIdentity.ReputationUpdate(1, 0, 0, 0) // ghost
+            stats.updateStats(
+                agentId,
+                IAntseedStats.StatsUpdate(1, 0, 0, 0, 0, 0) // ghost
             );
         }
     }
 
-    function _addSessions(uint256 tokenId, uint256 count) internal {
+    function _addSessions(uint256 agentId, uint256 count) internal {
         for (uint256 i = 0; i < count; i++) {
-            identity.updateReputation(
-                tokenId,
-                AntseedIdentity.ReputationUpdate(0, 1_000_000, 500, 1200) // settlement
+            stats.updateStats(
+                agentId,
+                IAntseedStats.StatsUpdate(0, 1_000_000, 500, 1200, 0, 0) // settlement
             );
         }
     }
@@ -80,17 +87,23 @@ contract AntseedStakingTest is Test {
 
     function test_constructor_setsState() public view {
         assertEq(address(staking.usdc()), address(usdc));
-        assertEq(address(staking.identityContract()), address(identity));
+        assertEq(address(staking.identityRegistry()), address(registry));
+        assertEq(address(staking.statsContract()), address(stats));
     }
 
     function test_constructor_revert_zeroUsdc() public {
         vm.expectRevert(AntseedStaking.InvalidAddress.selector);
-        new AntseedStaking(address(0), address(identity));
+        new AntseedStaking(address(0), address(registry), address(stats));
     }
 
-    function test_constructor_revert_zeroIdentity() public {
+    function test_constructor_revert_zeroRegistry() public {
         vm.expectRevert(AntseedStaking.InvalidAddress.selector);
-        new AntseedStaking(address(usdc), address(0));
+        new AntseedStaking(address(usdc), address(0), address(stats));
+    }
+
+    function test_constructor_revert_zeroStats() public {
+        vm.expectRevert(AntseedStaking.InvalidAddress.selector);
+        new AntseedStaking(address(usdc), address(registry), address(0));
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -103,9 +116,9 @@ contract AntseedStakingTest is Test {
         vm.startPrank(seller);
         usdc.approve(address(staking), MIN_STAKE);
 
-        vm.expectEmit(true, false, false, true);
-        emit AntseedStaking.Staked(seller, MIN_STAKE);
-        staking.stake(MIN_STAKE);
+        vm.expectEmit(true, true, false, true);
+        emit AntseedStaking.Staked(seller, sellerAgentId, MIN_STAKE);
+        staking.stake(sellerAgentId, MIN_STAKE);
         vm.stopPrank();
 
         (uint256 stakeAmt, uint256 stakedAt) = staking.getSellerAccount(seller);
@@ -117,17 +130,17 @@ contract AntseedStakingTest is Test {
     function test_stake_revert_zeroAmount() public {
         vm.prank(seller);
         vm.expectRevert(AntseedStaking.InvalidAmount.selector);
-        staking.stake(0);
+        staking.stake(sellerAgentId, 0);
     }
 
-    function test_stake_revert_notRegistered() public {
+    function test_stake_revert_notAgentOwner() public {
         address unregistered = address(0x99);
         usdc.mint(unregistered, MIN_STAKE);
 
         vm.startPrank(unregistered);
         usdc.approve(address(staking), MIN_STAKE);
-        vm.expectRevert(AntseedStaking.NotRegistered.selector);
-        staking.stake(MIN_STAKE);
+        vm.expectRevert(AntseedStaking.NotAgentOwner.selector);
+        staking.stake(sellerAgentId, MIN_STAKE);
         vm.stopPrank();
     }
 
@@ -148,30 +161,30 @@ contract AntseedStakingTest is Test {
         vm.startPrank(thirdParty);
         usdc.approve(address(staking), MIN_STAKE);
 
-        vm.expectEmit(true, false, false, true);
-        emit AntseedStaking.Staked(seller, MIN_STAKE);
-        staking.stakeFor(seller, MIN_STAKE);
+        vm.expectEmit(true, true, false, true);
+        emit AntseedStaking.Staked(seller, sellerAgentId, MIN_STAKE);
+        staking.stakeFor(seller, sellerAgentId, MIN_STAKE);
         vm.stopPrank();
 
         assertEq(staking.getStake(seller), MIN_STAKE);
         assertEq(usdc.balanceOf(thirdParty), 0);
     }
 
-    function test_stakeFor_revert_notRegistered() public {
+    function test_stakeFor_revert_notAgentOwner() public {
         address unregistered = address(0x99);
         usdc.mint(thirdParty, MIN_STAKE);
 
         vm.startPrank(thirdParty);
         usdc.approve(address(staking), MIN_STAKE);
-        vm.expectRevert(AntseedStaking.NotRegistered.selector);
-        staking.stakeFor(unregistered, MIN_STAKE);
+        vm.expectRevert(AntseedStaking.NotAgentOwner.selector);
+        staking.stakeFor(unregistered, sellerAgentId, MIN_STAKE);
         vm.stopPrank();
     }
 
     function test_stakeFor_revert_zeroAmount() public {
         vm.prank(thirdParty);
         vm.expectRevert(AntseedStaking.InvalidAmount.selector);
-        staking.stakeFor(seller, 0);
+        staking.stakeFor(seller, sellerAgentId, 0);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -226,9 +239,8 @@ contract AntseedStakingTest is Test {
     function test_slash_tier1_fullSlash() public {
         _stakeAs(seller, LARGE_STAKE);
 
-        uint256 tokenId = identity.getTokenId(seller);
         // Add 5 ghosts (= SLASH_GHOST_THRESHOLD), zero sessions
-        _addGhosts(tokenId, 5);
+        _addGhosts(sellerAgentId, 5);
 
         vm.prank(seller);
         staking.unstake();
@@ -242,11 +254,10 @@ contract AntseedStakingTest is Test {
     function test_slash_tier2_halfSlash() public {
         _stakeAs(seller, LARGE_STAKE);
 
-        uint256 tokenId = identity.getTokenId(seller);
         // Ghost ratio = ghosts / (sessions + ghosts) >= 30%
         // 3 ghosts, 3 sessions -> ratio = 3*100/(3+3) = 50% >= 30%
-        _addSessions(tokenId, 3);
-        _addGhosts(tokenId, 3);
+        _addSessions(sellerAgentId, 3);
+        _addGhosts(sellerAgentId, 3);
 
         vm.prank(seller);
         staking.unstake();
@@ -259,9 +270,8 @@ contract AntseedStakingTest is Test {
     function test_slash_tier3_inactivitySlash() public {
         _stakeAs(seller, LARGE_STAKE);
 
-        uint256 tokenId = identity.getTokenId(seller);
         // Add sessions (with recent settlement)
-        _addSessions(tokenId, 10);
+        _addSessions(sellerAgentId, 10);
 
         // Warp time past inactivity threshold (30 days + 1 second)
         vm.warp(block.timestamp + 30 days + 1);
@@ -278,9 +288,8 @@ contract AntseedStakingTest is Test {
     function test_slash_tier4_noSlash() public {
         _stakeAs(seller, LARGE_STAKE);
 
-        uint256 tokenId = identity.getTokenId(seller);
         // Add sessions with recent settlement, no ghosts
-        _addSessions(tokenId, 10);
+        _addSessions(sellerAgentId, 10);
 
         vm.prank(seller);
         staking.unstake();
@@ -293,8 +302,7 @@ contract AntseedStakingTest is Test {
     function test_slash_tier1_belowThreshold_noSlash() public {
         _stakeAs(seller, LARGE_STAKE);
 
-        uint256 tokenId = identity.getTokenId(seller);
-        _addGhosts(tokenId, 4); // below threshold of 5
+        _addGhosts(sellerAgentId, 4); // below threshold of 5
 
         vm.prank(seller);
         staking.unstake();
@@ -307,10 +315,9 @@ contract AntseedStakingTest is Test {
     function test_slash_tier2_belowRatioThreshold() public {
         _stakeAs(seller, LARGE_STAKE);
 
-        uint256 tokenId = identity.getTokenId(seller);
         // 1 ghost, 10 sessions -> ratio = 1*100/(10+1) = 9% < 30%
-        _addSessions(tokenId, 10);
-        _addGhosts(tokenId, 1);
+        _addSessions(sellerAgentId, 10);
+        _addGhosts(sellerAgentId, 1);
 
         vm.prank(seller);
         staking.unstake();
@@ -322,18 +329,17 @@ contract AntseedStakingTest is Test {
     // Edge: slash with no protocolReserve set -> slashed funds stay in contract
     function test_slash_noReserve_fundsStayInContract() public {
         // Deploy a new staking without reserve
-        AntseedStaking staking2 = new AntseedStaking(address(usdc), address(identity));
+        AntseedStaking staking2 = new AntseedStaking(address(usdc), address(registry), address(stats));
         staking2.setSessionsContract(address(this));
         // Don't set protocolReserve
 
         usdc.mint(seller, LARGE_STAKE);
         vm.startPrank(seller);
         usdc.approve(address(staking2), LARGE_STAKE);
-        staking2.stake(LARGE_STAKE);
+        staking2.stake(sellerAgentId, LARGE_STAKE);
         vm.stopPrank();
 
-        uint256 tokenId = identity.getTokenId(seller);
-        _addGhosts(tokenId, 5); // tier 1 full slash
+        _addGhosts(sellerAgentId, 5); // tier 1 full slash
 
         vm.prank(seller);
         staking2.unstake();
@@ -399,8 +405,7 @@ contract AntseedStakingTest is Test {
     function test_effectiveSettlements_belowCap() public {
         _stakeAs(seller, LARGE_STAKE); // 100 USDC
 
-        uint256 tokenId = identity.getTokenId(seller);
-        _addSessions(tokenId, 5);
+        _addSessions(sellerAgentId, 5);
 
         // stakeCap = (100_000_000 * 20) / 1_000_000 = 2000
         // sessionCount = 5, which is < 2000
@@ -411,16 +416,14 @@ contract AntseedStakingTest is Test {
         // Tiny stake to make cap small
         _stakeAs(seller, 100_000); // 0.1 USDC
 
-        uint256 tokenId = identity.getTokenId(seller);
         // stakeCap = (100_000 * 20) / 1_000_000 = 2
-        _addSessions(tokenId, 10);
+        _addSessions(sellerAgentId, 10);
 
         assertEq(staking.effectiveSettlements(seller), 2);
     }
 
     function test_effectiveSettlements_zeroStake() public {
-        uint256 tokenId = identity.getTokenId(seller);
-        _addSessions(tokenId, 5);
+        _addSessions(sellerAgentId, 5);
 
         // stakeCap = 0, sessionCount = 5 -> min(5, 0) = 0
         assertEq(staking.effectiveSettlements(seller), 0);
@@ -484,25 +487,42 @@ contract AntseedStakingTest is Test {
         staking.setSessionsContract(address(0));
     }
 
-    function test_setIdentityContract() public {
-        address newIdentity = address(0x66);
-        staking.setIdentityContract(newIdentity);
-        assertEq(address(staking.identityContract()), newIdentity);
+    function test_setIdentityRegistry() public {
+        address newRegistry = address(0x66);
+        staking.setIdentityRegistry(newRegistry);
+        assertEq(address(staking.identityRegistry()), newRegistry);
     }
 
-    function test_setIdentityContract_revert_notOwner() public {
+    function test_setIdentityRegistry_revert_notOwner() public {
         vm.prank(seller);
         vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", seller));
-        staking.setIdentityContract(address(0x66));
+        staking.setIdentityRegistry(address(0x66));
     }
 
-    function test_setIdentityContract_revert_zeroAddress() public {
+    function test_setIdentityRegistry_revert_zeroAddress() public {
         vm.expectRevert(AntseedStaking.InvalidAddress.selector);
-        staking.setIdentityContract(address(0));
+        staking.setIdentityRegistry(address(0));
+    }
+
+    function test_setStatsContract() public {
+        address newStats = address(0x77);
+        staking.setStatsContract(newStats);
+        assertEq(address(staking.statsContract()), newStats);
+    }
+
+    function test_setStatsContract_revert_notOwner() public {
+        vm.prank(seller);
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", seller));
+        staking.setStatsContract(address(0x77));
+    }
+
+    function test_setStatsContract_revert_zeroAddress() public {
+        vm.expectRevert(AntseedStaking.InvalidAddress.selector);
+        staking.setStatsContract(address(0));
     }
 
     function test_setProtocolReserve() public {
-        address newReserve = address(0x77);
+        address newReserve = address(0x88);
         staking.setProtocolReserve(newReserve);
         assertEq(staking.protocolReserve(), newReserve);
     }
@@ -510,7 +530,7 @@ contract AntseedStakingTest is Test {
     function test_setProtocolReserve_revert_notOwner() public {
         vm.prank(seller);
         vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", seller));
-        staking.setProtocolReserve(address(0x77));
+        staking.setProtocolReserve(address(0x88));
     }
 
     function test_setProtocolReserve_revert_zeroAddress() public {

@@ -352,7 +352,7 @@ describe('Budget mismatch rejection', () => {
       sessionsContractAddress: CONTRACT_ADDR,
       streamChannelAddress: STREAM_CHANNEL_ADDR,
       usdcAddress: '0x' + 'ee'.repeat(20),
-      identityAddress: '0x' + 'ff'.repeat(20),
+      identityRegistryAddress: '0x' + 'ff'.repeat(20),
       chainId: CHAIN_ID,
       defaultAuthDurationSecs: 3600,
       maxPerRequestUsdc: 50_000n,      // buyer allows max $0.05
@@ -401,7 +401,7 @@ describe('Budget mismatch rejection', () => {
       sessionsContractAddress: CONTRACT_ADDR,
       streamChannelAddress: STREAM_CHANNEL_ADDR,
       usdcAddress: '0x' + 'ee'.repeat(20),
-      identityAddress: '0x' + 'ff'.repeat(20),
+      identityRegistryAddress: '0x' + 'ff'.repeat(20),
       chainId: CHAIN_ID,
       defaultAuthDurationSecs: 3600,
       maxPerRequestUsdc: 100_000n,     // buyer allows exactly $0.10
@@ -450,7 +450,7 @@ describe('Budget mismatch rejection', () => {
       sessionsContractAddress: CONTRACT_ADDR,
       streamChannelAddress: STREAM_CHANNEL_ADDR,
       usdcAddress: '0x' + 'ee'.repeat(20),
-      identityAddress: '0x' + 'ff'.repeat(20),
+      identityRegistryAddress: '0x' + 'ff'.repeat(20),
       chainId: CHAIN_ID,
       defaultAuthDurationSecs: 3600,
       maxPerRequestUsdc: 100_000n,     // buyer allows $0.10

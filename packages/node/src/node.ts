@@ -71,7 +71,8 @@ import { BuyerPaymentManager, type BuyerPaymentConfig } from "./payments/buyer-p
 import { SellerPaymentManager, type SellerPaymentConfig } from "./payments/seller-payment-manager.js";
 import { identityToEvmAddress } from "./payments/evm/keypair.js";
 import { IdentityClient } from "./payments/evm/identity-client.js";
-import { verifyReputation } from "./discovery/reputation-verifier.js";
+import { StatsClient } from "./payments/evm/stats-client.js";
+import { verifyStats } from "./discovery/stats-verifier.js";
 
 export type { Provider, ProviderStreamCallbacks };
 export type { Router };
@@ -161,8 +162,10 @@ export interface NodePaymentsConfig {
   streamChannelAddress?: string;
   /** USDC token contract address */
   usdcAddress?: string;
-  /** AntseedIdentity contract address */
-  identityAddress?: string;
+  /** ERC-8004 IdentityRegistry contract address */
+  identityRegistryAddress?: string;
+  /** AntseedStats contract address */
+  statsAddress?: string;
   /** AntseedStaking contract address */
   stakingAddress?: string;
   /** Chain ID for EIP-712 domain. Default: 8453 (Base) */
@@ -276,6 +279,7 @@ export class AntseedNode extends EventEmitter {
   private _sessionsClient: SessionsClient | null = null;
   private _stakingClient: StakingClient | null = null;
   private _identityClient: IdentityClient | null = null;
+  private _statsClient: StatsClient | null = null;
   private _paymentMuxes = new Map<PeerId, PaymentMux>();
   private _providerLoadCounts = new Map<string, number>();
   private _metadataRefreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -354,6 +358,16 @@ export class AntseedNode extends EventEmitter {
   /** Actual signaling/connection port after binding (0 means not started). */
   get signalingPort(): number {
     return this._connectionManager?.getListeningPort() ?? 0;
+  }
+
+  /** ERC-8004 IdentityRegistry client (null if not configured). */
+  get identityClient(): IdentityClient | null {
+    return this._identityClient;
+  }
+
+  /** AntseedStats client for on-chain agent stats (null if not configured). */
+  get statsClient(): StatsClient | null {
+    return this._statsClient;
   }
 
   /** Current connection state for a peer if a connection exists, otherwise null. */
@@ -519,6 +533,7 @@ export class AntseedNode extends EventEmitter {
     this._sessionsClient = null;
     this._stakingClient = null;
     this._identityClient = null;
+    this._statsClient = null;
     this._buyerPaymentManager = null;
     this._sellerPaymentManager = null;
     this._buyerLockedPeers.clear();
@@ -568,8 +583,8 @@ export class AntseedNode extends EventEmitter {
 
 
 
-    // Optional reputation verification: replace claimed data with verified on-chain data
-    if (this._identityClient) {
+    // Optional stats verification: replace claimed data with verified on-chain data
+    if (this._statsClient && this._stakingClient) {
       for (const p of peers) {
         if (!p.evmAddress) continue;
         try {
@@ -585,12 +600,12 @@ export class AntseedNode extends EventEmitter {
             onChainSessionCount: p.onChainSessionCount,
             onChainDisputeCount: p.onChainDisputeCount,
           };
-          const result = await verifyReputation(this._identityClient, metadata);
+          const result = await verifyStats(this._statsClient, this._stakingClient, metadata);
           p.onChainReputation = result.actualReputation;
           p.onChainSessionCount = result.actualSessionCount;
           p.onChainDisputeCount = result.actualDisputeCount;
         } catch {
-          // Identity contract lookup failed for this peer — keep claimed data
+          // Stats/staking contract lookup failed for this peer — keep claimed data
         }
       }
     }
@@ -1169,8 +1184,8 @@ export class AntseedNode extends EventEmitter {
         ),
         reannounceIntervalMs: DEFAULT_DHT_CONFIG.reannounceIntervalMs,
         signalingPort: actualSignalingPort,
-        ...(this._identityClient ? { identityClient: this._identityClient } : {}),
-        ...(this._stakingClient ? { paymentsEnabled: true } : {}),
+        ...(this._statsClient ? { statsClient: this._statsClient } : {}),
+        ...(this._stakingClient ? { stakingClient: this._stakingClient, paymentsEnabled: true } : {}),
       };
       this._announcer = new PeerAnnouncer(announcerConfig);
       this._announcer.startPeriodicAnnounce();
@@ -1240,7 +1255,7 @@ export class AntseedNode extends EventEmitter {
           sessionsContractAddress: payments.sessionsAddress,
           streamChannelAddress: payments.streamChannelAddress ?? '',
           usdcAddress: payments.usdcAddress,
-          identityAddress: payments.identityAddress ?? '',
+          identityRegistryAddress: payments.identityRegistryAddress ?? '',
           chainId: payments.chainId ?? 8453,
           defaultAuthDurationSecs: payments.defaultAuthDurationSecs ?? 90000, // Must exceed SETTLE_TIMEOUT (24h)
           maxPerRequestUsdc: BigInt(payments.maxPerRequestUsdc ?? "100000"),  // $0.10 default
@@ -1753,13 +1768,22 @@ export class AntseedNode extends EventEmitter {
       debugLog(`[Node] StakingClient initialized (contract=${payments.stakingAddress.slice(0, 10)}...)`);
     }
 
-    // Initialize IdentityClient
-    if (payments.rpcUrl && payments.identityAddress) {
+    // Initialize IdentityClient (ERC-8004 IdentityRegistry)
+    if (payments.rpcUrl && payments.identityRegistryAddress) {
       this._identityClient = new IdentityClient({
         rpcUrl: payments.rpcUrl,
-        contractAddress: payments.identityAddress,
+        contractAddress: payments.identityRegistryAddress,
       });
-      debugLog(`[Node] IdentityClient initialized (contract=${payments.identityAddress.slice(0, 10)}...)`);
+      debugLog(`[Node] IdentityClient initialized (contract=${payments.identityRegistryAddress.slice(0, 10)}...)`);
+    }
+
+    // Initialize StatsClient
+    if (payments.rpcUrl && payments.statsAddress) {
+      this._statsClient = new StatsClient({
+        rpcUrl: payments.rpcUrl,
+        contractAddress: payments.statsAddress,
+      });
+      debugLog(`[Node] StatsClient initialized (contract=${payments.statsAddress.slice(0, 10)}...)`);
     }
 
     // Initialize SessionStore for persistent payment sessions (shared instance)

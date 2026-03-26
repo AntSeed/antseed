@@ -9,6 +9,7 @@ import {
 } from '@antseed/node';
 import {
   IdentityClient,
+  StatsClient,
   EmissionsClient,
   SubPoolClient,
   SessionStore,
@@ -96,12 +97,26 @@ export function createSessionsClient(config: AntseedConfig): SessionsClient {
  */
 export function createIdentityClient(config: AntseedConfig): IdentityClient {
   const crypto = requireCryptoConfig(config);
-  if (!crypto.identityContractAddress) {
-    throw new Error('No identity contract address configured. Set payments.crypto.identityContractAddress in your config file.');
+  if (!crypto.identityRegistryAddress) {
+    throw new Error('No identity registry address configured. Set payments.crypto.identityRegistryAddress in your config file.');
   }
   return new IdentityClient({
     rpcUrl: crypto.rpcUrl,
-    contractAddress: crypto.identityContractAddress,
+    contractAddress: crypto.identityRegistryAddress,
+  });
+}
+
+/**
+ * Create a StatsClient from the CLI config.
+ */
+export function createStatsClient(config: AntseedConfig): StatsClient {
+  const crypto = requireCryptoConfig(config);
+  if (!crypto.statsContractAddress) {
+    throw new Error('No stats contract address configured. Set payments.crypto.statsContractAddress in your config file.');
+  }
+  return new StatsClient({
+    rpcUrl: crypto.rpcUrl,
+    contractAddress: crypto.statsContractAddress,
   });
 }
 

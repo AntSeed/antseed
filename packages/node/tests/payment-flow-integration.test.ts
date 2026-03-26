@@ -63,7 +63,7 @@ function makeBuyerConfig(dataDir: string): BuyerPaymentConfig {
     sessionsContractAddress: SESSIONS_CONTRACT,
     streamChannelAddress: STREAM_CHANNEL_ADDR,
     usdcAddress: '0x' + 'ee'.repeat(20),
-    identityAddress: '0x' + 'ff'.repeat(20),
+    identityRegistryAddress: '0x' + 'ff'.repeat(20),
     chainId: CHAIN_ID,
     defaultAuthDurationSecs: 3600,
     maxPerRequestUsdc: 500_000n, // $0.50
