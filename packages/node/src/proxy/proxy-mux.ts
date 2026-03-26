@@ -286,7 +286,7 @@ export class ProxyMux {
           // Buyer side: response from seller (start frame for streams).
           const response = decodeHttpResponse(frame.payload);
           debugLog(
-            `[ProxyMux] recv response reqId=${response.requestId.slice(0, 8)} status=${response.statusCode} bytes=${response.body.length} streamingStart=${response.headers[ANTSEED_STREAMING_RESPONSE_HEADER] === '1' ? "true" : "false"}`,
+            `[ProxyMux] recv response reqId=${response.requestId.slice(0, 8)} status=${response.statusCode} bytes=${response.body?.length ?? 0} streamingStart=${response.headers[ANTSEED_STREAMING_RESPONSE_HEADER] === '1' ? "true" : "false"}`,
           );
           const handler = this._responseHandlers.get(response.requestId);
           if (handler) {

@@ -1384,8 +1384,8 @@ export class AntseedNode extends EventEmitter {
             },
           });
           statusCode = response.statusCode;
-          responseBody = response.body;
-          debugLog(`[Node] Provider responded: status=${statusCode} (${Date.now() - startTime}ms, ${responseBody.length}b)`);
+          responseBody = response.body ?? new Uint8Array(0);
+          debugLog(`[Node] Provider responded: status=${statusCode} (${Date.now() - startTime}ms, ${responseBody.length}b) bodyType=${typeof response.body} hasBody=${!!response.body}`);
           if (!streamedResponseStarted) {
             // Inject cost headers before sending response (non-streamed only)
             const responseToSend = this._injectCostHeaders(response, provider, request, buyerPeerId);
@@ -2472,7 +2472,9 @@ export class AntseedNode extends EventEmitter {
     const cumulativeCost = session ? spm.getCumulativeSpend(session.sessionId) : 0n;
 
     return {
-      ...response,
+      requestId: response.requestId,
+      statusCode: response.statusCode,
+      body: response.body ?? new Uint8Array(0),
       headers: {
         ...response.headers,
         'x-antseed-input-tokens': String(usage.inputTokens),
