@@ -319,17 +319,21 @@ export class BuyerProxy {
 
   private _replacePeers(incoming: PeerInfo[]): void {
     const incomingById = new Map(incoming.map((p) => [p.peerId, p]))
+    const now = Date.now()
 
     // Carry forward previously known peers that are missing from this scan,
     // preserving their lastSeen timestamp. A missed DHT scan doesn't mean
     // the peer is unavailable — it just wasn't discovered this time.
+    // Drop peers older than 30 minutes to prevent unbounded growth.
+    const CARRY_FORWARD_TTL_MS = 30 * 60_000
+    const merged = [...incoming]
     for (const prev of this._cachedPeers) {
-      if (!incomingById.has(prev.peerId)) {
-        incoming.push({ ...prev })
+      if (!incomingById.has(prev.peerId) && now - prev.lastSeen < CARRY_FORWARD_TTL_MS) {
+        merged.push({ ...prev })
       }
     }
 
-    this._cachedPeers = incoming
+    this._cachedPeers = merged
     this._cacheLastUpdatedAtMs = Date.now()
     this._cacheMutationEpoch += 1
     this._persistPeersToState()
