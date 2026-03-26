@@ -19,16 +19,11 @@ export interface SellerPaymentConfig {
   sessionsContractAddress: string;
   chainId: number;
   dataDir: string;
-  /** Timeout in seconds before a disconnected session is considered ghost. Default: 86400 (24h). */
-  settleTimeoutSecs?: number;
   /** Minimum USDC per request (base units). Default: "10000" ($0.01). */
   minBudgetPerRequest?: string;
   /** Whether to immediately settle when buyer disconnects. Default: true. */
   settleOnDisconnect?: boolean;
 }
-
-/** Default settle timeout: 24 hours. */
-const DEFAULT_SETTLE_TIMEOUT_SECS = 86400;
 
 /** Default minimum budget per request: $0.01 USDC (base units). */
 const DEFAULT_MIN_BUDGET_PER_REQUEST = '10000';
@@ -423,11 +418,16 @@ export class SellerPaymentManager {
    * Called periodically and on startup for recovery.
    */
   async checkTimeouts(): Promise<void> {
-    const timeoutSecs = this._config.settleTimeoutSecs ?? DEFAULT_SETTLE_TIMEOUT_SECS;
-    const timedOut = this._sessionStore.getTimedOutSessions(timeoutSecs);
+    // Check all active sessions — use the session's actual deadline + CLOSE_GRACE_PERIOD (2h)
+    // to determine if on-chain settleTimeout() will succeed, instead of a separate config timer.
+    const CLOSE_GRACE_PERIOD_SECS = 2 * 60 * 60; // 2 hours — matches contract default
+    const nowSecs = Math.floor(Date.now() / 1000);
+    const activeSessions = this._sessionStore.getActiveSessions('seller');
 
-    for (const session of timedOut) {
-      if (session.status !== 'active') continue;
+    for (const session of activeSessions) {
+      // Skip sessions whose deadline + grace period hasn't passed
+      const deadlinePlusGrace = session.deadline + CLOSE_GRACE_PERIOD_SECS;
+      if (nowSecs < deadlinePlusGrace) continue;
 
       try {
         const accepted = this._acceptedCumulative.get(session.sessionId) ?? 0n;
@@ -442,6 +442,7 @@ export class SellerPaymentManager {
           this._sessionStore.updateSessionStatus(session.sessionId, 'timeout');
           this._acceptedCumulative.delete(session.sessionId);
           this._spent.delete(session.sessionId);
+          this._latestAuth.delete(session.sessionId);
           this._activeBuyers.delete(session.peerId);
         }
       } catch (err) {

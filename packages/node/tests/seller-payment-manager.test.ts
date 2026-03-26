@@ -57,13 +57,14 @@ async function buildSpendingAuth(
     cumulativeInputTokens?: bigint;
     cumulativeOutputTokens?: bigint;
     nonce?: number;
+    deadline?: number;
   } = {},
 ): Promise<SpendingAuthPayload> {
   const cumulativeAmount = opts.cumulativeAmount ?? 1_000_000n;
   const cumulativeInputTokens = opts.cumulativeInputTokens ?? 0n;
   const cumulativeOutputTokens = opts.cumulativeOutputTokens ?? 0n;
   const nonce = opts.nonce ?? 1;
-  const deadline = Math.floor(Date.now() / 1000) + 3600;
+  const deadline = opts.deadline ?? Math.floor(Date.now() / 1000) + 3600;
 
   const buyerWallet = identityToEvmWallet(buyerIdentity);
   const sellerEvmAddr = identityToEvmAddress(sellerIdentity);
@@ -116,7 +117,6 @@ describe('SellerPaymentManager', () => {
       sessionsContractAddress: CONTRACT_ADDR,
       chainId: CHAIN_ID,
       dataDir: tempDir,
-      settleTimeoutSecs: 60,
     };
     manager = new SellerPaymentManager(sellerIdentity, config, store);
 
@@ -212,7 +212,6 @@ describe('SellerPaymentManager', () => {
       sessionsContractAddress: CONTRACT_ADDR,
       chainId: CHAIN_ID,
       dataDir: tempDir,
-      settleTimeoutSecs: 60,
       settleOnDisconnect: false,
     };
     const manager2 = new SellerPaymentManager(sellerIdentity, config2, store);
@@ -243,19 +242,17 @@ describe('SellerPaymentManager', () => {
   it('test_checkTimeouts: timed-out sessions with cumulative > 0 are settled', async () => {
     const buyerEvmAddr = identityToEvmAddress(buyerIdentity);
     const sessionId = makeSessionId(6);
-    const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, sessionId);
-    await manager.handleSpendingAuth(buyerIdentity.peerId, buyerEvmAddr, payload, mux);
-
-    // Manually set updatedAt to be old enough to time out (config has 60s timeout)
-    const oldTime = Date.now() - 120_000; // 2 minutes ago
-    store.upsertSession({
-      ...store.getSession(sessionId)!,
-      updatedAt: oldTime,
+    // Build SpendingAuth with a deadline that's already 3 hours in the past
+    // so deadline + CLOSE_GRACE_PERIOD (2h) = 1 hour ago → timeout eligible
+    const oldDeadline = Math.floor(Date.now() / 1000) - (3 * 60 * 60);
+    const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, sessionId, {
+      deadline: oldDeadline,
     });
+    await manager.handleSpendingAuth(buyerIdentity.peerId, buyerEvmAddr, payload, mux);
 
     await manager.checkTimeouts();
 
-    // Session has cumulative > 0 (from initial SpendingAuth), so settle is called
+    // Session has cumulative > 0 (default 1_000_000), so settle is called
     expect(manager.sessionsClient.settle).toHaveBeenCalledOnce();
     const session = store.getSession(sessionId);
     expect(session!.status).toBe('settled');
