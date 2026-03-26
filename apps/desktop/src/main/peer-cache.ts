@@ -130,7 +130,7 @@ export function parsePeerFromRaw(pr: Record<string, unknown>): DashboardNetworkP
   };
 }
 
-/** Refresh peer cache from buyer.state.json — merge new, mark stale as offline. */
+/** Refresh peer cache from buyer.state.json — derive online status from lastSeen. */
 export async function refreshPeerCache(): Promise<void> {
   const now = Date.now();
   // Use a shorter debounce until we've found at least one peer (startup phase).
@@ -139,9 +139,6 @@ export async function refreshPeerCache(): Promise<void> {
     return;
   }
   peerCacheLastRefreshAt = now;
-
-  // Track which peers are in the current file snapshot.
-  const seenInFile = new Set<string>();
 
   try {
     const raw = await readFile(DEFAULT_BUYER_STATE_PATH, 'utf-8');
@@ -153,7 +150,6 @@ export async function refreshPeerCache(): Promise<void> {
       const peer = parsePeerFromRaw(p as Record<string, unknown>);
       if (!peer) continue;
 
-      seenInFile.add(peer.peerId);
       const existing = peerCache.get(peer.peerId);
       if (existing) {
         peer.displayName = peer.displayName ?? existing.displayName;
@@ -164,7 +160,8 @@ export async function refreshPeerCache(): Promise<void> {
         peer.capacityMsgPerHour = peer.capacityMsgPerHour || existing.capacityMsgPerHour;
         peer.lastSeen = Math.max(peer.lastSeen, existing.lastSeen);
       }
-      peer.online = true;
+      // Derive online from lastSeen — peer is online if seen within the TTL window.
+      peer.online = now - peer.lastSeen < PEER_ONLINE_TTL_MS;
       peerCache.set(peer.peerId, peer);
     }
 
@@ -173,11 +170,10 @@ export async function refreshPeerCache(): Promise<void> {
     // File doesn't exist yet — buyer runtime may not be running.
   }
 
-  // Mark peers not in the current file snapshot as offline if stale.
-  for (const [id, peer] of peerCache) {
-    if (!seenInFile.has(id)) {
-      peer.online = now - peer.lastSeen < PEER_ONLINE_TTL_MS;
-    }
+  // Re-derive online for every cached peer so evicted / un-filed peers
+  // also transition to offline once their lastSeen TTL expires.
+  for (const peer of peerCache.values()) {
+    peer.online = now - peer.lastSeen < PEER_ONLINE_TTL_MS;
   }
 
   emitIfChanged();

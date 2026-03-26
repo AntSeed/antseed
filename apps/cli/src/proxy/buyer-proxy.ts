@@ -85,6 +85,8 @@ export interface BuyerProxyConfig {
 
 const BUYER_STATE_FILE = join(homedir(), '.antseed', 'buyer.state.json')
 const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504])
+/** Max age for carrying forward peers not seen in the latest DHT scan. */
+const CARRY_FORWARD_TTL_MS = 30 * 60_000
 
 type TransformResult = { request: SerializedHttpRequest; streamRequested: boolean; requestedModel: string | null }
 type AdaptResponseMeta = { streamRequested: boolean; fallbackModel: string | null }
@@ -318,7 +320,20 @@ export class BuyerProxy {
   }
 
   private _replacePeers(incoming: PeerInfo[]): void {
-    this._cachedPeers = incoming
+    const incomingById = new Map(incoming.map((p) => [p.peerId, p]))
+    const now = Date.now()
+
+    // Carry forward previously known peers that are missing from this scan,
+    // preserving their lastSeen timestamp. A missed DHT scan doesn't mean
+    // the peer is unavailable — it just wasn't discovered this time.
+    const merged = [...incoming]
+    for (const prev of this._cachedPeers) {
+      if (!incomingById.has(prev.peerId) && now - prev.lastSeen < CARRY_FORWARD_TTL_MS) {
+        merged.push({ ...prev })
+      }
+    }
+
+    this._cachedPeers = merged
     this._cacheLastUpdatedAtMs = Date.now()
     this._cacheMutationEpoch += 1
     this._persistPeersToState()
@@ -358,6 +373,7 @@ export class BuyerProxy {
     if (this._cachedPeers.length < before) {
       this._cacheLastUpdatedAtMs = Date.now()
       this._cacheMutationEpoch += 1
+      this._persistPeersToState()
       log(`Evicted failing peer ${peerId.slice(0, 12)}... from cache (${this._cachedPeers.length} remaining)`)
     }
   }
