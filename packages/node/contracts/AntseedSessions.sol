@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
@@ -32,7 +30,6 @@ import {IAntseedEmissions} from "./interfaces/IAntseedEmissions.sol";
  *         Contract is swappable: deploy a new version and re-point Deposits + Stats.
  */
 contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
-    using SafeERC20 for IERC20;
 
     // ─── EIP-712 ─────────────────────────────────────────────────────
     bytes32 public constant METADATA_AUTH_TYPEHASH = keccak256(
@@ -69,7 +66,6 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     IAntseedStats public statsContract;
     IAntseedStaking public stakingContract;
     IAntseedEmissions public emissionsContract;
-    IERC20 public usdc;
     address public protocolReserve;
 
     mapping(bytes32 => Session) public sessions;
@@ -100,20 +96,17 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     constructor(
         address _deposits,
         address _stats,
-        address _staking,
-        address _usdc
+        address _staking
     )
         EIP712("AntseedSessions", "6")
         Ownable(msg.sender)
     {
-        if (_deposits == address(0) || _stats == address(0) ||
-            _staking == address(0) || _usdc == address(0))
+        if (_deposits == address(0) || _stats == address(0) || _staking == address(0))
             revert InvalidAddress();
 
         depositsContract = IAntseedDeposits(_deposits);
         statsContract = IAntseedStats(_stats);
         stakingContract = IAntseedStaking(_staking);
-        usdc = IERC20(_usdc);
     }
 
     // ─── Domain Separator Helper ────────────────────────────────────
@@ -164,9 +157,8 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         bytes32 zeroMetadataHash = keccak256(abi.encode(uint256(0), uint256(0), uint256(0), uint256(0)));
         _verifyMetadataAuth(channelId, 0, zeroMetadataHash, buyer, buyerSig);
 
-        // Pull USDC from Deposits → this contract (escrow)
+        // Lock buyer's USDC in Deposits (stays there, no transfer)
         depositsContract.lockForSession(buyer, maxAmount);
-        depositsContract.transferToSessions(buyer, address(this), maxAmount);
 
         sessions[channelId] = Session({
             buyer: buyer,
@@ -196,8 +188,6 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         if (additionalAmount == 0) revert InvalidAmount();
 
         depositsContract.lockForSession(session.buyer, additionalAmount);
-        depositsContract.transferToSessions(session.buyer, address(this), additionalAmount);
-
         session.deposit += additionalAmount;
         emit Reserved(channelId, session.buyer, session.seller, session.deposit);
     }
@@ -232,8 +222,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         _verifyMetadataAuth(channelId, cumulativeAmount, metadataHash, session.buyer, buyerSig);
 
         uint128 delta = cumulativeAmount - session.settled;
-
-        _distributeDelta(session, delta);
+        uint256 platformFee = _chargeAndSettle(session, delta, delta);
 
         session.settled = cumulativeAmount;
         session.metadataHash = metadataHash;
@@ -241,7 +230,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
 
         _recordStatsAndEmissions(session, delta, metadata);
 
-        emit SessionSettled(channelId, session.seller, cumulativeAmount, _lastPlatformFee);
+        emit SessionSettled(channelId, session.seller, cumulativeAmount, platformFee);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -273,14 +262,9 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         _verifyMetadataAuth(channelId, finalAmount, metadataHash, session.buyer, buyerSig);
 
         uint128 delta = finalAmount - session.settled;
-        uint128 refund = session.deposit - finalAmount;
-
-        _distributeDelta(session, delta);
-
-        if (refund > 0) {
-            usdc.safeTransfer(address(depositsContract), refund);
-            depositsContract.creditBuyerRefund(session.buyer, refund);
-        }
+        // Release all remaining reserved: charge delta, un-reserve everything
+        uint128 remainingReserved = session.deposit - session.settled;
+        uint256 platformFee = _chargeAndSettle(session, delta, remainingReserved);
 
         session.settled = finalAmount;
         session.metadataHash = metadataHash;
@@ -290,7 +274,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
 
         _recordStatsAndEmissions(session, delta, metadata);
 
-        emit SessionClosed(channelId, session.seller, finalAmount, _lastPlatformFee);
+        emit SessionClosed(channelId, session.seller, finalAmount, platformFee);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -322,11 +306,10 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         if (session.closeRequestedAt == 0) revert TimeoutNotReady();
         if (block.timestamp < session.closeRequestedAt + TIMEOUT_GRACE_PERIOD) revert TimeoutNotReady();
 
-        uint128 refund = session.deposit - session.settled;
-
-        if (refund > 0) {
-            usdc.safeTransfer(address(depositsContract), refund);
-            depositsContract.creditBuyerRefund(session.buyer, refund);
+        // Release all remaining reserved back to buyer's available balance
+        uint128 remainingReserved = session.deposit - session.settled;
+        if (remainingReserved > 0) {
+            depositsContract.releaseLock(session.buyer, remainingReserved);
         }
 
         session.status = SessionStatus.TimedOut;
@@ -352,28 +335,35 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     //                        INTERNAL HELPERS
     // ═══════════════════════════════════════════════════════════════════
 
-    /// @dev Temporary storage for platform fee (avoids stack-too-deep in settle/close)
-    uint256 private _lastPlatformFee;
-
-    function _distributeDelta(Session storage session, uint128 delta) internal {
-        _lastPlatformFee = 0;
-        if (delta == 0) return;
-
-        uint256 platformFee = (uint256(delta) * PLATFORM_FEE_BPS) / 10000;
-        uint256 sellerPayout = uint256(delta) - platformFee;
-
-        if (platformFee > 0 && protocolReserve != address(0)) {
-            usdc.safeTransfer(protocolReserve, platformFee);
-        } else {
-            sellerPayout += platformFee;
+    /**
+     * @dev Charge buyer via Deposits and credit seller earnings.
+     * @param delta          USDC amount to charge
+     * @param reservedToFree How much of the buyer's reservation to release
+     * @return platformFee   The platform fee deducted
+     */
+    function _chargeAndSettle(
+        Session storage session,
+        uint128 delta,
+        uint128 reservedToFree
+    ) internal returns (uint256 platformFee) {
+        if (delta == 0 && reservedToFree > 0) {
+            // No charge but release lock (e.g., close with no additional spend)
+            depositsContract.releaseLock(session.buyer, reservedToFree);
+            return 0;
         }
+        if (delta == 0) return 0;
 
-        if (sellerPayout > 0) {
-            usdc.safeTransfer(address(depositsContract), sellerPayout);
-            depositsContract.creditEarnings(session.seller, sellerPayout);
-        }
+        platformFee = (uint256(delta) * PLATFORM_FEE_BPS) / 10000;
+        if (protocolReserve == address(0)) platformFee = 0;
 
-        _lastPlatformFee = platformFee;
+        depositsContract.chargeAndCreditEarnings(
+            session.buyer,
+            session.seller,
+            delta,
+            reservedToFree,
+            platformFee,
+            protocolReserve
+        );
     }
 
     function _recordStatsAndEmissions(

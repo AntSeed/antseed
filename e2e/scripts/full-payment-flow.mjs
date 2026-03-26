@@ -565,8 +565,8 @@ async function main() {
     ]);
     info(`Buyer balance (available, reserved, pending, lastActivity): ${buyerBalanceRaw}`);
 
-    // Parse the first two values — available and reserved
-    const balanceParts = buyerBalanceRaw.split("\n").map((s) => s.trim());
+    // Parse the first two values — available and reserved (cast output: "1000000 [1e6]")
+    const balanceParts = buyerBalanceRaw.split("\n").map((s) => s.trim().split(" ")[0]);
     const reservedBalance = BigInt(balanceParts[1] || "0");
     if (reservedBalance > 0n) {
       pass(`Buyer has reserved balance: ${reservedBalance}`);
@@ -620,17 +620,17 @@ async function main() {
       usdcAddress: USDC_ADDRESS,
     });
 
-    // Wait for seller earnings to appear
+    // Wait for seller earnings in Deposits contract (credited by close())
     const sellerEarnings = await waitForValue(
       async () => {
-        const bal = await depositsClient.getUSDCBalance(sellerAddress);
-        return bal > 0n ? bal : null;
+        const earnings = await depositsClient.getSellerEarnings(sellerAddress);
+        return earnings > 0n ? earnings : null;
       },
-      "seller USDC settlement earnings",
+      "seller settlement earnings in Deposits",
       30_000,
       500
     );
-    pass(`Seller earned ${sellerEarnings} USDC base units`);
+    pass(`Seller earned ${sellerEarnings} USDC base units in Deposits`);
 
     // Verify session is settled (activeSessionId is an internal UUID, not the
     // on-chain channelId — wrap in try/catch since this is informational)

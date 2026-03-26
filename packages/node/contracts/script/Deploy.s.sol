@@ -75,10 +75,10 @@ contract Deploy is Script {
         require(deposits != address(0), "Deposits deploy failed");
         console.log("AntseedDeposits:      ", deposits);
 
-        // 7. AntseedSessions(deposits, stats, staking, usdc)
+        // 7. AntseedSessions(deposits, stats, staking)
         bytes memory sessionsBytecode = abi.encodePacked(
             vm.getCode("AntseedSessions.sol:AntseedSessions"),
-            abi.encode(deposits, stats, staking, usdc)
+            abi.encode(deposits, stats, staking)
         );
         address sessions;
         assembly { sessions := create(0, add(sessionsBytecode, 0x20), mload(sessionsBytecode)) }

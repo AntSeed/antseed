@@ -56,8 +56,7 @@ contract AntseedSessionsTest is Test {
         sessions = new AntseedSessions(
             address(deposits),
             address(stats),
-            address(staking),
-            address(usdc)
+            address(staking)
         );
 
         // Wire contracts together
@@ -195,12 +194,13 @@ contract AntseedSessionsTest is Test {
         assertEq(sSettledAt, 0);
         assertTrue(sStatus == AntseedSessions.SessionStatus.Active);
 
-        // USDC held in Sessions contract
-        assertEq(usdc.balanceOf(address(sessions)), USDC_100);
+        // USDC stays in Deposits (locked via reserved)
+        assertEq(usdc.balanceOf(address(sessions)), 0);
+        assertEq(usdc.balanceOf(address(deposits)), USDC_100);
 
-        // Assert buyer's Deposits: balance reduced, reserved released (both happen in transferToSessions)
+        // Assert buyer's Deposits: reserved = maxAmount, available = 0
         (uint256 available, uint256 reserved,,) = deposits.getBuyerBalance(buyer);
-        assertEq(reserved, 0);  // transferToSessions clears reserved
+        assertEq(reserved, USDC_100);
         assertEq(available, 0); // all 100 USDC went to Sessions
     }
 
@@ -300,8 +300,10 @@ contract AntseedSessionsTest is Test {
         assertEq(sDeposit, USDC_50 + USDC_30);
         assertTrue(sStatus == AntseedSessions.SessionStatus.Active);
 
-        // Sessions contract holds the USDC
-        assertEq(usdc.balanceOf(address(sessions)), USDC_50 + USDC_30);
+        // USDC stays in Deposits (reserved portion is locked, rest is available)
+        assertEq(usdc.balanceOf(address(sessions)), 0);
+        (uint256 topUpAvail, uint256 topUpReserved,,) = deposits.getBuyerBalance(buyer);
+        assertEq(topUpReserved, USDC_50 + USDC_30);
     }
 
     function test_topUp_revert_notSeller() public {
