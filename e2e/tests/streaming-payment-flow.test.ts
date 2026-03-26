@@ -467,25 +467,24 @@ describe('Streaming payment flow E2E', () => {
     expect(bpm).not.toBeNull();
 
     // Use the BuyerPaymentManager to create a signed auth manually
-    const { signMetadataAuth, makeSessionsDomain, identityToEvmAddress, identityToEvmWallet, ZERO_METADATA_HASH, encodeMetadata, ZERO_METADATA } = await import('@antseed/node');
+    const { signReserveAuth, makeSessionsDomain, identityToEvmAddress, identityToEvmWallet, computeChannelId, ZERO_METADATA_HASH } = await import('@antseed/node');
     const buyerIdentity = buyerNode!.identity!;
     const buyerSigner = identityToEvmWallet(buyerIdentity);
     const buyerEvmAddr = identityToEvmAddress(buyerIdentity);
     const sellerEvmAddr = body402.sellerEvmAddr as string;
 
-    const channelIdBytes = new Uint8Array(32);
-    crypto.getRandomValues(channelIdBytes);
-    const channelId = '0x' + Array.from(channelIdBytes, b => b.toString(16).padStart(2, '0')).join('');
+    const salt = '0x' + Array.from(new Uint8Array(32), () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0')).join('');
+    const channelId = computeChannelId(buyerEvmAddr, sellerEvmAddr, salt);
+    const deadline = Math.floor(Date.now() / 1000) + 90000;
+    const maxAmount = 10000000n;
 
     const sessionsDomain = makeSessionsDomain(31337, '0x' + 'cc'.repeat(20));
-    const salt = '0x' + Array.from(new Uint8Array(32), () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0')).join('');
-    const deadline = Math.floor(Date.now() / 1000) + 90000;
 
-    // For initial reserve, sign MetadataAuth with cumAmount=0.
-    const metadataAuthSig = await signMetadataAuth(buyerSigner, sessionsDomain, {
+    // Sign ReserveAuth — binds channelId, maxAmount, deadline
+    const reserveAuthSig = await signReserveAuth(buyerSigner, sessionsDomain, {
       channelId,
-      cumulativeAmount: 0n,
-      metadataHash: ZERO_METADATA_HASH,
+      maxAmount,
+      deadline: BigInt(deadline),
     });
 
     // Encode as base64 JSON and place in x-antseed-spending-auth header
@@ -493,12 +492,12 @@ describe('Streaming payment flow E2E', () => {
       channelId,
       cumulativeAmount: '0',
       metadataHash: ZERO_METADATA_HASH,
-      metadata: encodeMetadata(ZERO_METADATA),
-      metadataAuthSig,
+      metadata: '',
+      metadataAuthSig: reserveAuthSig,
       buyerEvmAddr,
       sellerEvmAddr,
       reserveSalt: salt,
-      reserveMaxAmount: '10000000',
+      reserveMaxAmount: maxAmount.toString(),
       reserveDeadline: deadline,
     };
     const headerValue = Buffer.from(JSON.stringify(authPayload)).toString('base64');

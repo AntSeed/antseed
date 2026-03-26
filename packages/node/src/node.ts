@@ -1357,6 +1357,28 @@ export class AntseedNode extends EventEmitter {
         return;
       }
 
+      // Check budget before routing — reject if buyer hasn't authorized enough
+      if (this._sellerPaymentManager) {
+        const session = this._sellerPaymentManager.getSessionByPeer(buyerPeerId);
+        if (session) {
+          const accepted = this._sellerPaymentManager.getAcceptedCumulative(session.sessionId);
+          const spent = this._sellerPaymentManager.getCumulativeSpend(session.sessionId);
+          if (spent > accepted) {
+            debugLog(`[Node] Budget exceeded for ${buyerPeerId.slice(0, 12)}... (spent=${spent} > accepted=${accepted}) — waiting for NeedAuth response`);
+            mux.sendProxyResponse({
+              requestId: request.requestId,
+              statusCode: 429,
+              headers: { "content-type": "application/json" },
+              body: new TextEncoder().encode(JSON.stringify({
+                error: 'budget_exceeded',
+                message: 'Awaiting payment authorization',
+              })),
+            });
+            return;
+          }
+        }
+      }
+
       const requestedService = this._extractRequestedService(request);
       const requestedProvider = this._extractRequestedProvider(request);
       const matchesService = (provider: Provider): boolean =>

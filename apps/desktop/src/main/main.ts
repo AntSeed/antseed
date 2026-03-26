@@ -18,7 +18,7 @@ import {
 } from './process-manager.js';
 import { registerPiChatHandlers } from './pi-chat-engine.js';
 import { ensureSecureIdentity, secureIdentityEnv, getSecureIdentity } from './identity.js';
-import { identityToEvmAddress, identityToEvmWallet, DepositsClient, signMetadataAuth, makeSessionsDomain, resolveChainConfig, formatUsdc, encodeMetadata, ZERO_METADATA_HASH, ZERO_METADATA } from '@antseed/node';
+import { identityToEvmAddress, identityToEvmWallet, DepositsClient, signMetadataAuth, signReserveAuth, makeSessionsDomain, resolveChainConfig, formatUsdc, ZERO_METADATA_HASH } from '@antseed/node';
 import { createServer as createPaymentsServer } from '@antseed/payments';
 import type { LogEvent, RuntimeActivityEvent } from './log-parser.js';
 import { parseRuntimeActivityFromLog } from './log-parser.js';
@@ -872,24 +872,25 @@ ipcMain.handle('chat:approve-payment', async (_event, conversationId: string) =>
     const channelId = computeChannelId(buyerEvmAddr, sellerEvmAddr, salt);
     const deadline = Math.floor(Date.now() / 1000) + DEFAULT_SPENDING_AUTH_DURATION_SECONDS;
 
-    // For initial reserve, sign MetadataAuth with cumAmount=0.
-    const zeroEncodedMetadata = encodeMetadata(ZERO_METADATA);
-    const metadataAuthSig = await signMetadataAuth(wallet, sessionsDomain, {
+    // Sign ReserveAuth — binds channelId, maxAmount, deadline
+    const maxAmount = 1_000_000n; // $1.00 — matches FIRST_SIGN_CAP
+    const reserveAuthSig = await signReserveAuth(wallet, sessionsDomain, {
       channelId,
-      cumulativeAmount: 0n,
-      metadataHash: ZERO_METADATA_HASH,
+      maxAmount,
+      deadline: BigInt(deadline),
     });
 
     // Build the header payload
     const authPayload = {
       channelId,
       cumulativeAmount: '0',
-      metadataAuthSig,
+      metadataAuthSig: reserveAuthSig,
       buyerEvmAddr,
       sellerEvmAddr,
       metadataHash: ZERO_METADATA_HASH,
-      metadata: zeroEncodedMetadata,
+      metadata: '',
       reserveSalt: salt,
+      reserveMaxAmount: maxAmount.toString(),
       reserveDeadline: deadline,
     };
 
