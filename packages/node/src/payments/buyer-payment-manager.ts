@@ -186,6 +186,9 @@ export class BuyerPaymentManager {
       settledAt: null,
       settledAmount: null,
       status: 'active',
+      latestTempoVoucherSig: null,
+      latestMetadataAuthSig: null,
+      latestMetadata: null,
       createdAt: now,
       updatedAt: now,
     };

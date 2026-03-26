@@ -80,10 +80,18 @@ export class SellerPaymentManager {
     const activeSessions = this._sessionStore.getActiveSessions('seller');
     for (const session of activeSessions) {
       this._activeBuyers.add(session.peerId);
-      // Hydrate _acceptedCumulative from authMax (stores latest cumulativeAmount)
       this._acceptedCumulative.set(session.sessionId, BigInt(session.authMax));
-      // Hydrate _spent from tokensDelivered (repurposed as spentAmount string)
       this._spent.set(session.sessionId, BigInt(session.tokensDelivered));
+      // Hydrate latest auth sigs so close() works after restart
+      if (session.latestTempoVoucherSig && session.latestMetadataAuthSig) {
+        this._latestAuth.set(session.sessionId, {
+          tempoVoucherSig: session.latestTempoVoucherSig,
+          metadataAuthSig: session.latestMetadataAuthSig,
+          cumulativeAmount: BigInt(session.authMax),
+          metadataHash: '',
+          metadata: session.latestMetadata ?? '',
+        });
+      }
     }
   }
 
@@ -193,6 +201,9 @@ export class SellerPaymentManager {
           settledAt: null,
           settledAmount: null,
           status: 'active',
+          latestTempoVoucherSig: payload.tempoVoucherSig,
+          latestMetadataAuthSig: payload.metadataAuthSig,
+          latestMetadata: payload.metadata,
           createdAt: now,
           updatedAt: now,
         };
@@ -237,10 +248,13 @@ export class SellerPaymentManager {
           metadata: payload.metadata,
         });
 
-        // Persist latest auth to SessionStore (authMax = latest cumulativeAmount)
+        // Persist latest auth + sigs to SessionStore
         const session = this._sessionStore.getSession(channelId);
         if (session) {
           session.authMax = payload.cumulativeAmount;
+          session.latestTempoVoucherSig = payload.tempoVoucherSig;
+          session.latestMetadataAuthSig = payload.metadataAuthSig;
+          session.latestMetadata = payload.metadata;
           session.updatedAt = Date.now();
           this._sessionStore.upsertSession(session);
         }

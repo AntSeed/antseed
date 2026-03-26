@@ -2218,6 +2218,9 @@ export class AntseedNode extends EventEmitter {
         settledAt: null,
         settledAmount: null,
         status: 'active',
+        latestTempoVoucherSig: null,
+        latestMetadataAuthSig: null,
+        latestMetadata: null,
         createdAt: Date.now(),
         updatedAt: Date.now(),
       });
