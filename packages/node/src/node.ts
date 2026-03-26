@@ -1364,14 +1364,17 @@ export class AntseedNode extends EventEmitter {
           const accepted = this._sellerPaymentManager.getAcceptedCumulative(session.sessionId);
           const spent = this._sellerPaymentManager.getCumulativeSpend(session.sessionId);
           if (spent > accepted) {
-            debugLog(`[Node] Budget exceeded for ${buyerPeerId.slice(0, 12)}... (spent=${spent} > accepted=${accepted}) — waiting for NeedAuth response`);
+            debugLog(`[Node] Budget exceeded for ${buyerPeerId.slice(0, 12)}... (spent=${spent} > accepted=${accepted}) — holding request until NeedAuth resolved`);
+            // Don't serve — the NeedAuth was already sent after the previous request.
+            // The buyer should respond with a higher SpendingAuth before the next request arrives.
+            // Return 402 so the buyer retries after sending more auth.
             mux.sendProxyResponse({
               requestId: request.requestId,
-              statusCode: 429,
+              statusCode: 402,
               headers: { "content-type": "application/json" },
               body: new TextEncoder().encode(JSON.stringify({
                 error: 'budget_exceeded',
-                message: 'Awaiting payment authorization',
+                message: 'Awaiting payment authorization — send higher SpendingAuth',
               })),
             });
             return;
