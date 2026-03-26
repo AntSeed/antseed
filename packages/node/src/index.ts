@@ -42,17 +42,17 @@ export { StakingClient, type StakingClientConfig, type SellerAccountInfo } from 
 export { identityToEvmWallet, identityToEvmAddress } from './payments/evm/keypair.js';
 export {
   signMetadataAuth,
-  signSpendingAuth,
+  signReserveAuth,
   makeSessionsDomain,
   METADATA_AUTH_TYPES,
-  SPENDING_AUTH_TYPES,
+  RESERVE_AUTH_TYPES,
   computeMetadataHash,
   encodeMetadata,
   computeChannelId,
   ZERO_METADATA,
   ZERO_METADATA_HASH,
 } from './payments/evm/signatures.js';
-export type { MetadataAuthMessage, SpendingAuthMessage, SpendingAuthMetadata } from './payments/evm/signatures.js';
+export type { MetadataAuthMessage, ReserveAuthMessage, SpendingAuthMetadata } from './payments/evm/signatures.js';
 export { NatTraversal, type NatMapping, type NatTraversalResult } from './p2p/nat-traversal.js';
 export { BuyerPaymentManager } from './payments/buyer-payment-manager.js';
 export type { BuyerPaymentConfig } from './payments/buyer-payment-manager.js';

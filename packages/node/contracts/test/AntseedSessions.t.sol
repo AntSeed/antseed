@@ -37,9 +37,12 @@ contract AntseedSessionsTest is Test {
 
     uint256 constant STAKE_AMOUNT = 10_000_000; // MIN_SELLER_STAKE
 
-    // AntSeed MetadataAuth EIP-712 typehash (must match contract)
+    // AntSeed EIP-712 typehashes (must match contract)
     bytes32 constant METADATA_AUTH_TYPEHASH = keccak256(
         "MetadataAuth(bytes32 channelId,uint256 cumulativeAmount,bytes32 metadataHash)"
+    );
+    bytes32 constant RESERVE_AUTH_TYPEHASH = keccak256(
+        "ReserveAuth(bytes32 channelId,uint128 maxAmount,uint256 deadline)"
     );
 
     function setUp() public {
@@ -127,6 +130,28 @@ contract AntseedSessionsTest is Test {
         return abi.encodePacked(r, s, v);
     }
 
+    /**
+     * @dev Sign an AntSeed ReserveAuth (our EIP-712 domain, version "6")
+     */
+    function signReserveAuth(
+        uint256 pk,
+        bytes32 channelId,
+        uint128 maxAmount,
+        uint256 deadline
+    ) internal view returns (bytes memory) {
+        bytes32 structHash = keccak256(
+            abi.encode(
+                RESERVE_AUTH_TYPEHASH,
+                channelId,
+                maxAmount,
+                deadline
+            )
+        );
+        bytes32 digest = _hashTypedDataSessions(structHash);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digest);
+        return abi.encodePacked(r, s, v);
+    }
+
     function encodeMetadata(
         uint256 cumulativeInputTokens,
         uint256 cumulativeOutputTokens
@@ -159,10 +184,10 @@ contract AntseedSessionsTest is Test {
         channelId = computeChannelId(salt);
         uint256 deadline = block.timestamp + 1 hours;
 
-        bytes memory metaSig = signMetadataAuth(BUYER_PK, channelId, 0, 0, 0);
+        bytes memory reserveSig = signReserveAuth(BUYER_PK, channelId, maxAmount, deadline);
 
         vm.prank(seller);
-        sessions.reserve(buyer, salt, maxAmount, deadline, metaSig);
+        sessions.reserve(buyer, salt, maxAmount, deadline, reserveSig);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -214,11 +239,11 @@ contract AntseedSessionsTest is Test {
         bytes32 channelId = computeChannelId(salt);
         uint256 deadline = block.timestamp + 1 hours;
 
-        bytes memory metaSig = signMetadataAuth(BUYER_PK, channelId, 0, 0, 0);
+        bytes memory reserveSig = signReserveAuth(BUYER_PK, channelId, USDC_50, deadline);
 
         vm.prank(seller);
         vm.expectRevert(AntseedSessions.SellerNotStaked.selector);
-        sessions.reserve(buyer, salt, USDC_50, deadline, metaSig);
+        sessions.reserve(buyer, salt, USDC_50, deadline, reserveSig);
     }
 
     function test_reserve_revert_expiredDeadline() public {
@@ -229,11 +254,11 @@ contract AntseedSessionsTest is Test {
         bytes32 channelId = computeChannelId(salt);
         uint256 pastDeadline = block.timestamp - 1;
 
-        bytes memory metaSig = signMetadataAuth(BUYER_PK, channelId, 0, 0, 0);
+        bytes memory reserveSig = signReserveAuth(BUYER_PK, channelId, USDC_50, pastDeadline);
 
         vm.prank(seller);
         vm.expectRevert(AntseedSessions.SessionExpired.selector);
-        sessions.reserve(buyer, salt, USDC_50, pastDeadline, metaSig);
+        sessions.reserve(buyer, salt, USDC_50, pastDeadline, reserveSig);
     }
 
     function test_reserve_revert_invalidSignature() public {
@@ -245,7 +270,7 @@ contract AntseedSessionsTest is Test {
         uint256 deadline = block.timestamp + 1 hours;
 
         // Sign with wrong key
-        bytes memory badSig = signMetadataAuth(RANDOM_PK, channelId, 0, 0, 0);
+        bytes memory badSig = signReserveAuth(RANDOM_PK, channelId, USDC_50, deadline);
 
         vm.prank(seller);
         vm.expectRevert(AntseedSessions.InvalidSignature.selector);
@@ -263,11 +288,11 @@ contract AntseedSessionsTest is Test {
         bytes32 channelId = computeChannelId(salt);
         uint256 deadline = block.timestamp + 1 hours;
 
-        bytes memory metaSig = signMetadataAuth(BUYER_PK, channelId, 0, 0, 0);
+        bytes memory reserveSig = signReserveAuth(BUYER_PK, channelId, overCap, deadline);
 
         vm.prank(seller);
         vm.expectRevert(AntseedSessions.FirstSignCapExceeded.selector);
-        sessions.reserve(buyer, salt, overCap, deadline, metaSig);
+        sessions.reserve(buyer, salt, overCap, deadline, reserveSig);
     }
 
     function test_reserve_revert_sessionExists() public {
@@ -275,44 +300,12 @@ contract AntseedSessionsTest is Test {
         bytes32 channelId = doReserve(salt, USDC_50, USDC_100);
 
         // Try to reserve again with same salt (same channelId)
-        bytes memory metaSig = signMetadataAuth(BUYER_PK, channelId, 0, 0, 0);
         uint256 deadline = block.timestamp + 1 hours;
+        bytes memory reserveSig = signReserveAuth(BUYER_PK, channelId, USDC_30, deadline);
 
         vm.prank(seller);
         vm.expectRevert(AntseedSessions.SessionExists.selector);
-        sessions.reserve(buyer, salt, USDC_30, deadline, metaSig);
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    //                   TOP-UP TESTS
-    // ═══════════════════════════════════════════════════════════════════
-
-    function test_topUp() public {
-        bytes32 salt = keccak256("session-topup");
-        bytes32 channelId = doReserve(salt, USDC_50, USDC_100);
-
-        // Top up with 30 more USDC
-        vm.prank(seller);
-        sessions.topUp(channelId, USDC_30);
-
-        // Session deposit should be 80
-        (,, uint128 sDeposit,,,,,, AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
-        assertEq(sDeposit, USDC_50 + USDC_30);
-        assertTrue(sStatus == AntseedSessions.SessionStatus.Active);
-
-        // USDC stays in Deposits (reserved portion is locked, rest is available)
-        assertEq(usdc.balanceOf(address(sessions)), 0);
-        (uint256 topUpAvail, uint256 topUpReserved,,) = deposits.getBuyerBalance(buyer);
-        assertEq(topUpReserved, USDC_50 + USDC_30);
-    }
-
-    function test_topUp_revert_notSeller() public {
-        bytes32 salt = keccak256("session-topup-auth");
-        bytes32 channelId = doReserve(salt, USDC_50, USDC_100);
-
-        vm.prank(randomUser);
-        vm.expectRevert(AntseedSessions.NotAuthorized.selector);
-        sessions.topUp(channelId, USDC_30);
+        sessions.reserve(buyer, salt, USDC_30, deadline, reserveSig);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -705,11 +698,11 @@ contract AntseedSessionsTest is Test {
         bytes32 channelId = computeChannelId(salt);
         uint256 deadline = block.timestamp + 1 hours;
 
-        bytes memory metaSig = signMetadataAuth(BUYER_PK, channelId, 0, 0, 0);
+        bytes memory reserveSig = signReserveAuth(BUYER_PK, channelId, USDC_50, deadline);
 
         vm.prank(seller);
         vm.expectRevert();
-        sessions.reserve(buyer, salt, USDC_50, deadline, metaSig);
+        sessions.reserve(buyer, salt, USDC_50, deadline, reserveSig);
     }
 
     function test_unpause_allowsReserve() public {
@@ -723,10 +716,10 @@ contract AntseedSessionsTest is Test {
         bytes32 channelId = computeChannelId(salt);
         uint256 deadline = block.timestamp + 1 hours;
 
-        bytes memory metaSig = signMetadataAuth(BUYER_PK, channelId, 0, 0, 0);
+        bytes memory reserveSig = signReserveAuth(BUYER_PK, channelId, USDC_50, deadline);
 
         vm.prank(seller);
-        sessions.reserve(buyer, salt, USDC_50, deadline, metaSig);
+        sessions.reserve(buyer, salt, USDC_50, deadline, reserveSig);
 
         (,,,,,,,,AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
         assertTrue(sStatus == AntseedSessions.SessionStatus.Active);

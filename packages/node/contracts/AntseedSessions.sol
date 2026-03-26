@@ -36,6 +36,10 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         "MetadataAuth(bytes32 channelId,uint256 cumulativeAmount,bytes32 metadataHash)"
     );
 
+    bytes32 public constant RESERVE_AUTH_TYPEHASH = keccak256(
+        "ReserveAuth(bytes32 channelId,uint128 maxAmount,uint256 deadline)"
+    );
+
     // ─── Constant Keys for setConstant ──────────────────────────────
     bytes32 private constant KEY_FIRST_SIGN_CAP = keccak256("FIRST_SIGN_CAP");
     bytes32 private constant KEY_PLATFORM_FEE_BPS = keccak256("PLATFORM_FEE_BPS");
@@ -153,9 +157,8 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         if (sessions[channelId].status != SessionStatus.None) revert SessionExists();
         if (maxAmount > FIRST_SIGN_CAP) revert FirstSignCapExceeded();
 
-        // Verify buyer signature (cumulativeAmount=0, zero metadata = reserve proof)
-        bytes32 zeroMetadataHash = keccak256(abi.encode(uint256(0), uint256(0), uint256(0), uint256(0)));
-        _verifyMetadataAuth(channelId, 0, zeroMetadataHash, buyer, buyerSig);
+        // Verify buyer's ReserveAuth signature — binds channelId, maxAmount, deadline
+        _verifyReserveAuth(channelId, maxAmount, deadline, buyer, buyerSig);
 
         // Lock buyer's USDC in Deposits (stays there, no transfer)
         depositsContract.lockForSession(buyer, maxAmount);
@@ -174,22 +177,6 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
 
         stakingContract.incrementActiveSessions(msg.sender);
         emit Reserved(channelId, buyer, msg.sender, maxAmount);
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    //                        CORE — TOP UP
-    // ═══════════════════════════════════════════════════════════════════
-
-    function topUp(bytes32 channelId, uint128 additionalAmount) external nonReentrant whenNotPaused {
-        Session storage session = sessions[channelId];
-        if (session.status != SessionStatus.Active) revert SessionNotActive();
-        if (msg.sender != session.seller) revert NotAuthorized();
-        if (block.timestamp > session.deadline) revert SessionExpired();
-        if (additionalAmount == 0) revert InvalidAmount();
-
-        depositsContract.lockForSession(session.buyer, additionalAmount);
-        session.deposit += additionalAmount;
-        emit Reserved(channelId, session.buyer, session.seller, session.deposit);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -228,7 +215,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         session.metadataHash = metadataHash;
         session.settledAt = block.timestamp;
 
-        _recordStatsAndEmissions(session, delta, metadata);
+        _recordStatsAndEmissions(session, delta, metadata, 2); // partial settlement
 
         emit SessionSettled(channelId, session.seller, cumulativeAmount, platformFee);
     }
@@ -272,7 +259,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         session.status = SessionStatus.Settled;
         stakingContract.decrementActiveSessions(session.seller);
 
-        _recordStatsAndEmissions(session, delta, metadata);
+        _recordStatsAndEmissions(session, delta, metadata, 0); // session complete
 
         emit SessionClosed(channelId, session.seller, finalAmount, platformFee);
     }
@@ -366,17 +353,19 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         );
     }
 
+    /// @param statsUpdateType 0 = session complete (close), 1 = ghost, 2 = partial settlement
     function _recordStatsAndEmissions(
         Session storage session,
         uint128 delta,
-        bytes calldata metadata
+        bytes calldata metadata,
+        uint8 statsUpdateType
     ) internal {
         uint256 agentId = stakingContract.getAgentId(session.seller);
         if (agentId != 0) {
             (uint256 inputTokens, uint256 outputTokens, uint256 latencyMs, uint256 requestCount) =
                 abi.decode(metadata, (uint256, uint256, uint256, uint256));
             statsContract.updateStats(agentId, IAntseedStats.StatsUpdate({
-                updateType: 0,
+                updateType: statsUpdateType,
                 volumeUsdc: delta,
                 inputTokens: uint128(inputTokens),
                 outputTokens: uint128(outputTokens),
@@ -388,6 +377,26 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
             emissionsContract.accrueSellerPoints(session.seller, delta);
             emissionsContract.accrueBuyerPoints(session.buyer, delta);
         }
+    }
+
+    function _verifyReserveAuth(
+        bytes32 channelId,
+        uint128 maxAmount,
+        uint256 deadline,
+        address buyer,
+        bytes calldata signature
+    ) internal view {
+        bytes32 structHash = keccak256(
+            abi.encode(
+                RESERVE_AUTH_TYPEHASH,
+                channelId,
+                maxAmount,
+                deadline
+            )
+        );
+        bytes32 digest = _hashTypedDataV4(structHash);
+        address recovered = ECDSA.recover(digest, signature);
+        if (recovered != buyer) revert InvalidSignature();
     }
 
     function _verifyMetadataAuth(

@@ -9,6 +9,7 @@ import { SessionsClient } from './evm/sessions-client.js';
 import { identityToEvmWallet, identityToEvmAddress } from './evm/keypair.js';
 import {
   METADATA_AUTH_TYPES,
+  RESERVE_AUTH_TYPES,
   makeSessionsDomain,
 } from './evm/signatures.js';
 import { debugLog, debugWarn } from '../utils/debug.js';
@@ -129,29 +130,26 @@ export class SellerPaymentManager {
       const cumulativeAmount = BigInt(payload.cumulativeAmount);
       const existingCumulative = this._acceptedCumulative.get(channelId);
 
-      // 1. Always verify AntSeed MetadataAuth signature
       const sessionsDomain = makeSessionsDomain(this._config.chainId, this._config.sessionsContractAddress);
-      const metadataMsg = {
-        channelId,
-        cumulativeAmount,
-        metadataHash: payload.metadataHash,
-      };
-
-      const metadataRecovered = verifyTypedData(sessionsDomain, METADATA_AUTH_TYPES, metadataMsg, payload.metadataAuthSig);
-      if (metadataRecovered.toLowerCase() !== buyerEvmAddr.toLowerCase()) {
-        debugWarn(`[SellerPayment] Invalid MetadataAuth signature: recovered=${metadataRecovered} expected=${buyerEvmAddr}`);
-        return 'rejected';
-      }
-
-      debugLog(`[SellerPayment] SpendingAuth verified for buyer ${buyerPeerId.slice(0, 12)}...`);
 
       if (existingCumulative === undefined) {
-        // ── First SpendingAuth: reserve on-chain ──
-        // The contract's reserve() only needs the MetadataAuth sig (cumulativeAmount=0).
-        debugLog(`[SellerPayment] Reserving channel ${channelId.slice(0, 18)}... on-chain`);
+        // ── First SpendingAuth: verify ReserveAuth and reserve on-chain ──
+        // The buyer signs ReserveAuth(channelId, maxAmount, deadline) to bind escrow terms.
         const reserveMaxAmount = payload.reserveMaxAmount ? BigInt(payload.reserveMaxAmount) : cumulativeAmount;
-        const reserveSalt = payload.reserveSalt ?? channelId; // salt should be provided by buyer
         const reserveDeadline = payload.reserveDeadline ?? (Math.floor(Date.now() / 1000) + 3600);
+        const reserveMsg = {
+          channelId,
+          maxAmount: reserveMaxAmount,
+          deadline: BigInt(reserveDeadline),
+        };
+        const reserveRecovered = verifyTypedData(sessionsDomain, RESERVE_AUTH_TYPES, reserveMsg, payload.metadataAuthSig);
+        if (reserveRecovered.toLowerCase() !== buyerEvmAddr.toLowerCase()) {
+          debugWarn(`[SellerPayment] Invalid ReserveAuth signature: recovered=${reserveRecovered} expected=${buyerEvmAddr}`);
+          return 'rejected';
+        }
+        debugLog(`[SellerPayment] ReserveAuth verified for buyer ${buyerPeerId.slice(0, 12)}...`);
+        debugLog(`[SellerPayment] Reserving channel ${channelId.slice(0, 18)}... on-chain`);
+        const reserveSalt = payload.reserveSalt ?? channelId;
         await this._sessionsClient.reserve(
           this._signer,
           buyerEvmAddr,
@@ -208,7 +206,19 @@ export class SellerPaymentManager {
         debugLog(`[SellerPayment] AuthAck sent for channel ${channelId.slice(0, 18)}...`);
         return 'reserved';
       } else {
-        // ── Subsequent SpendingAuth: validate monotonic (equal = idempotent retransmit) ──
+        // ── Subsequent SpendingAuth: verify MetadataAuth signature ──
+        const metadataMsg = {
+          channelId,
+          cumulativeAmount,
+          metadataHash: payload.metadataHash,
+        };
+        const metadataRecovered = verifyTypedData(sessionsDomain, METADATA_AUTH_TYPES, metadataMsg, payload.metadataAuthSig);
+        if (metadataRecovered.toLowerCase() !== buyerEvmAddr.toLowerCase()) {
+          debugWarn(`[SellerPayment] Invalid MetadataAuth signature: recovered=${metadataRecovered} expected=${buyerEvmAddr}`);
+          return 'rejected';
+        }
+
+        // Validate monotonic (equal = idempotent retransmit)
         if (cumulativeAmount < existingCumulative) {
           debugWarn(
             `[SellerPayment] Rejecting non-monotonic SpendingAuth: ` +

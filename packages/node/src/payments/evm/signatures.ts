@@ -14,8 +14,13 @@ export const METADATA_AUTH_TYPES = {
   ],
 };
 
-/** @deprecated Use METADATA_AUTH_TYPES */
-export const SPENDING_AUTH_TYPES = METADATA_AUTH_TYPES;
+export const RESERVE_AUTH_TYPES = {
+  ReserveAuth: [
+    { name: 'channelId', type: 'bytes32' },
+    { name: 'maxAmount', type: 'uint128' },
+    { name: 'deadline', type: 'uint256' },
+  ],
+};
 
 // =========================================================================
 // Message interfaces
@@ -27,8 +32,11 @@ export interface MetadataAuthMessage {
   metadataHash: string; // bytes32 hex
 }
 
-/** @deprecated Use MetadataAuthMessage */
-export type SpendingAuthMessage = MetadataAuthMessage;
+export interface ReserveAuthMessage {
+  channelId: string;
+  maxAmount: bigint;
+  deadline: bigint;
+}
 
 // =========================================================================
 // Metadata encoding
@@ -107,8 +115,13 @@ export async function signMetadataAuth(
   return signer.signTypedData(domain, METADATA_AUTH_TYPES, msg);
 }
 
-/** @deprecated Use signMetadataAuth */
-export const signSpendingAuth = signMetadataAuth;
+export async function signReserveAuth(
+  signer: AbstractSigner,
+  domain: TypedDataDomain,
+  msg: ReserveAuthMessage,
+): Promise<string> {
+  return signer.signTypedData(domain, RESERVE_AUTH_TYPES, msg);
+}
 
 // =========================================================================
 // Ed25519 signatures (off-chain P2P)

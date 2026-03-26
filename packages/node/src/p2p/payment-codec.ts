@@ -57,7 +57,7 @@ export function decodeSpendingAuth(data: Uint8Array): SpendingAuthPayload {
     channelId: requireString(obj, 'channelId'),
     cumulativeAmount: requireString(obj, 'cumulativeAmount'),
     metadataHash: requireString(obj, 'metadataHash'),
-    metadata: requireString(obj, 'metadata'),
+    metadata: typeof obj.metadata === 'string' ? obj.metadata : '',
     metadataAuthSig: requireString(obj, 'metadataAuthSig'),
     buyerEvmAddr: requireString(obj, 'buyerEvmAddr'),
   };

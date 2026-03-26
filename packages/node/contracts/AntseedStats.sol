@@ -30,7 +30,7 @@ contract AntseedStats is IAntseedStats, Ownable {
     function updateStats(uint256 agentId, StatsUpdate calldata update) external onlySessions {
         AgentStats storage s = _stats[agentId];
         if (update.updateType == 0) {
-            // Settlement
+            // Session complete (close) — increment sessionCount
             s.sessionCount++;
             s.totalVolumeUsdc += update.volumeUsdc;
             s.totalInputTokens += update.inputTokens;
@@ -41,6 +41,14 @@ contract AntseedStats is IAntseedStats, Ownable {
         } else if (update.updateType == 1) {
             // Ghost (seller disappeared)
             s.ghostCount++;
+        } else if (update.updateType == 2) {
+            // Partial settlement — accumulate volume/tokens but NOT sessionCount
+            s.totalVolumeUsdc += update.volumeUsdc;
+            s.totalInputTokens += update.inputTokens;
+            s.totalOutputTokens += update.outputTokens;
+            s.totalLatencyMs += update.latencyMs;
+            s.totalRequestCount += update.requestCount;
+            s.lastSettledAt = uint64(block.timestamp);
         }
     }
 

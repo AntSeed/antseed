@@ -1298,6 +1298,9 @@ export class AntseedNode extends EventEmitter {
               debugWarn(`[Node] SpendingAuth rejected for buyer ${buyerPeerId.slice(0, 12)}... — notifying via payment:auth-rejected event`);
               this.emit('payment:auth-rejected', { buyerPeerId, reason: 'invalid_or_non_monotonic' });
             }
+          })
+          .catch((err) => {
+            debugWarn(`[Node] SpendingAuth handler error for ${buyerPeerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
           });
       });
     } else {

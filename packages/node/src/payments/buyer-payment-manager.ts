@@ -11,6 +11,7 @@ import { DepositsClient } from './evm/deposits-client.js';
 import { identityToEvmWallet, identityToEvmAddress } from './evm/keypair.js';
 import {
   signMetadataAuth,
+  signReserveAuth,
   makeSessionsDomain,
   computeMetadataHash,
   encodeMetadata,
@@ -18,7 +19,7 @@ import {
   ZERO_METADATA_HASH,
   computeChannelId,
 } from './evm/signatures.js';
-import type { MetadataAuthMessage, SpendingAuthMetadata } from './evm/signatures.js';
+import type { MetadataAuthMessage, ReserveAuthMessage, SpendingAuthMetadata } from './evm/signatures.js';
 import { debugLog, debugWarn } from '../utils/debug.js';
 import { SessionStore, type StoredSession } from './session-store.js';
 
@@ -141,17 +142,15 @@ export class BuyerPaymentManager {
 
     debugLog(`[BuyerPayment] authorizeSpending: channel=${channelId.slice(0, 18)}... seller=${sellerPeerId.slice(0, 12)}... amount=${minBudgetPerRequest}`);
 
-    // Sign MetadataAuth with cumulative=0 for on-chain reserve() verification.
-    // For initial reserve, only MetadataAuth is needed.
+    // Sign ReserveAuth — binds channelId, maxAmount, deadline on-chain
     const sessionsDomain = makeSessionsDomain(this._config.chainId, this._config.sessionsContractAddress);
-    const zeroMetadata = { ...ZERO_METADATA };
-    const zeroEncodedMetadata = encodeMetadata(zeroMetadata);
-    const metadataMsg: MetadataAuthMessage = {
+    const maxAmount = this._config.maxReserveAmountUsdc;
+    const reserveMsg: ReserveAuthMessage = {
       channelId,
-      cumulativeAmount: 0n,
-      metadataHash: ZERO_METADATA_HASH,
+      maxAmount,
+      deadline: BigInt(deadline),
     };
-    const metadataAuthSig = await signMetadataAuth(this._signer, sessionsDomain, metadataMsg);
+    const reserveAuthSig = await signReserveAuth(this._signer, sessionsDomain, reserveMsg);
 
     // Initialize cumulative maps at 0 — first per-request auth will increment
     this._cumulativeAmount.set(sellerPeerId, 0n);
@@ -184,16 +183,16 @@ export class BuyerPaymentManager {
     };
     this._sessionStore.upsertSession(session);
 
-    // Send SpendingAuth via PaymentMux — initial reserve only needs MetadataAuth sig
+    // Send SpendingAuth via PaymentMux — reserve carries ReserveAuth sig
     paymentMux.sendSpendingAuth({
       channelId,
       cumulativeAmount: '0',
       metadataHash: ZERO_METADATA_HASH,
-      metadata: zeroEncodedMetadata,
-      metadataAuthSig,
+      metadata: '',
+      metadataAuthSig: reserveAuthSig,
       buyerEvmAddr,
       reserveSalt: salt,
-      reserveMaxAmount: this._config.maxReserveAmountUsdc.toString(),
+      reserveMaxAmount: maxAmount.toString(),
       reserveDeadline: deadline,
     });
 

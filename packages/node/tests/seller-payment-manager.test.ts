@@ -11,8 +11,8 @@ import type { SpendingAuthPayload } from '../src/types/protocol.js';
 import { bytesToHex } from '../src/utils/hex.js';
 import { toPeerId } from '../src/types/peer.js';
 import { identityToEvmWallet, identityToEvmAddress } from '../src/payments/evm/keypair.js';
-import { signMetadataAuth, makeSessionsDomain, computeMetadataHash, encodeMetadata, ZERO_METADATA_HASH } from '../src/payments/evm/signatures.js';
-import type { MetadataAuthMessage, SpendingAuthMetadata } from '../src/payments/evm/signatures.js';
+import { signMetadataAuth, signReserveAuth, makeSessionsDomain, computeMetadataHash, encodeMetadata, ZERO_METADATA_HASH } from '../src/payments/evm/signatures.js';
+import type { MetadataAuthMessage, ReserveAuthMessage, SpendingAuthMetadata } from '../src/payments/evm/signatures.js';
 
 const CHAIN_ID = 31337;
 const CONTRACT_ADDR = '0x' + 'dd'.repeat(20);
@@ -58,9 +58,11 @@ async function buildSpendingAuth(
     cumulativeOutputTokens?: bigint;
     salt?: string;
     deadline?: number;
+    reserveMaxAmount?: string;
+    isReserve?: boolean;
   } = {},
 ): Promise<SpendingAuthPayload> {
-  const cumulativeAmount = opts.cumulativeAmount ?? 1_000_000n;
+  const cumulativeAmount = opts.isReserve ? 0n : (opts.cumulativeAmount ?? 1_000_000n);
   const cumulativeInputTokens = opts.cumulativeInputTokens ?? 0n;
   const cumulativeOutputTokens = opts.cumulativeOutputTokens ?? 0n;
   const salt = opts.salt ?? '0x' + '01'.repeat(32);
@@ -77,10 +79,19 @@ async function buildSpendingAuth(
 
   const buyerWallet = identityToEvmWallet(buyerIdentity);
   const buyerEvmAddr = buyerWallet.address;
-
   const sessionsDomain = makeSessionsDomain(CHAIN_ID, CONTRACT_ADDR);
-  const metadataMsg: MetadataAuthMessage = { channelId, cumulativeAmount, metadataHash: metadataHashHex };
-  const metadataAuthSig = await signMetadataAuth(buyerWallet, sessionsDomain, metadataMsg);
+  const reserveMaxAmount = BigInt(opts.reserveMaxAmount ?? '10000000');
+
+  // First auth (reserve) uses ReserveAuth; subsequent uses MetadataAuth
+  const isReserve = opts.isReserve ?? false;
+  let metadataAuthSig: string;
+  if (isReserve) {
+    const reserveMsg: ReserveAuthMessage = { channelId, maxAmount: reserveMaxAmount, deadline: BigInt(deadline) };
+    metadataAuthSig = await signReserveAuth(buyerWallet, sessionsDomain, reserveMsg);
+  } else {
+    const metadataMsg: MetadataAuthMessage = { channelId, cumulativeAmount, metadataHash: metadataHashHex };
+    metadataAuthSig = await signMetadataAuth(buyerWallet, sessionsDomain, metadataMsg);
+  }
 
   return {
     channelId,
@@ -137,7 +148,7 @@ describe('SellerPaymentManager', () => {
   it('test_handleSpendingAuth_firstSign: calls reserve, sends AuthAck', async () => {
     const channelId = makeChannelId(1);
     const buyerEvmAddr = identityToEvmAddress(buyerIdentity);
-    const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId);
+    const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { isReserve: true });
 
     await manager.handleSpendingAuth(buyerIdentity.peerId, buyerEvmAddr, payload, mux);
 
@@ -157,7 +168,7 @@ describe('SellerPaymentManager', () => {
     const buyerEvmAddr = identityToEvmAddress(buyerIdentity);
     const channelId = makeChannelId(2);
 
-    const payload1 = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { cumulativeAmount: 100_000n });
+    const payload1 = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { isReserve: true });
     await manager.handleSpendingAuth(buyerIdentity.peerId, buyerEvmAddr, payload1, mux);
 
     const payload2 = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { cumulativeAmount: 200_000n });
@@ -170,7 +181,7 @@ describe('SellerPaymentManager', () => {
   it('test_recordSpend: tracks cumulative spend', async () => {
     const buyerEvmAddr = identityToEvmAddress(buyerIdentity);
     const channelId = makeChannelId(3);
-    const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId);
+    const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { isReserve: true });
     await manager.handleSpendingAuth(buyerIdentity.peerId, buyerEvmAddr, payload, mux);
 
     manager.recordSpend(channelId, 50_000n);
@@ -183,7 +194,7 @@ describe('SellerPaymentManager', () => {
   it('test_getSessionByPeer: returns active session', async () => {
     const buyerEvmAddr = identityToEvmAddress(buyerIdentity);
     const channelId = makeChannelId(4);
-    const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId);
+    const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { isReserve: true });
     await manager.handleSpendingAuth(buyerIdentity.peerId, buyerEvmAddr, payload, mux);
 
     const session = manager.getSessionByPeer(buyerIdentity.peerId);
@@ -205,7 +216,7 @@ describe('SellerPaymentManager', () => {
 
     const buyerEvmAddr = identityToEvmAddress(buyerIdentity);
     const channelId = makeChannelId(5);
-    const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId);
+    const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { isReserve: true });
     await manager2.handleSpendingAuth(buyerIdentity.peerId, buyerEvmAddr, payload, mux);
 
     expect(manager2.hasSession(buyerIdentity.peerId)).toBe(true);
@@ -223,7 +234,7 @@ describe('SellerPaymentManager', () => {
     expect(manager.hasSession(buyerIdentity.peerId)).toBe(false);
 
     const channelId = makeChannelId(7);
-    const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId);
+    const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { isReserve: true });
     await manager.handleSpendingAuth(buyerIdentity.peerId, buyerEvmAddr, payload, mux);
 
     expect(manager.hasSession(buyerIdentity.peerId)).toBe(true);
@@ -250,7 +261,7 @@ describe('SellerPaymentManager', () => {
     const buyerEvmAddr = identityToEvmAddress(buyerIdentity);
     const channelId = makeChannelId(8);
 
-    const payload1 = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { cumulativeAmount: 100_000n });
+    const payload1 = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { isReserve: true });
     await manager.handleSpendingAuth(buyerIdentity.peerId, buyerEvmAddr, payload1, mux);
 
     const payload2 = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { cumulativeAmount: 200_000n });

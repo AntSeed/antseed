@@ -12,8 +12,6 @@ interface IAntseedSessions {
         bytes calldata buyerSig
     ) external;
 
-    function topUp(bytes32 channelId, uint128 additionalAmount) external;
-
     function settle(
         bytes32 channelId,
         uint128 cumulativeAmount,
