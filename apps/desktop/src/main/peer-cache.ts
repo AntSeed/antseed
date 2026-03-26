@@ -170,6 +170,12 @@ export async function refreshPeerCache(): Promise<void> {
     // File doesn't exist yet — buyer runtime may not be running.
   }
 
+  // Re-derive online for every cached peer so evicted / un-filed peers
+  // also transition to offline once their lastSeen TTL expires.
+  for (const peer of peerCache.values()) {
+    peer.online = now - peer.lastSeen < PEER_ONLINE_TTL_MS;
+  }
+
   emitIfChanged();
 }
 
