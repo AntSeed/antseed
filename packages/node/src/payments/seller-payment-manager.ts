@@ -425,28 +425,36 @@ export class SellerPaymentManager {
     const activeSessions = this._sessionStore.getActiveSessions('seller');
 
     for (const session of activeSessions) {
-      // Skip sessions whose deadline + grace period hasn't passed
-      const deadlinePlusGrace = session.deadline + CLOSE_GRACE_PERIOD_SECS;
-      if (nowSecs < deadlinePlusGrace) continue;
+      const deadline = session.deadline;
+      const deadlinePlusGrace = deadline + CLOSE_GRACE_PERIOD_SECS;
+      const accepted = this._acceptedCumulative.get(session.sessionId) ?? 0n;
 
       try {
-        const accepted = this._acceptedCumulative.get(session.sessionId) ?? 0n;
-        if (accepted > 0n) {
-          // Has accepted cumulative — settle to get paid
-          debugLog(`[SellerPayment] Settling timed-out session ${session.sessionId.slice(0, 18)}... cumulative=${accepted}`);
-          await this.settleSession(session.peerId);
-        } else {
-          // No accepted cumulative — use settleTimeout to release buyer funds
-          debugLog(`[SellerPayment] Settling timed-out session ${session.sessionId.slice(0, 18)}... (no cumulative)`);
+        if (nowSecs >= deadlinePlusGrace) {
+          // Past deadline + grace: settle() would revert (SessionExpired).
+          // Must use settleTimeout() — releases full deposit, no payment to seller.
+          debugLog(`[SellerPayment] Session ${session.sessionId.slice(0, 18)}... past grace period — calling settleTimeout`);
           await this._sessionsClient.settleTimeout(this._signer, session.sessionId);
           this._sessionStore.updateSessionStatus(session.sessionId, 'timeout');
           this._acceptedCumulative.delete(session.sessionId);
           this._spent.delete(session.sessionId);
           this._latestAuth.delete(session.sessionId);
           this._activeBuyers.delete(session.peerId);
+        } else if (accepted > 0n) {
+          // Before grace period but session has accepted cumulative.
+          // Check if deadline is approaching — settle before it expires.
+          const latestAuth = this._latestAuth.get(session.sessionId);
+          const authDeadline = latestAuth ? Number(latestAuth.deadline) : deadline;
+          if (nowSecs < authDeadline) {
+            // Auth deadline still valid — settle to claim payment
+            debugLog(`[SellerPayment] Session ${session.sessionId.slice(0, 18)}... settling before deadline (cumulative=${accepted})`);
+            await this.settleSession(session.peerId);
+          }
+          // If auth deadline already passed, we can't settle — wait for grace period → settleTimeout
         }
+        // If deadline hasn't passed and no accepted cumulative, skip — session is still active
       } catch (err) {
-        debugWarn(`[SellerPayment] Failed to settle timeout for ${session.sessionId.slice(0, 18)}...: ${err instanceof Error ? err.message : err}`);
+        debugWarn(`[SellerPayment] Failed to process session ${session.sessionId.slice(0, 18)}...: ${err instanceof Error ? err.message : err}`);
       }
     }
   }

@@ -239,11 +239,11 @@ describe('SellerPaymentManager', () => {
     expect(manager2.sessionsClient.settle).not.toHaveBeenCalled();
   });
 
-  it('test_checkTimeouts: timed-out sessions with cumulative > 0 are settled', async () => {
+  it('test_checkTimeouts: post-grace sessions use settleTimeout (not settle)', async () => {
     const buyerEvmAddr = identityToEvmAddress(buyerIdentity);
     const sessionId = makeSessionId(6);
     // Build SpendingAuth with a deadline that's already 3 hours in the past
-    // so deadline + CLOSE_GRACE_PERIOD (2h) = 1 hour ago → timeout eligible
+    // so deadline + CLOSE_GRACE_PERIOD (2h) = 1 hour ago → past grace period
     const oldDeadline = Math.floor(Date.now() / 1000) - (3 * 60 * 60);
     const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, sessionId, {
       deadline: oldDeadline,
@@ -252,7 +252,27 @@ describe('SellerPaymentManager', () => {
 
     await manager.checkTimeouts();
 
-    // Session has cumulative > 0 (default 1_000_000), so settle is called
+    // Past grace period: settleTimeout is called (not settle — settle would revert)
+    expect(manager.sessionsClient.settleTimeout).toHaveBeenCalledOnce();
+    expect(manager.sessionsClient.settle).not.toHaveBeenCalled();
+    const session = store.getSession(sessionId);
+    expect(session!.status).toBe('timeout');
+  });
+
+  it('test_checkTimeouts: pre-deadline sessions with cumulative > 0 are settled', async () => {
+    const buyerEvmAddr = identityToEvmAddress(buyerIdentity);
+    const sessionId = makeSessionId(7);
+    // Build SpendingAuth with a deadline 1 hour from now — still valid
+    const futureDeadline = Math.floor(Date.now() / 1000) + 3600;
+    const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, sessionId, {
+      deadline: futureDeadline,
+    });
+    await manager.handleSpendingAuth(buyerIdentity.peerId, buyerEvmAddr, payload, mux);
+
+    // Simulate disconnect detected — checkTimeouts sees valid deadline, tries settle
+    await manager.checkTimeouts();
+
+    // Auth deadline still valid → settle is called to claim payment
     expect(manager.sessionsClient.settle).toHaveBeenCalledOnce();
     const session = store.getSession(sessionId);
     expect(session!.status).toBe('settled');
