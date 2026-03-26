@@ -141,6 +141,7 @@ export class SessionStore {
           @status, @createdAt, @updatedAt
         )
         ON CONFLICT(session_id) DO UPDATE SET
+          auth_max = @authMax,
           tokens_delivered = @tokensDelivered,
           request_count = @requestCount,
           settled_at = @settledAt,

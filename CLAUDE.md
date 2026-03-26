@@ -83,16 +83,20 @@ and resolved via the workspace.
 ## Smart Contracts
 ```
 packages/node/contracts/
-├── interfaces/          Shared Solidity interfaces (IAntseed*.sol)
-├── AntseedIdentity.sol  Peer registration, reputation (ERC-721, ERC-8004)
-├── AntseedStaking.sol   Seller staking, slashing (holds stake USDC)
-├── AntseedDeposits.sol  Buyer deposits, seller earnings (holds buyer USDC)
-├── AntseedSessions.sol  Session lifecycle, cumulative SpendingAuth (swappable, no USDC)
-├── AntseedEmissions.sol ANTS token emissions
-├── AntseedSubPool.sol   Subscription pool
-├── ANTSToken.sol        ANTS ERC-20 token
-└── MockUSDC.sol         Test USDC
+├── interfaces/              Shared Solidity interfaces (IAntseed*.sol, IERC8004Registry.sol)
+├── vendor/                  Tempo StreamChannel (audited, MIT)
+├── AntseedStats.sol         Per-agent session metrics keyed by ERC-8004 agentId
+├── AntseedStaking.sol       Seller staking, slashing (holds stake USDC, binds to agentId)
+├── AntseedDeposits.sol      Buyer deposits, seller earnings (holds buyer USDC)
+├── AntseedSessions.sol      Session lifecycle wrapping Tempo StreamChannel (swappable)
+├── AntseedEmissions.sol     ANTS token emissions (USDC volume-based)
+├── AntseedSubPool.sol       Subscription pool
+├── MockERC8004Registry.sol  Mock ERC-8004 IdentityRegistry (local testing only)
+├── ANTSToken.sol            ANTS ERC-20 token
+└── MockUSDC.sol             Test USDC
 ```
+Identity uses the deployed ERC-8004 IdentityRegistry (Base: `0x8004A169...`).
+Feedback uses the deployed ERC-8004 ReputationRegistry (Base: `0x8004BAa1...`).
 All contracts use OpenZeppelin Ownable, ReentrancyGuard, SafeERC20.
 Build/test: `cd packages/node/contracts && forge build && forge test`
 
@@ -104,7 +108,7 @@ Build/test: `cd packages/node/contracts && forge build && forge test`
 5. `settle()` charges buyer, credits seller earnings, releases remaining deposit, updates reputation
 6. If seller disappears: `settleTimeout()` (permissionless after 2h) releases buyer funds
 
-EIP-712 domain: name="AntseedSessions", version="2"
+EIP-712 domain: name="AntseedSessions", version="5"
 
 ### Contract Separation Design
 - **Stable contracts** (Identity, Staking, Deposits) hold funds and rarely change

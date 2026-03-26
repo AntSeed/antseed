@@ -100,6 +100,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     error InvalidFee();
     error FirstSignCapExceeded();
     error SellerNotStaked();
+    error FinalAmountBelowSettled();
 
     // ─── Constructor ──────────────────────────────────────────────────
     constructor(
@@ -208,7 +209,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
      * @param channelId         The Tempo channel ID (also our session key)
      * @param additionalAmount  Additional USDC to lock
      */
-    function topUp(bytes32 channelId, uint128 additionalAmount) external nonReentrant {
+    function topUp(bytes32 channelId, uint128 additionalAmount) external nonReentrant whenNotPaused {
         Session storage session = sessions[channelId];
         if (session.status != SessionStatus.Active) revert SessionNotActive();
         if (msg.sender != session.seller) revert NotAuthorized();
@@ -276,6 +277,8 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
             // Send platform fee to protocol reserve
             if (platformFee > 0 && protocolReserve != address(0)) {
                 usdc.safeTransfer(protocolReserve, platformFee);
+            } else {
+                sellerPayout += platformFee; // no reserve configured — seller gets full amount
             }
 
             // Forward seller payout to Deposits and credit earnings
@@ -320,6 +323,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         Session storage session = sessions[channelId];
         if (session.status != SessionStatus.Active) revert SessionNotActive();
         if (msg.sender != session.seller) revert NotAuthorized();
+        if (finalAmount < session.settled) revert FinalAmountBelowSettled();
 
         // Verify AntSeed MetadataAuth signature
         bytes32 metadataHash = keccak256(metadata);
@@ -341,6 +345,8 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
 
             if (platformFee > 0 && protocolReserve != address(0)) {
                 usdc.safeTransfer(protocolReserve, platformFee);
+            } else {
+                sellerPayout += platformFee; // no reserve configured — seller gets full amount
             }
 
             if (sellerPayout > 0) {

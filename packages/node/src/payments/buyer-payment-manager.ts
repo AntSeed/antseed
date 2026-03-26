@@ -40,7 +40,7 @@ export interface BuyerPaymentConfig {
   defaultAuthDurationSecs: number;
   /** Max USDC to pre-authorize per request increment (base units). Default: 100000 ($0.10). */
   maxPerRequestUsdc: bigint;
-  /** Max total USDC to reserve per session (base units). Default: 10000000 ($10.00). */
+  /** Max total USDC to reserve per session (base units). Default: 1000000 ($1.00). */
   maxReserveAmountUsdc: bigint;
   dataDir: string;
 }
@@ -333,6 +333,15 @@ export class BuyerPaymentManager {
 
     const requiredCumulativeAmount = BigInt(payload.requiredCumulativeAmount);
 
+    // Reject stale/lower NeedAuth (monotonicity guard)
+    const currentCumulative = this._cumulativeAmount.get(sellerPeerId) ?? 0n;
+    if (requiredCumulativeAmount <= currentCumulative) {
+      debugLog(
+        `[BuyerPayment] NeedAuth stale: required=${requiredCumulativeAmount} <= current=${currentCumulative} — ignoring`,
+      );
+      return;
+    }
+
     // Reject if exceeds max reserve
     if (requiredCumulativeAmount > this._config.maxReserveAmountUsdc) {
       debugWarn(
@@ -426,15 +435,8 @@ export class BuyerPaymentManager {
   }
 
   getSessionHistory(sellerPeerId: string): StoredSession[] {
-    const sessions: StoredSession[] = [];
-    const seen = new Set<string>();
-    let session = this._sessionStore.getLatestSession(sellerPeerId, 'buyer');
-    while (session && !seen.has(session.sessionId)) {
-      seen.add(session.sessionId);
-      sessions.unshift(session);
-      break; // No more chaining in the new model
-    }
-    return sessions;
+    const session = this._sessionStore.getLatestSession(sellerPeerId, 'buyer');
+    return session ? [session] : [];
   }
 
   // ── Deposit operations ──────────────────────────────────────────
