@@ -1,3 +1,8 @@
+> **Note (2026-03-27):** This audit was based on a pre-fix version of the contracts. All three VULNs identified below have been addressed:
+> - **VULN-001** (reserve sig doesn't bind maxAmount/deadline): Fixed — introduced dedicated `ReserveAuth(channelId, maxAmount, deadline)` EIP-712 type that binds all reserve parameters to the buyer's signature.
+> - **VULN-002** (topUp without buyer auth): Fixed — `topUp()` has been removed. Budget exhaustion triggers a new session negotiation with a fresh ReserveAuth.
+> - **VULN-003** (partial settle inflates sessionCount): Fixed — `sessionCount` is now incremented only on `close()`, not on intermediate `settle()` calls.
+
 # Security Audit Report
 
 **Scope**

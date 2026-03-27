@@ -7,20 +7,20 @@ hide_title: true
 
 # Payments
 
-Buyers pre-deposit USDC into the on-chain AntseedDeposits contract. Each session follows a Reserve-Serve-Settle lifecycle where credits are locked via AntseedSessions, requests flow freely over the P2P transport, and settlement happens lazily when the buyer starts their next session.
+Buyers pre-deposit USDC into the on-chain AntseedDeposits contract. Each session follows a Reserve-Serve-Settle lifecycle where credits are locked via AntseedSessions (which holds no USDC itself), requests flow freely over the P2P transport, and settlement happens when the seller calls `settle()` or `close()`.
 
-The key primitive is the **SpendingAuth** — an EIP-712 signed authorization that simultaneously authorizes the current session and proves delivery of the previous one.
+Two EIP-712 signed messages drive the flow: **ReserveAuth** (buyer authorizes a session budget) and **MetadataAuth** (buyer authorizes cumulative spend per request).
 
 ## Session Lifecycle
 
 ```text title="reserve → serve → settle"
 Buyer                          Seller                         Chain
   │                              │                              │
-  ├── SpendingAuth ─────────────>│                              │
-  │   (EIP-712 signed)           │                              │
-  │                              ├── reserve(auth) ────────────>│
-  │                              │   locks credits from         │
-  │                              │   buyer's deposit            │
+  ├── ReserveAuth ──────────────>│                              │
+  │   (EIP-712: channelId,       │                              │
+  │    maxAmount, deadline)       │                              │
+  │                              ├── reserve(buyerSig) ────────>│
+  │                              │   Deposits.lockForSession()  │
   │                              │<──── reserveConfirmed ───────┤
   │                              │                              │
   │   ┌──────────────────────────┤                              │
@@ -28,84 +28,62 @@ Buyer                          Seller                         Chain
   │   │                          │                              │
   │   ├── HTTP Request ─────────>│                              │
   │   │<── SellerReceipt ────────┤  Ed25519-signed receipt      │
-  │   ├── BuyerAck ─────────────>│  acknowledgement             │
+  │   ├── MetadataAuth ─────────>│  EIP-712: channelId,         │
+  │   │   (cumulativeAmount,     │  cumulativeAmount,            │
+  │   │    metadataHash)         │  metadataHash                 │
   │   │         ... N requests   │                              │
   │   └──────────────────────────┘                              │
   │                              │                              │
-  │  === NEXT SESSION =========  │                              │
+  │  === SETTLE / CLOSE ========  │                              │
   │                              │                              │
-  ├── SpendingAuth(N+1) ─────-──>│                              │
-  │   previousConsumption = X    │                              │
-  │   previousSessionId = N      │                              │
-  │                              ├── reserve(auth) ────────────>│
-  │                              │   settles session N          │
-  │                              │   (seller paid, excess       │
-  │                              │    returned to buyer)        │
-  │                              │   locks credits for N+1      │
+  │                              ├── settle(MetadataAuth) ─────>│
+  │                              │   or close(MetadataAuth)     │
+  │                              │   Deposits.chargeAndCredit   │
+  │                              │   EarningsToSeller()         │
   │                              │<──── confirmed ──────────────┤
   │                              │                              │
 ```
 
-Settlement of session N is triggered atomically during `reserve()` for session N+1. If the buyer never returns, the seller calls `settleTimeout()` after 24 hours.
+The seller calls `settle()` with the latest MetadataAuth to charge the buyer for cumulative usage while keeping the session open, or `close()` to finalize and release remaining funds. If the seller disappears, anyone can call `requestTimeout()` after the deadline, followed by `withdraw()` after a 15-minute grace period to release buyer funds.
 
-## SpendingAuth (EIP-712)
+## EIP-712 Signed Messages
 
-The SpendingAuth is the buyer's signed authorization for a session. It is an [EIP-712](https://eips.ethereum.org/EIPS/eip-712) typed data signature verified on-chain.
+Two EIP-712 typed data messages drive the payment flow. Both share the same domain:
 
 ```text title="EIP-712 domain"
-name:               "AntSeedSessions"
-version:            "1"
+name:               "AntseedSessions"
+version:            "6"
 chainId:            <deployment chain>
 verifyingContract:  <sessions contract address>
 ```
 
+### ReserveAuth
+
+Signed by the buyer to authorize a session budget. One signature per session.
+
 | Field | Type | Description |
 |---|---|---|
-| `seller` | `address` | Seller's EVM address (derived from their Ed25519 identity) |
-| `sessionId` | `bytes32` | Unique identifier for this session |
-| `maxAmount` | `uint256` | Maximum USDC (6 decimals) the seller may charge |
-| `nonce` | `uint256` | Buyer's current nonce; incremented on each reserve |
+| `channelId` | `bytes32` | `keccak256(abi.encode(buyer, seller, salt))` |
+| `maxAmount` | `uint128` | Maximum USDC (6 decimals) the seller may lock |
 | `deadline` | `uint256` | Unix timestamp after which this auth expires |
-| `previousConsumption` | `uint256` | Tokens delivered in the previous session |
-| `previousSessionId` | `bytes32` | Session ID of the previous session (`bytes32(0)` if first) |
 
-The `previousConsumption` and `previousSessionId` fields form the **proof chain**. When the buyer signs a SpendingAuth attesting that the previous session delivered X tokens, they are providing a cryptographic proof of delivery that the contract verifies during `reserve()`.
+### MetadataAuth
 
-## Proof Chain
+Signed by the buyer on each request to authorize cumulative spending.
 
-Each SpendingAuth is a link in a chain. The chain builds trust incrementally:
-
-```text title="proof chain progression"
-Session 1 (First Sign)
-  previousSessionId:   0x0000...0000
-  previousConsumption: 0
-  maxAmount:           ≤ FIRST_SIGN_CAP ($1)
-  Trust basis:         None — blind trust, hard-capped
-
-Session 2 (Proven Sign)
-  previousSessionId:   session1.id
-  previousConsumption: 15420  (tokens delivered in session 1)
-  maxAmount:           uncapped
-  Trust basis:         Buyer proved session 1 delivery on-chain
-
-Session N
-  previousSessionId:   session(N-1).id
-  previousConsumption: actual consumption of session N-1
-  maxAmount:           uncapped
-  Trust basis:         Full chain of proven deliveries
-```
-
-### Trust Tiers
-
-| Tier | Condition | Max Authorization |
+| Field | Type | Description |
 |---|---|---|
-| First Sign | No prior session with this seller (`previousSessionId = 0x0`) | `FIRST_SIGN_CAP` ($1 USDC) |
-| Proven Sign | At least one prior proven delivery with this seller | Uncapped (up to buyer's deposit) |
-| Qualified Proven Sign | Buyer has proven deliveries with ≥3 distinct sellers | Uncapped, higher reputation weight |
+| `channelId` | `bytes32` | Same channel identifier as the ReserveAuth |
+| `cumulativeAmount` | `uint256` | Total USDC authorized so far (monotonically increasing) |
+| `metadataHash` | `bytes32` | Hash of request metadata (input/output token counts, model, etc.) |
 
-First Sign caps protect buyers from committing significant funds to an unknown seller. Once the buyer signs over a non-zero `previousConsumption`, the on-chain record proves the seller delivered, and subsequent sessions are uncapped.
+The seller submits the latest MetadataAuth to `settle()` or `close()` on-chain. The contract verifies the buyer's signature and charges the cumulative amount from the locked deposit.
 
-Qualified Proven Sign indicates the buyer is an active network participant, not a sybil pair with a single seller. The diversity threshold (≥3 sellers) is checked against on-chain settlement history.
+## Session Budget and Budget Exhaustion
+
+The `maxAmount` in the ReserveAuth caps total USDC the seller can charge in a session. As the buyer signs MetadataAuths with increasing `cumulativeAmount`, the budget is consumed.
+
+When the budget is exhausted, the seller settles the current session (calling `close()`) and returns HTTP 402 to the buyer, triggering a new negotiation cycle (new ReserveAuth, new session).
 
 ## Bilateral Receipts
 
@@ -129,34 +107,19 @@ Signed by the seller's Ed25519 identity key after processing each request.
 
 The buyer's Ed25519 signature over the SellerReceipt, confirming they received the response matching `responseHash`.
 
-Bilateral receipts form the per-request audit trail. They are stored locally by both parties and are not submitted on-chain during normal operation. The SpendingAuth chain is the settlement mechanism — receipts exist for dispute evidence and offline verification.
+Bilateral receipts form the per-request audit trail. They are stored locally by both parties and are not submitted on-chain during normal operation. The MetadataAuth chain is the settlement mechanism — receipts exist for dispute evidence and offline verification.
 
 ## Settlement
 
-### Lazy Settlement
+### Active Settlement
 
-Settlement is not an explicit step. When the seller calls `reserve()` with a new SpendingAuth, the contract atomically:
+The seller calls `settle()` with the latest buyer-signed MetadataAuth at any time during the session. This charges the buyer's locked deposit for the cumulative amount and credits the seller's earnings, while keeping the session open for further requests.
 
-1. Validates the `previousSessionId` matches an active reservation
-2. Settles the previous session: transfers `previousConsumption` to seller, returns excess to buyer's deposit
-3. Updates on-chain counters (session count, total volume) for both parties
-4. Locks `maxAmount` for the new session
+To finalize, the seller calls `close()` with the final MetadataAuth. This charges the cumulative amount, credits the seller, and releases any remaining locked deposit back to the buyer's available balance.
 
-This means sellers are paid as a side effect of the buyer's continued usage.
+### Timeout
 
-### Timeout Settlement
-
-If a buyer does not return within 24 hours of the last session:
-
-```text title="settleTimeout() behavior"
-Caller:     Anyone (typically the seller)
-Condition:  block.timestamp > reservation.timestamp + 24 hours
-Effect:     Full refund of locked amount to buyer's deposit
-            Seller receives nothing
-            Ghost mark recorded on seller's on-chain record
-```
-
-The full-refund-on-timeout design is intentional: the seller had 24 hours to serve a session that would trigger lazy settlement via the next SpendingAuth. If the buyer didn't return, the seller cannot prove delivery unilaterally (only the buyer's SpendingAuth can attest to consumption). Ghost marks accumulate on the seller's record and affect reputation scoring.
+If the seller disappears, anyone can call `requestTimeout()` after the session deadline has passed. This marks the session as timed out. After a 15-minute grace period, the buyer (or anyone) calls `withdraw()` to release the locked funds back to the buyer's deposit.
 
 ### Token-to-USDC Conversion
 
@@ -178,7 +141,7 @@ Ed25519 private key (32 bytes)
   → EVM address (20 bytes)
 ```
 
-The signing identity (Ed25519) and the funding wallet (secp256k1/EVM) are separate key types derived from the same seed. The Ed25519 key signs protocol messages (handshakes, receipts). The EVM key signs on-chain transactions and EIP-712 SpendingAuths.
+The signing identity (Ed25519) and the funding wallet (secp256k1/EVM) are separate key types derived from the same seed. The Ed25519 key signs protocol messages (handshakes, receipts). The EVM key signs EIP-712 messages (ReserveAuth, MetadataAuth).
 
 ### Funding
 
