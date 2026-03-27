@@ -14,6 +14,3 @@ interface ISetProtocolReserve {
     function setProtocolReserve(address) external;
 }
 
-interface ISetStaking {
-    function setStakingContract(address) external;
-}

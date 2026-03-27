@@ -8,14 +8,8 @@ import { BuyerPaymentManager, type BuyerPaymentConfig } from '../src/payments/bu
 import { SessionStore } from '../src/payments/session-store.js';
 import type { PaymentMux } from '../src/p2p/payment-mux.js';
 import type { Identity } from '../src/p2p/identity.js';
-import { bytesToHex, hexToBytes } from '../src/utils/hex.js';
+import { bytesToHex } from '../src/utils/hex.js';
 import { toPeerId } from '../src/types/peer.js';
-import {
-  buildReceiptMessage,
-  signMessageEd25519,
-} from '../src/payments/evm/signatures.js';
-
-const ZERO_SESSION_ID = '0x' + '0'.repeat(64);
 
 async function createTestIdentity(): Promise<Identity> {
   const privateKey = ed.utils.randomPrivateKey();
@@ -26,36 +20,33 @@ async function createTestIdentity(): Promise<Identity> {
 
 function createMockPaymentMux(): PaymentMux & {
   sentSpendingAuths: unknown[];
-  sentBuyerAcks: unknown[];
 } {
   const mux = {
     sentSpendingAuths: [] as unknown[],
-    sentBuyerAcks: [] as unknown[],
     sendSpendingAuth(payload: unknown) { mux.sentSpendingAuths.push(payload); },
     sendAuthAck() {},
-    sendSellerReceipt() {},
-    sendBuyerAck(payload: unknown) { mux.sentBuyerAcks.push(payload); },
-    sendTopUpRequest() {},
+    sendPaymentRequired() {},
+    sendNeedAuth() {},
     onSpendingAuth() {},
     onAuthAck() {},
-    onSellerReceipt() {},
-    onBuyerAck() {},
-    onTopUpRequest() {},
+    onPaymentRequired() {},
+    onNeedAuth() {},
     handleFrame: vi.fn(),
   };
-  return mux as unknown as PaymentMux & { sentSpendingAuths: unknown[]; sentBuyerAcks: unknown[] };
+  return mux as unknown as PaymentMux & { sentSpendingAuths: unknown[] };
 }
 
 function makeConfig(dataDir: string): BuyerPaymentConfig {
   return {
     rpcUrl: 'http://127.0.0.1:8545',
-    contractAddress: '0x' + 'dd'.repeat(20),
+    depositsContractAddress: '0x' + 'dd'.repeat(20),
+    sessionsContractAddress: '0x' + 'cc'.repeat(20),
     usdcAddress: '0x' + 'ee'.repeat(20),
-    identityAddress: '0x' + 'ff'.repeat(20),
+    identityRegistryAddress: '0x' + 'ff'.repeat(20),
     chainId: 31337,
-    defaultMaxAmountUsdc: 1_000_000n,
     defaultAuthDurationSecs: 3600,
-    autoAck: true,
+    maxPerRequestUsdc: 100_000n,
+    maxReserveAmountUsdc: 10_000_000n,
     dataDir,
   };
 }
@@ -83,159 +74,287 @@ describe('BuyerPaymentManager', () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it('test_authorizeSpending_firstSession: previousConsumption=0, previousSessionId=zero', async () => {
+  it('authorizeSpending sends SpendingAuth with channelId and dual sigs', async () => {
     const sellerPeerId = 'seller-peer-001';
     const sellerEvmAddr = '0x' + 'ab'.repeat(20);
+    const minBudget = 50_000n;
 
-    const sessionId = await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux);
+    const channelId = await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux, minBudget);
 
-    expect(sessionId).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(channelId).toMatch(/^0x[0-9a-f]{64}$/);
     expect(mux.sentSpendingAuths.length).toBe(1);
 
     const sent = mux.sentSpendingAuths[0] as Record<string, unknown>;
-    expect(sent.previousConsumption).toBe('0');
-    expect(sent.previousSessionId).toBe(ZERO_SESSION_ID);
-    expect(sent.sessionId).toBe(sessionId);
-    expect(sent.maxAmountUsdc).toBe('1000000');
+    expect(sent.cumulativeAmount).toBe('0');
+    expect(sent.metadataHash).toBeTypeOf('string');
+    expect(sent.metadata).toBeTypeOf('string');
+    expect(sent.channelId).toBe(channelId);
+    expect(sent.spendingAuthSig).toBeTypeOf('string');
+    expect(sent.buyerEvmAddr).toBeTypeOf('string');
   });
 
-  it('test_authorizeSpending_withPriorSession: loads prior session, correct previousConsumption', async () => {
-    const sellerPeerId = 'seller-peer-002';
+  it('authorizeSpending rejects if minBudgetPerRequest exceeds maxPerRequestUsdc', async () => {
+    const sellerPeerId = 'seller-peer-reject';
     const sellerEvmAddr = '0x' + 'ab'.repeat(20);
+    const tooLarge = 200_000n; // exceeds maxPerRequestUsdc (100_000)
 
-    // Create first session
-    const firstSessionId = await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux);
+    const channelId = await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux, tooLarge);
 
-    // Simulate some token delivery on the first session by updating the store directly
-    // Access the store through a new SessionStore since it's the same DB
-    const store = new SessionStore(tempDir);
-    store.updateTokensDelivered(firstSessionId, '500000', 5);
-    store.updateSessionStatus(firstSessionId, 'settled', '500000');
-    store.close();
-
-    // Create second session — should reference first
-    const secondSessionId = await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux);
-
-    expect(mux.sentSpendingAuths.length).toBe(2);
-    const sent = mux.sentSpendingAuths[1] as Record<string, unknown>;
-    expect(sent.previousConsumption).toBe('500000');
-    expect(sent.previousSessionId).toBe(firstSessionId);
-    expect(sent.sessionId).toBe(secondSessionId);
+    expect(channelId).toBe('');
+    expect(mux.sentSpendingAuths.length).toBe(0);
   });
 
-  it('test_handleAuthAck: session marked confirmed', async () => {
+  it('handleAuthAck marks session as confirmed', async () => {
     const sellerPeerId = 'seller-peer-003';
     const sellerEvmAddr = '0x' + 'ab'.repeat(20);
 
-    const sessionId = await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux);
+    const channelId = await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux, 10_000n);
     expect(manager.isAuthorized(sellerPeerId)).toBe(false);
 
-    manager.handleAuthAck(sellerPeerId, { sessionId, nonce: 1 });
+    manager.handleAuthAck(sellerPeerId, { channelId });
     expect(manager.isAuthorized(sellerPeerId)).toBe(true);
   });
 
-  it('test_handleSellerReceipt_updatesTokens: tokensDelivered updated', async () => {
-    const sellerIdentity = await createTestIdentity();
-    const sellerPeerId = sellerIdentity.peerId;
-    const sellerEvmAddr = '0x' + 'ab'.repeat(20);
-
-    const sessionId = await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux);
-
-    // Build a valid seller receipt
-    const sessionIdBytes = hexToBytes(sessionId.replace(/^0x/, ''));
-    const responseHash = new Uint8Array(32).fill(0xaa);
-    const receiptMsg = buildReceiptMessage(sessionIdBytes, 100000n, 1, responseHash);
-    const sellerSig = await signMessageEd25519(sellerIdentity, receiptMsg);
-
-    await manager.handleSellerReceipt(sellerPeerId, {
-      sessionId,
-      runningTotal: '100000',
-      requestCount: 1,
-      responseHash: bytesToHex(responseHash),
-      sellerSig: bytesToHex(sellerSig),
-    }, mux);
-
-    // Verify tokens updated in store
-    const store = new SessionStore(tempDir);
-    const session = store.getSession(sessionId);
-    expect(session!.tokensDelivered).toBe('100000');
-    expect(session!.requestCount).toBe(1);
-    store.close();
-  });
-
-  it('test_handleSellerReceipt_sendsAck: BuyerAck sent when autoAck=true', async () => {
-    const sellerIdentity = await createTestIdentity();
-    const sellerPeerId = sellerIdentity.peerId;
-    const sellerEvmAddr = '0x' + 'ab'.repeat(20);
-
-    const sessionId = await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux);
-
-    const sessionIdBytes = hexToBytes(sessionId.replace(/^0x/, ''));
-    const responseHash = new Uint8Array(32).fill(0xbb);
-    const receiptMsg = buildReceiptMessage(sessionIdBytes, 50000n, 1, responseHash);
-    const sellerSig = await signMessageEd25519(sellerIdentity, receiptMsg);
-
-    await manager.handleSellerReceipt(sellerPeerId, {
-      sessionId,
-      runningTotal: '50000',
-      requestCount: 1,
-      responseHash: bytesToHex(responseHash),
-      sellerSig: bytesToHex(sellerSig),
-    }, mux);
-
-    expect(mux.sentBuyerAcks.length).toBe(1);
-    const ack = mux.sentBuyerAcks[0] as Record<string, unknown>;
-    expect(ack.sessionId).toBe(sessionId);
-    expect(ack.runningTotal).toBe('50000');
-    expect(ack.requestCount).toBe(1);
-    expect(ack.buyerSig).toBeTypeOf('string');
-  });
-
-  it('test_isAuthorized: returns true for confirmed session, false otherwise', async () => {
+  it('isAuthorized returns true for confirmed session, false otherwise', async () => {
     const peerId1 = 'seller-peer-auth-1';
     const peerId2 = 'seller-peer-auth-2';
     const evmAddr = '0x' + 'ab'.repeat(20);
 
     expect(manager.isAuthorized(peerId1)).toBe(false);
 
-    const sid = await manager.authorizeSpending(peerId1, evmAddr, mux);
+    const cid = await manager.authorizeSpending(peerId1, evmAddr, mux, 10_000n);
     // Still not authorized until AuthAck
     expect(manager.isAuthorized(peerId1)).toBe(false);
 
-    manager.handleAuthAck(peerId1, { sessionId: sid, nonce: 1 });
+    manager.handleAuthAck(peerId1, { channelId: cid });
     expect(manager.isAuthorized(peerId1)).toBe(true);
     expect(manager.isAuthorized(peerId2)).toBe(false);
   });
 
-  it('test_sessionPersistence: session survives store reconstruction', async () => {
+  it('signPerRequestAuth increments cumulative values and produces dual sigs', async () => {
+    const sellerPeerId = 'seller-peer-perreq';
+    const sellerEvmAddr = '0x' + 'ab'.repeat(20);
+
+    await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux, 10_000n);
+    manager.handleAuthAck(sellerPeerId, {
+      channelId: (mux.sentSpendingAuths[0] as Record<string, unknown>).channelId as string,
+    });
+
+    const payload = await manager.signPerRequestAuth(
+      sellerPeerId,
+      5_000n,     // addedCostUsdc
+      100n,       // addedInputTokens
+      50n,        // addedOutputTokens
+      5_000n,     // estimatedNextCostUsdc
+    );
+
+    // cumulativeAmount should be initial (0) + addedCost (5000) + estimatedNext (5000) = 10000
+    expect(BigInt(payload.cumulativeAmount)).toBe(10_000n);
+    expect(payload.metadataHash).toBeTypeOf('string');
+    expect(payload.metadata).toBeTypeOf('string');
+    expect(payload.spendingAuthSig).toBeTypeOf('string');
+  });
+
+  it('signPerRequestAuth caps increment at maxPerRequestUsdc', async () => {
+    const sellerPeerId = 'seller-peer-cap';
+    const sellerEvmAddr = '0x' + 'ab'.repeat(20);
+
+    await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux, 10_000n);
+
+    // addedCost + estimatedNext = 80000 + 80000 = 160000 > maxPerRequestUsdc (100000)
+    const payload = await manager.signPerRequestAuth(
+      sellerPeerId,
+      80_000n,
+      0n,
+      0n,
+      80_000n,
+    );
+
+    // Should be capped: initial (0) + maxPerRequestUsdc (100000) = 100000
+    expect(BigInt(payload.cumulativeAmount)).toBe(100_000n);
+  });
+
+  it('signPerRequestAuth throws if no active session', async () => {
+    await expect(
+      manager.signPerRequestAuth('nonexistent-peer', 1000n, 0n, 0n, 1000n),
+    ).rejects.toThrow(/No active session/);
+  });
+
+  it('handleNeedAuth signs and sends updated SpendingAuth', async () => {
+    const sellerPeerId = 'seller-peer-needauth';
+    const sellerEvmAddr = '0x' + 'ab'.repeat(20);
+
+    const channelId = await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux, 10_000n);
+    mux.sentSpendingAuths.length = 0; // clear initial auth
+
+    await manager.handleNeedAuth(sellerPeerId, {
+      channelId,
+      requiredCumulativeAmount: '500000',
+      currentAcceptedCumulative: '10000',
+      deposit: '1000000',
+    }, mux);
+
+    expect(mux.sentSpendingAuths.length).toBe(1);
+    const sent = mux.sentSpendingAuths[0] as Record<string, unknown>;
+    expect(sent.cumulativeAmount).toBe('500000');
+    expect(sent.channelId).toBe(channelId);
+    expect(sent.spendingAuthSig).toBeTypeOf('string');
+  });
+
+  it('handleNeedAuth rejects if requiredCumulativeAmount exceeds maxReserveAmountUsdc', async () => {
+    const sellerPeerId = 'seller-peer-needauth-reject';
+    const sellerEvmAddr = '0x' + 'ab'.repeat(20);
+
+    const channelId = await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux, 10_000n);
+    mux.sentSpendingAuths.length = 0;
+
+    await manager.handleNeedAuth(sellerPeerId, {
+      channelId,
+      requiredCumulativeAmount: '99999999999', // way over maxReserveAmountUsdc (10000000)
+      currentAcceptedCumulative: '10000',
+      deposit: '1000000',
+    }, mux);
+
+    // Should not send any new SpendingAuth
+    expect(mux.sentSpendingAuths.length).toBe(0);
+  });
+
+  it('handleNeedAuth ignores unknown seller', async () => {
+    mux.sentSpendingAuths.length = 0;
+
+    await manager.handleNeedAuth('unknown-seller', {
+      channelId: '0x' + '00'.repeat(32),
+      requiredCumulativeAmount: '500000',
+      currentAcceptedCumulative: '10000',
+      deposit: '1000000',
+    }, mux);
+
+    expect(mux.sentSpendingAuths.length).toBe(0);
+  });
+
+  it('parseResponseCost extracts cost and token counts from headers', () => {
+    const result = BuyerPaymentManager.parseResponseCost({
+      'x-antseed-cost': '5000',
+      'x-antseed-input-tokens': '100',
+      'x-antseed-output-tokens': '50',
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.cost).toBe(5000n);
+    expect(result!.inputTokens).toBe(100n);
+    expect(result!.outputTokens).toBe(50n);
+  });
+
+  it('parseResponseCost returns null when cost header is missing', () => {
+    expect(BuyerPaymentManager.parseResponseCost({})).toBeNull();
+  });
+
+  it('parseResponseCost returns null for non-numeric cost', () => {
+    expect(BuyerPaymentManager.parseResponseCost({
+      'x-antseed-cost': 'not-a-number',
+    })).toBeNull();
+  });
+
+  it('parseResponseCost defaults tokens to 0 when headers missing', () => {
+    const result = BuyerPaymentManager.parseResponseCost({
+      'x-antseed-cost': '5000',
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.cost).toBe(5000n);
+    expect(result!.inputTokens).toBe(0n);
+    expect(result!.outputTokens).toBe(0n);
+  });
+
+  it('parseResponseCost returns null for empty cost header', () => {
+    expect(BuyerPaymentManager.parseResponseCost({
+      'x-antseed-cost': '',
+    })).toBeNull();
+  });
+
+  it('parseResponseCost handles partial headers (cost + input only)', () => {
+    const result = BuyerPaymentManager.parseResponseCost({
+      'x-antseed-cost': '12000',
+      'x-antseed-input-tokens': '500',
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.cost).toBe(12000n);
+    expect(result!.inputTokens).toBe(500n);
+    expect(result!.outputTokens).toBe(0n); // defaults when missing
+  });
+
+  it('parseResponseCost handles partial headers (cost + output only)', () => {
+    const result = BuyerPaymentManager.parseResponseCost({
+      'x-antseed-cost': '8000',
+      'x-antseed-output-tokens': '250',
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.cost).toBe(8000n);
+    expect(result!.inputTokens).toBe(0n);
+    expect(result!.outputTokens).toBe(250n);
+  });
+
+  it('parseResponseCost handles large values', () => {
+    const result = BuyerPaymentManager.parseResponseCost({
+      'x-antseed-cost': '999999999999',
+      'x-antseed-input-tokens': '1000000',
+      'x-antseed-output-tokens': '500000',
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.cost).toBe(999999999999n);
+    expect(result!.inputTokens).toBe(1000000n);
+    expect(result!.outputTokens).toBe(500000n);
+  });
+
+  it('parseResponseCost returns null for non-numeric token values with valid cost', () => {
+    const result = BuyerPaymentManager.parseResponseCost({
+      'x-antseed-cost': '5000',
+      'x-antseed-input-tokens': 'not-a-number',
+    });
+
+    expect(result).toBeNull();
+  });
+
+  it('parseResponseCost handles zero values correctly', () => {
+    const result = BuyerPaymentManager.parseResponseCost({
+      'x-antseed-cost': '0',
+      'x-antseed-input-tokens': '0',
+      'x-antseed-output-tokens': '0',
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.cost).toBe(0n);
+    expect(result!.inputTokens).toBe(0n);
+    expect(result!.outputTokens).toBe(0n);
+  });
+
+  it('sessionPersistence: session survives store reconstruction', async () => {
     const sellerPeerId = 'seller-peer-persist';
     const sellerEvmAddr = '0x' + 'ab'.repeat(20);
 
-    const sessionId = await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux);
+    const channelId = await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux, 10_000n);
     store.close();
 
     // Reopen the store independently and check persistence
     const checkStore = new SessionStore(tempDir);
-    const session = checkStore.getSession(sessionId);
+    const session = checkStore.getSession(channelId);
     expect(session).not.toBeNull();
     expect(session!.peerId).toBe(sellerPeerId);
     expect(session!.role).toBe('buyer');
-    expect(session!.authMax).toBe('1000000');
-    expect(session!.previousSessionId).toBe(ZERO_SESSION_ID);
+    expect(session!.authMax).toBe('0');
     checkStore.close();
 
-    // Mark first session as settled with tokens delivered (required for proof chain)
-    store = new SessionStore(tempDir);
-    store.updateTokensDelivered(sessionId, '500', 1);
-    store.updateSessionStatus(sessionId, 'settled', '500');
-
     // Re-create manager with same data dir, authorize again
+    store = new SessionStore(tempDir);
     manager = new BuyerPaymentManager(identity, makeConfig(tempDir), store);
     manager.setSigner(Wallet.createRandom());
-    const secondId = await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux);
 
-    // Second session references the first (now settled)
-    const sent = mux.sentSpendingAuths[mux.sentSpendingAuths.length - 1] as Record<string, unknown>;
-    expect(sent.previousSessionId).toBe(sessionId);
+    const mux2 = createMockPaymentMux();
+    const secondId = await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux2, 10_000n);
+    expect(secondId).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(secondId).not.toBe(channelId); // New channel ID
   });
 });

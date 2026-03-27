@@ -58,14 +58,15 @@ The buyer-seller flow enforces:
 - Buyer acks receipts with Ed25519 signatures (auto-ack enabled by default).
 - Metering events and signed receipts persisted locally.
 
-### 3.5 Payment Authorization, Settlement, and Disputes
+### 3.5 Payment Authorization and Settlement
 
-- Buyer authorizes lock/top-up with ECDSA signatures over deterministic message hashes.
-- Seller recovers buyer address from lock signature before on-chain commit.
-- Buyer and seller exchange Ed25519-signed running-total artifacts off-chain.
-- Settlement submits buyer ECDSA authorization plus score.
-- On buyer disconnect with committed lock: seller opens dispute using `lastAckedTotal` or `runningTotal`.
-- Sessions client maintains per-address nonce cursor to prevent local tx nonce reuse.
+- Buyer signs EIP-712 ReserveAuth (channelId, maxAmount, deadline) to authorize session budget.
+- Seller recovers buyer address from ReserveAuth signature before on-chain reserve.
+- Per request: buyer signs EIP-712 SpendingAuth (channelId, cumulativeAmount, metadataHash).
+- Seller submits latest SpendingAuth to settle() or close() on-chain.
+- On buyer disconnect: seller calls close() with last SpendingAuth to finalize.
+- On seller disappearance: requestTimeout() (permissionless after deadline) + withdraw() after 15min grace.
+- Sessions contract holds no USDC — all funds managed by AntseedDeposits.
 
 ## 4. Cryptographic Control Plane
 
@@ -74,7 +75,7 @@ The buyer-seller flow enforces:
 | Node identity | Ed25519 keypair | Peer ID and metadata signing |
 | Connection auth | Ed25519 signature + nonce + timestamp | Spoofing and replay prevention |
 | Metadata integrity | Ed25519 signature over encoded metadata | Discovery payload authenticity |
-| Payment auth (on-chain) | ECDSA over typed hashes | Lock, top-up, settlement authorizations |
+| Payment auth (on-chain) | EIP-712 ECDSA (ReserveAuth, SpendingAuth) | Reserve, cumulative spend, settlement authorizations |
 | Receipt/ack integrity | Ed25519 binary signatures | Running-total acknowledgment trail |
 
 ## 5. Operational Best Practices

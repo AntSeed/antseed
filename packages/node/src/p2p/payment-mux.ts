@@ -3,10 +3,8 @@ import { MessageType } from '../types/protocol.js';
 import type {
   SpendingAuthPayload,
   AuthAckPayload,
-  SellerReceiptPayload,
-  BuyerAckPayload,
-  TopUpRequestPayload,
   PaymentRequiredPayload,
+  NeedAuthPayload,
 } from '../types/protocol.js';
 import { encodeFrame } from './message-protocol.js';
 import type { FramedMessage } from '../types/protocol.js';
@@ -16,10 +14,8 @@ import { debugLog } from '../utils/debug.js';
 const MESSAGE_TYPE_NAME: Record<number, string> = {
   [MessageType.SpendingAuth]: 'SpendingAuth',
   [MessageType.AuthAck]: 'AuthAck',
-  [MessageType.SellerReceipt]: 'SellerReceipt',
-  [MessageType.BuyerAck]: 'BuyerAck',
-  [MessageType.TopUpRequest]: 'TopUpRequest',
   [MessageType.PaymentRequired]: 'PaymentRequired',
+  [MessageType.NeedAuth]: 'NeedAuth',
 };
 
 export type PaymentMessageHandler<T> = (payload: T) => void | Promise<void>;
@@ -36,10 +32,8 @@ export class PaymentMux {
   // Handler registrations
   private _onSpendingAuth?: PaymentMessageHandler<SpendingAuthPayload>;
   private _onAuthAck?: PaymentMessageHandler<AuthAckPayload>;
-  private _onSellerReceipt?: PaymentMessageHandler<SellerReceiptPayload>;
-  private _onBuyerAck?: PaymentMessageHandler<BuyerAckPayload>;
-  private _onTopUpRequest?: PaymentMessageHandler<TopUpRequestPayload>;
   private _onPaymentRequired?: PaymentMessageHandler<PaymentRequiredPayload>;
+  private _onNeedAuth?: PaymentMessageHandler<NeedAuthPayload>;
 
   constructor(connection: PeerConnection) {
     this._connection = connection;
@@ -52,17 +46,11 @@ export class PaymentMux {
   onAuthAck(handler: PaymentMessageHandler<AuthAckPayload>): void {
     this._onAuthAck = handler;
   }
-  onSellerReceipt(handler: PaymentMessageHandler<SellerReceiptPayload>): void {
-    this._onSellerReceipt = handler;
-  }
-  onBuyerAck(handler: PaymentMessageHandler<BuyerAckPayload>): void {
-    this._onBuyerAck = handler;
-  }
-  onTopUpRequest(handler: PaymentMessageHandler<TopUpRequestPayload>): void {
-    this._onTopUpRequest = handler;
-  }
   onPaymentRequired(handler: PaymentMessageHandler<PaymentRequiredPayload>): void {
     this._onPaymentRequired = handler;
+  }
+  onNeedAuth(handler: PaymentMessageHandler<NeedAuthPayload>): void {
+    this._onNeedAuth = handler;
   }
 
   // --- Sending ---
@@ -72,17 +60,11 @@ export class PaymentMux {
   sendAuthAck(payload: AuthAckPayload): void {
     this._send(MessageType.AuthAck, codec.encodeAuthAck(payload));
   }
-  sendSellerReceipt(payload: SellerReceiptPayload): void {
-    this._send(MessageType.SellerReceipt, codec.encodeSellerReceipt(payload));
-  }
-  sendBuyerAck(payload: BuyerAckPayload): void {
-    this._send(MessageType.BuyerAck, codec.encodeBuyerAck(payload));
-  }
-  sendTopUpRequest(payload: TopUpRequestPayload): void {
-    this._send(MessageType.TopUpRequest, codec.encodeTopUpRequest(payload));
-  }
   sendPaymentRequired(payload: PaymentRequiredPayload): void {
     this._send(MessageType.PaymentRequired, codec.encodePaymentRequired(payload));
+  }
+  sendNeedAuth(payload: NeedAuthPayload): void {
+    this._send(MessageType.NeedAuth, codec.encodeNeedAuth(payload));
   }
 
   // --- Receiving ---
@@ -100,17 +82,11 @@ export class PaymentMux {
       case MessageType.AuthAck:
         await this._onAuthAck?.(codec.decodeAuthAck(frame.payload));
         return true;
-      case MessageType.SellerReceipt:
-        await this._onSellerReceipt?.(codec.decodeSellerReceipt(frame.payload));
-        return true;
-      case MessageType.BuyerAck:
-        await this._onBuyerAck?.(codec.decodeBuyerAck(frame.payload));
-        return true;
-      case MessageType.TopUpRequest:
-        await this._onTopUpRequest?.(codec.decodeTopUpRequest(frame.payload));
-        return true;
       case MessageType.PaymentRequired:
         await this._onPaymentRequired?.(codec.decodePaymentRequired(frame.payload));
+        return true;
+      case MessageType.NeedAuth:
+        await this._onNeedAuth?.(codec.decodeNeedAuth(frame.payload));
         return true;
       default:
         return false;

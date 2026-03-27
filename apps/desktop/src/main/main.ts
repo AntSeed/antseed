@@ -18,7 +18,7 @@ import {
 } from './process-manager.js';
 import { registerPiChatHandlers } from './pi-chat-engine.js';
 import { ensureSecureIdentity, secureIdentityEnv, getSecureIdentity } from './identity.js';
-import { identityToEvmAddress, identityToEvmWallet, DepositsClient, signSpendingAuth, makeSessionsDomain, resolveChainConfig, formatUsdc } from '@antseed/node';
+import { identityToEvmAddress, identityToEvmWallet, DepositsClient, signSpendingAuth, signReserveAuth, makeSessionsDomain, resolveChainConfig, formatUsdc, ZERO_METADATA_HASH } from '@antseed/node';
 import { createServer as createPaymentsServer } from '@antseed/payments';
 import type { LogEvent, RuntimeActivityEvent } from './log-parser.js';
 import { parseRuntimeActivityFromLog } from './log-parser.js';
@@ -674,41 +674,25 @@ ipcMain.handle('credits:get-info', async (): Promise<{ ok: boolean; data: Credit
 // FIRST_SIGN_CAP: 1 USDC = 1,000,000 base units. Main process enforces this cap
 // to prevent a compromised renderer from signing unbounded spending authorizations.
 const MAX_SPENDING_AUTH_BASE_UNITS = 1_000_000n;
-const MAX_DEADLINE_SECONDS = 7 * 24 * 60 * 60; // 7 days
 const DEFAULT_SPENDING_AUTH_DURATION_SECONDS = 25 * 60 * 60; // must exceed escrow SETTLE_TIMEOUT (24h)
-const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 const BYTES32_RE = /^0x[0-9a-fA-F]{64}$/;
 
 ipcMain.handle('payments:sign-spending-auth', async (_event, params: {
-  sellerEvmAddress: string;
-  sessionId: string;
-  maxAmountBaseUnits: string;
-  nonce: number;
-  deadline: number;
-  previousConsumption: string;
-  previousSessionId: string;
+  channelId: string;
+  cumulativeAmountBaseUnits: string;
+  metadataHash: string;
 }) => {
   try {
     // Validate renderer-supplied parameters at the trust boundary
-    if (!ETH_ADDRESS_RE.test(params.sellerEvmAddress)) {
-      return { ok: false, error: 'Invalid seller EVM address' };
+    if (!BYTES32_RE.test(params.channelId)) {
+      return { ok: false, error: 'Invalid channel ID format' };
     }
-    if (!BYTES32_RE.test(params.sessionId)) {
-      return { ok: false, error: 'Invalid session ID format' };
+    const cumulativeAmount = BigInt(params.cumulativeAmountBaseUnits);
+    if (cumulativeAmount <= 0n || cumulativeAmount > MAX_SPENDING_AUTH_BASE_UNITS) {
+      return { ok: false, error: `cumulativeAmount exceeds cap (${MAX_SPENDING_AUTH_BASE_UNITS} base units)` };
     }
-    const maxAmount = BigInt(params.maxAmountBaseUnits);
-    if (maxAmount <= 0n || maxAmount > MAX_SPENDING_AUTH_BASE_UNITS) {
-      return { ok: false, error: `maxAmount exceeds cap (${MAX_SPENDING_AUTH_BASE_UNITS} base units)` };
-    }
-    if (!Number.isInteger(params.nonce) || params.nonce < 0) {
-      return { ok: false, error: 'Invalid nonce' };
-    }
-    if (!BYTES32_RE.test(params.previousSessionId)) {
-      return { ok: false, error: 'Invalid previousSessionId format' };
-    }
-    const now = Math.floor(Date.now() / 1000);
-    if (params.deadline < now || params.deadline > now + MAX_DEADLINE_SECONDS) {
-      return { ok: false, error: 'Deadline out of acceptable range' };
+    if (!BYTES32_RE.test(params.metadataHash)) {
+      return { ok: false, error: 'Invalid metadataHash format' };
     }
 
     await ensureSecureIdentity();
@@ -723,16 +707,13 @@ ipcMain.handle('payments:sign-spending-auth', async (_event, params: {
     }
 
     const wallet = identityToEvmWallet(identity);
-    const domain = makeSessionsDomain(cc.chainId, cc.sessionsAddress);
 
-    const signature = await signSpendingAuth(wallet, domain, {
-      seller: params.sellerEvmAddress,
-      sessionId: params.sessionId,
-      maxAmount,
-      nonce: params.nonce,
-      deadline: params.deadline,
-      previousConsumption: BigInt(params.previousConsumption),
-      previousSessionId: params.previousSessionId,
+    // Sign SpendingAuth (AntSeed Sessions domain)
+    const sessionsDomain = makeSessionsDomain(cc.chainId, cc.sessionsAddress);
+    const spendingAuthSig = await signSpendingAuth(wallet, sessionsDomain, {
+      channelId: params.channelId,
+      cumulativeAmount,
+      metadataHash: params.metadataHash,
     });
 
     const buyerEvmAddress = identityToEvmAddress(identity);
@@ -740,7 +721,7 @@ ipcMain.handle('payments:sign-spending-auth', async (_event, params: {
     return {
       ok: true,
       data: {
-        signature,
+        spendingAuthSig,
         buyerEvmAddress,
       },
     };
@@ -843,12 +824,13 @@ const chatEngine = registerPiChatHandlers({
   },
 });
 
-// Manual payment approval: sign SpendingAuth and set it for the next request
+// Manual payment approval: sign the initial SpendingAuth and set it for the next request.
+// This only gates the initial session creation — once the user approves and the session
+// is established (reserve on-chain + AuthAck), subsequent per-request SpendingAuth
+// updates are handled automatically by BuyerPaymentManager.signPerRequestAuth()
+// without additional user interaction.
 ipcMain.handle('chat:approve-payment', async (_event, conversationId: string) => {
-  const paymentInfo = chatEngine.getCachedPaymentRequired(conversationId);
-  if (!paymentInfo) {
-    return { ok: false, error: 'No pending payment for this conversation' };
-  }
+  const paymentInfo = chatEngine.getCachedPaymentRequired(conversationId) ?? {};
 
   try {
     await ensureSecureIdentity();
@@ -863,7 +845,7 @@ ipcMain.handle('chat:approve-payment', async (_event, conversationId: string) =>
     }
 
     const wallet = identityToEvmWallet(identity);
-    const domain = makeSessionsDomain(cc.chainId, cc.sessionsAddress);
+    const sessionsDomain = makeSessionsDomain(cc.chainId, cc.sessionsAddress);
     const buyerEvmAddr = wallet.address;
 
     let sellerEvmAddr = String(paymentInfo.sellerEvmAddr ?? '');
@@ -883,35 +865,33 @@ ipcMain.handle('chat:approve-payment', async (_event, conversationId: string) =>
     if (!sellerEvmAddr) {
       return { ok: false, error: 'No seller EVM address available for this payment' };
     }
-    const maxAmount = BigInt(String(paymentInfo.suggestedAmount ?? '100000'));
 
-    // Generate session parameters
-    const sessionIdBytes = randomBytes(32);
-    const sessionId = '0x' + sessionIdBytes.toString('hex');
-    const nonce = Date.now(); // simple nonce
+    // Generate random salt and compute deterministic channelId
+    const salt = '0x' + randomBytes(32).toString('hex');
+    const { computeChannelId } = await import('@antseed/node');
+    const channelId = computeChannelId(buyerEvmAddr, sellerEvmAddr, salt);
     const deadline = Math.floor(Date.now() / 1000) + DEFAULT_SPENDING_AUTH_DURATION_SECONDS;
 
-    const signature = await signSpendingAuth(wallet, domain, {
-      seller: sellerEvmAddr,
-      sessionId,
+    // Sign ReserveAuth — binds channelId, maxAmount, deadline
+    const maxAmount = 1_000_000n; // $1.00 — matches FIRST_SIGN_CAP
+    const reserveAuthSig = await signReserveAuth(wallet, sessionsDomain, {
+      channelId,
       maxAmount,
-      nonce,
-      deadline,
-      previousConsumption: 0n,
-      previousSessionId: '0x' + '00'.repeat(32),
+      deadline: BigInt(deadline),
     });
 
     // Build the header payload
     const authPayload = {
-      sessionId,
-      maxAmountUsdc: maxAmount.toString(),
-      nonce,
-      deadline,
-      buyerSig: signature,
+      channelId,
+      cumulativeAmount: '0',
+      spendingAuthSig: reserveAuthSig,
       buyerEvmAddr,
       sellerEvmAddr,
-      previousConsumption: '0',
-      previousSessionId: '0x' + '00'.repeat(32),
+      metadataHash: ZERO_METADATA_HASH,
+      metadata: '',
+      reserveSalt: salt,
+      reserveMaxAmount: maxAmount.toString(),
+      reserveDeadline: deadline,
     };
 
     const authBase64 = Buffer.from(JSON.stringify(authPayload)).toString('base64');

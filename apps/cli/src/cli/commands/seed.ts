@@ -323,6 +323,8 @@ export function registerSeedCommand(program: Command): void {
           `  enabled providers: ${effectiveSellerConfig.enabledProviders.length > 0 ? effectiveSellerConfig.enabledProviders.join(', ') : '(none)'}`
         )
       )
+      const minBudgetPerRequest = config.payments.minBudgetPerRequest ?? '10000'
+      console.log(chalk.dim(`  min budget per request: ${minBudgetPerRequest} base units`))
       console.log(chalk.dim(`  reserve floor: ${effectiveSellerConfig.reserveFloor}`))
       console.log(chalk.dim(`  max concurrent buyers: ${effectiveSellerConfig.maxConcurrentBuyers}`))
       console.log('')
@@ -348,12 +350,16 @@ export function registerSeedCommand(program: Command): void {
           defaultDepositAmountUSDC: defaultDepositAmountUSDCBaseUnits,
           sellerWalletAddress,
           paymentConfig,
+          minBudgetPerRequest: config.payments.minBudgetPerRequest ?? '10000',
           // Top-level fields required by the node for contract clients + EIP-712 domain
           ...(paymentConfig?.crypto ? {
             rpcUrl: paymentConfig.crypto.rpcUrl,
-            depositsContractAddress: paymentConfig.crypto.depositsContractAddress,
-            sessionsContractAddress: paymentConfig.crypto.sessionsContractAddress,
+            depositsAddress: paymentConfig.crypto.depositsContractAddress,
+            sessionsAddress: paymentConfig.crypto.sessionsContractAddress,
             usdcAddress: paymentConfig.crypto.usdcAddress,
+            identityRegistryAddress: resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).identityRegistryAddress,
+            statsAddress: resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).statsContractAddress,
+            stakingAddress: resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).stakingContractAddress,
             chainId: resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).evmChainId,
           } : {}),
         },

@@ -1,41 +1,111 @@
-import { type AbstractSigner, type TypedDataDomain } from 'ethers';
+import { type AbstractSigner, type TypedDataDomain, AbiCoder, keccak256 } from 'ethers';
 import type { Identity } from '../../p2p/identity.js';
 import { signData, verifySignature } from '../../p2p/identity.js';
 
 // =========================================================================
-// EIP-712 Spending Authorization (on-chain) — verified by contract
+// EIP-712 Types — AntSeed SpendingAuth (cumulative payment authorization)
 // =========================================================================
 
 export const SPENDING_AUTH_TYPES = {
   SpendingAuth: [
-    { name: 'seller', type: 'address' },
-    { name: 'sessionId', type: 'bytes32' },
-    { name: 'maxAmount', type: 'uint256' },
-    { name: 'nonce', type: 'uint256' },
-    { name: 'deadline', type: 'uint256' },
-    { name: 'previousConsumption', type: 'uint256' },
-    { name: 'previousSessionId', type: 'bytes32' },
+    { name: 'channelId', type: 'bytes32' },
+    { name: 'cumulativeAmount', type: 'uint256' },
+    { name: 'metadataHash', type: 'bytes32' },
   ],
 };
 
+export const RESERVE_AUTH_TYPES = {
+  ReserveAuth: [
+    { name: 'channelId', type: 'bytes32' },
+    { name: 'maxAmount', type: 'uint128' },
+    { name: 'deadline', type: 'uint256' },
+  ],
+};
+
+// =========================================================================
+// Message interfaces
+// =========================================================================
+
 export interface SpendingAuthMessage {
-  seller: string;
-  sessionId: string;
-  maxAmount: bigint;
-  nonce: number;
-  deadline: number;
-  previousConsumption: bigint;
-  previousSessionId: string;
+  channelId: string;
+  cumulativeAmount: bigint;
+  metadataHash: string; // bytes32 hex
 }
+
+export interface ReserveAuthMessage {
+  channelId: string;
+  maxAmount: bigint;
+  deadline: bigint;
+}
+
+// =========================================================================
+// Metadata encoding
+// =========================================================================
+
+export interface SpendingAuthMetadata {
+  cumulativeInputTokens: bigint;
+  cumulativeOutputTokens: bigint;
+  cumulativeLatencyMs: bigint;
+  cumulativeRequestCount: bigint;
+}
+
+export function encodeMetadata(metadata: SpendingAuthMetadata): string {
+  const coder = AbiCoder.defaultAbiCoder();
+  return coder.encode(
+    ['uint256', 'uint256', 'uint256', 'uint256'],
+    [metadata.cumulativeInputTokens, metadata.cumulativeOutputTokens, metadata.cumulativeLatencyMs, metadata.cumulativeRequestCount],
+  );
+}
+
+export function computeMetadataHash(metadata: SpendingAuthMetadata): string {
+  return keccak256(encodeMetadata(metadata));
+}
+
+export const ZERO_METADATA: SpendingAuthMetadata = {
+  cumulativeInputTokens: 0n,
+  cumulativeOutputTokens: 0n,
+  cumulativeLatencyMs: 0n,
+  cumulativeRequestCount: 0n,
+};
+
+export const ZERO_METADATA_HASH: string = computeMetadataHash(ZERO_METADATA);
+
+// =========================================================================
+// Channel ID computation (must match AntseedSessions.computeChannelId)
+// =========================================================================
+
+/**
+ * Compute the deterministic channelId.
+ * Must match: keccak256(abi.encode(buyer, seller, salt))
+ */
+export function computeChannelId(
+  buyer: string,
+  seller: string,
+  salt: string,
+): string {
+  const coder = AbiCoder.defaultAbiCoder();
+  return keccak256(coder.encode(
+    ['address', 'address', 'bytes32'],
+    [buyer, seller, salt],
+  ));
+}
+
+// =========================================================================
+// EIP-712 Domain helpers
+// =========================================================================
 
 export function makeSessionsDomain(chainId: number, contractAddress: string): TypedDataDomain {
   return {
     name: 'AntseedSessions',
-    version: '1',
+    version: '7',
     chainId,
     verifyingContract: contractAddress,
   };
 }
+
+// =========================================================================
+// Signing functions — EIP-712 (on-chain)
+// =========================================================================
 
 export async function signSpendingAuth(
   signer: AbstractSigner,
@@ -45,46 +115,17 @@ export async function signSpendingAuth(
   return signer.signTypedData(domain, SPENDING_AUTH_TYPES, msg);
 }
 
-// =========================================================================
-// Ed25519 signatures (off-chain P2P) — bilateral receipt proof
-// =========================================================================
-
-export function buildReceiptMessage(
-  sessionId: Uint8Array,
-  runningTotal: bigint,
-  requestCount: number,
-  responseHash: Uint8Array,
-): Uint8Array {
-  if (sessionId.length !== 32) throw new Error(`sessionId must be 32 bytes, got ${sessionId.length}`);
-  if (responseHash.length !== 32) throw new Error(`responseHash must be 32 bytes, got ${responseHash.length}`);
-  const msg = new Uint8Array(76);
-  msg.set(sessionId, 0);
-  const totalBuf = new ArrayBuffer(8);
-  new DataView(totalBuf).setBigUint64(0, runningTotal, true);
-  msg.set(new Uint8Array(totalBuf), 32);
-  const countBuf = new ArrayBuffer(4);
-  new DataView(countBuf).setUint32(0, requestCount, true);
-  msg.set(new Uint8Array(countBuf), 40);
-  msg.set(responseHash, 44);
-  return msg;
+export async function signReserveAuth(
+  signer: AbstractSigner,
+  domain: TypedDataDomain,
+  msg: ReserveAuthMessage,
+): Promise<string> {
+  return signer.signTypedData(domain, RESERVE_AUTH_TYPES, msg);
 }
 
-export function buildAckMessage(
-  sessionId: Uint8Array,
-  runningTotal: bigint,
-  requestCount: number,
-): Uint8Array {
-  if (sessionId.length !== 32) throw new Error(`sessionId must be 32 bytes, got ${sessionId.length}`);
-  const msg = new Uint8Array(44);
-  msg.set(sessionId, 0);
-  const totalBuf = new ArrayBuffer(8);
-  new DataView(totalBuf).setBigUint64(0, runningTotal, true);
-  msg.set(new Uint8Array(totalBuf), 32);
-  const countBuf = new ArrayBuffer(4);
-  new DataView(countBuf).setUint32(0, requestCount, true);
-  msg.set(new Uint8Array(countBuf), 40);
-  return msg;
-}
+// =========================================================================
+// Ed25519 signatures (off-chain P2P)
+// =========================================================================
 
 export async function signMessageEd25519(
   identity: Identity,

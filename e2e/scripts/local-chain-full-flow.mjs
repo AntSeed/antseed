@@ -31,7 +31,7 @@ const FUND_ETH = process.env.FLOW_FUND_ETH ?? "2ether";
 
 const scriptDir = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = resolve(scriptDir, "..", "..");
-const contractsDir = resolve(repoRoot, "packages", "node", "contracts");
+const contractsDir = resolve(repoRoot, "packages", "contracts");
 
 function logStep(message) {
   console.log(`\n[flow] ${message}`);

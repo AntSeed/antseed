@@ -49,13 +49,6 @@ export async function checkSellerReadiness(
     command: hasStake ? undefined : 'antseed stake 10',
   });
 
-  // 4. Token rate
-  checks.push({
-    name: 'Token rate',
-    passed: account.tokenRate > 0n,
-    message: account.tokenRate > 0n ? `Rate: ${account.tokenRate}` : 'Token rate not set',
-  });
-
   return checks;
 }
 

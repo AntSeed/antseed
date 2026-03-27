@@ -24,9 +24,13 @@ export type { DepositsClientConfig, BuyerBalanceInfo } from './evm/deposits-clie
 export { SessionsClient } from './evm/sessions-client.js';
 export type { SessionsClientConfig, SessionInfo } from './evm/sessions-client.js';
 
-// Identity client (registration, reputation)
+// Identity client (ERC-8004 IdentityRegistry)
 export { IdentityClient } from './evm/identity-client.js';
-export type { IdentityClientConfig, ProvenReputation, FeedbackSummary } from './evm/identity-client.js';
+export type { IdentityClientConfig } from './evm/identity-client.js';
+
+// Stats client (AntseedStats)
+export { StatsClient } from './evm/stats-client.js';
+export type { StatsClientConfig, AgentStats } from './evm/stats-client.js';
 
 // Staking client (seller staking, token rate, slashing)
 export { StakingClient } from './evm/staking-client.js';
@@ -36,14 +40,19 @@ export type { StakingClientConfig, SellerAccountInfo } from './evm/staking-clien
 export { identityToEvmWallet, identityToEvmAddress } from './evm/keypair.js';
 export {
   signSpendingAuth,
+  signReserveAuth,
   makeSessionsDomain,
   SPENDING_AUTH_TYPES,
+  RESERVE_AUTH_TYPES,
   signMessageEd25519,
-  buildReceiptMessage,
-  buildAckMessage,
   verifyMessageEd25519,
+  computeMetadataHash,
+  encodeMetadata,
+  computeChannelId,
+  ZERO_METADATA,
+  ZERO_METADATA_HASH,
 } from './evm/signatures.js';
-export type { SpendingAuthMessage } from './evm/signatures.js';
+export type { SpendingAuthMessage, ReserveAuthMessage, SpendingAuthMetadata } from './evm/signatures.js';
 
 // ANTS token
 export { ANTSTokenClient } from './evm/ants-token-client.js';

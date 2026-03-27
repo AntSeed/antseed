@@ -18,8 +18,9 @@ import { isKnownServiceApiProtocol } from "../types/service-api.js";
 import { encodeMetadataForSigning } from "./metadata-codec.js";
 import { debugWarn } from "../utils/debug.js";
 import { bytesToHex } from "../utils/hex.js";
-// Announcer uses identityClient for on-chain reputation and staking checks
-import type { IdentityClient } from "../payments/evm/identity-client.js";
+// Announcer uses StatsClient + StakingClient for on-chain stats lookup
+import type { StatsClient } from "../payments/evm/stats-client.js";
+import type { StakingClient } from "../payments/evm/staking-client.js";
 import { identityToEvmAddress } from "../payments/evm/keypair.js";
 
 export interface AnnouncerConfig {
@@ -45,9 +46,10 @@ export interface AnnouncerConfig {
   offerings?: PeerOffering[];
   stakeAmountUSDC?: number;
   trustScore?: number;
-  /** @deprecated Use identityClient for payments-enabled checks */
+  /** @deprecated Use statsClient for payments-enabled checks */
   paymentsEnabled?: boolean;
-  identityClient?: IdentityClient;
+  statsClient?: StatsClient;
+  stakingClient?: StakingClient;
   reannounceIntervalMs: number;
   signalingPort: number;
 }
@@ -160,18 +162,15 @@ export class PeerAnnouncer {
       const evmAddress = identityToEvmAddress(this.config.identity);
       metadata.evmAddress = evmAddress;
 
-      if (includeOnChainReputation && this.config.identityClient) {
+      if (includeOnChainReputation && this.config.statsClient && this.config.stakingClient) {
         try {
-          const tokenId = await this.config.identityClient.getTokenId(evmAddress);
-          const reputation = await this.config.identityClient.getReputation(tokenId);
-          metadata.onChainReputation = reputation.qualifiedProvenSignCount;
-          metadata.onChainSessionCount =
-            reputation.firstSignCount +
-            reputation.qualifiedProvenSignCount +
-            reputation.unqualifiedProvenSignCount;
-          metadata.onChainDisputeCount = reputation.ghostCount;
+          const agentId = await this.config.stakingClient.getAgentId(evmAddress);
+          const stats = await this.config.statsClient.getStats(agentId);
+          metadata.onChainReputation = stats.sessionCount;
+          metadata.onChainSessionCount = stats.sessionCount;
+          metadata.onChainDisputeCount = stats.ghostCount;
         } catch {
-          // Identity contract lookup failed — skip on-chain reputation for this cycle
+          // Stats/staking contract lookup failed — skip on-chain stats for this cycle
         }
       } else if (this._latestMetadata) {
         metadata.onChainReputation = this._latestMetadata.onChainReputation;

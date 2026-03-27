@@ -221,7 +221,7 @@ describe('Payment negotiation: seller sends PaymentRequired on 402', () => {
     } catch (err) {
       // Negotiation may throw on timeout — that's expected with unreachable RPC
       expect(err).toBeDefined();
-      expect((err as Error).message).toMatch(/timeout|failed|PaymentRequired/i);
+      expect((err as Error).message).toMatch(/timed?\s*out|failed|PaymentRequired|Lock confirmation/i);
     }
   });
 });

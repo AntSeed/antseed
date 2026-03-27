@@ -184,12 +184,13 @@ export class ProxyMux {
   /** Route an incoming frame to the correct handler based on message type. */
   async handleFrame(frame: FramedMessage): Promise<void> {
     try {
+      debugLog(`[ProxyMux] handleFrame type=${frame.type} (0x${frame.type.toString(16)}) payloadLen=${frame.payload?.length ?? 0}`);
       switch (frame.type) {
         case MessageType.HttpRequest: {
           // Seller side: incoming request from buyer
           const request = decodeHttpRequest(frame.payload);
           debugLog(
-            `[ProxyMux] recv request reqId=${request.requestId.slice(0, 8)} chunked=${request.headers[ANTSEED_UPLOAD_CHUNK_HEADER] === 'chunked' ? "true" : "false"} bodyBytes=${request.body.length}`,
+            `[ProxyMux] recv request reqId=${request.requestId.slice(0, 8)} chunked=${request.headers[ANTSEED_UPLOAD_CHUNK_HEADER] === 'chunked' ? "true" : "false"} bodyBytes=${request.body?.length ?? 0} bodyType=${typeof request.body}`,
           );
           if (request.headers[ANTSEED_UPLOAD_CHUNK_HEADER] === 'chunked') {
             // Body will arrive via HttpRequestChunk/HttpRequestEnd — start buffering.
@@ -286,7 +287,7 @@ export class ProxyMux {
           // Buyer side: response from seller (start frame for streams).
           const response = decodeHttpResponse(frame.payload);
           debugLog(
-            `[ProxyMux] recv response reqId=${response.requestId.slice(0, 8)} status=${response.statusCode} bytes=${response.body.length} streamingStart=${response.headers[ANTSEED_STREAMING_RESPONSE_HEADER] === '1' ? "true" : "false"}`,
+            `[ProxyMux] recv response reqId=${response.requestId.slice(0, 8)} status=${response.statusCode} bytes=${response.body?.length ?? 0} streamingStart=${response.headers[ANTSEED_STREAMING_RESPONSE_HEADER] === '1' ? "true" : "false"}`,
           );
           const handler = this._responseHandlers.get(response.requestId);
           if (handler) {

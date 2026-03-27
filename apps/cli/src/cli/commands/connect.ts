@@ -328,6 +328,8 @@ export function registerConnectCommand(program: Command): void {
             ? String(Math.round(parseFloat(cryptoOverrides.defaultLockAmountUSDC) * 1_000_000))
             : '1000000',
           platformFeeRate: config.payments?.platformFeeRate,
+          maxPerRequestUsdc: config.payments?.maxPerRequestUsdc ?? '100000',
+          maxReserveAmountUsdc: config.payments?.maxReserveAmountUsdc ?? '1000000',
         }
       }
 
@@ -344,6 +346,10 @@ export function registerConnectCommand(program: Command): void {
           `  max pricing defaults (USD/1M): input=${effectiveBuyerConfig.maxPricing.defaults.inputUsdPerMillion}, output=${effectiveBuyerConfig.maxPricing.defaults.outputUsdPerMillion}`
         )
       )
+      const maxPerRequestUsdc = config.payments?.maxPerRequestUsdc ?? '100000'
+      const maxReserveAmountUsdc = config.payments?.maxReserveAmountUsdc ?? '1000000'
+      console.log(chalk.dim(`  max per-request USDC: ${(Number(maxPerRequestUsdc) / 1_000_000).toFixed(6)}`))
+      console.log(chalk.dim(`  max reserve USDC: ${(Number(maxReserveAmountUsdc) / 1_000_000).toFixed(6)}`))
       console.log(chalk.dim(`  min peer reputation: ${effectiveBuyerConfig.minPeerReputation}`))
       console.log(chalk.dim(`  proxy port: ${effectiveBuyerConfig.proxyPort}`))
       if (pinnedPeerId) {

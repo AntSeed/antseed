@@ -37,10 +37,22 @@ export { BalanceManager } from './payments/balance-manager.js';
 export { DepositsClient, type DepositsClientConfig, type BuyerBalanceInfo } from './payments/evm/deposits-client.js';
 export { SessionsClient, type SessionsClientConfig, type SessionInfo } from './payments/evm/sessions-client.js';
 export { IdentityClient, type IdentityClientConfig } from './payments/evm/identity-client.js';
+export { StatsClient, type StatsClientConfig, type AgentStats } from './payments/evm/stats-client.js';
 export { StakingClient, type StakingClientConfig, type SellerAccountInfo } from './payments/evm/staking-client.js';
 export { identityToEvmWallet, identityToEvmAddress } from './payments/evm/keypair.js';
-export { signSpendingAuth, makeSessionsDomain } from './payments/evm/signatures.js';
-export type { SpendingAuthMessage } from './payments/evm/signatures.js';
+export {
+  signSpendingAuth,
+  signReserveAuth,
+  makeSessionsDomain,
+  SPENDING_AUTH_TYPES,
+  RESERVE_AUTH_TYPES,
+  computeMetadataHash,
+  encodeMetadata,
+  computeChannelId,
+  ZERO_METADATA,
+  ZERO_METADATA_HASH,
+} from './payments/evm/signatures.js';
+export type { SpendingAuthMessage, ReserveAuthMessage, SpendingAuthMetadata } from './payments/evm/signatures.js';
 export { NatTraversal, type NatMapping, type NatTraversalResult } from './p2p/nat-traversal.js';
 export { BuyerPaymentManager } from './payments/buyer-payment-manager.js';
 export type { BuyerPaymentConfig } from './payments/buyer-payment-manager.js';

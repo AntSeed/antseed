@@ -61,14 +61,12 @@ describe('PaymentMux', () => {
       mux.onSpendingAuth(handler);
 
       const payload = {
-        sessionId: 'a'.repeat(64),
-        maxAmountUsdc: '1000000',
-        nonce: 1,
-        deadline: 1700000000,
-        buyerSig: 'b'.repeat(128),
+        channelId: '0x' + 'aa'.repeat(32),
+        cumulativeAmount: '1000000',
+        metadataHash: '0x' + 'cc'.repeat(32),
+        metadata: '0x' + 'dd'.repeat(128),
+        spendingAuthSig: '0x' + 'ee'.repeat(65),
         buyerEvmAddr: '0x' + 'ab'.repeat(20),
-        previousConsumption: '0',
-        previousSessionId: '0x' + '00'.repeat(32),
       };
       const frame: FramedMessage = {
         type: MessageType.SpendingAuth,
@@ -87,7 +85,7 @@ describe('PaymentMux', () => {
       const handler = vi.fn();
       mux.onAuthAck(handler);
 
-      const payload = { sessionId: 'a'.repeat(64), nonce: 42 };
+      const payload = { channelId: '0x' + 'aa'.repeat(32) };
       const frame: FramedMessage = {
         type: MessageType.AuthAck,
         messageId: 1,
@@ -99,23 +97,22 @@ describe('PaymentMux', () => {
       expect(handler).toHaveBeenCalledWith(payload);
     });
 
-    it('dispatches SellerReceipt', async () => {
+    it('dispatches PaymentRequired', async () => {
       const conn = mockConnection();
       const mux = new PaymentMux(conn);
       const handler = vi.fn();
-      mux.onSellerReceipt(handler);
+      mux.onPaymentRequired(handler);
 
       const payload = {
-        sessionId: 'a'.repeat(64),
-        runningTotal: '500000',
-        requestCount: 5,
-        responseHash: 'c'.repeat(64),
-        sellerSig: 'd'.repeat(128),
+        sellerEvmAddr: '0x' + 'ab'.repeat(20),
+        minBudgetPerRequest: '10000',
+        suggestedAmount: '100000',
+        requestId: 'req-123',
       };
       const frame: FramedMessage = {
-        type: MessageType.SellerReceipt,
+        type: MessageType.PaymentRequired,
         messageId: 2,
-        payload: codec.encodeSellerReceipt(payload),
+        payload: codec.encodePaymentRequired(payload),
       };
 
       const result = await mux.handleFrame(frame);
@@ -123,45 +120,22 @@ describe('PaymentMux', () => {
       expect(handler).toHaveBeenCalledWith(payload);
     });
 
-    it('dispatches BuyerAck', async () => {
+    it('dispatches NeedAuth', async () => {
       const conn = mockConnection();
       const mux = new PaymentMux(conn);
       const handler = vi.fn();
-      mux.onBuyerAck(handler);
+      mux.onNeedAuth(handler);
 
       const payload = {
-        sessionId: 'a'.repeat(64),
-        runningTotal: '500000',
-        requestCount: 5,
-        buyerSig: 'e'.repeat(128),
+        channelId: '0x' + 'aa'.repeat(32),
+        requiredCumulativeAmount: '500000',
+        currentAcceptedCumulative: '200000',
+        deposit: '1000000',
       };
       const frame: FramedMessage = {
-        type: MessageType.BuyerAck,
+        type: MessageType.NeedAuth,
         messageId: 3,
-        payload: codec.encodeBuyerAck(payload),
-      };
-
-      const result = await mux.handleFrame(frame);
-      expect(result).toBe(true);
-      expect(handler).toHaveBeenCalledWith(payload);
-    });
-
-    it('dispatches TopUpRequest', async () => {
-      const conn = mockConnection();
-      const mux = new PaymentMux(conn);
-      const handler = vi.fn();
-      mux.onTopUpRequest(handler);
-
-      const payload = {
-        sessionId: 'a'.repeat(64),
-        currentUsed: '400000',
-        currentMax: '500000',
-        requestedAdditional: '500000',
-      };
-      const frame: FramedMessage = {
-        type: MessageType.TopUpRequest,
-        messageId: 4,
-        payload: codec.encodeTopUpRequest(payload),
+        payload: codec.encodeNeedAuth(payload),
       };
 
       const result = await mux.handleFrame(frame);
@@ -174,14 +148,12 @@ describe('PaymentMux', () => {
       const mux = new PaymentMux(conn);
 
       const payload = {
-        sessionId: 'a'.repeat(64),
-        maxAmountUsdc: '1000000',
-        nonce: 1,
-        deadline: 1700000000,
-        buyerSig: 'b'.repeat(128),
+        channelId: '0x' + 'aa'.repeat(32),
+        cumulativeAmount: '1000000',
+        metadataHash: '0x' + 'cc'.repeat(32),
+        metadata: '0x' + 'dd'.repeat(128),
+        spendingAuthSig: '0x' + 'ee'.repeat(65),
         buyerEvmAddr: '0x' + 'ab'.repeat(20),
-        previousConsumption: '0',
-        previousSessionId: '0x' + '00'.repeat(32),
       };
       const frame: FramedMessage = {
         type: MessageType.SpendingAuth,
@@ -191,6 +163,46 @@ describe('PaymentMux', () => {
 
       const result = await mux.handleFrame(frame);
       expect(result).toBe(true);
+    });
+  });
+
+  describe('send methods encode and write to transport', () => {
+    it('sendNeedAuth writes encoded frame', () => {
+      const conn = mockConnection();
+      const mux = new PaymentMux(conn);
+
+      const payload = {
+        channelId: '0x' + 'aa'.repeat(32),
+        requiredCumulativeAmount: '500000',
+        currentAcceptedCumulative: '200000',
+        deposit: '1000000',
+      };
+      mux.sendNeedAuth(payload);
+
+      expect(conn.send).toHaveBeenCalledOnce();
+      // The send receives a framed binary message
+      const sentFrame = (conn.send as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(sentFrame).toBeInstanceOf(Uint8Array);
+      expect(sentFrame.length).toBeGreaterThan(0);
+    });
+
+    it('sendSpendingAuth writes encoded frame', () => {
+      const conn = mockConnection();
+      const mux = new PaymentMux(conn);
+
+      const payload = {
+        channelId: '0x' + 'aa'.repeat(32),
+        cumulativeAmount: '1000000',
+        metadataHash: '0x' + 'cc'.repeat(32),
+        metadata: '0x' + 'dd'.repeat(128),
+        spendingAuthSig: '0x' + 'ee'.repeat(65),
+        buyerEvmAddr: '0x' + 'ab'.repeat(20),
+      };
+      mux.sendSpendingAuth(payload);
+
+      expect(conn.send).toHaveBeenCalledOnce();
+      const sentFrame = (conn.send as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(sentFrame).toBeInstanceOf(Uint8Array);
     });
   });
 });

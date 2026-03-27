@@ -1,91 +1,101 @@
 ---
 slug: reputation-from-settlement
-title: "Reputation from Settlement"
+title: "Stats from Settlement"
 authors: [antseed]
 tags: [reputation, mechanism-design, Sybil-resistance, game-theory]
-description: How AntSeed derives on-chain reputation directly from payment settlement — no oracles, no validators, no self-reporting.
-keywords: [reputation system, Sybil resistance, proof of delivery, mechanism design, P2P reputation, anti-gaming, staking slashing]
+description: How AntSeed derives on-chain stats directly from payment settlement — factual metrics, not subjective scores. No oracles, no validators, no self-reporting.
+keywords: [stats, reputation, Sybil resistance, settlement, mechanism design, P2P reputation, anti-gaming, staking slashing]
 image: /og-image.jpg
 date: 2026-03-24
 ---
 
 Reputation in decentralized networks typically falls into two categories: self-reported metrics (trivially gameable — a node reports its own uptime, latency, and success rate) or validator-based attestations (introduces a trusted third party whose incentives may not align with the network). Both approaches fail at the fundamental thing reputation is supposed to do: distinguish real service delivery from fake activity.
 
-AntSeed takes a different approach. Reputation is not a separate system. It is a side effect of payment settlement.
+AntSeed takes a different approach. There is no reputation system. There are **stats** — factual metrics derived from payment settlement, written by the contract itself. You cannot self-report. You cannot inflate. The settlement record *is* the data.
 
 <!-- truncate -->
 
-## Reputation as a Side Effect
+## Stats, Not Reputation
 
-The AntSeed sessions contract (AntseedSessions) maintains per-seller reputation counters: `firstSignCount`, `qualifiedProvenSignCount`, `totalQualifiedTokenVolume`, and `ghostCount`. These counters are updated atomically inside the `reserve()` and `settle()` functions — the same contract calls that handle payment.
+The word "reputation" implies subjectivity — ratings, scores, weighted opinions. AntSeed's on-chain record is none of these. The **AntseedStats** contract maintains per-agent counters that are updated atomically during settlement. No separate oracle. No reporting step. No delay between service delivery and metric update.
 
-There is no separate reputation oracle. There is no reporting step. There is no delay between service delivery and reputation update. When a seller settles a proven session, their reputation counter increments in the same transaction that moves funds. The reputation data is unforgeable because it derives from the proof-of-prior-delivery chain: each proven sign references a prior settlement, creating a cryptographic linkage that cannot be fabricated without actual on-chain payment history.
+The counters are:
 
-This eliminates an entire class of attacks. You cannot inflate your reputation without actually settling payments. You cannot backdate reputation. You cannot report metrics that diverge from what the contract recorded. The settlement record *is* the reputation.
+- `sessionCount` — completed sessions
+- `ghostCount` — sessions where the seller disappeared (timed out)
+- `totalVolumeUsdc` — cumulative USDC settled
+- `totalInputTokens` — cumulative input tokens across all sessions
+- `totalOutputTokens` — cumulative output tokens across all sessions
+- `totalLatencyMs` — cumulative latency across all requests
+- `totalRequestCount` — cumulative requests served
+- `lastSettledAt` — timestamp of most recent settlement
 
-## Qualified vs. Unqualified
+These values are keyed by ERC-8004 agentId. They cannot be written by any external caller. Only the Sessions contract — during `settle()`, `close()`, or `withdraw()` — can update them. This eliminates an entire class of attacks: you cannot inflate your stats without actual USDC changing hands through real settlements.
 
-Not all proven signs are equal. A proven sign accrues reputation only if the buyer meets a diversity threshold: they must have been charged by at least 3 unique sellers in the network.
+## Three Update Paths
 
-This is the first and most important anti-gaming layer. Without it, a single attacker could create one buyer address and one seller address, cycle funds between them, and accumulate arbitrary reputation. The diversity requirement means that even if you control the buyer, you need to have paid 3 distinct sellers before your proven signs start counting. Those payments to other sellers are real costs that cannot be recovered.
+The stats system has three distinct update paths, each triggered by a different settlement outcome. The distinction matters because it determines what "one session" means in the on-chain record.
 
-Unqualified proven signs still settle payment normally. The seller gets paid. The proof chain extends. But the `qualifiedProvenSignCount` counter does not increment, and no emission points are awarded. This means the payment protocol works for everyone from day one, but reputation farming requires genuine network participation.
+**`close()` — updateType 0 (complete).** The seller calls `close()` with the buyer's latest SpendingAuth to finalize a session. The contract charges the cumulative amount, credits the seller, releases remaining reservation, and updates stats. Critically, this **increments sessionCount by 1**. One completed session equals one count. This is the clean path — both parties fulfilled their obligations.
 
-## Seven Layers of Defense
+**`settle()` — updateType 2 (partial).** The seller calls `settle()` mid-session to collect earnings so far without closing the session. This accumulates volume, tokens, latency, and request count into the stats, but **does not increment sessionCount**. Why? Because the session is still open. If a seller settles 5 times during a long session and then closes it, that's 5 partial settlements and 1 session count. This prevents artificial inflation — you can't turn one real session into five by settling frequently.
 
-No single mechanism is sufficient against determined attackers. AntSeed layers seven independent defenses, each targeting a different attack vector.
+**`withdraw()` — updateType 1 (ghost).** When a session times out and the buyer (or anyone) calls `withdraw()` to reclaim locked funds, the contract **increments ghostCount**. The seller gets nothing. The buyer gets their full reservation back. A ghost means the seller failed to settle before the deadline — they either crashed, went offline, or abandoned the session.
 
-**Buyer diversity** requires 3 unique sellers before proven signs qualify. This prevents the simplest attack: a single colluding buyer-seller pair cycling funds. The cost to bypass this is real payments to 3 other sellers, which represents genuine economic activity in the network. An attacker controlling multiple seller addresses still needs to stake each one independently.
+The three paths are exhaustive. Every session ends in exactly one of these outcomes. The stats record which one it was.
 
-**Minimum deposit** sets a $10 USDC floor to open a deposit account. This is not a large amount, but it prices out the cheapest form of Sybil attack: creating thousands of zero-cost addresses to manufacture diversity. At $10 per account, creating enough fake buyers to satisfy diversity requirements for a farming operation has a concrete and scaling cost.
+## Why Stats Can't Be Faked
 
-**Dynamic credit limits** prevent a new account from dumping large amounts of capital on day one. Credit grows as a function of interaction count, account age, proven session history, and feedback scores. A fresh Sybil account starts with minimal credit regardless of how much USDC backs it. This means that even a well-funded attacker must invest time — not just money — to scale up.
+The counters have a critical property: they are written exclusively by contract logic during fund movement. Consider what an attacker would need to do to inflate their stats:
 
-**Inactivity lock** freezes accounts after 90 days without settlement activity. This handles a subtle long-game strategy: creating Sybil accounts during a low-cost period, letting them age to accumulate time-based bonuses, and activating them later. Dormant accounts lose their credit history and must re-establish activity to unlock.
+To increase `sessionCount`, they need a `close()` call, which requires a valid buyer-signed SpendingAuth, which requires a real reservation, which requires locked USDC from a real deposit. The cost of inflating session count is the gas cost plus the actual USDC that must be deposited and reserved.
 
-**Cooldown per pair** enforces a 7-day minimum between a buyer-seller pair's first session and their first proven sign. This prevents rapid-fire session farming where an attacker settles hundreds of micro-sessions in a single block to inflate counters. The attacker must maintain the colluding infrastructure across multiple days, increasing operational cost and detection surface.
+To increase `totalVolumeUsdc`, they need real USDC flowing through settlement. There is no way to record volume without moving money.
 
-**Minimum token threshold** ignores sessions below 1,000 tokens. Without this, an attacker could settle millions of near-empty sessions to inflate `qualifiedProvenSignCount` while minimizing actual compute costs. The threshold ensures that each counted session represents meaningful work.
+To decrease `ghostCount`, they would need to modify contract storage. They can't. The contract is the sole writer.
 
-**Stake-proportional cap** bounds effective reputation by economic commitment: `effectiveProvenSigns = min(actualProvenSigns, stake * 20)`. Even if an attacker bypasses every other defense and accumulates thousands of proven signs, their reputation influence is capped by the USDC they have at risk. To achieve high reputation, they must maintain proportionally high stake — which is subject to slashing.
+The metadata values — tokens, latency, request count — come from the `metadataHash` in the buyer's SpendingAuth signature. The buyer commits to these values by signing `keccak256(inputTokens, outputTokens, latencyMs, requestCount)`. The contract unpacks and accumulates them. A buyer could theoretically sign incorrect metadata, but they have no incentive to: the metadata feeds their own stats record, and the seller independently tracks the same values.
 
-Each layer independently raises the cost of attack. In combination, they create a cost function where the expense of manufacturing fake reputation exceeds the expected return from doing so.
+## Slashing Reads Stats
 
-## Staking as Accountability
+Seller staking is the economic commitment that backs service delivery. When a seller unstakes, the contract reads their stats to determine whether slashing applies. Four tiers:
 
-Sellers stake USDC to accept paid sessions. The stake is not just a routing signal — it is collateral that enforces a minimum standard of real delivery. Slash conditions are evaluated when a seller unstakes:
+**100% slash** — the seller has only ghost sessions (`sessionCount == 0` and `ghostCount > 0`). This is the harshest penalty. It targets pure ghosts: sellers who staked, accepted reservations, and never delivered. Every dollar of their stake is forfeit.
 
-- **100% slash** if the seller has zero qualified proven signs. This is the harshest penalty and targets pure farming: staking to appear legitimate without ever delivering qualifying service.
-- **50% slash** if fewer than 30% of the seller's total proven signs are qualified. This targets a subtler strategy: doing some real work but primarily farming unqualified sessions with controlled buyers.
-- **20% slash** if the seller has no qualified activity in the last 30 days. This penalizes stale participation — staking to occupy network capacity without active delivery.
-- **0% slash** for sellers with a clean record: at least 30% qualified ratio and recent activity.
+**50% slash** — high ghost ratio. The seller completed some sessions but ghosted on a disproportionate number. This targets unreliable sellers who deliver inconsistently — perhaps running unstable infrastructure or accepting more sessions than they can handle.
 
-The slash conditions create a clear economic calculus. If you stake $1,000 and never deliver qualified service, you lose $1,000. This makes reputation farming expensive even if an attacker finds a way to bypass the per-session defenses. The cost of the attack includes not just the operational overhead of maintaining Sybil infrastructure, but the capital at risk from slashing.
+**20% slash** — inactivity. The seller has a clean record but hasn't settled recently (`lastSettledAt` is stale). This penalizes passive staking — occupying network capacity and appearing in routing tables without actively serving. If you're staked, you should be delivering.
 
-Slashed funds go to the protocol reserve, which funds emission. This means that attackers directly subsidize honest participants.
+**0% slash** — clean record with recent activity. The seller completed sessions, maintained a low ghost ratio, and settled recently. Full stake returned.
 
-## Emission as Incentive
+The slashing tiers create a clear economic calculus. A seller who stakes $1,000 and ghosts on every session loses $1,000. A seller who delivers reliably gets their full stake back. The stats are the evidence, and the contract is the judge.
 
-ANTS token emission is the positive incentive counterpart to slashing. Seller emission points are calculated as:
+## ERC-8004 Feedback: The Subjective Layer
 
-```
-sellerPoints = E(P) * V(P) * feedbackMultiplier
-```
+Stats are factual. But some things can't be measured by a contract: was the response helpful? Was the model appropriate for the task? Did the seller's custom system prompt add value?
 
-Where `E(P)` is a reputation factor derived from qualified proven signs, `V(P)` is the token volume delivered, and `feedbackMultiplier` ranges from 0.5x to 1.5x based on buyer feedback scores.
+This is where ERC-8004 feedback comes in. Buyers can submit on-chain feedback — ratings and comments — tied to the seller's agentId. This feedback is subjective and clearly separated from the factual stats. It's recorded on the AntseedIdentity contract (which implements ERC-8004), not on AntseedStats.
 
-The distribution uses a Synthetix-style reward-per-point mechanism — O(1) gas per interaction, no epoch batching, no claim transactions. Points convert to ANTS at a rate determined by the total points accumulated across all participants in the period.
+The separation is intentional. Stats tell you "this seller completed 847 sessions, settled $12,340 USDC, served 2.1M tokens, with 3 ghosts." Feedback tells you "responses were fast but occasionally off-topic." Both are useful. Neither should be confused with the other.
 
-Buyers earn points too: for usage (USDC spent in qualified sessions), for submitting feedback (incentivizing the signal that modulates seller emission), and for diversity (transacting with more unique sellers). The split is 65% seller, 25% buyer, 10% protocol reserve.
+Feedback influences ANTS token emissions as a multiplier on the seller's volume-based points. Good feedback amplifies earnings; poor feedback dampens them. This creates an incentive for sellers to optimize not just for throughput (which stats capture) but for quality (which only buyers can judge).
 
-ANTS tokens are non-transferable until network maturity. This is a deliberate design choice. Transferability before the network has sufficient honest activity would allow early farmers to extract value before the anti-gaming mechanisms have enough data to distinguish real from fake participation. Non-transferability ensures that the only way to benefit from ANTS accumulation is to continue participating in the network.
+## USDC Volume-Based Emissions
+
+ANTS token emission ties directly to stats. Both buyers and sellers accrue emission points based on USDC volume flowing through settled sessions.
+
+Sellers earn points proportional to the volume they settle. This means a seller who processes $100 in real, settled payments earns more than one who processes $10. The stats — specifically `totalVolumeUsdc` — are the input to the emission calculation. Since volume can only increase through real settlements, emission farming requires real economic activity.
+
+Buyers earn points for spending. USDC deposited and settled through sessions accrues buyer-side emission points. This incentivizes genuine usage rather than parking funds in the deposit contract.
+
+The feedback multiplier modulates seller emissions: strong feedback increases the emission rate, weak feedback decreases it. This creates a feedback loop where the most valuable sellers (high volume, good reviews) earn the most ANTS, which aligns token distribution with actual network contribution.
 
 ## The Design Principle
 
-The key insight behind this system is that reputation does not need its own infrastructure. If your payment protocol already proves delivery — if settlement requires cryptographic evidence that service was rendered — then reputation is just the accumulated record of those proofs.
+The key insight is that stats don't need their own infrastructure. If your payment protocol already settles through a smart contract — if every session ends with a verifiable on-chain outcome — then the accumulated record of those outcomes is the only metric you need.
 
-Every additional system you bolt on (oracles, validators, reporting layers, attestation networks) introduces new trust assumptions and new attack surfaces. AntSeed's reputation has exactly the same trust assumptions as its payment protocol: the protocol contracts are correct, and the proof-of-prior-delivery chain is valid. No more, no less.
+Three numbers tell you almost everything about a seller: `sessionCount` (how much they've delivered), `ghostCount` (how often they've failed), and `totalVolumeUsdc` (how much economic value they've handled). These numbers are written by the contract during fund movement. They can't be inflated without real money. They can't be deflated without real failures.
 
-The anti-gaming layers exist not because the core mechanism is weak, but because any system with economic incentives will attract adversarial behavior. Each layer raises the cost of attack along a different dimension — capital, time, operational complexity, diversity of real network participation. The goal is not to make gaming impossible (it never is) but to make it more expensive than honest participation.
+Subjective quality lives in a separate layer (ERC-8004 feedback) where it belongs — clearly labeled as opinion, not confused with fact.
 
-That is the bar a reputation system needs to clear. Not perfection. Just a cost function where the honest strategy dominates.
+That is the bar an on-chain metrics system needs to clear. Not omniscience. Just facts that can't be faked, written by the same logic that moves the money.

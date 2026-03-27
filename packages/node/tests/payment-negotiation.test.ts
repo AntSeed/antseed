@@ -25,16 +25,13 @@ async function createTestIdentity(): Promise<Identity> {
   return { peerId, privateKey, publicKey };
 }
 
-const ZERO_BYTES32 = '0x' + '00'.repeat(32);
 const CHAIN_ID = 31337;
 const CONTRACT_ADDR = '0x' + 'dd'.repeat(20);
-const USDC_ADDR = '0x' + 'ee'.repeat(20);
 
 const SAMPLE_PAYMENT_REQUIRED: PaymentRequiredPayload = {
   sellerEvmAddr: '0x' + 'ab'.repeat(20),
-  tokenRate: '1000',
-  firstSignCap: '1000000',
-  suggestedAmount: '1000000',
+  minBudgetPerRequest: '10000',
+  suggestedAmount: '100000',
   requestId: 'req-' + 'a'.repeat(32),
 };
 
@@ -64,15 +61,13 @@ describe('PaymentRequired codec', () => {
   it('preserves all fields through encode/decode', () => {
     const payload: PaymentRequiredPayload = {
       sellerEvmAddr: '0x1234567890abcdef1234567890abcdef12345678',
-      tokenRate: '500',
-      firstSignCap: '2000000',
+      minBudgetPerRequest: '10000',
       suggestedAmount: '1500000',
       requestId: 'abc-123',
-    };
+        };
     const decoded = codec.decodePaymentRequired(codec.encodePaymentRequired(payload));
     expect(decoded.sellerEvmAddr).toBe(payload.sellerEvmAddr);
-    expect(decoded.tokenRate).toBe(payload.tokenRate);
-    expect(decoded.firstSignCap).toBe(payload.firstSignCap);
+    expect(decoded.minBudgetPerRequest).toBe(payload.minBudgetPerRequest);
     expect(decoded.suggestedAmount).toBe(payload.suggestedAmount);
     expect(decoded.requestId).toBe(payload.requestId);
   });
@@ -148,21 +143,15 @@ describe('SellerPaymentManager PaymentRequired', () => {
     const config: SellerPaymentConfig = {
       rpcUrl: 'http://127.0.0.1:8545',
       sessionsContractAddress: CONTRACT_ADDR,
-      stakingContractAddress: '0x' + 'cc'.repeat(20),
-      usdcAddress: USDC_ADDR,
-      chainId: CHAIN_ID,
+          chainId: CHAIN_ID,
       dataDir: tempDir,
     };
     manager = new SellerPaymentManager(sellerIdentity, config, store);
 
     vi.spyOn(manager.sessionsClient, 'reserve').mockResolvedValue('0xhash');
-    vi.spyOn(manager.sessionsClient, 'settle').mockResolvedValue('0xhash');
-    vi.spyOn(manager.sessionsClient, 'settleTimeout').mockResolvedValue('0xhash');
-    vi.spyOn(manager.stakingClient, 'getSellerAccount').mockResolvedValue({
-      stake: 100_000_000n,
-      stakedAt: BigInt(Date.now()),
-      tokenRate: 500n,
-    });
+    vi.spyOn(manager.sessionsClient, 'close').mockResolvedValue('0xhash');
+    vi.spyOn(manager.sessionsClient, 'requestTimeout').mockResolvedValue('0xhash');
+    vi.spyOn(manager.sessionsClient, 'withdraw').mockResolvedValue('0xhash');
   });
 
   afterEach(() => {
@@ -170,183 +159,31 @@ describe('SellerPaymentManager PaymentRequired', () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it('getPaymentRequirements returns null before init', () => {
-    expect(manager.getPaymentRequirements('req-1')).toBeNull();
-  });
-
-  it('init caches tokenRate and firstSignCap', async () => {
-    vi.spyOn(manager.sessionsClient, 'getFirstSignCap').mockResolvedValue(1_000_000n);
-    await manager.init();
-
+  it('getPaymentRequirements returns a valid payload immediately (no init needed)', () => {
     const req = manager.getPaymentRequirements('req-1');
     expect(req).not.toBeNull();
-    expect(req!.tokenRate).toBe('500');
-    expect(req!.firstSignCap).toBe('1000000');
-    expect(req!.suggestedAmount).toBe('100000'); // $0.10 first-sign suggested
-    expect(req!.sellerEvmAddr).toBe(identityToEvmAddress(sellerIdentity));
+    expect(req.minBudgetPerRequest).toBe('10000'); // default $0.01
+    expect(req.suggestedAmount).toBe('100000'); // $0.10 default
+    expect(req.sellerEvmAddr).toBe(identityToEvmAddress(sellerIdentity));
   });
 
-  it('init survives RPC failure gracefully', async () => {
-    vi.spyOn(manager.stakingClient, 'getSellerAccount').mockRejectedValue(new Error('RPC down'));
-    vi.spyOn(manager.sessionsClient, 'getFirstSignCap').mockRejectedValue(new Error('RPC down'));
-
-    await manager.init(); // should not throw
-    expect(manager.getPaymentRequirements('req-1')).toBeNull();
+  it('getPaymentRequirements includes the triggering requestId', () => {
+    expect(manager.getPaymentRequirements('req-aaa').requestId).toBe('req-aaa');
+    expect(manager.getPaymentRequirements('req-bbb').requestId).toBe('req-bbb');
   });
 
-  it('getPaymentRequirements includes the triggering requestId', async () => {
-    vi.spyOn(manager.sessionsClient, 'getFirstSignCap').mockResolvedValue(1_000_000n);
-    await manager.init();
-
-    expect(manager.getPaymentRequirements('req-aaa')!.requestId).toBe('req-aaa');
-    expect(manager.getPaymentRequirements('req-bbb')!.requestId).toBe('req-bbb');
-  });
-
-  it('suggestedAmount is independent of firstSignCap', async () => {
-    vi.spyOn(manager.sessionsClient, 'getFirstSignCap').mockResolvedValue(3_000_000n);
-    await manager.init();
-
-    const req = manager.getPaymentRequirements('req-1');
-    // suggestedAmount is the fixed cent-level default, not the contract cap
-    expect(req!.suggestedAmount).toBe('100000'); // $0.10
-    expect(req!.firstSignCap).toBe('3000000'); // contract cap still reported
-  });
-});
-
-// ═══════════════════════════════════════════════════════════════
-// Buyer: on-chain approval context
-// ═══════════════════════════════════════════════════════════════
-
-describe('SessionsClient.getBuyerApprovalContext', () => {
-  // We test via SellerPaymentManager's sessionsClient since we can't easily
-  // instantiate SessionsClient without a real provider. The manager
-  // exposes its client for spying.
-
-  let tempDir: string;
-  let store: SessionStore;
-  let sellerIdentity: Identity;
-  let manager: SellerPaymentManager;
-  let mockDepositsClient: { getBuyerBalance: ReturnType<typeof vi.fn> };
-
-  beforeEach(async () => {
-    tempDir = mkdtempSync(join(tmpdir(), 'sessions-ctx-'));
-    store = new SessionStore(tempDir);
-    sellerIdentity = await createTestIdentity();
-
-    const config: SellerPaymentConfig = {
+  it('minBudgetPerRequest can be configured', () => {
+    const customConfig: SellerPaymentConfig = {
       rpcUrl: 'http://127.0.0.1:8545',
       sessionsContractAddress: CONTRACT_ADDR,
-      stakingContractAddress: '0x' + 'cc'.repeat(20),
-      usdcAddress: USDC_ADDR,
-      chainId: CHAIN_ID,
+          chainId: CHAIN_ID,
       dataDir: tempDir,
+      minBudgetPerRequest: '50000',
     };
-    manager = new SellerPaymentManager(sellerIdentity, config, store);
-    mockDepositsClient = {
-      getBuyerBalance: vi.fn(),
-    };
-  });
+    const customManager = new SellerPaymentManager(sellerIdentity, customConfig, store);
 
-  afterEach(() => {
-    store.close();
-    rmSync(tempDir, { recursive: true, force: true });
-  });
-
-  it('returns isFirstSign=true when latestSessionId is zero', async () => {
-    const sessions = manager.sessionsClient;
-    mockDepositsClient.getBuyerBalance.mockResolvedValue({
-      available: 10_000_000n,
-      reserved: 0n,
-      pendingWithdrawal: 0n,
-      lastActivityAt: 0n,
-    });
-    vi.spyOn(sessions, 'getFirstSignCap').mockResolvedValue(1_000_000n);
-    vi.spyOn(sessions, 'getLatestSessionId').mockResolvedValue(ZERO_BYTES32);
-    vi.spyOn(sessions, 'getFirstSessionTimestamp').mockResolvedValue(0n);
-    vi.spyOn(sessions, 'getProvenSignCooldown').mockResolvedValue(604800n); // 7 days
-
-    const ctx = await sessions.getBuyerApprovalContext('0xbuyer', '0xseller', mockDepositsClient);
-    expect(ctx.isFirstSign).toBe(true);
-    expect(ctx.cooldownRemainingSecs).toBe(0);
-    expect(ctx.buyerBalance.available).toBe(10_000_000n);
-    expect(ctx.firstSignCap).toBe(1_000_000n);
-  });
-
-  it('returns isFirstSign=false with cooldown when prior session exists', async () => {
-    const sessions = manager.sessionsClient;
-    const nowSecs = BigInt(Math.floor(Date.now() / 1000));
-    const threeDaysAgo = nowSecs - 259200n; // 3 days ago
-
-    mockDepositsClient.getBuyerBalance.mockResolvedValue({
-      available: 5_000_000n,
-      reserved: 1_000_000n,
-      pendingWithdrawal: 0n,
-      lastActivityAt: nowSecs,
-    });
-    vi.spyOn(sessions, 'getFirstSignCap').mockResolvedValue(1_000_000n);
-    vi.spyOn(sessions, 'getLatestSessionId').mockResolvedValue('0x' + 'aa'.repeat(32));
-    vi.spyOn(sessions, 'getFirstSessionTimestamp').mockResolvedValue(threeDaysAgo);
-    vi.spyOn(sessions, 'getProvenSignCooldown').mockResolvedValue(604800n); // 7 days
-
-    const ctx = await sessions.getBuyerApprovalContext('0xbuyer', '0xseller', mockDepositsClient);
-    expect(ctx.isFirstSign).toBe(false);
-    expect(ctx.latestSessionId).toBe('0x' + 'aa'.repeat(32));
-    // Cooldown: 7 days - 3 days = ~4 days remaining
-    expect(ctx.cooldownRemainingSecs).toBeGreaterThan(300000); // > 3 days in secs
-    expect(ctx.cooldownRemainingSecs).toBeLessThan(400000); // < 5 days
-  });
-
-  it('returns cooldownRemainingSecs=0 when cooldown has elapsed', async () => {
-    const sessions = manager.sessionsClient;
-    const nowSecs = BigInt(Math.floor(Date.now() / 1000));
-    const tenDaysAgo = nowSecs - 864000n; // 10 days ago
-
-    mockDepositsClient.getBuyerBalance.mockResolvedValue({
-      available: 5_000_000n, reserved: 0n, pendingWithdrawal: 0n, lastActivityAt: 0n,
-    });
-    vi.spyOn(sessions, 'getFirstSignCap').mockResolvedValue(1_000_000n);
-    vi.spyOn(sessions, 'getLatestSessionId').mockResolvedValue('0x' + 'bb'.repeat(32));
-    vi.spyOn(sessions, 'getFirstSessionTimestamp').mockResolvedValue(tenDaysAgo);
-    vi.spyOn(sessions, 'getProvenSignCooldown').mockResolvedValue(604800n);
-
-    const ctx = await sessions.getBuyerApprovalContext('0xbuyer', '0xseller', mockDepositsClient);
-    expect(ctx.isFirstSign).toBe(false);
-    expect(ctx.cooldownRemainingSecs).toBe(0);
-  });
-
-  it('batches all view calls in parallel', async () => {
-    const sessions = manager.sessionsClient;
-    const calls: string[] = [];
-
-    mockDepositsClient.getBuyerBalance.mockImplementation(async () => {
-      calls.push('getBuyerBalance');
-      return { available: 0n, reserved: 0n, pendingWithdrawal: 0n, lastActivityAt: 0n };
-    });
-    vi.spyOn(sessions, 'getFirstSignCap').mockImplementation(async () => {
-      calls.push('getFirstSignCap');
-      return 0n;
-    });
-    vi.spyOn(sessions, 'getLatestSessionId').mockImplementation(async () => {
-      calls.push('getLatestSessionId');
-      return ZERO_BYTES32;
-    });
-    vi.spyOn(sessions, 'getFirstSessionTimestamp').mockImplementation(async () => {
-      calls.push('getFirstSessionTimestamp');
-      return 0n;
-    });
-    vi.spyOn(sessions, 'getProvenSignCooldown').mockImplementation(async () => {
-      calls.push('getProvenSignCooldown');
-      return 0n;
-    });
-
-    await sessions.getBuyerApprovalContext('0xbuyer', '0xseller', mockDepositsClient);
-    // All 5 view calls should have been made
-    expect(calls).toHaveLength(5);
-    expect(calls).toContain('getBuyerBalance');
-    expect(calls).toContain('getFirstSignCap');
-    expect(calls).toContain('getLatestSessionId');
-    expect(calls).toContain('getFirstSessionTimestamp');
-    expect(calls).toContain('getProvenSignCooldown');
+    const req = customManager.getPaymentRequirements('req-1');
+    expect(req.minBudgetPerRequest).toBe('50000');
   });
 });
 
@@ -394,10 +231,10 @@ describe('PaymentMux PaymentRequired buffering', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-// Seller: proven-sign suggested amount
+// Seller: suggested amount for returning vs new buyers
 // ═══════════════════════════════════════════════════════════════
 
-describe('SellerPaymentManager proven-sign suggested amount', () => {
+describe('SellerPaymentManager suggested amount', () => {
   let tempDir: string;
   let store: SessionStore;
   let sellerIdentity: Identity;
@@ -411,22 +248,15 @@ describe('SellerPaymentManager proven-sign suggested amount', () => {
     const config: SellerPaymentConfig = {
       rpcUrl: 'http://127.0.0.1:8545',
       sessionsContractAddress: CONTRACT_ADDR,
-      stakingContractAddress: '0x' + 'cc'.repeat(20),
-      usdcAddress: USDC_ADDR,
-      chainId: CHAIN_ID,
+          chainId: CHAIN_ID,
       dataDir: tempDir,
     };
     manager = new SellerPaymentManager(sellerIdentity, config, store);
 
     vi.spyOn(manager.sessionsClient, 'reserve').mockResolvedValue('0xhash');
-    vi.spyOn(manager.sessionsClient, 'settle').mockResolvedValue('0xhash');
-    vi.spyOn(manager.sessionsClient, 'settleTimeout').mockResolvedValue('0xhash');
-    vi.spyOn(manager.stakingClient, 'getSellerAccount').mockResolvedValue({
-      stake: 100_000_000n,
-      stakedAt: BigInt(Date.now()),
-      tokenRate: 500n,
-    });
-    vi.spyOn(manager.sessionsClient, 'getFirstSignCap').mockResolvedValue(1_000_000n);
+    vi.spyOn(manager.sessionsClient, 'close').mockResolvedValue('0xhash');
+    vi.spyOn(manager.sessionsClient, 'requestTimeout').mockResolvedValue('0xhash');
+    vi.spyOn(manager.sessionsClient, 'withdraw').mockResolvedValue('0xhash');
   });
 
   afterEach(() => {
@@ -434,16 +264,13 @@ describe('SellerPaymentManager proven-sign suggested amount', () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it('suggests cent-level amount for new buyers (first-sign)', async () => {
-    await manager.init();
+  it('suggests $0.10 amount for new buyers', () => {
     const req = manager.getPaymentRequirements('req-1', 'unknown-buyer');
-    expect(req!.suggestedAmount).toBe('100000'); // $0.10
+    expect(req.suggestedAmount).toBe('100000'); // $0.10
   });
 
-  it('suggests flat proven-sign amount ($0.10) for returning buyers with delivered tokens', async () => {
-    await manager.init();
-
-    // Insert a prior session with delivered tokens
+  it('suggests $0.10 for returning buyers with settled sessions', () => {
+    // Insert a prior settled session
     store.upsertSession({
       sessionId: '0x' + 'aa'.repeat(32),
       peerId: 'returning-buyer',
@@ -466,73 +293,188 @@ describe('SellerPaymentManager proven-sign suggested amount', () => {
     });
 
     const req = manager.getPaymentRequirements('req-2', 'returning-buyer');
-    // Proven-sign suggested amount ($0.10) differs from first-sign cap ($1.00)
-    expect(req!.suggestedAmount).toBe('100000');
+    expect(req.suggestedAmount).toBe('100000');
   });
 
-  it('includes per-direction pricing when provided', async () => {
-    await manager.init();
+  it('includes per-direction pricing when provided', () => {
     const req = manager.getPaymentRequirements('req-3', undefined, {
       inputUsdPerMillion: 3.0,
       outputUsdPerMillion: 15.0,
     });
-    expect(req!.inputUsdPerMillion).toBe(3.0);
-    expect(req!.outputUsdPerMillion).toBe(15.0);
+    expect(req.inputUsdPerMillion).toBe(3.0);
+    expect(req.outputUsdPerMillion).toBe(15.0);
   });
 
-  it('omits pricing fields when not provided', async () => {
-    await manager.init();
+  it('omits pricing fields when not provided', () => {
     const req = manager.getPaymentRequirements('req-4');
-    expect(req!.inputUsdPerMillion).toBeUndefined();
-    expect(req!.outputUsdPerMillion).toBeUndefined();
+    expect(req.inputUsdPerMillion).toBeUndefined();
+    expect(req.outputUsdPerMillion).toBeUndefined();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// Codec: PaymentRequired with optional pricing fields
+// ═══════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════
+// Budget mismatch: seller minBudgetPerRequest > buyer maxPerRequestUsdc
+// ═══════════════════════════════════════════════════════════════
+
+describe('Budget mismatch rejection', () => {
+  let tempDir: string;
+  let store: SessionStore;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), 'budget-mismatch-'));
+    store = new SessionStore(tempDir);
   });
 
-  it('uses config-driven amounts when set', async () => {
-    // Create manager with custom amounts
-    const customConfig: SellerPaymentConfig = {
+  afterEach(() => {
+    store.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('buyer refuses when seller minBudgetPerRequest exceeds buyer maxPerRequestUsdc', async () => {
+    const buyerIdentity = await createTestIdentity();
+    const { BuyerPaymentManager } = await import('../src/payments/buyer-payment-manager.js');
+    const { identityToEvmWallet } = await import('../src/payments/evm/keypair.js');
+
+    const buyerConfig = {
       rpcUrl: 'http://127.0.0.1:8545',
+      depositsContractAddress: '0x' + 'dd'.repeat(20),
       sessionsContractAddress: CONTRACT_ADDR,
-      stakingContractAddress: '0x' + 'cc'.repeat(20),
-      usdcAddress: USDC_ADDR,
+          usdcAddress: '0x' + 'ee'.repeat(20),
+      identityRegistryAddress: '0x' + 'ff'.repeat(20),
       chainId: CHAIN_ID,
+      defaultAuthDurationSecs: 3600,
+      maxPerRequestUsdc: 50_000n,      // buyer allows max $0.05
+      maxReserveAmountUsdc: 10_000_000n,
       dataDir: tempDir,
-      firstSignAmountUsdc: '50000',   // $0.05
-      provenSignAmountUsdc: '500000', // $0.50
     };
-    const customManager = new SellerPaymentManager(sellerIdentity, customConfig, store);
-    vi.spyOn(customManager.stakingClient, 'getSellerAccount').mockResolvedValue({
-      stake: 100_000_000n, stakedAt: BigInt(Date.now()), tokenRate: 500n,
-    });
-    vi.spyOn(customManager.sessionsClient, 'getFirstSignCap').mockResolvedValue(1_000_000n);
-    await customManager.init();
 
-    // First-sign: uses config value
-    const first = customManager.getPaymentRequirements('req-5', 'new-buyer');
-    expect(first!.suggestedAmount).toBe('50000');
+    const buyer = new BuyerPaymentManager(buyerIdentity, buyerConfig, store);
+    buyer.setSigner(identityToEvmWallet(buyerIdentity));
 
-    // Proven-sign: uses config value
-    store.upsertSession({
-      sessionId: '0x' + 'cc'.repeat(32),
-      peerId: 'returning-buyer-2',
-      role: 'seller',
-      sellerEvmAddr: identityToEvmAddress(sellerIdentity),
-      buyerEvmAddr: '0x' + 'dd'.repeat(20),
-      nonce: 1,
-      authMax: '50000',
-      deadline: Math.floor(Date.now() / 1000) + 3600,
-      previousSessionId: '0x' + '00'.repeat(32),
-      previousConsumption: '0',
-      tokensDelivered: '100',
-      requestCount: 2,
-      reservedAt: Date.now(),
-      settledAt: null,
-      settledAmount: null,
-      status: 'settled',
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    });
-    const proven = customManager.getPaymentRequirements('req-6', 'returning-buyer-2');
-    expect(proven!.suggestedAmount).toBe('500000');
+    const mux = {
+      sentSpendingAuths: [] as unknown[],
+      sendSpendingAuth(payload: unknown) { mux.sentSpendingAuths.push(payload); },
+      sendAuthAck() {},
+      sendPaymentRequired() {},
+      sendNeedAuth() {},
+      onSpendingAuth() {},
+      onAuthAck() {},
+      onPaymentRequired() {},
+      onNeedAuth() {},
+      handleFrame: vi.fn(),
+    } as unknown as import('../src/p2p/payment-mux.js').PaymentMux & { sentSpendingAuths: unknown[] };
+
+    // Seller demands $0.10 per request — exceeds buyer's $0.05 limit
+    const sellerMinBudget = 100_000n;
+    const sessionId = await buyer.authorizeSpending(
+      'seller-peer-expensive',
+      '0x' + 'ab'.repeat(20),
+      mux,
+      sellerMinBudget,
+    );
+
+    // Buyer should refuse (empty sessionId, no SpendingAuth sent)
+    expect(sessionId).toBe('');
+    expect(mux.sentSpendingAuths.length).toBe(0);
+  });
+
+  it('buyer accepts when seller minBudgetPerRequest equals buyer maxPerRequestUsdc', async () => {
+    const buyerIdentity = await createTestIdentity();
+    const { BuyerPaymentManager } = await import('../src/payments/buyer-payment-manager.js');
+    const { identityToEvmWallet } = await import('../src/payments/evm/keypair.js');
+
+    const buyerConfig = {
+      rpcUrl: 'http://127.0.0.1:8545',
+      depositsContractAddress: '0x' + 'dd'.repeat(20),
+      sessionsContractAddress: CONTRACT_ADDR,
+          usdcAddress: '0x' + 'ee'.repeat(20),
+      identityRegistryAddress: '0x' + 'ff'.repeat(20),
+      chainId: CHAIN_ID,
+      defaultAuthDurationSecs: 3600,
+      maxPerRequestUsdc: 100_000n,     // buyer allows exactly $0.10
+      maxReserveAmountUsdc: 10_000_000n,
+      dataDir: tempDir,
+    };
+
+    const buyer = new BuyerPaymentManager(buyerIdentity, buyerConfig, store);
+    buyer.setSigner(identityToEvmWallet(buyerIdentity));
+
+    const mux = {
+      sentSpendingAuths: [] as unknown[],
+      sendSpendingAuth(payload: unknown) { mux.sentSpendingAuths.push(payload); },
+      sendAuthAck() {},
+      sendPaymentRequired() {},
+      sendNeedAuth() {},
+      onSpendingAuth() {},
+      onAuthAck() {},
+      onPaymentRequired() {},
+      onNeedAuth() {},
+      handleFrame: vi.fn(),
+    } as unknown as import('../src/p2p/payment-mux.js').PaymentMux & { sentSpendingAuths: unknown[] };
+
+    // Seller demands exactly $0.10 per request — matches buyer's limit
+    const sellerMinBudget = 100_000n;
+    const sessionId = await buyer.authorizeSpending(
+      'seller-peer-match',
+      '0x' + 'ab'.repeat(20),
+      mux,
+      sellerMinBudget,
+    );
+
+    // Should succeed
+    expect(sessionId).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(mux.sentSpendingAuths.length).toBe(1);
+  });
+
+  it('buyer accepts when seller minBudgetPerRequest is below buyer maxPerRequestUsdc', async () => {
+    const buyerIdentity = await createTestIdentity();
+    const { BuyerPaymentManager } = await import('../src/payments/buyer-payment-manager.js');
+    const { identityToEvmWallet } = await import('../src/payments/evm/keypair.js');
+
+    const buyerConfig = {
+      rpcUrl: 'http://127.0.0.1:8545',
+      depositsContractAddress: '0x' + 'dd'.repeat(20),
+      sessionsContractAddress: CONTRACT_ADDR,
+          usdcAddress: '0x' + 'ee'.repeat(20),
+      identityRegistryAddress: '0x' + 'ff'.repeat(20),
+      chainId: CHAIN_ID,
+      defaultAuthDurationSecs: 3600,
+      maxPerRequestUsdc: 100_000n,     // buyer allows $0.10
+      maxReserveAmountUsdc: 10_000_000n,
+      dataDir: tempDir,
+    };
+
+    const buyer = new BuyerPaymentManager(buyerIdentity, buyerConfig, store);
+    buyer.setSigner(identityToEvmWallet(buyerIdentity));
+
+    const mux = {
+      sentSpendingAuths: [] as unknown[],
+      sendSpendingAuth(payload: unknown) { mux.sentSpendingAuths.push(payload); },
+      sendAuthAck() {},
+      sendPaymentRequired() {},
+      sendNeedAuth() {},
+      onSpendingAuth() {},
+      onAuthAck() {},
+      onPaymentRequired() {},
+      onNeedAuth() {},
+      handleFrame: vi.fn(),
+    } as unknown as import('../src/p2p/payment-mux.js').PaymentMux & { sentSpendingAuths: unknown[] };
+
+    // Seller demands only $0.01 per request — well within buyer's limit
+    const sellerMinBudget = 10_000n;
+    const sessionId = await buyer.authorizeSpending(
+      'seller-peer-cheap',
+      '0x' + 'ab'.repeat(20),
+      mux,
+      sellerMinBudget,
+    );
+
+    expect(sessionId).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(mux.sentSpendingAuths.length).toBe(1);
   });
 });
 

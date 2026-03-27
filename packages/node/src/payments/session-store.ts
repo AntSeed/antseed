@@ -26,6 +26,9 @@ export interface StoredSession {
   settledAt: number | null;
   settledAmount: string | null; // bigint as string
   status: 'active' | 'settled' | 'timeout' | 'ghost';
+  latestBuyerSig: string | null;
+  latestSpendingAuthSig: string | null;
+  latestMetadata: string | null;       // hex-encoded
   createdAt: number;
   updatedAt: number;
 }
@@ -103,11 +106,30 @@ export class SessionStore {
         settled_at INTEGER,
         settled_amount TEXT,
         status TEXT NOT NULL DEFAULT 'active',
+        latest_buyer_sig TEXT,
+        latest_metadata_auth_sig TEXT,
+        latest_metadata TEXT,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       );
 
       CREATE INDEX IF NOT EXISTS idx_sessions_peer_role_status ON payment_sessions(peer_id, role, status);
+    `);
+
+    // Migration: add columns for persisted auth sigs (v0.2.28+)
+    const cols = this._db.pragma('table_info(payment_sessions)') as Array<{ name: string }>;
+    const colNames = new Set(cols.map(c => c.name));
+    if (!colNames.has('latest_buyer_sig')) {
+      this._db.exec('ALTER TABLE payment_sessions ADD COLUMN latest_buyer_sig TEXT');
+    }
+    if (!colNames.has('latest_metadata_auth_sig')) {
+      this._db.exec('ALTER TABLE payment_sessions ADD COLUMN latest_metadata_auth_sig TEXT');
+    }
+    if (!colNames.has('latest_metadata')) {
+      this._db.exec('ALTER TABLE payment_sessions ADD COLUMN latest_metadata TEXT');
+    }
+
+    this._db.exec(`
       CREATE INDEX IF NOT EXISTS idx_sessions_status_updated ON payment_sessions(status, updated_at);
 
       CREATE TABLE IF NOT EXISTS payment_receipts (
@@ -133,19 +155,25 @@ export class SessionStore {
           session_id, peer_id, role, seller_evm_addr, buyer_evm_addr,
           nonce, auth_max, deadline, previous_session_id, previous_consumption,
           tokens_delivered, request_count, reserved_at, settled_at, settled_amount,
-          status, created_at, updated_at
+          status, latest_buyer_sig, latest_metadata_auth_sig, latest_metadata,
+          created_at, updated_at
         ) VALUES (
           @sessionId, @peerId, @role, @sellerEvmAddr, @buyerEvmAddr,
           @nonce, @authMax, @deadline, @previousSessionId, @previousConsumption,
           @tokensDelivered, @requestCount, @reservedAt, @settledAt, @settledAmount,
-          @status, @createdAt, @updatedAt
+          @status, @latestBuyerSig, @latestSpendingAuthSig, @latestMetadata,
+          @createdAt, @updatedAt
         )
         ON CONFLICT(session_id) DO UPDATE SET
+          auth_max = @authMax,
           tokens_delivered = @tokensDelivered,
           request_count = @requestCount,
           settled_at = @settledAt,
           settled_amount = @settledAmount,
           status = @status,
+          latest_buyer_sig = @latestBuyerSig,
+          latest_metadata_auth_sig = @latestSpendingAuthSig,
+          latest_metadata = @latestMetadata,
           updated_at = @updatedAt
       `),
       getById: this._db.prepare(
@@ -216,6 +244,9 @@ export class SessionStore {
       settledAt: session.settledAt,
       settledAmount: session.settledAmount,
       status: session.status,
+      latestBuyerSig: session.latestBuyerSig ?? null,
+      latestSpendingAuthSig: session.latestSpendingAuthSig ?? null,
+      latestMetadata: session.latestMetadata ?? null,
       createdAt: session.createdAt,
       updatedAt: session.updatedAt,
     });
@@ -334,6 +365,9 @@ interface SessionRow {
   settled_at: number | null;
   settled_amount: string | null;
   status: string;
+  latest_buyer_sig: string | null;
+  latest_metadata_auth_sig: string | null;
+  latest_metadata: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -367,6 +401,9 @@ function rowToSession(row: SessionRow): StoredSession {
     settledAt: row.settled_at,
     settledAmount: row.settled_amount,
     status: row.status as StoredSession['status'],
+    latestBuyerSig: row.latest_buyer_sig,
+    latestSpendingAuthSig: row.latest_metadata_auth_sig,
+    latestMetadata: row.latest_metadata,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

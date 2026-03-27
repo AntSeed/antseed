@@ -1,9 +1,9 @@
 [profile.default]
-src = "contracts"
-test = "contracts/test"
-out = "contracts/out"
-cache_path = "contracts/cache_forge"
-libs = ["node_modules", "lib", "../../node_modules"]
+src = "."
+test = "test"
+out = "out"
+cache_path = "cache_forge"
+libs = ["lib", "../../node_modules"]
 remappings = [
     "@openzeppelin/=../../node_modules/@openzeppelin/",
     "forge-std/=lib/forge-std/src/",

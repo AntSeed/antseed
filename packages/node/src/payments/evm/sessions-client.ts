@@ -1,7 +1,5 @@
-import { Contract } from 'ethers';
-import type { AbstractSigner } from 'ethers';
+import { type AbstractSigner, Contract } from 'ethers';
 import { BaseEvmClient } from './base-evm-client.js';
-import type { BuyerBalanceInfo } from './deposits-client.js';
 
 export interface SessionsClientConfig {
   rpcUrl: string;
@@ -11,31 +9,25 @@ export interface SessionsClientConfig {
 export interface SessionInfo {
   buyer: string;
   seller: string;
-  maxAmount: bigint;
-  nonce: bigint;
+  deposit: bigint;
+  settled: bigint;
+  metadataHash: string;
   deadline: bigint;
-  previousConsumption: bigint;
-  previousSessionId: string;
-  reservedAt: bigint;
-  settledAmount: bigint;
-  settledTokenCount: bigint;
-  tokenRate: bigint;
+  settledAt: bigint;
+  closeRequestedAt: bigint;
   status: number;
-  isFirstSign: boolean;
-  isProvenSign: boolean;
-  isQualifiedProvenSign: boolean;
 }
 
 const SESSIONS_ABI = [
-  'function reserve(address buyer, bytes32 sessionId, uint256 maxAmount, uint256 nonce, uint256 deadline, uint256 previousConsumption, bytes32 previousSessionId, bytes calldata buyerSig) external',
-  'function settle(bytes32 sessionId, uint256 tokenCount) external',
-  'function settleTimeout(bytes32 sessionId) external',
+  'function reserve(address buyer, bytes32 salt, uint128 maxAmount, uint256 deadline, bytes buyerSig) external',
+  'function settle(bytes32 channelId, uint128 cumulativeAmount, bytes metadata, bytes buyerSig) external',
+  'function close(bytes32 channelId, uint128 finalAmount, bytes metadata, bytes buyerSig) external',
+  'function requestTimeout(bytes32 channelId) external',
+  'function withdraw(bytes32 channelId) external',
+  'function sessions(bytes32 channelId) external view returns (address buyer, address seller, uint128 deposit, uint128 settled, bytes32 metadataHash, uint256 deadline, uint256 settledAt, uint256 closeRequestedAt, uint8 status)',
+  'function computeChannelId(address buyer, address seller, bytes32 salt) external pure returns (bytes32)',
   'function domainSeparator() external view returns (bytes32)',
   'function FIRST_SIGN_CAP() external view returns (uint256)',
-  'function PROVEN_SIGN_COOLDOWN() external view returns (uint256)',
-  'function latestSessionId(address buyer, address seller) external view returns (bytes32)',
-  'function firstSessionTimestamp(address buyer, address seller) external view returns (uint256)',
-  'function sessions(bytes32 sessionId) external view returns (address buyer, address seller, uint256 maxAmount, uint256 nonce, uint256 deadline, uint256 previousConsumption, bytes32 previousSessionId, uint256 reservedAt, uint256 settledAmount, uint256 settledTokenCount, uint256 tokenRate, uint8 status, bool isFirstSign, bool isProvenSign, bool isQualifiedProvenSign)',
 ] as const;
 
 export class SessionsClient extends BaseEvmClient {
@@ -43,55 +35,67 @@ export class SessionsClient extends BaseEvmClient {
     super(config.rpcUrl, config.contractAddress);
   }
 
-  // ─── Core — Reserve & Settle ────────────────────────────────────────
-
   async reserve(
     signer: AbstractSigner,
     buyer: string,
-    sessionId: string,
+    salt: string,
     maxAmount: bigint,
-    nonce: bigint,
     deadline: bigint,
-    previousConsumption: bigint,
-    previousSessionId: string,
     buyerSig: string,
   ): Promise<string> {
     return this._execWrite(
       signer, SESSIONS_ABI, 'reserve',
-      buyer, sessionId, maxAmount, nonce, deadline,
-      previousConsumption, previousSessionId, buyerSig,
+      buyer, salt, maxAmount, deadline, buyerSig,
     );
   }
 
-  async settle(signer: AbstractSigner, sessionId: string, tokenCount: bigint): Promise<string> {
-    return this._execWrite(signer, SESSIONS_ABI, 'settle', sessionId, tokenCount);
+  async settle(
+    signer: AbstractSigner,
+    channelId: string,
+    cumulativeAmount: bigint,
+    metadata: string,
+    buyerSig: string,
+  ): Promise<string> {
+    return this._execWrite(
+      signer, SESSIONS_ABI, 'settle',
+      channelId, cumulativeAmount, metadata, buyerSig,
+    );
   }
 
-  async settleTimeout(signer: AbstractSigner, sessionId: string): Promise<string> {
-    return this._execWrite(signer, SESSIONS_ABI, 'settleTimeout', sessionId);
+  async close(
+    signer: AbstractSigner,
+    channelId: string,
+    finalAmount: bigint,
+    metadata: string,
+    buyerSig: string,
+  ): Promise<string> {
+    return this._execWrite(
+      signer, SESSIONS_ABI, 'close',
+      channelId, finalAmount, metadata, buyerSig,
+    );
   }
 
-  // ─── View Functions ─────────────────────────────────────────────────
+  async requestTimeout(signer: AbstractSigner, channelId: string): Promise<string> {
+    return this._execWrite(signer, SESSIONS_ABI, 'requestTimeout', channelId);
+  }
 
-  async getSession(sessionId: string): Promise<SessionInfo> {
+  async withdraw(signer: AbstractSigner, channelId: string): Promise<string> {
+    return this._execWrite(signer, SESSIONS_ABI, 'withdraw', channelId);
+  }
+
+  async getSession(channelId: string): Promise<SessionInfo> {
     const contract = new Contract(this._contractAddress, SESSIONS_ABI, this._provider);
-    const result = await contract.getFunction('sessions')(sessionId);
+    const result = await contract.getFunction('sessions')(channelId);
     return {
       buyer: result[0],
       seller: result[1],
-      maxAmount: result[2],
-      nonce: result[3],
-      deadline: result[4],
-      previousConsumption: result[5],
-      previousSessionId: result[6],
-      reservedAt: result[7],
-      settledAmount: result[8],
-      settledTokenCount: result[9],
-      tokenRate: result[10],
-      status: Number(result[11]),
-      isFirstSign: result[12],
-      isProvenSign: result[13],
-      isQualifiedProvenSign: result[14],
+      deposit: result[2],
+      settled: result[3],
+      metadataHash: result[4],
+      deadline: result[5],
+      settledAt: result[6],
+      closeRequestedAt: result[7],
+      status: Number(result[8]),
     };
   }
 
@@ -105,60 +109,8 @@ export class SessionsClient extends BaseEvmClient {
     return contract.getFunction('FIRST_SIGN_CAP')() as Promise<bigint>;
   }
 
-  async getLatestSessionId(buyerAddr: string, sellerAddr: string): Promise<string> {
+  async computeChannelId(buyer: string, seller: string, salt: string): Promise<string> {
     const contract = new Contract(this._contractAddress, SESSIONS_ABI, this._provider);
-    return contract.getFunction('latestSessionId')(buyerAddr, sellerAddr) as Promise<string>;
-  }
-
-  async getFirstSessionTimestamp(buyerAddr: string, sellerAddr: string): Promise<bigint> {
-    const contract = new Contract(this._contractAddress, SESSIONS_ABI, this._provider);
-    return contract.getFunction('firstSessionTimestamp')(buyerAddr, sellerAddr) as Promise<bigint>;
-  }
-
-  async getProvenSignCooldown(): Promise<bigint> {
-    const contract = new Contract(this._contractAddress, SESSIONS_ABI, this._provider);
-    return contract.getFunction('PROVEN_SIGN_COOLDOWN')() as Promise<bigint>;
-  }
-
-  async getBuyerApprovalContext(
-    buyerAddr: string,
-    sellerAddr: string,
-    depositsClient: { getBuyerBalance(addr: string): Promise<BuyerBalanceInfo> },
-  ): Promise<{
-    buyerBalance: BuyerBalanceInfo;
-    firstSignCap: bigint;
-    latestSessionId: string;
-    firstSessionTimestamp: bigint;
-    isFirstSign: boolean;
-    cooldownRemainingSecs: number;
-  }> {
-    const ZERO_BYTES32 = '0x' + '00'.repeat(32);
-
-    const [buyerBalance, firstSignCap, latestSessId, firstSessTs, cooldown] = await Promise.all([
-      depositsClient.getBuyerBalance(buyerAddr),
-      this.getFirstSignCap(),
-      this.getLatestSessionId(buyerAddr, sellerAddr),
-      this.getFirstSessionTimestamp(buyerAddr, sellerAddr),
-      this.getProvenSignCooldown(),
-    ]);
-
-    const isFirstSign = latestSessId === ZERO_BYTES32;
-    const nowSecs = BigInt(Math.floor(Date.now() / 1000));
-    let cooldownRemainingSecs = 0;
-    if (!isFirstSign && firstSessTs > 0n) {
-      const cooldownEnd = firstSessTs + cooldown;
-      if (cooldownEnd > nowSecs) {
-        cooldownRemainingSecs = Number(cooldownEnd - nowSecs);
-      }
-    }
-
-    return {
-      buyerBalance,
-      firstSignCap,
-      latestSessionId: latestSessId,
-      firstSessionTimestamp: firstSessTs,
-      isFirstSign,
-      cooldownRemainingSecs,
-    };
+    return contract.getFunction('computeChannelId')(buyer, seller, salt) as Promise<string>;
   }
 }

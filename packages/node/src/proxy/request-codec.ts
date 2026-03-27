@@ -136,6 +136,9 @@ export function decodeHttpRequest(data: Uint8Array): SerializedHttpRequest {
  * [bodyLen:4][body:N]
  */
 export function encodeHttpResponse(resp: SerializedHttpResponse): Uint8Array {
+  if (!resp.body) {
+    resp = { ...resp, body: new Uint8Array(0) };
+  }
   const requestIdBytes = encoder.encode(resp.requestId);
 
   const headerEntries = Object.entries(resp.headers);
