@@ -471,34 +471,35 @@ export class SellerPaymentManager {
             debugLog(`[SellerPayment] Channel ${session.sessionId.slice(0, 18)}... past deadline — attempting close`);
             await this.settleSession(session.peerId);
           } else {
-            // No auths received — requestTimeout then withdraw
-            const deadlinePlusGrace = deadline + GRACE_PERIOD_SECS;
-            if (nowSecs >= deadlinePlusGrace) {
-              // Grace period passed — withdraw
-              debugLog(`[SellerPayment] Channel ${session.sessionId.slice(0, 18)}... past grace period — calling withdraw`);
-              try {
-                await this._sessionsClient.withdraw(this._signer, session.sessionId);
-              } catch {
-                // withdraw may fail if requestTimeout hasn't been called yet — try that first
-                debugLog(`[SellerPayment] Withdraw failed, trying requestTimeout first for ${session.sessionId.slice(0, 18)}...`);
-                await this._sessionsClient.requestTimeout(this._signer, session.sessionId);
-                // Will withdraw on next cycle
-                continue;
-              }
+            // No auths received — two-phase: requestTimeout, then withdraw after grace
+            const closeRequestedAt = session.settledAt ?? 0; // repurpose settledAt to store closeRequestedAt timestamp
+            if (closeRequestedAt > 0 && nowSecs >= closeRequestedAt + GRACE_PERIOD_SECS) {
+              // Grace period passed since requestTimeout was called — withdraw
+              debugLog(`[SellerPayment] Channel ${session.sessionId.slice(0, 18)}... grace period passed — calling withdraw`);
+              await this._sessionsClient.withdraw(this._signer, session.sessionId);
               this._sessionStore.updateSessionStatus(session.sessionId, 'timeout');
               this._acceptedCumulative.delete(session.sessionId);
               this._spent.delete(session.sessionId);
               this._latestAuth.delete(session.sessionId);
+              this._reserveMax.delete(session.sessionId);
               this._activeBuyers.delete(session.peerId);
-            } else {
-              // Call requestTimeout to start the grace period
+            } else if (closeRequestedAt === 0) {
+              // First time past deadline — call requestTimeout and record when
               debugLog(`[SellerPayment] Channel ${session.sessionId.slice(0, 18)}... past deadline — calling requestTimeout`);
               try {
                 await this._sessionsClient.requestTimeout(this._signer, session.sessionId);
+                // Persist the timestamp so we know when grace period started
+                const stored = this._sessionStore.getSession(session.sessionId);
+                if (stored) {
+                  stored.settledAt = nowSecs;
+                  stored.updatedAt = Date.now();
+                  this._sessionStore.upsertSession(stored);
+                }
               } catch {
                 // May already have been requested — ignore
               }
             }
+            // else: grace period still running, wait
           }
         }
         // If deadline hasn't passed, skip — session is still active

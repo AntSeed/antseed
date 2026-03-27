@@ -1,5 +1,4 @@
-import { Contract } from 'ethers';
-import type { AbstractSigner } from 'ethers';
+import { type AbstractSigner, Contract } from 'ethers';
 import { BaseEvmClient } from './base-evm-client.js';
 
 export interface SessionsClientConfig {
@@ -12,22 +11,20 @@ export interface SessionInfo {
   seller: string;
   deposit: bigint;
   settled: bigint;
-  settledInputTokens: bigint;
-  settledOutputTokens: bigint;
-  settledMetadataHash: string;
+  metadataHash: string;
   deadline: bigint;
   settledAt: bigint;
+  closeRequestedAt: bigint;
   status: number;
 }
 
 const SESSIONS_ABI = [
-  'function reserve(address buyer, bytes32 salt, uint128 maxAmount, uint256 deadline, bytes buyerMetaSig) external',
-  'function topUp(bytes32 channelId, uint128 additionalAmount) external',
+  'function reserve(address buyer, bytes32 salt, uint128 maxAmount, uint256 deadline, bytes buyerSig) external',
   'function settle(bytes32 channelId, uint128 cumulativeAmount, bytes metadata, bytes buyerSig) external',
   'function close(bytes32 channelId, uint128 finalAmount, bytes metadata, bytes buyerSig) external',
   'function requestTimeout(bytes32 channelId) external',
   'function withdraw(bytes32 channelId) external',
-  'function sessions(bytes32 channelId) external view returns (address buyer, address seller, uint128 deposit, uint128 settled, uint128 settledInputTokens, uint128 settledOutputTokens, bytes32 settledMetadataHash, uint256 deadline, uint256 settledAt, uint8 status)',
+  'function sessions(bytes32 channelId) external view returns (address buyer, address seller, uint128 deposit, uint128 settled, bytes32 metadataHash, uint256 deadline, uint256 settledAt, uint256 closeRequestedAt, uint8 status)',
   'function computeChannelId(address buyer, address seller, bytes32 salt) external pure returns (bytes32)',
   'function domainSeparator() external view returns (bytes32)',
   'function FIRST_SIGN_CAP() external view returns (uint256)',
@@ -38,36 +35,19 @@ export class SessionsClient extends BaseEvmClient {
     super(config.rpcUrl, config.contractAddress);
   }
 
-  // ─── Core — Reserve ──────────────────────────────────────────────────
-
   async reserve(
     signer: AbstractSigner,
     buyer: string,
     salt: string,
     maxAmount: bigint,
     deadline: bigint,
-    buyerMetaSig: string,
+    buyerSig: string,
   ): Promise<string> {
     return this._execWrite(
       signer, SESSIONS_ABI, 'reserve',
-      buyer, salt, maxAmount, deadline, buyerMetaSig,
+      buyer, salt, maxAmount, deadline, buyerSig,
     );
   }
-
-  // ─── Core — Top Up ───────────────────────────────────────────────────
-
-  async topUp(
-    signer: AbstractSigner,
-    channelId: string,
-    additionalAmount: bigint,
-  ): Promise<string> {
-    return this._execWrite(
-      signer, SESSIONS_ABI, 'topUp',
-      channelId, additionalAmount,
-    );
-  }
-
-  // ─── Core — Settle (mid-session checkpoint) ──────────────────────────
 
   async settle(
     signer: AbstractSigner,
@@ -82,8 +62,6 @@ export class SessionsClient extends BaseEvmClient {
     );
   }
 
-  // ─── Core — Close (final settle) ────────────────────────────────────
-
   async close(
     signer: AbstractSigner,
     channelId: string,
@@ -97,8 +75,6 @@ export class SessionsClient extends BaseEvmClient {
     );
   }
 
-  // ─── Timeout — Request Timeout + Withdraw ──────────────────────────────
-
   async requestTimeout(signer: AbstractSigner, channelId: string): Promise<string> {
     return this._execWrite(signer, SESSIONS_ABI, 'requestTimeout', channelId);
   }
@@ -106,8 +82,6 @@ export class SessionsClient extends BaseEvmClient {
   async withdraw(signer: AbstractSigner, channelId: string): Promise<string> {
     return this._execWrite(signer, SESSIONS_ABI, 'withdraw', channelId);
   }
-
-  // ─── View Functions ─────────────────────────────────────────────────
 
   async getSession(channelId: string): Promise<SessionInfo> {
     const contract = new Contract(this._contractAddress, SESSIONS_ABI, this._provider);
@@ -117,12 +91,11 @@ export class SessionsClient extends BaseEvmClient {
       seller: result[1],
       deposit: result[2],
       settled: result[3],
-      settledInputTokens: result[4],
-      settledOutputTokens: result[5],
-      settledMetadataHash: result[6],
-      deadline: result[7],
-      settledAt: result[8],
-      status: Number(result[9]),
+      metadataHash: result[4],
+      deadline: result[5],
+      settledAt: result[6],
+      closeRequestedAt: result[7],
+      status: Number(result[8]),
     };
   }
 
