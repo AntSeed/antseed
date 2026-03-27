@@ -19,8 +19,8 @@ echo "=== Step 1: Deploy contracts ==="
 echo "Make sure anvil is running: anvil"
 echo ""
 
-cd packages/node
-forge script contracts/script/Deploy.s.sol --rpc-url $RPC --broadcast
+cd packages/contracts
+forge script script/Deploy.s.sol --rpc-url $RPC --broadcast
 cd ../..
 
 echo ""

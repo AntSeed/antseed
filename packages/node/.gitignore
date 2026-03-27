@@ -23,8 +23,3 @@ pnpm-debug.log*
 .vscode/
 .idea/
 
-# Foundry
-contracts/out/
-contracts/cache_forge/
-broadcast/Deploy.s.sol/31337/
-lib/

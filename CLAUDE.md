@@ -82,7 +82,7 @@ and resolved via the workspace.
 
 ## Smart Contracts
 ```
-packages/node/contracts/
+packages/contracts/
 ├── interfaces/              Shared Solidity interfaces (IAntseed*.sol, IERC8004Registry.sol)
 ├── AntseedStats.sol         Per-agent session metrics keyed by ERC-8004 agentId
 ├── AntseedStaking.sol       Seller staking, slashing (holds stake USDC, binds to agentId)
@@ -97,7 +97,7 @@ packages/node/contracts/
 Identity uses the deployed ERC-8004 IdentityRegistry (Base: `0x8004A169...`).
 Feedback uses the deployed ERC-8004 ReputationRegistry (Base: `0x8004BAa1...`).
 All contracts use OpenZeppelin Ownable, ReentrancyGuard, SafeERC20.
-Build/test: `cd packages/node/contracts && forge build && forge test`
+Build/test: `cd packages/contracts && forge build && forge test`
 
 ### Payment Flow (Cumulative Streaming SpendingAuth)
 1. Buyer deposits USDC into AntseedDeposits

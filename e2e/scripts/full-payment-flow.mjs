@@ -60,8 +60,7 @@ const USDC_DEPOSIT_AMOUNT = 10_000_000n; // 10 USDC
 
 const scriptDir = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = resolve(scriptDir, "..", "..");
-const contractsDir = resolve(repoRoot, "packages", "node", "contracts");
-const nodePackageDir = resolve(repoRoot, "packages", "node");
+const contractsDir = resolve(repoRoot, "packages", "contracts");
 
 // ---------------------------------------------------------------------------
 // Colored output helpers
@@ -277,11 +276,11 @@ async function main() {
       "forge",
       [
         "script",
-        "contracts/script/Deploy.s.sol",
+        "script/Deploy.s.sol",
         "--rpc-url", RPC_URL,
         "--broadcast",
       ],
-      { cwd: nodePackageDir }
+      { cwd: contractsDir }
     );
 
     info(`MockUSDC:      ${USDC_ADDRESS}`);
