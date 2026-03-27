@@ -318,7 +318,7 @@ export default function Home(): JSX.Element {
       {/* Hero */}
       <section className={styles.hero}>
         <h1 className={styles.heroTitle}>AI, Set Free</h1>
-        <p className={styles.heroSub}>A peer-to-peer protocol where anyone can serve AI and anyone can use it.</p>
+        <p className={styles.heroSub}>Permissionless AI. Anyone can serve. Anyone can use.</p>
       </section>
 
       {/* Liveness */}
