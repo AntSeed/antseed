@@ -82,6 +82,11 @@ export class SellerPaymentManager {
       this._activeBuyers.add(session.peerId);
       this._acceptedCumulative.set(session.sessionId, BigInt(session.authMax));
       this._spent.set(session.sessionId, BigInt(session.tokensDelivered));
+      // Hydrate reserveMax from previousConsumption (repurposed field)
+      const storedReserveMax = BigInt(session.previousConsumption || '0');
+      if (storedReserveMax > 0n) {
+        this._reserveMax.set(session.sessionId, storedReserveMax);
+      }
       // Hydrate latest auth sigs so close() works after restart
       if (session.latestMetadataAuthSig) {
         this._latestAuth.set(session.sessionId, {
@@ -173,9 +178,9 @@ export class SellerPaymentManager {
           buyerEvmAddr,
           nonce: 0,
           authMax: payload.cumulativeAmount,
+          previousConsumption: reserveMaxAmount.toString(), // repurposed: stores reserveMax
           deadline: reserveDeadline,
           previousSessionId: '',
-          previousConsumption: '0',
           tokensDelivered: '0',
           requestCount: 0,
           reservedAt: now,
