@@ -317,8 +317,8 @@ export default function Home(): JSX.Element {
 
       {/* Hero */}
       <section className={styles.hero}>
-        <h1 className={styles.heroTitle}>An open network for<br/>AI services.</h1>
-        <p className={styles.heroSub}>Unstoppable by design.</p>
+        <h1 className={styles.heroTitle}>AI, Set Free</h1>
+        <p className={styles.heroSub}>A peer-to-peer protocol where anyone can serve AI and anyone can use it.</p>
       </section>
 
       {/* Liveness */}
@@ -466,8 +466,8 @@ export default function Home(): JSX.Element {
             <div className={styles.layerContent}>
               <div className={styles.layerNum}>02</div>
               <h4>An Open Marketplace for AI Services</h4>
-              <p className={styles.layerTags}>Proof of Prior Delivery · On-Chain Reputation · Self-Priced</p>
-              <p>Wrap your expertise in AI. Set your own price. Every delivery is verified by Proof of Prior Delivery. Reputation is on-chain, permanent, and no platform can take it from you.</p>
+              <p className={styles.layerTags}>Gasless Payments · On-Chain Stats · Built-in Escrow</p>
+              <p>Wrap your expertise in AI. Set your own price. Buyers sign, sellers settle — zero gas for buyers. Every delivery is recorded as on-chain stats. Anyone can build the reputation system they want on top.</p>
             </div>
             <div className={styles.layerIllust}>
               <div className={styles.svcList}>
