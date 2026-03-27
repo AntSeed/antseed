@@ -9,6 +9,10 @@ image: /og-image.jpg
 date: 2026-03-24
 ---
 
+:::note
+This article describes an earlier version of the AntSeed payment protocol. The current protocol uses cumulative MetadataAuth signatures instead of proof-of-prior-delivery chains. See the [payment documentation](/docs/payments) for the current design.
+:::
+
 In peer-to-peer compute markets, proving service delivery is the hard problem. Not routing, not pricing, not discovery — proving that a seller actually delivered what they were paid for, without a trusted intermediary watching the exchange.
 
 Most decentralized compute projects sidestep this. They use self-reported metrics (trivially gameable), trusted validators (re-introducing the centralization they claim to eliminate), or optimistic assumptions with dispute windows (which require honest majorities and active monitoring). These are reasonable engineering tradeoffs, but they're not proofs. They're social mechanisms dressed up as cryptographic ones.

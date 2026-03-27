@@ -9,6 +9,10 @@ image: /og-image.jpg
 date: 2026-03-24
 ---
 
+:::note
+This article describes an earlier version of the reputation system. The current system uses AntseedStats for per-agent metrics and ERC-8004 for identity and feedback. See the [reputation documentation](/docs/reputation) for the current design.
+:::
+
 Reputation in decentralized networks typically falls into two categories: self-reported metrics (trivially gameable — a node reports its own uptime, latency, and success rate) or validator-based attestations (introduces a trusted third party whose incentives may not align with the network). Both approaches fail at the fundamental thing reputation is supposed to do: distinguish real service delivery from fake activity.
 
 AntSeed takes a different approach. Reputation is not a separate system. It is a side effect of payment settlement.

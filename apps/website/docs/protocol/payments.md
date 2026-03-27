@@ -27,7 +27,7 @@ Buyer                          Seller                         Chain
   │   │ SERVE PHASE              │                              │
   │   │                          │                              │
   │   ├── HTTP Request ─────────>│                              │
-  │   │<── SellerReceipt ────────┤  Ed25519-signed receipt      │
+  │   │<── HTTP Response ────────┤                              │
   │   ├── MetadataAuth ─────────>│  EIP-712: channelId,         │
   │   │   (cumulativeAmount,     │  cumulativeAmount,            │
   │   │    metadataHash)         │  metadataHash                 │
@@ -84,30 +84,6 @@ The seller submits the latest MetadataAuth to `settle()` or `close()` on-chain. 
 The `maxAmount` in the ReserveAuth caps total USDC the seller can charge in a session. As the buyer signs MetadataAuths with increasing `cumulativeAmount`, the budget is consumed.
 
 When the budget is exhausted, the seller settles the current session (calling `close()`) and returns HTTP 402 to the buyer, triggering a new negotiation cycle (new ReserveAuth, new session).
-
-## Bilateral Receipts
-
-During the serve phase, each request produces a bilateral receipt pair:
-
-### SellerReceipt
-
-Signed by the seller's Ed25519 identity key after processing each request.
-
-| Field | Type | Description |
-|---|---|---|
-| `sessionId` | `bytes32` | Current session identifier |
-| `requestIndex` | `uint32` | Sequential request number within session |
-| `runningTotal` | `uint256` | Cumulative USDC cost through this request |
-| `inputTokens` | `uint32` | Input tokens for this request |
-| `outputTokens` | `uint32` | Output tokens for this request |
-| `responseHash` | `bytes32` | SHA-256 hash of the response payload |
-| `timestamp` | `uint64` | Unix timestamp (ms) |
-
-### BuyerAck
-
-The buyer's Ed25519 signature over the SellerReceipt, confirming they received the response matching `responseHash`.
-
-Bilateral receipts form the per-request audit trail. They are stored locally by both parties and are not submitted on-chain during normal operation. The MetadataAuth chain is the settlement mechanism — receipts exist for dispute evidence and offline verification.
 
 ## Settlement
 
