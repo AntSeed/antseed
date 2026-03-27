@@ -71,6 +71,9 @@ jobs:
       - name: Install Forge dependencies
         run: cd packages/contracts && forge install foundry-rs/forge-std
 
+      - name: Build contracts
+        run: cd packages/contracts && forge build
+
       - name: Start Anvil
         run: anvil &
 
