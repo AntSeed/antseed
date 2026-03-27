@@ -71,21 +71,21 @@ Buyer USDC deposit management with dynamic credit limits and withdrawal timelock
 
 ### AntseedSessions.sol
 
-Session lifecycle with EIP-712 ReserveAuth + MetadataAuth. Holds NO USDC — all funds stay in AntseedDeposits. Swappable: can be redeployed by re-pointing stable contracts.
+Session lifecycle with EIP-712 ReserveAuth + SpendingAuth. Holds NO USDC — all funds stay in AntseedDeposits. Swappable: can be redeployed by re-pointing stable contracts.
 
 **Seller operations:**
 - `reserve(address buyer, bytes32 salt, uint128 maxAmount, uint256 deadline, bytes calldata buyerSig)` — validates ReserveAuth EIP-712 sig, calls Deposits.lockForSession()
-- `settle(bytes32 channelId, uint128 amount, bytes32 metadataHash, bytes calldata buyerSig)` — validates MetadataAuth, calls Deposits.chargeAndCreditEarnings(), session stays open
+- `settle(bytes32 channelId, uint128 amount, bytes32 metadataHash, bytes calldata buyerSig)` — validates SpendingAuth, calls Deposits.chargeAndCreditEarnings(), session stays open
 - `close(bytes32 channelId, uint128 amount, bytes32 metadataHash, bytes calldata buyerSig)` — like settle but finalizes session, releases remaining lock
 
 **Timeout (permissionless):**
 - `requestTimeout(bytes32 channelId)` — after deadline, marks session timed out
 - `withdraw(bytes32 channelId)` — after 15min grace, releases locked funds to buyer
 
-**EIP-712 types (domain: name="AntseedSessions", version="6"):**
+**EIP-712 types (domain: name="AntseedSessions", version="7"):**
 ```
 ReserveAuth(bytes32 channelId, uint128 maxAmount, uint256 deadline)
-MetadataAuth(bytes32 channelId, uint256 cumulativeAmount, bytes32 metadataHash)
+SpendingAuth(bytes32 channelId, uint256 cumulativeAmount, bytes32 metadataHash)
 ```
 
 channelId = keccak256(abi.encode(buyer, seller, salt))

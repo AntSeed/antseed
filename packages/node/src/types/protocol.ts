@@ -43,7 +43,7 @@ export const MAX_PAYLOAD_SIZE = 64 * 1024 * 1024;
 // ─── Bilateral Payment Messages ─────────────────────────────────
 
 /**
- * Buyer authorizes spending via a single EIP-712 MetadataAuth signature.
+ * Buyer authorizes spending via a single EIP-712 SpendingAuth signature.
  * The signature covers channelId, cumulativeAmount, and metadataHash.
  */
 export interface SpendingAuthPayload {
@@ -51,7 +51,7 @@ export interface SpendingAuthPayload {
   cumulativeAmount: string;
   metadataHash: string;         // bytes32 hex
   metadata: string;             // hex-encoded abi.encode(inputTokens, outputTokens, latencyMs, requestCount)
-  metadataAuthSig: string;      // EIP-712 MetadataAuth signature (covers amount + metadata)
+  spendingAuthSig: string;      // EIP-712 SpendingAuth signature (covers amount + metadata)
   buyerEvmAddr: string;
   // Only for initial reserve
   reserveSalt?: string;

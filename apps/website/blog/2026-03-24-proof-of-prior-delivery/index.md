@@ -1,10 +1,10 @@
 ---
 slug: proof-of-prior-delivery
-title: "Cumulative MetadataAuth: One Signature, Two Jobs"
+title: "Cumulative SpendingAuth: One Signature, Two Jobs"
 authors: [antseed]
 tags: [protocol, payments, cryptography, mechanism-design]
-description: How AntSeed's cumulative MetadataAuth model lets the buyer authorize payment and attest to delivery in a single signature per request — no oracles, no validators, no dispute games.
-keywords: [MetadataAuth, EIP-712, payment protocol, P2P payments, deposits, spending authorization, cumulative voucher]
+description: How AntSeed's cumulative SpendingAuth model lets the buyer authorize payment and attest to delivery in a single signature per request — no oracles, no validators, no dispute games.
+keywords: [SpendingAuth, EIP-712, payment protocol, P2P payments, deposits, spending authorization, cumulative voucher]
 image: /og-image.jpg
 date: 2026-03-24
 ---
@@ -13,7 +13,7 @@ In peer-to-peer compute markets, proving service delivery is the hard problem. N
 
 Most decentralized compute projects sidestep this. They use self-reported metrics (trivially gameable), trusted validators (re-introducing the centralization they claim to eliminate), or optimistic assumptions with dispute windows (which require honest majorities and active monitoring). These are reasonable engineering tradeoffs, but they're not proofs. They're social mechanisms dressed up as cryptographic ones.
 
-AntSeed takes a different approach. Every request produces a cumulative **MetadataAuth** — a single EIP-712 signature from the buyer that simultaneously authorizes payment and attests to what was delivered. No validators, no oracles, no dispute games. The buyer's own signature is the proof.
+AntSeed takes a different approach. Every request produces a cumulative **SpendingAuth** — a single EIP-712 signature from the buyer that simultaneously authorizes payment and attests to what was delivered. No validators, no oracles, no dispute games. The buyer's own signature is the proof.
 
 <!-- truncate -->
 
@@ -25,9 +25,9 @@ The naive answer is to put every request on-chain. Prohibitively expensive. The 
 
 The real question is: who already knows what was delivered? Both the buyer and the seller. And the buyer is the one paying. If the buyer signs off on what they consumed, that signature is simultaneously a delivery attestation and a payment authorization. One signature, two jobs.
 
-## Cumulative MetadataAuth
+## Cumulative SpendingAuth
 
-The primitive is the **MetadataAuth** — an EIP-712 typed data signature that the buyer produces after every request. It contains three fields:
+The primitive is the **SpendingAuth** — an EIP-712 typed data signature that the buyer produces after every request. It contains three fields:
 
 - `channelId` — the session identifier
 - `cumulativeAmount` — total USDC authorized so far across all requests in this session
@@ -43,9 +43,9 @@ Walk through a full session:
 
 **Reserve.** The buyer signs a **ReserveAuth** — `(channelId, maxAmount, deadline)` — binding the escrow terms. The seller submits this to `Sessions.reserve()`, which calls `Deposits.lockForSession()` to lock USDC from the buyer's deposit. The USDC never leaves the Deposits contract; Sessions holds nothing. A first-time buyer-seller pair is hard-capped at `FIRST_SIGN_CAP` ($1 USDC), limiting exposure to an unproven seller.
 
-**Serve.** Requests flow. After each one, the buyer computes the cumulative cost, hashes the observed metadata, and signs a MetadataAuth. The seller stores the latest signature. Each new signature makes the previous one obsolete — the seller always holds a single, latest authorization covering all work done so far.
+**Serve.** Requests flow. After each one, the buyer computes the cumulative cost, hashes the observed metadata, and signs a SpendingAuth. The seller stores the latest signature. Each new signature makes the previous one obsolete — the seller always holds a single, latest authorization covering all work done so far.
 
-**Settle.** At any point, the seller can call `settle()` with the latest MetadataAuth. The contract verifies the buyer's signature, charges the cumulative amount from the locked deposit, credits the seller's earnings, and updates on-chain stats with the metadata. The session remains open for more requests. Or the seller can call `close()` to settle and release the remaining reservation in one step.
+**Settle.** At any point, the seller can call `settle()` with the latest SpendingAuth. The contract verifies the buyer's signature, charges the cumulative amount from the locked deposit, credits the seller's earnings, and updates on-chain stats with the metadata. The session remains open for more requests. Or the seller can call `close()` to settle and release the remaining reservation in one step.
 
 There is no separate "claim" step. There is no dispute window. The buyer already signed off on the amount. The contract just executes.
 
@@ -61,7 +61,7 @@ The metadata hash adds a second dimension. The buyer attests to input tokens, ou
 
 The seller computes the cost of each request and reports it to the buyer. What stops a seller from claiming a request cost $0.10 when it really cost $0.01?
 
-The buyer independently estimates cost. Both parties know the model, the token counts, and the seller's published rate. If the seller's claimed cost exceeds 2x the buyer's own estimate, the buyer caps the MetadataAuth at their estimate. The seller can overcharge by small amounts (within the 2x bound), but doing so consistently will cause buyers to choose cheaper sellers. Market pressure enforces honest pricing.
+The buyer independently estimates cost. Both parties know the model, the token counts, and the seller's published rate. If the seller's claimed cost exceeds 2x the buyer's own estimate, the buyer caps the SpendingAuth at their estimate. The seller can overcharge by small amounts (within the 2x bound), but doing so consistently will cause buyers to choose cheaper sellers. Market pressure enforces honest pricing.
 
 This is a meaningful design property: no on-chain oracle is needed to verify pricing. The buyer's independent cost verification, combined with the ability to cap their own signature, creates a bilateral check that works without any third party.
 
@@ -81,14 +81,14 @@ If the seller disappears mid-session — crashes, goes offline, stops responding
 
 Why the grace period? To prevent race conditions where a seller is in the process of settling when someone triggers timeout. The 15 minutes gives the seller time to land their `settle()` transaction. After that, the funds return to the buyer unconditionally.
 
-Why a full refund? Because the seller cannot unilaterally prove delivery. Only the buyer's signed MetadataAuth can authorize charges. If the seller had a recent MetadataAuth, they should have settled before the deadline. If they didn't, the protocol's position is explicit: if you can't prove it, you don't get paid.
+Why a full refund? Because the seller cannot unilaterally prove delivery. Only the buyer's signed SpendingAuth can authorize charges. If the seller had a recent SpendingAuth, they should have settled before the deadline. If they didn't, the protocol's position is explicit: if you can't prove it, you don't get paid.
 
 ## The Design Principle
 
-The cumulative MetadataAuth model reduces the payment-and-attestation problem to a single primitive: a buyer signature over running totals. Each signature makes the previous one obsolete. The seller holds exactly one signature at any time. Settlement is a single contract call with that one signature.
+The cumulative SpendingAuth model reduces the payment-and-attestation problem to a single primitive: a buyer signature over running totals. Each signature makes the previous one obsolete. The seller holds exactly one signature at any time. Settlement is a single contract call with that one signature.
 
 No proof chains. No bilateral receipt exchanges. No per-request on-chain activity. Just a cumulative counter, a metadata hash, and a signature. The buyer can't pay without attesting, and the attestation is a standard ECDSA signature verified by a standard smart contract.
 
-The simplicity is the point. Every additional mechanism — oracles, validators, dispute games, receipt chains — introduces new trust assumptions and new attack surfaces. The cumulative MetadataAuth has exactly one trust assumption: the buyer will sign honestly because doing otherwise is either self-defeating (understating) or self-harming (overstating). That turns out to be enough.
+The simplicity is the point. Every additional mechanism — oracles, validators, dispute games, receipt chains — introduces new trust assumptions and new attack surfaces. The cumulative SpendingAuth has exactly one trust assumption: the buyer will sign honestly because doing otherwise is either self-defeating (understating) or self-harming (overstating). That turns out to be enough.
 
 [Read the full payment protocol specification](/docs/payments)

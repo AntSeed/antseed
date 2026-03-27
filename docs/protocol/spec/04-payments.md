@@ -1,6 +1,6 @@
-# 04 - Payments: Streaming MetadataAuth
+# 04 - Payments: Streaming SpendingAuth
 
-This document specifies the payment protocol for the AntSeed P2P AI compute network. Payments use USDC on Base with two EIP-712 signed messages: **ReserveAuth** (session budget) and **MetadataAuth** (cumulative per-request authorization). AntseedSessions orchestrates the lifecycle but holds no USDC — all funds stay in AntseedDeposits.
+This document specifies the payment protocol for the AntSeed P2P AI compute network. Payments use USDC on Base with two EIP-712 signed messages: **ReserveAuth** (session budget) and **SpendingAuth** (cumulative per-request authorization). AntseedSessions orchestrates the lifecycle but holds no USDC — all funds stay in AntseedDeposits.
 
 ## 1. Session Lifecycle (Reserve → Serve → Settle/Close)
 
@@ -17,16 +17,16 @@ BUYER                              SELLER                           ON-CHAIN
   │ ══ SERVE ═══════════════════════ │                                │
   │   requests flow                  │   cumulativeAmount increases   │
   │   ◄── SellerReceipt (per req) ── │   running total + hash         │
-  │   ── MetadataAuth ────────────► │   buyer signs cumulative auth  │
+  │   ── SpendingAuth ────────────► │   buyer signs cumulative auth  │
   │         ... N requests           │                                │
   │                                  │                                │
   │  === SETTLE (mid-session) ======  │                                │
-  │                                  │ ── settle(MetadataAuth) ──────►│ ← charges cumulative
+  │                                  │ ── settle(SpendingAuth) ──────►│ ← charges cumulative
   │                                  │    Deposits.chargeAndCredit    │   session stays open
   │                                  │    EarningsToSeller()          │
   │                                  │                                │
   │  === CLOSE (final) ============  │                                │
-  │                                  │ ── close(MetadataAuth) ───────►│ ← charges final amount
+  │                                  │ ── close(SpendingAuth) ───────►│ ← charges final amount
   │                                  │    releases remaining lock     │   session finalized
   │                                  │                                │
   │  === TIMEOUT (seller gone) ====  │                                │
@@ -42,13 +42,13 @@ The buyer signs an EIP-712 `ReserveAuth` (channelId, maxAmount, deadline) and se
 
 ### Serve
 
-During the session, the seller sends a `SellerReceipt` after each request. The buyer signs a `MetadataAuth` with the new cumulative amount and metadata hash. These form the authorization trail.
+During the session, the seller sends a `SellerReceipt` after each request. The buyer signs a `SpendingAuth` with the new cumulative amount and metadata hash. These form the authorization trail.
 
 When the session budget is nearly exhausted, the seller settles (calls `close()`), returns HTTP 402, and the buyer initiates a new session negotiation with a fresh ReserveAuth.
 
 ### Settle / Close
 
-The seller calls `settle()` with the latest MetadataAuth to charge the cumulative amount while keeping the session open. To finalize, the seller calls `close()`, which charges the final amount and releases remaining locked funds to the buyer.
+The seller calls `settle()` with the latest SpendingAuth to charge the cumulative amount while keeping the session open. To finalize, the seller calls `close()`, which charges the final amount and releases remaining locked funds to the buyer.
 
 ### Timeout
 
@@ -60,7 +60,7 @@ EIP-712 domain for both message types:
 
 ```
 name:               "AntseedSessions"
-version:            "6"
+version:            "7"
 chainId:            <deployment chain>
 verifyingContract:  <sessions contract address>
 ```
@@ -83,10 +83,10 @@ ReserveAuth(
 
 The buyer signs this off-chain. The seller submits it to `reserve()` along with buyer address, salt, maxAmount, and deadline.
 
-### MetadataAuth
+### SpendingAuth
 
 ```
-MetadataAuth(
+SpendingAuth(
   bytes32 channelId,
   uint256 cumulativeAmount,
   bytes32 metadataHash
@@ -99,13 +99,13 @@ MetadataAuth(
 | `cumulativeAmount` | Total USDC authorized so far (monotonically increasing across requests) |
 | `metadataHash` | Hash of request metadata (input/output tokens, model identifier, etc.) |
 
-The buyer signs a new MetadataAuth after each request. The seller accumulates these and submits the latest to `settle()` or `close()`. Single signature per action — no dual signatures required.
+The buyer signs a new SpendingAuth after each request. The seller accumulates these and submits the latest to `settle()` or `close()`. Single signature per action — no dual signatures required.
 
 ## 3. Session Budget and Budget Exhaustion
 
-The `maxAmount` in the ReserveAuth caps total USDC the seller can charge in a session. The buyer's MetadataAuth `cumulativeAmount` must not exceed this cap.
+The `maxAmount` in the ReserveAuth caps total USDC the seller can charge in a session. The buyer's SpendingAuth `cumulativeAmount` must not exceed this cap.
 
-When the budget is nearly exhausted, the seller calls `close()` with the final MetadataAuth, returns HTTP 402 to the buyer, and the buyer initiates a new session negotiation with a fresh ReserveAuth and salt.
+When the budget is nearly exhausted, the seller calls `close()` with the final SpendingAuth, returns HTTP 402 to the buyer, and the buyer initiates a new session negotiation with a fresh ReserveAuth and salt.
 
 ## 4. Per-Agent Stats (AntseedStats)
 
@@ -124,7 +124,7 @@ Stats are factual counters with no reputation scoring logic. They feed into emis
 | Minimum deposit | Buyers must deposit at least N USDC to participate | 10 USDC |
 | Minimum stake | Sellers must stake USDC bound to ERC-8004 agentId | 10 USDC |
 | Budget binding | ReserveAuth binds maxAmount and deadline to buyer signature | Per-session |
-| Cumulative auth | MetadataAuth cumulativeAmount is monotonically increasing | Per-request |
+| Cumulative auth | SpendingAuth cumulativeAmount is monotonically increasing | Per-request |
 | Gasless buyer | Buyer never submits transactions — cannot be griefed for gas | Always |
 
 ## 6. Staking
@@ -259,14 +259,14 @@ Contracts reference each other by address (set at deployment, updateable by owne
 | 0x50 | `ReserveAuth` | Buyer → Seller | EIP-712 signed reserve authorization |
 | 0x51 | `AuthAck` | Seller → Buyer | Reservation confirmed |
 | 0x53 | `SellerReceipt` | Seller → Buyer | Running-total receipt after each request |
-| 0x54 | `MetadataAuth` | Buyer → Seller | EIP-712 signed cumulative spending authorization |
+| 0x54 | `SpendingAuth` | Buyer → Seller | EIP-712 signed cumulative spending authorization |
 
 ## 12. Session Persistence
 
 Session state is persisted to SQLite in the node SDK. Schema:
 
 - `sessions` table: channel_id, peer_id, role, EVM addresses, salt, max_amount, deadline, cumulative_amount, request_count, timestamps, status
-- `receipts` table: channel_id, cumulative_amount, request_count, metadata_hash, seller_sig, buyer_metadata_auth_sig, timestamp
+- `receipts` table: channel_id, cumulative_amount, request_count, metadata_hash, seller_sig, buyer_spending_auth_sig, timestamp
 
 ## 13. Supported Chains
 

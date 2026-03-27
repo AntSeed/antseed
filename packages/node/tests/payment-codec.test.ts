@@ -13,7 +13,7 @@ describe('payment codec round-trips', () => {
       cumulativeAmount: '1000000',
       metadataHash: '0x' + 'cc'.repeat(32),
       metadata: '0x' + 'dd'.repeat(128),
-      metadataAuthSig: '0x' + 'ee'.repeat(65),
+      spendingAuthSig: '0x' + 'ee'.repeat(65),
       buyerEvmAddr: '0x' + 'ab'.repeat(20),
     };
     const encoded = encodeSpendingAuth(payload);

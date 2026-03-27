@@ -10,7 +10,7 @@ import type {
 import { DepositsClient } from './evm/deposits-client.js';
 import { identityToEvmWallet, identityToEvmAddress } from './evm/keypair.js';
 import {
-  signMetadataAuth,
+  signSpendingAuth,
   signReserveAuth,
   makeSessionsDomain,
   computeMetadataHash,
@@ -19,7 +19,7 @@ import {
   ZERO_METADATA_HASH,
   computeChannelId,
 } from './evm/signatures.js';
-import type { MetadataAuthMessage, ReserveAuthMessage, SpendingAuthMetadata } from './evm/signatures.js';
+import type { SpendingAuthMessage, ReserveAuthMessage, SpendingAuthMetadata } from './evm/signatures.js';
 import { debugLog, debugWarn } from '../utils/debug.js';
 import { SessionStore, type StoredSession } from './session-store.js';
 
@@ -176,7 +176,7 @@ export class BuyerPaymentManager {
       settledAmount: null,
       status: 'active',
       latestBuyerSig: null,
-      latestMetadataAuthSig: null,
+      latestSpendingAuthSig: null,
       latestMetadata: null,
       createdAt: now,
       updatedAt: now,
@@ -189,7 +189,7 @@ export class BuyerPaymentManager {
       cumulativeAmount: '0',
       metadataHash: ZERO_METADATA_HASH,
       metadata: '',
-      metadataAuthSig: reserveAuthSig,
+      spendingAuthSig: reserveAuthSig,
       buyerEvmAddr,
       reserveSalt: salt,
       reserveMaxAmount: maxAmount.toString(),
@@ -265,14 +265,14 @@ export class BuyerPaymentManager {
     const metadataHashHex = computeMetadataHash(newMeta);
     const encodedMetadata = encodeMetadata(newMeta);
 
-    // Sign EIP-712 MetadataAuth (covers amount + metadata for both payment and reputation)
+    // Sign EIP-712 SpendingAuth (covers amount + metadata for both payment and reputation)
     const sessionsDomain = makeSessionsDomain(this._config.chainId, this._config.sessionsContractAddress);
-    const metadataMsg: MetadataAuthMessage = {
+    const metadataMsg: SpendingAuthMessage = {
       channelId: session.sessionId,
       cumulativeAmount: newAmount,
       metadataHash: metadataHashHex,
     };
-    const metadataAuthSig = await signMetadataAuth(this._signer, sessionsDomain, metadataMsg);
+    const spendingAuthSig = await signSpendingAuth(this._signer, sessionsDomain, metadataMsg);
 
     // Persist updated cumulative values to SessionStore
     this._sessionStore.upsertSession({
@@ -289,7 +289,7 @@ export class BuyerPaymentManager {
       cumulativeAmount: newAmount.toString(),
       metadataHash: metadataHashHex,
       metadata: encodedMetadata,
-      metadataAuthSig,
+      spendingAuthSig,
       buyerEvmAddr: session.buyerEvmAddr,
     };
 
@@ -336,18 +336,18 @@ export class BuyerPaymentManager {
     // Update cumulative amount
     this._cumulativeAmount.set(sellerPeerId, requiredCumulativeAmount);
 
-    // Sign MetadataAuth with the required cumulative amount and current metadata
+    // Sign SpendingAuth with the required cumulative amount and current metadata
     const currentMeta = this._metadata.get(sellerPeerId) ?? { ...ZERO_METADATA };
     const metadataHashHex = computeMetadataHash(currentMeta);
     const encodedMetadata = encodeMetadata(currentMeta);
 
     const sessionsDomain = makeSessionsDomain(this._config.chainId, this._config.sessionsContractAddress);
-    const metadataMsg: MetadataAuthMessage = {
+    const metadataMsg: SpendingAuthMessage = {
       channelId: session.sessionId,
       cumulativeAmount: requiredCumulativeAmount,
       metadataHash: metadataHashHex,
     };
-    const metadataAuthSig = await signMetadataAuth(this._signer, sessionsDomain, metadataMsg);
+    const spendingAuthSig = await signSpendingAuth(this._signer, sessionsDomain, metadataMsg);
 
     // Persist updated values
     this._sessionStore.upsertSession({
@@ -363,7 +363,7 @@ export class BuyerPaymentManager {
         cumulativeAmount: requiredCumulativeAmount.toString(),
         metadataHash: metadataHashHex,
         metadata: encodedMetadata,
-        metadataAuthSig,
+        spendingAuthSig,
         buyerEvmAddr: session.buyerEvmAddr,
       });
       debugLog(`[BuyerPayment] NeedAuth responded: new cumulativeAmount=${requiredCumulativeAmount}`);

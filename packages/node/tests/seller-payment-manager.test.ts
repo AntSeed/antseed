@@ -11,8 +11,8 @@ import type { SpendingAuthPayload } from '../src/types/protocol.js';
 import { bytesToHex } from '../src/utils/hex.js';
 import { toPeerId } from '../src/types/peer.js';
 import { identityToEvmWallet, identityToEvmAddress } from '../src/payments/evm/keypair.js';
-import { signMetadataAuth, signReserveAuth, makeSessionsDomain, computeMetadataHash, encodeMetadata, ZERO_METADATA_HASH } from '../src/payments/evm/signatures.js';
-import type { MetadataAuthMessage, ReserveAuthMessage, SpendingAuthMetadata } from '../src/payments/evm/signatures.js';
+import { signSpendingAuth, signReserveAuth, makeSessionsDomain, computeMetadataHash, encodeMetadata, ZERO_METADATA_HASH } from '../src/payments/evm/signatures.js';
+import type { SpendingAuthMessage, ReserveAuthMessage, SpendingAuthMetadata } from '../src/payments/evm/signatures.js';
 
 const CHAIN_ID = 31337;
 const CONTRACT_ADDR = '0x' + 'dd'.repeat(20);
@@ -82,15 +82,15 @@ async function buildSpendingAuth(
   const sessionsDomain = makeSessionsDomain(CHAIN_ID, CONTRACT_ADDR);
   const reserveMaxAmount = BigInt(opts.reserveMaxAmount ?? '10000000');
 
-  // First auth (reserve) uses ReserveAuth; subsequent uses MetadataAuth
+  // First auth (reserve) uses ReserveAuth; subsequent uses SpendingAuth
   const isReserve = opts.isReserve ?? false;
-  let metadataAuthSig: string;
+  let spendingAuthSig: string;
   if (isReserve) {
     const reserveMsg: ReserveAuthMessage = { channelId, maxAmount: reserveMaxAmount, deadline: BigInt(deadline) };
-    metadataAuthSig = await signReserveAuth(buyerWallet, sessionsDomain, reserveMsg);
+    spendingAuthSig = await signReserveAuth(buyerWallet, sessionsDomain, reserveMsg);
   } else {
-    const metadataMsg: MetadataAuthMessage = { channelId, cumulativeAmount, metadataHash: metadataHashHex };
-    metadataAuthSig = await signMetadataAuth(buyerWallet, sessionsDomain, metadataMsg);
+    const metadataMsg: SpendingAuthMessage = { channelId, cumulativeAmount, metadataHash: metadataHashHex };
+    spendingAuthSig = await signSpendingAuth(buyerWallet, sessionsDomain, metadataMsg);
   }
 
   return {
@@ -98,7 +98,7 @@ async function buildSpendingAuth(
     cumulativeAmount: cumulativeAmount.toString(),
     metadataHash: metadataHashHex,
     metadata: encodedMetadata,
-    metadataAuthSig,
+    spendingAuthSig,
     buyerEvmAddr,
     reserveSalt: salt,
     reserveMaxAmount: '10000000',

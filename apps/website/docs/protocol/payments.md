@@ -9,7 +9,7 @@ hide_title: true
 
 Buyers pre-deposit USDC into the on-chain AntseedDeposits contract. Each session follows a Reserve-Serve-Settle lifecycle where credits are locked via AntseedSessions (which holds no USDC itself), requests flow freely over the P2P transport, and settlement happens when the seller calls `settle()` or `close()`.
 
-Two EIP-712 signed messages drive the flow: **ReserveAuth** (buyer authorizes a session budget) and **MetadataAuth** (buyer authorizes cumulative spend per request).
+Two EIP-712 signed messages drive the flow: **ReserveAuth** (buyer authorizes a session budget) and **SpendingAuth** (buyer authorizes cumulative spend per request).
 
 ## Session Lifecycle
 
@@ -28,7 +28,7 @@ Buyer                          Seller                         Chain
   │   │                          │                              │
   │   ├── HTTP Request ─────────>│                              │
   │   │<── HTTP Response ────────┤                              │
-  │   ├── MetadataAuth ─────────>│  EIP-712: channelId,         │
+  │   ├── SpendingAuth ─────────>│  EIP-712: channelId,         │
   │   │   (cumulativeAmount,     │  cumulativeAmount,            │
   │   │    metadataHash)         │  metadataHash                 │
   │   │         ... N requests   │                              │
@@ -36,15 +36,15 @@ Buyer                          Seller                         Chain
   │                              │                              │
   │  === SETTLE / CLOSE ========  │                              │
   │                              │                              │
-  │                              ├── settle(MetadataAuth) ─────>│
-  │                              │   or close(MetadataAuth)     │
+  │                              ├── settle(SpendingAuth) ─────>│
+  │                              │   or close(SpendingAuth)     │
   │                              │   Deposits.chargeAndCredit   │
   │                              │   EarningsToSeller()         │
   │                              │<──── confirmed ──────────────┤
   │                              │                              │
 ```
 
-The seller calls `settle()` with the latest MetadataAuth to charge the buyer for cumulative usage while keeping the session open, or `close()` to finalize and release remaining funds. If the seller disappears, anyone can call `requestTimeout()` after the deadline, followed by `withdraw()` after a 15-minute grace period to release buyer funds.
+The seller calls `settle()` with the latest SpendingAuth to charge the buyer for cumulative usage while keeping the session open, or `close()` to finalize and release remaining funds. If the seller disappears, anyone can call `requestTimeout()` after the deadline, followed by `withdraw()` after a 15-minute grace period to release buyer funds.
 
 ## EIP-712 Signed Messages
 
@@ -52,7 +52,7 @@ Two EIP-712 typed data messages drive the payment flow. Both share the same doma
 
 ```text title="EIP-712 domain"
 name:               "AntseedSessions"
-version:            "6"
+version:            "7"
 chainId:            <deployment chain>
 verifyingContract:  <sessions contract address>
 ```
@@ -67,7 +67,7 @@ Signed by the buyer to authorize a session budget. One signature per session.
 | `maxAmount` | `uint128` | Maximum USDC (6 decimals) the seller may lock |
 | `deadline` | `uint256` | Unix timestamp after which this auth expires |
 
-### MetadataAuth
+### SpendingAuth
 
 Signed by the buyer on each request to authorize cumulative spending.
 
@@ -77,11 +77,11 @@ Signed by the buyer on each request to authorize cumulative spending.
 | `cumulativeAmount` | `uint256` | Total USDC authorized so far (monotonically increasing) |
 | `metadataHash` | `bytes32` | Hash of request metadata (input/output token counts, model, etc.) |
 
-The seller submits the latest MetadataAuth to `settle()` or `close()` on-chain. The contract verifies the buyer's signature and charges the cumulative amount from the locked deposit.
+The seller submits the latest SpendingAuth to `settle()` or `close()` on-chain. The contract verifies the buyer's signature and charges the cumulative amount from the locked deposit.
 
 ## Session Budget and Budget Exhaustion
 
-The `maxAmount` in the ReserveAuth caps total USDC the seller can charge in a session. As the buyer signs MetadataAuths with increasing `cumulativeAmount`, the budget is consumed.
+The `maxAmount` in the ReserveAuth caps total USDC the seller can charge in a session. As the buyer signs SpendingAuths with increasing `cumulativeAmount`, the budget is consumed.
 
 When the budget is exhausted, the seller settles the current session (calling `close()`) and returns HTTP 402 to the buyer, triggering a new negotiation cycle (new ReserveAuth, new session).
 
@@ -89,9 +89,9 @@ When the budget is exhausted, the seller settles the current session (calling `c
 
 ### Active Settlement
 
-The seller calls `settle()` with the latest buyer-signed MetadataAuth at any time during the session. This charges the buyer's locked deposit for the cumulative amount and credits the seller's earnings, while keeping the session open for further requests.
+The seller calls `settle()` with the latest buyer-signed SpendingAuth at any time during the session. This charges the buyer's locked deposit for the cumulative amount and credits the seller's earnings, while keeping the session open for further requests.
 
-To finalize, the seller calls `close()` with the final MetadataAuth. This charges the cumulative amount, credits the seller, and releases any remaining locked deposit back to the buyer's available balance.
+To finalize, the seller calls `close()` with the final SpendingAuth. This charges the cumulative amount, credits the seller, and releases any remaining locked deposit back to the buyer's available balance.
 
 ### Timeout
 
@@ -117,7 +117,7 @@ Ed25519 private key (32 bytes)
   → EVM address (20 bytes)
 ```
 
-The signing identity (Ed25519) and the funding wallet (secp256k1/EVM) are separate key types derived from the same seed. The Ed25519 key signs protocol messages (handshakes, receipts). The EVM key signs EIP-712 messages (ReserveAuth, MetadataAuth).
+The signing identity (Ed25519) and the funding wallet (secp256k1/EVM) are separate key types derived from the same seed. The Ed25519 key signs protocol messages (handshakes, receipts). The EVM key signs EIP-712 messages (ReserveAuth, SpendingAuth).
 
 ### Funding
 

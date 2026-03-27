@@ -493,7 +493,7 @@ describe('Streaming payment flow E2E', () => {
       cumulativeAmount: '0',
       metadataHash: ZERO_METADATA_HASH,
       metadata: '',
-      metadataAuthSig: reserveAuthSig,
+      spendingAuthSig: reserveAuthSig,
       buyerEvmAddr,
       sellerEvmAddr,
       reserveSalt: salt,

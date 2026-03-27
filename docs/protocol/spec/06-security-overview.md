@@ -62,9 +62,9 @@ The buyer-seller flow enforces:
 
 - Buyer signs EIP-712 ReserveAuth (channelId, maxAmount, deadline) to authorize session budget.
 - Seller recovers buyer address from ReserveAuth signature before on-chain reserve.
-- Per request: buyer signs EIP-712 MetadataAuth (channelId, cumulativeAmount, metadataHash).
-- Seller submits latest MetadataAuth to settle() or close() on-chain.
-- On buyer disconnect: seller calls close() with last MetadataAuth to finalize.
+- Per request: buyer signs EIP-712 SpendingAuth (channelId, cumulativeAmount, metadataHash).
+- Seller submits latest SpendingAuth to settle() or close() on-chain.
+- On buyer disconnect: seller calls close() with last SpendingAuth to finalize.
 - On seller disappearance: requestTimeout() (permissionless after deadline) + withdraw() after 15min grace.
 - Sessions contract holds no USDC — all funds managed by AntseedDeposits.
 
@@ -75,7 +75,7 @@ The buyer-seller flow enforces:
 | Node identity | Ed25519 keypair | Peer ID and metadata signing |
 | Connection auth | Ed25519 signature + nonce + timestamp | Spoofing and replay prevention |
 | Metadata integrity | Ed25519 signature over encoded metadata | Discovery payload authenticity |
-| Payment auth (on-chain) | EIP-712 ECDSA (ReserveAuth, MetadataAuth) | Reserve, cumulative spend, settlement authorizations |
+| Payment auth (on-chain) | EIP-712 ECDSA (ReserveAuth, SpendingAuth) | Reserve, cumulative spend, settlement authorizations |
 | Receipt/ack integrity | Ed25519 binary signatures | Running-total acknowledgment trail |
 
 ## 5. Operational Best Practices

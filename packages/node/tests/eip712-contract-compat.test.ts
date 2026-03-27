@@ -1,12 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { keccak256, toUtf8Bytes, verifyTypedData } from 'ethers';
 import {
-  METADATA_AUTH_TYPES,
+  SPENDING_AUTH_TYPES,
   makeSessionsDomain,
-  signMetadataAuth,
+  signSpendingAuth,
   computeMetadataHash,
   ZERO_METADATA_HASH,
-  type MetadataAuthMessage,
+  type SpendingAuthMessage,
 } from '../src/payments/evm/signatures.js';
 import { identityToEvmWallet } from '../src/payments/evm/keypair.js';
 import { loadOrCreateIdentity } from '../src/p2p/identity.js';
@@ -15,33 +15,33 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
 describe('EIP-712 Contract Compatibility', () => {
-  it('METADATA_AUTH_TYPES typehash matches contract format', () => {
+  it('SPENDING_AUTH_TYPES typehash matches contract format', () => {
     // The contract computes:
-    // keccak256("MetadataAuth(bytes32 channelId,uint256 cumulativeAmount,bytes32 metadataHash)")
+    // keccak256("SpendingAuth(bytes32 channelId,uint256 cumulativeAmount,bytes32 metadataHash)")
     const expectedTypeString =
-      'MetadataAuth(bytes32 channelId,uint256 cumulativeAmount,bytes32 metadataHash)';
+      'SpendingAuth(bytes32 channelId,uint256 cumulativeAmount,bytes32 metadataHash)';
     const expectedHash = keccak256(toUtf8Bytes(expectedTypeString));
 
     // Verify our TS type definition produces the same encoding
-    const fields = METADATA_AUTH_TYPES.MetadataAuth;
-    const tsTypeString = `MetadataAuth(${fields.map((f) => `${f.type} ${f.name}`).join(',')})`;
+    const fields = SPENDING_AUTH_TYPES.SpendingAuth;
+    const tsTypeString = `SpendingAuth(${fields.map((f) => `${f.type} ${f.name}`).join(',')})`;
     const tsHash = keccak256(toUtf8Bytes(tsTypeString));
 
     expect(tsHash).toBe(expectedHash);
   });
 
-  it('TS MetadataAuth type string has exactly the right field order and types', () => {
-    const fields = METADATA_AUTH_TYPES.MetadataAuth;
+  it('TS SpendingAuth type string has exactly the right field order and types', () => {
+    const fields = SPENDING_AUTH_TYPES.SpendingAuth;
     expect(fields).toHaveLength(3);
     expect(fields[0]).toEqual({ name: 'channelId', type: 'bytes32' });
     expect(fields[1]).toEqual({ name: 'cumulativeAmount', type: 'uint256' });
     expect(fields[2]).toEqual({ name: 'metadataHash', type: 'bytes32' });
   });
 
-  it('AntSeed domain version is "6" matching contract constructor', () => {
+  it('AntSeed domain version is "7" matching contract constructor', () => {
     const domain = makeSessionsDomain(31337, '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
     expect(domain.name).toBe('AntseedSessions');
-    expect(domain.version).toBe('6');
+    expect(domain.version).toBe('7');
     expect(domain.chainId).toBe(31337);
     expect(domain.verifyingContract).toBe('0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
   });
@@ -58,63 +58,63 @@ describe('EIP-712 Contract Compatibility', () => {
     expect(local.chainId).not.toBe(base.chainId);
   });
 
-  it('reserve MetadataAuth (cumulative=0) signs and recovers correctly', async () => {
+  it('reserve SpendingAuth (cumulative=0) signs and recovers correctly', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'eip712-test-'));
     try {
       const identity = await loadOrCreateIdentity(dir);
       const wallet = identityToEvmWallet(identity);
       const domain = makeSessionsDomain(31337, '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
 
-      const msg: MetadataAuthMessage = {
+      const msg: SpendingAuthMessage = {
         channelId: '0x' + '01'.repeat(32),
         cumulativeAmount: 0n,
         metadataHash: ZERO_METADATA_HASH,
       };
 
-      const sig = await signMetadataAuth(wallet, domain, msg);
-      const recovered = verifyTypedData(domain, METADATA_AUTH_TYPES, msg, sig);
+      const sig = await signSpendingAuth(wallet, domain, msg);
+      const recovered = verifyTypedData(domain, SPENDING_AUTH_TYPES, msg, sig);
       expect(recovered.toLowerCase()).toBe(wallet.address.toLowerCase());
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
   });
 
-  it('settle MetadataAuth (cumulative>0) signs and recovers correctly', async () => {
+  it('settle SpendingAuth (cumulative>0) signs and recovers correctly', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'eip712-test-'));
     try {
       const identity = await loadOrCreateIdentity(dir);
       const wallet = identityToEvmWallet(identity);
       const domain = makeSessionsDomain(31337, '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
 
-      const msg: MetadataAuthMessage = {
+      const msg: SpendingAuthMessage = {
         channelId: '0x' + '01'.repeat(32),
         cumulativeAmount: 500000n,
         metadataHash: computeMetadataHash({ cumulativeInputTokens: 5000n, cumulativeOutputTokens: 12000n, cumulativeLatencyMs: 0n, cumulativeRequestCount: 0n }),
       };
 
-      const sig = await signMetadataAuth(wallet, domain, msg);
-      const recovered = verifyTypedData(domain, METADATA_AUTH_TYPES, msg, sig);
+      const sig = await signSpendingAuth(wallet, domain, msg);
+      const recovered = verifyTypedData(domain, SPENDING_AUTH_TYPES, msg, sig);
       expect(recovered.toLowerCase()).toBe(wallet.address.toLowerCase());
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
   });
 
-  it('different cumulative amounts produce different MetadataAuth signatures', async () => {
+  it('different cumulative amounts produce different SpendingAuth signatures', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'eip712-test-'));
     try {
       const identity = await loadOrCreateIdentity(dir);
       const wallet = identityToEvmWallet(identity);
       const domain = makeSessionsDomain(31337, '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
 
-      const baseMsg: MetadataAuthMessage = {
+      const baseMsg: SpendingAuthMessage = {
         channelId: '0x' + '01'.repeat(32),
         cumulativeAmount: 100000n,
         metadataHash: computeMetadataHash({ cumulativeInputTokens: 1000n, cumulativeOutputTokens: 2000n, cumulativeLatencyMs: 0n, cumulativeRequestCount: 0n }),
       };
 
-      const sig1 = await signMetadataAuth(wallet, domain, baseMsg);
-      const sig2 = await signMetadataAuth(wallet, domain, {
+      const sig1 = await signSpendingAuth(wallet, domain, baseMsg);
+      const sig2 = await signSpendingAuth(wallet, domain, {
         ...baseMsg,
         cumulativeAmount: 200000n,
       });
@@ -131,14 +131,14 @@ describe('EIP-712 Contract Compatibility', () => {
       const wallet = identityToEvmWallet(identity);
       const domain = makeSessionsDomain(31337, '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
 
-      const baseMsg: MetadataAuthMessage = {
+      const baseMsg: SpendingAuthMessage = {
         channelId: '0x' + '01'.repeat(32),
         cumulativeAmount: 100000n,
         metadataHash: ZERO_METADATA_HASH,
       };
 
-      const sig1 = await signMetadataAuth(wallet, domain, baseMsg);
-      const sig2 = await signMetadataAuth(wallet, domain, {
+      const sig1 = await signSpendingAuth(wallet, domain, baseMsg);
+      const sig2 = await signSpendingAuth(wallet, domain, {
         ...baseMsg,
         channelId: '0x' + '02'.repeat(32),
       });
@@ -160,16 +160,16 @@ describe('EIP-712 Contract Compatibility', () => {
       const wallet2 = identityToEvmWallet(identity2);
 
       const domain = makeSessionsDomain(31337, '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
-      const msg: MetadataAuthMessage = {
+      const msg: SpendingAuthMessage = {
         channelId: '0x' + '01'.repeat(32),
         cumulativeAmount: 100000n,
         metadataHash: ZERO_METADATA_HASH,
       };
 
       // Sign with wallet1
-      const sig = await signMetadataAuth(wallet1, domain, msg);
+      const sig = await signSpendingAuth(wallet1, domain, msg);
       // Recover and check it does NOT match wallet2
-      const recovered = verifyTypedData(domain, METADATA_AUTH_TYPES, msg, sig);
+      const recovered = verifyTypedData(domain, SPENDING_AUTH_TYPES, msg, sig);
       expect(recovered.toLowerCase()).toBe(wallet1.address.toLowerCase());
       expect(recovered.toLowerCase()).not.toBe(wallet2.address.toLowerCase());
 

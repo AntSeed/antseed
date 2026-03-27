@@ -36,7 +36,7 @@ These values are keyed by ERC-8004 agentId. They cannot be written by any extern
 
 The stats system has three distinct update paths, each triggered by a different settlement outcome. The distinction matters because it determines what "one session" means in the on-chain record.
 
-**`close()` — updateType 0 (complete).** The seller calls `close()` with the buyer's latest MetadataAuth to finalize a session. The contract charges the cumulative amount, credits the seller, releases remaining reservation, and updates stats. Critically, this **increments sessionCount by 1**. One completed session equals one count. This is the clean path — both parties fulfilled their obligations.
+**`close()` — updateType 0 (complete).** The seller calls `close()` with the buyer's latest SpendingAuth to finalize a session. The contract charges the cumulative amount, credits the seller, releases remaining reservation, and updates stats. Critically, this **increments sessionCount by 1**. One completed session equals one count. This is the clean path — both parties fulfilled their obligations.
 
 **`settle()` — updateType 2 (partial).** The seller calls `settle()` mid-session to collect earnings so far without closing the session. This accumulates volume, tokens, latency, and request count into the stats, but **does not increment sessionCount**. Why? Because the session is still open. If a seller settles 5 times during a long session and then closes it, that's 5 partial settlements and 1 session count. This prevents artificial inflation — you can't turn one real session into five by settling frequently.
 
@@ -48,13 +48,13 @@ The three paths are exhaustive. Every session ends in exactly one of these outco
 
 The counters have a critical property: they are written exclusively by contract logic during fund movement. Consider what an attacker would need to do to inflate their stats:
 
-To increase `sessionCount`, they need a `close()` call, which requires a valid buyer-signed MetadataAuth, which requires a real reservation, which requires locked USDC from a real deposit. The cost of inflating session count is the gas cost plus the actual USDC that must be deposited and reserved.
+To increase `sessionCount`, they need a `close()` call, which requires a valid buyer-signed SpendingAuth, which requires a real reservation, which requires locked USDC from a real deposit. The cost of inflating session count is the gas cost plus the actual USDC that must be deposited and reserved.
 
 To increase `totalVolumeUsdc`, they need real USDC flowing through settlement. There is no way to record volume without moving money.
 
 To decrease `ghostCount`, they would need to modify contract storage. They can't. The contract is the sole writer.
 
-The metadata values — tokens, latency, request count — come from the `metadataHash` in the buyer's MetadataAuth signature. The buyer commits to these values by signing `keccak256(inputTokens, outputTokens, latencyMs, requestCount)`. The contract unpacks and accumulates them. A buyer could theoretically sign incorrect metadata, but they have no incentive to: the metadata feeds their own stats record, and the seller independently tracks the same values.
+The metadata values — tokens, latency, request count — come from the `metadataHash` in the buyer's SpendingAuth signature. The buyer commits to these values by signing `keccak256(inputTokens, outputTokens, latencyMs, requestCount)`. The contract unpacks and accumulates them. A buyer could theoretically sign incorrect metadata, but they have no incentive to: the metadata feeds their own stats record, and the seller independently tracks the same values.
 
 ## Slashing Reads Stats
 

@@ -38,8 +38,8 @@ contract AntseedSessionsTest is Test {
     uint256 constant STAKE_AMOUNT = 10_000_000; // MIN_SELLER_STAKE
 
     // AntSeed EIP-712 typehashes (must match contract)
-    bytes32 constant METADATA_AUTH_TYPEHASH = keccak256(
-        "MetadataAuth(bytes32 channelId,uint256 cumulativeAmount,bytes32 metadataHash)"
+    bytes32 constant SPENDING_AUTH_TYPEHASH = keccak256(
+        "SpendingAuth(bytes32 channelId,uint256 cumulativeAmount,bytes32 metadataHash)"
     );
     bytes32 constant RESERVE_AUTH_TYPEHASH = keccak256(
         "ReserveAuth(bytes32 channelId,uint128 maxAmount,uint256 deadline)"
@@ -107,9 +107,9 @@ contract AntseedSessionsTest is Test {
     }
 
     /**
-     * @dev Sign an AntSeed MetadataAuth (our EIP-712 domain, version "6")
+     * @dev Sign an AntSeed SpendingAuth (our EIP-712 domain, version "7")
      */
-    function signMetadataAuth(
+    function signSpendingAuth(
         uint256 pk,
         bytes32 channelId,
         uint256 cumulativeAmount,
@@ -119,7 +119,7 @@ contract AntseedSessionsTest is Test {
         bytes32 metadataHash = keccak256(abi.encode(cumulativeInputTokens, cumulativeOutputTokens, uint256(0), uint256(0)));
         bytes32 structHash = keccak256(
             abi.encode(
-                METADATA_AUTH_TYPEHASH,
+                SPENDING_AUTH_TYPEHASH,
                 channelId,
                 cumulativeAmount,
                 metadataHash
@@ -131,7 +131,7 @@ contract AntseedSessionsTest is Test {
     }
 
     /**
-     * @dev Sign an AntSeed ReserveAuth (our EIP-712 domain, version "6")
+     * @dev Sign an AntSeed ReserveAuth (our EIP-712 domain, version "7")
      */
     function signReserveAuth(
         uint256 pk,
@@ -320,7 +320,7 @@ contract AntseedSessionsTest is Test {
         uint256 inputTokens = 5000;
         uint256 outputTokens = 2000;
 
-        bytes memory metaSig = signMetadataAuth(BUYER_PK, channelId, finalAmount, inputTokens, outputTokens);
+        bytes memory metaSig = signSpendingAuth(BUYER_PK, channelId, finalAmount, inputTokens, outputTokens);
 
         vm.prank(seller);
         sessions.close(channelId, finalAmount, encodeMetadata(inputTokens, outputTokens), metaSig);
@@ -369,7 +369,7 @@ contract AntseedSessionsTest is Test {
         bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
         uint128 finalAmount = USDC_100;
-        bytes memory metaSig = signMetadataAuth(BUYER_PK, channelId, finalAmount, 10000, 5000);
+        bytes memory metaSig = signSpendingAuth(BUYER_PK, channelId, finalAmount, 10000, 5000);
 
         vm.prank(seller);
         sessions.close(channelId, finalAmount, encodeMetadata(10000, 5000), metaSig);
@@ -388,7 +388,7 @@ contract AntseedSessionsTest is Test {
         bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
         // Close with 0 — full refund to buyer
-        bytes memory metaSig = signMetadataAuth(BUYER_PK, channelId, 0, 0, 0);
+        bytes memory metaSig = signSpendingAuth(BUYER_PK, channelId, 0, 0, 0);
 
         vm.prank(seller);
         sessions.close(channelId, 0, encodeMetadata(0, 0), metaSig);
@@ -403,7 +403,7 @@ contract AntseedSessionsTest is Test {
         bytes32 salt = keccak256("session-close-auth");
         bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
-        bytes memory metaSig = signMetadataAuth(BUYER_PK, channelId, USDC_60, 0, 0);
+        bytes memory metaSig = signSpendingAuth(BUYER_PK, channelId, USDC_60, 0, 0);
 
         vm.prank(randomUser);
         vm.expectRevert(AntseedSessions.NotAuthorized.selector);
@@ -415,7 +415,7 @@ contract AntseedSessionsTest is Test {
         bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
         // Sign metadata with wrong key
-        bytes memory badMetaSig = signMetadataAuth(RANDOM_PK, channelId, USDC_60, 0, 0);
+        bytes memory badMetaSig = signSpendingAuth(RANDOM_PK, channelId, USDC_60, 0, 0);
 
         vm.prank(seller);
         vm.expectRevert(AntseedSessions.InvalidSignature.selector);
@@ -426,13 +426,13 @@ contract AntseedSessionsTest is Test {
         bytes32 salt = keccak256("session-double-close");
         bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
-        bytes memory metaSig = signMetadataAuth(BUYER_PK, channelId, USDC_60, 0, 0);
+        bytes memory metaSig = signSpendingAuth(BUYER_PK, channelId, USDC_60, 0, 0);
 
         vm.prank(seller);
         sessions.close(channelId, USDC_60, encodeMetadata(0, 0), metaSig);
 
         // Try again — session already Settled
-        bytes memory metaSig2 = signMetadataAuth(BUYER_PK, channelId, USDC_30, 0, 0);
+        bytes memory metaSig2 = signSpendingAuth(BUYER_PK, channelId, USDC_30, 0, 0);
         vm.prank(seller);
         vm.expectRevert(AntseedSessions.SessionNotActive.selector);
         sessions.close(channelId, USDC_30, encodeMetadata(0, 0), metaSig2);
@@ -447,7 +447,7 @@ contract AntseedSessionsTest is Test {
         bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
         uint128 amount1 = USDC_30;
-        bytes memory metaSig1 = signMetadataAuth(BUYER_PK, channelId, amount1, 1000, 500);
+        bytes memory metaSig1 = signSpendingAuth(BUYER_PK, channelId, amount1, 1000, 500);
 
         vm.prank(seller);
         sessions.settle(channelId, amount1, encodeMetadata(1000, 500), metaSig1);
@@ -470,14 +470,14 @@ contract AntseedSessionsTest is Test {
 
         // First settle: 30 USDC
         uint128 amount1 = USDC_30;
-        bytes memory metaSig1 = signMetadataAuth(BUYER_PK, channelId, amount1, 1000, 500);
+        bytes memory metaSig1 = signSpendingAuth(BUYER_PK, channelId, amount1, 1000, 500);
 
         vm.prank(seller);
         sessions.settle(channelId, amount1, encodeMetadata(1000, 500), metaSig1);
 
         // Then close: final cumulative = 60 USDC
         uint128 finalAmount = USDC_60;
-        bytes memory metaSig2 = signMetadataAuth(BUYER_PK, channelId, finalAmount, 3000, 1500);
+        bytes memory metaSig2 = signSpendingAuth(BUYER_PK, channelId, finalAmount, 3000, 1500);
 
         vm.prank(seller);
         sessions.close(channelId, finalAmount, encodeMetadata(3000, 1500), metaSig2);
@@ -571,7 +571,7 @@ contract AntseedSessionsTest is Test {
         uint256 expectedPlatformFee = (uint256(chargeAmount) * 500) / 10000; // 3 USDC
         uint256 expectedSellerPayout = uint256(chargeAmount) - expectedPlatformFee; // 57 USDC
 
-        bytes memory metaSig = signMetadataAuth(BUYER_PK, channelId, chargeAmount, 0, 0);
+        bytes memory metaSig = signSpendingAuth(BUYER_PK, channelId, chargeAmount, 0, 0);
 
         vm.prank(seller);
         sessions.close(channelId, chargeAmount, encodeMetadata(0, 0), metaSig);
@@ -591,7 +591,7 @@ contract AntseedSessionsTest is Test {
         uint256 inputToks = 7500;
         uint256 outputToks = 3200;
 
-        bytes memory metaSig = signMetadataAuth(BUYER_PK, channelId, USDC_50, inputToks, outputToks);
+        bytes memory metaSig = signSpendingAuth(BUYER_PK, channelId, USDC_50, inputToks, outputToks);
 
         vm.prank(seller);
         sessions.close(channelId, USDC_50, encodeMetadata(inputToks, outputToks), metaSig);

@@ -140,7 +140,7 @@ export type DesktopBridge = {
     channelId: string;
     cumulativeAmountBaseUnits: string;
     metadataHash: string;
-  }) => Promise<{ ok: boolean; data?: { metadataAuthSig: string; buyerEvmAddress: string }; error?: string }>;
+  }) => Promise<{ ok: boolean; data?: { spendingAuthSig: string; buyerEvmAddress: string }; error?: string }>;
 
   paymentsGetPeerInfo?: (peerId: string) => Promise<{
     ok: boolean;

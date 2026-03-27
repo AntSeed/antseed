@@ -15,25 +15,25 @@ import {IAntseedEmissions} from "./interfaces/IAntseedEmissions.sol";
 /**
  * @title AntseedSessions
  * @notice Session lifecycle with built-in cumulative payment channels.
- *         USDC is held in this contract during active sessions.
+ *         USDC stays in AntseedDeposits — this contract holds none.
  *
- *         The buyer signs a single EIP-712 MetadataAuth on every request:
+ *         The buyer signs a single EIP-712 SpendingAuth on every request:
  *         - cumulativeAmount: total USDC authorized so far
  *         - metadataHash: hash of (inputTokens, outputTokens, latencyMs, requestCount)
  *
  *         Money flow:
- *           reserve:  Deposits → Sessions (escrow)
- *           settle:   Sessions → Deposits (seller earnings)
- *           close:    Sessions → Deposits (seller earnings + buyer refund)
- *           timeout:  Sessions → Deposits (buyer refund)
+ *           reserve:  Deposits locks buyer funds
+ *           settle:   Deposits charges buyer, credits seller earnings
+ *           close:    Deposits charges buyer, credits seller, releases remaining
+ *           timeout:  Deposits releases locked funds back to buyer
  *
  *         Contract is swappable: deploy a new version and re-point Deposits + Stats.
  */
 contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
 
     // ─── EIP-712 ─────────────────────────────────────────────────────
-    bytes32 public constant METADATA_AUTH_TYPEHASH = keccak256(
-        "MetadataAuth(bytes32 channelId,uint256 cumulativeAmount,bytes32 metadataHash)"
+    bytes32 public constant SPENDING_AUTH_TYPEHASH = keccak256(
+        "SpendingAuth(bytes32 channelId,uint256 cumulativeAmount,bytes32 metadataHash)"
     );
 
     bytes32 public constant RESERVE_AUTH_TYPEHASH = keccak256(
@@ -102,7 +102,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         address _stats,
         address _staking
     )
-        EIP712("AntseedSessions", "6")
+        EIP712("AntseedSessions", "7")
         Ownable(msg.sender)
     {
         if (_deposits == address(0) || _stats == address(0) || _staking == address(0))
@@ -135,11 +135,11 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
      * @notice Open a payment session. Seller calls this.
      *         USDC is pulled from buyer's Deposits balance into this contract.
      *
-     * @param buyer        The buyer's address (signs MetadataAuth off-chain)
+     * @param buyer        The buyer's address (signs SpendingAuth off-chain)
      * @param salt         Random salt for deterministic channel ID
      * @param maxAmount    USDC amount to lock
      * @param deadline     Session deadline (for timeout protection)
-     * @param buyerSig     Buyer's MetadataAuth signature (cumAmount=0) as reserve proof
+     * @param buyerSig     Buyer's SpendingAuth signature (cumAmount=0) as reserve proof
      */
     function reserve(
         address buyer,
@@ -184,14 +184,14 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     // ═══════════════════════════════════════════════════════════════════
 
     /**
-     * @notice Settle partial payment. Seller submits buyer's MetadataAuth signature.
+     * @notice Settle partial payment. Seller submits buyer's SpendingAuth signature.
      *         The delta USDC is distributed to seller (minus platform fee).
      *         Session stays active for more requests.
      *
      * @param channelId        Session ID
      * @param cumulativeAmount Cumulative USDC amount authorized by buyer
      * @param metadata         ABI-encoded (inputTokens, outputTokens, latencyMs, requestCount)
-     * @param buyerSig         Buyer's MetadataAuth EIP-712 signature
+     * @param buyerSig         Buyer's SpendingAuth EIP-712 signature
      */
     function settle(
         bytes32 channelId,
@@ -206,7 +206,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         if (cumulativeAmount > session.deposit) revert InvalidAmount();
 
         bytes32 metadataHash = keccak256(metadata);
-        _verifyMetadataAuth(channelId, cumulativeAmount, metadataHash, session.buyer, buyerSig);
+        _verifySpendingAuth(channelId, cumulativeAmount, metadataHash, session.buyer, buyerSig);
 
         uint128 delta = cumulativeAmount - session.settled;
         uint256 platformFee = _chargeAndSettle(session, delta, delta);
@@ -231,7 +231,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
      * @param channelId    Session ID
      * @param finalAmount  Final cumulative USDC amount
      * @param metadata     ABI-encoded (inputTokens, outputTokens, latencyMs, requestCount)
-     * @param buyerSig     Buyer's MetadataAuth EIP-712 signature
+     * @param buyerSig     Buyer's SpendingAuth EIP-712 signature
      */
     function close(
         bytes32 channelId,
@@ -246,7 +246,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         if (finalAmount > session.deposit) revert InvalidAmount();
 
         bytes32 metadataHash = keccak256(metadata);
-        _verifyMetadataAuth(channelId, finalAmount, metadataHash, session.buyer, buyerSig);
+        _verifySpendingAuth(channelId, finalAmount, metadataHash, session.buyer, buyerSig);
 
         uint128 delta = finalAmount - session.settled;
         // Release all remaining reserved: charge delta, un-reserve everything
@@ -399,7 +399,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         if (recovered != buyer) revert InvalidSignature();
     }
 
-    function _verifyMetadataAuth(
+    function _verifySpendingAuth(
         bytes32 channelId,
         uint256 cumulativeAmount,
         bytes32 metadataHash,
@@ -408,7 +408,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     ) internal view {
         bytes32 structHash = keccak256(
             abi.encode(
-                METADATA_AUTH_TYPEHASH,
+                SPENDING_AUTH_TYPEHASH,
                 channelId,
                 cumulativeAmount,
                 metadataHash

@@ -16,13 +16,13 @@ A single Ed25519 seed deterministically produces two independent keypairs:
 | Keypair | Derivation | Purpose |
 |---|---|---|
 | **P2P identity** | Ed25519 directly from seed | Peer authentication, metadata signing, metering receipts |
-| **EVM wallet** | `secp256k1` via `keccak256(ed25519_seed \|\| "evm-payment-key")` | EIP-712 payment signatures (ReserveAuth, MetadataAuth) |
+| **EVM wallet** | `secp256k1` via `keccak256(ed25519_seed \|\| "evm-payment-key")` | EIP-712 payment signatures (ReserveAuth, SpendingAuth) |
 
 The domain-separated derivation ensures the two keypairs are cryptographically independent. One seed, deterministic recovery, no additional key management.
 
 ## Signing Identity vs Funding Wallet
 
-The EVM wallet derived from the node seed is the **signing identity**. It is used exclusively to sign EIP-712 payment messages (`ReserveAuth` to authorize session budgets, `MetadataAuth` to authorize cumulative spending). It never holds funds.
+The EVM wallet derived from the node seed is the **signing identity**. It is used exclusively to sign EIP-712 payment messages (`ReserveAuth` to authorize session budgets, `SpendingAuth` to authorize cumulative spending). It never holds funds.
 
 The **funding wallet** is any external wallet the user controls — hardware wallet, multisig, or EOA. It deposits USDC into the AntseedDeposits contract via `depositFor(buyer, amount)`, where `buyer` is the signing identity's address. The funding wallet has no ongoing role after deposit.
 
@@ -69,7 +69,7 @@ All communication happens over an untrusted network. Every trust-critical operat
 - **Ed25519 peer identity** — every node has a unique keypair; metadata, connection handshakes, and metering receipts are all signed
 - **Replay-resistant authentication** — connection envelopes include nonce + timestamp with skew checks
 - **Bounded resource usage** — frame sizes, upload caps, stream durations, and concurrent connections are all hard-limited
-- **On-chain settlement** — EIP-712 signed ReserveAuth and MetadataAuth with per-seller, per-session, time-bounded authorization
+- **On-chain settlement** — EIP-712 signed ReserveAuth and SpendingAuth with per-seller, per-session, time-bounded authorization
 
 ## Buyer-Seller Flow Controls
 

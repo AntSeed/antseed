@@ -348,7 +348,7 @@ describe('Full Payment Flow Integration', () => {
 
     // Should use auth2's cumulative amount (the latest), not auth1's or the initial
     expect(settledAmount).toBe(BigInt(auth2.cumulativeAmount));
-    expect(buyerSig).toBe(auth2.metadataAuthSig);
+    expect(buyerSig).toBe(auth2.spendingAuthSig);
   });
 
   it('reserve sends reserveAmount from buyer config, not cumulativeAmount', async () => {
@@ -447,7 +447,7 @@ describe('Full Payment Flow Integration', () => {
       cumulativeAmount: '50000',
       metadataHash: ZERO_METADATA_HASH,
       metadata: encodeMetadata(ZERO_METADATA),
-      metadataAuthSig: '0x' + 'bb'.repeat(65), // garbage signature
+      spendingAuthSig: '0x' + 'bb'.repeat(65), // garbage signature
       buyerEvmAddr,
       reserveMaxAmount: '10000000',
       reserveSalt: '0x' + '01'.repeat(32),

@@ -27,7 +27,7 @@ export interface StoredSession {
   settledAmount: string | null; // bigint as string
   status: 'active' | 'settled' | 'timeout' | 'ghost';
   latestBuyerSig: string | null;
-  latestMetadataAuthSig: string | null;
+  latestSpendingAuthSig: string | null;
   latestMetadata: string | null;       // hex-encoded
   createdAt: number;
   updatedAt: number;
@@ -161,7 +161,7 @@ export class SessionStore {
           @sessionId, @peerId, @role, @sellerEvmAddr, @buyerEvmAddr,
           @nonce, @authMax, @deadline, @previousSessionId, @previousConsumption,
           @tokensDelivered, @requestCount, @reservedAt, @settledAt, @settledAmount,
-          @status, @latestBuyerSig, @latestMetadataAuthSig, @latestMetadata,
+          @status, @latestBuyerSig, @latestSpendingAuthSig, @latestMetadata,
           @createdAt, @updatedAt
         )
         ON CONFLICT(session_id) DO UPDATE SET
@@ -172,7 +172,7 @@ export class SessionStore {
           settled_amount = @settledAmount,
           status = @status,
           latest_buyer_sig = @latestBuyerSig,
-          latest_metadata_auth_sig = @latestMetadataAuthSig,
+          latest_metadata_auth_sig = @latestSpendingAuthSig,
           latest_metadata = @latestMetadata,
           updated_at = @updatedAt
       `),
@@ -245,7 +245,7 @@ export class SessionStore {
       settledAmount: session.settledAmount,
       status: session.status,
       latestBuyerSig: session.latestBuyerSig ?? null,
-      latestMetadataAuthSig: session.latestMetadataAuthSig ?? null,
+      latestSpendingAuthSig: session.latestSpendingAuthSig ?? null,
       latestMetadata: session.latestMetadata ?? null,
       createdAt: session.createdAt,
       updatedAt: session.updatedAt,
@@ -402,7 +402,7 @@ function rowToSession(row: SessionRow): StoredSession {
     settledAmount: row.settled_amount,
     status: row.status as StoredSession['status'],
     latestBuyerSig: row.latest_buyer_sig,
-    latestMetadataAuthSig: row.latest_metadata_auth_sig,
+    latestSpendingAuthSig: row.latest_metadata_auth_sig,
     latestMetadata: row.latest_metadata,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

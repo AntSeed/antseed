@@ -89,7 +89,7 @@ describe('BuyerPaymentManager', () => {
     expect(sent.metadataHash).toBeTypeOf('string');
     expect(sent.metadata).toBeTypeOf('string');
     expect(sent.channelId).toBe(channelId);
-    expect(sent.metadataAuthSig).toBeTypeOf('string');
+    expect(sent.spendingAuthSig).toBeTypeOf('string');
     expect(sent.buyerEvmAddr).toBeTypeOf('string');
   });
 
@@ -152,7 +152,7 @@ describe('BuyerPaymentManager', () => {
     expect(BigInt(payload.cumulativeAmount)).toBe(10_000n);
     expect(payload.metadataHash).toBeTypeOf('string');
     expect(payload.metadata).toBeTypeOf('string');
-    expect(payload.metadataAuthSig).toBeTypeOf('string');
+    expect(payload.spendingAuthSig).toBeTypeOf('string');
   });
 
   it('signPerRequestAuth caps increment at maxPerRequestUsdc', async () => {
@@ -198,7 +198,7 @@ describe('BuyerPaymentManager', () => {
     const sent = mux.sentSpendingAuths[0] as Record<string, unknown>;
     expect(sent.cumulativeAmount).toBe('500000');
     expect(sent.channelId).toBe(channelId);
-    expect(sent.metadataAuthSig).toBeTypeOf('string');
+    expect(sent.spendingAuthSig).toBeTypeOf('string');
   });
 
   it('handleNeedAuth rejects if requiredCumulativeAmount exceeds maxReserveAmountUsdc', async () => {

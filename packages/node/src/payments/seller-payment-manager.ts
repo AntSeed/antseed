@@ -8,7 +8,7 @@ import type {
 import { SessionsClient } from './evm/sessions-client.js';
 import { identityToEvmWallet, identityToEvmAddress } from './evm/keypair.js';
 import {
-  METADATA_AUTH_TYPES,
+  SPENDING_AUTH_TYPES,
   RESERVE_AUTH_TYPES,
   makeSessionsDomain,
 } from './evm/signatures.js';
@@ -29,9 +29,9 @@ export interface SellerPaymentConfig {
 /** Default minimum budget per request: $0.01 USDC (base units). */
 const DEFAULT_MIN_BUDGET_PER_REQUEST = '10000';
 
-/** Stored auth entry for buyer's MetadataAuth signature. */
+/** Stored auth entry for buyer's SpendingAuth signature. */
 interface LatestAuth {
-  metadataAuthSig: string;
+  spendingAuthSig: string;
   cumulativeAmount: bigint;
   metadataHash: string;
   metadata: string;
@@ -39,7 +39,7 @@ interface LatestAuth {
 
 /**
  * Manages seller-side payment sessions.
- * The buyer sends a single MetadataAuth signature with a monotonically
+ * The buyer sends a single SpendingAuth signature with a monotonically
  * increasing cumulativeAmount on every request.
  * The seller tracks spending locally and settles/closes via the contract at session end.
  */
@@ -88,9 +88,9 @@ export class SellerPaymentManager {
         this._reserveMax.set(session.sessionId, storedReserveMax);
       }
       // Hydrate latest auth sigs so close() works after restart
-      if (session.latestMetadataAuthSig) {
+      if (session.latestSpendingAuthSig) {
         this._latestAuth.set(session.sessionId, {
-          metadataAuthSig: session.latestMetadataAuthSig,
+          spendingAuthSig: session.latestSpendingAuthSig,
           cumulativeAmount: BigInt(session.authMax),
           metadataHash: '',
           metadata: session.latestMetadata ?? '',
@@ -103,12 +103,12 @@ export class SellerPaymentManager {
     return this._sessionsClient;
   }
 
-  // ── SpendingAuth handler (dual-signature model) ─────────────
+  // ── SpendingAuth handler ─────────────────────────────────────
 
   /**
    * Handle incoming SpendingAuth from a buyer.
-   * First auth: verify MetadataAuth, reserve on-chain, send AuthAck.
-   * Subsequent: verify MetadataAuth signature, validate monotonic increase, persist.
+   * First auth: verify SpendingAuth, reserve on-chain, send AuthAck.
+   * Subsequent: verify SpendingAuth signature, validate monotonic increase, persist.
    */
   async handleSpendingAuth(
     buyerPeerId: string,
@@ -150,7 +150,7 @@ export class SellerPaymentManager {
           maxAmount: reserveMaxAmount,
           deadline: BigInt(reserveDeadline),
         };
-        const reserveRecovered = verifyTypedData(sessionsDomain, RESERVE_AUTH_TYPES, reserveMsg, payload.metadataAuthSig);
+        const reserveRecovered = verifyTypedData(sessionsDomain, RESERVE_AUTH_TYPES, reserveMsg, payload.spendingAuthSig);
         if (reserveRecovered.toLowerCase() !== buyerEvmAddr.toLowerCase()) {
           debugWarn(`[SellerPayment] Invalid ReserveAuth signature: recovered=${reserveRecovered} expected=${buyerEvmAddr}`);
           return 'rejected';
@@ -164,7 +164,7 @@ export class SellerPaymentManager {
           reserveSalt,
           reserveMaxAmount,
           BigInt(reserveDeadline),
-          payload.metadataAuthSig,
+          payload.spendingAuthSig,
         );
 
         // Store new session (sessionId field stores channelId for backward compat)
@@ -187,8 +187,8 @@ export class SellerPaymentManager {
           settledAt: null,
           settledAmount: null,
           status: 'active',
-          latestBuyerSig: payload.metadataAuthSig,
-          latestMetadataAuthSig: payload.metadataAuthSig,
+          latestBuyerSig: payload.spendingAuthSig,
+          latestSpendingAuthSig: payload.spendingAuthSig,
           latestMetadata: payload.metadata,
           createdAt: now,
           updatedAt: now,
@@ -200,7 +200,7 @@ export class SellerPaymentManager {
         this._reserveMax.set(channelId, reserveMaxAmount);
         this._spent.set(channelId, 0n);
         this._latestAuth.set(channelId, {
-          metadataAuthSig: payload.metadataAuthSig,
+          spendingAuthSig: payload.spendingAuthSig,
           cumulativeAmount,
           metadataHash: payload.metadataHash,
           metadata: payload.metadata,
@@ -215,15 +215,15 @@ export class SellerPaymentManager {
         debugLog(`[SellerPayment] AuthAck sent for channel ${channelId.slice(0, 18)}...`);
         return 'reserved';
       } else {
-        // ── Subsequent SpendingAuth: verify MetadataAuth signature ──
+        // ── Subsequent SpendingAuth: verify SpendingAuth signature ──
         const metadataMsg = {
           channelId,
           cumulativeAmount,
           metadataHash: payload.metadataHash,
         };
-        const metadataRecovered = verifyTypedData(sessionsDomain, METADATA_AUTH_TYPES, metadataMsg, payload.metadataAuthSig);
+        const metadataRecovered = verifyTypedData(sessionsDomain, SPENDING_AUTH_TYPES, metadataMsg, payload.spendingAuthSig);
         if (metadataRecovered.toLowerCase() !== buyerEvmAddr.toLowerCase()) {
-          debugWarn(`[SellerPayment] Invalid MetadataAuth signature: recovered=${metadataRecovered} expected=${buyerEvmAddr}`);
+          debugWarn(`[SellerPayment] Invalid SpendingAuth signature: recovered=${metadataRecovered} expected=${buyerEvmAddr}`);
           return 'rejected';
         }
 
@@ -253,7 +253,7 @@ export class SellerPaymentManager {
         // Update tracking
         this._acceptedCumulative.set(channelId, cumulativeAmount);
         this._latestAuth.set(channelId, {
-          metadataAuthSig: payload.metadataAuthSig,
+          spendingAuthSig: payload.spendingAuthSig,
           cumulativeAmount,
           metadataHash: payload.metadataHash,
           metadata: payload.metadata,
@@ -263,8 +263,8 @@ export class SellerPaymentManager {
         const session = this._sessionStore.getSession(channelId);
         if (session) {
           session.authMax = payload.cumulativeAmount;
-          session.latestBuyerSig = payload.metadataAuthSig;
-          session.latestMetadataAuthSig = payload.metadataAuthSig;
+          session.latestBuyerSig = payload.spendingAuthSig;
+          session.latestSpendingAuthSig = payload.spendingAuthSig;
           session.latestMetadata = payload.metadata;
           session.updatedAt = Date.now();
           this._sessionStore.upsertSession(session);
@@ -304,7 +304,7 @@ export class SellerPaymentManager {
       return false;
     }
 
-    // Verify AntSeed MetadataAuth signature
+    // Verify AntSeed SpendingAuth signature
     const sessionsDomain = makeSessionsDomain(this._config.chainId, this._config.sessionsContractAddress);
     const metadataMsg = {
       channelId: auth.channelId,
@@ -313,13 +313,13 @@ export class SellerPaymentManager {
     };
 
     try {
-      const recovered = verifyTypedData(sessionsDomain, METADATA_AUTH_TYPES, metadataMsg, auth.metadataAuthSig);
+      const recovered = verifyTypedData(sessionsDomain, SPENDING_AUTH_TYPES, metadataMsg, auth.spendingAuthSig);
       if (recovered.toLowerCase() !== auth.buyerEvmAddr.toLowerCase()) {
-        debugWarn(`[SellerPayment] validateAndAcceptAuth: invalid MetadataAuth signature`);
+        debugWarn(`[SellerPayment] validateAndAcceptAuth: invalid SpendingAuth signature`);
         return false;
       }
     } catch {
-      debugWarn(`[SellerPayment] validateAndAcceptAuth: MetadataAuth verification failed`);
+      debugWarn(`[SellerPayment] validateAndAcceptAuth: SpendingAuth verification failed`);
       return false;
     }
 
@@ -334,7 +334,7 @@ export class SellerPaymentManager {
     if (newCumulative > existingCumulative) {
       this._acceptedCumulative.set(channelId, newCumulative);
       this._latestAuth.set(channelId, {
-        metadataAuthSig: auth.metadataAuthSig,
+        spendingAuthSig: auth.spendingAuthSig,
         cumulativeAmount: newCumulative,
         metadataHash: auth.metadataHash,
         metadata: auth.metadata,
@@ -344,8 +344,8 @@ export class SellerPaymentManager {
       const storedSession = this._sessionStore.getSession(channelId);
       if (storedSession) {
         storedSession.authMax = auth.cumulativeAmount;
-        storedSession.latestBuyerSig = auth.metadataAuthSig;
-        storedSession.latestMetadataAuthSig = auth.metadataAuthSig;
+        storedSession.latestBuyerSig = auth.spendingAuthSig;
+        storedSession.latestSpendingAuthSig = auth.spendingAuthSig;
         storedSession.latestMetadata = auth.metadata;
         storedSession.updatedAt = Date.now();
         this._sessionStore.upsertSession(storedSession);
@@ -400,7 +400,7 @@ export class SellerPaymentManager {
     } else {
       // Close with the latest buyer-signed auth (final settlement)
       const latestAuth = this._latestAuth.get(channelId);
-      if (!latestAuth || !latestAuth.metadataAuthSig) {
+      if (!latestAuth || !latestAuth.spendingAuthSig) {
         debugWarn(`[SellerPayment] No buyer signature stored for channel ${channelId.slice(0, 18)}... — cannot close`);
         return;
       }
@@ -411,7 +411,7 @@ export class SellerPaymentManager {
           channelId,
           latestAuth.cumulativeAmount,
           latestAuth.metadata,
-          latestAuth.metadataAuthSig,
+          latestAuth.spendingAuthSig,
         );
         this._sessionStore.updateSessionStatus(channelId, 'settled', latestAuth.cumulativeAmount.toString());
       } catch (err) {

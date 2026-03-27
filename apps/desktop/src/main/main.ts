@@ -18,7 +18,7 @@ import {
 } from './process-manager.js';
 import { registerPiChatHandlers } from './pi-chat-engine.js';
 import { ensureSecureIdentity, secureIdentityEnv, getSecureIdentity } from './identity.js';
-import { identityToEvmAddress, identityToEvmWallet, DepositsClient, signMetadataAuth, signReserveAuth, makeSessionsDomain, resolveChainConfig, formatUsdc, ZERO_METADATA_HASH } from '@antseed/node';
+import { identityToEvmAddress, identityToEvmWallet, DepositsClient, signSpendingAuth, signReserveAuth, makeSessionsDomain, resolveChainConfig, formatUsdc, ZERO_METADATA_HASH } from '@antseed/node';
 import { createServer as createPaymentsServer } from '@antseed/payments';
 import type { LogEvent, RuntimeActivityEvent } from './log-parser.js';
 import { parseRuntimeActivityFromLog } from './log-parser.js';
@@ -708,9 +708,9 @@ ipcMain.handle('payments:sign-spending-auth', async (_event, params: {
 
     const wallet = identityToEvmWallet(identity);
 
-    // Sign MetadataAuth (AntSeed Sessions domain)
+    // Sign SpendingAuth (AntSeed Sessions domain)
     const sessionsDomain = makeSessionsDomain(cc.chainId, cc.sessionsAddress);
-    const metadataAuthSig = await signMetadataAuth(wallet, sessionsDomain, {
+    const spendingAuthSig = await signSpendingAuth(wallet, sessionsDomain, {
       channelId: params.channelId,
       cumulativeAmount,
       metadataHash: params.metadataHash,
@@ -721,7 +721,7 @@ ipcMain.handle('payments:sign-spending-auth', async (_event, params: {
     return {
       ok: true,
       data: {
-        metadataAuthSig,
+        spendingAuthSig,
         buyerEvmAddress,
       },
     };
@@ -884,7 +884,7 @@ ipcMain.handle('chat:approve-payment', async (_event, conversationId: string) =>
     const authPayload = {
       channelId,
       cumulativeAmount: '0',
-      metadataAuthSig: reserveAuthSig,
+      spendingAuthSig: reserveAuthSig,
       buyerEvmAddr,
       sellerEvmAddr,
       metadataHash: ZERO_METADATA_HASH,

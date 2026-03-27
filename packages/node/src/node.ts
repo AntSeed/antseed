@@ -2221,7 +2221,7 @@ export class AntseedNode extends EventEmitter {
       cumulativeAmount: string;
       metadataHash: string;
       metadata: string;
-      metadataAuthSig: string;
+      spendingAuthSig: string;
       buyerEvmAddr: string;
       sellerEvmAddr?: string;
       reserveSalt?: string;
@@ -2259,7 +2259,7 @@ export class AntseedNode extends EventEmitter {
         settledAmount: null,
         status: 'active',
         latestBuyerSig: null,
-        latestMetadataAuthSig: null,
+        latestSpendingAuthSig: null,
         latestMetadata: null,
         createdAt: Date.now(),
         updatedAt: Date.now(),

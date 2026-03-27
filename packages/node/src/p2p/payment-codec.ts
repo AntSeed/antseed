@@ -58,7 +58,7 @@ export function decodeSpendingAuth(data: Uint8Array): SpendingAuthPayload {
     cumulativeAmount: requireString(obj, 'cumulativeAmount'),
     metadataHash: requireString(obj, 'metadataHash'),
     metadata: typeof obj.metadata === 'string' ? obj.metadata : '',
-    metadataAuthSig: requireString(obj, 'metadataAuthSig'),
+    spendingAuthSig: requireString(obj, 'spendingAuthSig'),
     buyerEvmAddr: requireString(obj, 'buyerEvmAddr'),
   };
   // Optional reserve params (only on initial auth)

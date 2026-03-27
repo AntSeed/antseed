@@ -65,7 +65,7 @@ describe('PaymentMux', () => {
         cumulativeAmount: '1000000',
         metadataHash: '0x' + 'cc'.repeat(32),
         metadata: '0x' + 'dd'.repeat(128),
-        metadataAuthSig: '0x' + 'ee'.repeat(65),
+        spendingAuthSig: '0x' + 'ee'.repeat(65),
         buyerEvmAddr: '0x' + 'ab'.repeat(20),
       };
       const frame: FramedMessage = {
@@ -152,7 +152,7 @@ describe('PaymentMux', () => {
         cumulativeAmount: '1000000',
         metadataHash: '0x' + 'cc'.repeat(32),
         metadata: '0x' + 'dd'.repeat(128),
-        metadataAuthSig: '0x' + 'ee'.repeat(65),
+        spendingAuthSig: '0x' + 'ee'.repeat(65),
         buyerEvmAddr: '0x' + 'ab'.repeat(20),
       };
       const frame: FramedMessage = {
@@ -195,7 +195,7 @@ describe('PaymentMux', () => {
         cumulativeAmount: '1000000',
         metadataHash: '0x' + 'cc'.repeat(32),
         metadata: '0x' + 'dd'.repeat(128),
-        metadataAuthSig: '0x' + 'ee'.repeat(65),
+        spendingAuthSig: '0x' + 'ee'.repeat(65),
         buyerEvmAddr: '0x' + 'ab'.repeat(20),
       };
       mux.sendSpendingAuth(payload);

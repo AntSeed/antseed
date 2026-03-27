@@ -87,8 +87,8 @@ This is especially important because the buyer’s available balance is reduced 
 Relevant signed type:
 
 ```solidity
-bytes32 public constant METADATA_AUTH_TYPEHASH = keccak256(
-    "MetadataAuth(bytes32 channelId,uint256 cumulativeAmount,bytes32 metadataHash)"
+bytes32 public constant SPENDING_AUTH_TYPEHASH = keccak256(
+    "SpendingAuth(bytes32 channelId,uint256 cumulativeAmount,bytes32 metadataHash)"
 );
 ```
 
@@ -105,7 +105,7 @@ function reserve(
     ...
     bytes32 channelId = computeChannelId(buyer, msg.sender, salt);
     ...
-    _verifyMetadataAuth(channelId, 0, zeroMetadataHash, buyer, buyerSig);
+    _verifySpendingAuth(channelId, 0, zeroMetadataHash, buyer, buyerSig);
     depositsContract.lockForSession(buyer, maxAmount);
 ```
 

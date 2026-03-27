@@ -3,11 +3,11 @@ import type { Identity } from '../../p2p/identity.js';
 import { signData, verifySignature } from '../../p2p/identity.js';
 
 // =========================================================================
-// EIP-712 Types — AntSeed MetadataAuth (reputation attestation)
+// EIP-712 Types — AntSeed SpendingAuth (cumulative payment authorization)
 // =========================================================================
 
-export const METADATA_AUTH_TYPES = {
-  MetadataAuth: [
+export const SPENDING_AUTH_TYPES = {
+  SpendingAuth: [
     { name: 'channelId', type: 'bytes32' },
     { name: 'cumulativeAmount', type: 'uint256' },
     { name: 'metadataHash', type: 'bytes32' },
@@ -26,7 +26,7 @@ export const RESERVE_AUTH_TYPES = {
 // Message interfaces
 // =========================================================================
 
-export interface MetadataAuthMessage {
+export interface SpendingAuthMessage {
   channelId: string;
   cumulativeAmount: bigint;
   metadataHash: string; // bytes32 hex
@@ -97,7 +97,7 @@ export function computeChannelId(
 export function makeSessionsDomain(chainId: number, contractAddress: string): TypedDataDomain {
   return {
     name: 'AntseedSessions',
-    version: '6',
+    version: '7',
     chainId,
     verifyingContract: contractAddress,
   };
@@ -107,12 +107,12 @@ export function makeSessionsDomain(chainId: number, contractAddress: string): Ty
 // Signing functions — EIP-712 (on-chain)
 // =========================================================================
 
-export async function signMetadataAuth(
+export async function signSpendingAuth(
   signer: AbstractSigner,
   domain: TypedDataDomain,
-  msg: MetadataAuthMessage,
+  msg: SpendingAuthMessage,
 ): Promise<string> {
-  return signer.signTypedData(domain, METADATA_AUTH_TYPES, msg);
+  return signer.signTypedData(domain, SPENDING_AUTH_TYPES, msg);
 }
 
 export async function signReserveAuth(
