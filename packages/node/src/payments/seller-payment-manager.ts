@@ -340,10 +340,13 @@ export class SellerPaymentManager {
         metadata: auth.metadata,
       });
 
-      // Persist latest auth to SessionStore
+      // Persist latest auth + sigs to SessionStore
       const storedSession = this._sessionStore.getSession(channelId);
       if (storedSession) {
         storedSession.authMax = auth.cumulativeAmount;
+        storedSession.latestBuyerSig = auth.metadataAuthSig;
+        storedSession.latestMetadataAuthSig = auth.metadataAuthSig;
+        storedSession.latestMetadata = auth.metadata;
         storedSession.updatedAt = Date.now();
         this._sessionStore.upsertSession(storedSession);
       }

@@ -198,7 +198,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         uint128 cumulativeAmount,
         bytes calldata metadata,
         bytes calldata buyerSig
-    ) external nonReentrant {
+    ) external nonReentrant whenNotPaused {
         Session storage session = sessions[channelId];
         if (session.status != SessionStatus.Active) revert SessionNotActive();
         if (msg.sender != session.seller) revert NotAuthorized();
@@ -238,7 +238,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         uint128 finalAmount,
         bytes calldata metadata,
         bytes calldata buyerSig
-    ) external nonReentrant {
+    ) external nonReentrant whenNotPaused {
         Session storage session = sessions[channelId];
         if (session.status != SessionStatus.Active) revert SessionNotActive();
         if (msg.sender != session.seller) revert NotAuthorized();
