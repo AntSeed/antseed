@@ -60,6 +60,9 @@ export class SellerPaymentManager {
   /** channelId -> total USDC spent so far (sum of recordSpend calls) */
   private readonly _spent = new Map<string, bigint>();
 
+  /** channelId -> on-chain reserveMaxAmount (budget ceiling from ReserveAuth) */
+  private readonly _reserveMax = new Map<string, bigint>();
+
   /** channelId -> latest buyer-signed auth (both sigs + cumulative values + metadata) for settle/close */
   private readonly _latestAuth = new Map<string, LatestAuth>();
 
@@ -189,6 +192,7 @@ export class SellerPaymentManager {
 
         // Initialize tracking maps
         this._acceptedCumulative.set(channelId, cumulativeAmount);
+        this._reserveMax.set(channelId, reserveMaxAmount);
         this._spent.set(channelId, 0n);
         this._latestAuth.set(channelId, {
           metadataAuthSig: payload.metadataAuthSig,
@@ -523,6 +527,11 @@ export class SellerPaymentManager {
   /** Get the highest accepted cumulative amount for a session. */
   getAcceptedCumulative(sessionId: string): bigint {
     return this._acceptedCumulative.get(sessionId) ?? 0n;
+  }
+
+  /** Get the on-chain reserve budget ceiling for a session. */
+  getReserveMax(sessionId: string): bigint {
+    return this._reserveMax.get(sessionId) ?? 0n;
   }
 
   private static readonly DEFAULT_SUGGESTED_AMOUNT = 100_000n; // $0.10

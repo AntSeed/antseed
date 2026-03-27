@@ -1361,11 +1361,11 @@ export class AntseedNode extends EventEmitter {
       if (this._sellerPaymentManager) {
         const session = this._sellerPaymentManager.getSessionByPeer(buyerPeerId);
         if (session) {
-          const accepted = this._sellerPaymentManager.getAcceptedCumulative(session.sessionId);
+          const reserveMax = this._sellerPaymentManager.getReserveMax(session.sessionId);
           const spent = this._sellerPaymentManager.getCumulativeSpend(session.sessionId);
-          if (spent >= accepted) {
+          if (reserveMax > 0n && spent >= reserveMax) {
             // Budget exhausted — settle current session, buyer will auto-negotiate a new one
-            debugLog(`[Node] Budget exhausted for ${buyerPeerId.slice(0, 12)}... (spent=${spent} >= accepted=${accepted}) — settling and returning 402`);
+            debugLog(`[Node] Budget exhausted for ${buyerPeerId.slice(0, 12)}... (spent=${spent} >= reserveMax=${reserveMax}) — settling and returning 402`);
             void this._sellerPaymentManager!.settleSession(buyerPeerId).catch((err) => {
               debugWarn(`[Node] Failed to settle exhausted session: ${err instanceof Error ? err.message : err}`);
             });
