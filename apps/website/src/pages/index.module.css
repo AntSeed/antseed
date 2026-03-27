@@ -208,7 +208,7 @@
 .card { background: #fff; border: 1px solid #e8e8e3; border-radius: 16px; padding: 40px; }
 
 /* Agents & Developers full-width section */
-.agentsSection { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: center; padding: 0 60px 60px; max-width: 1100px; margin: 0 auto; }
+.agentsSection { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: start; padding: 0 60px 60px; max-width: 1100px; margin: 0 auto; }
 .agentsCopy { }
 .agentsCopy h3 { font-size: 32px; font-weight: 700; letter-spacing: -1px; line-height: 1.2; margin-bottom: 16px; }
 .agentsBullets { list-style: none; padding: 0; margin: 0 0 24px; display: flex; flex-direction: column; gap: 10px; }

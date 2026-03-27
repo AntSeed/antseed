@@ -324,34 +324,27 @@ export default function Home(): JSX.Element {
       {/* Liveness */}
       <section className={styles.live}><LiveBar /></section>
 
-      {/* Download */}
-      <div className={styles.downloads}>
-        <a href={dmgUrl ?? RELEASES_URL} target="_blank" rel="noopener noreferrer" className={styles.dlbtn}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
-          Download for Mac
-        </a>
-        <a href={RELEASES_URL} target="_blank" rel="noopener noreferrer" className={styles.dlnote}>All releases →</a>
-      </div>
-
-      {/* Desktop App Video */}
-      <div className={styles.mockupWrap}>
-        <div className={styles.mac}>
-          {/* <div className={styles.macBar}>
-            <div className={styles.macDots}>
-              <span className={styles.macDot} style={{background:'#ff5f56'}}/>
-              <span className={styles.macDot} style={{background:'#ffbd2e'}}/>
-              <span className={styles.macDot} style={{background:'#27c93f'}}/>
-            </div>
-            <div className={styles.macTitle}>AntStation</div>
-            <div style={{width:'52px'}}/>
-          </div> */}
+      {/* AntStation */}
+      <div className={styles.agentsSection} style={{marginTop:'40px'}}>
+        <div className={styles.agentsCopy}>
+          <h3>AntStation</h3>
+          <p className={styles.agentsVision}>Your desktop gateway to the AntSeed network. Provide services, route requests, and manage your node — all from one app.</p>
+          <div className={styles.downloads} style={{alignItems:'flex-start',padding:0}}>
+            <a href={dmgUrl ?? RELEASES_URL} target="_blank" rel="noopener noreferrer" className={styles.dlbtn}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+              Download for Mac
+            </a>
+            <a href={RELEASES_URL} target="_blank" rel="noopener noreferrer" className={styles.dlnote}>All releases →</a>
+          </div>
+        </div>
+        <div className={styles.agentsVideo}>
           <video
             src="/videos/desktop-app.mp4"
             autoPlay
             loop
             muted
             playsInline
-            style={{width:'100%',display:'block'}}
+            style={{width:'100%',borderRadius:'8px',display:'block',border:'1px solid #e0e0db',boxShadow:'0 4px 20px rgba(0,0,0,0.06)'}}
           />
         </div>
       </div>
@@ -372,8 +365,8 @@ export default function Home(): JSX.Element {
           </div>
           <div className={styles.feat}>
             <div className={styles.featIcon}><svg viewBox="0 0 44 44" fill="none"><rect x="2" y="2" width="40" height="40" rx="10" stroke="#1FD87A" strokeWidth="1.5" fill="#fff"/><path d="M14 18h16M14 22h12M14 26h8" stroke="#1FD87A" strokeWidth="1.5" strokeLinecap="round"/><circle cx="32" cy="14" r="4" fill="#1FD87A"/><path d="M30.5 14l1 1 2-2.5" stroke="#fff" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"/></svg></div>
-            <h4>Reputation-based.</h4>
-            <p>Every delivery is verified on-chain. Providers set their own price and build a permanent track record no platform can revoke.</p>
+            <h4>On-Chain Stats. Build Reputation.</h4>
+            <p>Every delivery is recorded as factual on-chain stats. All data is public — any client can build its own reputation and access rules on top.</p>
           </div>
           <div className={styles.feat}>
             <div className={styles.featIcon}><svg viewBox="0 0 44 44" fill="none"><rect x="2" y="2" width="40" height="40" rx="10" stroke="#1FD87A" strokeWidth="1.5" fill="#fff"/><circle cx="22" cy="22" r="9" stroke="#1FD87A" strokeWidth="1.5" fill="none"/><path d="M22 16v6l4 3" stroke="#1FD87A" strokeWidth="1.5" strokeLinecap="round"/><circle cx="22" cy="22" r="2" fill="#1FD87A"/><path d="M15 10l-2-3M29 10l2-3" stroke="#1FD87A" strokeWidth="1.5" strokeLinecap="round"/></svg></div>
