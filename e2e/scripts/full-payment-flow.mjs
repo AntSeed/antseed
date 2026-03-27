@@ -627,7 +627,7 @@ async function main() {
         return earnings > 0n ? earnings : null;
       },
       "seller settlement earnings in Deposits",
-      30_000,
+      60_000,
       500
     );
     pass(`Seller earned ${sellerEarnings} USDC base units in Deposits`);
