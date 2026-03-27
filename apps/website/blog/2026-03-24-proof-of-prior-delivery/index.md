@@ -1,105 +1,94 @@
 ---
 slug: proof-of-prior-delivery
-title: "Proof of Prior Delivery"
+title: "Cumulative MetadataAuth: One Signature, Two Jobs"
 authors: [antseed]
 tags: [protocol, payments, cryptography, mechanism-design]
-description: How AntSeed's payment protocol creates an unforgeable chain where each spending authorization simultaneously pays for the current session and proves delivery of the previous one.
-keywords: [proof of delivery, EIP-712, payment protocol, P2P payments, deposits, spending authorization]
+description: How AntSeed's cumulative MetadataAuth model lets the buyer authorize payment and attest to delivery in a single signature per request — no oracles, no validators, no dispute games.
+keywords: [MetadataAuth, EIP-712, payment protocol, P2P payments, deposits, spending authorization, cumulative voucher]
 image: /og-image.jpg
 date: 2026-03-24
 ---
-
-:::note
-This article describes an earlier version of the AntSeed payment protocol. The current protocol uses cumulative MetadataAuth signatures instead of proof-of-prior-delivery chains. See the [payment documentation](/docs/payments) for the current design.
-:::
 
 In peer-to-peer compute markets, proving service delivery is the hard problem. Not routing, not pricing, not discovery — proving that a seller actually delivered what they were paid for, without a trusted intermediary watching the exchange.
 
 Most decentralized compute projects sidestep this. They use self-reported metrics (trivially gameable), trusted validators (re-introducing the centralization they claim to eliminate), or optimistic assumptions with dispute windows (which require honest majorities and active monitoring). These are reasonable engineering tradeoffs, but they're not proofs. They're social mechanisms dressed up as cryptographic ones.
 
-AntSeed takes a different approach. The payment protocol produces unforgeable delivery proofs as a natural byproduct of continued usage. No validators, no oracles, no dispute games. If a buyer keeps paying a seller, the chain of payments *is* the proof of delivery.
+AntSeed takes a different approach. Every request produces a cumulative **MetadataAuth** — a single EIP-712 signature from the buyer that simultaneously authorizes payment and attests to what was delivered. No validators, no oracles, no dispute games. The buyer's own signature is the proof.
 
 <!-- truncate -->
 
-## The Core Mechanism
+## The Problem
 
-The primitive is the **SpendingAuth** — an EIP-712 typed data signature that the buyer sends to the seller before each session. It contains the usual fields you'd expect: seller address, session ID, max amount, nonce, deadline. But it also contains two fields that change everything:
+Consider a streaming payment channel between a buyer and a seller. The buyer sends requests, the seller processes them. At some point the seller wants to get paid. How does the smart contract know what was delivered?
 
-- `previousConsumption` — the actual USDC consumed in the prior session
-- `previousSessionId` — the session ID being attested to
+The naive answer is to put every request on-chain. Prohibitively expensive. The next answer is to trust the seller's claim. Obviously broken — sellers would overcharge. The answer after that is a validator network that monitors exchanges. Now you've rebuilt the centralized intermediary you were trying to eliminate.
 
-When a buyer signs `previousConsumption = 15420` (15,420 USDC atomic units, i.e., $0.015420), they are cryptographically attesting that the seller delivered 15,420 units worth of service in the previous session. This signature is verified on-chain when the seller calls `reserve()` on the AntseedSessions contract.
+The real question is: who already knows what was delivered? Both the buyer and the seller. And the buyer is the one paying. If the buyer signs off on what they consumed, that signature is simultaneously a delivery attestation and a payment authorization. One signature, two jobs.
 
-The SpendingAuth is simultaneously a payment authorization *and* a delivery receipt. One signature, two functions. The buyer can't authorize a new session without settling the previous one, and settling the previous one requires attesting to what was delivered.
+## Cumulative MetadataAuth
 
-## How the Chain Builds
+The primitive is the **MetadataAuth** — an EIP-712 typed data signature that the buyer produces after every request. It contains three fields:
 
-Walk through three sessions between a buyer and seller:
+- `channelId` — the session identifier
+- `cumulativeAmount` — total USDC authorized so far across all requests in this session
+- `metadataHash` — `keccak256(inputTokens, outputTokens, latencyMs, requestCount)`
 
-**Session 1** — The buyer has never transacted with this seller. They sign a SpendingAuth with `previousSessionId = 0x0` and `previousConsumption = 0`. The contract recognizes this as a First Sign — no prior delivery to reference — and hard-caps the reservation at `FIRST_SIGN_CAP` ($1 USDC). This limits the buyer's exposure to an unproven seller. The seller calls `reserve()`, $1 is locked from the buyer's deposit, and requests flow.
+The amount is cumulative. After request 1 costs $0.003, the buyer signs `cumulativeAmount = 3000`. After request 2 costs another $0.005, the buyer signs `cumulativeAmount = 8000`. Each signature supersedes the previous one. The seller only needs the latest signature to claim everything owed.
 
-During the session, the buyer sends 12 requests. The seller processes them, consuming 8,340 tokens at the seller's published rate, costing $0.004170 USDC. Each request produces a bilateral receipt: the seller signs a SellerReceipt (including a SHA-256 hash of the response), the buyer signs a BuyerAck. These receipts are exchanged peer-to-peer and stored locally.
+The `metadataHash` is what makes this a delivery attestation, not just a payment voucher. By signing over `keccak256(inputTokens, outputTokens, latencyMs, requestCount)`, the buyer is cryptographically committing to what they observed: how many tokens went in, how many came out, how fast the response was, and how many requests were served. This metadata flows into the on-chain stats system at settlement, creating a factual record that neither party can unilaterally fabricate.
 
-**Session 2** — The buyer returns. They sign a new SpendingAuth with `previousSessionId = session1.id` and `previousConsumption = 4170` (the $0.004170 converted to USDC atomic units). The seller submits this to `reserve()`. The contract:
+## Session Lifecycle
 
-1. Looks up session 1's reservation
-2. Verifies the buyer's ECDSA signature over the `previousConsumption` claim
-3. Transfers 4,170 units to the seller
-4. Returns the remaining locked amount ($1.00 - $0.004170) to the buyer's deposit
-5. Locks the new `maxAmount` for session 2
+Walk through a full session:
 
-Because the buyer proved delivery of session 1, this is now a **Proven Sign**. The `FIRST_SIGN_CAP` no longer applies. The buyer can authorize up to their full deposit balance.
+**Reserve.** The buyer signs a **ReserveAuth** — `(channelId, maxAmount, deadline)` — binding the escrow terms. The seller submits this to `Sessions.reserve()`, which calls `Deposits.lockForSession()` to lock USDC from the buyer's deposit. The USDC never leaves the Deposits contract; Sessions holds nothing. A first-time buyer-seller pair is hard-capped at `FIRST_SIGN_CAP` ($1 USDC), limiting exposure to an unproven seller.
 
-**Session 3, 4, ... N** — Each subsequent SpendingAuth settles session N-1 and authorizes session N. The chain extends indefinitely. Every link contains the buyer's signed attestation of what the seller delivered in the previous session, verified on-chain.
+**Serve.** Requests flow. After each one, the buyer computes the cumulative cost, hashes the observed metadata, and signs a MetadataAuth. The seller stores the latest signature. Each new signature makes the previous one obsolete — the seller always holds a single, latest authorization covering all work done so far.
 
-## Why the Chain Is Unforgeable
+**Settle.** At any point, the seller can call `settle()` with the latest MetadataAuth. The contract verifies the buyer's signature, charges the cumulative amount from the locked deposit, credits the seller's earnings, and updates on-chain stats with the metadata. The session remains open for more requests. Or the seller can call `close()` to settle and release the remaining reservation in one step.
 
-Four properties make this chain resistant to manipulation:
+There is no separate "claim" step. There is no dispute window. The buyer already signed off on the amount. The contract just executes.
 
-**Only the buyer can sign.** The SpendingAuth is an ECDSA signature over EIP-712 typed data, bound to the buyer's EVM address. The seller cannot forge a delivery attestation. The buyer must voluntarily sign over `previousConsumption` to continue using the seller's services.
+## Why the Buyer Can't Lie
 
-**On-chain session reference validation.** The contract verifies that `previousSessionId` matches an active reservation for this buyer-seller pair. You can't reference a session that doesn't exist or has already been settled. The chain is append-only.
+If the buyer understates consumption — signing `cumulativeAmount = 1000` when the seller tracked $0.005 of real usage — the seller simply refuses to serve the next request. The buyer needs the service, so their incentive is to sign accurately. Understating is self-defeating.
 
-**Buyer can't overstate consumption.** If a buyer signs `previousConsumption = 50000` when only 4170 was consumed, they're overpaying. The excess goes to the seller. Buyers have no incentive to overstate — it costs them money.
+If the buyer overstates consumption, they're overpaying. No buyer has an incentive to do this.
 
-**Buyer can't significantly understate consumption.** Sellers track consumption through bilateral receipts during the serve phase. If a buyer's `previousConsumption` is more than 20% below the seller's recorded total, the seller rejects the SpendingAuth and refuses to start a new session. The buyer's only recourse is to sign a more accurate attestation or find a different seller. Under-reporting is self-limiting because the seller controls session admission.
+The metadata hash adds a second dimension. The buyer attests to input tokens, output tokens, latency, and request count. These values feed into on-chain stats. A buyer who lies about metadata is corrupting their own on-chain record. Since stats influence routing and emissions, there is no benefit to the buyer in fabricating this data — and the seller independently tracks the same values, so discrepancies are immediately detectable off-chain.
 
-The net result: the only stable strategy for a buyer who wants continued service is to accurately report what was consumed. And that accurate report, signed and verified on-chain, is the delivery proof.
+## Why the Seller Can't Lie
 
-## Bilateral Receipts: The Audit Trail
+The seller computes the cost of each request and reports it to the buyer. What stops a seller from claiming a request cost $0.10 when it really cost $0.01?
 
-The SpendingAuth chain handles settlement. But during the serve phase, a finer-grained audit trail is constructed through bilateral receipts.
+The buyer independently estimates cost. Both parties know the model, the token counts, and the seller's published rate. If the seller's claimed cost exceeds 2x the buyer's own estimate, the buyer caps the MetadataAuth at their estimate. The seller can overcharge by small amounts (within the 2x bound), but doing so consistently will cause buyers to choose cheaper sellers. Market pressure enforces honest pricing.
 
-After each request, the seller signs a **SellerReceipt** with their Ed25519 identity key. The receipt contains the session ID, a sequential request index, the running total cost, token counts, and critically, a SHA-256 hash of the response payload. This binds the receipt to specific delivered content — the seller can't claim to have delivered a response without committing to its exact contents.
+This is a meaningful design property: no on-chain oracle is needed to verify pricing. The buyer's independent cost verification, combined with the ability to cap their own signature, creates a bilateral check that works without any third party.
 
-The buyer then signs a **BuyerAck** over the SellerReceipt, confirming they received the response matching that hash. This creates a bilateral record: the seller attests to what they sent, the buyer attests to what they received.
+## Budget Auto-Renewal
 
-These receipts are exchanged peer-to-peer and never submitted on-chain during normal operation. They serve two purposes: they give the seller the running total needed to evaluate the buyer's `previousConsumption` claim in the next SpendingAuth, and they provide evidence for dispute resolution if the two parties disagree on consumption.
+Sessions have budgets. When the cumulative amount approaches the reserved maximum, the seller calls `settle()` to collect what's owed, then returns HTTP 402 to the buyer. The buyer's client automatically negotiates a new session — signing a fresh ReserveAuth, reserving new funds, and continuing seamlessly.
 
-The division of labor is intentional. Receipts are the raw data. The SpendingAuth chain is the settlement proof. Putting per-request receipts on-chain would be prohibitively expensive and unnecessary — the buyer's aggregate attestation in the SpendingAuth is sufficient for settlement, and receipts exist as backup evidence.
+From the user's perspective, this is invisible. From the protocol's perspective, it creates natural settlement checkpoints. Long-running interactions settle periodically rather than accumulating unbounded liability. Each settlement commits metadata to the chain, building the on-chain record incrementally.
 
-## Lazy Settlement
+The `FIRST_SIGN_CAP` of $1 means the buyer's initial risk is trivially small. After the first session settles successfully, subsequent sessions can reserve up to the buyer's full deposit balance. Trust scales with demonstrated delivery, not with upfront commitment.
 
-There is no explicit "settle" transaction in the normal flow. Settlement is a side effect of `reserve()`.
+## Timeout Protection
 
-When the seller calls `reserve()` with a new SpendingAuth, the contract atomically settles the previous session and locks funds for the new one. The seller gets paid for session N as a natural consequence of starting session N+1. No additional transaction, no additional gas.
+If the seller disappears mid-session — crashes, goes offline, stops responding — the buyer's funds are locked in a reservation with no one to settle it. The protocol handles this with two permissionless functions:
 
-This design has a meaningful property: the cost of settlement is amortized into the cost of continued operation. A buyer who uses a seller for 100 sessions triggers 100 settlements, but each one is bundled into the `reserve()` call that was going to happen anyway. The marginal gas cost of settlement is near zero.
+`requestTimeout()` can be called by anyone after the session's deadline passes. It marks the session as timed out. After a 15-minute grace period, `withdraw()` releases the locked funds back to the buyer's deposit and records a ghost mark on the seller's stats.
 
-The edge case is a buyer who never returns. If 24 hours pass without a new SpendingAuth, the seller (or anyone) can call `settleTimeout()`. This refunds the full locked amount to the buyer's deposit and records a ghost mark on the seller's on-chain record.
+Why the grace period? To prevent race conditions where a seller is in the process of settling when someone triggers timeout. The 15 minutes gives the seller time to land their `settle()` transaction. After that, the funds return to the buyer unconditionally.
 
-Why a full refund? Because the seller cannot unilaterally prove delivery. Only the buyer's signed SpendingAuth can attest to consumption, and the buyer hasn't provided one. The protocol's position is explicit: if you can't prove it, you don't get paid. Ghost marks are visible in reputation data — a seller with many ghost marks is one whose buyers tend not to return, which is meaningful signal regardless of the underlying cause.
+Why a full refund? Because the seller cannot unilaterally prove delivery. Only the buyer's signed MetadataAuth can authorize charges. If the seller had a recent MetadataAuth, they should have settled before the deadline. If they didn't, the protocol's position is explicit: if you can't prove it, you don't get paid.
 
-In practice, timeout settlement is rare. Buyers who received good service return (they need the service). Buyers who received poor service don't, and the seller eats the gas cost of the reservation without earning anything. The incentives align: sellers are motivated to deliver quality because their payment depends on the buyer's voluntary return.
+## The Design Principle
 
-## What This Enables
+The cumulative MetadataAuth model reduces the payment-and-attestation problem to a single primitive: a buyer signature over running totals. Each signature makes the previous one obsolete. The seller holds exactly one signature at any time. Settlement is a single contract call with that one signature.
 
-The proof chain creates two properties that are hard to achieve in P2P markets:
+No proof chains. No bilateral receipt exchanges. No per-request on-chain activity. Just a cumulative counter, a metadata hash, and a signature. The buyer can't pay without attesting, and the attestation is a standard ECDSA signature verified by a standard smart contract.
 
-**Verifiable reputation from settlement data.** Every `reserve()` call that settles a previous session updates on-chain counters atomically — total sessions, total volume, per-pair history. These counters can't be inflated without real USDC changing hands. A seller's reputation is backed by actual economic activity, not self-reported metrics. (We'll cover the reputation system in detail in a future post.)
-
-**Trust bootstrapping without oracles.** A new seller starts with First Sign caps, proves delivery through buyer attestations, and builds uncapped trust — all without any third party vouching for them. The proof is in the payment chain itself. A buyer who has proven deliveries with three or more distinct sellers reaches Qualified Proven Sign status, which carries additional reputation weight and signals genuine network participation rather than a sybil pair trading with itself.
-
-The mechanism is simple in retrospect: make the buyer's next payment contingent on attesting to the seller's previous delivery. The buyer can't pay without proving, and the proof is a standard ECDSA signature verified by a standard smart contract. No new cryptographic assumptions, no trusted hardware, no validator set. Just signatures, deposits, sessions, and aligned incentives.
+The simplicity is the point. Every additional mechanism — oracles, validators, dispute games, receipt chains — introduces new trust assumptions and new attack surfaces. The cumulative MetadataAuth has exactly one trust assumption: the buyer will sign honestly because doing otherwise is either self-defeating (understating) or self-harming (overstating). That turns out to be enough.
 
 [Read the full payment protocol specification](/docs/payments)
