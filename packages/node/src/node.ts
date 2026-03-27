@@ -1363,24 +1363,17 @@ export class AntseedNode extends EventEmitter {
         if (session) {
           const accepted = this._sellerPaymentManager.getAcceptedCumulative(session.sessionId);
           const spent = this._sellerPaymentManager.getCumulativeSpend(session.sessionId);
-          if (spent > accepted) {
-            // Request more budget — suggest 2x what's been spent so far
-            const suggestedAmount = (spent * 2n).toString();
-            debugLog(`[Node] Budget exceeded for ${buyerPeerId.slice(0, 12)}... (spent=${spent} > accepted=${accepted}) — sending NeedAuth for ${suggestedAmount}`);
-            paymentMux.sendNeedAuth({
-              channelId: session.sessionId,
-              requiredCumulativeAmount: suggestedAmount,
-              currentAcceptedCumulative: accepted.toString(),
-              deposit: session.authMax ?? '0',
+          if (spent >= accepted) {
+            // Budget exhausted — settle current session, buyer will auto-negotiate a new one
+            debugLog(`[Node] Budget exhausted for ${buyerPeerId.slice(0, 12)}... (spent=${spent} >= accepted=${accepted}) — settling and returning 402`);
+            void this._sellerPaymentManager!.settleSession(buyerPeerId).catch((err) => {
+              debugWarn(`[Node] Failed to settle exhausted session: ${err instanceof Error ? err.message : err}`);
             });
             mux.sendProxyResponse({
               requestId: request.requestId,
               statusCode: 402,
               headers: { "content-type": "application/json" },
-              body: new TextEncoder().encode(JSON.stringify({
-                error: 'budget_exceeded',
-                requiredAmount: suggestedAmount,
-              })),
+              body: new TextEncoder().encode(JSON.stringify({ error: 'payment_required' })),
             });
             return;
           }
