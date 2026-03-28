@@ -416,7 +416,7 @@ export class SellerPaymentManager {
         this._sessionStore.updateSessionStatus(channelId, 'settled', latestAuth.cumulativeAmount.toString());
       } catch (err) {
         debugWarn(`[SellerPayment] Failed to close channel: ${err instanceof Error ? err.message : err}`);
-        return;
+        // Clean up even if close() failed — the channel is unusable after disconnect
       }
     }
 
