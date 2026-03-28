@@ -509,6 +509,7 @@ export class SellerPaymentManager {
               this._acceptedCumulative.delete(session.sessionId);
               this._spent.delete(session.sessionId);
               this._latestAuth.delete(session.sessionId);
+              this._closeRetryCount.delete(session.sessionId);
               this._reserveMax.delete(session.sessionId);
               this._activeBuyers.delete(session.peerId);
             } else if (closeRequestedAt === 0) {
