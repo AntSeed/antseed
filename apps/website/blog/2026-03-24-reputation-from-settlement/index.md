@@ -2,100 +2,93 @@
 slug: reputation-from-settlement
 title: "Stats from Settlement"
 authors: [antseed]
-tags: [reputation, mechanism-design, Sybil-resistance, game-theory]
-description: How AntSeed derives on-chain stats directly from payment settlement — factual metrics, not subjective scores. No oracles, no validators, no self-reporting.
-keywords: [stats, reputation, Sybil resistance, settlement, mechanism design, P2P reputation, anti-gaming, staking slashing]
+tags: [reputation, open-network, stats, agentic-AI]
+description: On AntSeed, every settlement writes factual stats on-chain. Agents and buyers can see exactly what a seller has delivered before routing a single request.
+keywords: [stats, reputation, on-chain stats, P2P reputation, agentic AI, open network, settlement, service discovery]
 image: /og-image.jpg
-date: 2026-03-24
+date: 2026-03-27
 ---
 
-Reputation in decentralized networks typically falls into two categories: self-reported metrics (trivially gameable — a node reports its own uptime, latency, and success rate) or validator-based attestations (introduces a trusted third party whose incentives may not align with the network). Both approaches fail at the fundamental thing reputation is supposed to do: distinguish real service delivery from fake activity.
+When an AI agent needs to pick a service provider, what does it look at?
 
-AntSeed takes a different approach. There is no reputation system. There are **stats** — factual metrics derived from payment settlement, written by the contract itself. You cannot self-report. You cannot inflate. The settlement record *is* the data.
+On centralized platforms, the answer is: whatever the platform tells it. Star ratings, curated badges, editorial picks. The platform decides what's visible, how it's weighted, and which providers get surfaced. The agent has no independent way to verify any of it.
+
+On AntSeed, the answer is: the settlement record. Every completed session writes factual metrics on-chain — volume, tokens delivered, latency, success rate. These stats are public, queryable by anyone, and impossible to fake without real money changing hands. An agent routing a request can inspect a seller's full delivery history before committing a single dollar.
+
+This is what an open network looks like. Not a platform showing you what it wants you to see — a public ledger of what actually happened.
 
 <!-- truncate -->
 
-## Stats, Not Reputation
+## What Gets Recorded
 
-The word "reputation" implies subjectivity — ratings, scores, weighted opinions. AntSeed's on-chain record is none of these. The **AntseedStats** contract maintains per-agent counters that are updated atomically during settlement. No separate oracle. No reporting step. No delay between service delivery and metric update.
+The **AntseedStats** contract maintains per-agent counters, updated atomically during settlement. No separate oracle, no reporting step, no delay between delivery and metric update:
 
-The counters are:
+- **Session count** — completed sessions
+- **Ghost count** — sessions where the seller disappeared (timed out without settling)
+- **Total volume** — cumulative USDC settled
+- **Total tokens** — cumulative input and output tokens across all sessions
+- **Average latency** — average response time across all requests
+- **Total requests** — cumulative requests served
+- **Last settled** — timestamp of most recent settlement
 
-- `sessionCount` — completed sessions
-- `ghostCount` — sessions where the seller disappeared (timed out)
-- `totalVolumeUsdc` — cumulative USDC settled
-- `totalInputTokens` — cumulative input tokens across all sessions
-- `totalOutputTokens` — cumulative output tokens across all sessions
-- `totalLatencyMs` — cumulative latency across all requests
-- `totalRequestCount` — cumulative requests served
-- `lastSettledAt` — timestamp of most recent settlement
+These values are keyed by ERC-8004 agentId — the seller's on-chain identity. They cannot be written by any external caller. Only the Sessions contract, during actual fund movement (`settle()`, `close()`, or `withdraw()`), can update them.
 
-These values are keyed by ERC-8004 agentId. They cannot be written by any external caller. Only the Sessions contract — during `settle()`, `close()`, or `withdraw()` — can update them. This eliminates an entire class of attacks: you cannot inflate your stats without actual USDC changing hands through real settlements.
+This is the key property: you cannot inflate your stats without real USDC changing hands through real settlements.
 
-## Three Update Paths
+## An Open Record for an Open Network
 
-The stats system has three distinct update paths, each triggered by a different settlement outcome. The distinction matters because it determines what "one session" means in the on-chain record.
+In a centralized marketplace, the platform owns the reputation data. If you leave the platform, your track record stays behind. If the platform changes its algorithm, your visibility changes overnight. Reputation is a platform asset, not a provider asset.
 
-**`close()` — updateType 0 (complete).** The seller calls `close()` with the buyer's latest SpendingAuth to finalize a session. The contract charges the cumulative amount, credits the seller, releases remaining reservation, and updates stats. Critically, this **increments sessionCount by 1**. One completed session equals one count. This is the clean path — both parties fulfilled their obligations.
+AntSeed inverts this. Stats live on-chain, tied to the seller's wallet address via ERC-8004 identity. They're public. Anyone can query them — not just AntSeed clients, but any smart contract, any indexer, any agent framework that reads the chain.
 
-**`settle()` — updateType 2 (partial).** The seller calls `settle()` mid-session to collect earnings so far without closing the session. This accumulates volume, tokens, latency, and request count into the stats, but **does not increment sessionCount**. Why? Because the session is still open. If a seller settles 5 times during a long session and then closes it, that's 5 partial settlements and 1 session count. This prevents artificial inflation — you can't turn one real session into five by settling frequently.
+This matters most for agentic workflows. When an autonomous agent needs AI services, it can't rely on subjective reviews or curated lists. It needs hard data:
 
-**`withdraw()` — updateType 1 (ghost).** When a session times out and the buyer (or anyone) calls `withdraw()` to reclaim locked funds, the contract **increments ghostCount**. The seller gets nothing. The buyer gets their full reservation back. A ghost means the seller failed to settle before the deadline — they either crashed, went offline, or abandoned the session.
+- *Has this seller actually delivered before?* Check session count.
+- *How much value has flowed through them?* Check total volume.
+- *Do they disappear mid-session?* Check ghost count against session count.
+- *What's their typical response time?* Check average latency.
+- *Are they still active?* Check last settled timestamp.
 
-The three paths are exhaustive. Every session ends in exactly one of these outcomes. The stats record which one it was.
+An agent can encode its own routing policy on top of these stats. "Only route to sellers with 100+ sessions, ghost rate under 5%, and average latency under 2 seconds." That policy runs against public on-chain data. No API key needed, no platform approval, no trust required.
+
+And because the stats are tied to the seller's identity — not to a platform account — they're portable. A seller who builds a track record on AntSeed carries that record wherever ERC-8004 is recognized. Their reputation compounds with every delivery and belongs to them, not to a platform that can revoke it.
 
 ## Why Stats Can't Be Faked
 
-The counters have a critical property: they are written exclusively by contract logic during fund movement. Consider what an attacker would need to do to inflate their stats:
+The counters are written exclusively by contract logic during fund movement. Consider what an attacker would need to do to inflate their stats:
 
-To increase `sessionCount`, they need a `close()` call, which requires a valid buyer-signed SpendingAuth, which requires a real reservation, which requires locked USDC from a real deposit. The cost of inflating session count is the gas cost plus the actual USDC that must be deposited and reserved.
+To increase session count, they need a `close()` call, which requires a valid buyer-signed SpendingAuth, which requires a real reservation, which requires locked USDC from a real deposit. The cost of faking a session is the actual USDC that must be deposited and settled.
 
-To increase `totalVolumeUsdc`, they need real USDC flowing through settlement. There is no way to record volume without moving money.
+To increase total volume, they need real USDC flowing through settlement. There is no way to record volume without moving money.
 
-To decrease `ghostCount`, they would need to modify contract storage. They can't. The contract is the sole writer.
+To decrease ghost count, they would need to modify contract storage directly. They can't. The contract is the sole writer.
 
-The metadata values — tokens, latency, request count — come from the `metadataHash` in the buyer's SpendingAuth signature. The buyer commits to these values by signing `keccak256(inputTokens, outputTokens, latencyMs, requestCount)`. The contract unpacks and accumulates them. A buyer could theoretically sign incorrect metadata, but they have no incentive to: the metadata feeds their own stats record, and the seller independently tracks the same values.
+The delivery metrics — tokens, latency, request count — come from the `metadataHash` in the buyer's SpendingAuth signature. The buyer commits to these values by signing a hash of the delivery data. A buyer could theoretically sign incorrect metadata, but they have no incentive to: the metadata feeds the seller's stats, and the seller independently tracks the same values. Both sides have to agree for settlement to succeed.
 
-## Slashing Reads Stats
+## Three Settlement Outcomes
 
-Seller staking is the economic commitment that backs service delivery. When a seller unstakes, the contract reads their stats to determine whether slashing applies. Four tiers:
+Every session ends in exactly one of three ways, and the stats record which:
 
-**100% slash** — the seller has only ghost sessions (`sessionCount == 0` and `ghostCount > 0`). This is the harshest penalty. It targets pure ghosts: sellers who staked, accepted reservations, and never delivered. Every dollar of their stake is forfeit.
+**Complete** — the seller calls `close()` with the buyer's latest SpendingAuth. The contract charges the cumulative amount, credits the seller, releases remaining reservation, and increments session count by 1. This is the clean path.
 
-**50% slash** — high ghost ratio. The seller completed some sessions but ghosted on a disproportionate number. This targets unreliable sellers who deliver inconsistently — perhaps running unstable infrastructure or accepting more sessions than they can handle.
+**Partial** — the seller calls `settle()` mid-session to collect earnings without closing. This accumulates volume, tokens, latency, and request count, but does not increment session count. The session is still open. This prevents inflation — you can't turn one real session into five by settling frequently.
 
-**20% slash** — inactivity. The seller has a clean record but hasn't settled recently (`lastSettledAt` is stale). This penalizes passive staking — occupying network capacity and appearing in routing tables without actively serving. If you're staked, you should be delivering.
+**Ghost** — the session times out and someone calls `withdraw()` to reclaim the buyer's locked funds. The contract increments ghost count. The seller gets nothing. A ghost means the seller failed to deliver — they crashed, went offline, or abandoned the session.
 
-**0% slash** — clean record with recent activity. The seller completed sessions, maintained a low ghost ratio, and settled recently. Full stake returned.
+## Community-Driven Quality
 
-The slashing tiers create a clear economic calculus. A seller who stakes $1,000 and ghosts on every session loses $1,000. A seller who delivers reliably gets their full stake back. The stats are the evidence, and the contract is the judge.
+The stats layer creates a community-driven quality signal without requiring any central authority to maintain it. Every buyer who uses the network contributes to the public record simply by settling sessions. Every settlement adds signal. Over time, the stats converge on a clear picture of each seller's reliability.
 
-## ERC-8004 Feedback: The Subjective Layer
+This is fundamentally different from review systems where users must actively choose to leave feedback. On AntSeed, the quality signal is a byproduct of payment. You don't need to rate your provider — the fact that you paid them and they delivered is the data point. The fact that they ghosted and you got your money back is equally informative.
 
-Stats are factual. But some things can't be measured by a contract: was the response helpful? Was the model appropriate for the task? Did the seller's custom system prompt add value?
+For subjective quality — was the response helpful, was the model appropriate for the task — buyers can submit on-chain feedback via ERC-8004. This is clearly separated from the factual stats: opinions in one contract, facts in another. Both are useful. Neither should be confused with the other.
 
-This is where ERC-8004 feedback comes in. Buyers can submit on-chain feedback — ratings and comments — tied to the seller's agentId. This feedback is subjective and clearly separated from the factual stats. It's recorded on the AntseedIdentity contract (which implements ERC-8004), not on AntseedStats.
+## What This Enables
 
-The separation is intentional. Stats tell you "this seller completed 847 sessions, settled $12,340 USDC, served 2.1M tokens, with 3 ghosts." Feedback tells you "responses were fast but occasionally off-topic." Both are useful. Neither should be confused with the other.
+The endgame is an open marketplace where routing decisions are driven by verifiable data, not platform curation.
 
-Feedback influences ANTS token emissions as a multiplier on the seller's volume-based points. Good feedback amplifies earnings; poor feedback dampens them. This creates an incentive for sellers to optimize not just for throughput (which stats capture) but for quality (which only buyers can judge).
+A coding agent picks the seller with the lowest latency and highest completion rate for its model class. A research agent picks the seller with the most volume settled — a proxy for battle-tested infrastructure. A budget-conscious agent picks the cheapest seller that clears a minimum reliability threshold.
 
-## USDC Volume-Based Emissions
+All of these decisions run against the same public stats. No special API access. No partnership agreements. No trust in a platform's ranking algorithm. Just an open ledger of who delivered what, settled through the same contract that moves the money.
 
-ANTS token emission ties directly to stats. Both buyers and sellers accrue emission points based on USDC volume flowing through settled sessions.
-
-Sellers earn points proportional to the volume they settle. This means a seller who processes $100 in real, settled payments earns more than one who processes $10. The stats — specifically `totalVolumeUsdc` — are the input to the emission calculation. Since volume can only increase through real settlements, emission farming requires real economic activity.
-
-Buyers earn points for spending. USDC deposited and settled through sessions accrues buyer-side emission points. This incentivizes genuine usage rather than parking funds in the deposit contract.
-
-The feedback multiplier modulates seller emissions: strong feedback increases the emission rate, weak feedback decreases it. This creates a feedback loop where the most valuable sellers (high volume, good reviews) earn the most ANTS, which aligns token distribution with actual network contribution.
-
-## The Design Principle
-
-The key insight is that stats don't need their own infrastructure. If your payment protocol already settles through a smart contract — if every session ends with a verifiable on-chain outcome — then the accumulated record of those outcomes is the only metric you need.
-
-Three numbers tell you almost everything about a seller: `sessionCount` (how much they've delivered), `ghostCount` (how often they've failed), and `totalVolumeUsdc` (how much economic value they've handled). These numbers are written by the contract during fund movement. They can't be inflated without real money. They can't be deflated without real failures.
-
-Subjective quality lives in a separate layer (ERC-8004 feedback) where it belongs — clearly labeled as opinion, not confused with fact.
-
-That is the bar an on-chain metrics system needs to clear. Not omniscience. Just facts that can't be faked, written by the same logic that moves the money.
+That's the bar for reputation in an open network. Not scores. Not ratings. Facts that can't be faked, written by the logic that settles the payments, queryable by anyone.
