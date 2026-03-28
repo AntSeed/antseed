@@ -8,6 +8,7 @@ import { isKnownServiceApiProtocol } from "../types/service-api.js";
 const SERVICE_CATEGORIES_METADATA_VERSION = 3;
 const SERVICE_API_PROTOCOLS_METADATA_VERSION = 4;
 const PUBLIC_ADDRESS_METADATA_VERSION = 5;
+const EVM_IDENTITY_METADATA_VERSION = 6;
 
 /**
  * Encode metadata into binary format:
@@ -299,13 +300,16 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
   const hasServiceCategoryExtensions = version >= SERVICE_CATEGORIES_METADATA_VERSION;
   const hasServiceApiProtocolExtensions = version >= SERVICE_API_PROTOCOLS_METADATA_VERSION;
   const hasPublicAddressExtension = version >= PUBLIC_ADDRESS_METADATA_VERSION;
+  const hasEvmIdentity = version >= EVM_IDENTITY_METADATA_VERSION;
+  const peerIdSize = hasEvmIdentity ? 20 : 32;
+  const sigSize = hasEvmIdentity ? 65 : 64;
   offset += 1;
 
-  // peerId: 20 bytes (EVM address)
-  checkBounds(offset, 20, data.length);
-  const peerIdBytes = data.slice(offset, offset + 20);
+  // peerId: 20 bytes (v6+ EVM address) or 32 bytes (v5 Ed25519 pubkey)
+  checkBounds(offset, peerIdSize, data.length);
+  const peerIdBytes = data.slice(offset, offset + peerIdSize);
   const peerId = bytesToHex(peerIdBytes);
-  offset += 20;
+  offset += peerIdSize;
 
   // region: length-prefixed
   checkBounds(offset, 1, data.length);
@@ -489,14 +493,14 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
 
   let displayName: string | undefined;
   if (hasServiceCategoryExtensions) {
-    checkBounds(offset, 1, data.length - 65);
+    checkBounds(offset, 1, data.length - sigSize);
     const displayNameFlag = data[offset]!;
     offset += 1;
     if (displayNameFlag === 1) {
-      checkBounds(offset, 1, data.length - 65);
+      checkBounds(offset, 1, data.length - sigSize);
       const displayNameLen = data[offset]!;
       offset += 1;
-      checkBounds(offset, displayNameLen, data.length - 65);
+      checkBounds(offset, displayNameLen, data.length - sigSize);
       displayName = new TextDecoder().decode(data.slice(offset, offset + displayNameLen));
       offset += displayNameLen;
     }
@@ -504,14 +508,14 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
 
   let publicAddress: string | undefined;
   if (hasPublicAddressExtension) {
-    checkBounds(offset, 1, data.length - 65);
+    checkBounds(offset, 1, data.length - sigSize);
     const publicAddressFlag = data[offset]!;
     offset += 1;
     if (publicAddressFlag === 1) {
-      checkBounds(offset, 1, data.length - 65);
+      checkBounds(offset, 1, data.length - sigSize);
       const publicAddressLen = data[offset]!;
       offset += 1;
-      checkBounds(offset, publicAddressLen, data.length - 65);
+      checkBounds(offset, publicAddressLen, data.length - sigSize);
       publicAddress = new TextDecoder().decode(data.slice(offset, offset + publicAddressLen));
       offset += publicAddressLen;
     }
@@ -524,39 +528,39 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
   const remainingBeforeSignature = data.length - offset - 65;
   if (remainingBeforeSignature >= 2) {
     offerings = [];
-    checkBounds(offset, 2, data.length - 65);
+    checkBounds(offset, 2, data.length - sigSize);
     const offeringCount = new DataView(data.buffer, data.byteOffset + offset, 2).getUint16(0, false);
     offset += 2;
 
     for (let i = 0; i < offeringCount; i++) {
-      checkBounds(offset, 1, data.length - 65);
+      checkBounds(offset, 1, data.length - sigSize);
       const capLen = data[offset]!; offset += 1;
-      checkBounds(offset, capLen, data.length - 65);
+      checkBounds(offset, capLen, data.length - sigSize);
       const capability = new TextDecoder().decode(data.slice(offset, offset + capLen)); offset += capLen;
 
-      checkBounds(offset, 1, data.length - 65);
+      checkBounds(offset, 1, data.length - sigSize);
       const nameLen = data[offset]!; offset += 1;
-      checkBounds(offset, nameLen, data.length - 65);
+      checkBounds(offset, nameLen, data.length - sigSize);
       const name = new TextDecoder().decode(data.slice(offset, offset + nameLen)); offset += nameLen;
 
-      checkBounds(offset, 2, data.length - 65);
+      checkBounds(offset, 2, data.length - sigSize);
       const descLen = new DataView(data.buffer, data.byteOffset + offset, 2).getUint16(0, false); offset += 2;
-      checkBounds(offset, descLen, data.length - 65);
+      checkBounds(offset, descLen, data.length - sigSize);
       const description = new TextDecoder().decode(data.slice(offset, offset + descLen)); offset += descLen;
 
-      checkBounds(offset, 1, data.length - 65);
+      checkBounds(offset, 1, data.length - sigSize);
       const unit = PRICING_UNIT_REVERSE[data[offset]!] ?? 'token'; offset += 1;
 
-      checkBounds(offset, 4, data.length - 65);
+      checkBounds(offset, 4, data.length - sigSize);
       const pricePerUnit = new DataView(data.buffer, data.byteOffset + offset, 4).getFloat32(0, false); offset += 4;
 
-      checkBounds(offset, 1, data.length - 65);
+      checkBounds(offset, 1, data.length - sigSize);
       const offeringServiceCount = data[offset]!; offset += 1;
       const offeringServices: string[] = [];
       for (let j = 0; j < offeringServiceCount; j++) {
-        checkBounds(offset, 1, data.length - 65);
+        checkBounds(offset, 1, data.length - sigSize);
         const serviceLen = data[offset]!; offset += 1;
-        checkBounds(offset, serviceLen, data.length - 65);
+        checkBounds(offset, serviceLen, data.length - sigSize);
         offeringServices.push(new TextDecoder().decode(data.slice(offset, offset + serviceLen))); offset += serviceLen;
       }
 
@@ -576,7 +580,7 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
     const evmFlag = data[offset]!;
     offset += 1;
     if (evmFlag === 1) {
-      checkBounds(offset, 20, data.length - 65);
+      checkBounds(offset, 20, data.length - sigSize);
       const addrBytes = data.slice(offset, offset + 20);
       evmAddress = '0x' + bytesToHex(addrBytes);
       offset += 20;
@@ -592,7 +596,7 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
     const repFlag = data[offset]!;
     offset += 1;
     if (repFlag === 1) {
-      checkBounds(offset, 10, data.length - 65);
+      checkBounds(offset, 10, data.length - sigSize);
       const repView = new DataView(data.buffer, data.byteOffset + offset, 10);
       onChainReputation = repView.getUint8(0);
       onChainSessionCount = repView.getUint32(1, false);
@@ -602,9 +606,9 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
     }
   }
 
-  // signature: 65 bytes (EVM secp256k1 r+s+v)
-  checkBounds(offset, 65, data.length);
-  const signatureBytes = data.slice(offset, offset + 65);
+  // signature: 65 bytes (v6+ secp256k1 r+s+v) or 64 bytes (v5 Ed25519)
+  checkBounds(offset, sigSize, data.length);
+  const signatureBytes = data.slice(offset, offset + sigSize);
   const signature = bytesToHex(signatureBytes);
 
   return {

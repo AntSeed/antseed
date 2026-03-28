@@ -179,7 +179,7 @@ export class PeerAnnouncer {
     }
 
     const dataToSign = encodeMetadataForSigning(metadata);
-    const signature = await signData(this.config.identity.wallet, dataToSign);
+    const signature = signData(this.config.identity.wallet, dataToSign);
     metadata.signature = bytesToHex(signature);
     return metadata;
   }
