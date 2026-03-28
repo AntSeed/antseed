@@ -389,7 +389,7 @@ export class SellerPaymentManager {
    * Close a completed session on-chain using the latest buyer-signed dual signatures.
    * Uses close() for final settlement (releases remaining deposit to buyer).
    */
-  async settleSession(buyerPeerId: string): Promise<void> {
+  async settleSession(buyerPeerId: string, { cleanupOnFailure = false } = {}): Promise<void> {
     const session = this._sessionStore.getActiveSessionByPeer(buyerPeerId, 'seller');
     if (!session) {
       debugWarn(`[SellerPayment] settleSession: no active session for buyer ${buyerPeerId.slice(0, 12)}...`);
@@ -430,8 +430,11 @@ export class SellerPaymentManager {
         } catch (err) {
           debugWarn(`[SellerPayment] Failed to close channel (attempt ${retries + 1}): ${err instanceof Error ? err.message : err}`);
           this._closeRetryCount.set(channelId, retries + 1);
-          // Keep maps intact so checkTimeouts can retry
-          return;
+          if (!cleanupOnFailure) {
+            // Keep maps intact so checkTimeouts can retry
+            return;
+          }
+          // Caller requested cleanup even on failure (e.g., disconnect handler)
         }
       }
     }
@@ -456,8 +459,8 @@ export class SellerPaymentManager {
       const accepted = this._acceptedCumulative.get(session.sessionId) ?? 0n;
       if (accepted > 0n) {
         debugLog(`[SellerPayment] Buyer ${buyerPeerId.slice(0, 12)}... disconnected — closing channel immediately`);
-        // Fire and forget settlement
-        this.settleSession(buyerPeerId).catch((err) => {
+        // Fire and forget settlement — clean up maps even if close() fails
+        this.settleSession(buyerPeerId, { cleanupOnFailure: true }).catch((err) => {
           debugWarn(`[SellerPayment] Failed to close on disconnect: ${err instanceof Error ? err.message : err}`);
         });
         return;
