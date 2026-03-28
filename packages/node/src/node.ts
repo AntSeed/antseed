@@ -2350,7 +2350,7 @@ export class AntseedNode extends EventEmitter {
     this.emit('payment:required', approvalInfo);
 
     try {
-      await bpm.authorizeSpending(peer.peerId, pmux, amount);
+      await bpm.authorizeSpending(peer.peerId, pmux, minBudgetPerRequest);
       debugLog(`[Node] SpendingAuth sent to seller ${peer.peerId.slice(0, 12)}..., waiting for AuthAck...`);
 
       await this._waitForLockConfirmation(peer.peerId);

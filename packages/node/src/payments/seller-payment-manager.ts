@@ -26,8 +26,8 @@ export interface SellerPaymentConfig {
   settleOnDisconnect?: boolean;
 }
 
-/** Default minimum budget per request: $0.01 USDC (base units). */
-const DEFAULT_MIN_BUDGET_PER_REQUEST = '10000';
+/** Default minimum budget per request: $0.50 USDC (base units). */
+const DEFAULT_MIN_BUDGET_PER_REQUEST = '500000';
 
 /** Stored auth entry for buyer's SpendingAuth signature. */
 interface LatestAuth {

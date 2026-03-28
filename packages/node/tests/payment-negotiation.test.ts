@@ -165,8 +165,8 @@ describe('SellerPaymentManager PaymentRequired', () => {
   it('getPaymentRequirements returns a valid payload immediately (no init needed)', () => {
     const req = manager.getPaymentRequirements('req-1');
     expect(req).not.toBeNull();
-    expect(req.minBudgetPerRequest).toBe('10000'); // default $0.01
-    expect(req.suggestedAmount).toBe('5000000'); // $0.10 default
+    expect(req.minBudgetPerRequest).toBe('500000'); // default $0.50
+    expect(req.suggestedAmount).toBe('5000000'); // $5.00 default
   });
 
   it('getPaymentRequirements includes the triggering requestId', () => {
