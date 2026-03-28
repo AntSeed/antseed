@@ -352,7 +352,7 @@ async function main() {
     logStep("starting isolated local DHT bootstrap");
     bootstrap = new DHTNode({
       // Match the same deterministic bootstrap setup used by e2e test helpers.
-      peerId: toPeerId("0".repeat(64)),
+      peerId: toPeerId("0".repeat(40)),
       port: 0,
       bootstrapNodes: [],
       reannounceIntervalMs: 60_000,

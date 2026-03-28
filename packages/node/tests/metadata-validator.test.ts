@@ -15,7 +15,7 @@ import { METADATA_VERSION, type PeerMetadata } from '../src/discovery/peer-metad
 
 function validMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
   return {
-    peerId: 'a'.repeat(64) as any,
+    peerId: 'a'.repeat(40) as any,
     version: METADATA_VERSION,
     providers: [
       {
@@ -53,7 +53,7 @@ describe('validateMetadata', () => {
   });
 
   it('should reject invalid peerId (uppercase)', () => {
-    const errors = validateMetadata(validMetadata({ peerId: 'A'.repeat(64) as any }));
+    const errors = validateMetadata(validMetadata({ peerId: 'A'.repeat(40) as any }));
     expect(errors.some((e) => e.field === 'peerId')).toBe(true);
   });
 

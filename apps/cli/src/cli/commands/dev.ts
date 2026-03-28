@@ -26,7 +26,7 @@ export function registerDevCommand(program: Command): void {
       const spinner = ora('Starting local network...').start();
 
       // 1. Create and start local bootstrap DHT node
-      const bootstrapPeerId = toPeerId(crypto.randomBytes(32).toString('hex'));
+      const bootstrapPeerId = toPeerId(crypto.randomBytes(20).toString('hex'));
       const bootstrapDht = new DHTNode({
         peerId: bootstrapPeerId,
         port: 0,

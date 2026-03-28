@@ -324,7 +324,7 @@ async function main() {
 
     // Register seller identity via ERC-8004 registry
     info("Registering seller identity...");
-    const sellerPeerIdHex = Buffer.from(sellerIdentity.publicKey).toString("hex");
+    const sellerPeerIdHex = sellerIdentity.peerId;
     // register() returns the new agentId — capture it from the transaction receipt
     const registerOutput = castSend(
       [REGISTRY_ADDRESS, "register()"],
@@ -374,7 +374,7 @@ async function main() {
 
     // Start an isolated local DHT bootstrap node
     bootstrap = new DHTNode({
-      peerId: toPeerId("0".repeat(64)),
+      peerId: toPeerId("0".repeat(40)),
       port: 0,
       bootstrapNodes: [],
       reannounceIntervalMs: 60_000,

@@ -31,11 +31,11 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
     });
   }
 
-  // peerId length (64 hex chars = 32 bytes)
-  if (!/^[0-9a-f]{64}$/.test(metadata.peerId)) {
+  // peerId length (40 hex chars = 20 bytes, EVM address)
+  if (!/^[0-9a-f]{40}$/.test(metadata.peerId)) {
     errors.push({
       field: "peerId",
-      message: "PeerId must be exactly 64 lowercase hex characters",
+      message: "PeerId must be exactly 40 lowercase hex characters",
     });
   }
 
