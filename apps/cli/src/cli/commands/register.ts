@@ -29,12 +29,8 @@ export function registerRegisterCommand(program: Command): void {
           return;
         }
 
-        // Derive a short peerId from the address for on-chain registration
-        // Use first 31 bytes of the address hex (bytes32 limit for encodeBytes32String)
-        const peerId = address.slice(2, 33).toLowerCase();
-
         spinner.text = 'Registering peer identity...';
-        const agentId = await identityClient.register(wallet, peerId, options.metadata as string);
+        const agentId = await identityClient.register(wallet, options.metadata as string || undefined);
         spinner.succeed(chalk.green('Peer identity registered'));
 
         console.log(chalk.dim(`Agent ID: ${agentId}`));

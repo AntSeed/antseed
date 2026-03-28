@@ -88,7 +88,6 @@ echo "=== Step 6: Register seller identity (ERC-8004) ==="
 cast send --rpc-url $RPC --private-key $SELLER_KEY $REGISTRY "register()" > /dev/null
 # agentId=1 for first registration on fresh chain
 AGENT_ID=1
-cast send --rpc-url $RPC --private-key $SELLER_KEY $REGISTRY "setMetadata(uint256,string,bytes)" $AGENT_ID "antseed.peerId" "0x${SELLER_PEER}" > /dev/null
 echo "Done"
 
 echo ""

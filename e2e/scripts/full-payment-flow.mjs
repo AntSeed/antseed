@@ -324,19 +324,12 @@ async function main() {
 
     // Register seller identity via ERC-8004 registry
     info("Registering seller identity...");
-    const sellerPeerIdHex = sellerIdentity.peerId;
-    // register() returns the new agentId — capture it from the transaction receipt
-    const registerOutput = castSend(
+    castSend(
       [REGISTRY_ADDRESS, "register()"],
       sellerPrivateKey
     );
     // The agentId is 1 for the first registration on a fresh chain
     const sellerAgentId = "1";
-    // Set the peerId as metadata on the registry
-    castSend(
-      [REGISTRY_ADDRESS, "setMetadata(uint256,string,bytes)", sellerAgentId, "antseed.peerId", `0x${sellerPeerIdHex}`],
-      sellerPrivateKey
-    );
     pass("Seller identity registered (ERC-8004)");
 
     // Seller stakes (agentId, amount)
