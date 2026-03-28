@@ -78,7 +78,6 @@ async function buildSpendingAuth(
   const encodedMetadata = encodeMetadata(meta);
 
   const buyerWallet = buyerIdentity.wallet;
-  const buyerEvmAddr = buyerWallet.address;
   const sessionsDomain = makeSessionsDomain(CHAIN_ID, CONTRACT_ADDR);
   const reserveMaxAmount = BigInt(opts.reserveMaxAmount ?? '10000000');
 
@@ -99,7 +98,6 @@ async function buildSpendingAuth(
     metadataHash: metadataHashHex,
     metadata: encodedMetadata,
     spendingAuthSig,
-    buyerEvmAddr,
     reserveSalt: salt,
     reserveMaxAmount: '10000000',
     reserveDeadline: deadline,
@@ -147,10 +145,10 @@ describe('SellerPaymentManager', () => {
 
   it('test_handleSpendingAuth_firstSign: calls reserve, sends AuthAck', async () => {
     const channelId = makeChannelId(1);
-    const buyerEvmAddr = buyerIdentity.wallet.address;
+
     const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { isReserve: true });
 
-    await manager.handleSpendingAuth(buyerIdentity.peerId, buyerEvmAddr, payload, mux);
+    await manager.handleSpendingAuth(buyerIdentity.peerId, payload, mux);
 
     expect(manager.sessionsClient.reserve).toHaveBeenCalledOnce();
     expect(mux.sentAuthAcks.length).toBe(1);
@@ -165,24 +163,24 @@ describe('SellerPaymentManager', () => {
   });
 
   it('test_handleSpendingAuth_subsequent: validates monotonic increase', async () => {
-    const buyerEvmAddr = buyerIdentity.wallet.address;
+
     const channelId = makeChannelId(2);
 
     const payload1 = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { isReserve: true });
-    await manager.handleSpendingAuth(buyerIdentity.peerId, buyerEvmAddr, payload1, mux);
+    await manager.handleSpendingAuth(buyerIdentity.peerId, payload1, mux);
 
     const payload2 = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { cumulativeAmount: 200_000n });
-    await manager.handleSpendingAuth(buyerIdentity.peerId, buyerEvmAddr, payload2, mux);
+    await manager.handleSpendingAuth(buyerIdentity.peerId, payload2, mux);
 
     expect(mux.sentAuthAcks.length).toBe(1);
     expect(manager.getAcceptedCumulative(channelId)).toBe(200_000n);
   });
 
   it('test_recordSpend: tracks cumulative spend', async () => {
-    const buyerEvmAddr = buyerIdentity.wallet.address;
+
     const channelId = makeChannelId(3);
     const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { isReserve: true });
-    await manager.handleSpendingAuth(buyerIdentity.peerId, buyerEvmAddr, payload, mux);
+    await manager.handleSpendingAuth(buyerIdentity.peerId, payload, mux);
 
     manager.recordSpend(channelId, 50_000n);
     expect(manager.getCumulativeSpend(channelId)).toBe(50_000n);
@@ -192,10 +190,10 @@ describe('SellerPaymentManager', () => {
   });
 
   it('test_getSessionByPeer: returns active session', async () => {
-    const buyerEvmAddr = buyerIdentity.wallet.address;
+
     const channelId = makeChannelId(4);
     const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { isReserve: true });
-    await manager.handleSpendingAuth(buyerIdentity.peerId, buyerEvmAddr, payload, mux);
+    await manager.handleSpendingAuth(buyerIdentity.peerId, payload, mux);
 
     const session = manager.getSessionByPeer(buyerIdentity.peerId);
     expect(session).not.toBeNull();
@@ -214,10 +212,10 @@ describe('SellerPaymentManager', () => {
     vi.spyOn(manager2.sessionsClient, 'reserve').mockResolvedValue('0xreserve-hash');
     vi.spyOn(manager2.sessionsClient, 'close').mockResolvedValue('0xclose-hash');
 
-    const buyerEvmAddr = buyerIdentity.wallet.address;
+
     const channelId = makeChannelId(5);
     const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { isReserve: true });
-    await manager2.handleSpendingAuth(buyerIdentity.peerId, buyerEvmAddr, payload, mux);
+    await manager2.handleSpendingAuth(buyerIdentity.peerId, payload, mux);
 
     expect(manager2.hasSession(buyerIdentity.peerId)).toBe(true);
     manager2.onBuyerDisconnect(buyerIdentity.peerId);
@@ -230,12 +228,12 @@ describe('SellerPaymentManager', () => {
   });
 
   it('test_hasSession: returns true/false correctly', async () => {
-    const buyerEvmAddr = buyerIdentity.wallet.address;
+
     expect(manager.hasSession(buyerIdentity.peerId)).toBe(false);
 
     const channelId = makeChannelId(7);
     const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { isReserve: true });
-    await manager.handleSpendingAuth(buyerIdentity.peerId, buyerEvmAddr, payload, mux);
+    await manager.handleSpendingAuth(buyerIdentity.peerId, payload, mux);
 
     expect(manager.hasSession(buyerIdentity.peerId)).toBe(true);
     expect(manager.hasSession('nonexistent-peer')).toBe(false);
@@ -246,7 +244,6 @@ describe('SellerPaymentManager', () => {
     expect(req).not.toBeNull();
     expect(req.suggestedAmount).toBe('100000');
     expect(req.requestId).toBe('test-req-1');
-    expect(req.sellerEvmAddr).toBe(sellerIdentity.wallet.address);
     expect(req.minBudgetPerRequest).toBeDefined();
   });
 
@@ -258,11 +255,11 @@ describe('SellerPaymentManager', () => {
   });
 
   it('test_validateAndAcceptAuth: accepts monotonic increase', async () => {
-    const buyerEvmAddr = buyerIdentity.wallet.address;
+
     const channelId = makeChannelId(8);
 
     const payload1 = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { isReserve: true });
-    await manager.handleSpendingAuth(buyerIdentity.peerId, buyerEvmAddr, payload1, mux);
+    await manager.handleSpendingAuth(buyerIdentity.peerId, payload1, mux);
 
     const payload2 = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { cumulativeAmount: 200_000n });
     const accepted = await manager.validateAndAcceptAuth(buyerIdentity.peerId, payload2);

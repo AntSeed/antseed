@@ -52,7 +52,6 @@ export interface SpendingAuthPayload {
   metadataHash: string;         // bytes32 hex
   metadata: string;             // hex-encoded abi.encode(inputTokens, outputTokens, latencyMs, requestCount)
   spendingAuthSig: string;      // EIP-712 SpendingAuth signature (covers amount + metadata)
-  buyerEvmAddr: string;
   // Only for initial reserve
   reserveSalt?: string;
   reserveMaxAmount?: string;
@@ -71,7 +70,6 @@ export interface AuthAckPayload {
  * Sent via PaymentMux alongside the HTTP 402 response.
  */
 export interface PaymentRequiredPayload {
-  sellerEvmAddr: string;
   minBudgetPerRequest: string;
   suggestedAmount: string;
   requestId: string;

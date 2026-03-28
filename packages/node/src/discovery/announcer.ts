@@ -158,11 +158,9 @@ export class PeerAnnouncer {
     }
 
     if (this.config.paymentsEnabled) {
-      const evmAddress = this.config.identity.wallet.address;
-      metadata.evmAddress = evmAddress;
-
       if (includeOnChainReputation && this.config.statsClient && this.config.stakingClient) {
         try {
+          const evmAddress = this.config.identity.wallet.address;
           const agentId = await this.config.stakingClient.getAgentId(evmAddress);
           const stats = await this.config.statsClient.getStats(agentId);
           metadata.onChainReputation = stats.sessionCount;

@@ -59,7 +59,6 @@ export function decodeSpendingAuth(data: Uint8Array): SpendingAuthPayload {
     metadataHash: requireString(obj, 'metadataHash'),
     metadata: typeof obj.metadata === 'string' ? obj.metadata : '',
     spendingAuthSig: requireString(obj, 'spendingAuthSig'),
-    buyerEvmAddr: requireString(obj, 'buyerEvmAddr'),
   };
   // Optional reserve params (only on initial auth)
   if (typeof obj.reserveSalt === 'string') result.reserveSalt = obj.reserveSalt;
@@ -78,7 +77,6 @@ export function decodeAuthAck(data: Uint8Array): AuthAckPayload {
 export function decodePaymentRequired(data: Uint8Array): PaymentRequiredPayload {
   const obj = parseJson(data);
   const result: PaymentRequiredPayload = {
-    sellerEvmAddr: requireString(obj, 'sellerEvmAddr'),
     minBudgetPerRequest: requireString(obj, 'minBudgetPerRequest'),
     suggestedAmount: requireString(obj, 'suggestedAmount'),
     requestId: requireString(obj, 'requestId'),

@@ -66,8 +66,6 @@ export interface PeerInfo {
   currentLoad?: number;
   /** Computed trust score (0-100) from the trust engine. */
   trustScore?: number;
-  /** EVM address of the peer (0x-prefixed hex). */
-  evmAddress?: string;
   /** On-chain reputation score (0-100) from the Base identity contract. */
   onChainReputation?: number;
   /** On-chain session count from the Base identity contract. */

@@ -67,8 +67,6 @@ describe('Cumulative SpendingAuth Integration', () => {
   });
 
   it('cumulative amount increases across multiple requests within a session', async () => {
-    const sellerEvmAddr = sellerIdentity.wallet.address;
-
     // Track sent SpendingAuths
     const sentAuths: SpendingAuthPayload[] = [];
     const mux = {
@@ -86,7 +84,6 @@ describe('Cumulative SpendingAuth Integration', () => {
     // Step 1: Initial authorization with minBudgetPerRequest = 10000
     const channelId = await buyerManager.authorizeSpending(
       sellerIdentity.peerId,
-      sellerEvmAddr,
       mux,
       10_000n,
     );
@@ -176,7 +173,6 @@ describe('Cumulative SpendingAuth Integration', () => {
     // Initial authorization
     const channelId = await buyerManager.authorizeSpending(
       sellerIdentity.peerId,
-      sellerEvmAddr,
       mux,
       10_000n,
     );
@@ -232,7 +228,6 @@ describe('Cumulative SpendingAuth Integration', () => {
     // Create session and do some spending
     const channelId = await buyerManager.authorizeSpending(
       sellerIdentity.peerId,
-      sellerEvmAddr,
       mux,
       10_000n,
     );

@@ -750,7 +750,7 @@ ipcMain.handle('payments:get-peer-info', async (_event, peerId: string) => {
         onChainReputation: (peer as Record<string, unknown>).onChainReputation ?? null,
         onChainSessionCount: (peer as Record<string, unknown>).onChainSessionCount ?? null,
         onChainDisputeCount: (peer as Record<string, unknown>).onChainDisputeCount ?? null,
-        evmAddress: (peer as Record<string, unknown>).evmAddress ?? null,
+        evmAddress: peer.peerId ? '0x' + peer.peerId : null,
         timestamp: (peer as Record<string, unknown>).timestamp ?? null,
         providers: peer.providers ?? [],
         services: peer.services ?? [],
@@ -854,9 +854,7 @@ ipcMain.handle('chat:approve-payment', async (_event, conversationId: string) =>
       if (peerId) {
         await refreshPeerCache();
         const peer = lookupPeer(peerId);
-        const resolvedEvm = typeof (peer as Record<string, unknown> | undefined)?.evmAddress === 'string'
-          ? String((peer as Record<string, unknown>).evmAddress).trim()
-          : '';
+        const resolvedEvm = peer?.peerId ? '0x' + peer.peerId : '';
         if (resolvedEvm) {
           sellerEvmAddr = resolvedEvm;
         }

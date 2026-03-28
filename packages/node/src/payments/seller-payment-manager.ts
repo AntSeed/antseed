@@ -111,7 +111,6 @@ export class SellerPaymentManager {
    */
   async handleSpendingAuth(
     buyerPeerId: string,
-    buyerEvmAddr: string,
     payload: SpendingAuthPayload,
     paymentMux: PaymentMux,
   ): Promise<'accepted' | 'reserved' | 'rejected'> {
@@ -119,7 +118,7 @@ export class SellerPaymentManager {
     const existing = this._buyerLocks.get(buyerPeerId);
     let result: 'accepted' | 'reserved' | 'rejected' = 'rejected';
     const lock = (existing ?? Promise.resolve()).then(async () => {
-      result = await this._handleSpendingAuthInner(buyerPeerId, buyerEvmAddr, payload, paymentMux);
+      result = await this._handleSpendingAuthInner(buyerPeerId, payload, paymentMux);
     });
     this._buyerLocks.set(buyerPeerId, lock.catch(() => {}));
     await lock;
@@ -128,10 +127,10 @@ export class SellerPaymentManager {
 
   private async _handleSpendingAuthInner(
     buyerPeerId: string,
-    buyerEvmAddr: string,
     payload: SpendingAuthPayload,
     paymentMux: PaymentMux,
   ): Promise<'accepted' | 'reserved' | 'rejected'> {
+    const buyerEvmAddr = '0x' + buyerPeerId;
     try {
       const channelId = payload.channelId;
       const cumulativeAmount = BigInt(payload.cumulativeAmount);
@@ -311,9 +310,10 @@ export class SellerPaymentManager {
       metadataHash: auth.metadataHash,
     };
 
+    const buyerEvmAddr = '0x' + buyerPeerId;
     try {
       const recovered = verifyTypedData(sessionsDomain, SPENDING_AUTH_TYPES, metadataMsg, auth.spendingAuthSig);
-      if (recovered.toLowerCase() !== auth.buyerEvmAddr.toLowerCase()) {
+      if (recovered.toLowerCase() !== buyerEvmAddr.toLowerCase()) {
         debugWarn(`[SellerPayment] validateAndAcceptAuth: invalid SpendingAuth signature`);
         return false;
       }
@@ -552,7 +552,6 @@ export class SellerPaymentManager {
     buyerPeerId?: string,
     pricing?: { inputUsdPerMillion?: number; outputUsdPerMillion?: number },
   ): PaymentRequiredPayload {
-    const sellerEvmAddr = this._identity.wallet.address;
     const minBudgetPerRequest = this._config.minBudgetPerRequest ?? DEFAULT_MIN_BUDGET_PER_REQUEST;
 
     let suggestedAmount = SellerPaymentManager.DEFAULT_SUGGESTED_AMOUNT;
@@ -566,7 +565,6 @@ export class SellerPaymentManager {
     }
 
     return {
-      sellerEvmAddr,
       minBudgetPerRequest,
       suggestedAmount: suggestedAmount.toString(),
       requestId,

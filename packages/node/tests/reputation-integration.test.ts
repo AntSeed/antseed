@@ -27,9 +27,8 @@ function makeMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
 }
 
 describe('Reputation Integration', () => {
-  it('should round-trip metadata with EVM address and reputation', () => {
+  it('should round-trip metadata with reputation', () => {
     const original = makeMetadata({
-      evmAddress: '0x1234567890abcdef1234567890abcdef12345678',
       onChainReputation: 85,
       onChainSessionCount: 42,
       onChainDisputeCount: 2,
@@ -37,7 +36,6 @@ describe('Reputation Integration', () => {
     const encoded = encodeMetadata(original);
     const decoded = decodeMetadata(encoded);
 
-    expect(decoded.evmAddress).toBe('0x1234567890abcdef1234567890abcdef12345678');
     expect(decoded.onChainReputation).toBe(85);
     expect(decoded.onChainSessionCount).toBe(42);
     expect(decoded.onChainDisputeCount).toBe(2);
@@ -55,7 +53,6 @@ describe('Reputation Integration', () => {
     const encoded = encodeMetadata(original);
     const decoded = decodeMetadata(encoded);
 
-    expect(decoded.evmAddress).toBeUndefined();
     expect(decoded.onChainReputation).toBeUndefined();
     expect(decoded.onChainSessionCount).toBeUndefined();
     expect(decoded.onChainDisputeCount).toBeUndefined();
@@ -67,7 +64,6 @@ describe('Reputation Integration', () => {
 
   it('should populate PeerInfo from metadata reputation', () => {
     const metadata: PeerMetadata = makeMetadata({
-      evmAddress: '0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
       onChainReputation: 92,
       onChainSessionCount: 100,
       onChainDisputeCount: 1,
@@ -79,14 +75,12 @@ describe('Reputation Integration', () => {
       lastSeen: metadata.timestamp,
       providers: metadata.providers.map((p) => p.provider),
       publicAddress: '1.2.3.4:6882',
-      evmAddress: metadata.evmAddress,
       onChainReputation: metadata.onChainReputation,
       onChainSessionCount: metadata.onChainSessionCount,
       onChainDisputeCount: metadata.onChainDisputeCount,
       trustScore: metadata.onChainReputation,
     };
 
-    expect(peerInfo.evmAddress).toBe('0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef');
     expect(peerInfo.onChainReputation).toBe(92);
     expect(peerInfo.onChainSessionCount).toBe(100);
     expect(peerInfo.onChainDisputeCount).toBe(1);
@@ -152,7 +146,6 @@ describe('Reputation Integration', () => {
     const { verifyReputation } = await import('../src/discovery/reputation-verifier.js');
 
     const metadata = makeMetadata({
-      evmAddress: '0x1111111111111111111111111111111111111111',
       onChainReputation: 80,
       onChainSessionCount: 50,
       onChainDisputeCount: 3,
@@ -181,7 +174,6 @@ describe('Reputation Integration', () => {
 
     // Test with mismatched data
     const mismatchedMetadata = makeMetadata({
-      evmAddress: '0x1111111111111111111111111111111111111111',
       onChainReputation: 90, // claimed higher than actual
       onChainSessionCount: 50,
       onChainDisputeCount: 3,

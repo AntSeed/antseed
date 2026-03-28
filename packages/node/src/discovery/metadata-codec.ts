@@ -246,18 +246,6 @@ function encodeBody(metadata: PeerMetadata): Uint8Array {
     }
   }
 
-  // EVM address: 1 flag byte + 20 address bytes if present
-  if (metadata.evmAddress) {
-    parts.push(new Uint8Array([1])); // flag: present
-    // Strip 0x prefix if present, then decode 20 bytes
-    const addrHex = metadata.evmAddress.startsWith('0x')
-      ? metadata.evmAddress.slice(2)
-      : metadata.evmAddress;
-    parts.push(hexToBytes(addrHex.toLowerCase().padStart(40, '0')));
-  } else {
-    parts.push(new Uint8Array([0])); // flag: absent
-  }
-
   // On-chain reputation: 1 flag byte + 10 data bytes (1 reputation + 4 sessionCount + 4 disputeCount + 1 reserved)
   if (metadata.onChainReputation !== undefined) {
     parts.push(new Uint8Array([1])); // flag: present
@@ -572,20 +560,6 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
     }
   }
 
-  // Optional EVM address (flag + 20 bytes) — present if there are enough remaining bytes before signature
-  let evmAddress: string | undefined;
-  const remainingBeforeEvmSig = data.length - offset - 65;
-  if (remainingBeforeEvmSig >= 1) {
-    const evmFlag = data[offset]!;
-    offset += 1;
-    if (evmFlag === 1) {
-      checkBounds(offset, 20, data.length - 65);
-      const addrBytes = data.slice(offset, offset + 20);
-      evmAddress = '0x' + bytesToHex(addrBytes);
-      offset += 20;
-    }
-  }
-
   // Optional on-chain reputation (flag + 10 bytes)
   let onChainReputation: number | undefined;
   let onChainSessionCount: number | undefined;
@@ -617,7 +591,6 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
     ...(publicAddress ? { publicAddress } : {}),
     providers,
     ...(offerings && offerings.length > 0 ? { offerings } : {}),
-    ...(evmAddress !== undefined ? { evmAddress } : {}),
     ...(onChainReputation !== undefined ? { onChainReputation } : {}),
     ...(onChainSessionCount !== undefined ? { onChainSessionCount } : {}),
     ...(onChainDisputeCount !== undefined ? { onChainDisputeCount } : {}),

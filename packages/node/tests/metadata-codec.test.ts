@@ -163,14 +163,12 @@ describe('encodeMetadata / decodeMetadata', () => {
           services: ['claude-3-sonnet'],
         },
       ],
-      evmAddress: '0x1111111111111111111111111111111111111111',
       onChainReputation: 88,
       onChainSessionCount: 123,
       onChainDisputeCount: 2,
     });
     const decoded = decodeMetadata(encodeMetadata(original));
     expect(decoded.offerings?.[0]?.name).toBe('summarize');
-    expect(decoded.evmAddress).toBe('0x1111111111111111111111111111111111111111');
     expect(decoded.onChainReputation).toBe(88);
     expect(decoded.onChainSessionCount).toBe(123);
     expect(decoded.onChainDisputeCount).toBe(2);

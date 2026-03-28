@@ -18,6 +18,13 @@ function createTestIdentity(): Identity {
   return { peerId, privateKey, wallet };
 }
 
+/** Generate a fake but valid-format peerId (40 hex chars) from a label. */
+function fakePeerId(label: string): string {
+  // Pad/hash label into a valid 40-hex-char EVM address (without 0x prefix)
+  const hex = Buffer.from(label).toString('hex').padEnd(40, '0').slice(0, 40);
+  return hex;
+}
+
 function createMockPaymentMux(): PaymentMux & {
   sentSpendingAuths: unknown[];
 } {
@@ -75,11 +82,11 @@ describe('BuyerPaymentManager', () => {
   });
 
   it('authorizeSpending sends SpendingAuth with channelId and dual sigs', async () => {
-    const sellerPeerId = 'seller-peer-001';
-    const sellerEvmAddr = '0x' + 'ab'.repeat(20);
+    const sellerPeerId = fakePeerId('seller-peer-001');
+
     const minBudget = 50_000n;
 
-    const channelId = await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux, minBudget);
+    const channelId = await manager.authorizeSpending(sellerPeerId, mux, minBudget);
 
     expect(channelId).toMatch(/^0x[0-9a-f]{64}$/);
     expect(mux.sentSpendingAuths.length).toBe(1);
@@ -90,25 +97,24 @@ describe('BuyerPaymentManager', () => {
     expect(sent.metadata).toBeTypeOf('string');
     expect(sent.channelId).toBe(channelId);
     expect(sent.spendingAuthSig).toBeTypeOf('string');
-    expect(sent.buyerEvmAddr).toBeTypeOf('string');
   });
 
   it('authorizeSpending rejects if minBudgetPerRequest exceeds maxPerRequestUsdc', async () => {
-    const sellerPeerId = 'seller-peer-reject';
-    const sellerEvmAddr = '0x' + 'ab'.repeat(20);
+    const sellerPeerId = fakePeerId('seller-peer-reject');
+
     const tooLarge = 200_000n; // exceeds maxPerRequestUsdc (100_000)
 
-    const channelId = await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux, tooLarge);
+    const channelId = await manager.authorizeSpending(sellerPeerId, mux, tooLarge);
 
     expect(channelId).toBe('');
     expect(mux.sentSpendingAuths.length).toBe(0);
   });
 
   it('handleAuthAck marks session as confirmed', async () => {
-    const sellerPeerId = 'seller-peer-003';
-    const sellerEvmAddr = '0x' + 'ab'.repeat(20);
+    const sellerPeerId = fakePeerId('seller-peer-003');
 
-    const channelId = await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux, 10_000n);
+
+    const channelId = await manager.authorizeSpending(sellerPeerId, mux, 10_000n);
     expect(manager.isAuthorized(sellerPeerId)).toBe(false);
 
     manager.handleAuthAck(sellerPeerId, { channelId });
@@ -116,13 +122,13 @@ describe('BuyerPaymentManager', () => {
   });
 
   it('isAuthorized returns true for confirmed session, false otherwise', async () => {
-    const peerId1 = 'seller-peer-auth-1';
-    const peerId2 = 'seller-peer-auth-2';
-    const evmAddr = '0x' + 'ab'.repeat(20);
+    const peerId1 = fakePeerId('seller-peer-auth-1');
+    const peerId2 = fakePeerId('seller-peer-auth-2');
+
 
     expect(manager.isAuthorized(peerId1)).toBe(false);
 
-    const cid = await manager.authorizeSpending(peerId1, evmAddr, mux, 10_000n);
+    const cid = await manager.authorizeSpending(peerId1, mux, 10_000n);
     // Still not authorized until AuthAck
     expect(manager.isAuthorized(peerId1)).toBe(false);
 
@@ -132,10 +138,10 @@ describe('BuyerPaymentManager', () => {
   });
 
   it('signPerRequestAuth increments cumulative values and produces dual sigs', async () => {
-    const sellerPeerId = 'seller-peer-perreq';
-    const sellerEvmAddr = '0x' + 'ab'.repeat(20);
+    const sellerPeerId = fakePeerId('seller-peer-perreq');
 
-    await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux, 10_000n);
+
+    await manager.authorizeSpending(sellerPeerId, mux, 10_000n);
     manager.handleAuthAck(sellerPeerId, {
       channelId: (mux.sentSpendingAuths[0] as Record<string, unknown>).channelId as string,
     });
@@ -156,10 +162,10 @@ describe('BuyerPaymentManager', () => {
   });
 
   it('signPerRequestAuth caps increment at maxPerRequestUsdc', async () => {
-    const sellerPeerId = 'seller-peer-cap';
-    const sellerEvmAddr = '0x' + 'ab'.repeat(20);
+    const sellerPeerId = fakePeerId('seller-peer-cap');
 
-    await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux, 10_000n);
+
+    await manager.authorizeSpending(sellerPeerId, mux, 10_000n);
 
     // addedCost + estimatedNext = 80000 + 80000 = 160000 > maxPerRequestUsdc (100000)
     const payload = await manager.signPerRequestAuth(
@@ -181,10 +187,10 @@ describe('BuyerPaymentManager', () => {
   });
 
   it('handleNeedAuth signs and sends updated SpendingAuth', async () => {
-    const sellerPeerId = 'seller-peer-needauth';
-    const sellerEvmAddr = '0x' + 'ab'.repeat(20);
+    const sellerPeerId = fakePeerId('seller-peer-needauth');
 
-    const channelId = await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux, 10_000n);
+
+    const channelId = await manager.authorizeSpending(sellerPeerId, mux, 10_000n);
     mux.sentSpendingAuths.length = 0; // clear initial auth
 
     await manager.handleNeedAuth(sellerPeerId, {
@@ -202,10 +208,10 @@ describe('BuyerPaymentManager', () => {
   });
 
   it('handleNeedAuth rejects if requiredCumulativeAmount exceeds maxReserveAmountUsdc', async () => {
-    const sellerPeerId = 'seller-peer-needauth-reject';
-    const sellerEvmAddr = '0x' + 'ab'.repeat(20);
+    const sellerPeerId = fakePeerId('seller-peer-needauth-reject');
 
-    const channelId = await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux, 10_000n);
+
+    const channelId = await manager.authorizeSpending(sellerPeerId, mux, 10_000n);
     mux.sentSpendingAuths.length = 0;
 
     await manager.handleNeedAuth(sellerPeerId, {
@@ -332,10 +338,10 @@ describe('BuyerPaymentManager', () => {
   });
 
   it('sessionPersistence: session survives store reconstruction', async () => {
-    const sellerPeerId = 'seller-peer-persist';
-    const sellerEvmAddr = '0x' + 'ab'.repeat(20);
+    const sellerPeerId = fakePeerId('seller-peer-persist');
 
-    const channelId = await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux, 10_000n);
+
+    const channelId = await manager.authorizeSpending(sellerPeerId, mux, 10_000n);
     store.close();
 
     // Reopen the store independently and check persistence
@@ -353,7 +359,7 @@ describe('BuyerPaymentManager', () => {
     manager.setSigner(Wallet.createRandom());
 
     const mux2 = createMockPaymentMux();
-    const secondId = await manager.authorizeSpending(sellerPeerId, sellerEvmAddr, mux2, 10_000n);
+    const secondId = await manager.authorizeSpending(sellerPeerId, mux2, 10_000n);
     expect(secondId).toMatch(/^0x[0-9a-f]{64}$/);
     expect(secondId).not.toBe(channelId); // New channel ID
   });

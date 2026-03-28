@@ -25,11 +25,16 @@ function createTestIdentity(): Identity {
   return { peerId, privateKey, wallet };
 }
 
+/** Generate a fake but valid-format peerId (40 hex chars) from a label. */
+function fakePeerId(label: string): string {
+  const hex = Buffer.from(label).toString('hex').padEnd(40, '0').slice(0, 40);
+  return hex;
+}
+
 const CHAIN_ID = 31337;
 const CONTRACT_ADDR = '0x' + 'dd'.repeat(20);
 
 const SAMPLE_PAYMENT_REQUIRED: PaymentRequiredPayload = {
-  sellerEvmAddr: '0x' + 'ab'.repeat(20),
   minBudgetPerRequest: '10000',
   suggestedAmount: '100000',
   requestId: 'req-' + 'a'.repeat(32),
@@ -48,7 +53,7 @@ describe('PaymentRequired codec', () => {
 
   it('decodePaymentRequired rejects missing fields', () => {
     const incomplete = new TextEncoder().encode(JSON.stringify({
-      sellerEvmAddr: '0x' + 'ab'.repeat(20),
+      minBudgetPerRequest: '10000',
     }));
     expect(() => codec.decodePaymentRequired(incomplete)).toThrow('Missing or invalid string field');
   });
@@ -60,13 +65,11 @@ describe('PaymentRequired codec', () => {
 
   it('preserves all fields through encode/decode', () => {
     const payload: PaymentRequiredPayload = {
-      sellerEvmAddr: '0x1234567890abcdef1234567890abcdef12345678',
       minBudgetPerRequest: '10000',
       suggestedAmount: '1500000',
       requestId: 'abc-123',
         };
     const decoded = codec.decodePaymentRequired(codec.encodePaymentRequired(payload));
-    expect(decoded.sellerEvmAddr).toBe(payload.sellerEvmAddr);
     expect(decoded.minBudgetPerRequest).toBe(payload.minBudgetPerRequest);
     expect(decoded.suggestedAmount).toBe(payload.suggestedAmount);
     expect(decoded.requestId).toBe(payload.requestId);
@@ -164,7 +167,6 @@ describe('SellerPaymentManager PaymentRequired', () => {
     expect(req).not.toBeNull();
     expect(req.minBudgetPerRequest).toBe('10000'); // default $0.01
     expect(req.suggestedAmount).toBe('100000'); // $0.10 default
-    expect(req.sellerEvmAddr).toBe(sellerIdentity.wallet.address);
   });
 
   it('getPaymentRequirements includes the triggering requestId', () => {
@@ -371,8 +373,7 @@ describe('Budget mismatch rejection', () => {
     // Seller demands $0.10 per request — exceeds buyer's $0.05 limit
     const sellerMinBudget = 100_000n;
     const sessionId = await buyer.authorizeSpending(
-      'seller-peer-expensive',
-      '0x' + 'ab'.repeat(20),
+      fakePeerId('seller-peer-expensive'),
       mux,
       sellerMinBudget,
     );
@@ -419,8 +420,7 @@ describe('Budget mismatch rejection', () => {
     // Seller demands exactly $0.10 per request — matches buyer's limit
     const sellerMinBudget = 100_000n;
     const sessionId = await buyer.authorizeSpending(
-      'seller-peer-match',
-      '0x' + 'ab'.repeat(20),
+      fakePeerId('seller-peer-match'),
       mux,
       sellerMinBudget,
     );
@@ -467,8 +467,7 @@ describe('Budget mismatch rejection', () => {
     // Seller demands only $0.01 per request — well within buyer's limit
     const sellerMinBudget = 10_000n;
     const sessionId = await buyer.authorizeSpending(
-      'seller-peer-cheap',
-      '0x' + 'ab'.repeat(20),
+      fakePeerId('seller-peer-cheap'),
       mux,
       sellerMinBudget,
     );

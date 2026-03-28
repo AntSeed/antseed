@@ -129,14 +129,11 @@ describe('Full Payment Flow Integration', () => {
 
   async function doInitialHandshake(minBudget: bigint): Promise<{ sessionId: string }> {
     const sellerPeerId = sellerIdentity.peerId;
-    const sellerEvmAddr = sellerIdentity.wallet.address;
-    const buyerEvmAddr = buyerIdentity.wallet.address;
     const buyerPeerId = buyerIdentity.peerId;
 
     // Step 1: Buyer signs and sends initial SpendingAuth
     const sessionId = await buyer.authorizeSpending(
       sellerPeerId,
-      sellerEvmAddr,
       buyerMux,
       minBudget,
     );
@@ -147,7 +144,6 @@ describe('Full Payment Flow Integration', () => {
     const initialAuth = buyerMux.sentSpendingAuths[0]!;
     const result = await seller.handleSpendingAuth(
       buyerPeerId,
-      buyerEvmAddr,
       initialAuth,
       sellerMux,
     );
@@ -167,7 +163,6 @@ describe('Full Payment Flow Integration', () => {
   it('complete flow: reserve -> 3 requests -> settle', async () => {
     const sellerPeerId = sellerIdentity.peerId;
     const buyerPeerId = buyerIdentity.peerId;
-    const buyerEvmAddr = buyerIdentity.wallet.address;
     const minBudget = 50_000n; // $0.05
 
     const { sessionId } = await doInitialHandshake(minBudget);
@@ -276,7 +271,6 @@ describe('Full Payment Flow Integration', () => {
 
   it('seller rejects non-monotonic cumulative amount', async () => {
     const buyerPeerId = buyerIdentity.peerId;
-    const buyerEvmAddr = buyerIdentity.wallet.address;
     const sellerPeerId = sellerIdentity.peerId;
 
     await doInitialHandshake(50_000n);
@@ -364,14 +358,13 @@ describe('Full Payment Flow Integration', () => {
   it('seller sends AuthAck only on first SpendingAuth, not subsequent', async () => {
     const sellerPeerId = sellerIdentity.peerId;
     const buyerPeerId = buyerIdentity.peerId;
-    const buyerEvmAddr = buyerIdentity.wallet.address;
 
     await doInitialHandshake(50_000n);
     expect(sellerMux.sentAuthAcks).toHaveLength(1);
 
     // Send a subsequent auth via handleSpendingAuth
     const auth1 = await buyer.signPerRequestAuth(sellerPeerId, 10_000n, 100n, 50n, 10_000n);
-    const result = await seller.handleSpendingAuth(buyerPeerId, buyerEvmAddr, auth1, sellerMux);
+    const result = await seller.handleSpendingAuth(buyerPeerId, auth1, sellerMux);
     expect(result).toBe('accepted');
     // No new AuthAck should be sent
     expect(sellerMux.sentAuthAcks).toHaveLength(1);
@@ -413,11 +406,9 @@ describe('Full Payment Flow Integration', () => {
 
   it('buyer handleAuthAck ignores mismatched channelId', async () => {
     const sellerPeerId = sellerIdentity.peerId;
-    const sellerEvmAddr = sellerIdentity.wallet.address;
 
     const sessionId = await buyer.authorizeSpending(
       sellerPeerId,
-      sellerEvmAddr,
       buyerMux,
       50_000n,
     );
@@ -437,7 +428,6 @@ describe('Full Payment Flow Integration', () => {
 
   it('seller rejects SpendingAuth with invalid signature', async () => {
     const buyerPeerId = buyerIdentity.peerId;
-    const buyerEvmAddr = buyerIdentity.wallet.address;
     const sellerPeerId = sellerIdentity.peerId;
 
     const { ZERO_METADATA_HASH, encodeMetadata, ZERO_METADATA } = await import('../src/payments/evm/signatures.js');
@@ -447,13 +437,12 @@ describe('Full Payment Flow Integration', () => {
       metadataHash: ZERO_METADATA_HASH,
       metadata: encodeMetadata(ZERO_METADATA),
       spendingAuthSig: '0x' + 'bb'.repeat(65), // garbage signature
-      buyerEvmAddr,
       reserveMaxAmount: '10000000',
       reserveSalt: '0x' + '01'.repeat(32),
       reserveDeadline: Math.floor(Date.now() / 1000) + 3600,
     };
 
-    const result = await seller.handleSpendingAuth(buyerPeerId, buyerEvmAddr, badAuth, sellerMux);
+    const result = await seller.handleSpendingAuth(buyerPeerId, badAuth, sellerMux);
     expect(result).toBe('rejected');
     expect(sellerMux.sentAuthAcks).toHaveLength(0);
   });
@@ -471,8 +460,7 @@ describe('Full Payment Flow Integration', () => {
     buyer = new BuyerPaymentManager(buyerIdentity, tightConfig, buyerStore);
     buyer.setSigner(buyerIdentity.wallet);
 
-    const sellerEvmAddr = sellerIdentity.wallet.address;
-    await buyer.authorizeSpending(sellerPeerId, sellerEvmAddr, buyerMux, 50_000n);
+    await buyer.authorizeSpending(sellerPeerId, buyerMux, 50_000n);
     buyer.handleAuthAck(sellerPeerId, {
       channelId: buyerMux.sentSpendingAuths[0]!.channelId,
     });
@@ -530,14 +518,12 @@ describe('Settlement edge cases', () => {
 
   it('onBuyerDisconnect triggers settlement for active session', async () => {
     const sellerPeerId = sellerIdentity.peerId;
-    const sellerEvmAddr = sellerIdentity.wallet.address;
     const buyerPeerId = buyerIdentity.peerId;
-    const buyerEvmAddr = buyerIdentity.wallet.address;
 
     // Handshake
-    const sessionId = await buyer.authorizeSpending(sellerPeerId, sellerEvmAddr, buyerMux, 50_000n);
+    const sessionId = await buyer.authorizeSpending(sellerPeerId, buyerMux, 50_000n);
     const initialAuth = buyerMux.sentSpendingAuths[0]!;
-    await seller.handleSpendingAuth(buyerPeerId, buyerEvmAddr, initialAuth, sellerMux);
+    await seller.handleSpendingAuth(buyerPeerId, initialAuth, sellerMux);
     buyer.handleAuthAck(sellerPeerId, sellerMux.sentAuthAcks[0]!);
 
     // Send one request auth

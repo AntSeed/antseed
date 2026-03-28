@@ -117,10 +117,10 @@ export class BuyerPaymentManager {
    */
   async authorizeSpending(
     sellerPeerId: string,
-    sellerEvmAddr: string,
     paymentMux: PaymentMux,
     minBudgetPerRequest: bigint,
   ): Promise<string> {
+    const sellerEvmAddr = '0x' + sellerPeerId;
     // Budget validation: reject if seller demands more than buyer allows per request
     if (minBudgetPerRequest > this._config.maxPerRequestUsdc) {
       debugWarn(
@@ -161,8 +161,8 @@ export class BuyerPaymentManager {
       sessionId: channelId,
       peerId: sellerPeerId,
       role: 'buyer',
-      sellerEvmAddr,
-      buyerEvmAddr,
+      sellerEvmAddr: '0x' + sellerPeerId,
+      buyerEvmAddr: this._identity.wallet.address,
       nonce: 0,
       authMax: '0',
       deadline,
@@ -189,7 +189,6 @@ export class BuyerPaymentManager {
       metadataHash: ZERO_METADATA_HASH,
       metadata: '',
       spendingAuthSig: reserveAuthSig,
-      buyerEvmAddr,
       reserveSalt: salt,
       reserveMaxAmount: maxAmount.toString(),
       reserveDeadline: deadline,
@@ -289,7 +288,6 @@ export class BuyerPaymentManager {
       metadataHash: metadataHashHex,
       metadata: encodedMetadata,
       spendingAuthSig,
-      buyerEvmAddr: session.buyerEvmAddr,
     };
 
     return payload;
@@ -363,7 +361,6 @@ export class BuyerPaymentManager {
         metadataHash: metadataHashHex,
         metadata: encodedMetadata,
         spendingAuthSig,
-        buyerEvmAddr: session.buyerEvmAddr,
       });
       debugLog(`[BuyerPayment] NeedAuth responded: new cumulativeAmount=${requiredCumulativeAmount}`);
     } catch {
