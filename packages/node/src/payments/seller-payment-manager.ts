@@ -26,8 +26,8 @@ export interface SellerPaymentConfig {
   settleOnDisconnect?: boolean;
 }
 
-/** Default minimum budget per request: $0.01 USDC (base units). */
-const DEFAULT_MIN_BUDGET_PER_REQUEST = '10000';
+/** Default minimum budget per request: $0.50 USDC (base units). */
+const DEFAULT_MIN_BUDGET_PER_REQUEST = '500000';
 
 /** Stored auth entry for buyer's SpendingAuth signature. */
 interface LatestAuth {
@@ -416,11 +416,12 @@ export class SellerPaymentManager {
         this._sessionStore.updateSessionStatus(channelId, 'settled', latestAuth.cumulativeAmount.toString());
       } catch (err) {
         debugWarn(`[SellerPayment] Failed to close channel: ${err instanceof Error ? err.message : err}`);
+        // Keep maps intact so checkTimeouts can retry close() later
         return;
       }
     }
 
-    // Clean up maps
+    // Clean up maps only after successful close or zero-cumulative deferral
     this._acceptedCumulative.delete(channelId);
     this._spent.delete(channelId);
     this._latestAuth.delete(channelId);
@@ -543,7 +544,7 @@ export class SellerPaymentManager {
     return this._reserveMax.get(sessionId) ?? 0n;
   }
 
-  private static readonly DEFAULT_SUGGESTED_AMOUNT = 100_000n; // $0.10
+  private static readonly DEFAULT_SUGGESTED_AMOUNT = 5_000_000n; // $5.00 — matches buyer's default maxReserveAmountUsdc
 
   /**
    * Build the PaymentRequired payload for a buyer that doesn't have a session.
