@@ -2,9 +2,9 @@
 slug: proof-of-prior-delivery
 title: "Proof of Prior Delivery"
 authors: [antseed]
-tags: [protocol, payments, cryptography, proof-of-delivery]
-description: How AntSeed's SpendingAuth signature serves as both payment authorization and cryptographic proof of delivery — the primitive that ties settlement to service.
-keywords: [proof of delivery, SpendingAuth, EIP-712, payment protocol, P2P payments, cumulative voucher, payment negotiation]
+tags: [protocol, payments, cryptography, proof-of-delivery, reputation, open-network]
+description: How AntSeed's SpendingAuth signature serves as both payment authorization and cryptographic proof of delivery — building an open, verifiable record of what every seller has delivered.
+keywords: [proof of delivery, SpendingAuth, EIP-712, payment protocol, P2P payments, cumulative voucher, payment negotiation, on-chain stats, agentic AI, open network]
 image: /og-image.jpg
 date: 2026-03-27
 ---
@@ -75,9 +75,19 @@ When the seller calls `settle()` or `close()` on the AntseedSessions contract, t
 3. Credits the seller's earnings (minus platform fee)
 4. Unpacks the metadata and writes it to AntseedStats
 
-Step 4 is the proof. The on-chain stats now contain delivery metrics — tokens processed, average latency, request count — attested by the buyer's own signature. No oracle reported these numbers. No validator observed them. The buyer signed them because they were there when the service was delivered.
+Step 4 is the proof. The **AntseedStats** contract now contains delivery metrics attested by the buyer's own signature. No oracle reported these numbers. No validator observed them. The buyer signed them because they were there when the service was delivered. The stats system doesn't need its own data pipeline. Settlement *is* the data pipeline.
 
-This is what enables the [stats-from-settlement](/blog/reputation-from-settlement) model. The stats system doesn't need its own data pipeline. Settlement *is* the data pipeline. Every time money moves, delivery metrics move with it.
+The counters that accumulate per seller:
+
+- **Session count** — completed sessions
+- **Ghost count** — sessions where the seller disappeared without settling
+- **Total volume** — cumulative USDC settled
+- **Total tokens** — cumulative input and output tokens
+- **Average latency** — average response time across all requests
+- **Total requests** — cumulative requests served
+- **Last settled** — timestamp of most recent settlement
+
+These values are keyed by ERC-8004 agentId and cannot be written by any external caller — only the Sessions contract during fund movement. You cannot inflate your stats without real USDC changing hands.
 
 ## Budget Exhaustion and Renewal
 
@@ -95,10 +105,24 @@ If the seller disappears mid-session, the buyer's funds are locked in a reservat
 
 Why a full refund? Because the seller cannot unilaterally prove delivery. Only the buyer's signed SpendingAuth can authorize charges. If the seller had a recent SpendingAuth, they should have settled before the deadline. If they didn't — if you can't prove it, you don't get paid.
 
+## An Open Record for an Open Network
+
+These stats are public, on-chain, and queryable by anyone — not just AntSeed clients, but any smart contract, any indexer, any agent framework that reads the chain. And because they're tied to the seller's ERC-8004 identity, they're portable. A seller's track record belongs to their wallet, not to a platform that can revoke it.
+
+This matters most for agentic workflows. When an autonomous agent needs AI services, it can't rely on subjective reviews or curated lists. It needs hard data:
+
+- *Has this seller actually delivered before?* Check session count.
+- *How much value has flowed through them?* Check total volume.
+- *Do they disappear mid-session?* Check ghost count against session count.
+- *What's their typical response time?* Check average latency.
+- *Are they still active?* Check last settled timestamp.
+
+An agent can encode its own routing policy on top of these stats. "Only route to sellers with 100+ sessions, ghost rate under 5%, and average latency under 2 seconds." That policy runs against public on-chain data. No API key needed, no platform approval, no trust required.
+
+The quality signal is a byproduct of payment. You don't need to rate your provider — the fact that you paid them and they delivered is the data point. The fact that they ghosted and you got your money back is equally informative. Every settlement adds signal, and over time the stats converge on a clear picture of each seller's reliability.
+
 ## Why This Matters
 
 The `metadataHash` is what closes the loop between payment and accountability. Without it, settlement would just prove that money moved. With it, settlement proves what was delivered — and that proof is signed by the buyer, not claimed by the seller.
 
-This is the primitive that makes everything else work. On-chain stats don't need oracles — they're fed by the metadata in every settlement. Reputation doesn't need validators — it's derived from buyer-attested delivery metrics. Routing decisions can be based on verified data — because every dollar settled carries a cryptographic commitment to what the buyer actually received.
-
-No separate reporting system. No dispute games. No per-request on-chain activity. The seller presents the buyer's signed `metadataHash` to get paid, and the delivery record writes itself.
+No separate reporting system. No oracles. No dispute games. The seller presents the buyer's signed `metadataHash` to get paid, the delivery record writes itself, and an open network of verifiable stats emerges from the payments themselves.
