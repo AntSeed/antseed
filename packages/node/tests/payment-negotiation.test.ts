@@ -268,7 +268,7 @@ describe('SellerPaymentManager suggested amount', () => {
 
   it('suggests $5.00 amount for new buyers', () => {
     const req = manager.getPaymentRequirements('req-1', 'unknown-buyer');
-    expect(req.suggestedAmount).toBe('5000000'); // $0.10
+    expect(req.suggestedAmount).toBe('5000000'); // $5.00
   });
 
   it('suggests $5.00 for returning buyers with settled sessions', () => {
