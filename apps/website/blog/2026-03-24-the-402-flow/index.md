@@ -3,8 +3,8 @@ slug: the-402-flow
 title: "The 402 Flow"
 authors: [antseed]
 tags: [protocol, payments, WebRTC, P2P, transport]
-description: How AntSeed uses HTTP 402 to trigger fully decentralized payment negotiation — multiplexed over the same WebRTC DataChannel as proxy traffic.
-keywords: [HTTP 402, payment negotiation, WebRTC, PaymentMux, P2P payments, decentralized payments, binary protocol]
+description: How AntSeed uses HTTP 402 to trigger fully decentralized payment negotiation for an OpenRouter alternative and decentralized AI routing stack — multiplexed over the same WebRTC DataChannel as proxy traffic.
+keywords: [HTTP 402, payment negotiation, WebRTC, PaymentMux, P2P payments, decentralized payments, binary protocol, OpenRouter alternative, decentralized AI routing, OpenAI-compatible P2P AI network]
 image: /og-image.jpg
 date: 2026-03-24
 ---
@@ -13,7 +13,7 @@ HTTP 402 Payment Required has been in the HTTP spec since 1997 — "reserved for
 
 All of these give 402 a mechanism. They differ in architecture — specifically, in who sits between buyer and seller, and whether that intermediary is required.
 
-AntSeed uses 402 as the trigger for fully decentralized payment negotiation between peers. No payment gateway, no relay, no facilitator. The entire flow — from the initial 402 response to the on-chain reserve transaction to the retried request — happens over a single WebRTC DataChannel that's already open for proxy traffic.
+For builders searching for an OpenRouter alternative or a decentralized AI routing stack, this is one of the architectural differences that matters. AntSeed uses 402 as the trigger for fully decentralized payment negotiation between peers. No payment gateway, no relay, no facilitator. The entire flow — from the initial 402 response to the on-chain reserve transaction to the retried request — happens over a single WebRTC DataChannel that's already open for proxy traffic.
 
 <!-- truncate -->
 
