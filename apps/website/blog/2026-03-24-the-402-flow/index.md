@@ -142,12 +142,12 @@ No facilitator, no per-session buyer transaction. The buyer deposits USDC once. 
 | Intermediary | Facilitator (Coinbase) | Stripe + Tempo | None (smart contract only) |
 | Payment transport | HTTP headers + facilitator round-trip | HTTP headers + Stripe/Tempo API | Same WebRTC DataChannel as traffic |
 | Buyer transaction to open session | Per-request | Per-session | None (seller reserves from buyer's deposit) |
-| Per-request on-chain cost | 1 tx per request | Batched (amortized) | 0 (signature verification only) |
+| On-chain settlement | 1 tx per request | Batched (amortized) | Batched (amortized) |
 | Session model | Per-request | Pre-authorized session | ReserveAuth ceiling + cumulative SpendingAuth |
 | Chain dependency | Multi-chain | Chain-agnostic | Any EVM chain with USDC |
 | Proof of delivery | None | None | Built-in (metadataHash in SpendingAuth) |
 
-The last two rows are the architectural distinctions that matter most. The deposit model means the buyer never needs to be online for a wallet transaction — critical for autonomous agents that consume AI services without human intervention. And the `metadataHash` in every SpendingAuth creates a cryptographic link between payment and delivery, enabling on-chain reputation to emerge directly from settlement without a separate reporting system.
+Both MPP and AntSeed amortize on-chain costs by batching settlement — individual requests are authorized off-chain, and the cumulative result settles on-chain. The architectural distinctions are in the other rows. The deposit model means the buyer never needs to be online for a wallet transaction — critical for autonomous agents that consume AI services without human intervention. The multiplexed transport means no additional infrastructure. And the `metadataHash` in every SpendingAuth creates a cryptographic link between payment and delivery, enabling on-chain reputation to emerge directly from settlement without a separate reporting system.
 
 ## Why This Matters
 
