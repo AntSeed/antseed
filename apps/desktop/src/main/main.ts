@@ -18,7 +18,7 @@ import {
 } from './process-manager.js';
 import { registerPiChatHandlers } from './pi-chat-engine.js';
 import { ensureSecureIdentity, secureIdentityEnv, getSecureIdentity } from './identity.js';
-import { DepositsClient, signSpendingAuth, signReserveAuth, makeSessionsDomain, resolveChainConfig, formatUsdc, ZERO_METADATA_HASH } from '@antseed/node';
+import { DepositsClient, signSpendingAuth, signReserveAuth, makeSessionsDomain, resolveChainConfig, formatUsdc, ZERO_METADATA_HASH, peerIdToAddress } from '@antseed/node';
 import { createServer as createPaymentsServer } from '@antseed/payments';
 import type { LogEvent, RuntimeActivityEvent } from './log-parser.js';
 import { parseRuntimeActivityFromLog } from './log-parser.js';
@@ -750,7 +750,7 @@ ipcMain.handle('payments:get-peer-info', async (_event, peerId: string) => {
         onChainReputation: (peer as Record<string, unknown>).onChainReputation ?? null,
         onChainSessionCount: (peer as Record<string, unknown>).onChainSessionCount ?? null,
         onChainDisputeCount: (peer as Record<string, unknown>).onChainDisputeCount ?? null,
-        evmAddress: peer.peerId ? '0x' + peer.peerId : null,
+        evmAddress: peer.peerId ? peerIdToAddress(peer.peerId) : null,
         timestamp: (peer as Record<string, unknown>).timestamp ?? null,
         providers: peer.providers ?? [],
         services: peer.services ?? [],
@@ -852,7 +852,7 @@ ipcMain.handle('chat:approve-payment', async (_event, conversationId: string) =>
     if (!peerId) {
       return { ok: false, error: 'No seller peerId available for this payment' };
     }
-    const sellerEvmAddr = '0x' + peerId;
+    const sellerEvmAddr = peerIdToAddress(peerId);
 
     // Generate random salt and compute deterministic channelId
     const salt = '0x' + randomBytes(32).toString('hex');

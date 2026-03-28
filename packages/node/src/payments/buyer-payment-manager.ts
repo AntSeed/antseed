@@ -20,6 +20,7 @@ import {
 } from './evm/signatures.js';
 import type { SpendingAuthMessage, ReserveAuthMessage, SpendingAuthMetadata } from './evm/signatures.js';
 import { debugLog, debugWarn } from '../utils/debug.js';
+import { peerIdToAddress } from '../types/peer.js';
 import { SessionStore, type StoredSession } from './session-store.js';
 
 // ── Response cost header constants ───────────────────────────────
@@ -120,7 +121,7 @@ export class BuyerPaymentManager {
     paymentMux: PaymentMux,
     minBudgetPerRequest: bigint,
   ): Promise<string> {
-    const sellerEvmAddr = '0x' + sellerPeerId;
+    const sellerEvmAddr = peerIdToAddress(sellerPeerId);
     // Budget validation: reject if seller demands more than buyer allows per request
     if (minBudgetPerRequest > this._config.maxPerRequestUsdc) {
       debugWarn(
@@ -161,7 +162,7 @@ export class BuyerPaymentManager {
       sessionId: channelId,
       peerId: sellerPeerId,
       role: 'buyer',
-      sellerEvmAddr: '0x' + sellerPeerId,
+      sellerEvmAddr: peerIdToAddress(sellerPeerId),
       buyerEvmAddr: this._identity.wallet.address,
       nonce: 0,
       authMax: '0',

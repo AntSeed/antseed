@@ -12,6 +12,7 @@ import {
   makeSessionsDomain,
 } from './evm/signatures.js';
 import { debugLog, debugWarn } from '../utils/debug.js';
+import { peerIdToAddress } from '../types/peer.js';
 import { SessionStore, type StoredSession } from './session-store.js';
 
 export interface SellerPaymentConfig {
@@ -130,7 +131,7 @@ export class SellerPaymentManager {
     payload: SpendingAuthPayload,
     paymentMux: PaymentMux,
   ): Promise<'accepted' | 'reserved' | 'rejected'> {
-    const buyerEvmAddr = '0x' + buyerPeerId;
+    const buyerEvmAddr = peerIdToAddress(buyerPeerId);
     try {
       const channelId = payload.channelId;
       const cumulativeAmount = BigInt(payload.cumulativeAmount);
@@ -310,7 +311,7 @@ export class SellerPaymentManager {
       metadataHash: auth.metadataHash,
     };
 
-    const buyerEvmAddr = '0x' + buyerPeerId;
+    const buyerEvmAddr = peerIdToAddress(buyerPeerId);
     try {
       const recovered = verifyTypedData(sessionsDomain, SPENDING_AUTH_TYPES, metadataMsg, auth.spendingAuthSig);
       if (recovered.toLowerCase() !== buyerEvmAddr.toLowerCase()) {

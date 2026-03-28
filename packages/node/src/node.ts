@@ -8,6 +8,7 @@ import type { Identity, IdentityStore } from "./p2p/identity.js";
 import { loadOrCreateIdentity } from "./p2p/identity.js";
 import type { PeerId } from "./types/peer.js";
 import type { PeerInfo, TokenPricingUsdPerMillion } from "./types/peer.js";
+import { peerIdToAddress } from "./types/peer.js";
 import {
   ANTSEED_STREAMING_RESPONSE_HEADER,
   type SerializedHttpRequest,
@@ -2236,7 +2237,7 @@ export class AntseedNode extends EventEmitter {
         sessionId: payload.channelId,
         peerId: peer.peerId,
         role: 'buyer',
-        sellerEvmAddr: '0x' + peer.peerId,
+        sellerEvmAddr: peerIdToAddress(peer.peerId),
         buyerEvmAddr: this._identity?.wallet.address ?? '',
         nonce: 0,
         authMax: payload.cumulativeAmount,
@@ -2267,7 +2268,7 @@ export class AntseedNode extends EventEmitter {
 
     this.emit('payment:signed', {
       peerId: peer.peerId,
-      sellerEvmAddr: '0x' + peer.peerId,
+      sellerEvmAddr: peerIdToAddress(peer.peerId),
       amount: payload.cumulativeAmount,
     });
   }
@@ -2342,7 +2343,7 @@ export class AntseedNode extends EventEmitter {
 
     const approvalInfo = {
       peerId: peer.peerId,
-      sellerEvmAddr: '0x' + peer.peerId,
+      sellerEvmAddr: peerIdToAddress(peer.peerId),
       minBudgetPerRequest: requirements.minBudgetPerRequest,
       suggestedAmount: amount.toString(),
     };
@@ -2360,7 +2361,7 @@ export class AntseedNode extends EventEmitter {
       // Notify listeners what was signed
       this.emit('payment:signed', {
         peerId: peer.peerId,
-        sellerEvmAddr: '0x' + peer.peerId,
+        sellerEvmAddr: peerIdToAddress(peer.peerId),
         amount: amount.toString(),
       });
     } catch (err) {

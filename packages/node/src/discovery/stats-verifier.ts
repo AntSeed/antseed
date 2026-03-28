@@ -1,6 +1,7 @@
 import type { PeerMetadata } from "./peer-metadata.js";
 import type { StatsClient } from "../payments/evm/stats-client.js";
 import type { StakingClient } from "../payments/evm/staking-client.js";
+import { peerIdToAddress } from "../types/peer.js";
 
 export interface StatsVerification {
   /** Whether the claimed stats match on-chain data. */
@@ -30,7 +31,7 @@ export async function verifyStats(
   stakingClient: StakingClient,
   metadata: PeerMetadata,
 ): Promise<StatsVerification> {
-  const evmAddress = '0x' + metadata.peerId;
+  const evmAddress = peerIdToAddress(metadata.peerId);
   const agentId = await stakingClient.getAgentId(evmAddress);
   const stats = await statsClient.getStats(agentId);
 

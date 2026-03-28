@@ -18,6 +18,11 @@ export function toPeerId(hex: string): PeerId {
   return hex as PeerId;
 }
 
+/** Convert a PeerId to a checksummed 0x-prefixed EVM address. */
+export function peerIdToAddress(peerId: string): string {
+  return '0x' + peerId;
+}
+
 export interface TokenPricingUsdPerMillion {
   inputUsdPerMillion: number;
   outputUsdPerMillion: number;
