@@ -91,6 +91,18 @@ Buyer                              Seller                       Deposits Contrac
 
 The buyer's only on-chain transaction is the initial deposit — which funds all future sessions with any seller. Opening a session is the seller's transaction, locking funds from the buyer's existing balance. After that, unlimited requests with off-chain signature verification. The seller settles on-chain when the session ends — calling `settle()` or `close()` with the buyer's latest SpendingAuth signature.
 
+## Same DataChannel, Zero Overhead
+
+Here's something x402 and MPP can't do: payment negotiation on the same transport as the actual traffic, with no additional infrastructure.
+
+AntSeed peers are already connected over a WebRTC DataChannel for proxying AI requests and responses. The payment flow — 402 trigger, ReserveAuth, SpendingAuth, acknowledgments — rides that same DataChannel. The protocol multiplexes payment messages alongside proxy traffic using a frame-level type byte. Payment messages are just another message type on an open connection.
+
+This means there is no payment service to deploy. No WebSocket sidecar for payment negotiation. No HTTP callbacks to a facilitator. No second connection to establish. When a buyer hits a 402, the entire negotiation — signing, sending the authorization, waiting for the on-chain reserve, receiving the acknowledgment, retrying the request — happens on the connection that's already open.
+
+The transport cost of payment negotiation is literally zero. The only added latency is the on-chain `reserve()` confirmation (2-3 seconds on Base), paid once per session. After that, SpendingAuth signatures flow alongside proxy traffic as just another message on the mux. A streaming AI response might produce dozens of response chunks interleaved with a SpendingAuth — the mux handles this naturally.
+
+x402 requires an HTTP round-trip to a facilitator for every paid request. MPP requires communication with Stripe's infrastructure. AntSeed requires nothing beyond the peer connection you already have.
+
 ## Running Out of Budget
 
 When the buyer's cumulative spend approaches the `maxAmount` ceiling, the seller sends a NeedAuth message indicating how much more authorization is required. The buyer can sign a new ReserveAuth with additional funds, extending the session without interruption. If the buyer doesn't top up, the seller finishes the current request but will 402 the next one.
@@ -128,6 +140,7 @@ No facilitator, no per-session buyer transaction. The buyer deposits USDC once. 
 | | **x402** | **MPP** | **AntSeed** |
 |---|---|---|---|
 | Intermediary | Facilitator (Coinbase) | Stripe + Tempo L1 | None (smart contract only) |
+| Payment transport | HTTP headers + facilitator round-trip | HTTP headers + Stripe/Tempo API | Same WebRTC DataChannel as traffic |
 | Buyer transaction to open session | Per-request | Per-session | None (seller reserves from buyer's deposit) |
 | Per-request on-chain cost | 1 tx per request | Batched (amortized) | 0 (signature verification only) |
 | Session model | Per-request | Pre-authorized session | ReserveAuth ceiling + cumulative SpendingAuth |
