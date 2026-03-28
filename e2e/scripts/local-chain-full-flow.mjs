@@ -10,7 +10,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { TextDecoder, TextEncoder } from "node:util";
 import { fileURLToPath } from "node:url";
 
-import { AntseedNode, identityToEvmAddress, toPeerId } from "@antseed/node";
+import { AntseedNode, toPeerId } from "@antseed/node";
 import { DepositsClient, SessionsClient } from "@antseed/node/payments";
 import { DHTNode } from "@antseed/node/discovery";
 
@@ -395,7 +395,7 @@ async function main() {
     if (!sellerNode.identity) {
       throw new Error("seller identity unavailable after start");
     }
-    const sellerAddress = identityToEvmAddress(sellerNode.identity);
+    const sellerAddress = sellerNode.identity.wallet.address;
     logStep(`seller peer=${sellerNode.peerId} evm=${sellerAddress}`);
 
     logStep("starting buyer node with payments enabled");
@@ -425,7 +425,7 @@ async function main() {
       throw new Error("buyer identity unavailable after start");
     }
     const buyerPeerId = buyerNode.peerId;
-    const buyerAddress = identityToEvmAddress(buyerNode.identity);
+    const buyerAddress = buyerNode.identity.wallet.address;
     logStep(`buyer peer=${buyerPeerId} evm=${buyerAddress}`);
 
     logStep("funding buyer/seller gas balances");

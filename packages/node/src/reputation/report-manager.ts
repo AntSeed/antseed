@@ -4,8 +4,7 @@ import { join } from 'node:path';
 import type { PeerId } from '../types/peer.js';
 import type { PeerReport, ReportReason, ReportEvidence } from '../types/report.js';
 import type { Identity } from '../p2p/identity.js';
-import { signData } from '../p2p/identity.js';
-import { bytesToHex } from '../utils/hex.js';
+import { signUtf8 } from '../p2p/identity.js';
 
 export interface ReportManagerConfig {
   configDir: string;
@@ -44,8 +43,7 @@ export class ReportManager {
 
     // Sign the report
     const dataToSign = `${report.reportId}:${report.reporterPeerId}:${report.targetPeerId}:${report.reason}:${report.timestamp}`;
-    const sig = await signData(this.identity.privateKey, new TextEncoder().encode(dataToSign));
-    report.signature = bytesToHex(sig);
+    report.signature = signUtf8(this.identity.wallet, dataToSign);
 
     this.reports.push(report);
     await this.save();

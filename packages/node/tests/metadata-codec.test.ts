@@ -4,7 +4,7 @@ import { METADATA_VERSION, type PeerMetadata } from '../src/discovery/peer-metad
 
 function makeMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
   return {
-    peerId: 'a'.repeat(64) as any,
+    peerId: 'a'.repeat(40) as any,
     version: METADATA_VERSION,
     providers: [
       {
@@ -26,7 +26,7 @@ function makeMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
     ],
     region: 'us-east-1',
     timestamp: 1700000000000,
-    signature: 'b'.repeat(128),
+    signature: 'b'.repeat(130),
     ...overrides,
   };
 }
@@ -243,8 +243,8 @@ describe('encodeMetadataForSigning', () => {
     const metadata = makeMetadata();
     const forSigning = encodeMetadataForSigning(metadata);
     const full = encodeMetadata(metadata);
-    // Full includes 64 bytes of signature
-    expect(full.length).toBe(forSigning.length + 64);
+    // Full includes 65 bytes of signature (EVM secp256k1 r+s+v)
+    expect(full.length).toBe(forSigning.length + 65);
   });
 
   it('should produce deterministic output for the same input', () => {

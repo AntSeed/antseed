@@ -6,7 +6,6 @@ import type {
   PaymentRequiredPayload,
 } from '../types/protocol.js';
 import { SessionsClient } from './evm/sessions-client.js';
-import { identityToEvmWallet, identityToEvmAddress } from './evm/keypair.js';
 import {
   SPENDING_AUTH_TYPES,
   RESERVE_AUTH_TYPES,
@@ -69,7 +68,7 @@ export class SellerPaymentManager {
   constructor(identity: Identity, config: SellerPaymentConfig, sessionStore: SessionStore) {
     this._identity = identity;
     this._config = config;
-    this._signer = identityToEvmWallet(identity);
+    this._signer = identity.wallet;
     this._sessionsClient = new SessionsClient({
       rpcUrl: config.rpcUrl,
       contractAddress: config.sessionsContractAddress,
@@ -169,7 +168,7 @@ export class SellerPaymentManager {
 
         // Store new session (sessionId field stores channelId for backward compat)
         const now = Date.now();
-        const sellerEvmAddr = identityToEvmAddress(this._identity);
+        const sellerEvmAddr = this._identity.wallet.address;
         const session: StoredSession = {
           sessionId: channelId,
           peerId: buyerPeerId,
@@ -553,7 +552,7 @@ export class SellerPaymentManager {
     buyerPeerId?: string,
     pricing?: { inputUsdPerMillion?: number; outputUsdPerMillion?: number },
   ): PaymentRequiredPayload {
-    const sellerEvmAddr = identityToEvmAddress(this._identity);
+    const sellerEvmAddr = this._identity.wallet.address;
     const minBudgetPerRequest = this._config.minBudgetPerRequest ?? DEFAULT_MIN_BUDGET_PER_REQUEST;
 
     let suggestedAmount = SellerPaymentManager.DEFAULT_SUGGESTED_AMOUNT;

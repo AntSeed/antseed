@@ -7,7 +7,7 @@ import { homedir } from 'node:os'
 import { createConnection } from 'node:net'
 import { getGlobalOptions } from './types.js'
 import { loadConfig } from '../../config/loader.js'
-import { AntseedNode, DepositsClient, identityToEvmAddress, getInstance, resolveChainConfig } from '@antseed/node'
+import { AntseedNode, DepositsClient, getInstance, resolveChainConfig } from '@antseed/node'
 import type { NodePaymentsConfig } from '@antseed/node'
 import { OFFICIAL_BOOTSTRAP_NODES, parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
 import { setupShutdownHandler } from '../shutdown.js'
@@ -381,7 +381,7 @@ export function registerConnectCommand(program: Command): void {
       if (paymentsConfig?.enabled) {
         try {
           const identity = node.identity!
-          const address = identityToEvmAddress(identity)
+          const address = identity.wallet.address
           const depositsClient = new DepositsClient({
             rpcUrl: chainConfig.rpcUrl,
             contractAddress: chainConfig.depositsContractAddress,

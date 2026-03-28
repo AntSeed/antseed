@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import * as ed from '@noble/ed25519';
+import { randomBytes } from 'node:crypto';
 import { Wallet } from 'ethers';
 import { BuyerPaymentManager, type BuyerPaymentConfig } from '../src/payments/buyer-payment-manager.js';
 import { SessionStore } from '../src/payments/session-store.js';
@@ -11,11 +11,11 @@ import type { Identity } from '../src/p2p/identity.js';
 import { bytesToHex } from '../src/utils/hex.js';
 import { toPeerId } from '../src/types/peer.js';
 
-async function createTestIdentity(): Promise<Identity> {
-  const privateKey = ed.utils.randomPrivateKey();
-  const publicKey = await ed.getPublicKeyAsync(privateKey);
-  const peerId = toPeerId(bytesToHex(publicKey));
-  return { peerId, privateKey, publicKey };
+function createTestIdentity(): Identity {
+  const privateKey = randomBytes(32);
+  const wallet = new Wallet('0x' + bytesToHex(privateKey));
+  const peerId = toPeerId(wallet.address.slice(2).toLowerCase());
+  return { peerId, privateKey, wallet };
 }
 
 function createMockPaymentMux(): PaymentMux & {
@@ -60,7 +60,7 @@ describe('BuyerPaymentManager', () => {
 
   beforeEach(async () => {
     tempDir = mkdtempSync(join(tmpdir(), 'buyer-pm-test-'));
-    identity = await createTestIdentity();
+    identity = createTestIdentity();
     store = new SessionStore(tempDir);
     manager = new BuyerPaymentManager(identity, makeConfig(tempDir), store);
     // Mock the signer to avoid actual RPC calls

@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import * as ed from '@noble/ed25519';
-import { Wallet } from 'ethers';
+import { randomBytes } from 'node:crypto';
+import { Wallet, AbiCoder } from 'ethers';
 import { BuyerPaymentManager, type BuyerPaymentConfig } from '../src/payments/buyer-payment-manager.js';
 import { SessionStore } from '../src/payments/session-store.js';
 import type { PaymentMux } from '../src/p2p/payment-mux.js';
@@ -14,8 +14,6 @@ import type {
 import type { Identity } from '../src/p2p/identity.js';
 import { bytesToHex } from '../src/utils/hex.js';
 import { toPeerId } from '../src/types/peer.js';
-import { identityToEvmAddress } from '../src/payments/evm/keypair.js';
-import { AbiCoder } from 'ethers';
 
 const CHAIN_ID = 31337;
 const CONTRACT_ADDR = '0x' + 'dd'.repeat(20);
@@ -26,11 +24,11 @@ function decodeMetadataTokens(metadata: string): { inputTokens: bigint; outputTo
   return { inputTokens, outputTokens };
 }
 
-async function createTestIdentity(): Promise<Identity> {
-  const privateKey = ed.utils.randomPrivateKey();
-  const publicKey = await ed.getPublicKeyAsync(privateKey);
-  const peerId = toPeerId(bytesToHex(publicKey));
-  return { peerId, privateKey, publicKey };
+function createTestIdentity(): Identity {
+  const privateKey = randomBytes(32);
+  const wallet = new Wallet('0x' + bytesToHex(privateKey));
+  const peerId = toPeerId(wallet.address.slice(2).toLowerCase());
+  return { peerId, privateKey, wallet };
 }
 
 describe('Cumulative SpendingAuth Integration', () => {
@@ -42,8 +40,8 @@ describe('Cumulative SpendingAuth Integration', () => {
 
   beforeEach(async () => {
     buyerTempDir = mkdtempSync(join(tmpdir(), 'cumulative-buyer-'));
-    buyerIdentity = await createTestIdentity();
-    sellerIdentity = await createTestIdentity();
+    buyerIdentity = createTestIdentity();
+    sellerIdentity = createTestIdentity();
 
     const buyerConfig: BuyerPaymentConfig = {
       rpcUrl: 'http://127.0.0.1:8545',
@@ -60,8 +58,7 @@ describe('Cumulative SpendingAuth Integration', () => {
     buyerStore = new SessionStore(buyerTempDir);
     buyerManager = new BuyerPaymentManager(buyerIdentity, buyerConfig, buyerStore);
     // Use a deterministic wallet derived from the identity so EIP-712 sigs are valid
-    const { identityToEvmWallet } = await import('../src/payments/evm/keypair.js');
-    buyerManager.setSigner(identityToEvmWallet(buyerIdentity));
+    buyerManager.setSigner(buyerIdentity.wallet);
   });
 
   afterEach(() => {
@@ -70,7 +67,7 @@ describe('Cumulative SpendingAuth Integration', () => {
   });
 
   it('cumulative amount increases across multiple requests within a session', async () => {
-    const sellerEvmAddr = identityToEvmAddress(sellerIdentity);
+    const sellerEvmAddr = sellerIdentity.wallet.address;
 
     // Track sent SpendingAuths
     const sentAuths: SpendingAuthPayload[] = [];
@@ -161,7 +158,7 @@ describe('Cumulative SpendingAuth Integration', () => {
   });
 
   it('NeedAuth triggers cumulative amount increase mid-session', async () => {
-    const sellerEvmAddr = identityToEvmAddress(sellerIdentity);
+    const sellerEvmAddr = sellerIdentity.wallet.address;
 
     const sentAuths: SpendingAuthPayload[] = [];
     const mux = {
@@ -217,7 +214,7 @@ describe('Cumulative SpendingAuth Integration', () => {
   });
 
   it('cumulative state persists across manager restarts', async () => {
-    const sellerEvmAddr = identityToEvmAddress(sellerIdentity);
+    const sellerEvmAddr = sellerIdentity.wallet.address;
 
     const sentAuths: SpendingAuthPayload[] = [];
     const mux = {
@@ -275,8 +272,7 @@ describe('Cumulative SpendingAuth Integration', () => {
       dataDir: buyerTempDir,
     };
     const newManager = new BuyerPaymentManager(buyerIdentity, newConfig, newStore);
-    const { identityToEvmWallet } = await import('../src/payments/evm/keypair.js');
-    newManager.setSigner(identityToEvmWallet(buyerIdentity));
+    newManager.setSigner(buyerIdentity.wallet);
 
     // The session should still be accessible
     const session = newStore.getSession(channelId);

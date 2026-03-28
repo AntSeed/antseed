@@ -21,7 +21,6 @@ import { bytesToHex } from "../utils/hex.js";
 // Announcer uses StatsClient + StakingClient for on-chain stats lookup
 import type { StatsClient } from "../payments/evm/stats-client.js";
 import type { StakingClient } from "../payments/evm/staking-client.js";
-import { identityToEvmAddress } from "../payments/evm/keypair.js";
 
 export interface AnnouncerConfig {
   identity: Identity;
@@ -159,7 +158,7 @@ export class PeerAnnouncer {
     }
 
     if (this.config.paymentsEnabled) {
-      const evmAddress = identityToEvmAddress(this.config.identity);
+      const evmAddress = this.config.identity.wallet.address;
       metadata.evmAddress = evmAddress;
 
       if (includeOnChainReputation && this.config.statsClient && this.config.stakingClient) {
@@ -180,7 +179,7 @@ export class PeerAnnouncer {
     }
 
     const dataToSign = encodeMetadataForSigning(metadata);
-    const signature = await signData(this.config.identity.privateKey, dataToSign);
+    const signature = await signData(this.config.identity.wallet, dataToSign);
     metadata.signature = bytesToHex(signature);
     return metadata;
   }

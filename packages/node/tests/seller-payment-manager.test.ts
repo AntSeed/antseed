@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import * as ed from '@noble/ed25519';
+import { randomBytes } from 'node:crypto';
 import { SellerPaymentManager, type SellerPaymentConfig } from '../src/payments/seller-payment-manager.js';
 import { SessionStore } from '../src/payments/session-store.js';
 import type { PaymentMux } from '../src/p2p/payment-mux.js';
@@ -10,18 +10,18 @@ import type { Identity } from '../src/p2p/identity.js';
 import type { SpendingAuthPayload } from '../src/types/protocol.js';
 import { bytesToHex } from '../src/utils/hex.js';
 import { toPeerId } from '../src/types/peer.js';
-import { identityToEvmWallet, identityToEvmAddress } from '../src/payments/evm/keypair.js';
+import { Wallet } from 'ethers';
 import { signSpendingAuth, signReserveAuth, makeSessionsDomain, computeMetadataHash, encodeMetadata, ZERO_METADATA_HASH } from '../src/payments/evm/signatures.js';
 import type { SpendingAuthMessage, ReserveAuthMessage, SpendingAuthMetadata } from '../src/payments/evm/signatures.js';
 
 const CHAIN_ID = 31337;
 const CONTRACT_ADDR = '0x' + 'dd'.repeat(20);
 
-async function createTestIdentity(): Promise<Identity> {
-  const privateKey = ed.utils.randomPrivateKey();
-  const publicKey = await ed.getPublicKeyAsync(privateKey);
-  const peerId = toPeerId(bytesToHex(publicKey));
-  return { peerId, privateKey, publicKey };
+function createTestIdentity(): Identity {
+  const privateKey = randomBytes(32);
+  const wallet = new Wallet('0x' + bytesToHex(privateKey));
+  const peerId = toPeerId(wallet.address.slice(2).toLowerCase());
+  return { peerId, privateKey, wallet };
 }
 
 function createMockPaymentMux(): PaymentMux & {
@@ -77,7 +77,7 @@ async function buildSpendingAuth(
   const metadataHashHex = computeMetadataHash(meta);
   const encodedMetadata = encodeMetadata(meta);
 
-  const buyerWallet = identityToEvmWallet(buyerIdentity);
+  const buyerWallet = buyerIdentity.wallet;
   const buyerEvmAddr = buyerWallet.address;
   const sessionsDomain = makeSessionsDomain(CHAIN_ID, CONTRACT_ADDR);
   const reserveMaxAmount = BigInt(opts.reserveMaxAmount ?? '10000000');
@@ -121,8 +121,8 @@ describe('SellerPaymentManager', () => {
   beforeEach(async () => {
     tempDir = mkdtempSync(join(tmpdir(), 'seller-pm-test-'));
     store = new SessionStore(tempDir);
-    sellerIdentity = await createTestIdentity();
-    buyerIdentity = await createTestIdentity();
+    sellerIdentity = createTestIdentity();
+    buyerIdentity = createTestIdentity();
 
     const config: SellerPaymentConfig = {
       rpcUrl: 'http://127.0.0.1:8545',
@@ -147,7 +147,7 @@ describe('SellerPaymentManager', () => {
 
   it('test_handleSpendingAuth_firstSign: calls reserve, sends AuthAck', async () => {
     const channelId = makeChannelId(1);
-    const buyerEvmAddr = identityToEvmAddress(buyerIdentity);
+    const buyerEvmAddr = buyerIdentity.wallet.address;
     const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { isReserve: true });
 
     await manager.handleSpendingAuth(buyerIdentity.peerId, buyerEvmAddr, payload, mux);
@@ -165,7 +165,7 @@ describe('SellerPaymentManager', () => {
   });
 
   it('test_handleSpendingAuth_subsequent: validates monotonic increase', async () => {
-    const buyerEvmAddr = identityToEvmAddress(buyerIdentity);
+    const buyerEvmAddr = buyerIdentity.wallet.address;
     const channelId = makeChannelId(2);
 
     const payload1 = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { isReserve: true });
@@ -179,7 +179,7 @@ describe('SellerPaymentManager', () => {
   });
 
   it('test_recordSpend: tracks cumulative spend', async () => {
-    const buyerEvmAddr = identityToEvmAddress(buyerIdentity);
+    const buyerEvmAddr = buyerIdentity.wallet.address;
     const channelId = makeChannelId(3);
     const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { isReserve: true });
     await manager.handleSpendingAuth(buyerIdentity.peerId, buyerEvmAddr, payload, mux);
@@ -192,7 +192,7 @@ describe('SellerPaymentManager', () => {
   });
 
   it('test_getSessionByPeer: returns active session', async () => {
-    const buyerEvmAddr = identityToEvmAddress(buyerIdentity);
+    const buyerEvmAddr = buyerIdentity.wallet.address;
     const channelId = makeChannelId(4);
     const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { isReserve: true });
     await manager.handleSpendingAuth(buyerIdentity.peerId, buyerEvmAddr, payload, mux);
@@ -214,7 +214,7 @@ describe('SellerPaymentManager', () => {
     vi.spyOn(manager2.sessionsClient, 'reserve').mockResolvedValue('0xreserve-hash');
     vi.spyOn(manager2.sessionsClient, 'close').mockResolvedValue('0xclose-hash');
 
-    const buyerEvmAddr = identityToEvmAddress(buyerIdentity);
+    const buyerEvmAddr = buyerIdentity.wallet.address;
     const channelId = makeChannelId(5);
     const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { isReserve: true });
     await manager2.handleSpendingAuth(buyerIdentity.peerId, buyerEvmAddr, payload, mux);
@@ -230,7 +230,7 @@ describe('SellerPaymentManager', () => {
   });
 
   it('test_hasSession: returns true/false correctly', async () => {
-    const buyerEvmAddr = identityToEvmAddress(buyerIdentity);
+    const buyerEvmAddr = buyerIdentity.wallet.address;
     expect(manager.hasSession(buyerIdentity.peerId)).toBe(false);
 
     const channelId = makeChannelId(7);
@@ -246,7 +246,7 @@ describe('SellerPaymentManager', () => {
     expect(req).not.toBeNull();
     expect(req.suggestedAmount).toBe('100000');
     expect(req.requestId).toBe('test-req-1');
-    expect(req.sellerEvmAddr).toBe(identityToEvmAddress(sellerIdentity));
+    expect(req.sellerEvmAddr).toBe(sellerIdentity.wallet.address);
     expect(req.minBudgetPerRequest).toBeDefined();
   });
 
@@ -258,7 +258,7 @@ describe('SellerPaymentManager', () => {
   });
 
   it('test_validateAndAcceptAuth: accepts monotonic increase', async () => {
-    const buyerEvmAddr = identityToEvmAddress(buyerIdentity);
+    const buyerEvmAddr = buyerIdentity.wallet.address;
     const channelId = makeChannelId(8);
 
     const payload1 = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { isReserve: true });

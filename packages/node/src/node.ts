@@ -53,7 +53,7 @@ import type {
 } from "./interfaces/seller-provider.js";
 import type { Router } from "./interfaces/buyer-router.js";
 import { NatTraversal } from "./p2p/nat-traversal.js";
-import { signUtf8Ed25519 } from "./p2p/identity.js";
+import { signUtf8 } from "./p2p/identity.js";
 // verifyMessage/getBytes removed — no longer needed after SpendingAuth refactor
 import {
   BalanceManager,
@@ -69,7 +69,6 @@ import { debugLog, debugWarn } from "./utils/debug.js";
 import { parsePublicAddress } from "./discovery/public-address.js";
 import { BuyerPaymentManager, type BuyerPaymentConfig } from "./payments/buyer-payment-manager.js";
 import { SellerPaymentManager, type SellerPaymentConfig } from "./payments/seller-payment-manager.js";
-import { identityToEvmAddress } from "./payments/evm/keypair.js";
 import { IdentityClient } from "./payments/evm/identity-client.js";
 import { StatsClient } from "./payments/evm/stats-client.js";
 import { verifyStats } from "./discovery/stats-verifier.js";
@@ -922,7 +921,7 @@ export class AntseedNode extends EventEmitter {
 
       // Check on-chain balance — if insufficient, return 402 instead of failing mid-negotiate
       try {
-        const buyerAddr = identityToEvmAddress(this._identity);
+        const buyerAddr = this._identity.wallet.address;
         const balance = await this._depositsClient.getBuyerBalance(buyerAddr);
         if (balance.available <= 0n) {
           return returnPaymentRequired('insufficient credits');
@@ -1125,7 +1124,7 @@ export class AntseedNode extends EventEmitter {
     if (this._metering) {
       this._receiptGenerator = new ReceiptGenerator({
         peerId: identity.peerId,
-        sign: (message: string) => signUtf8Ed25519(identity.privateKey, message),
+        sign: (message: string) => signUtf8(identity.wallet, message),
       });
     }
 
@@ -1273,7 +1272,7 @@ export class AntseedNode extends EventEmitter {
           dataDir: paymentsDir,
         };
         this._buyerPaymentManager = new BuyerPaymentManager(identity, buyerPaymentConfig, this._sessionStore);
-        debugLog(`[Node] Buyer payment manager initialized (wallet=${identityToEvmAddress(identity).slice(0, 10)}... chainId=${buyerPaymentConfig.chainId} deposits=${buyerPaymentConfig.depositsContractAddress.slice(0, 10)}...)`);
+        debugLog(`[Node] Buyer payment manager initialized (wallet=${identity.wallet.address.slice(0, 10)}... chainId=${buyerPaymentConfig.chainId} deposits=${buyerPaymentConfig.depositsContractAddress.slice(0, 10)}...)`);
       }
     }
 

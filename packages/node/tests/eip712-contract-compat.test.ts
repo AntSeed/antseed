@@ -8,7 +8,6 @@ import {
   ZERO_METADATA_HASH,
   type SpendingAuthMessage,
 } from '../src/payments/evm/signatures.js';
-import { identityToEvmWallet } from '../src/payments/evm/keypair.js';
 import { loadOrCreateIdentity } from '../src/p2p/identity.js';
 import { tmpdir } from 'node:os';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -62,7 +61,7 @@ describe('EIP-712 Contract Compatibility', () => {
     const dir = await mkdtemp(join(tmpdir(), 'eip712-test-'));
     try {
       const identity = await loadOrCreateIdentity(dir);
-      const wallet = identityToEvmWallet(identity);
+      const wallet = identity.wallet;
       const domain = makeSessionsDomain(31337, '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
 
       const msg: SpendingAuthMessage = {
@@ -83,7 +82,7 @@ describe('EIP-712 Contract Compatibility', () => {
     const dir = await mkdtemp(join(tmpdir(), 'eip712-test-'));
     try {
       const identity = await loadOrCreateIdentity(dir);
-      const wallet = identityToEvmWallet(identity);
+      const wallet = identity.wallet;
       const domain = makeSessionsDomain(31337, '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
 
       const msg: SpendingAuthMessage = {
@@ -104,7 +103,7 @@ describe('EIP-712 Contract Compatibility', () => {
     const dir = await mkdtemp(join(tmpdir(), 'eip712-test-'));
     try {
       const identity = await loadOrCreateIdentity(dir);
-      const wallet = identityToEvmWallet(identity);
+      const wallet = identity.wallet;
       const domain = makeSessionsDomain(31337, '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
 
       const baseMsg: SpendingAuthMessage = {
@@ -128,7 +127,7 @@ describe('EIP-712 Contract Compatibility', () => {
     const dir = await mkdtemp(join(tmpdir(), 'eip712-test-'));
     try {
       const identity = await loadOrCreateIdentity(dir);
-      const wallet = identityToEvmWallet(identity);
+      const wallet = identity.wallet;
       const domain = makeSessionsDomain(31337, '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
 
       const baseMsg: SpendingAuthMessage = {
@@ -152,12 +151,12 @@ describe('EIP-712 Contract Compatibility', () => {
     const dir = await mkdtemp(join(tmpdir(), 'eip712-test-'));
     try {
       const identity1 = await loadOrCreateIdentity(dir);
-      const wallet1 = identityToEvmWallet(identity1);
+      const wallet1 = identity1.wallet;
 
       // Create a second identity in a different dir
       const dir2 = await mkdtemp(join(tmpdir(), 'eip712-test2-'));
       const identity2 = await loadOrCreateIdentity(dir2);
-      const wallet2 = identityToEvmWallet(identity2);
+      const wallet2 = identity2.wallet;
 
       const domain = makeSessionsDomain(31337, '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
       const msg: SpendingAuthMessage = {

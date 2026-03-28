@@ -61,10 +61,10 @@ ln -sf "$(pwd)/plugins/provider-openai-responses" ~/.antseed/plugins/node_module
 
 echo ""
 echo "=== Step 3: Get wallet addresses ==="
-SELLER_ADDR=$(node -e "const{loadOrCreateIdentity}=require('./packages/node/dist/p2p/identity.js');const{identityToEvmAddress}=require('./packages/node/dist/payments/evm/keypair.js');(async()=>{console.log(identityToEvmAddress(await loadOrCreateIdentity('/Users/shahafan/.antseed-seller')))})()")
-SELLER_KEY=$(node -e "const{loadOrCreateIdentity}=require('./packages/node/dist/p2p/identity.js');const{identityToEvmWallet}=require('./packages/node/dist/payments/evm/keypair.js');(async()=>{console.log(identityToEvmWallet(await loadOrCreateIdentity('/Users/shahafan/.antseed-seller')).privateKey)})()")
-BUYER_ADDR=$(node -e "const{loadOrCreateIdentity}=require('./packages/node/dist/p2p/identity.js');const{identityToEvmAddress}=require('./packages/node/dist/payments/evm/keypair.js');(async()=>{console.log(identityToEvmAddress(await loadOrCreateIdentity('/Users/shahafan/.antseed')))})()")
-BUYER_KEY=$(node -e "const{loadOrCreateIdentity}=require('./packages/node/dist/p2p/identity.js');const{identityToEvmWallet}=require('./packages/node/dist/payments/evm/keypair.js');(async()=>{console.log(identityToEvmWallet(await loadOrCreateIdentity('/Users/shahafan/.antseed')).privateKey)})()")
+SELLER_ADDR=$(node -e "const{loadOrCreateIdentity}=require('./packages/node/dist/p2p/identity.js');(async()=>{const i=await loadOrCreateIdentity('/Users/shahafan/.antseed-seller');console.log(i.wallet.address)})()")
+SELLER_KEY=$(node -e "const{loadOrCreateIdentity}=require('./packages/node/dist/p2p/identity.js');(async()=>{const i=await loadOrCreateIdentity('/Users/shahafan/.antseed-seller');console.log(i.wallet.privateKey)})()")
+BUYER_ADDR=$(node -e "const{loadOrCreateIdentity}=require('./packages/node/dist/p2p/identity.js');(async()=>{const i=await loadOrCreateIdentity('/Users/shahafan/.antseed');console.log(i.wallet.address)})()")
+BUYER_KEY=$(node -e "const{loadOrCreateIdentity}=require('./packages/node/dist/p2p/identity.js');(async()=>{const i=await loadOrCreateIdentity('/Users/shahafan/.antseed');console.log(i.wallet.privateKey)})()")
 SELLER_PEER=$(cat ~/.antseed-seller/identity.key)
 
 echo "Seller EVM: $SELLER_ADDR"

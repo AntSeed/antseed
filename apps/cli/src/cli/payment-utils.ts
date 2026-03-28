@@ -4,8 +4,6 @@ import {
   SessionsClient,
   StakingClient,
   loadOrCreateIdentity,
-  identityToEvmWallet,
-  identityToEvmAddress,
 } from '@antseed/node';
 import {
   IdentityClient,
@@ -43,7 +41,7 @@ export function parseUsdcToBaseUnits(amount: string): bigint {
 
 export interface CryptoContext {
   identity: Identity;
-  wallet: ReturnType<typeof identityToEvmWallet>;
+  wallet: Identity['wallet'];
   address: string;
 }
 
@@ -52,8 +50,8 @@ export interface CryptoContext {
  */
 export async function loadCryptoContext(dataDir: string): Promise<CryptoContext> {
   const identity = await loadOrCreateIdentity(dataDir);
-  const wallet = identityToEvmWallet(identity);
-  const address = identityToEvmAddress(identity);
+  const wallet = identity.wallet;
+  const address = identity.wallet.address;
   return { identity, wallet, address };
 }
 

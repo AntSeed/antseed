@@ -3,7 +3,7 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { getGlobalOptions } from './types.js';
 import { loadConfig } from '../../config/loader.js';
-import { identityToEvmAddress, loadOrCreateIdentity } from '@antseed/node';
+import { loadOrCreateIdentity } from '@antseed/node';
 import { createStakingClient, createStatsClient } from '../payment-utils.js';
 
 export function registerReputationCommand(program: Command): void {
@@ -24,7 +24,7 @@ export function registerReputationCommand(program: Command): void {
         address = targetAddress;
       } else {
         const identity = await loadOrCreateIdentity(globalOpts.dataDir);
-        address = identityToEvmAddress(identity);
+        address = identity.wallet.address;
       }
 
       const stakingClient = createStakingClient(config);

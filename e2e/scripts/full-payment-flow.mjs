@@ -25,8 +25,6 @@ import { fileURLToPath } from "node:url";
 
 import {
   AntseedNode,
-  identityToEvmAddress,
-  identityToEvmWallet,
   loadOrCreateIdentity,
   toPeerId,
   DepositsClient,
@@ -304,10 +302,10 @@ async function main() {
     const sellerIdentity = await loadOrCreateIdentity(sellerDataDir);
     const buyerIdentity = await loadOrCreateIdentity(buyerDataDir);
 
-    sellerAddress = identityToEvmAddress(sellerIdentity);
-    buyerAddress = identityToEvmAddress(buyerIdentity);
-    sellerPrivateKey = identityToEvmWallet(sellerIdentity).privateKey;
-    buyerPrivateKey = identityToEvmWallet(buyerIdentity).privateKey;
+    sellerAddress = sellerIdentity.wallet.address;
+    buyerAddress = buyerIdentity.wallet.address;
+    sellerPrivateKey = sellerIdentity.wallet.privateKey;
+    buyerPrivateKey = buyerIdentity.wallet.privateKey;
 
     info(`Seller EVM: ${sellerAddress}`);
     info(`Buyer  EVM: ${buyerAddress}`);

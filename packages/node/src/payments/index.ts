@@ -36,16 +36,12 @@ export type { StatsClientConfig, AgentStats } from './evm/stats-client.js';
 export { StakingClient } from './evm/staking-client.js';
 export type { StakingClientConfig, SellerAccountInfo } from './evm/staking-client.js';
 
-// EVM keypair utilities
-export { identityToEvmWallet, identityToEvmAddress } from './evm/keypair.js';
 export {
   signSpendingAuth,
   signReserveAuth,
   makeSessionsDomain,
   SPENDING_AUTH_TYPES,
   RESERVE_AUTH_TYPES,
-  signMessageEd25519,
-  verifyMessageEd25519,
   computeMetadataHash,
   encodeMetadata,
   computeChannelId,

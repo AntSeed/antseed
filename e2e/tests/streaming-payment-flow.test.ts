@@ -467,10 +467,10 @@ describe('Streaming payment flow E2E', () => {
     expect(bpm).not.toBeNull();
 
     // Use the BuyerPaymentManager to create a signed auth manually
-    const { signReserveAuth, makeSessionsDomain, identityToEvmAddress, identityToEvmWallet, computeChannelId, ZERO_METADATA_HASH } = await import('@antseed/node');
+    const { signReserveAuth, makeSessionsDomain, computeChannelId, ZERO_METADATA_HASH } = await import('@antseed/node');
     const buyerIdentity = buyerNode!.identity!;
-    const buyerSigner = identityToEvmWallet(buyerIdentity);
-    const buyerEvmAddr = identityToEvmAddress(buyerIdentity);
+    const buyerSigner = buyerIdentity.wallet;
+    const buyerEvmAddr = buyerIdentity.wallet.address;
     const sellerEvmAddr = body402.sellerEvmAddr as string;
 
     const salt = '0x' + Array.from(new Uint8Array(32), () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0')).join('');

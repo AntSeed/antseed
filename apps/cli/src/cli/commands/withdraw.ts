@@ -6,8 +6,6 @@ import { loadConfig } from '../../config/loader.js';
 import {
   loadOrCreateIdentity,
   DepositsClient,
-  identityToEvmWallet,
-  identityToEvmAddress,
 } from '@antseed/node';
 
 export function registerWithdrawCommand(program: Command): void {
@@ -35,8 +33,8 @@ export function registerWithdrawCommand(program: Command): void {
       const amountBaseUnits = BigInt(Math.round(amountFloat * 1_000_000));
 
       const identity = await loadOrCreateIdentity(globalOpts.dataDir);
-      const wallet = identityToEvmWallet(identity);
-      const address = identityToEvmAddress(identity);
+      const wallet = identity.wallet;
+      const address = identity.wallet.address;
 
       const depositsClient = new DepositsClient({
         rpcUrl: payments.crypto.rpcUrl,

@@ -18,7 +18,7 @@ import {
 } from './process-manager.js';
 import { registerPiChatHandlers } from './pi-chat-engine.js';
 import { ensureSecureIdentity, secureIdentityEnv, getSecureIdentity } from './identity.js';
-import { identityToEvmAddress, identityToEvmWallet, DepositsClient, signSpendingAuth, signReserveAuth, makeSessionsDomain, resolveChainConfig, formatUsdc, ZERO_METADATA_HASH } from '@antseed/node';
+import { DepositsClient, signSpendingAuth, signReserveAuth, makeSessionsDomain, resolveChainConfig, formatUsdc, ZERO_METADATA_HASH } from '@antseed/node';
 import { createServer as createPaymentsServer } from '@antseed/payments';
 import type { LogEvent, RuntimeActivityEvent } from './log-parser.js';
 import { parseRuntimeActivityFromLog } from './log-parser.js';
@@ -614,7 +614,7 @@ async function refreshCreditsInfo(): Promise<CreditsInfo> {
     return { evmAddress: null, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
   }
 
-  const evmAddress = identityToEvmAddress(identity);
+  const evmAddress = identity.wallet.address;
   const cc = await loadCachedCryptoConfig();
   if (!cc) {
     return { evmAddress, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
@@ -706,7 +706,7 @@ ipcMain.handle('payments:sign-spending-auth', async (_event, params: {
       return { ok: false, error: 'No sessions contract configured' };
     }
 
-    const wallet = identityToEvmWallet(identity);
+    const wallet = identity.wallet;
 
     // Sign SpendingAuth (AntSeed Sessions domain)
     const sessionsDomain = makeSessionsDomain(cc.chainId, cc.sessionsAddress);
@@ -716,7 +716,7 @@ ipcMain.handle('payments:sign-spending-auth', async (_event, params: {
       metadataHash: params.metadataHash,
     });
 
-    const buyerEvmAddress = identityToEvmAddress(identity);
+    const buyerEvmAddress = identity.wallet.address;
 
     return {
       ok: true,
@@ -844,7 +844,7 @@ ipcMain.handle('chat:approve-payment', async (_event, conversationId: string) =>
       return { ok: false, error: 'No sessions contract configured' };
     }
 
-    const wallet = identityToEvmWallet(identity);
+    const wallet = identity.wallet;
     const sessionsDomain = makeSessionsDomain(cc.chainId, cc.sessionsAddress);
     const buyerEvmAddr = wallet.address;
 

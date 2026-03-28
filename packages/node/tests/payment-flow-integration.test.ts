@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import * as ed from '@noble/ed25519';
+import { randomBytes } from 'node:crypto';
 import { BuyerPaymentManager, type BuyerPaymentConfig } from '../src/payments/buyer-payment-manager.js';
 import { SellerPaymentManager, type SellerPaymentConfig } from '../src/payments/seller-payment-manager.js';
 import { SessionStore } from '../src/payments/session-store.js';
@@ -11,8 +11,7 @@ import type { SpendingAuthPayload, AuthAckPayload } from '../src/types/protocol.
 import type { Identity } from '../src/p2p/identity.js';
 import { bytesToHex } from '../src/utils/hex.js';
 import { toPeerId } from '../src/types/peer.js';
-import { identityToEvmAddress, identityToEvmWallet } from '../src/payments/evm/keypair.js';
-import { AbiCoder } from 'ethers';
+import { AbiCoder, Wallet } from 'ethers';
 
 function decodeMetadataTokens(metadata: string): { inputTokens: bigint; outputTokens: bigint } {
   const coder = AbiCoder.defaultAbiCoder();
@@ -22,11 +21,11 @@ function decodeMetadataTokens(metadata: string): { inputTokens: bigint; outputTo
 
 // ── Helpers ──────────────────────────────────────────────────
 
-async function createTestIdentity(): Promise<Identity> {
-  const privateKey = ed.utils.randomPrivateKey();
-  const publicKey = await ed.getPublicKeyAsync(privateKey);
-  const peerId = toPeerId(bytesToHex(publicKey));
-  return { peerId, privateKey, publicKey };
+function createTestIdentity(): Identity {
+  const privateKey = randomBytes(32);
+  const wallet = new Wallet('0x' + bytesToHex(privateKey));
+  const peerId = toPeerId(wallet.address.slice(2).toLowerCase());
+  return { peerId, privateKey, wallet };
 }
 
 function createMockPaymentMux(): PaymentMux & {
@@ -102,12 +101,12 @@ describe('Full Payment Flow Integration', () => {
     buyerStore = new SessionStore(buyerDir);
     sellerStore = new SessionStore(sellerDir);
 
-    buyerIdentity = await createTestIdentity();
-    sellerIdentity = await createTestIdentity();
+    buyerIdentity = createTestIdentity();
+    sellerIdentity = createTestIdentity();
 
     buyer = new BuyerPaymentManager(buyerIdentity, makeBuyerConfig(buyerDir), buyerStore);
     // Use the real derived EVM wallet for the buyer (so signatures are valid)
-    buyer.setSigner(identityToEvmWallet(buyerIdentity));
+    buyer.setSigner(buyerIdentity.wallet);
 
     seller = new SellerPaymentManager(sellerIdentity, makeSellerConfig(sellerDir), sellerStore);
     vi.spyOn(seller.sessionsClient, 'reserve').mockResolvedValue('0xreservehash');
@@ -130,8 +129,8 @@ describe('Full Payment Flow Integration', () => {
 
   async function doInitialHandshake(minBudget: bigint): Promise<{ sessionId: string }> {
     const sellerPeerId = sellerIdentity.peerId;
-    const sellerEvmAddr = identityToEvmAddress(sellerIdentity);
-    const buyerEvmAddr = identityToEvmAddress(buyerIdentity);
+    const sellerEvmAddr = sellerIdentity.wallet.address;
+    const buyerEvmAddr = buyerIdentity.wallet.address;
     const buyerPeerId = buyerIdentity.peerId;
 
     // Step 1: Buyer signs and sends initial SpendingAuth
@@ -168,7 +167,7 @@ describe('Full Payment Flow Integration', () => {
   it('complete flow: reserve -> 3 requests -> settle', async () => {
     const sellerPeerId = sellerIdentity.peerId;
     const buyerPeerId = buyerIdentity.peerId;
-    const buyerEvmAddr = identityToEvmAddress(buyerIdentity);
+    const buyerEvmAddr = buyerIdentity.wallet.address;
     const minBudget = 50_000n; // $0.05
 
     const { sessionId } = await doInitialHandshake(minBudget);
@@ -277,7 +276,7 @@ describe('Full Payment Flow Integration', () => {
 
   it('seller rejects non-monotonic cumulative amount', async () => {
     const buyerPeerId = buyerIdentity.peerId;
-    const buyerEvmAddr = identityToEvmAddress(buyerIdentity);
+    const buyerEvmAddr = buyerIdentity.wallet.address;
     const sellerPeerId = sellerIdentity.peerId;
 
     await doInitialHandshake(50_000n);
@@ -365,7 +364,7 @@ describe('Full Payment Flow Integration', () => {
   it('seller sends AuthAck only on first SpendingAuth, not subsequent', async () => {
     const sellerPeerId = sellerIdentity.peerId;
     const buyerPeerId = buyerIdentity.peerId;
-    const buyerEvmAddr = identityToEvmAddress(buyerIdentity);
+    const buyerEvmAddr = buyerIdentity.wallet.address;
 
     await doInitialHandshake(50_000n);
     expect(sellerMux.sentAuthAcks).toHaveLength(1);
@@ -414,7 +413,7 @@ describe('Full Payment Flow Integration', () => {
 
   it('buyer handleAuthAck ignores mismatched channelId', async () => {
     const sellerPeerId = sellerIdentity.peerId;
-    const sellerEvmAddr = identityToEvmAddress(sellerIdentity);
+    const sellerEvmAddr = sellerIdentity.wallet.address;
 
     const sessionId = await buyer.authorizeSpending(
       sellerPeerId,
@@ -438,7 +437,7 @@ describe('Full Payment Flow Integration', () => {
 
   it('seller rejects SpendingAuth with invalid signature', async () => {
     const buyerPeerId = buyerIdentity.peerId;
-    const buyerEvmAddr = identityToEvmAddress(buyerIdentity);
+    const buyerEvmAddr = buyerIdentity.wallet.address;
     const sellerPeerId = sellerIdentity.peerId;
 
     const { ZERO_METADATA_HASH, encodeMetadata, ZERO_METADATA } = await import('../src/payments/evm/signatures.js');
@@ -470,9 +469,9 @@ describe('Full Payment Flow Integration', () => {
     buyerStore.close();
     buyerStore = new SessionStore(buyerDir);
     buyer = new BuyerPaymentManager(buyerIdentity, tightConfig, buyerStore);
-    buyer.setSigner(identityToEvmWallet(buyerIdentity));
+    buyer.setSigner(buyerIdentity.wallet);
 
-    const sellerEvmAddr = identityToEvmAddress(sellerIdentity);
+    const sellerEvmAddr = sellerIdentity.wallet.address;
     await buyer.authorizeSpending(sellerPeerId, sellerEvmAddr, buyerMux, 50_000n);
     buyer.handleAuthAck(sellerPeerId, {
       channelId: buyerMux.sentSpendingAuths[0]!.channelId,
@@ -506,11 +505,11 @@ describe('Settlement edge cases', () => {
     buyerStore = new SessionStore(buyerDir);
     sellerStore = new SessionStore(sellerDir);
 
-    buyerIdentity = await createTestIdentity();
-    sellerIdentity = await createTestIdentity();
+    buyerIdentity = createTestIdentity();
+    sellerIdentity = createTestIdentity();
 
     buyer = new BuyerPaymentManager(buyerIdentity, makeBuyerConfig(buyerDir), buyerStore);
-    buyer.setSigner(identityToEvmWallet(buyerIdentity));
+    buyer.setSigner(buyerIdentity.wallet);
 
     seller = new SellerPaymentManager(sellerIdentity, makeSellerConfig(sellerDir), sellerStore);
     vi.spyOn(seller.sessionsClient, 'reserve').mockResolvedValue('0xreservehash');
@@ -531,9 +530,9 @@ describe('Settlement edge cases', () => {
 
   it('onBuyerDisconnect triggers settlement for active session', async () => {
     const sellerPeerId = sellerIdentity.peerId;
-    const sellerEvmAddr = identityToEvmAddress(sellerIdentity);
+    const sellerEvmAddr = sellerIdentity.wallet.address;
     const buyerPeerId = buyerIdentity.peerId;
-    const buyerEvmAddr = identityToEvmAddress(buyerIdentity);
+    const buyerEvmAddr = buyerIdentity.wallet.address;
 
     // Handshake
     const sessionId = await buyer.authorizeSpending(sellerPeerId, sellerEvmAddr, buyerMux, 50_000n);

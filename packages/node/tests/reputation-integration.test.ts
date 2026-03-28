@@ -5,7 +5,7 @@ import type { PeerInfo } from '../src/types/peer.js';
 
 function makeMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
   return {
-    peerId: 'a'.repeat(64) as any,
+    peerId: 'a'.repeat(40) as any,
     version: METADATA_VERSION,
     providers: [
       {
@@ -21,7 +21,7 @@ function makeMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
     ],
     region: 'us-east-1',
     timestamp: 1700000000000,
-    signature: 'b'.repeat(128),
+    signature: 'b'.repeat(130),
     ...overrides,
   };
 }
@@ -103,7 +103,7 @@ describe('Reputation Integration', () => {
     }
 
     const peer: PeerInfo = {
-      peerId: 'a'.repeat(64) as any,
+      peerId: 'a'.repeat(40) as any,
       lastSeen: Date.now(),
       providers: ['anthropic'],
       onChainReputation: 88,
@@ -123,7 +123,7 @@ describe('Reputation Integration', () => {
     }
 
     const peerWithTrust: PeerInfo = {
-      peerId: 'a'.repeat(64) as any,
+      peerId: 'a'.repeat(40) as any,
       lastSeen: Date.now(),
       providers: ['anthropic'],
       trustScore: 75,
@@ -131,14 +131,14 @@ describe('Reputation Integration', () => {
     };
 
     const peerWithRepOnly: PeerInfo = {
-      peerId: 'b'.repeat(64) as any,
+      peerId: 'b'.repeat(40) as any,
       lastSeen: Date.now(),
       providers: ['openai'],
       reputationScore: 55,
     };
 
     const peerWithNothing: PeerInfo = {
-      peerId: 'c'.repeat(64) as any,
+      peerId: 'c'.repeat(40) as any,
       lastSeen: Date.now(),
       providers: ['openai'],
     };

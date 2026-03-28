@@ -1,15 +1,20 @@
 import { describe, it, expect, vi } from 'vitest';
+import { Wallet } from 'ethers';
 import { checkSellerReadiness, checkBuyerReadiness } from '../src/payments/readiness.js';
 import type { Identity } from '../src/p2p/identity.js';
 import type { DepositsClient } from '../src/payments/evm/deposits-client.js';
 import type { IdentityClient } from '../src/payments/evm/identity-client.js';
 import type { StakingClient } from '../src/payments/evm/staking-client.js';
+import { toPeerId } from '../src/types/peer.js';
+import { bytesToHex } from '../src/utils/hex.js';
 
-// Deterministic fake identity (32-byte keys)
+// Deterministic fake identity
+const seed = new Uint8Array(32).fill(1);
+const wallet = new Wallet('0x' + bytesToHex(seed));
 const fakeIdentity: Identity = {
-  peerId: 'abcd1234' as Identity['peerId'],
-  privateKey: new Uint8Array(32).fill(1),
-  publicKey: new Uint8Array(32).fill(2),
+  peerId: toPeerId(wallet.address.slice(2).toLowerCase()),
+  privateKey: seed,
+  wallet,
 };
 
 function mockStakingClient(overrides: {
