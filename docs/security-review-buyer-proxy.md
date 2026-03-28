@@ -149,7 +149,7 @@
   if (autoAck) {
     // Signs receipt.runningTotal without comparing to expected cost
     const ackMsg = buildAckMessage(sessionIdBytes, BigInt(receipt.runningTotal), receipt.requestCount);
-    const sigBytes = await signMessageEd25519(this._identity, ackMsg);
+    const sigBytes = await signData(this._identity, ackMsg);
     paymentMux.sendBuyerAck({ ... });
   }
   ```
@@ -167,7 +167,7 @@
 | **Sensitive data in RAM** | `ProxyMux` zeros chunked upload buffers after use (`chunk.fill(0)`). Good practice. ✅ |
 | **Debug logging** | Debug mode is off by default; when enabled, request/response shapes are logged but body contents are not logged directly. Request bodies are parsed for shape summaries only. Low risk. |
 | **Telemetry headers** | Response headers expose peer metadata (`x-antseed-peer-id`, `x-antseed-peer-address`, pricing, reputation). These are returned to the local client only. Acceptable for localhost. |
-| **ECDSA / Ed25519 signatures** | Payment signatures use `ethers` library's `signMessage` and custom Ed25519 via the node identity. Signature construction uses domain-separated `solidityPackedKeccak256` with type prefixes (`0x01`, `0x02`). ✅ |
+| **ECDSA / secp256k1 signatures** | Payment signatures use `ethers` library's `signMessage` via the node identity. Signature construction uses domain-separated `solidityPackedKeccak256` with type prefixes (`0x01`, `0x02`). ✅ |
 | **Retry logic** | Retries (max 3) evict failing peers from cache and report failures to the router. No amplification risk since retries target different peers. ✅ |
 
 ---

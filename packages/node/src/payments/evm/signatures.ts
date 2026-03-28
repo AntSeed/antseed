@@ -1,6 +1,4 @@
 import { type AbstractSigner, type TypedDataDomain, AbiCoder, keccak256 } from 'ethers';
-import type { Identity } from '../../p2p/identity.js';
-import { signData, verifySignature } from '../../p2p/identity.js';
 
 // =========================================================================
 // EIP-712 Types — AntSeed SpendingAuth (cumulative payment authorization)
@@ -121,23 +119,4 @@ export async function signReserveAuth(
   msg: ReserveAuthMessage,
 ): Promise<string> {
   return signer.signTypedData(domain, RESERVE_AUTH_TYPES, msg);
-}
-
-// =========================================================================
-// Ed25519 signatures (off-chain P2P)
-// =========================================================================
-
-export async function signMessageEd25519(
-  identity: Identity,
-  message: Uint8Array,
-): Promise<Uint8Array> {
-  return signData(identity.privateKey, message);
-}
-
-export async function verifyMessageEd25519(
-  publicKey: Uint8Array,
-  signature: Uint8Array,
-  message: Uint8Array,
-): Promise<boolean> {
-  return verifySignature(publicKey, signature, message);
 }

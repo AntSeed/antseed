@@ -69,19 +69,17 @@ AntSeed breaks this coupling. The hot wallet is useful at zero balance — it ju
 
 For sellers, the separation works similarly. The seller's hot wallet signs metering receipts and calls `reserve()` on-chain. Earned revenue accumulates in the AntseedDeposits contract as seller earnings — claimable to any address the seller specifies, not automatically to the hot wallet. A compromised seller node cannot redirect earnings to an attacker's address.
 
-## Under the Hood: One Seed, Two Keypairs
+## Under the Hood: One Key, One Identity
 
-Every AntSeed node starts with a single Ed25519 seed. From this seed, two independent keypairs are derived:
+Every AntSeed node has a single secp256k1 private key. The corresponding EVM address is the node's PeerId on the network and its on-chain signing identity. There is no derivation step and no two-key system.
 
-**P2P identity** — an Ed25519 keypair used for peer authentication, metadata signing, and metering receipt signatures. This is how the node identifies itself on the network — other peers verify its identity through this key.
+This one key signs everything: peer authentication handshakes (EIP-191 `personal_sign` with domain tags), metadata announcements, metering receipts, and EIP-712 payment messages (ReserveAuth, SpendingAuth). Verification always uses `ecrecover` to confirm the signer matches the expected EVM address.
 
-**EVM signing identity** — a secp256k1 keypair derived via domain-separated hashing of the same seed. This is the address that signs EIP-712 ReserveAuth and SpendingAuth messages. The domain separation ensures the two keypairs are cryptographically independent — knowing one does not reveal the other.
-
-Both keypairs derive from one seed, but serve completely different purposes. The Ed25519 key handles P2P transport and identity. The secp256k1 key handles payment authorization. Neither holds funds.
+One key, one identity, one address across P2P and on-chain. But it never holds funds — that's what the funding wallet and AntseedDeposits are for.
 
 ### Desktop Key Storage
 
-The desktop app encrypts the Ed25519 seed at rest using Electron's `safeStorage` API, which delegates to the OS keychain — macOS Keychain, Windows Credential Manager, or Linux libsecret. The seed is decrypted into memory only when needed for signing operations.
+The desktop app encrypts the secp256k1 private key at rest using Electron's `safeStorage` API, which delegates to the OS keychain — macOS Keychain, Windows Credential Manager, or Linux libsecret. The key is decrypted into memory only when needed for signing operations.
 
 The funding wallet never touches the application. A user can deposit into AntseedDeposits from a Ledger, a Trezor, a Safe multisig, or any other wallet. The deposit is a standard ERC-20 approval + `depositFor()` call that can be executed from any interface. The application has no knowledge of the funding wallet's private key and no mechanism to request it.
 

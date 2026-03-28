@@ -4,34 +4,34 @@ This document specifies the transport protocol for peer-to-peer communication in
 
 ## Identity
 
-Each node holds a persistent Ed25519 identity used for authentication and peer identification.
+Each node holds a persistent secp256k1 identity used for authentication and peer identification.
 
 ### Key Storage
 
-- Algorithm: Ed25519 (via `@noble/ed25519`)
+- Algorithm: secp256k1 (via `ethers`)
 - Storage directory: `~/.antseed/`
 - Private key file: `identity.key`
-- File format: hex-encoded 32-byte Ed25519 private key seed (64 hex characters)
+- File format: hex-encoded 32-byte secp256k1 private key (64 hex characters)
 - File permissions: `0o600` (owner read/write only)
 
-On first launch, if `~/.antseed/identity.key` does not exist, the node generates a random Ed25519 private key, derives the public key, and writes the private key seed as hex to disk.
+On first launch, if `~/.antseed/identity.key` does not exist, the node generates a random secp256k1 private key, derives the EVM address, and writes the private key as hex to disk.
 
 ### PeerId Derivation
 
-- PeerId = lowercase hex encoding of the 32-byte Ed25519 public key
-- Validated by regex: `^[0-9a-f]{64}$`
+- PeerId = lowercase hex encoding of the 20-byte EVM address (no `0x` prefix)
+- Validated by regex: `^[0-9a-f]{40}$`
 - See [00-conventions.md](./00-conventions.md) for full PeerId format
 
 ### Signing and Verification
 
 | Operation | Function | Input | Output |
 |---|---|---|---|
-| Sign (async) | `signData(privateKey, data)` | 32-byte private key, arbitrary `Uint8Array` | 64-byte Ed25519 signature |
-| Verify (async) | `verifySignature(publicKey, signature, data)` | 32-byte public key, 64-byte signature, arbitrary `Uint8Array` | `boolean` |
-| Sign UTF-8 (sync) | `signUtf8Ed25519(privateKeySeed, message)` | 32-byte seed, UTF-8 string | hex-encoded 64-byte signature |
-| Verify UTF-8 (sync) | `verifyUtf8Ed25519(publicKeyHex, message, signatureHex)` | hex public key, UTF-8 string, hex signature | `boolean` |
+| Sign (async) | `signData(wallet, data)` | ethers Wallet, arbitrary `Uint8Array` | 65-byte secp256k1 signature |
+| Verify (async) | `verifySignature(address, signature, data)` | 20-byte EVM address, 65-byte signature, arbitrary `Uint8Array` | `boolean` (via ecrecover) |
+| Sign UTF-8 | `signUtf8(wallet, message)` | ethers Wallet, UTF-8 string | hex-encoded 65-byte signature |
+| Verify UTF-8 | `verifyUtf8(address, message, signatureHex)` | EVM address hex, UTF-8 string, hex signature | `boolean` |
 
-The async functions use `@noble/ed25519` directly. The synchronous UTF-8 functions wrap the private key seed in a PKCS#8 DER envelope and use Node.js `crypto.sign`/`crypto.verify`.
+All signing uses EIP-191 personal_sign with domain tags. Verification uses ecrecover to recover the signer address and compares it to the expected address. The `ethers` library is used for all cryptographic operations.
 
 ## Frame Protocol
 
@@ -79,7 +79,7 @@ A `MessageMux` routes decoded frames to registered handlers by `MessageType`. An
 
 ## Handshake
 
-The handshake authenticates both peers using Ed25519 challenge-response.
+The handshake authenticates both peers using secp256k1 challenge-response.
 
 ### Constants
 
@@ -87,44 +87,44 @@ The handshake authenticates both peers using Ed25519 challenge-response.
 |---|---|
 | Nonce size | 32 bytes (crypto random) |
 | Handshake timeout | 10,000 ms (10 seconds) |
-| HandshakeInit payload size | 128 bytes (32 + 32 + 64) |
-| HandshakeAck payload size | 128 bytes (32 + 32 + 64) |
+| HandshakeInit payload size | 117 bytes (20 + 32 + 65) |
+| HandshakeAck payload size | 117 bytes (20 + 32 + 65) |
 
 ### HandshakeInit Payload
 
 ```
 Offset  Size  Field
-0       32    pubKey        Initiator's Ed25519 public key
-32      32    nonce         Random 32-byte challenge nonce
-64      64    signature     Ed25519 signature of nonce by initiator's private key
+0       20    address       Initiator's EVM address
+20      32    nonce         Random 32-byte challenge nonce
+52      65    signature     secp256k1 signature of nonce by initiator's private key
 ---
-Total: 128 bytes
+Total: 117 bytes
 ```
 
 ### HandshakeAck Payload
 
 ```
 Offset  Size  Field
-0       32    pubKey        Responder's Ed25519 public key
-32      32    remoteNonce   Echo of the initiator's nonce
-64      64    signature     Ed25519 signature of remoteNonce by responder's private key
+0       20    address       Responder's EVM address
+20      32    remoteNonce   Echo of the initiator's nonce
+52      65    signature     secp256k1 signature of remoteNonce by responder's private key
 ---
-Total: 128 bytes
+Total: 117 bytes
 ```
 
 ### Protocol Flow
 
 1. **Initiator** generates a random 32-byte nonce, signs it with its private key, and sends a `HandshakeInit` frame.
-2. **Responder** receives the `HandshakeInit`, extracts the initiator's public key and nonce, verifies the signature over the nonce using the initiator's public key.
+2. **Responder** receives the `HandshakeInit`, extracts the initiator's address and nonce, recovers the signer address from the signature via ecrecover and verifies it matches the claimed address.
 3. If valid, the **Responder** signs the initiator's nonce with its own private key and sends a `HandshakeAck` frame.
-4. **Initiator** receives the `HandshakeAck`, verifies that the echoed nonce matches the original, and verifies the signature over the echoed nonce using the responder's public key.
+4. **Initiator** receives the `HandshakeAck`, verifies that the echoed nonce matches the original, and recovers the signer address from the signature via ecrecover to verify the responder's identity.
 5. On success, both sides transition to `Authenticated` state. On failure, the connection transitions to `Failed`.
 
 ### Validation Rules
 
-- If the payload length is not exactly 128 bytes, the handshake MUST fail.
+- If the payload length is not exactly 117 bytes, the handshake MUST fail.
 - The echoed nonce in `HandshakeAck` MUST match the original nonce byte-for-byte.
-- The Ed25519 signature MUST verify against the claimed public key and the nonce data.
+- The address recovered via ecrecover from the signature MUST match the claimed address in the payload.
 
 ## Connection
 

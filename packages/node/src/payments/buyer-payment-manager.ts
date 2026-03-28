@@ -8,7 +8,6 @@ import type {
   NeedAuthPayload,
 } from '../types/protocol.js';
 import { DepositsClient } from './evm/deposits-client.js';
-import { identityToEvmWallet, identityToEvmAddress } from './evm/keypair.js';
 import {
   signSpendingAuth,
   signReserveAuth,
@@ -21,6 +20,7 @@ import {
 } from './evm/signatures.js';
 import type { SpendingAuthMessage, ReserveAuthMessage, SpendingAuthMetadata } from './evm/signatures.js';
 import { debugLog, debugWarn } from '../utils/debug.js';
+import { peerIdToAddress } from '../types/peer.js';
 import { SessionStore, type StoredSession } from './session-store.js';
 
 // ── Response cost header constants ───────────────────────────────
@@ -67,7 +67,7 @@ export class BuyerPaymentManager {
   constructor(identity: Identity, config: BuyerPaymentConfig, sessionStore: SessionStore) {
     this._identity = identity;
     this._config = config;
-    this._signer = identityToEvmWallet(identity);
+    this._signer = identity.wallet;
     this._depositsClient = new DepositsClient({
       rpcUrl: config.rpcUrl,
       contractAddress: config.depositsContractAddress,
@@ -118,10 +118,10 @@ export class BuyerPaymentManager {
    */
   async authorizeSpending(
     sellerPeerId: string,
-    sellerEvmAddr: string,
     paymentMux: PaymentMux,
     minBudgetPerRequest: bigint,
   ): Promise<string> {
+    const sellerEvmAddr = peerIdToAddress(sellerPeerId);
     // Budget validation: reject if seller demands more than buyer allows per request
     if (minBudgetPerRequest > this._config.maxPerRequestUsdc) {
       debugWarn(
@@ -136,7 +136,7 @@ export class BuyerPaymentManager {
     // Generate random salt and compute deterministic channelId
     // Must match: AntseedSessions.computeChannelId(buyer, seller, salt)
     const salt = '0x' + randomBytes(32).toString('hex');
-    const buyerEvmAddr = identityToEvmAddress(this._identity);
+    const buyerEvmAddr = this._identity.wallet.address;
     const channelId = computeChannelId(buyerEvmAddr, sellerEvmAddr, salt);
     const deadline = Math.floor(Date.now() / 1000) + this._config.defaultAuthDurationSecs;
 
@@ -162,8 +162,8 @@ export class BuyerPaymentManager {
       sessionId: channelId,
       peerId: sellerPeerId,
       role: 'buyer',
-      sellerEvmAddr,
-      buyerEvmAddr,
+      sellerEvmAddr: peerIdToAddress(sellerPeerId),
+      buyerEvmAddr: this._identity.wallet.address,
       nonce: 0,
       authMax: '0',
       deadline,
@@ -190,7 +190,6 @@ export class BuyerPaymentManager {
       metadataHash: ZERO_METADATA_HASH,
       metadata: '',
       spendingAuthSig: reserveAuthSig,
-      buyerEvmAddr,
       reserveSalt: salt,
       reserveMaxAmount: maxAmount.toString(),
       reserveDeadline: deadline,
@@ -290,7 +289,6 @@ export class BuyerPaymentManager {
       metadataHash: metadataHashHex,
       metadata: encodedMetadata,
       spendingAuthSig,
-      buyerEvmAddr: session.buyerEvmAddr,
     };
 
     return payload;
@@ -364,7 +362,6 @@ export class BuyerPaymentManager {
         metadataHash: metadataHashHex,
         metadata: encodedMetadata,
         spendingAuthSig,
-        buyerEvmAddr: session.buyerEvmAddr,
       });
       debugLog(`[BuyerPayment] NeedAuth responded: new cumulativeAmount=${requiredCumulativeAmount}`);
     } catch {
@@ -423,7 +420,7 @@ export class BuyerPaymentManager {
   }
 
   async getBalance(): Promise<{ available: bigint; reserved: bigint }> {
-    const buyerAddr = identityToEvmAddress(this._identity);
+    const buyerAddr = this._identity.wallet.address;
     const info = await this._depositsClient.getBuyerBalance(buyerAddr);
     return { available: info.available, reserved: info.reserved };
   }

@@ -6,7 +6,7 @@ This document provides a system-level security overview of the buyer-seller flow
 
 The buyer-seller flow enforces:
 
-1. **Peer authenticity** — every node is identified by a unique Ed25519 keypair; all trust-critical messages are signed.
+1. **Peer authenticity** — every node is identified by a unique secp256k1 keypair (EVM address); all trust-critical messages are signed.
 2. **Metadata integrity** — discovery metadata is signed and freshness-checked before use.
 3. **Bounded resource usage** — frame sizes, upload caps, stream durations, and connection counts are hard-limited.
 4. **Billing accountability** — usage is tracked via bilateral signed receipts and settled through on-chain deposits and sessions contracts.
@@ -35,7 +35,7 @@ The buyer-seller flow enforces:
 
 ### 3.2 Connection Establishment and Peer Authentication
 
-- Signed auth envelopes include `peerId`, timestamp, nonce, and Ed25519 signature.
+- Signed auth envelopes include `peerId`, timestamp, nonce, and secp256k1 signature.
 - Timestamp skew checks (`INTRO_AUTH_MAX_SKEW_MS = 30s`) reject stale or future envelopes.
 - Nonce replay guard rejects previously seen nonces.
 - Inbound initial line limited to `8KB` with `10s` timeout.
@@ -55,7 +55,7 @@ The buyer-seller flow enforces:
 - Seller rejects requests with `402` when payments are configured and lock is not committed.
 - Session state tracked per buyer and finalized on disconnect, idle timeout, or shutdown.
 - Seller emits bilateral receipts after each request with `runningTotal` tracking.
-- Buyer acks receipts with Ed25519 signatures (auto-ack enabled by default).
+- Buyer acks receipts with secp256k1 signatures (auto-ack enabled by default).
 - Metering events and signed receipts persisted locally.
 
 ### 3.5 Payment Authorization and Settlement
@@ -72,11 +72,11 @@ The buyer-seller flow enforces:
 
 | Use Case | Primitive | Scope |
 |---|---|---|
-| Node identity | Ed25519 keypair | Peer ID and metadata signing |
-| Connection auth | Ed25519 signature + nonce + timestamp | Spoofing and replay prevention |
-| Metadata integrity | Ed25519 signature over encoded metadata | Discovery payload authenticity |
+| Node identity | secp256k1 keypair (EVM address) | Peer ID and metadata signing |
+| Connection auth | secp256k1 signature + nonce + timestamp | Spoofing and replay prevention |
+| Metadata integrity | secp256k1 signature over encoded metadata | Discovery payload authenticity |
 | Payment auth (on-chain) | EIP-712 ECDSA (ReserveAuth, SpendingAuth) | Reserve, cumulative spend, settlement authorizations |
-| Receipt/ack integrity | Ed25519 binary signatures | Running-total acknowledgment trail |
+| Receipt/ack integrity | secp256k1 binary signatures | Running-total acknowledgment trail |
 
 ## 5. Operational Best Practices
 

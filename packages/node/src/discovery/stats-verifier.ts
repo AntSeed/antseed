@@ -1,6 +1,7 @@
 import type { PeerMetadata } from "./peer-metadata.js";
 import type { StatsClient } from "../payments/evm/stats-client.js";
 import type { StakingClient } from "../payments/evm/staking-client.js";
+import { peerIdToAddress } from "../types/peer.js";
 
 export interface StatsVerification {
   /** Whether the claimed stats match on-chain data. */
@@ -21,30 +22,17 @@ export interface StatsVerification {
 
 /**
  * Verify a peer's claimed on-chain stats against the AntseedStats contract.
- * Uses the staking client to look up the agentId from the peer's EVM address,
- * then fetches stats from the StatsClient and compares claimed vs actual.
- *
- * Returns valid=true with zeroed actuals if the peer has no evmAddress
- * (cannot verify without an address).
+ * Uses the staking client to look up the agentId from the peer's EVM address
+ * (derived from peerId), then fetches stats from the StatsClient and compares
+ * claimed vs actual.
  */
 export async function verifyStats(
   statsClient: StatsClient,
   stakingClient: StakingClient,
   metadata: PeerMetadata,
 ): Promise<StatsVerification> {
-  if (!metadata.evmAddress) {
-    return {
-      valid: true,
-      actualReputation: 0,
-      actualSessionCount: 0,
-      actualDisputeCount: 0,
-      claimedReputation: metadata.onChainReputation,
-      claimedSessionCount: metadata.onChainSessionCount,
-      claimedDisputeCount: metadata.onChainDisputeCount,
-    };
-  }
-
-  const agentId = await stakingClient.getAgentId(metadata.evmAddress);
+  const evmAddress = peerIdToAddress(metadata.peerId);
+  const agentId = await stakingClient.getAgentId(evmAddress);
   const stats = await statsClient.getStats(agentId);
 
   // Map AgentStats fields to the verification format:
@@ -55,7 +43,7 @@ export async function verifyStats(
   const actualSessionCount = stats.sessionCount;
   const actualDisputeCount = stats.ghostCount;
 
-  // Always compare against on-chain data when evmAddress is present.
+  // Always compare against on-chain data.
   // If peer omits stats fields, treat as unverified — prevents bypass
   // by simply not claiming any values.
   const valid =

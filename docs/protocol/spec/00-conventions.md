@@ -4,14 +4,14 @@ This document defines the conventions and data formats used across all Antseed N
 
 ## PeerId
 
-A **PeerId** is a 64-character lowercase hexadecimal string representing an Ed25519 public key.
+A **PeerId** is a 40-character lowercase hexadecimal string representing an EVM address (derived from a secp256k1 public key).
 
-- Length: 64 characters (32 bytes encoded as hex)
+- Length: 40 characters (20 bytes encoded as hex, no `0x` prefix)
 - Character set: `[0-9a-f]`
 - Case: lowercase only
-- Example: `a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2`
+- Example: `a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4`
 
-Every node in the network is uniquely identified by its PeerId, which is derived from the node's Ed25519 public key.
+Every node in the network is uniquely identified by its PeerId, which is the EVM address derived from the node's secp256k1 public key.
 
 ## Timestamps
 
@@ -60,12 +60,12 @@ Costs and prices use the following conventions:
 
 ## Signature Format
 
-All Ed25519 signatures in the protocol are represented as **128-character lowercase hexadecimal strings** (64 bytes encoded as hex).
+All secp256k1 signatures in the protocol are represented as **130-character lowercase hexadecimal strings** (65 bytes encoded as hex).
 
-- Length: 128 characters (64 bytes encoded as hex)
+- Length: 130 characters (65 bytes encoded as hex)
 - Character set: `[0-9a-f]`
 - Case: lowercase only
-- Algorithm: Ed25519
-- Example: `a1b2c3d4...` (128 hex characters total)
+- Algorithm: secp256k1 ECDSA (EIP-191 personal_sign with domain tags, verified via ecrecover)
+- Example: `a1b2c3d4...` (130 hex characters total)
 
 Signatures are used for message authentication, usage attestation, and payment authorization. The signed payload and signing context are defined in each relevant specification document.

@@ -2,7 +2,6 @@ import { type Identity } from '../p2p/identity.js';
 import { type DepositsClient } from './evm/deposits-client.js';
 import { type IdentityClient } from './evm/identity-client.js';
 import { type StakingClient } from './evm/staking-client.js';
-import { identityToEvmAddress } from './evm/keypair.js';
 import { formatEther } from 'ethers';
 
 export interface ReadinessCheck {
@@ -18,7 +17,7 @@ export async function checkSellerReadiness(
   stakingClient: StakingClient,
 ): Promise<ReadinessCheck[]> {
   const checks: ReadinessCheck[] = [];
-  const evmAddr = identityToEvmAddress(identity);
+  const evmAddr = identity.wallet.address;
 
   // 1. ETH for gas
   const ethBalance = await stakingClient.provider.getBalance(evmAddr);
@@ -57,7 +56,7 @@ export async function checkBuyerReadiness(
   depositsClient: DepositsClient,
 ): Promise<ReadinessCheck[]> {
   const checks: ReadinessCheck[] = [];
-  const evmAddr = identityToEvmAddress(identity);
+  const evmAddr = identity.wallet.address;
 
   // 1. ETH for gas
   const ethBalance = await depositsClient.provider.getBalance(evmAddr);

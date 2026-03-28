@@ -14,7 +14,6 @@ describe('payment codec round-trips', () => {
       metadataHash: '0x' + 'cc'.repeat(32),
       metadata: '0x' + 'dd'.repeat(128),
       spendingAuthSig: '0x' + 'ee'.repeat(65),
-      buyerEvmAddr: '0x' + 'ab'.repeat(20),
     };
     const encoded = encodeSpendingAuth(payload);
     const decoded = decodeSpendingAuth(encoded);
@@ -28,7 +27,6 @@ describe('payment codec round-trips', () => {
 
   it('PaymentRequired', () => {
     const payload = {
-      sellerEvmAddr: '0x' + 'ab'.repeat(20),
       minBudgetPerRequest: '10000',
       suggestedAmount: '100000',
       requestId: 'req-123',
@@ -40,7 +38,6 @@ describe('payment codec round-trips', () => {
 
   it('PaymentRequired with optional pricing fields', () => {
     const payload = {
-      sellerEvmAddr: '0x' + 'ab'.repeat(20),
       minBudgetPerRequest: '10000',
       suggestedAmount: '100000',
       requestId: 'req-456',

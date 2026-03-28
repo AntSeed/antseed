@@ -8,12 +8,6 @@ export interface CryptoContext {
   evmAddress: string;
 }
 
-export interface PaymentCryptoConfig {
-  rpcUrl: string;
-  depositsContractAddress: string;
-  usdcContractAddress: string;
-}
-
 /**
  * Load crypto context from either ANTSEED_IDENTITY_HEX env var
  * or from the data directory's identity file.

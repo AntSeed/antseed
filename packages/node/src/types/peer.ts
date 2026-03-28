@@ -1,20 +1,26 @@
 import type { ServiceApiProtocol } from "./service-api.js";
 
 /**
- * A PeerId is the hex-encoded Ed25519 public key (64 hex chars = 32 bytes).
+ * A PeerId is the EVM address hex (40 lowercase chars = 20 bytes, no 0x prefix).
  * This is the canonical identifier for any peer in the network.
+ * The peer's secp256k1 wallet address serves as both P2P and on-chain identity.
  */
 export type PeerId = string & { readonly __brand: "PeerId" };
 
 /**
  * Validates and brands a string as a PeerId.
- * Must be exactly 64 lowercase hex characters.
+ * Must be exactly 40 lowercase hex characters (EVM address without 0x).
  */
 export function toPeerId(hex: string): PeerId {
-  if (!/^[0-9a-f]{64}$/.test(hex)) {
-    throw new Error(`Invalid PeerId: expected 64 hex chars, got "${hex.slice(0, 20)}..."`);
+  if (!/^[0-9a-f]{40}$/.test(hex)) {
+    throw new Error(`Invalid PeerId: expected 40 hex chars, got "${hex.slice(0, 20)}..."`);
   }
   return hex as PeerId;
+}
+
+/** Convert a PeerId to a checksummed 0x-prefixed EVM address. */
+export function peerIdToAddress(peerId: string): string {
+  return '0x' + peerId;
 }
 
 export interface TokenPricingUsdPerMillion {
@@ -37,7 +43,7 @@ export interface ProviderServiceApiProtocolMatrixEntry {
 
 /** Information about a known peer. */
 export interface PeerInfo {
-  /** Unique peer identifier (Ed25519 public key hex). */
+  /** Unique peer identifier (EVM address, 40 hex chars). */
   peerId: PeerId;
   /** Human-readable label, optional. */
   displayName?: string;
@@ -65,8 +71,6 @@ export interface PeerInfo {
   currentLoad?: number;
   /** Computed trust score (0-100) from the trust engine. */
   trustScore?: number;
-  /** EVM address of the peer (0x-prefixed hex). */
-  evmAddress?: string;
   /** On-chain reputation score (0-100) from the Base identity contract. */
   onChainReputation?: number;
   /** On-chain session count from the Base identity contract. */

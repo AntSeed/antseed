@@ -4,7 +4,7 @@ import { LocalRouter } from './router.js';
 
 function makePeer(overrides?: Partial<PeerInfo>): PeerInfo {
   return {
-    peerId: 'a'.repeat(64) as PeerInfo['peerId'],
+    peerId: 'a'.repeat(40) as PeerInfo['peerId'],
     lastSeen: Date.now(),
     providers: ['anthropic'],
     reputationScore: 80,
@@ -45,7 +45,7 @@ describe('LocalRouter', () => {
     });
 
     const expensive = makePeer({
-      peerId: '1'.repeat(64) as PeerInfo['peerId'],
+      peerId: '1'.repeat(40) as PeerInfo['peerId'],
       providers: ['anthropic'],
       providerPricing: {
         anthropic: {
@@ -56,7 +56,7 @@ describe('LocalRouter', () => {
       defaultOutputUsdPerMillion: 100,
     });
     const cheap = makePeer({
-      peerId: '2'.repeat(64) as PeerInfo['peerId'],
+      peerId: '2'.repeat(40) as PeerInfo['peerId'],
       providers: ['openai'],
       providerPricing: {
         openai: {
@@ -79,7 +79,7 @@ describe('LocalRouter', () => {
     });
 
     const overpricedOutputPeer = makePeer({
-      peerId: '1'.repeat(64) as PeerInfo['peerId'],
+      peerId: '1'.repeat(40) as PeerInfo['peerId'],
       providerPricing: {
         anthropic: {
           defaults: { inputUsdPerMillion: 5, outputUsdPerMillion: 20 },
@@ -100,7 +100,7 @@ describe('LocalRouter', () => {
     });
 
     const peerA = makePeer({
-      peerId: '1'.repeat(64) as PeerInfo['peerId'],
+      peerId: '1'.repeat(40) as PeerInfo['peerId'],
       providerPricing: {
         anthropic: {
           defaults: { inputUsdPerMillion: 10, outputUsdPerMillion: 10 },
@@ -113,7 +113,7 @@ describe('LocalRouter', () => {
       defaultOutputUsdPerMillion: 10,
     });
     const peerB = makePeer({
-      peerId: '2'.repeat(64) as PeerInfo['peerId'],
+      peerId: '2'.repeat(40) as PeerInfo['peerId'],
       providerPricing: {
         anthropic: {
           defaults: { inputUsdPerMillion: 20, outputUsdPerMillion: 20 },
@@ -138,7 +138,7 @@ describe('LocalRouter', () => {
     });
 
     const expensiveDefault = makePeer({
-      peerId: '1'.repeat(64) as PeerInfo['peerId'],
+      peerId: '1'.repeat(40) as PeerInfo['peerId'],
       providerPricing: {
         anthropic: {
           defaults: { inputUsdPerMillion: 40, outputUsdPerMillion: 40 },
@@ -151,7 +151,7 @@ describe('LocalRouter', () => {
       defaultOutputUsdPerMillion: 40,
     });
     const cheapDefault = makePeer({
-      peerId: '2'.repeat(64) as PeerInfo['peerId'],
+      peerId: '2'.repeat(40) as PeerInfo['peerId'],
       providerPricing: {
         anthropic: {
           defaults: { inputUsdPerMillion: 5, outputUsdPerMillion: 5 },
@@ -173,8 +173,8 @@ describe('LocalRouter', () => {
       now: () => now,
     });
 
-    const flaky = makePeer({ peerId: '1'.repeat(64) as PeerInfo['peerId'], lastSeen: now });
-    const fallback = makePeer({ peerId: 'f'.repeat(64) as PeerInfo['peerId'], lastSeen: now });
+    const flaky = makePeer({ peerId: '1'.repeat(40) as PeerInfo['peerId'], lastSeen: now });
+    const fallback = makePeer({ peerId: 'f'.repeat(40) as PeerInfo['peerId'], lastSeen: now });
 
     router.onResult(flaky, { success: false, latencyMs: 300, tokens: 0 });
     router.onResult(flaky, { success: false, latencyMs: 300, tokens: 0 });
@@ -195,12 +195,12 @@ describe('LocalRouter', () => {
     });
 
     const lowRep = makePeer({
-      peerId: '1'.repeat(64) as PeerInfo['peerId'],
+      peerId: '1'.repeat(40) as PeerInfo['peerId'],
       reputationScore: 40,
       trustScore: 40,
     });
     const highRep = makePeer({
-      peerId: '2'.repeat(64) as PeerInfo['peerId'],
+      peerId: '2'.repeat(40) as PeerInfo['peerId'],
       reputationScore: 90,
       trustScore: 90,
     });
@@ -212,7 +212,7 @@ describe('LocalRouter', () => {
   it('keeps peers eligible when reputation fields are missing', () => {
     const router = new LocalRouter();
     const unrated = makePeer({
-      peerId: '1'.repeat(64) as PeerInfo['peerId'],
+      peerId: '1'.repeat(40) as PeerInfo['peerId'],
       reputationScore: undefined,
       trustScore: undefined,
       onChainReputation: undefined,
@@ -225,7 +225,7 @@ describe('LocalRouter', () => {
   it('treats on-chain zero reputation with zero sessions as unrated', () => {
     const router = new LocalRouter();
     const newSeller = makePeer({
-      peerId: '3'.repeat(64) as PeerInfo['peerId'],
+      peerId: '3'.repeat(40) as PeerInfo['peerId'],
       trustScore: 0,
       reputationScore: undefined,
       onChainReputation: 0,
@@ -240,7 +240,7 @@ describe('LocalRouter', () => {
   it('ignores empty provider entries when selecting a peer provider', () => {
     const router = new LocalRouter();
     const malformedProviders = makePeer({
-      peerId: '1'.repeat(64) as PeerInfo['peerId'],
+      peerId: '1'.repeat(40) as PeerInfo['peerId'],
       providers: ['', 'anthropic'],
     });
 
@@ -257,7 +257,7 @@ describe('LocalRouter', () => {
 
     // Peer has two providers: anthropic (expensive) and openai (cheap)
     const multiPeer = makePeer({
-      peerId: '1'.repeat(64) as PeerInfo['peerId'],
+      peerId: '1'.repeat(40) as PeerInfo['peerId'],
       providers: ['anthropic', 'openai'],
       providerPricing: {
         anthropic: {

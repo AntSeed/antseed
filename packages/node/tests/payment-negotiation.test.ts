@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import * as ed from '@noble/ed25519';
+import { randomBytes } from 'node:crypto';
 import { PaymentMux } from '../src/p2p/payment-mux.js';
 import { MessageType, type FramedMessage, type PaymentRequiredPayload } from '../src/types/protocol.js';
 import * as codec from '../src/p2p/payment-codec.js';
@@ -12,24 +12,29 @@ import { SessionStore } from '../src/payments/session-store.js';
 import type { Identity } from '../src/p2p/identity.js';
 import { bytesToHex } from '../src/utils/hex.js';
 import { toPeerId } from '../src/types/peer.js';
-import { identityToEvmAddress } from '../src/payments/evm/keypair.js';
+import { Wallet } from 'ethers';
 
 function mockConnection(): PeerConnection {
   return { send: vi.fn() } as unknown as PeerConnection;
 }
 
-async function createTestIdentity(): Promise<Identity> {
-  const privateKey = ed.utils.randomPrivateKey();
-  const publicKey = await ed.getPublicKeyAsync(privateKey);
-  const peerId = toPeerId(bytesToHex(publicKey));
-  return { peerId, privateKey, publicKey };
+function createTestIdentity(): Identity {
+  const privateKey = randomBytes(32);
+  const wallet = new Wallet('0x' + bytesToHex(privateKey));
+  const peerId = toPeerId(wallet.address.slice(2).toLowerCase());
+  return { peerId, privateKey, wallet };
+}
+
+/** Generate a fake but valid-format peerId (40 hex chars) from a label. */
+function fakePeerId(label: string): string {
+  const hex = Buffer.from(label).toString('hex').padEnd(40, '0').slice(0, 40);
+  return hex;
 }
 
 const CHAIN_ID = 31337;
 const CONTRACT_ADDR = '0x' + 'dd'.repeat(20);
 
 const SAMPLE_PAYMENT_REQUIRED: PaymentRequiredPayload = {
-  sellerEvmAddr: '0x' + 'ab'.repeat(20),
   minBudgetPerRequest: '10000',
   suggestedAmount: '100000',
   requestId: 'req-' + 'a'.repeat(32),
@@ -48,7 +53,7 @@ describe('PaymentRequired codec', () => {
 
   it('decodePaymentRequired rejects missing fields', () => {
     const incomplete = new TextEncoder().encode(JSON.stringify({
-      sellerEvmAddr: '0x' + 'ab'.repeat(20),
+      minBudgetPerRequest: '10000',
     }));
     expect(() => codec.decodePaymentRequired(incomplete)).toThrow('Missing or invalid string field');
   });
@@ -60,13 +65,11 @@ describe('PaymentRequired codec', () => {
 
   it('preserves all fields through encode/decode', () => {
     const payload: PaymentRequiredPayload = {
-      sellerEvmAddr: '0x1234567890abcdef1234567890abcdef12345678',
       minBudgetPerRequest: '10000',
       suggestedAmount: '1500000',
       requestId: 'abc-123',
         };
     const decoded = codec.decodePaymentRequired(codec.encodePaymentRequired(payload));
-    expect(decoded.sellerEvmAddr).toBe(payload.sellerEvmAddr);
     expect(decoded.minBudgetPerRequest).toBe(payload.minBudgetPerRequest);
     expect(decoded.suggestedAmount).toBe(payload.suggestedAmount);
     expect(decoded.requestId).toBe(payload.requestId);
@@ -138,7 +141,7 @@ describe('SellerPaymentManager PaymentRequired', () => {
   beforeEach(async () => {
     tempDir = mkdtempSync(join(tmpdir(), 'seller-negotiation-'));
     store = new SessionStore(tempDir);
-    sellerIdentity = await createTestIdentity();
+    sellerIdentity = createTestIdentity();
 
     const config: SellerPaymentConfig = {
       rpcUrl: 'http://127.0.0.1:8545',
@@ -164,7 +167,6 @@ describe('SellerPaymentManager PaymentRequired', () => {
     expect(req).not.toBeNull();
     expect(req.minBudgetPerRequest).toBe('10000'); // default $0.01
     expect(req.suggestedAmount).toBe('100000'); // $0.10 default
-    expect(req.sellerEvmAddr).toBe(identityToEvmAddress(sellerIdentity));
   });
 
   it('getPaymentRequirements includes the triggering requestId', () => {
@@ -243,7 +245,7 @@ describe('SellerPaymentManager suggested amount', () => {
   beforeEach(async () => {
     tempDir = mkdtempSync(join(tmpdir(), 'seller-proven-'));
     store = new SessionStore(tempDir);
-    sellerIdentity = await createTestIdentity();
+    sellerIdentity = createTestIdentity();
 
     const config: SellerPaymentConfig = {
       rpcUrl: 'http://127.0.0.1:8545',
@@ -275,7 +277,7 @@ describe('SellerPaymentManager suggested amount', () => {
       sessionId: '0x' + 'aa'.repeat(32),
       peerId: 'returning-buyer',
       role: 'seller',
-      sellerEvmAddr: identityToEvmAddress(sellerIdentity),
+      sellerEvmAddr: sellerIdentity.wallet.address,
       buyerEvmAddr: '0x' + 'bb'.repeat(20),
       nonce: 1,
       authMax: '1000000',
@@ -335,9 +337,9 @@ describe('Budget mismatch rejection', () => {
   });
 
   it('buyer refuses when seller minBudgetPerRequest exceeds buyer maxPerRequestUsdc', async () => {
-    const buyerIdentity = await createTestIdentity();
+    const buyerIdentity = createTestIdentity();
     const { BuyerPaymentManager } = await import('../src/payments/buyer-payment-manager.js');
-    const { identityToEvmWallet } = await import('../src/payments/evm/keypair.js');
+
 
     const buyerConfig = {
       rpcUrl: 'http://127.0.0.1:8545',
@@ -353,7 +355,7 @@ describe('Budget mismatch rejection', () => {
     };
 
     const buyer = new BuyerPaymentManager(buyerIdentity, buyerConfig, store);
-    buyer.setSigner(identityToEvmWallet(buyerIdentity));
+    buyer.setSigner(buyerIdentity.wallet);
 
     const mux = {
       sentSpendingAuths: [] as unknown[],
@@ -371,8 +373,7 @@ describe('Budget mismatch rejection', () => {
     // Seller demands $0.10 per request — exceeds buyer's $0.05 limit
     const sellerMinBudget = 100_000n;
     const sessionId = await buyer.authorizeSpending(
-      'seller-peer-expensive',
-      '0x' + 'ab'.repeat(20),
+      fakePeerId('seller-peer-expensive'),
       mux,
       sellerMinBudget,
     );
@@ -383,9 +384,9 @@ describe('Budget mismatch rejection', () => {
   });
 
   it('buyer accepts when seller minBudgetPerRequest equals buyer maxPerRequestUsdc', async () => {
-    const buyerIdentity = await createTestIdentity();
+    const buyerIdentity = createTestIdentity();
     const { BuyerPaymentManager } = await import('../src/payments/buyer-payment-manager.js');
-    const { identityToEvmWallet } = await import('../src/payments/evm/keypair.js');
+
 
     const buyerConfig = {
       rpcUrl: 'http://127.0.0.1:8545',
@@ -401,7 +402,7 @@ describe('Budget mismatch rejection', () => {
     };
 
     const buyer = new BuyerPaymentManager(buyerIdentity, buyerConfig, store);
-    buyer.setSigner(identityToEvmWallet(buyerIdentity));
+    buyer.setSigner(buyerIdentity.wallet);
 
     const mux = {
       sentSpendingAuths: [] as unknown[],
@@ -419,8 +420,7 @@ describe('Budget mismatch rejection', () => {
     // Seller demands exactly $0.10 per request — matches buyer's limit
     const sellerMinBudget = 100_000n;
     const sessionId = await buyer.authorizeSpending(
-      'seller-peer-match',
-      '0x' + 'ab'.repeat(20),
+      fakePeerId('seller-peer-match'),
       mux,
       sellerMinBudget,
     );
@@ -431,9 +431,9 @@ describe('Budget mismatch rejection', () => {
   });
 
   it('buyer accepts when seller minBudgetPerRequest is below buyer maxPerRequestUsdc', async () => {
-    const buyerIdentity = await createTestIdentity();
+    const buyerIdentity = createTestIdentity();
     const { BuyerPaymentManager } = await import('../src/payments/buyer-payment-manager.js');
-    const { identityToEvmWallet } = await import('../src/payments/evm/keypair.js');
+
 
     const buyerConfig = {
       rpcUrl: 'http://127.0.0.1:8545',
@@ -449,7 +449,7 @@ describe('Budget mismatch rejection', () => {
     };
 
     const buyer = new BuyerPaymentManager(buyerIdentity, buyerConfig, store);
-    buyer.setSigner(identityToEvmWallet(buyerIdentity));
+    buyer.setSigner(buyerIdentity.wallet);
 
     const mux = {
       sentSpendingAuths: [] as unknown[],
@@ -467,8 +467,7 @@ describe('Budget mismatch rejection', () => {
     // Seller demands only $0.01 per request — well within buyer's limit
     const sellerMinBudget = 10_000n;
     const sessionId = await buyer.authorizeSpending(
-      'seller-peer-cheap',
-      '0x' + 'ab'.repeat(20),
+      fakePeerId('seller-peer-cheap'),
       mux,
       sellerMinBudget,
     );

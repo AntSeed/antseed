@@ -6,7 +6,6 @@ import { loadConfig } from '../../config/loader.js';
 import {
   loadOrCreateIdentity,
   DepositsClient,
-  identityToEvmAddress,
 } from '@antseed/node';
 
 /** Format USDC base units (6 decimals) to human-readable string. */
@@ -34,7 +33,7 @@ export function registerBalanceCommand(program: Command): void {
       }
 
       const identity = await loadOrCreateIdentity(globalOpts.dataDir);
-      const address = identityToEvmAddress(identity);
+      const address = identity.wallet.address;
 
       const depositsClient = new DepositsClient({
         rpcUrl: payments.crypto.rpcUrl,

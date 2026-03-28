@@ -32,7 +32,7 @@ antseed init
 
 This does three things:
 - Installs all trusted plugins (provider + router) from npm
-- Generates an Ed25519 identity keypair at `~/.antseed/identity.key`
+- Generates a secp256k1 identity keypair at `~/.antseed/identity.key`
 - Creates default config at `~/.antseed/config.json`
 
 If the user already knows their provider type and API key, shortcut with:

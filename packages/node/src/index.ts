@@ -15,6 +15,7 @@ export * from './types/index.js';
 // Submodule re-exports (commonly used)
 export {
   loadOrCreateIdentity,
+  identityFromPrivateKeyHex,
   type Identity,
   type IdentityStore,
   FileIdentityStore,
@@ -39,7 +40,7 @@ export { SessionsClient, type SessionsClientConfig, type SessionInfo } from './p
 export { IdentityClient, type IdentityClientConfig } from './payments/evm/identity-client.js';
 export { StatsClient, type StatsClientConfig, type AgentStats } from './payments/evm/stats-client.js';
 export { StakingClient, type StakingClientConfig, type SellerAccountInfo } from './payments/evm/staking-client.js';
-export { identityToEvmWallet, identityToEvmAddress } from './payments/evm/keypair.js';
+export { signData, verifySignature, signUtf8, verifyUtf8 } from './p2p/identity.js';
 export {
   signSpendingAuth,
   signReserveAuth,

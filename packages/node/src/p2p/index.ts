@@ -1,4 +1,4 @@
-export { type Identity, loadOrCreateIdentity, signData, verifySignature, hexToBytes, bytesToHex, signUtf8Ed25519, verifyUtf8Ed25519 } from './identity.js';
+export { type Identity, type IdentityStore, FileIdentityStore, loadOrCreateIdentity, identityFromPrivateKeyHex, signData, verifySignature, hexToBytes, bytesToHex, signUtf8, verifyUtf8 } from './identity.js';
 export { encodeFrame, decodeFrame, FrameDecoder, MessageMux, type MessageHandler } from './message-protocol.js';
 export { ConnectionManager, PeerConnection, type PeerEndpoint } from './connection-manager.js';
 export { type IceServer, type IceConfig, getDefaultIceConfig, buildIceConfig, needsTurnFallback, extractCandidateType } from './ice-config.js';

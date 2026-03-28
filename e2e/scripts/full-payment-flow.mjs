@@ -25,8 +25,6 @@ import { fileURLToPath } from "node:url";
 
 import {
   AntseedNode,
-  identityToEvmAddress,
-  identityToEvmWallet,
   loadOrCreateIdentity,
   toPeerId,
   DepositsClient,
@@ -297,17 +295,17 @@ async function main() {
     // -----------------------------------------------------------------------
     phase(2, "Fund wallets and setup on-chain state");
 
-    // Create temp data dirs and derive wallet addresses from Ed25519 identities
+    // Create temp data dirs and derive wallet addresses from secp256k1 identities
     sellerDataDir = await mkdtemp(join(tmpdir(), "antseed-e2e-seller-"));
     buyerDataDir = await mkdtemp(join(tmpdir(), "antseed-e2e-buyer-"));
 
     const sellerIdentity = await loadOrCreateIdentity(sellerDataDir);
     const buyerIdentity = await loadOrCreateIdentity(buyerDataDir);
 
-    sellerAddress = identityToEvmAddress(sellerIdentity);
-    buyerAddress = identityToEvmAddress(buyerIdentity);
-    sellerPrivateKey = identityToEvmWallet(sellerIdentity).privateKey;
-    buyerPrivateKey = identityToEvmWallet(buyerIdentity).privateKey;
+    sellerAddress = sellerIdentity.wallet.address;
+    buyerAddress = buyerIdentity.wallet.address;
+    sellerPrivateKey = sellerIdentity.wallet.privateKey;
+    buyerPrivateKey = buyerIdentity.wallet.privateKey;
 
     info(`Seller EVM: ${sellerAddress}`);
     info(`Buyer  EVM: ${buyerAddress}`);
@@ -326,19 +324,12 @@ async function main() {
 
     // Register seller identity via ERC-8004 registry
     info("Registering seller identity...");
-    const sellerPeerIdHex = Buffer.from(sellerIdentity.publicKey).toString("hex");
-    // register() returns the new agentId — capture it from the transaction receipt
-    const registerOutput = castSend(
+    castSend(
       [REGISTRY_ADDRESS, "register()"],
       sellerPrivateKey
     );
     // The agentId is 1 for the first registration on a fresh chain
     const sellerAgentId = "1";
-    // Set the peerId as metadata on the registry
-    castSend(
-      [REGISTRY_ADDRESS, "setMetadata(uint256,string,bytes)", sellerAgentId, "antseed.peerId", `0x${sellerPeerIdHex}`],
-      sellerPrivateKey
-    );
     pass("Seller identity registered (ERC-8004)");
 
     // Seller stakes (agentId, amount)
@@ -376,7 +367,7 @@ async function main() {
 
     // Start an isolated local DHT bootstrap node
     bootstrap = new DHTNode({
-      peerId: toPeerId("0".repeat(64)),
+      peerId: toPeerId("0".repeat(40)),
       port: 0,
       bootstrapNodes: [],
       reannounceIntervalMs: 60_000,

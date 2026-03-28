@@ -116,7 +116,7 @@ At a high level, `@antseed/node` currently enforces:
 - Signed connection intro envelopes with replay protection
 - Frame, stream, and upload limits to reduce DoS exposure
 - Payment-aware request gating (`402` if no session is reserved when payments are enabled)
-- Signed bilateral receipts (Ed25519) plus on-chain payment authorization (ECDSA)
+- Signed bilateral receipts (secp256k1) plus on-chain payment authorization (ECDSA)
 
 ## Node Configuration
 
@@ -165,10 +165,10 @@ const node = new AntseedNode({
 
 ## Identity Storage
 
-Every node has an Ed25519 identity keypair. The private key seed (32 bytes, stored as 64 hex characters) serves two roles:
+Every node has a secp256k1 identity keypair. The private key (32 bytes, stored as 64 hex characters) serves two roles:
 
-1. **P2P identity** — signs metadata, connection handshakes, and metering receipts. Your PeerId is the hex-encoded public key.
-2. **On-chain wallet** — an EVM wallet (secp256k1) is deterministically derived from the Ed25519 seed via `keccak256(seed || "evm-payment-key")`. This wallet holds deposits, stakes, receives seller earnings, and signs payment authorizations.
+1. **P2P identity** — signs metadata, connection handshakes, and metering receipts. Your PeerId is the EVM address (40 hex characters) derived from the public key.
+2. **On-chain wallet** — the same secp256k1 key is used as the EVM wallet. This wallet holds deposits, stakes, receives seller earnings, and signs payment authorizations.
 
 > **Important:** Losing your identity key means losing both your peer identity and access to any on-chain funds tied to the derived wallet.
 

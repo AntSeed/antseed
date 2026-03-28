@@ -66,7 +66,7 @@ describe('PaymentMux', () => {
         metadataHash: '0x' + 'cc'.repeat(32),
         metadata: '0x' + 'dd'.repeat(128),
         spendingAuthSig: '0x' + 'ee'.repeat(65),
-        buyerEvmAddr: '0x' + 'ab'.repeat(20),
+
       };
       const frame: FramedMessage = {
         type: MessageType.SpendingAuth,
@@ -104,7 +104,7 @@ describe('PaymentMux', () => {
       mux.onPaymentRequired(handler);
 
       const payload = {
-        sellerEvmAddr: '0x' + 'ab'.repeat(20),
+
         minBudgetPerRequest: '10000',
         suggestedAmount: '100000',
         requestId: 'req-123',
@@ -153,7 +153,7 @@ describe('PaymentMux', () => {
         metadataHash: '0x' + 'cc'.repeat(32),
         metadata: '0x' + 'dd'.repeat(128),
         spendingAuthSig: '0x' + 'ee'.repeat(65),
-        buyerEvmAddr: '0x' + 'ab'.repeat(20),
+
       };
       const frame: FramedMessage = {
         type: MessageType.SpendingAuth,
@@ -196,7 +196,7 @@ describe('PaymentMux', () => {
         metadataHash: '0x' + 'cc'.repeat(32),
         metadata: '0x' + 'dd'.repeat(128),
         spendingAuthSig: '0x' + 'ee'.repeat(65),
-        buyerEvmAddr: '0x' + 'ab'.repeat(20),
+
       };
       mux.sendSpendingAuth(payload);
 

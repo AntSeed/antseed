@@ -108,16 +108,14 @@ totalCostUSDC   = sum(requestCosts) * 1_000_000  (6-decimal USDC)
 
 ## Wallet
 
-Each node's EVM wallet is derived deterministically from its Ed25519 identity key:
+Each node's identity key is a secp256k1 private key. The EVM address derived from this key serves as both the PeerId on the network and the on-chain wallet address.
 
-```text title="identity → wallet derivation"
-Ed25519 private key (32 bytes)
-  → domain-separated hash: keccak256("antseed-evm-v1" || ed25519PrivateKey)
-  → secp256k1 private key (32 bytes)
-  → EVM address (20 bytes)
+```text title="identity = wallet"
+secp256k1 private key (32 bytes)
+  → EVM address (20 bytes) = PeerId
 ```
 
-The signing identity (Ed25519) and the funding wallet (secp256k1/EVM) are separate key types derived from the same seed. The Ed25519 key signs protocol messages (handshakes, receipts). The EVM key signs EIP-712 messages (ReserveAuth, SpendingAuth).
+There is no derivation step or two-key system. One secp256k1 key signs everything — protocol messages (using EIP-191 `personal_sign` with domain tags like `"antseed-data-v1:"` and `"antseed-msg-v1:"`), EIP-712 payment messages (ReserveAuth, SpendingAuth), and on-chain transactions. Verification uses `ecrecover`.
 
 ### Funding
 

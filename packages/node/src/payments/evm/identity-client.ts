@@ -31,10 +31,10 @@ export class IdentityClient extends BaseEvmClient {
 
   /**
    * Register a new agent identity via ERC-8004 IdentityRegistry.
-   * Optionally sets the antseed.peerId metadata key.
-   * Returns the new agentId.
+   * Returns the new agentId. The peerId is the signer's EVM address
+   * (ownerOf(agentId)), so no separate metadata storage is needed.
    */
-  async register(signer: AbstractSigner, peerId?: string, metadataURI?: string): Promise<number> {
+  async register(signer: AbstractSigner, metadataURI?: string): Promise<number> {
     const connected = this._ensureConnected(signer);
     const signerAddress = await connected.getAddress();
     const contract = new Contract(this._contractAddress, IDENTITY_REGISTRY_ABI, connected);
@@ -53,18 +53,7 @@ export class IdentityClient extends BaseEvmClient {
     const transferTopic = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
     const transferLog = receipt.logs.find((l) => l.topics?.[0] === transferTopic);
     const rawAgentId = transferLog?.topics?.[3];
-    const agentId = rawAgentId ? Number(BigInt(rawAgentId)) : 0;
-
-    // Set peerId metadata if provided
-    if (peerId && agentId > 0) {
-      const encoder = new TextEncoder();
-      const peerIdBytes = encoder.encode(peerId);
-      const metaNonce = await this._reserveNonce(signerAddress);
-      const metaTx = await contract.getFunction('setMetadata')(agentId, 'antseed.peerId', peerIdBytes, { nonce: metaNonce });
-      await metaTx.wait();
-    }
-
-    return agentId;
+    return rawAgentId ? Number(BigInt(rawAgentId)) : 0;
   }
 
   async setMetadata(signer: AbstractSigner, agentId: number, key: string, value: Uint8Array): Promise<string> {

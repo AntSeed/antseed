@@ -4,7 +4,7 @@ import type { PeerInfo } from '@antseed/node'
 import { selectCandidatePeersForRouting, rewriteServiceInBody } from './buyer-proxy.js'
 
 function makePeer(seed: string, providers: string[]): PeerInfo {
-  const repeated = (seed.repeat(64) + 'a'.repeat(64)).slice(0, 64)
+  const repeated = (seed.repeat(40) + 'a'.repeat(40)).slice(0, 40)
   return {
     peerId: repeated as PeerInfo['peerId'],
     lastSeen: Date.now(),

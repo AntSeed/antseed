@@ -8,6 +8,7 @@ import type { Identity, IdentityStore } from "./p2p/identity.js";
 import { loadOrCreateIdentity } from "./p2p/identity.js";
 import type { PeerId } from "./types/peer.js";
 import type { PeerInfo, TokenPricingUsdPerMillion } from "./types/peer.js";
+import { peerIdToAddress } from "./types/peer.js";
 import {
   ANTSEED_STREAMING_RESPONSE_HEADER,
   type SerializedHttpRequest,
@@ -53,7 +54,7 @@ import type {
 } from "./interfaces/seller-provider.js";
 import type { Router } from "./interfaces/buyer-router.js";
 import { NatTraversal } from "./p2p/nat-traversal.js";
-import { signUtf8Ed25519 } from "./p2p/identity.js";
+import { signUtf8 } from "./p2p/identity.js";
 // verifyMessage/getBytes removed — no longer needed after SpendingAuth refactor
 import {
   BalanceManager,
@@ -69,7 +70,6 @@ import { debugLog, debugWarn } from "./utils/debug.js";
 import { parsePublicAddress } from "./discovery/public-address.js";
 import { BuyerPaymentManager, type BuyerPaymentConfig } from "./payments/buyer-payment-manager.js";
 import { SellerPaymentManager, type SellerPaymentConfig } from "./payments/seller-payment-manager.js";
-import { identityToEvmAddress } from "./payments/evm/keypair.js";
 import { IdentityClient } from "./payments/evm/identity-client.js";
 import { StatsClient } from "./payments/evm/stats-client.js";
 import { verifyStats } from "./discovery/stats-verifier.js";
@@ -584,7 +584,6 @@ export class AntseedNode extends EventEmitter {
     // Optional stats verification: replace claimed data with verified on-chain data
     if (this._statsClient && this._stakingClient) {
       for (const p of peers) {
-        if (!p.evmAddress) continue;
         try {
           const metadata: import("./discovery/peer-metadata.js").PeerMetadata = {
             peerId: p.peerId,
@@ -593,7 +592,6 @@ export class AntseedNode extends EventEmitter {
             region: "",
             timestamp: 0,
             signature: "",
-            evmAddress: p.evmAddress,
             onChainReputation: p.onChainReputation,
             onChainSessionCount: p.onChainSessionCount,
             onChainDisputeCount: p.onChainDisputeCount,
@@ -880,7 +878,7 @@ export class AntseedNode extends EventEmitter {
     if (response.statusCode === 402 && needsPaymentNegotiation && !externalSpendingAuth) {
       const manualApproval = await this._isManualApprovalEnabled();
       const directPaymentBody = parsePaymentRequiredBody(response.body);
-      const responseAlreadyHasRequirements = Boolean(directPaymentBody?.sellerEvmAddr);
+      const responseAlreadyHasRequirements = Boolean(directPaymentBody?.minBudgetPerRequest);
       const waitMs = manualApproval ? 10_000 : 2_000;
       const buffered = responseAlreadyHasRequirements
         ? null
@@ -897,7 +895,6 @@ export class AntseedNode extends EventEmitter {
           const enrichedBody = JSON.stringify({
             error: 'payment_required',
             peerId: peer.peerId,
-            sellerEvmAddr: buffered.sellerEvmAddr,
             minBudgetPerRequest: buffered.minBudgetPerRequest,
             suggestedAmount: buffered.suggestedAmount,
           });
@@ -922,7 +919,7 @@ export class AntseedNode extends EventEmitter {
 
       // Check on-chain balance — if insufficient, return 402 instead of failing mid-negotiate
       try {
-        const buyerAddr = identityToEvmAddress(this._identity);
+        const buyerAddr = this._identity.wallet.address;
         const balance = await this._depositsClient.getBuyerBalance(buyerAddr);
         if (balance.available <= 0n) {
           return returnPaymentRequired('insufficient credits');
@@ -941,7 +938,6 @@ export class AntseedNode extends EventEmitter {
         this._bufferedPaymentRequired.set(peer.peerId, buffered);
       } else if (responseAlreadyHasRequirements && directPaymentBody) {
         const bodyRequirements: PaymentRequiredPayload = {
-          sellerEvmAddr: String(directPaymentBody.sellerEvmAddr ?? ''),
           minBudgetPerRequest: String(directPaymentBody.minBudgetPerRequest ?? '10000'),
           suggestedAmount: String(directPaymentBody.suggestedAmount ?? '100000'),
           requestId: req.requestId,
@@ -1125,7 +1121,7 @@ export class AntseedNode extends EventEmitter {
     if (this._metering) {
       this._receiptGenerator = new ReceiptGenerator({
         peerId: identity.peerId,
-        sign: (message: string) => signUtf8Ed25519(identity.privateKey, message),
+        sign: (message: string) => signUtf8(identity.wallet, message),
       });
     }
 
@@ -1273,7 +1269,7 @@ export class AntseedNode extends EventEmitter {
           dataDir: paymentsDir,
         };
         this._buyerPaymentManager = new BuyerPaymentManager(identity, buyerPaymentConfig, this._sessionStore);
-        debugLog(`[Node] Buyer payment manager initialized (wallet=${identityToEvmAddress(identity).slice(0, 10)}... chainId=${buyerPaymentConfig.chainId} deposits=${buyerPaymentConfig.depositsContractAddress.slice(0, 10)}...)`);
+        debugLog(`[Node] Buyer payment manager initialized (wallet=${identity.wallet.address.slice(0, 10)}... chainId=${buyerPaymentConfig.chainId} deposits=${buyerPaymentConfig.depositsContractAddress.slice(0, 10)}...)`);
       }
     }
 
@@ -1292,7 +1288,7 @@ export class AntseedNode extends EventEmitter {
       paymentMux.onSpendingAuth((payload) => {
         // handleSpendingAuth handles both initial (sends AuthAck) and subsequent
         // per-request auths (validates monotonic increase, no AuthAck).
-        void spm.handleSpendingAuth(buyerPeerId, payload.buyerEvmAddr, payload, paymentMux)
+        void spm.handleSpendingAuth(buyerPeerId, payload, paymentMux)
           .then((status) => {
             if (status === 'rejected') {
               debugWarn(`[Node] SpendingAuth rejected for buyer ${buyerPeerId.slice(0, 12)}... — notifying via payment:auth-rejected event`);
@@ -1331,7 +1327,6 @@ export class AntseedNode extends EventEmitter {
           debugLog(`[Node] No payment session for ${buyerPeerId.slice(0, 12)}... — sending 402 + PaymentRequired`);
           const paymentBody = JSON.stringify({
             error: 'payment_required',
-            sellerEvmAddr: requirements.sellerEvmAddr,
             minBudgetPerRequest: requirements.minBudgetPerRequest,
             suggestedAmount: requirements.suggestedAmount,
           });
@@ -2222,8 +2217,6 @@ export class AntseedNode extends EventEmitter {
       metadataHash: string;
       metadata: string;
       spendingAuthSig: string;
-      buyerEvmAddr: string;
-      sellerEvmAddr?: string;
       reserveSalt?: string;
       reserveMaxAmount?: string;
       reserveDeadline?: number;
@@ -2239,14 +2232,13 @@ export class AntseedNode extends EventEmitter {
 
     // Store session so handleAuthAck can find it
     if (this._sessionStore) {
-      const sellerEvmAddr = payload.sellerEvmAddr ?? '';
       const reserveDeadline = payload.reserveDeadline ?? (Math.floor(Date.now() / 1000) + 3600);
       this._sessionStore.upsertSession({
         sessionId: payload.channelId,
         peerId: peer.peerId,
         role: 'buyer',
-        sellerEvmAddr,
-        buyerEvmAddr: payload.buyerEvmAddr,
+        sellerEvmAddr: peerIdToAddress(peer.peerId),
+        buyerEvmAddr: this._identity?.wallet.address ?? '',
         nonce: 0,
         authMax: payload.cumulativeAmount,
         deadline: reserveDeadline,
@@ -2276,7 +2268,7 @@ export class AntseedNode extends EventEmitter {
 
     this.emit('payment:signed', {
       peerId: peer.peerId,
-      sellerEvmAddr: payload.sellerEvmAddr ?? '',
+      sellerEvmAddr: peerIdToAddress(peer.peerId),
       amount: payload.cumulativeAmount,
     });
   }
@@ -2351,7 +2343,7 @@ export class AntseedNode extends EventEmitter {
 
     const approvalInfo = {
       peerId: peer.peerId,
-      sellerEvmAddr: requirements.sellerEvmAddr,
+      sellerEvmAddr: peerIdToAddress(peer.peerId),
       minBudgetPerRequest: requirements.minBudgetPerRequest,
       suggestedAmount: amount.toString(),
     };
@@ -2359,7 +2351,7 @@ export class AntseedNode extends EventEmitter {
     this.emit('payment:required', approvalInfo);
 
     try {
-      await bpm.authorizeSpending(peer.peerId, requirements.sellerEvmAddr, pmux, amount);
+      await bpm.authorizeSpending(peer.peerId, pmux, amount);
       debugLog(`[Node] SpendingAuth sent to seller ${peer.peerId.slice(0, 12)}..., waiting for AuthAck...`);
 
       await this._waitForLockConfirmation(peer.peerId);
@@ -2369,7 +2361,7 @@ export class AntseedNode extends EventEmitter {
       // Notify listeners what was signed
       this.emit('payment:signed', {
         peerId: peer.peerId,
-        sellerEvmAddr: requirements.sellerEvmAddr,
+        sellerEvmAddr: peerIdToAddress(peer.peerId),
         amount: amount.toString(),
       });
     } catch (err) {
@@ -2480,7 +2472,6 @@ export class AntseedNode extends EventEmitter {
       defaultOutputUsdPerMillion: firstProvider?.defaultPricing.outputUsdPerMillion,
       maxConcurrency: firstProvider?.maxConcurrency,
       currentLoad: firstProvider?.currentLoad,
-      evmAddress: result.metadata.evmAddress,
       onChainReputation: result.metadata.onChainReputation,
       onChainSessionCount: result.metadata.onChainSessionCount,
       onChainDisputeCount: result.metadata.onChainDisputeCount,

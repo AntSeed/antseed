@@ -458,8 +458,6 @@ describe('Streaming payment flow E2E', () => {
     // Parse the PaymentRequired body from the 402
     const body402 = JSON.parse(new TextDecoder().decode(res1.body)) as Record<string, unknown>;
     expect(body402.error).toBe('payment_required');
-    expect(body402.sellerEvmAddr).toBeDefined();
-
     // Now construct a pre-signed SpendingAuth header.
     // In the real desktop flow, the external signer (wallet) would sign this.
     // Here, we use the buyer's payment manager to sign it ourselves.
@@ -467,11 +465,11 @@ describe('Streaming payment flow E2E', () => {
     expect(bpm).not.toBeNull();
 
     // Use the BuyerPaymentManager to create a signed auth manually
-    const { signReserveAuth, makeSessionsDomain, identityToEvmAddress, identityToEvmWallet, computeChannelId, ZERO_METADATA_HASH } = await import('@antseed/node');
+    const { signReserveAuth, makeSessionsDomain, computeChannelId, ZERO_METADATA_HASH } = await import('@antseed/node');
     const buyerIdentity = buyerNode!.identity!;
-    const buyerSigner = identityToEvmWallet(buyerIdentity);
-    const buyerEvmAddr = identityToEvmAddress(buyerIdentity);
-    const sellerEvmAddr = body402.sellerEvmAddr as string;
+    const buyerSigner = buyerIdentity.wallet;
+    const buyerEvmAddr = buyerIdentity.wallet.address;
+    const sellerEvmAddr = sellerNode!.identity!.wallet.address;
 
     const salt = '0x' + Array.from(new Uint8Array(32), () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0')).join('');
     const channelId = computeChannelId(buyerEvmAddr, sellerEvmAddr, salt);

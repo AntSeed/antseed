@@ -3,7 +3,7 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { getGlobalOptions } from './types.js';
 import { loadConfig } from '../../config/loader.js';
-import { loadOrCreateIdentity, identityToEvmAddress } from '@antseed/node';
+import { loadOrCreateIdentity } from '@antseed/node';
 import { checkSellerReadiness, checkBuyerReadiness } from '@antseed/node/payments';
 import {
   createDepositsClient,
@@ -27,7 +27,7 @@ export function registerSetupCommand(program: Command): void {
       }
 
       const identity = await loadOrCreateIdentity(globalOpts.dataDir);
-      const address = identityToEvmAddress(identity);
+      const address = identity.wallet.address;
 
       console.log(chalk.bold('\nAntseed Setup\n'));
       console.log(chalk.dim(`Wallet: ${address}`));

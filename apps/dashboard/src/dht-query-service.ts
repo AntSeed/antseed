@@ -146,7 +146,7 @@ export class DHTQueryService {
     }
 
     // Standalone mode: run our own read-only DHT node for discovery.
-    const randomId = randomBytes(32).toString('hex');
+    const randomId = randomBytes(20).toString('hex');
     const peerId = toPeerId(randomId);
 
     const userBootstrap = this.config.network?.bootstrapNodes?.length
