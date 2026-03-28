@@ -6,7 +6,7 @@ tags: [decentralized-ai, P2P AI, OpenRouter alternative, AI infrastructure, perm
 description: OpenRouter decides what you're allowed to route to. AntSeed doesn't. A permissionless, peer-to-peer AI network with the same OpenAI-compatible interface — no gatekeeper, no platform fee, no single point of failure.
 keywords: [OpenRouter alternative, permissionless AI, decentralized AI inference, P2P LLM routing, AI API gateway alternative, OpenRouter vs AntSeed, decentralized AI marketplace, AI agent marketplace, permissionless AI marketplace, Bittensor alternative]
 image: /og-image.jpg
-date: 2026-03-27
+date: 2026-03-28
 ---
 
 AntSeed is a peer-to-peer AI services network — like OpenRouter, but permissionless. Same OpenAI-compatible interface, no central gatekeeper, no editorial control over what you can route to.
