@@ -7,22 +7,21 @@ hide_title: true
 
 # Security
 
-AntSeed separates signing authority from fund custody. The node identity that signs protocol messages and payment authorizations never holds funds. The wallet that holds funds never touches the application.
+AntSeed separates signing authority from fund custody. The node identity that signs protocol messages and payment authorizations never holds funds directly. The wallet that holds your money deposits into a contract and never touches the node.
 
-## Identity Derivation
+## Identity
 
-A single Ed25519 seed deterministically produces two independent keypairs:
+Each node has a single secp256k1 private key. The corresponding EVM address is both the PeerId on the network and the on-chain signing identity. There is no key derivation step and no two-key system — one key handles everything.
 
-| Keypair | Derivation | Purpose |
-|---|---|---|
-| **P2P identity** | Ed25519 directly from seed | Peer authentication, metadata signing, metering receipts |
-| **EVM wallet** | `secp256k1` via `keccak256(ed25519_seed \|\| "evm-payment-key")` | EIP-712 payment signatures (ReserveAuth, SpendingAuth) |
-
-The domain-separated derivation ensures the two keypairs are cryptographically independent. One seed, deterministic recovery, no additional key management.
+| Function | Mechanism |
+|---|---|
+| **P2P identity** | EIP-191 `personal_sign` with domain tags (`"antseed-data-v1:"`, `"antseed-msg-v1:"`), verified via `ecrecover` |
+| **Payment authorization** | EIP-712 signatures (ReserveAuth, SpendingAuth) |
+| **PeerId** | EVM address (40 hex chars, no `0x` prefix) |
 
 ## Signing Identity vs Funding Wallet
 
-The EVM wallet derived from the node seed is the **signing identity**. It is used exclusively to sign EIP-712 payment messages (`ReserveAuth` to authorize session budgets, `SpendingAuth` to authorize cumulative spending). It never holds funds.
+The node's secp256k1 key is the **signing identity**. It signs both protocol messages (handshakes, metadata, metering receipts) and EIP-712 payment messages (`ReserveAuth` to authorize session budgets, `SpendingAuth` to authorize cumulative spending). It never holds funds directly.
 
 The **funding wallet** is any external wallet the user controls — hardware wallet, multisig, or EOA. It deposits USDC into the AntseedDeposits contract via `depositFor(buyer, amount)`, where `buyer` is the signing identity's address. The funding wallet has no ongoing role after deposit.
 
@@ -36,7 +35,7 @@ This separation means:
 
 | Environment | Protection |
 |---|---|
-| **Desktop app** | Electron `safeStorage` API encrypts the Ed25519 seed at rest using the OS keychain (macOS Keychain, Windows Credential Manager, Linux libsecret). On first launch after upgrade, plaintext `identity.key` is auto-encrypted and the original deleted. |
+| **Desktop app** | Electron `safeStorage` API encrypts the secp256k1 private key at rest using the OS keychain (macOS Keychain, Windows Credential Manager, Linux libsecret). On first launch after upgrade, plaintext `identity.key` is auto-encrypted and the original deleted. |
 | **CLI / Server** | Plaintext `identity.key` in the data directory (`~/.antseed/`). Use `ANTSEED_IDENTITY_HEX` env var with a secrets manager for production deployments. |
 
 ## Auto vs Manual Approval
@@ -66,7 +65,7 @@ In the common attack surface — node compromise — the funding wallet is never
 
 All communication happens over an untrusted network. Every trust-critical operation is cryptographically verified:
 
-- **Ed25519 peer identity** — every node has a unique keypair; metadata, connection handshakes, and metering receipts are all signed
+- **secp256k1 peer identity** — every node has a unique keypair; metadata, connection handshakes, and metering receipts are all signed with EIP-191 `personal_sign`
 - **Replay-resistant authentication** — connection envelopes include nonce + timestamp with skew checks
 - **Bounded resource usage** — frame sizes, upload caps, stream durations, and concurrent connections are all hard-limited
 - **On-chain settlement** — EIP-712 signed ReserveAuth and SpendingAuth with per-seller, per-session, time-bounded authorization
@@ -76,10 +75,10 @@ All communication happens over an untrusted network. Every trust-critical operat
 | Stage | Controls |
 |---|---|
 | **Discovery** | Signed metadata with freshness checks, topic normalization, private IP filtering |
-| **Connection** | Ed25519-signed intro envelopes with nonce replay guard, timestamp skew rejection, per-IP connection cap (10) |
+| **Connection** | EIP-191 signed intro envelopes with nonce replay guard, timestamp skew rejection, per-IP connection cap (10) |
 | **Transport** | Frame type and size validation (64 MiB max), fail-closed on decode errors, request and stream timeouts |
 | **Upload/Stream** | Per-request cap (32 MiB), global pending cap (256 MiB), upload timeout (120s), stream buffer (16 MiB) and duration (5 min) limits |
-| **Metering** | Bilateral Ed25519-signed receipts with running totals, auto-ack enabled by default |
+| **Metering** | Bilateral EIP-191 signed receipts with running totals, auto-ack enabled by default |
 | **Payment** | 402 gating until ReserveAuth is committed on-chain via `reserve()`, bounded by maxAmount and deadline |
 
 ## Default Limits
@@ -103,4 +102,4 @@ All communication happens over an untrusted network. Every trust-critical operat
 4. Keep signature verification and stale metadata rejection enabled (both on by default).
 5. Prefer WebRTC transport for end-to-end encryption.
 6. On servers, use `ANTSEED_IDENTITY_HEX` with a secrets manager instead of storing keys on disk.
-7. Back up your Ed25519 seed — it is the only way to recover both your PeerId and your signing identity address.
+7. Back up your secp256k1 private key — it is the only way to recover your PeerId (EVM address) and on-chain wallet.

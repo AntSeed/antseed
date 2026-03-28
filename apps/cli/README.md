@@ -175,7 +175,7 @@ After `antseed connect` is running, you can override the service or peer for all
 antseed connection set --service claude-opus-4-6
 
 # Pin all requests to a specific peer (bypasses router for peer selection)
-antseed connection set --peer <64-char-hex-peer-id>
+antseed connection set --peer <40-char-hex-peer-id>
 
 # Combine both in one command
 antseed connection set --service claude-sonnet-4-6 --peer <peer-id>

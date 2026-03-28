@@ -20,7 +20,7 @@ hide_title: true
 
 | Variable | Description |
 |---|---|
-| `ANTSEED_IDENTITY_HEX` | Ed25519 private key seed (64 hex chars). When set, used instead of `identity.key` file. Cleared from process environment after read. |
+| `ANTSEED_IDENTITY_HEX` | secp256k1 private key (64 hex chars). When set, used instead of `identity.key` file. Cleared from process environment after read. |
 | `ANTSEED_DEBUG` | Enable verbose runtime logs (`0` or `1`) |
 | `ANTSEED_ENV_FILE` | Override env file path for runtime env loading |
 | `ANTSEED_ALLOWED_SERVICES` | Comma-separated list of service names to announce |

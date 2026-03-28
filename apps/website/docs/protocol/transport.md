@@ -51,22 +51,23 @@ Max payload size: 64 MB. Frames exceeding this are rejected.
 | 0xF0 | Disconnect | Graceful disconnect |
 | 0xFF | Error | Protocol-level error |
 
-## Handshake (Ed25519 Challenge-Response)
+## Handshake (EIP-191 Challenge-Response)
 
 ```text title="handshake flow"
 Initiator                       Responder
   │                               │
   ├── HandshakeInit ─────────────>│
-  │   (pubKey + nonce + sig)      │  128 bytes
+  │   (evmAddress + nonce + sig)  │
   │                               │
   │<──── HandshakeAck ────────────┤
-  │   (pubKey + nonce echo + sig) │  128 bytes
+  │   (evmAddress + nonce echo    │
+  │    + sig)                     │
   │                               │
   │   Both sides: Authenticated   │
   └───────────────────────────────┘
 ```
 
-Each side sends a 32-byte random nonce signed with its Ed25519 private key. The responder echoes the initiator's nonce to prove it received the challenge. Handshake timeout: 10 seconds.
+Each side sends a 32-byte random nonce signed with its secp256k1 private key via EIP-191 `personal_sign`. The responder echoes the initiator's nonce to prove it received the challenge. Verification uses `ecrecover` to confirm the signer matches the claimed EVM address. Handshake timeout: 10 seconds.
 
 ## Keepalive
 

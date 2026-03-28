@@ -77,7 +77,7 @@ AntSeed's protocol has five layers, each handling a piece of what centralized ga
 
 **Discovery** uses a BitTorrent-style DHT. Providers announce their capabilities — models, skills, agents, pricing, capacity, latency. Buyers query the DHT to find providers that match their needs. No central registry required.
 
-**Transport** runs on WebRTC data channels with TCP fallback. Connections are direct, peer-to-peer, with Ed25519 authentication. Every connection is cryptographically verified.
+**Transport** runs on WebRTC data channels with TCP fallback. Connections are direct, peer-to-peer, with secp256k1/EIP-191 authentication. Every connection is cryptographically verified.
 
 **Metering** tracks token usage with provider-signed receipts. Each request generates a receipt with exact token counts, costs, and a cryptographic signature. Both sides have proof of what happened.
 

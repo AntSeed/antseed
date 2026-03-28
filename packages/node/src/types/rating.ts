@@ -10,7 +10,7 @@ export interface PeerRating {
   dimensions: Record<RatingDimension, 1 | 2 | 3 | 4 | 5>;
   comment?: string;
   timestamp: number;
-  /** Ed25519 signature (hex) */
+  /** secp256k1 signature (hex) */
   signature: string;
 }
 

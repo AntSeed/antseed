@@ -217,14 +217,14 @@ export function registerConnectCommand(program: Command): void {
     .option('--instance <id>', 'use a configured plugin instance by ID')
     .option('--max-input-usd-per-million <number>', 'runtime-only max input pricing override in USD per 1M tokens', parseFloat)
     .option('--max-output-usd-per-million <number>', 'runtime-only max output pricing override in USD per 1M tokens', parseFloat)
-    .option('--peer <peerId>', 'pin all requests to a specific peer ID (64-char hex), bypassing the router')
+    .option('--peer <peerId>', 'pin all requests to a specific peer ID (40-char hex EVM address), bypassing the router')
     .action(async (options) => {
       const globalOpts = getGlobalOptions(program)
       const config = await loadConfig(globalOpts.config)
 
       const pinnedPeerId = options.peer as string | undefined
-      if (pinnedPeerId !== undefined && !/^[0-9a-f]{64}$/i.test(pinnedPeerId)) {
-        console.error(chalk.red('Error: --peer must be a 64-character hex peer ID.'))
+      if (pinnedPeerId !== undefined && !/^(0x)?[0-9a-f]{40}$/i.test(pinnedPeerId)) {
+        console.error(chalk.red('Error: --peer must be a 40-character hex peer ID (EVM address).'))
         process.exit(1)
       }
 

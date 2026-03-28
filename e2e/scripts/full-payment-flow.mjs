@@ -295,7 +295,7 @@ async function main() {
     // -----------------------------------------------------------------------
     phase(2, "Fund wallets and setup on-chain state");
 
-    // Create temp data dirs and derive wallet addresses from Ed25519 identities
+    // Create temp data dirs and derive wallet addresses from secp256k1 identities
     sellerDataDir = await mkdtemp(join(tmpdir(), "antseed-e2e-seller-"));
     buyerDataDir = await mkdtemp(join(tmpdir(), "antseed-e2e-buyer-"));
 
