@@ -416,11 +416,12 @@ export class SellerPaymentManager {
         this._sessionStore.updateSessionStatus(channelId, 'settled', latestAuth.cumulativeAmount.toString());
       } catch (err) {
         debugWarn(`[SellerPayment] Failed to close channel: ${err instanceof Error ? err.message : err}`);
-        // Clean up even if close() failed — the channel is unusable after disconnect
+        // Keep maps intact so checkTimeouts can retry close() later
+        return;
       }
     }
 
-    // Clean up maps
+    // Clean up maps only after successful close or zero-cumulative deferral
     this._acceptedCumulative.delete(channelId);
     this._spent.delete(channelId);
     this._latestAuth.delete(channelId);
