@@ -176,10 +176,7 @@ describe('encodeMetadata / decodeMetadata', () => {
     expect(decoded.onChainDisputeCount).toBe(2);
   });
 
-  // Note: v2/v3/v4 roundtrip tests were removed because the encoder now always
-  // produces 20-byte peerIds (v6 format). Decoding old v5 packets with 32-byte
-  // peerIds is version-gated in decodeMetadata but can only be tested with
-  // hand-crafted binary fixtures, not via encode→decode roundtrips.
+  // v2/v3/v4/v5 roundtrip tests removed — pre-v6 format is rejected by the decoder.
 });
 
 describe('encodeMetadataForSigning', () => {

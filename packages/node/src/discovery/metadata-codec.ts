@@ -296,6 +296,9 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
   // version: 1 byte
   checkBounds(offset, 1, data.length);
   const version = data[offset]!;
+  if (version < 6) {
+    throw new Error(`Unsupported metadata version ${version}: pre-v6 Ed25519 format is no longer supported`);
+  }
   const hasServiceCategoryExtensions = version >= SERVICE_CATEGORIES_METADATA_VERSION;
   const hasServiceApiProtocolExtensions = version >= SERVICE_API_PROTOCOLS_METADATA_VERSION;
   const hasPublicAddressExtension = version >= PUBLIC_ADDRESS_METADATA_VERSION;
@@ -602,7 +605,7 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
     }
   }
 
-  // signature: 65 bytes (v6+ secp256k1 r+s+v) or 64 bytes (v5 Ed25519)
+  // signature: 65 bytes (secp256k1 r+s+v)
   checkBounds(offset, 65, data.length);
   const signatureBytes = data.slice(offset, offset + 65);
   const signature = bytesToHex(signatureBytes);
