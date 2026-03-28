@@ -248,7 +248,7 @@ describe('Full Payment Flow Integration', () => {
 
     await doInitialHandshake(50_000n);
 
-    const amounts: bigint[] = [0n]; // initial cumulative is 0
+    const amounts: bigint[] = [50_000n]; // initial cumulative is minBudget
 
     for (let i = 0; i < 5; i++) {
       const auth = await buyer.signPerRequestAuth(
@@ -351,8 +351,8 @@ describe('Full Payment Flow Integration', () => {
     // The SpendingAuth payload should include reserveAmount
     expect(initialAuth.reserveMaxAmount).toBe('10000000'); // maxReserveAmountUsdc
 
-    // And cumulativeAmount should be 0 (initial reserve auth)
-    expect(initialAuth.cumulativeAmount).toBe('0');
+    // And cumulativeAmount should be minBudget (initial reserve auth)
+    expect(initialAuth.cumulativeAmount).toBe('50000');
   });
 
   it('seller sends AuthAck only on first SpendingAuth, not subsequent', async () => {
@@ -388,19 +388,19 @@ describe('Full Payment Flow Integration', () => {
     expect(seller.hasSession(buyerPeerId)).toBe(false);
   });
 
-  it('zero-cumulative session settles via settleTimeout', async () => {
+  it('no-spend session settles via close with initial minBudget auth', async () => {
     const buyerPeerId = buyerIdentity.peerId;
 
     await doInitialHandshake(50_000n);
 
     // Settle without any per-request auths (no spend recorded)
-    // The initial auth now has cumulativeAmount=0, so the seller's
-    // acceptedCumulative is 0 — settleSession defers to timeout checker
-    // (neither settle nor settleTimeout is called immediately).
+    // The initial auth has cumulativeAmount=minBudget (50000), so the seller's
+    // acceptedCumulative is 50000 — settleSession calls close() with the
+    // initial auth (which carries the ReserveAuth sig).
     await seller.settleSession(buyerPeerId);
 
-    // With initial cumulative = 0, neither settle nor settleTimeout is called
-    expect(seller.sessionsClient.close).not.toHaveBeenCalled();
+    // With initial cumulative > 0, close is called
+    expect(seller.sessionsClient.close).toHaveBeenCalledOnce();
     expect(seller.sessionsClient.requestTimeout).not.toHaveBeenCalled();
   });
 

@@ -671,9 +671,9 @@ ipcMain.handle('credits:get-info', async (): Promise<{ ok: boolean; data: Credit
   }
 });
 
-// FIRST_SIGN_CAP: 1 USDC = 1,000,000 base units. Main process enforces this cap
-// to prevent a compromised renderer from signing unbounded spending authorizations.
-const MAX_SPENDING_AUTH_BASE_UNITS = 1_000_000n;
+// Max spending per session: $5 USDC = 5,000,000 base units. Main process enforces
+// this cap to prevent a compromised renderer from signing unbounded authorizations.
+const MAX_SPENDING_AUTH_BASE_UNITS = 5_000_000n;
 const DEFAULT_SPENDING_AUTH_DURATION_SECONDS = 25 * 60 * 60; // must exceed escrow SETTLE_TIMEOUT (24h)
 const BYTES32_RE = /^0x[0-9a-fA-F]{64}$/;
 
@@ -861,7 +861,7 @@ ipcMain.handle('chat:approve-payment', async (_event, conversationId: string) =>
     const deadline = Math.floor(Date.now() / 1000) + DEFAULT_SPENDING_AUTH_DURATION_SECONDS;
 
     // Sign ReserveAuth — binds channelId, maxAmount, deadline
-    const maxAmount = 1_000_000n; // $1.00 — matches FIRST_SIGN_CAP
+    const maxAmount = 5_000_000n; // $5.00 per session
     const reserveAuthSig = await signReserveAuth(wallet, sessionsDomain, {
       channelId,
       maxAmount,

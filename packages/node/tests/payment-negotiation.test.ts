@@ -36,7 +36,7 @@ const CONTRACT_ADDR = '0x' + 'dd'.repeat(20);
 
 const SAMPLE_PAYMENT_REQUIRED: PaymentRequiredPayload = {
   minBudgetPerRequest: '10000',
-  suggestedAmount: '100000',
+  suggestedAmount: '5000000',
   requestId: 'req-' + 'a'.repeat(32),
 };
 
@@ -166,7 +166,7 @@ describe('SellerPaymentManager PaymentRequired', () => {
     const req = manager.getPaymentRequirements('req-1');
     expect(req).not.toBeNull();
     expect(req.minBudgetPerRequest).toBe('10000'); // default $0.01
-    expect(req.suggestedAmount).toBe('100000'); // $0.10 default
+    expect(req.suggestedAmount).toBe('5000000'); // $0.10 default
   });
 
   it('getPaymentRequirements includes the triggering requestId', () => {
@@ -266,12 +266,12 @@ describe('SellerPaymentManager suggested amount', () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it('suggests $0.10 amount for new buyers', () => {
+  it('suggests $5.00 amount for new buyers', () => {
     const req = manager.getPaymentRequirements('req-1', 'unknown-buyer');
-    expect(req.suggestedAmount).toBe('100000'); // $0.10
+    expect(req.suggestedAmount).toBe('5000000'); // $0.10
   });
 
-  it('suggests $0.10 for returning buyers with settled sessions', () => {
+  it('suggests $5.00 for returning buyers with settled sessions', () => {
     // Insert a prior settled session
     store.upsertSession({
       sessionId: '0x' + 'aa'.repeat(32),
@@ -295,7 +295,7 @@ describe('SellerPaymentManager suggested amount', () => {
     });
 
     const req = manager.getPaymentRequirements('req-2', 'returning-buyer');
-    expect(req.suggestedAmount).toBe('100000');
+    expect(req.suggestedAmount).toBe('5000000');
   });
 
   it('includes per-direction pricing when provided', () => {

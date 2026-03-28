@@ -1264,8 +1264,8 @@ export class AntseedNode extends EventEmitter {
           identityRegistryAddress: payments.identityRegistryAddress ?? '',
           chainId: payments.chainId ?? 8453,
           defaultAuthDurationSecs: payments.defaultAuthDurationSecs ?? 90000, // Must exceed SETTLE_TIMEOUT (24h)
-          maxPerRequestUsdc: BigInt(payments.maxPerRequestUsdc ?? "100000"),  // $0.10 default
-          maxReserveAmountUsdc: BigInt(payments.maxReserveAmountUsdc ?? "1000000"),  // $1.00 default — matches FIRST_SIGN_CAP
+          maxPerRequestUsdc: BigInt(payments.maxPerRequestUsdc ?? "500000"),  // $0.50 default — covers most LLM requests
+          maxReserveAmountUsdc: BigInt(payments.maxReserveAmountUsdc ?? "5000000"),  // $5.00 default per session
           dataDir: paymentsDir,
         };
         this._buyerPaymentManager = new BuyerPaymentManager(identity, buyerPaymentConfig, this._sessionStore);
@@ -1356,14 +1356,11 @@ export class AntseedNode extends EventEmitter {
       if (this._sellerPaymentManager) {
         const session = this._sellerPaymentManager.getSessionByPeer(buyerPeerId);
         if (session) {
-          const reserveMax = this._sellerPaymentManager.getReserveMax(session.sessionId);
+          const accepted = this._sellerPaymentManager.getAcceptedCumulative(session.sessionId);
           const spent = this._sellerPaymentManager.getCumulativeSpend(session.sessionId);
-          if (reserveMax > 0n && spent >= reserveMax) {
-            // Budget exhausted — settle current session, buyer will auto-negotiate a new one
-            debugLog(`[Node] Budget exhausted for ${buyerPeerId.slice(0, 12)}... (spent=${spent} >= reserveMax=${reserveMax}) — settling and returning 402`);
-            void this._sellerPaymentManager!.settleSession(buyerPeerId).catch((err) => {
-              debugWarn(`[Node] Failed to settle exhausted session: ${err instanceof Error ? err.message : err}`);
-            });
+          if (accepted > 0n && spent >= accepted) {
+            // Budget exhausted — no remaining authorized balance
+            debugLog(`[Node] Budget exhausted for ${buyerPeerId.slice(0, 12)}... (spent=${spent} >= accepted=${accepted}) — returning 402`);
             mux.sendProxyResponse({
               requestId: request.requestId,
               statusCode: 402,
@@ -1499,10 +1496,12 @@ export class AntseedNode extends EventEmitter {
             const remainingBudget = accepted - cumulativeSpend;
             const estimatedNextRequestCost = costUsdc > 0n ? costUsdc : 1n;
             if (remainingBudget < estimatedNextRequestCost) {
-              debugLog(`[Node] Budget low for ${buyerPeerId.slice(0, 12)}... remaining=${remainingBudget} estimated=${estimatedNextRequestCost} — sending NeedAuth`);
+              // Ask for just enough to cover the next request, not 2x
+              const requiredAmount = cumulativeSpend + estimatedNextRequestCost;
+              debugLog(`[Node] Budget low for ${buyerPeerId.slice(0, 12)}... remaining=${remainingBudget} estimated=${estimatedNextRequestCost} — sending NeedAuth (required=${requiredAmount})`);
               paymentMux.sendNeedAuth({
                 channelId: session.sessionId,
-                requiredCumulativeAmount: (cumulativeSpend + estimatedNextRequestCost * 2n).toString(),
+                requiredCumulativeAmount: requiredAmount.toString(),
                 currentAcceptedCumulative: accepted.toString(),
                 deposit: session.authMax ?? '0',
               });

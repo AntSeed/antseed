@@ -88,7 +88,7 @@ describe('Cumulative SpendingAuth Integration', () => {
       10_000n,
     );
     expect(sentAuths.length).toBe(1);
-    expect(sentAuths[0].cumulativeAmount).toBe('0');
+    expect(sentAuths[0].cumulativeAmount).toBe('10000');
     expect(sentAuths[0].metadataHash).toBeTypeOf('string');
     expect(sentAuths[0].metadata).toBeTypeOf('string');
 
@@ -105,8 +105,8 @@ describe('Cumulative SpendingAuth Integration', () => {
       5_000n,   // estimatedNextCostUsdc
     );
 
-    // Cumulative amount: 0 (initial) + 3000 + 5000 = 8000
-    expect(BigInt(auth1.cumulativeAmount)).toBe(8_000n);
+    // Cumulative amount: 10000 (initial) + 3000 + 5000 = 18000
+    expect(BigInt(auth1.cumulativeAmount)).toBe(18_000n);
     const meta1 = decodeMetadataTokens(auth1.metadata);
     expect(meta1.inputTokens).toBe(500n);
     expect(meta1.outputTokens).toBe(200n);
@@ -121,8 +121,8 @@ describe('Cumulative SpendingAuth Integration', () => {
       6_000n,
     );
 
-    // Cumulative amount: 8000 + 4000 + 6000 = 18000
-    expect(BigInt(auth2.cumulativeAmount)).toBe(18_000n);
+    // Cumulative amount: 18000 + 4000 + 6000 = 28000
+    expect(BigInt(auth2.cumulativeAmount)).toBe(28_000n);
     // Cumulative tokens: 500 + 300 = 800 input, 200 + 150 = 350 output
     const meta2 = decodeMetadataTokens(auth2.metadata);
     expect(meta2.inputTokens).toBe(800n);
@@ -137,8 +137,8 @@ describe('Cumulative SpendingAuth Integration', () => {
       3_000n,
     );
 
-    // Cumulative amount: 18000 + 2000 + 3000 = 23000
-    expect(BigInt(auth3.cumulativeAmount)).toBe(23_000n);
+    // Cumulative amount: 28000 + 2000 + 3000 = 33000
+    expect(BigInt(auth3.cumulativeAmount)).toBe(33_000n);
     // Cumulative tokens: 800 + 200 = 1000 input, 350 + 100 = 450 output
     const meta3 = decodeMetadataTokens(auth3.metadata);
     expect(meta3.inputTokens).toBe(1000n);
@@ -244,7 +244,8 @@ describe('Cumulative SpendingAuth Integration', () => {
     );
 
     // Verify the sign succeeded and returned updated cumulative values
-    expect(BigInt(auth.cumulativeAmount)).toBe(10_000n);
+    // Initial (10000) + addedCost (5000) + estimatedNext (5000) = 20000
+    expect(BigInt(auth.cumulativeAmount)).toBe(20_000n);
     const authMeta = decodeMetadataTokens(auth.metadata);
     expect(authMeta.inputTokens).toBe(100n);
     expect(authMeta.outputTokens).toBe(50n);

@@ -152,8 +152,8 @@ export class BuyerPaymentManager {
     };
     const reserveAuthSig = await signReserveAuth(this._signer, sessionsDomain, reserveMsg);
 
-    // Initialize cumulative maps at 0 — first per-request auth will increment
-    this._cumulativeAmount.set(sellerPeerId, 0n);
+    // Initialize cumulative amount to minBudgetPerRequest so the first request is covered
+    this._cumulativeAmount.set(sellerPeerId, minBudgetPerRequest);
     this._metadata.set(sellerPeerId, { ...ZERO_METADATA });
 
     // Store session (sessionId in store maps to channelId)
@@ -165,7 +165,7 @@ export class BuyerPaymentManager {
       sellerEvmAddr: peerIdToAddress(sellerPeerId),
       buyerEvmAddr: this._identity.wallet.address,
       nonce: 0,
-      authMax: '0',
+      authMax: minBudgetPerRequest.toString(),
       deadline,
       previousSessionId: '0x' + '0'.repeat(64),
       previousConsumption: '0',
@@ -186,7 +186,7 @@ export class BuyerPaymentManager {
     // Send SpendingAuth via PaymentMux — reserve carries ReserveAuth sig
     paymentMux.sendSpendingAuth({
       channelId,
-      cumulativeAmount: '0',
+      cumulativeAmount: minBudgetPerRequest.toString(),
       metadataHash: ZERO_METADATA_HASH,
       metadata: '',
       spendingAuthSig: reserveAuthSig,

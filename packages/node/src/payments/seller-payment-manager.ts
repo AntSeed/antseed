@@ -543,7 +543,7 @@ export class SellerPaymentManager {
     return this._reserveMax.get(sessionId) ?? 0n;
   }
 
-  private static readonly DEFAULT_SUGGESTED_AMOUNT = 100_000n; // $0.10
+  private static readonly DEFAULT_SUGGESTED_AMOUNT = 5_000_000n; // $5.00 — matches buyer's default maxReserveAmountUsdc
 
   /**
    * Build the PaymentRequired payload for a buyer that doesn't have a session.
