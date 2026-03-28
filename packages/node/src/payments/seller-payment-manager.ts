@@ -66,7 +66,7 @@ export class SellerPaymentManager {
   /** channelId -> latest buyer-signed auth (both sigs + cumulative values + metadata) for settle/close */
   private readonly _latestAuth = new Map<string, LatestAuth>();
 
-  /** channelId -> number of failed close() attempts */
+  /** channelId -> number of failed close() attempts. In-memory only; resets on node restart. */
   private readonly _closeRetryCount = new Map<string, number>();
 
   /** Max close() retries before falling back to requestTimeout → withdraw */
@@ -408,8 +408,7 @@ export class SellerPaymentManager {
       if (retries >= SellerPaymentManager.MAX_CLOSE_RETRIES) {
         // Exhausted retries — give up on close(), fall back to timeout path
         debugWarn(`[SellerPayment] close() failed ${retries} times for ${channelId.slice(0, 18)}... — falling back to timeout path`);
-        // Clean up close-specific state; checkTimeouts will use requestTimeout → withdraw
-        this._closeRetryCount.delete(channelId);
+        // Fall through to general cleanup below; checkTimeouts will use requestTimeout → withdraw
       } else {
         // Close with the latest buyer-signed auth (final settlement)
         const latestAuth = this._latestAuth.get(channelId);
