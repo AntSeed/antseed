@@ -1360,7 +1360,16 @@ export class AntseedNode extends EventEmitter {
           const spent = this._sellerPaymentManager.getCumulativeSpend(session.sessionId);
           if (accepted > 0n && spent >= accepted) {
             // Budget exhausted — no remaining authorized balance
-            debugLog(`[Node] Budget exhausted for ${buyerPeerId.slice(0, 12)}... (spent=${spent} >= accepted=${accepted}) — returning 402`);
+            const reserveMax = this._sellerPaymentManager.getReserveMax(session.sessionId);
+            if (reserveMax > 0n && accepted >= reserveMax) {
+              // Truly exhausted (at reserve cap) — settle so buyer can start a new session
+              debugLog(`[Node] Session fully exhausted for ${buyerPeerId.slice(0, 12)}... (spent=${spent} >= accepted=${accepted} >= reserveMax=${reserveMax}) — settling and returning 402`);
+              void this._sellerPaymentManager.settleSession(buyerPeerId).catch((err) => {
+                debugWarn(`[Node] Failed to settle exhausted session: ${err instanceof Error ? err.message : err}`);
+              });
+            } else {
+              debugLog(`[Node] Budget exhausted for ${buyerPeerId.slice(0, 12)}... (spent=${spent} >= accepted=${accepted}) — returning 402, awaiting NeedAuth response`);
+            }
             mux.sendProxyResponse({
               requestId: request.requestId,
               statusCode: 402,
