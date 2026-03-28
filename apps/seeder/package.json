@@ -1,0 +1,52 @@
+{
+  "name": "@antseed/seeder",
+  "version": "0.1.0",
+  "description": "Seeder dashboard for AntSeed — staking, identity, earnings, sessions",
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "main": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "npm run build:server && npm run build:web",
+    "build:server": "tsc -p tsconfig.json",
+    "build:web": "vite build",
+    "build:all": "npm run build",
+    "dev": "concurrently -k \"npm:dev:web\" \"npm:dev:server\"",
+    "dev:web": "vite",
+    "dev:server": "tsc -p tsconfig.json --watch --preserveWatchOutput",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@antseed/node": "workspace:*",
+    "@fastify/cors": "^10.0.0",
+    "@fastify/static": "^9.0.0",
+    "@fastify/websocket": "^11.2.0",
+    "@tanstack/react-query": "^5.94.5",
+    "@rainbow-me/rainbowkit": "^2.2.10",
+    "ethers": "^6.13.0",
+    "fastify": "^5.7.4",
+    "viem": "^2.47.6",
+    "wagmi": "^3.5.0"
+  },
+  "devDependencies": {
+    "@noble/ed25519": "^2.1.0",
+    "@types/node": "^20.11.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/ws": "^8.18.1",
+    "@vitejs/plugin-react": "^4.3.0",
+    "concurrently": "^9.0.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "recharts": "^2.15.0",
+    "@tanstack/react-table": "^8.20.0",
+    "sass": "^1.97.3",
+    "typescript": "^5.6.0",
+    "vite": "^6.0.0"
+  }
+}
