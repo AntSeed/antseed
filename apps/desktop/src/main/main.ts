@@ -848,21 +848,11 @@ ipcMain.handle('chat:approve-payment', async (_event, conversationId: string) =>
     const sessionsDomain = makeSessionsDomain(cc.chainId, cc.sessionsAddress);
     const buyerEvmAddr = wallet.address;
 
-    let sellerEvmAddr = String(paymentInfo.sellerEvmAddr ?? '');
-    if (!sellerEvmAddr) {
-      const peerId = typeof paymentInfo.peerId === 'string' ? paymentInfo.peerId.trim() : '';
-      if (peerId) {
-        await refreshPeerCache();
-        const peer = lookupPeer(peerId);
-        const resolvedEvm = peer?.peerId ? '0x' + peer.peerId : '';
-        if (resolvedEvm) {
-          sellerEvmAddr = resolvedEvm;
-        }
-      }
+    const peerId = typeof paymentInfo.peerId === 'string' ? paymentInfo.peerId.trim() : '';
+    if (!peerId) {
+      return { ok: false, error: 'No seller peerId available for this payment' };
     }
-    if (!sellerEvmAddr) {
-      return { ok: false, error: 'No seller EVM address available for this payment' };
-    }
+    const sellerEvmAddr = '0x' + peerId;
 
     // Generate random salt and compute deterministic channelId
     const salt = '0x' + randomBytes(32).toString('hex');

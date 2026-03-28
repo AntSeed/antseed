@@ -1761,11 +1761,11 @@ export function registerPiChatHandlers({
             // Try to parse the full payment body from content, errorMessage, or embedded JSON
             let paymentBody: Record<string, unknown> | null = null;
             try { paymentBody = JSON.parse(rawContent) as Record<string, unknown>; } catch { /* not JSON */ }
-            if (!paymentBody || !paymentBody.sellerEvmAddr) {
+            if (!paymentBody) {
               try { paymentBody = JSON.parse(errorMsg) as Record<string, unknown>; } catch { /* not JSON */ }
             }
             // SDK wraps the body as "402 {json}" — extract the embedded JSON
-            if (!paymentBody || !paymentBody.sellerEvmAddr) {
+            if (!paymentBody) {
               const jsonStart = errorMsg.indexOf('{');
               if (jsonStart >= 0) {
                 try { paymentBody = JSON.parse(errorMsg.slice(jsonStart)) as Record<string, unknown>; } catch { /* not JSON */ }
@@ -1773,7 +1773,7 @@ export function registerPiChatHandlers({
             }
             const suggestedAmount = typeof paymentBody?.suggestedAmount === 'string'
               ? paymentBody.suggestedAmount : '100000';
-            if (paymentBody?.sellerEvmAddr) {
+            if (paymentBody?.peerId) {
               cachedPaymentRequired.set(conversationId, paymentBody);
             } else {
               cacheFallbackPaymentRequired(conversationId, suggestedAmount);
@@ -1848,7 +1848,7 @@ export function registerPiChatHandlers({
         try { payBody = JSON.parse(lastText) as Record<string, unknown>; } catch { /* not JSON */ }
         if (payBody?.error === 'payment_required') {
           const amt = typeof payBody.suggestedAmount === 'string' ? payBody.suggestedAmount : '100000';
-          if (payBody.sellerEvmAddr) {
+          if (payBody.peerId) {
             cachedPaymentRequired.set(conversationId, payBody);
           } else {
             cacheFallbackPaymentRequired(conversationId, amt);
@@ -1893,11 +1893,9 @@ export function registerPiChatHandlers({
           try { payBody = JSON.parse(message.slice(jsonStart)) as Record<string, unknown>; } catch { /* not JSON */ }
         }
         const amt = typeof payBody?.suggestedAmount === 'string' ? payBody.suggestedAmount : '100000';
-        if (payBody?.sellerEvmAddr) {
+        if (payBody?.peerId) {
           cachedPaymentRequired.set(conversationId, payBody);
         } else {
-          // Cache what we have — sellerEvmAddr will be resolved from peer cache
-          // in the approve-payment handler if needed
           const peerId = preferredPeerByConversationId.get(conversationId) ?? '';
           cachedPaymentRequired.set(conversationId, {
             ...(payBody ?? {}),
