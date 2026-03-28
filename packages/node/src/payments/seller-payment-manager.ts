@@ -66,6 +66,12 @@ export class SellerPaymentManager {
   /** channelId -> latest buyer-signed auth (both sigs + cumulative values + metadata) for settle/close */
   private readonly _latestAuth = new Map<string, LatestAuth>();
 
+  /** channelId -> number of failed close() attempts */
+  private readonly _closeRetryCount = new Map<string, number>();
+
+  /** Max close() retries before falling back to requestTimeout → withdraw */
+  private static readonly MAX_CLOSE_RETRIES = 3;
+
   constructor(identity: Identity, config: SellerPaymentConfig, sessionStore: SessionStore) {
     this._identity = identity;
     this._config = config;
@@ -398,33 +404,44 @@ export class SellerPaymentManager {
       // Leave it for checkTimeouts() which uses requestTimeout → withdraw.
       debugLog(`[SellerPayment] Zero-cumulative channel ${channelId.slice(0, 18)}... — deferring to timeout checker`);
     } else {
-      // Close with the latest buyer-signed auth (final settlement)
-      const latestAuth = this._latestAuth.get(channelId);
-      if (!latestAuth || !latestAuth.spendingAuthSig) {
-        debugWarn(`[SellerPayment] No buyer signature stored for channel ${channelId.slice(0, 18)}... — cannot close`);
-        return;
-      }
-      debugLog(`[SellerPayment] Closing channel ${channelId.slice(0, 18)}... cumulative=${latestAuth.cumulativeAmount}`);
-      try {
-        await this._sessionsClient.close(
-          this._signer,
-          channelId,
-          latestAuth.cumulativeAmount,
-          latestAuth.metadata,
-          latestAuth.spendingAuthSig,
-        );
-        this._sessionStore.updateSessionStatus(channelId, 'settled', latestAuth.cumulativeAmount.toString());
-      } catch (err) {
-        debugWarn(`[SellerPayment] Failed to close channel: ${err instanceof Error ? err.message : err}`);
-        // Keep maps intact so checkTimeouts can retry close() later
-        return;
+      const retries = this._closeRetryCount.get(channelId) ?? 0;
+      if (retries >= SellerPaymentManager.MAX_CLOSE_RETRIES) {
+        // Exhausted retries — give up on close(), fall back to timeout path
+        debugWarn(`[SellerPayment] close() failed ${retries} times for ${channelId.slice(0, 18)}... — falling back to timeout path`);
+        // Clean up close-specific state; checkTimeouts will use requestTimeout → withdraw
+        this._closeRetryCount.delete(channelId);
+      } else {
+        // Close with the latest buyer-signed auth (final settlement)
+        const latestAuth = this._latestAuth.get(channelId);
+        if (!latestAuth || !latestAuth.spendingAuthSig) {
+          debugWarn(`[SellerPayment] No buyer signature stored for channel ${channelId.slice(0, 18)}... — cannot close`);
+          return;
+        }
+        debugLog(`[SellerPayment] Closing channel ${channelId.slice(0, 18)}... cumulative=${latestAuth.cumulativeAmount} (attempt ${retries + 1}/${SellerPaymentManager.MAX_CLOSE_RETRIES})`);
+        try {
+          await this._sessionsClient.close(
+            this._signer,
+            channelId,
+            latestAuth.cumulativeAmount,
+            latestAuth.metadata,
+            latestAuth.spendingAuthSig,
+          );
+          this._sessionStore.updateSessionStatus(channelId, 'settled', latestAuth.cumulativeAmount.toString());
+          this._closeRetryCount.delete(channelId);
+        } catch (err) {
+          debugWarn(`[SellerPayment] Failed to close channel (attempt ${retries + 1}): ${err instanceof Error ? err.message : err}`);
+          this._closeRetryCount.set(channelId, retries + 1);
+          // Keep maps intact so checkTimeouts can retry
+          return;
+        }
       }
     }
 
-    // Clean up maps only after successful close or zero-cumulative deferral
+    // Clean up maps after successful close, zero-cumulative deferral, or exhausted retries
     this._acceptedCumulative.delete(channelId);
     this._spent.delete(channelId);
     this._latestAuth.delete(channelId);
+    this._closeRetryCount.delete(channelId);
     this._activeBuyers.delete(buyerPeerId);
   }
 
