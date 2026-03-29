@@ -6,7 +6,10 @@ import {
   useWaitForTransactionReceipt,
 } from 'wagmi';
 import { parseUnits } from 'viem';
+import { parseAbi } from 'viem';
 import type { PaymentConfig } from '../types';
+import { getOperatorInfo, signOperatorAuth } from '../api';
+import { SESSIONS_ABI } from '../sessions-abi';
 import './DepositView.scss';
 
 interface DepositViewProps {
@@ -122,6 +125,9 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
     hash: depositTxHash,
   });
 
+  // Step 3: Auto-set operator (best-effort after deposit)
+  const { writeContractAsync: writeOperatorAsync } = useWriteContract();
+
   // When approve confirms, trigger deposit
   useEffect(() => {
     if (approveConfirmed && step === 'approving' && config && depositTarget) {
@@ -141,13 +147,34 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
     }
   }, [approveConfirmed, step, config, depositTarget, amount, writeDeposit]);
 
-  // When deposit confirms, show success
+  // When deposit confirms, show success and auto-set operator
   useEffect(() => {
     if (depositConfirmed && step === 'depositing') {
       setStep('done');
       onDeposited();
+
+      // Auto-set operator after first deposit (best-effort, non-blocking)
+      (async () => {
+        try {
+          const opInfo = await getOperatorInfo();
+          const zeroAddr = '0x0000000000000000000000000000000000000000';
+          if (opInfo.operator === zeroAddr && address && config?.sessionsContractAddress) {
+            const signResult = await signOperatorAuth(address);
+            if (signResult.ok) {
+              await writeOperatorAsync({
+                address: config.sessionsContractAddress as `0x${string}`,
+                abi: parseAbi(SESSIONS_ABI),
+                functionName: 'setOperator',
+                args: [signResult.buyer as `0x${string}`, address as `0x${string}`, BigInt(signResult.nonce), signResult.signature as `0x${string}`],
+              });
+            }
+          }
+        } catch {
+          // Non-critical — operator can be set later via Sessions tab
+        }
+      })();
     }
-  }, [depositConfirmed, step, onDeposited]);
+  }, [depositConfirmed, step, onDeposited, address, config, writeOperatorAsync]);
 
   const handleDeposit = useCallback(() => {
     if (!address || !amount || parseFloat(amount) <= 0 || !config || !depositTarget) return;

@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { CryptoContext, PaymentCryptoConfig } from './crypto-context.js';
-import { DepositsClient, SessionsClient, formatUsdc, parseUsdc, type ChainConfig } from '@antseed/node';
+import { DepositsClient, SessionsClient, formatUsdc, parseUsdc, signSetOperator, makeSessionsDomain, type ChainConfig } from '@antseed/node';
 
 interface RouteContext {
   cryptoCtx: CryptoContext | null;
@@ -211,6 +211,34 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
       ]);
 
       return { operator, nonce: Number(nonce) };
+    } catch (err) {
+      return reply.status(500).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  fastify.post('/api/operator/sign', async (request, reply) => {
+    if (!ctx.cryptoCtx) {
+      return reply.status(503).send({ ok: false, error: 'Identity not configured' });
+    }
+
+    const body = request.body as { operator?: string } | null;
+    const operator = body?.operator?.trim();
+    if (!operator || !/^0x[0-9a-fA-F]{40}$/.test(operator)) {
+      return reply.status(400).send({ ok: false, error: 'Invalid operator address' });
+    }
+
+    try {
+      const sc = getSessionsClient();
+      if (!sc) {
+        return reply.status(503).send({ ok: false, error: 'Sessions contract not configured' });
+      }
+      const nonce = await sc.getOperatorNonce(ctx.cryptoCtx.evmAddress);
+      const domain = makeSessionsDomain(ctx.chainConfig.evmChainId, ctx.cryptoConfig.sessionsContractAddress);
+      const signature = await signSetOperator(ctx.cryptoCtx.wallet, domain, {
+        operator,
+        nonce,
+      });
+      return { ok: true, signature, nonce: Number(nonce), buyer: ctx.cryptoCtx.evmAddress };
     } catch (err) {
       return reply.status(500).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
     }
