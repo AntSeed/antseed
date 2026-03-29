@@ -43,6 +43,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     // ─── Constant Keys for setConstant ──────────────────────────────
     bytes32 private constant KEY_FIRST_SIGN_CAP = keccak256("FIRST_SIGN_CAP");
     bytes32 private constant KEY_PLATFORM_FEE_BPS = keccak256("PLATFORM_FEE_BPS");
+    bytes32 private constant KEY_TOP_UP_SETTLED_THRESHOLD_BPS = keccak256("TOP_UP_SETTLED_THRESHOLD_BPS");
 
     // ─── Configurable Constants ─────────────────────────────────────
     uint256 public FIRST_SIGN_CAP = 1_000_000;
@@ -177,6 +178,57 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
 
         stakingContract.incrementActiveSessions(msg.sender);
         emit Reserved(channelId, buyer, msg.sender, maxAmount);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //                        CORE — TOP UP (extend reserve)
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// @notice Minimum fraction of deposit that must be settled before top-up (85% = 8500 bps).
+    uint256 public TOP_UP_SETTLED_THRESHOLD_BPS = 8500;
+
+    error TopUpThresholdNotMet();
+    error TopUpAmountTooLow();
+
+    /**
+     * @notice Top up an active session by increasing the reserve ceiling.
+     *         Seller calls this when the buyer's cumulative spending approaches
+     *         the current deposit. Requires at least 85% of the current deposit
+     *         to be settled (proven via SpendingAuth) before allowing more funds.
+     *
+     * @param channelId    Existing session ID
+     * @param newMaxAmount New total reserve ceiling (must be > current deposit)
+     * @param deadline     New session deadline
+     * @param buyerSig     Buyer's ReserveAuth signature for (channelId, newMaxAmount, deadline)
+     */
+    function topUp(
+        bytes32 channelId,
+        uint128 newMaxAmount,
+        uint256 deadline,
+        bytes calldata buyerSig
+    ) external nonReentrant whenNotPaused {
+        Session storage session = sessions[channelId];
+        if (session.status != SessionStatus.Active) revert SessionNotActive();
+        if (msg.sender != session.seller) revert NotAuthorized();
+        if (block.timestamp > deadline) revert SessionExpired();
+        if (newMaxAmount <= session.deposit) revert TopUpAmountTooLow();
+
+        // Require at least 85% of current deposit to be settled
+        uint256 threshold = (uint256(session.deposit) * TOP_UP_SETTLED_THRESHOLD_BPS) / 10000;
+        if (session.settled < threshold) revert TopUpThresholdNotMet();
+
+        // Verify buyer's ReserveAuth signature for the new ceiling
+        _verifyReserveAuth(channelId, newMaxAmount, deadline, session.buyer, buyerSig);
+
+        // Lock the additional amount in Deposits
+        uint128 additionalAmount = newMaxAmount - session.deposit;
+        depositsContract.lockForSession(session.buyer, additionalAmount);
+
+        // Update session
+        session.deposit = newMaxAmount;
+        session.deadline = deadline;
+
+        emit Reserved(channelId, session.buyer, session.seller, newMaxAmount);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -452,6 +504,10 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         else if (key == KEY_PLATFORM_FEE_BPS) {
             if (value > MAX_PLATFORM_FEE_BPS) revert InvalidFee();
             PLATFORM_FEE_BPS = value;
+        }
+        else if (key == KEY_TOP_UP_SETTLED_THRESHOLD_BPS) {
+            if (value > 10000) revert InvalidFee();
+            TOP_UP_SETTLED_THRESHOLD_BPS = value;
         }
         else revert InvalidAmount();
 

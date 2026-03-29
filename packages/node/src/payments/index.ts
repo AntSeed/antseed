@@ -68,11 +68,15 @@ export type { StoredSession, StoredReceipt } from './session-store.js';
 
 // Buyer payment manager
 export { BuyerPaymentManager } from './buyer-payment-manager.js';
-export type { BuyerPaymentConfig } from './buyer-payment-manager.js';
+export type { BuyerPaymentConfig, PerRequestAuthResult } from './buyer-payment-manager.js';
 
 // Seller payment manager
 export { SellerPaymentManager } from './seller-payment-manager.js';
 export type { SellerPaymentConfig } from './seller-payment-manager.js';
+
+// Pricing utilities
+export { computeCostUsdc, estimateCostFromBytes, estimateTokensFromBytes } from './pricing.js';
+export type { ServicePricing } from './pricing.js';
 
 // Readiness checks
 export { checkSellerReadiness, checkBuyerReadiness } from './readiness.js';

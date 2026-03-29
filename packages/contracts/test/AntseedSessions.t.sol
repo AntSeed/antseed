@@ -732,6 +732,187 @@ contract AntseedSessionsTest is Test {
     }
 
     // ═══════════════════════════════════════════════════════════════════
+    //                   TOP UP TESTS
+    // ═══════════════════════════════════════════════════════════════════
+
+    function test_topUp_afterSettling85Percent() public {
+        bytes32 salt = keccak256("session-topup");
+        bytes32 channelId = doReserve(salt, USDC_100, USDC_150);
+
+        // Settle 85% of the deposit (85 USDC out of 100)
+        uint128 settleAmount = 85_000_000;
+        bytes memory settleSig = signSpendingAuth(BUYER_PK, channelId, settleAmount, 5000, 2000);
+
+        vm.prank(seller);
+        sessions.settle(channelId, settleAmount, encodeMetadata(5000, 2000), settleSig);
+
+        // Top up: increase reserve from 100 to 150 USDC
+        uint128 newMax = USDC_150;
+        uint256 newDeadline = block.timestamp + 2 hours;
+        bytes memory topUpSig = signReserveAuth(BUYER_PK, channelId, newMax, newDeadline);
+
+        vm.prank(seller);
+        sessions.topUp(channelId, newMax, newDeadline, topUpSig);
+
+        // Verify session state updated
+        (,, uint128 sDeposit, uint128 sSettled,,uint256 sDeadline,,,AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
+        assertTrue(sStatus == AntseedSessions.SessionStatus.Active);
+        assertEq(sDeposit, USDC_150);
+        assertEq(sSettled, settleAmount);
+        assertEq(sDeadline, newDeadline);
+
+        // Additional 50 USDC locked in Deposits
+        (, uint256 reserved,,) = deposits.getBuyerBalance(buyer);
+        // reserved = 100 (initial) - 85 (settled via chargeAndCreditEarnings releases reserved)
+        // + 50 (topUp) ... but settle only charges, doesn't release reservation proportionally
+        // Actually: settle charges delta=85 from reserved. reserved was 100, after settle reserved=100-85=15
+        // No wait — chargeAndCreditEarnings gets reservedAmount=delta for settle, so reserved goes 100-85=15
+        // Then topUp locks additional 50, so reserved = 15 + 50 = 65
+        assertEq(reserved, 65_000_000);
+    }
+
+    function test_topUp_revert_thresholdNotMet() public {
+        bytes32 salt = keccak256("session-topup-fail");
+        bytes32 channelId = doReserve(salt, USDC_100, USDC_150);
+
+        // Only settle 50% (50 USDC out of 100) — below 85% threshold
+        uint128 settleAmount = USDC_50;
+        bytes memory settleSig = signSpendingAuth(BUYER_PK, channelId, settleAmount, 3000, 1000);
+
+        vm.prank(seller);
+        sessions.settle(channelId, settleAmount, encodeMetadata(3000, 1000), settleSig);
+
+        // Try top up — should revert
+        uint128 newMax = USDC_150;
+        uint256 newDeadline = block.timestamp + 2 hours;
+        bytes memory topUpSig = signReserveAuth(BUYER_PK, channelId, newMax, newDeadline);
+
+        vm.prank(seller);
+        vm.expectRevert(AntseedSessions.TopUpThresholdNotMet.selector);
+        sessions.topUp(channelId, newMax, newDeadline, topUpSig);
+    }
+
+    function test_topUp_revert_newAmountNotHigher() public {
+        bytes32 salt = keccak256("session-topup-low");
+        bytes32 channelId = doReserve(salt, USDC_100, USDC_150);
+
+        // Settle 90%
+        uint128 settleAmount = 90_000_000;
+        bytes memory settleSig = signSpendingAuth(BUYER_PK, channelId, settleAmount, 5000, 2000);
+        vm.prank(seller);
+        sessions.settle(channelId, settleAmount, encodeMetadata(5000, 2000), settleSig);
+
+        // Try topUp with same amount — should revert
+        uint256 newDeadline = block.timestamp + 2 hours;
+        bytes memory topUpSig = signReserveAuth(BUYER_PK, channelId, USDC_100, newDeadline);
+
+        vm.prank(seller);
+        vm.expectRevert(AntseedSessions.TopUpAmountTooLow.selector);
+        sessions.topUp(channelId, USDC_100, newDeadline, topUpSig);
+    }
+
+    function test_topUp_revert_notSeller() public {
+        bytes32 salt = keccak256("session-topup-auth");
+        bytes32 channelId = doReserve(salt, USDC_100, USDC_150);
+
+        // Settle 90%
+        uint128 settleAmount = 90_000_000;
+        bytes memory settleSig = signSpendingAuth(BUYER_PK, channelId, settleAmount, 5000, 2000);
+        vm.prank(seller);
+        sessions.settle(channelId, settleAmount, encodeMetadata(5000, 2000), settleSig);
+
+        uint128 newMax = USDC_150;
+        uint256 newDeadline = block.timestamp + 2 hours;
+        bytes memory topUpSig = signReserveAuth(BUYER_PK, channelId, newMax, newDeadline);
+
+        vm.prank(randomUser);
+        vm.expectRevert(AntseedSessions.NotAuthorized.selector);
+        sessions.topUp(channelId, newMax, newDeadline, topUpSig);
+    }
+
+    function test_topUp_revert_expiredDeadline() public {
+        bytes32 salt = keccak256("session-topup-expired");
+        bytes32 channelId = doReserve(salt, USDC_100, USDC_150);
+
+        // Settle 90%
+        uint128 settleAmount = 90_000_000;
+        bytes memory settleSig = signSpendingAuth(BUYER_PK, channelId, settleAmount, 5000, 2000);
+        vm.prank(seller);
+        sessions.settle(channelId, settleAmount, encodeMetadata(5000, 2000), settleSig);
+
+        uint128 newMax = USDC_150;
+        uint256 pastDeadline = block.timestamp - 1;
+        bytes memory topUpSig = signReserveAuth(BUYER_PK, channelId, newMax, pastDeadline);
+
+        vm.prank(seller);
+        vm.expectRevert(AntseedSessions.SessionExpired.selector);
+        sessions.topUp(channelId, newMax, pastDeadline, topUpSig);
+    }
+
+    function test_topUp_revert_invalidSignature() public {
+        bytes32 salt = keccak256("session-topup-badsig");
+        bytes32 channelId = doReserve(salt, USDC_100, USDC_150);
+
+        // Settle 90%
+        uint128 settleAmount = 90_000_000;
+        bytes memory settleSig = signSpendingAuth(BUYER_PK, channelId, settleAmount, 5000, 2000);
+        vm.prank(seller);
+        sessions.settle(channelId, settleAmount, encodeMetadata(5000, 2000), settleSig);
+
+        uint128 newMax = USDC_150;
+        uint256 newDeadline = block.timestamp + 2 hours;
+        // Sign with wrong key
+        bytes memory badSig = signReserveAuth(RANDOM_PK, channelId, newMax, newDeadline);
+
+        vm.prank(seller);
+        vm.expectRevert(AntseedSessions.InvalidSignature.selector);
+        sessions.topUp(channelId, newMax, newDeadline, badSig);
+    }
+
+    function test_topUp_settleAfterTopUp() public {
+        bytes32 salt = keccak256("session-topup-then-settle");
+        bytes32 channelId = doReserve(salt, USDC_100, USDC_150);
+
+        // Settle 90 USDC
+        uint128 settleAmount1 = 90_000_000;
+        bytes memory settleSig1 = signSpendingAuth(BUYER_PK, channelId, settleAmount1, 5000, 2000);
+        vm.prank(seller);
+        sessions.settle(channelId, settleAmount1, encodeMetadata(5000, 2000), settleSig1);
+
+        // Top up to 150 USDC
+        uint128 newMax = USDC_150;
+        uint256 newDeadline = block.timestamp + 2 hours;
+        bytes memory topUpSig = signReserveAuth(BUYER_PK, channelId, newMax, newDeadline);
+        vm.prank(seller);
+        sessions.topUp(channelId, newMax, newDeadline, topUpSig);
+
+        // Continue settling up to the new ceiling (120 cumulative)
+        uint128 settleAmount2 = 120_000_000;
+        bytes memory settleSig2 = signSpendingAuth(BUYER_PK, channelId, settleAmount2, 8000, 3500);
+        vm.prank(seller);
+        sessions.settle(channelId, settleAmount2, encodeMetadata(8000, 3500), settleSig2);
+
+        (,, uint128 sDeposit, uint128 sSettled,,,,, AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
+        assertTrue(sStatus == AntseedSessions.SessionStatus.Active);
+        assertEq(sDeposit, USDC_150);
+        assertEq(sSettled, 120_000_000);
+
+        // Close at 130 cumulative
+        uint128 finalAmount = 130_000_000;
+        bytes memory closeSig = signSpendingAuth(BUYER_PK, channelId, finalAmount, 10000, 4000);
+        vm.prank(seller);
+        sessions.close(channelId, finalAmount, encodeMetadata(10000, 4000), closeSig);
+
+        (,,, uint128 sSettledFinal,,,,, AntseedSessions.SessionStatus sStatusFinal) = sessions.sessions(channelId);
+        assertTrue(sStatusFinal == AntseedSessions.SessionStatus.Settled);
+        assertEq(sSettledFinal, 130_000_000);
+
+        // Buyer refund = 150 - 130 = 20 USDC
+        (uint256 available,,,) = deposits.getBuyerBalance(buyer);
+        assertEq(available, 20_000_000);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
     //                   DOMAIN SEPARATOR TEST
     // ═══════════════════════════════════════════════════════════════════
 

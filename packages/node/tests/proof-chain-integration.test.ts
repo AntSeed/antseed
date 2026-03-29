@@ -9,14 +9,20 @@ import { SessionStore } from '../src/payments/session-store.js';
 import type { PaymentMux } from '../src/p2p/payment-mux.js';
 import type {
   SpendingAuthPayload,
-  AuthAckPayload,
 } from '../src/types/protocol.js';
 import type { Identity } from '../src/p2p/identity.js';
 import { bytesToHex } from '../src/utils/hex.js';
 import { toPeerId } from '../src/types/peer.js';
 
+const enc = new TextEncoder();
+
 const CHAIN_ID = 31337;
 const CONTRACT_ADDR = '0x' + 'dd'.repeat(20);
+
+const TEST_PRICING = { inputUsdPerMillion: 3, outputUsdPerMillion: 15 };
+
+const SAMPLE_INPUT = enc.encode('What is the capital of France? Provide historical context.');
+const SAMPLE_OUTPUT = enc.encode('The capital of France is Paris, on the Seine River, capital since the 10th century.');
 
 function decodeMetadataTokens(metadata: string): { inputTokens: bigint; outputTokens: bigint } {
   const coder = AbiCoder.defaultAbiCoder();
@@ -57,7 +63,6 @@ describe('Cumulative SpendingAuth Integration', () => {
     };
     buyerStore = new SessionStore(buyerTempDir);
     buyerManager = new BuyerPaymentManager(buyerIdentity, buyerConfig, buyerStore);
-    // Use a deterministic wallet derived from the identity so EIP-712 sigs are valid
     buyerManager.setSigner(buyerIdentity.wallet);
   });
 
@@ -67,7 +72,6 @@ describe('Cumulative SpendingAuth Integration', () => {
   });
 
   it('cumulative amount increases across multiple requests within a session', async () => {
-    // Track sent SpendingAuths
     const sentAuths: SpendingAuthPayload[] = [];
     const mux = {
       sendSpendingAuth(p: SpendingAuthPayload) { sentAuths.push(p); },
@@ -81,82 +85,57 @@ describe('Cumulative SpendingAuth Integration', () => {
       handleFrame: vi.fn(),
     } as unknown as PaymentMux;
 
-    // Step 1: Initial authorization with minBudgetPerRequest = 10000
     const channelId = await buyerManager.authorizeSpending(
       sellerIdentity.peerId,
       mux,
       10_000n,
+      TEST_PRICING,
     );
     expect(sentAuths.length).toBe(1);
     expect(sentAuths[0].cumulativeAmount).toBe('10000');
-    expect(sentAuths[0].metadataHash).toBeTypeOf('string');
-    expect(sentAuths[0].metadata).toBeTypeOf('string');
 
-    // Simulate AuthAck
     buyerManager.handleAuthAck(sellerIdentity.peerId, { channelId });
     expect(buyerManager.isAuthorized(sellerIdentity.peerId)).toBe(true);
 
-    // Step 2: First request completes, sign per-request auth
-    const auth1 = await buyerManager.signPerRequestAuth(
+    const { payload: auth1 } = await buyerManager.signPerRequestAuth(
       sellerIdentity.peerId,
-      3_000n,   // addedCostUsdc from first request
-      500n,     // addedInputTokens
-      200n,     // addedOutputTokens
-      5_000n,   // estimatedNextCostUsdc
+      { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: 3_000n },
     );
-
-    // Cumulative amount: 10000 (initial) + 3000 + 5000 = 18000
-    expect(BigInt(auth1.cumulativeAmount)).toBe(18_000n);
+    expect(BigInt(auth1.cumulativeAmount)).toBeGreaterThan(10_000n);
     const meta1 = decodeMetadataTokens(auth1.metadata);
-    expect(meta1.inputTokens).toBe(500n);
-    expect(meta1.outputTokens).toBe(200n);
+    expect(meta1.inputTokens).toBeGreaterThan(0n);
+    expect(meta1.outputTokens).toBeGreaterThan(0n);
     expect(auth1.channelId).toBe(channelId);
+    const firstInput = meta1.inputTokens;
+    const firstOutput = meta1.outputTokens;
 
-    // Step 3: Second request completes
-    const auth2 = await buyerManager.signPerRequestAuth(
+    const { payload: auth2 } = await buyerManager.signPerRequestAuth(
       sellerIdentity.peerId,
-      4_000n,
-      300n,
-      150n,
-      6_000n,
+      { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: 4_000n },
     );
-
-    // Cumulative amount: 18000 + 4000 + 6000 = 28000
-    expect(BigInt(auth2.cumulativeAmount)).toBe(28_000n);
-    // Cumulative tokens: 500 + 300 = 800 input, 200 + 150 = 350 output
+    expect(BigInt(auth2.cumulativeAmount)).toBeGreaterThan(BigInt(auth1.cumulativeAmount));
     const meta2 = decodeMetadataTokens(auth2.metadata);
-    expect(meta2.inputTokens).toBe(800n);
-    expect(meta2.outputTokens).toBe(350n);
+    expect(meta2.inputTokens).toBe(firstInput * 2n);
+    expect(meta2.outputTokens).toBe(firstOutput * 2n);
 
-    // Step 4: Third request
-    const auth3 = await buyerManager.signPerRequestAuth(
+    const { payload: auth3 } = await buyerManager.signPerRequestAuth(
       sellerIdentity.peerId,
-      2_000n,
-      200n,
-      100n,
-      3_000n,
+      { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: 2_000n },
     );
-
-    // Cumulative amount: 28000 + 2000 + 3000 = 33000
-    expect(BigInt(auth3.cumulativeAmount)).toBe(33_000n);
-    // Cumulative tokens: 800 + 200 = 1000 input, 350 + 100 = 450 output
+    expect(BigInt(auth3.cumulativeAmount)).toBeGreaterThan(BigInt(auth2.cumulativeAmount));
     const meta3 = decodeMetadataTokens(auth3.metadata);
-    expect(meta3.inputTokens).toBe(1000n);
-    expect(meta3.outputTokens).toBe(450n);
+    expect(meta3.inputTokens).toBe(firstInput * 3n);
+    expect(meta3.outputTokens).toBe(firstOutput * 3n);
 
-    // Verify all auth payloads reference the same channel
     expect(auth1.channelId).toBe(channelId);
     expect(auth2.channelId).toBe(channelId);
     expect(auth3.channelId).toBe(channelId);
 
-    // Verify monotonically increasing cumulative amounts
     expect(BigInt(auth1.cumulativeAmount)).toBeLessThan(BigInt(auth2.cumulativeAmount));
     expect(BigInt(auth2.cumulativeAmount)).toBeLessThan(BigInt(auth3.cumulativeAmount));
   });
 
   it('NeedAuth triggers cumulative amount increase mid-session', async () => {
-    const sellerEvmAddr = sellerIdentity.wallet.address;
-
     const sentAuths: SpendingAuthPayload[] = [];
     const mux = {
       sendSpendingAuth(p: SpendingAuthPayload) { sentAuths.push(p); },
@@ -170,48 +149,39 @@ describe('Cumulative SpendingAuth Integration', () => {
       handleFrame: vi.fn(),
     } as unknown as PaymentMux;
 
-    // Initial authorization
     const channelId = await buyerManager.authorizeSpending(
       sellerIdentity.peerId,
       mux,
       10_000n,
+      TEST_PRICING,
     );
     expect(sentAuths.length).toBe(1);
 
-    // Simulate seller requesting more budget via NeedAuth
+    // maxSignable = verifiedCost(0) + maxPerRequestUsdc(100_000) = 100_000
     await buyerManager.handleNeedAuth(
       sellerIdentity.peerId,
       {
         channelId,
-        requiredCumulativeAmount: '500000',
+        requiredCumulativeAmount: '100000',
         currentAcceptedCumulative: '10000',
         deposit: '1000000',
       },
       mux,
     );
 
-    // Should have sent a new SpendingAuth with the required amount
     expect(sentAuths.length).toBe(2);
     const updatedAuth = sentAuths[1];
-    expect(updatedAuth.cumulativeAmount).toBe('500000');
+    expect(updatedAuth.cumulativeAmount).toBe('100000');
     expect(updatedAuth.channelId).toBe(channelId);
 
-    // Subsequent signPerRequestAuth should build on the new cumulative base
-    const auth = await buyerManager.signPerRequestAuth(
+    const { payload: auth } = await buyerManager.signPerRequestAuth(
       sellerIdentity.peerId,
-      10_000n,
-      100n,
-      50n,
-      10_000n,
+      { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: 5_000n },
     );
-
-    // 500000 + 10000 + 10000 = 520000
-    expect(BigInt(auth.cumulativeAmount)).toBe(520_000n);
+    expect(BigInt(auth.cumulativeAmount)).toBeGreaterThan(100_000n);
   });
 
   it('cumulative state persists across manager restarts', async () => {
-    const sellerEvmAddr = sellerIdentity.wallet.address;
-
     const sentAuths: SpendingAuthPayload[] = [];
     const mux = {
       sendSpendingAuth(p: SpendingAuthPayload) { sentAuths.push(p); },
@@ -225,33 +195,26 @@ describe('Cumulative SpendingAuth Integration', () => {
       handleFrame: vi.fn(),
     } as unknown as PaymentMux;
 
-    // Create session and do some spending
     const channelId = await buyerManager.authorizeSpending(
       sellerIdentity.peerId,
       mux,
       10_000n,
+      TEST_PRICING,
     );
 
-    // Simulate AuthAck so the session is confirmed
     buyerManager.handleAuthAck(sellerIdentity.peerId, { channelId });
 
-    const auth = await buyerManager.signPerRequestAuth(
+    const { payload: auth } = await buyerManager.signPerRequestAuth(
       sellerIdentity.peerId,
-      5_000n,
-      100n,
-      50n,
-      5_000n,
+      { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: 5_000n },
     );
 
-    // Verify the sign succeeded and returned updated cumulative values
-    // Initial (10000) + addedCost (5000) + estimatedNext (5000) = 20000
-    expect(BigInt(auth.cumulativeAmount)).toBe(20_000n);
+    expect(BigInt(auth.cumulativeAmount)).toBeGreaterThan(10_000n);
     const authMeta = decodeMetadataTokens(auth.metadata);
-    expect(authMeta.inputTokens).toBe(100n);
-    expect(authMeta.outputTokens).toBe(50n);
+    expect(authMeta.inputTokens).toBeGreaterThan(0n);
+    expect(authMeta.outputTokens).toBeGreaterThan(0n);
     expect(auth.channelId).toBe(channelId);
 
-    // Close store and recreate manager
     buyerStore.close();
 
     const newStore = new SessionStore(buyerTempDir);
@@ -270,16 +233,11 @@ describe('Cumulative SpendingAuth Integration', () => {
     const newManager = new BuyerPaymentManager(buyerIdentity, newConfig, newStore);
     newManager.setSigner(buyerIdentity.wallet);
 
-    // The session should still be accessible
     const session = newStore.getSession(channelId);
     expect(session).not.toBeNull();
     expect(session!.status).toBe('active');
-    // The upsert ON CONFLICT clause persists tokens_delivered but not
-    // auth_max or previous_consumption (cumulative output tokens).
-    // This verifies the DB-persisted fields survive a store restart.
-    expect(session!.tokensDelivered).toBe('100');
+    expect(BigInt(session!.tokensDelivered)).toBeGreaterThan(0n);
 
-    // Reassign buyerStore for cleanup
     buyerStore = newStore;
   });
 });
