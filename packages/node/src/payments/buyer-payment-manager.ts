@@ -94,6 +94,9 @@ export class BuyerPaymentManager {
   /** sellerPeerId -> salt used in the current reserve */
   private readonly _reserveSalt = new Map<string, string>();
 
+  /** Cached EIP-712 domain — static for the lifetime of this manager. */
+  private readonly _sessionsDomain: ReturnType<typeof makeSessionsDomain>;
+
   constructor(identity: Identity, config: BuyerPaymentConfig, sessionStore: SessionStore) {
     this._identity = identity;
     this._config = config;
@@ -104,6 +107,7 @@ export class BuyerPaymentManager {
       usdcAddress: config.usdcAddress,
     });
     this._sessionStore = sessionStore;
+    this._sessionsDomain = makeSessionsDomain(config.chainId, config.sessionsContractAddress);
 
     // Hydrate cumulative maps from persisted active sessions
     this._hydrateFromStore();
@@ -140,6 +144,22 @@ export class BuyerPaymentManager {
 
   private get _costTolerance(): number {
     return this._config.costToleranceMultiplier ?? DEFAULT_COST_TOLERANCE;
+  }
+
+  private _getCeiling(sellerPeerId: string): bigint {
+    return this._currentReserveCeiling.get(sellerPeerId) ?? this._config.maxReserveAmountUsdc;
+  }
+
+  /** Clean up all in-memory state for a seller when the session ends. */
+  cleanupSession(sellerPeerId: string): void {
+    this._cumulativeAmount.delete(sellerPeerId);
+    this._metadata.delete(sellerPeerId);
+    this._verifiedCost.delete(sellerPeerId);
+    this._sessionPricing.delete(sellerPeerId);
+    this._currentReserveCeiling.delete(sellerPeerId);
+    this._reserveSalt.delete(sellerPeerId);
+    this._confirmedPeers.delete(sellerPeerId);
+    this._rejectedPeers.delete(sellerPeerId);
   }
 
   // ── Spending Authorization ────────────────────────────────────
@@ -183,7 +203,7 @@ export class BuyerPaymentManager {
     debugLog(`[BuyerPayment] authorizeSpending: channel=${channelId.slice(0, 18)}... seller=${sellerPeerId.slice(0, 12)}... amount=${minBudgetPerRequest}`);
 
     // Sign ReserveAuth — binds channelId, maxAmount, deadline on-chain
-    const sessionsDomain = makeSessionsDomain(this._config.chainId, this._config.sessionsContractAddress);
+    const sessionsDomain = this._sessionsDomain;
     const maxAmount = this._config.maxReserveAmountUsdc;
     const reserveMsg: ReserveAuthMessage = {
       channelId,
@@ -324,7 +344,7 @@ export class BuyerPaymentManager {
    */
   private _maxSignable(sellerPeerId: string): bigint {
     const verified = this._verifiedCost.get(sellerPeerId) ?? 0n;
-    const ceiling = this._currentReserveCeiling.get(sellerPeerId) ?? this._config.maxReserveAmountUsdc;
+    const ceiling = this._getCeiling(sellerPeerId);
     const maxSignable = verified + this._config.maxPerRequestUsdc;
     return maxSignable < ceiling ? maxSignable : ceiling;
   }
@@ -334,7 +354,7 @@ export class BuyerPaymentManager {
    * and a top-up should be triggered.
    */
   private _needsTopUp(sellerPeerId: string): boolean {
-    const ceiling = this._currentReserveCeiling.get(sellerPeerId) ?? this._config.maxReserveAmountUsdc;
+    const ceiling = this._getCeiling(sellerPeerId);
     const current = this._cumulativeAmount.get(sellerPeerId) ?? 0n;
     const threshold = BigInt(Math.floor(Number(ceiling) * DEFAULT_TOPUP_THRESHOLD));
     return current >= threshold;
@@ -389,7 +409,7 @@ export class BuyerPaymentManager {
     if (acceptedCost === 0n) acceptedCost = 1n;
 
     // Update cumulative metadata
-    const prev = this._metadata.get(sellerPeerId) ?? { ...ZERO_METADATA };
+    const prev = this._metadata.get(sellerPeerId) ?? ZERO_METADATA;
     const newMeta: SpendingAuthMetadata = {
       cumulativeInputTokens: prev.cumulativeInputTokens + estimatedInputTokens,
       cumulativeOutputTokens: prev.cumulativeOutputTokens + estimatedOutputTokens,
@@ -400,17 +420,14 @@ export class BuyerPaymentManager {
 
     // Advance cumulative amount by the accepted cost, then add overdraft headroom
     // for the next request (so the seller has budget to serve it).
+    // maxSignable already caps at reserve ceiling, so one cap is sufficient
     const prevAmount = this._cumulativeAmount.get(sellerPeerId) ?? 0n;
     const maxSignable = this._maxSignable(sellerPeerId);
     let newAmount = prevAmount + acceptedCost;
-    // Cap at overdraft limit
     if (newAmount > maxSignable) newAmount = maxSignable;
-    // Final cap at reserve ceiling
-    const ceiling = this._currentReserveCeiling.get(sellerPeerId) ?? this._config.maxReserveAmountUsdc;
-    if (newAmount > ceiling) newAmount = ceiling;
-    // Ensure monotonic increase
+    // Ensure monotonic increase (at least +1 per request)
     if (newAmount <= prevAmount) newAmount = prevAmount + 1n;
-    if (newAmount > ceiling) newAmount = ceiling;
+    if (newAmount > maxSignable) newAmount = maxSignable;
     this._cumulativeAmount.set(sellerPeerId, newAmount);
 
     // Compute metadata hash and encode metadata
@@ -418,7 +435,7 @@ export class BuyerPaymentManager {
     const encodedMetadata = encodeMetadata(newMeta);
 
     // Sign EIP-712 SpendingAuth
-    const sessionsDomain = makeSessionsDomain(this._config.chainId, this._config.sessionsContractAddress);
+    const sessionsDomain = this._sessionsDomain;
     const metadataMsg: SpendingAuthMessage = {
       channelId: session.sessionId,
       cumulativeAmount: newAmount,
@@ -495,11 +512,11 @@ export class BuyerPaymentManager {
     this._cumulativeAmount.set(sellerPeerId, effectiveAmount);
 
     // Sign SpendingAuth with the effective amount and current metadata
-    const currentMeta = this._metadata.get(sellerPeerId) ?? { ...ZERO_METADATA };
+    const currentMeta = this._metadata.get(sellerPeerId) ?? ZERO_METADATA;
     const metadataHashHex = computeMetadataHash(currentMeta);
     const encodedMetadata = encodeMetadata(currentMeta);
 
-    const sessionsDomain = makeSessionsDomain(this._config.chainId, this._config.sessionsContractAddress);
+    const sessionsDomain = this._sessionsDomain;
     const metadataMsg: SpendingAuthMessage = {
       channelId: session.sessionId,
       cumulativeAmount: effectiveAmount,
@@ -546,14 +563,14 @@ export class BuyerPaymentManager {
       return;
     }
 
-    const prevCeiling = this._currentReserveCeiling.get(sellerPeerId) ?? this._config.maxReserveAmountUsdc;
+    const prevCeiling = this._getCeiling(sellerPeerId);
     const newCeiling = prevCeiling + this._config.maxReserveAmountUsdc;
     const deadline = Math.floor(Date.now() / 1000) + this._config.defaultAuthDurationSecs;
 
     debugLog(`[BuyerPayment] topUpReserve: channel=${session.sessionId.slice(0, 18)}... ceiling ${prevCeiling} → ${newCeiling}`);
 
     // Sign ReserveAuth with new maxAmount
-    const sessionsDomain = makeSessionsDomain(this._config.chainId, this._config.sessionsContractAddress);
+    const sessionsDomain = this._sessionsDomain;
     const reserveMsg: ReserveAuthMessage = {
       channelId: session.sessionId,
       maxAmount: newCeiling,
@@ -562,7 +579,7 @@ export class BuyerPaymentManager {
     const reserveAuthSig = await signReserveAuth(this._signer, sessionsDomain, reserveMsg);
 
     const currentCumulative = this._cumulativeAmount.get(sellerPeerId) ?? 0n;
-    const currentMeta = this._metadata.get(sellerPeerId) ?? { ...ZERO_METADATA };
+    const currentMeta = this._metadata.get(sellerPeerId) ?? ZERO_METADATA;
     const metadataHashHex = computeMetadataHash(currentMeta);
     const encodedMetadata = encodeMetadata(currentMeta);
 
