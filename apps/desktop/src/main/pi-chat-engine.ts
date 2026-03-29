@@ -1396,7 +1396,6 @@ export function registerPiChatHandlers({
 }: RegisterPiChatHandlersOptions): {
   setPendingSpendingAuth: (conversationId: string, authBase64: string) => void;
   getCachedPaymentRequired: (conversationId: string) => Record<string, unknown> | null;
-  clearSessionsForPeer: (peerId: string) => void;
 } {
   const store = new PiConversationStore();
   const activeRunsByConversation = new Map<string, ActiveRun>();
@@ -2069,14 +2068,6 @@ export function registerPiChatHandlers({
     },
     getCachedPaymentRequired: (conversationId: string) => {
       return cachedPaymentRequired.get(conversationId) ?? null;
-    },
-    clearSessionsForPeer: (peerId: string) => {
-      for (const [convId, pId] of preferredPeerByConversationId.entries()) {
-        if (pId === peerId) {
-          pendingSpendingAuth.delete(convId);
-          cachedPaymentRequired.delete(convId);
-        }
-      }
     },
   };
 }

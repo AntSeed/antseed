@@ -475,23 +475,8 @@ registerActions({
     uiState.chatPaymentApprovalError = null;
     notifyUiStateChanged();
   },
-  requestSessionClose: (peerId: string) => {
-    uiState.chatSessionCloseError.delete(peerId);
-    notifyUiStateChanged();
-    void (async () => {
-      try {
-        const result = await bridge?.requestSessionClose?.(peerId);
-        if (result?.ok) {
-          uiState.chatActiveSessions.delete(peerId);
-          uiState.chatSessionCloseError.delete(peerId);
-        } else {
-          uiState.chatSessionCloseError.set(peerId, result?.error ?? 'Failed to close session');
-        }
-        notifyUiStateChanged();
-      } catch {
-        // Silently fail — session will timeout naturally
-      }
-    })();
+  requestSessionClose: () => {
+    void bridge?.paymentsOpenPortal?.();
   },
   refreshCredits: () => void creditsApi.refreshCredits(),
   refreshPlugins: refreshPluginInventory,

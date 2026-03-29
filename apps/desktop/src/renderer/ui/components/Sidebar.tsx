@@ -157,7 +157,7 @@ function formatUsdc(value: number): string {
 }
 
 function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void }) {
-  const { chatConversations, chatActiveConversation, chatActiveSessions, chatSessionCloseError } = useUiSnapshot();
+  const { chatConversations, chatActiveConversation, chatActiveSessions } = useUiSnapshot();
   const actions = useActions();
   const conversations = Array.isArray(chatConversations) ? chatConversations : [];
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
@@ -219,15 +219,12 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
                         className={styles.chatConvCloseBtn}
                         onClick={(e) => {
                           e.stopPropagation();
-                          actions.requestSessionClose(convPeerId);
+                          actions.requestSessionClose();
                         }}
                       >
                         Close
                       </button>
                     </div>
-                    {convPeerId && chatSessionCloseError.get(convPeerId) && (
-                      <div className={styles.chatConvSessionError}>{chatSessionCloseError.get(convPeerId)}</div>
-                    )}
                   </>
                 )}
                 {menuOpenId === id && (

@@ -152,7 +152,6 @@ export type RendererUiState = {
 
   // --- Active payment sessions (keyed by peerId) ---
   chatActiveSessions: Map<string, ActiveSessionInfo>;
-  chatSessionCloseError: Map<string, string>;
 
   // --- Chat display ---
   chatActiveConversation: string | null;
@@ -278,7 +277,6 @@ export function createInitialUiState(): RendererUiState {
 
     // Active payment sessions
     chatActiveSessions: new Map(),
-    chatSessionCloseError: new Map(),
 
     // Chat
     chatActiveConversation: null,

@@ -891,18 +891,6 @@ ipcMain.handle('chat:approve-payment', async (_event, conversationId: string) =>
   }
 });
 
-ipcMain.handle('chat:request-session-close', async (_event, peerId: string) => {
-  // Buyer-side close request: clear spending auth for all conversations with this peer.
-  // No on-chain tx is submitted here; the local spending auth is simply invalidated.
-  // The seller will close or timeout the on-chain session via their normal lifecycle.
-  try {
-    chatEngine.clearSessionsForPeer(peerId);
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
-  }
-});
-
 ipcMain.handle('runtime:scan-network', async () => {
   // The buyer runtime handles peer discovery; just return the current state.
   await refreshPeerCache();

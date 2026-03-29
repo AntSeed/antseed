@@ -290,7 +290,6 @@ const api = {
   paymentsGetPeerInfo: (peerId: string) => ipcRenderer.invoke('payments:get-peer-info', peerId),
   paymentsOpenPortal: () => ipcRenderer.invoke('payments:open-portal'),
   chatApprovePayment: (conversationId: string) => ipcRenderer.invoke('chat:approve-payment', conversationId) as Promise<{ ok: boolean; error?: string }>,
-  requestSessionClose: (peerId: string) => ipcRenderer.invoke('chat:request-session-close', peerId) as Promise<{ ok: boolean; error?: string }>,
 };
 
 contextBridge.exposeInMainWorld('antseedDesktop', api);

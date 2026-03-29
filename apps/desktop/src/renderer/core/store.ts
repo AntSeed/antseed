@@ -92,7 +92,6 @@ export function getUiSnapshot(): RendererUiState {
         }
       : null,
     chatActiveSessions: new Map(state.chatActiveSessions),
-    chatSessionCloseError: new Map(state.chatSessionCloseError),
     chatServiceOptions: [...state.chatServiceOptions],
   };
   cachedSnapshotVersion = version;
