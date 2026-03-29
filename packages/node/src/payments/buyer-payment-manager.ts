@@ -32,7 +32,8 @@ const HEADER_OUTPUT_TOKENS = 'x-antseed-output-tokens';
 /** Default tolerance: accept seller claims up to 1.4x buyer's bytes/4 estimate. */
 const DEFAULT_COST_TOLERANCE = 1.4;
 /** Fraction of reserve ceiling at which to signal a top-up is needed. */
-const DEFAULT_TOPUP_THRESHOLD = 0.8;
+/** Must match or exceed contract's TOP_UP_SETTLED_THRESHOLD_BPS (85%). */
+const DEFAULT_TOPUP_THRESHOLD = 0.85;
 
 export interface BuyerPaymentConfig {
   rpcUrl: string;
