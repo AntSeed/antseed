@@ -69,6 +69,7 @@ import { parseJsonObject, extractUsage } from "@antseed/api-adapter";
 import { debugLog, debugWarn } from "./utils/debug.js";
 import { parsePublicAddress } from "./discovery/public-address.js";
 import { BuyerPaymentManager, type BuyerPaymentConfig } from "./payments/buyer-payment-manager.js";
+import { computeCostUsdc } from "./payments/pricing.js";
 import { SellerPaymentManager, type SellerPaymentConfig } from "./payments/seller-payment-manager.js";
 import { IdentityClient } from "./payments/evm/identity-client.js";
 import { StatsClient } from "./payments/evm/stats-client.js";
@@ -112,21 +113,7 @@ function parseResponseUsage(body: Uint8Array): { inputTokens: number; outputToke
  * pricing.inputUsdPerMillion / pricing.outputUsdPerMillion are in USD per million tokens.
  * Returns cost in base units (1 USDC = 1_000_000).
  */
-function computeCostUsdc(
-  inputTokens: number,
-  outputTokens: number,
-  pricing: { inputUsdPerMillion: number; outputUsdPerMillion: number },
-): bigint {
-  // USD cost = tokens * (usdPerMillion / 1_000_000)
-  // USDC base units = USD cost * 1_000_000
-  // Combined: base units = tokens * usdPerMillion / 1_000_000 * 1_000_000 = tokens * usdPerMillion
-  // But usdPerMillion is a float, so compute in float then round
-  const costUsd =
-    (inputTokens * pricing.inputUsdPerMillion + outputTokens * pricing.outputUsdPerMillion) / 1_000_000;
-  // Convert to USDC base units (6 decimals)
-  const costBaseUnits = Math.max(0, Math.round(costUsd * 1_000_000));
-  return BigInt(costBaseUnits);
-}
+// computeCostUsdc imported from ./payments/pricing.js
 
 function parsePaymentRequiredBody(body: Uint8Array): Record<string, unknown> | null {
   try {
@@ -310,12 +297,14 @@ export class AntseedNode extends EventEmitter {
   /** Peers that have already sent their first request after session establishment.
    *  Used to distinguish whether per-request SpendingAuth should be attached. */
   private _buyerFirstRequestSent = new Set<string>();
-  /** Per-peer last response cost headers from the seller, used for per-request auth. */
+  /** Per-peer last response cost and raw content from the seller, used for per-request auth. */
   private _lastResponseCost = new Map<string, {
     costUsdc: bigint;
     inputTokens: bigint;
     outputTokens: bigint;
     cumulativeCost: bigint;
+    inputContent: Uint8Array;
+    outputContent: Uint8Array;
   }>();
 
   constructor(config: NodeConfig) {
@@ -957,27 +946,19 @@ export class AntseedNode extends EventEmitter {
       }
     }
 
-    // Buyer-side cost verification: always estimate locally from response body,
-    // then compare with seller's claimed cost headers. Use the lower of the two
-    // (with 2x tolerance for input token estimation inaccuracy).
+    // Store response byte counts for the BPM's bytes/4 cost verification.
+    // inputBytes = request body length (buyer knows their prompt).
+    // outputBytes = response body length (buyer observes the response).
+    // The BPM handles overdraft control; node.ts just records the raw data.
     this._estimateCostFromResponse(peer, response);
-    const buyerEstimate = this._lastResponseCost.get(peer.peerId);
     this._parseCostHeaders(peer.peerId, response);
-    const sellerClaimed = this._lastResponseCost.get(peer.peerId);
-    if (buyerEstimate && sellerClaimed && sellerClaimed !== buyerEstimate) {
-      // Cap seller's claimed cost at 2x the buyer's estimate
-      const maxAcceptable = buyerEstimate.costUsdc * 2n;
-      if (sellerClaimed.costUsdc > maxAcceptable && maxAcceptable > 0n) {
-        debugWarn(
-          `[Node] Seller cost ${sellerClaimed.costUsdc} exceeds 2x buyer estimate ${buyerEstimate.costUsdc} — capping`,
-        );
-        this._lastResponseCost.set(peer.peerId, {
-          ...sellerClaimed,
-          costUsdc: maxAcceptable,
-          inputTokens: buyerEstimate.inputTokens,
-          outputTokens: buyerEstimate.outputTokens,
-        });
-      }
+    const existing = this._lastResponseCost.get(peer.peerId);
+    if (existing) {
+      this._lastResponseCost.set(peer.peerId, {
+        ...existing,
+        inputContent: req.body,
+        outputContent: response.body,
+      });
     }
 
     return response;
@@ -1263,7 +1244,7 @@ export class AntseedNode extends EventEmitter {
           usdcAddress: payments.usdcAddress,
           identityRegistryAddress: payments.identityRegistryAddress ?? '',
           chainId: payments.chainId ?? 8453,
-          defaultAuthDurationSecs: payments.defaultAuthDurationSecs ?? 90000, // Must exceed SETTLE_TIMEOUT (24h)
+          defaultAuthDurationSecs: payments.defaultAuthDurationSecs ?? 900, // 15 min — seller must call reserve() promptly
           maxPerRequestUsdc: BigInt(payments.maxPerRequestUsdc ?? "500000"),  // $0.50 default — covers most LLM requests
           maxReserveAmountUsdc: BigInt(payments.maxReserveAmountUsdc ?? "5000000"),  // $5.00 default per session
           dataDir: paymentsDir,
@@ -2358,8 +2339,21 @@ export class AntseedNode extends EventEmitter {
 
     this.emit('payment:required', approvalInfo);
 
+    // Extract pricing from seller's PaymentRequired payload or peer metadata
+    const pricing = (requirements.inputUsdPerMillion != null || requirements.outputUsdPerMillion != null)
+      ? {
+          inputUsdPerMillion: requirements.inputUsdPerMillion ?? peer.defaultInputUsdPerMillion ?? 0,
+          outputUsdPerMillion: requirements.outputUsdPerMillion ?? peer.defaultOutputUsdPerMillion ?? 0,
+        }
+      : (peer.defaultInputUsdPerMillion != null || peer.defaultOutputUsdPerMillion != null)
+        ? {
+            inputUsdPerMillion: peer.defaultInputUsdPerMillion ?? 0,
+            outputUsdPerMillion: peer.defaultOutputUsdPerMillion ?? 0,
+          }
+        : undefined;
+
     try {
-      await bpm.authorizeSpending(peer.peerId, pmux, minBudgetPerRequest);
+      await bpm.authorizeSpending(peer.peerId, pmux, minBudgetPerRequest, pricing);
       debugLog(`[Node] SpendingAuth sent to seller ${peer.peerId.slice(0, 12)}..., waiting for AuthAck...`);
 
       await this._waitForLockConfirmation(peer.peerId);
@@ -2559,11 +2553,15 @@ export class AntseedNode extends EventEmitter {
     if (!costHeader) return;
 
     try {
+      // Preserve content from the estimate if already set
+      const existing = this._lastResponseCost.get(peerId);
       this._lastResponseCost.set(peerId, {
         costUsdc: BigInt(costHeader),
         inputTokens: BigInt(response.headers['x-antseed-input-tokens'] ?? '0'),
         outputTokens: BigInt(response.headers['x-antseed-output-tokens'] ?? '0'),
         cumulativeCost: BigInt(response.headers['x-antseed-cumulative-cost'] ?? '0'),
+        inputContent: existing?.inputContent ?? new Uint8Array(0),
+        outputContent: existing?.outputContent ?? response.body,
       });
     } catch {
       // Ignore malformed headers
@@ -2601,6 +2599,8 @@ export class AntseedNode extends EventEmitter {
       inputTokens: BigInt(inputTokens),
       outputTokens: BigInt(outputTokens),
       cumulativeCost: 0n, // Unknown for estimated costs
+      inputContent: new Uint8Array(0), // Placeholder — overwritten with req.body below
+      outputContent: response.body,
     });
 
     debugLog(
@@ -2618,24 +2618,24 @@ export class AntseedNode extends EventEmitter {
 
     const pmux = this._getOrCreateBuyerPaymentMux(peer.peerId, conn);
 
-    // Get cost from the previous response
+    // Get raw content and seller-claimed cost from the previous response
     const lastCost = this._lastResponseCost.get(peer.peerId);
-    const addedCostUsdc = lastCost?.costUsdc ?? 0n;
-    const addedInputTokens = lastCost?.inputTokens ?? 0n;
-    const addedOutputTokens = lastCost?.outputTokens ?? 0n;
-    // Estimate next request cost as the same as last request
-    const estimatedNextCostUsdc = addedCostUsdc > 0n ? addedCostUsdc : 1n;
+    const inputBytes = lastCost?.inputContent ?? 0;
+    const outputBytes = lastCost?.outputContent ?? 0;
+    const sellerClaimedCost = lastCost?.costUsdc;
 
     try {
-      const payload = await bpm.signPerRequestAuth(
+      const { payload, topUpNeeded } = await bpm.signPerRequestAuth(
         peer.peerId,
-        addedCostUsdc,
-        addedInputTokens,
-        addedOutputTokens,
-        estimatedNextCostUsdc,
+        { inputBytes, outputBytes, sellerClaimedCost },
       );
       pmux.sendSpendingAuth(payload);
       debugLog(`[Node] Per-request SpendingAuth sent to ${peer.peerId.slice(0, 12)}... cumulative=${payload.cumulativeAmount}`);
+
+      if (topUpNeeded) {
+        debugLog(`[Node] Reserve top-up needed for ${peer.peerId.slice(0, 12)}...`);
+        await bpm.topUpReserve(peer.peerId, pmux);
+      }
     } catch (err) {
       debugWarn(`[Node] Failed to send per-request SpendingAuth: ${err instanceof Error ? err.message : err}`);
       throw err;

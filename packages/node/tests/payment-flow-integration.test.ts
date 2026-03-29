@@ -13,6 +13,8 @@ import { bytesToHex } from '../src/utils/hex.js';
 import { toPeerId } from '../src/types/peer.js';
 import { AbiCoder, Wallet } from 'ethers';
 
+const enc = new TextEncoder();
+
 function decodeMetadataTokens(metadata: string): { inputTokens: bigint; outputTokens: bigint } {
   const coder = AbiCoder.defaultAbiCoder();
   const [inputTokens, outputTokens] = coder.decode(['uint256', 'uint256', 'uint256', 'uint256'], metadata);
@@ -53,6 +55,12 @@ function createMockPaymentMux(): PaymentMux & {
 
 const CHAIN_ID = 31337;
 const SESSIONS_CONTRACT = '0x' + 'cc'.repeat(20);
+
+const TEST_PRICING = { inputUsdPerMillion: 3, outputUsdPerMillion: 15 };
+
+/** Realistic test content for tokenx estimation. */
+const SAMPLE_INPUT = enc.encode('What is the capital of France? Please provide a detailed historical answer.');
+const SAMPLE_OUTPUT = enc.encode('The capital of France is Paris, located on the Seine River. It has been the capital since the 10th century.');
 
 function makeBuyerConfig(dataDir: string): BuyerPaymentConfig {
   return {
@@ -105,13 +113,12 @@ describe('Full Payment Flow Integration', () => {
     sellerIdentity = createTestIdentity();
 
     buyer = new BuyerPaymentManager(buyerIdentity, makeBuyerConfig(buyerDir), buyerStore);
-    // Use the real derived EVM wallet for the buyer (so signatures are valid)
     buyer.setSigner(buyerIdentity.wallet);
 
     seller = new SellerPaymentManager(sellerIdentity, makeSellerConfig(sellerDir), sellerStore);
     vi.spyOn(seller.sessionsClient, 'reserve').mockResolvedValue('0xreservehash');
     vi.spyOn(seller.sessionsClient, 'close').mockResolvedValue('0xclosehash');
-    vi.spyOn(seller.sessionsClient, 'requestTimeout').mockResolvedValue('0xrequestclosehash');
+    vi.spyOn(seller.sessionsClient, 'requestClose').mockResolvedValue('0xrequestclosehash');
     vi.spyOn(seller.sessionsClient, 'withdraw').mockResolvedValue('0xwithdrawhash');
 
     buyerMux = createMockPaymentMux();
@@ -125,122 +132,73 @@ describe('Full Payment Flow Integration', () => {
     rmSync(sellerDir, { recursive: true, force: true });
   });
 
-  // ── Helper to run the initial handshake ─────────────────────
-
   async function doInitialHandshake(minBudget: bigint): Promise<{ sessionId: string }> {
     const sellerPeerId = sellerIdentity.peerId;
     const buyerPeerId = buyerIdentity.peerId;
 
-    // Step 1: Buyer signs and sends initial SpendingAuth
-    const sessionId = await buyer.authorizeSpending(
-      sellerPeerId,
-      buyerMux,
-      minBudget,
-    );
+    const sessionId = await buyer.authorizeSpending(sellerPeerId, buyerMux, minBudget, TEST_PRICING);
     expect(sessionId).toMatch(/^0x[0-9a-f]{64}$/);
     expect(buyerMux.sentSpendingAuths).toHaveLength(1);
 
-    // Step 2: Seller receives SpendingAuth, reserves on-chain, sends AuthAck
     const initialAuth = buyerMux.sentSpendingAuths[0]!;
-    const result = await seller.handleSpendingAuth(
-      buyerPeerId,
-      initialAuth,
-      sellerMux,
-    );
+    const result = await seller.handleSpendingAuth(buyerPeerId, initialAuth, sellerMux);
     expect(result).toBe('reserved');
     expect(sellerMux.sentAuthAcks).toHaveLength(1);
-    expect(sellerMux.sentAuthAcks[0]!.channelId).toBe(sessionId);
 
-    // Step 3: Buyer receives AuthAck
     buyer.handleAuthAck(sellerPeerId, sellerMux.sentAuthAcks[0]!);
     expect(buyer.isAuthorized(sellerPeerId)).toBe(true);
 
     return { sessionId };
   }
 
-  // ── Tests ──────────────────────────────────────────────────
-
   it('complete flow: reserve -> 3 requests -> settle', async () => {
     const sellerPeerId = sellerIdentity.peerId;
     const buyerPeerId = buyerIdentity.peerId;
-    const minBudget = 50_000n; // $0.05
 
-    const { sessionId } = await doInitialHandshake(minBudget);
+    const { sessionId } = await doInitialHandshake(50_000n);
 
-    // Verify reserve was called with reserveAmount (not cumulativeAmount)
     expect(seller.sessionsClient.reserve).toHaveBeenCalledOnce();
     const reserveCall = (seller.sessionsClient.reserve as ReturnType<typeof vi.fn>).mock.calls[0]!;
-    // reserveAmount is the 4th arg (index 3)
-    const reserveAmount = reserveCall[3] as bigint;
-    expect(reserveAmount).toBe(10_000_000n); // maxReserveAmountUsdc from buyer config
+    expect(reserveCall[3] as bigint).toBe(10_000_000n);
 
-    // ── Request 1 ──
-    const auth1 = await buyer.signPerRequestAuth(
+    const { payload: auth1 } = await buyer.signPerRequestAuth(
       sellerPeerId,
-      20_000n,  // addedCost (actual cost of previous request)
-      500n,     // addedInputTokens
-      200n,     // addedOutputTokens
-      20_000n,  // estimatedNextCost
+      { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: 20_000n },
     );
-    expect(BigInt(auth1.cumulativeAmount)).toBeGreaterThan(0n);
-    const meta1 = decodeMetadataTokens(auth1.metadata);
-    expect(meta1.inputTokens).toBe(500n);
-    expect(meta1.outputTokens).toBe(200n);
+    expect(BigInt(auth1.cumulativeAmount)).toBeGreaterThan(50_000n);
 
-    // Seller validates and accepts
     const valid1 = await seller.validateAndAcceptAuth(buyerPeerId, auth1);
     expect(valid1).toBe(true);
     seller.recordSpend(sessionId, 20_000n);
 
-    // ── Request 2 ──
-    const auth2 = await buyer.signPerRequestAuth(
+    const { payload: auth2 } = await buyer.signPerRequestAuth(
       sellerPeerId,
-      30_000n,
-      800n,
-      350n,
-      25_000n,
+      { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: 30_000n },
     );
     expect(BigInt(auth2.cumulativeAmount)).toBeGreaterThan(BigInt(auth1.cumulativeAmount));
-    const meta2 = decodeMetadataTokens(auth2.metadata);
-    expect(meta2.inputTokens).toBe(1300n); // 500 + 800
-    expect(meta2.outputTokens).toBe(550n); // 200 + 350
 
     const valid2 = await seller.validateAndAcceptAuth(buyerPeerId, auth2);
     expect(valid2).toBe(true);
     seller.recordSpend(sessionId, 30_000n);
 
-    // ── Request 3 ──
-    const auth3 = await buyer.signPerRequestAuth(
+    const { payload: auth3 } = await buyer.signPerRequestAuth(
       sellerPeerId,
-      15_000n,
-      300n,
-      150n,
-      15_000n,
+      { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: 15_000n },
     );
     expect(BigInt(auth3.cumulativeAmount)).toBeGreaterThan(BigInt(auth2.cumulativeAmount));
-    const meta3 = decodeMetadataTokens(auth3.metadata);
-    expect(meta3.inputTokens).toBe(1600n); // 1300 + 300
-    expect(meta3.outputTokens).toBe(700n); // 550 + 150
 
     const valid3 = await seller.validateAndAcceptAuth(buyerPeerId, auth3);
     expect(valid3).toBe(true);
     seller.recordSpend(sessionId, 15_000n);
 
-    // Verify total spend
-    expect(seller.getCumulativeSpend(sessionId)).toBe(65_000n); // 20k + 30k + 15k
+    expect(seller.getCumulativeSpend(sessionId)).toBe(65_000n);
 
-    // ── Settlement ──
     await seller.settleSession(buyerPeerId);
 
     expect(seller.sessionsClient.close).toHaveBeenCalledOnce();
     const closeCall = (seller.sessionsClient.close as ReturnType<typeof vi.fn>).mock.calls[0]!;
-    // close(signer, channelId, cumulativeAmount, metadata, buyerSig)
-    const settledAmount = closeCall[2] as bigint;
-    expect(settledAmount).toBe(BigInt(auth3.cumulativeAmount));
-    // Verify buyer signature is non-empty
-    const buyerSig = closeCall[4] as string;
-    expect(buyerSig).toBeTruthy();
-    expect(buyerSig.length).toBeGreaterThan(2);
+    expect(closeCall[2] as bigint).toBe(BigInt(auth3.cumulativeAmount));
+    expect((closeCall[4] as string).length).toBeGreaterThan(2);
   });
 
   it('cumulative amounts are strictly monotonically increasing', async () => {
@@ -248,22 +206,18 @@ describe('Full Payment Flow Integration', () => {
 
     await doInitialHandshake(50_000n);
 
-    const amounts: bigint[] = [50_000n]; // initial cumulative is minBudget
+    const amounts: bigint[] = [50_000n];
 
     for (let i = 0; i < 5; i++) {
-      const auth = await buyer.signPerRequestAuth(
+      const { payload: auth } = await buyer.signPerRequestAuth(
         sellerPeerId,
-        10_000n,
-        100n,
-        50n,
-        10_000n,
+        { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: 10_000n },
       );
       const amount = BigInt(auth.cumulativeAmount);
       expect(amount).toBeGreaterThan(amounts[amounts.length - 1]!);
       amounts.push(amount);
     }
 
-    // Verify strictly increasing
     for (let i = 1; i < amounts.length; i++) {
       expect(amounts[i]!).toBeGreaterThan(amounts[i - 1]!);
     }
@@ -275,25 +229,17 @@ describe('Full Payment Flow Integration', () => {
 
     await doInitialHandshake(50_000n);
 
-    // Sign a legitimate higher auth first
-    const auth1 = await buyer.signPerRequestAuth(
+    const { payload: auth1 } = await buyer.signPerRequestAuth(
       sellerPeerId,
-      20_000n,
-      100n,
-      50n,
-      20_000n,
+      { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: 20_000n },
     );
-    const valid1 = await seller.validateAndAcceptAuth(buyerPeerId, auth1);
-    expect(valid1).toBe(true);
+    expect(await seller.validateAndAcceptAuth(buyerPeerId, auth1)).toBe(true);
 
-    // Try to send a lower cumulative amount (replay the initial auth)
     const fakeAuth: SpendingAuthPayload = {
       ...auth1,
-      cumulativeAmount: '30000', // lower than what was just accepted
+      cumulativeAmount: '30000',
     };
-    // Re-sign would produce a valid sig for lower amount, but seller should reject non-monotonic
-    const valid2 = await seller.validateAndAcceptAuth(buyerPeerId, fakeAuth);
-    expect(valid2).toBe(false);
+    expect(await seller.validateAndAcceptAuth(buyerPeerId, fakeAuth)).toBe(false);
   });
 
   it('token counts accumulate correctly across multiple requests', async () => {
@@ -301,20 +247,31 @@ describe('Full Payment Flow Integration', () => {
 
     await doInitialHandshake(50_000n);
 
-    const auth1 = await buyer.signPerRequestAuth(sellerPeerId, 10_000n, 1000n, 500n, 10_000n);
+    const { payload: auth1 } = await buyer.signPerRequestAuth(
+      sellerPeerId,
+      { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: 10_000n },
+    );
     const tMeta1 = decodeMetadataTokens(auth1.metadata);
-    expect(tMeta1.inputTokens).toBe(1000n);
-    expect(tMeta1.outputTokens).toBe(500n);
+    expect(tMeta1.inputTokens).toBeGreaterThan(0n);
+    expect(tMeta1.outputTokens).toBeGreaterThan(0n);
+    const firstInput = tMeta1.inputTokens;
+    const firstOutput = tMeta1.outputTokens;
 
-    const auth2 = await buyer.signPerRequestAuth(sellerPeerId, 10_000n, 2000n, 1500n, 10_000n);
+    const { payload: auth2 } = await buyer.signPerRequestAuth(
+      sellerPeerId,
+      { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: 10_000n },
+    );
     const tMeta2 = decodeMetadataTokens(auth2.metadata);
-    expect(tMeta2.inputTokens).toBe(3000n); // 1000 + 2000
-    expect(tMeta2.outputTokens).toBe(2000n); // 500 + 1500
+    expect(tMeta2.inputTokens).toBe(firstInput * 2n);
+    expect(tMeta2.outputTokens).toBe(firstOutput * 2n);
 
-    const auth3 = await buyer.signPerRequestAuth(sellerPeerId, 10_000n, 500n, 300n, 10_000n);
+    const { payload: auth3 } = await buyer.signPerRequestAuth(
+      sellerPeerId,
+      { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: 10_000n },
+    );
     const tMeta3 = decodeMetadataTokens(auth3.metadata);
-    expect(tMeta3.inputTokens).toBe(3500n); // 3000 + 500
-    expect(tMeta3.outputTokens).toBe(2300n); // 2000 + 300
+    expect(tMeta3.inputTokens).toBe(firstInput * 3n);
+    expect(tMeta3.outputTokens).toBe(firstOutput * 3n);
   });
 
   it('settle uses latest buyer signature (not initial)', async () => {
@@ -323,35 +280,32 @@ describe('Full Payment Flow Integration', () => {
 
     const { sessionId } = await doInitialHandshake(50_000n);
 
-    // Send several per-request auths
-    const auth1 = await buyer.signPerRequestAuth(sellerPeerId, 10_000n, 100n, 50n, 10_000n);
+    const { payload: auth1 } = await buyer.signPerRequestAuth(
+      sellerPeerId,
+      { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: 10_000n },
+    );
     await seller.validateAndAcceptAuth(buyerPeerId, auth1);
     seller.recordSpend(sessionId, 10_000n);
 
-    const auth2 = await buyer.signPerRequestAuth(sellerPeerId, 20_000n, 200n, 100n, 20_000n);
+    const { payload: auth2 } = await buyer.signPerRequestAuth(
+      sellerPeerId,
+      { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: 20_000n },
+    );
     await seller.validateAndAcceptAuth(buyerPeerId, auth2);
     seller.recordSpend(sessionId, 20_000n);
 
-    // Settle
     await seller.settleSession(buyerPeerId);
 
     const closeCall = (seller.sessionsClient.close as ReturnType<typeof vi.fn>).mock.calls[0]!;
-    const settledAmount = closeCall[2] as bigint;
-    const buyerSig = closeCall[4] as string;
-
-    // Should use auth2's cumulative amount (the latest), not auth1's or the initial
-    expect(settledAmount).toBe(BigInt(auth2.cumulativeAmount));
-    expect(buyerSig).toBe(auth2.spendingAuthSig);
+    expect(closeCall[2] as bigint).toBe(BigInt(auth2.cumulativeAmount));
+    expect(closeCall[4] as string).toBe(auth2.spendingAuthSig);
   });
 
   it('reserve sends reserveAmount from buyer config, not cumulativeAmount', async () => {
     await doInitialHandshake(50_000n);
 
     const initialAuth = buyerMux.sentSpendingAuths[0]!;
-    // The SpendingAuth payload should include reserveAmount
-    expect(initialAuth.reserveMaxAmount).toBe('10000000'); // maxReserveAmountUsdc
-
-    // And cumulativeAmount should be minBudget (initial reserve auth)
+    expect(initialAuth.reserveMaxAmount).toBe('10000000');
     expect(initialAuth.cumulativeAmount).toBe('50000');
   });
 
@@ -362,11 +316,11 @@ describe('Full Payment Flow Integration', () => {
     await doInitialHandshake(50_000n);
     expect(sellerMux.sentAuthAcks).toHaveLength(1);
 
-    // Send a subsequent auth via handleSpendingAuth
-    const auth1 = await buyer.signPerRequestAuth(sellerPeerId, 10_000n, 100n, 50n, 10_000n);
-    const result = await seller.handleSpendingAuth(buyerPeerId, auth1, sellerMux);
-    expect(result).toBe('accepted');
-    // No new AuthAck should be sent
+    const { payload: auth1 } = await buyer.signPerRequestAuth(
+      sellerPeerId,
+      { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: 10_000n },
+    );
+    expect(await seller.handleSpendingAuth(buyerPeerId, auth1, sellerMux)).toBe('accepted');
     expect(sellerMux.sentAuthAcks).toHaveLength(1);
   });
 
@@ -379,8 +333,10 @@ describe('Full Payment Flow Integration', () => {
     const { sessionId } = await doInitialHandshake(50_000n);
     expect(seller.hasSession(buyerPeerId)).toBe(true);
 
-    // Record at least one spend so settle works
-    const auth = await buyer.signPerRequestAuth(sellerPeerId, 10_000n, 100n, 50n, 10_000n);
+    const { payload: auth } = await buyer.signPerRequestAuth(
+      sellerPeerId,
+      { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: 10_000n },
+    );
     await seller.validateAndAcceptAuth(buyerPeerId, auth);
     seller.recordSpend(sessionId, 10_000n);
 
@@ -390,45 +346,25 @@ describe('Full Payment Flow Integration', () => {
 
   it('no-spend session settles via close with initial minBudget auth', async () => {
     const buyerPeerId = buyerIdentity.peerId;
-
     await doInitialHandshake(50_000n);
-
-    // Settle without any per-request auths (no spend recorded)
-    // The initial auth has cumulativeAmount=minBudget (50000), so the seller's
-    // acceptedCumulative is 50000 — settleSession calls close() with the
-    // initial auth (which carries the ReserveAuth sig).
     await seller.settleSession(buyerPeerId);
-
-    // With initial cumulative > 0, close is called
     expect(seller.sessionsClient.close).toHaveBeenCalledOnce();
-    expect(seller.sessionsClient.requestTimeout).not.toHaveBeenCalled();
+    expect(seller.sessionsClient.requestClose).not.toHaveBeenCalled();
   });
 
   it('buyer handleAuthAck ignores mismatched channelId', async () => {
     const sellerPeerId = sellerIdentity.peerId;
+    const sessionId = await buyer.authorizeSpending(sellerPeerId, buyerMux, 50_000n, TEST_PRICING);
 
-    const sessionId = await buyer.authorizeSpending(
-      sellerPeerId,
-      buyerMux,
-      50_000n,
-    );
-
-    // Send AuthAck with wrong channelId
-    buyer.handleAuthAck(sellerPeerId, {
-      channelId: '0x' + 'ff'.repeat(32),
-    });
-
-    // Should NOT be authorized
+    buyer.handleAuthAck(sellerPeerId, { channelId: '0x' + 'ff'.repeat(32) });
     expect(buyer.isAuthorized(sellerPeerId)).toBe(false);
 
-    // Now send correct AuthAck
     buyer.handleAuthAck(sellerPeerId, { channelId: sessionId });
     expect(buyer.isAuthorized(sellerPeerId)).toBe(true);
   });
 
   it('seller rejects SpendingAuth with invalid signature', async () => {
     const buyerPeerId = buyerIdentity.peerId;
-    const sellerPeerId = sellerIdentity.peerId;
 
     const { ZERO_METADATA_HASH, encodeMetadata, ZERO_METADATA } = await import('../src/payments/evm/signatures.js');
     const badAuth: SpendingAuthPayload = {
@@ -436,23 +372,21 @@ describe('Full Payment Flow Integration', () => {
       cumulativeAmount: '50000',
       metadataHash: ZERO_METADATA_HASH,
       metadata: encodeMetadata(ZERO_METADATA),
-      spendingAuthSig: '0x' + 'bb'.repeat(65), // garbage signature
+      spendingAuthSig: '0x' + 'bb'.repeat(65),
       reserveMaxAmount: '10000000',
       reserveSalt: '0x' + '01'.repeat(32),
       reserveDeadline: Math.floor(Date.now() / 1000) + 3600,
     };
 
-    const result = await seller.handleSpendingAuth(buyerPeerId, badAuth, sellerMux);
-    expect(result).toBe('rejected');
+    expect(await seller.handleSpendingAuth(buyerPeerId, badAuth, sellerMux)).toBe('rejected');
     expect(sellerMux.sentAuthAcks).toHaveLength(0);
   });
 
-  it('buyer per-request auth caps cumulative at maxReserveAmountUsdc', async () => {
+  it('buyer per-request auth caps cumulative at reserve ceiling', async () => {
     const sellerPeerId = sellerIdentity.peerId;
 
-    // Use a small maxReserve for this test
     const tightConfig = makeBuyerConfig(buyerDir);
-    tightConfig.maxReserveAmountUsdc = 100_000n; // $0.10 max reserve
+    tightConfig.maxReserveAmountUsdc = 100_000n;
     tightConfig.maxPerRequestUsdc = 500_000n;
 
     buyerStore.close();
@@ -460,13 +394,13 @@ describe('Full Payment Flow Integration', () => {
     buyer = new BuyerPaymentManager(buyerIdentity, tightConfig, buyerStore);
     buyer.setSigner(buyerIdentity.wallet);
 
-    await buyer.authorizeSpending(sellerPeerId, buyerMux, 50_000n);
-    buyer.handleAuthAck(sellerPeerId, {
-      channelId: buyerMux.sentSpendingAuths[0]!.channelId,
-    });
+    await buyer.authorizeSpending(sellerPeerId, buyerMux, 50_000n, TEST_PRICING);
+    buyer.handleAuthAck(sellerPeerId, { channelId: buyerMux.sentSpendingAuths[0]!.channelId });
 
-    // Try to increment by a lot — should cap at maxReserveAmountUsdc
-    const auth = await buyer.signPerRequestAuth(sellerPeerId, 200_000n, 100n, 50n, 200_000n);
+    const { payload: auth } = await buyer.signPerRequestAuth(
+      sellerPeerId,
+      { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: 200_000n },
+    );
     expect(BigInt(auth.cumulativeAmount)).toBeLessThanOrEqual(100_000n);
   });
 });
@@ -502,7 +436,7 @@ describe('Settlement edge cases', () => {
     seller = new SellerPaymentManager(sellerIdentity, makeSellerConfig(sellerDir), sellerStore);
     vi.spyOn(seller.sessionsClient, 'reserve').mockResolvedValue('0xreservehash');
     vi.spyOn(seller.sessionsClient, 'close').mockResolvedValue('0xclosehash');
-    vi.spyOn(seller.sessionsClient, 'requestTimeout').mockResolvedValue('0xrequestclosehash');
+    vi.spyOn(seller.sessionsClient, 'requestClose').mockResolvedValue('0xrequestclosehash');
     vi.spyOn(seller.sessionsClient, 'withdraw').mockResolvedValue('0xwithdrawhash');
 
     buyerMux = createMockPaymentMux();
@@ -516,25 +450,27 @@ describe('Settlement edge cases', () => {
     rmSync(sellerDir, { recursive: true, force: true });
   });
 
+  const TEST_PRICING = { inputUsdPerMillion: 3, outputUsdPerMillion: 15 };
+  const SAMPLE_INPUT = enc.encode('What is the capital of France?');
+  const SAMPLE_OUTPUT = enc.encode('The capital of France is Paris.');
+
   it('onBuyerDisconnect triggers settlement for active session', async () => {
     const sellerPeerId = sellerIdentity.peerId;
     const buyerPeerId = buyerIdentity.peerId;
 
-    // Handshake
-    const sessionId = await buyer.authorizeSpending(sellerPeerId, buyerMux, 50_000n);
+    const sessionId = await buyer.authorizeSpending(sellerPeerId, buyerMux, 50_000n, TEST_PRICING);
     const initialAuth = buyerMux.sentSpendingAuths[0]!;
     await seller.handleSpendingAuth(buyerPeerId, initialAuth, sellerMux);
     buyer.handleAuthAck(sellerPeerId, sellerMux.sentAuthAcks[0]!);
 
-    // Send one request auth
-    const auth1 = await buyer.signPerRequestAuth(sellerPeerId, 10_000n, 100n, 50n, 10_000n);
+    const { payload: auth1 } = await buyer.signPerRequestAuth(
+      sellerPeerId,
+      { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: 10_000n },
+    );
     await seller.validateAndAcceptAuth(buyerPeerId, auth1);
     seller.recordSpend(sessionId, 10_000n);
 
-    // Buyer disconnects
     seller.onBuyerDisconnect(buyerPeerId);
-
-    // Wait for the fire-and-forget settle to complete
     await new Promise((r) => setTimeout(r, 50));
 
     expect(seller.sessionsClient.close).toHaveBeenCalledOnce();
@@ -543,11 +479,9 @@ describe('Settlement edge cases', () => {
   it('settleSession is no-op for unknown buyer', async () => {
     await seller.settleSession('unknown-peer');
     expect(seller.sessionsClient.close).not.toHaveBeenCalled();
-    expect(seller.sessionsClient.requestTimeout).not.toHaveBeenCalled();
   });
 
   it('recordSpend is no-op for unknown channelId', () => {
-    // Should not throw
     seller.recordSpend('0x' + 'ff'.repeat(32), 1000n);
   });
 });

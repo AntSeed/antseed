@@ -674,7 +674,7 @@ ipcMain.handle('credits:get-info', async (): Promise<{ ok: boolean; data: Credit
 // Max spending per session: $5 USDC = 5,000,000 base units. Main process enforces
 // this cap to prevent a compromised renderer from signing unbounded authorizations.
 const MAX_SPENDING_AUTH_BASE_UNITS = 5_000_000n;
-const DEFAULT_SPENDING_AUTH_DURATION_SECONDS = 25 * 60 * 60; // must exceed escrow SETTLE_TIMEOUT (24h)
+const DEFAULT_SPENDING_AUTH_DURATION_SECONDS = 15 * 60; // 15 min — seller must call reserve() promptly
 const BYTES32_RE = /^0x[0-9a-fA-F]{64}$/;
 
 ipcMain.handle('payments:sign-spending-auth', async (_event, params: {

@@ -43,6 +43,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     // ─── Constant Keys for setConstant ──────────────────────────────
     bytes32 private constant KEY_FIRST_SIGN_CAP = keccak256("FIRST_SIGN_CAP");
     bytes32 private constant KEY_PLATFORM_FEE_BPS = keccak256("PLATFORM_FEE_BPS");
+    bytes32 private constant KEY_TOP_UP_SETTLED_THRESHOLD_BPS = keccak256("TOP_UP_SETTLED_THRESHOLD_BPS");
 
     // ─── Configurable Constants ─────────────────────────────────────
     uint256 public FIRST_SIGN_CAP = 1_000_000;
@@ -78,8 +79,9 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     event Reserved(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint128 maxAmount);
     event SessionSettled(bytes32 indexed channelId, address indexed seller, uint128 cumulativeAmount, uint256 platformFee);
     event SessionClosed(bytes32 indexed channelId, address indexed seller, uint128 finalAmount, uint256 platformFee);
-    event TimeoutRequested(bytes32 indexed channelId);
-    event SessionTimedOut(bytes32 indexed channelId, address indexed buyer);
+    event SessionTopUp(bytes32 indexed channelId, address indexed buyer, uint128 newMaxAmount);
+    event CloseRequested(bytes32 indexed channelId, address indexed buyer);
+    event SessionWithdrawn(bytes32 indexed channelId, address indexed buyer);
     event ConstantUpdated(bytes32 indexed key, uint256 value);
 
     // ─── Custom Errors ──────────────────────────────────────────────
@@ -94,7 +96,8 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     error FirstSignCapExceeded();
     error SellerNotStaked();
     error FinalAmountBelowSettled();
-    error TimeoutNotReady();
+    error CloseNotReady();
+    error CloseAlreadyRequested();
 
     // ─── Constructor ────────────────────────────────────────────────
     constructor(
@@ -177,6 +180,57 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
 
         stakingContract.incrementActiveSessions(msg.sender);
         emit Reserved(channelId, buyer, msg.sender, maxAmount);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //                        CORE — TOP UP (extend reserve)
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// @notice Minimum fraction of deposit that must be settled before top-up (85% = 8500 bps).
+    uint256 public TOP_UP_SETTLED_THRESHOLD_BPS = 8500;
+
+    error TopUpThresholdNotMet();
+    error TopUpAmountTooLow();
+
+    /**
+     * @notice Top up an active session by increasing the reserve ceiling.
+     *         Seller calls this when the buyer's cumulative spending approaches
+     *         the current deposit. Requires at least 85% of the current deposit
+     *         to be settled (proven via SpendingAuth) before allowing more funds.
+     *
+     * @param channelId    Existing session ID
+     * @param newMaxAmount New total reserve ceiling (must be > current deposit)
+     * @param deadline     New session deadline
+     * @param buyerSig     Buyer's ReserveAuth signature for (channelId, newMaxAmount, deadline)
+     */
+    function topUp(
+        bytes32 channelId,
+        uint128 newMaxAmount,
+        uint256 deadline,
+        bytes calldata buyerSig
+    ) external nonReentrant whenNotPaused {
+        Session storage session = sessions[channelId];
+        if (session.status != SessionStatus.Active) revert SessionNotActive();
+        if (msg.sender != session.seller) revert NotAuthorized();
+        if (block.timestamp > deadline) revert SessionExpired();
+        if (newMaxAmount <= session.deposit) revert TopUpAmountTooLow();
+
+        // Require at least 85% of current deposit to be settled
+        uint256 threshold = (uint256(session.deposit) * TOP_UP_SETTLED_THRESHOLD_BPS) / 10000;
+        if (session.settled < threshold) revert TopUpThresholdNotMet();
+
+        // Verify buyer's ReserveAuth signature for the new ceiling
+        _verifyReserveAuth(channelId, newMaxAmount, deadline, session.buyer, buyerSig);
+
+        // Lock the additional amount in Deposits
+        uint128 additionalAmount = newMaxAmount - session.deposit;
+        depositsContract.lockForSession(session.buyer, additionalAmount);
+
+        // Update session
+        session.deposit = newMaxAmount;
+        session.deadline = deadline;
+
+        emit SessionTopUp(channelId, session.buyer, newMaxAmount);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -265,33 +319,36 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //                        TIMEOUT
+    //                        REQUEST CLOSE + WITHDRAW
     // ═══════════════════════════════════════════════════════════════════
 
     /**
-     * @notice Request session timeout. Permissionless after deadline.
-     *         Starts a grace period before funds can be withdrawn.
+     * @notice Request session close. Buyer-only, callable anytime.
+     *         Starts a grace period during which the seller can still
+     *         call settle() or close() with the latest SpendingAuth.
+     *         After the grace period, the buyer can withdraw remaining funds.
      */
-    function requestTimeout(bytes32 channelId) external {
+    function requestClose(bytes32 channelId) external {
         Session storage session = sessions[channelId];
         if (session.status != SessionStatus.Active) revert SessionNotActive();
-        if (block.timestamp <= session.deadline) revert NotAuthorized();
-        if (session.closeRequestedAt != 0) revert InvalidAmount(); // already requested
+        if (msg.sender != session.buyer) revert NotAuthorized();
+        if (session.closeRequestedAt != 0) revert CloseAlreadyRequested();
 
         session.closeRequestedAt = block.timestamp;
-        emit TimeoutRequested(channelId);
+        emit CloseRequested(channelId, session.buyer);
     }
 
     /**
-     * @notice Withdraw remaining funds after timeout grace period.
+     * @notice Withdraw remaining funds after close grace period.
      *         Returns unspent USDC to buyer's Deposits balance.
-     *         Permissionless after grace period expires.
+     *         Buyer-only, after TIMEOUT_GRACE_PERIOD has elapsed since requestClose.
      */
     function withdraw(bytes32 channelId) external nonReentrant {
         Session storage session = sessions[channelId];
         if (session.status != SessionStatus.Active) revert SessionNotActive();
-        if (session.closeRequestedAt == 0) revert TimeoutNotReady();
-        if (block.timestamp < session.closeRequestedAt + TIMEOUT_GRACE_PERIOD) revert TimeoutNotReady();
+        if (msg.sender != session.buyer) revert NotAuthorized();
+        if (session.closeRequestedAt == 0) revert CloseNotReady();
+        if (block.timestamp < session.closeRequestedAt + TIMEOUT_GRACE_PERIOD) revert CloseNotReady();
 
         // Release all remaining reserved back to buyer's available balance
         uint128 remainingReserved = session.deposit - session.settled;
@@ -302,20 +359,22 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         session.status = SessionStatus.TimedOut;
         stakingContract.decrementActiveSessions(session.seller);
 
-        // Record ghost
-        uint256 agentId = stakingContract.getAgentId(session.seller);
-        if (agentId != 0) {
-            statsContract.updateStats(agentId, IAntseedStats.StatsUpdate({
-                updateType: 1,
-                volumeUsdc: 0,
-                inputTokens: 0,
-                outputTokens: 0,
-                latencyMs: 0,
-                requestCount: 0
-            }));
+        // Record ghost only if seller never settled anything (true abandonment)
+        if (session.settled == 0) {
+            uint256 agentId = stakingContract.getAgentId(session.seller);
+            if (agentId != 0) {
+                statsContract.updateStats(agentId, IAntseedStats.StatsUpdate({
+                    updateType: 1,
+                    volumeUsdc: 0,
+                    inputTokens: 0,
+                    outputTokens: 0,
+                    latencyMs: 0,
+                    requestCount: 0
+                }));
+            }
         }
 
-        emit SessionTimedOut(channelId, session.buyer);
+        emit SessionWithdrawn(channelId, session.buyer);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -452,6 +511,10 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         else if (key == KEY_PLATFORM_FEE_BPS) {
             if (value > MAX_PLATFORM_FEE_BPS) revert InvalidFee();
             PLATFORM_FEE_BPS = value;
+        }
+        else if (key == KEY_TOP_UP_SETTLED_THRESHOLD_BPS) {
+            if (value > 10000) revert InvalidAmount();
+            TOP_UP_SETTLED_THRESHOLD_BPS = value;
         }
         else revert InvalidAmount();
 

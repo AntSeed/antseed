@@ -132,7 +132,7 @@ describe('SellerPaymentManager', () => {
 
     vi.spyOn(manager.sessionsClient, 'reserve').mockResolvedValue('0xreserve-hash');
     vi.spyOn(manager.sessionsClient, 'close').mockResolvedValue('0xclose-hash');
-    vi.spyOn(manager.sessionsClient, 'requestTimeout').mockResolvedValue('0xrequesttimeout-hash');
+    vi.spyOn(manager.sessionsClient, 'requestClose').mockResolvedValue('0xrequesttimeout-hash');
     vi.spyOn(manager.sessionsClient, 'withdraw').mockResolvedValue('0xwithdraw-hash');
 
     mux = createMockPaymentMux();

@@ -69,7 +69,7 @@ export class SellerPaymentManager {
   /** channelId -> number of failed close() attempts. In-memory only; resets on node restart. */
   private readonly _closeRetryCount = new Map<string, number>();
 
-  /** Max close() retries before falling back to requestTimeout → withdraw */
+  /** Max close() retries before giving up (buyer must requestClose on-chain) */
   private static readonly MAX_CLOSE_RETRIES = 3;
 
   constructor(identity: Identity, config: SellerPaymentConfig, sessionStore: SessionStore) {
@@ -219,6 +219,50 @@ export class SellerPaymentManager {
 
         debugLog(`[SellerPayment] AuthAck sent for channel ${channelId.slice(0, 18)}...`);
         return 'reserved';
+      } else if (
+        payload.reserveMaxAmount
+        && existingCumulative !== undefined
+        && BigInt(payload.reserveMaxAmount) > (this._reserveMax.get(channelId) ?? 0n)
+      ) {
+        // ── Top-up: buyer is extending the reserve ceiling ──
+        const newMaxAmount = BigInt(payload.reserveMaxAmount);
+        const topUpDeadline = payload.reserveDeadline ?? (Math.floor(Date.now() / 1000) + 3600);
+        const currentReserveMax = this._reserveMax.get(channelId) ?? 0n;
+
+        // Verify as ReserveAuth (not SpendingAuth)
+        const reserveMsg = {
+          channelId,
+          maxAmount: newMaxAmount,
+          deadline: BigInt(topUpDeadline),
+        };
+        const recovered = verifyTypedData(sessionsDomain, RESERVE_AUTH_TYPES, reserveMsg, payload.spendingAuthSig);
+        if (recovered.toLowerCase() !== buyerEvmAddr.toLowerCase()) {
+          debugWarn(`[SellerPayment] Invalid top-up ReserveAuth signature: recovered=${recovered} expected=${buyerEvmAddr}`);
+          return 'rejected';
+        }
+
+        // Call topUp() on-chain
+        debugLog(`[SellerPayment] Top-up verified: channel=${channelId.slice(0, 18)}... ceiling ${currentReserveMax} → ${newMaxAmount}`);
+        await this._sessionsClient.topUp(
+          this._signer,
+          channelId,
+          newMaxAmount,
+          BigInt(topUpDeadline),
+          payload.spendingAuthSig,
+        );
+
+        // Update tracking
+        this._reserveMax.set(channelId, newMaxAmount);
+        const session = this._sessionStore.getSession(channelId);
+        if (session) {
+          session.previousConsumption = newMaxAmount.toString(); // repurposed: stores reserveMax
+          session.deadline = topUpDeadline;
+          session.updatedAt = Date.now();
+          this._sessionStore.upsertSession(session);
+        }
+
+        debugLog(`[SellerPayment] Top-up completed: channel=${channelId.slice(0, 18)}... new ceiling=${newMaxAmount}`);
+        return 'accepted';
       } else {
         // ── Subsequent SpendingAuth: verify SpendingAuth signature ──
         const metadataMsg = {
@@ -401,14 +445,14 @@ export class SellerPaymentManager {
 
     if (accepted === 0n) {
       // Session opened but no requests served — cannot close without a voucher.
-      // Leave it for checkTimeouts() which uses requestTimeout → withdraw.
+      // Leave it for checkTimeouts(); buyer must call requestClose → withdraw on-chain.
       debugLog(`[SellerPayment] Zero-cumulative channel ${channelId.slice(0, 18)}... — deferring to timeout checker`);
     } else {
       const retries = this._closeRetryCount.get(channelId) ?? 0;
       if (retries >= SellerPaymentManager.MAX_CLOSE_RETRIES) {
         // Exhausted retries — give up on close(), fall back to timeout path
         debugWarn(`[SellerPayment] close() failed ${retries} times for ${channelId.slice(0, 18)}... — falling back to timeout path`);
-        // Fall through to general cleanup below; checkTimeouts will use requestTimeout → withdraw
+        // Fall through to general cleanup below; buyer must requestClose on-chain
       } else {
         // Close with the latest buyer-signed auth (final settlement)
         const latestAuth = this._latestAuth.get(channelId);
@@ -472,66 +516,42 @@ export class SellerPaymentManager {
     debugLog(`[SellerPayment] Buyer ${buyerPeerId.slice(0, 12)}... disconnected — channel ${session.sessionId.slice(0, 18)}... preserved for reconnect`);
   }
 
-  // ── Timeout management ────────────────────────────────────────
+  // ── Stale session cleanup ────────────────────────────────────
 
   /**
-   * Check for and handle timed-out sessions.
-   * For expired sessions: requestTimeout → withdraw (after grace period).
+   * Check for stale sessions and attempt to close them.
+   * The seller can only close() with a valid SpendingAuth — it cannot
+   * requestClose or withdraw (those are buyer-only on-chain).
+   * If the seller has no auths, the session remains open until the buyer
+   * calls requestClose → withdraw on-chain.
    * Called periodically and on startup for recovery.
    */
   async checkTimeouts(): Promise<void> {
-    // Sessions has a 15-minute grace period after requestTimeout.
-    // We use the session deadline as the trigger — once past deadline, call requestTimeout.
-    // On the next check cycle (after 15 min), call withdraw.
-    const GRACE_PERIOD_SECS = 15 * 60;
     const nowSecs = Math.floor(Date.now() / 1000);
     const activeSessions = this._sessionStore.getActiveSessions('seller');
 
     for (const session of activeSessions) {
-      const deadline = session.deadline;
       const accepted = this._acceptedCumulative.get(session.sessionId) ?? 0n;
 
       try {
-        if (nowSecs > deadline) {
-          // Past deadline: try to close normally if we have auths, otherwise requestTimeout→withdraw
-          if (accepted > 0n) {
-            // Try to close with latest auth first
-            debugLog(`[SellerPayment] Channel ${session.sessionId.slice(0, 18)}... past deadline — attempting close`);
-            await this.settleSession(session.peerId);
-          } else {
-            // No auths received — two-phase: requestTimeout, then withdraw after grace
-            const closeRequestedAt = session.settledAt ?? 0; // repurpose settledAt to store closeRequestedAt timestamp
-            if (closeRequestedAt > 0 && nowSecs >= closeRequestedAt + GRACE_PERIOD_SECS) {
-              // Grace period passed since requestTimeout was called — withdraw
-              debugLog(`[SellerPayment] Channel ${session.sessionId.slice(0, 18)}... grace period passed — calling withdraw`);
-              await this._sessionsClient.withdraw(this._signer, session.sessionId);
-              this._sessionStore.updateSessionStatus(session.sessionId, 'timeout');
-              this._acceptedCumulative.delete(session.sessionId);
-              this._spent.delete(session.sessionId);
-              this._latestAuth.delete(session.sessionId);
-              this._closeRetryCount.delete(session.sessionId);
-              this._reserveMax.delete(session.sessionId);
-              this._activeBuyers.delete(session.peerId);
-            } else if (closeRequestedAt === 0) {
-              // First time past deadline — call requestTimeout and record when
-              debugLog(`[SellerPayment] Channel ${session.sessionId.slice(0, 18)}... past deadline — calling requestTimeout`);
-              try {
-                await this._sessionsClient.requestTimeout(this._signer, session.sessionId);
-                // Persist the timestamp so we know when grace period started
-                const stored = this._sessionStore.getSession(session.sessionId);
-                if (stored) {
-                  stored.settledAt = nowSecs;
-                  stored.updatedAt = Date.now();
-                  this._sessionStore.upsertSession(stored);
-                }
-              } catch {
-                // May already have been requested — ignore
-              }
-            }
-            // else: grace period still running, wait
-          }
+        // If we have auths and the buyer is disconnected, try to close
+        if (accepted > 0n && !this._activeBuyers.has(session.peerId)) {
+          debugLog(`[SellerPayment] Channel ${session.sessionId.slice(0, 18)}... buyer disconnected — attempting close`);
+          await this.settleSession(session.peerId);
         }
-        // If deadline hasn't passed, skip — session is still active
+        // If no auths and buyer disconnected, nothing the seller can do on-chain.
+        // The buyer must call requestClose → withdraw. We just clean up locally
+        // after a reasonable period (e.g. deadline passed).
+        if (accepted === 0n && !this._activeBuyers.has(session.peerId) && nowSecs > session.deadline) {
+          debugLog(`[SellerPayment] Channel ${session.sessionId.slice(0, 18)}... no auths, past deadline — cleaning up locally`);
+          this._sessionStore.updateSessionStatus(session.sessionId, 'timeout');
+          this._acceptedCumulative.delete(session.sessionId);
+          this._spent.delete(session.sessionId);
+          this._latestAuth.delete(session.sessionId);
+          this._closeRetryCount.delete(session.sessionId);
+          this._reserveMax.delete(session.sessionId);
+          this._activeBuyers.delete(session.peerId);
+        }
       } catch (err) {
         debugWarn(`[SellerPayment] Failed to process channel ${session.sessionId.slice(0, 18)}...: ${err instanceof Error ? err.message : err}`);
       }

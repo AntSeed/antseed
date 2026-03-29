@@ -22,7 +22,8 @@ const SESSIONS_ABI = [
   'function reserve(address buyer, bytes32 salt, uint128 maxAmount, uint256 deadline, bytes buyerSig) external',
   'function settle(bytes32 channelId, uint128 cumulativeAmount, bytes metadata, bytes buyerSig) external',
   'function close(bytes32 channelId, uint128 finalAmount, bytes metadata, bytes buyerSig) external',
-  'function requestTimeout(bytes32 channelId) external',
+  'function topUp(bytes32 channelId, uint128 newMaxAmount, uint256 deadline, bytes buyerSig) external',
+  'function requestClose(bytes32 channelId) external',
   'function withdraw(bytes32 channelId) external',
   'function sessions(bytes32 channelId) external view returns (address buyer, address seller, uint128 deposit, uint128 settled, bytes32 metadataHash, uint256 deadline, uint256 settledAt, uint256 closeRequestedAt, uint8 status)',
   'function computeChannelId(address buyer, address seller, bytes32 salt) external pure returns (bytes32)',
@@ -75,8 +76,21 @@ export class SessionsClient extends BaseEvmClient {
     );
   }
 
-  async requestTimeout(signer: AbstractSigner, channelId: string): Promise<string> {
-    return this._execWrite(signer, SESSIONS_ABI, 'requestTimeout', channelId);
+  async topUp(
+    signer: AbstractSigner,
+    channelId: string,
+    newMaxAmount: bigint,
+    deadline: bigint,
+    buyerSig: string,
+  ): Promise<string> {
+    return this._execWrite(
+      signer, SESSIONS_ABI, 'topUp',
+      channelId, newMaxAmount, deadline, buyerSig,
+    );
+  }
+
+  async requestClose(signer: AbstractSigner, channelId: string): Promise<string> {
+    return this._execWrite(signer, SESSIONS_ABI, 'requestClose', channelId);
   }
 
   async withdraw(signer: AbstractSigner, channelId: string): Promise<string> {
