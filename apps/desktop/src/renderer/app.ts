@@ -424,6 +424,15 @@ registerActions({
           return;
         }
 
+        // Track the active session for this peer (shared across conversations)
+        const peerId = uiState.chatPaymentApprovalPeerId;
+        if (peerId) {
+          uiState.chatActiveSessions.set(peerId, {
+            reservedUsdc: uiState.chatPaymentApprovalAmount,
+            peerName: uiState.chatPaymentApprovalPeerName || 'Peer',
+          });
+        }
+
         // Dismiss card and resend
         uiState.chatPaymentApprovalVisible = false;
         uiState.chatPaymentApprovalPeerId = null;
@@ -465,6 +474,27 @@ registerActions({
     uiState.chatPaymentApprovalLoading = false;
     uiState.chatPaymentApprovalError = null;
     notifyUiStateChanged();
+  },
+  requestSessionClose: (peerId: string) => {
+    uiState.chatSessionCloseError = null;
+    notifyUiStateChanged();
+    void (async () => {
+      try {
+        const result = await bridge?.requestSessionClose?.(peerId);
+        if (result?.ok) {
+          uiState.chatActiveSessions.delete(peerId);
+          uiState.chatSessionCloseError = null;
+        } else if (result?.error === 'no_gas') {
+          const addr = result.evmAddress ? ` (${result.evmAddress})` : '';
+          uiState.chatSessionCloseError = `No ETH for gas fees. Send ETH to your wallet${addr} to close sessions on-chain.`;
+        } else {
+          uiState.chatSessionCloseError = result?.error ?? 'Failed to close session';
+        }
+        notifyUiStateChanged();
+      } catch {
+        // Silently fail — session will timeout naturally
+      }
+    })();
   },
   refreshCredits: () => void creditsApi.refreshCredits(),
   refreshPlugins: refreshPluginInventory,

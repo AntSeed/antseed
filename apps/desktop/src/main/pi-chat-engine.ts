@@ -1396,6 +1396,7 @@ export function registerPiChatHandlers({
 }: RegisterPiChatHandlersOptions): {
   setPendingSpendingAuth: (conversationId: string, authBase64: string) => void;
   getCachedPaymentRequired: (conversationId: string) => Record<string, unknown> | null;
+  clearSessionsForPeer: (peerId: string) => void;
 } {
   const store = new PiConversationStore();
   const activeRunsByConversation = new Map<string, ActiveRun>();
@@ -1975,7 +1976,12 @@ export function registerPiChatHandlers({
 
   ipcMain.handle('chat:ai-list-conversations', async () => {
     const conversations = await store.list();
-    return { ok: true, data: conversations };
+    // Enrich summaries with peerId from the preferred-peer map
+    const enriched = conversations.map((c) => {
+      const peerId = preferredPeerByConversationId.get(c.id);
+      return peerId ? { ...c, peerId } : c;
+    });
+    return { ok: true, data: enriched };
   });
 
   ipcMain.handle('chat:ai-get-conversation', async (_event, id: string) => {
@@ -2063,6 +2069,14 @@ export function registerPiChatHandlers({
     },
     getCachedPaymentRequired: (conversationId: string) => {
       return cachedPaymentRequired.get(conversationId) ?? null;
+    },
+    clearSessionsForPeer: (peerId: string) => {
+      for (const [convId, pId] of preferredPeerByConversationId.entries()) {
+        if (pId === peerId) {
+          pendingSpendingAuth.delete(convId);
+          cachedPaymentRequired.delete(convId);
+        }
+      }
     },
   };
 }

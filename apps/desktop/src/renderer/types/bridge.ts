@@ -160,4 +160,5 @@ export type DesktopBridge = {
   }>;
 
   paymentsOpenPortal?: () => Promise<{ ok: boolean; url?: string; error?: string }>;
+  requestSessionClose?: (peerId: string) => Promise<{ ok: boolean; error?: string; evmAddress?: string }>;
 };

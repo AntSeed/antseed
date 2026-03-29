@@ -891,6 +891,28 @@ ipcMain.handle('chat:approve-payment', async (_event, conversationId: string) =>
   }
 });
 
+ipcMain.handle('chat:request-session-close', async (_event, peerId: string) => {
+  // Buyer-side close request: clear spending auth for all conversations with this peer.
+  // The seller will close or timeout the on-chain session via their normal lifecycle.
+  // Check gas balance first — requestTimeout requires an on-chain tx.
+  try {
+    await ensureSecureIdentity();
+    const identity = getSecureIdentity();
+    const cc = await loadCachedCryptoConfig();
+    if (identity && cc) {
+      const depositsClient = new DepositsClient({ rpcUrl: cc.rpcUrl, contractAddress: cc.depositsAddress, usdcAddress: cc.usdcAddress });
+      const ethBalance = await depositsClient.provider.getBalance(identity.wallet.address);
+      if (ethBalance === 0n) {
+        return { ok: false, error: 'no_gas', evmAddress: identity.wallet.address };
+      }
+    }
+    chatEngine.clearSessionsForPeer(peerId);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+
 ipcMain.handle('runtime:scan-network', async () => {
   // The buyer runtime handles peer discovery; just return the current state.
   await refreshPeerCache();
