@@ -40,6 +40,10 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         "ReserveAuth(bytes32 channelId,uint128 maxAmount,uint256 deadline)"
     );
 
+    bytes32 public constant SET_OPERATOR_TYPEHASH = keccak256(
+        "SetOperator(address operator,uint256 nonce)"
+    );
+
     // ─── Constant Keys for setConstant ──────────────────────────────
     bytes32 private constant KEY_FIRST_SIGN_CAP = keccak256("FIRST_SIGN_CAP");
     bytes32 private constant KEY_PLATFORM_FEE_BPS = keccak256("PLATFORM_FEE_BPS");
@@ -75,6 +79,11 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
 
     mapping(bytes32 => Session) public sessions;
 
+    /// @notice Authorized operator per buyer — can call requestClose, withdraw on buyer's behalf
+    mapping(address => address) public operators;
+    /// @notice Nonce for SetOperator signatures (replay protection)
+    mapping(address => uint256) public operatorNonces;
+
     // ─── Events ─────────────────────────────────────────────────────
     event Reserved(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint128 maxAmount);
     event SessionSettled(bytes32 indexed channelId, address indexed seller, uint128 cumulativeAmount, uint256 platformFee);
@@ -82,6 +91,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     event SessionTopUp(bytes32 indexed channelId, address indexed buyer, uint128 newMaxAmount);
     event CloseRequested(bytes32 indexed channelId, address indexed buyer);
     event SessionWithdrawn(bytes32 indexed channelId, address indexed buyer);
+    event OperatorSet(address indexed buyer, address indexed operator);
     event ConstantUpdated(bytes32 indexed key, uint256 value);
 
     // ─── Custom Errors ──────────────────────────────────────────────
@@ -98,6 +108,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     error FinalAmountBelowSettled();
     error CloseNotReady();
     error CloseAlreadyRequested();
+    error InvalidNonce();
 
     // ─── Constructor ────────────────────────────────────────────────
     constructor(
@@ -331,7 +342,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     function requestClose(bytes32 channelId) external {
         Session storage session = sessions[channelId];
         if (session.status != SessionStatus.Active) revert SessionNotActive();
-        if (msg.sender != session.buyer) revert NotAuthorized();
+        _requireBuyerOrOperator(session.buyer);
         if (session.closeRequestedAt != 0) revert CloseAlreadyRequested();
 
         session.closeRequestedAt = block.timestamp;
@@ -346,7 +357,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     function withdraw(bytes32 channelId) external nonReentrant {
         Session storage session = sessions[channelId];
         if (session.status != SessionStatus.Active) revert SessionNotActive();
-        if (msg.sender != session.buyer) revert NotAuthorized();
+        _requireBuyerOrOperator(session.buyer);
         if (session.closeRequestedAt == 0) revert CloseNotReady();
         if (block.timestamp < session.closeRequestedAt + TIMEOUT_GRACE_PERIOD) revert CloseNotReady();
 
@@ -375,6 +386,47 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         }
 
         emit SessionWithdrawn(channelId, session.buyer);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //                        OPERATOR MANAGEMENT
+    // ═══════════════════════════════════════════════════════════════════
+
+    /**
+     * @notice Set an authorized operator for a buyer. Anyone can submit
+     *         this tx — authorization comes from the buyer's EIP-712 signature.
+     *         The operator can call requestClose and withdraw on the buyer's behalf.
+     *
+     * @param buyer     The buyer address (hot wallet)
+     * @param operator  The operator address (funded wallet)
+     * @param nonce     Must match buyer's current operatorNonce (replay protection)
+     * @param buyerSig  Buyer's EIP-712 SetOperator signature
+     */
+    function setOperator(
+        address buyer,
+        address operator,
+        uint256 nonce,
+        bytes calldata buyerSig
+    ) external {
+        if (buyer == address(0)) revert InvalidAddress();
+        if (nonce != operatorNonces[buyer]) revert InvalidNonce();
+
+        bytes32 structHash = keccak256(
+            abi.encode(SET_OPERATOR_TYPEHASH, operator, nonce)
+        );
+        bytes32 digest = _hashTypedDataV4(structHash);
+        address recovered = ECDSA.recover(digest, buyerSig);
+        if (recovered != buyer) revert InvalidSignature();
+
+        operatorNonces[buyer] = nonce + 1;
+        operators[buyer] = operator;
+
+        emit OperatorSet(buyer, operator);
+    }
+
+    /// @dev Check that msg.sender is the buyer or their authorized operator.
+    function _requireBuyerOrOperator(address buyer) internal view {
+        if (msg.sender != buyer && msg.sender != operators[buyer]) revert NotAuthorized();
     }
 
     // ═══════════════════════════════════════════════════════════════════

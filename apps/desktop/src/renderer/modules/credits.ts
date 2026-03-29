@@ -31,7 +31,8 @@ export function initCreditsModule({ bridge, uiState }: CreditsModuleOptions): Cr
           uiState.creditsAvailableUsdc !== result.data.availableUsdc ||
           uiState.creditsReservedUsdc !== result.data.reservedUsdc ||
           uiState.creditsTotalUsdc !== result.data.balanceUsdc ||
-          uiState.creditsEvmAddress !== result.data.evmAddress;
+          uiState.creditsEvmAddress !== result.data.evmAddress ||
+          uiState.creditsOperatorAddress !== (result.data.operatorAddress ?? null);
 
         uiState.creditsAvailableUsdc = result.data.availableUsdc;
         uiState.creditsReservedUsdc = result.data.reservedUsdc;
@@ -39,6 +40,7 @@ export function initCreditsModule({ bridge, uiState }: CreditsModuleOptions): Cr
         uiState.creditsPendingWithdrawalUsdc = result.data.pendingWithdrawalUsdc;
         uiState.creditsCreditLimitUsdc = result.data.creditLimitUsdc;
         uiState.creditsEvmAddress = result.data.evmAddress;
+        uiState.creditsOperatorAddress = result.data.operatorAddress ?? null;
         uiState.creditsLastRefreshedAt = Date.now();
 
         // Low balance detection

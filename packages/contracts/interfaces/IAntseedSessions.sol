@@ -36,4 +36,10 @@ interface IAntseedSessions {
     function requestClose(bytes32 channelId) external;
 
     function withdraw(bytes32 channelId) external;
+
+    function setOperator(address buyer, address operator, uint256 nonce, bytes calldata buyerSig) external;
+
+    function operators(address buyer) external view returns (address);
+
+    function operatorNonces(address buyer) external view returns (uint256);
 }

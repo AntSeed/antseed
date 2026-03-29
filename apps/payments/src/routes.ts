@@ -84,7 +84,7 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
     try {
       const baseUnits = parseUsdc6(amount);
       const client = getClient()!;
-      const txHash = await client.requestWithdrawal(ctx.cryptoCtx.wallet, baseUnits);
+      const txHash = await client.requestWithdrawal(ctx.cryptoCtx.wallet, ctx.cryptoCtx.evmAddress, baseUnits);
       return { ok: true, txHash };
     } catch (err) {
       return reply.status(500).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
@@ -98,7 +98,7 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
 
     try {
       const client = getClient()!;
-      const txHash = await client.executeWithdrawal(ctx.cryptoCtx.wallet);
+      const txHash = await client.executeWithdrawal(ctx.cryptoCtx.wallet, ctx.cryptoCtx.evmAddress);
       return { ok: true, txHash };
     } catch (err) {
       return reply.status(500).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
@@ -112,7 +112,7 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
 
     try {
       const client = getClient()!;
-      const txHash = await client.cancelWithdrawal(ctx.cryptoCtx.wallet);
+      const txHash = await client.cancelWithdrawal(ctx.cryptoCtx.wallet, ctx.cryptoCtx.evmAddress);
       return { ok: true, txHash };
     } catch (err) {
       return reply.status(500).send({ ok: false, error: err instanceof Error ? err.message : String(err) });

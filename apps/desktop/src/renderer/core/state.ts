@@ -131,6 +131,7 @@ export type RendererUiState = {
   creditsPendingWithdrawalUsdc: string;
   creditsCreditLimitUsdc: string;
   creditsEvmAddress: string | null;
+  creditsOperatorAddress: string | null;
   creditsLoading: boolean;
   creditsLastRefreshedAt: number;
 
@@ -262,6 +263,7 @@ export function createInitialUiState(): RendererUiState {
     creditsPendingWithdrawalUsdc: '0',
     creditsCreditLimitUsdc: '0',
     creditsEvmAddress: null,
+    creditsOperatorAddress: null,
     creditsLoading: false,
     creditsLastRefreshedAt: 0,
 

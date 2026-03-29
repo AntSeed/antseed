@@ -559,6 +559,7 @@ ipcMain.handle(
 
 type CreditsInfo = {
   evmAddress: string | null;
+  operatorAddress: string | null;
   balanceUsdc: string;
   reservedUsdc: string;
   availableUsdc: string;
@@ -611,13 +612,13 @@ const CREDITS_RPC_RETRY_COOLDOWN_MS = 60_000;
 async function refreshCreditsInfo(): Promise<CreditsInfo> {
   const identity = getSecureIdentity();
   if (!identity) {
-    return { evmAddress: null, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
+    return { evmAddress: null, operatorAddress: null, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
   }
 
   const evmAddress = identity.wallet.address;
   const cc = await loadCachedCryptoConfig();
   if (!cc) {
-    return { evmAddress, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
+    return { evmAddress, operatorAddress: null, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
   }
 
   // Back off after repeated RPC failures; retry after cooldown so transient
@@ -625,7 +626,7 @@ async function refreshCreditsInfo(): Promise<CreditsInfo> {
   if (creditsRpcFailCount >= CREDITS_RPC_BACKOFF_THRESHOLD) {
     if (Date.now() - creditsRpcLastFailAt < CREDITS_RPC_RETRY_COOLDOWN_MS) {
       if (cachedCreditsInfo) return cachedCreditsInfo;
-      return { evmAddress, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
+      return { evmAddress, operatorAddress: null, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
     }
     // Cooldown elapsed — allow a retry attempt
     creditsRpcFailCount = 0;
@@ -639,8 +640,22 @@ async function refreshCreditsInfo(): Promise<CreditsInfo> {
       depositsClient.getBuyerCreditLimit(evmAddress),
     ]);
     creditsRpcFailCount = 0; // Reset on success
+
+    let operatorAddress: string | null = null;
+    try {
+      const { SessionsClient } = await import('@antseed/node');
+      const sessionsClient = new SessionsClient({ rpcUrl: cc.rpcUrl, contractAddress: cc.sessionsAddress });
+      const addr = await sessionsClient.getOperator(evmAddress);
+      if (addr && addr !== '0x0000000000000000000000000000000000000000') {
+        operatorAddress = addr;
+      }
+    } catch {
+      // Sessions contract may not be configured
+    }
+
     const info: CreditsInfo = {
       evmAddress,
+      operatorAddress,
       balanceUsdc: formatUsdc6(balance.available + balance.reserved),
       reservedUsdc: formatUsdc6(balance.reserved),
       availableUsdc: formatUsdc6(balance.available),
@@ -657,7 +672,7 @@ async function refreshCreditsInfo(): Promise<CreditsInfo> {
       catch { /* EPIPE — ignore */ }
     }
     if (cachedCreditsInfo) return cachedCreditsInfo;
-    return { evmAddress, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
+    return { evmAddress, operatorAddress: null, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
   }
 }
 
