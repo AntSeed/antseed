@@ -210,22 +210,20 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
                 </div>
                 {metaLabel ? <div className={styles.chatConvPreview}>{metaLabel}</div> : null}
                 {session && (
-                  <>
-                    <div className={styles.chatConvSession}>
-                      <span className={styles.chatConvSessionInfo}>
-                        Reserved ${formatUsdc(Number(session.reservedUsdc) || 0)} · Used ${formatUsdc(usedUsdc)}
-                      </span>
-                      <button
-                        className={styles.chatConvCloseBtn}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          actions.requestSessionClose();
-                        }}
-                      >
-                        Close
-                      </button>
-                    </div>
-                  </>
+                  <div className={styles.chatConvSession}>
+                    <span className={styles.chatConvSessionInfo}>
+                      Reserved ${formatUsdc(Number(session.reservedUsdc) || 0)} · Used ${formatUsdc(usedUsdc)}
+                    </span>
+                    <button
+                      className={styles.chatConvCloseBtn}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        actions.requestSessionClose();
+                      }}
+                    >
+                      Close
+                    </button>
+                  </div>
                 )}
                 {menuOpenId === id && (
                   <ConvContextMenu

@@ -424,7 +424,6 @@ registerActions({
           return;
         }
 
-        // Track the active session for this peer (shared across conversations)
         const peerId = uiState.chatPaymentApprovalPeerId;
         if (peerId) {
           uiState.chatActiveSessions.set(peerId, {

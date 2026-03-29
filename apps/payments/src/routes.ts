@@ -151,10 +151,14 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
       ]);
       const eventTopic = iface.getEvent('Reserved')!.topicHash;
 
+      // Limit to recent blocks to avoid unbounded RPC queries
+      const latestBlock = await client.provider.getBlockNumber();
+      const fromBlock = Math.max(0, latestBlock - 100_000);
+
       const logs = await client.provider.getLogs({
         address: ctx.cryptoConfig.sessionsContractAddress,
         topics: [eventTopic, null, buyerTopic],
-        fromBlock: 0,
+        fromBlock,
         toBlock: 'latest',
       });
 

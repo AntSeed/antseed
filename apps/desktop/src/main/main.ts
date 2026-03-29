@@ -635,23 +635,19 @@ async function refreshCreditsInfo(): Promise<CreditsInfo> {
   const depositsClient = new DepositsClient({ rpcUrl: cc.rpcUrl, contractAddress: cc.depositsAddress, usdcAddress: cc.usdcAddress });
 
   try {
-    const [balance, creditLimit] = await Promise.all([
+    const [balance, creditLimit, operatorAddress] = await Promise.all([
       depositsClient.getBuyerBalance(evmAddress),
       depositsClient.getBuyerCreditLimit(evmAddress),
+      (async (): Promise<string | null> => {
+        try {
+          const { SessionsClient } = await import('@antseed/node');
+          const sc = new SessionsClient({ rpcUrl: cc.rpcUrl, contractAddress: cc.sessionsAddress });
+          const addr = await sc.getOperator(evmAddress);
+          return addr && addr !== '0x0000000000000000000000000000000000000000' ? addr : null;
+        } catch { return null; }
+      })(),
     ]);
-    creditsRpcFailCount = 0; // Reset on success
-
-    let operatorAddress: string | null = null;
-    try {
-      const { SessionsClient } = await import('@antseed/node');
-      const sessionsClient = new SessionsClient({ rpcUrl: cc.rpcUrl, contractAddress: cc.sessionsAddress });
-      const addr = await sessionsClient.getOperator(evmAddress);
-      if (addr && addr !== '0x0000000000000000000000000000000000000000') {
-        operatorAddress = addr;
-      }
-    } catch {
-      // Sessions contract may not be configured
-    }
+    creditsRpcFailCount = 0;
 
     const info: CreditsInfo = {
       evmAddress,

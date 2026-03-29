@@ -174,7 +174,8 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
         }
       })();
     }
-  }, [depositConfirmed, step, onDeposited, address, config, writeOperatorAsync]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- writeOperatorAsync is stable from useWriteContract
+  }, [depositConfirmed, step, onDeposited, address, config]);
 
   const handleDeposit = useCallback(() => {
     if (!address || !amount || parseFloat(amount) <= 0 || !config || !depositTarget) return;
