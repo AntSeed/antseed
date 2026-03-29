@@ -39,6 +39,8 @@ interface IAntseedSessions {
 
     function setOperator(address buyer, address operator, uint256 nonce, bytes calldata buyerSig) external;
 
+    function transferOperator(address buyer, address newOperator) external;
+
     function operators(address buyer) external view returns (address);
 
     function operatorNonces(address buyer) external view returns (uint256);

@@ -1035,29 +1035,77 @@ contract AntseedSessionsTest is Test {
         sessions.setOperator(buyer, operator, 0, sig);
     }
 
-    function test_setOperator_changeOperator() public {
+    function test_setOperator_revert_alreadySet() public {
         address op1 = address(0xABCDE2);
         address op2 = address(0xABCDE3);
 
         bytes memory sig1 = signSetOperator(BUYER_PK, op1, 0);
         sessions.setOperator(buyer, op1, 0, sig1);
+
+        // setOperator reverts when operator is already set
+        bytes memory sig2 = signSetOperator(BUYER_PK, op2, 1);
+        vm.expectRevert(AntseedSessions.OperatorAlreadySet.selector);
+        sessions.setOperator(buyer, op2, 1, sig2);
+    }
+
+    function test_transferOperator() public {
+        address op1 = address(0xABCDE2);
+        address op2 = address(0xABCDE3);
+
+        // Set initial operator via buyer sig
+        bytes memory sig = signSetOperator(BUYER_PK, op1, 0);
+        sessions.setOperator(buyer, op1, 0, sig);
         assertEq(sessions.operators(buyer), op1);
 
+        // Current operator transfers to new operator
+        vm.prank(op1);
+        sessions.transferOperator(buyer, op2);
+        assertEq(sessions.operators(buyer), op2);
+    }
+
+    function test_transferOperator_revoke() public {
+        address operator = address(0xABCDE1);
+        bytes memory sig = signSetOperator(BUYER_PK, operator, 0);
+        sessions.setOperator(buyer, operator, 0, sig);
+
+        // Operator revokes themselves
+        vm.prank(operator);
+        sessions.transferOperator(buyer, address(0));
+        assertEq(sessions.operators(buyer), address(0));
+    }
+
+    function test_transferOperator_revert_notOperator() public {
+        address operator = address(0xABCDE1);
+        bytes memory sig = signSetOperator(BUYER_PK, operator, 0);
+        sessions.setOperator(buyer, operator, 0, sig);
+
+        // Random user cannot transfer
+        vm.prank(randomUser);
+        vm.expectRevert(AntseedSessions.NotAuthorized.selector);
+        sessions.transferOperator(buyer, address(0xBEEF));
+
+        // Buyer cannot transfer (only operator can)
+        vm.prank(buyer);
+        vm.expectRevert(AntseedSessions.NotAuthorized.selector);
+        sessions.transferOperator(buyer, address(0xBEEF));
+    }
+
+    function test_transferOperator_thenSetAgain() public {
+        address op1 = address(0xABCDE2);
+        address op2 = address(0xABCDE3);
+
+        // Set initial operator
+        bytes memory sig1 = signSetOperator(BUYER_PK, op1, 0);
+        sessions.setOperator(buyer, op1, 0, sig1);
+
+        // Operator revokes (sets to zero)
+        vm.prank(op1);
+        sessions.transferOperator(buyer, address(0));
+
+        // Now buyer can setOperator again with a new sig
         bytes memory sig2 = signSetOperator(BUYER_PK, op2, 1);
         sessions.setOperator(buyer, op2, 1, sig2);
         assertEq(sessions.operators(buyer), op2);
-        assertEq(sessions.operatorNonces(buyer), 2);
-    }
-
-    function test_setOperator_revokeOperator() public {
-        address operator = address(0xABCDE1);
-        bytes memory sig1 = signSetOperator(BUYER_PK, operator, 0);
-        sessions.setOperator(buyer, operator, 0, sig1);
-
-        // Set operator to zero address = revoke
-        bytes memory sig2 = signSetOperator(BUYER_PK, address(0), 1);
-        sessions.setOperator(buyer, address(0), 1, sig2);
-        assertEq(sessions.operators(buyer), address(0));
     }
 
     function test_operator_canRequestClose() public {

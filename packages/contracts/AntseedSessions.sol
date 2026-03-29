@@ -109,6 +109,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     error CloseNotReady();
     error CloseAlreadyRequested();
     error InvalidNonce();
+    error OperatorAlreadySet();
 
     // ─── Constructor ────────────────────────────────────────────────
     constructor(
@@ -393,9 +394,9 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     // ═══════════════════════════════════════════════════════════════════
 
     /**
-     * @notice Set an authorized operator for a buyer. Anyone can submit
+     * @notice Set the initial operator for a buyer. Anyone can submit
      *         this tx — authorization comes from the buyer's EIP-712 signature.
-     *         The operator can call requestClose and withdraw on the buyer's behalf.
+     *         Can only be called when no operator is set yet.
      *
      * @param buyer     The buyer address (hot wallet)
      * @param operator  The operator address (funded wallet)
@@ -409,6 +410,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         bytes calldata buyerSig
     ) external {
         if (buyer == address(0)) revert InvalidAddress();
+        if (operators[buyer] != address(0)) revert OperatorAlreadySet();
         if (nonce != operatorNonces[buyer]) revert InvalidNonce();
 
         bytes32 structHash = keccak256(
@@ -422,6 +424,24 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         operators[buyer] = operator;
 
         emit OperatorSet(buyer, operator);
+    }
+
+    /**
+     * @notice Transfer operator to a new address. Only the current operator
+     *         can call this — like ownership transfer. No buyer signature needed.
+     *
+     * @param buyer       The buyer whose operator is being transferred
+     * @param newOperator The new operator address (address(0) to revoke)
+     */
+    function transferOperator(
+        address buyer,
+        address newOperator
+    ) external {
+        if (msg.sender != operators[buyer]) revert NotAuthorized();
+
+        operators[buyer] = newOperator;
+
+        emit OperatorSet(buyer, newOperator);
     }
 
     /// @dev Check that msg.sender is the buyer or their authorized operator.
