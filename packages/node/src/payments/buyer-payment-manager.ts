@@ -261,11 +261,37 @@ export class BuyerPaymentManager {
   // ── Buyer-side cost verification ──────────────────────────────
 
   /**
+   * Estimate tokens and cost from response content without updating state.
+   */
+  private _estimateResponseCost(
+    sellerPeerId: string,
+    inputBytes: Uint8Array | number,
+    outputBytes: Uint8Array | number,
+  ): { cost: bigint; inputTokens: number; outputTokens: number } | null {
+    const pricing = this._sessionPricing.get(sellerPeerId);
+    if (!pricing) return null;
+    return estimateCostFromBytes(inputBytes, outputBytes, pricing);
+  }
+
+  /**
+   * Accumulate a cost estimate into verifiedCost.
+   */
+  private _accumulateVerifiedCost(
+    sellerPeerId: string,
+    estimate: { cost: bigint; inputTokens: number; outputTokens: number },
+  ): bigint {
+    const prev = this._verifiedCost.get(sellerPeerId) ?? 0n;
+    const newVerified = prev + estimate.cost;
+    this._verifiedCost.set(sellerPeerId, newVerified);
+    return newVerified;
+  }
+
+  /**
    * Record response content and update the buyer's verified cost.
    * Call this after receiving each response from the seller.
    *
-   * Accepts either raw content (Uint8Array) for accurate tokenx estimation,
-   * or byte lengths (number) for fallback bytes/4 approximation.
+   * NOTE: Do not call this AND signPerRequestAuth for the same response —
+   * signPerRequestAuth already updates verifiedCost internally.
    *
    * @returns The updated verified cost and estimated tokens, or null if no pricing is available.
    */
@@ -274,23 +300,20 @@ export class BuyerPaymentManager {
     inputBytes: Uint8Array | number,
     outputBytes: Uint8Array | number,
   ): { verifiedCost: bigint; inputTokens: number; outputTokens: number } | null {
-    const pricing = this._sessionPricing.get(sellerPeerId);
-    if (!pricing) return null;
+    const estimate = this._estimateResponseCost(sellerPeerId, inputBytes, outputBytes);
+    if (!estimate) return null;
 
-    const { cost, inputTokens, outputTokens } = estimateCostFromBytes(inputBytes, outputBytes, pricing);
-    const prev = this._verifiedCost.get(sellerPeerId) ?? 0n;
-    const newVerified = prev + cost;
-    this._verifiedCost.set(sellerPeerId, newVerified);
+    const newVerified = this._accumulateVerifiedCost(sellerPeerId, estimate);
 
     const inSize = typeof inputBytes === 'number' ? inputBytes : inputBytes.length;
     const outSize = typeof outputBytes === 'number' ? outputBytes : outputBytes.length;
     debugLog(
       `[BuyerPayment] recordResponseBytes: seller=${sellerPeerId.slice(0, 12)}... ` +
-      `in=${inSize}B→${inputTokens}tok out=${outSize}B→${outputTokens}tok ` +
-      `requestCost=${cost} verifiedCost=${newVerified}`,
+      `in=${inSize}B→${estimate.inputTokens}tok out=${outSize}B→${estimate.outputTokens}tok ` +
+      `requestCost=${estimate.cost} verifiedCost=${newVerified}`,
     );
 
-    return { verifiedCost: newVerified, inputTokens, outputTokens };
+    return { verifiedCost: newVerified, inputTokens: estimate.inputTokens, outputTokens: estimate.outputTokens };
   }
 
   // ── Per-request authorization (overdraft model) ─────────────
@@ -341,13 +364,14 @@ export class BuyerPaymentManager {
       throw new Error(`[BuyerPayment] No active session for seller ${sellerPeerId.slice(0, 12)}... — call authorizeSpending() first`);
     }
 
-    // Update verified cost from response bytes (buyer's independent estimate)
-    const verification = this.recordResponseBytes(sellerPeerId, responseStats.inputBytes, responseStats.outputBytes);
-    const estimatedInputTokens = verification ? BigInt(verification.inputTokens) : 0n;
-    const estimatedOutputTokens = verification ? BigInt(verification.outputTokens) : 0n;
-    const buyerEstimatedRequestCost = verification
-      ? estimateCostFromBytes(responseStats.inputBytes, responseStats.outputBytes, this._sessionPricing.get(sellerPeerId)!).cost
-      : 0n;
+    // Estimate cost from response bytes (buyer's independent estimate) and accumulate
+    const estimate = this._estimateResponseCost(sellerPeerId, responseStats.inputBytes, responseStats.outputBytes);
+    const estimatedInputTokens = estimate ? BigInt(estimate.inputTokens) : 0n;
+    const estimatedOutputTokens = estimate ? BigInt(estimate.outputTokens) : 0n;
+    const buyerEstimatedRequestCost = estimate ? estimate.cost : 0n;
+    if (estimate) {
+      this._accumulateVerifiedCost(sellerPeerId, estimate);
+    }
 
     // Determine the accepted cost for this request:
     // Use seller's claim, but cap at tolerance * buyer estimate if buyer has pricing.
@@ -537,9 +561,6 @@ export class BuyerPaymentManager {
     };
     const reserveAuthSig = await signReserveAuth(this._signer, sessionsDomain, reserveMsg);
 
-    // Update ceiling
-    this._currentReserveCeiling.set(sellerPeerId, newCeiling);
-
     const currentCumulative = this._cumulativeAmount.get(sellerPeerId) ?? 0n;
     const currentMeta = this._metadata.get(sellerPeerId) ?? { ...ZERO_METADATA };
     const metadataHashHex = computeMetadataHash(currentMeta);
@@ -548,7 +569,7 @@ export class BuyerPaymentManager {
     const salt = this._reserveSalt.get(sellerPeerId) ?? '0x' + '00'.repeat(32);
 
     // Send ReserveAuth sig with reserve fields (same pattern as initial authorizeSpending).
-    // The seller uses this to call reserve() on-chain with the new maxAmount.
+    // The seller uses this to call topUp() on-chain with the new maxAmount.
     try {
       paymentMux.sendSpendingAuth({
         channelId: session.sessionId,
@@ -560,9 +581,11 @@ export class BuyerPaymentManager {
         reserveMaxAmount: newCeiling.toString(),
         reserveDeadline: deadline,
       });
+      // Only commit the new ceiling after the message is delivered
+      this._currentReserveCeiling.set(sellerPeerId, newCeiling);
       debugLog(`[BuyerPayment] topUpReserve sent: newCeiling=${newCeiling}`);
     } catch {
-      debugLog(`[BuyerPayment] topUpReserve: connection closed before SpendingAuth could be sent`);
+      debugLog(`[BuyerPayment] topUpReserve: connection closed before ReserveAuth could be sent`);
     }
   }
 
