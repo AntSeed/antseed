@@ -297,7 +297,7 @@ export class AntseedNode extends EventEmitter {
   /** Peers that have already sent their first request after session establishment.
    *  Used to distinguish whether per-request SpendingAuth should be attached. */
   private _buyerFirstRequestSent = new Set<string>();
-  /** Per-peer last response cost and raw content from the seller, used for per-request auth. */
+  /** Per-peer last response cost, raw content, and latency from the seller. */
   private _lastResponseCost = new Map<string, {
     costUsdc: bigint;
     inputTokens: bigint;
@@ -305,6 +305,7 @@ export class AntseedNode extends EventEmitter {
     cumulativeCost: bigint;
     inputContent: Uint8Array;
     outputContent: Uint8Array;
+    latencyMs: number;
   }>();
 
   constructor(config: NodeConfig) {
@@ -958,6 +959,7 @@ export class AntseedNode extends EventEmitter {
         ...existing,
         inputContent: req.body,
         outputContent: response.body,
+        latencyMs: Date.now() - startTime,
       });
     }
 
@@ -1051,6 +1053,7 @@ export class AntseedNode extends EventEmitter {
         // Clean up buyer-side per-request auth tracking on disconnect
         this._buyerFirstRequestSent.delete(peerId);
         this._lastResponseCost.delete(peerId);
+        this._buyerPaymentManager?.cleanupSession(peerId);
         // Handle buyer disconnect
         if (this._sellerPaymentManager) {
           this._sellerPaymentManager.onBuyerDisconnect(peerId);
@@ -2553,7 +2556,7 @@ export class AntseedNode extends EventEmitter {
     if (!costHeader) return;
 
     try {
-      // Preserve content from the estimate if already set
+      // Preserve content and latency from the estimate if already set
       const existing = this._lastResponseCost.get(peerId);
       this._lastResponseCost.set(peerId, {
         costUsdc: BigInt(costHeader),
@@ -2562,6 +2565,7 @@ export class AntseedNode extends EventEmitter {
         cumulativeCost: BigInt(response.headers['x-antseed-cumulative-cost'] ?? '0'),
         inputContent: existing?.inputContent ?? new Uint8Array(0),
         outputContent: existing?.outputContent ?? response.body,
+        latencyMs: existing?.latencyMs ?? 0,
       });
     } catch {
       // Ignore malformed headers
@@ -2601,6 +2605,7 @@ export class AntseedNode extends EventEmitter {
       cumulativeCost: 0n, // Unknown for estimated costs
       inputContent: new Uint8Array(0), // Placeholder — overwritten with req.body below
       outputContent: response.body,
+      latencyMs: 0, // Placeholder — overwritten below
     });
 
     debugLog(
@@ -2618,16 +2623,18 @@ export class AntseedNode extends EventEmitter {
 
     const pmux = this._getOrCreateBuyerPaymentMux(peer.peerId, conn);
 
-    // Get raw content and seller-claimed cost from the previous response
+    // Get raw content, seller-claimed cost, and latency from the previous response
     const lastCost = this._lastResponseCost.get(peer.peerId);
     const inputBytes = lastCost?.inputContent ?? 0;
     const outputBytes = lastCost?.outputContent ?? 0;
     const sellerClaimedCost = lastCost?.costUsdc;
+    const latencyMs = lastCost?.latencyMs ?? 0;
 
     try {
       const { payload, topUpNeeded } = await bpm.signPerRequestAuth(
         peer.peerId,
         { inputBytes, outputBytes, sellerClaimedCost },
+        latencyMs > 0 ? BigInt(latencyMs) : undefined,
       );
       pmux.sendSpendingAuth(payload);
       debugLog(`[Node] Per-request SpendingAuth sent to ${peer.peerId.slice(0, 12)}... cumulative=${payload.cumulativeAmount}`);
