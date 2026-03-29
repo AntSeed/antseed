@@ -79,6 +79,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     event Reserved(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint128 maxAmount);
     event SessionSettled(bytes32 indexed channelId, address indexed seller, uint128 cumulativeAmount, uint256 platformFee);
     event SessionClosed(bytes32 indexed channelId, address indexed seller, uint128 finalAmount, uint256 platformFee);
+    event SessionTopUp(bytes32 indexed channelId, address indexed buyer, uint128 newMaxAmount);
     event CloseRequested(bytes32 indexed channelId, address indexed buyer);
     event SessionWithdrawn(bytes32 indexed channelId, address indexed buyer);
     event ConstantUpdated(bytes32 indexed key, uint256 value);
@@ -229,7 +230,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         session.deposit = newMaxAmount;
         session.deadline = deadline;
 
-        emit Reserved(channelId, session.buyer, session.seller, newMaxAmount);
+        emit SessionTopUp(channelId, session.buyer, newMaxAmount);
     }
 
     // ═══════════════════════════════════════════════════════════════════

@@ -219,6 +219,50 @@ export class SellerPaymentManager {
 
         debugLog(`[SellerPayment] AuthAck sent for channel ${channelId.slice(0, 18)}...`);
         return 'reserved';
+      } else if (
+        payload.reserveMaxAmount
+        && existingCumulative !== undefined
+        && BigInt(payload.reserveMaxAmount) > (this._reserveMax.get(channelId) ?? 0n)
+      ) {
+        // ── Top-up: buyer is extending the reserve ceiling ──
+        const newMaxAmount = BigInt(payload.reserveMaxAmount);
+        const topUpDeadline = payload.reserveDeadline ?? (Math.floor(Date.now() / 1000) + 3600);
+        const currentReserveMax = this._reserveMax.get(channelId) ?? 0n;
+
+        // Verify as ReserveAuth (not SpendingAuth)
+        const reserveMsg = {
+          channelId,
+          maxAmount: newMaxAmount,
+          deadline: BigInt(topUpDeadline),
+        };
+        const recovered = verifyTypedData(sessionsDomain, RESERVE_AUTH_TYPES, reserveMsg, payload.spendingAuthSig);
+        if (recovered.toLowerCase() !== buyerEvmAddr.toLowerCase()) {
+          debugWarn(`[SellerPayment] Invalid top-up ReserveAuth signature: recovered=${recovered} expected=${buyerEvmAddr}`);
+          return 'rejected';
+        }
+
+        // Call topUp() on-chain
+        debugLog(`[SellerPayment] Top-up verified: channel=${channelId.slice(0, 18)}... ceiling ${currentReserveMax} → ${newMaxAmount}`);
+        await this._sessionsClient.topUp(
+          this._signer,
+          channelId,
+          newMaxAmount,
+          BigInt(topUpDeadline),
+          payload.spendingAuthSig,
+        );
+
+        // Update tracking
+        this._reserveMax.set(channelId, newMaxAmount);
+        const session = this._sessionStore.getSession(channelId);
+        if (session) {
+          session.previousConsumption = newMaxAmount.toString(); // repurposed: stores reserveMax
+          session.deadline = topUpDeadline;
+          session.updatedAt = Date.now();
+          this._sessionStore.upsertSession(session);
+        }
+
+        debugLog(`[SellerPayment] Top-up completed: channel=${channelId.slice(0, 18)}... new ceiling=${newMaxAmount}`);
+        return 'accepted';
       } else {
         // ── Subsequent SpendingAuth: verify SpendingAuth signature ──
         const metadataMsg = {
