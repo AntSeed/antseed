@@ -1244,7 +1244,7 @@ export class AntseedNode extends EventEmitter {
           usdcAddress: payments.usdcAddress,
           identityRegistryAddress: payments.identityRegistryAddress ?? '',
           chainId: payments.chainId ?? 8453,
-          defaultAuthDurationSecs: payments.defaultAuthDurationSecs ?? 90000, // Must exceed SETTLE_TIMEOUT (24h)
+          defaultAuthDurationSecs: payments.defaultAuthDurationSecs ?? 900, // 15 min — seller must call reserve() promptly
           maxPerRequestUsdc: BigInt(payments.maxPerRequestUsdc ?? "500000"),  // $0.50 default — covers most LLM requests
           maxReserveAmountUsdc: BigInt(payments.maxReserveAmountUsdc ?? "5000000"),  // $5.00 default per session
           dataDir: paymentsDir,

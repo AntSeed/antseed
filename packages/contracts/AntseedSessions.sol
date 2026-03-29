@@ -79,8 +79,8 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     event Reserved(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint128 maxAmount);
     event SessionSettled(bytes32 indexed channelId, address indexed seller, uint128 cumulativeAmount, uint256 platformFee);
     event SessionClosed(bytes32 indexed channelId, address indexed seller, uint128 finalAmount, uint256 platformFee);
-    event TimeoutRequested(bytes32 indexed channelId);
-    event SessionTimedOut(bytes32 indexed channelId, address indexed buyer);
+    event CloseRequested(bytes32 indexed channelId, address indexed buyer);
+    event SessionWithdrawn(bytes32 indexed channelId, address indexed buyer);
     event ConstantUpdated(bytes32 indexed key, uint256 value);
 
     // ─── Custom Errors ──────────────────────────────────────────────
@@ -95,7 +95,8 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     error FirstSignCapExceeded();
     error SellerNotStaked();
     error FinalAmountBelowSettled();
-    error TimeoutNotReady();
+    error CloseNotReady();
+    error CloseAlreadyRequested();
 
     // ─── Constructor ────────────────────────────────────────────────
     constructor(
@@ -317,33 +318,36 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //                        TIMEOUT
+    //                        REQUEST CLOSE + WITHDRAW
     // ═══════════════════════════════════════════════════════════════════
 
     /**
-     * @notice Request session timeout. Permissionless after deadline.
-     *         Starts a grace period before funds can be withdrawn.
+     * @notice Request session close. Buyer-only, callable anytime.
+     *         Starts a grace period during which the seller can still
+     *         call settle() or close() with the latest SpendingAuth.
+     *         After the grace period, the buyer can withdraw remaining funds.
      */
-    function requestTimeout(bytes32 channelId) external {
+    function requestClose(bytes32 channelId) external {
         Session storage session = sessions[channelId];
         if (session.status != SessionStatus.Active) revert SessionNotActive();
-        if (block.timestamp <= session.deadline) revert NotAuthorized();
-        if (session.closeRequestedAt != 0) revert InvalidAmount(); // already requested
+        if (msg.sender != session.buyer) revert NotAuthorized();
+        if (session.closeRequestedAt != 0) revert CloseAlreadyRequested();
 
         session.closeRequestedAt = block.timestamp;
-        emit TimeoutRequested(channelId);
+        emit CloseRequested(channelId, session.buyer);
     }
 
     /**
-     * @notice Withdraw remaining funds after timeout grace period.
+     * @notice Withdraw remaining funds after close grace period.
      *         Returns unspent USDC to buyer's Deposits balance.
-     *         Permissionless after grace period expires.
+     *         Buyer-only, after TIMEOUT_GRACE_PERIOD has elapsed since requestClose.
      */
     function withdraw(bytes32 channelId) external nonReentrant {
         Session storage session = sessions[channelId];
         if (session.status != SessionStatus.Active) revert SessionNotActive();
-        if (session.closeRequestedAt == 0) revert TimeoutNotReady();
-        if (block.timestamp < session.closeRequestedAt + TIMEOUT_GRACE_PERIOD) revert TimeoutNotReady();
+        if (msg.sender != session.buyer) revert NotAuthorized();
+        if (session.closeRequestedAt == 0) revert CloseNotReady();
+        if (block.timestamp < session.closeRequestedAt + TIMEOUT_GRACE_PERIOD) revert CloseNotReady();
 
         // Release all remaining reserved back to buyer's available balance
         uint128 remainingReserved = session.deposit - session.settled;
@@ -354,20 +358,22 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         session.status = SessionStatus.TimedOut;
         stakingContract.decrementActiveSessions(session.seller);
 
-        // Record ghost
-        uint256 agentId = stakingContract.getAgentId(session.seller);
-        if (agentId != 0) {
-            statsContract.updateStats(agentId, IAntseedStats.StatsUpdate({
-                updateType: 1,
-                volumeUsdc: 0,
-                inputTokens: 0,
-                outputTokens: 0,
-                latencyMs: 0,
-                requestCount: 0
-            }));
+        // Record ghost only if seller never settled anything (true abandonment)
+        if (session.settled == 0) {
+            uint256 agentId = stakingContract.getAgentId(session.seller);
+            if (agentId != 0) {
+                statsContract.updateStats(agentId, IAntseedStats.StatsUpdate({
+                    updateType: 1,
+                    volumeUsdc: 0,
+                    inputTokens: 0,
+                    outputTokens: 0,
+                    latencyMs: 0,
+                    requestCount: 0
+                }));
+            }
         }
 
-        emit SessionTimedOut(channelId, session.buyer);
+        emit SessionWithdrawn(channelId, session.buyer);
     }
 
     // ═══════════════════════════════════════════════════════════════════

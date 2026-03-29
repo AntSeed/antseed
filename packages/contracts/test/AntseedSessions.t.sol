@@ -502,35 +502,27 @@ contract AntseedSessionsTest is Test {
     //                   TIMEOUT TESTS
     // ═══════════════════════════════════════════════════════════════════
 
-    function test_requestTimeout_and_withdraw() public {
-        bytes32 salt = keccak256("session-timeout");
+    function test_requestClose_and_withdraw() public {
+        bytes32 salt = keccak256("session-close-req");
         bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
-        (, , , , , uint256 deadline, , ,) = sessions.sessions(channelId);
-
-        // requestTimeout reverts before deadline
-        vm.expectRevert(AntseedSessions.NotAuthorized.selector);
-        sessions.requestTimeout(channelId);
-
-        // Warp past deadline
-        vm.warp(deadline + 1);
-
-        // Anyone can request timeout
-        vm.prank(randomUser);
-        sessions.requestTimeout(channelId);
+        // Buyer can request close anytime — no deadline dependency
+        vm.prank(buyer);
+        sessions.requestClose(channelId);
 
         // Can't withdraw yet — need to wait for grace period (15 min)
-        vm.expectRevert(AntseedSessions.TimeoutNotReady.selector);
+        vm.prank(buyer);
+        vm.expectRevert(AntseedSessions.CloseNotReady.selector);
         sessions.withdraw(channelId);
 
         // Warp past grace period
         vm.warp(block.timestamp + 15 minutes + 1);
 
-        // Now withdraw
-        vm.prank(randomUser);
+        // Buyer can withdraw after grace period
+        vm.prank(buyer);
         sessions.withdraw(channelId);
 
-        // Session timed out
+        // Session timed out (withdrawn)
         (,,,,,,,,AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
         assertTrue(sStatus == AntseedSessions.SessionStatus.TimedOut);
 
@@ -539,24 +531,100 @@ contract AntseedSessionsTest is Test {
         assertEq(available, USDC_100);
     }
 
-    function test_requestTimeout_revert_beforeDeadline() public {
-        bytes32 salt = keccak256("session-timeout-early");
+    function test_requestClose_revert_notBuyer() public {
+        bytes32 salt = keccak256("session-close-auth");
         bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
+        // Seller can't request close
+        vm.prank(seller);
         vm.expectRevert(AntseedSessions.NotAuthorized.selector);
-        sessions.requestTimeout(channelId);
+        sessions.requestClose(channelId);
+
+        // Random user can't request close
+        vm.prank(randomUser);
+        vm.expectRevert(AntseedSessions.NotAuthorized.selector);
+        sessions.requestClose(channelId);
     }
 
-    function test_withdraw_revert_withoutRequestTimeout() public {
-        bytes32 salt = keccak256("session-timeout-no-request");
+    function test_requestClose_revert_alreadyRequested() public {
+        bytes32 salt = keccak256("session-close-dup");
         bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
-        (, , , , , uint256 deadline, , ,) = sessions.sessions(channelId);
-        vm.warp(deadline + 16 minutes);
+        vm.prank(buyer);
+        sessions.requestClose(channelId);
 
-        // withdraw without calling requestTimeout first
-        vm.expectRevert(AntseedSessions.TimeoutNotReady.selector);
+        vm.prank(buyer);
+        vm.expectRevert(AntseedSessions.CloseAlreadyRequested.selector);
+        sessions.requestClose(channelId);
+    }
+
+    function test_withdraw_revert_notBuyer() public {
+        bytes32 salt = keccak256("session-withdraw-auth");
+        bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
+
+        vm.prank(buyer);
+        sessions.requestClose(channelId);
+
+        vm.warp(block.timestamp + 15 minutes + 1);
+
+        // Seller can't withdraw
+        vm.prank(seller);
+        vm.expectRevert(AntseedSessions.NotAuthorized.selector);
         sessions.withdraw(channelId);
+    }
+
+    function test_withdraw_revert_withoutRequestClose() public {
+        bytes32 salt = keccak256("session-withdraw-no-req");
+        bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
+
+        // withdraw without calling requestClose first
+        vm.prank(buyer);
+        vm.expectRevert(AntseedSessions.CloseNotReady.selector);
+        sessions.withdraw(channelId);
+    }
+
+    function test_sellerCanStillCloseDuringGracePeriod() public {
+        bytes32 salt = keccak256("session-grace-settle");
+        bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
+
+        // Buyer requests close
+        vm.prank(buyer);
+        sessions.requestClose(channelId);
+
+        // Seller can still close with a SpendingAuth during grace period
+        uint128 finalAmount = USDC_60;
+        bytes memory metaSig = signSpendingAuth(BUYER_PK, channelId, finalAmount, 5000, 2000);
+
+        vm.prank(seller);
+        sessions.close(channelId, finalAmount, encodeMetadata(5000, 2000), metaSig);
+
+        (,,,uint128 sSettled,,,,,AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
+        assertTrue(sStatus == AntseedSessions.SessionStatus.Settled);
+        assertEq(sSettled, USDC_60);
+
+        // Buyer gets refund of 40 USDC
+        (uint256 available,,,) = deposits.getBuyerBalance(buyer);
+        assertEq(available, USDC_100 - USDC_60);
+    }
+
+    function test_sellerCanSettleDuringGracePeriod() public {
+        bytes32 salt = keccak256("session-grace-mid");
+        bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
+
+        // Buyer requests close
+        vm.prank(buyer);
+        sessions.requestClose(channelId);
+
+        // Seller can still settle mid-session during grace period
+        uint128 amount = USDC_30;
+        bytes memory metaSig = signSpendingAuth(BUYER_PK, channelId, amount, 1000, 500);
+
+        vm.prank(seller);
+        sessions.settle(channelId, amount, encodeMetadata(1000, 500), metaSig);
+
+        (,,, uint128 sSettled,,,,, AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
+        assertTrue(sStatus == AntseedSessions.SessionStatus.Active);
+        assertEq(sSettled, USDC_30);
     }
 
     // ═══════════════════════════════════════════════════════════════════

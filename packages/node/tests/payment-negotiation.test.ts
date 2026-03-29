@@ -153,7 +153,7 @@ describe('SellerPaymentManager PaymentRequired', () => {
 
     vi.spyOn(manager.sessionsClient, 'reserve').mockResolvedValue('0xhash');
     vi.spyOn(manager.sessionsClient, 'close').mockResolvedValue('0xhash');
-    vi.spyOn(manager.sessionsClient, 'requestTimeout').mockResolvedValue('0xhash');
+    vi.spyOn(manager.sessionsClient, 'requestClose').mockResolvedValue('0xhash');
     vi.spyOn(manager.sessionsClient, 'withdraw').mockResolvedValue('0xhash');
   });
 
@@ -257,7 +257,7 @@ describe('SellerPaymentManager suggested amount', () => {
 
     vi.spyOn(manager.sessionsClient, 'reserve').mockResolvedValue('0xhash');
     vi.spyOn(manager.sessionsClient, 'close').mockResolvedValue('0xhash');
-    vi.spyOn(manager.sessionsClient, 'requestTimeout').mockResolvedValue('0xhash');
+    vi.spyOn(manager.sessionsClient, 'requestClose').mockResolvedValue('0xhash');
     vi.spyOn(manager.sessionsClient, 'withdraw').mockResolvedValue('0xhash');
   });
 

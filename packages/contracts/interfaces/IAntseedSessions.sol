@@ -33,7 +33,7 @@ interface IAntseedSessions {
         bytes calldata buyerSig
     ) external;
 
-    function requestTimeout(bytes32 channelId) external;
+    function requestClose(bytes32 channelId) external;
 
     function withdraw(bytes32 channelId) external;
 }

@@ -118,7 +118,7 @@ describe('Full Payment Flow Integration', () => {
     seller = new SellerPaymentManager(sellerIdentity, makeSellerConfig(sellerDir), sellerStore);
     vi.spyOn(seller.sessionsClient, 'reserve').mockResolvedValue('0xreservehash');
     vi.spyOn(seller.sessionsClient, 'close').mockResolvedValue('0xclosehash');
-    vi.spyOn(seller.sessionsClient, 'requestTimeout').mockResolvedValue('0xrequestclosehash');
+    vi.spyOn(seller.sessionsClient, 'requestClose').mockResolvedValue('0xrequestclosehash');
     vi.spyOn(seller.sessionsClient, 'withdraw').mockResolvedValue('0xwithdrawhash');
 
     buyerMux = createMockPaymentMux();
@@ -349,7 +349,7 @@ describe('Full Payment Flow Integration', () => {
     await doInitialHandshake(50_000n);
     await seller.settleSession(buyerPeerId);
     expect(seller.sessionsClient.close).toHaveBeenCalledOnce();
-    expect(seller.sessionsClient.requestTimeout).not.toHaveBeenCalled();
+    expect(seller.sessionsClient.requestClose).not.toHaveBeenCalled();
   });
 
   it('buyer handleAuthAck ignores mismatched channelId', async () => {
@@ -436,7 +436,7 @@ describe('Settlement edge cases', () => {
     seller = new SellerPaymentManager(sellerIdentity, makeSellerConfig(sellerDir), sellerStore);
     vi.spyOn(seller.sessionsClient, 'reserve').mockResolvedValue('0xreservehash');
     vi.spyOn(seller.sessionsClient, 'close').mockResolvedValue('0xclosehash');
-    vi.spyOn(seller.sessionsClient, 'requestTimeout').mockResolvedValue('0xrequestclosehash');
+    vi.spyOn(seller.sessionsClient, 'requestClose').mockResolvedValue('0xrequestclosehash');
     vi.spyOn(seller.sessionsClient, 'withdraw').mockResolvedValue('0xwithdrawhash');
 
     buyerMux = createMockPaymentMux();
