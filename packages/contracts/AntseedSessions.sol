@@ -512,7 +512,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
             PLATFORM_FEE_BPS = value;
         }
         else if (key == KEY_TOP_UP_SETTLED_THRESHOLD_BPS) {
-            if (value > 10000) revert InvalidFee();
+            if (value > 10000) revert InvalidAmount();
             TOP_UP_SETTLED_THRESHOLD_BPS = value;
         }
         else revert InvalidAmount();
