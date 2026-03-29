@@ -476,19 +476,16 @@ registerActions({
     notifyUiStateChanged();
   },
   requestSessionClose: (peerId: string) => {
-    uiState.chatSessionCloseError = null;
+    uiState.chatSessionCloseError.delete(peerId);
     notifyUiStateChanged();
     void (async () => {
       try {
         const result = await bridge?.requestSessionClose?.(peerId);
         if (result?.ok) {
           uiState.chatActiveSessions.delete(peerId);
-          uiState.chatSessionCloseError = null;
-        } else if (result?.error === 'no_gas') {
-          const addr = result.evmAddress ? ` (${result.evmAddress})` : '';
-          uiState.chatSessionCloseError = `No ETH for gas fees. Send ETH to your wallet${addr} to close sessions on-chain.`;
+          uiState.chatSessionCloseError.delete(peerId);
         } else {
-          uiState.chatSessionCloseError = result?.error ?? 'Failed to close session';
+          uiState.chatSessionCloseError.set(peerId, result?.error ?? 'Failed to close session');
         }
         notifyUiStateChanged();
       } catch {

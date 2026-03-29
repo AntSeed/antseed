@@ -213,7 +213,7 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
                   <>
                     <div className={styles.chatConvSession}>
                       <span className={styles.chatConvSessionInfo}>
-                        Reserved ${session.reservedUsdc} · Used ${formatUsdc(usedUsdc)}
+                        Reserved ${formatUsdc(Number(session.reservedUsdc) || 0)} · Used ${formatUsdc(usedUsdc)}
                       </span>
                       <button
                         className={styles.chatConvCloseBtn}
@@ -225,8 +225,8 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
                         Close
                       </button>
                     </div>
-                    {chatSessionCloseError && (
-                      <div className={styles.chatConvSessionError}>{chatSessionCloseError}</div>
+                    {convPeerId && chatSessionCloseError.get(convPeerId) && (
+                      <div className={styles.chatConvSessionError}>{chatSessionCloseError.get(convPeerId)}</div>
                     )}
                   </>
                 )}
