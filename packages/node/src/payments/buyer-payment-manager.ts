@@ -286,8 +286,8 @@ export class BuyerPaymentManager {
    */
   private _estimateResponseCost(
     sellerPeerId: string,
-    inputBytes: Uint8Array | number,
-    outputBytes: Uint8Array | number,
+    inputBytes: Uint8Array,
+    outputBytes: Uint8Array,
   ): { cost: bigint; inputTokens: number; outputTokens: number } | null {
     const pricing = this._sessionPricing.get(sellerPeerId);
     if (!pricing) return null;
@@ -318,16 +318,16 @@ export class BuyerPaymentManager {
    */
   recordResponseBytes(
     sellerPeerId: string,
-    inputBytes: Uint8Array | number,
-    outputBytes: Uint8Array | number,
+    inputBytes: Uint8Array,
+    outputBytes: Uint8Array,
   ): { verifiedCost: bigint; inputTokens: number; outputTokens: number } | null {
     const estimate = this._estimateResponseCost(sellerPeerId, inputBytes, outputBytes);
     if (!estimate) return null;
 
     const newVerified = this._accumulateVerifiedCost(sellerPeerId, estimate);
 
-    const inSize = typeof inputBytes === 'number' ? inputBytes : inputBytes.length;
-    const outSize = typeof outputBytes === 'number' ? outputBytes : outputBytes.length;
+    const inSize = inputBytes.length;
+    const outSize = outputBytes.length;
     debugLog(
       `[BuyerPayment] recordResponseBytes: seller=${sellerPeerId.slice(0, 12)}... ` +
       `in=${inSize}B→${estimate.inputTokens}tok out=${outSize}B→${estimate.outputTokens}tok ` +
@@ -377,7 +377,7 @@ export class BuyerPaymentManager {
    */
   async signPerRequestAuth(
     sellerPeerId: string,
-    responseStats: { inputBytes: Uint8Array | number; outputBytes: Uint8Array | number; sellerClaimedCost?: bigint },
+    responseStats: { inputBytes: Uint8Array; outputBytes: Uint8Array; sellerClaimedCost?: bigint },
     addedLatencyMs?: bigint,
   ): Promise<PerRequestAuthResult> {
     const session = this._channelStore.getActiveChannelByPeer(sellerPeerId, 'buyer');

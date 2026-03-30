@@ -2626,8 +2626,8 @@ export class AntseedNode extends EventEmitter {
 
     // Get raw content, seller-claimed cost, and latency from the previous response
     const lastCost = this._lastResponseCost.get(peer.peerId);
-    const inputBytes = lastCost?.inputContent ?? 0;
-    const outputBytes = lastCost?.outputContent ?? 0;
+    const inputBytes = lastCost?.inputContent ?? new Uint8Array(0);
+    const outputBytes = lastCost?.outputContent ?? new Uint8Array(0);
     const sellerClaimedCost = lastCost?.costUsdc;
     const latencyMs = lastCost?.latencyMs ?? 0;
 

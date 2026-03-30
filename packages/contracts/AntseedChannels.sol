@@ -82,6 +82,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
     event OperatorSet(address indexed buyer, address indexed operator);
 
 
+
     // ─── Custom Errors ──────────────────────────────────────────────
     error InvalidAddress();
     error InvalidAmount();
@@ -261,7 +262,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         channel.metadataHash = metadataHash;
         channel.settledAt = block.timestamp;
 
-        _recordStatsAndEmissions(channel, delta, metadata, 2); // partial settlement
+        _recordStatsAndEmissions(channelId, channel, delta, metadata, 2); // partial settlement
 
         emit ChannelSettled(channelId, channel.seller, cumulativeAmount, platformFee);
     }
@@ -305,7 +306,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         channel.status = ChannelStatus.Settled;
         activeChannelCount[channel.seller]--;
 
-        _recordStatsAndEmissions(channel, delta, metadata, 0); // channel complete
+        _recordStatsAndEmissions(channelId, channel, delta, metadata, 0); // channel complete
 
         emit ChannelClosed(channelId, channel.seller, finalAmount, platformFee);
     }
@@ -355,14 +356,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         if (channel.settled == 0) {
             uint256 agentId = IAntseedStaking(registry.staking()).getAgentId(channel.seller);
             if (agentId != 0) {
-                IAntseedStats(registry.stats()).updateStats(agentId, IAntseedStats.StatsUpdate({
-                    updateType: 1,
-                    volumeUsdc: 0,
-                    inputTokens: 0,
-                    outputTokens: 0,
-                    latencyMs: 0,
-                    requestCount: 0
-                }));
+                IAntseedStats(registry.stats()).updateStats(channelId, agentId, channel.buyer, 1, 0, 0, "");
             }
         }
 
@@ -409,10 +403,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
             if (channel.settled == 0) {
                 uint256 agentId = IAntseedStaking(registry.staking()).getAgentId(channel.seller);
                 if (agentId != 0) {
-                    IAntseedStats(registry.stats()).updateStats(agentId, IAntseedStats.StatsUpdate({
-                        updateType: 1, volumeUsdc: 0, inputTokens: 0,
-                        outputTokens: 0, latencyMs: 0, requestCount: 0
-                    }));
+                    IAntseedStats(registry.stats()).updateStats(channelIds[i], agentId, buyer, 1, 0, 0, "");
                 }
             }
 
@@ -516,6 +507,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
 
     /// @param statsUpdateType 0 = channel complete (close), 1 = ghost, 2 = partial settlement
     function _recordStatsAndEmissions(
+        bytes32 channelId,
         Channel storage channel,
         uint128 delta,
         bytes calldata metadata,
@@ -523,16 +515,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
     ) internal {
         uint256 agentId = IAntseedStaking(registry.staking()).getAgentId(channel.seller);
         if (agentId != 0) {
-            (uint256 inputTokens, uint256 outputTokens, uint256 latencyMs, uint256 requestCount) =
-                abi.decode(metadata, (uint256, uint256, uint256, uint256));
-            IAntseedStats(registry.stats()).updateStats(agentId, IAntseedStats.StatsUpdate({
-                updateType: statsUpdateType,
-                volumeUsdc: delta,
-                inputTokens: uint128(inputTokens),
-                outputTokens: uint128(outputTokens),
-                latencyMs: uint64(latencyMs),
-                requestCount: uint64(requestCount)
-            }));
+            IAntseedStats(registry.stats()).updateStats(channelId, agentId, channel.buyer, statsUpdateType, delta, channel.settled, metadata);
         }
         address _emissions = registry.emissions();
         if (delta > 0 && _emissions != address(0)) {

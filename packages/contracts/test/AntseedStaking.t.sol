@@ -86,20 +86,17 @@ contract AntseedStakingTest is Test {
         vm.stopPrank();
     }
 
-    function _addGhosts(uint256 agentId, uint256 count) internal {
+    function _addGhosts(uint256 _agentId, uint256 count) internal {
         for (uint256 i = 0; i < count; i++) {
-            stats.updateStats(
-                agentId,
-                IAntseedStats.StatsUpdate(1, 0, 0, 0, 0, 0) // ghost
-            );
+            stats.updateStats(bytes32(i), _agentId, address(0x99), 1, 0, 0, "");
         }
     }
 
-    function _addChannels(uint256 agentId, uint256 count) internal {
+    function _addChannels(uint256 _agentId, uint256 count) internal {
         for (uint256 i = 0; i < count; i++) {
             stats.updateStats(
-                agentId,
-                IAntseedStats.StatsUpdate(0, 1_000_000, 500, 1200, 0, 0) // settlement
+                bytes32(i + 1000), _agentId, address(0x99), 0, 1_000_000, 1_000_000,
+                abi.encode(uint256(500), uint256(1200), uint256(0), uint256(0))
             );
         }
     }

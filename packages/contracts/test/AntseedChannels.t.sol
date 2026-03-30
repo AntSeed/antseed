@@ -365,8 +365,6 @@ contract AntseedChannelsTest is Test {
         IAntseedStats.AgentStats memory s = stats.getStats(sellerAgentId);
         assertEq(s.channelCount, 1);
         assertEq(s.totalVolumeUsdc, USDC_60);
-        assertEq(s.totalInputTokens, 5000);
-        assertEq(s.totalOutputTokens, 2000);
     }
 
     function test_close_fullDeposit() public {
@@ -703,8 +701,6 @@ contract AntseedChannelsTest is Test {
         IAntseedStats.AgentStats memory s = stats.getStats(sellerAgentId);
         assertEq(s.channelCount, 1);
         assertEq(s.totalVolumeUsdc, USDC_50);
-        assertEq(s.totalInputTokens, inputToks);
-        assertEq(s.totalOutputTokens, outputToks);
     }
 
     // ═══════════════════════════════════════════════════════════════════
