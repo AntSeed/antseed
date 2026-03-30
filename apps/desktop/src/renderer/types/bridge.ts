@@ -134,7 +134,7 @@ export type DesktopBridge = {
   onAppSetupStep?: (handler: (data: { step: string; label: string }) => void) => () => void;
   onAppSetupComplete?: (handler: () => void) => () => void;
   setDebugLogs?: (enabled: boolean) => Promise<{ ok: true }>;
-  creditsGetInfo?: () => Promise<{ ok: boolean; data: { evmAddress: string | null; balanceUsdc: string; reservedUsdc: string; availableUsdc: string; pendingWithdrawalUsdc: string; creditLimitUsdc: string } | null; error: string | null }>;
+  creditsGetInfo?: () => Promise<{ ok: boolean; data: { evmAddress: string | null; operatorAddress: string | null; balanceUsdc: string; reservedUsdc: string; availableUsdc: string; pendingWithdrawalUsdc: string; creditLimitUsdc: string } | null; error: string | null }>;
 
   paymentsSignSpendingAuth?: (params: {
     channelId: string;

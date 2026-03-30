@@ -152,8 +152,12 @@ function ConvContextMenu({
   );
 }
 
+function formatUsdc(value: number): string {
+  return value < 0.01 && value > 0 ? '<0.01' : value.toFixed(2);
+}
+
 function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void }) {
-  const { chatConversations, chatActiveConversation } = useUiSnapshot();
+  const { chatConversations, chatActiveConversation, chatActiveSessions } = useUiSnapshot();
   const actions = useActions();
   const conversations = Array.isArray(chatConversations) ? chatConversations : [];
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
@@ -175,6 +179,9 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
             const peerLabel = String(conv.peerLabel || '').trim();
             const serviceLabel = shortServiceName(conv.service);
             const metaLabel = [peerLabel, serviceLabel].filter(Boolean).join(' • ');
+            const convPeerId = String(conv.peerId || '').trim();
+            const session = convPeerId ? chatActiveSessions.get(convPeerId) : undefined;
+            const usedUsdc = Number(conv.totalEstimatedCostUsd) || 0;
 
             return (
               <div
@@ -202,6 +209,22 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
                   </div>
                 </div>
                 {metaLabel ? <div className={styles.chatConvPreview}>{metaLabel}</div> : null}
+                {session && (
+                  <div className={styles.chatConvSession}>
+                    <span className={styles.chatConvSessionInfo}>
+                      Reserved ${formatUsdc(Number(session.reservedUsdc) || 0)} · Used ${formatUsdc(usedUsdc)}
+                    </span>
+                    <button
+                      className={styles.chatConvCloseBtn}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        actions.requestSessionClose();
+                      }}
+                    >
+                      Close
+                    </button>
+                  </div>
+                )}
                 {menuOpenId === id && (
                   <ConvContextMenu
                     convId={id}
