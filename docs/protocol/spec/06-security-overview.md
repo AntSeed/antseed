@@ -9,7 +9,7 @@ The buyer-seller flow enforces:
 1. **Peer authenticity** — every node is identified by a unique secp256k1 keypair (EVM address); all trust-critical messages are signed.
 2. **Metadata integrity** — discovery metadata is signed and freshness-checked before use.
 3. **Bounded resource usage** — frame sizes, upload caps, stream durations, and connection counts are hard-limited.
-4. **Billing accountability** — usage is tracked via bilateral signed receipts and settled through on-chain deposits and sessions contracts.
+4. **Billing accountability** — usage is tracked via bilateral signed receipts and settled through on-chain deposits and channels contracts.
 5. **Fail-closed behavior** — timeouts and disconnects deterministically finalize sessions without hanging state.
 
 ## 2. Trust Boundaries
@@ -66,7 +66,7 @@ The buyer-seller flow enforces:
 - Seller submits latest SpendingAuth to settle() or close() on-chain.
 - On buyer disconnect: seller calls close() with last SpendingAuth to finalize.
 - On seller disappearance: requestTimeout() (permissionless after deadline) + withdraw() after 15min grace.
-- Sessions contract holds no USDC — all funds managed by AntseedDeposits.
+- Channels contract holds no USDC — all funds managed by AntseedDeposits.
 
 ## 4. Cryptographic Control Plane
 

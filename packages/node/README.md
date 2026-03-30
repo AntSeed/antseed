@@ -242,7 +242,7 @@ When `payments.enabled=true` in seller mode:
 2. Deposit balance is locked on-chain at session start.
 3. Usage receipts are generated during request handling.
 4. On idle/session finalization, `calculateSettlement` computes cost from receipts and settles on-chain via:
-   - `SessionsClient.settle(sessionId, tokenCount)`
+   - `ChannelsClient.settle(sessionId, tokenCount)`
 5. Any unused reservation is refunded to the buyer by contract logic in the same settlement transaction.
 
 Minimal crypto config:
@@ -261,7 +261,7 @@ const node = new AntseedNode({
         chainId: 'base',
         rpcUrl: process.env.RPC_URL!,
         depositsContractAddress: process.env.DEPOSITS_ADDRESS!,
-        sessionsContractAddress: process.env.SESSIONS_ADDRESS!,
+        channelsContractAddress: process.env.CHANNELS_ADDRESS!,
         usdcContractAddress: process.env.USDC_ADDRESS!,
         autoFundDeposit: true,
       },
@@ -302,7 +302,7 @@ import type { PeerMetadata, ProviderAnnouncement } from '@antseed/node';
 import { MeteringStorage } from '@antseed/node';
 import { BalanceManager } from '@antseed/node';
 import { BuyerPaymentManager, calculateSettlement } from '@antseed/node/payments';
-import { BaseSessionsClient } from '@antseed/node';
+import { BaseChannelsClient } from '@antseed/node';
 
 // Routing & Proxy
 import { ProxyMux } from '@antseed/node';

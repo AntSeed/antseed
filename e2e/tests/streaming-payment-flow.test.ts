@@ -16,8 +16,8 @@ import { randomUUID } from 'node:crypto';
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
 
 // ─── Mock JSON-RPC server ────────────────────────────────────────────────────
-// Responds to ethers JsonRpcProvider calls so SessionsClient.reserve(),
-// SessionsClient.settle(), DepositsClient.getBuyerBalance(), etc. work
+// Responds to ethers JsonRpcProvider calls so ChannelsClient.reserve(),
+// ChannelsClient.settle(), DepositsClient.getBuyerBalance(), etc. work
 // without a real chain.
 
 let rpcCallLog: Array<{ method: string; params: unknown[] }> = [];
@@ -296,7 +296,7 @@ function makePaymentsConfig(rpcUrl: string, overrides?: Partial<NodePaymentsConf
     enabled: true,
     rpcUrl,
     depositsAddress: '0x' + 'dd'.repeat(20),
-    sessionsAddress: '0x' + 'cc'.repeat(20),
+    channelsAddress: '0x' + 'cc'.repeat(20),
     stakingAddress: '0x' + 'bb'.repeat(20),
     usdcAddress: '0x' + 'ee'.repeat(20),
     identityRegistryAddress: '0x' + 'aa'.repeat(20),

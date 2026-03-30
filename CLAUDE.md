@@ -87,7 +87,7 @@ packages/contracts/
 ├── AntseedStats.sol         Per-agent session metrics keyed by ERC-8004 agentId
 ├── AntseedStaking.sol       Seller staking, slashing (holds stake USDC, binds to agentId)
 ├── AntseedDeposits.sol      Buyer deposits, seller earnings (holds buyer USDC)
-├── AntseedSessions.sol      Session lifecycle, ReserveAuth + SpendingAuth (swappable, holds NO USDC)
+├── AntseedChannels.sol      Session lifecycle, ReserveAuth + SpendingAuth (swappable, holds NO USDC)
 ├── AntseedEmissions.sol     ANTS token emissions (USDC volume-based)
 ├── AntseedSubPool.sol       Subscription pool
 ├── MockERC8004Registry.sol  Mock ERC-8004 IdentityRegistry (local testing only)
@@ -102,16 +102,16 @@ Build/test: `cd packages/contracts && forge build && forge test`
 ### Payment Flow (Cumulative Streaming SpendingAuth)
 1. Buyer deposits USDC into AntseedDeposits
 2. Buyer signs ReserveAuth(channelId, maxAmount, deadline) off-chain
-3. Seller calls `reserve()` on AntseedSessions with buyer's ReserveAuth sig → Deposits.lockForSession()
+3. Seller calls `reserve()` on AntseedChannels with buyer's ReserveAuth sig → Deposits.lockForSession()
 4. Per request: buyer signs SpendingAuth(channelId, cumulativeAmount, metadataHash)
 5. Seller calls `settle()` or `close()` with latest SpendingAuth → Deposits.chargeAndCreditEarnings()
 6. If seller disappears: `requestTimeout()` (permissionless after deadline) → `withdraw()` after 15min grace
 
-EIP-712 domain: name="AntseedSessions", version="7"
+EIP-712 domain: name="AntseedChannels", version="7"
 
 ### Contract Separation Design
 - **Stable contracts** (Staking, Deposits) hold funds and rarely change
-- **Swappable contract** (Sessions) holds no USDC — can be redeployed by re-pointing stable contracts
+- **Swappable contract** (Channels) holds no USDC — can be redeployed by re-pointing stable contracts
 - Buyer never needs gas — all on-chain actions are seller-initiated or permissionless
 
 ## Local Testing (Full Payment Flow)
@@ -140,7 +140,7 @@ In the desktop app, go to Settings > Chain Config and set:
 - Chain ID: `base-local`
 - RPC URL: `http://127.0.0.1:8545`
 - Deposits: `0x5FC8d32690cc91D4c39d9d3abcBD16989F875707`
-- Sessions: `0x0165878A594ca255338adfa4d48449f69242Eb8F`
+- Channels: `0x0165878A594ca255338adfa4d48449f69242Eb8F`
 
 Then start a chat — the payment flow (ReserveAuth → per-request SpendingAuth → settle/close) runs automatically.
 

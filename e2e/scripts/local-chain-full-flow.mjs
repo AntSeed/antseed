@@ -11,7 +11,7 @@ import { TextDecoder, TextEncoder } from "node:util";
 import { fileURLToPath } from "node:url";
 
 import { AntseedNode, toPeerId } from "@antseed/node";
-import { DepositsClient, SessionsClient } from "@antseed/node/payments";
+import { DepositsClient, ChannelsClient } from "@antseed/node/payments";
 import { DHTNode } from "@antseed/node/discovery";
 
 const RPC_URL = process.env.RPC_URL ?? "http://127.0.0.1:8545";
@@ -321,12 +321,12 @@ async function main() {
     const depositsAddress = parseDeployedAddress(depositsDeployOutput);
     logStep(`AntseedDeposits deployed: ${depositsAddress}`);
 
-    logStep("deploying AntseedSessions");
+    logStep("deploying AntseedChannels");
     const sessionsDeployOutput = runCommand(
       "forge",
       [
         "create",
-        "AntseedSessions.sol:AntseedSessions",
+        "AntseedChannels.sol:AntseedChannels",
         "--rpc-url",
         RPC_URL,
         "--private-key",
@@ -339,14 +339,14 @@ async function main() {
       ],
       { cwd: contractsDir }
     );
-    const sessionsAddress = parseDeployedAddress(sessionsDeployOutput);
-    logStep(`AntseedSessions deployed: ${sessionsAddress}`);
+    const channelsAddress = parseDeployedAddress(sessionsDeployOutput);
+    logStep(`AntseedChannels deployed: ${channelsAddress}`);
 
     logStep("wiring contracts together");
-    castSend([depositsAddress, "setSessionsContract(address)", sessionsAddress]);
-    castSend([identityAddress, "setSessionsContract(address)", sessionsAddress]);
+    castSend([depositsAddress, "setChannelsContract(address)", channelsAddress]);
+    castSend([identityAddress, "setChannelsContract(address)", channelsAddress]);
     castSend([identityAddress, "setStakingContract(address)", stakingAddress]);
-    castSend([stakingAddress, "setSessionsContract(address)", sessionsAddress]);
+    castSend([stakingAddress, "setChannelsContract(address)", channelsAddress]);
     logStep("contract wiring complete");
 
     logStep("starting isolated local DHT bootstrap");
@@ -383,7 +383,7 @@ async function main() {
         platformFeeRate: 0.05,
         rpcUrl: RPC_URL,
         depositsAddress,
-        sessionsAddress,
+        channelsAddress,
         stakingAddress,
         identityAddress,
         usdcAddress,
@@ -413,7 +413,7 @@ async function main() {
         platformFeeRate: 0.05,
         rpcUrl: RPC_URL,
         depositsAddress,
-        sessionsAddress,
+        channelsAddress,
         stakingAddress,
         identityAddress,
         usdcAddress,
@@ -555,9 +555,9 @@ async function main() {
       contractAddress: depositsAddress,
       usdcAddress,
     });
-    const sessionsClient = new SessionsClient({
+    const channelsClient = new ChannelsClient({
       rpcUrl: RPC_URL,
-      contractAddress: sessionsAddress,
+      contractAddress: channelsAddress,
     });
 
     const sellerUsdcBalance = await waitForValue(
@@ -571,7 +571,7 @@ async function main() {
     );
 
     const buyerBalance = await depositsClient.getBuyerBalance(buyerAddress);
-    const sessionInfo = await sessionsClient.getSession(activeSellerSession.sessionId);
+    const sessionInfo = await channelsClient.getSession(activeSellerSession.sessionId);
 
     if (buyerBalance.reserved !== 0n) {
       throw new Error(`buyer still has reserved balance after settlement: ${buyerBalance.reserved}`);
@@ -594,7 +594,7 @@ async function main() {
             identity: identityAddress,
             staking: stakingAddress,
             deposits: depositsAddress,
-            sessions: sessionsAddress,
+            sessions: channelsAddress,
           },
           actors: {
             sellerPeerId: sellerNode.peerId,

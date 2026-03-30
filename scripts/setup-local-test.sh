@@ -11,7 +11,7 @@ REGISTRY=0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512      # nonce 1 — MockERC80
 STATS=0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9         # nonce 3
 STAKING=0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9       # nonce 4
 DEPOSITS=0x5FC8d32690cc91D4c39d9d3abcBD16989F875707      # nonce 5
-SESSIONS=0x0165878A594ca255338adfa4d48449f69242Eb8F       # nonce 6
+CHANNELS=0x0165878A594ca255338adfa4d48449f69242Eb8F       # nonce 6
 
 cd /Users/shahafan/Development/antseed
 
@@ -41,7 +41,7 @@ cat > ~/.antseed-seller/config.json << EOF
       "chainId": "base-local",
       "rpcUrl": "$RPC",
       "depositsContractAddress": "$DEPOSITS",
-      "sessionsContractAddress": "$SESSIONS",
+      "channelsContractAddress": "$CHANNELS",
       "stakingContractAddress": "$STAKING",
       "usdcContractAddress": "$USDC",
       "identityRegistryAddress": "$REGISTRY",
@@ -119,13 +119,13 @@ echo "  Registry:  $REGISTRY"
 echo "  Stats:     $STATS"
 echo "  Staking:   $STAKING"
 echo "  Deposits:  $DEPOSITS"
-echo "  Sessions:  $SESSIONS"
+echo "  Channels:  $CHANNELS"
 echo ""
 echo "Desktop config (Settings > Chain Config):"
 echo "  Chain ID:    base-local"
 echo "  RPC URL:     $RPC"
 echo "  Deposits:    $DEPOSITS"
-echo "  Sessions:    $SESSIONS"
+echo "  Channels:    $CHANNELS"
 echo ""
 echo "Start seller:"
 echo "  node apps/cli/dist/cli/index.js --data-dir ~/.antseed-seller seed --provider openai-responses --verbose --config ~/.antseed-seller/config.json"

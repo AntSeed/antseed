@@ -7,7 +7,7 @@ hide_title: true
 
 # Payments
 
-Buyers pre-deposit USDC into the on-chain AntseedDeposits contract. Each session follows a Reserve-Serve-Settle lifecycle where credits are locked via AntseedSessions (which holds no USDC itself), requests flow freely over the P2P transport, and settlement happens when the seller calls `settle()` or `close()`.
+Buyers pre-deposit USDC into the on-chain AntseedDeposits contract. Each session follows a Reserve-Serve-Settle lifecycle where credits are locked via AntseedChannels (which holds no USDC itself), requests flow freely over the P2P transport, and settlement happens when the seller calls `settle()` or `close()`.
 
 Two EIP-712 signed messages drive the flow: **ReserveAuth** (buyer authorizes a session budget) and **SpendingAuth** (buyer authorizes cumulative spend per request).
 
@@ -51,10 +51,10 @@ The seller calls `settle()` with the latest SpendingAuth to charge the buyer for
 Two EIP-712 typed data messages drive the payment flow. Both share the same domain:
 
 ```text title="EIP-712 domain"
-name:               "AntseedSessions"
+name:               "AntseedChannels"
 version:            "7"
 chainId:            <deployment chain>
-verifyingContract:  <sessions contract address>
+verifyingContract:  <channels contract address>
 ```
 
 ### ReserveAuth

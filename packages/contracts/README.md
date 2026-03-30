@@ -7,7 +7,7 @@ Solidity contracts implementing the streaming payment, staking, stats, emission,
 ```
 ANTSToken (ERC-20)          ── phase-locked transfers, mint restricted to AntseedEmissions
 AntseedDeposits             ── buyer USDC deposits, holds ALL buyer USDC
-AntseedSessions             ── Reserve→Settle/Close lifecycle, EIP-712 (swappable, holds NO USDC)
+AntseedChannels             ── Reserve→Settle/Close lifecycle, EIP-712 (swappable, holds NO USDC)
 AntseedStaking              ── seller stake bound to ERC-8004 agentId
 AntseedStats                ── factual per-agent session metrics (sessionCount, volume, requests)
 AntseedEmissions            ── USDC volume-based epoch emissions
@@ -21,11 +21,11 @@ Feedback uses the deployed ERC-8004 ReputationRegistry (Base: `0x8004BAa1...`).
 Contracts reference each other by address set at deployment. No inheritance — only interface calls.
 
 ```
-AntseedSessions ──calls──► AntseedDeposits.lockForSession() (on reserve)
-AntseedSessions ──calls──► AntseedDeposits.chargeAndCreditEarnings() (on settle/close)
-AntseedSessions ──calls──► AntseedStats.updateStats() (on settle/close)
-AntseedSessions ──calls──► AntseedEmissions.accrueSellerPoints() / accrueBuyerPoints()
-AntseedSessions ──reads──► AntseedStaking (seller stake verification)
+AntseedChannels ──calls──► AntseedDeposits.lockForSession() (on reserve)
+AntseedChannels ──calls──► AntseedDeposits.chargeAndCreditEarnings() (on settle/close)
+AntseedChannels ──calls──► AntseedStats.updateStats() (on settle/close)
+AntseedChannels ──calls──► AntseedEmissions.accrueSellerPoints() / accrueBuyerPoints()
+AntseedChannels ──reads──► AntseedStaking (seller stake verification)
 AntseedEmissions ──calls──► ANTSToken.mint()
 ```
 
@@ -69,7 +69,7 @@ Buyer USDC deposit management with dynamic credit limits and withdrawal timelock
 - `getBuyerBalance(address)` → available, reserved, pendingWithdrawal
 - `setCreditLimitOverride(address, uint256)` — owner overrides buyer limit
 
-### AntseedSessions.sol
+### AntseedChannels.sol
 
 Session lifecycle with EIP-712 ReserveAuth + SpendingAuth. Holds NO USDC — all funds stay in AntseedDeposits. Swappable: can be redeployed by re-pointing stable contracts.
 
@@ -82,7 +82,7 @@ Session lifecycle with EIP-712 ReserveAuth + SpendingAuth. Holds NO USDC — all
 - `requestTimeout(bytes32 channelId)` — after deadline, marks session timed out
 - `withdraw(bytes32 channelId)` — after 15min grace, releases locked funds to buyer
 
-**EIP-712 types (domain: name="AntseedSessions", version="7"):**
+**EIP-712 types (domain: name="AntseedChannels", version="7"):**
 ```
 ReserveAuth(bytes32 channelId, uint128 maxAmount, uint256 deadline)
 SpendingAuth(bytes32 channelId, uint256 cumulativeAmount, bytes32 metadataHash)
@@ -95,9 +95,9 @@ channelId = keccak256(abi.encode(buyer, seller, salt))
 
 ### AntseedStats.sol
 
-Factual per-agent session metrics keyed by ERC-8004 agentId. Updated by AntseedSessions during settlement.
+Factual per-agent session metrics keyed by ERC-8004 agentId. Updated by AntseedChannels during settlement.
 
-- `updateStats(uint256 agentId, StatsUpdate calldata)` — restricted to sessions contract
+- `updateStats(uint256 agentId, StatsUpdate calldata)` — restricted to channels contract
 - `getStats(uint256 agentId)` — returns sessionCount, totalVolumeUsdc, totalRequests
 
 ### AntseedStaking.sol
@@ -119,7 +119,7 @@ Subscription management with daily budgets and epoch-based revenue distribution.
 - `claimRevenue(uint256 agentId)` — claim share proportional to stats
 - `distributionEpoch()` — callable by anyone, distributes current epoch revenue
 
-Reads from AntseedStats (delivery metrics) and AntseedSessions (session verification).
+Reads from AntseedStats (delivery metrics) and AntseedChannels (session verification).
 
 ### AntseedEmissions.sol
 
@@ -129,7 +129,7 @@ ANTS emission controller using the Synthetix reward-per-point pattern. O(1) gas 
 - `advanceEpoch()` — callable by anyone when `EPOCH_DURATION` has passed
 - `getEpochInfo()` → current epoch, emission amount, time remaining
 
-**Point accrual (restricted to AntseedSessions):**
+**Point accrual (restricted to AntseedChannels):**
 - `accrueSellerPoints(address seller, uint256 pointsDelta)`
 - `accrueBuyerPoints(address buyer, uint256 pointsDelta)`
 
@@ -147,16 +147,16 @@ ANTS emission controller using the Synthetix reward-per-point pattern. O(1) gas 
 2. **MockERC8004Registry** — deploy for local testing (on mainnet use deployed ERC-8004)
 3. **AntseedDeposits** — deploy with `(usdcAddress)`
 4. **AntseedStaking** — deploy with `(usdcAddress, registryAddress)`
-5. **AntseedStats** — deploy, then set sessions contract
-6. **AntseedSessions** — deploy with `(depositsAddress, stakingAddress, statsAddress)`, then authorize on Deposits and Stats
-7. **AntseedEmissions** — deploy with `(antsTokenAddress, sessionsAddress)`, then call `antsToken.setEmissionsContract(emissions)`
-8. **AntseedSubPool** — deploy with `(usdcAddress, statsAddress, sessionsAddress)`
+5. **AntseedStats** — deploy, then set channels contract
+6. **AntseedChannels** — deploy with `(depositsAddress, stakingAddress, statsAddress)`, then authorize on Deposits and Stats
+7. **AntseedEmissions** — deploy with `(antsTokenAddress, channelsAddress)`, then call `antsToken.setEmissionsContract(emissions)`
+8. **AntseedSubPool** — deploy with `(usdcAddress, statsAddress, channelsAddress)`
 
 ## Configuration
 
 All constants are configurable by the contract owner via dedicated setter functions (e.g., `setFirstSignCap()`, `setWithdrawalDelay()`).
 
-### AntseedDeposits / AntseedSessions / AntseedStaking
+### AntseedDeposits / AntseedChannels / AntseedStaking
 
 | Constant | Default | Description |
 |---|---|---|
