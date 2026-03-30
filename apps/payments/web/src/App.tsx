@@ -38,7 +38,10 @@ function ThemeToggle({ isDark, onToggle }: { isDark: boolean; onToggle: () => vo
 export function App() {
   const [balance, setBalance] = useState<BalanceData | null>(null);
   const [config, setConfig] = useState<PaymentConfig | null>(null);
-  const [activeTab, setActiveTab] = useState<'deposit' | 'sessions'>('deposit');
+  const [activeTab, setActiveTab] = useState<'deposit' | 'sessions'>(() => {
+    const urlTab = new URLSearchParams(window.location.search).get('tab');
+    return urlTab === 'sessions' ? 'sessions' : 'deposit';
+  });
   const [isDark, setIsDark] = useState(() => {
     const saved = localStorage.getItem('antseed-payments-theme');
     if (saved) return saved === 'dark';

@@ -26,7 +26,7 @@ export type AppActions = {
   refreshCredits: () => void;
   refreshPlugins: () => Promise<void>;
   installPlugin: () => Promise<void>;
-  openPaymentsPortal?: () => void;
+  openPaymentsPortal?: (tab?: string) => void;
 };
 
 let _actions: AppActions | null = null;

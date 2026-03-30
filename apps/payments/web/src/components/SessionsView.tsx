@@ -57,7 +57,7 @@ function formatTimeRemaining(closeRequestedAt: number): string {
 
 const parsedAbi = parseAbi(SESSIONS_ABI);
 
-function SessionCard({ session, config }: { session: SessionData; config: PaymentConfig }) {
+function SessionCard({ session, config, onRefresh }: { session: SessionData; config: PaymentConfig; onRefresh: () => void }) {
   const status = getSessionStatus(session);
 
   const {
@@ -136,10 +136,10 @@ function SessionCard({ session, config }: { session: SessionData; config: Paymen
         </button>
       )}
       {closeConfirmed && (
-        <div className="status-msg status-success" style={{ fontSize: 11 }}>Close requested. Tx: {closeTxHash?.slice(0, 18)}...</div>
+        <div className="status-msg status-success" style={{ fontSize: 11 }}>Close requested. Tx: {closeTxHash?.slice(0, 18)}... <button className="btn-link" onClick={onRefresh} style={{ fontSize: 11 }}>Refresh</button></div>
       )}
       {withdrawConfirmed && (
-        <div className="status-msg status-success" style={{ fontSize: 11 }}>Withdrawn. Tx: {withdrawTxHash?.slice(0, 18)}...</div>
+        <div className="status-msg status-success" style={{ fontSize: 11 }}>Withdrawn. Tx: {withdrawTxHash?.slice(0, 18)}... <button className="btn-link" onClick={onRefresh} style={{ fontSize: 11 }}>Refresh</button></div>
       )}
     </div>
   );
@@ -199,7 +199,7 @@ export function SessionsView({ config }: SessionsViewProps) {
         </div>
       ) : (
         config && sessions.map((session) => (
-          <SessionCard key={session.channelId} session={session} config={config} />
+          <SessionCard key={session.channelId} session={session} config={config} onRefresh={fetchData} />
         ))
       )}
     </div>

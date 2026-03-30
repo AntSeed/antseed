@@ -475,7 +475,7 @@ registerActions({
     notifyUiStateChanged();
   },
   requestSessionClose: () => {
-    void bridge?.paymentsOpenPortal?.();
+    void bridge?.paymentsOpenPortal?.('sessions');
   },
   refreshCredits: () => void creditsApi.refreshCredits(),
   refreshPlugins: refreshPluginInventory,
@@ -485,8 +485,8 @@ registerActions({
     );
     return installPluginPackage(packageName);
   },
-  openPaymentsPortal: () => {
-    void bridge?.paymentsOpenPortal?.();
+  openPaymentsPortal: (tab?: string) => {
+    void bridge?.paymentsOpenPortal?.(tab);
   },
 });
 

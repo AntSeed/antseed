@@ -159,5 +159,5 @@ export type DesktopBridge = {
     error?: string;
   }>;
 
-  paymentsOpenPortal?: () => Promise<{ ok: boolean; url?: string; error?: string }>;
+  paymentsOpenPortal?: (tab?: string) => Promise<{ ok: boolean; url?: string; error?: string }>;
 };

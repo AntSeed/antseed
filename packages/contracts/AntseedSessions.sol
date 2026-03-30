@@ -404,7 +404,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         uint256 nonce,
         bytes calldata buyerSig
     ) external {
-        if (buyer == address(0)) revert InvalidAddress();
+        if (buyer == address(0) || operator == address(0)) revert InvalidAddress();
         if (operators[buyer] != address(0)) revert OperatorAlreadySet();
         if (nonce != operatorNonces[buyer]) revert InvalidNonce();
 

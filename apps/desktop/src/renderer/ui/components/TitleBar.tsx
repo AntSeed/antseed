@@ -58,6 +58,11 @@ export function TitleBar() {
     actions.openPaymentsPortal?.();
   }, [actions]);
 
+  const handleManageSessions = useCallback(() => {
+    setCreditsDropdownOpen(false);
+    actions.openPaymentsPortal?.('sessions');
+  }, [actions]);
+
   useEffect(() => {
     if (!creditsDropdownOpen) return;
     const handler = (e: MouseEvent) => {
@@ -137,7 +142,7 @@ export function TitleBar() {
                 <button className={styles.creditsDropdownAddBtn} onClick={handleAddCredits}>
                   Add Credits
                 </button>
-                <button className={styles.creditsDropdownManageBtn} onClick={handleAddCredits}>
+                <button className={styles.creditsDropdownManageBtn} onClick={handleManageSessions}>
                   Manage Sessions
                 </button>
               </div>

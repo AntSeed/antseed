@@ -266,14 +266,15 @@ async function stopPaymentsPortal(): Promise<void> {
   paymentsServer = null;
 }
 
-ipcMain.handle('payments:open-portal', async () => {
+ipcMain.handle('payments:open-portal', async (_event, tab?: string) => {
   try {
     await startPaymentsPortal();
-    // Pass bearer token via URL param so the portal frontend can authenticate POST requests
     const token = paymentsServer ? (paymentsServer as unknown as { bearerToken?: string }).bearerToken : '';
-    const url = token
-      ? `http://127.0.0.1:${PAYMENTS_PORT}?token=${token}`
-      : `http://127.0.0.1:${PAYMENTS_PORT}`;
+    const params = new URLSearchParams();
+    if (token) params.set('token', token);
+    if (tab) params.set('tab', tab);
+    const qs = params.toString();
+    const url = qs ? `http://127.0.0.1:${PAYMENTS_PORT}?${qs}` : `http://127.0.0.1:${PAYMENTS_PORT}`;
     const { default: open } = await import('open');
     await open(url);
     return { ok: true, url };
