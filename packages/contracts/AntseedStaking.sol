@@ -43,17 +43,9 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
     uint256 public SLASH_GHOST_THRESHOLD = 5;
     uint256 public SLASH_INACTIVITY_DAYS = 30 days;
 
-    // ─── Constant Keys ──────────────────────────────────────────────────
-    bytes32 private constant KEY_MIN_SELLER_STAKE = keccak256("MIN_SELLER_STAKE");
-    bytes32 private constant KEY_REPUTATION_CAP_COEFFICIENT = keccak256("REPUTATION_CAP_COEFFICIENT");
-    bytes32 private constant KEY_SLASH_RATIO_THRESHOLD = keccak256("SLASH_RATIO_THRESHOLD");
-    bytes32 private constant KEY_SLASH_GHOST_THRESHOLD = keccak256("SLASH_GHOST_THRESHOLD");
-    bytes32 private constant KEY_SLASH_INACTIVITY_DAYS = keccak256("SLASH_INACTIVITY_DAYS");
-
     // ─── Events ─────────────────────────────────────────────────────────
     event Staked(address indexed seller, uint256 indexed agentId, uint256 amount);
     event Unstaked(address indexed seller, uint256 amount, uint256 slashed);
-    event ConstantUpdated(bytes32 indexed key, uint256 value);
 
     // ─── Custom Errors ──────────────────────────────────────────────────
     error NotAuthorized();
@@ -236,17 +228,24 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
         protocolReserve = _reserve;
     }
 
-    function setConstant(bytes32 key, uint256 value) external onlyOwner {
-        if (key == KEY_MIN_SELLER_STAKE) MIN_SELLER_STAKE = value;
-        else if (key == KEY_REPUTATION_CAP_COEFFICIENT) REPUTATION_CAP_COEFFICIENT = value;
-        else if (key == KEY_SLASH_RATIO_THRESHOLD) SLASH_RATIO_THRESHOLD = value;
-        else if (key == KEY_SLASH_GHOST_THRESHOLD) SLASH_GHOST_THRESHOLD = value;
-        else if (key == KEY_SLASH_INACTIVITY_DAYS) {
-            if (value < 1 days) revert InvalidAmount();
-            SLASH_INACTIVITY_DAYS = value;
-        }
-        else revert InvalidAmount();
+    function setMinSellerStake(uint256 value) external onlyOwner {
+        MIN_SELLER_STAKE = value;
+    }
 
-        emit ConstantUpdated(key, value);
+    function setReputationCapCoefficient(uint256 value) external onlyOwner {
+        REPUTATION_CAP_COEFFICIENT = value;
+    }
+
+    function setSlashRatioThreshold(uint256 value) external onlyOwner {
+        SLASH_RATIO_THRESHOLD = value;
+    }
+
+    function setSlashGhostThreshold(uint256 value) external onlyOwner {
+        SLASH_GHOST_THRESHOLD = value;
+    }
+
+    function setSlashInactivityDays(uint256 value) external onlyOwner {
+        if (value < 1 days) revert InvalidAmount();
+        SLASH_INACTIVITY_DAYS = value;
     }
 }

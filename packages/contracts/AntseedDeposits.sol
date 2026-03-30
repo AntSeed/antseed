@@ -19,16 +19,6 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
     IERC20 public immutable usdc;
     address public sessionsContract;
 
-    // ─── Constant Keys ───────────────────────────────────────────────────
-    bytes32 private constant KEY_MIN_BUYER_DEPOSIT = keccak256("MIN_BUYER_DEPOSIT");
-    bytes32 private constant KEY_WITHDRAWAL_DELAY = keccak256("WITHDRAWAL_DELAY");
-    bytes32 private constant KEY_BUYER_INACTIVITY_PERIOD = keccak256("BUYER_INACTIVITY_PERIOD");
-    bytes32 private constant KEY_BASE_CREDIT_LIMIT = keccak256("BASE_CREDIT_LIMIT");
-    bytes32 private constant KEY_PEER_INTERACTION_BONUS = keccak256("PEER_INTERACTION_BONUS");
-    bytes32 private constant KEY_TIME_BONUS = keccak256("TIME_BONUS");
-    bytes32 private constant KEY_FEEDBACK_BONUS = keccak256("FEEDBACK_BONUS");
-    bytes32 private constant KEY_MAX_CREDIT_LIMIT = keccak256("MAX_CREDIT_LIMIT");
-
     // ─── Configurable Constants ─────────────────────────────────────────
     uint256 public MIN_BUYER_DEPOSIT = 10_000_000;
     uint256 public WITHDRAWAL_DELAY = 48 hours;
@@ -63,7 +53,7 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
     event WithdrawalExecuted(address indexed buyer, uint256 amount);
     event WithdrawalCancelled(address indexed buyer);
     event EarningsClaimed(address indexed seller, uint256 amount);
-    event ConstantUpdated(bytes32 indexed key, uint256 value);
+
 
     // ─── Custom Errors ──────────────────────────────────────────────────
     error NotAuthorized();
@@ -318,23 +308,37 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
         creditLimitOverride[buyer] = limit;
     }
 
-    function setConstant(bytes32 key, uint256 value) external onlyOwner {
-        if (key == KEY_MIN_BUYER_DEPOSIT) MIN_BUYER_DEPOSIT = value;
-        else if (key == KEY_WITHDRAWAL_DELAY) {
-            if (value < 1 hours) revert InvalidAmount();
-            WITHDRAWAL_DELAY = value;
-        }
-        else if (key == KEY_BUYER_INACTIVITY_PERIOD) {
-            if (value < 1 days) revert InvalidAmount();
-            BUYER_INACTIVITY_PERIOD = value;
-        }
-        else if (key == KEY_BASE_CREDIT_LIMIT) BASE_CREDIT_LIMIT = value;
-        else if (key == KEY_PEER_INTERACTION_BONUS) PEER_INTERACTION_BONUS = value;
-        else if (key == KEY_TIME_BONUS) TIME_BONUS = value;
-        else if (key == KEY_FEEDBACK_BONUS) FEEDBACK_BONUS = value;
-        else if (key == KEY_MAX_CREDIT_LIMIT) MAX_CREDIT_LIMIT = value;
-        else revert InvalidAmount();
+    function setMinBuyerDeposit(uint256 value) external onlyOwner {
+        MIN_BUYER_DEPOSIT = value;
+    }
 
-        emit ConstantUpdated(key, value);
+    function setWithdrawalDelay(uint256 value) external onlyOwner {
+        if (value < 1 hours) revert InvalidAmount();
+        WITHDRAWAL_DELAY = value;
+    }
+
+    function setBuyerInactivityPeriod(uint256 value) external onlyOwner {
+        if (value < 1 days) revert InvalidAmount();
+        BUYER_INACTIVITY_PERIOD = value;
+    }
+
+    function setBaseCreditLimit(uint256 value) external onlyOwner {
+        BASE_CREDIT_LIMIT = value;
+    }
+
+    function setPeerInteractionBonus(uint256 value) external onlyOwner {
+        PEER_INTERACTION_BONUS = value;
+    }
+
+    function setTimeBonus(uint256 value) external onlyOwner {
+        TIME_BONUS = value;
+    }
+
+    function setFeedbackBonus(uint256 value) external onlyOwner {
+        FEEDBACK_BONUS = value;
+    }
+
+    function setMaxCreditLimit(uint256 value) external onlyOwner {
+        MAX_CREDIT_LIMIT = value;
     }
 }

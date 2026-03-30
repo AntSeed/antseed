@@ -44,11 +44,6 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         "SetOperator(address operator,uint256 nonce)"
     );
 
-    // ─── Constant Keys for setConstant ──────────────────────────────
-    bytes32 private constant KEY_FIRST_SIGN_CAP = keccak256("FIRST_SIGN_CAP");
-    bytes32 private constant KEY_PLATFORM_FEE_BPS = keccak256("PLATFORM_FEE_BPS");
-    bytes32 private constant KEY_TOP_UP_SETTLED_THRESHOLD_BPS = keccak256("TOP_UP_SETTLED_THRESHOLD_BPS");
-
     // ─── Configurable Constants ─────────────────────────────────────
     uint256 public FIRST_SIGN_CAP = 1_000_000;
     uint256 public PLATFORM_FEE_BPS = 500;
@@ -92,7 +87,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     event CloseRequested(bytes32 indexed channelId, address indexed buyer);
     event SessionWithdrawn(bytes32 indexed channelId, address indexed buyer);
     event OperatorSet(address indexed buyer, address indexed operator);
-    event ConstantUpdated(bytes32 indexed key, uint256 value);
+
 
     // ─── Custom Errors ──────────────────────────────────────────────
     error InvalidAddress();
@@ -579,19 +574,18 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         protocolReserve = _reserve;
     }
 
-    function setConstant(bytes32 key, uint256 value) external onlyOwner {
-        if (key == KEY_FIRST_SIGN_CAP) FIRST_SIGN_CAP = value;
-        else if (key == KEY_PLATFORM_FEE_BPS) {
-            if (value > MAX_PLATFORM_FEE_BPS) revert InvalidFee();
-            PLATFORM_FEE_BPS = value;
-        }
-        else if (key == KEY_TOP_UP_SETTLED_THRESHOLD_BPS) {
-            if (value > 10000) revert InvalidAmount();
-            TOP_UP_SETTLED_THRESHOLD_BPS = value;
-        }
-        else revert InvalidAmount();
+    function setFirstSignCap(uint256 value) external onlyOwner {
+        FIRST_SIGN_CAP = value;
+    }
 
-        emit ConstantUpdated(key, value);
+    function setPlatformFeeBps(uint256 value) external onlyOwner {
+        if (value > MAX_PLATFORM_FEE_BPS) revert InvalidFee();
+        PLATFORM_FEE_BPS = value;
+    }
+
+    function setTopUpSettledThresholdBps(uint256 value) external onlyOwner {
+        if (value > 10000) revert InvalidAmount();
+        TOP_UP_SETTLED_THRESHOLD_BPS = value;
     }
 
     function pause() external onlyOwner {

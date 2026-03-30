@@ -538,61 +538,46 @@ contract AntseedStakingTest is Test {
         staking.setProtocolReserve(address(0));
     }
 
-    // ─── setConstant ─────────────────────────────────────────────────
+    // ─── Individual Setters ────────────────────────────────────────────
 
-    function test_setConstant_minSellerStake() public {
-        bytes32 key = keccak256("MIN_SELLER_STAKE");
-        vm.expectEmit(true, false, false, true);
-        emit AntseedStaking.ConstantUpdated(key, 5_000_000);
-        staking.setConstant(key, 5_000_000);
-
+    function test_setMinSellerStake() public {
+        staking.setMinSellerStake(5_000_000);
         assertEq(staking.MIN_SELLER_STAKE(), 5_000_000);
     }
 
-    function test_setConstant_reputationCapCoefficient() public {
-        bytes32 key = keccak256("REPUTATION_CAP_COEFFICIENT");
-        staking.setConstant(key, 50);
+    function test_setReputationCapCoefficient() public {
+        staking.setReputationCapCoefficient(50);
         assertEq(staking.REPUTATION_CAP_COEFFICIENT(), 50);
     }
 
-    function test_setConstant_slashRatioThreshold() public {
-        bytes32 key = keccak256("SLASH_RATIO_THRESHOLD");
-        staking.setConstant(key, 50);
+    function test_setSlashRatioThreshold() public {
+        staking.setSlashRatioThreshold(50);
         assertEq(staking.SLASH_RATIO_THRESHOLD(), 50);
     }
 
-    function test_setConstant_slashGhostThreshold() public {
-        bytes32 key = keccak256("SLASH_GHOST_THRESHOLD");
-        staking.setConstant(key, 10);
+    function test_setSlashGhostThreshold() public {
+        staking.setSlashGhostThreshold(10);
         assertEq(staking.SLASH_GHOST_THRESHOLD(), 10);
     }
 
-    function test_setConstant_slashInactivityDays() public {
-        bytes32 key = keccak256("SLASH_INACTIVITY_DAYS");
-        staking.setConstant(key, 60 days);
+    function test_setSlashInactivityDays() public {
+        staking.setSlashInactivityDays(60 days);
         assertEq(staking.SLASH_INACTIVITY_DAYS(), 60 days);
     }
 
-    function test_setConstant_slashInactivityDays_revert_belowMin() public {
-        bytes32 key = keccak256("SLASH_INACTIVITY_DAYS");
+    function test_setSlashInactivityDays_revert_belowMin() public {
         vm.expectRevert(AntseedStaking.InvalidAmount.selector);
-        staking.setConstant(key, 1 hours); // less than 1 day
+        staking.setSlashInactivityDays(1 hours); // less than 1 day
     }
 
-    function test_setConstant_slashInactivityDays_exactlyOneDay() public {
-        bytes32 key = keccak256("SLASH_INACTIVITY_DAYS");
-        staking.setConstant(key, 1 days);
+    function test_setSlashInactivityDays_exactlyOneDay() public {
+        staking.setSlashInactivityDays(1 days);
         assertEq(staking.SLASH_INACTIVITY_DAYS(), 1 days);
     }
 
-    function test_setConstant_revert_unknownKey() public {
-        vm.expectRevert(AntseedStaking.InvalidAmount.selector);
-        staking.setConstant(keccak256("UNKNOWN_KEY"), 100);
-    }
-
-    function test_setConstant_revert_notOwner() public {
+    function test_setMinSellerStake_revert_notOwner() public {
         vm.prank(seller);
         vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", seller));
-        staking.setConstant(keccak256("MIN_SELLER_STAKE"), 100);
+        staking.setMinSellerStake(100);
     }
 }

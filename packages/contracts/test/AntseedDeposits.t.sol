@@ -500,7 +500,7 @@ contract AntseedDepositsTest is Test {
         // Set a huge override to verify the cap path — but override bypasses cap.
         // Instead, we need to manipulate values so the computed limit exceeds MAX.
         // Set BASE_CREDIT_LIMIT very high
-        deposits.setConstant(keccak256("BASE_CREDIT_LIMIT"), 600_000_000);
+        deposits.setBaseCreditLimit(600_000_000);
 
         uint256 limit = deposits.getBuyerCreditLimit(buyer);
         assertEq(limit, 500_000_000); // MAX_CREDIT_LIMIT
@@ -778,68 +778,60 @@ contract AntseedDepositsTest is Test {
         deposits.setCreditLimitOverride(buyer, 100_000_000);
     }
 
-    function test_setConstant_minBuyerDeposit() public {
-        vm.expectEmit(true, false, false, true);
-        emit AntseedDeposits.ConstantUpdated(keccak256("MIN_BUYER_DEPOSIT"), 5_000_000);
-
-        deposits.setConstant(keccak256("MIN_BUYER_DEPOSIT"), 5_000_000);
+    function test_setMinBuyerDeposit() public {
+        deposits.setMinBuyerDeposit(5_000_000);
         assertEq(deposits.MIN_BUYER_DEPOSIT(), 5_000_000);
     }
 
-    function test_setConstant_withdrawalDelay() public {
-        deposits.setConstant(keccak256("WITHDRAWAL_DELAY"), 2 hours);
+    function test_setWithdrawalDelay() public {
+        deposits.setWithdrawalDelay(2 hours);
         assertEq(deposits.WITHDRAWAL_DELAY(), 2 hours);
     }
 
-    function test_setConstant_withdrawalDelay_revert_belowMinimum() public {
+    function test_setWithdrawalDelay_revert_belowMinimum() public {
         vm.expectRevert(AntseedDeposits.InvalidAmount.selector);
-        deposits.setConstant(keccak256("WITHDRAWAL_DELAY"), 59 minutes);
+        deposits.setWithdrawalDelay(59 minutes);
     }
 
-    function test_setConstant_buyerInactivityPeriod() public {
-        deposits.setConstant(keccak256("BUYER_INACTIVITY_PERIOD"), 2 days);
+    function test_setBuyerInactivityPeriod() public {
+        deposits.setBuyerInactivityPeriod(2 days);
         assertEq(deposits.BUYER_INACTIVITY_PERIOD(), 2 days);
     }
 
-    function test_setConstant_buyerInactivityPeriod_revert_belowMinimum() public {
+    function test_setBuyerInactivityPeriod_revert_belowMinimum() public {
         vm.expectRevert(AntseedDeposits.InvalidAmount.selector);
-        deposits.setConstant(keccak256("BUYER_INACTIVITY_PERIOD"), 23 hours);
+        deposits.setBuyerInactivityPeriod(23 hours);
     }
 
-    function test_setConstant_baseCreditLimit() public {
-        deposits.setConstant(keccak256("BASE_CREDIT_LIMIT"), 100_000_000);
+    function test_setBaseCreditLimit() public {
+        deposits.setBaseCreditLimit(100_000_000);
         assertEq(deposits.BASE_CREDIT_LIMIT(), 100_000_000);
     }
 
-    function test_setConstant_peerInteractionBonus() public {
-        deposits.setConstant(keccak256("PEER_INTERACTION_BONUS"), 10_000_000);
+    function test_setPeerInteractionBonus() public {
+        deposits.setPeerInteractionBonus(10_000_000);
         assertEq(deposits.PEER_INTERACTION_BONUS(), 10_000_000);
     }
 
-    function test_setConstant_timeBonus() public {
-        deposits.setConstant(keccak256("TIME_BONUS"), 1_000_000);
+    function test_setTimeBonus() public {
+        deposits.setTimeBonus(1_000_000);
         assertEq(deposits.TIME_BONUS(), 1_000_000);
     }
 
-    function test_setConstant_feedbackBonus() public {
-        deposits.setConstant(keccak256("FEEDBACK_BONUS"), 3_000_000);
+    function test_setFeedbackBonus() public {
+        deposits.setFeedbackBonus(3_000_000);
         assertEq(deposits.FEEDBACK_BONUS(), 3_000_000);
     }
 
-    function test_setConstant_maxCreditLimit() public {
-        deposits.setConstant(keccak256("MAX_CREDIT_LIMIT"), 1_000_000_000);
+    function test_setMaxCreditLimit() public {
+        deposits.setMaxCreditLimit(1_000_000_000);
         assertEq(deposits.MAX_CREDIT_LIMIT(), 1_000_000_000);
     }
 
-    function test_setConstant_revert_unknownKey() public {
-        vm.expectRevert(AntseedDeposits.InvalidAmount.selector);
-        deposits.setConstant(keccak256("UNKNOWN_KEY"), 123);
-    }
-
-    function test_setConstant_revert_notOwner() public {
+    function test_setMinBuyerDeposit_revert_notOwner() public {
         vm.prank(randomCaller);
         vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", randomCaller));
-        deposits.setConstant(keccak256("MIN_BUYER_DEPOSIT"), 5_000_000);
+        deposits.setMinBuyerDeposit(5_000_000);
     }
 
     // ═══════════════════════════════════════════════════════════════════

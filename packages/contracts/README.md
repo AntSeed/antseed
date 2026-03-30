@@ -154,7 +154,7 @@ ANTS emission controller using the Synthetix reward-per-point pattern. O(1) gas 
 
 ## Configuration
 
-All constants are configurable by the contract owner via `setConstant()` or dedicated setters.
+All constants are configurable by the contract owner via dedicated setter functions (e.g., `setFirstSignCap()`, `setWithdrawalDelay()`).
 
 ### AntseedDeposits / AntseedSessions / AntseedStaking
 

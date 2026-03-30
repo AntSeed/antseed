@@ -69,7 +69,7 @@ contract AntseedSessionsTest is Test {
         sessions.setProtocolReserve(protocolReserve);
 
         // Raise FIRST_SIGN_CAP for tests that need large reservations
-        sessions.setConstant(keccak256("FIRST_SIGN_CAP"), 500_000_000);
+        sessions.setFirstSignCap(500_000_000);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -278,7 +278,7 @@ contract AntseedSessionsTest is Test {
     }
 
     function test_reserve_revert_firstSignCapExceeded() public {
-        sessions.setConstant(keccak256("FIRST_SIGN_CAP"), 1_000_000);
+        sessions.setFirstSignCap(1_000_000);
 
         createBuyer(BUYER_PK, USDC_100);
         createSeller(SELLER_PK);
@@ -706,24 +706,19 @@ contract AntseedSessionsTest is Test {
     //                   ADMIN TESTS
     // ═══════════════════════════════════════════════════════════════════
 
-    function test_setConstant_firstSignCap() public {
-        sessions.setConstant(keccak256("FIRST_SIGN_CAP"), 2_000_000);
+    function test_setFirstSignCap() public {
+        sessions.setFirstSignCap(2_000_000);
         assertEq(sessions.FIRST_SIGN_CAP(), 2_000_000);
     }
 
-    function test_setConstant_platformFeeBps() public {
-        sessions.setConstant(keccak256("PLATFORM_FEE_BPS"), 300);
+    function test_setPlatformFeeBps() public {
+        sessions.setPlatformFeeBps(300);
         assertEq(sessions.PLATFORM_FEE_BPS(), 300);
     }
 
-    function test_setConstant_revert_unknownKey() public {
-        vm.expectRevert(AntseedSessions.InvalidAmount.selector);
-        sessions.setConstant(keccak256("UNKNOWN_KEY"), 100);
-    }
-
-    function test_setConstant_revert_platformFeeBpsAboveMax() public {
+    function test_setPlatformFeeBps_revert_aboveMax() public {
         vm.expectRevert(AntseedSessions.InvalidFee.selector);
-        sessions.setConstant(keccak256("PLATFORM_FEE_BPS"), 1001);
+        sessions.setPlatformFeeBps(1001);
     }
 
     function test_setDepositsContract() public {
