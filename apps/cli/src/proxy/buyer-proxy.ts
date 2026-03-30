@@ -358,6 +358,8 @@ export class BuyerProxy {
         publicAddress: p.publicAddress ?? null,
         providers: p.providers,
         services,
+        providerPricing: p.providerPricing ?? null,
+        providerServiceApiProtocols: p.providerServiceApiProtocols ?? null,
         defaultInputUsdPerMillion: p.defaultInputUsdPerMillion ?? 0,
         defaultOutputUsdPerMillion: p.defaultOutputUsdPerMillion ?? 0,
         maxConcurrency: p.maxConcurrency ?? 0,

@@ -338,6 +338,7 @@ type NetworkPeerAddress = {
   port: number;
   providers?: string[];
   services?: string[];
+  providerServiceApiProtocols?: Record<string, { services: Record<string, string[]> }>;
 };
 
 type ChatServiceProtocol = 'anthropic-messages' | 'openai-chat-completions' | 'openai-responses';
@@ -418,8 +419,31 @@ function inferProviderProtocol(provider: string): ChatServiceProtocol | null {
   return null;
 }
 
+const VALID_CHAT_SERVICE_PROTOCOLS = new Set<string>([
+  'anthropic-messages', 'openai-chat-completions', 'openai-responses',
+]);
 
-
+/**
+ * Resolve protocol for a service from the peer's announced providerServiceApiProtocols metadata.
+ * Returns the first recognized chat protocol, or null if not found.
+ */
+function resolveServiceProtocol(
+  apiProtocols: NetworkPeerAddress['providerServiceApiProtocols'],
+  serviceId: string,
+): ChatServiceProtocol | null {
+  if (!apiProtocols) return null;
+  for (const providerEntry of Object.values(apiProtocols)) {
+    const protocols = providerEntry?.services?.[serviceId];
+    if (Array.isArray(protocols)) {
+      for (const p of protocols) {
+        if (VALID_CHAT_SERVICE_PROTOCOLS.has(p)) {
+          return p as ChatServiceProtocol;
+        }
+      }
+    }
+  }
+  return null;
+}
 
 function normalizeServiceValue(value: unknown): string | null {
   if (typeof value !== 'string') {
@@ -446,7 +470,7 @@ function updateServiceProviderHints(
   for (const entry of entries) {
     const serviceId = normalizeServiceValue(entry.id)?.toLowerCase();
     const provider = normalizeProviderId(entry.provider);
-    if (!serviceId || !provider || !inferProviderProtocol(provider)) {
+    if (!serviceId || !provider || !isChatServiceProtocol(entry.protocol)) {
       continue;
     }
     const providers = serviceProviderHints.get(serviceId) ?? [];
@@ -476,10 +500,7 @@ function resolveProviderHintForService(
   explicitProvider?: string,
 ): string | null {
   const explicit = normalizeProviderId(explicitProvider);
-  if (explicit && inferProviderProtocol(explicit)) {
-    return explicit;
-  }
-  return null;
+  return explicit ?? null;
 }
 
 function normalizePeerId(value: unknown): string | null {
@@ -499,7 +520,7 @@ function normalizeChatServiceCatalogEntry(raw: unknown): ChatServiceCatalogEntry
   const id = normalizeServiceValue(entry.id);
   const provider = normalizeProviderId(entry.provider);
   const protocol = entry.protocol;
-  if (!id || !provider || !isChatServiceProtocol(protocol) || !inferProviderProtocol(provider)) {
+  if (!id || !provider || !isChatServiceProtocol(protocol)) {
     return null;
   }
 
@@ -604,6 +625,9 @@ async function discoverChatServiceCatalog(
         port: 0,
         providers: Array.isArray(p.providers) ? p.providers.map(String) : [],
         services: Array.isArray(p.services) ? p.services.map(String) : [],
+        providerServiceApiProtocols: (p.providerServiceApiProtocols && typeof p.providerServiceApiProtocols === 'object')
+          ? p.providerServiceApiProtocols as NetworkPeerAddress['providerServiceApiProtocols']
+          : undefined,
       }))
       .filter((p) => p.peerId.length > 0);
   } catch {
@@ -625,13 +649,14 @@ async function discoverChatServiceCatalog(
 
     const providerList = peer.providers ?? [];
     const serviceList = peer.services ?? [];
+    const apiProtocols = peer.providerServiceApiProtocols;
 
     if (serviceList.length > 0) {
       // Use explicit service names when available.
       for (const serviceId of serviceList) {
-        // Infer provider from the service name or fall back to the first provider.
-        const provider = providerList.find((p) => inferProviderProtocol(p) !== null) ?? providerList[0] ?? 'unknown';
-        const protocol = inferProviderProtocol(provider);
+        const provider = providerList[0] ?? 'unknown';
+        // Resolve protocol: first check peer metadata, then fall back to inference from provider name.
+        const protocol = resolveServiceProtocol(apiProtocols, serviceId) ?? inferProviderProtocol(provider);
         if (!protocol) continue;
 
         results.push({
@@ -1256,7 +1281,7 @@ class PiConversationStore {
     await this.ready;
     const manager = SessionManager.create(this.workspaceDir, this.sessionsDir);
     const providerId = normalizeProviderId(provider);
-    const modelProvider = providerId && inferProviderProtocol(providerId) ? providerId : PROXY_PROVIDER_ID;
+    const modelProvider = providerId ?? PROXY_PROVIDER_ID;
     manager.appendModelChange(modelProvider, normalizeServiceId(service));
     const sessionPath = manager.getSessionFile();
     if (!sessionPath) {
