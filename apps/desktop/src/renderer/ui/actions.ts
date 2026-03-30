@@ -22,7 +22,6 @@ export type AppActions = {
   clearPinnedPeer: () => void;
   approvePaymentSession: () => void;
   rejectPaymentSession: () => void;
-  requestSessionClose: () => void;
   refreshCredits: () => void;
   refreshPlugins: () => Promise<void>;
   installPlugin: () => Promise<void>;

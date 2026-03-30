@@ -61,11 +61,6 @@ export type ChatServiceOptionEntry = {
   peerLabel: string;
 };
 
-export type ActiveSessionInfo = {
-  reservedUsdc: string;
-  peerName: string;
-};
-
 export type RendererUiState = {
   // --- Process / runtime state ---
   processes: RuntimeProcessState[];
@@ -131,7 +126,6 @@ export type RendererUiState = {
   creditsPendingWithdrawalUsdc: string;
   creditsCreditLimitUsdc: string;
   creditsEvmAddress: string | null;
-  creditsOperatorAddress: string | null;
   creditsLoading: boolean;
   creditsLastRefreshedAt: number;
 
@@ -150,9 +144,6 @@ export type RendererUiState = {
   chatPaymentApprovalLoading: boolean;
   chatPaymentApprovalError: string | null;
   chatLowBalanceWarning: boolean;
-
-  // --- Active payment sessions (keyed by peerId) ---
-  chatActiveSessions: Map<string, ActiveSessionInfo>;
 
   // --- Chat display ---
   chatActiveConversation: string | null;
@@ -263,7 +254,6 @@ export function createInitialUiState(): RendererUiState {
     creditsPendingWithdrawalUsdc: '0',
     creditsCreditLimitUsdc: '0',
     creditsEvmAddress: null,
-    creditsOperatorAddress: null,
     creditsLoading: false,
     creditsLastRefreshedAt: 0,
 
@@ -276,9 +266,6 @@ export function createInitialUiState(): RendererUiState {
     chatPaymentApprovalLoading: false,
     chatPaymentApprovalError: null,
     chatLowBalanceWarning: false,
-
-    // Active payment sessions
-    chatActiveSessions: new Map(),
 
     // Chat
     chatActiveConversation: null,
