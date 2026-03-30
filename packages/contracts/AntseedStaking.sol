@@ -52,6 +52,7 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
     error InsufficientStake();
     error ActiveChannels();
     error NotAgentOwner();
+    error AgentIdMismatch();
 
     // ─── Constructor ────────────────────────────────────────────────────
     constructor(address _usdc, address _identityRegistry, address _stats) Ownable(msg.sender) {
@@ -74,8 +75,11 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
     }
 
     function _stakeFor(address seller, uint256 agentId, uint256 amount) internal {
+        if (seller == address(0)) revert InvalidAddress();
         if (amount == 0) revert InvalidAmount();
         if (identityRegistry.ownerOf(agentId) != seller) revert NotAgentOwner();
+        uint256 existingAgentId = sellerAgentId[seller];
+        if (existingAgentId != 0 && existingAgentId != agentId) revert AgentIdMismatch();
 
         usdc.safeTransferFrom(msg.sender, address(this), amount);
 

@@ -167,6 +167,21 @@ contract AntseedStakingTest is Test {
         assertEq(staking.getStake(seller), MIN_STAKE * 2);
     }
 
+    function test_stake_revert_agentIdMismatch() public {
+        _stakeAs(seller, MIN_STAKE);
+
+        // Register a second agent owned by seller
+        vm.prank(seller);
+        uint256 otherAgentId = registry.register();
+
+        usdc.mint(seller, MIN_STAKE);
+        vm.startPrank(seller);
+        usdc.approve(address(staking), MIN_STAKE);
+        vm.expectRevert(AntseedStaking.AgentIdMismatch.selector);
+        staking.stake(otherAgentId, MIN_STAKE);
+        vm.stopPrank();
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     //                        stakeFor()
     // ═══════════════════════════════════════════════════════════════════
@@ -194,6 +209,15 @@ contract AntseedStakingTest is Test {
         usdc.approve(address(staking), MIN_STAKE);
         vm.expectRevert(AntseedStaking.NotAgentOwner.selector);
         staking.stakeFor(unregistered, sellerAgentId, MIN_STAKE);
+        vm.stopPrank();
+    }
+
+    function test_stakeFor_revert_zeroAddress() public {
+        usdc.mint(thirdParty, MIN_STAKE);
+        vm.startPrank(thirdParty);
+        usdc.approve(address(staking), MIN_STAKE);
+        vm.expectRevert(AntseedStaking.InvalidAddress.selector);
+        staking.stakeFor(address(0), sellerAgentId, MIN_STAKE);
         vm.stopPrank();
     }
 
