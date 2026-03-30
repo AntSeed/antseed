@@ -677,7 +677,7 @@ export class AntseedNode extends EventEmitter {
       }
     }
 
-    const startTime = Date.now();
+    let startTime = Date.now();
 
     const executeRequest = (): Promise<SerializedHttpResponse> => new Promise<SerializedHttpResponse>((resolve, reject) => {
       const timeoutMs = this._config.requestTimeoutMs ?? 30_000;
@@ -939,6 +939,7 @@ export class AntseedNode extends EventEmitter {
       try {
         await this._negotiatePayment(peer, conn);
         debugLog(`[Node] Payment negotiated with ${peer.peerId.slice(0, 12)}... — retrying request`);
+        startTime = Date.now(); // Reset so latency reflects inference time, not negotiation
         return executeRequest();
       } catch (err) {
         this._buyerLockedPeers.delete(peer.peerId);
