@@ -10,15 +10,15 @@ interface IAntseedStats {
         uint64 lastSettledAt;
     }
 
-    function updateStats(
+    function recordClose(
         bytes32 channelId,
         uint256 agentId,
         address buyer,
-        uint8 updateType,
-        uint256 deltaUsdc,
         uint256 cumulativeUsdc,
         bytes calldata metadata
     ) external;
+
+    function recordGhost(uint256 agentId) external;
 
     function getStats(uint256 agentId) external view returns (AgentStats memory);
 }
