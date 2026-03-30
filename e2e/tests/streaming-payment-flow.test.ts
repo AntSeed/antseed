@@ -465,7 +465,7 @@ describe('Streaming payment flow E2E', () => {
     expect(bpm).not.toBeNull();
 
     // Use the BuyerPaymentManager to create a signed auth manually
-    const { signReserveAuth, makeSessionsDomain, computeChannelId, ZERO_METADATA_HASH } = await import('@antseed/node');
+    const { signReserveAuth, makeChannelsDomain, computeChannelId, ZERO_METADATA_HASH } = await import('@antseed/node');
     const buyerIdentity = buyerNode!.identity!;
     const buyerSigner = buyerIdentity.wallet;
     const buyerEvmAddr = buyerIdentity.wallet.address;
@@ -476,10 +476,10 @@ describe('Streaming payment flow E2E', () => {
     const deadline = Math.floor(Date.now() / 1000) + 90000;
     const maxAmount = 10000000n;
 
-    const sessionsDomain = makeSessionsDomain(31337, '0x' + 'cc'.repeat(20));
+    const channelsDomain = makeChannelsDomain(31337, '0x' + 'cc'.repeat(20));
 
     // Sign ReserveAuth — binds channelId, maxAmount, deadline
-    const reserveAuthSig = await signReserveAuth(buyerSigner, sessionsDomain, {
+    const reserveAuthSig = await signReserveAuth(buyerSigner, channelsDomain, {
       channelId,
       maxAmount,
       deadline: BigInt(deadline),

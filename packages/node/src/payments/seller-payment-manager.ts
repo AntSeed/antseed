@@ -143,7 +143,7 @@ export class SellerPaymentManager {
       const cumulativeAmount = BigInt(payload.cumulativeAmount);
       const existingCumulative = this._acceptedCumulative.get(channelId);
 
-      const sessionsDomain = makeChannelsDomain(this._config.chainId, this._config.channelsContractAddress);
+      const channelsDomain = makeChannelsDomain(this._config.chainId, this._config.channelsContractAddress);
 
       if (existingCumulative === undefined) {
         // ── First SpendingAuth: verify ReserveAuth and reserve on-chain ──
@@ -155,7 +155,7 @@ export class SellerPaymentManager {
           maxAmount: reserveMaxAmount,
           deadline: BigInt(reserveDeadline),
         };
-        const reserveRecovered = verifyTypedData(sessionsDomain, RESERVE_AUTH_TYPES, reserveMsg, payload.spendingAuthSig);
+        const reserveRecovered = verifyTypedData(channelsDomain, RESERVE_AUTH_TYPES, reserveMsg, payload.spendingAuthSig);
         if (reserveRecovered.toLowerCase() !== buyerEvmAddr.toLowerCase()) {
           debugWarn(`[SellerPayment] Invalid ReserveAuth signature: recovered=${reserveRecovered} expected=${buyerEvmAddr}`);
           return 'rejected';
@@ -235,7 +235,7 @@ export class SellerPaymentManager {
           maxAmount: newMaxAmount,
           deadline: BigInt(topUpDeadline),
         };
-        const recovered = verifyTypedData(sessionsDomain, RESERVE_AUTH_TYPES, reserveMsg, payload.spendingAuthSig);
+        const recovered = verifyTypedData(channelsDomain, RESERVE_AUTH_TYPES, reserveMsg, payload.spendingAuthSig);
         if (recovered.toLowerCase() !== buyerEvmAddr.toLowerCase()) {
           debugWarn(`[SellerPayment] Invalid top-up ReserveAuth signature: recovered=${recovered} expected=${buyerEvmAddr}`);
           return 'rejected';
@@ -270,7 +270,7 @@ export class SellerPaymentManager {
           cumulativeAmount,
           metadataHash: payload.metadataHash,
         };
-        const metadataRecovered = verifyTypedData(sessionsDomain, SPENDING_AUTH_TYPES, metadataMsg, payload.spendingAuthSig);
+        const metadataRecovered = verifyTypedData(channelsDomain, SPENDING_AUTH_TYPES, metadataMsg, payload.spendingAuthSig);
         if (metadataRecovered.toLowerCase() !== buyerEvmAddr.toLowerCase()) {
           debugWarn(`[SellerPayment] Invalid SpendingAuth signature: recovered=${metadataRecovered} expected=${buyerEvmAddr}`);
           return 'rejected';
@@ -354,7 +354,7 @@ export class SellerPaymentManager {
     }
 
     // Verify AntSeed SpendingAuth signature
-    const sessionsDomain = makeChannelsDomain(this._config.chainId, this._config.channelsContractAddress);
+    const channelsDomain = makeChannelsDomain(this._config.chainId, this._config.channelsContractAddress);
     const metadataMsg = {
       channelId: auth.channelId,
       cumulativeAmount: BigInt(auth.cumulativeAmount),
@@ -363,7 +363,7 @@ export class SellerPaymentManager {
 
     const buyerEvmAddr = peerIdToAddress(buyerPeerId);
     try {
-      const recovered = verifyTypedData(sessionsDomain, SPENDING_AUTH_TYPES, metadataMsg, auth.spendingAuthSig);
+      const recovered = verifyTypedData(channelsDomain, SPENDING_AUTH_TYPES, metadataMsg, auth.spendingAuthSig);
       if (recovered.toLowerCase() !== buyerEvmAddr.toLowerCase()) {
         debugWarn(`[SellerPayment] validateAndAcceptAuth: invalid SpendingAuth signature`);
         return false;
