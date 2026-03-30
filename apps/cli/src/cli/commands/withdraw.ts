@@ -48,7 +48,7 @@ export function registerWithdrawCommand(program: Command): void {
       const spinner = ora('Withdrawing USDC from deposits contract...').start();
 
       try {
-        const txHash = await depositsClient.requestWithdrawal(wallet, address, amountBaseUnits);
+        const txHash = await depositsClient.requestWithdrawal(wallet, amountBaseUnits);
         spinner.succeed(chalk.green(`Withdrawal requested for ${amountFloat} USDC`));
         console.log(chalk.dim(`Transaction: ${txHash}`));
       } catch (err) {

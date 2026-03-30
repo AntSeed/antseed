@@ -20,13 +20,6 @@ export const RESERVE_AUTH_TYPES = {
   ],
 };
 
-export const SET_OPERATOR_TYPES = {
-  SetOperator: [
-    { name: 'operator', type: 'address' },
-    { name: 'nonce', type: 'uint256' },
-  ],
-};
-
 // =========================================================================
 // Message interfaces
 // =========================================================================
@@ -41,11 +34,6 @@ export interface ReserveAuthMessage {
   channelId: string;
   maxAmount: bigint;
   deadline: bigint;
-}
-
-export interface SetOperatorMessage {
-  operator: string;
-  nonce: bigint;
 }
 
 // =========================================================================
@@ -131,12 +119,4 @@ export async function signReserveAuth(
   msg: ReserveAuthMessage,
 ): Promise<string> {
   return signer.signTypedData(domain, RESERVE_AUTH_TYPES, msg);
-}
-
-export async function signSetOperator(
-  signer: AbstractSigner,
-  domain: TypedDataDomain,
-  msg: SetOperatorMessage,
-): Promise<string> {
-  return signer.signTypedData(domain, SET_OPERATOR_TYPES, msg);
 }

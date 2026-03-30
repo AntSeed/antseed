@@ -12,7 +12,6 @@ export interface PaymentConfig {
   evmChainId: number;
   rpcUrl: string;
   depositsContractAddress: string;
-  sessionsContractAddress: string;
   usdcContractAddress: string;
   evmAddress: string | null;
 }

@@ -424,14 +424,6 @@ registerActions({
           return;
         }
 
-        const peerId = uiState.chatPaymentApprovalPeerId;
-        if (peerId) {
-          uiState.chatActiveSessions.set(peerId, {
-            reservedUsdc: uiState.chatPaymentApprovalAmount,
-            peerName: uiState.chatPaymentApprovalPeerName || 'Peer',
-          });
-        }
-
         // Dismiss card and resend
         uiState.chatPaymentApprovalVisible = false;
         uiState.chatPaymentApprovalPeerId = null;
@@ -473,9 +465,6 @@ registerActions({
     uiState.chatPaymentApprovalLoading = false;
     uiState.chatPaymentApprovalError = null;
     notifyUiStateChanged();
-  },
-  requestSessionClose: () => {
-    void bridge?.paymentsOpenPortal?.();
   },
   refreshCredits: () => void creditsApi.refreshCredits(),
   refreshPlugins: refreshPluginInventory,

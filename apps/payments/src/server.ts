@@ -81,14 +81,12 @@ export async function createServer(options: PaymentsServerOptions) {
     chainId: userOverrides.chainId as string | undefined,
     rpcUrl: userOverrides.rpcUrl as string | undefined,
     depositsContractAddress: userOverrides.depositsContractAddress as string | undefined,
-    sessionsContractAddress: userOverrides.sessionsContractAddress as string | undefined,
     usdcContractAddress: userOverrides.usdcContractAddress as string | undefined,
   });
 
   const cryptoConfig: PaymentCryptoConfig = {
     rpcUrl: chainConfig.rpcUrl,
     depositsContractAddress: chainConfig.depositsContractAddress,
-    sessionsContractAddress: chainConfig.sessionsContractAddress,
     usdcContractAddress: chainConfig.usdcContractAddress,
   };
 

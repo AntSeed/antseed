@@ -50,33 +50,3 @@ export async function executeWithdrawal(): Promise<{ ok: boolean; txHash?: strin
 export async function cancelWithdrawal(): Promise<{ ok: boolean; error?: string }> {
   return fetchJson('/api/withdraw/cancel', { method: 'POST' });
 }
-
-export interface SessionData {
-  channelId: string;
-  seller: string;
-  deposit: string;
-  settled: string;
-  deadline: number;
-  closeRequestedAt: number;
-  status: number;
-}
-
-export interface OperatorData {
-  operator: string;
-  nonce: number;
-}
-
-export async function getSessions(): Promise<{ sessions: SessionData[] }> {
-  return fetchJson('/api/sessions');
-}
-
-export async function getOperatorInfo(): Promise<OperatorData> {
-  return fetchJson('/api/operator');
-}
-
-export async function signOperatorAuth(operator: string): Promise<{ ok: boolean; signature: string; nonce: number; buyer: string }> {
-  return fetchJson('/api/operator/sign', {
-    method: 'POST',
-    body: JSON.stringify({ operator }),
-  });
-}
