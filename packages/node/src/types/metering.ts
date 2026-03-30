@@ -15,7 +15,7 @@ export interface TokenCount {
   /** Total estimated tokens */
   totalTokens: number;
   /** The estimation method used */
-  method: 'content-length' | 'chunk-accumulation' | 'fallback';
+  method: 'content-length' | 'chunk-accumulation' | 'provider-usage' | 'fallback';
   /**
    * Confidence level of the estimate.
    * 'high' = Content-Length header was present.
@@ -77,7 +77,7 @@ export interface UsageReceipt {
   /** Total cost in USD cents: (totalTokens / 1000) * unitPriceCentsPerThousandTokens */
   costCents: number;
   /**
-   * Ed25519 signature over the receipt data (hex string).
+   * secp256k1 signature over the receipt data (hex string).
    * Signs: receiptId + sessionId + eventId + timestamp + provider
    *        + sellerPeerId + buyerPeerId + totalTokens + costCents
    */

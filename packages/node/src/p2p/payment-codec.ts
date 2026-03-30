@@ -1,13 +1,8 @@
 import type {
-  SessionLockAuthPayload,
-  SessionLockConfirmPayload,
-  SessionLockRejectPayload,
-  SellerReceiptPayload,
-  BuyerAckPayload,
-  SessionEndPayload,
-  TopUpRequestPayload,
-  TopUpAuthPayload,
-  DisputeNotifyPayload,
+  SpendingAuthPayload,
+  AuthAckPayload,
+  PaymentRequiredPayload,
+  NeedAuthPayload,
 } from '../types/protocol.js';
 
 const encoder = new TextEncoder();
@@ -15,7 +10,12 @@ const decoder = new TextDecoder();
 
 // --- Validation helpers ---
 
+const MAX_PAYLOAD_SIZE = 65536; // 64KB
+
 function parseJson(data: Uint8Array): Record<string, unknown> {
+  if (data.byteLength > MAX_PAYLOAD_SIZE) {
+    throw new Error(`Payment payload too large: ${data.byteLength} bytes (max ${MAX_PAYLOAD_SIZE})`);
+  }
   const raw: unknown = JSON.parse(decoder.decode(data));
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
     throw new Error('Expected JSON object');
@@ -31,135 +31,67 @@ function requireString(obj: Record<string, unknown>, field: string): string {
   return val;
 }
 
-function requireNumber(obj: Record<string, unknown>, field: string): number {
-  const val = obj[field];
-  if (typeof val !== 'number' || !Number.isFinite(val)) {
-    throw new Error(`Missing or invalid number field: ${field}`);
-  }
-  return val;
-}
-
 // --- Encoders ---
 
-export function encodeSessionLockAuth(payload: SessionLockAuthPayload): Uint8Array {
+export function encodeSpendingAuth(payload: SpendingAuthPayload): Uint8Array {
   return encoder.encode(JSON.stringify(payload));
 }
 
-export function encodeSessionLockConfirm(payload: SessionLockConfirmPayload): Uint8Array {
+export function encodeAuthAck(payload: AuthAckPayload): Uint8Array {
   return encoder.encode(JSON.stringify(payload));
 }
 
-export function encodeSessionLockReject(payload: SessionLockRejectPayload): Uint8Array {
+export function encodePaymentRequired(payload: PaymentRequiredPayload): Uint8Array {
   return encoder.encode(JSON.stringify(payload));
 }
 
-export function encodeSellerReceipt(payload: SellerReceiptPayload): Uint8Array {
-  return encoder.encode(JSON.stringify(payload));
-}
-
-export function encodeBuyerAck(payload: BuyerAckPayload): Uint8Array {
-  return encoder.encode(JSON.stringify(payload));
-}
-
-export function encodeSessionEnd(payload: SessionEndPayload): Uint8Array {
-  return encoder.encode(JSON.stringify(payload));
-}
-
-export function encodeTopUpRequest(payload: TopUpRequestPayload): Uint8Array {
-  return encoder.encode(JSON.stringify(payload));
-}
-
-export function encodeTopUpAuth(payload: TopUpAuthPayload): Uint8Array {
-  return encoder.encode(JSON.stringify(payload));
-}
-
-export function encodeDisputeNotify(payload: DisputeNotifyPayload): Uint8Array {
+export function encodeNeedAuth(payload: NeedAuthPayload): Uint8Array {
   return encoder.encode(JSON.stringify(payload));
 }
 
 // --- Decoders (with runtime validation) ---
 
-export function decodeSessionLockAuth(data: Uint8Array): SessionLockAuthPayload {
+export function decodeSpendingAuth(data: Uint8Array): SpendingAuthPayload {
+  const obj = parseJson(data);
+  const result: SpendingAuthPayload = {
+    channelId: requireString(obj, 'channelId'),
+    cumulativeAmount: requireString(obj, 'cumulativeAmount'),
+    metadataHash: requireString(obj, 'metadataHash'),
+    metadata: typeof obj.metadata === 'string' ? obj.metadata : '',
+    spendingAuthSig: requireString(obj, 'spendingAuthSig'),
+  };
+  // Optional reserve params (only on initial auth)
+  if (typeof obj.reserveSalt === 'string') result.reserveSalt = obj.reserveSalt;
+  if (typeof obj.reserveMaxAmount === 'string') result.reserveMaxAmount = obj.reserveMaxAmount;
+  if (typeof obj.reserveDeadline === 'number') result.reserveDeadline = obj.reserveDeadline;
+  return result;
+}
+
+export function decodeAuthAck(data: Uint8Array): AuthAckPayload {
   const obj = parseJson(data);
   return {
-    sessionId: requireString(obj, 'sessionId'),
-    lockedAmount: requireString(obj, 'lockedAmount'),
-    buyerSig: requireString(obj, 'buyerSig'),
+    channelId: requireString(obj, 'channelId'),
   };
 }
 
-export function decodeSessionLockConfirm(data: Uint8Array): SessionLockConfirmPayload {
+export function decodePaymentRequired(data: Uint8Array): PaymentRequiredPayload {
   const obj = parseJson(data);
-  return {
-    sessionId: requireString(obj, 'sessionId'),
-    txSignature: requireString(obj, 'txSignature'),
+  const result: PaymentRequiredPayload = {
+    minBudgetPerRequest: requireString(obj, 'minBudgetPerRequest'),
+    suggestedAmount: requireString(obj, 'suggestedAmount'),
+    requestId: requireString(obj, 'requestId'),
   };
+  if (typeof obj.inputUsdPerMillion === 'number') result.inputUsdPerMillion = obj.inputUsdPerMillion;
+  if (typeof obj.outputUsdPerMillion === 'number') result.outputUsdPerMillion = obj.outputUsdPerMillion;
+  return result;
 }
 
-export function decodeSessionLockReject(data: Uint8Array): SessionLockRejectPayload {
+export function decodeNeedAuth(data: Uint8Array): NeedAuthPayload {
   const obj = parseJson(data);
   return {
-    sessionId: requireString(obj, 'sessionId'),
-    reason: requireString(obj, 'reason'),
-  };
-}
-
-export function decodeSellerReceipt(data: Uint8Array): SellerReceiptPayload {
-  const obj = parseJson(data);
-  return {
-    sessionId: requireString(obj, 'sessionId'),
-    runningTotal: requireString(obj, 'runningTotal'),
-    requestCount: requireNumber(obj, 'requestCount'),
-    responseHash: requireString(obj, 'responseHash'),
-    sellerSig: requireString(obj, 'sellerSig'),
-  };
-}
-
-export function decodeBuyerAck(data: Uint8Array): BuyerAckPayload {
-  const obj = parseJson(data);
-  return {
-    sessionId: requireString(obj, 'sessionId'),
-    runningTotal: requireString(obj, 'runningTotal'),
-    requestCount: requireNumber(obj, 'requestCount'),
-    buyerSig: requireString(obj, 'buyerSig'),
-  };
-}
-
-export function decodeSessionEnd(data: Uint8Array): SessionEndPayload {
-  const obj = parseJson(data);
-  return {
-    sessionId: requireString(obj, 'sessionId'),
-    runningTotal: requireString(obj, 'runningTotal'),
-    requestCount: requireNumber(obj, 'requestCount'),
-    score: requireNumber(obj, 'score'),
-    buyerSig: requireString(obj, 'buyerSig'),
-  };
-}
-
-export function decodeTopUpRequest(data: Uint8Array): TopUpRequestPayload {
-  const obj = parseJson(data);
-  return {
-    sessionId: requireString(obj, 'sessionId'),
-    additionalAmount: requireString(obj, 'additionalAmount'),
-    currentRunningTotal: requireString(obj, 'currentRunningTotal'),
-    currentLockedAmount: requireString(obj, 'currentLockedAmount'),
-  };
-}
-
-export function decodeTopUpAuth(data: Uint8Array): TopUpAuthPayload {
-  const obj = parseJson(data);
-  return {
-    sessionId: requireString(obj, 'sessionId'),
-    additionalAmount: requireString(obj, 'additionalAmount'),
-    buyerSig: requireString(obj, 'buyerSig'),
-  };
-}
-
-export function decodeDisputeNotify(data: Uint8Array): DisputeNotifyPayload {
-  const obj = parseJson(data);
-  return {
-    sessionId: requireString(obj, 'sessionId'),
-    reason: requireString(obj, 'reason'),
-    txSignature: requireString(obj, 'txSignature'),
+    channelId: requireString(obj, 'channelId'),
+    requiredCumulativeAmount: requireString(obj, 'requiredCumulativeAmount'),
+    currentAcceptedCumulative: requireString(obj, 'currentAcceptedCumulative'),
+    deposit: requireString(obj, 'deposit'),
   };
 }

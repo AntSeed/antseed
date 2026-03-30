@@ -85,7 +85,7 @@ export function registerConnectionCommand(program: Command): void {
     .command('set')
     .description('Update session overrides on the running buyer proxy')
     .option('--service <service>', 'override service ID for all routed requests')
-    .option('--peer <peerId>', 'pin all requests to a specific peer ID (64-char hex)')
+    .option('--peer <peerId>', 'pin all requests to a specific peer ID (40-char hex EVM address)')
     .action(async (options) => {
       const state = await requireRunningBuyer()
 
@@ -105,8 +105,8 @@ export function registerConnectionCommand(program: Command): void {
 
       if (options.peer !== undefined) {
         const peer = String(options.peer).trim()
-        if (!/^[0-9a-f]{64}$/i.test(peer)) {
-          console.error(chalk.red('Error: --peer must be a 64-character hex peer ID.'))
+        if (!/^(0x)?[0-9a-f]{40}$/i.test(peer)) {
+          console.error(chalk.red('Error: --peer must be a 40-character hex peer ID (EVM address).'))
           process.exit(1)
         }
         state.pinnedPeerId = peer.toLowerCase()

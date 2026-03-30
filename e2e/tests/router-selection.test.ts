@@ -4,7 +4,7 @@ import { LocalRouter } from '../../plugins/router-local/src/router.js';
 
 function makePeer(overrides?: Partial<PeerInfo>): PeerInfo {
   return {
-    peerId: 'a'.repeat(64) as any,
+    peerId: 'a'.repeat(40) as any,
     lastSeen: Date.now(),
     providers: ['anthropic'],
     reputationScore: 80,
@@ -41,8 +41,8 @@ describe('LocalRouter peer selection hardening', () => {
       maxPeerStalenessMs: 1_000,
     });
 
-    const fresh = makePeer({ peerId: 'a'.repeat(64) as any, lastSeen: now });
-    const stale = makePeer({ peerId: 'b'.repeat(64) as any, lastSeen: now - 1_000 });
+    const fresh = makePeer({ peerId: 'a'.repeat(40) as any, lastSeen: now });
+    const stale = makePeer({ peerId: 'b'.repeat(40) as any, lastSeen: now - 1_000 });
 
     const selected = router.selectPeer(dummyReq, [stale, fresh]);
     expect(selected?.peerId).toBe(fresh.peerId);
@@ -55,7 +55,7 @@ describe('LocalRouter peer selection hardening', () => {
       failureCooldownMs: 1_000,
       now: () => now,
     });
-    const peer = makePeer({ peerId: 'c'.repeat(64) as any, lastSeen: now });
+    const peer = makePeer({ peerId: 'c'.repeat(40) as any, lastSeen: now });
 
     // Single peer should be selected initially.
     expect(router.selectPeer(dummyReq, [peer])?.peerId).toBe(peer.peerId);
@@ -72,8 +72,8 @@ describe('LocalRouter peer selection hardening', () => {
 
   it('uses deterministic tie-breaking for equal-scored peers', () => {
     const router = new LocalRouter();
-    const lowIdPeer = makePeer({ peerId: '1'.repeat(64) as any, lastSeen: 1_000_000 });
-    const highIdPeer = makePeer({ peerId: 'f'.repeat(64) as any, lastSeen: 1_000_000 });
+    const lowIdPeer = makePeer({ peerId: '1'.repeat(40) as any, lastSeen: 1_000_000 });
+    const highIdPeer = makePeer({ peerId: 'f'.repeat(40) as any, lastSeen: 1_000_000 });
 
     const selected = router.selectPeer(dummyReq, [highIdPeer, lowIdPeer]);
     expect(selected?.peerId).toBe(lowIdPeer.peerId);

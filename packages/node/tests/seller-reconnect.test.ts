@@ -23,8 +23,8 @@ import { AntseedNode } from '../src/node.js';
 import { ConnectionState } from '../src/types/connection.js';
 import type { PeerId } from '../src/types/peer.js';
 
-const BUYER_PEER_ID = 'b'.repeat(64) as PeerId;
-const SELLER_PEER_ID = 's'.repeat(64) as PeerId;
+const BUYER_PEER_ID = 'b'.repeat(40) as PeerId;
+const SELLER_PEER_ID = 's'.repeat(40) as PeerId;
 
 /** Minimal fake PeerConnection — just an EventEmitter with remotePeerId and send(). */
 function makeFakeConn(remotePeerId: PeerId): EventEmitter & { remotePeerId: PeerId; send: ReturnType<typeof vi.fn> } {

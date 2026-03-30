@@ -33,6 +33,9 @@ const baseEntries: NavEntry[] = [
   { label: 'Discover', view: 'discover', icon: DiscoverCircleIcon },
   { label: 'Network', view: 'overview', icon: HierarchySquare03Icon },
   { label: 'External Clients', view: 'external-clients', icon: ComputerTerminal01Icon },
+];
+
+const configEntries: NavEntry[] = [
   { label: 'Settings', view: 'config', icon: Settings02Icon },
 ];
 
@@ -57,6 +60,12 @@ function formatChatTime(timestamp: unknown): string {
     return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   }
   return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+function shortServiceName(service: unknown): string {
+  const raw = String(service || '').trim();
+  if (!raw) return '';
+  return raw.replace(/^claude-/, '').replace(/-20\d{6,}/, '');
 }
 
 function ConvContextMenu({
@@ -143,8 +152,12 @@ function ConvContextMenu({
   );
 }
 
+function formatUsdc(value: number): string {
+  return value < 0.01 && value > 0 ? '<0.01' : value.toFixed(2);
+}
+
 function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void }) {
-  const { chatConversations, chatActiveConversation } = useUiSnapshot();
+  const { chatConversations, chatActiveConversation, chatActiveChannels } = useUiSnapshot();
   const actions = useActions();
   const conversations = Array.isArray(chatConversations) ? chatConversations : [];
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
@@ -163,6 +176,12 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
             const isActive = id === chatActiveConversation;
             const updatedLabel = Number(conv.updatedAt) > 0 ? formatChatTime(conv.updatedAt) : 'n/a';
             const title = String(conv.title || '');
+            const peerLabel = String(conv.peerLabel || '').trim();
+            const serviceLabel = shortServiceName(conv.service);
+            const metaLabel = [peerLabel, serviceLabel].filter(Boolean).join(' • ');
+            const convPeerId = String(conv.peerId || '').trim();
+            const session = convPeerId ? chatActiveChannels.get(convPeerId) : undefined;
+            const usedUsdc = Number(conv.totalEstimatedCostUsd) || 0;
 
             return (
               <div
@@ -189,6 +208,23 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
                     </button>
                   </div>
                 </div>
+                {metaLabel ? <div className={styles.chatConvPreview}>{metaLabel}</div> : null}
+                {session && (
+                  <div className={styles.chatConvSession}>
+                    <span className={styles.chatConvSessionInfo}>
+                      Reserved ${formatUsdc(Number(session.reservedUsdc) || 0)} · Used ${formatUsdc(usedUsdc)}
+                    </span>
+                    <button
+                      className={styles.chatConvCloseBtn}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        actions.requestChannelClose();
+                      }}
+                    >
+                      Close
+                    </button>
+                  </div>
+                )}
                 {menuOpenId === id && (
                   <ConvContextMenu
                     convId={id}
@@ -209,7 +245,7 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
 export function Sidebar({ activeView, onSelectView }: SidebarProps) {
   const actions = useActions();
   const { devMode, chatActiveConversation } = useUiSnapshot();
-  const navEntries = devMode ? [...baseEntries, ...devEntries] : baseEntries;
+  const navEntries = devMode ? [...baseEntries, ...devEntries, ...configEntries] : [...baseEntries, ...configEntries];
 
   return (
     <aside className={styles.sidebar}>

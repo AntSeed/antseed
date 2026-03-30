@@ -9,6 +9,7 @@ import {
   resolveRouterPackageName,
 } from './modules/plugin-setup';
 import { initAppSetupModule } from './modules/app-setup';
+import { initCreditsModule } from './modules/credits';
 import { mountAppShell } from './ui/mount';
 import { registerActions } from './ui/actions';
 import {
@@ -95,7 +96,7 @@ const { populateSettingsForm, saveConfig } = initSettingsModule({
   updateDashboardConfig: updateDashboardConfig as (
     config: Record<string, unknown>,
   ) => Promise<{ ok: boolean; data: unknown; error?: string | null; status?: number | null }>,
-  setDebugLogs: (enabled: boolean) => bridge?.setDebugLogs(enabled) ?? Promise.resolve(),
+  setDebugLogs: (enabled: boolean) => bridge?.setDebugLogs?.(enabled) ?? Promise.resolve(),
 });
 
 const {
@@ -115,6 +116,9 @@ const chatApi = initChatModule({
 });
 
 initAppSetupModule({ uiState, bridge: bridge ?? null });
+
+const creditsApi = initCreditsModule({ bridge: bridge as DesktopBridge, uiState });
+creditsApi.startPeriodicRefresh();
 
 /* ------------------------------------------------------------------ */
 /*  Runtime activity helpers                                           */
@@ -208,16 +212,6 @@ function updateRuntimeActivityFromLog(mode: string, lineRaw: string): void {
     }
   }
 
-  if (mode === 'dashboard') {
-    if (line.includes('running on http://127.0.0.1')) {
-      setRuntimeActivity('active', 'Local data service ready.', 3_000);
-      return;
-    }
-    if (line.includes('failed to start')) {
-      setRuntimeActivity('warn', 'Local data service start fallback in progress...', 8_000);
-      return;
-    }
-  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -278,6 +272,9 @@ function requireBridgeMethod<K extends keyof DesktopBridge>(
 
 async function ensureConnectRuntimeStarted(): Promise<void> {
   if (!bridge?.start || isModeRunning('connect')) return;
+  // Don't start until plugin setup is resolved — starting without the router
+  // plugin causes the CLI to exit immediately with "plugin not found".
+  if (uiState.appSetupStatusKnown && uiState.appSetupNeeded && !uiState.appSetupComplete) return;
 
   try {
     setRuntimeActivity('warn', 'Starting buyer runtime...', 8_000);
@@ -408,12 +405,88 @@ registerActions({
   handleServiceChange: chatApi.handleServiceChange,
   handleServiceFocus: chatApi.handleServiceFocus,
   handleServiceBlur: chatApi.handleServiceBlur,
+  clearPinnedPeer: chatApi.clearPinnedPeer,
+  approvePaymentSession: () => {
+    const convId = uiState.chatActiveConversation;
+    if (!convId || uiState.chatSending) return;
+
+    // Sign the SpendingAuth via IPC, then resend
+    uiState.chatPaymentApprovalLoading = true;
+    notifyUiStateChanged();
+
+    void (async () => {
+      try {
+        const result = await bridge?.chatApprovePayment?.(convId);
+        if (!result?.ok) {
+          uiState.chatPaymentApprovalError = result?.error ?? 'Failed to sign payment';
+          uiState.chatPaymentApprovalLoading = false;
+          notifyUiStateChanged();
+          return;
+        }
+
+        const peerId = uiState.chatPaymentApprovalPeerId;
+        if (peerId) {
+          uiState.chatActiveChannels.set(peerId, {
+            reservedUsdc: uiState.chatPaymentApprovalAmount,
+            peerName: uiState.chatPaymentApprovalPeerName || 'Peer',
+          });
+        }
+
+        // Dismiss card and resend
+        uiState.chatPaymentApprovalVisible = false;
+        uiState.chatPaymentApprovalPeerId = null;
+        uiState.chatPaymentApprovalPeerName = null;
+        uiState.chatPaymentApprovalPeerInfo = null;
+        uiState.chatPaymentApprovalLoading = false;
+        uiState.chatPaymentApprovalError = null;
+        notifyUiStateChanged();
+
+        // Resend the last user message — the spending auth header will be injected
+        const messages = uiState.chatMessages as Array<{ role: string; content: unknown }>;
+        const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user');
+        if (lastUserMsg) {
+          if (typeof lastUserMsg.content === 'string') {
+            chatApi.sendMessage(lastUserMsg.content);
+          } else if (Array.isArray(lastUserMsg.content)) {
+            const parts = lastUserMsg.content as Array<Record<string, unknown>>;
+            const textPart = parts.find((p) => p.type === 'text');
+            const imagePart = parts.find((p) => p.type === 'image') as Record<string, unknown> | undefined;
+            const text = typeof textPart?.text === 'string' ? textPart.text : '';
+            const source = imagePart?.source as Record<string, unknown> | undefined;
+            const imageBase64 = typeof source?.data === 'string' ? source.data : undefined;
+            const imageMimeType = typeof source?.media_type === 'string' ? source.media_type : undefined;
+            chatApi.sendMessage(text, imageBase64, imageMimeType);
+          }
+        }
+      } catch (err) {
+        uiState.chatPaymentApprovalError = err instanceof Error ? err.message : String(err);
+        uiState.chatPaymentApprovalLoading = false;
+        notifyUiStateChanged();
+      }
+    })();
+  },
+  rejectPaymentSession: () => {
+    uiState.chatPaymentApprovalVisible = false;
+    uiState.chatPaymentApprovalPeerId = null;
+    uiState.chatPaymentApprovalPeerName = null;
+    uiState.chatPaymentApprovalPeerInfo = null;
+    uiState.chatPaymentApprovalLoading = false;
+    uiState.chatPaymentApprovalError = null;
+    notifyUiStateChanged();
+  },
+  requestChannelClose: () => {
+    void bridge?.paymentsOpenPortal?.('channels');
+  },
+  refreshCredits: () => void creditsApi.refreshCredits(),
   refreshPlugins: refreshPluginInventory,
   installPlugin: () => {
     const packageName = resolveRouterPackageName(
       uiState.pluginHints.router || uiState.connectRouterValue,
     );
     return installPluginPackage(packageName);
+  },
+  openPaymentsPortal: (tab?: string) => {
+    void bridge?.paymentsOpenPortal?.(tab);
   },
 });
 
@@ -478,8 +551,11 @@ function initializeBridge(): void {
     }
   });
 
+  bridge.onPeersChanged?.(() => {
+    void chatApi.refreshChatServiceOptions();
+  });
+
   bridge.onState?.((processes) => {
-    const wasDashboardRunning = uiState.dashboardRunning;
     renderProcesses(processes);
     syncBuyerRuntimeOverview(processes);
     syncRuntimeActivityFromProcesses(processes);
@@ -491,29 +567,7 @@ function initializeBridge(): void {
     }
 
     renderPluginSetupState();
-
-    const nowDashboardRunning = isModeRunning('dashboard', processes);
-    if (nowDashboardRunning !== wasDashboardRunning) {
-      void refreshDashboardData(processes);
-    }
   });
-
-  if (bridge.start) {
-    setRuntimeActivity('warn', 'Starting local data service...', 8_000);
-    void bridge.start({
-      mode: 'dashboard',
-      dashboardPort: getDashboardPort(),
-    }).catch((err) => {
-      const message = err instanceof Error ? err.message : String(err);
-      if (isProxyPortOccupiedMessage(message)) {
-        appendSystemLog(UI_MESSAGES.localServicePortInUse);
-        setRuntimeActivity('active', UI_MESSAGES.localServicePortInUse, 6_000);
-        return;
-      }
-      appendSystemLog(`Background data service start failed: ${message}`);
-      setRuntimeActivity('bad', `Data service start failed: ${message}`, 10_000);
-    });
-  }
 
   void (async () => {
     await refreshAll('startup');

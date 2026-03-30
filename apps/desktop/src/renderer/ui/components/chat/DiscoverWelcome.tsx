@@ -2,6 +2,8 @@ import { useState, useMemo, useCallback } from 'react';
 import Skeleton from 'react-loading-skeleton';
 import 'react-loading-skeleton/dist/skeleton.css';
 import type { ChatServiceOptionEntry } from '../../../core/state';
+import { useUiSnapshot } from '../../hooks/useUiSnapshot';
+import { useActions } from '../../hooks/useActions';
 import styles from './DiscoverWelcome.module.scss';
 
 /* ── Tag colour map (from Figma design tokens) ──────────────────────── */
@@ -35,6 +37,7 @@ const FILTERS = [
 
 type CardItem = {
   name: string;
+  peerLabel: string;
   value: string;
   provider: string;
   providerCount: number;
@@ -120,6 +123,7 @@ function inferTags(serviceId: string, protocol: string): string[] {
 function buildCards(options: ChatServiceOptionEntry[]): CardItem[] {
   return options.map((opt) => ({
     name: opt.label || opt.id,
+    peerLabel: opt.peerLabel || '',
     value: opt.value,
     provider: opt.provider,
     providerCount: opt.count,
@@ -218,6 +222,9 @@ type DiscoverWelcomeProps = {
 
 export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWelcomeProps) {
   const [activeFilter, setActiveFilter] = useState('All');
+  const { creditsAvailableUsdc } = useUiSnapshot();
+  const actions = useActions();
+  const hasCredits = parseFloat(creditsAvailableUsdc) > 0;
 
   const hasNetworkData = serviceOptions.length > 0;
   const cards = useMemo(
@@ -239,7 +246,6 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
 
   return (
     <div className={styles.discover}>
-      {/* Header */}
       <div className={styles.header}>
         <h1 className={styles.heading}>
           What do you need <span className={styles.headingAccent}>AI</span> for?
@@ -248,9 +254,17 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
           Pick a service or agent to start. Filter by what you need.
           Everything is anonymous — no account required.
         </p>
+        {!hasCredits && (
+          <button
+            className={styles.addCreditsBtn}
+            onClick={() => actions.openPaymentsPortal?.()}
+          >
+            Add Credits to use paid services
+          </button>
+        )}
       </div>
 
-      {/* Filter pills */}
+      {/*
       <div className={styles.filters}>
         {FILTERS.map((f) => (
           <button
@@ -262,6 +276,7 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
           </button>
         ))}
       </div>
+      */}
 
       {/* Scrollable cards area */}
       <div className={styles.cardsScroll}>
@@ -314,12 +329,13 @@ function Card({
   item: CardItem;
   onClick: (v: string) => void;
 }) {
-  const providerLabel =
+  const providerLabel = item.peerLabel || (
     item.providerCount === 1
       ? '1 provider'
       : item.providerCount > 1
         ? `${item.providerCount} providers`
-        : '';
+        : ''
+  );
 
   return (
     <div

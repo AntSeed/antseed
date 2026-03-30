@@ -1,5 +1,5 @@
 import type { AntseedProviderPlugin, Provider, ServiceApiProtocol } from '@antseed/node';
-import { BaseProvider, StaticTokenProvider } from '@antseed/provider-core';
+import { BaseProvider, StaticTokenProvider, parseServiceAliasMap } from '@antseed/provider-core';
 
 function parseNonNegativeNumber(raw: string | undefined, key: string, fallback: number): number {
   const parsed = raw === undefined ? fallback : Number.parseFloat(raw);
@@ -63,6 +63,7 @@ const plugin: AntseedProviderPlugin = {
     { key: 'ANTSEED_SERVICE_PRICING_JSON', label: 'Service Pricing JSON', type: 'string', required: false, description: 'Per-service pricing JSON' },
     { key: 'ANTSEED_MAX_CONCURRENCY', label: 'Max Concurrency', type: 'number', required: false, default: 10, description: 'Max concurrent requests' },
     { key: 'ANTSEED_ALLOWED_SERVICES', label: 'Allowed Services', type: 'string[]', required: false, description: 'Service allow-list' },
+    { key: 'ANTSEED_SERVICE_ALIAS_MAP_JSON', label: 'Service Alias Map', type: 'string', required: false, description: 'JSON map of announced service → upstream model name' },
   ],
 
   createProvider(config: Record<string, string>): Provider {
@@ -91,6 +92,7 @@ const plugin: AntseedProviderPlugin = {
 
     const tokenProvider = new StaticTokenProvider(apiKey);
     const serviceApiProtocols = buildServiceApiProtocols(allowedServices, 'anthropic-messages');
+    const serviceRewriteMap = parseServiceAliasMap(config['ANTSEED_SERVICE_ALIAS_MAP_JSON']);
 
     return new BaseProvider({
       name: 'anthropic',
@@ -104,6 +106,7 @@ const plugin: AntseedProviderPlugin = {
         tokenProvider,
         maxConcurrency,
         allowedServices,
+        serviceRewriteMap,
       },
     });
   },

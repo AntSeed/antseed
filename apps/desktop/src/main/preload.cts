@@ -59,16 +59,14 @@ type NetworkSnapshot = {
   error: string | null;
 };
 
-type DashboardEndpoint = 'status' | 'network' | 'peers' | 'config' | 'data-sources';
+type DataEndpoint = 'status' | 'network' | 'peers' | 'config' | 'data-sources';
 
-type DashboardDataResult = {
+type DataResult = {
   ok: boolean;
   data: unknown | null;
   error: string | null;
   status: number | null;
 };
-
-type DashboardUpdateResult = DashboardDataResult;
 
 type PluginInfo = {
   package: string;
@@ -113,25 +111,35 @@ const api = {
   getNetwork(port?: number): Promise<NetworkSnapshot> {
     return ipcRenderer.invoke('runtime:get-network', port) as Promise<NetworkSnapshot>;
   },
-  getDashboardData(
-    endpoint: DashboardEndpoint,
+  getData(
+    endpoint: DataEndpoint,
     options?: { port?: number; query?: Record<string, string | number | boolean> },
-  ): Promise<DashboardDataResult> {
-    return ipcRenderer.invoke('runtime:get-dashboard-data', endpoint, options) as Promise<DashboardDataResult>;
+  ): Promise<DataResult> {
+    return ipcRenderer.invoke('runtime:get-data', endpoint, options) as Promise<DataResult>;
   },
-  updateDashboardConfig(
+  updateConfig(
     config: Record<string, unknown>,
-    options?: { port?: number },
-  ): Promise<DashboardUpdateResult> {
-    return ipcRenderer.invoke('runtime:update-dashboard-config', config, options) as Promise<DashboardUpdateResult>;
+  ): Promise<DataResult> {
+    return ipcRenderer.invoke('runtime:update-config', config) as Promise<DataResult>;
   },
-  scanNetwork(port?: number): Promise<DashboardDataResult> {
-    return ipcRenderer.invoke('runtime:scan-network', port) as Promise<DashboardDataResult>;
+  scanNetwork(): Promise<DataResult> {
+    return ipcRenderer.invoke('runtime:scan-network') as Promise<DataResult>;
+  },
+  lookupPeer(peerId: string): Promise<{ ok: boolean; peer: unknown; error: string | null }> {
+    return ipcRenderer.invoke('runtime:lookup-peer', peerId) as Promise<{ ok: boolean; peer: unknown; error: string | null }>;
+  },
+  touchPeer(peerId: string): void {
+    void ipcRenderer.invoke('runtime:touch-peer', peerId);
   },
   onLog(handler: (event: LogEvent) => void): () => void {
     const listener = (_: unknown, event: LogEvent) => handler(event);
     ipcRenderer.on('runtime:log', listener);
     return () => ipcRenderer.off('runtime:log', listener);
+  },
+  onPeersChanged(handler: () => void): () => void {
+    const listener = () => handler();
+    ipcRenderer.on('peers:changed', listener);
+    return () => ipcRenderer.off('peers:changed', listener);
   },
   onState(handler: (states: RuntimeProcessState[]) => void): () => void {
     const listener = (_: unknown, states: RuntimeProcessState[]) => handler(states);
@@ -151,8 +159,8 @@ const api = {
   chatAiGetConversation(id: string): Promise<{ ok: boolean; data?: unknown; error?: string }> {
     return ipcRenderer.invoke('chat:ai-get-conversation', id);
   },
-  chatAiCreateConversation(service: string, provider?: string): Promise<{ ok: boolean; data?: unknown; error?: string }> {
-    return ipcRenderer.invoke('chat:ai-create-conversation', service, provider);
+  chatAiCreateConversation(service: string, provider?: string, peerId?: string): Promise<{ ok: boolean; data?: unknown; error?: string }> {
+    return ipcRenderer.invoke('chat:ai-create-conversation', service, provider, peerId);
   },
   chatAiListServices(): Promise<{ ok: boolean; data?: unknown[]; error?: string }> {
     return ipcRenderer.invoke('chat:ai-list-services');
@@ -171,6 +179,9 @@ const api = {
   },
   chatAiAbort(): Promise<{ ok: boolean }> {
     return ipcRenderer.invoke('chat:ai-abort');
+  },
+  chatAiSelectPeer(peerId: string | null): Promise<{ ok: boolean; error?: string }> {
+    return ipcRenderer.invoke('chat:ai-select-peer', peerId);
   },
   chatAiGetProxyStatus(): Promise<{ ok: boolean; data: { running: boolean; port: number } }> {
     return ipcRenderer.invoke('chat:ai-get-proxy-status');
@@ -272,6 +283,13 @@ const api = {
   setDebugLogs(enabled: boolean): Promise<{ ok: true }> {
     return ipcRenderer.invoke('desktop:set-debug-logs', enabled) as Promise<{ ok: true }>;
   },
+  creditsGetInfo() {
+    return ipcRenderer.invoke('credits:get-info');
+  },
+  paymentsSignSpendingAuth: (params: unknown) => ipcRenderer.invoke('payments:sign-spending-auth', params),
+  paymentsGetPeerInfo: (peerId: string) => ipcRenderer.invoke('payments:get-peer-info', peerId),
+  paymentsOpenPortal: (tab?: string) => ipcRenderer.invoke('payments:open-portal', tab),
+  chatApprovePayment: (conversationId: string) => ipcRenderer.invoke('chat:approve-payment', conversationId) as Promise<{ ok: boolean; error?: string }>,
 };
 
 contextBridge.exposeInMainWorld('antseedDesktop', api);

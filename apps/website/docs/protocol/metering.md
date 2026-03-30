@@ -7,7 +7,7 @@ hide_title: true
 
 # Metering
 
-Both sides independently verify what was delivered. Token usage is estimated from HTTP content lengths and stream byte totals. Sellers generate Ed25519-signed receipts after each request. Buyers independently verify receipts and flag disputes when estimates diverge.
+Both sides independently verify what was delivered. Token usage is estimated from HTTP content lengths and stream byte totals. Sellers generate EIP-191 signed receipts (using their secp256k1 identity key) after each request. Buyers independently verify receipts via `ecrecover` and flag disputes when estimates diverge.
 
 ## Token Estimation
 
@@ -31,8 +31,8 @@ For SSE streams, a factor of `0.82` is applied to account for framing overhead. 
   "eventId": "event-uuid",
   "timestamp": 1708272000000,
   "provider": "anthropic",
-  "sellerPeerId": "a1b2...64 hex",
-  "buyerPeerId": "c3d4...64 hex",
+  "sellerPeerId": "a1b2...40 hex (EVM address)",
+  "buyerPeerId": "c3d4...40 hex (EVM address)",
   "tokens": {
     "inputTokens": 1024,
     "outputTokens": 512,
@@ -42,7 +42,7 @@ For SSE streams, a factor of `0.82` is applied to account for framing overhead. 
   },
   "unitPriceCentsPerThousandTokens": 300,
   "costCents": 5,
-  "signature": "ed25519...128 hex"
+  "signature": "eip191...130 hex"
 }
 ```
 
@@ -52,4 +52,4 @@ For SSE streams, a factor of `0.82` is applied to account for framing overhead. 
 
 ## Receipt Verification
 
-Buyers verify the Ed25519 signature and compare token estimates. A dispute is flagged when the difference exceeds **15%** or the signature is invalid. If their measurements diverge significantly, the transaction is disputed and the buyer is protected.
+Buyers verify the EIP-191 signature (recovering the seller's address via `ecrecover`) and compare token estimates. A dispute is flagged when the difference exceeds **15%** or the signature is invalid. If their measurements diverge significantly, the transaction is disputed and the buyer is protected.

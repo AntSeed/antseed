@@ -25,6 +25,6 @@ export interface PeerReport {
   sessionId?: string;
   timestamp: number;
   status: ReportStatus;
-  /** Ed25519 signature over report data (hex string) */
+  /** secp256k1 signature over report data (hex string) */
   signature: string;
 }

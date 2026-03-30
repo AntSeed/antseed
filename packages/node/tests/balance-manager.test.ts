@@ -25,7 +25,7 @@ afterEach(() => {
 function makeTx(overrides?: Partial<Transaction>): Transaction {
   return {
     txId: `tx-${Math.random().toString(36).slice(2)}`,
-    type: 'escrow_lock',
+    type: 'deposit_lock',
     amountUSD: 10,
     from: 'buyer',
     to: 'seller',
@@ -36,13 +36,13 @@ function makeTx(overrides?: Partial<Transaction>): Transaction {
 }
 
 describe('BalanceManager.getBalance', () => {
-  it('should compute unified balance from crypto + escrow', () => {
+  it('should compute unified balance from crypto + deposits', () => {
     const bm = new BalanceManager();
     const wallet: WalletInfo = { address: '0x1', chainId: 'base-local', balanceETH: '0', balanceUSDC: '50.5' };
     const result = bm.getBalance(wallet, 10);
 
     expect(result.cryptoUSDC).toBeCloseTo(50.5);
-    expect(result.inEscrowUSDC).toBe(10);
+    expect(result.inDepositsUSDC).toBe(10);
     expect(result.totalUSD).toBeCloseTo(60.5);
   });
 
@@ -53,14 +53,14 @@ describe('BalanceManager.getBalance', () => {
     expect(result.totalUSD).toBe(0);
   });
 
-  it('should include escrow in total', () => {
+  it('should include deposits in total', () => {
     const bm = new BalanceManager();
     const wallet: WalletInfo = { address: '0x1', chainId: 'base-local', balanceETH: '0', balanceUSDC: '100' };
     const result = bm.getBalance(wallet, 5);
     expect(result.totalUSD).toBe(105);
   });
 
-  it('should handle both null wallet and zero escrow', () => {
+  it('should handle both null wallet and zero deposits', () => {
     const bm = new BalanceManager();
     const result = bm.getBalance(null, 0);
     expect(result.totalUSD).toBe(0);
@@ -80,12 +80,12 @@ describe('BalanceManager.recordTransaction / getTransactionHistory', () => {
 
   it('should filter by type', () => {
     const bm = new BalanceManager();
-    bm.recordTransaction(makeTx({ type: 'escrow_lock' }));
-    bm.recordTransaction(makeTx({ type: 'escrow_release' }));
-    bm.recordTransaction(makeTx({ type: 'escrow_lock' }));
+    bm.recordTransaction(makeTx({ type: 'deposit_lock' }));
+    bm.recordTransaction(makeTx({ type: 'deposit_release' }));
+    bm.recordTransaction(makeTx({ type: 'deposit_lock' }));
 
-    expect(bm.getTransactionHistory('escrow_lock')).toHaveLength(2);
-    expect(bm.getTransactionHistory('escrow_release')).toHaveLength(1);
+    expect(bm.getTransactionHistory('deposit_lock')).toHaveLength(2);
+    expect(bm.getTransactionHistory('deposit_release')).toHaveLength(1);
   });
 
   it('should support limit and offset', () => {
@@ -101,20 +101,20 @@ describe('BalanceManager.recordTransaction / getTransactionHistory', () => {
 });
 
 describe('BalanceManager.getTotalEarnings / getTotalSpending', () => {
-  it('should sum escrow_release transactions for earnings', () => {
+  it('should sum deposit_release transactions for earnings', () => {
     const bm = new BalanceManager();
-    bm.recordTransaction(makeTx({ type: 'escrow_release', amountUSD: 10 }));
-    bm.recordTransaction(makeTx({ type: 'escrow_release', amountUSD: 20 }));
-    bm.recordTransaction(makeTx({ type: 'escrow_lock', amountUSD: 100 }));
+    bm.recordTransaction(makeTx({ type: 'deposit_release', amountUSD: 10 }));
+    bm.recordTransaction(makeTx({ type: 'deposit_release', amountUSD: 20 }));
+    bm.recordTransaction(makeTx({ type: 'deposit_lock', amountUSD: 100 }));
 
     expect(bm.getTotalEarnings()).toBe(30);
   });
 
-  it('should sum escrow_lock transactions for spending', () => {
+  it('should sum deposit_lock transactions for spending', () => {
     const bm = new BalanceManager();
-    bm.recordTransaction(makeTx({ type: 'escrow_lock', amountUSD: 5 }));
-    bm.recordTransaction(makeTx({ type: 'escrow_lock', amountUSD: 15 }));
-    bm.recordTransaction(makeTx({ type: 'escrow_release', amountUSD: 100 }));
+    bm.recordTransaction(makeTx({ type: 'deposit_lock', amountUSD: 5 }));
+    bm.recordTransaction(makeTx({ type: 'deposit_lock', amountUSD: 15 }));
+    bm.recordTransaction(makeTx({ type: 'deposit_release', amountUSD: 100 }));
 
     expect(bm.getTotalSpending()).toBe(20);
   });
@@ -122,8 +122,8 @@ describe('BalanceManager.getTotalEarnings / getTotalSpending', () => {
   it('should filter by since timestamp', () => {
     const bm = new BalanceManager();
     const now = Date.now();
-    bm.recordTransaction(makeTx({ type: 'escrow_release', amountUSD: 10, timestamp: now - 2000 }));
-    bm.recordTransaction(makeTx({ type: 'escrow_release', amountUSD: 20, timestamp: now - 500 }));
+    bm.recordTransaction(makeTx({ type: 'deposit_release', amountUSD: 10, timestamp: now - 2000 }));
+    bm.recordTransaction(makeTx({ type: 'deposit_release', amountUSD: 20, timestamp: now - 500 }));
 
     expect(bm.getTotalEarnings(now - 1000)).toBe(20);
     expect(bm.getTotalEarnings()).toBe(30);

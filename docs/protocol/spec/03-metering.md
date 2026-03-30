@@ -114,7 +114,7 @@ Receipts are the unit of billing. The seller generates a signed receipt after ea
 | `tokens`         | `TokenCount`  | Seller's token estimate                        |
 | `unitPriceCentsPerThousandTokens` | `number`      | Effective unit price in USD cents per 1,000 tokens |
 | `costCents`      | `number`      | Total cost in USD cents                        |
-| `signature`      | `string`      | Ed25519 signature over receipt data (hex string) |
+| `signature`      | `string`      | secp256k1 signature over receipt data (hex string) |
 
 ### Signature Payload Format
 
@@ -124,7 +124,7 @@ The `buildSignaturePayload()` function creates a deterministic string by joining
 receiptId | sessionId | eventId | timestamp | provider | sellerPeerId | buyerPeerId | totalTokens | costCents
 ```
 
-All numeric fields are converted to strings via `.toString()`. The resulting string is signed with the seller's Ed25519 private key.
+All numeric fields are converted to strings via `.toString()`. The resulting string is signed with the seller's secp256k1 private key (via EIP-191 personal_sign).
 
 ### Cost Calculation
 
@@ -152,8 +152,8 @@ The `ReceiptGenerator` class requires a `Signer` interface:
 
 ```typescript
 interface Signer {
-  sign(message: string): string;  // Returns hex-encoded Ed25519 signature
-  peerId: string;                 // Seller's peer ID (Ed25519 public key hex)
+  sign(message: string): string;  // Returns hex-encoded secp256k1 signature
+  peerId: string;                 // Seller's peer ID (EVM address hex)
 }
 ```
 
@@ -162,7 +162,7 @@ The `generate()` method:
 2. Records `timestamp` as `Date.now()`
 3. Calculates `costCents` using the cost formula above
 4. Builds the signature payload from all receipt fields
-5. Signs the payload with the seller's Ed25519 private key
+5. Signs the payload with the seller's secp256k1 private key
 6. Returns the complete `UsageReceipt` with signature
 
 ---
@@ -173,7 +173,7 @@ The buyer verifies each seller-issued receipt independently.
 
 ### Verification Steps
 
-1. **Verify Ed25519 signature** -- Reconstruct the signature payload using `buildSignaturePayload()` and verify against the seller's public key (their `sellerPeerId`)
+1. **Verify secp256k1 signature** -- Reconstruct the signature payload using `buildSignaturePayload()` and verify via ecrecover against the seller's address (their `sellerPeerId`)
 2. **Compare token estimates** -- Compare the seller's `totalTokens` with the buyer's independent `totalTokens` estimate
 3. **Calculate percentage difference** -- `abs(sellerTotal - buyerTotal) / max(sellerTotal, buyerTotal) * 100` (returns 0 if both are 0)
 4. **Flag as disputed** -- Disputed if signature is invalid OR percentage difference exceeds the threshold
@@ -182,14 +182,14 @@ The buyer verifies each seller-issued receipt independently.
 
 Default: **15%** difference between buyer and seller token estimates triggers a dispute flag. Configurable via `VerifierOptions.disputeThresholdPercent`.
 
-A receipt is also flagged as disputed if the Ed25519 signature verification fails, regardless of token difference.
+A receipt is also flagged as disputed if the secp256k1 signature verification fails, regardless of token difference.
 
 ### ReceiptVerification Interface
 
 | Field                  | Type          | Description                                         |
 |------------------------|---------------|-----------------------------------------------------|
 | `receiptId`            | `string`      | The receipt being verified                          |
-| `signatureValid`       | `boolean`     | Whether the Ed25519 signature is valid              |
+| `signatureValid`       | `boolean`     | Whether the secp256k1 signature is valid            |
 | `buyerTokenEstimate`   | `TokenCount`  | Buyer's independent token estimate                  |
 | `sellerTokenEstimate`  | `TokenCount`  | Seller's token estimate (from receipt)              |
 | `tokenDifference`      | `number`      | Absolute difference in total tokens                 |

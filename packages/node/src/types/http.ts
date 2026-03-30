@@ -1,4 +1,6 @@
 export const ANTSEED_STREAMING_RESPONSE_HEADER = 'x-antseed-streaming';
+/** Header carrying a pre-signed SpendingAuth for manual payment approval. Base64-encoded JSON. */
+export const ANTSEED_SPENDING_AUTH_HEADER = 'x-antseed-spending-auth';
 /** Marker header set on HttpRequest frames whose body is sent via HttpRequestChunk/End frames. */
 export const ANTSEED_UPLOAD_CHUNK_HEADER = 'x-antseed-upload';
 /**

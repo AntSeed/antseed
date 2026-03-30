@@ -8,6 +8,7 @@ import type {
 import { type PeerId } from "../types/peer.js";
 import { ConnectionState, type ConnectionConfig } from "../types/connection.js";
 import { type IceConfig, getDefaultIceConfig } from "./ice-config.js";
+import type { Wallet } from "ethers";
 import {
   type ConnectionAuthEnvelope,
   NonceReplayGuard,
@@ -60,6 +61,7 @@ const DATA_CHANNEL_LABEL = "antseed-data";
 const LINE_SEPARATOR = "\n";
 const INITIAL_LINE_TIMEOUT_MS = 10_000;
 const MAX_INITIAL_LINE_BYTES = 8 * 1024;
+const TCP_KEEPALIVE_INITIAL_DELAY_MS = 10_000;
 
 /** Represents a single P2P connection. */
 export class PeerConnection extends EventEmitter {
@@ -123,6 +125,7 @@ export class PeerConnection extends EventEmitter {
 
   attachRawSocket(socket: Socket, initialData?: Uint8Array): void {
     this._rawSocket = socket;
+    socket.setKeepAlive(true, TCP_KEEPALIVE_INITIAL_DELAY_MS);
 
     socket.on("data", (chunk: Buffer) => {
       this.emit("message", new Uint8Array(chunk));
@@ -265,7 +268,7 @@ export class ConnectionManager extends EventEmitter {
   private _connections = new Map<PeerId, PeerConnection>();
   private _iceConfig: IceConfig;
   private _localPeerId: PeerId | null = null;
-  private _localPrivateKey: Uint8Array | null = null;
+  private _localWallet: Wallet | null = null;
   private _listenHost = "127.0.0.1";
   private _listenPort: number | null = null;
   private _server: net.Server | null = null;
@@ -311,9 +314,9 @@ export class ConnectionManager extends EventEmitter {
     this._localPeerId = peerId;
   }
 
-  setLocalIdentity(identity: { peerId: PeerId; privateKey: Uint8Array }): void {
+  setLocalIdentity(identity: { peerId: PeerId; wallet: Wallet }): void {
     this._localPeerId = identity.peerId;
-    this._localPrivateKey = identity.privateKey;
+    this._localWallet = identity.wallet;
   }
 
   static registerPeerEndpoint(peerId: PeerId, endpoint: PeerEndpoint): void {
@@ -345,6 +348,9 @@ export class ConnectionManager extends EventEmitter {
         return;
       }
       this._ipConnectionCounts.set(ip, current + 1);
+      // Keepalive set here for all inbound sockets (WebRTC signaling + TCP).
+      // TCP ("intro") sockets will have it re-applied in attachRawSocket — harmless.
+      socket.setKeepAlive(true, TCP_KEEPALIVE_INITIAL_DELAY_MS);
       socket.once('close', () => {
         const count = this._ipConnectionCounts.get(ip) ?? 1;
         if (count <= 1) {
@@ -409,9 +415,9 @@ export class ConnectionManager extends EventEmitter {
       });
       return conn;
     }
-    if (!this._localPrivateKey) {
+    if (!this._localWallet) {
       queueMicrotask(() => {
-        conn.fail(new Error("Local private key is not configured"));
+        conn.fail(new Error("Local wallet is not configured"));
       });
       return conn;
     }
@@ -465,6 +471,7 @@ export class ConnectionManager extends EventEmitter {
     endpoint: PeerEndpoint,
   ): void {
     const signalingSocket = net.connect({ host: endpoint.host, port: endpoint.port });
+    signalingSocket.setKeepAlive(true, TCP_KEEPALIVE_INITIAL_DELAY_MS);
     conn.attachSignalingSocket(signalingSocket);
 
     let rtc: NativeRtcPeerConnection | null = null;
@@ -489,7 +496,7 @@ export class ConnectionManager extends EventEmitter {
         auth: buildConnectionAuthEnvelope(
           "hello",
           this._localPeerId!,
-          this._localPrivateKey!,
+          this._localWallet!,
         ),
       });
 
@@ -529,7 +536,7 @@ export class ConnectionManager extends EventEmitter {
         auth: buildConnectionAuthEnvelope(
           "intro",
           this._localPeerId!,
-          this._localPrivateKey!,
+          this._localWallet!,
         ),
       });
       conn.attachRawSocket(socket);
