@@ -74,7 +74,7 @@ export async function getNodeStatus(config: AntseedConfig): Promise<NodeStatus> 
       peerCount: typeof state.peerCount === 'number' ? state.peerCount : 0,
       earningsToday: typeof state.earningsToday === 'string' ? state.earningsToday : '0',
       tokensToday: typeof state.tokensToday === 'number' ? state.tokensToday : 0,
-      activeChannels: typeof state.activeSessions === 'number' ? state.activeSessions : 0,
+      activeChannels: typeof state.activeChannels === 'number' ? state.activeChannels : 0,
       uptime: typeof state.uptime === 'string' ? state.uptime : '0s',
       walletAddress: typeof state.walletAddress === 'string' ? state.walletAddress : (config.identity.walletAddress ?? null),
       proxyPort: typeof state.proxyPort === 'number' ? state.proxyPort : null,

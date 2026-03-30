@@ -8,7 +8,7 @@ import { MessageType, type FramedMessage, type PaymentRequiredPayload } from '..
 import * as codec from '../src/p2p/payment-codec.js';
 import type { PeerConnection } from '../src/p2p/connection-manager.js';
 import { SellerPaymentManager, type SellerPaymentConfig } from '../src/payments/seller-payment-manager.js';
-import { SessionStore } from '../src/payments/session-store.js';
+import { ChannelStore } from '../src/payments/channel-store.js';
 import type { Identity } from '../src/p2p/identity.js';
 import { bytesToHex } from '../src/utils/hex.js';
 import { toPeerId } from '../src/types/peer.js';
@@ -134,13 +134,13 @@ describe('PaymentMux PaymentRequired', () => {
 
 describe('SellerPaymentManager PaymentRequired', () => {
   let tempDir: string;
-  let store: SessionStore;
+  let store: ChannelStore;
   let sellerIdentity: Identity;
   let manager: SellerPaymentManager;
 
   beforeEach(async () => {
     tempDir = mkdtempSync(join(tmpdir(), 'seller-negotiation-'));
-    store = new SessionStore(tempDir);
+    store = new ChannelStore(tempDir);
     sellerIdentity = createTestIdentity();
 
     const config: SellerPaymentConfig = {
@@ -238,13 +238,13 @@ describe('PaymentMux PaymentRequired buffering', () => {
 
 describe('SellerPaymentManager suggested amount', () => {
   let tempDir: string;
-  let store: SessionStore;
+  let store: ChannelStore;
   let sellerIdentity: Identity;
   let manager: SellerPaymentManager;
 
   beforeEach(async () => {
     tempDir = mkdtempSync(join(tmpdir(), 'seller-proven-'));
-    store = new SessionStore(tempDir);
+    store = new ChannelStore(tempDir);
     sellerIdentity = createTestIdentity();
 
     const config: SellerPaymentConfig = {
@@ -273,7 +273,7 @@ describe('SellerPaymentManager suggested amount', () => {
 
   it('suggests $5.00 for returning buyers with settled sessions', () => {
     // Insert a prior settled session
-    store.upsertSession({
+    store.upsertChannel({
       sessionId: '0x' + 'aa'.repeat(32),
       peerId: 'returning-buyer',
       role: 'seller',
@@ -324,11 +324,11 @@ describe('SellerPaymentManager suggested amount', () => {
 
 describe('Budget mismatch rejection', () => {
   let tempDir: string;
-  let store: SessionStore;
+  let store: ChannelStore;
 
   beforeEach(() => {
     tempDir = mkdtempSync(join(tmpdir(), 'budget-mismatch-'));
-    store = new SessionStore(tempDir);
+    store = new ChannelStore(tempDir);
   });
 
   afterEach(() => {

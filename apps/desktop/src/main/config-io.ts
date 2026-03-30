@@ -130,7 +130,7 @@ export async function readNodeStatus(configPath = DEFAULT_CONFIG_PATH): Promise<
     peerId: asString(state.peerId as string, ''),
     walletAddress: asString(state.walletAddress as string, ''),
     peerCount: 0, // Desktop is buyer-only; seller's activeChannels is not meaningful here.
-    activeSessions: asNumber(state.activeSessions, 0),
+    activeChannels: asNumber(state.activeChannels, 0),
     capacityUsedPercent: asNumber(state.capacityUsedPercent, 0),
     earningsToday: asString(state.earningsToday as string, '0.00'),
     tokensToday: asNumber(state.tokensToday, 0),

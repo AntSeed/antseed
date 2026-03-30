@@ -480,8 +480,8 @@ export function registerSeedCommand(program: Command): void {
           }
         }
 
-        const activeSessionDetails = [...trackedSessions, ...syntheticDetails]
-        const activeSessionsCount = Math.max(node.getActiveSellerSessionCount(), cap.current)
+        const activeChannelDetails = [...trackedSessions, ...syntheticDetails]
+        const activeChannelsCount = Math.max(node.getActiveSellerChannelCount(), cap.current)
 
         return {
           state: 'seeding',
@@ -513,8 +513,8 @@ export function registerSeedCommand(program: Command): void {
           startedAt,
           // Fields the dashboard reads
           peerCount: 0,
-          activeSessions: activeSessionsCount,
-          activeSessionDetails,
+          activeChannels: activeChannelsCount,
+          activeChannelDetails,
           capacityUsedPercent: cap.max > 0 ? Math.round((cap.current / cap.max) * 100) : 0,
           earningsToday: '0',
           tokensToday: 0,

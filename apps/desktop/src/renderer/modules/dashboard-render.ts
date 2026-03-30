@@ -197,13 +197,13 @@ export function initDashboardRenderModule({
     const configPayload = results.config.ok ? (results.config.data as Record<string, unknown> | null) : null;
 
     const daemonStateRoot = safeObject(uiState.daemonState?.state);
-    const daemonActiveChannels = safeNumber(daemonStateRoot?.activeSessions, 0);
-    const daemonChannelDetails = safeArray(daemonStateRoot?.activeSessionDetails);
+    const daemonActiveChannels = safeNumber(daemonStateRoot?.activeChannels, 0);
+    const daemonChannelDetails = safeArray(daemonStateRoot?.activeChannelDetails);
     const daemonDetailsCount = daemonChannelDetails.length;
 
     const buyerRuntimeState = isModeRunning('connect') ? 'connected' : 'offline';
     const activeChannels = Math.max(
-      safeNumber(statusPayload?.activeSessions, 0),
+      safeNumber(statusPayload?.activeChannels, 0),
       daemonActiveChannels,
       daemonDetailsCount,
     );

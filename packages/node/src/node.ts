@@ -63,7 +63,7 @@ import {
   DepositsClient,
   ChannelsClient,
   StakingClient,
-  SessionStore,
+  ChannelStore,
 } from "./payments/index.js";
 import { parseJsonObject, extractUsage } from "@antseed/api-adapter";
 import { debugLog, debugWarn } from "./utils/debug.js";
@@ -275,8 +275,8 @@ export class AntseedNode extends EventEmitter {
   private _buyerPaymentManager: BuyerPaymentManager | null = null;
   /** Seller-side payment manager (initialized when seller has payment config). */
   private _sellerPaymentManager: SellerPaymentManager | null = null;
-  /** Shared session store for payment persistence. */
-  private _sessionStore: SessionStore | null = null;
+  /** Shared channel store for payment persistence. */
+  private _channelStore: ChannelStore | null = null;
   /** Periodic timeout checker interval. */
   private _timeoutCheckerInterval: ReturnType<typeof setInterval> | null = null;
   /** Tracks which seller peers the buyer has already negotiated payment for. */
@@ -384,8 +384,8 @@ export class AntseedNode extends EventEmitter {
     return snapshots;
   }
 
-  /** Number of active in-memory seller sessions that are not currently settling. */
-  getActiveSellerSessionCount(): number {
+  /** Number of active in-memory seller channels that are not currently settling. */
+  getActiveSellerChannelCount(): number {
     let count = 0;
     for (const session of this._sessions.values()) {
       if (!session.settling) {
@@ -504,13 +504,13 @@ export class AntseedNode extends EventEmitter {
       this._timeoutCheckerInterval = null;
     }
 
-    if (this._sessionStore) {
+    if (this._channelStore) {
       try {
-        this._sessionStore.close();
+        this._channelStore.close();
       } catch {
         // ignore close errors
       }
-      this._sessionStore = null;
+      this._channelStore = null;
     }
 
     this._peerLookup = null;
@@ -1227,16 +1227,16 @@ export class AntseedNode extends EventEmitter {
     const payments = this._config.payments;
     if (payments?.enabled && payments.rpcUrl && payments.depositsAddress && payments.channelsAddress && payments.usdcAddress) {
       const paymentsDir = join(dataDir, "payments");
-      // Create shared SessionStore for both buyer and seller payment managers
-      if (!this._sessionStore) {
+      // Create shared ChannelStore for both buyer and seller payment managers
+      if (!this._channelStore) {
         try {
-          this._sessionStore = new SessionStore(paymentsDir);
-          debugLog("[Node] SessionStore initialized (buyer)");
+          this._channelStore = new ChannelStore(paymentsDir);
+          debugLog("[Node] ChannelStore initialized (buyer)");
         } catch (err) {
-          debugWarn(`[Node] SessionStore unavailable: ${err instanceof Error ? err.message : err}`);
+          debugWarn(`[Node] ChannelStore unavailable: ${err instanceof Error ? err.message : err}`);
         }
       }
-      if (this._sessionStore) {
+      if (this._channelStore) {
         const buyerPaymentConfig: BuyerPaymentConfig = {
           rpcUrl: payments.rpcUrl,
           depositsContractAddress: payments.depositsAddress,
@@ -1249,7 +1249,7 @@ export class AntseedNode extends EventEmitter {
           maxReserveAmountUsdc: BigInt(payments.maxReserveAmountUsdc ?? "5000000"),  // $5.00 default per session
           dataDir: paymentsDir,
         };
-        this._buyerPaymentManager = new BuyerPaymentManager(identity, buyerPaymentConfig, this._sessionStore);
+        this._buyerPaymentManager = new BuyerPaymentManager(identity, buyerPaymentConfig, this._channelStore);
         debugLog(`[Node] Buyer payment manager initialized (wallet=${identity.wallet.address.slice(0, 10)}... chainId=${buyerPaymentConfig.chainId} deposits=${buyerPaymentConfig.depositsContractAddress.slice(0, 10)}...)`);
       }
     }
@@ -1335,7 +1335,7 @@ export class AntseedNode extends EventEmitter {
 
       // Check budget before routing — reject if buyer hasn't authorized enough
       if (this._sellerPaymentManager) {
-        const session = this._sellerPaymentManager.getSessionByPeer(buyerPeerId);
+        const session = this._sellerPaymentManager.getChannelByPeer(buyerPeerId);
         if (session) {
           const accepted = this._sellerPaymentManager.getAcceptedCumulative(session.sessionId);
           const spent = this._sellerPaymentManager.getCumulativeSpend(session.sessionId);
@@ -1475,7 +1475,7 @@ export class AntseedNode extends EventEmitter {
             };
           }
           const costUsdc = computeCostUsdc(usage.inputTokens, usage.outputTokens, requestPricing);
-          const session = this._sellerPaymentManager.getSessionByPeer(buyerPeerId);
+          const session = this._sellerPaymentManager.getChannelByPeer(buyerPeerId);
           if (session) {
             this._sellerPaymentManager.recordSpend(session.sessionId, costUsdc);
             const cumulativeSpend = this._sellerPaymentManager.getCumulativeSpend(session.sessionId);
@@ -1812,19 +1812,19 @@ export class AntseedNode extends EventEmitter {
       debugLog(`[Node] StatsClient initialized (contract=${payments.statsAddress.slice(0, 10)}...)`);
     }
 
-    // Initialize SessionStore for persistent payment sessions (shared instance)
+    // Initialize ChannelStore for persistent payment channels (shared instance)
     const paymentsDir = join(dataDir, "payments");
-    if (!this._sessionStore) {
+    if (!this._channelStore) {
       try {
-        this._sessionStore = new SessionStore(paymentsDir);
-        debugLog("[Node] SessionStore initialized");
+        this._channelStore = new ChannelStore(paymentsDir);
+        debugLog("[Node] ChannelStore initialized");
       } catch (err) {
-        debugWarn(`[Node] SessionStore unavailable: ${err instanceof Error ? err.message : err}`);
+        debugWarn(`[Node] ChannelStore unavailable: ${err instanceof Error ? err.message : err}`);
       }
     }
 
     // Initialize SellerPaymentManager for seller role
-    if (this._config.role === 'seller' && this._identity && this._sessionStore &&
+    if (this._config.role === 'seller' && this._identity && this._channelStore &&
         payments.rpcUrl && payments.channelsAddress) {
       const sellerConfig: SellerPaymentConfig = {
         rpcUrl: payments.rpcUrl,
@@ -1833,7 +1833,7 @@ export class AntseedNode extends EventEmitter {
         dataDir: paymentsDir,
         ...(payments.minBudgetPerRequest ? { minBudgetPerRequest: payments.minBudgetPerRequest } : {}),
       };
-      this._sellerPaymentManager = new SellerPaymentManager(this._identity, sellerConfig, this._sessionStore);
+      this._sellerPaymentManager = new SellerPaymentManager(this._identity, sellerConfig, this._channelStore);
       debugLog(`[Node] SellerPaymentManager initialized`);
 
       // Startup recovery: check for timed-out sessions
@@ -2220,9 +2220,9 @@ export class AntseedNode extends EventEmitter {
     debugLog(`[Node] External SpendingAuth: channel=${payload.channelId.slice(0, 18)}... amount=${payload.cumulativeAmount}`);
 
     // Store session so handleAuthAck can find it
-    if (this._sessionStore) {
+    if (this._channelStore) {
       const reserveDeadline = payload.reserveDeadline ?? (Math.floor(Date.now() / 1000) + 3600);
-      this._sessionStore.upsertSession({
+      this._channelStore.upsertChannel({
         sessionId: payload.channelId,
         peerId: peer.peerId,
         role: 'buyer',
@@ -2399,7 +2399,7 @@ export class AntseedNode extends EventEmitter {
 
   /**
    * Clean up buyer payment sessions on shutdown.
-   * Sessions are persisted in SessionStore and will be resumed on next connect.
+   * Channels are persisted in ChannelStore and will be resumed on next connect.
    */
   private async _endAllBuyerSessions(): Promise<void> {
     const bpm = this._buyerPaymentManager;
@@ -2528,7 +2528,7 @@ export class AntseedNode extends EventEmitter {
     const usage = parseResponseUsage(response.body);
     const pricing = this._resolveProviderPricing(provider, request);
     const costUsdc = computeCostUsdc(usage.inputTokens, usage.outputTokens, pricing);
-    const session = spm.getSessionByPeer(buyerPeerId);
+    const session = spm.getChannelByPeer(buyerPeerId);
     const cumulativeCost = session ? spm.getCumulativeSpend(session.sessionId) : 0n;
 
     return {

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { Wallet } from 'ethers';
 import { BuyerPaymentManager, type BuyerPaymentConfig } from '../src/payments/buyer-payment-manager.js';
-import { SessionStore } from '../src/payments/session-store.js';
+import { ChannelStore } from '../src/payments/channel-store.js';
 import type { PaymentMux } from '../src/p2p/payment-mux.js';
 import type { Identity } from '../src/p2p/identity.js';
 import { bytesToHex } from '../src/utils/hex.js';
@@ -79,13 +79,13 @@ describe('BuyerPaymentManager', () => {
   let tempDir: string;
   let identity: Identity;
   let manager: BuyerPaymentManager;
-  let store: SessionStore;
+  let store: ChannelStore;
   let mux: ReturnType<typeof createMockPaymentMux>;
 
   beforeEach(async () => {
     tempDir = mkdtempSync(join(tmpdir(), 'buyer-pm-test-'));
     identity = createTestIdentity();
-    store = new SessionStore(tempDir);
+    store = new ChannelStore(tempDir);
     manager = new BuyerPaymentManager(identity, makeConfig(tempDir), store);
     const wallet = Wallet.createRandom();
     manager.setSigner(wallet);
@@ -291,7 +291,7 @@ describe('BuyerPaymentManager', () => {
     const initialBudget = 9_000n;
     const ceiling = initialBudget + SAMPLE_ESTIMATE.cost + 100n; // tight ceiling
     store.close();
-    store = new SessionStore(tempDir);
+    store = new ChannelStore(tempDir);
     manager = new BuyerPaymentManager(
       identity,
       makeConfig(tempDir, { maxReserveAmountUsdc: ceiling, maxPerRequestUsdc: 100_000n }),
@@ -511,15 +511,15 @@ describe('BuyerPaymentManager', () => {
     const channelId = await manager.authorizeSpending(sellerPeerId, mux, 10_000n, TEST_PRICING);
     store.close();
 
-    const checkStore = new SessionStore(tempDir);
-    const session = checkStore.getSession(channelId);
+    const checkStore = new ChannelStore(tempDir);
+    const session = checkStore.getChannel(channelId);
     expect(session).not.toBeNull();
     expect(session!.peerId).toBe(sellerPeerId);
     expect(session!.role).toBe('buyer');
     expect(session!.authMax).toBe('10000');
     checkStore.close();
 
-    store = new SessionStore(tempDir);
+    store = new ChannelStore(tempDir);
     manager = new BuyerPaymentManager(identity, makeConfig(tempDir), store);
     manager.setSigner(Wallet.createRandom());
 

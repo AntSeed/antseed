@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { SellerPaymentManager, type SellerPaymentConfig } from '../src/payments/seller-payment-manager.js';
-import { SessionStore } from '../src/payments/session-store.js';
+import { ChannelStore } from '../src/payments/channel-store.js';
 import type { PaymentMux } from '../src/p2p/payment-mux.js';
 import type { Identity } from '../src/p2p/identity.js';
 import type { SpendingAuthPayload } from '../src/types/protocol.js';
@@ -110,7 +110,7 @@ function makeChannelId(n: number): string {
 
 describe('SellerPaymentManager', () => {
   let tempDir: string;
-  let store: SessionStore;
+  let store: ChannelStore;
   let sellerIdentity: Identity;
   let buyerIdentity: Identity;
   let manager: SellerPaymentManager;
@@ -118,7 +118,7 @@ describe('SellerPaymentManager', () => {
 
   beforeEach(async () => {
     tempDir = mkdtempSync(join(tmpdir(), 'seller-pm-test-'));
-    store = new SessionStore(tempDir);
+    store = new ChannelStore(tempDir);
     sellerIdentity = createTestIdentity();
     buyerIdentity = createTestIdentity();
 
@@ -155,7 +155,7 @@ describe('SellerPaymentManager', () => {
     const ack = mux.sentAuthAcks[0] as Record<string, unknown>;
     expect(ack.channelId).toBe(channelId);
 
-    const session = store.getSession(channelId);
+    const session = store.getChannel(channelId);
     expect(session).not.toBeNull();
     expect(session!.role).toBe('seller');
     expect(session!.status).toBe('active');
@@ -221,7 +221,7 @@ describe('SellerPaymentManager', () => {
     manager2.onBuyerDisconnect(buyerIdentity.peerId);
     expect(manager2.hasSession(buyerIdentity.peerId)).toBe(false);
 
-    const session = store.getSession(channelId);
+    const session = store.getChannel(channelId);
     expect(session).not.toBeNull();
     expect(session!.status).toBe('active');
     expect(manager2.channelsClient.close).not.toHaveBeenCalled();

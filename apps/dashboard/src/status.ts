@@ -76,7 +76,7 @@ export async function getNodeStatus(config: DashboardConfig): Promise<NodeStatus
       peerCount: asFiniteNumber(state['peerCount'], 0),
       earningsToday: typeof state['earningsToday'] === 'string' ? state['earningsToday'] : '0',
       tokensToday: asFiniteNumber(state['tokensToday'], 0),
-      activeChannels: asFiniteNumber(state['activeSessions'], 0),
+      activeChannels: asFiniteNumber(state['activeChannels'], 0),
       uptime: typeof state['uptime'] === 'string' ? state['uptime'] : '0s',
       walletAddress: typeof state['walletAddress'] === 'string' ? state['walletAddress'] : (config.identity.walletAddress ?? null),
       proxyPort: asNullablePort(state['proxyPort']),

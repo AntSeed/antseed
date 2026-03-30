@@ -258,7 +258,7 @@ async function main() {
   let sellerPrivateKey = null;
   let buyerPrivateKey = null;
   let discoveredSeller = null;
-  let activeSessionId = null;
+  let activeChannelId = null;
 
   try {
     // -----------------------------------------------------------------------
@@ -543,8 +543,8 @@ async function main() {
       10_000,
       250
     );
-    activeSessionId = sellerSession.sessionId;
-    info(`Active session: ${activeSessionId}`);
+    activeChannelId = sellerSession.sessionId;
+    info(`Active session: ${activeChannelId}`);
     pass(`Session active with ${sellerSession.totalRequests} requests`);
 
     // Check buyer deposit balance via cast
@@ -572,7 +572,7 @@ async function main() {
 
     let sessionInfo;
     try {
-      sessionInfo = await channelsClient.getSession(activeSessionId);
+      sessionInfo = await channelsClient.getSession(activeChannelId);
       info(`On-chain session status: ${sessionInfo.status} (0=Active, 1=Settled)`);
       if (sessionInfo.status === 0) {
         pass("Session is Active on-chain");
@@ -622,10 +622,10 @@ async function main() {
     );
     pass(`Seller earned ${sellerPayouts} USDC base units in Deposits`);
 
-    // Verify session is settled (activeSessionId is an internal UUID, not the
+    // Verify session is settled (activeChannelId is an internal UUID, not the
     // on-chain channelId — wrap in try/catch since this is informational)
     try {
-      const settledSession = await channelsClient.getSession(activeSessionId);
+      const settledSession = await channelsClient.getSession(activeChannelId);
       if (settledSession.status === 1) {
         pass("Session status = Settled (1)");
       } else {

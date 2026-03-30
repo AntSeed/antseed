@@ -2,14 +2,14 @@ import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
-export const SESSION_STATUS = {
+export const CHANNEL_STATUS = {
   ACTIVE: 'active',
   SETTLED: 'settled',
   TIMEOUT: 'timeout',
   GHOST: 'ghost',
 } as const;
 
-export interface StoredSession {
+export interface StoredChannel {
   sessionId: string;
   peerId: string;
   role: 'buyer' | 'seller';
@@ -44,7 +44,7 @@ export interface StoredReceipt {
   createdAt: number;
 }
 
-export class SessionStore {
+export class ChannelStore {
   private _db: Database.Database;
 
   // ── Cached prepared statements (compiled once, reused every call) ──
@@ -70,7 +70,7 @@ export class SessionStore {
     insertReceipt: Database.Statement;
     getReceipts: Database.Statement;
     updateReceiptAck: Database.Statement;
-    getActiveSessions: Database.Statement;
+    getActiveChannels: Database.Statement;
   };
 
   constructor(dataDir: string) {
@@ -89,7 +89,7 @@ export class SessionStore {
 
   private _createTables(): void {
     this._db.exec(`
-      CREATE TABLE IF NOT EXISTS payment_sessions (
+      CREATE TABLE IF NOT EXISTS payment_channels (
         session_id TEXT PRIMARY KEY,
         peer_id TEXT NOT NULL,
         role TEXT NOT NULL,
@@ -113,24 +113,24 @@ export class SessionStore {
         updated_at INTEGER NOT NULL
       );
 
-      CREATE INDEX IF NOT EXISTS idx_sessions_peer_role_status ON payment_sessions(peer_id, role, status);
+      CREATE INDEX IF NOT EXISTS idx_channels_peer_role_status ON payment_channels(peer_id, role, status);
     `);
 
     // Migration: add columns for persisted auth sigs (v0.2.28+)
-    const cols = this._db.pragma('table_info(payment_sessions)') as Array<{ name: string }>;
+    const cols = this._db.pragma('table_info(payment_channels)') as Array<{ name: string }>;
     const colNames = new Set(cols.map(c => c.name));
     if (!colNames.has('latest_buyer_sig')) {
-      this._db.exec('ALTER TABLE payment_sessions ADD COLUMN latest_buyer_sig TEXT');
+      this._db.exec('ALTER TABLE payment_channels ADD COLUMN latest_buyer_sig TEXT');
     }
     if (!colNames.has('latest_metadata_auth_sig')) {
-      this._db.exec('ALTER TABLE payment_sessions ADD COLUMN latest_metadata_auth_sig TEXT');
+      this._db.exec('ALTER TABLE payment_channels ADD COLUMN latest_metadata_auth_sig TEXT');
     }
     if (!colNames.has('latest_metadata')) {
-      this._db.exec('ALTER TABLE payment_sessions ADD COLUMN latest_metadata TEXT');
+      this._db.exec('ALTER TABLE payment_channels ADD COLUMN latest_metadata TEXT');
     }
 
     this._db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_sessions_status_updated ON payment_sessions(status, updated_at);
+      CREATE INDEX IF NOT EXISTS idx_channels_status_updated ON payment_channels(status, updated_at);
 
       CREATE TABLE IF NOT EXISTS payment_receipts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -141,7 +141,7 @@ export class SessionStore {
         seller_sig TEXT NOT NULL,
         buyer_ack_sig TEXT,
         created_at INTEGER NOT NULL,
-        FOREIGN KEY (session_id) REFERENCES payment_sessions(session_id)
+        FOREIGN KEY (session_id) REFERENCES payment_channels(session_id)
       );
 
       CREATE INDEX IF NOT EXISTS idx_receipts_session ON payment_receipts(session_id);
@@ -151,7 +151,7 @@ export class SessionStore {
   private _prepareStatements() {
     return {
       upsert: this._db.prepare(`
-        INSERT INTO payment_sessions (
+        INSERT INTO payment_channels (
           session_id, peer_id, role, seller_evm_addr, buyer_evm_addr,
           nonce, auth_max, deadline, previous_session_id, previous_consumption,
           tokens_delivered, request_count, reserved_at, settled_at, settled_amount,
@@ -177,31 +177,31 @@ export class SessionStore {
           updated_at = @updatedAt
       `),
       getById: this._db.prepare(
-        'SELECT * FROM payment_sessions WHERE session_id = ?',
+        'SELECT * FROM payment_channels WHERE session_id = ?',
       ),
       getActiveByPeer: this._db.prepare(
-        'SELECT * FROM payment_sessions WHERE peer_id = ? AND role = ? AND status = ? ORDER BY created_at DESC LIMIT 1',
+        'SELECT * FROM payment_channels WHERE peer_id = ? AND role = ? AND status = ? ORDER BY created_at DESC LIMIT 1',
       ),
       getLatestByPeer: this._db.prepare(
-        'SELECT * FROM payment_sessions WHERE peer_id = ? AND role = ? ORDER BY created_at DESC LIMIT 1',
+        'SELECT * FROM payment_channels WHERE peer_id = ? AND role = ? ORDER BY created_at DESC LIMIT 1',
       ),
       updateStatusWithAmount: this._db.prepare(
-        'UPDATE payment_sessions SET status = ?, settled_at = ?, settled_amount = ?, updated_at = ? WHERE session_id = ?',
+        'UPDATE payment_channels SET status = ?, settled_at = ?, settled_amount = ?, updated_at = ? WHERE session_id = ?',
       ),
       updateStatus: this._db.prepare(
-        'UPDATE payment_sessions SET status = ?, updated_at = ? WHERE session_id = ?',
+        'UPDATE payment_channels SET status = ?, updated_at = ? WHERE session_id = ?',
       ),
       updateTokens: this._db.prepare(
-        'UPDATE payment_sessions SET tokens_delivered = ?, request_count = ?, updated_at = ? WHERE session_id = ?',
+        'UPDATE payment_channels SET tokens_delivered = ?, request_count = ?, updated_at = ? WHERE session_id = ?',
       ),
       getMaxNonce: this._db.prepare(
-        'SELECT MAX(nonce) as max_nonce FROM payment_sessions WHERE role = ?',
+        'SELECT MAX(nonce) as max_nonce FROM payment_channels WHERE role = ?',
       ),
       listAll: this._db.prepare(
-        'SELECT * FROM payment_sessions ORDER BY updated_at DESC LIMIT ?',
+        'SELECT * FROM payment_channels ORDER BY updated_at DESC LIMIT ?',
       ),
       getTimedOut: this._db.prepare(
-        'SELECT * FROM payment_sessions WHERE status = ? AND updated_at < ? ORDER BY updated_at LIMIT 100',
+        'SELECT * FROM payment_channels WHERE status = ? AND updated_at < ? ORDER BY updated_at LIMIT 100',
       ),
       insertReceipt: this._db.prepare(`
         INSERT INTO payment_receipts (
@@ -218,56 +218,56 @@ export class SessionStore {
       updateReceiptAck: this._db.prepare(
         'UPDATE payment_receipts SET buyer_ack_sig = ? WHERE session_id = ? AND running_total = ? AND request_count = ?',
       ),
-      getActiveSessions: this._db.prepare(
-        'SELECT * FROM payment_sessions WHERE role = ? AND status = ? ORDER BY created_at DESC',
+      getActiveChannels: this._db.prepare(
+        'SELECT * FROM payment_channels WHERE role = ? AND status = ? ORDER BY created_at DESC',
       ),
     };
   }
 
-  // ── Session CRUD ──────────────────────────────────────────────
+  // ── Channel CRUD ──────────────────────────────────────────────
 
-  upsertSession(session: StoredSession): void {
+  upsertChannel(channel: StoredChannel): void {
     this._stmts.upsert.run({
-      sessionId: session.sessionId,
-      peerId: session.peerId,
-      role: session.role,
-      sellerEvmAddr: session.sellerEvmAddr,
-      buyerEvmAddr: session.buyerEvmAddr,
-      nonce: session.nonce,
-      authMax: session.authMax,
-      deadline: session.deadline,
-      previousSessionId: session.previousSessionId,
-      previousConsumption: session.previousConsumption,
-      tokensDelivered: session.tokensDelivered,
-      requestCount: session.requestCount,
-      reservedAt: session.reservedAt,
-      settledAt: session.settledAt,
-      settledAmount: session.settledAmount,
-      status: session.status,
-      latestBuyerSig: session.latestBuyerSig ?? null,
-      latestSpendingAuthSig: session.latestSpendingAuthSig ?? null,
-      latestMetadata: session.latestMetadata ?? null,
-      createdAt: session.createdAt,
-      updatedAt: session.updatedAt,
+      sessionId: channel.sessionId,
+      peerId: channel.peerId,
+      role: channel.role,
+      sellerEvmAddr: channel.sellerEvmAddr,
+      buyerEvmAddr: channel.buyerEvmAddr,
+      nonce: channel.nonce,
+      authMax: channel.authMax,
+      deadline: channel.deadline,
+      previousSessionId: channel.previousSessionId,
+      previousConsumption: channel.previousConsumption,
+      tokensDelivered: channel.tokensDelivered,
+      requestCount: channel.requestCount,
+      reservedAt: channel.reservedAt,
+      settledAt: channel.settledAt,
+      settledAmount: channel.settledAmount,
+      status: channel.status,
+      latestBuyerSig: channel.latestBuyerSig ?? null,
+      latestSpendingAuthSig: channel.latestSpendingAuthSig ?? null,
+      latestMetadata: channel.latestMetadata ?? null,
+      createdAt: channel.createdAt,
+      updatedAt: channel.updatedAt,
     });
   }
 
-  getSession(sessionId: string): StoredSession | null {
-    const row = this._stmts.getById.get(sessionId) as SessionRow | undefined;
-    return row ? rowToSession(row) : null;
+  getChannel(sessionId: string): StoredChannel | null {
+    const row = this._stmts.getById.get(sessionId) as ChannelRow | undefined;
+    return row ? rowToChannel(row) : null;
   }
 
-  getActiveSessionByPeer(peerId: string, role: string): StoredSession | null {
-    const row = this._stmts.getActiveByPeer.get(peerId, role, SESSION_STATUS.ACTIVE) as SessionRow | undefined;
-    return row ? rowToSession(row) : null;
+  getActiveChannelByPeer(peerId: string, role: string): StoredChannel | null {
+    const row = this._stmts.getActiveByPeer.get(peerId, role, CHANNEL_STATUS.ACTIVE) as ChannelRow | undefined;
+    return row ? rowToChannel(row) : null;
   }
 
-  getLatestSession(peerId: string, role: string): StoredSession | null {
-    const row = this._stmts.getLatestByPeer.get(peerId, role) as SessionRow | undefined;
-    return row ? rowToSession(row) : null;
+  getLatestChannel(peerId: string, role: string): StoredChannel | null {
+    const row = this._stmts.getLatestByPeer.get(peerId, role) as ChannelRow | undefined;
+    return row ? rowToChannel(row) : null;
   }
 
-  updateSessionStatus(sessionId: string, status: string, settledAmount?: string): void {
+  updateChannelStatus(sessionId: string, status: string, settledAmount?: string): void {
     const now = Date.now();
     if (settledAmount !== undefined) {
       this._stmts.updateStatusWithAmount.run(status, now, settledAmount, now, sessionId);
@@ -285,24 +285,24 @@ export class SessionStore {
     return row?.max_nonce ?? 0;
   }
 
-  /** List all sessions ordered by most recent first. */
-  listAllSessions(limit = 100): StoredSession[] {
-    const rows = this._stmts.listAll.all(limit) as SessionRow[];
-    return rows.map(rowToSession);
+  /** List all channels ordered by most recent first. */
+  listAllChannels(limit = 100): StoredChannel[] {
+    const rows = this._stmts.listAll.all(limit) as ChannelRow[];
+    return rows.map(rowToChannel);
   }
 
-  /** Get all active sessions for a given role (buyer or seller). */
-  getActiveSessions(role: string): StoredSession[] {
-    const rows = this._stmts.getActiveSessions.all(role, SESSION_STATUS.ACTIVE) as SessionRow[];
-    return rows.map(rowToSession);
+  /** Get all active channels for a given role (buyer or seller). */
+  getActiveChannels(role: string): StoredChannel[] {
+    const rows = this._stmts.getActiveChannels.all(role, CHANNEL_STATUS.ACTIVE) as ChannelRow[];
+    return rows.map(rowToChannel);
   }
 
   // ── Timeout queries ───────────────────────────────────────────
 
-  getTimedOutSessions(timeoutSeconds: number): StoredSession[] {
+  getTimedOutChannels(timeoutSeconds: number): StoredChannel[] {
     const cutoff = Date.now() - timeoutSeconds * 1000;
-    const rows = this._stmts.getTimedOut.all(SESSION_STATUS.ACTIVE, cutoff) as SessionRow[];
-    return rows.map(rowToSession);
+    const rows = this._stmts.getTimedOut.all(CHANNEL_STATUS.ACTIVE, cutoff) as ChannelRow[];
+    return rows.map(rowToChannel);
   }
 
   // ── Receipt CRUD ──────────────────────────────────────────────
@@ -348,7 +348,7 @@ export class SessionStore {
 
 // ── Row types ─────────────────────────────────────────────────
 
-interface SessionRow {
+interface ChannelRow {
   session_id: string;
   peer_id: string;
   role: string;
@@ -383,7 +383,7 @@ interface ReceiptRow {
   created_at: number;
 }
 
-function rowToSession(row: SessionRow): StoredSession {
+function rowToChannel(row: ChannelRow): StoredChannel {
   return {
     sessionId: row.session_id,
     peerId: row.peer_id,
@@ -400,7 +400,7 @@ function rowToSession(row: SessionRow): StoredSession {
     reservedAt: row.reserved_at,
     settledAt: row.settled_at,
     settledAmount: row.settled_amount,
-    status: row.status as StoredSession['status'],
+    status: row.status as StoredChannel['status'],
     latestBuyerSig: row.latest_buyer_sig,
     latestSpendingAuthSig: row.latest_metadata_auth_sig,
     latestMetadata: row.latest_metadata,

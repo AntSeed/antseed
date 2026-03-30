@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { BuyerPaymentManager, type BuyerPaymentConfig } from '../src/payments/buyer-payment-manager.js';
 import { SellerPaymentManager, type SellerPaymentConfig } from '../src/payments/seller-payment-manager.js';
-import { SessionStore } from '../src/payments/session-store.js';
+import { ChannelStore } from '../src/payments/channel-store.js';
 import type { PaymentMux } from '../src/p2p/payment-mux.js';
 import type { SpendingAuthPayload, AuthAckPayload } from '../src/types/protocol.js';
 import type { Identity } from '../src/p2p/identity.js';
@@ -94,8 +94,8 @@ function makeSellerConfig(dataDir: string): SellerPaymentConfig {
 describe('Full Payment Flow Integration', () => {
   let buyerDir: string;
   let sellerDir: string;
-  let buyerStore: SessionStore;
-  let sellerStore: SessionStore;
+  let buyerStore: ChannelStore;
+  let sellerStore: ChannelStore;
   let buyerIdentity: Identity;
   let sellerIdentity: Identity;
   let buyer: BuyerPaymentManager;
@@ -106,8 +106,8 @@ describe('Full Payment Flow Integration', () => {
   beforeEach(async () => {
     buyerDir = mkdtempSync(join(tmpdir(), 'flow-buyer-'));
     sellerDir = mkdtempSync(join(tmpdir(), 'flow-seller-'));
-    buyerStore = new SessionStore(buyerDir);
-    sellerStore = new SessionStore(sellerDir);
+    buyerStore = new ChannelStore(buyerDir);
+    sellerStore = new ChannelStore(sellerDir);
 
     buyerIdentity = createTestIdentity();
     sellerIdentity = createTestIdentity();
@@ -390,7 +390,7 @@ describe('Full Payment Flow Integration', () => {
     tightConfig.maxPerRequestUsdc = 500_000n;
 
     buyerStore.close();
-    buyerStore = new SessionStore(buyerDir);
+    buyerStore = new ChannelStore(buyerDir);
     buyer = new BuyerPaymentManager(buyerIdentity, tightConfig, buyerStore);
     buyer.setSigner(buyerIdentity.wallet);
 
@@ -412,8 +412,8 @@ describe('Full Payment Flow Integration', () => {
 describe('Settlement edge cases', () => {
   let buyerDir: string;
   let sellerDir: string;
-  let buyerStore: SessionStore;
-  let sellerStore: SessionStore;
+  let buyerStore: ChannelStore;
+  let sellerStore: ChannelStore;
   let buyerIdentity: Identity;
   let sellerIdentity: Identity;
   let buyer: BuyerPaymentManager;
@@ -424,8 +424,8 @@ describe('Settlement edge cases', () => {
   beforeEach(async () => {
     buyerDir = mkdtempSync(join(tmpdir(), 'settle-buyer-'));
     sellerDir = mkdtempSync(join(tmpdir(), 'settle-seller-'));
-    buyerStore = new SessionStore(buyerDir);
-    sellerStore = new SessionStore(sellerDir);
+    buyerStore = new ChannelStore(buyerDir);
+    sellerStore = new ChannelStore(sellerDir);
 
     buyerIdentity = createTestIdentity();
     sellerIdentity = createTestIdentity();
