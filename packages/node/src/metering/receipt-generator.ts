@@ -2,18 +2,18 @@ import { randomUUID } from 'node:crypto';
 import type { ProviderType, TokenCount, UsageReceipt } from '../types/metering.js';
 
 /**
- * Interface for signing data with the seller's Ed25519 private key.
- * The actual implementation lives in the identity module (PRD-01).
+ * Interface for signing data with the seller's secp256k1 private key.
+ * The actual implementation lives in the identity module.
  */
 export interface Signer {
   /**
-   * Sign a message with the seller's Ed25519 private key.
+   * Sign a message with the seller's secp256k1 private key.
    * @param message - UTF-8 string to sign
    * @returns Hex-encoded signature
    */
   sign(message: string): string;
 
-  /** The seller's peer ID (Ed25519 public key hex) */
+  /** The seller's peer ID (EVM address hex, no 0x prefix) */
   peerId: string;
 }
 

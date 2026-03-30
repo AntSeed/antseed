@@ -18,8 +18,9 @@ import { isKnownServiceApiProtocol } from "../types/service-api.js";
 import { encodeMetadataForSigning } from "./metadata-codec.js";
 import { debugWarn } from "../utils/debug.js";
 import { bytesToHex } from "../utils/hex.js";
-import type { BaseEscrowClient } from "../payments/evm/escrow-client.js";
-import { identityToEvmAddress } from "../payments/evm/keypair.js";
+// Announcer uses StatsClient + StakingClient for on-chain stats lookup
+import type { StatsClient } from "../payments/evm/stats-client.js";
+import type { StakingClient } from "../payments/evm/staking-client.js";
 
 export interface AnnouncerConfig {
   identity: Identity;
@@ -44,7 +45,10 @@ export interface AnnouncerConfig {
   offerings?: PeerOffering[];
   stakeAmountUSDC?: number;
   trustScore?: number;
-  escrowClient?: BaseEscrowClient;
+  /** @deprecated Use statsClient for payments-enabled checks */
+  paymentsEnabled?: boolean;
+  statsClient?: StatsClient;
+  stakingClient?: StakingClient;
   reannounceIntervalMs: number;
   signalingPort: number;
 }
@@ -153,18 +157,17 @@ export class PeerAnnouncer {
       metadata.trustScore = this.config.trustScore;
     }
 
-    if (this.config.escrowClient) {
-      const evmAddress = identityToEvmAddress(this.config.identity);
-      metadata.evmAddress = evmAddress;
-
-      if (includeOnChainReputation) {
+    if (this.config.paymentsEnabled) {
+      if (includeOnChainReputation && this.config.statsClient && this.config.stakingClient) {
         try {
-          const reputation = await this.config.escrowClient.getReputation(evmAddress);
-          metadata.onChainReputation = reputation.weightedAverage;
-          metadata.onChainSessionCount = reputation.sessionCount;
-          metadata.onChainDisputeCount = reputation.disputeCount;
+          const evmAddress = this.config.identity.wallet.address;
+          const agentId = await this.config.stakingClient.getAgentId(evmAddress);
+          const stats = await this.config.statsClient.getStats(agentId);
+          metadata.onChainReputation = stats.sessionCount;
+          metadata.onChainSessionCount = stats.sessionCount;
+          metadata.onChainDisputeCount = stats.ghostCount;
         } catch {
-          // Silently continue without reputation data
+          // Stats/staking contract lookup failed — skip on-chain stats for this cycle
         }
       } else if (this._latestMetadata) {
         metadata.onChainReputation = this._latestMetadata.onChainReputation;
@@ -174,7 +177,7 @@ export class PeerAnnouncer {
     }
 
     const dataToSign = encodeMetadataForSigning(metadata);
-    const signature = await signData(this.config.identity.privateKey, dataToSign);
+    const signature = signData(this.config.identity.wallet, dataToSign);
     metadata.signature = bytesToHex(signature);
     return metadata;
   }

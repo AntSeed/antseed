@@ -17,7 +17,7 @@ function makeRequest(service: string): SerializedHttpRequest {
 
 function makePeer(overrides?: Partial<PeerInfo>): PeerInfo {
   return {
-    peerId: 'a'.repeat(64) as PeerInfo['peerId'],
+    peerId: 'a'.repeat(40) as PeerInfo['peerId'],
     lastSeen: Date.now(),
     providers: ['anthropic'],
     trustScore: 80,
@@ -50,7 +50,7 @@ describe('pricing fallback hierarchy', () => {
     });
 
     const serviceSpecificPeer = makePeer({
-      peerId: '1'.repeat(64) as PeerInfo['peerId'],
+      peerId: '1'.repeat(40) as PeerInfo['peerId'],
       providerPricing: {
         anthropic: {
           defaults: {
@@ -70,7 +70,7 @@ describe('pricing fallback hierarchy', () => {
     });
 
     const providerDefaultPeer = makePeer({
-      peerId: '2'.repeat(64) as PeerInfo['peerId'],
+      peerId: '2'.repeat(40) as PeerInfo['peerId'],
       providerPricing: {
         anthropic: {
           defaults: {
@@ -84,14 +84,14 @@ describe('pricing fallback hierarchy', () => {
     });
 
     const peerDefaultOnly = makePeer({
-      peerId: '3'.repeat(64) as PeerInfo['peerId'],
+      peerId: '3'.repeat(40) as PeerInfo['peerId'],
       providerPricing: undefined,
       defaultInputUsdPerMillion: 10,
       defaultOutputUsdPerMillion: 11,
     });
 
     const outputTooHigh = makePeer({
-      peerId: '4'.repeat(64) as PeerInfo['peerId'],
+      peerId: '4'.repeat(40) as PeerInfo['peerId'],
       providerPricing: {
         anthropic: {
           defaults: {

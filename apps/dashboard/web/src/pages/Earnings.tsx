@@ -31,12 +31,12 @@ export function Earnings() {
 
   if (!earnings) return <div className="loading">Loading...</div>;
 
-  const lineData = earnings.daily.map((d) => ({
+  const lineData = (earnings.daily ?? []).map((d) => ({
     date: d.date,
     amount: parseFloat(d.amount),
   }));
 
-  const pieData = earnings.byProvider.map((p) => ({
+  const pieData = (earnings.byProvider ?? []).map((p) => ({
     name: p.provider,
     value: parseFloat(p.amount),
   }));
@@ -63,16 +63,16 @@ export function Earnings() {
         <div className="stat-card">
           <div className="stat-label">Today</div>
           <div className="stat-value" style={{ color: 'var(--accent-green)' }}>
-            ${parseFloat(earnings.today).toFixed(2)}
+            ${parseFloat(earnings.today ?? '0').toFixed(2)}
           </div>
         </div>
         <div className="stat-card">
           <div className="stat-label">This Week</div>
-          <div className="stat-value">${parseFloat(earnings.thisWeek).toFixed(2)}</div>
+          <div className="stat-value">${parseFloat(earnings.thisWeek ?? '0').toFixed(2)}</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">This Month</div>
-          <div className="stat-value">${parseFloat(earnings.thisMonth).toFixed(2)}</div>
+          <div className="stat-value">${parseFloat(earnings.thisMonth ?? '0').toFixed(2)}</div>
         </div>
       </div>
 

@@ -133,9 +133,8 @@ export class PeerLookup {
 
   async verifyMetadataSignature(metadata: PeerMetadata): Promise<boolean> {
     const dataToVerify = encodeMetadataForSigning(metadata);
-    const publicKey = hexToBytes(metadata.peerId);
     const signature = hexToBytes(metadata.signature);
-    return verifySignature(publicKey, signature, dataToVerify);
+    return verifySignature(metadata.peerId, signature, dataToVerify);
   }
 
   isStale(metadata: PeerMetadata): boolean {

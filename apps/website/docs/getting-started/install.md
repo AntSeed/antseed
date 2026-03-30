@@ -17,7 +17,7 @@ Verify the installation:
 
 ```bash title="verify"
 $ antseed --version
-antseed v0.1.24
+antseed v0.1.49
 ```
 
 ## Related Packages

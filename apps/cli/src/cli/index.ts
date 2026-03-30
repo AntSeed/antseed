@@ -18,6 +18,14 @@ import { registerBalanceCommand } from './commands/balance.js';
 import { registerBootstrapCommand } from './commands/bootstrap.js';
 import { registerConnectionCommand } from './commands/connection.js';
 import { registerAgentCommand } from './commands/agent.js';
+import { registerSetupCommand } from './commands/setup.js';
+import { registerRegisterCommand } from './commands/register.js';
+import { registerStakeCommand } from './commands/stake.js';
+import { registerEmissionsCommand } from './commands/emissions.js';
+import { registerReputationCommand } from './commands/reputation.js';
+import { registerChannelsCommand } from './commands/channels.js';
+import { registerSubscribeCommand } from './commands/subscribe.js';
+import { registerPaymentsCommand } from './commands/payments.js';
 
 loadEnvFromFiles();
 
@@ -51,5 +59,13 @@ registerBalanceCommand(program);
 registerBootstrapCommand(program);
 registerConnectionCommand(program);
 registerAgentCommand(program);
+registerSetupCommand(program);
+registerRegisterCommand(program);
+registerStakeCommand(program);
+registerEmissionsCommand(program);
+registerReputationCommand(program);
+registerChannelsCommand(program);
+registerSubscribeCommand(program);
+registerPaymentsCommand(program);
 
 program.parse(process.argv);

@@ -1,15 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
-import * as ed from '@noble/ed25519';
+import { randomBytes } from 'node:crypto';
+import { Wallet } from 'ethers';
 import { PeerAnnouncer, type AnnouncerConfig } from '../src/discovery/announcer.js';
 import { encodeMetadataForSigning } from '../src/discovery/metadata-codec.js';
 import { ANTSEED_WILDCARD_TOPIC, serviceSearchTopic, serviceTopic, topicToInfoHash } from '../src/discovery/dht-node.js';
 import { verifySignature, bytesToHex, hexToBytes } from '../src/p2p/identity.js';
 import { toPeerId } from '../src/types/peer.js';
 
-async function makeConfig(): Promise<{ config: AnnouncerConfig; dht: { announce: ReturnType<typeof vi.fn> } }> {
-  const privateKey = ed.utils.randomPrivateKey();
-  const publicKey = await ed.getPublicKeyAsync(privateKey);
-  const peerId = toPeerId(bytesToHex(publicKey));
+function makeConfig(): { config: AnnouncerConfig; dht: { announce: ReturnType<typeof vi.fn> } } {
+  const privateKey = randomBytes(32);
+  const wallet = new Wallet('0x' + bytesToHex(privateKey));
+  const peerId = toPeerId(wallet.address.slice(2).toLowerCase());
 
   const dht = {
     announce: vi.fn().mockResolvedValue(undefined),
@@ -19,7 +20,7 @@ async function makeConfig(): Promise<{ config: AnnouncerConfig; dht: { announce:
     identity: {
       peerId,
       privateKey,
-      publicKey,
+      wallet,
     },
     dht: dht as unknown as AnnouncerConfig['dht'],
     providers: [
@@ -42,7 +43,7 @@ async function makeConfig(): Promise<{ config: AnnouncerConfig; dht: { announce:
 
 describe('PeerAnnouncer live load metadata', () => {
   it('refreshes signed metadata load without re-announcing to DHT', async () => {
-    const { config, dht } = await makeConfig();
+    const { config, dht } = makeConfig();
     const announcer = new PeerAnnouncer(config);
 
     await announcer.announce();
@@ -60,8 +61,8 @@ describe('PeerAnnouncer live load metadata', () => {
     expect(refreshed!.providers[0]!.currentLoad).toBe(3);
     expect(dht.announce).not.toHaveBeenCalled();
 
-    const valid = await verifySignature(
-      hexToBytes(refreshed!.peerId),
+    const valid = verifySignature(
+      refreshed!.peerId,
       hexToBytes(refreshed!.signature),
       encodeMetadataForSigning(refreshed!),
     );
@@ -69,7 +70,7 @@ describe('PeerAnnouncer live load metadata', () => {
   });
 
   it('preserves wildcard service metadata entries when provider services are wildcard', async () => {
-    const { config } = await makeConfig();
+    const { config } = makeConfig();
     config.providers = [
       {
         provider: 'openai',
@@ -100,7 +101,7 @@ describe('PeerAnnouncer live load metadata', () => {
   });
 
   it('announces deduped lowercase service topics and wildcard', async () => {
-    const { config, dht } = await makeConfig();
+    const { config, dht } = makeConfig();
     config.providers = [
       {
         provider: 'openai',
@@ -121,7 +122,7 @@ describe('PeerAnnouncer live load metadata', () => {
   });
 
   it('announces compact service-search topic when canonical service key differs', async () => {
-    const { config, dht } = await makeConfig();
+    const { config, dht } = makeConfig();
     config.providers = [
       {
         provider: 'openai',

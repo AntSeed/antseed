@@ -1,0 +1,413 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+
+import {IERC8004Registry} from "./interfaces/IERC8004Registry.sol";
+import {IAntseedStats} from "./interfaces/IAntseedStats.sol";
+
+/**
+ * @title AntseedSubPool
+ * @notice Subscription pool contract managing monthly subscriptions, daily token
+ *         budgets, and epoch-based revenue distribution to opted-in peers
+ *         proportional to their proven reputation.
+ */
+contract AntseedSubPool is Ownable, ReentrancyGuard {
+    using SafeERC20 for IERC20;
+
+    // ─── Structs ─────────────────────────────────────────────────────────
+    struct Tier {
+        uint256 monthlyFee; // USDC base units
+        uint256 dailyTokenBudget; // tokens per day
+        bool active;
+    }
+
+    struct Subscription {
+        uint256 tierId;
+        uint256 startedAt;
+        uint256 expiresAt;
+        uint256 tokensUsedToday;
+        uint256 lastResetDay; // day number (block.timestamp / 1 days)
+        bool cancelled;
+    }
+
+    struct PeerOpt {
+        bool optedIn;
+        uint256 tokenId; // ERC-8004 agentId
+        uint256 lastClaimedEpoch;
+        uint256 pendingRevenue;
+        uint256 optedInAt; // timestamp when peer opted in
+    }
+
+    // ─── State Variables ─────────────────────────────────────────────────
+    IERC20 public immutable usdc;
+    IERC8004Registry public identityRegistry;
+    IAntseedStats public statsContract;
+    address public channelsContract;
+
+    mapping(uint256 => Tier) public tiers;
+    uint256 public tierCount;
+    mapping(address => Subscription) public subscriptions;
+    mapping(address => PeerOpt) public peerOpts; // seller address → opt-in state
+    address[] public optedInPeers;
+
+    uint256 public currentEpochRevenue; // USDC accumulated this epoch
+    uint256 public epochDuration; // default 1 week
+    uint256 public epochStart;
+    uint256 public currentEpoch;
+
+    // ─── Events ──────────────────────────────────────────────────────────
+    event TierSet(uint256 indexed tierId, uint256 monthlyFee, uint256 dailyTokenBudget);
+    event Subscribed(address indexed buyer, uint256 indexed tierId, uint256 expiresAt);
+    event Renewed(address indexed buyer, uint256 newExpiresAt);
+    event Cancelled(address indexed buyer);
+    event PeerOptedIn(address indexed peer, uint256 indexed tokenId);
+    event PeerOptedOut(address indexed peer, uint256 indexed tokenId);
+    event RevenueDistributed(uint256 indexed epoch, uint256 totalRevenue, uint256 peerCount);
+    event RevenueClaimed(address indexed peer, uint256 amount);
+    event TokenUsageRecorded(address indexed buyer, uint256 tokens);
+
+    // ─── Custom Errors ───────────────────────────────────────────────────
+    error InvalidAddress();
+    error InvalidAmount();
+    error InvalidTier();
+    error TierNotActive();
+    error NotRegistered();
+    error NotSubscribed();
+    error SubscriptionExpired();
+    error AlreadyOptedIn();
+    error NotOptedIn();
+    error EpochNotEnded();
+    error NothingToClaim();
+    error DailyBudgetExceeded();
+    error AlreadySubscribed();
+    error NotAuthorized();
+
+    // ─── Constructor ─────────────────────────────────────────────────────
+    constructor(address _usdc, address _identityRegistry, address _stats)
+        Ownable(msg.sender)
+        ReentrancyGuard()
+    {
+        if (_usdc == address(0)) revert InvalidAddress();
+        if (_identityRegistry == address(0)) revert InvalidAddress();
+        if (_stats == address(0)) revert InvalidAddress();
+        usdc = IERC20(_usdc);
+        identityRegistry = IERC8004Registry(_identityRegistry);
+        statsContract = IAntseedStats(_stats);
+        epochDuration = 7 days;
+        epochStart = block.timestamp;
+        currentEpoch = 1;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //                        TIER MANAGEMENT
+    // ═══════════════════════════════════════════════════════════════════
+
+    function setTier(uint256 tierId, uint256 monthlyFee, uint256 dailyTokenBudget) external onlyOwner {
+        if (monthlyFee == 0) revert InvalidAmount();
+        if (dailyTokenBudget == 0) revert InvalidAmount();
+
+        tiers[tierId] = Tier({ monthlyFee: monthlyFee, dailyTokenBudget: dailyTokenBudget, active: true });
+
+        if (tierId >= tierCount) {
+            tierCount = tierId + 1;
+        }
+
+        emit TierSet(tierId, monthlyFee, dailyTokenBudget);
+    }
+
+    function deactivateTier(uint256 tierId) external onlyOwner {
+        if (!tiers[tierId].active) revert TierNotActive();
+        tiers[tierId].active = false;
+    }
+
+    function getTier(uint256 tierId) external view returns (uint256 monthlyFee, uint256 dailyTokenBudget, bool active) {
+        Tier storage t = tiers[tierId];
+        return (t.monthlyFee, t.dailyTokenBudget, t.active);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //                        SUBSCRIPTIONS
+    // ═══════════════════════════════════════════════════════════════════
+
+    function subscribe(uint256 tierId) external nonReentrant {
+        Tier storage tier = tiers[tierId];
+        if (!tier.active) revert TierNotActive();
+
+        Subscription storage sub = subscriptions[msg.sender];
+        if (sub.expiresAt > block.timestamp) revert AlreadySubscribed();
+
+        usdc.safeTransferFrom(msg.sender, address(this), tier.monthlyFee);
+        currentEpochRevenue += tier.monthlyFee;
+
+        sub.tierId = tierId;
+        sub.startedAt = block.timestamp;
+        sub.expiresAt = block.timestamp + 30 days;
+        sub.tokensUsedToday = 0;
+        sub.lastResetDay = block.timestamp / 1 days;
+        sub.cancelled = false;
+
+        emit Subscribed(msg.sender, tierId, sub.expiresAt);
+    }
+
+    function renewSubscription() external nonReentrant {
+        Subscription storage sub = subscriptions[msg.sender];
+        if (sub.expiresAt == 0) revert NotSubscribed();
+        if (sub.cancelled) revert NotAuthorized();
+        if (sub.expiresAt < block.timestamp) revert SubscriptionExpired();
+
+        Tier storage tier = tiers[sub.tierId];
+        if (!tier.active) revert TierNotActive();
+
+        usdc.safeTransferFrom(msg.sender, address(this), tier.monthlyFee);
+        currentEpochRevenue += tier.monthlyFee;
+
+        sub.expiresAt += 30 days;
+
+        emit Renewed(msg.sender, sub.expiresAt);
+    }
+
+    function cancelSubscription() external {
+        Subscription storage sub = subscriptions[msg.sender];
+        if (sub.expiresAt == 0 || sub.expiresAt < block.timestamp) revert NotSubscribed();
+        sub.cancelled = true;
+        // No refund, subscription remains active until expiresAt
+        emit Cancelled(msg.sender);
+    }
+
+    function isSubscriptionActive(address buyer) external view returns (bool) {
+        return subscriptions[buyer].expiresAt > block.timestamp;
+    }
+
+    function getRemainingDailyBudget(address buyer) external view returns (uint256) {
+        Subscription storage sub = subscriptions[buyer];
+        if (sub.expiresAt <= block.timestamp) return 0;
+
+        Tier storage tier = tiers[sub.tierId];
+        uint256 today = block.timestamp / 1 days;
+
+        if (today > sub.lastResetDay) {
+            // New day — full budget available
+            return tier.dailyTokenBudget;
+        }
+
+        if (sub.tokensUsedToday >= tier.dailyTokenBudget) return 0;
+        return tier.dailyTokenBudget - sub.tokensUsedToday;
+    }
+
+    function recordTokenUsage(address buyer, uint256 tokens) external {
+        if (msg.sender != channelsContract && msg.sender != owner()) revert NotAuthorized();
+        Subscription storage sub = subscriptions[buyer];
+        if (sub.expiresAt <= block.timestamp) revert SubscriptionExpired();
+
+        Tier storage tier = tiers[sub.tierId];
+        uint256 today = block.timestamp / 1 days;
+
+        // Reset daily counter if new day
+        if (today > sub.lastResetDay) {
+            sub.tokensUsedToday = 0;
+            sub.lastResetDay = today;
+        }
+
+        if (sub.tokensUsedToday + tokens > tier.dailyTokenBudget) revert DailyBudgetExceeded();
+
+        sub.tokensUsedToday += tokens;
+        emit TokenUsageRecorded(buyer, tokens);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //                        PEER OPT-IN / OPT-OUT
+    // ═══════════════════════════════════════════════════════════════════
+
+    function optIn(uint256 agentId) external {
+        if (identityRegistry.ownerOf(agentId) != msg.sender) revert NotRegistered();
+        if (peerOpts[msg.sender].optedIn) revert AlreadyOptedIn();
+
+        peerOpts[msg.sender] = PeerOpt({
+            optedIn: true,
+            tokenId: agentId,
+            lastClaimedEpoch: currentEpoch,
+            pendingRevenue: 0,
+            optedInAt: block.timestamp
+        });
+        peerRewardPerTokenPaid[msg.sender] = rewardPerTokenStored;
+        // Snapshot initial weight from current stats
+        IAntseedStats.AgentStats memory stats = statsContract.getStats(agentId);
+        peerSnapshotWeight[msg.sender] = uint256(stats.sessionCount);
+
+        optedInPeers.push(msg.sender);
+        emit PeerOptedIn(msg.sender, agentId);
+    }
+
+    function optOut(uint256 tokenId) external nonReentrant {
+        PeerOpt storage opt = peerOpts[msg.sender];
+        if (!opt.optedIn) revert NotOptedIn();
+        if (opt.tokenId != tokenId) revert InvalidAmount();
+
+        // Auto-claim any pending revenue before opting out (use snapshot weight)
+        uint256 weight = peerSnapshotWeight[msg.sender];
+        uint256 earned = (weight * (rewardPerTokenStored - peerRewardPerTokenPaid[msg.sender])) / 1e18;
+        uint256 claimable = opt.pendingRevenue + earned;
+        if (claimable > 0) {
+            opt.pendingRevenue = 0;
+            peerRewardPerTokenPaid[msg.sender] = rewardPerTokenStored;
+            usdc.safeTransfer(msg.sender, claimable);
+        }
+
+        opt.optedIn = false;
+
+        // Remove from optedInPeers array
+        uint256 len = optedInPeers.length;
+        for (uint256 i = 0; i < len; i++) {
+            if (optedInPeers[i] == msg.sender) {
+                optedInPeers[i] = optedInPeers[len - 1];
+                optedInPeers.pop();
+                break;
+            }
+        }
+
+        emit PeerOptedOut(msg.sender, tokenId);
+    }
+
+    function getOptedInPeerCount() external view returns (uint256) {
+        return optedInPeers.length;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //                        REVENUE DISTRIBUTION
+    // ═══════════════════════════════════════════════════════════════════
+
+    // Accumulated reward-per-token for the current epoch (scaled by 1e18)
+    uint256 public rewardPerTokenStored;
+    // Snapshot of rewardPerToken at last claim per peer
+    mapping(address => uint256) public peerRewardPerTokenPaid;
+    // Weight snapshot: locked at distributeRevenue() to prevent retroactive over-claims
+    mapping(address => uint256) public peerSnapshotWeight;
+
+    function distributeRevenue() external nonReentrant {
+        if (block.timestamp < epochStart + epochDuration) revert EpochNotEnded();
+
+        uint256 revenue = currentEpochRevenue;
+        uint256 peerCount = optedInPeers.length;
+        bool distributed = false;
+
+        if (revenue > 0 && peerCount > 0) {
+            // Settle all peers using their CURRENT weight before changing rewardPerTokenStored
+            uint256 totalWeight = 0;
+            for (uint256 i = 0; i < peerCount; i++) {
+                address peer = optedInPeers[i];
+                PeerOpt storage opt = peerOpts[peer];
+
+                // Skip peers who opted in during the current epoch (mid-epoch opt-in)
+                if (opt.optedInAt > epochStart) {
+                    // Still sync their paid marker so they start fresh next epoch
+                    peerRewardPerTokenPaid[peer] = rewardPerTokenStored;
+                    continue;
+                }
+
+                uint256 w = peerSnapshotWeight[peer];
+                if (w > 0) {
+                    // Settle earned with old snapshot weight before updating
+                    uint256 earned = (w * (rewardPerTokenStored - peerRewardPerTokenPaid[peer])) / 1e18;
+                    opt.pendingRevenue += earned;
+                }
+                // Always sync paid marker — even for zero-weight peers — so they
+                // can't retroactively claim deltas from epochs they didn't participate in.
+                peerRewardPerTokenPaid[peer] = rewardPerTokenStored;
+                // Snapshot current stats as weight for the new epoch
+                IAntseedStats.AgentStats memory st = statsContract.getStats(opt.tokenId);
+                uint256 newWeight = uint256(st.sessionCount);
+                peerSnapshotWeight[peer] = newWeight;
+                totalWeight += newWeight;
+            }
+
+            if (totalWeight > 0) {
+                rewardPerTokenStored += (revenue * 1e18) / totalWeight;
+                distributed = true;
+            }
+        }
+
+        // Only reset revenue if distributed; otherwise carry forward to next epoch
+        if (distributed) {
+            currentEpochRevenue = 0;
+        }
+
+        emit RevenueDistributed(currentEpoch, distributed ? revenue : 0, peerCount);
+
+        // Advance epoch (use precise boundary to prevent compounding drift)
+        epochStart = epochStart + epochDuration;
+        currentEpoch++;
+    }
+
+    function claimRevenue() external nonReentrant {
+        PeerOpt storage opt = peerOpts[msg.sender];
+        if (!opt.optedIn) revert NotOptedIn();
+
+        // Use snapshotted weight (locked at distribution time), not live reputation
+        uint256 weight = peerSnapshotWeight[msg.sender];
+        uint256 earned = (weight * (rewardPerTokenStored - peerRewardPerTokenPaid[msg.sender])) / 1e18;
+        uint256 amount = opt.pendingRevenue + earned;
+        if (amount == 0) revert NothingToClaim();
+
+        opt.pendingRevenue = 0;
+        opt.lastClaimedEpoch = currentEpoch;
+        peerRewardPerTokenPaid[msg.sender] = rewardPerTokenStored;
+
+        usdc.safeTransfer(msg.sender, amount);
+        emit RevenueClaimed(msg.sender, amount);
+    }
+
+    function getProjectedRevenue(address seller) external view returns (uint256) {
+        PeerOpt storage opt = peerOpts[seller];
+        if (!opt.optedIn) return 0;
+
+        // Already-earned from previous epochs (use snapshot weight)
+        uint256 weight = peerSnapshotWeight[seller];
+        uint256 earned = (weight * (rewardPerTokenStored - peerRewardPerTokenPaid[seller])) / 1e18;
+        uint256 pending = opt.pendingRevenue + earned;
+
+        // Project current epoch share (use live stats for projection)
+        IAntseedStats.AgentStats memory st = statsContract.getStats(opt.tokenId);
+        uint256 liveWeight = uint256(st.sessionCount);
+        uint256 revenue = currentEpochRevenue;
+        uint256 peerCount = optedInPeers.length;
+        if (revenue == 0 || peerCount == 0 || liveWeight == 0) return pending;
+
+        uint256 totalWeight = 0;
+        for (uint256 i = 0; i < peerCount; i++) {
+            PeerOpt storage p = peerOpts[optedInPeers[i]];
+            IAntseedStats.AgentStats memory s = statsContract.getStats(p.tokenId);
+            totalWeight += uint256(s.sessionCount);
+        }
+
+        if (totalWeight == 0) return pending;
+        return pending + (revenue * liveWeight) / totalWeight;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //                        ADMIN
+    // ═══════════════════════════════════════════════════════════════════
+
+    function setChannelsContract(address _channels) external onlyOwner {
+        if (_channels == address(0)) revert InvalidAddress();
+        channelsContract = _channels;
+    }
+
+    function setEpochDuration(uint256 duration) external onlyOwner {
+        if (duration == 0) revert InvalidAmount();
+        epochDuration = duration;
+    }
+
+    function setIdentityRegistry(address _registry) external onlyOwner {
+        if (_registry == address(0)) revert InvalidAddress();
+        identityRegistry = IERC8004Registry(_registry);
+    }
+
+    function setStatsContract(address _stats) external onlyOwner {
+        if (_stats == address(0)) revert InvalidAddress();
+        statsContract = IAntseedStats(_stats);
+    }
+}

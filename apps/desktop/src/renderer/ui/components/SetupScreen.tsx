@@ -55,18 +55,18 @@ export function SetupScreen() {
   // only happen during the commit phase (safe in concurrent/strict mode).
   useEffect(() => {
     setLevel((prev) => {
-      // Advance at most one level per call so intermediate steps animate visibly.
-      if (snap.appSetupComplete && prev < 1) return 1 as ProgressLevel;
-      if (prev >= 1 && /\bpeer(s)?\b|p2p|dht|discovering/i.test(msg) && prev < 2) return 2 as ProgressLevel;
-      if (prev >= 1 && (/service/i.test(msg) || hasServices) && prev < 3) return 3 as ProgressLevel;
-      return prev;
+      let next = prev;
+      if (snap.appSetupComplete && next < 1) next = 1 as ProgressLevel;
+      if (next >= 1 && /\bpeer(s)?\b|p2p|dht|discovering/i.test(msg) && next < 2) next = 2 as ProgressLevel;
+      if (next >= 1 && (hasServices || /service/i.test(msg)) && next < 3) next = 3 as ProgressLevel;
+      return next;
     });
   }, [snap.appSetupComplete, msg, hasServices]);
   const networkDone = level >= 2 || hasServices;
   const serviceActive = level >= 2 && !hasServices;
 
-  const connectLabel = level === 1 ? (msg || 'Connecting to P2P network...') : 'Connecting to P2P network';
-  const serviceLabel = serviceActive ? (msg || 'Loading services...') : 'Loading services';
+  const connectLabel = level <= 1 ? (msg || 'Connecting to P2P network...') : 'Connected to P2P network';
+  const serviceLabel = serviceActive ? 'Loading services...' : 'Loading services';
 
   return (
     <>

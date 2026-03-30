@@ -71,7 +71,7 @@ Custom bootstrap nodes can be supplied and are merged (deduplicated by `host:por
 **Source:** `node/src/discovery/peer-metadata.ts`
 
 ```
-METADATA_VERSION = 5
+METADATA_VERSION = 6
 ```
 
 ### Data Structures
@@ -80,14 +80,14 @@ METADATA_VERSION = 5
 
 | Field       | Type                    | Description                             |
 |-------------|-------------------------|-----------------------------------------|
-| peerId      | PeerId (string)         | 64 hex chars (32-byte Ed25519 public key) |
-| version     | number                  | Must equal `METADATA_VERSION` (5)       |
+| peerId      | PeerId (string)         | 40 hex chars (20-byte EVM address)      |
+| version     | number                  | Must equal `METADATA_VERSION` (6)       |
 | displayName | string                  | Optional human-readable node label      |
 | publicAddress | string                | Optional public `host:port` buyers should dial instead of the raw DHT source address |
 | providers   | ProviderAnnouncement[]  | List of provider offerings              |
 | region      | string                  | Geographic region identifier            |
 | timestamp   | number                  | Unix epoch milliseconds                 |
-| signature   | string                  | 128 hex chars (64-byte Ed25519 signature) |
+| signature   | string                  | 130 hex chars (65-byte secp256k1 signature) |
 
 #### ProviderAnnouncement
 
@@ -111,7 +111,7 @@ All multi-byte integers are big-endian. Strings are UTF-8 encoded.
 ```
 Header:
   [version       : 1 byte   uint8 ]
-  [peerId        : 32 bytes        ]   // raw Ed25519 public key
+  [peerId        : 20 bytes        ]   // EVM address
   [regionLen     : 1 byte   uint8 ]
   [region        : N bytes  UTF-8  ]   // N = regionLen
   [timestamp     : 8 bytes  BigUint64 big-endian ]
@@ -164,10 +164,10 @@ Post-provider sections:
   [onChainReputationFlag:1] + [reputationData:10 if present]
 
 Trailer:
-  [signature     : 64 bytes        ]   // Ed25519 signature
+  [signature     : 65 bytes        ]   // secp256k1 signature
 ```
 
-The body (everything except the trailing 64-byte signature) is the data that is signed. `encodeMetadataForSigning()` produces this body without the signature for signing and verification purposes.
+The body (everything except the trailing 65-byte signature) is the data that is signed. `encodeMetadataForSigning()` produces this body without the signature for signing and verification purposes.
 
 ### Validation Limits
 
@@ -188,8 +188,8 @@ The body (everything except the trailing 64-byte signature) is the data that is 
 
 Additional validation rules enforced by `validateMetadata()`:
 
-- `version` must equal `METADATA_VERSION` (5).
-- `peerId` must be exactly 64 lowercase hex characters.
+- `version` must equal `METADATA_VERSION` (6).
+- `peerId` must be exactly 40 lowercase hex characters.
 - `region` must not be empty.
 - `displayName` is optional, but when present it must be non-empty and <= 64 chars.
 - `publicAddress` is optional, but when present it must be a valid `host:port` and is signed as part of the metadata.
@@ -205,7 +205,7 @@ Additional validation rules enforced by `validateMetadata()`:
 - `serviceApiProtocols` entries must be known protocol IDs, non-empty, unique per service, and within per-service limits above.
 - `maxConcurrency` must be at least 1.
 - `currentLoad` must be non-negative and must not exceed `maxConcurrency`.
-- `signature` must be exactly 128 lowercase hex characters (64 bytes).
+- `signature` must be exactly 130 lowercase hex characters (65 bytes).
 - The full encoded payload must not exceed `MAX_METADATA_SIZE`.
 
 ---
@@ -262,7 +262,7 @@ The `PeerLookup` class orchestrates the full discovery flow:
 2. Query the DHT for the topic hash(es) to obtain `{host, port}` peer endpoints.
 3. For each peer (up to `maxResults`):
    a. Fetch metadata via the configured `MetadataResolver`.
-   b. If `requireValidSignature` is `true`, verify the Ed25519 signature over the encoded body using the peer's public key (`peerId`). Discard peers with invalid signatures.
+   b. If `requireValidSignature` is `true`, verify the secp256k1 signature over the encoded body using ecrecover and compare the recovered address to the peer's `peerId`. Discard peers with invalid signatures.
    c. If `allowStaleMetadata` is `false`, discard metadata where `Date.now() - timestamp > maxAnnouncementAgeMs`.
 4. Return the list of `{metadata, host, port}` results.
 
@@ -286,7 +286,7 @@ The `PeerAnnouncer` class handles the seller-side announcement lifecycle:
 1. Build a `PeerMetadata` object from the configured providers, current pricing, current load, and region.
 2. Set `version` to `METADATA_VERSION` (4) and `timestamp` to `Date.now()`.
 3. Encode the body (without signature) via `encodeMetadataForSigning()`.
-4. Sign the body with the seller's Ed25519 private key.
+4. Sign the body with the seller's secp256k1 private key (via EIP-191 personal_sign).
 5. Announce DHT topics at the configured signaling port:
    - canonical service topics (`serviceTopic(service)`)
    - compact service-search topics (`serviceSearchTopic(service)`) when canonical and compact keys differ

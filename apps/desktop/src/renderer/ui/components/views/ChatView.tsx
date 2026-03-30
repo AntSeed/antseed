@@ -4,12 +4,14 @@ import { Add01Icon } from '@hugeicons/core-free-icons';
 import { ArrowUp02Icon } from '@hugeicons/core-free-icons';
 import { ComputerTerminal01Icon } from '@hugeicons/core-free-icons';
 import { ArrowRight01Icon } from '@hugeicons/core-free-icons';
+import { RepeatIcon } from '@hugeicons/core-free-icons';
 import { useUiSnapshot } from '../../hooks/useUiSnapshot';
 import { useActions } from '../../hooks/useActions';
 import { ChatBubble } from '../chat/ChatBubble';
 import { isToolResultOnlyMessage } from '../chat/chat-utils.js';
 import { WalkingAnt } from '../chat/WalkingAnt';
-import { ServiceDropdown } from '../chat/ServiceDropdown';
+import { SessionApprovalCard } from '../chat/SessionApprovalCard';
+
 import { AntStationStackedLogo } from '../AntStationLogo';
 import styles from './ChatView.module.scss';
 import type { ChatMessage } from '../chat/chat-shared';
@@ -60,8 +62,6 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   const fileInputId = useId();
   const prevInputDisabled = useRef<boolean>(snap.chatInputDisabled);
   const isUserScrolledUp = useRef(false);
-  const prevMessageCount = useRef(0);
-
   const visibleMessages = useMemo(() => {
     const msgs = Array.isArray(snap.chatMessages) ? (snap.chatMessages as ChatMessage[]) : [];
     return buildDisplayMessages(msgs).filter((msg) => !isToolResultOnlyMessage(msg));
@@ -79,15 +79,35 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     return () => el.removeEventListener('scroll', handleScroll);
   }, []);
 
-  // Auto-scroll only when new messages arrive and user hasn't scrolled up
+  // Keep the view pinned to the bottom while the user is already at the bottom.
+  // This covers streaming updates, tool diffs, and other in-place content growth.
   useEffect(() => {
-    const count = visibleMessages.length;
-    const isNew = count > prevMessageCount.current;
-    prevMessageCount.current = count;
-    if (isNew && !isUserScrolledUp.current && scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    const el = scrollRef.current;
+    if (!el || isUserScrolledUp.current) {
+      return;
     }
-  }, [visibleMessages]);
+
+    const scrollToBottom = (): void => {
+      el.scrollTop = el.scrollHeight;
+    };
+
+    scrollToBottom();
+
+    if (typeof ResizeObserver === 'undefined') {
+      return;
+    }
+
+    const observer = new ResizeObserver(() => {
+      if (!isUserScrolledUp.current) {
+        scrollToBottom();
+      }
+    });
+
+    observer.observe(el);
+    Array.from(el.children).forEach((child) => observer.observe(child));
+
+    return () => observer.disconnect();
+  }, [visibleMessages, snap.chatStreamingMessage, snap.chatSending]);
 
   // Re-focus the input when it transitions from disabled → enabled (e.g. after AI response completes)
   useEffect(() => {
@@ -201,22 +221,24 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   return (
     <section className={`view view-chat${active ? ' active' : ''}`} role="tabpanel">
       <div className={styles.pageHeader}>
-        <div className={styles.pageHeaderLeft}>
-          <ServiceDropdown
-            options={snap.chatServiceOptions}
-            value={snap.chatSelectedServiceValue}
-            disabled={snap.chatServiceSelectDisabled}
-            onChange={actions.handleServiceChange}
-            onFocus={actions.handleServiceFocus}
-            onBlur={actions.handleServiceBlur}
-          />
-        </div>
+        <div className={styles.pageHeaderLeft} />
         <div className={styles.pageHeaderRight}>
-          {snap.chatRoutedPeer && (
-            <>
-              <span className={styles.chatRoutedLabel}>Routed to:</span>
-              <span className={styles.chatRoutedPeer}>{snap.chatRoutedPeer}</span>
-            </>
+          {snap.chatRoutedPeer ? (
+            <button
+              className={styles.peerServiceIndicator}
+              onClick={() => { actions.clearPinnedPeer(); onSelectView?.('discover'); }}
+            >
+              <span className={styles.peerName}>{snap.chatRoutedPeer}</span>
+              <span className={styles.serviceSeparator}>·</span>
+              <span className={styles.serviceName}>
+                {snap.chatServiceOptions.find((o) => o.value === snap.chatSelectedServiceValue)?.label || snap.chatSelectedServiceValue || 'Service'}
+              </span>
+              <HugeiconsIcon icon={RepeatIcon} size={14} strokeWidth={1.5} />
+            </button>
+          ) : (
+            <span className={styles.serviceLabel}>
+              {snap.chatServiceOptions.find((o) => o.value === snap.chatSelectedServiceValue)?.label || 'No peer selected'}
+            </span>
           )}
         </div>
       </div>
@@ -268,15 +290,30 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
             {snap.chatSending && snap.chatSendingConversationId === snap.chatActiveConversation && (
               <WalkingAnt elapsedMs={snap.chatThinkingElapsedMs} />
             )}
+            <SessionApprovalCard
+              visible={snap.chatPaymentApprovalVisible}
+              peerName={snap.chatPaymentApprovalPeerName}
+              amount={snap.chatPaymentApprovalAmount}
+              peerInfo={snap.chatPaymentApprovalPeerInfo}
+              loading={snap.chatPaymentApprovalLoading}
+              error={snap.chatPaymentApprovalError}
+              onApprove={() => actions.approvePaymentSession()}
+              onAddCredits={() => actions.openPaymentsPortal?.()}
+              onCancel={() => actions.rejectPaymentSession()}
+            />
           </div>
 
+
           <div className={styles.chatInputArea}>
+            {snap.chatError && <div className={styles.chatError}>{snap.chatError}</div>}
+
             {attachedImage && (
               <div className={styles.chatImageAttachPreview}>
                 <img src={attachedImage.previewUrl} alt="Attached" className={styles.chatImageAttachThumb} />
                 <button className={styles.chatImageRemoveBtn} onClick={handleRemoveImage} title="Remove image">✕</button>
               </div>
             )}
+
             <div className={styles.chatInputRow}>
               <input
                 ref={fileInputRef}
@@ -321,8 +358,6 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
               </div>
             </div>
           </div>
-
-          {snap.chatError && <div className={styles.chatError}>{snap.chatError}</div>}
         </div>
       </div>
     </section>

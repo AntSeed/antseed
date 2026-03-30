@@ -9,7 +9,7 @@ AntSeed is a peer-to-peer AI services network that enables direct connections be
   - [01-discovery.md](spec/01-discovery.md) — DHT-based peer discovery
   - [02-transport.md](spec/02-transport.md) — Binary framing and connection management
   - [03-metering.md](spec/03-metering.md) — Token estimation and usage receipts
-  - [04-payments.md](spec/04-payments.md) — Settlement, escrow, and disputes
+  - [04-payments.md](spec/04-payments.md) — Settlement, deposits, sessions, and disputes
   - [05-reputation.md](spec/05-reputation.md) — Trust scoring and attestations
   - [06-security-overview.md](spec/06-security-overview.md) — End-to-end security model and hardening guidance
 - [templates/provider-plugin/](templates/provider-plugin/) — Starter template for building a provider plugin (offer AI services)

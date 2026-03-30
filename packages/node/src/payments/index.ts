@@ -7,44 +7,79 @@ export type {
   Transaction,
   PaymentConfig,
   CryptoPaymentConfig,
-  SettlementResult,
-  DisputeStatus,
-  PaymentDispute,
 } from './types.js';
 
 // Balance tracking (local transaction history)
 export { BalanceManager } from './balance-manager.js';
 export type { UnifiedBalance } from './balance-manager.js';
 
-// Off-chain settlement calculation
-export { calculateSettlement, isSettlementWithinEscrow, calculateRefund } from './settlement.js';
+// Base EVM client
+export { BaseEvmClient } from './evm/base-evm-client.js';
 
-// Off-chain dispute detection
-export {
-  createDispute,
-  detectDiscrepancy,
-  resolveDispute,
-  isDisputeExpired,
-  calculateDisputedAmount,
-  DISPUTE_TIMEOUT_MS,
-} from './disputes.js';
+// Deposits client (buyer deposits + seller earnings)
+export { DepositsClient } from './evm/deposits-client.js';
+export type { DepositsClientConfig, BuyerBalanceInfo } from './evm/deposits-client.js';
 
-// Base/EVM integration
-export { BaseEscrowClient } from './evm/escrow-client.js';
-export type { BaseEscrowConfig, SessionInfo, ReputationInfo } from './evm/escrow-client.js';
-export { identityToEvmWallet, identityToEvmAddress } from './evm/keypair.js';
+// Channels client (reserve, settle, timeout)
+export { ChannelsClient } from './evm/channels-client.js';
+export type { ChannelsClientConfig, ChannelInfo } from './evm/channels-client.js';
+
+// Identity client (ERC-8004 IdentityRegistry)
+export { IdentityClient } from './evm/identity-client.js';
+export type { IdentityClientConfig } from './evm/identity-client.js';
+
+// Stats client (AntseedStats)
+export { StatsClient } from './evm/stats-client.js';
+export type { StatsClientConfig, AgentStats } from './evm/stats-client.js';
+
+// Staking client (seller staking, token rate, slashing)
+export { StakingClient } from './evm/staking-client.js';
+export type { StakingClientConfig, SellerAccountInfo } from './evm/staking-client.js';
+
 export {
-  signMessageEcdsa,
-  signMessageEd25519,
-  buildLockMessageHash,
-  buildSettlementMessageHash,
-  buildExtendLockMessageHash,
-  buildReceiptMessage,
-  buildAckMessage,
-  verifyMessageEd25519,
+  signSpendingAuth,
+  signReserveAuth,
+  signSetOperator,
+  makeChannelsDomain,
+  SPENDING_AUTH_TYPES,
+  RESERVE_AUTH_TYPES,
+  SET_OPERATOR_TYPES,
+  computeMetadataHash,
+  encodeMetadata,
+  computeChannelId,
+  ZERO_METADATA,
+  ZERO_METADATA_HASH,
 } from './evm/signatures.js';
-export { getWalletInfo, getAddress } from './evm/wallet.js';
+export type { SpendingAuthMessage, ReserveAuthMessage, SetOperatorMessage, SpendingAuthMetadata } from './evm/signatures.js';
+
+// ANTS token
+export { ANTSTokenClient } from './evm/ants-token-client.js';
+export type { ANTSTokenClientConfig } from './evm/ants-token-client.js';
+
+// Emissions
+export { EmissionsClient } from './evm/emissions-client.js';
+export type { EmissionsClientConfig } from './evm/emissions-client.js';
+
+// Subscription Pool
+export { SubPoolClient } from './evm/subpool-client.js';
+export type { SubPoolClientConfig } from './evm/subpool-client.js';
+
+// Session persistence
+export { SessionStore, SESSION_STATUS } from './session-store.js';
+export type { StoredSession, StoredReceipt } from './session-store.js';
 
 // Buyer payment manager
 export { BuyerPaymentManager } from './buyer-payment-manager.js';
-export type { BuyerPaymentConfig, BuyerSessionState, BuyerSessionStatus } from './buyer-payment-manager.js';
+export type { BuyerPaymentConfig, PerRequestAuthResult } from './buyer-payment-manager.js';
+
+// Seller payment manager
+export { SellerPaymentManager } from './seller-payment-manager.js';
+export type { SellerPaymentConfig } from './seller-payment-manager.js';
+
+// Pricing utilities
+export { computeCostUsdc, estimateCostFromBytes, estimateTokensFromBytes } from './pricing.js';
+export type { ServicePricing } from './pricing.js';
+
+// Readiness checks
+export { checkSellerReadiness, checkBuyerReadiness } from './readiness.js';
+export type { ReadinessCheck } from './readiness.js';

@@ -1,6 +1,6 @@
 {
   "name": "@antseed/bound-agent",
-  "version": "0.1.8",
+  "version": "0.1.13",
   "description": "Bound agent runtime for AntSeed — monetize knowledge with read-only, knowledge-augmented AI agents",
   "type": "module",
   "files": [
@@ -9,7 +9,7 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "prebuild": "rm -rf dist",
+    "prebuild": "node ../../scripts/remove-paths.mjs dist",
     "build": "tsc",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"

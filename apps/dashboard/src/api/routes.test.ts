@@ -67,7 +67,7 @@ test('PUT /api/config writes to injected config path and persists payments updat
         crypto: {
           chainId: 'base-sepolia',
           rpcUrl: 'http://127.0.0.1:8545',
-          escrowContractAddress: '0xabc',
+          depositsContractAddress: '0xabc',
           usdcContractAddress: '0xdef',
         },
       },

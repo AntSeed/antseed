@@ -1,4 +1,4 @@
-export type RuntimeMode = 'connect' | 'dashboard';
+export type RuntimeMode = 'connect';
 
 export type RuntimeProcessState = {
   mode: RuntimeMode;
@@ -41,21 +41,14 @@ export type RuntimeSnapshot = {
   logs: LogEvent[];
 };
 
-export type DashboardEndpoint =
+export type DataEndpoint =
   | 'status'
   | 'network'
   | 'peers'
   | 'config'
   | 'data-sources';
 
-export type DashboardDataResult<T = unknown> = {
-  ok: boolean;
-  data: T | null;
-  error: string | null;
-  status: number | null;
-};
-
-export type DashboardUpdateResult<T = unknown> = {
+export type DataResult<T = unknown> = {
   ok: boolean;
   data: T | null;
   error: string | null;
@@ -97,29 +90,31 @@ export type DesktopBridge = {
   pluginsInstall?: (packageName: string) => Promise<PluginInstallResult>;
 
   getNetwork?: (port?: number) => Promise<{ ok: boolean; peers?: unknown[]; error?: string | null; [key: string]: unknown }>;
-  getDashboardData?: (
-    endpoint: DashboardEndpoint,
+  getData?: (
+    endpoint: DataEndpoint,
     options?: { port?: number; query?: Record<string, string | number | boolean> }
-  ) => Promise<DashboardDataResult>;
-  updateDashboardConfig?: (
+  ) => Promise<DataResult>;
+  updateConfig?: (
     config: Record<string, unknown>,
-    options?: { port?: number }
-  ) => Promise<DashboardUpdateResult>;
-  scanNetwork?: (port?: number) => Promise<DashboardDataResult>;
+  ) => Promise<DataResult>;
+  scanNetwork?: () => Promise<DataResult>;
 
   onLog?: (handler: (event: LogEvent) => void) => () => void;
   onState?: (handler: (states: RuntimeProcessState[]) => void) => () => void;
   onRuntimeActivity?: (handler: (event: RuntimeActivityEvent) => void) => () => void;
+  onPeersChanged?: (handler: () => void) => () => void;
 
   chatAiListConversations?: () => Promise<{ ok: boolean; data: unknown[] }>;
   chatAiListServices?: () => Promise<{ ok: boolean; data?: unknown[]; error?: string }>;
   chatAiGetConversation?: (id: string) => Promise<{ ok: boolean; data?: unknown; error?: string }>;
-  chatAiCreateConversation?: (service: string, provider?: string) => Promise<{ ok: boolean; data?: unknown; error?: string }>;
+  chatAiCreateConversation?: (service: string, provider?: string, peerId?: string) => Promise<{ ok: boolean; data?: unknown; error?: string }>;
   chatAiDeleteConversation?: (id: string) => Promise<{ ok: boolean }>;
   chatAiRenameConversation?: (id: string, title: string) => Promise<{ ok: boolean; error?: string }>;
   chatAiSend?: (conversationId: string, message: string, service?: string, provider?: string, imageBase64?: string, imageMimeType?: string) => Promise<{ ok: boolean; error?: string }>;
   chatAiSendStream?: (conversationId: string, message: string, service?: string, provider?: string, imageBase64?: string, imageMimeType?: string) => Promise<{ ok: boolean; error?: string }>;
+  chatApprovePayment?: (conversationId: string) => Promise<{ ok: boolean; error?: string }>;
   chatAiAbort?: () => Promise<{ ok: boolean }>;
+  chatAiSelectPeer?: (peerId: string | null) => Promise<{ ok: boolean; error?: string }>;
   chatAiGetProxyStatus?: () => Promise<{ ok: boolean; data: { running: boolean; port: number } }>;
   onChatAiDone?: (handler: (data: { conversationId: string; message: { role: string; content: unknown; createdAt?: number; meta?: Record<string, unknown> } }) => void) => () => void;
   onChatAiError?: (handler: (data: { conversationId: string; error: string }) => void) => () => void;
@@ -139,4 +134,30 @@ export type DesktopBridge = {
   onAppSetupStep?: (handler: (data: { step: string; label: string }) => void) => () => void;
   onAppSetupComplete?: (handler: () => void) => () => void;
   setDebugLogs?: (enabled: boolean) => Promise<{ ok: true }>;
+  creditsGetInfo?: () => Promise<{ ok: boolean; data: { evmAddress: string | null; operatorAddress: string | null; balanceUsdc: string; reservedUsdc: string; availableUsdc: string; pendingWithdrawalUsdc: string; creditLimitUsdc: string } | null; error: string | null }>;
+
+  paymentsSignSpendingAuth?: (params: {
+    channelId: string;
+    cumulativeAmountBaseUnits: string;
+    metadataHash: string;
+  }) => Promise<{ ok: boolean; data?: { spendingAuthSig: string; buyerEvmAddress: string }; error?: string }>;
+
+  paymentsGetPeerInfo?: (peerId: string) => Promise<{
+    ok: boolean;
+    data?: {
+      peerId: string;
+      displayName: string | null;
+      reputation: number;
+      onChainReputation: number | null;
+      onChainSessionCount: number | null;
+      onChainDisputeCount: number | null;
+      evmAddress: string | null;
+      timestamp: number | null;
+      providers: string[];
+      services: string[];
+    };
+    error?: string;
+  }>;
+
+  paymentsOpenPortal?: (tab?: string) => Promise<{ ok: boolean; url?: string; error?: string }>;
 };

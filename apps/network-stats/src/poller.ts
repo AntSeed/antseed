@@ -70,7 +70,7 @@ export class NetworkPoller {
   /** Perform one discovery cycle. */
   async poll(): Promise<void> {
     console.log('[network-stats] starting poll...');
-    const peerId = toPeerId(randomBytes(32).toString('hex'));
+    const peerId = toPeerId(randomBytes(20).toString('hex'));
     const dht = new DHTNode({
       ...DEFAULT_DHT_CONFIG,
       port: 0, // OS-assigned, ephemeral

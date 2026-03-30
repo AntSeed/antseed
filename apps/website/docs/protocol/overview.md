@@ -18,7 +18,7 @@ AntSeed is a fully decentralized protocol for buying and selling AI services dir
 │   (trust scoring, attestations) │
 ├─────────────────────────────────┤
 │       4. Payments Layer         │
-│   (USDC escrow, settlement)     │
+│   (USDC deposits, settlement)   │
 ├─────────────────────────────────┤
 │       3. Metering Layer         │
 │   (token counting, receipts)    │

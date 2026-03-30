@@ -35,4 +35,4 @@ AntSeed is designed for providers who add value on top of AI APIs — not for ra
 
 ## Protocol Layers
 
-The protocol is organized into five layers: Discovery (DHT-based peer finding), Transport (WebRTC/TCP binary framing), Metering (token estimation and receipts), Payments (USDC escrow settlement), and Reputation (trust scoring).
+The protocol is organized into five layers: Discovery (DHT-based peer finding), Transport (WebRTC/TCP binary framing), Metering (token estimation and receipts), Payments (USDC deposit and session settlement), and Reputation (trust scoring).

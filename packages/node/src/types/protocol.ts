@@ -12,16 +12,11 @@ export enum MessageType {
   HttpRequestChunk = 0x25,
   HttpRequestEnd   = 0x26,
 
-  // --- Bilateral Payment Protocol (0x50-0x5F) ---
-  SessionLockAuth = 0x50,
-  SessionLockConfirm = 0x51,
-  SessionLockReject = 0x52,
-  SellerReceipt = 0x53,
-  BuyerAck = 0x54,
-  SessionEnd = 0x55,
-  TopUpRequest = 0x56,
-  TopUpAuth = 0x57,
-  DisputeNotify = 0x58,
+  // --- Payment Protocol (0x50-0x5F) ---
+  SpendingAuth = 0x50,
+  AuthAck = 0x51,
+  PaymentRequired = 0x56,
+  NeedAuth = 0x58,
 
   // Report message types
   PeerReport = 0x60,
@@ -48,110 +43,46 @@ export const MAX_PAYLOAD_SIZE = 64 * 1024 * 1024;
 // ─── Bilateral Payment Messages ─────────────────────────────────
 
 /**
- * Buyer authorizes locking funds for a session.
- * Contains the buyer's ECDSA signature over keccak256(sessionId, seller, amount).
+ * Buyer authorizes spending via a single EIP-712 SpendingAuth signature.
+ * The signature covers channelId, cumulativeAmount, and metadataHash.
  */
-export interface SessionLockAuthPayload {
-  /** 32-byte session ID as hex string */
-  sessionId: string;
-  /** Amount to lock in USDC base units (6 decimals) */
-  lockedAmount: string;
-  /** Buyer's ECDSA signature over keccak256(sessionId || seller || amount) as hex */
-  buyerSig: string;
+export interface SpendingAuthPayload {
+  channelId: string;
+  cumulativeAmount: string;
+  metadataHash: string;         // bytes32 hex
+  metadata: string;             // hex-encoded abi.encode(inputTokens, outputTokens, latencyMs, requestCount)
+  spendingAuthSig: string;      // EIP-712 SpendingAuth signature (covers amount + metadata)
+  // Only for initial reserve
+  reserveSalt?: string;
+  reserveMaxAmount?: string;
+  reserveDeadline?: number;
 }
 
 /**
- * Seller confirms the lock was committed on-chain.
+ * Seller acknowledges the spending authorization was reserved on-chain.
  */
-export interface SessionLockConfirmPayload {
-  sessionId: string;
-  /** Base transaction hash for the commit_lock instruction */
-  txSignature: string;
+export interface AuthAckPayload {
+  channelId: string;
 }
 
 /**
- * Seller rejects the lock (insufficient funds, invalid sig, etc).
+ * Seller tells buyer what's needed to start a payment session.
+ * Sent via PaymentMux alongside the HTTP 402 response.
  */
-export interface SessionLockRejectPayload {
-  sessionId: string;
-  reason: string;
+export interface PaymentRequiredPayload {
+  minBudgetPerRequest: string;
+  suggestedAmount: string;
+  requestId: string;
+  inputUsdPerMillion?: number;
+  outputUsdPerMillion?: number;
 }
 
 /**
- * Running-total receipt signed by seller after processing a request.
- * Each receipt supersedes the previous one.
+ * Seller tells buyer that the current cumulative authorization is insufficient.
  */
-export interface SellerReceiptPayload {
-  sessionId: string;
-  /** Cumulative cost of all requests in this session (USDC base units) */
-  runningTotal: string;
-  /** Number of requests processed so far */
-  requestCount: number;
-  /** SHA-256 hash of the response body (hex) for proof of work */
-  responseHash: string;
-  /** Seller's Ed25519 signature over (sessionId || runningTotal || requestCount || responseHash) */
-  sellerSig: string;
-}
-
-/**
- * Buyer acknowledges the seller's receipt by counter-signing.
- */
-export interface BuyerAckPayload {
-  sessionId: string;
-  /** Must match seller's runningTotal */
-  runningTotal: string;
-  /** Must match seller's requestCount */
-  requestCount: number;
-  /** Buyer's Ed25519 signature over (sessionId || runningTotal || requestCount) */
-  buyerSig: string;
-}
-
-/**
- * Buyer ends the session with a final score.
- */
-export interface SessionEndPayload {
-  sessionId: string;
-  /** Final running total (must match last ack'd receipt) */
-  runningTotal: string;
-  /** Final request count */
-  requestCount: number;
-  /** Quality score 0-100 */
-  score: number;
-  /** Buyer's ECDSA signature over keccak256(sessionId || runningTotal || score) as hex */
-  buyerSig: string;
-}
-
-/**
- * Seller requests additional funds when budget is running low.
- */
-export interface TopUpRequestPayload {
-  sessionId: string;
-  /** Additional USDC amount requested (base units) */
-  additionalAmount: string;
-  /** Current running total for context */
-  currentRunningTotal: string;
-  /** Current locked amount for context */
-  currentLockedAmount: string;
-}
-
-/**
- * Buyer authorizes a top-up.
- */
-export interface TopUpAuthPayload {
-  sessionId: string;
-  /** Additional amount authorized (USDC base units) */
-  additionalAmount: string;
-  /** Buyer's ECDSA signature over keccak256(sessionId || seller || additionalAmount) as hex */
-  buyerSig: string;
-}
-
-/**
- * Notify counterparty that a dispute has been opened on-chain.
- */
-export interface DisputeNotifyPayload {
-  sessionId: string;
-  /** Reason for the dispute */
-  reason: string;
-  /** Base tx hash of the open_dispute instruction */
-  txSignature: string;
+export interface NeedAuthPayload {
+  channelId: string;
+  requiredCumulativeAmount: string;
+  currentAcceptedCumulative: string;
+  deposit: string;
 }

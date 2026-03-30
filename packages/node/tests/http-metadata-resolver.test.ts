@@ -4,7 +4,7 @@ import { METADATA_VERSION, type PeerMetadata } from '../src/discovery/peer-metad
 
 function buildMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
   return {
-    peerId: 'a'.repeat(64) as any,
+    peerId: 'a'.repeat(40) as any,
     version: METADATA_VERSION,
     providers: [
       {

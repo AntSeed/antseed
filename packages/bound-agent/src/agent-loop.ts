@@ -68,6 +68,12 @@ function chunkHasMessageStart(data: Uint8Array): boolean {
   return text.includes('event: message_start') || text.includes('"type":"message_start"') || text.includes('"type": "message_start"');
 }
 
+/** Check if an SSE chunk contains a Responses API response.created event. */
+function chunkHasResponseCreated(data: Uint8Array): boolean {
+  const text = decoder.decode(data);
+  return text.includes('event: response.created');
+}
+
 
 /**
  * Check if an SSE chunk contains an internal (antseed_*) tool call.
@@ -87,7 +93,7 @@ function chunkHasInternalToolCall(data: Uint8Array, format: RequestFormat): bool
       } catch { /* ignore */ }
     }
   } else {
-    // Anthropic: look for content_block_start with tool_use type and antseed_ name
+    // Anthropic & Responses API: look for antseed_ name in content blocks or output items
     if (text.includes(`"name":"${TOOL_PREFIX}`) || text.includes(`"name": "${TOOL_PREFIX}`)) return true;
   }
   return false;
@@ -244,6 +250,10 @@ export async function runAgentLoopStream(
               if (messageStartSent) return;
               messageStartSent = true;
             }
+            if (format === 'openai-responses' && chunkHasResponseCreated(chunk.data)) {
+              if (messageStartSent) return;
+              messageStartSent = true;
+            }
           }
           callbacks.onResponseChunk(chunk);
         },
@@ -316,9 +326,11 @@ export async function runAgentLoopStream(
       }
     },
     onResponseChunk: (chunk) => {
-      // Anthropic: suppress message_start if we already sent one (continuing the envelope)
-      if (format === 'anthropic' && messageStartSent && !chunk.done && chunk.data.length > 0 && chunkHasMessageStart(chunk.data)) {
-        return;
+      if (!chunk.done && chunk.data.length > 0) {
+        // Anthropic: suppress message_start if we already sent one (continuing the envelope)
+        if (format === 'anthropic' && messageStartSent && chunkHasMessageStart(chunk.data)) return;
+        // Responses API: suppress response.created if we already sent one
+        if (format === 'openai-responses' && messageStartSent && chunkHasResponseCreated(chunk.data)) return;
       }
       callbacks.onResponseChunk(chunk);
     },

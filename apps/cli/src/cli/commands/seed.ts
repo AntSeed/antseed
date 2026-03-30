@@ -7,11 +7,11 @@ import { homedir } from 'node:os'
 import { getGlobalOptions } from './types.js'
 import { loadConfig } from '../../config/loader.js'
 import type { CLIProviderConfig } from '../../config/types.js'
-import { AntseedNode, type Provider, getInstance } from '@antseed/node'
+import { AntseedNode, type Provider, getInstance, resolveChainConfig } from '@antseed/node'
 import type { PaymentConfig } from '@antseed/node/payments'
 import { parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
 import { setupShutdownHandler } from '../shutdown.js'
-import { loadProviderPlugin, buildPluginConfig } from '../../plugins/loader.js'
+import { loadProviderPlugin, buildPluginConfig, getPackageVersions } from '../../plugins/loader.js'
 import { resolveEffectiveSellerConfig, type SellerRuntimeOverrides } from '../../config/effective.js'
 import type { SellerCLIConfig } from '../../config/types.js'
 import { BoundAgentProvider, loadBoundAgent, type BoundAgentDefinition } from '@antseed/bound-agent'
@@ -252,23 +252,31 @@ export function registerSeedCommand(program: Command): void {
         : undefined
 
       const preferredMethod = config.payments.preferredMethod
-      const defaultEscrowAmountUSDC = process.env['ANTSEED_DEFAULT_ESCROW_USDC'] ?? config.payments.crypto?.defaultLockAmountUSDC ?? '1'
-      const defaultEscrowAmountUSDCBaseUnits = toUSDCBaseUnits(defaultEscrowAmountUSDC, '1000000')
+      const defaultDepositAmountUSDC = process.env['ANTSEED_DEFAULT_DEPOSIT_USDC'] ?? config.payments.crypto?.defaultLockAmountUSDC ?? '1'
+      const defaultDepositAmountUSDCBaseUnits = toUSDCBaseUnits(defaultDepositAmountUSDC, '1000000')
       const settlementIdleMsRaw = process.env['ANTSEED_SETTLEMENT_IDLE_MS']
       const settlementIdleMs = settlementIdleMsRaw ? parseInt(settlementIdleMsRaw, 10) : 30_000
       const sellerWalletAddress = process.env['ANTSEED_SELLER_WALLET_ADDRESS']
 
       let paymentConfig: PaymentConfig | null = null
-      if (preferredMethod === 'crypto' && config.payments.crypto) {
+      if (preferredMethod === 'crypto') {
+        const cc = resolveChainConfig({
+          chainId: config.payments.crypto?.chainId,
+          rpcUrl: config.payments.crypto?.rpcUrl,
+          depositsContractAddress: config.payments.crypto?.depositsContractAddress,
+          channelsContractAddress: config.payments.crypto?.channelsContractAddress,
+          usdcContractAddress: config.payments.crypto?.usdcContractAddress,
+        })
         const defaultLockAmountUSDCBaseUnits = toUSDCBaseUnits(
-          config.payments.crypto.defaultLockAmountUSDC ?? defaultEscrowAmountUSDC,
-          defaultEscrowAmountUSDCBaseUnits,
+          config.payments.crypto?.defaultLockAmountUSDC ?? defaultDepositAmountUSDC,
+          defaultDepositAmountUSDCBaseUnits,
         )
         const cryptoConfig: NonNullable<PaymentConfig['crypto']> = {
-          chainId: config.payments.crypto.chainId,
-          rpcUrl: config.payments.crypto.rpcUrl,
-          contractAddress: config.payments.crypto.escrowContractAddress,
-          usdcAddress: config.payments.crypto.usdcContractAddress,
+          chainId: cc.chainId,
+          rpcUrl: cc.rpcUrl,
+          depositsContractAddress: cc.depositsContractAddress,
+          channelsContractAddress: cc.channelsContractAddress,
+          usdcAddress: cc.usdcContractAddress,
           defaultLockAmountUSDC: defaultLockAmountUSDCBaseUnits,
         }
 
@@ -299,6 +307,10 @@ export function registerSeedCommand(program: Command): void {
       if (runtimeServiceCategories) {
         provider.serviceCategories = runtimeServiceCategories
       }
+      const versions = getPackageVersions(providerName)
+      if (Object.keys(versions).length > 0) {
+        console.log(chalk.dim(`Package versions: ${Object.entries(versions).map(([k, v]) => `${k}@${v}`).join(', ')}`))
+      }
       console.log(chalk.bold('Effective seller settings:'))
       console.log(chalk.dim(`  provider: ${providerName}`))
       console.log(
@@ -311,6 +323,8 @@ export function registerSeedCommand(program: Command): void {
           `  enabled providers: ${effectiveSellerConfig.enabledProviders.length > 0 ? effectiveSellerConfig.enabledProviders.join(', ') : '(none)'}`
         )
       )
+      const minBudgetPerRequest = config.payments.minBudgetPerRequest ?? '10000'
+      console.log(chalk.dim(`  min budget per request: ${minBudgetPerRequest} base units`))
       console.log(chalk.dim(`  reserve floor: ${effectiveSellerConfig.reserveFloor}`))
       console.log(chalk.dim(`  max concurrent buyers: ${effectiveSellerConfig.maxConcurrentBuyers}`))
       console.log('')
@@ -333,9 +347,21 @@ export function registerSeedCommand(program: Command): void {
           paymentMethod: preferredMethod,
           platformFeeRate: config.payments.platformFeeRate,
           settlementIdleMs: Number.isFinite(settlementIdleMs) ? settlementIdleMs : 30_000,
-          defaultEscrowAmountUSDC: defaultEscrowAmountUSDCBaseUnits,
+          defaultDepositAmountUSDC: defaultDepositAmountUSDCBaseUnits,
           sellerWalletAddress,
           paymentConfig,
+          minBudgetPerRequest: config.payments.minBudgetPerRequest ?? '10000',
+          // Top-level fields required by the node for contract clients + EIP-712 domain
+          ...(paymentConfig?.crypto ? {
+            rpcUrl: paymentConfig.crypto.rpcUrl,
+            depositsAddress: paymentConfig.crypto.depositsContractAddress,
+            channelsAddress: paymentConfig.crypto.channelsContractAddress,
+            usdcAddress: paymentConfig.crypto.usdcAddress,
+            identityRegistryAddress: resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).identityRegistryAddress,
+            statsAddress: resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).statsContractAddress,
+            stakingAddress: resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).stakingContractAddress,
+            chainId: resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).evmChainId,
+          } : {}),
         },
       })
 
@@ -538,7 +564,7 @@ export function registerSeedCommand(program: Command): void {
         nodeSpinner.start('Shutting down seeding daemon...')
         await node.stop()
         await unlink(getStateFile(globalOpts.dataDir)).catch(() => {})
-        nodeSpinner.succeed('Seeding daemon stopped. Sessions finalized.')
+        nodeSpinner.succeed('Seeding daemon stopped. Channels finalized.')
       })
     })
 }

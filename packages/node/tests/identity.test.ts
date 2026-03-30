@@ -9,8 +9,8 @@ import {
   verifySignature,
   hexToBytes,
   bytesToHex,
-  signUtf8Ed25519,
-  verifyUtf8Ed25519,
+  signUtf8,
+  verifyUtf8,
 } from '../src/p2p/identity.js';
 
 function tmpDir(): string {
@@ -51,10 +51,10 @@ describe('loadOrCreateIdentity', () => {
 
     const identity = await loadOrCreateIdentity(dir);
 
-    expect(identity.peerId).toMatch(/^[0-9a-f]{64}$/);
+    expect(identity.peerId).toMatch(/^[0-9a-f]{40}$/);
     expect(identity.privateKey).toBeInstanceOf(Uint8Array);
-    expect(identity.publicKey).toBeInstanceOf(Uint8Array);
-    expect(identity.publicKey.length).toBe(32);
+    expect(identity.wallet).toBeDefined();
+    expect(identity.wallet.address.slice(2).toLowerCase()).toBe(identity.peerId);
   });
 
   it('should persist and reload the same identity', async () => {
@@ -66,7 +66,7 @@ describe('loadOrCreateIdentity', () => {
 
     expect(second.peerId).toBe(first.peerId);
     expect(bytesToHex(second.privateKey)).toBe(bytesToHex(first.privateKey));
-    expect(bytesToHex(second.publicKey)).toBe(bytesToHex(first.publicKey));
+    expect(second.wallet.address).toBe(first.wallet.address);
   });
 });
 
@@ -77,12 +77,12 @@ describe('signData / verifySignature', () => {
 
     const identity = await loadOrCreateIdentity(dir);
     const data = new TextEncoder().encode('hello world');
-    const signature = await signData(identity.privateKey, data);
+    const signature = signData(identity.wallet, data);
 
     expect(signature).toBeInstanceOf(Uint8Array);
-    expect(signature.length).toBe(64);
+    expect(signature.length).toBe(65);
 
-    const valid = await verifySignature(identity.publicKey, signature, data);
+    const valid = verifySignature(identity.peerId, signature, data);
     expect(valid).toBe(true);
   });
 
@@ -92,27 +92,27 @@ describe('signData / verifySignature', () => {
 
     const identity = await loadOrCreateIdentity(dir);
     const data = new TextEncoder().encode('hello');
-    const signature = await signData(identity.privateKey, data);
+    const signature = signData(identity.wallet, data);
 
     const wrongData = new TextEncoder().encode('world');
-    const valid = await verifySignature(identity.publicKey, signature, wrongData);
+    const valid = verifySignature(identity.peerId, signature, wrongData);
     expect(valid).toBe(false);
   });
 });
 
-describe('signUtf8Ed25519 / verifyUtf8Ed25519', () => {
+describe('signUtf8 / verifyUtf8', () => {
   it('should sign and verify a UTF-8 message', async () => {
     const dir = tmpDir();
     dirsToClean.push(dir);
 
     const identity = await loadOrCreateIdentity(dir);
     const message = 'receipt|data|12345';
-    const sig = signUtf8Ed25519(identity.privateKey, message);
+    const sig = signUtf8(identity.wallet, message);
 
     expect(sig).toMatch(/^[0-9a-f]+$/);
-    expect(sig.length).toBe(128); // 64 bytes = 128 hex chars
+    expect(sig.length).toBe(130); // 65 bytes = 130 hex chars
 
-    const valid = verifyUtf8Ed25519(identity.peerId, message, sig);
+    const valid = verifyUtf8(identity.peerId, message, sig);
     expect(valid).toBe(true);
   });
 
@@ -121,13 +121,13 @@ describe('signUtf8Ed25519 / verifyUtf8Ed25519', () => {
     dirsToClean.push(dir);
 
     const identity = await loadOrCreateIdentity(dir);
-    const sig = signUtf8Ed25519(identity.privateKey, 'correct');
-    const valid = verifyUtf8Ed25519(identity.peerId, 'wrong', sig);
+    const sig = signUtf8(identity.wallet, 'correct');
+    const valid = verifyUtf8(identity.peerId, 'wrong', sig);
     expect(valid).toBe(false);
   });
 
-  it('should fail verification with invalid public key', () => {
-    const valid = verifyUtf8Ed25519('invalidhex', 'msg', 'ab'.repeat(64));
+  it('should fail verification with invalid address', () => {
+    const valid = verifyUtf8('invalidhex', 'msg', 'ab'.repeat(65));
     expect(valid).toBe(false);
   });
 });

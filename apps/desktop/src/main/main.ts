@@ -2,23 +2,14 @@ import {
   app,
   BrowserWindow,
   ipcMain,
-  shell,
-  Menu,
-  dialog,
-  nativeImage,
-  type MenuItemConstructorOptions,
 } from 'electron';
 import electronUpdater from 'electron-updater';
 const { autoUpdater } = electronUpdater;
-import { readFile, writeFile, readdir, mkdir, cp } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
-import { execFile as execFileCallback } from 'node:child_process';
-import { promisify } from 'node:util';
-import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { randomBytes } from 'node:crypto';
 import { isIP } from 'node:net';
-import { createDashboardServer, type DashboardConfig, type DashboardServer } from '@antseed/dashboard';
+import { existsSync } from 'node:fs';
 import {
   ProcessManager,
   type RuntimeMode,
@@ -26,16 +17,52 @@ import {
   type StartOptions,
 } from './process-manager.js';
 import { registerPiChatHandlers } from './pi-chat-engine.js';
-import { WalletConnectManager } from './walletconnect.js';
+import { ensureSecureIdentity, secureIdentityEnv, getSecureIdentity } from './identity.js';
+import { DepositsClient, signSpendingAuth, signReserveAuth, makeChannelsDomain, resolveChainConfig, formatUsdc, ZERO_METADATA_HASH, peerIdToAddress } from '@antseed/node';
+import { createServer as createPaymentsServer } from '@antseed/payments';
+import type { LogEvent, RuntimeActivityEvent } from './log-parser.js';
+import { parseRuntimeActivityFromLog } from './log-parser.js';
+import {
+  setPluginAppendLog,
+  ensureDefaultPlugin,
+  listInstalledPlugins,
+  installPluginDependency,
+  normalizePluginPackageName,
+  isSafePluginPackageName,
+  resolveLegacyPluginPackage,
+  toNpmAliasInstallSpec,
+  toFileInstallSpec,
+  resolveLocalPluginSource,
+  type InstalledPlugin,
+} from './plugins.js';
+type ApiResult = {
+  ok: boolean;
+  data: unknown | null;
+  error: string | null;
+  status: number | null;
+};
+import {
+  refreshPeerCache,
+  getNetworkSnapshot,
+  touchPeer,
+  lookupPeer,
+  onPeersChanged,
+  type DashboardNetworkPeer,
+} from './peer-cache.js';
+import { createWindow, createApplicationMenu, getMainWindow } from './window.js';
+import { ensureConfig, readConfig, mergeConfig, readNodeStatus } from './config-io.js';
+
+// Re-export types that may be used by other main-process modules
+export type { LogEvent, RuntimeActivityEvent } from './log-parser.js';
+export type { DashboardNetworkPeer, DashboardNetworkStats, DashboardNetworkResult } from './peer-cache.js';
+export type { InstalledPlugin } from './plugins.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const execFileAsync = promisify(execFileCallback);
-
 const isDev = Boolean(process.env['VITE_DEV_SERVER_URL']);
 const rendererUrl = process.env['VITE_DEV_SERVER_URL'] ?? `file://${path.join(__dirname, '../renderer/index.html')}`;
-const APP_NAME = 'AntSeed Desktop';
+const APP_NAME = 'AntStation Desktop';
 const DESKTOP_DEBUG_ENV = 'ANTSEED_DESKTOP_DEBUG';
 const DESKTOP_DEBUG_FLAGS = new Set(['--debug-runtime', '--desktop-debug']);
 
@@ -79,100 +106,8 @@ const APP_ICON_PATH = resolveAppIconPath();
 // in some surfaces because the underlying bundle is Electron.app.
 app.setName(APP_NAME);
 
-type LogEvent = {
-  mode: RuntimeMode;
-  stream: 'stdout' | 'stderr' | 'system';
-  line: string;
-  timestamp: number;
-};
-
-type RuntimeActivityTone = 'active' | 'idle' | 'warn' | 'bad';
-
-type RuntimeActivityEvent = {
-  mode: RuntimeMode;
-  tone: RuntimeActivityTone;
-  stage: string;
-  message: string;
-  holdMs: number;
-  timestamp: number;
-  requestId?: string;
-  peerId?: string;
-};
-
-type DashboardNetworkPeer = {
-  peerId: string;
-  host: string;
-  port: number;
-  providers: string[];
-  inputUsdPerMillion: number;
-  outputUsdPerMillion: number;
-  capacityMsgPerHour: number;
-  reputation: number;
-  lastSeen: number;
-  source: 'dht' | 'daemon';
-};
-
-type DashboardNetworkStats = {
-  totalPeers: number;
-  dhtNodeCount: number;
-  dhtHealthy: boolean;
-  lastScanAt: number | null;
-  totalLookups?: number;
-  successfulLookups?: number;
-  lookupSuccessRate?: number;
-  averageLookupLatencyMs?: number;
-  healthReason?: string;
-};
-
-type DashboardNetworkSnapshot = {
-  peers: DashboardNetworkPeer[];
-  stats: DashboardNetworkStats;
-};
-
-type DashboardNetworkResult = {
-  ok: boolean;
-  peers: DashboardNetworkPeer[];
-  stats: DashboardNetworkStats;
-  error: string | null;
-};
-
-type DashboardEndpoint = 'status' | 'network' | 'peers' | 'sessions' | 'earnings' | 'config' | 'data-sources';
-
-type DashboardQueryValue = string | number | boolean;
-
-type DashboardApiResult = {
-  ok: boolean;
-  data: unknown | null;
-  error: string | null;
-  status: number | null;
-};
-
-type DashboardRuntimeState = {
-  running: boolean;
-  port: number;
-  startedAt: number | null;
-  lastError: string | null;
-  lastExitCode: number | null;
-};
-
-type InstalledPlugin = {
-  package: string;
-  version: string;
-};
-
-const DEFAULT_DASHBOARD_PORT = 3117;
-const DEFAULT_CONFIG_PATH = path.join(homedir(), '.antseed', 'config.json');
-const DEFAULT_PLUGINS_DIR = path.join(homedir(), '.antseed', 'plugins');
-const DEFAULT_PLUGINS_PACKAGE_JSON = path.join(DEFAULT_PLUGINS_DIR, 'package.json');
-const SAFE_PLUGIN_PACKAGE_PATTERN = /^(@?[a-z0-9][a-z0-9._-]*)(\/[a-z0-9][a-z0-9._-]*)?$/i;
-const PLUGIN_PACKAGE_ALIAS_MAP: Record<string, string> = {
-  'local': '@antseed/router-local',
-  'router-local': '@antseed/router-local',
-  'antseed-router-local': '@antseed/router-local',
-};
-const SCOPED_TO_LEGACY_PLUGIN_PACKAGE_MAP: Record<string, string> = {
-  '@antseed/router-local': 'antseed-router-local',
-};
+import { DEFAULT_CONFIG_PATH } from './constants.js';
+import { asRecord, asString } from './utils.js';
 
 function resolveActiveConfigPath(): string {
   const explicit = process.env['ANTSEED_CONFIG_PATH']?.trim();
@@ -185,407 +120,11 @@ function resolveActiveConfigPath(): string {
 
 const ACTIVE_CONFIG_PATH = resolveActiveConfigPath();
 
-const DASHBOARD_ENDPOINTS: ReadonlySet<DashboardEndpoint> = new Set([
-  'status',
-  'network',
-  'peers',
-  'sessions',
-  'earnings',
-  'config',
-  'data-sources',
-]);
-
-let mainWindow: BrowserWindow | null = null;
 const logBuffer: LogEvent[] = [];
 let lastRuntimeActivityHash = '';
 
 let appSetupNeeded = false;
 let appSetupComplete = false;
-
-// When a specific connect error (e.g. port-in-use) is detected, suppress the
-// generic "exited unexpectedly" message for a short window so the specific
-// error isn't overwritten by the process-exit log that immediately follows.
-let connectSpecificErrorAt = 0;
-const CONNECT_EXIT_SUPPRESS_WINDOW_MS = 5_000;
-
-let dashboardServer: DashboardServer | null = null;
-const dashboardRuntime: DashboardRuntimeState = {
-  running: false,
-  port: DEFAULT_DASHBOARD_PORT,
-  startedAt: null,
-  lastError: null,
-  lastExitCode: null,
-};
-let dashboardStartPromise: Promise<void> | null = null;
-let dashboardPortInUseUntilMs = 0;
-const DASHBOARD_PORT_IN_USE_RETRY_COOLDOWN_MS = 60_000;
-
-function toSafeDashboardPort(port?: number): number {
-  const parsed = Number(port);
-  if (Number.isFinite(parsed) && parsed > 0 && parsed <= 65535) {
-    return Math.floor(parsed);
-  }
-  return DEFAULT_DASHBOARD_PORT;
-}
-
-function isAddressInUseError(message: string): boolean {
-  const normalized = message.toLowerCase();
-  return normalized.includes('eaddrinuse') || normalized.includes('address already in use');
-}
-
-function stripAnsi(input: string): string {
-  return input.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '');
-}
-
-function shortId(value: string | undefined): string {
-  if (!value) {
-    return 'unknown';
-  }
-  return value.length > 8 ? value.slice(0, 8) : value;
-}
-
-function toRuntimeActivity(event: Omit<RuntimeActivityEvent, 'timestamp'>): RuntimeActivityEvent {
-  return {
-    ...event,
-    timestamp: Date.now(),
-  };
-}
-
-function parseConnectRuntimeActivity(lineRaw: string): RuntimeActivityEvent | null {
-  const line = stripAnsi(lineRaw).trim();
-  if (line.length === 0) {
-    return null;
-  }
-
-  const proxyBindErrorMatch = /failed to start proxy:\s*listen\s+eaddrinuse:\s*address already in use.*:(\d+)/i.exec(line);
-  if (proxyBindErrorMatch) {
-    const port = proxyBindErrorMatch[1] ?? '8377';
-    connectSpecificErrorAt = Date.now();
-    return toRuntimeActivity({
-      mode: 'connect',
-      tone: 'bad',
-      stage: 'proxy-port-in-use',
-      message: `Buyer proxy port :${port} is already in use.`,
-      holdMs: 120_000,
-    });
-  }
-
-  if (/process exited \(code=\d+\)/i.test(line)) {
-    // If a specific error was just shown (e.g. port in use), don't overwrite it
-    // with the generic exit message — the process exiting is a consequence, not the cause.
-    if (Date.now() - connectSpecificErrorAt < CONNECT_EXIT_SUPPRESS_WINDOW_MS) {
-      return null;
-    }
-    return toRuntimeActivity({
-      mode: 'connect',
-      tone: 'bad',
-      stage: 'connect-exit',
-      message: 'Buyer runtime exited unexpectedly.',
-      holdMs: 90_000,
-    });
-  }
-
-  const adapterMatch = /\[proxy\]\s+Applying protocol adapter\s+([^\s]+)\s*->\s*([^\s]+)\s+via provider\s+"([^"]+)"/i.exec(line);
-  if (adapterMatch) {
-    const from = adapterMatch[1] ?? 'unknown';
-    const to = adapterMatch[2] ?? 'unknown';
-    const provider = adapterMatch[3] ?? 'unknown';
-    return toRuntimeActivity({
-      mode: 'connect',
-      tone: 'warn',
-      stage: 'protocol-adapter',
-      message: `Adapting protocol ${from} -> ${to} via ${provider}.`,
-      holdMs: 15_000,
-    });
-  }
-
-  const sendMatch = /\[Node\]\s+sendRequest(?:Stream)?\s+([A-Z]+)\s+(\S+)\s+.*peer\s+([a-f0-9]+)\.\.\.\s+\(reqId=([a-f0-9-]+)\)/i.exec(line);
-  if (sendMatch) {
-    const method = sendMatch[1] ?? 'REQ';
-    const path = sendMatch[2] ?? '/';
-    const peerId = sendMatch[3] ?? '';
-    const requestId = sendMatch[4] ?? '';
-    return toRuntimeActivity({
-      mode: 'connect',
-      tone: 'warn',
-      stage: 'request-dispatched',
-      message: `Request ${shortId(requestId)}: ${method} ${path} to peer ${shortId(peerId)}...`,
-      holdMs: 20_000,
-      requestId,
-      peerId,
-    });
-  }
-
-  const routingMatch = /\[proxy\]\s+Routing to peer\s+([a-f0-9]+)\.\.\./i.exec(line);
-  if (routingMatch) {
-    const peerId = routingMatch[1] ?? '';
-    return toRuntimeActivity({
-      mode: 'connect',
-      tone: 'warn',
-      stage: 'routing',
-      message: `Routing request to peer ${shortId(peerId)}...`,
-      holdMs: 15_000,
-      peerId,
-    });
-  }
-
-  const connectingMatch = /\[Node\]\s+Connecting to\s+([a-f0-9]+)\.\.\.\s+at\s+([0-9a-z.:_-]+)/i.exec(line);
-  if (connectingMatch) {
-    const peerId = connectingMatch[1] ?? '';
-    const endpoint = connectingMatch[2] ?? 'unknown';
-    return toRuntimeActivity({
-      mode: 'connect',
-      tone: 'warn',
-      stage: 'peer-connecting',
-      message: `Connecting to peer ${shortId(peerId)} at ${endpoint}...`,
-      holdMs: 15_000,
-      peerId,
-    });
-  }
-
-  const connectionStateMatch = /\[Node\]\s+Connection(?: to [a-f0-9.]+)? state:\s*(\w+)/i.exec(line);
-  if (connectionStateMatch) {
-    const state = (connectionStateMatch[1] ?? '').toLowerCase();
-    if (state === 'open') {
-      return toRuntimeActivity({
-        mode: 'connect',
-        tone: 'active',
-        stage: 'peer-connected',
-        message: 'Peer connection open.',
-        holdMs: 12_000,
-      });
-    }
-  }
-
-  const responseMatch = /\[Node\]\s+Response for\s+([a-f0-9-]+):\s+status=(\d+)\s+\((\d+)ms/i.exec(line);
-  if (responseMatch) {
-    const requestId = responseMatch[1] ?? '';
-    const status = Number(responseMatch[2] ?? 0);
-    const latencyMs = Number(responseMatch[3] ?? 0);
-    const ok = status >= 200 && status < 400;
-    return toRuntimeActivity({
-      mode: 'connect',
-      tone: ok ? 'active' : 'bad',
-      stage: 'response',
-      message: ok
-        ? `Request ${shortId(requestId)} succeeded (${status}, ${String(latencyMs)}ms).`
-        : `Request ${shortId(requestId)} failed (${status}, ${String(latencyMs)}ms).`,
-      holdMs: ok ? 12_000 : 45_000,
-      requestId,
-    });
-  }
-
-  const timeoutMatch = /\[Node\]\s+Request\s+([a-f0-9-]+)\s+timed out after\s+(\d+)ms/i.exec(line);
-  if (timeoutMatch) {
-    const requestId = timeoutMatch[1] ?? '';
-    const timeoutMs = timeoutMatch[2] ?? '30000';
-    return toRuntimeActivity({
-      mode: 'connect',
-      tone: 'bad',
-      stage: 'request-timeout',
-      message: `Request ${shortId(requestId)} timed out after ${timeoutMs}ms.`,
-      holdMs: 60_000,
-      requestId,
-    });
-  }
-
-  const retryMatch = /\[proxy\]\s+Peer\s+([a-f0-9]+)\.\.\.\s+returned\s+(\d+),\s+retrying.*\(attempt\s+(\d+)\/(\d+)\)/i.exec(line);
-  if (retryMatch) {
-    const peerId = retryMatch[1] ?? '';
-    const code = retryMatch[2] ?? 'unknown';
-    const attempt = retryMatch[3] ?? '?';
-    const max = retryMatch[4] ?? '?';
-    return toRuntimeActivity({
-      mode: 'connect',
-      tone: 'warn',
-      stage: 'peer-retry',
-      message: `Peer ${shortId(peerId)} returned ${code}. Retrying (${attempt}/${max})...`,
-      holdMs: 25_000,
-      peerId,
-    });
-  }
-
-  const allFailedMatch = /\[proxy\]\s+All\s+\d+\s+peer\(s\)\s+failed, returning last error \((\d+)\)/i.exec(line);
-  if (allFailedMatch) {
-    const code = allFailedMatch[1] ?? 'unknown';
-    return toRuntimeActivity({
-      mode: 'connect',
-      tone: 'bad',
-      stage: 'routing-failed',
-      message: `All candidate peers failed (${code}).`,
-      holdMs: 60_000,
-    });
-  }
-
-  if (/\[proxy\]\s+No peers available for request/i.test(line)) {
-    return toRuntimeActivity({
-      mode: 'connect',
-      tone: 'bad',
-      stage: 'no-peers',
-      message: 'No peers available for this request.',
-      holdMs: 60_000,
-    });
-  }
-
-  if (/\[Node\]\s+Discovering peers/i.test(line)) {
-    return toRuntimeActivity({
-      mode: 'connect',
-      tone: 'warn',
-      stage: 'discovering-peers',
-      message: 'Discovering peers from DHT...',
-      holdMs: 12_000,
-    });
-  }
-
-  const dhtResultMatch = /\[Node\]\s+DHT returned\s+(\d+)\s+result\(s\)/i.exec(line);
-  if (dhtResultMatch) {
-    const count = Number(dhtResultMatch[1] ?? 0);
-    return toRuntimeActivity({
-      mode: 'connect',
-      tone: count > 0 ? 'active' : 'warn',
-      stage: 'dht-results',
-      message: `DHT discovery returned ${String(count)} peer result${count === 1 ? '' : 's'}.`,
-      holdMs: 12_000,
-    });
-  }
-
-  if (/\[proxy\]\s+POST \/v1\/messages/i.test(line)) {
-    return toRuntimeActivity({
-      mode: 'connect',
-      tone: 'warn',
-      stage: 'chat-request',
-      message: 'Submitting chat request to buyer proxy...',
-      holdMs: 18_000,
-    });
-  }
-
-  if (/\[proxy\]\s+GET \/v1\/models/i.test(line)) {
-    return toRuntimeActivity({
-      mode: 'connect',
-      tone: 'warn',
-      stage: 'service-request',
-      message: 'Loading available services from peers...',
-      holdMs: 20_000,
-    });
-  }
-
-  return null;
-}
-
-function parseDashboardRuntimeActivity(lineRaw: string): RuntimeActivityEvent | null {
-  const line = stripAnsi(lineRaw).trim().toLowerCase();
-  if (line.length === 0) {
-    return null;
-  }
-
-  if (line.includes('embedded dashboard engine running on http://127.0.0.1')) {
-    return toRuntimeActivity({
-      mode: 'dashboard',
-      tone: 'active',
-      stage: 'dashboard-ready',
-      message: 'Local data service is ready.',
-      holdMs: 10_000,
-    });
-  }
-
-  if (line.includes('address already in use') || line.includes('eaddrinuse')) {
-    return toRuntimeActivity({
-      mode: 'dashboard',
-      tone: 'warn',
-      stage: 'dashboard-reuse',
-      message: 'Local data service port is busy; using existing service.',
-      holdMs: 20_000,
-    });
-  }
-
-  return null;
-}
-
-function parseRuntimeActivityFromLog(event: LogEvent): RuntimeActivityEvent | null {
-  if (event.mode === 'connect') {
-    return parseConnectRuntimeActivity(event.line);
-  }
-  if (event.mode === 'dashboard') {
-    return parseDashboardRuntimeActivity(event.line);
-  }
-  return null;
-}
-
-function emitRuntimeActivity(activity: RuntimeActivityEvent): void {
-  const hash = [
-    activity.mode,
-    activity.stage,
-    activity.tone,
-    activity.message,
-    activity.requestId ?? '',
-    activity.peerId ?? '',
-  ].join('|');
-
-  if (hash === lastRuntimeActivityHash) {
-    return;
-  }
-  lastRuntimeActivityHash = hash;
-  mainWindow?.webContents.send('runtime:activity', activity);
-}
-
-function appendLog(mode: RuntimeMode, stream: 'stdout' | 'stderr' | 'system', line: string): void {
-  const event: LogEvent = { mode, stream, line, timestamp: Date.now() };
-  logBuffer.push(event);
-  if (logBuffer.length > 1200) {
-    logBuffer.splice(0, logBuffer.length - 1200);
-  }
-
-  mainWindow?.webContents.send('runtime:log', event);
-  const activity = parseRuntimeActivityFromLog(event);
-  if (activity) {
-    emitRuntimeActivity(activity);
-  }
-  emitRuntimeState();
-}
-
-const processManager = new ProcessManager((mode, stream, line) => {
-  appendLog(mode, stream, line);
-});
-
-function getDashboardProcessState(): RuntimeProcessState {
-  return {
-    mode: 'dashboard',
-    running: dashboardRuntime.running,
-    pid: dashboardRuntime.running ? process.pid : null,
-    startedAt: dashboardRuntime.startedAt,
-    lastExitCode: dashboardRuntime.lastExitCode,
-    lastError: dashboardRuntime.lastError,
-  };
-}
-
-function getCombinedProcessState(): RuntimeProcessState[] {
-  const processStates = processManager.getState().filter((state) => state.mode !== 'dashboard');
-  processStates.push(getDashboardProcessState());
-  return processStates;
-}
-
-function emitRuntimeState(): void {
-  mainWindow?.webContents.send('runtime:state', getCombinedProcessState());
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  if (value && typeof value === 'object') {
-    return value as Record<string, unknown>;
-  }
-  return {};
-}
-
-function asString(value: unknown, fallback: string): string {
-  return typeof value === 'string' && value.trim().length > 0 ? value : fallback;
-}
-
-function asNumber(value: unknown, fallback: number): number {
-  const parsed = Number(value);
-  if (Number.isFinite(parsed)) {
-    return parsed;
-  }
-  return fallback;
-}
 
 function isPublicMetadataHost(rawHost: string): boolean {
   const host = rawHost.trim();
@@ -646,897 +185,109 @@ function isPublicMetadataHost(rawHost: string): boolean {
   return true;
 }
 
-function asStringArray(value: unknown, fallback: string[]): string[] {
-  if (!Array.isArray(value)) {
-    return fallback;
+// ── Runtime Activity & Log Wiring ──
+
+function emitRuntimeActivity(activity: RuntimeActivityEvent): void {
+  const hash = [
+    activity.mode,
+    activity.stage,
+    activity.tone,
+    activity.message,
+    activity.requestId ?? '',
+    activity.peerId ?? '',
+  ].join('|');
+
+  if (hash === lastRuntimeActivityHash) {
+    return;
   }
-  return value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
+  lastRuntimeActivityHash = hash;
+  getMainWindow()?.webContents.send('runtime:activity', activity);
 }
 
-function isSafePluginPackageName(value: string): boolean {
-  return SAFE_PLUGIN_PACKAGE_PATTERN.test(value);
+function emitRuntimeState(): void {
+  getMainWindow()?.webContents.send('runtime:state', getCombinedProcessState());
 }
 
-function normalizePluginPackageName(value: string): string {
-  const trimmed = value.trim();
-  if (!trimmed) return '';
-
-  const lower = trimmed.toLowerCase();
-  if (PLUGIN_PACKAGE_ALIAS_MAP[lower]) {
-    return PLUGIN_PACKAGE_ALIAS_MAP[lower]!;
+function appendLog(mode: RuntimeMode, stream: 'stdout' | 'stderr' | 'system', line: string): void {
+  const event: LogEvent = { mode, stream, line, timestamp: Date.now() };
+  logBuffer.push(event);
+  if (logBuffer.length > 1200) {
+    logBuffer.splice(0, logBuffer.length - 1200);
   }
 
-  if (trimmed.startsWith('@')) {
-    return trimmed;
+  getMainWindow()?.webContents.send('runtime:log', event);
+  const activity = parseRuntimeActivityFromLog(event);
+  if (activity) {
+    emitRuntimeActivity(activity);
   }
-
-  if (lower.startsWith('provider-') || lower.startsWith('router-')) {
-    return `@antseed/${lower}`;
-  }
-
-  return trimmed;
+  emitRuntimeState();
 }
 
-function resolveLegacyPluginPackage(packageName: string): string | null {
-  return SCOPED_TO_LEGACY_PLUGIN_PACKAGE_MAP[packageName] ?? null;
-}
+// Wire up callbacks for extracted modules
+setPluginAppendLog(appendLog);
 
-function resolveLocalPackageNameAliases(packageName: string): Set<string> {
-  const aliases = new Set<string>([packageName]);
-  for (const [scoped, legacy] of Object.entries(SCOPED_TO_LEGACY_PLUGIN_PACKAGE_MAP)) {
-    if (packageName === scoped) {
-      aliases.add(legacy);
-    } else if (packageName === legacy) {
-      aliases.add(scoped);
-    }
-  }
-  return aliases;
-}
+// When the peer set changes, tell the renderer to refresh the service catalog.
+onPeersChanged(() => {
+  getMainWindow()?.webContents.send('peers:changed');
+});
+const processManager = new ProcessManager((mode, stream, line) => {
+  appendLog(mode, stream, line);
+});
 
-function toFileInstallSpec(packageName: string, localPath: string): string {
-  const normalizedPath = localPath.startsWith('file:') ? localPath.slice(5) : localPath;
-  return `${packageName}@file:${normalizedPath}`;
-}
+// ── Payments Portal ──
 
-function toNpmAliasInstallSpec(packageName: string, legacyPackageName: string): string {
-  return `${packageName}@npm:${legacyPackageName}`;
-}
+let paymentsServer: Awaited<ReturnType<typeof createPaymentsServer>> | null = null;
+const PAYMENTS_PORT = Number(process.env['ANTSEED_PAYMENTS_PORT']) || 3118;
 
-async function ensurePluginsDirectory(): Promise<void> {
-  await mkdir(DEFAULT_PLUGINS_DIR, { recursive: true });
-
-  if (!existsSync(DEFAULT_PLUGINS_PACKAGE_JSON)) {
-    const emptyPackageJson = {
-      name: 'antseed-plugins',
-      version: '1.0.0',
-      private: true,
-      dependencies: {},
-    };
-    await writeFile(DEFAULT_PLUGINS_PACKAGE_JSON, JSON.stringify(emptyPackageJson, null, 2), 'utf-8');
-  }
-}
-
-async function listInstalledPlugins(): Promise<InstalledPlugin[]> {
-  await ensurePluginsDirectory();
-
+async function startPaymentsPortal(): Promise<void> {
+  if (paymentsServer) return;
   try {
-    const raw = await readFile(DEFAULT_PLUGINS_PACKAGE_JSON, 'utf-8');
-    const parsed = JSON.parse(raw) as { dependencies?: Record<string, string> };
-    const deps = parsed.dependencies ?? {};
-    return Object.entries(deps)
-      .map(([pkg, version]) => ({ package: pkg, version }))
-      .sort((left, right) => left.package.localeCompare(right.package));
+    await ensureSecureIdentity();
+    const identityHex = secureIdentityEnv().ANTSEED_IDENTITY_HEX;
+    paymentsServer = await createPaymentsServer({
+      port: PAYMENTS_PORT,
+      identityHex,
+    });
+    await paymentsServer.listen({ port: PAYMENTS_PORT, host: '127.0.0.1' });
+    console.log(`[desktop] Payments portal running at http://127.0.0.1:${PAYMENTS_PORT}`);
+  } catch (err) {
+    console.error('[desktop] Failed to start payments portal:', err instanceof Error ? err.message : String(err));
+    paymentsServer = null;
+  }
+}
+
+async function stopPaymentsPortal(): Promise<void> {
+  if (!paymentsServer) return;
+  try {
+    await paymentsServer.close();
   } catch {
-    return [];
+    // Already closed
   }
+  paymentsServer = null;
 }
 
-function resolveNpmBin(): string {
-  // Electron apps on macOS get a restricted PATH that may not include npm.
-  // Check common locations before falling back to plain 'npm'.
-  const candidates = [
-    '/usr/local/bin/npm',          // Homebrew (Intel Mac)
-    '/opt/homebrew/bin/npm',       // Homebrew (Apple Silicon)
-    '/usr/bin/npm',                // System
-    path.join(homedir(), '.nvm', 'alias', 'default', 'bin', 'npm'), // nvm symlink
-  ];
-  for (const candidate of candidates) {
-    if (existsSync(candidate)) return candidate;
-  }
-  return 'npm'; // fallback — rely on PATH
-}
-
-async function installPluginDependency(packageSpec: string): Promise<void> {
-  await ensurePluginsDirectory();
-  const npmBin = resolveNpmBin();
-  appendLog('connect', 'system', `Installing "${packageSpec}" via ${npmBin}...`);
-  await execFileAsync(npmBin, ['install', '--ignore-scripts', packageSpec], {
-    cwd: DEFAULT_PLUGINS_DIR,
-    timeout: 120_000, // 2-minute hard limit
-    env: {
-      ...process.env,
-      PATH: [
-        '/usr/local/bin', '/opt/homebrew/bin', '/usr/bin', '/bin',
-        process.env['PATH'] ?? '',
-      ].join(':'),
-    },
-  });
-}
-
-async function installPluginFromBundle(packageName: string): Promise<boolean> {
-  // In production builds, plugins are bundled into Resources/bundled-plugins/.
-  const bundleRoot = path.join(process.resourcesPath ?? '', 'bundled-plugins');
-  if (!existsSync(path.join(bundleRoot, packageName))) return false;
-
-  await ensurePluginsDirectory();
-  const destRoot = path.join(DEFAULT_PLUGINS_DIR, 'node_modules');
-
-  // Copy all scoped packages from the bundle (target + its bundled dependencies).
-  const bundleEntries = await readdir(bundleRoot, { withFileTypes: true });
-  const scopeDirs = bundleEntries.filter((e) => e.isDirectory() && e.name.startsWith('@'));
-
-  for (const scope of scopeDirs) {
-    const pkgEntries = await readdir(path.join(bundleRoot, scope.name), { withFileTypes: true });
-    for (const pkg of pkgEntries.filter((e) => e.isDirectory())) {
-      const src = path.join(bundleRoot, scope.name, pkg.name);
-      const dest = path.join(destRoot, scope.name, pkg.name);
-      await mkdir(path.dirname(dest), { recursive: true });
-      await cp(src, dest, { recursive: true, force: true });
-      appendLog('connect', 'system', `Copied bundled plugin ${scope.name}/${pkg.name}.`);
-    }
-  }
-
-  return existsSync(path.join(destRoot, packageName, 'package.json'));
-}
-
-function isPluginInstalled(packageName: string): boolean {
-  const pluginDir = path.join(DEFAULT_PLUGINS_DIR, 'node_modules', packageName);
-  return existsSync(path.join(pluginDir, 'package.json'));
-}
-
-async function ensureDefaultPlugin(packageName: string): Promise<void> {
-  if (isPluginInstalled(packageName)) {
-    appSetupNeeded = false;
-    appSetupComplete = true;
-    return;
-  }
-  appSetupNeeded = true;
-  mainWindow?.webContents.send('app:setup-step', { step: 'installing', label: 'Installing router plugin' });
-  appendLog('connect', 'system', `Required plugin "${packageName}" not found. Installing`);
+ipcMain.handle('payments:open-portal', async (_event, tab?: string) => {
   try {
-    // 1. Try copying from the app bundle (production builds — instant, no network)
-    const installedFromBundle = await installPluginFromBundle(packageName);
-    if (installedFromBundle) {
-      appendLog('connect', 'system', `Installed plugin "${packageName}" from app bundle.`);
-    } else {
-      // 2. Try local monorepo source (dev builds)
-      const localSource = await resolveLocalPluginSource(packageName);
-      appendLog('connect', 'system', localSource ? `Using local source: ${localSource}` : `Using npm registry (${resolveNpmBin()})...`);
-      if (localSource) {
-        await installPluginDependency(toFileInstallSpec(packageName, localSource));
-      } else {
-        // 3. Fall back to npm registry
-        await installPluginDependency(packageName);
-      }
-    }
-    appendLog('connect', 'system', `Installed plugin "${packageName}".`);
-    appSetupComplete = true;
-    mainWindow?.webContents.send('app:setup-step', { step: 'done', label: 'Router plugin ready' });
-    mainWindow?.webContents.send('app:setup-complete');
+    await startPaymentsPortal();
+    const token = paymentsServer ? (paymentsServer as unknown as { bearerToken?: string }).bearerToken : '';
+    const params = new URLSearchParams();
+    if (token) params.set('token', token);
+    if (tab) params.set('tab', tab);
+    const qs = params.toString();
+    const url = qs ? `http://127.0.0.1:${PAYMENTS_PORT}?${qs}` : `http://127.0.0.1:${PAYMENTS_PORT}`;
+    const { default: open } = await import('open');
+    await open(url);
+    return { ok: true, url };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    appendLog('connect', 'system', `Failed to auto-install plugin "${packageName}": ${message}`);
-    mainWindow?.webContents.send('app:setup-step', { step: 'error', label: 'Failed to install router plugin' });
-    // Do NOT emit app:setup-complete on failure — the onAppSetupComplete handler
-    // would unconditionally start the connect process even though the plugin is
-    // not available, producing a spurious "Buyer runtime exited unexpectedly" message.
-    throw new Error(`Required plugin "${packageName}" could not be installed: ${message}`);
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
+});
+
+function getCombinedProcessState(): RuntimeProcessState[] {
+  return processManager.getState();
 }
 
-async function resolveLocalPluginSource(packageName: string): Promise<string | null> {
-  const rootCandidates = [
-    path.resolve(process.cwd(), '..'),
-    path.resolve(__dirname, '../../../'),
-  ];
-
-  const dedupedRoots = [...new Set(rootCandidates)];
-  const acceptedPackageNames = resolveLocalPackageNameAliases(packageName);
-  const packageSuffix = packageName.includes('/') ? packageName.split('/').pop() ?? packageName : packageName;
-  const inferredDir = packageSuffix.replace(/^antseed-/, '');
-
-  const relativeCandidates = [
-    packageName,
-    packageSuffix,
-    inferredDir,
-    `plugins/${packageSuffix}`,
-    `plugins/${inferredDir}`,
-  ];
-
-  for (const root of dedupedRoots) {
-    for (const rel of relativeCandidates) {
-      const candidateDir = path.resolve(root, rel);
-      const packageJsonPath = path.join(candidateDir, 'package.json');
-      if (!existsSync(packageJsonPath)) {
-        continue;
-      }
-
-      try {
-        const raw = await readFile(packageJsonPath, 'utf-8');
-        const parsed = JSON.parse(raw) as { name?: unknown };
-        if (typeof parsed.name === 'string' && acceptedPackageNames.has(parsed.name.trim())) {
-          return candidateDir;
-        }
-      } catch {
-        // Ignore unreadable candidates and continue.
-      }
-    }
-  }
-
-  for (const root of dedupedRoots) {
-    try {
-      const entries = await readdir(root, { withFileTypes: true });
-      for (const entry of entries) {
-        if (!entry.isDirectory()) {
-          continue;
-        }
-        if (entry.name.startsWith('.')) {
-          continue;
-        }
-        const candidateDir = path.join(root, entry.name);
-        const packageJsonPath = path.join(candidateDir, 'package.json');
-        if (!existsSync(packageJsonPath)) {
-          continue;
-        }
-
-        try {
-          const raw = await readFile(packageJsonPath, 'utf-8');
-          const parsed = JSON.parse(raw) as { name?: unknown };
-          if (typeof parsed.name === 'string' && acceptedPackageNames.has(parsed.name.trim())) {
-            return candidateDir;
-          }
-        } catch {
-          // Ignore unreadable candidates and continue.
-        }
-      }
-    } catch {
-      // Ignore unreadable roots.
-    }
-  }
-
-  return null;
-}
-
-function defaultDashboardConfig(): DashboardConfig {
-  return {
-    identity: {
-      displayName: 'AntSeed Node',
-    },
-    seller: {
-      reserveFloor: 10,
-      maxConcurrentBuyers: 5,
-      enabledProviders: [],
-      pricing: {
-        defaults: {
-          inputUsdPerMillion: 10,
-          outputUsdPerMillion: 10,
-        },
-      },
-    },
-    buyer: {
-      maxPricing: {
-        defaults: {
-          inputUsdPerMillion: 100,
-          outputUsdPerMillion: 100,
-        },
-      },
-      minPeerReputation: 50,
-      proxyPort: 8377,
-    },
-    network: {
-      bootstrapNodes: [],
-    },
-    payments: {
-      preferredMethod: 'crypto',
-      platformFeeRate: 0.05,
-    },
-    providers: [],
-    plugins: [],
-  };
-}
-
-async function loadDashboardConfig(configPath = DEFAULT_CONFIG_PATH): Promise<DashboardConfig> {
-  const defaults = defaultDashboardConfig();
-
-  let parsed: unknown;
-  try {
-    const raw = await readFile(configPath, 'utf-8');
-    parsed = JSON.parse(raw);
-  } catch {
-    return defaults;
-  }
-
-  const root = asRecord(parsed);
-  const identity = asRecord(root.identity);
-  const seller = asRecord(root.seller);
-  const buyer = asRecord(root.buyer);
-  const sellerPricing = asRecord(seller.pricing);
-  const sellerPricingDefaults = asRecord(sellerPricing.defaults);
-  const buyerMaxPricing = asRecord(buyer.maxPricing);
-  const buyerMaxPricingDefaults = asRecord(buyerMaxPricing.defaults);
-  const network = asRecord(root.network);
-  const payments = asRecord(root.payments);
-
-  const plugins = Array.isArray(root.plugins)
-    ? root.plugins
-      .map((item) => asRecord(item))
-      .map((item) => ({
-        name: asString(item.name, 'unknown'),
-        package: asString(item.package, 'unknown'),
-        installedAt: asString(item.installedAt, new Date(0).toISOString()),
-      }))
-    : [];
-
-  return {
-    identity: {
-      displayName: asString(identity.displayName, defaults.identity.displayName),
-      walletAddress: typeof identity.walletAddress === 'string' ? identity.walletAddress : undefined,
-    },
-    seller: {
-      reserveFloor: asNumber(seller.reserveFloor, defaults.seller.reserveFloor),
-      maxConcurrentBuyers: asNumber(seller.maxConcurrentBuyers, defaults.seller.maxConcurrentBuyers),
-      enabledProviders: asStringArray(seller.enabledProviders, defaults.seller.enabledProviders),
-      pricing: {
-        defaults: {
-          inputUsdPerMillion: asNumber(
-            sellerPricingDefaults.inputUsdPerMillion,
-            defaults.seller.pricing.defaults.inputUsdPerMillion
-          ),
-          outputUsdPerMillion: asNumber(
-            sellerPricingDefaults.outputUsdPerMillion,
-            defaults.seller.pricing.defaults.outputUsdPerMillion
-          ),
-        },
-        providers: sellerPricing.providers && typeof sellerPricing.providers === 'object'
-          ? sellerPricing.providers as DashboardConfig['seller']['pricing']['providers']
-          : defaults.seller.pricing.providers,
-      },
-    },
-    buyer: {
-      maxPricing: {
-        defaults: {
-          inputUsdPerMillion: asNumber(
-            buyerMaxPricingDefaults.inputUsdPerMillion,
-            defaults.buyer.maxPricing.defaults.inputUsdPerMillion
-          ),
-          outputUsdPerMillion: asNumber(
-            buyerMaxPricingDefaults.outputUsdPerMillion,
-            defaults.buyer.maxPricing.defaults.outputUsdPerMillion
-          ),
-        },
-        providers: buyerMaxPricing.providers && typeof buyerMaxPricing.providers === 'object'
-          ? buyerMaxPricing.providers as DashboardConfig['buyer']['maxPricing']['providers']
-          : defaults.buyer.maxPricing.providers,
-      },
-      minPeerReputation: asNumber(buyer.minPeerReputation, defaults.buyer.minPeerReputation),
-      proxyPort: asNumber(buyer.proxyPort, defaults.buyer.proxyPort),
-    },
-    network: {
-      bootstrapNodes: asStringArray(network.bootstrapNodes, defaults.network.bootstrapNodes),
-    },
-    payments: {
-      preferredMethod: asString(payments.preferredMethod, defaults.payments.preferredMethod),
-      platformFeeRate: asNumber(payments.platformFeeRate, defaults.payments.platformFeeRate),
-    },
-    providers: Array.isArray(root.providers) ? root.providers : defaults.providers,
-    plugins,
-  };
-}
-
-async function startDashboardRuntime(port?: number): Promise<void> {
-  const targetPort = toSafeDashboardPort(port ?? dashboardRuntime.port);
-
-  if (dashboardRuntime.running && dashboardRuntime.port === targetPort) {
-    return;
-  }
-  if (dashboardStartPromise) {
-    await dashboardStartPromise;
-    if (dashboardRuntime.running && dashboardRuntime.port === targetPort) {
-      return;
-    }
-  }
-
-  const startAttempt = (async () => {
-    if (dashboardRuntime.running) {
-      await stopDashboardRuntime('restart');
-    }
-
-    dashboardRuntime.port = targetPort;
-    dashboardRuntime.lastError = null;
-
-    try {
-      const config = await loadDashboardConfig(ACTIVE_CONFIG_PATH);
-      dashboardServer = await createDashboardServer(config, targetPort, { configPath: ACTIVE_CONFIG_PATH });
-      await dashboardServer.start();
-
-      dashboardRuntime.running = true;
-      dashboardRuntime.startedAt = Date.now();
-      dashboardRuntime.lastExitCode = null;
-      dashboardRuntime.lastError = null;
-      dashboardPortInUseUntilMs = 0;
-
-      appendLog('dashboard', 'system', `Embedded dashboard engine running on http://127.0.0.1:${targetPort}`);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      dashboardRuntime.running = false;
-      dashboardRuntime.startedAt = null;
-      dashboardRuntime.lastExitCode = 1;
-      dashboardRuntime.lastError = message;
-      dashboardServer = null;
-
-      if (isAddressInUseError(message)) {
-        // Avoid startup log storms from parallel callers while still allowing a near-term retry.
-        dashboardPortInUseUntilMs = Date.now() + DASHBOARD_PORT_IN_USE_RETRY_COOLDOWN_MS;
-      }
-
-      appendLog('dashboard', 'system', `Embedded dashboard engine failed to start: ${message}`);
-      throw err;
-    }
-  })();
-
-  dashboardStartPromise = startAttempt;
-  try {
-    await startAttempt;
-  } finally {
-    if (dashboardStartPromise === startAttempt) {
-      dashboardStartPromise = null;
-    }
-  }
-}
-
-async function stopDashboardRuntime(reason: string): Promise<void> {
-  if (!dashboardServer) {
-    dashboardRuntime.running = false;
-    dashboardRuntime.startedAt = null;
-    emitRuntimeState();
-    return;
-  }
-
-  try {
-    await dashboardServer.stop();
-    dashboardRuntime.lastExitCode = 0;
-    appendLog('dashboard', 'system', `Embedded dashboard engine stopped (${reason}).`);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    dashboardRuntime.lastExitCode = 1;
-    dashboardRuntime.lastError = message;
-    appendLog('dashboard', 'system', `Embedded dashboard engine stop failed: ${message}`);
-  } finally {
-    dashboardServer = null;
-    dashboardRuntime.running = false;
-    dashboardRuntime.startedAt = null;
-    emitRuntimeState();
-  }
-}
-
-function createWindow(): void {
-  const macosWindowChrome = process.platform === 'darwin'
-    ? {
-      titleBarStyle: 'hiddenInset' as const,
-      trafficLightPosition: { x: 14, y: 16 },
-    }
-    : {};
-
-  mainWindow = new BrowserWindow({
-    width: 1240,
-    height: 860,
-    minWidth: 980,
-    minHeight: 700,
-    title: APP_NAME,
-    icon: APP_ICON_PATH,
-    backgroundColor: '#ececec',
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.cjs'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
-    },
-    ...macosWindowChrome,
-  });
-
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
-    return { action: 'deny' };
-  });
-
-  mainWindow.on('enter-full-screen', () => {
-    mainWindow?.webContents.send('fullscreen-change', true);
-  });
-  mainWindow.on('leave-full-screen', () => {
-    mainWindow?.webContents.send('fullscreen-change', false);
-  });
-  mainWindow.on('focus', () => {
-    mainWindow?.webContents.send('window-focus-change', true);
-  });
-  mainWindow.on('blur', () => {
-    mainWindow?.webContents.send('window-focus-change', false);
-  });
-
-  void mainWindow.loadURL(rendererUrl);
-
-  mainWindow.webContents.on('did-finish-load', () => {
-    if (!isDev || !mainWindow) return;
-    void mainWindow.webContents
-      .executeJavaScript('Boolean(window.antseedDesktop)', true)
-      .then((ok) => {
-        console.log(`[desktop] preload bridge ${ok ? 'ready' : 'missing'}`);
-      })
-      .catch((err) => {
-        console.error(`[desktop] preload bridge check failed: ${String(err)}`);
-      });
-  });
-
-  if (isDev) {
-    mainWindow.webContents.openDevTools({ mode: 'detach' });
-  }
-
-  // Allow opening DevTools in production for debugging (Cmd+Option+I / Ctrl+Shift+I).
-  mainWindow.webContents.on('before-input-event', (_event, input) => {
-    const devToolsShortcut =
-      (input.meta && input.alt && input.key === 'i') ||   // macOS: Cmd+Option+I
-      (input.control && input.shift && input.key === 'I'); // Windows/Linux: Ctrl+Shift+I
-    if (devToolsShortcut && mainWindow) {
-      mainWindow.webContents.openDevTools({ mode: 'detach' });
-    }
-  });
-
-  mainWindow.on('closed', () => {
-    mainWindow = null;
-  });
-}
-
-function showAboutDialog(): void {
-  void dialog.showMessageBox({
-    type: 'none',
-    title: `About ${APP_NAME}`,
-    message: APP_NAME,
-    detail: `Version ${app.getVersion()}`,
-    buttons: ['OK'],
-    icon: APP_ICON_PATH ? nativeImage.createFromPath(APP_ICON_PATH) : undefined,
-  });
-}
-
-function createApplicationMenu(): void {
-  const template: MenuItemConstructorOptions[] = process.platform === 'darwin'
-    ? [
-      {
-        label: APP_NAME,
-        submenu: [
-          { label: `About ${APP_NAME}`, click: () => showAboutDialog() },
-          { type: 'separator' },
-          { role: 'services' },
-          { type: 'separator' },
-          { role: 'hide', label: `Hide ${APP_NAME}` },
-          { role: 'hideOthers' },
-          { role: 'unhide' },
-          { type: 'separator' },
-          { role: 'quit', label: `Quit ${APP_NAME}` },
-        ],
-      },
-      { role: 'editMenu' },
-      { role: 'viewMenu' },
-      { role: 'windowMenu' },
-      {
-        role: 'help',
-        submenu: [
-          { label: `About ${APP_NAME}`, click: () => showAboutDialog() },
-        ],
-      },
-    ]
-    : [
-      {
-        role: 'fileMenu',
-      },
-      {
-        role: 'editMenu',
-      },
-      {
-        role: 'viewMenu',
-      },
-      {
-        role: 'windowMenu',
-      },
-      {
-        role: 'help',
-        submenu: [
-          { label: `About ${APP_NAME}`, click: () => showAboutDialog() },
-        ],
-      },
-    ];
-
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
-}
-
-function defaultNetworkStats(): DashboardNetworkStats {
-  return {
-    totalPeers: 0,
-    dhtNodeCount: 0,
-    dhtHealthy: false,
-    lastScanAt: null,
-    totalLookups: 0,
-    successfulLookups: 0,
-    lookupSuccessRate: 0,
-    averageLookupLatencyMs: 0,
-    healthReason: 'dashboard offline',
-  };
-}
-
-function toSafeDashboardEndpoint(endpoint: string): DashboardEndpoint | null {
-  if (DASHBOARD_ENDPOINTS.has(endpoint as DashboardEndpoint)) {
-    return endpoint as DashboardEndpoint;
-  }
-  return null;
-}
-
-function sanitizeDashboardQuery(query: unknown): Record<string, DashboardQueryValue> {
-  if (!query || typeof query !== 'object') {
-    return {};
-  }
-
-  const safe: Record<string, DashboardQueryValue> = {};
-  for (const [rawKey, rawValue] of Object.entries(query)) {
-    const key = rawKey.trim();
-    if (key.length === 0) {
-      continue;
-    }
-    if (typeof rawValue === 'string' || typeof rawValue === 'number' || typeof rawValue === 'boolean') {
-      safe[key] = rawValue;
-    }
-  }
-  return safe;
-}
-
-const DASHBOARD_FETCH_TIMEOUT_MS = 10_000;
-
-function buildDashboardUrl(endpoint: DashboardEndpoint, port: number, query: Record<string, DashboardQueryValue>): string {
-  const url = new URL(`http://127.0.0.1:${port}/api/${endpoint}`);
-  for (const [key, value] of Object.entries(query)) {
-    url.searchParams.set(key, String(value));
-  }
-  return url.toString();
-}
-
-function errorMessageFromPayload(payload: unknown): string | null {
-  if (!payload || typeof payload !== 'object') {
-    return null;
-  }
-  const candidate = (payload as { error?: unknown }).error;
-  if (typeof candidate === 'string' && candidate.trim().length > 0) {
-    return candidate;
-  }
-  return null;
-}
-
-async function fetchDashboardData(
-  endpoint: DashboardEndpoint,
-  port?: number,
-  query: Record<string, DashboardQueryValue> = {},
-): Promise<DashboardApiResult> {
-  const safePort = toSafeDashboardPort(port);
-  const url = buildDashboardUrl(endpoint, safePort, query);
-  const controller = new AbortController();
-  const timeout = setTimeout(() => {
-    controller.abort();
-  }, DASHBOARD_FETCH_TIMEOUT_MS);
-
-  try {
-    const response = await fetch(url, {
-      signal: controller.signal,
-    });
-
-    let payload: unknown = null;
-    const contentType = response.headers.get('content-type') ?? '';
-    if (contentType.includes('application/json')) {
-      payload = await response.json();
-    } else {
-      payload = await response.text();
-    }
-
-    if (!response.ok) {
-      return {
-        ok: false,
-        data: payload,
-        error: errorMessageFromPayload(payload) ?? `dashboard api returned ${response.status}`,
-        status: response.status,
-      };
-    }
-
-    return {
-      ok: true,
-      data: payload,
-      error: null,
-      status: response.status,
-    };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const normalized = message.toLowerCase();
-    const error = normalized.includes('abort')
-      ? `dashboard ${endpoint} request timed out after ${String(DASHBOARD_FETCH_TIMEOUT_MS)}ms`
-      : message;
-    return {
-      ok: false,
-      data: null,
-      error,
-      status: null,
-    };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-async function scanDashboardNetwork(port?: number): Promise<DashboardApiResult> {
-  const safePort = toSafeDashboardPort(port);
-  const url = `http://127.0.0.1:${safePort}/api/network/scan`;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => {
-    controller.abort();
-  }, DASHBOARD_FETCH_TIMEOUT_MS);
-
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-      },
-      signal: controller.signal,
-    });
-
-    let payload: unknown = null;
-    const contentType = response.headers.get('content-type') ?? '';
-    if (contentType.includes('application/json')) {
-      payload = await response.json();
-    } else {
-      payload = await response.text();
-    }
-
-    if (!response.ok) {
-      return {
-        ok: false,
-        data: payload,
-        error: errorMessageFromPayload(payload) ?? `dashboard api returned ${response.status}`,
-        status: response.status,
-      };
-    }
-
-    return {
-      ok: true,
-      data: payload,
-      error: null,
-      status: response.status,
-    };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const normalized = message.toLowerCase();
-    const error = normalized.includes('abort')
-      ? `dashboard network scan timed out after ${String(DASHBOARD_FETCH_TIMEOUT_MS)}ms`
-      : message;
-    return {
-      ok: false,
-      data: null,
-      error,
-      status: null,
-    };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-async function updateDashboardConfig(
-  config: Record<string, unknown>,
-  port?: number,
-): Promise<DashboardApiResult> {
-  const safePort = toSafeDashboardPort(port);
-  const url = `http://127.0.0.1:${safePort}/api/config`;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => {
-    controller.abort();
-  }, DASHBOARD_FETCH_TIMEOUT_MS);
-
-  try {
-    const response = await fetch(url, {
-      method: 'PUT',
-      headers: {
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify(config),
-      signal: controller.signal,
-    });
-
-    let payload: unknown = null;
-    const contentType = response.headers.get('content-type') ?? '';
-    if (contentType.includes('application/json')) {
-      payload = await response.json();
-    } else {
-      payload = await response.text();
-    }
-
-    if (!response.ok) {
-      return {
-        ok: false,
-        data: payload,
-        error: errorMessageFromPayload(payload) ?? `dashboard api returned ${response.status}`,
-        status: response.status,
-      };
-    }
-
-    return {
-      ok: true,
-      data: payload,
-      error: null,
-      status: response.status,
-    };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const normalized = message.toLowerCase();
-    const error = normalized.includes('abort')
-      ? `dashboard config update timed out after ${String(DASHBOARD_FETCH_TIMEOUT_MS)}ms`
-      : message;
-    return {
-      ok: false,
-      data: null,
-      error,
-      status: null,
-    };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-async function fetchNetworkSnapshot(port?: number): Promise<DashboardNetworkResult> {
-  const response = await fetchDashboardData('network', port);
-  if (!response.ok || !response.data || typeof response.data !== 'object') {
-    return {
-      ok: false,
-      peers: [],
-      stats: defaultNetworkStats(),
-      error: response.error ?? 'dashboard network api error',
-    };
-  }
-
-  const payload = response.data as Partial<DashboardNetworkSnapshot>;
-  const peers = Array.isArray(payload.peers) ? payload.peers : [];
-  const stats = payload.stats ?? defaultNetworkStats();
-
-  return {
-    ok: true,
-    peers,
-    stats,
-    error: null,
-  };
-}
-
-async function ensureDashboardRuntime(targetPort?: number): Promise<void> {
-  if (dashboardRuntime.running) {
-    return;
-  }
-
-  const desiredPort = toSafeDashboardPort(targetPort ?? dashboardRuntime.port);
-  const now = Date.now();
-  if (dashboardPortInUseUntilMs > now && dashboardRuntime.port === desiredPort) {
-    return;
-  }
-
-  try {
-    await startDashboardRuntime(desiredPort);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (isAddressInUseError(message)) {
-      appendLog('dashboard', 'system', `Dashboard port ${desiredPort} already in use; using existing local data service.`);
-      return;
-    }
-    throw err;
-  }
-}
+// ── IPC Handlers ──
 
 ipcMain.handle('runtime:get-state', async () => {
   return {
@@ -1547,22 +298,7 @@ ipcMain.handle('runtime:get-state', async () => {
 });
 
 ipcMain.handle('runtime:start', async (_event, options: StartOptions) => {
-  if (options.mode === 'dashboard') {
-    try {
-      await startDashboardRuntime(options.dashboardPort);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (!isAddressInUseError(message)) {
-        throw err;
-      }
-      appendLog('dashboard', 'system', 'Dashboard port already in use; reusing existing local data service.');
-    }
-    return {
-      state: getDashboardProcessState(),
-      processes: getCombinedProcessState(),
-      daemonState: processManager.getDaemonStateSnapshot(),
-    };
-  }
+  await ensureSecureIdentity();
 
   const startOptions: StartOptions = {
     ...options,
@@ -1570,6 +306,7 @@ ipcMain.handle('runtime:start', async (_event, options: StartOptions) => {
     env: {
       ...(options.env ?? {}),
       ...(desktopDebugEnabled ? { ANTSEED_DEBUG: '1' } : {}),
+      ...secureIdentityEnv(),
     },
   };
   if (desktopDebugEnabled) {
@@ -1585,15 +322,6 @@ ipcMain.handle('runtime:start', async (_event, options: StartOptions) => {
 });
 
 ipcMain.handle('runtime:stop', async (_event, mode: RuntimeMode) => {
-  if (mode === 'dashboard') {
-    await stopDashboardRuntime('manual stop');
-    return {
-      state: getDashboardProcessState(),
-      processes: getCombinedProcessState(),
-      daemonState: processManager.getDaemonStateSnapshot(),
-    };
-  }
-
   const state = await processManager.stop(mode);
   return {
     state,
@@ -1607,12 +335,6 @@ ipcMain.handle('desktop:set-debug-logs', (_event, enabled: boolean) => {
   return { ok: true };
 });
 
-ipcMain.handle('runtime:open-dashboard', async (_event, port?: number) => {
-  const openPort = dashboardRuntime.running ? dashboardRuntime.port : toSafeDashboardPort(port);
-  await shell.openExternal(`http://127.0.0.1:${openPort}`);
-  return { ok: true };
-});
-
 ipcMain.handle('runtime:clear-logs', async () => {
   logBuffer.length = 0;
   return { ok: true };
@@ -1622,6 +344,23 @@ ipcMain.handle('app:get-setup-status', () => ({
   needed: appSetupNeeded,
   complete: appSetupComplete,
 }));
+
+ipcMain.handle('identity:get', async () => {
+  try {
+    await ensureSecureIdentity();
+    const identity = getSecureIdentity();
+    if (!identity) {
+      return { ok: false, data: null, error: 'Identity not available (safeStorage may not be ready)' };
+    }
+    return {
+      ok: true,
+      data: { peerId: identity.peerId },
+      error: null,
+    };
+  } catch (err) {
+    return { ok: false, data: null, error: err instanceof Error ? err.message : String(err) };
+  }
+});
 
 ipcMain.handle('plugins:list', async () => {
   try {
@@ -1648,10 +387,10 @@ ipcMain.handle('plugins:install', async (_event, packageName: string) => {
   }
 
   try {
-    appendLog('dashboard', 'system', `Installing plugin "${normalized}"...`);
+    appendLog('connect', 'system', `Installing plugin "${normalized}"...`);
     await installPluginDependency(normalized);
     const plugins = await listInstalledPlugins();
-    appendLog('dashboard', 'system', `Installed plugin "${normalized}".`);
+    appendLog('connect', 'system', `Installed plugin "${normalized}".`);
     return { ok: true, package: normalized, plugins, error: null };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -1660,14 +399,14 @@ ipcMain.handle('plugins:install', async (_event, packageName: string) => {
     if (legacyPackageName) {
       try {
         const aliasSpec = toNpmAliasInstallSpec(normalized, legacyPackageName);
-        appendLog('dashboard', 'system', `Registry install failed; retrying via legacy alias: ${aliasSpec}`);
+        appendLog('connect', 'system', `Registry install failed; retrying via legacy alias: ${aliasSpec}`);
         await installPluginDependency(aliasSpec);
         const plugins = await listInstalledPlugins();
-        appendLog('dashboard', 'system', `Installed plugin "${normalized}" using legacy package alias "${legacyPackageName}".`);
+        appendLog('connect', 'system', `Installed plugin "${normalized}" using legacy package alias "${legacyPackageName}".`);
         return { ok: true, package: normalized, plugins, error: null };
       } catch (legacyErr) {
         const legacyMessage = legacyErr instanceof Error ? legacyErr.message : String(legacyErr);
-        appendLog('dashboard', 'system', `Legacy alias install failed for "${normalized}": ${legacyMessage}`);
+        appendLog('connect', 'system', `Legacy alias install failed for "${normalized}": ${legacyMessage}`);
       }
     }
 
@@ -1675,14 +414,14 @@ ipcMain.handle('plugins:install', async (_event, packageName: string) => {
 
     if (localSource) {
       try {
-        appendLog('dashboard', 'system', `Registry install failed; retrying from local source: ${localSource}`);
+        appendLog('connect', 'system', `Registry install failed; retrying from local source: ${localSource}`);
         await installPluginDependency(toFileInstallSpec(normalized, localSource));
         const plugins = await listInstalledPlugins();
-        appendLog('dashboard', 'system', `Installed plugin "${normalized}" from local source.`);
+        appendLog('connect', 'system', `Installed plugin "${normalized}" from local source.`);
         return { ok: true, package: normalized, plugins, error: null };
       } catch (localErr) {
         const localMessage = localErr instanceof Error ? localErr.message : String(localErr);
-        appendLog('dashboard', 'system', `Local plugin install failed for "${normalized}": ${localMessage}`);
+        appendLog('connect', 'system', `Local plugin install failed for "${normalized}": ${localMessage}`);
         return {
           ok: false,
           package: normalized,
@@ -1692,7 +431,7 @@ ipcMain.handle('plugins:install', async (_event, packageName: string) => {
       }
     }
 
-    appendLog('dashboard', 'system', `Plugin install failed for "${normalized}": ${message}`);
+    appendLog('connect', 'system', `Plugin install failed for "${normalized}": ${message}`);
     return {
       ok: false,
       package: normalized,
@@ -1702,36 +441,75 @@ ipcMain.handle('plugins:install', async (_event, packageName: string) => {
   }
 });
 
-ipcMain.handle('runtime:get-network', async (_event, port?: number) => {
-  const requestedPort = toSafeDashboardPort(port);
-  await ensureDashboardRuntime(requestedPort);
-  const activePort = dashboardRuntime.running ? dashboardRuntime.port : requestedPort;
-  return fetchNetworkSnapshot(activePort);
+ipcMain.handle('runtime:get-network', async () => {
+  await refreshPeerCache();
+  return getNetworkSnapshot();
+});
+
+ipcMain.handle('runtime:lookup-peer', async (_event, peerId: string) => {
+  if (typeof peerId !== 'string' || peerId.trim().length === 0) {
+    return { ok: false, peer: null, error: 'Invalid peerId' };
+  }
+  await refreshPeerCache();
+  const peer = lookupPeer(peerId.trim());
+  return { ok: Boolean(peer), peer, error: peer ? null : 'Peer not found' };
+});
+
+ipcMain.handle('runtime:touch-peer', (_event, peerId: string) => {
+  if (typeof peerId !== 'string' || peerId.trim().length === 0) return { ok: false };
+  return { ok: touchPeer(peerId.trim()) };
 });
 
 ipcMain.handle(
-  'runtime:get-dashboard-data',
+  'runtime:get-data',
   async (
     _event,
     endpoint: string,
-    options?: { port?: number; query?: Record<string, unknown> },
+    _options?: { port?: number; query?: Record<string, unknown> },
   ) => {
-    const safeEndpoint = toSafeDashboardEndpoint(endpoint);
-    if (!safeEndpoint) {
-      return {
-        ok: false,
-        data: null,
-        error: `Unsupported dashboard endpoint: ${endpoint}`,
-        status: null,
-      } satisfies DashboardApiResult;
+    // Serve status, config, and network directly from files — no dashboard needed.
+    if (endpoint === 'status') {
+      try {
+        const data = await readNodeStatus(ACTIVE_CONFIG_PATH);
+        return { ok: true, data, error: null, status: 200 } satisfies ApiResult;
+      } catch (err) {
+        return { ok: false, data: null, error: err instanceof Error ? err.message : String(err), status: null } satisfies ApiResult;
+      }
     }
 
-    const requestedPort = toSafeDashboardPort(options?.port);
-    await ensureDashboardRuntime(requestedPort);
+    if (endpoint === 'config') {
+      try {
+        const config = await readConfig(ACTIVE_CONFIG_PATH);
+        return { ok: true, data: { config }, error: null, status: 200 } satisfies ApiResult;
+      } catch (err) {
+        return { ok: false, data: null, error: err instanceof Error ? err.message : String(err), status: null } satisfies ApiResult;
+      }
+    }
 
-    const safeQuery = sanitizeDashboardQuery(options?.query);
-    const activePort = dashboardRuntime.running ? dashboardRuntime.port : requestedPort;
-    return fetchDashboardData(safeEndpoint, activePort, safeQuery);
+    if (endpoint === 'network' || endpoint === 'peers') {
+      try {
+        await refreshPeerCache();
+        const snapshot = getNetworkSnapshot();
+        if (endpoint === 'peers') {
+          return { ok: true, data: { peers: snapshot.peers, total: snapshot.peers.length, degraded: false }, error: null, status: 200 } satisfies ApiResult;
+        }
+      return { ok: true, data: snapshot, error: null, status: 200 } satisfies ApiResult;
+      } catch (err) {
+        return { ok: false, data: null, error: err instanceof Error ? err.message : String(err), status: null } satisfies ApiResult;
+      }
+    }
+
+    if (endpoint === 'data-sources') {
+      return { ok: true, data: { configPath: ACTIVE_CONFIG_PATH }, error: null, status: 200 } satisfies ApiResult;
+    }
+
+    // Channels/earnings are seller-only — not needed in the desktop (buyer) app.
+    return {
+      ok: false,
+      data: null,
+      error: `Endpoint "${endpoint}" is not available in the desktop app`,
+      status: null,
+    } satisfies ApiResult;
   },
 );
 
@@ -1759,150 +537,297 @@ function sanitizeDashboardConfigPayload(raw: unknown): Record<string, unknown> {
 }
 
 ipcMain.handle(
-  'runtime:update-dashboard-config',
-  async (_event, config: Record<string, unknown>, options?: { port?: number }): Promise<DashboardApiResult> => {
+  'runtime:update-config',
+  async (_event, config: Record<string, unknown>): Promise<ApiResult> => {
     const safeConfig = sanitizeDashboardConfigPayload(config);
     if (Object.keys(safeConfig).length === 0) {
       return { ok: false, data: null, error: 'No valid config keys provided', status: null };
     }
-    const requestedPort = toSafeDashboardPort(options?.port);
-    await ensureDashboardRuntime(requestedPort);
-    const activePort = dashboardRuntime.running ? dashboardRuntime.port : requestedPort;
-    return updateDashboardConfig(safeConfig, activePort);
+    try {
+      const merged = await mergeConfig(safeConfig, ACTIVE_CONFIG_PATH);
+      cachedCryptoConfig = null; // Invalidate cached crypto config
+      creditsRpcFailCount = 0; // Reset backoff so new config is tried immediately
+      // Restart payments portal if running so it picks up new contract/chain config
+      void stopPaymentsPortal().catch(() => {});
+      return { ok: true, data: { config: merged }, error: null, status: 200 };
+    } catch (err) {
+      return { ok: false, data: null, error: err instanceof Error ? err.message : String(err), status: null };
+    }
   },
 );
 
-// ── Wallet IPC Handlers ──
+// ── Credits / Deposits Balance ──
 
-type WalletInfo = {
-  address: string | null;
-  chainId: string;
-  balanceETH: string;
-  balanceUSDC: string;
-  escrow: {
-    deposited: string;
-    committed: string;
-    available: string;
-  };
+type CreditsInfo = {
+  evmAddress: string | null;
+  operatorAddress: string | null;
+  balanceUsdc: string;
+  reservedUsdc: string;
+  availableUsdc: string;
+  pendingWithdrawalUsdc: string;
+  creditLimitUsdc: string;
 };
 
-ipcMain.handle('wallet:get-info', async (_event, port?: number): Promise<{ ok: boolean; data: WalletInfo | null; error: string | null }> => {
+// Use shared formatUsdc from @antseed/node
+const formatUsdc6 = formatUsdc;
+
+let cachedCreditsInfo: CreditsInfo | null = null;
+
+// Cached crypto config — invalidated on config update. Uses protocol defaults
+// from resolveChainConfig with optional user overrides from config.json.
+let cachedCryptoConfig: { rpcUrl: string; depositsAddress: string; channelsAddress: string; usdcAddress: string; chainId: number } | null = null;
+
+async function loadCachedCryptoConfig(): Promise<typeof cachedCryptoConfig> {
+  if (cachedCryptoConfig) return cachedCryptoConfig;
+  let overrides: Record<string, unknown> = {};
   try {
-    const requestedPort = toSafeDashboardPort(port);
-    await ensureDashboardRuntime(requestedPort);
-    const activePort = dashboardRuntime.running ? dashboardRuntime.port : requestedPort;
+    const config = await readConfig(ACTIVE_CONFIG_PATH);
+    const payments = asRecord(config.payments);
+    overrides = asRecord(payments.crypto);
+  } catch {
+    // No config — no crypto config available
+  }
+  // Only resolve if the user has explicitly configured a chain or contract address.
+  // Without explicit config, there's no contract to query — return null so callers
+  // skip RPC calls instead of hitting a default contract that may not exist.
+  const hasExplicitConfig = overrides.chainId || overrides.rpcUrl || overrides.depositsContractAddress || overrides.channelsContractAddress;
+  if (!hasExplicitConfig) {
+    return null;
+  }
+  const cc = resolveChainConfig({
+    chainId: asString(overrides.chainId as string, '') || undefined,
+    rpcUrl: asString(overrides.rpcUrl as string, '') || undefined,
+    depositsContractAddress: asString(overrides.depositsContractAddress as string, '') || undefined,
+    channelsContractAddress: asString(overrides.channelsContractAddress as string, '') || undefined,
+    usdcContractAddress: asString(overrides.usdcContractAddress as string, '') || undefined,
+  });
+  cachedCryptoConfig = { rpcUrl: cc.rpcUrl, depositsAddress: cc.depositsContractAddress, channelsAddress: cc.channelsContractAddress, usdcAddress: cc.usdcContractAddress, chainId: cc.evmChainId };
+  return cachedCryptoConfig;
+}
 
-    const [statusResult, configResult] = await Promise.all([
-      fetchDashboardData('status', activePort),
-      fetchDashboardData('config', activePort),
+let creditsRpcFailCount = 0;
+let creditsRpcLastFailAt = 0;
+const CREDITS_RPC_BACKOFF_THRESHOLD = 3;
+const CREDITS_RPC_RETRY_COOLDOWN_MS = 60_000;
+
+async function refreshCreditsInfo(): Promise<CreditsInfo> {
+  const identity = getSecureIdentity();
+  if (!identity) {
+    return { evmAddress: null, operatorAddress: null, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
+  }
+
+  const evmAddress = identity.wallet.address;
+  const cc = await loadCachedCryptoConfig();
+  if (!cc) {
+    return { evmAddress, operatorAddress: null, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
+  }
+
+  // Back off after repeated RPC failures; retry after cooldown so transient
+  // outages don't permanently disable balance display for the session.
+  if (creditsRpcFailCount >= CREDITS_RPC_BACKOFF_THRESHOLD) {
+    if (Date.now() - creditsRpcLastFailAt < CREDITS_RPC_RETRY_COOLDOWN_MS) {
+      if (cachedCreditsInfo) return cachedCreditsInfo;
+      return { evmAddress, operatorAddress: null, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
+    }
+    // Cooldown elapsed — allow a retry attempt
+    creditsRpcFailCount = 0;
+  }
+
+  const depositsClient = new DepositsClient({ rpcUrl: cc.rpcUrl, contractAddress: cc.depositsAddress, usdcAddress: cc.usdcAddress });
+
+  try {
+    const [balance, creditLimit, operatorAddress] = await Promise.all([
+      depositsClient.getBuyerBalance(evmAddress),
+      depositsClient.getBuyerCreditLimit(evmAddress),
+      (async (): Promise<string | null> => {
+        try {
+          const { ChannelsClient } = await import('@antseed/node');
+          const sc = new ChannelsClient({ rpcUrl: cc.rpcUrl, contractAddress: cc.channelsAddress });
+          const addr = await sc.getOperator(evmAddress);
+          return addr && addr !== '0x0000000000000000000000000000000000000000' ? addr : null;
+        } catch { return null; }
+      })(),
     ]);
+    creditsRpcFailCount = 0;
 
-    const statusData = statusResult.ok ? asRecord(statusResult.data) : {};
-    const configData = configResult.ok ? asRecord(asRecord(configResult.data).config ?? configResult.data) : {};
-    const identity = asRecord(configData.identity);
-    const payments = asRecord(configData.payments);
+    const info: CreditsInfo = {
+      evmAddress,
+      operatorAddress,
+      balanceUsdc: formatUsdc6(balance.available + balance.reserved),
+      reservedUsdc: formatUsdc6(balance.reserved),
+      availableUsdc: formatUsdc6(balance.available),
+      pendingWithdrawalUsdc: formatUsdc6(balance.pendingWithdrawal),
+      creditLimitUsdc: formatUsdc6(creditLimit),
+    };
+    cachedCreditsInfo = info;
+    return info;
+  } catch (err) {
+    creditsRpcFailCount++;
+    creditsRpcLastFailAt = Date.now();
+    if (creditsRpcFailCount <= 1) {
+      try { console.warn('[credits] Deposits RPC unavailable:', err instanceof Error ? err.message : String(err)); }
+      catch { /* EPIPE — ignore */ }
+    }
+    if (cachedCreditsInfo) return cachedCreditsInfo;
+    return { evmAddress, operatorAddress: null, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
+  }
+}
 
-    const walletAddress = asString(statusData.walletAddress as string, '') || asString(identity.walletAddress as string, '');
+ipcMain.handle('credits:get-info', async (): Promise<{ ok: boolean; data: CreditsInfo | null; error: string | null }> => {
+  try {
+    await ensureSecureIdentity();
+    const info = await refreshCreditsInfo();
+    return { ok: true, data: info, error: null };
+  } catch (err) {
+    return { ok: false, data: null, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+
+// Max spending per session: $5 USDC = 5,000,000 base units. Main process enforces
+// this cap to prevent a compromised renderer from signing unbounded authorizations.
+const MAX_SPENDING_AUTH_BASE_UNITS = 5_000_000n;
+const DEFAULT_SPENDING_AUTH_DURATION_SECONDS = 15 * 60; // 15 min — seller must call reserve() promptly
+const BYTES32_RE = /^0x[0-9a-fA-F]{64}$/;
+
+ipcMain.handle('payments:sign-spending-auth', async (_event, params: {
+  channelId: string;
+  cumulativeAmountBaseUnits: string;
+  metadataHash: string;
+}) => {
+  try {
+    // Validate renderer-supplied parameters at the trust boundary
+    if (!BYTES32_RE.test(params.channelId)) {
+      return { ok: false, error: 'Invalid channel ID format' };
+    }
+    const cumulativeAmount = BigInt(params.cumulativeAmountBaseUnits);
+    if (cumulativeAmount <= 0n || cumulativeAmount > MAX_SPENDING_AUTH_BASE_UNITS) {
+      return { ok: false, error: `cumulativeAmount exceeds cap (${MAX_SPENDING_AUTH_BASE_UNITS} base units)` };
+    }
+    if (!BYTES32_RE.test(params.metadataHash)) {
+      return { ok: false, error: 'Invalid metadataHash format' };
+    }
+
+    await ensureSecureIdentity();
+    const identity = getSecureIdentity();
+    if (!identity) {
+      return { ok: false, error: 'Identity not available' };
+    }
+
+    const cc = await loadCachedCryptoConfig();
+    if (!cc) {
+      return { ok: false, error: 'No channels contract configured' };
+    }
+
+    const wallet = identity.wallet;
+
+    // Sign SpendingAuth (AntSeed Channels domain)
+    const channelsDomain = makeChannelsDomain(cc.chainId, cc.channelsAddress);
+    const spendingAuthSig = await signSpendingAuth(wallet, channelsDomain, {
+      channelId: params.channelId,
+      cumulativeAmount,
+      metadataHash: params.metadataHash,
+    });
+
+    const buyerEvmAddress = identity.wallet.address;
 
     return {
       ok: true,
       data: {
-        address: walletAddress || null,
-        chainId: asString(payments.chainId as string, 'base-sepolia'),
-        balanceETH: '0.00',
-        balanceUSDC: '0.00',
-        escrow: {
-          deposited: '0.00',
-          committed: '0.00',
-          available: '0.00',
-        },
+        spendingAuthSig,
+        buyerEvmAddress,
       },
-      error: null,
     };
-  } catch (err) {
-    return {
-      ok: false,
-      data: null,
-      error: err instanceof Error ? err.message : String(err),
-    };
-  }
-});
-
-ipcMain.handle('wallet:deposit', async (_event, amount: string) => {
-  const numericAmount = Number(amount);
-  if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
-    return { ok: false, error: 'Invalid deposit amount' };
-  }
-  appendLog('dashboard', 'system', `Deposit requested: ${amount} USDC. Run 'antseed deposit ${amount}' in terminal.`);
-  return { ok: true, message: `Deposit of ${amount} USDC logged. Use CLI to execute: antseed deposit ${amount}` };
-});
-
-ipcMain.handle('wallet:withdraw', async (_event, amount: string) => {
-  const numericAmount = Number(amount);
-  if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
-    return { ok: false, error: 'Invalid withdrawal amount' };
-  }
-  appendLog('dashboard', 'system', `Withdrawal requested: ${amount} USDC. Run 'antseed withdraw ${amount}' in terminal.`);
-  return { ok: true, message: `Withdrawal of ${amount} USDC logged. Use CLI to execute: antseed withdraw ${amount}` };
-});
-
-// ── WalletConnect IPC Handlers ──
-
-const walletConnectManager = new WalletConnectManager();
-
-walletConnectManager.on('state', (state: unknown) => {
-  mainWindow?.webContents.send('wallet:wc-state-changed', state);
-});
-
-ipcMain.handle('wallet:wc-state', async () => {
-  return { ok: true, data: walletConnectManager.state };
-});
-
-ipcMain.handle('wallet:wc-connect', async () => {
-  try {
-    const uri = await walletConnectManager.connect();
-    if (!uri) {
-      return { ok: false, error: 'WalletConnect not initialized. Set WALLETCONNECT_PROJECT_ID environment variable.' };
-    }
-    return { ok: true, data: { uri } };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 });
 
-ipcMain.handle('wallet:wc-disconnect', async () => {
+ipcMain.handle('payments:get-peer-info', async (_event, peerId: string) => {
   try {
-    await walletConnectManager.disconnect();
-    return { ok: true };
+    if (typeof peerId !== 'string' || peerId.trim().length === 0) {
+      return { ok: false, error: 'Invalid peerId' };
+    }
+    await refreshPeerCache();
+    const peer = lookupPeer(peerId.trim());
+    if (!peer) {
+      return { ok: false, error: 'Peer not found' };
+    }
+
+    return {
+      ok: true,
+      data: {
+        peerId: peer.peerId,
+        displayName: peer.displayName ?? null,
+        reputation: peer.reputation ?? 0,
+        onChainReputation: (peer as Record<string, unknown>).onChainReputation ?? null,
+        onChainSessionCount: (peer as Record<string, unknown>).onChainSessionCount ?? null,
+        onChainDisputeCount: (peer as Record<string, unknown>).onChainDisputeCount ?? null,
+        evmAddress: peer.peerId ? peerIdToAddress(peer.peerId) : null,
+        timestamp: (peer as Record<string, unknown>).timestamp ?? null,
+        providers: peer.providers ?? [],
+        services: peer.services ?? [],
+      },
+    };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 });
 
 // ── AI Chat IPC Handlers ──
-registerPiChatHandlers({
+const chatEngine = registerPiChatHandlers({
   ipcMain,
   sendToRenderer: (channel, payload) => {
-    mainWindow?.webContents.send(channel, payload);
+    getMainWindow()?.webContents.send(channel, payload);
   },
   configPath: ACTIVE_CONFIG_PATH,
   isBuyerRuntimeRunning: () => getCombinedProcessState().some((state) => state.mode === "connect" && state.running),
+  ensureBuyerRuntimeStarted: async () => {
+    const connectState = getCombinedProcessState().find((state) => state.mode === 'connect');
+    if (connectState?.running) {
+      return true;
+    }
+
+    await ensureSecureIdentity();
+
+    const startOptions: StartOptions = {
+      mode: 'connect',
+      router: 'local',
+      ...(desktopDebugEnabled ? { verbose: true } : {}),
+      env: {
+        ...(desktopDebugEnabled ? { ANTSEED_DEBUG: '1' } : {}),
+        ...secureIdentityEnv(),
+      },
+    };
+
+    try {
+      await processManager.start(startOptions);
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.toLowerCase().includes('already running')) {
+        return true;
+      }
+      appendLog('connect', 'system', `Chat-triggered buyer runtime start failed: ${message}`);
+      return false;
+    }
+  },
   appendSystemLog: (line) => {
-    appendLog("dashboard", "system", line);
+    appendLog("connect", "system", line);
   },
   getNetworkPeers: async () => {
-    const requestedPort = dashboardRuntime.port;
-    await ensureDashboardRuntime(requestedPort);
-    const activePort = dashboardRuntime.running ? dashboardRuntime.port : requestedPort;
-    const snapshot = await fetchNetworkSnapshot(activePort);
+    await refreshPeerCache();
+    const snapshot = getNetworkSnapshot();
     if (!snapshot.ok) {
       return [];
     }
     return snapshot.peers
-      .map((peer) => ({
+      .map((peer: DashboardNetworkPeer) => ({
+        peerId: typeof peer.peerId === "string" ? peer.peerId : "",
+        displayName: peer.displayName ?? undefined,
         host: typeof peer.host === "string" ? peer.host.trim() : "",
         port: Number(peer.port) || 0,
         providers: Array.isArray(peer.providers) ? peer.providers.map((provider) => String(provider)) : [],
+        services: Array.isArray(peer.services) ? peer.services.map((s) => String(s)) : [],
       }))
       .filter((peer) => peer.host.length > 0
         && isPublicMetadataHost(peer.host)
@@ -1911,14 +836,81 @@ registerPiChatHandlers({
   },
 });
 
-ipcMain.handle('runtime:scan-network', async (_event, port?: number) => {
-  const requestedPort = toSafeDashboardPort(port);
-  await ensureDashboardRuntime(requestedPort);
-  const activePort = dashboardRuntime.running ? dashboardRuntime.port : requestedPort;
-  return scanDashboardNetwork(activePort);
+// Manual payment approval: sign the initial SpendingAuth and set it for the next request.
+// This only gates the initial session creation — once the user approves and the session
+// is established (reserve on-chain + AuthAck), subsequent per-request SpendingAuth
+// updates are handled automatically by BuyerPaymentManager.signPerRequestAuth()
+// without additional user interaction.
+ipcMain.handle('chat:approve-payment', async (_event, conversationId: string) => {
+  const paymentInfo = chatEngine.getCachedPaymentRequired(conversationId) ?? {};
+
+  try {
+    await ensureSecureIdentity();
+    const identity = getSecureIdentity();
+    if (!identity) {
+      return { ok: false, error: 'Identity not available' };
+    }
+
+    const cc = await loadCachedCryptoConfig();
+    if (!cc) {
+      return { ok: false, error: 'No channels contract configured' };
+    }
+
+    const wallet = identity.wallet;
+    const channelsDomain = makeChannelsDomain(cc.chainId, cc.channelsAddress);
+    const buyerEvmAddr = wallet.address;
+
+    const peerId = typeof paymentInfo.peerId === 'string' ? paymentInfo.peerId.trim() : '';
+    if (!peerId) {
+      return { ok: false, error: 'No seller peerId available for this payment' };
+    }
+    const sellerEvmAddr = peerIdToAddress(peerId);
+
+    // Generate random salt and compute deterministic channelId
+    const salt = '0x' + randomBytes(32).toString('hex');
+    const { computeChannelId } = await import('@antseed/node');
+    const channelId = computeChannelId(buyerEvmAddr, sellerEvmAddr, salt);
+    const deadline = Math.floor(Date.now() / 1000) + DEFAULT_SPENDING_AUTH_DURATION_SECONDS;
+
+    // Sign ReserveAuth — binds channelId, maxAmount, deadline
+    const maxAmount = 5_000_000n; // $5.00 per session
+    const reserveAuthSig = await signReserveAuth(wallet, channelsDomain, {
+      channelId,
+      maxAmount,
+      deadline: BigInt(deadline),
+    });
+
+    // Build the header payload
+    const authPayload = {
+      channelId,
+      cumulativeAmount: '0',
+      spendingAuthSig: reserveAuthSig,
+      buyerEvmAddr,
+      sellerEvmAddr,
+      metadataHash: ZERO_METADATA_HASH,
+      metadata: '',
+      reserveSalt: salt,
+      reserveMaxAmount: maxAmount.toString(),
+      reserveDeadline: deadline,
+    };
+
+    const authBase64 = Buffer.from(JSON.stringify(authPayload)).toString('base64');
+    chatEngine.setPendingSpendingAuth(conversationId, authBase64);
+
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
 });
 
-app.whenReady().then(() => {
+ipcMain.handle('runtime:scan-network', async () => {
+  // The buyer runtime handles peer discovery; just return the current state.
+  await refreshPeerCache();
+  const snapshot = getNetworkSnapshot();
+  return { ok: snapshot.ok, data: snapshot, error: snapshot.error, status: 200 };
+});
+
+app.whenReady().then(async () => {
   app.setName(APP_NAME);
   app.setAboutPanelOptions({
     applicationName: APP_NAME,
@@ -1929,15 +921,30 @@ app.whenReady().then(() => {
   if (process.platform === 'darwin' && APP_ICON_PATH && app.dock) {
     app.dock.setIcon(APP_ICON_PATH);
   }
-  createApplicationMenu();
+  createApplicationMenu(APP_NAME, APP_ICON_PATH);
 
-  createWindow();
+  // Ensure config.json exists before anything else (first launch).
+  // Must complete before creating the window — the renderer auto-starts the
+  // buyer runtime which needs config.json to find the router plugin.
+  await ensureConfig(ACTIVE_CONFIG_PATH).catch(() => {});
 
-  void startDashboardRuntime().catch(() => {
-    // Failure is already logged to renderer/system log.
+  createWindow({ appName: APP_NAME, appIconPath: APP_ICON_PATH, isDev, rendererUrl });
+
+  // Pre-load identity from encrypted store so it's ready before the first CLI spawn.
+  void ensureSecureIdentity().catch(() => {
+    // Failure is logged inside ensureSecureIdentity; CLI falls back to file-based identity.
   });
 
-  void ensureDefaultPlugin('@antseed/router-local').catch(() => {
+  // Payments portal starts lazily on first open (via payments:open-portal IPC)
+
+  void ensureDefaultPlugin('@antseed/router-local', {
+    getAppSetupNeeded: () => appSetupNeeded,
+    setAppSetupNeeded: (v) => { appSetupNeeded = v; },
+    getAppSetupComplete: () => appSetupComplete,
+    setAppSetupComplete: (v) => { appSetupComplete = v; },
+    getMainWindow,
+    appendLog,
+  }).catch(() => {
     // Failure is already logged via appendLog inside ensureDefaultPlugin.
   });
 
@@ -1948,7 +955,7 @@ app.whenReady().then(() => {
   let updateCheckInterval: ReturnType<typeof setInterval> | null = null;
 
   autoUpdater.on('update-downloaded', (info) => {
-    mainWindow?.webContents.send('app:update-status', { status: 'ready', version: info.version });
+    getMainWindow()?.webContents.send('app:update-status', { status: 'ready', version: info.version });
     if (updateCheckInterval) {
       clearInterval(updateCheckInterval);
       updateCheckInterval = null;
@@ -1968,51 +975,43 @@ app.whenReady().then(() => {
     autoUpdater.quitAndInstall(false, true);
   });
 
-  // Initialize WalletConnect if project ID is configured
-  const wcProjectId = process.env['WALLETCONNECT_PROJECT_ID'] ?? '';
-  if (wcProjectId.length > 0) {
-    void walletConnectManager.init(wcProjectId).catch((err) => {
-      console.error('[WalletConnect] init failed:', err instanceof Error ? err.message : String(err));
-    });
-  }
-
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
+      createWindow({ appName: APP_NAME, appIconPath: APP_ICON_PATH, isDev, rendererUrl });
     }
   });
 });
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
-    void Promise.allSettled([
-      stopDashboardRuntime('window close'),
-      processManager.stopAll(),
-    ]).finally(() => app.quit());
+    void processManager.stopAll().finally(() => app.quit());
   }
 });
 
+let isQuitting = false;
+
 app.on('before-quit', (event) => {
-  if ((app as unknown as { __antseedStopping?: boolean }).__antseedStopping) {
+  if (isQuitting) {
     return;
   }
 
   event.preventDefault();
-  (app as unknown as { __antseedStopping?: boolean }).__antseedStopping = true;
+  isQuitting = true;
 
-  void Promise.allSettled([
-    stopDashboardRuntime('app shutdown'),
-    processManager.stopAll(),
-  ]).finally(() => {
-    app.quit();
-  });
+  void processManager.stopAll()
+    .then(() => stopPaymentsPortal())
+    .finally(() => {
+      app.quit();
+    });
 });
 
 // Ensure child processes are cleaned up if the main process receives SIGTERM
 // (e.g. dev runner Ctrl+C kills Electron before before-quit fires).
 process.on('SIGTERM', () => {
-  void Promise.allSettled([
-    stopDashboardRuntime('SIGTERM'),
-    processManager.stopAll(),
-  ]).finally(() => process.exit(0));
+  void Promise.all([processManager.stopAll(), stopPaymentsPortal()]).finally(() => process.exit(0));
 });
+
+// Suppress EPIPE errors from console.error/console.warn when the dev terminal
+// pipe is closed (e.g. Ctrl+C in the terminal while Electron is still running).
+process.stdout?.on('error', () => {});
+process.stderr?.on('error', () => {});

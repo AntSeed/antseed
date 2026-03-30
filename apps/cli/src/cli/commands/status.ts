@@ -51,7 +51,7 @@ export function registerStatusCommand(program: Command): void {
           ['Peers connected', chalk.cyan(String(status.peerCount))],
           ['Earnings today', chalk.green(formatEarnings(status.earningsToday))],
           ['Tokens today', formatTokens(status.tokensToday)],
-          ['Active sessions', String(status.activeSessions)],
+          ['Active channels', String(status.activeChannels)],
           ['Uptime', status.uptime],
           ['Wallet address', status.walletAddress ?? chalk.dim('not configured')],
           ['Proxy port', status.proxyPort ? String(status.proxyPort) : chalk.dim('n/a')],

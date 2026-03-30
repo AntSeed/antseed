@@ -66,7 +66,7 @@ export function AppShell() {
     [actions],
   );
 
-  if (showSetup || !snap.appSetupStatusKnown || !snap.chatConversationsLoaded) {
+  if (showSetup) {
     return <SetupScreen />;
   }
 

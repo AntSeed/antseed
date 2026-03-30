@@ -6,10 +6,10 @@ This document provides a system-level security overview of the buyer-seller flow
 
 The buyer-seller flow enforces:
 
-1. **Peer authenticity** — every node is identified by a unique Ed25519 keypair; all trust-critical messages are signed.
+1. **Peer authenticity** — every node is identified by a unique secp256k1 keypair (EVM address); all trust-critical messages are signed.
 2. **Metadata integrity** — discovery metadata is signed and freshness-checked before use.
 3. **Bounded resource usage** — frame sizes, upload caps, stream durations, and connection counts are hard-limited.
-4. **Billing accountability** — usage is tracked via bilateral signed receipts and settled through on-chain escrow.
+4. **Billing accountability** — usage is tracked via bilateral signed receipts and settled through on-chain deposits and channels contracts.
 5. **Fail-closed behavior** — timeouts and disconnects deterministically finalize sessions without hanging state.
 
 ## 2. Trust Boundaries
@@ -20,7 +20,7 @@ The buyer-seller flow enforces:
 | DHT network | No — verified via signatures | Peer endpoints and topic results |
 | Metadata fetch | No — verified via signatures + freshness | Signed peer metadata payload |
 | P2P transport (WebRTC/TCP) | Authenticated via intro envelopes | Request/response frames, payment frames |
-| On-chain escrow | Trust-minimized (contract + chain consensus) | Session locks, settlement balances, disputes |
+| On-chain contracts | Trust-minimized (contract + chain consensus) | Deposits, session locks, settlement balances, disputes |
 
 ## 3. Buyer → Seller Flow and Controls
 
@@ -35,7 +35,7 @@ The buyer-seller flow enforces:
 
 ### 3.2 Connection Establishment and Peer Authentication
 
-- Signed auth envelopes include `peerId`, timestamp, nonce, and Ed25519 signature.
+- Signed auth envelopes include `peerId`, timestamp, nonce, and secp256k1 signature.
 - Timestamp skew checks (`INTRO_AUTH_MAX_SKEW_MS = 30s`) reject stale or future envelopes.
 - Nonce replay guard rejects previously seen nonces.
 - Inbound initial line limited to `8KB` with `10s` timeout.
@@ -52,37 +52,38 @@ The buyer-seller flow enforces:
 
 ### 3.4 Request Routing and Metering
 
-- Seller rejects requests with `402` when escrow is configured and lock is not committed.
+- Seller rejects requests with `402` when payments are configured and lock is not committed.
 - Session state tracked per buyer and finalized on disconnect, idle timeout, or shutdown.
 - Seller emits bilateral receipts after each request with `runningTotal` tracking.
-- Buyer acks receipts with Ed25519 signatures (auto-ack enabled by default).
+- Buyer acks receipts with secp256k1 signatures (auto-ack enabled by default).
 - Metering events and signed receipts persisted locally.
 
-### 3.5 Payment Authorization, Settlement, and Disputes
+### 3.5 Payment Authorization and Settlement
 
-- Buyer authorizes lock/top-up with ECDSA signatures over deterministic message hashes.
-- Seller recovers buyer address from lock signature before on-chain commit.
-- Buyer and seller exchange Ed25519-signed running-total artifacts off-chain.
-- Settlement submits buyer ECDSA authorization plus score.
-- On buyer disconnect with committed lock: seller opens dispute using `lastAckedTotal` or `runningTotal`.
-- Escrow client maintains per-address nonce cursor to prevent local tx nonce reuse.
+- Buyer signs EIP-712 ReserveAuth (channelId, maxAmount, deadline) to authorize session budget.
+- Seller recovers buyer address from ReserveAuth signature before on-chain reserve.
+- Per request: buyer signs EIP-712 SpendingAuth (channelId, cumulativeAmount, metadataHash).
+- Seller submits latest SpendingAuth to settle() or close() on-chain.
+- On buyer disconnect: seller calls close() with last SpendingAuth to finalize.
+- On seller disappearance: requestTimeout() (permissionless after deadline) + withdraw() after 15min grace.
+- Channels contract holds no USDC — all funds managed by AntseedDeposits.
 
 ## 4. Cryptographic Control Plane
 
 | Use Case | Primitive | Scope |
 |---|---|---|
-| Node identity | Ed25519 keypair | Peer ID and metadata signing |
-| Connection auth | Ed25519 signature + nonce + timestamp | Spoofing and replay prevention |
-| Metadata integrity | Ed25519 signature over encoded metadata | Discovery payload authenticity |
-| Payment auth (on-chain) | ECDSA over typed hashes | Lock, top-up, settlement authorizations |
-| Receipt/ack integrity | Ed25519 binary signatures | Running-total acknowledgment trail |
+| Node identity | secp256k1 keypair (EVM address) | Peer ID and metadata signing |
+| Connection auth | secp256k1 signature + nonce + timestamp | Spoofing and replay prevention |
+| Metadata integrity | secp256k1 signature over encoded metadata | Discovery payload authenticity |
+| Payment auth (on-chain) | EIP-712 ECDSA (ReserveAuth, SpendingAuth) | Reserve, cumulative spend, settlement authorizations |
+| Receipt/ack integrity | secp256k1 binary signatures | Running-total acknowledgment trail |
 
 ## 5. Operational Best Practices
 
 1. Keep `allowPrivateIPs=false` in production.
 2. Keep metadata signature verification and freshness checks enabled (both on by default).
 3. Prefer WebRTC transport for end-to-end encryption.
-4. Use dedicated wallets for escrow operations and monitor settlement events.
+4. Use dedicated wallets for deposit and settlement operations and monitor settlement events.
 5. Persist and back up metering/payment state for audit and incident reconstruction.
 6. Keep upload/stream caps at defaults or tighter for internet-facing sellers.
 

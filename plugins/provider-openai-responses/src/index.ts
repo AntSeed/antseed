@@ -5,12 +5,21 @@ import { resolve } from 'node:path';
 import type {
   AntseedProviderPlugin,
   Provider,
-  ProviderStreamCallbacks,
   SerializedHttpRequest,
   SerializedHttpResponse,
   ServiceApiProtocol,
+  TokenProvider,
+  TokenProviderState,
 } from '@antseed/node';
-import { parseServiceAliasMap, validateRequestService } from '@antseed/provider-core';
+import {
+  BaseProvider,
+  DEFAULT_HTTP_TIMEOUT_MS,
+  buildServiceApiProtocols,
+  parseCsv,
+  parseNonNegativeNumber,
+  parseServiceAliasMap,
+  parseServicePricingJson,
+} from '@antseed/provider-core';
 
 const DEFAULT_AUTH_FILE = '~/.codex/auth.json';
 const DEFAULT_BASE_URL = 'https://chatgpt.com/backend-api';
@@ -20,79 +29,10 @@ const DEFAULT_INPUT_PRICE = 10;
 const DEFAULT_OUTPUT_PRICE = 10;
 const DEFAULT_MAX_CONCURRENCY = 5;
 const REFRESH_BUFFER_MS = 5 * 60 * 1000;
-const MAX_RETRIES = 3;
-const BASE_DELAY_MS = 1000;
-const TRANSIENT_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
+const FETCH_TIMEOUT_MS = DEFAULT_HTTP_TIMEOUT_MS;
 const RESPONSE_PATH_PREFIX = '/v1/responses';
-const UPSTREAM_RESPONSES_PATH = '/codex/responses';
-const MODELS_PATH = '/v1/models';
-const HOP_BY_HOP_HEADERS = new Set([
-  'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization',
-  'te', 'trailers', 'transfer-encoding', 'upgrade',
-]);
-const INTERNAL_HEADERS = new Set(['x-antseed-provider']);
+const RELAY_PATH = '/responses';
 const AUTH_CLAIM_PATH = 'https://api.openai.com/auth';
-
-function parseNonNegativeNumber(raw: string | undefined, key: string, fallback: number): number {
-  const parsed = raw === undefined ? fallback : Number.parseFloat(raw);
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    throw new Error(`${key} must be a non-negative number`);
-  }
-  return parsed;
-}
-
-function parseServicePricingJson(raw: string | undefined): Provider['pricing']['services'] {
-  if (!raw) return undefined;
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw) as unknown;
-  } catch {
-    throw new Error('ANTSEED_SERVICE_PRICING_JSON must be valid JSON');
-  }
-
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('ANTSEED_SERVICE_PRICING_JSON must be an object map of service -> pricing');
-  }
-
-  const out: NonNullable<Provider['pricing']['services']> = {};
-  for (const [service, pricing] of Object.entries(parsed as Record<string, unknown>)) {
-    if (!pricing || typeof pricing !== 'object' || Array.isArray(pricing)) {
-      throw new Error(`Service pricing for "${service}" must be an object`);
-    }
-    const input = (pricing as Record<string, unknown>)['inputUsdPerMillion'];
-    const output = (pricing as Record<string, unknown>)['outputUsdPerMillion'];
-    if (typeof input !== 'number' || !Number.isFinite(input) || input < 0) {
-      throw new Error(`Service pricing for "${service}" requires non-negative inputUsdPerMillion`);
-    }
-    if (typeof output !== 'number' || !Number.isFinite(output) || output < 0) {
-      throw new Error(`Service pricing for "${service}" requires non-negative outputUsdPerMillion`);
-    }
-    out[service] = { inputUsdPerMillion: input, outputUsdPerMillion: output };
-  }
-
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
-function parseCsv(raw: string | undefined): string[] {
-  if (!raw) return [];
-  return Array.from(
-    new Set(
-      raw
-        .split(',')
-        .map((entry) => entry.trim())
-        .filter((entry) => entry.length > 0),
-    ),
-  );
-}
-
-function buildServiceApiProtocols(
-  services: string[],
-  protocol: ServiceApiProtocol,
-): Record<string, ServiceApiProtocol[]> | undefined {
-  if (services.length === 0) return undefined;
-  return Object.fromEntries(services.map((service) => [service, [protocol]]));
-}
 
 function expandHome(path: string): string {
   if (path === '~') return homedir();
@@ -119,6 +59,16 @@ interface AuthContext {
   idToken?: string;
 }
 
+interface LoadedAuthContext {
+  auth: AuthContext;
+  persisted: AuthFileShape;
+}
+
+interface CodexTokenProviderState extends TokenProviderState {
+  accountId?: string;
+  idToken?: string;
+}
+
 function decodeJwtPayload(token: string): Record<string, unknown> | null {
   const parts = token.split('.');
   if (parts.length < 2) return null;
@@ -139,9 +89,7 @@ function decodeJwtPayload(token: string): Record<string, unknown> | null {
   }
 }
 
-function readAuthContext(authFilePath: string): AuthContext {
-  const raw = readFileSync(authFilePath, 'utf8');
-  const parsed = JSON.parse(raw) as AuthFileShape;
+function parseAuthContext(parsed: AuthFileShape, authFilePath: string): AuthContext {
   const accessToken = typeof parsed.tokens?.access_token === 'string'
     ? parsed.tokens.access_token.trim()
     : '';
@@ -180,6 +128,19 @@ function readAuthContext(authFilePath: string): AuthContext {
   return { accessToken, refreshToken, accountId, expiresAt, idToken };
 }
 
+function readAuthContext(authFilePath: string): AuthContext {
+  return loadAuthContext(authFilePath).auth;
+}
+
+function loadAuthContext(authFilePath: string): LoadedAuthContext {
+  const raw = readFileSync(authFilePath, 'utf8');
+  const parsed = JSON.parse(raw) as AuthFileShape;
+  return {
+    auth: parseAuthContext(parsed, authFilePath),
+    persisted: parsed,
+  };
+}
+
 function getJwtExpiration(token: string): number | undefined {
   const payload = decodeJwtPayload(token);
   const exp = payload?.['exp'];
@@ -193,12 +154,11 @@ function isAuthExpiringSoon(auth: AuthContext): boolean {
   return auth.expiresAt !== undefined && Date.now() >= auth.expiresAt - REFRESH_BUFFER_MS;
 }
 
-function writeAuthContext(authFilePath: string, auth: AuthContext): void {
-  const existing = JSON.parse(readFileSync(authFilePath, 'utf8')) as AuthFileShape;
+function writeAuthContext(authFilePath: string, persisted: AuthFileShape, auth: AuthContext): void {
   const next: AuthFileShape = {
-    ...existing,
+    ...persisted,
     tokens: {
-      ...existing.tokens,
+      ...persisted.tokens,
       access_token: auth.accessToken,
       ...(auth.refreshToken ? { refresh_token: auth.refreshToken } : {}),
       ...(auth.idToken ? { id_token: auth.idToken } : {}),
@@ -213,22 +173,32 @@ function writeAuthContext(authFilePath: string, auth: AuthContext): void {
 }
 
 async function refreshAuthContext(authFilePath: string): Promise<AuthContext> {
-  const current = readAuthContext(authFilePath);
+  const { auth: current, persisted } = loadAuthContext(authFilePath);
   if (!current.refreshToken) {
     throw new Error(`Codex auth file at ${authFilePath} is missing tokens.refresh_token`);
   }
 
-  const response = await fetch(OPENAI_TOKEN_URL, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/x-www-form-urlencoded',
-    },
-    body: new URLSearchParams({
-      grant_type: 'refresh_token',
-      refresh_token: current.refreshToken,
-      client_id: OPENAI_CLIENT_ID,
-    }),
-  });
+  const timeoutSignal = AbortSignal.timeout(FETCH_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(OPENAI_TOKEN_URL, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: current.refreshToken,
+        client_id: OPENAI_CLIENT_ID,
+      }),
+      signal: timeoutSignal,
+    });
+  } catch (error) {
+    if (timeoutSignal.aborted) {
+      throw new Error(`OpenAI Codex token refresh timed out after ${FETCH_TIMEOUT_MS}ms`);
+    }
+    throw error;
+  }
 
   if (!response.ok) {
     const text = await response.text().catch(() => '');
@@ -260,7 +230,7 @@ async function refreshAuthContext(authFilePath: string): Promise<AuthContext> {
     ...(idToken ? { idToken } : {}),
   };
 
-  writeAuthContext(authFilePath, refreshed);
+  writeAuthContext(authFilePath, persisted, refreshed);
   return refreshed;
 }
 
@@ -298,138 +268,134 @@ function extractAccountIdFromTokens(accessToken: string, idToken: string | undef
   return fallbackAccountId;
 }
 
-function replaceRequestedService(
+function prepareRequestBody(
   request: SerializedHttpRequest,
   serviceRewriteMap: Record<string, string> | undefined,
 ): SerializedHttpRequest {
-  if (!serviceRewriteMap || request.method === 'GET' || request.method === 'HEAD') {
+  if (request.method === 'GET' || request.method === 'HEAD') {
     return request;
   }
 
   try {
     const parsed = JSON.parse(new TextDecoder().decode(request.body)) as Record<string, unknown>;
-    const requestedService = parsed.model ?? parsed.service;
-    if (typeof requestedService !== 'string' || requestedService.trim().length === 0) {
-      return request;
+    parsed.store ??= false;
+
+    const requestedService = (parsed.model ?? parsed.service) as string | undefined;
+    if (serviceRewriteMap && typeof requestedService === 'string' && requestedService.trim().length > 0) {
+      const rewritten = serviceRewriteMap[requestedService.trim().toLowerCase()];
+      if (rewritten && rewritten.trim().length > 0) {
+        parsed.model = rewritten.trim();
+      }
     }
 
-    const rewrittenService = serviceRewriteMap[requestedService.trim().toLowerCase()];
-    if (!rewrittenService || rewrittenService.trim().length === 0) {
-      return request;
+    if (parsed.service !== undefined && parsed.model === undefined) {
+      parsed.model = parsed.service;
+    }
+    delete parsed.service;
+
+    // Strip parameters the Codex backend doesn't support.
+    delete parsed.max_output_tokens;
+
+    // The Codex backend requires `instructions` as a top-level field.
+    // Some clients (e.g. pi's openai-responses provider) send the system
+    // prompt as a developer/system message in `input` instead. Extract it
+    // and move to `instructions` so the request is accepted.
+    if (!parsed.instructions && Array.isArray(parsed.input)) {
+      const input = parsed.input as Array<Record<string, unknown>>;
+      const sysIdx = input.findIndex((m) => m.role === 'system' || m.role === 'developer');
+      if (sysIdx >= 0) {
+        const sysMsg = input[sysIdx]!;
+        let instructionText: string;
+        if (typeof sysMsg.content === 'string') {
+          instructionText = sysMsg.content;
+        } else if (Array.isArray(sysMsg.content)) {
+          instructionText = (sysMsg.content as Array<{ type?: string; text?: string }>)
+            .filter((c) => c.type === 'text' && typeof c.text === 'string')
+            .map((c) => c.text as string)
+            .join('');
+        } else {
+          instructionText = '';
+        }
+        parsed.instructions = instructionText;
+        input.splice(sysIdx, 1);
+      }
     }
 
     return {
       ...request,
-      body: new TextEncoder().encode(JSON.stringify({
-        ...parsed,
-        model: rewrittenService.trim(),
-      })),
+      body: new TextEncoder().encode(JSON.stringify(parsed)),
     };
   } catch {
     return request;
   }
 }
 
-function stripRequestHeaders(headers: Record<string, string>): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(headers)) {
-    const lower = key.toLowerCase();
-    if (
-      HOP_BY_HOP_HEADERS.has(lower)
-      || INTERNAL_HEADERS.has(lower)
-      || lower === 'host'
-      || lower === 'content-length'
-      || lower === 'authorization'
-      || lower === 'chatgpt-account-id'
-      || lower === 'openai-beta'
-      || lower === 'accept-encoding'
-    ) {
-      continue;
-    }
-    out[key] = value;
-  }
-  return out;
+function toRelayPath(path: string): string | null {
+  if (!path.startsWith(RESPONSE_PATH_PREFIX)) return null;
+  return `${RELAY_PATH}${path.slice(RESPONSE_PATH_PREFIX.length)}`;
 }
 
-function stripResponseHeaders(response: Response): Record<string, string> {
-  const headers: Record<string, string> = {};
-  response.headers.forEach((value, key) => {
-    const lower = key.toLowerCase();
-    if (!HOP_BY_HOP_HEADERS.has(lower) && lower !== 'content-encoding' && lower !== 'content-length') {
-      headers[lower] = value;
-    }
-  });
-  return headers;
-}
-
-function isTransientError(statusCode: number): boolean {
-  return TRANSIENT_STATUS_CODES.has(statusCode);
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
-
-function requestPathToUpstream(path: string): string | null {
-  const normalized = path.split('?')[0] ?? path;
-  if (normalized === MODELS_PATH) return null;
-  if (normalized.startsWith(RESPONSE_PATH_PREFIX)) return UPSTREAM_RESPONSES_PATH;
-  return null;
-}
-
-function buildModelsResponse(requestId: string, services: string[]): SerializedHttpResponse {
-  const now = Math.floor(Date.now() / 1000);
+function buildError(requestId: string, statusCode: number, error: string): SerializedHttpResponse {
   return {
     requestId,
-    statusCode: 200,
-    headers: {
-      'content-type': 'application/json',
-    },
-    body: new TextEncoder().encode(JSON.stringify({
-      object: 'list',
-      data: services.map((id) => ({
-        id,
-        object: 'model',
-        created: now,
-        owned_by: 'antseed-openai-responses',
-      })),
-    })),
+    statusCode,
+    headers: { 'content-type': 'application/json' },
+    body: new TextEncoder().encode(JSON.stringify({ error })),
   };
 }
 
-function concatChunks(chunks: Uint8Array[]): Uint8Array {
-  if (chunks.length === 0) return new Uint8Array(0);
-  if (chunks.length === 1) return chunks[0]!;
+class CodexAuthTokenProvider implements TokenProvider {
+  private authContext: AuthContext | null = null;
+  private refreshPromise: Promise<AuthContext> | null = null;
 
-  const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-  const output = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const chunk of chunks) {
-    output.set(chunk, offset);
-    offset += chunk.length;
+  constructor(private readonly authFilePath: string) {}
+
+  async getToken(): Promise<string> {
+    if (!this.authContext) {
+      this.authContext = readAuthContext(this.authFilePath);
+    }
+    if (isAuthExpiringSoon(this.authContext)) {
+      this.authContext = await this.refresh();
+    }
+    return this.authContext.accessToken;
   }
-  return output;
+
+  async forceRefresh(): Promise<string> {
+    this.authContext = await this.refresh();
+    return this.authContext.accessToken;
+  }
+
+  stop(): void {}
+
+  getState(): CodexTokenProviderState {
+    return {
+      accessToken: this.authContext?.accessToken ?? '',
+      ...(this.authContext?.refreshToken ? { refreshToken: this.authContext.refreshToken } : {}),
+      ...(this.authContext?.expiresAt ? { expiresAt: this.authContext.expiresAt } : {}),
+      ...(this.authContext?.accountId ? { accountId: this.authContext.accountId } : {}),
+      ...(this.authContext?.idToken ? { idToken: this.authContext.idToken } : {}),
+    };
+  }
+
+  private async refresh(): Promise<AuthContext> {
+    if (!this.refreshPromise) {
+      this.refreshPromise = refreshAuthContext(this.authFilePath).finally(() => {
+        this.refreshPromise = null;
+      });
+    }
+    return this.refreshPromise;
+  }
 }
 
-interface RequestResult {
-  response: SerializedHttpResponse;
-}
-
-class CodexResponsesProvider implements Provider {
+class OpenAIResponsesProvider implements Provider {
   readonly name: string;
   readonly services: string[];
   readonly pricing: Provider['pricing'];
   readonly serviceApiProtocols?: Record<string, ServiceApiProtocol[]>;
   readonly maxConcurrency: number;
 
-  private readonly authFilePath: string;
-  private readonly baseUrl: string;
+  private readonly inner: BaseProvider;
   private readonly serviceRewriteMap?: Record<string, string>;
-  private readonly validationServices: ReadonlySet<string>;
-  private authRefreshPromise: Promise<AuthContext> | null = null;
-  private activeCount = 0;
 
   constructor(config: {
     name: string;
@@ -437,8 +403,8 @@ class CodexResponsesProvider implements Provider {
     pricing: Provider['pricing'];
     serviceApiProtocols?: Record<string, ServiceApiProtocol[]>;
     maxConcurrency: number;
-    authFilePath: string;
     baseUrl: string;
+    authFilePath: string;
     serviceRewriteMap?: Record<string, string>;
   }) {
     this.name = config.name;
@@ -446,207 +412,95 @@ class CodexResponsesProvider implements Provider {
     this.pricing = config.pricing;
     this.serviceApiProtocols = config.serviceApiProtocols;
     this.maxConcurrency = config.maxConcurrency;
-    this.authFilePath = config.authFilePath;
-    this.baseUrl = config.baseUrl.replace(/\/+$/, '');
     this.serviceRewriteMap = config.serviceRewriteMap;
 
-    const rewriteValues = Object.values(config.serviceRewriteMap ?? {});
-    this.validationServices = new Set([
-      ...config.services.map((service) => service.trim().toLowerCase()),
-      ...rewriteValues.map((service) => service.trim().toLowerCase()),
-    ]);
+    const tokenProvider = new CodexAuthTokenProvider(config.authFilePath);
+    const relayBaseUrl = `${config.baseUrl.replace(/\/+$/, '')}/codex`;
+    const relayAllowedServices = [
+      ...config.services,
+      ...Object.values(config.serviceRewriteMap ?? {}),
+    ];
+    this.inner = new BaseProvider({
+      name: config.name,
+      services: relayAllowedServices,
+      pricing: config.pricing,
+      ...(config.serviceApiProtocols ? { serviceApiProtocols: config.serviceApiProtocols } : {}),
+      relay: {
+        baseUrl: relayBaseUrl,
+        authHeaderName: 'authorization',
+        authHeaderValue: 'Bearer ignored',
+        tokenProvider,
+        extraHeaders: {
+          'accept': 'text/event-stream',
+          'openai-beta': 'responses=experimental',
+        },
+        extraHeadersProvider: async () => {
+          const state = tokenProvider.getState() as CodexTokenProviderState | null;
+          if (!state?.accountId) {
+            return undefined;
+          }
+          return {
+            'chatgpt-account-id': state.accountId,
+          };
+        },
+        maxConcurrency: config.maxConcurrency,
+        allowedServices: relayAllowedServices,
+        timeoutMs: FETCH_TIMEOUT_MS,
+        retryOn401: true,
+        retryOn5xx: 3,
+        retryBaseDelayMs: 1000,
+        retryStatusCodes: [429],
+      },
+    });
   }
 
   async init(): Promise<void> {
-    await this.getAuthContext();
+    await this.inner.init();
   }
 
   getCapacity(): { current: number; max: number } {
-    return {
-      current: this.activeCount,
-      max: this.maxConcurrency,
-    };
+    return this.inner.getCapacity();
   }
 
   async handleRequest(req: SerializedHttpRequest): Promise<SerializedHttpResponse> {
-    return (await this.executeRequest(req)).response;
+    const prepared = this.prepareRequest(req);
+    if ('response' in prepared) {
+      return prepared.response;
+    }
+    return this.inner.handleRequest(prepared.request);
   }
 
   async handleRequestStream(
     req: SerializedHttpRequest,
-    callbacks: ProviderStreamCallbacks,
+    callbacks: Parameters<NonNullable<Provider['handleRequestStream']>>[1],
   ): Promise<SerializedHttpResponse> {
-    return (await this.executeRequest(req, callbacks)).response;
-  }
-
-  private buildError(requestId: string, statusCode: number, error: string): RequestResult {
-    return {
-      response: {
-        requestId,
-        statusCode,
-        headers: { 'content-type': 'application/json' },
-        body: new TextEncoder().encode(JSON.stringify({ error })),
-      },
-    };
-  }
-
-  private async executeRequest(
-    req: SerializedHttpRequest,
-    callbacks?: ProviderStreamCallbacks,
-  ): Promise<RequestResult> {
-    if (this.activeCount >= this.maxConcurrency) {
-      return this.buildError(req.requestId, 429, 'Max concurrency reached');
-    }
-
-    const normalizedPath = req.path.split('?')[0] ?? req.path;
-    if (normalizedPath === MODELS_PATH) {
-      return { response: buildModelsResponse(req.requestId, this.services) };
-    }
-
-    const validationError = validateRequestService(req, this.validationServices);
-    if (validationError) {
-      return this.buildError(req.requestId, 403, validationError);
-    }
-
-    const upstreamPath = requestPathToUpstream(req.path);
-    if (!upstreamPath) {
-      return this.buildError(req.requestId, 404, `Unsupported path: ${normalizedPath}`);
-    }
-
-    this.activeCount++;
-    try {
-      return await this.fetchWithRetry(replaceRequestedService(req, this.serviceRewriteMap), upstreamPath, callbacks);
-    } finally {
-      this.activeCount--;
-    }
-  }
-
-  private async fetchWithRetry(
-    req: SerializedHttpRequest,
-    upstreamPath: string,
-    callbacks?: ProviderStreamCallbacks,
-  ): Promise<RequestResult> {
-    let lastError: Error | null = null;
-    let auth = await this.getAuthContext();
-
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-      try {
-        const result = await this.fetchOnce(req, upstreamPath, auth, callbacks);
-        if (result.response.statusCode === 401) {
-          auth = await this.forceRefreshAuthContext();
-          const retryAfterRefresh = await this.fetchOnce(req, upstreamPath, auth, callbacks);
-          if (retryAfterRefresh.response.statusCode !== 401) {
-            return retryAfterRefresh;
-          }
-          return retryAfterRefresh;
-        }
-        if (!isTransientError(result.response.statusCode) || attempt === MAX_RETRIES) {
-          return result;
-        }
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error));
-        if (attempt === MAX_RETRIES) {
-          break;
-        }
-      }
-
-      await sleep(BASE_DELAY_MS * 2 ** attempt);
-    }
-
-    return this.buildError(
-      req.requestId,
-      502,
-      lastError?.message ?? 'OpenAI Responses upstream request failed after retries',
-    );
-  }
-
-  private async getAuthContext(): Promise<AuthContext> {
-    const auth = readAuthContext(this.authFilePath);
-    if (!isAuthExpiringSoon(auth)) {
-      return auth;
-    }
-    return this.forceRefreshAuthContext();
-  }
-
-  private async forceRefreshAuthContext(): Promise<AuthContext> {
-    if (!this.authRefreshPromise) {
-      this.authRefreshPromise = refreshAuthContext(this.authFilePath)
-        .finally(() => {
-          this.authRefreshPromise = null;
-        });
-    }
-    return this.authRefreshPromise;
-  }
-
-  private async fetchOnce(
-    req: SerializedHttpRequest,
-    upstreamPath: string,
-    auth: AuthContext,
-    callbacks?: ProviderStreamCallbacks,
-  ): Promise<RequestResult> {
-    const fetchHeaders = stripRequestHeaders(req.headers);
-    fetchHeaders['authorization'] = `Bearer ${auth.accessToken}`;
-    fetchHeaders['chatgpt-account-id'] = auth.accountId;
-    fetchHeaders['openai-beta'] = 'responses=experimental';
-    if (!Object.keys(fetchHeaders).some((key) => key.toLowerCase() === 'content-type') && req.method !== 'GET' && req.method !== 'HEAD') {
-      fetchHeaders['content-type'] = 'application/json';
-    }
-
-    const response = await fetch(`${this.baseUrl}${upstreamPath}`, {
-      method: req.method,
-      headers: fetchHeaders,
-      body: req.method !== 'GET' && req.method !== 'HEAD'
-        ? Buffer.from(req.body)
-        : undefined,
-    });
-
-    const responseHeaders = stripResponseHeaders(response);
-    const contentType = response.headers.get('content-type') ?? '';
-    const isSse = contentType.includes('text/event-stream');
-
-    if (isSse && response.body) {
-      const responseStart: SerializedHttpResponse = {
-        requestId: req.requestId,
-        statusCode: response.status,
-        headers: responseHeaders,
-        body: new Uint8Array(0),
-      };
-      callbacks?.onResponseStart(responseStart);
-
-      const reader = response.body.getReader();
-      const streamChunks: Uint8Array[] = [];
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        streamChunks.push(value);
-        callbacks?.onResponseChunk({
-          requestId: req.requestId,
-          data: value,
-          done: false,
-        });
-      }
-
-      callbacks?.onResponseChunk({
-        requestId: req.requestId,
-        data: new Uint8Array(0),
+    const prepared = this.prepareRequest(req);
+    if ('response' in prepared) {
+      callbacks.onResponseStart(prepared.response);
+      callbacks.onResponseChunk({
+        requestId: prepared.response.requestId,
+        data: prepared.response.body,
         done: true,
       });
+      return prepared.response;
+    }
+    return this.inner.handleRequestStream!(prepared.request, callbacks);
+  }
 
-      return {
-        response: {
-          ...responseStart,
-          body: concatChunks(streamChunks),
-        },
-      };
+  private prepareRequest(
+    req: SerializedHttpRequest,
+  ): { request: SerializedHttpRequest } | { response: SerializedHttpResponse } {
+    const normalizedPath = req.path.split('?')[0] ?? req.path;
+    const relayPath = toRelayPath(req.path);
+    if (!relayPath) {
+      return { response: buildError(req.requestId, 404, `Unsupported path: ${normalizedPath}`) };
     }
 
+    const preparedBody = prepareRequestBody(req, this.serviceRewriteMap);
     return {
-      response: {
-        requestId: req.requestId,
-        statusCode: response.status,
-        headers: responseHeaders,
-        body: new Uint8Array(await response.arrayBuffer()),
+      request: {
+        ...preparedBody,
+        path: relayPath,
       },
     };
   }
@@ -690,14 +544,14 @@ const plugin: AntseedProviderPlugin = {
     const serviceRewriteMap = parseServiceAliasMap(config['ANTSEED_SERVICE_ALIAS_MAP_JSON']);
     const serviceApiProtocols = buildServiceApiProtocols(allowedServices, 'openai-responses');
 
-    return new CodexResponsesProvider({
+    return new OpenAIResponsesProvider({
       name: 'openai-responses',
       services: allowedServices,
       pricing,
       ...(serviceApiProtocols ? { serviceApiProtocols } : {}),
       maxConcurrency,
-      authFilePath,
       baseUrl,
+      authFilePath,
       ...(serviceRewriteMap ? { serviceRewriteMap } : {}),
     });
   },
@@ -707,7 +561,6 @@ export default plugin;
 
 export type { AuthContext };
 export {
-  buildModelsResponse,
   decodeJwtPayload,
   expandHome,
   getJwtExpiration,

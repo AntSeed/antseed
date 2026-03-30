@@ -6,7 +6,6 @@ import { join } from 'node:path'
 import { homedir } from 'node:os'
 import type {
   AntseedNode,
-  ConnectionState,
   PeerInfo,
   RequestStreamResponseMetadata,
   Router,
@@ -17,17 +16,47 @@ import type {
 import {
   createOpenAIChatToAnthropicStreamingAdapter,
   createOpenAIChatToResponsesStreamingAdapter,
+  createOpenAIResponsesToChatStreamingAdapter,
   detectRequestServiceApiProtocol,
-  inferProviderDefaultServiceApiProtocols,
   type ServiceApiProtocol,
-  selectTargetProtocolForRequest,
   type StreamingResponseAdapter,
-  type TargetProtocolSelection,
   transformAnthropicMessagesRequestToOpenAIChat,
+  transformOpenAIChatRequestToOpenAIResponses,
   transformOpenAIChatResponseToAnthropicMessage,
-  transformOpenAIResponsesRequestToOpenAIChat,
   transformOpenAIChatResponseToOpenAIResponses,
+  transformOpenAIResponsesRequestToOpenAIChat,
+  transformOpenAIResponsesResponseToOpenAIChat,
 } from './service-api-adapter.js'
+import {
+  DEBUG,
+  log,
+  extractRequestedService,
+  summarizeRequestShape,
+  summarizeErrorResponse,
+  requestWantsStreaming,
+  rewriteServiceInBody,
+  isConnectionChurnError,
+  isConnectionHealthy,
+  isLoopbackPeer,
+} from './request-utils.js'
+import {
+  getExplicitProviderOverride,
+  getExplicitPeerIdOverride,
+  getPreferredPeerIdHint,
+  resolvePeerRoutePlan,
+  selectCandidatePeersForRouting,
+  type CandidatePeerRouteSelection,
+  type PeerProtocolRoutePlan,
+} from './routing.js'
+import {
+  computeResponseTelemetry,
+  attachAntseedTelemetryHeaders,
+  attachStreamingAntseedHeaders,
+} from './telemetry.js'
+
+// Re-export for backward compatibility (used by tests and other consumers)
+export { selectCandidatePeersForRouting, type CandidatePeerRouteSelection } from './routing.js'
+export { rewriteServiceInBody } from './request-utils.js'
 
 export interface BuyerProxyConfig {
   port: number
@@ -54,770 +83,76 @@ export interface BuyerProxyConfig {
   pinnedService?: string
 }
 
-const DAEMON_STATE_FILE = join(homedir(), '.antseed', 'daemon.state.json')
 const BUYER_STATE_FILE = join(homedir(), '.antseed', 'buyer.state.json')
+const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504])
+/** Max age for carrying forward peers not seen in the latest DHT scan. */
+const CARRY_FORWARD_TTL_MS = 30 * 60_000
 
-const DEBUG = () =>
-  ['1', 'true', 'yes', 'on'].includes((process.env['ANTSEED_DEBUG'] ?? '').trim().toLowerCase())
+type TransformResult = { request: SerializedHttpRequest; streamRequested: boolean; requestedModel: string | null }
+type AdaptResponseMeta = { streamRequested: boolean; fallbackModel: string | null }
 
-function log(...args: unknown[]): void {
-  if (DEBUG()) console.log('[proxy]', ...args)
+type ProtocolTransformStrategy = {
+  transformRequest: (req: SerializedHttpRequest) => TransformResult | null
+  adaptResponse: (res: SerializedHttpResponse, meta: AdaptResponseMeta) => SerializedHttpResponse
+  createStreamAdapter: (opts: { fallbackModel: string | null }) => StreamingResponseAdapter
 }
 
-type TokenUsageSummary = {
-  inputTokens: number
-  outputTokens: number
-  totalTokens: number
-  source: 'usage' | 'estimated'
-}
-
-type RoutingPricing = {
-  provider: string
-  service: string | null
-  inputUsdPerMillion: number | null
-  outputUsdPerMillion: number | null
-}
-
-type ResponseTelemetry = {
-  usage: TokenUsageSummary
-  pricing: RoutingPricing
-  estimatedCostUsd: number | null
-}
-
-type PeerProtocolRoutePlan = {
-  provider: string
-  selection: TargetProtocolSelection | null
-}
-
-export type CandidatePeerRouteSelection = {
-  candidatePeers: PeerInfo[]
-  routePlanByPeerId: Map<string, PeerProtocolRoutePlan>
-}
-
-function getExplicitProviderOverride(request: SerializedHttpRequest): string | null {
-  const provider = request.headers['x-antseed-provider']?.trim().toLowerCase()
-  return provider && provider.length > 0 ? provider : null
-}
-
-function getExplicitPeerIdOverride(
-  request: SerializedHttpRequest,
-  sessionPinnedPeerId: string | undefined,
-): string | null {
-  // Per-request header takes priority over session pin
-  const header = request.headers['x-antseed-pin-peer']?.trim().toLowerCase()
-  if (header && header.length > 0) return header
-  return sessionPinnedPeerId?.toLowerCase() ?? null
-}
-
-function getPreferredPeerIdHint(request: SerializedHttpRequest): string | null {
-  const header = request.headers['x-antseed-prefer-peer']?.trim().toLowerCase()
-  if (!header || header.length === 0) {
-    return null
-  }
-  return header
-}
-
-function getPeerProviderProtocols(
-  peer: PeerInfo,
-  provider: string,
-  requestedService: string | null,
-): ServiceApiProtocol[] {
-  const normalizedRequestedService = requestedService?.trim()
-  const fromMetadata = (
-    peer as PeerInfo & {
-      providerServiceApiProtocols?: Record<string, { services: Record<string, ServiceApiProtocol[]> }>
-    }
-  ).providerServiceApiProtocols?.[provider]?.services
-  if (fromMetadata) {
-    if (normalizedRequestedService) {
-      const directMatchKey = Object.keys(fromMetadata).find(
-        (key) => key.toLowerCase() === normalizedRequestedService.toLowerCase(),
-      )
-      if (directMatchKey && fromMetadata[directMatchKey]?.length) {
-        log(
-          `Service match: peer ${peer.peerId.slice(0, 8)} provider=${provider} service="${normalizedRequestedService}" `
-          + `→ [${fromMetadata[directMatchKey]!.join(',')}]`,
-        )
-        return Array.from(new Set(fromMetadata[directMatchKey]!))
-      }
-
-      if (Object.keys(fromMetadata).length > 0) {
-        log(
-          `Service strict-miss: peer ${peer.peerId.slice(0, 8)} provider=${provider} service="${normalizedRequestedService}" `
-          + 'not in metadata; excluding from route candidates.',
-        )
-        return []
-      }
-    }
-
-    const merged = Object.values(fromMetadata).flat()
-    if (merged.length > 0) {
-      if (requestedService) {
-        log(
-          `Service hint miss: peer ${peer.peerId.slice(0, 8)} provider=${provider} service="${requestedService}" not in metadata; falling back to provider protocol set [${Array.from(new Set(merged)).join(',')}]`,
-        )
-      }
-      return Array.from(new Set(merged))
-    }
-  }
-
-  const inferred = inferProviderDefaultServiceApiProtocols(provider)
-  log(`No metadata: peer ${peer.peerId.slice(0, 8)} provider=${provider} → inferred [${inferred.join(',')}]`)
-  return inferred
-}
-
-function resolvePeerRoutePlan(
-  peer: PeerInfo,
+function adaptOpenAICompatibleErrorResponse(
+  response: SerializedHttpResponse,
   requestProtocol: ServiceApiProtocol | null,
-  requestedService: string | null,
-  explicitProvider: string | null,
-): PeerProtocolRoutePlan | null {
-  const providers = peer.providers
-    .map((provider) => provider.trim().toLowerCase())
-    .filter((provider) => provider.length > 0)
-
-  if (providers.length === 0) {
-    return null
+): SerializedHttpResponse {
+  if (response.statusCode !== 402) {
+    return response;
+  }
+  if (requestProtocol !== 'openai-responses' && requestProtocol !== 'openai-chat-completions') {
+    return response;
   }
 
-  if (explicitProvider && !providers.includes(explicitProvider)) {
-    return null
-  }
-
-  const candidates = explicitProvider ? [explicitProvider] : providers
-
-  if (!requestProtocol) {
-    const provider = candidates[0]
-    return provider ? { provider, selection: null } : null
-  }
-
-  let transformedFallback: PeerProtocolRoutePlan | null = null
-  for (const provider of candidates) {
-    const supportedProtocols = getPeerProviderProtocols(peer, provider, requestedService)
-    const selection = selectTargetProtocolForRequest(requestProtocol, supportedProtocols)
-    if (!selection) {
-      continue
-    }
-    if (!selection.requiresTransform) {
-      return { provider, selection }
-    }
-    if (!transformedFallback) {
-      transformedFallback = { provider, selection }
-    }
-  }
-
-  return transformedFallback
-}
-
-export function selectCandidatePeersForRouting(
-  peers: PeerInfo[],
-  requestProtocol: ServiceApiProtocol | null,
-  requestedService: string | null,
-  explicitProvider: string | null,
-): CandidatePeerRouteSelection {
-  const routePlanByPeerId = new Map<string, PeerProtocolRoutePlan>()
-  if (!requestProtocol && !explicitProvider) {
-    return {
-      candidatePeers: peers,
-      routePlanByPeerId,
-    }
-  }
-
-  const candidatePeers = peers.filter((peer) => {
-    const plan = resolvePeerRoutePlan(peer, requestProtocol, requestedService, explicitProvider)
-    if (!plan) return false
-    routePlanByPeerId.set(peer.peerId, plan)
-    return true
-  })
-
-  return {
-    candidatePeers,
-    routePlanByPeerId,
-  }
-}
-
-function parseTokenCount(value: unknown): number {
-  const parsed = Number(value)
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return 0
-  }
-  return Math.floor(parsed)
-}
-
-function parseUsageObject(value: unknown): { inputTokens: number; outputTokens: number; totalTokens: number } {
-  if (!value || typeof value !== 'object') {
-    return { inputTokens: 0, outputTokens: 0, totalTokens: 0 }
-  }
-
-  const usage = value as Record<string, unknown>
-  const total = parseTokenCount(usage.totalTokens ?? usage.total_tokens ?? usage.total_token_count)
-  let input = parseTokenCount(
-    usage.inputTokens
-    ?? usage.input_tokens
-    ?? usage.promptTokens
-    ?? usage.prompt_tokens
-    ?? usage.input_token_count
-    ?? usage.prompt_token_count
-    ?? usage.cache_creation_input_tokens
-    ?? usage.cache_read_input_tokens,
-  )
-  let output = parseTokenCount(
-    usage.outputTokens
-    ?? usage.output_tokens
-    ?? usage.completionTokens
-    ?? usage.completion_tokens
-    ?? usage.output_token_count
-    ?? usage.completion_token_count,
-  )
-
-  if (total > 0) {
-    if (input === 0 && output === 0) {
-      output = total
-    } else if (output === 0 && input > 0 && total >= input) {
-      output = total - input
-    } else if (input === 0 && output > 0 && total >= output) {
-      input = total - output
-    }
-  }
-
-  return {
-    inputTokens: input,
-    outputTokens: output,
-    totalTokens: input + output,
-  }
-}
-
-function estimateTokensFromBytes(inputBytes: number, outputBytes: number): TokenUsageSummary {
-  const inputTokens = Math.max(1, Math.round(Math.max(0, inputBytes) / 4))
-  const outputTokens = Math.max(1, Math.round(Math.max(0, outputBytes) / 4))
-  return {
-    inputTokens,
-    outputTokens,
-    totalTokens: inputTokens + outputTokens,
-    source: 'estimated',
-  }
-}
-
-function parseSseUsage(body: Uint8Array): { inputTokens: number; outputTokens: number; totalTokens: number } {
-  const text = new TextDecoder().decode(body)
-  const lines = text.split('\n')
-  let inputTokens = 0
-  let outputTokens = 0
-  let totalTokens = 0
-
-  for (const line of lines) {
-    const trimmed = line.trim()
-    if (!trimmed.startsWith('data:')) continue
-
-    const payload = trimmed.slice(5).trim()
-    if (payload.length === 0 || payload === '[DONE]') continue
-
-    let parsed: Record<string, unknown>
-    try {
-      parsed = JSON.parse(payload) as Record<string, unknown>
-    } catch {
-      continue
-    }
-
-    const directUsage = parseUsageObject(parsed.usage)
-    if (directUsage.totalTokens > 0) {
-      inputTokens = Math.max(inputTokens, directUsage.inputTokens)
-      outputTokens = Math.max(outputTokens, directUsage.outputTokens)
-      totalTokens = Math.max(totalTokens, directUsage.totalTokens)
-    }
-
-    const message = parsed.message
-    const messageUsage = parseUsageObject(message && typeof message === 'object' ? (message as Record<string, unknown>).usage : undefined)
-    if (messageUsage.totalTokens > 0) {
-      inputTokens = Math.max(inputTokens, messageUsage.inputTokens)
-      outputTokens = Math.max(outputTokens, messageUsage.outputTokens)
-      totalTokens = Math.max(totalTokens, messageUsage.totalTokens)
-    }
-  }
-
-  if (totalTokens <= 0) {
-    totalTokens = inputTokens + outputTokens
-  }
-
-  return { inputTokens, outputTokens, totalTokens }
-}
-
-function parseJsonUsage(body: Uint8Array): { inputTokens: number; outputTokens: number; totalTokens: number } {
+  let parsed: Record<string, unknown> | null = null
   try {
-    const parsed = JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>
-    const direct = parseUsageObject(parsed.usage)
-    if (direct.totalTokens > 0) {
-      return direct
-    }
-
-    const message = parsed.message
-    if (message && typeof message === 'object') {
-      const nested = parseUsageObject((message as Record<string, unknown>).usage)
-      if (nested.totalTokens > 0) {
-        return nested
-      }
-    }
-
-    const result = parsed.result
-    if (result && typeof result === 'object') {
-      const nested = parseUsageObject((result as Record<string, unknown>).usage)
-      if (nested.totalTokens > 0) {
-        return nested
-      }
-    }
-
-    return { inputTokens: 0, outputTokens: 0, totalTokens: 0 }
+    parsed = JSON.parse(Buffer.from(response.body).toString('utf-8')) as Record<string, unknown>
   } catch {
-    return { inputTokens: 0, outputTokens: 0, totalTokens: 0 }
-  }
-}
-
-function pickProviderForPeer(peer: PeerInfo, request: SerializedHttpRequest): string {
-  const explicit = getExplicitProviderOverride(request)
-  if (explicit) {
-    return explicit
+    return response
   }
 
-  if (request.path.startsWith('/v1/messages') && peer.providers.includes('anthropic')) {
-    return 'anthropic'
+  if (!parsed || parsed.error !== 'payment_required') {
+    return response
   }
 
-  const first = peer.providers[0]?.trim()
-  if (first && first.length > 0) {
-    return first.toLowerCase()
-  }
-
-  return 'unknown'
-}
-
-function extractRequestedService(request: SerializedHttpRequest): string | null {
-  const contentType = (request.headers['content-type'] ?? request.headers['Content-Type'] ?? '').toLowerCase()
-  if (!contentType.includes('application/json')) {
-    return null
-  }
-
-  try {
-    const parsed = JSON.parse(new TextDecoder().decode(request.body)) as Record<string, unknown>
-    const service = parsed.service ?? parsed.model
-    if (typeof service === 'string' && service.trim().length > 0) {
-      return service.trim()
-    }
-    return null
-  } catch {
-    return null
-  }
-}
-
-function decodeJsonBody(body: Uint8Array): Record<string, unknown> | null {
-  if (!body || body.length === 0) {
-    return null
-  }
-  try {
-    const parsed = JSON.parse(new TextDecoder().decode(body)) as unknown
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      return null
-    }
-    return parsed as Record<string, unknown>
-  } catch {
-    return null
-  }
-}
-
-function summarizeMessageShape(messagesRaw: unknown): string {
-  if (!Array.isArray(messagesRaw)) {
-    return 'msgShape=none'
-  }
-
-  const roleCounts = new Map<string, number>()
-  const contentKindCounts = new Map<string, number>()
-  const blockTypeCounts = new Map<string, number>()
-  let invalidMessages = 0
-  let firstRole = 'none'
-  let lastRole = 'none'
-
-  const bump = (map: Map<string, number>, key: string): void => {
-    map.set(key, (map.get(key) ?? 0) + 1)
-  }
-
-  for (const entry of messagesRaw) {
-    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
-      invalidMessages += 1
-      continue
-    }
-
-    const message = entry as Record<string, unknown>
-    const role = typeof message.role === 'string' && message.role.trim().length > 0
-      ? message.role.trim().toLowerCase()
-      : 'invalid-role'
-    bump(roleCounts, role)
-    if (firstRole === 'none') {
-      firstRole = role
-    }
-    lastRole = role
-
-    const content = message.content
-    if (typeof content === 'string') {
-      bump(contentKindCounts, 'string')
-      continue
-    }
-    if (Array.isArray(content)) {
-      bump(contentKindCounts, 'array')
-      for (const block of content) {
-        if (!block || typeof block !== 'object' || Array.isArray(block)) {
-          bump(blockTypeCounts, 'invalid')
-          continue
-        }
-        const blockType = typeof (block as Record<string, unknown>).type === 'string'
-          ? String((block as Record<string, unknown>).type).trim().toLowerCase()
-          : 'missing-type'
-        bump(blockTypeCounts, blockType || 'missing-type')
-      }
-      continue
-    }
-    if (content && typeof content === 'object') {
-      bump(contentKindCounts, 'object')
-      continue
-    }
-    bump(contentKindCounts, 'other')
-  }
-
-  const joinMap = (map: Map<string, number>): string => (
-    [...map.entries()]
-      .sort((left, right) => left[0].localeCompare(right[0]))
-      .map(([key, value]) => `${key}:${String(value)}`)
-      .join(',')
-  )
-
-  const roleSummary = joinMap(roleCounts) || 'none'
-  const contentSummary = joinMap(contentKindCounts) || 'none'
-  const blockSummary = joinMap(blockTypeCounts) || 'none'
-
-  return [
-    `msgShape=roles{${roleSummary}}`,
-    `content{${contentSummary}}`,
-    `blocks{${blockSummary}}`,
-    `firstRole=${firstRole}`,
-    `lastRole=${lastRole}`,
-    `invalidMsgs=${String(invalidMessages)}`,
-  ].join(' ')
-}
-
-function summarizeRequestShape(request: SerializedHttpRequest): string {
-  const contentType = (request.headers['content-type'] ?? request.headers['Content-Type'] ?? '').toLowerCase()
-  const accept = (request.headers['accept'] ?? request.headers['Accept'] ?? '').toLowerCase()
-  const providerHeader = request.headers['x-antseed-provider'] ?? 'none'
-  const preferPeerHeader = request.headers['x-antseed-prefer-peer'] ?? 'none'
-  const service = extractRequestedService(request) ?? 'none'
-  const wantsStreaming = requestWantsStreaming(request.headers, request.body)
-
-  const baseParts = [
-    `method=${request.method}`,
-    `path=${request.path}`,
-    `provider=${providerHeader}`,
-    `preferPeer=${preferPeerHeader}`,
-    `contentType=${contentType || 'none'}`,
-    `accept=${accept || 'none'}`,
-    `stream=${String(wantsStreaming)}`,
-    `service=${service}`,
-    `bodyBytes=${String(request.body.length)}`,
-  ]
-
-  const jsonBody = decodeJsonBody(request.body)
-  if (!jsonBody) {
-    return baseParts.join(' ')
-  }
-
-  const messagesRaw = jsonBody.messages
-  const toolsRaw = jsonBody.tools
-  const messageCount = Array.isArray(messagesRaw) ? messagesRaw.length : 0
-  const toolCount = Array.isArray(toolsRaw) ? toolsRaw.length : 0
-  const maxTokens = Number(jsonBody.max_tokens ?? jsonBody.maxTokens)
-  const keys = Object.keys(jsonBody).sort().join(',')
-
-  baseParts.push(`messages=${String(messageCount)}`)
-  baseParts.push(`tools=${String(toolCount)}`)
-  if (Number.isFinite(maxTokens) && maxTokens > 0) {
-    baseParts.push(`maxTokens=${String(Math.floor(maxTokens))}`)
-  }
-  if (keys.length > 0) {
-    baseParts.push(`keys=[${keys}]`)
-  }
-  baseParts.push(summarizeMessageShape(messagesRaw))
-
-  return baseParts.join(' ')
-}
-
-function summarizeErrorResponse(response: SerializedHttpResponse): string {
-  const contentType = (response.headers['content-type'] ?? '').toLowerCase()
-  if (!response.body || response.body.length === 0) {
-    return 'empty response body'
-  }
-
-  const raw = new TextDecoder().decode(response.body).trim()
-  if (raw.length === 0) {
-    return 'empty response body'
-  }
-
-  if (contentType.includes('application/json')) {
-    try {
-      const parsed = JSON.parse(raw) as unknown
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        const object = parsed as Record<string, unknown>
-        const nestedError = object.error && typeof object.error === 'object' && !Array.isArray(object.error)
-          ? (object.error as Record<string, unknown>)
-          : null
-        const message = (
-          (typeof nestedError?.message === 'string' && nestedError.message)
-          || (typeof object.message === 'string' && object.message)
-          || (typeof object.detail === 'string' && object.detail)
-        )
-        if (message) {
-          return `message="${message}"`
-        }
-      }
-    } catch {
-      // fall through to raw snippet
-    }
-  }
-
-  const compact = raw.replace(/\s+/g, ' ')
-  const maxChars = 280
-  const snippet = compact.length > maxChars ? `${compact.slice(0, maxChars)}...` : compact
-  return `body="${snippet}"`
-}
-
-function toFiniteNumberOrNull(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null
-}
-
-function setFiniteNumberHeader(
-  headers: Record<string, string>,
-  name: string,
-  value: unknown,
-): void {
-  const finite = toFiniteNumberOrNull(value)
-  if (finite !== null) {
-    headers[name] = String(finite)
-  }
-}
-
-function setPeerIdentityHeaders(headers: Record<string, string>, selectedPeer: PeerInfo): void {
-  headers['x-antseed-peer-id'] = selectedPeer.peerId
-  if (selectedPeer.publicAddress) {
-    headers['x-antseed-peer-address'] = selectedPeer.publicAddress
-  }
-  if (selectedPeer.providers.length > 0) {
-    headers['x-antseed-peer-providers'] = selectedPeer.providers.join(',')
-  }
-}
-
-function resolvePeerPricing(peer: PeerInfo, provider: string, service: string | null): { inputUsdPerMillion: number | null; outputUsdPerMillion: number | null } {
-  const providerPricing = peer.providerPricing?.[provider]
-  if (providerPricing) {
-    const servicePricing = service ? providerPricing.services?.[service] : undefined
-    if (servicePricing) {
-      return {
-        inputUsdPerMillion: toFiniteNumberOrNull(servicePricing.inputUsdPerMillion),
-        outputUsdPerMillion: toFiniteNumberOrNull(servicePricing.outputUsdPerMillion),
-      }
-    }
-    return {
-      inputUsdPerMillion: toFiniteNumberOrNull(providerPricing.defaults.inputUsdPerMillion),
-      outputUsdPerMillion: toFiniteNumberOrNull(providerPricing.defaults.outputUsdPerMillion),
-    }
-  }
-
-  return {
-    inputUsdPerMillion: toFiniteNumberOrNull(peer.defaultInputUsdPerMillion),
-    outputUsdPerMillion: toFiniteNumberOrNull(peer.defaultOutputUsdPerMillion),
-  }
-}
-
-function computeResponseTelemetry(
-  request: SerializedHttpRequest,
-  responseHeaders: Record<string, string>,
-  responseBody: Uint8Array,
-  selectedPeer: PeerInfo,
-): ResponseTelemetry {
-  const provider = pickProviderForPeer(selectedPeer, request)
-  const service = extractRequestedService(request)
-  const pricing = resolvePeerPricing(selectedPeer, provider, service)
-  const contentType = (responseHeaders['content-type'] ?? '').toLowerCase()
-
-  const usageFromBody = contentType.includes('text/event-stream')
-    ? parseSseUsage(responseBody)
-    : parseJsonUsage(responseBody)
-
-  let usage: TokenUsageSummary
-  if (usageFromBody.totalTokens > 0) {
-    usage = {
-      inputTokens: usageFromBody.inputTokens,
-      outputTokens: usageFromBody.outputTokens,
-      totalTokens: usageFromBody.totalTokens,
-      source: 'usage',
-    }
-  } else {
-    usage = estimateTokensFromBytes(request.body.length, responseBody.length)
-  }
-
-  let estimatedCostUsd: number | null = null
-  if (
-    pricing.inputUsdPerMillion !== null &&
-    pricing.outputUsdPerMillion !== null &&
-    Number.isFinite(pricing.inputUsdPerMillion) &&
-    Number.isFinite(pricing.outputUsdPerMillion)
-  ) {
-    estimatedCostUsd =
-      (usage.inputTokens * pricing.inputUsdPerMillion + usage.outputTokens * pricing.outputUsdPerMillion) / 1_000_000
-  }
-
-  return {
-    usage,
-    pricing: {
-      provider,
-      service,
-      inputUsdPerMillion: pricing.inputUsdPerMillion,
-      outputUsdPerMillion: pricing.outputUsdPerMillion,
+  const wrappedError = {
+    error: {
+      ...parsed,
+      type: 'payment_required',
+      message: JSON.stringify(parsed),
     },
-    estimatedCostUsd,
+  }
+
+  return {
+    ...response,
+    headers: {
+      ...response.headers,
+      'content-type': 'application/json',
+    },
+    body: Buffer.from(JSON.stringify(wrappedError)),
   }
 }
 
-function attachAntseedTelemetryHeaders(
-  upstreamHeaders: Record<string, string>,
-  selectedPeer: PeerInfo,
-  telemetry: ResponseTelemetry,
-  requestId: string,
-  latencyMs: number,
-): Record<string, string> {
-  const headers: Record<string, string> = { ...upstreamHeaders }
-  headers['x-antseed-request-id'] = requestId
-  headers['x-antseed-latency-ms'] = String(Math.max(0, Math.floor(latencyMs)))
-  setPeerIdentityHeaders(headers, selectedPeer)
-  setFiniteNumberHeader(headers, 'x-antseed-peer-reputation', selectedPeer.reputationScore)
-  setFiniteNumberHeader(headers, 'x-antseed-peer-trust-score', selectedPeer.trustScore)
-  setFiniteNumberHeader(headers, 'x-antseed-peer-current-load', selectedPeer.currentLoad)
-  setFiniteNumberHeader(headers, 'x-antseed-peer-max-concurrency', selectedPeer.maxConcurrency)
-  headers['x-antseed-provider'] = telemetry.pricing.provider
-  if (telemetry.pricing.service) {
-    headers['x-antseed-service'] = telemetry.pricing.service
-  }
-  setFiniteNumberHeader(headers, 'x-antseed-input-usd-per-million', telemetry.pricing.inputUsdPerMillion)
-  setFiniteNumberHeader(headers, 'x-antseed-output-usd-per-million', telemetry.pricing.outputUsdPerMillion)
-  headers['x-antseed-token-source'] = telemetry.usage.source
-  headers['x-antseed-input-tokens'] = String(telemetry.usage.inputTokens)
-  headers['x-antseed-output-tokens'] = String(telemetry.usage.outputTokens)
-  headers['x-antseed-total-tokens'] = String(telemetry.usage.totalTokens)
-  if (telemetry.estimatedCostUsd !== null && Number.isFinite(telemetry.estimatedCostUsd)) {
-    headers['x-antseed-estimated-cost-usd'] = telemetry.estimatedCostUsd.toFixed(6)
-  }
-  return headers
-}
-
-function attachStreamingAntseedHeaders(
-  upstreamHeaders: Record<string, string>,
-  selectedPeer: PeerInfo,
-  requestId: string,
-): Record<string, string> {
-  const headers: Record<string, string> = { ...upstreamHeaders }
-  headers['x-antseed-request-id'] = requestId
-  setPeerIdentityHeaders(headers, selectedPeer)
-  return headers
-}
-
-function requestWantsStreaming(headers: Record<string, string>, body: Uint8Array): boolean {
-  const accept = (headers['accept'] ?? headers['Accept'] ?? '').toLowerCase()
-  if (accept.includes('text/event-stream')) {
-    return true
-  }
-
-  const contentType = (headers['content-type'] ?? headers['Content-Type'] ?? '').toLowerCase()
-  if (!contentType.includes('application/json') || body.length === 0) {
-    return false
-  }
-
-  try {
-    const parsed = JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>
-    return parsed.stream === true
-  } catch {
-    return false
-  }
-}
-
-function isConnectionChurnError(message: string): boolean {
-  return /connection .*?\b(closed|failed)\s+during request\b/i.test(message)
-}
-
-function isConnectionHealthy(state: ConnectionState | null): boolean {
-  if (!state) {
-    return false
-  }
-  const normalized = String(state).toLowerCase()
-  return normalized === 'open' || normalized === 'authenticated' || normalized === 'connecting'
-}
-
-function extractHostFromAddress(address: string): string {
-  const trimmed = address.trim()
-  if (trimmed.length === 0) return ''
-
-  if (trimmed.startsWith('[')) {
-    const end = trimmed.indexOf(']')
-    return end > 1 ? trimmed.slice(1, end).toLowerCase() : ''
-  }
-
-  const idx = trimmed.lastIndexOf(':')
-  if (idx > 0) {
-    return trimmed.slice(0, idx).toLowerCase()
-  }
-  return trimmed.toLowerCase()
-}
-
-function isLoopbackHost(host: string): boolean {
-  return host === '127.0.0.1' || host === 'localhost' || host === '::1'
-}
-
-function isLoopbackPeer(peer: PeerInfo): boolean {
-  if (!peer.publicAddress) {
-    return false
-  }
-  const host = extractHostFromAddress(peer.publicAddress)
-  return isLoopbackHost(host)
-}
-
-/**
- * Rewrite the `service` (and `model` for upstream LLM API compat) fields in a JSON request body.
- * Also updates `content-length` if present in headers.
- * Returns the original body/headers unchanged if the body is not JSON,
- * is empty, or cannot be parsed.
- */
-export function rewriteServiceInBody(
-  body: Uint8Array,
-  headers: Record<string, string>,
-  service: string,
-): { body: Uint8Array; headers: Record<string, string> } {
-  const contentType = (headers['content-type'] ?? headers['Content-Type'] ?? '').toLowerCase()
-  if (!contentType.includes('application/json') || body.length === 0) {
-    return { body, headers }
-  }
-  try {
-    const parsed = JSON.parse(new TextDecoder().decode(body)) as unknown
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      return { body, headers }
-    }
-    const obj = parsed as Record<string, unknown>
-    obj['service'] = service
-    obj['model'] = service
-    const rewritten = new TextEncoder().encode(JSON.stringify(obj))
-    const updatedHeaders = { ...headers }
-    if ('content-length' in updatedHeaders) {
-      updatedHeaders['content-length'] = String(rewritten.length)
-    } else if ('Content-Length' in updatedHeaders) {
-      updatedHeaders['Content-Length'] = String(rewritten.length)
-    }
-    return { body: rewritten, headers: updatedHeaders }
-  } catch {
-    return { body, headers }
-  }
+const PROTOCOL_TRANSFORMS: Record<string, ProtocolTransformStrategy> = {
+  'anthropic-messages→openai-chat-completions': {
+    transformRequest: transformAnthropicMessagesRequestToOpenAIChat,
+    adaptResponse: (res, meta) => transformOpenAIChatResponseToAnthropicMessage(res, meta),
+    createStreamAdapter: createOpenAIChatToAnthropicStreamingAdapter,
+  },
+  'openai-responses→openai-chat-completions': {
+    transformRequest: transformOpenAIResponsesRequestToOpenAIChat,
+    adaptResponse: (res, meta) => transformOpenAIChatResponseToOpenAIResponses(res, meta),
+    createStreamAdapter: createOpenAIChatToResponsesStreamingAdapter,
+  },
+  'openai-chat-completions→openai-responses': {
+    transformRequest: transformOpenAIChatRequestToOpenAIResponses,
+    adaptResponse: (res, meta) => transformOpenAIResponsesResponseToOpenAIChat(res, meta),
+    createStreamAdapter: createOpenAIResponsesToChatStreamingAdapter,
+  },
 }
 
 /**
@@ -837,6 +172,8 @@ export class BuyerProxy {
   private _pinnedService: string | null
   private _stateFileWatcher: FSWatcher | null = null
   private _stateWatchDebounce: ReturnType<typeof setTimeout> | null = null
+
+  private _stateWriteChain: Promise<void> = Promise.resolve()
 
   private _cachedPeers: PeerInfo[] = []
   private _cacheLastUpdatedAtMs = 0
@@ -874,6 +211,9 @@ export class BuyerProxy {
       })
     })
     this._startBackgroundRefresh()
+    // Trigger initial peer discovery immediately so the desktop can show
+    // services without waiting for the first request or 5-minute interval.
+    void this._refreshPeersNow().catch(() => {})
     await this._writeStateFile('connected')
     this._watchStateFile()
   }
@@ -932,36 +272,43 @@ export class BuyerProxy {
     }
   }
 
-  private async _writeStateFile(state: 'connected' | 'stopped'): Promise<void> {
-    try {
-      const dir = join(homedir(), '.antseed')
-      await mkdir(dir, { recursive: true })
-      let existing: Record<string, unknown> = {}
+  /** Serialised read-modify-write to buyer.state.json. Returns the queued write promise. */
+  private _mergeStateFile(patch: Record<string, unknown>): Promise<void> {
+    this._stateWriteChain = this._stateWriteChain.then(async () => {
       try {
-        const raw = await readFile(BUYER_STATE_FILE, 'utf-8')
-        existing = JSON.parse(raw) as Record<string, unknown>
+        const dir = join(homedir(), '.antseed')
+        await mkdir(dir, { recursive: true })
+        let existing: Record<string, unknown> = {}
+        try {
+          const raw = await readFile(BUYER_STATE_FILE, 'utf-8')
+          existing = JSON.parse(raw) as Record<string, unknown>
+        } catch {
+          // file doesn't exist yet
+        }
+        const data = { ...existing, ...patch }
+        const tmp = join(homedir(), '.antseed', `.buyer.state.${randomUUID()}.json.tmp`)
+        await writeFile(tmp, JSON.stringify(data, null, 2))
+        await rename(tmp, BUYER_STATE_FILE)
       } catch {
-        // file doesn't exist yet
+        // non-fatal
       }
-      // When stopping, preserve whatever pinnedService/pinnedPeerId is already
-      // in the file — the debounce may have been cancelled before
-      // _reloadSessionOverrides could commit the latest CLI-written values.
-      const sessionOverrides = state === 'connected'
-        ? { pinnedService: this._pinnedService, pinnedPeerId: this._pinnedPeer }
-        : {}
-      const data = {
-        ...existing,
-        state,
-        pid: process.pid,
-        port: this._port,
-        ...sessionOverrides,
-      }
-      const tmp = join(homedir(), '.antseed', `.buyer.state.${randomUUID()}.json.tmp`)
-      await writeFile(tmp, JSON.stringify(data, null, 2))
-      await rename(tmp, BUYER_STATE_FILE)
-    } catch {
-      // non-fatal
-    }
+    }).catch(() => {})
+    return this._stateWriteChain
+  }
+
+  private async _writeStateFile(state: 'connected' | 'stopped'): Promise<void> {
+    // When stopping, preserve whatever pinnedService/pinnedPeerId is already
+    // in the file — the debounce may have been cancelled before
+    // _reloadSessionOverrides could commit the latest CLI-written values.
+    const sessionOverrides = state === 'connected'
+      ? { pinnedService: this._pinnedService, pinnedPeerId: this._pinnedPeer }
+      : {}
+    await this._mergeStateFile({
+      state,
+      pid: process.pid,
+      port: this._port,
+      ...sessionOverrides,
+    })
   }
 
   private _startBackgroundRefresh(): void {
@@ -973,9 +320,51 @@ export class BuyerProxy {
   }
 
   private _replacePeers(incoming: PeerInfo[]): void {
-    this._cachedPeers = incoming
+    const incomingById = new Map(incoming.map((p) => [p.peerId, p]))
+    const now = Date.now()
+
+    // Carry forward previously known peers that are missing from this scan,
+    // preserving their lastSeen timestamp. A missed DHT scan doesn't mean
+    // the peer is unavailable — it just wasn't discovered this time.
+    const merged = [...incoming]
+    for (const prev of this._cachedPeers) {
+      if (!incomingById.has(prev.peerId) && now - prev.lastSeen < CARRY_FORWARD_TTL_MS) {
+        merged.push({ ...prev })
+      }
+    }
+
+    this._cachedPeers = merged
     this._cacheLastUpdatedAtMs = Date.now()
     this._cacheMutationEpoch += 1
+    this._persistPeersToState()
+  }
+
+  private _persistPeersToState(): void {
+    // Write discovered peers to buyer.state.json so the dashboard can read them
+    // without running its own DHT node.
+    const peers = this._cachedPeers.map((p) => {
+      // Extract service names from providerPricing entries.
+      const services: string[] = []
+      if (p.providerPricing) {
+        for (const entry of Object.values(p.providerPricing)) {
+          if (entry.services) {
+            services.push(...Object.keys(entry.services))
+          }
+        }
+      }
+      return {
+        peerId: p.peerId,
+        displayName: p.displayName ?? null,
+        publicAddress: p.publicAddress ?? null,
+        providers: p.providers,
+        services,
+        defaultInputUsdPerMillion: p.defaultInputUsdPerMillion ?? 0,
+        defaultOutputUsdPerMillion: p.defaultOutputUsdPerMillion ?? 0,
+        maxConcurrency: p.maxConcurrency ?? 0,
+        lastSeen: p.lastSeen,
+      }
+    })
+    this._mergeStateFile({ discoveredPeers: peers, peersUpdatedAt: Date.now() })
   }
 
   private _evictPeer(peerId: string): void {
@@ -984,6 +373,7 @@ export class BuyerProxy {
     if (this._cachedPeers.length < before) {
       this._cacheLastUpdatedAtMs = Date.now()
       this._cacheMutationEpoch += 1
+      this._persistPeersToState()
       log(`Evicted failing peer ${peerId.slice(0, 12)}... from cache (${this._cachedPeers.length} remaining)`)
     }
   }
@@ -991,7 +381,7 @@ export class BuyerProxy {
   private _rememberSuccessfulPeer(routeKey: string, peerId: string): void {
     this._lastSuccessfulPeerId = peerId
     this._lastSuccessfulPeerByRouteKey.set(routeKey, peerId)
-    // Keep map bounded to prevent unbounded growth from long-running sessions.
+    // Keep map bounded to prevent unbounded growth from long-running channels.
     const MAX_ROUTE_HISTORY = 200
     if (this._lastSuccessfulPeerByRouteKey.size > MAX_ROUTE_HISTORY) {
       const oldestKey = this._lastSuccessfulPeerByRouteKey.keys().next().value
@@ -1041,67 +431,7 @@ export class BuyerProxy {
     ].join('|')
   }
 
-  private async _readLocalSeederFallback(): Promise<PeerInfo | null> {
-    try {
-      const raw = await readFile(DAEMON_STATE_FILE, 'utf-8')
-      const parsed = JSON.parse(raw) as {
-        state?: unknown
-        pid?: unknown
-        peerId?: unknown
-        signalingPort?: unknown
-        provider?: unknown
-        defaultInputUsdPerMillion?: unknown
-        defaultOutputUsdPerMillion?: unknown
-        providerPricing?: unknown
-      }
-
-      if (parsed.state !== 'seeding') return null
-      if (typeof parsed.peerId !== 'string' || !/^[0-9a-f]{64}$/i.test(parsed.peerId)) return null
-
-      const signalingPort = Number(parsed.signalingPort)
-      if (!Number.isFinite(signalingPort) || signalingPort <= 0 || signalingPort > 65535) return null
-
-      const pid = Number(parsed.pid)
-      if (Number.isFinite(pid) && pid > 0) {
-        try {
-          process.kill(Math.floor(pid), 0)
-        } catch {
-          return null
-        }
-      }
-
-      const providers = typeof parsed.provider === 'string' && parsed.provider.trim().length > 0
-        ? [parsed.provider.trim()]
-        : []
-      const defaultInputUsdPerMillion = Number(parsed.defaultInputUsdPerMillion)
-      const defaultOutputUsdPerMillion = Number(parsed.defaultOutputUsdPerMillion)
-      const providerPricing = parsed.providerPricing && typeof parsed.providerPricing === 'object'
-        ? (parsed.providerPricing as PeerInfo['providerPricing'])
-        : undefined
-
-      const peerId = parsed.peerId.toLowerCase()
-
-      return {
-        peerId: peerId as PeerInfo['peerId'],
-        lastSeen: Date.now(),
-        publicAddress: `127.0.0.1:${Math.floor(signalingPort)}`,
-        providers,
-        defaultInputUsdPerMillion: Number.isFinite(defaultInputUsdPerMillion) ? defaultInputUsdPerMillion : 0,
-        defaultOutputUsdPerMillion: Number.isFinite(defaultOutputUsdPerMillion) ? defaultOutputUsdPerMillion : 0,
-        ...(providerPricing ? { providerPricing } : {}),
-      }
-    } catch {
-      return null
-    }
-  }
-
   private async _discoverPeersFromNetwork(): Promise<PeerInfo[]> {
-    const localSeeder = await this._readLocalSeederFallback()
-    if (localSeeder) {
-      log(`Using local seeder ${localSeeder.peerId.slice(0, 12)}... @ ${localSeeder.publicAddress} (skipping DHT lookup)`)
-      return [localSeeder]
-    }
-
     log('Discovering peers via DHT...')
     const peers = await this._node.discoverPeers()
     if (peers.length > 0) {
@@ -1191,11 +521,92 @@ export class BuyerProxy {
     return `Discovered ${peers.length} peer(s): ${samples}${suffix}`
   }
 
+  private async _handleControlPlane(
+    req: IncomingMessage,
+    res: ServerResponse,
+    method: string,
+    path: string,
+  ): Promise<void> {
+    if (path === '/_antseed/peers' && method === 'GET') {
+      const peers = await this._getPeers()
+      const payload = peers.map((p) => ({
+        peerId: p.peerId,
+        displayName: p.displayName,
+        publicAddress: p.publicAddress,
+        providers: p.providers,
+        providerPricing: p.providerPricing,
+        providerServiceCategories: p.providerServiceCategories,
+        providerServiceApiProtocols: p.providerServiceApiProtocols,
+        reputationScore: p.reputationScore,
+        trustScore: p.trustScore,
+        lastSeen: p.lastSeen,
+      }))
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ ok: true, peers: payload }))
+      return
+    }
+
+    if (path === '/_antseed/connect' && method === 'POST') {
+      const chunks: Buffer[] = []
+      let totalSize = 0
+      for await (const chunk of req) {
+        totalSize += (chunk as Buffer).length
+        if (totalSize > 8192) {
+          res.writeHead(413, { 'content-type': 'application/json' })
+          res.end(JSON.stringify({ ok: false, error: 'Request body too large' }))
+          return
+        }
+        chunks.push(chunk as Buffer)
+      }
+      let peerId: string
+      try {
+        const body = JSON.parse(Buffer.concat(chunks).toString())
+        peerId = String(body.peerId ?? '')
+      } catch {
+        res.writeHead(400, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: false, error: 'Invalid JSON body' }))
+        return
+      }
+      if (!peerId) {
+        res.writeHead(400, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: false, error: 'Missing peerId' }))
+        return
+      }
+      const peers = await this._getPeers()
+      const peer = peers.find((p) => p.peerId === peerId)
+      if (!peer) {
+        res.writeHead(404, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: false, error: 'Peer not found in cache' }))
+        return
+      }
+      try {
+        await this._node.connectToPeer(peer)
+        log(`Eager connection established to ${peerId.slice(0, 12)}...`)
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: true }))
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        log(`Eager connection failed for ${peerId.slice(0, 12)}...: ${message}`)
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: false, error: message }))
+      }
+      return
+    }
+
+    res.writeHead(404, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ ok: false, error: 'Unknown control-plane endpoint' }))
+  }
+
   private async _handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const method = req.method ?? 'GET'
     const path = req.url ?? '/'
 
     log(`${method} ${path}`)
+
+    // Control-plane endpoints — handle before collecting proxy body
+    if (path.startsWith('/_antseed/')) {
+      return this._handleControlPlane(req, res, method, path)
+    }
 
     // Collect request body
     const chunks: Buffer[] = []
@@ -1314,32 +725,25 @@ export class BuyerProxy {
 
     if (routingPeers.length === 0) {
       const diagnostics = this._formatPeerSelectionDiagnostics(discoveredPeers)
-      res.writeHead(502, { 'content-type': 'text/plain' })
-      if (requestProtocol) {
-        const protocolLabel = requestProtocol
-        const providerLabel = explicitProvider ? ` for provider "${explicitProvider}"` : ''
-        res.end(`No peers support ${protocolLabel}${providerLabel}. ${diagnostics}`)
-      } else {
-        res.end(`No peers advertise provider "${explicitProvider}". ${diagnostics}`)
-      }
-      return
-    }
-
-    if (routingPeers.length === 0) {
-      const diagnostics = this._formatPeerSelectionDiagnostics(discoveredPeers)
-      res.writeHead(502, { 'content-type': 'text/plain' })
       const providerLabel = explicitProvider ? ` for provider "${explicitProvider}"` : ''
+      res.writeHead(502, { 'content-type': 'text/plain' })
       res.end(`No peers support ${requestProtocol ?? 'this request'}${providerLabel}. ${diagnostics}`)
       return
     }
 
     log(`Routing candidates: ${routingPeers.length} peer(s)`)
 
-    // Select peer: explicit pin bypasses the router (and retry)
     const router = this._node.router
-    const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504])
 
     if (explicitPeerId) {
+      // Pinned peers must use fresh discovery data so IP changes are picked up.
+      // Safe with the hasForcedRefresh guard: if an earlier refresh already ran
+      // this request, the cache is already fresh and cacheAgeMs will be < TTL.
+      const cacheAgeMs = Date.now() - this._cacheLastUpdatedAtMs
+      if (cacheAgeMs > this._peerCacheTtlMs) {
+        await refreshPeerSelection(`pinned peer with stale cache (${cacheAgeMs}ms old)`)
+      }
+
       let pinnedRoutingPeers = routingPeers
       let pinnedRoutePlans = routingPlans
       let selectedPeer = pinnedRoutingPeers.find((p) => p.peerId.toLowerCase() === explicitPeerId) ?? null
@@ -1466,7 +870,7 @@ export class BuyerProxy {
 
       if (!selectedPeer) {
         selectedPeer = router
-          ? router.selectPeer(serializedReq, availableCandidates)
+          ? (router.selectPeer(serializedReq, availableCandidates) ?? availableCandidates[0] ?? null)
           : availableCandidates[0] ?? null
       }
 
@@ -1560,66 +964,37 @@ export class BuyerProxy {
     let streamResponseAdapter: StreamingResponseAdapter | null = null
 
     if (selectedRoutePlan.selection?.requiresTransform) {
-      if (
-        requestProtocol === 'anthropic-messages'
-        && selectedRoutePlan.selection.targetProtocol === 'openai-chat-completions'
-      ) {
-        log(`Applying protocol adapter anthropic-messages -> openai-chat-completions via provider "${selectedRoutePlan.provider}"`)
-        const transformed = transformAnthropicMessagesRequestToOpenAIChat(requestForPeer)
-        if (!transformed) {
-          res.writeHead(502, { 'content-type': 'text/plain' })
-          res.end('Failed to transform Anthropic request for selected provider protocol')
-          return { done: true }
-        }
-        requestForPeer = {
-          ...transformed.request,
-          headers: {
-            ...transformed.request.headers,
-            'x-antseed-provider': selectedRoutePlan.provider,
-          },
-        }
-        adaptResponse = (response: SerializedHttpResponse) =>
-          transformOpenAIChatResponseToAnthropicMessage(response, {
-            streamRequested: transformed.streamRequested,
-            fallbackModel: transformed.requestedModel,
-          })
-        if (transformed.streamRequested) {
-          streamResponseAdapter = createOpenAIChatToAnthropicStreamingAdapter({
-            fallbackModel: transformed.requestedModel,
-          })
-        }
-      } else if (
-        requestProtocol === 'openai-responses'
-        && selectedRoutePlan.selection.targetProtocol === 'openai-chat-completions'
-      ) {
-        log(`Applying protocol adapter openai-responses -> openai-chat-completions via provider "${selectedRoutePlan.provider}"`)
-        const transformed = transformOpenAIResponsesRequestToOpenAIChat(requestForPeer)
-        if (!transformed) {
-          res.writeHead(502, { 'content-type': 'text/plain' })
-          res.end('Failed to transform Responses API request for selected provider protocol')
-          return { done: true }
-        }
-        requestForPeer = {
-          ...transformed.request,
-          headers: {
-            ...transformed.request.headers,
-            'x-antseed-provider': selectedRoutePlan.provider,
-          },
-        }
-        adaptResponse = (response: SerializedHttpResponse) =>
-          transformOpenAIChatResponseToOpenAIResponses(response, {
-            fallbackModel: transformed.requestedModel,
-            streamRequested: transformed.streamRequested,
-          })
-        if (transformed.streamRequested) {
-          streamResponseAdapter = createOpenAIChatToResponsesStreamingAdapter({
-            fallbackModel: transformed.requestedModel,
-          })
-        }
-      } else {
+      const transformKey = `${requestProtocol}→${selectedRoutePlan.selection.targetProtocol}`
+      const strategy = PROTOCOL_TRANSFORMS[transformKey]
+      if (!strategy) {
         res.writeHead(502, { 'content-type': 'text/plain' })
         res.end('Unsupported protocol transformation path')
         return { done: true }
+      }
+
+      log(`Applying protocol adapter ${transformKey} via provider "${selectedRoutePlan.provider}"`)
+      const transformed = strategy.transformRequest(requestForPeer)
+      if (!transformed) {
+        res.writeHead(502, { 'content-type': 'text/plain' })
+        res.end(`Failed to transform request for ${transformKey}`)
+        return { done: true }
+      }
+      requestForPeer = {
+        ...transformed.request,
+        headers: {
+          ...transformed.request.headers,
+          'x-antseed-provider': selectedRoutePlan.provider,
+        },
+      }
+      adaptResponse = (response: SerializedHttpResponse) =>
+        strategy.adaptResponse(response, {
+          streamRequested: transformed.streamRequested,
+          fallbackModel: transformed.requestedModel,
+        })
+      if (transformed.streamRequested) {
+        streamResponseAdapter = strategy.createStreamAdapter({
+          fallbackModel: transformed.requestedModel,
+        })
       }
     }
 
@@ -1646,6 +1021,12 @@ export class BuyerProxy {
               selectedPeer,
               requestForPeer.requestId,
             )
+            // Ensure content-type is set for SSE — some upstream APIs (e.g. Codex)
+            // omit it, which can cause the client's fetch body reader to not
+            // detect end-of-stream properly.
+            if (!streamingHeaders['content-type']) {
+              streamingHeaders['content-type'] = 'text/event-stream'
+            }
             res.writeHead(adaptedStartResponse.statusCode, streamingHeaders)
             if (adaptedStartResponse.body.length > 0) {
               res.write(Buffer.from(adaptedStartResponse.body))
@@ -1668,6 +1049,7 @@ export class BuyerProxy {
         if (!streamed && adaptResponse) {
           responseForClient = adaptResponse(response)
         }
+        responseForClient = adaptOpenAICompatibleErrorResponse(responseForClient, requestProtocol)
 
         const latencyMs = Date.now() - startTime
         log(`Response: ${responseForClient.statusCode} (${latencyMs}ms, ${responseForClient.body.length} bytes)`)
@@ -1735,6 +1117,7 @@ export class BuyerProxy {
         if (adaptResponse) {
           response = adaptResponse(response)
         }
+        response = adaptOpenAICompatibleErrorResponse(response, requestProtocol)
         const latencyMs = Date.now() - startTime
 
         log(`Response: ${response.statusCode} (${latencyMs}ms, ${response.body.length} bytes)`)

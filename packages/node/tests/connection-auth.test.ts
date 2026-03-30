@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import * as ed from '@noble/ed25519';
+import { randomBytes } from 'node:crypto';
+import { Wallet } from 'ethers';
 import { toPeerId } from '../src/types/peer.js';
 import { bytesToHex } from '../src/utils/hex.js';
 import {
@@ -7,19 +8,20 @@ import {
   buildConnectionAuthEnvelope,
   verifyConnectionAuthEnvelope,
 } from '../src/p2p/connection-auth.js';
+import type { Identity } from '../src/p2p/identity.js';
 
-async function createIdentity(): Promise<{ peerId: string; privateKey: Uint8Array }> {
-  const privateKey = ed.utils.randomPrivateKey();
-  const publicKey = await ed.getPublicKeyAsync(privateKey);
-  const peerId = toPeerId(bytesToHex(publicKey));
-  return { peerId, privateKey };
+function createIdentity(): Identity {
+  const privateKey = randomBytes(32);
+  const wallet = new Wallet('0x' + bytesToHex(privateKey));
+  const peerId = toPeerId(wallet.address.slice(2).toLowerCase());
+  return { peerId, privateKey, wallet };
 }
 
 describe('connection-auth', () => {
-  it('accepts valid signed intro auth', async () => {
-    const { peerId, privateKey } = await createIdentity();
+  it('accepts valid signed intro auth', () => {
+    const { peerId, wallet } = createIdentity();
     const nowMs = 1_700_000_000_000;
-    const auth = buildConnectionAuthEnvelope('intro', peerId, privateKey, nowMs);
+    const auth = buildConnectionAuthEnvelope('intro', peerId, wallet, nowMs);
 
     const result = verifyConnectionAuthEnvelope({
       type: 'intro',
@@ -31,10 +33,10 @@ describe('connection-auth', () => {
     expect(result.peerId).toBe(peerId);
   });
 
-  it('rejects payload type mismatch', async () => {
-    const { peerId, privateKey } = await createIdentity();
+  it('rejects payload type mismatch', () => {
+    const { peerId, wallet } = createIdentity();
     const nowMs = 1_700_000_000_000;
-    const auth = buildConnectionAuthEnvelope('intro', peerId, privateKey, nowMs);
+    const auth = buildConnectionAuthEnvelope('intro', peerId, wallet, nowMs);
 
     const result = verifyConnectionAuthEnvelope({
       type: 'hello',
@@ -46,9 +48,9 @@ describe('connection-auth', () => {
     expect(result.reason).toContain('signature');
   });
 
-  it('rejects stale auth timestamps', async () => {
-    const { peerId, privateKey } = await createIdentity();
-    const auth = buildConnectionAuthEnvelope('hello', peerId, privateKey, 1_000);
+  it('rejects stale auth timestamps', () => {
+    const { peerId, wallet } = createIdentity();
+    const auth = buildConnectionAuthEnvelope('hello', peerId, wallet, 1_000);
 
     const result = verifyConnectionAuthEnvelope({
       type: 'hello',
@@ -61,11 +63,11 @@ describe('connection-auth', () => {
     expect(result.reason).toContain('timestamp');
   });
 
-  it('rejects replayed nonces when replay guard is enabled', async () => {
-    const { peerId, privateKey } = await createIdentity();
+  it('rejects replayed nonces when replay guard is enabled', () => {
+    const { peerId, wallet } = createIdentity();
     const guard = new NonceReplayGuard();
     const nowMs = 1_700_000_000_000;
-    const auth = buildConnectionAuthEnvelope('intro', peerId, privateKey, nowMs);
+    const auth = buildConnectionAuthEnvelope('intro', peerId, wallet, nowMs);
 
     const first = verifyConnectionAuthEnvelope({
       type: 'intro',
