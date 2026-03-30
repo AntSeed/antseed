@@ -3,7 +3,6 @@ import type { BalanceData, PaymentConfig } from './types';
 import { getBalance, getConfig } from './api';
 import { DepositView } from './components/DepositView';
 import { WithdrawView } from './components/WithdrawView';
-import { SessionsView } from './components/SessionsView';
 
 function AntIcon({ size = 24 }: { size?: number }) {
   return (
@@ -38,7 +37,6 @@ function ThemeToggle({ isDark, onToggle }: { isDark: boolean; onToggle: () => vo
 export function App() {
   const [balance, setBalance] = useState<BalanceData | null>(null);
   const [config, setConfig] = useState<PaymentConfig | null>(null);
-  const [activeTab, setActiveTab] = useState<'deposit' | 'sessions'>('deposit');
   const [isDark, setIsDark] = useState(() => {
     const saved = localStorage.getItem('antseed-payments-theme');
     if (saved) return saved === 'dark';
@@ -103,29 +101,9 @@ export function App() {
           </div>
         </div>
 
-        {/* ── Tabs ── */}
-        <div className="tabs">
-          <button
-            className={`tab${activeTab === 'deposit' ? ' tab-active' : ''}`}
-            onClick={() => setActiveTab('deposit')}
-          >
-            Deposit
-          </button>
-          <button
-            className={`tab${activeTab === 'sessions' ? ' tab-active' : ''}`}
-            onClick={() => setActiveTab('sessions')}
-          >
-            Sessions
-          </button>
-        </div>
-
-        {/* ── Tab content ── */}
+        {/* ── Deposit ── */}
         <div className="portal-section">
-          {activeTab === 'deposit' ? (
-            <DepositView config={config} buyerAddress={config?.evmAddress ?? null} onDeposited={refreshBalance} />
-          ) : (
-            <SessionsView config={config} />
-          )}
+          <DepositView config={config} buyerAddress={config?.evmAddress ?? null} onDeposited={refreshBalance} />
         </div>
       </div>
 

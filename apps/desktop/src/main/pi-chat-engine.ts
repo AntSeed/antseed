@@ -1975,12 +1975,7 @@ export function registerPiChatHandlers({
 
   ipcMain.handle('chat:ai-list-conversations', async () => {
     const conversations = await store.list();
-    // Enrich summaries with peerId from the preferred-peer map
-    const enriched = conversations.map((c) => {
-      const peerId = preferredPeerByConversationId.get(c.id);
-      return peerId ? { ...c, peerId } : c;
-    });
-    return { ok: true, data: enriched };
+    return { ok: true, data: conversations };
   });
 
   ipcMain.handle('chat:ai-get-conversation', async (_event, id: string) => {

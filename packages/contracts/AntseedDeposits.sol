@@ -5,7 +5,6 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {IAntseedSessions} from "./interfaces/IAntseedSessions.sol";
 
 /**
  * @title AntseedDeposits
@@ -80,13 +79,6 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
         _;
     }
 
-    /// @dev Check that msg.sender is the buyer's authorized operator (from Sessions).
-    ///      The buyer (hot wallet) is a signer only — it cannot call these functions directly.
-    function _isOperator(address buyer) internal view returns (bool) {
-        if (sessionsContract == address(0)) return false;
-        return msg.sender == IAntseedSessions(sessionsContract).operators(buyer);
-    }
-
     // ─── Constructor ────────────────────────────────────────────────────
     constructor(address _usdc) Ownable(msg.sender) {
         if (_usdc == address(0)) revert InvalidAddress();
@@ -145,10 +137,9 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
         emit Deposited(buyer, amount);
     }
 
-    function requestWithdrawal(address buyer, uint256 amount) external {
+    function requestWithdrawal(uint256 amount) external {
         if (amount == 0) revert InvalidAmount();
-        if (!_isOperator(buyer)) revert NotAuthorized();
-        BuyerAccount storage ba = buyers[buyer];
+        BuyerAccount storage ba = buyers[msg.sender];
         if (ba.withdrawalAmount > 0) revert InvalidAmount();
         uint256 available = ba.balance - ba.reserved - ba.withdrawalAmount;
         if (available < amount) revert InsufficientBalance();
@@ -156,12 +147,11 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
         ba.withdrawalAmount = amount;
         ba.withdrawalRequestedAt = block.timestamp;
 
-        emit WithdrawalRequested(buyer, amount);
+        emit WithdrawalRequested(msg.sender, amount);
     }
 
-    function executeWithdrawal(address buyer) external nonReentrant {
-        if (!_isOperator(buyer)) revert NotAuthorized();
-        BuyerAccount storage ba = buyers[buyer];
+    function executeWithdrawal() external nonReentrant {
+        BuyerAccount storage ba = buyers[msg.sender];
         if (ba.withdrawalAmount == 0) revert InvalidAmount();
         if (block.timestamp < ba.withdrawalRequestedAt + WITHDRAWAL_DELAY) revert TimeoutNotReached();
 
@@ -171,19 +161,17 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
         ba.withdrawalRequestedAt = 0;
         ba.balance -= amount;
 
-        // Always send to the buyer address — never to msg.sender
-        usdc.safeTransfer(buyer, amount);
+        usdc.safeTransfer(msg.sender, amount);
 
-        emit WithdrawalExecuted(buyer, amount);
+        emit WithdrawalExecuted(msg.sender, amount);
     }
 
-    function cancelWithdrawal(address buyer) external {
-        if (!_isOperator(buyer)) revert NotAuthorized();
-        BuyerAccount storage ba = buyers[buyer];
+    function cancelWithdrawal() external {
+        BuyerAccount storage ba = buyers[msg.sender];
         ba.withdrawalAmount = 0;
         ba.withdrawalRequestedAt = 0;
 
-        emit WithdrawalCancelled(buyer);
+        emit WithdrawalCancelled(msg.sender);
     }
 
     function getBuyerBalance(address buyer)

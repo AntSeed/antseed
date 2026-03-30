@@ -4,7 +4,6 @@ pragma solidity ^0.8.24;
 import "forge-std/Test.sol";
 import "../AntseedDeposits.sol";
 import "../MockUSDC.sol";
-import {IAntseedSessions} from "../interfaces/IAntseedSessions.sol";
 
 contract AntseedDepositsTest is Test {
     AntseedDeposits public deposits;
@@ -162,26 +161,15 @@ contract AntseedDepositsTest is Test {
     //                     requestWithdrawal()
     // ═══════════════════════════════════════════════════════════════════
 
-    function _mockOperator(address _buyer, address _operator) internal {
-        vm.mockCall(
-            sessions,
-            abi.encodeWithSelector(IAntseedSessions.operators.selector, _buyer),
-            abi.encode(_operator)
-        );
-    }
-
     function test_requestWithdrawal_success() public {
         vm.prank(buyer);
         deposits.deposit(MIN_DEPOSIT);
 
-        address operator = address(0xAA);
-        _mockOperator(buyer, operator);
-
         vm.expectEmit(true, false, false, true);
         emit AntseedDeposits.WithdrawalRequested(buyer, MIN_DEPOSIT);
 
-        vm.prank(operator);
-        deposits.requestWithdrawal(buyer, MIN_DEPOSIT);
+        vm.prank(buyer);
+        deposits.requestWithdrawal(MIN_DEPOSIT);
 
         (uint256 available,, uint256 pending,) = deposits.getBuyerBalance(buyer);
         assertEq(pending, MIN_DEPOSIT);
@@ -192,40 +180,31 @@ contract AntseedDepositsTest is Test {
         vm.prank(buyer);
         deposits.deposit(MIN_DEPOSIT);
 
-        address operator = address(0xAA);
-        _mockOperator(buyer, operator);
-
-        vm.prank(operator);
+        vm.prank(buyer);
         vm.expectRevert(AntseedDeposits.InvalidAmount.selector);
-        deposits.requestWithdrawal(buyer, 0);
+        deposits.requestWithdrawal(0);
     }
 
     function test_requestWithdrawal_revert_alreadyPending() public {
         vm.prank(buyer);
         deposits.deposit(20_000_000);
 
-        address operator = address(0xAA);
-        _mockOperator(buyer, operator);
-
-        vm.prank(operator);
-        deposits.requestWithdrawal(buyer, MIN_DEPOSIT);
+        vm.prank(buyer);
+        deposits.requestWithdrawal(MIN_DEPOSIT);
 
         // Second request while one is pending
-        vm.prank(operator);
+        vm.prank(buyer);
         vm.expectRevert(AntseedDeposits.InvalidAmount.selector);
-        deposits.requestWithdrawal(buyer, MIN_DEPOSIT);
+        deposits.requestWithdrawal(MIN_DEPOSIT);
     }
 
     function test_requestWithdrawal_revert_insufficientAvailable() public {
         vm.prank(buyer);
         deposits.deposit(MIN_DEPOSIT);
 
-        address operator = address(0xAA);
-        _mockOperator(buyer, operator);
-
-        vm.prank(operator);
+        vm.prank(buyer);
         vm.expectRevert(AntseedDeposits.InsufficientBalance.selector);
-        deposits.requestWithdrawal(buyer, MIN_DEPOSIT + 1);
+        deposits.requestWithdrawal(MIN_DEPOSIT + 1);
     }
 
     function test_requestWithdrawal_revert_insufficientDueToReserved() public {
@@ -236,12 +215,9 @@ contract AntseedDepositsTest is Test {
         vm.prank(sessions);
         deposits.lockForSession(buyer, MIN_DEPOSIT);
 
-        address operator = address(0xAA);
-        _mockOperator(buyer, operator);
-
-        vm.prank(operator);
+        vm.prank(buyer);
         vm.expectRevert(AntseedDeposits.InsufficientBalance.selector);
-        deposits.requestWithdrawal(buyer, 1);
+        deposits.requestWithdrawal(1);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -252,11 +228,8 @@ contract AntseedDepositsTest is Test {
         vm.prank(buyer);
         deposits.deposit(MIN_DEPOSIT);
 
-        address operator = address(0xAA);
-        _mockOperator(buyer, operator);
-
-        vm.prank(operator);
-        deposits.requestWithdrawal(buyer, MIN_DEPOSIT);
+        vm.prank(buyer);
+        deposits.requestWithdrawal(MIN_DEPOSIT);
 
         // Warp past withdrawal delay (48 hours)
         vm.warp(block.timestamp + 48 hours + 1);
@@ -266,8 +239,8 @@ contract AntseedDepositsTest is Test {
         vm.expectEmit(true, false, false, true);
         emit AntseedDeposits.WithdrawalExecuted(buyer, MIN_DEPOSIT);
 
-        vm.prank(operator);
-        deposits.executeWithdrawal(buyer);
+        vm.prank(buyer);
+        deposits.executeWithdrawal();
 
         assertEq(usdc.balanceOf(buyer), balBefore + MIN_DEPOSIT);
         (uint256 available,, uint256 pending,) = deposits.getBuyerBalance(buyer);
@@ -279,27 +252,21 @@ contract AntseedDepositsTest is Test {
         vm.prank(buyer);
         deposits.deposit(MIN_DEPOSIT);
 
-        address operator = address(0xAA);
-        _mockOperator(buyer, operator);
-
-        vm.prank(operator);
-        deposits.requestWithdrawal(buyer, MIN_DEPOSIT);
+        vm.prank(buyer);
+        deposits.requestWithdrawal(MIN_DEPOSIT);
 
         // Warp to just before the delay
         vm.warp(block.timestamp + 48 hours - 1);
 
-        vm.prank(operator);
+        vm.prank(buyer);
         vm.expectRevert(AntseedDeposits.TimeoutNotReached.selector);
-        deposits.executeWithdrawal(buyer);
+        deposits.executeWithdrawal();
     }
 
     function test_executeWithdrawal_revert_noPending() public {
-        address operator = address(0xAA);
-        _mockOperator(buyer, operator);
-
-        vm.prank(operator);
+        vm.prank(buyer);
         vm.expectRevert(AntseedDeposits.InvalidAmount.selector);
-        deposits.executeWithdrawal(buyer);
+        deposits.executeWithdrawal();
     }
 
     function test_executeWithdrawal_capsAtAvailable() public {
@@ -310,11 +277,8 @@ contract AntseedDepositsTest is Test {
         vm.prank(buyer);
         deposits.deposit(50_000_000);
 
-        address operator = address(0xAA);
-        _mockOperator(buyer, operator);
-
-        vm.prank(operator);
-        deposits.requestWithdrawal(buyer, 30_000_000);
+        vm.prank(buyer);
+        deposits.requestWithdrawal(30_000_000);
 
         // Directly reduce balance via vm.store to simulate an edge case
         // buyers mapping at slot 10, balance is field 0
@@ -324,8 +288,8 @@ contract AntseedDepositsTest is Test {
         vm.warp(block.timestamp + 48 hours + 1);
 
         uint256 balBefore = usdc.balanceOf(buyer);
-        vm.prank(operator);
-        deposits.executeWithdrawal(buyer);
+        vm.prank(buyer);
+        deposits.executeWithdrawal();
 
         // Capped at available = balance(20) - reserved(0) = 20, not the requested 30
         assertEq(usdc.balanceOf(buyer), balBefore + 20_000_000);
@@ -339,17 +303,14 @@ contract AntseedDepositsTest is Test {
         vm.prank(buyer);
         deposits.deposit(MIN_DEPOSIT);
 
-        address operator = address(0xAA);
-        _mockOperator(buyer, operator);
-
-        vm.prank(operator);
-        deposits.requestWithdrawal(buyer, MIN_DEPOSIT);
+        vm.prank(buyer);
+        deposits.requestWithdrawal(MIN_DEPOSIT);
 
         vm.expectEmit(true, false, false, false);
         emit AntseedDeposits.WithdrawalCancelled(buyer);
 
-        vm.prank(operator);
-        deposits.cancelWithdrawal(buyer);
+        vm.prank(buyer);
+        deposits.cancelWithdrawal();
 
         (uint256 available,, uint256 pending,) = deposits.getBuyerBalance(buyer);
         assertEq(available, MIN_DEPOSIT);
@@ -367,11 +328,8 @@ contract AntseedDepositsTest is Test {
         vm.prank(sessions);
         deposits.lockForSession(buyer, 10_000_000);
 
-        address operator = address(0xAA);
-        _mockOperator(buyer, operator);
-
-        vm.prank(operator);
-        deposits.requestWithdrawal(buyer, 5_000_000);
+        vm.prank(buyer);
+        deposits.requestWithdrawal(5_000_000);
 
         (uint256 available, uint256 reserved, uint256 pending, uint256 lastActivity) =
             deposits.getBuyerBalance(buyer);
@@ -840,95 +798,5 @@ contract AntseedDepositsTest is Test {
         vm.prank(randomCaller);
         vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", randomCaller));
         deposits.setConstant(keccak256("MIN_BUYER_DEPOSIT"), 5_000_000);
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    //                   OPERATOR WITHDRAWAL TESTS
-    // ═══════════════════════════════════════════════════════════════════
-
-    function test_requestWithdrawal_operatorCanCall() public {
-        vm.prank(buyer);
-        deposits.deposit(MIN_DEPOSIT);
-
-        address operator = address(0xAA);
-        _mockOperator(buyer, operator);
-
-        vm.prank(operator);
-        deposits.requestWithdrawal(buyer, MIN_DEPOSIT);
-
-        (uint256 available,, uint256 pending,) = deposits.getBuyerBalance(buyer);
-        assertEq(pending, MIN_DEPOSIT);
-        assertEq(available, 0);
-    }
-
-    function test_executeWithdrawal_operatorCanCall() public {
-        vm.prank(buyer);
-        deposits.deposit(MIN_DEPOSIT);
-
-        address operator = address(0xAA);
-        _mockOperator(buyer, operator);
-
-        vm.prank(operator);
-        deposits.requestWithdrawal(buyer, MIN_DEPOSIT);
-
-        vm.warp(block.timestamp + 48 hours + 1);
-
-        uint256 balBefore = usdc.balanceOf(buyer);
-
-        vm.prank(operator);
-        deposits.executeWithdrawal(buyer);
-
-        // USDC goes to buyer
-        assertEq(usdc.balanceOf(buyer), balBefore + MIN_DEPOSIT);
-    }
-
-    function test_requestWithdrawal_revert_notOperator() public {
-        vm.prank(buyer);
-        deposits.deposit(MIN_DEPOSIT);
-
-        // Mock sessions.operators(buyer) to return address(0) — no operator set
-        vm.mockCall(sessions, abi.encodeWithSelector(IAntseedSessions.operators.selector, buyer), abi.encode(address(0)));
-
-        vm.prank(randomCaller);
-        vm.expectRevert(AntseedDeposits.NotAuthorized.selector);
-        deposits.requestWithdrawal(buyer, MIN_DEPOSIT);
-    }
-
-    function test_executeWithdrawal_revert_notOperator() public {
-        vm.prank(buyer);
-        deposits.deposit(MIN_DEPOSIT);
-
-        address operator = address(0xAA);
-        _mockOperator(buyer, operator);
-
-        vm.prank(operator);
-        deposits.requestWithdrawal(buyer, MIN_DEPOSIT);
-
-        vm.warp(block.timestamp + 48 hours + 1);
-
-        // Mock sessions.operators(buyer) to return address(0) — no operator set
-        vm.mockCall(sessions, abi.encodeWithSelector(IAntseedSessions.operators.selector, buyer), abi.encode(address(0)));
-
-        vm.prank(randomCaller);
-        vm.expectRevert(AntseedDeposits.NotAuthorized.selector);
-        deposits.executeWithdrawal(buyer);
-    }
-
-    function test_cancelWithdrawal_revert_notOperator() public {
-        vm.prank(buyer);
-        deposits.deposit(MIN_DEPOSIT);
-
-        address operator = address(0xAA);
-        _mockOperator(buyer, operator);
-
-        vm.prank(operator);
-        deposits.requestWithdrawal(buyer, MIN_DEPOSIT);
-
-        // Mock sessions.operators(buyer) to return address(0) — no operator set
-        vm.mockCall(sessions, abi.encodeWithSelector(IAntseedSessions.operators.selector, buyer), abi.encode(address(0)));
-
-        vm.prank(randomCaller);
-        vm.expectRevert(AntseedDeposits.NotAuthorized.selector);
-        deposits.cancelWithdrawal(buyer);
     }
 }
