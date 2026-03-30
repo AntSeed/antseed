@@ -29,6 +29,8 @@ const SESSIONS_ABI = [
   'function computeChannelId(address buyer, address seller, bytes32 salt) external pure returns (bytes32)',
   'function domainSeparator() external view returns (bytes32)',
   'function FIRST_SIGN_CAP() external view returns (uint256)',
+  'function operators(address buyer) external view returns (address)',
+  'function operatorNonces(address buyer) external view returns (uint256)',
 ] as const;
 
 export class SessionsClient extends BaseEvmClient {
@@ -126,5 +128,15 @@ export class SessionsClient extends BaseEvmClient {
   async computeChannelId(buyer: string, seller: string, salt: string): Promise<string> {
     const contract = new Contract(this._contractAddress, SESSIONS_ABI, this._provider);
     return contract.getFunction('computeChannelId')(buyer, seller, salt) as Promise<string>;
+  }
+
+  async getOperator(buyer: string): Promise<string> {
+    const contract = new Contract(this._contractAddress, SESSIONS_ABI, this._provider);
+    return contract.getFunction('operators')(buyer) as Promise<string>;
+  }
+
+  async getOperatorNonce(buyer: string): Promise<bigint> {
+    const contract = new Contract(this._contractAddress, SESSIONS_ABI, this._provider);
+    return contract.getFunction('operatorNonces')(buyer) as Promise<bigint>;
   }
 }

@@ -18,9 +18,9 @@ export interface BuyerBalanceInfo {
 const DEPOSITS_ABI = [
   'function deposit(uint256 amount) external',
   'function depositFor(address buyer, uint256 amount) external',
-  'function requestWithdrawal(uint256 amount) external',
-  'function executeWithdrawal() external',
-  'function cancelWithdrawal() external',
+  'function requestWithdrawal(address buyer, uint256 amount) external',
+  'function executeWithdrawal(address buyer) external',
+  'function cancelWithdrawal(address buyer) external',
   'function claimEarnings() external',
   'function getBuyerBalance(address buyer) external view returns (uint256 available, uint256 reserved, uint256 pendingWithdrawal, uint256 lastActivityAt)',
   'function getBuyerCreditLimit(address buyer) external view returns (uint256)',
@@ -48,16 +48,16 @@ export class DepositsClient extends BaseEvmClient {
     return this._approveAndExec(signer, this._usdcAddress, amount, DEPOSITS_ABI, 'depositFor', buyer, amount);
   }
 
-  async requestWithdrawal(signer: AbstractSigner, amount: bigint): Promise<string> {
-    return this._execWrite(signer, DEPOSITS_ABI, 'requestWithdrawal', amount);
+  async requestWithdrawal(signer: AbstractSigner, buyer: string, amount: bigint): Promise<string> {
+    return this._execWrite(signer, DEPOSITS_ABI, 'requestWithdrawal', buyer, amount);
   }
 
-  async executeWithdrawal(signer: AbstractSigner): Promise<string> {
-    return this._execWrite(signer, DEPOSITS_ABI, 'executeWithdrawal');
+  async executeWithdrawal(signer: AbstractSigner, buyer: string): Promise<string> {
+    return this._execWrite(signer, DEPOSITS_ABI, 'executeWithdrawal', buyer);
   }
 
-  async cancelWithdrawal(signer: AbstractSigner): Promise<string> {
-    return this._execWrite(signer, DEPOSITS_ABI, 'cancelWithdrawal');
+  async cancelWithdrawal(signer: AbstractSigner, buyer: string): Promise<string> {
+    return this._execWrite(signer, DEPOSITS_ABI, 'cancelWithdrawal', buyer);
   }
 
   // ─── Seller Earnings ────────────────────────────────────────────────

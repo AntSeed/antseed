@@ -39,7 +39,13 @@ export function TitleBar() {
     void bridge?.installUpdate?.();
   }, []);
 
-  const { creditsAvailableUsdc } = useUiSnapshot();
+  const {
+    creditsAvailableUsdc,
+    creditsReservedUsdc,
+    creditsPendingWithdrawalUsdc,
+    creditsOperatorAddress,
+    creditsEvmAddress,
+  } = useUiSnapshot();
   const actions = useActions();
   const [creditsDropdownOpen, setCreditsDropdownOpen] = useState(false);
 
@@ -91,16 +97,50 @@ export function TitleBar() {
           </button>
           {creditsDropdownOpen && (
             <div className={styles.titleBarCreditsDropdown}>
-              <div className={styles.creditsDropdownBalance}>
-                <span className={styles.creditsDropdownLabel}>Available</span>
-                <span className={styles.creditsDropdownValue}>{creditsDisplay}</span>
+              <div className={styles.creditsDropdownSection}>
+                <div className={styles.creditsDropdownRow}>
+                  <span className={styles.creditsDropdownLabel}>Available</span>
+                  <span className={styles.creditsDropdownValue}>{creditsDisplay}</span>
+                </div>
+                <div className={styles.creditsDropdownRow}>
+                  <span className={styles.creditsDropdownLabel}>Reserved</span>
+                  <span className={styles.creditsDropdownValueMuted}>${parseFloat(creditsReservedUsdc).toFixed(2)}</span>
+                </div>
+                {parseFloat(creditsPendingWithdrawalUsdc) > 0 && (
+                  <div className={styles.creditsDropdownRow}>
+                    <span className={styles.creditsDropdownLabel}>Pending Withdrawal</span>
+                    <span className={styles.creditsDropdownValueMuted}>${parseFloat(creditsPendingWithdrawalUsdc).toFixed(2)}</span>
+                  </div>
+                )}
               </div>
-              <button
-                className={styles.creditsDropdownAddBtn}
-                onClick={handleAddCredits}
-              >
-                Add Credits
-              </button>
+              <div className={styles.creditsDropdownSection}>
+                <div className={styles.creditsDropdownRow}>
+                  <span className={styles.creditsDropdownLabel}>Operator</span>
+                  {creditsOperatorAddress ? (
+                    <span className={styles.creditsDropdownValueGreen}>
+                      {creditsOperatorAddress.slice(0, 6)}...{creditsOperatorAddress.slice(-4)}
+                    </span>
+                  ) : (
+                    <span className={styles.creditsDropdownValueWarn}>Not set</span>
+                  )}
+                </div>
+                {creditsEvmAddress && (
+                  <div className={styles.creditsDropdownRow}>
+                    <span className={styles.creditsDropdownLabel}>Wallet</span>
+                    <span className={styles.creditsDropdownValueMuted}>
+                      {creditsEvmAddress.slice(0, 6)}...{creditsEvmAddress.slice(-4)}
+                    </span>
+                  </div>
+                )}
+              </div>
+              <div className={styles.creditsDropdownActions}>
+                <button className={styles.creditsDropdownAddBtn} onClick={handleAddCredits}>
+                  Add Credits
+                </button>
+                <button className={styles.creditsDropdownManageBtn} onClick={handleAddCredits}>
+                  Manage Sessions
+                </button>
+              </div>
             </div>
           )}
         </div>

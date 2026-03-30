@@ -12,4 +12,7 @@ interface IAntseedDeposits {
     function creditEarnings(address seller, uint256 amount) external;
     function creditBuyerRefund(address buyer, uint256 creditBack) external;
     function uniqueSellersCharged(address buyer) external view returns (uint256);
+    function requestWithdrawal(address buyer, uint256 amount) external;
+    function executeWithdrawal(address buyer) external;
+    function cancelWithdrawal(address buyer) external;
 }
