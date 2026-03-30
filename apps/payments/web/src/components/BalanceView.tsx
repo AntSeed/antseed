@@ -23,7 +23,6 @@ export function BalanceView({ balance }: BalanceViewProps) {
   const available = parseFloat(balance.available);
   const reserved = parseFloat(balance.reserved);
   const total = parseFloat(balance.total);
-  const pending = parseFloat(balance.pendingWithdrawal);
   const limit = parseFloat(balance.creditLimit);
   const utilization = limit > 0 ? ((total / limit) * 100) : 0;
 
@@ -45,12 +44,6 @@ export function BalanceView({ balance }: BalanceViewProps) {
             <span className="overview-row-label">Reserved in Channels</span>
             <span className="overview-row-value">${reserved.toFixed(2)}</span>
           </div>
-          {pending > 0 && (
-            <div className="overview-row">
-              <span className="overview-row-label overview-row-label--amber">Pending Withdrawal</span>
-              <span className="overview-row-value overview-row-value--amber">${pending.toFixed(2)}</span>
-            </div>
-          )}
         </div>
 
         <div className="overview-limit">

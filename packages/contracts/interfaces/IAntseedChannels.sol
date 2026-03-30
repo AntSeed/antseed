@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 interface IAntseedChannels {
+    function activeChannelCount(address seller) external view returns (uint256);
     function computeChannelId(address buyer, address seller, bytes32 salt) external pure returns (bytes32);
 
     function reserve(
@@ -40,8 +41,4 @@ interface IAntseedChannels {
     function setOperator(address buyer, address operator, uint256 nonce, bytes calldata buyerSig) external;
 
     function transferOperator(address buyer, address newOperator) external;
-
-    function operators(address buyer) external view returns (address);
-
-    function operatorNonces(address buyer) external view returns (uint256);
 }

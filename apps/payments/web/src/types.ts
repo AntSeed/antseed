@@ -3,7 +3,6 @@ export interface BalanceData {
   available: string;
   reserved: string;
   total: string;
-  pendingWithdrawal: string;
   creditLimit: string;
 }
 

@@ -21,7 +21,7 @@ import {
 import type { SpendingAuthMessage, ReserveAuthMessage, SpendingAuthMetadata } from './evm/signatures.js';
 import { debugLog, debugWarn } from '../utils/debug.js';
 import { peerIdToAddress } from '../types/peer.js';
-import { SessionStore, type StoredSession } from './session-store.js';
+import { ChannelStore, type StoredChannel } from './channel-store.js';
 import { estimateCostFromBytes, type ServicePricing } from './pricing.js';
 
 // ── Response cost header constants ───────────────────────────────
@@ -71,7 +71,7 @@ export class BuyerPaymentManager {
   private _signer: AbstractSigner;
   private readonly _depositsClient: DepositsClient;
   private readonly _config: BuyerPaymentConfig;
-  private readonly _sessionStore: SessionStore;
+  private readonly _channelStore: ChannelStore;
   /** In-memory map of active confirmed sessions by seller peerId for fast lookups. */
   private readonly _confirmedPeers = new Set<string>();
   /** Peers that explicitly rejected our spending auth. */
@@ -98,7 +98,7 @@ export class BuyerPaymentManager {
   /** Cached EIP-712 domain — static for the lifetime of this manager. */
   private readonly _channelsDomain: ReturnType<typeof makeChannelsDomain>;
 
-  constructor(identity: Identity, config: BuyerPaymentConfig, sessionStore: SessionStore) {
+  constructor(identity: Identity, config: BuyerPaymentConfig, channelStore: ChannelStore) {
     this._identity = identity;
     this._config = config;
     this._signer = identity.wallet;
@@ -107,7 +107,7 @@ export class BuyerPaymentManager {
       contractAddress: config.depositsContractAddress,
       usdcAddress: config.usdcAddress,
     });
-    this._sessionStore = sessionStore;
+    this._channelStore = channelStore;
     this._channelsDomain = makeChannelsDomain(config.chainId, config.channelsContractAddress);
 
     // Hydrate cumulative maps from persisted active sessions
@@ -116,15 +116,15 @@ export class BuyerPaymentManager {
 
   /** Hydrate cumulative tracking maps from persisted active buyer sessions. */
   private _hydrateFromStore(): void {
-    const activeSessions = this._sessionStore.getActiveSessions('buyer');
-    for (const session of activeSessions) {
-      const peerId = session.peerId;
-      this._cumulativeAmount.set(peerId, BigInt(session.authMax));
+    const activeChannels = this._channelStore.getActiveChannels('buyer');
+    for (const channel of activeChannels) {
+      const peerId = channel.peerId;
+      this._cumulativeAmount.set(peerId, BigInt(channel.authMax));
       this._metadata.set(peerId, {
-        cumulativeInputTokens: BigInt(session.tokensDelivered),
-        cumulativeOutputTokens: BigInt(session.previousConsumption),
+        cumulativeInputTokens: BigInt(channel.tokensDelivered),
+        cumulativeOutputTokens: BigInt(channel.previousConsumption),
         cumulativeLatencyMs: 0n,
-        cumulativeRequestCount: BigInt(session.requestCount),
+        cumulativeRequestCount: BigInt(channel.requestCount),
       });
       // verifiedCost and pricing are not persisted — start from 0 on hydration.
       // This is conservative: the buyer treats all previously-signed amounts as unverified.
@@ -222,7 +222,7 @@ export class BuyerPaymentManager {
 
     // Store session
     const now = Date.now();
-    const session: StoredSession = {
+    const session: StoredChannel = {
       sessionId: channelId,
       peerId: sellerPeerId,
       role: 'buyer',
@@ -245,7 +245,7 @@ export class BuyerPaymentManager {
       createdAt: now,
       updatedAt: now,
     };
-    this._sessionStore.upsertSession(session);
+    this._channelStore.upsertChannel(session);
 
     // Send SpendingAuth via PaymentMux — reserve carries ReserveAuth sig
     paymentMux.sendSpendingAuth({
@@ -265,7 +265,7 @@ export class BuyerPaymentManager {
   // ── AuthAck handler ───────────────────────────────────────────
 
   handleAuthAck(sellerPeerId: string, payload: AuthAckPayload): void {
-    const session = this._sessionStore.getActiveSessionByPeer(sellerPeerId, 'buyer');
+    const session = this._channelStore.getActiveChannelByPeer(sellerPeerId, 'buyer');
     if (!session) {
       debugWarn(`[BuyerPayment] AuthAck for unknown seller: ${sellerPeerId.slice(0, 12)}...`);
       return;
@@ -380,7 +380,7 @@ export class BuyerPaymentManager {
     responseStats: { inputBytes: Uint8Array | number; outputBytes: Uint8Array | number; sellerClaimedCost?: bigint },
     addedLatencyMs?: bigint,
   ): Promise<PerRequestAuthResult> {
-    const session = this._sessionStore.getActiveSessionByPeer(sellerPeerId, 'buyer');
+    const session = this._channelStore.getActiveChannelByPeer(sellerPeerId, 'buyer');
     if (!session) {
       throw new Error(`[BuyerPayment] No active session for seller ${sellerPeerId.slice(0, 12)}... — call authorizeSpending() first`);
     }
@@ -444,8 +444,8 @@ export class BuyerPaymentManager {
     };
     const spendingAuthSig = await signSpendingAuth(this._signer, channelsDomain, metadataMsg);
 
-    // Persist updated cumulative values to SessionStore
-    this._sessionStore.upsertSession({
+    // Persist updated cumulative values to ChannelStore
+    this._channelStore.upsertChannel({
       ...session,
       authMax: newAmount.toString(),
       tokensDelivered: newMeta.cumulativeInputTokens.toString(),
@@ -478,7 +478,7 @@ export class BuyerPaymentManager {
     payload: NeedAuthPayload,
     paymentMux: PaymentMux,
   ): Promise<void> {
-    const session = this._sessionStore.getActiveSessionByPeer(sellerPeerId, 'buyer');
+    const session = this._channelStore.getActiveChannelByPeer(sellerPeerId, 'buyer');
     if (!session) {
       debugWarn(`[BuyerPayment] NeedAuth for unknown seller: ${sellerPeerId.slice(0, 12)}...`);
       return;
@@ -526,7 +526,7 @@ export class BuyerPaymentManager {
     const spendingAuthSig = await signSpendingAuth(this._signer, channelsDomain, metadataMsg);
 
     // Persist updated values
-    this._sessionStore.upsertSession({
+    this._channelStore.upsertChannel({
       ...session,
       authMax: effectiveAmount.toString(),
       updatedAt: Date.now(),
@@ -558,7 +558,7 @@ export class BuyerPaymentManager {
     sellerPeerId: string,
     paymentMux: PaymentMux,
   ): Promise<void> {
-    const session = this._sessionStore.getActiveSessionByPeer(sellerPeerId, 'buyer');
+    const session = this._channelStore.getActiveChannelByPeer(sellerPeerId, 'buyer');
     if (!session) {
       debugWarn(`[BuyerPayment] topUpReserve: no active session for ${sellerPeerId.slice(0, 12)}...`);
       return;
@@ -655,8 +655,8 @@ export class BuyerPaymentManager {
     debugLog(`[BuyerPayment] Peer ${sellerPeerId.slice(0, 12)}... marked as rejected`);
   }
 
-  getSessionHistory(sellerPeerId: string): StoredSession[] {
-    const session = this._sessionStore.getLatestSession(sellerPeerId, 'buyer');
+  getSessionHistory(sellerPeerId: string): StoredChannel[] {
+    const session = this._channelStore.getLatestChannel(sellerPeerId, 'buyer');
     return session ? [session] : [];
   }
 
@@ -668,8 +668,8 @@ export class BuyerPaymentManager {
   }
 
   async withdraw(amount: bigint): Promise<string> {
-    debugLog(`[BuyerPayment] Requesting withdrawal of ${amount} from deposits`);
-    return this._depositsClient.requestWithdrawal(this._signer, this._identity.wallet.address, amount);
+    debugLog(`[BuyerPayment] Withdrawing ${amount} from deposits`);
+    return this._depositsClient.withdraw(this._signer, this._identity.wallet.address, amount);
   }
 
   async getBalance(): Promise<{ available: bigint; reserved: bigint }> {

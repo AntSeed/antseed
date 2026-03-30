@@ -7,6 +7,19 @@ import "../AntseedStats.sol";
 import "../MockERC8004Registry.sol";
 import "../MockUSDC.sol";
 
+/// @dev Minimal mock that exposes activeChannelCount for Staking tests.
+contract MockChannelsForStaking {
+    mapping(address => uint256) private _activeChannelCount;
+
+    function activeChannelCount(address seller) external view returns (uint256) {
+        return _activeChannelCount[seller];
+    }
+
+    function setActiveChannelCount(address seller, uint256 count) external {
+        _activeChannelCount[seller] = count;
+    }
+}
+
 contract AntseedStakingTest is Test {
     MockERC8004Registry public registry;
     AntseedStats public stats;
@@ -32,10 +45,13 @@ contract AntseedStakingTest is Test {
         stats = new AntseedStats();
         staking = new AntseedStaking(address(usdc), address(registry), address(stats));
 
-        // Wire: this test contract is the channelsContract on both Stats and Staking
-        // so we can call updateStats and increment/decrement sessions directly
+        // Wire: this test contract is the channelsContract on Stats
+        // so we can call updateStats directly
         stats.setChannelsContract(address(this));
-        staking.setChannelsContract(address(this));
+
+        // Set a mock channels contract on Staking that reports 0 active channels by default
+        MockChannelsForStaking mockChannels = new MockChannelsForStaking();
+        staking.setChannelsContract(address(mockChannels));
         staking.setProtocolReserve(reserve);
 
         // Register sellers on MockERC8004Registry
@@ -72,7 +88,7 @@ contract AntseedStakingTest is Test {
         }
     }
 
-    function _addSessions(uint256 agentId, uint256 count) internal {
+    function _addChannels(uint256 agentId, uint256 count) internal {
         for (uint256 i = 0; i < count; i++) {
             stats.updateStats(
                 agentId,
@@ -209,14 +225,16 @@ contract AntseedStakingTest is Test {
         staking.unstake();
     }
 
-    function test_unstake_revert_activeSessions() public {
+    function test_unstake_revert_activeChannels() public {
         _stakeAs(seller, MIN_STAKE);
 
-        // increment active sessions (we are the channelsContract)
-        staking.incrementActiveSessions(seller);
+        // Deploy a mock channels contract that reports active channels
+        MockChannelsForStaking mockChannels = new MockChannelsForStaking();
+        staking.setChannelsContract(address(mockChannels));
+        mockChannels.setActiveChannelCount(seller, 1);
 
         vm.prank(seller);
-        vm.expectRevert(AntseedStaking.ActiveSessions.selector);
+        vm.expectRevert(AntseedStaking.ActiveChannels.selector);
         staking.unstake();
     }
 
@@ -235,11 +253,11 @@ contract AntseedStakingTest is Test {
     //                  SLASH TIERS (via unstake)
     // ═══════════════════════════════════════════════════════════════════
 
-    // Tier 1: ghosts >= SLASH_GHOST_THRESHOLD AND zero sessions -> full slash
+    // Tier 1: ghosts >= SLASH_GHOST_THRESHOLD AND zero channels -> full slash
     function test_slash_tier1_fullSlash() public {
         _stakeAs(seller, LARGE_STAKE);
 
-        // Add 5 ghosts (= SLASH_GHOST_THRESHOLD), zero sessions
+        // Add 5 ghosts (= SLASH_GHOST_THRESHOLD), zero channels
         _addGhosts(sellerAgentId, 5);
 
         vm.prank(seller);
@@ -250,13 +268,13 @@ contract AntseedStakingTest is Test {
         assertEq(usdc.balanceOf(reserve), LARGE_STAKE);
     }
 
-    // Tier 2: sessions > 0, ghost ratio >= SLASH_RATIO_THRESHOLD -> half slash
+    // Tier 2: channels > 0, ghost ratio >= SLASH_RATIO_THRESHOLD -> half slash
     function test_slash_tier2_halfSlash() public {
         _stakeAs(seller, LARGE_STAKE);
 
-        // Ghost ratio = ghosts / (sessions + ghosts) >= 30%
-        // 3 ghosts, 3 sessions -> ratio = 3*100/(3+3) = 50% >= 30%
-        _addSessions(sellerAgentId, 3);
+        // Ghost ratio = ghosts / (channels + ghosts) >= 30%
+        // 3 ghosts, 3 channels -> ratio = 3*100/(3+3) = 50% >= 30%
+        _addChannels(sellerAgentId, 3);
         _addGhosts(sellerAgentId, 3);
 
         vm.prank(seller);
@@ -266,12 +284,12 @@ contract AntseedStakingTest is Test {
         assertEq(usdc.balanceOf(reserve), LARGE_STAKE / 2);
     }
 
-    // Tier 3: sessions > 0, inactive (lastSettledAt + SLASH_INACTIVITY_DAYS < now) -> 20% slash
+    // Tier 3: channels > 0, inactive (lastSettledAt + SLASH_INACTIVITY_DAYS < now) -> 20% slash
     function test_slash_tier3_inactivitySlash() public {
         _stakeAs(seller, LARGE_STAKE);
 
-        // Add sessions (with recent settlement)
-        _addSessions(sellerAgentId, 10);
+        // Add channels (with recent settlement)
+        _addChannels(sellerAgentId, 10);
 
         // Warp time past inactivity threshold (30 days + 1 second)
         vm.warp(block.timestamp + 30 days + 1);
@@ -288,8 +306,8 @@ contract AntseedStakingTest is Test {
     function test_slash_tier4_noSlash() public {
         _stakeAs(seller, LARGE_STAKE);
 
-        // Add sessions with recent settlement, no ghosts
-        _addSessions(sellerAgentId, 10);
+        // Add channels with recent settlement, no ghosts
+        _addChannels(sellerAgentId, 10);
 
         vm.prank(seller);
         staking.unstake();
@@ -298,7 +316,7 @@ contract AntseedStakingTest is Test {
         assertEq(usdc.balanceOf(reserve), 0);
     }
 
-    // Edge: tier 1 boundary — ghosts just below threshold, zero sessions -> no slash
+    // Edge: tier 1 boundary — ghosts just below threshold, zero channels -> no slash
     function test_slash_tier1_belowThreshold_noSlash() public {
         _stakeAs(seller, LARGE_STAKE);
 
@@ -307,7 +325,7 @@ contract AntseedStakingTest is Test {
         vm.prank(seller);
         staking.unstake();
 
-        // ghosts < threshold and sessions == 0 -> no tier matches, 0 slash
+        // ghosts < threshold and channels == 0 -> no tier matches, 0 slash
         assertEq(usdc.balanceOf(seller), LARGE_STAKE);
     }
 
@@ -315,8 +333,8 @@ contract AntseedStakingTest is Test {
     function test_slash_tier2_belowRatioThreshold() public {
         _stakeAs(seller, LARGE_STAKE);
 
-        // 1 ghost, 10 sessions -> ratio = 1*100/(10+1) = 9% < 30%
-        _addSessions(sellerAgentId, 10);
+        // 1 ghost, 10 channels -> ratio = 1*100/(10+1) = 9% < 30%
+        _addChannels(sellerAgentId, 10);
         _addGhosts(sellerAgentId, 1);
 
         vm.prank(seller);
@@ -330,7 +348,8 @@ contract AntseedStakingTest is Test {
     function test_slash_noReserve_fundsStayInContract() public {
         // Deploy a new staking without reserve
         AntseedStaking staking2 = new AntseedStaking(address(usdc), address(registry), address(stats));
-        staking2.setChannelsContract(address(this));
+        MockChannelsForStaking mockChannels2 = new MockChannelsForStaking();
+        staking2.setChannelsContract(address(mockChannels2));
         // Don't set protocolReserve
 
         usdc.mint(seller, LARGE_STAKE);
@@ -405,10 +424,10 @@ contract AntseedStakingTest is Test {
     function test_effectiveSettlements_belowCap() public {
         _stakeAs(seller, LARGE_STAKE); // 100 USDC
 
-        _addSessions(sellerAgentId, 5);
+        _addChannels(sellerAgentId, 5);
 
         // stakeCap = (100_000_000 * 20) / 1_000_000 = 2000
-        // sessionCount = 5, which is < 2000
+        // channelCount = 5, which is < 2000
         assertEq(staking.effectiveSettlements(seller), 5);
     }
 
@@ -417,53 +436,16 @@ contract AntseedStakingTest is Test {
         _stakeAs(seller, 100_000); // 0.1 USDC
 
         // stakeCap = (100_000 * 20) / 1_000_000 = 2
-        _addSessions(sellerAgentId, 10);
+        _addChannels(sellerAgentId, 10);
 
         assertEq(staking.effectiveSettlements(seller), 2);
     }
 
     function test_effectiveSettlements_zeroStake() public {
-        _addSessions(sellerAgentId, 5);
+        _addChannels(sellerAgentId, 5);
 
-        // stakeCap = 0, sessionCount = 5 -> min(5, 0) = 0
+        // stakeCap = 0, channelCount = 5 -> min(5, 0) = 0
         assertEq(staking.effectiveSettlements(seller), 0);
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    //              incrementActiveSessions / decrementActiveSessions
-    // ═══════════════════════════════════════════════════════════════════
-
-    function test_incrementActiveSessions() public {
-        staking.incrementActiveSessions(seller);
-        assertEq(staking.activeSessionCount(seller), 1);
-
-        staking.incrementActiveSessions(seller);
-        assertEq(staking.activeSessionCount(seller), 2);
-    }
-
-    function test_incrementActiveSessions_revert_notSessions() public {
-        vm.prank(seller);
-        vm.expectRevert(AntseedStaking.NotAuthorized.selector);
-        staking.incrementActiveSessions(seller);
-    }
-
-    function test_decrementActiveSessions() public {
-        staking.incrementActiveSessions(seller);
-        staking.incrementActiveSessions(seller);
-        staking.decrementActiveSessions(seller);
-
-        assertEq(staking.activeSessionCount(seller), 1);
-    }
-
-    function test_decrementActiveSessions_revert_notSessions() public {
-        vm.prank(seller);
-        vm.expectRevert(AntseedStaking.NotAuthorized.selector);
-        staking.decrementActiveSessions(seller);
-    }
-
-    function test_decrementActiveSessions_revert_underflow() public {
-        vm.expectRevert(AntseedStaking.InvalidAmount.selector);
-        staking.decrementActiveSessions(seller);
     }
 
     // ═══════════════════════════════════════════════════════════════════

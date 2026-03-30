@@ -14,7 +14,7 @@ contract AntseedStatsReputationTest is Test {
     function setUp() public {
         registry = new MockERC8004Registry();
         stats = new AntseedStats();
-        // Set this test contract as the sessions contract so it can call updateStats
+        // Set this test contract as the channels contract so it can call updateStats
         stats.setChannelsContract(address(this));
 
         vm.prank(peer1);
@@ -26,7 +26,7 @@ contract AntseedStatsReputationTest is Test {
     function test_updateStats_settlement() public {
         stats.updateStats(agentId, IAntseedStats.StatsUpdate(0, 1000000, 500, 1200, 0, 0));
         IAntseedStats.AgentStats memory s = stats.getStats(agentId);
-        assertEq(s.sessionCount, 1);
+        assertEq(s.channelCount, 1);
         assertEq(s.totalVolumeUsdc, 1000000);
         assertEq(s.totalInputTokens, 500);
         assertEq(s.totalOutputTokens, 1200);
@@ -39,7 +39,7 @@ contract AntseedStatsReputationTest is Test {
         assertEq(s.ghostCount, 1);
     }
 
-    function test_updateStats_revert_notSessions() public {
+    function test_updateStats_revert_notChannels() public {
         vm.prank(peer1);
         vm.expectRevert(AntseedStats.NotAuthorized.selector);
         stats.updateStats(agentId, IAntseedStats.StatsUpdate(0, 1000000, 500, 1200, 0, 0));
@@ -57,7 +57,7 @@ contract AntseedStatsReputationTest is Test {
         stats.updateStats(agentId, IAntseedStats.StatsUpdate(1, 0, 0, 0, 0, 0));
 
         IAntseedStats.AgentStats memory s = stats.getStats(agentId);
-        assertEq(s.sessionCount, 3);
+        assertEq(s.channelCount, 3);
         assertEq(s.ghostCount, 4);
         assertEq(s.totalVolumeUsdc, 10000);
         assertEq(s.totalInputTokens, 1000);
@@ -69,7 +69,7 @@ contract AntseedStatsReputationTest is Test {
 
     function test_getStats_empty() public view {
         IAntseedStats.AgentStats memory s = stats.getStats(999);
-        assertEq(s.sessionCount, 0);
+        assertEq(s.channelCount, 0);
         assertEq(s.ghostCount, 0);
         assertEq(s.totalVolumeUsdc, 0);
         assertEq(s.totalInputTokens, 0);
@@ -84,7 +84,7 @@ contract AntseedStatsReputationTest is Test {
         stats.updateStats(agentId, IAntseedStats.StatsUpdate(0, 2000, 200, 300, 60, 2));
 
         IAntseedStats.AgentStats memory s = stats.getStats(agentId);
-        assertEq(s.sessionCount, 2);
+        assertEq(s.channelCount, 2);
         assertEq(s.totalVolumeUsdc, 3000);
         assertEq(s.totalInputTokens, 300);
         assertEq(s.totalOutputTokens, 500);
@@ -99,6 +99,6 @@ contract AntseedStatsReputationTest is Test {
 
         IAntseedStats.AgentStats memory s = stats.getStats(agentId);
         assertEq(s.ghostCount, 3);
-        assertEq(s.sessionCount, 0);
+        assertEq(s.channelCount, 0);
     }
 }

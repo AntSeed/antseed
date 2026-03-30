@@ -128,7 +128,6 @@ export type RendererUiState = {
   creditsAvailableUsdc: string;
   creditsReservedUsdc: string;
   creditsTotalUsdc: string;
-  creditsPendingWithdrawalUsdc: string;
   creditsCreditLimitUsdc: string;
   creditsEvmAddress: string | null;
   creditsOperatorAddress: string | null;
@@ -142,7 +141,7 @@ export type RendererUiState = {
   chatPaymentApprovalAmount: string;
   chatPaymentApprovalPeerInfo: {
     reputation: number;
-    sessionCount: number | null;
+    channelCount: number | null;
     disputeCount: number | null;
     networkAgeDays: number | null;
     evmAddress: string | null;
@@ -260,7 +259,6 @@ export function createInitialUiState(): RendererUiState {
     creditsAvailableUsdc: '0',
     creditsReservedUsdc: '0',
     creditsTotalUsdc: '0',
-    creditsPendingWithdrawalUsdc: '0',
     creditsCreditLimitUsdc: '0',
     creditsEvmAddress: null,
     creditsOperatorAddress: null,

@@ -20,7 +20,7 @@ Buyer                          Seller                         Chain
   │   (EIP-712: channelId,       │                              │
   │    maxAmount, deadline)       │                              │
   │                              ├── reserve(buyerSig) ────────>│
-  │                              │   Deposits.lockForSession()  │
+  │                              │   Deposits.lockForChannel()  │
   │                              │<──── reserveConfirmed ───────┤
   │                              │                              │
   │   ┌──────────────────────────┤                              │

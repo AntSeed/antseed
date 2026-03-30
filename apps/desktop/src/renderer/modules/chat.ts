@@ -128,7 +128,7 @@ export function initChatModule({
 
         uiState.chatPaymentApprovalPeerInfo = {
           reputation: result.data.onChainReputation ?? result.data.reputation ?? 0,
-          sessionCount: result.data.onChainSessionCount ?? null,
+          channelCount: result.data.onChainChannelCount ?? null,
           disputeCount: result.data.onChainDisputeCount ?? null,
           networkAgeDays: ageDays > 0 ? ageDays : null,
           evmAddress: result.data.evmAddress ?? null,

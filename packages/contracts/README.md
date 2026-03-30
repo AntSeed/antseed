@@ -9,7 +9,7 @@ ANTSToken (ERC-20)          ── phase-locked transfers, mint restricted to An
 AntseedDeposits             ── buyer USDC deposits, holds ALL buyer USDC
 AntseedChannels             ── Reserve→Settle/Close lifecycle, EIP-712 (swappable, holds NO USDC)
 AntseedStaking              ── seller stake bound to ERC-8004 agentId
-AntseedStats                ── factual per-agent session metrics (sessionCount, volume, requests)
+AntseedStats                ── factual per-agent channel metrics (channelCount, volume, requests)
 AntseedEmissions            ── USDC volume-based epoch emissions
 AntseedSubPool              ── subscription tiers, daily budgets, revenue distribution
 MockERC8004Registry         ── mock ERC-8004 IdentityRegistry (local testing only)
@@ -21,8 +21,8 @@ Feedback uses the deployed ERC-8004 ReputationRegistry (Base: `0x8004BAa1...`).
 Contracts reference each other by address set at deployment. No inheritance — only interface calls.
 
 ```
-AntseedChannels ──calls──► AntseedDeposits.lockForSession() (on reserve)
-AntseedChannels ──calls──► AntseedDeposits.chargeAndCreditEarnings() (on settle/close)
+AntseedChannels ──calls──► AntseedDeposits.lockForChannel() (on reserve)
+AntseedChannels ──calls──► AntseedDeposits.chargeAndCreditPayouts() (on settle/close)
 AntseedChannels ──calls──► AntseedStats.updateStats() (on settle/close)
 AntseedChannels ──calls──► AntseedEmissions.accrueSellerPoints() / accrueBuyerPoints()
 AntseedChannels ──reads──► AntseedStaking (seller stake verification)
@@ -59,14 +59,15 @@ ERC-20 token (`AntSeed` / `ANTS`). No pre-mine, no initial supply.
 
 ### AntseedDeposits.sol
 
-Buyer USDC deposit management with dynamic credit limits and withdrawal timelock.
+Buyer USDC deposit management with dynamic credit limits and seller payouts.
 
 **Buyer operations:**
 - `deposit(uint256 amount)` — USDC deposit, enforces `MIN_BUYER_DEPOSIT` and dynamic credit limit
-- `requestWithdrawal(uint256 amount)` — starts inactivity timer
-- `executeWithdrawal()` — after `BUYER_INACTIVITY_PERIOD` of no activity
-- `cancelWithdrawal()`
-- `getBuyerBalance(address)` → available, reserved, pendingWithdrawal
+- `depositFor(address buyer, uint256 amount)` — third-party deposit on behalf of buyer
+- `withdraw(address buyer, uint256 amount)` — immediate withdrawal (operator-only, sends USDC to buyer)
+- `getBuyerBalance(address)` → available, reserved, lastActivity
+- `getOperator(address)` / `getOperatorNonce(address)` — operator views
+- `claimPayouts()` — seller claims accumulated USDC payouts
 - `setCreditLimitOverride(address, uint256)` — owner overrides buyer limit
 
 ### AntseedChannels.sol
@@ -74,8 +75,8 @@ Buyer USDC deposit management with dynamic credit limits and withdrawal timelock
 Session lifecycle with EIP-712 ReserveAuth + SpendingAuth. Holds NO USDC — all funds stay in AntseedDeposits. Swappable: can be redeployed by re-pointing stable contracts.
 
 **Seller operations:**
-- `reserve(address buyer, bytes32 salt, uint128 maxAmount, uint256 deadline, bytes calldata buyerSig)` — validates ReserveAuth EIP-712 sig, calls Deposits.lockForSession()
-- `settle(bytes32 channelId, uint128 amount, bytes32 metadataHash, bytes calldata buyerSig)` — validates SpendingAuth, calls Deposits.chargeAndCreditEarnings(), session stays open
+- `reserve(address buyer, bytes32 salt, uint128 maxAmount, uint256 deadline, bytes calldata buyerSig)` — validates ReserveAuth EIP-712 sig, calls Deposits.lockForChannel()
+- `settle(bytes32 channelId, uint128 amount, bytes32 metadataHash, bytes calldata buyerSig)` — validates SpendingAuth, calls Deposits.chargeAndCreditPayouts(), session stays open
 - `close(bytes32 channelId, uint128 amount, bytes32 metadataHash, bytes calldata buyerSig)` — like settle but finalizes session, releases remaining lock
 
 **Timeout (permissionless):**
@@ -95,10 +96,10 @@ channelId = keccak256(abi.encode(buyer, seller, salt))
 
 ### AntseedStats.sol
 
-Factual per-agent session metrics keyed by ERC-8004 agentId. Updated by AntseedChannels during settlement.
+Factual per-agent channel metrics keyed by ERC-8004 agentId. Updated by AntseedChannels during settlement.
 
 - `updateStats(uint256 agentId, StatsUpdate calldata)` — restricted to channels contract
-- `getStats(uint256 agentId)` — returns sessionCount, totalVolumeUsdc, totalRequests
+- `getStats(uint256 agentId)` — returns channelCount, totalVolumeUsdc, totalRequests
 
 ### AntseedStaking.sol
 

@@ -15,7 +15,7 @@ Each seller's ERC-8004 agentId maintains the following counters in the AntseedSt
 
 | Counter | Updated During | Description |
 |---|---|---|
-| `sessionCount` | `close()` | Number of completed sessions |
+| `channelCount` | `close()` | Number of completed channels |
 | `totalVolumeUsdc` | `settle()` / `close()` | Cumulative USDC volume settled |
 | `totalRequests` | `settle()` / `close()` | Cumulative request count |
 
@@ -94,6 +94,6 @@ On-chain reputation feeds into the router's peer selection algorithm. The `@ants
 
 - **Minimum reputation filter**: Peers below `minPeerReputation` (default: 50) are excluded before scoring.
 - **On-chain precedence**: When on-chain reputation data is available, it takes precedence over the local trust score. Local metrics (success rate, latency, uptime) serve as tiebreakers and fill in during the bootstrapping period before a seller has on-chain history.
-- **Score composition**: On-chain stats score is derived from `sessionCount`, `totalVolumeUsdc`, and `totalRequests` from AntseedStats, combined with ERC-8004 feedback signals.
+- **Score composition**: On-chain stats score is derived from `channelCount`, `totalVolumeUsdc`, and `totalRequests` from AntseedStats, combined with ERC-8004 feedback signals.
 - **Latency**: Tracked as an exponential moving average (alpha: 0.3).
 - **Failure backoff**: Peers with consecutive failures enter exponential backoff cooldown.

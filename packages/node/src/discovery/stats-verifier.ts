@@ -6,16 +6,16 @@ import { peerIdToAddress } from "../types/peer.js";
 export interface StatsVerification {
   /** Whether the claimed stats match on-chain data. */
   valid: boolean;
-  /** The actual on-chain reputation score (session count). */
+  /** The actual on-chain reputation score (channel count). */
   actualReputation: number;
-  /** The actual on-chain session count. */
-  actualSessionCount: number;
+  /** The actual on-chain channel count. */
+  actualChannelCount: number;
   /** The actual on-chain ghost/dispute count. */
   actualDisputeCount: number;
   /** The claimed on-chain reputation score from metadata. */
   claimedReputation?: number;
-  /** The claimed on-chain session count from metadata. */
-  claimedSessionCount?: number;
+  /** The claimed on-chain channel count from metadata. */
+  claimedChannelCount?: number;
   /** The claimed on-chain dispute count from metadata. */
   claimedDisputeCount?: number;
 }
@@ -36,11 +36,11 @@ export async function verifyStats(
   const stats = await statsClient.getStats(agentId);
 
   // Map AgentStats fields to the verification format:
-  // - sessionCount is the total completed sessions
-  // - ghostCount maps to dispute count (sessions where provider went silent)
-  // - Use sessionCount as the reputation metric (higher = more trusted)
-  const actualReputation = stats.sessionCount;
-  const actualSessionCount = stats.sessionCount;
+  // - channelCount is the total completed channels
+  // - ghostCount maps to dispute count (channels where provider went silent)
+  // - Use channelCount as the reputation metric (higher = more trusted)
+  const actualReputation = stats.channelCount;
+  const actualChannelCount = stats.channelCount;
   const actualDisputeCount = stats.ghostCount;
 
   // Always compare against on-chain data.
@@ -48,19 +48,19 @@ export async function verifyStats(
   // by simply not claiming any values.
   const valid =
     metadata.onChainReputation !== undefined &&
-    metadata.onChainSessionCount !== undefined &&
+    metadata.onChainChannelCount !== undefined &&
     metadata.onChainDisputeCount !== undefined &&
     metadata.onChainReputation === actualReputation &&
-    metadata.onChainSessionCount === actualSessionCount &&
+    metadata.onChainChannelCount === actualChannelCount &&
     metadata.onChainDisputeCount === actualDisputeCount;
 
   return {
     valid,
     actualReputation,
-    actualSessionCount,
+    actualChannelCount,
     actualDisputeCount,
     claimedReputation: metadata.onChainReputation,
-    claimedSessionCount: metadata.onChainSessionCount,
+    claimedChannelCount: metadata.onChainChannelCount,
     claimedDisputeCount: metadata.onChainDisputeCount,
   };
 }

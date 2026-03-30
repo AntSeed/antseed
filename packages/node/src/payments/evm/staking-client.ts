@@ -21,7 +21,6 @@ const STAKING_ABI = [
   'function getSellerAccount(address seller) external view returns (uint256 stake, uint256 stakedAt)',
   'function getStake(address seller) external view returns (uint256)',
   'function isStakedAboveMin(address seller) external view returns (bool)',
-  'function activeSessionCount(address seller) external view returns (uint256)',
   'function getAgentId(address seller) external view returns (uint256)',
 ] as const;
 

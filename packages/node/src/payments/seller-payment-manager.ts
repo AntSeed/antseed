@@ -13,7 +13,7 @@ import {
 } from './evm/signatures.js';
 import { debugLog, debugWarn } from '../utils/debug.js';
 import { peerIdToAddress } from '../types/peer.js';
-import { SessionStore, type StoredSession } from './session-store.js';
+import { ChannelStore, type StoredChannel } from './channel-store.js';
 
 export interface SellerPaymentConfig {
   rpcUrl: string;
@@ -48,7 +48,7 @@ export class SellerPaymentManager {
   private readonly _signer: AbstractSigner;
   private readonly _channelsClient: ChannelsClient;
   private readonly _config: SellerPaymentConfig;
-  private readonly _sessionStore: SessionStore;
+  private readonly _channelStore: ChannelStore;
   /** In-memory cache of active buyer peerIds for fast has-session checks. */
   private readonly _activeBuyers = new Set<string>();
   /** Per-buyer mutex to prevent concurrent handleSpendingAuth for the same buyer. */
@@ -72,7 +72,7 @@ export class SellerPaymentManager {
   /** Max close() retries before giving up (buyer must requestClose on-chain) */
   private static readonly MAX_CLOSE_RETRIES = 3;
 
-  constructor(identity: Identity, config: SellerPaymentConfig, sessionStore: SessionStore) {
+  constructor(identity: Identity, config: SellerPaymentConfig, channelStore: ChannelStore) {
     this._identity = identity;
     this._config = config;
     this._signer = identity.wallet;
@@ -80,26 +80,26 @@ export class SellerPaymentManager {
       rpcUrl: config.rpcUrl,
       contractAddress: config.channelsContractAddress,
     });
-    this._sessionStore = sessionStore;
+    this._channelStore = channelStore;
 
-    // Hydrate from persisted sessions
-    const activeSessions = this._sessionStore.getActiveSessions('seller');
-    for (const session of activeSessions) {
-      this._activeBuyers.add(session.peerId);
-      this._acceptedCumulative.set(session.sessionId, BigInt(session.authMax));
-      this._spent.set(session.sessionId, BigInt(session.tokensDelivered));
+    // Hydrate from persisted channels
+    const activeChannels = this._channelStore.getActiveChannels('seller');
+    for (const channel of activeChannels) {
+      this._activeBuyers.add(channel.peerId);
+      this._acceptedCumulative.set(channel.sessionId, BigInt(channel.authMax));
+      this._spent.set(channel.sessionId, BigInt(channel.tokensDelivered));
       // Hydrate reserveMax from previousConsumption (repurposed field)
-      const storedReserveMax = BigInt(session.previousConsumption || '0');
+      const storedReserveMax = BigInt(channel.previousConsumption || '0');
       if (storedReserveMax > 0n) {
-        this._reserveMax.set(session.sessionId, storedReserveMax);
+        this._reserveMax.set(channel.sessionId, storedReserveMax);
       }
       // Hydrate latest auth sigs so close() works after restart
-      if (session.latestSpendingAuthSig) {
-        this._latestAuth.set(session.sessionId, {
-          spendingAuthSig: session.latestSpendingAuthSig,
-          cumulativeAmount: BigInt(session.authMax),
+      if (channel.latestSpendingAuthSig) {
+        this._latestAuth.set(channel.sessionId, {
+          spendingAuthSig: channel.latestSpendingAuthSig,
+          cumulativeAmount: BigInt(channel.authMax),
           metadataHash: '',
-          metadata: session.latestMetadata ?? '',
+          metadata: channel.latestMetadata ?? '',
         });
       }
     }
@@ -175,7 +175,7 @@ export class SellerPaymentManager {
         // Store new session (sessionId field stores channelId for backward compat)
         const now = Date.now();
         const sellerEvmAddr = this._identity.wallet.address;
-        const session: StoredSession = {
+        const session: StoredChannel = {
           sessionId: channelId,
           peerId: buyerPeerId,
           role: 'seller',
@@ -198,7 +198,7 @@ export class SellerPaymentManager {
           createdAt: now,
           updatedAt: now,
         };
-        this._sessionStore.upsertSession(session);
+        this._channelStore.upsertChannel(session);
 
         // Initialize tracking maps
         this._acceptedCumulative.set(channelId, cumulativeAmount);
@@ -252,12 +252,12 @@ export class SellerPaymentManager {
 
         // Update tracking
         this._reserveMax.set(channelId, newMaxAmount);
-        const session = this._sessionStore.getSession(channelId);
+        const session = this._channelStore.getChannel(channelId);
         if (session) {
           session.previousConsumption = newMaxAmount.toString(); // repurposed: stores reserveMax
           session.deadline = topUpDeadline;
           session.updatedAt = Date.now();
-          this._sessionStore.upsertSession(session);
+          this._channelStore.upsertChannel(session);
         }
 
         debugLog(`[SellerPayment] Top-up completed: channel=${channelId.slice(0, 18)}... new ceiling=${newMaxAmount}`);
@@ -307,15 +307,15 @@ export class SellerPaymentManager {
           metadata: payload.metadata,
         });
 
-        // Persist latest auth + sigs to SessionStore
-        const session = this._sessionStore.getSession(channelId);
+        // Persist latest auth + sigs to ChannelStore
+        const session = this._channelStore.getChannel(channelId);
         if (session) {
           session.authMax = payload.cumulativeAmount;
           session.latestBuyerSig = payload.spendingAuthSig;
           session.latestSpendingAuthSig = payload.spendingAuthSig;
           session.latestMetadata = payload.metadata;
           session.updatedAt = Date.now();
-          this._sessionStore.upsertSession(session);
+          this._channelStore.upsertChannel(session);
         }
 
         debugLog(`[SellerPayment] Budget updated: channel=${channelId.slice(0, 18)}... cumulative=${cumulativeAmount}`);
@@ -338,7 +338,7 @@ export class SellerPaymentManager {
     auth: SpendingAuthPayload,
   ): Promise<boolean> {
     // Look up active session for this buyer
-    const session = this._sessionStore.getActiveSessionByPeer(buyerPeerId, 'seller');
+    const session = this._channelStore.getActiveChannelByPeer(buyerPeerId, 'seller');
     if (!session) {
       debugWarn(`[SellerPayment] validateAndAcceptAuth: no active session for buyer ${buyerPeerId.slice(0, 12)}...`);
       return false;
@@ -388,15 +388,15 @@ export class SellerPaymentManager {
         metadata: auth.metadata,
       });
 
-      // Persist latest auth + sigs to SessionStore
-      const storedSession = this._sessionStore.getSession(channelId);
+      // Persist latest auth + sigs to ChannelStore
+      const storedSession = this._channelStore.getChannel(channelId);
       if (storedSession) {
         storedSession.authMax = auth.cumulativeAmount;
         storedSession.latestBuyerSig = auth.spendingAuthSig;
         storedSession.latestSpendingAuthSig = auth.spendingAuthSig;
         storedSession.latestMetadata = auth.metadata;
         storedSession.updatedAt = Date.now();
-        this._sessionStore.upsertSession(storedSession);
+        this._channelStore.upsertChannel(storedSession);
       }
     }
 
@@ -421,8 +421,8 @@ export class SellerPaymentManager {
     const newSpent = current + costUsdc;
     this._spent.set(sessionId, newSpent);
 
-    // Persist spent amount to SessionStore (using tokensDelivered field)
-    this._sessionStore.updateTokensDelivered(sessionId, newSpent.toString(), 0);
+    // Persist spent amount to ChannelStore (using tokensDelivered field)
+    this._channelStore.updateTokensDelivered(sessionId, newSpent.toString(), 0);
   }
 
   // ── Settlement ──────────────────────────────────────────────
@@ -432,7 +432,7 @@ export class SellerPaymentManager {
    * Uses close() for final settlement (releases remaining deposit to buyer).
    */
   async settleSession(buyerPeerId: string, { cleanupOnFailure = false } = {}): Promise<void> {
-    const session = this._sessionStore.getActiveSessionByPeer(buyerPeerId, 'seller');
+    const session = this._channelStore.getActiveChannelByPeer(buyerPeerId, 'seller');
     if (!session) {
       debugWarn(`[SellerPayment] settleSession: no active session for buyer ${buyerPeerId.slice(0, 12)}...`);
       return;
@@ -467,7 +467,7 @@ export class SellerPaymentManager {
             latestAuth.metadata,
             latestAuth.spendingAuthSig,
           );
-          this._sessionStore.updateSessionStatus(channelId, 'settled', latestAuth.cumulativeAmount.toString());
+          this._channelStore.updateChannelStatus(channelId, 'settled', latestAuth.cumulativeAmount.toString());
           this._closeRetryCount.delete(channelId);
         } catch (err) {
           debugWarn(`[SellerPayment] Failed to close channel (attempt ${retries + 1}): ${err instanceof Error ? err.message : err}`);
@@ -492,7 +492,7 @@ export class SellerPaymentManager {
   // ── Disconnect handling ───────────────────────────────────────
 
   onBuyerDisconnect(buyerPeerId: string): void {
-    const session = this._sessionStore.getActiveSessionByPeer(buyerPeerId, 'seller');
+    const session = this._channelStore.getActiveChannelByPeer(buyerPeerId, 'seller');
     if (!session) return;
 
     const settleOnDisconnect = this._config.settleOnDisconnect ?? true;
@@ -526,32 +526,32 @@ export class SellerPaymentManager {
    */
   async checkTimeouts(): Promise<void> {
     const nowSecs = Math.floor(Date.now() / 1000);
-    const activeSessions = this._sessionStore.getActiveSessions('seller');
+    const activeChannels = this._channelStore.getActiveChannels('seller');
 
-    for (const session of activeSessions) {
-      const accepted = this._acceptedCumulative.get(session.sessionId) ?? 0n;
+    for (const channel of activeChannels) {
+      const accepted = this._acceptedCumulative.get(channel.sessionId) ?? 0n;
 
       try {
         // If we have auths and the buyer is disconnected, try to close
-        if (accepted > 0n && !this._activeBuyers.has(session.peerId)) {
-          debugLog(`[SellerPayment] Channel ${session.sessionId.slice(0, 18)}... buyer disconnected — attempting close`);
-          await this.settleSession(session.peerId);
+        if (accepted > 0n && !this._activeBuyers.has(channel.peerId)) {
+          debugLog(`[SellerPayment] Channel ${channel.sessionId.slice(0, 18)}... buyer disconnected — attempting close`);
+          await this.settleSession(channel.peerId);
         }
         // If no auths and buyer disconnected, nothing the seller can do on-chain.
         // The buyer must call requestClose → withdraw. We just clean up locally
         // after a reasonable period (e.g. deadline passed).
-        if (accepted === 0n && !this._activeBuyers.has(session.peerId) && nowSecs > session.deadline) {
-          debugLog(`[SellerPayment] Channel ${session.sessionId.slice(0, 18)}... no auths, past deadline — cleaning up locally`);
-          this._sessionStore.updateSessionStatus(session.sessionId, 'timeout');
-          this._acceptedCumulative.delete(session.sessionId);
-          this._spent.delete(session.sessionId);
-          this._latestAuth.delete(session.sessionId);
-          this._closeRetryCount.delete(session.sessionId);
-          this._reserveMax.delete(session.sessionId);
-          this._activeBuyers.delete(session.peerId);
+        if (accepted === 0n && !this._activeBuyers.has(channel.peerId) && nowSecs > channel.deadline) {
+          debugLog(`[SellerPayment] Channel ${channel.sessionId.slice(0, 18)}... no auths, past deadline — cleaning up locally`);
+          this._channelStore.updateChannelStatus(channel.sessionId, 'timeout');
+          this._acceptedCumulative.delete(channel.sessionId);
+          this._spent.delete(channel.sessionId);
+          this._latestAuth.delete(channel.sessionId);
+          this._closeRetryCount.delete(channel.sessionId);
+          this._reserveMax.delete(channel.sessionId);
+          this._activeBuyers.delete(channel.peerId);
         }
       } catch (err) {
-        debugWarn(`[SellerPayment] Failed to process channel ${session.sessionId.slice(0, 18)}...: ${err instanceof Error ? err.message : err}`);
+        debugWarn(`[SellerPayment] Failed to process channel ${channel.sessionId.slice(0, 18)}...: ${err instanceof Error ? err.message : err}`);
       }
     }
   }
@@ -563,8 +563,8 @@ export class SellerPaymentManager {
   }
 
   /** Get the active session for a buyer peer, or null. */
-  getSessionByPeer(buyerPeerId: string): StoredSession | null {
-    return this._sessionStore.getActiveSessionByPeer(buyerPeerId, 'seller');
+  getChannelByPeer(buyerPeerId: string): StoredChannel | null {
+    return this._channelStore.getActiveChannelByPeer(buyerPeerId, 'seller');
   }
 
   /** Get total USDC spent for a session (sum of recordSpend calls). */
@@ -596,7 +596,7 @@ export class SellerPaymentManager {
 
     let suggestedAmount = SellerPaymentManager.DEFAULT_SUGGESTED_AMOUNT;
     if (buyerPeerId) {
-      const priorSession = this._sessionStore.getLatestSession(buyerPeerId, 'seller');
+      const priorSession = this._channelStore.getLatestChannel(buyerPeerId, 'seller');
       if (priorSession && priorSession.status === 'settled') {
         // Returning buyer with proven history — could use a different amount
         // For now, use the same default; config can override later
@@ -616,6 +616,6 @@ export class SellerPaymentManager {
   // ── Lifecycle ─────────────────────────────────────────────────
 
   close(): void {
-    // SessionStore is shared with BuyerPaymentManager, closed from node.ts
+    // ChannelStore is shared with BuyerPaymentManager, closed from node.ts
   }
 }

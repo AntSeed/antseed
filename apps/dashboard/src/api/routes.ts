@@ -537,7 +537,7 @@ interface SessionListEntry {
   active: boolean;
 }
 
-type DaemonActiveSession = {
+type DaemonActiveChannel = {
   sessionId?: unknown;
   buyerPeerId?: unknown;
   provider?: unknown;
@@ -578,8 +578,8 @@ async function getDaemonActiveChannels(): Promise<SessionListEntry[]> {
     return [];
   }
 
-  const details = Array.isArray(root['activeSessionDetails']) ? root['activeSessionDetails'] as DaemonActiveSession[] : [];
-  const activeChannelsCount = Math.max(0, Math.round(asFiniteNumber(root['activeSessions'], 0)));
+  const details = Array.isArray(root['activeChannelDetails']) ? root['activeChannelDetails'] as DaemonActiveChannel[] : [];
+  const activeChannelsCount = Math.max(0, Math.round(asFiniteNumber(root['activeChannels'], 0)));
   if (details.length === 0 && activeChannelsCount === 0) {
     return [];
   }

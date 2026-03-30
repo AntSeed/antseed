@@ -1,7 +1,7 @@
 import type { Command } from 'commander';
 import chalk from 'chalk';
 import { getGlobalOptions } from './types.js';
-import { openSessionStore } from '../payment-utils.js';
+import { openChannelStore } from '../payment-utils.js';
 
 /** Abbreviate a session/peer ID to a short form. */
 function short(id: string, len = 10): string {
@@ -31,22 +31,22 @@ export function registerChannelsCommand(program: Command): void {
 
       let store;
       try {
-        store = openSessionStore(globalOpts.dataDir);
+        store = openChannelStore(globalOpts.dataDir);
       } catch (err) {
-        console.error(chalk.red(`Failed to open session store: ${(err as Error).message}`));
+        console.error(chalk.red(`Failed to open channel store: ${(err as Error).message}`));
         console.error(chalk.dim('Have you connected to the network yet? Channels are stored locally after first use.'));
         process.exit(1);
       }
 
       try {
-        // Query channels — SessionStore doesn't have a generic list method,
+        // Query channels — ChannelStore doesn't have a generic list method,
         // so we use the DB directly via the available methods.
         // For now, we read from the active/timeout channels.
         const limit = parseInt(options.limit as string, 10) || 20;
         const statusFilter = options.status as string | undefined;
         const roleFilter = options.role as string | undefined;
 
-        const allSessions = store.listAllSessions(limit * 2);
+        const allSessions = store.listAllChannels(limit * 2);
 
         // Apply filters
         let filtered = allSessions;

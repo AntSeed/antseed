@@ -7,7 +7,7 @@ export interface StatsClientConfig {
 }
 
 export interface AgentStats {
-  sessionCount: number;
+  channelCount: number;
   ghostCount: number;
   totalVolumeUsdc: bigint;
   totalInputTokens: bigint;
@@ -30,7 +30,7 @@ export class StatsClient extends BaseEvmClient {
     const contract = new Contract(this._contractAddress, STATS_ABI, this._provider);
     const result = await contract.getFunction('getStats')(agentId);
     return {
-      sessionCount: Number(result[0]),
+      channelCount: Number(result[0]),
       ghostCount: Number(result[1]),
       totalVolumeUsdc: result[2] as bigint,
       totalInputTokens: result[3] as bigint,

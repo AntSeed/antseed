@@ -108,13 +108,12 @@ async function handleSingleRpcRequest(parsed: { id: number; method: string; para
       });
     }
     case 'eth_call': {
-      // Return ABI-encoded tuple of 4 uint256 for getBuyerBalance or any eth_call
+      // Return ABI-encoded tuple of 3 uint256 for getBuyerBalance or any eth_call
       const available = BigInt('10000000000'); // $10,000 USDC
       const reserved = 0n;
-      const pendingWithdrawal = 0n;
       const lastActivityAt = BigInt(Math.floor(Date.now() / 1000));
       const encode256 = (n: bigint) => n.toString(16).padStart(64, '0');
-      return makeResult('0x' + encode256(available) + encode256(reserved) + encode256(pendingWithdrawal) + encode256(lastActivityAt));
+      return makeResult('0x' + encode256(available) + encode256(reserved) + encode256(lastActivityAt));
     }
     default:
       return makeResult('0x');

@@ -10,7 +10,7 @@ import {
   StatsClient,
   EmissionsClient,
   SubPoolClient,
-  SessionStore,
+  ChannelStore,
 } from '@antseed/node/payments';
 import type { Identity } from '@antseed/node';
 
@@ -163,8 +163,8 @@ export function createSubPoolClient(config: AntseedConfig): SubPoolClient {
 }
 
 /**
- * Open a SessionStore from the given data directory.
+ * Open a ChannelStore from the given data directory.
  */
-export function openSessionStore(dataDir: string): SessionStore {
-  return new SessionStore(dataDir);
+export function openChannelStore(dataDir: string): ChannelStore {
+  return new ChannelStore(dataDir);
 }

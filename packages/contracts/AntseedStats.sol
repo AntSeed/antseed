@@ -7,8 +7,8 @@ import {IAntseedStats} from "./interfaces/IAntseedStats.sol";
 
 /**
  * @title AntseedStats
- * @notice Factual per-agent session metrics, keyed by ERC-8004 agentId.
- *         Only the Sessions contract can write; anyone can read.
+ * @notice Factual per-agent channel metrics, keyed by ERC-8004 agentId.
+ *         Only the Channels contract can write; anyone can read.
  */
 contract AntseedStats is IAntseedStats, Ownable {
     address public channelsContract;
@@ -30,8 +30,8 @@ contract AntseedStats is IAntseedStats, Ownable {
     function updateStats(uint256 agentId, StatsUpdate calldata update) external onlyChannels {
         AgentStats storage s = _stats[agentId];
         if (update.updateType == 0) {
-            // Session complete (close) — increment sessionCount
-            s.sessionCount++;
+            // Channel complete (close) — increment channelCount
+            s.channelCount++;
             s.totalVolumeUsdc += update.volumeUsdc;
             s.totalInputTokens += update.inputTokens;
             s.totalOutputTokens += update.outputTokens;
@@ -42,7 +42,7 @@ contract AntseedStats is IAntseedStats, Ownable {
             // Ghost (seller disappeared)
             s.ghostCount++;
         } else if (update.updateType == 2) {
-            // Partial settlement — accumulate volume/tokens but NOT sessionCount
+            // Partial settlement — accumulate volume/tokens but NOT channelCount
             s.totalVolumeUsdc += update.volumeUsdc;
             s.totalInputTokens += update.inputTokens;
             s.totalOutputTokens += update.outputTokens;

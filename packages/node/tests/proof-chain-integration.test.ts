@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { Wallet, AbiCoder } from 'ethers';
 import { BuyerPaymentManager, type BuyerPaymentConfig } from '../src/payments/buyer-payment-manager.js';
-import { SessionStore } from '../src/payments/session-store.js';
+import { ChannelStore } from '../src/payments/channel-store.js';
 import type { PaymentMux } from '../src/p2p/payment-mux.js';
 import type {
   SpendingAuthPayload,
@@ -42,7 +42,7 @@ describe('Cumulative SpendingAuth Integration', () => {
   let buyerIdentity: Identity;
   let sellerIdentity: Identity;
   let buyerManager: BuyerPaymentManager;
-  let buyerStore: SessionStore;
+  let buyerStore: ChannelStore;
 
   beforeEach(async () => {
     buyerTempDir = mkdtempSync(join(tmpdir(), 'cumulative-buyer-'));
@@ -61,7 +61,7 @@ describe('Cumulative SpendingAuth Integration', () => {
       maxReserveAmountUsdc: 10_000_000n,
       dataDir: buyerTempDir,
     };
-    buyerStore = new SessionStore(buyerTempDir);
+    buyerStore = new ChannelStore(buyerTempDir);
     buyerManager = new BuyerPaymentManager(buyerIdentity, buyerConfig, buyerStore);
     buyerManager.setSigner(buyerIdentity.wallet);
   });
@@ -217,7 +217,7 @@ describe('Cumulative SpendingAuth Integration', () => {
 
     buyerStore.close();
 
-    const newStore = new SessionStore(buyerTempDir);
+    const newStore = new ChannelStore(buyerTempDir);
     const newConfig: BuyerPaymentConfig = {
       rpcUrl: 'http://127.0.0.1:8545',
       depositsContractAddress: CONTRACT_ADDR,
@@ -233,7 +233,7 @@ describe('Cumulative SpendingAuth Integration', () => {
     const newManager = new BuyerPaymentManager(buyerIdentity, newConfig, newStore);
     newManager.setSigner(buyerIdentity.wallet);
 
-    const session = newStore.getSession(channelId);
+    const session = newStore.getChannel(channelId);
     expect(session).not.toBeNull();
     expect(session!.status).toBe('active');
     expect(BigInt(session!.tokensDelivered)).toBeGreaterThan(0n);

@@ -109,7 +109,7 @@ contract AntseedEmissionsTest is Test {
         assertApproxEqAbs(sellerPending, expected, 1e6); // small rounding tolerance
     }
 
-    function test_accrueSellerPoints_revert_notSessions() public {
+    function test_accrueSellerPoints_revert_notChannels() public {
         vm.prank(seller1);
         vm.expectRevert(AntseedEmissions.NotAuthorized.selector);
         emissions.accrueSellerPoints(seller1, 100);
@@ -128,7 +128,7 @@ contract AntseedEmissionsTest is Test {
         assertApproxEqAbs(buyerPending, expected, 1e6);
     }
 
-    function test_accrueBuyerPoints_revert_notSessions() public {
+    function test_accrueBuyerPoints_revert_notChannels() public {
         vm.prank(buyer1);
         vm.expectRevert(AntseedEmissions.NotAuthorized.selector);
         emissions.accrueBuyerPoints(buyer1, 100);

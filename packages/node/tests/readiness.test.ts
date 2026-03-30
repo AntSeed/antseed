@@ -43,7 +43,6 @@ function mockDepositsClient(overrides: {
     getBuyerBalance: vi.fn().mockResolvedValue({
       available: overrides.buyerAvailable ?? 5_000_000n,
       reserved: 0n,
-      pendingWithdrawal: 0n,
       lastActivityAt: 0n,
     }),
   } as unknown as DepositsClient;

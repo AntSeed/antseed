@@ -8,10 +8,11 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 import {IERC8004Registry} from "./interfaces/IERC8004Registry.sol";
 import {IAntseedStats} from "./interfaces/IAntseedStats.sol";
+import {IAntseedChannels} from "./interfaces/IAntseedChannels.sol";
 
 /**
  * @title AntseedStaking
- * @notice Seller staking, active session tracking, and slashing.
+ * @notice Seller staking and slashing.
  *         Stable contract — holds seller stake USDC. Reads stats from AntseedStats.
  *         Binds each seller's stake to their ERC-8004 agentId.
  */
@@ -33,7 +34,6 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
 
     // ─── Storage ────────────────────────────────────────────────────────
     mapping(address => SellerAccount) public sellers;
-    mapping(address => uint256) public activeSessionCount;
     mapping(address => uint256) public sellerAgentId;
 
     // ─── Configurable Constants ─────────────────────────────────────────
@@ -52,14 +52,8 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
     error InvalidAmount();
     error InvalidAddress();
     error InsufficientStake();
-    error ActiveSessions();
+    error ActiveChannels();
     error NotAgentOwner();
-
-    // ─── Modifiers ──────────────────────────────────────────────────────
-    modifier onlyChannels() {
-        if (msg.sender != channelsContract) revert NotAuthorized();
-        _;
-    }
 
     // ─── Constructor ────────────────────────────────────────────────────
     constructor(address _usdc, address _identityRegistry, address _stats) Ownable(msg.sender) {
@@ -104,7 +98,7 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
     function unstake() external nonReentrant {
         SellerAccount storage sa = sellers[msg.sender];
         if (sa.stake == 0) revert InsufficientStake();
-        if (activeSessionCount[msg.sender] > 0) revert ActiveSessions();
+        if (IAntseedChannels(channelsContract).activeChannelCount(msg.sender) > 0) revert ActiveChannels();
 
         uint256 slashAmount = _calculateSlash(msg.sender);
         uint256 payout = sa.stake - slashAmount;
@@ -155,20 +149,10 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
         if (agentId == 0) return 0;
         IAntseedStats.AgentStats memory stats = statsContract.getStats(agentId);
 
-        uint256 sessionCount = uint256(stats.sessionCount);
+        uint256 channelCount = uint256(stats.channelCount);
         uint256 stakeCap = (sellers[seller].stake * REPUTATION_CAP_COEFFICIENT) / 1_000_000;
 
-        return sessionCount < stakeCap ? sessionCount : stakeCap;
-    }
-
-    // ─── Privileged — Sessions Only ─────────────────────────────────────
-    function incrementActiveSessions(address seller) external onlyChannels {
-        activeSessionCount[seller]++;
-    }
-
-    function decrementActiveSessions(address seller) external onlyChannels {
-        if (activeSessionCount[seller] == 0) revert InvalidAmount();
-        activeSessionCount[seller]--;
+        return channelCount < stakeCap ? channelCount : stakeCap;
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -180,21 +164,21 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
         if (agentId == 0) return 0;
         IAntseedStats.AgentStats memory stats = statsContract.getStats(agentId);
 
-        uint256 sessions = uint256(stats.sessionCount);
+        uint256 channels = uint256(stats.channelCount);
         uint256 ghosts = uint256(stats.ghostCount);
         uint256 stakeAmt = sellers[seller].stake;
 
-        // Tier 1: ghosts >= threshold AND zero sessions → full slash
-        if (ghosts >= SLASH_GHOST_THRESHOLD && sessions == 0) return stakeAmt;
+        // Tier 1: ghosts >= threshold AND zero channels → full slash
+        if (ghosts >= SLASH_GHOST_THRESHOLD && channels == 0) return stakeAmt;
 
-        // Tier 2: sessions > 0 but ghost ratio high → half slash
-        if (sessions > 0 && ghosts > 0) {
-            uint256 ghostRatio = (ghosts * 100) / (sessions + ghosts);
+        // Tier 2: channels > 0 but ghost ratio high → half slash
+        if (channels > 0 && ghosts > 0) {
+            uint256 ghostRatio = (ghosts * 100) / (channels + ghosts);
             if (ghostRatio >= SLASH_RATIO_THRESHOLD) return stakeAmt / 2;
         }
 
-        // Tier 3: sessions > 0 but inactive → 20% slash
-        if (sessions > 0 && stats.lastSettledAt > 0) {
+        // Tier 3: channels > 0 but inactive → 20% slash
+        if (channels > 0 && stats.lastSettledAt > 0) {
             if (block.timestamp > uint256(stats.lastSettledAt) + SLASH_INACTIVITY_DAYS) {
                 return stakeAmt / 5;
             }

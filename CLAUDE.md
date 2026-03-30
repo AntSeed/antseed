@@ -86,7 +86,7 @@ packages/contracts/
 ├── interfaces/              Shared Solidity interfaces (IAntseed*.sol, IERC8004Registry.sol)
 ├── AntseedStats.sol         Per-agent session metrics keyed by ERC-8004 agentId
 ├── AntseedStaking.sol       Seller staking, slashing (holds stake USDC, binds to agentId)
-├── AntseedDeposits.sol      Buyer deposits, seller earnings (holds buyer USDC)
+├── AntseedDeposits.sol      Buyer deposits, seller payouts (holds buyer USDC)
 ├── AntseedChannels.sol      Session lifecycle, ReserveAuth + SpendingAuth (swappable, holds NO USDC)
 ├── AntseedEmissions.sol     ANTS token emissions (USDC volume-based)
 ├── AntseedSubPool.sol       Subscription pool
@@ -102,9 +102,9 @@ Build/test: `cd packages/contracts && forge build && forge test`
 ### Payment Flow (Cumulative Streaming SpendingAuth)
 1. Buyer deposits USDC into AntseedDeposits
 2. Buyer signs ReserveAuth(channelId, maxAmount, deadline) off-chain
-3. Seller calls `reserve()` on AntseedChannels with buyer's ReserveAuth sig → Deposits.lockForSession()
+3. Seller calls `reserve()` on AntseedChannels with buyer's ReserveAuth sig → Deposits.lockForChannel()
 4. Per request: buyer signs SpendingAuth(channelId, cumulativeAmount, metadataHash)
-5. Seller calls `settle()` or `close()` with latest SpendingAuth → Deposits.chargeAndCreditEarnings()
+5. Seller calls `settle()` or `close()` with latest SpendingAuth → Deposits.chargeAndCreditPayouts()
 6. If seller disappears: `requestTimeout()` (permissionless after deadline) → `withdraw()` after 15min grace
 
 EIP-712 domain: name="AntseedChannels", version="7"

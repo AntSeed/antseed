@@ -30,14 +30,14 @@ describe('Reputation Integration', () => {
   it('should round-trip metadata with reputation', () => {
     const original = makeMetadata({
       onChainReputation: 85,
-      onChainSessionCount: 42,
+      onChainChannelCount: 42,
       onChainDisputeCount: 2,
     });
     const encoded = encodeMetadata(original);
     const decoded = decodeMetadata(encoded);
 
     expect(decoded.onChainReputation).toBe(85);
-    expect(decoded.onChainSessionCount).toBe(42);
+    expect(decoded.onChainChannelCount).toBe(42);
     expect(decoded.onChainDisputeCount).toBe(2);
     // Verify other fields are still correct
     expect(decoded.peerId).toBe(original.peerId);
@@ -54,7 +54,7 @@ describe('Reputation Integration', () => {
     const decoded = decodeMetadata(encoded);
 
     expect(decoded.onChainReputation).toBeUndefined();
-    expect(decoded.onChainSessionCount).toBeUndefined();
+    expect(decoded.onChainChannelCount).toBeUndefined();
     expect(decoded.onChainDisputeCount).toBeUndefined();
     // Core fields should still work
     expect(decoded.peerId).toBe(original.peerId);
@@ -65,7 +65,7 @@ describe('Reputation Integration', () => {
   it('should populate PeerInfo from metadata reputation', () => {
     const metadata: PeerMetadata = makeMetadata({
       onChainReputation: 92,
-      onChainSessionCount: 100,
+      onChainChannelCount: 100,
       onChainDisputeCount: 1,
     });
 
@@ -76,13 +76,13 @@ describe('Reputation Integration', () => {
       providers: metadata.providers.map((p) => p.provider),
       publicAddress: '1.2.3.4:6882',
       onChainReputation: metadata.onChainReputation,
-      onChainSessionCount: metadata.onChainSessionCount,
+      onChainChannelCount: metadata.onChainChannelCount,
       onChainDisputeCount: metadata.onChainDisputeCount,
       trustScore: metadata.onChainReputation,
     };
 
     expect(peerInfo.onChainReputation).toBe(92);
-    expect(peerInfo.onChainSessionCount).toBe(100);
+    expect(peerInfo.onChainChannelCount).toBe(100);
     expect(peerInfo.onChainDisputeCount).toBe(1);
     expect(peerInfo.trustScore).toBe(92);
   });
@@ -147,7 +147,7 @@ describe('Reputation Integration', () => {
 
     const metadata = makeMetadata({
       onChainReputation: 80,
-      onChainSessionCount: 50,
+      onChainChannelCount: 50,
       onChainDisputeCount: 3,
     });
 
@@ -156,7 +156,7 @@ describe('Reputation Integration', () => {
       getReputation: async (_addr: string) => ({
         totalWeightedScore: 4000n,
         totalWeight: 50n,
-        sessionCount: 50,
+        channelCount: 50,
         disputeCount: 3,
         weightedAverage: 80,
       }),
@@ -166,16 +166,16 @@ describe('Reputation Integration', () => {
 
     expect(result.valid).toBe(true);
     expect(result.actualReputation).toBe(80);
-    expect(result.actualSessionCount).toBe(50);
+    expect(result.actualChannelCount).toBe(50);
     expect(result.actualDisputeCount).toBe(3);
     expect(result.claimedReputation).toBe(80);
-    expect(result.claimedSessionCount).toBe(50);
+    expect(result.claimedChannelCount).toBe(50);
     expect(result.claimedDisputeCount).toBe(3);
 
     // Test with mismatched data
     const mismatchedMetadata = makeMetadata({
       onChainReputation: 90, // claimed higher than actual
-      onChainSessionCount: 50,
+      onChainChannelCount: 50,
       onChainDisputeCount: 3,
     });
 

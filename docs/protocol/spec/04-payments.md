@@ -10,7 +10,7 @@ BUYER                              SELLER                           ON-CHAIN
   │ ─ ReserveAuth ─────────────────► │                                │
   │   {channelId, maxAmount,         │                                │
   │    deadline}                      │ ── reserve(buyerSig) ─────────►│
-  │                                  │    Deposits.lockForSession()   │ ← USDC locked
+  │                                  │    Deposits.lockForChannel()   │ ← USDC locked
   │                                  │                                │
   │ ◄── AuthAck ─────────────────── │                                │
   │                                  │                                │
@@ -38,7 +38,7 @@ BUYER                              SELLER                           ON-CHAIN
 
 ### Reserve
 
-The buyer signs an EIP-712 `ReserveAuth` (channelId, maxAmount, deadline) and sends it to the seller over P2P. The seller calls `reserve()` on-chain, which verifies the buyer's signature and calls `Deposits.lockForSession()` to lock the buyer's USDC. The channelId is `keccak256(abi.encode(buyer, seller, salt))`.
+The buyer signs an EIP-712 `ReserveAuth` (channelId, maxAmount, deadline) and sends it to the seller over P2P. The seller calls `reserve()` on-chain, which verifies the buyer's signature and calls `Deposits.lockForChannel()` to lock the buyer's USDC. The channelId is `keccak256(abi.encode(buyer, seller, salt))`.
 
 ### Serve
 
@@ -109,9 +109,9 @@ When the budget is nearly exhausted, the seller calls `close()` with the final S
 
 ## 4. Per-Agent Stats (AntseedStats)
 
-Session metrics are tracked per ERC-8004 agentId in the AntseedStats contract. Stats are updated by AntseedChannels during `settle()` and `close()`:
+Channel metrics are tracked per ERC-8004 agentId in the AntseedStats contract. Stats are updated by AntseedChannels during `settle()` and `close()`:
 
-- `sessionCount` — number of completed sessions
+- `channelCount` — number of completed channels
 - `totalVolumeUsdc` — cumulative USDC volume
 - `totalRequests` — cumulative request count
 
@@ -245,8 +245,8 @@ MockERC8004Registry       ── local testing only (mainnet: deployed ERC-8004)
 Contracts reference each other by address (set at deployment, updateable by owner). No inheritance between contracts — only interface calls.
 
 **Interaction flow:**
-- `AntseedChannels` calls `AntseedDeposits.lockForSession()` on reserve
-- `AntseedChannels` calls `AntseedDeposits.chargeAndCreditEarnings()` on settle/close
+- `AntseedChannels` calls `AntseedDeposits.lockForChannel()` on reserve
+- `AntseedChannels` calls `AntseedDeposits.chargeAndCreditPayouts()` on settle/close
 - `AntseedChannels` calls `AntseedStats.updateStats()` on settle/close
 - `AntseedChannels` calls `AntseedEmissions.accrueSellerPoints()` / `accrueBuyerPoints()` on settle/close
 - `AntseedChannels` reads from `AntseedStaking` (seller stake verification)

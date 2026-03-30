@@ -163,15 +163,15 @@ export class PeerAnnouncer {
           const evmAddress = this.config.identity.wallet.address;
           const agentId = await this.config.stakingClient.getAgentId(evmAddress);
           const stats = await this.config.statsClient.getStats(agentId);
-          metadata.onChainReputation = stats.sessionCount;
-          metadata.onChainSessionCount = stats.sessionCount;
+          metadata.onChainReputation = stats.channelCount;
+          metadata.onChainChannelCount = stats.channelCount;
           metadata.onChainDisputeCount = stats.ghostCount;
         } catch {
           // Stats/staking contract lookup failed — skip on-chain stats for this cycle
         }
       } else if (this._latestMetadata) {
         metadata.onChainReputation = this._latestMetadata.onChainReputation;
-        metadata.onChainSessionCount = this._latestMetadata.onChainSessionCount;
+        metadata.onChainChannelCount = this._latestMetadata.onChainChannelCount;
         metadata.onChainDisputeCount = this._latestMetadata.onChainDisputeCount;
       }
     }

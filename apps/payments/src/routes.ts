@@ -57,7 +57,6 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
         available: formatUsdc6(balance.available),
         reserved: formatUsdc6(balance.reserved),
         total: formatUsdc6(balance.available + balance.reserved),
-        pendingWithdrawal: formatUsdc6(balance.pendingWithdrawal),
         creditLimit: formatUsdc6(creditLimit),
       };
     } catch (err) {
@@ -82,7 +81,7 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
     return { transactions: [] };
   });
 
-  fastify.post('/api/withdraw/request', async (request, reply) => {
+  fastify.post('/api/withdraw', async (request, reply) => {
     if (!ctx.cryptoCtx) {
       return reply.status(503).send({ ok: false, error: 'Identity not configured — run antseed init' });
     }
@@ -96,35 +95,7 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
     try {
       const baseUnits = parseUsdc6(amount);
       const client = getClient()!;
-      const txHash = await client.requestWithdrawal(ctx.cryptoCtx.wallet, ctx.cryptoCtx.evmAddress, baseUnits);
-      return { ok: true, txHash };
-    } catch (err) {
-      return reply.status(500).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
-    }
-  });
-
-  fastify.post('/api/withdraw/execute', async (_request, reply) => {
-    if (!ctx.cryptoCtx) {
-      return reply.status(503).send({ ok: false, error: 'Identity not configured — run antseed init' });
-    }
-
-    try {
-      const client = getClient()!;
-      const txHash = await client.executeWithdrawal(ctx.cryptoCtx.wallet, ctx.cryptoCtx.evmAddress);
-      return { ok: true, txHash };
-    } catch (err) {
-      return reply.status(500).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
-    }
-  });
-
-  fastify.post('/api/withdraw/cancel', async (_request, reply) => {
-    if (!ctx.cryptoCtx) {
-      return reply.status(503).send({ ok: false, error: 'Identity not configured — run antseed init' });
-    }
-
-    try {
-      const client = getClient()!;
-      const txHash = await client.cancelWithdrawal(ctx.cryptoCtx.wallet, ctx.cryptoCtx.evmAddress);
+      const txHash = await client.withdraw(ctx.cryptoCtx.wallet, ctx.cryptoCtx.evmAddress, baseUnits);
       return { ok: true, txHash };
     } catch (err) {
       return reply.status(500).send({ ok: false, error: err instanceof Error ? err.message : String(err) });

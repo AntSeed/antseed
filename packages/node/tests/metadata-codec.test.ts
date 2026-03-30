@@ -164,13 +164,13 @@ describe('encodeMetadata / decodeMetadata', () => {
         },
       ],
       onChainReputation: 88,
-      onChainSessionCount: 123,
+      onChainChannelCount: 123,
       onChainDisputeCount: 2,
     });
     const decoded = decodeMetadata(encodeMetadata(original));
     expect(decoded.offerings?.[0]?.name).toBe('summarize');
     expect(decoded.onChainReputation).toBe(88);
-    expect(decoded.onChainSessionCount).toBe(123);
+    expect(decoded.onChainChannelCount).toBe(123);
     expect(decoded.onChainDisputeCount).toBe(2);
   });
 

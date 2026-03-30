@@ -2,13 +2,13 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { SessionStore, type StoredSession, type StoredReceipt } from '../src/payments/session-store.js';
+import { ChannelStore, type StoredChannel, type StoredReceipt } from '../src/payments/channel-store.js';
 
 function makeTempDir(): string {
-  return mkdtempSync(join(tmpdir(), 'session-store-test-'));
+  return mkdtempSync(join(tmpdir(), 'channel-store-test-'));
 }
 
-function makeSession(overrides: Partial<StoredSession> = {}): StoredSession {
+function makeChannel(overrides: Partial<StoredChannel> = {}): StoredChannel {
   const now = Date.now();
   return {
     sessionId: '0x' + 'aa'.repeat(32),
@@ -33,13 +33,13 @@ function makeSession(overrides: Partial<StoredSession> = {}): StoredSession {
   };
 }
 
-describe('SessionStore', () => {
+describe('ChannelStore', () => {
   let tempDir: string;
-  let store: SessionStore;
+  let store: ChannelStore;
 
   beforeEach(() => {
     tempDir = makeTempDir();
-    store = new SessionStore(tempDir);
+    store = new ChannelStore(tempDir);
   });
 
   afterEach(() => {
@@ -47,112 +47,112 @@ describe('SessionStore', () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it('test_createAndRead: insert session, read back all fields', () => {
-    const session = makeSession();
-    store.upsertSession(session);
+  it('test_createAndRead: insert channel, read back all fields', () => {
+    const channel = makeChannel();
+    store.upsertChannel(channel);
 
-    const loaded = store.getSession(session.sessionId);
+    const loaded = store.getChannel(channel.sessionId);
     expect(loaded).not.toBeNull();
-    expect(loaded!.sessionId).toBe(session.sessionId);
-    expect(loaded!.peerId).toBe(session.peerId);
-    expect(loaded!.role).toBe(session.role);
-    expect(loaded!.sellerEvmAddr).toBe(session.sellerEvmAddr);
-    expect(loaded!.buyerEvmAddr).toBe(session.buyerEvmAddr);
-    expect(loaded!.nonce).toBe(session.nonce);
-    expect(loaded!.authMax).toBe(session.authMax);
-    expect(loaded!.deadline).toBe(session.deadline);
-    expect(loaded!.previousSessionId).toBe(session.previousSessionId);
-    expect(loaded!.previousConsumption).toBe(session.previousConsumption);
-    expect(loaded!.tokensDelivered).toBe(session.tokensDelivered);
-    expect(loaded!.requestCount).toBe(session.requestCount);
+    expect(loaded!.sessionId).toBe(channel.sessionId);
+    expect(loaded!.peerId).toBe(channel.peerId);
+    expect(loaded!.role).toBe(channel.role);
+    expect(loaded!.sellerEvmAddr).toBe(channel.sellerEvmAddr);
+    expect(loaded!.buyerEvmAddr).toBe(channel.buyerEvmAddr);
+    expect(loaded!.nonce).toBe(channel.nonce);
+    expect(loaded!.authMax).toBe(channel.authMax);
+    expect(loaded!.deadline).toBe(channel.deadline);
+    expect(loaded!.previousSessionId).toBe(channel.previousSessionId);
+    expect(loaded!.previousConsumption).toBe(channel.previousConsumption);
+    expect(loaded!.tokensDelivered).toBe(channel.tokensDelivered);
+    expect(loaded!.requestCount).toBe(channel.requestCount);
     expect(loaded!.status).toBe('active');
     expect(loaded!.settledAt).toBeNull();
     expect(loaded!.settledAmount).toBeNull();
   });
 
   it('test_updateStatus: update to settled, verify', () => {
-    const session = makeSession();
-    store.upsertSession(session);
+    const channel = makeChannel();
+    store.upsertChannel(channel);
 
-    store.updateSessionStatus(session.sessionId, 'settled', '500000');
+    store.updateChannelStatus(channel.sessionId, 'settled', '500000');
 
-    const loaded = store.getSession(session.sessionId);
+    const loaded = store.getChannel(channel.sessionId);
     expect(loaded!.status).toBe('settled');
     expect(loaded!.settledAmount).toBe('500000');
     expect(loaded!.settledAt).toBeTypeOf('number');
   });
 
   it('test_updateTokensDelivered: increment tokens, verify', () => {
-    const session = makeSession();
-    store.upsertSession(session);
+    const channel = makeChannel();
+    store.upsertChannel(channel);
 
-    store.updateTokensDelivered(session.sessionId, '250000', 3);
+    store.updateTokensDelivered(channel.sessionId, '250000', 3);
 
-    const loaded = store.getSession(session.sessionId);
+    const loaded = store.getChannel(channel.sessionId);
     expect(loaded!.tokensDelivered).toBe('250000');
     expect(loaded!.requestCount).toBe(3);
   });
 
-  it('test_getActiveByPeer: returns correct active session', () => {
-    const s1 = makeSession({ sessionId: '0x' + '01'.repeat(32), status: 'settled', createdAt: Date.now() - 1000 });
-    const s2 = makeSession({ sessionId: '0x' + '02'.repeat(32), status: 'active', createdAt: Date.now() });
-    store.upsertSession(s1);
-    store.upsertSession(s2);
+  it('test_getActiveByPeer: returns correct active channel', () => {
+    const s1 = makeChannel({ sessionId: '0x' + '01'.repeat(32), status: 'settled', createdAt: Date.now() - 1000 });
+    const s2 = makeChannel({ sessionId: '0x' + '02'.repeat(32), status: 'active', createdAt: Date.now() });
+    store.upsertChannel(s1);
+    store.upsertChannel(s2);
 
-    const active = store.getActiveSessionByPeer('peer-abc123', 'buyer');
+    const active = store.getActiveChannelByPeer('peer-abc123', 'buyer');
     expect(active).not.toBeNull();
     expect(active!.sessionId).toBe(s2.sessionId);
   });
 
-  it('test_getActiveByPeer: returns null when no active session', () => {
-    const s1 = makeSession({ status: 'settled' });
-    store.upsertSession(s1);
+  it('test_getActiveByPeer: returns null when no active channel', () => {
+    const s1 = makeChannel({ status: 'settled' });
+    store.upsertChannel(s1);
 
-    const active = store.getActiveSessionByPeer('peer-abc123', 'buyer');
+    const active = store.getActiveChannelByPeer('peer-abc123', 'buyer');
     expect(active).toBeNull();
   });
 
   it('test_getLatestByPeer: returns most recent (any status)', () => {
-    const s1 = makeSession({ sessionId: '0x' + '01'.repeat(32), status: 'settled', createdAt: Date.now() - 2000 });
-    const s2 = makeSession({ sessionId: '0x' + '02'.repeat(32), status: 'settled', createdAt: Date.now() - 1000 });
-    const s3 = makeSession({ sessionId: '0x' + '03'.repeat(32), status: 'active', createdAt: Date.now() });
-    store.upsertSession(s1);
-    store.upsertSession(s2);
-    store.upsertSession(s3);
+    const s1 = makeChannel({ sessionId: '0x' + '01'.repeat(32), status: 'settled', createdAt: Date.now() - 2000 });
+    const s2 = makeChannel({ sessionId: '0x' + '02'.repeat(32), status: 'settled', createdAt: Date.now() - 1000 });
+    const s3 = makeChannel({ sessionId: '0x' + '03'.repeat(32), status: 'active', createdAt: Date.now() });
+    store.upsertChannel(s1);
+    store.upsertChannel(s2);
+    store.upsertChannel(s3);
 
-    const latest = store.getLatestSession('peer-abc123', 'buyer');
+    const latest = store.getLatestChannel('peer-abc123', 'buyer');
     expect(latest).not.toBeNull();
     expect(latest!.sessionId).toBe(s3.sessionId);
   });
 
-  it('test_getTimedOut: returns sessions past timeout', () => {
+  it('test_getTimedOut: returns channels past timeout', () => {
     const oldTime = Date.now() - 100_000; // 100 seconds ago
-    const s1 = makeSession({
+    const s1 = makeChannel({
       sessionId: '0x' + '01'.repeat(32),
       updatedAt: oldTime,
       createdAt: oldTime,
     });
     const recentTime = Date.now();
-    const s2 = makeSession({
+    const s2 = makeChannel({
       sessionId: '0x' + '02'.repeat(32),
       updatedAt: recentTime,
       createdAt: recentTime,
     });
-    store.upsertSession(s1);
-    store.upsertSession(s2);
+    store.upsertChannel(s1);
+    store.upsertChannel(s2);
 
     // 50 second timeout — s1 should be timed out, s2 should not
-    const timedOut = store.getTimedOutSessions(50);
+    const timedOut = store.getTimedOutChannels(50);
     expect(timedOut.length).toBe(1);
     expect(timedOut[0].sessionId).toBe(s1.sessionId);
   });
 
   it('test_receiptCRUD: insert and read receipts', () => {
-    const session = makeSession();
-    store.upsertSession(session);
+    const channel = makeChannel();
+    store.upsertChannel(channel);
 
     const receipt: Omit<StoredReceipt, 'id'> = {
-      sessionId: session.sessionId,
+      sessionId: channel.sessionId,
       runningTotal: '100000',
       requestCount: 1,
       responseHash: 'dd'.repeat(32),
@@ -163,7 +163,7 @@ describe('SessionStore', () => {
     store.insertReceipt(receipt);
 
     const receipt2: Omit<StoredReceipt, 'id'> = {
-      sessionId: session.sessionId,
+      sessionId: channel.sessionId,
       runningTotal: '200000',
       requestCount: 2,
       responseHash: 'ff'.repeat(32),
@@ -173,7 +173,7 @@ describe('SessionStore', () => {
     };
     store.insertReceipt(receipt2);
 
-    const receipts = store.getReceipts(session.sessionId);
+    const receipts = store.getReceipts(channel.sessionId);
     expect(receipts.length).toBe(2);
     expect(receipts[0].runningTotal).toBe('100000');
     expect(receipts[0].requestCount).toBe(1);
@@ -183,10 +183,10 @@ describe('SessionStore', () => {
   });
 
   it('test_persistence: close and reopen, data survives', () => {
-    const session = makeSession();
-    store.upsertSession(session);
+    const channel = makeChannel();
+    store.upsertChannel(channel);
     store.insertReceipt({
-      sessionId: session.sessionId,
+      sessionId: channel.sessionId,
       runningTotal: '50000',
       requestCount: 1,
       responseHash: 'aa'.repeat(32),
@@ -197,18 +197,18 @@ describe('SessionStore', () => {
 
     // Close and reopen
     store.close();
-    const store2 = new SessionStore(tempDir);
+    const store2 = new ChannelStore(tempDir);
 
-    const loaded = store2.getSession(session.sessionId);
+    const loaded = store2.getChannel(channel.sessionId);
     expect(loaded).not.toBeNull();
-    expect(loaded!.peerId).toBe(session.peerId);
+    expect(loaded!.peerId).toBe(channel.peerId);
 
-    const receipts = store2.getReceipts(session.sessionId);
+    const receipts = store2.getReceipts(channel.sessionId);
     expect(receipts.length).toBe(1);
     expect(receipts[0].runningTotal).toBe('50000');
 
     store2.close();
     // Prevent double-close in afterEach
-    store = new SessionStore(tempDir);
+    store = new ChannelStore(tempDir);
   });
 });

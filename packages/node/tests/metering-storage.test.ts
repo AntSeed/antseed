@@ -197,7 +197,7 @@ describe('MeteringStorage — Sessions', () => {
     storage.upsertSession(makeSession({ sessionId: 's2', startedAt: now - 200, totalCostCents: 20, totalTokens: 2000, totalRequests: 3 }));
 
     const summary = storage.getSessionSummary(now - 1000, now);
-    expect(summary.sessionCount).toBe(2);
+    expect(summary.channelCount).toBe(2);
     expect(summary.totalCostCents).toBe(30);
     expect(summary.totalTokens).toBe(3000);
     expect(summary.totalRequests).toBe(8);
