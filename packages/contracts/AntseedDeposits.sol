@@ -80,9 +80,9 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
         _;
     }
 
-    /// @dev Check that msg.sender is the buyer or their authorized operator (from Sessions).
-    function _isBuyerOrOperator(address buyer) internal view returns (bool) {
-        if (msg.sender == buyer) return true;
+    /// @dev Check that msg.sender is the buyer's authorized operator (from Sessions).
+    ///      The buyer (hot wallet) is a signer only — it cannot call these functions directly.
+    function _isOperator(address buyer) internal view returns (bool) {
         if (sessionsContract == address(0)) return false;
         return msg.sender == IAntseedSessions(sessionsContract).operators(buyer);
     }
@@ -147,7 +147,7 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
 
     function requestWithdrawal(address buyer, uint256 amount) external {
         if (amount == 0) revert InvalidAmount();
-        if (!_isBuyerOrOperator(buyer)) revert NotAuthorized();
+        if (!_isOperator(buyer)) revert NotAuthorized();
         BuyerAccount storage ba = buyers[buyer];
         if (ba.withdrawalAmount > 0) revert InvalidAmount();
         uint256 available = ba.balance - ba.reserved - ba.withdrawalAmount;
@@ -160,7 +160,7 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
     }
 
     function executeWithdrawal(address buyer) external nonReentrant {
-        if (!_isBuyerOrOperator(buyer)) revert NotAuthorized();
+        if (!_isOperator(buyer)) revert NotAuthorized();
         BuyerAccount storage ba = buyers[buyer];
         if (ba.withdrawalAmount == 0) revert InvalidAmount();
         if (block.timestamp < ba.withdrawalRequestedAt + WITHDRAWAL_DELAY) revert TimeoutNotReached();
@@ -178,7 +178,7 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
     }
 
     function cancelWithdrawal(address buyer) external {
-        if (!_isBuyerOrOperator(buyer)) revert NotAuthorized();
+        if (!_isOperator(buyer)) revert NotAuthorized();
         BuyerAccount storage ba = buyers[buyer];
         ba.withdrawalAmount = 0;
         ba.withdrawalRequestedAt = 0;

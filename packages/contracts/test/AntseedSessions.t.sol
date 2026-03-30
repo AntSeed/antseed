@@ -506,20 +506,25 @@ contract AntseedSessionsTest is Test {
         bytes32 salt = keccak256("session-close-req");
         bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
-        // Buyer can request close anytime — no deadline dependency
-        vm.prank(buyer);
+        // Set operator for buyer
+        address operator = address(0xABCDE1);
+        bytes memory opSig = signSetOperator(BUYER_PK, operator, 0);
+        sessions.setOperator(buyer, operator, 0, opSig);
+
+        // Operator can request close anytime — no deadline dependency
+        vm.prank(operator);
         sessions.requestClose(channelId);
 
         // Can't withdraw yet — need to wait for grace period (15 min)
-        vm.prank(buyer);
+        vm.prank(operator);
         vm.expectRevert(AntseedSessions.CloseNotReady.selector);
         sessions.withdraw(channelId);
 
         // Warp past grace period
         vm.warp(block.timestamp + 15 minutes + 1);
 
-        // Buyer can withdraw after grace period
-        vm.prank(buyer);
+        // Operator can withdraw after grace period
+        vm.prank(operator);
         sessions.withdraw(channelId);
 
         // Session timed out (withdrawn)
@@ -550,19 +555,29 @@ contract AntseedSessionsTest is Test {
         bytes32 salt = keccak256("session-close-dup");
         bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
-        vm.prank(buyer);
+        // Set operator for buyer
+        address operator = address(0xABCDE1);
+        bytes memory opSig = signSetOperator(BUYER_PK, operator, 0);
+        sessions.setOperator(buyer, operator, 0, opSig);
+
+        vm.prank(operator);
         sessions.requestClose(channelId);
 
-        vm.prank(buyer);
+        vm.prank(operator);
         vm.expectRevert(AntseedSessions.CloseAlreadyRequested.selector);
         sessions.requestClose(channelId);
     }
 
-    function test_withdraw_revert_notBuyer() public {
+    function test_withdraw_revert_notOperator() public {
         bytes32 salt = keccak256("session-withdraw-auth");
         bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
-        vm.prank(buyer);
+        // Set operator for buyer
+        address operator = address(0xABCDE1);
+        bytes memory opSig = signSetOperator(BUYER_PK, operator, 0);
+        sessions.setOperator(buyer, operator, 0, opSig);
+
+        vm.prank(operator);
         sessions.requestClose(channelId);
 
         vm.warp(block.timestamp + 15 minutes + 1);
@@ -577,8 +592,13 @@ contract AntseedSessionsTest is Test {
         bytes32 salt = keccak256("session-withdraw-no-req");
         bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
+        // Set operator for buyer
+        address operator = address(0xABCDE1);
+        bytes memory opSig = signSetOperator(BUYER_PK, operator, 0);
+        sessions.setOperator(buyer, operator, 0, opSig);
+
         // withdraw without calling requestClose first
-        vm.prank(buyer);
+        vm.prank(operator);
         vm.expectRevert(AntseedSessions.CloseNotReady.selector);
         sessions.withdraw(channelId);
     }
@@ -587,8 +607,13 @@ contract AntseedSessionsTest is Test {
         bytes32 salt = keccak256("session-grace-settle");
         bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
-        // Buyer requests close
-        vm.prank(buyer);
+        // Set operator for buyer
+        address operator = address(0xABCDE1);
+        bytes memory opSig = signSetOperator(BUYER_PK, operator, 0);
+        sessions.setOperator(buyer, operator, 0, opSig);
+
+        // Operator requests close
+        vm.prank(operator);
         sessions.requestClose(channelId);
 
         // Seller can still close with a SpendingAuth during grace period
@@ -611,8 +636,13 @@ contract AntseedSessionsTest is Test {
         bytes32 salt = keccak256("session-grace-mid");
         bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
-        // Buyer requests close
-        vm.prank(buyer);
+        // Set operator for buyer
+        address operator = address(0xABCDE1);
+        bytes memory opSig = signSetOperator(BUYER_PK, operator, 0);
+        sessions.setOperator(buyer, operator, 0, opSig);
+
+        // Operator requests close
+        vm.prank(operator);
         sessions.requestClose(channelId);
 
         // Seller can still settle mid-session during grace period

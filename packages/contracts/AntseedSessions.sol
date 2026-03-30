@@ -343,7 +343,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     function requestClose(bytes32 channelId) external {
         Session storage session = sessions[channelId];
         if (session.status != SessionStatus.Active) revert SessionNotActive();
-        _requireBuyerOrOperator(session.buyer);
+        _requireOperator(session.buyer);
         if (session.closeRequestedAt != 0) revert CloseAlreadyRequested();
 
         session.closeRequestedAt = block.timestamp;
@@ -358,7 +358,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     function withdraw(bytes32 channelId) external nonReentrant {
         Session storage session = sessions[channelId];
         if (session.status != SessionStatus.Active) revert SessionNotActive();
-        _requireBuyerOrOperator(session.buyer);
+        _requireOperator(session.buyer);
         if (session.closeRequestedAt == 0) revert CloseNotReady();
         if (block.timestamp < session.closeRequestedAt + TIMEOUT_GRACE_PERIOD) revert CloseNotReady();
 
@@ -444,9 +444,10 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         emit OperatorSet(buyer, newOperator);
     }
 
-    /// @dev Check that msg.sender is the buyer or their authorized operator.
-    function _requireBuyerOrOperator(address buyer) internal view {
-        if (msg.sender != buyer && msg.sender != operators[buyer]) revert NotAuthorized();
+    /// @dev Check that msg.sender is the buyer's authorized operator.
+    ///      The buyer (hot wallet) is a signer only — it cannot call these functions directly.
+    function _requireOperator(address buyer) internal view {
+        if (msg.sender != operators[buyer]) revert NotAuthorized();
     }
 
     // ═══════════════════════════════════════════════════════════════════
