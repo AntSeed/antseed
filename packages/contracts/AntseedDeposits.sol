@@ -22,11 +22,9 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
     // ─── Configurable Constants ─────────────────────────────────────────
     uint256 public MIN_BUYER_DEPOSIT = 10_000_000;
     uint256 public WITHDRAWAL_DELAY = 48 hours;
-    uint256 public BUYER_INACTIVITY_PERIOD = 90 days;
     uint256 public BASE_CREDIT_LIMIT = 50_000_000;
     uint256 public PEER_INTERACTION_BONUS = 5_000_000;
     uint256 public TIME_BONUS = 500_000;
-    uint256 public FEEDBACK_BONUS = 2_000_000;
     uint256 public MAX_CREDIT_LIMIT = 500_000_000;
 
     // ─── Structs ────────────────────────────────────────────────────────
@@ -37,7 +35,6 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
         uint256 withdrawalRequestedAt;
         uint256 lastActivityAt;
         uint256 firstSessionAt;
-        uint256 feedbackCount;
     }
 
     // ─── Storage ────────────────────────────────────────────────────────
@@ -99,8 +96,7 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
 
         uint256 limit = BASE_CREDIT_LIMIT
             + PEER_INTERACTION_BONUS * uniqueSellers
-            + TIME_BONUS * daysSinceFirst
-            + FEEDBACK_BONUS * ba.feedbackCount;
+            + TIME_BONUS * daysSinceFirst;
 
         if (limit > MAX_CREDIT_LIMIT) limit = MAX_CREDIT_LIMIT;
         return limit;
@@ -317,10 +313,6 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
         WITHDRAWAL_DELAY = value;
     }
 
-    function setBuyerInactivityPeriod(uint256 value) external onlyOwner {
-        if (value < 1 days) revert InvalidAmount();
-        BUYER_INACTIVITY_PERIOD = value;
-    }
 
     function setBaseCreditLimit(uint256 value) external onlyOwner {
         BASE_CREDIT_LIMIT = value;
@@ -332,10 +324,6 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
 
     function setTimeBonus(uint256 value) external onlyOwner {
         TIME_BONUS = value;
-    }
-
-    function setFeedbackBonus(uint256 value) external onlyOwner {
-        FEEDBACK_BONUS = value;
     }
 
     function setMaxCreditLimit(uint256 value) external onlyOwner {
