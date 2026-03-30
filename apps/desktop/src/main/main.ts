@@ -266,14 +266,15 @@ async function stopPaymentsPortal(): Promise<void> {
   paymentsServer = null;
 }
 
-ipcMain.handle('payments:open-portal', async () => {
+ipcMain.handle('payments:open-portal', async (_event, tab?: string) => {
   try {
     await startPaymentsPortal();
-    // Pass bearer token via URL param so the portal frontend can authenticate POST requests
     const token = paymentsServer ? (paymentsServer as unknown as { bearerToken?: string }).bearerToken : '';
-    const url = token
-      ? `http://127.0.0.1:${PAYMENTS_PORT}?token=${token}`
-      : `http://127.0.0.1:${PAYMENTS_PORT}`;
+    const params = new URLSearchParams();
+    if (token) params.set('token', token);
+    if (tab) params.set('tab', tab);
+    const qs = params.toString();
+    const url = qs ? `http://127.0.0.1:${PAYMENTS_PORT}?${qs}` : `http://127.0.0.1:${PAYMENTS_PORT}`;
     const { default: open } = await import('open');
     await open(url);
     return { ok: true, url };
@@ -559,6 +560,7 @@ ipcMain.handle(
 
 type CreditsInfo = {
   evmAddress: string | null;
+  operatorAddress: string | null;
   balanceUsdc: string;
   reservedUsdc: string;
   availableUsdc: string;
@@ -611,13 +613,13 @@ const CREDITS_RPC_RETRY_COOLDOWN_MS = 60_000;
 async function refreshCreditsInfo(): Promise<CreditsInfo> {
   const identity = getSecureIdentity();
   if (!identity) {
-    return { evmAddress: null, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
+    return { evmAddress: null, operatorAddress: null, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
   }
 
   const evmAddress = identity.wallet.address;
   const cc = await loadCachedCryptoConfig();
   if (!cc) {
-    return { evmAddress, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
+    return { evmAddress, operatorAddress: null, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
   }
 
   // Back off after repeated RPC failures; retry after cooldown so transient
@@ -625,7 +627,7 @@ async function refreshCreditsInfo(): Promise<CreditsInfo> {
   if (creditsRpcFailCount >= CREDITS_RPC_BACKOFF_THRESHOLD) {
     if (Date.now() - creditsRpcLastFailAt < CREDITS_RPC_RETRY_COOLDOWN_MS) {
       if (cachedCreditsInfo) return cachedCreditsInfo;
-      return { evmAddress, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
+      return { evmAddress, operatorAddress: null, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
     }
     // Cooldown elapsed — allow a retry attempt
     creditsRpcFailCount = 0;
@@ -634,13 +636,23 @@ async function refreshCreditsInfo(): Promise<CreditsInfo> {
   const depositsClient = new DepositsClient({ rpcUrl: cc.rpcUrl, contractAddress: cc.depositsAddress, usdcAddress: cc.usdcAddress });
 
   try {
-    const [balance, creditLimit] = await Promise.all([
+    const [balance, creditLimit, operatorAddress] = await Promise.all([
       depositsClient.getBuyerBalance(evmAddress),
       depositsClient.getBuyerCreditLimit(evmAddress),
+      (async (): Promise<string | null> => {
+        try {
+          const { SessionsClient } = await import('@antseed/node');
+          const sc = new SessionsClient({ rpcUrl: cc.rpcUrl, contractAddress: cc.sessionsAddress });
+          const addr = await sc.getOperator(evmAddress);
+          return addr && addr !== '0x0000000000000000000000000000000000000000' ? addr : null;
+        } catch { return null; }
+      })(),
     ]);
-    creditsRpcFailCount = 0; // Reset on success
+    creditsRpcFailCount = 0;
+
     const info: CreditsInfo = {
       evmAddress,
+      operatorAddress,
       balanceUsdc: formatUsdc6(balance.available + balance.reserved),
       reservedUsdc: formatUsdc6(balance.reserved),
       availableUsdc: formatUsdc6(balance.available),
@@ -657,7 +669,7 @@ async function refreshCreditsInfo(): Promise<CreditsInfo> {
       catch { /* EPIPE — ignore */ }
     }
     if (cachedCreditsInfo) return cachedCreditsInfo;
-    return { evmAddress, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
+    return { evmAddress, operatorAddress: null, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
   }
 }
 

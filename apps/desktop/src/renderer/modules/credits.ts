@@ -31,7 +31,8 @@ export function initCreditsModule({ bridge, uiState }: CreditsModuleOptions): Cr
           uiState.creditsAvailableUsdc !== result.data.availableUsdc ||
           uiState.creditsReservedUsdc !== result.data.reservedUsdc ||
           uiState.creditsTotalUsdc !== result.data.balanceUsdc ||
-          uiState.creditsEvmAddress !== result.data.evmAddress;
+          uiState.creditsEvmAddress !== result.data.evmAddress ||
+          uiState.creditsOperatorAddress !== (result.data.operatorAddress ?? null);
 
         uiState.creditsAvailableUsdc = result.data.availableUsdc;
         uiState.creditsReservedUsdc = result.data.reservedUsdc;
@@ -39,11 +40,17 @@ export function initCreditsModule({ bridge, uiState }: CreditsModuleOptions): Cr
         uiState.creditsPendingWithdrawalUsdc = result.data.pendingWithdrawalUsdc;
         uiState.creditsCreditLimitUsdc = result.data.creditLimitUsdc;
         uiState.creditsEvmAddress = result.data.evmAddress;
+        uiState.creditsOperatorAddress = result.data.operatorAddress ?? null;
         uiState.creditsLastRefreshedAt = Date.now();
+
+        // Clear session badges when no funds are reserved (all sessions closed)
+        const reserved = parseFloat(uiState.creditsReservedUsdc);
+        if (reserved === 0 && uiState.chatActiveSessions.size > 0) {
+          uiState.chatActiveSessions.clear();
+        }
 
         // Low balance detection
         const available = parseFloat(uiState.creditsAvailableUsdc);
-        const reserved = parseFloat(uiState.creditsReservedUsdc);
         const lowBalance = available > 0 && (available < 1.0 || (reserved > 0 && available < reserved));
         if (uiState.chatLowBalanceWarning !== lowBalance) {
           uiState.chatLowBalanceWarning = lowBalance;

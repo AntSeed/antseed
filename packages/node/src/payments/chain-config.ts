@@ -12,6 +12,8 @@ export interface ChainConfig {
   statsContractAddress?: string;
   emissionsContractAddress?: string;
   subPoolContractAddress?: string;
+  /** Block when Sessions contract was deployed. Floor for event log scans. */
+  sessionsDeployBlock?: number;
 }
 
 /**

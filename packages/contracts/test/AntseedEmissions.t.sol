@@ -306,8 +306,8 @@ contract AntseedEmissionsTest is Test {
         emissions.setSessionsContract(address(0x99));
     }
 
-    function test_setConstant() public {
-        emissions.setConstant(keccak256("MAX_SELLER_SHARE_PCT"), 20);
+    function test_setMaxSellerSharePct() public {
+        emissions.setMaxSellerSharePct(20);
         assertEq(emissions.MAX_SELLER_SHARE_PCT(), 20);
     }
 

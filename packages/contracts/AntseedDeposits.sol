@@ -5,6 +5,7 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {IAntseedSessions} from "./interfaces/IAntseedSessions.sol";
 
 /**
  * @title AntseedDeposits
@@ -17,16 +18,6 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
     // ─── State ───────────────────────────────────────────────────────────
     IERC20 public immutable usdc;
     address public sessionsContract;
-
-    // ─── Constant Keys ───────────────────────────────────────────────────
-    bytes32 private constant KEY_MIN_BUYER_DEPOSIT = keccak256("MIN_BUYER_DEPOSIT");
-    bytes32 private constant KEY_WITHDRAWAL_DELAY = keccak256("WITHDRAWAL_DELAY");
-    bytes32 private constant KEY_BUYER_INACTIVITY_PERIOD = keccak256("BUYER_INACTIVITY_PERIOD");
-    bytes32 private constant KEY_BASE_CREDIT_LIMIT = keccak256("BASE_CREDIT_LIMIT");
-    bytes32 private constant KEY_PEER_INTERACTION_BONUS = keccak256("PEER_INTERACTION_BONUS");
-    bytes32 private constant KEY_TIME_BONUS = keccak256("TIME_BONUS");
-    bytes32 private constant KEY_FEEDBACK_BONUS = keccak256("FEEDBACK_BONUS");
-    bytes32 private constant KEY_MAX_CREDIT_LIMIT = keccak256("MAX_CREDIT_LIMIT");
 
     // ─── Configurable Constants ─────────────────────────────────────────
     uint256 public MIN_BUYER_DEPOSIT = 10_000_000;
@@ -62,7 +53,7 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
     event WithdrawalExecuted(address indexed buyer, uint256 amount);
     event WithdrawalCancelled(address indexed buyer);
     event EarningsClaimed(address indexed seller, uint256 amount);
-    event ConstantUpdated(bytes32 indexed key, uint256 value);
+
 
     // ─── Custom Errors ──────────────────────────────────────────────────
     error NotAuthorized();
@@ -77,6 +68,13 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
     modifier onlySessions() {
         if (msg.sender != sessionsContract) revert NotAuthorized();
         _;
+    }
+
+    /// @dev Check that msg.sender is the buyer's authorized operator (from Sessions).
+    ///      The buyer (hot wallet) is a signer only — it cannot call these functions directly.
+    function _isOperator(address buyer) internal view returns (bool) {
+        if (sessionsContract == address(0)) return false;
+        return msg.sender == IAntseedSessions(sessionsContract).operators(buyer);
     }
 
     // ─── Constructor ────────────────────────────────────────────────────
@@ -137,9 +135,10 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
         emit Deposited(buyer, amount);
     }
 
-    function requestWithdrawal(uint256 amount) external {
+    function requestWithdrawal(address buyer, uint256 amount) external {
         if (amount == 0) revert InvalidAmount();
-        BuyerAccount storage ba = buyers[msg.sender];
+        if (!_isOperator(buyer)) revert NotAuthorized();
+        BuyerAccount storage ba = buyers[buyer];
         if (ba.withdrawalAmount > 0) revert InvalidAmount();
         uint256 available = ba.balance - ba.reserved - ba.withdrawalAmount;
         if (available < amount) revert InsufficientBalance();
@@ -147,11 +146,12 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
         ba.withdrawalAmount = amount;
         ba.withdrawalRequestedAt = block.timestamp;
 
-        emit WithdrawalRequested(msg.sender, amount);
+        emit WithdrawalRequested(buyer, amount);
     }
 
-    function executeWithdrawal() external nonReentrant {
-        BuyerAccount storage ba = buyers[msg.sender];
+    function executeWithdrawal(address buyer) external nonReentrant {
+        if (!_isOperator(buyer)) revert NotAuthorized();
+        BuyerAccount storage ba = buyers[buyer];
         if (ba.withdrawalAmount == 0) revert InvalidAmount();
         if (block.timestamp < ba.withdrawalRequestedAt + WITHDRAWAL_DELAY) revert TimeoutNotReached();
 
@@ -161,17 +161,19 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
         ba.withdrawalRequestedAt = 0;
         ba.balance -= amount;
 
-        usdc.safeTransfer(msg.sender, amount);
+        // Always send to the buyer address — never to msg.sender
+        usdc.safeTransfer(buyer, amount);
 
-        emit WithdrawalExecuted(msg.sender, amount);
+        emit WithdrawalExecuted(buyer, amount);
     }
 
-    function cancelWithdrawal() external {
-        BuyerAccount storage ba = buyers[msg.sender];
+    function cancelWithdrawal(address buyer) external {
+        if (!_isOperator(buyer)) revert NotAuthorized();
+        BuyerAccount storage ba = buyers[buyer];
         ba.withdrawalAmount = 0;
         ba.withdrawalRequestedAt = 0;
 
-        emit WithdrawalCancelled(msg.sender);
+        emit WithdrawalCancelled(buyer);
     }
 
     function getBuyerBalance(address buyer)
@@ -306,23 +308,37 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
         creditLimitOverride[buyer] = limit;
     }
 
-    function setConstant(bytes32 key, uint256 value) external onlyOwner {
-        if (key == KEY_MIN_BUYER_DEPOSIT) MIN_BUYER_DEPOSIT = value;
-        else if (key == KEY_WITHDRAWAL_DELAY) {
-            if (value < 1 hours) revert InvalidAmount();
-            WITHDRAWAL_DELAY = value;
-        }
-        else if (key == KEY_BUYER_INACTIVITY_PERIOD) {
-            if (value < 1 days) revert InvalidAmount();
-            BUYER_INACTIVITY_PERIOD = value;
-        }
-        else if (key == KEY_BASE_CREDIT_LIMIT) BASE_CREDIT_LIMIT = value;
-        else if (key == KEY_PEER_INTERACTION_BONUS) PEER_INTERACTION_BONUS = value;
-        else if (key == KEY_TIME_BONUS) TIME_BONUS = value;
-        else if (key == KEY_FEEDBACK_BONUS) FEEDBACK_BONUS = value;
-        else if (key == KEY_MAX_CREDIT_LIMIT) MAX_CREDIT_LIMIT = value;
-        else revert InvalidAmount();
+    function setMinBuyerDeposit(uint256 value) external onlyOwner {
+        MIN_BUYER_DEPOSIT = value;
+    }
 
-        emit ConstantUpdated(key, value);
+    function setWithdrawalDelay(uint256 value) external onlyOwner {
+        if (value < 1 hours) revert InvalidAmount();
+        WITHDRAWAL_DELAY = value;
+    }
+
+    function setBuyerInactivityPeriod(uint256 value) external onlyOwner {
+        if (value < 1 days) revert InvalidAmount();
+        BUYER_INACTIVITY_PERIOD = value;
+    }
+
+    function setBaseCreditLimit(uint256 value) external onlyOwner {
+        BASE_CREDIT_LIMIT = value;
+    }
+
+    function setPeerInteractionBonus(uint256 value) external onlyOwner {
+        PEER_INTERACTION_BONUS = value;
+    }
+
+    function setTimeBonus(uint256 value) external onlyOwner {
+        TIME_BONUS = value;
+    }
+
+    function setFeedbackBonus(uint256 value) external onlyOwner {
+        FEEDBACK_BONUS = value;
+    }
+
+    function setMaxCreditLimit(uint256 value) external onlyOwner {
+        MAX_CREDIT_LIMIT = value;
     }
 }

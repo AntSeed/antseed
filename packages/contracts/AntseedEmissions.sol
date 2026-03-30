@@ -58,18 +58,12 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
     // ─── Reserve ───
     uint256 public reserveAccumulated;
 
-    // ─── setConstant key constants ───
-    bytes32 private constant KEY_EPOCH_DURATION = keccak256("EPOCH_DURATION");
-    bytes32 private constant KEY_HALVING_INTERVAL = keccak256("HALVING_INTERVAL");
-    bytes32 private constant KEY_MAX_SELLER_SHARE_PCT = keccak256("MAX_SELLER_SHARE_PCT");
-
     // ─── Events ───
     event EpochAdvanced(uint256 indexed epoch, uint256 emission);
     event SellerPointsAccrued(address indexed seller, uint256 pointsDelta);
     event BuyerPointsAccrued(address indexed buyer, uint256 pointsDelta);
     event EmissionsClaimed(address indexed claimer, uint256 amount);
     event ReserveFlushed(address indexed destination, uint256 amount);
-    event ConstantUpdated(bytes32 indexed key, uint256 value);
 
     // ─── Custom Errors ───
     error NotAuthorized();
@@ -314,18 +308,17 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
         RESERVE_SHARE_PCT = reservePct;
     }
 
-    function setConstant(bytes32 key, uint256 value) external onlyOwner {
-        if (key == KEY_EPOCH_DURATION) {
-            if (value == 0) revert InvalidValue();
-            EPOCH_DURATION = value;
-        }
-        else if (key == KEY_HALVING_INTERVAL) {
-            if (value == 0) revert InvalidValue();
-            HALVING_INTERVAL = value;
-        }
-        else if (key == KEY_MAX_SELLER_SHARE_PCT) MAX_SELLER_SHARE_PCT = value;
-        else revert NotAuthorized();
+    function setEpochDuration(uint256 value) external onlyOwner {
+        if (value == 0) revert InvalidValue();
+        EPOCH_DURATION = value;
+    }
 
-        emit ConstantUpdated(key, value);
+    function setHalvingInterval(uint256 value) external onlyOwner {
+        if (value == 0) revert InvalidValue();
+        HALVING_INTERVAL = value;
+    }
+
+    function setMaxSellerSharePct(uint256 value) external onlyOwner {
+        MAX_SELLER_SHARE_PCT = value;
     }
 }

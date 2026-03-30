@@ -22,10 +22,11 @@ export type AppActions = {
   clearPinnedPeer: () => void;
   approvePaymentSession: () => void;
   rejectPaymentSession: () => void;
+  requestSessionClose: () => void;
   refreshCredits: () => void;
   refreshPlugins: () => Promise<void>;
   installPlugin: () => Promise<void>;
-  openPaymentsPortal?: () => void;
+  openPaymentsPortal?: (tab?: string) => void;
 };
 
 let _actions: AppActions | null = null;

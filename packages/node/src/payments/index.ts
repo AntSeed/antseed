@@ -39,16 +39,18 @@ export type { StakingClientConfig, SellerAccountInfo } from './evm/staking-clien
 export {
   signSpendingAuth,
   signReserveAuth,
+  signSetOperator,
   makeSessionsDomain,
   SPENDING_AUTH_TYPES,
   RESERVE_AUTH_TYPES,
+  SET_OPERATOR_TYPES,
   computeMetadataHash,
   encodeMetadata,
   computeChannelId,
   ZERO_METADATA,
   ZERO_METADATA_HASH,
 } from './evm/signatures.js';
-export type { SpendingAuthMessage, ReserveAuthMessage, SpendingAuthMetadata } from './evm/signatures.js';
+export type { SpendingAuthMessage, ReserveAuthMessage, SetOperatorMessage, SpendingAuthMetadata } from './evm/signatures.js';
 
 // ANTS token
 export { ANTSTokenClient } from './evm/ants-token-client.js';
