@@ -36,19 +36,11 @@ export async function getConfig(): Promise<PaymentConfig> {
   return fetchJson('/api/config');
 }
 
-export async function requestWithdrawal(amount: string): Promise<{ ok: boolean; txHash?: string; error?: string }> {
-  return fetchJson('/api/withdraw/request', {
+export async function withdraw(amount: string): Promise<{ ok: boolean; txHash?: string; error?: string }> {
+  return fetchJson('/api/withdraw', {
     method: 'POST',
     body: JSON.stringify({ amount }),
   });
-}
-
-export async function executeWithdrawal(): Promise<{ ok: boolean; txHash?: string; error?: string }> {
-  return fetchJson('/api/withdraw/execute', { method: 'POST' });
-}
-
-export async function cancelWithdrawal(): Promise<{ ok: boolean; error?: string }> {
-  return fetchJson('/api/withdraw/cancel', { method: 'POST' });
 }
 
 export interface ChannelData {

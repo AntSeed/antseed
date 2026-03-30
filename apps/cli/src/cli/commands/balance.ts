@@ -55,7 +55,6 @@ export function registerBalanceCommand(program: Command): void {
             walletUSDC: formatUsdc(usdcBalance),
             depositsAvailable: formatUsdc(account.available),
             depositsReserved: formatUsdc(account.reserved),
-            depositsPendingWithdrawal: formatUsdc(account.pendingWithdrawal),
           }, null, 2));
           return;
         }
@@ -67,7 +66,6 @@ export function registerBalanceCommand(program: Command): void {
         console.log(chalk.bold('Deposits Account:'));
         console.log(`  Available:           ${chalk.green(formatUsdc(account.available) + ' USDC')}`);
         console.log(`  Reserved:            ${chalk.yellow(formatUsdc(account.reserved) + ' USDC')}`);
-        console.log(`  Pending Withdrawal:  ${chalk.yellow(formatUsdc(account.pendingWithdrawal) + ' USDC')}`);
       } catch (err) {
         spinner.fail(chalk.red(`Failed to fetch balance: ${(err as Error).message}`));
         process.exit(1);

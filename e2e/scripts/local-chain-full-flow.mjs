@@ -612,7 +612,6 @@ async function main() {
             sellerUSDC: sellerUsdcBalance.toString(),
             buyerAvailable: buyerBalance.available.toString(),
             buyerReserved: buyerBalance.reserved.toString(),
-            buyerPendingWithdrawal: buyerBalance.pendingWithdrawal.toString(),
           },
         },
         null,

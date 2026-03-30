@@ -246,7 +246,7 @@ Contracts reference each other by address (set at deployment, updateable by owne
 
 **Interaction flow:**
 - `AntseedChannels` calls `AntseedDeposits.lockForSession()` on reserve
-- `AntseedChannels` calls `AntseedDeposits.chargeAndCreditEarnings()` on settle/close
+- `AntseedChannels` calls `AntseedDeposits.chargeAndCreditPayouts()` on settle/close
 - `AntseedChannels` calls `AntseedStats.updateStats()` on settle/close
 - `AntseedChannels` calls `AntseedEmissions.accrueSellerPoints()` / `accrueBuyerPoints()` on settle/close
 - `AntseedChannels` reads from `AntseedStaking` (seller stake verification)

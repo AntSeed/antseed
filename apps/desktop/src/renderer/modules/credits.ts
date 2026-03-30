@@ -37,7 +37,6 @@ export function initCreditsModule({ bridge, uiState }: CreditsModuleOptions): Cr
         uiState.creditsAvailableUsdc = result.data.availableUsdc;
         uiState.creditsReservedUsdc = result.data.reservedUsdc;
         uiState.creditsTotalUsdc = result.data.balanceUsdc;
-        uiState.creditsPendingWithdrawalUsdc = result.data.pendingWithdrawalUsdc;
         uiState.creditsCreditLimitUsdc = result.data.creditLimitUsdc;
         uiState.creditsEvmAddress = result.data.evmAddress;
         uiState.creditsOperatorAddress = result.data.operatorAddress ?? null;

@@ -16,7 +16,7 @@ export type { UnifiedBalance } from './balance-manager.js';
 // Base EVM client
 export { BaseEvmClient } from './evm/base-evm-client.js';
 
-// Deposits client (buyer deposits + seller earnings)
+// Deposits client (buyer deposits + seller payouts)
 export { DepositsClient } from './evm/deposits-client.js';
 export type { DepositsClientConfig, BuyerBalanceInfo } from './evm/deposits-client.js';
 

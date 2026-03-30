@@ -42,7 +42,6 @@ export function TitleBar() {
   const {
     creditsAvailableUsdc,
     creditsReservedUsdc,
-    creditsPendingWithdrawalUsdc,
     creditsOperatorAddress,
     creditsEvmAddress,
   } = useUiSnapshot();
@@ -111,12 +110,6 @@ export function TitleBar() {
                   <span className={styles.creditsDropdownLabel}>Reserved</span>
                   <span className={styles.creditsDropdownValueMuted}>${parseFloat(creditsReservedUsdc).toFixed(2)}</span>
                 </div>
-                {parseFloat(creditsPendingWithdrawalUsdc) > 0 && (
-                  <div className={styles.creditsDropdownRow}>
-                    <span className={styles.creditsDropdownLabel}>Pending Withdrawal</span>
-                    <span className={styles.creditsDropdownValueMuted}>${parseFloat(creditsPendingWithdrawalUsdc).toFixed(2)}</span>
-                  </div>
-                )}
               </div>
               <div className={styles.creditsDropdownSection}>
                 <div className={styles.creditsDropdownRow}>

@@ -3,16 +3,14 @@ pragma solidity ^0.8.24;
 
 interface IAntseedDeposits {
     function lockForSession(address buyer, uint256 amount) external;
-    function chargeAndCreditEarnings(
+    function chargeAndCreditPayouts(
         address buyer, address seller, uint256 chargeAmount, uint256 reservedAmount,
         uint256 platformFee, address protocolReserve
     ) external;
     function releaseLock(address buyer, uint256 amount) external;
-    function transferToChannels(address buyer, address to, uint256 amount) external;
-    function creditEarnings(address seller, uint256 amount) external;
-    function creditBuyerRefund(address buyer, uint256 creditBack) external;
+    function setOperatorFor(address buyer, address operator) external;
+    function getOperator(address buyer) external view returns (address);
+    function getOperatorNonce(address buyer) external view returns (uint256);
     function uniqueSellersCharged(address buyer) external view returns (uint256);
-    function requestWithdrawal(address buyer, uint256 amount) external;
-    function executeWithdrawal(address buyer) external;
-    function cancelWithdrawal(address buyer) external;
+    function withdraw(address buyer, uint256 amount) external;
 }

@@ -224,7 +224,7 @@ contract AntseedChannelsTest is Test {
         assertEq(usdc.balanceOf(address(deposits)), USDC_100);
 
         // Assert buyer's Deposits: reserved = maxAmount, available = 0
-        (uint256 available, uint256 reserved,,) = deposits.getBuyerBalance(buyer);
+        (uint256 available, uint256 reserved,) = deposits.getBuyerBalance(buyer);
         assertEq(reserved, USDC_100);
         assertEq(available, 0); // all 100 USDC went to Sessions
     }
@@ -345,13 +345,13 @@ contract AntseedChannelsTest is Test {
         // Platform fee = 60 * 500 / 10000 = 3 USDC
         uint256 platformFee = (uint256(USDC_60) * 500) / 10000;
         uint256 sellerPayout = uint256(USDC_60) - platformFee;
-        assertEq(deposits.sellerEarnings(seller), sellerPayout);
+        assertEq(deposits.sellerPayouts(seller), sellerPayout);
 
         // Protocol reserve got the fee
         assertEq(usdc.balanceOf(protocolReserve), platformFee);
 
         // Buyer: refund of 40 USDC credited back
-        (uint256 available, uint256 reserved,,) = deposits.getBuyerBalance(buyer);
+        (uint256 available, uint256 reserved,) = deposits.getBuyerBalance(buyer);
         assertEq(reserved, 0);
         assertEq(available, USDC_100 - USDC_100 + (USDC_100 - USDC_60)); // 0 + 40 = 40
 
@@ -379,7 +379,7 @@ contract AntseedChannelsTest is Test {
         assertTrue(sStatus == AntseedChannels.ChannelStatus.Settled);
 
         // Buyer should have 0 available (no refund)
-        (uint256 available,,,) = deposits.getBuyerBalance(buyer);
+        (uint256 available,,) = deposits.getBuyerBalance(buyer);
         assertEq(available, 0);
     }
 
@@ -393,10 +393,10 @@ contract AntseedChannelsTest is Test {
         vm.prank(seller);
         channels.close(channelId, 0, encodeMetadata(0, 0), metaSig);
 
-        (uint256 available,,,) = deposits.getBuyerBalance(buyer);
+        (uint256 available,,) = deposits.getBuyerBalance(buyer);
         assertEq(available, USDC_100);
 
-        assertEq(deposits.sellerEarnings(seller), 0);
+        assertEq(deposits.sellerPayouts(seller), 0);
     }
 
     function test_close_revert_notSeller() public {
@@ -458,10 +458,10 @@ contract AntseedChannelsTest is Test {
         assertEq(sDeposit, USDC_100);
         assertEq(sSettled, USDC_30);
 
-        // Seller earnings credited for first settle
+        // Seller payouts credited for first settle
         uint256 fee1 = (uint256(USDC_30) * 500) / 10000;
         uint256 payout1 = uint256(USDC_30) - fee1;
-        assertEq(deposits.sellerEarnings(seller), payout1);
+        assertEq(deposits.sellerPayouts(seller), payout1);
     }
 
     function test_settle_thenClose() public {
@@ -487,14 +487,14 @@ contract AntseedChannelsTest is Test {
         assertTrue(sStatus == AntseedChannels.ChannelStatus.Settled);
         assertEq(sSettled, USDC_60);
 
-        // Total seller earnings = payout from 30 (settle) + payout from delta 30 (close)
+        // Total seller payouts = payout from 30 (settle) + payout from delta 30 (close)
         // Each delta of 30 has its own fee: 30 * 500/10000 = 1.5 USDC per delta
         uint256 fee30 = (uint256(USDC_30) * 500) / 10000;
-        uint256 expectedEarnings = (uint256(USDC_30) - fee30) * 2; // two deltas of 30
-        assertEq(deposits.sellerEarnings(seller), expectedEarnings);
+        uint256 expectedPayouts = (uint256(USDC_30) - fee30) * 2; // two deltas of 30
+        assertEq(deposits.sellerPayouts(seller), expectedPayouts);
 
         // Buyer refund = 100 - 60 = 40
-        (uint256 available,,,) = deposits.getBuyerBalance(buyer);
+        (uint256 available,,) = deposits.getBuyerBalance(buyer);
         assertEq(available, USDC_100 - USDC_60);
     }
 
@@ -532,7 +532,7 @@ contract AntseedChannelsTest is Test {
         assertTrue(sStatus == AntseedChannels.ChannelStatus.TimedOut);
 
         // Full deposit returned to buyer
-        (uint256 available,,,) = deposits.getBuyerBalance(buyer);
+        (uint256 available,,) = deposits.getBuyerBalance(buyer);
         assertEq(available, USDC_100);
     }
 
@@ -628,7 +628,7 @@ contract AntseedChannelsTest is Test {
         assertEq(sSettled, USDC_60);
 
         // Buyer gets refund of 40 USDC
-        (uint256 available,,,) = deposits.getBuyerBalance(buyer);
+        (uint256 available,,) = deposits.getBuyerBalance(buyer);
         assertEq(available, USDC_100 - USDC_60);
     }
 
@@ -674,7 +674,7 @@ contract AntseedChannelsTest is Test {
         vm.prank(seller);
         channels.close(channelId, chargeAmount, encodeMetadata(0, 0), metaSig);
 
-        assertEq(deposits.sellerEarnings(seller), expectedSellerPayout);
+        assertEq(deposits.sellerPayouts(seller), expectedSellerPayout);
         assertEq(usdc.balanceOf(protocolReserve), expectedPlatformFee);
     }
 
@@ -855,11 +855,11 @@ contract AntseedChannelsTest is Test {
         assertEq(sDeadline, newDeadline);
 
         // Additional 50 USDC locked in Deposits
-        (, uint256 reserved,,) = deposits.getBuyerBalance(buyer);
-        // reserved = 100 (initial) - 85 (settled via chargeAndCreditEarnings releases reserved)
+        (, uint256 reserved,) = deposits.getBuyerBalance(buyer);
+        // reserved = 100 (initial) - 85 (settled via chargeAndCreditPayouts releases reserved)
         // + 50 (topUp) ... but settle only charges, doesn't release reservation proportionally
         // Actually: settle charges delta=85 from reserved. reserved was 100, after settle reserved=100-85=15
-        // No wait — chargeAndCreditEarnings gets reservedAmount=delta for settle, so reserved goes 100-85=15
+        // No wait — chargeAndCreditPayouts gets reservedAmount=delta for settle, so reserved goes 100-85=15
         // Then topUp locks additional 50, so reserved = 15 + 50 = 65
         assertEq(reserved, 65_000_000);
     }
@@ -1001,7 +1001,7 @@ contract AntseedChannelsTest is Test {
         assertEq(sSettledFinal, 130_000_000);
 
         // Buyer refund = 150 - 130 = 20 USDC
-        (uint256 available,,,) = deposits.getBuyerBalance(buyer);
+        (uint256 available,,) = deposits.getBuyerBalance(buyer);
         assertEq(available, 20_000_000);
     }
 
@@ -1040,8 +1040,8 @@ contract AntseedChannelsTest is Test {
         bytes memory sig = signSetOperator(BUYER_PK, operator, 0);
 
         channels.setOperator(buyer, operator, 0, sig);
-        assertEq(channels.operators(buyer), operator);
-        assertEq(channels.operatorNonces(buyer), 1);
+        assertEq(deposits.getOperator(buyer), operator);
+        assertEq(deposits.getOperatorNonce(buyer), 1);
     }
 
     function test_setOperator_revert_wrongNonce() public {
@@ -1080,12 +1080,12 @@ contract AntseedChannelsTest is Test {
         // Set initial operator via buyer sig
         bytes memory sig = signSetOperator(BUYER_PK, op1, 0);
         channels.setOperator(buyer, op1, 0, sig);
-        assertEq(channels.operators(buyer), op1);
+        assertEq(deposits.getOperator(buyer), op1);
 
         // Current operator transfers to new operator
         vm.prank(op1);
         channels.transferOperator(buyer, op2);
-        assertEq(channels.operators(buyer), op2);
+        assertEq(deposits.getOperator(buyer), op2);
     }
 
     function test_transferOperator_revoke() public {
@@ -1096,7 +1096,7 @@ contract AntseedChannelsTest is Test {
         // Operator revokes themselves
         vm.prank(operator);
         channels.transferOperator(buyer, address(0));
-        assertEq(channels.operators(buyer), address(0));
+        assertEq(deposits.getOperator(buyer), address(0));
     }
 
     function test_transferOperator_revert_notOperator() public {
@@ -1127,10 +1127,10 @@ contract AntseedChannelsTest is Test {
         vm.prank(op1);
         channels.transferOperator(buyer, address(0));
 
-        // Now buyer can setOperator again with a new sig
-        bytes memory sig2 = signSetOperator(BUYER_PK, op2, 1);
-        channels.setOperator(buyer, op2, 1, sig2);
-        assertEq(channels.operators(buyer), op2);
+        // Now buyer can setOperator again with a new sig (nonce is 2: incremented by setOperator + transferOperator)
+        bytes memory sig2 = signSetOperator(BUYER_PK, op2, 2);
+        channels.setOperator(buyer, op2, 2, sig2);
+        assertEq(deposits.getOperator(buyer), op2);
     }
 
     function test_operator_canRequestClose() public {
@@ -1171,7 +1171,7 @@ contract AntseedChannelsTest is Test {
         channels.withdraw(channelId);
 
         // Funds returned to buyer's deposits balance
-        (uint256 available,,,) = deposits.getBuyerBalance(buyer);
+        (uint256 available,,) = deposits.getBuyerBalance(buyer);
         assertEq(available, USDC_100);
     }
 
@@ -1209,6 +1209,6 @@ contract AntseedChannelsTest is Test {
         vm.prank(randomUser);
         channels.setOperator(buyer, operator, 0, sig);
 
-        assertEq(channels.operators(buyer), operator);
+        assertEq(deposits.getOperator(buyer), operator);
     }
 }

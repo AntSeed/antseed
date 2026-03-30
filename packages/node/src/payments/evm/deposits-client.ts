@@ -11,20 +11,17 @@ export interface DepositsClientConfig {
 export interface BuyerBalanceInfo {
   available: bigint;
   reserved: bigint;
-  pendingWithdrawal: bigint;
   lastActivityAt: bigint;
 }
 
 const DEPOSITS_ABI = [
   'function deposit(uint256 amount) external',
   'function depositFor(address buyer, uint256 amount) external',
-  'function requestWithdrawal(address buyer, uint256 amount) external',
-  'function executeWithdrawal(address buyer) external',
-  'function cancelWithdrawal(address buyer) external',
-  'function claimEarnings() external',
-  'function getBuyerBalance(address buyer) external view returns (uint256 available, uint256 reserved, uint256 pendingWithdrawal, uint256 lastActivityAt)',
+  'function withdraw(address buyer, uint256 amount) external',
+  'function claimPayouts() external',
+  'function getBuyerBalance(address buyer) external view returns (uint256 available, uint256 reserved, uint256 lastActivityAt)',
   'function getBuyerCreditLimit(address buyer) external view returns (uint256)',
-  'function sellerEarnings(address seller) external view returns (uint256)',
+  'function sellerPayouts(address seller) external view returns (uint256)',
   'function uniqueSellersCharged(address buyer) external view returns (uint256)',
 ] as const;
 
@@ -48,27 +45,19 @@ export class DepositsClient extends BaseEvmClient {
     return this._approveAndExec(signer, this._usdcAddress, amount, DEPOSITS_ABI, 'depositFor', buyer, amount);
   }
 
-  async requestWithdrawal(signer: AbstractSigner, buyer: string, amount: bigint): Promise<string> {
-    return this._execWrite(signer, DEPOSITS_ABI, 'requestWithdrawal', buyer, amount);
+  async withdraw(signer: AbstractSigner, buyer: string, amount: bigint): Promise<string> {
+    return this._execWrite(signer, DEPOSITS_ABI, 'withdraw', buyer, amount);
   }
 
-  async executeWithdrawal(signer: AbstractSigner, buyer: string): Promise<string> {
-    return this._execWrite(signer, DEPOSITS_ABI, 'executeWithdrawal', buyer);
+  // ─── Seller Payouts ─────────────────────────────────────────────────
+
+  async claimPayouts(signer: AbstractSigner): Promise<string> {
+    return this._execWrite(signer, DEPOSITS_ABI, 'claimPayouts');
   }
 
-  async cancelWithdrawal(signer: AbstractSigner, buyer: string): Promise<string> {
-    return this._execWrite(signer, DEPOSITS_ABI, 'cancelWithdrawal', buyer);
-  }
-
-  // ─── Seller Earnings ────────────────────────────────────────────────
-
-  async claimEarnings(signer: AbstractSigner): Promise<string> {
-    return this._execWrite(signer, DEPOSITS_ABI, 'claimEarnings');
-  }
-
-  async getSellerEarnings(sellerAddr: string): Promise<bigint> {
+  async getSellerPayouts(sellerAddr: string): Promise<bigint> {
     const contract = new Contract(this._contractAddress, DEPOSITS_ABI, this._provider);
-    return contract.getFunction('sellerEarnings')(sellerAddr) as Promise<bigint>;
+    return contract.getFunction('sellerPayouts')(sellerAddr) as Promise<bigint>;
   }
 
   // ─── View Functions ─────────────────────────────────────────────────
@@ -79,8 +68,7 @@ export class DepositsClient extends BaseEvmClient {
     return {
       available: result[0] as bigint,
       reserved: result[1] as bigint,
-      pendingWithdrawal: result[2] as bigint,
-      lastActivityAt: result[3] as bigint,
+      lastActivityAt: result[2] as bigint,
     };
   }
 

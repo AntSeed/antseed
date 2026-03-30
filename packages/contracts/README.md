@@ -22,7 +22,7 @@ Contracts reference each other by address set at deployment. No inheritance — 
 
 ```
 AntseedChannels ──calls──► AntseedDeposits.lockForSession() (on reserve)
-AntseedChannels ──calls──► AntseedDeposits.chargeAndCreditEarnings() (on settle/close)
+AntseedChannels ──calls──► AntseedDeposits.chargeAndCreditPayouts() (on settle/close)
 AntseedChannels ──calls──► AntseedStats.updateStats() (on settle/close)
 AntseedChannels ──calls──► AntseedEmissions.accrueSellerPoints() / accrueBuyerPoints()
 AntseedChannels ──reads──► AntseedStaking (seller stake verification)
@@ -75,7 +75,7 @@ Session lifecycle with EIP-712 ReserveAuth + SpendingAuth. Holds NO USDC — all
 
 **Seller operations:**
 - `reserve(address buyer, bytes32 salt, uint128 maxAmount, uint256 deadline, bytes calldata buyerSig)` — validates ReserveAuth EIP-712 sig, calls Deposits.lockForSession()
-- `settle(bytes32 channelId, uint128 amount, bytes32 metadataHash, bytes calldata buyerSig)` — validates SpendingAuth, calls Deposits.chargeAndCreditEarnings(), session stays open
+- `settle(bytes32 channelId, uint128 amount, bytes32 metadataHash, bytes calldata buyerSig)` — validates SpendingAuth, calls Deposits.chargeAndCreditPayouts(), session stays open
 - `close(bytes32 channelId, uint128 amount, bytes32 metadataHash, bytes calldata buyerSig)` — like settle but finalizes session, releases remaining lock
 
 **Timeout (permissionless):**

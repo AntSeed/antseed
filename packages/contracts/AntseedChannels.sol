@@ -74,11 +74,6 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
 
     mapping(bytes32 => Channel) public channels;
 
-    /// @notice Authorized operator per buyer — can call requestClose, withdraw on buyer's behalf
-    mapping(address => address) public operators;
-    /// @notice Nonce for SetOperator signatures (replay protection)
-    mapping(address => uint256) public operatorNonces;
-
     // ─── Events ─────────────────────────────────────────────────────
     event Reserved(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint128 maxAmount);
     event ChannelSettled(bytes32 indexed channelId, address indexed seller, uint128 cumulativeAmount, uint256 platformFee);
@@ -384,6 +379,55 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         emit ChannelWithdrawn(channelId, channel.buyer);
     }
 
+    /**
+     * @notice Batch request close on multiple channels. Operator-only.
+     *         Skips channels that are not active or already have close requested.
+     */
+    function requestCloseAll(bytes32[] calldata channelIds) external {
+        for (uint256 i = 0; i < channelIds.length; i++) {
+            Channel storage channel = channels[channelIds[i]];
+            if (channel.status != ChannelStatus.Active) continue;
+            if (channel.closeRequestedAt != 0) continue;
+            _requireOperator(channel.buyer);
+            channel.closeRequestedAt = block.timestamp;
+            emit CloseRequested(channelIds[i], channel.buyer);
+        }
+    }
+
+    /**
+     * @notice Batch withdraw from multiple channels after grace periods.
+     *         Skips channels that are not ready for withdrawal.
+     */
+    function withdrawAll(bytes32[] calldata channelIds) external nonReentrant {
+        for (uint256 i = 0; i < channelIds.length; i++) {
+            Channel storage channel = channels[channelIds[i]];
+            if (channel.status != ChannelStatus.Active) continue;
+            if (channel.closeRequestedAt == 0) continue;
+            if (block.timestamp < channel.closeRequestedAt + TIMEOUT_GRACE_PERIOD) continue;
+            _requireOperator(channel.buyer);
+
+            uint128 remainingReserved = channel.deposit - channel.settled;
+            if (remainingReserved > 0) {
+                depositsContract.releaseLock(channel.buyer, remainingReserved);
+            }
+
+            channel.status = ChannelStatus.TimedOut;
+            stakingContract.decrementActiveSessions(channel.seller);
+
+            if (channel.settled == 0) {
+                uint256 agentId = stakingContract.getAgentId(channel.seller);
+                if (agentId != 0) {
+                    statsContract.updateStats(agentId, IAntseedStats.StatsUpdate({
+                        updateType: 1, volumeUsdc: 0, inputTokens: 0,
+                        outputTokens: 0, latencyMs: 0, requestCount: 0
+                    }));
+                }
+            }
+
+            emit ChannelWithdrawn(channelIds[i], channel.buyer);
+        }
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     //                        OPERATOR MANAGEMENT
     // ═══════════════════════════════════════════════════════════════════
@@ -405,8 +449,10 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         bytes calldata buyerSig
     ) external {
         if (buyer == address(0) || operator == address(0)) revert InvalidAddress();
-        if (operators[buyer] != address(0)) revert OperatorAlreadySet();
-        if (nonce != operatorNonces[buyer]) revert InvalidNonce();
+        address currentOp = depositsContract.getOperator(buyer);
+        if (currentOp != address(0)) revert OperatorAlreadySet();
+        uint256 currentNonce = depositsContract.getOperatorNonce(buyer);
+        if (nonce != currentNonce) revert InvalidNonce();
 
         bytes32 structHash = keccak256(
             abi.encode(SET_OPERATOR_TYPEHASH, operator, nonce)
@@ -415,8 +461,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         address recovered = ECDSA.recover(digest, buyerSig);
         if (recovered != buyer) revert InvalidSignature();
 
-        operatorNonces[buyer] = nonce + 1;
-        operators[buyer] = operator;
+        depositsContract.setOperatorFor(buyer, operator);
 
         emit OperatorSet(buyer, operator);
     }
@@ -424,25 +469,21 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
     /**
      * @notice Transfer operator to a new address. Only the current operator
      *         can call this — like ownership transfer. No buyer signature needed.
-     *
-     * @param buyer       The buyer whose operator is being transferred
-     * @param newOperator The new operator address (address(0) to revoke)
      */
     function transferOperator(
         address buyer,
         address newOperator
     ) external {
-        if (msg.sender != operators[buyer]) revert NotAuthorized();
+        if (msg.sender != depositsContract.getOperator(buyer)) revert NotAuthorized();
 
-        operators[buyer] = newOperator;
+        depositsContract.setOperatorFor(buyer, newOperator);
 
         emit OperatorSet(buyer, newOperator);
     }
 
-    /// @dev Check that msg.sender is the buyer's authorized operator.
-    ///      The buyer (hot wallet) is a signer only — it cannot call these functions directly.
+    /// @dev Check that msg.sender is the buyer's authorized operator (stored in Deposits).
     function _requireOperator(address buyer) internal view {
-        if (msg.sender != operators[buyer]) revert NotAuthorized();
+        if (msg.sender != depositsContract.getOperator(buyer)) revert NotAuthorized();
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -470,7 +511,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         platformFee = (uint256(delta) * PLATFORM_FEE_BPS) / 10000;
         if (protocolReserve == address(0)) platformFee = 0;
 
-        depositsContract.chargeAndCreditEarnings(
+        depositsContract.chargeAndCreditPayouts(
             channel.buyer,
             channel.seller,
             delta,

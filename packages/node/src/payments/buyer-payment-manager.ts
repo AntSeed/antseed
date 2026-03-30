@@ -668,8 +668,8 @@ export class BuyerPaymentManager {
   }
 
   async withdraw(amount: bigint): Promise<string> {
-    debugLog(`[BuyerPayment] Requesting withdrawal of ${amount} from deposits`);
-    return this._depositsClient.requestWithdrawal(this._signer, this._identity.wallet.address, amount);
+    debugLog(`[BuyerPayment] Withdrawing ${amount} from deposits`);
+    return this._depositsClient.withdraw(this._signer, this._identity.wallet.address, amount);
   }
 
   async getBalance(): Promise<{ available: bigint; reserved: bigint }> {
