@@ -221,7 +221,6 @@ export class SellerPaymentManager {
         return 'reserved';
       } else if (
         payload.reserveMaxAmount
-        && existingCumulative !== undefined
         && BigInt(payload.reserveMaxAmount) > (this._reserveMax.get(channelId) ?? 0n)
       ) {
         // ── Top-up: buyer is extending the reserve ceiling ──
@@ -320,7 +319,6 @@ export class SellerPaymentManager {
         }
 
         debugLog(`[SellerPayment] Budget updated: channel=${channelId.slice(0, 18)}... cumulative=${cumulativeAmount}`);
-        // No on-chain call. No AuthAck.
         return 'accepted';
       }
     } catch (err) {

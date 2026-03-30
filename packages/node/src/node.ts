@@ -293,7 +293,6 @@ export class AntseedNode extends EventEmitter {
   private _bufferedPaymentRequired = new Map<string, PaymentRequiredPayload>();
   /** Per-peer mutex to prevent concurrent payment negotiations. */
   private _paymentNegotiationLocks = new Map<string, Promise<void>>();
-  /** Peers the caller has manually approved by retrying after a 402. */
   /** Peers that have already sent their first request after session establishment.
    *  Used to distinguish whether per-request SpendingAuth should be attached. */
   private _buyerFirstRequestSent = new Set<string>();
@@ -1051,6 +1050,7 @@ export class AntseedNode extends EventEmitter {
         // Deleting here would race with a new negotiation started on reconnect.
         this._decoders.delete(peerId);
         // Clean up buyer-side per-request auth tracking on disconnect
+        this._buyerLockedPeers.delete(peerId);
         this._buyerFirstRequestSent.delete(peerId);
         this._lastResponseCost.delete(peerId);
         this._buyerPaymentManager?.cleanupSession(peerId);
