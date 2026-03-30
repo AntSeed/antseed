@@ -136,7 +136,7 @@ contract AntseedDepositsTest is Test {
         deposits.depositFor(buyer, MIN_DEPOSIT);
 
         // firstSessionAt should remain 0 — only lockForSession sets it
-        (,,,,, uint256 firstSessionAt,) = deposits.buyers(buyer);
+        (,,,,, uint256 firstSessionAt) = deposits.buyers(buyer);
         assertEq(firstSessionAt, 0);
     }
 
@@ -317,8 +317,8 @@ contract AntseedDepositsTest is Test {
         deposits.requestWithdrawal(buyer, 30_000_000);
 
         // Directly reduce balance via vm.store to simulate an edge case
-        // buyers mapping at slot 10, balance is field 0
-        bytes32 buyerBaseSlot = keccak256(abi.encode(buyer, uint256(10)));
+        // buyers mapping at slot 8 (forge inspect storage-layout), balance is field 0
+        bytes32 buyerBaseSlot = keccak256(abi.encode(buyer, uint256(8)));
         vm.store(address(deposits), buyerBaseSlot, bytes32(uint256(20_000_000)));
 
         vm.warp(block.timestamp + 48 hours + 1);
@@ -446,55 +446,6 @@ contract AntseedDepositsTest is Test {
         assertEq(limit, expected);
     }
 
-    function test_creditLimit_withFeedbackBonus() public {
-        // feedbackCount is in BuyerAccount struct field index 6 within the buyers mapping.
-        // We need to find the correct storage slot. Use forge's vm.store.
-        // First deposit so the buyer account exists.
-        vm.prank(buyer);
-        deposits.deposit(MIN_DEPOSIT);
-
-        // Use stdstore to find and write the feedbackCount.
-        // The buyers mapping is a public mapping, and feedbackCount is field 6 of the struct.
-        // Storage slot = keccak256(abi.encode(buyer, mappingSlot)) + structOffset
-        // We need to find the mapping slot. Let's use a brute force approach: read buyers(buyer)
-        // and find which slot has feedbackCount.
-        // Actually, let's just try multiple slots to find the right mapping slot.
-        // Easier approach: use the public getter. buyers(buyer) returns all 7 fields.
-        // We know balance = MIN_DEPOSIT after deposit. Let's find the slot by checking.
-
-        // For Ownable + ReentrancyGuard: Ownable has 1 slot (_owner at slot 0),
-        // ReentrancyGuard has 1 slot (_status at slot 1). But OZ v5 uses ERC-7201 namespaced storage
-        // for Ownable and ReentrancyGuard, so they don't occupy regular slots.
-        // Regular storage starts at slot 0: channelsContract
-        // slot 0: channelsContract (address)
-        // slot 1: MIN_BUYER_DEPOSIT
-        // slot 2: WITHDRAWAL_DELAY
-        // slot 3: BUYER_INACTIVITY_PERIOD
-        // slot 4: BASE_CREDIT_LIMIT
-        // slot 5: PEER_INTERACTION_BONUS
-        // slot 6: TIME_BONUS
-        // slot 7: FEEDBACK_BONUS
-        // slot 8: MAX_CREDIT_LIMIT
-        // slot 9: buyers mapping
-        // slot 10: creditLimitOverride mapping
-        // slot 11: uniqueSellersCharged mapping
-        // slot 12: _buyerSellerPairs mapping
-        // slot 13: sellerEarnings mapping
-
-        // buyers mapping is at slot 10 (from forge inspect storage-layout)
-        // feedbackCount is struct field index 6
-        bytes32 buyerBaseSlot = keccak256(abi.encode(buyer, uint256(10)));
-        bytes32 feedbackSlot = bytes32(uint256(buyerBaseSlot) + 6);
-        vm.store(address(deposits), feedbackSlot, bytes32(uint256(3)));
-
-        // Verify it was set
-        (,,,,,, uint256 fc) = deposits.buyers(buyer);
-        assertEq(fc, 3);
-
-        uint256 limit = deposits.getBuyerCreditLimit(buyer);
-        // BASE + FEEDBACK_BONUS * 3 = 50 + 6 = 56 USDC
-        assertEq(limit, BASE_CREDIT + 2_000_000 * 3);
-    }
 
     function test_creditLimit_cappedAtMax() public {
         // Set a huge override to verify the cap path — but override bypasses cap.
@@ -565,13 +516,13 @@ contract AntseedDepositsTest is Test {
         vm.prank(buyer);
         deposits.deposit(30_000_000);
 
-        (,,,,, uint256 firstBefore,) = deposits.buyers(buyer);
+        (,,,,, uint256 firstBefore) = deposits.buyers(buyer);
         assertEq(firstBefore, 0);
 
         vm.prank(sessions);
         deposits.lockForSession(buyer, 10_000_000);
 
-        (,,,,, uint256 firstAfter,) = deposits.buyers(buyer);
+        (,,,,, uint256 firstAfter) = deposits.buyers(buyer);
         assertEq(firstAfter, block.timestamp);
     }
 
@@ -584,7 +535,7 @@ contract AntseedDepositsTest is Test {
         vm.prank(sessions);
         deposits.lockForSession(buyer, 10_000_000);
 
-        (,,,,, uint256 firstSessionAt,) = deposits.buyers(buyer);
+        (,,,,, uint256 firstSessionAt) = deposits.buyers(buyer);
         assertEq(firstSessionAt, 1000);
 
         vm.warp(2000);
@@ -595,7 +546,7 @@ contract AntseedDepositsTest is Test {
         vm.prank(sessions);
         deposits.lockForSession(buyer, 5_000_000);
 
-        (,,,,, uint256 firstSessionAt2,) = deposits.buyers(buyer);
+        (,,,,, uint256 firstSessionAt2) = deposits.buyers(buyer);
         assertEq(firstSessionAt2, 1000); // Not overwritten
     }
 
@@ -793,16 +744,6 @@ contract AntseedDepositsTest is Test {
         deposits.setWithdrawalDelay(59 minutes);
     }
 
-    function test_setBuyerInactivityPeriod() public {
-        deposits.setBuyerInactivityPeriod(2 days);
-        assertEq(deposits.BUYER_INACTIVITY_PERIOD(), 2 days);
-    }
-
-    function test_setBuyerInactivityPeriod_revert_belowMinimum() public {
-        vm.expectRevert(AntseedDeposits.InvalidAmount.selector);
-        deposits.setBuyerInactivityPeriod(23 hours);
-    }
-
     function test_setBaseCreditLimit() public {
         deposits.setBaseCreditLimit(100_000_000);
         assertEq(deposits.BASE_CREDIT_LIMIT(), 100_000_000);
@@ -816,11 +757,6 @@ contract AntseedDepositsTest is Test {
     function test_setTimeBonus() public {
         deposits.setTimeBonus(1_000_000);
         assertEq(deposits.TIME_BONUS(), 1_000_000);
-    }
-
-    function test_setFeedbackBonus() public {
-        deposits.setFeedbackBonus(3_000_000);
-        assertEq(deposits.FEEDBACK_BONUS(), 3_000_000);
     }
 
     function test_setMaxCreditLimit() public {
