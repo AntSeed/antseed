@@ -149,7 +149,7 @@ export type DesktopBridge = {
       displayName: string | null;
       reputation: number;
       onChainReputation: number | null;
-      onChainSessionCount: number | null;
+      onChainChannelCount: number | null;
       onChainDisputeCount: number | null;
       evmAddress: string | null;
       timestamp: number | null;

@@ -2,7 +2,7 @@
 pragma solidity ^0.8.24;
 
 interface IAntseedDeposits {
-    function lockForSession(address buyer, uint256 amount) external;
+    function lockForChannel(address buyer, uint256 amount) external;
     function chargeAndCreditPayouts(
         address buyer, address seller, uint256 chargeAmount, uint256 reservedAmount,
         uint256 platformFee, address protocolReserve

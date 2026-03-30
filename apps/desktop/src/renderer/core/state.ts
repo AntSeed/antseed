@@ -141,7 +141,7 @@ export type RendererUiState = {
   chatPaymentApprovalAmount: string;
   chatPaymentApprovalPeerInfo: {
     reputation: number;
-    sessionCount: number | null;
+    channelCount: number | null;
     disputeCount: number | null;
     networkAgeDays: number | null;
     evmAddress: string | null;

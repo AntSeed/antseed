@@ -14,7 +14,7 @@ import {IAntseedEmissions} from "./interfaces/IAntseedEmissions.sol";
 
 /**
  * @title AntseedChannels
- * @notice Session lifecycle with built-in cumulative payment channels.
+ * @notice Channel lifecycle with built-in cumulative payment channels.
  *         USDC stays in AntseedDeposits — this contract holds none.
  *
  *         The buyer signs a single EIP-712 SpendingAuth on every request:
@@ -73,6 +73,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
     address public protocolReserve;
 
     mapping(bytes32 => Channel) public channels;
+    mapping(address => uint256) public activeChannelCount;
 
     // ─── Events ─────────────────────────────────────────────────────
     event Reserved(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint128 maxAmount);
@@ -143,7 +144,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
      * @param buyer        The buyer's address (signs SpendingAuth off-chain)
      * @param salt         Random salt for deterministic channel ID
      * @param maxAmount    USDC amount to lock
-     * @param deadline     Session deadline (for timeout protection)
+     * @param deadline     Channel deadline (for timeout protection)
      * @param buyerSig     Buyer's SpendingAuth signature (cumAmount=0) as reserve proof
      */
     function reserve(
@@ -166,7 +167,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         _verifyReserveAuth(channelId, maxAmount, deadline, buyer, buyerSig);
 
         // Lock buyer's USDC in Deposits (stays there, no transfer)
-        depositsContract.lockForSession(buyer, maxAmount);
+        depositsContract.lockForChannel(buyer, maxAmount);
 
         channels[channelId] = Channel({
             buyer: buyer,
@@ -180,7 +181,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
             status: ChannelStatus.Active
         });
 
-        stakingContract.incrementActiveSessions(msg.sender);
+        activeChannelCount[msg.sender]++;
         emit Reserved(channelId, buyer, msg.sender, maxAmount);
     }
 
@@ -195,14 +196,14 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
     error TopUpAmountTooLow();
 
     /**
-     * @notice Top up an active session by increasing the reserve ceiling.
+     * @notice Top up an active channel by increasing the reserve ceiling.
      *         Seller calls this when the buyer's cumulative spending approaches
      *         the current deposit. Requires at least 85% of the current deposit
      *         to be settled (proven via SpendingAuth) before allowing more funds.
      *
-     * @param channelId    Existing session ID
+     * @param channelId    Existing channel ID
      * @param newMaxAmount New total reserve ceiling (must be > current deposit)
-     * @param deadline     New session deadline
+     * @param deadline     New channel deadline
      * @param buyerSig     Buyer's ReserveAuth signature for (channelId, newMaxAmount, deadline)
      */
     function topUp(
@@ -226,9 +227,9 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
 
         // Lock the additional amount in Deposits
         uint128 additionalAmount = newMaxAmount - channel.deposit;
-        depositsContract.lockForSession(channel.buyer, additionalAmount);
+        depositsContract.lockForChannel(channel.buyer, additionalAmount);
 
-        // Update session
+        // Update channel
         channel.deposit = newMaxAmount;
         channel.deadline = deadline;
 
@@ -236,15 +237,15 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //                        CORE — SETTLE (mid-session checkpoint)
+    //                        CORE — SETTLE (mid-channel checkpoint)
     // ═══════════════════════════════════════════════════════════════════
 
     /**
      * @notice Settle partial payment. Seller submits buyer's SpendingAuth signature.
      *         The delta USDC is distributed to seller (minus platform fee).
-     *         Session stays active for more requests.
+     *         Channel stays active for more requests.
      *
-     * @param channelId        Session ID
+     * @param channelId        Channel ID
      * @param cumulativeAmount Cumulative USDC amount authorized by buyer
      * @param metadata         ABI-encoded (inputTokens, outputTokens, latencyMs, requestCount)
      * @param buyerSig         Buyer's SpendingAuth EIP-712 signature
@@ -281,10 +282,10 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
     // ═══════════════════════════════════════════════════════════════════
 
     /**
-     * @notice Close the session with a final settlement.
+     * @notice Close the channel with a final settlement.
      *         Seller earnings and buyer refund are sent to Deposits.
      *
-     * @param channelId    Session ID
+     * @param channelId    Channel ID
      * @param finalAmount  Final cumulative USDC amount
      * @param metadata     ABI-encoded (inputTokens, outputTokens, latencyMs, requestCount)
      * @param buyerSig     Buyer's SpendingAuth EIP-712 signature
@@ -313,9 +314,9 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         channel.metadataHash = metadataHash;
         channel.settledAt = block.timestamp;
         channel.status = ChannelStatus.Settled;
-        stakingContract.decrementActiveSessions(channel.seller);
+        activeChannelCount[channel.seller]--;
 
-        _recordStatsAndEmissions(channel, delta, metadata, 0); // session complete
+        _recordStatsAndEmissions(channel, delta, metadata, 0); // channel complete
 
         emit ChannelClosed(channelId, channel.seller, finalAmount, platformFee);
     }
@@ -325,7 +326,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
     // ═══════════════════════════════════════════════════════════════════
 
     /**
-     * @notice Request session close. Buyer-only, callable anytime.
+     * @notice Request channel close. Buyer-only, callable anytime.
      *         Starts a grace period during which the seller can still
      *         call settle() or close() with the latest SpendingAuth.
      *         After the grace period, the buyer can withdraw remaining funds.
@@ -359,7 +360,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         }
 
         channel.status = ChannelStatus.TimedOut;
-        stakingContract.decrementActiveSessions(channel.seller);
+        activeChannelCount[channel.seller]--;
 
         // Record ghost only if seller never settled anything (true abandonment)
         if (channel.settled == 0) {
@@ -412,7 +413,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
             }
 
             channel.status = ChannelStatus.TimedOut;
-            stakingContract.decrementActiveSessions(channel.seller);
+            activeChannelCount[channel.seller]--;
 
             if (channel.settled == 0) {
                 uint256 agentId = stakingContract.getAgentId(channel.seller);
@@ -521,7 +522,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         );
     }
 
-    /// @param statsUpdateType 0 = session complete (close), 1 = ghost, 2 = partial settlement
+    /// @param statsUpdateType 0 = channel complete (close), 1 = ghost, 2 = partial settlement
     function _recordStatsAndEmissions(
         Channel storage channel,
         uint128 delta,

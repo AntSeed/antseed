@@ -330,7 +330,7 @@ export class MeteringStorage {
 
   /** Get session count and total cost for a time range. */
   getSessionSummary(startMs: number, endMs: number): {
-    sessionCount: number;
+    channelCount: number;
     totalRequests: number;
     totalTokens: number;
     totalCostCents: number;
@@ -351,7 +351,7 @@ export class MeteringStorage {
       total_cost_cents: number;
     };
     return {
-      sessionCount: row.session_count,
+      channelCount: row.session_count,
       totalRequests: row.total_requests,
       totalTokens: row.total_tokens,
       totalCostCents: row.total_cost_cents,

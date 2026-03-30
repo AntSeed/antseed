@@ -73,8 +73,8 @@ export interface PeerInfo {
   trustScore?: number;
   /** On-chain reputation score (0-100) from the Base identity contract. */
   onChainReputation?: number;
-  /** On-chain session count from the Base identity contract. */
-  onChainSessionCount?: number;
+  /** On-chain channel count from the Base identity contract. */
+  onChainChannelCount?: number;
   /** On-chain dispute count from the Base identity contract. */
   onChainDisputeCount?: number;
 }

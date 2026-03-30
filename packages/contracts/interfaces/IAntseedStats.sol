@@ -3,7 +3,7 @@ pragma solidity ^0.8.24;
 
 interface IAntseedStats {
     struct AgentStats {
-        uint64 sessionCount;
+        uint64 channelCount;
         uint64 ghostCount;
         uint256 totalVolumeUsdc;
         uint128 totalInputTokens;

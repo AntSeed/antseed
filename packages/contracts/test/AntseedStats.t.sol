@@ -6,6 +6,7 @@ import "../AntseedStats.sol";
 import "../AntseedStaking.sol";
 import "../MockERC8004Registry.sol";
 import "../MockUSDC.sol";
+import {MockChannelsForStaking} from "./AntseedStaking.t.sol";
 
 contract AntseedStatsTest is Test {
     AntseedStats public stats;
@@ -23,8 +24,12 @@ contract AntseedStatsTest is Test {
         stats = new AntseedStats();
         staking = new AntseedStaking(address(usdc), address(registry), address(stats));
 
-        // Set this test contract as the sessions contract so it can call updateStats
+        // Set this test contract as the channels contract so it can call updateStats
         stats.setChannelsContract(address(this));
+
+        // Set a mock channels contract on Staking (needed for unstake's activeChannelCount check)
+        MockChannelsForStaking mockChannels = new MockChannelsForStaking();
+        staking.setChannelsContract(address(mockChannels));
     }
 
     function test_register() public {
@@ -141,7 +146,7 @@ contract AntseedStatsTest is Test {
 
     function test_getStats_default() public view {
         IAntseedStats.AgentStats memory s = stats.getStats(999);
-        assertEq(s.sessionCount, 0);
+        assertEq(s.channelCount, 0);
         assertEq(s.ghostCount, 0);
         assertEq(s.totalVolumeUsdc, 0);
     }

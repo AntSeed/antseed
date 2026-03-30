@@ -236,7 +236,7 @@ contract AntseedSubPool is Ownable, ReentrancyGuard {
         peerRewardPerTokenPaid[msg.sender] = rewardPerTokenStored;
         // Snapshot initial weight from current stats
         IAntseedStats.AgentStats memory stats = statsContract.getStats(agentId);
-        peerSnapshotWeight[msg.sender] = uint256(stats.sessionCount);
+        peerSnapshotWeight[msg.sender] = uint256(stats.channelCount);
 
         optedInPeers.push(msg.sender);
         emit PeerOptedIn(msg.sender, agentId);
@@ -319,7 +319,7 @@ contract AntseedSubPool is Ownable, ReentrancyGuard {
                 peerRewardPerTokenPaid[peer] = rewardPerTokenStored;
                 // Snapshot current stats as weight for the new epoch
                 IAntseedStats.AgentStats memory st = statsContract.getStats(opt.tokenId);
-                uint256 newWeight = uint256(st.sessionCount);
+                uint256 newWeight = uint256(st.channelCount);
                 peerSnapshotWeight[peer] = newWeight;
                 totalWeight += newWeight;
             }
@@ -371,7 +371,7 @@ contract AntseedSubPool is Ownable, ReentrancyGuard {
 
         // Project current epoch share (use live stats for projection)
         IAntseedStats.AgentStats memory st = statsContract.getStats(opt.tokenId);
-        uint256 liveWeight = uint256(st.sessionCount);
+        uint256 liveWeight = uint256(st.channelCount);
         uint256 revenue = currentEpochRevenue;
         uint256 peerCount = optedInPeers.length;
         if (revenue == 0 || peerCount == 0 || liveWeight == 0) return pending;
@@ -380,7 +380,7 @@ contract AntseedSubPool is Ownable, ReentrancyGuard {
         for (uint256 i = 0; i < peerCount; i++) {
             PeerOpt storage p = peerOpts[optedInPeers[i]];
             IAntseedStats.AgentStats memory s = statsContract.getStats(p.tokenId);
-            totalWeight += uint256(s.sessionCount);
+            totalWeight += uint256(s.channelCount);
         }
 
         if (totalWeight == 0) return pending;

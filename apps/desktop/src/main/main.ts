@@ -758,7 +758,7 @@ ipcMain.handle('payments:get-peer-info', async (_event, peerId: string) => {
         displayName: peer.displayName ?? null,
         reputation: peer.reputation ?? 0,
         onChainReputation: (peer as Record<string, unknown>).onChainReputation ?? null,
-        onChainSessionCount: (peer as Record<string, unknown>).onChainSessionCount ?? null,
+        onChainChannelCount: (peer as Record<string, unknown>).onChainChannelCount ?? null,
         onChainDisputeCount: (peer as Record<string, unknown>).onChainDisputeCount ?? null,
         evmAddress: peer.peerId ? peerIdToAddress(peer.peerId) : null,
         timestamp: (peer as Record<string, unknown>).timestamp ?? null,

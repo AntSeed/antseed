@@ -8,7 +8,7 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 /**
  * @title AntseedDeposits
  * @notice Buyer USDC custody with credit limits, withdrawal timelocks, and seller earnings.
- *         Stable contract — holds funds. Session logic lives in AntseedChannels (swappable).
+ *         Stable contract — holds funds. Channel logic lives in AntseedChannels (swappable).
  */
 contract AntseedDeposits is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -29,7 +29,7 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
         uint256 balance;
         uint256 reserved;
         uint256 lastActivityAt;
-        uint256 firstSessionAt;
+        uint256 firstChannelAt;
         address operator;
         uint256 operatorNonce;
     }
@@ -82,8 +82,8 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
         BuyerAccount storage ba = buyers[buyer];
         uint256 uniqueSellers = uniqueSellersCharged[buyer];
         uint256 daysSinceFirst = 0;
-        if (ba.firstSessionAt > 0) {
-            daysSinceFirst = (block.timestamp - ba.firstSessionAt) / 1 days;
+        if (ba.firstChannelAt > 0) {
+            daysSinceFirst = (block.timestamp - ba.firstChannelAt) / 1 days;
         }
 
         uint256 limit = BASE_CREDIT_LIMIT
@@ -170,17 +170,17 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //                   PRIVILEGED — SESSIONS ONLY
+    //                   PRIVILEGED — CHANNELS ONLY
     // ═══════════════════════════════════════════════════════════════════
 
-    function lockForSession(address buyer, uint256 amount) external onlyChannels {
+    function lockForChannel(address buyer, uint256 amount) external onlyChannels {
         BuyerAccount storage ba = buyers[buyer];
         uint256 available = ba.balance - ba.reserved;
         if (available < amount) revert InsufficientBalance();
         ba.reserved += amount;
         ba.lastActivityAt = block.timestamp;
-        if (ba.firstSessionAt == 0) {
-            ba.firstSessionAt = block.timestamp;
+        if (ba.firstChannelAt == 0) {
+            ba.firstChannelAt = block.timestamp;
         }
     }
 
@@ -218,7 +218,7 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
         buyers[buyer].reserved -= amount;
     }
 
-    /// @notice Set operator for a buyer. Called by Channels after EIP-712 signature verification.
+    /// @notice Set operator for a buyer. Called by Channels contract after EIP-712 signature verification.
     function setOperatorFor(address buyer, address operator) external onlyChannels {
         BuyerAccount storage ba = buyers[buyer];
         ba.operator = operator;

@@ -229,7 +229,7 @@ describe('LocalRouter', () => {
       trustScore: 0,
       reputationScore: undefined,
       onChainReputation: 0,
-      onChainSessionCount: 0,
+      onChainChannelCount: 0,
       onChainDisputeCount: 0,
     });
 

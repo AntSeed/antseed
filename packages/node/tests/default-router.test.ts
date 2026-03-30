@@ -88,7 +88,7 @@ describe('DefaultRouter', () => {
         reputationScore: undefined,
         trustScore: 0,
         onChainReputation: 0,
-        onChainSessionCount: 0,
+        onChainChannelCount: 0,
         onChainDisputeCount: 0,
       });
 

@@ -49,7 +49,7 @@ export function registerReputationCommand(program: Command): void {
             address,
             tokenId,
             stats: {
-              sessionCount: stats.sessionCount,
+              channelCount: stats.channelCount,
               ghostCount: stats.ghostCount,
               totalVolumeUsdc: stats.totalVolumeUsdc.toString(),
               totalInputTokens: stats.totalInputTokens.toString(),
@@ -66,8 +66,8 @@ export function registerReputationCommand(program: Command): void {
         console.log(`  Token ID:                    ${chalk.cyan(String(tokenId))}`);
         console.log('');
         console.log(chalk.bold('  Settlement History:'));
-        console.log(`    Settled sessions:           ${chalk.green(String(stats.sessionCount))}`);
-        console.log(`    Ghost sessions:             ${chalk.red(String(stats.ghostCount))}`);
+        console.log(`    Settled channels:           ${chalk.green(String(stats.channelCount))}`);
+        console.log(`    Ghost channels:             ${chalk.red(String(stats.ghostCount))}`);
         console.log(`    Total volume:                ${chalk.dim(stats.totalVolumeUsdc.toString() + ' USDC base units')}`);
         console.log(`    Total input tokens:          ${chalk.dim(stats.totalInputTokens.toString())}`);
         console.log(`    Total output tokens:         ${chalk.dim(stats.totalOutputTokens.toString())}`);

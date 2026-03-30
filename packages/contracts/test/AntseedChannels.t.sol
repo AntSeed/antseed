@@ -194,11 +194,11 @@ contract AntseedChannelsTest is Test {
     //                   RESERVE TESTS
     // ═══════════════════════════════════════════════════════════════════
 
-    function test_reserve_newSession() public {
+    function test_reserve_newChannel() public {
         bytes32 salt = keccak256("session-1");
         bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
-        // Assert session state
+        // Assert channel state
         (
             address sBuyer,
             address sSeller,
@@ -226,7 +226,7 @@ contract AntseedChannelsTest is Test {
         // Assert buyer's Deposits: reserved = maxAmount, available = 0
         (uint256 available, uint256 reserved,) = deposits.getBuyerBalance(buyer);
         assertEq(reserved, USDC_100);
-        assertEq(available, 0); // all 100 USDC went to Sessions
+        assertEq(available, 0); // all 100 USDC reserved in Deposits
     }
 
     function test_reserve_revert_sellerNotStaked() public {
@@ -295,7 +295,7 @@ contract AntseedChannelsTest is Test {
         channels.reserve(buyer, salt, overCap, deadline, reserveSig);
     }
 
-    function test_reserve_revert_sessionExists() public {
+    function test_reserve_revert_channelExists() public {
         bytes32 salt = keccak256("session-1");
         bytes32 channelId = doReserve(salt, USDC_50, USDC_100);
 
@@ -325,7 +325,7 @@ contract AntseedChannelsTest is Test {
         vm.prank(seller);
         channels.close(channelId, finalAmount, encodeMetadata(inputTokens, outputTokens), metaSig);
 
-        // Assert session state
+        // Assert channel state
         (
             ,
             ,
@@ -358,7 +358,7 @@ contract AntseedChannelsTest is Test {
         // Stats updated
         uint256 sellerAgentId = staking.getAgentId(seller);
         IAntseedStats.AgentStats memory s = stats.getStats(sellerAgentId);
-        assertEq(s.sessionCount, 1);
+        assertEq(s.channelCount, 1);
         assertEq(s.totalVolumeUsdc, USDC_60);
         assertEq(s.totalInputTokens, 5000);
         assertEq(s.totalOutputTokens, 2000);
@@ -431,7 +431,7 @@ contract AntseedChannelsTest is Test {
         vm.prank(seller);
         channels.close(channelId, USDC_60, encodeMetadata(0, 0), metaSig);
 
-        // Try again — session already Settled
+        // Try again — channel already Settled
         bytes memory metaSig2 = signSpendingAuth(BUYER_PK, channelId, USDC_30, 0, 0);
         vm.prank(seller);
         vm.expectRevert(AntseedChannels.ChannelNotActive.selector);
@@ -439,10 +439,10 @@ contract AntseedChannelsTest is Test {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //                   SETTLE TESTS (mid-session)
+    //                   SETTLE TESTS (mid-channel)
     // ═══════════════════════════════════════════════════════════════════
 
-    function test_settle_midSession() public {
+    function test_settle_midChannel() public {
         bytes32 salt = keccak256("session-settle");
         bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
@@ -452,7 +452,7 @@ contract AntseedChannelsTest is Test {
         vm.prank(seller);
         channels.settle(channelId, amount1, encodeMetadata(1000, 500), metaSig1);
 
-        // Session still active
+        // Channel still active
         (,, uint128 sDeposit, uint128 sSettled,,,,, AntseedChannels.ChannelStatus sStatus) = channels.channels(channelId);
         assertTrue(sStatus == AntseedChannels.ChannelStatus.Active);
         assertEq(sDeposit, USDC_100);
@@ -482,7 +482,7 @@ contract AntseedChannelsTest is Test {
         vm.prank(seller);
         channels.close(channelId, finalAmount, encodeMetadata(3000, 1500), metaSig2);
 
-        // Session settled
+        // Channel settled
         (,,,uint128 sSettled,,,,,AntseedChannels.ChannelStatus sStatus) = channels.channels(channelId);
         assertTrue(sStatus == AntseedChannels.ChannelStatus.Settled);
         assertEq(sSettled, USDC_60);
@@ -527,7 +527,7 @@ contract AntseedChannelsTest is Test {
         vm.prank(operator);
         channels.withdraw(channelId);
 
-        // Session timed out (withdrawn)
+        // Channel timed out (withdrawn)
         (,,,,,,,,AntseedChannels.ChannelStatus sStatus) = channels.channels(channelId);
         assertTrue(sStatus == AntseedChannels.ChannelStatus.TimedOut);
 
@@ -645,7 +645,7 @@ contract AntseedChannelsTest is Test {
         vm.prank(operator);
         channels.requestClose(channelId);
 
-        // Seller can still settle mid-session during grace period
+        // Seller can still settle mid-channel during grace period
         uint128 amount = USDC_30;
         bytes memory metaSig = signSpendingAuth(BUYER_PK, channelId, amount, 1000, 500);
 
@@ -696,7 +696,7 @@ contract AntseedChannelsTest is Test {
 
         uint256 sellerAgentId = staking.getAgentId(seller);
         IAntseedStats.AgentStats memory s = stats.getStats(sellerAgentId);
-        assertEq(s.sessionCount, 1);
+        assertEq(s.channelCount, 1);
         assertEq(s.totalVolumeUsdc, USDC_50);
         assertEq(s.totalInputTokens, inputToks);
         assertEq(s.totalOutputTokens, outputToks);
@@ -847,7 +847,7 @@ contract AntseedChannelsTest is Test {
         vm.prank(seller);
         channels.topUp(channelId, newMax, newDeadline, topUpSig);
 
-        // Verify session state updated
+        // Verify channel state updated
         (,, uint128 sDeposit, uint128 sSettled,,uint256 sDeadline,,,AntseedChannels.ChannelStatus sStatus) = channels.channels(channelId);
         assertTrue(sStatus == AntseedChannels.ChannelStatus.Active);
         assertEq(sDeposit, USDC_150);

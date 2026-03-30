@@ -582,12 +582,12 @@ export class AntseedNode extends EventEmitter {
             timestamp: 0,
             signature: "",
             onChainReputation: p.onChainReputation,
-            onChainSessionCount: p.onChainSessionCount,
+            onChainChannelCount: p.onChainChannelCount,
             onChainDisputeCount: p.onChainDisputeCount,
           };
           const result = await verifyStats(this._statsClient, this._stakingClient, metadata);
           p.onChainReputation = result.actualReputation;
-          p.onChainSessionCount = result.actualSessionCount;
+          p.onChainChannelCount = result.actualChannelCount;
           p.onChainDisputeCount = result.actualDisputeCount;
         } catch {
           // Stats/staking contract lookup failed for this peer — keep claimed data
@@ -2475,7 +2475,7 @@ export class AntseedNode extends EventEmitter {
       maxConcurrency: firstProvider?.maxConcurrency,
       currentLoad: firstProvider?.currentLoad,
       onChainReputation: result.metadata.onChainReputation,
-      onChainSessionCount: result.metadata.onChainSessionCount,
+      onChainChannelCount: result.metadata.onChainChannelCount,
       onChainDisputeCount: result.metadata.onChainDisputeCount,
       trustScore: result.metadata.onChainReputation,
     };
