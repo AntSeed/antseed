@@ -101,7 +101,7 @@ The protocol is provider-agnostic. It does not care how a seller fulfills a requ
 
 **Metering.** Both sides independently verify what was delivered. If their measurements diverge significantly, the transaction is disputed and the buyer is protected.
 
-**Settlement.** Buyers pre-deposit USDC into AntseedDeposits. Each session is authorized by an EIP-712 SpendingAuth. Settlement is lazy — the buyer's next SpendingAuth proves delivery of the previous session and triggers on-chain settlement atomically via AntseedSessions.
+**Settlement.** Buyers pre-deposit USDC into AntseedDeposits. Each session is authorized by an EIP-712 SpendingAuth. Settlement is lazy — the buyer's next SpendingAuth proves delivery of the previous session and triggers on-chain settlement atomically via AntseedChannels.
 
 **Routing.** The buyer's software scores available providers on reputation, capability match, speed, price, and uptime. On failure, it automatically switches to the next-best provider. Because AI APIs are stateless, these switches are invisible to the application.
 

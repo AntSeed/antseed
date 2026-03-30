@@ -68,7 +68,7 @@ This creates a rolling bilateral agreement. At any point, the seller holds a sin
 
 ## Settlement as Proof
 
-When the seller calls `settle()` or `close()` on the AntseedSessions contract, they submit the buyer's latest SpendingAuth signature. The contract:
+When the seller calls `settle()` or `close()` on the AntseedChannels contract, they submit the buyer's latest SpendingAuth signature. The contract:
 
 1. Verifies the buyer's EIP-712 signature
 2. Charges the cumulative amount from the buyer's locked deposit
@@ -87,7 +87,7 @@ The counters that accumulate per seller:
 - **Total requests** — cumulative requests served
 - **Last settled** — timestamp of most recent settlement
 
-These values are keyed by ERC-8004 agentId and cannot be written by any external caller — only the Sessions contract during fund movement. You cannot inflate your stats without real USDC changing hands.
+These values are keyed by ERC-8004 agentId and cannot be written by any external caller — only the Channels contract during fund movement. You cannot inflate your stats without real USDC changing hands.
 
 ## Budget Exhaustion and Renewal
 

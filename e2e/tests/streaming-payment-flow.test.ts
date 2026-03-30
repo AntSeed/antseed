@@ -16,8 +16,8 @@ import { randomUUID } from 'node:crypto';
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
 
 // ─── Mock JSON-RPC server ────────────────────────────────────────────────────
-// Responds to ethers JsonRpcProvider calls so SessionsClient.reserve(),
-// SessionsClient.settle(), DepositsClient.getBuyerBalance(), etc. work
+// Responds to ethers JsonRpcProvider calls so ChannelsClient.reserve(),
+// ChannelsClient.settle(), DepositsClient.getBuyerBalance(), etc. work
 // without a real chain.
 
 let rpcCallLog: Array<{ method: string; params: unknown[] }> = [];
@@ -296,7 +296,7 @@ function makePaymentsConfig(rpcUrl: string, overrides?: Partial<NodePaymentsConf
     enabled: true,
     rpcUrl,
     depositsAddress: '0x' + 'dd'.repeat(20),
-    sessionsAddress: '0x' + 'cc'.repeat(20),
+    channelsAddress: '0x' + 'cc'.repeat(20),
     stakingAddress: '0x' + 'bb'.repeat(20),
     usdcAddress: '0x' + 'ee'.repeat(20),
     identityRegistryAddress: '0x' + 'aa'.repeat(20),
@@ -465,7 +465,7 @@ describe('Streaming payment flow E2E', () => {
     expect(bpm).not.toBeNull();
 
     // Use the BuyerPaymentManager to create a signed auth manually
-    const { signReserveAuth, makeSessionsDomain, computeChannelId, ZERO_METADATA_HASH } = await import('@antseed/node');
+    const { signReserveAuth, makeChannelsDomain, computeChannelId, ZERO_METADATA_HASH } = await import('@antseed/node');
     const buyerIdentity = buyerNode!.identity!;
     const buyerSigner = buyerIdentity.wallet;
     const buyerEvmAddr = buyerIdentity.wallet.address;
@@ -476,10 +476,10 @@ describe('Streaming payment flow E2E', () => {
     const deadline = Math.floor(Date.now() / 1000) + 90000;
     const maxAmount = 10000000n;
 
-    const sessionsDomain = makeSessionsDomain(31337, '0x' + 'cc'.repeat(20));
+    const channelsDomain = makeChannelsDomain(31337, '0x' + 'cc'.repeat(20));
 
     // Sign ReserveAuth — binds channelId, maxAmount, deadline
-    const reserveAuthSig = await signReserveAuth(buyerSigner, sessionsDomain, {
+    const reserveAuthSig = await signReserveAuth(buyerSigner, channelsDomain, {
       channelId,
       maxAmount,
       deadline: BigInt(deadline),

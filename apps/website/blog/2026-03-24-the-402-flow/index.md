@@ -45,7 +45,7 @@ When a buyer agrees to the seller's terms, it signs a **ReserveAuth** — a one-
 - **maxAmount** — the total USDC the seller is allowed to draw
 - **deadline** — when the authorization expires
 
-The buyer sends this signature to the seller, who submits it on-chain by calling `reserve()` on the AntseedSessions contract. This locks `maxAmount` of the buyer's deposited USDC for this specific seller. The transaction confirms on Base L2 in 2-3 seconds. Once confirmed, the seller sends an acknowledgment and the buyer retries the original request.
+The buyer sends this signature to the seller, who submits it on-chain by calling `reserve()` on the AntseedChannels contract. This locks `maxAmount` of the buyer's deposited USDC for this specific seller. The transaction confirms on Base L2 in 2-3 seconds. Once confirmed, the seller sends an acknowledgment and the buyer retries the original request.
 
 This is the only on-chain transaction in the entire flow. Everything after this is off-chain.
 

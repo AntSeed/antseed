@@ -211,7 +211,7 @@ Crypto settlement also requires `config.payments.crypto` values in your config f
 - `chainId` (`base` or `arbitrum`)
 - `rpcUrl`
 - `depositsContractAddress`
-- `sessionsContractAddress`
+- `channelsContractAddress`
 - `usdcContractAddress`
 
 If `ANTSEED_ENABLE_SETTLEMENT` is not explicitly set and the RPC endpoint is unreachable,

@@ -5,19 +5,19 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {IAntseedSessions} from "./interfaces/IAntseedSessions.sol";
+import {IAntseedChannels} from "./interfaces/IAntseedChannels.sol";
 
 /**
  * @title AntseedDeposits
  * @notice Buyer USDC custody with credit limits, withdrawal timelocks, and seller earnings.
- *         Stable contract — holds funds. Session logic lives in AntseedSessions (swappable).
+ *         Stable contract — holds funds. Session logic lives in AntseedChannels (swappable).
  */
 contract AntseedDeposits is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     // ─── State ───────────────────────────────────────────────────────────
     IERC20 public immutable usdc;
-    address public sessionsContract;
+    address public channelsContract;
 
     // ─── Configurable Constants ─────────────────────────────────────────
     uint256 public MIN_BUYER_DEPOSIT = 10_000_000;
@@ -65,16 +65,16 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
     error CreditLimitExceeded();
 
     // ─── Modifiers ──────────────────────────────────────────────────────
-    modifier onlySessions() {
-        if (msg.sender != sessionsContract) revert NotAuthorized();
+    modifier onlyChannels() {
+        if (msg.sender != channelsContract) revert NotAuthorized();
         _;
     }
 
     /// @dev Check that msg.sender is the buyer's authorized operator (from Sessions).
     ///      The buyer (hot wallet) is a signer only — it cannot call these functions directly.
     function _isOperator(address buyer) internal view returns (bool) {
-        if (sessionsContract == address(0)) return false;
-        return msg.sender == IAntseedSessions(sessionsContract).operators(buyer);
+        if (channelsContract == address(0)) return false;
+        return msg.sender == IAntseedChannels(channelsContract).operators(buyer);
     }
 
     // ─── Constructor ────────────────────────────────────────────────────
@@ -211,7 +211,7 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
     //                   PRIVILEGED — SESSIONS ONLY
     // ═══════════════════════════════════════════════════════════════════
 
-    function lockForSession(address buyer, uint256 amount) external onlySessions {
+    function lockForSession(address buyer, uint256 amount) external onlyChannels {
         BuyerAccount storage ba = buyers[buyer];
         uint256 available = ba.balance - ba.reserved - ba.withdrawalAmount;
         if (available < amount) revert InsufficientBalance();
@@ -229,7 +229,7 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
         uint256 reservedAmount,
         uint256 platformFee,
         address protocolReserve
-    ) external onlySessions nonReentrant {
+    ) external onlyChannels nonReentrant {
         if (chargeAmount > reservedAmount) revert InvalidAmount();
         if (platformFee > chargeAmount) revert InvalidAmount();
 
@@ -252,19 +252,19 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
         }
     }
 
-    function releaseLock(address buyer, uint256 amount) external onlySessions {
+    function releaseLock(address buyer, uint256 amount) external onlyChannels {
         buyers[buyer].reserved -= amount;
     }
 
     /**
      * @notice Credit back refunded USDC to buyer's available balance.
      *         Used when Sessions refunds unspent USDC on close/withdraw.
-     *         The buyer's balance and reserved were already reduced in transferToSessions.
+     *         The buyer's balance and reserved were already reduced in transferToChannels.
      *         The USDC has been sent back to this contract by Sessions.
      * @param buyer      The buyer address
      * @param creditBack The USDC amount being credited back (refund from Sessions)
      */
-    function creditBuyerRefund(address buyer, uint256 creditBack) external onlySessions {
+    function creditBuyerRefund(address buyer, uint256 creditBack) external onlyChannels {
         BuyerAccount storage ba = buyers[buyer];
         ba.balance += creditBack;
         ba.lastActivityAt = block.timestamp;
@@ -279,7 +279,7 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
      * @param to     The Sessions contract address
      * @param amount USDC amount to transfer
      */
-    function transferToSessions(address buyer, address to, uint256 amount) external onlySessions nonReentrant {
+    function transferToChannels(address buyer, address to, uint256 amount) external onlyChannels nonReentrant {
         BuyerAccount storage ba = buyers[buyer];
         ba.balance -= amount;
         ba.reserved -= amount;
@@ -291,7 +291,7 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
      * @param seller The seller address
      * @param amount The amount to credit
      */
-    function creditEarnings(address seller, uint256 amount) external onlySessions {
+    function creditEarnings(address seller, uint256 amount) external onlyChannels {
         sellerEarnings[seller] += amount;
     }
 
@@ -299,9 +299,9 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
     //                        ADMIN FUNCTIONS
     // ═══════════════════════════════════════════════════════════════════
 
-    function setSessionsContract(address _sessions) external onlyOwner {
-        if (_sessions == address(0)) revert InvalidAddress();
-        sessionsContract = _sessions;
+    function setChannelsContract(address _channels) external onlyOwner {
+        if (_channels == address(0)) revert InvalidAddress();
+        channelsContract = _channels;
     }
 
     function setCreditLimitOverride(address buyer, uint256 limit) external onlyOwner {

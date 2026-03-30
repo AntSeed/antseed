@@ -58,9 +58,9 @@ export function TitleBar() {
     actions.openPaymentsPortal?.();
   }, [actions]);
 
-  const handleManageSessions = useCallback(() => {
+  const handleManageChannels = useCallback(() => {
     setCreditsDropdownOpen(false);
-    actions.openPaymentsPortal?.('sessions');
+    actions.openPaymentsPortal?.('channels');
   }, [actions]);
 
   useEffect(() => {
@@ -142,8 +142,8 @@ export function TitleBar() {
                 <button className={styles.creditsDropdownAddBtn} onClick={handleAddCredits}>
                   Add Credits
                 </button>
-                <button className={styles.creditsDropdownManageBtn} onClick={handleManageSessions}>
-                  Manage Sessions
+                <button className={styles.creditsDropdownManageBtn} onClick={handleManageChannels}>
+                  Manage Channels
                 </button>
               </div>
             </div>

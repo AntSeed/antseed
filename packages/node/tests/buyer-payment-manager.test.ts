@@ -49,7 +49,7 @@ function makeConfig(dataDir: string, overrides?: Partial<BuyerPaymentConfig>): B
   return {
     rpcUrl: 'http://127.0.0.1:8545',
     depositsContractAddress: '0x' + 'dd'.repeat(20),
-    sessionsContractAddress: '0x' + 'cc'.repeat(20),
+    channelsContractAddress: '0x' + 'cc'.repeat(20),
     usdcAddress: '0x' + 'ee'.repeat(20),
     identityRegistryAddress: '0x' + 'ff'.repeat(20),
     chainId: 31337,

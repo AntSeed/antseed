@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { isAddress, verifyTypedData } from 'ethers';
 import {
   signSpendingAuth,
-  makeSessionsDomain,
+  makeChannelsDomain,
   SPENDING_AUTH_TYPES,
   computeMetadataHash,
   ZERO_METADATA_HASH,
@@ -64,7 +64,7 @@ describe('EIP-712 SpendingAuth signature helpers', () => {
     const dir = await mkdtemp(join(tmpdir(), 'lch-test-'));
     const identity = await loadOrCreateIdentity(dir);
     const wallet = identity.wallet;
-    const domain = makeSessionsDomain(CHAIN_ID, CONTRACT);
+    const domain = makeChannelsDomain(CHAIN_ID, CONTRACT);
 
     const msg: SpendingAuthMessage = {
       channelId: '0x' + '01'.repeat(32),
@@ -81,9 +81,9 @@ describe('EIP-712 SpendingAuth signature helpers', () => {
     expect(recovered.toLowerCase()).toBe(wallet.address.toLowerCase());
   });
 
-  it('makeSessionsDomain returns correct domain fields', () => {
-    const domain = makeSessionsDomain(CHAIN_ID, CONTRACT);
-    expect(domain.name).toBe('AntseedSessions');
+  it('makeChannelsDomain returns correct domain fields', () => {
+    const domain = makeChannelsDomain(CHAIN_ID, CONTRACT);
+    expect(domain.name).toBe('AntseedChannels');
     expect(domain.version).toBe('7');
     expect(domain.chainId).toBe(CHAIN_ID);
     expect(domain.verifyingContract).toBe(CONTRACT);
@@ -93,7 +93,7 @@ describe('EIP-712 SpendingAuth signature helpers', () => {
     const dir = await mkdtemp(join(tmpdir(), 'lch-test-'));
     const identity = await loadOrCreateIdentity(dir);
     const wallet = identity.wallet;
-    const domain = makeSessionsDomain(CHAIN_ID, CONTRACT);
+    const domain = makeChannelsDomain(CHAIN_ID, CONTRACT);
 
     const msg1: SpendingAuthMessage = {
       channelId: '0x' + '01'.repeat(32),
@@ -115,7 +115,7 @@ describe('EIP-712 SpendingAuth signature helpers', () => {
     const dir = await mkdtemp(join(tmpdir(), 'lch-test-'));
     const identity = await loadOrCreateIdentity(dir);
     const wallet = identity.wallet;
-    const domain = makeSessionsDomain(CHAIN_ID, CONTRACT);
+    const domain = makeChannelsDomain(CHAIN_ID, CONTRACT);
 
     const msg: SpendingAuthMessage = {
       channelId: '0x' + '01'.repeat(32),

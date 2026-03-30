@@ -91,7 +91,7 @@ export function getUiSnapshot(): RendererUiState {
             : state.chatStreamingMessage.content,
         }
       : null,
-    chatActiveSessions: new Map(state.chatActiveSessions),
+    chatActiveChannels: new Map(state.chatActiveChannels),
     chatServiceOptions: [...state.chatServiceOptions],
   };
   cachedSnapshotVersion = version;

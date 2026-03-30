@@ -112,7 +112,7 @@ Providers set their own prices. The routing layer scores all available providers
 
 ### How do providers get paid?
 
-Buyers pre-deposit USDC into the on-chain AntseedDeposits contract. Each session is authorized by an EIP-712 ReserveAuth that caps the seller's charge. The seller calls `reserve()` on AntseedSessions to lock funds. During the session, the buyer signs cumulative SpendingAuth messages that authorize spending. The seller calls `close()` with the buyer's latest SpendingAuth to settle and release remaining funds. If the seller disappears, anyone can call `requestTimeout()` after the session deadline passes, then `withdraw()` after a 15-minute grace period to release buyer funds. No invoicing, no monthly billing — automatic settlement per session.
+Buyers pre-deposit USDC into the on-chain AntseedDeposits contract. Each session is authorized by an EIP-712 ReserveAuth that caps the seller's charge. The seller calls `reserve()` on AntseedChannels to lock funds. During the session, the buyer signs cumulative SpendingAuth messages that authorize spending. The seller calls `close()` with the buyer's latest SpendingAuth to settle and release remaining funds. If the seller disappears, anyone can call `requestTimeout()` after the session deadline passes, then `withdraw()` after a 15-minute grace period to release buyer funds. No invoicing, no monthly billing — automatic settlement per session.
 
 ---
 

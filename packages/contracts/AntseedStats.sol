@@ -11,23 +11,23 @@ import {IAntseedStats} from "./interfaces/IAntseedStats.sol";
  *         Only the Sessions contract can write; anyone can read.
  */
 contract AntseedStats is IAntseedStats, Ownable {
-    address public sessionsContract;
+    address public channelsContract;
 
     mapping(uint256 => AgentStats) private _stats;
 
     error NotAuthorized();
     error InvalidAddress();
 
-    event SessionsContractSet(address indexed sessionsContract);
+    event ChannelsContractSet(address indexed channelsContract);
 
-    modifier onlySessions() {
-        if (msg.sender != sessionsContract) revert NotAuthorized();
+    modifier onlyChannels() {
+        if (msg.sender != channelsContract) revert NotAuthorized();
         _;
     }
 
     constructor() Ownable(msg.sender) {}
 
-    function updateStats(uint256 agentId, StatsUpdate calldata update) external onlySessions {
+    function updateStats(uint256 agentId, StatsUpdate calldata update) external onlyChannels {
         AgentStats storage s = _stats[agentId];
         if (update.updateType == 0) {
             // Session complete (close) — increment sessionCount
@@ -58,9 +58,9 @@ contract AntseedStats is IAntseedStats, Ownable {
 
     // ─── Admin ────────────────────────────────────────────────────────────
 
-    function setSessionsContract(address _sessions) external onlyOwner {
-        if (_sessions == address(0)) revert InvalidAddress();
-        sessionsContract = _sessions;
-        emit SessionsContractSet(_sessions);
+    function setChannelsContract(address _channels) external onlyOwner {
+        if (_channels == address(0)) revert InvalidAddress();
+        channelsContract = _channels;
+        emit ChannelsContractSet(_channels);
     }
 }

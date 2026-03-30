@@ -1,6 +1,6 @@
 # 04 - Payments: Streaming SpendingAuth
 
-This document specifies the payment protocol for the AntSeed P2P AI compute network. Payments use USDC on Base with two EIP-712 signed messages: **ReserveAuth** (session budget) and **SpendingAuth** (cumulative per-request authorization). AntseedSessions orchestrates the lifecycle but holds no USDC — all funds stay in AntseedDeposits.
+This document specifies the payment protocol for the AntSeed P2P AI compute network. Payments use USDC on Base with two EIP-712 signed messages: **ReserveAuth** (session budget) and **SpendingAuth** (cumulative per-request authorization). AntseedChannels orchestrates the lifecycle but holds no USDC — all funds stay in AntseedDeposits.
 
 ## 1. Session Lifecycle (Reserve → Serve → Settle/Close)
 
@@ -59,10 +59,10 @@ If the seller disappears after the deadline, anyone can call `requestTimeout()`.
 EIP-712 domain for both message types:
 
 ```
-name:               "AntseedSessions"
+name:               "AntseedChannels"
 version:            "7"
 chainId:            <deployment chain>
-verifyingContract:  <sessions contract address>
+verifyingContract:  <channels contract address>
 ```
 
 ### ReserveAuth
@@ -109,7 +109,7 @@ When the budget is nearly exhausted, the seller calls `close()` with the final S
 
 ## 4. Per-Agent Stats (AntseedStats)
 
-Session metrics are tracked per ERC-8004 agentId in the AntseedStats contract. Stats are updated by AntseedSessions during `settle()` and `close()`:
+Session metrics are tracked per ERC-8004 agentId in the AntseedStats contract. Stats are updated by AntseedChannels during `settle()` and `close()`:
 
 - `sessionCount` — number of completed sessions
 - `totalVolumeUsdc` — cumulative USDC volume
@@ -135,7 +135,7 @@ Sellers must stake USDC via `stake(agentId, amount)` on `AntseedStaking`, bindin
 
 ### AntseedStats (on-chain metrics)
 
-Factual per-agent session metrics updated by AntseedSessions during settlement. No reputation scoring — pure counters.
+Factual per-agent session metrics updated by AntseedChannels during settlement. No reputation scoring — pure counters.
 
 ### ERC-8004 Identity and Feedback
 
@@ -219,7 +219,7 @@ Same pattern for buyers with a separate accumulator (`buyerRewardPerPointStored`
 
 ## 9. Subscription Pool
 
-Separate contract (`AntseedSubPool`) managing subscription-based access. Evolves independently from the core deposits/sessions/proof system.
+Separate contract (`AntseedSubPool`) managing subscription-based access. Evolves independently from the core deposits/channels/proof system.
 
 - `subscribe(tier)` — buyer pays monthly fee in USDC
 - `cancelSubscription()` — stops at end of current period
@@ -234,7 +234,7 @@ Separate contract (`AntseedSubPool`) managing subscription-based access. Evolves
 ```
 ANTSToken (ERC-20)        ── mint restricted to AntseedEmissions
 AntseedDeposits           ── buyer USDC deposits, holds ALL buyer USDC
-AntseedSessions           ── Reserve→Settle/Close lifecycle (holds NO USDC, swappable)
+AntseedChannels           ── Reserve→Settle/Close lifecycle (holds NO USDC, swappable)
 AntseedStaking            ── seller stake bound to ERC-8004 agentId
 AntseedStats              ── factual per-agent session metrics
 AntseedEmissions          ── USDC volume-based epoch emissions
@@ -245,11 +245,11 @@ MockERC8004Registry       ── local testing only (mainnet: deployed ERC-8004)
 Contracts reference each other by address (set at deployment, updateable by owner). No inheritance between contracts — only interface calls.
 
 **Interaction flow:**
-- `AntseedSessions` calls `AntseedDeposits.lockForSession()` on reserve
-- `AntseedSessions` calls `AntseedDeposits.chargeAndCreditEarnings()` on settle/close
-- `AntseedSessions` calls `AntseedStats.updateStats()` on settle/close
-- `AntseedSessions` calls `AntseedEmissions.accrueSellerPoints()` / `accrueBuyerPoints()` on settle/close
-- `AntseedSessions` reads from `AntseedStaking` (seller stake verification)
+- `AntseedChannels` calls `AntseedDeposits.lockForSession()` on reserve
+- `AntseedChannels` calls `AntseedDeposits.chargeAndCreditEarnings()` on settle/close
+- `AntseedChannels` calls `AntseedStats.updateStats()` on settle/close
+- `AntseedChannels` calls `AntseedEmissions.accrueSellerPoints()` / `accrueBuyerPoints()` on settle/close
+- `AntseedChannels` reads from `AntseedStaking` (seller stake verification)
 - `AntseedEmissions` calls `ANTSToken.mint()` on claim
 
 ## 11. P2P Messages

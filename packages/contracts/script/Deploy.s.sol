@@ -3,7 +3,7 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Script.sol";
 
-import {ISetSessions, ISetEmissions, ISetProtocolReserve} from "../interfaces/IAntseedWiring.sol";
+import {ISetChannels, ISetEmissions, ISetProtocolReserve} from "../interfaces/IAntseedWiring.sol";
 
 /**
  * @title Deploy
@@ -75,15 +75,15 @@ contract Deploy is Script {
         require(deposits != address(0), "Deposits deploy failed");
         console.log("AntseedDeposits:      ", deposits);
 
-        // 7. AntseedSessions(deposits, stats, staking)
-        bytes memory sessionsBytecode = abi.encodePacked(
-            vm.getCode("AntseedSessions.sol:AntseedSessions"),
+        // 7. AntseedChannels(deposits, stats, staking)
+        bytes memory channelsBytecode = abi.encodePacked(
+            vm.getCode("AntseedChannels.sol:AntseedChannels"),
             abi.encode(deposits, stats, staking)
         );
-        address sessions;
-        assembly { sessions := create(0, add(sessionsBytecode, 0x20), mload(sessionsBytecode)) }
-        require(sessions != address(0), "Sessions deploy failed");
-        console.log("AntseedSessions:      ", sessions);
+        address channels;
+        assembly { channels := create(0, add(channelsBytecode, 0x20), mload(channelsBytecode)) }
+        require(channels != address(0), "Channels deploy failed");
+        console.log("AntseedChannels:      ", channels);
 
         // 9. AntseedEmissions(antsToken, initialEmission, epochDuration)
         bytes memory emissionsBytecode = abi.encodePacked(
@@ -106,14 +106,14 @@ contract Deploy is Script {
         console.log("AntseedSubPool:       ", subPool);
 
         // ---- Wire contracts together ----
-        ISetSessions(stats).setSessionsContract(sessions);
-        ISetSessions(deposits).setSessionsContract(sessions);
-        ISetSessions(staking).setSessionsContract(sessions);
+        ISetChannels(stats).setChannelsContract(channels);
+        ISetChannels(deposits).setChannelsContract(channels);
+        ISetChannels(staking).setChannelsContract(channels);
         ISetProtocolReserve(staking).setProtocolReserve(protocolReserve);
         ISetEmissions(antsToken).setEmissionsContract(emissions);
-        ISetSessions(emissions).setSessionsContract(sessions);
-        ISetProtocolReserve(sessions).setProtocolReserve(protocolReserve);
-        ISetSessions(subPool).setSessionsContract(sessions);
+        ISetChannels(emissions).setChannelsContract(channels);
+        ISetProtocolReserve(channels).setProtocolReserve(protocolReserve);
+        ISetChannels(subPool).setChannelsContract(channels);
 
         vm.stopBroadcast();
 

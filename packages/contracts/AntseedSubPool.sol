@@ -46,7 +46,7 @@ contract AntseedSubPool is Ownable, ReentrancyGuard {
     IERC20 public immutable usdc;
     IERC8004Registry public identityRegistry;
     IAntseedStats public statsContract;
-    address public sessionsContract;
+    address public channelsContract;
 
     mapping(uint256 => Tier) public tiers;
     uint256 public tierCount;
@@ -199,7 +199,7 @@ contract AntseedSubPool is Ownable, ReentrancyGuard {
     }
 
     function recordTokenUsage(address buyer, uint256 tokens) external {
-        if (msg.sender != sessionsContract && msg.sender != owner()) revert NotAuthorized();
+        if (msg.sender != channelsContract && msg.sender != owner()) revert NotAuthorized();
         Subscription storage sub = subscriptions[buyer];
         if (sub.expiresAt <= block.timestamp) revert SubscriptionExpired();
 
@@ -391,9 +391,9 @@ contract AntseedSubPool is Ownable, ReentrancyGuard {
     //                        ADMIN
     // ═══════════════════════════════════════════════════════════════════
 
-    function setSessionsContract(address _sessions) external onlyOwner {
-        if (_sessions == address(0)) revert InvalidAddress();
-        sessionsContract = _sessions;
+    function setChannelsContract(address _channels) external onlyOwner {
+        if (_channels == address(0)) revert InvalidAddress();
+        channelsContract = _channels;
     }
 
     function setEpochDuration(uint256 duration) external onlyOwner {

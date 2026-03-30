@@ -61,7 +61,7 @@ import {
   type PaymentConfig,
   type PaymentMethod,
   DepositsClient,
-  SessionsClient,
+  ChannelsClient,
   StakingClient,
   SessionStore,
 } from "./payments/index.js";
@@ -143,8 +143,8 @@ export interface NodePaymentsConfig {
   rpcUrl?: string;
   /** Deployed AntseedDeposits contract address */
   depositsAddress?: string;
-  /** Deployed AntseedSessions contract address */
-  sessionsAddress?: string;
+  /** Deployed AntseedChannels contract address */
+  channelsAddress?: string;
   /** USDC token contract address */
   usdcAddress?: string;
   /** ERC-8004 IdentityRegistry contract address */
@@ -261,7 +261,7 @@ export class AntseedNode extends EventEmitter {
   private _receiptGenerator: ReceiptGenerator | null = null;
   private _balanceManager: BalanceManager | null = null;
   private _depositsClient: DepositsClient | null = null;
-  private _sessionsClient: SessionsClient | null = null;
+  private _channelsClient: ChannelsClient | null = null;
   private _stakingClient: StakingClient | null = null;
   private _identityClient: IdentityClient | null = null;
   private _statsClient: StatsClient | null = null;
@@ -517,7 +517,7 @@ export class AntseedNode extends EventEmitter {
     this._receiptGenerator = null;
     this._balanceManager = null;
     this._depositsClient = null;
-    this._sessionsClient = null;
+    this._channelsClient = null;
     this._stakingClient = null;
     this._identityClient = null;
     this._statsClient = null;
@@ -1225,7 +1225,7 @@ export class AntseedNode extends EventEmitter {
 
     // Initialize buyer-side payment manager if payments config is provided
     const payments = this._config.payments;
-    if (payments?.enabled && payments.rpcUrl && payments.depositsAddress && payments.sessionsAddress && payments.usdcAddress) {
+    if (payments?.enabled && payments.rpcUrl && payments.depositsAddress && payments.channelsAddress && payments.usdcAddress) {
       const paymentsDir = join(dataDir, "payments");
       // Create shared SessionStore for both buyer and seller payment managers
       if (!this._sessionStore) {
@@ -1240,7 +1240,7 @@ export class AntseedNode extends EventEmitter {
         const buyerPaymentConfig: BuyerPaymentConfig = {
           rpcUrl: payments.rpcUrl,
           depositsContractAddress: payments.depositsAddress,
-          sessionsContractAddress: payments.sessionsAddress,
+          channelsContractAddress: payments.channelsAddress,
           usdcAddress: payments.usdcAddress,
           identityRegistryAddress: payments.identityRegistryAddress ?? '',
           chainId: payments.chainId ?? 8453,
@@ -1296,7 +1296,7 @@ export class AntseedNode extends EventEmitter {
       // Reject with 402 if no active payment session and sessions client is configured.
       // Also send PaymentRequired via PaymentMux so the buyer knows what to sign.
       const spmAuthorized = this._sellerPaymentManager?.hasSession(buyerPeerId) ?? false;
-      if (this._sessionsClient && !spmAuthorized) {
+      if (this._channelsClient && !spmAuthorized) {
         // Pass buyerPeerId so seller can suggest higher amount for returning buyers,
         // and include per-direction pricing from the first registered provider.
         const firstProvider = this._providers[0];
@@ -1775,13 +1775,13 @@ export class AntseedNode extends EventEmitter {
       debugLog(`[Node] DepositsClient initialized (contract=${payments.depositsAddress.slice(0, 10)}...)`);
     }
 
-    // Initialize SessionsClient
-    if (payments.rpcUrl && payments.sessionsAddress) {
-      this._sessionsClient = new SessionsClient({
+    // Initialize ChannelsClient
+    if (payments.rpcUrl && payments.channelsAddress) {
+      this._channelsClient = new ChannelsClient({
         rpcUrl: payments.rpcUrl,
-        contractAddress: payments.sessionsAddress,
+        contractAddress: payments.channelsAddress,
       });
-      debugLog(`[Node] SessionsClient initialized (contract=${payments.sessionsAddress.slice(0, 10)}...)`);
+      debugLog(`[Node] ChannelsClient initialized (contract=${payments.channelsAddress.slice(0, 10)}...)`);
     }
 
     // Initialize StakingClient
@@ -1825,10 +1825,10 @@ export class AntseedNode extends EventEmitter {
 
     // Initialize SellerPaymentManager for seller role
     if (this._config.role === 'seller' && this._identity && this._sessionStore &&
-        payments.rpcUrl && payments.sessionsAddress) {
+        payments.rpcUrl && payments.channelsAddress) {
       const sellerConfig: SellerPaymentConfig = {
         rpcUrl: payments.rpcUrl,
-        sessionsContractAddress: payments.sessionsAddress,
+        channelsContractAddress: payments.channelsAddress,
         chainId: payments.chainId ?? 8453,
         dataDir: paymentsDir,
         ...(payments.minBudgetPerRequest ? { minBudgetPerRequest: payments.minBudgetPerRequest } : {}),

@@ -81,7 +81,7 @@ export const ZERO_METADATA: SpendingAuthMetadata = {
 export const ZERO_METADATA_HASH: string = computeMetadataHash(ZERO_METADATA);
 
 // =========================================================================
-// Channel ID computation (must match AntseedSessions.computeChannelId)
+// Channel ID computation (must match AntseedChannels.computeChannelId)
 // =========================================================================
 
 /**
@@ -104,9 +104,9 @@ export function computeChannelId(
 // EIP-712 Domain helpers
 // =========================================================================
 
-export function makeSessionsDomain(chainId: number, contractAddress: string): TypedDataDomain {
+export function makeChannelsDomain(chainId: number, contractAddress: string): TypedDataDomain {
   return {
-    name: 'AntseedSessions',
+    name: 'AntseedChannels',
     version: '7',
     chainId,
     verifyingContract: contractAddress,

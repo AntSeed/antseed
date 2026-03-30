@@ -43,10 +43,10 @@ export function initCreditsModule({ bridge, uiState }: CreditsModuleOptions): Cr
         uiState.creditsOperatorAddress = result.data.operatorAddress ?? null;
         uiState.creditsLastRefreshedAt = Date.now();
 
-        // Clear session badges when no funds are reserved (all sessions closed)
+        // Clear channel badges when no funds are reserved (all channels closed)
         const reserved = parseFloat(uiState.creditsReservedUsdc);
-        if (reserved === 0 && uiState.chatActiveSessions.size > 0) {
-          uiState.chatActiveSessions.clear();
+        if (reserved === 0 && uiState.chatActiveChannels.size > 0) {
+          uiState.chatActiveChannels.clear();
         }
 
         // Low balance detection

@@ -138,7 +138,7 @@ export function WithdrawView({ balance, onAction }: WithdrawViewProps) {
             </button>
 
             <div className="withdraw-note">
-              Withdrawals have a 48-hour security delay to protect active sessions.
+              Withdrawals have a 48-hour security delay to protect active channels.
             </div>
           </div>
         )}

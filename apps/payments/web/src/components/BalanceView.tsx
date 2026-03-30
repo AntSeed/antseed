@@ -42,7 +42,7 @@ export function BalanceView({ balance }: BalanceViewProps) {
             <span className="overview-row-value overview-row-value--accent">${available.toFixed(2)}</span>
           </div>
           <div className="overview-row">
-            <span className="overview-row-label">Reserved in Sessions</span>
+            <span className="overview-row-label">Reserved in Channels</span>
             <span className="overview-row-value">${reserved.toFixed(2)}</span>
           </div>
           {pending > 0 && (

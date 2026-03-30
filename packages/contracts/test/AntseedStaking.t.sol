@@ -32,10 +32,10 @@ contract AntseedStakingTest is Test {
         stats = new AntseedStats();
         staking = new AntseedStaking(address(usdc), address(registry), address(stats));
 
-        // Wire: this test contract is the sessionsContract on both Stats and Staking
+        // Wire: this test contract is the channelsContract on both Stats and Staking
         // so we can call updateStats and increment/decrement sessions directly
-        stats.setSessionsContract(address(this));
-        staking.setSessionsContract(address(this));
+        stats.setChannelsContract(address(this));
+        staking.setChannelsContract(address(this));
         staking.setProtocolReserve(reserve);
 
         // Register sellers on MockERC8004Registry
@@ -212,7 +212,7 @@ contract AntseedStakingTest is Test {
     function test_unstake_revert_activeSessions() public {
         _stakeAs(seller, MIN_STAKE);
 
-        // increment active sessions (we are the sessionsContract)
+        // increment active sessions (we are the channelsContract)
         staking.incrementActiveSessions(seller);
 
         vm.prank(seller);
@@ -330,7 +330,7 @@ contract AntseedStakingTest is Test {
     function test_slash_noReserve_fundsStayInContract() public {
         // Deploy a new staking without reserve
         AntseedStaking staking2 = new AntseedStaking(address(usdc), address(registry), address(stats));
-        staking2.setSessionsContract(address(this));
+        staking2.setChannelsContract(address(this));
         // Don't set protocolReserve
 
         usdc.mint(seller, LARGE_STAKE);
@@ -470,21 +470,21 @@ contract AntseedStakingTest is Test {
     //                        ADMIN
     // ═══════════════════════════════════════════════════════════════════
 
-    function test_setSessionsContract() public {
+    function test_setChannelsContract() public {
         address newSessions = address(0x55);
-        staking.setSessionsContract(newSessions);
-        assertEq(staking.sessionsContract(), newSessions);
+        staking.setChannelsContract(newSessions);
+        assertEq(staking.channelsContract(), newSessions);
     }
 
-    function test_setSessionsContract_revert_notOwner() public {
+    function test_setChannelsContract_revert_notOwner() public {
         vm.prank(seller);
         vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", seller));
-        staking.setSessionsContract(address(0x55));
+        staking.setChannelsContract(address(0x55));
     }
 
-    function test_setSessionsContract_revert_zeroAddress() public {
+    function test_setChannelsContract_revert_zeroAddress() public {
         vm.expectRevert(AntseedStaking.InvalidAddress.selector);
-        staking.setSessionsContract(address(0));
+        staking.setChannelsContract(address(0));
     }
 
     function test_setIdentityRegistry() public {

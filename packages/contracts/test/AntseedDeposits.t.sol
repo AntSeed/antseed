@@ -4,7 +4,7 @@ pragma solidity ^0.8.24;
 import "forge-std/Test.sol";
 import "../AntseedDeposits.sol";
 import "../MockUSDC.sol";
-import {IAntseedSessions} from "../interfaces/IAntseedSessions.sol";
+import {IAntseedChannels} from "../interfaces/IAntseedChannels.sol";
 
 contract AntseedDepositsTest is Test {
     AntseedDeposits public deposits;
@@ -27,7 +27,7 @@ contract AntseedDepositsTest is Test {
         owner = address(this);
         usdc = new MockUSDC();
         deposits = new AntseedDeposits(address(usdc));
-        deposits.setSessionsContract(sessions);
+        deposits.setChannelsContract(sessions);
 
         // Fund test addresses
         usdc.mint(buyer, 1_000_000_000);   // 1000 USDC
@@ -165,7 +165,7 @@ contract AntseedDepositsTest is Test {
     function _mockOperator(address _buyer, address _operator) internal {
         vm.mockCall(
             sessions,
-            abi.encodeWithSelector(IAntseedSessions.operators.selector, _buyer),
+            abi.encodeWithSelector(IAntseedChannels.operators.selector, _buyer),
             abi.encode(_operator)
         );
     }
@@ -465,8 +465,8 @@ contract AntseedDepositsTest is Test {
         // For Ownable + ReentrancyGuard: Ownable has 1 slot (_owner at slot 0),
         // ReentrancyGuard has 1 slot (_status at slot 1). But OZ v5 uses ERC-7201 namespaced storage
         // for Ownable and ReentrancyGuard, so they don't occupy regular slots.
-        // Regular storage starts at slot 0: sessionsContract
-        // slot 0: sessionsContract (address)
+        // Regular storage starts at slot 0: channelsContract
+        // slot 0: channelsContract (address)
         // slot 1: MIN_BUYER_DEPOSIT
         // slot 2: WITHDRAWAL_DELAY
         // slot 3: BUYER_INACTIVITY_PERIOD
@@ -750,21 +750,21 @@ contract AntseedDepositsTest is Test {
     //                       ADMIN FUNCTIONS
     // ═══════════════════════════════════════════════════════════════════
 
-    function test_setSessionsContract_success() public {
+    function test_setChannelsContract_success() public {
         address newSessions = address(0xAA);
-        deposits.setSessionsContract(newSessions);
-        assertEq(deposits.sessionsContract(), newSessions);
+        deposits.setChannelsContract(newSessions);
+        assertEq(deposits.channelsContract(), newSessions);
     }
 
-    function test_setSessionsContract_revert_zeroAddress() public {
+    function test_setChannelsContract_revert_zeroAddress() public {
         vm.expectRevert(AntseedDeposits.InvalidAddress.selector);
-        deposits.setSessionsContract(address(0));
+        deposits.setChannelsContract(address(0));
     }
 
-    function test_setSessionsContract_revert_notOwner() public {
+    function test_setChannelsContract_revert_notOwner() public {
         vm.prank(randomCaller);
         vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", randomCaller));
-        deposits.setSessionsContract(address(0xAA));
+        deposits.setChannelsContract(address(0xAA));
     }
 
     function test_setCreditLimitOverride_success() public {
@@ -879,7 +879,7 @@ contract AntseedDepositsTest is Test {
         deposits.deposit(MIN_DEPOSIT);
 
         // Mock sessions.operators(buyer) to return address(0) — no operator set
-        vm.mockCall(sessions, abi.encodeWithSelector(IAntseedSessions.operators.selector, buyer), abi.encode(address(0)));
+        vm.mockCall(sessions, abi.encodeWithSelector(IAntseedChannels.operators.selector, buyer), abi.encode(address(0)));
 
         vm.prank(randomCaller);
         vm.expectRevert(AntseedDeposits.NotAuthorized.selector);
@@ -899,7 +899,7 @@ contract AntseedDepositsTest is Test {
         vm.warp(block.timestamp + 48 hours + 1);
 
         // Mock sessions.operators(buyer) to return address(0) — no operator set
-        vm.mockCall(sessions, abi.encodeWithSelector(IAntseedSessions.operators.selector, buyer), abi.encode(address(0)));
+        vm.mockCall(sessions, abi.encodeWithSelector(IAntseedChannels.operators.selector, buyer), abi.encode(address(0)));
 
         vm.prank(randomCaller);
         vm.expectRevert(AntseedDeposits.NotAuthorized.selector);
@@ -917,7 +917,7 @@ contract AntseedDepositsTest is Test {
         deposits.requestWithdrawal(buyer, MIN_DEPOSIT);
 
         // Mock sessions.operators(buyer) to return address(0) — no operator set
-        vm.mockCall(sessions, abi.encodeWithSelector(IAntseedSessions.operators.selector, buyer), abi.encode(address(0)));
+        vm.mockCall(sessions, abi.encodeWithSelector(IAntseedChannels.operators.selector, buyer), abi.encode(address(0)));
 
         vm.prank(randomCaller);
         vm.expectRevert(AntseedDeposits.NotAuthorized.selector);

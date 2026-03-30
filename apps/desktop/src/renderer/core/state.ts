@@ -46,7 +46,7 @@ export type ConfigFormData = {
   cryptoChainId: string;
   cryptoRpcUrl: string;
   cryptoDepositsAddress: string;
-  cryptoSessionsAddress: string;
+  cryptoChannelsAddress: string;
   cryptoUsdcAddress: string;
 };
 
@@ -61,7 +61,7 @@ export type ChatServiceOptionEntry = {
   peerLabel: string;
 };
 
-export type ActiveSessionInfo = {
+export type ActiveChannelInfo = {
   reservedUsdc: string;
   peerName: string;
 };
@@ -151,8 +151,8 @@ export type RendererUiState = {
   chatPaymentApprovalError: string | null;
   chatLowBalanceWarning: boolean;
 
-  // --- Active payment sessions (keyed by peerId) ---
-  chatActiveSessions: Map<string, ActiveSessionInfo>;
+  // --- Active payment channels (keyed by peerId) ---
+  chatActiveChannels: Map<string, ActiveChannelInfo>;
 
   // --- Chat display ---
   chatActiveConversation: string | null;
@@ -277,8 +277,8 @@ export function createInitialUiState(): RendererUiState {
     chatPaymentApprovalError: null,
     chatLowBalanceWarning: false,
 
-    // Active payment sessions
-    chatActiveSessions: new Map(),
+    // Active payment channels
+    chatActiveChannels: new Map(),
 
     // Chat
     chatActiveConversation: null,

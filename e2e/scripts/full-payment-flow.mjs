@@ -28,7 +28,7 @@ import {
   loadOrCreateIdentity,
   toPeerId,
   DepositsClient,
-  SessionsClient,
+  ChannelsClient,
   DHTNode,
 } from "../../packages/node/dist/index.js";
 
@@ -49,7 +49,7 @@ const REGISTRY_ADDRESS = "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"; // nonce 
 const STATS_ADDRESS    = "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9"; // nonce 3
 const STAKING_ADDRESS  = "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9"; // nonce 4
 const DEPOSITS_ADDRESS = "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707"; // nonce 5
-const SESSIONS_ADDRESS = "0x0165878A594ca255338adfa4d48449f69242Eb8F"; // nonce 6
+const CHANNELS_ADDRESS = "0x0165878A594ca255338adfa4d48449f69242Eb8F"; // nonce 6
 
 const FUND_ETH = "2ether";
 const USDC_MINT_AMOUNT = "100000000"; // 100 USDC (6 decimals)
@@ -286,7 +286,7 @@ async function main() {
     info(`Stats:         ${STATS_ADDRESS}`);
     info(`Staking:       ${STAKING_ADDRESS}`);
     info(`Deposits:      ${DEPOSITS_ADDRESS}`);
-    info(`Sessions:      ${SESSIONS_ADDRESS}`);
+    info(`Channels:      ${CHANNELS_ADDRESS}`);
     pass("Contracts deployed and wired");
     record("1-deploy", true);
 
@@ -393,7 +393,7 @@ async function main() {
         platformFeeRate: 0.05,
         rpcUrl: RPC_URL,
         depositsAddress: DEPOSITS_ADDRESS,
-        sessionsAddress: SESSIONS_ADDRESS,
+        channelsAddress: CHANNELS_ADDRESS,
         stakingAddress: STAKING_ADDRESS,
         identityRegistryAddress: REGISTRY_ADDRESS,
         statsAddress: STATS_ADDRESS,
@@ -429,7 +429,7 @@ async function main() {
         platformFeeRate: 0.05,
         rpcUrl: RPC_URL,
         depositsAddress: DEPOSITS_ADDRESS,
-        sessionsAddress: SESSIONS_ADDRESS,
+        channelsAddress: CHANNELS_ADDRESS,
         stakingAddress: STAKING_ADDRESS,
         identityRegistryAddress: REGISTRY_ADDRESS,
         statsAddress: STATS_ADDRESS,
@@ -565,14 +565,14 @@ async function main() {
     }
 
     // Check session on-chain
-    const sessionsClient = new SessionsClient({
+    const channelsClient = new ChannelsClient({
       rpcUrl: RPC_URL,
-      contractAddress: SESSIONS_ADDRESS,
+      contractAddress: CHANNELS_ADDRESS,
     });
 
     let sessionInfo;
     try {
-      sessionInfo = await sessionsClient.getSession(activeSessionId);
+      sessionInfo = await channelsClient.getSession(activeSessionId);
       info(`On-chain session status: ${sessionInfo.status} (0=Active, 1=Settled)`);
       if (sessionInfo.status === 0) {
         pass("Session is Active on-chain");
@@ -625,7 +625,7 @@ async function main() {
     // Verify session is settled (activeSessionId is an internal UUID, not the
     // on-chain channelId — wrap in try/catch since this is informational)
     try {
-      const settledSession = await sessionsClient.getSession(activeSessionId);
+      const settledSession = await channelsClient.getSession(activeSessionId);
       if (settledSession.status === 1) {
         pass("Session status = Settled (1)");
       } else {

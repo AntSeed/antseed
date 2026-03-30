@@ -15,7 +15,7 @@ import {IANTSToken} from "./interfaces/IANTSToken.sol";
 contract AntseedEmissions is Ownable, ReentrancyGuard {
     // ─── Configuration (all owner-settable) ───
     IANTSToken public antsToken;
-    address public sessionsContract;
+    address public channelsContract;
     address public reserveDestination;
 
     uint256 public EPOCH_DURATION;
@@ -76,8 +76,8 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
     error InvalidSharePercentages();
 
     // ─── Modifiers ───
-    modifier onlySessions() {
-        if (msg.sender != sessionsContract) revert NotAuthorized();
+    modifier onlyChannels() {
+        if (msg.sender != channelsContract) revert NotAuthorized();
         _;
     }
 
@@ -178,7 +178,7 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
         sr.rewardPerPointPaid = sellerRewardPerPointStored;
     }
 
-    function accrueSellerPoints(address seller, uint256 pointsDelta) external onlySessions {
+    function accrueSellerPoints(address seller, uint256 pointsDelta) external onlyChannels {
         _updateSellerAccount(seller);
         sellerRewards[seller].points += pointsDelta;
         totalSellerPoints += pointsDelta;
@@ -205,7 +205,7 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
         br.rewardPerPointPaid = buyerRewardPerPointStored;
     }
 
-    function accrueBuyerPoints(address buyer, uint256 pointsDelta) external onlySessions {
+    function accrueBuyerPoints(address buyer, uint256 pointsDelta) external onlyChannels {
         _updateBuyerAccount(buyer);
         buyerRewards[buyer].points += pointsDelta;
         totalBuyerPoints += pointsDelta;
@@ -289,9 +289,9 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
     //                        ADMIN FUNCTIONS
     // ═══════════════════════════════════════════════════════════════════
 
-    function setSessionsContract(address _sessions) external onlyOwner {
-        if (_sessions == address(0)) revert InvalidAddress();
-        sessionsContract = _sessions;
+    function setChannelsContract(address _channels) external onlyOwner {
+        if (_channels == address(0)) revert InvalidAddress();
+        channelsContract = _channels;
     }
 
     function setReserveDestination(address _dest) external onlyOwner {

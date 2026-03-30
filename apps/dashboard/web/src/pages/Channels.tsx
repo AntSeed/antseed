@@ -8,7 +8,7 @@ import {
   createColumnHelper,
   SortingState,
 } from '@tanstack/react-table';
-import { SessionsResponse } from './api-types';
+import { ChannelsResponse } from './api-types';
 import { SessionMetrics } from './shared-types';
 import { debugError } from '../utils/debug';
 
@@ -57,26 +57,26 @@ function formatDuration(ms: number): string {
   return `${h}h ${m % 60}m`;
 }
 
-export function Sessions() {
-  const [sessions, setSessions] = useState<SessionMetrics[]>([]);
+export function Channels() {
+  const [channels, setChannels] = useState<SessionMetrics[]>([]);
   const [total, setTotal] = useState(0);
   const [sorting, setSorting] = useState<SortingState>([]);
 
   useEffect(() => {
-    fetch('/api/sessions')
+    fetch('/api/channels')
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
       })
-      .then((data: SessionsResponse) => {
-        setSessions(data.sessions);
+      .then((data: ChannelsResponse) => {
+        setChannels(data.channels);
         setTotal(data.total);
       })
       .catch(debugError);
   }, []);
 
   const table = useReactTable({
-    data: sessions,
+    data: channels,
     columns,
     state: { sorting },
     onSortingChange: setSorting,
@@ -85,9 +85,9 @@ export function Sessions() {
   });
 
   return (
-    <div className="sessions-page">
+    <div className="channels-page">
       <div className="page-header">
-        <h2>Sessions ({total})</h2>
+        <h2>Channels ({total})</h2>
       </div>
       <div className="table-container">
         <table className="data-table">

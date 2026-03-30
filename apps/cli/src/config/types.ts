@@ -122,8 +122,8 @@ export interface PaymentsCLIConfig {
     rpcUrl: string;
     /** Deployed AntseedDeposits contract address */
     depositsContractAddress: string;
-    /** Deployed AntseedSessions contract address */
-    sessionsContractAddress: string;
+    /** Deployed AntseedChannels contract address */
+    channelsContractAddress: string;
     /** Deployed AntseedStaking contract address */
     stakingContractAddress?: string;
     /** USDC token contract address */

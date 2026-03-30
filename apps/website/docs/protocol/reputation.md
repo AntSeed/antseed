@@ -11,7 +11,7 @@ AntSeed derives on-chain stats directly from payment settlement. Per-agent metri
 
 ## On-Chain Stats (AntseedStats)
 
-Each seller's ERC-8004 agentId maintains the following counters in the AntseedStats contract, updated by AntseedSessions during settlement:
+Each seller's ERC-8004 agentId maintains the following counters in the AntseedStats contract, updated by AntseedChannels during settlement:
 
 | Counter | Updated During | Description |
 |---|---|---|
@@ -23,7 +23,7 @@ No counter can be incremented without a corresponding on-chain state transition.
 
 ## Staking
 
-Sellers stake USDC via AntseedStaking, binding their stake to an ERC-8004 agentId. Minimum stake: 10 USDC. An unstaked seller cannot have `reserve()` called on AntseedSessions.
+Sellers stake USDC via AntseedStaking, binding their stake to an ERC-8004 agentId. Minimum stake: 10 USDC. An unstaked seller cannot have `reserve()` called on AntseedChannels.
 
 ## ERC-8004 Feedback
 

@@ -45,8 +45,8 @@ export interface CryptoPaymentConfig {
   rpcUrl: string;
   /** Deployed AntseedDeposits contract address */
   depositsContractAddress: string;
-  /** Deployed AntseedSessions contract address */
-  sessionsContractAddress: string;
+  /** Deployed AntseedChannels contract address */
+  channelsContractAddress: string;
   /** USDC token contract address */
   usdcAddress: string;
   /** Default lock amount for new sessions (USDC base units as string, e.g. "1000000" = 1 USDC) */

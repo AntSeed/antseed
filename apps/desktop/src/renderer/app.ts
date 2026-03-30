@@ -426,7 +426,7 @@ registerActions({
 
         const peerId = uiState.chatPaymentApprovalPeerId;
         if (peerId) {
-          uiState.chatActiveSessions.set(peerId, {
+          uiState.chatActiveChannels.set(peerId, {
             reservedUsdc: uiState.chatPaymentApprovalAmount,
             peerName: uiState.chatPaymentApprovalPeerName || 'Peer',
           });
@@ -474,8 +474,8 @@ registerActions({
     uiState.chatPaymentApprovalError = null;
     notifyUiStateChanged();
   },
-  requestSessionClose: () => {
-    void bridge?.paymentsOpenPortal?.('sessions');
+  requestChannelClose: () => {
+    void bridge?.paymentsOpenPortal?.('channels');
   },
   refreshCredits: () => void creditsApi.refreshCredits(),
   refreshPlugins: refreshPluginInventory,

@@ -264,7 +264,7 @@ export function registerSeedCommand(program: Command): void {
           chainId: config.payments.crypto?.chainId,
           rpcUrl: config.payments.crypto?.rpcUrl,
           depositsContractAddress: config.payments.crypto?.depositsContractAddress,
-          sessionsContractAddress: config.payments.crypto?.sessionsContractAddress,
+          channelsContractAddress: config.payments.crypto?.channelsContractAddress,
           usdcContractAddress: config.payments.crypto?.usdcContractAddress,
         })
         const defaultLockAmountUSDCBaseUnits = toUSDCBaseUnits(
@@ -275,7 +275,7 @@ export function registerSeedCommand(program: Command): void {
           chainId: cc.chainId,
           rpcUrl: cc.rpcUrl,
           depositsContractAddress: cc.depositsContractAddress,
-          sessionsContractAddress: cc.sessionsContractAddress,
+          channelsContractAddress: cc.channelsContractAddress,
           usdcAddress: cc.usdcContractAddress,
           defaultLockAmountUSDC: defaultLockAmountUSDCBaseUnits,
         }
@@ -355,7 +355,7 @@ export function registerSeedCommand(program: Command): void {
           ...(paymentConfig?.crypto ? {
             rpcUrl: paymentConfig.crypto.rpcUrl,
             depositsAddress: paymentConfig.crypto.depositsContractAddress,
-            sessionsAddress: paymentConfig.crypto.sessionsContractAddress,
+            channelsAddress: paymentConfig.crypto.channelsContractAddress,
             usdcAddress: paymentConfig.crypto.usdcAddress,
             identityRegistryAddress: resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).identityRegistryAddress,
             statsAddress: resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).statsContractAddress,
@@ -564,7 +564,7 @@ export function registerSeedCommand(program: Command): void {
         nodeSpinner.start('Shutting down seeding daemon...')
         await node.stop()
         await unlink(getStateFile(globalOpts.dataDir)).catch(() => {})
-        nodeSpinner.succeed('Seeding daemon stopped. Sessions finalized.')
+        nodeSpinner.succeed('Seeding daemon stopped. Channels finalized.')
       })
     })
 }

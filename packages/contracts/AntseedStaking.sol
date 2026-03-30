@@ -22,7 +22,7 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
     IERC20 public immutable usdc;
     IERC8004Registry public identityRegistry;
     IAntseedStats public statsContract;
-    address public sessionsContract;
+    address public channelsContract;
     address public protocolReserve;
 
     // ─── Structs ────────────────────────────────────────────────────────
@@ -56,8 +56,8 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
     error NotAgentOwner();
 
     // ─── Modifiers ──────────────────────────────────────────────────────
-    modifier onlySessions() {
-        if (msg.sender != sessionsContract) revert NotAuthorized();
+    modifier onlyChannels() {
+        if (msg.sender != channelsContract) revert NotAuthorized();
         _;
     }
 
@@ -162,11 +162,11 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
     }
 
     // ─── Privileged — Sessions Only ─────────────────────────────────────
-    function incrementActiveSessions(address seller) external onlySessions {
+    function incrementActiveSessions(address seller) external onlyChannels {
         activeSessionCount[seller]++;
     }
 
-    function decrementActiveSessions(address seller) external onlySessions {
+    function decrementActiveSessions(address seller) external onlyChannels {
         if (activeSessionCount[seller] == 0) revert InvalidAmount();
         activeSessionCount[seller]--;
     }
@@ -208,9 +208,9 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
     //                        ADMIN
     // ═══════════════════════════════════════════════════════════════════
 
-    function setSessionsContract(address _sessions) external onlyOwner {
-        if (_sessions == address(0)) revert InvalidAddress();
-        sessionsContract = _sessions;
+    function setChannelsContract(address _channels) external onlyOwner {
+        if (_channels == address(0)) revert InvalidAddress();
+        channelsContract = _channels;
     }
 
     function setIdentityRegistry(address _registry) external onlyOwner {

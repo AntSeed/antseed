@@ -5,15 +5,15 @@ export interface ChainConfig {
   evmChainId: number;
   rpcUrl: string;
   depositsContractAddress: string;
-  sessionsContractAddress: string;
+  channelsContractAddress: string;
   stakingContractAddress?: string;
   usdcContractAddress: string;
   identityRegistryAddress?: string;
   statsContractAddress?: string;
   emissionsContractAddress?: string;
   subPoolContractAddress?: string;
-  /** Block when Sessions contract was deployed. Floor for event log scans. */
-  sessionsDeployBlock?: number;
+  /** Block when Channels contract was deployed. Floor for event log scans. */
+  channelsDeployBlock?: number;
 }
 
 /**
@@ -27,7 +27,7 @@ const CHAIN_CONFIGS: Record<ChainId, ChainConfig> = {
     evmChainId: 8453,
     rpcUrl: 'https://mainnet.base.org',
     depositsContractAddress: '0x0000000000000000000000000000000000000000', // TODO: deploy and fill
-    sessionsContractAddress: '0x0000000000000000000000000000000000000000', // TODO: deploy and fill
+    channelsContractAddress: '0x0000000000000000000000000000000000000000', // TODO: deploy and fill
     usdcContractAddress: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', // USDC on Base
   },
   'base-sepolia': {
@@ -35,7 +35,7 @@ const CHAIN_CONFIGS: Record<ChainId, ChainConfig> = {
     evmChainId: 84532,
     rpcUrl: 'https://sepolia.base.org',
     depositsContractAddress: '0x0000000000000000000000000000000000000000', // TODO: deploy and fill
-    sessionsContractAddress: '0x0000000000000000000000000000000000000000', // TODO: deploy and fill
+    channelsContractAddress: '0x0000000000000000000000000000000000000000', // TODO: deploy and fill
     usdcContractAddress: '0x036CbD53842c5426634e7929541eC2318f3dCF7e', // USDC on Base Sepolia
   },
   'base-local': {
@@ -48,7 +48,7 @@ const CHAIN_CONFIGS: Record<ChainId, ChainConfig> = {
     statsContractAddress: '0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9',
     stakingContractAddress: '0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9',
     depositsContractAddress: '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707',
-    sessionsContractAddress: '0x0165878A594ca255338adfa4d48449f69242Eb8F',
+    channelsContractAddress: '0x0165878A594ca255338adfa4d48449f69242Eb8F',
     emissionsContractAddress: '0xa513E6E4b8f2a923D98304ec87F64353C4D5C853',
     subPoolContractAddress: '0x2279B7A0a67DB372996a5FaB50D91eAA73d2eBe6',
   },
@@ -74,7 +74,7 @@ export function resolveChainConfig(overrides?: {
   chainId?: ChainId | string;
   rpcUrl?: string;
   depositsContractAddress?: string;
-  sessionsContractAddress?: string;
+  channelsContractAddress?: string;
   stakingContractAddress?: string;
   usdcContractAddress?: string;
   identityRegistryAddress?: string;
@@ -87,7 +87,7 @@ export function resolveChainConfig(overrides?: {
     ...base,
     ...(overrides?.rpcUrl ? { rpcUrl: overrides.rpcUrl } : {}),
     ...(overrides?.depositsContractAddress ? { depositsContractAddress: overrides.depositsContractAddress } : {}),
-    ...(overrides?.sessionsContractAddress ? { sessionsContractAddress: overrides.sessionsContractAddress } : {}),
+    ...(overrides?.channelsContractAddress ? { channelsContractAddress: overrides.channelsContractAddress } : {}),
     ...(overrides?.stakingContractAddress ? { stakingContractAddress: overrides.stakingContractAddress } : {}),
     ...(overrides?.usdcContractAddress ? { usdcContractAddress: overrides.usdcContractAddress } : {}),
     ...(overrides?.identityRegistryAddress ? { identityRegistryAddress: overrides.identityRegistryAddress } : {}),

@@ -1,7 +1,7 @@
 import type { AntseedConfig } from '../config/types.js';
 import {
   DepositsClient,
-  SessionsClient,
+  ChannelsClient,
   StakingClient,
   loadOrCreateIdentity,
 } from '@antseed/node';
@@ -80,13 +80,13 @@ export function createDepositsClient(config: AntseedConfig): DepositsClient {
 }
 
 /**
- * Create a SessionsClient from the CLI config.
+ * Create a ChannelsClient from the CLI config.
  */
-export function createSessionsClient(config: AntseedConfig): SessionsClient {
+export function createChannelsClient(config: AntseedConfig): ChannelsClient {
   const crypto = requireCryptoConfig(config);
-  return new SessionsClient({
+  return new ChannelsClient({
     rpcUrl: crypto.rpcUrl,
-    contractAddress: crypto.sessionsContractAddress,
+    contractAddress: crypto.channelsContractAddress,
   });
 }
 

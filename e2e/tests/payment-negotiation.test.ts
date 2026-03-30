@@ -77,7 +77,7 @@ describe('Payment negotiation: seller sends PaymentRequired on 402', () => {
         // but SellerPaymentManager won't be fully initialized (no tokenRate).
         rpcUrl: 'http://127.0.0.1:1', // unreachable — intentional
         depositsAddress: '0x' + 'dd'.repeat(20),
-        sessionsAddress: '0x' + 'cc'.repeat(20),
+        channelsAddress: '0x' + 'cc'.repeat(20),
         stakingAddress: '0x' + 'bb'.repeat(20),
         usdcAddress: '0x' + 'ee'.repeat(20),
       },
@@ -177,7 +177,7 @@ describe('Payment negotiation: seller sends PaymentRequired on 402', () => {
         enabled: true,
         rpcUrl: 'http://127.0.0.1:1',
         depositsAddress: '0x' + 'dd'.repeat(20),
-        sessionsAddress: '0x' + 'cc'.repeat(20),
+        channelsAddress: '0x' + 'cc'.repeat(20),
         stakingAddress: '0x' + 'bb'.repeat(20),
         usdcAddress: '0x' + 'ee'.repeat(20),
       },
@@ -198,7 +198,7 @@ describe('Payment negotiation: seller sends PaymentRequired on 402', () => {
         enabled: true,
         rpcUrl: 'http://127.0.0.1:1',
         depositsAddress: '0x' + 'dd'.repeat(20),
-        sessionsAddress: '0x' + 'cc'.repeat(20),
+        channelsAddress: '0x' + 'cc'.repeat(20),
         stakingAddress: '0x' + 'bb'.repeat(20),
         usdcAddress: '0x' + 'ee'.repeat(20),
       },
