@@ -20,7 +20,7 @@ export interface PricingTier {
 
 /**
  * A discrete offering that a peer advertises via DHT capability topics.
- * Skills are loaded dynamically via the BoundAgentProvider in @antseed/bound-agent.
+ * Skills are loaded dynamically via the AntAgentProvider in @antseed/ant-agent.
  */
 export interface PeerOffering {
   capability: ProviderCapability;

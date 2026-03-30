@@ -13,12 +13,12 @@ importers:
 
   apps/cli:
     dependencies:
+      '@antseed/ant-agent':
+        specifier: workspace:*
+        version: link:../../packages/ant-agent
       '@antseed/api-adapter':
         specifier: workspace:*
         version: link:../../packages/api-adapter
-      '@antseed/bound-agent':
-        specifier: workspace:*
-        version: link:../../packages/bound-agent
       '@antseed/dashboard':
         specifier: workspace:*
         version: link:../dashboard
@@ -381,8 +381,11 @@ importers:
         specifier: ^1.2.0
         version: 1.6.1(@types/node@20.19.33)(sass@1.97.3)(terser@5.46.0)
 
-  packages/api-adapter:
+  packages/ant-agent:
     devDependencies:
+      '@antseed/node':
+        specifier: workspace:*
+        version: link:../node
       typescript:
         specifier: ^5.5.0
         version: 5.9.3
@@ -390,11 +393,8 @@ importers:
         specifier: ^2.0.0
         version: 2.1.9(@types/node@22.7.5)(sass@1.97.3)(terser@5.46.0)
 
-  packages/bound-agent:
+  packages/api-adapter:
     devDependencies:
-      '@antseed/node':
-        specifier: workspace:*
-        version: link:../node
       typescript:
         specifier: ^5.5.0
         version: 5.9.3

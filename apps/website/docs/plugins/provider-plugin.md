@@ -87,9 +87,9 @@ export default {
 
 `services` should represent the service IDs buyers will request on the network. A provider can still rewrite to different upstream model IDs internally (for example, announce `kimi2.5` and forward upstream as `together/kimi2.5`).
 
-## Bound Agent
+## Ant Agent
 
-Providers can differentiate their service by wrapping it with a **bound agent** — a knowledge-augmented AI service that injects a persona, guardrails, on-demand knowledge, and custom tools into buyer requests. No plugin code required; the CLI handles it via `@antseed/bound-agent`.
+Providers can differentiate their service by wrapping it with a **ant agent** — a knowledge-augmented AI service that injects a persona, guardrails, on-demand knowledge, and custom tools into buyer requests. No plugin code required; the CLI handles it via `@antseed/ant-agent`.
 
 ```json title="antseed.config.json"
 {
@@ -122,7 +122,7 @@ The agent directory contains an `agent.json` manifest:
 
 The LLM receives the persona, guardrails, and `antseed_*` prefixed tools. It decides when to load knowledge or call custom tools during the conversation. Buyers only see the final response — no internal tools or loop artifacts are exposed.
 
-See the [`@antseed/bound-agent` README](https://github.com/AntSeed/antseed/tree/main/packages/bound-agent) for the full manifest reference and custom tool documentation.
+See the [`@antseed/ant-agent` README](https://github.com/AntSeed/antseed/tree/main/packages/ant-agent) for the full manifest reference and custom tool documentation.
 
 ## Peer Offering
 

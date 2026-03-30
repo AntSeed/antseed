@@ -72,7 +72,7 @@ export interface SellerCLIConfig {
   /** Optional provider/service category tags announced in peer metadata */
   serviceCategories?: SellerServiceCategoryConfig;
   /**
-   * Bound agent configuration. Can be:
+   * Ant agent configuration. Can be:
    * - A string path to a single agent directory (applies to all services)
    * - A record mapping service IDs to agent directory paths (per-service agents).
    *   Use `"*"` key as a fallback for unmatched services.

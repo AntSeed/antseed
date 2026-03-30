@@ -30,10 +30,10 @@ export type LoopAction =
   | { type: 'done' };
 
 /**
- * A tool that the bound agent can use during the agent loop.
+ * A tool that the ant agent can use during the agent loop.
  * The tool name is automatically prefixed with `antseed_` when injected.
  */
-export interface BoundAgentTool {
+export interface AntAgentTool {
   /** Tool name (without the antseed_ prefix — it's added automatically). */
   name: string;
   /** Description shown to the LLM. */
@@ -48,7 +48,7 @@ export interface BoundAgentTool {
  * Create a knowledge-loading tool from a set of knowledge modules.
  * The module catalog is embedded in the tool description.
  */
-export function knowledgeTool(modules: KnowledgeModule[]): BoundAgentTool {
+export function knowledgeTool(modules: KnowledgeModule[]): AntAgentTool {
   const catalog = modules.map(m => `- ${m.name}: ${m.description}`).join('\n');
   return {
     name: 'load_knowledge',
@@ -85,7 +85,7 @@ export function isToolChoiceForced(body: Record<string, unknown>): boolean {
   return false;
 }
 
-function toApiFormat(tool: BoundAgentTool, format: RequestFormat): Record<string, unknown> {
+function toApiFormat(tool: AntAgentTool, format: RequestFormat): Record<string, unknown> {
   const prefixedName = `${TOOL_PREFIX}${tool.name}`;
   if (format === 'openai') {
     return { type: 'function', function: { name: prefixedName, description: tool.description, parameters: tool.parameters } };
@@ -102,7 +102,7 @@ function toApiFormat(tool: BoundAgentTool, format: RequestFormat): Record<string
  */
 export function injectTools(
   body: Record<string, unknown>,
-  tools: BoundAgentTool[],
+  tools: AntAgentTool[],
   format: RequestFormat,
 ): Record<string, unknown> {
   if (tools.length === 0) return body;
@@ -200,7 +200,7 @@ function extractToolCalls(
  */
 export async function executeTools(
   calls: InternalToolCall[],
-  tools: BoundAgentTool[],
+  tools: AntAgentTool[],
 ): Promise<ToolResult[]> {
   return Promise.all(calls.map(async (call) => {
     const unprefixed = call.name.startsWith(TOOL_PREFIX)

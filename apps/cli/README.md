@@ -119,9 +119,9 @@ Pricing is configured in USD per 1M tokens with role-specific defaults and optio
 
 Service categories are normalized to lowercase tags. Recommended tags include: `privacy`, `legal`, `uncensored`, `coding`, `finance`, `tee` (custom tags are also allowed).
 
-### Bound Agent
+### Ant Agent
 
-Providers can wrap their service with a bound agent — a read-only, knowledge-augmented AI service that injects a persona, guardrails, and on-demand loaded knowledge into buyer requests.
+Providers can wrap their service with an ant agent — a read-only, knowledge-augmented AI service that injects a persona, guardrails, and on-demand loaded knowledge into buyer requests.
 
 ```json
 {
@@ -133,7 +133,7 @@ Providers can wrap their service with a bound agent — a read-only, knowledge-a
 
 The agent directory contains an `agent.json` manifest that defines the agent's persona, guardrails, and knowledge modules. Knowledge modules are loaded on demand via the `antseed_load_knowledge` tool — the LLM decides which modules to load during the conversation and only relevant knowledge is brought into context. Buyers only see the LLM's natural response, never the injected content or internal tool calls.
 
-See the [`@antseed/bound-agent` README](../../packages/bound-agent/README.md) for the full manifest reference and directory structure.
+See the [`@antseed/ant-agent` README](../../packages/ant-agent/README.md) for the full manifest reference and directory structure.
 
 Role-first config examples:
 
