@@ -207,8 +207,8 @@ export function Overview() {
         />
         <StatCard label="Uptime" value={status.uptime} />
         <StatCard
-          label="Active Sessions"
-          value={String(status.activeSessions)}
+          label="Active Channels"
+          value={String(status.activeChannels)}
         />
         <StatCard
           label="Wallet"
@@ -232,8 +232,8 @@ export function Overview() {
                 <span className="capacity-val mono">{status.proxyPort ?? '-'}</span>
               </div>
               <div className="capacity-row">
-                <span className="capacity-label">Sessions</span>
-                <span className="capacity-val">{status.activeSessions}</span>
+                <span className="capacity-label">Channels</span>
+                <span className="capacity-val">{status.activeChannels}</span>
               </div>
               <div className="capacity-row">
                 <span className="capacity-label">Peers</span>

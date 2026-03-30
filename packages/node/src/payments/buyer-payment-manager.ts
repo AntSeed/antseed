@@ -11,7 +11,7 @@ import { DepositsClient } from './evm/deposits-client.js';
 import {
   signSpendingAuth,
   signReserveAuth,
-  makeSessionsDomain,
+  makeChannelsDomain,
   computeMetadataHash,
   encodeMetadata,
   ZERO_METADATA,
@@ -38,7 +38,7 @@ const DEFAULT_TOPUP_THRESHOLD = 0.85;
 export interface BuyerPaymentConfig {
   rpcUrl: string;
   depositsContractAddress: string;
-  sessionsContractAddress: string;
+  channelsContractAddress: string;
   usdcAddress: string;
   identityRegistryAddress: string;
   chainId: number;
@@ -96,7 +96,7 @@ export class BuyerPaymentManager {
   private readonly _reserveSalt = new Map<string, string>();
 
   /** Cached EIP-712 domain — static for the lifetime of this manager. */
-  private readonly _sessionsDomain: ReturnType<typeof makeSessionsDomain>;
+  private readonly _channelsDomain: ReturnType<typeof makeChannelsDomain>;
 
   constructor(identity: Identity, config: BuyerPaymentConfig, sessionStore: SessionStore) {
     this._identity = identity;
@@ -108,7 +108,7 @@ export class BuyerPaymentManager {
       usdcAddress: config.usdcAddress,
     });
     this._sessionStore = sessionStore;
-    this._sessionsDomain = makeSessionsDomain(config.chainId, config.sessionsContractAddress);
+    this._channelsDomain = makeChannelsDomain(config.chainId, config.channelsContractAddress);
 
     // Hydrate cumulative maps from persisted active sessions
     this._hydrateFromStore();
@@ -204,7 +204,7 @@ export class BuyerPaymentManager {
     debugLog(`[BuyerPayment] authorizeSpending: channel=${channelId.slice(0, 18)}... seller=${sellerPeerId.slice(0, 12)}... amount=${minBudgetPerRequest}`);
 
     // Sign ReserveAuth — binds channelId, maxAmount, deadline on-chain
-    const sessionsDomain = this._sessionsDomain;
+    const sessionsDomain = this._channelsDomain;
     const maxAmount = this._config.maxReserveAmountUsdc;
     const reserveMsg: ReserveAuthMessage = {
       channelId,
@@ -436,7 +436,7 @@ export class BuyerPaymentManager {
     const encodedMetadata = encodeMetadata(newMeta);
 
     // Sign EIP-712 SpendingAuth
-    const sessionsDomain = this._sessionsDomain;
+    const sessionsDomain = this._channelsDomain;
     const metadataMsg: SpendingAuthMessage = {
       channelId: session.sessionId,
       cumulativeAmount: newAmount,
@@ -517,7 +517,7 @@ export class BuyerPaymentManager {
     const metadataHashHex = computeMetadataHash(currentMeta);
     const encodedMetadata = encodeMetadata(currentMeta);
 
-    const sessionsDomain = this._sessionsDomain;
+    const sessionsDomain = this._channelsDomain;
     const metadataMsg: SpendingAuthMessage = {
       channelId: session.sessionId,
       cumulativeAmount: effectiveAmount,
@@ -571,7 +571,7 @@ export class BuyerPaymentManager {
     debugLog(`[BuyerPayment] topUpReserve: channel=${session.sessionId.slice(0, 18)}... ceiling ${prevCeiling} → ${newCeiling}`);
 
     // Sign ReserveAuth with new maxAmount
-    const sessionsDomain = this._sessionsDomain;
+    const sessionsDomain = this._channelsDomain;
     const reserveMsg: ReserveAuthMessage = {
       channelId: session.sessionId,
       maxAmount: newCeiling,

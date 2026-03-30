@@ -2,10 +2,10 @@ import { useState, useEffect, useCallback } from 'react';
 import { useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { parseAbi } from 'viem';
 import type { PaymentConfig } from '../types';
-import { getSessions, getOperatorInfo, type SessionData } from '../api';
-import { SESSIONS_ABI } from '../sessions-abi';
+import { getChannels, getOperatorInfo, type ChannelData } from '../api';
+import { CHANNELS_ABI } from '../channels-abi';
 
-interface SessionsViewProps {
+interface ChannelsViewProps {
   config: PaymentConfig | null;
 }
 
@@ -17,7 +17,7 @@ function truncateAddress(addr: string): string {
 
 type SessionStatus = 'active' | 'closing' | 'withdrawable';
 
-function getSessionStatus(session: SessionData): SessionStatus {
+function getSessionStatus(session: ChannelData): SessionStatus {
   if (session.closeRequestedAt === 0) return 'active';
   const now = Math.floor(Date.now() / 1000);
   if (now < session.closeRequestedAt + GRACE_PERIOD) return 'closing';
@@ -55,9 +55,9 @@ function formatTimeRemaining(closeRequestedAt: number): string {
   return `${mins}:${secs.toString().padStart(2, '0')}`;
 }
 
-const parsedAbi = parseAbi(SESSIONS_ABI);
+const parsedAbi = parseAbi(CHANNELS_ABI);
 
-function SessionCard({ session, config, onRefresh }: { session: SessionData; config: PaymentConfig; onRefresh: () => void }) {
+function SessionCard({ session, config, onRefresh }: { session: ChannelData; config: PaymentConfig; onRefresh: () => void }) {
   const status = getSessionStatus(session);
 
   const {
@@ -80,21 +80,21 @@ function SessionCard({ session, config, onRefresh }: { session: SessionData; con
 
   const handleRequestClose = useCallback(() => {
     writeRequestClose({
-      address: config.sessionsContractAddress as `0x${string}`,
+      address: config.channelsContractAddress as `0x${string}`,
       abi: parsedAbi,
       functionName: 'requestClose',
       args: [session.channelId as `0x${string}`],
     });
-  }, [config.sessionsContractAddress, session.channelId, writeRequestClose]);
+  }, [config.channelsContractAddress, session.channelId, writeRequestClose]);
 
   const handleWithdraw = useCallback(() => {
     writeWithdraw({
-      address: config.sessionsContractAddress as `0x${string}`,
+      address: config.channelsContractAddress as `0x${string}`,
       abi: parsedAbi,
       functionName: 'withdraw',
       args: [session.channelId as `0x${string}`],
     });
-  }, [config.sessionsContractAddress, session.channelId, writeWithdraw]);
+  }, [config.channelsContractAddress, session.channelId, writeWithdraw]);
 
   return (
     <div style={{
@@ -145,19 +145,19 @@ function SessionCard({ session, config, onRefresh }: { session: SessionData; con
   );
 }
 
-export function SessionsView({ config }: SessionsViewProps) {
-  const [sessions, setSessions] = useState<SessionData[]>([]);
+export function ChannelsView({ config }: ChannelsViewProps) {
+  const [channels, setChannels] = useState<ChannelData[]>([]);
   const [loading, setLoading] = useState(true);
   const [operatorSet, setOperatorSet] = useState<boolean | null>(null);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const [sessionsResult, operatorResult] = await Promise.all([
-        getSessions().catch(() => ({ sessions: [] })),
+      const [channelsResult, operatorResult] = await Promise.all([
+        getChannels().catch(() => ({ channels: [] })),
         getOperatorInfo().catch(() => null),
       ]);
-      setSessions(sessionsResult.sessions);
+      setChannels(channelsResult.channels);
       if (operatorResult) {
         setOperatorSet(operatorResult.operator !== '0x0000000000000000000000000000000000000000');
       }
@@ -173,7 +173,7 @@ export function SessionsView({ config }: SessionsViewProps) {
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <div className="card-section-title" style={{ marginBottom: 0 }}>Active Sessions</div>
+        <div className="card-section-title" style={{ marginBottom: 0 }}>Active Channels</div>
         <button
           className="btn-outline"
           onClick={fetchData}
@@ -185,20 +185,20 @@ export function SessionsView({ config }: SessionsViewProps) {
 
       {operatorSet === false && (
         <div className="status-msg" style={{ marginTop: 0, marginBottom: 16, fontSize: 12, color: 'var(--text-secondary)' }}>
-          No operator set. Deposit credits to set up your wallet as the session operator.
+          No operator set. Deposit credits to set up your wallet as the channel operator.
         </div>
       )}
 
       {loading ? (
         <div style={{ textAlign: 'center', padding: 32, color: 'var(--text-muted)', fontSize: 13 }}>
-          Loading sessions...
+          Loading channels...
         </div>
-      ) : sessions.length === 0 ? (
+      ) : channels.length === 0 ? (
         <div style={{ textAlign: 'center', padding: 32, color: 'var(--text-muted)', fontSize: 13 }}>
-          No active sessions
+          No active channels
         </div>
       ) : (
-        config && sessions.map((session) => (
+        config && channels.map((session) => (
           <SessionCard key={session.channelId} session={session} config={config} onRefresh={fetchData} />
         ))
       )}

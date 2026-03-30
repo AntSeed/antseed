@@ -20,9 +20,9 @@ export { BaseEvmClient } from './evm/base-evm-client.js';
 export { DepositsClient } from './evm/deposits-client.js';
 export type { DepositsClientConfig, BuyerBalanceInfo } from './evm/deposits-client.js';
 
-// Sessions client (reserve, settle, timeout)
-export { SessionsClient } from './evm/sessions-client.js';
-export type { SessionsClientConfig, SessionInfo } from './evm/sessions-client.js';
+// Channels client (reserve, settle, timeout)
+export { ChannelsClient } from './evm/channels-client.js';
+export type { ChannelsClientConfig, ChannelInfo } from './evm/channels-client.js';
 
 // Identity client (ERC-8004 IdentityRegistry)
 export { IdentityClient } from './evm/identity-client.js';
@@ -40,7 +40,7 @@ export {
   signSpendingAuth,
   signReserveAuth,
   signSetOperator,
-  makeSessionsDomain,
+  makeChannelsDomain,
   SPENDING_AUTH_TYPES,
   RESERVE_AUTH_TYPES,
   SET_OPERATOR_TYPES,

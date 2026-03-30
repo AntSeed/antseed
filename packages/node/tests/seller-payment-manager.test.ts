@@ -11,7 +11,7 @@ import type { SpendingAuthPayload } from '../src/types/protocol.js';
 import { bytesToHex } from '../src/utils/hex.js';
 import { toPeerId } from '../src/types/peer.js';
 import { Wallet } from 'ethers';
-import { signSpendingAuth, signReserveAuth, makeSessionsDomain, computeMetadataHash, encodeMetadata, ZERO_METADATA_HASH } from '../src/payments/evm/signatures.js';
+import { signSpendingAuth, signReserveAuth, makeChannelsDomain, computeMetadataHash, encodeMetadata, ZERO_METADATA_HASH } from '../src/payments/evm/signatures.js';
 import type { SpendingAuthMessage, ReserveAuthMessage, SpendingAuthMetadata } from '../src/payments/evm/signatures.js';
 
 const CHAIN_ID = 31337;
@@ -78,7 +78,7 @@ async function buildSpendingAuth(
   const encodedMetadata = encodeMetadata(meta);
 
   const buyerWallet = buyerIdentity.wallet;
-  const sessionsDomain = makeSessionsDomain(CHAIN_ID, CONTRACT_ADDR);
+  const sessionsDomain = makeChannelsDomain(CHAIN_ID, CONTRACT_ADDR);
   const reserveMaxAmount = BigInt(opts.reserveMaxAmount ?? '10000000');
 
   // First auth (reserve) uses ReserveAuth; subsequent uses SpendingAuth
@@ -124,16 +124,16 @@ describe('SellerPaymentManager', () => {
 
     const config: SellerPaymentConfig = {
       rpcUrl: 'http://127.0.0.1:8545',
-      sessionsContractAddress: CONTRACT_ADDR,
+      channelsContractAddress: CONTRACT_ADDR,
       chainId: CHAIN_ID,
       dataDir: tempDir,
     };
     manager = new SellerPaymentManager(sellerIdentity, config, store);
 
-    vi.spyOn(manager.sessionsClient, 'reserve').mockResolvedValue('0xreserve-hash');
-    vi.spyOn(manager.sessionsClient, 'close').mockResolvedValue('0xclose-hash');
-    vi.spyOn(manager.sessionsClient, 'requestClose').mockResolvedValue('0xrequesttimeout-hash');
-    vi.spyOn(manager.sessionsClient, 'withdraw').mockResolvedValue('0xwithdraw-hash');
+    vi.spyOn(manager.channelsClient, 'reserve').mockResolvedValue('0xreserve-hash');
+    vi.spyOn(manager.channelsClient, 'close').mockResolvedValue('0xclose-hash');
+    vi.spyOn(manager.channelsClient, 'requestClose').mockResolvedValue('0xrequesttimeout-hash');
+    vi.spyOn(manager.channelsClient, 'withdraw').mockResolvedValue('0xwithdraw-hash');
 
     mux = createMockPaymentMux();
   });
@@ -150,7 +150,7 @@ describe('SellerPaymentManager', () => {
 
     await manager.handleSpendingAuth(buyerIdentity.peerId, payload, mux);
 
-    expect(manager.sessionsClient.reserve).toHaveBeenCalledOnce();
+    expect(manager.channelsClient.reserve).toHaveBeenCalledOnce();
     expect(mux.sentAuthAcks.length).toBe(1);
     const ack = mux.sentAuthAcks[0] as Record<string, unknown>;
     expect(ack.channelId).toBe(channelId);
@@ -203,14 +203,14 @@ describe('SellerPaymentManager', () => {
   it('test_onBuyerDisconnect: session persisted, not closed when settleOnDisconnect=false', async () => {
     const config2: SellerPaymentConfig = {
       rpcUrl: 'http://127.0.0.1:8545',
-      sessionsContractAddress: CONTRACT_ADDR,
+      channelsContractAddress: CONTRACT_ADDR,
       chainId: CHAIN_ID,
       dataDir: tempDir,
       settleOnDisconnect: false,
     };
     const manager2 = new SellerPaymentManager(sellerIdentity, config2, store);
-    vi.spyOn(manager2.sessionsClient, 'reserve').mockResolvedValue('0xreserve-hash');
-    vi.spyOn(manager2.sessionsClient, 'close').mockResolvedValue('0xclose-hash');
+    vi.spyOn(manager2.channelsClient, 'reserve').mockResolvedValue('0xreserve-hash');
+    vi.spyOn(manager2.channelsClient, 'close').mockResolvedValue('0xclose-hash');
 
 
     const channelId = makeChannelId(5);
@@ -224,7 +224,7 @@ describe('SellerPaymentManager', () => {
     const session = store.getSession(channelId);
     expect(session).not.toBeNull();
     expect(session!.status).toBe('active');
-    expect(manager2.sessionsClient.close).not.toHaveBeenCalled();
+    expect(manager2.channelsClient.close).not.toHaveBeenCalled();
   });
 
   it('test_hasSession: returns true/false correctly', async () => {

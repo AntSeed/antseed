@@ -2,8 +2,8 @@
 pragma solidity ^0.8.24;
 
 /// @notice Shared admin wiring interfaces used by Deploy.s.sol
-interface ISetSessions {
-    function setSessionsContract(address) external;
+interface ISetChannels {
+    function setChannelsContract(address) external;
 }
 
 interface ISetEmissions {

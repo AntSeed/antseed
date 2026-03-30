@@ -36,7 +36,7 @@ export { parsePublicAddress, MAX_PUBLIC_ADDRESS_LENGTH, type ParsedPublicAddress
 export { MeteringStorage } from './metering/storage.js';
 export { BalanceManager } from './payments/balance-manager.js';
 export { DepositsClient, type DepositsClientConfig, type BuyerBalanceInfo } from './payments/evm/deposits-client.js';
-export { SessionsClient, type SessionsClientConfig, type SessionInfo } from './payments/evm/sessions-client.js';
+export { ChannelsClient, type ChannelsClientConfig, type ChannelInfo } from './payments/evm/channels-client.js';
 export { IdentityClient, type IdentityClientConfig } from './payments/evm/identity-client.js';
 export { StatsClient, type StatsClientConfig, type AgentStats } from './payments/evm/stats-client.js';
 export { StakingClient, type StakingClientConfig, type SellerAccountInfo } from './payments/evm/staking-client.js';
@@ -45,7 +45,7 @@ export {
   signSpendingAuth,
   signReserveAuth,
   signSetOperator,
-  makeSessionsDomain,
+  makeChannelsDomain,
   SPENDING_AUTH_TYPES,
   RESERVE_AUTH_TYPES,
   SET_OPERATOR_TYPES,

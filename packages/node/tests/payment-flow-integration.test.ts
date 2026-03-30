@@ -66,7 +66,7 @@ function makeBuyerConfig(dataDir: string): BuyerPaymentConfig {
   return {
     rpcUrl: 'http://127.0.0.1:8545',
     depositsContractAddress: '0x' + 'dd'.repeat(20),
-    sessionsContractAddress: SESSIONS_CONTRACT,
+    channelsContractAddress: SESSIONS_CONTRACT,
     usdcAddress: '0x' + 'ee'.repeat(20),
     identityRegistryAddress: '0x' + 'ff'.repeat(20),
     chainId: CHAIN_ID,
@@ -80,7 +80,7 @@ function makeBuyerConfig(dataDir: string): BuyerPaymentConfig {
 function makeSellerConfig(dataDir: string): SellerPaymentConfig {
   return {
     rpcUrl: 'http://127.0.0.1:8545',
-    sessionsContractAddress: SESSIONS_CONTRACT,
+    channelsContractAddress: SESSIONS_CONTRACT,
     chainId: CHAIN_ID,
     dataDir,
     minBudgetPerRequest: '50000', // $0.05
@@ -116,10 +116,10 @@ describe('Full Payment Flow Integration', () => {
     buyer.setSigner(buyerIdentity.wallet);
 
     seller = new SellerPaymentManager(sellerIdentity, makeSellerConfig(sellerDir), sellerStore);
-    vi.spyOn(seller.sessionsClient, 'reserve').mockResolvedValue('0xreservehash');
-    vi.spyOn(seller.sessionsClient, 'close').mockResolvedValue('0xclosehash');
-    vi.spyOn(seller.sessionsClient, 'requestClose').mockResolvedValue('0xrequestclosehash');
-    vi.spyOn(seller.sessionsClient, 'withdraw').mockResolvedValue('0xwithdrawhash');
+    vi.spyOn(seller.channelsClient, 'reserve').mockResolvedValue('0xreservehash');
+    vi.spyOn(seller.channelsClient, 'close').mockResolvedValue('0xclosehash');
+    vi.spyOn(seller.channelsClient, 'requestClose').mockResolvedValue('0xrequestclosehash');
+    vi.spyOn(seller.channelsClient, 'withdraw').mockResolvedValue('0xwithdrawhash');
 
     buyerMux = createMockPaymentMux();
     sellerMux = createMockPaymentMux();
@@ -157,8 +157,8 @@ describe('Full Payment Flow Integration', () => {
 
     const { sessionId } = await doInitialHandshake(50_000n);
 
-    expect(seller.sessionsClient.reserve).toHaveBeenCalledOnce();
-    const reserveCall = (seller.sessionsClient.reserve as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    expect(seller.channelsClient.reserve).toHaveBeenCalledOnce();
+    const reserveCall = (seller.channelsClient.reserve as ReturnType<typeof vi.fn>).mock.calls[0]!;
     expect(reserveCall[3] as bigint).toBe(10_000_000n);
 
     const { payload: auth1 } = await buyer.signPerRequestAuth(
@@ -195,8 +195,8 @@ describe('Full Payment Flow Integration', () => {
 
     await seller.settleSession(buyerPeerId);
 
-    expect(seller.sessionsClient.close).toHaveBeenCalledOnce();
-    const closeCall = (seller.sessionsClient.close as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    expect(seller.channelsClient.close).toHaveBeenCalledOnce();
+    const closeCall = (seller.channelsClient.close as ReturnType<typeof vi.fn>).mock.calls[0]!;
     expect(closeCall[2] as bigint).toBe(BigInt(auth3.cumulativeAmount));
     expect((closeCall[4] as string).length).toBeGreaterThan(2);
   });
@@ -296,7 +296,7 @@ describe('Full Payment Flow Integration', () => {
 
     await seller.settleSession(buyerPeerId);
 
-    const closeCall = (seller.sessionsClient.close as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    const closeCall = (seller.channelsClient.close as ReturnType<typeof vi.fn>).mock.calls[0]!;
     expect(closeCall[2] as bigint).toBe(BigInt(auth2.cumulativeAmount));
     expect(closeCall[4] as string).toBe(auth2.spendingAuthSig);
   });
@@ -348,8 +348,8 @@ describe('Full Payment Flow Integration', () => {
     const buyerPeerId = buyerIdentity.peerId;
     await doInitialHandshake(50_000n);
     await seller.settleSession(buyerPeerId);
-    expect(seller.sessionsClient.close).toHaveBeenCalledOnce();
-    expect(seller.sessionsClient.requestClose).not.toHaveBeenCalled();
+    expect(seller.channelsClient.close).toHaveBeenCalledOnce();
+    expect(seller.channelsClient.requestClose).not.toHaveBeenCalled();
   });
 
   it('buyer handleAuthAck ignores mismatched channelId', async () => {
@@ -434,10 +434,10 @@ describe('Settlement edge cases', () => {
     buyer.setSigner(buyerIdentity.wallet);
 
     seller = new SellerPaymentManager(sellerIdentity, makeSellerConfig(sellerDir), sellerStore);
-    vi.spyOn(seller.sessionsClient, 'reserve').mockResolvedValue('0xreservehash');
-    vi.spyOn(seller.sessionsClient, 'close').mockResolvedValue('0xclosehash');
-    vi.spyOn(seller.sessionsClient, 'requestClose').mockResolvedValue('0xrequestclosehash');
-    vi.spyOn(seller.sessionsClient, 'withdraw').mockResolvedValue('0xwithdrawhash');
+    vi.spyOn(seller.channelsClient, 'reserve').mockResolvedValue('0xreservehash');
+    vi.spyOn(seller.channelsClient, 'close').mockResolvedValue('0xclosehash');
+    vi.spyOn(seller.channelsClient, 'requestClose').mockResolvedValue('0xrequestclosehash');
+    vi.spyOn(seller.channelsClient, 'withdraw').mockResolvedValue('0xwithdrawhash');
 
     buyerMux = createMockPaymentMux();
     sellerMux = createMockPaymentMux();
@@ -473,12 +473,12 @@ describe('Settlement edge cases', () => {
     seller.onBuyerDisconnect(buyerPeerId);
     await new Promise((r) => setTimeout(r, 50));
 
-    expect(seller.sessionsClient.close).toHaveBeenCalledOnce();
+    expect(seller.channelsClient.close).toHaveBeenCalledOnce();
   });
 
   it('settleSession is no-op for unknown buyer', async () => {
     await seller.settleSession('unknown-peer');
-    expect(seller.sessionsClient.close).not.toHaveBeenCalled();
+    expect(seller.channelsClient.close).not.toHaveBeenCalled();
   });
 
   it('recordSpend is no-op for unknown channelId', () => {

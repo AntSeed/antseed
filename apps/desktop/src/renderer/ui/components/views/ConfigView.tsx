@@ -19,7 +19,7 @@ export function ConfigView({ active }: ConfigViewProps) {
   const [chainId, setChainId] = useState('');
   const [rpcUrl, setRpcUrl] = useState('');
   const [depositsAddress, setDepositsAddress] = useState('');
-  const [sessionsAddress, setSessionsAddress] = useState('');
+  const [channelsAddress, setChannelsAddress] = useState('');
   const [usdcAddress, setUsdcAddress] = useState('');
   const [dirty, setDirty] = useState(false);
 
@@ -35,7 +35,7 @@ export function ConfigView({ active }: ConfigViewProps) {
       setChainId(configFormData.cryptoChainId);
       setRpcUrl(configFormData.cryptoRpcUrl);
       setDepositsAddress(configFormData.cryptoDepositsAddress);
-      setSessionsAddress(configFormData.cryptoSessionsAddress);
+      setChannelsAddress(configFormData.cryptoChannelsAddress);
       setUsdcAddress(configFormData.cryptoUsdcAddress);
       setInitialized(true);
     }
@@ -62,7 +62,7 @@ export function ConfigView({ active }: ConfigViewProps) {
       cryptoChainId: chainId,
       cryptoRpcUrl: rpcUrl,
       cryptoDepositsAddress: depositsAddress,
-      cryptoSessionsAddress: sessionsAddress,
+      cryptoChannelsAddress: channelsAddress,
       cryptoUsdcAddress: usdcAddress,
     });
     setDirty(false);
@@ -188,15 +188,15 @@ export function ConfigView({ active }: ConfigViewProps) {
             </label>
             <label className="settings-item">
               <div className="settings-copy">
-                <h4>Sessions Contract</h4>
-                <p>AntseedSessions contract address.</p>
+                <h4>Channels Contract</h4>
+                <p>AntseedChannels contract address.</p>
               </div>
               <input
                 type="text"
                 className="form-input settings-control"
-                value={sessionsAddress}
+                value={channelsAddress}
                 placeholder="0x..."
-                onChange={(e) => { setSessionsAddress(e.target.value); markDirty(); }}
+                onChange={(e) => { setChannelsAddress(e.target.value); markDirty(); }}
               />
             </label>
             <label className="settings-item">

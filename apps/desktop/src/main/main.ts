@@ -18,7 +18,7 @@ import {
 } from './process-manager.js';
 import { registerPiChatHandlers } from './pi-chat-engine.js';
 import { ensureSecureIdentity, secureIdentityEnv, getSecureIdentity } from './identity.js';
-import { DepositsClient, signSpendingAuth, signReserveAuth, makeSessionsDomain, resolveChainConfig, formatUsdc, ZERO_METADATA_HASH, peerIdToAddress } from '@antseed/node';
+import { DepositsClient, signSpendingAuth, signReserveAuth, makeChannelsDomain, resolveChainConfig, formatUsdc, ZERO_METADATA_HASH, peerIdToAddress } from '@antseed/node';
 import { createServer as createPaymentsServer } from '@antseed/payments';
 import type { LogEvent, RuntimeActivityEvent } from './log-parser.js';
 import { parseRuntimeActivityFromLog } from './log-parser.js';
@@ -503,7 +503,7 @@ ipcMain.handle(
       return { ok: true, data: { configPath: ACTIVE_CONFIG_PATH }, error: null, status: 200 } satisfies ApiResult;
     }
 
-    // Sessions/earnings are seller-only — not needed in the desktop (buyer) app.
+    // Channels/earnings are seller-only — not needed in the desktop (buyer) app.
     return {
       ok: false,
       data: null,
@@ -575,7 +575,7 @@ let cachedCreditsInfo: CreditsInfo | null = null;
 
 // Cached crypto config — invalidated on config update. Uses protocol defaults
 // from resolveChainConfig with optional user overrides from config.json.
-let cachedCryptoConfig: { rpcUrl: string; depositsAddress: string; sessionsAddress: string; usdcAddress: string; chainId: number } | null = null;
+let cachedCryptoConfig: { rpcUrl: string; depositsAddress: string; channelsAddress: string; usdcAddress: string; chainId: number } | null = null;
 
 async function loadCachedCryptoConfig(): Promise<typeof cachedCryptoConfig> {
   if (cachedCryptoConfig) return cachedCryptoConfig;
@@ -590,7 +590,7 @@ async function loadCachedCryptoConfig(): Promise<typeof cachedCryptoConfig> {
   // Only resolve if the user has explicitly configured a chain or contract address.
   // Without explicit config, there's no contract to query — return null so callers
   // skip RPC calls instead of hitting a default contract that may not exist.
-  const hasExplicitConfig = overrides.chainId || overrides.rpcUrl || overrides.depositsContractAddress || overrides.sessionsContractAddress;
+  const hasExplicitConfig = overrides.chainId || overrides.rpcUrl || overrides.depositsContractAddress || overrides.channelsContractAddress;
   if (!hasExplicitConfig) {
     return null;
   }
@@ -598,10 +598,10 @@ async function loadCachedCryptoConfig(): Promise<typeof cachedCryptoConfig> {
     chainId: asString(overrides.chainId as string, '') || undefined,
     rpcUrl: asString(overrides.rpcUrl as string, '') || undefined,
     depositsContractAddress: asString(overrides.depositsContractAddress as string, '') || undefined,
-    sessionsContractAddress: asString(overrides.sessionsContractAddress as string, '') || undefined,
+    channelsContractAddress: asString(overrides.channelsContractAddress as string, '') || undefined,
     usdcContractAddress: asString(overrides.usdcContractAddress as string, '') || undefined,
   });
-  cachedCryptoConfig = { rpcUrl: cc.rpcUrl, depositsAddress: cc.depositsContractAddress, sessionsAddress: cc.sessionsContractAddress, usdcAddress: cc.usdcContractAddress, chainId: cc.evmChainId };
+  cachedCryptoConfig = { rpcUrl: cc.rpcUrl, depositsAddress: cc.depositsContractAddress, channelsAddress: cc.channelsContractAddress, usdcAddress: cc.usdcContractAddress, chainId: cc.evmChainId };
   return cachedCryptoConfig;
 }
 
@@ -641,8 +641,8 @@ async function refreshCreditsInfo(): Promise<CreditsInfo> {
       depositsClient.getBuyerCreditLimit(evmAddress),
       (async (): Promise<string | null> => {
         try {
-          const { SessionsClient } = await import('@antseed/node');
-          const sc = new SessionsClient({ rpcUrl: cc.rpcUrl, contractAddress: cc.sessionsAddress });
+          const { ChannelsClient } = await import('@antseed/node');
+          const sc = new ChannelsClient({ rpcUrl: cc.rpcUrl, contractAddress: cc.channelsAddress });
           const addr = await sc.getOperator(evmAddress);
           return addr && addr !== '0x0000000000000000000000000000000000000000' ? addr : null;
         } catch { return null; }
@@ -715,14 +715,14 @@ ipcMain.handle('payments:sign-spending-auth', async (_event, params: {
 
     const cc = await loadCachedCryptoConfig();
     if (!cc) {
-      return { ok: false, error: 'No sessions contract configured' };
+      return { ok: false, error: 'No channels contract configured' };
     }
 
     const wallet = identity.wallet;
 
-    // Sign SpendingAuth (AntSeed Sessions domain)
-    const sessionsDomain = makeSessionsDomain(cc.chainId, cc.sessionsAddress);
-    const spendingAuthSig = await signSpendingAuth(wallet, sessionsDomain, {
+    // Sign SpendingAuth (AntSeed Channels domain)
+    const channelsDomain = makeChannelsDomain(cc.chainId, cc.channelsAddress);
+    const spendingAuthSig = await signSpendingAuth(wallet, channelsDomain, {
       channelId: params.channelId,
       cumulativeAmount,
       metadataHash: params.metadataHash,
@@ -853,11 +853,11 @@ ipcMain.handle('chat:approve-payment', async (_event, conversationId: string) =>
 
     const cc = await loadCachedCryptoConfig();
     if (!cc) {
-      return { ok: false, error: 'No sessions contract configured' };
+      return { ok: false, error: 'No channels contract configured' };
     }
 
     const wallet = identity.wallet;
-    const sessionsDomain = makeSessionsDomain(cc.chainId, cc.sessionsAddress);
+    const channelsDomain = makeChannelsDomain(cc.chainId, cc.channelsAddress);
     const buyerEvmAddr = wallet.address;
 
     const peerId = typeof paymentInfo.peerId === 'string' ? paymentInfo.peerId.trim() : '';
@@ -874,7 +874,7 @@ ipcMain.handle('chat:approve-payment', async (_event, conversationId: string) =>
 
     // Sign ReserveAuth — binds channelId, maxAmount, deadline
     const maxAmount = 5_000_000n; // $5.00 per session
-    const reserveAuthSig = await signReserveAuth(wallet, sessionsDomain, {
+    const reserveAuthSig = await signReserveAuth(wallet, channelsDomain, {
       channelId,
       maxAmount,
       deadline: BigInt(deadline),

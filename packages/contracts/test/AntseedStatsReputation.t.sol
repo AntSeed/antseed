@@ -15,7 +15,7 @@ contract AntseedStatsReputationTest is Test {
         registry = new MockERC8004Registry();
         stats = new AntseedStats();
         // Set this test contract as the sessions contract so it can call updateStats
-        stats.setSessionsContract(address(this));
+        stats.setChannelsContract(address(this));
 
         vm.prank(peer1);
         agentId = registry.register();

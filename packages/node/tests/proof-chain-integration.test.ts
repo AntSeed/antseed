@@ -52,7 +52,7 @@ describe('Cumulative SpendingAuth Integration', () => {
     const buyerConfig: BuyerPaymentConfig = {
       rpcUrl: 'http://127.0.0.1:8545',
       depositsContractAddress: CONTRACT_ADDR,
-      sessionsContractAddress: CONTRACT_ADDR,
+      channelsContractAddress: CONTRACT_ADDR,
       usdcAddress: '0x' + 'ee'.repeat(20),
       identityRegistryAddress: '0x' + 'ff'.repeat(20),
       chainId: CHAIN_ID,
@@ -221,7 +221,7 @@ describe('Cumulative SpendingAuth Integration', () => {
     const newConfig: BuyerPaymentConfig = {
       rpcUrl: 'http://127.0.0.1:8545',
       depositsContractAddress: CONTRACT_ADDR,
-      sessionsContractAddress: CONTRACT_ADDR,
+      channelsContractAddress: CONTRACT_ADDR,
       usdcAddress: '0x' + 'ee'.repeat(20),
       identityRegistryAddress: '0x' + 'ff'.repeat(20),
       chainId: CHAIN_ID,

@@ -157,7 +157,7 @@ function formatUsdc(value: number): string {
 }
 
 function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void }) {
-  const { chatConversations, chatActiveConversation, chatActiveSessions } = useUiSnapshot();
+  const { chatConversations, chatActiveConversation, chatActiveChannels } = useUiSnapshot();
   const actions = useActions();
   const conversations = Array.isArray(chatConversations) ? chatConversations : [];
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
@@ -180,7 +180,7 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
             const serviceLabel = shortServiceName(conv.service);
             const metaLabel = [peerLabel, serviceLabel].filter(Boolean).join(' • ');
             const convPeerId = String(conv.peerId || '').trim();
-            const session = convPeerId ? chatActiveSessions.get(convPeerId) : undefined;
+            const session = convPeerId ? chatActiveChannels.get(convPeerId) : undefined;
             const usedUsdc = Number(conv.totalEstimatedCostUsd) || 0;
 
             return (
@@ -218,7 +218,7 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
                       className={styles.chatConvCloseBtn}
                       onClick={(e) => {
                         e.stopPropagation();
-                        actions.requestSessionClose();
+                        actions.requestChannelClose();
                       }}
                     >
                       Close

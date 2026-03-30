@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { keccak256, toUtf8Bytes, verifyTypedData } from 'ethers';
 import {
   SPENDING_AUTH_TYPES,
-  makeSessionsDomain,
+  makeChannelsDomain,
   signSpendingAuth,
   computeMetadataHash,
   ZERO_METADATA_HASH,
@@ -38,22 +38,22 @@ describe('EIP-712 Contract Compatibility', () => {
   });
 
   it('AntSeed domain version is "7" matching contract constructor', () => {
-    const domain = makeSessionsDomain(31337, '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
-    expect(domain.name).toBe('AntseedSessions');
+    const domain = makeChannelsDomain(31337, '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
+    expect(domain.name).toBe('AntseedChannels');
     expect(domain.version).toBe('7');
     expect(domain.chainId).toBe(31337);
     expect(domain.verifyingContract).toBe('0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
   });
 
   it('domain separator is deterministic for same inputs', () => {
-    const d1 = makeSessionsDomain(31337, '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
-    const d2 = makeSessionsDomain(31337, '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
+    const d1 = makeChannelsDomain(31337, '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
+    const d2 = makeChannelsDomain(31337, '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
     expect(d1).toEqual(d2);
   });
 
   it('different chain IDs produce different domains', () => {
-    const local = makeSessionsDomain(31337, '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
-    const base = makeSessionsDomain(8453, '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
+    const local = makeChannelsDomain(31337, '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
+    const base = makeChannelsDomain(8453, '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
     expect(local.chainId).not.toBe(base.chainId);
   });
 
@@ -62,7 +62,7 @@ describe('EIP-712 Contract Compatibility', () => {
     try {
       const identity = await loadOrCreateIdentity(dir);
       const wallet = identity.wallet;
-      const domain = makeSessionsDomain(31337, '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
+      const domain = makeChannelsDomain(31337, '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
 
       const msg: SpendingAuthMessage = {
         channelId: '0x' + '01'.repeat(32),
@@ -83,7 +83,7 @@ describe('EIP-712 Contract Compatibility', () => {
     try {
       const identity = await loadOrCreateIdentity(dir);
       const wallet = identity.wallet;
-      const domain = makeSessionsDomain(31337, '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
+      const domain = makeChannelsDomain(31337, '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
 
       const msg: SpendingAuthMessage = {
         channelId: '0x' + '01'.repeat(32),
@@ -104,7 +104,7 @@ describe('EIP-712 Contract Compatibility', () => {
     try {
       const identity = await loadOrCreateIdentity(dir);
       const wallet = identity.wallet;
-      const domain = makeSessionsDomain(31337, '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
+      const domain = makeChannelsDomain(31337, '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
 
       const baseMsg: SpendingAuthMessage = {
         channelId: '0x' + '01'.repeat(32),
@@ -128,7 +128,7 @@ describe('EIP-712 Contract Compatibility', () => {
     try {
       const identity = await loadOrCreateIdentity(dir);
       const wallet = identity.wallet;
-      const domain = makeSessionsDomain(31337, '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
+      const domain = makeChannelsDomain(31337, '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
 
       const baseMsg: SpendingAuthMessage = {
         channelId: '0x' + '01'.repeat(32),
@@ -158,7 +158,7 @@ describe('EIP-712 Contract Compatibility', () => {
       const identity2 = await loadOrCreateIdentity(dir2);
       const wallet2 = identity2.wallet;
 
-      const domain = makeSessionsDomain(31337, '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
+      const domain = makeChannelsDomain(31337, '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707');
       const msg: SpendingAuthMessage = {
         channelId: '0x' + '01'.repeat(32),
         cumulativeAmount: 100000n,

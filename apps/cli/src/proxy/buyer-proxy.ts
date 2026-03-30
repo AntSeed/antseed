@@ -381,7 +381,7 @@ export class BuyerProxy {
   private _rememberSuccessfulPeer(routeKey: string, peerId: string): void {
     this._lastSuccessfulPeerId = peerId
     this._lastSuccessfulPeerByRouteKey.set(routeKey, peerId)
-    // Keep map bounded to prevent unbounded growth from long-running sessions.
+    // Keep map bounded to prevent unbounded growth from long-running channels.
     const MAX_ROUTE_HISTORY = 200
     if (this._lastSuccessfulPeerByRouteKey.size > MAX_ROUTE_HISTORY) {
       const oldestKey = this._lastSuccessfulPeerByRouteKey.keys().next().value

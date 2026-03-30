@@ -2,20 +2,20 @@
 pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
-import "../AntseedSessions.sol";
+import "../AntseedChannels.sol";
 import "../AntseedDeposits.sol";
 import "../AntseedStaking.sol";
 import "../AntseedStats.sol";
 import "../MockERC8004Registry.sol";
 import "../MockUSDC.sol";
 
-contract AntseedSessionsTest is Test {
+contract AntseedChannelsTest is Test {
     MockUSDC public usdc;
     MockERC8004Registry public registry;
     AntseedStats public stats;
     AntseedStaking public staking;
     AntseedDeposits public deposits;
-    AntseedSessions public sessions;
+    AntseedChannels public channels;
 
     // Deterministic private keys
     uint256 constant BUYER_PK = 0xA11CE;
@@ -56,20 +56,20 @@ contract AntseedSessionsTest is Test {
         stats = new AntseedStats();
         staking = new AntseedStaking(address(usdc), address(registry), address(stats));
         deposits = new AntseedDeposits(address(usdc));
-        sessions = new AntseedSessions(
+        channels = new AntseedChannels(
             address(deposits),
             address(stats),
             address(staking)
         );
 
         // Wire contracts together
-        deposits.setSessionsContract(address(sessions));
-        stats.setSessionsContract(address(sessions));
-        staking.setSessionsContract(address(sessions));
-        sessions.setProtocolReserve(protocolReserve);
+        deposits.setChannelsContract(address(channels));
+        stats.setChannelsContract(address(channels));
+        staking.setChannelsContract(address(channels));
+        channels.setProtocolReserve(protocolReserve);
 
         // Raise FIRST_SIGN_CAP for tests that need large reservations
-        sessions.setFirstSignCap(500_000_000);
+        channels.setFirstSignCap(500_000_000);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -125,7 +125,7 @@ contract AntseedSessionsTest is Test {
                 metadataHash
             )
         );
-        bytes32 digest = _hashTypedDataSessions(structHash);
+        bytes32 digest = _hashTypedDataChannels(structHash);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digest);
         return abi.encodePacked(r, s, v);
     }
@@ -147,7 +147,7 @@ contract AntseedSessionsTest is Test {
                 deadline
             )
         );
-        bytes32 digest = _hashTypedDataSessions(structHash);
+        bytes32 digest = _hashTypedDataChannels(structHash);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digest);
         return abi.encodePacked(r, s, v);
     }
@@ -159,15 +159,15 @@ contract AntseedSessionsTest is Test {
         return abi.encode(cumulativeInputTokens, cumulativeOutputTokens, uint256(0), uint256(0));
     }
 
-    function _hashTypedDataSessions(bytes32 structHash) internal view returns (bytes32) {
-        return keccak256(abi.encodePacked("\x19\x01", sessions.domainSeparator(), structHash));
+    function _hashTypedDataChannels(bytes32 structHash) internal view returns (bytes32) {
+        return keccak256(abi.encodePacked("\x19\x01", channels.domainSeparator(), structHash));
     }
 
     /**
      * @dev Compute the channelId: keccak256(abi.encode(buyer, seller, salt))
      */
     function computeChannelId(bytes32 salt) internal view returns (bytes32) {
-        return sessions.computeChannelId(buyer, seller, salt);
+        return channels.computeChannelId(buyer, seller, salt);
     }
 
     /**
@@ -187,7 +187,7 @@ contract AntseedSessionsTest is Test {
         bytes memory reserveSig = signReserveAuth(BUYER_PK, channelId, maxAmount, deadline);
 
         vm.prank(seller);
-        sessions.reserve(buyer, salt, maxAmount, deadline, reserveSig);
+        channels.reserve(buyer, salt, maxAmount, deadline, reserveSig);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -208,8 +208,8 @@ contract AntseedSessionsTest is Test {
             uint256 sDeadline,
             uint256 sSettledAt,
             ,
-            AntseedSessions.SessionStatus sStatus
-        ) = sessions.sessions(channelId);
+            AntseedChannels.ChannelStatus sStatus
+        ) = channels.channels(channelId);
 
         assertEq(sBuyer, buyer);
         assertEq(sSeller, seller);
@@ -217,10 +217,10 @@ contract AntseedSessionsTest is Test {
         assertEq(sSettled, 0);
         assertGt(sDeadline, 0);
         assertEq(sSettledAt, 0);
-        assertTrue(sStatus == AntseedSessions.SessionStatus.Active);
+        assertTrue(sStatus == AntseedChannels.ChannelStatus.Active);
 
         // USDC stays in Deposits (locked via reserved)
-        assertEq(usdc.balanceOf(address(sessions)), 0);
+        assertEq(usdc.balanceOf(address(channels)), 0);
         assertEq(usdc.balanceOf(address(deposits)), USDC_100);
 
         // Assert buyer's Deposits: reserved = maxAmount, available = 0
@@ -242,8 +242,8 @@ contract AntseedSessionsTest is Test {
         bytes memory reserveSig = signReserveAuth(BUYER_PK, channelId, USDC_50, deadline);
 
         vm.prank(seller);
-        vm.expectRevert(AntseedSessions.SellerNotStaked.selector);
-        sessions.reserve(buyer, salt, USDC_50, deadline, reserveSig);
+        vm.expectRevert(AntseedChannels.SellerNotStaked.selector);
+        channels.reserve(buyer, salt, USDC_50, deadline, reserveSig);
     }
 
     function test_reserve_revert_expiredDeadline() public {
@@ -257,8 +257,8 @@ contract AntseedSessionsTest is Test {
         bytes memory reserveSig = signReserveAuth(BUYER_PK, channelId, USDC_50, pastDeadline);
 
         vm.prank(seller);
-        vm.expectRevert(AntseedSessions.SessionExpired.selector);
-        sessions.reserve(buyer, salt, USDC_50, pastDeadline, reserveSig);
+        vm.expectRevert(AntseedChannels.ChannelExpired.selector);
+        channels.reserve(buyer, salt, USDC_50, pastDeadline, reserveSig);
     }
 
     function test_reserve_revert_invalidSignature() public {
@@ -273,12 +273,12 @@ contract AntseedSessionsTest is Test {
         bytes memory badSig = signReserveAuth(RANDOM_PK, channelId, USDC_50, deadline);
 
         vm.prank(seller);
-        vm.expectRevert(AntseedSessions.InvalidSignature.selector);
-        sessions.reserve(buyer, salt, USDC_50, deadline, badSig);
+        vm.expectRevert(AntseedChannels.InvalidSignature.selector);
+        channels.reserve(buyer, salt, USDC_50, deadline, badSig);
     }
 
     function test_reserve_revert_firstSignCapExceeded() public {
-        sessions.setFirstSignCap(1_000_000);
+        channels.setFirstSignCap(1_000_000);
 
         createBuyer(BUYER_PK, USDC_100);
         createSeller(SELLER_PK);
@@ -291,8 +291,8 @@ contract AntseedSessionsTest is Test {
         bytes memory reserveSig = signReserveAuth(BUYER_PK, channelId, overCap, deadline);
 
         vm.prank(seller);
-        vm.expectRevert(AntseedSessions.FirstSignCapExceeded.selector);
-        sessions.reserve(buyer, salt, overCap, deadline, reserveSig);
+        vm.expectRevert(AntseedChannels.FirstSignCapExceeded.selector);
+        channels.reserve(buyer, salt, overCap, deadline, reserveSig);
     }
 
     function test_reserve_revert_sessionExists() public {
@@ -304,8 +304,8 @@ contract AntseedSessionsTest is Test {
         bytes memory reserveSig = signReserveAuth(BUYER_PK, channelId, USDC_30, deadline);
 
         vm.prank(seller);
-        vm.expectRevert(AntseedSessions.SessionExists.selector);
-        sessions.reserve(buyer, salt, USDC_30, deadline, reserveSig);
+        vm.expectRevert(AntseedChannels.ChannelExists.selector);
+        channels.reserve(buyer, salt, USDC_30, deadline, reserveSig);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -323,7 +323,7 @@ contract AntseedSessionsTest is Test {
         bytes memory metaSig = signSpendingAuth(BUYER_PK, channelId, finalAmount, inputTokens, outputTokens);
 
         vm.prank(seller);
-        sessions.close(channelId, finalAmount, encodeMetadata(inputTokens, outputTokens), metaSig);
+        channels.close(channelId, finalAmount, encodeMetadata(inputTokens, outputTokens), metaSig);
 
         // Assert session state
         (
@@ -335,10 +335,10 @@ contract AntseedSessionsTest is Test {
             ,
             uint256 sSettledAt,
             ,
-            AntseedSessions.SessionStatus sStatus
-        ) = sessions.sessions(channelId);
+            AntseedChannels.ChannelStatus sStatus
+        ) = channels.channels(channelId);
 
-        assertTrue(sStatus == AntseedSessions.SessionStatus.Settled);
+        assertTrue(sStatus == AntseedChannels.ChannelStatus.Settled);
         assertEq(sSettled, USDC_60);
         assertGt(sSettledAt, 0);
 
@@ -372,11 +372,11 @@ contract AntseedSessionsTest is Test {
         bytes memory metaSig = signSpendingAuth(BUYER_PK, channelId, finalAmount, 10000, 5000);
 
         vm.prank(seller);
-        sessions.close(channelId, finalAmount, encodeMetadata(10000, 5000), metaSig);
+        channels.close(channelId, finalAmount, encodeMetadata(10000, 5000), metaSig);
 
-        (,,,uint128 sSettled,,,,,AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
+        (,,,uint128 sSettled,,,,,AntseedChannels.ChannelStatus sStatus) = channels.channels(channelId);
         assertEq(sSettled, USDC_100);
-        assertTrue(sStatus == AntseedSessions.SessionStatus.Settled);
+        assertTrue(sStatus == AntseedChannels.ChannelStatus.Settled);
 
         // Buyer should have 0 available (no refund)
         (uint256 available,,,) = deposits.getBuyerBalance(buyer);
@@ -391,7 +391,7 @@ contract AntseedSessionsTest is Test {
         bytes memory metaSig = signSpendingAuth(BUYER_PK, channelId, 0, 0, 0);
 
         vm.prank(seller);
-        sessions.close(channelId, 0, encodeMetadata(0, 0), metaSig);
+        channels.close(channelId, 0, encodeMetadata(0, 0), metaSig);
 
         (uint256 available,,,) = deposits.getBuyerBalance(buyer);
         assertEq(available, USDC_100);
@@ -406,8 +406,8 @@ contract AntseedSessionsTest is Test {
         bytes memory metaSig = signSpendingAuth(BUYER_PK, channelId, USDC_60, 0, 0);
 
         vm.prank(randomUser);
-        vm.expectRevert(AntseedSessions.NotAuthorized.selector);
-        sessions.close(channelId, USDC_60, encodeMetadata(0, 0), metaSig);
+        vm.expectRevert(AntseedChannels.NotAuthorized.selector);
+        channels.close(channelId, USDC_60, encodeMetadata(0, 0), metaSig);
     }
 
     function test_close_revert_invalidMetadataSignature() public {
@@ -418,8 +418,8 @@ contract AntseedSessionsTest is Test {
         bytes memory badMetaSig = signSpendingAuth(RANDOM_PK, channelId, USDC_60, 0, 0);
 
         vm.prank(seller);
-        vm.expectRevert(AntseedSessions.InvalidSignature.selector);
-        sessions.close(channelId, USDC_60, encodeMetadata(0, 0), badMetaSig);
+        vm.expectRevert(AntseedChannels.InvalidSignature.selector);
+        channels.close(channelId, USDC_60, encodeMetadata(0, 0), badMetaSig);
     }
 
     function test_close_revert_doubleClose() public {
@@ -429,13 +429,13 @@ contract AntseedSessionsTest is Test {
         bytes memory metaSig = signSpendingAuth(BUYER_PK, channelId, USDC_60, 0, 0);
 
         vm.prank(seller);
-        sessions.close(channelId, USDC_60, encodeMetadata(0, 0), metaSig);
+        channels.close(channelId, USDC_60, encodeMetadata(0, 0), metaSig);
 
         // Try again — session already Settled
         bytes memory metaSig2 = signSpendingAuth(BUYER_PK, channelId, USDC_30, 0, 0);
         vm.prank(seller);
-        vm.expectRevert(AntseedSessions.SessionNotActive.selector);
-        sessions.close(channelId, USDC_30, encodeMetadata(0, 0), metaSig2);
+        vm.expectRevert(AntseedChannels.ChannelNotActive.selector);
+        channels.close(channelId, USDC_30, encodeMetadata(0, 0), metaSig2);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -450,11 +450,11 @@ contract AntseedSessionsTest is Test {
         bytes memory metaSig1 = signSpendingAuth(BUYER_PK, channelId, amount1, 1000, 500);
 
         vm.prank(seller);
-        sessions.settle(channelId, amount1, encodeMetadata(1000, 500), metaSig1);
+        channels.settle(channelId, amount1, encodeMetadata(1000, 500), metaSig1);
 
         // Session still active
-        (,, uint128 sDeposit, uint128 sSettled,,,,, AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
-        assertTrue(sStatus == AntseedSessions.SessionStatus.Active);
+        (,, uint128 sDeposit, uint128 sSettled,,,,, AntseedChannels.ChannelStatus sStatus) = channels.channels(channelId);
+        assertTrue(sStatus == AntseedChannels.ChannelStatus.Active);
         assertEq(sDeposit, USDC_100);
         assertEq(sSettled, USDC_30);
 
@@ -473,18 +473,18 @@ contract AntseedSessionsTest is Test {
         bytes memory metaSig1 = signSpendingAuth(BUYER_PK, channelId, amount1, 1000, 500);
 
         vm.prank(seller);
-        sessions.settle(channelId, amount1, encodeMetadata(1000, 500), metaSig1);
+        channels.settle(channelId, amount1, encodeMetadata(1000, 500), metaSig1);
 
         // Then close: final cumulative = 60 USDC
         uint128 finalAmount = USDC_60;
         bytes memory metaSig2 = signSpendingAuth(BUYER_PK, channelId, finalAmount, 3000, 1500);
 
         vm.prank(seller);
-        sessions.close(channelId, finalAmount, encodeMetadata(3000, 1500), metaSig2);
+        channels.close(channelId, finalAmount, encodeMetadata(3000, 1500), metaSig2);
 
         // Session settled
-        (,,,uint128 sSettled,,,,,AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
-        assertTrue(sStatus == AntseedSessions.SessionStatus.Settled);
+        (,,,uint128 sSettled,,,,,AntseedChannels.ChannelStatus sStatus) = channels.channels(channelId);
+        assertTrue(sStatus == AntseedChannels.ChannelStatus.Settled);
         assertEq(sSettled, USDC_60);
 
         // Total seller earnings = payout from 30 (settle) + payout from delta 30 (close)
@@ -509,27 +509,27 @@ contract AntseedSessionsTest is Test {
         // Set operator for buyer
         address operator = address(0xABCDE1);
         bytes memory opSig = signSetOperator(BUYER_PK, operator, 0);
-        sessions.setOperator(buyer, operator, 0, opSig);
+        channels.setOperator(buyer, operator, 0, opSig);
 
         // Operator can request close anytime — no deadline dependency
         vm.prank(operator);
-        sessions.requestClose(channelId);
+        channels.requestClose(channelId);
 
         // Can't withdraw yet — need to wait for grace period (15 min)
         vm.prank(operator);
-        vm.expectRevert(AntseedSessions.CloseNotReady.selector);
-        sessions.withdraw(channelId);
+        vm.expectRevert(AntseedChannels.CloseNotReady.selector);
+        channels.withdraw(channelId);
 
         // Warp past grace period
         vm.warp(block.timestamp + 15 minutes + 1);
 
         // Operator can withdraw after grace period
         vm.prank(operator);
-        sessions.withdraw(channelId);
+        channels.withdraw(channelId);
 
         // Session timed out (withdrawn)
-        (,,,,,,,,AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
-        assertTrue(sStatus == AntseedSessions.SessionStatus.TimedOut);
+        (,,,,,,,,AntseedChannels.ChannelStatus sStatus) = channels.channels(channelId);
+        assertTrue(sStatus == AntseedChannels.ChannelStatus.TimedOut);
 
         // Full deposit returned to buyer
         (uint256 available,,,) = deposits.getBuyerBalance(buyer);
@@ -542,13 +542,13 @@ contract AntseedSessionsTest is Test {
 
         // Seller can't request close
         vm.prank(seller);
-        vm.expectRevert(AntseedSessions.NotAuthorized.selector);
-        sessions.requestClose(channelId);
+        vm.expectRevert(AntseedChannels.NotAuthorized.selector);
+        channels.requestClose(channelId);
 
         // Random user can't request close
         vm.prank(randomUser);
-        vm.expectRevert(AntseedSessions.NotAuthorized.selector);
-        sessions.requestClose(channelId);
+        vm.expectRevert(AntseedChannels.NotAuthorized.selector);
+        channels.requestClose(channelId);
     }
 
     function test_requestClose_revert_alreadyRequested() public {
@@ -558,14 +558,14 @@ contract AntseedSessionsTest is Test {
         // Set operator for buyer
         address operator = address(0xABCDE1);
         bytes memory opSig = signSetOperator(BUYER_PK, operator, 0);
-        sessions.setOperator(buyer, operator, 0, opSig);
+        channels.setOperator(buyer, operator, 0, opSig);
 
         vm.prank(operator);
-        sessions.requestClose(channelId);
+        channels.requestClose(channelId);
 
         vm.prank(operator);
-        vm.expectRevert(AntseedSessions.CloseAlreadyRequested.selector);
-        sessions.requestClose(channelId);
+        vm.expectRevert(AntseedChannels.CloseAlreadyRequested.selector);
+        channels.requestClose(channelId);
     }
 
     function test_withdraw_revert_notOperator() public {
@@ -575,17 +575,17 @@ contract AntseedSessionsTest is Test {
         // Set operator for buyer
         address operator = address(0xABCDE1);
         bytes memory opSig = signSetOperator(BUYER_PK, operator, 0);
-        sessions.setOperator(buyer, operator, 0, opSig);
+        channels.setOperator(buyer, operator, 0, opSig);
 
         vm.prank(operator);
-        sessions.requestClose(channelId);
+        channels.requestClose(channelId);
 
         vm.warp(block.timestamp + 15 minutes + 1);
 
         // Seller can't withdraw
         vm.prank(seller);
-        vm.expectRevert(AntseedSessions.NotAuthorized.selector);
-        sessions.withdraw(channelId);
+        vm.expectRevert(AntseedChannels.NotAuthorized.selector);
+        channels.withdraw(channelId);
     }
 
     function test_withdraw_revert_withoutRequestClose() public {
@@ -595,12 +595,12 @@ contract AntseedSessionsTest is Test {
         // Set operator for buyer
         address operator = address(0xABCDE1);
         bytes memory opSig = signSetOperator(BUYER_PK, operator, 0);
-        sessions.setOperator(buyer, operator, 0, opSig);
+        channels.setOperator(buyer, operator, 0, opSig);
 
         // withdraw without calling requestClose first
         vm.prank(operator);
-        vm.expectRevert(AntseedSessions.CloseNotReady.selector);
-        sessions.withdraw(channelId);
+        vm.expectRevert(AntseedChannels.CloseNotReady.selector);
+        channels.withdraw(channelId);
     }
 
     function test_sellerCanStillCloseDuringGracePeriod() public {
@@ -610,21 +610,21 @@ contract AntseedSessionsTest is Test {
         // Set operator for buyer
         address operator = address(0xABCDE1);
         bytes memory opSig = signSetOperator(BUYER_PK, operator, 0);
-        sessions.setOperator(buyer, operator, 0, opSig);
+        channels.setOperator(buyer, operator, 0, opSig);
 
         // Operator requests close
         vm.prank(operator);
-        sessions.requestClose(channelId);
+        channels.requestClose(channelId);
 
         // Seller can still close with a SpendingAuth during grace period
         uint128 finalAmount = USDC_60;
         bytes memory metaSig = signSpendingAuth(BUYER_PK, channelId, finalAmount, 5000, 2000);
 
         vm.prank(seller);
-        sessions.close(channelId, finalAmount, encodeMetadata(5000, 2000), metaSig);
+        channels.close(channelId, finalAmount, encodeMetadata(5000, 2000), metaSig);
 
-        (,,,uint128 sSettled,,,,,AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
-        assertTrue(sStatus == AntseedSessions.SessionStatus.Settled);
+        (,,,uint128 sSettled,,,,,AntseedChannels.ChannelStatus sStatus) = channels.channels(channelId);
+        assertTrue(sStatus == AntseedChannels.ChannelStatus.Settled);
         assertEq(sSettled, USDC_60);
 
         // Buyer gets refund of 40 USDC
@@ -639,21 +639,21 @@ contract AntseedSessionsTest is Test {
         // Set operator for buyer
         address operator = address(0xABCDE1);
         bytes memory opSig = signSetOperator(BUYER_PK, operator, 0);
-        sessions.setOperator(buyer, operator, 0, opSig);
+        channels.setOperator(buyer, operator, 0, opSig);
 
         // Operator requests close
         vm.prank(operator);
-        sessions.requestClose(channelId);
+        channels.requestClose(channelId);
 
         // Seller can still settle mid-session during grace period
         uint128 amount = USDC_30;
         bytes memory metaSig = signSpendingAuth(BUYER_PK, channelId, amount, 1000, 500);
 
         vm.prank(seller);
-        sessions.settle(channelId, amount, encodeMetadata(1000, 500), metaSig);
+        channels.settle(channelId, amount, encodeMetadata(1000, 500), metaSig);
 
-        (,,, uint128 sSettled,,,,, AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
-        assertTrue(sStatus == AntseedSessions.SessionStatus.Active);
+        (,,, uint128 sSettled,,,,, AntseedChannels.ChannelStatus sStatus) = channels.channels(channelId);
+        assertTrue(sStatus == AntseedChannels.ChannelStatus.Active);
         assertEq(sSettled, USDC_30);
     }
 
@@ -672,7 +672,7 @@ contract AntseedSessionsTest is Test {
         bytes memory metaSig = signSpendingAuth(BUYER_PK, channelId, chargeAmount, 0, 0);
 
         vm.prank(seller);
-        sessions.close(channelId, chargeAmount, encodeMetadata(0, 0), metaSig);
+        channels.close(channelId, chargeAmount, encodeMetadata(0, 0), metaSig);
 
         assertEq(deposits.sellerEarnings(seller), expectedSellerPayout);
         assertEq(usdc.balanceOf(protocolReserve), expectedPlatformFee);
@@ -692,7 +692,7 @@ contract AntseedSessionsTest is Test {
         bytes memory metaSig = signSpendingAuth(BUYER_PK, channelId, USDC_50, inputToks, outputToks);
 
         vm.prank(seller);
-        sessions.close(channelId, USDC_50, encodeMetadata(inputToks, outputToks), metaSig);
+        channels.close(channelId, USDC_50, encodeMetadata(inputToks, outputToks), metaSig);
 
         uint256 sellerAgentId = staking.getAgentId(seller);
         IAntseedStats.AgentStats memory s = stats.getStats(sellerAgentId);
@@ -707,74 +707,74 @@ contract AntseedSessionsTest is Test {
     // ═══════════════════════════════════════════════════════════════════
 
     function test_setFirstSignCap() public {
-        sessions.setFirstSignCap(2_000_000);
-        assertEq(sessions.FIRST_SIGN_CAP(), 2_000_000);
+        channels.setFirstSignCap(2_000_000);
+        assertEq(channels.FIRST_SIGN_CAP(), 2_000_000);
     }
 
     function test_setPlatformFeeBps() public {
-        sessions.setPlatformFeeBps(300);
-        assertEq(sessions.PLATFORM_FEE_BPS(), 300);
+        channels.setPlatformFeeBps(300);
+        assertEq(channels.PLATFORM_FEE_BPS(), 300);
     }
 
     function test_setPlatformFeeBps_revert_aboveMax() public {
-        vm.expectRevert(AntseedSessions.InvalidFee.selector);
-        sessions.setPlatformFeeBps(1001);
+        vm.expectRevert(AntseedChannels.InvalidFee.selector);
+        channels.setPlatformFeeBps(1001);
     }
 
     function test_setDepositsContract() public {
         address newDeposits = address(0x1234);
-        sessions.setDepositsContract(newDeposits);
-        assertEq(address(sessions.depositsContract()), newDeposits);
+        channels.setDepositsContract(newDeposits);
+        assertEq(address(channels.depositsContract()), newDeposits);
     }
 
     function test_setDepositsContract_revert_zeroAddress() public {
-        vm.expectRevert(AntseedSessions.InvalidAddress.selector);
-        sessions.setDepositsContract(address(0));
+        vm.expectRevert(AntseedChannels.InvalidAddress.selector);
+        channels.setDepositsContract(address(0));
     }
 
     function test_setDepositsContract_revert_notOwner() public {
         vm.prank(randomUser);
         vm.expectRevert();
-        sessions.setDepositsContract(address(0x1234));
+        channels.setDepositsContract(address(0x1234));
     }
 
     function test_setStatsContract() public {
         address newStats = address(0x5678);
-        sessions.setStatsContract(newStats);
-        assertEq(address(sessions.statsContract()), newStats);
+        channels.setStatsContract(newStats);
+        assertEq(address(channels.statsContract()), newStats);
     }
 
     function test_setStatsContract_revert_zeroAddress() public {
-        vm.expectRevert(AntseedSessions.InvalidAddress.selector);
-        sessions.setStatsContract(address(0));
+        vm.expectRevert(AntseedChannels.InvalidAddress.selector);
+        channels.setStatsContract(address(0));
     }
 
     function test_setStakingContract() public {
         address newStaking = address(0x9ABC);
-        sessions.setStakingContract(newStaking);
-        assertEq(address(sessions.stakingContract()), newStaking);
+        channels.setStakingContract(newStaking);
+        assertEq(address(channels.stakingContract()), newStaking);
     }
 
     function test_setStakingContract_revert_zeroAddress() public {
-        vm.expectRevert(AntseedSessions.InvalidAddress.selector);
-        sessions.setStakingContract(address(0));
+        vm.expectRevert(AntseedChannels.InvalidAddress.selector);
+        channels.setStakingContract(address(0));
     }
 
     function test_setProtocolReserve() public {
         address newReserve = address(0xDEF0);
-        sessions.setProtocolReserve(newReserve);
-        assertEq(sessions.protocolReserve(), newReserve);
+        channels.setProtocolReserve(newReserve);
+        assertEq(channels.protocolReserve(), newReserve);
     }
 
     function test_setProtocolReserve_revert_zeroAddress() public {
-        vm.expectRevert(AntseedSessions.InvalidAddress.selector);
-        sessions.setProtocolReserve(address(0));
+        vm.expectRevert(AntseedChannels.InvalidAddress.selector);
+        channels.setProtocolReserve(address(0));
     }
 
     function test_setProtocolReserve_revert_notOwner() public {
         vm.prank(randomUser);
         vm.expectRevert();
-        sessions.setProtocolReserve(address(0xDEF0));
+        channels.setProtocolReserve(address(0xDEF0));
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -785,7 +785,7 @@ contract AntseedSessionsTest is Test {
         createBuyer(BUYER_PK, USDC_100);
         createSeller(SELLER_PK);
 
-        sessions.pause();
+        channels.pause();
 
         bytes32 salt = keccak256("session-paused");
         bytes32 channelId = computeChannelId(salt);
@@ -795,15 +795,15 @@ contract AntseedSessionsTest is Test {
 
         vm.prank(seller);
         vm.expectRevert();
-        sessions.reserve(buyer, salt, USDC_50, deadline, reserveSig);
+        channels.reserve(buyer, salt, USDC_50, deadline, reserveSig);
     }
 
     function test_unpause_allowsReserve() public {
         createBuyer(BUYER_PK, USDC_100);
         createSeller(SELLER_PK);
 
-        sessions.pause();
-        sessions.unpause();
+        channels.pause();
+        channels.unpause();
 
         bytes32 salt = keccak256("session-unpaused");
         bytes32 channelId = computeChannelId(salt);
@@ -812,16 +812,16 @@ contract AntseedSessionsTest is Test {
         bytes memory reserveSig = signReserveAuth(BUYER_PK, channelId, USDC_50, deadline);
 
         vm.prank(seller);
-        sessions.reserve(buyer, salt, USDC_50, deadline, reserveSig);
+        channels.reserve(buyer, salt, USDC_50, deadline, reserveSig);
 
-        (,,,,,,,,AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
-        assertTrue(sStatus == AntseedSessions.SessionStatus.Active);
+        (,,,,,,,,AntseedChannels.ChannelStatus sStatus) = channels.channels(channelId);
+        assertTrue(sStatus == AntseedChannels.ChannelStatus.Active);
     }
 
     function test_pause_revert_notOwner() public {
         vm.prank(randomUser);
         vm.expectRevert();
-        sessions.pause();
+        channels.pause();
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -837,7 +837,7 @@ contract AntseedSessionsTest is Test {
         bytes memory settleSig = signSpendingAuth(BUYER_PK, channelId, settleAmount, 5000, 2000);
 
         vm.prank(seller);
-        sessions.settle(channelId, settleAmount, encodeMetadata(5000, 2000), settleSig);
+        channels.settle(channelId, settleAmount, encodeMetadata(5000, 2000), settleSig);
 
         // Top up: increase reserve from 100 to 150 USDC
         uint128 newMax = USDC_150;
@@ -845,11 +845,11 @@ contract AntseedSessionsTest is Test {
         bytes memory topUpSig = signReserveAuth(BUYER_PK, channelId, newMax, newDeadline);
 
         vm.prank(seller);
-        sessions.topUp(channelId, newMax, newDeadline, topUpSig);
+        channels.topUp(channelId, newMax, newDeadline, topUpSig);
 
         // Verify session state updated
-        (,, uint128 sDeposit, uint128 sSettled,,uint256 sDeadline,,,AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
-        assertTrue(sStatus == AntseedSessions.SessionStatus.Active);
+        (,, uint128 sDeposit, uint128 sSettled,,uint256 sDeadline,,,AntseedChannels.ChannelStatus sStatus) = channels.channels(channelId);
+        assertTrue(sStatus == AntseedChannels.ChannelStatus.Active);
         assertEq(sDeposit, USDC_150);
         assertEq(sSettled, settleAmount);
         assertEq(sDeadline, newDeadline);
@@ -873,7 +873,7 @@ contract AntseedSessionsTest is Test {
         bytes memory settleSig = signSpendingAuth(BUYER_PK, channelId, settleAmount, 3000, 1000);
 
         vm.prank(seller);
-        sessions.settle(channelId, settleAmount, encodeMetadata(3000, 1000), settleSig);
+        channels.settle(channelId, settleAmount, encodeMetadata(3000, 1000), settleSig);
 
         // Try top up — should revert
         uint128 newMax = USDC_150;
@@ -881,8 +881,8 @@ contract AntseedSessionsTest is Test {
         bytes memory topUpSig = signReserveAuth(BUYER_PK, channelId, newMax, newDeadline);
 
         vm.prank(seller);
-        vm.expectRevert(AntseedSessions.TopUpThresholdNotMet.selector);
-        sessions.topUp(channelId, newMax, newDeadline, topUpSig);
+        vm.expectRevert(AntseedChannels.TopUpThresholdNotMet.selector);
+        channels.topUp(channelId, newMax, newDeadline, topUpSig);
     }
 
     function test_topUp_revert_newAmountNotHigher() public {
@@ -893,15 +893,15 @@ contract AntseedSessionsTest is Test {
         uint128 settleAmount = 90_000_000;
         bytes memory settleSig = signSpendingAuth(BUYER_PK, channelId, settleAmount, 5000, 2000);
         vm.prank(seller);
-        sessions.settle(channelId, settleAmount, encodeMetadata(5000, 2000), settleSig);
+        channels.settle(channelId, settleAmount, encodeMetadata(5000, 2000), settleSig);
 
         // Try topUp with same amount — should revert
         uint256 newDeadline = block.timestamp + 2 hours;
         bytes memory topUpSig = signReserveAuth(BUYER_PK, channelId, USDC_100, newDeadline);
 
         vm.prank(seller);
-        vm.expectRevert(AntseedSessions.TopUpAmountTooLow.selector);
-        sessions.topUp(channelId, USDC_100, newDeadline, topUpSig);
+        vm.expectRevert(AntseedChannels.TopUpAmountTooLow.selector);
+        channels.topUp(channelId, USDC_100, newDeadline, topUpSig);
     }
 
     function test_topUp_revert_notSeller() public {
@@ -912,15 +912,15 @@ contract AntseedSessionsTest is Test {
         uint128 settleAmount = 90_000_000;
         bytes memory settleSig = signSpendingAuth(BUYER_PK, channelId, settleAmount, 5000, 2000);
         vm.prank(seller);
-        sessions.settle(channelId, settleAmount, encodeMetadata(5000, 2000), settleSig);
+        channels.settle(channelId, settleAmount, encodeMetadata(5000, 2000), settleSig);
 
         uint128 newMax = USDC_150;
         uint256 newDeadline = block.timestamp + 2 hours;
         bytes memory topUpSig = signReserveAuth(BUYER_PK, channelId, newMax, newDeadline);
 
         vm.prank(randomUser);
-        vm.expectRevert(AntseedSessions.NotAuthorized.selector);
-        sessions.topUp(channelId, newMax, newDeadline, topUpSig);
+        vm.expectRevert(AntseedChannels.NotAuthorized.selector);
+        channels.topUp(channelId, newMax, newDeadline, topUpSig);
     }
 
     function test_topUp_revert_expiredDeadline() public {
@@ -931,15 +931,15 @@ contract AntseedSessionsTest is Test {
         uint128 settleAmount = 90_000_000;
         bytes memory settleSig = signSpendingAuth(BUYER_PK, channelId, settleAmount, 5000, 2000);
         vm.prank(seller);
-        sessions.settle(channelId, settleAmount, encodeMetadata(5000, 2000), settleSig);
+        channels.settle(channelId, settleAmount, encodeMetadata(5000, 2000), settleSig);
 
         uint128 newMax = USDC_150;
         uint256 pastDeadline = block.timestamp - 1;
         bytes memory topUpSig = signReserveAuth(BUYER_PK, channelId, newMax, pastDeadline);
 
         vm.prank(seller);
-        vm.expectRevert(AntseedSessions.SessionExpired.selector);
-        sessions.topUp(channelId, newMax, pastDeadline, topUpSig);
+        vm.expectRevert(AntseedChannels.ChannelExpired.selector);
+        channels.topUp(channelId, newMax, pastDeadline, topUpSig);
     }
 
     function test_topUp_revert_invalidSignature() public {
@@ -950,7 +950,7 @@ contract AntseedSessionsTest is Test {
         uint128 settleAmount = 90_000_000;
         bytes memory settleSig = signSpendingAuth(BUYER_PK, channelId, settleAmount, 5000, 2000);
         vm.prank(seller);
-        sessions.settle(channelId, settleAmount, encodeMetadata(5000, 2000), settleSig);
+        channels.settle(channelId, settleAmount, encodeMetadata(5000, 2000), settleSig);
 
         uint128 newMax = USDC_150;
         uint256 newDeadline = block.timestamp + 2 hours;
@@ -958,8 +958,8 @@ contract AntseedSessionsTest is Test {
         bytes memory badSig = signReserveAuth(RANDOM_PK, channelId, newMax, newDeadline);
 
         vm.prank(seller);
-        vm.expectRevert(AntseedSessions.InvalidSignature.selector);
-        sessions.topUp(channelId, newMax, newDeadline, badSig);
+        vm.expectRevert(AntseedChannels.InvalidSignature.selector);
+        channels.topUp(channelId, newMax, newDeadline, badSig);
     }
 
     function test_topUp_settleAfterTopUp() public {
@@ -970,23 +970,23 @@ contract AntseedSessionsTest is Test {
         uint128 settleAmount1 = 90_000_000;
         bytes memory settleSig1 = signSpendingAuth(BUYER_PK, channelId, settleAmount1, 5000, 2000);
         vm.prank(seller);
-        sessions.settle(channelId, settleAmount1, encodeMetadata(5000, 2000), settleSig1);
+        channels.settle(channelId, settleAmount1, encodeMetadata(5000, 2000), settleSig1);
 
         // Top up to 150 USDC
         uint128 newMax = USDC_150;
         uint256 newDeadline = block.timestamp + 2 hours;
         bytes memory topUpSig = signReserveAuth(BUYER_PK, channelId, newMax, newDeadline);
         vm.prank(seller);
-        sessions.topUp(channelId, newMax, newDeadline, topUpSig);
+        channels.topUp(channelId, newMax, newDeadline, topUpSig);
 
         // Continue settling up to the new ceiling (120 cumulative)
         uint128 settleAmount2 = 120_000_000;
         bytes memory settleSig2 = signSpendingAuth(BUYER_PK, channelId, settleAmount2, 8000, 3500);
         vm.prank(seller);
-        sessions.settle(channelId, settleAmount2, encodeMetadata(8000, 3500), settleSig2);
+        channels.settle(channelId, settleAmount2, encodeMetadata(8000, 3500), settleSig2);
 
-        (,, uint128 sDeposit, uint128 sSettled,,,,, AntseedSessions.SessionStatus sStatus) = sessions.sessions(channelId);
-        assertTrue(sStatus == AntseedSessions.SessionStatus.Active);
+        (,, uint128 sDeposit, uint128 sSettled,,,,, AntseedChannels.ChannelStatus sStatus) = channels.channels(channelId);
+        assertTrue(sStatus == AntseedChannels.ChannelStatus.Active);
         assertEq(sDeposit, USDC_150);
         assertEq(sSettled, 120_000_000);
 
@@ -994,10 +994,10 @@ contract AntseedSessionsTest is Test {
         uint128 finalAmount = 130_000_000;
         bytes memory closeSig = signSpendingAuth(BUYER_PK, channelId, finalAmount, 10000, 4000);
         vm.prank(seller);
-        sessions.close(channelId, finalAmount, encodeMetadata(10000, 4000), closeSig);
+        channels.close(channelId, finalAmount, encodeMetadata(10000, 4000), closeSig);
 
-        (,,, uint128 sSettledFinal,,,,, AntseedSessions.SessionStatus sStatusFinal) = sessions.sessions(channelId);
-        assertTrue(sStatusFinal == AntseedSessions.SessionStatus.Settled);
+        (,,, uint128 sSettledFinal,,,,, AntseedChannels.ChannelStatus sStatusFinal) = channels.channels(channelId);
+        assertTrue(sStatusFinal == AntseedChannels.ChannelStatus.Settled);
         assertEq(sSettledFinal, 130_000_000);
 
         // Buyer refund = 150 - 130 = 20 USDC
@@ -1010,7 +1010,7 @@ contract AntseedSessionsTest is Test {
     // ═══════════════════════════════════════════════════════════════════
 
     function test_domainSeparator_nonZero() public view {
-        bytes32 ds = sessions.domainSeparator();
+        bytes32 ds = channels.domainSeparator();
         assertTrue(ds != bytes32(0));
     }
 
@@ -1030,7 +1030,7 @@ contract AntseedSessionsTest is Test {
         bytes32 structHash = keccak256(
             abi.encode(SET_OPERATOR_TYPEHASH, operator, nonce)
         );
-        bytes32 digest = _hashTypedDataSessions(structHash);
+        bytes32 digest = _hashTypedDataChannels(structHash);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(buyerPk, digest);
         return abi.encodePacked(r, s, v);
     }
@@ -1039,25 +1039,25 @@ contract AntseedSessionsTest is Test {
         address operator = address(0xABCDE1);
         bytes memory sig = signSetOperator(BUYER_PK, operator, 0);
 
-        sessions.setOperator(buyer, operator, 0, sig);
-        assertEq(sessions.operators(buyer), operator);
-        assertEq(sessions.operatorNonces(buyer), 1);
+        channels.setOperator(buyer, operator, 0, sig);
+        assertEq(channels.operators(buyer), operator);
+        assertEq(channels.operatorNonces(buyer), 1);
     }
 
     function test_setOperator_revert_wrongNonce() public {
         address operator = address(0xABCDE1);
         bytes memory sig = signSetOperator(BUYER_PK, operator, 1); // nonce should be 0
 
-        vm.expectRevert(AntseedSessions.InvalidNonce.selector);
-        sessions.setOperator(buyer, operator, 1, sig);
+        vm.expectRevert(AntseedChannels.InvalidNonce.selector);
+        channels.setOperator(buyer, operator, 1, sig);
     }
 
     function test_setOperator_revert_wrongSigner() public {
         address operator = address(0xABCDE1);
         bytes memory sig = signSetOperator(RANDOM_PK, operator, 0); // wrong signer
 
-        vm.expectRevert(AntseedSessions.InvalidSignature.selector);
-        sessions.setOperator(buyer, operator, 0, sig);
+        vm.expectRevert(AntseedChannels.InvalidSignature.selector);
+        channels.setOperator(buyer, operator, 0, sig);
     }
 
     function test_setOperator_revert_alreadySet() public {
@@ -1065,12 +1065,12 @@ contract AntseedSessionsTest is Test {
         address op2 = address(0xABCDE3);
 
         bytes memory sig1 = signSetOperator(BUYER_PK, op1, 0);
-        sessions.setOperator(buyer, op1, 0, sig1);
+        channels.setOperator(buyer, op1, 0, sig1);
 
         // setOperator reverts when operator is already set
         bytes memory sig2 = signSetOperator(BUYER_PK, op2, 1);
-        vm.expectRevert(AntseedSessions.OperatorAlreadySet.selector);
-        sessions.setOperator(buyer, op2, 1, sig2);
+        vm.expectRevert(AntseedChannels.OperatorAlreadySet.selector);
+        channels.setOperator(buyer, op2, 1, sig2);
     }
 
     function test_transferOperator() public {
@@ -1079,40 +1079,40 @@ contract AntseedSessionsTest is Test {
 
         // Set initial operator via buyer sig
         bytes memory sig = signSetOperator(BUYER_PK, op1, 0);
-        sessions.setOperator(buyer, op1, 0, sig);
-        assertEq(sessions.operators(buyer), op1);
+        channels.setOperator(buyer, op1, 0, sig);
+        assertEq(channels.operators(buyer), op1);
 
         // Current operator transfers to new operator
         vm.prank(op1);
-        sessions.transferOperator(buyer, op2);
-        assertEq(sessions.operators(buyer), op2);
+        channels.transferOperator(buyer, op2);
+        assertEq(channels.operators(buyer), op2);
     }
 
     function test_transferOperator_revoke() public {
         address operator = address(0xABCDE1);
         bytes memory sig = signSetOperator(BUYER_PK, operator, 0);
-        sessions.setOperator(buyer, operator, 0, sig);
+        channels.setOperator(buyer, operator, 0, sig);
 
         // Operator revokes themselves
         vm.prank(operator);
-        sessions.transferOperator(buyer, address(0));
-        assertEq(sessions.operators(buyer), address(0));
+        channels.transferOperator(buyer, address(0));
+        assertEq(channels.operators(buyer), address(0));
     }
 
     function test_transferOperator_revert_notOperator() public {
         address operator = address(0xABCDE1);
         bytes memory sig = signSetOperator(BUYER_PK, operator, 0);
-        sessions.setOperator(buyer, operator, 0, sig);
+        channels.setOperator(buyer, operator, 0, sig);
 
         // Random user cannot transfer
         vm.prank(randomUser);
-        vm.expectRevert(AntseedSessions.NotAuthorized.selector);
-        sessions.transferOperator(buyer, address(0xBEEF));
+        vm.expectRevert(AntseedChannels.NotAuthorized.selector);
+        channels.transferOperator(buyer, address(0xBEEF));
 
         // Buyer cannot transfer (only operator can)
         vm.prank(buyer);
-        vm.expectRevert(AntseedSessions.NotAuthorized.selector);
-        sessions.transferOperator(buyer, address(0xBEEF));
+        vm.expectRevert(AntseedChannels.NotAuthorized.selector);
+        channels.transferOperator(buyer, address(0xBEEF));
     }
 
     function test_transferOperator_thenSetAgain() public {
@@ -1121,16 +1121,16 @@ contract AntseedSessionsTest is Test {
 
         // Set initial operator
         bytes memory sig1 = signSetOperator(BUYER_PK, op1, 0);
-        sessions.setOperator(buyer, op1, 0, sig1);
+        channels.setOperator(buyer, op1, 0, sig1);
 
         // Operator revokes (sets to zero)
         vm.prank(op1);
-        sessions.transferOperator(buyer, address(0));
+        channels.transferOperator(buyer, address(0));
 
         // Now buyer can setOperator again with a new sig
         bytes memory sig2 = signSetOperator(BUYER_PK, op2, 1);
-        sessions.setOperator(buyer, op2, 1, sig2);
-        assertEq(sessions.operators(buyer), op2);
+        channels.setOperator(buyer, op2, 1, sig2);
+        assertEq(channels.operators(buyer), op2);
     }
 
     function test_operator_canRequestClose() public {
@@ -1140,13 +1140,13 @@ contract AntseedSessionsTest is Test {
         // Set operator
         address operator = address(0xABCDE1);
         bytes memory opSig = signSetOperator(BUYER_PK, operator, 0);
-        sessions.setOperator(buyer, operator, 0, opSig);
+        channels.setOperator(buyer, operator, 0, opSig);
 
         // Operator calls requestClose
         vm.prank(operator);
-        sessions.requestClose(channelId);
+        channels.requestClose(channelId);
 
-        (,,,,,,,uint256 closeRequestedAt,) = sessions.sessions(channelId);
+        (,,,,,,,uint256 closeRequestedAt,) = channels.channels(channelId);
         assertTrue(closeRequestedAt > 0);
     }
 
@@ -1157,18 +1157,18 @@ contract AntseedSessionsTest is Test {
         // Set operator
         address operator = address(0xABCDE1);
         bytes memory opSig = signSetOperator(BUYER_PK, operator, 0);
-        sessions.setOperator(buyer, operator, 0, opSig);
+        channels.setOperator(buyer, operator, 0, opSig);
 
         // Operator requests close
         vm.prank(operator);
-        sessions.requestClose(channelId);
+        channels.requestClose(channelId);
 
         // Wait grace period
         vm.warp(block.timestamp + 15 minutes + 1);
 
         // Operator withdraws
         vm.prank(operator);
-        sessions.withdraw(channelId);
+        channels.withdraw(channelId);
 
         // Funds returned to buyer's deposits balance
         (uint256 available,,,) = deposits.getBuyerBalance(buyer);
@@ -1182,12 +1182,12 @@ contract AntseedSessionsTest is Test {
         // Set operator to a specific address
         address operator = address(0xABCDE1);
         bytes memory opSig = signSetOperator(BUYER_PK, operator, 0);
-        sessions.setOperator(buyer, operator, 0, opSig);
+        channels.setOperator(buyer, operator, 0, opSig);
 
         // Random user cannot close
         vm.prank(randomUser);
-        vm.expectRevert(AntseedSessions.NotAuthorized.selector);
-        sessions.requestClose(channelId);
+        vm.expectRevert(AntseedChannels.NotAuthorized.selector);
+        channels.requestClose(channelId);
     }
 
     function test_operator_revert_sellerCannotClose() public {
@@ -1196,8 +1196,8 @@ contract AntseedSessionsTest is Test {
 
         // No operator set — seller should not be able to close
         vm.prank(seller);
-        vm.expectRevert(AntseedSessions.NotAuthorized.selector);
-        sessions.requestClose(channelId);
+        vm.expectRevert(AntseedChannels.NotAuthorized.selector);
+        channels.requestClose(channelId);
     }
 
     function test_operator_anyoneCanSubmitSetOperator() public {
@@ -1207,8 +1207,8 @@ contract AntseedSessionsTest is Test {
 
         // Random user submits the tx
         vm.prank(randomUser);
-        sessions.setOperator(buyer, operator, 0, sig);
+        channels.setOperator(buyer, operator, 0, sig);
 
-        assertEq(sessions.operators(buyer), operator);
+        assertEq(channels.operators(buyer), operator);
     }
 }

@@ -13,7 +13,7 @@ import {IAntseedStaking} from "./interfaces/IAntseedStaking.sol";
 import {IAntseedEmissions} from "./interfaces/IAntseedEmissions.sol";
 
 /**
- * @title AntseedSessions
+ * @title AntseedChannels
  * @notice Session lifecycle with built-in cumulative payment channels.
  *         USDC stays in AntseedDeposits — this contract holds none.
  *
@@ -29,7 +29,7 @@ import {IAntseedEmissions} from "./interfaces/IAntseedEmissions.sol";
  *
  *         Contract is swappable: deploy a new version and re-point Deposits + Stats.
  */
-contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
+contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
 
     // ─── EIP-712 ─────────────────────────────────────────────────────
     bytes32 public constant SPENDING_AUTH_TYPEHASH = keccak256(
@@ -51,9 +51,9 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     uint256 public TIMEOUT_GRACE_PERIOD = 15 minutes;
 
     // ─── Enums & Structs ────────────────────────────────────────────
-    enum SessionStatus { None, Active, Settled, TimedOut }
+    enum ChannelStatus { None, Active, Settled, TimedOut }
 
-    struct Session {
+    struct Channel {
         address buyer;
         address seller;
         uint128 deposit;              // total USDC escrowed in this contract
@@ -62,7 +62,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         uint256 deadline;
         uint256 settledAt;
         uint256 closeRequestedAt;     // timestamp when timeout was requested (0 = not requested)
-        SessionStatus status;
+        ChannelStatus status;
     }
 
     // ─── State Variables ────────────────────────────────────────────
@@ -72,7 +72,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     IAntseedEmissions public emissionsContract;
     address public protocolReserve;
 
-    mapping(bytes32 => Session) public sessions;
+    mapping(bytes32 => Channel) public channels;
 
     /// @notice Authorized operator per buyer — can call requestClose, withdraw on buyer's behalf
     mapping(address => address) public operators;
@@ -81,11 +81,11 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
 
     // ─── Events ─────────────────────────────────────────────────────
     event Reserved(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint128 maxAmount);
-    event SessionSettled(bytes32 indexed channelId, address indexed seller, uint128 cumulativeAmount, uint256 platformFee);
-    event SessionClosed(bytes32 indexed channelId, address indexed seller, uint128 finalAmount, uint256 platformFee);
-    event SessionTopUp(bytes32 indexed channelId, address indexed buyer, uint128 newMaxAmount);
+    event ChannelSettled(bytes32 indexed channelId, address indexed seller, uint128 cumulativeAmount, uint256 platformFee);
+    event ChannelClosed(bytes32 indexed channelId, address indexed seller, uint128 finalAmount, uint256 platformFee);
+    event ChannelTopUp(bytes32 indexed channelId, address indexed buyer, uint128 newMaxAmount);
     event CloseRequested(bytes32 indexed channelId, address indexed buyer);
-    event SessionWithdrawn(bytes32 indexed channelId, address indexed buyer);
+    event ChannelWithdrawn(bytes32 indexed channelId, address indexed buyer);
     event OperatorSet(address indexed buyer, address indexed operator);
 
 
@@ -93,9 +93,9 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     error InvalidAddress();
     error InvalidAmount();
     error InvalidSignature();
-    error SessionExists();
-    error SessionNotActive();
-    error SessionExpired();
+    error ChannelExists();
+    error ChannelNotActive();
+    error ChannelExpired();
     error NotAuthorized();
     error InvalidFee();
     error FirstSignCapExceeded();
@@ -112,7 +112,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         address _stats,
         address _staking
     )
-        EIP712("AntseedSessions", "7")
+        EIP712("AntseedChannels", "7")
         Ownable(msg.sender)
     {
         if (_deposits == address(0) || _stats == address(0) || _staking == address(0))
@@ -142,7 +142,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
     // ═══════════════════════════════════════════════════════════════════
 
     /**
-     * @notice Open a payment session. Seller calls this.
+     * @notice Open a payment channel. Seller calls this.
      *         USDC is pulled from buyer's Deposits balance into this contract.
      *
      * @param buyer        The buyer's address (signs SpendingAuth off-chain)
@@ -158,13 +158,13 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         uint256 deadline,
         bytes calldata buyerSig
     ) external nonReentrant whenNotPaused {
-        if (block.timestamp > deadline) revert SessionExpired();
+        if (block.timestamp > deadline) revert ChannelExpired();
         if (!stakingContract.isStakedAboveMin(msg.sender)) revert SellerNotStaked();
         if (maxAmount == 0) revert InvalidAmount();
 
         bytes32 channelId = computeChannelId(buyer, msg.sender, salt);
 
-        if (sessions[channelId].status != SessionStatus.None) revert SessionExists();
+        if (channels[channelId].status != ChannelStatus.None) revert ChannelExists();
         if (maxAmount > FIRST_SIGN_CAP) revert FirstSignCapExceeded();
 
         // Verify buyer's ReserveAuth signature — binds channelId, maxAmount, deadline
@@ -173,7 +173,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         // Lock buyer's USDC in Deposits (stays there, no transfer)
         depositsContract.lockForSession(buyer, maxAmount);
 
-        sessions[channelId] = Session({
+        channels[channelId] = Channel({
             buyer: buyer,
             seller: msg.sender,
             deposit: maxAmount,
@@ -182,7 +182,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
             deadline: deadline,
             settledAt: 0,
             closeRequestedAt: 0,
-            status: SessionStatus.Active
+            status: ChannelStatus.Active
         });
 
         stakingContract.incrementActiveSessions(msg.sender);
@@ -216,28 +216,28 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         uint256 deadline,
         bytes calldata buyerSig
     ) external nonReentrant whenNotPaused {
-        Session storage session = sessions[channelId];
-        if (session.status != SessionStatus.Active) revert SessionNotActive();
-        if (msg.sender != session.seller) revert NotAuthorized();
-        if (block.timestamp > deadline) revert SessionExpired();
-        if (newMaxAmount <= session.deposit) revert TopUpAmountTooLow();
+        Channel storage channel = channels[channelId];
+        if (channel.status != ChannelStatus.Active) revert ChannelNotActive();
+        if (msg.sender != channel.seller) revert NotAuthorized();
+        if (block.timestamp > deadline) revert ChannelExpired();
+        if (newMaxAmount <= channel.deposit) revert TopUpAmountTooLow();
 
         // Require at least 85% of current deposit to be settled
-        uint256 threshold = (uint256(session.deposit) * TOP_UP_SETTLED_THRESHOLD_BPS) / 10000;
-        if (session.settled < threshold) revert TopUpThresholdNotMet();
+        uint256 threshold = (uint256(channel.deposit) * TOP_UP_SETTLED_THRESHOLD_BPS) / 10000;
+        if (channel.settled < threshold) revert TopUpThresholdNotMet();
 
         // Verify buyer's ReserveAuth signature for the new ceiling
-        _verifyReserveAuth(channelId, newMaxAmount, deadline, session.buyer, buyerSig);
+        _verifyReserveAuth(channelId, newMaxAmount, deadline, channel.buyer, buyerSig);
 
         // Lock the additional amount in Deposits
-        uint128 additionalAmount = newMaxAmount - session.deposit;
-        depositsContract.lockForSession(session.buyer, additionalAmount);
+        uint128 additionalAmount = newMaxAmount - channel.deposit;
+        depositsContract.lockForSession(channel.buyer, additionalAmount);
 
         // Update session
-        session.deposit = newMaxAmount;
-        session.deadline = deadline;
+        channel.deposit = newMaxAmount;
+        channel.deadline = deadline;
 
-        emit SessionTopUp(channelId, session.buyer, newMaxAmount);
+        emit ChannelTopUp(channelId, channel.buyer, newMaxAmount);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -260,25 +260,25 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         bytes calldata metadata,
         bytes calldata buyerSig
     ) external nonReentrant whenNotPaused {
-        Session storage session = sessions[channelId];
-        if (session.status != SessionStatus.Active) revert SessionNotActive();
-        if (msg.sender != session.seller) revert NotAuthorized();
-        if (cumulativeAmount <= session.settled) revert InvalidAmount();
-        if (cumulativeAmount > session.deposit) revert InvalidAmount();
+        Channel storage channel = channels[channelId];
+        if (channel.status != ChannelStatus.Active) revert ChannelNotActive();
+        if (msg.sender != channel.seller) revert NotAuthorized();
+        if (cumulativeAmount <= channel.settled) revert InvalidAmount();
+        if (cumulativeAmount > channel.deposit) revert InvalidAmount();
 
         bytes32 metadataHash = keccak256(metadata);
-        _verifySpendingAuth(channelId, cumulativeAmount, metadataHash, session.buyer, buyerSig);
+        _verifySpendingAuth(channelId, cumulativeAmount, metadataHash, channel.buyer, buyerSig);
 
-        uint128 delta = cumulativeAmount - session.settled;
-        uint256 platformFee = _chargeAndSettle(session, delta, delta);
+        uint128 delta = cumulativeAmount - channel.settled;
+        uint256 platformFee = _chargeAndSettle(channel, delta, delta);
 
-        session.settled = cumulativeAmount;
-        session.metadataHash = metadataHash;
-        session.settledAt = block.timestamp;
+        channel.settled = cumulativeAmount;
+        channel.metadataHash = metadataHash;
+        channel.settledAt = block.timestamp;
 
-        _recordStatsAndEmissions(session, delta, metadata, 2); // partial settlement
+        _recordStatsAndEmissions(channel, delta, metadata, 2); // partial settlement
 
-        emit SessionSettled(channelId, session.seller, cumulativeAmount, platformFee);
+        emit ChannelSettled(channelId, channel.seller, cumulativeAmount, platformFee);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -300,29 +300,29 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         bytes calldata metadata,
         bytes calldata buyerSig
     ) external nonReentrant whenNotPaused {
-        Session storage session = sessions[channelId];
-        if (session.status != SessionStatus.Active) revert SessionNotActive();
-        if (msg.sender != session.seller) revert NotAuthorized();
-        if (finalAmount < session.settled) revert FinalAmountBelowSettled();
-        if (finalAmount > session.deposit) revert InvalidAmount();
+        Channel storage channel = channels[channelId];
+        if (channel.status != ChannelStatus.Active) revert ChannelNotActive();
+        if (msg.sender != channel.seller) revert NotAuthorized();
+        if (finalAmount < channel.settled) revert FinalAmountBelowSettled();
+        if (finalAmount > channel.deposit) revert InvalidAmount();
 
         bytes32 metadataHash = keccak256(metadata);
-        _verifySpendingAuth(channelId, finalAmount, metadataHash, session.buyer, buyerSig);
+        _verifySpendingAuth(channelId, finalAmount, metadataHash, channel.buyer, buyerSig);
 
-        uint128 delta = finalAmount - session.settled;
+        uint128 delta = finalAmount - channel.settled;
         // Release all remaining reserved: charge delta, un-reserve everything
-        uint128 remainingReserved = session.deposit - session.settled;
-        uint256 platformFee = _chargeAndSettle(session, delta, remainingReserved);
+        uint128 remainingReserved = channel.deposit - channel.settled;
+        uint256 platformFee = _chargeAndSettle(channel, delta, remainingReserved);
 
-        session.settled = finalAmount;
-        session.metadataHash = metadataHash;
-        session.settledAt = block.timestamp;
-        session.status = SessionStatus.Settled;
-        stakingContract.decrementActiveSessions(session.seller);
+        channel.settled = finalAmount;
+        channel.metadataHash = metadataHash;
+        channel.settledAt = block.timestamp;
+        channel.status = ChannelStatus.Settled;
+        stakingContract.decrementActiveSessions(channel.seller);
 
-        _recordStatsAndEmissions(session, delta, metadata, 0); // session complete
+        _recordStatsAndEmissions(channel, delta, metadata, 0); // session complete
 
-        emit SessionClosed(channelId, session.seller, finalAmount, platformFee);
+        emit ChannelClosed(channelId, channel.seller, finalAmount, platformFee);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -336,13 +336,13 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
      *         After the grace period, the buyer can withdraw remaining funds.
      */
     function requestClose(bytes32 channelId) external {
-        Session storage session = sessions[channelId];
-        if (session.status != SessionStatus.Active) revert SessionNotActive();
-        _requireOperator(session.buyer);
-        if (session.closeRequestedAt != 0) revert CloseAlreadyRequested();
+        Channel storage channel = channels[channelId];
+        if (channel.status != ChannelStatus.Active) revert ChannelNotActive();
+        _requireOperator(channel.buyer);
+        if (channel.closeRequestedAt != 0) revert CloseAlreadyRequested();
 
-        session.closeRequestedAt = block.timestamp;
-        emit CloseRequested(channelId, session.buyer);
+        channel.closeRequestedAt = block.timestamp;
+        emit CloseRequested(channelId, channel.buyer);
     }
 
     /**
@@ -351,24 +351,24 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
      *         Buyer-only, after TIMEOUT_GRACE_PERIOD has elapsed since requestClose.
      */
     function withdraw(bytes32 channelId) external nonReentrant {
-        Session storage session = sessions[channelId];
-        if (session.status != SessionStatus.Active) revert SessionNotActive();
-        _requireOperator(session.buyer);
-        if (session.closeRequestedAt == 0) revert CloseNotReady();
-        if (block.timestamp < session.closeRequestedAt + TIMEOUT_GRACE_PERIOD) revert CloseNotReady();
+        Channel storage channel = channels[channelId];
+        if (channel.status != ChannelStatus.Active) revert ChannelNotActive();
+        _requireOperator(channel.buyer);
+        if (channel.closeRequestedAt == 0) revert CloseNotReady();
+        if (block.timestamp < channel.closeRequestedAt + TIMEOUT_GRACE_PERIOD) revert CloseNotReady();
 
         // Release all remaining reserved back to buyer's available balance
-        uint128 remainingReserved = session.deposit - session.settled;
+        uint128 remainingReserved = channel.deposit - channel.settled;
         if (remainingReserved > 0) {
-            depositsContract.releaseLock(session.buyer, remainingReserved);
+            depositsContract.releaseLock(channel.buyer, remainingReserved);
         }
 
-        session.status = SessionStatus.TimedOut;
-        stakingContract.decrementActiveSessions(session.seller);
+        channel.status = ChannelStatus.TimedOut;
+        stakingContract.decrementActiveSessions(channel.seller);
 
         // Record ghost only if seller never settled anything (true abandonment)
-        if (session.settled == 0) {
-            uint256 agentId = stakingContract.getAgentId(session.seller);
+        if (channel.settled == 0) {
+            uint256 agentId = stakingContract.getAgentId(channel.seller);
             if (agentId != 0) {
                 statsContract.updateStats(agentId, IAntseedStats.StatsUpdate({
                     updateType: 1,
@@ -381,7 +381,7 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
             }
         }
 
-        emit SessionWithdrawn(channelId, session.buyer);
+        emit ChannelWithdrawn(channelId, channel.buyer);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -456,13 +456,13 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
      * @return platformFee   The platform fee deducted
      */
     function _chargeAndSettle(
-        Session storage session,
+        Channel storage channel,
         uint128 delta,
         uint128 reservedToFree
     ) internal returns (uint256 platformFee) {
         if (delta == 0 && reservedToFree > 0) {
             // No charge but release lock (e.g., close with no additional spend)
-            depositsContract.releaseLock(session.buyer, reservedToFree);
+            depositsContract.releaseLock(channel.buyer, reservedToFree);
             return 0;
         }
         if (delta == 0) return 0;
@@ -471,8 +471,8 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
         if (protocolReserve == address(0)) platformFee = 0;
 
         depositsContract.chargeAndCreditEarnings(
-            session.buyer,
-            session.seller,
+            channel.buyer,
+            channel.seller,
             delta,
             reservedToFree,
             platformFee,
@@ -482,12 +482,12 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
 
     /// @param statsUpdateType 0 = session complete (close), 1 = ghost, 2 = partial settlement
     function _recordStatsAndEmissions(
-        Session storage session,
+        Channel storage channel,
         uint128 delta,
         bytes calldata metadata,
         uint8 statsUpdateType
     ) internal {
-        uint256 agentId = stakingContract.getAgentId(session.seller);
+        uint256 agentId = stakingContract.getAgentId(channel.seller);
         if (agentId != 0) {
             (uint256 inputTokens, uint256 outputTokens, uint256 latencyMs, uint256 requestCount) =
                 abi.decode(metadata, (uint256, uint256, uint256, uint256));
@@ -501,8 +501,8 @@ contract AntseedSessions is EIP712, Pausable, Ownable, ReentrancyGuard {
             }));
         }
         if (delta > 0 && address(emissionsContract) != address(0)) {
-            emissionsContract.accrueSellerPoints(session.seller, delta);
-            emissionsContract.accrueBuyerPoints(session.buyer, delta);
+            emissionsContract.accrueSellerPoints(channel.seller, delta);
+            emissionsContract.accrueBuyerPoints(channel.buyer, delta);
         }
     }
 

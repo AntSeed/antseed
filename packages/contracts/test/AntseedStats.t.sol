@@ -24,7 +24,7 @@ contract AntseedStatsTest is Test {
         staking = new AntseedStaking(address(usdc), address(registry), address(stats));
 
         // Set this test contract as the sessions contract so it can call updateStats
-        stats.setSessionsContract(address(this));
+        stats.setChannelsContract(address(this));
     }
 
     function test_register() public {
@@ -129,14 +129,14 @@ contract AntseedStatsTest is Test {
         assertEq(stake, 0);
     }
 
-    function test_setSessionsContract() public {
-        stats.setSessionsContract(address(0x99));
-        assertEq(stats.sessionsContract(), address(0x99));
+    function test_setChannelsContract() public {
+        stats.setChannelsContract(address(0x99));
+        assertEq(stats.channelsContract(), address(0x99));
     }
 
-    function test_setSessionsContract_revert_zeroAddress() public {
+    function test_setChannelsContract_revert_zeroAddress() public {
         vm.expectRevert(AntseedStats.InvalidAddress.selector);
-        stats.setSessionsContract(address(0));
+        stats.setChannelsContract(address(0));
     }
 
     function test_getStats_default() public view {

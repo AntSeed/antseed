@@ -302,7 +302,7 @@ export function registerConnectCommand(program: Command): void {
         chainId: cryptoOverrides?.chainId,
         rpcUrl: cryptoOverrides?.rpcUrl,
         depositsContractAddress: cryptoOverrides?.depositsContractAddress,
-        sessionsContractAddress: cryptoOverrides?.sessionsContractAddress,
+        channelsContractAddress: cryptoOverrides?.channelsContractAddress,
         usdcContractAddress: cryptoOverrides?.usdcContractAddress,
       })
       let settlementEnabled = settlementEnv ?? true
@@ -321,7 +321,7 @@ export function registerConnectCommand(program: Command): void {
           enabled: true,
           rpcUrl: chainConfig.rpcUrl,
           depositsAddress: chainConfig.depositsContractAddress,
-          sessionsAddress: chainConfig.sessionsContractAddress,
+          channelsAddress: chainConfig.channelsContractAddress,
           usdcAddress: chainConfig.usdcContractAddress,
           chainId: chainConfig.evmChainId,
           defaultDepositAmountUSDC: cryptoOverrides?.defaultLockAmountUSDC
@@ -446,7 +446,7 @@ export function registerConnectCommand(program: Command): void {
           await proxy.stop()
         }
         await node.stop()
-        nodeSpinner.succeed('Disconnected. All sessions finalized.')
+        nodeSpinner.succeed('Disconnected. All channels finalized.')
       })
     })
 }

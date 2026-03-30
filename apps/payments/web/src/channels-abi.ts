@@ -1,4 +1,4 @@
-export const SESSIONS_ABI = [
+export const CHANNELS_ABI = [
   'function requestClose(bytes32 channelId) external',
   'function withdraw(bytes32 channelId) external',
   'function setOperator(address buyer, address operator, uint256 nonce, bytes buyerSig) external',

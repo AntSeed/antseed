@@ -145,16 +145,16 @@ describe('SellerPaymentManager PaymentRequired', () => {
 
     const config: SellerPaymentConfig = {
       rpcUrl: 'http://127.0.0.1:8545',
-      sessionsContractAddress: CONTRACT_ADDR,
+      channelsContractAddress: CONTRACT_ADDR,
           chainId: CHAIN_ID,
       dataDir: tempDir,
     };
     manager = new SellerPaymentManager(sellerIdentity, config, store);
 
-    vi.spyOn(manager.sessionsClient, 'reserve').mockResolvedValue('0xhash');
-    vi.spyOn(manager.sessionsClient, 'close').mockResolvedValue('0xhash');
-    vi.spyOn(manager.sessionsClient, 'requestClose').mockResolvedValue('0xhash');
-    vi.spyOn(manager.sessionsClient, 'withdraw').mockResolvedValue('0xhash');
+    vi.spyOn(manager.channelsClient, 'reserve').mockResolvedValue('0xhash');
+    vi.spyOn(manager.channelsClient, 'close').mockResolvedValue('0xhash');
+    vi.spyOn(manager.channelsClient, 'requestClose').mockResolvedValue('0xhash');
+    vi.spyOn(manager.channelsClient, 'withdraw').mockResolvedValue('0xhash');
   });
 
   afterEach(() => {
@@ -177,7 +177,7 @@ describe('SellerPaymentManager PaymentRequired', () => {
   it('minBudgetPerRequest can be configured', () => {
     const customConfig: SellerPaymentConfig = {
       rpcUrl: 'http://127.0.0.1:8545',
-      sessionsContractAddress: CONTRACT_ADDR,
+      channelsContractAddress: CONTRACT_ADDR,
           chainId: CHAIN_ID,
       dataDir: tempDir,
       minBudgetPerRequest: '50000',
@@ -249,16 +249,16 @@ describe('SellerPaymentManager suggested amount', () => {
 
     const config: SellerPaymentConfig = {
       rpcUrl: 'http://127.0.0.1:8545',
-      sessionsContractAddress: CONTRACT_ADDR,
+      channelsContractAddress: CONTRACT_ADDR,
           chainId: CHAIN_ID,
       dataDir: tempDir,
     };
     manager = new SellerPaymentManager(sellerIdentity, config, store);
 
-    vi.spyOn(manager.sessionsClient, 'reserve').mockResolvedValue('0xhash');
-    vi.spyOn(manager.sessionsClient, 'close').mockResolvedValue('0xhash');
-    vi.spyOn(manager.sessionsClient, 'requestClose').mockResolvedValue('0xhash');
-    vi.spyOn(manager.sessionsClient, 'withdraw').mockResolvedValue('0xhash');
+    vi.spyOn(manager.channelsClient, 'reserve').mockResolvedValue('0xhash');
+    vi.spyOn(manager.channelsClient, 'close').mockResolvedValue('0xhash');
+    vi.spyOn(manager.channelsClient, 'requestClose').mockResolvedValue('0xhash');
+    vi.spyOn(manager.channelsClient, 'withdraw').mockResolvedValue('0xhash');
   });
 
   afterEach(() => {
@@ -344,7 +344,7 @@ describe('Budget mismatch rejection', () => {
     const buyerConfig = {
       rpcUrl: 'http://127.0.0.1:8545',
       depositsContractAddress: '0x' + 'dd'.repeat(20),
-      sessionsContractAddress: CONTRACT_ADDR,
+      channelsContractAddress: CONTRACT_ADDR,
           usdcAddress: '0x' + 'ee'.repeat(20),
       identityRegistryAddress: '0x' + 'ff'.repeat(20),
       chainId: CHAIN_ID,
@@ -391,7 +391,7 @@ describe('Budget mismatch rejection', () => {
     const buyerConfig = {
       rpcUrl: 'http://127.0.0.1:8545',
       depositsContractAddress: '0x' + 'dd'.repeat(20),
-      sessionsContractAddress: CONTRACT_ADDR,
+      channelsContractAddress: CONTRACT_ADDR,
           usdcAddress: '0x' + 'ee'.repeat(20),
       identityRegistryAddress: '0x' + 'ff'.repeat(20),
       chainId: CHAIN_ID,
@@ -438,7 +438,7 @@ describe('Budget mismatch rejection', () => {
     const buyerConfig = {
       rpcUrl: 'http://127.0.0.1:8545',
       depositsContractAddress: '0x' + 'dd'.repeat(20),
-      sessionsContractAddress: CONTRACT_ADDR,
+      channelsContractAddress: CONTRACT_ADDR,
           usdcAddress: '0x' + 'ee'.repeat(20),
       identityRegistryAddress: '0x' + 'ff'.repeat(20),
       chainId: CHAIN_ID,

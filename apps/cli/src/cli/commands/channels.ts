@@ -18,13 +18,13 @@ function statusColor(status: string): string {
   }
 }
 
-export function registerSessionsCommand(program: Command): void {
+export function registerChannelsCommand(program: Command): void {
   program
-    .command('sessions')
-    .description('List payment sessions from local store')
+    .command('channels')
+    .description('List payment channels from local store')
     .option('--status <status>', 'filter by status: active, settled, timeout, ghost')
     .option('--role <role>', 'filter by role: buyer or seller')
-    .option('--limit <number>', 'max number of sessions to show', '20')
+    .option('--limit <number>', 'max number of channels to show', '20')
     .option('--json', 'output as JSON', false)
     .action(async (options) => {
       const globalOpts = getGlobalOptions(program);
@@ -34,14 +34,14 @@ export function registerSessionsCommand(program: Command): void {
         store = openSessionStore(globalOpts.dataDir);
       } catch (err) {
         console.error(chalk.red(`Failed to open session store: ${(err as Error).message}`));
-        console.error(chalk.dim('Have you connected to the network yet? Sessions are stored locally after first use.'));
+        console.error(chalk.dim('Have you connected to the network yet? Channels are stored locally after first use.'));
         process.exit(1);
       }
 
       try {
-        // Query sessions — SessionStore doesn't have a generic list method,
+        // Query channels — SessionStore doesn't have a generic list method,
         // so we use the DB directly via the available methods.
-        // For now, we read from the active/timeout sessions.
+        // For now, we read from the active/timeout channels.
         const limit = parseInt(options.limit as string, 10) || 20;
         const statusFilter = options.status as string | undefined;
         const roleFilter = options.role as string | undefined;
@@ -67,11 +67,11 @@ export function registerSessionsCommand(program: Command): void {
         }
 
         if (limited.length === 0) {
-          console.log(chalk.yellow('No sessions found.'));
+          console.log(chalk.yellow('No channels found.'));
           return;
         }
 
-        console.log(chalk.bold(`Payment Sessions (${limited.length} of ${filtered.length}):\n`));
+        console.log(chalk.bold(`Payment Channels (${limited.length} of ${filtered.length}):\n`));
 
         for (const session of limited) {
           console.log(`  ${chalk.bold(short(session.sessionId, 16))}  ${statusColor(session.status)}  ${chalk.dim(session.role)}`);

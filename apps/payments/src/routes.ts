@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { CryptoContext, PaymentCryptoConfig } from './crypto-context.js';
-import { DepositsClient, SessionsClient, formatUsdc, parseUsdc, signSetOperator, makeSessionsDomain, type ChainConfig } from '@antseed/node';
+import { DepositsClient, ChannelsClient, formatUsdc, parseUsdc, signSetOperator, makeChannelsDomain, type ChainConfig } from '@antseed/node';
 
 interface RouteContext {
   cryptoCtx: CryptoContext | null;
@@ -28,15 +28,15 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
     return depositsClient;
   }
 
-  let sessionsClient: SessionsClient | null = null;
-  function getSessionsClient(): SessionsClient | null {
-    if (!sessionsClient && ctx.cryptoConfig.sessionsContractAddress) {
-      sessionsClient = new SessionsClient({
+  let channelsClient: ChannelsClient | null = null;
+  function getChannelsClient(): ChannelsClient | null {
+    if (!channelsClient && ctx.cryptoConfig.channelsContractAddress) {
+      channelsClient = new ChannelsClient({
         rpcUrl: ctx.cryptoConfig.rpcUrl,
-        contractAddress: ctx.cryptoConfig.sessionsContractAddress,
+        contractAddress: ctx.cryptoConfig.channelsContractAddress,
       });
     }
-    return sessionsClient;
+    return channelsClient;
   }
 
   fastify.get('/api/balance', async (_request, reply) => {
@@ -71,7 +71,7 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
       evmChainId: ctx.chainConfig.evmChainId,
       rpcUrl: ctx.cryptoConfig.rpcUrl,
       depositsContractAddress: ctx.cryptoConfig.depositsContractAddress,
-      sessionsContractAddress: ctx.cryptoConfig.sessionsContractAddress,
+      channelsContractAddress: ctx.cryptoConfig.channelsContractAddress,
       usdcContractAddress: ctx.cryptoConfig.usdcContractAddress,
       evmAddress: ctx.cryptoCtx?.evmAddress ?? null,
     };
@@ -131,14 +131,14 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
     }
   });
 
-  fastify.get('/api/sessions', async (_request, reply) => {
+  fastify.get('/api/channels', async (_request, reply) => {
     if (!ctx.cryptoCtx) {
-      return { sessions: [] };
+      return { channels: [] };
     }
 
     try {
-      const client = getSessionsClient();
-      if (!client) return { sessions: [] };
+      const client = getChannelsClient();
+      if (!client) return { channels: [] };
 
       const buyerAddress = ctx.cryptoCtx.evmAddress;
       // Pad buyer address to 32 bytes for topic filter (indexed address in events)
@@ -152,9 +152,9 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
       const eventTopic = iface.getEvent('Reserved')!.topicHash;
 
       const logs = await client.provider.getLogs({
-        address: ctx.cryptoConfig.sessionsContractAddress,
+        address: ctx.cryptoConfig.channelsContractAddress,
         topics: [eventTopic, null, buyerTopic],
-        fromBlock: ctx.chainConfig.sessionsDeployBlock ?? 0,
+        fromBlock: ctx.chainConfig.channelsDeployBlock ?? 0,
         toBlock: 'latest',
       });
 
@@ -165,14 +165,14 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
         if (log.topics[1]) channelIds.add(log.topics[1]);
       }
 
-      // Fetch session details for each channelId
-      const sessions = [];
+      // Fetch channel details for each channelId
+      const channels = [];
       for (const channelId of channelIds) {
         try {
           const session = await client.getSession(channelId);
-          // Only include Active sessions (status === 1)
+          // Only include Active channels (status === 1)
           if (session.status === 1) {
-            sessions.push({
+            channels.push({
               channelId,
               seller: session.seller,
               deposit: formatUsdc6(session.deposit),
@@ -183,13 +183,13 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
             });
           }
         } catch {
-          // Skip sessions that fail to fetch
+          // Skip channels that fail to fetch
         }
       }
 
-      return { sessions };
+      return { channels };
     } catch (err) {
-      return { sessions: [] };
+      return { channels: [] };
     }
   });
 
@@ -199,7 +199,7 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
     }
 
     try {
-      const client = getSessionsClient();
+      const client = getChannelsClient();
       if (!client) {
         return { operator: '0x0000000000000000000000000000000000000000', nonce: 0 };
       }
@@ -228,12 +228,12 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
     }
 
     try {
-      const sc = getSessionsClient();
+      const sc = getChannelsClient();
       if (!sc) {
-        return reply.status(503).send({ ok: false, error: 'Sessions contract not configured' });
+        return reply.status(503).send({ ok: false, error: 'Channels contract not configured' });
       }
       const nonce = await sc.getOperatorNonce(ctx.cryptoCtx.evmAddress);
-      const domain = makeSessionsDomain(ctx.chainConfig.evmChainId, ctx.cryptoConfig.sessionsContractAddress);
+      const domain = makeChannelsDomain(ctx.chainConfig.evmChainId, ctx.cryptoConfig.channelsContractAddress);
       const signature = await signSetOperator(ctx.cryptoCtx.wallet, domain, {
         operator,
         nonce,

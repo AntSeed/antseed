@@ -24,7 +24,7 @@ const EMISSIONS_ABI = [
   'function totalBuyerPoints() external view returns (uint256)',
   'function reserveAccumulated() external view returns (uint256)',
   'function flushReserve() external',
-  'function setSessionsContract(address _sessions) external',
+  'function setChannelsContract(address _sessions) external',
   'function setReserveDestination(address _dest) external',
   'function setSharePercentages(uint256 sellerPct, uint256 buyerPct, uint256 reservePct) external',
   'function transferOwnership(address newOwner) external',

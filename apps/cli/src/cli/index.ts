@@ -23,7 +23,7 @@ import { registerRegisterCommand } from './commands/register.js';
 import { registerStakeCommand } from './commands/stake.js';
 import { registerEmissionsCommand } from './commands/emissions.js';
 import { registerReputationCommand } from './commands/reputation.js';
-import { registerSessionsCommand } from './commands/sessions.js';
+import { registerChannelsCommand } from './commands/channels.js';
 import { registerSubscribeCommand } from './commands/subscribe.js';
 import { registerPaymentsCommand } from './commands/payments.js';
 
@@ -64,7 +64,7 @@ registerRegisterCommand(program);
 registerStakeCommand(program);
 registerEmissionsCommand(program);
 registerReputationCommand(program);
-registerSessionsCommand(program);
+registerChannelsCommand(program);
 registerSubscribeCommand(program);
 registerPaymentsCommand(program);
 

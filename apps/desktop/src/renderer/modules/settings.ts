@@ -74,7 +74,7 @@ export function initSettingsModule({
       cryptoChainId: safeString(crypto.chainId, ''),
       cryptoRpcUrl: safeString(crypto.rpcUrl, ''),
       cryptoDepositsAddress: safeString(crypto.depositsContractAddress, ''),
-      cryptoSessionsAddress: safeString(crypto.sessionsContractAddress, ''),
+      cryptoChannelsAddress: safeString(crypto.channelsContractAddress, ''),
       cryptoUsdcAddress: safeString(crypto.usdcContractAddress, ''),
     });
     notifyUiStateChanged();
@@ -114,13 +114,13 @@ export function initSettingsModule({
         payments: {
           ...asRecord(currentConfig.payments),
           preferredMethod: formData.paymentMethod || 'crypto',
-          ...(formData.cryptoChainId || formData.cryptoRpcUrl || formData.cryptoDepositsAddress || formData.cryptoSessionsAddress || formData.cryptoUsdcAddress ? {
+          ...(formData.cryptoChainId || formData.cryptoRpcUrl || formData.cryptoDepositsAddress || formData.cryptoChannelsAddress || formData.cryptoUsdcAddress ? {
             crypto: {
               ...asRecord(asRecord(currentConfig.payments)?.crypto),
               ...(formData.cryptoChainId ? { chainId: formData.cryptoChainId } : {}),
               ...(formData.cryptoRpcUrl ? { rpcUrl: formData.cryptoRpcUrl } : {}),
               ...(formData.cryptoDepositsAddress ? { depositsContractAddress: formData.cryptoDepositsAddress } : {}),
-              ...(formData.cryptoSessionsAddress ? { sessionsContractAddress: formData.cryptoSessionsAddress } : {}),
+              ...(formData.cryptoChannelsAddress ? { channelsContractAddress: formData.cryptoChannelsAddress } : {}),
               ...(formData.cryptoUsdcAddress ? { usdcContractAddress: formData.cryptoUsdcAddress } : {}),
             },
           } : {}),

@@ -9,7 +9,7 @@ import { parseUnits } from 'viem';
 import { parseAbi } from 'viem';
 import type { PaymentConfig } from '../types';
 import { getOperatorInfo, signOperatorAuth } from '../api';
-import { SESSIONS_ABI } from '../sessions-abi';
+import { CHANNELS_ABI } from '../channels-abi';
 import './DepositView.scss';
 
 interface DepositViewProps {
@@ -158,19 +158,19 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
         try {
           const opInfo = await getOperatorInfo();
           const zeroAddr = '0x0000000000000000000000000000000000000000';
-          if (opInfo.operator === zeroAddr && address && config?.sessionsContractAddress) {
+          if (opInfo.operator === zeroAddr && address && config?.channelsContractAddress) {
             const signResult = await signOperatorAuth(address);
             if (signResult.ok) {
               await writeOperatorAsync({
-                address: config.sessionsContractAddress as `0x${string}`,
-                abi: parseAbi(SESSIONS_ABI),
+                address: config.channelsContractAddress as `0x${string}`,
+                abi: parseAbi(CHANNELS_ABI),
                 functionName: 'setOperator',
                 args: [signResult.buyer as `0x${string}`, address as `0x${string}`, BigInt(signResult.nonce), signResult.signature as `0x${string}`],
               });
             }
           }
         } catch {
-          // Non-critical — operator can be set later via Sessions tab
+          // Non-critical — operator can be set later via Channels tab
         }
       })();
     }

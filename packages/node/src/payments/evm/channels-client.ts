@@ -1,12 +1,12 @@
 import { type AbstractSigner, Contract } from 'ethers';
 import { BaseEvmClient } from './base-evm-client.js';
 
-export interface SessionsClientConfig {
+export interface ChannelsClientConfig {
   rpcUrl: string;
   contractAddress: string;
 }
 
-export interface SessionInfo {
+export interface ChannelInfo {
   buyer: string;
   seller: string;
   deposit: bigint;
@@ -33,8 +33,8 @@ const SESSIONS_ABI = [
   'function operatorNonces(address buyer) external view returns (uint256)',
 ] as const;
 
-export class SessionsClient extends BaseEvmClient {
-  constructor(config: SessionsClientConfig) {
+export class ChannelsClient extends BaseEvmClient {
+  constructor(config: ChannelsClientConfig) {
     super(config.rpcUrl, config.contractAddress);
   }
 
@@ -99,7 +99,7 @@ export class SessionsClient extends BaseEvmClient {
     return this._execWrite(signer, SESSIONS_ABI, 'withdraw', channelId);
   }
 
-  async getSession(channelId: string): Promise<SessionInfo> {
+  async getSession(channelId: string): Promise<ChannelInfo> {
     const contract = new Contract(this._contractAddress, SESSIONS_ABI, this._provider);
     const result = await contract.getFunction('sessions')(channelId);
     return {

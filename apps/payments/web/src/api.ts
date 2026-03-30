@@ -51,7 +51,7 @@ export async function cancelWithdrawal(): Promise<{ ok: boolean; error?: string 
   return fetchJson('/api/withdraw/cancel', { method: 'POST' });
 }
 
-export interface SessionData {
+export interface ChannelData {
   channelId: string;
   seller: string;
   deposit: string;
@@ -66,8 +66,8 @@ export interface OperatorData {
   nonce: number;
 }
 
-export async function getSessions(): Promise<{ sessions: SessionData[] }> {
-  return fetchJson('/api/sessions');
+export async function getChannels(): Promise<{ channels: ChannelData[] }> {
+  return fetchJson('/api/channels');
 }
 
 export async function getOperatorInfo(): Promise<OperatorData> {

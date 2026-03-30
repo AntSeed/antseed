@@ -38,7 +38,7 @@ export function createDefaultConfig(): AntseedConfig {
         chainId: 'base-local',
         rpcUrl: 'http://127.0.0.1:8545',
         depositsContractAddress: '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707',
-        sessionsContractAddress: '0xa513E6E4b8f2a923D98304ec87F64353C4D5C853',
+        channelsContractAddress: '0xa513E6E4b8f2a923D98304ec87F64353C4D5C853',
         usdcContractAddress: '0x5FbDB2315678afecb367f032d93F642f64180aa3',
         identityRegistryAddress: '0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512',
         statsContractAddress: '0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9',

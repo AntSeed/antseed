@@ -5,11 +5,11 @@ import type {
   SpendingAuthPayload,
   PaymentRequiredPayload,
 } from '../types/protocol.js';
-import { SessionsClient } from './evm/sessions-client.js';
+import { ChannelsClient } from './evm/channels-client.js';
 import {
   SPENDING_AUTH_TYPES,
   RESERVE_AUTH_TYPES,
-  makeSessionsDomain,
+  makeChannelsDomain,
 } from './evm/signatures.js';
 import { debugLog, debugWarn } from '../utils/debug.js';
 import { peerIdToAddress } from '../types/peer.js';
@@ -17,7 +17,7 @@ import { SessionStore, type StoredSession } from './session-store.js';
 
 export interface SellerPaymentConfig {
   rpcUrl: string;
-  sessionsContractAddress: string;
+  channelsContractAddress: string;
   chainId: number;
   dataDir: string;
   /** Minimum USDC per request (base units). Default: "10000" ($0.01). */
@@ -46,7 +46,7 @@ interface LatestAuth {
 export class SellerPaymentManager {
   private readonly _identity: Identity;
   private readonly _signer: AbstractSigner;
-  private readonly _sessionsClient: SessionsClient;
+  private readonly _channelsClient: ChannelsClient;
   private readonly _config: SellerPaymentConfig;
   private readonly _sessionStore: SessionStore;
   /** In-memory cache of active buyer peerIds for fast has-session checks. */
@@ -76,9 +76,9 @@ export class SellerPaymentManager {
     this._identity = identity;
     this._config = config;
     this._signer = identity.wallet;
-    this._sessionsClient = new SessionsClient({
+    this._channelsClient = new ChannelsClient({
       rpcUrl: config.rpcUrl,
-      contractAddress: config.sessionsContractAddress,
+      contractAddress: config.channelsContractAddress,
     });
     this._sessionStore = sessionStore;
 
@@ -105,8 +105,8 @@ export class SellerPaymentManager {
     }
   }
 
-  get sessionsClient(): SessionsClient {
-    return this._sessionsClient;
+  get channelsClient(): ChannelsClient {
+    return this._channelsClient;
   }
 
   // ── SpendingAuth handler ─────────────────────────────────────
@@ -143,7 +143,7 @@ export class SellerPaymentManager {
       const cumulativeAmount = BigInt(payload.cumulativeAmount);
       const existingCumulative = this._acceptedCumulative.get(channelId);
 
-      const sessionsDomain = makeSessionsDomain(this._config.chainId, this._config.sessionsContractAddress);
+      const sessionsDomain = makeChannelsDomain(this._config.chainId, this._config.channelsContractAddress);
 
       if (existingCumulative === undefined) {
         // ── First SpendingAuth: verify ReserveAuth and reserve on-chain ──
@@ -163,7 +163,7 @@ export class SellerPaymentManager {
         debugLog(`[SellerPayment] ReserveAuth verified for buyer ${buyerPeerId.slice(0, 12)}...`);
         debugLog(`[SellerPayment] Reserving channel ${channelId.slice(0, 18)}... on-chain`);
         const reserveSalt = payload.reserveSalt ?? channelId;
-        await this._sessionsClient.reserve(
+        await this._channelsClient.reserve(
           this._signer,
           buyerEvmAddr,
           reserveSalt,
@@ -243,7 +243,7 @@ export class SellerPaymentManager {
 
         // Call topUp() on-chain
         debugLog(`[SellerPayment] Top-up verified: channel=${channelId.slice(0, 18)}... ceiling ${currentReserveMax} → ${newMaxAmount}`);
-        await this._sessionsClient.topUp(
+        await this._channelsClient.topUp(
           this._signer,
           channelId,
           newMaxAmount,
@@ -354,7 +354,7 @@ export class SellerPaymentManager {
     }
 
     // Verify AntSeed SpendingAuth signature
-    const sessionsDomain = makeSessionsDomain(this._config.chainId, this._config.sessionsContractAddress);
+    const sessionsDomain = makeChannelsDomain(this._config.chainId, this._config.channelsContractAddress);
     const metadataMsg = {
       channelId: auth.channelId,
       cumulativeAmount: BigInt(auth.cumulativeAmount),
@@ -462,7 +462,7 @@ export class SellerPaymentManager {
         }
         debugLog(`[SellerPayment] Closing channel ${channelId.slice(0, 18)}... cumulative=${latestAuth.cumulativeAmount} (attempt ${retries + 1}/${SellerPaymentManager.MAX_CLOSE_RETRIES})`);
         try {
-          await this._sessionsClient.close(
+          await this._channelsClient.close(
             this._signer,
             channelId,
             latestAuth.cumulativeAmount,
