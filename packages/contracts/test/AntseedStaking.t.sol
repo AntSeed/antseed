@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import "forge-std/Test.sol";
 import "../AntseedStaking.sol";
 import "../AntseedStats.sol";
+import "../AntseedRegistry.sol";
 import "../MockERC8004Registry.sol";
 import "../MockUSDC.sol";
 
@@ -21,9 +22,10 @@ contract MockChannelsForStaking {
 }
 
 contract AntseedStakingTest is Test {
-    MockERC8004Registry public registry;
+    MockERC8004Registry public identityRegistry;
     AntseedStats public stats;
     AntseedStaking public staking;
+    AntseedRegistry public antseedRegistry;
     MockUSDC public usdc;
 
     address public owner;
@@ -41,25 +43,30 @@ contract AntseedStakingTest is Test {
     function setUp() public {
         owner = address(this);
         usdc = new MockUSDC();
-        registry = new MockERC8004Registry();
+        identityRegistry = new MockERC8004Registry();
         stats = new AntseedStats();
-        staking = new AntseedStaking(address(usdc), address(registry), address(stats));
 
-        // Wire: this test contract is the channelsContract on Stats
-        // so we can call updateStats directly
-        stats.setChannelsContract(address(this));
+        // Registry for stats: channels = this test contract (so we can call updateStats)
+        AntseedRegistry statsRegistry = new AntseedRegistry();
+        statsRegistry.setChannels(address(this));
+        stats.setRegistry(address(statsRegistry));
 
-        // Set a mock channels contract on Staking that reports 0 active channels by default
+        // Main registry for staking
+        antseedRegistry = new AntseedRegistry();
         MockChannelsForStaking mockChannels = new MockChannelsForStaking();
-        staking.setChannelsContract(address(mockChannels));
-        staking.setProtocolReserve(reserve);
+        antseedRegistry.setChannels(address(mockChannels));
+        antseedRegistry.setIdentityRegistry(address(identityRegistry));
+        antseedRegistry.setStats(address(stats));
+        antseedRegistry.setProtocolReserve(reserve);
+
+        staking = new AntseedStaking(address(usdc), address(antseedRegistry));
 
         // Register sellers on MockERC8004Registry
         vm.prank(seller);
-        sellerAgentId = registry.register();
+        sellerAgentId = identityRegistry.register();
 
         vm.prank(seller2);
-        seller2AgentId = registry.register();
+        seller2AgentId = identityRegistry.register();
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -103,23 +110,17 @@ contract AntseedStakingTest is Test {
 
     function test_constructor_setsState() public view {
         assertEq(address(staking.usdc()), address(usdc));
-        assertEq(address(staking.identityRegistry()), address(registry));
-        assertEq(address(staking.statsContract()), address(stats));
+        assertEq(address(staking.registry()), address(antseedRegistry));
     }
 
     function test_constructor_revert_zeroUsdc() public {
         vm.expectRevert(AntseedStaking.InvalidAddress.selector);
-        new AntseedStaking(address(0), address(registry), address(stats));
+        new AntseedStaking(address(0), address(antseedRegistry));
     }
 
     function test_constructor_revert_zeroRegistry() public {
         vm.expectRevert(AntseedStaking.InvalidAddress.selector);
-        new AntseedStaking(address(usdc), address(0), address(stats));
-    }
-
-    function test_constructor_revert_zeroStats() public {
-        vm.expectRevert(AntseedStaking.InvalidAddress.selector);
-        new AntseedStaking(address(usdc), address(registry), address(0));
+        new AntseedStaking(address(usdc), address(0));
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -172,7 +173,7 @@ contract AntseedStakingTest is Test {
 
         // Register a second agent owned by seller
         vm.prank(seller);
-        uint256 otherAgentId = registry.register();
+        uint256 otherAgentId = identityRegistry.register();
 
         usdc.mint(seller, MIN_STAKE);
         vm.startPrank(seller);
@@ -254,7 +255,7 @@ contract AntseedStakingTest is Test {
 
         // Deploy a mock channels contract that reports active channels
         MockChannelsForStaking mockChannels = new MockChannelsForStaking();
-        staking.setChannelsContract(address(mockChannels));
+        antseedRegistry.setChannels(address(mockChannels));
         mockChannels.setActiveChannelCount(seller, 1);
 
         vm.prank(seller);
@@ -370,11 +371,15 @@ contract AntseedStakingTest is Test {
 
     // Edge: slash with no protocolReserve set -> revert to prevent lost funds
     function test_slash_noReserve_reverts() public {
-        // Deploy a new staking without reserve
-        AntseedStaking staking2 = new AntseedStaking(address(usdc), address(registry), address(stats));
+        // Deploy a new staking with a registry that has no protocolReserve
+        AntseedRegistry noReserveRegistry = new AntseedRegistry();
         MockChannelsForStaking mockChannels2 = new MockChannelsForStaking();
-        staking2.setChannelsContract(address(mockChannels2));
+        noReserveRegistry.setChannels(address(mockChannels2));
+        noReserveRegistry.setIdentityRegistry(address(identityRegistry));
+        noReserveRegistry.setStats(address(stats));
         // Don't set protocolReserve
+
+        AntseedStaking staking2 = new AntseedStaking(address(usdc), address(noReserveRegistry));
 
         usdc.mint(seller, LARGE_STAKE);
         vm.startPrank(seller);
@@ -424,72 +429,21 @@ contract AntseedStakingTest is Test {
     //                        ADMIN
     // ═══════════════════════════════════════════════════════════════════
 
-    function test_setChannelsContract() public {
-        address newSessions = address(0x55);
-        staking.setChannelsContract(newSessions);
-        assertEq(staking.channelsContract(), newSessions);
+    function test_setRegistry() public {
+        AntseedRegistry newRegistry = new AntseedRegistry();
+        staking.setRegistry(address(newRegistry));
+        assertEq(address(staking.registry()), address(newRegistry));
     }
 
-    function test_setChannelsContract_revert_notOwner() public {
+    function test_setRegistry_revert_notOwner() public {
         vm.prank(seller);
         vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", seller));
-        staking.setChannelsContract(address(0x55));
+        staking.setRegistry(address(0x55));
     }
 
-    function test_setChannelsContract_revert_zeroAddress() public {
+    function test_setRegistry_revert_zeroAddress() public {
         vm.expectRevert(AntseedStaking.InvalidAddress.selector);
-        staking.setChannelsContract(address(0));
-    }
-
-    function test_setIdentityRegistry() public {
-        address newRegistry = address(0x66);
-        staking.setIdentityRegistry(newRegistry);
-        assertEq(address(staking.identityRegistry()), newRegistry);
-    }
-
-    function test_setIdentityRegistry_revert_notOwner() public {
-        vm.prank(seller);
-        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", seller));
-        staking.setIdentityRegistry(address(0x66));
-    }
-
-    function test_setIdentityRegistry_revert_zeroAddress() public {
-        vm.expectRevert(AntseedStaking.InvalidAddress.selector);
-        staking.setIdentityRegistry(address(0));
-    }
-
-    function test_setStatsContract() public {
-        address newStats = address(0x77);
-        staking.setStatsContract(newStats);
-        assertEq(address(staking.statsContract()), newStats);
-    }
-
-    function test_setStatsContract_revert_notOwner() public {
-        vm.prank(seller);
-        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", seller));
-        staking.setStatsContract(address(0x77));
-    }
-
-    function test_setStatsContract_revert_zeroAddress() public {
-        vm.expectRevert(AntseedStaking.InvalidAddress.selector);
-        staking.setStatsContract(address(0));
-    }
-
-    function test_setProtocolReserve() public {
-        address newReserve = address(0x88);
-        staking.setProtocolReserve(newReserve);
-        assertEq(staking.protocolReserve(), newReserve);
-    }
-
-    function test_setProtocolReserve_revert_notOwner() public {
-        vm.prank(seller);
-        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", seller));
-        staking.setProtocolReserve(address(0x88));
-    }
-
-    function test_setProtocolReserve_revert_zeroAddress() public {
-        vm.expectRevert(AntseedStaking.InvalidAddress.selector);
-        staking.setProtocolReserve(address(0));
+        staking.setRegistry(address(0));
     }
 
     // ─── Individual Setters ────────────────────────────────────────────

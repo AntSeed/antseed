@@ -6,6 +6,7 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
+import {IAntseedRegistry} from "./interfaces/IAntseedRegistry.sol";
 import {IERC8004Registry} from "./interfaces/IERC8004Registry.sol";
 import {IAntseedStats} from "./interfaces/IAntseedStats.sol";
 
@@ -44,9 +45,7 @@ contract AntseedSubPool is Ownable, ReentrancyGuard {
 
     // ─── State Variables ─────────────────────────────────────────────────
     IERC20 public immutable usdc;
-    IERC8004Registry public identityRegistry;
-    IAntseedStats public statsContract;
-    address public channelsContract;
+    IAntseedRegistry public registry;
 
     mapping(uint256 => Tier) public tiers;
     uint256 public tierCount;
@@ -87,16 +86,14 @@ contract AntseedSubPool is Ownable, ReentrancyGuard {
     error NotAuthorized();
 
     // ─── Constructor ─────────────────────────────────────────────────────
-    constructor(address _usdc, address _identityRegistry, address _stats)
+    constructor(address _usdc, address _registry)
         Ownable(msg.sender)
         ReentrancyGuard()
     {
         if (_usdc == address(0)) revert InvalidAddress();
-        if (_identityRegistry == address(0)) revert InvalidAddress();
-        if (_stats == address(0)) revert InvalidAddress();
+        if (_registry == address(0)) revert InvalidAddress();
         usdc = IERC20(_usdc);
-        identityRegistry = IERC8004Registry(_identityRegistry);
-        statsContract = IAntseedStats(_stats);
+        registry = IAntseedRegistry(_registry);
         epochDuration = 7 days;
         epochStart = block.timestamp;
         currentEpoch = 1;
@@ -199,7 +196,7 @@ contract AntseedSubPool is Ownable, ReentrancyGuard {
     }
 
     function recordTokenUsage(address buyer, uint256 tokens) external {
-        if (msg.sender != channelsContract && msg.sender != owner()) revert NotAuthorized();
+        if (msg.sender != registry.channels() && msg.sender != owner()) revert NotAuthorized();
         Subscription storage sub = subscriptions[buyer];
         if (sub.expiresAt <= block.timestamp) revert SubscriptionExpired();
 
@@ -223,7 +220,7 @@ contract AntseedSubPool is Ownable, ReentrancyGuard {
     // ═══════════════════════════════════════════════════════════════════
 
     function optIn(uint256 agentId) external {
-        if (identityRegistry.ownerOf(agentId) != msg.sender) revert NotRegistered();
+        if (IERC8004Registry(registry.identityRegistry()).ownerOf(agentId) != msg.sender) revert NotRegistered();
         if (peerOpts[msg.sender].optedIn) revert AlreadyOptedIn();
 
         peerOpts[msg.sender] = PeerOpt({
@@ -235,7 +232,7 @@ contract AntseedSubPool is Ownable, ReentrancyGuard {
         });
         peerRewardPerTokenPaid[msg.sender] = rewardPerTokenStored;
         // Snapshot initial weight from current stats
-        IAntseedStats.AgentStats memory stats = statsContract.getStats(agentId);
+        IAntseedStats.AgentStats memory stats = IAntseedStats(registry.stats()).getStats(agentId);
         peerSnapshotWeight[msg.sender] = uint256(stats.channelCount);
 
         optedInPeers.push(msg.sender);
@@ -318,7 +315,7 @@ contract AntseedSubPool is Ownable, ReentrancyGuard {
                 // can't retroactively claim deltas from epochs they didn't participate in.
                 peerRewardPerTokenPaid[peer] = rewardPerTokenStored;
                 // Snapshot current stats as weight for the new epoch
-                IAntseedStats.AgentStats memory st = statsContract.getStats(opt.tokenId);
+                IAntseedStats.AgentStats memory st = IAntseedStats(registry.stats()).getStats(opt.tokenId);
                 uint256 newWeight = uint256(st.channelCount);
                 peerSnapshotWeight[peer] = newWeight;
                 totalWeight += newWeight;
@@ -370,7 +367,7 @@ contract AntseedSubPool is Ownable, ReentrancyGuard {
         uint256 pending = opt.pendingRevenue + earned;
 
         // Project current epoch share (use live stats for projection)
-        IAntseedStats.AgentStats memory st = statsContract.getStats(opt.tokenId);
+        IAntseedStats.AgentStats memory st = IAntseedStats(registry.stats()).getStats(opt.tokenId);
         uint256 liveWeight = uint256(st.channelCount);
         uint256 revenue = currentEpochRevenue;
         uint256 peerCount = optedInPeers.length;
@@ -379,7 +376,7 @@ contract AntseedSubPool is Ownable, ReentrancyGuard {
         uint256 totalWeight = 0;
         for (uint256 i = 0; i < peerCount; i++) {
             PeerOpt storage p = peerOpts[optedInPeers[i]];
-            IAntseedStats.AgentStats memory s = statsContract.getStats(p.tokenId);
+            IAntseedStats.AgentStats memory s = IAntseedStats(registry.stats()).getStats(p.tokenId);
             totalWeight += uint256(s.channelCount);
         }
 
@@ -391,23 +388,13 @@ contract AntseedSubPool is Ownable, ReentrancyGuard {
     //                        ADMIN
     // ═══════════════════════════════════════════════════════════════════
 
-    function setChannelsContract(address _channels) external onlyOwner {
-        if (_channels == address(0)) revert InvalidAddress();
-        channelsContract = _channels;
+    function setRegistry(address _registry) external onlyOwner {
+        if (_registry == address(0)) revert InvalidAddress();
+        registry = IAntseedRegistry(_registry);
     }
 
     function setEpochDuration(uint256 duration) external onlyOwner {
         if (duration == 0) revert InvalidAmount();
         epochDuration = duration;
-    }
-
-    function setIdentityRegistry(address _registry) external onlyOwner {
-        if (_registry == address(0)) revert InvalidAddress();
-        identityRegistry = IERC8004Registry(_registry);
-    }
-
-    function setStatsContract(address _stats) external onlyOwner {
-        if (_stats == address(0)) revert InvalidAddress();
-        statsContract = IAntseedStats(_stats);
     }
 }

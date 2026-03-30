@@ -3,22 +3,26 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
 import "../AntseedStats.sol";
+import "../AntseedRegistry.sol";
 import "../MockERC8004Registry.sol";
 
 contract AntseedStatsReputationTest is Test {
     AntseedStats public stats;
-    MockERC8004Registry public registry;
+    AntseedRegistry public antseedRegistry;
+    MockERC8004Registry public identityRegistry;
     address public peer1 = address(0x1);
     uint256 public agentId;
 
     function setUp() public {
-        registry = new MockERC8004Registry();
+        identityRegistry = new MockERC8004Registry();
         stats = new AntseedStats();
-        // Set this test contract as the channels contract so it can call updateStats
-        stats.setChannelsContract(address(this));
+
+        antseedRegistry = new AntseedRegistry();
+        antseedRegistry.setChannels(address(this));
+        stats.setRegistry(address(antseedRegistry));
 
         vm.prank(peer1);
-        agentId = registry.register();
+        agentId = identityRegistry.register();
     }
 
     // ── updateStats tests ──

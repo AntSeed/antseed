@@ -3,7 +3,8 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Script.sol";
 
-import {ISetChannels, ISetEmissions, ISetProtocolReserve} from "../interfaces/IAntseedWiring.sol";
+import {ISetRegistry} from "../interfaces/IAntseedWiring.sol";
+import {AntseedRegistry} from "../AntseedRegistry.sol";
 
 /**
  * @title Deploy
@@ -37,10 +38,10 @@ contract Deploy is Script {
 
         // 2. MockERC8004Registry (local testing; on mainnet use 0x8004A169...)
         bytes memory registryBytecode = vm.getCode("MockERC8004Registry.sol:MockERC8004Registry");
-        address registry;
-        assembly { registry := create(0, add(registryBytecode, 0x20), mload(registryBytecode)) }
-        require(registry != address(0), "MockERC8004Registry deploy failed");
-        console.log("MockERC8004Registry:  ", registry);
+        address identityRegistry;
+        assembly { identityRegistry := create(0, add(registryBytecode, 0x20), mload(registryBytecode)) }
+        require(identityRegistry != address(0), "MockERC8004Registry deploy failed");
+        console.log("MockERC8004Registry:  ", identityRegistry);
 
         // 3. ANTSToken
         address antsToken;
@@ -48,24 +49,28 @@ contract Deploy is Script {
         require(antsToken != address(0), "ANTSToken deploy failed");
         console.log("ANTSToken:            ", antsToken);
 
-        // 4. AntseedStats (no constructor args)
+        // 4. AntseedRegistry (central address book)
+        AntseedRegistry antseedRegistry = new AntseedRegistry();
+        console.log("AntseedRegistry:      ", address(antseedRegistry));
+
+        // 5. AntseedStats (no constructor args)
         bytes memory statsBytecode = vm.getCode("AntseedStats.sol:AntseedStats");
         address stats;
         assembly { stats := create(0, add(statsBytecode, 0x20), mload(statsBytecode)) }
         require(stats != address(0), "AntseedStats deploy failed");
         console.log("AntseedStats:         ", stats);
 
-        // 5. AntseedStaking(usdc, registry, stats)
+        // 6. AntseedStaking(usdc, registry)
         bytes memory stakingBytecode = abi.encodePacked(
             vm.getCode("AntseedStaking.sol:AntseedStaking"),
-            abi.encode(usdc, registry, stats)
+            abi.encode(usdc, address(antseedRegistry))
         );
         address staking;
         assembly { staking := create(0, add(stakingBytecode, 0x20), mload(stakingBytecode)) }
         require(staking != address(0), "Staking deploy failed");
         console.log("AntseedStaking:       ", staking);
 
-        // 6. AntseedDeposits(usdc)
+        // 7. AntseedDeposits(usdc)
         bytes memory depositsBytecode = abi.encodePacked(
             vm.getCode("AntseedDeposits.sol:AntseedDeposits"),
             abi.encode(usdc)
@@ -75,45 +80,53 @@ contract Deploy is Script {
         require(deposits != address(0), "Deposits deploy failed");
         console.log("AntseedDeposits:      ", deposits);
 
-        // 7. AntseedChannels(deposits, stats, staking)
+        // 8. AntseedChannels(registry)
         bytes memory channelsBytecode = abi.encodePacked(
             vm.getCode("AntseedChannels.sol:AntseedChannels"),
-            abi.encode(deposits, stats, staking)
+            abi.encode(address(antseedRegistry))
         );
         address channels;
         assembly { channels := create(0, add(channelsBytecode, 0x20), mload(channelsBytecode)) }
         require(channels != address(0), "Channels deploy failed");
         console.log("AntseedChannels:      ", channels);
 
-        // 9. AntseedEmissions(antsToken, initialEmission, epochDuration)
+        // 9. AntseedEmissions(registry, initialEmission, epochDuration)
         bytes memory emissionsBytecode = abi.encodePacked(
             vm.getCode("AntseedEmissions.sol:AntseedEmissions"),
-            abi.encode(antsToken, uint256(1_000_000e18), uint256(7 days))
+            abi.encode(address(antseedRegistry), uint256(1_000_000e18), uint256(7 days))
         );
         address emissions;
         assembly { emissions := create(0, add(emissionsBytecode, 0x20), mload(emissionsBytecode)) }
         require(emissions != address(0), "Emissions deploy failed");
         console.log("AntseedEmissions:     ", emissions);
 
-        // 10. AntseedSubPool(usdc, registry, stats)
+        // 10. AntseedSubPool(usdc, registry)
         bytes memory subPoolBytecode = abi.encodePacked(
             vm.getCode("AntseedSubPool.sol:AntseedSubPool"),
-            abi.encode(usdc, registry, stats)
+            abi.encode(usdc, address(antseedRegistry))
         );
         address subPool;
         assembly { subPool := create(0, add(subPoolBytecode, 0x20), mload(subPoolBytecode)) }
         require(subPool != address(0), "SubPool deploy failed");
         console.log("AntseedSubPool:       ", subPool);
 
-        // ---- Wire contracts together ----
-        ISetChannels(stats).setChannelsContract(channels);
-        ISetChannels(deposits).setChannelsContract(channels);
-        ISetChannels(staking).setChannelsContract(channels);
-        ISetProtocolReserve(staking).setProtocolReserve(protocolReserve);
-        ISetEmissions(antsToken).setEmissionsContract(emissions);
-        ISetChannels(emissions).setChannelsContract(channels);
-        ISetProtocolReserve(channels).setProtocolReserve(protocolReserve);
-        ISetChannels(subPool).setChannelsContract(channels);
+        // ---- Wire registry ----
+        antseedRegistry.setChannels(channels);
+        antseedRegistry.setDeposits(deposits);
+        antseedRegistry.setStaking(staking);
+        antseedRegistry.setStats(stats);
+        antseedRegistry.setEmissions(emissions);
+        antseedRegistry.setAntsToken(antsToken);
+        antseedRegistry.setIdentityRegistry(identityRegistry);
+        antseedRegistry.setProtocolReserve(protocolReserve);
+
+        // ---- Point each contract at the registry ----
+        ISetRegistry(stats).setRegistry(address(antseedRegistry));
+        ISetRegistry(deposits).setRegistry(address(antseedRegistry));
+        ISetRegistry(staking).setRegistry(address(antseedRegistry));
+        ISetRegistry(emissions).setRegistry(address(antseedRegistry));
+        ISetRegistry(antsToken).setRegistry(address(antseedRegistry));
+        ISetRegistry(subPool).setRegistry(address(antseedRegistry));
 
         vm.stopBroadcast();
 

@@ -4,36 +4,31 @@ pragma solidity ^0.8.24;
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
+import {IAntseedRegistry} from "./interfaces/IAntseedRegistry.sol";
+
 contract ANTSToken is ERC20, Ownable {
-    address public emissionsContract;
-    bool public emissionsContractSet;
+    IAntseedRegistry public registry;
     bool public transfersEnabled;       // Phase 1: false. One-way toggle to true.
 
     error NotEmissionsContract();
-    error EmissionsAlreadySet();
     error InvalidAddress();
     error TransfersNotEnabled();
     error TransfersAlreadyEnabled();
 
-    event EmissionsContractSet(address indexed emissionsContract);
     event TransfersEnabled();
 
     constructor() ERC20("AntSeed", "ANTS") Ownable(msg.sender) {
         transfersEnabled = false;   // Phase 1: non-transferable
     }
 
-    /// @notice Set the emissions contract address. Can only be called once.
-    function setEmissionsContract(address _emissionsContract) external onlyOwner {
-        if (_emissionsContract == address(0)) revert InvalidAddress();
-        if (emissionsContractSet) revert EmissionsAlreadySet();
-        emissionsContract = _emissionsContract;
-        emissionsContractSet = true;
-        emit EmissionsContractSet(_emissionsContract);
+    function setRegistry(address _registry) external onlyOwner {
+        if (_registry == address(0)) revert InvalidAddress();
+        registry = IAntseedRegistry(_registry);
     }
 
     /// @notice Mint ANTS tokens. Restricted to emissions contract.
     function mint(address to, uint256 amount) external {
-        if (msg.sender != emissionsContract) revert NotEmissionsContract();
+        if (msg.sender != registry.emissions()) revert NotEmissionsContract();
         if (to == address(0)) revert InvalidAddress();
         _mint(to, amount);
     }
