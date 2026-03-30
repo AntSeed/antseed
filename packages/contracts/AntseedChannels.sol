@@ -381,35 +381,37 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
     }
 
     /**
-     * @notice Batch request close on multiple channels. Operator-only.
-     *         Skips channels that are not active or already have close requested.
+     * @notice Batch request close on multiple channels for a single buyer.
+     *         Operator-only. Skips channels that are not active or already closing.
      */
-    function requestCloseAll(bytes32[] calldata channelIds) external {
+    function requestCloseAll(address buyer, bytes32[] calldata channelIds) external {
+        _requireOperator(buyer);
         for (uint256 i = 0; i < channelIds.length; i++) {
             Channel storage channel = channels[channelIds[i]];
+            if (channel.buyer != buyer) continue;
             if (channel.status != ChannelStatus.Active) continue;
             if (channel.closeRequestedAt != 0) continue;
-            if (msg.sender != depositsContract.getOperator(channel.buyer)) continue;
             channel.closeRequestedAt = block.timestamp;
-            emit CloseRequested(channelIds[i], channel.buyer);
+            emit CloseRequested(channelIds[i], buyer);
         }
     }
 
     /**
-     * @notice Batch withdraw from multiple channels after grace periods.
-     *         Skips channels that are not ready for withdrawal.
+     * @notice Batch withdraw from multiple channels for a single buyer.
+     *         Operator-only. Skips channels not ready for withdrawal.
      */
-    function withdrawAll(bytes32[] calldata channelIds) external nonReentrant {
+    function withdrawAll(address buyer, bytes32[] calldata channelIds) external nonReentrant {
+        _requireOperator(buyer);
         for (uint256 i = 0; i < channelIds.length; i++) {
             Channel storage channel = channels[channelIds[i]];
+            if (channel.buyer != buyer) continue;
             if (channel.status != ChannelStatus.Active) continue;
             if (channel.closeRequestedAt == 0) continue;
             if (block.timestamp < channel.closeRequestedAt + TIMEOUT_GRACE_PERIOD) continue;
-            if (msg.sender != depositsContract.getOperator(channel.buyer)) continue;
 
             uint128 remainingReserved = channel.deposit - channel.settled;
             if (remainingReserved > 0) {
-                depositsContract.releaseLock(channel.buyer, remainingReserved);
+                depositsContract.releaseLock(buyer, remainingReserved);
             }
 
             channel.status = ChannelStatus.TimedOut;
@@ -425,7 +427,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
                 }
             }
 
-            emit ChannelWithdrawn(channelIds[i], channel.buyer);
+            emit ChannelWithdrawn(channelIds[i], buyer);
         }
     }
 
