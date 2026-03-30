@@ -189,15 +189,15 @@ describe('SellerPaymentManager', () => {
     expect(manager.getCumulativeSpend(channelId)).toBe(80_000n);
   });
 
-  it('test_getSessionByPeer: returns active session', async () => {
+  it('test_getChannelByPeer: returns active channel', async () => {
 
     const channelId = makeChannelId(4);
     const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { isReserve: true });
     await manager.handleSpendingAuth(buyerIdentity.peerId, payload, mux);
 
-    const session = manager.getSessionByPeer(buyerIdentity.peerId);
-    expect(session).not.toBeNull();
-    expect(session!.sessionId).toBe(channelId);
+    const channel = manager.getChannelByPeer(buyerIdentity.peerId);
+    expect(channel).not.toBeNull();
+    expect(channel!.sessionId).toBe(channelId);
   });
 
   it('test_onBuyerDisconnect: session persisted, not closed when settleOnDisconnect=false', async () => {

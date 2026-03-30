@@ -7,7 +7,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 /**
  * @title AntseedDeposits
- * @notice Buyer USDC custody with credit limits, withdrawal timelocks, and seller earnings.
+ * @notice Buyer USDC custody with credit limits and seller payouts.
  *         Stable contract — holds funds. Channel logic lives in AntseedChannels (swappable).
  */
 contract AntseedDeposits is Ownable, ReentrancyGuard {

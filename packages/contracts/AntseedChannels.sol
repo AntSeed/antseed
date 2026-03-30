@@ -389,7 +389,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
             Channel storage channel = channels[channelIds[i]];
             if (channel.status != ChannelStatus.Active) continue;
             if (channel.closeRequestedAt != 0) continue;
-            _requireOperator(channel.buyer);
+            if (msg.sender != depositsContract.getOperator(channel.buyer)) continue;
             channel.closeRequestedAt = block.timestamp;
             emit CloseRequested(channelIds[i], channel.buyer);
         }
@@ -405,7 +405,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
             if (channel.status != ChannelStatus.Active) continue;
             if (channel.closeRequestedAt == 0) continue;
             if (block.timestamp < channel.closeRequestedAt + TIMEOUT_GRACE_PERIOD) continue;
-            _requireOperator(channel.buyer);
+            if (msg.sender != depositsContract.getOperator(channel.buyer)) continue;
 
             uint128 remainingReserved = channel.deposit - channel.settled;
             if (remainingReserved > 0) {
