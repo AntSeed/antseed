@@ -121,6 +121,9 @@ contract Deploy is Script {
         antseedRegistry.setProtocolReserve(protocolReserve);
 
         // ---- Point each contract at the registry ----
+        // Channels and Staking already received the registry in their constructors,
+        // but we include them here for uniformity so the pattern is obvious in upgrades.
+        ISetRegistry(channels).setRegistry(address(antseedRegistry));
         ISetRegistry(stats).setRegistry(address(antseedRegistry));
         ISetRegistry(deposits).setRegistry(address(antseedRegistry));
         ISetRegistry(staking).setRegistry(address(antseedRegistry));
