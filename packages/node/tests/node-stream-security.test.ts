@@ -22,7 +22,7 @@ function createNode(config: Partial<NodeConfig>): AntseedNode {
   });
 
   (node as any)._identity = {
-    peerId: 'a'.repeat(64),
+    peerId: 'a'.repeat(40),
     privateKey: new Uint8Array(32),
     publicKey: new Uint8Array(32),
   };
@@ -94,7 +94,7 @@ describe('AntseedNode streaming security guards', () => {
       maxStreamDurationMs: 60_000,
     });
     const harness = setupStreamingHarness(node, requestId);
-    const peer = { peerId: 'b'.repeat(64) } as PeerInfo;
+    const peer = { peerId: 'b'.repeat(40) } as PeerInfo;
     const request: SerializedHttpRequest = {
       requestId,
       method: 'POST',
@@ -126,7 +126,7 @@ describe('AntseedNode streaming security guards', () => {
       maxStreamDurationMs: 100,
     });
     const harness = setupStreamingHarness(node, requestId);
-    const peer = { peerId: 'b'.repeat(64) } as PeerInfo;
+    const peer = { peerId: 'b'.repeat(40) } as PeerInfo;
     const request: SerializedHttpRequest = {
       requestId,
       method: 'POST',
@@ -156,7 +156,7 @@ describe('AntseedNode streaming security guards', () => {
       maxStreamDurationMs: 60_000,
     });
     const harness = setupStreamingHarness(node, requestId);
-    const peer = { peerId: 'b'.repeat(64) } as PeerInfo;
+    const peer = { peerId: 'b'.repeat(40) } as PeerInfo;
     const request: SerializedHttpRequest = {
       requestId,
       method: 'POST',
@@ -190,7 +190,7 @@ describe('AntseedNode streaming security guards', () => {
       maxStreamDurationMs: 60_000,
     });
     const harness = setupStreamingHarness(node, requestId);
-    const peer = { peerId: 'b'.repeat(64) } as PeerInfo;
+    const peer = { peerId: 'b'.repeat(40) } as PeerInfo;
     const request: SerializedHttpRequest = {
       requestId,
       method: 'POST',

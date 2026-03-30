@@ -1,0 +1,63 @@
+.withdraw-loading {
+  font-size: 13px;
+  color: var(--text-muted);
+  padding: 12px 0;
+}
+
+.withdraw-pending {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.withdraw-pending-banner {
+  display: flex;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--amber-dim);
+  border: 1px solid var(--amber-border);
+  border-radius: 8px;
+}
+
+.withdraw-pending-banner-icon {
+  color: var(--amber);
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.withdraw-pending-banner-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.withdraw-pending-banner-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--amber);
+  font-variant-numeric: tabular-nums;
+}
+
+.withdraw-pending-banner-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.withdraw-request {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.withdraw-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.withdraw-note {
+  font-size: 12px;
+  color: var(--text-faint);
+  text-align: center;
+  padding-top: 2px;
+}

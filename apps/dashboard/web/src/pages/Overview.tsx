@@ -91,7 +91,7 @@ function PeerRow({ peer, isSelf }: { peer: PeerInfo; isSelf: boolean }) {
         <SourceBadge source={peer.source} />
       </div>
       <div className="peer-row-providers">
-        {peer.providers.map((p) => (
+        {(peer.providers ?? []).map((p) => (
           <span key={p} className={`provider-chip provider-${p}`}>{p}</span>
         ))}
       </div>
@@ -166,11 +166,11 @@ export function Overview() {
 
   if (!status) return <div className="loading"><div className="loading-spinner" /><span>Loading dashboard...</span></div>;
 
-  const chartData = earnings?.daily.map((d) => ({ date: d.date, amount: parseFloat(d.amount) })) ?? [];
+  const chartData = (earnings?.daily ?? []).map((d) => ({ date: d.date, amount: parseFloat(d.amount) }));
   const capacityPercent = status.capacityUsedPercent ?? 0;
   const peers: PeerInfo[] = (network?.peers ?? []).map((p) => ({
     peerId: p.peerId,
-    providers: p.providers,
+    providers: p.providers ?? [],
     capacityMsgPerHour: p.capacityMsgPerHour,
     inputUsdPerMillion: p.inputUsdPerMillion,
     outputUsdPerMillion: p.outputUsdPerMillion,
@@ -199,7 +199,7 @@ export function Overview() {
           label="Earnings Today"
           value={`$${parseFloat(status.earningsToday).toFixed(2)}`}
           color="var(--accent-green)"
-          sub={earnings ? `$${parseFloat(earnings.thisMonth).toFixed(2)} this month` : undefined}
+          sub={earnings ? `$${parseFloat(earnings.thisMonth ?? '0').toFixed(2)} this month` : undefined}
         />
         <StatCard
           label="Tokens Today"
@@ -207,8 +207,8 @@ export function Overview() {
         />
         <StatCard label="Uptime" value={status.uptime} />
         <StatCard
-          label="Active Sessions"
-          value={String(status.activeSessions)}
+          label="Active Channels"
+          value={String(status.activeChannels)}
         />
         <StatCard
           label="Wallet"
@@ -232,8 +232,8 @@ export function Overview() {
                 <span className="capacity-val mono">{status.proxyPort ?? '-'}</span>
               </div>
               <div className="capacity-row">
-                <span className="capacity-label">Sessions</span>
-                <span className="capacity-val">{status.activeSessions}</span>
+                <span className="capacity-label">Channels</span>
+                <span className="capacity-val">{status.activeChannels}</span>
               </div>
               <div className="capacity-row">
                 <span className="capacity-label">Peers</span>

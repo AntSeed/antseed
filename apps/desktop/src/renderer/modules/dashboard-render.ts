@@ -119,7 +119,7 @@ function normalizeNetworkData(
   }
 
   const peers = Array.from(merged.values())
-    .filter((peer) => peer.services.length > 0)
+    .filter((peer) => peer.services.length > 0 || peer.providers.length > 0)
     .sort((a, b) => {
       if (b.reputation !== a.reputation) return b.reputation - a.reputation;
       return b.lastSeen - a.lastSeen;
@@ -197,14 +197,14 @@ export function initDashboardRenderModule({
     const configPayload = results.config.ok ? (results.config.data as Record<string, unknown> | null) : null;
 
     const daemonStateRoot = safeObject(uiState.daemonState?.state);
-    const daemonActiveSessions = safeNumber(daemonStateRoot?.activeSessions, 0);
-    const daemonSessionDetails = safeArray(daemonStateRoot?.activeSessionDetails);
-    const daemonDetailsCount = daemonSessionDetails.length;
+    const daemonActiveChannels = safeNumber(daemonStateRoot?.activeSessions, 0);
+    const daemonChannelDetails = safeArray(daemonStateRoot?.activeSessionDetails);
+    const daemonDetailsCount = daemonChannelDetails.length;
 
     const buyerRuntimeState = isModeRunning('connect') ? 'connected' : 'offline';
-    const activeSessions = Math.max(
+    const activeChannels = Math.max(
       safeNumber(statusPayload?.activeSessions, 0),
-      daemonActiveSessions,
+      daemonActiveChannels,
       daemonDetailsCount,
     );
     const configRoot = safeObject((configPayload as Record<string, unknown> | null)?.config ?? configPayload);
@@ -245,7 +245,7 @@ export function initDashboardRenderModule({
       const buyerStatus = {
         buyerRuntime: buyerRuntimeState,
         proxyPort: proxyPort > 0 ? proxyPort : null,
-        activeSessions,
+        activeChannels,
         peerCount: peers.length,
         dht: {
           health: dht.label,
@@ -280,7 +280,7 @@ export function initDashboardRenderModule({
     const notes = [
       `Buyer runtime: ${buyerRuntimeState}`,
       `Proxy port: ${proxyPort > 0 ? proxyPort : 'not available'}`,
-      `Active sessions: ${formatInt(activeSessions)}`,
+      `Active channels: ${formatInt(activeChannels)}`,
       `DHT health: ${dht.label}`,
       `DHT nodes: ${formatInt(stats.dhtNodeCount)}`,
       `Lookup success: ${formatPercent(safeNumber(stats.lookupSuccessRate, 0) * 100)}`,
@@ -305,7 +305,7 @@ export function initDashboardRenderModule({
 
       const pluginCount = safeArray((config as Record<string, unknown> | null)?.plugins).length;
       uiState.configMeta = { tone: 'active', label: `${pluginCount} plugins` };
-      uiState.configMessage = { text: 'Settings loaded from dashboard API.', type: 'info' };
+      uiState.configMessage = { text: 'Config loaded from config.json', type: 'info' };
     } else {
       uiState.configMessage = { text: `Unable to load config: ${results.config.error ?? 'unknown error'}`, type: 'error' };
       uiState.configMeta = { tone: 'warn', label: 'config unavailable' };
@@ -313,8 +313,8 @@ export function initDashboardRenderModule({
 
     // Debug
     const debugKey = [
-      `active=${activeSessions}`,
-      `daemon=${daemonActiveSessions}`,
+      `active=${activeChannels}`,
+      `daemon=${daemonActiveChannels}`,
       `details=${daemonDetailsCount}`,
       `peers=${peers.length}`,
     ].join('|');

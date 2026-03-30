@@ -55,7 +55,7 @@ By default, metadata is fetched from `http://{host}:{port}/metadata` (`metadataP
 
 ```json title="metadata structure"
 {
-  "peerId": "a1b2c3d4...64 hex chars",
+  "peerId": "a1b2c3d4...40 hex chars (EVM address)",
   "version": 5,
   "displayName": "Acme Inference - us-east-1",
   "publicAddress": "peer.example.com:6882",
@@ -81,7 +81,7 @@ By default, metadata is fetched from `http://{host}:{port}/metadata` (`metadataP
   }],
   "region": "us-east",
   "timestamp": 1708272000000,
-  "signature": "ed25519...128 hex chars"
+  "signature": "eip191...130 hex chars"
 }
 ```
 

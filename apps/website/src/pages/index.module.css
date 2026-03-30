@@ -17,6 +17,7 @@
   text-transform: uppercase;
   font-family: 'JetBrains Mono', monospace;
 }
+.heroTitle em { font-style: italic; color: #1FD87A; }
 .accent { color: #1FD87A; }
 
 /* ---- LIVENESS ---- */
@@ -40,6 +41,84 @@
 @keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(31,216,122,.4); } 50% { box-shadow: 0 0 0 6px rgba(31,216,122,0); } }
 .ldiv { width: 1px; height: 20px; background: #e8e8e3; }
 .liveArrow { font-size: 11px; color: #16a863; font-family: 'JetBrains Mono', monospace; margin-left: 4px; }
+
+/* ---- BIG STATEMENT ---- */
+.bigStatement { text-align: center; padding: 60px 20px 40px; max-width: 800px; margin: 0 auto; }
+.bigStatementTitle {
+  font-size: clamp(32px, 4.5vw, 52px);
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -2px;
+  margin-bottom: 20px;
+  color: #1a1a1a;
+}
+.bigStatementTitle em { font-style: italic; color: #1FD87A; }
+.bigStatementSub { font-size: 16px; color: #888; line-height: 1.6; max-width: 520px; margin: 0 auto; }
+
+/* ---- THREE LAYERS ---- */
+.layers { padding: 60px 60px 80px; max-width: 900px; margin: 0 auto; }
+.layersHeader { text-align: center; margin-bottom: 48px; }
+.layersKicker {
+  font-size: 12px; font-weight: 600; color: #1FD87A;
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 2px; text-transform: uppercase; margin-bottom: 12px;
+}
+.layersHeader h2 { font-size: clamp(28px, 3.5vw, 40px); font-weight: 700; letter-spacing: -1.5px; margin-bottom: 16px; }
+.layersHeader p { font-size: 15px; color: #888; line-height: 1.6; max-width: 600px; margin: 0 auto; }
+.layersStack { display: flex; flex-direction: column; gap: 0; }
+.layerCard {
+  background: #fff; border: 1px solid #e8e8e3; border-radius: 16px;
+  padding: 36px; display: flex; gap: 32px; align-items: center;
+}
+.layerContent { flex: 1; position: relative; }
+.layerIllust { flex-shrink: 0; width: 220px; }
+.layerSvg { width: 100%; height: auto; }
+.layerNum {
+  font-family: 'JetBrains Mono', monospace; font-size: 48px; font-weight: 700;
+  color: rgba(31,216,122,0.1); position: absolute; top: -8px; right: 0;
+}
+.layerContent h4 { font-size: 20px; font-weight: 700; letter-spacing: -0.5px; margin-bottom: 6px; }
+.layerTags { font-size: 12px; color: #1FD87A; font-family: 'JetBrains Mono', monospace; margin-bottom: 10px; letter-spacing: 0.5px; }
+.layerContent > p:last-child { font-size: 14px; color: #888; line-height: 1.6; margin: 0; }
+.layerConnector {
+  text-align: center; padding: 12px 0;
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  color: #ccc; letter-spacing: 1px;
+}
+
+/* Layer 02 — service list */
+.svcList { display: flex; flex-direction: column; gap: 0; }
+.svcRow {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 10px 0; border-bottom: 1px solid #f0f0eb;
+}
+.svcRow:last-child { border-bottom: none; }
+.svcInfo { display: flex; flex-direction: column; gap: 2px; }
+.svcName { font-size: 13px; font-weight: 600; color: #1a1a1a; }
+.svcJobs { font-size: 10px; color: #aaa; font-family: 'JetBrains Mono', monospace; }
+.svcScore { display: flex; align-items: baseline; gap: 1px; }
+.svcNum { font-size: 18px; font-weight: 700; color: #1FD87A; font-family: 'JetBrains Mono', monospace; }
+.svcOf { font-size: 10px; color: #ccc; font-family: 'JetBrains Mono', monospace; }
+
+/* Layer 03 — terminal mini */
+.termMini {
+  background: #1a1a1a; border-radius: 8px; overflow: hidden;
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+}
+.termMiniBar {
+  display: flex; align-items: center; gap: 5px;
+  padding: 8px 10px; background: #222; border-bottom: 1px solid #333;
+}
+.termMiniDot { width: 8px; height: 8px; border-radius: 50%; display: block; }
+.termMiniTitle { font-size: 10px; color: #666; margin-left: auto; }
+.termMiniBody { padding: 10px 12px; line-height: 1.8; }
+.termTree { color: #555; margin-right: 4px; }
+.termFile { color: #e8e8e8; }
+.termDir { color: rgba(255,255,255,0.4); }
+.termComment { color: #555; margin-left: 8px; }
+
+/* ---- AGENTS VISION ---- */
+.agentsVision { font-size: 14px; color: #888; line-height: 1.6; margin-bottom: 20px; }
 
 /* ---- TAGLINE ---- */
 .tagline { text-align: center; padding: 20px 20px 40px; font-size: 17px; color: #888; }
@@ -65,7 +144,7 @@
 
 /* ---- MAC MOCKUP ---- */
 .mockupWrap { padding: 0 60px 60px; display: flex; justify-content: center; }
-.mac { width: 100%; max-width: 900px; border-radius: 12px; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,.12); border: 1px solid #e0e0db; }
+.mac { width: 100%; max-width: 630px; border-radius: 12px; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,.12); border: 1px solid #e0e0db; }
 .macBar { display: flex; align-items: center; padding: 14px 18px; background: #f0f0eb; border-bottom: 1px solid #e0e0db; }
 .macDots { display: flex; gap: 8px; }
 .macDot { width: 12px; height: 12px; border-radius: 50%; display: block; }
@@ -129,7 +208,7 @@
 .card { background: #fff; border: 1px solid #e8e8e3; border-radius: 16px; padding: 40px; }
 
 /* Agents & Developers full-width section */
-.agentsSection { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: center; padding: 0 60px 60px; max-width: 1100px; margin: 0 auto; }
+.agentsSection { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: start; padding: 0 60px 60px; max-width: 1100px; margin: 0 auto; }
 .agentsCopy { }
 .agentsCopy h3 { font-size: 32px; font-weight: 700; letter-spacing: -1px; line-height: 1.2; margin-bottom: 16px; }
 .agentsBullets { list-style: none; padding: 0; margin: 0 0 24px; display: flex; flex-direction: column; gap: 10px; }
@@ -410,9 +489,11 @@
 /* ---- RESPONSIVE ---- */
 @media (max-width: 900px) {
   .twoCards, .featuresGrid, .supplyGrid, .bottomGrid, .agentsSection { grid-template-columns: 1fr; }
+  .layerCard { flex-direction: column; }
+  .layerIllust { width: 100%; max-width: 260px; }
   .supplyCol { border-right: none; border-bottom: 1px solid #e8e8e3; }
   .supplyCol:last-child { border-bottom: none; }
-  .mockupWrap, .features, .supply, .twoCards, .agentsSection, .how, .compat, .bottomCtas { padding-left: 20px; padding-right: 20px; }
+  .mockupWrap, .features, .supply, .twoCards, .agentsSection, .how, .compat, .bottomCtas, .layers { padding-left: 20px; padding-right: 20px; }
   .hero { padding: 60px 20px 30px; }
   .heroTitle { letter-spacing: -1.5px; }
   .creator { padding: 60px 20px; }

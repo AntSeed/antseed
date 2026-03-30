@@ -1,95 +1,63 @@
 import { describe, it, expect } from 'vitest';
 import {
-  encodeSessionLockAuth, decodeSessionLockAuth,
-  encodeSessionLockConfirm, decodeSessionLockConfirm,
-  encodeSessionLockReject, decodeSessionLockReject,
-  encodeSellerReceipt, decodeSellerReceipt,
-  encodeBuyerAck, decodeBuyerAck,
-  encodeSessionEnd, decodeSessionEnd,
-  encodeTopUpRequest, decodeTopUpRequest,
-  encodeTopUpAuth, decodeTopUpAuth,
-  encodeDisputeNotify, decodeDisputeNotify,
+  encodeSpendingAuth, decodeSpendingAuth,
+  encodeAuthAck, decodeAuthAck,
+  encodePaymentRequired, decodePaymentRequired,
+  encodeNeedAuth, decodeNeedAuth,
 } from '../src/p2p/payment-codec.js';
 
 describe('payment codec round-trips', () => {
-  it('SessionLockAuth', () => {
+  it('SpendingAuth', () => {
     const payload = {
-      sessionId: 'a'.repeat(64),
-      lockedAmount: '1000000',
-      buyerSig: 'b'.repeat(128),
+      channelId: '0x' + 'aa'.repeat(32),
+      cumulativeAmount: '1000000',
+      metadataHash: '0x' + 'cc'.repeat(32),
+      metadata: '0x' + 'dd'.repeat(128),
+      spendingAuthSig: '0x' + 'ee'.repeat(65),
     };
-    const encoded = encodeSessionLockAuth(payload);
-    const decoded = decodeSessionLockAuth(encoded);
+    const encoded = encodeSpendingAuth(payload);
+    const decoded = decodeSpendingAuth(encoded);
     expect(decoded).toEqual(payload);
   });
 
-  it('SessionLockConfirm', () => {
-    const payload = { sessionId: 'a'.repeat(64), txSignature: 'tx123' };
-    expect(decodeSessionLockConfirm(encodeSessionLockConfirm(payload))).toEqual(payload);
+  it('AuthAck', () => {
+    const payload = { channelId: '0x' + 'aa'.repeat(32) };
+    expect(decodeAuthAck(encodeAuthAck(payload))).toEqual(payload);
   });
 
-  it('SessionLockReject', () => {
-    const payload = { sessionId: 'a'.repeat(64), reason: 'Insufficient funds' };
-    expect(decodeSessionLockReject(encodeSessionLockReject(payload))).toEqual(payload);
-  });
-
-  it('SellerReceipt', () => {
+  it('PaymentRequired', () => {
     const payload = {
-      sessionId: 'a'.repeat(64),
-      runningTotal: '500000',
-      requestCount: 5,
-      responseHash: 'c'.repeat(64),
-      sellerSig: 'd'.repeat(128),
+      minBudgetPerRequest: '10000',
+      suggestedAmount: '100000',
+      requestId: 'req-123',
     };
-    expect(decodeSellerReceipt(encodeSellerReceipt(payload))).toEqual(payload);
+    const encoded = encodePaymentRequired(payload);
+    const decoded = decodePaymentRequired(encoded);
+    expect(decoded).toEqual(payload);
   });
 
-  it('BuyerAck', () => {
+  it('PaymentRequired with optional pricing fields', () => {
     const payload = {
-      sessionId: 'a'.repeat(64),
-      runningTotal: '500000',
-      requestCount: 5,
-      buyerSig: 'e'.repeat(128),
+      minBudgetPerRequest: '10000',
+      suggestedAmount: '100000',
+      requestId: 'req-456',
+      inputUsdPerMillion: 3000,
+      outputUsdPerMillion: 15000,
     };
-    expect(decodeBuyerAck(encodeBuyerAck(payload))).toEqual(payload);
+    const encoded = encodePaymentRequired(payload);
+    const decoded = decodePaymentRequired(encoded);
+    expect(decoded).toEqual(payload);
   });
 
-  it('SessionEnd', () => {
+  it('NeedAuth', () => {
     const payload = {
-      sessionId: 'a'.repeat(64),
-      runningTotal: '500000',
-      requestCount: 5,
-      score: 85,
-      buyerSig: 'f'.repeat(128),
+      channelId: '0x' + 'aa'.repeat(32),
+      requiredCumulativeAmount: '500000',
+      currentAcceptedCumulative: '200000',
+      deposit: '1000000',
     };
-    expect(decodeSessionEnd(encodeSessionEnd(payload))).toEqual(payload);
-  });
-
-  it('TopUpRequest', () => {
-    const payload = {
-      sessionId: 'a'.repeat(64),
-      additionalAmount: '500000',
-      currentRunningTotal: '400000',
-      currentLockedAmount: '500000',
-    };
-    expect(decodeTopUpRequest(encodeTopUpRequest(payload))).toEqual(payload);
-  });
-
-  it('TopUpAuth', () => {
-    const payload = {
-      sessionId: 'a'.repeat(64),
-      additionalAmount: '500000',
-      buyerSig: 'g'.repeat(128),
-    };
-    expect(decodeTopUpAuth(encodeTopUpAuth(payload))).toEqual(payload);
-  });
-
-  it('DisputeNotify', () => {
-    const payload = {
-      sessionId: 'a'.repeat(64),
-      reason: 'Unacknowledged service',
-      txSignature: 'tx456',
-    };
-    expect(decodeDisputeNotify(encodeDisputeNotify(payload))).toEqual(payload);
+    const encoded = encodeNeedAuth(payload);
+    const decoded = decodeNeedAuth(encoded);
+    expect(decoded).toEqual(payload);
   });
 });

@@ -15,7 +15,7 @@ import { METADATA_VERSION, type PeerMetadata } from '../src/discovery/peer-metad
 
 function validMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
   return {
-    peerId: 'a'.repeat(64) as any,
+    peerId: 'a'.repeat(40) as any,
     version: METADATA_VERSION,
     providers: [
       {
@@ -31,7 +31,7 @@ function validMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
     ],
     region: 'us-east-1',
     timestamp: Date.now(),
-    signature: 'b'.repeat(128),
+    signature: 'b'.repeat(130),
     ...overrides,
   };
 }
@@ -53,7 +53,7 @@ describe('validateMetadata', () => {
   });
 
   it('should reject invalid peerId (uppercase)', () => {
-    const errors = validateMetadata(validMetadata({ peerId: 'A'.repeat(64) as any }));
+    const errors = validateMetadata(validMetadata({ peerId: 'A'.repeat(40) as any }));
     expect(errors.some((e) => e.field === 'peerId')).toBe(true);
   });
 
@@ -276,7 +276,7 @@ describe('validateMetadata', () => {
   });
 
   it('should reject signature with uppercase hex', () => {
-    const errors = validateMetadata(validMetadata({ signature: 'B'.repeat(128) }));
+    const errors = validateMetadata(validMetadata({ signature: 'B'.repeat(130) }));
     expect(errors.some((e) => e.field === 'signature')).toBe(true);
   });
 

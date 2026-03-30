@@ -15,3 +15,17 @@ hide_title: true
 --version                Show version
 --help                   Show help
 ```
+
+## Environment Variables
+
+| Variable | Description |
+|---|---|
+| `ANTSEED_IDENTITY_HEX` | secp256k1 private key (64 hex chars). When set, used instead of `identity.key` file. Cleared from process environment after read. |
+| `ANTSEED_DEBUG` | Enable verbose runtime logs (`0` or `1`) |
+| `ANTSEED_ENV_FILE` | Override env file path for runtime env loading |
+| `ANTSEED_ALLOWED_SERVICES` | Comma-separated list of service names to announce |
+| `ANTSEED_ENABLE_SETTLEMENT` | Enable on-chain settlement (`true`/`false`) |
+| `ANTSEED_SETTLEMENT_IDLE_MS` | Settlement idle timeout in milliseconds |
+| `ANTSEED_DEFAULT_SESSION_USDC` | Default session authorization amount in USDC |
+| `ANTSEED_AUTO_FUND_DEPOSIT` | Auto-fund deposit on session start (`true`/`false`) |
+| `ANTSEED_SELLER_WALLET_ADDRESS` | Seller EVM wallet address override |

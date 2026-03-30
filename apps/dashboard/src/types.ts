@@ -32,7 +32,7 @@ export interface DashboardConfig {
     crypto?: {
       chainId: string;
       rpcUrl: string;
-      escrowContractAddress: string;
+      depositsContractAddress: string;
       usdcContractAddress: string;
       defaultLockAmountUSDC?: string;
     };
@@ -64,7 +64,7 @@ export interface NodeStatus {
   peerCount: number;
   earningsToday: string;
   tokensToday: number;
-  activeSessions: number;
+  activeChannels: number;
   uptime: string;
   walletAddress: string | null;
   proxyPort: number | null;

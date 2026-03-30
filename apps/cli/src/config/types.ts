@@ -95,6 +95,9 @@ export interface BuyerCLIConfig {
   minPeerReputation: number;
   /** Local proxy listen port */
   proxyPort: number;
+  /** When true, user must manually approve each paid session in the desktop app.
+   *  When false (default), the buyer runtime auto-signs SpendingAuth. */
+  requireManualApproval?: boolean;
 }
 
 /**
@@ -105,16 +108,34 @@ export interface PaymentsCLIConfig {
   preferredMethod: 'crypto';
   /** Platform fee rate (0-1) */
   platformFeeRate: number;
+  /** Minimum USDC per request in base units (seller). Default: "10000" ($0.01). */
+  minBudgetPerRequest?: string;
+  /** Maximum USDC the buyer authorizes per single request in base units. Default: "100000" ($0.10). */
+  maxPerRequestUsdc?: string;
+  /** Maximum total USDC the buyer will reserve in a single SpendingAuth in base units. Default: "1000000" ($1.00). */
+  maxReserveAmountUsdc?: string;
   /** Optional crypto settlement settings (Base network) */
   crypto?: {
     /** Chain identifier */
     chainId: 'base-local' | 'base-sepolia' | 'base-mainnet';
     /** Base JSON-RPC URL (e.g. http://127.0.0.1:8545 for local anvil) */
     rpcUrl: string;
-    /** Deployed AntseedEscrow contract address */
-    escrowContractAddress: string;
+    /** Deployed AntseedDeposits contract address */
+    depositsContractAddress: string;
+    /** Deployed AntseedChannels contract address */
+    channelsContractAddress: string;
+    /** Deployed AntseedStaking contract address */
+    stakingContractAddress?: string;
     /** USDC token contract address */
     usdcContractAddress: string;
+    /** Deployed AntseedIdentity (ERC-8004 registry) contract address */
+    identityRegistryAddress?: string;
+    /** Deployed AntseedStats contract address */
+    statsContractAddress?: string;
+    /** Deployed AntseedEmissions contract address */
+    emissionsContractAddress?: string;
+    /** Deployed AntseedSubPool contract address */
+    subPoolContractAddress?: string;
     /** Default lock amount per session in human-readable USDC (e.g. "1" = 1 USDC) */
     defaultLockAmountUSDC?: string;
   };

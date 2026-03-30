@@ -1,24 +1,27 @@
 import type { PeerConnection } from './connection-manager.js';
 import { MessageType } from '../types/protocol.js';
 import type {
-  SessionLockAuthPayload,
-  SessionLockConfirmPayload,
-  SessionLockRejectPayload,
-  SellerReceiptPayload,
-  BuyerAckPayload,
-  SessionEndPayload,
-  TopUpRequestPayload,
-  TopUpAuthPayload,
-  DisputeNotifyPayload,
+  SpendingAuthPayload,
+  AuthAckPayload,
+  PaymentRequiredPayload,
+  NeedAuthPayload,
 } from '../types/protocol.js';
 import { encodeFrame } from './message-protocol.js';
 import type { FramedMessage } from '../types/protocol.js';
 import * as codec from './payment-codec.js';
+import { debugLog } from '../utils/debug.js';
+
+const MESSAGE_TYPE_NAME: Record<number, string> = {
+  [MessageType.SpendingAuth]: 'SpendingAuth',
+  [MessageType.AuthAck]: 'AuthAck',
+  [MessageType.PaymentRequired]: 'PaymentRequired',
+  [MessageType.NeedAuth]: 'NeedAuth',
+};
 
 export type PaymentMessageHandler<T> = (payload: T) => void | Promise<void>;
 
 /**
- * Multiplexes bilateral payment messages over a PeerConnection.
+ * Multiplexes payment messages over a PeerConnection.
  * Register handlers for each message type, then call handleFrame()
  * when a payment-range frame arrives.
  */
@@ -27,76 +30,41 @@ export class PaymentMux {
   private _messageIdCounter = 0;
 
   // Handler registrations
-  private _onSessionLockAuth?: PaymentMessageHandler<SessionLockAuthPayload>;
-  private _onSessionLockConfirm?: PaymentMessageHandler<SessionLockConfirmPayload>;
-  private _onSessionLockReject?: PaymentMessageHandler<SessionLockRejectPayload>;
-  private _onSellerReceipt?: PaymentMessageHandler<SellerReceiptPayload>;
-  private _onBuyerAck?: PaymentMessageHandler<BuyerAckPayload>;
-  private _onSessionEnd?: PaymentMessageHandler<SessionEndPayload>;
-  private _onTopUpRequest?: PaymentMessageHandler<TopUpRequestPayload>;
-  private _onTopUpAuth?: PaymentMessageHandler<TopUpAuthPayload>;
-  private _onDisputeNotify?: PaymentMessageHandler<DisputeNotifyPayload>;
+  private _onSpendingAuth?: PaymentMessageHandler<SpendingAuthPayload>;
+  private _onAuthAck?: PaymentMessageHandler<AuthAckPayload>;
+  private _onPaymentRequired?: PaymentMessageHandler<PaymentRequiredPayload>;
+  private _onNeedAuth?: PaymentMessageHandler<NeedAuthPayload>;
 
   constructor(connection: PeerConnection) {
     this._connection = connection;
   }
 
   // --- Handler registration ---
-  onSessionLockAuth(handler: PaymentMessageHandler<SessionLockAuthPayload>): void {
-    this._onSessionLockAuth = handler;
+  onSpendingAuth(handler: PaymentMessageHandler<SpendingAuthPayload>): void {
+    this._onSpendingAuth = handler;
   }
-  onSessionLockConfirm(handler: PaymentMessageHandler<SessionLockConfirmPayload>): void {
-    this._onSessionLockConfirm = handler;
+  onAuthAck(handler: PaymentMessageHandler<AuthAckPayload>): void {
+    this._onAuthAck = handler;
   }
-  onSessionLockReject(handler: PaymentMessageHandler<SessionLockRejectPayload>): void {
-    this._onSessionLockReject = handler;
+  onPaymentRequired(handler: PaymentMessageHandler<PaymentRequiredPayload>): void {
+    this._onPaymentRequired = handler;
   }
-  onSellerReceipt(handler: PaymentMessageHandler<SellerReceiptPayload>): void {
-    this._onSellerReceipt = handler;
-  }
-  onBuyerAck(handler: PaymentMessageHandler<BuyerAckPayload>): void {
-    this._onBuyerAck = handler;
-  }
-  onSessionEnd(handler: PaymentMessageHandler<SessionEndPayload>): void {
-    this._onSessionEnd = handler;
-  }
-  onTopUpRequest(handler: PaymentMessageHandler<TopUpRequestPayload>): void {
-    this._onTopUpRequest = handler;
-  }
-  onTopUpAuth(handler: PaymentMessageHandler<TopUpAuthPayload>): void {
-    this._onTopUpAuth = handler;
-  }
-  onDisputeNotify(handler: PaymentMessageHandler<DisputeNotifyPayload>): void {
-    this._onDisputeNotify = handler;
+  onNeedAuth(handler: PaymentMessageHandler<NeedAuthPayload>): void {
+    this._onNeedAuth = handler;
   }
 
   // --- Sending ---
-  sendSessionLockAuth(payload: SessionLockAuthPayload): void {
-    this._send(MessageType.SessionLockAuth, codec.encodeSessionLockAuth(payload));
+  sendSpendingAuth(payload: SpendingAuthPayload): void {
+    this._send(MessageType.SpendingAuth, codec.encodeSpendingAuth(payload));
   }
-  sendSessionLockConfirm(payload: SessionLockConfirmPayload): void {
-    this._send(MessageType.SessionLockConfirm, codec.encodeSessionLockConfirm(payload));
+  sendAuthAck(payload: AuthAckPayload): void {
+    this._send(MessageType.AuthAck, codec.encodeAuthAck(payload));
   }
-  sendSessionLockReject(payload: SessionLockRejectPayload): void {
-    this._send(MessageType.SessionLockReject, codec.encodeSessionLockReject(payload));
+  sendPaymentRequired(payload: PaymentRequiredPayload): void {
+    this._send(MessageType.PaymentRequired, codec.encodePaymentRequired(payload));
   }
-  sendSellerReceipt(payload: SellerReceiptPayload): void {
-    this._send(MessageType.SellerReceipt, codec.encodeSellerReceipt(payload));
-  }
-  sendBuyerAck(payload: BuyerAckPayload): void {
-    this._send(MessageType.BuyerAck, codec.encodeBuyerAck(payload));
-  }
-  sendSessionEnd(payload: SessionEndPayload): void {
-    this._send(MessageType.SessionEnd, codec.encodeSessionEnd(payload));
-  }
-  sendTopUpRequest(payload: TopUpRequestPayload): void {
-    this._send(MessageType.TopUpRequest, codec.encodeTopUpRequest(payload));
-  }
-  sendTopUpAuth(payload: TopUpAuthPayload): void {
-    this._send(MessageType.TopUpAuth, codec.encodeTopUpAuth(payload));
-  }
-  sendDisputeNotify(payload: DisputeNotifyPayload): void {
-    this._send(MessageType.DisputeNotify, codec.encodeDisputeNotify(payload));
+  sendNeedAuth(payload: NeedAuthPayload): void {
+    this._send(MessageType.NeedAuth, codec.encodeNeedAuth(payload));
   }
 
   // --- Receiving ---
@@ -104,33 +72,21 @@ export class PaymentMux {
    * Returns true if this frame is a payment message and was handled.
    */
   async handleFrame(frame: FramedMessage): Promise<boolean> {
+    const name = MESSAGE_TYPE_NAME[frame.type];
+    if (!name) return false;
+    debugLog(`[PaymentMux] ← recv ${name} (${frame.payload.length}b)`);
     switch (frame.type) {
-      case MessageType.SessionLockAuth:
-        await this._onSessionLockAuth?.(codec.decodeSessionLockAuth(frame.payload));
+      case MessageType.SpendingAuth:
+        await this._onSpendingAuth?.(codec.decodeSpendingAuth(frame.payload));
         return true;
-      case MessageType.SessionLockConfirm:
-        await this._onSessionLockConfirm?.(codec.decodeSessionLockConfirm(frame.payload));
+      case MessageType.AuthAck:
+        await this._onAuthAck?.(codec.decodeAuthAck(frame.payload));
         return true;
-      case MessageType.SessionLockReject:
-        await this._onSessionLockReject?.(codec.decodeSessionLockReject(frame.payload));
+      case MessageType.PaymentRequired:
+        await this._onPaymentRequired?.(codec.decodePaymentRequired(frame.payload));
         return true;
-      case MessageType.SellerReceipt:
-        await this._onSellerReceipt?.(codec.decodeSellerReceipt(frame.payload));
-        return true;
-      case MessageType.BuyerAck:
-        await this._onBuyerAck?.(codec.decodeBuyerAck(frame.payload));
-        return true;
-      case MessageType.SessionEnd:
-        await this._onSessionEnd?.(codec.decodeSessionEnd(frame.payload));
-        return true;
-      case MessageType.TopUpRequest:
-        await this._onTopUpRequest?.(codec.decodeTopUpRequest(frame.payload));
-        return true;
-      case MessageType.TopUpAuth:
-        await this._onTopUpAuth?.(codec.decodeTopUpAuth(frame.payload));
-        return true;
-      case MessageType.DisputeNotify:
-        await this._onDisputeNotify?.(codec.decodeDisputeNotify(frame.payload));
+      case MessageType.NeedAuth:
+        await this._onNeedAuth?.(codec.decodeNeedAuth(frame.payload));
         return true;
       default:
         return false;
@@ -143,6 +99,7 @@ export class PaymentMux {
   }
 
   private _send(type: MessageType, payload: Uint8Array): void {
+    debugLog(`[PaymentMux] → send ${MESSAGE_TYPE_NAME[type] ?? `0x${type.toString(16)}`} (${payload.length}b)`);
     const frame = encodeFrame({
       type,
       messageId: this._messageIdCounter++ & 0xffffffff,

@@ -4,8 +4,7 @@ import { join } from 'node:path';
 import type { PeerId } from '../types/peer.js';
 import type { PeerRating, RatingDimension, AggregateRating } from '../types/rating.js';
 import type { Identity } from '../p2p/identity.js';
-import { signData } from '../p2p/identity.js';
-import { bytesToHex } from '../utils/hex.js';
+import { signUtf8 } from '../p2p/identity.js';
 
 const HALF_LIFE_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
 const DIMENSIONS: RatingDimension[] = ['quality', 'speed', 'reliability', 'value', 'overall'];
@@ -45,8 +44,7 @@ export class RatingManager {
     };
 
     const dataToSign = `${rating.ratingId}:${rating.raterPeerId}:${rating.targetPeerId}:${rating.sessionId}:${rating.timestamp}`;
-    const sig = await signData(this.identity.privateKey, new TextEncoder().encode(dataToSign));
-    rating.signature = bytesToHex(sig);
+    rating.signature = signUtf8(this.identity.wallet, dataToSign);
 
     this.ratings.push(rating);
     await this.save();

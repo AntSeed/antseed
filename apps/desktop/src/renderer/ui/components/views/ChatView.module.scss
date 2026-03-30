@@ -41,6 +41,42 @@
   white-space: nowrap;
 }
 
+.peer-service-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-primary);
+  transition: background 0.15s;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.06);
+  }
+}
+
+.peer-name {
+  font-weight: 500;
+  color: var(--accent-green);
+}
+
+.service-separator {
+  color: var(--text-muted);
+}
+
+.service-name {
+  color: var(--text-secondary);
+}
+
+.service-label {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
 /* ===================================================================
    Chat layout
    =================================================================== */
@@ -321,7 +357,7 @@
 }
 
 .chat-error {
-  margin: 8px 16px 0;
+  margin: 8px 16px;
   padding: 8px 12px;
   border-radius: var(--radius-sm);
   border: 1px solid rgba(var(--danger-rgb), 0.2);
@@ -329,7 +365,7 @@
   color: var(--danger);
   font-size: 12px;
   line-height: 1.4;
-  max-width: 640px;
+  max-width: fit-content;
   margin-left: auto;
   margin-right: auto;
 }

@@ -9,7 +9,7 @@ export interface StatusResponse {
   peerCount: number;
   earningsToday: string;
   tokensToday: number;
-  activeSessions: number;
+  activeChannels: number;
   uptime: string;
   walletAddress: string | null;
   proxyPort: number | null;
@@ -24,19 +24,19 @@ export interface PeersResponse {
   total: number;
 }
 
-/** Response type for GET /api/sessions */
-export interface SessionsResponse {
-  sessions: import('./shared-types').SessionMetrics[];
+/** Response type for GET /api/channels */
+export interface ChannelsResponse {
+  channels: import('./shared-types').SessionMetrics[];
   total: number;
 }
 
 /** Response type for GET /api/earnings */
 export interface EarningsResponse {
-  today: string;
-  thisWeek: string;
-  thisMonth: string;
-  daily: Array<{ date: string; amount: string }>;
-  byProvider: Array<{ provider: string; amount: string }>;
+  today?: string;
+  thisWeek?: string;
+  thisMonth?: string;
+  daily?: Array<{ date: string; amount: string }>;
+  byProvider?: Array<{ provider: string; amount: string }>;
 }
 
 /** A peer discovered via the DHT network */
@@ -126,7 +126,7 @@ export interface ConfigResponse {
       crypto?: {
         chainId: 'base' | 'arbitrum';
         rpcUrl: string;
-        escrowContractAddress: string;
+        depositsContractAddress: string;
         usdcContractAddress: string;
       };
     };

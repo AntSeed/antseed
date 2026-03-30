@@ -41,7 +41,13 @@ export type ConfigFormData = {
   maxOutputUsdPerMillion: number;
   minRep: number;
   paymentMethod: string;
+  requireManualApproval: boolean;
   devMode: boolean;
+  cryptoChainId: string;
+  cryptoRpcUrl: string;
+  cryptoDepositsAddress: string;
+  cryptoChannelsAddress: string;
+  cryptoUsdcAddress: string;
 };
 
 export type ChatServiceOptionEntry = {
@@ -51,20 +57,24 @@ export type ChatServiceOptionEntry = {
   protocol: string;
   count: number;
   value: string;
+  peerId: string;
+  peerLabel: string;
+};
+
+export type ActiveChannelInfo = {
+  reservedUsdc: string;
+  peerName: string;
 };
 
 export type RendererUiState = {
   // --- Process / runtime state ---
   processes: RuntimeProcessState[];
   refreshing: boolean;
-  dashboardRunning: boolean;
   daemonState: DaemonStateSnapshot | null;
 
   // --- Runtime display ---
   connectState: string;
   connectBadge: BadgeState;
-  dashboardState: string;
-  dashboardBadge: BadgeState;
   connectWarning: string | null;
   runtimeActivity: { tone: BadgeTone; message: string };
 
@@ -114,6 +124,36 @@ export type RendererUiState = {
   pluginInstallBtnDisabled: boolean;
   pluginRefreshBtnDisabled: boolean;
 
+  // --- Credits / Payments ---
+  creditsAvailableUsdc: string;
+  creditsReservedUsdc: string;
+  creditsTotalUsdc: string;
+  creditsPendingWithdrawalUsdc: string;
+  creditsCreditLimitUsdc: string;
+  creditsEvmAddress: string | null;
+  creditsOperatorAddress: string | null;
+  creditsLoading: boolean;
+  creditsLastRefreshedAt: number;
+
+  // --- Session approval ---
+  chatPaymentApprovalVisible: boolean;
+  chatPaymentApprovalPeerId: string | null;
+  chatPaymentApprovalPeerName: string | null;
+  chatPaymentApprovalAmount: string;
+  chatPaymentApprovalPeerInfo: {
+    reputation: number;
+    sessionCount: number | null;
+    disputeCount: number | null;
+    networkAgeDays: number | null;
+    evmAddress: string | null;
+  } | null;
+  chatPaymentApprovalLoading: boolean;
+  chatPaymentApprovalError: string | null;
+  chatLowBalanceWarning: boolean;
+
+  // --- Active payment channels (keyed by peerId) ---
+  chatActiveChannels: Map<string, ActiveChannelInfo>;
+
   // --- Chat display ---
   chatActiveConversation: string | null;
   chatConversationTitle: string;
@@ -129,6 +169,7 @@ export type RendererUiState = {
   chatRoutedPeer: string;
   chatServiceOptions: ChatServiceOptionEntry[];
   chatSelectedServiceValue: string;
+  chatSelectedPeerId: string;
   chatServiceStatus: BadgeState;
   chatProxyStatus: BadgeState;
   chatDeleteVisible: boolean;
@@ -161,14 +202,11 @@ export function createInitialUiState(): RendererUiState {
     // Process / runtime
     processes: [],
     refreshing: false,
-    dashboardRunning: false,
     daemonState: null,
 
     // Runtime display
     connectState: '',
     connectBadge: { tone: 'idle', label: 'Stopped' },
-    dashboardState: '',
-    dashboardBadge: { tone: 'idle', label: 'Stopped' },
     connectWarning: null,
     runtimeActivity: { tone: 'idle', message: 'Idle' },
 
@@ -218,6 +256,30 @@ export function createInitialUiState(): RendererUiState {
     pluginInstallBtnDisabled: true,
     pluginRefreshBtnDisabled: true,
 
+    // Credits / Payments
+    creditsAvailableUsdc: '0',
+    creditsReservedUsdc: '0',
+    creditsTotalUsdc: '0',
+    creditsPendingWithdrawalUsdc: '0',
+    creditsCreditLimitUsdc: '0',
+    creditsEvmAddress: null,
+    creditsOperatorAddress: null,
+    creditsLoading: false,
+    creditsLastRefreshedAt: 0,
+
+    // Session approval
+    chatPaymentApprovalVisible: false,
+    chatPaymentApprovalPeerId: null,
+    chatPaymentApprovalPeerName: null,
+    chatPaymentApprovalAmount: '1.00',
+    chatPaymentApprovalPeerInfo: null,
+    chatPaymentApprovalLoading: false,
+    chatPaymentApprovalError: null,
+    chatLowBalanceWarning: false,
+
+    // Active payment channels
+    chatActiveChannels: new Map(),
+
     // Chat
     chatActiveConversation: null,
     chatConversationTitle: 'Conversation',
@@ -233,6 +295,7 @@ export function createInitialUiState(): RendererUiState {
     chatRoutedPeer: '',
     chatServiceOptions: [],
     chatSelectedServiceValue: '',
+    chatSelectedPeerId: '',
     chatServiceStatus: { tone: 'idle', label: 'Services idle' },
     chatProxyStatus: { tone: 'idle', label: 'Proxy offline' },
     chatDeleteVisible: false,

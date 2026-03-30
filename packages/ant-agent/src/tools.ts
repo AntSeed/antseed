@@ -1,9 +1,11 @@
 import type { KnowledgeModule } from './loader.js';
 
-export type RequestFormat = 'anthropic' | 'openai';
+export type RequestFormat = 'anthropic' | 'openai' | 'openai-responses';
 
 export function detectRequestFormat(path?: string): RequestFormat {
-  return path?.includes('/chat/completions') ? 'openai' : 'anthropic';
+  if (path?.includes('/chat/completions')) return 'openai';
+  if (path?.includes('/responses')) return 'openai-responses';
+  return 'anthropic';
 }
 
 export const TOOL_PREFIX = 'antseed_';
@@ -88,6 +90,9 @@ function toApiFormat(tool: AntAgentTool, format: RequestFormat): Record<string, 
   if (format === 'openai') {
     return { type: 'function', function: { name: prefixedName, description: tool.description, parameters: tool.parameters } };
   }
+  if (format === 'openai-responses') {
+    return { type: 'function', name: prefixedName, description: tool.description, parameters: tool.parameters };
+  }
   return { name: prefixedName, description: tool.description, input_schema: tool.parameters };
 }
 
@@ -150,6 +155,25 @@ function extractToolCalls(
         }
       }
     }
+  } else if (format === 'openai-responses') {
+    const output = body.output as {
+      type: string;
+      call_id?: string;
+      name?: string;
+      arguments?: string;
+    }[] | undefined;
+    if (output) {
+      for (const item of output) {
+        if (item.type === 'function_call' && item.call_id && item.name) {
+          try {
+            const args = JSON.parse(item.arguments ?? '{}') as Record<string, unknown>;
+            calls.push({ id: item.call_id, name: item.name, arguments: args });
+          } catch {
+            calls.push({ id: item.call_id, name: item.name, arguments: {} });
+          }
+        }
+      }
+    }
   } else {
     const content = body.content as {
       type: string;
@@ -207,6 +231,26 @@ export function appendToolLoop(
   results: ToolResult[],
   format: RequestFormat,
 ): Record<string, unknown> {
+  if (format === 'openai-responses') {
+    const input = Array.isArray(body.input) ? [...(body.input as unknown[])] : [];
+    // Append the function_call items from the response output
+    const output = assistantResponse.output as { type: string }[] | undefined;
+    if (output) {
+      for (const item of output) {
+        if (item.type === 'function_call') input.push(item);
+      }
+    }
+    // Append function_call_output items for each result
+    for (const result of results) {
+      input.push({
+        type: 'function_call_output',
+        call_id: result.id,
+        output: result.content,
+      });
+    }
+    return { ...body, input };
+  }
+
   const messages = Array.isArray(body.messages) ? [...(body.messages as unknown[])] : [];
 
   if (format === 'openai') {
@@ -260,6 +304,21 @@ export function stripInternalToolCalls(
       return { ...choice, message: msg };
     });
     return { ...responseBody, choices: cleaned };
+  }
+
+  if (format === 'openai-responses') {
+    const output = responseBody.output as { type: string; name?: string }[] | undefined;
+    if (!output) return responseBody;
+    const filtered = output.filter(
+      item => !(item.type === 'function_call' && item.name?.startsWith(TOOL_PREFIX)),
+    );
+    const wasStripped = filtered.length < output.length;
+    const hasRemainingFunctionCall = filtered.some(i => i.type === 'function_call');
+    return {
+      ...responseBody,
+      output: filtered,
+      ...(wasStripped && !hasRemainingFunctionCall ? { status: 'completed' } : {}),
+    };
   }
 
   const content = responseBody.content as { type: string; name?: string }[] | undefined;

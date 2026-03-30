@@ -114,6 +114,15 @@ describe('injectTools', () => {
     const fn = tools[0].function as Record<string, unknown>;
     expect(fn.name).toBe('antseed_load_knowledge');
   });
+
+  it('uses OpenAI Responses format (flat function)', () => {
+    const body = { input: 'hello' };
+    const result = injectTools(body, testTools, 'openai-responses');
+    const tools = result.tools as Record<string, unknown>[];
+    expect(tools[0].type).toBe('function');
+    expect(tools[0].name).toBe('antseed_load_knowledge');
+    expect(tools[0].function).toBeUndefined(); // flat, not nested
+  });
 });
 
 describe('inspectResponse', () => {
@@ -186,6 +195,48 @@ describe('inspectResponse', () => {
       }],
     };
     expect(inspectResponse(response, 'openai').type).toBe('done');
+  });
+
+  it('returns done for text-only response (Responses)', () => {
+    const response = {
+      output: [{ type: 'message', content: [{ type: 'output_text', text: 'hi' }] }],
+    };
+    expect(inspectResponse(response, 'openai-responses').type).toBe('done');
+  });
+
+  it('returns continue for antseed_* calls (Responses)', () => {
+    const response = {
+      output: [{
+        type: 'function_call',
+        call_id: 'call-1',
+        name: 'antseed_load_knowledge',
+        arguments: '{"name":"pricing"}',
+      }],
+    };
+    const action = inspectResponse(response, 'openai-responses');
+    expect(action.type).toBe('continue');
+    if (action.type === 'continue') {
+      expect(action.internalCalls).toHaveLength(1);
+      expect(action.internalCalls[0].id).toBe('call-1');
+      expect(action.internalCalls[0].arguments).toEqual({ name: 'pricing' });
+    }
+  });
+
+  it('returns done for buyer-only function calls (Responses)', () => {
+    const response = {
+      output: [{ type: 'function_call', call_id: 'call-1', name: 'search_web', arguments: '{}' }],
+    };
+    expect(inspectResponse(response, 'openai-responses').type).toBe('done');
+  });
+
+  it('returns done when mixed — buyer calls prevent re-prompt (Responses)', () => {
+    const response = {
+      output: [
+        { type: 'function_call', call_id: 'call-1', name: 'search_web', arguments: '{}' },
+        { type: 'function_call', call_id: 'call-2', name: 'antseed_load_knowledge', arguments: '{"name":"faq"}' },
+      ],
+    };
+    expect(inspectResponse(response, 'openai-responses').type).toBe('done');
   });
 });
 
@@ -277,6 +328,21 @@ describe('appendToolLoop', () => {
     expect(msgs).toHaveLength(3);
     expect(msgs[2]).toEqual({ role: 'tool', tool_call_id: 'tc1', content: 'Price is $10/mo' });
   });
+
+  it('appends correctly in Responses format', () => {
+    const body = { input: [{ role: 'user', content: 'hello' }] };
+    const assistantResponse = {
+      output: [
+        { type: 'function_call', call_id: 'call-1', name: 'antseed_load_knowledge', arguments: '{"name":"pricing"}' },
+      ],
+    };
+    const results = [{ id: 'call-1', content: 'Price is $10/mo', isError: false }];
+    const updated = appendToolLoop(body, assistantResponse, results, 'openai-responses');
+    const input = updated.input as Record<string, unknown>[];
+    expect(input).toHaveLength(3); // original + function_call + function_call_output
+    expect(input[1]).toEqual(assistantResponse.output[0]);
+    expect(input[2]).toEqual({ type: 'function_call_output', call_id: 'call-1', output: 'Price is $10/mo' });
+  });
 });
 
 describe('stripInternalToolCalls', () => {
@@ -347,5 +413,30 @@ describe('stripInternalToolCalls', () => {
     };
     const stripped = stripInternalToolCalls(response, 'anthropic');
     expect(stripped.stop_reason).toBe('end_turn');
+  });
+
+  it('strips antseed_* calls, keeps buyer calls (Responses)', () => {
+    const response = {
+      output: [
+        { type: 'message', content: [{ type: 'output_text', text: 'Here you go' }] },
+        { type: 'function_call', call_id: 'call-1', name: 'search_web', arguments: '{}' },
+        { type: 'function_call', call_id: 'call-2', name: 'antseed_load_knowledge', arguments: '{}' },
+      ],
+    };
+    const stripped = stripInternalToolCalls(response, 'openai-responses');
+    const output = stripped.output as Record<string, unknown>[];
+    expect(output).toHaveLength(2);
+    expect((output[1] as Record<string, unknown>).name).toBe('search_web');
+  });
+
+  it('sets status to completed when all function_calls removed (Responses)', () => {
+    const response = {
+      output: [{ type: 'function_call', call_id: 'call-1', name: 'antseed_load_knowledge', arguments: '{}' }],
+      status: 'requires_action',
+    };
+    const stripped = stripInternalToolCalls(response, 'openai-responses');
+    const output = stripped.output as unknown[];
+    expect(output).toHaveLength(0);
+    expect(stripped.status).toBe('completed');
   });
 });

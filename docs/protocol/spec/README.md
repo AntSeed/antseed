@@ -64,7 +64,7 @@ See: [03-metering.md](./03-metering.md)
 
 ### 4. Payments
 
-How Buyers pay Sellers for inference. Covers pricing terms, payment settlement, escrow mechanics, and refund conditions.
+How Buyers pay Sellers for inference. Covers pricing terms, payment settlement, deposit and session mechanics, and refund conditions.
 
 See: [04-payments.md](./04-payments.md)
 

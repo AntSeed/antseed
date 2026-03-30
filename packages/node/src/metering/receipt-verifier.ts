@@ -2,18 +2,18 @@ import type { UsageReceipt, TokenCount, ReceiptVerification } from '../types/met
 import { buildSignaturePayload } from './receipt-generator.js';
 
 /**
- * Interface for verifying Ed25519 signatures.
- * The actual implementation lives in the identity module (PRD-01).
+ * Interface for verifying secp256k1 signatures.
+ * The actual implementation lives in the identity module.
  */
 export interface SignatureVerifier {
   /**
-   * Verify an Ed25519 signature.
+   * Verify a secp256k1 signature via ecrecover.
    * @param message - The original signed message (UTF-8 string)
    * @param signature - Hex-encoded signature
-   * @param publicKeyHex - Signer's Ed25519 public key (hex)
+   * @param address - Signer's EVM address (hex, no 0x prefix)
    * @returns true if signature is valid
    */
-  verify(message: string, signature: string, publicKeyHex: string): boolean;
+  verify(message: string, signature: string, address: string): boolean;
 }
 
 export interface VerifierOptions {
@@ -45,7 +45,7 @@ export class ReceiptVerifier {
    * Verify a receipt against the buyer's independent token estimate.
    *
    * Verification steps:
-   * 1. Verify the Ed25519 signature using the seller's public key
+   * 1. Verify the secp256k1 signature using the seller's address
    * 2. Compare seller's token estimate with buyer's estimate
    * 3. Calculate percentage difference
    * 4. Flag as disputed if difference exceeds threshold

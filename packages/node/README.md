@@ -115,8 +115,8 @@ At a high level, `@antseed/node` currently enforces:
 - Signed discovery metadata verification and staleness checks
 - Signed connection intro envelopes with replay protection
 - Frame, stream, and upload limits to reduce DoS exposure
-- Escrow-aware request gating (`402` if lock is not committed when escrow is enabled)
-- Signed bilateral receipts (Ed25519) plus on-chain payment authorization (ECDSA)
+- Payment-aware request gating (`402` if no session is reserved when payments are enabled)
+- Signed bilateral receipts (secp256k1) plus on-chain payment authorization (ECDSA)
 
 ## Node Configuration
 
@@ -126,6 +126,7 @@ interface NodeConfig {
   displayName?: string;       // Optional human-readable name announced in metadata
   publicAddress?: string;     // Optional public host:port override announced in metadata
   dataDir?: string;           // Default: ~/.antseed
+  identityStore?: IdentityStore; // Pluggable identity storage backend
   dhtPort?: number;           // Default: 6881 for seller, 0 (OS-assigned) for buyer
   signalingPort?: number;     // Default: 6882 for seller
   bootstrapNodes?: Array<{ host: string; port: number }>;
@@ -134,7 +135,7 @@ interface NodeConfig {
     paymentMethod?: 'crypto';
     platformFeeRate?: number;
     settlementIdleMs?: number;
-    defaultEscrowAmountUSDC?: string;
+    defaultSessionAmountUSDC?: string;
     sellerWalletAddress?: string;
     paymentConfig?: PaymentConfig | null;
   };
@@ -147,6 +148,7 @@ interface NodeConfig {
 | `displayName` | unset | Optional node label included in discovery metadata |
 | `publicAddress` | unset | Optional public `host:port` advertised in signed metadata and preferred by buyers over the raw DHT source address |
 | `dataDir` | `~/.antseed` | Directory for identity keys, metering DB, and config |
+| `identityStore` | `FileIdentityStore` | Pluggable identity storage backend (see [Identity Storage](#identity-storage)) |
 | `dhtPort` | `6881` / `0` | UDP port for DHT. Seller defaults to 6881, buyer uses OS-assigned |
 | `signalingPort` | `6882` | TCP port for P2P signaling and incoming connections (seller only) |
 | `bootstrapNodes` | AntSeed nodes | Additional DHT bootstrap nodes merged with the official AntSeed infrastructure |
@@ -161,16 +163,87 @@ const node = new AntseedNode({
 });
 ```
 
+## Identity Storage
+
+Every node has a secp256k1 identity keypair. The private key (32 bytes, stored as 64 hex characters) serves two roles:
+
+1. **P2P identity** — signs metadata, connection handshakes, and metering receipts. Your PeerId is the EVM address (40 hex characters) derived from the public key.
+2. **On-chain wallet** — the same secp256k1 key is used as the EVM wallet. This wallet holds deposits, stakes, receives seller earnings, and signs payment authorizations.
+
+> **Important:** Losing your identity key means losing both your peer identity and access to any on-chain funds tied to the derived wallet.
+
+### Storage Backends
+
+Identity loading follows this priority:
+
+1. **Environment variable** — if `ANTSEED_IDENTITY_HEX` is set (64 hex chars), it is used directly and cleared from the environment immediately after read. Useful for injecting keys from secrets managers without touching disk.
+2. **IdentityStore** — if `identityStore` is passed in `NodeConfig`, it is used to load/save the key.
+3. **File** — default. Reads/writes `identity.key` in `dataDir` (`~/.antseed/` by default) with `0600` permissions.
+
+If no identity is found, a new keypair is generated and persisted via the active store.
+
+### File Store (Default)
+
+```ts
+import { AntseedNode, FileIdentityStore } from '@antseed/node';
+
+const node = new AntseedNode({
+  role: 'seller',
+  // These are equivalent — FileIdentityStore is the default:
+  identityStore: new FileIdentityStore('/path/to/config-dir'),
+  // dataDir: '/path/to/config-dir',
+});
+```
+
+### Environment Variable
+
+Pass the private key hex from a secrets manager (AWS SSM, HashiCorp Vault, etc.):
+
+```bash
+export ANTSEED_IDENTITY_HEX="$(vault kv get -field=key secret/antseed/identity)"
+antseed seed --provider anthropic
+```
+
+The variable is cleared from the process environment immediately after consumption.
+
+### Custom Store
+
+Implement the `IdentityStore` interface for any backend:
+
+```ts
+import { AntseedNode, type IdentityStore } from '@antseed/node';
+
+class VaultIdentityStore implements IdentityStore {
+  async load(): Promise<string | null> {
+    // Read 64-char hex string from your backend
+    return await vault.getSecret('antseed-identity');
+  }
+  async save(hexKey: string): Promise<void> {
+    // Persist the 64-char hex string
+    await vault.putSecret('antseed-identity', hexKey);
+  }
+}
+
+const node = new AntseedNode({
+  role: 'seller',
+  identityStore: new VaultIdentityStore(),
+});
+```
+
+### Desktop App
+
+The AntSeed Desktop app encrypts the identity at rest using Electron's `safeStorage` API. The encryption key is stored in the OS keychain (macOS Keychain / Windows DPAPI / Linux libsecret) and the encrypted blob is stored at `~/.antseed/identity.enc`. On first launch, any existing plaintext `identity.key` is migrated to the encrypted store and deleted.
+
 ## On-Chain Settlement Flow
 
 When `payments.enabled=true` in seller mode:
 
 1. A per-buyer payment session is created via `BuyerPaymentManager`.
-2. Escrow is funded on-chain at session start.
+2. Deposit balance is locked on-chain at session start.
 3. Usage receipts are generated during request handling.
 4. On idle/session finalization, `calculateSettlement` computes cost from receipts and settles on-chain via:
-   - `BaseEscrowClient.settle(sessionId, sellerAmount, platformAmount)`
-5. Any unused escrow is refunded to the buyer by contract logic in the same settlement transaction.
+   - `ChannelsClient.settle(sessionId, tokenCount)`
+5. Any unused reservation is refunded to the buyer by contract logic in the same settlement transaction.
 
 Minimal crypto config:
 
@@ -181,15 +254,16 @@ const node = new AntseedNode({
     enabled: true,
     paymentMethod: 'crypto',
     platformFeeRate: 0.05,
-    defaultEscrowAmountUSDC: '1',
+    defaultSessionAmountUSDC: '1',
     sellerWalletAddress: '0xSeller...',
     paymentConfig: {
       crypto: {
         chainId: 'base',
         rpcUrl: process.env.RPC_URL!,
-        escrowContractAddress: process.env.ESCROW_ADDRESS!,
+        depositsContractAddress: process.env.DEPOSITS_ADDRESS!,
+        channelsContractAddress: process.env.CHANNELS_ADDRESS!,
         usdcContractAddress: process.env.USDC_ADDRESS!,
-        autoFundEscrow: true,
+        autoFundDeposit: true,
       },
     },
   },
@@ -215,7 +289,7 @@ import type {
 } from '@antseed/node';
 
 // Identity & P2P
-import { loadOrCreateIdentity, type Identity } from '@antseed/node';
+import { loadOrCreateIdentity, type Identity, type IdentityStore, FileIdentityStore } from '@antseed/node';
 import { NatTraversal, type NatMapping, type NatTraversalResult } from '@antseed/node';
 
 // Discovery
@@ -228,7 +302,7 @@ import type { PeerMetadata, ProviderAnnouncement } from '@antseed/node';
 import { MeteringStorage } from '@antseed/node';
 import { BalanceManager } from '@antseed/node';
 import { BuyerPaymentManager, calculateSettlement } from '@antseed/node/payments';
-import { BaseEscrowClient } from '@antseed/node';
+import { BaseChannelsClient } from '@antseed/node';
 
 // Routing & Proxy
 import { ProxyMux } from '@antseed/node';

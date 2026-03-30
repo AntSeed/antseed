@@ -7,8 +7,12 @@ export {
 
 export {
   createOpenAIChatToResponsesStreamingAdapter,
+  createOpenAIResponsesToChatStreamingAdapter,
+  transformOpenAIChatRequestToOpenAIResponses,
   transformOpenAIChatResponseToOpenAIResponses,
   transformOpenAIResponsesRequestToOpenAIChat,
+  transformOpenAIResponsesResponseToOpenAIChat,
+  type ChatToResponsesRequestTransformResult,
   type ResponsesToOpenAIRequestTransformResult,
 } from './openai-responses.js';
 
@@ -20,6 +24,9 @@ export {
 } from './detect.js';
 
 export {
+  extractUsage,
+  parseJsonObject,
+  toNonNegativeInt,
   type StreamingResponseAdapter,
 } from './utils.js';
 

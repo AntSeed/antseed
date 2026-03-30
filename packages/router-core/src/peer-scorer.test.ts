@@ -4,7 +4,7 @@ import { scoreCandidates, DEFAULT_WEIGHTS } from './peer-scorer.js'
 import type { PeerMetrics, TokenPricingUsdPerMillion } from './peer-scorer.js'
 
 function makePeerId(char: string): PeerInfo['peerId'] {
-  return char.repeat(64) as PeerInfo['peerId']
+  return char.repeat(40) as PeerInfo['peerId']
 }
 
 function makePeer(overrides?: Partial<PeerInfo>): PeerInfo {

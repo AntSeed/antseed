@@ -109,4 +109,4 @@ See [packages/node/README.md](packages/node/README.md) for the `Provider` and `R
 - **Test**: vitest
 - **Desktop**: Electron
 - **P2P**: BitTorrent DHT + WebRTC data channels
-- **Payments**: On-chain USDC escrow (Base/Arbitrum)
+- **Payments**: On-chain USDC deposits and sessions (Base/Arbitrum)
