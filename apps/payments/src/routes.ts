@@ -154,7 +154,7 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
       const logs = await client.provider.getLogs({
         address: ctx.cryptoConfig.sessionsContractAddress,
         topics: [eventTopic, null, buyerTopic],
-        fromBlock: 0,
+        fromBlock: ctx.chainConfig.sessionsDeployBlock ?? 0,
         toBlock: 'latest',
       });
 
