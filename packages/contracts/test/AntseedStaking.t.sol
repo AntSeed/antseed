@@ -167,6 +167,21 @@ contract AntseedStakingTest is Test {
         assertEq(staking.getStake(seller), MIN_STAKE * 2);
     }
 
+    function test_stake_revert_agentIdMismatch() public {
+        _stakeAs(seller, MIN_STAKE);
+
+        // Register a second agent owned by seller
+        vm.prank(seller);
+        uint256 otherAgentId = registry.register();
+
+        usdc.mint(seller, MIN_STAKE);
+        vm.startPrank(seller);
+        usdc.approve(address(staking), MIN_STAKE);
+        vm.expectRevert(AntseedStaking.AgentIdMismatch.selector);
+        staking.stake(otherAgentId, MIN_STAKE);
+        vm.stopPrank();
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     //                        stakeFor()
     // ═══════════════════════════════════════════════════════════════════
@@ -194,6 +209,15 @@ contract AntseedStakingTest is Test {
         usdc.approve(address(staking), MIN_STAKE);
         vm.expectRevert(AntseedStaking.NotAgentOwner.selector);
         staking.stakeFor(unregistered, sellerAgentId, MIN_STAKE);
+        vm.stopPrank();
+    }
+
+    function test_stakeFor_revert_zeroAddress() public {
+        usdc.mint(thirdParty, MIN_STAKE);
+        vm.startPrank(thirdParty);
+        usdc.approve(address(staking), MIN_STAKE);
+        vm.expectRevert(AntseedStaking.InvalidAddress.selector);
+        staking.stakeFor(address(0), sellerAgentId, MIN_STAKE);
         vm.stopPrank();
     }
 
@@ -344,8 +368,8 @@ contract AntseedStakingTest is Test {
         assertEq(usdc.balanceOf(seller), LARGE_STAKE);
     }
 
-    // Edge: slash with no protocolReserve set -> slashed funds stay in contract
-    function test_slash_noReserve_fundsStayInContract() public {
+    // Edge: slash with no protocolReserve set -> revert to prevent lost funds
+    function test_slash_noReserve_reverts() public {
         // Deploy a new staking without reserve
         AntseedStaking staking2 = new AntseedStaking(address(usdc), address(registry), address(stats));
         MockChannelsForStaking mockChannels2 = new MockChannelsForStaking();
@@ -361,29 +385,8 @@ contract AntseedStakingTest is Test {
         _addGhosts(sellerAgentId, 5); // tier 1 full slash
 
         vm.prank(seller);
+        vm.expectRevert(AntseedStaking.InvalidAddress.selector);
         staking2.unstake();
-
-        // Seller gets 0, reserve is address(0) so slashed funds stay in contract
-        assertEq(usdc.balanceOf(seller), 0);
-        assertEq(usdc.balanceOf(address(staking2)), LARGE_STAKE);
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    //                        validateSeller()
-    // ═══════════════════════════════════════════════════════════════════
-
-    function test_validateSeller_true() public {
-        _stakeAs(seller, MIN_STAKE);
-        assertTrue(staking.validateSeller(seller));
-    }
-
-    function test_validateSeller_false_notStaked() public view {
-        assertFalse(staking.validateSeller(seller));
-    }
-
-    function test_validateSeller_false_belowMin() public {
-        _stakeAs(seller, MIN_STAKE - 1);
-        assertFalse(staking.validateSeller(seller));
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -415,37 +418,6 @@ contract AntseedStakingTest is Test {
         (uint256 stakeAmt, uint256 stakedAt) = staking.getSellerAccount(seller);
         assertEq(stakeAmt, MIN_STAKE);
         assertEq(stakedAt, ts);
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    //                     effectiveSettlements()
-    // ═══════════════════════════════════════════════════════════════════
-
-    function test_effectiveSettlements_belowCap() public {
-        _stakeAs(seller, LARGE_STAKE); // 100 USDC
-
-        _addChannels(sellerAgentId, 5);
-
-        // stakeCap = (100_000_000 * 20) / 1_000_000 = 2000
-        // channelCount = 5, which is < 2000
-        assertEq(staking.effectiveSettlements(seller), 5);
-    }
-
-    function test_effectiveSettlements_aboveCap() public {
-        // Tiny stake to make cap small
-        _stakeAs(seller, 100_000); // 0.1 USDC
-
-        // stakeCap = (100_000 * 20) / 1_000_000 = 2
-        _addChannels(sellerAgentId, 10);
-
-        assertEq(staking.effectiveSettlements(seller), 2);
-    }
-
-    function test_effectiveSettlements_zeroStake() public {
-        _addChannels(sellerAgentId, 5);
-
-        // stakeCap = 0, channelCount = 5 -> min(5, 0) = 0
-        assertEq(staking.effectiveSettlements(seller), 0);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -525,11 +497,6 @@ contract AntseedStakingTest is Test {
     function test_setMinSellerStake() public {
         staking.setMinSellerStake(5_000_000);
         assertEq(staking.MIN_SELLER_STAKE(), 5_000_000);
-    }
-
-    function test_setReputationCapCoefficient() public {
-        staking.setReputationCapCoefficient(50);
-        assertEq(staking.REPUTATION_CAP_COEFFICIENT(), 50);
     }
 
     function test_setSlashRatioThreshold() public {

@@ -38,7 +38,6 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
 
     // ─── Configurable Constants ─────────────────────────────────────────
     uint256 public MIN_SELLER_STAKE = 10_000_000;
-    uint256 public REPUTATION_CAP_COEFFICIENT = 20;
     uint256 public SLASH_RATIO_THRESHOLD = 30;
     uint256 public SLASH_GHOST_THRESHOLD = 5;
     uint256 public SLASH_INACTIVITY_DAYS = 30 days;
@@ -48,12 +47,12 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
     event Unstaked(address indexed seller, uint256 amount, uint256 slashed);
 
     // ─── Custom Errors ──────────────────────────────────────────────────
-    error NotAuthorized();
     error InvalidAmount();
     error InvalidAddress();
     error InsufficientStake();
     error ActiveChannels();
     error NotAgentOwner();
+    error AgentIdMismatch();
 
     // ─── Constructor ────────────────────────────────────────────────────
     constructor(address _usdc, address _identityRegistry, address _stats) Ownable(msg.sender) {
@@ -68,22 +67,19 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
     // ═══════════════════════════════════════════════════════════════════
 
     function stake(uint256 agentId, uint256 amount) external nonReentrant {
-        if (amount == 0) revert InvalidAmount();
-        if (identityRegistry.ownerOf(agentId) != msg.sender) revert NotAgentOwner();
-
-        usdc.safeTransferFrom(msg.sender, address(this), amount);
-
-        SellerAccount storage sa = sellers[msg.sender];
-        sa.stake += amount;
-        sa.stakedAt = block.timestamp;
-        sellerAgentId[msg.sender] = agentId;
-
-        emit Staked(msg.sender, agentId, amount);
+        _stakeFor(msg.sender, agentId, amount);
     }
 
     function stakeFor(address seller, uint256 agentId, uint256 amount) external nonReentrant {
+        _stakeFor(seller, agentId, amount);
+    }
+
+    function _stakeFor(address seller, uint256 agentId, uint256 amount) internal {
+        if (seller == address(0)) revert InvalidAddress();
         if (amount == 0) revert InvalidAmount();
         if (identityRegistry.ownerOf(agentId) != seller) revert NotAgentOwner();
+        uint256 existingAgentId = sellerAgentId[seller];
+        if (existingAgentId != 0 && existingAgentId != agentId) revert AgentIdMismatch();
 
         usdc.safeTransferFrom(msg.sender, address(this), amount);
 
@@ -111,7 +107,8 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
         if (payout > 0) {
             usdc.safeTransfer(msg.sender, payout);
         }
-        if (slashAmount > 0 && protocolReserve != address(0)) {
+        if (slashAmount > 0) {
+            if (protocolReserve == address(0)) revert InvalidAddress();
             usdc.safeTransfer(protocolReserve, slashAmount);
         }
 
@@ -119,10 +116,6 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
     }
 
     // ─── View Helpers ───────────────────────────────────────────────────
-    function validateSeller(address seller) external view returns (bool) {
-        return sellers[seller].stake >= MIN_SELLER_STAKE;
-    }
-
     function getStake(address seller) external view returns (uint256) {
         return sellers[seller].stake;
     }
@@ -142,17 +135,6 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
 
     function getAgentId(address seller) external view returns (uint256) {
         return sellerAgentId[seller];
-    }
-
-    function effectiveSettlements(address seller) external view returns (uint256) {
-        uint256 agentId = sellerAgentId[seller];
-        if (agentId == 0) return 0;
-        IAntseedStats.AgentStats memory stats = statsContract.getStats(agentId);
-
-        uint256 channelCount = uint256(stats.channelCount);
-        uint256 stakeCap = (sellers[seller].stake * REPUTATION_CAP_COEFFICIENT) / 1_000_000;
-
-        return channelCount < stakeCap ? channelCount : stakeCap;
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -214,10 +196,6 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
 
     function setMinSellerStake(uint256 value) external onlyOwner {
         MIN_SELLER_STAKE = value;
-    }
-
-    function setReputationCapCoefficient(uint256 value) external onlyOwner {
-        REPUTATION_CAP_COEFFICIENT = value;
     }
 
     function setSlashRatioThreshold(uint256 value) external onlyOwner {
