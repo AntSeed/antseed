@@ -420,7 +420,7 @@ function inferProviderProtocol(provider: string): ChatServiceProtocol | null {
 }
 
 const VALID_CHAT_SERVICE_PROTOCOLS = new Set<string>([
-  'anthropic-messages', 'openai-chat-completions', 'openai-completions', 'openai-responses',
+  'anthropic-messages', 'openai-chat-completions', 'openai-responses',
 ]);
 
 /**
