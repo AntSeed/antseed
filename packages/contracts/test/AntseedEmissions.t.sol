@@ -572,6 +572,118 @@ contract AntseedEmissionsTest is Test {
         assertEq(emissions.MAX_SELLER_SHARE_PCT(), 20);
     }
 
+    function test_setMaxSellerSharePct_revert_zero() public {
+        vm.expectRevert(AntseedEmissions.InvalidValue.selector);
+        emissions.setMaxSellerSharePct(0);
+    }
+
+    function test_setMaxSellerSharePct_revert_over100() public {
+        vm.expectRevert(AntseedEmissions.InvalidValue.selector);
+        emissions.setMaxSellerSharePct(101);
+    }
+
+    function test_setEpochDuration() public {
+        emissions.setEpochDuration(2 weeks);
+        assertEq(emissions.EPOCH_DURATION(), 2 weeks);
+    }
+
+    function test_setEpochDuration_revert_zero() public {
+        vm.expectRevert(AntseedEmissions.InvalidValue.selector);
+        emissions.setEpochDuration(0);
+    }
+
+    function test_setHalvingInterval() public {
+        emissions.setHalvingInterval(52);
+        assertEq(emissions.HALVING_INTERVAL(), 52);
+    }
+
+    function test_setHalvingInterval_revert_zero() public {
+        vm.expectRevert(AntseedEmissions.InvalidValue.selector);
+        emissions.setHalvingInterval(0);
+    }
+
+    function test_setRegistry() public {
+        AntseedRegistry newReg = new AntseedRegistry();
+        newReg.setChannels(address(this));
+        newReg.setAntsToken(address(token));
+        emissions.setRegistry(address(newReg));
+        assertEq(address(emissions.registry()), address(newReg));
+    }
+
+    function test_setRegistry_revert_zeroAddress() public {
+        vm.expectRevert(AntseedEmissions.InvalidAddress.selector);
+        emissions.setRegistry(address(0));
+    }
+
+    function test_getEpochEmission() public view {
+        assertEq(emissions.getEpochEmission(0), INITIAL_EMISSION);
+        assertEq(emissions.getEpochEmission(26), INITIAL_EMISSION / 2);
+    }
+
+    // ─── Constructor revert paths ───
+
+    function test_constructor_revert_zeroRegistry() public {
+        vm.expectRevert(AntseedEmissions.InvalidAddress.selector);
+        new AntseedEmissions(address(0), INITIAL_EMISSION, EPOCH_DURATION);
+    }
+
+    function test_constructor_revert_zeroEmission() public {
+        vm.expectRevert(AntseedEmissions.InvalidValue.selector);
+        new AntseedEmissions(address(antseedRegistry), 0, EPOCH_DURATION);
+    }
+
+    function test_constructor_revert_zeroDuration() public {
+        vm.expectRevert(AntseedEmissions.InvalidValue.selector);
+        new AntseedEmissions(address(antseedRegistry), INITIAL_EMISSION, 0);
+    }
+
+    // ─── Edge cases for claim/pending ───
+
+    function test_claim_skipsZeroActivityEpochs() public {
+        // Seller1 works in epoch 0 only
+        emissions.accrueSellerPoints(seller1, 100);
+
+        vm.warp(block.timestamp + EPOCH_DURATION * 3);
+        emissions.advanceEpoch();
+
+        // Claim epochs 0, 1, 2 — only epoch 0 has activity
+        vm.prank(seller1);
+        emissions.claimEmissions(_epochRange(0, 3));
+
+        // Epoch 0 claimed, epochs 1/2 skipped (not marked as claimed)
+        assertTrue(emissions.userEpochClaimed(seller1, 0));
+        assertFalse(emissions.userEpochClaimed(seller1, 1));
+        assertFalse(emissions.userEpochClaimed(seller1, 2));
+    }
+
+    function test_claim_emptyEpochArray() public {
+        uint256[] memory empty = new uint256[](0);
+        vm.prank(seller1);
+        emissions.claimEmissions(empty);
+        // Should not revert, no tokens minted
+        assertEq(token.balanceOf(seller1), 0);
+    }
+
+    function test_pendingEmissions_unfinalizedEpochSkipped() public {
+        emissions.accrueSellerPoints(seller1, 100);
+
+        // Don't advance — epoch 0 is still current
+        (uint256 pendSeller, uint256 pendBuyer) = emissions.pendingEmissions(seller1, _epochList(0));
+        assertEq(pendSeller, 0);
+        assertEq(pendBuyer, 0);
+    }
+
+    function test_pendingEmissions_buyerOnlyEpoch() public {
+        emissions.accrueBuyerPoints(buyer1, 500);
+
+        vm.warp(block.timestamp + EPOCH_DURATION);
+        emissions.advanceEpoch();
+
+        (uint256 pendSeller, uint256 pendBuyer) = emissions.pendingEmissions(buyer1, _epochList(0));
+        assertEq(pendSeller, 0);
+        assertTrue(pendBuyer > 0);
+    }
+
     function test_transferOwnership() public {
         emissions.transferOwnership(seller1);
         assertEq(emissions.owner(), seller1);
