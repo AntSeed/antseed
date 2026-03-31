@@ -143,6 +143,7 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
                 currentEpoch++;
                 epochStart += EPOCH_DURATION;
             }
+            emit EpochAdvanced(currentEpoch, _calcEpochEmission(currentEpoch));
         }
     }
 
@@ -249,9 +250,8 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
 
         if (totalReward > 0) {
             IANTSToken(registry.antsToken()).mint(msg.sender, totalReward);
+            emit EmissionsClaimed(msg.sender, totalReward, epochs);
         }
-
-        emit EmissionsClaimed(msg.sender, totalReward, epochs);
     }
 
     /**
@@ -326,12 +326,14 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
 
     function setSharePercentages(uint256 sellerPct, uint256 buyerPct, uint256 reservePct) external onlyOwner {
         if (sellerPct + buyerPct + reservePct != 100) revert InvalidShareSum();
+        _tryAdvanceEpoch();
         SELLER_SHARE_PCT = sellerPct;
         BUYER_SHARE_PCT = buyerPct;
         RESERVE_SHARE_PCT = reservePct;
     }
 
     function setMaxSellerSharePct(uint256 value) external onlyOwner {
+        if (value == 0 || value > 100) revert InvalidValue();
         MAX_SELLER_SHARE_PCT = value;
     }
 

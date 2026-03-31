@@ -225,17 +225,13 @@ contract AntseedEmissionsTest is Test {
         emissions.claimEmissions(_epochList(0));
     }
 
-    function test_claim_revert_notFinalized() public {
+    function test_claim_revert_futureEpoch() public {
         emissions.accrueSellerPoints(seller1, 100);
 
-        // Manually warp past epoch but don't call advanceEpoch
         vm.warp(block.timestamp + EPOCH_DURATION);
 
-        // Epoch 0 not finalized yet (no advanceEpoch or lazy advance)
+        // Epoch 1 is current (not yet ended) — cannot claim
         vm.prank(seller1);
-        // claimEmissions calls _tryAdvanceEpoch which WILL finalize it
-        // so this should actually work. Let's test epoch 1 instead which
-        // hasn't ended yet.
         vm.expectRevert(AntseedEmissions.EpochIsCurrentOrFuture.selector);
         emissions.claimEmissions(_epochList(1));
     }
