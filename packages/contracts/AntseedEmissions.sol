@@ -9,12 +9,25 @@ import {IANTSToken} from "./interfaces/IANTSToken.sol";
 
 /**
  * @title AntseedEmissions
- * @notice ANTS token emission controller using Synthetix reward-per-point pattern.
- *         Epoch-based emission with halving, O(1) gas per interaction,
- *         configurable seller/buyer/reserve split.
+ * @notice Weekly epoch-based ANTS token emissions.
+ *
+ *         Points earned in epoch N only earn from epoch N's budget.
+ *         If you stop working, you stop earning — points don't carry over.
+ *         Earned rewards are claimable forever.
+ *
+ *         Each epoch's emission budget = INITIAL_EMISSION >> (epoch / HALVING_INTERVAL),
+ *         split into seller / buyer / reserve shares.
+ *
+ *         Empty epochs: seller/buyer budget rolls forward to the next non-empty epoch.
+ *         Reserve accumulates regardless.
+ *
+ *         Gas profile:
+ *           accruePoints:    O(1) + lazy epoch advance (typically 0-1)
+ *           claimEmissions:  O(claimed epochs) — caller passes epoch list
+ *           advanceEpoch:    O(missed epochs), capped at 52
  */
 contract AntseedEmissions is Ownable, ReentrancyGuard {
-    // ─── Configuration (all owner-settable) ───
+    // ─── Configuration ───
     IAntseedRegistry public registry;
     address public reserveDestination;
 
@@ -29,31 +42,22 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
     // ─── Epoch State ───
     uint256 public currentEpoch;
     uint256 public epochStart;
-    uint256 public currentEmissionRate; // tokens per second for current epoch
 
-    // ─── Seller Reward Accumulator (Synthetix pattern) ───
-    uint256 public sellerRewardPerPointStored;
-    uint256 public totalSellerPoints;
-    uint256 public sellerLastUpdateTime;
+    // Budget rollover from empty epochs
+    uint256 public sellerBudgetRollover;
+    uint256 public buyerBudgetRollover;
 
-    struct SellerReward {
-        uint256 points;
-        uint256 rewardPerPointPaid;
-        uint256 pendingReward;
-    }
-    mapping(address => SellerReward) public sellerRewards;
+    // ─── Per-Epoch Snapshots (set when epoch finalizes) ───
+    mapping(uint256 => uint256) public epochTotalSellerPoints;
+    mapping(uint256 => uint256) public epochTotalBuyerPoints;
+    mapping(uint256 => uint256) public epochSellerBudget;
+    mapping(uint256 => uint256) public epochBuyerBudget;
+    mapping(uint256 => bool) public epochFinalized;
 
-    // ─── Buyer Reward Accumulator ───
-    uint256 public buyerRewardPerPointStored;
-    uint256 public totalBuyerPoints;
-    uint256 public buyerLastUpdateTime;
-
-    struct BuyerReward {
-        uint256 points;
-        uint256 rewardPerPointPaid;
-        uint256 pendingReward;
-    }
-    mapping(address => BuyerReward) public buyerRewards;
+    // ─── Per-User State ───
+    mapping(address => mapping(uint256 => uint256)) public userSellerPoints;
+    mapping(address => mapping(uint256 => uint256)) public userBuyerPoints;
+    mapping(address => mapping(uint256 => bool)) public userEpochClaimed;
 
     // ─── Reserve ───
     uint256 public reserveAccumulated;
@@ -62,18 +66,20 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
     event EpochAdvanced(uint256 indexed epoch, uint256 emission);
     event SellerPointsAccrued(address indexed seller, uint256 pointsDelta);
     event BuyerPointsAccrued(address indexed buyer, uint256 pointsDelta);
-    event EmissionsClaimed(address indexed claimer, uint256 amount);
+    event EmissionsClaimed(address indexed claimer, uint256 amount, uint256[] epochs);
     event ReserveFlushed(address indexed destination, uint256 amount);
 
     // ─── Custom Errors ───
     error NotAuthorized();
     error EpochNotEnded();
+    error EpochNotFinalized();
+    error EpochAlreadyClaimed();
+    error EpochIsCurrentOrFuture();
     error InvalidShareSum();
     error NoReserveDestination();
     error NoReserve();
     error InvalidAddress();
     error InvalidValue();
-    error InvalidSharePercentages();
 
     // ─── Modifiers ───
     modifier onlyChannels() {
@@ -89,6 +95,7 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
         if (_registry == address(0)) revert InvalidAddress();
         if (_initialEmission == 0) revert InvalidValue();
         if (_epochDuration == 0) revert InvalidValue();
+
         registry = IAntseedRegistry(_registry);
         INITIAL_EMISSION = _initialEmission;
         EPOCH_DURATION = _epochDuration;
@@ -98,183 +105,189 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
         RESERVE_SHARE_PCT = 10;
         MAX_SELLER_SHARE_PCT = 15;
 
-        if (SELLER_SHARE_PCT + BUYER_SHARE_PCT + RESERVE_SHARE_PCT != 100) revert InvalidSharePercentages();
-
         epochStart = block.timestamp;
-        currentEmissionRate = _calcEmissionRate(0);
-        sellerLastUpdateTime = block.timestamp;
-        buyerLastUpdateTime = block.timestamp;
     }
 
     // ═══════════════════════════════════════════════════════════════════
     //                        EPOCH MANAGEMENT
     // ═══════════════════════════════════════════════════════════════════
 
-    function advanceEpoch() external {
+    /**
+     * @notice Advance through all completed epochs. Permissionless.
+     *         Finalizes each completed epoch: snapshots budgets (with rollovers),
+     *         accumulates reserve, advances emission rate on halving boundaries.
+     */
+    function advanceEpoch() public {
         if (block.timestamp < epochStart + EPOCH_DURATION) revert EpochNotEnded();
 
-        // Process all missed epochs (not just one) to prevent over-accrual
-        // at a stale emission rate when epochs are skipped
-        uint256 maxIterations = 52; // cap to prevent gas exhaustion
+        uint256 maxIterations = 52;
         while (block.timestamp >= epochStart + EPOCH_DURATION && maxIterations > 0) {
             maxIterations--;
-
-            uint256 epochEnd = epochStart + EPOCH_DURATION;
-
-            // Clamp accrual to epoch boundary (not block.timestamp)
-            _updateSellerRewardTo(epochEnd);
-            _updateBuyerRewardTo(epochEnd);
-
-            // Accumulate reserve for this epoch
-            uint256 epochEmission = _calcEpochEmission(currentEpoch);
-            reserveAccumulated += (epochEmission * RESERVE_SHARE_PCT) / 100;
-
+            _finalizeEpoch(currentEpoch);
             currentEpoch++;
-            currentEmissionRate = _calcEmissionRate(currentEpoch);
-            epochStart = epochEnd;
+            epochStart += EPOCH_DURATION;
         }
 
-        // Accrue any remaining time in the new current epoch
-        _updateSellerReward();
-        _updateBuyerReward();
-
         emit EpochAdvanced(currentEpoch, _calcEpochEmission(currentEpoch));
+    }
+
+    /**
+     * @dev Lazily advance epochs if needed. Called before any state mutation.
+     */
+    function _tryAdvanceEpoch() internal {
+        if (block.timestamp >= epochStart + EPOCH_DURATION) {
+            uint256 maxIterations = 52;
+            while (block.timestamp >= epochStart + EPOCH_DURATION && maxIterations > 0) {
+                maxIterations--;
+                _finalizeEpoch(currentEpoch);
+                currentEpoch++;
+                epochStart += EPOCH_DURATION;
+            }
+        }
+    }
+
+    /**
+     * @dev Finalize a completed epoch: compute budgets with rollovers,
+     *      handle empty epochs, accumulate reserve.
+     */
+    function _finalizeEpoch(uint256 epoch) internal {
+        if (epochFinalized[epoch]) return;
+
+        uint256 emission = _calcEpochEmission(epoch);
+        uint256 sellerBudget = (emission * SELLER_SHARE_PCT) / 100 + sellerBudgetRollover;
+        uint256 buyerBudget = (emission * BUYER_SHARE_PCT) / 100 + buyerBudgetRollover;
+
+        reserveAccumulated += (emission * RESERVE_SHARE_PCT) / 100;
+
+        if (epochTotalSellerPoints[epoch] == 0) {
+            sellerBudgetRollover = sellerBudget;
+        } else {
+            epochSellerBudget[epoch] = sellerBudget;
+            sellerBudgetRollover = 0;
+        }
+
+        if (epochTotalBuyerPoints[epoch] == 0) {
+            buyerBudgetRollover = buyerBudget;
+        } else {
+            epochBuyerBudget[epoch] = buyerBudget;
+            buyerBudgetRollover = 0;
+        }
+
+        epochFinalized[epoch] = true;
     }
 
     function _calcEpochEmission(uint256 epoch) internal view returns (uint256) {
         return INITIAL_EMISSION >> (epoch / HALVING_INTERVAL);
     }
 
-    function _calcEmissionRate(uint256 epoch) internal view returns (uint256) {
-        return _calcEpochEmission(epoch) / EPOCH_DURATION;
-    }
-
     // ═══════════════════════════════════════════════════════════════════
-    //                   SYNTHETIX REWARD ACCUMULATORS
+    //                        POINT ACCRUAL
     // ═══════════════════════════════════════════════════════════════════
-
-    function _clampedNow() private view returns (uint256) {
-        uint256 epochEnd = epochStart + EPOCH_DURATION;
-        return block.timestamp < epochEnd ? block.timestamp : epochEnd;
-    }
-
-    function _updateSellerReward() internal {
-        _updateSellerRewardTo(_clampedNow());
-    }
-
-    function _updateSellerRewardTo(uint256 timestamp) internal {
-        if (totalSellerPoints > 0 && timestamp > sellerLastUpdateTime) {
-            uint256 elapsed = timestamp - sellerLastUpdateTime;
-            uint256 sellerEmissionRate = (currentEmissionRate * SELLER_SHARE_PCT) / 100;
-            sellerRewardPerPointStored += (sellerEmissionRate * elapsed * 1e18) / totalSellerPoints;
-        }
-        sellerLastUpdateTime = timestamp;
-    }
-
-    function _updateSellerAccount(address seller) internal {
-        _updateSellerReward();
-        SellerReward storage sr = sellerRewards[seller];
-        sr.pendingReward += (sr.points * (sellerRewardPerPointStored - sr.rewardPerPointPaid)) / 1e18;
-        sr.rewardPerPointPaid = sellerRewardPerPointStored;
-    }
 
     function accrueSellerPoints(address seller, uint256 pointsDelta) external onlyChannels {
-        _updateSellerAccount(seller);
-        sellerRewards[seller].points += pointsDelta;
-        totalSellerPoints += pointsDelta;
+        _tryAdvanceEpoch();
+        userSellerPoints[seller][currentEpoch] += pointsDelta;
+        epochTotalSellerPoints[currentEpoch] += pointsDelta;
         emit SellerPointsAccrued(seller, pointsDelta);
     }
 
-    function _updateBuyerReward() internal {
-        _updateBuyerRewardTo(_clampedNow());
-    }
-
-    function _updateBuyerRewardTo(uint256 timestamp) internal {
-        if (totalBuyerPoints > 0 && timestamp > buyerLastUpdateTime) {
-            uint256 elapsed = timestamp - buyerLastUpdateTime;
-            uint256 buyerEmissionRate = (currentEmissionRate * BUYER_SHARE_PCT) / 100;
-            buyerRewardPerPointStored += (buyerEmissionRate * elapsed * 1e18) / totalBuyerPoints;
-        }
-        buyerLastUpdateTime = timestamp;
-    }
-
-    function _updateBuyerAccount(address buyer) internal {
-        _updateBuyerReward();
-        BuyerReward storage br = buyerRewards[buyer];
-        br.pendingReward += (br.points * (buyerRewardPerPointStored - br.rewardPerPointPaid)) / 1e18;
-        br.rewardPerPointPaid = buyerRewardPerPointStored;
-    }
-
     function accrueBuyerPoints(address buyer, uint256 pointsDelta) external onlyChannels {
-        _updateBuyerAccount(buyer);
-        buyerRewards[buyer].points += pointsDelta;
-        totalBuyerPoints += pointsDelta;
+        _tryAdvanceEpoch();
+        userBuyerPoints[buyer][currentEpoch] += pointsDelta;
+        epochTotalBuyerPoints[currentEpoch] += pointsDelta;
         emit BuyerPointsAccrued(buyer, pointsDelta);
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //                        CLAIMING & RESERVE
+    //                        CLAIMING
     // ═══════════════════════════════════════════════════════════════════
 
-    function claimEmissions() external nonReentrant {
-        _updateSellerAccount(msg.sender);
-        _updateBuyerAccount(msg.sender);
+    /**
+     * @notice Claim emissions for a list of finalized epochs.
+     *         Caller specifies which epochs to claim — no automatic looping.
+     *         Each epoch can only be claimed once per address.
+     *         Reverts if any epoch is not finalized or already claimed.
+     *
+     * @param epochs  Array of epoch numbers to claim
+     */
+    function claimEmissions(uint256[] calldata epochs) external nonReentrant {
+        _tryAdvanceEpoch();
 
-        uint256 sellerReward = sellerRewards[msg.sender].pendingReward;
-        uint256 buyerReward = buyerRewards[msg.sender].pendingReward;
+        uint256 totalReward = 0;
 
-        // Enforce per-seller cap (MAX_SELLER_SHARE_PCT of seller pool).
-        // Use INITIAL_EMISSION (not current epoch) so the cap doesn't shrink
-        // after halvings — otherwise infrequent claimers who accumulate across
-        // a halving boundary lose rewards to the reserve unfairly.
-        uint256 maxSellerReward =
-            (INITIAL_EMISSION * SELLER_SHARE_PCT * MAX_SELLER_SHARE_PCT) / 10000;
-        if (sellerReward > maxSellerReward) {
-            uint256 excess = sellerReward - maxSellerReward;
-            sellerReward = maxSellerReward;
-            reserveAccumulated += excess;
+        for (uint256 i = 0; i < epochs.length; i++) {
+            uint256 epoch = epochs[i];
+            if (epoch >= currentEpoch) revert EpochIsCurrentOrFuture();
+            if (!epochFinalized[epoch]) revert EpochNotFinalized();
+            if (userEpochClaimed[msg.sender][epoch]) revert EpochAlreadyClaimed();
+
+            userEpochClaimed[msg.sender][epoch] = true;
+
+            // Seller reward
+            uint256 userSP = userSellerPoints[msg.sender][epoch];
+            uint256 totalSP = epochTotalSellerPoints[epoch];
+            if (userSP > 0 && totalSP > 0) {
+                uint256 sellerReward = (userSP * epochSellerBudget[epoch]) / totalSP;
+
+                // Per-seller cap
+                uint256 maxSellerReward = (epochSellerBudget[epoch] * MAX_SELLER_SHARE_PCT) / 100;
+                if (sellerReward > maxSellerReward) {
+                    reserveAccumulated += sellerReward - maxSellerReward;
+                    sellerReward = maxSellerReward;
+                }
+
+                totalReward += sellerReward;
+            }
+
+            // Buyer reward
+            uint256 userBP = userBuyerPoints[msg.sender][epoch];
+            uint256 totalBP = epochTotalBuyerPoints[epoch];
+            if (userBP > 0 && totalBP > 0) {
+                totalReward += (userBP * epochBuyerBudget[epoch]) / totalBP;
+            }
         }
 
-        uint256 total = sellerReward + buyerReward;
-        if (total == 0) return;
+        if (totalReward > 0) {
+            IANTSToken(registry.antsToken()).mint(msg.sender, totalReward);
+        }
 
-        sellerRewards[msg.sender].pendingReward = 0;
-        buyerRewards[msg.sender].pendingReward = 0;
-
-        IANTSToken(registry.antsToken()).mint(msg.sender, total);
-        emit EmissionsClaimed(msg.sender, total);
+        emit EmissionsClaimed(msg.sender, totalReward, epochs);
     }
 
-    function pendingEmissions(address account) external view returns (uint256 seller, uint256 buyer) {
-        // Calculate without mutating state (view-safe)
-        uint256 clampedTime = _clampedNow();
+    /**
+     * @notice View pending (unclaimed) emissions for an account across specific epochs.
+     */
+    function pendingEmissions(
+        address account,
+        uint256[] calldata epochs
+    ) external view returns (uint256 totalSeller, uint256 totalBuyer) {
+        for (uint256 i = 0; i < epochs.length; i++) {
+            uint256 epoch = epochs[i];
+            if (!epochFinalized[epoch]) continue;
+            if (userEpochClaimed[account][epoch]) continue;
 
-        SellerReward memory sr = sellerRewards[account];
-        uint256 sellerRPP = sellerRewardPerPointStored;
-        if (totalSellerPoints > 0 && clampedTime > sellerLastUpdateTime) {
-            uint256 elapsed = clampedTime - sellerLastUpdateTime;
-            uint256 sellerEmRate = (currentEmissionRate * SELLER_SHARE_PCT) / 100;
-            sellerRPP += (sellerEmRate * elapsed * 1e18) / totalSellerPoints;
-        }
-        seller = sr.pendingReward + (sr.points * (sellerRPP - sr.rewardPerPointPaid)) / 1e18;
+            uint256 userSP = userSellerPoints[account][epoch];
+            uint256 totalSP = epochTotalSellerPoints[epoch];
+            if (userSP > 0 && totalSP > 0) {
+                uint256 sellerReward = (userSP * epochSellerBudget[epoch]) / totalSP;
+                uint256 maxSellerReward = (epochSellerBudget[epoch] * MAX_SELLER_SHARE_PCT) / 100;
+                if (sellerReward > maxSellerReward) {
+                    sellerReward = maxSellerReward;
+                }
+                totalSeller += sellerReward;
+            }
 
-        // Apply per-seller cap (mirrors claimEmissions logic)
-        uint256 maxSellerReward =
-            (INITIAL_EMISSION * SELLER_SHARE_PCT * MAX_SELLER_SHARE_PCT) / 10000;
-        if (seller > maxSellerReward) {
-            seller = maxSellerReward;
+            uint256 userBP = userBuyerPoints[account][epoch];
+            uint256 totalBP = epochTotalBuyerPoints[epoch];
+            if (userBP > 0 && totalBP > 0) {
+                totalBuyer += (userBP * epochBuyerBudget[epoch]) / totalBP;
+            }
         }
-
-        // Same for buyer
-        BuyerReward memory br = buyerRewards[account];
-        uint256 buyerRPP = buyerRewardPerPointStored;
-        if (totalBuyerPoints > 0 && clampedTime > buyerLastUpdateTime) {
-            uint256 elapsed = clampedTime - buyerLastUpdateTime;
-            uint256 buyerEmRate = (currentEmissionRate * BUYER_SHARE_PCT) / 100;
-            buyerRPP += (buyerEmRate * elapsed * 1e18) / totalBuyerPoints;
-        }
-        buyer = br.pendingReward + (br.points * (buyerRPP - br.rewardPerPointPaid)) / 1e18;
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //                        RESERVE
+    // ═══════════════════════════════════════════════════════════════════
 
     function flushReserve() external onlyOwner nonReentrant {
         if (reserveDestination == address(0)) revert NoReserveDestination();
@@ -283,6 +296,18 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
         reserveAccumulated = 0;
         IANTSToken(registry.antsToken()).mint(reserveDestination, amount);
         emit ReserveFlushed(reserveDestination, amount);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //                        VIEW HELPERS
+    // ═══════════════════════════════════════════════════════════════════
+
+    function currentEmissionRate() external view returns (uint256) {
+        return _calcEpochEmission(currentEpoch) / EPOCH_DURATION;
+    }
+
+    function getEpochEmission(uint256 epoch) external view returns (uint256) {
+        return _calcEpochEmission(epoch);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -301,11 +326,13 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
 
     function setSharePercentages(uint256 sellerPct, uint256 buyerPct, uint256 reservePct) external onlyOwner {
         if (sellerPct + buyerPct + reservePct != 100) revert InvalidShareSum();
-        _updateSellerReward();
-        _updateBuyerReward();
         SELLER_SHARE_PCT = sellerPct;
         BUYER_SHARE_PCT = buyerPct;
         RESERVE_SHARE_PCT = reservePct;
+    }
+
+    function setMaxSellerSharePct(uint256 value) external onlyOwner {
+        MAX_SELLER_SHARE_PCT = value;
     }
 
     function setEpochDuration(uint256 value) external onlyOwner {
@@ -316,9 +343,5 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
     function setHalvingInterval(uint256 value) external onlyOwner {
         if (value == 0) revert InvalidValue();
         HALVING_INTERVAL = value;
-    }
-
-    function setMaxSellerSharePct(uint256 value) external onlyOwner {
-        MAX_SELLER_SHARE_PCT = value;
     }
 }

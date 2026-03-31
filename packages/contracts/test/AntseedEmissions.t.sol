@@ -34,8 +34,24 @@ contract AntseedEmissionsTest is Test {
         emissions.setReserveDestination(reserveDest);
     }
 
+    // ── Helpers ──
+
+    function _epochList(uint256 epoch) internal pure returns (uint256[] memory) {
+        uint256[] memory epochs = new uint256[](1);
+        epochs[0] = epoch;
+        return epochs;
+    }
+
+    function _epochRange(uint256 from, uint256 to) internal pure returns (uint256[] memory) {
+        uint256[] memory epochs = new uint256[](to - from);
+        for (uint256 i = 0; i < epochs.length; i++) {
+            epochs[i] = from + i;
+        }
+        return epochs;
+    }
+
     // ═══════════════════════════════════════════════════════════════════
-    //                        EPOCH TESTS
+    //                        INITIAL STATE
     // ═══════════════════════════════════════════════════════════════════
 
     function test_initialState() public view {
@@ -47,9 +63,12 @@ contract AntseedEmissionsTest is Test {
         assertEq(emissions.RESERVE_SHARE_PCT(), 10);
         assertEq(emissions.MAX_SELLER_SHARE_PCT(), 15);
         assertEq(emissions.HALVING_INTERVAL(), 26);
-        // Emission rate = INITIAL_EMISSION / EPOCH_DURATION
         assertEq(emissions.currentEmissionRate(), INITIAL_EMISSION / EPOCH_DURATION);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //                        EPOCH TESTS
+    // ═══════════════════════════════════════════════════════════════════
 
     function test_advanceEpoch() public {
         vm.warp(block.timestamp + EPOCH_DURATION);
@@ -63,57 +82,47 @@ contract AntseedEmissionsTest is Test {
         emissions.advanceEpoch();
     }
 
+    function test_advanceMultipleEpochs() public {
+        vm.warp(block.timestamp + EPOCH_DURATION * 3);
+        emissions.advanceEpoch();
+        assertEq(emissions.currentEpoch(), 3);
+        assertTrue(emissions.epochFinalized(0));
+        assertTrue(emissions.epochFinalized(1));
+        assertTrue(emissions.epochFinalized(2));
+    }
+
     function test_halvingSchedule() public {
         uint256 halvingInterval = emissions.HALVING_INTERVAL();
-        uint256 t = block.timestamp;
-        // Advance through one full halving interval
-        for (uint256 i = 0; i < halvingInterval; i++) {
-            t += EPOCH_DURATION;
-            vm.warp(t);
-            emissions.advanceEpoch();
-        }
-        // After 26 epochs, emission should be halved
+        vm.warp(block.timestamp + EPOCH_DURATION * halvingInterval);
+        emissions.advanceEpoch();
+
         assertEq(emissions.currentEpoch(), halvingInterval);
-        // Rate should be half of initial
         uint256 expectedRate = (INITIAL_EMISSION / 2) / EPOCH_DURATION;
         assertEq(emissions.currentEmissionRate(), expectedRate);
     }
 
     function test_multipleHalvings() public {
         uint256 halvingInterval = emissions.HALVING_INTERVAL();
-        uint256 t = block.timestamp;
-        // 4 halvings = 104 epochs
-        for (uint256 i = 0; i < halvingInterval * 4; i++) {
-            t += EPOCH_DURATION;
-            vm.warp(t);
-            emissions.advanceEpoch();
-        }
-        // Emission should be INITIAL / 16
+        // Advance 4 halving intervals (104 epochs) — but max 52 per call
+        vm.warp(block.timestamp + EPOCH_DURATION * halvingInterval * 2 + 1);
+        emissions.advanceEpoch(); // epochs 0-51
+        vm.warp(block.timestamp + EPOCH_DURATION * halvingInterval * 2 + 1);
+        emissions.advanceEpoch(); // epochs 52-103
+
+        assertEq(emissions.currentEpoch(), halvingInterval * 4);
         uint256 expectedRate = (INITIAL_EMISSION / 16) / EPOCH_DURATION;
         assertEq(emissions.currentEmissionRate(), expectedRate);
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //                  REWARD ACCUMULATION TESTS
+    //                        POINT ACCRUAL
     // ═══════════════════════════════════════════════════════════════════
 
     function test_accrueSellerPoints() public {
         emissions.accrueSellerPoints(seller1, 100);
-        assertEq(emissions.totalSellerPoints(), 100);
 
-        // Wait half the epoch
-        vm.warp(block.timestamp + EPOCH_DURATION / 2);
-
-        // Check pending rewards (capped by MAX_SELLER_SHARE_PCT)
-        (uint256 sellerPending,) = emissions.pendingEmissions(seller1);
-        // Raw: (emissionRate * SELLER_SHARE_PCT/100 * elapsed) for the sole seller
-        uint256 elapsed = EPOCH_DURATION / 2;
-        uint256 sellerEmRate = (emissions.currentEmissionRate() * 65) / 100;
-        uint256 rawExpected = sellerEmRate * elapsed;
-        // Cap: (epochEmission * SELLER_SHARE_PCT * MAX_SELLER_SHARE_PCT) / 10000
-        uint256 maxSellerReward = (INITIAL_EMISSION * 65 * 15) / 10000;
-        uint256 expected = rawExpected > maxSellerReward ? maxSellerReward : rawExpected;
-        assertApproxEqAbs(sellerPending, expected, 1e6); // small rounding tolerance
+        assertEq(emissions.epochTotalSellerPoints(0), 100);
+        assertEq(emissions.userSellerPoints(seller1, 0), 100);
     }
 
     function test_accrueSellerPoints_revert_notChannels() public {
@@ -124,15 +133,9 @@ contract AntseedEmissionsTest is Test {
 
     function test_accrueBuyerPoints() public {
         emissions.accrueBuyerPoints(buyer1, 200);
-        assertEq(emissions.totalBuyerPoints(), 200);
 
-        vm.warp(block.timestamp + EPOCH_DURATION / 2);
-
-        (, uint256 buyerPending) = emissions.pendingEmissions(buyer1);
-        uint256 elapsed = EPOCH_DURATION / 2;
-        uint256 buyerEmRate = (emissions.currentEmissionRate() * 25) / 100;
-        uint256 expected = buyerEmRate * elapsed;
-        assertApproxEqAbs(buyerPending, expected, 1e6);
+        assertEq(emissions.epochTotalBuyerPoints(0), 200);
+        assertEq(emissions.userBuyerPoints(buyer1, 0), 200);
     }
 
     function test_accrueBuyerPoints_revert_notChannels() public {
@@ -141,161 +144,413 @@ contract AntseedEmissionsTest is Test {
         emissions.accrueBuyerPoints(buyer1, 100);
     }
 
-    function test_multipleParticipants() public {
-        // Seller1 gets 300 points, seller2 gets 100 points
-        emissions.accrueSellerPoints(seller1, 300);
-        emissions.accrueSellerPoints(seller2, 100);
+    function test_accruePoints_advancesEpochLazily() public {
+        vm.warp(block.timestamp + EPOCH_DURATION);
+        emissions.accrueSellerPoints(seller1, 50);
 
-        vm.warp(block.timestamp + EPOCH_DURATION / 2);
-
-        (uint256 s1Pending,) = emissions.pendingEmissions(seller1);
-        (uint256 s2Pending,) = emissions.pendingEmissions(seller2);
-
-        // Both sellers may be capped by MAX_SELLER_SHARE_PCT.
-        // seller1 (75% of pool) is capped; seller2 (25% of pool) may or may not be.
-        // Just verify both have non-zero pending and seller1 >= seller2.
-        assertTrue(s1Pending > 0);
-        assertTrue(s2Pending > 0);
-        assertTrue(s1Pending >= s2Pending);
+        assertEq(emissions.currentEpoch(), 1);
+        assertTrue(emissions.epochFinalized(0));
+        assertEq(emissions.userSellerPoints(seller1, 1), 50);
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //                        CLAIMING TESTS
+    //                        CLAIMING
     // ═══════════════════════════════════════════════════════════════════
 
-    function test_claimEmissions_seller() public {
+    function test_claimSeller_singleEpoch() public {
         emissions.accrueSellerPoints(seller1, 100);
 
-        vm.warp(block.timestamp + EPOCH_DURATION / 2);
+        // Advance past epoch 0
+        vm.warp(block.timestamp + EPOCH_DURATION);
+        emissions.advanceEpoch();
 
-        (uint256 rawSeller,) = emissions.pendingEmissions(seller1);
-        assertTrue(rawSeller > 0);
+        uint256 expectedSellerBudget = (INITIAL_EMISSION * 65) / 100;
 
-        // Account for per-seller cap
-        uint256 maxSellerReward = (INITIAL_EMISSION * 65 * 15) / 10000;
-        uint256 expectedSeller = rawSeller > maxSellerReward ? maxSellerReward : rawSeller;
+        // Sole seller gets full budget (capped at MAX_SELLER_SHARE_PCT)
+        uint256 maxPerSeller = (expectedSellerBudget * 15) / 100;
+        uint256 expected = expectedSellerBudget > maxPerSeller ? maxPerSeller : expectedSellerBudget;
 
         vm.prank(seller1);
-        emissions.claimEmissions();
+        emissions.claimEmissions(_epochList(0));
 
-        assertApproxEqAbs(token.balanceOf(seller1), expectedSeller, 1e6);
+        assertEq(token.balanceOf(seller1), expected);
     }
 
-    function test_claimEmissions_buyer() public {
+    function test_claimBuyer_singleEpoch() public {
         emissions.accrueBuyerPoints(buyer1, 100);
 
-        vm.warp(block.timestamp + EPOCH_DURATION / 2);
+        vm.warp(block.timestamp + EPOCH_DURATION);
+        emissions.advanceEpoch();
 
-        (, uint256 expectedBuyer) = emissions.pendingEmissions(buyer1);
-        assertTrue(expectedBuyer > 0);
+        uint256 expectedBuyerBudget = (INITIAL_EMISSION * 25) / 100;
 
         vm.prank(buyer1);
-        emissions.claimEmissions();
+        emissions.claimEmissions(_epochList(0));
 
-        assertEq(token.balanceOf(buyer1), expectedBuyer);
+        assertEq(token.balanceOf(buyer1), expectedBuyerBudget);
     }
 
-    function test_claimEmissions_both() public {
-        // Same address is both seller and buyer
+    function test_claimBoth_singleEpoch() public {
         emissions.accrueSellerPoints(seller1, 100);
-        emissions.accrueBuyerPoints(seller1, 200);
+        emissions.accrueBuyerPoints(seller1, 100);
 
-        vm.warp(block.timestamp + EPOCH_DURATION / 2);
-
-        (uint256 sellerPending, uint256 buyerPending) = emissions.pendingEmissions(seller1);
-        uint256 expectedTotal = sellerPending + buyerPending;
-        assertTrue(expectedTotal > 0);
+        vm.warp(block.timestamp + EPOCH_DURATION);
+        emissions.advanceEpoch();
 
         vm.prank(seller1);
-        emissions.claimEmissions();
+        emissions.claimEmissions(_epochList(0));
 
-        // May be capped, so balance <= expectedTotal
         assertTrue(token.balanceOf(seller1) > 0);
     }
 
-    function test_sellerCap() public {
-        // Give seller1 a massive amount of points so they exceed the 15% cap
-        emissions.accrueSellerPoints(seller1, 1_000_000);
-
-        // Wait full epoch
-        vm.warp(block.timestamp + EPOCH_DURATION);
-
-        // Get pending before claim
-        (uint256 rawSellerPending,) = emissions.pendingEmissions(seller1);
-
-        // The cap: INITIAL_EMISSION * SELLER_SHARE_PCT * MAX_SELLER_SHARE_PCT / 10000
-        uint256 maxSellerReward = (INITIAL_EMISSION * 65 * 15) / 10000;
-
-        // If raw pending exceeds cap, claim should be capped
-        if (rawSellerPending > maxSellerReward) {
-            uint256 reserveBefore = emissions.reserveAccumulated();
-
-            vm.prank(seller1);
-            emissions.claimEmissions();
-
-            // Excess should go to reserve
-            uint256 reserveAfter = emissions.reserveAccumulated();
-            assertTrue(reserveAfter > reserveBefore);
-        }
-    }
-
-    function test_pendingEmissions_matchesClaim() public {
-        emissions.accrueSellerPoints(seller1, 500);
-        emissions.accrueBuyerPoints(seller1, 300);
-
-        vm.warp(block.timestamp + EPOCH_DURATION / 4);
-
-        (uint256 pendSeller, uint256 pendBuyer) = emissions.pendingEmissions(seller1);
-        uint256 expectedTotal = pendSeller + pendBuyer;
-
-        // Cap the seller portion the same way claimEmissions does
-        uint256 maxSellerReward = (INITIAL_EMISSION * 65 * 15) / 10000;
-        if (pendSeller > maxSellerReward) {
-            expectedTotal = maxSellerReward + pendBuyer;
-        }
+    function test_claim_revert_currentEpoch() public {
+        emissions.accrueSellerPoints(seller1, 100);
 
         vm.prank(seller1);
-        emissions.claimEmissions();
+        vm.expectRevert(AntseedEmissions.EpochIsCurrentOrFuture.selector);
+        emissions.claimEmissions(_epochList(0));
+    }
 
-        assertApproxEqAbs(token.balanceOf(seller1), expectedTotal, 1e6);
+    function test_claim_revert_doubleClaim() public {
+        emissions.accrueSellerPoints(seller1, 100);
+
+        vm.warp(block.timestamp + EPOCH_DURATION);
+        emissions.advanceEpoch();
+
+        vm.prank(seller1);
+        emissions.claimEmissions(_epochList(0));
+
+        vm.prank(seller1);
+        vm.expectRevert(AntseedEmissions.EpochAlreadyClaimed.selector);
+        emissions.claimEmissions(_epochList(0));
+    }
+
+    function test_claim_revert_notFinalized() public {
+        emissions.accrueSellerPoints(seller1, 100);
+
+        // Manually warp past epoch but don't call advanceEpoch
+        vm.warp(block.timestamp + EPOCH_DURATION);
+
+        // Epoch 0 not finalized yet (no advanceEpoch or lazy advance)
+        vm.prank(seller1);
+        // claimEmissions calls _tryAdvanceEpoch which WILL finalize it
+        // so this should actually work. Let's test epoch 1 instead which
+        // hasn't ended yet.
+        vm.expectRevert(AntseedEmissions.EpochIsCurrentOrFuture.selector);
+        emissions.claimEmissions(_epochList(1));
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //                        RESERVE TESTS
+    //               PROPORTIONAL DISTRIBUTION
     // ═══════════════════════════════════════════════════════════════════
 
-    function test_reserveFlush() public {
-        // Advance an epoch to accumulate reserve
+    function test_proportionalSellers() public {
+        // seller1: 300 points, seller2: 100 points → 75%/25% split
+        emissions.accrueSellerPoints(seller1, 300);
+        emissions.accrueSellerPoints(seller2, 100);
+
+        vm.warp(block.timestamp + EPOCH_DURATION);
+        emissions.advanceEpoch();
+
+        uint256 sellerBudget = (INITIAL_EMISSION * 65) / 100;
+        uint256 maxPerSeller = (sellerBudget * 15) / 100;
+
+        uint256 raw1 = (300 * sellerBudget) / 400; // 75%
+        uint256 raw2 = (100 * sellerBudget) / 400; // 25%
+
+        uint256 expected1 = raw1 > maxPerSeller ? maxPerSeller : raw1;
+        uint256 expected2 = raw2 > maxPerSeller ? maxPerSeller : raw2;
+
+        vm.prank(seller1);
+        emissions.claimEmissions(_epochList(0));
+        vm.prank(seller2);
+        emissions.claimEmissions(_epochList(0));
+
+        assertEq(token.balanceOf(seller1), expected1);
+        assertEq(token.balanceOf(seller2), expected2);
+    }
+
+    function test_proportionalBuyers() public {
+        emissions.accrueBuyerPoints(buyer1, 600);
+        emissions.accrueBuyerPoints(buyer2, 400);
+
+        vm.warp(block.timestamp + EPOCH_DURATION);
+        emissions.advanceEpoch();
+
+        uint256 buyerBudget = (INITIAL_EMISSION * 25) / 100;
+
+        vm.prank(buyer1);
+        emissions.claimEmissions(_epochList(0));
+        vm.prank(buyer2);
+        emissions.claimEmissions(_epochList(0));
+
+        assertEq(token.balanceOf(buyer1), (600 * buyerBudget) / 1000);
+        assertEq(token.balanceOf(buyer2), (400 * buyerBudget) / 1000);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //               POINTS EXPIRE — NO CARRY-OVER
+    // ═══════════════════════════════════════════════════════════════════
+
+    function test_pointsDontCarryOver() public {
+        uint256 t = block.timestamp;
+        // Seller works in epoch 0
         emissions.accrueSellerPoints(seller1, 100);
+
+        // Advance to epoch 1 — seller1 does nothing
+        t += EPOCH_DURATION + 1;
+        vm.warp(t);
+        emissions.advanceEpoch();
+
+        // Seller2 works in epoch 1
+        emissions.accrueSellerPoints(seller2, 100);
+
+        // Advance to epoch 2
+        t += EPOCH_DURATION + 1;
+        vm.warp(t);
+        emissions.advanceEpoch();
+
+        // seller1 has 0 points in epoch 1
+        assertEq(emissions.userSellerPoints(seller1, 1), 0);
+
+        // seller2 gets full epoch 1 budget (seller1 earns nothing from epoch 1)
+        uint256 sellerBudget1 = emissions.epochSellerBudget(1);
+        uint256 maxPerSeller = (sellerBudget1 * 15) / 100;
+        uint256 expected2 = sellerBudget1 > maxPerSeller ? maxPerSeller : sellerBudget1;
+
+        vm.prank(seller2);
+        emissions.claimEmissions(_epochList(1));
+
+        assertEq(token.balanceOf(seller2), expected2);
+    }
+
+    function test_inactiveSellerEarnsNothing() public {
+        // Seller1 works in epoch 0 only
+        emissions.accrueSellerPoints(seller1, 1000);
+
+        // Advance 3 epochs without seller1 working
+        vm.warp(block.timestamp + EPOCH_DURATION * 3);
+        emissions.advanceEpoch();
+
+        // seller1 has no points in epochs 1 and 2
+        assertEq(emissions.userSellerPoints(seller1, 1), 0);
+        assertEq(emissions.userSellerPoints(seller1, 2), 0);
+
+        // Trying to claim epoch 1 gives nothing
+        (uint256 pendSeller,) = emissions.pendingEmissions(seller1, _epochList(1));
+        assertEq(pendSeller, 0);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //               CROSS-EPOCH CLAIMING
+    // ═══════════════════════════════════════════════════════════════════
+
+    function test_claimMultipleEpochs() public {
+        uint256 t = block.timestamp;
+        // Work in epoch 0
+        emissions.accrueSellerPoints(seller1, 100);
+
+        // Advance to epoch 1, work again
+        t += EPOCH_DURATION + 1;
+        vm.warp(t);
+        emissions.accrueSellerPoints(seller1, 200);
+
+        // Advance to epoch 2
+        t += EPOCH_DURATION + 1;
+        vm.warp(t);
+        emissions.advanceEpoch();
+
+        // Claim both epochs at once
+        vm.prank(seller1);
+        emissions.claimEmissions(_epochRange(0, 2));
+
+        assertTrue(token.balanceOf(seller1) > 0);
+        assertTrue(emissions.userEpochClaimed(seller1, 0));
+        assertTrue(emissions.userEpochClaimed(seller1, 1));
+    }
+
+    function test_claimAfterLongAbsence() public {
+        // Work in epoch 0
+        emissions.accrueSellerPoints(seller1, 100);
+
+        // Advance 10 epochs
+        vm.warp(block.timestamp + EPOCH_DURATION * 10);
+        emissions.advanceEpoch();
+
+        // Can still claim epoch 0
+        vm.prank(seller1);
+        emissions.claimEmissions(_epochList(0));
+
+        assertTrue(token.balanceOf(seller1) > 0);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //               EMPTY EPOCH ROLLOVER
+    // ═══════════════════════════════════════════════════════════════════
+
+    function test_emptyEpochRollsForward() public {
+        uint256 t = block.timestamp;
+        // Epoch 0: nobody works
+        // Epoch 1: seller1 works
+        t += EPOCH_DURATION + 1;
+        vm.warp(t);
+        emissions.accrueSellerPoints(seller1, 100);
+
+        // Advance to epoch 2
+        t += EPOCH_DURATION + 1;
+        vm.warp(t);
+        emissions.advanceEpoch();
+
+        // Epoch 1 should have epoch 0's seller budget + epoch 1's own
+        uint256 epoch0Emission = INITIAL_EMISSION; // epoch 0
+        uint256 epoch1Emission = INITIAL_EMISSION; // same halving period
+        uint256 expectedBudget =
+            (epoch0Emission * 65) / 100 + (epoch1Emission * 65) / 100;
+
+        assertEq(emissions.epochSellerBudget(1), expectedBudget);
+    }
+
+    function test_multipleEmptyEpochsRollover() public {
+        // Epochs 0, 1, 2 empty. Epoch 3: seller works.
+        vm.warp(block.timestamp + EPOCH_DURATION * 3);
+        emissions.accrueSellerPoints(seller1, 100);
+
+        vm.warp(block.timestamp + EPOCH_DURATION);
+        emissions.advanceEpoch();
+
+        // Epoch 3 should have 4 epochs worth of seller budget (0+1+2+3)
+        uint256 expectedBudget = (INITIAL_EMISSION * 65 * 4) / 100;
+        assertEq(emissions.epochSellerBudget(3), expectedBudget);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //               SELLER CAP
+    // ═══════════════════════════════════════════════════════════════════
+
+    function test_sellerCap() public {
+        // One seller with all points — should be capped at 15%
+        emissions.accrueSellerPoints(seller1, 1_000_000);
+
+        vm.warp(block.timestamp + EPOCH_DURATION);
+        emissions.advanceEpoch();
+
+        uint256 sellerBudget = (INITIAL_EMISSION * 65) / 100;
+        uint256 maxPerSeller = (sellerBudget * 15) / 100;
+
+        vm.prank(seller1);
+        emissions.claimEmissions(_epochList(0));
+
+        assertEq(token.balanceOf(seller1), maxPerSeller);
+    }
+
+    function test_sellerCap_excessGoesToReserve() public {
+        emissions.accrueSellerPoints(seller1, 1_000_000);
+
+        vm.warp(block.timestamp + EPOCH_DURATION);
+        emissions.advanceEpoch();
+
+        uint256 reserveBefore = emissions.reserveAccumulated();
+
+        vm.prank(seller1);
+        emissions.claimEmissions(_epochList(0));
+
+        uint256 reserveAfter = emissions.reserveAccumulated();
+        assertTrue(reserveAfter > reserveBefore);
+    }
+
+    function test_sellerCap_notTriggeredWithManySellers() public {
+        // 10 sellers with equal points — each gets 10%, below 15% cap
+        for (uint256 i = 1; i <= 10; i++) {
+            emissions.accrueSellerPoints(address(uint160(i)), 100);
+        }
+
+        vm.warp(block.timestamp + EPOCH_DURATION);
+        emissions.advanceEpoch();
+
+        uint256 sellerBudget = (INITIAL_EMISSION * 65) / 100;
+        uint256 expectedEach = sellerBudget / 10;
+
+        vm.prank(address(uint160(1)));
+        emissions.claimEmissions(_epochList(0));
+
+        assertEq(token.balanceOf(address(uint160(1))), expectedEach);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //               RESERVE
+    // ═══════════════════════════════════════════════════════════════════
+
+    function test_reserveAccumulates() public {
+        emissions.accrueSellerPoints(seller1, 100);
+
+        vm.warp(block.timestamp + EPOCH_DURATION);
+        emissions.advanceEpoch();
+
+        uint256 expectedReserve = (INITIAL_EMISSION * 10) / 100;
+        assertEq(emissions.reserveAccumulated(), expectedReserve);
+    }
+
+    function test_reserveFlush() public {
+        emissions.accrueSellerPoints(seller1, 100);
+
         vm.warp(block.timestamp + EPOCH_DURATION);
         emissions.advanceEpoch();
 
         uint256 reserveAmount = emissions.reserveAccumulated();
         assertTrue(reserveAmount > 0);
 
-        // Expected reserve: INITIAL_EMISSION * RESERVE_SHARE_PCT / 100
-        uint256 expectedReserve = (INITIAL_EMISSION * 10) / 100;
-        assertEq(reserveAmount, expectedReserve);
-
         emissions.flushReserve();
-        assertEq(token.balanceOf(reserveDest), expectedReserve);
+        assertEq(token.balanceOf(reserveDest), reserveAmount);
         assertEq(emissions.reserveAccumulated(), 0);
     }
 
     function test_reserveFlush_revert_noDestination() public {
-        // Deploy new emissions without setting reserve destination
         AntseedRegistry reg2 = new AntseedRegistry();
         reg2.setChannels(address(this));
         reg2.setAntsToken(address(token));
         AntseedEmissions em2 = new AntseedEmissions(address(reg2), INITIAL_EMISSION, EPOCH_DURATION);
-        // Note: can't actually mint since token's registry emissions is already set
-        // But we can still test the revert
+
         vm.expectRevert(AntseedEmissions.NoReserveDestination.selector);
         em2.flushReserve();
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //                        CONFIG TESTS
+    //               PENDING EMISSIONS VIEW
+    // ═══════════════════════════════════════════════════════════════════
+
+    function test_pendingEmissions_matchesClaim() public {
+        emissions.accrueSellerPoints(seller1, 500);
+        emissions.accrueBuyerPoints(seller1, 300);
+
+        vm.warp(block.timestamp + EPOCH_DURATION);
+        emissions.advanceEpoch();
+
+        (uint256 pendSeller, uint256 pendBuyer) = emissions.pendingEmissions(seller1, _epochList(0));
+        uint256 expectedTotal = pendSeller + pendBuyer;
+        assertTrue(expectedTotal > 0);
+
+        vm.prank(seller1);
+        emissions.claimEmissions(_epochList(0));
+
+        assertEq(token.balanceOf(seller1), expectedTotal);
+    }
+
+    function test_pendingEmissions_zeroAfterClaim() public {
+        emissions.accrueSellerPoints(seller1, 100);
+
+        vm.warp(block.timestamp + EPOCH_DURATION);
+        emissions.advanceEpoch();
+
+        vm.prank(seller1);
+        emissions.claimEmissions(_epochList(0));
+
+        (uint256 pendSeller, uint256 pendBuyer) = emissions.pendingEmissions(seller1, _epochList(0));
+        assertEq(pendSeller, 0);
+        assertEq(pendBuyer, 0);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //               CONFIG
     // ═══════════════════════════════════════════════════════════════════
 
     function test_sharePercentages() public {
@@ -325,12 +580,10 @@ contract AntseedEmissionsTest is Test {
         emissions.transferOwnership(seller1);
         assertEq(emissions.owner(), seller1);
 
-        // Create a new registry (owned by this test contract) and wire it
         AntseedRegistry newRegistry = new AntseedRegistry();
         newRegistry.setChannels(address(0x99));
         newRegistry.setAntsToken(address(token));
 
-        // New owner can call setRegistry
         vm.prank(seller1);
         emissions.setRegistry(address(newRegistry));
         assertEq(address(emissions.registry()), address(newRegistry));
