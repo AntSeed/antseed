@@ -203,6 +203,21 @@ nav.navbar {
   display: none;
 }
 
+/* Mobile sidebar — hide the secondary docs sub-panel and back button */
+.navbar-sidebar__items--show-secondary .navbar-sidebar__item:first-child {
+  display: none;
+}
+.navbar-sidebar__back {
+  display: none;
+}
+.navbar-sidebar__items {
+  transform: none !important;
+  transition: none !important;
+}
+.navbar-sidebar__item.menu {
+  display: block !important;
+}
+
 /* =============================================
    Custom Footer hover states
    ============================================= */

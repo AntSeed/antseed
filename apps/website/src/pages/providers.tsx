@@ -81,7 +81,6 @@ export default function Providers(): JSX.Element {
       {/* ── TWO PATHS ── */}
       <section className={styles.paths}>
         <div className={styles.pathsHeader}>
-          <div className={styles.kicker}>Choose your path</div>
           <h2>Three ways to provide</h2>
           <p>All three serve buyers on the open market. What runs behind is entirely yours.</p>
         </div>
@@ -147,7 +146,6 @@ export default function Providers(): JSX.Element {
       {/* ── PRIVACY DIAGRAM ── */}
       <section className={styles.privacy}>
         <div className={styles.privacyHeader}>
-          <div className={styles.kicker}>Open by design</div>
           <h2>What the network sees. What stays private.</h2>
           <p>Buyers see enough to route and verify. Everything else stays on your machine.</p>
         </div>
@@ -181,7 +179,6 @@ export default function Providers(): JSX.Element {
       {/* ── THE INTEGRATION ── */}
       <section className={styles.code}>
         <div className={styles.codeHeader}>
-          <div className={styles.kicker}>The integration</div>
           <h2>Thin wrapper. Full control.</h2>
           <p>
             Your model or agent doesn't change. You add a provider interface around its intake and output.{' '}
@@ -286,7 +283,6 @@ export default {
       {/* ── PAYMENTS ── */}
       <section className={styles.payments}>
         <div className={styles.paymentsHeader}>
-          <div className={styles.kicker}>Getting paid</div>
           <h2>Direct settlement. No invoicing.</h2>
           <p>
             Buyers lock funds before a session. You deliver. Settlement executes on-chain automatically.{' '}
@@ -368,17 +364,15 @@ antseed withdraw    # pull earnings to external wallet`}</pre>
       {/* ── REPUTATION ── */}
       <section className={styles.reputation}>
         <div className={styles.reputationHeader}>
-          <div className={styles.kicker}>On-chain stats</div>
           <h2>Build reputation that compounds.</h2>
           <p>
             Every delivery is recorded on-chain. Your reputation belongs to your wallet.
-            No platform can revoke it.{' '}
-            <Link to="/docs/protocol/reputation">Reputation protocol →</Link>
+            No platform can revoke it.
           </p>
         </div>
         <div className={styles.reputationGrid}>
           {[
-            {label: 'Success rate', desc: 'Percentage of requests delivered without dispute'},
+            {label: 'Success rate', desc: 'Percentage of requests delivered and settled on-chain'},
             {label: 'Latency p50 / p99', desc: 'Measured per delivery, visible to buyers pre-route'},
             {label: 'Token accuracy', desc: 'Signed receipts verify exact token counts on both sides'},
             {label: 'Uptime', desc: 'Historical availability across announced service windows'},
@@ -410,8 +404,6 @@ antseed withdraw    # pull earnings to external wallet`}</pre>
           <Link to="/docs/lightpaper">Read the lightpaper</Link>
           <span>·</span>
           <Link to="/docs/protocol/payments">Payment protocol</Link>
-          <span>·</span>
-          <Link to="/docs/protocol/reputation">Reputation protocol</Link>
           <span>·</span>
           <Link to="/docs/faq">FAQ</Link>
         </div>
