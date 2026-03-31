@@ -56,7 +56,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
     struct Channel {
         address buyer;
         address seller;
-        uint128 deposit;              // total USDC escrowed in this contract
+        uint128 deposit;              // total USDC locked in Deposits for this channel
         uint128 settled;              // last settled cumulative amount
         bytes32 metadataHash;         // latest metadata hash (for auditability)
         uint256 deadline;
@@ -70,7 +70,6 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         uint64 channelCount;
         uint64 ghostCount;
         uint256 totalVolumeUsdc;
-        uint64 totalRequestCount;
         uint64 lastSettledAt;
     }
 
@@ -93,18 +92,16 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
     event OperatorSet(address indexed buyer, address indexed operator);
 
     /// @notice Per-channel cumulative metrics for off-chain indexing.
-    ///         All values are cumulative for the channel. Tokens and latency
-    ///         are buyer-reported (unverifiable) — indexers should filter anomalies.
+    ///         Emitted on every settle and close. metadata is raw bytes —
+    ///         decode off-chain based on metadataVersion.
+    ///         Buyer-reported (unverifiable) — indexers should filter anomalies.
     event ChannelMetrics(
         bytes32 indexed channelId,
         uint256 indexed agentId,
         address indexed buyer,
         uint8 metadataVersion,
-        uint256 cumulativeUsdc,
-        uint128 cumulativeInputTokens,
-        uint128 cumulativeOutputTokens,
-        uint64 cumulativeLatencyMs,
-        uint64 cumulativeRequestCount
+        uint128 cumulativeUsdc,
+        bytes metadata
     );
 
     // ─── Custom Errors ──────────────────────────────────────────────
@@ -290,6 +287,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         channel.metadataHash = metadataHash;
         channel.settledAt = block.timestamp;
 
+        _emitChannelMetrics(channelId, channel, cumulativeAmount, metadata);
         _recordEmissions(channel, delta);
 
         emit ChannelSettled(channelId, channel.seller, cumulativeAmount, platformFee);
@@ -523,6 +521,18 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         );
     }
 
+    function _emitChannelMetrics(
+        bytes32 channelId,
+        Channel storage channel,
+        uint128 cumulativeUsdc,
+        bytes calldata metadata
+    ) internal {
+        uint256 agentId = IAntseedStaking(registry.staking()).getAgentId(channel.seller);
+        if (agentId != 0) {
+            emit ChannelMetrics(channelId, agentId, channel.buyer, METADATA_VERSION, cumulativeUsdc, metadata);
+        }
+    }
+
     function _recordCloseStats(
         bytes32 channelId,
         Channel storage channel,
@@ -537,15 +547,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         s.totalVolumeUsdc += cumulativeUsdc;
         s.lastSettledAt = uint64(block.timestamp);
 
-        (uint256 inputTokens, uint256 outputTokens, uint256 latencyMs, uint256 requestCount) =
-            abi.decode(metadata, (uint256, uint256, uint256, uint256));
-        s.totalRequestCount += uint64(requestCount);
-
-        emit ChannelMetrics(
-            channelId, agentId, channel.buyer, METADATA_VERSION,
-            cumulativeUsdc, uint128(inputTokens), uint128(outputTokens),
-            uint64(latencyMs), uint64(requestCount)
-        );
+        emit ChannelMetrics(channelId, agentId, channel.buyer, METADATA_VERSION, cumulativeUsdc, metadata);
     }
 
     function _recordWithdrawStats(Channel storage channel) internal {

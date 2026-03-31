@@ -61,7 +61,7 @@ contract AntseedStatsReputationTest is Test {
         assertEq(s.channelCount, 0);
         assertEq(s.ghostCount, 0);
         assertEq(s.totalVolumeUsdc, 0);
-        assertEq(s.totalRequestCount, 0);
+        assertEq(s.lastSettledAt, 0);
         assertEq(s.lastSettledAt, 0);
     }
 }

@@ -6,7 +6,6 @@ interface IAntseedChannels {
         uint64 channelCount;
         uint64 ghostCount;
         uint256 totalVolumeUsdc;
-        uint64 totalRequestCount;
         uint64 lastSettledAt;
     }
 
