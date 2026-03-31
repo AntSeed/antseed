@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 
+import {IAntseedRegistry} from "./interfaces/IAntseedRegistry.sol";
 import {IAntseedStats} from "./interfaces/IAntseedStats.sol";
 
 /**
@@ -11,7 +12,7 @@ import {IAntseedStats} from "./interfaces/IAntseedStats.sol";
  *         Only the Channels contract can write; anyone can read.
  */
 contract AntseedStats is IAntseedStats, Ownable {
-    address public channelsContract;
+    IAntseedRegistry public registry;
 
     mapping(uint256 => AgentStats) private _stats;
 
@@ -21,7 +22,7 @@ contract AntseedStats is IAntseedStats, Ownable {
     event ChannelsContractSet(address indexed channelsContract);
 
     modifier onlyChannels() {
-        if (msg.sender != channelsContract) revert NotAuthorized();
+        if (msg.sender != registry.channels()) revert NotAuthorized();
         _;
     }
 
@@ -58,9 +59,8 @@ contract AntseedStats is IAntseedStats, Ownable {
 
     // ─── Admin ────────────────────────────────────────────────────────────
 
-    function setChannelsContract(address _channels) external onlyOwner {
-        if (_channels == address(0)) revert InvalidAddress();
-        channelsContract = _channels;
-        emit ChannelsContractSet(_channels);
+    function setRegistry(address _registry) external onlyOwner {
+        if (_registry == address(0)) revert InvalidAddress();
+        registry = IAntseedRegistry(_registry);
     }
 }

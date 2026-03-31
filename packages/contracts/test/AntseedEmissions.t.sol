@@ -4,10 +4,12 @@ pragma solidity ^0.8.24;
 import "forge-std/Test.sol";
 import "../ANTSToken.sol";
 import "../AntseedEmissions.sol";
+import "../AntseedRegistry.sol";
 
 contract AntseedEmissionsTest is Test {
     ANTSToken public token;
     AntseedEmissions public emissions;
+    AntseedRegistry public antseedRegistry;
 
     address public seller1 = address(0x10);
     address public seller2 = address(0x20);
@@ -20,10 +22,15 @@ contract AntseedEmissionsTest is Test {
 
     function setUp() public {
         token = new ANTSToken();
-        emissions = new AntseedEmissions(address(token), INITIAL_EMISSION, EPOCH_DURATION);
-        token.setEmissionsContract(address(emissions));
-        // Allow test contract to call accrue functions
-        emissions.setChannelsContract(address(this));
+        antseedRegistry = new AntseedRegistry();
+        antseedRegistry.setChannels(address(this));
+        antseedRegistry.setAntsToken(address(token));
+
+        emissions = new AntseedEmissions(address(antseedRegistry), INITIAL_EMISSION, EPOCH_DURATION);
+
+        antseedRegistry.setEmissions(address(emissions));
+        token.setRegistry(address(antseedRegistry));
+
         emissions.setReserveDestination(reserveDest);
     }
 
@@ -277,8 +284,11 @@ contract AntseedEmissionsTest is Test {
 
     function test_reserveFlush_revert_noDestination() public {
         // Deploy new emissions without setting reserve destination
-        AntseedEmissions em2 = new AntseedEmissions(address(token), INITIAL_EMISSION, EPOCH_DURATION);
-        // Note: can't actually mint since token's emissions contract is already set
+        AntseedRegistry reg2 = new AntseedRegistry();
+        reg2.setChannels(address(this));
+        reg2.setAntsToken(address(token));
+        AntseedEmissions em2 = new AntseedEmissions(address(reg2), INITIAL_EMISSION, EPOCH_DURATION);
+        // Note: can't actually mint since token's registry emissions is already set
         // But we can still test the revert
         vm.expectRevert(AntseedEmissions.NoReserveDestination.selector);
         em2.flushReserve();
@@ -300,10 +310,10 @@ contract AntseedEmissionsTest is Test {
         emissions.setSharePercentages(60, 20, 10);
     }
 
-    function test_setChannelsContract_onlyOwner() public {
+    function test_setRegistry_onlyOwner() public {
         vm.prank(seller1);
         vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", seller1));
-        emissions.setChannelsContract(address(0x99));
+        emissions.setRegistry(address(0x99));
     }
 
     function test_setMaxSellerSharePct() public {
@@ -315,8 +325,14 @@ contract AntseedEmissionsTest is Test {
         emissions.transferOwnership(seller1);
         assertEq(emissions.owner(), seller1);
 
+        // Create a new registry (owned by this test contract) and wire it
+        AntseedRegistry newRegistry = new AntseedRegistry();
+        newRegistry.setChannels(address(0x99));
+        newRegistry.setAntsToken(address(token));
+
+        // New owner can call setRegistry
         vm.prank(seller1);
-        emissions.setChannelsContract(address(0x99));
-        assertEq(emissions.channelsContract(), address(0x99));
+        emissions.setRegistry(address(newRegistry));
+        assertEq(address(emissions.registry()), address(newRegistry));
     }
 }

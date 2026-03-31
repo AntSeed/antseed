@@ -139,8 +139,8 @@ cd apps/desktop && npm run dev
 In the desktop app, go to Settings > Chain Config and set:
 - Chain ID: `base-local`
 - RPC URL: `http://127.0.0.1:8545`
-- Deposits: `0x5FC8d32690cc91D4c39d9d3abcBD16989F875707`
-- Channels: `0x0165878A594ca255338adfa4d48449f69242Eb8F`
+- Deposits: `0x0165878A594ca255338adfa4d48449f69242Eb8F`
+- Channels: `0xa513E6E4b8f2a923D98304ec87F64353C4D5C853`
 
 Then start a chat — the payment flow (ReserveAuth → per-request SpendingAuth → settle/close) runs automatically.
 

@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import "forge-std/Test.sol";
 import "../AntseedStats.sol";
 import "../AntseedStaking.sol";
+import "../AntseedRegistry.sol";
 import "../MockERC8004Registry.sol";
 import "../MockUSDC.sol";
 import {MockChannelsForStaking} from "./AntseedStaking.t.sol";
@@ -11,7 +12,9 @@ import {MockChannelsForStaking} from "./AntseedStaking.t.sol";
 contract AntseedStatsTest is Test {
     AntseedStats public stats;
     AntseedStaking public staking;
-    MockERC8004Registry public registry;
+    MockERC8004Registry public identityRegistry;
+    AntseedRegistry public statsRegistry;
+    AntseedRegistry public stakingRegistry;
     MockUSDC public usdc;
     address public owner;
     address public peer1 = address(0x1);
@@ -20,56 +23,62 @@ contract AntseedStatsTest is Test {
     function setUp() public {
         owner = address(this);
         usdc = new MockUSDC();
-        registry = new MockERC8004Registry();
+        identityRegistry = new MockERC8004Registry();
         stats = new AntseedStats();
-        staking = new AntseedStaking(address(usdc), address(registry), address(stats));
 
-        // Set this test contract as the channels contract so it can call updateStats
-        stats.setChannelsContract(address(this));
+        // Registry for stats: channels = address(this) so test can call updateStats
+        statsRegistry = new AntseedRegistry();
+        statsRegistry.setChannels(address(this));
+        stats.setRegistry(address(statsRegistry));
 
-        // Set a mock channels contract on Staking (needed for unstake's activeChannelCount check)
+        // Registry for staking: channels = mockChannels (needed for unstake's activeChannelCount check)
         MockChannelsForStaking mockChannels = new MockChannelsForStaking();
-        staking.setChannelsContract(address(mockChannels));
+        stakingRegistry = new AntseedRegistry();
+        stakingRegistry.setChannels(address(mockChannels));
+        stakingRegistry.setIdentityRegistry(address(identityRegistry));
+        stakingRegistry.setStats(address(stats));
+
+        staking = new AntseedStaking(address(usdc), address(stakingRegistry));
     }
 
     function test_register() public {
         vm.prank(peer1);
-        uint256 agentId = registry.register();
+        uint256 agentId = identityRegistry.register();
 
-        assertEq(registry.ownerOf(agentId), peer1);
-        assertEq(registry.balanceOf(peer1), 1);
+        assertEq(identityRegistry.ownerOf(agentId), peer1);
+        assertEq(identityRegistry.balanceOf(peer1), 1);
     }
 
     function test_register_multipleAgents() public {
         vm.prank(peer1);
-        uint256 agentId1 = registry.register();
+        uint256 agentId1 = identityRegistry.register();
 
         vm.prank(peer2);
-        uint256 agentId2 = registry.register();
+        uint256 agentId2 = identityRegistry.register();
 
-        assertEq(registry.ownerOf(agentId1), peer1);
-        assertEq(registry.ownerOf(agentId2), peer2);
+        assertEq(identityRegistry.ownerOf(agentId1), peer1);
+        assertEq(identityRegistry.ownerOf(agentId2), peer2);
         assertTrue(agentId1 != agentId2);
     }
 
     function test_setMetadata() public {
         vm.prank(peer1);
-        uint256 agentId = registry.register();
+        uint256 agentId = identityRegistry.register();
 
         bytes memory peerId = abi.encodePacked(keccak256("peer1"));
         vm.prank(peer1);
-        registry.setMetadata(agentId, "antseed.peerId", peerId);
+        identityRegistry.setMetadata(agentId, "antseed.peerId", peerId);
 
-        assertEq(registry.getMetadata(agentId, "antseed.peerId"), peerId);
+        assertEq(identityRegistry.getMetadata(agentId, "antseed.peerId"), peerId);
     }
 
     function test_setMetadata_revert_notOwner() public {
         vm.prank(peer1);
-        uint256 agentId = registry.register();
+        uint256 agentId = identityRegistry.register();
 
         vm.prank(peer2);
         vm.expectRevert("Not owner");
-        registry.setMetadata(agentId, "antseed.peerId", abi.encodePacked("hacked"));
+        identityRegistry.setMetadata(agentId, "antseed.peerId", abi.encodePacked("hacked"));
     }
 
     function test_stake() public {
@@ -77,7 +86,7 @@ contract AntseedStatsTest is Test {
         usdc.mint(peer1, stakeAmount);
 
         vm.prank(peer1);
-        uint256 agentId = registry.register();
+        uint256 agentId = identityRegistry.register();
 
         vm.startPrank(peer1);
         usdc.approve(address(staking), stakeAmount);
@@ -94,7 +103,7 @@ contract AntseedStatsTest is Test {
         usdc.mint(peer2, stakeAmount);
 
         vm.prank(peer1);
-        uint256 agentId = registry.register();
+        uint256 agentId = identityRegistry.register();
 
         vm.startPrank(peer2);
         usdc.approve(address(staking), stakeAmount);
@@ -108,7 +117,7 @@ contract AntseedStatsTest is Test {
         usdc.mint(address(this), stakeAmount);
 
         vm.prank(peer1);
-        uint256 agentId = registry.register();
+        uint256 agentId = identityRegistry.register();
 
         usdc.approve(address(staking), stakeAmount);
         staking.stakeFor(peer1, agentId, stakeAmount);
@@ -122,7 +131,7 @@ contract AntseedStatsTest is Test {
         usdc.mint(peer1, stakeAmount);
 
         vm.prank(peer1);
-        uint256 agentId = registry.register();
+        uint256 agentId = identityRegistry.register();
 
         vm.startPrank(peer1);
         usdc.approve(address(staking), stakeAmount);
@@ -134,14 +143,16 @@ contract AntseedStatsTest is Test {
         assertEq(stake, 0);
     }
 
-    function test_setChannelsContract() public {
-        stats.setChannelsContract(address(0x99));
-        assertEq(stats.channelsContract(), address(0x99));
+    function test_setRegistry() public {
+        AntseedRegistry newRegistry = new AntseedRegistry();
+        newRegistry.setChannels(address(0x99));
+        stats.setRegistry(address(newRegistry));
+        assertEq(address(stats.registry()), address(newRegistry));
     }
 
-    function test_setChannelsContract_revert_zeroAddress() public {
+    function test_setRegistry_revert_zeroAddress() public {
         vm.expectRevert(AntseedStats.InvalidAddress.selector);
-        stats.setChannelsContract(address(0));
+        stats.setRegistry(address(0));
     }
 
     function test_getStats_default() public view {

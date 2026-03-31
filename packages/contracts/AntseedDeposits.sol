@@ -5,6 +5,8 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+
+import {IAntseedRegistry} from "./interfaces/IAntseedRegistry.sol";
 /**
  * @title AntseedDeposits
  * @notice Buyer USDC custody with credit limits and seller payouts.
@@ -15,7 +17,7 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
 
     // ─── State ───────────────────────────────────────────────────────────
     IERC20 public immutable usdc;
-    address public channelsContract;
+    IAntseedRegistry public registry;
 
     // ─── Configurable Constants ─────────────────────────────────────────
     uint256 public MIN_BUYER_DEPOSIT = 10_000_000;
@@ -57,7 +59,7 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
 
     // ─── Modifiers ──────────────────────────────────────────────────────
     modifier onlyChannels() {
-        if (msg.sender != channelsContract) revert NotAuthorized();
+        if (msg.sender != registry.channels()) revert NotAuthorized();
         _;
     }
 
@@ -241,9 +243,9 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
     //                        ADMIN FUNCTIONS
     // ═══════════════════════════════════════════════════════════════════
 
-    function setChannelsContract(address _channels) external onlyOwner {
-        if (_channels == address(0)) revert InvalidAddress();
-        channelsContract = _channels;
+    function setRegistry(address _registry) external onlyOwner {
+        if (_registry == address(0)) revert InvalidAddress();
+        registry = IAntseedRegistry(_registry);
     }
 
     function setCreditLimitOverride(address buyer, uint256 limit) external onlyOwner {

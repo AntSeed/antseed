@@ -3,15 +3,16 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
 import "../ANTSToken.sol";
+import "../AntseedRegistry.sol";
 
 contract ANTSTokenTest is Test {
     ANTSToken public token;
+    AntseedRegistry public antseedRegistry;
     address public owner;
     address public emissions;
     address public user1;
     address public user2;
 
-    event EmissionsContractSet(address indexed emissionsContract);
     event TransfersEnabled();
 
     function setUp() public {
@@ -20,6 +21,8 @@ contract ANTSTokenTest is Test {
         user1 = address(2);
         user2 = address(3);
         token = new ANTSToken();
+        antseedRegistry = new AntseedRegistry();
+        antseedRegistry.setEmissions(emissions);
     }
 
     function test_initialState() public view {
@@ -30,33 +33,24 @@ contract ANTSTokenTest is Test {
         assertFalse(token.transfersEnabled());
     }
 
-    function test_setEmissionsContract() public {
-        vm.expectEmit(true, false, false, false);
-        emit EmissionsContractSet(emissions);
-        token.setEmissionsContract(emissions);
-        assertEq(token.emissionsContract(), emissions);
-        assertTrue(token.emissionsContractSet());
+    function test_setRegistry() public {
+        token.setRegistry(address(antseedRegistry));
+        assertEq(address(token.registry()), address(antseedRegistry));
     }
 
-    function test_setEmissionsContract_revert_notOwner() public {
+    function test_setRegistry_revert_notOwner() public {
         vm.prank(user1);
         vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", user1));
-        token.setEmissionsContract(emissions);
+        token.setRegistry(address(antseedRegistry));
     }
 
-    function test_setEmissionsContract_revert_alreadySet() public {
-        token.setEmissionsContract(emissions);
-        vm.expectRevert(ANTSToken.EmissionsAlreadySet.selector);
-        token.setEmissionsContract(address(4));
-    }
-
-    function test_setEmissionsContract_revert_zeroAddress() public {
+    function test_setRegistry_revert_zeroAddress() public {
         vm.expectRevert(ANTSToken.InvalidAddress.selector);
-        token.setEmissionsContract(address(0));
+        token.setRegistry(address(0));
     }
 
     function test_mint() public {
-        token.setEmissionsContract(emissions);
+        token.setRegistry(address(antseedRegistry));
         vm.prank(emissions);
         token.mint(user1, 1000 ether);
         assertEq(token.balanceOf(user1), 1000 ether);
@@ -64,21 +58,21 @@ contract ANTSTokenTest is Test {
     }
 
     function test_mint_revert_notEmissions() public {
-        token.setEmissionsContract(emissions);
+        token.setRegistry(address(antseedRegistry));
         vm.prank(user1);
         vm.expectRevert(ANTSToken.NotEmissionsContract.selector);
         token.mint(user1, 100 ether);
     }
 
-    function test_mint_revert_beforeSet() public {
-        // emissionsContract == address(0), so any caller (including address(0)) fails
+    function test_mint_revert_beforeRegistrySet() public {
+        // registry not set, so registry.emissions() will revert
         vm.prank(user1);
-        vm.expectRevert(ANTSToken.NotEmissionsContract.selector);
+        vm.expectRevert();
         token.mint(user1, 100 ether);
     }
 
     function test_mint_revert_zeroAddress() public {
-        token.setEmissionsContract(emissions);
+        token.setRegistry(address(antseedRegistry));
         vm.prank(emissions);
         vm.expectRevert(ANTSToken.InvalidAddress.selector);
         token.mint(address(0), 100 ether);
@@ -86,14 +80,14 @@ contract ANTSTokenTest is Test {
 
     function test_mint_worksWhenTransfersDisabled() public {
         assertFalse(token.transfersEnabled());
-        token.setEmissionsContract(emissions);
+        token.setRegistry(address(antseedRegistry));
         vm.prank(emissions);
         token.mint(user1, 500 ether);
         assertEq(token.balanceOf(user1), 500 ether);
     }
 
     function test_transfer_revert_transfersDisabled() public {
-        token.setEmissionsContract(emissions);
+        token.setRegistry(address(antseedRegistry));
         vm.prank(emissions);
         token.mint(user1, 100 ether);
 
@@ -103,7 +97,7 @@ contract ANTSTokenTest is Test {
     }
 
     function test_transferFrom_revert_transfersDisabled() public {
-        token.setEmissionsContract(emissions);
+        token.setRegistry(address(antseedRegistry));
         vm.prank(emissions);
         token.mint(user1, 100 ether);
 
@@ -135,7 +129,7 @@ contract ANTSTokenTest is Test {
     }
 
     function test_transfer_afterEnabled() public {
-        token.setEmissionsContract(emissions);
+        token.setRegistry(address(antseedRegistry));
         vm.prank(emissions);
         token.mint(user1, 100 ether);
         token.enableTransfers();
@@ -147,7 +141,7 @@ contract ANTSTokenTest is Test {
     }
 
     function test_approve_transferFrom_afterEnabled() public {
-        token.setEmissionsContract(emissions);
+        token.setRegistry(address(antseedRegistry));
         vm.prank(emissions);
         token.mint(user1, 100 ether);
         token.enableTransfers();
@@ -175,5 +169,19 @@ contract ANTSTokenTest is Test {
         vm.prank(user1);
         vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", user1));
         token.transferOwnership(user2);
+    }
+
+    function test_setRegistry_canUpdateEmissions() public {
+        // Set registry with one emissions address
+        token.setRegistry(address(antseedRegistry));
+
+        // Create a new registry with different emissions
+        address newEmissions = address(0xBB);
+        AntseedRegistry newRegistry = new AntseedRegistry();
+        newRegistry.setEmissions(newEmissions);
+
+        // Can update registry (not a one-time set)
+        token.setRegistry(address(newRegistry));
+        assertEq(address(token.registry()), address(newRegistry));
     }
 }

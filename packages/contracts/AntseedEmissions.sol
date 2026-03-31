@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
+import {IAntseedRegistry} from "./interfaces/IAntseedRegistry.sol";
 import {IANTSToken} from "./interfaces/IANTSToken.sol";
 
 /**
@@ -14,8 +15,7 @@ import {IANTSToken} from "./interfaces/IANTSToken.sol";
  */
 contract AntseedEmissions is Ownable, ReentrancyGuard {
     // ─── Configuration (all owner-settable) ───
-    IANTSToken public antsToken;
-    address public channelsContract;
+    IAntseedRegistry public registry;
     address public reserveDestination;
 
     uint256 public EPOCH_DURATION;
@@ -77,19 +77,19 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
 
     // ─── Modifiers ───
     modifier onlyChannels() {
-        if (msg.sender != channelsContract) revert NotAuthorized();
+        if (msg.sender != registry.channels()) revert NotAuthorized();
         _;
     }
 
     // ─── Constructor ───
-    constructor(address _antsToken, uint256 _initialEmission, uint256 _epochDuration)
+    constructor(address _registry, uint256 _initialEmission, uint256 _epochDuration)
         Ownable(msg.sender)
         ReentrancyGuard()
     {
-        if (_antsToken == address(0)) revert InvalidAddress();
+        if (_registry == address(0)) revert InvalidAddress();
         if (_initialEmission == 0) revert InvalidValue();
         if (_epochDuration == 0) revert InvalidValue();
-        antsToken = IANTSToken(_antsToken);
+        registry = IAntseedRegistry(_registry);
         INITIAL_EMISSION = _initialEmission;
         EPOCH_DURATION = _epochDuration;
         HALVING_INTERVAL = 26;
@@ -241,7 +241,7 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
         sellerRewards[msg.sender].pendingReward = 0;
         buyerRewards[msg.sender].pendingReward = 0;
 
-        antsToken.mint(msg.sender, total);
+        IANTSToken(registry.antsToken()).mint(msg.sender, total);
         emit EmissionsClaimed(msg.sender, total);
     }
 
@@ -281,7 +281,7 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
         uint256 amount = reserveAccumulated;
         if (amount == 0) revert NoReserve();
         reserveAccumulated = 0;
-        antsToken.mint(reserveDestination, amount);
+        IANTSToken(registry.antsToken()).mint(reserveDestination, amount);
         emit ReserveFlushed(reserveDestination, amount);
     }
 
@@ -289,9 +289,9 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
     //                        ADMIN FUNCTIONS
     // ═══════════════════════════════════════════════════════════════════
 
-    function setChannelsContract(address _channels) external onlyOwner {
-        if (_channels == address(0)) revert InvalidAddress();
-        channelsContract = _channels;
+    function setRegistry(address _registry) external onlyOwner {
+        if (_registry == address(0)) revert InvalidAddress();
+        registry = IAntseedRegistry(_registry);
     }
 
     function setReserveDestination(address _dest) external onlyOwner {
