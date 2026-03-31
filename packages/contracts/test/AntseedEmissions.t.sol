@@ -29,9 +29,8 @@ contract AntseedEmissionsTest is Test {
         emissions = new AntseedEmissions(address(antseedRegistry), INITIAL_EMISSION, EPOCH_DURATION);
 
         antseedRegistry.setEmissions(address(emissions));
+        antseedRegistry.setProtocolReserve(reserveDest);
         token.setRegistry(address(antseedRegistry));
-
-        emissions.setReserveDestination(reserveDest);
     }
 
     // ── Helpers ──
@@ -500,13 +499,13 @@ contract AntseedEmissionsTest is Test {
         assertEq(emissions.reserveAccumulated(), 0);
     }
 
-    function test_reserveFlush_revert_noDestination() public {
+    function test_reserveFlush_revert_noProtocolReserve() public {
         AntseedRegistry reg2 = new AntseedRegistry();
         reg2.setChannels(address(this));
         reg2.setAntsToken(address(token));
         AntseedEmissions em2 = new AntseedEmissions(address(reg2), INITIAL_EMISSION, EPOCH_DURATION);
 
-        vm.expectRevert(AntseedEmissions.NoReserveDestination.selector);
+        vm.expectRevert(AntseedEmissions.NoProtocolReserve.selector);
         em2.flushReserve();
     }
 

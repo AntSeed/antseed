@@ -29,7 +29,6 @@ import {IANTSToken} from "./interfaces/IANTSToken.sol";
 contract AntseedEmissions is Ownable, ReentrancyGuard {
     // ─── Configuration ───
     IAntseedRegistry public registry;
-    address public reserveDestination;
 
     uint256 public EPOCH_DURATION;
     uint256 public HALVING_INTERVAL;
@@ -76,7 +75,7 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
     error EpochAlreadyClaimed();
     error EpochIsCurrentOrFuture();
     error InvalidShareSum();
-    error NoReserveDestination();
+    error NoProtocolReserve();
     error NoReserve();
     error InvalidAddress();
     error InvalidValue();
@@ -290,12 +289,13 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
     // ═══════════════════════════════════════════════════════════════════
 
     function flushReserve() external onlyOwner nonReentrant {
-        if (reserveDestination == address(0)) revert NoReserveDestination();
+        address dest = registry.protocolReserve();
+        if (dest == address(0)) revert NoProtocolReserve();
         uint256 amount = reserveAccumulated;
         if (amount == 0) revert NoReserve();
         reserveAccumulated = 0;
-        IANTSToken(registry.antsToken()).mint(reserveDestination, amount);
-        emit ReserveFlushed(reserveDestination, amount);
+        IANTSToken(registry.antsToken()).mint(dest, amount);
+        emit ReserveFlushed(dest, amount);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -317,11 +317,6 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
     function setRegistry(address _registry) external onlyOwner {
         if (_registry == address(0)) revert InvalidAddress();
         registry = IAntseedRegistry(_registry);
-    }
-
-    function setReserveDestination(address _dest) external onlyOwner {
-        if (_dest == address(0)) revert InvalidAddress();
-        reserveDestination = _dest;
     }
 
     function setSharePercentages(uint256 sellerPct, uint256 buyerPct, uint256 reservePct) external onlyOwner {
