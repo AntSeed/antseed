@@ -50,7 +50,8 @@ export type ConfigFormData = {
   devMode: boolean;
   cryptoChainId: string;
   cryptoRpcUrl: string;
-  cryptoEscrowAddress: string;
+  cryptoDepositsAddress: string;
+  cryptoChannelsAddress: string;
   cryptoUsdcAddress: string;
 };
 
@@ -63,6 +64,11 @@ export type ChatServiceOptionEntry = {
   value: string;
   peerId: string;
   peerLabel: string;
+};
+
+export type ActiveChannelInfo = {
+  reservedUsdc: string;
+  peerName: string;
 };
 
 export type RendererUiState = {
@@ -127,9 +133,9 @@ export type RendererUiState = {
   creditsAvailableUsdc: string;
   creditsReservedUsdc: string;
   creditsTotalUsdc: string;
-  creditsPendingWithdrawalUsdc: string;
   creditsCreditLimitUsdc: string;
   creditsEvmAddress: string | null;
+  creditsOperatorAddress: string | null;
   creditsLoading: boolean;
   creditsLastRefreshedAt: number;
 
@@ -140,7 +146,7 @@ export type RendererUiState = {
   chatPaymentApprovalAmount: string;
   chatPaymentApprovalPeerInfo: {
     reputation: number;
-    sessionCount: number | null;
+    channelCount: number | null;
     disputeCount: number | null;
     networkAgeDays: number | null;
     evmAddress: string | null;
@@ -148,6 +154,9 @@ export type RendererUiState = {
   chatPaymentApprovalLoading: boolean;
   chatPaymentApprovalError: string | null;
   chatLowBalanceWarning: boolean;
+
+  // --- Active payment channels (keyed by peerId) ---
+  chatActiveChannels: Map<string, ActiveChannelInfo>;
 
   // --- Chat display ---
   chatActiveConversation: string | null;
@@ -262,9 +271,9 @@ export function createInitialUiState(): RendererUiState {
     creditsAvailableUsdc: '0',
     creditsReservedUsdc: '0',
     creditsTotalUsdc: '0',
-    creditsPendingWithdrawalUsdc: '0',
     creditsCreditLimitUsdc: '0',
     creditsEvmAddress: null,
+    creditsOperatorAddress: null,
     creditsLoading: false,
     creditsLastRefreshedAt: 0,
 
@@ -277,6 +286,9 @@ export function createInitialUiState(): RendererUiState {
     chatPaymentApprovalLoading: false,
     chatPaymentApprovalError: null,
     chatLowBalanceWarning: false,
+
+    // Active payment channels
+    chatActiveChannels: new Map(),
 
     // Chat
     chatActiveConversation: null,

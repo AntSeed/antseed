@@ -55,10 +55,10 @@ describe('Payment negotiation: seller sends PaymentRequired on 402', () => {
     try { if (buyerDataDir) { await rm(buyerDataDir, { recursive: true, force: true }); buyerDataDir = null; } } catch {}
   });
 
-  it('buyer receives 402 when seller has escrow configured but buyer has no payment session', async () => {
+  it('buyer receives 402 when seller has payments configured but buyer has no payment session', async () => {
     bootstrap = await createLocalBootstrap();
 
-    // Seller with a fake escrow config (will trigger 402 path)
+    // Seller with a fake payments config (will trigger 402 path)
     sellerDataDir = await mkdtemp(join(tmpdir(), 'antseed-seller-pay-'));
     const mockProvider = new MockAnthropicProvider();
 
@@ -72,18 +72,20 @@ describe('Payment negotiation: seller sends PaymentRequired on 402', () => {
       noOfficialBootstrap: true,
       payments: {
         enabled: true,
-        // Use dummy addresses — no real RPC calls for escrow in this test.
-        // The seller will have _escrowClient set (triggering 402 gate)
+        // Use dummy addresses — no real RPC calls in this test.
+        // The seller will have _sessionsClient set (triggering 402 gate)
         // but SellerPaymentManager won't be fully initialized (no tokenRate).
         rpcUrl: 'http://127.0.0.1:1', // unreachable — intentional
-        contractAddress: '0x' + 'dd'.repeat(20),
+        depositsAddress: '0x' + 'dd'.repeat(20),
+        channelsAddress: '0x' + 'cc'.repeat(20),
+        stakingAddress: '0x' + 'bb'.repeat(20),
         usdcAddress: '0x' + 'ee'.repeat(20),
       },
     });
     sellerNode.registerProvider(mockProvider);
     await sellerNode.start();
 
-    // Buyer without payment manager (no escrow config)
+    // Buyer without payment manager (no payments config)
     buyerDataDir = await mkdtemp(join(tmpdir(), 'antseed-buyer-pay-'));
     buyerNode = new AntseedNode({
       role: 'buyer',
@@ -102,7 +104,7 @@ describe('Payment negotiation: seller sends PaymentRequired on 402', () => {
     expect(seller).toBeDefined();
 
     // Send request — buyer has no BuyerPaymentManager, so no negotiation.
-    // The request reaches the seller, which has _escrowClient set, so it returns 402.
+    // The request reaches the seller, which has _sessionsClient set, so it returns 402.
     const request = makeRequest();
     const response = await buyerNode!.sendRequest(seller!, request);
 
@@ -114,10 +116,10 @@ describe('Payment negotiation: seller sends PaymentRequired on 402', () => {
     expect(mockProvider.requestCount).toBe(0);
   });
 
-  it('without escrow config, seller serves request without payment', async () => {
+  it('without payments config, seller serves request without payment', async () => {
     bootstrap = await createLocalBootstrap();
 
-    // Seller WITHOUT payments — no escrow, no 402
+    // Seller WITHOUT payments — no sessions client, no 402
     sellerDataDir = await mkdtemp(join(tmpdir(), 'antseed-seller-free-'));
     const mockProvider = new MockAnthropicProvider();
 
@@ -159,7 +161,7 @@ describe('Payment negotiation: seller sends PaymentRequired on 402', () => {
   it('payment:required event fires on buyer when seller requires payment and buyer has payment manager', async () => {
     bootstrap = await createLocalBootstrap();
 
-    // Seller with escrow (triggers 402 + PaymentRequired)
+    // Seller with payments (triggers 402 + PaymentRequired)
     sellerDataDir = await mkdtemp(join(tmpdir(), 'antseed-seller-evt-'));
     const mockProvider = new MockAnthropicProvider();
 
@@ -174,7 +176,9 @@ describe('Payment negotiation: seller sends PaymentRequired on 402', () => {
       payments: {
         enabled: true,
         rpcUrl: 'http://127.0.0.1:1',
-        contractAddress: '0x' + 'dd'.repeat(20),
+        depositsAddress: '0x' + 'dd'.repeat(20),
+        channelsAddress: '0x' + 'cc'.repeat(20),
+        stakingAddress: '0x' + 'bb'.repeat(20),
         usdcAddress: '0x' + 'ee'.repeat(20),
       },
     });
@@ -193,7 +197,9 @@ describe('Payment negotiation: seller sends PaymentRequired on 402', () => {
       payments: {
         enabled: true,
         rpcUrl: 'http://127.0.0.1:1',
-        contractAddress: '0x' + 'dd'.repeat(20),
+        depositsAddress: '0x' + 'dd'.repeat(20),
+        channelsAddress: '0x' + 'cc'.repeat(20),
+        stakingAddress: '0x' + 'bb'.repeat(20),
         usdcAddress: '0x' + 'ee'.repeat(20),
       },
     });
@@ -215,7 +221,7 @@ describe('Payment negotiation: seller sends PaymentRequired on 402', () => {
     } catch (err) {
       // Negotiation may throw on timeout — that's expected with unreachable RPC
       expect(err).toBeDefined();
-      expect((err as Error).message).toMatch(/timeout|failed|PaymentRequired/i);
+      expect((err as Error).message).toMatch(/timed?\s*out|failed|PaymentRequired|Lock confirmation/i);
     }
   });
 });

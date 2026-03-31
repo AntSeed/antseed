@@ -26,7 +26,7 @@
   },
   "dependencies": {
     "@antseed/api-adapter": "workspace:*",
-    "@antseed/bound-agent": "workspace:*",
+    "@antseed/ant-agent": "workspace:*",
     "@antseed/payments": "workspace:*",
     "@antseed/node": "workspace:*",
     "@antseed/provider-core": "workspace:*",

@@ -4,7 +4,7 @@ import ora from 'ora';
 import { getGlobalOptions } from './types.js';
 import { loadConfig } from '../../config/loader.js';
 import {
-  createEscrowClient,
+  createStakingClient,
   createIdentityClient,
   loadCryptoContext,
   formatUsdc,
@@ -31,7 +31,7 @@ export function registerStakeCommand(program: Command): void {
 
       try {
         const { wallet, address } = await loadCryptoContext(globalOpts.dataDir);
-        const escrowClient = createEscrowClient(config);
+        const stakingClient = createStakingClient(config);
         const identityClient = createIdentityClient(config);
         const isReg = await identityClient.isRegistered(address);
         if (!isReg) {
@@ -39,12 +39,24 @@ export function registerStakeCommand(program: Command): void {
           process.exit(1);
         }
 
+        // Look up agentId from staking contract (set during stakeFor or previous stake)
+        // If not yet staked, we need the agentId from registration. For first stake,
+        // the user should have registered first; we can try getAgentId which returns 0 if not set.
+        let agentId = await stakingClient.getAgentId(address);
+        if (agentId === 0) {
+          // First-time staker: agentId not yet recorded. We need the user to provide it
+          // or derive from registry. For now, use 0 which will be set by stakeFor flow.
+          spinner.fail(chalk.red('No agentId found. Register first with: antseed register, then use the stakeFor flow.'));
+          process.exit(1);
+        }
+
         const amountFloat = parseFloat(amount);
         console.log(chalk.dim(`Wallet: ${address}`));
+        console.log(chalk.dim(`Agent ID: ${agentId}`));
         console.log(chalk.dim(`Amount: ${amountFloat} USDC (${amountBaseUnits} base units)`));
 
         spinner.text = 'Staking USDC...';
-        const txHash = await escrowClient.stake(wallet, amountBaseUnits);
+        const txHash = await stakingClient.stake(wallet, agentId, amountBaseUnits);
         spinner.succeed(chalk.green(`Staked ${amountFloat} USDC`));
         console.log(chalk.dim(`Transaction: ${txHash}`));
       } catch (err) {
@@ -64,19 +76,18 @@ export function registerStakeCommand(program: Command): void {
 
       try {
         const { wallet, address } = await loadCryptoContext(globalOpts.dataDir);
-        const escrowClient = createEscrowClient(config);
+        const stakingClient = createStakingClient(config);
         console.log(chalk.dim(`Wallet: ${address}`));
-        const account = await escrowClient.getSellerAccount(address);
+        const account = await stakingClient.getSellerAccount(address);
         if (account.stake === 0n) {
           spinner.fail(chalk.yellow('No active stake to withdraw.'));
           return;
         }
 
         console.log(chalk.dim(`Current stake: ${formatUsdc(account.stake)} USDC`));
-        console.log(chalk.dim(`Earnings: ${formatUsdc(account.earnings)} USDC`));
 
         spinner.text = 'Unstaking...';
-        const txHash = await escrowClient.unstake(wallet);
+        const txHash = await stakingClient.unstake(wallet);
         spinner.succeed(chalk.green('Unstaked successfully'));
         console.log(chalk.dim(`Transaction: ${txHash}`));
       } catch (err) {

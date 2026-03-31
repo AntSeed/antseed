@@ -25,22 +25,15 @@ export function registerRegisterCommand(program: Command): void {
         console.log(chalk.dim(`Wallet: ${address}`));
         const alreadyRegistered = await identityClient.isRegistered(address);
         if (alreadyRegistered) {
-          const tokenId = await identityClient.getTokenId(address);
-          spinner.succeed(chalk.yellow(`Already registered (token ID: ${tokenId})`));
+          spinner.succeed(chalk.yellow('Already registered'));
           return;
         }
 
-        // Derive a short peerId from the address for on-chain registration
-        // Use first 31 bytes of the address hex (bytes32 limit for encodeBytes32String)
-        const peerId = address.slice(2, 33).toLowerCase();
-
         spinner.text = 'Registering peer identity...';
-        const txHash = await identityClient.register(wallet, peerId, options.metadata as string);
+        const agentId = await identityClient.register(wallet, options.metadata as string || undefined);
         spinner.succeed(chalk.green('Peer identity registered'));
 
-        const tokenId = await identityClient.getTokenId(address);
-        console.log(chalk.dim(`Token ID: ${tokenId}`));
-        console.log(chalk.dim(`Transaction: ${txHash}`));
+        console.log(chalk.dim(`Agent ID: ${agentId}`));
       } catch (err) {
         spinner.fail(chalk.red(`Registration failed: ${(err as Error).message}`));
         process.exit(1);

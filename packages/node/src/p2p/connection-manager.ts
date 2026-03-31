@@ -8,6 +8,7 @@ import type {
 import { type PeerId } from "../types/peer.js";
 import { ConnectionState, type ConnectionConfig } from "../types/connection.js";
 import { type IceConfig, getDefaultIceConfig } from "./ice-config.js";
+import type { Wallet } from "ethers";
 import {
   type ConnectionAuthEnvelope,
   NonceReplayGuard,
@@ -267,7 +268,7 @@ export class ConnectionManager extends EventEmitter {
   private _connections = new Map<PeerId, PeerConnection>();
   private _iceConfig: IceConfig;
   private _localPeerId: PeerId | null = null;
-  private _localPrivateKey: Uint8Array | null = null;
+  private _localWallet: Wallet | null = null;
   private _listenHost = "127.0.0.1";
   private _listenPort: number | null = null;
   private _server: net.Server | null = null;
@@ -313,9 +314,9 @@ export class ConnectionManager extends EventEmitter {
     this._localPeerId = peerId;
   }
 
-  setLocalIdentity(identity: { peerId: PeerId; privateKey: Uint8Array }): void {
+  setLocalIdentity(identity: { peerId: PeerId; wallet: Wallet }): void {
     this._localPeerId = identity.peerId;
-    this._localPrivateKey = identity.privateKey;
+    this._localWallet = identity.wallet;
   }
 
   static registerPeerEndpoint(peerId: PeerId, endpoint: PeerEndpoint): void {
@@ -414,9 +415,9 @@ export class ConnectionManager extends EventEmitter {
       });
       return conn;
     }
-    if (!this._localPrivateKey) {
+    if (!this._localWallet) {
       queueMicrotask(() => {
-        conn.fail(new Error("Local private key is not configured"));
+        conn.fail(new Error("Local wallet is not configured"));
       });
       return conn;
     }
@@ -495,7 +496,7 @@ export class ConnectionManager extends EventEmitter {
         auth: buildConnectionAuthEnvelope(
           "hello",
           this._localPeerId!,
-          this._localPrivateKey!,
+          this._localWallet!,
         ),
       });
 
@@ -535,7 +536,7 @@ export class ConnectionManager extends EventEmitter {
         auth: buildConnectionAuthEnvelope(
           "intro",
           this._localPeerId!,
-          this._localPrivateKey!,
+          this._localWallet!,
         ),
       });
       conn.attachRawSocket(socket);

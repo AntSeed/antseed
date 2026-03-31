@@ -3,7 +3,6 @@ export interface BalanceData {
   available: string;
   reserved: string;
   total: string;
-  pendingWithdrawal: string;
   creditLimit: string;
 }
 
@@ -11,7 +10,8 @@ export interface PaymentConfig {
   chainId: string;
   evmChainId: number;
   rpcUrl: string;
-  escrowContractAddress: string;
+  depositsContractAddress: string;
+  channelsContractAddress: string;
   usdcContractAddress: string;
   evmAddress: string | null;
 }

@@ -56,7 +56,7 @@ async function main(): Promise<void> {
   assert(noPeer === null, 'returns null for empty peer list');
 
   const fakePeer = {
-    peerId: 'a'.repeat(64),
+    peerId: 'a'.repeat(40),
     providers: ['anthropic'],
     defaultInputUsdPerMillion: 1,
     defaultOutputUsdPerMillion: 3,
@@ -75,7 +75,7 @@ async function main(): Promise<void> {
 
   const selected = router.selectPeer(fakeReq, [fakePeer]);
   assert(selected !== null, 'returns a peer for non-empty list');
-  assert(selected?.peerId === 'a'.repeat(64), 'returns the only peer when one is available');
+  assert(selected?.peerId === 'a'.repeat(40), 'returns the only peer when one is available');
 
   // --- 4. onResult ---
   console.log('\n4. onResult()');
@@ -83,9 +83,9 @@ async function main(): Promise<void> {
   assert(true, 'onResult() completed without error');
 
   // Verify subsequent selection uses updated latency info
-  const secondPeer = { ...fakePeer, peerId: 'b'.repeat(64) };
+  const secondPeer = { ...fakePeer, peerId: 'b'.repeat(40) };
   const selectedAfterResult = router.selectPeer(fakeReq, [fakePeer, secondPeer]);
-  assert(selectedAfterResult?.peerId === 'a'.repeat(64), 'selects lower-latency peer after onResult');
+  assert(selectedAfterResult?.peerId === 'a'.repeat(40), 'selects lower-latency peer after onResult');
 
   // --- Summary ---
   console.log(`\n${'='.repeat(40)}`);

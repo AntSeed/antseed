@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { CryptoContext, PaymentCryptoConfig } from './crypto-context.js';
-import { BaseEscrowClient, formatUsdc, parseUsdc, type ChainConfig } from '@antseed/node';
+import { DepositsClient, ChannelsClient, formatUsdc, parseUsdc, signSetOperator, makeChannelsDomain, type ChainConfig } from '@antseed/node';
 
 interface RouteContext {
   cryptoCtx: CryptoContext | null;
@@ -12,20 +12,31 @@ interface RouteContext {
 const formatUsdc6 = formatUsdc;
 const parseUsdc6 = parseUsdc;
 
-function createClient(config: PaymentCryptoConfig): BaseEscrowClient {
-  return new BaseEscrowClient({
+function createClient(config: PaymentCryptoConfig): DepositsClient {
+  return new DepositsClient({
     rpcUrl: config.rpcUrl,
-    contractAddress: config.escrowContractAddress,
+    contractAddress: config.depositsContractAddress,
     usdcAddress: config.usdcContractAddress,
   });
 }
 
 export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): void {
-  // Shared escrow client — reused across requests (stateless, only holds RPC URL + ABI)
-  let escrowClient: BaseEscrowClient | null = null;
-  function getClient(): BaseEscrowClient | null {
-    if (!escrowClient) escrowClient = createClient(ctx.cryptoConfig);
-    return escrowClient;
+  // Shared deposits client — reused across requests (stateless, only holds RPC URL + ABI)
+  let depositsClient: DepositsClient | null = null;
+  function getClient(): DepositsClient | null {
+    if (!depositsClient) depositsClient = createClient(ctx.cryptoConfig);
+    return depositsClient;
+  }
+
+  let channelsClient: ChannelsClient | null = null;
+  function getChannelsClient(): ChannelsClient | null {
+    if (!channelsClient && ctx.cryptoConfig.channelsContractAddress) {
+      channelsClient = new ChannelsClient({
+        rpcUrl: ctx.cryptoConfig.rpcUrl,
+        contractAddress: ctx.cryptoConfig.channelsContractAddress,
+      });
+    }
+    return channelsClient;
   }
 
   fastify.get('/api/balance', async (_request, reply) => {
@@ -46,7 +57,6 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
         available: formatUsdc6(balance.available),
         reserved: formatUsdc6(balance.reserved),
         total: formatUsdc6(balance.available + balance.reserved),
-        pendingWithdrawal: formatUsdc6(balance.pendingWithdrawal),
         creditLimit: formatUsdc6(creditLimit),
       };
     } catch (err) {
@@ -59,7 +69,8 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
       chainId: ctx.chainConfig.chainId,
       evmChainId: ctx.chainConfig.evmChainId,
       rpcUrl: ctx.cryptoConfig.rpcUrl,
-      escrowContractAddress: ctx.cryptoConfig.escrowContractAddress,
+      depositsContractAddress: ctx.cryptoConfig.depositsContractAddress,
+      channelsContractAddress: ctx.cryptoConfig.channelsContractAddress,
       usdcContractAddress: ctx.cryptoConfig.usdcContractAddress,
       evmAddress: ctx.cryptoCtx?.evmAddress ?? null,
     };
@@ -70,7 +81,7 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
     return { transactions: [] };
   });
 
-  fastify.post('/api/withdraw/request', async (request, reply) => {
+  fastify.post('/api/withdraw', async (request, reply) => {
     if (!ctx.cryptoCtx) {
       return reply.status(503).send({ ok: false, error: 'Identity not configured — run antseed init' });
     }
@@ -84,36 +95,121 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
     try {
       const baseUnits = parseUsdc6(amount);
       const client = getClient()!;
-      const txHash = await client.requestWithdrawal(ctx.cryptoCtx.wallet, baseUnits);
+      const txHash = await client.withdraw(ctx.cryptoCtx.wallet, ctx.cryptoCtx.evmAddress, baseUnits);
       return { ok: true, txHash };
     } catch (err) {
       return reply.status(500).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
     }
   });
 
-  fastify.post('/api/withdraw/execute', async (_request, reply) => {
+  fastify.get('/api/channels', async (_request, reply) => {
+    if (!ctx.cryptoCtx) {
+      return { channels: [] };
+    }
+
+    try {
+      const client = getChannelsClient();
+      if (!client) return { channels: [] };
+
+      const buyerAddress = ctx.cryptoCtx.evmAddress;
+      // Pad buyer address to 32 bytes for topic filter (indexed address in events)
+      const buyerTopic = '0x' + buyerAddress.slice(2).toLowerCase().padStart(64, '0');
+
+      // Reserved event signature: Reserved(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint128 maxAmount)
+      const { ethers } = await import('ethers');
+      const iface = new ethers.Interface([
+        'event Reserved(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint128 maxAmount)',
+      ]);
+      const eventTopic = iface.getEvent('Reserved')!.topicHash;
+
+      const logs = await client.provider.getLogs({
+        address: ctx.cryptoConfig.channelsContractAddress,
+        topics: [eventTopic, null, buyerTopic],
+        fromBlock: ctx.chainConfig.channelsDeployBlock ?? 0,
+        toBlock: 'latest',
+      });
+
+      // Collect unique channelIds from events
+      const channelIds = new Set<string>();
+      for (const log of logs) {
+        // channelId is topic1
+        if (log.topics[1]) channelIds.add(log.topics[1]);
+      }
+
+      // Fetch channel details for each channelId
+      const channels = [];
+      for (const channelId of channelIds) {
+        try {
+          const session = await client.getSession(channelId);
+          // Only include Active channels (status === 1)
+          if (session.status === 1) {
+            channels.push({
+              channelId,
+              seller: session.seller,
+              deposit: formatUsdc6(session.deposit),
+              settled: formatUsdc6(session.settled),
+              deadline: Number(session.deadline),
+              closeRequestedAt: Number(session.closeRequestedAt),
+              status: session.status,
+            });
+          }
+        } catch {
+          // Skip channels that fail to fetch
+        }
+      }
+
+      return { channels };
+    } catch (err) {
+      return { channels: [] };
+    }
+  });
+
+  fastify.get('/api/operator', async (_request, reply) => {
     if (!ctx.cryptoCtx) {
       return reply.status(503).send({ ok: false, error: 'Identity not configured — run antseed init' });
     }
 
     try {
-      const client = getClient()!;
-      const txHash = await client.executeWithdrawal(ctx.cryptoCtx.wallet);
-      return { ok: true, txHash };
+      const client = getChannelsClient();
+      if (!client) {
+        return { operator: '0x0000000000000000000000000000000000000000', nonce: 0 };
+      }
+
+      const buyerAddress = ctx.cryptoCtx.evmAddress;
+      const [operator, nonce] = await Promise.all([
+        client.getOperator(buyerAddress),
+        client.getOperatorNonce(buyerAddress),
+      ]);
+
+      return { operator, nonce: Number(nonce) };
     } catch (err) {
       return reply.status(500).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
     }
   });
 
-  fastify.post('/api/withdraw/cancel', async (_request, reply) => {
+  fastify.post('/api/operator/sign', async (request, reply) => {
     if (!ctx.cryptoCtx) {
-      return reply.status(503).send({ ok: false, error: 'Identity not configured — run antseed init' });
+      return reply.status(503).send({ ok: false, error: 'Identity not configured' });
+    }
+
+    const body = request.body as { operator?: string } | null;
+    const operator = body?.operator?.trim();
+    if (!operator || !/^0x[0-9a-fA-F]{40}$/.test(operator)) {
+      return reply.status(400).send({ ok: false, error: 'Invalid operator address' });
     }
 
     try {
-      const client = getClient()!;
-      const txHash = await client.cancelWithdrawal(ctx.cryptoCtx.wallet);
-      return { ok: true, txHash };
+      const sc = getChannelsClient();
+      if (!sc) {
+        return reply.status(503).send({ ok: false, error: 'Channels contract not configured' });
+      }
+      const nonce = await sc.getOperatorNonce(ctx.cryptoCtx.evmAddress);
+      const domain = makeChannelsDomain(ctx.chainConfig.evmChainId, ctx.cryptoConfig.channelsContractAddress);
+      const signature = await signSetOperator(ctx.cryptoCtx.wallet, domain, {
+        operator,
+        nonce,
+      });
+      return { ok: true, signature, nonce: Number(nonce), buyer: ctx.cryptoCtx.evmAddress };
     } catch (err) {
       return reply.status(500).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
     }

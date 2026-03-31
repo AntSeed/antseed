@@ -20,7 +20,7 @@ import {
 } from './process-manager.js';
 import { registerPiChatHandlers } from './pi-chat-engine.js';
 import { ensureSecureIdentity, secureIdentityEnv, getSecureIdentity } from './identity.js';
-import { identityToEvmAddress, identityToEvmWallet, BaseEscrowClient, signSpendingAuth, makeEscrowDomain, resolveChainConfig, formatUsdc } from '@antseed/node';
+import { DepositsClient, signSpendingAuth, signReserveAuth, makeChannelsDomain, resolveChainConfig, formatUsdc, ZERO_METADATA_HASH, peerIdToAddress } from '@antseed/node';
 import { createServer as createPaymentsServer } from '@antseed/payments';
 import type { LogEvent, RuntimeActivityEvent } from './log-parser.js';
 import { parseRuntimeActivityFromLog } from './log-parser.js';
@@ -268,14 +268,15 @@ async function stopPaymentsPortal(): Promise<void> {
   paymentsServer = null;
 }
 
-ipcMain.handle('payments:open-portal', async () => {
+ipcMain.handle('payments:open-portal', async (_event, tab?: string) => {
   try {
     await startPaymentsPortal();
-    // Pass bearer token via URL param so the portal frontend can authenticate POST requests
     const token = paymentsServer ? (paymentsServer as unknown as { bearerToken?: string }).bearerToken : '';
-    const url = token
-      ? `http://127.0.0.1:${PAYMENTS_PORT}?token=${token}`
-      : `http://127.0.0.1:${PAYMENTS_PORT}`;
+    const params = new URLSearchParams();
+    if (token) params.set('token', token);
+    if (tab) params.set('tab', tab);
+    const qs = params.toString();
+    const url = qs ? `http://127.0.0.1:${PAYMENTS_PORT}?${qs}` : `http://127.0.0.1:${PAYMENTS_PORT}`;
     const { default: open } = await import('open');
     await open(url);
     return { ok: true, url };
@@ -522,7 +523,7 @@ ipcMain.handle(
       return { ok: true, data: { configPath: ACTIVE_CONFIG_PATH }, error: null, status: 200 } satisfies ApiResult;
     }
 
-    // Sessions/earnings are seller-only — not needed in the desktop (buyer) app.
+    // Channels/earnings are seller-only — not needed in the desktop (buyer) app.
     return {
       ok: false,
       data: null,
@@ -566,7 +567,7 @@ ipcMain.handle(
       const merged = await mergeConfig(safeConfig, ACTIVE_CONFIG_PATH);
       cachedCryptoConfig = null; // Invalidate cached crypto config
       creditsRpcFailCount = 0; // Reset backoff so new config is tried immediately
-      // Restart payments portal if running so it picks up new escrow/chain config
+      // Restart payments portal if running so it picks up new contract/chain config
       void stopPaymentsPortal().catch(() => {});
       return { ok: true, data: { config: merged }, error: null, status: 200 };
     } catch (err) {
@@ -575,14 +576,14 @@ ipcMain.handle(
   },
 );
 
-// ── Credits / Escrow Balance ──
+// ── Credits / Deposits Balance ──
 
 type CreditsInfo = {
   evmAddress: string | null;
+  operatorAddress: string | null;
   balanceUsdc: string;
   reservedUsdc: string;
   availableUsdc: string;
-  pendingWithdrawalUsdc: string;
   creditLimitUsdc: string;
 };
 
@@ -593,7 +594,7 @@ let cachedCreditsInfo: CreditsInfo | null = null;
 
 // Cached crypto config — invalidated on config update. Uses protocol defaults
 // from resolveChainConfig with optional user overrides from config.json.
-let cachedCryptoConfig: { rpcUrl: string; escrowAddress: string; usdcAddress: string; chainId: number } | null = null;
+let cachedCryptoConfig: { rpcUrl: string; depositsAddress: string; channelsAddress: string; usdcAddress: string; chainId: number } | null = null;
 
 async function loadCachedCryptoConfig(): Promise<typeof cachedCryptoConfig> {
   if (cachedCryptoConfig) return cachedCryptoConfig;
@@ -605,20 +606,21 @@ async function loadCachedCryptoConfig(): Promise<typeof cachedCryptoConfig> {
   } catch {
     // No config — no crypto config available
   }
-  // Only resolve if the user has explicitly configured a chain or escrow address.
-  // Without explicit config, there's no escrow to query — return null so callers
+  // Only resolve if the user has explicitly configured a chain or contract address.
+  // Without explicit config, there's no contract to query — return null so callers
   // skip RPC calls instead of hitting a default contract that may not exist.
-  const hasExplicitConfig = overrides.chainId || overrides.rpcUrl || overrides.escrowContractAddress;
+  const hasExplicitConfig = overrides.chainId || overrides.rpcUrl || overrides.depositsContractAddress || overrides.channelsContractAddress;
   if (!hasExplicitConfig) {
     return null;
   }
   const cc = resolveChainConfig({
     chainId: asString(overrides.chainId as string, '') || undefined,
     rpcUrl: asString(overrides.rpcUrl as string, '') || undefined,
-    escrowContractAddress: asString(overrides.escrowContractAddress as string, '') || undefined,
+    depositsContractAddress: asString(overrides.depositsContractAddress as string, '') || undefined,
+    channelsContractAddress: asString(overrides.channelsContractAddress as string, '') || undefined,
     usdcContractAddress: asString(overrides.usdcContractAddress as string, '') || undefined,
   });
-  cachedCryptoConfig = { rpcUrl: cc.rpcUrl, escrowAddress: cc.escrowContractAddress, usdcAddress: cc.usdcContractAddress, chainId: cc.evmChainId };
+  cachedCryptoConfig = { rpcUrl: cc.rpcUrl, depositsAddress: cc.depositsContractAddress, channelsAddress: cc.channelsContractAddress, usdcAddress: cc.usdcContractAddress, chainId: cc.evmChainId };
   return cachedCryptoConfig;
 }
 
@@ -630,13 +632,13 @@ const CREDITS_RPC_RETRY_COOLDOWN_MS = 60_000;
 async function refreshCreditsInfo(): Promise<CreditsInfo> {
   const identity = getSecureIdentity();
   if (!identity) {
-    return { evmAddress: null, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
+    return { evmAddress: null, operatorAddress: null, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', creditLimitUsdc: '0' };
   }
 
-  const evmAddress = identityToEvmAddress(identity);
+  const evmAddress = identity.wallet.address;
   const cc = await loadCachedCryptoConfig();
   if (!cc) {
-    return { evmAddress, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
+    return { evmAddress, operatorAddress: null, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', creditLimitUsdc: '0' };
   }
 
   // Back off after repeated RPC failures; retry after cooldown so transient
@@ -644,26 +646,35 @@ async function refreshCreditsInfo(): Promise<CreditsInfo> {
   if (creditsRpcFailCount >= CREDITS_RPC_BACKOFF_THRESHOLD) {
     if (Date.now() - creditsRpcLastFailAt < CREDITS_RPC_RETRY_COOLDOWN_MS) {
       if (cachedCreditsInfo) return cachedCreditsInfo;
-      return { evmAddress, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
+      return { evmAddress, operatorAddress: null, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', creditLimitUsdc: '0' };
     }
     // Cooldown elapsed — allow a retry attempt
     creditsRpcFailCount = 0;
   }
 
-  const client = new BaseEscrowClient({ rpcUrl: cc.rpcUrl, contractAddress: cc.escrowAddress, usdcAddress: cc.usdcAddress });
+  const depositsClient = new DepositsClient({ rpcUrl: cc.rpcUrl, contractAddress: cc.depositsAddress, usdcAddress: cc.usdcAddress });
 
   try {
-    const [balance, creditLimit] = await Promise.all([
-      client.getBuyerBalance(evmAddress),
-      client.getBuyerCreditLimit(evmAddress),
+    const [balance, creditLimit, operatorAddress] = await Promise.all([
+      depositsClient.getBuyerBalance(evmAddress),
+      depositsClient.getBuyerCreditLimit(evmAddress),
+      (async (): Promise<string | null> => {
+        try {
+          const { ChannelsClient } = await import('@antseed/node');
+          const sc = new ChannelsClient({ rpcUrl: cc.rpcUrl, contractAddress: cc.channelsAddress });
+          const addr = await sc.getOperator(evmAddress);
+          return addr && addr !== '0x0000000000000000000000000000000000000000' ? addr : null;
+        } catch { return null; }
+      })(),
     ]);
-    creditsRpcFailCount = 0; // Reset on success
+    creditsRpcFailCount = 0;
+
     const info: CreditsInfo = {
       evmAddress,
+      operatorAddress,
       balanceUsdc: formatUsdc6(balance.available + balance.reserved),
       reservedUsdc: formatUsdc6(balance.reserved),
       availableUsdc: formatUsdc6(balance.available),
-      pendingWithdrawalUsdc: formatUsdc6(balance.pendingWithdrawal),
       creditLimitUsdc: formatUsdc6(creditLimit),
     };
     cachedCreditsInfo = info;
@@ -672,11 +683,11 @@ async function refreshCreditsInfo(): Promise<CreditsInfo> {
     creditsRpcFailCount++;
     creditsRpcLastFailAt = Date.now();
     if (creditsRpcFailCount <= 1) {
-      try { console.warn('[credits] Escrow RPC unavailable:', err instanceof Error ? err.message : String(err)); }
+      try { console.warn('[credits] Deposits RPC unavailable:', err instanceof Error ? err.message : String(err)); }
       catch { /* EPIPE — ignore */ }
     }
     if (cachedCreditsInfo) return cachedCreditsInfo;
-    return { evmAddress, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', pendingWithdrawalUsdc: '0', creditLimitUsdc: '0' };
+    return { evmAddress, operatorAddress: null, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', creditLimitUsdc: '0' };
   }
 }
 
@@ -690,44 +701,28 @@ ipcMain.handle('credits:get-info', async (): Promise<{ ok: boolean; data: Credit
   }
 });
 
-// FIRST_SIGN_CAP: 1 USDC = 1,000,000 base units. Main process enforces this cap
-// to prevent a compromised renderer from signing unbounded spending authorizations.
-const MAX_SPENDING_AUTH_BASE_UNITS = 1_000_000n;
-const MAX_DEADLINE_SECONDS = 7 * 24 * 60 * 60; // 7 days
-const DEFAULT_SPENDING_AUTH_DURATION_SECONDS = 25 * 60 * 60; // must exceed escrow SETTLE_TIMEOUT (24h)
-const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+// Max spending per session: $5 USDC = 5,000,000 base units. Main process enforces
+// this cap to prevent a compromised renderer from signing unbounded authorizations.
+const MAX_SPENDING_AUTH_BASE_UNITS = 5_000_000n;
+const DEFAULT_SPENDING_AUTH_DURATION_SECONDS = 15 * 60; // 15 min — seller must call reserve() promptly
 const BYTES32_RE = /^0x[0-9a-fA-F]{64}$/;
 
 ipcMain.handle('payments:sign-spending-auth', async (_event, params: {
-  sellerEvmAddress: string;
-  sessionId: string;
-  maxAmountBaseUnits: string;
-  nonce: number;
-  deadline: number;
-  previousConsumption: string;
-  previousSessionId: string;
+  channelId: string;
+  cumulativeAmountBaseUnits: string;
+  metadataHash: string;
 }) => {
   try {
     // Validate renderer-supplied parameters at the trust boundary
-    if (!ETH_ADDRESS_RE.test(params.sellerEvmAddress)) {
-      return { ok: false, error: 'Invalid seller EVM address' };
+    if (!BYTES32_RE.test(params.channelId)) {
+      return { ok: false, error: 'Invalid channel ID format' };
     }
-    if (!BYTES32_RE.test(params.sessionId)) {
-      return { ok: false, error: 'Invalid session ID format' };
+    const cumulativeAmount = BigInt(params.cumulativeAmountBaseUnits);
+    if (cumulativeAmount <= 0n || cumulativeAmount > MAX_SPENDING_AUTH_BASE_UNITS) {
+      return { ok: false, error: `cumulativeAmount exceeds cap (${MAX_SPENDING_AUTH_BASE_UNITS} base units)` };
     }
-    const maxAmount = BigInt(params.maxAmountBaseUnits);
-    if (maxAmount <= 0n || maxAmount > MAX_SPENDING_AUTH_BASE_UNITS) {
-      return { ok: false, error: `maxAmount exceeds cap (${MAX_SPENDING_AUTH_BASE_UNITS} base units)` };
-    }
-    if (!Number.isInteger(params.nonce) || params.nonce < 0) {
-      return { ok: false, error: 'Invalid nonce' };
-    }
-    if (!BYTES32_RE.test(params.previousSessionId)) {
-      return { ok: false, error: 'Invalid previousSessionId format' };
-    }
-    const now = Math.floor(Date.now() / 1000);
-    if (params.deadline < now || params.deadline > now + MAX_DEADLINE_SECONDS) {
-      return { ok: false, error: 'Deadline out of acceptable range' };
+    if (!BYTES32_RE.test(params.metadataHash)) {
+      return { ok: false, error: 'Invalid metadataHash format' };
     }
 
     await ensureSecureIdentity();
@@ -738,28 +733,25 @@ ipcMain.handle('payments:sign-spending-auth', async (_event, params: {
 
     const cc = await loadCachedCryptoConfig();
     if (!cc) {
-      return { ok: false, error: 'No escrow contract configured' };
+      return { ok: false, error: 'No channels contract configured' };
     }
 
-    const wallet = identityToEvmWallet(identity);
-    const domain = makeEscrowDomain(cc.chainId, cc.escrowAddress);
+    const wallet = identity.wallet;
 
-    const signature = await signSpendingAuth(wallet, domain, {
-      seller: params.sellerEvmAddress,
-      sessionId: params.sessionId,
-      maxAmount,
-      nonce: params.nonce,
-      deadline: params.deadline,
-      previousConsumption: BigInt(params.previousConsumption),
-      previousSessionId: params.previousSessionId,
+    // Sign SpendingAuth (AntSeed Channels domain)
+    const channelsDomain = makeChannelsDomain(cc.chainId, cc.channelsAddress);
+    const spendingAuthSig = await signSpendingAuth(wallet, channelsDomain, {
+      channelId: params.channelId,
+      cumulativeAmount,
+      metadataHash: params.metadataHash,
     });
 
-    const buyerEvmAddress = identityToEvmAddress(identity);
+    const buyerEvmAddress = identity.wallet.address;
 
     return {
       ok: true,
       data: {
-        signature,
+        spendingAuthSig,
         buyerEvmAddress,
       },
     };
@@ -786,9 +778,9 @@ ipcMain.handle('payments:get-peer-info', async (_event, peerId: string) => {
         displayName: peer.displayName ?? null,
         reputation: peer.reputation ?? 0,
         onChainReputation: (peer as Record<string, unknown>).onChainReputation ?? null,
-        onChainSessionCount: (peer as Record<string, unknown>).onChainSessionCount ?? null,
+        onChainChannelCount: (peer as Record<string, unknown>).onChainChannelCount ?? null,
         onChainDisputeCount: (peer as Record<string, unknown>).onChainDisputeCount ?? null,
-        evmAddress: (peer as Record<string, unknown>).evmAddress ?? null,
+        evmAddress: peer.peerId ? peerIdToAddress(peer.peerId) : null,
         timestamp: (peer as Record<string, unknown>).timestamp ?? null,
         providers: peer.providers ?? [],
         services: peer.services ?? [],
@@ -862,12 +854,13 @@ const chatEngine = registerPiChatHandlers({
   },
 });
 
-// Manual payment approval: sign SpendingAuth and set it for the next request
+// Manual payment approval: sign the initial SpendingAuth and set it for the next request.
+// This only gates the initial session creation — once the user approves and the session
+// is established (reserve on-chain + AuthAck), subsequent per-request SpendingAuth
+// updates are handled automatically by BuyerPaymentManager.signPerRequestAuth()
+// without additional user interaction.
 ipcMain.handle('chat:approve-payment', async (_event, conversationId: string) => {
-  const paymentInfo = chatEngine.getCachedPaymentRequired(conversationId);
-  if (!paymentInfo) {
-    return { ok: false, error: 'No pending payment for this conversation' };
-  }
+  const paymentInfo = chatEngine.getCachedPaymentRequired(conversationId) ?? {};
 
   try {
     await ensureSecureIdentity();
@@ -878,59 +871,45 @@ ipcMain.handle('chat:approve-payment', async (_event, conversationId: string) =>
 
     const cc = await loadCachedCryptoConfig();
     if (!cc) {
-      return { ok: false, error: 'No escrow contract configured' };
+      return { ok: false, error: 'No channels contract configured' };
     }
 
-    const wallet = identityToEvmWallet(identity);
-    const domain = makeEscrowDomain(cc.chainId, cc.escrowAddress);
+    const wallet = identity.wallet;
+    const channelsDomain = makeChannelsDomain(cc.chainId, cc.channelsAddress);
     const buyerEvmAddr = wallet.address;
 
-    let sellerEvmAddr = String(paymentInfo.sellerEvmAddr ?? '');
-    if (!sellerEvmAddr) {
-      const peerId = typeof paymentInfo.peerId === 'string' ? paymentInfo.peerId.trim() : '';
-      if (peerId) {
-        await refreshPeerCache();
-        const peer = lookupPeer(peerId);
-        const resolvedEvm = typeof (peer as Record<string, unknown> | undefined)?.evmAddress === 'string'
-          ? String((peer as Record<string, unknown>).evmAddress).trim()
-          : '';
-        if (resolvedEvm) {
-          sellerEvmAddr = resolvedEvm;
-        }
-      }
+    const peerId = typeof paymentInfo.peerId === 'string' ? paymentInfo.peerId.trim() : '';
+    if (!peerId) {
+      return { ok: false, error: 'No seller peerId available for this payment' };
     }
-    if (!sellerEvmAddr) {
-      return { ok: false, error: 'No seller EVM address available for this payment' };
-    }
-    const maxAmount = BigInt(String(paymentInfo.suggestedAmount ?? '100000'));
+    const sellerEvmAddr = peerIdToAddress(peerId);
 
-    // Generate session parameters
-    const sessionIdBytes = randomBytes(32);
-    const sessionId = '0x' + sessionIdBytes.toString('hex');
-    const nonce = Date.now(); // simple nonce
+    // Generate random salt and compute deterministic channelId
+    const salt = '0x' + randomBytes(32).toString('hex');
+    const { computeChannelId } = await import('@antseed/node');
+    const channelId = computeChannelId(buyerEvmAddr, sellerEvmAddr, salt);
     const deadline = Math.floor(Date.now() / 1000) + DEFAULT_SPENDING_AUTH_DURATION_SECONDS;
 
-    const signature = await signSpendingAuth(wallet, domain, {
-      seller: sellerEvmAddr,
-      sessionId,
+    // Sign ReserveAuth — binds channelId, maxAmount, deadline
+    const maxAmount = 5_000_000n; // $5.00 per session
+    const reserveAuthSig = await signReserveAuth(wallet, channelsDomain, {
+      channelId,
       maxAmount,
-      nonce,
-      deadline,
-      previousConsumption: 0n,
-      previousSessionId: '0x' + '00'.repeat(32),
+      deadline: BigInt(deadline),
     });
 
     // Build the header payload
     const authPayload = {
-      sessionId,
-      maxAmountUsdc: maxAmount.toString(),
-      nonce,
-      deadline,
-      buyerSig: signature,
+      channelId,
+      cumulativeAmount: '0',
+      spendingAuthSig: reserveAuthSig,
       buyerEvmAddr,
       sellerEvmAddr,
-      previousConsumption: '0',
-      previousSessionId: '0x' + '00'.repeat(32),
+      metadataHash: ZERO_METADATA_HASH,
+      metadata: '',
+      reserveSalt: salt,
+      reserveMaxAmount: maxAmount.toString(),
+      reserveDeadline: deadline,
     };
 
     const authBase64 = Buffer.from(JSON.stringify(authPayload)).toString('base64');

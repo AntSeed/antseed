@@ -11,8 +11,8 @@ export async function createLocalBootstrap(): Promise<{
   bootstrapConfig: Array<{ host: string; port: number }>;
   stop: () => Promise<void>;
 }> {
-  // We need a peerId for the DHTNodeConfig. Generate a dummy 64-char hex peerId.
-  const peerId = toPeerId('0'.repeat(64));
+  // We need a peerId for the DHTNodeConfig. Generate a dummy 40-char hex peerId.
+  const peerId = toPeerId('0'.repeat(40));
 
   const config: DHTNodeConfig = {
     peerId,

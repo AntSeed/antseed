@@ -619,6 +619,7 @@ type NetworkPeerAddress = {
   port: number;
   providers?: string[];
   services?: string[];
+  providerServiceApiProtocols?: Record<string, { services: Record<string, string[]> }>;
 };
 
 type ChatServiceProtocol = 'anthropic-messages' | 'openai-chat-completions' | 'openai-responses';
@@ -843,8 +844,31 @@ function inferProviderProtocol(provider: string): ChatServiceProtocol | null {
   return null;
 }
 
+const VALID_CHAT_SERVICE_PROTOCOLS = new Set<string>([
+  'anthropic-messages', 'openai-chat-completions', 'openai-responses',
+]);
 
-
+/**
+ * Resolve protocol for a service from the peer's announced providerServiceApiProtocols metadata.
+ * Returns the first recognized chat protocol, or null if not found.
+ */
+function resolveServiceProtocol(
+  apiProtocols: NetworkPeerAddress['providerServiceApiProtocols'],
+  serviceId: string,
+): ChatServiceProtocol | null {
+  if (!apiProtocols) return null;
+  for (const providerEntry of Object.values(apiProtocols)) {
+    const protocols = providerEntry?.services?.[serviceId];
+    if (Array.isArray(protocols)) {
+      for (const p of protocols) {
+        if (VALID_CHAT_SERVICE_PROTOCOLS.has(p)) {
+          return p as ChatServiceProtocol;
+        }
+      }
+    }
+  }
+  return null;
+}
 
 function normalizeServiceValue(value: unknown): string | null {
   if (typeof value !== 'string') {
@@ -871,7 +895,7 @@ function updateServiceProviderHints(
   for (const entry of entries) {
     const serviceId = normalizeServiceValue(entry.id)?.toLowerCase();
     const provider = normalizeProviderId(entry.provider);
-    if (!serviceId || !provider || !inferProviderProtocol(provider)) {
+    if (!serviceId || !provider || !isChatServiceProtocol(entry.protocol)) {
       continue;
     }
     const providers = serviceProviderHints.get(serviceId) ?? [];
@@ -901,10 +925,7 @@ function resolveProviderHintForService(
   explicitProvider?: string,
 ): string | null {
   const explicit = normalizeProviderId(explicitProvider);
-  if (explicit && inferProviderProtocol(explicit)) {
-    return explicit;
-  }
-  return null;
+  return explicit ?? null;
 }
 
 function normalizePeerId(value: unknown): string | null {
@@ -924,7 +945,7 @@ function normalizeChatServiceCatalogEntry(raw: unknown): ChatServiceCatalogEntry
   const id = normalizeServiceValue(entry.id);
   const provider = normalizeProviderId(entry.provider);
   const protocol = entry.protocol;
-  if (!id || !provider || !isChatServiceProtocol(protocol) || !inferProviderProtocol(provider)) {
+  if (!id || !provider || !isChatServiceProtocol(protocol)) {
     return null;
   }
 
@@ -1029,6 +1050,9 @@ async function discoverChatServiceCatalog(
         port: 0,
         providers: Array.isArray(p.providers) ? p.providers.map(String) : [],
         services: Array.isArray(p.services) ? p.services.map(String) : [],
+        providerServiceApiProtocols: (p.providerServiceApiProtocols && typeof p.providerServiceApiProtocols === 'object')
+          ? p.providerServiceApiProtocols as NetworkPeerAddress['providerServiceApiProtocols']
+          : undefined,
       }))
       .filter((p) => p.peerId.length > 0);
   } catch {
@@ -1050,13 +1074,14 @@ async function discoverChatServiceCatalog(
 
     const providerList = peer.providers ?? [];
     const serviceList = peer.services ?? [];
+    const apiProtocols = peer.providerServiceApiProtocols;
 
     if (serviceList.length > 0) {
       // Use explicit service names when available.
       for (const serviceId of serviceList) {
-        // Infer provider from the service name or fall back to the first provider.
-        const provider = providerList.find((p) => inferProviderProtocol(p) !== null) ?? providerList[0] ?? 'unknown';
-        const protocol = inferProviderProtocol(provider);
+        const provider = providerList[0] ?? 'unknown';
+        // Resolve protocol: first check peer metadata, then fall back to inference from provider name.
+        const protocol = resolveServiceProtocol(apiProtocols, serviceId) ?? inferProviderProtocol(provider);
         if (!protocol) continue;
 
         results.push({
@@ -1686,7 +1711,7 @@ class PiConversationStore {
     const workspaceDir = await this.ensureWorkspaceDir();
     const manager = SessionManager.create(workspaceDir, this.sessionsDir);
     const providerId = normalizeProviderId(provider);
-    const modelProvider = providerId && inferProviderProtocol(providerId) ? providerId : PROXY_PROVIDER_ID;
+    const modelProvider = providerId ?? PROXY_PROVIDER_ID;
     manager.appendModelChange(modelProvider, normalizeServiceId(service));
     const sessionPath = manager.getSessionFile();
     if (!sessionPath) {
@@ -2193,11 +2218,11 @@ export function registerPiChatHandlers({
             // Try to parse the full payment body from content, errorMessage, or embedded JSON
             let paymentBody: Record<string, unknown> | null = null;
             try { paymentBody = JSON.parse(rawContent) as Record<string, unknown>; } catch { /* not JSON */ }
-            if (!paymentBody || !paymentBody.sellerEvmAddr) {
+            if (!paymentBody) {
               try { paymentBody = JSON.parse(errorMsg) as Record<string, unknown>; } catch { /* not JSON */ }
             }
             // SDK wraps the body as "402 {json}" — extract the embedded JSON
-            if (!paymentBody || !paymentBody.sellerEvmAddr) {
+            if (!paymentBody) {
               const jsonStart = errorMsg.indexOf('{');
               if (jsonStart >= 0) {
                 try { paymentBody = JSON.parse(errorMsg.slice(jsonStart)) as Record<string, unknown>; } catch { /* not JSON */ }
@@ -2205,7 +2230,7 @@ export function registerPiChatHandlers({
             }
             const suggestedAmount = typeof paymentBody?.suggestedAmount === 'string'
               ? paymentBody.suggestedAmount : '100000';
-            if (paymentBody?.sellerEvmAddr) {
+            if (paymentBody?.peerId) {
               cachedPaymentRequired.set(conversationId, paymentBody);
             } else {
               cacheFallbackPaymentRequired(conversationId, suggestedAmount);
@@ -2280,7 +2305,7 @@ export function registerPiChatHandlers({
         try { payBody = JSON.parse(lastText) as Record<string, unknown>; } catch { /* not JSON */ }
         if (payBody?.error === 'payment_required') {
           const amt = typeof payBody.suggestedAmount === 'string' ? payBody.suggestedAmount : '100000';
-          if (payBody.sellerEvmAddr) {
+          if (payBody.peerId) {
             cachedPaymentRequired.set(conversationId, payBody);
           } else {
             cacheFallbackPaymentRequired(conversationId, amt);
@@ -2324,12 +2349,16 @@ export function registerPiChatHandlers({
         if (jsonStart >= 0) {
           try { payBody = JSON.parse(message.slice(jsonStart)) as Record<string, unknown>; } catch { /* not JSON */ }
         }
-        if (payBody?.sellerEvmAddr) {
+        const amt = typeof payBody?.suggestedAmount === 'string' ? payBody.suggestedAmount : '100000';
+        if (payBody?.peerId) {
           cachedPaymentRequired.set(conversationId, payBody);
-        }
-        const amt = typeof payBody?.suggestedAmount === 'string' ? payBody.suggestedAmount : '0';
-        if (!payBody?.sellerEvmAddr && amt !== '0') {
-          cacheFallbackPaymentRequired(conversationId, amt);
+        } else {
+          const peerId = preferredPeerByConversationId.get(conversationId) ?? '';
+          cachedPaymentRequired.set(conversationId, {
+            ...(payBody ?? {}),
+            peerId,
+            suggestedAmount: amt,
+          });
         }
         sendToRenderer('chat:ai-stream-error', { conversationId, error: `payment_required:${amt}` });
       } else {
@@ -2403,7 +2432,12 @@ export function registerPiChatHandlers({
 
   ipcMain.handle('chat:ai-list-conversations', async () => {
     const conversations = await store.list();
-    return { ok: true, data: conversations };
+    // Enrich summaries with peerId from the preferred-peer map
+    const enriched = conversations.map((c) => {
+      const peerId = preferredPeerByConversationId.get(c.id);
+      return peerId ? { ...c, peerId } : c;
+    });
+    return { ok: true, data: enriched };
   });
 
   ipcMain.handle('chat:ai-get-workspace', async () => {

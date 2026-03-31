@@ -31,11 +31,11 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
     });
   }
 
-  // peerId length (64 hex chars = 32 bytes)
-  if (!/^[0-9a-f]{64}$/.test(metadata.peerId)) {
+  // peerId length (40 hex chars = 20 bytes, EVM address)
+  if (!/^[0-9a-f]{40}$/.test(metadata.peerId)) {
     errors.push({
       field: "peerId",
-      message: "PeerId must be exactly 64 lowercase hex characters",
+      message: "PeerId must be exactly 40 lowercase hex characters",
     });
   }
 
@@ -308,11 +308,11 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
     }
   }
 
-  // signature length (128 hex chars = 64 bytes)
-  if (!/^[0-9a-f]{128}$/.test(metadata.signature)) {
+  // signature length (130 hex chars = 65 bytes, secp256k1 r+s+v)
+  if (!/^[0-9a-f]{130}$/.test(metadata.signature)) {
     errors.push({
       field: "signature",
-      message: "Signature must be exactly 128 lowercase hex characters (64 bytes)",
+      message: "Signature must be exactly 130 lowercase hex characters (65 bytes)",
     });
   }
 

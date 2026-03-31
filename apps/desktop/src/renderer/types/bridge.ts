@@ -153,17 +153,13 @@ export type DesktopBridge = {
   onAppSetupStep?: (handler: (data: { step: string; label: string }) => void) => () => void;
   onAppSetupComplete?: (handler: () => void) => () => void;
   setDebugLogs?: (enabled: boolean) => Promise<{ ok: true }>;
-  creditsGetInfo?: () => Promise<{ ok: boolean; data: { evmAddress: string | null; balanceUsdc: string; reservedUsdc: string; availableUsdc: string; pendingWithdrawalUsdc: string; creditLimitUsdc: string } | null; error: string | null }>;
+  creditsGetInfo?: () => Promise<{ ok: boolean; data: { evmAddress: string | null; operatorAddress: string | null; balanceUsdc: string; reservedUsdc: string; availableUsdc: string; creditLimitUsdc: string } | null; error: string | null }>;
 
   paymentsSignSpendingAuth?: (params: {
-    sellerEvmAddress: string;
-    sessionId: string;
-    maxAmountBaseUnits: string;
-    nonce: number;
-    deadline: number;
-    previousConsumption: string;
-    previousSessionId: string;
-  }) => Promise<{ ok: boolean; data?: { signature: string; buyerEvmAddress: string }; error?: string }>;
+    channelId: string;
+    cumulativeAmountBaseUnits: string;
+    metadataHash: string;
+  }) => Promise<{ ok: boolean; data?: { spendingAuthSig: string; buyerEvmAddress: string }; error?: string }>;
 
   paymentsGetPeerInfo?: (peerId: string) => Promise<{
     ok: boolean;
@@ -172,7 +168,7 @@ export type DesktopBridge = {
       displayName: string | null;
       reputation: number;
       onChainReputation: number | null;
-      onChainSessionCount: number | null;
+      onChainChannelCount: number | null;
       onChainDisputeCount: number | null;
       evmAddress: string | null;
       timestamp: number | null;
@@ -182,5 +178,5 @@ export type DesktopBridge = {
     error?: string;
   }>;
 
-  paymentsOpenPortal?: () => Promise<{ ok: boolean; url?: string; error?: string }>;
+  paymentsOpenPortal?: (tab?: string) => Promise<{ ok: boolean; url?: string; error?: string }>;
 };

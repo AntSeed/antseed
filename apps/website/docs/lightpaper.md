@@ -87,11 +87,11 @@ The protocol is provider-agnostic. It does not care how a seller fulfills a requ
 
 ## Economic Incentives
 
-**Reputation requires stake.** Providers commit economic stake to participate. Stake is collateral (slashable), routing signal (more stake = more trust = more traffic), and Sybil resistance.
+**Reputation from settlement.** On-chain reputation counters are updated atomically during payment settlement. Each spending authorization proves delivery of the previous session, creating an unforgeable proof-of-prior-delivery chain. No oracles, no validators, no self-reporting.
 
-**Quality enforced economically.** Every transaction is independently verifiable by both parties. Disputes trigger automatic buyer protection. Poor-quality providers face progressive consequences: warnings, stake slashing, routing exclusion.
+**Stake as collateral.** Sellers commit USDC stake to participate. Stake is slashable (up to 100% for zero qualified delivery), serves as a routing signal, and caps reputation accrual proportionally. Seven anti-gaming layers make wash trading economically irrational.
 
-**Low barrier to entry.** Stablecoin on-ramps and bootstrap rewards ensure new participants can join without significant upfront cost.
+**ANTS emission rewards real delivery.** The ANTS token is distributed to sellers and buyers proportional to proven delivery volume and network participation. Non-transferable until network maturity. Emission halves every ~6 months over 10 years.
 
 ## How It Works
 
@@ -101,7 +101,7 @@ The protocol is provider-agnostic. It does not care how a seller fulfills a requ
 
 **Metering.** Both sides independently verify what was delivered. If their measurements diverge significantly, the transaction is disputed and the buyer is protected.
 
-**Settlement.** Buyers commit funds before a session. Requests flow freely during the session. At the end, one settlement transaction resolves everything.
+**Settlement.** Buyers pre-deposit USDC into AntseedDeposits. Each session is authorized by an EIP-712 SpendingAuth. Settlement is lazy — the buyer's next SpendingAuth proves delivery of the previous session and triggers on-chain settlement atomically via AntseedChannels.
 
 **Routing.** The buyer's software scores available providers on reputation, capability match, speed, price, and uptime. On failure, it automatically switches to the next-best provider. Because AI APIs are stateless, these switches are invisible to the application.
 

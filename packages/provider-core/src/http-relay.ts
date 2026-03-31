@@ -2,6 +2,7 @@ import type { TokenProvider } from '@antseed/node';
 import type { SerializedHttpRequest, SerializedHttpResponse, SerializedHttpResponseChunk } from '@antseed/node';
 import { ANTSEED_STREAMING_RESPONSE_HEADER } from '@antseed/node';
 import { swapAuthHeader, validateRequestService } from './auth-swap.js';
+import Bottleneck from 'bottleneck';
 import { stripRelayRequestHeaders, stripRelayResponseHeaders } from './http-headers.js';
 
 export const DEFAULT_HTTP_TIMEOUT_MS = 120_000;
@@ -24,6 +25,19 @@ export interface RelayConfig {
   injectJsonFields?: Record<string, unknown>;
   /** If true, retry once with a force-refreshed token on 401. Only meaningful for providers with a refreshable tokenProvider (e.g. OAuth). */
   retryOn401?: boolean;
+  /** Throttle settings for upstream requests (uses bottleneck). */
+  throttle?: {
+    /** Minimum time between requests in ms (e.g. 1000 = max 1 req/sec). */
+    minTime?: number;
+    /** Max concurrent requests to upstream. Overrides maxConcurrency for throttling purposes. */
+    maxConcurrent?: number;
+    /** Max requests in the reservoir per interval. */
+    reservoir?: number;
+    /** Reservoir refill interval in ms. */
+    reservoirRefreshInterval?: number;
+    /** How many requests to add on each refill. */
+    reservoirRefreshAmount?: number;
+  };
   /** Retry on 500/502/503/504 with exponential backoff. Default: 0 (no retries). */
   retryOn5xx?: number;
   /** Base delay in ms for 5xx retries. Default: 1000. */
@@ -53,11 +67,21 @@ export class HttpRelay {
   private readonly _config: RelayConfig;
   private readonly _callbacks: RelayCallbacks;
   private readonly _validationServices: ReadonlySet<string>;
+  private readonly _limiter: Bottleneck | null;
   private _activeCount = 0;
 
   constructor(config: RelayConfig, callbacks: RelayCallbacks) {
     this._config = config;
     this._callbacks = callbacks;
+    this._limiter = config.throttle
+      ? new Bottleneck({
+          minTime: config.throttle.minTime,
+          maxConcurrent: config.throttle.maxConcurrent,
+          reservoir: config.throttle.reservoir,
+          reservoirRefreshInterval: config.throttle.reservoirRefreshInterval,
+          reservoirRefreshAmount: config.throttle.reservoirRefreshAmount,
+        })
+      : null;
     const rewriteValues = Object.values(config.serviceRewriteMap ?? {});
     this._validationServices = new Set([
       ...config.allowedServices.map((m) => m.trim().toLowerCase()),
@@ -199,6 +223,10 @@ export class HttpRelay {
       const baseDelay = this._config.retryBaseDelayMs ?? 1000;
       const retryableStatusCodes = new Set(this._config.retryStatusCodes ?? []);
 
+      const runFetch = this._limiter
+        ? (headers: Record<string, string>) => this._limiter!.schedule(() => doFetch(headers))
+        : doFetch;
+
       const fetchWithRetries = async (): Promise<Response> => {
         let lastError: unknown;
         for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -208,7 +236,7 @@ export class HttpRelay {
           }
 
           try {
-            const response = await doFetch(currentHeaders);
+            const response = await runFetch(currentHeaders);
             if (attempt === maxRetries || (response.status < 500 && !retryableStatusCodes.has(response.status))) {
               return response;
             }

@@ -1,7 +1,8 @@
 import { randomBytes } from 'node:crypto';
+import type { Wallet } from 'ethers';
 import type { PeerId } from '../types/peer.js';
 import { toPeerId } from '../types/peer.js';
-import { signUtf8Ed25519, verifyUtf8Ed25519 } from './identity.js';
+import { signUtf8, verifyUtf8 } from './identity.js';
 
 export type InitialWireType = 'intro' | 'hello';
 
@@ -29,9 +30,9 @@ export interface VerifyConnectionAuthResult {
 export const INTRO_AUTH_MAX_SKEW_MS = 30_000;
 
 const NONCE_SIZE_BYTES = 16;
-const SIG_HEX_LEN = 128;
+const SIG_HEX_LEN = 130;
 const NONCE_HEX_REGEX = /^[0-9a-f]{32}$/;
-const SIG_HEX_REGEX = /^[0-9a-f]{128}$/;
+const SIG_HEX_REGEX = /^[0-9a-f]{130}$/;
 
 function buildSigningPayload(
   type: InitialWireType,
@@ -92,12 +93,12 @@ export class NonceReplayGuard {
 export function buildConnectionAuthEnvelope(
   type: InitialWireType,
   peerId: PeerId,
-  privateKeySeed: Uint8Array,
+  wallet: Wallet,
   nowMs = Date.now(),
 ): ConnectionAuthEnvelope {
   const nonce = randomBytes(NONCE_SIZE_BYTES).toString('hex');
   const payload = buildSigningPayload(type, peerId, nowMs, nonce);
-  const sig = signUtf8Ed25519(privateKeySeed, payload);
+  const sig = signUtf8(wallet, payload);
 
   return {
     peerId,
@@ -143,7 +144,7 @@ export function verifyConnectionAuthEnvelope(
   }
 
   const payload = buildSigningPayload(options.type, peerId, auth.ts, auth.nonce);
-  const valid = verifyUtf8Ed25519(peerId, payload, auth.sig);
+  const valid = verifyUtf8(peerId, payload, auth.sig);
   if (!valid) {
     return { ok: false, reason: 'signature verification failed' };
   }

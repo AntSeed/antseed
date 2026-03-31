@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Overview } from './pages/Overview';
 import { Peers } from './pages/Peers';
-import { Sessions } from './pages/Sessions';
+import { Channels } from './pages/Channels';
 import { Earnings } from './pages/Earnings';
 import { Settings } from './pages/Settings';
 import { Sidebar, NavItem } from './components/Sidebar';
@@ -9,7 +9,7 @@ import { Sidebar, NavItem } from './components/Sidebar';
 const NAV_ITEMS: NavItem[] = [
   { id: 'overview', label: 'Overview', icon: 'grid' },
   { id: 'peers', label: 'Peers', icon: 'users' },
-  { id: 'sessions', label: 'Sessions', icon: 'activity' },
+  { id: 'channels', label: 'Channels', icon: 'activity' },
   { id: 'earnings', label: 'Earnings', icon: 'dollar' },
   { id: 'settings', label: 'Settings', icon: 'settings' },
 ];
@@ -21,7 +21,7 @@ export function App() {
     switch (activePage) {
       case 'overview': return <Overview />;
       case 'peers': return <Peers />;
-      case 'sessions': return <Sessions />;
+      case 'channels': return <Channels />;
       case 'earnings': return <Earnings />;
       case 'settings': return <Settings />;
       default: return <Overview />;

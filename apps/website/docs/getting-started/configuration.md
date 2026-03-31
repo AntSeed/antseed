@@ -7,11 +7,11 @@ hide_title: true
 
 # Configuration
 
-After installation, initialize your node. This generates an Ed25519 identity keypair stored at `~/.antseed/identity.key` and creates default configuration.
+After installation, initialize your node. This generates a secp256k1 identity key stored at `~/.antseed/identity.key` and creates default configuration.
 
 ```bash title="init"
 $ antseed init
-Generated node identity (Ed25519)
+Generated node identity (secp256k1)
 Created ~/.antseed/identity.key
 Installed official plugins
 Ready to connect
@@ -19,10 +19,10 @@ Ready to connect
 
 ## Identity
 
-Your node identity is an Ed25519 keypair. Your PeerId is the hex-encoded 32-byte public key (64 lowercase hex characters). Set `identity.displayName` in config to control the human-readable name announced in peer metadata.
+Your node identity is a secp256k1 private key. Your PeerId is the corresponding EVM address (40 lowercase hex characters, no `0x` prefix). Set `identity.displayName` in config to control the human-readable name announced in peer metadata.
 
-:::warning Single Key, Two Roles
-Your identity key is used for **both** P2P operations (signing metadata, connection handshakes, metering receipts) **and** on-chain payments. An EVM wallet (secp256k1) is deterministically derived from your Ed25519 seed — this is the wallet that holds escrow deposits, receives seller earnings, and signs payment authorizations. Losing your identity key means losing access to your on-chain funds.
+:::warning One Key, All Roles
+Your identity key is a single secp256k1 private key used for **everything** — P2P operations (signing metadata, connection handshakes, metering receipts), on-chain payments (EIP-712 ReserveAuth and SpendingAuth), and wallet custody. The corresponding EVM address is both your PeerId on the network and your on-chain wallet that holds deposits in AntseedDeposits, receives seller earnings, and signs payment authorizations. Losing your identity key means losing access to your on-chain funds.
 :::
 
 ### Storage
@@ -31,7 +31,7 @@ Identity loading follows this priority:
 
 | Priority | Method | How | Best for |
 |---|---|---|---|
-| 1 | **Environment variable** | Set `ANTSEED_IDENTITY_HEX` to 64 hex chars | Server deployments with secrets managers (AWS SSM, Vault) |
+| 1 | **Environment variable** | Set `ANTSEED_IDENTITY_HEX` to 64 hex chars (secp256k1 private key) | Server deployments with secrets managers (AWS SSM, Vault) |
 | 2 | **Custom store** | Pass an `IdentityStore` via `NodeConfig.identityStore` | Custom integrations (KMS, HSM, Desktop safeStorage) |
 | 3 | **Plaintext file** ⚠️ | `~/.antseed/identity.key` with `0600` permissions | **Not recommended** — use env var or custom store instead |
 
@@ -55,18 +55,18 @@ The variable is cleared from the process environment immediately after the node 
 
 ### Desktop App
 
-AntSeed Desktop encrypts the identity at rest using the OS keychain (macOS Keychain / Windows DPAPI / Linux libsecret). On first launch, any existing plaintext `identity.key` is migrated to the encrypted store (`identity.enc`) and the plaintext file is deleted.
+AntSeed Desktop encrypts the secp256k1 private key at rest using the OS keychain (macOS Keychain / Windows DPAPI / Linux libsecret). On first launch, any existing plaintext `identity.key` is migrated to the encrypted store (`identity.enc`) and the plaintext file is deleted.
 
 ### Plaintext File (Default CLI — Not Recommended)
 
 :::danger Unsafe for production
-The plaintext file stores your private key unencrypted on disk. Since this key also controls your on-chain wallet, any process running as your user can read it and access your funds. Use `ANTSEED_IDENTITY_HEX` with a secrets manager or the Desktop app's encrypted storage instead.
+The plaintext file stores your secp256k1 private key unencrypted on disk. Since this key is also your on-chain wallet, any process running as your user can read it and access your funds. Use `ANTSEED_IDENTITY_HEX` with a secrets manager or the Desktop app's encrypted storage instead.
 :::
 
-Generated automatically on first run. The private key seed is stored as 64 hex characters in `~/.antseed/identity.key` with `0600` permissions.
+Generated automatically on first run. The secp256k1 private key is stored as 64 hex characters in `~/.antseed/identity.key` with `0600` permissions.
 
 :::tip Key Backup
-Back up your identity key before migrating servers. Your PeerId (and derived EVM wallet address) are tied to this key — losing it means a new identity on the network.
+Back up your identity key before migrating servers. Your PeerId and EVM wallet address are both derived from this key — losing it means a new identity on the network and loss of access to on-chain funds.
 :::
 
 ## Selling AI Services
@@ -107,7 +107,7 @@ Configuration is stored at `~/.antseed/config.json`. Key sections:
 | `providers` | Configured provider API keys and endpoints |
 | `seller` | Reserve floor, max concurrent buyers, pricing, enabled providers, model category tags |
 | `buyer` | Preferred providers, max pricing, min peer reputation, proxy port |
-| `payments` | Payment method, platform fee rate, chain config (Base) |
+| `payments` | Payment method, chain config (chainId, rpcUrl, contract addresses for deposits, sessions, staking) |
 | `network` | Bootstrap nodes |
 | `plugins` | Installed plugin packages |
 
@@ -139,9 +139,9 @@ antseed config set identity.displayName "Acme Inference - us-east-1"
 antseed config seller set serviceCategories.anthropic.claude-sonnet-4-5-20250929 '["coding","privacy"]'
 ```
 
-## Bound Agent
+## Ant Agent
 
-Providers can wrap their service with a bound agent — a knowledge-augmented AI service that injects a persona, guardrails, and on-demand knowledge into buyer requests. The LLM decides which knowledge to load via the `antseed_load_knowledge` tool. Creators can also define custom tools in the manifest.
+Providers can wrap their service with an ant agent — a knowledge-augmented AI service that injects a persona, guardrails, and on-demand knowledge into buyer requests. The LLM decides which knowledge to load via the `antseed_load_knowledge` tool. Creators can also define custom tools in the manifest.
 
 ```json title="config example"
 {
@@ -151,7 +151,7 @@ Providers can wrap their service with a bound agent — a knowledge-augmented AI
 }
 ```
 
-The agent directory contains an `agent.json` manifest that defines the persona, guardrails, knowledge modules, and custom tools. See the [`@antseed/bound-agent` README](https://github.com/AntSeed/antseed/tree/main/packages/bound-agent) for the full manifest reference.
+The agent directory contains an `agent.json` manifest that defines the persona, guardrails, knowledge modules, and custom tools. See the [`@antseed/ant-agent` README](https://github.com/AntSeed/antseed/tree/main/packages/ant-agent) for the full manifest reference.
 
 Per-service agents (different agents for different services):
 

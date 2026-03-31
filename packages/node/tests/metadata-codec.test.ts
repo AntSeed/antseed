@@ -4,7 +4,7 @@ import { METADATA_VERSION, type PeerMetadata } from '../src/discovery/peer-metad
 
 function makeMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
   return {
-    peerId: 'a'.repeat(64) as any,
+    peerId: 'a'.repeat(40) as any,
     version: METADATA_VERSION,
     providers: [
       {
@@ -26,7 +26,7 @@ function makeMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
     ],
     region: 'us-east-1',
     timestamp: 1700000000000,
-    signature: 'b'.repeat(128),
+    signature: 'b'.repeat(130),
     ...overrides,
   };
 }
@@ -163,79 +163,18 @@ describe('encodeMetadata / decodeMetadata', () => {
           services: ['claude-3-sonnet'],
         },
       ],
-      evmAddress: '0x1111111111111111111111111111111111111111',
       onChainReputation: 88,
-      onChainSessionCount: 123,
+      onChainChannelCount: 123,
       onChainDisputeCount: 2,
     });
     const decoded = decodeMetadata(encodeMetadata(original));
     expect(decoded.offerings?.[0]?.name).toBe('summarize');
-    expect(decoded.evmAddress).toBe('0x1111111111111111111111111111111111111111');
     expect(decoded.onChainReputation).toBe(88);
-    expect(decoded.onChainSessionCount).toBe(123);
+    expect(decoded.onChainChannelCount).toBe(123);
     expect(decoded.onChainDisputeCount).toBe(2);
   });
 
-  it('should retain backward-compatible binary layout for metadata version 2', () => {
-    const v2 = makeMetadata({
-      version: 2,
-      displayName: 'legacy',
-      providers: [
-        {
-          provider: 'anthropic',
-          services: ['claude-3-opus'],
-          defaultPricing: {
-            inputUsdPerMillion: 15,
-            outputUsdPerMillion: 75,
-          },
-          serviceCategories: {
-            'claude-3-opus': ['coding'],
-          },
-          maxConcurrency: 10,
-          currentLoad: 3,
-        },
-      ],
-    });
-    const decoded = decodeMetadata(encodeMetadata(v2));
-    expect(decoded.version).toBe(2);
-    expect(decoded.displayName).toBeUndefined();
-    expect(decoded.providers[0]!.serviceCategories).toBeUndefined();
-    expect(decoded.providers[0]!.serviceApiProtocols).toBeUndefined();
-  });
-
-  it('should retain backward-compatible binary layout for metadata version 3', () => {
-    const v3 = makeMetadata({
-      version: 3,
-      providers: [
-        {
-          provider: 'openai',
-          services: ['service-a'],
-          defaultPricing: {
-            inputUsdPerMillion: 1,
-            outputUsdPerMillion: 2,
-          },
-          serviceApiProtocols: {
-            'service-a': ['openai-chat-completions'],
-          },
-          maxConcurrency: 3,
-          currentLoad: 1,
-        },
-      ],
-    });
-    const decoded = decodeMetadata(encodeMetadata(v3));
-    expect(decoded.version).toBe(3);
-    expect(decoded.providers[0]!.serviceApiProtocols).toBeUndefined();
-  });
-
-  it('should retain backward-compatible binary layout for metadata version 4', () => {
-    const v4 = makeMetadata({
-      version: 4,
-      publicAddress: 'peer.example.com:6882',
-    });
-    const decoded = decodeMetadata(encodeMetadata(v4));
-    expect(decoded.version).toBe(4);
-    expect(decoded.publicAddress).toBeUndefined();
-  });
+  // v2/v3/v4/v5 roundtrip tests removed — pre-v6 format is rejected by the decoder.
 });
 
 describe('encodeMetadataForSigning', () => {
@@ -243,8 +182,8 @@ describe('encodeMetadataForSigning', () => {
     const metadata = makeMetadata();
     const forSigning = encodeMetadataForSigning(metadata);
     const full = encodeMetadata(metadata);
-    // Full includes 64 bytes of signature
-    expect(full.length).toBe(forSigning.length + 64);
+    // Full includes 65 bytes of signature (EVM secp256k1 r+s+v)
+    expect(full.length).toBe(forSigning.length + 65);
   });
 
   it('should produce deterministic output for the same input', () => {

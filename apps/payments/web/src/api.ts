@@ -36,17 +36,39 @@ export async function getConfig(): Promise<PaymentConfig> {
   return fetchJson('/api/config');
 }
 
-export async function requestWithdrawal(amount: string): Promise<{ ok: boolean; txHash?: string; error?: string }> {
-  return fetchJson('/api/withdraw/request', {
+export async function withdraw(amount: string): Promise<{ ok: boolean; txHash?: string; error?: string }> {
+  return fetchJson('/api/withdraw', {
     method: 'POST',
     body: JSON.stringify({ amount }),
   });
 }
 
-export async function executeWithdrawal(): Promise<{ ok: boolean; txHash?: string; error?: string }> {
-  return fetchJson('/api/withdraw/execute', { method: 'POST' });
+export interface ChannelData {
+  channelId: string;
+  seller: string;
+  deposit: string;
+  settled: string;
+  deadline: number;
+  closeRequestedAt: number;
+  status: number;
 }
 
-export async function cancelWithdrawal(): Promise<{ ok: boolean; error?: string }> {
-  return fetchJson('/api/withdraw/cancel', { method: 'POST' });
+export interface OperatorData {
+  operator: string;
+  nonce: number;
+}
+
+export async function getChannels(): Promise<{ channels: ChannelData[] }> {
+  return fetchJson('/api/channels');
+}
+
+export async function getOperatorInfo(): Promise<OperatorData> {
+  return fetchJson('/api/operator');
+}
+
+export async function signOperatorAuth(operator: string): Promise<{ ok: boolean; signature: string; nonce: number; buyer: string }> {
+  return fetchJson('/api/operator/sign', {
+    method: 'POST',
+    body: JSON.stringify({ operator }),
+  });
 }

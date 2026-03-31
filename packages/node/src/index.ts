@@ -15,6 +15,7 @@ export * from './types/index.js';
 // Submodule re-exports (commonly used)
 export {
   loadOrCreateIdentity,
+  identityFromPrivateKeyHex,
   type Identity,
   type IdentityStore,
   FileIdentityStore,
@@ -34,17 +35,34 @@ export { MetadataServer, type MetadataServerConfig } from './discovery/metadata-
 export { parsePublicAddress, MAX_PUBLIC_ADDRESS_LENGTH, type ParsedPublicAddress } from './discovery/public-address.js';
 export { MeteringStorage } from './metering/storage.js';
 export { BalanceManager } from './payments/balance-manager.js';
-export { BaseEscrowClient, type BaseEscrowConfig } from './payments/evm/escrow-client.js';
-export { identityToEvmWallet, identityToEvmAddress } from './payments/evm/keypair.js';
-export { signSpendingAuth, makeEscrowDomain } from './payments/evm/signatures.js';
-export type { SpendingAuthMessage } from './payments/evm/signatures.js';
+export { DepositsClient, type DepositsClientConfig, type BuyerBalanceInfo } from './payments/evm/deposits-client.js';
+export { ChannelsClient, type ChannelsClientConfig, type ChannelInfo } from './payments/evm/channels-client.js';
+export { IdentityClient, type IdentityClientConfig } from './payments/evm/identity-client.js';
+export { StatsClient, type StatsClientConfig, type AgentStats } from './payments/evm/stats-client.js';
+export { StakingClient, type StakingClientConfig, type SellerAccountInfo } from './payments/evm/staking-client.js';
+export { signData, verifySignature, signUtf8, verifyUtf8 } from './p2p/identity.js';
+export {
+  signSpendingAuth,
+  signReserveAuth,
+  signSetOperator,
+  makeChannelsDomain,
+  SPENDING_AUTH_TYPES,
+  RESERVE_AUTH_TYPES,
+  SET_OPERATOR_TYPES,
+  computeMetadataHash,
+  encodeMetadata,
+  computeChannelId,
+  ZERO_METADATA,
+  ZERO_METADATA_HASH,
+} from './payments/evm/signatures.js';
+export type { SpendingAuthMessage, ReserveAuthMessage, SetOperatorMessage, SpendingAuthMetadata } from './payments/evm/signatures.js';
 export { NatTraversal, type NatMapping, type NatTraversalResult } from './p2p/nat-traversal.js';
 export { BuyerPaymentManager } from './payments/buyer-payment-manager.js';
 export type { BuyerPaymentConfig } from './payments/buyer-payment-manager.js';
 export { SellerPaymentManager } from './payments/seller-payment-manager.js';
 export type { SellerPaymentConfig } from './payments/seller-payment-manager.js';
-export { SessionStore } from './payments/session-store.js';
-export type { StoredSession, StoredReceipt } from './payments/session-store.js';
+export { ChannelStore } from './payments/channel-store.js';
+export type { StoredChannel, StoredReceipt } from './payments/channel-store.js';
 export { getChainConfig, resolveChainConfig, DEFAULT_CHAIN_ID, CHAIN_CONFIGS } from './payments/chain-config.js';
 export type { ChainConfig } from './payments/chain-config.js';
 export { formatUsdc, parseUsdc } from './payments/usdc-utils.js';

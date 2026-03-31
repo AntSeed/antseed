@@ -7,7 +7,7 @@ import { homedir } from 'node:os'
 import { createConnection } from 'node:net'
 import { getGlobalOptions } from './types.js'
 import { loadConfig } from '../../config/loader.js'
-import { AntseedNode, BaseEscrowClient, identityToEvmAddress, getInstance, resolveChainConfig } from '@antseed/node'
+import { AntseedNode, DepositsClient, getInstance, resolveChainConfig } from '@antseed/node'
 import type { NodePaymentsConfig } from '@antseed/node'
 import { OFFICIAL_BOOTSTRAP_NODES, parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
 import { setupShutdownHandler } from '../shutdown.js'
@@ -217,14 +217,14 @@ export function registerConnectCommand(program: Command): void {
     .option('--instance <id>', 'use a configured plugin instance by ID')
     .option('--max-input-usd-per-million <number>', 'runtime-only max input pricing override in USD per 1M tokens', parseFloat)
     .option('--max-output-usd-per-million <number>', 'runtime-only max output pricing override in USD per 1M tokens', parseFloat)
-    .option('--peer <peerId>', 'pin all requests to a specific peer ID (64-char hex), bypassing the router')
+    .option('--peer <peerId>', 'pin all requests to a specific peer ID (40-char hex EVM address), bypassing the router')
     .action(async (options) => {
       const globalOpts = getGlobalOptions(program)
       const config = await loadConfig(globalOpts.config)
 
       const pinnedPeerId = options.peer as string | undefined
-      if (pinnedPeerId !== undefined && !/^[0-9a-f]{64}$/i.test(pinnedPeerId)) {
-        console.error(chalk.red('Error: --peer must be a 64-character hex peer ID.'))
+      if (pinnedPeerId !== undefined && !/^(0x)?[0-9a-f]{40}$/i.test(pinnedPeerId)) {
+        console.error(chalk.red('Error: --peer must be a 40-character hex peer ID (EVM address).'))
         process.exit(1)
       }
 
@@ -301,7 +301,8 @@ export function registerConnectCommand(program: Command): void {
       const chainConfig = resolveChainConfig({
         chainId: cryptoOverrides?.chainId,
         rpcUrl: cryptoOverrides?.rpcUrl,
-        escrowContractAddress: cryptoOverrides?.escrowContractAddress,
+        depositsContractAddress: cryptoOverrides?.depositsContractAddress,
+        channelsContractAddress: cryptoOverrides?.channelsContractAddress,
         usdcContractAddress: cryptoOverrides?.usdcContractAddress,
       })
       let settlementEnabled = settlementEnv ?? true
@@ -319,13 +320,16 @@ export function registerConnectCommand(program: Command): void {
         paymentsConfig = {
           enabled: true,
           rpcUrl: chainConfig.rpcUrl,
-          contractAddress: chainConfig.escrowContractAddress,
+          depositsAddress: chainConfig.depositsContractAddress,
+          channelsAddress: chainConfig.channelsContractAddress,
           usdcAddress: chainConfig.usdcContractAddress,
           chainId: chainConfig.evmChainId,
-          defaultEscrowAmountUSDC: cryptoOverrides?.defaultLockAmountUSDC
+          defaultDepositAmountUSDC: cryptoOverrides?.defaultLockAmountUSDC
             ? String(Math.round(parseFloat(cryptoOverrides.defaultLockAmountUSDC) * 1_000_000))
             : '1000000',
           platformFeeRate: config.payments?.platformFeeRate,
+          maxPerRequestUsdc: config.payments?.maxPerRequestUsdc ?? '100000',
+          maxReserveAmountUsdc: config.payments?.maxReserveAmountUsdc ?? '1000000',
         }
       }
 
@@ -342,6 +346,10 @@ export function registerConnectCommand(program: Command): void {
           `  max pricing defaults (USD/1M): input=${effectiveBuyerConfig.maxPricing.defaults.inputUsdPerMillion}, output=${effectiveBuyerConfig.maxPricing.defaults.outputUsdPerMillion}`
         )
       )
+      const maxPerRequestUsdc = config.payments?.maxPerRequestUsdc ?? '100000'
+      const maxReserveAmountUsdc = config.payments?.maxReserveAmountUsdc ?? '1000000'
+      console.log(chalk.dim(`  max per-request USDC: ${(Number(maxPerRequestUsdc) / 1_000_000).toFixed(6)}`))
+      console.log(chalk.dim(`  max reserve USDC: ${(Number(maxReserveAmountUsdc) / 1_000_000).toFixed(6)}`))
       console.log(chalk.dim(`  min peer reputation: ${effectiveBuyerConfig.minPeerReputation}`))
       console.log(chalk.dim(`  proxy port: ${effectiveBuyerConfig.proxyPort}`))
       if (pinnedPeerId) {
@@ -373,16 +381,16 @@ export function registerConnectCommand(program: Command): void {
       if (paymentsConfig?.enabled) {
         try {
           const identity = node.identity!
-          const address = identityToEvmAddress(identity)
-          const escrowClient = new BaseEscrowClient({
+          const address = identity.wallet.address
+          const depositsClient = new DepositsClient({
             rpcUrl: chainConfig.rpcUrl,
-            contractAddress: chainConfig.escrowContractAddress,
+            contractAddress: chainConfig.depositsContractAddress,
             usdcAddress: chainConfig.usdcContractAddress,
           })
-          const account = await escrowClient.getBuyerBalance(address)
+          const account = await depositsClient.getBuyerBalance(address)
           console.log(chalk.dim(`Wallet: ${address}`))
           const availUsdc = Number(account.available) / 1_000_000
-          console.log(chalk.dim(`Escrow available: ${availUsdc.toFixed(6)} USDC`))
+          console.log(chalk.dim(`Deposits available: ${availUsdc.toFixed(6)} USDC`))
         } catch {
           // Non-fatal — chain may not be available
           console.log(chalk.dim('Payment balance unavailable (chain not reachable)'))
@@ -438,7 +446,7 @@ export function registerConnectCommand(program: Command): void {
           await proxy.stop()
         }
         await node.stop()
-        nodeSpinner.succeed('Disconnected. All sessions finalized.')
+        nodeSpinner.succeed('Disconnected. All channels finalized.')
       })
     })
 }

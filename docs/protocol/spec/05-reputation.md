@@ -149,7 +149,7 @@ interface ReputationAttestation {
   };
   /** Unix timestamp (ms) when the attestation was created. */
   timestamp: number;
-  /** Ed25519 signature over the canonical encoding of all other fields. */
+  /** secp256k1 signature (EIP-191 personal_sign) over the canonical encoding of all other fields. */
   signature: string;
 }
 ```

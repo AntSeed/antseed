@@ -14,7 +14,7 @@ import { setupShutdownHandler } from '../shutdown.js'
 import { loadProviderPlugin, buildPluginConfig, getPackageVersions } from '../../plugins/loader.js'
 import { resolveEffectiveSellerConfig, type SellerRuntimeOverrides } from '../../config/effective.js'
 import type { SellerCLIConfig } from '../../config/types.js'
-import { BoundAgentProvider, loadBoundAgent, type BoundAgentDefinition } from '@antseed/bound-agent'
+import { AntAgentProvider, loadAntAgent, type AntAgentDefinition } from '@antseed/ant-agent'
 
 function getStateFile(dataDir: string): string {
   return join(dataDir, 'daemon.state.json')
@@ -252,8 +252,8 @@ export function registerSeedCommand(program: Command): void {
         : undefined
 
       const preferredMethod = config.payments.preferredMethod
-      const defaultEscrowAmountUSDC = process.env['ANTSEED_DEFAULT_ESCROW_USDC'] ?? config.payments.crypto?.defaultLockAmountUSDC ?? '1'
-      const defaultEscrowAmountUSDCBaseUnits = toUSDCBaseUnits(defaultEscrowAmountUSDC, '1000000')
+      const defaultDepositAmountUSDC = process.env['ANTSEED_DEFAULT_DEPOSIT_USDC'] ?? config.payments.crypto?.defaultLockAmountUSDC ?? '1'
+      const defaultDepositAmountUSDCBaseUnits = toUSDCBaseUnits(defaultDepositAmountUSDC, '1000000')
       const settlementIdleMsRaw = process.env['ANTSEED_SETTLEMENT_IDLE_MS']
       const settlementIdleMs = settlementIdleMsRaw ? parseInt(settlementIdleMsRaw, 10) : 30_000
       const sellerWalletAddress = process.env['ANTSEED_SELLER_WALLET_ADDRESS']
@@ -263,17 +263,19 @@ export function registerSeedCommand(program: Command): void {
         const cc = resolveChainConfig({
           chainId: config.payments.crypto?.chainId,
           rpcUrl: config.payments.crypto?.rpcUrl,
-          escrowContractAddress: config.payments.crypto?.escrowContractAddress,
+          depositsContractAddress: config.payments.crypto?.depositsContractAddress,
+          channelsContractAddress: config.payments.crypto?.channelsContractAddress,
           usdcContractAddress: config.payments.crypto?.usdcContractAddress,
         })
         const defaultLockAmountUSDCBaseUnits = toUSDCBaseUnits(
-          config.payments.crypto?.defaultLockAmountUSDC ?? defaultEscrowAmountUSDC,
-          defaultEscrowAmountUSDCBaseUnits,
+          config.payments.crypto?.defaultLockAmountUSDC ?? defaultDepositAmountUSDC,
+          defaultDepositAmountUSDCBaseUnits,
         )
         const cryptoConfig: NonNullable<PaymentConfig['crypto']> = {
           chainId: cc.chainId,
           rpcUrl: cc.rpcUrl,
-          contractAddress: cc.escrowContractAddress,
+          depositsContractAddress: cc.depositsContractAddress,
+          channelsContractAddress: cc.channelsContractAddress,
           usdcAddress: cc.usdcContractAddress,
           defaultLockAmountUSDC: defaultLockAmountUSDCBaseUnits,
         }
@@ -321,6 +323,8 @@ export function registerSeedCommand(program: Command): void {
           `  enabled providers: ${effectiveSellerConfig.enabledProviders.length > 0 ? effectiveSellerConfig.enabledProviders.join(', ') : '(none)'}`
         )
       )
+      const minBudgetPerRequest = config.payments.minBudgetPerRequest ?? '10000'
+      console.log(chalk.dim(`  min budget per request: ${minBudgetPerRequest} base units`))
       console.log(chalk.dim(`  reserve floor: ${effectiveSellerConfig.reserveFloor}`))
       console.log(chalk.dim(`  max concurrent buyers: ${effectiveSellerConfig.maxConcurrentBuyers}`))
       console.log('')
@@ -343,20 +347,25 @@ export function registerSeedCommand(program: Command): void {
           paymentMethod: preferredMethod,
           platformFeeRate: config.payments.platformFeeRate,
           settlementIdleMs: Number.isFinite(settlementIdleMs) ? settlementIdleMs : 30_000,
-          defaultEscrowAmountUSDC: defaultEscrowAmountUSDCBaseUnits,
+          defaultDepositAmountUSDC: defaultDepositAmountUSDCBaseUnits,
           sellerWalletAddress,
           paymentConfig,
-          // Top-level fields required by the node for escrow client + EIP-712 domain
+          minBudgetPerRequest: config.payments.minBudgetPerRequest ?? '10000',
+          // Top-level fields required by the node for contract clients + EIP-712 domain
           ...(paymentConfig?.crypto ? {
             rpcUrl: paymentConfig.crypto.rpcUrl,
-            contractAddress: paymentConfig.crypto.contractAddress,
+            depositsAddress: paymentConfig.crypto.depositsContractAddress,
+            channelsAddress: paymentConfig.crypto.channelsContractAddress,
             usdcAddress: paymentConfig.crypto.usdcAddress,
+            identityRegistryAddress: resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).identityRegistryAddress,
+            statsAddress: resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).statsContractAddress,
+            stakingAddress: resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).stakingContractAddress,
             chainId: resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).evmChainId,
           } : {}),
         },
       })
 
-      // Wrap provider with bound agent if configured
+      // Wrap provider with ant agent if configured
       if (effectiveSellerConfig.agentDir) {
         const baseDir = globalOpts.config ? dirname(resolve(globalOpts.config)) : process.cwd()
         const resolvePath = (p: string) => isAbsolute(p) ? p : resolve(baseDir, p)
@@ -364,24 +373,24 @@ export function registerSeedCommand(program: Command): void {
         try {
           if (typeof effectiveSellerConfig.agentDir === 'string') {
             // Single agent for all services
-            const agentDef = await loadBoundAgent(resolvePath(effectiveSellerConfig.agentDir))
-            provider = new BoundAgentProvider(provider, agentDef)
+            const agentDef = await loadAntAgent(resolvePath(effectiveSellerConfig.agentDir))
+            provider = new AntAgentProvider(provider, agentDef)
             const k = agentDef.knowledge.length
-            console.log(chalk.dim(`  bound agent: "${agentDef.name}" (${k} knowledge module${k !== 1 ? 's' : ''})`))
+            console.log(chalk.dim(`  ant agent: "${agentDef.name}" (${k} knowledge module${k !== 1 ? 's' : ''})`))
           } else {
             // Per-service agents
-            const agentMap: Record<string, BoundAgentDefinition> = {}
+            const agentMap: Record<string, AntAgentDefinition> = {}
             for (const [service, dir] of Object.entries(effectiveSellerConfig.agentDir)) {
-              const agentDef = await loadBoundAgent(resolvePath(dir))
+              const agentDef = await loadAntAgent(resolvePath(dir))
               agentMap[service] = agentDef
               const k = agentDef.knowledge.length
               const label = service === '*' ? '(default)' : service
-              console.log(chalk.dim(`  bound agent: "${agentDef.name}" → ${label} (${k} knowledge module${k !== 1 ? 's' : ''})`))
+              console.log(chalk.dim(`  ant agent: "${agentDef.name}" → ${label} (${k} knowledge module${k !== 1 ? 's' : ''})`))
             }
-            provider = new BoundAgentProvider(provider, agentMap)
+            provider = new AntAgentProvider(provider, agentMap)
           }
         } catch (err) {
-          console.error(chalk.red(`Failed to load bound agent: ${(err as Error).message}`))
+          console.error(chalk.red(`Failed to load ant agent: ${(err as Error).message}`))
           process.exit(1)
         }
       }
@@ -471,8 +480,8 @@ export function registerSeedCommand(program: Command): void {
           }
         }
 
-        const activeSessionDetails = [...trackedSessions, ...syntheticDetails]
-        const activeSessionsCount = Math.max(node.getActiveSellerSessionCount(), cap.current)
+        const activeChannelDetails = [...trackedSessions, ...syntheticDetails]
+        const activeChannelsCount = Math.max(node.getActiveSellerChannelCount(), cap.current)
 
         return {
           state: 'seeding',
@@ -504,8 +513,8 @@ export function registerSeedCommand(program: Command): void {
           startedAt,
           // Fields the dashboard reads
           peerCount: 0,
-          activeSessions: activeSessionsCount,
-          activeSessionDetails,
+          activeChannels: activeChannelsCount,
+          activeChannelDetails,
           capacityUsedPercent: cap.max > 0 ? Math.round((cap.current / cap.max) * 100) : 0,
           earningsToday: '0',
           tokensToday: 0,
@@ -555,7 +564,7 @@ export function registerSeedCommand(program: Command): void {
         nodeSpinner.start('Shutting down seeding daemon...')
         await node.stop()
         await unlink(getStateFile(globalOpts.dataDir)).catch(() => {})
-        nodeSpinner.succeed('Seeding daemon stopped. Sessions finalized.')
+        nodeSpinner.succeed('Seeding daemon stopped. Channels finalized.')
       })
     })
 }

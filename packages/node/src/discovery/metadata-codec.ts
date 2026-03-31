@@ -11,7 +11,7 @@ const PUBLIC_ADDRESS_METADATA_VERSION = 5;
 
 /**
  * Encode metadata into binary format:
- * [version:1][peerId:32][regionLen:1][region:N][timestamp:8 BigUint64][providerCount:1]
+ * [version:1][peerId:20][regionLen:1][region:N][timestamp:8 BigUint64][providerCount:1]
  * for each provider:
  *   [providerLen:1][provider:N][serviceCount:1][services...]
  *   [defaultInputPrice:4][defaultOutputPrice:4]
@@ -26,7 +26,7 @@ const PUBLIC_ADDRESS_METADATA_VERSION = 5;
  * protocol(v4+): [protocolLen:1][protocol:N]
  * [displayNameFlag:1][displayNameLen:1][displayName:N] (v3+ only)
  * [publicAddressFlag:1][publicAddressLen:1][publicAddress:N] (v5+ only)
- * [signature:64]
+ * [signature:65]
  */
 export function encodeMetadata(metadata: PeerMetadata): Uint8Array {
   const bodyBytes = encodeBody(metadata);
@@ -53,7 +53,7 @@ function encodeBody(metadata: PeerMetadata): Uint8Array {
   // version: 1 byte
   parts.push(new Uint8Array([metadata.version]));
 
-  // peerId: 32 bytes
+  // peerId: 20 bytes (EVM address)
   parts.push(hexToBytes(metadata.peerId));
 
   // region: length-prefixed
@@ -246,25 +246,13 @@ function encodeBody(metadata: PeerMetadata): Uint8Array {
     }
   }
 
-  // EVM address: 1 flag byte + 20 address bytes if present
-  if (metadata.evmAddress) {
-    parts.push(new Uint8Array([1])); // flag: present
-    // Strip 0x prefix if present, then decode 20 bytes
-    const addrHex = metadata.evmAddress.startsWith('0x')
-      ? metadata.evmAddress.slice(2)
-      : metadata.evmAddress;
-    parts.push(hexToBytes(addrHex.toLowerCase().padStart(40, '0')));
-  } else {
-    parts.push(new Uint8Array([0])); // flag: absent
-  }
-
-  // On-chain reputation: 1 flag byte + 10 data bytes (1 reputation + 4 sessionCount + 4 disputeCount + 1 reserved)
+  // On-chain reputation: 1 flag byte + 10 data bytes (1 reputation + 4 channelCount + 4 disputeCount + 1 reserved)
   if (metadata.onChainReputation !== undefined) {
     parts.push(new Uint8Array([1])); // flag: present
     const repBuf = new ArrayBuffer(10);
     const repView = new DataView(repBuf);
     repView.setUint8(0, Math.min(255, Math.max(0, metadata.onChainReputation)));
-    repView.setUint32(1, metadata.onChainSessionCount ?? 0, false);
+    repView.setUint32(1, metadata.onChainChannelCount ?? 0, false);
     repView.setUint32(5, metadata.onChainDisputeCount ?? 0, false);
     repView.setUint8(9, 0); // reserved
     parts.push(new Uint8Array(repBuf));
@@ -296,16 +284,19 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
   // version: 1 byte
   checkBounds(offset, 1, data.length);
   const version = data[offset]!;
+  if (version < 6) {
+    throw new Error(`Unsupported metadata version ${version}: pre-v6 Ed25519 format is no longer supported`);
+  }
   const hasServiceCategoryExtensions = version >= SERVICE_CATEGORIES_METADATA_VERSION;
   const hasServiceApiProtocolExtensions = version >= SERVICE_API_PROTOCOLS_METADATA_VERSION;
   const hasPublicAddressExtension = version >= PUBLIC_ADDRESS_METADATA_VERSION;
   offset += 1;
 
-  // peerId: 32 bytes
-  checkBounds(offset, 32, data.length);
-  const peerIdBytes = data.slice(offset, offset + 32);
+  // peerId: 20 bytes (EVM address)
+  checkBounds(offset, 20, data.length);
+  const peerIdBytes = data.slice(offset, offset + 20);
   const peerId = bytesToHex(peerIdBytes);
-  offset += 32;
+  offset += 20;
 
   // region: length-prefixed
   checkBounds(offset, 1, data.length);
@@ -489,14 +480,14 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
 
   let displayName: string | undefined;
   if (hasServiceCategoryExtensions) {
-    checkBounds(offset, 1, data.length - 64);
+    checkBounds(offset, 1, data.length - 65);
     const displayNameFlag = data[offset]!;
     offset += 1;
     if (displayNameFlag === 1) {
-      checkBounds(offset, 1, data.length - 64);
+      checkBounds(offset, 1, data.length - 65);
       const displayNameLen = data[offset]!;
       offset += 1;
-      checkBounds(offset, displayNameLen, data.length - 64);
+      checkBounds(offset, displayNameLen, data.length - 65);
       displayName = new TextDecoder().decode(data.slice(offset, offset + displayNameLen));
       offset += displayNameLen;
     }
@@ -504,14 +495,14 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
 
   let publicAddress: string | undefined;
   if (hasPublicAddressExtension) {
-    checkBounds(offset, 1, data.length - 64);
+    checkBounds(offset, 1, data.length - 65);
     const publicAddressFlag = data[offset]!;
     offset += 1;
     if (publicAddressFlag === 1) {
-      checkBounds(offset, 1, data.length - 64);
+      checkBounds(offset, 1, data.length - 65);
       const publicAddressLen = data[offset]!;
       offset += 1;
-      checkBounds(offset, publicAddressLen, data.length - 64);
+      checkBounds(offset, publicAddressLen, data.length - 65);
       publicAddress = new TextDecoder().decode(data.slice(offset, offset + publicAddressLen));
       offset += publicAddressLen;
     }
@@ -521,42 +512,42 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
   const PRICING_UNIT_REVERSE: Array<'token' | 'request' | 'minute' | 'task'> = ['token', 'request', 'minute', 'task'];
   let offerings: PeerOffering[] | undefined;
 
-  const remainingBeforeSignature = data.length - offset - 64;
+  const remainingBeforeSignature = data.length - offset - 65;
   if (remainingBeforeSignature >= 2) {
     offerings = [];
-    checkBounds(offset, 2, data.length - 64);
+    checkBounds(offset, 2, data.length - 65);
     const offeringCount = new DataView(data.buffer, data.byteOffset + offset, 2).getUint16(0, false);
     offset += 2;
 
     for (let i = 0; i < offeringCount; i++) {
-      checkBounds(offset, 1, data.length - 64);
+      checkBounds(offset, 1, data.length - 65);
       const capLen = data[offset]!; offset += 1;
-      checkBounds(offset, capLen, data.length - 64);
+      checkBounds(offset, capLen, data.length - 65);
       const capability = new TextDecoder().decode(data.slice(offset, offset + capLen)); offset += capLen;
 
-      checkBounds(offset, 1, data.length - 64);
+      checkBounds(offset, 1, data.length - 65);
       const nameLen = data[offset]!; offset += 1;
-      checkBounds(offset, nameLen, data.length - 64);
+      checkBounds(offset, nameLen, data.length - 65);
       const name = new TextDecoder().decode(data.slice(offset, offset + nameLen)); offset += nameLen;
 
-      checkBounds(offset, 2, data.length - 64);
+      checkBounds(offset, 2, data.length - 65);
       const descLen = new DataView(data.buffer, data.byteOffset + offset, 2).getUint16(0, false); offset += 2;
-      checkBounds(offset, descLen, data.length - 64);
+      checkBounds(offset, descLen, data.length - 65);
       const description = new TextDecoder().decode(data.slice(offset, offset + descLen)); offset += descLen;
 
-      checkBounds(offset, 1, data.length - 64);
+      checkBounds(offset, 1, data.length - 65);
       const unit = PRICING_UNIT_REVERSE[data[offset]!] ?? 'token'; offset += 1;
 
-      checkBounds(offset, 4, data.length - 64);
+      checkBounds(offset, 4, data.length - 65);
       const pricePerUnit = new DataView(data.buffer, data.byteOffset + offset, 4).getFloat32(0, false); offset += 4;
 
-      checkBounds(offset, 1, data.length - 64);
+      checkBounds(offset, 1, data.length - 65);
       const offeringServiceCount = data[offset]!; offset += 1;
       const offeringServices: string[] = [];
       for (let j = 0; j < offeringServiceCount; j++) {
-        checkBounds(offset, 1, data.length - 64);
+        checkBounds(offset, 1, data.length - 65);
         const serviceLen = data[offset]!; offset += 1;
-        checkBounds(offset, serviceLen, data.length - 64);
+        checkBounds(offset, serviceLen, data.length - 65);
         offeringServices.push(new TextDecoder().decode(data.slice(offset, offset + serviceLen))); offset += serviceLen;
       }
 
@@ -569,42 +560,28 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
     }
   }
 
-  // Optional EVM address (flag + 20 bytes) — present if there are enough remaining bytes before signature
-  let evmAddress: string | undefined;
-  const remainingBeforeEvmSig = data.length - offset - 64;
-  if (remainingBeforeEvmSig >= 1) {
-    const evmFlag = data[offset]!;
-    offset += 1;
-    if (evmFlag === 1) {
-      checkBounds(offset, 20, data.length - 64);
-      const addrBytes = data.slice(offset, offset + 20);
-      evmAddress = '0x' + bytesToHex(addrBytes);
-      offset += 20;
-    }
-  }
-
   // Optional on-chain reputation (flag + 10 bytes)
   let onChainReputation: number | undefined;
-  let onChainSessionCount: number | undefined;
+  let onChainChannelCount: number | undefined;
   let onChainDisputeCount: number | undefined;
-  const remainingBeforeRepSig = data.length - offset - 64;
+  const remainingBeforeRepSig = data.length - offset - 65;
   if (remainingBeforeRepSig >= 1) {
     const repFlag = data[offset]!;
     offset += 1;
     if (repFlag === 1) {
-      checkBounds(offset, 10, data.length - 64);
+      checkBounds(offset, 10, data.length - 65);
       const repView = new DataView(data.buffer, data.byteOffset + offset, 10);
       onChainReputation = repView.getUint8(0);
-      onChainSessionCount = repView.getUint32(1, false);
+      onChainChannelCount = repView.getUint32(1, false);
       onChainDisputeCount = repView.getUint32(5, false);
       // byte 9 is reserved
       offset += 10;
     }
   }
 
-  // signature: 64 bytes
-  checkBounds(offset, 64, data.length);
-  const signatureBytes = data.slice(offset, offset + 64);
+  // signature: 65 bytes (secp256k1 r+s+v)
+  checkBounds(offset, 65, data.length);
+  const signatureBytes = data.slice(offset, offset + 65);
   const signature = bytesToHex(signatureBytes);
 
   return {
@@ -614,9 +591,8 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
     ...(publicAddress ? { publicAddress } : {}),
     providers,
     ...(offerings && offerings.length > 0 ? { offerings } : {}),
-    ...(evmAddress !== undefined ? { evmAddress } : {}),
     ...(onChainReputation !== undefined ? { onChainReputation } : {}),
-    ...(onChainSessionCount !== undefined ? { onChainSessionCount } : {}),
+    ...(onChainChannelCount !== undefined ? { onChainChannelCount } : {}),
     ...(onChainDisputeCount !== undefined ? { onChainDisputeCount } : {}),
     region,
     timestamp,

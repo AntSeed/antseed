@@ -7,7 +7,7 @@ type SessionApprovalCardProps = {
   amount: string;
   peerInfo: {
     reputation: number;
-    sessionCount: number | null;
+    channelCount: number | null;
     disputeCount: number | null;
     networkAgeDays: number | null;
     evmAddress: string | null;
@@ -42,15 +42,15 @@ export function SessionApprovalCard({
     <div className={styles.approval}>
       <div className={styles.approvalText}>
         {hasCredits
-          ? <>Approve a <strong>${amount} USDC</strong> pre-deposit to start a session with <strong>{displayName}</strong>. This is reserved from your escrow balance.</>
-          : <>A <strong>${amount} USDC</strong> pre-deposit is required to use <strong>{displayName}</strong>. Add credits to your escrow first.</>
+          ? <>Approve a <strong>${amount} USDC</strong> pre-deposit to start a session with <strong>{displayName}</strong>. This is reserved from your deposit balance.</>
+          : <>A <strong>${amount} USDC</strong> pre-deposit is required to use <strong>{displayName}</strong>. Add credits to your deposits first.</>
         }
       </div>
 
-      {peerInfo && (peerInfo.reputation > 0 || peerInfo.sessionCount !== null) && (
+      {peerInfo && (peerInfo.reputation > 0 || peerInfo.channelCount !== null) && (
         <div className={styles.approvalStats}>
           {peerInfo.reputation > 0 && <span>{peerInfo.reputation} reputation</span>}
-          {peerInfo.sessionCount !== null && <span>{peerInfo.sessionCount} sessions</span>}
+          {peerInfo.channelCount !== null && <span>{peerInfo.channelCount} channels</span>}
           {peerInfo.networkAgeDays !== null && <span>{peerInfo.networkAgeDays}d in network</span>}
         </div>
       )}

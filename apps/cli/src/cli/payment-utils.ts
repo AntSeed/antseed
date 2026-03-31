@@ -1,15 +1,16 @@
 import type { AntseedConfig } from '../config/types.js';
 import {
-  BaseEscrowClient,
+  DepositsClient,
+  ChannelsClient,
+  StakingClient,
   loadOrCreateIdentity,
-  identityToEvmWallet,
-  identityToEvmAddress,
 } from '@antseed/node';
 import {
   IdentityClient,
+  StatsClient,
   EmissionsClient,
   SubPoolClient,
-  SessionStore,
+  ChannelStore,
 } from '@antseed/node/payments';
 import type { Identity } from '@antseed/node';
 
@@ -40,7 +41,7 @@ export function parseUsdcToBaseUnits(amount: string): bigint {
 
 export interface CryptoContext {
   identity: Identity;
-  wallet: ReturnType<typeof identityToEvmWallet>;
+  wallet: Identity['wallet'];
   address: string;
 }
 
@@ -49,8 +50,8 @@ export interface CryptoContext {
  */
 export async function loadCryptoContext(dataDir: string): Promise<CryptoContext> {
   const identity = await loadOrCreateIdentity(dataDir);
-  const wallet = identityToEvmWallet(identity);
-  const address = identityToEvmAddress(identity);
+  const wallet = identity.wallet;
+  const address = identity.wallet.address;
   return { identity, wallet, address };
 }
 
@@ -67,14 +68,25 @@ export function requireCryptoConfig(config: AntseedConfig): NonNullable<AntseedC
 }
 
 /**
- * Create a BaseEscrowClient from the CLI config.
+ * Create a DepositsClient from the CLI config.
  */
-export function createEscrowClient(config: AntseedConfig): BaseEscrowClient {
+export function createDepositsClient(config: AntseedConfig): DepositsClient {
   const crypto = requireCryptoConfig(config);
-  return new BaseEscrowClient({
+  return new DepositsClient({
     rpcUrl: crypto.rpcUrl,
-    contractAddress: crypto.escrowContractAddress,
+    contractAddress: crypto.depositsContractAddress,
     usdcAddress: crypto.usdcContractAddress,
+  });
+}
+
+/**
+ * Create a ChannelsClient from the CLI config.
+ */
+export function createChannelsClient(config: AntseedConfig): ChannelsClient {
+  const crypto = requireCryptoConfig(config);
+  return new ChannelsClient({
+    rpcUrl: crypto.rpcUrl,
+    contractAddress: crypto.channelsContractAddress,
   });
 }
 
@@ -83,12 +95,41 @@ export function createEscrowClient(config: AntseedConfig): BaseEscrowClient {
  */
 export function createIdentityClient(config: AntseedConfig): IdentityClient {
   const crypto = requireCryptoConfig(config);
-  if (!crypto.identityContractAddress) {
-    throw new Error('No identity contract address configured. Set payments.crypto.identityContractAddress in your config file.');
+  if (!crypto.identityRegistryAddress) {
+    throw new Error('No identity registry address configured. Set payments.crypto.identityRegistryAddress in your config file.');
   }
   return new IdentityClient({
     rpcUrl: crypto.rpcUrl,
-    contractAddress: crypto.identityContractAddress,
+    contractAddress: crypto.identityRegistryAddress,
+  });
+}
+
+/**
+ * Create a StatsClient from the CLI config.
+ */
+export function createStatsClient(config: AntseedConfig): StatsClient {
+  const crypto = requireCryptoConfig(config);
+  if (!crypto.statsContractAddress) {
+    throw new Error('No stats contract address configured. Set payments.crypto.statsContractAddress in your config file.');
+  }
+  return new StatsClient({
+    rpcUrl: crypto.rpcUrl,
+    contractAddress: crypto.statsContractAddress,
+  });
+}
+
+/**
+ * Create a StakingClient from the CLI config.
+ */
+export function createStakingClient(config: AntseedConfig): StakingClient {
+  const crypto = requireCryptoConfig(config);
+  if (!crypto.stakingContractAddress) {
+    throw new Error('No staking contract address configured. Set payments.crypto.stakingContractAddress in your config file.');
+  }
+  return new StakingClient({
+    rpcUrl: crypto.rpcUrl,
+    contractAddress: crypto.stakingContractAddress,
+    usdcAddress: crypto.usdcContractAddress,
   });
 }
 
@@ -122,8 +163,8 @@ export function createSubPoolClient(config: AntseedConfig): SubPoolClient {
 }
 
 /**
- * Open a SessionStore from the given data directory.
+ * Open a ChannelStore from the given data directory.
  */
-export function openSessionStore(dataDir: string): SessionStore {
-  return new SessionStore(dataDir);
+export function openChannelStore(dataDir: string): ChannelStore {
+  return new ChannelStore(dataDir);
 }

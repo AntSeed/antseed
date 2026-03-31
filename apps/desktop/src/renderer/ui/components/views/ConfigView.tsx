@@ -18,7 +18,8 @@ export function ConfigView({ active }: ConfigViewProps) {
   const [requireManualApproval, setRequireManualApproval] = useState(false);
   const [chainId, setChainId] = useState('');
   const [rpcUrl, setRpcUrl] = useState('');
-  const [escrowAddress, setEscrowAddress] = useState('');
+  const [depositsAddress, setDepositsAddress] = useState('');
+  const [channelsAddress, setChannelsAddress] = useState('');
   const [usdcAddress, setUsdcAddress] = useState('');
   const [dirty, setDirty] = useState(false);
 
@@ -33,7 +34,8 @@ export function ConfigView({ active }: ConfigViewProps) {
       setRequireManualApproval(configFormData.requireManualApproval);
       setChainId(configFormData.cryptoChainId);
       setRpcUrl(configFormData.cryptoRpcUrl);
-      setEscrowAddress(configFormData.cryptoEscrowAddress);
+      setDepositsAddress(configFormData.cryptoDepositsAddress);
+      setChannelsAddress(configFormData.cryptoChannelsAddress);
       setUsdcAddress(configFormData.cryptoUsdcAddress);
       setInitialized(true);
     }
@@ -59,7 +61,8 @@ export function ConfigView({ active }: ConfigViewProps) {
       requireManualApproval,
       cryptoChainId: chainId,
       cryptoRpcUrl: rpcUrl,
-      cryptoEscrowAddress: escrowAddress,
+      cryptoDepositsAddress: depositsAddress,
+      cryptoChannelsAddress: channelsAddress,
       cryptoUsdcAddress: usdcAddress,
     });
     setDirty(false);
@@ -172,15 +175,28 @@ export function ConfigView({ active }: ConfigViewProps) {
             </label>
             <label className="settings-item">
               <div className="settings-copy">
-                <h4>Escrow Contract</h4>
-                <p>AntseedEscrow contract address.</p>
+                <h4>Deposits Contract</h4>
+                <p>AntseedDeposits contract address.</p>
               </div>
               <input
                 type="text"
                 className="form-input settings-control"
-                value={escrowAddress}
+                value={depositsAddress}
                 placeholder="0x..."
-                onChange={(e) => { setEscrowAddress(e.target.value); markDirty(); }}
+                onChange={(e) => { setDepositsAddress(e.target.value); markDirty(); }}
+              />
+            </label>
+            <label className="settings-item">
+              <div className="settings-copy">
+                <h4>Channels Contract</h4>
+                <p>AntseedChannels contract address.</p>
+              </div>
+              <input
+                type="text"
+                className="form-input settings-control"
+                value={channelsAddress}
+                placeholder="0x..."
+                onChange={(e) => { setChannelsAddress(e.target.value); markDirty(); }}
               />
             </label>
             <label className="settings-item">

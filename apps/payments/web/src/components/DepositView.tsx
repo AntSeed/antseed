@@ -6,7 +6,10 @@ import {
   useWaitForTransactionReceipt,
 } from 'wagmi';
 import { parseUnits } from 'viem';
+import { parseAbi } from 'viem';
 import type { PaymentConfig } from '../types';
+import { getOperatorInfo, signOperatorAuth } from '../api';
+import { CHANNELS_ABI } from '../channels-abi';
 import './DepositView.scss';
 
 interface DepositViewProps {
@@ -15,7 +18,7 @@ interface DepositViewProps {
   onDeposited: () => void;
 }
 
-const ESCROW_ABI = [
+const DEPOSITS_ABI = [
   {
     name: 'depositFor',
     type: 'function',
@@ -122,14 +125,17 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
     hash: depositTxHash,
   });
 
+  // Step 3: Auto-set operator (best-effort after deposit)
+  const { writeContractAsync: writeOperatorAsync } = useWriteContract();
+
   // When approve confirms, trigger deposit
   useEffect(() => {
     if (approveConfirmed && step === 'approving' && config && depositTarget) {
       setStep('depositing');
       const usdcAmount = parseUnits(amount, 6);
       writeDeposit({
-        address: config.escrowContractAddress as `0x${string}`,
-        abi: ESCROW_ABI,
+        address: config.depositsContractAddress as `0x${string}`,
+        abi: DEPOSITS_ABI,
         functionName: 'depositFor',
         args: [depositTarget as `0x${string}`, usdcAmount],
       }, {
@@ -141,13 +147,35 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
     }
   }, [approveConfirmed, step, config, depositTarget, amount, writeDeposit]);
 
-  // When deposit confirms, show success
+  // When deposit confirms, show success and auto-set operator
   useEffect(() => {
     if (depositConfirmed && step === 'depositing') {
       setStep('done');
       onDeposited();
+
+      // Auto-set operator after first deposit (best-effort, non-blocking)
+      (async () => {
+        try {
+          const opInfo = await getOperatorInfo();
+          const zeroAddr = '0x0000000000000000000000000000000000000000';
+          if (opInfo.operator === zeroAddr && address && config?.channelsContractAddress) {
+            const signResult = await signOperatorAuth(address);
+            if (signResult.ok) {
+              await writeOperatorAsync({
+                address: config.channelsContractAddress as `0x${string}`,
+                abi: parseAbi(CHANNELS_ABI),
+                functionName: 'setOperator',
+                args: [signResult.buyer as `0x${string}`, address as `0x${string}`, BigInt(signResult.nonce), signResult.signature as `0x${string}`],
+              });
+            }
+          }
+        } catch {
+          // Non-critical — operator can be set later via Channels tab
+        }
+      })();
     }
-  }, [depositConfirmed, step, onDeposited]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- writeOperatorAsync is stable from useWriteContract
+  }, [depositConfirmed, step, onDeposited, address, config]);
 
   const handleDeposit = useCallback(() => {
     if (!address || !amount || parseFloat(amount) <= 0 || !config || !depositTarget) return;
@@ -163,7 +191,7 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
       address: config.usdcContractAddress as `0x${string}`,
       abi: ERC20_ABI,
       functionName: 'approve',
-      args: [config.escrowContractAddress as `0x${string}`, usdcAmount],
+      args: [config.depositsContractAddress as `0x${string}`, usdcAmount],
     }, {
       onError: (err) => {
         setStep('idle');
@@ -272,7 +300,7 @@ function CardDepositPlaceholder() {
         </div>
         <div className="deposit-card-coming-title">Credit card deposits coming soon</div>
         <div className="deposit-card-coming-desc">
-          Direct credit card to escrow deposits are being integrated.
+          Direct credit card deposits are being integrated.
           For now, use the crypto wallet option.
         </div>
       </div>

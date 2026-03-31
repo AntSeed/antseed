@@ -119,9 +119,9 @@ Pricing is configured in USD per 1M tokens with role-specific defaults and optio
 
 Service categories are normalized to lowercase tags. Recommended tags include: `privacy`, `legal`, `uncensored`, `coding`, `finance`, `tee` (custom tags are also allowed).
 
-### Bound Agent
+### Ant Agent
 
-Providers can wrap their service with a bound agent — a read-only, knowledge-augmented AI service that injects a persona, guardrails, and on-demand loaded knowledge into buyer requests.
+Providers can wrap their service with an ant agent — a read-only, knowledge-augmented AI service that injects a persona, guardrails, and on-demand loaded knowledge into buyer requests.
 
 ```json
 {
@@ -133,7 +133,7 @@ Providers can wrap their service with a bound agent — a read-only, knowledge-a
 
 The agent directory contains an `agent.json` manifest that defines the agent's persona, guardrails, and knowledge modules. Knowledge modules are loaded on demand via the `antseed_load_knowledge` tool — the LLM decides which modules to load during the conversation and only relevant knowledge is brought into context. Buyers only see the LLM's natural response, never the injected content or internal tool calls.
 
-See the [`@antseed/bound-agent` README](../../packages/bound-agent/README.md) for the full manifest reference and directory structure.
+See the [`@antseed/ant-agent` README](../../packages/ant-agent/README.md) for the full manifest reference and directory structure.
 
 Role-first config examples:
 
@@ -175,7 +175,7 @@ After `antseed connect` is running, you can override the service or peer for all
 antseed connection set --service claude-opus-4-6
 
 # Pin all requests to a specific peer (bypasses router for peer selection)
-antseed connection set --peer <64-char-hex-peer-id>
+antseed connection set --peer <40-char-hex-peer-id>
 
 # Combine both in one command
 antseed connection set --service claude-sonnet-4-6 --peer <peer-id>
@@ -198,7 +198,7 @@ The service override rewrites the `model` field in the request body **before rou
 ## Settlement Runtime (Seeder)
 
 `antseed seed` can enable automatic session settlement when payment config is present.
-`antseed connect` can also enable buyer-side escrow/session locking with the same payment config.
+`antseed connect` can also enable buyer-side deposits/session locking with the same payment config.
 
 Common runtime env controls:
 - `ANTSEED_ENABLE_SETTLEMENT=true|false`
@@ -210,7 +210,8 @@ Common runtime env controls:
 Crypto settlement also requires `config.payments.crypto` values in your config file:
 - `chainId` (`base` or `arbitrum`)
 - `rpcUrl`
-- `escrowContractAddress`
+- `depositsContractAddress`
+- `channelsContractAddress`
 - `usdcContractAddress`
 
 If `ANTSEED_ENABLE_SETTLEMENT` is not explicitly set and the RPC endpoint is unreachable,
@@ -218,9 +219,9 @@ the CLI now auto-disables settlement for that run and logs a warning instead of 
 Set `ANTSEED_ENABLE_SETTLEMENT=true` to force-enable settlement checks.
 
 Runtime behavior:
-- session opens -> optional escrow deposit
-- session finalizes -> exact on-chain split settlement (`seller payout + platform fee + buyer refund remainder`)
-- no receipts -> escrow refund path
+- session opens -> optional deposit into deposits contract
+- session finalizes -> exact on-chain split settlement via sessions contract (`seller payout + platform fee + buyer refund remainder`)
+- no receipts -> deposit refund path
 
 Provider-specific options are configured via each plugin's config schema (see `antseed plugin add --help`).
 

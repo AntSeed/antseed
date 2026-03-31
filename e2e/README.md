@@ -17,10 +17,10 @@ npm run test:watch  # Watch mode
 Run a complete local payment + networking flow (no external API keys):
 
 1. Start a local Anvil chain
-2. Build and deploy `MockUSDC` + `AntseedEscrow` with Foundry
+2. Build and deploy `MockUSDC` + `AntseedIdentity` + `AntseedStaking` + `AntseedDeposits` + `AntseedChannels` with Foundry
 3. Start isolated local DHT bootstrap + seller + buyer nodes
 4. Mint/fund buyer + seller wallets
-5. Buyer deposits escrow, sends a real P2P request, then triggers settlement
+5. Buyer deposits into AntseedDeposits, sends a real P2P request, then triggers settlement
 6. Verify on-chain settled state, balances, and reputation updates
 
 ```bash

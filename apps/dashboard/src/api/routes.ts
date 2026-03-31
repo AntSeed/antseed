@@ -78,9 +78,9 @@ export interface PeersResponse {
   degraded: boolean;
 }
 
-/** Response type for GET /api/sessions */
-export interface SessionsResponse {
-  sessions: SessionMetrics[];
+/** Response type for GET /api/channels */
+export interface ChannelsResponse {
+  channels: SessionMetrics[];
   total: number;
   degraded: boolean;
 }
@@ -277,17 +277,17 @@ export async function registerApiRoutes(
     return reply.send({ success: true, stats: dhtQueryService.getNetworkStats() });
   });
 
-  // GET /api/sessions - Session history
+  // GET /api/channels - Channel history
   app.get<{
     Querystring: { limit?: number; offset?: number; status?: string };
-    Reply: SessionsResponse;
-  }>('/api/sessions', async (req, reply) => {
+    Reply: ChannelsResponse;
+  }>('/api/channels', async (req, reply) => {
     try {
       const { limit = 50, offset = 0, status } = req.query;
       const sessions = await getSessionList(storage, limit, offset, status);
-      return reply.send({ sessions: sessions.items, total: sessions.total, degraded: !readiness.meteringDbAvailable });
+      return reply.send({ channels: sessions.items, total: sessions.total, degraded: !readiness.meteringDbAvailable });
     } catch (err) {
-      return reply.code(500).send({ error: `Failed to get sessions: ${(err as Error).message}` } as any);
+      return reply.code(500).send({ error: `Failed to get channels: ${(err as Error).message}` } as any);
     }
   });
 
@@ -457,7 +457,7 @@ async function getSessionList(
 ): Promise<{ items: SessionMetrics[]; total: number }> {
   const merged = new Map<string, SessionListEntry>();
 
-  // Query persisted sessions from the last 30 days.
+  // Query persisted channels from the last 30 days.
   const now = Date.now();
   const thirtyDaysAgo = now - 30 * 24 * 60 * 60 * 1000;
   if (storage) {
@@ -480,11 +480,11 @@ async function getSessionList(
     }
   }
 
-  // Merge live in-memory sessions exposed by the seeding daemon state.
-  // This closes the gap where status says "activeSessions > 0" but metering DB rows
+  // Merge live in-memory channels exposed by the seeding daemon state.
+  // This closes the gap where status says "activeChannels > 0" but metering DB rows
   // are delayed or unavailable for the current active stream.
-  const daemonActiveSessions = await getDaemonActiveSessions();
-  for (const active of daemonActiveSessions) {
+  const daemonActiveChannels = await getDaemonActiveChannels();
+  for (const active of daemonActiveChannels) {
     const existing = merged.get(active.metrics.sessionId);
     if (!existing) {
       merged.set(active.metrics.sessionId, active);
@@ -537,7 +537,7 @@ interface SessionListEntry {
   active: boolean;
 }
 
-type DaemonActiveSession = {
+type DaemonActiveChannel = {
   sessionId?: unknown;
   buyerPeerId?: unknown;
   provider?: unknown;
@@ -557,7 +557,7 @@ function asText(value: unknown, fallback: string): string {
   return typeof value === 'string' && value.trim().length > 0 ? value : fallback;
 }
 
-async function getDaemonActiveSessions(): Promise<SessionListEntry[]> {
+async function getDaemonActiveChannels(): Promise<SessionListEntry[]> {
   const stateFile = join(homedir(), '.antseed', 'daemon.state.json');
   let raw: string;
   try {
@@ -578,9 +578,9 @@ async function getDaemonActiveSessions(): Promise<SessionListEntry[]> {
     return [];
   }
 
-  const details = Array.isArray(root['activeSessionDetails']) ? root['activeSessionDetails'] as DaemonActiveSession[] : [];
-  const activeSessionsCount = Math.max(0, Math.round(asFiniteNumber(root['activeSessions'], 0)));
-  if (details.length === 0 && activeSessionsCount === 0) {
+  const details = Array.isArray(root['activeChannelDetails']) ? root['activeChannelDetails'] as DaemonActiveChannel[] : [];
+  const activeChannelsCount = Math.max(0, Math.round(asFiniteNumber(root['activeChannels'], 0)));
+  if (details.length === 0 && activeChannelsCount === 0) {
     return [];
   }
 
@@ -610,10 +610,10 @@ async function getDaemonActiveSessions(): Promise<SessionListEntry[]> {
     });
   }
 
-  // Fallback: if daemon reports active sessions but does not expose detailed rows yet,
-  // synthesize placeholders so Sessions UI still reflects live load.
-  if (entries.length === 0 && activeSessionsCount > 0) {
-    for (let i = 0; i < activeSessionsCount; i += 1) {
+  // Fallback: if daemon reports active channels but does not expose detailed rows yet,
+  // synthesize placeholders so Channels UI still reflects live load.
+  if (entries.length === 0 && activeChannelsCount > 0) {
+    for (let i = 0; i < activeChannelsCount; i += 1) {
       entries.push({
         metrics: {
           sessionId: `live-${i + 1}`,

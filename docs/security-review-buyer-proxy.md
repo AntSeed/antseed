@@ -2,7 +2,7 @@
 
 **Date:** 2026-03-08
 **Reviewer:** Automated Security Audit
-**Scope:** `apps/cli/src/proxy/buyer-proxy.ts`, `apps/cli/src/proxy/service-api-adapter.ts`, `packages/node/src/proxy/proxy-mux.ts`, `packages/node/src/proxy/request-codec.ts`, `packages/node/src/payments/buyer-payment-manager.ts`, `packages/node/src/payments/evm/escrow-client.ts`, `packages/node/src/types/buyer.ts`
+**Scope:** `apps/cli/src/proxy/buyer-proxy.ts`, `apps/cli/src/proxy/service-api-adapter.ts`, `packages/node/src/proxy/proxy-mux.ts`, `packages/node/src/proxy/request-codec.ts`, `packages/node/src/payments/buyer-payment-manager.ts`, `packages/node/src/payments/evm/sessions-client.ts`, `packages/node/src/types/buyer.ts`
 
 ---
 
@@ -142,14 +142,14 @@
 ### [VERIFY-002] Auto-Acknowledge Receipts Without Amount Validation
 
 - **Location**: `packages/node/src/payments/buyer-payment-manager.ts:183-214` (`handleSellerReceipt`)
-- **Question**: When `autoAck` is enabled (default: `true`), the buyer automatically counter-signs every seller receipt without verifying that the `runningTotal` is reasonable relative to actual usage. A malicious seller could inflate `runningTotal` beyond actual costs, and the buyer would sign an acknowledgment that could later be used in on-chain settlement for a larger amount. **Verify**: Does the on-chain escrow contract cap settlement at `lockedAmount`? If so, the blast radius is limited to the locked amount. If not, this is a High severity financial loss vector.
+- **Question**: When `autoAck` is enabled (default: `true`), the buyer automatically counter-signs every seller receipt without verifying that the `runningTotal` is reasonable relative to actual usage. A malicious seller could inflate `runningTotal` beyond actual costs, and the buyer would sign an acknowledgment that could later be used in on-chain settlement for a larger amount. **Verify**: Does the on-chain channels contract cap settlement at `lockedAmount`? If so, the blast radius is limited to the locked amount. If not, this is a High severity financial loss vector.
   ```typescript
   // packages/node/src/payments/buyer-payment-manager.ts:193-213
   const autoAck = this._config.autoAck ?? true;
   if (autoAck) {
     // Signs receipt.runningTotal without comparing to expected cost
     const ackMsg = buildAckMessage(sessionIdBytes, BigInt(receipt.runningTotal), receipt.requestCount);
-    const sigBytes = await signMessageEd25519(this._identity, ackMsg);
+    const sigBytes = await signData(this._identity, ackMsg);
     paymentMux.sendBuyerAck({ ... });
   }
   ```
@@ -167,7 +167,7 @@
 | **Sensitive data in RAM** | `ProxyMux` zeros chunked upload buffers after use (`chunk.fill(0)`). Good practice. ✅ |
 | **Debug logging** | Debug mode is off by default; when enabled, request/response shapes are logged but body contents are not logged directly. Request bodies are parsed for shape summaries only. Low risk. |
 | **Telemetry headers** | Response headers expose peer metadata (`x-antseed-peer-id`, `x-antseed-peer-address`, pricing, reputation). These are returned to the local client only. Acceptable for localhost. |
-| **ECDSA / Ed25519 signatures** | Payment signatures use `ethers` library's `signMessage` and custom Ed25519 via the node identity. Signature construction uses domain-separated `solidityPackedKeccak256` with type prefixes (`0x01`, `0x02`). ✅ |
+| **ECDSA / secp256k1 signatures** | Payment signatures use `ethers` library's `signMessage` via the node identity. Signature construction uses domain-separated `solidityPackedKeccak256` with type prefixes (`0x01`, `0x02`). ✅ |
 | **Retry logic** | Retries (max 3) evict failing peers from cache and report failures to the router. No amplification risk since retries target different peers. ✅ |
 
 ---

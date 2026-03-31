@@ -10,8 +10,8 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { TextDecoder, TextEncoder } from "node:util";
 import { fileURLToPath } from "node:url";
 
-import { AntseedNode, identityToEvmAddress, toPeerId } from "@antseed/node";
-import { BaseEscrowClient } from "@antseed/node/payments";
+import { AntseedNode, toPeerId } from "@antseed/node";
+import { DepositsClient, ChannelsClient } from "@antseed/node/payments";
 import { DHTNode } from "@antseed/node/discovery";
 
 const RPC_URL = process.env.RPC_URL ?? "http://127.0.0.1:8545";
@@ -31,7 +31,7 @@ const FUND_ETH = process.env.FLOW_FUND_ETH ?? "2ether";
 
 const scriptDir = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = resolve(scriptDir, "..", "..");
-const contractsDir = resolve(repoRoot, "contracts");
+const contractsDir = resolve(repoRoot, "packages", "contracts");
 
 function logStep(message) {
   console.log(`\n[flow] ${message}`);
@@ -253,7 +253,7 @@ async function main() {
       "forge",
       [
         "create",
-        "test/mocks/MockUSDC.sol:MockUSDC",
+        "MockUSDC.sol:MockUSDC",
         "--rpc-url",
         RPC_URL,
         "--private-key",
@@ -265,12 +265,49 @@ async function main() {
     const usdcAddress = parseDeployedAddress(mockDeployOutput);
     logStep(`MockUSDC deployed: ${usdcAddress}`);
 
-    logStep("deploying AntseedEscrow");
-    const escrowDeployOutput = runCommand(
+    logStep("deploying AntseedIdentity");
+    const identityDeployOutput = runCommand(
       "forge",
       [
         "create",
-        "src/AntseedEscrow.sol:AntseedEscrow",
+        "AntseedIdentity.sol:AntseedIdentity",
+        "--rpc-url",
+        RPC_URL,
+        "--private-key",
+        DEPLOYER_PRIVATE_KEY,
+        "--broadcast",
+      ],
+      { cwd: contractsDir }
+    );
+    const identityAddress = parseDeployedAddress(identityDeployOutput);
+    logStep(`AntseedIdentity deployed: ${identityAddress}`);
+
+    logStep("deploying AntseedStaking");
+    const stakingDeployOutput = runCommand(
+      "forge",
+      [
+        "create",
+        "AntseedStaking.sol:AntseedStaking",
+        "--rpc-url",
+        RPC_URL,
+        "--private-key",
+        DEPLOYER_PRIVATE_KEY,
+        "--broadcast",
+        "--constructor-args",
+        usdcAddress,
+        identityAddress,
+      ],
+      { cwd: contractsDir }
+    );
+    const stakingAddress = parseDeployedAddress(stakingDeployOutput);
+    logStep(`AntseedStaking deployed: ${stakingAddress}`);
+
+    logStep("deploying AntseedDeposits");
+    const depositsDeployOutput = runCommand(
+      "forge",
+      [
+        "create",
+        "AntseedDeposits.sol:AntseedDeposits",
         "--rpc-url",
         RPC_URL,
         "--private-key",
@@ -281,13 +318,41 @@ async function main() {
       ],
       { cwd: contractsDir }
     );
-    const escrowAddress = parseDeployedAddress(escrowDeployOutput);
-    logStep(`AntseedEscrow deployed: ${escrowAddress}`);
+    const depositsAddress = parseDeployedAddress(depositsDeployOutput);
+    logStep(`AntseedDeposits deployed: ${depositsAddress}`);
+
+    logStep("deploying AntseedChannels");
+    const sessionsDeployOutput = runCommand(
+      "forge",
+      [
+        "create",
+        "AntseedChannels.sol:AntseedChannels",
+        "--rpc-url",
+        RPC_URL,
+        "--private-key",
+        DEPLOYER_PRIVATE_KEY,
+        "--broadcast",
+        "--constructor-args",
+        depositsAddress,
+        identityAddress,
+        stakingAddress,
+      ],
+      { cwd: contractsDir }
+    );
+    const channelsAddress = parseDeployedAddress(sessionsDeployOutput);
+    logStep(`AntseedChannels deployed: ${channelsAddress}`);
+
+    logStep("wiring contracts together");
+    castSend([depositsAddress, "setChannelsContract(address)", channelsAddress]);
+    castSend([identityAddress, "setChannelsContract(address)", channelsAddress]);
+    castSend([identityAddress, "setStakingContract(address)", stakingAddress]);
+    castSend([stakingAddress, "setChannelsContract(address)", channelsAddress]);
+    logStep("contract wiring complete");
 
     logStep("starting isolated local DHT bootstrap");
     bootstrap = new DHTNode({
       // Match the same deterministic bootstrap setup used by e2e test helpers.
-      peerId: toPeerId("0".repeat(64)),
+      peerId: toPeerId("0".repeat(40)),
       port: 0,
       bootstrapNodes: [],
       reannounceIntervalMs: 60_000,
@@ -314,10 +379,13 @@ async function main() {
         enabled: true,
         paymentMethod: "crypto",
         settlementIdleMs: 5_000,
-        defaultEscrowAmountUSDC: "1000000",
+        defaultDepositAmountUSDC: "1000000",
         platformFeeRate: 0.05,
         rpcUrl: RPC_URL,
-        contractAddress: escrowAddress,
+        depositsAddress,
+        channelsAddress,
+        stakingAddress,
+        identityAddress,
         usdcAddress,
       },
     });
@@ -327,7 +395,7 @@ async function main() {
     if (!sellerNode.identity) {
       throw new Error("seller identity unavailable after start");
     }
-    const sellerAddress = identityToEvmAddress(sellerNode.identity);
+    const sellerAddress = sellerNode.identity.wallet.address;
     logStep(`seller peer=${sellerNode.peerId} evm=${sellerAddress}`);
 
     logStep("starting buyer node with payments enabled");
@@ -341,10 +409,13 @@ async function main() {
         enabled: true,
         paymentMethod: "crypto",
         settlementIdleMs: 5_000,
-        defaultEscrowAmountUSDC: "1000000",
+        defaultDepositAmountUSDC: "1000000",
         platformFeeRate: 0.05,
         rpcUrl: RPC_URL,
-        contractAddress: escrowAddress,
+        depositsAddress,
+        channelsAddress,
+        stakingAddress,
+        identityAddress,
         usdcAddress,
       },
     });
@@ -354,7 +425,7 @@ async function main() {
       throw new Error("buyer identity unavailable after start");
     }
     const buyerPeerId = buyerNode.peerId;
-    const buyerAddress = identityToEvmAddress(buyerNode.identity);
+    const buyerAddress = buyerNode.identity.wallet.address;
     logStep(`buyer peer=${buyerPeerId} evm=${buyerAddress}`);
 
     logStep("funding buyer/seller gas balances");
@@ -419,7 +490,7 @@ async function main() {
       throw new Error("buyer payment manager was not initialized");
     }
 
-    logStep(`depositing ${USDC_DEPOSIT_AMOUNT} base units into escrow from buyer`);
+    logStep(`depositing ${USDC_DEPOSIT_AMOUNT} base units into deposits contract from buyer`);
     let depositTx = "";
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       try {
@@ -479,15 +550,19 @@ async function main() {
     }
     await bpm.endSession(discoveredSeller.peerId, sellerPaymentMux, 85);
 
-    const escrowClient = new BaseEscrowClient({
+    const depositsClient = new DepositsClient({
       rpcUrl: RPC_URL,
-      contractAddress: escrowAddress,
+      contractAddress: depositsAddress,
       usdcAddress,
+    });
+    const channelsClient = new ChannelsClient({
+      rpcUrl: RPC_URL,
+      contractAddress: channelsAddress,
     });
 
     const sellerUsdcBalance = await waitForValue(
       async () => {
-        const bal = await escrowClient.getUSDCBalance(sellerAddress);
+        const bal = await depositsClient.getUSDCBalance(sellerAddress);
         return bal > 0n ? bal : null;
       },
       "seller USDC settlement balance",
@@ -495,12 +570,11 @@ async function main() {
       500
     );
 
-    const buyerAccount = await escrowClient.getBuyerAccount(buyerAddress);
-    const sessionInfo = await escrowClient.getSession(activeSellerSession.sessionId);
-    const reputation = await escrowClient.getReputation(sellerAddress);
+    const buyerBalance = await depositsClient.getBuyerBalance(buyerAddress);
+    const sessionInfo = await channelsClient.getSession(activeSellerSession.sessionId);
 
-    if (buyerAccount.committed !== 0n) {
-      throw new Error(`buyer still has committed balance after settlement: ${buyerAccount.committed}`);
+    if (buyerBalance.reserved !== 0n) {
+      throw new Error(`buyer still has reserved balance after settlement: ${buyerBalance.reserved}`);
     }
     if (sessionInfo.status !== 1) {
       throw new Error(`session not settled on-chain (status=${sessionInfo.status})`);
@@ -517,7 +591,10 @@ async function main() {
           chainId: CHAIN_ID,
           contracts: {
             usdc: usdcAddress,
-            escrow: escrowAddress,
+            identity: identityAddress,
+            staking: stakingAddress,
+            deposits: depositsAddress,
+            sessions: channelsAddress,
           },
           actors: {
             sellerPeerId: sellerNode.peerId,
@@ -533,14 +610,8 @@ async function main() {
           },
           balances: {
             sellerUSDC: sellerUsdcBalance.toString(),
-            buyerDeposited: buyerAccount.deposited.toString(),
-            buyerCommitted: buyerAccount.committed.toString(),
-            buyerAvailable: buyerAccount.available.toString(),
-          },
-          reputation: {
-            weightedAverage: reputation.weightedAverage,
-            sessionCount: reputation.sessionCount,
-            disputeCount: reputation.disputeCount,
+            buyerAvailable: buyerBalance.available.toString(),
+            buyerReserved: buyerBalance.reserved.toString(),
           },
         },
         null,

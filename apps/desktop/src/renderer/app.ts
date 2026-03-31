@@ -424,6 +424,14 @@ registerActions({
           return;
         }
 
+        const peerId = uiState.chatPaymentApprovalPeerId;
+        if (peerId) {
+          uiState.chatActiveChannels.set(peerId, {
+            reservedUsdc: uiState.chatPaymentApprovalAmount,
+            peerName: uiState.chatPaymentApprovalPeerName || 'Peer',
+          });
+        }
+
         // Dismiss card and resend
         uiState.chatPaymentApprovalVisible = false;
         uiState.chatPaymentApprovalPeerId = null;
@@ -466,6 +474,9 @@ registerActions({
     uiState.chatPaymentApprovalError = null;
     notifyUiStateChanged();
   },
+  requestChannelClose: () => {
+    void bridge?.paymentsOpenPortal?.('channels');
+  },
   refreshCredits: () => void creditsApi.refreshCredits(),
   refreshWorkspace: chatApi.refreshWorkspace,
   refreshWorkspaceGitStatus: chatApi.refreshWorkspaceGitStatus,
@@ -477,8 +488,8 @@ registerActions({
     );
     return installPluginPackage(packageName);
   },
-  openPaymentsPortal: () => {
-    void bridge?.paymentsOpenPortal?.();
+  openPaymentsPortal: (tab?: string) => {
+    void bridge?.paymentsOpenPortal?.(tab);
   },
 });
 

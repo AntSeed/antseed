@@ -18,8 +18,11 @@
     "@antseed/node": ">=0.1.0"
   },
   "devDependencies": {
+    "@antseed/node": "workspace:*",
     "typescript": "^5.5.0",
-    "vitest": "^2.0.0",
-    "@antseed/node": "workspace:*"
+    "vitest": "^2.0.0"
+  },
+  "dependencies": {
+    "bottleneck": "^2.19.5"
   }
 }

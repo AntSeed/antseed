@@ -77,7 +77,7 @@ export interface UsageReceipt {
   /** Total cost in USD cents: (totalTokens / 1000) * unitPriceCentsPerThousandTokens */
   costCents: number;
   /**
-   * Ed25519 signature over the receipt data (hex string).
+   * secp256k1 signature over the receipt data (hex string).
    * Signs: receiptId + sessionId + eventId + timestamp + provider
    *        + sellerPeerId + buyerPeerId + totalTokens + costCents
    */

@@ -3,14 +3,12 @@
 // The encrypted blob is stored in a file; the OS keychain protects the encryption key.
 
 import { safeStorage } from 'electron';
+import { randomBytes } from 'node:crypto';
 import { readFile, writeFile, mkdir, unlink, rename } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import type { Identity } from '@antseed/node';
-import { hexToBytes, bytesToHex, toPeerId } from '@antseed/node';
-import * as ed from '@noble/ed25519';
-import { sha512 } from '@noble/hashes/sha512';
-ed.etc.sha512Sync = (...m: Uint8Array[]) => sha512(ed.etc.concatBytes(...m));
+import { bytesToHex, identityFromPrivateKeyHex } from '@antseed/node';
 
 const ENCRYPTED_IDENTITY_PATH = path.join(homedir(), '.antseed', 'identity.enc');
 const PLAINTEXT_IDENTITY_PATH = path.join(homedir(), '.antseed', 'identity.key');
@@ -31,9 +29,7 @@ function safeStorageAvailable(): boolean {
 }
 
 function identityFromHex(hex: string): Identity {
-  const privateKey = hexToBytes(hex);
-  const publicKey = ed.getPublicKey(privateKey);
-  return { peerId: toPeerId(bytesToHex(publicKey)), privateKey, publicKey };
+  return identityFromPrivateKeyHex(hex);
 }
 
 async function loadEncryptedIdentity(): Promise<string | null> {
@@ -112,8 +108,8 @@ export async function ensureSecureIdentity(): Promise<void> {
       }
 
       // 3. No identity anywhere — create fresh and encrypt
-      const privateKey = ed.utils.randomPrivateKey();
-      const newHex = bytesToHex(privateKey);
+      const newHex = bytesToHex(randomBytes(32));
+
       await saveEncryptedIdentity(newHex);
       secureIdentity = identityFromHex(newHex);
       console.log(`[desktop] secure identity created: ${secureIdentity.peerId.slice(0, 12)}...`);

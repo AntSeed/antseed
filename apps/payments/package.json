@@ -33,7 +33,6 @@
     "wagmi": "^3.5.0"
   },
   "devDependencies": {
-    "@noble/ed25519": "^2.1.0",
     "@types/node": "^20.11.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",

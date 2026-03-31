@@ -19,8 +19,8 @@ antseed peer                          Query peer info
 antseed profile                       Manage node profiles
 antseed plugin                        Manage plugins (add, remove, list)
 antseed dashboard                     Launch the local web dashboard
-antseed deposit                       Deposit USDC into escrow
-antseed withdraw                      Withdraw USDC from escrow
+antseed deposit                       Deposit USDC into AntseedDeposits
+antseed withdraw                      Withdraw USDC from AntseedDeposits
 antseed balance                       Check USDC balance
 antseed bootstrap                     Run a dedicated DHT bootstrap node
 antseed connection                    Manage connection settings (get/set/clear)
