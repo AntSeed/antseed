@@ -27,3 +27,11 @@ export function asStringArray(value: unknown, fallback: string[]): string[] {
   }
   return value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
 }
+
+export function asErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message;
+  }
+  const text = String(error ?? '').trim();
+  return text.length > 0 ? text : 'Unexpected error';
+}
