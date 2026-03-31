@@ -85,9 +85,6 @@ contract AntseedEmissionsTest is Test {
         vm.warp(block.timestamp + EPOCH_DURATION * 3);
         emissions.advanceEpoch();
         assertEq(emissions.currentEpoch(), 3);
-        assertTrue(emissions.epochFinalized(0));
-        assertTrue(emissions.epochFinalized(1));
-        assertTrue(emissions.epochFinalized(2));
     }
 
     function test_halvingSchedule() public {
@@ -148,7 +145,6 @@ contract AntseedEmissionsTest is Test {
         emissions.accrueSellerPoints(seller1, 50);
 
         assertEq(emissions.currentEpoch(), 1);
-        assertTrue(emissions.epochFinalized(0));
         assertEq(emissions.userSellerPoints(seller1, 1), 50);
     }
 
@@ -206,7 +202,7 @@ contract AntseedEmissionsTest is Test {
         emissions.accrueSellerPoints(seller1, 100);
 
         vm.prank(seller1);
-        vm.expectRevert(AntseedEmissions.EpochIsCurrentOrFuture.selector);
+        vm.expectRevert(AntseedEmissions.EpochNotFinalized.selector);
         emissions.claimEmissions(_epochList(0));
     }
 
@@ -231,7 +227,7 @@ contract AntseedEmissionsTest is Test {
 
         // Epoch 1 is current (not yet ended) — cannot claim
         vm.prank(seller1);
-        vm.expectRevert(AntseedEmissions.EpochIsCurrentOrFuture.selector);
+        vm.expectRevert(AntseedEmissions.EpochNotFinalized.selector);
         emissions.claimEmissions(_epochList(1));
     }
 
@@ -497,6 +493,11 @@ contract AntseedEmissionsTest is Test {
         emissions.flushReserve();
         assertEq(token.balanceOf(reserveDest), reserveAmount);
         assertEq(emissions.reserveAccumulated(), 0);
+    }
+
+    function test_reserveFlush_revert_zeroBalance() public {
+        vm.expectRevert(AntseedEmissions.NoReserve.selector);
+        emissions.flushReserve();
     }
 
     function test_reserveFlush_revert_noProtocolReserve() public {

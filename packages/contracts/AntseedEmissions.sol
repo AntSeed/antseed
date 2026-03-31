@@ -51,7 +51,6 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
     mapping(uint256 => uint256) public epochTotalBuyerPoints;
     mapping(uint256 => uint256) public epochSellerBudget;
     mapping(uint256 => uint256) public epochBuyerBudget;
-    mapping(uint256 => bool) public epochFinalized;
 
     // ─── Per-User State ───
     mapping(address => mapping(uint256 => uint256)) public userSellerPoints;
@@ -71,9 +70,8 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
     // ─── Custom Errors ───
     error NotAuthorized();
     error EpochNotEnded();
-    error EpochNotFinalized();
     error EpochAlreadyClaimed();
-    error EpochIsCurrentOrFuture();
+    error EpochNotFinalized();
     error InvalidShareSum();
     error NoProtocolReserve();
     error NoReserve();
@@ -113,37 +111,34 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
 
     /**
      * @notice Advance through all completed epochs. Permissionless.
-     *         Finalizes each completed epoch: snapshots budgets (with rollovers),
-     *         accumulates reserve, advances emission rate on halving boundaries.
+     *         Reverts if the current epoch hasn't ended yet.
      */
     function advanceEpoch() public {
         if (block.timestamp < epochStart + EPOCH_DURATION) revert EpochNotEnded();
-
-        uint256 maxIterations = 52;
-        while (block.timestamp >= epochStart + EPOCH_DURATION && maxIterations > 0) {
-            maxIterations--;
-            _finalizeEpoch(currentEpoch);
-            currentEpoch++;
-            epochStart += EPOCH_DURATION;
-        }
-
-        emit EpochAdvanced(currentEpoch, _calcEpochEmission(currentEpoch));
+        _tryAdvanceEpoch();
     }
 
     /**
      * @dev Lazily advance epochs if needed. Called before any state mutation.
+     *      Caches storage vars in memory for gas efficiency during multi-epoch catch-up.
      */
     function _tryAdvanceEpoch() internal {
-        if (block.timestamp >= epochStart + EPOCH_DURATION) {
-            uint256 maxIterations = 52;
-            while (block.timestamp >= epochStart + EPOCH_DURATION && maxIterations > 0) {
-                maxIterations--;
-                _finalizeEpoch(currentEpoch);
-                currentEpoch++;
-                epochStart += EPOCH_DURATION;
-            }
-            emit EpochAdvanced(currentEpoch, _calcEpochEmission(currentEpoch));
+        uint256 _epochStart = epochStart;
+        uint256 _epochDuration = EPOCH_DURATION;
+        if (block.timestamp < _epochStart + _epochDuration) return;
+
+        uint256 _epoch = currentEpoch;
+        uint256 maxIterations = 52;
+        while (block.timestamp >= _epochStart + _epochDuration && maxIterations > 0) {
+            maxIterations--;
+            _finalizeEpoch(_epoch);
+            _epoch++;
+            _epochStart += _epochDuration;
         }
+        currentEpoch = _epoch;
+        epochStart = _epochStart;
+
+        emit EpochAdvanced(_epoch, _calcEpochEmission(_epoch));
     }
 
     /**
@@ -151,8 +146,6 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
      *      handle empty epochs, accumulate reserve.
      */
     function _finalizeEpoch(uint256 epoch) internal {
-        if (epochFinalized[epoch]) return;
-
         uint256 emission = _calcEpochEmission(epoch);
         uint256 sellerBudget = (emission * SELLER_SHARE_PCT) / 100 + sellerBudgetRollover;
         uint256 buyerBudget = (emission * BUYER_SHARE_PCT) / 100 + buyerBudgetRollover;
@@ -172,8 +165,6 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
             epochBuyerBudget[epoch] = buyerBudget;
             buyerBudgetRollover = 0;
         }
-
-        epochFinalized[epoch] = true;
     }
 
     function _calcEpochEmission(uint256 epoch) internal view returns (uint256) {
@@ -204,47 +195,29 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
 
     /**
      * @notice Claim emissions for a list of finalized epochs.
-     *         Caller specifies which epochs to claim — no automatic looping.
      *         Each epoch can only be claimed once per address.
-     *         Reverts if any epoch is not finalized or already claimed.
      *
      * @param epochs  Array of epoch numbers to claim
      */
     function claimEmissions(uint256[] calldata epochs) external nonReentrant {
         _tryAdvanceEpoch();
 
+        uint256 _currentEpoch = currentEpoch;
+        uint256 _maxSellerPct = MAX_SELLER_SHARE_PCT;
         uint256 totalReward = 0;
 
         for (uint256 i = 0; i < epochs.length; i++) {
             uint256 epoch = epochs[i];
-            if (epoch >= currentEpoch) revert EpochIsCurrentOrFuture();
-            if (!epochFinalized[epoch]) revert EpochNotFinalized();
+            if (epoch >= _currentEpoch) revert EpochNotFinalized();
             if (userEpochClaimed[msg.sender][epoch]) revert EpochAlreadyClaimed();
 
             userEpochClaimed[msg.sender][epoch] = true;
 
-            // Seller reward
-            uint256 userSP = userSellerPoints[msg.sender][epoch];
-            uint256 totalSP = epochTotalSellerPoints[epoch];
-            if (userSP > 0 && totalSP > 0) {
-                uint256 sellerReward = (userSP * epochSellerBudget[epoch]) / totalSP;
+            (uint256 sellerReward, uint256 sellerExcess, uint256 buyerReward) =
+                _calcEpochReward(msg.sender, epoch, _maxSellerPct);
 
-                // Per-seller cap
-                uint256 maxSellerReward = (epochSellerBudget[epoch] * MAX_SELLER_SHARE_PCT) / 100;
-                if (sellerReward > maxSellerReward) {
-                    reserveAccumulated += sellerReward - maxSellerReward;
-                    sellerReward = maxSellerReward;
-                }
-
-                totalReward += sellerReward;
-            }
-
-            // Buyer reward
-            uint256 userBP = userBuyerPoints[msg.sender][epoch];
-            uint256 totalBP = epochTotalBuyerPoints[epoch];
-            if (userBP > 0 && totalBP > 0) {
-                totalReward += (userBP * epochBuyerBudget[epoch]) / totalBP;
-            }
+            reserveAccumulated += sellerExcess;
+            totalReward += sellerReward + buyerReward;
         }
 
         if (totalReward > 0) {
@@ -260,27 +233,48 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
         address account,
         uint256[] calldata epochs
     ) external view returns (uint256 totalSeller, uint256 totalBuyer) {
+        uint256 _currentEpoch = currentEpoch;
+        uint256 _maxSellerPct = MAX_SELLER_SHARE_PCT;
+
         for (uint256 i = 0; i < epochs.length; i++) {
             uint256 epoch = epochs[i];
-            if (!epochFinalized[epoch]) continue;
+            if (epoch >= _currentEpoch) continue;
             if (userEpochClaimed[account][epoch]) continue;
 
-            uint256 userSP = userSellerPoints[account][epoch];
-            uint256 totalSP = epochTotalSellerPoints[epoch];
-            if (userSP > 0 && totalSP > 0) {
-                uint256 sellerReward = (userSP * epochSellerBudget[epoch]) / totalSP;
-                uint256 maxSellerReward = (epochSellerBudget[epoch] * MAX_SELLER_SHARE_PCT) / 100;
-                if (sellerReward > maxSellerReward) {
-                    sellerReward = maxSellerReward;
-                }
-                totalSeller += sellerReward;
-            }
+            (uint256 sellerReward,, uint256 buyerReward) =
+                _calcEpochReward(account, epoch, _maxSellerPct);
 
-            uint256 userBP = userBuyerPoints[account][epoch];
-            uint256 totalBP = epochTotalBuyerPoints[epoch];
-            if (userBP > 0 && totalBP > 0) {
-                totalBuyer += (userBP * epochBuyerBudget[epoch]) / totalBP;
+            totalSeller += sellerReward;
+            totalBuyer += buyerReward;
+        }
+    }
+
+    /**
+     * @dev Calculate a user's reward for a single finalized epoch.
+     *      Returns capped seller reward, excess (for reserve), and buyer reward.
+     */
+    function _calcEpochReward(
+        address account,
+        uint256 epoch,
+        uint256 maxSellerPct
+    ) internal view returns (uint256 sellerReward, uint256 sellerExcess, uint256 buyerReward) {
+        uint256 userSP = userSellerPoints[account][epoch];
+        uint256 totalSP = epochTotalSellerPoints[epoch];
+        if (userSP > 0 && totalSP > 0) {
+            uint256 sBudget = epochSellerBudget[epoch];
+            sellerReward = (userSP * sBudget) / totalSP;
+
+            uint256 maxSellerReward = (sBudget * maxSellerPct) / 100;
+            if (sellerReward > maxSellerReward) {
+                sellerExcess = sellerReward - maxSellerReward;
+                sellerReward = maxSellerReward;
             }
+        }
+
+        uint256 userBP = userBuyerPoints[account][epoch];
+        uint256 totalBP = epochTotalBuyerPoints[epoch];
+        if (userBP > 0 && totalBP > 0) {
+            buyerReward = (userBP * epochBuyerBudget[epoch]) / totalBP;
         }
     }
 
@@ -334,11 +328,13 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
 
     function setEpochDuration(uint256 value) external onlyOwner {
         if (value == 0) revert InvalidValue();
+        _tryAdvanceEpoch();
         EPOCH_DURATION = value;
     }
 
     function setHalvingInterval(uint256 value) external onlyOwner {
         if (value == 0) revert InvalidValue();
+        _tryAdvanceEpoch();
         HALVING_INTERVAL = value;
     }
 }
