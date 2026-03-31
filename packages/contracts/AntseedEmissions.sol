@@ -210,6 +210,7 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
             uint256 epoch = epochs[i];
             if (epoch >= _currentEpoch) revert EpochNotFinalized();
             if (userEpochClaimed[msg.sender][epoch]) revert EpochAlreadyClaimed();
+            if (userSellerPoints[msg.sender][epoch] == 0 && userBuyerPoints[msg.sender][epoch] == 0) continue;
 
             userEpochClaimed[msg.sender][epoch] = true;
 
