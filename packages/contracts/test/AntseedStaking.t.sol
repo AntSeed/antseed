@@ -3,14 +3,16 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
 import "../AntseedStaking.sol";
-import "../AntseedStats.sol";
+import "../AntseedChannels.sol";
 import "../AntseedRegistry.sol";
 import "../MockERC8004Registry.sol";
 import "../MockUSDC.sol";
+import {IAntseedChannels} from "../interfaces/IAntseedChannels.sol";
 
-/// @dev Minimal mock that exposes activeChannelCount for Staking tests.
+/// @dev Minimal mock that exposes activeChannelCount + getAgentStats for Staking tests.
 contract MockChannelsForStaking {
     mapping(address => uint256) private _activeChannelCount;
+    mapping(uint256 => IAntseedChannels.AgentStats) private _agentStats;
 
     function activeChannelCount(address seller) external view returns (uint256) {
         return _activeChannelCount[seller];
@@ -19,11 +21,25 @@ contract MockChannelsForStaking {
     function setActiveChannelCount(address seller, uint256 count) external {
         _activeChannelCount[seller] = count;
     }
+
+    function getAgentStats(uint256 agentId) external view returns (IAntseedChannels.AgentStats memory) {
+        return _agentStats[agentId];
+    }
+
+    function addGhosts(uint256 agentId, uint256 count) external {
+        _agentStats[agentId].ghostCount += uint64(count);
+    }
+
+    function addChannels(uint256 agentId, uint256 count, uint256 volumePerChannel) external {
+        _agentStats[agentId].channelCount += uint64(count);
+        _agentStats[agentId].totalVolumeUsdc += volumePerChannel * count;
+        _agentStats[agentId].lastSettledAt = uint64(block.timestamp);
+    }
 }
 
 contract AntseedStakingTest is Test {
     MockERC8004Registry public identityRegistry;
-    AntseedStats public stats;
+    MockChannelsForStaking public mockChannels;
     AntseedStaking public staking;
     AntseedRegistry public antseedRegistry;
     MockUSDC public usdc;
@@ -44,19 +60,11 @@ contract AntseedStakingTest is Test {
         owner = address(this);
         usdc = new MockUSDC();
         identityRegistry = new MockERC8004Registry();
-        stats = new AntseedStats();
 
-        // Registry for stats: channels = this test contract (so we can call updateStats)
-        AntseedRegistry statsRegistry = new AntseedRegistry();
-        statsRegistry.setChannels(address(this));
-        stats.setRegistry(address(statsRegistry));
-
-        // Main registry for staking
         antseedRegistry = new AntseedRegistry();
-        MockChannelsForStaking mockChannels = new MockChannelsForStaking();
+        mockChannels = new MockChannelsForStaking();
         antseedRegistry.setChannels(address(mockChannels));
         antseedRegistry.setIdentityRegistry(address(identityRegistry));
-        antseedRegistry.setStats(address(stats));
         antseedRegistry.setProtocolReserve(reserve);
 
         staking = new AntseedStaking(address(usdc), address(antseedRegistry));
@@ -86,22 +94,12 @@ contract AntseedStakingTest is Test {
         vm.stopPrank();
     }
 
-    function _addGhosts(uint256 agentId, uint256 count) internal {
-        for (uint256 i = 0; i < count; i++) {
-            stats.updateStats(
-                agentId,
-                IAntseedStats.StatsUpdate(1, 0, 0, 0, 0, 0) // ghost
-            );
-        }
+    function _addGhosts(uint256 _agentId, uint256 count) internal {
+        mockChannels.addGhosts(_agentId, count);
     }
 
-    function _addChannels(uint256 agentId, uint256 count) internal {
-        for (uint256 i = 0; i < count; i++) {
-            stats.updateStats(
-                agentId,
-                IAntseedStats.StatsUpdate(0, 1_000_000, 500, 1200, 0, 0) // settlement
-            );
-        }
+    function _addChannels(uint256 _agentId, uint256 count) internal {
+        mockChannels.addChannels(_agentId, count, 1_000_000);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -376,7 +374,6 @@ contract AntseedStakingTest is Test {
         MockChannelsForStaking mockChannels2 = new MockChannelsForStaking();
         noReserveRegistry.setChannels(address(mockChannels2));
         noReserveRegistry.setIdentityRegistry(address(identityRegistry));
-        noReserveRegistry.setStats(address(stats));
         // Don't set protocolReserve
 
         AntseedStaking staking2 = new AntseedStaking(address(usdc), address(noReserveRegistry));
@@ -387,7 +384,7 @@ contract AntseedStakingTest is Test {
         staking2.stake(sellerAgentId, LARGE_STAKE);
         vm.stopPrank();
 
-        _addGhosts(sellerAgentId, 5); // tier 1 full slash
+        mockChannels2.addGhosts(sellerAgentId, 5); // tier 1 full slash
 
         vm.prank(seller);
         vm.expectRevert(AntseedStaking.InvalidAddress.selector);

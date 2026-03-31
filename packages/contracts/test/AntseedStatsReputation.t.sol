@@ -2,107 +2,66 @@
 pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
-import "../AntseedStats.sol";
+import "../AntseedChannels.sol";
+import "../AntseedStaking.sol";
 import "../AntseedRegistry.sol";
+import "../AntseedDeposits.sol";
 import "../MockERC8004Registry.sol";
+import "../MockUSDC.sol";
 
+/// @dev Tests for AgentStats tracking within AntseedChannels.
+///      Uses the Channels contract directly (stats are now inline).
 contract AntseedStatsReputationTest is Test {
-    AntseedStats public stats;
+    AntseedChannels public channelsContract;
+    AntseedStaking public staking;
     AntseedRegistry public antseedRegistry;
+    AntseedDeposits public deposits;
     MockERC8004Registry public identityRegistry;
-    address public peer1 = address(0x1);
-    uint256 public agentId;
+    MockUSDC public usdc;
+
+    address public seller = address(0x1);
+    address public buyer = address(0x2);
+    address public reserve = address(0x4);
+    uint256 public sellerAgentId;
+
+    uint256 public constant STAKE_AMT = 10_000_000;
+    uint128 public constant USDC_100 = 100_000_000;
 
     function setUp() public {
+        usdc = new MockUSDC();
         identityRegistry = new MockERC8004Registry();
-        stats = new AntseedStats();
 
         antseedRegistry = new AntseedRegistry();
-        antseedRegistry.setChannels(address(this));
-        stats.setRegistry(address(antseedRegistry));
+        deposits = new AntseedDeposits(address(usdc));
+        channelsContract = new AntseedChannels(address(antseedRegistry));
+        staking = new AntseedStaking(address(usdc), address(antseedRegistry));
 
-        vm.prank(peer1);
-        agentId = identityRegistry.register();
+        antseedRegistry.setChannels(address(channelsContract));
+        antseedRegistry.setDeposits(address(deposits));
+        antseedRegistry.setStaking(address(staking));
+        antseedRegistry.setIdentityRegistry(address(identityRegistry));
+        antseedRegistry.setProtocolReserve(reserve);
+
+        // Register seller
+        vm.prank(seller);
+        sellerAgentId = identityRegistry.register();
+
+        // Stake seller
+        usdc.mint(seller, STAKE_AMT);
+        vm.startPrank(seller);
+        usdc.approve(address(staking), STAKE_AMT);
+        staking.stake(sellerAgentId, STAKE_AMT);
+        vm.stopPrank();
     }
 
-    // ── updateStats tests ──
+    // ── getAgentStats ──
 
-    function test_updateStats_settlement() public {
-        stats.updateStats(agentId, IAntseedStats.StatsUpdate(0, 1000000, 500, 1200, 0, 0));
-        IAntseedStats.AgentStats memory s = stats.getStats(agentId);
-        assertEq(s.channelCount, 1);
-        assertEq(s.totalVolumeUsdc, 1000000);
-        assertEq(s.totalInputTokens, 500);
-        assertEq(s.totalOutputTokens, 1200);
-        assertEq(s.lastSettledAt, block.timestamp);
-    }
-
-    function test_updateStats_ghost() public {
-        stats.updateStats(agentId, IAntseedStats.StatsUpdate(1, 0, 0, 0, 0, 0));
-        IAntseedStats.AgentStats memory s = stats.getStats(agentId);
-        assertEq(s.ghostCount, 1);
-    }
-
-    function test_updateStats_revert_notChannels() public {
-        vm.prank(peer1);
-        vm.expectRevert(AntseedStats.NotAuthorized.selector);
-        stats.updateStats(agentId, IAntseedStats.StatsUpdate(0, 1000000, 500, 1200, 0, 0));
-    }
-
-    function test_getStats_allFields() public {
-        // 3 settlements with different volumes
-        stats.updateStats(agentId, IAntseedStats.StatsUpdate(0, 5000, 500, 800, 100, 5));
-        stats.updateStats(agentId, IAntseedStats.StatsUpdate(0, 3000, 300, 600, 200, 3));
-        stats.updateStats(agentId, IAntseedStats.StatsUpdate(0, 2000, 200, 400, 150, 2));
-        // 4 ghosts
-        stats.updateStats(agentId, IAntseedStats.StatsUpdate(1, 0, 0, 0, 0, 0));
-        stats.updateStats(agentId, IAntseedStats.StatsUpdate(1, 0, 0, 0, 0, 0));
-        stats.updateStats(agentId, IAntseedStats.StatsUpdate(1, 0, 0, 0, 0, 0));
-        stats.updateStats(agentId, IAntseedStats.StatsUpdate(1, 0, 0, 0, 0, 0));
-
-        IAntseedStats.AgentStats memory s = stats.getStats(agentId);
-        assertEq(s.channelCount, 3);
-        assertEq(s.ghostCount, 4);
-        assertEq(s.totalVolumeUsdc, 10000);
-        assertEq(s.totalInputTokens, 1000);
-        assertEq(s.totalOutputTokens, 1800);
-        assertEq(s.totalLatencyMs, 450);
-        assertEq(s.totalRequestCount, 10);
-        assertEq(s.lastSettledAt, block.timestamp);
-    }
-
-    function test_getStats_empty() public view {
-        IAntseedStats.AgentStats memory s = stats.getStats(999);
+    function test_getAgentStats_empty() public view {
+        AntseedChannels.AgentStats memory s = channelsContract.getAgentStats(999);
         assertEq(s.channelCount, 0);
         assertEq(s.ghostCount, 0);
         assertEq(s.totalVolumeUsdc, 0);
-        assertEq(s.totalInputTokens, 0);
-        assertEq(s.totalOutputTokens, 0);
-        assertEq(s.totalLatencyMs, 0);
-        assertEq(s.totalRequestCount, 0);
         assertEq(s.lastSettledAt, 0);
-    }
-
-    function test_updateStats_multipleSettlements_accumulate() public {
-        stats.updateStats(agentId, IAntseedStats.StatsUpdate(0, 1000, 100, 200, 50, 1));
-        stats.updateStats(agentId, IAntseedStats.StatsUpdate(0, 2000, 200, 300, 60, 2));
-
-        IAntseedStats.AgentStats memory s = stats.getStats(agentId);
-        assertEq(s.channelCount, 2);
-        assertEq(s.totalVolumeUsdc, 3000);
-        assertEq(s.totalInputTokens, 300);
-        assertEq(s.totalOutputTokens, 500);
-        assertEq(s.totalLatencyMs, 110);
-        assertEq(s.totalRequestCount, 3);
-    }
-
-    function test_updateStats_multipleGhosts_accumulate() public {
-        stats.updateStats(agentId, IAntseedStats.StatsUpdate(1, 0, 0, 0, 0, 0));
-        stats.updateStats(agentId, IAntseedStats.StatsUpdate(1, 0, 0, 0, 0, 0));
-        stats.updateStats(agentId, IAntseedStats.StatsUpdate(1, 0, 0, 0, 0, 0));
-
-        IAntseedStats.AgentStats memory s = stats.getStats(agentId);
-        assertEq(s.ghostCount, 3);
-        assertEq(s.channelCount, 0);
+        assertEq(s.lastSettledAt, 0);
     }
 }

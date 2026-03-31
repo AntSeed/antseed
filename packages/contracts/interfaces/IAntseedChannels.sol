@@ -2,6 +2,14 @@
 pragma solidity ^0.8.24;
 
 interface IAntseedChannels {
+    struct AgentStats {
+        uint64 channelCount;
+        uint64 ghostCount;
+        uint256 totalVolumeUsdc;
+        uint64 lastSettledAt;
+    }
+
+    function getAgentStats(uint256 agentId) external view returns (AgentStats memory);
     function activeChannelCount(address seller) external view returns (uint256);
     function computeChannelId(address buyer, address seller, bytes32 salt) external pure returns (bytes32);
 

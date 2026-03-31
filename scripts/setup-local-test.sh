@@ -7,11 +7,11 @@ RPC=http://127.0.0.1:8545
 # Contract addresses (deterministic from anvil nonce sequence)
 USDC=0x5FbDB2315678afecb367f032d93F642f64180aa3          # nonce 0
 REGISTRY=0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512      # nonce 1 — MockERC8004Registry
-# ANTSToken = nonce 2, AntseedRegistry = nonce 3 (unused here)
-STATS=0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9         # nonce 4
-STAKING=0x5FC8d32690cc91D4c39d9d3abcBD16989F875707       # nonce 5
-DEPOSITS=0x0165878A594ca255338adfa4d48449f69242Eb8F      # nonce 6
-CHANNELS=0xa513E6E4b8f2a923D98304ec87F64353C4D5C853       # nonce 7
+# ANTSToken = nonce 2, AntseedRegistry = nonce 3
+STAKING=0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9       # nonce 4
+DEPOSITS=0x5FC8d32690cc91D4c39d9d3abcBD16989F875707      # nonce 5
+CHANNELS=0x0165878A594ca255338adfa4d48449f69242Eb8F      # nonce 6
+# Emissions = nonce 7, SubPool = nonce 8
 
 cd /Users/shahafan/Development/antseed
 
@@ -107,8 +107,8 @@ echo "=== Verify ==="
 echo "Seller account (stake, stakedAt):"
 cast call --rpc-url $RPC $STAKING "getSellerAccount(address)(uint256,uint256)" $SELLER_ADDR
 echo ""
-echo "Buyer balance (available, reserved, pendingWithdrawal, lastActivityAt):"
-cast call --rpc-url $RPC $DEPOSITS "getBuyerBalance(address)(uint256,uint256,uint256,uint256)" $BUYER_ADDR
+echo "Buyer balance (available, reserved, lastActivityAt):"
+cast call --rpc-url $RPC $DEPOSITS "getBuyerBalance(address)(uint256,uint256,uint256)" $BUYER_ADDR
 
 echo ""
 echo "=== All set! ==="
@@ -116,7 +116,6 @@ echo ""
 echo "Contract addresses:"
 echo "  USDC:      $USDC"
 echo "  Registry:  $REGISTRY"
-echo "  Stats:     $STATS"
 echo "  Staking:   $STAKING"
 echo "  Deposits:  $DEPOSITS"
 echo "  Channels:  $CHANNELS"

@@ -5,7 +5,6 @@ import "forge-std/Test.sol";
 import "../AntseedChannels.sol";
 import "../AntseedDeposits.sol";
 import "../AntseedStaking.sol";
-import "../AntseedStats.sol";
 import "../MockERC8004Registry.sol";
 import "../MockUSDC.sol";
 import "../AntseedRegistry.sol";
@@ -14,7 +13,6 @@ contract AntseedChannelsTest is Test {
     MockUSDC public usdc;
     MockERC8004Registry public identityRegistry;
     AntseedRegistry public antseedRegistry;
-    AntseedStats public stats;
     AntseedStaking public staking;
     AntseedDeposits public deposits;
     AntseedChannels public channels;
@@ -56,7 +54,6 @@ contract AntseedChannelsTest is Test {
         usdc = new MockUSDC();
         identityRegistry = new MockERC8004Registry();
         antseedRegistry = new AntseedRegistry();
-        stats = new AntseedStats();
         staking = new AntseedStaking(address(usdc), address(antseedRegistry));
         deposits = new AntseedDeposits(address(usdc));
         channels = new AntseedChannels(address(antseedRegistry));
@@ -65,13 +62,11 @@ contract AntseedChannelsTest is Test {
         antseedRegistry.setChannels(address(channels));
         antseedRegistry.setDeposits(address(deposits));
         antseedRegistry.setStaking(address(staking));
-        antseedRegistry.setStats(address(stats));
         antseedRegistry.setIdentityRegistry(address(identityRegistry));
         antseedRegistry.setProtocolReserve(protocolReserve);
 
         // Set registry on contracts that need it
         deposits.setRegistry(address(antseedRegistry));
-        stats.setRegistry(address(antseedRegistry));
 
         // Raise FIRST_SIGN_CAP for tests that need large reservations
         channels.setFirstSignCap(500_000_000);
@@ -362,11 +357,9 @@ contract AntseedChannelsTest is Test {
 
         // Stats updated
         uint256 sellerAgentId = staking.getAgentId(seller);
-        IAntseedStats.AgentStats memory s = stats.getStats(sellerAgentId);
+        AntseedChannels.AgentStats memory s = channels.getAgentStats(sellerAgentId);
         assertEq(s.channelCount, 1);
         assertEq(s.totalVolumeUsdc, USDC_60);
-        assertEq(s.totalInputTokens, 5000);
-        assertEq(s.totalOutputTokens, 2000);
     }
 
     function test_close_fullDeposit() public {
@@ -700,11 +693,9 @@ contract AntseedChannelsTest is Test {
         channels.close(channelId, USDC_50, encodeMetadata(inputToks, outputToks), metaSig);
 
         uint256 sellerAgentId = staking.getAgentId(seller);
-        IAntseedStats.AgentStats memory s = stats.getStats(sellerAgentId);
+        AntseedChannels.AgentStats memory s = channels.getAgentStats(sellerAgentId);
         assertEq(s.channelCount, 1);
         assertEq(s.totalVolumeUsdc, USDC_50);
-        assertEq(s.totalInputTokens, inputToks);
-        assertEq(s.totalOutputTokens, outputToks);
     }
 
     // ═══════════════════════════════════════════════════════════════════
