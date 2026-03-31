@@ -77,6 +77,15 @@ contract AntseedStats is IAntseedStats, Ownable {
         _stats[agentId].ghostCount++;
     }
 
+    /// @notice Record a timed-out channel that had partial settlements.
+    ///         Captures verified volume without unverifiable metadata (no ChannelMetrics event).
+    function recordTimeout(uint256 agentId, uint256 settledUsdc) external onlyChannels {
+        AgentStats storage s = _stats[agentId];
+        s.channelCount++;
+        s.totalVolumeUsdc += settledUsdc;
+        s.lastSettledAt = uint64(block.timestamp);
+    }
+
     function getStats(uint256 agentId) external view returns (AgentStats memory) {
         return _stats[agentId];
     }

@@ -9,7 +9,6 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 import {IAntseedRegistry} from "./interfaces/IAntseedRegistry.sol";
 import {IAntseedDeposits} from "./interfaces/IAntseedDeposits.sol";
-import {IAntseedStats} from "./interfaces/IAntseedStats.sol";
 import {IAntseedStaking} from "./interfaces/IAntseedStaking.sol";
 import {IAntseedEmissions} from "./interfaces/IAntseedEmissions.sol";
 
@@ -66,11 +65,23 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         ChannelStatus status;
     }
 
+    // ─── Agent Stats (replaces AntseedStats contract) ────────────────
+    struct AgentStats {
+        uint64 channelCount;
+        uint64 ghostCount;
+        uint256 totalVolumeUsdc;
+        uint64 totalRequestCount;
+        uint64 lastSettledAt;
+    }
+
+    uint8 public constant METADATA_VERSION = 1;
+
     // ─── State Variables ────────────────────────────────────────────
     IAntseedRegistry public registry;
 
     mapping(bytes32 => Channel) public channels;
     mapping(address => uint256) public activeChannelCount;
+    mapping(uint256 => AgentStats) private _agentStats;
 
     // ─── Events ─────────────────────────────────────────────────────
     event Reserved(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint128 maxAmount);
@@ -81,7 +92,20 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
     event ChannelWithdrawn(bytes32 indexed channelId, address indexed buyer);
     event OperatorSet(address indexed buyer, address indexed operator);
 
-
+    /// @notice Per-channel cumulative metrics for off-chain indexing.
+    ///         All values are cumulative for the channel. Tokens and latency
+    ///         are buyer-reported (unverifiable) — indexers should filter anomalies.
+    event ChannelMetrics(
+        bytes32 indexed channelId,
+        uint256 indexed agentId,
+        address indexed buyer,
+        uint8 metadataVersion,
+        uint256 cumulativeUsdc,
+        uint128 cumulativeInputTokens,
+        uint128 cumulativeOutputTokens,
+        uint64 cumulativeLatencyMs,
+        uint64 cumulativeRequestCount
+    );
 
     // ─── Custom Errors ──────────────────────────────────────────────
     error InvalidAddress();
@@ -121,6 +145,10 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         bytes32 salt
     ) public pure returns (bytes32) {
         return keccak256(abi.encode(buyer, seller, salt));
+    }
+
+    function getAgentStats(uint256 agentId) external view returns (AgentStats memory) {
+        return _agentStats[agentId];
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -306,10 +334,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         channel.status = ChannelStatus.Settled;
         activeChannelCount[channel.seller]--;
 
-        uint256 agentId = IAntseedStaking(registry.staking()).getAgentId(channel.seller);
-        if (agentId != 0) {
-            IAntseedStats(registry.stats()).recordClose(channelId, agentId, channel.buyer, finalAmount, metadata);
-        }
+        _recordCloseStats(channelId, channel, finalAmount, metadata);
         _recordEmissions(channel, delta);
 
         emit ChannelClosed(channelId, channel.seller, finalAmount, platformFee);
@@ -356,13 +381,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         channel.status = ChannelStatus.TimedOut;
         activeChannelCount[channel.seller]--;
 
-        // Record ghost only if seller never settled anything (true abandonment)
-        if (channel.settled == 0) {
-            uint256 agentId = IAntseedStaking(registry.staking()).getAgentId(channel.seller);
-            if (agentId != 0) {
-                IAntseedStats(registry.stats()).recordGhost(agentId);
-            }
-        }
+        _recordWithdrawStats(channel);
 
         emit ChannelWithdrawn(channelId, channel.buyer);
     }
@@ -404,12 +423,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
             channel.status = ChannelStatus.TimedOut;
             activeChannelCount[channel.seller]--;
 
-            if (channel.settled == 0) {
-                uint256 agentId = IAntseedStaking(registry.staking()).getAgentId(channel.seller);
-                if (agentId != 0) {
-                    IAntseedStats(registry.stats()).recordGhost(agentId);
-                }
-            }
+            _recordWithdrawStats(channel);
 
             emit ChannelWithdrawn(channelIds[i], buyer);
         }
@@ -507,6 +521,47 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
             platformFee,
             _protocolReserve
         );
+    }
+
+    function _recordCloseStats(
+        bytes32 channelId,
+        Channel storage channel,
+        uint128 cumulativeUsdc,
+        bytes calldata metadata
+    ) internal {
+        uint256 agentId = IAntseedStaking(registry.staking()).getAgentId(channel.seller);
+        if (agentId == 0) return;
+
+        AgentStats storage s = _agentStats[agentId];
+        s.channelCount++;
+        s.totalVolumeUsdc += cumulativeUsdc;
+        s.lastSettledAt = uint64(block.timestamp);
+
+        (uint256 inputTokens, uint256 outputTokens, uint256 latencyMs, uint256 requestCount) =
+            abi.decode(metadata, (uint256, uint256, uint256, uint256));
+        s.totalRequestCount += uint64(requestCount);
+
+        emit ChannelMetrics(
+            channelId, agentId, channel.buyer, METADATA_VERSION,
+            cumulativeUsdc, uint128(inputTokens), uint128(outputTokens),
+            uint64(latencyMs), uint64(requestCount)
+        );
+    }
+
+    function _recordWithdrawStats(Channel storage channel) internal {
+        uint256 agentId = IAntseedStaking(registry.staking()).getAgentId(channel.seller);
+        if (agentId == 0) return;
+
+        AgentStats storage s = _agentStats[agentId];
+        if (channel.settled == 0) {
+            // True ghost — seller never settled
+            s.ghostCount++;
+        } else {
+            // Partial-settled timeout — count as completed, record volume
+            s.channelCount++;
+            s.totalVolumeUsdc += channel.settled;
+            s.lastSettledAt = uint64(block.timestamp);
+        }
     }
 
     function _recordEmissions(Channel storage channel, uint128 delta) internal {

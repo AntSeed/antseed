@@ -20,5 +20,9 @@ interface IAntseedStats {
 
     function recordGhost(uint256 agentId) external;
 
+    /// @notice Record a timed-out channel that had partial settlements.
+    ///         Captures the verified volume without unverifiable metadata.
+    function recordTimeout(uint256 agentId, uint256 settledUsdc) external;
+
     function getStats(uint256 agentId) external view returns (AgentStats memory);
 }

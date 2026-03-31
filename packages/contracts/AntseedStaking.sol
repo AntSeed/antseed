@@ -8,7 +8,6 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 import {IAntseedRegistry} from "./interfaces/IAntseedRegistry.sol";
 import {IERC8004Registry} from "./interfaces/IERC8004Registry.sol";
-import {IAntseedStats} from "./interfaces/IAntseedStats.sol";
 import {IAntseedChannels} from "./interfaces/IAntseedChannels.sol";
 
 /**
@@ -142,7 +141,7 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
     function _calculateSlash(address seller) internal view returns (uint256) {
         uint256 agentId = sellerAgentId[seller];
         if (agentId == 0) return 0;
-        IAntseedStats.AgentStats memory stats = IAntseedStats(registry.stats()).getStats(agentId);
+        IAntseedChannels.AgentStats memory stats = IAntseedChannels(registry.channels()).getAgentStats(agentId);
 
         uint256 channels = uint256(stats.channelCount);
         uint256 ghosts = uint256(stats.ghostCount);

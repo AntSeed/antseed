@@ -8,7 +8,7 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import {IAntseedRegistry} from "./interfaces/IAntseedRegistry.sol";
 import {IERC8004Registry} from "./interfaces/IERC8004Registry.sol";
-import {IAntseedStats} from "./interfaces/IAntseedStats.sol";
+import {IAntseedChannels} from "./interfaces/IAntseedChannels.sol";
 
 /**
  * @title AntseedSubPool
@@ -232,7 +232,7 @@ contract AntseedSubPool is Ownable, ReentrancyGuard {
         });
         peerRewardPerTokenPaid[msg.sender] = rewardPerTokenStored;
         // Snapshot initial weight from current stats
-        IAntseedStats.AgentStats memory stats = IAntseedStats(registry.stats()).getStats(agentId);
+        IAntseedChannels.AgentStats memory stats = IAntseedChannels(registry.channels()).getAgentStats(agentId);
         peerSnapshotWeight[msg.sender] = uint256(stats.channelCount);
 
         optedInPeers.push(msg.sender);
@@ -315,7 +315,7 @@ contract AntseedSubPool is Ownable, ReentrancyGuard {
                 // can't retroactively claim deltas from epochs they didn't participate in.
                 peerRewardPerTokenPaid[peer] = rewardPerTokenStored;
                 // Snapshot current stats as weight for the new epoch
-                IAntseedStats.AgentStats memory st = IAntseedStats(registry.stats()).getStats(opt.tokenId);
+                IAntseedChannels.AgentStats memory st = IAntseedChannels(registry.channels()).getAgentStats(opt.tokenId);
                 uint256 newWeight = uint256(st.channelCount);
                 peerSnapshotWeight[peer] = newWeight;
                 totalWeight += newWeight;
@@ -367,7 +367,7 @@ contract AntseedSubPool is Ownable, ReentrancyGuard {
         uint256 pending = opt.pendingRevenue + earned;
 
         // Project current epoch share (use live stats for projection)
-        IAntseedStats.AgentStats memory st = IAntseedStats(registry.stats()).getStats(opt.tokenId);
+        IAntseedChannels.AgentStats memory st = IAntseedChannels(registry.channels()).getAgentStats(opt.tokenId);
         uint256 liveWeight = uint256(st.channelCount);
         uint256 revenue = currentEpochRevenue;
         uint256 peerCount = optedInPeers.length;
@@ -376,7 +376,7 @@ contract AntseedSubPool is Ownable, ReentrancyGuard {
         uint256 totalWeight = 0;
         for (uint256 i = 0; i < peerCount; i++) {
             PeerOpt storage p = peerOpts[optedInPeers[i]];
-            IAntseedStats.AgentStats memory s = IAntseedStats(registry.stats()).getStats(p.tokenId);
+            IAntseedChannels.AgentStats memory s = IAntseedChannels(registry.channels()).getAgentStats(p.tokenId);
             totalWeight += uint256(s.channelCount);
         }
 
