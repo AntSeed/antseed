@@ -65,7 +65,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         ChannelStatus status;
     }
 
-    // ─── Agent Stats (replaces AntseedStats contract) ────────────────
+    // ─── Agent Stats ─────────────────────────────────────────────────
     struct AgentStats {
         uint64 channelCount;
         uint64 ghostCount;

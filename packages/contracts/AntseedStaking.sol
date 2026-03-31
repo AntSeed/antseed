@@ -13,7 +13,7 @@ import {IAntseedChannels} from "./interfaces/IAntseedChannels.sol";
 /**
  * @title AntseedStaking
  * @notice Seller staking and slashing.
- *         Stable contract — holds seller stake USDC. Reads stats from AntseedStats.
+ *         Stable contract — holds seller stake USDC. Reads stats from AntseedChannels.
  *         Binds each seller's stake to their ERC-8004 agentId.
  */
 contract AntseedStaking is Ownable, ReentrancyGuard {

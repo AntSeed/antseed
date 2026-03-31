@@ -53,14 +53,7 @@ contract Deploy is Script {
         AntseedRegistry antseedRegistry = new AntseedRegistry();
         console.log("AntseedRegistry:      ", address(antseedRegistry));
 
-        // 5. AntseedStats (no constructor args)
-        bytes memory statsBytecode = vm.getCode("AntseedStats.sol:AntseedStats");
-        address stats;
-        assembly { stats := create(0, add(statsBytecode, 0x20), mload(statsBytecode)) }
-        require(stats != address(0), "AntseedStats deploy failed");
-        console.log("AntseedStats:         ", stats);
-
-        // 6. AntseedStaking(usdc, registry)
+        // 5. AntseedStaking(usdc, registry)
         bytes memory stakingBytecode = abi.encodePacked(
             vm.getCode("AntseedStaking.sol:AntseedStaking"),
             abi.encode(usdc, address(antseedRegistry))
@@ -114,7 +107,6 @@ contract Deploy is Script {
         antseedRegistry.setChannels(channels);
         antseedRegistry.setDeposits(deposits);
         antseedRegistry.setStaking(staking);
-        antseedRegistry.setStats(stats);
         antseedRegistry.setEmissions(emissions);
         antseedRegistry.setAntsToken(antsToken);
         antseedRegistry.setIdentityRegistry(identityRegistry);
@@ -124,7 +116,6 @@ contract Deploy is Script {
         // Channels and Staking already received the registry in their constructors,
         // but we include them here for uniformity so the pattern is obvious in upgrades.
         ISetRegistry(channels).setRegistry(address(antseedRegistry));
-        ISetRegistry(stats).setRegistry(address(antseedRegistry));
         ISetRegistry(deposits).setRegistry(address(antseedRegistry));
         ISetRegistry(staking).setRegistry(address(antseedRegistry));
         ISetRegistry(emissions).setRegistry(address(antseedRegistry));
