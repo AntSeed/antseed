@@ -158,6 +158,7 @@ const config: Config = {
         src: 'logo.svg',
       },
       items: [
+        {to: '/providers', label: 'Providers', position: 'right'},
         {to: '/blog', label: 'Blog', position: 'right'},
         {
           type: 'docSidebar',

@@ -106,7 +106,7 @@ function EarnAnimation() {
   const stageRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [activeNode, setActiveNode] = useState(-1);
-  const initialSkills = ['Video Creator','Legal in Guatemala','Company Intelligence','Medical Diagnostics BR','Manga Translator JP'];
+  const initialSkills = ['claude-sonnet-4-6 · raw inference','Legal in Guatemala · AntAgent','TEE Router · routing','llama-3-70b · raw inference','Price Router · routing'];
   const initialFeed = initialSkills.map((skill, i) => ({skill, amount:(Math.random()*0.014+0.001).toFixed(3), id:i}));
   const [feed, setFeed] = useState<{skill:string;amount:string;id:number}[]>(initialFeed);
   const startedRef = useRef(false);
@@ -117,7 +117,20 @@ function EarnAnimation() {
 
   const counter = totalRef.current.toFixed(3);
 
-  const skills = ['Video Creator','Legal in Guatemala','Company Intelligence','Medical Diagnostics BR','Manga Translator JP','Real Estate Analyst NY','Solidity Auditor','Podcast Editor','Immigration Law UK','Supply Chain Optimizer'];
+  const skills = [
+    'claude-sonnet-4-6 · raw inference',
+    'Legal in Guatemala · AntAgent',
+    'TEE Router · routing',
+    'llama-3-70b · raw inference',
+    'Price Router · routing',
+    'Solidity Auditor · AntAgent',
+    'mistral-large · raw inference',
+    'Result Router · routing',
+    'Medical Diagnostics BR · AntAgent',
+    'gemma-3-27b · raw inference',
+    'Latency Router · routing',
+    'Company Intelligence · AntAgent',
+  ];
 
   // Ant particles circling the hex
   useEffect(() => {
@@ -270,11 +283,11 @@ function EarnAnimation() {
 
 /* ========== FAQ ========== */
 const FAQ_DATA = [
-  {q:'How is this different from OpenRouter?', a:"OpenRouter is a centralised routing layer that aggregates model providers and handles the API calls for you. It is a well-built product — but it is still a company making decisions about which models to list, on what terms, at what margins, based on partnerships they negotiate in their own interest. AntSeed is structurally different. Anyone can offer a service. There is no company deciding who gets listed or who gets buried. Reputation is built by actually delivering good results to real buyers — not by signing a commercial deal with the platform. OpenRouter routes to models. AntSeed routes to expertise."},
-  {q:'What happens when LLMs become so good that anyone can do anything?', a:"That is exactly what we want. When LLMs become dramatically more capable, costs collapse and more people can run their own capable LLMs on their own hardware — those people become AntSeed providers. The supply side grows, not shrinks. But \"anyone can do anything\" does not mean everyone delivers the same result. The value is in what you build on top — the skills, the workflows, the domain expertise, the agent orchestration. A more capable base model raises the ceiling for every provider, but it does not eliminate the distance between a generic prompt and a production-grade service."},
+  {q:'How is this different from OpenRouter?', a:"OpenRouter is a centralized aggregator: it decides which models are listed, reads every request, and holds your earnings until payout. AntSeed removes the aggregator entirely. Requests go peer-to-peer. Payments settle on-chain directly to the provider's wallet. Anyone can provide — no approval needed. The network has no company behind it and no off switch."},
+  {q:'What happens when LLMs become so good that anyone can do anything?', a:"That is exactly what we want. When LLMs become dramatically more capable, costs collapse and more people can run their own capable LLMs on their own hardware. Those people become AntSeed providers. The supply side grows, not shrinks. But \"anyone can do anything\" does not mean everyone delivers the same result. The value is in what you build on top: the skills, the workflows, the domain expertise, the agent orchestration. A more capable base model raises the ceiling for every provider, but it does not eliminate the distance between a generic prompt and a production-grade service."},
   {q:"Isn't this just like P2P file sharing? Netflix killed that.", a:"Netflix and Spotify won because humans are happy to pay a simple subscription for a clean UI. But that logic only applies to humans who care about experience. Agents don't. An agent has no preference for a polished interface, no reason to care about a brand, no inertia keeping it on a familiar platform. It just needs the service, the price, and the reliability. On those three axes, an open P2P network with no middleman and no markup wins every time."},
-  {q:'Is AntSeed built for agents specifically?', a:"It works for humans today and is being used by humans now. But the architecture decisions — USDC-native payments, no account system, open discovery, always-on peers — are all decisions that make the network ideal for agents. A human tolerates signing up, waiting for API keys, and managing a subscription. An agent cannot. The network AntSeed is building is the one autonomous agents will naturally discover and use."},
-  {q:'Why would a provider use AntSeed instead of just building their own API?', a:"Building your own API means building billing infrastructure, handling support, managing uptime, acquiring customers, and maintaining a reputation system from scratch. That is a startup, not a service. AntSeed gives you distribution — buyers already on the network looking for exactly what you offer — plus a reputation system that makes your track record portable and permanent, plus payments handled at the protocol level. You focus on the thing you're good at. The network handles the rest."},
+  {q:'Is AntSeed built for agents specifically?', a:"It works for humans today and is being used by humans now. But the architecture decisions: USDC-native payments, no account system, open discovery, always-on peers, are all decisions that make the network ideal for agents. A human tolerates signing up, waiting for API keys, and managing a subscription. An agent cannot. The network AntSeed is building is the one autonomous agents will naturally discover and use."},
+  {q:'Why would a provider use AntSeed instead of just building their own API?', a:"Building your own API means building billing infrastructure, handling support, managing uptime, acquiring customers, and maintaining a reputation system from scratch. That is a startup, not a service. AntSeed gives you distribution: buyers already on the network looking for exactly what you offer, plus a reputation system that makes your track record portable and permanent, plus payments handled at the protocol level. You focus on the thing you're good at. The network handles the rest."},
 ];
 
 function FAQSection() {
@@ -318,17 +331,17 @@ export default function Home(): JSX.Element {
       {/* Hero */}
       <section className={styles.hero}>
         <h1 className={styles.heroTitle}>AI, Set Free</h1>
-        <p className={styles.heroSub}>Permissionless AI. Anyone can serve. Anyone can use.</p>
+        <p className={styles.heroSub}>The open market for AI inference. No gatekeepers.</p>
       </section>
 
       {/* Liveness */}
       <section className={styles.live}><LiveBar /></section>
 
       {/* AntStation */}
-      <div className={styles.agentsSection} style={{marginTop:'40px'}}>
+      <div className={styles.agentsSection}>
         <div className={styles.agentsCopy}>
           <h3>AntStation</h3>
-          <p className={styles.agentsVision}>Your desktop gateway to the AntSeed network. Provide services, route requests, and manage your node — all from one app.</p>
+          <p className={styles.agentsVision}>Your desktop gateway to the AntSeed network. Provide services, route requests, and manage your node. All from one app.</p>
           <div className={styles.downloads} style={{alignItems:'flex-start',padding:0}}>
             <a href={dmgUrl ?? RELEASES_URL} target="_blank" rel="noopener noreferrer" className={styles.dlbtn}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
@@ -349,29 +362,23 @@ export default function Home(): JSX.Element {
         </div>
       </div>
 
-      {/* Big Statement */}
-      <section className={styles.bigStatement}>
-        <h2 className={styles.bigStatementTitle}>Agents don't have a favorite model. They have a budget and a deadline.</h2>
-        <p className={styles.bigStatementSub}>They'll route to whoever delivers. Reputation is the signal. Price is the lever. AntSeed is the network where both are set by the provider and verified by the protocol.</p>
-      </section>
-
       {/* What is AntSeed — unified feature section */}
       <section className={styles.features}>
         <div className={styles.featuresGrid}>
           <div className={styles.feat}>
             <div className={styles.featIcon}><svg viewBox="0 0 44 44" fill="none"><rect x="2" y="2" width="40" height="40" rx="10" stroke="#1FD87A" strokeWidth="1.5" fill="#fff"/><circle cx="22" cy="22" r="8" stroke="#1FD87A" strokeWidth="1.5" fill="none"/><path d="M22 14v-4M22 34v-4M30 22h4M8 22h4" stroke="#1FD87A" strokeWidth="1.5" strokeLinecap="round"/><circle cx="22" cy="22" r="3" fill="#1FD87A"/></svg></div>
-            <h4>A peer-to-peer network for AI services.</h4>
-            <p>Coding assistants, legal review, video creators, uncensored models, fine-tuned experts. Providers deliver the job — they pick the model and workflows.</p>
+            <h4>True peer-to-peer. No relay.</h4>
+            <p>Requests travel directly to the provider. No central server that can read your traffic, log your prompts, or be shut down.</p>
           </div>
           <div className={styles.feat}>
             <div className={styles.featIcon}><svg viewBox="0 0 44 44" fill="none"><rect x="2" y="2" width="40" height="40" rx="10" stroke="#1FD87A" strokeWidth="1.5" fill="#fff"/><path d="M14 18h16M14 22h12M14 26h8" stroke="#1FD87A" strokeWidth="1.5" strokeLinecap="round"/><circle cx="32" cy="14" r="4" fill="#1FD87A"/><path d="M30.5 14l1 1 2-2.5" stroke="#fff" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"/></svg></div>
             <h4>On-Chain Stats. Build Reputation.</h4>
-            <p>Every delivery is recorded as factual on-chain stats. All data is public — any client can build its own reputation and access rules on top.</p>
+            <p>Every delivery produces a cryptographically signed receipt. Stats are on-chain. Reputation belongs to your wallet. No platform can revoke what you earned.</p>
           </div>
           <div className={styles.feat}>
             <div className={styles.featIcon}><svg viewBox="0 0 44 44" fill="none"><rect x="2" y="2" width="40" height="40" rx="10" stroke="#1FD87A" strokeWidth="1.5" fill="#fff"/><circle cx="22" cy="22" r="9" stroke="#1FD87A" strokeWidth="1.5" fill="none"/><path d="M22 16v6l4 3" stroke="#1FD87A" strokeWidth="1.5" strokeLinecap="round"/><circle cx="22" cy="22" r="2" fill="#1FD87A"/><path d="M15 10l-2-3M29 10l2-3" stroke="#1FD87A" strokeWidth="1.5" strokeLinecap="round"/></svg></div>
-            <h4>Anonymous. Private. Uncensored.</h4>
-            <p>No accounts, no logging. TEE-secured providers where not even the operator sees your data. No content restrictions.</p>
+            <h4>No account. No log. No censor.</h4>
+            <p>No sign-up. No content policy. TEE-secured providers where not even the operator sees your data. Your requests, your models, your business.</p>
           </div>
         </div>
       </section>
@@ -379,12 +386,12 @@ export default function Home(): JSX.Element {
       {/* Agents & Developers — full width */}
       <div className={styles.agentsSection}>
         <div className={styles.agentsCopy}>
-          <h3>Agents use the best service<br/>for every task.</h3>
-          <p className={styles.agentsVision}>Your agent routes a research task to a specialist with 4,800 verified deliveries. Switches to an uncensored model for creative work. Calls a legal Ant Agent for a contract question. Pays per use.</p>
+          <h3>One endpoint.<br/>The whole open market.</h3>
+          <p className={styles.agentsVision}>Any agent or coding tool connects in one command. Browse providers by price, latency, and on-chain reputation or use a Routing Service that does the selection for you. Raw inference, specialized models, your choice. No API key approval. Pay per token.</p>
           <ul className={styles.agentsBullets}>
             <li>One command: <code>npm install -g @antseed/cli</code></li>
-            <li>Works with any OpenAI-compatible client</li>
-            <li>Pick services, set routing preferences, or let the network decide</li>
+            <li>Works with any AI agent or coding tool</li>
+            <li>Choose providers directly or delegate to a Routing Service</li>
           </ul>
           <Link to="/docs/intro" className={styles.agentsCta}>Read the Docs →</Link>
         </div>
@@ -406,11 +413,37 @@ export default function Home(): JSX.Element {
         </div>
       </div>
 
-      {/* Three Layers */}
+      {/* Structurally different */}
+      <section className={styles.structural}>
+        <div className={styles.structuralHeader}>
+          <h2>Not just different policies.<br/>Different by design.</h2>
+          <p className={styles.structuralSub}>Some things aren't policy decisions. They're impossible by design.</p>
+        </div>
+        <div className={styles.structuralGrid}>
+          <div className={styles.structuralItem}>
+            <h4>Reading your requests</h4>
+            <p>No central relay exists. Requests travel peer-to-peer. There is no server to subpoena, no logs to leak.</p>
+          </div>
+          <div className={styles.structuralItem}>
+            <h4>Freezing your earnings</h4>
+            <p>Payments settle in USDC directly to your wallet via on-chain escrow. No company holds your funds. No trust required.</p>
+          </div>
+          <div className={styles.structuralItem}>
+            <h4>Delisting your capability</h4>
+            <p>No editorial team. Anyone who delivers gets discovered. Reputation is built by results, not relationships with a platform.</p>
+          </div>
+          <div className={styles.structuralItem}>
+            <h4>Deciding who can participate</h4>
+            <p>Anyone can provide. Anyone can consume. The network has no gatekeeper. Only the protocol and the proof of delivery.</p>
+          </div>
+        </div>
+      </section>
+
+      {/* Two Layers */}
       <section className={styles.layers}>
         <div className={styles.layersHeader}>
-          <h2>Three layers. Built on each other.</h2>
-          <p>The foundation is the unstoppable P2P network. On top sits the open marketplace where any AI service can be offered and proven. On top of that emerge Ant Agents — domain experts packaged as always-on services.</p>
+          <h2>Two layers. One protocol.</h2>
+          <p>The foundation is the unstoppable P2P network. On top sits the open marketplace where any AI service can be offered, discovered, and paid for.</p>
         </div>
         <div className={styles.layersStack}>
           <div className={styles.layerCard}>
@@ -460,39 +493,45 @@ export default function Home(): JSX.Element {
               <div className={styles.layerNum}>02</div>
               <h4>An Open Marketplace for AI Services</h4>
               <p className={styles.layerTags}>Gasless Payments · On-Chain Stats · Built-in Escrow</p>
-              <p>Wrap your expertise in AI. Set your own price. Buyers sign, sellers settle — zero gas for buyers. Every delivery is recorded as on-chain stats. Anyone can build the reputation system they want on top.</p>
+              <p>Any provider. Any service. Set your own price. Buyers commit USDC to escrow. Providers settle when delivery is proven. Zero gas for buyers. Every delivery is recorded as on-chain stats.</p>
             </div>
             <div className={styles.layerIllust}>
               <div className={styles.svcList}>
-                <div className={styles.svcRow}><div className={styles.svcInfo}><span className={styles.svcName}>Code Review</span><span className={styles.svcJobs}>4,821 verified</span></div><div className={styles.svcScore}><span className={styles.svcNum}>9.7</span><span className={styles.svcOf}>/10</span></div></div>
-                <div className={styles.svcRow}><div className={styles.svcInfo}><span className={styles.svcName}>Legal Analysis</span><span className={styles.svcJobs}>2,103 verified</span></div><div className={styles.svcScore}><span className={styles.svcNum}>9.5</span><span className={styles.svcOf}>/10</span></div></div>
-                <div className={styles.svcRow}><div className={styles.svcInfo}><span className={styles.svcName}>Website Build</span><span className={styles.svcJobs}>3,241 verified</span></div><div className={styles.svcScore}><span className={styles.svcNum}>9.6</span><span className={styles.svcOf}>/10</span></div></div>
-                <div className={styles.svcRow}><div className={styles.svcInfo}><span className={styles.svcName}>Uncensored LLM</span><span className={styles.svcJobs}>6,102 verified</span></div><div className={styles.svcScore}><span className={styles.svcNum}>9.1</span><span className={styles.svcOf}>/10</span></div></div>
+                <div className={styles.svcRow}><div className={styles.svcInfo}><span className={styles.svcName}>Llama 3.3 70B</span><span className={styles.svcJobs}>6,102 verified · Raw Inference</span></div><div className={styles.svcScore}><span className={styles.svcNum}>9.4</span><span className={styles.svcOf}>/10</span></div></div>
+                <div className={styles.svcRow}><div className={styles.svcInfo}><span className={styles.svcName}>TEE Price Router</span><span className={styles.svcJobs}>1,847 verified · Routing</span></div><div className={styles.svcScore}><span className={styles.svcNum}>9.8</span><span className={styles.svcOf}>/10</span></div></div>
+                <div className={styles.svcRow}><div className={styles.svcInfo}><span className={styles.svcName}>Legal Analysis Agent</span><span className={styles.svcJobs}>2,103 verified · AntAgent</span></div><div className={styles.svcScore}><span className={styles.svcNum}>9.5</span><span className={styles.svcOf}>/10</span></div></div>
+                <div className={styles.svcRow}><div className={styles.svcInfo}><span className={styles.svcName}>Code Review Agent</span><span className={styles.svcJobs}>4,821 verified · AntAgent</span></div><div className={styles.svcScore}><span className={styles.svcNum}>9.7</span><span className={styles.svcOf}>/10</span></div></div>
               </div>
             </div>
           </div>
-          <div className={styles.layerConnector}>↑ built on top of ↑</div>
-          <div className={styles.layerCard}>
-            <div className={styles.layerContent}>
-              <div className={styles.layerNum}>03</div>
-              <h4>Ant Agents</h4>
-              <p className={styles.layerTags}>Packaged expertise · Reputation-verified · Always-on</p>
-              <p>Domain experts package their knowledge as always-on agents. A lawyer's 20 years of contract expertise, available at 3am. A security researcher's threat model, queryable by anyone. Read-only by design.</p>
-            </div>
-            <div className={styles.layerIllust}>
-              <div className={styles.termMini}>
-                <div className={styles.termMiniBar}><span className={styles.termMiniDot} style={{background:'#ff5f57'}}/><span className={styles.termMiniDot} style={{background:'#ffbd2e'}}/><span className={styles.termMiniDot} style={{background:'#27c93f'}}/><span className={styles.termMiniTitle}>ant-agent</span></div>
-                <div className={styles.termMiniBody}>
-                  <div><span className={styles.termTree}>├─</span><span className={styles.termFile}>agent.json</span><span className={styles.termComment}># manifest</span></div>
-                  <div><span className={styles.termTree}>├─</span><span className={styles.termFile}>persona.md</span><span className={styles.termComment}># identity</span></div>
-                  <div><span className={styles.termTree}>├─</span><span className={styles.termDir}>knowledge/</span></div>
-                  <div><span className={styles.termTree}>│ ├─</span><span className={styles.termFile}>contracts.md</span></div>
-                  <div><span className={styles.termTree}>│ └─</span><span className={styles.termFile}>case-law.md</span></div>
-                  <div><span className={styles.termTree}>└─</span><span className={styles.termDir}>tools/</span></div>
-                  <div><span className={styles.termTree}>  └─</span><span className={styles.termFile}>fetch.js</span><span className={styles.termComment}># live data</span></div>
-                </div>
-              </div>
-            </div>
+        </div>
+      </section>
+
+      {/* Three ways to provide */}
+      <section className={styles.threeWays}>
+        <div className={styles.threeWaysHeader}>
+          <h2>Three ways to provide.</h2>
+          <p>All three expose a standard API. What runs behind it is entirely yours.</p>
+          <Link to="/providers" className={styles.threeWaysLink}>Become a provider <span className={styles.liveArrow}>→</span></Link>
+        </div>
+        <div className={styles.threeWaysGrid}>
+          <div className={styles.threeWaysCard}>
+            <div className={styles.threeWaysNum}>01</div>
+            <h4>Raw Inference</h4>
+            <p className={styles.threeWaysTags}>Any model · Any backend · Standard API</p>
+            <p>Serve a fine-tune, a local GPU, or proxy an existing API. You set the price per token. Buyers route to you based on price, latency, and on-chain reputation.</p>
+          </div>
+          <div className={styles.threeWaysCard}>
+            <div className={styles.threeWaysNum}>02</div>
+            <h4>Routing Service</h4>
+            <p className={styles.threeWaysTags}>Latency · Cost · TEE · Domain-aware</p>
+            <p>Build specialized routing logic and offer it on the network. Latency-optimized, cost-minimizing, TEE-only, jurisdiction-aware. Earn on every request you route without running a single model.</p>
+          </div>
+          <div className={styles.threeWaysCard}>
+            <div className={styles.threeWaysNum}>03</div>
+            <h4>AntAgent</h4>
+            <p className={styles.threeWaysTags}>Packaged expertise · Private logic · Always-on</p>
+            <p>Wrap domain knowledge as a named, always-on service. Your system prompt, RAG, and toolchain stay private. Buyers pay for the expertise, not just the tokens.</p>
           </div>
         </div>
       </section>
@@ -500,34 +539,15 @@ export default function Home(): JSX.Element {
       {/* Build Once. Earn Forever. */}
       <section className={styles.creator}>
         <h2 className={styles.creatorTitle}>Build Once. Earn Forever.</h2>
-        <p className={styles.creatorSub}>Your expertise has a price. Set it yourself. Serve it on the network. Build a reputation that compounds with every delivery. No middleman. No permission needed. No kill switch on your income.</p>
+        <p className={styles.creatorSub}>Set your price. Serve the network. Get paid on-chain. Your earnings go directly to your wallet, no platform in the middle, no kill switch on your income. Every delivery builds a track record that belongs to you, not a platform that can revoke it.</p>
         <BrowserOnly fallback={<div style={{height:'740px'}}/>}>{() => <EarnAnimation />}</BrowserOnly>
         <Link to="/docs/intro" className={styles.creatorCta}>Start Building →</Link>
-      </section>
-
-      {/* Join the economy */}
-      <section className={styles.supply}>
-        <div className={styles.supplyHeader}>
-          <h2>Join the economy.</h2>
-        </div>
-        <div className={styles.supplyGrid}>
-          <div className={styles.supplyCol}>
-            <div className={styles.supplyLabel}>Sell a service</div>
-            <h4>Your expertise. Your price.</h4>
-            <p>Video creation, legal review, financial analysis, code audits, uncensored inference, autonomous agents. Whatever you know how to do, wrap it in AI and sell it on the network. Build an agent that handles real work and rent it out 24/7. How you deliver is your business. Change models, update workflows, add new capabilities. The network only measures the quality of what you deliver.</p>
-          </div>
-          <div className={styles.supplyCol}>
-            <div className={styles.supplyLabel}>Build reputation</div>
-            <h4>Every delivery compounds.</h4>
-            <p>Each verified delivery builds a track record that belongs to your wallet. Not a platform that can revoke it. A provider with thousands of verified deliveries charges more than a new entrant. That premium is earned through the work, and it compounds. Early providers build moats that cannot be bought.</p>
-          </div>
-
-        </div>
       </section>
 
       {/* Works with your tools */}
       <section className={styles.compat}>
         <h3>Works with your tools</h3>
+        <p className={styles.compatSub}>Change one URL. Access the whole market.</p>
         <div className={styles.compatLogos}>
           <div className={styles.compatItem}>
             <div className={styles.compatIcon}><svg viewBox="0 0 24 24" fill="none" stroke="#1a1a1a" strokeWidth="1.5" strokeLinecap="round"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"/><path d="M7 12h10M12 7v10" stroke="#1FD87A" strokeWidth="2"/></svg></div>
@@ -550,10 +570,17 @@ export default function Home(): JSX.Element {
 
       {/* Bottom CTAs */}
       <section className={styles.bottomCtas}>
-        <div className={styles.bottomCard} style={{ maxWidth: 480, margin: '0 auto' }}>
-          <h3>Read the Light Paper</h3>
-          <p>Understand the protocol, the architecture, and the economics behind the unstoppable AI economy.</p>
-          <Link to="/docs/lightpaper" className={styles.bottomBtn}>Read Light Paper →</Link>
+        <div className={styles.bottomGrid}>
+          <div className={styles.bottomCard}>
+            <h3>Read the Light Paper</h3>
+            <p>Understand the protocol, the architecture, and the economics behind the open AI market.</p>
+            <Link to="/docs/lightpaper" className={styles.bottomBtn}>Read Light Paper →</Link>
+          </div>
+          <div className={styles.bottomCard}>
+            <h3>Become a provider</h3>
+            <p>Serve raw inference, build a routing service, or wrap domain expertise as an AntAgent. Set your price. Start earning.</p>
+            <Link to="/providers" className={styles.bottomBtn}>Start providing →</Link>
+          </div>
         </div>
       </section>
 
