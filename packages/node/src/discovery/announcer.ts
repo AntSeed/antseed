@@ -106,7 +106,7 @@ export class PeerAnnouncer {
     return this._latestMetadata;
   }
 
-  private async _buildSignedMetadata(_includeOnChainReputation = true): Promise<PeerMetadata> {
+  private async _buildSignedMetadata(includeOnChainReputation = true): Promise<PeerMetadata> {
     const providers: ProviderAnnouncement[] = this.config.providers.map((p) => {
       const pricing = this.config.pricing.get(p.provider) ?? {
         defaults: {
@@ -156,7 +156,7 @@ export class PeerAnnouncer {
     }
 
     if (this.config.paymentsEnabled) {
-      if (_includeOnChainReputation && this.config.channelsClient && this.config.stakingClient) {
+      if (includeOnChainReputation && this.config.channelsClient && this.config.stakingClient) {
         try {
           const evmAddress = this.config.identity.wallet.address;
           const agentId = await this.config.stakingClient.getAgentId(evmAddress);

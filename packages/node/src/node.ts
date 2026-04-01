@@ -558,7 +558,21 @@ export class AntseedNode extends EventEmitter {
       }
     }
 
-
+    // Verify claimed on-chain stats against actual contract data
+    if (this._channelsClient && this._stakingClient) {
+      for (const p of peers) {
+        try {
+          const evmAddress = peerIdToAddress(p.peerId);
+          const agentId = await this._stakingClient.getAgentId(evmAddress);
+          const stats = await this._channelsClient.getAgentStats(agentId);
+          p.onChainReputation = stats.channelCount;
+          p.onChainChannelCount = stats.channelCount;
+          p.onChainDisputeCount = stats.ghostCount;
+        } catch {
+          // Contract lookup failed for this peer — keep claimed data
+        }
+      }
+    }
 
     for (const p of peers) {
       debugLog(`[Node]   peer ${p.peerId.slice(0, 12)}... providers=[${p.providers.join(",")}] addr=${p.publicAddress ?? "?"}`);
