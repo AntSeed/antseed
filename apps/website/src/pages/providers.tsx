@@ -74,7 +74,7 @@ export default function Providers(): JSX.Element {
         </p>
         <div className={styles.heroCtas}>
           <Link to="/docs/provider-api" className={styles.ctaPrimary}>Read provider docs →</Link>
-          <Link to="/docs/getting-started/install" className={styles.ctaSecondary}>Install AntSeed</Link>
+          <Link to="/docs/install" className={styles.ctaSecondary}>Install AntSeed</Link>
         </div>
       </section>
 
@@ -119,7 +119,7 @@ export default function Providers(): JSX.Element {
               <li>→ Announced as a named service on the network</li>
               <li>→ Premium pricing for specialized delivery</li>
             </ul>
-            <Link to="/docs/provider-api#bound-agent" className={styles.pathLink}>AntAgent docs →</Link>
+            <Link to="/docs/provider-api#ant-agent" className={styles.pathLink}>AntAgent docs →</Link>
           </div>
 
           <div className={styles.pathCard}>
@@ -349,9 +349,9 @@ export default {
               <span className={styles.codeTermDot} style={{background:'#28c840'}}/>
               <span className={styles.codeTermTitle}>wallet management</span>
             </div>
-            <pre className={styles.codePre}>{`antseed balance     # view USDC balance + in-escrow
-antseed deposit     # add funds for buying
-antseed withdraw    # pull earnings to external wallet`}</pre>
+            <pre className={styles.codePre}>{`antseed balance     # view USDC balance
+antseed deposit     # add funds
+antseed withdraw    # claim payouts`}</pre>
           </div>
           <p className={styles.walletNote}>
             EVM wallets are derived automatically from your node's Ed25519 identity key.
@@ -397,13 +397,13 @@ antseed withdraw    # pull earnings to external wallet`}</pre>
         <h2>Ready to provide?</h2>
         <p>Install AntSeed, configure your provider, and start earning.</p>
         <div className={styles.bottomCtaBtns}>
-          <Link to="/docs/getting-started/install" className={styles.ctaPrimary}>Get started →</Link>
+          <Link to="/docs/install" className={styles.ctaPrimary}>Get started →</Link>
           <Link to="/docs/provider-api" className={styles.ctaSecondary}>Provider API reference</Link>
         </div>
         <div className={styles.bottomLinks}>
           <Link to="/docs/lightpaper">Read the lightpaper</Link>
           <span>·</span>
-          <Link to="/docs/protocol/payments">Payment protocol</Link>
+          <Link to="/docs/payments">Payment protocol</Link>
           <span>·</span>
           <Link to="/docs/faq">FAQ</Link>
         </div>
