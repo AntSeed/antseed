@@ -6,6 +6,7 @@ import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 import {IAntseedRegistry} from "./interfaces/IAntseedRegistry.sol";
+import {IAntseedDeposits} from "./interfaces/IAntseedDeposits.sol";
 import {IANTSToken} from "./interfaces/IANTSToken.sol";
 
 /**
@@ -137,35 +138,16 @@ contract AntseedEmissions is Ownable, Pausable, ReentrancyGuard {
      * @param epochs  Array of epoch numbers to claim
      */
     function claimEmissions(uint256[] calldata epochs) external nonReentrant whenNotPaused {
-        uint256 _currentEpoch = currentEpoch();
-        uint256 _maxSellerPct = MAX_SELLER_SHARE_PCT;
-        uint256 totalReward = 0;
+        _claimEmissions(msg.sender, msg.sender, epochs);
+    }
 
-        for (uint256 i = 0; i < epochs.length; i++) {
-            uint256 epoch = epochs[i];
-            if (epoch >= _currentEpoch) revert EpochNotFinalized();
-            if (userEpochClaimed[msg.sender][epoch]) continue;
-            if (userSellerPoints[msg.sender][epoch] == 0 && userBuyerPoints[msg.sender][epoch] == 0) continue;
-
-            userEpochClaimed[msg.sender][epoch] = true;
-
-            // Accumulate reserve share on first claim for this epoch
-            if (!epochReserveAccounted[epoch]) {
-                epochReserveAccounted[epoch] = true;
-                reserveAccumulated += (getEpochEmission(epoch) * RESERVE_SHARE_PCT) / 100;
-            }
-
-            (uint256 sellerReward, uint256 sellerExcess, uint256 buyerReward) =
-                _calcEpochReward(msg.sender, epoch, _maxSellerPct);
-
-            reserveAccumulated += sellerExcess;
-            totalReward += sellerReward + buyerReward;
-        }
-
-        if (totalReward > 0) {
-            IANTSToken(registry.antsToken()).mint(msg.sender, totalReward);
-            emit EmissionsClaimed(msg.sender, totalReward, epochs);
-        }
+    /**
+     * @notice Claim emissions on behalf of an account. Operator-only.
+     *         Tokens are minted to the operator (msg.sender), not the account.
+     */
+    function claimEmissionsFor(address account, uint256[] calldata epochs) external nonReentrant whenNotPaused {
+        if (IAntseedDeposits(registry.deposits()).getOperator(account) != msg.sender) revert NotAuthorized();
+        _claimEmissions(account, msg.sender, epochs);
     }
 
     /**
@@ -188,6 +170,40 @@ contract AntseedEmissions is Ownable, Pausable, ReentrancyGuard {
 
             totalSeller += sellerReward;
             totalBuyer += buyerReward;
+        }
+    }
+
+    /**
+     * @dev Shared claim logic. Marks epochs claimed for `account`, mints to `recipient`.
+     */
+    function _claimEmissions(address account, address recipient, uint256[] calldata epochs) internal {
+        uint256 _currentEpoch = currentEpoch();
+        uint256 _maxSellerPct = MAX_SELLER_SHARE_PCT;
+        uint256 totalReward = 0;
+
+        for (uint256 i = 0; i < epochs.length; i++) {
+            uint256 epoch = epochs[i];
+            if (epoch >= _currentEpoch) revert EpochNotFinalized();
+            if (userEpochClaimed[account][epoch]) continue;
+            if (userSellerPoints[account][epoch] == 0 && userBuyerPoints[account][epoch] == 0) continue;
+
+            userEpochClaimed[account][epoch] = true;
+
+            if (!epochReserveAccounted[epoch]) {
+                epochReserveAccounted[epoch] = true;
+                reserveAccumulated += (getEpochEmission(epoch) * RESERVE_SHARE_PCT) / 100;
+            }
+
+            (uint256 sellerReward, uint256 sellerExcess, uint256 buyerReward) =
+                _calcEpochReward(account, epoch, _maxSellerPct);
+
+            reserveAccumulated += sellerExcess;
+            totalReward += sellerReward + buyerReward;
+        }
+
+        if (totalReward > 0) {
+            IANTSToken(registry.antsToken()).mint(recipient, totalReward);
+            emit EmissionsClaimed(account, totalReward, epochs);
         }
     }
 

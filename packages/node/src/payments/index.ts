@@ -41,6 +41,7 @@ export {
   signReserveAuth,
   signSetOperator,
   makeChannelsDomain,
+  makeDepositsDomain,
   SPENDING_AUTH_TYPES,
   RESERVE_AUTH_TYPES,
   SET_OPERATOR_TYPES,

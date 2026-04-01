@@ -15,14 +15,18 @@ export interface BuyerBalanceInfo {
 }
 
 const DEPOSITS_ABI = [
-  'function deposit(uint256 amount) external',
-  'function depositFor(address buyer, uint256 amount) external',
+  'function deposit(address buyer, uint256 amount) external',
   'function withdraw(address buyer, uint256 amount) external',
   'function claimPayouts() external',
   'function getBuyerBalance(address buyer) external view returns (uint256 available, uint256 reserved, uint256 lastActivityAt)',
   'function getBuyerCreditLimit(address buyer) external view returns (uint256)',
   'function sellerPayouts(address seller) external view returns (uint256)',
   'function uniqueSellersCharged(address buyer) external view returns (uint256)',
+  'function getOperator(address buyer) external view returns (address)',
+  'function getOperatorNonce(address buyer) external view returns (uint256)',
+  'function setOperator(address buyer, address operator, uint256 nonce, bytes buyerSig) external',
+  'function transferOperator(address buyer, address newOperator) external',
+  'function domainSeparator() external view returns (bytes32)',
 ] as const;
 
 export class DepositsClient extends BaseEvmClient {
@@ -37,12 +41,8 @@ export class DepositsClient extends BaseEvmClient {
 
   // ─── Buyer Operations ──────────────────────────────────────────────
 
-  async deposit(signer: AbstractSigner, amount: bigint): Promise<string> {
-    return this._approveAndExec(signer, this._usdcAddress, amount, DEPOSITS_ABI, 'deposit', amount);
-  }
-
-  async depositFor(signer: AbstractSigner, buyer: string, amount: bigint): Promise<string> {
-    return this._approveAndExec(signer, this._usdcAddress, amount, DEPOSITS_ABI, 'depositFor', buyer, amount);
+  async deposit(signer: AbstractSigner, buyer: string, amount: bigint): Promise<string> {
+    return this._approveAndExec(signer, this._usdcAddress, amount, DEPOSITS_ABI, 'deposit', buyer, amount);
   }
 
   async withdraw(signer: AbstractSigner, buyer: string, amount: bigint): Promise<string> {
@@ -76,6 +76,33 @@ export class DepositsClient extends BaseEvmClient {
     const contract = new Contract(this._contractAddress, DEPOSITS_ABI, this._provider);
     return contract.getFunction('getBuyerCreditLimit')(buyerAddr) as Promise<bigint>;
   }
+
+  // ─── Operator Management ─────────────────────────────────────────
+
+  async getOperator(buyerAddr: string): Promise<string> {
+    const contract = new Contract(this._contractAddress, DEPOSITS_ABI, this._provider);
+    return contract.getFunction('getOperator')(buyerAddr) as Promise<string>;
+  }
+
+  async getOperatorNonce(buyerAddr: string): Promise<bigint> {
+    const contract = new Contract(this._contractAddress, DEPOSITS_ABI, this._provider);
+    return contract.getFunction('getOperatorNonce')(buyerAddr) as Promise<bigint>;
+  }
+
+  async setOperator(signer: AbstractSigner, buyer: string, operator: string, nonce: bigint, buyerSig: string): Promise<string> {
+    return this._execWrite(signer, DEPOSITS_ABI, 'setOperator', buyer, operator, nonce, buyerSig);
+  }
+
+  async transferOperator(signer: AbstractSigner, buyer: string, newOperator: string): Promise<string> {
+    return this._execWrite(signer, DEPOSITS_ABI, 'transferOperator', buyer, newOperator);
+  }
+
+  async domainSeparator(): Promise<string> {
+    const contract = new Contract(this._contractAddress, DEPOSITS_ABI, this._provider);
+    return contract.getFunction('domainSeparator')() as Promise<string>;
+  }
+
+  // ─── USDC Balance ───────────────────────────────────────────────
 
   async getUSDCBalance(ownerAddr: string): Promise<bigint> {
     const usdc = new Contract(this._usdcAddress, ERC20_ABI, this._provider);

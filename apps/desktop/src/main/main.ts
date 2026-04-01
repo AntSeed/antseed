@@ -640,9 +640,7 @@ async function refreshCreditsInfo(): Promise<CreditsInfo> {
       depositsClient.getBuyerCreditLimit(evmAddress),
       (async (): Promise<string | null> => {
         try {
-          const { ChannelsClient } = await import('@antseed/node');
-          const sc = new ChannelsClient({ rpcUrl: cc.rpcUrl, contractAddress: cc.channelsAddress });
-          const addr = await sc.getOperator(evmAddress);
+          const addr = await depositsClient.getOperator(evmAddress);
           return addr && addr !== '0x0000000000000000000000000000000000000000' ? addr : null;
         } catch { return null; }
       })(),

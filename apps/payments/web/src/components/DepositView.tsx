@@ -9,7 +9,7 @@ import { parseUnits } from 'viem';
 import { parseAbi } from 'viem';
 import type { PaymentConfig } from '../types';
 import { getOperatorInfo, signOperatorAuth } from '../api';
-import { CHANNELS_ABI } from '../channels-abi';
+import { DEPOSITS_OPERATOR_ABI } from '../channels-abi';
 import './DepositView.scss';
 
 interface DepositViewProps {
@@ -20,7 +20,7 @@ interface DepositViewProps {
 
 const DEPOSITS_ABI = [
   {
-    name: 'depositFor',
+    name: 'deposit',
     type: 'function',
     stateMutability: 'nonpayable',
     inputs: [
@@ -136,7 +136,7 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
       writeDeposit({
         address: config.depositsContractAddress as `0x${string}`,
         abi: DEPOSITS_ABI,
-        functionName: 'depositFor',
+        functionName: 'deposit',
         args: [depositTarget as `0x${string}`, usdcAmount],
       }, {
         onError: (err) => {
@@ -158,12 +158,12 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
         try {
           const opInfo = await getOperatorInfo();
           const zeroAddr = '0x0000000000000000000000000000000000000000';
-          if (opInfo.operator === zeroAddr && address && config?.channelsContractAddress) {
+          if (opInfo.operator === zeroAddr && address && config?.depositsContractAddress) {
             const signResult = await signOperatorAuth(address);
             if (signResult.ok) {
               await writeOperatorAsync({
-                address: config.channelsContractAddress as `0x${string}`,
-                abi: parseAbi(CHANNELS_ABI),
+                address: config.depositsContractAddress as `0x${string}`,
+                abi: parseAbi(DEPOSITS_OPERATOR_ABI),
                 functionName: 'setOperator',
                 args: [signResult.buyer as `0x${string}`, address as `0x${string}`, BigInt(signResult.nonce), signResult.signature as `0x${string}`],
               });
