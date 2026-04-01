@@ -15,42 +15,29 @@ import {IANTSToken} from "./interfaces/IANTSToken.sol";
  *         If you stop working, you stop earning — points don't carry over.
  *         Earned rewards are claimable forever.
  *
- *         Each epoch's emission budget = INITIAL_EMISSION >> (epoch / HALVING_INTERVAL),
- *         split into seller / buyer / reserve shares.
+ *         Epoch number is derived from timestamp:
+ *           epoch = (block.timestamp - genesis) / EPOCH_DURATION
  *
- *         Empty epochs: seller/buyer budget rolls forward to the next non-empty epoch.
- *         Reserve accumulates regardless.
- *
- *         Gas profile:
- *           accruePoints:    O(1) + lazy epoch advance (typically 0-1)
- *           claimEmissions:  O(claimed epochs) — caller passes epoch list
- *           advanceEpoch:    O(missed epochs), capped at 52
+ *         No explicit epoch advancement — everything is a pure function of time.
+ *         Empty epoch budgets go to reserve (no rollover).
  */
 contract AntseedEmissions is Ownable, ReentrancyGuard {
     // ─── Configuration ───
     IAntseedRegistry public registry;
 
-    uint256 public EPOCH_DURATION;
-    uint256 public HALVING_INTERVAL;
-    uint256 public INITIAL_EMISSION;
+    uint256 public immutable EPOCH_DURATION;
+    uint256 public immutable HALVING_INTERVAL;
+    uint256 public immutable INITIAL_EMISSION;
+    uint256 public immutable genesis;
+
     uint256 public SELLER_SHARE_PCT;
     uint256 public BUYER_SHARE_PCT;
     uint256 public RESERVE_SHARE_PCT;
     uint256 public MAX_SELLER_SHARE_PCT;
 
-    // ─── Epoch State ───
-    uint256 public currentEpoch;
-    uint256 public epochStart;
-
-    // Budget rollover from empty epochs
-    uint256 public sellerBudgetRollover;
-    uint256 public buyerBudgetRollover;
-
-    // ─── Per-Epoch Snapshots (set when epoch finalizes) ───
+    // ─── Per-Epoch Totals ───
     mapping(uint256 => uint256) public epochTotalSellerPoints;
     mapping(uint256 => uint256) public epochTotalBuyerPoints;
-    mapping(uint256 => uint256) public epochSellerBudget;
-    mapping(uint256 => uint256) public epochBuyerBudget;
 
     // ─── Per-User State ───
     mapping(address => mapping(uint256 => uint256)) public userSellerPoints;
@@ -61,17 +48,15 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
     uint256 public reserveAccumulated;
 
     // ─── Events ───
-    event EpochAdvanced(uint256 indexed epoch, uint256 emission);
-    event SellerPointsAccrued(address indexed seller, uint256 pointsDelta);
-    event BuyerPointsAccrued(address indexed buyer, uint256 pointsDelta);
+    event SellerPointsAccrued(address indexed seller, uint256 indexed epoch, uint256 pointsDelta);
+    event BuyerPointsAccrued(address indexed buyer, uint256 indexed epoch, uint256 pointsDelta);
     event EmissionsClaimed(address indexed claimer, uint256 amount, uint256[] epochs);
     event ReserveFlushed(address indexed destination, uint256 amount);
 
     // ─── Custom Errors ───
     error NotAuthorized();
-    error EpochNotEnded();
-    error EpochAlreadyClaimed();
     error EpochNotFinalized();
+    error EpochAlreadyClaimed();
     error InvalidShareSum();
     error NoProtocolReserve();
     error NoReserve();
@@ -97,78 +82,28 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
         INITIAL_EMISSION = _initialEmission;
         EPOCH_DURATION = _epochDuration;
         HALVING_INTERVAL = 26;
+        genesis = block.timestamp;
+
         SELLER_SHARE_PCT = 65;
         BUYER_SHARE_PCT = 25;
         RESERVE_SHARE_PCT = 10;
         MAX_SELLER_SHARE_PCT = 15;
-
-        epochStart = block.timestamp;
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //                        EPOCH MANAGEMENT
+    //                        EPOCH HELPERS
     // ═══════════════════════════════════════════════════════════════════
 
-    /**
-     * @notice Advance through all completed epochs. Permissionless.
-     *         Reverts if the current epoch hasn't ended yet.
-     */
-    function advanceEpoch() public {
-        if (block.timestamp < epochStart + EPOCH_DURATION) revert EpochNotEnded();
-        _tryAdvanceEpoch();
+    function currentEpoch() public view returns (uint256) {
+        return (block.timestamp - genesis) / EPOCH_DURATION;
     }
 
-    /**
-     * @dev Lazily advance epochs if needed. Called before any state mutation.
-     *      Caches storage vars in memory for gas efficiency during multi-epoch catch-up.
-     */
-    function _tryAdvanceEpoch() internal {
-        uint256 _epochStart = epochStart;
-        uint256 _epochDuration = EPOCH_DURATION;
-        if (block.timestamp < _epochStart + _epochDuration) return;
-
-        uint256 _epoch = currentEpoch;
-        uint256 maxIterations = 52;
-        while (block.timestamp >= _epochStart + _epochDuration && maxIterations > 0) {
-            maxIterations--;
-            _finalizeEpoch(_epoch);
-            _epoch++;
-            _epochStart += _epochDuration;
-        }
-        currentEpoch = _epoch;
-        epochStart = _epochStart;
-
-        emit EpochAdvanced(_epoch, _calcEpochEmission(_epoch));
-    }
-
-    /**
-     * @dev Finalize a completed epoch: compute budgets with rollovers,
-     *      handle empty epochs, accumulate reserve.
-     */
-    function _finalizeEpoch(uint256 epoch) internal {
-        uint256 emission = _calcEpochEmission(epoch);
-        uint256 sellerBudget = (emission * SELLER_SHARE_PCT) / 100 + sellerBudgetRollover;
-        uint256 buyerBudget = (emission * BUYER_SHARE_PCT) / 100 + buyerBudgetRollover;
-
-        reserveAccumulated += (emission * RESERVE_SHARE_PCT) / 100;
-
-        if (epochTotalSellerPoints[epoch] == 0) {
-            sellerBudgetRollover = sellerBudget;
-        } else {
-            epochSellerBudget[epoch] = sellerBudget;
-            sellerBudgetRollover = 0;
-        }
-
-        if (epochTotalBuyerPoints[epoch] == 0) {
-            buyerBudgetRollover = buyerBudget;
-        } else {
-            epochBuyerBudget[epoch] = buyerBudget;
-            buyerBudgetRollover = 0;
-        }
-    }
-
-    function _calcEpochEmission(uint256 epoch) internal view returns (uint256) {
+    function getEpochEmission(uint256 epoch) public view returns (uint256) {
         return INITIAL_EMISSION >> (epoch / HALVING_INTERVAL);
+    }
+
+    function currentEmissionRate() external view returns (uint256) {
+        return getEpochEmission(currentEpoch()) / EPOCH_DURATION;
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -176,17 +111,17 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
     // ═══════════════════════════════════════════════════════════════════
 
     function accrueSellerPoints(address seller, uint256 pointsDelta) external onlyChannels {
-        _tryAdvanceEpoch();
-        userSellerPoints[seller][currentEpoch] += pointsDelta;
-        epochTotalSellerPoints[currentEpoch] += pointsDelta;
-        emit SellerPointsAccrued(seller, pointsDelta);
+        uint256 epoch = currentEpoch();
+        userSellerPoints[seller][epoch] += pointsDelta;
+        epochTotalSellerPoints[epoch] += pointsDelta;
+        emit SellerPointsAccrued(seller, epoch, pointsDelta);
     }
 
     function accrueBuyerPoints(address buyer, uint256 pointsDelta) external onlyChannels {
-        _tryAdvanceEpoch();
-        userBuyerPoints[buyer][currentEpoch] += pointsDelta;
-        epochTotalBuyerPoints[currentEpoch] += pointsDelta;
-        emit BuyerPointsAccrued(buyer, pointsDelta);
+        uint256 epoch = currentEpoch();
+        userBuyerPoints[buyer][epoch] += pointsDelta;
+        epochTotalBuyerPoints[epoch] += pointsDelta;
+        emit BuyerPointsAccrued(buyer, epoch, pointsDelta);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -194,15 +129,14 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
     // ═══════════════════════════════════════════════════════════════════
 
     /**
-     * @notice Claim emissions for a list of finalized epochs.
+     * @notice Claim emissions for a list of past epochs.
      *         Each epoch can only be claimed once per address.
+     *         Epochs with no user activity are skipped (not marked as claimed).
      *
      * @param epochs  Array of epoch numbers to claim
      */
     function claimEmissions(uint256[] calldata epochs) external nonReentrant {
-        _tryAdvanceEpoch();
-
-        uint256 _currentEpoch = currentEpoch;
+        uint256 _currentEpoch = currentEpoch();
         uint256 _maxSellerPct = MAX_SELLER_SHARE_PCT;
         uint256 totalReward = 0;
 
@@ -229,74 +163,41 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
 
     /**
      * @notice View pending (unclaimed) emissions for an account across specific epochs.
-     *         Simulates epoch advancement so it returns correct values even if
-     *         advanceEpoch hasn't been called yet.
      */
     function pendingEmissions(
         address account,
         uint256[] calldata epochs
     ) external view returns (uint256 totalSeller, uint256 totalBuyer) {
-        // Simulate what currentEpoch would be if _tryAdvanceEpoch ran now
-        uint256 _effectiveEpoch = currentEpoch;
-        uint256 _epochStart = epochStart;
-        uint256 _epochDuration = EPOCH_DURATION;
-        while (block.timestamp >= _epochStart + _epochDuration && _effectiveEpoch < currentEpoch + 52) {
-            _effectiveEpoch++;
-            _epochStart += _epochDuration;
-        }
-
+        uint256 _currentEpoch = currentEpoch();
         uint256 _maxSellerPct = MAX_SELLER_SHARE_PCT;
 
         for (uint256 i = 0; i < epochs.length; i++) {
             uint256 epoch = epochs[i];
-            if (epoch >= _effectiveEpoch) continue;
+            if (epoch >= _currentEpoch) continue;
             if (userEpochClaimed[account][epoch]) continue;
 
-            // For elapsed-but-not-yet-finalized epochs, compute budget on the fly
-            uint256 sBudget = epochSellerBudget[epoch];
-            uint256 bBudget = epochBuyerBudget[epoch];
-            if (sBudget == 0 && bBudget == 0 && epoch >= currentEpoch) {
-                // Epoch elapsed but not finalized — simulate budget
-                uint256 emission = _calcEpochEmission(epoch);
-                uint256 totalSP = epochTotalSellerPoints[epoch];
-                uint256 totalBP = epochTotalBuyerPoints[epoch];
-                if (totalSP > 0) sBudget = (emission * SELLER_SHARE_PCT) / 100;
-                if (totalBP > 0) bBudget = (emission * BUYER_SHARE_PCT) / 100;
-                // Note: rollover not simulated — would require iterating all prior epochs
-            }
+            (uint256 sellerReward,, uint256 buyerReward) =
+                _calcEpochReward(account, epoch, _maxSellerPct);
 
-            uint256 userSP = userSellerPoints[account][epoch];
-            uint256 totalSP = epochTotalSellerPoints[epoch];
-            if (userSP > 0 && totalSP > 0 && sBudget > 0) {
-                uint256 sellerReward = (userSP * sBudget) / totalSP;
-                uint256 maxSellerReward = (sBudget * _maxSellerPct) / 100;
-                if (sellerReward > maxSellerReward) {
-                    sellerReward = maxSellerReward;
-                }
-                totalSeller += sellerReward;
-            }
-
-            uint256 userBP = userBuyerPoints[account][epoch];
-            uint256 totalBP = epochTotalBuyerPoints[epoch];
-            if (userBP > 0 && totalBP > 0 && bBudget > 0) {
-                totalBuyer += (userBP * bBudget) / totalBP;
-            }
+            totalSeller += sellerReward;
+            totalBuyer += buyerReward;
         }
     }
 
     /**
-     * @dev Calculate a user's reward for a single finalized epoch.
-     *      Returns capped seller reward, excess (for reserve), and buyer reward.
+     * @dev Calculate a user's reward for a single past epoch.
      */
     function _calcEpochReward(
         address account,
         uint256 epoch,
         uint256 maxSellerPct
     ) internal view returns (uint256 sellerReward, uint256 sellerExcess, uint256 buyerReward) {
+        uint256 emission = getEpochEmission(epoch);
+
         uint256 userSP = userSellerPoints[account][epoch];
         uint256 totalSP = epochTotalSellerPoints[epoch];
         if (userSP > 0 && totalSP > 0) {
-            uint256 sBudget = epochSellerBudget[epoch];
+            uint256 sBudget = (emission * SELLER_SHARE_PCT) / 100;
             sellerReward = (userSP * sBudget) / totalSP;
 
             uint256 maxSellerReward = (sBudget * maxSellerPct) / 100;
@@ -309,7 +210,8 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
         uint256 userBP = userBuyerPoints[account][epoch];
         uint256 totalBP = epochTotalBuyerPoints[epoch];
         if (userBP > 0 && totalBP > 0) {
-            buyerReward = (userBP * epochBuyerBudget[epoch]) / totalBP;
+            uint256 bBudget = (emission * BUYER_SHARE_PCT) / 100;
+            buyerReward = (userBP * bBudget) / totalBP;
         }
     }
 
@@ -328,18 +230,6 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //                        VIEW HELPERS
-    // ═══════════════════════════════════════════════════════════════════
-
-    function currentEmissionRate() external view returns (uint256) {
-        return _calcEpochEmission(currentEpoch) / EPOCH_DURATION;
-    }
-
-    function getEpochEmission(uint256 epoch) external view returns (uint256) {
-        return _calcEpochEmission(epoch);
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
     //                        ADMIN FUNCTIONS
     // ═══════════════════════════════════════════════════════════════════
 
@@ -350,7 +240,6 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
 
     function setSharePercentages(uint256 sellerPct, uint256 buyerPct, uint256 reservePct) external onlyOwner {
         if (sellerPct + buyerPct + reservePct != 100) revert InvalidShareSum();
-        _tryAdvanceEpoch();
         SELLER_SHARE_PCT = sellerPct;
         BUYER_SHARE_PCT = buyerPct;
         RESERVE_SHARE_PCT = reservePct;
@@ -359,17 +248,5 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
     function setMaxSellerSharePct(uint256 value) external onlyOwner {
         if (value == 0 || value > 100) revert InvalidValue();
         MAX_SELLER_SHARE_PCT = value;
-    }
-
-    function setEpochDuration(uint256 value) external onlyOwner {
-        if (value == 0) revert InvalidValue();
-        _tryAdvanceEpoch();
-        EPOCH_DURATION = value;
-    }
-
-    function setHalvingInterval(uint256 value) external onlyOwner {
-        if (value == 0) revert InvalidValue();
-        _tryAdvanceEpoch();
-        HALVING_INTERVAL = value;
     }
 }
