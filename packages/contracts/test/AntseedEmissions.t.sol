@@ -664,13 +664,29 @@ contract AntseedEmissionsTest is Test {
         assertEq(token.balanceOf(seller1), 0);
     }
 
-    function test_pendingEmissions_unfinalizedEpochSkipped() public {
+    function test_pendingEmissions_currentEpochSkipped() public {
         emissions.accrueSellerPoints(seller1, 100);
 
-        // Don't advance — epoch 0 is still current
+        // Epoch 0 is still in progress — no pending yet
         (uint256 pendSeller, uint256 pendBuyer) = emissions.pendingEmissions(seller1, _epochList(0));
         assertEq(pendSeller, 0);
         assertEq(pendBuyer, 0);
+    }
+
+    function test_pendingEmissions_worksWithoutAdvanceEpoch() public {
+        emissions.accrueSellerPoints(seller1, 100);
+
+        // Warp past epoch 0 but DON'T call advanceEpoch
+        vm.warp(block.timestamp + EPOCH_DURATION + 1);
+
+        // pendingEmissions should still return correct values
+        (uint256 pendSeller,) = emissions.pendingEmissions(seller1, _epochList(0));
+        assertTrue(pendSeller > 0);
+
+        // Verify it matches what claim would give
+        vm.prank(seller1);
+        emissions.claimEmissions(_epochList(0));
+        assertEq(token.balanceOf(seller1), pendSeller);
     }
 
     function test_pendingEmissions_buyerOnlyEpoch() public {

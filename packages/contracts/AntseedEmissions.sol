@@ -229,24 +229,58 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
 
     /**
      * @notice View pending (unclaimed) emissions for an account across specific epochs.
+     *         Simulates epoch advancement so it returns correct values even if
+     *         advanceEpoch hasn't been called yet.
      */
     function pendingEmissions(
         address account,
         uint256[] calldata epochs
     ) external view returns (uint256 totalSeller, uint256 totalBuyer) {
-        uint256 _currentEpoch = currentEpoch;
+        // Simulate what currentEpoch would be if _tryAdvanceEpoch ran now
+        uint256 _effectiveEpoch = currentEpoch;
+        uint256 _epochStart = epochStart;
+        uint256 _epochDuration = EPOCH_DURATION;
+        while (block.timestamp >= _epochStart + _epochDuration && _effectiveEpoch < currentEpoch + 52) {
+            _effectiveEpoch++;
+            _epochStart += _epochDuration;
+        }
+
         uint256 _maxSellerPct = MAX_SELLER_SHARE_PCT;
 
         for (uint256 i = 0; i < epochs.length; i++) {
             uint256 epoch = epochs[i];
-            if (epoch >= _currentEpoch) continue;
+            if (epoch >= _effectiveEpoch) continue;
             if (userEpochClaimed[account][epoch]) continue;
 
-            (uint256 sellerReward,, uint256 buyerReward) =
-                _calcEpochReward(account, epoch, _maxSellerPct);
+            // For elapsed-but-not-yet-finalized epochs, compute budget on the fly
+            uint256 sBudget = epochSellerBudget[epoch];
+            uint256 bBudget = epochBuyerBudget[epoch];
+            if (sBudget == 0 && bBudget == 0 && epoch >= currentEpoch) {
+                // Epoch elapsed but not finalized — simulate budget
+                uint256 emission = _calcEpochEmission(epoch);
+                uint256 totalSP = epochTotalSellerPoints[epoch];
+                uint256 totalBP = epochTotalBuyerPoints[epoch];
+                if (totalSP > 0) sBudget = (emission * SELLER_SHARE_PCT) / 100;
+                if (totalBP > 0) bBudget = (emission * BUYER_SHARE_PCT) / 100;
+                // Note: rollover not simulated — would require iterating all prior epochs
+            }
 
-            totalSeller += sellerReward;
-            totalBuyer += buyerReward;
+            uint256 userSP = userSellerPoints[account][epoch];
+            uint256 totalSP = epochTotalSellerPoints[epoch];
+            if (userSP > 0 && totalSP > 0 && sBudget > 0) {
+                uint256 sellerReward = (userSP * sBudget) / totalSP;
+                uint256 maxSellerReward = (sBudget * _maxSellerPct) / 100;
+                if (sellerReward > maxSellerReward) {
+                    sellerReward = maxSellerReward;
+                }
+                totalSeller += sellerReward;
+            }
+
+            uint256 userBP = userBuyerPoints[account][epoch];
+            uint256 totalBP = epochTotalBuyerPoints[epoch];
+            if (userBP > 0 && totalBP > 0 && bBudget > 0) {
+                totalBuyer += (userBP * bBudget) / totalBP;
+            }
         }
     }
 
