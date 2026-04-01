@@ -130,8 +130,6 @@ export interface PaymentsCLIConfig {
     usdcContractAddress: string;
     /** Deployed AntseedIdentity (ERC-8004 registry) contract address */
     identityRegistryAddress?: string;
-    /** Deployed AntseedStats contract address */
-    statsContractAddress?: string;
     /** Deployed AntseedEmissions contract address */
     emissionsContractAddress?: string;
     /** Deployed AntseedSubPool contract address */
