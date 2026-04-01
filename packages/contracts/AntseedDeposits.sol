@@ -254,7 +254,6 @@ contract AntseedDeposits is EIP712, Ownable, ReentrancyGuard {
      */
     function transferOperator(address buyer, address newOperator) external {
         if (!_isOperator(buyer)) revert NotAuthorized();
-
         buyers[buyer].operator = newOperator;
 
         emit OperatorSet(buyer, newOperator);

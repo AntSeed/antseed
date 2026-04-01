@@ -98,7 +98,7 @@ echo "Done"
 echo ""
 echo "=== Step 8: Buyer deposit 10 USDC ==="
 cast send --rpc-url $RPC --private-key $BUYER_KEY $USDC "approve(address,uint256)" $DEPOSITS 10000000 > /dev/null
-cast send --rpc-url $RPC --private-key $BUYER_KEY $DEPOSITS "deposit(uint256)" 10000000 > /dev/null
+cast send --rpc-url $RPC --private-key $BUYER_KEY $DEPOSITS "deposit(address,uint256)" $BUYER_ADDR 10000000 > /dev/null
 echo "Done"
 
 echo ""

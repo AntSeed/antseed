@@ -53,7 +53,7 @@ contract AntseedEmissions is Ownable, Pausable, ReentrancyGuard {
     // ─── Events ───
     event SellerPointsAccrued(address indexed seller, uint256 indexed epoch, uint256 pointsDelta);
     event BuyerPointsAccrued(address indexed buyer, uint256 indexed epoch, uint256 pointsDelta);
-    event EmissionsClaimed(address indexed claimer, uint256 amount, uint256[] epochs);
+    event EmissionsClaimed(address indexed account, address indexed recipient, uint256 amount, uint256[] epochs);
     event ReserveFlushed(address indexed destination, uint256 amount);
 
     // ─── Custom Errors ───
@@ -203,7 +203,7 @@ contract AntseedEmissions is Ownable, Pausable, ReentrancyGuard {
 
         if (totalReward > 0) {
             IANTSToken(registry.antsToken()).mint(recipient, totalReward);
-            emit EmissionsClaimed(account, totalReward, epochs);
+            emit EmissionsClaimed(account, recipient, totalReward, epochs);
         }
     }
 

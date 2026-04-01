@@ -350,7 +350,7 @@ async function main() {
       buyerPrivateKey
     );
     castSend(
-      [DEPOSITS_ADDRESS, "deposit(uint256)", USDC_DEPOSIT_AMOUNT.toString()],
+      [DEPOSITS_ADDRESS, "deposit(address,uint256)", buyerAddress, USDC_DEPOSIT_AMOUNT.toString()],
       buyerPrivateKey
     );
     pass("Buyer deposited");
