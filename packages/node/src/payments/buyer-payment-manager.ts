@@ -252,7 +252,7 @@ export class BuyerPaymentManager {
       channelId,
       cumulativeAmount: minBudgetPerRequest.toString(),
       metadataHash: ZERO_METADATA_HASH,
-      metadata: '',
+      metadata: encodeMetadata(ZERO_METADATA),
       spendingAuthSig: reserveAuthSig,
       reserveSalt: salt,
       reserveMaxAmount: maxAmount.toString(),

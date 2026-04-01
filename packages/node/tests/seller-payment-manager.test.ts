@@ -11,7 +11,7 @@ import type { SpendingAuthPayload } from '../src/types/protocol.js';
 import { bytesToHex } from '../src/utils/hex.js';
 import { toPeerId } from '../src/types/peer.js';
 import { Wallet } from 'ethers';
-import { signSpendingAuth, signReserveAuth, makeChannelsDomain, computeMetadataHash, encodeMetadata, ZERO_METADATA_HASH } from '../src/payments/evm/signatures.js';
+import { signSpendingAuth, signReserveAuth, makeChannelsDomain, computeMetadataHash, encodeMetadata, ZERO_METADATA, ZERO_METADATA_HASH } from '../src/payments/evm/signatures.js';
 import type { SpendingAuthMessage, ReserveAuthMessage, SpendingAuthMetadata } from '../src/payments/evm/signatures.js';
 
 const CHAIN_ID = 31337;
@@ -225,6 +225,58 @@ describe('SellerPaymentManager', () => {
     expect(session).not.toBeNull();
     expect(session!.status).toBe('active');
     expect(manager2.channelsClient.close).not.toHaveBeenCalled();
+  });
+
+  it('test_onBuyerDisconnect_close: calls close with valid metadata from latest auth', async () => {
+    const channelId = makeChannelId(10);
+
+    // Reserve
+    const payload1 = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { isReserve: true });
+    await manager.handleSpendingAuth(buyerIdentity.peerId, payload1, mux);
+
+    // Accept a SpendingAuth with real metadata
+    const payload2 = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
+      cumulativeAmount: 200_000n,
+      cumulativeInputTokens: 100n,
+      cumulativeOutputTokens: 500n,
+    });
+    await manager.handleSpendingAuth(buyerIdentity.peerId, payload2, mux);
+
+    // Record some spend so close() is attempted (not zero-cumulative deferral)
+    manager.recordSpend(channelId, 50_000n);
+
+    manager.onBuyerDisconnect(buyerIdentity.peerId);
+
+    expect(manager.channelsClient.close).toHaveBeenCalledOnce();
+    const closeArgs = (manager.channelsClient.close as ReturnType<typeof vi.fn>).mock.calls[0];
+    // closeArgs: [signer, channelId, cumulativeAmount, metadata, buyerSig]
+    const metadata = closeArgs[3] as string;
+    expect(metadata).not.toBe('');
+    expect(metadata.startsWith('0x')).toBe(true);
+  });
+
+  it('test_onBuyerDisconnect_close_empty_metadata: falls back to 0x for empty metadata', async () => {
+    const channelId = makeChannelId(11);
+
+    // Reserve
+    const payload1 = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { isReserve: true });
+    await manager.handleSpendingAuth(buyerIdentity.peerId, payload1, mux);
+
+    // Accept a SpendingAuth but mutate metadata to empty string (simulates old buyer)
+    const payload2 = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { cumulativeAmount: 200_000n });
+    payload2.metadata = ''; // simulate old buyer sending empty metadata
+    await manager.handleSpendingAuth(buyerIdentity.peerId, payload2, mux);
+
+    // Record some spend so close() is attempted
+    manager.recordSpend(channelId, 5_000n);
+
+    manager.onBuyerDisconnect(buyerIdentity.peerId);
+
+    expect(manager.channelsClient.close).toHaveBeenCalledOnce();
+    const closeArgs = (manager.channelsClient.close as ReturnType<typeof vi.fn>).mock.calls[0];
+    const metadata = closeArgs[3] as string;
+    // Should fall back to ABI-encoded zero metadata (matching ZERO_METADATA_HASH)
+    expect(metadata).toBe(encodeMetadata(ZERO_METADATA));
   });
 
   it('test_hasSession: returns true/false correctly', async () => {
