@@ -35,7 +35,7 @@ export function registerDepositCommand(program: Command): void {
       const spinner = ora('Depositing USDC into deposits contract...').start();
 
       try {
-        const txHash = await depositsClient.deposit(wallet, amountBaseUnits);
+        const txHash = await depositsClient.deposit(wallet, address, amountBaseUnits);
         spinner.succeed(chalk.green(`Deposited ${amountFloat} USDC into deposits contract`));
         console.log(chalk.dim(`Transaction: ${txHash}`));
       } catch (err) {

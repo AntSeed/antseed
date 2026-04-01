@@ -12,7 +12,8 @@ contract AntseedDepositsTest is Test {
     MockUSDC public usdc;
 
     address public owner;
-    address public buyer = address(0x1);
+    uint256 constant BUYER_PK = 0xA11CE;
+    address public buyer = vm.addr(BUYER_PK);
     address public buyer2 = address(0x2);
     address public seller = address(0x3);
     address public seller2 = address(0x4);
@@ -61,7 +62,7 @@ contract AntseedDepositsTest is Test {
 
     function test_deposit_success() public {
         vm.prank(buyer);
-        deposits.deposit(MIN_DEPOSIT);
+        deposits.deposit(buyer,MIN_DEPOSIT);
 
         (uint256 available, uint256 reserved, uint256 lastActivity) =
             deposits.getBuyerBalance(buyer);
@@ -76,29 +77,29 @@ contract AntseedDepositsTest is Test {
         emit AntseedDeposits.Deposited(buyer, MIN_DEPOSIT);
 
         vm.prank(buyer);
-        deposits.deposit(MIN_DEPOSIT);
+        deposits.deposit(buyer,MIN_DEPOSIT);
     }
 
     function test_deposit_revert_zeroAmount() public {
         vm.prank(buyer);
         vm.expectRevert(AntseedDeposits.InvalidAmount.selector);
-        deposits.deposit(0);
+        deposits.deposit(buyer,0);
     }
 
     function test_deposit_revert_belowMinFirstDeposit() public {
         vm.prank(buyer);
         vm.expectRevert(AntseedDeposits.BelowMinDeposit.selector);
-        deposits.deposit(MIN_DEPOSIT - 1);
+        deposits.deposit(buyer,MIN_DEPOSIT - 1);
     }
 
     function test_deposit_secondBelowMinSucceeds() public {
         // First deposit meets minimum
         vm.prank(buyer);
-        deposits.deposit(MIN_DEPOSIT);
+        deposits.deposit(buyer,MIN_DEPOSIT);
 
         // Second deposit below minimum succeeds because buyer already has balance
         vm.prank(buyer);
-        deposits.deposit(1);
+        deposits.deposit(buyer,1);
 
         (uint256 available,,) = deposits.getBuyerBalance(buyer);
         assertEq(available, MIN_DEPOSIT + 1);
@@ -108,16 +109,16 @@ contract AntseedDepositsTest is Test {
         // Default credit limit is 50 USDC. Try to deposit 51 USDC.
         vm.prank(buyer);
         vm.expectRevert(AntseedDeposits.CreditLimitExceeded.selector);
-        deposits.deposit(BASE_CREDIT + 1);
+        deposits.deposit(buyer,BASE_CREDIT + 1);
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //                         depositFor()
+    //                         depositOnBehalf()
     // ═══════════════════════════════════════════════════════════════════
 
-    function test_depositFor_success() public {
+    function test_depositOnBehalf_success() public {
         vm.prank(thirdParty);
-        deposits.depositFor(buyer, MIN_DEPOSIT);
+        deposits.deposit(buyer, MIN_DEPOSIT);
 
         (uint256 available,,) = deposits.getBuyerBalance(buyer);
         assertEq(available, MIN_DEPOSIT);
@@ -125,39 +126,39 @@ contract AntseedDepositsTest is Test {
         assertEq(usdc.balanceOf(thirdParty), 1_000_000_000 - MIN_DEPOSIT);
     }
 
-    function test_depositFor_emitsEventForBuyer() public {
+    function test_depositOnBehalf_emitsEventForBuyer() public {
         vm.expectEmit(true, false, false, true);
         emit AntseedDeposits.Deposited(buyer, MIN_DEPOSIT);
 
         vm.prank(thirdParty);
-        deposits.depositFor(buyer, MIN_DEPOSIT);
+        deposits.deposit(buyer, MIN_DEPOSIT);
     }
 
-    function test_depositFor_doesNotSetFirstChannelAt() public {
+    function test_depositOnBehalf_doesNotSetFirstChannelAt() public {
         vm.prank(thirdParty);
-        deposits.depositFor(buyer, MIN_DEPOSIT);
+        deposits.deposit(buyer, MIN_DEPOSIT);
 
         // firstChannelAt should remain 0 — only lockForChannel sets it
         (,,, uint256 firstChannelAt,,) = deposits.buyers(buyer);
         assertEq(firstChannelAt, 0);
     }
 
-    function test_depositFor_revert_zeroAmount() public {
+    function test_depositOnBehalf_revert_zeroAmount() public {
         vm.prank(thirdParty);
         vm.expectRevert(AntseedDeposits.InvalidAmount.selector);
-        deposits.depositFor(buyer, 0);
+        deposits.deposit(buyer, 0);
     }
 
-    function test_depositFor_revert_belowMin() public {
+    function test_depositOnBehalf_revert_belowMin() public {
         vm.prank(thirdParty);
         vm.expectRevert(AntseedDeposits.BelowMinDeposit.selector);
-        deposits.depositFor(buyer, MIN_DEPOSIT - 1);
+        deposits.deposit(buyer, MIN_DEPOSIT - 1);
     }
 
-    function test_depositFor_revert_exceedsCreditLimit() public {
+    function test_depositOnBehalf_revert_exceedsCreditLimit() public {
         vm.prank(thirdParty);
         vm.expectRevert(AntseedDeposits.CreditLimitExceeded.selector);
-        deposits.depositFor(buyer, BASE_CREDIT + 1);
+        deposits.deposit(buyer, BASE_CREDIT + 1);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -165,18 +166,21 @@ contract AntseedDepositsTest is Test {
     // ═══════════════════════════════════════════════════════════════════
 
     function _setOperator(address _buyer, address _operator) internal {
-        vm.prank(sessions);
-        deposits.setOperatorFor(_buyer, _operator);
+        uint256 nonce = deposits.getOperatorNonce(_buyer);
+        bytes32 structHash = keccak256(abi.encode(deposits.SET_OPERATOR_TYPEHASH(), _operator, nonce));
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", deposits.domainSeparator(), structHash));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(BUYER_PK, digest);
+        deposits.setOperator(_buyer, _operator, nonce, abi.encodePacked(r, s, v));
     }
 
     function test_withdraw_success() public {
         vm.prank(buyer);
-        deposits.deposit(MIN_DEPOSIT);
+        deposits.deposit(buyer,MIN_DEPOSIT);
 
         address operator = address(0xAA);
         _setOperator(buyer, operator);
 
-        uint256 balBefore = usdc.balanceOf(buyer);
+        uint256 balBefore = usdc.balanceOf(operator);
 
         vm.expectEmit(true, false, false, true);
         emit AntseedDeposits.WithdrawalExecuted(buyer, MIN_DEPOSIT);
@@ -184,7 +188,7 @@ contract AntseedDepositsTest is Test {
         vm.prank(operator);
         deposits.withdraw(buyer, MIN_DEPOSIT);
 
-        assertEq(usdc.balanceOf(buyer), balBefore + MIN_DEPOSIT);
+        assertEq(usdc.balanceOf(operator), balBefore + MIN_DEPOSIT);
         (uint256 available, uint256 reserved,) = deposits.getBuyerBalance(buyer);
         assertEq(available, 0);
         assertEq(reserved, 0);
@@ -192,7 +196,7 @@ contract AntseedDepositsTest is Test {
 
     function test_withdraw_revert_notOperator() public {
         vm.prank(buyer);
-        deposits.deposit(MIN_DEPOSIT);
+        deposits.deposit(buyer,MIN_DEPOSIT);
 
         // No operator set — randomCaller is not authorized
         vm.prank(randomCaller);
@@ -202,7 +206,7 @@ contract AntseedDepositsTest is Test {
 
     function test_withdraw_revert_insufficientBalance() public {
         vm.prank(buyer);
-        deposits.deposit(MIN_DEPOSIT);
+        deposits.deposit(buyer,MIN_DEPOSIT);
 
         address operator = address(0xAA);
         _setOperator(buyer, operator);
@@ -214,7 +218,7 @@ contract AntseedDepositsTest is Test {
 
     function test_withdraw_revert_zeroAmount() public {
         vm.prank(buyer);
-        deposits.deposit(MIN_DEPOSIT);
+        deposits.deposit(buyer,MIN_DEPOSIT);
 
         address operator = address(0xAA);
         _setOperator(buyer, operator);
@@ -226,7 +230,7 @@ contract AntseedDepositsTest is Test {
 
     function test_withdraw_revert_insufficientDueToReserved() public {
         vm.prank(buyer);
-        deposits.deposit(MIN_DEPOSIT);
+        deposits.deposit(buyer,MIN_DEPOSIT);
 
         // Lock some for channel
         vm.prank(sessions);
@@ -246,7 +250,7 @@ contract AntseedDepositsTest is Test {
 
     function test_getBuyerBalance_correct() public {
         vm.prank(buyer);
-        deposits.deposit(30_000_000);
+        deposits.deposit(buyer,30_000_000);
 
         vm.prank(sessions);
         deposits.lockForChannel(buyer, 10_000_000);
@@ -271,7 +275,7 @@ contract AntseedDepositsTest is Test {
     function test_getBuyerBalance_availableFloorsAtZero() public {
         // When locked > balance (shouldn't normally happen, but getBuyerBalance guards it)
         vm.prank(buyer);
-        deposits.deposit(30_000_000);
+        deposits.deposit(buyer,30_000_000);
 
         // Lock entire balance
         vm.prank(sessions);
@@ -293,7 +297,7 @@ contract AntseedDepositsTest is Test {
     function test_creditLimit_withUniqueSellersBonus() public {
         // Deposit and have channels charge with a seller to track diversity
         vm.prank(buyer);
-        deposits.deposit(30_000_000);
+        deposits.deposit(buyer,30_000_000);
         vm.prank(sessions);
         deposits.lockForChannel(buyer, 10_000_000);
         vm.prank(sessions);
@@ -307,7 +311,7 @@ contract AntseedDepositsTest is Test {
     function test_creditLimit_withTimeBonus() public {
         // First, create a channel so firstChannelAt is set
         vm.prank(buyer);
-        deposits.deposit(30_000_000);
+        deposits.deposit(buyer,30_000_000);
         vm.prank(sessions);
         deposits.lockForChannel(buyer, 10_000_000);
         vm.prank(sessions);
@@ -346,7 +350,7 @@ contract AntseedDepositsTest is Test {
     function test_claimPayouts_success() public {
         // Setup: deposit, lock, settle to credit seller payouts
         vm.prank(buyer);
-        deposits.deposit(30_000_000);
+        deposits.deposit(buyer,30_000_000);
         vm.prank(sessions);
         deposits.lockForChannel(buyer, 20_000_000);
         vm.prank(sessions);
@@ -379,7 +383,7 @@ contract AntseedDepositsTest is Test {
 
     function test_lockForChannel_success() public {
         vm.prank(buyer);
-        deposits.deposit(30_000_000);
+        deposits.deposit(buyer,30_000_000);
 
         vm.prank(sessions);
         deposits.lockForChannel(buyer, 20_000_000);
@@ -390,7 +394,7 @@ contract AntseedDepositsTest is Test {
 
     function test_lockForChannel_setsFirstChannelAt() public {
         vm.prank(buyer);
-        deposits.deposit(30_000_000);
+        deposits.deposit(buyer,30_000_000);
 
         (,,, uint256 firstBefore,,) = deposits.buyers(buyer);
         assertEq(firstBefore, 0);
@@ -406,7 +410,7 @@ contract AntseedDepositsTest is Test {
         vm.warp(1000); // Set a known starting timestamp
 
         vm.prank(buyer);
-        deposits.deposit(30_000_000);
+        deposits.deposit(buyer,30_000_000);
 
         vm.prank(sessions);
         deposits.lockForChannel(buyer, 10_000_000);
@@ -428,7 +432,7 @@ contract AntseedDepositsTest is Test {
 
     function test_lockForChannel_revert_insufficientBalance() public {
         vm.prank(buyer);
-        deposits.deposit(MIN_DEPOSIT);
+        deposits.deposit(buyer,MIN_DEPOSIT);
 
         vm.prank(sessions);
         vm.expectRevert(AntseedDeposits.InsufficientBalance.selector);
@@ -437,7 +441,7 @@ contract AntseedDepositsTest is Test {
 
     function test_lockForChannel_revert_notChannels() public {
         vm.prank(buyer);
-        deposits.deposit(MIN_DEPOSIT);
+        deposits.deposit(buyer,MIN_DEPOSIT);
 
         vm.prank(randomCaller);
         vm.expectRevert(AntseedDeposits.NotAuthorized.selector);
@@ -446,7 +450,7 @@ contract AntseedDepositsTest is Test {
 
     function test_chargeAndCreditPayouts_success() public {
         vm.prank(buyer);
-        deposits.deposit(30_000_000);
+        deposits.deposit(buyer,30_000_000);
         vm.prank(sessions);
         deposits.lockForChannel(buyer, 20_000_000);
 
@@ -471,7 +475,7 @@ contract AntseedDepositsTest is Test {
     function test_chargeAndCreditPayouts_diversityOnlyCountedOnce() public {
         deposits.setCreditLimitOverride(buyer, 200_000_000);
         vm.prank(buyer);
-        deposits.deposit(100_000_000);
+        deposits.deposit(buyer,100_000_000);
 
         // Two channels with same seller
         vm.prank(sessions);
@@ -497,7 +501,7 @@ contract AntseedDepositsTest is Test {
 
     function test_chargeAndCreditPayouts_zeroPlatformFee() public {
         vm.prank(buyer);
-        deposits.deposit(30_000_000);
+        deposits.deposit(buyer,30_000_000);
         vm.prank(sessions);
         deposits.lockForChannel(buyer, 20_000_000);
 
@@ -514,7 +518,7 @@ contract AntseedDepositsTest is Test {
 
     function test_chargeAndCreditPayouts_zeroProtocolReserveAddress() public {
         vm.prank(buyer);
-        deposits.deposit(30_000_000);
+        deposits.deposit(buyer,30_000_000);
         vm.prank(sessions);
         deposits.lockForChannel(buyer, 20_000_000);
 
@@ -528,7 +532,7 @@ contract AntseedDepositsTest is Test {
 
     function test_chargeAndCreditPayouts_revert_chargeExceedsReserved() public {
         vm.prank(buyer);
-        deposits.deposit(30_000_000);
+        deposits.deposit(buyer,30_000_000);
         vm.prank(sessions);
         deposits.lockForChannel(buyer, 10_000_000);
 
@@ -539,7 +543,7 @@ contract AntseedDepositsTest is Test {
 
     function test_chargeAndCreditPayouts_revert_platformFeeExceedsCharge() public {
         vm.prank(buyer);
-        deposits.deposit(30_000_000);
+        deposits.deposit(buyer,30_000_000);
         vm.prank(sessions);
         deposits.lockForChannel(buyer, 20_000_000);
 
@@ -556,7 +560,7 @@ contract AntseedDepositsTest is Test {
 
     function test_releaseLock_success() public {
         vm.prank(buyer);
-        deposits.deposit(30_000_000);
+        deposits.deposit(buyer,30_000_000);
         vm.prank(sessions);
         deposits.lockForChannel(buyer, 20_000_000);
 
@@ -643,31 +647,32 @@ contract AntseedDepositsTest is Test {
 
     function test_withdraw_operatorCanCall() public {
         vm.prank(buyer);
-        deposits.deposit(MIN_DEPOSIT);
+        deposits.deposit(buyer,MIN_DEPOSIT);
 
         address operator = address(0xAA);
         _setOperator(buyer, operator);
 
-        uint256 balBefore = usdc.balanceOf(buyer);
+        uint256 balBefore = usdc.balanceOf(operator);
 
         vm.prank(operator);
         deposits.withdraw(buyer, MIN_DEPOSIT);
 
-        // USDC goes to buyer
-        assertEq(usdc.balanceOf(buyer), balBefore + MIN_DEPOSIT);
+        // USDC goes to operator
+        assertEq(usdc.balanceOf(operator), balBefore + MIN_DEPOSIT);
         (uint256 available,,) = deposits.getBuyerBalance(buyer);
         assertEq(available, 0);
     }
 
     function test_withdraw_operatorRevoked_revert() public {
         vm.prank(buyer);
-        deposits.deposit(MIN_DEPOSIT);
+        deposits.deposit(buyer,MIN_DEPOSIT);
 
         address operator = address(0xAA);
         _setOperator(buyer, operator);
 
-        // Revoke operator
-        _setOperator(buyer, address(0));
+        // Revoke operator via transferOperator
+        vm.prank(operator);
+        deposits.transferOperator(buyer, address(0));
 
         vm.prank(randomCaller);
         vm.expectRevert(AntseedDeposits.NotAuthorized.selector);

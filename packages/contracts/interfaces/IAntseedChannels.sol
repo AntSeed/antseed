@@ -45,8 +45,4 @@ interface IAntseedChannels {
     function requestClose(bytes32 channelId) external;
 
     function withdraw(bytes32 channelId) external;
-
-    function setOperator(address buyer, address operator, uint256 nonce, bytes calldata buyerSig) external;
-
-    function transferOperator(address buyer, address newOperator) external;
 }

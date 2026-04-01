@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { CryptoContext, PaymentCryptoConfig } from './crypto-context.js';
-import { DepositsClient, ChannelsClient, formatUsdc, parseUsdc, signSetOperator, makeChannelsDomain, type ChainConfig } from '@antseed/node';
+import { DepositsClient, ChannelsClient, formatUsdc, parseUsdc, signSetOperator, makeDepositsDomain, type ChainConfig } from '@antseed/node';
 
 interface RouteContext {
   cryptoCtx: CryptoContext | null;
@@ -170,7 +170,7 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
     }
 
     try {
-      const client = getChannelsClient();
+      const client = getClient();
       if (!client) {
         return { operator: '0x0000000000000000000000000000000000000000', nonce: 0 };
       }
@@ -199,12 +199,12 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
     }
 
     try {
-      const sc = getChannelsClient();
-      if (!sc) {
-        return reply.status(503).send({ ok: false, error: 'Channels contract not configured' });
+      const dc = getClient();
+      if (!dc) {
+        return reply.status(503).send({ ok: false, error: 'Deposits contract not configured' });
       }
-      const nonce = await sc.getOperatorNonce(ctx.cryptoCtx.evmAddress);
-      const domain = makeChannelsDomain(ctx.chainConfig.evmChainId, ctx.cryptoConfig.channelsContractAddress);
+      const nonce = await dc.getOperatorNonce(ctx.cryptoCtx.evmAddress);
+      const domain = makeDepositsDomain(ctx.chainConfig.evmChainId, ctx.cryptoConfig.depositsContractAddress);
       const signature = await signSetOperator(ctx.cryptoCtx.wallet, domain, {
         operator,
         nonce,

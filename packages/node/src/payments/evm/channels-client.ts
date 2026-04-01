@@ -37,8 +37,6 @@ const CHANNELS_ABI = [
   'function getAgentStats(uint256 agentId) external view returns (uint64 channelCount, uint64 ghostCount, uint256 totalVolumeUsdc, uint64 lastSettledAt)',
   'function domainSeparator() external view returns (bytes32)',
   'function FIRST_SIGN_CAP() external view returns (uint256)',
-  'function operators(address buyer) external view returns (address)',
-  'function operatorNonces(address buyer) external view returns (uint256)',
 ] as const;
 
 export class ChannelsClient extends BaseEvmClient {
@@ -138,11 +136,6 @@ export class ChannelsClient extends BaseEvmClient {
     return contract.getFunction('computeChannelId')(buyer, seller, salt) as Promise<string>;
   }
 
-  async getOperator(buyer: string): Promise<string> {
-    const contract = new Contract(this._contractAddress, CHANNELS_ABI, this._provider);
-    return contract.getFunction('operators')(buyer) as Promise<string>;
-  }
-
   async getAgentStats(agentId: number): Promise<AgentStats> {
     const contract = new Contract(this._contractAddress, CHANNELS_ABI, this._provider);
     const result = await contract.getFunction('getAgentStats')(agentId);
@@ -152,10 +145,5 @@ export class ChannelsClient extends BaseEvmClient {
       totalVolumeUsdc: result[2] as bigint,
       lastSettledAt: Number(result[3]),
     };
-  }
-
-  async getOperatorNonce(buyer: string): Promise<bigint> {
-    const contract = new Contract(this._contractAddress, CHANNELS_ABI, this._provider);
-    return contract.getFunction('operatorNonces')(buyer) as Promise<bigint>;
   }
 }

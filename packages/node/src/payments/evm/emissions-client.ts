@@ -7,12 +7,11 @@ export interface EmissionsClientConfig {
 }
 
 const EMISSIONS_ABI = [
-  'function advanceEpoch() external',
-  'function claimEmissions() external',
-  'function pendingEmissions(address account) external view returns (uint256 seller, uint256 buyer)',
+  'function claimSellerEmissions(uint256[] epochs) external',
+  'function claimBuyerEmissions(address buyer, uint256[] epochs) external',
+  'function pendingEmissions(address account, uint256[] epochs) external view returns (uint256 seller, uint256 buyer)',
   'function currentEpoch() external view returns (uint256)',
   'function currentEmissionRate() external view returns (uint256)',
-  'function epochStart() external view returns (uint256)',
   'function EPOCH_DURATION() external view returns (uint256)',
   'function INITIAL_EMISSION() external view returns (uint256)',
   'function SELLER_SHARE_PCT() external view returns (uint256)',
@@ -35,46 +34,30 @@ export class EmissionsClient extends BaseEvmClient {
     super(config.rpcUrl, config.contractAddress);
   }
 
-  async advanceEpoch(signer: AbstractSigner): Promise<string> {
-    const connected = this._ensureConnected(signer);
-    const signerAddress = await connected.getAddress();
-    const contract = new Contract(this._contractAddress, EMISSIONS_ABI, connected);
-    const nonce = await this._reserveNonce(signerAddress);
-    const tx = await contract.getFunction('advanceEpoch')({ nonce });
-    const receipt = await tx.wait();
-    if (!receipt) throw new Error('Transaction was dropped or replaced');
-    return receipt.hash;
+  async claimSellerEmissions(signer: AbstractSigner, epochs: number[]): Promise<string> {
+    return this._execWrite(signer, EMISSIONS_ABI, 'claimSellerEmissions', epochs);
   }
 
-  async claimEmissions(signer: AbstractSigner): Promise<string> {
-    const connected = this._ensureConnected(signer);
-    const signerAddress = await connected.getAddress();
-    const contract = new Contract(this._contractAddress, EMISSIONS_ABI, connected);
-    const nonce = await this._reserveNonce(signerAddress);
-    const tx = await contract.getFunction('claimEmissions')({ nonce });
-    const receipt = await tx.wait();
-    if (!receipt) throw new Error('Transaction was dropped or replaced');
-    return receipt.hash;
+  async claimBuyerEmissions(signer: AbstractSigner, buyer: string, epochs: number[]): Promise<string> {
+    return this._execWrite(signer, EMISSIONS_ABI, 'claimBuyerEmissions', buyer, epochs);
   }
 
-  async pendingEmissions(address: string): Promise<{ seller: bigint; buyer: bigint }> {
+  async pendingEmissions(address: string, epochs: number[]): Promise<{ seller: bigint; buyer: bigint }> {
     const contract = new Contract(this._contractAddress, EMISSIONS_ABI, this._provider);
-    const [seller, buyer] = await contract.getFunction('pendingEmissions')(address);
+    const [seller, buyer] = await contract.getFunction('pendingEmissions')(address, epochs);
     return { seller, buyer };
   }
 
-  async getEpochInfo(): Promise<{ epoch: number; emission: bigint; epochStart: number; epochDuration: number }> {
+  async getEpochInfo(): Promise<{ epoch: number; emission: bigint; epochDuration: number }> {
     const contract = new Contract(this._contractAddress, EMISSIONS_ABI, this._provider);
-    const [epoch, emission, start, duration] = await Promise.all([
+    const [epoch, emission, duration] = await Promise.all([
       contract.getFunction('currentEpoch')(),
       contract.getFunction('currentEmissionRate')(),
-      contract.getFunction('epochStart')(),
       contract.getFunction('EPOCH_DURATION')(),
     ]);
     return {
       epoch: Number(epoch),
       emission: BigInt(emission),
-      epochStart: Number(start),
       epochDuration: Number(duration),
     };
   }

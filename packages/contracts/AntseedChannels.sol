@@ -40,10 +40,6 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         "ReserveAuth(bytes32 channelId,uint128 maxAmount,uint256 deadline)"
     );
 
-    bytes32 public constant SET_OPERATOR_TYPEHASH = keccak256(
-        "SetOperator(address operator,uint256 nonce)"
-    );
-
     // ─── Configurable Constants ─────────────────────────────────────
     uint256 public FIRST_SIGN_CAP = 1_000_000;
     uint256 public PLATFORM_FEE_BPS = 500;
@@ -89,8 +85,6 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
     event ChannelTopUp(bytes32 indexed channelId, address indexed buyer, uint128 newMaxAmount);
     event CloseRequested(bytes32 indexed channelId, address indexed buyer);
     event ChannelWithdrawn(bytes32 indexed channelId, address indexed buyer);
-    event OperatorSet(address indexed buyer, address indexed operator);
-
     /// @notice Per-channel cumulative metrics for off-chain indexing.
     ///         Emitted on every settle and close. metadata is raw bytes —
     ///         decode off-chain based on metadataVersion.
@@ -118,12 +112,10 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
     error FinalAmountBelowSettled();
     error CloseNotReady();
     error CloseAlreadyRequested();
-    error InvalidNonce();
-    error OperatorAlreadySet();
 
     // ─── Constructor ────────────────────────────────────────────────
     constructor(address _registry)
-        EIP712("AntseedChannels", "7")
+        EIP712("AntseedChannels", "1")
         Ownable(msg.sender)
     {
         if (_registry == address(0)) revert InvalidAddress();
@@ -425,59 +417,6 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
 
             emit ChannelWithdrawn(channelIds[i], buyer);
         }
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    //                        OPERATOR MANAGEMENT
-    // ═══════════════════════════════════════════════════════════════════
-
-    /**
-     * @notice Set the initial operator for a buyer. Anyone can submit
-     *         this tx — authorization comes from the buyer's EIP-712 signature.
-     *         Can only be called when no operator is set yet.
-     *
-     * @param buyer     The buyer address (hot wallet)
-     * @param operator  The operator address (funded wallet)
-     * @param nonce     Must match buyer's current operatorNonce (replay protection)
-     * @param buyerSig  Buyer's EIP-712 SetOperator signature
-     */
-    function setOperator(
-        address buyer,
-        address operator,
-        uint256 nonce,
-        bytes calldata buyerSig
-    ) external {
-        if (buyer == address(0) || operator == address(0)) revert InvalidAddress();
-        address currentOp = IAntseedDeposits(registry.deposits()).getOperator(buyer);
-        if (currentOp != address(0)) revert OperatorAlreadySet();
-        uint256 currentNonce = IAntseedDeposits(registry.deposits()).getOperatorNonce(buyer);
-        if (nonce != currentNonce) revert InvalidNonce();
-
-        bytes32 structHash = keccak256(
-            abi.encode(SET_OPERATOR_TYPEHASH, operator, nonce)
-        );
-        bytes32 digest = _hashTypedDataV4(structHash);
-        address recovered = ECDSA.recover(digest, buyerSig);
-        if (recovered != buyer) revert InvalidSignature();
-
-        IAntseedDeposits(registry.deposits()).setOperatorFor(buyer, operator);
-
-        emit OperatorSet(buyer, operator);
-    }
-
-    /**
-     * @notice Transfer operator to a new address. Only the current operator
-     *         can call this — like ownership transfer. No buyer signature needed.
-     */
-    function transferOperator(
-        address buyer,
-        address newOperator
-    ) external {
-        if (msg.sender != IAntseedDeposits(registry.deposits()).getOperator(buyer)) revert NotAuthorized();
-
-        IAntseedDeposits(registry.deposits()).setOperatorFor(buyer, newOperator);
-
-        emit OperatorSet(buyer, newOperator);
     }
 
     /// @dev Check that msg.sender is the buyer's authorized operator (stored in Deposits).
