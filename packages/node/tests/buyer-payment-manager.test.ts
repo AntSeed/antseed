@@ -117,6 +117,20 @@ describe('BuyerPaymentManager', () => {
     expect(sent.reserveMaxAmount).toBe('10000000');
   });
 
+  it('authorizeSpending sends ABI-encoded zero metadata (not empty string)', async () => {
+    const sellerPeerId = fakePeerId('seller-peer-meta');
+    const channelId = await manager.authorizeSpending(sellerPeerId, mux, 50_000n, TEST_PRICING);
+
+    expect(channelId).toMatch(/^0x[0-9a-f]{64}$/);
+    const sent = mux.sentSpendingAuths[0] as Record<string, unknown>;
+    // metadata must be a valid hex-encoded bytes value, not ''
+    expect(sent.metadata).toBeTypeOf('string');
+    expect(sent.metadata).not.toBe('');
+    expect((sent.metadata as string).startsWith('0x')).toBe(true);
+    // Should be ABI-encoded (uint256,uint256,uint256,uint256) = 4 * 32 bytes + 0x prefix
+    expect((sent.metadata as string).length).toBe(2 + 4 * 64);
+  });
+
   it('authorizeSpending rejects if minBudgetPerRequest exceeds maxPerRequestUsdc', async () => {
     const sellerPeerId = fakePeerId('seller-peer-reject');
     const tooLarge = 200_000n;

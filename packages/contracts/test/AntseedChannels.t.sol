@@ -5,14 +5,14 @@ import "forge-std/Test.sol";
 import "../AntseedChannels.sol";
 import "../AntseedDeposits.sol";
 import "../AntseedStaking.sol";
-import "../AntseedStats.sol";
 import "../MockERC8004Registry.sol";
 import "../MockUSDC.sol";
+import "../AntseedRegistry.sol";
 
 contract AntseedChannelsTest is Test {
     MockUSDC public usdc;
-    MockERC8004Registry public registry;
-    AntseedStats public stats;
+    MockERC8004Registry public identityRegistry;
+    AntseedRegistry public antseedRegistry;
     AntseedStaking public staking;
     AntseedDeposits public deposits;
     AntseedChannels public channels;
@@ -52,21 +52,21 @@ contract AntseedChannelsTest is Test {
 
         // Deploy contracts
         usdc = new MockUSDC();
-        registry = new MockERC8004Registry();
-        stats = new AntseedStats();
-        staking = new AntseedStaking(address(usdc), address(registry), address(stats));
+        identityRegistry = new MockERC8004Registry();
+        antseedRegistry = new AntseedRegistry();
+        staking = new AntseedStaking(address(usdc), address(antseedRegistry));
         deposits = new AntseedDeposits(address(usdc));
-        channels = new AntseedChannels(
-            address(deposits),
-            address(stats),
-            address(staking)
-        );
+        channels = new AntseedChannels(address(antseedRegistry));
 
-        // Wire contracts together
-        deposits.setChannelsContract(address(channels));
-        stats.setChannelsContract(address(channels));
-        staking.setChannelsContract(address(channels));
-        channels.setProtocolReserve(protocolReserve);
+        // Wire registry
+        antseedRegistry.setChannels(address(channels));
+        antseedRegistry.setDeposits(address(deposits));
+        antseedRegistry.setStaking(address(staking));
+        antseedRegistry.setIdentityRegistry(address(identityRegistry));
+        antseedRegistry.setProtocolReserve(protocolReserve);
+
+        // Set registry on contracts that need it
+        deposits.setRegistry(address(antseedRegistry));
 
         // Raise FIRST_SIGN_CAP for tests that need large reservations
         channels.setFirstSignCap(500_000_000);
@@ -81,7 +81,7 @@ contract AntseedChannelsTest is Test {
 
         // Register on MockERC8004Registry
         vm.prank(addr);
-        registry.register();
+        identityRegistry.register();
 
         deposits.setCreditLimitOverride(addr, type(uint256).max);
 
@@ -97,7 +97,7 @@ contract AntseedChannelsTest is Test {
 
         // Register on MockERC8004Registry and stake with agentId
         vm.prank(addr);
-        uint256 agentId = registry.register();
+        uint256 agentId = identityRegistry.register();
 
         usdc.mint(addr, STAKE_AMOUNT);
         vm.startPrank(addr);
@@ -233,7 +233,7 @@ contract AntseedChannelsTest is Test {
         createBuyer(BUYER_PK, USDC_100);
         // Register seller but don't stake
         vm.prank(seller);
-        registry.register();
+        identityRegistry.register();
 
         bytes32 salt = keccak256("session-1");
         bytes32 channelId = computeChannelId(salt);
@@ -357,11 +357,9 @@ contract AntseedChannelsTest is Test {
 
         // Stats updated
         uint256 sellerAgentId = staking.getAgentId(seller);
-        IAntseedStats.AgentStats memory s = stats.getStats(sellerAgentId);
+        AntseedChannels.AgentStats memory s = channels.getAgentStats(sellerAgentId);
         assertEq(s.channelCount, 1);
         assertEq(s.totalVolumeUsdc, USDC_60);
-        assertEq(s.totalInputTokens, 5000);
-        assertEq(s.totalOutputTokens, 2000);
     }
 
     function test_close_fullDeposit() public {
@@ -695,11 +693,9 @@ contract AntseedChannelsTest is Test {
         channels.close(channelId, USDC_50, encodeMetadata(inputToks, outputToks), metaSig);
 
         uint256 sellerAgentId = staking.getAgentId(seller);
-        IAntseedStats.AgentStats memory s = stats.getStats(sellerAgentId);
+        AntseedChannels.AgentStats memory s = channels.getAgentStats(sellerAgentId);
         assertEq(s.channelCount, 1);
         assertEq(s.totalVolumeUsdc, USDC_50);
-        assertEq(s.totalInputTokens, inputToks);
-        assertEq(s.totalOutputTokens, outputToks);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -721,60 +717,21 @@ contract AntseedChannelsTest is Test {
         channels.setPlatformFeeBps(1001);
     }
 
-    function test_setDepositsContract() public {
-        address newDeposits = address(0x1234);
-        channels.setDepositsContract(newDeposits);
-        assertEq(address(channels.depositsContract()), newDeposits);
+    function test_setRegistry() public {
+        AntseedRegistry newReg = new AntseedRegistry();
+        channels.setRegistry(address(newReg));
+        assertEq(address(channels.registry()), address(newReg));
     }
 
-    function test_setDepositsContract_revert_zeroAddress() public {
+    function test_setRegistry_revert_zeroAddress() public {
         vm.expectRevert(AntseedChannels.InvalidAddress.selector);
-        channels.setDepositsContract(address(0));
+        channels.setRegistry(address(0));
     }
 
-    function test_setDepositsContract_revert_notOwner() public {
+    function test_setRegistry_revert_notOwner() public {
         vm.prank(randomUser);
         vm.expectRevert();
-        channels.setDepositsContract(address(0x1234));
-    }
-
-    function test_setStatsContract() public {
-        address newStats = address(0x5678);
-        channels.setStatsContract(newStats);
-        assertEq(address(channels.statsContract()), newStats);
-    }
-
-    function test_setStatsContract_revert_zeroAddress() public {
-        vm.expectRevert(AntseedChannels.InvalidAddress.selector);
-        channels.setStatsContract(address(0));
-    }
-
-    function test_setStakingContract() public {
-        address newStaking = address(0x9ABC);
-        channels.setStakingContract(newStaking);
-        assertEq(address(channels.stakingContract()), newStaking);
-    }
-
-    function test_setStakingContract_revert_zeroAddress() public {
-        vm.expectRevert(AntseedChannels.InvalidAddress.selector);
-        channels.setStakingContract(address(0));
-    }
-
-    function test_setProtocolReserve() public {
-        address newReserve = address(0xDEF0);
-        channels.setProtocolReserve(newReserve);
-        assertEq(channels.protocolReserve(), newReserve);
-    }
-
-    function test_setProtocolReserve_revert_zeroAddress() public {
-        vm.expectRevert(AntseedChannels.InvalidAddress.selector);
-        channels.setProtocolReserve(address(0));
-    }
-
-    function test_setProtocolReserve_revert_notOwner() public {
-        vm.prank(randomUser);
-        vm.expectRevert();
-        channels.setProtocolReserve(address(0xDEF0));
+        channels.setRegistry(address(0x1234));
     }
 
     // ═══════════════════════════════════════════════════════════════════

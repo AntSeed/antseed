@@ -1,6 +1,8 @@
 import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { runMigrations } from '../storage/migrate.js';
+import { channelMigrations } from '../storage/migrations/channels/index.js';
 
 export const CHANNEL_STATUS = {
   ACTIVE: 'active',
@@ -77,7 +79,7 @@ export class ChannelStore {
     mkdirSync(dataDir, { recursive: true });
     this._db = new Database(join(dataDir, 'sessions.db'));
     this._db.pragma('journal_mode = WAL');
-    this._createTables();
+    runMigrations(this._db, channelMigrations);
     this._stmts = this._prepareStatements();
     this._updateDeliveredAndInsertReceiptTxn = this._db.transaction(
       (sessionId: string, tokens: string, requestCount: number, receipt: Omit<StoredReceipt, 'id'>) => {
@@ -85,67 +87,6 @@ export class ChannelStore {
         this.insertReceipt(receipt);
       },
     );
-  }
-
-  private _createTables(): void {
-    this._db.exec(`
-      CREATE TABLE IF NOT EXISTS payment_channels (
-        session_id TEXT PRIMARY KEY,
-        peer_id TEXT NOT NULL,
-        role TEXT NOT NULL,
-        seller_evm_addr TEXT NOT NULL,
-        buyer_evm_addr TEXT NOT NULL,
-        nonce INTEGER NOT NULL,
-        auth_max TEXT NOT NULL,
-        deadline INTEGER NOT NULL,
-        previous_session_id TEXT NOT NULL,
-        previous_consumption TEXT NOT NULL,
-        tokens_delivered TEXT NOT NULL DEFAULT '0',
-        request_count INTEGER NOT NULL DEFAULT 0,
-        reserved_at INTEGER NOT NULL,
-        settled_at INTEGER,
-        settled_amount TEXT,
-        status TEXT NOT NULL DEFAULT 'active',
-        latest_buyer_sig TEXT,
-        latest_metadata_auth_sig TEXT,
-        latest_metadata TEXT,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_channels_peer_role_status ON payment_channels(peer_id, role, status);
-    `);
-
-    // Migration: add columns for persisted auth sigs (v0.2.28+)
-    const cols = this._db.pragma('table_info(payment_channels)') as Array<{ name: string }>;
-    const colNames = new Set(cols.map(c => c.name));
-    if (!colNames.has('latest_buyer_sig')) {
-      this._db.exec('ALTER TABLE payment_channels ADD COLUMN latest_buyer_sig TEXT');
-    }
-    if (!colNames.has('latest_metadata_auth_sig')) {
-      this._db.exec('ALTER TABLE payment_channels ADD COLUMN latest_metadata_auth_sig TEXT');
-    }
-    if (!colNames.has('latest_metadata')) {
-      this._db.exec('ALTER TABLE payment_channels ADD COLUMN latest_metadata TEXT');
-    }
-
-    this._db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_channels_status_updated ON payment_channels(status, updated_at);
-
-      CREATE TABLE IF NOT EXISTS payment_receipts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        session_id TEXT NOT NULL,
-        running_total TEXT NOT NULL,
-        request_count INTEGER NOT NULL,
-        response_hash TEXT NOT NULL,
-        seller_sig TEXT NOT NULL,
-        buyer_ack_sig TEXT,
-        created_at INTEGER NOT NULL,
-        FOREIGN KEY (session_id) REFERENCES payment_channels(session_id)
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_receipts_session ON payment_receipts(session_id);
-    `);
   }
 
   private _prepareStatements() {

@@ -1,0 +1,659 @@
+/* Providers landing page — matches homepage design system */
+
+/* ── SHARED ── */
+.kicker {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1FD87A;
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  margin-bottom: 12px;
+}
+
+/* ── HERO ── */
+.hero {
+  text-align: center;
+  padding: 80px 20px 60px;
+  max-width: 820px;
+  margin: 0 auto;
+}
+.heroKicker {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1FD87A;
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  margin-bottom: 20px;
+}
+.heroTitle {
+  font-size: clamp(36px, 5.5vw, 68px);
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: -2.5px;
+  margin-bottom: 24px;
+  color: #1a1a1a;
+}
+.heroTitle em {
+  font-style: italic;
+  color: #1FD87A;
+}
+.heroSub {
+  font-size: 16px;
+  color: #888;
+  line-height: 1.7;
+  max-width: 600px;
+  margin: 0 auto 36px;
+}
+.heroCtas {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+/* ── BUTTONS ── */
+.ctaPrimary {
+  display: inline-flex;
+  align-items: center;
+  padding: 14px 28px;
+  border-radius: 12px;
+  background: #1a1a1a;
+  color: #fff !important;
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none !important;
+  transition: background 0.15s, transform 0.15s;
+}
+.ctaPrimary:hover {
+  background: #333;
+  transform: translateY(-1px);
+}
+.ctaSecondary {
+  display: inline-flex;
+  align-items: center;
+  padding: 14px 28px;
+  border-radius: 12px;
+  background: transparent;
+  border: 1px solid #e8e8e3;
+  color: #1a1a1a !important;
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none !important;
+  transition: border-color 0.15s, transform 0.15s;
+}
+.ctaSecondary:hover {
+  border-color: #aaa;
+  transform: translateY(-1px);
+}
+
+/* ── TWO PATHS ── */
+.paths {
+  padding: 60px 60px 80px;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+.pathsHeader {
+  text-align: center;
+  margin-bottom: 48px;
+}
+.pathsHeader h2 {
+  font-size: clamp(28px, 3.5vw, 40px);
+  font-weight: 700;
+  letter-spacing: -1.5px;
+  margin-bottom: 14px;
+}
+.pathsHeader p {
+  font-size: 15px;
+  color: #888;
+  line-height: 1.6;
+}
+.pathsGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 20px;
+}
+.pathCard {
+  background: #fff;
+  border: 1px solid #e8e8e3;
+  border-radius: 16px;
+  padding: 40px;
+}
+.pathIcon {
+  width: 52px;
+  height: 52px;
+  border-radius: 12px;
+  background: rgba(31, 216, 122, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 20px;
+}
+.pathCard h3 {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  margin-bottom: 12px;
+}
+.pathCard > p {
+  font-size: 14px;
+  color: #888;
+  line-height: 1.65;
+  margin-bottom: 20px;
+}
+.pathList {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pathList li {
+  font-size: 13px;
+  color: #555;
+  font-family: 'JetBrains Mono', monospace;
+}
+.pathLink {
+  font-size: 13px;
+  font-family: 'JetBrains Mono', monospace;
+  color: #0a0e14 !important;
+  text-decoration: none !important;
+  border-bottom: 1px solid #0a0e14;
+  padding-bottom: 1px;
+  transition: color 0.15s;
+}
+.pathLink:hover { color: #1FD87A !important; border-color: #1FD87A; }
+
+/* ── PRIVACY ── */
+.privacy {
+  padding: 60px 60px 80px;
+  max-width: 900px;
+  margin: 0 auto;
+}
+.privacyHeader {
+  text-align: center;
+  margin-bottom: 48px;
+}
+.privacyHeader h2 {
+  font-size: clamp(26px, 3vw, 36px);
+  font-weight: 700;
+  letter-spacing: -1.2px;
+  margin-bottom: 12px;
+}
+.privacyHeader p {
+  font-size: 15px;
+  color: #888;
+  line-height: 1.6;
+}
+.privacyGrid {
+  display: grid;
+  grid-template-columns: 1fr 32px 1fr;
+  gap: 0;
+  background: #fff;
+  border: 1px solid #e8e8e3;
+  border-radius: 16px;
+  padding: 40px 32px;
+}
+.privacyCol {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.privacyColLabel {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  font-family: 'JetBrains Mono', monospace;
+  margin-bottom: 20px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #f0f0eb;
+}
+.privacyColLabel.public { color: #1FD87A; }
+.privacyColLabel.private { color: #888; }
+.privacyDivider {
+  display: flex;
+  justify-content: center;
+  padding: 40px 0 0;
+}
+.privacyRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid #f5f5f0;
+  font-size: 14px;
+  color: #444;
+}
+.privacyRow:last-child { border-bottom: none; }
+.privacyCheck {
+  color: #1FD87A;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+.privacyLock {
+  font-size: 12px;
+  flex-shrink: 0;
+  opacity: 0.5;
+}
+
+/* ── CODE ── */
+.code {
+  padding: 60px 60px 80px;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+.codeHeader {
+  text-align: center;
+  margin-bottom: 48px;
+}
+.codeHeader h2 {
+  font-size: clamp(26px, 3vw, 36px);
+  font-weight: 700;
+  letter-spacing: -1.2px;
+  margin-bottom: 12px;
+}
+.codeHeader p {
+  font-size: 15px;
+  color: #888;
+  line-height: 1.6;
+}
+.codeHeader a {
+  color: #1a1a1a !important;
+  text-decoration: underline;
+}
+.codeGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  align-items: start;
+}
+.codeCard {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.codeCardLabel {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  font-family: 'JetBrains Mono', monospace;
+  color: #888;
+  margin-bottom: 12px;
+}
+.codeTerm {
+  background: #1a1a1a;
+  border-radius: 10px;
+  overflow: hidden;
+  font-family: 'JetBrains Mono', monospace;
+}
+.codeTermBar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 14px;
+  background: #222;
+  border-bottom: 1px solid #333;
+}
+.codeTermDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: block;
+}
+.codeTermTitle {
+  font-size: 11px;
+  color: #555;
+  margin-left: auto;
+  font-family: 'JetBrains Mono', monospace;
+}
+.codePre {
+  margin: 0 !important;
+  padding: 16px !important;
+  font-size: 12.5px !important;
+  line-height: 1.75 !important;
+  color: #f0f0f0 !important;
+  background: transparent !important;
+  overflow-x: auto;
+  white-space: pre;
+  border: none !important;
+  border-radius: 0 !important;
+  text-shadow: none !important;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace !important;
+}
+.codeNote {
+  font-size: 13px;
+  color: #888;
+  line-height: 1.6;
+  margin-top: 14px;
+  padding: 0 4px;
+}
+.codeNote a {
+  color: #555 !important;
+  text-decoration: underline;
+}
+
+/* ── PAYMENTS ── */
+.payments {
+  padding: 60px 60px 80px;
+  max-width: 900px;
+  margin: 0 auto;
+}
+.paymentsHeader {
+  text-align: center;
+  margin-bottom: 48px;
+}
+.paymentsHeader h2 {
+  font-size: clamp(26px, 3vw, 36px);
+  font-weight: 700;
+  letter-spacing: -1.2px;
+  margin-bottom: 12px;
+}
+.paymentsHeader p {
+  font-size: 15px;
+  color: #888;
+  line-height: 1.6;
+}
+.paymentsHeader a { color: #555 !important; text-decoration: underline; }
+
+.paymentsFlow {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-bottom: 40px;
+}
+.payStep {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+  padding: 28px 0;
+  border-bottom: 1px solid #f0f0eb;
+}
+.payStep:last-child { border-bottom: none; }
+.payStepNum {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  font-weight: 700;
+  color: #1FD87A;
+  flex-shrink: 0;
+  padding-top: 2px;
+  width: 28px;
+}
+.payStepContent h4 {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  margin-bottom: 6px;
+}
+.payStepContent p {
+  font-size: 14px;
+  color: #888;
+  line-height: 1.65;
+  margin: 0;
+}
+
+.paymentsEcon {
+  background: #fff;
+  border: 1px solid #e8e8e3;
+  border-radius: 16px;
+  overflow: hidden;
+  margin-bottom: 32px;
+}
+.econRow {
+  display: flex;
+  align-items: baseline;
+  gap: 20px;
+  padding: 16px 28px;
+  border-bottom: 1px solid #f5f5f0;
+}
+.econRow:last-child { border-bottom: none; }
+.econLabel {
+  font-size: 12px;
+  font-weight: 600;
+  font-family: 'JetBrains Mono', monospace;
+  color: #888;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  min-width: 160px;
+  flex-shrink: 0;
+}
+.econValue {
+  font-size: 14px;
+  color: #1a1a1a;
+  line-height: 1.5;
+}
+
+.paymentsWallet {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.walletTerm {
+  background: #1a1a1a;
+  border-radius: 10px;
+  overflow: hidden;
+  font-family: 'JetBrains Mono', monospace;
+}
+.walletNote {
+  font-size: 13px;
+  color: #888;
+  line-height: 1.6;
+  margin: 0;
+}
+.walletNote a { color: #555 !important; text-decoration: underline; }
+
+/* ── REPUTATION ── */
+.reputation {
+  padding: 60px 60px 80px;
+  max-width: 1000px;
+  margin: 0 auto;
+}
+.reputationHeader {
+  text-align: center;
+  margin-bottom: 48px;
+}
+.reputationHeader h2 {
+  font-size: clamp(26px, 3vw, 36px);
+  font-weight: 700;
+  letter-spacing: -1.2px;
+  margin-bottom: 12px;
+}
+.reputationHeader p {
+  font-size: 15px;
+  color: #888;
+  line-height: 1.6;
+}
+.reputationHeader a { color: #555 !important; text-decoration: underline; }
+.reputationGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 28px;
+}
+.reputationCard {
+  background: #fff;
+  border: 1px solid #e8e8e3;
+  border-radius: 14px;
+  padding: 28px;
+}
+.reputationLabel {
+  font-size: 13px;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', monospace;
+  color: #1FD87A;
+  margin-bottom: 8px;
+}
+.reputationCard p {
+  font-size: 14px;
+  color: #888;
+  line-height: 1.6;
+  margin: 0;
+}
+.reputationNote {
+  font-size: 14px;
+  color: #888;
+  line-height: 1.7;
+  text-align: center;
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+/* ── FAQ ── */
+.faq {
+  padding: 60px 60px 80px;
+  max-width: 780px;
+  margin: 0 auto;
+}
+.faqTitle {
+  font-size: clamp(24px, 2.5vw, 32px);
+  font-weight: 700;
+  letter-spacing: -1px;
+  margin-bottom: 36px;
+  text-align: center;
+}
+.faqList { display: flex; flex-direction: column; }
+.faqItem { border-top: 1px solid #e8e8e3; }
+.faqItemFirst { border-top: none; }
+.faqSummary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 20px 0;
+  cursor: pointer;
+  font-size: 15px;
+  font-weight: 600;
+  color: #1a1a1a;
+  user-select: none;
+}
+.faqSummary:hover { color: #333; }
+.faqChevron {
+  font-size: 20px;
+  color: #aaa;
+  flex-shrink: 0;
+  transition: transform 0.2s;
+  font-weight: 300;
+}
+.faqChevronOpen { transform: rotate(45deg); color: #1FD87A; }
+.faqCollapse { overflow: hidden; max-height: 0; transition: max-height 0.25s ease; }
+.faqCollapseOpen { max-height: 400px; }
+.faqCollapseInner { padding-bottom: 20px; }
+.faqAnswer { font-size: 14px; color: #888; line-height: 1.7; margin: 0; }
+
+/* ── BOTTOM CTA ── */
+.bottomCta {
+  text-align: center;
+  padding: 80px 20px 100px;
+  max-width: 600px;
+  margin: 0 auto;
+}
+.bottomCta h2 {
+  font-size: clamp(28px, 3.5vw, 42px);
+  font-weight: 700;
+  letter-spacing: -1.5px;
+  margin-bottom: 14px;
+}
+.bottomCta > p {
+  font-size: 16px;
+  color: #888;
+  line-height: 1.6;
+  margin-bottom: 32px;
+}
+.bottomCtaBtns {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 28px;
+}
+.bottomLinks {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+.bottomLinks a {
+  color: #888 !important;
+  text-decoration: none !important;
+}
+.bottomLinks a:hover { color: #1a1a1a !important; }
+.bottomLinks span { color: #ddd; }
+
+/* ── RESPONSIVE ── */
+@media (max-width: 900px) {
+  .paths,
+  .privacy,
+  .code,
+  .payments,
+  .reputation,
+  .faq {
+    padding: 40px 20px 60px;
+  }
+  .pathsGrid,
+  .codeGrid,
+  .reputationGrid {
+    grid-template-columns: 1fr;
+  }
+  .privacyGrid {
+    grid-template-columns: 1fr;
+  }
+  .privacyDivider { display: none; }
+  .econRow { flex-direction: column; gap: 4px; }
+  .econLabel { min-width: unset; }
+}
+
+@media (max-width: 600px) {
+  .heroTitle {
+    font-size: clamp(32px, 9vw, 48px);
+    letter-spacing: -1.5px;
+  }
+  .heroSub {
+    font-size: 15px;
+  }
+  .heroCtas {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .ctaPrimary,
+  .ctaSecondary {
+    justify-content: center;
+  }
+  .pathCard {
+    padding: 28px 24px;
+  }
+  .codePre {
+    font-size: 11px !important;
+  }
+  .paymentsEcon {
+    border-radius: 12px;
+  }
+  .econRow {
+    padding: 14px 20px;
+  }
+  .bottomCtaBtns {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .bottomCtaBtns .ctaPrimary,
+  .bottomCtaBtns .ctaSecondary {
+    justify-content: center;
+  }
+  .bottomLinks {
+    flex-direction: column;
+    gap: 8px;
+  }
+  .bottomLinks span { display: none; }
+  .reputationGrid {
+    grid-template-columns: 1fr;
+  }
+  .privacyGrid {
+    padding: 24px 20px;
+  }
+}

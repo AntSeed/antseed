@@ -3,10 +3,12 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
 import "../AntseedDeposits.sol";
+import "../AntseedRegistry.sol";
 import "../MockUSDC.sol";
 
 contract AntseedDepositsTest is Test {
     AntseedDeposits public deposits;
+    AntseedRegistry public antseedRegistry;
     MockUSDC public usdc;
 
     address public owner;
@@ -25,8 +27,10 @@ contract AntseedDepositsTest is Test {
     function setUp() public {
         owner = address(this);
         usdc = new MockUSDC();
+        antseedRegistry = new AntseedRegistry();
+        antseedRegistry.setChannels(sessions);
         deposits = new AntseedDeposits(address(usdc));
-        deposits.setChannelsContract(sessions);
+        deposits.setRegistry(address(antseedRegistry));
 
         // Fund test addresses
         usdc.mint(buyer, 1_000_000_000);   // 1000 USDC
@@ -573,21 +577,22 @@ contract AntseedDepositsTest is Test {
     //                       ADMIN FUNCTIONS
     // ═══════════════════════════════════════════════════════════════════
 
-    function test_setChannelsContract_success() public {
-        address newSessions = address(0xAA);
-        deposits.setChannelsContract(newSessions);
-        assertEq(deposits.channelsContract(), newSessions);
+    function test_setRegistry_success() public {
+        AntseedRegistry newRegistry = new AntseedRegistry();
+        newRegistry.setChannels(address(0xAA));
+        deposits.setRegistry(address(newRegistry));
+        assertEq(address(deposits.registry()), address(newRegistry));
     }
 
-    function test_setChannelsContract_revert_zeroAddress() public {
+    function test_setRegistry_revert_zeroAddress() public {
         vm.expectRevert(AntseedDeposits.InvalidAddress.selector);
-        deposits.setChannelsContract(address(0));
+        deposits.setRegistry(address(0));
     }
 
-    function test_setChannelsContract_revert_notOwner() public {
+    function test_setRegistry_revert_notOwner() public {
         vm.prank(randomCaller);
         vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", randomCaller));
-        deposits.setChannelsContract(address(0xAA));
+        deposits.setRegistry(address(0xAA));
     }
 
     function test_setCreditLimitOverride_success() public {

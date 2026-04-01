@@ -11,12 +11,7 @@ export interface ServicePricing {
 const textDecoder = new TextDecoder();
 
 /** Estimate token count from raw bytes using tokenx (~95-98% accuracy). */
-export function estimateTokensFromBytes(bytes: Uint8Array | number): number {
-  if (typeof bytes === 'number') {
-    // Fallback for callers that only have byte length (no content).
-    // Use bytes/4 as a rough approximation.
-    return Math.ceil(bytes / 4);
-  }
+export function estimateTokensFromBytes(bytes: Uint8Array): number {
   const text = textDecoder.decode(bytes);
   return estimateTokenCount(text);
 }
@@ -45,11 +40,10 @@ export function computeCostUsdc(
 
 /**
  * Estimate USDC cost from raw content bytes using tokenx token estimation.
- * Falls back to bytes/4 if only byte lengths (not content) are provided.
  */
 export function estimateCostFromBytes(
-  inputBytes: Uint8Array | number,
-  outputBytes: Uint8Array | number,
+  inputBytes: Uint8Array,
+  outputBytes: Uint8Array,
   pricing: ServicePricing,
 ): { cost: bigint; inputTokens: number; outputTokens: number } {
   const inputTokens = estimateTokensFromBytes(inputBytes);

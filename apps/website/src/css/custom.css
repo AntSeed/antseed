@@ -196,20 +196,27 @@ nav.navbar {
   color: #6b7280;
 }
 
-/* Mobile sidebar — show text labels for social icon links */
+/* Mobile sidebar — hide social icon links, they don't belong in the list */
 .navbar-sidebar .header-github-link,
 .navbar-sidebar .header-x-link,
 .navbar-sidebar .header-telegram-link {
-  width: auto;
-  height: auto;
-  background-position: left 12px center;
-  padding-left: 42px !important;
-  opacity: 1;
+  display: none;
 }
 
-.navbar-sidebar .header-github-link::after { content: 'GitHub'; }
-.navbar-sidebar .header-x-link::after { content: 'X'; }
-.navbar-sidebar .header-telegram-link::after { content: 'Telegram'; }
+/* Mobile sidebar — hide the secondary docs sub-panel and back button */
+.navbar-sidebar__items--show-secondary .navbar-sidebar__item:first-child {
+  display: none;
+}
+.navbar-sidebar__back {
+  display: none;
+}
+.navbar-sidebar__items {
+  transform: none !important;
+  transition: none !important;
+}
+.navbar-sidebar__item.menu {
+  display: block !important;
+}
 
 /* =============================================
    Custom Footer hover states

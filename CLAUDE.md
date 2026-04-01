@@ -139,8 +139,8 @@ cd apps/desktop && npm run dev
 In the desktop app, go to Settings > Chain Config and set:
 - Chain ID: `base-local`
 - RPC URL: `http://127.0.0.1:8545`
-- Deposits: `0x5FC8d32690cc91D4c39d9d3abcBD16989F875707`
-- Channels: `0x0165878A594ca255338adfa4d48449f69242Eb8F`
+- Deposits: `0x0165878A594ca255338adfa4d48449f69242Eb8F`
+- Channels: `0xa513E6E4b8f2a923D98304ec87F64353C4D5C853`
 
 Then start a chat — the payment flow (ReserveAuth → per-request SpendingAuth → settle/close) runs automatically.
 
@@ -148,3 +148,21 @@ Then start a chat — the payment flow (ReserveAuth → per-request SpendingAuth
 packages/node has native dependencies (better-sqlite3, node-datachannel).
 After install, a postinstall script patches ethers type declarations.
 The desktop app has a script to rebuild native modules for Electron's Node version.
+
+## SQLite Migrations
+Schema changes use a lightweight migration framework in `packages/node/src/storage/`.
+```
+storage/
+  migrate.ts                              # Runner: schema_version table + transactional apply
+  migrations/
+    channels/                             # payment_channels, payment_receipts
+      001_create_tables.ts
+      002_add_auth_sig_columns.ts
+      index.ts                            # Collects all channel migrations
+    metering/                             # metering_events, usage_receipts, sessions, etc.
+      001_create_tables.ts
+      index.ts                            # Collects all metering migrations
+```
+To add a new migration: create `NNN_name.ts` exporting `{ migration: Migration }`,
+add it to the domain's `index.ts`. Use `/add-migration` skill for scaffolding.
+Never modify an existing migration file — always create a new one.

@@ -19,7 +19,7 @@ describe('ANTSTokenClient', () => {
     expect(typeof client.balanceOf).toBe('function');
     expect(typeof client.totalSupply).toBe('function');
     expect(typeof client.transfersEnabled).toBe('function');
-    expect(typeof client.setEmissionsContract).toBe('function');
+    expect(typeof client.setRegistry).toBe('function');
     expect(typeof client.enableTransfers).toBe('function');
     expect(typeof client.transferOwnership).toBe('function');
   });

@@ -56,7 +56,7 @@
 .bigStatementSub { font-size: 16px; color: #888; line-height: 1.6; max-width: 520px; margin: 0 auto; }
 
 /* ---- THREE LAYERS ---- */
-.layers { padding: 60px 60px 80px; max-width: 900px; margin: 0 auto; }
+.layers { padding: 60px 60px; max-width: 900px; margin: 0 auto; }
 .layersHeader { text-align: center; margin-bottom: 48px; }
 .layersKicker {
   font-size: 12px; font-weight: 600; color: #1FD87A;
@@ -208,7 +208,7 @@
 .card { background: #fff; border: 1px solid #e8e8e3; border-radius: 16px; padding: 40px; }
 
 /* Agents & Developers full-width section */
-.agentsSection { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: start; padding: 0 60px 60px; max-width: 1100px; margin: 0 auto; }
+.agentsSection { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: start; padding: 60px 60px; max-width: 1100px; margin: 0 auto; }
 .agentsCopy { }
 .agentsCopy h3 { font-size: 32px; font-weight: 700; letter-spacing: -1px; line-height: 1.2; margin-bottom: 16px; }
 .agentsBullets { list-style: none; padding: 0; margin: 0 0 24px; display: flex; flex-direction: column; gap: 10px; }
@@ -270,8 +270,21 @@
 .feat h4 { font-size: 22px; font-weight: 700; letter-spacing: -0.5px; margin-bottom: 10px; line-height: 1.2; }
 .feat p { font-size: 14px; color: #888; line-height: 1.6; }
 
+/* ---- STRUCTURALLY DIFFERENT ---- */
+.structural { padding: 60px 60px; max-width: 1100px; margin: 0 auto; }
+.structuralHeader { text-align: center; margin-bottom: 56px; }
+.structuralKicker { font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 2px; color: #1FD87A; text-transform: uppercase; margin-bottom: 16px; }
+.structuralHeader h2 { font-size: clamp(28px, 3.5vw, 42px); font-weight: 700; letter-spacing: -1.5px; margin-bottom: 12px; line-height: 1.15; }
+.structuralSub { font-size: 16px; color: #888; }
+.structuralGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; background: #e5e0d4; border: 1px solid #e5e0d4; border-radius: 16px; overflow: hidden; }
+.structuralItem { background: #f5f2eb; padding: 36px 32px; }
+.structuralItem h4 { font-size: 16px; font-weight: 700; margin-bottom: 8px; position: relative; padding-left: 20px; }
+.structuralItem h4::before { content: '✕'; position: absolute; left: 0; color: #e53e3e; font-size: 13px; top: 1px; }
+.structuralItem p { font-size: 14px; color: #666; line-height: 1.6; margin: 0; }
+.structuralIcon { display: none; }
+
 /* ---- CREATOR ECONOMY ---- */
-.creator { padding: 80px 60px; text-align: center; max-width: 900px; margin: 0 auto; }
+.creator { padding: 60px 60px; text-align: center; max-width: 900px; margin: 0 auto; }
 .creatorTitle { font-size: clamp(32px, 4vw, 48px); font-weight: 700; letter-spacing: -2px; margin-bottom: 16px; }
 .creatorSub { font-size: 16px; color: #888; line-height: 1.6; margin-bottom: 48px; max-width: 560px; margin-left: auto; margin-right: auto; }
 
@@ -317,7 +330,7 @@
 .nLeft { left: -30px; top: 50%; transform: translateY(-50%); }
 
 /* Feed */
-.earnFeed { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 0; height: 140px; flex-shrink: 0; overflow: hidden; position: relative; }
+.earnFeed { display: flex; flex-direction: column; align-items: stretch; justify-content: flex-end; gap: 0; height: 140px; flex-shrink: 0; overflow: hidden; position: relative; }
 .earnFeedFade { position: absolute; bottom: 0; left: 0; right: 0; height: 30px; background: linear-gradient(transparent, var(--ifm-background-color, #f5f5f0)); pointer-events: none; }
 .feedRow {
   display: flex; align-items: center; gap: 10px;
@@ -367,6 +380,20 @@
   display: grid; grid-template-columns: 1fr 1fr; gap: 0;
   border: 1px solid #e8e8e3; border-radius: 16px; overflow: hidden;
 }
+
+/* ---- THREE WAYS TO PROVIDE ---- */
+.threeWays { padding: 60px 60px; max-width: 1100px; margin: 0 auto; }
+.threeWaysHeader { text-align: center; margin-bottom: 48px; }
+.threeWaysHeader h2 { font-size: clamp(28px, 3.5vw, 42px); font-weight: 700; letter-spacing: -1.5px; margin-bottom: 12px; }
+.threeWaysHeader p { font-size: 16px; color: #888; margin-bottom: 16px; }
+.threeWaysLink { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-family: 'JetBrains Mono', monospace; color: #16a863; text-decoration: none; letter-spacing: 0.3px; }
+.threeWaysLink:hover { color: #1FD87A; }
+.threeWaysGrid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+.threeWaysCard { background: #fff; border: 1px solid #e8e8e3; border-radius: 16px; padding: 32px 28px; }
+.threeWaysNum { font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 700; color: #1FD87A; letter-spacing: 1px; margin-bottom: 12px; }
+.threeWaysCard h4 { font-size: 18px; font-weight: 700; margin-bottom: 6px; }
+.threeWaysTags { font-size: 11px; color: #aaa; margin-bottom: 12px; font-family: 'JetBrains Mono', monospace; letter-spacing: 0.3px; }
+.threeWaysCard p:last-child { font-size: 14px; color: #555; line-height: 1.65; margin: 0; }
 .supplyCol { padding: 36px; background: #fff; border-right: 1px solid #e8e8e3; }
 .supplyCol:last-child { border-right: none; }
 .supplyLabel {
@@ -402,13 +429,14 @@
 .howArrow { color: #ccc; font-size: 24px; margin-top: 20px; flex-shrink: 0; }
 
 /* ---- COMPATIBLE TOOLS ---- */
-.compat { padding: 60px 60px; text-align: center; max-width: 900px; margin: 0 auto; }
+.compat { padding: 60px; text-align: center; max-width: 900px; margin: 0 auto; }
 .compat h3 {
   font-size: 14px; font-weight: 600; color: #888;
   letter-spacing: 2px; text-transform: uppercase;
   font-family: 'JetBrains Mono', monospace;
   margin-bottom: 32px;
 }
+.compatSub { font-size: 15px; color: #888; margin: -16px 0 32px; }
 .compatLogos { display: flex; justify-content: center; align-items: center; gap: 48px; flex-wrap: wrap; }
 .compatItem { display: flex; flex-direction: column; align-items: center; gap: 8px; }
 .compatIcon {
@@ -421,7 +449,7 @@
 .compatName { font-size: 11px; color: #888; font-family: 'JetBrains Mono', monospace; }
 
 /* ---- BOTTOM CTAs ---- */
-.bottomCtas { padding: 60px 60px 80px; max-width: 900px; margin: 0 auto; }
+.bottomCtas { padding: 60px; max-width: 900px; margin: 0 auto; }
 .bottomGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
 .bottomCard { background: #fff; border: 1px solid #e8e8e3; border-radius: 16px; padding: 40px; text-align: center; }
 .bottomCard h3 { font-size: 22px; font-weight: 700; letter-spacing: -0.5px; margin-bottom: 8px; }
@@ -454,7 +482,7 @@
 .waitlistSuccess { color: #1FD87A; font-weight: 600; font-size: 15px; margin: 0; }
 
 /* ---- FAQ ---- */
-.faq { padding: 60px 60px 80px; width: 100%; max-width: 800px; margin: 0 auto; }
+.faq { padding: 60px; width: 100%; max-width: 800px; margin: 0 auto; }
 .faqTitle { font-size: clamp(28px, 3.5vw, 40px); font-weight: 700; letter-spacing: -1.5px; margin-bottom: 32px; text-align: center; }
 .faqList { display: flex; flex-direction: column; gap: 0; width: 100%; }
 .faqItem { border-bottom: 1px solid #e8e8e3; padding: 0; }
@@ -493,6 +521,10 @@
   .layerIllust { width: 100%; max-width: 260px; }
   .supplyCol { border-right: none; border-bottom: 1px solid #e8e8e3; }
   .supplyCol:last-child { border-bottom: none; }
+  .structural { padding: 60px 20px; }
+  .structuralGrid { grid-template-columns: 1fr; }
+  .threeWays { padding: 60px 20px; }
+  .threeWaysGrid { grid-template-columns: 1fr; }
   .mockupWrap, .features, .supply, .twoCards, .agentsSection, .how, .compat, .bottomCtas, .layers { padding-left: 20px; padding-right: 20px; }
   .hero { padding: 60px 20px 30px; }
   .heroTitle { letter-spacing: -1.5px; }

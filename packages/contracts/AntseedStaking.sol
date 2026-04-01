@@ -6,14 +6,14 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
+import {IAntseedRegistry} from "./interfaces/IAntseedRegistry.sol";
 import {IERC8004Registry} from "./interfaces/IERC8004Registry.sol";
-import {IAntseedStats} from "./interfaces/IAntseedStats.sol";
 import {IAntseedChannels} from "./interfaces/IAntseedChannels.sol";
 
 /**
  * @title AntseedStaking
  * @notice Seller staking and slashing.
- *         Stable contract — holds seller stake USDC. Reads stats from AntseedStats.
+ *         Stable contract — holds seller stake USDC. Reads stats from AntseedChannels.
  *         Binds each seller's stake to their ERC-8004 agentId.
  */
 contract AntseedStaking is Ownable, ReentrancyGuard {
@@ -21,10 +21,7 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
 
     // ─── State ───────────────────────────────────────────────────────────
     IERC20 public immutable usdc;
-    IERC8004Registry public identityRegistry;
-    IAntseedStats public statsContract;
-    address public channelsContract;
-    address public protocolReserve;
+    IAntseedRegistry public registry;
 
     // ─── Structs ────────────────────────────────────────────────────────
     struct SellerAccount {
@@ -55,11 +52,10 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
     error AgentIdMismatch();
 
     // ─── Constructor ────────────────────────────────────────────────────
-    constructor(address _usdc, address _identityRegistry, address _stats) Ownable(msg.sender) {
-        if (_usdc == address(0) || _identityRegistry == address(0) || _stats == address(0)) revert InvalidAddress();
+    constructor(address _usdc, address _registry) Ownable(msg.sender) {
+        if (_usdc == address(0) || _registry == address(0)) revert InvalidAddress();
         usdc = IERC20(_usdc);
-        identityRegistry = IERC8004Registry(_identityRegistry);
-        statsContract = IAntseedStats(_stats);
+        registry = IAntseedRegistry(_registry);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -77,7 +73,7 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
     function _stakeFor(address seller, uint256 agentId, uint256 amount) internal {
         if (seller == address(0)) revert InvalidAddress();
         if (amount == 0) revert InvalidAmount();
-        if (identityRegistry.ownerOf(agentId) != seller) revert NotAgentOwner();
+        if (IERC8004Registry(registry.identityRegistry()).ownerOf(agentId) != seller) revert NotAgentOwner();
         uint256 existingAgentId = sellerAgentId[seller];
         if (existingAgentId != 0 && existingAgentId != agentId) revert AgentIdMismatch();
 
@@ -94,7 +90,7 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
     function unstake() external nonReentrant {
         SellerAccount storage sa = sellers[msg.sender];
         if (sa.stake == 0) revert InsufficientStake();
-        if (IAntseedChannels(channelsContract).activeChannelCount(msg.sender) > 0) revert ActiveChannels();
+        if (IAntseedChannels(registry.channels()).activeChannelCount(msg.sender) > 0) revert ActiveChannels();
 
         uint256 slashAmount = _calculateSlash(msg.sender);
         uint256 payout = sa.stake - slashAmount;
@@ -108,8 +104,9 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
             usdc.safeTransfer(msg.sender, payout);
         }
         if (slashAmount > 0) {
-            if (protocolReserve == address(0)) revert InvalidAddress();
-            usdc.safeTransfer(protocolReserve, slashAmount);
+            address _protocolReserve = registry.protocolReserve();
+            if (_protocolReserve == address(0)) revert InvalidAddress();
+            usdc.safeTransfer(_protocolReserve, slashAmount);
         }
 
         emit Unstaked(msg.sender, stakeAmount, slashAmount);
@@ -144,7 +141,7 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
     function _calculateSlash(address seller) internal view returns (uint256) {
         uint256 agentId = sellerAgentId[seller];
         if (agentId == 0) return 0;
-        IAntseedStats.AgentStats memory stats = statsContract.getStats(agentId);
+        IAntseedChannels.AgentStats memory stats = IAntseedChannels(registry.channels()).getAgentStats(agentId);
 
         uint256 channels = uint256(stats.channelCount);
         uint256 ghosts = uint256(stats.ghostCount);
@@ -174,24 +171,9 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
     //                        ADMIN
     // ═══════════════════════════════════════════════════════════════════
 
-    function setChannelsContract(address _channels) external onlyOwner {
-        if (_channels == address(0)) revert InvalidAddress();
-        channelsContract = _channels;
-    }
-
-    function setIdentityRegistry(address _registry) external onlyOwner {
+    function setRegistry(address _registry) external onlyOwner {
         if (_registry == address(0)) revert InvalidAddress();
-        identityRegistry = IERC8004Registry(_registry);
-    }
-
-    function setStatsContract(address _stats) external onlyOwner {
-        if (_stats == address(0)) revert InvalidAddress();
-        statsContract = IAntseedStats(_stats);
-    }
-
-    function setProtocolReserve(address _reserve) external onlyOwner {
-        if (_reserve == address(0)) revert InvalidAddress();
-        protocolReserve = _reserve;
+        registry = IAntseedRegistry(_registry);
     }
 
     function setMinSellerStake(uint256 value) external onlyOwner {
