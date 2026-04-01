@@ -148,9 +148,8 @@ export type DesktopBridge = {
       peerId: string;
       displayName: string | null;
       reputation: number;
-      onChainReputation: number | null;
       onChainChannelCount: number | null;
-      onChainDisputeCount: number | null;
+      onChainGhostCount: number | null;
       evmAddress: string | null;
       timestamp: number | null;
       providers: string[];

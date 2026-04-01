@@ -71,10 +71,8 @@ export interface PeerInfo {
   currentLoad?: number;
   /** Computed trust score (0-100) from the trust engine. */
   trustScore?: number;
-  /** On-chain reputation score (0-100) from the Base identity contract. */
-  onChainReputation?: number;
-  /** On-chain channel count from the Base identity contract. */
+  /** On-chain settled channel count from AntseedChannels. */
   onChainChannelCount?: number;
-  /** On-chain dispute count from the Base identity contract. */
-  onChainDisputeCount?: number;
+  /** On-chain ghost count (provider went silent) from AntseedChannels. */
+  onChainGhostCount?: number;
 }

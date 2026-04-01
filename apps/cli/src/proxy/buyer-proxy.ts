@@ -511,7 +511,7 @@ export class BuyerProxy {
         .filter((provider) => provider.length > 0)
       const trust = Number.isFinite(peer.trustScore) ? String(peer.trustScore) : 'n/a'
       const rep = Number.isFinite(peer.reputationScore) ? String(peer.reputationScore) : 'n/a'
-      const onChain = Number.isFinite(peer.onChainReputation) ? String(peer.onChainReputation) : 'n/a'
+      const onChain = Number.isFinite(peer.onChainChannelCount) ? String(peer.onChainChannelCount) : 'n/a'
       const input = Number.isFinite(peer.defaultInputUsdPerMillion) ? String(peer.defaultInputUsdPerMillion) : 'n/a'
       const output = Number.isFinite(peer.defaultOutputUsdPerMillion) ? String(peer.defaultOutputUsdPerMillion) : 'n/a'
 

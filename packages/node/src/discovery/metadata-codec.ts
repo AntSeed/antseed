@@ -246,14 +246,14 @@ function encodeBody(metadata: PeerMetadata): Uint8Array {
     }
   }
 
-  // On-chain reputation: 1 flag byte + 10 data bytes (1 reputation + 4 channelCount + 4 disputeCount + 1 reserved)
-  if (metadata.onChainReputation !== undefined) {
+  // On-chain stats: 1 flag byte + 10 data bytes (1 reserved + 4 channelCount + 4 ghostCount + 1 reserved)
+  if (metadata.onChainChannelCount !== undefined) {
     parts.push(new Uint8Array([1])); // flag: present
     const repBuf = new ArrayBuffer(10);
     const repView = new DataView(repBuf);
-    repView.setUint8(0, Math.min(255, Math.max(0, metadata.onChainReputation)));
-    repView.setUint32(1, metadata.onChainChannelCount ?? 0, false);
-    repView.setUint32(5, metadata.onChainDisputeCount ?? 0, false);
+    repView.setUint8(0, Math.min(255, metadata.onChainChannelCount)); // legacy reputation byte — channelCount capped to u8
+    repView.setUint32(1, metadata.onChainChannelCount, false);
+    repView.setUint32(5, metadata.onChainGhostCount ?? 0, false);
     repView.setUint8(9, 0); // reserved
     parts.push(new Uint8Array(repBuf));
   } else {
@@ -560,10 +560,9 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
     }
   }
 
-  // Optional on-chain reputation (flag + 10 bytes)
-  let onChainReputation: number | undefined;
+  // Optional on-chain stats (flag + 10 bytes)
   let onChainChannelCount: number | undefined;
-  let onChainDisputeCount: number | undefined;
+  let onChainGhostCount: number | undefined;
   const remainingBeforeRepSig = data.length - offset - 65;
   if (remainingBeforeRepSig >= 1) {
     const repFlag = data[offset]!;
@@ -571,9 +570,9 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
     if (repFlag === 1) {
       checkBounds(offset, 10, data.length - 65);
       const repView = new DataView(data.buffer, data.byteOffset + offset, 10);
-      onChainReputation = repView.getUint8(0);
+      // byte 0 is legacy reputation (ignored — use channelCount directly)
       onChainChannelCount = repView.getUint32(1, false);
-      onChainDisputeCount = repView.getUint32(5, false);
+      onChainGhostCount = repView.getUint32(5, false);
       // byte 9 is reserved
       offset += 10;
     }
@@ -591,9 +590,8 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
     ...(publicAddress ? { publicAddress } : {}),
     providers,
     ...(offerings && offerings.length > 0 ? { offerings } : {}),
-    ...(onChainReputation !== undefined ? { onChainReputation } : {}),
     ...(onChainChannelCount !== undefined ? { onChainChannelCount } : {}),
-    ...(onChainDisputeCount !== undefined ? { onChainDisputeCount } : {}),
+    ...(onChainGhostCount !== undefined ? { onChainGhostCount } : {}),
     region,
     timestamp,
     signature,

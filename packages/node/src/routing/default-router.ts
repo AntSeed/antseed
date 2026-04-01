@@ -44,8 +44,8 @@ export class DefaultRouter implements Router {
   }
 
   private _effectiveReputation(peer: PeerInfo): number {
-    if (this._isFiniteNonNegative(peer.onChainReputation)) {
-      return peer.onChainReputation;
+    if (this._isFiniteNonNegative(peer.onChainChannelCount)) {
+      return peer.onChainChannelCount;
     }
     if (this._isFiniteNonNegative(peer.trustScore)) {
       return peer.trustScore;
@@ -57,13 +57,8 @@ export class DefaultRouter implements Router {
   }
 
   private _hasReputation(peer: PeerInfo): boolean {
-    if (this._isFiniteNonNegative(peer.onChainReputation)) {
-      const channelCount = this._isFiniteNonNegative(peer.onChainChannelCount) ? peer.onChainChannelCount : undefined;
-      const disputeCount = this._isFiniteNonNegative(peer.onChainDisputeCount) ? peer.onChainDisputeCount : undefined;
-      if (channelCount !== undefined || disputeCount !== undefined) {
-        return (channelCount ?? 0) > 0 || (disputeCount ?? 0) > 0;
-      }
-      return true;
+    if (this._isFiniteNonNegative(peer.onChainChannelCount)) {
+      return (peer.onChainChannelCount ?? 0) > 0 || (peer.onChainGhostCount ?? 0) > 0;
     }
 
     return this._isFiniteNonNegative(peer.trustScore) || this._isFiniteNonNegative(peer.reputationScore);

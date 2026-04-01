@@ -163,15 +163,13 @@ describe('encodeMetadata / decodeMetadata', () => {
           services: ['claude-3-sonnet'],
         },
       ],
-      onChainReputation: 88,
       onChainChannelCount: 123,
-      onChainDisputeCount: 2,
+      onChainGhostCount: 2,
     });
     const decoded = decodeMetadata(encodeMetadata(original));
     expect(decoded.offerings?.[0]?.name).toBe('summarize');
-    expect(decoded.onChainReputation).toBe(88);
     expect(decoded.onChainChannelCount).toBe(123);
-    expect(decoded.onChainDisputeCount).toBe(2);
+    expect(decoded.onChainGhostCount).toBe(2);
   });
 
   // v2/v3/v4/v5 roundtrip tests removed — pre-v6 format is rejected by the decoder.

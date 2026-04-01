@@ -358,7 +358,6 @@ export function registerSeedCommand(program: Command): void {
             channelsAddress: paymentConfig.crypto.channelsContractAddress,
             usdcAddress: paymentConfig.crypto.usdcAddress,
             identityRegistryAddress: resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).identityRegistryAddress,
-            statsAddress: resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).statsContractAddress,
             stakingAddress: resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).stakingContractAddress,
             chainId: resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).evmChainId,
           } : {}),

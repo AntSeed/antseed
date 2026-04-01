@@ -127,9 +127,9 @@ export function initChatModule({
         const ageDays = Math.floor((now - timestamp) / 86400);
 
         uiState.chatPaymentApprovalPeerInfo = {
-          reputation: result.data.onChainReputation ?? result.data.reputation ?? 0,
+          reputation: result.data.onChainChannelCount ?? result.data.reputation ?? 0,
           channelCount: result.data.onChainChannelCount ?? null,
-          disputeCount: result.data.onChainDisputeCount ?? null,
+          disputeCount: result.data.onChainGhostCount ?? null,
           networkAgeDays: ageDays > 0 ? ageDays : null,
           evmAddress: result.data.evmAddress ?? null,
         };

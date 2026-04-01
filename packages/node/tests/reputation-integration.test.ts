@@ -29,16 +29,14 @@ function makeMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
 describe('Reputation Integration', () => {
   it('should round-trip metadata with reputation', () => {
     const original = makeMetadata({
-      onChainReputation: 85,
       onChainChannelCount: 42,
-      onChainDisputeCount: 2,
+      onChainGhostCount: 2,
     });
     const encoded = encodeMetadata(original);
     const decoded = decodeMetadata(encoded);
 
-    expect(decoded.onChainReputation).toBe(85);
     expect(decoded.onChainChannelCount).toBe(42);
-    expect(decoded.onChainDisputeCount).toBe(2);
+    expect(decoded.onChainGhostCount).toBe(2);
     // Verify other fields are still correct
     expect(decoded.peerId).toBe(original.peerId);
     expect(decoded.region).toBe(original.region);
@@ -53,9 +51,8 @@ describe('Reputation Integration', () => {
     const encoded = encodeMetadata(original);
     const decoded = decodeMetadata(encoded);
 
-    expect(decoded.onChainReputation).toBeUndefined();
     expect(decoded.onChainChannelCount).toBeUndefined();
-    expect(decoded.onChainDisputeCount).toBeUndefined();
+    expect(decoded.onChainGhostCount).toBeUndefined();
     // Core fields should still work
     expect(decoded.peerId).toBe(original.peerId);
     expect(decoded.region).toBe(original.region);
@@ -64,9 +61,8 @@ describe('Reputation Integration', () => {
 
   it('should populate PeerInfo from metadata reputation', () => {
     const metadata: PeerMetadata = makeMetadata({
-      onChainReputation: 92,
       onChainChannelCount: 100,
-      onChainDisputeCount: 1,
+      onChainGhostCount: 1,
     });
 
     // Simulate what _lookupResultToPeerInfo does
@@ -75,23 +71,21 @@ describe('Reputation Integration', () => {
       lastSeen: metadata.timestamp,
       providers: metadata.providers.map((p) => p.provider),
       publicAddress: '1.2.3.4:6882',
-      onChainReputation: metadata.onChainReputation,
       onChainChannelCount: metadata.onChainChannelCount,
-      onChainDisputeCount: metadata.onChainDisputeCount,
-      trustScore: metadata.onChainReputation,
+      onChainGhostCount: metadata.onChainGhostCount,
+      trustScore: metadata.onChainChannelCount,
     };
 
-    expect(peerInfo.onChainReputation).toBe(92);
     expect(peerInfo.onChainChannelCount).toBe(100);
-    expect(peerInfo.onChainDisputeCount).toBe(1);
-    expect(peerInfo.trustScore).toBe(92);
+    expect(peerInfo.onChainGhostCount).toBe(1);
+    expect(peerInfo.trustScore).toBe(100);
   });
 
   it('should prefer on-chain reputation in effective reputation', () => {
     // Simulates the _effectiveReputation logic from the router
     function effectiveReputation(p: PeerInfo): number {
-      if (p.onChainReputation !== undefined) {
-        return p.onChainReputation;
+      if (p.onChainChannelCount !== undefined) {
+        return p.onChainChannelCount;
       }
       return p.trustScore ?? p.reputationScore ?? 0;
     }
@@ -100,7 +94,7 @@ describe('Reputation Integration', () => {
       peerId: 'a'.repeat(40) as any,
       lastSeen: Date.now(),
       providers: ['anthropic'],
-      onChainReputation: 88,
+      onChainChannelCount: 88,
       trustScore: 70,
       reputationScore: 60,
     };
@@ -110,8 +104,8 @@ describe('Reputation Integration', () => {
 
   it('should fall back when on-chain reputation is not available', () => {
     function effectiveReputation(p: PeerInfo): number {
-      if (p.onChainReputation !== undefined) {
-        return p.onChainReputation;
+      if (p.onChainChannelCount !== undefined) {
+        return p.onChainChannelCount;
       }
       return p.trustScore ?? p.reputationScore ?? 0;
     }
@@ -142,46 +136,4 @@ describe('Reputation Integration', () => {
     expect(effectiveReputation(peerWithNothing)).toBe(0);
   });
 
-  it.skip('should verify reputation with evmAddress via verifyReputation (pending IdentityClient integration)', async () => {
-    const { verifyReputation } = await import('../src/discovery/reputation-verifier.js');
-
-    const metadata = makeMetadata({
-      onChainReputation: 80,
-      onChainChannelCount: 50,
-      onChainDisputeCount: 3,
-    });
-
-    // Mock identity client
-    const mockIdentityClient = {
-      getReputation: async (_addr: string) => ({
-        totalWeightedScore: 4000n,
-        totalWeight: 50n,
-        channelCount: 50,
-        disputeCount: 3,
-        weightedAverage: 80,
-      }),
-    } as any;
-
-    const result = await verifyReputation(mockIdentityClient, metadata);
-
-    expect(result.valid).toBe(true);
-    expect(result.actualReputation).toBe(80);
-    expect(result.actualChannelCount).toBe(50);
-    expect(result.actualDisputeCount).toBe(3);
-    expect(result.claimedReputation).toBe(80);
-    expect(result.claimedChannelCount).toBe(50);
-    expect(result.claimedDisputeCount).toBe(3);
-
-    // Test with mismatched data
-    const mismatchedMetadata = makeMetadata({
-      onChainReputation: 90, // claimed higher than actual
-      onChainChannelCount: 50,
-      onChainDisputeCount: 3,
-    });
-
-    const mismatchResult = await verifyReputation(mockIdentityClient, mismatchedMetadata);
-    expect(mismatchResult.valid).toBe(false);
-    expect(mismatchResult.actualReputation).toBe(80);
-    expect(mismatchResult.claimedReputation).toBe(90);
-  });
 });

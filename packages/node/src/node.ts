@@ -72,8 +72,6 @@ import { BuyerPaymentManager, type BuyerPaymentConfig } from "./payments/buyer-p
 import { computeCostUsdc } from "./payments/pricing.js";
 import { SellerPaymentManager, type SellerPaymentConfig } from "./payments/seller-payment-manager.js";
 import { IdentityClient } from "./payments/evm/identity-client.js";
-import { StatsClient } from "./payments/evm/stats-client.js";
-import { verifyStats } from "./discovery/stats-verifier.js";
 
 export type { Provider, ProviderStreamCallbacks };
 export type { Router };
@@ -149,8 +147,6 @@ export interface NodePaymentsConfig {
   usdcAddress?: string;
   /** ERC-8004 IdentityRegistry contract address */
   identityRegistryAddress?: string;
-  /** AntseedStats contract address */
-  statsAddress?: string;
   /** AntseedStaking contract address */
   stakingAddress?: string;
   /** Chain ID for EIP-712 domain. Default: 8453 (Base) */
@@ -264,7 +260,6 @@ export class AntseedNode extends EventEmitter {
   private _channelsClient: ChannelsClient | null = null;
   private _stakingClient: StakingClient | null = null;
   private _identityClient: IdentityClient | null = null;
-  private _statsClient: StatsClient | null = null;
   private _paymentMuxes = new Map<PeerId, PaymentMux>();
   private _providerLoadCounts = new Map<string, number>();
   private _metadataRefreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -352,10 +347,6 @@ export class AntseedNode extends EventEmitter {
     return this._identityClient;
   }
 
-  /** AntseedStats client for on-chain agent stats (null if not configured). */
-  get statsClient(): StatsClient | null {
-    return this._statsClient;
-  }
 
   /** Current connection state for a peer if a connection exists, otherwise null. */
   getPeerConnectionState(peerId: PeerId): ConnectionState | null {
@@ -520,7 +511,6 @@ export class AntseedNode extends EventEmitter {
     this._channelsClient = null;
     this._stakingClient = null;
     this._identityClient = null;
-    this._statsClient = null;
     this._buyerPaymentManager = null;
     this._sellerPaymentManager = null;
     this._buyerLockedPeers.clear();
@@ -568,29 +558,17 @@ export class AntseedNode extends EventEmitter {
       }
     }
 
-
-
-    // Optional stats verification: replace claimed data with verified on-chain data
-    if (this._statsClient && this._stakingClient) {
+    // Verify claimed on-chain stats against actual contract data
+    if (this._channelsClient && this._stakingClient) {
       for (const p of peers) {
         try {
-          const metadata: import("./discovery/peer-metadata.js").PeerMetadata = {
-            peerId: p.peerId,
-            version: 0,
-            providers: [],
-            region: "",
-            timestamp: 0,
-            signature: "",
-            onChainReputation: p.onChainReputation,
-            onChainChannelCount: p.onChainChannelCount,
-            onChainDisputeCount: p.onChainDisputeCount,
-          };
-          const result = await verifyStats(this._statsClient, this._stakingClient, metadata);
-          p.onChainReputation = result.actualReputation;
-          p.onChainChannelCount = result.actualChannelCount;
-          p.onChainDisputeCount = result.actualDisputeCount;
+          const evmAddress = peerIdToAddress(p.peerId);
+          const agentId = await this._stakingClient.getAgentId(evmAddress);
+          const stats = await this._channelsClient.getAgentStats(agentId);
+          p.onChainChannelCount = stats.channelCount;
+          p.onChainGhostCount = stats.ghostCount;
         } catch {
-          // Stats/staking contract lookup failed for this peer — keep claimed data
+          // Contract lookup failed for this peer — keep claimed data
         }
       }
     }
@@ -1176,7 +1154,7 @@ export class AntseedNode extends EventEmitter {
         ),
         reannounceIntervalMs: DEFAULT_DHT_CONFIG.reannounceIntervalMs,
         signalingPort: actualSignalingPort,
-        ...(this._statsClient ? { statsClient: this._statsClient } : {}),
+        ...(this._channelsClient ? { channelsClient: this._channelsClient } : {}),
         ...(this._stakingClient ? { stakingClient: this._stakingClient, paymentsEnabled: true } : {}),
       };
       this._announcer = new PeerAnnouncer(announcerConfig);
@@ -1805,15 +1783,6 @@ export class AntseedNode extends EventEmitter {
         contractAddress: payments.identityRegistryAddress,
       });
       debugLog(`[Node] IdentityClient initialized (contract=${payments.identityRegistryAddress.slice(0, 10)}...)`);
-    }
-
-    // Initialize StatsClient
-    if (payments.rpcUrl && payments.statsAddress) {
-      this._statsClient = new StatsClient({
-        rpcUrl: payments.rpcUrl,
-        contractAddress: payments.statsAddress,
-      });
-      debugLog(`[Node] StatsClient initialized (contract=${payments.statsAddress.slice(0, 10)}...)`);
     }
 
     // Initialize ChannelStore for persistent payment channels (shared instance)
@@ -2478,10 +2447,8 @@ export class AntseedNode extends EventEmitter {
       defaultOutputUsdPerMillion: firstProvider?.defaultPricing.outputUsdPerMillion,
       maxConcurrency: firstProvider?.maxConcurrency,
       currentLoad: firstProvider?.currentLoad,
-      onChainReputation: result.metadata.onChainReputation,
       onChainChannelCount: result.metadata.onChainChannelCount,
-      onChainDisputeCount: result.metadata.onChainDisputeCount,
-      trustScore: result.metadata.onChainReputation,
+      onChainGhostCount: result.metadata.onChainGhostCount,
     };
   }
 
