@@ -543,6 +543,41 @@ contract AntseedEmissionsTest is Test {
         new AntseedEmissions(address(antseedRegistry), INITIAL_EMISSION, 0);
     }
 
+    function test_pause_blocksAccrual() public {
+        emissions.pause();
+
+        vm.expectRevert(abi.encodeWithSignature("EnforcedPause()"));
+        emissions.accrueSellerPoints(seller1, 100);
+
+        vm.expectRevert(abi.encodeWithSignature("EnforcedPause()"));
+        emissions.accrueBuyerPoints(buyer1, 100);
+    }
+
+    function test_pause_blocksClaim() public {
+        emissions.accrueSellerPoints(seller1, 100);
+        vm.warp(block.timestamp + EPOCH_DURATION);
+
+        emissions.pause();
+
+        vm.prank(seller1);
+        vm.expectRevert(abi.encodeWithSignature("EnforcedPause()"));
+        emissions.claimEmissions(_epochList(0));
+    }
+
+    function test_unpause_restoresFunction() public {
+        emissions.pause();
+        emissions.unpause();
+
+        emissions.accrueSellerPoints(seller1, 100);
+        assertEq(emissions.userSellerPoints(seller1, 0), 100);
+    }
+
+    function test_pause_revert_notOwner() public {
+        vm.prank(seller1);
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", seller1));
+        emissions.pause();
+    }
+
     function test_transferOwnership() public {
         emissions.transferOwnership(seller1);
         assertEq(emissions.owner(), seller1);

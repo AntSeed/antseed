@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 import {IAntseedRegistry} from "./interfaces/IAntseedRegistry.sol";
@@ -21,7 +22,7 @@ import {IANTSToken} from "./interfaces/IANTSToken.sol";
  *         No explicit epoch advancement — everything is a pure function of time.
  *         Empty epoch budgets go to reserve (no rollover).
  */
-contract AntseedEmissions is Ownable, ReentrancyGuard {
+contract AntseedEmissions is Ownable, Pausable, ReentrancyGuard {
     // ─── Configuration ───
     IAntseedRegistry public registry;
 
@@ -110,14 +111,14 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
     //                        POINT ACCRUAL
     // ═══════════════════════════════════════════════════════════════════
 
-    function accrueSellerPoints(address seller, uint256 pointsDelta) external onlyChannels {
+    function accrueSellerPoints(address seller, uint256 pointsDelta) external onlyChannels whenNotPaused {
         uint256 epoch = currentEpoch();
         userSellerPoints[seller][epoch] += pointsDelta;
         epochTotalSellerPoints[epoch] += pointsDelta;
         emit SellerPointsAccrued(seller, epoch, pointsDelta);
     }
 
-    function accrueBuyerPoints(address buyer, uint256 pointsDelta) external onlyChannels {
+    function accrueBuyerPoints(address buyer, uint256 pointsDelta) external onlyChannels whenNotPaused {
         uint256 epoch = currentEpoch();
         userBuyerPoints[buyer][epoch] += pointsDelta;
         epochTotalBuyerPoints[epoch] += pointsDelta;
@@ -135,7 +136,7 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
      *
      * @param epochs  Array of epoch numbers to claim
      */
-    function claimEmissions(uint256[] calldata epochs) external nonReentrant {
+    function claimEmissions(uint256[] calldata epochs) external nonReentrant whenNotPaused {
         uint256 _currentEpoch = currentEpoch();
         uint256 _maxSellerPct = MAX_SELLER_SHARE_PCT;
         uint256 totalReward = 0;
@@ -248,5 +249,13 @@ contract AntseedEmissions is Ownable, ReentrancyGuard {
     function setMaxSellerSharePct(uint256 value) external onlyOwner {
         if (value == 0 || value > 100) revert InvalidValue();
         MAX_SELLER_SHARE_PCT = value;
+    }
+
+    function pause() external onlyOwner {
+        _pause();
+    }
+
+    function unpause() external onlyOwner {
+        _unpause();
     }
 }
