@@ -464,7 +464,7 @@ export class SellerPaymentManager {
             this._signer,
             channelId,
             latestAuth.cumulativeAmount,
-            latestAuth.metadata,
+            latestAuth.metadata || '0x',
             latestAuth.spendingAuthSig,
           );
           this._channelStore.updateChannelStatus(channelId, 'settled', latestAuth.cumulativeAmount.toString());
