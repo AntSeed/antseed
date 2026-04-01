@@ -7,8 +7,8 @@ export interface EmissionsClientConfig {
 }
 
 const EMISSIONS_ABI = [
-  'function claimEmissions(uint256[] epochs) external',
-  'function claimEmissionsFor(address account, uint256[] epochs) external',
+  'function claimSellerEmissions(uint256[] epochs) external',
+  'function claimBuyerEmissions(address buyer, uint256[] epochs) external',
   'function pendingEmissions(address account, uint256[] epochs) external view returns (uint256 seller, uint256 buyer)',
   'function currentEpoch() external view returns (uint256)',
   'function currentEmissionRate() external view returns (uint256)',
@@ -34,12 +34,12 @@ export class EmissionsClient extends BaseEvmClient {
     super(config.rpcUrl, config.contractAddress);
   }
 
-  async claimEmissions(signer: AbstractSigner, epochs: number[]): Promise<string> {
-    return this._execWrite(signer, EMISSIONS_ABI, 'claimEmissions', epochs);
+  async claimSellerEmissions(signer: AbstractSigner, epochs: number[]): Promise<string> {
+    return this._execWrite(signer, EMISSIONS_ABI, 'claimSellerEmissions', epochs);
   }
 
-  async claimEmissionsFor(signer: AbstractSigner, account: string, epochs: number[]): Promise<string> {
-    return this._execWrite(signer, EMISSIONS_ABI, 'claimEmissionsFor', account, epochs);
+  async claimBuyerEmissions(signer: AbstractSigner, buyer: string, epochs: number[]): Promise<string> {
+    return this._execWrite(signer, EMISSIONS_ABI, 'claimBuyerEmissions', buyer, epochs);
   }
 
   async pendingEmissions(address: string, epochs: number[]): Promise<{ seller: bigint; buyer: bigint }> {

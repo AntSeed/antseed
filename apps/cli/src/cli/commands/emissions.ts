@@ -86,7 +86,7 @@ export function registerEmissionsCommand(program: Command): void {
 
         console.log(chalk.dim(`Pending: ${formatAnts(totalPending)} ANTS`));
 
-        const txHash = await emissionsClient.claimEmissions(wallet, pastEpochs);
+        const txHash = await emissionsClient.claimSellerEmissions(wallet, pastEpochs);
         spinner.succeed(chalk.green(`Claimed ${formatAnts(totalPending)} ANTS`));
         console.log(chalk.dim(`Transaction: ${txHash}`));
       } catch (err) {
