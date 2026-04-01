@@ -22,15 +22,11 @@ export const migration: Migration = {
         settled_at INTEGER,
         settled_amount TEXT,
         status TEXT NOT NULL DEFAULT 'active',
-        latest_buyer_sig TEXT,
-        latest_metadata_auth_sig TEXT,
-        latest_metadata TEXT,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       );
 
       CREATE INDEX IF NOT EXISTS idx_channels_peer_role_status ON payment_channels(peer_id, role, status);
-      CREATE INDEX IF NOT EXISTS idx_channels_status_updated ON payment_channels(status, updated_at);
 
       CREATE TABLE IF NOT EXISTS payment_receipts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
