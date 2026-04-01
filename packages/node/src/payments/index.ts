@@ -22,15 +22,11 @@ export type { DepositsClientConfig, BuyerBalanceInfo } from './evm/deposits-clie
 
 // Channels client (reserve, settle, timeout)
 export { ChannelsClient } from './evm/channels-client.js';
-export type { ChannelsClientConfig, ChannelInfo } from './evm/channels-client.js';
+export type { ChannelsClientConfig, ChannelInfo, AgentStats } from './evm/channels-client.js';
 
 // Identity client (ERC-8004 IdentityRegistry)
 export { IdentityClient } from './evm/identity-client.js';
 export type { IdentityClientConfig } from './evm/identity-client.js';
-
-// Stats client (AntseedStats)
-export { StatsClient } from './evm/stats-client.js';
-export type { StatsClientConfig, AgentStats } from './evm/stats-client.js';
 
 // Staking client (seller staking, token rate, slashing)
 export { StakingClient } from './evm/staking-client.js';

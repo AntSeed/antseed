@@ -42,8 +42,7 @@ export interface PeerMetadata {
   timestamp: number;
   stakeAmountUSDC?: number;
   trustScore?: number;
-  onChainReputation?: number;
   onChainChannelCount?: number;
-  onChainDisputeCount?: number;
+  onChainGhostCount?: number;
   signature: string;
 }

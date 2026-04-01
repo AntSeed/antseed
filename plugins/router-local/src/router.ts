@@ -134,20 +134,15 @@ export class LocalRouter implements Router {
   }
 
   private _effectiveReputation(p: PeerInfo): number {
-    if (p.onChainReputation !== undefined) {
-      return p.onChainReputation;
+    if (p.onChainChannelCount !== undefined) {
+      return p.onChainChannelCount;
     }
     return p.trustScore ?? p.reputationScore ?? 0;
   }
 
   private _hasReputation(p: PeerInfo): boolean {
-    if (this._isFiniteNonNegative(p.onChainReputation)) {
-      const channelCount = this._isFiniteNonNegative(p.onChainChannelCount) ? p.onChainChannelCount : undefined;
-      const disputeCount = this._isFiniteNonNegative(p.onChainDisputeCount) ? p.onChainDisputeCount : undefined;
-      if (channelCount !== undefined || disputeCount !== undefined) {
-        return (channelCount ?? 0) > 0 || (disputeCount ?? 0) > 0;
-      }
-      return true;
+    if (this._isFiniteNonNegative(p.onChainChannelCount)) {
+      return (p.onChainChannelCount ?? 0) > 0 || (p.onChainGhostCount ?? 0) > 0;
     }
 
     return this._isFiniteNonNegative(p.trustScore) || this._isFiniteNonNegative(p.reputationScore);

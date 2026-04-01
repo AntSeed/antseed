@@ -18,9 +18,8 @@ import { isKnownServiceApiProtocol } from "../types/service-api.js";
 import { encodeMetadataForSigning } from "./metadata-codec.js";
 import { debugWarn } from "../utils/debug.js";
 import { bytesToHex } from "../utils/hex.js";
-// Announcer uses StatsClient + StakingClient for on-chain stats lookup
-import type { StatsClient } from "../payments/evm/stats-client.js";
 import type { StakingClient } from "../payments/evm/staking-client.js";
+import type { ChannelsClient } from "../payments/evm/channels-client.js";
 
 export interface AnnouncerConfig {
   identity: Identity;
@@ -45,9 +44,8 @@ export interface AnnouncerConfig {
   offerings?: PeerOffering[];
   stakeAmountUSDC?: number;
   trustScore?: number;
-  /** @deprecated Use statsClient for payments-enabled checks */
   paymentsEnabled?: boolean;
-  statsClient?: StatsClient;
+  channelsClient?: ChannelsClient;
   stakingClient?: StakingClient;
   reannounceIntervalMs: number;
   signalingPort: number;
@@ -158,21 +156,19 @@ export class PeerAnnouncer {
     }
 
     if (this.config.paymentsEnabled) {
-      if (includeOnChainReputation && this.config.statsClient && this.config.stakingClient) {
+      if (includeOnChainReputation && this.config.channelsClient && this.config.stakingClient) {
         try {
           const evmAddress = this.config.identity.wallet.address;
           const agentId = await this.config.stakingClient.getAgentId(evmAddress);
-          const stats = await this.config.statsClient.getStats(agentId);
-          metadata.onChainReputation = stats.channelCount;
+          const stats = await this.config.channelsClient.getAgentStats(agentId);
           metadata.onChainChannelCount = stats.channelCount;
-          metadata.onChainDisputeCount = stats.ghostCount;
+          metadata.onChainGhostCount = stats.ghostCount;
         } catch {
-          // Stats/staking contract lookup failed — skip on-chain stats for this cycle
+          // Channels/staking contract lookup failed — skip on-chain stats for this cycle
         }
       } else if (this._latestMetadata) {
-        metadata.onChainReputation = this._latestMetadata.onChainReputation;
         metadata.onChainChannelCount = this._latestMetadata.onChainChannelCount;
-        metadata.onChainDisputeCount = this._latestMetadata.onChainDisputeCount;
+        metadata.onChainGhostCount = this._latestMetadata.onChainGhostCount;
       }
     }
 

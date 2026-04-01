@@ -44,8 +44,7 @@ cat > ~/.antseed-seller/config.json << EOF
       "channelsContractAddress": "$CHANNELS",
       "stakingContractAddress": "$STAKING",
       "usdcContractAddress": "$USDC",
-      "identityRegistryAddress": "$REGISTRY",
-      "statsAddress": "$STATS"
+      "identityRegistryAddress": "$REGISTRY"
     }
   },
   "providers": [

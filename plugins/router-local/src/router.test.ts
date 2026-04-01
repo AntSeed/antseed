@@ -215,7 +215,7 @@ describe('LocalRouter', () => {
       peerId: '1'.repeat(40) as PeerInfo['peerId'],
       reputationScore: undefined,
       trustScore: undefined,
-      onChainReputation: undefined,
+      onChainChannelCount: undefined,
     });
 
     const selected = router.selectPeer(makeRequest(), [unrated]);
@@ -228,9 +228,8 @@ describe('LocalRouter', () => {
       peerId: '3'.repeat(40) as PeerInfo['peerId'],
       trustScore: 0,
       reputationScore: undefined,
-      onChainReputation: 0,
       onChainChannelCount: 0,
-      onChainDisputeCount: 0,
+      onChainGhostCount: 0,
     });
 
     const selected = router.selectPeer(makeRequest(), [newSeller]);

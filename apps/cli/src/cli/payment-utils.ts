@@ -7,7 +7,6 @@ import {
 } from '@antseed/node';
 import {
   IdentityClient,
-  StatsClient,
   EmissionsClient,
   SubPoolClient,
   ChannelStore,
@@ -101,20 +100,6 @@ export function createIdentityClient(config: AntseedConfig): IdentityClient {
   return new IdentityClient({
     rpcUrl: crypto.rpcUrl,
     contractAddress: crypto.identityRegistryAddress,
-  });
-}
-
-/**
- * Create a StatsClient from the CLI config.
- */
-export function createStatsClient(config: AntseedConfig): StatsClient {
-  const crypto = requireCryptoConfig(config);
-  if (!crypto.statsContractAddress) {
-    throw new Error('No stats contract address configured. Set payments.crypto.statsContractAddress in your config file.');
-  }
-  return new StatsClient({
-    rpcUrl: crypto.rpcUrl,
-    contractAddress: crypto.statsContractAddress,
   });
 }
 
