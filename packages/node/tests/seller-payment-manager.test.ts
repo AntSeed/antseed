@@ -11,7 +11,7 @@ import type { SpendingAuthPayload } from '../src/types/protocol.js';
 import { bytesToHex } from '../src/utils/hex.js';
 import { toPeerId } from '../src/types/peer.js';
 import { Wallet } from 'ethers';
-import { signSpendingAuth, signReserveAuth, makeChannelsDomain, computeMetadataHash, encodeMetadata, ZERO_METADATA_HASH } from '../src/payments/evm/signatures.js';
+import { signSpendingAuth, signReserveAuth, makeChannelsDomain, computeMetadataHash, encodeMetadata, ZERO_METADATA, ZERO_METADATA_HASH } from '../src/payments/evm/signatures.js';
 import type { SpendingAuthMessage, ReserveAuthMessage, SpendingAuthMetadata } from '../src/payments/evm/signatures.js';
 
 const CHAIN_ID = 31337;
@@ -275,8 +275,8 @@ describe('SellerPaymentManager', () => {
     expect(manager.channelsClient.close).toHaveBeenCalledOnce();
     const closeArgs = (manager.channelsClient.close as ReturnType<typeof vi.fn>).mock.calls[0];
     const metadata = closeArgs[3] as string;
-    // Should fall back to '0x' instead of passing empty string
-    expect(metadata).toBe('0x');
+    // Should fall back to ABI-encoded zero metadata (matching ZERO_METADATA_HASH)
+    expect(metadata).toBe(encodeMetadata(ZERO_METADATA));
   });
 
   it('test_hasSession: returns true/false correctly', async () => {

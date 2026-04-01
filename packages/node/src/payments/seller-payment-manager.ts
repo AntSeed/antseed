@@ -10,6 +10,8 @@ import {
   SPENDING_AUTH_TYPES,
   RESERVE_AUTH_TYPES,
   makeChannelsDomain,
+  encodeMetadata,
+  ZERO_METADATA,
 } from './evm/signatures.js';
 import { debugLog, debugWarn } from '../utils/debug.js';
 import { peerIdToAddress } from '../types/peer.js';
@@ -464,7 +466,7 @@ export class SellerPaymentManager {
             this._signer,
             channelId,
             latestAuth.cumulativeAmount,
-            latestAuth.metadata || '0x',
+            latestAuth.metadata || encodeMetadata(ZERO_METADATA),
             latestAuth.spendingAuthSig,
           );
           this._channelStore.updateChannelStatus(channelId, 'settled', latestAuth.cumulativeAmount.toString());
