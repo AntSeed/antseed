@@ -14,7 +14,7 @@ export interface Migration {
 export function runMigrations(db: Database.Database, migrations: Migration[]): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS schema_version (
-      version INTEGER NOT NULL,
+      version INTEGER NOT NULL UNIQUE,
       name TEXT NOT NULL,
       applied_at INTEGER NOT NULL
     )
@@ -35,5 +35,7 @@ export function runMigrations(db: Database.Database, migrations: Migration[]): v
       db.prepare('INSERT INTO schema_version (version, name, applied_at) VALUES (?, ?, ?)')
         .run(migration.version, migration.name, Date.now());
     })();
+
+    applied.add(migration.version);
   }
 }

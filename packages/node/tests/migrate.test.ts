@@ -68,6 +68,20 @@ describe('runMigrations', () => {
     expect(versions.map(v => v.version)).toEqual([1, 2]);
   });
 
+  it('ignores duplicate version numbers', () => {
+    let callCount = 0;
+    const migrations: Migration[] = [
+      { version: 1, name: 'first', up: (d) => { callCount++; d.exec('CREATE TABLE a (id INTEGER)'); } },
+      { version: 1, name: 'second', up: (d) => { callCount++; d.exec('CREATE TABLE b (id INTEGER)'); } },
+    ];
+
+    runMigrations(db, migrations);
+
+    expect(callCount).toBe(1);
+    const versions = db.prepare('SELECT version FROM schema_version').all();
+    expect(versions).toHaveLength(1);
+  });
+
   it('rolls back failed migration without affecting others', () => {
     const migrations: Migration[] = [
       { version: 1, name: 'create_a', up: (d) => d.exec('CREATE TABLE a (id INTEGER)') },
