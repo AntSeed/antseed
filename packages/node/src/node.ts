@@ -2449,7 +2449,6 @@ export class AntseedNode extends EventEmitter {
       currentLoad: firstProvider?.currentLoad,
       onChainChannelCount: result.metadata.onChainChannelCount,
       onChainGhostCount: result.metadata.onChainGhostCount,
-      trustScore: result.metadata.onChainChannelCount,
     };
   }
 
