@@ -192,17 +192,20 @@ contract AntseedEmissionsTest is Test {
         emissions.claimEmissions(_epochList(5));
     }
 
-    function test_claim_revert_doubleClaim() public {
+    function test_claim_duplicateEpochIsIdempotent() public {
         emissions.accrueSellerPoints(seller1, 100);
 
         vm.warp(block.timestamp + EPOCH_DURATION);
 
+        // First claim
         vm.prank(seller1);
         emissions.claimEmissions(_epochList(0));
+        uint256 balanceAfterFirst = token.balanceOf(seller1);
 
+        // Second claim of same epoch — should be a no-op (continue), not revert
         vm.prank(seller1);
-        vm.expectRevert(AntseedEmissions.EpochAlreadyClaimed.selector);
         emissions.claimEmissions(_epochList(0));
+        assertEq(token.balanceOf(seller1), balanceAfterFirst);
     }
 
     function test_claim_skipsZeroActivityEpochs() public {
@@ -396,9 +399,48 @@ contract AntseedEmissionsTest is Test {
     //               RESERVE
     // ═══════════════════════════════════════════════════════════════════
 
+    function test_reserveAccumulates_onClaim() public {
+        emissions.accrueSellerPoints(seller1, 100);
+
+        vm.warp(block.timestamp + EPOCH_DURATION);
+
+        assertEq(emissions.reserveAccumulated(), 0);
+
+        vm.prank(seller1);
+        emissions.claimEmissions(_epochList(0));
+
+        // Reserve should have 10% of epoch emission
+        uint256 expectedReserve = (INITIAL_EMISSION * 10) / 100;
+        // Plus any seller cap excess
+        uint256 reserveAmount = emissions.reserveAccumulated();
+        assertTrue(reserveAmount >= expectedReserve);
+    }
+
+    function test_reserveAccumulates_onlyOncePerEpoch() public {
+        // Use 10 sellers so each gets 10% (below 15% cap = no excess)
+        for (uint256 i = 1; i <= 10; i++) {
+            emissions.accrueSellerPoints(address(uint160(i)), 100);
+        }
+
+        vm.warp(block.timestamp + EPOCH_DURATION);
+
+        vm.prank(address(uint160(1)));
+        emissions.claimEmissions(_epochList(0));
+        uint256 reserveAfterFirst = emissions.reserveAccumulated();
+
+        vm.prank(address(uint160(2)));
+        emissions.claimEmissions(_epochList(0));
+        uint256 reserveAfterSecond = emissions.reserveAccumulated();
+
+        // Reserve share (10%) added on first claim only
+        uint256 baseReserve = (INITIAL_EMISSION * 10) / 100;
+        assertEq(reserveAfterFirst, baseReserve);
+        // Second claim adds no additional reserve (no cap excess with 10% each)
+        assertEq(reserveAfterSecond, baseReserve);
+    }
+
     function test_reserveFlush() public {
-        // Trigger reserve accumulation via seller cap excess
-        emissions.accrueSellerPoints(seller1, 1_000_000);
+        emissions.accrueSellerPoints(seller1, 100);
         vm.warp(block.timestamp + EPOCH_DURATION);
 
         vm.prank(seller1);

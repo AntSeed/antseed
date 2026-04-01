@@ -47,6 +47,7 @@ contract AntseedEmissions is Ownable, Pausable, ReentrancyGuard {
 
     // ─── Reserve ───
     uint256 public reserveAccumulated;
+    mapping(uint256 => bool) public epochReserveAccounted;
 
     // ─── Events ───
     event SellerPointsAccrued(address indexed seller, uint256 indexed epoch, uint256 pointsDelta);
@@ -57,7 +58,6 @@ contract AntseedEmissions is Ownable, Pausable, ReentrancyGuard {
     // ─── Custom Errors ───
     error NotAuthorized();
     error EpochNotFinalized();
-    error EpochAlreadyClaimed();
     error InvalidShareSum();
     error NoProtocolReserve();
     error NoReserve();
@@ -144,10 +144,16 @@ contract AntseedEmissions is Ownable, Pausable, ReentrancyGuard {
         for (uint256 i = 0; i < epochs.length; i++) {
             uint256 epoch = epochs[i];
             if (epoch >= _currentEpoch) revert EpochNotFinalized();
-            if (userEpochClaimed[msg.sender][epoch]) revert EpochAlreadyClaimed();
+            if (userEpochClaimed[msg.sender][epoch]) continue;
             if (userSellerPoints[msg.sender][epoch] == 0 && userBuyerPoints[msg.sender][epoch] == 0) continue;
 
             userEpochClaimed[msg.sender][epoch] = true;
+
+            // Accumulate reserve share on first claim for this epoch
+            if (!epochReserveAccounted[epoch]) {
+                epochReserveAccounted[epoch] = true;
+                reserveAccumulated += (getEpochEmission(epoch) * RESERVE_SHARE_PCT) / 100;
+            }
 
             (uint256 sellerReward, uint256 sellerExcess, uint256 buyerReward) =
                 _calcEpochReward(msg.sender, epoch, _maxSellerPct);
