@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { runMigrations } from '../storage/migrate.js';
-import { channelMigrations } from '../storage/channel-migrations.js';
+import { channelMigrations } from '../storage/migrations/channels/index.js';
 
 export const CHANNEL_STATUS = {
   ACTIVE: 'active',

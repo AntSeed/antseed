@@ -7,7 +7,7 @@ import type {
   TokenCount,
 } from '../types/metering.js';
 import { runMigrations } from '../storage/migrate.js';
-import { meteringMigrations } from '../storage/metering-migrations.js';
+import { meteringMigrations } from '../storage/migrations/metering/index.js';
 
 /**
  * SQLite storage for metering data.
