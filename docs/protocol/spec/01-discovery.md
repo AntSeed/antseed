@@ -161,7 +161,7 @@ Post-provider sections:
   [offeringCount:2]                               // uint16
   [offeringEntries...]
   [evmAddressFlag:1] + [evmAddress:20 if present]
-  [onChainReputationFlag:1] + [reputationData:10 if present]
+  [onChainStatsFlag:1] + [statsData:10 if present]
 
 Trailer:
   [signature     : 65 bytes        ]   // secp256k1 signature

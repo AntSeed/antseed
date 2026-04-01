@@ -565,9 +565,8 @@ export class AntseedNode extends EventEmitter {
           const evmAddress = peerIdToAddress(p.peerId);
           const agentId = await this._stakingClient.getAgentId(evmAddress);
           const stats = await this._channelsClient.getAgentStats(agentId);
-          p.onChainReputation = stats.channelCount;
           p.onChainChannelCount = stats.channelCount;
-          p.onChainDisputeCount = stats.ghostCount;
+          p.onChainGhostCount = stats.ghostCount;
         } catch {
           // Contract lookup failed for this peer — keep claimed data
         }
@@ -2448,10 +2447,9 @@ export class AntseedNode extends EventEmitter {
       defaultOutputUsdPerMillion: firstProvider?.defaultPricing.outputUsdPerMillion,
       maxConcurrency: firstProvider?.maxConcurrency,
       currentLoad: firstProvider?.currentLoad,
-      onChainReputation: result.metadata.onChainReputation,
       onChainChannelCount: result.metadata.onChainChannelCount,
-      onChainDisputeCount: result.metadata.onChainDisputeCount,
-      trustScore: result.metadata.onChainReputation,
+      onChainGhostCount: result.metadata.onChainGhostCount,
+      trustScore: result.metadata.onChainChannelCount,
     };
   }
 

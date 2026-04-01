@@ -63,8 +63,8 @@ function normalizedInverted(value: number, min: number, range: number): number {
 }
 
 function effectiveReputation(p: PeerInfo): number {
-  if (p.onChainReputation !== undefined) {
-    return p.onChainReputation
+  if (p.onChainChannelCount !== undefined) {
+    return p.onChainChannelCount
   }
   return p.trustScore ?? p.reputationScore ?? 0
 }
