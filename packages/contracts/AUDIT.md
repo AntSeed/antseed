@@ -130,17 +130,13 @@ If hundreds or thousands of peers opt in, `distributeRevenue()` will exceed the 
 
 ---
 
-### H6. `_recordCloseStats` double-counts volume
+### ~~H6. `_recordCloseStats` double-counts volume~~ — FIXED
 
-**File:** `AntseedChannels.sol:486`
+**File:** `AntseedChannels.sol`
 
-```solidity
-s.totalVolumeUsdc += cumulativeUsdc;
-```
+Previously `_recordCloseStats` added the full cumulative amount to `totalVolumeUsdc` on close, but volume from prior `settle()` calls was not tracked. Stats were only written at close time.
 
-On `close()`, `totalVolumeUsdc` is incremented by the **full** `cumulativeUsdc` (which includes already-settled amounts from prior `settle()` calls). While `_agentStats.totalVolumeUsdc` is used for reputation (not payments), it inflates the seller's apparent volume, affecting SubPool revenue distribution weights.
-
-**Recommendation:** Track only the delta: `s.totalVolumeUsdc += delta` (finalAmount - previouslySettled).
+**Fix:** Stats now update incrementally on every `settle()` and `close()` via `_recordSettleStats(channel, delta)`. Volume is always the delta. `channelCount` increments once on close via `_recordChannelComplete`. Removed the cumulative `ChannelMetrics` event and `METADATA_VERSION` constant (no longer needed).
 
 ---
 

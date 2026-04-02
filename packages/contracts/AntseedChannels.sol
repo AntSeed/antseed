@@ -69,8 +69,6 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         uint64 lastSettledAt;
     }
 
-    uint8 public constant METADATA_VERSION = 1;
-
     // ─── State Variables ────────────────────────────────────────────
     IAntseedRegistry public registry;
 
@@ -85,18 +83,6 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
     event ChannelTopUp(bytes32 indexed channelId, address indexed buyer, uint128 newMaxAmount);
     event CloseRequested(bytes32 indexed channelId, address indexed buyer);
     event ChannelWithdrawn(bytes32 indexed channelId, address indexed buyer);
-    /// @notice Per-channel cumulative metrics for off-chain indexing.
-    ///         Emitted on every settle and close. metadata is raw bytes —
-    ///         decode off-chain based on metadataVersion.
-    ///         Buyer-reported (unverifiable) — indexers should filter anomalies.
-    event ChannelMetrics(
-        bytes32 indexed channelId,
-        uint256 indexed agentId,
-        address indexed buyer,
-        uint8 metadataVersion,
-        uint128 cumulativeUsdc,
-        bytes metadata
-    );
 
     // ─── Custom Errors ──────────────────────────────────────────────
     error InvalidAddress();
@@ -279,7 +265,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         channel.metadataHash = metadataHash;
         channel.settledAt = block.timestamp;
 
-        _emitChannelMetrics(channelId, channel, cumulativeAmount, metadata);
+        _recordSettleStats(channel, delta);
         _recordEmissions(channel, delta);
 
         emit ChannelSettled(channelId, channel.seller, cumulativeAmount, platformFee);
@@ -334,7 +320,8 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         channel.status = ChannelStatus.Settled;
         activeChannelCount[channel.seller]--;
 
-        _recordCloseStats(channelId, channel, finalAmount, metadata);
+        _recordSettleStats(channel, delta);
+        _recordChannelComplete(channel);
         _recordEmissions(channel, delta);
 
         emit ChannelClosed(channelId, channel.seller, finalAmount, platformFee);
@@ -470,48 +457,33 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         );
     }
 
-    function _emitChannelMetrics(
-        bytes32 channelId,
-        Channel storage channel,
-        uint128 cumulativeUsdc,
-        bytes calldata metadata
-    ) internal {
-        uint256 agentId = IAntseedStaking(registry.staking()).getAgentId(channel.seller);
-        if (agentId != 0) {
-            emit ChannelMetrics(channelId, agentId, channel.buyer, METADATA_VERSION, cumulativeUsdc, metadata);
-        }
-    }
-
-    function _recordCloseStats(
-        bytes32 channelId,
-        Channel storage channel,
-        uint128 cumulativeUsdc,
-        bytes calldata metadata
-    ) internal {
+    /// @dev Update agent stats incrementally. Called on every settle and close.
+    function _recordSettleStats(Channel storage channel, uint128 delta) internal {
+        if (delta == 0) return;
         uint256 agentId = IAntseedStaking(registry.staking()).getAgentId(channel.seller);
         if (agentId == 0) return;
 
         AgentStats storage s = _agentStats[agentId];
-        s.channelCount++;
-        s.totalVolumeUsdc += cumulativeUsdc;
+        s.totalVolumeUsdc += delta;
         s.lastSettledAt = uint64(block.timestamp);
-
-        emit ChannelMetrics(channelId, agentId, channel.buyer, METADATA_VERSION, cumulativeUsdc, metadata);
     }
 
+    /// @dev Mark channel as completed. Called on close only.
+    function _recordChannelComplete(Channel storage channel) internal {
+        uint256 agentId = IAntseedStaking(registry.staking()).getAgentId(channel.seller);
+        if (agentId == 0) return;
+        _agentStats[agentId].channelCount++;
+    }
+
+    /// @dev Record withdraw outcome — ghost if never settled, otherwise completed.
     function _recordWithdrawStats(Channel storage channel) internal {
         uint256 agentId = IAntseedStaking(registry.staking()).getAgentId(channel.seller);
         if (agentId == 0) return;
 
-        AgentStats storage s = _agentStats[agentId];
         if (channel.settled == 0) {
-            // True ghost — seller never settled
-            s.ghostCount++;
+            _agentStats[agentId].ghostCount++;
         } else {
-            // Partial-settled timeout — count as completed, record volume
-            s.channelCount++;
-            s.totalVolumeUsdc += channel.settled;
-            s.lastSettledAt = uint64(block.timestamp);
+            _agentStats[agentId].channelCount++;
         }
     }
 
