@@ -113,6 +113,7 @@ contract AntseedDeposits is EIP712, Ownable, ReentrancyGuard {
     function deposit(address buyer, uint256 amount) external nonReentrant {
         if (amount == 0) revert InvalidAmount();
         BuyerAccount storage ba = buyers[buyer];
+        if (!_isOperator(buyer)) revert NotAuthorized();
         if (ba.balance == 0 && amount < MIN_BUYER_DEPOSIT) revert BelowMinDeposit();
         if (ba.balance + amount > getBuyerCreditLimit(buyer)) revert CreditLimitExceeded();
 

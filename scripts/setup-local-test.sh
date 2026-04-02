@@ -96,7 +96,18 @@ cast send --rpc-url $RPC --private-key $SELLER_KEY $STAKING "stake(uint256,uint2
 echo "Done"
 
 echo ""
-echo "=== Step 8: Buyer deposit 10 USDC ==="
+echo "=== Step 8: Set buyer operator (self) ==="
+# Buyer signs EIP-712 SetOperator message to authorize itself as operator
+DOMAIN_SEP=$(cast call --rpc-url $RPC $DEPOSITS "domainSeparator()(bytes32)")
+TYPEHASH=$(cast keccak "SetOperator(address operator,uint256 nonce)")
+STRUCT_HASH=$(cast keccak $(cast abi-encode "f(bytes32,address,uint256)" $TYPEHASH $BUYER_ADDR 0))
+DIGEST=$(cast keccak $(cast concat-hex 0x1901 $DOMAIN_SEP $STRUCT_HASH))
+SIG=$(cast wallet sign --private-key $BUYER_KEY $DIGEST)
+cast send --rpc-url $RPC --private-key $BUYER_KEY $DEPOSITS "setOperator(address,address,uint256,bytes)" $BUYER_ADDR $BUYER_ADDR 0 $SIG > /dev/null
+echo "Done"
+
+echo ""
+echo "=== Step 9: Buyer deposit 10 USDC ==="
 cast send --rpc-url $RPC --private-key $BUYER_KEY $USDC "approve(address,uint256)" $DEPOSITS 10000000 > /dev/null
 cast send --rpc-url $RPC --private-key $BUYER_KEY $DEPOSITS "deposit(address,uint256)" $BUYER_ADDR 10000000 > /dev/null
 echo "Done"

@@ -26,6 +26,7 @@ contract AntseedChannelsTest is Test {
     address public seller;
     address public randomUser;
     address public protocolReserve = address(0xFEE);
+    address public buyerOperator = address(0xAA);
 
     // USDC amounts (6 decimals)
     uint128 constant USDC_100 = 100_000_000;
@@ -85,8 +86,16 @@ contract AntseedChannelsTest is Test {
 
         deposits.setCreditLimitOverride(addr, type(uint256).max);
 
-        usdc.mint(addr, depositAmount);
-        vm.startPrank(addr);
+        // Set operator via EIP-712 signature
+        uint256 nonce = deposits.getOperatorNonce(addr);
+        bytes32 structHash = keccak256(abi.encode(deposits.SET_OPERATOR_TYPEHASH(), buyerOperator, nonce));
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", deposits.domainSeparator(), structHash));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digest);
+        deposits.setOperator(addr, buyerOperator, nonce, abi.encodePacked(r, s, v));
+
+        // Operator deposits USDC on behalf of buyer
+        usdc.mint(buyerOperator, depositAmount);
+        vm.startPrank(buyerOperator);
         usdc.approve(address(deposits), depositAmount);
         deposits.deposit(addr, depositAmount);
         vm.stopPrank();
@@ -508,17 +517,12 @@ contract AntseedChannelsTest is Test {
         bytes32 salt = keccak256("session-close-req");
         bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
-        // Set operator for buyer
-        address operator = address(0xABCDE1);
-        bytes memory opSig = signSetOperator(BUYER_PK, operator, 0);
-        deposits.setOperator(buyer, operator, 0, opSig);
-
         // Operator can request close anytime — no deadline dependency
-        vm.prank(operator);
+        vm.prank(buyerOperator);
         channels.requestClose(channelId);
 
         // Can't withdraw yet — need to wait for grace period (15 min)
-        vm.prank(operator);
+        vm.prank(buyerOperator);
         vm.expectRevert(AntseedChannels.CloseNotReady.selector);
         channels.withdraw(channelId);
 
@@ -526,7 +530,7 @@ contract AntseedChannelsTest is Test {
         vm.warp(block.timestamp + 15 minutes + 1);
 
         // Operator can withdraw after grace period
-        vm.prank(operator);
+        vm.prank(buyerOperator);
         channels.withdraw(channelId);
 
         // Channel timed out (withdrawn)
@@ -557,15 +561,10 @@ contract AntseedChannelsTest is Test {
         bytes32 salt = keccak256("session-close-dup");
         bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
-        // Set operator for buyer
-        address operator = address(0xABCDE1);
-        bytes memory opSig = signSetOperator(BUYER_PK, operator, 0);
-        deposits.setOperator(buyer, operator, 0, opSig);
-
-        vm.prank(operator);
+        vm.prank(buyerOperator);
         channels.requestClose(channelId);
 
-        vm.prank(operator);
+        vm.prank(buyerOperator);
         vm.expectRevert(AntseedChannels.CloseAlreadyRequested.selector);
         channels.requestClose(channelId);
     }
@@ -574,12 +573,7 @@ contract AntseedChannelsTest is Test {
         bytes32 salt = keccak256("session-withdraw-auth");
         bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
-        // Set operator for buyer
-        address operator = address(0xABCDE1);
-        bytes memory opSig = signSetOperator(BUYER_PK, operator, 0);
-        deposits.setOperator(buyer, operator, 0, opSig);
-
-        vm.prank(operator);
+        vm.prank(buyerOperator);
         channels.requestClose(channelId);
 
         vm.warp(block.timestamp + 15 minutes + 1);
@@ -594,13 +588,8 @@ contract AntseedChannelsTest is Test {
         bytes32 salt = keccak256("session-withdraw-no-req");
         bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
-        // Set operator for buyer
-        address operator = address(0xABCDE1);
-        bytes memory opSig = signSetOperator(BUYER_PK, operator, 0);
-        deposits.setOperator(buyer, operator, 0, opSig);
-
         // withdraw without calling requestClose first
-        vm.prank(operator);
+        vm.prank(buyerOperator);
         vm.expectRevert(AntseedChannels.CloseNotReady.selector);
         channels.withdraw(channelId);
     }
@@ -609,13 +598,8 @@ contract AntseedChannelsTest is Test {
         bytes32 salt = keccak256("session-grace-settle");
         bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
-        // Set operator for buyer
-        address operator = address(0xABCDE1);
-        bytes memory opSig = signSetOperator(BUYER_PK, operator, 0);
-        deposits.setOperator(buyer, operator, 0, opSig);
-
         // Operator requests close
-        vm.prank(operator);
+        vm.prank(buyerOperator);
         channels.requestClose(channelId);
 
         // Seller can still close with a SpendingAuth during grace period
@@ -638,13 +622,8 @@ contract AntseedChannelsTest is Test {
         bytes32 salt = keccak256("session-grace-mid");
         bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
-        // Set operator for buyer
-        address operator = address(0xABCDE1);
-        bytes memory opSig = signSetOperator(BUYER_PK, operator, 0);
-        deposits.setOperator(buyer, operator, 0, opSig);
-
         // Operator requests close
-        vm.prank(operator);
+        vm.prank(buyerOperator);
         channels.requestClose(channelId);
 
         // Seller can still settle mid-channel during grace period
@@ -996,29 +975,32 @@ contract AntseedChannelsTest is Test {
         return abi.encodePacked(r, s, v);
     }
 
-    function test_setOperator() public {
-        address operator = address(0xABCDE1);
-        bytes memory sig = signSetOperator(BUYER_PK, operator, 0);
+    // NOTE: These are standalone operator tests — they don't use createBuyer/doReserve,
+    // so buyer starts with no operator (nonce 0).
 
-        deposits.setOperator(buyer, operator, 0, sig);
-        assertEq(deposits.getOperator(buyer), operator);
+    function test_setOperator() public {
+        address op = address(0xABCDE1);
+        bytes memory sig = signSetOperator(BUYER_PK, op, 0);
+
+        deposits.setOperator(buyer, op, 0, sig);
+        assertEq(deposits.getOperator(buyer), op);
         assertEq(deposits.getOperatorNonce(buyer), 1);
     }
 
     function test_setOperator_revert_wrongNonce() public {
-        address operator = address(0xABCDE1);
-        bytes memory sig = signSetOperator(BUYER_PK, operator, 1); // nonce should be 0
+        address op = address(0xABCDE1);
+        bytes memory sig = signSetOperator(BUYER_PK, op, 1); // nonce should be 0
 
         vm.expectRevert(AntseedDeposits.InvalidNonce.selector);
-        deposits.setOperator(buyer, operator, 1, sig);
+        deposits.setOperator(buyer, op, 1, sig);
     }
 
     function test_setOperator_revert_wrongSigner() public {
-        address operator = address(0xABCDE1);
-        bytes memory sig = signSetOperator(RANDOM_PK, operator, 0); // wrong signer
+        address op = address(0xABCDE1);
+        bytes memory sig = signSetOperator(RANDOM_PK, op, 0); // wrong signer
 
         vm.expectRevert(AntseedDeposits.InvalidSignature.selector);
-        deposits.setOperator(buyer, operator, 0, sig);
+        deposits.setOperator(buyer, op, 0, sig);
     }
 
     function test_setOperator_revert_alreadySet() public {
@@ -1028,7 +1010,6 @@ contract AntseedChannelsTest is Test {
         bytes memory sig1 = signSetOperator(BUYER_PK, op1, 0);
         deposits.setOperator(buyer, op1, 0, sig1);
 
-        // setOperator reverts when operator is already set
         bytes memory sig2 = signSetOperator(BUYER_PK, op2, 1);
         vm.expectRevert(AntseedDeposits.OperatorAlreadySet.selector);
         deposits.setOperator(buyer, op2, 1, sig2);
@@ -1038,39 +1019,33 @@ contract AntseedChannelsTest is Test {
         address op1 = address(0xABCDE2);
         address op2 = address(0xABCDE3);
 
-        // Set initial operator via buyer sig
         bytes memory sig = signSetOperator(BUYER_PK, op1, 0);
         deposits.setOperator(buyer, op1, 0, sig);
-        assertEq(deposits.getOperator(buyer), op1);
 
-        // Current operator transfers to new operator
         vm.prank(op1);
         deposits.transferOperator(buyer, op2);
         assertEq(deposits.getOperator(buyer), op2);
     }
 
     function test_transferOperator_revoke() public {
-        address operator = address(0xABCDE1);
-        bytes memory sig = signSetOperator(BUYER_PK, operator, 0);
-        deposits.setOperator(buyer, operator, 0, sig);
+        address op = address(0xABCDE1);
+        bytes memory sig = signSetOperator(BUYER_PK, op, 0);
+        deposits.setOperator(buyer, op, 0, sig);
 
-        // Operator revokes themselves
-        vm.prank(operator);
+        vm.prank(op);
         deposits.transferOperator(buyer, address(0));
         assertEq(deposits.getOperator(buyer), address(0));
     }
 
     function test_transferOperator_revert_notOperator() public {
-        address operator = address(0xABCDE1);
-        bytes memory sig = signSetOperator(BUYER_PK, operator, 0);
-        deposits.setOperator(buyer, operator, 0, sig);
+        address op = address(0xABCDE1);
+        bytes memory sig = signSetOperator(BUYER_PK, op, 0);
+        deposits.setOperator(buyer, op, 0, sig);
 
-        // Random user cannot transfer
         vm.prank(randomUser);
         vm.expectRevert(AntseedDeposits.NotAuthorized.selector);
         deposits.transferOperator(buyer, address(0xBEEF));
 
-        // Buyer cannot transfer (only operator can)
         vm.prank(buyer);
         vm.expectRevert(AntseedDeposits.NotAuthorized.selector);
         deposits.transferOperator(buyer, address(0xBEEF));
@@ -1080,15 +1055,12 @@ contract AntseedChannelsTest is Test {
         address op1 = address(0xABCDE2);
         address op2 = address(0xABCDE3);
 
-        // Set initial operator
         bytes memory sig1 = signSetOperator(BUYER_PK, op1, 0);
         deposits.setOperator(buyer, op1, 0, sig1);
 
-        // Operator revokes (sets to zero)
         vm.prank(op1);
         deposits.transferOperator(buyer, address(0));
 
-        // Now buyer can setOperator again with a new sig (nonce is 1: incremented by setOperator only)
         bytes memory sig2 = signSetOperator(BUYER_PK, op2, 1);
         deposits.setOperator(buyer, op2, 1, sig2);
         assertEq(deposits.getOperator(buyer), op2);
@@ -1098,13 +1070,8 @@ contract AntseedChannelsTest is Test {
         bytes32 salt = keccak256("session-operator-close");
         bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
-        // Set operator
-        address operator = address(0xABCDE1);
-        bytes memory opSig = signSetOperator(BUYER_PK, operator, 0);
-        deposits.setOperator(buyer, operator, 0, opSig);
-
         // Operator calls requestClose
-        vm.prank(operator);
+        vm.prank(buyerOperator);
         channels.requestClose(channelId);
 
         (,,,,,,,uint256 closeRequestedAt,) = channels.channels(channelId);
@@ -1115,20 +1082,15 @@ contract AntseedChannelsTest is Test {
         bytes32 salt = keccak256("session-operator-withdraw");
         bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
-        // Set operator
-        address operator = address(0xABCDE1);
-        bytes memory opSig = signSetOperator(BUYER_PK, operator, 0);
-        deposits.setOperator(buyer, operator, 0, opSig);
-
         // Operator requests close
-        vm.prank(operator);
+        vm.prank(buyerOperator);
         channels.requestClose(channelId);
 
         // Wait grace period
         vm.warp(block.timestamp + 15 minutes + 1);
 
         // Operator withdraws
-        vm.prank(operator);
+        vm.prank(buyerOperator);
         channels.withdraw(channelId);
 
         // Funds returned to buyer's deposits balance
@@ -1140,10 +1102,7 @@ contract AntseedChannelsTest is Test {
         bytes32 salt = keccak256("session-operator-random");
         bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
-        // Set operator to a specific address
-        address operator = address(0xABCDE1);
-        bytes memory opSig = signSetOperator(BUYER_PK, operator, 0);
-        deposits.setOperator(buyer, operator, 0, opSig);
+        // buyerOperator already set via createBuyer
 
         // Random user cannot close
         vm.prank(randomUser);
@@ -1155,7 +1114,7 @@ contract AntseedChannelsTest is Test {
         bytes32 salt = keccak256("session-operator-seller");
         bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
-        // No operator set — seller should not be able to close
+        // Seller is not the operator — should not be able to close
         vm.prank(seller);
         vm.expectRevert(AntseedChannels.NotAuthorized.selector);
         channels.requestClose(channelId);
@@ -1163,13 +1122,13 @@ contract AntseedChannelsTest is Test {
 
     function test_operator_anyoneCanSubmitSetOperator() public {
         // The tx can be submitted by anyone — auth comes from the buyer signature
-        address operator = address(0xABCDE1);
-        bytes memory sig = signSetOperator(BUYER_PK, operator, 0);
+        address op = address(0xABCDE1);
+        bytes memory sig = signSetOperator(BUYER_PK, op, 0);
 
         // Random user submits the tx
         vm.prank(randomUser);
-        deposits.setOperator(buyer, operator, 0, sig);
+        deposits.setOperator(buyer, op, 0, sig);
 
-        assertEq(deposits.getOperator(buyer), operator);
+        assertEq(deposits.getOperator(buyer), op);
     }
 }
