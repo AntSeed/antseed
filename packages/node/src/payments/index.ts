@@ -43,6 +43,7 @@ export {
   SET_OPERATOR_TYPES,
   computeMetadataHash,
   encodeMetadata,
+  METADATA_VERSION,
   computeChannelId,
   ZERO_METADATA,
   ZERO_METADATA_HASH,

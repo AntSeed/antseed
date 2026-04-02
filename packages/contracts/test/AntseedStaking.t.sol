@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
 import "../AntseedStaking.sol";
+import "../AntseedSlashing.sol";
 import "../AntseedChannels.sol";
 import "../AntseedRegistry.sol";
 import "../MockERC8004Registry.sol";
@@ -68,6 +69,10 @@ contract AntseedStakingTest is Test {
         antseedRegistry.setProtocolReserve(reserve);
 
         staking = new AntseedStaking(address(usdc), address(antseedRegistry));
+        antseedRegistry.setStaking(address(staking));
+
+        AntseedSlashing slashing = new AntseedSlashing(address(antseedRegistry));
+        staking.setSlashing(address(slashing));
 
         // Register sellers on MockERC8004Registry
         vm.prank(seller);
@@ -136,9 +141,7 @@ contract AntseedStakingTest is Test {
         staking.stake(sellerAgentId, MIN_STAKE);
         vm.stopPrank();
 
-        (uint256 stakeAmt, uint256 stakedAt) = staking.getSellerAccount(seller);
-        assertEq(stakeAmt, MIN_STAKE);
-        assertEq(stakedAt, block.timestamp);
+        assertEq(staking.getStake(seller), MIN_STAKE);
         assertEq(usdc.balanceOf(address(staking)), MIN_STAKE);
     }
 
@@ -267,9 +270,7 @@ contract AntseedStakingTest is Test {
         vm.prank(seller);
         staking.unstake();
 
-        (uint256 stakeAmt, uint256 stakedAt) = staking.getSellerAccount(seller);
-        assertEq(stakeAmt, 0);
-        assertEq(stakedAt, 0);
+        assertEq(staking.getStake(seller), 0);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -307,25 +308,7 @@ contract AntseedStakingTest is Test {
         assertEq(usdc.balanceOf(reserve), LARGE_STAKE / 2);
     }
 
-    // Tier 3: channels > 0, inactive (lastSettledAt + SLASH_INACTIVITY_DAYS < now) -> 20% slash
-    function test_slash_tier3_inactivitySlash() public {
-        _stakeAs(seller, LARGE_STAKE);
-
-        // Add channels (with recent settlement)
-        _addChannels(sellerAgentId, 10);
-
-        // Warp time past inactivity threshold (30 days + 1 second)
-        vm.warp(block.timestamp + 30 days + 1);
-
-        vm.prank(seller);
-        staking.unstake();
-
-        uint256 slashed = LARGE_STAKE / 5; // 20%
-        assertEq(usdc.balanceOf(seller), LARGE_STAKE - slashed);
-        assertEq(usdc.balanceOf(reserve), slashed);
-    }
-
-    // Tier 4: no slash (good standing)
+    // Tier 3: no slash (good standing)
     function test_slash_tier4_noSlash() public {
         _stakeAs(seller, LARGE_STAKE);
 
@@ -377,6 +360,9 @@ contract AntseedStakingTest is Test {
         // Don't set protocolReserve
 
         AntseedStaking staking2 = new AntseedStaking(address(usdc), address(noReserveRegistry));
+        noReserveRegistry.setStaking(address(staking2));
+        AntseedSlashing slashing2 = new AntseedSlashing(address(noReserveRegistry));
+        staking2.setSlashing(address(slashing2));
 
         usdc.mint(seller, LARGE_STAKE);
         vm.startPrank(seller);
@@ -413,15 +399,6 @@ contract AntseedStakingTest is Test {
         assertFalse(staking.isStakedAboveMin(seller));
     }
 
-    function test_getSellerAccount() public {
-        uint256 ts = block.timestamp;
-        _stakeAs(seller, MIN_STAKE);
-
-        (uint256 stakeAmt, uint256 stakedAt) = staking.getSellerAccount(seller);
-        assertEq(stakeAmt, MIN_STAKE);
-        assertEq(stakedAt, ts);
-    }
-
     // ═══════════════════════════════════════════════════════════════════
     //                        ADMIN
     // ═══════════════════════════════════════════════════════════════════
@@ -450,34 +427,45 @@ contract AntseedStakingTest is Test {
         assertEq(staking.MIN_SELLER_STAKE(), 5_000_000);
     }
 
-    function test_setSlashRatioThreshold() public {
-        staking.setSlashRatioThreshold(50);
-        assertEq(staking.SLASH_RATIO_THRESHOLD(), 50);
-    }
-
-    function test_setSlashGhostThreshold() public {
-        staking.setSlashGhostThreshold(10);
-        assertEq(staking.SLASH_GHOST_THRESHOLD(), 10);
-    }
-
-    function test_setSlashInactivityDays() public {
-        staking.setSlashInactivityDays(60 days);
-        assertEq(staking.SLASH_INACTIVITY_DAYS(), 60 days);
-    }
-
-    function test_setSlashInactivityDays_revert_belowMin() public {
-        vm.expectRevert(AntseedStaking.InvalidAmount.selector);
-        staking.setSlashInactivityDays(1 hours); // less than 1 day
-    }
-
-    function test_setSlashInactivityDays_exactlyOneDay() public {
-        staking.setSlashInactivityDays(1 days);
-        assertEq(staking.SLASH_INACTIVITY_DAYS(), 1 days);
-    }
-
     function test_setMinSellerStake_revert_notOwner() public {
         vm.prank(seller);
         vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", seller));
         staking.setMinSellerStake(100);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //                   SLASHING CONTRACT SWAP
+    // ═══════════════════════════════════════════════════════════════════
+
+    function test_unstake_noSlashingContract() public {
+        // Remove slashing contract — unstake should have zero slash
+        staking.setSlashing(address(0));
+
+        _stakeAs(seller, LARGE_STAKE);
+        _addGhosts(sellerAgentId, 10); // would be full slash if slashing was set
+
+        vm.prank(seller);
+        staking.unstake();
+
+        // Seller gets full stake back — no slashing
+        assertEq(usdc.balanceOf(seller), LARGE_STAKE);
+        assertEq(usdc.balanceOf(reserve), 0);
+    }
+
+    function test_swapSlashingContract() public {
+        _stakeAs(seller, LARGE_STAKE);
+        _addGhosts(sellerAgentId, 10); // tier 1 full slash
+
+        // Deploy a new slashing contract with higher threshold
+        AntseedSlashing newSlashing = new AntseedSlashing(address(antseedRegistry));
+        newSlashing.setSlashGhostThreshold(20); // raise to 20
+        staking.setSlashing(address(newSlashing));
+
+        // Now 10 ghosts is below threshold — no slash
+        vm.prank(seller);
+        staking.unstake();
+
+        assertEq(usdc.balanceOf(seller), LARGE_STAKE);
+        assertEq(usdc.balanceOf(reserve), 0);
     }
 }

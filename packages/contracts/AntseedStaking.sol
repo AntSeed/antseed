@@ -9,6 +9,7 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IAntseedRegistry} from "./interfaces/IAntseedRegistry.sol";
 import {IERC8004Registry} from "./interfaces/IERC8004Registry.sol";
 import {IAntseedChannels} from "./interfaces/IAntseedChannels.sol";
+import {IAntseedSlashing} from "./interfaces/IAntseedSlashing.sol";
 
 /**
  * @title AntseedStaking
@@ -22,6 +23,7 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
     // ─── State ───────────────────────────────────────────────────────────
     IERC20 public immutable usdc;
     IAntseedRegistry public registry;
+    IAntseedSlashing public slashing;
 
     // ─── Structs ────────────────────────────────────────────────────────
     struct SellerAccount {
@@ -35,9 +37,6 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
 
     // ─── Configurable Constants ─────────────────────────────────────────
     uint256 public MIN_SELLER_STAKE = 10_000_000;
-    uint256 public SLASH_RATIO_THRESHOLD = 30;
-    uint256 public SLASH_GHOST_THRESHOLD = 5;
-    uint256 public SLASH_INACTIVITY_DAYS = 30 days;
 
     // ─── Events ─────────────────────────────────────────────────────────
     event Staked(address indexed seller, uint256 indexed agentId, uint256 amount);
@@ -80,8 +79,10 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
         usdc.safeTransferFrom(msg.sender, address(this), amount);
 
         SellerAccount storage sa = sellers[seller];
+        if (sa.stakedAt == 0) {
+            sa.stakedAt = block.timestamp;
+        }
         sa.stake += amount;
-        sa.stakedAt = block.timestamp;
         sellerAgentId[seller] = agentId;
 
         emit Staked(seller, agentId, amount);
@@ -92,12 +93,14 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
         if (sa.stake == 0) revert InsufficientStake();
         if (IAntseedChannels(registry.channels()).activeChannelCount(msg.sender) > 0) revert ActiveChannels();
 
-        uint256 slashAmount = _calculateSlash(msg.sender);
+        uint256 slashAmount = 0;
+        if (address(slashing) != address(0)) {
+            slashAmount = slashing.calculateSlash(msg.sender, sa.stake);
+        }
         uint256 payout = sa.stake - slashAmount;
 
         uint256 stakeAmount = sa.stake;
         sa.stake = 0;
-        sa.stakedAt = 0;
         sellerAgentId[msg.sender] = 0;
 
         if (payout > 0) {
@@ -121,50 +124,8 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
         return sellers[seller].stake >= MIN_SELLER_STAKE;
     }
 
-    function getSellerAccount(address seller)
-        external
-        view
-        returns (uint256 stakeAmt, uint256 stakedAt)
-    {
-        SellerAccount storage sa = sellers[seller];
-        return (sa.stake, sa.stakedAt);
-    }
-
     function getAgentId(address seller) external view returns (uint256) {
         return sellerAgentId[seller];
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    //                        INTERNAL — SLASHING
-    // ═══════════════════════════════════════════════════════════════════
-
-    function _calculateSlash(address seller) internal view returns (uint256) {
-        uint256 agentId = sellerAgentId[seller];
-        if (agentId == 0) return 0;
-        IAntseedChannels.AgentStats memory stats = IAntseedChannels(registry.channels()).getAgentStats(agentId);
-
-        uint256 channels = uint256(stats.channelCount);
-        uint256 ghosts = uint256(stats.ghostCount);
-        uint256 stakeAmt = sellers[seller].stake;
-
-        // Tier 1: ghosts >= threshold AND zero channels → full slash
-        if (ghosts >= SLASH_GHOST_THRESHOLD && channels == 0) return stakeAmt;
-
-        // Tier 2: channels > 0 but ghost ratio high → half slash
-        if (channels > 0 && ghosts > 0) {
-            uint256 ghostRatio = (ghosts * 100) / (channels + ghosts);
-            if (ghostRatio >= SLASH_RATIO_THRESHOLD) return stakeAmt / 2;
-        }
-
-        // Tier 3: channels > 0 but inactive → 20% slash
-        if (channels > 0 && stats.lastSettledAt > 0) {
-            if (block.timestamp > uint256(stats.lastSettledAt) + SLASH_INACTIVITY_DAYS) {
-                return stakeAmt / 5;
-            }
-        }
-
-        // Tier 4: no slash
-        return 0;
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -176,20 +137,11 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
         registry = IAntseedRegistry(_registry);
     }
 
+    function setSlashing(address _slashing) external onlyOwner {
+        slashing = IAntseedSlashing(_slashing);
+    }
+
     function setMinSellerStake(uint256 value) external onlyOwner {
         MIN_SELLER_STAKE = value;
-    }
-
-    function setSlashRatioThreshold(uint256 value) external onlyOwner {
-        SLASH_RATIO_THRESHOLD = value;
-    }
-
-    function setSlashGhostThreshold(uint256 value) external onlyOwner {
-        SLASH_GHOST_THRESHOLD = value;
-    }
-
-    function setSlashInactivityDays(uint256 value) external onlyOwner {
-        if (value < 1 days) revert InvalidAmount();
-        SLASH_INACTIVITY_DAYS = value;
     }
 }

@@ -27,11 +27,11 @@ contract AntseedDeposits is EIP712, Ownable, ReentrancyGuard {
     IAntseedRegistry public registry;
 
     // ─── Configurable Constants ─────────────────────────────────────────
-    uint256 public MIN_BUYER_DEPOSIT = 10_000_000;
-    uint256 public BASE_CREDIT_LIMIT = 50_000_000;
+    uint256 public MIN_BUYER_DEPOSIT = 1_000_000;
+    uint256 public BASE_CREDIT_LIMIT = 10_000_000;
     uint256 public PEER_INTERACTION_BONUS = 5_000_000;
     uint256 public TIME_BONUS = 500_000;
-    uint256 public MAX_CREDIT_LIMIT = 500_000_000;
+    uint256 public MAX_CREDIT_LIMIT = 50_000_000;
 
     // ─── Structs ────────────────────────────────────────────────────────
     struct BuyerAccount {
@@ -109,8 +109,12 @@ contract AntseedDeposits is EIP712, Ownable, ReentrancyGuard {
         if (limit > MAX_CREDIT_LIMIT) limit = MAX_CREDIT_LIMIT;
         return limit;
     }
-
+    /// @notice Deposit USDC for a buyer. Anyone can call — USDC is pulled from msg.sender.
     function deposit(address buyer, uint256 amount) external nonReentrant {
+        _deposit(buyer, amount);
+    }
+
+    function _deposit(address buyer, uint256 amount) internal {
         if (amount == 0) revert InvalidAmount();
         BuyerAccount storage ba = buyers[buyer];
         if (ba.balance == 0 && amount < MIN_BUYER_DEPOSIT) revert BelowMinDeposit();
@@ -222,11 +226,8 @@ contract AntseedDeposits is EIP712, Ownable, ReentrancyGuard {
     //                        OPERATOR MANAGEMENT
     // ═══════════════════════════════════════════════════════════════════
 
-    /**
-     * @notice Set the initial operator for a buyer. Anyone can submit
-     *         this tx — authorization comes from the buyer's EIP-712 signature.
-     *         Can only be called when no operator is set yet.
-     */
+    /// @notice Set the initial operator for a buyer. Anyone can submit —
+    ///         authorization comes from the buyer's EIP-712 signature.
     function setOperator(
         address buyer,
         address operator,

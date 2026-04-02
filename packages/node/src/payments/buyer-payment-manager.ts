@@ -664,7 +664,7 @@ export class BuyerPaymentManager {
 
   async deposit(amount: bigint): Promise<string> {
     debugLog(`[BuyerPayment] Depositing ${amount} to deposits`);
-    const buyer = await this._signer.getAddress();
+    const buyer = this._identity.wallet.address;
     return this._depositsClient.deposit(this._signer, buyer, amount);
   }
 

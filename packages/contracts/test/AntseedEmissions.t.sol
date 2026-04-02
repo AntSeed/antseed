@@ -79,10 +79,11 @@ contract AntseedEmissionsTest is Test {
         assertEq(emissions.currentEpoch(), 0);
         assertEq(emissions.INITIAL_EMISSION(), INITIAL_EMISSION);
         assertEq(emissions.EPOCH_DURATION(), EPOCH_DURATION);
-        assertEq(emissions.SELLER_SHARE_PCT(), 65);
-        assertEq(emissions.BUYER_SHARE_PCT(), 25);
-        assertEq(emissions.RESERVE_SHARE_PCT(), 10);
-        assertEq(emissions.MAX_SELLER_SHARE_PCT(), 15);
+        assertEq(emissions.SELLER_SHARE_PCT(), 50);
+        assertEq(emissions.BUYER_SHARE_PCT(), 20);
+        assertEq(emissions.RESERVE_SHARE_PCT(), 15);
+        assertEq(emissions.TEAM_SHARE_PCT(), 15);
+        assertEq(emissions.MAX_SELLER_SHARE_PCT(), 49);
         assertEq(emissions.HALVING_INTERVAL(), 26);
         assertEq(emissions.currentEmissionRate(), INITIAL_EMISSION / EPOCH_DURATION);
     }
@@ -165,8 +166,8 @@ contract AntseedEmissionsTest is Test {
 
         vm.warp(block.timestamp + EPOCH_DURATION);
 
-        uint256 sellerBudget = (INITIAL_EMISSION * 65) / 100;
-        uint256 maxPerSeller = (sellerBudget * 15) / 100;
+        uint256 sellerBudget = (INITIAL_EMISSION * 50) / 100;
+        uint256 maxPerSeller = (sellerBudget * 49) / 100;
         uint256 expected = sellerBudget > maxPerSeller ? maxPerSeller : sellerBudget;
 
         vm.prank(seller1);
@@ -180,7 +181,7 @@ contract AntseedEmissionsTest is Test {
 
         vm.warp(block.timestamp + EPOCH_DURATION);
 
-        uint256 expectedBuyerBudget = (INITIAL_EMISSION * 25) / 100;
+        uint256 expectedBuyerBudget = (INITIAL_EMISSION * 20) / 100;
 
         // Operator claims on behalf of buyer — tokens go to operator
         vm.prank(operator1);
@@ -269,8 +270,8 @@ contract AntseedEmissionsTest is Test {
 
         vm.warp(block.timestamp + EPOCH_DURATION);
 
-        uint256 sellerBudget = (INITIAL_EMISSION * 65) / 100;
-        uint256 maxPerSeller = (sellerBudget * 15) / 100;
+        uint256 sellerBudget = (INITIAL_EMISSION * 50) / 100;
+        uint256 maxPerSeller = (sellerBudget * 49) / 100;
 
         uint256 raw1 = (300 * sellerBudget) / 400;
         uint256 raw2 = (100 * sellerBudget) / 400;
@@ -293,7 +294,7 @@ contract AntseedEmissionsTest is Test {
 
         vm.warp(block.timestamp + EPOCH_DURATION);
 
-        uint256 buyerBudget = (INITIAL_EMISSION * 25) / 100;
+        uint256 buyerBudget = (INITIAL_EMISSION * 20) / 100;
 
         vm.prank(operator1);
         emissions.claimBuyerEmissions(buyer1, _epochList(0));
@@ -326,8 +327,8 @@ contract AntseedEmissionsTest is Test {
         assertEq(emissions.userSellerPoints(seller1, 1), 0);
 
         // seller2 gets full epoch 1 seller budget (capped)
-        uint256 sellerBudget = (INITIAL_EMISSION * 65) / 100;
-        uint256 maxPerSeller = (sellerBudget * 15) / 100;
+        uint256 sellerBudget = (INITIAL_EMISSION * 50) / 100;
+        uint256 maxPerSeller = (sellerBudget * 49) / 100;
         uint256 expected = sellerBudget > maxPerSeller ? maxPerSeller : sellerBudget;
 
         vm.prank(seller2);
@@ -391,8 +392,8 @@ contract AntseedEmissionsTest is Test {
 
         vm.warp(block.timestamp + EPOCH_DURATION);
 
-        uint256 sellerBudget = (INITIAL_EMISSION * 65) / 100;
-        uint256 maxPerSeller = (sellerBudget * 15) / 100;
+        uint256 sellerBudget = (INITIAL_EMISSION * 50) / 100;
+        uint256 maxPerSeller = (sellerBudget * 49) / 100;
 
         vm.prank(seller1);
         emissions.claimSellerEmissions(_epochList(0));
@@ -420,7 +421,7 @@ contract AntseedEmissionsTest is Test {
 
         vm.warp(block.timestamp + EPOCH_DURATION);
 
-        uint256 sellerBudget = (INITIAL_EMISSION * 65) / 100;
+        uint256 sellerBudget = (INITIAL_EMISSION * 50) / 100;
         uint256 expectedEach = sellerBudget / 10;
 
         vm.prank(address(uint160(1)));
@@ -444,7 +445,7 @@ contract AntseedEmissionsTest is Test {
         emissions.claimSellerEmissions(_epochList(0));
 
         // Reserve should have 10% of epoch emission
-        uint256 expectedReserve = (INITIAL_EMISSION * 10) / 100;
+        uint256 expectedReserve = (INITIAL_EMISSION * 15) / 100;
         // Plus any seller cap excess
         uint256 reserveAmount = emissions.reserveAccumulated();
         assertTrue(reserveAmount >= expectedReserve);
@@ -467,7 +468,7 @@ contract AntseedEmissionsTest is Test {
         uint256 reserveAfterSecond = emissions.reserveAccumulated();
 
         // Reserve share (10%) added on first claim only
-        uint256 baseReserve = (INITIAL_EMISSION * 10) / 100;
+        uint256 baseReserve = (INITIAL_EMISSION * 15) / 100;
         assertEq(reserveAfterFirst, baseReserve);
         // Second claim adds no additional reserve (no cap excess with 10% each)
         assertEq(reserveAfterSecond, baseReserve);
@@ -564,15 +565,16 @@ contract AntseedEmissionsTest is Test {
     // ═══════════════════════════════════════════════════════════════════
 
     function test_sharePercentages() public {
-        emissions.setSharePercentages(70, 20, 10);
-        assertEq(emissions.SELLER_SHARE_PCT(), 70);
+        emissions.setSharePercentages(60, 20, 10, 10);
+        assertEq(emissions.SELLER_SHARE_PCT(), 60);
         assertEq(emissions.BUYER_SHARE_PCT(), 20);
         assertEq(emissions.RESERVE_SHARE_PCT(), 10);
+        assertEq(emissions.TEAM_SHARE_PCT(), 10);
     }
 
     function test_sharePercentages_revert_invalidSum() public {
         vm.expectRevert(AntseedEmissions.InvalidShareSum.selector);
-        emissions.setSharePercentages(60, 20, 10);
+        emissions.setSharePercentages(60, 20, 10, 5);
     }
 
     function test_setRegistry_onlyOwner() public {
@@ -599,9 +601,9 @@ contract AntseedEmissionsTest is Test {
         assertEq(emissions.MAX_SELLER_SHARE_PCT(), 20);
     }
 
-    function test_setMaxSellerSharePct_revert_zero() public {
-        vm.expectRevert(AntseedEmissions.InvalidValue.selector);
+    function test_setMaxSellerSharePct_allowsZero() public {
         emissions.setMaxSellerSharePct(0);
+        assertEq(emissions.MAX_SELLER_SHARE_PCT(), 0);
     }
 
     function test_setMaxSellerSharePct_revert_over100() public {

@@ -42,7 +42,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
 
     // ─── Configurable Constants ─────────────────────────────────────
     uint256 public FIRST_SIGN_CAP = 1_000_000;
-    uint256 public PLATFORM_FEE_BPS = 500;
+    uint256 public PLATFORM_FEE_BPS = 200;
     uint256 public MAX_PLATFORM_FEE_BPS = 1000;
     uint256 public TIMEOUT_GRACE_PERIOD = 15 minutes;
 
@@ -69,8 +69,6 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         uint64 lastSettledAt;
     }
 
-    uint8 public constant METADATA_VERSION = 1;
-
     // ─── State Variables ────────────────────────────────────────────
     IAntseedRegistry public registry;
 
@@ -80,23 +78,11 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
 
     // ─── Events ─────────────────────────────────────────────────────
     event Reserved(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint128 maxAmount);
-    event ChannelSettled(bytes32 indexed channelId, address indexed seller, uint128 cumulativeAmount, uint256 platformFee);
-    event ChannelClosed(bytes32 indexed channelId, address indexed seller, uint128 finalAmount, uint256 platformFee);
+    event ChannelSettled(bytes32 indexed channelId, address indexed seller, uint128 cumulativeAmount, uint256 platformFee, bytes metadata);
+    event ChannelClosed(bytes32 indexed channelId, address indexed seller, uint128 finalAmount, uint256 platformFee, bytes metadata);
     event ChannelTopUp(bytes32 indexed channelId, address indexed buyer, uint128 newMaxAmount);
     event CloseRequested(bytes32 indexed channelId, address indexed buyer);
     event ChannelWithdrawn(bytes32 indexed channelId, address indexed buyer);
-    /// @notice Per-channel cumulative metrics for off-chain indexing.
-    ///         Emitted on every settle and close. metadata is raw bytes —
-    ///         decode off-chain based on metadataVersion.
-    ///         Buyer-reported (unverifiable) — indexers should filter anomalies.
-    event ChannelMetrics(
-        bytes32 indexed channelId,
-        uint256 indexed agentId,
-        address indexed buyer,
-        uint8 metadataVersion,
-        uint128 cumulativeUsdc,
-        bytes metadata
-    );
 
     // ─── Custom Errors ──────────────────────────────────────────────
     error InvalidAddress();
@@ -279,10 +265,10 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         channel.metadataHash = metadataHash;
         channel.settledAt = block.timestamp;
 
-        _emitChannelMetrics(channelId, channel, cumulativeAmount, metadata);
+        _recordSettleStats(channel, delta);
         _recordEmissions(channel, delta);
 
-        emit ChannelSettled(channelId, channel.seller, cumulativeAmount, platformFee);
+        emit ChannelSettled(channelId, channel.seller, cumulativeAmount, platformFee, metadata);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -291,12 +277,14 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
 
     /**
      * @notice Close the channel with a final settlement.
-     *         Seller earnings and buyer refund are sent to Deposits.
+     *         If finalAmount == channel.settled, no signature is required —
+     *         the seller can close without a new SpendingAuth (forfeiting
+     *         any unproven spend). Otherwise a buyer SpendingAuth is verified.
      *
      * @param channelId    Channel ID
      * @param finalAmount  Final cumulative USDC amount
-     * @param metadata     ABI-encoded (inputTokens, outputTokens, latencyMs, requestCount)
-     * @param buyerSig     Buyer's SpendingAuth EIP-712 signature
+     * @param metadata     ABI-encoded (version, inputTokens, outputTokens, latencyMs, requestCount)
+     * @param buyerSig     Buyer's SpendingAuth EIP-712 signature (ignored when finalAmount == channel.settled)
      */
     function close(
         bytes32 channelId,
@@ -310,24 +298,29 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         if (finalAmount < channel.settled) revert FinalAmountBelowSettled();
         if (finalAmount > channel.deposit) revert InvalidAmount();
 
-        bytes32 metadataHash = keccak256(metadata);
-        _verifySpendingAuth(channelId, finalAmount, metadataHash, channel.buyer, buyerSig);
-
         uint128 delta = finalAmount - channel.settled;
+
+        // Only verify signature if there's a new amount to prove
+        if (delta > 0) {
+            bytes32 metadataHash = keccak256(metadata);
+            _verifySpendingAuth(channelId, finalAmount, metadataHash, channel.buyer, buyerSig);
+            channel.metadataHash = metadataHash;
+        }
+
         // Release all remaining reserved: charge delta, un-reserve everything
         uint128 remainingReserved = channel.deposit - channel.settled;
         uint256 platformFee = _chargeAndSettle(channel, delta, remainingReserved);
 
         channel.settled = finalAmount;
-        channel.metadataHash = metadataHash;
         channel.settledAt = block.timestamp;
         channel.status = ChannelStatus.Settled;
         activeChannelCount[channel.seller]--;
 
-        _recordCloseStats(channelId, channel, finalAmount, metadata);
+        _recordSettleStats(channel, delta);
+        _recordChannelComplete(channel);
         _recordEmissions(channel, delta);
 
-        emit ChannelClosed(channelId, channel.seller, finalAmount, platformFee);
+        emit ChannelClosed(channelId, channel.seller, finalAmount, platformFee, metadata);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -460,48 +453,33 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         );
     }
 
-    function _emitChannelMetrics(
-        bytes32 channelId,
-        Channel storage channel,
-        uint128 cumulativeUsdc,
-        bytes calldata metadata
-    ) internal {
-        uint256 agentId = IAntseedStaking(registry.staking()).getAgentId(channel.seller);
-        if (agentId != 0) {
-            emit ChannelMetrics(channelId, agentId, channel.buyer, METADATA_VERSION, cumulativeUsdc, metadata);
-        }
-    }
-
-    function _recordCloseStats(
-        bytes32 channelId,
-        Channel storage channel,
-        uint128 cumulativeUsdc,
-        bytes calldata metadata
-    ) internal {
+    /// @dev Update agent stats incrementally. Called on every settle and close.
+    function _recordSettleStats(Channel storage channel, uint128 delta) internal {
+        if (delta == 0) return;
         uint256 agentId = IAntseedStaking(registry.staking()).getAgentId(channel.seller);
         if (agentId == 0) return;
 
         AgentStats storage s = _agentStats[agentId];
-        s.channelCount++;
-        s.totalVolumeUsdc += cumulativeUsdc;
+        s.totalVolumeUsdc += delta;
         s.lastSettledAt = uint64(block.timestamp);
-
-        emit ChannelMetrics(channelId, agentId, channel.buyer, METADATA_VERSION, cumulativeUsdc, metadata);
     }
 
+    /// @dev Mark channel as completed. Called on close only.
+    function _recordChannelComplete(Channel storage channel) internal {
+        uint256 agentId = IAntseedStaking(registry.staking()).getAgentId(channel.seller);
+        if (agentId == 0) return;
+        _agentStats[agentId].channelCount++;
+    }
+
+    /// @dev Record withdraw outcome — ghost if never settled, otherwise completed.
     function _recordWithdrawStats(Channel storage channel) internal {
         uint256 agentId = IAntseedStaking(registry.staking()).getAgentId(channel.seller);
         if (agentId == 0) return;
 
-        AgentStats storage s = _agentStats[agentId];
         if (channel.settled == 0) {
-            // True ghost — seller never settled
-            s.ghostCount++;
+            _agentStats[agentId].ghostCount++;
         } else {
-            // Partial-settled timeout — count as completed, record volume
-            s.channelCount++;
-            s.totalVolumeUsdc += channel.settled;
-            s.lastSettledAt = uint64(block.timestamp);
+            _agentStats[agentId].channelCount++;
         }
     }
 
