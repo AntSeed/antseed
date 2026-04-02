@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
+import { useAccount, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { parseAbi } from 'viem';
 import type { PaymentConfig } from '../types';
-import { getChannels, getOperatorInfo, type ChannelData } from '../api';
+import { getChannels, getOperatorInfo, signOperatorAuth, type ChannelData } from '../api';
 import { CHANNELS_ABI } from '../channels-abi';
 
 interface ChannelsViewProps {
@@ -184,9 +184,7 @@ export function ChannelsView({ config }: ChannelsViewProps) {
       </div>
 
       {operatorSet === false && (
-        <div className="status-msg" style={{ marginTop: 0, marginBottom: 16, fontSize: 12, color: 'var(--text-secondary)' }}>
-          No operator set. Deposit credits to set up your wallet as the channel operator.
-        </div>
+        <SetOperatorBanner config={config} onSet={fetchData} />
       )}
 
       {loading ? (
@@ -202,6 +200,76 @@ export function ChannelsView({ config }: ChannelsViewProps) {
           <SessionCard key={session.channelId} session={session} config={config} onRefresh={fetchData} />
         ))
       )}
+    </div>
+  );
+}
+
+/* ── Set Operator Banner ── */
+
+const DEPOSITS_OPERATOR_ABI = parseAbi([
+  'function setOperator(address buyer, address operator, uint256 nonce, bytes buyerSig) external',
+]);
+
+function SetOperatorBanner({ config, onSet }: { config: PaymentConfig | null; onSet: () => void }) {
+  const { address } = useAccount();
+  const [setting, setSetting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const { writeContract, data: txHash, reset } = useWriteContract();
+  const { isSuccess } = useWaitForTransactionReceipt({ hash: txHash });
+
+  useEffect(() => {
+    if (isSuccess && setting) {
+      setSetting(false);
+      onSet();
+    }
+  }, [isSuccess, setting, onSet]);
+
+  const handleSetOperator = useCallback(async () => {
+    if (!address || !config?.depositsContractAddress) return;
+    setError(null);
+    setSetting(true);
+    reset();
+
+    try {
+      const signResult = await signOperatorAuth(address);
+      if (!signResult.ok) {
+        setSetting(false);
+        setError('Failed to sign operator authorization');
+        return;
+      }
+
+      writeContract({
+        address: config.depositsContractAddress as `0x${string}`,
+        abi: DEPOSITS_OPERATOR_ABI,
+        functionName: 'setOperator',
+        args: [signResult.buyer as `0x${string}`, address as `0x${string}`, BigInt(signResult.nonce), signResult.signature as `0x${string}`],
+      }, {
+        onError: (err) => {
+          setSetting(false);
+          setError(err.message.split('\n')[0] ?? err.message);
+        },
+      });
+    } catch (err) {
+      setSetting(false);
+      setError(err instanceof Error ? err.message : 'Failed to set operator');
+    }
+  }, [address, config, writeContract, reset]);
+
+  return (
+    <div className="status-msg" style={{ marginTop: 0, marginBottom: 16, fontSize: 12 }}>
+      <div style={{ color: 'var(--text-secondary)', marginBottom: 8 }}>
+        No operator set. Set your connected wallet as the operator to manage channels.
+      </div>
+      <button
+        className="btn-outline"
+        style={{ fontSize: 12, padding: '4px 12px' }}
+        onClick={handleSetOperator}
+        disabled={setting || !address}
+      >
+        {setting ? 'Setting operator...' : 'Set Operator'}
+      </button>
+      {error && <div style={{ color: 'var(--error)', marginTop: 6 }}>{error}</div>}
     </div>
   );
 }
