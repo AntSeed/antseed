@@ -8,9 +8,3 @@ export const CHANNELS_ABI = [
   'event CloseRequested(bytes32 indexed channelId, address indexed buyer)',
 ] as const;
 
-export const DEPOSITS_OPERATOR_ABI = [
-  'function setOperator(address buyer, address operator, uint256 nonce, bytes buyerSig) external',
-  'function transferOperator(address buyer, address newOperator) external',
-  'function getOperator(address buyer) external view returns (address)',
-  'function getOperatorNonce(address buyer) external view returns (uint256)',
-] as const;

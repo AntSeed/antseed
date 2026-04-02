@@ -64,8 +64,7 @@ contract AntseedEmissions is Ownable, Pausable, ReentrancyGuard {
     // ─── Reserve & Team ───
     uint256 public reserveAccumulated;
     uint256 public teamAccumulated;
-    mapping(uint256 => bool) public epochReserveAccounted;
-    mapping(uint256 => bool) public epochTeamAccounted;
+    mapping(uint256 => bool) public epochNonUserAccounted;
 
     // ─── Events ───
     event SellerPointsAccrued(address indexed seller, uint256 indexed epoch, uint256 pointsDelta);
@@ -81,6 +80,7 @@ contract AntseedEmissions is Ownable, Pausable, ReentrancyGuard {
     error NoProtocolReserve();
     error NoTeamWallet();
     error NoReserve();
+    error NoTeamAccumulated();
     error InvalidAddress();
     error InvalidValue();
 
@@ -180,8 +180,7 @@ contract AntseedEmissions is Ownable, Pausable, ReentrancyGuard {
             if (userSellerPoints[msg.sender][epoch] == 0) continue;
 
             sellerEpochClaimed[msg.sender][epoch] = true;
-            _accountReserve(epoch);
-            _accountTeam(epoch);
+            _accountReserveAndTeam(epoch);
 
             EpochParams storage params = epochParams[epoch];
             uint256 userSP = userSellerPoints[msg.sender][epoch];
@@ -221,8 +220,7 @@ contract AntseedEmissions is Ownable, Pausable, ReentrancyGuard {
             if (userBuyerPoints[buyer][epoch] == 0) continue;
 
             buyerEpochClaimed[buyer][epoch] = true;
-            _accountReserve(epoch);
-            _accountTeam(epoch);
+            _accountReserveAndTeam(epoch);
 
             EpochParams storage params = epochParams[epoch];
             uint256 userBP = userBuyerPoints[buyer][epoch];
@@ -273,17 +271,13 @@ contract AntseedEmissions is Ownable, Pausable, ReentrancyGuard {
         }
     }
 
-    function _accountReserve(uint256 epoch) internal {
-        if (!epochReserveAccounted[epoch]) {
-            epochReserveAccounted[epoch] = true;
-            reserveAccumulated += (getEpochEmission(epoch) * epochParams[epoch].reserveSharePct) / 100;
-        }
-    }
-
-    function _accountTeam(uint256 epoch) internal {
-        if (!epochTeamAccounted[epoch]) {
-            epochTeamAccounted[epoch] = true;
-            teamAccumulated += (getEpochEmission(epoch) * epochParams[epoch].teamSharePct) / 100;
+    function _accountReserveAndTeam(uint256 epoch) internal {
+        if (!epochNonUserAccounted[epoch]) {
+            epochNonUserAccounted[epoch] = true;
+            EpochParams storage params = epochParams[epoch];
+            uint256 emission = getEpochEmission(epoch);
+            reserveAccumulated += (emission * params.reserveSharePct) / 100;
+            teamAccumulated += (emission * params.teamSharePct) / 100;
         }
     }
 
@@ -304,7 +298,7 @@ contract AntseedEmissions is Ownable, Pausable, ReentrancyGuard {
     function flushTeam() external onlyOwner nonReentrant {
         if (teamWallet == address(0)) revert NoTeamWallet();
         uint256 amount = teamAccumulated;
-        if (amount == 0) revert NoReserve();
+        if (amount == 0) revert NoTeamAccumulated();
         teamAccumulated = 0;
         IANTSToken(registry.antsToken()).mint(teamWallet, amount);
         emit TeamFlushed(teamWallet, amount);

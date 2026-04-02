@@ -108,7 +108,6 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
   const [amount, setAmount] = useState('10');
   const [step, setStep] = useState<'idle' | 'approving' | 'depositing' | 'done'>('idle');
   const [error, setError] = useState<string | null>(null);
-  // Stash operator sig for use in the deposit tx
   const [operatorSig, setOperatorSig] = useState<{ nonce: bigint; signature: `0x${string}` } | null>(null);
 
   const expectedChainId = config?.evmChainId;
@@ -144,33 +143,22 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
       const usdcAmount = parseUnits(amount, 6);
       const depositsAddr = config.depositsContractAddress as `0x${string}`;
 
-      if (operatorSig) {
-        // First deposit — include operator signature
-        writeDeposit({
-          address: depositsAddr,
-          abi: DEPOSITS_ABI,
-          functionName: 'deposit',
-          args: [depositTarget as `0x${string}`, usdcAmount, operatorSig.nonce, operatorSig.signature],
-        }, {
-          onError: (err) => {
-            setStep('idle');
-            setError(err.message.split('\n')[0] ?? err.message);
-          },
-        });
-      } else {
-        // Operator already set — plain deposit
-        writeDeposit({
-          address: depositsAddr,
-          abi: DEPOSITS_ABI,
-          functionName: 'deposit',
-          args: [depositTarget as `0x${string}`, usdcAmount],
-        }, {
-          onError: (err) => {
-            setStep('idle');
-            setError(err.message.split('\n')[0] ?? err.message);
-          },
-        });
-      }
+      const target = depositTarget as `0x${string}`;
+      const args = operatorSig
+        ? [target, usdcAmount, operatorSig.nonce, operatorSig.signature] as const
+        : [target, usdcAmount] as const;
+
+      writeDeposit({
+        address: depositsAddr,
+        abi: DEPOSITS_ABI,
+        functionName: 'deposit',
+        args,
+      }, {
+        onError: (err) => {
+          setStep('idle');
+          setError(err.message.split('\n')[0] ?? err.message);
+        },
+      });
     }
   }, [approveConfirmed, step, config, depositTarget, amount, operatorSig, writeDeposit]);
 
