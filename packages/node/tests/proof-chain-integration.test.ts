@@ -26,7 +26,7 @@ const SAMPLE_OUTPUT = enc.encode('The capital of France is Paris, on the Seine R
 
 function decodeMetadataTokens(metadata: string): { inputTokens: bigint; outputTokens: bigint } {
   const coder = AbiCoder.defaultAbiCoder();
-  const [inputTokens, outputTokens] = coder.decode(['uint256', 'uint256', 'uint256', 'uint256'], metadata);
+  const [, inputTokens, outputTokens] = coder.decode(['uint256', 'uint256', 'uint256', 'uint256', 'uint256'], metadata);
   return { inputTokens, outputTokens };
 }
 
