@@ -26,6 +26,7 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
     // ─── Structs ────────────────────────────────────────────────────────
     struct SellerAccount {
         uint256 stake;
+        uint256 stakedAt;
     }
 
     // ─── Storage ────────────────────────────────────────────────────────
@@ -78,6 +79,9 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
         usdc.safeTransferFrom(msg.sender, address(this), amount);
 
         SellerAccount storage sa = sellers[seller];
+        if (sa.stakedAt == 0) {
+            sa.stakedAt = block.timestamp;
+        }
         sa.stake += amount;
         sellerAgentId[seller] = agentId;
 
