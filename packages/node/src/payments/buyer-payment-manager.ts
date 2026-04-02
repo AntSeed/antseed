@@ -11,9 +11,7 @@ import { DepositsClient } from './evm/deposits-client.js';
 import {
   signSpendingAuth,
   signReserveAuth,
-  signSetOperator,
   makeChannelsDomain,
-  makeDepositsDomain,
   computeMetadataHash,
   encodeMetadata,
   ZERO_METADATA,
@@ -667,20 +665,7 @@ export class BuyerPaymentManager {
   async deposit(amount: bigint): Promise<string> {
     debugLog(`[BuyerPayment] Depositing ${amount} to deposits`);
     const buyer = this._identity.wallet.address;
-    const operator = await this._signer.getAddress();
-
-    // Check if operator needs to be set (first deposit)
-    const currentOperator = await this._depositsClient.getOperator(buyer);
-    let nonce = 0n;
-    let buyerSig = '0x';
-
-    if (currentOperator === '0x0000000000000000000000000000000000000000') {
-      nonce = await this._depositsClient.getOperatorNonce(buyer);
-      const domain = makeDepositsDomain(this._config.chainId, this._depositsClient.contractAddress);
-      buyerSig = await signSetOperator(this._identity.wallet, domain, { operator, nonce });
-    }
-
-    return this._depositsClient.deposit(this._signer, buyer, amount, nonce, buyerSig);
+    return this._depositsClient.deposit(this._signer, buyer, amount);
   }
 
   async withdraw(amount: bigint): Promise<string> {

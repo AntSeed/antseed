@@ -27,11 +27,11 @@ contract AntseedDeposits is EIP712, Ownable, ReentrancyGuard {
     IAntseedRegistry public registry;
 
     // ─── Configurable Constants ─────────────────────────────────────────
-    uint256 public MIN_BUYER_DEPOSIT = 5_000_000;
-    uint256 public BASE_CREDIT_LIMIT = 50_000_000;
+    uint256 public MIN_BUYER_DEPOSIT = 1_000_000;
+    uint256 public BASE_CREDIT_LIMIT = 10_000_000;
     uint256 public PEER_INTERACTION_BONUS = 5_000_000;
     uint256 public TIME_BONUS = 500_000;
-    uint256 public MAX_CREDIT_LIMIT = 500_000_000;
+    uint256 public MAX_CREDIT_LIMIT = 50_000_000;
 
     // ─── Structs ────────────────────────────────────────────────────────
     struct BuyerAccount {
@@ -109,23 +109,8 @@ contract AntseedDeposits is EIP712, Ownable, ReentrancyGuard {
         if (limit > MAX_CREDIT_LIMIT) limit = MAX_CREDIT_LIMIT;
         return limit;
     }
-
-    /**
-     * @notice Deposit USDC. On first call, sets msg.sender as operator using
-     *         the buyer's EIP-712 signature. On subsequent calls, pass empty
-     *         buyerSig (0x) — operator is already set.
-     */
-    function deposit(
-        address buyer,
-        uint256 amount,
-        uint256 nonce,
-        bytes calldata buyerSig
-    ) external nonReentrant {
-        BuyerAccount storage ba = buyers[buyer];
-        if (ba.operator == address(0)) {
-            _setOperator(buyer, msg.sender, nonce, buyerSig);
-        }
-        if (!_isOperator(buyer)) revert NotAuthorized();
+    /// @notice Deposit USDC for a buyer. Anyone can call — USDC is pulled from msg.sender.
+    function deposit(address buyer, uint256 amount) external nonReentrant {
         _deposit(buyer, amount);
     }
 
@@ -241,12 +226,14 @@ contract AntseedDeposits is EIP712, Ownable, ReentrancyGuard {
     //                        OPERATOR MANAGEMENT
     // ═══════════════════════════════════════════════════════════════════
 
-    function _setOperator(
+    /// @notice Set the initial operator for a buyer. Anyone can submit —
+    ///         authorization comes from the buyer's EIP-712 signature.
+    function setOperator(
         address buyer,
         address operator,
         uint256 nonce,
         bytes calldata buyerSig
-    ) internal {
+    ) external {
         if (buyer == address(0) || operator == address(0)) revert InvalidAddress();
         BuyerAccount storage ba = buyers[buyer];
         if (ba.operator != address(0)) revert OperatorAlreadySet();
