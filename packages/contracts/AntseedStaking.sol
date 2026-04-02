@@ -26,7 +26,6 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
     // ─── Structs ────────────────────────────────────────────────────────
     struct SellerAccount {
         uint256 stake;
-        uint256 stakedAt;
     }
 
     // ─── Storage ────────────────────────────────────────────────────────
@@ -37,7 +36,6 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
     uint256 public MIN_SELLER_STAKE = 10_000_000;
     uint256 public SLASH_RATIO_THRESHOLD = 30;
     uint256 public SLASH_GHOST_THRESHOLD = 5;
-    uint256 public SLASH_INACTIVITY_DAYS = 30 days;
 
     // ─── Events ─────────────────────────────────────────────────────────
     event Staked(address indexed seller, uint256 indexed agentId, uint256 amount);
@@ -81,7 +79,6 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
 
         SellerAccount storage sa = sellers[seller];
         sa.stake += amount;
-        sa.stakedAt = block.timestamp;
         sellerAgentId[seller] = agentId;
 
         emit Staked(seller, agentId, amount);
@@ -97,7 +94,6 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
 
         uint256 stakeAmount = sa.stake;
         sa.stake = 0;
-        sa.stakedAt = 0;
         sellerAgentId[msg.sender] = 0;
 
         if (payout > 0) {
@@ -119,15 +115,6 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
 
     function isStakedAboveMin(address seller) external view returns (bool) {
         return sellers[seller].stake >= MIN_SELLER_STAKE;
-    }
-
-    function getSellerAccount(address seller)
-        external
-        view
-        returns (uint256 stakeAmt, uint256 stakedAt)
-    {
-        SellerAccount storage sa = sellers[seller];
-        return (sa.stake, sa.stakedAt);
     }
 
     function getAgentId(address seller) external view returns (uint256) {
@@ -156,14 +143,7 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
             if (ghostRatio >= SLASH_RATIO_THRESHOLD) return stakeAmt / 2;
         }
 
-        // Tier 3: channels > 0 but inactive → 20% slash
-        if (channels > 0 && stats.lastSettledAt > 0) {
-            if (block.timestamp > uint256(stats.lastSettledAt) + SLASH_INACTIVITY_DAYS) {
-                return stakeAmt / 5;
-            }
-        }
-
-        // Tier 4: no slash
+        // Tier 3: no slash
         return 0;
     }
 
@@ -186,10 +166,5 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
 
     function setSlashGhostThreshold(uint256 value) external onlyOwner {
         SLASH_GHOST_THRESHOLD = value;
-    }
-
-    function setSlashInactivityDays(uint256 value) external onlyOwner {
-        if (value < 1 days) revert InvalidAmount();
-        SLASH_INACTIVITY_DAYS = value;
     }
 }

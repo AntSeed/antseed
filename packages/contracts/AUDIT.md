@@ -221,7 +221,7 @@ If `totalWeight == 0` (all opted-in peers have zero `channelCount`), revenue is 
 
 ---
 
-### M6. Staking: `stakedAt` resets on additional staking
+### ~~M6. Staking: `stakedAt` resets on additional staking~~ — FIXED
 
 **File:** `AntseedStaking.sol:84`
 
