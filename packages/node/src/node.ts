@@ -1294,9 +1294,11 @@ export class AntseedNode extends EventEmitter {
       const spmAuthorized = this._sellerPaymentManager?.hasSession(buyerPeerId) ?? false;
       if (this._channelsClient && !spmAuthorized) {
         // Pass buyerPeerId so seller can suggest higher amount for returning buyers,
-        // and include per-direction pricing from the first registered provider.
-        const firstProvider = this._providers[0];
-        const providerPricing = firstProvider?.pricing?.defaults;
+        // and include matched provider/service pricing when available.
+        const matchedProvider = this._matchProviderForRequest(request);
+        const providerPricing = matchedProvider
+          ? this._resolveProviderPricing(matchedProvider, request)
+          : undefined;
         const requirements = this._sellerPaymentManager?.getPaymentRequirements(
           request.requestId, buyerPeerId, providerPricing,
         );
@@ -1306,6 +1308,8 @@ export class AntseedNode extends EventEmitter {
             error: 'payment_required',
             minBudgetPerRequest: requirements.minBudgetPerRequest,
             suggestedAmount: requirements.suggestedAmount,
+            ...(requirements.inputUsdPerMillion != null ? { inputUsdPerMillion: requirements.inputUsdPerMillion } : {}),
+            ...(requirements.outputUsdPerMillion != null ? { outputUsdPerMillion: requirements.outputUsdPerMillion } : {}),
           });
           mux.sendProxyResponse({
             requestId: request.requestId,
@@ -1338,8 +1342,10 @@ export class AntseedNode extends EventEmitter {
           if (accepted > 0n && spent >= accepted) {
             // Budget exhausted — no remaining authorized balance
             const reserveMax = this._sellerPaymentManager.getReserveMax(session.sessionId);
-            const firstProvider = this._providers[0];
-            const providerPricing = firstProvider?.pricing?.defaults;
+            const matchedProvider = this._matchProviderForRequest(request);
+            const providerPricing = matchedProvider
+              ? this._resolveProviderPricing(matchedProvider, request)
+              : undefined;
             const requirements = this._sellerPaymentManager.getPaymentRequirements(
               request.requestId, buyerPeerId, providerPricing,
             );
@@ -1352,47 +1358,25 @@ export class AntseedNode extends EventEmitter {
             } else {
               debugLog(`[Node] Budget exhausted for ${buyerPeerId.slice(0, 12)}... (spent=${spent} >= accepted=${accepted}) — returning 402, awaiting NeedAuth response`);
             }
-            if (requirements) {
-              mux.sendProxyResponse({
-                requestId: request.requestId,
-                statusCode: 402,
-                headers: { "content-type": "application/json" },
-                body: new TextEncoder().encode(JSON.stringify({
-                  error: 'payment_required',
-                  minBudgetPerRequest: requirements.minBudgetPerRequest,
-                  suggestedAmount: requirements.suggestedAmount,
-                })),
-              });
-              paymentMux.sendPaymentRequired(requirements);
-            } else {
-              mux.sendProxyResponse({
-                requestId: request.requestId,
-                statusCode: 402,
-                headers: { "content-type": "application/json" },
-                body: new TextEncoder().encode(JSON.stringify({ error: 'payment_required' })),
-              });
-            }
+            mux.sendProxyResponse({
+              requestId: request.requestId,
+              statusCode: 402,
+              headers: { "content-type": "application/json" },
+              body: new TextEncoder().encode(JSON.stringify({
+                error: 'payment_required',
+                minBudgetPerRequest: requirements.minBudgetPerRequest,
+                suggestedAmount: requirements.suggestedAmount,
+                ...(requirements.inputUsdPerMillion != null ? { inputUsdPerMillion: requirements.inputUsdPerMillion } : {}),
+                ...(requirements.outputUsdPerMillion != null ? { outputUsdPerMillion: requirements.outputUsdPerMillion } : {}),
+              })),
+            });
+            paymentMux.sendPaymentRequired(requirements);
             return;
           }
         }
       }
 
-      const requestedService = this._extractRequestedService(request);
-      const requestedProvider = this._extractRequestedProvider(request);
-      const matchesService = (provider: Provider): boolean =>
-        provider.services.length === 0
-        || (requestedService !== null && provider.services.includes(requestedService))
-        || this._providers.length === 1;
-
-      let provider: Provider | undefined;
-      if (requestedProvider) {
-        provider = this._providers.find((candidate) =>
-          candidate.name.toLowerCase() === requestedProvider && matchesService(candidate),
-        );
-      }
-      if (!provider) {
-        provider = this._providers.find((candidate) => matchesService(candidate));
-      }
+      const provider = this._matchProviderForRequest(request);
 
       if (!provider) {
         debugWarn(`[Node] No matching provider for ${request.path}`);
@@ -1579,6 +1563,26 @@ export class AntseedNode extends EventEmitter {
       .filter((value) => value.length > 0);
 
     return providers[0] ?? null;
+  }
+
+  private _matchProviderForRequest(request: SerializedHttpRequest): Provider | undefined {
+    const requestedService = this._extractRequestedService(request);
+    const requestedProvider = this._extractRequestedProvider(request);
+    const matchesService = (provider: Provider): boolean =>
+      provider.services.length === 0
+      || (requestedService !== null && provider.services.includes(requestedService))
+      || this._providers.length === 1;
+
+    let provider: Provider | undefined;
+    if (requestedProvider) {
+      provider = this._providers.find((candidate) =>
+        candidate.name.toLowerCase() === requestedProvider && matchesService(candidate),
+      );
+    }
+    if (!provider) {
+      provider = this._providers.find((candidate) => matchesService(candidate));
+    }
+    return provider;
   }
 
   private _resolveProviderPricing(
