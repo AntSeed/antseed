@@ -98,3 +98,21 @@ test('seed does not override explicit provider instance pricing with seller defa
   assert.equal(merged['ANTSEED_INPUT_USD_PER_MILLION'], '0.05');
   assert.equal(merged['ANTSEED_OUTPUT_USD_PER_MILLION'], '0.1');
 });
+
+test('seed merge keeps explicit pricing when runtime env also contains pricing and force override is off', () => {
+  const merged = mergeSellerRuntimeEnv(
+    {
+      ANTSEED_INPUT_USD_PER_MILLION: '0.05',
+      ANTSEED_OUTPUT_USD_PER_MILLION: '0.1',
+    },
+    {
+      ANTSEED_INPUT_USD_PER_MILLION: '3',
+      ANTSEED_OUTPUT_USD_PER_MILLION: '15',
+      ANTSEED_MAX_CONCURRENCY: '10',
+    },
+  );
+
+  assert.equal(merged['ANTSEED_INPUT_USD_PER_MILLION'], '0.05');
+  assert.equal(merged['ANTSEED_OUTPUT_USD_PER_MILLION'], '0.1');
+  assert.equal(merged['ANTSEED_MAX_CONCURRENCY'], '10');
+});

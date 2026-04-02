@@ -499,7 +499,11 @@ export class BuyerPaymentManager {
     let maxSignable = this._maxSignable(sellerPeerId);
     const reserveCeiling = this._getCeiling(sellerPeerId);
     if (requiredCumulativeAmount > maxSignable && maxSignable >= reserveCeiling) {
-      await this.topUpReserve(sellerPeerId, paymentMux);
+      try {
+        await this.topUpReserve(sellerPeerId, paymentMux);
+      } catch (err) {
+        debugWarn(`[BuyerPayment] NeedAuth: topUpReserve failed: ${err instanceof Error ? err.message : err}`);
+      }
       maxSignable = this._maxSignable(sellerPeerId);
     }
     if (maxSignable <= currentCumulative) {

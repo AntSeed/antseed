@@ -586,6 +586,9 @@ export class AntseedNode extends EventEmitter {
   async connectToPeer(peer: PeerInfo): Promise<void> {
     const conn = await this._getOrCreateConnection(peer);
     this._getOrCreateMux(peer.peerId, conn);
+    if (this._buyerPaymentManager) {
+      this._getOrCreateBuyerPaymentMux(peer.peerId, conn);
+    }
   }
 
   async sendRequest(
@@ -624,6 +627,9 @@ export class AntseedNode extends EventEmitter {
     const conn = await this._getOrCreateConnection(peer);
     debugLog(`[Node] Connection to ${peer.peerId.slice(0, 12)}... state=${conn.state}`);
     const mux = this._getOrCreateMux(peer.peerId, conn);
+    if (this._buyerPaymentManager) {
+      this._getOrCreateBuyerPaymentMux(peer.peerId, conn);
+    }
 
     // Extract and strip x-antseed-spending-auth header if present (manual approval flow)
     const externalSpendingAuth = req.headers[ANTSEED_SPENDING_AUTH_HEADER] ?? null;
@@ -632,12 +638,10 @@ export class AntseedNode extends EventEmitter {
       req = { ...req, headers: cleanHeaders };
     }
 
-    // If we already have a payment session with this peer, skip negotiation.
-    const needsPaymentNegotiation = this._buyerPaymentManager
-      && !this._buyerLockedPeers.has(peer.peerId);
+    const hasBuyerPaymentManager = Boolean(this._buyerPaymentManager);
 
     // If an external spending auth was provided, apply it before sending the request.
-    if (externalSpendingAuth && needsPaymentNegotiation) {
+    if (externalSpendingAuth && hasBuyerPaymentManager) {
       debugLog(`[Node] Applying external spending auth for ${peer.peerId.slice(0, 12)}...`);
       await this._applyExternalSpendingAuth(peer, conn, externalSpendingAuth);
     }
@@ -842,7 +846,8 @@ export class AntseedNode extends EventEmitter {
     // wait for the seller's PaymentRequired message, negotiate, and retry.
     const response = await executeRequest();
 
-    if (response.statusCode === 402 && needsPaymentNegotiation && !externalSpendingAuth) {
+    if (response.statusCode === 402 && hasBuyerPaymentManager && !externalSpendingAuth) {
+      const hadLockedSession = this._buyerLockedPeers.has(peer.peerId);
       const manualApproval = await this._isManualApprovalEnabled();
       const directPaymentBody = parsePaymentRequiredBody(response.body);
       const responseAlreadyHasRequirements = Boolean(directPaymentBody?.minBudgetPerRequest);
@@ -877,6 +882,15 @@ export class AntseedNode extends EventEmitter {
       // If manual approval is on, always return the 402 to the caller
       if (manualApproval) {
         return returnPaymentRequired(responseAlreadyHasRequirements ? 'manual approval (direct body)' : 'manual approval');
+      }
+
+      // A 402 on an existing paid session means the current authorization is no
+      // longer usable. Clear buyer-side session state so auto-negotiation can
+      // establish a fresh authorization instead of short-circuiting.
+      if (hadLockedSession) {
+        this._buyerLockedPeers.delete(peer.peerId);
+        this._buyerFirstRequestSent.delete(peer.peerId);
+        this._buyerPaymentManager?.cleanupSession(peer.peerId);
       }
 
       // Auto mode: check if we can actually pay before attempting negotiation
