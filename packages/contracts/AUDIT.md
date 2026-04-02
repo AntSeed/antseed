@@ -76,21 +76,17 @@ The owner can change reward splits after an epoch has finished but before users 
 
 ---
 
-### H2. No permissionless channel timeout — liveness/fund-lock risk
+### ~~H2. No permissionless channel timeout — liveness/fund-lock risk~~ — PARTIALLY FIXED
 
 **File:** `AntseedChannels.sol`
 
 The `deadline` field is correctly used as a **reserve authorization limit** — the buyer signs a ReserveAuth valid until the deadline, and `reserve()`/`topUp()` enforce it. It is intentionally NOT checked on `settle()`/`close()` because the seller should always be able to collect earned funds regardless of time.
 
-However, closing a channel requires either:
-- The **seller** calling `settle()`/`close()` with a buyer-signed SpendingAuth, or
-- The **buyer's operator** calling `requestClose()` + `withdraw()` after grace period
+Previously, closing a channel required either a buyer-signed SpendingAuth or the buyer's operator. If the buyer operator disappeared and the seller had no SpendingAuth, funds were locked indefinitely.
 
-There is no **permissionless** fallback. If the buyer's operator disappears and the seller has no SpendingAuth to submit, reserved funds remain locked indefinitely. The seller also cannot unstake because `AntseedStaking.unstake()` blocks when `activeChannelCount(msg.sender) > 0`.
+**Fix:** Added `abandon(channelId)` — seller can close any channel without a SpendingAuth. No additional charge; remaining reserved USDC is released back to the buyer. This unblocks the seller's `activeChannelCount` so they can unstake.
 
-**Impact:** Permanent fund lock for both buyer (reserved USDC) and seller (staked USDC) if buyer operator is lost.
-
-**Recommendation:** Add a permissionless timeout path: anyone can call `forceClose(channelId)` after a long period (e.g., 30 days) past the stored deadline. This releases remaining reserved funds to the buyer and decrements the seller's `activeChannelCount`, allowing unstake. No SpendingAuth or operator required.
+**Remaining risk:** If the buyer's operator is lost and the seller also disappears, buyer funds stay locked. A fully permissionless timeout (callable by anyone after a long period) would address this edge case.
 
 ---
 

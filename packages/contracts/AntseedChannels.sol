@@ -330,6 +330,37 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         emit ChannelClosed(channelId, channel.seller, finalAmount, platformFee);
     }
 
+    /**
+     * @notice Seller abandons the channel without a new SpendingAuth.
+     *         No additional charge — releases all remaining reserved USDC
+     *         back to the buyer. The seller forfeits any unproven spend.
+     */
+    function abandon(bytes32 channelId) external nonReentrant whenNotPaused {
+        Channel storage channel = channels[channelId];
+        if (channel.status != ChannelStatus.Active) revert ChannelNotActive();
+        if (msg.sender != channel.seller) revert NotAuthorized();
+
+        uint128 remainingReserved = channel.deposit - channel.settled;
+        if (remainingReserved > 0) {
+            IAntseedDeposits(registry.deposits()).releaseLock(channel.buyer, remainingReserved);
+        }
+
+        channel.settledAt = block.timestamp;
+        channel.status = ChannelStatus.Settled;
+        activeChannelCount[channel.seller]--;
+
+        // Record stats without metadata (no new SpendingAuth was provided)
+        uint256 agentId = IAntseedStaking(registry.staking()).getAgentId(channel.seller);
+        if (agentId != 0) {
+            AgentStats storage s = _agentStats[agentId];
+            s.channelCount++;
+            s.totalVolumeUsdc += channel.settled;
+            s.lastSettledAt = uint64(block.timestamp);
+        }
+
+        emit ChannelClosed(channelId, channel.seller, channel.settled, 0);
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     //                        REQUEST CLOSE + WITHDRAW
     // ═══════════════════════════════════════════════════════════════════

@@ -42,6 +42,8 @@ interface IAntseedChannels {
         bytes calldata buyerSig
     ) external;
 
+    function abandon(bytes32 channelId) external;
+
     function requestClose(bytes32 channelId) external;
 
     function withdraw(bytes32 channelId) external;
