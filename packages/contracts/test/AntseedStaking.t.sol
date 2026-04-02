@@ -432,4 +432,40 @@ contract AntseedStakingTest is Test {
         vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", seller));
         staking.setMinSellerStake(100);
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //                   SLASHING CONTRACT SWAP
+    // ═══════════════════════════════════════════════════════════════════
+
+    function test_unstake_noSlashingContract() public {
+        // Remove slashing contract — unstake should have zero slash
+        staking.setSlashing(address(0));
+
+        _stakeAs(seller, LARGE_STAKE);
+        _addGhosts(sellerAgentId, 10); // would be full slash if slashing was set
+
+        vm.prank(seller);
+        staking.unstake();
+
+        // Seller gets full stake back — no slashing
+        assertEq(usdc.balanceOf(seller), LARGE_STAKE);
+        assertEq(usdc.balanceOf(reserve), 0);
+    }
+
+    function test_swapSlashingContract() public {
+        _stakeAs(seller, LARGE_STAKE);
+        _addGhosts(sellerAgentId, 10); // tier 1 full slash
+
+        // Deploy a new slashing contract with higher threshold
+        AntseedSlashing newSlashing = new AntseedSlashing(address(antseedRegistry));
+        newSlashing.setSlashGhostThreshold(20); // raise to 20
+        staking.setSlashing(address(newSlashing));
+
+        // Now 10 ghosts is below threshold — no slash
+        vm.prank(seller);
+        staking.unstake();
+
+        assertEq(usdc.balanceOf(seller), LARGE_STAKE);
+        assertEq(usdc.balanceOf(reserve), 0);
+    }
 }
