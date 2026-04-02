@@ -15,7 +15,6 @@ export interface BuyerBalanceInfo {
 }
 
 const DEPOSITS_ABI = [
-  'function deposit(address buyer, uint256 amount) external',
   'function deposit(address buyer, uint256 amount, uint256 nonce, bytes buyerSig) external',
   'function withdraw(address buyer, uint256 amount) external',
   'function claimPayouts() external',
@@ -25,7 +24,6 @@ const DEPOSITS_ABI = [
   'function uniqueSellersCharged(address buyer) external view returns (uint256)',
   'function getOperator(address buyer) external view returns (address)',
   'function getOperatorNonce(address buyer) external view returns (uint256)',
-  'function setOperator(address buyer, address operator, uint256 nonce, bytes buyerSig) external',
   'function transferOperator(address buyer, address newOperator) external',
   'function domainSeparator() external view returns (bytes32)',
 ] as const;
@@ -42,11 +40,7 @@ export class DepositsClient extends BaseEvmClient {
 
   // ─── Buyer Operations ──────────────────────────────────────────────
 
-  async deposit(signer: AbstractSigner, buyer: string, amount: bigint): Promise<string> {
-    return this._approveAndExec(signer, this._usdcAddress, amount, DEPOSITS_ABI, 'deposit', buyer, amount);
-  }
-
-  async depositWithOperator(signer: AbstractSigner, buyer: string, amount: bigint, nonce: bigint, buyerSig: string): Promise<string> {
+  async deposit(signer: AbstractSigner, buyer: string, amount: bigint, nonce: bigint, buyerSig: string): Promise<string> {
     return this._approveAndExec(signer, this._usdcAddress, amount, DEPOSITS_ABI, 'deposit', buyer, amount, nonce, buyerSig);
   }
 
@@ -92,10 +86,6 @@ export class DepositsClient extends BaseEvmClient {
   async getOperatorNonce(buyerAddr: string): Promise<bigint> {
     const contract = new Contract(this._contractAddress, DEPOSITS_ABI, this._provider);
     return contract.getFunction('getOperatorNonce')(buyerAddr) as Promise<bigint>;
-  }
-
-  async setOperator(signer: AbstractSigner, buyer: string, operator: string, nonce: bigint, buyerSig: string): Promise<string> {
-    return this._execWrite(signer, DEPOSITS_ABI, 'setOperator', buyer, operator, nonce, buyerSig);
   }
 
   async transferOperator(signer: AbstractSigner, buyer: string, newOperator: string): Promise<string> {

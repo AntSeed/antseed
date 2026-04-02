@@ -27,7 +27,7 @@ contract AntseedDeposits is EIP712, Ownable, ReentrancyGuard {
     IAntseedRegistry public registry;
 
     // ─── Configurable Constants ─────────────────────────────────────────
-    uint256 public MIN_BUYER_DEPOSIT = 10_000_000;
+    uint256 public MIN_BUYER_DEPOSIT = 5_000_000;
     uint256 public BASE_CREDIT_LIMIT = 50_000_000;
     uint256 public PEER_INTERACTION_BONUS = 5_000_000;
     uint256 public TIME_BONUS = 500_000;
@@ -110,16 +110,10 @@ contract AntseedDeposits is EIP712, Ownable, ReentrancyGuard {
         return limit;
     }
 
-    function deposit(address buyer, uint256 amount) external nonReentrant {
-        if (!_isOperator(buyer)) revert NotAuthorized();
-        _deposit(buyer, amount);
-    }
-
     /**
-     * @notice Deposit USDC and set the operator in a single transaction.
-     *         If the operator is already set, the signature is ignored and
-     *         the call behaves like the plain deposit(). This lets the first
-     *         deposit atomically authorize the operator.
+     * @notice Deposit USDC. On first call, sets msg.sender as operator using
+     *         the buyer's EIP-712 signature. On subsequent calls, pass empty
+     *         buyerSig (0x) — operator is already set.
      */
     function deposit(
         address buyer,
@@ -246,20 +240,6 @@ contract AntseedDeposits is EIP712, Ownable, ReentrancyGuard {
     // ═══════════════════════════════════════════════════════════════════
     //                        OPERATOR MANAGEMENT
     // ═══════════════════════════════════════════════════════════════════
-
-    /**
-     * @notice Set the initial operator for a buyer. Anyone can submit
-     *         this tx — authorization comes from the buyer's EIP-712 signature.
-     *         Can only be called when no operator is set yet.
-     */
-    function setOperator(
-        address buyer,
-        address operator,
-        uint256 nonce,
-        bytes calldata buyerSig
-    ) external {
-        _setOperator(buyer, operator, nonce, buyerSig);
-    }
 
     function _setOperator(
         address buyer,

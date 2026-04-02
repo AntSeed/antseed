@@ -24,16 +24,6 @@ const DEPOSITS_ABI = [
     inputs: [
       { name: 'buyer', type: 'address' },
       { name: 'amount', type: 'uint256' },
-    ],
-    outputs: [],
-  },
-  {
-    name: 'deposit',
-    type: 'function',
-    stateMutability: 'nonpayable',
-    inputs: [
-      { name: 'buyer', type: 'address' },
-      { name: 'amount', type: 'uint256' },
       { name: 'nonce', type: 'uint256' },
       { name: 'buyerSig', type: 'bytes' },
     ],
@@ -144,15 +134,14 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
       const depositsAddr = config.depositsContractAddress as `0x${string}`;
 
       const target = depositTarget as `0x${string}`;
-      const args = operatorSig
-        ? [target, usdcAmount, operatorSig.nonce, operatorSig.signature] as const
-        : [target, usdcAmount] as const;
+      const nonce = operatorSig?.nonce ?? 0n;
+      const sig = operatorSig?.signature ?? '0x' as `0x${string}`;
 
       writeDeposit({
         address: depositsAddr,
         abi: DEPOSITS_ABI,
         functionName: 'deposit',
-        args,
+        args: [target, usdcAmount, nonce, sig],
       }, {
         onError: (err) => {
           setStep('idle');

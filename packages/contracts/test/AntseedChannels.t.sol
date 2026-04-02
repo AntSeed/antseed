@@ -86,18 +86,17 @@ contract AntseedChannelsTest is Test {
 
         deposits.setCreditLimitOverride(addr, type(uint256).max);
 
-        // Set operator via EIP-712 signature
+        // Operator deposits USDC with inline operator auth (first deposit sets operator)
         uint256 nonce = deposits.getOperatorNonce(addr);
         bytes32 structHash = keccak256(abi.encode(deposits.SET_OPERATOR_TYPEHASH(), buyerOperator, nonce));
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", deposits.domainSeparator(), structHash));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digest);
-        deposits.setOperator(addr, buyerOperator, nonce, abi.encodePacked(r, s, v));
+        bytes memory operatorSig = abi.encodePacked(r, s, v);
 
-        // Operator deposits USDC on behalf of buyer
         usdc.mint(buyerOperator, depositAmount);
         vm.startPrank(buyerOperator);
         usdc.approve(address(deposits), depositAmount);
-        deposits.deposit(addr, depositAmount);
+        deposits.deposit(addr, depositAmount, nonce, operatorSig);
         vm.stopPrank();
     }
 
@@ -977,52 +976,67 @@ contract AntseedChannelsTest is Test {
         return abi.encodePacked(r, s, v);
     }
 
-    // NOTE: These are standalone operator tests — they don't use createBuyer/doReserve,
-    // so buyer starts with no operator (nonce 0).
+    // NOTE: These are standalone operator tests — they don't use createBuyer/doReserve.
+    // Operator is set via the first deposit() call.
 
-    function test_setOperator() public {
+    /// @dev Deposit with operator sig to set operator atomically.
+    function _depositAsOperator(address op, uint256 buyerPk, uint256 nonce) internal {
+        bytes memory sig = signSetOperator(buyerPk, op, nonce);
+        deposits.setCreditLimitOverride(vm.addr(buyerPk), type(uint256).max);
+        usdc.mint(op, USDC_100);
+        vm.startPrank(op);
+        usdc.approve(address(deposits), USDC_100);
+        deposits.deposit(vm.addr(buyerPk), USDC_100, nonce, sig);
+        vm.stopPrank();
+    }
+
+    function test_operatorSetViaDeposit() public {
         address op = address(0xABCDE1);
-        bytes memory sig = signSetOperator(BUYER_PK, op, 0);
-
-        deposits.setOperator(buyer, op, 0, sig);
+        _depositAsOperator(op, BUYER_PK, 0);
         assertEq(deposits.getOperator(buyer), op);
         assertEq(deposits.getOperatorNonce(buyer), 1);
     }
 
-    function test_setOperator_revert_wrongNonce() public {
+    function test_deposit_revert_wrongNonce() public {
         address op = address(0xABCDE1);
         bytes memory sig = signSetOperator(BUYER_PK, op, 1); // nonce should be 0
-
+        usdc.mint(op, USDC_100);
+        vm.startPrank(op);
+        usdc.approve(address(deposits), USDC_100);
         vm.expectRevert(AntseedDeposits.InvalidNonce.selector);
-        deposits.setOperator(buyer, op, 1, sig);
+        deposits.deposit(buyer, USDC_100, 1, sig);
+        vm.stopPrank();
     }
 
-    function test_setOperator_revert_wrongSigner() public {
+    function test_deposit_revert_wrongSigner() public {
         address op = address(0xABCDE1);
         bytes memory sig = signSetOperator(RANDOM_PK, op, 0); // wrong signer
-
+        usdc.mint(op, USDC_100);
+        vm.startPrank(op);
+        usdc.approve(address(deposits), USDC_100);
         vm.expectRevert(AntseedDeposits.InvalidSignature.selector);
-        deposits.setOperator(buyer, op, 0, sig);
+        deposits.deposit(buyer, USDC_100, 0, sig);
+        vm.stopPrank();
     }
 
-    function test_setOperator_revert_alreadySet() public {
-        address op1 = address(0xABCDE2);
+    function test_deposit_revert_operatorAlreadySet() public {
+        // First deposit sets operator
+        _depositAsOperator(address(0xABCDE2), BUYER_PK, 0);
+
+        // Second deposit with different operator sig — ignored since operator already set, but msg.sender must match
         address op2 = address(0xABCDE3);
-
-        bytes memory sig1 = signSetOperator(BUYER_PK, op1, 0);
-        deposits.setOperator(buyer, op1, 0, sig1);
-
-        bytes memory sig2 = signSetOperator(BUYER_PK, op2, 1);
-        vm.expectRevert(AntseedDeposits.OperatorAlreadySet.selector);
-        deposits.setOperator(buyer, op2, 1, sig2);
+        usdc.mint(op2, USDC_100);
+        vm.startPrank(op2);
+        usdc.approve(address(deposits), USDC_100);
+        vm.expectRevert(AntseedDeposits.NotAuthorized.selector);
+        deposits.deposit(buyer, USDC_100, 1, "");
+        vm.stopPrank();
     }
 
     function test_transferOperator() public {
         address op1 = address(0xABCDE2);
         address op2 = address(0xABCDE3);
-
-        bytes memory sig = signSetOperator(BUYER_PK, op1, 0);
-        deposits.setOperator(buyer, op1, 0, sig);
+        _depositAsOperator(op1, BUYER_PK, 0);
 
         vm.prank(op1);
         deposits.transferOperator(buyer, op2);
@@ -1031,8 +1045,7 @@ contract AntseedChannelsTest is Test {
 
     function test_transferOperator_revoke() public {
         address op = address(0xABCDE1);
-        bytes memory sig = signSetOperator(BUYER_PK, op, 0);
-        deposits.setOperator(buyer, op, 0, sig);
+        _depositAsOperator(op, BUYER_PK, 0);
 
         vm.prank(op);
         deposits.transferOperator(buyer, address(0));
@@ -1041,8 +1054,7 @@ contract AntseedChannelsTest is Test {
 
     function test_transferOperator_revert_notOperator() public {
         address op = address(0xABCDE1);
-        bytes memory sig = signSetOperator(BUYER_PK, op, 0);
-        deposits.setOperator(buyer, op, 0, sig);
+        _depositAsOperator(op, BUYER_PK, 0);
 
         vm.prank(randomUser);
         vm.expectRevert(AntseedDeposits.NotAuthorized.selector);
@@ -1053,18 +1065,22 @@ contract AntseedChannelsTest is Test {
         deposits.transferOperator(buyer, address(0xBEEF));
     }
 
-    function test_transferOperator_thenSetAgain() public {
+    function test_transferOperator_thenDepositSetsNewOperator() public {
         address op1 = address(0xABCDE2);
         address op2 = address(0xABCDE3);
+        _depositAsOperator(op1, BUYER_PK, 0);
 
-        bytes memory sig1 = signSetOperator(BUYER_PK, op1, 0);
-        deposits.setOperator(buyer, op1, 0, sig1);
-
+        // Revoke
         vm.prank(op1);
         deposits.transferOperator(buyer, address(0));
 
+        // New deposit sets new operator (nonce 1)
         bytes memory sig2 = signSetOperator(BUYER_PK, op2, 1);
-        deposits.setOperator(buyer, op2, 1, sig2);
+        usdc.mint(op2, USDC_100);
+        vm.startPrank(op2);
+        usdc.approve(address(deposits), USDC_100);
+        deposits.deposit(buyer, USDC_100, 1, sig2);
+        vm.stopPrank();
         assertEq(deposits.getOperator(buyer), op2);
     }
 
@@ -1122,15 +1138,4 @@ contract AntseedChannelsTest is Test {
         channels.requestClose(channelId);
     }
 
-    function test_operator_anyoneCanSubmitSetOperator() public {
-        // The tx can be submitted by anyone — auth comes from the buyer signature
-        address op = address(0xABCDE1);
-        bytes memory sig = signSetOperator(BUYER_PK, op, 0);
-
-        // Random user submits the tx
-        vm.prank(randomUser);
-        deposits.setOperator(buyer, op, 0, sig);
-
-        assertEq(deposits.getOperator(buyer), op);
-    }
 }
