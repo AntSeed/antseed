@@ -23,8 +23,8 @@ contract AntseedDepositsTest is Test {
     address public randomCaller = address(0x8);
     address public operator = address(0xAA);
 
-    uint256 constant MIN_DEPOSIT = 10_000_000; // 10 USDC
-    uint256 constant BASE_CREDIT = 50_000_000; // 50 USDC
+    uint256 constant MIN_DEPOSIT = 1_000_000; // 1 USDC
+    uint256 constant BASE_CREDIT = 10_000_000; // 10 USDC
 
     function setUp() public {
         owner = address(this);
@@ -52,6 +52,9 @@ contract AntseedDepositsTest is Test {
 
         // First deposit sets the operator atomically
         _deposit(buyer, MIN_DEPOSIT);
+
+        // Raise credit limit for test flexibility (credit limit tests clear this)
+        deposits.setCreditLimitOverride(buyer, type(uint256).max);
     }
 
     function _signOperator(uint256 buyerPk, address _operator) internal view returns (uint256 nonce, bytes memory sig) {
@@ -130,6 +133,7 @@ contract AntseedDepositsTest is Test {
     }
 
     function test_deposit_revert_exceedsCreditLimit() public {
+        deposits.setCreditLimitOverride(buyer, 0); // use formula-based limit
         vm.prank(operator);
         vm.expectRevert(AntseedDeposits.CreditLimitExceeded.selector);
         deposits.deposit(buyer, BASE_CREDIT + 1, 0, "");
@@ -216,13 +220,14 @@ contract AntseedDepositsTest is Test {
         (uint256 before,,) = deposits.getBuyerBalance(buyer);
 
         vm.prank(sessions);
-        deposits.lockForChannel(buyer, 5_000_000);
+        uint256 lockAmount = before / 2;
+        deposits.lockForChannel(buyer, lockAmount);
 
         (uint256 available, uint256 reserved, uint256 lastActivity) =
             deposits.getBuyerBalance(buyer);
 
-        assertEq(available, before - 5_000_000);
-        assertEq(reserved, 5_000_000);
+        assertEq(available, before - lockAmount);
+        assertEq(reserved, lockAmount);
         assertGt(lastActivity, 0);
     }
 
@@ -249,29 +254,29 @@ contract AntseedDepositsTest is Test {
     //                    getBuyerCreditLimit()
     // ═══════════════════════════════════════════════════════════════════
 
-    function test_creditLimit_baseForNewBuyer() public view {
+    function test_creditLimit_baseForNewBuyer() public {
+        deposits.setCreditLimitOverride(buyer, 0);
         uint256 limit = deposits.getBuyerCreditLimit(buyer);
         assertEq(limit, BASE_CREDIT);
     }
 
     function test_creditLimit_withUniqueSellersBonus() public {
-        _deposit(buyer, 30_000_000);
+        deposits.setCreditLimitOverride(buyer, 0);
         vm.prank(sessions);
-        deposits.lockForChannel(buyer, 10_000_000);
+        deposits.lockForChannel(buyer, MIN_DEPOSIT);
         vm.prank(sessions);
-        deposits.chargeAndCreditPayouts(buyer, seller, 5_000_000, 10_000_000, 0, protocolReserve);
+        deposits.chargeAndCreditPayouts(buyer, seller, MIN_DEPOSIT / 2, MIN_DEPOSIT, 0, protocolReserve);
 
         uint256 limit = deposits.getBuyerCreditLimit(buyer);
-        // BASE + 1 * PEER_INTERACTION_BONUS + time bonus (firstChannelAt just set)
         assertEq(limit, BASE_CREDIT + 5_000_000); // PEER_INTERACTION_BONUS = 5 USDC
     }
 
     function test_creditLimit_withTimeBonus() public {
-        _deposit(buyer, 30_000_000);
+        deposits.setCreditLimitOverride(buyer, 0);
         vm.prank(sessions);
-        deposits.lockForChannel(buyer, 10_000_000);
+        deposits.lockForChannel(buyer, MIN_DEPOSIT);
         vm.prank(sessions);
-        deposits.chargeAndCreditPayouts(buyer, seller, 5_000_000, 10_000_000, 0, protocolReserve);
+        deposits.chargeAndCreditPayouts(buyer, seller, MIN_DEPOSIT / 2, MIN_DEPOSIT, 0, protocolReserve);
 
         // Warp forward 30 days
         vm.warp(block.timestamp + 30 days);
@@ -284,13 +289,12 @@ contract AntseedDepositsTest is Test {
 
 
     function test_creditLimit_cappedAtMax() public {
-        // Set a huge override to verify the cap path — but override bypasses cap.
-        // Instead, we need to manipulate values so the computed limit exceeds MAX.
-        // Set BASE_CREDIT_LIMIT very high
+        deposits.setCreditLimitOverride(buyer, 0);
+        // Set BASE_CREDIT_LIMIT higher than MAX to trigger the cap
         deposits.setBaseCreditLimit(600_000_000);
 
         uint256 limit = deposits.getBuyerCreditLimit(buyer);
-        assertEq(limit, 500_000_000); // MAX_CREDIT_LIMIT
+        assertEq(limit, deposits.MAX_CREDIT_LIMIT());
     }
 
     function test_creditLimit_override() public {

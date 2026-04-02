@@ -356,8 +356,8 @@ contract AntseedChannelsTest is Test {
         assertEq(sSettled, USDC_60);
         assertGt(sSettledAt, 0);
 
-        // Platform fee = 60 * 500 / 10000 = 3 USDC
-        uint256 platformFee = (uint256(USDC_60) * 500) / 10000;
+        // Platform fee = 60 * 200 / 10000 = 3 USDC
+        uint256 platformFee = (uint256(USDC_60) * 200) / 10000;
         uint256 sellerPayout = uint256(USDC_60) - platformFee;
         assertEq(deposits.sellerPayouts(seller), sellerPayout);
 
@@ -471,7 +471,7 @@ contract AntseedChannelsTest is Test {
         assertEq(sSettled, USDC_30);
 
         // Seller payouts credited for first settle
-        uint256 fee1 = (uint256(USDC_30) * 500) / 10000;
+        uint256 fee1 = (uint256(USDC_30) * 200) / 10000;
         uint256 payout1 = uint256(USDC_30) - fee1;
         assertEq(deposits.sellerPayouts(seller), payout1);
     }
@@ -501,7 +501,7 @@ contract AntseedChannelsTest is Test {
 
         // Total seller payouts = payout from 30 (settle) + payout from delta 30 (close)
         // Each delta of 30 has its own fee: 30 * 500/10000 = 1.5 USDC per delta
-        uint256 fee30 = (uint256(USDC_30) * 500) / 10000;
+        uint256 fee30 = (uint256(USDC_30) * 200) / 10000;
         uint256 expectedPayouts = (uint256(USDC_30) - fee30) * 2; // two deltas of 30
         assertEq(deposits.sellerPayouts(seller), expectedPayouts);
 
@@ -648,7 +648,7 @@ contract AntseedChannelsTest is Test {
         bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
 
         uint128 chargeAmount = USDC_60;
-        uint256 expectedPlatformFee = (uint256(chargeAmount) * 500) / 10000; // 3 USDC
+        uint256 expectedPlatformFee = (uint256(chargeAmount) * 200) / 10000; // 3 USDC
         uint256 expectedSellerPayout = uint256(chargeAmount) - expectedPlatformFee; // 57 USDC
 
         bytes memory metaSig = signSpendingAuth(BUYER_PK, channelId, chargeAmount, 0, 0);

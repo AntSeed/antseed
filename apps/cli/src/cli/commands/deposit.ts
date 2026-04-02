@@ -7,7 +7,9 @@ import {
   createDepositsClient,
   loadCryptoContext,
   parseUsdcToBaseUnits,
+  requireCryptoConfig,
 } from '../payment-utils.js';
+import { signSetOperator, makeDepositsDomain, resolveChainConfig } from '@antseed/node';
 
 export function registerDepositCommand(program: Command): void {
   program
@@ -27,6 +29,8 @@ export function registerDepositCommand(program: Command): void {
 
       const { wallet, address } = await loadCryptoContext(globalOpts.dataDir);
       const depositsClient = createDepositsClient(config);
+      const crypto = requireCryptoConfig(config);
+      const chainConfig = resolveChainConfig({ chainId: crypto.chainId });
 
       const amountFloat = parseFloat(amount);
       console.log(chalk.dim(`Wallet: ${address}`));
@@ -35,7 +39,18 @@ export function registerDepositCommand(program: Command): void {
       const spinner = ora('Depositing USDC into deposits contract...').start();
 
       try {
-        const txHash = await depositsClient.deposit(wallet, address, amountBaseUnits);
+        // Check if operator needs to be set (first deposit)
+        const currentOperator = await depositsClient.getOperator(address);
+        let nonce = 0n;
+        let buyerSig = '0x';
+
+        if (currentOperator === '0x0000000000000000000000000000000000000000') {
+          nonce = await depositsClient.getOperatorNonce(address);
+          const domain = makeDepositsDomain(chainConfig.evmChainId, crypto.depositsContractAddress);
+          buyerSig = await signSetOperator(wallet, domain, { operator: address, nonce });
+        }
+
+        const txHash = await depositsClient.deposit(wallet, address, amountBaseUnits, nonce, buyerSig);
         spinner.succeed(chalk.green(`Deposited ${amountFloat} USDC into deposits contract`));
         console.log(chalk.dim(`Transaction: ${txHash}`));
       } catch (err) {

@@ -83,7 +83,7 @@ contract AntseedEmissionsTest is Test {
         assertEq(emissions.BUYER_SHARE_PCT(), 20);
         assertEq(emissions.RESERVE_SHARE_PCT(), 15);
         assertEq(emissions.TEAM_SHARE_PCT(), 15);
-        assertEq(emissions.MAX_SELLER_SHARE_PCT(), 15);
+        assertEq(emissions.MAX_SELLER_SHARE_PCT(), 49);
         assertEq(emissions.HALVING_INTERVAL(), 26);
         assertEq(emissions.currentEmissionRate(), INITIAL_EMISSION / EPOCH_DURATION);
     }
@@ -167,7 +167,7 @@ contract AntseedEmissionsTest is Test {
         vm.warp(block.timestamp + EPOCH_DURATION);
 
         uint256 sellerBudget = (INITIAL_EMISSION * 50) / 100;
-        uint256 maxPerSeller = (sellerBudget * 15) / 100;
+        uint256 maxPerSeller = (sellerBudget * 49) / 100;
         uint256 expected = sellerBudget > maxPerSeller ? maxPerSeller : sellerBudget;
 
         vm.prank(seller1);
@@ -271,7 +271,7 @@ contract AntseedEmissionsTest is Test {
         vm.warp(block.timestamp + EPOCH_DURATION);
 
         uint256 sellerBudget = (INITIAL_EMISSION * 50) / 100;
-        uint256 maxPerSeller = (sellerBudget * 15) / 100;
+        uint256 maxPerSeller = (sellerBudget * 49) / 100;
 
         uint256 raw1 = (300 * sellerBudget) / 400;
         uint256 raw2 = (100 * sellerBudget) / 400;
@@ -328,7 +328,7 @@ contract AntseedEmissionsTest is Test {
 
         // seller2 gets full epoch 1 seller budget (capped)
         uint256 sellerBudget = (INITIAL_EMISSION * 50) / 100;
-        uint256 maxPerSeller = (sellerBudget * 15) / 100;
+        uint256 maxPerSeller = (sellerBudget * 49) / 100;
         uint256 expected = sellerBudget > maxPerSeller ? maxPerSeller : sellerBudget;
 
         vm.prank(seller2);
@@ -393,7 +393,7 @@ contract AntseedEmissionsTest is Test {
         vm.warp(block.timestamp + EPOCH_DURATION);
 
         uint256 sellerBudget = (INITIAL_EMISSION * 50) / 100;
-        uint256 maxPerSeller = (sellerBudget * 15) / 100;
+        uint256 maxPerSeller = (sellerBudget * 49) / 100;
 
         vm.prank(seller1);
         emissions.claimSellerEmissions(_epochList(0));
