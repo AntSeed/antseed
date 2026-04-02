@@ -587,13 +587,13 @@ async function main() {
       info(`Session query: ${err.message} (may not be on-chain yet if reserve is pending)`);
     }
 
-    // Check seller active session count via staking
-    const sellerAccountRaw = castCall([
+    // Check seller stake
+    const sellerStake = castCall([
       STAKING_ADDRESS,
-      "getSellerAccount(address)(uint256,uint256)",
+      "getStake(address)(uint256)",
       sellerAddress,
     ]);
-    info(`Seller staking account: ${sellerAccountRaw}`);
+    info(`Seller stake: ${sellerStake}`);
     pass("On-chain state verified");
     record("7-onchain-verify", true);
 
