@@ -111,9 +111,33 @@ contract AntseedDeposits is EIP712, Ownable, ReentrancyGuard {
     }
 
     function deposit(address buyer, uint256 amount) external nonReentrant {
+        if (!_isOperator(buyer)) revert NotAuthorized();
+        _deposit(buyer, amount);
+    }
+
+    /**
+     * @notice Deposit USDC and set the operator in a single transaction.
+     *         If the operator is already set, the signature is ignored and
+     *         the call behaves like the plain deposit(). This lets the first
+     *         deposit atomically authorize the operator.
+     */
+    function deposit(
+        address buyer,
+        uint256 amount,
+        uint256 nonce,
+        bytes calldata buyerSig
+    ) external nonReentrant {
+        BuyerAccount storage ba = buyers[buyer];
+        if (ba.operator == address(0)) {
+            _setOperator(buyer, msg.sender, nonce, buyerSig);
+        }
+        if (!_isOperator(buyer)) revert NotAuthorized();
+        _deposit(buyer, amount);
+    }
+
+    function _deposit(address buyer, uint256 amount) internal {
         if (amount == 0) revert InvalidAmount();
         BuyerAccount storage ba = buyers[buyer];
-        if (!_isOperator(buyer)) revert NotAuthorized();
         if (ba.balance == 0 && amount < MIN_BUYER_DEPOSIT) revert BelowMinDeposit();
         if (ba.balance + amount > getBuyerCreditLimit(buyer)) revert CreditLimitExceeded();
 
@@ -234,6 +258,15 @@ contract AntseedDeposits is EIP712, Ownable, ReentrancyGuard {
         uint256 nonce,
         bytes calldata buyerSig
     ) external {
+        _setOperator(buyer, operator, nonce, buyerSig);
+    }
+
+    function _setOperator(
+        address buyer,
+        address operator,
+        uint256 nonce,
+        bytes calldata buyerSig
+    ) internal {
         if (buyer == address(0) || operator == address(0)) revert InvalidAddress();
         BuyerAccount storage ba = buyers[buyer];
         if (ba.operator != address(0)) revert OperatorAlreadySet();

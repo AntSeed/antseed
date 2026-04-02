@@ -6,10 +6,8 @@ import {
   useWaitForTransactionReceipt,
 } from 'wagmi';
 import { parseUnits } from 'viem';
-import { parseAbi } from 'viem';
 import type { PaymentConfig } from '../types';
 import { getOperatorInfo, signOperatorAuth } from '../api';
-import { DEPOSITS_OPERATOR_ABI } from '../channels-abi';
 import './DepositView.scss';
 
 interface DepositViewProps {
@@ -26,6 +24,18 @@ const DEPOSITS_ABI = [
     inputs: [
       { name: 'buyer', type: 'address' },
       { name: 'amount', type: 'uint256' },
+    ],
+    outputs: [],
+  },
+  {
+    name: 'deposit',
+    type: 'function',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'buyer', type: 'address' },
+      { name: 'amount', type: 'uint256' },
+      { name: 'nonce', type: 'uint256' },
+      { name: 'buyerSig', type: 'bytes' },
     ],
     outputs: [],
   },
@@ -96,25 +106,16 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
 }) {
   const { address, isConnected, chain } = useAccount();
   const [amount, setAmount] = useState('10');
-  const [step, setStep] = useState<'idle' | 'setting-operator' | 'approving' | 'depositing' | 'done'>('idle');
+  const [step, setStep] = useState<'idle' | 'approving' | 'depositing' | 'done'>('idle');
   const [error, setError] = useState<string | null>(null);
+  // Stash operator sig for use in the deposit tx
+  const [operatorSig, setOperatorSig] = useState<{ nonce: bigint; signature: `0x${string}` } | null>(null);
 
   const expectedChainId = config?.evmChainId;
   const wrongChain = isConnected && chain && expectedChainId && chain.id !== expectedChainId;
-  const depositTarget = buyerAddress ?? address; // Use identity address if available, fallback to wallet
+  const depositTarget = buyerAddress ?? address;
 
-  // Step 1: Set operator (if needed)
-  const {
-    writeContract: writeOperator,
-    data: operatorTxHash,
-    reset: resetOperator,
-  } = useWriteContract();
-
-  const { isSuccess: operatorConfirmed } = useWaitForTransactionReceipt({
-    hash: operatorTxHash,
-  });
-
-  // Step 2: Approve USDC
+  // Step 1: Approve USDC
   const {
     writeContract: writeApprove,
     data: approveTxHash,
@@ -125,7 +126,7 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
     hash: approveTxHash,
   });
 
-  // Step 3: Deposit
+  // Step 2: Deposit (plain or with operator sig)
   const {
     writeContract: writeDeposit,
     data: depositTxHash,
@@ -136,9 +137,78 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
     hash: depositTxHash,
   });
 
-  // When operator tx confirms, proceed to approve
+  // When approve confirms, trigger deposit
   useEffect(() => {
-    if (operatorConfirmed && step === 'setting-operator' && config && address) {
+    if (approveConfirmed && step === 'approving' && config && depositTarget) {
+      setStep('depositing');
+      const usdcAmount = parseUnits(amount, 6);
+      const depositsAddr = config.depositsContractAddress as `0x${string}`;
+
+      if (operatorSig) {
+        // First deposit — include operator signature
+        writeDeposit({
+          address: depositsAddr,
+          abi: DEPOSITS_ABI,
+          functionName: 'deposit',
+          args: [depositTarget as `0x${string}`, usdcAmount, operatorSig.nonce, operatorSig.signature],
+        }, {
+          onError: (err) => {
+            setStep('idle');
+            setError(err.message.split('\n')[0] ?? err.message);
+          },
+        });
+      } else {
+        // Operator already set — plain deposit
+        writeDeposit({
+          address: depositsAddr,
+          abi: DEPOSITS_ABI,
+          functionName: 'deposit',
+          args: [depositTarget as `0x${string}`, usdcAmount],
+        }, {
+          onError: (err) => {
+            setStep('idle');
+            setError(err.message.split('\n')[0] ?? err.message);
+          },
+        });
+      }
+    }
+  }, [approveConfirmed, step, config, depositTarget, amount, operatorSig, writeDeposit]);
+
+  // When deposit confirms, show success
+  useEffect(() => {
+    if (depositConfirmed && step === 'depositing') {
+      setStep('done');
+      setOperatorSig(null);
+      onDeposited();
+    }
+  }, [depositConfirmed, step, onDeposited]);
+
+  const handleDeposit = useCallback(async () => {
+    if (!address || !amount || parseFloat(amount) <= 0 || !config || !depositTarget) return;
+
+    setError(null);
+    setOperatorSig(null);
+    resetApprove();
+    resetDeposit();
+
+    try {
+      // Check if operator needs to be set — if so, get buyer's signature
+      const opInfo = await getOperatorInfo();
+      const zeroAddr = '0x0000000000000000000000000000000000000000';
+
+      if (opInfo.operator === zeroAddr) {
+        const signResult = await signOperatorAuth(address);
+        if (!signResult.ok) {
+          setError('Failed to sign operator authorization');
+          return;
+        }
+        setOperatorSig({
+          nonce: BigInt(signResult.nonce),
+          signature: signResult.signature as `0x${string}`,
+        });
+      }
+
+      // Start approve → deposit chain
       setStep('approving');
       const usdcAmount = parseUnits(amount, 6);
       writeApprove({
@@ -152,100 +222,20 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
           setError(err.message.split('\n')[0] ?? err.message);
         },
       });
-    }
-  }, [operatorConfirmed, step, config, address, amount, writeApprove]);
-
-  // When approve confirms, trigger deposit
-  useEffect(() => {
-    if (approveConfirmed && step === 'approving' && config && depositTarget) {
-      setStep('depositing');
-      const usdcAmount = parseUnits(amount, 6);
-      writeDeposit({
-        address: config.depositsContractAddress as `0x${string}`,
-        abi: DEPOSITS_ABI,
-        functionName: 'deposit',
-        args: [depositTarget as `0x${string}`, usdcAmount],
-      }, {
-        onError: (err) => {
-          setStep('idle');
-          setError(err.message.split('\n')[0] ?? err.message);
-        },
-      });
-    }
-  }, [approveConfirmed, step, config, depositTarget, amount, writeDeposit]);
-
-  // When deposit confirms, show success
-  useEffect(() => {
-    if (depositConfirmed && step === 'depositing') {
-      setStep('done');
-      onDeposited();
-    }
-  }, [depositConfirmed, step, onDeposited]);
-
-  const handleDeposit = useCallback(async () => {
-    if (!address || !amount || parseFloat(amount) <= 0 || !config || !depositTarget) return;
-
-    setError(null);
-    resetOperator();
-    resetApprove();
-    resetDeposit();
-
-    try {
-      // Check if operator is already set
-      const opInfo = await getOperatorInfo();
-      const zeroAddr = '0x0000000000000000000000000000000000000000';
-      const needsOperator = opInfo.operator === zeroAddr;
-
-      if (needsOperator) {
-        // Buyer signs EIP-712 SetOperator, then we submit the tx
-        setStep('setting-operator');
-        const signResult = await signOperatorAuth(address);
-        if (!signResult.ok) {
-          setStep('idle');
-          setError('Failed to sign operator authorization');
-          return;
-        }
-        writeOperator({
-          address: config.depositsContractAddress as `0x${string}`,
-          abi: parseAbi(DEPOSITS_OPERATOR_ABI),
-          functionName: 'setOperator',
-          args: [signResult.buyer as `0x${string}`, address as `0x${string}`, BigInt(signResult.nonce), signResult.signature as `0x${string}`],
-        }, {
-          onError: (err) => {
-            setStep('idle');
-            setError(err.message.split('\n')[0] ?? err.message);
-          },
-        });
-      } else {
-        // Operator already set — go straight to approve
-        setStep('approving');
-        const usdcAmount = parseUnits(amount, 6);
-        writeApprove({
-          address: config.usdcContractAddress as `0x${string}`,
-          abi: ERC20_ABI,
-          functionName: 'approve',
-          args: [config.depositsContractAddress as `0x${string}`, usdcAmount],
-        }, {
-          onError: (err) => {
-            setStep('idle');
-            setError(err.message.split('\n')[0] ?? err.message);
-          },
-        });
-      }
     } catch (err) {
       setStep('idle');
-      setError(err instanceof Error ? err.message : 'Failed to check operator status');
+      setError(err instanceof Error ? err.message : 'Failed to prepare deposit');
     }
-  }, [address, amount, config, depositTarget, writeOperator, writeApprove, resetOperator, resetApprove, resetDeposit]);
+  }, [address, amount, config, depositTarget, writeApprove, resetApprove, resetDeposit]);
 
   const resetForm = useCallback(() => {
     setStep('idle');
     setError(null);
     setAmount('10');
-    resetOperator();
+    setOperatorSig(null);
     resetApprove();
     resetDeposit();
-  }, [resetOperator, resetApprove, resetDeposit]);
+  }, [resetApprove, resetDeposit]);
 
   return (
     <div className="deposit-form">
@@ -312,8 +302,7 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
             onClick={handleDeposit}
             disabled={step !== 'idle' || !amount || parseFloat(amount) <= 0 || !config}
           >
-            {step === 'setting-operator' ? 'Authorizing operator...' :
-             step === 'approving' ? 'Approving USDC...' :
+            {step === 'approving' ? 'Approving USDC...' :
              step === 'depositing' ? 'Depositing...' :
              'Deposit USDC'}
           </button>

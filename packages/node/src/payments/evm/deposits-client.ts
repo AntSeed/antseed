@@ -16,6 +16,7 @@ export interface BuyerBalanceInfo {
 
 const DEPOSITS_ABI = [
   'function deposit(address buyer, uint256 amount) external',
+  'function deposit(address buyer, uint256 amount, uint256 nonce, bytes buyerSig) external',
   'function withdraw(address buyer, uint256 amount) external',
   'function claimPayouts() external',
   'function getBuyerBalance(address buyer) external view returns (uint256 available, uint256 reserved, uint256 lastActivityAt)',
@@ -43,6 +44,10 @@ export class DepositsClient extends BaseEvmClient {
 
   async deposit(signer: AbstractSigner, buyer: string, amount: bigint): Promise<string> {
     return this._approveAndExec(signer, this._usdcAddress, amount, DEPOSITS_ABI, 'deposit', buyer, amount);
+  }
+
+  async depositWithOperator(signer: AbstractSigner, buyer: string, amount: bigint, nonce: bigint, buyerSig: string): Promise<string> {
+    return this._approveAndExec(signer, this._usdcAddress, amount, DEPOSITS_ABI, 'deposit', buyer, amount, nonce, buyerSig);
   }
 
   async withdraw(signer: AbstractSigner, buyer: string, amount: bigint): Promise<string> {
