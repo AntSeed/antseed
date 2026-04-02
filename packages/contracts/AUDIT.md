@@ -105,7 +105,7 @@ Once `setOperator` is called, there is no way to remove the operator (set back t
 
 ---
 
-### H4. `transferOperator` has no buyer consent
+### ~~H4. `transferOperator` has no buyer consent~~ — ACCEPTED
 
 **File:** `AntseedDeposits.sol:255-260`
 
