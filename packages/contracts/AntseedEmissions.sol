@@ -109,7 +109,7 @@ contract AntseedEmissions is Ownable, Pausable, ReentrancyGuard {
         BUYER_SHARE_PCT = 20;
         RESERVE_SHARE_PCT = 15;
         TEAM_SHARE_PCT = 15;
-        MAX_SELLER_SHARE_PCT = 15;
+        MAX_SELLER_SHARE_PCT = 49;
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -322,9 +322,12 @@ contract AntseedEmissions is Ownable, Pausable, ReentrancyGuard {
     }
 
     function setTeamWallet(address _teamWallet) external onlyOwner {
+        if (_teamWallet == address(0)) revert InvalidAddress();
         teamWallet = _teamWallet;
     }
 
+    /// @notice Set the per-seller cap as a percentage of the seller budget.
+    ///         Setting to 0 redirects all seller emissions to reserve — use as emergency pause.
     function setMaxSellerSharePct(uint256 value) external onlyOwner {
         if (value > 100) revert InvalidValue();
         MAX_SELLER_SHARE_PCT = value;

@@ -42,7 +42,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
 
     // ─── Configurable Constants ─────────────────────────────────────
     uint256 public FIRST_SIGN_CAP = 1_000_000;
-    uint256 public PLATFORM_FEE_BPS = 500;
+    uint256 public PLATFORM_FEE_BPS = 200;
     uint256 public MAX_PLATFORM_FEE_BPS = 1000;
     uint256 public TIMEOUT_GRACE_PERIOD = 15 minutes;
 
@@ -277,18 +277,14 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
 
     /**
      * @notice Close the channel with a final settlement.
-     *         Seller earnings and buyer refund are sent to Deposits.
-     *
-     * @param channelId    Channel ID
-     * @param finalAmount  Final cumulative USDC amount
-     * @param metadata     ABI-encoded (inputTokens, outputTokens, latencyMs, requestCount)
-     * @param buyerSig     Buyer's SpendingAuth EIP-712 signature
-     */
-    /**
-     * @notice Close the channel with a final settlement.
      *         If finalAmount == channel.settled, no signature is required —
      *         the seller can close without a new SpendingAuth (forfeiting
      *         any unproven spend). Otherwise a buyer SpendingAuth is verified.
+     *
+     * @param channelId    Channel ID
+     * @param finalAmount  Final cumulative USDC amount
+     * @param metadata     ABI-encoded (version, inputTokens, outputTokens, latencyMs, requestCount)
+     * @param buyerSig     Buyer's SpendingAuth EIP-712 signature (ignored when finalAmount == channel.settled)
      */
     function close(
         bytes32 channelId,
