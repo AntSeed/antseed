@@ -76,19 +76,21 @@ The owner can change reward splits after an epoch has finished but before users 
 
 ---
 
-### H2. Channel deadline not enforced on settlement — liveness/fund-lock risk
+### H2. No permissionless channel timeout — liveness/fund-lock risk
 
-**File:** `AntseedChannels.sol:260-331`
+**File:** `AntseedChannels.sol`
 
-`reserve()` stores a `deadline` and `topUp()` updates it, but the actual settlement path does not enforce it: `settle()` and `close()` do not check `channel.deadline`. The timeout flow is operator-driven (`requestClose` / `withdraw`), not a permissionless deadline-based timeout. The CLAUDE.md describes deadline-based timeout behavior, but the contract does not implement it.
+The `deadline` field is correctly used as a **reserve authorization limit** — the buyer signs a ReserveAuth valid until the deadline, and `reserve()`/`topUp()` enforce it. It is intentionally NOT checked on `settle()`/`close()` because the seller should always be able to collect earned funds regardless of time.
 
-If a buyer/operator disappears or never calls `requestClose`, reserved funds remain locked indefinitely. The seller also cannot unstake because `AntseedStaking.unstake()` blocks when `activeChannelCount(msg.sender) > 0`.
+However, closing a channel requires either:
+- The **seller** calling `settle()`/`close()` with a buyer-signed SpendingAuth, or
+- The **buyer's operator** calling `requestClose()` + `withdraw()` after grace period
 
-**Impact:** Permanent fund lock for both buyer (reserved USDC) and seller (staked USDC). Real liveness issue for both sides.
+There is no **permissionless** fallback. If the buyer's operator disappears and the seller has no SpendingAuth to submit, reserved funds remain locked indefinitely. The seller also cannot unstake because `AntseedStaking.unstake()` blocks when `activeChannelCount(msg.sender) > 0`.
 
-**Recommendation:** Either:
-- Enforce `channel.deadline` inside `settle`/`close` and add a permissionless timeout path (anyone can trigger after deadline + grace), OR
-- Remove the `deadline` field entirely and document that channels are buyer-operator-closed only.
+**Impact:** Permanent fund lock for both buyer (reserved USDC) and seller (staked USDC) if buyer operator is lost.
+
+**Recommendation:** Add a permissionless timeout path: anyone can call `forceClose(channelId)` after a long period (e.g., 30 days) past the stored deadline. This releases remaining reserved funds to the buyer and decrements the seller's `activeChannelCount`, allowing unstake. No SpendingAuth or operator required.
 
 ---
 
