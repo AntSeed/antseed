@@ -125,7 +125,7 @@ contract AntseedChannelsTest is Test {
         uint256 cumulativeInputTokens,
         uint256 cumulativeOutputTokens
     ) internal view returns (bytes memory) {
-        bytes32 metadataHash = keccak256(abi.encode(cumulativeInputTokens, cumulativeOutputTokens, uint256(0), uint256(0)));
+        bytes32 metadataHash = keccak256(abi.encode(METADATA_VERSION, cumulativeInputTokens, cumulativeOutputTokens, uint256(0), uint256(0)));
         bytes32 structHash = keccak256(
             abi.encode(
                 SPENDING_AUTH_TYPEHASH,
@@ -161,11 +161,13 @@ contract AntseedChannelsTest is Test {
         return abi.encodePacked(r, s, v);
     }
 
+    uint256 constant METADATA_VERSION = 1;
+
     function encodeMetadata(
         uint256 cumulativeInputTokens,
         uint256 cumulativeOutputTokens
     ) internal pure returns (bytes memory) {
-        return abi.encode(cumulativeInputTokens, cumulativeOutputTokens, uint256(0), uint256(0));
+        return abi.encode(METADATA_VERSION, cumulativeInputTokens, cumulativeOutputTokens, uint256(0), uint256(0));
     }
 
     function _hashTypedDataChannels(bytes32 structHash) internal view returns (bytes32) {
