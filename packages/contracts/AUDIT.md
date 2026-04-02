@@ -142,7 +142,7 @@ Previously `_recordCloseStats` added the full cumulative amount to `totalVolumeU
 
 ## Medium Severity
 
-### M1. Channel lifecycle is not state-machine safe
+### ~~M1. Channel lifecycle is not state-machine safe~~ — ACCEPTED
 
 **File:** `AntseedChannels.sol`
 
