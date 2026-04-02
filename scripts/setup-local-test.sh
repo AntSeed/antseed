@@ -101,7 +101,7 @@ DOMAIN_SEP=$(cast call --rpc-url $RPC $DEPOSITS "domainSeparator()(bytes32)")
 TYPEHASH=$(cast keccak "SetOperator(address operator,uint256 nonce)")
 STRUCT_HASH=$(cast keccak $(cast abi-encode "f(bytes32,address,uint256)" $TYPEHASH $BUYER_ADDR 0))
 DIGEST=$(cast keccak $(cast concat-hex 0x1901 $DOMAIN_SEP $STRUCT_HASH))
-SIG=$(cast wallet sign --private-key $BUYER_KEY $DIGEST)
+SIG=$(cast wallet sign --no-hash --private-key $BUYER_KEY $DIGEST)
 cast send --rpc-url $RPC --private-key $BUYER_KEY $DEPOSITS "setOperator(address,address,uint256,bytes)" $BUYER_ADDR $BUYER_ADDR 0 $SIG > /dev/null
 echo "Done"
 
