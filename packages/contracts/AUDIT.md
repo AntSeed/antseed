@@ -84,9 +84,9 @@ The `deadline` field is correctly used as a **reserve authorization limit** — 
 
 Previously, closing a channel required either a buyer-signed SpendingAuth or the buyer's operator. If the buyer operator disappeared and the seller had no SpendingAuth, funds were locked indefinitely.
 
-**Fix:** Added `abandon(channelId)` — seller can close any channel without a SpendingAuth. No additional charge; remaining reserved USDC is released back to the buyer. This unblocks the seller's `activeChannelCount` so they can unstake.
+**Fix:** `close()` now skips signature verification when `finalAmount == channel.settled` (no new spend to prove). The seller can close any channel without a SpendingAuth by passing `finalAmount = settled` — remaining reserved USDC is released to the buyer. Matches Tempo StreamChannel's `close()` behavior. This unblocks the seller's `activeChannelCount` so they can unstake.
 
-**Remaining risk:** If the buyer's operator is lost and the seller also disappears, buyer funds stay locked. A fully permissionless timeout (callable by anyone after a long period) would address this edge case.
+**Remaining risk:** If the buyer's operator is lost and the seller also disappears, buyer funds stay locked. A fully permissionless timeout (callable by anyone after a long period) would address this edge case. Tempo has the same limitation.
 
 ---
 

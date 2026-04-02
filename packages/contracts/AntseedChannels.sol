@@ -298,6 +298,12 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
      * @param metadata     ABI-encoded (inputTokens, outputTokens, latencyMs, requestCount)
      * @param buyerSig     Buyer's SpendingAuth EIP-712 signature
      */
+    /**
+     * @notice Close the channel with a final settlement.
+     *         If finalAmount == channel.settled, no signature is required —
+     *         the seller can close without a new SpendingAuth (forfeiting
+     *         any unproven spend). Otherwise a buyer SpendingAuth is verified.
+     */
     function close(
         bytes32 channelId,
         uint128 finalAmount,
@@ -310,16 +316,20 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         if (finalAmount < channel.settled) revert FinalAmountBelowSettled();
         if (finalAmount > channel.deposit) revert InvalidAmount();
 
-        bytes32 metadataHash = keccak256(metadata);
-        _verifySpendingAuth(channelId, finalAmount, metadataHash, channel.buyer, buyerSig);
-
         uint128 delta = finalAmount - channel.settled;
+
+        // Only verify signature if there's a new amount to prove
+        if (delta > 0) {
+            bytes32 metadataHash = keccak256(metadata);
+            _verifySpendingAuth(channelId, finalAmount, metadataHash, channel.buyer, buyerSig);
+            channel.metadataHash = metadataHash;
+        }
+
         // Release all remaining reserved: charge delta, un-reserve everything
         uint128 remainingReserved = channel.deposit - channel.settled;
         uint256 platformFee = _chargeAndSettle(channel, delta, remainingReserved);
 
         channel.settled = finalAmount;
-        channel.metadataHash = metadataHash;
         channel.settledAt = block.timestamp;
         channel.status = ChannelStatus.Settled;
         activeChannelCount[channel.seller]--;
@@ -328,37 +338,6 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         _recordEmissions(channel, delta);
 
         emit ChannelClosed(channelId, channel.seller, finalAmount, platformFee);
-    }
-
-    /**
-     * @notice Seller abandons the channel without a new SpendingAuth.
-     *         No additional charge — releases all remaining reserved USDC
-     *         back to the buyer. The seller forfeits any unproven spend.
-     */
-    function abandon(bytes32 channelId) external nonReentrant whenNotPaused {
-        Channel storage channel = channels[channelId];
-        if (channel.status != ChannelStatus.Active) revert ChannelNotActive();
-        if (msg.sender != channel.seller) revert NotAuthorized();
-
-        uint128 remainingReserved = channel.deposit - channel.settled;
-        if (remainingReserved > 0) {
-            IAntseedDeposits(registry.deposits()).releaseLock(channel.buyer, remainingReserved);
-        }
-
-        channel.settledAt = block.timestamp;
-        channel.status = ChannelStatus.Settled;
-        activeChannelCount[channel.seller]--;
-
-        // Record stats without metadata (no new SpendingAuth was provided)
-        uint256 agentId = IAntseedStaking(registry.staking()).getAgentId(channel.seller);
-        if (agentId != 0) {
-            AgentStats storage s = _agentStats[agentId];
-            s.channelCount++;
-            s.totalVolumeUsdc += channel.settled;
-            s.lastSettledAt = uint64(block.timestamp);
-        }
-
-        emit ChannelClosed(channelId, channel.seller, channel.settled, 0);
     }
 
     // ═══════════════════════════════════════════════════════════════════
