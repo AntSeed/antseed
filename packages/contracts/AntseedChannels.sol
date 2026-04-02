@@ -78,8 +78,8 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
 
     // ─── Events ─────────────────────────────────────────────────────
     event Reserved(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint128 maxAmount);
-    event ChannelSettled(bytes32 indexed channelId, address indexed seller, uint128 cumulativeAmount, uint256 platformFee);
-    event ChannelClosed(bytes32 indexed channelId, address indexed seller, uint128 finalAmount, uint256 platformFee);
+    event ChannelSettled(bytes32 indexed channelId, address indexed seller, uint128 cumulativeAmount, uint256 platformFee, bytes metadata);
+    event ChannelClosed(bytes32 indexed channelId, address indexed seller, uint128 finalAmount, uint256 platformFee, bytes metadata);
     event ChannelTopUp(bytes32 indexed channelId, address indexed buyer, uint128 newMaxAmount);
     event CloseRequested(bytes32 indexed channelId, address indexed buyer);
     event ChannelWithdrawn(bytes32 indexed channelId, address indexed buyer);
@@ -268,7 +268,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         _recordSettleStats(channel, delta);
         _recordEmissions(channel, delta);
 
-        emit ChannelSettled(channelId, channel.seller, cumulativeAmount, platformFee);
+        emit ChannelSettled(channelId, channel.seller, cumulativeAmount, platformFee, metadata);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -324,7 +324,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         _recordChannelComplete(channel);
         _recordEmissions(channel, delta);
 
-        emit ChannelClosed(channelId, channel.seller, finalAmount, platformFee);
+        emit ChannelClosed(channelId, channel.seller, finalAmount, platformFee, metadata);
     }
 
     // ═══════════════════════════════════════════════════════════════════
