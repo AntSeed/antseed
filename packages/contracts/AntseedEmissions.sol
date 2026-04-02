@@ -37,6 +37,16 @@ contract AntseedEmissions is Ownable, Pausable, ReentrancyGuard {
     uint256 public RESERVE_SHARE_PCT;
     uint256 public MAX_SELLER_SHARE_PCT;
 
+    // ─── Per-Epoch Params (snapshotted on first touch) ───
+    struct EpochParams {
+        uint256 sellerSharePct;
+        uint256 buyerSharePct;
+        uint256 reserveSharePct;
+        uint256 maxSellerSharePct;
+        bool initialized;
+    }
+    mapping(uint256 => EpochParams) public epochParams;
+
     // ─── Per-Epoch Totals ───
     mapping(uint256 => uint256) public epochTotalSellerPoints;
     mapping(uint256 => uint256) public epochTotalBuyerPoints;
@@ -115,6 +125,7 @@ contract AntseedEmissions is Ownable, Pausable, ReentrancyGuard {
 
     function accrueSellerPoints(address seller, uint256 pointsDelta) external onlyChannels whenNotPaused {
         uint256 epoch = currentEpoch();
+        _snapshotEpoch(epoch);
         userSellerPoints[seller][epoch] += pointsDelta;
         epochTotalSellerPoints[epoch] += pointsDelta;
         emit SellerPointsAccrued(seller, epoch, pointsDelta);
@@ -122,9 +133,23 @@ contract AntseedEmissions is Ownable, Pausable, ReentrancyGuard {
 
     function accrueBuyerPoints(address buyer, uint256 pointsDelta) external onlyChannels whenNotPaused {
         uint256 epoch = currentEpoch();
+        _snapshotEpoch(epoch);
         userBuyerPoints[buyer][epoch] += pointsDelta;
         epochTotalBuyerPoints[epoch] += pointsDelta;
         emit BuyerPointsAccrued(buyer, epoch, pointsDelta);
+    }
+
+    /// @dev Snapshot current share percentages on first touch for an epoch.
+    function _snapshotEpoch(uint256 epoch) internal {
+        if (!epochParams[epoch].initialized) {
+            epochParams[epoch] = EpochParams({
+                sellerSharePct: SELLER_SHARE_PCT,
+                buyerSharePct: BUYER_SHARE_PCT,
+                reserveSharePct: RESERVE_SHARE_PCT,
+                maxSellerSharePct: MAX_SELLER_SHARE_PCT,
+                initialized: true
+            });
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -136,7 +161,6 @@ contract AntseedEmissions is Ownable, Pausable, ReentrancyGuard {
      */
     function claimSellerEmissions(uint256[] calldata epochs) external nonReentrant whenNotPaused {
         uint256 _currentEpoch = currentEpoch();
-        uint256 _maxSellerPct = MAX_SELLER_SHARE_PCT;
         uint256 totalReward = 0;
 
         for (uint256 i = 0; i < epochs.length; i++) {
@@ -148,12 +172,13 @@ contract AntseedEmissions is Ownable, Pausable, ReentrancyGuard {
             sellerEpochClaimed[msg.sender][epoch] = true;
             _accountReserve(epoch);
 
+            EpochParams storage params = epochParams[epoch];
             uint256 userSP = userSellerPoints[msg.sender][epoch];
             uint256 totalSP = epochTotalSellerPoints[epoch];
-            uint256 sBudget = (getEpochEmission(epoch) * SELLER_SHARE_PCT) / 100;
+            uint256 sBudget = (getEpochEmission(epoch) * params.sellerSharePct) / 100;
             uint256 reward = (userSP * sBudget) / totalSP;
 
-            uint256 maxReward = (sBudget * _maxSellerPct) / 100;
+            uint256 maxReward = (sBudget * params.maxSellerSharePct) / 100;
             if (reward > maxReward) {
                 reserveAccumulated += reward - maxReward;
                 reward = maxReward;
@@ -187,9 +212,10 @@ contract AntseedEmissions is Ownable, Pausable, ReentrancyGuard {
             buyerEpochClaimed[buyer][epoch] = true;
             _accountReserve(epoch);
 
+            EpochParams storage params = epochParams[epoch];
             uint256 userBP = userBuyerPoints[buyer][epoch];
             uint256 totalBP = epochTotalBuyerPoints[epoch];
-            uint256 bBudget = (getEpochEmission(epoch) * BUYER_SHARE_PCT) / 100;
+            uint256 bBudget = (getEpochEmission(epoch) * params.buyerSharePct) / 100;
             totalReward += (userBP * bBudget) / totalBP;
         }
 
@@ -207,18 +233,20 @@ contract AntseedEmissions is Ownable, Pausable, ReentrancyGuard {
         uint256[] calldata epochs
     ) external view returns (uint256 totalSeller, uint256 totalBuyer) {
         uint256 _currentEpoch = currentEpoch();
-        uint256 _maxSellerPct = MAX_SELLER_SHARE_PCT;
 
         for (uint256 i = 0; i < epochs.length; i++) {
             uint256 epoch = epochs[i];
             if (epoch >= _currentEpoch) continue;
+            if (!epochParams[epoch].initialized) continue;
+
+            EpochParams storage params = epochParams[epoch];
 
             if (!sellerEpochClaimed[account][epoch] && userSellerPoints[account][epoch] > 0) {
                 uint256 totalSP = epochTotalSellerPoints[epoch];
                 if (totalSP > 0) {
-                    uint256 sBudget = (getEpochEmission(epoch) * SELLER_SHARE_PCT) / 100;
+                    uint256 sBudget = (getEpochEmission(epoch) * params.sellerSharePct) / 100;
                     uint256 reward = (userSellerPoints[account][epoch] * sBudget) / totalSP;
-                    uint256 maxReward = (sBudget * _maxSellerPct) / 100;
+                    uint256 maxReward = (sBudget * params.maxSellerSharePct) / 100;
                     totalSeller += reward > maxReward ? maxReward : reward;
                 }
             }
@@ -226,7 +254,7 @@ contract AntseedEmissions is Ownable, Pausable, ReentrancyGuard {
             if (!buyerEpochClaimed[account][epoch] && userBuyerPoints[account][epoch] > 0) {
                 uint256 totalBP = epochTotalBuyerPoints[epoch];
                 if (totalBP > 0) {
-                    uint256 bBudget = (getEpochEmission(epoch) * BUYER_SHARE_PCT) / 100;
+                    uint256 bBudget = (getEpochEmission(epoch) * params.buyerSharePct) / 100;
                     totalBuyer += (userBuyerPoints[account][epoch] * bBudget) / totalBP;
                 }
             }
@@ -236,7 +264,7 @@ contract AntseedEmissions is Ownable, Pausable, ReentrancyGuard {
     function _accountReserve(uint256 epoch) internal {
         if (!epochReserveAccounted[epoch]) {
             epochReserveAccounted[epoch] = true;
-            reserveAccumulated += (getEpochEmission(epoch) * RESERVE_SHARE_PCT) / 100;
+            reserveAccumulated += (getEpochEmission(epoch) * epochParams[epoch].reserveSharePct) / 100;
         }
     }
 
