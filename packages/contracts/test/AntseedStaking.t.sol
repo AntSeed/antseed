@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
 import "../AntseedStaking.sol";
+import "../AntseedSlashing.sol";
 import "../AntseedChannels.sol";
 import "../AntseedRegistry.sol";
 import "../MockERC8004Registry.sol";
@@ -68,6 +69,10 @@ contract AntseedStakingTest is Test {
         antseedRegistry.setProtocolReserve(reserve);
 
         staking = new AntseedStaking(address(usdc), address(antseedRegistry));
+        antseedRegistry.setStaking(address(staking));
+
+        AntseedSlashing slashing = new AntseedSlashing(address(antseedRegistry));
+        staking.setSlashing(address(slashing));
 
         // Register sellers on MockERC8004Registry
         vm.prank(seller);
@@ -355,6 +360,9 @@ contract AntseedStakingTest is Test {
         // Don't set protocolReserve
 
         AntseedStaking staking2 = new AntseedStaking(address(usdc), address(noReserveRegistry));
+        noReserveRegistry.setStaking(address(staking2));
+        AntseedSlashing slashing2 = new AntseedSlashing(address(noReserveRegistry));
+        staking2.setSlashing(address(slashing2));
 
         usdc.mint(seller, LARGE_STAKE);
         vm.startPrank(seller);
@@ -417,16 +425,6 @@ contract AntseedStakingTest is Test {
     function test_setMinSellerStake() public {
         staking.setMinSellerStake(5_000_000);
         assertEq(staking.MIN_SELLER_STAKE(), 5_000_000);
-    }
-
-    function test_setSlashRatioThreshold() public {
-        staking.setSlashRatioThreshold(50);
-        assertEq(staking.SLASH_RATIO_THRESHOLD(), 50);
-    }
-
-    function test_setSlashGhostThreshold() public {
-        staking.setSlashGhostThreshold(10);
-        assertEq(staking.SLASH_GHOST_THRESHOLD(), 10);
     }
 
     function test_setMinSellerStake_revert_notOwner() public {
