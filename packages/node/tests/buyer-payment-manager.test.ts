@@ -371,6 +371,38 @@ describe('BuyerPaymentManager', () => {
     expect(sent.cumulativeAmount).toBe('100000');
   });
 
+  it('handleNeedAuth tops up reserve when the ceiling blocks the required amount', async () => {
+    store.close();
+    store = new ChannelStore(tempDir);
+    manager = new BuyerPaymentManager(
+      identity,
+      makeConfig(tempDir, { maxReserveAmountUsdc: 100_000n, maxPerRequestUsdc: 100_000n }),
+      store,
+    );
+    manager.setSigner(Wallet.createRandom());
+
+    const sellerPeerId = fakePeerId('seller-needauth-topup');
+    const channelId = await manager.authorizeSpending(sellerPeerId, mux, 100_000n, TEST_PRICING);
+
+    // Increase verified cost so the overdraft model can sign above the current ceiling
+    // once the reserve is topped up.
+    manager.recordResponseBytes(sellerPeerId, SAMPLE_INPUT, SAMPLE_OUTPUT);
+    mux.sentSpendingAuths.length = 0;
+
+    await manager.handleNeedAuth(sellerPeerId, {
+      channelId,
+      requiredCumulativeAmount: '100001',
+      currentAcceptedCumulative: '100000',
+      deposit: '1000000',
+    }, mux);
+
+    expect(mux.sentSpendingAuths.length).toBe(2);
+    const reserveTopUp = mux.sentSpendingAuths[0] as Record<string, unknown>;
+    const updatedBudget = mux.sentSpendingAuths[1] as Record<string, unknown>;
+    expect(reserveTopUp.reserveMaxAmount).toBe('200000');
+    expect(updatedBudget.cumulativeAmount).toBe('100001');
+  });
+
   it('handleNeedAuth allows more after verified cost increases', async () => {
     const sellerPeerId = fakePeerId('seller-needauth-v');
     const channelId = await manager.authorizeSpending(sellerPeerId, mux, 10_000n, TEST_PRICING);

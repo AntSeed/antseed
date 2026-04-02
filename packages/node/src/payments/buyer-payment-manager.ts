@@ -496,7 +496,12 @@ export class BuyerPaymentManager {
     }
 
     // Cap at overdraft limit: verifiedCost + maxPerRequestUsdc
-    const maxSignable = this._maxSignable(sellerPeerId);
+    let maxSignable = this._maxSignable(sellerPeerId);
+    const reserveCeiling = this._getCeiling(sellerPeerId);
+    if (requiredCumulativeAmount > maxSignable && maxSignable >= reserveCeiling) {
+      await this.topUpReserve(sellerPeerId, paymentMux);
+      maxSignable = this._maxSignable(sellerPeerId);
+    }
     if (maxSignable <= currentCumulative) {
       debugWarn(
         `[BuyerPayment] NeedAuth: maxSignable=${maxSignable} <= currentCumulative=${currentCumulative} — cannot authorize more (overdraft limit reached)`,

@@ -5,6 +5,7 @@ import { resolveEffectiveSellerConfig } from '../../config/effective.js';
 import {
   buildSellerRuntimeOverridesFromFlags,
   buildSellerPluginRuntimeEnv,
+  mergeSellerRuntimeEnv,
 } from './seed.js';
 
 test('seed runtime overrides are runtime-only and win over env/config', () => {
@@ -75,4 +76,25 @@ test('seed maps effective seller pricing into provider runtime keys', () => {
 
   const categories = JSON.parse(runtimeEnv['ANTSEED_SERVICE_CATEGORIES_JSON'] ?? '{}') as Record<string, string[]>;
   assert.deepEqual(categories['claude-sonnet-4-5-20250929'], ['coding', 'legal']);
+});
+
+test('seed does not override explicit provider instance pricing with seller defaults', () => {
+  const config = createDefaultConfig();
+  config.seller.pricing.defaults.inputUsdPerMillion = 3;
+  config.seller.pricing.defaults.outputUsdPerMillion = 15;
+
+  const runtimeEnv = buildSellerPluginRuntimeEnv(config.seller, 'openai');
+  assert.equal(runtimeEnv['ANTSEED_INPUT_USD_PER_MILLION'], undefined);
+  assert.equal(runtimeEnv['ANTSEED_OUTPUT_USD_PER_MILLION'], undefined);
+
+  const merged = mergeSellerRuntimeEnv(
+    {
+      OPENAI_API_KEY: 'test-key',
+      ANTSEED_INPUT_USD_PER_MILLION: '0.05',
+      ANTSEED_OUTPUT_USD_PER_MILLION: '0.1',
+    },
+    runtimeEnv,
+  );
+  assert.equal(merged['ANTSEED_INPUT_USD_PER_MILLION'], '0.05');
+  assert.equal(merged['ANTSEED_OUTPUT_USD_PER_MILLION'], '0.1');
 });

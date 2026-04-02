@@ -94,13 +94,14 @@ export function buildSellerPluginRuntimeEnv(
   providerName: string,
 ): Record<string, string> {
   const providerPricing = sellerConfig.pricing.providers?.[providerName]
-  const effectiveDefaults = providerPricing?.defaults ?? sellerConfig.pricing.defaults
   const servicePricing = providerPricing?.services
   const serviceCategories = sellerConfig.serviceCategories?.[providerName]
   const runtimeEnv: Record<string, string> = {
-    ANTSEED_INPUT_USD_PER_MILLION: String(effectiveDefaults.inputUsdPerMillion),
-    ANTSEED_OUTPUT_USD_PER_MILLION: String(effectiveDefaults.outputUsdPerMillion),
     ANTSEED_MAX_CONCURRENCY: String(sellerConfig.maxConcurrentBuyers),
+  }
+  if (providerPricing?.defaults) {
+    runtimeEnv['ANTSEED_INPUT_USD_PER_MILLION'] = String(providerPricing.defaults.inputUsdPerMillion)
+    runtimeEnv['ANTSEED_OUTPUT_USD_PER_MILLION'] = String(providerPricing.defaults.outputUsdPerMillion)
   }
   if (servicePricing && Object.keys(servicePricing).length > 0) {
     runtimeEnv['ANTSEED_SERVICE_PRICING_JSON'] = JSON.stringify(servicePricing)
@@ -111,31 +112,28 @@ export function buildSellerPluginRuntimeEnv(
   return runtimeEnv
 }
 
-function parseRuntimeServicePricingJson(
-  raw: string | undefined,
-): Record<string, { inputUsdPerMillion: number; outputUsdPerMillion: number }> | undefined {
-  if (!raw) {
-    return undefined
+export function mergeSellerRuntimeEnv(
+  baseConfig: Record<string, string>,
+  runtimeEnv: Record<string, string>,
+  options?: {
+    forcePricingOverride?: boolean
+  },
+): Record<string, string> {
+  const merged = { ...baseConfig }
+  const forcePricingOverride = options?.forcePricingOverride ?? false
+  const pricingKeys = new Set([
+    'ANTSEED_INPUT_USD_PER_MILLION',
+    'ANTSEED_OUTPUT_USD_PER_MILLION',
+  ])
+
+  for (const [key, value] of Object.entries(runtimeEnv)) {
+    if (!forcePricingOverride && pricingKeys.has(key) && merged[key] !== undefined) {
+      continue
+    }
+    merged[key] = value
   }
 
-  try {
-    const parsed = JSON.parse(raw) as unknown
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      return undefined
-    }
-    const out: Record<string, { inputUsdPerMillion: number; outputUsdPerMillion: number }> = {}
-    for (const [service, pricing] of Object.entries(parsed as Record<string, unknown>)) {
-      if (!pricing || typeof pricing !== 'object' || Array.isArray(pricing)) continue
-      const input = Number((pricing as Record<string, unknown>)['inputUsdPerMillion'])
-      const output = Number((pricing as Record<string, unknown>)['outputUsdPerMillion'])
-      if (Number.isFinite(input) && Number.isFinite(output)) {
-        out[service] = { inputUsdPerMillion: input, outputUsdPerMillion: output }
-      }
-    }
-    return Object.keys(out).length > 0 ? out : undefined
-  } catch {
-    return undefined
-  }
+  return merged
 }
 
 function parseRuntimeServiceCategoriesJson(raw: string | undefined): Record<string, string[]> | undefined {
@@ -189,6 +187,8 @@ export function registerSeedCommand(program: Command): void {
         inputUsdPerMillion: options.inputUsdPerMillion as number | undefined,
         outputUsdPerMillion: options.outputUsdPerMillion as number | undefined,
       })
+      const forcePricingOverride = runtimeOverrides.inputUsdPerMillion !== undefined
+        || runtimeOverrides.outputUsdPerMillion !== undefined
       const effectiveSellerConfig = resolveEffectiveSellerConfig({
         config,
         sellerOverrides: runtimeOverrides,
@@ -211,7 +211,12 @@ export function registerSeedCommand(program: Command): void {
         try {
           const plugin = await loadProviderPlugin(instance.package)
           const runtimeEnv = buildSellerPluginRuntimeEnv(effectiveSellerConfig, plugin.name)
-          const pluginConfig = buildPluginConfig(plugin.configSchema ?? plugin.configKeys ?? [], runtimeEnv, instance.config as Record<string, string>)
+          const basePluginConfig = buildPluginConfig(
+            plugin.configSchema ?? plugin.configKeys ?? [],
+            undefined,
+            instance.config as Record<string, string>,
+          )
+          const pluginConfig = mergeSellerRuntimeEnv(basePluginConfig, runtimeEnv, { forcePricingOverride })
           provider = await plugin.createProvider(pluginConfig)
           if (provider.init) {
             spinner.text = 'Validating credentials...'
@@ -229,8 +234,8 @@ export function registerSeedCommand(program: Command): void {
           const configProvider = config.providers.find(p => p.type === options.provider)
           const fileConfig = configProvider ? providerConfigToEnv(configProvider) : {}
           const runtimeEnv = buildSellerPluginRuntimeEnv(effectiveSellerConfig, options.provider as string)
-          const envAndRuntimeConfig = buildPluginConfig(plugin.configSchema ?? plugin.configKeys ?? [], runtimeEnv)
-          const pluginConfig = { ...fileConfig, ...envAndRuntimeConfig }
+          const envAndFileConfig = buildPluginConfig(plugin.configSchema ?? plugin.configKeys ?? [], undefined, fileConfig)
+          const pluginConfig = mergeSellerRuntimeEnv(envAndFileConfig, runtimeEnv, { forcePricingOverride })
           provider = await plugin.createProvider(pluginConfig)
           if (provider.init) {
             spinner.text = 'Validating credentials...'
@@ -299,11 +304,8 @@ export function registerSeedCommand(program: Command): void {
       }
 
       const providerName = options.provider as string | undefined ?? provider.name ?? 'unknown'
-      const runtimeProviderPricing = buildSellerPluginRuntimeEnv(effectiveSellerConfig, providerName)
-      const runtimeInputUsdPerMillion = Number.parseFloat(runtimeProviderPricing['ANTSEED_INPUT_USD_PER_MILLION'] ?? '')
-      const runtimeOutputUsdPerMillion = Number.parseFloat(runtimeProviderPricing['ANTSEED_OUTPUT_USD_PER_MILLION'] ?? '')
-      const runtimeServicePricing = parseRuntimeServicePricingJson(runtimeProviderPricing['ANTSEED_SERVICE_PRICING_JSON'])
-      const runtimeServiceCategories = parseRuntimeServiceCategoriesJson(runtimeProviderPricing['ANTSEED_SERVICE_CATEGORIES_JSON'])
+      const runtimeProviderEnv = buildSellerPluginRuntimeEnv(effectiveSellerConfig, providerName)
+      const runtimeServiceCategories = parseRuntimeServiceCategoriesJson(runtimeProviderEnv['ANTSEED_SERVICE_CATEGORIES_JSON'])
       if (runtimeServiceCategories) {
         provider.serviceCategories = runtimeServiceCategories
       }
@@ -315,7 +317,7 @@ export function registerSeedCommand(program: Command): void {
       console.log(chalk.dim(`  provider: ${providerName}`))
       console.log(
         chalk.dim(
-          `  pricing defaults (USD/1M): input=${runtimeProviderPricing['ANTSEED_INPUT_USD_PER_MILLION']}, output=${runtimeProviderPricing['ANTSEED_OUTPUT_USD_PER_MILLION']}`
+          `  pricing defaults (USD/1M): input=${provider.pricing.defaults.inputUsdPerMillion}, output=${provider.pricing.defaults.outputUsdPerMillion}`
         )
       )
       console.log(
@@ -489,15 +491,15 @@ export function registerSeedCommand(program: Command): void {
           dhtPort: node.dhtPort,
           signalingPort: node.signalingPort,
           provider: providerName,
-          defaultInputUsdPerMillion: Number.isFinite(runtimeInputUsdPerMillion) ? runtimeInputUsdPerMillion : undefined,
-          defaultOutputUsdPerMillion: Number.isFinite(runtimeOutputUsdPerMillion) ? runtimeOutputUsdPerMillion : undefined,
+          defaultInputUsdPerMillion: provider.pricing.defaults.inputUsdPerMillion,
+          defaultOutputUsdPerMillion: provider.pricing.defaults.outputUsdPerMillion,
           providerPricing: {
             [providerName]: {
               defaults: {
-                inputUsdPerMillion: Number.isFinite(runtimeInputUsdPerMillion) ? runtimeInputUsdPerMillion : 0,
-                outputUsdPerMillion: Number.isFinite(runtimeOutputUsdPerMillion) ? runtimeOutputUsdPerMillion : 0,
+                inputUsdPerMillion: provider.pricing.defaults.inputUsdPerMillion,
+                outputUsdPerMillion: provider.pricing.defaults.outputUsdPerMillion,
               },
-              ...(runtimeServicePricing ? { services: runtimeServicePricing } : {}),
+              ...(provider.pricing.services ? { services: provider.pricing.services } : {}),
             },
           },
           ...(runtimeServiceCategories
