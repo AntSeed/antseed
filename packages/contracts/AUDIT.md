@@ -194,7 +194,7 @@ The seller's staked funds are locked until the channels are resolved.
 
 ---
 
-### M4. Emissions: unclaimed seller rewards beyond `maxReward` cap leak to reserve
+### ~~M4. Emissions: unclaimed seller rewards beyond `maxReward` cap leak to reserve~~ — ACCEPTED
 
 **File:** `AntseedEmissions.sol:156-159`
 
@@ -211,7 +211,7 @@ When a seller's share exceeds `MAX_SELLER_SHARE_PCT` (15% of seller budget), the
 
 ---
 
-### M5. SubPool `distributeRevenue` carries revenue forward if no peers have weight
+### ~~M5. SubPool `distributeRevenue` carries revenue forward if no peers have weight~~ — ACCEPTED
 
 **File:** `AntseedSubPool.sol:324-333`
 
