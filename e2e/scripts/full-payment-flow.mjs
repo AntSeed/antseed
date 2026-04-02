@@ -30,6 +30,8 @@ import {
   DepositsClient,
   ChannelsClient,
   DHTNode,
+  signSetOperator,
+  makeDepositsDomain,
 } from "../../packages/node/dist/index.js";
 
 // ---------------------------------------------------------------------------
@@ -343,14 +345,19 @@ async function main() {
     );
     pass("Seller staked");
 
-    // Buyer deposits
-    info("Buyer depositing 10 USDC...");
+    // Buyer deposits (with inline operator setup — buyer is self-operator)
+    info("Buyer depositing 10 USDC (with operator auth)...");
+    const depositsDomain = makeDepositsDomain(CHAIN_ID, DEPOSITS_ADDRESS);
+    const operatorSig = await signSetOperator(buyerIdentity.wallet, depositsDomain, {
+      operator: buyerAddress,
+      nonce: 0n,
+    });
     castSend(
       [USDC_ADDRESS, "approve(address,uint256)", DEPOSITS_ADDRESS, USDC_DEPOSIT_AMOUNT.toString()],
       buyerPrivateKey
     );
     castSend(
-      [DEPOSITS_ADDRESS, "deposit(address,uint256)", buyerAddress, USDC_DEPOSIT_AMOUNT.toString()],
+      [DEPOSITS_ADDRESS, "deposit(address,uint256,uint256,bytes)", buyerAddress, USDC_DEPOSIT_AMOUNT.toString(), "0", operatorSig],
       buyerPrivateKey
     );
     pass("Buyer deposited");
