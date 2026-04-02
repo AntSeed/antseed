@@ -157,7 +157,7 @@ Channel transitions are implicit, not formally enforced via a state machine. The
 
 ---
 
-### M2. Missing replay protection / weak nonce discipline in off-chain signatures
+### ~~M2. Missing replay protection / weak nonce discipline in off-chain signatures~~ — ACCEPTED
 
 **File:** `AntseedChannels.sol:516-554`
 
