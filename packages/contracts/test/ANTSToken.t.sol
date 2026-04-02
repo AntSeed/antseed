@@ -171,6 +171,101 @@ contract ANTSTokenTest is Test {
         token.transferOwnership(user2);
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    //                   TRANSFER WHITELIST
+    // ═══════════════════════════════════════════════════════════════════
+
+    function test_whitelist_canTransferBeforeEnabled() public {
+        token.setRegistry(address(antseedRegistry));
+        vm.prank(emissions);
+        token.mint(user1, 100 ether);
+
+        // user1 can't transfer yet
+        vm.prank(user1);
+        vm.expectRevert(ANTSToken.TransfersNotEnabled.selector);
+        token.transfer(user2, 50 ether);
+
+        // Whitelist user1
+        token.setTransferWhitelist(user1, true);
+        assertTrue(token.transferWhitelist(user1));
+
+        // Now user1 can transfer
+        vm.prank(user1);
+        token.transfer(user2, 50 ether);
+        assertEq(token.balanceOf(user2), 50 ether);
+
+        // user2 still can't transfer (not whitelisted)
+        vm.prank(user2);
+        vm.expectRevert(ANTSToken.TransfersNotEnabled.selector);
+        token.transfer(user1, 10 ether);
+    }
+
+    function test_whitelist_revoke() public {
+        token.setRegistry(address(antseedRegistry));
+        vm.prank(emissions);
+        token.mint(user1, 100 ether);
+
+        token.setTransferWhitelist(user1, true);
+
+        // Can transfer
+        vm.prank(user1);
+        token.transfer(user2, 10 ether);
+
+        // Revoke whitelist
+        token.setTransferWhitelist(user1, false);
+
+        // Can't transfer anymore
+        vm.prank(user1);
+        vm.expectRevert(ANTSToken.TransfersNotEnabled.selector);
+        token.transfer(user2, 10 ether);
+    }
+
+    function test_whitelist_revert_notOwner() public {
+        vm.prank(user1);
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", user1));
+        token.setTransferWhitelist(user2, true);
+    }
+
+    function test_whitelist_revert_zeroAddress() public {
+        vm.expectRevert(ANTSToken.InvalidAddress.selector);
+        token.setTransferWhitelist(address(0), true);
+    }
+
+    function test_whitelist_irrelevantAfterEnableTransfers() public {
+        token.setRegistry(address(antseedRegistry));
+        vm.prank(emissions);
+        token.mint(user1, 100 ether);
+
+        // Enable transfers globally — no whitelist needed
+        token.enableTransfers();
+
+        // Anyone can transfer, no whitelist required
+        vm.prank(user1);
+        token.transfer(user2, 50 ether);
+        assertEq(token.balanceOf(user2), 50 ether);
+
+        // Even non-whitelisted user2 can transfer
+        vm.prank(user2);
+        token.transfer(user1, 10 ether);
+        assertEq(token.balanceOf(user1), 60 ether);
+    }
+
+    function test_enableTransfers_permanentNoGoingBack() public {
+        token.enableTransfers();
+        assertTrue(token.transfersEnabled());
+
+        // Can't disable
+        vm.expectRevert(ANTSToken.TransfersAlreadyEnabled.selector);
+        token.enableTransfers();
+
+        // Still enabled
+        assertTrue(token.transfersEnabled());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //                   REGISTRY UPDATE
+    // ═══════════════════════════════════════════════════════════════════
+
     function test_setRegistry_canUpdateEmissions() public {
         // Set registry with one emissions address
         token.setRegistry(address(antseedRegistry));
