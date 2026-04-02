@@ -90,7 +90,7 @@ Previously, closing a channel required either a buyer-signed SpendingAuth or the
 
 ---
 
-### H3. Operator cannot be revoked — only transferred
+### ~~H3. Operator cannot be revoked — only transferred~~ — ACCEPTED
 
 **File:** `AntseedDeposits.sol:230-259`
 
