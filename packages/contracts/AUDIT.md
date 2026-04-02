@@ -174,7 +174,7 @@ The cumulative model provides implicit replay protection for `SpendingAuth` (can
 
 ---
 
-### M3. Seller griefing via minimal channels
+### ~~M3. Seller griefing via minimal channels~~ — FIXED (by H2)
 
 **File:** `AntseedChannels.sol:157-193`, `AntseedStaking.sol:93`
 
