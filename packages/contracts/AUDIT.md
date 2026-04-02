@@ -44,7 +44,7 @@ Intentional behavior. No protocol reserve = no fee.
 
 ---
 
-### C2. Deposit should require operator to be set first
+### ~~C2. Deposit should require operator to be set first~~ — FIXED
 
 **File:** `AntseedDeposits.sol:113-124`
 
@@ -53,6 +53,8 @@ Currently anyone can call `deposit(buyer, amount)` before an operator is set. Wi
 **Impact:** Funds deposited without an operator are effectively locked until an operator is set. If the buyer loses their signing key before setting an operator, funds are permanently locked.
 
 **Recommendation:** Require `buyers[buyer].operator != address(0)` before accepting deposits, ensuring the operator authorization flow completes first.
+
+**Fix:** `deposit()` now checks `_isOperator(buyer)` — msg.sender must be the buyer's authorized operator. Updated tests and `setup-local-test.sh` to set operator before depositing.
 
 ---
 
