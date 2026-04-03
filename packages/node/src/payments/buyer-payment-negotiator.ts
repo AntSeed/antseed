@@ -241,7 +241,7 @@ export class BuyerPaymentNegotiator {
     }
 
     // Check if we can pay before attempting negotiation
-    if (!this._depositsClient || !this._identity) {
+    if (!this._depositsClient) {
       return returnPaymentRequired('no deposits configured');
     }
 

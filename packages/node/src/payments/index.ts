@@ -74,9 +74,6 @@ export type { BuyerPaymentConfig, PerRequestAuthResult } from './buyer-payment-m
 export { BuyerPaymentNegotiator } from './buyer-payment-negotiator.js';
 export type { BuyerNegotiatorConfig, Handle402Result, NegotiationEmitter } from './buyer-payment-negotiator.js';
 
-// Response usage parsing
-export { parseResponseUsage } from '../utils/response-usage.js';
-
 // Seller payment manager
 export { SellerPaymentManager } from './seller-payment-manager.js';
 export type { SellerPaymentConfig } from './seller-payment-manager.js';

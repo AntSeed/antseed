@@ -1253,6 +1253,7 @@ export class AntseedNode extends EventEmitter {
             inputBytes: request.body.length,
             outputBytes: responseBody.length,
             responseBody,
+            providerUsage: responseUsage,
           });
         }
 

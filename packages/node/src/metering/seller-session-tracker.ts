@@ -144,13 +144,14 @@ export class SellerSessionTracker {
     inputBytes: number;
     outputBytes: number;
     responseBody: Uint8Array;
+    /** Pre-computed usage from parseResponseUsage — avoids re-parsing the same body. */
+    providerUsage?: { inputTokens: number; outputTokens: number };
   }): Promise<void> {
     const { buyerPeerId, providerName, pricing: providerPricingUsdPerMillion, request, statusCode, latencyMs, inputBytes, outputBytes, responseBody } = input;
     const sellerPeerId = this._identity.peerId;
     const isSSE = request.headers['accept']?.includes('text/event-stream') ?? false;
 
-    // Use actual token counts when available, fall back to estimation
-    const providerUsage = parseResponseUsage(responseBody);
+    const providerUsage = input.providerUsage ?? parseResponseUsage(responseBody);
     let tokens: TokenCount;
     if (providerUsage.inputTokens > 0 || providerUsage.outputTokens > 0) {
       const totalTokens = providerUsage.inputTokens + providerUsage.outputTokens;
