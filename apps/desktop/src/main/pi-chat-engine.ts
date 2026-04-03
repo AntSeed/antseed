@@ -1569,7 +1569,7 @@ export function registerPiChatHandlers({
 
     const authStorage = AuthStorage.inMemory();
     authStorage.setRuntimeApiKey(PROXY_PROVIDER_ID, PROXY_RUNTIME_API_KEY);
-    const modelRegistry = new ModelRegistry(authStorage);
+    const modelRegistry = ModelRegistry.inMemory(authStorage);
 
     // Pass the system prompt via resourceLoader so it is applied on every turn.
     // (agent-session rebuilds _baseSystemPrompt from the loader each turn, so a
