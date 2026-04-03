@@ -46,7 +46,7 @@ export interface BuyerPaymentConfig {
   /**
    * Max unverified exposure (overdraft limit) in USDC base units.
    * The buyer will never sign more than verifiedCost + maxPerRequestUsdc.
-   * Default: 100000 ($0.10).
+   * Default: 500000 ($0.50).
    */
   maxPerRequestUsdc: bigint;
   /** Max USDC to reserve per ReserveAuth signature (base units). Default: 1000000 ($1.00). */
