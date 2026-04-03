@@ -184,6 +184,20 @@ contract AntseedStakingTest is Test {
         vm.stopPrank();
     }
 
+    function test_stake_revert_agentAlreadyBoundToAnotherSeller() public {
+        _stakeAs(seller, MIN_STAKE);
+
+        vm.prank(seller);
+        identityRegistry.transferAgent(sellerAgentId, seller2);
+
+        usdc.mint(seller2, MIN_STAKE);
+        vm.startPrank(seller2);
+        usdc.approve(address(staking), MIN_STAKE);
+        vm.expectRevert(AntseedStaking.AgentAlreadyBound.selector);
+        staking.stake(sellerAgentId, MIN_STAKE);
+        vm.stopPrank();
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     //                        stakeFor()
     // ═══════════════════════════════════════════════════════════════════
@@ -271,6 +285,40 @@ contract AntseedStakingTest is Test {
         staking.unstake();
 
         assertEq(staking.getStake(seller), 0);
+    }
+
+    function test_unstake_afterIdentityTransfer_succeedsAndClearsBinding() public {
+        _stakeAs(seller, MIN_STAKE);
+
+        vm.prank(seller);
+        identityRegistry.transferAgent(sellerAgentId, seller2);
+
+        vm.prank(seller);
+        staking.unstake();
+
+        assertEq(staking.getStake(seller), 0);
+        assertEq(staking.getAgentId(seller), 0);
+        assertEq(staking.agentSeller(sellerAgentId), address(0));
+    }
+
+    function test_newOwnerCanStakeTransferredAgentAfterPreviousSellerUnstakes() public {
+        _stakeAs(seller, MIN_STAKE);
+
+        vm.prank(seller);
+        identityRegistry.transferAgent(sellerAgentId, seller2);
+
+        vm.prank(seller);
+        staking.unstake();
+
+        usdc.mint(seller2, MIN_STAKE);
+        vm.startPrank(seller2);
+        usdc.approve(address(staking), MIN_STAKE);
+        staking.stake(sellerAgentId, MIN_STAKE);
+        vm.stopPrank();
+
+        assertEq(staking.getAgentId(seller2), sellerAgentId);
+        assertEq(staking.agentSeller(sellerAgentId), seller2);
+        assertEq(staking.getStake(seller2), MIN_STAKE);
     }
 
     // ═══════════════════════════════════════════════════════════════════
