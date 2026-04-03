@@ -6,7 +6,7 @@ tags: [protocol, payments, security, P2P, buyer-protection]
 description: How AntSeed protects buyers during active AI sessions — overdraft control, independent cost verification, reserve ceilings, and a guaranteed on-chain escape hatch — without any intermediary.
 keywords: [buyer protection, overdraft control, cost verification, EIP-712, SpendingAuth, P2P payments, payment channels, streaming payments, escrow, smart contract]
 image: /og-image.jpg
-date: 2026-04-03
+date: 2099-01-01
 draft: true
 ---
 
