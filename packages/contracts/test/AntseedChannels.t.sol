@@ -261,6 +261,25 @@ contract AntseedChannelsTest is Test {
         channels.reserve(buyer, salt, USDC_50, deadline, reserveSig);
     }
 
+    function test_reserve_revert_sellerNoLongerOwnsAgent() public {
+        createBuyer(BUYER_PK, USDC_100);
+        createSeller(SELLER_PK);
+
+        uint256 agentId = staking.getAgentId(seller);
+        vm.prank(seller);
+        identityRegistry.transferAgent(agentId, randomUser);
+
+        bytes32 salt = keccak256("session-identity-transferred");
+        bytes32 channelId = computeChannelId(salt);
+        uint256 deadline = block.timestamp + 1 hours;
+
+        bytes memory reserveSig = signReserveAuth(BUYER_PK, channelId, USDC_50, deadline);
+
+        vm.prank(seller);
+        vm.expectRevert(AntseedChannels.SellerNoLongerOwnsAgent.selector);
+        channels.reserve(buyer, salt, USDC_50, deadline, reserveSig);
+    }
+
     function test_reserve_revert_expiredDeadline() public {
         createBuyer(BUYER_PK, USDC_100);
         createSeller(SELLER_PK);

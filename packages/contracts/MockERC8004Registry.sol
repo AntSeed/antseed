@@ -17,6 +17,7 @@ contract MockERC8004Registry is IERC8004Registry {
 
     event Registered(uint256 indexed agentId, address indexed owner);
     event MetadataSet(uint256 indexed agentId, string key, bytes value);
+    event Transferred(uint256 indexed agentId, address indexed from, address indexed to);
 
     function register() external returns (uint256 agentId) {
         agentId = _nextId++;
@@ -50,5 +51,15 @@ contract MockERC8004Registry is IERC8004Registry {
 
     function getMetadata(uint256 agentId, string calldata key) external view returns (bytes memory) {
         return _metadata[agentId][key];
+    }
+
+    function transferAgent(uint256 agentId, address to) external {
+        require(to != address(0), "Invalid recipient");
+        address from = _owners[agentId];
+        require(from == msg.sender, "Not owner");
+        _owners[agentId] = to;
+        _balances[from]--;
+        _balances[to]++;
+        emit Transferred(agentId, from, to);
     }
 }

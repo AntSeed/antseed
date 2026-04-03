@@ -34,6 +34,7 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
     // ─── Storage ────────────────────────────────────────────────────────
     mapping(address => SellerAccount) public sellers;
     mapping(address => uint256) public sellerAgentId;
+    mapping(uint256 => address) public agentSeller;
 
     // ─── Configurable Constants ─────────────────────────────────────────
     uint256 public MIN_SELLER_STAKE = 10_000_000;
@@ -49,6 +50,7 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
     error ActiveChannels();
     error NotAgentOwner();
     error AgentIdMismatch();
+    error AgentAlreadyBound();
 
     // ─── Constructor ────────────────────────────────────────────────────
     constructor(address _usdc, address _registry) Ownable(msg.sender) {
@@ -75,6 +77,8 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
         if (IERC8004Registry(registry.identityRegistry()).ownerOf(agentId) != seller) revert NotAgentOwner();
         uint256 existingAgentId = sellerAgentId[seller];
         if (existingAgentId != 0 && existingAgentId != agentId) revert AgentIdMismatch();
+        address existingSeller = agentSeller[agentId];
+        if (existingSeller != address(0) && existingSeller != seller) revert AgentAlreadyBound();
 
         usdc.safeTransferFrom(msg.sender, address(this), amount);
 
@@ -84,6 +88,7 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
         }
         sa.stake += amount;
         sellerAgentId[seller] = agentId;
+        agentSeller[agentId] = seller;
 
         emit Staked(seller, agentId, amount);
     }
@@ -100,8 +105,12 @@ contract AntseedStaking is Ownable, ReentrancyGuard {
         uint256 payout = sa.stake - slashAmount;
 
         uint256 stakeAmount = sa.stake;
+        uint256 agentId = sellerAgentId[msg.sender];
         sa.stake = 0;
         sellerAgentId[msg.sender] = 0;
+        if (agentId != 0) {
+            agentSeller[agentId] = address(0);
+        }
 
         if (payout > 0) {
             usdc.safeTransfer(msg.sender, payout);

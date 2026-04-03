@@ -11,6 +11,7 @@ import {IAntseedRegistry} from "./interfaces/IAntseedRegistry.sol";
 import {IAntseedDeposits} from "./interfaces/IAntseedDeposits.sol";
 import {IAntseedStaking} from "./interfaces/IAntseedStaking.sol";
 import {IAntseedEmissions} from "./interfaces/IAntseedEmissions.sol";
+import {IERC8004Registry} from "./interfaces/IERC8004Registry.sol";
 
 /**
  * @title AntseedChannels
@@ -95,6 +96,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
     error InvalidFee();
     error FirstSignCapExceeded();
     error SellerNotStaked();
+    error SellerNoLongerOwnsAgent();
     error FinalAmountBelowSettled();
     error CloseNotReady();
     error CloseAlreadyRequested();
@@ -149,6 +151,11 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
     ) external nonReentrant whenNotPaused {
         if (block.timestamp > deadline) revert ChannelExpired();
         if (!IAntseedStaking(registry.staking()).isStakedAboveMin(msg.sender)) revert SellerNotStaked();
+        uint256 agentId = IAntseedStaking(registry.staking()).getAgentId(msg.sender);
+        if (agentId == 0) revert SellerNotStaked();
+        if (IERC8004Registry(registry.identityRegistry()).ownerOf(agentId) != msg.sender) {
+            revert SellerNoLongerOwnsAgent();
+        }
         if (maxAmount == 0) revert InvalidAmount();
 
         bytes32 channelId = computeChannelId(buyer, msg.sender, salt);
