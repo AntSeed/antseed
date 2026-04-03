@@ -110,13 +110,13 @@ export interface NodePaymentsConfig {
   stakingAddress?: string;
   /** Chain ID for EIP-712 domain. Default: 8453 (Base) */
   chainId?: number;
-  /** Default maximum USDC per spending auth. Default: 100000 ($0.10) */
+  /** Default maximum USDC per spending auth. Default: 500000 ($0.50) */
   defaultMaxAmountUsdc?: string;
   /** Default auth duration in seconds. Default: 90000 */
   defaultAuthDurationSecs?: number;
   /** Minimum USDC per request (base units) for seller. Default: "10000" ($0.01). */
   minBudgetPerRequest?: string;
-  /** Maximum USDC the buyer authorizes per single request (base units). Default: "100000" ($0.10). */
+  /** Maximum USDC the buyer authorizes per single request (base units). Default: "500000" ($0.50). */
   maxPerRequestUsdc?: string;
   /** Maximum total USDC the buyer will reserve in a single SpendingAuth (base units). Default: "10000000" ($10.00). */
   maxReserveAmountUsdc?: string;
