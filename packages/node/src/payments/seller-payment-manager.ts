@@ -640,7 +640,8 @@ export class SellerPaymentManager {
         debugLog(`[SellerPayment] Channel ${channelId.slice(0, 18)}... closed successfully after CloseRequested`);
       } catch (err) {
         debugWarn(`[SellerPayment] Failed to close channel ${channelId.slice(0, 18)}... after CloseRequested: ${err instanceof Error ? err.message : err}`);
-        return; // Will retry on next poll
+        // Early return: preserve in-memory maps so the next poll cycle can retry close()
+        return;
       }
     } else {
       // No voucher — seller can't claim anything. Clean up locally;
@@ -669,8 +670,10 @@ export class SellerPaymentManager {
    */
   async pollCloseRequested(fromBlock: number): Promise<number> {
     try {
-      const events = await this._channelsClient.getCloseRequestedEvents(fromBlock, 'latest');
+      // Fetch block number first and pin as toBlock to avoid race:
+      // if blocks are mined between the two calls, events in the gap would be missed.
       const latestBlock = await this._channelsClient.getBlockNumber();
+      const events = await this._channelsClient.getCloseRequestedEvents(fromBlock, latestBlock);
 
       for (const event of events) {
         // Only handle channels this seller is actively tracking
