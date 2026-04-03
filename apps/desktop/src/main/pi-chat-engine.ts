@@ -527,12 +527,16 @@ function normalizeChatServiceCatalogEntry(raw: unknown): ChatServiceCatalogEntry
   const count = Number(entry.count);
   const normalizedCount = Number.isFinite(count) && count > 0 ? Math.max(1, Math.floor(count)) : 1;
   const label = normalizeServiceValue(entry.label) ?? id;
+  const peerId = typeof entry.peerId === 'string' ? entry.peerId.trim() : undefined;
+  const peerLabel = typeof entry.peerLabel === 'string' ? entry.peerLabel.trim() : undefined;
   return {
     id,
     label,
     provider,
     protocol,
     count: normalizedCount,
+    ...(peerId ? { peerId } : {}),
+    ...(peerLabel ? { peerLabel } : {}),
   };
 }
 

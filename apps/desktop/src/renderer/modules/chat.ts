@@ -987,6 +987,11 @@ export function initChatModule({
           uiState.chatProxyPort = proxyPort;
           uiState.chatProxyStatus = { tone: 'active', label: `Proxy :${port}` };
           notifyUiStateChanged();
+          // Proxy just became available — fetch metering stats for active conversation
+          if (activeConversation) {
+            const peerId = resolveConversationPeerId(activeConversation);
+            if (peerId) debouncedFetchMeteringStats(peerId);
+          }
           if (previousProxyState !== 'online') {
             setRuntimeActivity(
               'active',
