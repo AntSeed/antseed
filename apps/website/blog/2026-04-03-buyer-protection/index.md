@@ -65,7 +65,7 @@ Every session has a hard budget ceiling. When the buyer opens a payment channel,
 
 This is the absolute worst case for a single session. Even if the overdraft model had a bug, even if the tolerance cap had an edge case, the on-chain reserve limits total exposure. The seller's `reserve()` call on the smart contract locks exactly this amount — the contract won't allow more.
 
-For long sessions that need more budget, the buyer proactively signs a new ReserveAuth when spend reaches 85% of the ceiling. The seller calls `topUp()` on-chain to extend the channel. But the contract enforces a precondition: `topUp()` only succeeds if the seller has already settled at least 85% of the current deposit. This prevents a seller from accumulating unlimited budget without actually delivering and settling — funds must flow before more can be locked.
+For long sessions that need more budget, the buyer proactively signs a new ReserveAuth when its cumulative authorized spend reaches 85% of the ceiling. The seller then calls `topUp()` on-chain to extend the channel. But the contract has its own gate: `topUp()` only succeeds if the seller has already settled at least 85% of the current locked amount on-chain — meaning the seller must have submitted a SpendingAuth proving it delivered enough to justify the increase. These are two separate 85% checks: the client-side trigger ensures the buyer signs in time, the contract-side precondition ensures the seller has actually earned what it claims before more funds are locked.
 
 ## Layer 4: Separate the Keys
 
