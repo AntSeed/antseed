@@ -89,6 +89,9 @@ export class BuyerPaymentManager {
   /** sellerPeerId -> pricing learned from 402 / peer metadata at session start */
   private readonly _sessionPricing = new Map<string, ServicePricing>();
 
+  /** Cumulative response token totals per seller, tracked independently of signing metadata. */
+  private readonly _responseTokenTotals = new Map<string, { input: number; output: number; requests: number }>();
+
   /** sellerPeerId -> current on-chain reserve ceiling (can grow with top-ups) */
   private readonly _currentReserveCeiling = new Map<string, bigint>();
 
@@ -161,6 +164,7 @@ export class BuyerPaymentManager {
     this._reserveSalt.delete(sellerPeerId);
     this._confirmedPeers.delete(sellerPeerId);
     this._rejectedPeers.delete(sellerPeerId);
+    this._responseTokenTotals.delete(sellerPeerId);
   }
 
   // ── Spending Authorization ────────────────────────────────────
@@ -448,8 +452,6 @@ export class BuyerPaymentManager {
     this._channelStore.upsertChannel({
       ...session,
       authMax: newAmount.toString(),
-      tokensDelivered: newMeta.cumulativeInputTokens.toString(),
-      previousConsumption: newMeta.cumulativeOutputTokens.toString(),
       requestCount: Number(newMeta.cumulativeRequestCount),
       updatedAt: Date.now(),
     });
@@ -641,6 +643,43 @@ export class BuyerPaymentManager {
   /** Current cumulative signed amount for a seller. */
   getCumulativeAmount(sellerPeerId: string): bigint {
     return this._cumulativeAmount.get(sellerPeerId) ?? 0n;
+  }
+
+  /** Live cumulative token counts for a seller (in-memory, always up-to-date). */
+  getCumulativeTokens(sellerPeerId: string): { inputTokens: bigint; outputTokens: bigint } {
+    const meta = this._metadata.get(sellerPeerId) ?? ZERO_METADATA;
+    return { inputTokens: meta.cumulativeInputTokens, outputTokens: meta.cumulativeOutputTokens };
+  }
+
+  /**
+   * Accumulate response token counts and persist to the channel store.
+   * Tracks its own running totals independently of signPerRequestAuth metadata,
+   * so the persisted data is always up-to-date after each response.
+   */
+  recordAndPersistTokens(sellerPeerId: string, inputTokens: number, outputTokens: number): void {
+    const session = this._channelStore.getActiveChannelByPeer(sellerPeerId, 'buyer');
+    if (!session) return;
+
+    const prev = this._responseTokenTotals.get(sellerPeerId) ?? { input: 0, output: 0, requests: 0 };
+    const totals = {
+      input: prev.input + inputTokens,
+      output: prev.output + outputTokens,
+      requests: prev.requests + 1,
+    };
+    this._responseTokenTotals.set(sellerPeerId, totals);
+
+    this._channelStore.upsertChannel({
+      ...session,
+      tokensDelivered: String(totals.input),
+      previousConsumption: String(totals.output),
+      requestCount: totals.requests,
+      updatedAt: Date.now(),
+    });
+  }
+
+  /** Get the live response token totals for a seller, or null if none recorded this session. */
+  getResponseTokenTotals(sellerPeerId: string): { input: number; output: number; requests: number } | null {
+    return this._responseTokenTotals.get(sellerPeerId) ?? null;
   }
 
   /** Check if a session has been confirmed via AuthAck. */

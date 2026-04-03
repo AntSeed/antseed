@@ -567,6 +567,16 @@ export class BuyerProxy {
     method: string,
     path: string,
   ): Promise<void> {
+    const origin = req.headers.origin ?? '';
+    const isLocal = origin.startsWith('http://127.0.0.1') || origin.startsWith('http://localhost') || origin === 'file://';
+    if (isLocal) res.setHeader('Access-Control-Allow-Origin', origin);
+    if (method === 'OPTIONS') {
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+      res.writeHead(204)
+      res.end()
+      return
+    }
     if (path === '/_antseed/peers' && method === 'GET') {
       const peers = await this._getPeers()
       const payload = peers.map((p) => ({
@@ -629,6 +639,20 @@ export class BuyerProxy {
         log(`Eager connection failed for ${peerId.slice(0, 12)}...: ${message}`)
         res.writeHead(200, { 'content-type': 'application/json' })
         res.end(JSON.stringify({ ok: false, error: message }))
+      }
+      return
+    }
+
+    const meteringMatch = path.match(/^\/_antseed\/metering\/(.+)$/)
+    if (meteringMatch && method === 'GET') {
+      const sellerPeerId = decodeURIComponent(meteringMatch[1]!)
+      const stats = this._node.getMeteringStatsByPeer(sellerPeerId)
+      if (stats) {
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify(stats))
+      } else {
+        res.writeHead(503, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ error: 'Metering storage not available' }))
       }
       return
     }

@@ -107,6 +107,7 @@ export class ChannelStore {
         )
         ON CONFLICT(session_id) DO UPDATE SET
           auth_max = @authMax,
+          previous_consumption = @previousConsumption,
           tokens_delivered = @tokensDelivered,
           request_count = @requestCount,
           settled_at = @settledAt,
@@ -236,6 +237,43 @@ export class ChannelStore {
   getActiveChannels(role: string): StoredChannel[] {
     const rows = this._stmts.getActiveChannels.all(role, CHANNEL_STATUS.ACTIVE) as ChannelRow[];
     return rows.map(rowToChannel);
+  }
+
+  /** Aggregate totals across all channels for a given peer and role. */
+  getTotalsByPeer(peerId: string, role: string): {
+    totalSessions: number;
+    totalRequests: number;
+    totalInputTokens: number;
+    totalOutputTokens: number;
+    totalAuthorizedUsdc: bigint;
+    firstSessionAt: number | null;
+  } {
+    const row = this._db.prepare(`
+      SELECT
+        COUNT(*) as total_sessions,
+        COALESCE(SUM(request_count), 0) as total_requests,
+        COALESCE(SUM(CAST(tokens_delivered AS INTEGER)), 0) as total_input_tokens,
+        COALESCE(SUM(CAST(previous_consumption AS INTEGER)), 0) as total_output_tokens,
+        COALESCE(SUM(CAST(auth_max AS INTEGER)), 0) as total_authorized,
+        MIN(reserved_at) as first_session_at
+      FROM payment_channels
+      WHERE peer_id = ? AND role = ?
+    `).get(peerId, role) as {
+      total_sessions: number;
+      total_requests: number;
+      total_input_tokens: number;
+      total_output_tokens: number;
+      total_authorized: number;
+      first_session_at: number | null;
+    };
+    return {
+      totalSessions: row.total_sessions,
+      totalRequests: row.total_requests,
+      totalInputTokens: row.total_input_tokens,
+      totalOutputTokens: row.total_output_tokens,
+      totalAuthorizedUsdc: BigInt(row.total_authorized),
+      firstSessionAt: row.first_session_at,
+    };
   }
 
   // ── Timeout queries ───────────────────────────────────────────

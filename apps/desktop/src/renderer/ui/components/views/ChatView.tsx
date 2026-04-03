@@ -221,8 +221,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   return (
     <section className={`view view-chat${active ? ' active' : ''}`} role="tabpanel">
       <div className={styles.pageHeader}>
-        <div className={styles.pageHeaderLeft} />
-        <div className={styles.pageHeaderRight}>
+        <div className={styles.pageHeaderLeft}>
           {snap.chatRoutedPeer ? (
             <button
               className={styles.peerServiceIndicator}
@@ -241,6 +240,43 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
             </span>
           )}
         </div>
+        {snap.chatActiveConversation && (
+          <div className={styles.sessionMeta}>
+            {snap.chatRoutedPeerId && (
+              <span className={styles.sessionMetaItem} title={snap.chatRoutedPeerId}>
+                {snap.chatRoutedPeerId.slice(0, 10)}...
+              </span>
+            )}
+            {snap.chatSessionStarted && (
+              <span className={styles.sessionMetaItem}>{snap.chatSessionStarted}</span>
+            )}
+            {snap.chatSessionReservedUsdc && (
+              <span className={styles.sessionMetaItem}>
+                reserve ${snap.chatSessionReservedUsdc}
+              </span>
+            )}
+            {snap.chatSessionAccumulatedCostUsd && (
+              <span className={styles.sessionMetaItem}>
+                used ${snap.chatSessionAccumulatedCostUsd}
+              </span>
+            )}
+            {snap.chatSessionTotalTokens && (
+              <span className={styles.sessionMetaItem}>
+                {snap.chatSessionTotalTokens} tok
+              </span>
+            )}
+            {snap.chatLifetimeSpentUsdc && (
+              <span className={styles.sessionMetaItem} title="Total spent across all sessions with this peer">
+                total ${snap.chatLifetimeSpentUsdc}
+              </span>
+            )}
+            {snap.chatLifetimeTotalTokens && (
+              <span className={styles.sessionMetaItem} title="Total tokens across all sessions">
+                total {snap.chatLifetimeTotalTokens} tok
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {showWelcome && (

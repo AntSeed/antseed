@@ -215,6 +215,11 @@ describe('Cumulative SpendingAuth Integration', () => {
     expect(authMeta.outputTokens).toBeGreaterThan(0n);
     expect(auth.channelId).toBe(channelId);
 
+    // recordAndPersistTokens is now the sole writer for token fields
+    const estimatedInputTokens = Math.ceil(SAMPLE_INPUT.length / 4);
+    const estimatedOutputTokens = Math.ceil(SAMPLE_OUTPUT.length / 4);
+    buyerManager.recordAndPersistTokens(sellerIdentity.peerId, estimatedInputTokens, estimatedOutputTokens);
+
     buyerStore.close();
 
     const newStore = new ChannelStore(buyerTempDir);

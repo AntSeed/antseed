@@ -313,6 +313,8 @@ export class BuyerPaymentNegotiator {
       `[BuyerNegotiator] Estimated cost for ${peer.peerId.slice(0, 12)}...: ` +
       `cost=${costUsdc} (in=${inputTokens} out=${outputTokens}, estimated=${usage.inputTokens === 0 && usage.outputTokens === 0})`,
     );
+
+    this._bpm.recordAndPersistTokens(peer.peerId, inputTokens, outputTokens);
   }
 
   parseCostHeaders(peerId: string, response: SerializedHttpResponse): void {

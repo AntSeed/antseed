@@ -574,4 +574,58 @@ describe('BuyerPaymentManager', () => {
     expect(secondId).toMatch(/^0x[0-9a-f]{64}$/);
     expect(secondId).not.toBe(channelId);
   });
+
+  // ── recordAndPersistTokens ────────────────────────────────────
+
+  it('recordAndPersistTokens accumulates tokens and persists to channel store', async () => {
+    const sellerPeerId = fakePeerId('seller-record-tok');
+    await manager.authorizeSpending(sellerPeerId, mux, 50_000n, TEST_PRICING);
+
+    manager.recordAndPersistTokens(sellerPeerId, 1000, 200);
+    manager.recordAndPersistTokens(sellerPeerId, 500, 150);
+
+    // In-memory totals
+    const totals = manager.getResponseTokenTotals(sellerPeerId);
+    expect(totals.input).toBe(1500);
+    expect(totals.output).toBe(350);
+    expect(totals.requests).toBe(2);
+
+    // Persisted in channel store
+    const channel = store.getActiveChannelByPeer(sellerPeerId, 'buyer');
+    expect(channel).not.toBeNull();
+    expect(channel!.tokensDelivered).toBe('1500');
+    expect(channel!.previousConsumption).toBe('350');
+    expect(channel!.requestCount).toBe(2);
+  });
+
+  it('recordAndPersistTokens no-ops when no active session', () => {
+    const sellerPeerId = fakePeerId('seller-no-session');
+    manager.recordAndPersistTokens(sellerPeerId, 1000, 200);
+    expect(manager.getResponseTokenTotals(sellerPeerId)).toBeNull();
+  });
+
+  it('getResponseTokenTotals returns null for unknown peer', () => {
+    const totals = manager.getResponseTokenTotals(fakePeerId('unknown'));
+    expect(totals).toBeNull();
+  });
+
+  it('recordAndPersistTokens survives store reopen', async () => {
+    const sellerPeerId = fakePeerId('seller-persist');
+    await manager.authorizeSpending(sellerPeerId, mux, 50_000n, TEST_PRICING);
+
+    manager.recordAndPersistTokens(sellerPeerId, 2000, 800);
+    store.close();
+
+    // Reopen store and verify persisted data
+    const store2 = new ChannelStore(tempDir);
+    const channel = store2.getActiveChannelByPeer(sellerPeerId, 'buyer');
+    expect(channel).not.toBeNull();
+    expect(channel!.tokensDelivered).toBe('2000');
+    expect(channel!.previousConsumption).toBe('800');
+    expect(channel!.requestCount).toBe(1);
+    store2.close();
+
+    // Re-assign store so afterEach cleanup doesn't double-close
+    store = new ChannelStore(tempDir);
+  });
 });

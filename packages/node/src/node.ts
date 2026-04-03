@@ -461,6 +461,65 @@ export class AntseedNode extends EventEmitter {
     }
   }
 
+  /**
+   * Query session stats for a specific seller peer.
+   * Combines channel store data (authoritative payment/session info) with
+   * metering events when available.
+   */
+  getMeteringStatsByPeer(sellerPeerId: string): {
+    // Current session
+    totalRequests: number;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    reservedUsdc: string | null;
+    consumedUsdc: string | null;
+    channelStatus: string | null;
+    reservedAt: number | null;
+    // Lifetime totals (across all sessions with this peer)
+    lifetimeSessions: number;
+    lifetimeRequests: number;
+    lifetimeInputTokens: number;
+    lifetimeOutputTokens: number;
+    lifetimeTotalTokens: number;
+    lifetimeAuthorizedUsdc: string;
+    lifetimeFirstSessionAt: number | null;
+  } | null {
+    const channel = this._channelStore?.getActiveChannelByPeer(sellerPeerId, 'buyer')
+      ?? this._channelStore?.getLatestChannel(sellerPeerId, 'buyer')
+      ?? null;
+
+    const lifetime = this._channelStore?.getTotalsByPeer(sellerPeerId, 'buyer') ?? null;
+
+    if (!channel && !lifetime) return null;
+
+    const liveTotals = this._buyerPaymentManager?.getResponseTokenTotals(sellerPeerId);
+    const inputTokens = (liveTotals != null) ? liveTotals.input
+      : (channel != null) ? Number(channel.tokensDelivered || '0')
+      : 0;
+    const outputTokens = (liveTotals != null) ? liveTotals.output
+      : (channel != null) ? Number(channel.previousConsumption || '0')
+      : 0;
+
+    return {
+      totalRequests: channel?.requestCount ?? 0,
+      inputTokens,
+      outputTokens,
+      totalTokens: inputTokens + outputTokens,
+      reservedUsdc: this._buyerPaymentManager?.getReserveCeiling(sellerPeerId)?.toString() ?? null,
+      consumedUsdc: channel?.authMax ?? null,
+      channelStatus: channel?.status ?? null,
+      reservedAt: channel?.reservedAt ?? null,
+      lifetimeSessions: lifetime?.totalSessions ?? 0,
+      lifetimeRequests: lifetime?.totalRequests ?? 0,
+      lifetimeInputTokens: lifetime?.totalInputTokens ?? 0,
+      lifetimeOutputTokens: lifetime?.totalOutputTokens ?? 0,
+      lifetimeTotalTokens: (lifetime?.totalInputTokens ?? 0) + (lifetime?.totalOutputTokens ?? 0),
+      lifetimeAuthorizedUsdc: (lifetime?.totalAuthorizedUsdc ?? 0n).toString(),
+      lifetimeFirstSessionAt: lifetime?.firstSessionAt ?? null,
+    };
+  }
+
   async sendRequest(
     peer: PeerInfo,
     req: SerializedHttpRequest,
@@ -595,7 +654,6 @@ export class AntseedNode extends EventEmitter {
     const signalingPort = this._config.signalingPort ?? 6882;
     debugLog(`[Node] Starting seller — DHT port=${dhtPort}, signaling port=${signalingPort}`);
 
-    // Initialize metering storage
     const dataDir = this._config.dataDir ?? join(homedir(), ".antseed");
     try {
       this._metering = new MeteringStorage(join(dataDir, "metering.db"));

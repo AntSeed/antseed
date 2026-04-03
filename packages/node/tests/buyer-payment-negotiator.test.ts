@@ -41,6 +41,7 @@ function createMockBpm(): BuyerPaymentManager & Record<string, unknown> {
     cleanupSession: vi.fn(),
     isLockConfirmed: vi.fn().mockReturnValue(false),
     isLockRejected: vi.fn().mockReturnValue(false),
+    recordAndPersistTokens: vi.fn(),
     maxPerRequestUsdc: 100_000n,
     maxReserveAmountUsdc: 10_000_000n,
   } as unknown as BuyerPaymentManager & Record<string, unknown>;
@@ -256,6 +257,27 @@ describe('BuyerPaymentNegotiator', () => {
 
       // Verify by doing a full flow — lock the peer, then send auth which reads cost
       // For simplicity, just verify no error is thrown and the method is callable
+
+      // Verify recordAndPersistTokens was called with parsed token counts
+      expect(bpm.recordAndPersistTokens).toHaveBeenCalledWith(
+        peer.peerId, 100, 50,
+      );
+    });
+
+    it('estimateCostFromResponse calls recordAndPersistTokens with byte-estimated tokens when no usage field', () => {
+      const body = 'A'.repeat(400); // 400 bytes → ~100 output tokens (bytes/4)
+      const response: SerializedHttpResponse = {
+        requestId: 'req-2',
+        statusCode: 200,
+        headers: { 'content-type': 'application/json' },
+        body: enc.encode(body),
+      };
+
+      negotiator.estimateCostFromResponse(peer, response);
+
+      expect(bpm.recordAndPersistTokens).toHaveBeenCalledWith(
+        peer.peerId, 0, 100,
+      );
     });
 
     it('parseCostHeaders stores seller-reported cost', () => {

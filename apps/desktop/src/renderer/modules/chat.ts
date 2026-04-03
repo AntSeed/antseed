@@ -26,6 +26,7 @@ type ChatConversationSummary = {
   title?: string;
   service?: string;
   provider?: string;
+  peerId?: string;
   createdAt?: number;
   updatedAt?: number;
   messageCount?: number;
@@ -204,12 +205,11 @@ export function initChatModule({
   function decodeChatServiceSelection(value: unknown): ChatServiceSelection {
     const raw = String(value ?? '');
     if (!raw) return { id: '', provider: null };
-    const separatorIndex = raw.indexOf(CHAT_SERVICE_SELECTION_SEPARATOR);
-    if (separatorIndex === -1) return { id: normalizeChatServiceId(raw), provider: null };
-    const provider = normalizeProviderId(raw.slice(0, separatorIndex));
-    const id = normalizeChatServiceId(
-      raw.slice(separatorIndex + CHAT_SERVICE_SELECTION_SEPARATOR.length),
-    );
+    const parts = raw.split(CHAT_SERVICE_SELECTION_SEPARATOR);
+    if (parts.length === 1) return { id: normalizeChatServiceId(raw), provider: null };
+    // Format: "provider\x01service" or "provider\x01service\x01peerId"
+    const provider = normalizeProviderId(parts[0]);
+    const id = normalizeChatServiceId(parts[1]);
     return { id, provider };
   }
 
@@ -424,6 +424,14 @@ export function initChatModule({
     if (!conv) {
       uiState.chatThreadMeta = 'No conversation selected';
       uiState.chatRoutedPeer = '';
+      uiState.chatRoutedPeerId = '';
+      uiState.chatSessionStarted = '';
+      uiState.chatSessionReservedUsdc = '';
+      uiState.chatSessionAccumulatedCostUsd = '';
+      uiState.chatSessionTotalTokens = '';
+      uiState.chatLifetimeSpentUsdc = '';
+      uiState.chatLifetimeTotalTokens = '';
+      uiState.chatLifetimeSessions = '';
       return;
     }
 
@@ -431,6 +439,8 @@ export function initChatModule({
     let toolCalls = 0;
     let reasoningBlocks = 0;
     let totalEstimatedCostUsd = 0;
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
     const servingPeers = new Set<string>();
     let lastServingPeerId = '';
 
@@ -447,6 +457,8 @@ export function initChatModule({
           lastServingPeerId = meta.peerId;
         }
         if (meta.costUsd > 0) totalEstimatedCostUsd += meta.costUsd;
+        totalInputTokens += meta.inputTokens;
+        totalOutputTokens += meta.outputTokens;
       }
     }
 
@@ -458,7 +470,11 @@ export function initChatModule({
     if (toolCalls > 0) parts.push(`${toolCalls} tool${toolCalls === 1 ? '' : 's'}`);
     if (reasoningBlocks > 0) parts.push(`${reasoningBlocks} reasoning`);
 
-    const tokenCounts = getConversationTokenCounts(conv);
+    // Prefer message-derived token counts (always up-to-date) over stale conv.usage
+    const msgTotalTokens = totalInputTokens + totalOutputTokens;
+    const tokenCounts = msgTotalTokens > 0
+      ? { inputTokens: totalInputTokens, outputTokens: totalOutputTokens, totalTokens: msgTotalTokens }
+      : getConversationTokenCounts(conv);
     parts.push(
       `tokens ${formatCompactNumber(tokenCounts.totalTokens)} (${formatCompactNumber(tokenCounts.inputTokens)} in / ${formatCompactNumber(tokenCounts.outputTokens)} out)`,
     );
@@ -491,6 +507,116 @@ export function initChatModule({
     } else {
       uiState.chatRoutedPeer = '';
     }
+
+    const resolvedPeerId = resolveConversationPeerId(conv) || lastServingPeerId;
+    uiState.chatRoutedPeerId = resolvedPeerId;
+    // Only set fallback values for fields the metering endpoint hasn't populated yet.
+    // This prevents flicker: updateThreadMeta runs first with message-derived data,
+    // then fetchAndApplyMeteringStats overwrites with authoritative data.
+    if (!uiState.chatSessionStarted) {
+      uiState.chatSessionStarted = conv.createdAt ? formatChatDateTime(conv.createdAt) : '';
+    }
+    if (!uiState.chatSessionTotalTokens && tokenCounts.totalTokens > 0) {
+      uiState.chatSessionTotalTokens = formatCompactNumber(tokenCounts.totalTokens);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Metering stats from buyer proxy endpoint (source of truth)
+  // ---------------------------------------------------------------------------
+
+  function resolveConversationPeerId(conv: ChatConversation | null): string {
+    if (!conv) return '';
+    if (uiState.chatSelectedPeerId) return uiState.chatSelectedPeerId;
+    const convPeerId = conv.peerId?.trim() ?? '';
+    if (convPeerId) return convPeerId;
+    // Fallback: resolve from service options (the service maps to a peer)
+    const serviceOption = uiState.chatServiceOptions.find(
+      (o) => o.value === uiState.chatSelectedServiceValue || o.id === conv.service,
+    );
+    if (serviceOption?.peerId) return serviceOption.peerId;
+    // Last resort: extract peerId from the encoded service value (format: "provider\x01service\x01peerId")
+    const parts = uiState.chatSelectedServiceValue.split(CHAT_SERVICE_SELECTION_SEPARATOR);
+    return parts.length >= 3 ? parts[2]!.trim() : '';
+  }
+
+  type MeteringPeerStats = {
+    totalRequests: number;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    reservedUsdc: string | null;
+    consumedUsdc: string | null;
+    channelStatus: string | null;
+    reservedAt: number | null;
+    lifetimeSessions: number;
+    lifetimeRequests: number;
+    lifetimeInputTokens: number;
+    lifetimeOutputTokens: number;
+    lifetimeTotalTokens: number;
+    lifetimeAuthorizedUsdc: string;
+    lifetimeFirstSessionAt: number | null;
+  };
+
+  async function fetchAndApplyMeteringStats(sellerPeerId: string): Promise<void> {
+    const port = uiState.chatProxyPort;
+    if (!port) return;
+    try {
+      const prev = {
+        tokens: uiState.chatSessionTotalTokens,
+        cost: uiState.chatSessionAccumulatedCostUsd,
+        reserved: uiState.chatSessionReservedUsdc,
+        started: uiState.chatSessionStarted,
+        ltSpent: uiState.chatLifetimeSpentUsdc,
+        ltTokens: uiState.chatLifetimeTotalTokens,
+        ltSessions: uiState.chatLifetimeSessions,
+      };
+      const url = `http://127.0.0.1:${port}/_antseed/metering/${encodeURIComponent(sellerPeerId)}`;
+      const resp = await fetch(url);
+      if (!resp.ok) return;
+      const stats = (await resp.json()) as MeteringPeerStats;
+      if (stats.totalTokens > 0) {
+        uiState.chatSessionTotalTokens = formatCompactNumber(stats.totalTokens);
+      }
+      // reservedUsdc and consumedUsdc are USDC amounts stored as 6-decimal bigint strings
+      if (stats.reservedUsdc) {
+        const reservedNum = Number(stats.reservedUsdc) / 1_000_000;
+        if (reservedNum > 0) uiState.chatSessionReservedUsdc = formatUsd(reservedNum);
+      }
+      if (stats.consumedUsdc) {
+        const consumedNum = Number(stats.consumedUsdc) / 1_000_000;
+        if (consumedNum > 0) uiState.chatSessionAccumulatedCostUsd = formatUsd(consumedNum);
+      }
+      if (stats.reservedAt) {
+        uiState.chatSessionStarted = formatChatDateTime(stats.reservedAt);
+      }
+      // Lifetime totals across all sessions with this peer
+      const lifetimeSpent = Number(stats.lifetimeAuthorizedUsdc || '0') / 1_000_000;
+      if (lifetimeSpent > 0) uiState.chatLifetimeSpentUsdc = formatUsd(lifetimeSpent);
+      if (stats.lifetimeTotalTokens > 0) uiState.chatLifetimeTotalTokens = formatCompactNumber(stats.lifetimeTotalTokens);
+      if (stats.lifetimeSessions > 1) uiState.chatLifetimeSessions = String(stats.lifetimeSessions);
+
+      if (uiState.chatSessionTotalTokens !== prev.tokens ||
+          uiState.chatSessionAccumulatedCostUsd !== prev.cost ||
+          uiState.chatSessionReservedUsdc !== prev.reserved ||
+          uiState.chatSessionStarted !== prev.started ||
+          uiState.chatLifetimeSpentUsdc !== prev.ltSpent ||
+          uiState.chatLifetimeTotalTokens !== prev.ltTokens ||
+          uiState.chatLifetimeSessions !== prev.ltSessions) {
+        notifyUiStateChanged();
+      }
+    } catch {
+      // Buyer proxy unavailable — keep message-derived values
+    }
+  }
+
+  let _meteringDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  function debouncedFetchMeteringStats(peerId: string): void {
+    if (_meteringDebounceTimer) clearTimeout(_meteringDebounceTimer);
+    _meteringDebounceTimer = setTimeout(() => {
+      _meteringDebounceTimer = null;
+      void fetchAndApplyMeteringStats(peerId);
+    }, 500);
   }
 
   // ---------------------------------------------------------------------------
@@ -862,6 +988,11 @@ export function initChatModule({
           uiState.chatProxyPort = proxyPort;
           uiState.chatProxyStatus = { tone: 'active', label: `Proxy :${port}` };
           notifyUiStateChanged();
+          // Proxy just became available — fetch metering stats for active conversation
+          if (activeConversation) {
+            const peerId = resolveConversationPeerId(activeConversation);
+            if (peerId) debouncedFetchMeteringStats(peerId);
+          }
           if (previousProxyState !== 'online') {
             setRuntimeActivity(
               'active',
@@ -954,6 +1085,14 @@ export function initChatModule({
     if (!bridge || !bridge.chatAiGetConversation) return;
 
     uiState.chatActiveConversation = convId;
+    uiState.chatRoutedPeerId = '';
+    uiState.chatSessionStarted = '';
+    uiState.chatSessionReservedUsdc = '';
+    uiState.chatSessionAccumulatedCostUsd = '';
+    uiState.chatSessionTotalTokens = '';
+    uiState.chatLifetimeSpentUsdc = '';
+    uiState.chatLifetimeTotalTokens = '';
+    uiState.chatLifetimeSessions = '';
 
     try {
       const result = await bridge.chatAiGetConversation(convId);
@@ -991,6 +1130,9 @@ export function initChatModule({
         updateThreadMeta(activeConversation);
         uiState.chatError = null;
         notifyUiStateChanged();
+
+        const peerId = resolveConversationPeerId(activeConversation);
+        if (peerId) debouncedFetchMeteringStats(peerId);
       } else {
         reportChatError(result.error, 'Failed to open conversation');
       }
@@ -1047,6 +1189,8 @@ export function initChatModule({
       activeConversation.messages = uiState.chatMessages as ChatMessage[];
       activeConversation.updatedAt = Number(assistantMessage.createdAt) || Date.now();
       updateThreadMeta(activeConversation);
+      const peerId = resolveConversationPeerId(activeConversation);
+      if (peerId) debouncedFetchMeteringStats(peerId);
     }
   }
 
