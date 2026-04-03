@@ -672,6 +672,19 @@ export class BuyerProxy {
       return this._handleControlPlane(req, res, method, path)
     }
 
+    // Only proxy known API paths — reject everything else with 404
+    const normalizedPath = path.split('?')[0]?.trim().toLowerCase() ?? '/'
+    const isKnownApiPath =
+      normalizedPath.startsWith('/v1/messages') ||
+      normalizedPath.startsWith('/v1/chat/completions') ||
+      normalizedPath.startsWith('/v1/responses') ||
+      normalizedPath.startsWith('/v1/models')
+    if (!isKnownApiPath) {
+      res.writeHead(404, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ error: { message: 'Not found', type: 'invalid_request_error' } }))
+      return
+    }
+
     // Collect request body
     const chunks: Buffer[] = []
     for await (const chunk of req) {
