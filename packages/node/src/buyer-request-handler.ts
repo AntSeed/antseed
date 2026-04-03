@@ -281,6 +281,9 @@ export class BuyerRequestHandler {
       negotiator.estimateCostFromResponse(peer, response);
       negotiator.parseCostHeaders(peer.peerId, response);
       negotiator.recordResponseContent(peer.peerId, req.body, response.body, Date.now() - startTime);
+      // Send SpendingAuth immediately after response so the seller always has
+      // a valid signature for close(), even if the buyer disconnects before the next request.
+      await negotiator.sendPostResponseAuth(peer, conn);
     }
 
     return response;

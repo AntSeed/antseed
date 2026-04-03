@@ -147,7 +147,8 @@ export class BuyerPaymentNegotiator {
   /**
    * If this peer has an active payment session, send a per-request SpendingAuth.
    * Handles first-request skip automatically (initial auth already sent during negotiation).
-   * No-ops if the peer has no established session.
+   * No-ops if the peer has no established session or if cost data was already
+   * consumed by sendPostResponseAuth.
    */
   async preparePreRequestAuth(peer: PeerInfo, conn: PeerConnection): Promise<void> {
     if (!this._lockedPeers.has(peer.peerId)) return;
@@ -155,6 +156,19 @@ export class BuyerPaymentNegotiator {
       this._firstRequestSent.add(peer.peerId);
       return;
     }
+    // Skip if cost data was already consumed by post-response auth
+    if (!this._lastResponseCost.has(peer.peerId)) return;
+    await this._sendPerRequestAuth(peer, conn);
+  }
+
+  /**
+   * Send a SpendingAuth to the seller immediately after receiving a response.
+   * This ensures the seller always has a valid SpendingAuth for close(),
+   * even if the buyer disconnects before the next request.
+   */
+  async sendPostResponseAuth(peer: PeerInfo, conn: PeerConnection): Promise<void> {
+    if (!this._lockedPeers.has(peer.peerId)) return;
+    if (!this._lastResponseCost.has(peer.peerId)) return;
     await this._sendPerRequestAuth(peer, conn);
   }
 

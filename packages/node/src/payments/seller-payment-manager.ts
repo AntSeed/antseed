@@ -206,8 +206,12 @@ export class SellerPaymentManager {
         this._acceptedCumulative.set(channelId, cumulativeAmount);
         this._reserveMax.set(channelId, reserveMaxAmount);
         this._spent.set(channelId, 0n);
+        // Note: do NOT store the ReserveAuth sig as spendingAuthSig here.
+        // The ReserveAuth uses a different EIP-712 type and will fail
+        // _verifySpendingAuth in close(). A real SpendingAuth will arrive
+        // per-request and update this entry.
         this._latestAuth.set(channelId, {
-          spendingAuthSig: payload.spendingAuthSig,
+          spendingAuthSig: '',
           cumulativeAmount,
           metadataHash: payload.metadataHash,
           metadata: payload.metadata,
@@ -456,20 +460,29 @@ export class SellerPaymentManager {
       } else {
         // Close with the latest buyer-signed auth (final settlement)
         const latestAuth = this._latestAuth.get(channelId);
-        if (!latestAuth || !latestAuth.spendingAuthSig) {
-          debugWarn(`[SellerPayment] No buyer signature stored for channel ${channelId.slice(0, 18)}... — cannot close`);
-          return;
+        const hasSpendingAuth = latestAuth && latestAuth.spendingAuthSig.length > 0;
+        if (!hasSpendingAuth) {
+          // No real SpendingAuth received (only ReserveAuth from session setup).
+          // Close with finalAmount=0 so the contract skips signature verification.
+          // The seller forfeits unproven spend but the channel is properly closed.
+          debugLog(`[SellerPayment] No SpendingAuth for channel ${channelId.slice(0, 18)}... — closing with finalAmount=0 (forfeiting unproven spend)`);
+        } else {
+          debugLog(`[SellerPayment] Closing channel ${channelId.slice(0, 18)}... cumulative=${latestAuth.cumulativeAmount} (attempt ${retries + 1}/${SellerPaymentManager.MAX_CLOSE_RETRIES})`);
         }
-        debugLog(`[SellerPayment] Closing channel ${channelId.slice(0, 18)}... cumulative=${latestAuth.cumulativeAmount} (attempt ${retries + 1}/${SellerPaymentManager.MAX_CLOSE_RETRIES})`);
+        const closeAmount = hasSpendingAuth ? latestAuth!.cumulativeAmount : 0n;
+        const closeMetadata = hasSpendingAuth
+          ? (latestAuth!.metadata || encodeMetadata(ZERO_METADATA))
+          : encodeMetadata(ZERO_METADATA);
+        const closeSig = hasSpendingAuth ? latestAuth!.spendingAuthSig : '0x';
         try {
           await this._channelsClient.close(
             this._signer,
             channelId,
-            latestAuth.cumulativeAmount,
-            latestAuth.metadata || encodeMetadata(ZERO_METADATA),
-            latestAuth.spendingAuthSig,
+            closeAmount,
+            closeMetadata,
+            closeSig,
           );
-          this._channelStore.updateChannelStatus(channelId, 'settled', latestAuth.cumulativeAmount.toString());
+          this._channelStore.updateChannelStatus(channelId, 'settled', closeAmount.toString());
           this._closeRetryCount.delete(channelId);
         } catch (err) {
           debugWarn(`[SellerPayment] Failed to close channel (attempt ${retries + 1}): ${err instanceof Error ? err.message : err}`);
@@ -626,7 +639,9 @@ export class SellerPaymentManager {
     const latestAuth = this._latestAuth.get(channelId);
     const accepted = this._acceptedCumulative.get(channelId) ?? 0n;
 
-    if (accepted > 0n && latestAuth?.spendingAuthSig) {
+    const hasSpendingAuth = latestAuth && latestAuth.spendingAuthSig.length > 0;
+
+    if (accepted > 0n && hasSpendingAuth) {
       debugLog(`[SellerPayment] CloseRequested for channel ${channelId.slice(0, 18)}... — closing with cumulative=${latestAuth.cumulativeAmount}`);
       try {
         await this._channelsClient.close(
@@ -641,6 +656,16 @@ export class SellerPaymentManager {
       } catch (err) {
         debugWarn(`[SellerPayment] Failed to close channel ${channelId.slice(0, 18)}... after CloseRequested: ${err instanceof Error ? err.message : err}`);
         // Early return: preserve in-memory maps so the next poll cycle can retry close()
+        return;
+      }
+    } else if (accepted > 0n) {
+      // Had spend but no SpendingAuth (only ReserveAuth) — close with 0 to release deposit
+      debugLog(`[SellerPayment] CloseRequested for channel ${channelId.slice(0, 18)}... — no SpendingAuth, closing with finalAmount=0`);
+      try {
+        await this._channelsClient.close(this._signer, channelId, 0n, encodeMetadata(ZERO_METADATA), '0x');
+        this._channelStore.updateChannelStatus(channelId, 'settled', '0');
+      } catch (err) {
+        debugWarn(`[SellerPayment] Failed to close channel ${channelId.slice(0, 18)}... with finalAmount=0: ${err instanceof Error ? err.message : err}`);
         return;
       }
     } else {

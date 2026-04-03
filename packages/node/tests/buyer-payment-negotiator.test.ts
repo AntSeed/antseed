@@ -118,6 +118,13 @@ describe('BuyerPaymentNegotiator', () => {
       await negotiator.preparePreRequestAuth(peer, conn);
       expect(bpm.signPerRequestAuth).not.toHaveBeenCalled();
 
+      // Simulate response cost data being available (normally set by estimateCostFromResponse)
+      negotiator.parseCostHeaders(peer.peerId, {
+        statusCode: 200,
+        headers: { 'x-antseed-cost': '10000' },
+        body: new Uint8Array(0),
+      });
+
       // Second call — should send auth
       await negotiator.preparePreRequestAuth(peer, conn);
       expect(bpm.signPerRequestAuth).toHaveBeenCalledOnce();
@@ -139,6 +146,14 @@ describe('BuyerPaymentNegotiator', () => {
 
       // Skip first
       await negotiator.preparePreRequestAuth(peer, conn);
+
+      // Simulate response cost data being available
+      negotiator.parseCostHeaders(peer.peerId, {
+        statusCode: 200,
+        headers: { 'x-antseed-cost': '10000' },
+        body: new Uint8Array(0),
+      });
+
       // Second triggers auth
       await negotiator.preparePreRequestAuth(peer, conn);
 
