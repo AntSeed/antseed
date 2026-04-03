@@ -659,6 +659,11 @@ export class BuyerPaymentNegotiator {
       return false;
     }
 
+    if (!this._channelsClient) {
+      this._bpm.retireSession(peer.peerId, 'ghost');
+      return false;
+    }
+
     const onChain = await this._getOnChainSessionState(session.sessionId);
     if (onChain === null) {
       return false;
@@ -688,6 +693,7 @@ export class BuyerPaymentNegotiator {
     }
 
     if (onChain.state.status !== 1) {
+      this._bpm.retireSession(peer.peerId, 'ghost');
       return false;
     }
 
@@ -703,12 +709,13 @@ export class BuyerPaymentNegotiator {
     | { exists: false }
     | { exists: true; state: ChannelInfo }
   > {
-    if (!this._channelsClient) {
-      return null;
-    }
-
     try {
-      const state = await this._channelsClient.getSession(channelId);
+      const channelsClient = this._channelsClient;
+      if (!channelsClient) {
+        return null;
+      }
+
+      const state = await channelsClient.getSession(channelId);
       const exists = state.buyer !== '0x0000000000000000000000000000000000000000'
         || state.seller !== '0x0000000000000000000000000000000000000000'
         || state.deposit > 0n

@@ -278,6 +278,54 @@ describe('BuyerPaymentNegotiator', () => {
       expect(result.action).toBe('return');
     });
 
+    it('retires a stored session when no channels client is configured', async () => {
+      const activeSession = makeActiveSession(peer.peerId);
+      (bpm.getActiveSession as ReturnType<typeof vi.fn>)
+        .mockReturnValueOnce(activeSession)
+        .mockReturnValueOnce(activeSession)
+        .mockReturnValueOnce(null);
+      negotiator = new BuyerPaymentNegotiator(identity, bpm as unknown as BuyerPaymentManager, depositsClient, null, channelStore, config, emitter);
+      bufferPaymentRequired(negotiator, peer.peerId, conn);
+      (bpm.authorizeSpending as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+        (bpm.isLockConfirmed as ReturnType<typeof vi.fn>).mockReturnValue(true);
+      });
+
+      const result = await negotiator.handle402(make402Response(), peer, conn, makeRequest());
+
+      expect(bpm.retireSession).toHaveBeenCalledWith(peer.peerId, 'ghost');
+      expect(bpm.authorizeSpending).toHaveBeenCalled();
+      expect(result.action).toBe('retry');
+    });
+
+    it('retires a stored session on unknown on-chain status before renegotiating', async () => {
+      const activeSession = makeActiveSession(peer.peerId);
+      (bpm.getActiveSession as ReturnType<typeof vi.fn>)
+        .mockReturnValueOnce(activeSession)
+        .mockReturnValueOnce(activeSession)
+        .mockReturnValueOnce(null);
+      (channelsClient.getSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+        buyer: '0x' + '11'.repeat(20),
+        seller: '0x' + '22'.repeat(20),
+        deposit: 1_000_000n,
+        settled: 0n,
+        metadataHash: '0x' + '00'.repeat(32),
+        deadline: 0n,
+        settledAt: 0n,
+        closeRequestedAt: 0n,
+        status: 9,
+      });
+      bufferPaymentRequired(negotiator, peer.peerId, conn);
+      (bpm.authorizeSpending as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+        (bpm.isLockConfirmed as ReturnType<typeof vi.fn>).mockReturnValue(true);
+      });
+
+      const result = await negotiator.handle402(make402Response(), peer, conn, makeRequest());
+
+      expect(bpm.retireSession).toHaveBeenCalledWith(peer.peerId, 'ghost');
+      expect(bpm.authorizeSpending).toHaveBeenCalled();
+      expect(result.action).toBe('retry');
+    });
+
     it('auto-negotiates and returns retry on success', async () => {
       bufferPaymentRequired(negotiator, peer.peerId, conn);
       // Make isLockConfirmed return true after authorizeSpending
