@@ -855,6 +855,7 @@ export class AntseedNode extends EventEmitter {
           identity,
           this._buyerPaymentManager,
           this._depositsClient,
+          this._channelsClient,
           this._channelStore,
           {
             configPath: this._config.configPath,
@@ -1192,4 +1193,3 @@ function parsePeerAddress(address: string): { host: string; port: number } {
   const parts = address.split(":");
   return { host: parts[0]!, port: parseInt(parts[1] ?? "6882", 10) };
 }
-

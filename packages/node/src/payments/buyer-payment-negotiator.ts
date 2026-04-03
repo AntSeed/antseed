@@ -10,6 +10,7 @@ import type { SerializedHttpRequest, SerializedHttpResponse } from '../types/htt
 import type { PaymentRequiredPayload } from '../types/protocol.js';
 import type { BuyerPaymentManager } from './buyer-payment-manager.js';
 import type { DepositsClient } from './evm/deposits-client.js';
+import type { ChannelsClient, ChannelInfo } from './evm/channels-client.js';
 import type { ChannelStore } from './channel-store.js';
 import { peerIdToAddress } from '../types/peer.js';
 import { debugLog, debugWarn } from '../utils/debug.js';
@@ -62,6 +63,7 @@ function parsePaymentRequiredBody(body: Uint8Array): Record<string, unknown> | n
 export class BuyerPaymentNegotiator {
   private readonly _bpm: BuyerPaymentManager;
   private readonly _depositsClient: DepositsClient | null;
+  private readonly _channelsClient: ChannelsClient | null;
   private readonly _channelStore: ChannelStore | null;
   private readonly _identity: Identity;
   private readonly _config: BuyerNegotiatorConfig;
@@ -92,6 +94,7 @@ export class BuyerPaymentNegotiator {
     identity: Identity,
     bpm: BuyerPaymentManager,
     depositsClient: DepositsClient | null,
+    channelsClient: ChannelsClient | null,
     channelStore: ChannelStore | null,
     config: BuyerNegotiatorConfig,
     emitter: NegotiationEmitter,
@@ -99,6 +102,7 @@ export class BuyerPaymentNegotiator {
     this._identity = identity;
     this._bpm = bpm;
     this._depositsClient = depositsClient;
+    this._channelsClient = channelsClient;
     this._channelStore = channelStore;
     this._config = config;
     this._emit = emitter;
@@ -247,11 +251,19 @@ export class BuyerPaymentNegotiator {
       return returnPaymentRequired(responseAlreadyHasRequirements ? 'manual approval (direct body)' : 'manual approval');
     }
 
-    // Clear stale session state so auto-negotiation can start fresh
-    if (hadLockedSession) {
+    // Reconcile any active stored session before opening a fresh reserve.
+    if (hadLockedSession || this._bpm.getActiveSession(peer.peerId)) {
+      const recovered = await this._recoverExistingSession(peer, conn);
+      if (recovered) {
+        return { action: 'retry' };
+      }
+
+      if (this._bpm.getActiveSession(peer.peerId)) {
+        return returnPaymentRequired('existing channel still active');
+      }
+
       this._lockedPeers.delete(peer.peerId);
       this._firstRequestSent.delete(peer.peerId);
-      this._bpm.cleanupSession(peer.peerId);
     }
 
     // Check if we can pay before attempting negotiation
@@ -446,7 +458,6 @@ export class BuyerPaymentNegotiator {
     this._lockedPeers.delete(peerId);
     this._firstRequestSent.delete(peerId);
     this._lastResponseCost.delete(peerId);
-    this._bpm.cleanupSession(peerId);
   }
 
   cleanup(): void {
@@ -640,6 +651,73 @@ export class BuyerPaymentNegotiator {
         timer,
       });
     });
+  }
+
+  private async _recoverExistingSession(peer: PeerInfo, conn: PeerConnection): Promise<boolean> {
+    const session = this._bpm.getActiveSession(peer.peerId);
+    if (!session) {
+      return false;
+    }
+
+    const onChain = await this._getOnChainSessionState(session.sessionId);
+    if (onChain === null) {
+      return false;
+    }
+
+    if (!onChain.exists) {
+      if (this._bpm.canReplayReserveAuth(peer.peerId)) {
+        const pmux = this.getOrCreatePaymentMux(peer.peerId, conn);
+        await this._bpm.resendReserveAuth(peer.peerId, pmux);
+        await this._waitForLockConfirmation(peer.peerId);
+        this._lockedPeers.add(peer.peerId);
+        return true;
+      }
+
+      this._bpm.retireSession(peer.peerId, 'ghost');
+      return false;
+    }
+
+    if (onChain.state.status === 2) {
+      this._bpm.retireSession(peer.peerId, 'settled', onChain.state.settled);
+      return false;
+    }
+
+    if (onChain.state.status === 3) {
+      this._bpm.retireSession(peer.peerId, 'timeout');
+      return false;
+    }
+
+    if (onChain.state.status !== 1) {
+      return false;
+    }
+
+    const pmux = this.getOrCreatePaymentMux(peer.peerId, conn);
+    await this._bpm.resendCurrentSpendingAuth(peer.peerId, pmux);
+    await this._waitForLockConfirmation(peer.peerId);
+    this._lockedPeers.add(peer.peerId);
+    return true;
+  }
+
+  private async _getOnChainSessionState(channelId: string): Promise<
+    | null
+    | { exists: false }
+    | { exists: true; state: ChannelInfo }
+  > {
+    if (!this._channelsClient) {
+      return null;
+    }
+
+    try {
+      const state = await this._channelsClient.getSession(channelId);
+      const exists = state.buyer !== '0x0000000000000000000000000000000000000000'
+        || state.seller !== '0x0000000000000000000000000000000000000000'
+        || state.deposit > 0n
+        || state.status !== 0;
+      return exists ? { exists: true, state } : { exists: false };
+    } catch (err) {
+      debugWarn(`[BuyerNegotiator] Failed to load on-chain channel ${channelId.slice(0, 18)}...: ${err instanceof Error ? err.message : err}`);
+      return null;
+    }
   }
 
   private async _waitForLockConfirmation(sellerPeerId: string): Promise<void> {
