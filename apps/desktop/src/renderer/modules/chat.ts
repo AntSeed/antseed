@@ -510,13 +510,15 @@ export function initChatModule({
 
     const resolvedPeerId = resolveConversationPeerId(conv) || lastServingPeerId;
     uiState.chatRoutedPeerId = resolvedPeerId;
-    uiState.chatSessionStarted = conv.createdAt ? formatChatDateTime(conv.createdAt) : '';
-    const channelInfo = resolvedPeerId ? uiState.chatActiveChannels.get(resolvedPeerId) : undefined;
-    uiState.chatSessionReservedUsdc = channelInfo?.reservedUsdc ?? '';
-    uiState.chatSessionAccumulatedCostUsd = totalEstimatedCostUsd > 0 ? formatUsd(totalEstimatedCostUsd) : '';
-    uiState.chatSessionTotalTokens = tokenCounts.totalTokens > 0
-      ? formatCompactNumber(tokenCounts.totalTokens)
-      : '';
+    // Only set fallback values for fields the metering endpoint hasn't populated yet.
+    // This prevents flicker: updateThreadMeta runs first with message-derived data,
+    // then fetchAndApplyMeteringStats overwrites with authoritative data.
+    if (!uiState.chatSessionStarted) {
+      uiState.chatSessionStarted = conv.createdAt ? formatChatDateTime(conv.createdAt) : '';
+    }
+    if (!uiState.chatSessionTotalTokens && tokenCounts.totalTokens > 0) {
+      uiState.chatSessionTotalTokens = formatCompactNumber(tokenCounts.totalTokens);
+    }
   }
 
   // ---------------------------------------------------------------------------
