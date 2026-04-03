@@ -339,6 +339,10 @@ type NetworkPeerAddress = {
   providers?: string[];
   services?: string[];
   providerServiceApiProtocols?: Record<string, { services: Record<string, string[]> }>;
+  providerPricing?: Record<string, { services: Record<string, { input: number; output: number }> }>;
+  providerServiceCategories?: Record<string, { services: Record<string, string[]> }>;
+  defaultInputUsdPerMillion?: number;
+  defaultOutputUsdPerMillion?: number;
 };
 
 type ChatServiceProtocol = 'anthropic-messages' | 'openai-chat-completions' | 'openai-responses';
@@ -351,6 +355,10 @@ type ChatServiceCatalogEntry = {
   count: number;
   peerId?: string;
   peerLabel?: string;
+  inputUsdPerMillion?: number;
+  outputUsdPerMillion?: number;
+  categories?: string[];
+  description?: string;
 };
 
 const ANTSEED_HOME_DIR = path.join(homedir(), '.antseed');
@@ -529,6 +537,10 @@ function normalizeChatServiceCatalogEntry(raw: unknown): ChatServiceCatalogEntry
   const label = normalizeServiceValue(entry.label) ?? id;
   const peerId = typeof entry.peerId === 'string' ? entry.peerId.trim() : undefined;
   const peerLabel = typeof entry.peerLabel === 'string' ? entry.peerLabel.trim() : undefined;
+  const inputUsd = normalizeOptionalNumber(entry.inputUsdPerMillion);
+  const outputUsd = normalizeOptionalNumber(entry.outputUsdPerMillion);
+  const categories = Array.isArray(entry.categories) ? entry.categories.filter((c): c is string => typeof c === 'string') : undefined;
+  const description = typeof entry.description === 'string' ? entry.description.trim() : undefined;
   return {
     id,
     label,
@@ -537,6 +549,10 @@ function normalizeChatServiceCatalogEntry(raw: unknown): ChatServiceCatalogEntry
     count: normalizedCount,
     ...(peerId ? { peerId } : {}),
     ...(peerLabel ? { peerLabel } : {}),
+    ...(inputUsd != null && inputUsd >= 0 ? { inputUsdPerMillion: inputUsd } : {}),
+    ...(outputUsd != null && outputUsd >= 0 ? { outputUsdPerMillion: outputUsd } : {}),
+    ...(categories?.length ? { categories } : {}),
+    ...(description ? { description } : {}),
   };
 }
 
@@ -632,6 +648,14 @@ async function discoverChatServiceCatalog(
         providerServiceApiProtocols: (p.providerServiceApiProtocols && typeof p.providerServiceApiProtocols === 'object')
           ? p.providerServiceApiProtocols as NetworkPeerAddress['providerServiceApiProtocols']
           : undefined,
+        providerPricing: (p.providerPricing && typeof p.providerPricing === 'object')
+          ? p.providerPricing as NetworkPeerAddress['providerPricing']
+          : undefined,
+        providerServiceCategories: (p.providerServiceCategories && typeof p.providerServiceCategories === 'object')
+          ? p.providerServiceCategories as NetworkPeerAddress['providerServiceCategories']
+          : undefined,
+        defaultInputUsdPerMillion: typeof p.defaultInputUsdPerMillion === 'number' ? p.defaultInputUsdPerMillion : undefined,
+        defaultOutputUsdPerMillion: typeof p.defaultOutputUsdPerMillion === 'number' ? p.defaultOutputUsdPerMillion : undefined,
       }))
       .filter((p) => p.peerId.length > 0);
   } catch {
@@ -654,6 +678,10 @@ async function discoverChatServiceCatalog(
     const providerList = peer.providers ?? [];
     const serviceList = peer.services ?? [];
     const apiProtocols = peer.providerServiceApiProtocols;
+    const pricingMap = peer.providerPricing;
+    const categoriesMap = peer.providerServiceCategories;
+    const defaultInput = peer.defaultInputUsdPerMillion;
+    const defaultOutput = peer.defaultOutputUsdPerMillion;
 
     if (serviceList.length > 0) {
       // Use explicit service names when available.
@@ -663,6 +691,14 @@ async function discoverChatServiceCatalog(
         const protocol = resolveServiceProtocol(apiProtocols, serviceId) ?? inferProviderProtocol(provider);
         if (!protocol) continue;
 
+        // Resolve pricing: per-service → per-provider default → peer default
+        const providerPricing = pricingMap?.[provider]?.services?.[serviceId];
+        const inputUsd = providerPricing?.input ?? defaultInput;
+        const outputUsd = providerPricing?.output ?? defaultOutput;
+
+        // Resolve categories
+        const categories = categoriesMap?.[provider]?.services?.[serviceId];
+
         results.push({
           id: serviceId,
           label: serviceId,
@@ -671,6 +707,9 @@ async function discoverChatServiceCatalog(
           count: 1,
           peerId,
           peerLabel,
+          ...(inputUsd != null ? { inputUsdPerMillion: inputUsd } : {}),
+          ...(outputUsd != null ? { outputUsdPerMillion: outputUsd } : {}),
+          ...(categories?.length ? { categories } : {}),
         });
       }
     } else if (providerList.length > 0) {
@@ -687,6 +726,8 @@ async function discoverChatServiceCatalog(
           count: 1,
           peerId,
           peerLabel,
+          ...(defaultInput != null ? { inputUsdPerMillion: defaultInput } : {}),
+          ...(defaultOutput != null ? { outputUsdPerMillion: defaultOutput } : {}),
         });
       }
     }
