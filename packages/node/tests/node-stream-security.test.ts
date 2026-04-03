@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AntseedNode, type NodeConfig } from '../src/node.js';
+import { BuyerRequestHandler, type BuyerRequestHandlerConfig } from '../src/buyer-request-handler.js';
 import {
   ANTSEED_STREAMING_RESPONSE_HEADER,
   type SerializedHttpRequest,
@@ -15,22 +15,7 @@ interface StreamingHarness {
   emitChunk: (chunk: SerializedHttpResponseChunk) => void;
 }
 
-function createNode(config: Partial<NodeConfig>): AntseedNode {
-  const node = new AntseedNode({
-    role: 'buyer',
-    ...config,
-  });
-
-  (node as any)._identity = {
-    peerId: 'a'.repeat(40),
-    privateKey: new Uint8Array(32),
-    publicKey: new Uint8Array(32),
-  };
-  (node as any)._connectionManager = {};
-  return node;
-}
-
-function setupStreamingHarness(node: AntseedNode, requestId: string): StreamingHarness {
+function createHandler(config: BuyerRequestHandlerConfig): { handler: BuyerRequestHandler; harness: StreamingHarness } {
   let onResponse: ((response: SerializedHttpResponse, metadata: { streamingStart: boolean }) => void) | null = null;
   let onChunk: ((chunk: SerializedHttpResponseChunk) => void) | null = null;
   let resolveRegistered: (() => void) | null = null;
@@ -53,17 +38,21 @@ function setupStreamingHarness(node: AntseedNode, requestId: string): StreamingH
     cancelProxyRequest: vi.fn(),
   };
 
-  (node as any)._getOrCreateConnection = vi.fn(async () => ({ state: 'open' }));
-  (node as any)._getOrCreateMux = vi.fn(() => mux);
+  const handler = new BuyerRequestHandler(config, {
+    negotiator: null,
+    getConnection: vi.fn(async () => ({ state: 'open' })) as any,
+    getMux: vi.fn(() => mux) as any,
+    registerPaymentMux: vi.fn(),
+  });
 
-  return {
+  const harness: StreamingHarness = {
     mux,
     waitUntilRegistered: () => registered,
     emitStreamingStart: () => {
       if (!onResponse) throw new Error('stream response handler is not registered');
       onResponse(
         {
-          requestId,
+          requestId: '',
           statusCode: 200,
           headers: {
             [ANTSEED_STREAMING_RESPONSE_HEADER]: '1',
@@ -79,9 +68,11 @@ function setupStreamingHarness(node: AntseedNode, requestId: string): StreamingH
       onChunk(chunk);
     },
   };
+
+  return { handler, harness };
 }
 
-describe('AntseedNode streaming security guards', () => {
+describe('BuyerRequestHandler streaming security guards', () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
@@ -89,11 +80,10 @@ describe('AntseedNode streaming security guards', () => {
 
   it('rejects streaming responses that exceed max buffered size', async () => {
     const requestId = 'stream-size-limit';
-    const node = createNode({
+    const { handler, harness } = createHandler({
       maxStreamBufferBytes: 4,
       maxStreamDurationMs: 60_000,
     });
-    const harness = setupStreamingHarness(node, requestId);
     const peer = { peerId: 'b'.repeat(40) } as PeerInfo;
     const request: SerializedHttpRequest = {
       requestId,
@@ -103,7 +93,7 @@ describe('AntseedNode streaming security guards', () => {
       body: new Uint8Array(0),
     };
 
-    const promise = (node as any)._sendRequestInternal(peer, request, undefined);
+    const promise = handler.sendRequest(peer, request);
     await harness.waitUntilRegistered();
     harness.emitStreamingStart();
     harness.emitChunk({
@@ -121,11 +111,10 @@ describe('AntseedNode streaming security guards', () => {
     vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
 
     const requestId = 'stream-duration-limit';
-    const node = createNode({
+    const { handler, harness } = createHandler({
       maxStreamBufferBytes: 1024,
       maxStreamDurationMs: 100,
     });
-    const harness = setupStreamingHarness(node, requestId);
     const peer = { peerId: 'b'.repeat(40) } as PeerInfo;
     const request: SerializedHttpRequest = {
       requestId,
@@ -135,7 +124,7 @@ describe('AntseedNode streaming security guards', () => {
       body: new Uint8Array(0),
     };
 
-    const promise = (node as any)._sendRequestInternal(peer, request, undefined);
+    const promise = handler.sendRequest(peer, request);
     await harness.waitUntilRegistered();
     harness.emitStreamingStart();
     vi.setSystemTime(new Date('2026-01-01T00:00:00.200Z'));
@@ -151,11 +140,10 @@ describe('AntseedNode streaming security guards', () => {
 
   it('still reconstructs streamed responses under configured limits', async () => {
     const requestId = 'stream-success';
-    const node = createNode({
+    const { handler, harness } = createHandler({
       maxStreamBufferBytes: 1024,
       maxStreamDurationMs: 60_000,
     });
-    const harness = setupStreamingHarness(node, requestId);
     const peer = { peerId: 'b'.repeat(40) } as PeerInfo;
     const request: SerializedHttpRequest = {
       requestId,
@@ -165,7 +153,7 @@ describe('AntseedNode streaming security guards', () => {
       body: new Uint8Array(0),
     };
 
-    const promise = (node as any)._sendRequestInternal(peer, request, undefined);
+    const promise = handler.sendRequest(peer, request);
     await harness.waitUntilRegistered();
     harness.emitStreamingStart();
     harness.emitChunk({
@@ -185,11 +173,10 @@ describe('AntseedNode streaming security guards', () => {
 
   it('does not enforce buffer limit in streaming callback mode', async () => {
     const requestId = 'stream-no-limit';
-    const node = createNode({
+    const { handler, harness } = createHandler({
       maxStreamBufferBytes: 4,
       maxStreamDurationMs: 60_000,
     });
-    const harness = setupStreamingHarness(node, requestId);
     const peer = { peerId: 'b'.repeat(40) } as PeerInfo;
     const request: SerializedHttpRequest = {
       requestId,
@@ -200,7 +187,7 @@ describe('AntseedNode streaming security guards', () => {
     };
 
     const chunks: Uint8Array[] = [];
-    const promise = (node as any)._sendRequestInternal(peer, request, {
+    const promise = handler.sendRequest(peer, request, {
       onResponseStart: () => {},
       onResponseChunk: (chunk: SerializedHttpResponseChunk) => {
         if (chunk.data.length > 0) chunks.push(chunk.data);
