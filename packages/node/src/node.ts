@@ -774,14 +774,6 @@ export class AntseedNode extends EventEmitter {
     debugLog(`[Node] Starting buyer — DHT port=${dhtPort}`);
 
     const dataDir = this._config.dataDir ?? join(homedir(), ".antseed");
-
-    try {
-      this._metering = new MeteringStorage(join(dataDir, "metering.db"));
-      debugLog("[Node] Buyer metering storage initialized");
-    } catch (err) {
-      debugWarn(`[Node] Buyer metering storage unavailable: ${err instanceof Error ? err.message : err}`);
-    }
-
     await this._initializePayments(dataDir);
 
     // Start DHT with ephemeral port
