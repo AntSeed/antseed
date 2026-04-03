@@ -467,47 +467,56 @@ export class AntseedNode extends EventEmitter {
    * metering events when available.
    */
   getMeteringStatsByPeer(sellerPeerId: string): {
+    // Current session
     totalRequests: number;
     inputTokens: number;
     outputTokens: number;
     totalTokens: number;
-    totalCostCents: number;
-    firstEventAt: number | null;
-    lastEventAt: number | null;
     reservedUsdc: string | null;
     consumedUsdc: string | null;
     channelStatus: string | null;
     reservedAt: number | null;
+    // Lifetime totals (across all sessions with this peer)
+    lifetimeSessions: number;
+    lifetimeRequests: number;
+    lifetimeInputTokens: number;
+    lifetimeOutputTokens: number;
+    lifetimeTotalTokens: number;
+    lifetimeAuthorizedUsdc: string;
+    lifetimeFirstSessionAt: number | null;
   } | null {
-    // Channel store is the primary source (always available when payments are active)
     const channel = this._channelStore?.getActiveChannelByPeer(sellerPeerId, 'buyer')
       ?? this._channelStore?.getLatestChannel(sellerPeerId, 'buyer')
       ?? null;
 
-    const metering = this._metering?.getEventStatsByPeer(sellerPeerId) ?? null;
+    const lifetime = this._channelStore?.getTotalsByPeer(sellerPeerId, 'buyer') ?? null;
 
-    if (!channel && !metering) return null;
+    if (!channel && !lifetime) return null;
 
     const liveTotals = this._buyerPaymentManager?.getResponseTokenTotals(sellerPeerId);
     const inputTokens = (liveTotals != null) ? liveTotals.input
       : (channel != null) ? Number(channel.tokensDelivered || '0')
-      : metering?.inputTokens ?? 0;
+      : 0;
     const outputTokens = (liveTotals != null) ? liveTotals.output
       : (channel != null) ? Number(channel.previousConsumption || '0')
-      : metering?.outputTokens ?? 0;
+      : 0;
 
     return {
-      totalRequests: channel?.requestCount ?? metering?.totalRequests ?? 0,
+      totalRequests: channel?.requestCount ?? 0,
       inputTokens,
       outputTokens,
       totalTokens: inputTokens + outputTokens,
-      totalCostCents: metering?.totalCostCents ?? 0,
-      firstEventAt: metering?.firstEventAt ?? channel?.reservedAt ?? null,
-      lastEventAt: metering?.lastEventAt ?? null,
       reservedUsdc: this._buyerPaymentManager?.getReserveCeiling(sellerPeerId)?.toString() ?? null,
-      consumedUsdc: channel?.authMax ?? null,  // authMax = cumulative USDC authorized
+      consumedUsdc: channel?.authMax ?? null,
       channelStatus: channel?.status ?? null,
       reservedAt: channel?.reservedAt ?? null,
+      lifetimeSessions: lifetime?.totalSessions ?? 0,
+      lifetimeRequests: lifetime?.totalRequests ?? 0,
+      lifetimeInputTokens: lifetime?.totalInputTokens ?? 0,
+      lifetimeOutputTokens: lifetime?.totalOutputTokens ?? 0,
+      lifetimeTotalTokens: (lifetime?.totalInputTokens ?? 0) + (lifetime?.totalOutputTokens ?? 0),
+      lifetimeAuthorizedUsdc: (lifetime?.totalAuthorizedUsdc ?? 0n).toString(),
+      lifetimeFirstSessionAt: lifetime?.firstSessionAt ?? null,
     };
   }
 

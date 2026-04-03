@@ -265,6 +265,16 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                 {snap.chatSessionTotalTokens} tok
               </span>
             )}
+            {snap.chatLifetimeSpentUsdc && (
+              <span className={styles.sessionMetaItem} title="Total spent across all sessions with this peer">
+                total ${snap.chatLifetimeSpentUsdc}
+              </span>
+            )}
+            {snap.chatLifetimeTotalTokens && (
+              <span className={styles.sessionMetaItem} title="Total tokens across all sessions">
+                total {snap.chatLifetimeTotalTokens} tok
+              </span>
+            )}
           </div>
         )}
       </div>

@@ -171,6 +171,9 @@ export type RendererUiState = {
   chatSessionReservedUsdc: string;
   chatSessionAccumulatedCostUsd: string;
   chatSessionTotalTokens: string;
+  chatLifetimeSpentUsdc: string;
+  chatLifetimeTotalTokens: string;
+  chatLifetimeSessions: string;
   chatServiceOptions: ChatServiceOptionEntry[];
   chatSelectedServiceValue: string;
   chatSelectedPeerId: string;
@@ -301,6 +304,9 @@ export function createInitialUiState(): RendererUiState {
     chatSessionReservedUsdc: '',
     chatSessionAccumulatedCostUsd: '',
     chatSessionTotalTokens: '',
+    chatLifetimeSpentUsdc: '',
+    chatLifetimeTotalTokens: '',
+    chatLifetimeSessions: '',
     chatServiceOptions: [],
     chatSelectedServiceValue: '',
     chatSelectedPeerId: '',

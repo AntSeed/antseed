@@ -430,6 +430,9 @@ export function initChatModule({
       uiState.chatSessionReservedUsdc = '';
       uiState.chatSessionAccumulatedCostUsd = '';
       uiState.chatSessionTotalTokens = '';
+      uiState.chatLifetimeSpentUsdc = '';
+      uiState.chatLifetimeTotalTokens = '';
+      uiState.chatLifetimeSessions = '';
       return;
     }
 
@@ -538,13 +541,17 @@ export function initChatModule({
     inputTokens: number;
     outputTokens: number;
     totalTokens: number;
-    totalCostCents: number;
-    firstEventAt: number | null;
-    lastEventAt: number | null;
     reservedUsdc: string | null;
     consumedUsdc: string | null;
     channelStatus: string | null;
     reservedAt: number | null;
+    lifetimeSessions: number;
+    lifetimeRequests: number;
+    lifetimeInputTokens: number;
+    lifetimeOutputTokens: number;
+    lifetimeTotalTokens: number;
+    lifetimeAuthorizedUsdc: string;
+    lifetimeFirstSessionAt: number | null;
   };
 
   async function fetchAndApplyMeteringStats(sellerPeerId: string): Promise<void> {
@@ -556,6 +563,9 @@ export function initChatModule({
         cost: uiState.chatSessionAccumulatedCostUsd,
         reserved: uiState.chatSessionReservedUsdc,
         started: uiState.chatSessionStarted,
+        ltSpent: uiState.chatLifetimeSpentUsdc,
+        ltTokens: uiState.chatLifetimeTotalTokens,
+        ltSessions: uiState.chatLifetimeSessions,
       };
       const url = `http://127.0.0.1:${port}/_antseed/metering/${encodeURIComponent(sellerPeerId)}`;
       const resp = await fetch(url);
@@ -576,10 +586,19 @@ export function initChatModule({
       if (stats.reservedAt) {
         uiState.chatSessionStarted = formatChatDateTime(stats.reservedAt);
       }
+      // Lifetime totals across all sessions with this peer
+      const lifetimeSpent = Number(stats.lifetimeAuthorizedUsdc || '0') / 1_000_000;
+      if (lifetimeSpent > 0) uiState.chatLifetimeSpentUsdc = formatUsd(lifetimeSpent);
+      if (stats.lifetimeTotalTokens > 0) uiState.chatLifetimeTotalTokens = formatCompactNumber(stats.lifetimeTotalTokens);
+      if (stats.lifetimeSessions > 1) uiState.chatLifetimeSessions = String(stats.lifetimeSessions);
+
       if (uiState.chatSessionTotalTokens !== prev.tokens ||
           uiState.chatSessionAccumulatedCostUsd !== prev.cost ||
           uiState.chatSessionReservedUsdc !== prev.reserved ||
-          uiState.chatSessionStarted !== prev.started) {
+          uiState.chatSessionStarted !== prev.started ||
+          uiState.chatLifetimeSpentUsdc !== prev.ltSpent ||
+          uiState.chatLifetimeTotalTokens !== prev.ltTokens ||
+          uiState.chatLifetimeSessions !== prev.ltSessions) {
         notifyUiStateChanged();
       }
     } catch {
