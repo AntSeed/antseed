@@ -40,6 +40,7 @@ describe('BuyerRequestHandler payment mux wiring', () => {
         negotiator: {
           getOrCreatePaymentMux,
           preparePreRequestAuth: vi.fn(),
+          sendPostResponseAuth: vi.fn(),
           estimateCostFromResponse: vi.fn(),
           parseCostHeaders: vi.fn(),
           recordResponseContent: vi.fn(),
