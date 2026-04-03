@@ -43,8 +43,11 @@ function makeSellerNode(): AntseedNode {
     privateKey: new Uint8Array(32),
     publicKey: new Uint8Array(32),
   };
-  // Silence _finalizeSession — it touches _sessions/_metering which aren't set up
-  (node as any)._finalizeSession = vi.fn().mockResolvedValue(undefined);
+  // Stub _sessionTracker so disconnect cleanup doesn't touch real metering
+  (node as any)._sessionTracker = {
+    finalizeSession: vi.fn().mockResolvedValue(undefined),
+    getOrCreateSession: vi.fn(),
+  };
   return node;
 }
 
@@ -93,8 +96,7 @@ describe('seller reconnect — mux-collision regression', () => {
 
   it('does not finalize the session when a stale connection closes after a reconnect', () => {
     const node = makeSellerNode();
-    const finalize = vi.fn().mockResolvedValue(undefined);
-    (node as any)._finalizeSession = finalize;
+    const finalize = (node as any)._sessionTracker.finalizeSession;
 
     const conn1 = makeFakeConn(BUYER_PEER_ID);
     const conn2 = makeFakeConn(BUYER_PEER_ID);

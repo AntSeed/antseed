@@ -70,6 +70,13 @@ export type { StoredChannel, StoredReceipt } from './channel-store.js';
 export { BuyerPaymentManager } from './buyer-payment-manager.js';
 export type { BuyerPaymentConfig, PerRequestAuthResult } from './buyer-payment-manager.js';
 
+// Buyer payment negotiator (402 handling, SpendingAuth flow, cost tracking)
+export { BuyerPaymentNegotiator } from './buyer-payment-negotiator.js';
+export type { BuyerNegotiatorConfig, Handle402Result, NegotiationEmitter } from './buyer-payment-negotiator.js';
+
+// Response usage parsing
+export { parseResponseUsage } from '../utils/response-usage.js';
+
 // Seller payment manager
 export { SellerPaymentManager } from './seller-payment-manager.js';
 export type { SellerPaymentConfig } from './seller-payment-manager.js';

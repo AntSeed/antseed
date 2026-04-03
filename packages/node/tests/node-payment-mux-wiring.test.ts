@@ -48,22 +48,26 @@ describe('AntseedNode buyer payment mux wiring', () => {
       }, { streamingStart: false });
     });
 
-    (node as any)._buyerPaymentManager = {};
+    const getOrCreatePaymentMux = vi.fn().mockReturnValue({});
+    (node as any)._buyerNegotiator = {
+      getOrCreatePaymentMux: getOrCreatePaymentMux,
+      preparePreRequestAuth: vi.fn(),
+      estimateCostFromResponse: vi.fn(),
+      parseCostHeaders: vi.fn(),
+      recordResponseContent: vi.fn(),
+    };
     (node as any)._getOrCreateConnection = vi.fn(async () => conn);
     (node as any)._getOrCreateMux = vi.fn(() => ({
       sendProxyRequest,
       cancelProxyRequest: vi.fn(),
     }));
-    const getOrCreateBuyerPaymentMux = vi
-      .spyOn(node as any, '_getOrCreateBuyerPaymentMux')
-      .mockReturnValue({} as never);
 
     await (node as any)._sendRequestInternal(peer, request, undefined);
 
-    expect(getOrCreateBuyerPaymentMux).toHaveBeenCalledWith(peer.peerId, conn);
+    expect(getOrCreatePaymentMux).toHaveBeenCalledWith(peer.peerId, conn);
     expect(sendProxyRequest).toHaveBeenCalledOnce();
     expect(
-      getOrCreateBuyerPaymentMux.mock.invocationCallOrder[0],
+      getOrCreatePaymentMux.mock.invocationCallOrder[0],
     ).toBeLessThan(sendProxyRequest.mock.invocationCallOrder[0]);
   });
 
@@ -106,26 +110,24 @@ describe('AntseedNode buyer payment mux wiring', () => {
       onResponse(next, { streamingStart: false });
     });
 
-    (node as any)._buyerPaymentManager = { cleanupSession: vi.fn() };
-    (node as any)._depositsClient = { getBuyerBalance: vi.fn(async () => ({ available: 1n })) };
-    (node as any)._identity.wallet = { address: '0x' + '11'.repeat(20) };
-    (node as any)._buyerLockedPeers.add(peer.peerId);
+    const handle402 = vi.fn(async () => ({ action: 'retry' as const }));
+    (node as any)._buyerNegotiator = {
+      getOrCreatePaymentMux: vi.fn().mockReturnValue({}),
+      preparePreRequestAuth: vi.fn(),
+      handle402,
+      estimateCostFromResponse: vi.fn(),
+      parseCostHeaders: vi.fn(),
+      recordResponseContent: vi.fn(),
+    };
     (node as any)._getOrCreateConnection = vi.fn(async () => conn);
     (node as any)._getOrCreateMux = vi.fn(() => ({
       sendProxyRequest,
       cancelProxyRequest: vi.fn(),
     }));
-    vi.spyOn(node as any, '_getOrCreateBuyerPaymentMux').mockReturnValue({} as never);
-    vi.spyOn(node as any, '_isManualApprovalEnabled').mockResolvedValue(false);
-    const negotiatePayment = vi.spyOn(node as any, '_negotiatePayment').mockImplementation(async () => {
-      expect((node as any)._buyerLockedPeers.has(peer.peerId)).toBe(false);
-      expect((node as any)._buyerFirstRequestSent.has(peer.peerId)).toBe(false);
-    });
 
     const response = await (node as any)._sendRequestInternal(peer, request, undefined);
 
     expect(response.statusCode).toBe(200);
-    expect(negotiatePayment).toHaveBeenCalledWith(peer, conn);
-    expect((node as any)._buyerPaymentManager.cleanupSession).toHaveBeenCalledWith(peer.peerId);
+    expect(handle402).toHaveBeenCalledOnce();
   });
 });
