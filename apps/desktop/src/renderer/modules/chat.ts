@@ -531,7 +531,7 @@ export function initChatModule({
     if (convPeerId) return convPeerId;
     // Fallback: resolve from service options (the service maps to a peer)
     const serviceOption = uiState.chatServiceOptions.find(
-      (o) => o.value === uiState.chatSelectedServiceValue || o.label === conv.service,
+      (o) => o.value === uiState.chatSelectedServiceValue || o.id === conv.service,
     );
     return serviceOption?.peerId ?? '';
   }
