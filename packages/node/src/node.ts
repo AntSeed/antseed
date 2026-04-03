@@ -192,6 +192,8 @@ export class AntseedNode extends EventEmitter {
   private _channelStore: ChannelStore | null = null;
   /** Periodic timeout checker interval. */
   private _timeoutCheckerInterval: ReturnType<typeof setInterval> | null = null;
+  /** Block cursor for CloseRequested event polling. */
+  private _closeRequestedFromBlock: number = 0;
   /** Seller session lifecycle tracking (metering, settlement). */
   private _sessionTracker: SellerSessionTracker | null = null;
 
@@ -683,6 +685,17 @@ export class AntseedNode extends EventEmitter {
 
     await this._initializePayments(dataDir);
 
+    // Wire idle-timeout session finalization to on-chain settlement
+    if (this._sellerPaymentManager) {
+      const spm = this._sellerPaymentManager;
+      this.on("session:finalized", (info: { buyerPeerId: string; reason: string }) => {
+        if (info.reason === "idle-timeout") {
+          debugLog(`[Node] Idle timeout for buyer ${info.buyerPeerId.slice(0, 12)}... — settling channel`);
+          void spm.settleSession(info.buyerPeerId, { cleanupOnFailure: true });
+        }
+      });
+    }
+
     // Start DHT
     this._dht = new DHTNode(this._createDHTConfig(dhtPort, bootstrapNodes));
     await this._dht.start();
@@ -977,9 +990,21 @@ export class AntseedNode extends EventEmitter {
       // Startup recovery: check for timed-out sessions
       await this._sellerPaymentManager.checkTimeouts();
 
-      // Start periodic timeout checker (every 60s)
+      // Initialize CloseRequested polling cursor to current block
+      try {
+        this._closeRequestedFromBlock = await this._sellerPaymentManager.channelsClient.getBlockNumber();
+      } catch {
+        this._closeRequestedFromBlock = 0;
+      }
+
+      // Start periodic timeout checker + CloseRequested poller (every 60s)
       this._timeoutCheckerInterval = setInterval(() => {
         void this._sellerPaymentManager?.checkTimeouts();
+        if (this._sellerPaymentManager) {
+          void this._sellerPaymentManager.pollCloseRequested(this._closeRequestedFromBlock).then((nextBlock) => {
+            this._closeRequestedFromBlock = nextBlock;
+          });
+        }
       }, 60_000);
       if (typeof (this._timeoutCheckerInterval as { unref?: () => void }).unref === "function") {
         (this._timeoutCheckerInterval as { unref: () => void }).unref();
