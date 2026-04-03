@@ -677,9 +677,9 @@ export class BuyerPaymentManager {
     });
   }
 
-  /** Get the live response token totals for a seller. */
-  getResponseTokenTotals(sellerPeerId: string): { input: number; output: number; requests: number } {
-    return this._responseTokenTotals.get(sellerPeerId) ?? { input: 0, output: 0, requests: 0 };
+  /** Get the live response token totals for a seller, or null if none recorded this session. */
+  getResponseTokenTotals(sellerPeerId: string): { input: number; output: number; requests: number } | null {
+    return this._responseTokenTotals.get(sellerPeerId) ?? null;
   }
 
   /** Check if a session has been confirmed via AuthAck. */

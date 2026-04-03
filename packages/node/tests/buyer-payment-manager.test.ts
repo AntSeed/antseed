@@ -601,15 +601,12 @@ describe('BuyerPaymentManager', () => {
   it('recordAndPersistTokens no-ops when no active session', () => {
     const sellerPeerId = fakePeerId('seller-no-session');
     manager.recordAndPersistTokens(sellerPeerId, 1000, 200);
-    const totals = manager.getResponseTokenTotals(sellerPeerId);
-    expect(totals.input).toBe(0);
-    expect(totals.output).toBe(0);
-    expect(totals.requests).toBe(0);
+    expect(manager.getResponseTokenTotals(sellerPeerId)).toBeNull();
   });
 
-  it('getResponseTokenTotals returns zeroes for unknown peer', () => {
+  it('getResponseTokenTotals returns null for unknown peer', () => {
     const totals = manager.getResponseTokenTotals(fakePeerId('unknown'));
-    expect(totals).toEqual({ input: 0, output: 0, requests: 0 });
+    expect(totals).toBeNull();
   });
 
   it('recordAndPersistTokens survives store reopen', async () => {
