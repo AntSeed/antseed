@@ -567,6 +567,14 @@ export class BuyerProxy {
     method: string,
     path: string,
   ): Promise<void> {
+    res.setHeader('Access-Control-Allow-Origin', '*')
+    if (method === 'OPTIONS') {
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+      res.writeHead(204)
+      res.end()
+      return
+    }
     if (path === '/_antseed/peers' && method === 'GET') {
       const peers = await this._getPeers()
       const payload = peers.map((p) => ({
