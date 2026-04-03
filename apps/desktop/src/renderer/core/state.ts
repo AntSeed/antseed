@@ -166,6 +166,11 @@ export type RendererUiState = {
   chatError: string | null;
   chatThreadMeta: string;
   chatRoutedPeer: string;
+  chatRoutedPeerId: string;
+  chatSessionStarted: string;
+  chatSessionReservedUsdc: string;
+  chatSessionAccumulatedCostUsd: string;
+  chatSessionTotalTokens: string;
   chatServiceOptions: ChatServiceOptionEntry[];
   chatSelectedServiceValue: string;
   chatSelectedPeerId: string;
@@ -291,6 +296,11 @@ export function createInitialUiState(): RendererUiState {
     chatError: null,
     chatThreadMeta: 'No conversation selected',
     chatRoutedPeer: '',
+    chatRoutedPeerId: '',
+    chatSessionStarted: '',
+    chatSessionReservedUsdc: '',
+    chatSessionAccumulatedCostUsd: '',
+    chatSessionTotalTokens: '',
     chatServiceOptions: [],
     chatSelectedServiceValue: '',
     chatSelectedPeerId: '',

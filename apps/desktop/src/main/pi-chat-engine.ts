@@ -2036,7 +2036,9 @@ export function registerPiChatHandlers({
     if (!conversation) {
       return { ok: false, error: 'Conversation not found' };
     }
-    return { ok: true, data: conversation };
+    const peerId = preferredPeerByConversationId.get(id);
+    const enriched = peerId ? { ...conversation, peerId } : conversation;
+    return { ok: true, data: enriched };
   });
 
   ipcMain.handle('chat:ai-create-conversation', async (_event, service: string, provider?: string, peerId?: string) => {

@@ -26,6 +26,7 @@ type ChatConversationSummary = {
   title?: string;
   service?: string;
   provider?: string;
+  peerId?: string;
   createdAt?: number;
   updatedAt?: number;
   messageCount?: number;
@@ -424,6 +425,11 @@ export function initChatModule({
     if (!conv) {
       uiState.chatThreadMeta = 'No conversation selected';
       uiState.chatRoutedPeer = '';
+      uiState.chatRoutedPeerId = '';
+      uiState.chatSessionStarted = '';
+      uiState.chatSessionReservedUsdc = '';
+      uiState.chatSessionAccumulatedCostUsd = '';
+      uiState.chatSessionTotalTokens = '';
       return;
     }
 
@@ -431,6 +437,8 @@ export function initChatModule({
     let toolCalls = 0;
     let reasoningBlocks = 0;
     let totalEstimatedCostUsd = 0;
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
     const servingPeers = new Set<string>();
     let lastServingPeerId = '';
 
@@ -447,6 +455,8 @@ export function initChatModule({
           lastServingPeerId = meta.peerId;
         }
         if (meta.costUsd > 0) totalEstimatedCostUsd += meta.costUsd;
+        totalInputTokens += meta.inputTokens;
+        totalOutputTokens += meta.outputTokens;
       }
     }
 
@@ -458,7 +468,11 @@ export function initChatModule({
     if (toolCalls > 0) parts.push(`${toolCalls} tool${toolCalls === 1 ? '' : 's'}`);
     if (reasoningBlocks > 0) parts.push(`${reasoningBlocks} reasoning`);
 
-    const tokenCounts = getConversationTokenCounts(conv);
+    // Prefer message-derived token counts (always up-to-date) over stale conv.usage
+    const msgTotalTokens = totalInputTokens + totalOutputTokens;
+    const tokenCounts = msgTotalTokens > 0
+      ? { inputTokens: totalInputTokens, outputTokens: totalOutputTokens, totalTokens: msgTotalTokens }
+      : getConversationTokenCounts(conv);
     parts.push(
       `tokens ${formatCompactNumber(tokenCounts.totalTokens)} (${formatCompactNumber(tokenCounts.inputTokens)} in / ${formatCompactNumber(tokenCounts.outputTokens)} out)`,
     );
@@ -491,6 +505,95 @@ export function initChatModule({
     } else {
       uiState.chatRoutedPeer = '';
     }
+
+    const resolvedPeerId = resolveConversationPeerId(conv) || lastServingPeerId;
+    uiState.chatRoutedPeerId = resolvedPeerId;
+    uiState.chatSessionStarted = conv.createdAt ? formatChatDateTime(conv.createdAt) : '';
+    const channelInfo = resolvedPeerId ? uiState.chatActiveChannels.get(resolvedPeerId) : undefined;
+    uiState.chatSessionReservedUsdc = channelInfo?.reservedUsdc ?? '';
+    uiState.chatSessionAccumulatedCostUsd = totalEstimatedCostUsd > 0 ? formatUsd(totalEstimatedCostUsd) : '';
+    uiState.chatSessionTotalTokens = tokenCounts.totalTokens > 0
+      ? formatCompactNumber(tokenCounts.totalTokens)
+      : '';
+  }
+
+  // ---------------------------------------------------------------------------
+  // Metering stats from buyer proxy endpoint (source of truth)
+  // ---------------------------------------------------------------------------
+
+  function resolveConversationPeerId(conv: ChatConversation | null): string {
+    if (!conv) return '';
+    if (uiState.chatSelectedPeerId) return uiState.chatSelectedPeerId;
+    const convPeerId = conv.peerId?.trim() ?? '';
+    if (convPeerId) return convPeerId;
+    // Fallback: resolve from service options (the service maps to a peer)
+    const serviceOption = uiState.chatServiceOptions.find(
+      (o) => o.value === uiState.chatSelectedServiceValue || o.label === conv.service,
+    );
+    return serviceOption?.peerId ?? '';
+  }
+
+  type MeteringPeerStats = {
+    totalRequests: number;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    totalCostCents: number;
+    firstEventAt: number | null;
+    lastEventAt: number | null;
+    reservedUsdc: string | null;
+    consumedUsdc: string | null;
+    channelStatus: string | null;
+    reservedAt: number | null;
+  };
+
+  async function fetchAndApplyMeteringStats(sellerPeerId: string): Promise<void> {
+    const port = uiState.chatProxyPort;
+    if (!port) return;
+    try {
+      const prev = {
+        tokens: uiState.chatSessionTotalTokens,
+        cost: uiState.chatSessionAccumulatedCostUsd,
+        reserved: uiState.chatSessionReservedUsdc,
+        started: uiState.chatSessionStarted,
+      };
+      const url = `http://127.0.0.1:${port}/_antseed/metering/${encodeURIComponent(sellerPeerId)}`;
+      const resp = await fetch(url);
+      if (!resp.ok) return;
+      const stats = (await resp.json()) as MeteringPeerStats;
+      if (stats.totalTokens > 0) {
+        uiState.chatSessionTotalTokens = formatCompactNumber(stats.totalTokens);
+      }
+      // reservedUsdc and consumedUsdc are USDC amounts stored as 6-decimal bigint strings
+      if (stats.reservedUsdc) {
+        const reservedNum = Number(stats.reservedUsdc) / 1_000_000;
+        if (reservedNum > 0) uiState.chatSessionReservedUsdc = formatUsd(reservedNum);
+      }
+      if (stats.consumedUsdc) {
+        const consumedNum = Number(stats.consumedUsdc) / 1_000_000;
+        if (consumedNum > 0) uiState.chatSessionAccumulatedCostUsd = formatUsd(consumedNum);
+      }
+      if (stats.reservedAt) {
+        uiState.chatSessionStarted = formatChatDateTime(stats.reservedAt);
+      }
+      if (uiState.chatSessionTotalTokens !== prev.tokens ||
+          uiState.chatSessionAccumulatedCostUsd !== prev.cost ||
+          uiState.chatSessionReservedUsdc !== prev.reserved ||
+          uiState.chatSessionStarted !== prev.started) {
+        notifyUiStateChanged();
+      }
+    } catch {
+      // Buyer proxy unavailable — keep message-derived values
+    }
+  }
+
+  let _meteringDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  function debouncedFetchMeteringStats(peerId: string): void {
+    if (_meteringDebounceTimer) clearTimeout(_meteringDebounceTimer);
+    _meteringDebounceTimer = setTimeout(() => {
+      _meteringDebounceTimer = null;
+      void fetchAndApplyMeteringStats(peerId);
+    }, 500);
   }
 
   // ---------------------------------------------------------------------------
@@ -991,6 +1094,9 @@ export function initChatModule({
         updateThreadMeta(activeConversation);
         uiState.chatError = null;
         notifyUiStateChanged();
+
+        const peerId = resolveConversationPeerId(activeConversation);
+        if (peerId) debouncedFetchMeteringStats(peerId);
       } else {
         reportChatError(result.error, 'Failed to open conversation');
       }
@@ -1047,6 +1153,8 @@ export function initChatModule({
       activeConversation.messages = uiState.chatMessages as ChatMessage[];
       activeConversation.updatedAt = Number(assistantMessage.createdAt) || Date.now();
       updateThreadMeta(activeConversation);
+      const peerId = resolveConversationPeerId(activeConversation);
+      if (peerId) debouncedFetchMeteringStats(peerId);
     }
   }
 

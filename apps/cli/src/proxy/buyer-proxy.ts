@@ -633,6 +633,20 @@ export class BuyerProxy {
       return
     }
 
+    const meteringMatch = path.match(/^\/_antseed\/metering\/(.+)$/)
+    if (meteringMatch && method === 'GET') {
+      const sellerPeerId = decodeURIComponent(meteringMatch[1]!)
+      const stats = this._node.getMeteringStatsByPeer(sellerPeerId)
+      if (stats) {
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify(stats))
+      } else {
+        res.writeHead(503, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ error: 'Metering storage not available' }))
+      }
+      return
+    }
+
     res.writeHead(404, { 'content-type': 'application/json' })
     res.end(JSON.stringify({ ok: false, error: 'Unknown control-plane endpoint' }))
   }

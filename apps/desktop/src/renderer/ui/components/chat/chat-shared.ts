@@ -392,8 +392,7 @@ export function buildChatMetaParts(msg: ChatMessage): string[] {
   }
 
   if (assistantMeta) {
-    parts.push(assistantMeta.peerId ? `peer ${assistantMeta.peerId.slice(0, 8)}` : 'peer n/a');
-    if (assistantMeta.peerAddress) parts.push(assistantMeta.peerAddress);
+    if (assistantMeta.peerId) parts.push(`peer ${assistantMeta.peerId.slice(0, 8)}`);
     if (assistantMeta.provider) parts.push(assistantMeta.provider);
     if (assistantMeta.service) parts.push(shortServiceName(assistantMeta.service));
     if (assistantMeta.peerProviders.length > 0 && !assistantMeta.provider) {
@@ -407,12 +406,8 @@ export function buildChatMetaParts(msg: ChatMessage): string[] {
         );
       }
       parts.push(tokenParts.join(' '));
-    } else {
-      parts.push('tok n/a');
     }
-    if (assistantMeta.tokenSource === 'estimated') parts.push('est.');
     if (assistantMeta.costUsd > 0) parts.push(`$${formatUsd(assistantMeta.costUsd)}`);
-    else if (assistantMeta.totalTokens > 0) parts.push('$n/a');
     if (assistantMeta.latencyMs > 0) parts.push(`${Math.round(assistantMeta.latencyMs)}ms`);
     if (assistantMeta.peerReputation !== null) parts.push(`rep ${Math.round(assistantMeta.peerReputation)}`);
     if (assistantMeta.peerTrustScore !== null) parts.push(`trust ${Math.round(assistantMeta.peerTrustScore)}`);
@@ -423,7 +418,6 @@ export function buildChatMetaParts(msg: ChatMessage): string[] {
     ) {
       parts.push(`load ${Math.round(assistantMeta.peerCurrentLoad)}/${Math.round(assistantMeta.peerMaxConcurrency)}`);
     }
-    if (assistantMeta.routeRequestId) parts.push(`route ${assistantMeta.routeRequestId.slice(0, 8)}`);
   }
 
   return parts;

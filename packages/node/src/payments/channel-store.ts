@@ -107,6 +107,7 @@ export class ChannelStore {
         )
         ON CONFLICT(session_id) DO UPDATE SET
           auth_max = @authMax,
+          previous_consumption = @previousConsumption,
           tokens_delivered = @tokensDelivered,
           request_count = @requestCount,
           settled_at = @settledAt,

@@ -461,6 +461,56 @@ export class AntseedNode extends EventEmitter {
     }
   }
 
+  /**
+   * Query session stats for a specific seller peer.
+   * Combines channel store data (authoritative payment/session info) with
+   * metering events when available.
+   */
+  getMeteringStatsByPeer(sellerPeerId: string): {
+    totalRequests: number;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    totalCostCents: number;
+    firstEventAt: number | null;
+    lastEventAt: number | null;
+    reservedUsdc: string | null;
+    consumedUsdc: string | null;
+    channelStatus: string | null;
+    reservedAt: number | null;
+  } | null {
+    // Channel store is the primary source (always available when payments are active)
+    const channel = this._channelStore?.getActiveChannelByPeer(sellerPeerId, 'buyer')
+      ?? this._channelStore?.getLatestChannel(sellerPeerId, 'buyer')
+      ?? null;
+
+    const metering = this._metering?.getEventStatsByPeer(sellerPeerId) ?? null;
+
+    if (!channel && !metering) return null;
+
+    const liveTotals = this._buyerPaymentManager?.getResponseTokenTotals(sellerPeerId);
+    const inputTokens = (liveTotals != null) ? liveTotals.input
+      : (channel != null) ? Number(channel.tokensDelivered || '0')
+      : metering?.inputTokens ?? 0;
+    const outputTokens = (liveTotals != null) ? liveTotals.output
+      : (channel != null) ? Number(channel.previousConsumption || '0')
+      : metering?.outputTokens ?? 0;
+
+    return {
+      totalRequests: channel?.requestCount ?? metering?.totalRequests ?? 0,
+      inputTokens,
+      outputTokens,
+      totalTokens: inputTokens + outputTokens,
+      totalCostCents: metering?.totalCostCents ?? 0,
+      firstEventAt: metering?.firstEventAt ?? channel?.reservedAt ?? null,
+      lastEventAt: metering?.lastEventAt ?? null,
+      reservedUsdc: this._buyerPaymentManager?.getReserveCeiling(sellerPeerId)?.toString() ?? null,
+      consumedUsdc: channel?.authMax ?? null,  // authMax = cumulative USDC authorized
+      channelStatus: channel?.status ?? null,
+      reservedAt: channel?.reservedAt ?? null,
+    };
+  }
+
   async sendRequest(
     peer: PeerInfo,
     req: SerializedHttpRequest,
@@ -595,7 +645,6 @@ export class AntseedNode extends EventEmitter {
     const signalingPort = this._config.signalingPort ?? 6882;
     debugLog(`[Node] Starting seller — DHT port=${dhtPort}, signaling port=${signalingPort}`);
 
-    // Initialize metering storage
     const dataDir = this._config.dataDir ?? join(homedir(), ".antseed");
     try {
       this._metering = new MeteringStorage(join(dataDir, "metering.db"));
@@ -725,6 +774,14 @@ export class AntseedNode extends EventEmitter {
     debugLog(`[Node] Starting buyer — DHT port=${dhtPort}`);
 
     const dataDir = this._config.dataDir ?? join(homedir(), ".antseed");
+
+    try {
+      this._metering = new MeteringStorage(join(dataDir, "metering.db"));
+      debugLog("[Node] Buyer metering storage initialized");
+    } catch (err) {
+      debugWarn(`[Node] Buyer metering storage unavailable: ${err instanceof Error ? err.message : err}`);
+    }
+
     await this._initializePayments(dataDir);
 
     // Start DHT with ephemeral port
