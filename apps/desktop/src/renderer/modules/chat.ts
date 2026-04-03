@@ -205,12 +205,11 @@ export function initChatModule({
   function decodeChatServiceSelection(value: unknown): ChatServiceSelection {
     const raw = String(value ?? '');
     if (!raw) return { id: '', provider: null };
-    const separatorIndex = raw.indexOf(CHAT_SERVICE_SELECTION_SEPARATOR);
-    if (separatorIndex === -1) return { id: normalizeChatServiceId(raw), provider: null };
-    const provider = normalizeProviderId(raw.slice(0, separatorIndex));
-    const id = normalizeChatServiceId(
-      raw.slice(separatorIndex + CHAT_SERVICE_SELECTION_SEPARATOR.length),
-    );
+    const parts = raw.split(CHAT_SERVICE_SELECTION_SEPARATOR);
+    if (parts.length === 1) return { id: normalizeChatServiceId(raw), provider: null };
+    // Format: "provider\x01service" or "provider\x01service\x01peerId"
+    const provider = normalizeProviderId(parts[0]);
+    const id = normalizeChatServiceId(parts[1]);
     return { id, provider };
   }
 
