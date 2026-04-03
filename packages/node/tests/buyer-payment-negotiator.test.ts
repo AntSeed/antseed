@@ -337,6 +337,13 @@ describe('BuyerPaymentNegotiator', () => {
 
       expect(result.action).toBe('retry');
       expect(bpm.authorizeSpending).toHaveBeenCalled();
+      expect(bpm.authorizeSpending).toHaveBeenCalledWith(
+        peer.peerId,
+        expect.anything(),
+        10000n,
+        100000n,
+        { inputUsdPerMillion: 3, outputUsdPerMillion: 15 },
+      );
     });
 
     it('enriches 402 body with PaymentRequired data', async () => {

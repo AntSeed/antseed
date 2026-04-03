@@ -558,7 +558,7 @@ export class BuyerPaymentNegotiator {
         : undefined;
 
     try {
-      await this._bpm.authorizeSpending(peer.peerId, pmux, minBudgetPerRequest, pricing);
+      await this._bpm.authorizeSpending(peer.peerId, pmux, minBudgetPerRequest, amount, pricing);
       debugLog(`[BuyerNegotiator] SpendingAuth sent to seller ${peer.peerId.slice(0, 12)}..., waiting for AuthAck...`);
 
       await this._waitForLockConfirmation(peer.peerId);

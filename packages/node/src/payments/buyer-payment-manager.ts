@@ -271,9 +271,16 @@ export class BuyerPaymentManager {
     sellerPeerId: string,
     paymentMux: PaymentMux,
     minBudgetPerRequest: bigint,
-    pricing?: ServicePricing,
+    reserveAmountOrPricing?: bigint | ServicePricing,
+    pricingArg?: ServicePricing,
   ): Promise<string> {
     const sellerEvmAddr = peerIdToAddress(sellerPeerId);
+    const reserveAmount = typeof reserveAmountOrPricing === 'bigint'
+      ? reserveAmountOrPricing
+      : this._config.maxReserveAmountUsdc;
+    const pricing = typeof reserveAmountOrPricing === 'bigint'
+      ? pricingArg
+      : reserveAmountOrPricing;
 
     // Budget validation: reject if seller demands more than buyer's overdraft limit
     if (minBudgetPerRequest > this._config.maxPerRequestUsdc) {
@@ -301,7 +308,7 @@ export class BuyerPaymentManager {
 
     // Sign ReserveAuth — binds channelId, maxAmount, deadline on-chain
     const channelsDomain = this._channelsDomain;
-    const maxAmount = this._config.maxReserveAmountUsdc;
+    const maxAmount = reserveAmount;
     const reserveMsg: ReserveAuthMessage = {
       channelId,
       maxAmount,
