@@ -567,7 +567,9 @@ export class BuyerProxy {
     method: string,
     path: string,
   ): Promise<void> {
-    res.setHeader('Access-Control-Allow-Origin', '*')
+    const origin = req.headers.origin ?? '';
+    const isLocal = origin.startsWith('http://127.0.0.1') || origin.startsWith('http://localhost') || origin === 'file://';
+    if (isLocal) res.setHeader('Access-Control-Allow-Origin', origin);
     if (method === 'OPTIONS') {
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
