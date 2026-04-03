@@ -68,10 +68,9 @@ import { debugLog, debugWarn } from "./utils/debug.js";
 import { parsePublicAddress } from "./discovery/public-address.js";
 import { BuyerPaymentManager, type BuyerPaymentConfig } from "./payments/buyer-payment-manager.js";
 import { BuyerPaymentNegotiator } from "./payments/buyer-payment-negotiator.js";
-import { parseResponseUsage } from "./utils/response-usage.js";
-import { computeCostUsdc } from "./payments/pricing.js";
 import { SellerPaymentManager, type SellerPaymentConfig } from "./payments/seller-payment-manager.js";
 import { IdentityClient } from "./payments/evm/identity-client.js";
+import { SellerRequestHandler } from "./seller-request-handler.js";
 
 export type { Provider, ProviderStreamCallbacks };
 export type { Router };
@@ -170,7 +169,6 @@ export interface RequestExecutionOptions {
 }
 
 export class AntseedNode extends EventEmitter {
-  private static readonly _METADATA_REFRESH_DEBOUNCE_MS = 200;
   private _config: NodeConfig;
   private _identity: Identity | null = null;
   private _dht: DHTNode | null = null;
@@ -192,8 +190,8 @@ export class AntseedNode extends EventEmitter {
   private _stakingClient: StakingClient | null = null;
   private _identityClient: IdentityClient | null = null;
   private _paymentMuxes = new Map<PeerId, PaymentMux>();
-  private _providerLoadCounts = new Map<string, number>();
-  private _metadataRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Seller-side request handler (provider matching, execution, load tracking). */
+  private _sellerHandler: SellerRequestHandler | null = null;
   /** Buyer-side payment manager (initialized when buyer has payment config). */
   private _buyerPaymentManager: BuyerPaymentManager | null = null;
   /** Buyer-side payment negotiation (402 handling, SpendingAuth, cost tracking). */
@@ -321,11 +319,10 @@ export class AntseedNode extends EventEmitter {
       await this._sessionTracker.finalizeAllSessions("node-stop");
       this._sessionTracker.clearTimers();
     }
-    if (this._metadataRefreshTimer) {
-      clearTimeout(this._metadataRefreshTimer);
-      this._metadataRefreshTimer = null;
+    if (this._sellerHandler) {
+      this._sellerHandler.clearMetadataRefreshTimer();
+      this._sellerHandler = null;
     }
-    this._providerLoadCounts.clear();
 
     // Remove NAT port mappings
     if (this._nat) {
@@ -956,6 +953,16 @@ export class AntseedNode extends EventEmitter {
       );
     }
 
+    // Create seller request handler
+    this._sellerHandler = new SellerRequestHandler({
+      providers: this._providers,
+      sellerPaymentManager: this._sellerPaymentManager,
+      sessionTracker: this._sessionTracker,
+      channelsClient: this._channelsClient,
+      announcer: this._announcer,
+      emit: (event, ...args) => this.emit(event, ...args),
+    });
+
     // Listen for incoming connections
     this._connectionManager.on("connection", (conn: PeerConnection) => {
       this._handleIncomingConnection(conn);
@@ -1047,15 +1054,12 @@ export class AntseedNode extends EventEmitter {
   private _handleIncomingConnection(conn: PeerConnection): void {
     debugLog(`[Node] Incoming connection from ${conn.remotePeerId.slice(0, 12)}...`);
     const buyerPeerId = conn.remotePeerId;
-    const mux = new ProxyMux(conn);
 
     // Create PaymentMux alongside ProxyMux (seller-side)
     const paymentMux = new PaymentMux(conn);
     if (this._sellerPaymentManager) {
       const spm = this._sellerPaymentManager;
       paymentMux.onSpendingAuth((payload) => {
-        // handleSpendingAuth handles both initial (sends AuthAck) and subsequent
-        // per-request auths (validates monotonic increase, no AuthAck).
         void spm.handleSpendingAuth(buyerPeerId, payload, paymentMux)
           .then((status) => {
             if (status === 'rejected') {
@@ -1068,248 +1072,17 @@ export class AntseedNode extends EventEmitter {
           });
       });
     } else {
-      // No SellerPaymentManager — reject SpendingAuth to prevent
-      // accepting payment claims without EIP-712 signature verification
       paymentMux.onSpendingAuth(() => {
         debugWarn(`[Node] SpendingAuth rejected — SellerPaymentManager not configured`);
       });
     }
     this._paymentMuxes.set(buyerPeerId, paymentMux);
 
-    // Register the ProxyMux request handler that routes to providers
-    mux.onProxyRequest(async (request: SerializedHttpRequest) => {
-      debugLog(`[Node] Seller received request: ${request.method} ${request.path} (reqId=${request.requestId.slice(0, 8)})`);
-
-      // Reject with 402 if no active payment session and sessions client is configured.
-      // Also send PaymentRequired via PaymentMux so the buyer knows what to sign.
-      const spmAuthorized = this._sellerPaymentManager?.hasSession(buyerPeerId) ?? false;
-      if (this._channelsClient && !spmAuthorized) {
-        // Pass buyerPeerId so seller can suggest higher amount for returning buyers,
-        // and include matched provider/service pricing when available.
-        const matchedProvider = this._matchProviderForRequest(request);
-        const providerPricing = matchedProvider
-          ? this._resolveProviderPricing(matchedProvider, request)
-          : undefined;
-        const requirements = this._sellerPaymentManager?.getPaymentRequirements(
-          request.requestId, buyerPeerId, providerPricing,
-        );
-        if (requirements) {
-          debugLog(`[Node] No payment session for ${buyerPeerId.slice(0, 12)}... — sending 402 + PaymentRequired`);
-          const paymentBody = JSON.stringify({
-            error: 'payment_required',
-            minBudgetPerRequest: requirements.minBudgetPerRequest,
-            suggestedAmount: requirements.suggestedAmount,
-            ...(requirements.inputUsdPerMillion != null ? { inputUsdPerMillion: requirements.inputUsdPerMillion } : {}),
-            ...(requirements.outputUsdPerMillion != null ? { outputUsdPerMillion: requirements.outputUsdPerMillion } : {}),
-          });
-          mux.sendProxyResponse({
-            requestId: request.requestId,
-            statusCode: 402,
-            headers: { "content-type": "application/json" },
-            body: new TextEncoder().encode(paymentBody),
-          });
-          paymentMux.sendPaymentRequired(requirements);
-        } else {
-          debugWarn(`[Node] No payment session — returning 402`);
-          mux.sendProxyResponse({
-            requestId: request.requestId,
-            statusCode: 402,
-            headers: { "content-type": "application/json" },
-            body: new TextEncoder().encode(JSON.stringify({
-              error: 'payment_required',
-              message: 'Seller not ready, try again later',
-            })),
-          });
-        }
-        return;
-      }
-
-      // Check budget before routing — reject if buyer hasn't authorized enough
-      if (this._sellerPaymentManager) {
-        const session = this._sellerPaymentManager.getChannelByPeer(buyerPeerId);
-        if (session) {
-          const accepted = this._sellerPaymentManager.getAcceptedCumulative(session.sessionId);
-          const spent = this._sellerPaymentManager.getCumulativeSpend(session.sessionId);
-          if (accepted > 0n && spent >= accepted) {
-            // Budget exhausted — no remaining authorized balance
-            const reserveMax = this._sellerPaymentManager.getReserveMax(session.sessionId);
-            const matchedProvider = this._matchProviderForRequest(request);
-            const providerPricing = matchedProvider
-              ? this._resolveProviderPricing(matchedProvider, request)
-              : undefined;
-            const requirements = this._sellerPaymentManager.getPaymentRequirements(
-              request.requestId, buyerPeerId, providerPricing,
-            );
-            if (reserveMax > 0n && accepted >= reserveMax) {
-              // Truly exhausted (at reserve cap) — settle so buyer can start a new session
-              debugLog(`[Node] Session fully exhausted for ${buyerPeerId.slice(0, 12)}... (spent=${spent} >= accepted=${accepted} >= reserveMax=${reserveMax}) — settling and returning 402`);
-              void this._sellerPaymentManager.settleSession(buyerPeerId).catch((err) => {
-                debugWarn(`[Node] Failed to settle exhausted session: ${err instanceof Error ? err.message : err}`);
-              });
-            } else {
-              debugLog(`[Node] Budget exhausted for ${buyerPeerId.slice(0, 12)}... (spent=${spent} >= accepted=${accepted}) — returning 402, awaiting NeedAuth response`);
-            }
-            mux.sendProxyResponse({
-              requestId: request.requestId,
-              statusCode: 402,
-              headers: { "content-type": "application/json" },
-              body: new TextEncoder().encode(JSON.stringify({
-                error: 'payment_required',
-                minBudgetPerRequest: requirements.minBudgetPerRequest,
-                suggestedAmount: requirements.suggestedAmount,
-                ...(requirements.inputUsdPerMillion != null ? { inputUsdPerMillion: requirements.inputUsdPerMillion } : {}),
-                ...(requirements.outputUsdPerMillion != null ? { outputUsdPerMillion: requirements.outputUsdPerMillion } : {}),
-              })),
-            });
-            paymentMux.sendPaymentRequired(requirements);
-            return;
-          }
-        }
-      }
-
-      const provider = this._matchProviderForRequest(request);
-
-      if (!provider) {
-        debugWarn(`[Node] No matching provider for ${request.path}`);
-        mux.sendProxyResponse({
-          requestId: request.requestId,
-          statusCode: 502,
-          headers: { "content-type": "text/plain" },
-          body: new TextEncoder().encode("No matching provider"),
-        });
-        return;
-      }
-
-      // Track active seller session at request start
-      this._sessionTracker?.getOrCreateSession(buyerPeerId, provider.name);
-
-      request.headers['x-antseed-buyer-peer-id'] = buyerPeerId;
-
-      debugLog(`[Node] Routing to provider "${provider.name}"`);
-      const startTime = Date.now();
-      let statusCode = 500;
-      let responseBody: Uint8Array = new Uint8Array(0);
-      let streamedResponseStarted = false;
-      let responseUsage = { inputTokens: 0, outputTokens: 0 };
-      this._adjustProviderLoad(provider.name, 1);
-      try {
-        try {
-          const response = await this._executeProviderRequest(provider, request, {
-            onResponseStart: (streamResponseStart) => {
-              streamedResponseStarted = true;
-              statusCode = streamResponseStart.statusCode;
-              mux.sendProxyResponse(streamResponseStart);
-            },
-            onResponseChunk: (chunk) => {
-              if (!streamedResponseStarted) return;
-              mux.sendProxyChunk(chunk);
-            },
-          });
-          statusCode = response.statusCode;
-          responseBody = response.body ?? new Uint8Array(0);
-          debugLog(`[Node] Provider responded: status=${statusCode} (${Date.now() - startTime}ms, ${responseBody.length}b) bodyType=${typeof response.body} hasBody=${!!response.body}`);
-          responseUsage = parseResponseUsage(responseBody);
-          if (!streamedResponseStarted) {
-            const responseToSend = this._injectCostHeaders(response, provider, request, buyerPeerId, responseUsage);
-            mux.sendProxyResponse(responseToSend);
-          }
-        } catch (err) {
-          const message = err instanceof Error ? err.message : "Internal error";
-          debugWarn(`[Node] Provider error after ${Date.now() - startTime}ms: ${message}`);
-          responseBody = new TextEncoder().encode(message);
-          if (streamedResponseStarted) {
-            mux.sendProxyChunk({
-              requestId: request.requestId,
-              data: new TextEncoder().encode(`event: error\ndata: ${message}\n\n`),
-              done: false,
-            });
-            mux.sendProxyChunk({
-              requestId: request.requestId,
-              data: new Uint8Array(0),
-              done: true,
-            });
-          } else {
-            statusCode = 500;
-            mux.sendProxyResponse({
-              requestId: request.requestId,
-              statusCode: 500,
-              headers: { "content-type": "text/plain" },
-              body: responseBody,
-            });
-          }
-        }
-
-        // Record metering
-        const latencyMs = Date.now() - startTime;
-        const requestPricing = this._resolveProviderPricing(provider, request);
-        if (this._sessionTracker) {
-          await this._sessionTracker.recordMetering({
-            buyerPeerId,
-            providerName: provider.name,
-            pricing: requestPricing,
-            request,
-            statusCode,
-            latencyMs,
-            inputBytes: request.body.length,
-            outputBytes: responseBody.length,
-            responseBody,
-            providerUsage: responseUsage,
-          });
-        }
-
-        // Record spend for cumulative voucher model
-        if (this._sellerPaymentManager?.hasSession(buyerPeerId)) {
-          let usage = responseUsage;
-          if (usage.inputTokens === 0 && usage.outputTokens === 0) {
-            usage = {
-              inputTokens: Math.ceil(request.body.length / 4),
-              outputTokens: Math.ceil(responseBody.length / 4),
-            };
-          }
-          const costUsdc = computeCostUsdc(usage.inputTokens, usage.outputTokens, requestPricing);
-          const session = this._sellerPaymentManager.getChannelByPeer(buyerPeerId);
-          if (session) {
-            this._sellerPaymentManager.recordSpend(session.sessionId, costUsdc);
-            const cumulativeSpend = this._sellerPaymentManager.getCumulativeSpend(session.sessionId);
-            debugLog(`[Node] Cost recorded: buyer=${buyerPeerId.slice(0, 12)}... cost=${costUsdc} cumulative=${cumulativeSpend} (in=${usage.inputTokens} out=${usage.outputTokens})`);
-
-            // Check if remaining budget is running low; proactively request more auth
-            const accepted = this._sellerPaymentManager.getAcceptedCumulative(session.sessionId);
-            const remainingBudget = accepted - cumulativeSpend;
-            const estimatedNextRequestCost = costUsdc > 0n ? costUsdc : 1n;
-            if (remainingBudget < estimatedNextRequestCost) {
-              // Ask for just enough to cover the next request, not 2x
-              const requiredAmount = cumulativeSpend + estimatedNextRequestCost;
-              debugLog(`[Node] Budget low for ${buyerPeerId.slice(0, 12)}... remaining=${remainingBudget} estimated=${estimatedNextRequestCost} — sending NeedAuth (required=${requiredAmount})`);
-              paymentMux.sendNeedAuth({
-                channelId: session.sessionId,
-                requiredCumulativeAmount: requiredAmount.toString(),
-                currentAcceptedCumulative: accepted.toString(),
-                deposit: session.authMax ?? '0',
-              });
-            }
-          }
-        }
-      } finally {
-        this._adjustProviderLoad(provider.name, -1);
-      }
-    });
+    const { mux } = this._sellerHandler!.handleConnection(conn, buyerPeerId, paymentMux);
 
     this._muxes.set(buyerPeerId, mux);
     this._wireConnection(conn, buyerPeerId);
     this.emit("connection", conn);
-  }
-
-  private async _executeProviderRequest(
-    provider: Provider,
-    request: SerializedHttpRequest,
-    streamCallbacks?: ProviderStreamCallbacks,
-  ): Promise<SerializedHttpResponse> {
-    if (streamCallbacks && provider.handleRequestStream) {
-      return provider.handleRequestStream(request, streamCallbacks);
-    }
-
-    return provider.handleRequest(request);
   }
 
   private _stripStreamingHeader(response: SerializedHttpResponse): SerializedHttpResponse {
@@ -1323,73 +1096,6 @@ export class AntseedNode extends EventEmitter {
       ...response,
       headers,
     };
-  }
-
-  private _parseJsonBody(body: Uint8Array): unknown | null {
-    try {
-      return JSON.parse(new TextDecoder().decode(body)) as unknown;
-    } catch {
-      return null;
-    }
-  }
-
-  private _extractRequestedService(request: SerializedHttpRequest): string | null {
-    const contentType = request.headers["content-type"] ?? request.headers["Content-Type"] ?? "";
-    if (!contentType.toLowerCase().includes("application/json")) {
-      return null;
-    }
-    const parsed = this._parseJsonBody(request.body);
-    if (!parsed || typeof parsed !== "object") {
-      return null;
-    }
-    const service = (parsed as Record<string, unknown>)["model"];
-    if (typeof service !== "string" || service.trim().length === 0) {
-      return null;
-    }
-    return service.trim();
-  }
-
-  private _extractRequestedProvider(request: SerializedHttpRequest): string | null {
-    const providers = Object.entries(request.headers)
-      .filter(([header]) => header.toLowerCase() === "x-antseed-provider")
-      .map(([, value]) => value.trim().toLowerCase())
-      .filter((value) => value.length > 0);
-
-    return providers[0] ?? null;
-  }
-
-  private _matchProviderForRequest(request: SerializedHttpRequest): Provider | undefined {
-    const requestedService = this._extractRequestedService(request);
-    const requestedProvider = this._extractRequestedProvider(request);
-    const matchesService = (provider: Provider): boolean =>
-      provider.services.length === 0
-      || (requestedService !== null && provider.services.includes(requestedService))
-      || this._providers.length === 1;
-
-    let provider: Provider | undefined;
-    if (requestedProvider) {
-      provider = this._providers.find((candidate) =>
-        candidate.name.toLowerCase() === requestedProvider && matchesService(candidate),
-      );
-    }
-    if (!provider) {
-      provider = this._providers.find((candidate) => matchesService(candidate));
-    }
-    return provider;
-  }
-
-  private _resolveProviderPricing(
-    provider: Provider,
-    request: SerializedHttpRequest,
-  ): { inputUsdPerMillion: number; outputUsdPerMillion: number } {
-    const requestedService = this._extractRequestedService(request);
-    if (requestedService) {
-      const servicePricing = provider.pricing.services?.[requestedService];
-      if (servicePricing) {
-        return servicePricing;
-      }
-    }
-    return provider.pricing.defaults;
   }
 
   private async _initializePayments(dataDir: string): Promise<void> {
@@ -1644,71 +1350,6 @@ export class AntseedNode extends EventEmitter {
       currentLoad: firstProvider?.currentLoad,
       onChainChannelCount: result.metadata.onChainChannelCount,
       onChainGhostCount: result.metadata.onChainGhostCount,
-    };
-  }
-
-  private _adjustProviderLoad(providerName: string, delta: number): void {
-    const nextLoad = Math.max(0, (this._providerLoadCounts.get(providerName) ?? 0) + delta);
-    this._providerLoadCounts.set(providerName, nextLoad);
-
-    if (!this._announcer) return;
-    this._announcer.updateLoad(providerName, nextLoad);
-    this._scheduleMetadataRefresh();
-  }
-
-  private _scheduleMetadataRefresh(): void {
-    if (!this._announcer || this._metadataRefreshTimer) {
-      return;
-    }
-
-    const timer = setTimeout(() => {
-      this._metadataRefreshTimer = null;
-      const announcer = this._announcer;
-      if (!announcer) return;
-      void announcer.refreshMetadata().catch((err) => {
-        debugWarn(`[Node] Failed to refresh metadata snapshot: ${err instanceof Error ? err.message : err}`);
-      });
-    }, AntseedNode._METADATA_REFRESH_DEBOUNCE_MS);
-    this._metadataRefreshTimer = timer;
-    this._unrefTimer(timer);
-  }
-
-  private _unrefTimer(timer: ReturnType<typeof setTimeout>): void {
-    if (typeof (timer as { unref?: () => void }).unref === "function") {
-      (timer as { unref: () => void }).unref();
-    }
-  }
-
-  /**
-   * Inject cost headers into a non-streamed response before sending to buyer.
-   */
-  private _injectCostHeaders(
-    response: SerializedHttpResponse,
-    provider: Provider,
-    request: SerializedHttpRequest,
-    buyerPeerId: string,
-    usage?: { inputTokens: number; outputTokens: number },
-  ): SerializedHttpResponse {
-    const spm = this._sellerPaymentManager;
-    if (!spm || !spm.hasSession(buyerPeerId)) return response;
-
-    const resolvedUsage = usage ?? parseResponseUsage(response.body);
-    const pricing = this._resolveProviderPricing(provider, request);
-    const costUsdc = computeCostUsdc(resolvedUsage.inputTokens, resolvedUsage.outputTokens, pricing);
-    const session = spm.getChannelByPeer(buyerPeerId);
-    const cumulativeCost = session ? spm.getCumulativeSpend(session.sessionId) : 0n;
-
-    return {
-      requestId: response.requestId,
-      statusCode: response.statusCode,
-      body: response.body ?? new Uint8Array(0),
-      headers: {
-        ...response.headers,
-        'x-antseed-input-tokens': String(resolvedUsage.inputTokens),
-        'x-antseed-output-tokens': String(resolvedUsage.outputTokens),
-        'x-antseed-cost': costUsdc.toString(),
-        'x-antseed-cumulative-cost': cumulativeCost.toString(),
-      },
     };
   }
 

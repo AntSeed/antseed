@@ -1,22 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { AntseedNode, type NodeConfig } from '../src/node.js';
+import { SellerRequestHandler } from '../src/seller-request-handler.js';
 import type { SerializedHttpRequest } from '../src/types/http.js';
 import type { Provider } from '../src/interfaces/seller-provider.js';
-
-function createNode(config: Partial<NodeConfig> = {}): AntseedNode {
-  const node = new AntseedNode({
-    role: 'seller',
-    ...config,
-  });
-
-  (node as any)._identity = {
-    peerId: 'a'.repeat(40),
-    privateKey: new Uint8Array(32),
-    publicKey: new Uint8Array(32),
-  };
-
-  return node;
-}
 
 function makeProvider(inputUsdPerMillion: number, outputUsdPerMillion: number, opts: {
   name: string;
@@ -45,22 +30,8 @@ function makeProvider(inputUsdPerMillion: number, outputUsdPerMillion: number, o
   };
 }
 
-describe('AntseedNode payment pricing selection', () => {
+describe('SellerRequestHandler payment pricing selection', () => {
   it('matches the requested provider and service pricing instead of using the first provider defaults', () => {
-    const node = createNode();
-    const request: SerializedHttpRequest = {
-      requestId: 'req-pricing',
-      method: 'POST',
-      path: '/v1/chat/completions',
-      headers: {
-        'content-type': 'application/json',
-        'x-antseed-provider': 'openai',
-      },
-      body: new TextEncoder().encode(JSON.stringify({
-        model: 'local-test',
-      })),
-    };
-
     const anthropic = makeProvider(3, 15, {
       name: 'anthropic',
       services: ['claude-sonnet'],
@@ -76,11 +47,31 @@ describe('AntseedNode payment pricing selection', () => {
       },
     });
 
-    (node as any)._providers = [anthropic, openai];
+    const handler = new SellerRequestHandler({
+      providers: [anthropic, openai],
+      sellerPaymentManager: null,
+      sessionTracker: null,
+      channelsClient: null,
+      announcer: null,
+      emit: () => false,
+    });
 
-    const matched = (node as any)._matchProviderForRequest(request) as Provider | undefined;
+    const request: SerializedHttpRequest = {
+      requestId: 'req-pricing',
+      method: 'POST',
+      path: '/v1/chat/completions',
+      headers: {
+        'content-type': 'application/json',
+        'x-antseed-provider': 'openai',
+      },
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'local-test',
+      })),
+    };
+
+    const matched = handler.matchProvider(request);
     const pricing = matched
-      ? (node as any)._resolveProviderPricing(matched, request)
+      ? handler.resolveProviderPricing(matched, request)
       : undefined;
 
     expect(matched?.name).toBe('openai');

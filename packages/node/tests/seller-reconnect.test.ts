@@ -20,6 +20,7 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AntseedNode } from '../src/node.js';
+import { SellerRequestHandler } from '../src/seller-request-handler.js';
 import { ConnectionState } from '../src/types/connection.js';
 import type { PeerId } from '../src/types/peer.js';
 
@@ -44,10 +45,20 @@ function makeSellerNode(): AntseedNode {
     publicKey: new Uint8Array(32),
   };
   // Stub _sessionTracker so disconnect cleanup doesn't touch real metering
-  (node as any)._sessionTracker = {
+  const sessionTracker = {
     finalizeSession: vi.fn().mockResolvedValue(undefined),
     getOrCreateSession: vi.fn(),
   };
+  (node as any)._sessionTracker = sessionTracker;
+  // Create SellerRequestHandler so _handleIncomingConnection can delegate
+  (node as any)._sellerHandler = new SellerRequestHandler({
+    providers: [],
+    sellerPaymentManager: null,
+    sessionTracker: sessionTracker as any,
+    channelsClient: null,
+    announcer: null,
+    emit: (event: string, ...args: unknown[]) => node.emit(event, ...args),
+  });
   return node;
 }
 
