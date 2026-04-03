@@ -39,7 +39,7 @@ The trick is in what the buyer is willing to sign. Each payment authorization (S
 maxSignable = verifiedCost + maxPerRequestUsdc
 ```
 
-The `maxPerRequestUsdc` is the buyer's overdraft limit — how much unverified exposure it tolerates per request. It defaults to $0.10. This means the buyer is always willing to advance one request's worth of credit beyond what it has independently confirmed. Enough for the seller to serve the next request. Not enough to drain the buyer.
+The `maxPerRequestUsdc` is the buyer's overdraft limit — how much unverified exposure it tolerates per request. It defaults to $0.50. This means the buyer is always willing to advance one request's worth of credit beyond what it has independently confirmed. Enough for the seller to serve the next request. Not enough to drain the buyer.
 
 How does the buyer estimate tokens without a tokenizer? It doesn't need one. It uses a heuristic: split the response text on word boundaries and punctuation, apply a language-aware characters-per-token ratio (6 for English, 3 for German, individual counting for CJK), and sum the segments. This isn't a BPE tokenizer — there's no vocabulary lookup, no model-specific encoding. But it gets within roughly 5% of actual token counts for typical LLM traffic, and the buyer computes it entirely from bytes it received. The seller can't manipulate it.
 
@@ -146,7 +146,7 @@ Each layer addresses a different attack or failure mode:
 
 | Layer | What could go wrong | How it's bounded |
 |-------|-------------------|-----------------|
-| Overdraft model | Seller inflates per-request cost | Buyer's verified estimate + $0.10 |
+| Overdraft model | Seller inflates per-request cost | Buyer's verified estimate + $0.50 |
 | Tolerance capping | Seller claims 3x actual tokens | Capped at 1.4x buyer's estimate |
 | Reserve ceiling | Session drains entire deposit | $5.00 hard cap per session |
 | Key separation | Hot wallet compromised | Signing key can't withdraw funds |
@@ -157,7 +157,7 @@ Each layer addresses a different attack or failure mode:
 
 These layers are independent — each works without the others. A buyer with only the overdraft model is already protected against cost inflation. Add the reserve ceiling and the on-chain escape hatch, and worst-case exposure drops to $5.00 per session with guaranteed 15-minute recovery. Add key separation, and a compromised node can't drain the deposit.
 
-Together, they mean: the buyer's maximum exposure in any session is the reserve ceiling. The maximum unverified exposure per request is $0.10. Recovery from any failure takes at most 15 minutes. And the seller has every incentive to be honest — inflated costs trigger tolerance capping, unreliable service triggers eviction, and unsettled channels expire.
+Together, they mean: the buyer's maximum exposure in any session is the reserve ceiling. The maximum unverified exposure per request is $0.50. Recovery from any failure takes at most 15 minutes. And the seller has every incentive to be honest — inflated costs trigger tolerance capping, unreliable service triggers eviction, and unsettled channels expire.
 
 No trust in the seller. No intermediary enforcing rules. The buyer's own node enforces the overdraft model. The smart contract enforces the reserve and escape hatch. The protocol makes honesty the profitable strategy and cheating a dead end.
 
