@@ -233,6 +233,9 @@ export class BuyerPaymentManager {
       throw new Error(`[BuyerPayment] No replayable reserve for seller ${sellerPeerId.slice(0, 12)}...`);
     }
 
+    // Force a fresh AuthAck after replaying the reserve path.
+    this._confirmedPeers.delete(sellerPeerId);
+
     const maxAmount = this._currentReserveCeiling.get(sellerPeerId) ?? this._config.maxReserveAmountUsdc;
     const deadline = Math.floor(Date.now() / 1000) + this._config.defaultAuthDurationSecs;
     const reserveMsg: ReserveAuthMessage = {
