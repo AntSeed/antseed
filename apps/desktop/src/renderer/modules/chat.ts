@@ -533,7 +533,10 @@ export function initChatModule({
     const serviceOption = uiState.chatServiceOptions.find(
       (o) => o.value === uiState.chatSelectedServiceValue || o.id === conv.service,
     );
-    return serviceOption?.peerId ?? '';
+    if (serviceOption?.peerId) return serviceOption.peerId;
+    // Last resort: extract peerId from the encoded service value (format: "provider\x01service\x01peerId")
+    const parts = uiState.chatSelectedServiceValue.split(CHAT_SERVICE_SELECTION_SEPARATOR);
+    return parts.length >= 3 ? parts[2]!.trim() : '';
   }
 
   type MeteringPeerStats = {
