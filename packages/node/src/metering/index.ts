@@ -4,3 +4,4 @@ export { ReceiptGenerator, buildSignaturePayload, calculateCost, type Signer } f
 export { ReceiptVerifier, type SignatureVerifier, type VerifierOptions } from './receipt-verifier.js';
 export { SessionTracker } from './session-tracker.js';
 export { UsageAggregator, type AggregationGranularity, type TimePeriod } from './usage-aggregator.js';
+export { SellerSessionTracker, type SellerSessionSnapshot, type SellerSessionState, type SessionTrackerEvents, type SessionTrackerConfig } from './seller-session-tracker.js';

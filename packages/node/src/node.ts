@@ -1,6 +1,4 @@
 import { EventEmitter } from "node:events";
-import { createHash, randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -9,17 +7,17 @@ import { loadOrCreateIdentity } from "./p2p/identity.js";
 import type { PeerId } from "./types/peer.js";
 import type { PeerInfo, TokenPricingUsdPerMillion } from "./types/peer.js";
 import { peerIdToAddress } from "./types/peer.js";
-import {
-  ANTSEED_STREAMING_RESPONSE_HEADER,
-  type SerializedHttpRequest,
-  type SerializedHttpResponse,
-  type SerializedHttpResponseChunk,
-  ANTSEED_SPENDING_AUTH_HEADER,
+import type {
+  SerializedHttpRequest,
+  SerializedHttpResponse,
 } from "./types/http.js";
 import type { ConnectionConfig } from "./types/connection.js";
-import type { MeteringEvent, SessionMetrics, TokenCount } from "./types/metering.js";
 import { MeteringStorage } from "./metering/storage.js";
 import { ReceiptGenerator } from "./metering/receipt-generator.js";
+import {
+  SellerSessionTracker,
+  type SellerSessionSnapshot,
+} from "./metering/seller-session-tracker.js";
 import { ConnectionState } from "./types/connection.js";
 import {
   DHTNode,
@@ -47,7 +45,6 @@ import { PaymentMux } from "./p2p/payment-mux.js";
 import { FrameDecoder, encodeFrame } from "./p2p/message-protocol.js";
 import { KeepaliveManager, buildPongPayload } from "./p2p/keepalive.js";
 import { MessageType } from "./types/protocol.js";
-import type { PaymentRequiredPayload } from "./types/protocol.js";
 import type {
   Provider,
   ProviderStreamCallbacks,
@@ -55,7 +52,6 @@ import type {
 import type { Router } from "./interfaces/buyer-router.js";
 import { NatTraversal } from "./p2p/nat-traversal.js";
 import { signUtf8 } from "./p2p/identity.js";
-// verifyMessage/getBytes removed — no longer needed after SpendingAuth refactor
 import {
   BalanceManager,
   type PaymentConfig,
@@ -65,62 +61,25 @@ import {
   StakingClient,
   ChannelStore,
 } from "./payments/index.js";
-import { parseJsonObject, extractUsage } from "@antseed/api-adapter";
 import { debugLog, debugWarn } from "./utils/debug.js";
 import { parsePublicAddress } from "./discovery/public-address.js";
 import { BuyerPaymentManager, type BuyerPaymentConfig } from "./payments/buyer-payment-manager.js";
-import { computeCostUsdc } from "./payments/pricing.js";
+import { BuyerPaymentNegotiator } from "./payments/buyer-payment-negotiator.js";
 import { SellerPaymentManager, type SellerPaymentConfig } from "./payments/seller-payment-manager.js";
 import { IdentityClient } from "./payments/evm/identity-client.js";
+import { SellerRequestHandler } from "./seller-request-handler.js";
+import {
+  BuyerRequestHandler,
+  type RequestStreamCallbacks,
+  type RequestStreamResponseMetadata,
+  type RequestExecutionOptions,
+} from "./buyer-request-handler.js";
 
 export type { Provider, ProviderStreamCallbacks };
 export type { Router };
 export type { BuyerPaymentConfig };
-
-/**
- * Extract actual token usage from an LLM provider response body.
- * Handles both JSON and SSE (streaming) responses. Returns zeros
- * if usage data is not found (caller should fall back to estimation).
- */
-function parseResponseUsage(body: Uint8Array): { inputTokens: number; outputTokens: number } {
-  const parsed = parseJsonObject(body);
-  if (parsed) {
-    return extractUsage(parsed);
-  }
-  // SSE streaming: scan data lines for a usage object
-  const text = new TextDecoder().decode(body);
-  let inputTokens = 0;
-  let outputTokens = 0;
-  for (const line of text.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith('data:')) continue;
-    const payload = trimmed.slice(5).trim();
-    if (!payload || payload === '[DONE]') continue;
-    try {
-      const event = JSON.parse(payload) as Record<string, unknown>;
-      const usage = extractUsage(event);
-      if (usage.inputTokens > 0) inputTokens = Math.max(inputTokens, usage.inputTokens);
-      if (usage.outputTokens > 0) outputTokens = Math.max(outputTokens, usage.outputTokens);
-    } catch { /* skip non-JSON lines */ }
-  }
-  return { inputTokens, outputTokens };
-}
-
-/**
- * Compute request cost in USDC base units (6 decimals) from token counts and USD pricing.
- * pricing.inputUsdPerMillion / pricing.outputUsdPerMillion are in USD per million tokens.
- * Returns cost in base units (1 USDC = 1_000_000).
- */
-// computeCostUsdc imported from ./payments/pricing.js
-
-function parsePaymentRequiredBody(body: Uint8Array): Record<string, unknown> | null {
-  try {
-    const parsed = JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>;
-    return parsed && typeof parsed === "object" ? parsed : null;
-  } catch {
-    return null;
-  }
-}
+export type { SellerSessionSnapshot };
+export type { RequestStreamCallbacks, RequestStreamResponseMetadata, RequestExecutionOptions };
 
 export interface NodePaymentsConfig {
   /** Enable seller-side payment channels and automatic settlement. */
@@ -197,49 +156,7 @@ export interface NodeConfig {
   requireManualApproval?: boolean;
 }
 
-interface SellerSessionState {
-  sessionId: string;
-  sessionIdBytes: Uint8Array;
-  startedAt: number;
-  lastActivityAt: number;
-  totalRequests: number;
-  totalTokens: number;
-  totalLatencyMs: number;
-  totalCostCents: number;
-  provider: string;
-  settling?: boolean;
-}
-
-export interface SellerSessionSnapshot {
-  sessionId: string;
-  buyerPeerId: string;
-  provider: string;
-  startedAt: number;
-  lastActivityAt: number;
-  totalRequests: number;
-  totalTokens: number;
-  avgLatencyMs: number;
-  settling: boolean;
-}
-
-export interface RequestStreamResponseMetadata {
-  streaming: boolean;
-}
-
-export interface RequestStreamCallbacks {
-  onResponseStart?: (
-    response: SerializedHttpResponse,
-    metadata: RequestStreamResponseMetadata,
-  ) => void;
-  onResponseChunk?: (chunk: SerializedHttpResponseChunk) => void;
-}
-
-export interface RequestExecutionOptions {
-  signal?: AbortSignal;
-}
-
 export class AntseedNode extends EventEmitter {
-  private static readonly _METADATA_REFRESH_DEBOUNCE_MS = 200;
   private _config: NodeConfig;
   private _identity: Identity | null = null;
   private _dht: DHTNode | null = null;
@@ -261,46 +178,22 @@ export class AntseedNode extends EventEmitter {
   private _stakingClient: StakingClient | null = null;
   private _identityClient: IdentityClient | null = null;
   private _paymentMuxes = new Map<PeerId, PaymentMux>();
-  private _providerLoadCounts = new Map<string, number>();
-  private _metadataRefreshTimer: ReturnType<typeof setTimeout> | null = null;
-  /** Per-buyer session tracking: buyerPeerId → seller session state */
-  private _sessions = new Map<string, SellerSessionState>();
-  private _settlementTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Seller-side request handler (provider matching, execution, load tracking). */
+  private _sellerHandler: SellerRequestHandler | null = null;
   /** Buyer-side payment manager (initialized when buyer has payment config). */
   private _buyerPaymentManager: BuyerPaymentManager | null = null;
+  /** Buyer-side payment negotiation (402 handling, SpendingAuth, cost tracking). */
+  private _buyerNegotiator: BuyerPaymentNegotiator | null = null;
+  /** Buyer-side request execution (streaming, timeouts, 402 retry). */
+  private _buyerHandler: BuyerRequestHandler | null = null;
   /** Seller-side payment manager (initialized when seller has payment config). */
   private _sellerPaymentManager: SellerPaymentManager | null = null;
   /** Shared channel store for payment persistence. */
   private _channelStore: ChannelStore | null = null;
   /** Periodic timeout checker interval. */
   private _timeoutCheckerInterval: ReturnType<typeof setInterval> | null = null;
-  /** Tracks which seller peers the buyer has already negotiated payment for. */
-  private _buyerLockedPeers = new Set<string>();
-  /** Pending PaymentRequired payloads from sellers, keyed by peerId. Resolvers waiting for them. */
-  private _pendingPaymentRequired = new Map<string, {
-    resolve: (payload: PaymentRequiredPayload) => void;
-    reject: (err: Error) => void;
-    timer: ReturnType<typeof setTimeout>;
-  }>();
-  private _manualApprovalCache: { value: boolean; at: number } | null = null;
-  /** Buffered PaymentRequired that arrived before _doNegotiatePayment registered its listener.
-   *  This handles the race where 402 + PaymentRequired arrive in the same I/O tick. */
-  private _bufferedPaymentRequired = new Map<string, PaymentRequiredPayload>();
-  /** Per-peer mutex to prevent concurrent payment negotiations. */
-  private _paymentNegotiationLocks = new Map<string, Promise<void>>();
-  /** Peers that have already sent their first request after session establishment.
-   *  Used to distinguish whether per-request SpendingAuth should be attached. */
-  private _buyerFirstRequestSent = new Set<string>();
-  /** Per-peer last response cost, raw content, and latency from the seller. */
-  private _lastResponseCost = new Map<string, {
-    costUsdc: bigint;
-    inputTokens: bigint;
-    outputTokens: bigint;
-    cumulativeCost: bigint;
-    inputContent: Uint8Array;
-    outputContent: Uint8Array;
-    latencyMs: number;
-  }>();
+  /** Seller session lifecycle tracking (metering, settlement). */
+  private _sessionTracker: SellerSessionTracker | null = null;
 
   constructor(config: NodeConfig) {
     super();
@@ -332,6 +225,11 @@ export class AntseedNode extends EventEmitter {
     return this._buyerPaymentManager;
   }
 
+  /** Buyer-side payment negotiator (null if payments not configured for buyer). */
+  get buyerNegotiator(): BuyerPaymentNegotiator | null {
+    return this._buyerNegotiator;
+  }
+
   /** Actual DHT port after binding (0 means not started). */
   get dhtPort(): number {
     return this._dht?.getPort() ?? 0;
@@ -358,32 +256,12 @@ export class AntseedNode extends EventEmitter {
    * Includes open sessions before they are finalized/settled.
    */
   getActiveSellerSessions(): SellerSessionSnapshot[] {
-    const snapshots: SellerSessionSnapshot[] = [];
-    for (const [buyerPeerId, session] of this._sessions.entries()) {
-      snapshots.push({
-        sessionId: session.sessionId,
-        buyerPeerId,
-        provider: session.provider,
-        startedAt: session.startedAt,
-        lastActivityAt: session.lastActivityAt,
-        totalRequests: session.totalRequests,
-        totalTokens: session.totalTokens,
-        avgLatencyMs: session.totalRequests > 0 ? session.totalLatencyMs / session.totalRequests : 0,
-        settling: Boolean(session.settling),
-      });
-    }
-    return snapshots;
+    return this._sessionTracker?.getActiveSessions() ?? [];
   }
 
   /** Number of active in-memory seller channels that are not currently settling. */
   getActiveSellerChannelCount(): number {
-    let count = 0;
-    for (const session of this._sessions.values()) {
-      if (!session.settling) {
-        count += 1;
-      }
-    }
-    return count;
+    return this._sessionTracker?.getActiveChannelCount() ?? 0;
   }
 
   async start(): Promise<void> {
@@ -423,19 +301,18 @@ export class AntseedNode extends EventEmitter {
     }
 
     // End all active buyer payment sessions before shutdown
-    await this._endAllBuyerSessions();
-
-    await this._finalizeAllSessions("node-stop");
-
-    for (const timer of this._settlementTimers.values()) {
-      clearTimeout(timer);
+    if (this._buyerNegotiator) {
+      this._buyerNegotiator.cleanup();
     }
-    this._settlementTimers.clear();
-    if (this._metadataRefreshTimer) {
-      clearTimeout(this._metadataRefreshTimer);
-      this._metadataRefreshTimer = null;
+
+    if (this._sessionTracker) {
+      await this._sessionTracker.finalizeAllSessions("node-stop");
+      this._sessionTracker.clearTimers();
     }
-    this._providerLoadCounts.clear();
+    if (this._sellerHandler) {
+      this._sellerHandler.clearMetadataRefreshTimer();
+      this._sellerHandler = null;
+    }
 
     // Remove NAT port mappings
     if (this._nat) {
@@ -512,18 +389,10 @@ export class AntseedNode extends EventEmitter {
     this._stakingClient = null;
     this._identityClient = null;
     this._buyerPaymentManager = null;
+    this._buyerNegotiator = null;
+    this._buyerHandler = null;
     this._sellerPaymentManager = null;
-    this._buyerLockedPeers.clear();
-    this._buyerFirstRequestSent.clear();
-    this._lastResponseCost.clear();
-    // Clean up payment negotiation state
-    for (const [, pending] of this._pendingPaymentRequired) {
-      clearTimeout(pending.timer);
-      pending.reject(new Error('Node stopped'));
-    }
-    this._pendingPaymentRequired.clear();
-    this._bufferedPaymentRequired.clear();
-    this._paymentNegotiationLocks.clear();
+    this._sessionTracker = null;
     this._started = false;
     this.emit("stopped");
   }
@@ -586,8 +455,9 @@ export class AntseedNode extends EventEmitter {
   async connectToPeer(peer: PeerInfo): Promise<void> {
     const conn = await this._getOrCreateConnection(peer);
     this._getOrCreateMux(peer.peerId, conn);
-    if (this._buyerPaymentManager) {
-      this._getOrCreateBuyerPaymentMux(peer.peerId, conn);
+    const negotiator = this._buyerNegotiator;
+    if (negotiator) {
+      this._paymentMuxes.set(peer.peerId, negotiator.getOrCreatePaymentMux(peer.peerId, conn));
     }
   }
 
@@ -596,7 +466,8 @@ export class AntseedNode extends EventEmitter {
     req: SerializedHttpRequest,
     options?: RequestExecutionOptions,
   ): Promise<SerializedHttpResponse> {
-    return this._sendRequestInternal(peer, req, undefined, options);
+    if (!this._buyerHandler) throw new Error("Node not started or not in buyer mode");
+    return this._buyerHandler.sendRequest(peer, req, undefined, options);
   }
 
   async sendRequestStream(
@@ -605,357 +476,8 @@ export class AntseedNode extends EventEmitter {
     callbacks: RequestStreamCallbacks,
     options?: RequestExecutionOptions,
   ): Promise<SerializedHttpResponse> {
-    return this._sendRequestInternal(peer, req, callbacks, options);
-  }
-
-  private async _sendRequestInternal(
-    peer: PeerInfo,
-    req: SerializedHttpRequest,
-    callbacks?: RequestStreamCallbacks,
-    options?: RequestExecutionOptions,
-  ): Promise<SerializedHttpResponse> {
-    if (!req.requestId || typeof req.requestId !== "string") {
-      throw new Error("requestId must be a non-empty string");
-    }
-    if (!this._connectionManager || !this._identity) {
-      throw new Error("Node not started");
-    }
-
-    const opName = callbacks ? "sendRequestStream" : "sendRequest";
-    debugLog(`[Node] ${opName} ${req.method} ${req.path} → peer ${peer.peerId.slice(0, 12)}... (reqId=${req.requestId.slice(0, 8)})`);
-
-    const conn = await this._getOrCreateConnection(peer);
-    debugLog(`[Node] Connection to ${peer.peerId.slice(0, 12)}... state=${conn.state}`);
-    const mux = this._getOrCreateMux(peer.peerId, conn);
-    if (this._buyerPaymentManager) {
-      this._getOrCreateBuyerPaymentMux(peer.peerId, conn);
-    }
-
-    // Extract and strip x-antseed-spending-auth header if present (manual approval flow)
-    const externalSpendingAuth = req.headers[ANTSEED_SPENDING_AUTH_HEADER] ?? null;
-    if (externalSpendingAuth) {
-      const { [ANTSEED_SPENDING_AUTH_HEADER]: _, ...cleanHeaders } = req.headers;
-      req = { ...req, headers: cleanHeaders };
-    }
-
-    const hasBuyerPaymentManager = Boolean(this._buyerPaymentManager);
-
-    // If an external spending auth was provided, apply it before sending the request.
-    if (externalSpendingAuth && hasBuyerPaymentManager) {
-      debugLog(`[Node] Applying external spending auth for ${peer.peerId.slice(0, 12)}...`);
-      await this._applyExternalSpendingAuth(peer, conn, externalSpendingAuth);
-    }
-
-    // Send per-request SpendingAuth for subsequent requests (after the initial
-    // session was established). The first request is covered by the initial
-    // SpendingAuth from _doNegotiatePayment; skip it here.
-    const alreadyLocked = this._buyerLockedPeers.has(peer.peerId);
-    if (alreadyLocked && this._buyerPaymentManager && !externalSpendingAuth) {
-      if (this._buyerFirstRequestSent.has(peer.peerId)) {
-        await this._sendPerRequestAuth(peer, conn);
-      } else {
-        // First request after session open — initial SpendingAuth already sent
-        this._buyerFirstRequestSent.add(peer.peerId);
-      }
-    }
-
-    let startTime = Date.now();
-
-    const executeRequest = (): Promise<SerializedHttpResponse> => new Promise<SerializedHttpResponse>((resolve, reject) => {
-      const timeoutMs = this._config.requestTimeoutMs ?? 30_000;
-      const maxStreamBufferBytes = Math.max(1, this._config.maxStreamBufferBytes ?? 16 * 1024 * 1024);
-      const maxStreamDurationMs = Math.max(1, this._config.maxStreamDurationMs ?? 5 * 60_000);
-      const streamInitialResponseTimeoutMs = callbacks ? Math.max(timeoutMs, 90_000) : timeoutMs;
-      // Idle timeout for streaming: resets on each chunk so long-running
-      // streams (thinking models, large outputs) stay alive as long as
-      // data keeps flowing.
-      const streamIdleTimeoutMs = Math.max(timeoutMs, 60_000);
-      let settled = false;
-      let streamStarted = false;
-      let streamStartedAtMs = 0;
-      let streamBufferedBytes = 0;
-      let streamStartResponse: SerializedHttpResponse | null = null;
-      const streamChunks: Uint8Array[] = [];
-      let activeTimeout: ReturnType<typeof setTimeout> | null = null;
-      let activeTimeoutMs = streamInitialResponseTimeoutMs;
-      const abortSignal = options?.signal;
-      let abortListenerAttached = false;
-      let connectionStateListenerAttached = false;
-      const hasConnectionStateEvents =
-        typeof (conn as { on?: unknown }).on === "function"
-        && typeof (conn as { off?: unknown }).off === "function";
-
-      const cleanupAbortListener = (): void => {
-        if (abortSignal && abortListenerAttached) {
-          abortSignal.removeEventListener("abort", onAbort);
-          abortListenerAttached = false;
-        }
-      };
-      const cleanupConnectionListener = (): void => {
-        if (!connectionStateListenerAttached) return;
-        conn.off("stateChange", onConnectionStateChange);
-        connectionStateListenerAttached = false;
-      };
-      const onConnectionStateChange = (state: ConnectionState): void => {
-        if (settled) return;
-        if (state !== ConnectionState.Closed && state !== ConnectionState.Failed) {
-          return;
-        }
-        settled = true;
-        if (activeTimeout) clearTimeout(activeTimeout);
-        cleanupAbortListener();
-        cleanupConnectionListener();
-        mux.cancelProxyRequest(req.requestId);
-        reject(new Error(`Connection to ${peer.peerId} ${state.toLowerCase()} during request ${req.requestId}`));
-      };
-
-      const onAbort = (): void => {
-        if (settled) return;
-        settled = true;
-        if (activeTimeout) clearTimeout(activeTimeout);
-        cleanupAbortListener();
-        cleanupConnectionListener();
-        debugWarn(`[Node] Request ${req.requestId.slice(0, 8)} aborted by caller`);
-        mux.cancelProxyRequest(req.requestId);
-        reject(new Error(`Request ${req.requestId} aborted`));
-      };
-
-      if (abortSignal) {
-        if (abortSignal.aborted) {
-          onAbort();
-          return;
-        }
-        abortSignal.addEventListener("abort", onAbort, { once: true });
-        abortListenerAttached = true;
-      }
-      if (hasConnectionStateEvents) {
-        conn.on("stateChange", onConnectionStateChange);
-        connectionStateListenerAttached = true;
-      }
-
-      const resetTimeout = (ms: number): void => {
-        if (activeTimeout) clearTimeout(activeTimeout);
-        activeTimeoutMs = ms;
-        activeTimeout = setTimeout(() => {
-          if (settled) return;
-          settled = true;
-          cleanupAbortListener();
-          cleanupConnectionListener();
-          debugWarn(
-            `[Node] Request ${req.requestId.slice(0, 8)} timed out after ${Date.now() - startTime}ms `
-            + `(timeout=${activeTimeoutMs}ms, stream=${callbacks ? "true" : "false"}, streamStarted=${streamStarted ? "true" : "false"}, buffered=${streamBufferedBytes}b)`,
-          );
-          mux.cancelProxyRequest(req.requestId);
-          reject(new Error(`Request ${req.requestId} timed out`));
-        }, ms);
-      };
-
-      // Initial timeout: wait for the first response frame.
-      resetTimeout(streamInitialResponseTimeoutMs);
-
-      const finish = (response: SerializedHttpResponse): void => {
-        if (settled) return;
-        settled = true;
-        if (activeTimeout) clearTimeout(activeTimeout);
-        cleanupAbortListener();
-        cleanupConnectionListener();
-        const cleaned = this._stripStreamingHeader(response);
-        debugLog(`[Node] Response for ${req.requestId.slice(0, 8)}: status=${cleaned.statusCode} (${Date.now() - startTime}ms, ${cleaned.body.length}b)`);
-        resolve(cleaned);
-      };
-
-      const fail = (error: Error): void => {
-        if (settled) return;
-        settled = true;
-        if (activeTimeout) clearTimeout(activeTimeout);
-        cleanupAbortListener();
-        cleanupConnectionListener();
-        reject(error);
-      };
-
-      mux.sendProxyRequest(
-        req,
-        (response: SerializedHttpResponse, metadata) => {
-          if (settled) return;
-          if (metadata.streamingStart) {
-            streamStarted = true;
-            streamStartedAtMs = Date.now();
-            streamBufferedBytes = 0;
-            streamStartResponse = this._stripStreamingHeader(response);
-            debugLog(`[Node] Stream started for ${req.requestId.slice(0, 8)}; idle-timeout=${streamIdleTimeoutMs}ms`);
-            // Switch to streaming idle timeout: resets on each chunk.
-            resetTimeout(streamIdleTimeoutMs);
-            callbacks?.onResponseStart?.(streamStartResponse, { streaming: true });
-            return;
-          }
-
-          callbacks?.onResponseStart?.(this._stripStreamingHeader(response), { streaming: false });
-          finish(response);
-        },
-        (chunk) => {
-          if (settled) return;
-          if (!streamStarted) return;
-
-          // Reset idle timeout on each chunk so streaming stays alive.
-          resetTimeout(streamIdleTimeoutMs);
-
-          if (Date.now() - streamStartedAtMs > maxStreamDurationMs) {
-            mux.cancelProxyRequest(req.requestId);
-            fail(new Error(`Stream ${req.requestId} exceeded max duration (${maxStreamDurationMs}ms)`));
-            return;
-          }
-
-          callbacks?.onResponseChunk?.(chunk);
-
-          if (chunk.data.length > 0) {
-            if (callbacks?.onResponseChunk) {
-              // Streaming mode: chunks already delivered to caller via callback.
-              // Track byte count for the debug timeout log only — do not
-              // enforce maxStreamBufferBytes so large streams aren't rejected.
-              streamBufferedBytes += chunk.data.length;
-              streamChunks.push(chunk.data);
-            } else {
-              // Non-streaming: accumulate chunks for the final response body.
-              const nextBufferedBytes = streamBufferedBytes + chunk.data.length;
-              if (nextBufferedBytes > maxStreamBufferBytes) {
-                mux.cancelProxyRequest(req.requestId);
-                fail(new Error(`Stream ${req.requestId} exceeded max buffered size (${maxStreamBufferBytes} bytes)`));
-                return;
-              }
-              streamBufferedBytes = nextBufferedBytes;
-              streamChunks.push(chunk.data);
-            }
-          }
-
-          if (!chunk.done) return;
-
-          if (!streamStartResponse) {
-            fail(new Error(`Stream ${req.requestId} ended before response start`));
-            return;
-          }
-
-          finish({
-            ...streamStartResponse,
-            body: concatChunks(streamChunks),
-          });
-        },
-      );
-    });
-
-    // Execute the request. If we get a 402 and payment negotiation is needed,
-    // wait for the seller's PaymentRequired message, negotiate, and retry.
-    const response = await executeRequest();
-
-    if (response.statusCode === 402 && hasBuyerPaymentManager && !externalSpendingAuth) {
-      const hadLockedSession = this._buyerLockedPeers.has(peer.peerId);
-      const manualApproval = await this._isManualApprovalEnabled();
-      const directPaymentBody = parsePaymentRequiredBody(response.body);
-      const responseAlreadyHasRequirements = Boolean(directPaymentBody?.minBudgetPerRequest);
-      const waitMs = manualApproval ? 10_000 : 2_000;
-      const buffered = responseAlreadyHasRequirements
-        ? null
-        : await this._awaitPaymentRequired(peer.peerId, conn, waitMs);
-      if (buffered) this._bufferedPaymentRequired.delete(peer.peerId);
-
-      // Helper: return enriched 402 so the caller can show an approval / add-credits card
-      const returnPaymentRequired = (reason: string): SerializedHttpResponse => {
-        debugLog(`[Node] Got 402 from ${peer.peerId.slice(0, 12)}... — returning to caller (${reason})`);
-        if (responseAlreadyHasRequirements) {
-          return response;
-        }
-        if (buffered) {
-          const enrichedBody = JSON.stringify({
-            error: 'payment_required',
-            peerId: peer.peerId,
-            minBudgetPerRequest: buffered.minBudgetPerRequest,
-            suggestedAmount: buffered.suggestedAmount,
-          });
-          return {
-            ...response,
-            headers: { ...response.headers, 'content-type': 'application/json' },
-            body: new TextEncoder().encode(enrichedBody),
-          };
-        }
-        return response;
-      };
-
-      // If manual approval is on, always return the 402 to the caller
-      if (manualApproval) {
-        return returnPaymentRequired(responseAlreadyHasRequirements ? 'manual approval (direct body)' : 'manual approval');
-      }
-
-      // A 402 on an existing paid session means the current authorization is no
-      // longer usable. Clear buyer-side session state so auto-negotiation can
-      // establish a fresh authorization instead of short-circuiting.
-      if (hadLockedSession) {
-        this._buyerLockedPeers.delete(peer.peerId);
-        this._buyerFirstRequestSent.delete(peer.peerId);
-        this._buyerPaymentManager?.cleanupSession(peer.peerId);
-      }
-
-      // Auto mode: check if we can actually pay before attempting negotiation
-      if (!this._depositsClient || !this._identity || !this._buyerPaymentManager) {
-        return returnPaymentRequired('no deposits configured');
-      }
-
-      // Check on-chain balance — if insufficient, return 402 instead of failing mid-negotiate
-      try {
-        const buyerAddr = this._identity.wallet.address;
-        const balance = await this._depositsClient.getBuyerBalance(buyerAddr);
-        if (balance.available <= 0n) {
-          return returnPaymentRequired('insufficient credits');
-        }
-      } catch (err) {
-        debugWarn(`[Node] Failed to check buyer balance: ${err instanceof Error ? err.message : err}`);
-        // Fall through to negotiate — let it fail naturally if balance is truly insufficient
-      }
-
-      // Auto-negotiate: sign SpendingAuth internally and retry
-      // Re-buffer the PaymentRequired so _doNegotiatePayment can consume it.
-      // When the 402 body already contained requirements (responseAlreadyHasRequirements),
-      // construct a PaymentRequiredPayload from the body so _doNegotiatePayment doesn't
-      // need to wait for the PaymentMux frame (which may have already been lost).
-      if (buffered) {
-        this._bufferedPaymentRequired.set(peer.peerId, buffered);
-      } else if (responseAlreadyHasRequirements && directPaymentBody) {
-        const bodyRequirements: PaymentRequiredPayload = {
-          minBudgetPerRequest: String(directPaymentBody.minBudgetPerRequest ?? '10000'),
-          suggestedAmount: String(directPaymentBody.suggestedAmount ?? '100000'),
-          requestId: req.requestId,
-          ...(directPaymentBody.inputUsdPerMillion != null ? { inputUsdPerMillion: Number(directPaymentBody.inputUsdPerMillion) } : {}),
-          ...(directPaymentBody.outputUsdPerMillion != null ? { outputUsdPerMillion: Number(directPaymentBody.outputUsdPerMillion) } : {}),
-        };
-        this._bufferedPaymentRequired.set(peer.peerId, bodyRequirements);
-      }
-      debugLog(`[Node] Got 402 from ${peer.peerId.slice(0, 12)}... — auto-negotiating payment`);
-      try {
-        await this._negotiatePayment(peer, conn);
-        debugLog(`[Node] Payment negotiated with ${peer.peerId.slice(0, 12)}... — retrying request`);
-        startTime = Date.now(); // Reset so latency reflects inference time, not negotiation
-        return executeRequest();
-      } catch (err) {
-        this._buyerLockedPeers.delete(peer.peerId);
-        throw err;
-      }
-    }
-
-    // Store response byte counts for the BPM's bytes/4 cost verification.
-    // inputBytes = request body length (buyer knows their prompt).
-    // outputBytes = response body length (buyer observes the response).
-    // The BPM handles overdraft control; node.ts just records the raw data.
-    this._estimateCostFromResponse(peer, response);
-    this._parseCostHeaders(peer.peerId, response);
-    const existing = this._lastResponseCost.get(peer.peerId);
-    if (existing) {
-      this._lastResponseCost.set(peer.peerId, {
-        ...existing,
-        inputContent: req.body,
-        outputContent: response.body,
-        latencyMs: Date.now() - startTime,
-      });
-    }
-
-    return response;
+    if (!this._buyerHandler) throw new Error("Node not started or not in buyer mode");
+    return this._buyerHandler.sendRequest(peer, req, callbacks, options);
   }
 
   private _createDHTConfig(port: number, bootstrapNodes: Array<{ host: string; port: number }>): DHTNodeConfig {
@@ -1029,29 +551,16 @@ export class AntseedNode extends EventEmitter {
         this._muxes.get(peerId)?.abortPendingUploads();
         this._muxes.delete(peerId);
         this._paymentMuxes.delete(peerId);
-        this._bufferedPaymentRequired.delete(peerId);
-        // Cancel any in-flight PaymentRequired wait so _doNegotiatePayment
-        // fails immediately instead of blocking for 10s on a dead connection.
-        const pendingPR = this._pendingPaymentRequired.get(peerId);
-        if (pendingPR) {
-          clearTimeout(pendingPR.timer);
-          this._pendingPaymentRequired.delete(peerId);
-          pendingPR.reject(new Error(`Peer ${peerId.slice(0, 12)}... disconnected during payment negotiation`));
-        }
-        // Don't delete _paymentNegotiationLocks here — the pending rejection
-        // causes _doNegotiatePayment to throw, and its finally block owns cleanup.
-        // Deleting here would race with a new negotiation started on reconnect.
         this._decoders.delete(peerId);
-        // Clean up buyer-side per-request auth tracking on disconnect
-        this._buyerLockedPeers.delete(peerId);
-        this._buyerFirstRequestSent.delete(peerId);
-        this._lastResponseCost.delete(peerId);
-        this._buyerPaymentManager?.cleanupSession(peerId);
-        // Handle buyer disconnect
+        // Clean up buyer-side payment state on disconnect
+        this._buyerNegotiator?.onPeerDisconnect(peerId);
+        // Handle buyer disconnect (seller side)
         if (this._sellerPaymentManager) {
           this._sellerPaymentManager.onBuyerDisconnect(peerId);
         }
-        void this._finalizeSession(peerId, "disconnect");
+        if (this._sessionTracker) {
+          void this._sessionTracker.finalizeSession(peerId, "disconnect");
+        }
       }
     });
 
@@ -1101,6 +610,18 @@ export class AntseedNode extends EventEmitter {
         sign: (message: string) => signUtf8(identity.wallet, message),
       });
     }
+
+    // Initialize seller session tracker
+    this._sessionTracker = new SellerSessionTracker(
+      identity,
+      this._metering,
+      this._receiptGenerator,
+      { settlementIdleMs: this._config.payments?.settlementIdleMs },
+      {
+        onSessionUpdated: (snapshot) => this.emit("session:updated", snapshot),
+        onSessionFinalized: (info) => this.emit("session:finalized", info),
+      },
+    );
 
     await this._initializePayments(dataDir);
 
@@ -1180,6 +701,16 @@ export class AntseedNode extends EventEmitter {
       );
     }
 
+    // Create seller request handler
+    this._sellerHandler = new SellerRequestHandler({
+      providers: this._providers,
+      sellerPaymentManager: this._sellerPaymentManager,
+      sessionTracker: this._sessionTracker,
+      channelsClient: this._channelsClient,
+      announcer: this._announcer,
+      emit: (event, ...args) => this.emit(event, ...args),
+    });
+
     // Listen for incoming connections
     this._connectionManager.on("connection", (conn: PeerConnection) => {
       this._handleIncomingConnection(conn);
@@ -1247,8 +778,38 @@ export class AntseedNode extends EventEmitter {
         };
         this._buyerPaymentManager = new BuyerPaymentManager(identity, buyerPaymentConfig, this._channelStore);
         debugLog(`[Node] Buyer payment manager initialized (wallet=${identity.wallet.address.slice(0, 10)}... chainId=${buyerPaymentConfig.chainId} deposits=${buyerPaymentConfig.depositsContractAddress.slice(0, 10)}...)`);
+
+        // Create negotiator that wraps the BPM with 402 handling and per-request auth
+        this._buyerNegotiator = new BuyerPaymentNegotiator(
+          identity,
+          this._buyerPaymentManager,
+          this._depositsClient,
+          this._channelStore,
+          {
+            configPath: this._config.configPath,
+            dataDir: this._config.dataDir,
+            requireManualApproval: this._config.requireManualApproval,
+          },
+          this,
+        );
+        debugLog(`[Node] Buyer payment negotiator initialized`);
       }
     }
+
+    // Create buyer request handler
+    this._buyerHandler = new BuyerRequestHandler(
+      {
+        requestTimeoutMs: this._config.requestTimeoutMs,
+        maxStreamBufferBytes: this._config.maxStreamBufferBytes,
+        maxStreamDurationMs: this._config.maxStreamDurationMs,
+      },
+      {
+        negotiator: this._buyerNegotiator,
+        getConnection: (peer) => this._getOrCreateConnection(peer),
+        getMux: (peerId, conn) => this._getOrCreateMux(peerId, conn),
+        registerPaymentMux: (peerId, pmux) => this._paymentMuxes.set(peerId, pmux),
+      },
+    );
 
     debugLog(`[Node] Buyer ready — DHT running on port ${this._dht!.getPort()}`);
   }
@@ -1256,15 +817,12 @@ export class AntseedNode extends EventEmitter {
   private _handleIncomingConnection(conn: PeerConnection): void {
     debugLog(`[Node] Incoming connection from ${conn.remotePeerId.slice(0, 12)}...`);
     const buyerPeerId = conn.remotePeerId;
-    const mux = new ProxyMux(conn);
 
     // Create PaymentMux alongside ProxyMux (seller-side)
     const paymentMux = new PaymentMux(conn);
     if (this._sellerPaymentManager) {
       const spm = this._sellerPaymentManager;
       paymentMux.onSpendingAuth((payload) => {
-        // handleSpendingAuth handles both initial (sends AuthAck) and subsequent
-        // per-request auths (validates monotonic increase, no AuthAck).
         void spm.handleSpendingAuth(buyerPeerId, payload, paymentMux)
           .then((status) => {
             if (status === 'rejected') {
@@ -1277,505 +835,17 @@ export class AntseedNode extends EventEmitter {
           });
       });
     } else {
-      // No SellerPaymentManager — reject SpendingAuth to prevent
-      // accepting payment claims without EIP-712 signature verification
       paymentMux.onSpendingAuth(() => {
         debugWarn(`[Node] SpendingAuth rejected — SellerPaymentManager not configured`);
       });
     }
     this._paymentMuxes.set(buyerPeerId, paymentMux);
 
-    // Register the ProxyMux request handler that routes to providers
-    mux.onProxyRequest(async (request: SerializedHttpRequest) => {
-      debugLog(`[Node] Seller received request: ${request.method} ${request.path} (reqId=${request.requestId.slice(0, 8)})`);
-
-      // Reject with 402 if no active payment session and sessions client is configured.
-      // Also send PaymentRequired via PaymentMux so the buyer knows what to sign.
-      const spmAuthorized = this._sellerPaymentManager?.hasSession(buyerPeerId) ?? false;
-      if (this._channelsClient && !spmAuthorized) {
-        // Pass buyerPeerId so seller can suggest higher amount for returning buyers,
-        // and include matched provider/service pricing when available.
-        const matchedProvider = this._matchProviderForRequest(request);
-        const providerPricing = matchedProvider
-          ? this._resolveProviderPricing(matchedProvider, request)
-          : undefined;
-        const requirements = this._sellerPaymentManager?.getPaymentRequirements(
-          request.requestId, buyerPeerId, providerPricing,
-        );
-        if (requirements) {
-          debugLog(`[Node] No payment session for ${buyerPeerId.slice(0, 12)}... — sending 402 + PaymentRequired`);
-          const paymentBody = JSON.stringify({
-            error: 'payment_required',
-            minBudgetPerRequest: requirements.minBudgetPerRequest,
-            suggestedAmount: requirements.suggestedAmount,
-            ...(requirements.inputUsdPerMillion != null ? { inputUsdPerMillion: requirements.inputUsdPerMillion } : {}),
-            ...(requirements.outputUsdPerMillion != null ? { outputUsdPerMillion: requirements.outputUsdPerMillion } : {}),
-          });
-          mux.sendProxyResponse({
-            requestId: request.requestId,
-            statusCode: 402,
-            headers: { "content-type": "application/json" },
-            body: new TextEncoder().encode(paymentBody),
-          });
-          paymentMux.sendPaymentRequired(requirements);
-        } else {
-          debugWarn(`[Node] No payment session — returning 402`);
-          mux.sendProxyResponse({
-            requestId: request.requestId,
-            statusCode: 402,
-            headers: { "content-type": "application/json" },
-            body: new TextEncoder().encode(JSON.stringify({
-              error: 'payment_required',
-              message: 'Seller not ready, try again later',
-            })),
-          });
-        }
-        return;
-      }
-
-      // Check budget before routing — reject if buyer hasn't authorized enough
-      if (this._sellerPaymentManager) {
-        const session = this._sellerPaymentManager.getChannelByPeer(buyerPeerId);
-        if (session) {
-          const accepted = this._sellerPaymentManager.getAcceptedCumulative(session.sessionId);
-          const spent = this._sellerPaymentManager.getCumulativeSpend(session.sessionId);
-          if (accepted > 0n && spent >= accepted) {
-            // Budget exhausted — no remaining authorized balance
-            const reserveMax = this._sellerPaymentManager.getReserveMax(session.sessionId);
-            const matchedProvider = this._matchProviderForRequest(request);
-            const providerPricing = matchedProvider
-              ? this._resolveProviderPricing(matchedProvider, request)
-              : undefined;
-            const requirements = this._sellerPaymentManager.getPaymentRequirements(
-              request.requestId, buyerPeerId, providerPricing,
-            );
-            if (reserveMax > 0n && accepted >= reserveMax) {
-              // Truly exhausted (at reserve cap) — settle so buyer can start a new session
-              debugLog(`[Node] Session fully exhausted for ${buyerPeerId.slice(0, 12)}... (spent=${spent} >= accepted=${accepted} >= reserveMax=${reserveMax}) — settling and returning 402`);
-              void this._sellerPaymentManager.settleSession(buyerPeerId).catch((err) => {
-                debugWarn(`[Node] Failed to settle exhausted session: ${err instanceof Error ? err.message : err}`);
-              });
-            } else {
-              debugLog(`[Node] Budget exhausted for ${buyerPeerId.slice(0, 12)}... (spent=${spent} >= accepted=${accepted}) — returning 402, awaiting NeedAuth response`);
-            }
-            mux.sendProxyResponse({
-              requestId: request.requestId,
-              statusCode: 402,
-              headers: { "content-type": "application/json" },
-              body: new TextEncoder().encode(JSON.stringify({
-                error: 'payment_required',
-                minBudgetPerRequest: requirements.minBudgetPerRequest,
-                suggestedAmount: requirements.suggestedAmount,
-                ...(requirements.inputUsdPerMillion != null ? { inputUsdPerMillion: requirements.inputUsdPerMillion } : {}),
-                ...(requirements.outputUsdPerMillion != null ? { outputUsdPerMillion: requirements.outputUsdPerMillion } : {}),
-              })),
-            });
-            paymentMux.sendPaymentRequired(requirements);
-            return;
-          }
-        }
-      }
-
-      const provider = this._matchProviderForRequest(request);
-
-      if (!provider) {
-        debugWarn(`[Node] No matching provider for ${request.path}`);
-        mux.sendProxyResponse({
-          requestId: request.requestId,
-          statusCode: 502,
-          headers: { "content-type": "text/plain" },
-          body: new TextEncoder().encode("No matching provider"),
-        });
-        return;
-      }
-
-      // Track active seller session at request start so runtime state reflects
-      // in-flight work immediately (not only after metering persistence).
-      this._getOrCreateSellerSession(buyerPeerId, provider.name);
-
-      request.headers['x-antseed-buyer-peer-id'] = buyerPeerId;
-
-      debugLog(`[Node] Routing to provider "${provider.name}"`);
-      const startTime = Date.now();
-      let statusCode = 500;
-      let responseBody: Uint8Array = new Uint8Array(0);
-      let streamedResponseStarted = false;
-      this._adjustProviderLoad(provider.name, 1);
-      try {
-        try {
-          const response = await this._executeProviderRequest(provider, request, {
-            onResponseStart: (streamResponseStart) => {
-              streamedResponseStarted = true;
-              statusCode = streamResponseStart.statusCode;
-              mux.sendProxyResponse(streamResponseStart);
-            },
-            onResponseChunk: (chunk) => {
-              if (!streamedResponseStarted) return;
-              mux.sendProxyChunk(chunk);
-            },
-          });
-          statusCode = response.statusCode;
-          responseBody = response.body ?? new Uint8Array(0);
-          debugLog(`[Node] Provider responded: status=${statusCode} (${Date.now() - startTime}ms, ${responseBody.length}b) bodyType=${typeof response.body} hasBody=${!!response.body}`);
-          if (!streamedResponseStarted) {
-            // Inject cost headers before sending response (non-streamed only)
-            const responseToSend = this._injectCostHeaders(response, provider, request, buyerPeerId);
-            mux.sendProxyResponse(responseToSend);
-          }
-        } catch (err) {
-          const message = err instanceof Error ? err.message : "Internal error";
-          debugWarn(`[Node] Provider error after ${Date.now() - startTime}ms: ${message}`);
-          responseBody = new TextEncoder().encode(message);
-          if (streamedResponseStarted) {
-            mux.sendProxyChunk({
-              requestId: request.requestId,
-              data: new TextEncoder().encode(`event: error\ndata: ${message}\n\n`),
-              done: false,
-            });
-            mux.sendProxyChunk({
-              requestId: request.requestId,
-              data: new Uint8Array(0),
-              done: true,
-            });
-          } else {
-            statusCode = 500;
-            mux.sendProxyResponse({
-              requestId: request.requestId,
-              statusCode: 500,
-              headers: { "content-type": "text/plain" },
-              body: responseBody,
-            });
-          }
-        }
-
-        // Record metering
-        const latencyMs = Date.now() - startTime;
-        const requestPricing = this._resolveProviderPricing(provider, request);
-        await this._recordMetering(
-          buyerPeerId,
-          provider.name,
-          requestPricing,
-          request,
-          statusCode,
-          latencyMs,
-          request.body.length,
-          responseBody.length,
-          responseBody,
-        );
-
-        // Inject cost headers and record spend for cumulative voucher model
-        if (this._sellerPaymentManager?.hasSession(buyerPeerId)) {
-          let usage = parseResponseUsage(responseBody);
-          // Fall back to byte-based estimation when provider doesn't report usage
-          if (usage.inputTokens === 0 && usage.outputTokens === 0) {
-            usage = {
-              inputTokens: Math.ceil(request.body.length / 4),
-              outputTokens: Math.ceil(responseBody.length / 4),
-            };
-          }
-          const costUsdc = computeCostUsdc(usage.inputTokens, usage.outputTokens, requestPricing);
-          const session = this._sellerPaymentManager.getChannelByPeer(buyerPeerId);
-          if (session) {
-            this._sellerPaymentManager.recordSpend(session.sessionId, costUsdc);
-            const cumulativeSpend = this._sellerPaymentManager.getCumulativeSpend(session.sessionId);
-            debugLog(`[Node] Cost recorded: buyer=${buyerPeerId.slice(0, 12)}... cost=${costUsdc} cumulative=${cumulativeSpend} (in=${usage.inputTokens} out=${usage.outputTokens})`);
-
-            // Check if remaining budget is running low; proactively request more auth
-            const accepted = this._sellerPaymentManager.getAcceptedCumulative(session.sessionId);
-            const remainingBudget = accepted - cumulativeSpend;
-            const estimatedNextRequestCost = costUsdc > 0n ? costUsdc : 1n;
-            if (remainingBudget < estimatedNextRequestCost) {
-              // Ask for just enough to cover the next request, not 2x
-              const requiredAmount = cumulativeSpend + estimatedNextRequestCost;
-              debugLog(`[Node] Budget low for ${buyerPeerId.slice(0, 12)}... remaining=${remainingBudget} estimated=${estimatedNextRequestCost} — sending NeedAuth (required=${requiredAmount})`);
-              paymentMux.sendNeedAuth({
-                channelId: session.sessionId,
-                requiredCumulativeAmount: requiredAmount.toString(),
-                currentAcceptedCumulative: accepted.toString(),
-                deposit: session.authMax ?? '0',
-              });
-            }
-          }
-        }
-      } finally {
-        this._adjustProviderLoad(provider.name, -1);
-      }
-    });
+    const { mux } = this._sellerHandler!.handleConnection(conn, buyerPeerId, paymentMux);
 
     this._muxes.set(buyerPeerId, mux);
     this._wireConnection(conn, buyerPeerId);
     this.emit("connection", conn);
-  }
-
-  private async _executeProviderRequest(
-    provider: Provider,
-    request: SerializedHttpRequest,
-    streamCallbacks?: ProviderStreamCallbacks,
-  ): Promise<SerializedHttpResponse> {
-    if (streamCallbacks && provider.handleRequestStream) {
-      return provider.handleRequestStream(request, streamCallbacks);
-    }
-
-    return provider.handleRequest(request);
-  }
-
-  private _stripStreamingHeader(response: SerializedHttpResponse): SerializedHttpResponse {
-    if (response.headers[ANTSEED_STREAMING_RESPONSE_HEADER] !== "1") {
-      return response;
-    }
-
-    const headers = { ...response.headers };
-    delete headers[ANTSEED_STREAMING_RESPONSE_HEADER];
-    return {
-      ...response,
-      headers,
-    };
-  }
-
-  private _parseJsonBody(body: Uint8Array): unknown | null {
-    try {
-      return JSON.parse(new TextDecoder().decode(body)) as unknown;
-    } catch {
-      return null;
-    }
-  }
-
-  private _extractRequestedService(request: SerializedHttpRequest): string | null {
-    const contentType = request.headers["content-type"] ?? request.headers["Content-Type"] ?? "";
-    if (!contentType.toLowerCase().includes("application/json")) {
-      return null;
-    }
-    const parsed = this._parseJsonBody(request.body);
-    if (!parsed || typeof parsed !== "object") {
-      return null;
-    }
-    const service = (parsed as Record<string, unknown>)["model"];
-    if (typeof service !== "string" || service.trim().length === 0) {
-      return null;
-    }
-    return service.trim();
-  }
-
-  private _extractRequestedProvider(request: SerializedHttpRequest): string | null {
-    const providers = Object.entries(request.headers)
-      .filter(([header]) => header.toLowerCase() === "x-antseed-provider")
-      .map(([, value]) => value.trim().toLowerCase())
-      .filter((value) => value.length > 0);
-
-    return providers[0] ?? null;
-  }
-
-  private _matchProviderForRequest(request: SerializedHttpRequest): Provider | undefined {
-    const requestedService = this._extractRequestedService(request);
-    const requestedProvider = this._extractRequestedProvider(request);
-    const matchesService = (provider: Provider): boolean =>
-      provider.services.length === 0
-      || (requestedService !== null && provider.services.includes(requestedService))
-      || this._providers.length === 1;
-
-    let provider: Provider | undefined;
-    if (requestedProvider) {
-      provider = this._providers.find((candidate) =>
-        candidate.name.toLowerCase() === requestedProvider && matchesService(candidate),
-      );
-    }
-    if (!provider) {
-      provider = this._providers.find((candidate) => matchesService(candidate));
-    }
-    return provider;
-  }
-
-  private _resolveProviderPricing(
-    provider: Provider,
-    request: SerializedHttpRequest,
-  ): { inputUsdPerMillion: number; outputUsdPerMillion: number } {
-    const requestedService = this._extractRequestedService(request);
-    if (requestedService) {
-      const servicePricing = provider.pricing.services?.[requestedService];
-      if (servicePricing) {
-        return servicePricing;
-      }
-    }
-    return provider.pricing.defaults;
-  }
-
-  private _getOrCreateSellerSession(
-    buyerPeerId: string,
-    providerName: string,
-  ): SellerSessionState | null {
-    if (!this._identity) {
-      return null;
-    }
-
-    let session = this._sessions.get(buyerPeerId);
-    if (!session) {
-      const now = Date.now();
-      const sessionId = randomUUID();
-      // Generate 32-byte sessionIdBytes from UUID for on-chain use
-      const sessionIdBytes = createHash("sha256").update(sessionId).digest();
-      session = {
-        sessionId,
-        sessionIdBytes: new Uint8Array(sessionIdBytes),
-        startedAt: now,
-        lastActivityAt: now,
-        totalRequests: 0,
-        totalTokens: 0,
-        totalLatencyMs: 0,
-        totalCostCents: 0,
-        provider: providerName,
-      };
-      this._sessions.set(buyerPeerId, session);
-    }
-
-    session.provider = providerName;
-    session.lastActivityAt = Date.now();
-    this._emitSellerSessionUpdated(buyerPeerId, session);
-
-    return session;
-  }
-
-  private _emitSellerSessionUpdated(buyerPeerId: string, session: SellerSessionState): void {
-    this.emit("session:updated", {
-      buyerPeerId,
-      sessionId: session.sessionId,
-      provider: session.provider,
-      startedAt: session.startedAt,
-      lastActivityAt: session.lastActivityAt,
-      totalRequests: session.totalRequests,
-      totalTokens: session.totalTokens,
-      avgLatencyMs: session.totalRequests > 0 ? session.totalLatencyMs / session.totalRequests : 0,
-      settling: Boolean(session.settling),
-    });
-  }
-
-  /** Estimate tokens from byte lengths (rough: ~4 chars per token). */
-  /** Fallback token estimation from byte lengths (~4 bytes per token). */
-  private _estimateTokens(inputBytes: number, outputBytes: number): TokenCount {
-    const inputTokens = Math.max(1, Math.round(inputBytes / 4));
-    const outputTokens = Math.max(1, Math.round(outputBytes / 4));
-    return { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens, method: 'content-length', confidence: 'low' };
-  }
-
-  private async _recordMetering(
-    buyerPeerId: string,
-    providerName: string,
-    providerPricingUsdPerMillion: { inputUsdPerMillion: number; outputUsdPerMillion: number },
-    request: SerializedHttpRequest,
-    statusCode: number,
-    latencyMs: number,
-    inputBytes: number,
-    outputBytes: number,
-    responseBody: Uint8Array,
-  ): Promise<void> {
-    if (!this._identity) return;
-
-    const sellerPeerId = this._identity.peerId;
-    const isSSE = request.headers["accept"]?.includes("text/event-stream") ?? false;
-
-    // Use actual token counts from provider response when available,
-    // falling back to byte-based estimation.
-    const providerUsage = parseResponseUsage(responseBody);
-    let tokens: TokenCount;
-    if (providerUsage.inputTokens > 0 || providerUsage.outputTokens > 0) {
-      const totalTokens = providerUsage.inputTokens + providerUsage.outputTokens;
-      tokens = {
-        inputTokens: providerUsage.inputTokens,
-        outputTokens: providerUsage.outputTokens,
-        totalTokens,
-        method: 'provider-usage',
-        confidence: 'high',
-      };
-      debugLog(`[Node] Metering: provider-usage tokens=${totalTokens} (in=${providerUsage.inputTokens} out=${providerUsage.outputTokens})`);
-    } else {
-      tokens = this._estimateTokens(inputBytes, outputBytes);
-      debugLog(`[Node] Metering: estimated tokens=${tokens.totalTokens} from ${inputBytes}+${outputBytes} bytes`);
-    }
-
-    // Get or create session for this buyer
-    const session = this._getOrCreateSellerSession(buyerPeerId, providerName);
-    if (!session) return;
-
-    session.totalRequests++;
-    session.totalTokens += tokens.totalTokens;
-    session.totalLatencyMs += latencyMs;
-    session.provider = providerName;
-    session.lastActivityAt = Date.now();
-    this._emitSellerSessionUpdated(buyerPeerId, session);
-
-    const metering = this._metering;
-    if (!metering) {
-      this._scheduleSettlementTimer(buyerPeerId);
-      return;
-    }
-
-    // Record metering event
-    const event: MeteringEvent = {
-      eventId: randomUUID(),
-      sessionId: session.sessionId,
-      timestamp: Date.now(),
-      provider: providerName,
-      sellerPeerId,
-      buyerPeerId,
-      tokens: { ...tokens, method: "content-length", confidence: "low" },
-      latencyMs,
-      statusCode,
-      wasStreaming: isSSE,
-    };
-
-    try {
-      metering.insertEvent(event);
-    } catch (err) {
-      debugWarn(`[Node] Failed to record metering event: ${err instanceof Error ? err.message : err}`);
-    }
-
-    if (this._receiptGenerator) {
-      const estimatedCostUsd =
-        (tokens.inputTokens * providerPricingUsdPerMillion.inputUsdPerMillion +
-          tokens.outputTokens * providerPricingUsdPerMillion.outputUsdPerMillion) /
-        1_000_000;
-      const effectiveUsdPerThousandTokens =
-        tokens.totalTokens > 0 ? (estimatedCostUsd / tokens.totalTokens) * 1000 : 0;
-      // Receipt unit pricing uses USD cents per 1,000 tokens.
-      const unitPriceCentsPerThousandTokens = Math.max(0, effectiveUsdPerThousandTokens * 100);
-      const receipt = this._receiptGenerator.generate(
-        session.sessionId,
-        event.eventId,
-        providerName,
-        buyerPeerId,
-        event.tokens,
-        unitPriceCentsPerThousandTokens,
-      );
-      try {
-        metering.insertReceipt(receipt);
-        session.totalCostCents += receipt.costCents;
-      } catch (err) {
-        debugWarn(`[Node] Failed to record usage receipt: ${err instanceof Error ? err.message : err}`);
-      }
-    }
-
-    // Upsert session
-    const sessionMetrics: SessionMetrics = {
-      sessionId: session.sessionId,
-      sellerPeerId,
-      buyerPeerId,
-      provider: providerName,
-      startedAt: session.startedAt,
-      endedAt: null,
-      totalRequests: session.totalRequests,
-      totalTokens: session.totalTokens,
-      totalCostCents: session.totalCostCents,
-      avgLatencyMs: session.totalLatencyMs / session.totalRequests,
-      peerSwitches: 0,
-      disputedReceipts: 0,
-    };
-
-    try {
-      metering.upsertSession(sessionMetrics);
-    } catch (err) {
-      debugWarn(`[Node] Failed to upsert session: ${err instanceof Error ? err.message : err}`);
-    }
-
-    this._scheduleSettlementTimer(buyerPeerId);
   }
 
   private async _initializePayments(dataDir: string): Promise<void> {
@@ -1867,88 +937,6 @@ export class AntseedNode extends EventEmitter {
     await this._balanceManager.load(paymentsDir).catch((err) => {
       debugWarn(`[Node] Failed to load payment balances: ${err instanceof Error ? err.message : err}`);
     });
-  }
-
-  private _scheduleSettlementTimer(buyerPeerId: string): void {
-    const existing = this._settlementTimers.get(buyerPeerId);
-    if (existing) {
-      clearTimeout(existing);
-    }
-
-    const idleMs = this._config.payments?.settlementIdleMs ?? 30_000;
-    const timer = setTimeout(() => {
-      void this._finalizeSession(buyerPeerId, "idle-timeout");
-    }, idleMs);
-
-    if (typeof (timer as { unref?: () => void }).unref === "function") {
-      (timer as { unref: () => void }).unref();
-    }
-
-    this._settlementTimers.set(buyerPeerId, timer);
-  }
-
-  private async _finalizeSession(buyerPeerId: string, reason: string): Promise<void> {
-    const session = this._sessions.get(buyerPeerId);
-    if (!session || session.settling) {
-      return;
-    }
-    session.settling = true;
-
-    const timer = this._settlementTimers.get(buyerPeerId);
-    if (timer) {
-      clearTimeout(timer);
-      this._settlementTimers.delete(buyerPeerId);
-    }
-
-
-    if (!this._metering || !this._identity) {
-      this._sessions.delete(buyerPeerId);
-      return;
-    }
-
-    const now = Date.now();
-    const baseMetrics: SessionMetrics = {
-      sessionId: session.sessionId,
-      sellerPeerId: this._identity.peerId,
-      buyerPeerId,
-      provider: session.provider,
-      startedAt: session.startedAt,
-      endedAt: now,
-      totalRequests: session.totalRequests,
-      totalTokens: session.totalTokens,
-      totalCostCents: session.totalCostCents,
-      avgLatencyMs: session.totalRequests > 0 ? session.totalLatencyMs / session.totalRequests : 0,
-      peerSwitches: 0,
-      disputedReceipts: 0,
-    };
-
-    try {
-      this._metering.upsertSession(baseMetrics);
-      this._sessions.delete(buyerPeerId);
-      this.emit("session:finalized", {
-        buyerPeerId,
-        sessionId: session.sessionId,
-        reason,
-      });
-    } catch (err) {
-      session.settling = false;
-      debugWarn(`[Node] Failed to finalize session ${session.sessionId}: ${err instanceof Error ? err.message : err}`);
-      const retry = setTimeout(() => {
-        void this._finalizeSession(buyerPeerId, "retry");
-      }, 10_000);
-      if (typeof (retry as { unref?: () => void }).unref === "function") {
-        (retry as { unref: () => void }).unref();
-      }
-      this._settlementTimers.set(buyerPeerId, retry);
-    }
-  }
-
-  private async _finalizeAllSessions(reason: string): Promise<void> {
-    if (this._sessions.size === 0) return;
-    const buyers = [...this._sessions.keys()];
-    await Promise.allSettled(
-      buyers.map((buyerPeerId) => this._finalizeSession(buyerPeerId, reason)),
-    );
   }
 
   private async _getOrCreateConnection(peer: PeerInfo): Promise<PeerConnection> {
@@ -2045,380 +1033,6 @@ export class AntseedNode extends EventEmitter {
     return mux;
   }
 
-  // ── Buyer-side payment helpers ─────────────────────────────────
-
-  /**
-   * Create a PaymentMux for a buyer-side outbound connection and register
-   * buyer-side handlers (lock confirm, lock reject, seller receipt, top-up request).
-   */
-  private _getOrCreateBuyerPaymentMux(peerId: PeerId, conn: PeerConnection): PaymentMux {
-    const existing = this._paymentMuxes.get(peerId);
-    if (existing) return existing;
-
-    const pmux = new PaymentMux(conn);
-    this._paymentMuxes.set(peerId, pmux);
-
-    const bpm = this._buyerPaymentManager;
-    if (!bpm) return pmux;
-
-    pmux.onAuthAck((payload) => {
-      bpm.handleAuthAck(peerId, payload);
-    });
-
-    pmux.onNeedAuth((payload) => {
-      void bpm.handleNeedAuth(peerId, payload, pmux);
-    });
-
-    pmux.onPaymentRequired((payload) => {
-      const pending = this._pendingPaymentRequired.get(peerId);
-      if (pending) {
-        clearTimeout(pending.timer);
-        this._pendingPaymentRequired.delete(peerId);
-        pending.resolve(payload);
-      } else {
-        // Buffer: 402 and PaymentRequired can arrive in the same I/O tick,
-        // before _doNegotiatePayment registers its listener.
-        this._bufferedPaymentRequired.set(peerId, payload);
-        debugLog(`[Node] PaymentRequired from ${peerId.slice(0, 12)}... buffered (listener not yet registered)`);
-      }
-    });
-
-    return pmux;
-  }
-
-  /**
-   * Wait for the seller's PaymentRequired message, sign a SpendingAuth with
-   * the seller's real requirements, and wait for AuthAck.
-   * Uses a per-peer mutex so concurrent requests wait for the first negotiation.
-   */
-
-  /** Read requireManualApproval from config.json so changes take effect without restart. */
-  private async _isManualApprovalEnabled(): Promise<boolean> {
-    const now = Date.now();
-    if (this._manualApprovalCache && now - this._manualApprovalCache.at < 5_000) {
-      return this._manualApprovalCache.value;
-    }
-
-    try {
-      const configPath = this._config.configPath
-        ?? join(this._config.dataDir ?? join(homedir(), '.antseed'), 'config.json');
-      const raw = await readFile(configPath, 'utf-8');
-      const parsed = JSON.parse(raw) as Record<string, unknown>;
-      const buyer = parsed.buyer && typeof parsed.buyer === 'object' ? parsed.buyer as Record<string, unknown> : {};
-      const value = Boolean(buyer.requireManualApproval);
-      this._manualApprovalCache = { value, at: now };
-      return value;
-    } catch {
-      const value = Boolean(this._config.requireManualApproval);
-      this._manualApprovalCache = { value, at: now };
-      return value;
-    }
-  }
-
-  /**
-   * Wait for the seller's PaymentRequired payload for a given peer.
-   * Returns a buffered payload immediately when available, otherwise waits up to timeoutMs.
-   */
-  private async _awaitPaymentRequired(
-    peerId: PeerId,
-    conn: PeerConnection,
-    timeoutMs: number,
-  ): Promise<PaymentRequiredPayload | null> {
-    const buffered = this._bufferedPaymentRequired.get(peerId);
-    if (buffered) {
-      return buffered;
-    }
-
-    // Ensure the buyer-side PaymentMux exists before waiting so incoming frames
-    // are captured even when 402 and PaymentRequired arrive close together.
-    this._getOrCreateBuyerPaymentMux(peerId, conn);
-
-    return await new Promise<PaymentRequiredPayload | null>((resolve) => {
-      const already = this._bufferedPaymentRequired.get(peerId);
-      if (already) {
-        resolve(already);
-        return;
-      }
-
-      const existing = this._pendingPaymentRequired.get(peerId);
-      if (existing) {
-        const wrapper = {
-          resolve: (payload: PaymentRequiredPayload) => {
-            clearTimeout(existing.timer);
-            clearTimeout(wrapper.timer);
-            if (this._pendingPaymentRequired.get(peerId) === wrapper) {
-              this._pendingPaymentRequired.delete(peerId);
-            }
-            existing.resolve(payload);
-            resolve(payload);
-          },
-          reject: (err: Error) => {
-            clearTimeout(existing.timer);
-            clearTimeout(wrapper.timer);
-            if (this._pendingPaymentRequired.get(peerId) === wrapper) {
-              this._pendingPaymentRequired.delete(peerId);
-            }
-            existing.reject(err);
-            resolve(null);
-          },
-          timer: setTimeout(() => {
-            clearTimeout(existing.timer);
-            if (this._pendingPaymentRequired.get(peerId) === wrapper) {
-              this._pendingPaymentRequired.delete(peerId);
-            }
-            resolve(null);
-          }, timeoutMs),
-        };
-        this._pendingPaymentRequired.set(peerId, wrapper);
-        return;
-      }
-
-      const timer = setTimeout(() => {
-        if (this._pendingPaymentRequired.get(peerId)?.timer === timer) {
-          this._pendingPaymentRequired.delete(peerId);
-        }
-        resolve(null);
-      }, timeoutMs);
-      this._pendingPaymentRequired.set(peerId, {
-        resolve: (payload) => {
-          clearTimeout(timer);
-          if (this._pendingPaymentRequired.get(peerId)?.timer === timer) {
-            this._pendingPaymentRequired.delete(peerId);
-          }
-          resolve(payload);
-        },
-        reject: () => {
-          clearTimeout(timer);
-          if (this._pendingPaymentRequired.get(peerId)?.timer === timer) {
-            this._pendingPaymentRequired.delete(peerId);
-          }
-          resolve(null);
-        },
-        timer,
-      });
-    });
-  }
-
-  /**
-   * Apply a pre-signed SpendingAuth from the x-antseed-spending-auth header.
-   * Sends it to the seller via PaymentMux and waits for AuthAck.
-   */
-  private async _applyExternalSpendingAuth(
-    peer: PeerInfo,
-    conn: PeerConnection,
-    headerValue: string,
-  ): Promise<void> {
-    const pmux = this._getOrCreateBuyerPaymentMux(peer.peerId, conn);
-
-    let payload: {
-      channelId: string;
-      cumulativeAmount: string;
-      metadataHash: string;
-      metadata: string;
-      spendingAuthSig: string;
-      reserveSalt?: string;
-      reserveMaxAmount?: string;
-      reserveDeadline?: number;
-    };
-    try {
-      const decoded = Buffer.from(headerValue, 'base64').toString('utf-8');
-      payload = JSON.parse(decoded);
-    } catch {
-      throw new Error('Invalid x-antseed-spending-auth header: failed to decode');
-    }
-
-    debugLog(`[Node] External SpendingAuth: channel=${payload.channelId.slice(0, 18)}... amount=${payload.cumulativeAmount}`);
-
-    // Store session so handleAuthAck can find it
-    if (this._channelStore) {
-      const reserveDeadline = payload.reserveDeadline ?? (Math.floor(Date.now() / 1000) + 3600);
-      this._channelStore.upsertChannel({
-        sessionId: payload.channelId,
-        peerId: peer.peerId,
-        role: 'buyer',
-        sellerEvmAddr: peerIdToAddress(peer.peerId),
-        buyerEvmAddr: this._identity?.wallet.address ?? '',
-        nonce: 0,
-        authMax: payload.cumulativeAmount,
-        deadline: reserveDeadline,
-        previousSessionId: '0x' + '0'.repeat(64),
-        previousConsumption: '0',
-        tokensDelivered: '0',
-        requestCount: 0,
-        reservedAt: Date.now(),
-        settledAt: null,
-        settledAmount: null,
-        status: 'active',
-        latestBuyerSig: null,
-        latestSpendingAuthSig: null,
-        latestMetadata: null,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      });
-    }
-
-    // Send the pre-signed SpendingAuth to the seller
-    pmux.sendSpendingAuth(payload);
-    debugLog(`[Node] External SpendingAuth sent to seller ${peer.peerId.slice(0, 12)}..., waiting for AuthAck...`);
-
-    await this._waitForLockConfirmation(peer.peerId);
-    debugLog(`[Node] AuthAck received from seller ${peer.peerId.slice(0, 12)}...`);
-    this._buyerLockedPeers.add(peer.peerId);
-
-    this.emit('payment:signed', {
-      peerId: peer.peerId,
-      sellerEvmAddr: peerIdToAddress(peer.peerId),
-      amount: payload.cumulativeAmount,
-    });
-  }
-
-  private async _negotiatePayment(peer: PeerInfo, conn: PeerConnection): Promise<void> {
-    // Per-peer mutex: if another request is already negotiating, wait for it
-    const existing = this._paymentNegotiationLocks.get(peer.peerId);
-    if (existing) {
-      await existing;
-      return;
-    }
-
-    const negotiation = this._doNegotiatePayment(peer, conn);
-    this._paymentNegotiationLocks.set(peer.peerId, negotiation);
-    try {
-      await negotiation;
-    } finally {
-      this._paymentNegotiationLocks.delete(peer.peerId);
-    }
-  }
-
-  private async _doNegotiatePayment(peer: PeerInfo, conn: PeerConnection): Promise<void> {
-    const bpm = this._buyerPaymentManager;
-    if (!bpm) {
-      throw new Error('Payment negotiation unavailable — no sessions contract configured');
-    }
-
-    // If already locked from a previous successful negotiation, skip
-    if (this._buyerLockedPeers.has(peer.peerId)) return;
-
-    const pmux = this._getOrCreateBuyerPaymentMux(peer.peerId, conn);
-
-    // Check if PaymentRequired was already buffered (arrives in same I/O tick as 402)
-    const buffered = this._bufferedPaymentRequired.get(peer.peerId);
-    if (buffered) {
-      this._bufferedPaymentRequired.delete(peer.peerId);
-      debugLog(`[Node] Using buffered PaymentRequired from ${peer.peerId.slice(0, 12)}...`);
-    }
-
-    const PAYMENT_REQUIRED_TIMEOUT_MS = 10_000;
-    const requirements = buffered ?? await new Promise<PaymentRequiredPayload>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this._pendingPaymentRequired.delete(peer.peerId);
-        reject(new Error(`PaymentRequired timeout from seller ${peer.peerId.slice(0, 12)}...`));
-      }, PAYMENT_REQUIRED_TIMEOUT_MS);
-      this._pendingPaymentRequired.set(peer.peerId, { resolve, reject, timer });
-    });
-
-    debugLog(`[Node] PaymentRequired from ${peer.peerId.slice(0, 12)}...: minBudgetPerRequest=${requirements.minBudgetPerRequest} suggested=${requirements.suggestedAmount}`);
-
-    // Validate that seller's per-request minimum is within buyer's configured limit
-    const minBudgetPerRequest = BigInt(requirements.minBudgetPerRequest);
-    if (minBudgetPerRequest > bpm.maxPerRequestUsdc) {
-      throw new Error(
-        `Seller ${peer.peerId.slice(0, 12)}... minBudgetPerRequest=${minBudgetPerRequest} exceeds buyer maxPerRequestUsdc=${bpm.maxPerRequestUsdc}`,
-      );
-    }
-
-    // Cap amount at buyer's maxReserveAmountUsdc
-    let amount: bigint;
-    try {
-      amount = BigInt(requirements.suggestedAmount);
-    } catch {
-      throw new Error(`Invalid suggestedAmount from seller ${peer.peerId.slice(0, 12)}...: "${requirements.suggestedAmount}"`);
-    }
-    if (amount > bpm.maxReserveAmountUsdc) {
-      amount = bpm.maxReserveAmountUsdc;
-    }
-    if (amount <= 0n) {
-      throw new Error(`Invalid reserve amount for payment to ${peer.peerId.slice(0, 12)}...`);
-    }
-
-    const approvalInfo = {
-      peerId: peer.peerId,
-      sellerEvmAddr: peerIdToAddress(peer.peerId),
-      minBudgetPerRequest: requirements.minBudgetPerRequest,
-      suggestedAmount: amount.toString(),
-    };
-
-    this.emit('payment:required', approvalInfo);
-
-    // Extract pricing from seller's PaymentRequired payload or peer metadata
-    const pricing = (requirements.inputUsdPerMillion != null || requirements.outputUsdPerMillion != null)
-      ? {
-          inputUsdPerMillion: requirements.inputUsdPerMillion ?? peer.defaultInputUsdPerMillion ?? 0,
-          outputUsdPerMillion: requirements.outputUsdPerMillion ?? peer.defaultOutputUsdPerMillion ?? 0,
-        }
-      : (peer.defaultInputUsdPerMillion != null || peer.defaultOutputUsdPerMillion != null)
-        ? {
-            inputUsdPerMillion: peer.defaultInputUsdPerMillion ?? 0,
-            outputUsdPerMillion: peer.defaultOutputUsdPerMillion ?? 0,
-          }
-        : undefined;
-
-    try {
-      await bpm.authorizeSpending(peer.peerId, pmux, minBudgetPerRequest, pricing);
-      debugLog(`[Node] SpendingAuth sent to seller ${peer.peerId.slice(0, 12)}..., waiting for AuthAck...`);
-
-      await this._waitForLockConfirmation(peer.peerId);
-      debugLog(`[Node] AuthAck received from seller ${peer.peerId.slice(0, 12)}...`);
-      this._buyerLockedPeers.add(peer.peerId);
-
-      // Notify listeners what was signed
-      this.emit('payment:signed', {
-        peerId: peer.peerId,
-        sellerEvmAddr: peerIdToAddress(peer.peerId),
-        amount: amount.toString(),
-      });
-    } catch (err) {
-      debugWarn(`[Node] Payment negotiation failed for ${peer.peerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
-      throw err;
-    }
-  }
-
-  /**
-   * Poll until the lock for a seller is confirmed or rejected.
-   * Polls every 200ms with a 30-second timeout.
-   */
-  private async _waitForLockConfirmation(sellerPeerId: string): Promise<void> {
-    const bpm = this._buyerPaymentManager;
-    if (!bpm) return;
-
-    const pollIntervalMs = 200;
-    const timeoutMs = 30_000;
-    const deadline = Date.now() + timeoutMs;
-
-    while (Date.now() < deadline) {
-      if (bpm.isLockConfirmed(sellerPeerId)) {
-        return;
-      }
-      if (bpm.isLockRejected(sellerPeerId)) {
-        throw new Error(`Lock rejected by seller ${sellerPeerId.slice(0, 12)}...`);
-      }
-      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
-    }
-
-    throw new Error(`Lock confirmation timed out for seller ${sellerPeerId.slice(0, 12)}... (${timeoutMs}ms)`);
-  }
-
-  /**
-   * Clean up buyer payment sessions on shutdown.
-   * Channels are persisted in ChannelStore and will be resumed on next connect.
-   */
-  private async _endAllBuyerSessions(): Promise<void> {
-    const bpm = this._buyerPaymentManager;
-    if (!bpm) return;
-    // Sessions persist in SQLite; no explicit end needed.
-    // The buyer will reference them as previousSession on next connect.
-    debugLog(`[Node] Buyer sessions persisted for next reconnection`);
-  }
-
   private _resolvePublicAddress(result: LookupResult): string {
     const metadataPublicAddress = result.metadata.publicAddress?.trim();
     if (metadataPublicAddress && parsePublicAddress(metadataPublicAddress) !== null) {
@@ -2489,170 +1103,6 @@ export class AntseedNode extends EventEmitter {
     };
   }
 
-  private _adjustProviderLoad(providerName: string, delta: number): void {
-    const nextLoad = Math.max(0, (this._providerLoadCounts.get(providerName) ?? 0) + delta);
-    this._providerLoadCounts.set(providerName, nextLoad);
-
-    if (!this._announcer) return;
-    this._announcer.updateLoad(providerName, nextLoad);
-    this._scheduleMetadataRefresh();
-  }
-
-  private _scheduleMetadataRefresh(): void {
-    if (!this._announcer || this._metadataRefreshTimer) {
-      return;
-    }
-
-    const timer = setTimeout(() => {
-      this._metadataRefreshTimer = null;
-      const announcer = this._announcer;
-      if (!announcer) return;
-      void announcer.refreshMetadata().catch((err) => {
-        debugWarn(`[Node] Failed to refresh metadata snapshot: ${err instanceof Error ? err.message : err}`);
-      });
-    }, AntseedNode._METADATA_REFRESH_DEBOUNCE_MS);
-    this._metadataRefreshTimer = timer;
-    this._unrefTimer(timer);
-  }
-
-  private _unrefTimer(timer: ReturnType<typeof setTimeout>): void {
-    if (typeof (timer as { unref?: () => void }).unref === "function") {
-      (timer as { unref: () => void }).unref();
-    }
-  }
-
-  /**
-   * Inject cost headers into a non-streamed response before sending to buyer.
-   */
-  private _injectCostHeaders(
-    response: SerializedHttpResponse,
-    provider: Provider,
-    request: SerializedHttpRequest,
-    buyerPeerId: string,
-  ): SerializedHttpResponse {
-    const spm = this._sellerPaymentManager;
-    if (!spm || !spm.hasSession(buyerPeerId)) return response;
-
-    const usage = parseResponseUsage(response.body);
-    const pricing = this._resolveProviderPricing(provider, request);
-    const costUsdc = computeCostUsdc(usage.inputTokens, usage.outputTokens, pricing);
-    const session = spm.getChannelByPeer(buyerPeerId);
-    const cumulativeCost = session ? spm.getCumulativeSpend(session.sessionId) : 0n;
-
-    return {
-      requestId: response.requestId,
-      statusCode: response.statusCode,
-      body: response.body ?? new Uint8Array(0),
-      headers: {
-        ...response.headers,
-        'x-antseed-input-tokens': String(usage.inputTokens),
-        'x-antseed-output-tokens': String(usage.outputTokens),
-        'x-antseed-cost': costUsdc.toString(),
-        'x-antseed-cumulative-cost': cumulativeCost.toString(),
-      },
-    };
-  }
-
-  /**
-   * Parse seller cost headers from a response and store them for per-request auth.
-   */
-  private _parseCostHeaders(peerId: string, response: SerializedHttpResponse): void {
-    const costHeader = response.headers['x-antseed-cost'];
-    if (!costHeader) return;
-
-    try {
-      // Preserve content and latency from the estimate if already set
-      const existing = this._lastResponseCost.get(peerId);
-      this._lastResponseCost.set(peerId, {
-        costUsdc: BigInt(costHeader),
-        inputTokens: BigInt(response.headers['x-antseed-input-tokens'] ?? '0'),
-        outputTokens: BigInt(response.headers['x-antseed-output-tokens'] ?? '0'),
-        cumulativeCost: BigInt(response.headers['x-antseed-cumulative-cost'] ?? '0'),
-        inputContent: existing?.inputContent ?? new Uint8Array(0),
-        outputContent: existing?.outputContent ?? response.body,
-        latencyMs: existing?.latencyMs ?? 0,
-      });
-    } catch {
-      // Ignore malformed headers
-    }
-  }
-
-  /**
-   * Estimate cost from response body when seller cost headers are missing
-   * (e.g., streaming responses where _injectCostHeaders is not called).
-   * Uses parseResponseUsage to extract token counts from the response body,
-   * then computes cost using the peer's announced pricing.
-   */
-  private _estimateCostFromResponse(peer: PeerInfo, response: SerializedHttpResponse): void {
-    const inputPricePerM = peer.defaultInputUsdPerMillion;
-    const outputPricePerM = peer.defaultOutputUsdPerMillion;
-    if (inputPricePerM == null && outputPricePerM == null) return;
-
-    const usage = parseResponseUsage(response.body);
-    // If no token counts found in the response body, fall back to byte-based estimate
-    let inputTokens = usage.inputTokens;
-    let outputTokens = usage.outputTokens;
-    if (inputTokens === 0 && outputTokens === 0 && response.body.length > 0) {
-      // Rough estimate: ~4 bytes per token for output
-      outputTokens = Math.ceil(response.body.length / 4);
-    }
-
-    const pricing = {
-      inputUsdPerMillion: inputPricePerM ?? 0,
-      outputUsdPerMillion: outputPricePerM ?? 0,
-    };
-    const costUsdc = computeCostUsdc(inputTokens, outputTokens, pricing);
-
-    this._lastResponseCost.set(peer.peerId, {
-      costUsdc,
-      inputTokens: BigInt(inputTokens),
-      outputTokens: BigInt(outputTokens),
-      cumulativeCost: 0n, // Unknown for estimated costs
-      inputContent: new Uint8Array(0), // Placeholder — overwritten with req.body below
-      outputContent: response.body,
-      latencyMs: 0, // Placeholder — overwritten below
-    });
-
-    debugLog(
-      `[Node] Estimated cost for ${peer.peerId.slice(0, 12)}...: ` +
-      `cost=${costUsdc} (in=${inputTokens} out=${outputTokens}, estimated=${usage.inputTokens === 0 && usage.outputTokens === 0})`,
-    );
-  }
-
-  /**
-   * Sign and send a per-request SpendingAuth before sending the next request to a seller.
-   */
-  private async _sendPerRequestAuth(peer: PeerInfo, conn: PeerConnection): Promise<void> {
-    const bpm = this._buyerPaymentManager;
-    if (!bpm) return;
-
-    const pmux = this._getOrCreateBuyerPaymentMux(peer.peerId, conn);
-
-    // Get raw content, seller-claimed cost, and latency from the previous response
-    const lastCost = this._lastResponseCost.get(peer.peerId);
-    const inputBytes = lastCost?.inputContent ?? new Uint8Array(0);
-    const outputBytes = lastCost?.outputContent ?? new Uint8Array(0);
-    const sellerClaimedCost = lastCost?.costUsdc;
-    const latencyMs = lastCost?.latencyMs ?? 0;
-
-    try {
-      const { payload, topUpNeeded } = await bpm.signPerRequestAuth(
-        peer.peerId,
-        { inputBytes, outputBytes, sellerClaimedCost },
-        latencyMs > 0 ? BigInt(latencyMs) : undefined,
-      );
-      pmux.sendSpendingAuth(payload);
-      debugLog(`[Node] Per-request SpendingAuth sent to ${peer.peerId.slice(0, 12)}... cumulative=${payload.cumulativeAmount}`);
-
-      if (topUpNeeded) {
-        debugLog(`[Node] Reserve top-up needed for ${peer.peerId.slice(0, 12)}...`);
-        await bpm.topUpReserve(peer.peerId, pmux);
-      }
-    } catch (err) {
-      debugWarn(`[Node] Failed to send per-request SpendingAuth: ${err instanceof Error ? err.message : err}`);
-      throw err;
-    }
-  }
 }
 
 function parsePeerAddress(address: string): { host: string; port: number } {
@@ -2660,16 +1110,3 @@ function parsePeerAddress(address: string): { host: string; port: number } {
   return { host: parts[0]!, port: parseInt(parts[1] ?? "6882", 10) };
 }
 
-function concatChunks(chunks: Uint8Array[]): Uint8Array {
-  if (chunks.length === 0) return new Uint8Array(0);
-  if (chunks.length === 1) return chunks[0]!;
-
-  const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-  const output = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const chunk of chunks) {
-    output.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return output;
-}

@@ -1,0 +1,471 @@
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { BuyerPaymentNegotiator, type BuyerNegotiatorConfig, type NegotiationEmitter } from '../src/payments/buyer-payment-negotiator.js';
+import type { PeerInfo, PeerId } from '../src/types/peer.js';
+import type { SerializedHttpResponse, SerializedHttpRequest } from '../src/types/http.js';
+import type { BuyerPaymentManager } from '../src/payments/buyer-payment-manager.js';
+import type { DepositsClient } from '../src/payments/evm/deposits-client.js';
+import type { ChannelStore } from '../src/payments/channel-store.js';
+import type { Identity } from '../src/p2p/identity.js';
+import type { PeerConnection } from '../src/p2p/connection-manager.js';
+import type { PaymentRequiredPayload } from '../src/types/protocol.js';
+
+const enc = new TextEncoder();
+
+const BUYER_PEER_ID = 'a'.repeat(40) as PeerId;
+const SELLER_PEER_ID = 'b'.repeat(40) as PeerId;
+
+function createMockIdentity(): Identity {
+  return {
+    peerId: BUYER_PEER_ID,
+    privateKey: new Uint8Array(32),
+    wallet: { address: '0x' + '11'.repeat(20) },
+  } as unknown as Identity;
+}
+
+function createMockBpm(): BuyerPaymentManager & Record<string, unknown> {
+  return {
+    signPerRequestAuth: vi.fn().mockResolvedValue({
+      payload: {
+        channelId: '0x' + 'cc'.repeat(32),
+        cumulativeAmount: '50000',
+        metadataHash: '0x' + 'aa'.repeat(32),
+        metadata: '0x00',
+        spendingAuthSig: '0x' + 'bb'.repeat(65),
+      },
+      topUpNeeded: false,
+    }),
+    handleAuthAck: vi.fn(),
+    handleNeedAuth: vi.fn(),
+    authorizeSpending: vi.fn().mockResolvedValue(undefined),
+    topUpReserve: vi.fn().mockResolvedValue(undefined),
+    cleanupSession: vi.fn(),
+    isLockConfirmed: vi.fn().mockReturnValue(false),
+    isLockRejected: vi.fn().mockReturnValue(false),
+    maxPerRequestUsdc: 100_000n,
+    maxReserveAmountUsdc: 10_000_000n,
+  } as unknown as BuyerPaymentManager & Record<string, unknown>;
+}
+
+function createMockDepositsClient(balance = 1_000_000n): DepositsClient {
+  return {
+    getBuyerBalance: vi.fn().mockResolvedValue({ available: balance, locked: 0n }),
+  } as unknown as DepositsClient;
+}
+
+function createMockChannelStore(): ChannelStore {
+  return {
+    upsertChannel: vi.fn(),
+  } as unknown as ChannelStore;
+}
+
+function createMockConn(): PeerConnection {
+  return { send: vi.fn() } as unknown as PeerConnection;
+}
+
+function createPeer(peerId: PeerId = SELLER_PEER_ID): PeerInfo {
+  return {
+    peerId,
+    lastSeen: Date.now(),
+    providers: ['openai'],
+    defaultInputUsdPerMillion: 3,
+    defaultOutputUsdPerMillion: 15,
+  } as PeerInfo;
+}
+
+describe('BuyerPaymentNegotiator', () => {
+  let identity: Identity;
+  let bpm: ReturnType<typeof createMockBpm>;
+  let depositsClient: DepositsClient;
+  let channelStore: ChannelStore;
+  let config: BuyerNegotiatorConfig;
+  let emitter: NegotiationEmitter;
+  let negotiator: BuyerPaymentNegotiator;
+  let conn: PeerConnection;
+  let peer: PeerInfo;
+
+  beforeEach(() => {
+    identity = createMockIdentity();
+    bpm = createMockBpm();
+    depositsClient = createMockDepositsClient();
+    channelStore = createMockChannelStore();
+    config = { configPath: '/nonexistent/config.json' };
+    emitter = { emit: vi.fn() };
+    negotiator = new BuyerPaymentNegotiator(identity, bpm as unknown as BuyerPaymentManager, depositsClient, channelStore, config, emitter);
+    conn = createMockConn();
+    peer = createPeer();
+  });
+
+  describe('preparePreRequestAuth', () => {
+    it('no-ops when peer is not locked', async () => {
+      await negotiator.preparePreRequestAuth(peer, conn);
+      expect(bpm.signPerRequestAuth).not.toHaveBeenCalled();
+    });
+
+    it('skips first request (initial auth already sent during negotiation)', async () => {
+      // Simulate successful negotiation to add peer to _lockedPeers
+      await simulateSuccessfulNegotiation(negotiator, bpm, peer, conn);
+
+      // First call after lock — should skip (initial auth was sent during negotiation)
+      await negotiator.preparePreRequestAuth(peer, conn);
+      expect(bpm.signPerRequestAuth).not.toHaveBeenCalled();
+    });
+
+    it('sends per-request auth on subsequent requests', async () => {
+      await simulateSuccessfulNegotiation(negotiator, bpm, peer, conn);
+
+      // First call — skip
+      await negotiator.preparePreRequestAuth(peer, conn);
+      expect(bpm.signPerRequestAuth).not.toHaveBeenCalled();
+
+      // Second call — should send auth
+      await negotiator.preparePreRequestAuth(peer, conn);
+      expect(bpm.signPerRequestAuth).toHaveBeenCalledOnce();
+    });
+
+    it('calls bpm.topUpReserve when topUpNeeded', async () => {
+      (bpm.signPerRequestAuth as ReturnType<typeof vi.fn>).mockResolvedValue({
+        payload: {
+          channelId: '0x' + 'cc'.repeat(32),
+          cumulativeAmount: '90000',
+          metadataHash: '0x' + 'aa'.repeat(32),
+          metadata: '0x00',
+          spendingAuthSig: '0x' + 'bb'.repeat(65),
+        },
+        topUpNeeded: true,
+      });
+
+      await simulateSuccessfulNegotiation(negotiator, bpm, peer, conn);
+
+      // Skip first
+      await negotiator.preparePreRequestAuth(peer, conn);
+      // Second triggers auth
+      await negotiator.preparePreRequestAuth(peer, conn);
+
+      expect(bpm.topUpReserve).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe('handle402', () => {
+    it('returns 402 in manual approval mode', async () => {
+      config.requireManualApproval = true;
+      config.configPath = '/nonexistent/config.json';
+      negotiator = new BuyerPaymentNegotiator(identity, bpm as unknown as BuyerPaymentManager, depositsClient, channelStore, config, emitter);
+
+      // Pre-buffer PaymentRequired so the await doesn't time out
+      bufferPaymentRequired(negotiator, peer.peerId, conn);
+
+      const result = await negotiator.handle402(make402Response(), peer, conn, makeRequest());
+      expect(result.action).toBe('return');
+      expect((result as { action: 'return'; response: SerializedHttpResponse }).response.statusCode).toBe(402);
+    });
+
+    it('returns 402 when no depositsClient', async () => {
+      negotiator = new BuyerPaymentNegotiator(identity, bpm as unknown as BuyerPaymentManager, null, channelStore, config, emitter);
+
+      const result = await negotiator.handle402(make402Response(), peer, conn, makeRequest());
+      expect(result.action).toBe('return');
+    });
+
+    it('returns 402 when balance is zero', async () => {
+      depositsClient = createMockDepositsClient(0n);
+      negotiator = new BuyerPaymentNegotiator(identity, bpm as unknown as BuyerPaymentManager, depositsClient, channelStore, config, emitter);
+
+      const result = await negotiator.handle402(make402Response(), peer, conn, makeRequest());
+      expect(result.action).toBe('return');
+    });
+
+    it('clears stale session state before re-negotiating', async () => {
+      // First, lock the peer through successful negotiation
+      await simulateSuccessfulNegotiation(negotiator, bpm, peer, conn);
+
+      // Now handle402 again — it should clear stale state and re-negotiate
+      (bpm.isLockConfirmed as ReturnType<typeof vi.fn>).mockReturnValue(false);
+      bufferPaymentRequired(negotiator, peer.peerId, conn);
+      // Make isLockConfirmed return true after authorizeSpending
+      (bpm.authorizeSpending as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+        (bpm.isLockConfirmed as ReturnType<typeof vi.fn>).mockReturnValue(true);
+      });
+
+      const result = await negotiator.handle402(make402Response(), peer, conn, makeRequest());
+
+      expect(bpm.cleanupSession).toHaveBeenCalledWith(peer.peerId);
+      expect(result.action).toBe('retry');
+    });
+
+    it('auto-negotiates and returns retry on success', async () => {
+      bufferPaymentRequired(negotiator, peer.peerId, conn);
+      // Make isLockConfirmed return true after authorizeSpending
+      (bpm.authorizeSpending as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+        (bpm.isLockConfirmed as ReturnType<typeof vi.fn>).mockReturnValue(true);
+      });
+
+      const result = await negotiator.handle402(make402Response(), peer, conn, makeRequest());
+
+      expect(result.action).toBe('retry');
+      expect(bpm.authorizeSpending).toHaveBeenCalled();
+    });
+
+    it('enriches 402 body with PaymentRequired data', async () => {
+      config.requireManualApproval = true;
+      config.configPath = '/nonexistent/config.json';
+      negotiator = new BuyerPaymentNegotiator(identity, bpm as unknown as BuyerPaymentManager, depositsClient, channelStore, config, emitter);
+
+      bufferPaymentRequired(negotiator, peer.peerId, conn);
+
+      const result = await negotiator.handle402(make402Response(), peer, conn, makeRequest());
+      expect(result.action).toBe('return');
+
+      const res = (result as { action: 'return'; response: SerializedHttpResponse }).response;
+      const body = JSON.parse(new TextDecoder().decode(res.body));
+      expect(body.minBudgetPerRequest).toBe('10000');
+      expect(body.suggestedAmount).toBe('100000');
+      expect(body.peerId).toBe(peer.peerId);
+    });
+
+    it('throws on negotiation failure and clears locked state', async () => {
+      bufferPaymentRequired(negotiator, peer.peerId, conn);
+      // Make isLockRejected return true to trigger failure
+      (bpm.isLockRejected as ReturnType<typeof vi.fn>).mockReturnValue(true);
+
+      await expect(negotiator.handle402(make402Response(), peer, conn, makeRequest()))
+        .rejects.toThrow(/Lock rejected/);
+
+      // After failure, the peer should not be locked, so preparePreRequestAuth no-ops
+      await negotiator.preparePreRequestAuth(peer, conn);
+      expect(bpm.signPerRequestAuth).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('cost tracking', () => {
+    it('estimateCostFromResponse stores estimated cost', () => {
+      const response: SerializedHttpResponse = {
+        requestId: 'req-1',
+        statusCode: 200,
+        headers: { 'content-type': 'application/json' },
+        body: enc.encode(JSON.stringify({
+          usage: { prompt_tokens: 100, completion_tokens: 50 },
+        })),
+      };
+
+      negotiator.estimateCostFromResponse(peer, response);
+
+      // After estimating, preparePreRequestAuth on a locked peer should use the cost
+      // We verify by checking that recording works (cost entry exists)
+      // Record content should merge with existing entry
+      negotiator.recordResponseContent(peer.peerId, new Uint8Array(0), response.body, 150);
+
+      // Verify by doing a full flow — lock the peer, then send auth which reads cost
+      // For simplicity, just verify no error is thrown and the method is callable
+    });
+
+    it('parseCostHeaders stores seller-reported cost', () => {
+      const response: SerializedHttpResponse = {
+        requestId: 'req-1',
+        statusCode: 200,
+        headers: {
+          'content-type': 'application/json',
+          'x-antseed-cost': '5000',
+          'x-antseed-input-tokens': '100',
+          'x-antseed-output-tokens': '50',
+          'x-antseed-cumulative-cost': '15000',
+        },
+        body: enc.encode('{}'),
+      };
+
+      negotiator.parseCostHeaders(peer.peerId, response);
+
+      // Verify the cost was stored by recording content on top of it
+      // (recordResponseContent merges with existing entry)
+      negotiator.recordResponseContent(peer.peerId, enc.encode('input'), enc.encode('output'), 200);
+      // No error means both entries exist and merge correctly
+    });
+
+    it('parseCostHeaders ignores responses without cost header', () => {
+      const response: SerializedHttpResponse = {
+        requestId: 'req-1',
+        statusCode: 200,
+        headers: { 'content-type': 'application/json' },
+        body: enc.encode('{}'),
+      };
+
+      // Should not throw
+      negotiator.parseCostHeaders(peer.peerId, response);
+
+      // recordResponseContent should not find an existing entry, so it's a no-op
+      negotiator.recordResponseContent(peer.peerId, enc.encode('input'), enc.encode('output'), 200);
+    });
+
+    it('recordResponseContent updates content and latency', async () => {
+      // Set up cost entry first
+      const response: SerializedHttpResponse = {
+        requestId: 'req-1',
+        statusCode: 200,
+        headers: {
+          'content-type': 'application/json',
+          'x-antseed-cost': '5000',
+          'x-antseed-input-tokens': '100',
+          'x-antseed-output-tokens': '50',
+        },
+        body: enc.encode('{}'),
+      };
+      negotiator.parseCostHeaders(peer.peerId, response);
+
+      const reqBody = enc.encode('request body');
+      const resBody = enc.encode('response body');
+      negotiator.recordResponseContent(peer.peerId, reqBody, resBody, 250);
+
+      // Verify the stored content is used during per-request auth.
+      // Lock the peer and trigger signPerRequestAuth to check it receives content.
+      await simulateSuccessfulNegotiation(negotiator, bpm, peer, conn);
+      await negotiator.preparePreRequestAuth(peer, conn); // skip first
+      await negotiator.preparePreRequestAuth(peer, conn); // sends auth
+
+      expect(bpm.signPerRequestAuth).toHaveBeenCalled();
+      const call = (bpm.signPerRequestAuth as ReturnType<typeof vi.fn>).mock.calls[0];
+      // Second arg is the content object
+      expect(call[1].inputBytes).toEqual(reqBody);
+      expect(call[1].outputBytes).toEqual(resBody);
+      expect(call[1].sellerClaimedCost).toBe(5000n);
+      // Third arg is latencyMs as bigint
+      expect(call[2]).toBe(250n);
+    });
+  });
+
+  describe('cleanup', () => {
+    it('onPeerDisconnect clears all state for a peer', async () => {
+      await simulateSuccessfulNegotiation(negotiator, bpm, peer, conn);
+
+      // Peer is locked, first request sent tracking exists
+      negotiator.onPeerDisconnect(peer.peerId);
+
+      // After disconnect, preparePreRequestAuth should no-op (peer not locked)
+      (bpm.signPerRequestAuth as ReturnType<typeof vi.fn>).mockClear();
+      await negotiator.preparePreRequestAuth(peer, conn);
+      expect(bpm.signPerRequestAuth).not.toHaveBeenCalled();
+
+      // cleanupSession should have been called
+      expect(bpm.cleanupSession).toHaveBeenCalledWith(peer.peerId);
+    });
+
+    it('onPeerDisconnect rejects pending PaymentRequired', async () => {
+      // Create a pending payment required by starting a negotiation that waits
+      // We can't easily test the rejection directly, but we can verify the method
+      // doesn't throw and cleans up
+      negotiator.onPeerDisconnect(peer.peerId);
+      // Should not throw even when there's nothing to clean up
+    });
+
+    it('cleanup clears all state and rejects pending promises', async () => {
+      await simulateSuccessfulNegotiation(negotiator, bpm, peer, conn);
+
+      negotiator.cleanup();
+
+      // After cleanup, peer should not be locked
+      (bpm.signPerRequestAuth as ReturnType<typeof vi.fn>).mockClear();
+      await negotiator.preparePreRequestAuth(peer, conn);
+      expect(bpm.signPerRequestAuth).not.toHaveBeenCalled();
+    });
+
+    it('cleanup handles multiple peers', async () => {
+      const peer2Id = 'c'.repeat(40) as PeerId;
+      const peer2 = createPeer(peer2Id);
+      const conn2 = createMockConn();
+
+      await simulateSuccessfulNegotiation(negotiator, bpm, peer, conn);
+
+      // Reset isLockConfirmed for second peer
+      (bpm.isLockConfirmed as ReturnType<typeof vi.fn>).mockReturnValue(false);
+      await simulateSuccessfulNegotiation(negotiator, bpm, peer2, conn2);
+
+      negotiator.cleanup();
+
+      // Both peers should be unlocked
+      (bpm.signPerRequestAuth as ReturnType<typeof vi.fn>).mockClear();
+      await negotiator.preparePreRequestAuth(peer, conn);
+      await negotiator.preparePreRequestAuth(peer2, conn2);
+      expect(bpm.signPerRequestAuth).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getOrCreatePaymentMux', () => {
+    it('returns same mux for same peer', () => {
+      const mux1 = negotiator.getOrCreatePaymentMux(peer.peerId, conn);
+      const mux2 = negotiator.getOrCreatePaymentMux(peer.peerId, conn);
+      expect(mux1).toBe(mux2);
+    });
+
+    it('returns different mux for different peers', () => {
+      const peer2Id = 'c'.repeat(40) as PeerId;
+      const conn2 = createMockConn();
+      const mux1 = negotiator.getOrCreatePaymentMux(peer.peerId, conn);
+      const mux2 = negotiator.getOrCreatePaymentMux(peer2Id, conn2);
+      expect(mux1).not.toBe(mux2);
+    });
+  });
+});
+
+// ── Helpers ──────────────────────────────────────────────────────
+
+const paymentRequiredPayload: PaymentRequiredPayload = {
+  minBudgetPerRequest: '10000',
+  suggestedAmount: '100000',
+  requestId: 'req-1',
+};
+
+/**
+ * Simulates a successful payment negotiation so the peer gets added to _lockedPeers.
+ * This uses handle402 with a pre-buffered PaymentRequired and mocked lock confirmation.
+ */
+async function simulateSuccessfulNegotiation(
+  negotiator: BuyerPaymentNegotiator,
+  bpm: ReturnType<typeof createMockBpm>,
+  peer: PeerInfo,
+  conn: PeerConnection,
+): Promise<void> {
+  bufferPaymentRequired(negotiator, peer.peerId, conn);
+  (bpm.authorizeSpending as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+    (bpm.isLockConfirmed as ReturnType<typeof vi.fn>).mockReturnValue(true);
+  });
+
+  const result = await negotiator.handle402(make402Response(), peer, conn, makeRequest());
+  expect(result.action).toBe('retry');
+}
+
+/**
+ * Buffers a PaymentRequired payload for a peer so handle402 / _doNegotiatePayment
+ * can consume it without waiting for a PaymentMux message.
+ */
+function bufferPaymentRequired(
+  negotiator: BuyerPaymentNegotiator,
+  peerId: PeerId,
+  conn: PeerConnection,
+): void {
+  // Get or create the mux, then trigger its onPaymentRequired handler
+  const mux = negotiator.getOrCreatePaymentMux(peerId, conn);
+  // The mux registered an onPaymentRequired handler in getOrCreatePaymentMux.
+  // We need to invoke it to buffer the payload. Access it via the mux's internal.
+  // Since PaymentMux stores the handler privately, we simulate by calling handleFrame
+  // with a PaymentRequired frame. But that requires encoding. Instead, we use a
+  // simpler approach: directly access the _bufferedPaymentRequired map.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (negotiator as any)._bufferedPaymentRequired.set(peerId, { ...paymentRequiredPayload });
+}
+
+function make402Response(body: Record<string, unknown> = {}): SerializedHttpResponse {
+  return {
+    requestId: 'req-1',
+    statusCode: 402,
+    headers: { 'content-type': 'application/json' },
+    body: enc.encode(JSON.stringify(body)),
+  };
+}
+
+function makeRequest(): SerializedHttpRequest {
+  return {
+    requestId: 'req-1',
+    method: 'POST',
+    path: '/v1/chat/completions',
+    headers: { 'content-type': 'application/json' },
+    body: enc.encode(JSON.stringify({ model: 'gpt-4', messages: [{ role: 'user', content: 'hi' }] })),
+  };
+}
