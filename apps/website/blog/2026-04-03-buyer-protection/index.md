@@ -7,6 +7,7 @@ description: How AntSeed protects buyers during active AI sessions — overdraft
 keywords: [buyer protection, overdraft control, cost verification, EIP-712, SpendingAuth, P2P payments, payment channels, streaming payments, escrow, smart contract]
 image: /og-image.jpg
 date: 2026-04-03
+draft: true
 ---
 
 When you use an AI API, you swipe a card and trust the provider to charge you fairly. If they overcharge, you dispute it. There's a payment processor, a support team, terms of service, and ultimately a legal system behind every transaction.
