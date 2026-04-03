@@ -1,4 +1,4 @@
-import { type AbstractSigner, Contract } from 'ethers';
+import { type AbstractSigner, Contract, ethers } from 'ethers';
 import { BaseEvmClient } from './base-evm-client.js';
 
 export interface ChannelsClientConfig {
@@ -37,7 +37,13 @@ const CHANNELS_ABI = [
   'function getAgentStats(uint256 agentId) external view returns (uint64 channelCount, uint64 ghostCount, uint256 totalVolumeUsdc, uint64 lastSettledAt)',
   'function domainSeparator() external view returns (bytes32)',
   'function FIRST_SIGN_CAP() external view returns (uint256)',
+  'event CloseRequested(bytes32 indexed channelId, address indexed buyer)',
 ] as const;
+
+export interface CloseRequestedEvent {
+  channelId: string;
+  buyer: string;
+}
 
 export class ChannelsClient extends BaseEvmClient {
   constructor(config: ChannelsClientConfig) {
@@ -145,5 +151,33 @@ export class ChannelsClient extends BaseEvmClient {
       totalVolumeUsdc: result[2] as bigint,
       lastSettledAt: Number(result[3]),
     };
+  }
+
+  /**
+   * Query CloseRequested events from the Channels contract.
+   * Returns matching events between fromBlock and toBlock (inclusive).
+   */
+  async getCloseRequestedEvents(fromBlock: number | 'latest', toBlock: number | 'latest' = 'latest'): Promise<CloseRequestedEvent[]> {
+    const iface = new ethers.Interface(CHANNELS_ABI);
+    const eventTopic = iface.getEvent('CloseRequested')!.topicHash;
+
+    const logs = await this._provider.getLogs({
+      address: this._contractAddress,
+      topics: [eventTopic],
+      fromBlock,
+      toBlock,
+    });
+
+    return logs.map((log) => ({
+      channelId: log.topics[1]!,
+      buyer: ethers.getAddress('0x' + log.topics[2]!.slice(26)),
+    }));
+  }
+
+  /**
+   * Get the current block number from the provider.
+   */
+  async getBlockNumber(): Promise<number> {
+    return this._provider.getBlockNumber();
   }
 }

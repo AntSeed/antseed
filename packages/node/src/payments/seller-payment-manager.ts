@@ -615,6 +615,80 @@ export class SellerPaymentManager {
     };
   }
 
+  // ── CloseRequested handling ───────────────────────────────────
+
+  /**
+   * Handle a CloseRequested event for a channel this seller manages.
+   * If the seller has a stored SpendingAuth, immediately close the channel
+   * on-chain to claim earnings before the grace period expires.
+   */
+  async handleCloseRequested(channelId: string): Promise<void> {
+    const latestAuth = this._latestAuth.get(channelId);
+    const accepted = this._acceptedCumulative.get(channelId) ?? 0n;
+
+    if (accepted > 0n && latestAuth?.spendingAuthSig) {
+      debugLog(`[SellerPayment] CloseRequested for channel ${channelId.slice(0, 18)}... — closing with cumulative=${latestAuth.cumulativeAmount}`);
+      try {
+        await this._channelsClient.close(
+          this._signer,
+          channelId,
+          latestAuth.cumulativeAmount,
+          latestAuth.metadata || encodeMetadata(ZERO_METADATA),
+          latestAuth.spendingAuthSig,
+        );
+        this._channelStore.updateChannelStatus(channelId, 'settled', latestAuth.cumulativeAmount.toString());
+        debugLog(`[SellerPayment] Channel ${channelId.slice(0, 18)}... closed successfully after CloseRequested`);
+      } catch (err) {
+        debugWarn(`[SellerPayment] Failed to close channel ${channelId.slice(0, 18)}... after CloseRequested: ${err instanceof Error ? err.message : err}`);
+        // Early return: preserve in-memory maps so the next poll cycle can retry close()
+        return;
+      }
+    } else {
+      // No voucher — seller can't claim anything. Clean up locally;
+      // buyer will withdraw after grace period.
+      debugLog(`[SellerPayment] CloseRequested for channel ${channelId.slice(0, 18)}... — no SpendingAuth, cleaning up locally`);
+      this._channelStore.updateChannelStatus(channelId, 'timeout');
+    }
+
+    // Clean up in-memory state
+    this._acceptedCumulative.delete(channelId);
+    this._spent.delete(channelId);
+    this._latestAuth.delete(channelId);
+    this._closeRetryCount.delete(channelId);
+    this._reserveMax.delete(channelId);
+
+    // Find and remove buyer from active set
+    const channel = this._channelStore.getChannel(channelId);
+    if (channel) {
+      this._activeBuyers.delete(channel.peerId);
+    }
+  }
+
+  /**
+   * Poll for CloseRequested events and handle any that match active channels.
+   * Returns the block number to use as the next fromBlock cursor.
+   */
+  async pollCloseRequested(fromBlock: number): Promise<number> {
+    try {
+      // Fetch block number first and pin as toBlock to avoid race:
+      // if blocks are mined between the two calls, events in the gap would be missed.
+      const latestBlock = await this._channelsClient.getBlockNumber();
+      const events = await this._channelsClient.getCloseRequestedEvents(fromBlock, latestBlock);
+
+      for (const event of events) {
+        // Only handle channels this seller is actively tracking
+        if (this._acceptedCumulative.has(event.channelId) || this._channelStore.getChannel(event.channelId)?.status === 'active') {
+          await this.handleCloseRequested(event.channelId);
+        }
+      }
+
+      return latestBlock + 1;
+    } catch (err) {
+      debugWarn(`[SellerPayment] Failed to poll CloseRequested events: ${err instanceof Error ? err.message : err}`);
+      return fromBlock; // Retry from same block on next poll
+    }
+  }
+
   // ── Lifecycle ─────────────────────────────────────────────────
 
   close(): void {
