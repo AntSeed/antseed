@@ -1085,6 +1085,14 @@ export function initChatModule({
     if (!bridge || !bridge.chatAiGetConversation) return;
 
     uiState.chatActiveConversation = convId;
+    uiState.chatRoutedPeerId = '';
+    uiState.chatSessionStarted = '';
+    uiState.chatSessionReservedUsdc = '';
+    uiState.chatSessionAccumulatedCostUsd = '';
+    uiState.chatSessionTotalTokens = '';
+    uiState.chatLifetimeSpentUsdc = '';
+    uiState.chatLifetimeTotalTokens = '';
+    uiState.chatLifetimeSessions = '';
 
     try {
       const result = await bridge.chatAiGetConversation(convId);
