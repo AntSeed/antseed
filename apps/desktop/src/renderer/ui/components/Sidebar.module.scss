@@ -122,7 +122,124 @@
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 0;
+}
+
+/* ── Peer group ────────────────────────────────────────────────────── */
+
+.peer-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.peer-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  margin: 0 4px;
+  border: none;
+  background: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  width: calc(100% - 8px);
+  text-align: left;
+  font-family: inherit;
+  transition: background 0.1s;
+
+  &:hover {
+    background: var(--bg-hover);
+
+    .peer-group-add {
+      opacity: 1;
+    }
+  }
+}
+
+.peer-group-chevron {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: transform 0.15s ease;
+  transform: rotate(-90deg);
+}
+
+.peer-group-chevron-open {
+  transform: rotate(0deg);
+}
+
+.peer-group-avatar {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  line-height: 1;
+}
+
+.peer-group-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.peer-group-add {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  background: none;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--text-muted);
+  opacity: 0;
+  transition: opacity 0.1s, color 0.1s;
+
+  &:hover {
+    color: var(--text-primary);
+  }
+}
+
+.peer-group-convs {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-left: 4px;
+}
+
+/* ── Conversation preview with cost ────────────────────────────────── */
+
+.chat-conv-preview-sep {
+  display: inline-block;
+  width: 12px;
+  text-align: center;
+
+  &::before {
+    content: '';
+    display: inline-block;
+    width: 2px;
+    height: 2px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    vertical-align: middle;
+  }
+}
+
+.chat-conv-cost {
+  color: var(--text-muted);
 }
 
 .chat-conv-item {
