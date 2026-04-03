@@ -4,7 +4,9 @@ import type { PeerInfo, PeerId } from '../src/types/peer.js';
 import type { SerializedHttpResponse, SerializedHttpRequest } from '../src/types/http.js';
 import type { BuyerPaymentManager } from '../src/payments/buyer-payment-manager.js';
 import type { DepositsClient } from '../src/payments/evm/deposits-client.js';
+import type { ChannelsClient, ChannelInfo } from '../src/payments/evm/channels-client.js';
 import type { ChannelStore } from '../src/payments/channel-store.js';
+import type { StoredChannel } from '../src/payments/channel-store.js';
 import type { Identity } from '../src/p2p/identity.js';
 import type { PeerConnection } from '../src/p2p/connection-manager.js';
 import type { PaymentRequiredPayload } from '../src/types/protocol.js';
@@ -39,6 +41,11 @@ function createMockBpm(): BuyerPaymentManager & Record<string, unknown> {
     authorizeSpending: vi.fn().mockResolvedValue(undefined),
     topUpReserve: vi.fn().mockResolvedValue(undefined),
     cleanupSession: vi.fn(),
+    getActiveSession: vi.fn().mockReturnValue(null),
+    retireSession: vi.fn(),
+    canReplayReserveAuth: vi.fn().mockReturnValue(false),
+    resendCurrentSpendingAuth: vi.fn().mockResolvedValue(undefined),
+    resendReserveAuth: vi.fn().mockResolvedValue(undefined),
     isLockConfirmed: vi.fn().mockReturnValue(false),
     isLockRejected: vi.fn().mockReturnValue(false),
     recordAndPersistTokens: vi.fn(),
@@ -56,7 +63,25 @@ function createMockDepositsClient(balance = 1_000_000n): DepositsClient {
 function createMockChannelStore(): ChannelStore {
   return {
     upsertChannel: vi.fn(),
+    getActiveChannelByPeer: vi.fn().mockReturnValue(null),
   } as unknown as ChannelStore;
+}
+
+function createMockChannelsClient(state?: Partial<ChannelInfo>): ChannelsClient {
+  return {
+    getSession: vi.fn().mockResolvedValue({
+      buyer: '0x' + '11'.repeat(20),
+      seller: '0x' + '22'.repeat(20),
+      deposit: 1_000_000n,
+      settled: 0n,
+      metadataHash: '0x' + '00'.repeat(32),
+      deadline: 0n,
+      settledAt: 0n,
+      closeRequestedAt: 0n,
+      status: 1,
+      ...state,
+    }),
+  } as unknown as ChannelsClient;
 }
 
 function createMockConn(): PeerConnection {
@@ -77,6 +102,7 @@ describe('BuyerPaymentNegotiator', () => {
   let identity: Identity;
   let bpm: ReturnType<typeof createMockBpm>;
   let depositsClient: DepositsClient;
+  let channelsClient: ChannelsClient;
   let channelStore: ChannelStore;
   let config: BuyerNegotiatorConfig;
   let emitter: NegotiationEmitter;
@@ -88,10 +114,11 @@ describe('BuyerPaymentNegotiator', () => {
     identity = createMockIdentity();
     bpm = createMockBpm();
     depositsClient = createMockDepositsClient();
+    channelsClient = createMockChannelsClient();
     channelStore = createMockChannelStore();
     config = { configPath: '/nonexistent/config.json' };
     emitter = { emit: vi.fn() };
-    negotiator = new BuyerPaymentNegotiator(identity, bpm as unknown as BuyerPaymentManager, depositsClient, channelStore, config, emitter);
+    negotiator = new BuyerPaymentNegotiator(identity, bpm as unknown as BuyerPaymentManager, depositsClient, channelsClient, channelStore, config, emitter);
     conn = createMockConn();
     peer = createPeer();
   });
@@ -165,7 +192,7 @@ describe('BuyerPaymentNegotiator', () => {
     it('returns 402 in manual approval mode', async () => {
       config.requireManualApproval = true;
       config.configPath = '/nonexistent/config.json';
-      negotiator = new BuyerPaymentNegotiator(identity, bpm as unknown as BuyerPaymentManager, depositsClient, channelStore, config, emitter);
+      negotiator = new BuyerPaymentNegotiator(identity, bpm as unknown as BuyerPaymentManager, depositsClient, channelsClient, channelStore, config, emitter);
 
       // Pre-buffer PaymentRequired so the await doesn't time out
       bufferPaymentRequired(negotiator, peer.peerId, conn);
@@ -176,7 +203,7 @@ describe('BuyerPaymentNegotiator', () => {
     });
 
     it('returns 402 when no depositsClient', async () => {
-      negotiator = new BuyerPaymentNegotiator(identity, bpm as unknown as BuyerPaymentManager, null, channelStore, config, emitter);
+      negotiator = new BuyerPaymentNegotiator(identity, bpm as unknown as BuyerPaymentManager, null, channelsClient, channelStore, config, emitter);
 
       const result = await negotiator.handle402(make402Response(), peer, conn, makeRequest());
       expect(result.action).toBe('return');
@@ -184,27 +211,118 @@ describe('BuyerPaymentNegotiator', () => {
 
     it('returns 402 when balance is zero', async () => {
       depositsClient = createMockDepositsClient(0n);
-      negotiator = new BuyerPaymentNegotiator(identity, bpm as unknown as BuyerPaymentManager, depositsClient, channelStore, config, emitter);
+      negotiator = new BuyerPaymentNegotiator(identity, bpm as unknown as BuyerPaymentManager, depositsClient, channelsClient, channelStore, config, emitter);
 
       const result = await negotiator.handle402(make402Response(), peer, conn, makeRequest());
       expect(result.action).toBe('return');
     });
 
-    it('clears stale session state before re-negotiating', async () => {
+    it('replays an active on-chain session instead of opening a new reserve', async () => {
       // First, lock the peer through successful negotiation
       await simulateSuccessfulNegotiation(negotiator, bpm, peer, conn);
+      (bpm.authorizeSpending as ReturnType<typeof vi.fn>).mockClear();
 
-      // Now handle402 again — it should clear stale state and re-negotiate
-      (bpm.isLockConfirmed as ReturnType<typeof vi.fn>).mockReturnValue(false);
+      const activeSession = makeActiveSession(peer.peerId);
+      (bpm.getActiveSession as ReturnType<typeof vi.fn>).mockReturnValue(activeSession);
+      (bpm.resendCurrentSpendingAuth as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+        (bpm.isLockConfirmed as ReturnType<typeof vi.fn>).mockReturnValue(true);
+      });
       bufferPaymentRequired(negotiator, peer.peerId, conn);
-      // Make isLockConfirmed return true after authorizeSpending
+
+      const result = await negotiator.handle402(make402Response(), peer, conn, makeRequest());
+
+      expect(bpm.resendCurrentSpendingAuth).toHaveBeenCalledWith(peer.peerId, expect.anything());
+      expect(bpm.authorizeSpending).not.toHaveBeenCalled();
+      expect(result.action).toBe('retry');
+    });
+
+    it('retires a missing on-chain session before negotiating a new reserve', async () => {
+      const activeSession = makeActiveSession(peer.peerId);
+      (bpm.getActiveSession as ReturnType<typeof vi.fn>).mockReturnValue(activeSession);
+      (channelsClient.getSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+        buyer: '0x' + '00'.repeat(20),
+        seller: '0x' + '00'.repeat(20),
+        deposit: 0n,
+        settled: 0n,
+        metadataHash: '0x' + '00'.repeat(32),
+        deadline: 0n,
+        settledAt: 0n,
+        closeRequestedAt: 0n,
+        status: 0,
+      });
+      (bpm.getActiveSession as ReturnType<typeof vi.fn>)
+        .mockReturnValueOnce(activeSession)
+        .mockReturnValueOnce(activeSession)
+        .mockReturnValueOnce(null);
+      bufferPaymentRequired(negotiator, peer.peerId, conn);
       (bpm.authorizeSpending as ReturnType<typeof vi.fn>).mockImplementation(async () => {
         (bpm.isLockConfirmed as ReturnType<typeof vi.fn>).mockReturnValue(true);
       });
 
       const result = await negotiator.handle402(make402Response(), peer, conn, makeRequest());
 
-      expect(bpm.cleanupSession).toHaveBeenCalledWith(peer.peerId);
+      expect(bpm.retireSession).toHaveBeenCalledWith(peer.peerId, 'ghost');
+      expect(bpm.authorizeSpending).toHaveBeenCalled();
+      expect(result.action).toBe('retry');
+    });
+
+    it('does not open a new reserve when on-chain session lookup fails', async () => {
+      const activeSession = makeActiveSession(peer.peerId);
+      (bpm.getActiveSession as ReturnType<typeof vi.fn>).mockReturnValue(activeSession);
+      (channelsClient.getSession as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('rpc down'));
+      bufferPaymentRequired(negotiator, peer.peerId, conn);
+
+      const result = await negotiator.handle402(make402Response(), peer, conn, makeRequest());
+
+      expect(bpm.authorizeSpending).not.toHaveBeenCalled();
+      expect(result.action).toBe('return');
+    });
+
+    it('retires a stored session when no channels client is configured', async () => {
+      const activeSession = makeActiveSession(peer.peerId);
+      (bpm.getActiveSession as ReturnType<typeof vi.fn>)
+        .mockReturnValueOnce(activeSession)
+        .mockReturnValueOnce(activeSession)
+        .mockReturnValueOnce(null);
+      negotiator = new BuyerPaymentNegotiator(identity, bpm as unknown as BuyerPaymentManager, depositsClient, null, channelStore, config, emitter);
+      bufferPaymentRequired(negotiator, peer.peerId, conn);
+      (bpm.authorizeSpending as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+        (bpm.isLockConfirmed as ReturnType<typeof vi.fn>).mockReturnValue(true);
+      });
+
+      const result = await negotiator.handle402(make402Response(), peer, conn, makeRequest());
+
+      expect(bpm.retireSession).toHaveBeenCalledWith(peer.peerId, 'ghost');
+      expect(bpm.authorizeSpending).toHaveBeenCalled();
+      expect(result.action).toBe('retry');
+    });
+
+    it('retires a stored session on unknown on-chain status before renegotiating', async () => {
+      const activeSession = makeActiveSession(peer.peerId);
+      (bpm.getActiveSession as ReturnType<typeof vi.fn>)
+        .mockReturnValueOnce(activeSession)
+        .mockReturnValueOnce(activeSession)
+        .mockReturnValueOnce(null);
+      (channelsClient.getSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+        buyer: '0x' + '11'.repeat(20),
+        seller: '0x' + '22'.repeat(20),
+        deposit: 1_000_000n,
+        settled: 0n,
+        metadataHash: '0x' + '00'.repeat(32),
+        deadline: 0n,
+        settledAt: 0n,
+        closeRequestedAt: 0n,
+        status: 9,
+      });
+      bufferPaymentRequired(negotiator, peer.peerId, conn);
+      (bpm.authorizeSpending as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+        (bpm.isLockConfirmed as ReturnType<typeof vi.fn>).mockReturnValue(true);
+      });
+
+      const result = await negotiator.handle402(make402Response(), peer, conn, makeRequest());
+
+      expect(bpm.retireSession).toHaveBeenCalledWith(peer.peerId, 'ghost');
+      expect(bpm.authorizeSpending).toHaveBeenCalled();
       expect(result.action).toBe('retry');
     });
 
@@ -224,7 +342,7 @@ describe('BuyerPaymentNegotiator', () => {
     it('enriches 402 body with PaymentRequired data', async () => {
       config.requireManualApproval = true;
       config.configPath = '/nonexistent/config.json';
-      negotiator = new BuyerPaymentNegotiator(identity, bpm as unknown as BuyerPaymentManager, depositsClient, channelStore, config, emitter);
+      negotiator = new BuyerPaymentNegotiator(identity, bpm as unknown as BuyerPaymentManager, depositsClient, channelsClient, channelStore, config, emitter);
 
       bufferPaymentRequired(negotiator, peer.peerId, conn);
 
@@ -381,7 +499,7 @@ describe('BuyerPaymentNegotiator', () => {
       expect(bpm.signPerRequestAuth).not.toHaveBeenCalled();
 
       // cleanupSession should have been called
-      expect(bpm.cleanupSession).toHaveBeenCalledWith(peer.peerId);
+      expect(bpm.cleanupSession).not.toHaveBeenCalled();
     });
 
     it('onPeerDisconnect rejects pending PaymentRequired', async () => {
@@ -504,5 +622,32 @@ function makeRequest(): SerializedHttpRequest {
     path: '/v1/chat/completions',
     headers: { 'content-type': 'application/json' },
     body: enc.encode(JSON.stringify({ model: 'gpt-4', messages: [{ role: 'user', content: 'hi' }] })),
+  };
+}
+
+function makeActiveSession(peerId: string): StoredChannel {
+  const now = Date.now();
+  return {
+    sessionId: '0x' + 'ab'.repeat(32),
+    peerId,
+    role: 'buyer',
+    sellerEvmAddr: '0x' + '22'.repeat(20),
+    buyerEvmAddr: '0x' + '11'.repeat(20),
+    nonce: 0,
+    authMax: '100000',
+    deadline: Math.floor(now / 1000) + 900,
+    previousSessionId: '0x' + '00'.repeat(32),
+    previousConsumption: '0',
+    tokensDelivered: '0',
+    requestCount: 0,
+    reservedAt: now,
+    settledAt: null,
+    settledAmount: null,
+    status: 'active',
+    latestBuyerSig: null,
+    latestSpendingAuthSig: null,
+    latestMetadata: null,
+    createdAt: now,
+    updatedAt: now,
   };
 }

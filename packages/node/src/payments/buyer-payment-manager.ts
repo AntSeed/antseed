@@ -167,6 +167,98 @@ export class BuyerPaymentManager {
     this._responseTokenTotals.delete(sellerPeerId);
   }
 
+  getActiveSession(sellerPeerId: string): StoredChannel | null {
+    return this._channelStore.getActiveChannelByPeer(sellerPeerId, 'buyer');
+  }
+
+  retireSession(
+    sellerPeerId: string,
+    status: Extract<StoredChannel['status'], 'settled' | 'timeout' | 'ghost'>,
+    settledAmount?: bigint,
+  ): void {
+    const session = this._channelStore.getActiveChannelByPeer(sellerPeerId, 'buyer');
+    if (session) {
+      this._channelStore.updateChannelStatus(
+        session.sessionId,
+        status,
+        settledAmount !== undefined ? settledAmount.toString() : undefined,
+      );
+    }
+    this.cleanupSession(sellerPeerId);
+  }
+
+  canReplayReserveAuth(sellerPeerId: string): boolean {
+    return this._reserveSalt.has(sellerPeerId);
+  }
+
+  async resendCurrentSpendingAuth(
+    sellerPeerId: string,
+    paymentMux: PaymentMux,
+  ): Promise<string> {
+    const session = this._channelStore.getActiveChannelByPeer(sellerPeerId, 'buyer');
+    if (!session) {
+      throw new Error(`[BuyerPayment] No active session for seller ${sellerPeerId.slice(0, 12)}...`);
+    }
+
+    const cumulativeAmount = this._cumulativeAmount.get(sellerPeerId) ?? BigInt(session.authMax);
+    const currentMeta = this._metadata.get(sellerPeerId) ?? ZERO_METADATA;
+    const metadataHashHex = computeMetadataHash(currentMeta);
+    const encodedMetadata = encodeMetadata(currentMeta);
+
+    const metadataMsg: SpendingAuthMessage = {
+      channelId: session.sessionId,
+      cumulativeAmount,
+      metadataHash: metadataHashHex,
+    };
+    const spendingAuthSig = await signSpendingAuth(this._signer, this._channelsDomain, metadataMsg);
+
+    paymentMux.sendSpendingAuth({
+      channelId: session.sessionId,
+      cumulativeAmount: cumulativeAmount.toString(),
+      metadataHash: metadataHashHex,
+      metadata: encodedMetadata,
+      spendingAuthSig,
+    });
+
+    return session.sessionId;
+  }
+
+  async resendReserveAuth(
+    sellerPeerId: string,
+    paymentMux: PaymentMux,
+  ): Promise<string> {
+    const session = this._channelStore.getActiveChannelByPeer(sellerPeerId, 'buyer');
+    const salt = this._reserveSalt.get(sellerPeerId);
+    if (!session || !salt) {
+      throw new Error(`[BuyerPayment] No replayable reserve for seller ${sellerPeerId.slice(0, 12)}...`);
+    }
+
+    // Force a fresh AuthAck after replaying the reserve path.
+    this._confirmedPeers.delete(sellerPeerId);
+
+    const maxAmount = this._currentReserveCeiling.get(sellerPeerId) ?? this._config.maxReserveAmountUsdc;
+    const deadline = Math.floor(Date.now() / 1000) + this._config.defaultAuthDurationSecs;
+    const reserveMsg: ReserveAuthMessage = {
+      channelId: session.sessionId,
+      maxAmount,
+      deadline: BigInt(deadline),
+    };
+    const reserveAuthSig = await signReserveAuth(this._signer, this._channelsDomain, reserveMsg);
+
+    paymentMux.sendSpendingAuth({
+      channelId: session.sessionId,
+      cumulativeAmount: session.authMax,
+      metadataHash: ZERO_METADATA_HASH,
+      metadata: encodeMetadata(this._metadata.get(sellerPeerId) ?? ZERO_METADATA),
+      spendingAuthSig: reserveAuthSig,
+      reserveSalt: salt,
+      reserveMaxAmount: maxAmount.toString(),
+      reserveDeadline: deadline,
+    });
+
+    return session.sessionId;
+  }
+
   // ── Spending Authorization ────────────────────────────────────
 
   /**
