@@ -1394,6 +1394,25 @@ function parseAssistantMetaFromSessionEvent(
   return merged;
 }
 
+/**
+ * Normalize a parsed 402 payment body into a flat record with peerId at the
+ * top level.  The buyer proxy may return the flat format
+ * `{ error: 'payment_required', peerId, ... }` (Anthropic protocol) or the
+ * OpenAI-wrapped format `{ error: { type: 'payment_required', peerId, ... } }`.
+ * Returns the body with peerId promoted to the top level in either case.
+ */
+function normalizePaymentBody(body: Record<string, unknown>): Record<string, unknown> {
+  if (body.peerId) return body;
+  const inner = body.error;
+  if (typeof inner === 'object' && inner !== null) {
+    const innerObj = inner as Record<string, unknown>;
+    if (innerObj.peerId) {
+      return { ...body, peerId: innerObj.peerId };
+    }
+  }
+  return body;
+}
+
 function asErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim().length > 0) {
     return error.message;
@@ -1796,6 +1815,7 @@ export function registerPiChatHandlers({
                 try { paymentBody = JSON.parse(errorMsg.slice(jsonStart)) as Record<string, unknown>; } catch { /* not JSON */ }
               }
             }
+            if (paymentBody) paymentBody = normalizePaymentBody(paymentBody);
             const suggestedAmount = typeof paymentBody?.suggestedAmount === 'string'
               ? paymentBody.suggestedAmount : '100000';
             if (paymentBody?.peerId) {
@@ -1816,6 +1836,7 @@ export function registerPiChatHandlers({
           let paymentBody: Record<string, unknown> | null = null;
           try { paymentBody = JSON.parse(rawContent) as Record<string, unknown>; } catch { /* not JSON */ }
           if (paymentBody?.error === 'payment_required') {
+            paymentBody = normalizePaymentBody(paymentBody);
             const suggestedAmount = typeof paymentBody.suggestedAmount === 'string'
               ? paymentBody.suggestedAmount : '100000';
             // Cache payment info so the approve IPC handler can build the SpendingAuth
@@ -1872,6 +1893,7 @@ export function registerPiChatHandlers({
         let payBody: Record<string, unknown> | null = null;
         try { payBody = JSON.parse(lastText) as Record<string, unknown>; } catch { /* not JSON */ }
         if (payBody?.error === 'payment_required') {
+          payBody = normalizePaymentBody(payBody);
           const amt = typeof payBody.suggestedAmount === 'string' ? payBody.suggestedAmount : '100000';
           if (payBody.peerId) {
             cachedPaymentRequired.set(conversationId, payBody);
@@ -1917,6 +1939,7 @@ export function registerPiChatHandlers({
         if (jsonStart >= 0) {
           try { payBody = JSON.parse(message.slice(jsonStart)) as Record<string, unknown>; } catch { /* not JSON */ }
         }
+        if (payBody) payBody = normalizePaymentBody(payBody);
         const amt = typeof payBody?.suggestedAmount === 'string' ? payBody.suggestedAmount : '100000';
         if (payBody?.peerId) {
           cachedPaymentRequired.set(conversationId, payBody);

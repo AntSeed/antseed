@@ -137,6 +137,44 @@ function adaptOpenAICompatibleErrorResponse(
   }
 }
 
+/**
+ * Inject the buyer-known peerId into a 402 payment_required JSON body.
+ * The seller doesn't include its own peerId (and shouldn't — self-reported
+ * identity is untrusted). The buyer proxy knows which peer it connected to,
+ * so it stamps the peerId into the body before forwarding to the client.
+ */
+function inject402PeerId(
+  response: SerializedHttpResponse,
+  peerId: string,
+): SerializedHttpResponse {
+  let parsed: Record<string, unknown> | null = null
+  try {
+    parsed = JSON.parse(Buffer.from(response.body).toString('utf-8')) as Record<string, unknown>
+  } catch {
+    return response
+  }
+  if (!parsed) return response
+
+  // Handle both flat { error: 'payment_required', ... } and
+  // wrapped { error: { type: 'payment_required', ... } } formats.
+  if (parsed.error === 'payment_required') {
+    parsed.peerId = peerId
+  } else if (
+    typeof parsed.error === 'object' &&
+    parsed.error !== null &&
+    (parsed.error as Record<string, unknown>).type === 'payment_required'
+  ) {
+    (parsed.error as Record<string, unknown>).peerId = peerId
+  } else {
+    return response
+  }
+
+  return {
+    ...response,
+    body: Buffer.from(JSON.stringify(parsed)),
+  }
+}
+
 const PROTOCOL_TRANSFORMS: Record<string, ProtocolTransformStrategy> = {
   'anthropic-messages→openai-chat-completions': {
     transformRequest: transformAnthropicMessagesRequestToOpenAIChat,
@@ -1052,6 +1090,9 @@ export class BuyerProxy {
           responseForClient = adaptResponse(response)
         }
         responseForClient = adaptOpenAICompatibleErrorResponse(responseForClient, requestProtocol)
+        if (responseForClient.statusCode === 402) {
+          responseForClient = inject402PeerId(responseForClient, selectedPeer.peerId)
+        }
 
         const latencyMs = Date.now() - startTime
         log(`Response: ${responseForClient.statusCode} (${latencyMs}ms, ${responseForClient.body.length} bytes)`)
@@ -1120,6 +1161,9 @@ export class BuyerProxy {
           response = adaptResponse(response)
         }
         response = adaptOpenAICompatibleErrorResponse(response, requestProtocol)
+        if (response.statusCode === 402) {
+          response = inject402PeerId(response, selectedPeer.peerId)
+        }
         const latencyMs = Date.now() - startTime
 
         log(`Response: ${response.statusCode} (${latencyMs}ms, ${response.body.length} bytes)`)
