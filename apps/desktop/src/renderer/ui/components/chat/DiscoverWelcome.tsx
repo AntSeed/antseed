@@ -289,12 +289,16 @@ function Card({
         <div className={styles.cardPricing}>
           {isFree ? (
             <span>Free</span>
-          ) : hasInput || hasOutput ? (
+          ) : hasInput && hasOutput ? (
             <>
-              <span>{formatPerMillionPrice(item.inputUsdPerMillion ?? 0)} input tokens</span>
+              <span>{formatPerMillionPrice(item.inputUsdPerMillion!)} input tokens</span>
               <span className={styles.pricingDot} />
-              <span>{formatPerMillionPrice(item.outputUsdPerMillion ?? 0)} output tokens</span>
+              <span>{formatPerMillionPrice(item.outputUsdPerMillion!)} output tokens</span>
             </>
+          ) : hasInput ? (
+            <span>{formatPerMillionPrice(item.inputUsdPerMillion!)} input tokens</span>
+          ) : hasOutput ? (
+            <span>{formatPerMillionPrice(item.outputUsdPerMillion!)} output tokens</span>
           ) : null}
         </div>
       </div>

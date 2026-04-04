@@ -302,7 +302,7 @@ export function initChatModule({
     return options
       .map(
         (e) =>
-          `${e.id}|${e.label}|${e.provider}|${e.protocol}|${String(e.count)}`,
+          `${e.id}|${e.label}|${e.provider}|${e.protocol}|${String(e.count)}|${String(e.inputUsdPerMillion)}|${String(e.outputUsdPerMillion)}|${e.categories.join(',')}`,
       )
       .join('\n');
   }

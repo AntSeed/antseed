@@ -373,6 +373,18 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
 
   const peerGroups = useMemo(() => groupByPeer(conversations), [conversations]);
 
+  // Auto-expand the peer that owns the active conversation
+  useEffect(() => {
+    if (!chatActiveConversation) return;
+    const activeConv = conversations.find(
+      (c) => String((c as ConvRecord).id ?? '') === chatActiveConversation,
+    ) as ConvRecord | undefined;
+    const peerId = activeConv ? String(activeConv.peerId || '').trim() : '';
+    if (peerId) {
+      setExpandedPeerId(peerId);
+    }
+  }, [chatActiveConversation, conversations]);
+
   const handleTogglePeer = useCallback((peerId: string) => {
     setExpandedPeerId((prev) => (prev === peerId ? null : peerId));
   }, []);
