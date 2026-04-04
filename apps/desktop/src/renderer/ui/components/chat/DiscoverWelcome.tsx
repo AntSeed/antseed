@@ -107,16 +107,20 @@ function buildCards(options: ChatServiceOptionEntry[]): CardItem[] {
   });
 }
 
-/* ── Filter pills: only show categories present in the data ──────────── */
+/* ── Filter pills: predefined + any extra categories from the data ──── */
 
-function activeFilters(cards: CardItem[]): string[] {
-  const present = new Set<string>();
+function allFilters(cards: CardItem[]): string[] {
+  const known = new Set(SERVICE_CATEGORIES.map((c) => c.toLowerCase()));
+  const extra: string[] = [];
   for (const card of cards) {
     for (const tag of card.tags) {
-      present.add(tag.toLowerCase());
+      if (!known.has(tag.toLowerCase())) {
+        known.add(tag.toLowerCase());
+        extra.push(capitalizeCategory(tag));
+      }
     }
   }
-  return SERVICE_CATEGORIES.filter((c) => present.has(c.toLowerCase()));
+  return [...SERVICE_CATEGORIES, ...extra];
 }
 
 function matchesFilter(item: CardItem, filter: string): boolean {
@@ -175,7 +179,7 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
     [serviceOptions],
   );
 
-  const filters = useMemo(() => activeFilters(cards), [cards]);
+  const filters = useMemo(() => allFilters(cards), [cards]);
 
   const filtered = useMemo(
     () => cards.filter((c) => matchesFilter(c, activeFilter)),
@@ -204,7 +208,6 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
             </p>
           </div>
 
-          {filters.length > 0 && (
           <div className={styles.filters}>
             <button
               className={`${styles.filterPill}${activeFilter === 'All' ? ` ${styles.filterActive}` : ''}`}
@@ -222,7 +225,6 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
               </button>
             ))}
           </div>
-          )}
           {!hasNetworkData ? (
             <>
               <div className={styles.loadingHint}>
