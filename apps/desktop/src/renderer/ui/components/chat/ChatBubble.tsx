@@ -1,7 +1,7 @@
 import { createPortal } from 'react-dom';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { Copy01Icon, Tick02Icon } from '@hugeicons/core-free-icons';
+import { Copy01Icon, Tick02Icon, BrowserIcon } from '@hugeicons/core-free-icons';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import type { ReactNode } from 'react';
 import { MarkdownContent } from './chat-utils.js';
@@ -24,6 +24,7 @@ type ToolRenderItem = {
   diff: string;
   additions: number;
   removals: number;
+  previewUrl?: string;
 };
 
 function getToolKind(name: unknown): string {
@@ -53,6 +54,18 @@ function countDiffStats(diff: string): { additions: number; removals: number } {
   return { additions, removals };
 }
 
+const PREVIEW_TOOL_NAMES = new Set(['open_browser_preview', 'start_dev_server']);
+
+function extractPreviewUrl(name: unknown, input: unknown, output: string): string | undefined {
+  const toolName = String(name || '');
+  if (!PREVIEW_TOOL_NAMES.has(toolName)) return undefined;
+  const inputObj = (typeof input === 'object' && input !== null) ? input as Record<string, unknown> : {};
+  const url = typeof inputObj.url === 'string' ? inputObj.url : undefined;
+  if (url) return url;
+  const urlMatch = output.match(/https?:\/\/\S+/);
+  return urlMatch?.[0];
+}
+
 function buildToolRenderItem(block: ContentBlock, index: number): ToolRenderItem {
   const output = String(block.content || '');
   const diff = extractToolDiff(block);
@@ -67,6 +80,7 @@ function buildToolRenderItem(block: ContentBlock, index: number): ToolRenderItem
     diff,
     additions: diffStats.additions,
     removals: diffStats.removals,
+    previewUrl: extractPreviewUrl(block.name, block.input, output),
   };
 }
 
@@ -299,7 +313,7 @@ function ToolModal({ item, onClose }: { item: ToolRenderItem; onClose: () => voi
   );
 }
 
-function ToolGroupView({ blocks }: { blocks: ContentBlock[] }) {
+function ToolGroupView({ blocks, onOpenPreview }: { blocks: ContentBlock[]; onOpenPreview?: (url: string) => void }) {
   const [manualToggle, setManualToggle] = useState<boolean | null>(null);
   const [modalItem, setModalItem] = useState<ToolRenderItem | null>(null);
   const wasRunningRef = useRef(false);
@@ -396,6 +410,17 @@ function ToolGroupView({ blocks }: { blocks: ContentBlock[] }) {
                       {statusNode}
                       <span className={`tool-inline-open${hasDetail ? '' : ' hidden'}`}>↗</span>
                     </button>
+                    {item.previewUrl && onOpenPreview && (
+                      <button
+                        type="button"
+                        className="tool-preview-btn"
+                        onClick={(e) => { e.stopPropagation(); onOpenPreview(item.previewUrl!); }}
+                        title={`Preview ${item.previewUrl}`}
+                      >
+                        <HugeiconsIcon icon={BrowserIcon} size={12} strokeWidth={1.5} />
+                        Preview
+                      </button>
+                    )}
                     {hasInlineDiff ? <ToolDiffInline diff={item.diff} /> : null}
                   </div>
                 );
@@ -411,7 +436,7 @@ function ToolGroupView({ blocks }: { blocks: ContentBlock[] }) {
   );
 }
 
-function renderAssistantBlocks(blocks: ContentBlock[], streaming = false, messagePrefix = ''): ReactNode[] {
+function renderAssistantBlocks(blocks: ContentBlock[], streaming = false, messagePrefix = '', onOpenPreview?: (url: string) => void): ReactNode[] {
   const nodes: ReactNode[] = [];
   let toolGroup: ContentBlock[] = [];
 
@@ -421,6 +446,7 @@ function renderAssistantBlocks(blocks: ContentBlock[], streaming = false, messag
       <ToolGroupView
         key={`${messagePrefix}-tool-group-${nodes.length}-${String(toolGroup[0]?.id || toolGroup[0]?.tool_use_id || '')}`}
         blocks={toolGroup}
+        onOpenPreview={onOpenPreview}
       />,
     );
     toolGroup = [];
@@ -549,9 +575,10 @@ function CopyResponseButton({ content }: { content: unknown }) {
 type ChatBubbleProps = {
   message: ChatMessage;
   streaming?: boolean;
+  onOpenPreview?: (url: string) => void;
 };
 
-export function ChatBubble({ message, streaming = false }: ChatBubbleProps) {
+export function ChatBubble({ message, streaming = false, onOpenPreview }: ChatBubbleProps) {
   const [metaExpanded, setMetaExpanded] = useState(false);
   const metaParts = useMemo(() => buildChatMetaParts(message), [message]);
   const hasStreamingBlocks = useMemo(
@@ -573,7 +600,7 @@ export function ChatBubble({ message, streaming = false }: ChatBubbleProps) {
   const content = useMemo(() => {
     if (message.role === 'assistant') {
       if (Array.isArray(message.content)) {
-        return renderAssistantBlocks(message.content as ContentBlock[], isStreamingBubble, messagePrefix);
+        return renderAssistantBlocks(message.content as ContentBlock[], isStreamingBubble, messagePrefix, onOpenPreview);
       }
       return <MarkdownContent text={String(message.content)} />;
     }

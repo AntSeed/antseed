@@ -218,6 +218,11 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     document.addEventListener('mouseup', handleMouseUp);
   }, []);
 
+  const handleOpenPreview = useCallback((url: string) => {
+    setPreviewTargetUrl(url);
+    setPreviewOpen(true);
+  }, []);
+
   const handleSend = useCallback(() => {
     const text = inputValue.trim();
     if (!text && !attachedImage) return;
@@ -458,7 +463,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
               </div>
             ) : (
               visibleMessages.map((msg, i) => (
-                <ChatBubble key={getMessageKey(msg, i)} message={msg} />
+                <ChatBubble key={getMessageKey(msg, i)} message={msg} onOpenPreview={handleOpenPreview} />
               ))
             )}
             {snap.chatStreamingMessage ? (
@@ -466,6 +471,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                 key={`streaming:${snap.chatActiveConversation || 'new'}`}
                 message={snap.chatStreamingMessage as ChatMessage}
                 streaming
+                onOpenPreview={handleOpenPreview}
               />
             ) : null}
             {snap.chatSending && snap.chatSendingConversationId === snap.chatActiveConversation && (
@@ -542,6 +548,14 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                     onClick={() => fileInputRef.current?.click()}
                   >
                     <HugeiconsIcon icon={Add01Icon} size={18} strokeWidth={2} />
+                  </button>
+                  <button
+                    className={styles.workspaceButton}
+                    onClick={() => void actions.chooseWorkspace()}
+                    title={workspacePath || 'Choose workspace'}
+                  >
+                    <HugeiconsIcon icon={ComputerTerminal01Icon} size={14} strokeWidth={1.5} />
+                    <span className={styles.workspaceLabel}>{workspaceLabel}</span>
                   </button>
                 </div>
                 {snap.chatAbortVisible ? (
