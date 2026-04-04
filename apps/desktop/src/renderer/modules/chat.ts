@@ -201,7 +201,11 @@ export function initChatModule({
       && available >= required
     ) {
       uiState.chatPaymentApprovalVisible = false;
-      uiState.chatPaymentApprovalError = 'Payment negotiation failed even though your deposits appear sufficient. Retry the request.';
+      uiState.chatPaymentApprovalPeerId = null;
+      uiState.chatPaymentApprovalPeerName = null;
+      uiState.chatPaymentApprovalPeerInfo = null;
+      uiState.chatPaymentApprovalError = null;
+      showChatError('Payment setup failed. Retry the request.');
       notifyUiStateChanged();
       return;
     }
