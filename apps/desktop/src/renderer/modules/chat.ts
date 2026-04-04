@@ -2,6 +2,7 @@ import type { RendererUiState } from '../core/state';
 import type { BadgeTone } from '../core/state';
 import { notifyUiStateChanged, notifyUiStateChangedSync } from '../core/store';
 import type { DesktopBridge } from '../types/bridge';
+import { getActions } from '../ui/actions';
 import type {
   ChatMessage,
   ContentBlock,
@@ -141,24 +142,74 @@ export function initChatModule({
     }
   }
 
-  /**
-   * Show the payment approval card with peer context from the currently
-   * selected service, and kick off a fetchPeerInfo call for reputation data.
-   */
-  function showPaymentApprovalCard(amountBaseUnits: string): void {
+  function primePaymentApprovalState(amountBaseUnits: string): { peerId: string | null } {
     const selectedService = uiState.chatServiceOptions.find(
       (opt) => opt.value === uiState.chatSelectedServiceValue,
     );
-    uiState.chatPaymentApprovalVisible = true;
     uiState.chatPaymentApprovalAmount = (Number(amountBaseUnits) / 1_000_000).toFixed(2);
     uiState.chatPaymentApprovalPeerId = selectedService?.peerId ?? null;
     uiState.chatPaymentApprovalPeerName = selectedService?.peerLabel ?? selectedService?.label ?? null;
     uiState.chatPaymentApprovalPeerInfo = null;
     uiState.chatPaymentApprovalError = null;
+    return { peerId: selectedService?.peerId ?? null };
+  }
+
+  /**
+   * Show the payment approval card with peer context from the currently
+   * selected service, and kick off a fetchPeerInfo call for reputation data.
+   */
+  function showPaymentApprovalCard(amountBaseUnits: string): void {
+    const { peerId } = primePaymentApprovalState(amountBaseUnits);
+    uiState.chatPaymentApprovalVisible = true;
     notifyUiStateChanged();
-    if (selectedService?.peerId) {
-      void fetchPeerInfo(selectedService.peerId);
+    if (peerId) {
+      void fetchPeerInfo(peerId);
     }
+  }
+
+  async function refreshAvailableCreditsUsdc(): Promise<number> {
+    if (!bridge?.creditsGetInfo) {
+      return parseFloat(uiState.creditsAvailableUsdc || '0');
+    }
+
+    try {
+      const result = await bridge.creditsGetInfo();
+      if (!result.ok || !result.data) {
+        return parseFloat(uiState.creditsAvailableUsdc || '0');
+      }
+
+      uiState.creditsAvailableUsdc = result.data.availableUsdc;
+      uiState.creditsReservedUsdc = result.data.reservedUsdc;
+      uiState.creditsTotalUsdc = result.data.balanceUsdc;
+      uiState.creditsCreditLimitUsdc = result.data.creditLimitUsdc;
+      uiState.creditsEvmAddress = result.data.evmAddress;
+      uiState.creditsOperatorAddress = result.data.operatorAddress ?? null;
+      uiState.creditsLastRefreshedAt = Date.now();
+
+      return parseFloat(result.data.availableUsdc || '0');
+    } catch {
+      return parseFloat(uiState.creditsAvailableUsdc || '0');
+    }
+  }
+
+  async function handlePaymentRequired(amountBaseUnits: string): Promise<void> {
+    const required = Number(amountBaseUnits) / 1_000_000;
+    const manualApproval = Boolean(uiState.configFormData?.requireManualApproval);
+
+    if (
+      !manualApproval
+      && Number.isFinite(required)
+      && required > 0
+      && await refreshAvailableCreditsUsdc() >= required
+    ) {
+      primePaymentApprovalState(amountBaseUnits);
+      uiState.chatPaymentApprovalVisible = false;
+      notifyUiStateChanged();
+      getActions().approvePaymentSession();
+      return;
+    }
+
+    showPaymentApprovalCard(amountBaseUnits);
   }
 
   // ---------------------------------------------------------------------------
@@ -1357,11 +1408,12 @@ export function initChatModule({
             const errorMsg = typeof result.error === 'string' ? result.error : '';
             const paymentMatch2 = /^payment_required:(\d+)$/i.exec(errorMsg);
             if (paymentMatch2) {
-              showPaymentApprovalCard(paymentMatch2[1]);
+              setChatSending(false);
+              void handlePaymentRequired(paymentMatch2[1]);
             } else {
               reportChatError(result.error, 'Request failed');
+              setChatSending(false);
             }
-            setChatSending(false);
           } else if (uiState.chatSending) {
             // Fallback timeout in case stream completion event is missed
             setTimeout(() => {
@@ -1828,7 +1880,7 @@ export function initChatModule({
             const errStr = typeof data.error === 'string' ? data.error : '';
             const paymentMatch = /^payment_required:(\d+)$/i.exec(errStr);
             if (paymentMatch) {
-              showPaymentApprovalCard(paymentMatch[1]);
+              void handlePaymentRequired(paymentMatch[1]);
               if (bridge.chatAiAbort) void bridge.chatAiAbort().catch(() => {});
             } else {
               showChatError(data.error);
