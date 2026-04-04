@@ -482,11 +482,22 @@ export class AntseedNode extends EventEmitter {
     lifetimeAuthorizedUsdc: string;
     lifetimeFirstSessionAt: number | null;
   } | null {
-    const channel = this._channelStore?.getActiveChannelByPeer(sellerPeerId, 'buyer')
-      ?? this._channelStore?.getLatestChannel(sellerPeerId, 'buyer')
+    const buyerAddress = this._identity?.wallet.address ?? null;
+    const channel = (buyerAddress != null)
+      ? (
+        this._channelStore?.getActiveChannelByPeerAndBuyer(sellerPeerId, 'buyer', buyerAddress)
+        ?? this._channelStore?.getLatestChannelByPeerAndBuyer(sellerPeerId, 'buyer', buyerAddress)
+      )
+      : (
+        this._channelStore?.getActiveChannelByPeer(sellerPeerId, 'buyer')
+        ?? this._channelStore?.getLatestChannel(sellerPeerId, 'buyer')
+      )
       ?? null;
 
-    const lifetime = this._channelStore?.getTotalsByPeer(sellerPeerId, 'buyer') ?? null;
+    const lifetime = (buyerAddress != null)
+      ? this._channelStore?.getTotalsByPeerAndBuyer(sellerPeerId, 'buyer', buyerAddress)
+      : this._channelStore?.getTotalsByPeer(sellerPeerId, 'buyer')
+      ?? null;
 
     if (!channel && !lifetime) return null;
 

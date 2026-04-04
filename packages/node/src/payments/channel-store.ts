@@ -62,7 +62,9 @@ export class ChannelStore {
     upsert: Database.Statement;
     getById: Database.Statement;
     getActiveByPeer: Database.Statement;
+    getActiveByPeerAndBuyer: Database.Statement;
     getLatestByPeer: Database.Statement;
+    getLatestByPeerAndBuyer: Database.Statement;
     updateStatusWithAmount: Database.Statement;
     updateStatus: Database.Statement;
     updateTokens: Database.Statement;
@@ -73,6 +75,8 @@ export class ChannelStore {
     getReceipts: Database.Statement;
     updateReceiptAck: Database.Statement;
     getActiveChannels: Database.Statement;
+    getActiveChannelsByBuyer: Database.Statement;
+    getTotalsByPeerAndBuyer: Database.Statement;
   };
 
   constructor(dataDir: string) {
@@ -124,8 +128,14 @@ export class ChannelStore {
       getActiveByPeer: this._db.prepare(
         'SELECT * FROM payment_channels WHERE peer_id = ? AND role = ? AND status = ? ORDER BY created_at DESC LIMIT 1',
       ),
+      getActiveByPeerAndBuyer: this._db.prepare(
+        'SELECT * FROM payment_channels WHERE peer_id = ? AND role = ? AND buyer_evm_addr = ? AND status = ? ORDER BY created_at DESC LIMIT 1',
+      ),
       getLatestByPeer: this._db.prepare(
         'SELECT * FROM payment_channels WHERE peer_id = ? AND role = ? ORDER BY created_at DESC LIMIT 1',
+      ),
+      getLatestByPeerAndBuyer: this._db.prepare(
+        'SELECT * FROM payment_channels WHERE peer_id = ? AND role = ? AND buyer_evm_addr = ? ORDER BY created_at DESC LIMIT 1',
       ),
       updateStatusWithAmount: this._db.prepare(
         'UPDATE payment_channels SET status = ?, settled_at = ?, settled_amount = ?, updated_at = ? WHERE session_id = ?',
@@ -163,6 +173,20 @@ export class ChannelStore {
       getActiveChannels: this._db.prepare(
         'SELECT * FROM payment_channels WHERE role = ? AND status = ? ORDER BY created_at DESC',
       ),
+      getActiveChannelsByBuyer: this._db.prepare(
+        'SELECT * FROM payment_channels WHERE role = ? AND buyer_evm_addr = ? AND status = ? ORDER BY created_at DESC',
+      ),
+      getTotalsByPeerAndBuyer: this._db.prepare(`
+        SELECT
+          COUNT(*) as total_sessions,
+          COALESCE(SUM(request_count), 0) as total_requests,
+          COALESCE(SUM(CAST(tokens_delivered AS INTEGER)), 0) as total_input_tokens,
+          COALESCE(SUM(CAST(previous_consumption AS INTEGER)), 0) as total_output_tokens,
+          COALESCE(SUM(CAST(auth_max AS INTEGER)), 0) as total_authorized,
+          MIN(reserved_at) as first_session_at
+        FROM payment_channels
+        WHERE peer_id = ? AND role = ? AND buyer_evm_addr = ?
+      `),
     };
   }
 
@@ -204,8 +228,23 @@ export class ChannelStore {
     return row ? rowToChannel(row) : null;
   }
 
+  getActiveChannelByPeerAndBuyer(peerId: string, role: string, buyerEvmAddr: string): StoredChannel | null {
+    const row = this._stmts.getActiveByPeerAndBuyer.get(
+      peerId,
+      role,
+      buyerEvmAddr,
+      CHANNEL_STATUS.ACTIVE,
+    ) as ChannelRow | undefined;
+    return row ? rowToChannel(row) : null;
+  }
+
   getLatestChannel(peerId: string, role: string): StoredChannel | null {
     const row = this._stmts.getLatestByPeer.get(peerId, role) as ChannelRow | undefined;
+    return row ? rowToChannel(row) : null;
+  }
+
+  getLatestChannelByPeerAndBuyer(peerId: string, role: string, buyerEvmAddr: string): StoredChannel | null {
+    const row = this._stmts.getLatestByPeerAndBuyer.get(peerId, role, buyerEvmAddr) as ChannelRow | undefined;
     return row ? rowToChannel(row) : null;
   }
 
@@ -239,6 +278,11 @@ export class ChannelStore {
     return rows.map(rowToChannel);
   }
 
+  getActiveChannelsByBuyer(role: string, buyerEvmAddr: string): StoredChannel[] {
+    const rows = this._stmts.getActiveChannelsByBuyer.all(role, buyerEvmAddr, CHANNEL_STATUS.ACTIVE) as ChannelRow[];
+    return rows.map(rowToChannel);
+  }
+
   /** Aggregate totals across all channels for a given peer and role. */
   getTotalsByPeer(peerId: string, role: string): {
     totalSessions: number;
@@ -259,6 +303,32 @@ export class ChannelStore {
       FROM payment_channels
       WHERE peer_id = ? AND role = ?
     `).get(peerId, role) as {
+      total_sessions: number;
+      total_requests: number;
+      total_input_tokens: number;
+      total_output_tokens: number;
+      total_authorized: number;
+      first_session_at: number | null;
+    };
+    return {
+      totalSessions: row.total_sessions,
+      totalRequests: row.total_requests,
+      totalInputTokens: row.total_input_tokens,
+      totalOutputTokens: row.total_output_tokens,
+      totalAuthorizedUsdc: BigInt(row.total_authorized),
+      firstSessionAt: row.first_session_at,
+    };
+  }
+
+  getTotalsByPeerAndBuyer(peerId: string, role: string, buyerEvmAddr: string): {
+    totalSessions: number;
+    totalRequests: number;
+    totalInputTokens: number;
+    totalOutputTokens: number;
+    totalAuthorizedUsdc: bigint;
+    firstSessionAt: number | null;
+  } {
+    const row = this._stmts.getTotalsByPeerAndBuyer.get(peerId, role, buyerEvmAddr) as {
       total_sessions: number;
       total_requests: number;
       total_input_tokens: number;
