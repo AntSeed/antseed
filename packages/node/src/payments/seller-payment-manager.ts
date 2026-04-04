@@ -218,23 +218,23 @@ export class SellerPaymentManager {
           createdAt: now,
           updatedAt: now,
         };
-        this._channelStore.upsertChannel(session);
-
-        // Initialize tracking maps
-        this._acceptedCumulative.set(channelId, cumulativeAmount);
-        this._reserveMax.set(channelId, reserveMaxAmount);
-        this._spent.set(channelId, 0n);
-        // Note: do NOT store the ReserveAuth sig as spendingAuthSig here.
+        // Note: do NOT store the ReserveAuth sig as spendingAuthSig in _latestAuth.
         // The ReserveAuth uses a different EIP-712 type and will fail
         // _verifySpendingAuth in close(). A real SpendingAuth will arrive
         // per-request and update this entry.
-        this._latestAuth.set(channelId, {
+        this._activateSession(
+          session,
+          buyerPeerId,
+          cumulativeAmount,
+          reserveMaxAmount,
+          0n,
+          {
           spendingAuthSig: '',
           cumulativeAmount,
           metadataHash: payload.metadataHash,
           metadata: payload.metadata,
-        });
-        this._activeBuyers.add(buyerPeerId);
+          },
+        );
 
         // Send AuthAck
         paymentMux.sendAuthAck({
@@ -410,22 +410,39 @@ export class SellerPaymentManager {
       createdAt: now,
       updatedAt: now,
     };
-    this._channelStore.upsertChannel(session);
-
-    this._acceptedCumulative.set(channelId, cumulativeAmount);
-    this._reserveMax.set(channelId, onChain.deposit);
-    this._spent.set(channelId, onChain.settled);
-    this._latestAuth.set(channelId, {
-      spendingAuthSig: payload.spendingAuthSig,
+    this._activateSession(
+      session,
+      buyerPeerId,
       cumulativeAmount,
-      metadataHash: payload.metadataHash,
-      metadata: payload.metadata,
-    });
-    this._activeBuyers.add(buyerPeerId);
+      onChain.deposit,
+      onChain.settled,
+      {
+        spendingAuthSig: payload.spendingAuthSig,
+        cumulativeAmount,
+        metadataHash: payload.metadataHash,
+        metadata: payload.metadata,
+      },
+    );
 
     paymentMux.sendAuthAck({ channelId });
     debugLog(`[SellerPayment] Recovered active on-chain channel ${channelId.slice(0, 18)}... for buyer ${buyerPeerId.slice(0, 12)}...`);
     return true;
+  }
+
+  private _activateSession(
+    session: StoredChannel,
+    buyerPeerId: string,
+    cumulativeAmount: bigint,
+    reserveMaxAmount: bigint,
+    spent: bigint,
+    latestAuth: LatestAuth,
+  ): void {
+    this._channelStore.upsertChannel(session);
+    this._acceptedCumulative.set(session.sessionId, cumulativeAmount);
+    this._reserveMax.set(session.sessionId, reserveMaxAmount);
+    this._spent.set(session.sessionId, spent);
+    this._latestAuth.set(session.sessionId, latestAuth);
+    this._activeBuyers.add(buyerPeerId);
   }
 
   // ── Per-request validation ──────────────────────────────────
