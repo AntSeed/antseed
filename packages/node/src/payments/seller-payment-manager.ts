@@ -148,6 +148,24 @@ export class SellerPaymentManager {
       const channelsDomain = makeChannelsDomain(this._config.chainId, this._config.channelsContractAddress);
 
       if (existingCumulative === undefined) {
+        const hasReserveFields = payload.reserveSalt != null
+          || payload.reserveMaxAmount != null
+          || payload.reserveDeadline != null;
+
+        if (!hasReserveFields) {
+          const recovered = await this._recoverOnChainSession(
+            buyerPeerId,
+            buyerEvmAddr,
+            payload,
+            cumulativeAmount,
+            paymentMux,
+            channelsDomain,
+          );
+          if (recovered) {
+            return 'accepted';
+          }
+        }
+
         // ── First SpendingAuth: verify ReserveAuth and reserve on-chain ──
         // The buyer signs ReserveAuth(channelId, maxAmount, deadline) to bind escrow terms.
         const reserveMaxAmount = payload.reserveMaxAmount ? BigInt(payload.reserveMaxAmount) : cumulativeAmount;
@@ -200,23 +218,23 @@ export class SellerPaymentManager {
           createdAt: now,
           updatedAt: now,
         };
-        this._channelStore.upsertChannel(session);
-
-        // Initialize tracking maps
-        this._acceptedCumulative.set(channelId, cumulativeAmount);
-        this._reserveMax.set(channelId, reserveMaxAmount);
-        this._spent.set(channelId, 0n);
-        // Note: do NOT store the ReserveAuth sig as spendingAuthSig here.
+        // Note: do NOT store the ReserveAuth sig as spendingAuthSig in _latestAuth.
         // The ReserveAuth uses a different EIP-712 type and will fail
         // _verifySpendingAuth in close(). A real SpendingAuth will arrive
         // per-request and update this entry.
-        this._latestAuth.set(channelId, {
+        this._activateSession(
+          session,
+          buyerPeerId,
+          cumulativeAmount,
+          reserveMaxAmount,
+          0n,
+          {
           spendingAuthSig: '',
           cumulativeAmount,
           metadataHash: payload.metadataHash,
           metadata: payload.metadata,
-        });
-        this._activeBuyers.add(buyerPeerId);
+          },
+        );
 
         // Send AuthAck
         paymentMux.sendAuthAck({
@@ -331,6 +349,100 @@ export class SellerPaymentManager {
       debugWarn(`[SellerPayment] Failed to process SpendingAuth: ${err instanceof Error ? err.message : err}`);
       return 'rejected';
     }
+  }
+
+  private async _recoverOnChainSession(
+    buyerPeerId: string,
+    buyerEvmAddr: string,
+    payload: SpendingAuthPayload,
+    cumulativeAmount: bigint,
+    paymentMux: PaymentMux,
+    channelsDomain: ReturnType<typeof makeChannelsDomain>,
+  ): Promise<boolean> {
+    const channelId = payload.channelId;
+    const onChain = await this._channelsClient.getSession(channelId);
+    const sellerEvmAddr = this._identity.wallet.address;
+
+    if (onChain.status !== 1) return false;
+    if (onChain.buyer.toLowerCase() !== buyerEvmAddr.toLowerCase()) return false;
+    if (onChain.seller.toLowerCase() !== sellerEvmAddr.toLowerCase()) return false;
+
+    const metadataMsg = {
+      channelId,
+      cumulativeAmount,
+      metadataHash: payload.metadataHash,
+    };
+    const metadataRecovered = verifyTypedData(channelsDomain, SPENDING_AUTH_TYPES, metadataMsg, payload.spendingAuthSig);
+    if (metadataRecovered.toLowerCase() !== buyerEvmAddr.toLowerCase()) {
+      debugWarn(`[SellerPayment] Invalid recovered SpendingAuth during channel recovery: recovered=${metadataRecovered} expected=${buyerEvmAddr}`);
+      return false;
+    }
+
+    if (cumulativeAmount < onChain.settled) {
+      debugWarn(
+        `[SellerPayment] Rejecting recovered SpendingAuth below on-chain settled amount: ` +
+        `cumulative=${cumulativeAmount} settled=${onChain.settled} channel=${channelId.slice(0, 18)}...`,
+      );
+      return false;
+    }
+
+    const now = Date.now();
+    const session: StoredChannel = {
+      sessionId: channelId,
+      peerId: buyerPeerId,
+      role: 'seller',
+      sellerEvmAddr,
+      buyerEvmAddr,
+      nonce: 0,
+      authMax: payload.cumulativeAmount,
+      previousConsumption: onChain.deposit.toString(),
+      deadline: Number(onChain.deadline),
+      previousSessionId: '',
+      tokensDelivered: onChain.settled.toString(),
+      requestCount: 0,
+      reservedAt: now,
+      settledAt: null,
+      settledAmount: onChain.settled > 0n ? onChain.settled.toString() : null,
+      status: 'active',
+      latestBuyerSig: payload.spendingAuthSig,
+      latestSpendingAuthSig: payload.spendingAuthSig,
+      latestMetadata: payload.metadata,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this._activateSession(
+      session,
+      buyerPeerId,
+      cumulativeAmount,
+      onChain.deposit,
+      onChain.settled,
+      {
+        spendingAuthSig: payload.spendingAuthSig,
+        cumulativeAmount,
+        metadataHash: payload.metadataHash,
+        metadata: payload.metadata,
+      },
+    );
+
+    paymentMux.sendAuthAck({ channelId });
+    debugLog(`[SellerPayment] Recovered active on-chain channel ${channelId.slice(0, 18)}... for buyer ${buyerPeerId.slice(0, 12)}...`);
+    return true;
+  }
+
+  private _activateSession(
+    session: StoredChannel,
+    buyerPeerId: string,
+    cumulativeAmount: bigint,
+    reserveMaxAmount: bigint,
+    spent: bigint,
+    latestAuth: LatestAuth,
+  ): void {
+    this._channelStore.upsertChannel(session);
+    this._acceptedCumulative.set(session.sessionId, cumulativeAmount);
+    this._reserveMax.set(session.sessionId, reserveMaxAmount);
+    this._spent.set(session.sessionId, spent);
+    this._latestAuth.set(session.sessionId, latestAuth);
+    this._activeBuyers.add(buyerPeerId);
   }
 
   // ── Per-request validation ──────────────────────────────────
