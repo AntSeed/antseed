@@ -2,6 +2,7 @@ import { useState, useMemo, useCallback, useRef } from 'react';
 import Skeleton from 'react-loading-skeleton';
 import 'react-loading-skeleton/dist/skeleton.css';
 import type { ChatServiceOptionEntry } from '../../../core/state';
+import { stringHash, PEER_GRADIENTS, getPeerDisplayName, formatPerMillionPrice } from '../../../core/peer-utils';
 import { useUiSnapshot } from '../../hooks/useUiSnapshot';
 import { useActions } from '../../hooks/useActions';
 import styles from './DiscoverWelcome.module.scss';
@@ -50,33 +51,12 @@ const SERVICE_GRADIENTS: Record<string, string> = {
   community: 'linear-gradient(180deg, #1FD87A, #17C46E)',
 };
 
-const FALLBACK_GRADIENTS = [
-  'linear-gradient(180deg, #ffa66c, #ff7b15)',
-  'linear-gradient(180deg, #5ca9e0, #178dd6)',
-  'linear-gradient(180deg, #4ece64, #00be2c)',
-  'linear-gradient(180deg, #6fc5ff, #38b2ff)',
-  'linear-gradient(180deg, #f27796, #ec4b74)',
-  'linear-gradient(180deg, #8B5CF6, #7C3AED)',
-  'linear-gradient(180deg, #06B6D4, #0891B2)',
-  'linear-gradient(180deg, #EF4444, #DC2626)',
-  'linear-gradient(180deg, #EAB308, #CA8A04)',
-  'linear-gradient(180deg, #84CC16, #65A30D)',
-];
-
-function simpleHash(s: string): number {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) {
-    h = ((h << 5) - h + s.charCodeAt(i)) | 0;
-  }
-  return Math.abs(h);
-}
-
 function getGradient(name: string): string {
   const lower = name.toLowerCase();
   for (const [key, gradient] of Object.entries(SERVICE_GRADIENTS)) {
     if (lower.includes(key)) return gradient;
   }
-  return FALLBACK_GRADIENTS[simpleHash(lower) % FALLBACK_GRADIENTS.length];
+  return PEER_GRADIENTS[stringHash(lower) % PEER_GRADIENTS.length];
 }
 
 /* ── Infer tags from service name / categories ───────────────────────── */
@@ -178,14 +158,6 @@ function matchesFilter(item: CardItem, filter: string): boolean {
   return item.tags.some((t) => matchTags.some((m) => t.toLowerCase().includes(m.toLowerCase())));
 }
 
-/* ── Format pricing ──────────────────────────────────────────────────── */
-
-function formatPrice(usdPerMillion: number): string {
-  if (usdPerMillion <= 0) return 'Free';
-  if (usdPerMillion < 0.01) return `$${usdPerMillion.toFixed(3)}/M`;
-  return `$${usdPerMillion.toFixed(2)}/M`;
-}
-
 /* ── Skeleton card ───────────────────────────────────────────────────── */
 
 const skeletonBaseColor = 'rgba(0,0,0,0.04)';
@@ -237,8 +209,8 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
 
   const hasNetworkData = serviceOptions.length > 0;
   const cards = useMemo(
-    () => (hasNetworkData ? buildCards(serviceOptions) : []),
-    [hasNetworkData, serviceOptions],
+    () => (serviceOptions.length > 0 ? buildCards(serviceOptions) : []),
+    [serviceOptions],
   );
 
   const filtered = useMemo(
@@ -341,7 +313,7 @@ function Card({
   item: CardItem;
   onClick: (v: string) => void;
 }) {
-  const providerName = item.peerLabel?.replace(/\s*\([^)]*\)\s*$/, '') || item.provider || 'Peer';
+  const providerName = (item.peerLabel ? getPeerDisplayName(item.peerLabel) : '') || item.provider || 'Peer';
   const hasPricing = item.inputUsdPerMillion > 0 || item.outputUsdPerMillion > 0;
 
   return (
@@ -352,7 +324,6 @@ function Card({
       tabIndex={0}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(item.value); } }}
     >
-      {/* Body: tags, name, description, pricing */}
       <div className={styles.cardBody}>
         <div className={styles.cardTags}>
           {item.tags.map((t) => (
@@ -361,21 +332,19 @@ function Card({
         </div>
         <div className={styles.cardName}>{item.name}</div>
         <div className={styles.cardDesc}>{item.description}</div>
-        {hasPricing && (
-          <div className={styles.cardPricing}>
-            <span>{formatPrice(item.inputUsdPerMillion)} input tokens</span>
-            <span className={styles.pricingDot} />
-            <span>{formatPrice(item.outputUsdPerMillion)} output tokens</span>
-          </div>
-        )}
-        {!hasPricing && (
-          <div className={styles.cardPricing}>
+        <div className={styles.cardPricing}>
+          {hasPricing ? (
+            <>
+              <span>{formatPerMillionPrice(item.inputUsdPerMillion)} input tokens</span>
+              <span className={styles.pricingDot} />
+              <span>{formatPerMillionPrice(item.outputUsdPerMillion)} output tokens</span>
+            </>
+          ) : (
             <span>Free</span>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
-      {/* Footer: provider + stats */}
       <div className={styles.cardFooter}>
         <div className={styles.cardProvider}>
           <span className={styles.cardProviderBy}>By</span>

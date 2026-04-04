@@ -695,12 +695,9 @@ async function discoverChatServiceCatalog(
         const protocol = resolveServiceProtocol(apiProtocols, serviceId) ?? inferProviderProtocol(provider);
         if (!protocol) continue;
 
-        // Resolve pricing: per-service → per-provider default → peer default
         const providerPricing = pricingMap?.[provider]?.services?.[serviceId];
         const inputUsd = providerPricing?.input ?? defaultInput;
         const outputUsd = providerPricing?.output ?? defaultOutput;
-
-        // Resolve categories
         const categories = categoriesMap?.[provider]?.services?.[serviceId];
 
         results.push({

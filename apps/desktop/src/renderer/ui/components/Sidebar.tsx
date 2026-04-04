@@ -10,6 +10,7 @@ import { Add01Icon } from '@hugeicons/core-free-icons';
 import { ComputerTerminal01Icon } from '@hugeicons/core-free-icons';
 import { DiscoverCircleIcon } from '@hugeicons/core-free-icons';
 import { ArrowDown01Icon } from '@hugeicons/core-free-icons';
+import { getPeerGradient, getPeerDisplayName, formatCompactTokens } from '../../core/peer-utils';
 import type { ViewName } from '../types';
 import { useUiSnapshot } from '../hooks/useUiSnapshot';
 import { useActions } from '../hooks/useActions';
@@ -157,40 +158,6 @@ function formatUsdc(value: number): string {
   return value < 0.01 && value > 0 ? '<0.01' : value.toFixed(2);
 }
 
-function formatCompactTokens(count: number): string {
-  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
-  if (count >= 1_000) return `${(count / 1_000).toFixed(0)}K`;
-  return String(count);
-}
-
-/* ── Peer avatar gradient ──────────────────────────────────────────── */
-
-const PEER_GRADIENTS = [
-  'linear-gradient(180deg, #ffa66c, #ff7b15)',
-  'linear-gradient(180deg, #5ca9e0, #178dd6)',
-  'linear-gradient(180deg, #4ece64, #00be2c)',
-  'linear-gradient(180deg, #6fc5ff, #38b2ff)',
-  'linear-gradient(180deg, #f27796, #ec4b74)',
-  'linear-gradient(180deg, #8B5CF6, #7C3AED)',
-  'linear-gradient(180deg, #06B6D4, #0891B2)',
-  'linear-gradient(180deg, #EAB308, #CA8A04)',
-];
-
-function peerHash(s: string): number {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
-  return Math.abs(h);
-}
-
-function getPeerGradient(peerId: string): string {
-  return PEER_GRADIENTS[peerHash(peerId) % PEER_GRADIENTS.length];
-}
-
-function getPeerDisplayName(peerLabel: string): string {
-  // Strip "(abc123...)" suffix from peer labels like "Ember Forge (0x1234ab)"
-  return peerLabel.replace(/\s*\([^)]*\)\s*$/, '').trim();
-}
-
 /* ── Peer group type ───────────────────────────────────────────────── */
 
 type ConvRecord = Record<string, unknown>;
@@ -328,7 +295,7 @@ function PeerGroupSection({
                   <div className={styles.chatConvRight}>
                     <button
                       className={styles.chatConvMenuBtn}
-                      ref={(el) => { menuBtnRefs.current?.set(id, el); }}
+                      ref={(el) => { if (el) menuBtnRefs.current?.set(id, el); else menuBtnRefs.current?.delete(id); }}
                       onClick={(e) => {
                         e.stopPropagation();
                         setMenuOpenId(menuOpenId === id ? null : id);
@@ -378,10 +345,12 @@ function PeerGroupSection({
   );
 }
 
+const EMPTY_CONVERSATIONS: unknown[] = [];
+
 function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void }) {
   const { chatConversations, chatActiveConversation, chatActiveChannels } = useUiSnapshot();
   const actions = useActions();
-  const conversations = Array.isArray(chatConversations) ? chatConversations : [];
+  const conversations = Array.isArray(chatConversations) ? chatConversations : EMPTY_CONVERSATIONS;
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const menuBtnRefs = useRef<Map<string, HTMLButtonElement | null>>(new Map());
 
@@ -396,6 +365,10 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
     actions.startNewChat();
     onSelectView('chat');
   }, [actions, onSelectView]);
+
+  const handleCloseChannel = useCallback(() => {
+    actions.requestChannelClose();
+  }, [actions]);
 
   return (
     <aside className={styles.chatSidebar}>
@@ -412,7 +385,7 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
               chatActiveChannels={chatActiveChannels}
               onSelectConv={handleSelectConv}
               onNewChat={handleNewChat}
-              onCloseChannel={() => actions.requestChannelClose()}
+              onCloseChannel={handleCloseChannel}
               menuOpenId={menuOpenId}
               setMenuOpenId={setMenuOpenId}
               menuBtnRefs={menuBtnRefs}
