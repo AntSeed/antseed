@@ -242,14 +242,11 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
         </div>
         {snap.chatActiveConversation && (
           <div className={styles.sessionMeta}>
-            {snap.chatRoutedPeerId && (
+            {/* {snap.chatRoutedPeerId && (
               <span className={styles.sessionMetaItem} title={snap.chatRoutedPeerId}>
                 {snap.chatRoutedPeerId.slice(0, 10)}...
               </span>
-            )}
-            {snap.chatSessionStarted && (
-              <span className={styles.sessionMetaItem}>{snap.chatSessionStarted}</span>
-            )}
+            )} */}
             {snap.chatSessionReservedUsdc && (
               <span className={styles.sessionMetaItem}>
                 reserve ${snap.chatSessionReservedUsdc}
@@ -274,6 +271,9 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
               <span className={styles.sessionMetaItem} title="Total tokens across all sessions">
                 total {snap.chatLifetimeTotalTokens} tok
               </span>
+            )}
+            {snap.chatSessionStarted && (
+              <span className={styles.sessionMetaItem}>{snap.chatSessionStarted}</span>
             )}
           </div>
         )}
