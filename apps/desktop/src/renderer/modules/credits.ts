@@ -1,7 +1,6 @@
 import type { RendererUiState } from '../core/state';
 import { notifyUiStateChanged } from '../core/store';
 import type { DesktopBridge } from '../types/bridge';
-import { getActions } from '../ui/actions';
 
 type CreditsModuleOptions = {
   bridge?: DesktopBridge;
@@ -57,20 +56,6 @@ export function initCreditsModule({ bridge, uiState }: CreditsModuleOptions): Cr
 
         if (changed) notifyUiStateChanged();
 
-        const required = parseFloat(uiState.chatPaymentApprovalAmount || '0');
-        const manualApproval = Boolean(uiState.configFormData?.requireManualApproval);
-        if (
-          changed
-          && uiState.chatPaymentApprovalVisible
-          && !uiState.chatPaymentApprovalLoading
-          && !uiState.chatSending
-          && !manualApproval
-          && Number.isFinite(required)
-          && required > 0
-          && available >= required
-        ) {
-          getActions().approvePaymentSession();
-        }
       }
     } catch {
       // Silently fail — cached values remain

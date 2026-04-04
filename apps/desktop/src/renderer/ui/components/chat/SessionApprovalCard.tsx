@@ -12,9 +12,7 @@ type SessionApprovalCardProps = {
     networkAgeDays: number | null;
     evmAddress: string | null;
   } | null;
-  loading: boolean;
   error: string | null;
-  onApprove: () => void;
   onAddCredits: () => void;
   onCancel: () => void;
 };
@@ -24,9 +22,7 @@ export function SessionApprovalCard({
   peerName,
   amount,
   peerInfo,
-  loading,
   error,
-  onApprove,
   onAddCredits,
   onCancel,
 }: SessionApprovalCardProps) {
@@ -42,7 +38,7 @@ export function SessionApprovalCard({
     <div className={styles.approval}>
       <div className={styles.approvalText}>
         {hasCredits
-          ? <>Approve a <strong>${amount} USDC</strong> pre-deposit to start a session with <strong>{displayName}</strong>. This is reserved from your deposit balance.</>
+          ? <>Payment setup failed even though your available deposit balance covers <strong>${amount} USDC</strong> for <strong>{displayName}</strong>. Retry the chat, or manage credits if the problem persists.</>
           : <>A <strong>${amount} USDC</strong> pre-deposit is required to use <strong>{displayName}</strong>. Add credits to your deposits first.</>
         }
       </div>
@@ -58,16 +54,10 @@ export function SessionApprovalCard({
       {error && <div className={styles.approvalError}>{error}</div>}
 
       <div className={styles.approvalActions}>
-        {hasCredits ? (
-          <button className={styles.approveBtn} onClick={onApprove} disabled={loading}>
-            {loading ? 'Approving...' : 'Approve'}
-          </button>
-        ) : (
-          <button className={styles.approveBtn} onClick={onAddCredits}>
-            Add Credits
-          </button>
-        )}
-        <button className={styles.cancelBtn} onClick={onCancel} disabled={loading}>
+        <button className={styles.approveBtn} onClick={onAddCredits}>
+          {hasCredits ? 'Manage Credits' : 'Add Credits'}
+        </button>
+        <button className={styles.cancelBtn} onClick={onCancel}>
           Cancel
         </button>
       </div>

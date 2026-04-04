@@ -250,9 +250,6 @@ function mergeBuyerConfig(
     proxyPort: typeof value['proxyPort'] === 'number'
       ? value['proxyPort']
       : defaults.proxyPort,
-    requireManualApproval: typeof value['requireManualApproval'] === 'boolean'
-      ? value['requireManualApproval']
-      : defaults.requireManualApproval,
   };
 }
 

@@ -41,7 +41,6 @@ export type ConfigFormData = {
   maxOutputUsdPerMillion: number;
   minRep: number;
   paymentMethod: string;
-  requireManualApproval: boolean;
   devMode: boolean;
   cryptoChainId: string;
   cryptoRpcUrl: string;

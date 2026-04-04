@@ -329,7 +329,6 @@ describe('Streaming payment flow E2E', () => {
     sellerPaymentOverrides?: Partial<NodePaymentsConfig>,
     buyerPaymentOverrides?: Partial<NodePaymentsConfig>,
     sellerProvider?: Provider,
-    buyerConfig?: { requireManualApproval?: boolean },
   ): Promise<{ seller: PeerInfo }> {
     bootstrap = await createLocalBootstrap();
 
@@ -358,7 +357,6 @@ describe('Streaming payment flow E2E', () => {
       allowPrivateIPs: true,
       noOfficialBootstrap: true,
       payments: makePaymentsConfig(rpcUrl, buyerPaymentOverrides),
-      ...(buyerConfig ?? {}),
     });
     await buyerNode.start();
 
@@ -441,73 +439,18 @@ describe('Streaming payment flow E2E', () => {
     // The fact that 3 requests succeeded means cumulative SpendingAuths were accepted
   }, 30_000);
 
-  // ── Test 3: Manual mode — external SpendingAuth header ──────────────────
+  // ── Test 3: Auto-only mode — no external approval hop ──────────────────
 
-  it('manual mode: 402 returned, then retry with external SpendingAuth succeeds', async () => {
+  it('auto-only mode: first paid request succeeds without surfacing a 402 to the caller', async () => {
     await setupRpc();
     const mockProvider = new MockAnthropicProvider();
-    const { seller } = await createNodes({}, {}, mockProvider, { requireManualApproval: true });
+    const { seller } = await createNodes({}, {}, mockProvider);
 
-    // First request: manual approval => 402 returned to caller
+    // Manual approval was removed. The buyer should negotiate the reserve
+    // internally and return the successful upstream response directly.
     const req1 = makeRequest();
     const res1 = await buyerNode!.sendRequest(seller, req1);
-    expect(res1.statusCode).toBe(402);
-    expect(mockProvider.requestCount).toBe(0);
-
-    // Parse the PaymentRequired body from the 402
-    const body402 = JSON.parse(new TextDecoder().decode(res1.body)) as Record<string, unknown>;
-    expect(body402.error).toBe('payment_required');
-    // Now construct a pre-signed SpendingAuth header.
-    // In the real desktop flow, the external signer (wallet) would sign this.
-    // Here, we use the buyer's payment manager to sign it ourselves.
-    const bpm = buyerNode!.buyerPaymentManager;
-    expect(bpm).not.toBeNull();
-
-    // Use the BuyerPaymentManager to create a signed auth manually
-    const { signReserveAuth, makeChannelsDomain, computeChannelId, ZERO_METADATA_HASH } = await import('@antseed/node');
-    const buyerIdentity = buyerNode!.identity!;
-    const buyerSigner = buyerIdentity.wallet;
-    const buyerEvmAddr = buyerIdentity.wallet.address;
-    const sellerEvmAddr = sellerNode!.identity!.wallet.address;
-
-    const salt = '0x' + Array.from(new Uint8Array(32), () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0')).join('');
-    const channelId = computeChannelId(buyerEvmAddr, sellerEvmAddr, salt);
-    const deadline = Math.floor(Date.now() / 1000) + 90000;
-    const maxAmount = 10000000n;
-
-    const channelsDomain = makeChannelsDomain(31337, '0x' + 'cc'.repeat(20));
-
-    // Sign ReserveAuth — binds channelId, maxAmount, deadline
-    const reserveAuthSig = await signReserveAuth(buyerSigner, channelsDomain, {
-      channelId,
-      maxAmount,
-      deadline: BigInt(deadline),
-    });
-
-    // Encode as base64 JSON and place in x-antseed-spending-auth header
-    const authPayload = {
-      channelId,
-      cumulativeAmount: '0',
-      metadataHash: ZERO_METADATA_HASH,
-      metadata: '',
-      spendingAuthSig: reserveAuthSig,
-      buyerEvmAddr,
-      sellerEvmAddr,
-      reserveSalt: salt,
-      reserveMaxAmount: maxAmount.toString(),
-      reserveDeadline: deadline,
-    };
-    const headerValue = Buffer.from(JSON.stringify(authPayload)).toString('base64');
-
-    // Retry with the SpendingAuth header
-    const req2 = makeRequest({
-      headers: {
-        'content-type': 'application/json',
-        'x-antseed-spending-auth': headerValue,
-      },
-    });
-    const res2 = await buyerNode!.sendRequest(seller, req2);
-    expect(res2.statusCode).toBe(200);
+    expect(res1.statusCode).toBe(200);
     expect(mockProvider.requestCount).toBe(1);
   }, 30_000);
 

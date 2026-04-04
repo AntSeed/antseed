@@ -79,7 +79,7 @@ export class BuyerRequestHandler {
       this._deps.registerPaymentMux(peer.peerId, negotiator.getOrCreatePaymentMux(peer.peerId, conn));
     }
 
-    // Extract and strip x-antseed-spending-auth header if present (manual approval flow)
+    // Extract and strip x-antseed-spending-auth header if present (external auth compatibility)
     const externalSpendingAuth = req.headers[ANTSEED_SPENDING_AUTH_HEADER] ?? null;
     if (externalSpendingAuth) {
       const { [ANTSEED_SPENDING_AUTH_HEADER]: _, ...cleanHeaders } = req.headers;
