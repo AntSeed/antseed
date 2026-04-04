@@ -16,6 +16,7 @@ import {
 import { debugLog, debugWarn } from '../utils/debug.js';
 import { peerIdToAddress } from '../types/peer.js';
 import { ChannelStore, type StoredChannel } from './channel-store.js';
+import { classifyOnChainChannel, matchesChannelParties } from './channel-session-state.js';
 
 export interface SellerPaymentConfig {
   rpcUrl: string;
@@ -360,12 +361,12 @@ export class SellerPaymentManager {
     channelsDomain: ReturnType<typeof makeChannelsDomain>,
   ): Promise<boolean> {
     const channelId = payload.channelId;
-    const onChain = await this._channelsClient.getSession(channelId);
+    const onChainState = classifyOnChainChannel(await this._channelsClient.getSession(channelId));
     const sellerEvmAddr = this._identity.wallet.address;
 
-    if (onChain.status !== 1) return false;
-    if (onChain.buyer.toLowerCase() !== buyerEvmAddr.toLowerCase()) return false;
-    if (onChain.seller.toLowerCase() !== sellerEvmAddr.toLowerCase()) return false;
+    if (!onChainState.exists || onChainState.status !== 'active') return false;
+    if (!matchesChannelParties(onChainState.channel, buyerEvmAddr, sellerEvmAddr)) return false;
+    const onChain = onChainState.channel;
 
     const metadataMsg = {
       channelId,

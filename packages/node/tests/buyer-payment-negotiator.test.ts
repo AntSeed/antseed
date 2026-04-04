@@ -54,9 +54,9 @@ function createMockBpm(): BuyerPaymentManager & Record<string, unknown> {
   } as unknown as BuyerPaymentManager & Record<string, unknown>;
 }
 
-function createMockDepositsClient(balance = 1_000_000n): DepositsClient {
+function createMockDepositsClient(balance = 1_000_000n, reserved = 0n): DepositsClient {
   return {
-    getBuyerBalance: vi.fn().mockResolvedValue({ available: balance, locked: 0n }),
+    getBuyerBalance: vi.fn().mockResolvedValue({ available: balance, reserved, lastActivityAt: 0n }),
   } as unknown as DepositsClient;
 }
 
@@ -246,6 +246,7 @@ describe('BuyerPaymentNegotiator', () => {
       (bpm.getActiveSession as ReturnType<typeof vi.fn>)
         .mockReturnValueOnce(activeSession)
         .mockReturnValueOnce(activeSession)
+        .mockReturnValueOnce(null)
         .mockReturnValueOnce(null);
       bufferPaymentRequired(negotiator, peer.peerId, conn);
       (bpm.authorizeSpending as ReturnType<typeof vi.fn>).mockImplementation(async () => {
@@ -275,6 +276,28 @@ describe('BuyerPaymentNegotiator', () => {
         error: 'payment_negotiation_failed',
         reason: 'existing_channel_still_active',
       });
+    });
+
+    it('retires a stale local session when buyer reserved balance is zero', async () => {
+      const activeSession = makeActiveSession(peer.peerId);
+      depositsClient = createMockDepositsClient(1_000_000n, 0n);
+      negotiator = new BuyerPaymentNegotiator(identity, bpm as unknown as BuyerPaymentManager, depositsClient, channelsClient, channelStore, config, emitter);
+      (bpm.getActiveSession as ReturnType<typeof vi.fn>)
+        .mockReturnValueOnce(activeSession)
+        .mockReturnValueOnce(activeSession)
+        .mockReturnValueOnce(activeSession)
+        .mockReturnValueOnce(null);
+      (channelsClient.getSession as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('rpc down'));
+      bufferPaymentRequired(negotiator, peer.peerId, conn);
+      (bpm.authorizeSpending as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+        (bpm.isLockConfirmed as ReturnType<typeof vi.fn>).mockReturnValue(true);
+      });
+
+      const result = await negotiator.handle402(make402Response(), peer, conn, makeRequest());
+
+      expect(bpm.retireSession).toHaveBeenCalledWith(peer.peerId, 'ghost');
+      expect(bpm.authorizeSpending).toHaveBeenCalled();
+      expect(result.action).toBe('retry');
     });
 
     it('retires a stored session when no channels client is configured', async () => {

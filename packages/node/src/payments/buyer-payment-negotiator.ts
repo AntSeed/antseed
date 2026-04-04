@@ -6,8 +6,9 @@ import type { SerializedHttpRequest, SerializedHttpResponse } from '../types/htt
 import type { PaymentRequiredPayload } from '../types/protocol.js';
 import type { BuyerPaymentManager } from './buyer-payment-manager.js';
 import type { DepositsClient } from './evm/deposits-client.js';
-import type { ChannelsClient, ChannelInfo } from './evm/channels-client.js';
+import type { ChannelsClient } from './evm/channels-client.js';
 import type { ChannelStore } from './channel-store.js';
+import { classifyOnChainChannel } from './channel-session-state.js';
 import { peerIdToAddress } from '../types/peer.js';
 import { debugLog, debugWarn } from '../utils/debug.js';
 import { parseResponseUsage } from '../utils/response-usage.js';
@@ -258,6 +259,12 @@ export class BuyerPaymentNegotiator {
       const recovered = await this._recoverExistingSession(peer, conn);
       if (recovered) {
         return { action: 'retry' };
+      }
+
+      if (this._bpm.getActiveSession(peer.peerId)) {
+        if (await this._canRetireStaleSessionWithoutOnChainProof()) {
+          this._bpm.retireSession(peer.peerId, 'ghost');
+        }
       }
 
       if (this._bpm.getActiveSession(peer.peerId)) {
@@ -691,17 +698,17 @@ export class BuyerPaymentNegotiator {
       return false;
     }
 
-    if (onChain.state.status === 2) {
-      this._bpm.retireSession(peer.peerId, 'settled', onChain.state.settled);
+    if (onChain.status === 'settled') {
+      this._bpm.retireSession(peer.peerId, 'settled', onChain.channel.settled);
       return false;
     }
 
-    if (onChain.state.status === 3) {
+    if (onChain.status === 'timeout') {
       this._bpm.retireSession(peer.peerId, 'timeout');
       return false;
     }
 
-    if (onChain.state.status !== 1) {
+    if (onChain.status !== 'active') {
       this._bpm.retireSession(peer.peerId, 'ghost');
       return false;
     }
@@ -713,10 +720,27 @@ export class BuyerPaymentNegotiator {
     return true;
   }
 
+  private async _canRetireStaleSessionWithoutOnChainProof(): Promise<boolean> {
+    const depositsClient = this._depositsClient;
+    if (!depositsClient) {
+      return false;
+    }
+
+    try {
+      const balance = await depositsClient.getBuyerBalance(this._identity.wallet.address);
+      return balance.reserved === 0n;
+    } catch (err) {
+      debugWarn(
+        `[BuyerNegotiator] Failed to verify buyer reserved balance while checking stale session: ` +
+        `${err instanceof Error ? err.message : err}`,
+      );
+      return false;
+    }
+  }
+
   private async _getOnChainSessionState(channelId: string): Promise<
     | null
-    | { exists: false }
-    | { exists: true; state: ChannelInfo }
+    | ReturnType<typeof classifyOnChainChannel>
   > {
     try {
       const channelsClient = this._channelsClient;
@@ -724,12 +748,7 @@ export class BuyerPaymentNegotiator {
         return null;
       }
 
-      const state = await channelsClient.getSession(channelId);
-      const exists = state.buyer !== '0x0000000000000000000000000000000000000000'
-        || state.seller !== '0x0000000000000000000000000000000000000000'
-        || state.deposit > 0n
-        || state.status !== 0;
-      return exists ? { exists: true, state } : { exists: false };
+      return classifyOnChainChannel(await channelsClient.getSession(channelId));
     } catch (err) {
       debugWarn(`[BuyerNegotiator] Failed to load on-chain channel ${channelId.slice(0, 18)}...: ${err instanceof Error ? err.message : err}`);
       return null;
