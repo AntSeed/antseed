@@ -7,11 +7,6 @@ import styles from './DiscoverWelcome.module.scss';
 
 /* ── Filter categories ───────────────────────────────────────────────── */
 
-const FILTERS = [
-  'All', 'Text', 'Code', 'Image', 'Reasoning', 'Uncensored',
-  'Private', 'Fast', 'Free', 'Agents', 'Research', 'Writing', 'Legal', 'Math',
-] as const;
-
 /* ── Card data type ──────────────────────────────────────────────────── */
 
 type CardItem = {
@@ -57,42 +52,11 @@ function getGradient(name: string): string {
   return PEER_GRADIENTS[stringHash(lower) % PEER_GRADIENTS.length];
 }
 
-/* ── Infer tags from service name / categories ───────────────────────── */
+/* ── Capitalize category label ────────────────────────────────────────── */
 
-function inferTags(serviceId: string, categories: string[]): string[] {
-  if (categories.length > 0) return categories.slice(0, 3);
-
-  const tags: string[] = [];
-  const lower = serviceId.toLowerCase();
-
-  if (lower.includes('code') || lower.includes('claude') || lower.includes('codex') || lower.includes('starcoder'))
-    tags.push('Code');
-  if (lower.includes('uncensored') || lower.includes('dolphin'))
-    tags.push('Uncensored');
-  if (lower.includes('reason') || lower.includes('deepseek') || lower.includes('think'))
-    tags.push('Reasoning');
-  if (lower.includes('flux') || lower.includes('sdxl') || lower.includes('dall'))
-    tags.push('Image');
-  if (lower.includes('fast') || lower.includes('flash') || lower.includes('mini') || lower.includes('haiku'))
-    tags.push('Fast');
-  if (lower.includes('text') || lower.includes('chat') || lower.includes('llama') || lower.includes('mistral'))
-    tags.push('Text');
-  if (lower.includes('free'))
-    tags.push('Free');
-  if (lower.includes('write') || lower.includes('content'))
-    tags.push('Writing');
-  if (lower.includes('legal'))
-    tags.push('Legal');
-  if (lower.includes('math'))
-    tags.push('Math');
-  if (lower.includes('agent'))
-    tags.push('Agents');
-  if (lower.includes('research'))
-    tags.push('Research');
-  if (lower.includes('private') || lower.includes('tee'))
-    tags.push('Private');
-
-  return tags.length > 0 ? tags.slice(0, 3) : ['Text'];
+function capitalizeCategory(cat: string): string {
+  if (cat.length === 0) return cat;
+  return cat.charAt(0).toUpperCase() + cat.slice(1);
 }
 
 /* ── Generate description from service name ──────────────────────────── */
@@ -123,7 +87,7 @@ function buildCards(options: ChatServiceOptionEntry[]): CardItem[] {
     value: opt.value,
     provider: opt.provider,
     providerCount: opt.count,
-    tags: inferTags(opt.id, opt.categories),
+    tags: opt.categories.map(capitalizeCategory),
     gradient: getGradient(opt.peerLabel || opt.provider || opt.id),
     description: opt.description || generateDescription(opt.id, opt.categories, opt.peerLabel || opt.provider),
     inputUsdPerMillion: opt.inputUsdPerMillion,
@@ -131,29 +95,21 @@ function buildCards(options: ChatServiceOptionEntry[]): CardItem[] {
   }));
 }
 
-/* ── Filter matching ─────────────────────────────────────────────────── */
+/* ── Derive filters from data ────────────────────────────────────────── */
 
-const FILTER_TAG_MAP: Record<string, string[]> = {
-  Text:        ['Text'],
-  Code:        ['Code', 'Coding'],
-  Image:       ['Vision', 'Image'],
-  Reasoning:   ['Reasoning'],
-  Uncensored:  ['Uncensored'],
-  Private:     ['Private', 'Privacy'],
-  Fast:        ['Fast'],
-  Free:        ['Free'],
-  Agents:      ['Agent', 'Agents'],
-  Research:    ['Research'],
-  Writing:     ['Writing'],
-  Legal:       ['Legal'],
-  Math:        ['Math'],
-};
+function deriveFilters(cards: CardItem[]): string[] {
+  const seen = new Set<string>();
+  for (const card of cards) {
+    for (const tag of card.tags) {
+      seen.add(tag);
+    }
+  }
+  return Array.from(seen).sort();
+}
 
 function matchesFilter(item: CardItem, filter: string): boolean {
   if (filter === 'All') return true;
-  const matchTags = FILTER_TAG_MAP[filter];
-  if (!matchTags) return false;
-  return item.tags.some((t) => matchTags.some((m) => t.toLowerCase().includes(m.toLowerCase())));
+  return item.tags.some((t) => t.toLowerCase() === filter.toLowerCase());
 }
 
 /* ── Skeleton card ───────────────────────────────────────────────────── */
@@ -207,6 +163,8 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
     [serviceOptions],
   );
 
+  const filters = useMemo(() => deriveFilters(cards), [cards]);
+
   const filtered = useMemo(
     () => cards.filter((c) => matchesFilter(c, activeFilter)),
     [cards, activeFilter],
@@ -234,8 +192,15 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
             </p>
           </div>
 
+          {filters.length > 0 && (
           <div className={styles.filters}>
-            {FILTERS.map((f) => (
+            <button
+              className={`${styles.filterPill}${activeFilter === 'All' ? ` ${styles.filterActive}` : ''}`}
+              onClick={() => setActiveFilter('All')}
+            >
+              All
+            </button>
+            {filters.map((f) => (
               <button
                 key={f}
                 className={`${styles.filterPill}${activeFilter === f ? ` ${styles.filterActive}` : ''}`}
@@ -245,8 +210,7 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
               </button>
             ))}
           </div>
-
-          {/* Cards */}
+          )}
           {!hasNetworkData ? (
             <>
               <div className={styles.loadingHint}>
