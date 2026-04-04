@@ -685,6 +685,21 @@ const MAX_SPENDING_AUTH_BASE_UNITS = 5_000_000n;
 const DEFAULT_SPENDING_AUTH_DURATION_SECONDS = 15 * 60; // 15 min — seller must call reserve() promptly
 const BYTES32_RE = /^0x[0-9a-fA-F]{64}$/;
 
+function resolveApprovedReserveAmount(paymentInfo: Record<string, unknown>): bigint {
+  const fallbackAmount = 100_000n; // $0.10 default when the seller did not provide a usable suggestion
+  const rawSuggestedAmount = typeof paymentInfo.suggestedAmount === 'string'
+    ? paymentInfo.suggestedAmount
+    : '';
+
+  try {
+    const parsed = BigInt(rawSuggestedAmount);
+    if (parsed <= 0n) return fallbackAmount;
+    return parsed > MAX_SPENDING_AUTH_BASE_UNITS ? MAX_SPENDING_AUTH_BASE_UNITS : parsed;
+  } catch {
+    return fallbackAmount;
+  }
+}
+
 ipcMain.handle('payments:sign-spending-auth', async (_event, params: {
   channelId: string;
   cumulativeAmountBaseUnits: string;
@@ -868,7 +883,7 @@ ipcMain.handle('chat:approve-payment', async (_event, conversationId: string) =>
     const deadline = Math.floor(Date.now() / 1000) + DEFAULT_SPENDING_AUTH_DURATION_SECONDS;
 
     // Sign ReserveAuth — binds channelId, maxAmount, deadline
-    const maxAmount = 5_000_000n; // $5.00 per session
+    const maxAmount = resolveApprovedReserveAmount(paymentInfo);
     const reserveAuthSig = await signReserveAuth(wallet, channelsDomain, {
       channelId,
       maxAmount,
