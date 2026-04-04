@@ -16,6 +16,7 @@ import {
 import { debugLog, debugWarn } from '../utils/debug.js';
 import { peerIdToAddress } from '../types/peer.js';
 import { ChannelStore, type StoredChannel } from './channel-store.js';
+import { classifyOnChainChannel, matchesChannelParties } from './channel-session-state.js';
 
 export interface SellerPaymentConfig {
   rpcUrl: string;
@@ -360,12 +361,12 @@ export class SellerPaymentManager {
     channelsDomain: ReturnType<typeof makeChannelsDomain>,
   ): Promise<boolean> {
     const channelId = payload.channelId;
-    const onChain = await this._channelsClient.getSession(channelId);
+    const onChainState = classifyOnChainChannel(await this._channelsClient.getSession(channelId));
     const sellerEvmAddr = this._identity.wallet.address;
 
-    if (onChain.status !== 1) return false;
-    if (onChain.buyer.toLowerCase() !== buyerEvmAddr.toLowerCase()) return false;
-    if (onChain.seller.toLowerCase() !== sellerEvmAddr.toLowerCase()) return false;
+    if (!onChainState.exists || onChainState.status !== 'active') return false;
+    if (!matchesChannelParties(onChainState.channel, buyerEvmAddr, sellerEvmAddr)) return false;
+    const onChain = onChainState.channel;
 
     const metadataMsg = {
       channelId,
@@ -709,7 +710,7 @@ export class SellerPaymentManager {
     return this._reserveMax.get(sessionId) ?? 0n;
   }
 
-  private static readonly DEFAULT_SUGGESTED_AMOUNT = 5_000_000n; // $5.00 — matches buyer's default maxReserveAmountUsdc
+  private static readonly DEFAULT_SUGGESTED_AMOUNT = 1_000_000n; // $1.00 — matches contract FIRST_SIGN_CAP and buyer default
 
   /**
    * Build the PaymentRequired payload for a buyer that doesn't have a session.

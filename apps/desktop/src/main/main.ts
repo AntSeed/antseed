@@ -7,7 +7,6 @@ import electronUpdater from 'electron-updater';
 const { autoUpdater } = electronUpdater;
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { randomBytes } from 'node:crypto';
 import { isIP } from 'node:net';
 import { existsSync } from 'node:fs';
 import {
@@ -18,7 +17,7 @@ import {
 } from './process-manager.js';
 import { registerPiChatHandlers } from './pi-chat-engine.js';
 import { ensureSecureIdentity, secureIdentityEnv, getSecureIdentity } from './identity.js';
-import { DepositsClient, signSpendingAuth, signReserveAuth, makeChannelsDomain, resolveChainConfig, formatUsdc, ZERO_METADATA_HASH, peerIdToAddress } from '@antseed/node';
+import { DepositsClient, signSpendingAuth, makeChannelsDomain, resolveChainConfig, formatUsdc, peerIdToAddress } from '@antseed/node';
 import { createServer as createPaymentsServer } from '@antseed/payments';
 import type { LogEvent, RuntimeActivityEvent } from './log-parser.js';
 import { parseRuntimeActivityFromLog } from './log-parser.js';
@@ -682,7 +681,6 @@ ipcMain.handle('credits:get-info', async (): Promise<{ ok: boolean; data: Credit
 // Max spending per session: $5 USDC = 5,000,000 base units. Main process enforces
 // this cap to prevent a compromised renderer from signing unbounded authorizations.
 const MAX_SPENDING_AUTH_BASE_UNITS = 5_000_000n;
-const DEFAULT_SPENDING_AUTH_DURATION_SECONDS = 15 * 60; // 15 min — seller must call reserve() promptly
 const BYTES32_RE = /^0x[0-9a-fA-F]{64}$/;
 
 ipcMain.handle('payments:sign-spending-auth', async (_event, params: {
@@ -769,7 +767,7 @@ ipcMain.handle('payments:get-peer-info', async (_event, peerId: string) => {
 });
 
 // ── AI Chat IPC Handlers ──
-const chatEngine = registerPiChatHandlers({
+registerPiChatHandlers({
   ipcMain,
   sendToRenderer: (channel, payload) => {
     getMainWindow()?.webContents.send(channel, payload);
@@ -829,73 +827,6 @@ const chatEngine = registerPiChatHandlers({
         && peer.port > 0
         && peer.port <= 65535);
   },
-});
-
-// Manual payment approval: sign the initial SpendingAuth and set it for the next request.
-// This only gates the initial session creation — once the user approves and the session
-// is established (reserve on-chain + AuthAck), subsequent per-request SpendingAuth
-// updates are handled automatically by BuyerPaymentManager.signPerRequestAuth()
-// without additional user interaction.
-ipcMain.handle('chat:approve-payment', async (_event, conversationId: string) => {
-  const paymentInfo = chatEngine.getCachedPaymentRequired(conversationId) ?? {};
-
-  try {
-    await ensureSecureIdentity();
-    const identity = getSecureIdentity();
-    if (!identity) {
-      return { ok: false, error: 'Identity not available' };
-    }
-
-    const cc = await loadCachedCryptoConfig();
-    if (!cc) {
-      return { ok: false, error: 'No channels contract configured' };
-    }
-
-    const wallet = identity.wallet;
-    const channelsDomain = makeChannelsDomain(cc.chainId, cc.channelsAddress);
-    const buyerEvmAddr = wallet.address;
-
-    const peerId = typeof paymentInfo.peerId === 'string' ? paymentInfo.peerId.trim() : '';
-    if (!peerId) {
-      return { ok: false, error: 'No seller peerId available for this payment' };
-    }
-    const sellerEvmAddr = peerIdToAddress(peerId);
-
-    // Generate random salt and compute deterministic channelId
-    const salt = '0x' + randomBytes(32).toString('hex');
-    const { computeChannelId } = await import('@antseed/node');
-    const channelId = computeChannelId(buyerEvmAddr, sellerEvmAddr, salt);
-    const deadline = Math.floor(Date.now() / 1000) + DEFAULT_SPENDING_AUTH_DURATION_SECONDS;
-
-    // Sign ReserveAuth — binds channelId, maxAmount, deadline
-    const maxAmount = 5_000_000n; // $5.00 per session
-    const reserveAuthSig = await signReserveAuth(wallet, channelsDomain, {
-      channelId,
-      maxAmount,
-      deadline: BigInt(deadline),
-    });
-
-    // Build the header payload
-    const authPayload = {
-      channelId,
-      cumulativeAmount: '0',
-      spendingAuthSig: reserveAuthSig,
-      buyerEvmAddr,
-      sellerEvmAddr,
-      metadataHash: ZERO_METADATA_HASH,
-      metadata: '',
-      reserveSalt: salt,
-      reserveMaxAmount: maxAmount.toString(),
-      reserveDeadline: deadline,
-    };
-
-    const authBase64 = Buffer.from(JSON.stringify(authPayload)).toString('base64');
-    chatEngine.setPendingSpendingAuth(conversationId, authBase64);
-
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
-  }
 });
 
 ipcMain.handle('runtime:scan-network', async () => {

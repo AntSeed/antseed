@@ -1441,15 +1441,10 @@ export function registerPiChatHandlers({
   ensureBuyerRuntimeStarted,
   appendSystemLog,
   getNetworkPeers,
-}: RegisterPiChatHandlersOptions): {
-  setPendingSpendingAuth: (conversationId: string, authBase64: string) => void;
-  getCachedPaymentRequired: (conversationId: string) => Record<string, unknown> | null;
-} {
+}: RegisterPiChatHandlersOptions): void {
   const store = new PiConversationStore();
   const activeRunsByConversation = new Map<string, ActiveRun>();
   const serviceProviderHints = new Map<string, string[]>();
-  /** Pending signed SpendingAuth to inject as header on the next request for a conversation. */
-  const pendingSpendingAuth = new Map<string, string>();
   /** Cached payment-required info from 402 responses, keyed by conversationId. */
   const cachedPaymentRequired = new Map<string, Record<string, unknown>>();
   const serviceProtocolMap = new Map<string, ChatServiceProtocol>();
@@ -1585,10 +1580,7 @@ export function registerPiChatHandlers({
       providerOverride,
     );
     const protocol = await resolveProtocolForSend(serviceId);
-    // Inject pending spending auth header if the user approved a payment for this conversation
-    const spendingAuth = pendingSpendingAuth.get(conversationId) ?? null;
-    if (spendingAuth) pendingSpendingAuth.delete(conversationId);
-    const proxyModel = makeProxyService(serviceId, proxyPort, protocol, providerHint, preferredPeerId, spendingAuth);
+    const proxyModel = makeProxyService(serviceId, proxyPort, protocol, providerHint, preferredPeerId, null);
 
     const authStorage = AuthStorage.inMemory();
     authStorage.setRuntimeApiKey(PROXY_PROVIDER_ID, PROXY_RUNTIME_API_KEY);
@@ -2058,7 +2050,6 @@ export function registerPiChatHandlers({
   ipcMain.handle('chat:ai-delete-conversation', async (_event, id: string) => {
     preferredPeerByConversationId.delete(id);
     cachedPaymentRequired.delete(id);
-    pendingSpendingAuth.delete(id);
     await store.delete(id);
     return { ok: true };
   });
@@ -2116,12 +2107,5 @@ export function registerPiChatHandlers({
     }
   });
 
-  return {
-    setPendingSpendingAuth: (conversationId: string, authBase64: string) => {
-      pendingSpendingAuth.set(conversationId, authBase64);
-    },
-    getCachedPaymentRequired: (conversationId: string) => {
-      return cachedPaymentRequired.get(conversationId) ?? null;
-    },
-  };
+  return;
 }

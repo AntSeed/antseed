@@ -119,7 +119,7 @@ export class BuyerPaymentManager {
 
   /** Hydrate cumulative tracking maps from persisted active buyer sessions. */
   private _hydrateFromStore(): void {
-    const activeChannels = this._channelStore.getActiveChannels('buyer');
+    const activeChannels = this._channelStore.getActiveChannelsByBuyer('buyer', this._identity.wallet.address);
     for (const channel of activeChannels) {
       const peerId = channel.peerId;
       this._cumulativeAmount.set(peerId, BigInt(channel.authMax));
@@ -168,7 +168,7 @@ export class BuyerPaymentManager {
   }
 
   getActiveSession(sellerPeerId: string): StoredChannel | null {
-    return this._channelStore.getActiveChannelByPeer(sellerPeerId, 'buyer');
+    return this._channelStore.getActiveChannelByPeerAndBuyer(sellerPeerId, 'buyer', this._identity.wallet.address);
   }
 
   retireSession(
@@ -176,7 +176,7 @@ export class BuyerPaymentManager {
     status: Extract<StoredChannel['status'], 'settled' | 'timeout' | 'ghost'>,
     settledAmount?: bigint,
   ): void {
-    const session = this._channelStore.getActiveChannelByPeer(sellerPeerId, 'buyer');
+    const session = this.getActiveSession(sellerPeerId);
     if (session) {
       this._channelStore.updateChannelStatus(
         session.sessionId,
@@ -195,7 +195,7 @@ export class BuyerPaymentManager {
     sellerPeerId: string,
     paymentMux: PaymentMux,
   ): Promise<string> {
-    const session = this._channelStore.getActiveChannelByPeer(sellerPeerId, 'buyer');
+    const session = this.getActiveSession(sellerPeerId);
     if (!session) {
       throw new Error(`[BuyerPayment] No active session for seller ${sellerPeerId.slice(0, 12)}...`);
     }
@@ -227,7 +227,7 @@ export class BuyerPaymentManager {
     sellerPeerId: string,
     paymentMux: PaymentMux,
   ): Promise<string> {
-    const session = this._channelStore.getActiveChannelByPeer(sellerPeerId, 'buyer');
+    const session = this.getActiveSession(sellerPeerId);
     const salt = this._reserveSalt.get(sellerPeerId);
     if (!session || !salt) {
       throw new Error(`[BuyerPayment] No replayable reserve for seller ${sellerPeerId.slice(0, 12)}...`);
@@ -368,7 +368,7 @@ export class BuyerPaymentManager {
   // ── AuthAck handler ───────────────────────────────────────────
 
   handleAuthAck(sellerPeerId: string, payload: AuthAckPayload): void {
-    const session = this._channelStore.getActiveChannelByPeer(sellerPeerId, 'buyer');
+    const session = this.getActiveSession(sellerPeerId);
     if (!session) {
       debugWarn(`[BuyerPayment] AuthAck for unknown seller: ${sellerPeerId.slice(0, 12)}...`);
       return;
@@ -483,7 +483,7 @@ export class BuyerPaymentManager {
     responseStats: { inputBytes: Uint8Array; outputBytes: Uint8Array; sellerClaimedCost?: bigint },
     addedLatencyMs?: bigint,
   ): Promise<PerRequestAuthResult> {
-    const session = this._channelStore.getActiveChannelByPeer(sellerPeerId, 'buyer');
+    const session = this.getActiveSession(sellerPeerId);
     if (!session) {
       throw new Error(`[BuyerPayment] No active session for seller ${sellerPeerId.slice(0, 12)}... — call authorizeSpending() first`);
     }
@@ -579,7 +579,7 @@ export class BuyerPaymentManager {
     payload: NeedAuthPayload,
     paymentMux: PaymentMux,
   ): Promise<void> {
-    const session = this._channelStore.getActiveChannelByPeer(sellerPeerId, 'buyer');
+    const session = this.getActiveSession(sellerPeerId);
     if (!session) {
       debugWarn(`[BuyerPayment] NeedAuth for unknown seller: ${sellerPeerId.slice(0, 12)}...`);
       return;
@@ -668,7 +668,7 @@ export class BuyerPaymentManager {
     sellerPeerId: string,
     paymentMux: PaymentMux,
   ): Promise<void> {
-    const session = this._channelStore.getActiveChannelByPeer(sellerPeerId, 'buyer');
+    const session = this.getActiveSession(sellerPeerId);
     if (!session) {
       debugWarn(`[BuyerPayment] topUpReserve: no active session for ${sellerPeerId.slice(0, 12)}...`);
       return;
@@ -756,7 +756,7 @@ export class BuyerPaymentManager {
    * so the persisted data is always up-to-date after each response.
    */
   recordAndPersistTokens(sellerPeerId: string, inputTokens: number, outputTokens: number): void {
-    const session = this._channelStore.getActiveChannelByPeer(sellerPeerId, 'buyer');
+    const session = this.getActiveSession(sellerPeerId);
     if (!session) return;
 
     const prev = this._responseTokenTotals.get(sellerPeerId) ?? { input: 0, output: 0, requests: 0 };
@@ -803,7 +803,11 @@ export class BuyerPaymentManager {
   }
 
   getSessionHistory(sellerPeerId: string): StoredChannel[] {
-    const session = this._channelStore.getLatestChannel(sellerPeerId, 'buyer');
+    const session = this._channelStore.getLatestChannelByPeerAndBuyer(
+      sellerPeerId,
+      'buyer',
+      this._identity.wallet.address,
+    );
     return session ? [session] : [];
   }
 

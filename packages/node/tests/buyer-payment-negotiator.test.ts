@@ -54,9 +54,9 @@ function createMockBpm(): BuyerPaymentManager & Record<string, unknown> {
   } as unknown as BuyerPaymentManager & Record<string, unknown>;
 }
 
-function createMockDepositsClient(balance = 1_000_000n): DepositsClient {
+function createMockDepositsClient(balance = 1_000_000n, reserved = 0n): DepositsClient {
   return {
-    getBuyerBalance: vi.fn().mockResolvedValue({ available: balance, locked: 0n }),
+    getBuyerBalance: vi.fn().mockResolvedValue({ available: balance, reserved, lastActivityAt: 0n }),
   } as unknown as DepositsClient;
 }
 
@@ -189,24 +189,17 @@ describe('BuyerPaymentNegotiator', () => {
   });
 
   describe('handle402', () => {
-    it('returns 402 in manual approval mode', async () => {
-      config.requireManualApproval = true;
-      config.configPath = '/nonexistent/config.json';
-      negotiator = new BuyerPaymentNegotiator(identity, bpm as unknown as BuyerPaymentManager, depositsClient, channelsClient, channelStore, config, emitter);
-
-      // Pre-buffer PaymentRequired so the await doesn't time out
-      bufferPaymentRequired(negotiator, peer.peerId, conn);
-
-      const result = await negotiator.handle402(make402Response(), peer, conn, makeRequest());
-      expect(result.action).toBe('return');
-      expect((result as { action: 'return'; response: SerializedHttpResponse }).response.statusCode).toBe(402);
-    });
-
-    it('returns 402 when no depositsClient', async () => {
+    it('returns a non-payment error when no depositsClient is configured in auto mode', async () => {
       negotiator = new BuyerPaymentNegotiator(identity, bpm as unknown as BuyerPaymentManager, null, channelsClient, channelStore, config, emitter);
 
       const result = await negotiator.handle402(make402Response(), peer, conn, makeRequest());
       expect(result.action).toBe('return');
+      const res = (result as { action: 'return'; response: SerializedHttpResponse }).response;
+      expect(res.statusCode).toBe(503);
+      expect(JSON.parse(new TextDecoder().decode(res.body))).toMatchObject({
+        error: 'payment_negotiation_failed',
+        reason: 'deposits_not_configured',
+      });
     });
 
     it('returns 402 when balance is zero', async () => {
@@ -253,6 +246,7 @@ describe('BuyerPaymentNegotiator', () => {
       (bpm.getActiveSession as ReturnType<typeof vi.fn>)
         .mockReturnValueOnce(activeSession)
         .mockReturnValueOnce(activeSession)
+        .mockReturnValueOnce(null)
         .mockReturnValueOnce(null);
       bufferPaymentRequired(negotiator, peer.peerId, conn);
       (bpm.authorizeSpending as ReturnType<typeof vi.fn>).mockImplementation(async () => {
@@ -276,6 +270,34 @@ describe('BuyerPaymentNegotiator', () => {
 
       expect(bpm.authorizeSpending).not.toHaveBeenCalled();
       expect(result.action).toBe('return');
+      const res = (result as { action: 'return'; response: SerializedHttpResponse }).response;
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(new TextDecoder().decode(res.body))).toMatchObject({
+        error: 'payment_negotiation_failed',
+        reason: 'existing_channel_still_active',
+      });
+    });
+
+    it('retires a stale local session when buyer reserved balance is zero', async () => {
+      const activeSession = makeActiveSession(peer.peerId);
+      depositsClient = createMockDepositsClient(1_000_000n, 0n);
+      negotiator = new BuyerPaymentNegotiator(identity, bpm as unknown as BuyerPaymentManager, depositsClient, channelsClient, channelStore, config, emitter);
+      (bpm.getActiveSession as ReturnType<typeof vi.fn>)
+        .mockReturnValueOnce(activeSession)
+        .mockReturnValueOnce(activeSession)
+        .mockReturnValueOnce(activeSession)
+        .mockReturnValueOnce(null);
+      (channelsClient.getSession as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('rpc down'));
+      bufferPaymentRequired(negotiator, peer.peerId, conn);
+      (bpm.authorizeSpending as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+        (bpm.isLockConfirmed as ReturnType<typeof vi.fn>).mockReturnValue(true);
+      });
+
+      const result = await negotiator.handle402(make402Response(), peer, conn, makeRequest());
+
+      expect(bpm.retireSession).toHaveBeenCalledWith(peer.peerId, 'ghost');
+      expect(bpm.authorizeSpending).toHaveBeenCalled();
+      expect(result.action).toBe('retry');
     });
 
     it('retires a stored session when no channels client is configured', async () => {
@@ -346,11 +368,9 @@ describe('BuyerPaymentNegotiator', () => {
       );
     });
 
-    it('enriches 402 body with PaymentRequired data', async () => {
-      config.requireManualApproval = true;
-      config.configPath = '/nonexistent/config.json';
+    it('enriches 402 body with PaymentRequired data when credits are insufficient', async () => {
+      depositsClient = createMockDepositsClient(0n);
       negotiator = new BuyerPaymentNegotiator(identity, bpm as unknown as BuyerPaymentManager, depositsClient, channelsClient, channelStore, config, emitter);
-
       bufferPaymentRequired(negotiator, peer.peerId, conn);
 
       const result = await negotiator.handle402(make402Response(), peer, conn, makeRequest());

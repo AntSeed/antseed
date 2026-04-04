@@ -364,7 +364,6 @@ export function registerConnectCommand(program: Command): void {
         dataDir: globalOpts.dataDir,
         configPath: globalOpts.config,
         payments: paymentsConfig,
-        requireManualApproval: effectiveBuyerConfig.requireManualApproval,
       })
 
       node.setRouter(router)
