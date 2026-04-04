@@ -91,9 +91,7 @@ function generateDescription(serviceId: string, categories: string[], provider: 
 
 function buildCards(options: ChatServiceOptionEntry[]): CardItem[] {
   return options.map((opt) => {
-    const tags = opt.categories
-      .map(capitalizeCategory)
-      .filter((c) => SERVICE_CATEGORIES_LOWER.has(c.toLowerCase()));
+    const tags = opt.categories.map(capitalizeCategory);
     return {
       name: opt.label || opt.id,
       peerLabel: opt.peerLabel || '',
