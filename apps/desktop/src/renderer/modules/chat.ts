@@ -88,8 +88,8 @@ export function initChatModule({
   > & {
     peerId: string;
     peerLabel: string;
-    inputUsdPerMillion: number;
-    outputUsdPerMillion: number;
+    inputUsdPerMillion: number | null;
+    outputUsdPerMillion: number | null;
     categories: string[];
     description: string;
   };
@@ -199,8 +199,8 @@ export function initChatModule({
     const description = typeof entry.description === 'string' ? entry.description.trim() : '';
     return {
       id, label, provider, protocol, count, peerId, peerLabel,
-      inputUsdPerMillion: Number.isFinite(inputUsd) && inputUsd >= 0 ? inputUsd : 0,
-      outputUsdPerMillion: Number.isFinite(outputUsd) && outputUsd >= 0 ? outputUsd : 0,
+      inputUsdPerMillion: Number.isFinite(inputUsd) && inputUsd >= 0 ? inputUsd : null,
+      outputUsdPerMillion: Number.isFinite(outputUsd) && outputUsd >= 0 ? outputUsd : null,
       categories,
       description,
     };

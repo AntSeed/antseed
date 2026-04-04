@@ -60,22 +60,11 @@
 
 /* ── Filter pills ───────────────────────────────────────────────────── */
 
-.filters-wrap {
-  position: relative;
-  width: 100%;
-}
-
 .filters {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
-  overflow-x: auto;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-  padding-right: 48px; /* room for fade */
-
-  &::-webkit-scrollbar {
-    display: none;
-  }
+  justify-content: center;
 }
 
 .filter-pill {
@@ -104,38 +93,6 @@
   background: var(--accent) !important;
   color: #fff !important;
   font-weight: 600;
-}
-
-.filters-fade {
-  position: absolute;
-  top: 0;
-  right: 0;
-  height: 24px;
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding-left: 24px;
-  background: linear-gradient(to right, transparent, var(--bg-primary) 20%);
-}
-
-.filters-arrow {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  padding: 0;
-  border: none;
-  background: none;
-  font-size: 16px;
-  color: var(--text-secondary);
-  cursor: pointer;
-  font-family: inherit;
-  line-height: 1;
-
-  &:hover {
-    color: var(--text-primary);
-  }
 }
 
 /* ── Card grid ──────────────────────────────────────────────────────── */
@@ -344,7 +301,4 @@
     color: var(--text-secondary);
   }
 
-  .filters-fade {
-    background: linear-gradient(to right, transparent, var(--bg-primary) 20%);
-  }
 }

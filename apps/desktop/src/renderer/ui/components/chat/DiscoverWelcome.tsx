@@ -1,10 +1,8 @@
-import { useState, useMemo, useCallback, useRef } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import Skeleton from 'react-loading-skeleton';
 import 'react-loading-skeleton/dist/skeleton.css';
 import type { ChatServiceOptionEntry } from '../../../core/state';
 import { stringHash, PEER_GRADIENTS, getPeerDisplayName, formatPerMillionPrice } from '../../../core/peer-utils';
-import { useUiSnapshot } from '../../hooks/useUiSnapshot';
-import { useActions } from '../../hooks/useActions';
 import styles from './DiscoverWelcome.module.scss';
 
 /* ── Filter categories ───────────────────────────────────────────────── */
@@ -25,8 +23,8 @@ type CardItem = {
   tags: string[];
   gradient: string;
   description: string;
-  inputUsdPerMillion: number;
-  outputUsdPerMillion: number;
+  inputUsdPerMillion: number | null;
+  outputUsdPerMillion: number | null;
 };
 
 /* ── Service-name → visual gradient (for provider avatars) ─────────── */
@@ -202,10 +200,6 @@ type DiscoverWelcomeProps = {
 
 export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWelcomeProps) {
   const [activeFilter, setActiveFilter] = useState('All');
-  const { creditsAvailableUsdc } = useUiSnapshot();
-  const actions = useActions();
-  const hasCredits = parseFloat(creditsAvailableUsdc) > 0;
-  const filtersRef = useRef<HTMLDivElement>(null);
 
   const hasNetworkData = serviceOptions.length > 0;
   const cards = useMemo(
@@ -225,19 +219,11 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
     [onStartChatting],
   );
 
-  const scrollFilters = useCallback((dir: 'left' | 'right') => {
-    const el = filtersRef.current;
-    if (!el) return;
-    el.scrollBy({ left: dir === 'right' ? 120 : -120, behavior: 'smooth' });
-  }, []);
-
   return (
     <div className={styles.discover}>
-      {/* Scrollable content area */}
       <div className={styles.cardsScroll}>
         <div className={styles.cardsInner}>
 
-          {/* Hero */}
           <div className={styles.header}>
             <h1 className={styles.heading}>
               What do you need <span className={styles.headingAccent}>AI</span> for?
@@ -248,28 +234,16 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
             </p>
           </div>
 
-          {/* Filter pills */}
-          <div className={styles.filtersWrap}>
-            <div className={styles.filters} ref={filtersRef}>
-              {FILTERS.map((f) => (
-                <button
-                  key={f}
-                  className={`${styles.filterPill}${activeFilter === f ? ` ${styles.filterActive}` : ''}`}
-                  onClick={() => setActiveFilter(f)}
-                >
-                  {f}
-                </button>
-              ))}
-            </div>
-            <div className={styles.filtersFade}>
+          <div className={styles.filters}>
+            {FILTERS.map((f) => (
               <button
-                className={styles.filtersArrow}
-                onClick={() => scrollFilters('right')}
-                aria-label="Scroll filters"
+                key={f}
+                className={`${styles.filterPill}${activeFilter === f ? ` ${styles.filterActive}` : ''}`}
+                onClick={() => setActiveFilter(f)}
               >
-                ›
+                {f}
               </button>
-            </div>
+            ))}
           </div>
 
           {/* Cards */}
@@ -314,7 +288,9 @@ function Card({
   onClick: (v: string) => void;
 }) {
   const providerName = (item.peerLabel ? getPeerDisplayName(item.peerLabel) : '') || item.provider || 'Peer';
-  const hasPricing = item.inputUsdPerMillion > 0 || item.outputUsdPerMillion > 0;
+  const hasInput = item.inputUsdPerMillion != null;
+  const hasOutput = item.outputUsdPerMillion != null;
+  const isFree = hasInput && hasOutput && item.inputUsdPerMillion === 0 && item.outputUsdPerMillion === 0;
 
   return (
     <div
@@ -333,15 +309,15 @@ function Card({
         <div className={styles.cardName}>{item.name}</div>
         <div className={styles.cardDesc}>{item.description}</div>
         <div className={styles.cardPricing}>
-          {hasPricing ? (
-            <>
-              <span>{formatPerMillionPrice(item.inputUsdPerMillion)} input tokens</span>
-              <span className={styles.pricingDot} />
-              <span>{formatPerMillionPrice(item.outputUsdPerMillion)} output tokens</span>
-            </>
-          ) : (
+          {isFree ? (
             <span>Free</span>
-          )}
+          ) : hasInput || hasOutput ? (
+            <>
+              <span>{formatPerMillionPrice(item.inputUsdPerMillion ?? 0)} input tokens</span>
+              <span className={styles.pricingDot} />
+              <span>{formatPerMillionPrice(item.outputUsdPerMillion ?? 0)} output tokens</span>
+            </>
+          ) : null}
         </div>
       </div>
 
