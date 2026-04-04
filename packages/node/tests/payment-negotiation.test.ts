@@ -166,7 +166,7 @@ describe('SellerPaymentManager PaymentRequired', () => {
     const req = manager.getPaymentRequirements('req-1');
     expect(req).not.toBeNull();
     expect(req.minBudgetPerRequest).toBe('500000'); // default $0.50
-    expect(req.suggestedAmount).toBe('5000000'); // $5.00 default
+    expect(req.suggestedAmount).toBe('1000000'); // $1.00 default
   });
 
   it('getPaymentRequirements includes the triggering requestId', () => {
@@ -266,12 +266,12 @@ describe('SellerPaymentManager suggested amount', () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it('suggests $5.00 amount for new buyers', () => {
+  it('suggests $1.00 amount for new buyers', () => {
     const req = manager.getPaymentRequirements('req-1', 'unknown-buyer');
-    expect(req.suggestedAmount).toBe('5000000'); // $5.00
+    expect(req.suggestedAmount).toBe('1000000'); // $1.00
   });
 
-  it('suggests $5.00 for returning buyers with settled sessions', () => {
+  it('suggests $1.00 for returning buyers with settled sessions', () => {
     // Insert a prior settled session
     store.upsertChannel({
       sessionId: '0x' + 'aa'.repeat(32),
@@ -295,7 +295,7 @@ describe('SellerPaymentManager suggested amount', () => {
     });
 
     const req = manager.getPaymentRequirements('req-2', 'returning-buyer');
-    expect(req.suggestedAmount).toBe('5000000');
+    expect(req.suggestedAmount).toBe('1000000');
   });
 
   it('includes per-direction pricing when provided', () => {
