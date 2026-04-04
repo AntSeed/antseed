@@ -132,6 +132,15 @@
   flex-direction: column;
 }
 
+.peer-group-expanded {
+  .peer-group-header {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--bg-primary);
+  }
+}
+
 .peer-group-header {
   display: flex;
   align-items: center;
@@ -214,10 +223,22 @@
 }
 
 .peer-group-convs {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.2s ease;
   padding-left: 4px;
+
+  > * {
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-height: 0;
+  }
+}
+
+.peer-group-convs-open {
+  grid-template-rows: 1fr;
 }
 
 /* ── Conversation preview with cost ────────────────────────────────── */

@@ -216,6 +216,8 @@ function groupByPeer(conversations: unknown[]): PeerGroup[] {
 
 function PeerGroupSection({
   group,
+  expanded,
+  onToggle,
   activeConvId,
   chatActiveChannels,
   onSelectConv,
@@ -226,6 +228,8 @@ function PeerGroupSection({
   menuBtnRefs,
 }: {
   group: PeerGroup;
+  expanded: boolean;
+  onToggle: () => void;
   activeConvId: string | null;
   chatActiveChannels: Map<string, { reservedUsdc: string; peerName: string }>;
   onSelectConv: (id: string) => void;
@@ -235,14 +239,23 @@ function PeerGroupSection({
   setMenuOpenId: (id: string | null) => void;
   menuBtnRefs: React.RefObject<Map<string, HTMLButtonElement | null>>;
 }) {
-  const [expanded, setExpanded] = useState(true);
+  const headerRef = useRef<HTMLButtonElement>(null);
+  const convsRef = useRef<HTMLDivElement>(null);
   const letter = (group.displayName || '?').charAt(0).toUpperCase();
 
+  // Scroll the header into view and animate convs open when expanded
+  useEffect(() => {
+    if (expanded && headerRef.current) {
+      headerRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [expanded]);
+
   return (
-    <div className={styles.peerGroup}>
+    <div className={`${styles.peerGroup}${expanded ? ` ${styles.peerGroupExpanded}` : ''}`}>
       <button
+        ref={headerRef}
         className={styles.peerGroupHeader}
-        onClick={() => setExpanded(!expanded)}
+        onClick={onToggle}
       >
         <HugeiconsIcon
           icon={ArrowDown01Icon}
@@ -268,9 +281,12 @@ function PeerGroupSection({
         )}
       </button>
 
-      {expanded && (
-        <div className={styles.peerGroupConvs}>
-          {group.conversations.map((conv) => {
+      <div
+        ref={convsRef}
+        className={`${styles.peerGroupConvs}${expanded ? ` ${styles.peerGroupConvsOpen}` : ''}`}
+      >
+        <div>
+        {group.conversations.map((conv) => {
             const id = String(conv.id ?? '');
             const isActive = id === activeConvId;
             const title = String(conv.title || '');
@@ -340,7 +356,7 @@ function PeerGroupSection({
             );
           })}
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -352,9 +368,14 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
   const actions = useActions();
   const conversations = Array.isArray(chatConversations) ? chatConversations : EMPTY_CONVERSATIONS;
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+  const [expandedPeerId, setExpandedPeerId] = useState<string | null>(null);
   const menuBtnRefs = useRef<Map<string, HTMLButtonElement | null>>(new Map());
 
   const peerGroups = useMemo(() => groupByPeer(conversations), [conversations]);
+
+  const handleTogglePeer = useCallback((peerId: string) => {
+    setExpandedPeerId((prev) => (prev === peerId ? null : peerId));
+  }, []);
 
   const handleSelectConv = useCallback((id: string) => {
     void actions.openConversation(id);
@@ -377,20 +398,25 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
         {conversations.length === 0 ? (
           <div className={styles.chatEmpty}>No conversations yet</div>
         ) : (
-          peerGroups.map((group) => (
-            <PeerGroupSection
-              key={group.peerId || '__other'}
-              group={group}
-              activeConvId={chatActiveConversation}
-              chatActiveChannels={chatActiveChannels}
-              onSelectConv={handleSelectConv}
-              onNewChat={handleNewChat}
-              onCloseChannel={handleCloseChannel}
-              menuOpenId={menuOpenId}
-              setMenuOpenId={setMenuOpenId}
-              menuBtnRefs={menuBtnRefs}
-            />
-          ))
+          peerGroups.map((group) => {
+            const key = group.peerId || '__other';
+            return (
+              <PeerGroupSection
+                key={key}
+                group={group}
+                expanded={expandedPeerId === key}
+                onToggle={() => handleTogglePeer(key)}
+                activeConvId={chatActiveConversation}
+                chatActiveChannels={chatActiveChannels}
+                onSelectConv={handleSelectConv}
+                onNewChat={handleNewChat}
+                onCloseChannel={handleCloseChannel}
+                menuOpenId={menuOpenId}
+                setMenuOpenId={setMenuOpenId}
+                menuBtnRefs={menuBtnRefs}
+              />
+            );
+          })
         )}
       </div>
     </aside>
