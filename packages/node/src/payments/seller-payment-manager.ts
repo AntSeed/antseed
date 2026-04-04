@@ -401,7 +401,7 @@ export class SellerPaymentManager {
       tokensDelivered: onChain.settled.toString(),
       requestCount: 0,
       reservedAt: now,
-      settledAt: onChain.settledAt > 0n ? Number(onChain.settledAt) : null,
+      settledAt: null,
       settledAmount: onChain.settled > 0n ? onChain.settled.toString() : null,
       status: 'active',
       latestBuyerSig: payload.spendingAuthSig,
