@@ -1,4 +1,4 @@
-import { memo, useState, useRef, useEffect, useCallback } from 'react';
+import { memo, useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { HierarchySquare03Icon } from '@hugeicons/core-free-icons';
 import { UserGroupIcon } from '@hugeicons/core-free-icons';
@@ -9,6 +9,8 @@ import { MoreVerticalIcon } from '@hugeicons/core-free-icons';
 import { Add01Icon } from '@hugeicons/core-free-icons';
 import { ComputerTerminal01Icon } from '@hugeicons/core-free-icons';
 import { DiscoverCircleIcon } from '@hugeicons/core-free-icons';
+import { ArrowDown01Icon } from '@hugeicons/core-free-icons';
+import { getPeerGradient, getPeerDisplayName, formatCompactTokens } from '../../core/peer-utils';
 import type { ViewName } from '../types';
 import { useUiSnapshot } from '../hooks/useUiSnapshot';
 import { useActions } from '../hooks/useActions';
@@ -156,29 +158,144 @@ function formatUsdc(value: number): string {
   return value < 0.01 && value > 0 ? '<0.01' : value.toFixed(2);
 }
 
-function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void }) {
-  const { chatConversations, chatActiveConversation, chatActiveChannels } = useUiSnapshot();
-  const actions = useActions();
-  const conversations = Array.isArray(chatConversations) ? chatConversations : [];
-  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
-  const menuBtnRefs = useRef<Map<string, HTMLButtonElement | null>>(new Map());
+/* ── Peer group type ───────────────────────────────────────────────── */
+
+type ConvRecord = Record<string, unknown>;
+
+type PeerGroup = {
+  peerId: string;
+  peerLabel: string;
+  displayName: string;
+  gradient: string;
+  conversations: ConvRecord[];
+};
+
+function groupByPeer(conversations: unknown[]): PeerGroup[] {
+  const groups = new Map<string, PeerGroup>();
+  const ungrouped: ConvRecord[] = [];
+
+  for (const item of conversations) {
+    const conv = item as ConvRecord;
+    const peerId = String(conv.peerId || '').trim();
+    const peerLabel = String(conv.peerLabel || '').trim();
+
+    if (!peerId) {
+      ungrouped.push(conv);
+      continue;
+    }
+
+    let group = groups.get(peerId);
+    if (!group) {
+      const displayName = getPeerDisplayName(peerLabel) || peerId.slice(0, 12) + '...';
+      group = {
+        peerId,
+        peerLabel,
+        displayName,
+        gradient: getPeerGradient(peerId),
+        conversations: [],
+      };
+      groups.set(peerId, group);
+    }
+    group.conversations.push(conv);
+  }
+
+  const result = Array.from(groups.values());
+  if (ungrouped.length > 0) {
+    result.push({
+      peerId: '',
+      peerLabel: '',
+      displayName: 'Other',
+      gradient: 'linear-gradient(180deg, #9a9a96, #6b6b68)',
+      conversations: ungrouped,
+    });
+  }
+  return result;
+}
+
+/* ── Peer group component ──────────────────────────────────────────── */
+
+function PeerGroupSection({
+  group,
+  expanded,
+  onToggle,
+  activeConvId,
+  chatActiveChannels,
+  onSelectConv,
+  onNewChat,
+  onCloseChannel,
+  menuOpenId,
+  setMenuOpenId,
+  menuBtnRefs,
+}: {
+  group: PeerGroup;
+  expanded: boolean;
+  onToggle: () => void;
+  activeConvId: string | null;
+  chatActiveChannels: Map<string, { reservedUsdc: string; peerName: string }>;
+  onSelectConv: (id: string) => void;
+  onNewChat: (peerId: string) => void;
+  onCloseChannel: () => void;
+  menuOpenId: string | null;
+  setMenuOpenId: (id: string | null) => void;
+  menuBtnRefs: React.RefObject<Map<string, HTMLButtonElement | null>>;
+}) {
+  const headerRef = useRef<HTMLButtonElement>(null);
+  const convsRef = useRef<HTMLDivElement>(null);
+  const letter = (group.displayName || '?').charAt(0).toUpperCase();
+
+  // Scroll the header into view and animate convs open when expanded
+  useEffect(() => {
+    if (expanded && headerRef.current) {
+      headerRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [expanded]);
 
   return (
-    <aside className={styles.chatSidebar}>
-      <div className={styles.chatSidebarLabel}>Recents</div>
-      <div className={styles.chatConversationList}>
-        {conversations.length === 0 ? (
-          <div className={styles.chatEmpty}>No conversations yet</div>
-        ) : (
-          conversations.map((item: unknown) => {
-            const conv = item as Record<string, unknown>;
+    <div className={`${styles.peerGroup}${expanded ? ` ${styles.peerGroupExpanded}` : ''}`}>
+      <button
+        ref={headerRef}
+        className={styles.peerGroupHeader}
+        onClick={onToggle}
+      >
+        <HugeiconsIcon
+          icon={ArrowDown01Icon}
+          size={12}
+          strokeWidth={1.5}
+          className={`${styles.peerGroupChevron}${expanded ? ` ${styles.peerGroupChevronOpen}` : ''}`}
+        />
+        <span className={styles.peerGroupAvatar} style={{ background: group.gradient }}>
+          {letter}
+        </span>
+        <span className={styles.peerGroupName}>{group.displayName}</span>
+        {group.peerId && (
+          <button
+            className={styles.peerGroupAdd}
+            onClick={(e) => {
+              e.stopPropagation();
+              onNewChat(group.peerId);
+            }}
+            aria-label={`New chat with ${group.displayName}`}
+          >
+            <HugeiconsIcon icon={Add01Icon} size={12} strokeWidth={1.5} />
+          </button>
+        )}
+      </button>
+
+      <div
+        ref={convsRef}
+        className={`${styles.peerGroupConvs}${expanded ? ` ${styles.peerGroupConvsOpen}` : ''}`}
+      >
+        <div>
+        {group.conversations.map((conv) => {
             const id = String(conv.id ?? '');
-            const isActive = id === chatActiveConversation;
-            const updatedLabel = Number(conv.updatedAt) > 0 ? formatChatTime(conv.updatedAt) : 'n/a';
+            const isActive = id === activeConvId;
             const title = String(conv.title || '');
-            const peerLabel = String(conv.peerLabel || '').trim();
             const serviceLabel = shortServiceName(conv.service);
-            const metaLabel = [peerLabel, serviceLabel].filter(Boolean).join(' • ');
+            const totalCost = Number(conv.totalEstimatedCostUsd) || 0;
+            const totalTokens = Number(conv.totalTokens) || 0;
+            const costLabel = totalTokens > 0
+              ? `$${formatUsdc(totalCost)}/${formatCompactTokens(totalTokens)}`
+              : '';
             const convPeerId = String(conv.peerId || '').trim();
             const session = convPeerId ? chatActiveChannels.get(convPeerId) : undefined;
             const usedUsdc = Number(conv.totalEstimatedCostUsd) || 0;
@@ -187,18 +304,14 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
               <div
                 key={id}
                 className={`${styles.chatConvItem}${isActive ? ` ${styles.active}` : ''}`}
-                onClick={() => {
-                  void actions.openConversation(id);
-                  onSelectView('chat');
-                }}
+                onClick={() => onSelectConv(id)}
               >
                 <div className={styles.chatConvTop}>
                   <div className={styles.chatConvPeer}>{title}</div>
                   <div className={styles.chatConvRight}>
-                    <span className={styles.chatConvTime}>{updatedLabel}</span>
                     <button
                       className={styles.chatConvMenuBtn}
-                      ref={(el) => { menuBtnRefs.current.set(id, el); }}
+                      ref={(el) => { if (el) menuBtnRefs.current?.set(id, el); else menuBtnRefs.current?.delete(id); }}
                       onClick={(e) => {
                         e.stopPropagation();
                         setMenuOpenId(menuOpenId === id ? null : id);
@@ -208,7 +321,13 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
                     </button>
                   </div>
                 </div>
-                {metaLabel ? <div className={styles.chatConvPreview}>{metaLabel}</div> : null}
+                {(serviceLabel || costLabel) && (
+                  <div className={styles.chatConvPreview}>
+                    {serviceLabel}
+                    {serviceLabel && costLabel && <span className={styles.chatConvPreviewSep} />}
+                    {costLabel && <span className={styles.chatConvCost}>{costLabel}</span>}
+                  </div>
+                )}
                 {session && (
                   <div className={styles.chatConvSession}>
                     <span className={styles.chatConvSessionInfo}>
@@ -218,7 +337,7 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
                       className={styles.chatConvCloseBtn}
                       onClick={(e) => {
                         e.stopPropagation();
-                        actions.requestChannelClose();
+                        onCloseChannel();
                       }}
                     >
                       Close
@@ -229,11 +348,85 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
                   <ConvContextMenu
                     convId={id}
                     convTitle={title}
-                    anchorRef={{ current: menuBtnRefs.current.get(id) ?? null }}
+                    anchorRef={{ current: menuBtnRefs.current?.get(id) ?? null }}
                     onClose={() => setMenuOpenId(null)}
                   />
                 )}
               </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const EMPTY_CONVERSATIONS: unknown[] = [];
+
+function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void }) {
+  const { chatConversations, chatActiveConversation, chatActiveChannels } = useUiSnapshot();
+  const actions = useActions();
+  const conversations = Array.isArray(chatConversations) ? chatConversations : EMPTY_CONVERSATIONS;
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+  const [expandedPeerId, setExpandedPeerId] = useState<string | null>(null);
+  const menuBtnRefs = useRef<Map<string, HTMLButtonElement | null>>(new Map());
+
+  const peerGroups = useMemo(() => groupByPeer(conversations), [conversations]);
+
+  // Auto-expand the peer that owns the active conversation
+  useEffect(() => {
+    if (!chatActiveConversation) return;
+    const activeConv = conversations.find(
+      (c) => String((c as ConvRecord).id ?? '') === chatActiveConversation,
+    ) as ConvRecord | undefined;
+    const peerId = activeConv ? String(activeConv.peerId || '').trim() : '';
+    if (peerId) {
+      setExpandedPeerId(peerId);
+    }
+  }, [chatActiveConversation, conversations]);
+
+  const handleTogglePeer = useCallback((peerId: string) => {
+    setExpandedPeerId((prev) => (prev === peerId ? null : peerId));
+  }, []);
+
+  const handleSelectConv = useCallback((id: string) => {
+    void actions.openConversation(id);
+    onSelectView('chat');
+  }, [actions, onSelectView]);
+
+  const handleNewChat = useCallback((_peerId: string) => {
+    actions.startNewChat();
+    onSelectView('chat');
+  }, [actions, onSelectView]);
+
+  const handleCloseChannel = useCallback(() => {
+    actions.requestChannelClose();
+  }, [actions]);
+
+  return (
+    <aside className={styles.chatSidebar}>
+      <div className={styles.chatSidebarLabel}>Peers</div>
+      <div className={styles.chatConversationList}>
+        {conversations.length === 0 ? (
+          <div className={styles.chatEmpty}>No conversations yet</div>
+        ) : (
+          peerGroups.map((group) => {
+            const key = group.peerId || '__other';
+            return (
+              <PeerGroupSection
+                key={key}
+                group={group}
+                expanded={expandedPeerId === key}
+                onToggle={() => handleTogglePeer(key)}
+                activeConvId={chatActiveConversation}
+                chatActiveChannels={chatActiveChannels}
+                onSelectConv={handleSelectConv}
+                onNewChat={handleNewChat}
+                onCloseChannel={handleCloseChannel}
+                menuOpenId={menuOpenId}
+                setMenuOpenId={setMenuOpenId}
+                menuBtnRefs={menuBtnRefs}
+              />
             );
           })
         )}

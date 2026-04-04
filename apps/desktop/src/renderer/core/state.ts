@@ -58,6 +58,10 @@ export type ChatServiceOptionEntry = {
   value: string;
   peerId: string;
   peerLabel: string;
+  inputUsdPerMillion: number | null;
+  outputUsdPerMillion: number | null;
+  categories: string[];
+  description: string;
 };
 
 export type ActiveChannelInfo = {

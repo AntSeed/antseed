@@ -85,7 +85,14 @@ export function initChatModule({
 
   type NormalizedChatServiceEntry = Required<
     Pick<ChatServiceCatalogEntry, 'id' | 'label' | 'provider' | 'protocol' | 'count'>
-  > & { peerId: string; peerLabel: string };
+  > & {
+    peerId: string;
+    peerLabel: string;
+    inputUsdPerMillion: number | null;
+    outputUsdPerMillion: number | null;
+    categories: string[];
+    description: string;
+  };
   type ChatServiceSelection = { id: string; provider: string | null };
   type ChatServiceOption = ChatServiceSelection & { label: string; value: string };
 
@@ -238,7 +245,17 @@ export function initChatModule({
     const peerId = String(entry.peerId ?? '').trim();
     const peerLabel = String(entry.peerLabel ?? '').trim() || (peerId ? peerId.slice(0, 12) + '...' : '');
     const label = String(entry.label ?? '').trim() || `${id} · ${provider}`;
-    return { id, label, provider, protocol, count, peerId, peerLabel };
+    const inputUsd = Number(entry.inputUsdPerMillion);
+    const outputUsd = Number(entry.outputUsdPerMillion);
+    const categories = Array.isArray(entry.categories) ? entry.categories.filter((c): c is string => typeof c === 'string') : [];
+    const description = typeof entry.description === 'string' ? entry.description.trim() : '';
+    return {
+      id, label, provider, protocol, count, peerId, peerLabel,
+      inputUsdPerMillion: Number.isFinite(inputUsd) && inputUsd >= 0 ? inputUsd : null,
+      outputUsdPerMillion: Number.isFinite(outputUsd) && outputUsd >= 0 ? outputUsd : null,
+      categories,
+      description,
+    };
   }
 
   function encodeChatServiceSelection(serviceId: string, provider: string | null, peerId?: string): string {
@@ -285,7 +302,7 @@ export function initChatModule({
     return options
       .map(
         (e) =>
-          `${e.id}|${e.label}|${e.provider}|${e.protocol}|${String(e.count)}`,
+          `${e.id}|${e.label}|${e.provider}|${e.protocol}|${String(e.count)}|${String(e.inputUsdPerMillion)}|${String(e.outputUsdPerMillion)}|${e.categories.join(',')}`,
       )
       .join('\n');
   }
@@ -905,6 +922,10 @@ export function initChatModule({
       value: encodeChatServiceSelection(entry.id, entry.provider, entry.peerId),
       peerId: entry.peerId,
       peerLabel: entry.peerLabel,
+      inputUsdPerMillion: entry.inputUsdPerMillion,
+      outputUsdPerMillion: entry.outputUsdPerMillion,
+      categories: entry.categories,
+      description: entry.description,
     }));
 
     uiState.chatSelectedServiceValue = preferred;
@@ -1745,11 +1766,24 @@ export function initChatModule({
         } else if (data.blockType === 'tool_use' && data.input) {
           updateStreamingMessage(data.conversationId, (message) => {
             const blocks = message.content as ContentBlock[];
-            const toolBlock = blocks.find(
+            let toolBlock = blocks.find(
               (block) => block.type === 'tool_use' && block.id === data.toolId,
             );
+            // Fallback: the block may have been created with a placeholder ID
+            // (e.g. "tool-0") when the real ID wasn't available at toolcall_start.
+            if (!toolBlock && data.toolId) {
+              const fallbackId = getStreamingBlockId('tool', data.index);
+              toolBlock = blocks.find(
+                (block) => block.type === 'tool_use' && block.id === fallbackId,
+              );
+              if (toolBlock) {
+                toolBlock.id = data.toolId;
+                toolBlock.renderKey = createStreamingRenderKey('tool', data.toolId);
+              }
+            }
             if (toolBlock) {
               toolBlock.input = data.input;
+              if (data.toolName) toolBlock.name = String(data.toolName);
             }
           });
         }
@@ -1761,9 +1795,23 @@ export function initChatModule({
         if (!hasConversationStreamingMessage(data.conversationId)) return;
         updateStreamingMessage(data.conversationId, (message) => {
           const blocks = message.content as ContentBlock[];
-          const toolBlock = blocks.find(
+          let toolBlock = blocks.find(
             (block) => block.type === 'tool_use' && block.id === data.toolUseId,
           );
+          // Fallback: match by tool name against placeholder blocks
+          if (!toolBlock && data.toolUseId) {
+            toolBlock = blocks.find(
+              (block) =>
+                block.type === 'tool_use' &&
+                typeof block.id === 'string' &&
+                /^tool-\d+$/.test(block.id) &&
+                (block.name === data.name || block.name === 'tool'),
+            );
+            if (toolBlock) {
+              toolBlock.id = data.toolUseId;
+              toolBlock.renderKey = createStreamingRenderKey('tool', data.toolUseId);
+            }
+          }
           if (toolBlock) {
             toolBlock.name = String(data.name || toolBlock.name || 'tool');
             toolBlock.input = data.input;
@@ -1778,9 +1826,22 @@ export function initChatModule({
         if (!hasConversationStreamingMessage(data.conversationId)) return;
         updateStreamingMessage(data.conversationId, (message) => {
           const blocks = message.content as ContentBlock[];
-          const toolBlock = blocks.find(
+          let toolBlock = blocks.find(
             (block) => block.type === 'tool_use' && block.id === data.toolUseId,
           );
+          if (!toolBlock && data.toolUseId) {
+            toolBlock = blocks.find(
+              (block) =>
+                block.type === 'tool_use' &&
+                typeof block.id === 'string' &&
+                /^tool-\d+$/.test(block.id) &&
+                (block.name === data.name || block.name === 'tool'),
+            );
+            if (toolBlock) {
+              toolBlock.id = data.toolUseId;
+              toolBlock.renderKey = createStreamingRenderKey('tool', data.toolUseId);
+            }
+          }
           if (toolBlock) {
             toolBlock.name = String(data.name || toolBlock.name || 'tool');
             toolBlock.input = data.input;
@@ -1801,9 +1862,21 @@ export function initChatModule({
         if (!hasConversationStreamingMessage(data.conversationId)) return;
         updateStreamingMessage(data.conversationId, (message) => {
           const blocks = message.content as ContentBlock[];
-          const toolBlock = blocks.find(
+          let toolBlock = blocks.find(
             (block) => block.type === 'tool_use' && block.id === data.toolUseId,
           );
+          if (!toolBlock && data.toolUseId) {
+            toolBlock = blocks.find(
+              (block) =>
+                block.type === 'tool_use' &&
+                typeof block.id === 'string' &&
+                /^tool-\d+$/.test(block.id),
+            );
+            if (toolBlock) {
+              toolBlock.id = data.toolUseId;
+              toolBlock.renderKey = createStreamingRenderKey('tool', data.toolUseId);
+            }
+          }
           if (toolBlock) {
             toolBlock.status = data.isError ? 'error' : 'success';
             toolBlock.content = data.output;
