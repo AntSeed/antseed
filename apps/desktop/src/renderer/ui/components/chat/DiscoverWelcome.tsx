@@ -7,6 +7,15 @@ import styles from './DiscoverWelcome.module.scss';
 
 /* ── Filter categories ───────────────────────────────────────────────── */
 
+/* ── Known service categories ────────────────────────────────────────── */
+
+const SERVICE_CATEGORIES = [
+  'Code', 'Text', 'Image', 'Reasoning', 'Agents',
+  'Research', 'Writing', 'Fast', 'Private', 'Free',
+] as const;
+
+const SERVICE_CATEGORIES_LOWER = new Set(SERVICE_CATEGORIES.map((c) => c.toLowerCase()));
+
 /* ── Card data type ──────────────────────────────────────────────────── */
 
 type CardItem = {
@@ -81,30 +90,35 @@ function generateDescription(serviceId: string, categories: string[], provider: 
 /* ── Build cards from network service options ──────────────────────────── */
 
 function buildCards(options: ChatServiceOptionEntry[]): CardItem[] {
-  return options.map((opt) => ({
-    name: opt.label || opt.id,
-    peerLabel: opt.peerLabel || '',
-    value: opt.value,
-    provider: opt.provider,
-    providerCount: opt.count,
-    tags: opt.categories.map(capitalizeCategory),
-    gradient: getGradient(opt.peerLabel || opt.provider || opt.id),
-    description: opt.description || generateDescription(opt.id, opt.categories, opt.peerLabel || opt.provider),
-    inputUsdPerMillion: opt.inputUsdPerMillion,
-    outputUsdPerMillion: opt.outputUsdPerMillion,
-  }));
+  return options.map((opt) => {
+    const tags = opt.categories
+      .map(capitalizeCategory)
+      .filter((c) => SERVICE_CATEGORIES_LOWER.has(c.toLowerCase()));
+    return {
+      name: opt.label || opt.id,
+      peerLabel: opt.peerLabel || '',
+      value: opt.value,
+      provider: opt.provider,
+      providerCount: opt.count,
+      tags,
+      gradient: getGradient(opt.peerLabel || opt.provider || opt.id),
+      description: opt.description || generateDescription(opt.id, opt.categories, opt.peerLabel || opt.provider),
+      inputUsdPerMillion: opt.inputUsdPerMillion,
+      outputUsdPerMillion: opt.outputUsdPerMillion,
+    };
+  });
 }
 
-/* ── Derive filters from data ────────────────────────────────────────── */
+/* ── Filter pills: only show categories present in the data ──────────── */
 
-function deriveFilters(cards: CardItem[]): string[] {
-  const seen = new Set<string>();
+function activeFilters(cards: CardItem[]): string[] {
+  const present = new Set<string>();
   for (const card of cards) {
     for (const tag of card.tags) {
-      seen.add(tag);
+      present.add(tag.toLowerCase());
     }
   }
-  return Array.from(seen).sort();
+  return SERVICE_CATEGORIES.filter((c) => present.has(c.toLowerCase()));
 }
 
 function matchesFilter(item: CardItem, filter: string): boolean {
@@ -163,7 +177,7 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
     [serviceOptions],
   );
 
-  const filters = useMemo(() => deriveFilters(cards), [cards]);
+  const filters = useMemo(() => activeFilters(cards), [cards]);
 
   const filtered = useMemo(
     () => cards.filter((c) => matchesFilter(c, activeFilter)),
