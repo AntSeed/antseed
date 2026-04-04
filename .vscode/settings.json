@@ -2,5 +2,8 @@
   "solidity.remappings": [
     "@openzeppelin/=node_modules/@openzeppelin/",
     "forge-std/=packages/contracts/lib/forge-std/src/"
+  ],
+  "cSpell.words": [
+    "Antseed"
   ]
 }

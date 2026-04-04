@@ -311,6 +311,47 @@ export class MeteringStorage {
     };
   }
 
+  /** Get aggregated metering stats for a specific seller peer. */
+  getEventStatsByPeer(sellerPeerId: string): {
+    totalRequests: number;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    totalCostCents: number;
+    firstEventAt: number | null;
+    lastEventAt: number | null;
+  } {
+    const row = this.db.prepare(`
+      SELECT
+        COUNT(*) as total_requests,
+        COALESCE(SUM(input_tokens), 0) as input_tokens,
+        COALESCE(SUM(output_tokens), 0) as output_tokens,
+        COALESCE(SUM(total_tokens), 0) as total_tokens,
+        MIN(timestamp) as first_event_at,
+        MAX(timestamp) as last_event_at,
+        (SELECT COALESCE(SUM(total_cost_cents), 0) FROM sessions WHERE seller_peer_id = ?) as total_cost_cents
+      FROM metering_events
+      WHERE seller_peer_id = ?
+    `).get(sellerPeerId, sellerPeerId) as {
+      total_requests: number;
+      input_tokens: number;
+      output_tokens: number;
+      total_tokens: number;
+      first_event_at: number | null;
+      last_event_at: number | null;
+      total_cost_cents: number;
+    };
+    return {
+      totalRequests: row.total_requests,
+      inputTokens: row.input_tokens,
+      outputTokens: row.output_tokens,
+      totalTokens: row.total_tokens,
+      totalCostCents: row.total_cost_cents,
+      firstEventAt: row.first_event_at,
+      lastEventAt: row.last_event_at,
+    };
+  }
+
   // --- Maintenance ---
 
   /**

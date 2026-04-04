@@ -127,8 +127,8 @@ describe('BuyerPaymentManager', () => {
     expect(sent.metadata).toBeTypeOf('string');
     expect(sent.metadata).not.toBe('');
     expect((sent.metadata as string).startsWith('0x')).toBe(true);
-    // Should be ABI-encoded (uint256,uint256,uint256,uint256) = 4 * 32 bytes + 0x prefix
-    expect((sent.metadata as string).length).toBe(2 + 4 * 64);
+    // Should be ABI-encoded (version,uint256,uint256,uint256,uint256) = 5 * 32 bytes + 0x prefix
+    expect((sent.metadata as string).length).toBe(2 + 5 * 64);
   });
 
   it('authorizeSpending rejects if minBudgetPerRequest exceeds maxPerRequestUsdc', async () => {
@@ -371,6 +371,38 @@ describe('BuyerPaymentManager', () => {
     expect(sent.cumulativeAmount).toBe('100000');
   });
 
+  it('handleNeedAuth tops up reserve when the ceiling blocks the required amount', async () => {
+    store.close();
+    store = new ChannelStore(tempDir);
+    manager = new BuyerPaymentManager(
+      identity,
+      makeConfig(tempDir, { maxReserveAmountUsdc: 100_000n, maxPerRequestUsdc: 100_000n }),
+      store,
+    );
+    manager.setSigner(Wallet.createRandom());
+
+    const sellerPeerId = fakePeerId('seller-needauth-topup');
+    const channelId = await manager.authorizeSpending(sellerPeerId, mux, 100_000n, TEST_PRICING);
+
+    // Increase verified cost so the overdraft model can sign above the current ceiling
+    // once the reserve is topped up.
+    manager.recordResponseBytes(sellerPeerId, SAMPLE_INPUT, SAMPLE_OUTPUT);
+    mux.sentSpendingAuths.length = 0;
+
+    await manager.handleNeedAuth(sellerPeerId, {
+      channelId,
+      requiredCumulativeAmount: '100001',
+      currentAcceptedCumulative: '100000',
+      deposit: '1000000',
+    }, mux);
+
+    expect(mux.sentSpendingAuths.length).toBe(2);
+    const reserveTopUp = mux.sentSpendingAuths[0] as Record<string, unknown>;
+    const updatedBudget = mux.sentSpendingAuths[1] as Record<string, unknown>;
+    expect(reserveTopUp.reserveMaxAmount).toBe('200000');
+    expect(updatedBudget.cumulativeAmount).toBe('100001');
+  });
+
   it('handleNeedAuth allows more after verified cost increases', async () => {
     const sellerPeerId = fakePeerId('seller-needauth-v');
     const channelId = await manager.authorizeSpending(sellerPeerId, mux, 10_000n, TEST_PRICING);
@@ -541,5 +573,59 @@ describe('BuyerPaymentManager', () => {
     const secondId = await manager.authorizeSpending(sellerPeerId, mux2, 10_000n, TEST_PRICING);
     expect(secondId).toMatch(/^0x[0-9a-f]{64}$/);
     expect(secondId).not.toBe(channelId);
+  });
+
+  // ── recordAndPersistTokens ────────────────────────────────────
+
+  it('recordAndPersistTokens accumulates tokens and persists to channel store', async () => {
+    const sellerPeerId = fakePeerId('seller-record-tok');
+    await manager.authorizeSpending(sellerPeerId, mux, 50_000n, TEST_PRICING);
+
+    manager.recordAndPersistTokens(sellerPeerId, 1000, 200);
+    manager.recordAndPersistTokens(sellerPeerId, 500, 150);
+
+    // In-memory totals
+    const totals = manager.getResponseTokenTotals(sellerPeerId);
+    expect(totals.input).toBe(1500);
+    expect(totals.output).toBe(350);
+    expect(totals.requests).toBe(2);
+
+    // Persisted in channel store
+    const channel = store.getActiveChannelByPeer(sellerPeerId, 'buyer');
+    expect(channel).not.toBeNull();
+    expect(channel!.tokensDelivered).toBe('1500');
+    expect(channel!.previousConsumption).toBe('350');
+    expect(channel!.requestCount).toBe(2);
+  });
+
+  it('recordAndPersistTokens no-ops when no active session', () => {
+    const sellerPeerId = fakePeerId('seller-no-session');
+    manager.recordAndPersistTokens(sellerPeerId, 1000, 200);
+    expect(manager.getResponseTokenTotals(sellerPeerId)).toBeNull();
+  });
+
+  it('getResponseTokenTotals returns null for unknown peer', () => {
+    const totals = manager.getResponseTokenTotals(fakePeerId('unknown'));
+    expect(totals).toBeNull();
+  });
+
+  it('recordAndPersistTokens survives store reopen', async () => {
+    const sellerPeerId = fakePeerId('seller-persist');
+    await manager.authorizeSpending(sellerPeerId, mux, 50_000n, TEST_PRICING);
+
+    manager.recordAndPersistTokens(sellerPeerId, 2000, 800);
+    store.close();
+
+    // Reopen store and verify persisted data
+    const store2 = new ChannelStore(tempDir);
+    const channel = store2.getActiveChannelByPeer(sellerPeerId, 'buyer');
+    expect(channel).not.toBeNull();
+    expect(channel!.tokensDelivered).toBe('2000');
+    expect(channel!.previousConsumption).toBe('800');
+    expect(channel!.requestCount).toBe(1);
+    store2.close();
+
+    // Re-assign store so afterEach cleanup doesn't double-close
+    store = new ChannelStore(tempDir);
   });
 });

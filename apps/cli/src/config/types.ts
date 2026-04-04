@@ -95,9 +95,6 @@ export interface BuyerCLIConfig {
   minPeerReputation: number;
   /** Local proxy listen port */
   proxyPort: number;
-  /** When true, user must manually approve each paid session in the desktop app.
-   *  When false (default), the buyer runtime auto-signs SpendingAuth. */
-  requireManualApproval?: boolean;
 }
 
 /**
@@ -130,8 +127,6 @@ export interface PaymentsCLIConfig {
     usdcContractAddress: string;
     /** Deployed AntseedIdentity (ERC-8004 registry) contract address */
     identityRegistryAddress?: string;
-    /** Deployed AntseedStats contract address */
-    statsContractAddress?: string;
     /** Deployed AntseedEmissions contract address */
     emissionsContractAddress?: string;
     /** Deployed AntseedSubPool contract address */

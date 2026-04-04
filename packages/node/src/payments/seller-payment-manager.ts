@@ -16,6 +16,7 @@ import {
 import { debugLog, debugWarn } from '../utils/debug.js';
 import { peerIdToAddress } from '../types/peer.js';
 import { ChannelStore, type StoredChannel } from './channel-store.js';
+import { classifyOnChainChannel, matchesChannelParties } from './channel-session-state.js';
 
 export interface SellerPaymentConfig {
   rpcUrl: string;
@@ -148,6 +149,24 @@ export class SellerPaymentManager {
       const channelsDomain = makeChannelsDomain(this._config.chainId, this._config.channelsContractAddress);
 
       if (existingCumulative === undefined) {
+        const hasReserveFields = payload.reserveSalt != null
+          || payload.reserveMaxAmount != null
+          || payload.reserveDeadline != null;
+
+        if (!hasReserveFields) {
+          const recovered = await this._recoverOnChainSession(
+            buyerPeerId,
+            buyerEvmAddr,
+            payload,
+            cumulativeAmount,
+            paymentMux,
+            channelsDomain,
+          );
+          if (recovered) {
+            return 'accepted';
+          }
+        }
+
         // ── First SpendingAuth: verify ReserveAuth and reserve on-chain ──
         // The buyer signs ReserveAuth(channelId, maxAmount, deadline) to bind escrow terms.
         const reserveMaxAmount = payload.reserveMaxAmount ? BigInt(payload.reserveMaxAmount) : cumulativeAmount;
@@ -200,19 +219,23 @@ export class SellerPaymentManager {
           createdAt: now,
           updatedAt: now,
         };
-        this._channelStore.upsertChannel(session);
-
-        // Initialize tracking maps
-        this._acceptedCumulative.set(channelId, cumulativeAmount);
-        this._reserveMax.set(channelId, reserveMaxAmount);
-        this._spent.set(channelId, 0n);
-        this._latestAuth.set(channelId, {
-          spendingAuthSig: payload.spendingAuthSig,
+        // Note: do NOT store the ReserveAuth sig as spendingAuthSig in _latestAuth.
+        // The ReserveAuth uses a different EIP-712 type and will fail
+        // _verifySpendingAuth in close(). A real SpendingAuth will arrive
+        // per-request and update this entry.
+        this._activateSession(
+          session,
+          buyerPeerId,
+          cumulativeAmount,
+          reserveMaxAmount,
+          0n,
+          {
+          spendingAuthSig: '',
           cumulativeAmount,
           metadataHash: payload.metadataHash,
           metadata: payload.metadata,
-        });
-        this._activeBuyers.add(buyerPeerId);
+          },
+        );
 
         // Send AuthAck
         paymentMux.sendAuthAck({
@@ -327,6 +350,100 @@ export class SellerPaymentManager {
       debugWarn(`[SellerPayment] Failed to process SpendingAuth: ${err instanceof Error ? err.message : err}`);
       return 'rejected';
     }
+  }
+
+  private async _recoverOnChainSession(
+    buyerPeerId: string,
+    buyerEvmAddr: string,
+    payload: SpendingAuthPayload,
+    cumulativeAmount: bigint,
+    paymentMux: PaymentMux,
+    channelsDomain: ReturnType<typeof makeChannelsDomain>,
+  ): Promise<boolean> {
+    const channelId = payload.channelId;
+    const onChainState = classifyOnChainChannel(await this._channelsClient.getSession(channelId));
+    const sellerEvmAddr = this._identity.wallet.address;
+
+    if (!onChainState.exists || onChainState.status !== 'active') return false;
+    if (!matchesChannelParties(onChainState.channel, buyerEvmAddr, sellerEvmAddr)) return false;
+    const onChain = onChainState.channel;
+
+    const metadataMsg = {
+      channelId,
+      cumulativeAmount,
+      metadataHash: payload.metadataHash,
+    };
+    const metadataRecovered = verifyTypedData(channelsDomain, SPENDING_AUTH_TYPES, metadataMsg, payload.spendingAuthSig);
+    if (metadataRecovered.toLowerCase() !== buyerEvmAddr.toLowerCase()) {
+      debugWarn(`[SellerPayment] Invalid recovered SpendingAuth during channel recovery: recovered=${metadataRecovered} expected=${buyerEvmAddr}`);
+      return false;
+    }
+
+    if (cumulativeAmount < onChain.settled) {
+      debugWarn(
+        `[SellerPayment] Rejecting recovered SpendingAuth below on-chain settled amount: ` +
+        `cumulative=${cumulativeAmount} settled=${onChain.settled} channel=${channelId.slice(0, 18)}...`,
+      );
+      return false;
+    }
+
+    const now = Date.now();
+    const session: StoredChannel = {
+      sessionId: channelId,
+      peerId: buyerPeerId,
+      role: 'seller',
+      sellerEvmAddr,
+      buyerEvmAddr,
+      nonce: 0,
+      authMax: payload.cumulativeAmount,
+      previousConsumption: onChain.deposit.toString(),
+      deadline: Number(onChain.deadline),
+      previousSessionId: '',
+      tokensDelivered: onChain.settled.toString(),
+      requestCount: 0,
+      reservedAt: now,
+      settledAt: null,
+      settledAmount: onChain.settled > 0n ? onChain.settled.toString() : null,
+      status: 'active',
+      latestBuyerSig: payload.spendingAuthSig,
+      latestSpendingAuthSig: payload.spendingAuthSig,
+      latestMetadata: payload.metadata,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this._activateSession(
+      session,
+      buyerPeerId,
+      cumulativeAmount,
+      onChain.deposit,
+      onChain.settled,
+      {
+        spendingAuthSig: payload.spendingAuthSig,
+        cumulativeAmount,
+        metadataHash: payload.metadataHash,
+        metadata: payload.metadata,
+      },
+    );
+
+    paymentMux.sendAuthAck({ channelId });
+    debugLog(`[SellerPayment] Recovered active on-chain channel ${channelId.slice(0, 18)}... for buyer ${buyerPeerId.slice(0, 12)}...`);
+    return true;
+  }
+
+  private _activateSession(
+    session: StoredChannel,
+    buyerPeerId: string,
+    cumulativeAmount: bigint,
+    reserveMaxAmount: bigint,
+    spent: bigint,
+    latestAuth: LatestAuth,
+  ): void {
+    this._channelStore.upsertChannel(session);
+    this._acceptedCumulative.set(session.sessionId, cumulativeAmount);
+    this._reserveMax.set(session.sessionId, reserveMaxAmount);
+    this._spent.set(session.sessionId, spent);
+    this._latestAuth.set(session.sessionId, latestAuth);
+    this._activeBuyers.add(buyerPeerId);
   }
 
   // ── Per-request validation ──────────────────────────────────
@@ -456,20 +573,29 @@ export class SellerPaymentManager {
       } else {
         // Close with the latest buyer-signed auth (final settlement)
         const latestAuth = this._latestAuth.get(channelId);
-        if (!latestAuth || !latestAuth.spendingAuthSig) {
-          debugWarn(`[SellerPayment] No buyer signature stored for channel ${channelId.slice(0, 18)}... — cannot close`);
-          return;
+        const hasSpendingAuth = latestAuth && latestAuth.spendingAuthSig.length > 0;
+        if (!hasSpendingAuth) {
+          // No real SpendingAuth received (only ReserveAuth from session setup).
+          // Close with finalAmount=0 so the contract skips signature verification.
+          // The seller forfeits unproven spend but the channel is properly closed.
+          debugLog(`[SellerPayment] No SpendingAuth for channel ${channelId.slice(0, 18)}... — closing with finalAmount=0 (forfeiting unproven spend)`);
+        } else {
+          debugLog(`[SellerPayment] Closing channel ${channelId.slice(0, 18)}... cumulative=${latestAuth.cumulativeAmount} (attempt ${retries + 1}/${SellerPaymentManager.MAX_CLOSE_RETRIES})`);
         }
-        debugLog(`[SellerPayment] Closing channel ${channelId.slice(0, 18)}... cumulative=${latestAuth.cumulativeAmount} (attempt ${retries + 1}/${SellerPaymentManager.MAX_CLOSE_RETRIES})`);
+        const closeAmount = hasSpendingAuth ? latestAuth!.cumulativeAmount : 0n;
+        const closeMetadata = hasSpendingAuth
+          ? (latestAuth!.metadata || encodeMetadata(ZERO_METADATA))
+          : encodeMetadata(ZERO_METADATA);
+        const closeSig = hasSpendingAuth ? latestAuth!.spendingAuthSig : '0x';
         try {
           await this._channelsClient.close(
             this._signer,
             channelId,
-            latestAuth.cumulativeAmount,
-            latestAuth.metadata || encodeMetadata(ZERO_METADATA),
-            latestAuth.spendingAuthSig,
+            closeAmount,
+            closeMetadata,
+            closeSig,
           );
-          this._channelStore.updateChannelStatus(channelId, 'settled', latestAuth.cumulativeAmount.toString());
+          this._channelStore.updateChannelStatus(channelId, 'settled', closeAmount.toString());
           this._closeRetryCount.delete(channelId);
         } catch (err) {
           debugWarn(`[SellerPayment] Failed to close channel (attempt ${retries + 1}): ${err instanceof Error ? err.message : err}`);
@@ -584,7 +710,7 @@ export class SellerPaymentManager {
     return this._reserveMax.get(sessionId) ?? 0n;
   }
 
-  private static readonly DEFAULT_SUGGESTED_AMOUNT = 5_000_000n; // $5.00 — matches buyer's default maxReserveAmountUsdc
+  private static readonly DEFAULT_SUGGESTED_AMOUNT = 1_000_000n; // $1.00 — matches contract FIRST_SIGN_CAP and buyer default
 
   /**
    * Build the PaymentRequired payload for a buyer that doesn't have a session.
@@ -613,6 +739,92 @@ export class SellerPaymentManager {
       ...(pricing?.inputUsdPerMillion != null ? { inputUsdPerMillion: pricing.inputUsdPerMillion } : {}),
       ...(pricing?.outputUsdPerMillion != null ? { outputUsdPerMillion: pricing.outputUsdPerMillion } : {}),
     };
+  }
+
+  // ── CloseRequested handling ───────────────────────────────────
+
+  /**
+   * Handle a CloseRequested event for a channel this seller manages.
+   * If the seller has a stored SpendingAuth, immediately close the channel
+   * on-chain to claim earnings before the grace period expires.
+   */
+  async handleCloseRequested(channelId: string): Promise<void> {
+    const latestAuth = this._latestAuth.get(channelId);
+    const accepted = this._acceptedCumulative.get(channelId) ?? 0n;
+
+    const hasSpendingAuth = latestAuth && latestAuth.spendingAuthSig.length > 0;
+
+    if (accepted > 0n && hasSpendingAuth) {
+      debugLog(`[SellerPayment] CloseRequested for channel ${channelId.slice(0, 18)}... — closing with cumulative=${latestAuth.cumulativeAmount}`);
+      try {
+        await this._channelsClient.close(
+          this._signer,
+          channelId,
+          latestAuth.cumulativeAmount,
+          latestAuth.metadata || encodeMetadata(ZERO_METADATA),
+          latestAuth.spendingAuthSig,
+        );
+        this._channelStore.updateChannelStatus(channelId, 'settled', latestAuth.cumulativeAmount.toString());
+        debugLog(`[SellerPayment] Channel ${channelId.slice(0, 18)}... closed successfully after CloseRequested`);
+      } catch (err) {
+        debugWarn(`[SellerPayment] Failed to close channel ${channelId.slice(0, 18)}... after CloseRequested: ${err instanceof Error ? err.message : err}`);
+        // Early return: preserve in-memory maps so the next poll cycle can retry close()
+        return;
+      }
+    } else if (accepted > 0n) {
+      // Had spend but no SpendingAuth (only ReserveAuth) — close with 0 to release deposit
+      debugLog(`[SellerPayment] CloseRequested for channel ${channelId.slice(0, 18)}... — no SpendingAuth, closing with finalAmount=0`);
+      try {
+        await this._channelsClient.close(this._signer, channelId, 0n, encodeMetadata(ZERO_METADATA), '0x');
+        this._channelStore.updateChannelStatus(channelId, 'settled', '0');
+      } catch (err) {
+        debugWarn(`[SellerPayment] Failed to close channel ${channelId.slice(0, 18)}... with finalAmount=0: ${err instanceof Error ? err.message : err}`);
+        return;
+      }
+    } else {
+      // No voucher — seller can't claim anything. Clean up locally;
+      // buyer will withdraw after grace period.
+      debugLog(`[SellerPayment] CloseRequested for channel ${channelId.slice(0, 18)}... — no SpendingAuth, cleaning up locally`);
+      this._channelStore.updateChannelStatus(channelId, 'timeout');
+    }
+
+    // Clean up in-memory state
+    this._acceptedCumulative.delete(channelId);
+    this._spent.delete(channelId);
+    this._latestAuth.delete(channelId);
+    this._closeRetryCount.delete(channelId);
+    this._reserveMax.delete(channelId);
+
+    // Find and remove buyer from active set
+    const channel = this._channelStore.getChannel(channelId);
+    if (channel) {
+      this._activeBuyers.delete(channel.peerId);
+    }
+  }
+
+  /**
+   * Poll for CloseRequested events and handle any that match active channels.
+   * Returns the block number to use as the next fromBlock cursor.
+   */
+  async pollCloseRequested(fromBlock: number): Promise<number> {
+    try {
+      // Fetch block number first and pin as toBlock to avoid race:
+      // if blocks are mined between the two calls, events in the gap would be missed.
+      const latestBlock = await this._channelsClient.getBlockNumber();
+      const events = await this._channelsClient.getCloseRequestedEvents(fromBlock, latestBlock);
+
+      for (const event of events) {
+        // Only handle channels this seller is actively tracking
+        if (this._acceptedCumulative.has(event.channelId) || this._channelStore.getChannel(event.channelId)?.status === 'active') {
+          await this.handleCloseRequested(event.channelId);
+        }
+      }
+
+      return latestBlock + 1;
+    } catch (err) {
+      debugWarn(`[SellerPayment] Failed to poll CloseRequested events: ${err instanceof Error ? err.message : err}`);
+      return fromBlock; // Retry from same block on next poll
+    }
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────

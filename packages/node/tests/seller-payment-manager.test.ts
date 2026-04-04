@@ -176,6 +176,44 @@ describe('SellerPaymentManager', () => {
     expect(manager.getAcceptedCumulative(channelId)).toBe(200_000n);
   });
 
+  it('recovers an active on-chain channel when local seller session is missing', async () => {
+    const channelId = makeChannelId(21);
+    vi.spyOn(manager.channelsClient, 'getSession').mockResolvedValue({
+      buyer: buyerIdentity.wallet.address,
+      seller: sellerIdentity.wallet.address,
+      deposit: 1_000_000n,
+      settled: 50_000n,
+      metadataHash: ZERO_METADATA_HASH,
+      deadline: BigInt(Math.floor(Date.now() / 1000) + 3600),
+      settledAt: 0n,
+      closeRequestedAt: 0n,
+      status: 1,
+    });
+
+    const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
+      cumulativeAmount: 200_000n,
+      reserveMaxAmount: undefined,
+    });
+    delete payload.reserveSalt;
+    delete payload.reserveMaxAmount;
+    delete payload.reserveDeadline;
+
+    const result = await manager.handleSpendingAuth(buyerIdentity.peerId, payload, mux);
+
+    expect(result).toBe('accepted');
+    expect(manager.channelsClient.reserve).not.toHaveBeenCalled();
+    expect(manager.channelsClient.getSession).toHaveBeenCalledWith(channelId);
+    expect(mux.sentAuthAcks.length).toBe(1);
+    expect(manager.getAcceptedCumulative(channelId)).toBe(200_000n);
+    expect(manager.getCumulativeSpend(channelId)).toBe(50_000n);
+
+    const session = store.getChannel(channelId);
+    expect(session).not.toBeNull();
+    expect(session!.status).toBe('active');
+    expect(session!.previousConsumption).toBe('1000000');
+    expect(session!.tokensDelivered).toBe('50000');
+  });
+
   it('test_recordSpend: tracks cumulative spend', async () => {
 
     const channelId = makeChannelId(3);
@@ -294,7 +332,7 @@ describe('SellerPaymentManager', () => {
   it('test_getPaymentRequirements: returns payment requirements payload', () => {
     const req = manager.getPaymentRequirements('test-req-1');
     expect(req).not.toBeNull();
-    expect(req.suggestedAmount).toBe('5000000');
+    expect(req.suggestedAmount).toBe('1000000');
     expect(req.requestId).toBe('test-req-1');
     expect(req.minBudgetPerRequest).toBeDefined();
   });

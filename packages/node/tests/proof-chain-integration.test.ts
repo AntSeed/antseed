@@ -26,7 +26,7 @@ const SAMPLE_OUTPUT = enc.encode('The capital of France is Paris, on the Seine R
 
 function decodeMetadataTokens(metadata: string): { inputTokens: bigint; outputTokens: bigint } {
   const coder = AbiCoder.defaultAbiCoder();
-  const [inputTokens, outputTokens] = coder.decode(['uint256', 'uint256', 'uint256', 'uint256'], metadata);
+  const [, inputTokens, outputTokens] = coder.decode(['uint256', 'uint256', 'uint256', 'uint256', 'uint256'], metadata);
   return { inputTokens, outputTokens };
 }
 
@@ -214,6 +214,11 @@ describe('Cumulative SpendingAuth Integration', () => {
     expect(authMeta.inputTokens).toBeGreaterThan(0n);
     expect(authMeta.outputTokens).toBeGreaterThan(0n);
     expect(auth.channelId).toBe(channelId);
+
+    // recordAndPersistTokens is now the sole writer for token fields
+    const estimatedInputTokens = Math.ceil(SAMPLE_INPUT.length / 4);
+    const estimatedOutputTokens = Math.ceil(SAMPLE_OUTPUT.length / 4);
+    buyerManager.recordAndPersistTokens(sellerIdentity.peerId, estimatedInputTokens, estimatedOutputTokens);
 
     buyerStore.close();
 

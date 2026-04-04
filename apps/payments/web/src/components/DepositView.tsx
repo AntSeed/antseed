@@ -6,10 +6,7 @@ import {
   useWaitForTransactionReceipt,
 } from 'wagmi';
 import { parseUnits } from 'viem';
-import { parseAbi } from 'viem';
 import type { PaymentConfig } from '../types';
-import { getOperatorInfo, signOperatorAuth } from '../api';
-import { CHANNELS_ABI } from '../channels-abi';
 import './DepositView.scss';
 
 interface DepositViewProps {
@@ -20,7 +17,7 @@ interface DepositViewProps {
 
 const DEPOSITS_ABI = [
   {
-    name: 'depositFor',
+    name: 'deposit',
     type: 'function',
     stateMutability: 'nonpayable',
     inputs: [
@@ -101,7 +98,7 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
 
   const expectedChainId = config?.evmChainId;
   const wrongChain = isConnected && chain && expectedChainId && chain.id !== expectedChainId;
-  const depositTarget = buyerAddress ?? address; // Use identity address if available, fallback to wallet
+  const depositTarget = buyerAddress ?? address;
 
   // Step 1: Approve USDC
   const {
@@ -125,18 +122,16 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
     hash: depositTxHash,
   });
 
-  // Step 3: Auto-set operator (best-effort after deposit)
-  const { writeContractAsync: writeOperatorAsync } = useWriteContract();
-
   // When approve confirms, trigger deposit
   useEffect(() => {
     if (approveConfirmed && step === 'approving' && config && depositTarget) {
       setStep('depositing');
       const usdcAmount = parseUnits(amount, 6);
+
       writeDeposit({
         address: config.depositsContractAddress as `0x${string}`,
         abi: DEPOSITS_ABI,
-        functionName: 'depositFor',
+        functionName: 'deposit',
         args: [depositTarget as `0x${string}`, usdcAmount],
       }, {
         onError: (err) => {
@@ -147,44 +142,22 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
     }
   }, [approveConfirmed, step, config, depositTarget, amount, writeDeposit]);
 
-  // When deposit confirms, show success and auto-set operator
+  // When deposit confirms, show success
   useEffect(() => {
     if (depositConfirmed && step === 'depositing') {
       setStep('done');
       onDeposited();
-
-      // Auto-set operator after first deposit (best-effort, non-blocking)
-      (async () => {
-        try {
-          const opInfo = await getOperatorInfo();
-          const zeroAddr = '0x0000000000000000000000000000000000000000';
-          if (opInfo.operator === zeroAddr && address && config?.channelsContractAddress) {
-            const signResult = await signOperatorAuth(address);
-            if (signResult.ok) {
-              await writeOperatorAsync({
-                address: config.channelsContractAddress as `0x${string}`,
-                abi: parseAbi(CHANNELS_ABI),
-                functionName: 'setOperator',
-                args: [signResult.buyer as `0x${string}`, address as `0x${string}`, BigInt(signResult.nonce), signResult.signature as `0x${string}`],
-              });
-            }
-          }
-        } catch {
-          // Non-critical — operator can be set later via Channels tab
-        }
-      })();
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- writeOperatorAsync is stable from useWriteContract
-  }, [depositConfirmed, step, onDeposited, address, config]);
+  }, [depositConfirmed, step, onDeposited]);
 
   const handleDeposit = useCallback(() => {
     if (!address || !amount || parseFloat(amount) <= 0 || !config || !depositTarget) return;
 
     setError(null);
-    setStep('approving');
     resetApprove();
     resetDeposit();
 
+    setStep('approving');
     const usdcAmount = parseUnits(amount, 6);
 
     writeApprove({
@@ -265,7 +238,7 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
               onChange={(e) => setAmount(e.target.value)}
               disabled={step !== 'idle'}
             />
-            <span className="hint">Minimum first deposit: 10 USDC</span>
+            <span className="hint">Minimum first deposit: 1 USDC</span>
           </div>
 
           <button

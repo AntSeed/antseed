@@ -136,6 +136,28 @@
   color: var(--text-muted);
 }
 
+.session-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.session-meta-item {
+  &::before {
+    content: '\00b7';
+    margin-right: 4px;
+    opacity: 0.5;
+  }
+
+  &:first-child::before {
+    display: none;
+  }
+}
+
 /* ===================================================================
    Chat layout
    =================================================================== */

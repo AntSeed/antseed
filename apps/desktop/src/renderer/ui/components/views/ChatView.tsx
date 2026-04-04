@@ -366,24 +366,6 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     <section className={`view view-chat${active ? ' active' : ''}`} role="tabpanel">
       <div className={styles.pageHeader}>
         <div className={styles.pageHeaderLeft}>
-          <button
-            className={styles.workspaceButton}
-            onClick={() => void actions.chooseWorkspace()}
-            title={workspacePath || 'Choose workspace'}
-          >
-            <HugeiconsIcon icon={ComputerTerminal01Icon} size={15} strokeWidth={1.5} />
-            <span className={styles.workspaceLabel}>{workspaceLabel}</span>
-          </button>
-          <button
-            className={`${styles.previewToggle} ${previewActive ? styles.previewToggleActive : ''}`}
-            onClick={() => setPreviewOpen((v) => !v)}
-            title={previewActive ? 'Close preview' : 'Open preview'}
-          >
-            <HugeiconsIcon icon={BrowserIcon} size={15} strokeWidth={1.5} />
-            <span>{previewTargetUrl ? 'Preview' : 'Workspace'}</span>
-          </button>
-        </div>
-        <div className={styles.pageHeaderRight}>
           {snap.chatRoutedPeer ? (
             <button
               className={styles.peerServiceIndicator}
@@ -402,6 +384,43 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
             </span>
           )}
         </div>
+        {snap.chatActiveConversation && (
+          <div className={styles.sessionMeta}>
+            {/* {snap.chatRoutedPeerId && (
+              <span className={styles.sessionMetaItem} title={snap.chatRoutedPeerId}>
+                {snap.chatRoutedPeerId.slice(0, 10)}...
+              </span>
+            )} */}
+            {snap.chatSessionReservedUsdc && (
+              <span className={styles.sessionMetaItem}>
+                reserve ${snap.chatSessionReservedUsdc}
+              </span>
+            )}
+            {snap.chatSessionAccumulatedCostUsd && (
+              <span className={styles.sessionMetaItem}>
+                used ${snap.chatSessionAccumulatedCostUsd}
+              </span>
+            )}
+            {snap.chatSessionTotalTokens && (
+              <span className={styles.sessionMetaItem}>
+                {snap.chatSessionTotalTokens} tok
+              </span>
+            )}
+            {snap.chatLifetimeSpentUsdc && (
+              <span className={styles.sessionMetaItem} title="Total spent across all sessions with this peer">
+                total ${snap.chatLifetimeSpentUsdc}
+              </span>
+            )}
+            {snap.chatLifetimeTotalTokens && (
+              <span className={styles.sessionMetaItem} title="Total tokens across all sessions">
+                total {snap.chatLifetimeTotalTokens} tok
+              </span>
+            )}
+            {snap.chatSessionStarted && (
+              <span className={styles.sessionMetaItem}>{snap.chatSessionStarted}</span>
+            )}
+          </div>
+        )}
       </div>
 
       {showWelcome && (
@@ -457,9 +476,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
               peerName={snap.chatPaymentApprovalPeerName}
               amount={snap.chatPaymentApprovalAmount}
               peerInfo={snap.chatPaymentApprovalPeerInfo}
-              loading={snap.chatPaymentApprovalLoading}
               error={snap.chatPaymentApprovalError}
-              onApprove={() => actions.approvePaymentSession()}
               onAddCredits={() => actions.openPaymentsPortal?.()}
               onCancel={() => actions.rejectPaymentSession()}
             />

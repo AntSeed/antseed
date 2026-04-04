@@ -59,11 +59,13 @@ export interface SpendingAuthMetadata {
   cumulativeRequestCount: bigint;
 }
 
+export const METADATA_VERSION = 1n;
+
 export function encodeMetadata(metadata: SpendingAuthMetadata): string {
   const coder = AbiCoder.defaultAbiCoder();
   return coder.encode(
-    ['uint256', 'uint256', 'uint256', 'uint256'],
-    [metadata.cumulativeInputTokens, metadata.cumulativeOutputTokens, metadata.cumulativeLatencyMs, metadata.cumulativeRequestCount],
+    ['uint256', 'uint256', 'uint256', 'uint256', 'uint256'],
+    [METADATA_VERSION, metadata.cumulativeInputTokens, metadata.cumulativeOutputTokens, metadata.cumulativeLatencyMs, metadata.cumulativeRequestCount],
   );
 }
 
@@ -107,7 +109,16 @@ export function computeChannelId(
 export function makeChannelsDomain(chainId: number, contractAddress: string): TypedDataDomain {
   return {
     name: 'AntseedChannels',
-    version: '7',
+    version: '1',
+    chainId,
+    verifyingContract: contractAddress,
+  };
+}
+
+export function makeDepositsDomain(chainId: number, contractAddress: string): TypedDataDomain {
+  return {
+    name: 'AntseedDeposits',
+    version: '1',
     chainId,
     verifyingContract: contractAddress,
   };

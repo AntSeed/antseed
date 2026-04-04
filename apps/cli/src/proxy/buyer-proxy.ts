@@ -137,6 +137,44 @@ function adaptOpenAICompatibleErrorResponse(
   }
 }
 
+/**
+ * Inject the buyer-known peerId into a 402 payment_required JSON body.
+ * The seller doesn't include its own peerId (and shouldn't — self-reported
+ * identity is untrusted). The buyer proxy knows which peer it connected to,
+ * so it stamps the peerId into the body before forwarding to the client.
+ */
+function inject402PeerId(
+  response: SerializedHttpResponse,
+  peerId: string,
+): SerializedHttpResponse {
+  let parsed: Record<string, unknown> | null = null
+  try {
+    parsed = JSON.parse(Buffer.from(response.body).toString('utf-8')) as Record<string, unknown>
+  } catch {
+    return response
+  }
+  if (!parsed) return response
+
+  // Handle both flat { error: 'payment_required', ... } and
+  // wrapped { error: { type: 'payment_required', ... } } formats.
+  if (parsed.error === 'payment_required') {
+    parsed.peerId = peerId
+  } else if (
+    typeof parsed.error === 'object' &&
+    parsed.error !== null &&
+    (parsed.error as Record<string, unknown>).type === 'payment_required'
+  ) {
+    (parsed.error as Record<string, unknown>).peerId = peerId
+  } else {
+    return response
+  }
+
+  return {
+    ...response,
+    body: Buffer.from(JSON.stringify(parsed)),
+  }
+}
+
 const PROTOCOL_TRANSFORMS: Record<string, ProtocolTransformStrategy> = {
   'anthropic-messages→openai-chat-completions': {
     transformRequest: transformAnthropicMessagesRequestToOpenAIChat,
@@ -511,7 +549,7 @@ export class BuyerProxy {
         .filter((provider) => provider.length > 0)
       const trust = Number.isFinite(peer.trustScore) ? String(peer.trustScore) : 'n/a'
       const rep = Number.isFinite(peer.reputationScore) ? String(peer.reputationScore) : 'n/a'
-      const onChain = Number.isFinite(peer.onChainReputation) ? String(peer.onChainReputation) : 'n/a'
+      const onChain = Number.isFinite(peer.onChainChannelCount) ? String(peer.onChainChannelCount) : 'n/a'
       const input = Number.isFinite(peer.defaultInputUsdPerMillion) ? String(peer.defaultInputUsdPerMillion) : 'n/a'
       const output = Number.isFinite(peer.defaultOutputUsdPerMillion) ? String(peer.defaultOutputUsdPerMillion) : 'n/a'
 
@@ -529,6 +567,16 @@ export class BuyerProxy {
     method: string,
     path: string,
   ): Promise<void> {
+    const origin = req.headers.origin ?? '';
+    const isLocal = origin.startsWith('http://127.0.0.1') || origin.startsWith('http://localhost') || origin === 'file://';
+    if (isLocal) res.setHeader('Access-Control-Allow-Origin', origin);
+    if (method === 'OPTIONS') {
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+      res.writeHead(204)
+      res.end()
+      return
+    }
     if (path === '/_antseed/peers' && method === 'GET') {
       const peers = await this._getPeers()
       const payload = peers.map((p) => ({
@@ -595,6 +643,20 @@ export class BuyerProxy {
       return
     }
 
+    const meteringMatch = path.match(/^\/_antseed\/metering\/(.+)$/)
+    if (meteringMatch && method === 'GET') {
+      const sellerPeerId = decodeURIComponent(meteringMatch[1]!)
+      const stats = this._node.getMeteringStatsByPeer(sellerPeerId)
+      if (stats) {
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify(stats))
+      } else {
+        res.writeHead(503, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ error: 'Metering storage not available' }))
+      }
+      return
+    }
+
     res.writeHead(404, { 'content-type': 'application/json' })
     res.end(JSON.stringify({ ok: false, error: 'Unknown control-plane endpoint' }))
   }
@@ -608,6 +670,19 @@ export class BuyerProxy {
     // Control-plane endpoints — handle before collecting proxy body
     if (path.startsWith('/_antseed/')) {
       return this._handleControlPlane(req, res, method, path)
+    }
+
+    // Only proxy known API paths — reject everything else with 404
+    const normalizedPath = path.split('?')[0]?.trim().toLowerCase() ?? '/'
+    const isKnownApiPath =
+      normalizedPath.startsWith('/v1/messages') ||
+      normalizedPath.startsWith('/v1/chat/completions') ||
+      normalizedPath.startsWith('/v1/responses') ||
+      normalizedPath.startsWith('/v1/models')
+    if (!isKnownApiPath) {
+      res.writeHead(404, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ error: { message: 'Not found', type: 'invalid_request_error' } }))
+      return
     }
 
     // Collect request body
@@ -1052,6 +1127,9 @@ export class BuyerProxy {
           responseForClient = adaptResponse(response)
         }
         responseForClient = adaptOpenAICompatibleErrorResponse(responseForClient, requestProtocol)
+        if (responseForClient.statusCode === 402) {
+          responseForClient = inject402PeerId(responseForClient, selectedPeer.peerId)
+        }
 
         const latencyMs = Date.now() - startTime
         log(`Response: ${responseForClient.statusCode} (${latencyMs}ms, ${responseForClient.body.length} bytes)`)
@@ -1120,6 +1198,9 @@ export class BuyerProxy {
           response = adaptResponse(response)
         }
         response = adaptOpenAICompatibleErrorResponse(response, requestProtocol)
+        if (response.statusCode === 402) {
+          response = inject402PeerId(response, selectedPeer.peerId)
+        }
         const latencyMs = Date.now() - startTime
 
         log(`Response: ${response.statusCode} (${latencyMs}ms, ${response.body.length} bytes)`)

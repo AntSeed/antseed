@@ -9,6 +9,7 @@ import {IAntseedRegistry} from "./interfaces/IAntseedRegistry.sol";
 contract ANTSToken is ERC20, Ownable {
     IAntseedRegistry public registry;
     bool public transfersEnabled;       // Phase 1: false. One-way toggle to true.
+    mapping(address => bool) public transferWhitelist;
 
     error NotEmissionsContract();
     error InvalidAddress();
@@ -16,6 +17,7 @@ contract ANTSToken is ERC20, Ownable {
     error TransfersAlreadyEnabled();
 
     event TransfersEnabled();
+    event WhitelistUpdated(address indexed account, bool allowed);
 
     constructor() ERC20("AntSeed", "ANTS") Ownable(msg.sender) {
         transfersEnabled = false;   // Phase 1: non-transferable
@@ -40,11 +42,20 @@ contract ANTSToken is ERC20, Ownable {
         emit TransfersEnabled();
     }
 
+    /// @notice Allow an address to transfer before transfers are globally enabled.
+    ///         Used for adding liquidity, seeding pools, etc.
+    function setTransferWhitelist(address account, bool allowed) external onlyOwner {
+        if (account == address(0)) revert InvalidAddress();
+        transferWhitelist[account] = allowed;
+        emit WhitelistUpdated(account, allowed);
+    }
+
     /// @notice Override _update to block transfers when not enabled.
-    /// Minting (from == address(0)) is always allowed.
+    /// Minting (from == address(0)), whitelisted senders, and post-enablement transfers are allowed.
     function _update(address from, address to, uint256 value) internal override {
-        // Allow minting (from emissions contract) regardless of transfer state
-        if (from != address(0) && !transfersEnabled) revert TransfersNotEnabled();
+        if (from != address(0) && !transfersEnabled && !transferWhitelist[from]) {
+            revert TransfersNotEnabled();
+        }
         super._update(from, to, value);
     }
 }

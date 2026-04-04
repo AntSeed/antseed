@@ -86,6 +86,8 @@ type AiConversation = {
   title: string;
   service: string;
   provider?: string;
+  peerId?: string;
+  peerLabel?: string;
   messages: AiChatMessage[];
   createdAt: number;
   updatedAt: number;
@@ -97,6 +99,8 @@ type AiConversationSummary = {
   title: string;
   service: string;
   provider?: string;
+  peerId?: string;
+  peerLabel?: string;
   messageCount: number;
   createdAt: number;
   updatedAt: number;
@@ -134,6 +138,10 @@ type NetworkPeerAddress = {
   providers?: string[];
   services?: string[];
   providerServiceApiProtocols?: Record<string, { services: Record<string, string[]> }>;
+  providerPricing?: Record<string, { services: Record<string, { input: number; output: number }> }>;
+  providerServiceCategories?: Record<string, { services: Record<string, string[]> }>;
+  defaultInputUsdPerMillion?: number;
+  defaultOutputUsdPerMillion?: number;
 };
 
 type ChatServiceProtocol = 'anthropic-messages' | 'openai-chat-completions' | 'openai-responses';
@@ -146,6 +154,10 @@ type ChatServiceCatalogEntry = {
   count: number;
   peerId?: string;
   peerLabel?: string;
+  inputUsdPerMillion?: number;
+  outputUsdPerMillion?: number;
+  categories?: string[];
+  description?: string;
 };
 
 const ANTSEED_HOME_DIR = path.join(homedir(), '.antseed');
@@ -321,12 +333,24 @@ function normalizeChatServiceCatalogEntry(raw: unknown): ChatServiceCatalogEntry
   const count = Number(entry.count);
   const normalizedCount = Number.isFinite(count) && count > 0 ? Math.max(1, Math.floor(count)) : 1;
   const label = normalizeServiceValue(entry.label) ?? id;
+  const peerId = typeof entry.peerId === 'string' ? entry.peerId.trim() : undefined;
+  const peerLabel = typeof entry.peerLabel === 'string' ? entry.peerLabel.trim() : undefined;
+  const inputUsd = normalizeOptionalNumber(entry.inputUsdPerMillion);
+  const outputUsd = normalizeOptionalNumber(entry.outputUsdPerMillion);
+  const categories = Array.isArray(entry.categories) ? entry.categories.filter((c): c is string => typeof c === 'string') : undefined;
+  const description = typeof entry.description === 'string' ? entry.description.trim() : undefined;
   return {
     id,
     label,
     provider,
     protocol,
     count: normalizedCount,
+    ...(peerId ? { peerId } : {}),
+    ...(peerLabel ? { peerLabel } : {}),
+    ...(inputUsd != null && inputUsd >= 0 ? { inputUsdPerMillion: inputUsd } : {}),
+    ...(outputUsd != null && outputUsd >= 0 ? { outputUsdPerMillion: outputUsd } : {}),
+    ...(categories?.length ? { categories } : {}),
+    ...(description ? { description } : {}),
   };
 }
 
@@ -422,6 +446,14 @@ async function discoverChatServiceCatalog(
         providerServiceApiProtocols: (p.providerServiceApiProtocols && typeof p.providerServiceApiProtocols === 'object')
           ? p.providerServiceApiProtocols as NetworkPeerAddress['providerServiceApiProtocols']
           : undefined,
+        providerPricing: (p.providerPricing && typeof p.providerPricing === 'object')
+          ? p.providerPricing as NetworkPeerAddress['providerPricing']
+          : undefined,
+        providerServiceCategories: (p.providerServiceCategories && typeof p.providerServiceCategories === 'object')
+          ? p.providerServiceCategories as NetworkPeerAddress['providerServiceCategories']
+          : undefined,
+        defaultInputUsdPerMillion: typeof p.defaultInputUsdPerMillion === 'number' ? p.defaultInputUsdPerMillion : undefined,
+        defaultOutputUsdPerMillion: typeof p.defaultOutputUsdPerMillion === 'number' ? p.defaultOutputUsdPerMillion : undefined,
       }))
       .filter((p) => p.peerId.length > 0);
   } catch {
@@ -444,6 +476,10 @@ async function discoverChatServiceCatalog(
     const providerList = peer.providers ?? [];
     const serviceList = peer.services ?? [];
     const apiProtocols = peer.providerServiceApiProtocols;
+    const pricingMap = peer.providerPricing;
+    const categoriesMap = peer.providerServiceCategories;
+    const defaultInput = peer.defaultInputUsdPerMillion;
+    const defaultOutput = peer.defaultOutputUsdPerMillion;
 
     if (serviceList.length > 0) {
       // Use explicit service names when available.
@@ -453,6 +489,11 @@ async function discoverChatServiceCatalog(
         const protocol = resolveServiceProtocol(apiProtocols, serviceId) ?? inferProviderProtocol(provider);
         if (!protocol) continue;
 
+        const providerPricing = pricingMap?.[provider]?.services?.[serviceId];
+        const inputUsd = providerPricing?.input ?? defaultInput;
+        const outputUsd = providerPricing?.output ?? defaultOutput;
+        const categories = categoriesMap?.[provider]?.services?.[serviceId];
+
         results.push({
           id: serviceId,
           label: serviceId,
@@ -461,6 +502,9 @@ async function discoverChatServiceCatalog(
           count: 1,
           peerId,
           peerLabel,
+          ...(inputUsd != null ? { inputUsdPerMillion: inputUsd } : {}),
+          ...(outputUsd != null ? { outputUsdPerMillion: outputUsd } : {}),
+          ...(categories?.length ? { categories } : {}),
         });
       }
     } else if (providerList.length > 0) {
@@ -477,6 +521,8 @@ async function discoverChatServiceCatalog(
           count: 1,
           peerId,
           peerLabel,
+          ...(defaultInput != null ? { inputUsdPerMillion: defaultInput } : {}),
+          ...(defaultOutput != null ? { outputUsdPerMillion: defaultOutput } : {}),
         });
       }
     }
@@ -928,6 +974,23 @@ function extractToolCallFromPartial(
   };
 }
 
+const ANTSEED_PEER_CUSTOM_TYPE = 'antseed:peer';
+
+type AntseedPeerData = { peerId: string; peerLabel?: string };
+
+function extractPeerFromEntries(manager: SessionManager): AntseedPeerData | null {
+  const entries = manager.getEntries();
+  // Walk backwards to find the latest antseed:peer custom entry
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    if (entry.type === 'custom' && 'customType' in entry && entry.customType === ANTSEED_PEER_CUSTOM_TYPE) {
+      const data = (entry as { data?: unknown }).data as AntseedPeerData | undefined;
+      if (data?.peerId) return data;
+    }
+  }
+  return null;
+}
+
 class PiConversationStore {
   private readonly sessionsDir = CHAT_SESSIONS_DIR;
   private readonly ready: Promise<void>;
@@ -986,6 +1049,7 @@ class PiConversationStore {
       updatedAt = Math.max(updatedAt, Date.now());
     }
 
+    const peerData = extractPeerFromEntries(manager);
     return {
       id: manager.getSessionId(),
       title: manager.getSessionName() || deriveTitle(messages),
@@ -995,6 +1059,8 @@ class PiConversationStore {
       createdAt,
       updatedAt,
       usage,
+      ...(peerData?.peerId ? { peerId: peerData.peerId } : {}),
+      ...(peerData?.peerLabel ? { peerLabel: peerData.peerLabel } : {}),
     };
   }
 
@@ -1038,6 +1104,8 @@ class PiConversationStore {
         usage: conversation.usage,
         totalTokens,
         totalEstimatedCostUsd: deriveCost(conversation.messages),
+        ...(conversation.peerId ? { peerId: conversation.peerId } : {}),
+        ...(conversation.peerLabel ? { peerLabel: conversation.peerLabel } : {}),
       });
     }
 
@@ -1090,6 +1158,12 @@ class PiConversationStore {
     this.pendingManagers.set(conversation.id, manager);
     this.pathCache.set(conversation.id, sessionPath);
     return conversation;
+  }
+
+  async setPeer(id: string, peerId: string, peerLabel?: string): Promise<void> {
+    const manager = await this.openSessionManager(id);
+    if (!manager) return;
+    manager.appendCustomEntry(ANTSEED_PEER_CUSTOM_TYPE, { peerId, peerLabel } satisfies AntseedPeerData);
   }
 
   async delete(id: string): Promise<void> {
@@ -1193,6 +1267,18 @@ function parseAssistantMetaFromSessionEvent(
   return merged;
 }
 
+function normalizePaymentBody(body: Record<string, unknown>): Record<string, unknown> {
+  if (body.peerId) return body;
+  const inner = body.error;
+  if (typeof inner === 'object' && inner !== null) {
+    const innerObj = inner as Record<string, unknown>;
+    if (innerObj.peerId) {
+      return { ...body, peerId: innerObj.peerId };
+    }
+  }
+  return body;
+}
+
 
 function toConversationTitle(userMessage: string): string {
   const normalized = userMessage.trim();
@@ -1210,16 +1296,11 @@ export function registerPiChatHandlers({
   ensureBuyerRuntimeStarted,
   appendSystemLog,
   getNetworkPeers,
-}: RegisterPiChatHandlersOptions): {
-  setPendingSpendingAuth: (conversationId: string, authBase64: string) => void;
-  getCachedPaymentRequired: (conversationId: string) => Record<string, unknown> | null;
-} {
+}: RegisterPiChatHandlersOptions): void {
   void loadChatWorkspaceDir().catch(() => {});
   const store = new PiConversationStore();
   const activeRunsByConversation = new Map<string, ActiveRun>();
   const serviceProviderHints = new Map<string, string[]>();
-  /** Pending signed SpendingAuth to inject as header on the next request for a conversation. */
-  const pendingSpendingAuth = new Map<string, string>();
   /** Cached payment-required info from 402 responses, keyed by conversationId. */
   const cachedPaymentRequired = new Map<string, Record<string, unknown>>();
   const serviceProtocolMap = new Map<string, ChatServiceProtocol>();
@@ -1355,14 +1436,11 @@ export function registerPiChatHandlers({
       providerOverride,
     );
     const protocol = await resolveProtocolForSend(serviceId);
-    // Inject pending spending auth header if the user approved a payment for this conversation
-    const spendingAuth = pendingSpendingAuth.get(conversationId) ?? null;
-    if (spendingAuth) pendingSpendingAuth.delete(conversationId);
-    const proxyModel = makeProxyService(serviceId, proxyPort, protocol, providerHint, preferredPeerId, spendingAuth);
+    const proxyModel = makeProxyService(serviceId, proxyPort, protocol, providerHint, preferredPeerId, null);
 
     const authStorage = AuthStorage.inMemory();
     authStorage.setRuntimeApiKey(PROXY_PROVIDER_ID, PROXY_RUNTIME_API_KEY);
-    const modelRegistry = new ModelRegistry(authStorage);
+    const modelRegistry = ModelRegistry.inMemory(authStorage);
 
     // Pass the system prompt via resourceLoader so it is applied on every turn.
     // (agent-session rebuilds _baseSystemPrompt from the loader each turn, so a
@@ -1590,6 +1668,7 @@ export function registerPiChatHandlers({
                 try { paymentBody = JSON.parse(errorMsg.slice(jsonStart)) as Record<string, unknown>; } catch { /* not JSON */ }
               }
             }
+            if (paymentBody) paymentBody = normalizePaymentBody(paymentBody);
             const suggestedAmount = typeof paymentBody?.suggestedAmount === 'string'
               ? paymentBody.suggestedAmount : '100000';
             if (paymentBody?.peerId) {
@@ -1610,6 +1689,7 @@ export function registerPiChatHandlers({
           let paymentBody: Record<string, unknown> | null = null;
           try { paymentBody = JSON.parse(rawContent) as Record<string, unknown>; } catch { /* not JSON */ }
           if (paymentBody?.error === 'payment_required') {
+            paymentBody = normalizePaymentBody(paymentBody);
             const suggestedAmount = typeof paymentBody.suggestedAmount === 'string'
               ? paymentBody.suggestedAmount : '100000';
             // Cache payment info so the approve IPC handler can build the SpendingAuth
@@ -1627,7 +1707,13 @@ export function registerPiChatHandlers({
           const parsedMeta = parseAssistantMetaFromSessionEvent(message, proxyMeta);
           const peerId = normalizePeerId(parsedMeta.peerId);
           if (peerId) {
+            const prevPeerId = preferredPeerByConversationId.get(conversationId);
             preferredPeerByConversationId.set(conversationId, peerId);
+            // Persist peer to session file if it's new or changed
+            if (peerId !== prevPeerId) {
+              const peerLabel = lastServiceCatalogEntries.find((e) => e.peerId === peerId)?.peerLabel;
+              void store.setPeer(conversationId, peerId, peerLabel);
+            }
           }
           const assistantMessage = message as AssistantMessage & { meta?: AiMessageMeta };
           assistantMessage.meta = parsedMeta;
@@ -1666,6 +1752,7 @@ export function registerPiChatHandlers({
         let payBody: Record<string, unknown> | null = null;
         try { payBody = JSON.parse(lastText) as Record<string, unknown>; } catch { /* not JSON */ }
         if (payBody?.error === 'payment_required') {
+          payBody = normalizePaymentBody(payBody);
           const amt = typeof payBody.suggestedAmount === 'string' ? payBody.suggestedAmount : '100000';
           if (payBody.peerId) {
             cachedPaymentRequired.set(conversationId, payBody);
@@ -1711,6 +1798,7 @@ export function registerPiChatHandlers({
         if (jsonStart >= 0) {
           try { payBody = JSON.parse(message.slice(jsonStart)) as Record<string, unknown>; } catch { /* not JSON */ }
         }
+        if (payBody) payBody = normalizePaymentBody(payBody);
         const amt = typeof payBody?.suggestedAmount === 'string' ? payBody.suggestedAmount : '100000';
         if (payBody?.peerId) {
           cachedPaymentRequired.set(conversationId, payBody);
@@ -1794,9 +1882,14 @@ export function registerPiChatHandlers({
 
   ipcMain.handle('chat:ai-list-conversations', async () => {
     const conversations = await store.list();
-    // Enrich summaries with peerId from the preferred-peer map
+    // Enrich summaries: prefer in-memory peer, fall back to persisted
     const enriched = conversations.map((c) => {
-      const peerId = preferredPeerByConversationId.get(c.id);
+      const memPeerId = preferredPeerByConversationId.get(c.id);
+      const peerId = memPeerId || c.peerId;
+      if (peerId && !preferredPeerByConversationId.has(c.id)) {
+        // Warm the in-memory cache from persisted data
+        preferredPeerByConversationId.set(c.id, peerId);
+      }
       return peerId ? { ...c, peerId } : c;
     });
     return { ok: true, data: enriched };
@@ -1844,13 +1937,19 @@ export function registerPiChatHandlers({
     if (!conversation) {
       return { ok: false, error: 'Conversation not found' };
     }
-    return { ok: true, data: conversation };
+    const peerId = preferredPeerByConversationId.get(id);
+    const enriched = peerId ? { ...conversation, peerId } : conversation;
+    return { ok: true, data: enriched };
   });
 
   ipcMain.handle('chat:ai-create-conversation', async (_event, service: string, provider?: string, peerId?: string) => {
     const conversation = await store.create(service, provider);
-    if (peerId && peerId.trim().length > 0) {
-      preferredPeerByConversationId.set(conversation.id, peerId.trim());
+    const trimmedPeerId = peerId?.trim() ?? '';
+    if (trimmedPeerId) {
+      preferredPeerByConversationId.set(conversation.id, trimmedPeerId);
+      // Resolve peer label from service options
+      const peerLabel = lastServiceCatalogEntries.find((e) => e.peerId === trimmedPeerId)?.peerLabel;
+      await store.setPeer(conversation.id, trimmedPeerId, peerLabel);
     } else {
       preferredPeerByConversationId.delete(conversation.id);
     }
@@ -1860,7 +1959,6 @@ export function registerPiChatHandlers({
   ipcMain.handle('chat:ai-delete-conversation', async (_event, id: string) => {
     preferredPeerByConversationId.delete(id);
     cachedPaymentRequired.delete(id);
-    pendingSpendingAuth.delete(id);
     await store.delete(id);
     return { ok: true };
   });
@@ -1918,12 +2016,4 @@ export function registerPiChatHandlers({
     }
   });
 
-  return {
-    setPendingSpendingAuth: (conversationId: string, authBase64: string) => {
-      pendingSpendingAuth.set(conversationId, authBase64);
-    },
-    getCachedPaymentRequired: (conversationId: string) => {
-      return cachedPaymentRequired.get(conversationId) ?? null;
-    },
-  };
 }

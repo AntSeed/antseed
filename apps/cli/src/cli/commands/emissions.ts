@@ -28,25 +28,19 @@ export function registerEmissionsCommand(program: Command): void {
       const spinner = ora('Fetching emissions info...').start();
 
       try {
-        const [epochInfo, pending] = await Promise.all([
-          emissionsClient.getEpochInfo(),
-          emissionsClient.pendingEmissions(address),
-        ]);
+        const epochInfo = await emissionsClient.getEpochInfo();
+        // Build epoch range [0..current-1] for pending query
+        const pastEpochs = Array.from({ length: epochInfo.epoch }, (_, i) => i);
+        const pending = await emissionsClient.pendingEmissions(address, pastEpochs);
 
         spinner.stop();
-
-        const epochEndTs = epochInfo.epochStart + epochInfo.epochDuration;
-        const now = Math.floor(Date.now() / 1000);
-        const remaining = Math.max(0, epochEndTs - now);
 
         if (options.json) {
           console.log(JSON.stringify({
             address,
             epoch: epochInfo.epoch,
             emissionRate: formatAnts(epochInfo.emission),
-            epochStart: epochInfo.epochStart,
             epochDuration: epochInfo.epochDuration,
-            epochRemainingSeconds: remaining,
             pendingSeller: formatAnts(pending.seller),
             pendingBuyer: formatAnts(pending.buyer),
           }, null, 2));
@@ -56,7 +50,6 @@ export function registerEmissionsCommand(program: Command): void {
         console.log(chalk.bold('Emissions Info:\n'));
         console.log(`  Epoch:           ${chalk.cyan(String(epochInfo.epoch))}`);
         console.log(`  Emission rate:   ${chalk.green(formatAnts(epochInfo.emission) + ' ANTS/epoch')}`);
-        console.log(`  Epoch remaining: ${chalk.dim(remaining + 's')}`);
         console.log('');
         console.log(chalk.bold(`Pending Emissions (${address.slice(0, 10)}...):\n`));
         console.log(`  Seller rewards:  ${chalk.green(formatAnts(pending.seller) + ' ANTS')}`);
@@ -82,7 +75,9 @@ export function registerEmissionsCommand(program: Command): void {
       const spinner = ora('Claiming emissions...').start();
 
       try {
-        const pending = await emissionsClient.pendingEmissions(address);
+        const epochInfo = await emissionsClient.getEpochInfo();
+        const pastEpochs = Array.from({ length: epochInfo.epoch }, (_, i) => i);
+        const pending = await emissionsClient.pendingEmissions(address, pastEpochs);
         const totalPending = pending.seller + pending.buyer;
         if (totalPending === 0n) {
           spinner.succeed(chalk.yellow('No pending emissions to claim.'));
@@ -91,7 +86,7 @@ export function registerEmissionsCommand(program: Command): void {
 
         console.log(chalk.dim(`Pending: ${formatAnts(totalPending)} ANTS`));
 
-        const txHash = await emissionsClient.claimEmissions(wallet);
+        const txHash = await emissionsClient.claimSellerEmissions(wallet, pastEpochs);
         spinner.succeed(chalk.green(`Claimed ${formatAnts(totalPending)} ANTS`));
         console.log(chalk.dim(`Transaction: ${txHash}`));
       } catch (err) {

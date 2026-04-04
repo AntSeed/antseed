@@ -84,7 +84,7 @@ describe('EIP-712 SpendingAuth signature helpers', () => {
   it('makeChannelsDomain returns correct domain fields', () => {
     const domain = makeChannelsDomain(CHAIN_ID, CONTRACT);
     expect(domain.name).toBe('AntseedChannels');
-    expect(domain.version).toBe('7');
+    expect(domain.version).toBe('1');
     expect(domain.chainId).toBe(CHAIN_ID);
     expect(domain.verifyingContract).toBe(CONTRACT);
   });

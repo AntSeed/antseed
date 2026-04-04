@@ -22,15 +22,11 @@ export type { DepositsClientConfig, BuyerBalanceInfo } from './evm/deposits-clie
 
 // Channels client (reserve, settle, timeout)
 export { ChannelsClient } from './evm/channels-client.js';
-export type { ChannelsClientConfig, ChannelInfo } from './evm/channels-client.js';
+export type { ChannelsClientConfig, ChannelInfo, AgentStats, CloseRequestedEvent } from './evm/channels-client.js';
 
 // Identity client (ERC-8004 IdentityRegistry)
 export { IdentityClient } from './evm/identity-client.js';
 export type { IdentityClientConfig } from './evm/identity-client.js';
-
-// Stats client (AntseedStats)
-export { StatsClient } from './evm/stats-client.js';
-export type { StatsClientConfig, AgentStats } from './evm/stats-client.js';
 
 // Staking client (seller staking, token rate, slashing)
 export { StakingClient } from './evm/staking-client.js';
@@ -41,11 +37,13 @@ export {
   signReserveAuth,
   signSetOperator,
   makeChannelsDomain,
+  makeDepositsDomain,
   SPENDING_AUTH_TYPES,
   RESERVE_AUTH_TYPES,
   SET_OPERATOR_TYPES,
   computeMetadataHash,
   encodeMetadata,
+  METADATA_VERSION,
   computeChannelId,
   ZERO_METADATA,
   ZERO_METADATA_HASH,
@@ -71,6 +69,10 @@ export type { StoredChannel, StoredReceipt } from './channel-store.js';
 // Buyer payment manager
 export { BuyerPaymentManager } from './buyer-payment-manager.js';
 export type { BuyerPaymentConfig, PerRequestAuthResult } from './buyer-payment-manager.js';
+
+// Buyer payment negotiator (402 handling, SpendingAuth flow, cost tracking)
+export { BuyerPaymentNegotiator } from './buyer-payment-negotiator.js';
+export type { BuyerNegotiatorConfig, Handle402Result, NegotiationEmitter } from './buyer-payment-negotiator.js';
 
 // Seller payment manager
 export { SellerPaymentManager } from './seller-payment-manager.js';

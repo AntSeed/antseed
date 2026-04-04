@@ -29,6 +29,7 @@ type ChatConversationSummary = {
   title?: string;
   service?: string;
   provider?: string;
+  peerId?: string;
   createdAt?: number;
   updatedAt?: number;
   messageCount?: number;
@@ -90,7 +91,14 @@ export function initChatModule({
 
   type NormalizedChatServiceEntry = Required<
     Pick<ChatServiceCatalogEntry, 'id' | 'label' | 'provider' | 'protocol' | 'count'>
-  > & { peerId: string; peerLabel: string };
+  > & {
+    peerId: string;
+    peerLabel: string;
+    inputUsdPerMillion: number | null;
+    outputUsdPerMillion: number | null;
+    categories: string[];
+    description: string;
+  };
   type ChatServiceSelection = { id: string; provider: string | null };
   type ChatServiceOption = ChatServiceSelection & { label: string; value: string };
 
@@ -133,9 +141,9 @@ export function initChatModule({
         const ageDays = Math.floor((now - timestamp) / 86400);
 
         uiState.chatPaymentApprovalPeerInfo = {
-          reputation: result.data.onChainReputation ?? result.data.reputation ?? 0,
+          reputation: result.data.onChainChannelCount ?? result.data.reputation ?? 0,
           channelCount: result.data.onChainChannelCount ?? null,
-          disputeCount: result.data.onChainDisputeCount ?? null,
+          disputeCount: result.data.onChainGhostCount ?? null,
           networkAgeDays: ageDays > 0 ? ageDays : null,
           evmAddress: result.data.evmAddress ?? null,
         };
@@ -146,24 +154,76 @@ export function initChatModule({
     }
   }
 
-  /**
-   * Show the payment approval card with peer context from the currently
-   * selected service, and kick off a fetchPeerInfo call for reputation data.
-   */
-  function showPaymentApprovalCard(amountBaseUnits: string): void {
+  function primePaymentApprovalState(amountBaseUnits: string): { peerId: string | null } {
     const selectedService = uiState.chatServiceOptions.find(
       (opt) => opt.value === uiState.chatSelectedServiceValue,
     );
-    uiState.chatPaymentApprovalVisible = true;
     uiState.chatPaymentApprovalAmount = (Number(amountBaseUnits) / 1_000_000).toFixed(2);
     uiState.chatPaymentApprovalPeerId = selectedService?.peerId ?? null;
     uiState.chatPaymentApprovalPeerName = selectedService?.peerLabel ?? selectedService?.label ?? null;
     uiState.chatPaymentApprovalPeerInfo = null;
     uiState.chatPaymentApprovalError = null;
+    return { peerId: selectedService?.peerId ?? null };
+  }
+
+  /**
+   * Show the payment approval card with peer context from the currently
+   * selected service, and kick off a fetchPeerInfo call for reputation data.
+   */
+  function showPaymentApprovalCard(amountBaseUnits: string): void {
+    const { peerId } = primePaymentApprovalState(amountBaseUnits);
+    uiState.chatPaymentApprovalVisible = true;
     notifyUiStateChanged();
-    if (selectedService?.peerId) {
-      void fetchPeerInfo(selectedService.peerId);
+    if (peerId) {
+      void fetchPeerInfo(peerId);
     }
+  }
+
+  async function refreshAvailableCreditsUsdc(): Promise<number> {
+    if (!bridge?.creditsGetInfo) {
+      return parseFloat(uiState.creditsAvailableUsdc || '0');
+    }
+
+    try {
+      const result = await bridge.creditsGetInfo();
+      if (!result.ok || !result.data) {
+        return parseFloat(uiState.creditsAvailableUsdc || '0');
+      }
+
+      uiState.creditsAvailableUsdc = result.data.availableUsdc;
+      uiState.creditsReservedUsdc = result.data.reservedUsdc;
+      uiState.creditsTotalUsdc = result.data.balanceUsdc;
+      uiState.creditsCreditLimitUsdc = result.data.creditLimitUsdc;
+      uiState.creditsEvmAddress = result.data.evmAddress;
+      uiState.creditsOperatorAddress = result.data.operatorAddress ?? null;
+      uiState.creditsLastRefreshedAt = Date.now();
+
+      return parseFloat(result.data.availableUsdc || '0');
+    } catch {
+      return parseFloat(uiState.creditsAvailableUsdc || '0');
+    }
+  }
+
+  async function handlePaymentRequired(amountBaseUnits: string): Promise<void> {
+    const required = Number(amountBaseUnits) / 1_000_000;
+    const available = await refreshAvailableCreditsUsdc();
+
+    if (
+      Number.isFinite(required)
+      && required > 0
+      && available >= required
+    ) {
+      uiState.chatPaymentApprovalVisible = false;
+      uiState.chatPaymentApprovalPeerId = null;
+      uiState.chatPaymentApprovalPeerName = null;
+      uiState.chatPaymentApprovalPeerInfo = null;
+      uiState.chatPaymentApprovalError = null;
+      showChatError('Payment setup failed. Retry the request.');
+      notifyUiStateChanged();
+      return;
+    }
+
+    showPaymentApprovalCard(amountBaseUnits);
   }
 
   // ---------------------------------------------------------------------------
@@ -191,7 +251,17 @@ export function initChatModule({
     const peerId = String(entry.peerId ?? '').trim();
     const peerLabel = String(entry.peerLabel ?? '').trim() || (peerId ? peerId.slice(0, 12) + '...' : '');
     const label = String(entry.label ?? '').trim() || `${id} · ${provider}`;
-    return { id, label, provider, protocol, count, peerId, peerLabel };
+    const inputUsd = Number(entry.inputUsdPerMillion);
+    const outputUsd = Number(entry.outputUsdPerMillion);
+    const categories = Array.isArray(entry.categories) ? entry.categories.filter((c): c is string => typeof c === 'string') : [];
+    const description = typeof entry.description === 'string' ? entry.description.trim() : '';
+    return {
+      id, label, provider, protocol, count, peerId, peerLabel,
+      inputUsdPerMillion: Number.isFinite(inputUsd) && inputUsd >= 0 ? inputUsd : null,
+      outputUsdPerMillion: Number.isFinite(outputUsd) && outputUsd >= 0 ? outputUsd : null,
+      categories,
+      description,
+    };
   }
 
   function encodeChatServiceSelection(serviceId: string, provider: string | null, peerId?: string): string {
@@ -210,12 +280,11 @@ export function initChatModule({
   function decodeChatServiceSelection(value: unknown): ChatServiceSelection {
     const raw = String(value ?? '');
     if (!raw) return { id: '', provider: null };
-    const separatorIndex = raw.indexOf(CHAT_SERVICE_SELECTION_SEPARATOR);
-    if (separatorIndex === -1) return { id: normalizeChatServiceId(raw), provider: null };
-    const provider = normalizeProviderId(raw.slice(0, separatorIndex));
-    const id = normalizeChatServiceId(
-      raw.slice(separatorIndex + CHAT_SERVICE_SELECTION_SEPARATOR.length),
-    );
+    const parts = raw.split(CHAT_SERVICE_SELECTION_SEPARATOR);
+    if (parts.length === 1) return { id: normalizeChatServiceId(raw), provider: null };
+    // Format: "provider\x01service" or "provider\x01service\x01peerId"
+    const provider = normalizeProviderId(parts[0]);
+    const id = normalizeChatServiceId(parts[1]);
     return { id, provider };
   }
 
@@ -239,7 +308,7 @@ export function initChatModule({
     return options
       .map(
         (e) =>
-          `${e.id}|${e.label}|${e.provider}|${e.protocol}|${String(e.count)}`,
+          `${e.id}|${e.label}|${e.provider}|${e.protocol}|${String(e.count)}|${String(e.inputUsdPerMillion)}|${String(e.outputUsdPerMillion)}|${e.categories.join(',')}`,
       )
       .join('\n');
   }
@@ -430,6 +499,14 @@ export function initChatModule({
     if (!conv) {
       uiState.chatThreadMeta = 'No conversation selected';
       uiState.chatRoutedPeer = '';
+      uiState.chatRoutedPeerId = '';
+      uiState.chatSessionStarted = '';
+      uiState.chatSessionReservedUsdc = '';
+      uiState.chatSessionAccumulatedCostUsd = '';
+      uiState.chatSessionTotalTokens = '';
+      uiState.chatLifetimeSpentUsdc = '';
+      uiState.chatLifetimeTotalTokens = '';
+      uiState.chatLifetimeSessions = '';
       return;
     }
 
@@ -437,6 +514,8 @@ export function initChatModule({
     let toolCalls = 0;
     let reasoningBlocks = 0;
     let totalEstimatedCostUsd = 0;
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
     const servingPeers = new Set<string>();
     let lastServingPeerId = '';
 
@@ -453,6 +532,8 @@ export function initChatModule({
           lastServingPeerId = meta.peerId;
         }
         if (meta.costUsd > 0) totalEstimatedCostUsd += meta.costUsd;
+        totalInputTokens += meta.inputTokens;
+        totalOutputTokens += meta.outputTokens;
       }
     }
 
@@ -464,7 +545,11 @@ export function initChatModule({
     if (toolCalls > 0) parts.push(`${toolCalls} tool${toolCalls === 1 ? '' : 's'}`);
     if (reasoningBlocks > 0) parts.push(`${reasoningBlocks} reasoning`);
 
-    const tokenCounts = getConversationTokenCounts(conv);
+    // Prefer message-derived token counts (always up-to-date) over stale conv.usage
+    const msgTotalTokens = totalInputTokens + totalOutputTokens;
+    const tokenCounts = msgTotalTokens > 0
+      ? { inputTokens: totalInputTokens, outputTokens: totalOutputTokens, totalTokens: msgTotalTokens }
+      : getConversationTokenCounts(conv);
     parts.push(
       `tokens ${formatCompactNumber(tokenCounts.totalTokens)} (${formatCompactNumber(tokenCounts.inputTokens)} in / ${formatCompactNumber(tokenCounts.outputTokens)} out)`,
     );
@@ -497,6 +582,116 @@ export function initChatModule({
     } else {
       uiState.chatRoutedPeer = '';
     }
+
+    const resolvedPeerId = resolveConversationPeerId(conv) || lastServingPeerId;
+    uiState.chatRoutedPeerId = resolvedPeerId;
+    // Only set fallback values for fields the metering endpoint hasn't populated yet.
+    // This prevents flicker: updateThreadMeta runs first with message-derived data,
+    // then fetchAndApplyMeteringStats overwrites with authoritative data.
+    if (!uiState.chatSessionStarted) {
+      uiState.chatSessionStarted = conv.createdAt ? formatChatDateTime(conv.createdAt) : '';
+    }
+    if (!uiState.chatSessionTotalTokens && tokenCounts.totalTokens > 0) {
+      uiState.chatSessionTotalTokens = formatCompactNumber(tokenCounts.totalTokens);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Metering stats from buyer proxy endpoint (source of truth)
+  // ---------------------------------------------------------------------------
+
+  function resolveConversationPeerId(conv: ChatConversation | null): string {
+    if (!conv) return '';
+    if (uiState.chatSelectedPeerId) return uiState.chatSelectedPeerId;
+    const convPeerId = conv.peerId?.trim() ?? '';
+    if (convPeerId) return convPeerId;
+    // Fallback: resolve from service options (the service maps to a peer)
+    const serviceOption = uiState.chatServiceOptions.find(
+      (o) => o.value === uiState.chatSelectedServiceValue || o.id === conv.service,
+    );
+    if (serviceOption?.peerId) return serviceOption.peerId;
+    // Last resort: extract peerId from the encoded service value (format: "provider\x01service\x01peerId")
+    const parts = uiState.chatSelectedServiceValue.split(CHAT_SERVICE_SELECTION_SEPARATOR);
+    return parts.length >= 3 ? parts[2]!.trim() : '';
+  }
+
+  type MeteringPeerStats = {
+    totalRequests: number;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    reservedUsdc: string | null;
+    consumedUsdc: string | null;
+    channelStatus: string | null;
+    reservedAt: number | null;
+    lifetimeSessions: number;
+    lifetimeRequests: number;
+    lifetimeInputTokens: number;
+    lifetimeOutputTokens: number;
+    lifetimeTotalTokens: number;
+    lifetimeAuthorizedUsdc: string;
+    lifetimeFirstSessionAt: number | null;
+  };
+
+  async function fetchAndApplyMeteringStats(sellerPeerId: string): Promise<void> {
+    const port = uiState.chatProxyPort;
+    if (!port) return;
+    try {
+      const prev = {
+        tokens: uiState.chatSessionTotalTokens,
+        cost: uiState.chatSessionAccumulatedCostUsd,
+        reserved: uiState.chatSessionReservedUsdc,
+        started: uiState.chatSessionStarted,
+        ltSpent: uiState.chatLifetimeSpentUsdc,
+        ltTokens: uiState.chatLifetimeTotalTokens,
+        ltSessions: uiState.chatLifetimeSessions,
+      };
+      const url = `http://127.0.0.1:${port}/_antseed/metering/${encodeURIComponent(sellerPeerId)}`;
+      const resp = await fetch(url);
+      if (!resp.ok) return;
+      const stats = (await resp.json()) as MeteringPeerStats;
+      if (stats.totalTokens > 0) {
+        uiState.chatSessionTotalTokens = formatCompactNumber(stats.totalTokens);
+      }
+      // reservedUsdc and consumedUsdc are USDC amounts stored as 6-decimal bigint strings
+      if (stats.reservedUsdc) {
+        const reservedNum = Number(stats.reservedUsdc) / 1_000_000;
+        if (reservedNum > 0) uiState.chatSessionReservedUsdc = formatUsd(reservedNum);
+      }
+      if (stats.consumedUsdc) {
+        const consumedNum = Number(stats.consumedUsdc) / 1_000_000;
+        if (consumedNum > 0) uiState.chatSessionAccumulatedCostUsd = formatUsd(consumedNum);
+      }
+      if (stats.reservedAt) {
+        uiState.chatSessionStarted = formatChatDateTime(stats.reservedAt);
+      }
+      // Lifetime totals across all sessions with this peer
+      const lifetimeSpent = Number(stats.lifetimeAuthorizedUsdc || '0') / 1_000_000;
+      if (lifetimeSpent > 0) uiState.chatLifetimeSpentUsdc = formatUsd(lifetimeSpent);
+      if (stats.lifetimeTotalTokens > 0) uiState.chatLifetimeTotalTokens = formatCompactNumber(stats.lifetimeTotalTokens);
+      if (stats.lifetimeSessions > 1) uiState.chatLifetimeSessions = String(stats.lifetimeSessions);
+
+      if (uiState.chatSessionTotalTokens !== prev.tokens ||
+          uiState.chatSessionAccumulatedCostUsd !== prev.cost ||
+          uiState.chatSessionReservedUsdc !== prev.reserved ||
+          uiState.chatSessionStarted !== prev.started ||
+          uiState.chatLifetimeSpentUsdc !== prev.ltSpent ||
+          uiState.chatLifetimeTotalTokens !== prev.ltTokens ||
+          uiState.chatLifetimeSessions !== prev.ltSessions) {
+        notifyUiStateChanged();
+      }
+    } catch {
+      // Buyer proxy unavailable — keep message-derived values
+    }
+  }
+
+  let _meteringDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  function debouncedFetchMeteringStats(peerId: string): void {
+    if (_meteringDebounceTimer) clearTimeout(_meteringDebounceTimer);
+    _meteringDebounceTimer = setTimeout(() => {
+      _meteringDebounceTimer = null;
+      void fetchAndApplyMeteringStats(peerId);
+    }, 500);
   }
 
   // ---------------------------------------------------------------------------
@@ -733,6 +928,10 @@ export function initChatModule({
       value: encodeChatServiceSelection(entry.id, entry.provider, entry.peerId),
       peerId: entry.peerId,
       peerLabel: entry.peerLabel,
+      inputUsdPerMillion: entry.inputUsdPerMillion,
+      outputUsdPerMillion: entry.outputUsdPerMillion,
+      categories: entry.categories,
+      description: entry.description,
     }));
 
     uiState.chatSelectedServiceValue = preferred;
@@ -868,6 +1067,11 @@ export function initChatModule({
           uiState.chatProxyPort = proxyPort;
           uiState.chatProxyStatus = { tone: 'active', label: `Proxy :${port}` };
           notifyUiStateChanged();
+          // Proxy just became available — fetch metering stats for active conversation
+          if (activeConversation) {
+            const peerId = resolveConversationPeerId(activeConversation);
+            if (peerId) debouncedFetchMeteringStats(peerId);
+          }
           if (previousProxyState !== 'online') {
             setRuntimeActivity(
               'active',
@@ -1044,6 +1248,14 @@ export function initChatModule({
     if (!bridge || !bridge.chatAiGetConversation) return;
 
     uiState.chatActiveConversation = convId;
+    uiState.chatRoutedPeerId = '';
+    uiState.chatSessionStarted = '';
+    uiState.chatSessionReservedUsdc = '';
+    uiState.chatSessionAccumulatedCostUsd = '';
+    uiState.chatSessionTotalTokens = '';
+    uiState.chatLifetimeSpentUsdc = '';
+    uiState.chatLifetimeTotalTokens = '';
+    uiState.chatLifetimeSessions = '';
 
     try {
       const result = await bridge.chatAiGetConversation(convId);
@@ -1081,6 +1293,9 @@ export function initChatModule({
         updateThreadMeta(activeConversation);
         uiState.chatError = null;
         notifyUiStateChanged();
+
+        const peerId = resolveConversationPeerId(activeConversation);
+        if (peerId) debouncedFetchMeteringStats(peerId);
       } else {
         reportChatError(result.error, 'Failed to open conversation');
       }
@@ -1137,6 +1352,8 @@ export function initChatModule({
       activeConversation.messages = uiState.chatMessages as ChatMessage[];
       activeConversation.updatedAt = Number(assistantMessage.createdAt) || Date.now();
       updateThreadMeta(activeConversation);
+      const peerId = resolveConversationPeerId(activeConversation);
+      if (peerId) debouncedFetchMeteringStats(peerId);
     }
   }
 
@@ -1311,11 +1528,12 @@ export function initChatModule({
             const errorMsg = typeof result.error === 'string' ? result.error : '';
             const paymentMatch2 = /^payment_required:(\d+)$/i.exec(errorMsg);
             if (paymentMatch2) {
-              showPaymentApprovalCard(paymentMatch2[1]);
+              setChatSending(false);
+              void handlePaymentRequired(paymentMatch2[1]);
             } else {
               reportChatError(result.error, 'Request failed');
+              setChatSending(false);
             }
-            setChatSending(false);
           } else if (uiState.chatSending) {
             // Fallback timeout in case stream completion event is missed
             setTimeout(() => {
@@ -1656,11 +1874,24 @@ export function initChatModule({
         } else if (data.blockType === 'tool_use' && data.input) {
           updateStreamingMessage(data.conversationId, (message) => {
             const blocks = message.content as ContentBlock[];
-            const toolBlock = blocks.find(
+            let toolBlock = blocks.find(
               (block) => block.type === 'tool_use' && block.id === data.toolId,
             );
+            // Fallback: the block may have been created with a placeholder ID
+            // (e.g. "tool-0") when the real ID wasn't available at toolcall_start.
+            if (!toolBlock && data.toolId) {
+              const fallbackId = getStreamingBlockId('tool', data.index);
+              toolBlock = blocks.find(
+                (block) => block.type === 'tool_use' && block.id === fallbackId,
+              );
+              if (toolBlock) {
+                toolBlock.id = data.toolId;
+                toolBlock.renderKey = createStreamingRenderKey('tool', data.toolId);
+              }
+            }
             if (toolBlock) {
               toolBlock.input = data.input;
+              if (data.toolName) toolBlock.name = String(data.toolName);
             }
           });
         }
@@ -1672,9 +1903,23 @@ export function initChatModule({
         if (!hasConversationStreamingMessage(data.conversationId)) return;
         updateStreamingMessage(data.conversationId, (message) => {
           const blocks = message.content as ContentBlock[];
-          const toolBlock = blocks.find(
+          let toolBlock = blocks.find(
             (block) => block.type === 'tool_use' && block.id === data.toolUseId,
           );
+          // Fallback: match by tool name against placeholder blocks
+          if (!toolBlock && data.toolUseId) {
+            toolBlock = blocks.find(
+              (block) =>
+                block.type === 'tool_use' &&
+                typeof block.id === 'string' &&
+                /^tool-\d+$/.test(block.id) &&
+                (block.name === data.name || block.name === 'tool'),
+            );
+            if (toolBlock) {
+              toolBlock.id = data.toolUseId;
+              toolBlock.renderKey = createStreamingRenderKey('tool', data.toolUseId);
+            }
+          }
           if (toolBlock) {
             toolBlock.name = String(data.name || toolBlock.name || 'tool');
             toolBlock.input = data.input;
@@ -1689,9 +1934,22 @@ export function initChatModule({
         if (!hasConversationStreamingMessage(data.conversationId)) return;
         updateStreamingMessage(data.conversationId, (message) => {
           const blocks = message.content as ContentBlock[];
-          const toolBlock = blocks.find(
+          let toolBlock = blocks.find(
             (block) => block.type === 'tool_use' && block.id === data.toolUseId,
           );
+          if (!toolBlock && data.toolUseId) {
+            toolBlock = blocks.find(
+              (block) =>
+                block.type === 'tool_use' &&
+                typeof block.id === 'string' &&
+                /^tool-\d+$/.test(block.id) &&
+                (block.name === data.name || block.name === 'tool'),
+            );
+            if (toolBlock) {
+              toolBlock.id = data.toolUseId;
+              toolBlock.renderKey = createStreamingRenderKey('tool', data.toolUseId);
+            }
+          }
           if (toolBlock) {
             toolBlock.name = String(data.name || toolBlock.name || 'tool');
             toolBlock.input = data.input;
@@ -1712,9 +1970,21 @@ export function initChatModule({
         if (!hasConversationStreamingMessage(data.conversationId)) return;
         updateStreamingMessage(data.conversationId, (message) => {
           const blocks = message.content as ContentBlock[];
-          const toolBlock = blocks.find(
+          let toolBlock = blocks.find(
             (block) => block.type === 'tool_use' && block.id === data.toolUseId,
           );
+          if (!toolBlock && data.toolUseId) {
+            toolBlock = blocks.find(
+              (block) =>
+                block.type === 'tool_use' &&
+                typeof block.id === 'string' &&
+                /^tool-\d+$/.test(block.id),
+            );
+            if (toolBlock) {
+              toolBlock.id = data.toolUseId;
+              toolBlock.renderKey = createStreamingRenderKey('tool', data.toolUseId);
+            }
+          }
           if (toolBlock) {
             toolBlock.status = data.isError ? 'error' : 'success';
             toolBlock.content = data.output;
@@ -1811,7 +2081,7 @@ export function initChatModule({
             const errStr = typeof data.error === 'string' ? data.error : '';
             const paymentMatch = /^payment_required:(\d+)$/i.exec(errStr);
             if (paymentMatch) {
-              showPaymentApprovalCard(paymentMatch[1]);
+              void handlePaymentRequired(paymentMatch[1]);
               if (bridge.chatAiAbort) void bridge.chatAiAbort().catch(() => {});
             } else {
               showChatError(data.error);

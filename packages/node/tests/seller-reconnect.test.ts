@@ -20,6 +20,7 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AntseedNode } from '../src/node.js';
+import { SellerRequestHandler } from '../src/seller-request-handler.js';
 import { ConnectionState } from '../src/types/connection.js';
 import type { PeerId } from '../src/types/peer.js';
 
@@ -43,8 +44,21 @@ function makeSellerNode(): AntseedNode {
     privateKey: new Uint8Array(32),
     publicKey: new Uint8Array(32),
   };
-  // Silence _finalizeSession — it touches _sessions/_metering which aren't set up
-  (node as any)._finalizeSession = vi.fn().mockResolvedValue(undefined);
+  // Stub _sessionTracker so disconnect cleanup doesn't touch real metering
+  const sessionTracker = {
+    finalizeSession: vi.fn().mockResolvedValue(undefined),
+    getOrCreateSession: vi.fn(),
+  };
+  (node as any)._sessionTracker = sessionTracker;
+  // Create SellerRequestHandler so _handleIncomingConnection can delegate
+  (node as any)._sellerHandler = new SellerRequestHandler({
+    providers: [],
+    sellerPaymentManager: null,
+    sessionTracker: sessionTracker as any,
+    channelsClient: null,
+    announcer: null,
+    emit: (event: string, ...args: unknown[]) => node.emit(event, ...args),
+  });
   return node;
 }
 
@@ -93,8 +107,7 @@ describe('seller reconnect — mux-collision regression', () => {
 
   it('does not finalize the session when a stale connection closes after a reconnect', () => {
     const node = makeSellerNode();
-    const finalize = vi.fn().mockResolvedValue(undefined);
-    (node as any)._finalizeSession = finalize;
+    const finalize = (node as any)._sessionTracker.finalizeSession;
 
     const conn1 = makeFakeConn(BUYER_PEER_ID);
     const conn2 = makeFakeConn(BUYER_PEER_ID);

@@ -1,9 +1,16 @@
-import { type AbstractSigner, Contract } from 'ethers';
+import { type AbstractSigner, Contract, ethers } from 'ethers';
 import { BaseEvmClient } from './base-evm-client.js';
 
 export interface ChannelsClientConfig {
   rpcUrl: string;
   contractAddress: string;
+}
+
+export interface AgentStats {
+  channelCount: number;
+  ghostCount: number;
+  totalVolumeUsdc: bigint;
+  lastSettledAt: number;
 }
 
 export interface ChannelInfo {
@@ -27,11 +34,16 @@ const CHANNELS_ABI = [
   'function withdraw(bytes32 channelId) external',
   'function channels(bytes32 channelId) external view returns (address buyer, address seller, uint128 deposit, uint128 settled, bytes32 metadataHash, uint256 deadline, uint256 settledAt, uint256 closeRequestedAt, uint8 status)',
   'function computeChannelId(address buyer, address seller, bytes32 salt) external pure returns (bytes32)',
+  'function getAgentStats(uint256 agentId) external view returns (uint64 channelCount, uint64 ghostCount, uint256 totalVolumeUsdc, uint64 lastSettledAt)',
   'function domainSeparator() external view returns (bytes32)',
   'function FIRST_SIGN_CAP() external view returns (uint256)',
-  'function operators(address buyer) external view returns (address)',
-  'function operatorNonces(address buyer) external view returns (uint256)',
+  'event CloseRequested(bytes32 indexed channelId, address indexed buyer)',
 ] as const;
+
+export interface CloseRequestedEvent {
+  channelId: string;
+  buyer: string;
+}
 
 export class ChannelsClient extends BaseEvmClient {
   constructor(config: ChannelsClientConfig) {
@@ -130,13 +142,42 @@ export class ChannelsClient extends BaseEvmClient {
     return contract.getFunction('computeChannelId')(buyer, seller, salt) as Promise<string>;
   }
 
-  async getOperator(buyer: string): Promise<string> {
+  async getAgentStats(agentId: number): Promise<AgentStats> {
     const contract = new Contract(this._contractAddress, CHANNELS_ABI, this._provider);
-    return contract.getFunction('operators')(buyer) as Promise<string>;
+    const result = await contract.getFunction('getAgentStats')(agentId);
+    return {
+      channelCount: Number(result[0]),
+      ghostCount: Number(result[1]),
+      totalVolumeUsdc: result[2] as bigint,
+      lastSettledAt: Number(result[3]),
+    };
   }
 
-  async getOperatorNonce(buyer: string): Promise<bigint> {
-    const contract = new Contract(this._contractAddress, CHANNELS_ABI, this._provider);
-    return contract.getFunction('operatorNonces')(buyer) as Promise<bigint>;
+  /**
+   * Query CloseRequested events from the Channels contract.
+   * Returns matching events between fromBlock and toBlock (inclusive).
+   */
+  async getCloseRequestedEvents(fromBlock: number | 'latest', toBlock: number | 'latest' = 'latest'): Promise<CloseRequestedEvent[]> {
+    const iface = new ethers.Interface(CHANNELS_ABI);
+    const eventTopic = iface.getEvent('CloseRequested')!.topicHash;
+
+    const logs = await this._provider.getLogs({
+      address: this._contractAddress,
+      topics: [eventTopic],
+      fromBlock,
+      toBlock,
+    });
+
+    return logs.map((log) => ({
+      channelId: log.topics[1]!,
+      buyer: ethers.getAddress('0x' + log.topics[2]!.slice(26)),
+    }));
+  }
+
+  /**
+   * Get the current block number from the provider.
+   */
+  async getBlockNumber(): Promise<number> {
+    return this._provider.getBlockNumber();
   }
 }

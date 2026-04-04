@@ -5,6 +5,8 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
+import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 import {IAntseedRegistry} from "./interfaces/IAntseedRegistry.sol";
 /**
@@ -12,19 +14,24 @@ import {IAntseedRegistry} from "./interfaces/IAntseedRegistry.sol";
  * @notice Buyer USDC custody with credit limits and seller payouts.
  *         Stable contract — holds funds. Channel logic lives in AntseedChannels (swappable).
  */
-contract AntseedDeposits is Ownable, ReentrancyGuard {
+contract AntseedDeposits is EIP712, Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
+
+    // ─── EIP-712 ─────────────────────────────────────────────────────────
+    bytes32 public constant SET_OPERATOR_TYPEHASH = keccak256(
+        "SetOperator(address operator,uint256 nonce)"
+    );
 
     // ─── State ───────────────────────────────────────────────────────────
     IERC20 public immutable usdc;
     IAntseedRegistry public registry;
 
     // ─── Configurable Constants ─────────────────────────────────────────
-    uint256 public MIN_BUYER_DEPOSIT = 10_000_000;
-    uint256 public BASE_CREDIT_LIMIT = 50_000_000;
+    uint256 public MIN_BUYER_DEPOSIT = 1_000_000;
+    uint256 public BASE_CREDIT_LIMIT = 10_000_000;
     uint256 public PEER_INTERACTION_BONUS = 5_000_000;
     uint256 public TIME_BONUS = 500_000;
-    uint256 public MAX_CREDIT_LIMIT = 500_000_000;
+    uint256 public MAX_CREDIT_LIMIT = 50_000_000;
 
     // ─── Structs ────────────────────────────────────────────────────────
     struct BuyerAccount {
@@ -47,6 +54,7 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
     event Deposited(address indexed buyer, uint256 amount);
     event WithdrawalExecuted(address indexed buyer, uint256 amount);
     event PayoutClaimed(address indexed seller, uint256 amount);
+    event OperatorSet(address indexed buyer, address indexed operator);
 
 
     // ─── Custom Errors ──────────────────────────────────────────────────
@@ -56,6 +64,9 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
     error InsufficientBalance();
     error BelowMinDeposit();
     error CreditLimitExceeded();
+    error InvalidSignature();
+    error InvalidNonce();
+    error OperatorAlreadySet();
 
     // ─── Modifiers ──────────────────────────────────────────────────────
     modifier onlyChannels() {
@@ -69,7 +80,10 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
     }
 
     // ─── Constructor ────────────────────────────────────────────────────
-    constructor(address _usdc) Ownable(msg.sender) {
+    constructor(address _usdc)
+        EIP712("AntseedDeposits", "1")
+        Ownable(msg.sender)
+    {
         if (_usdc == address(0)) revert InvalidAddress();
         usdc = IERC20(_usdc);
     }
@@ -95,24 +109,12 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
         if (limit > MAX_CREDIT_LIMIT) limit = MAX_CREDIT_LIMIT;
         return limit;
     }
-
-    function deposit(uint256 amount) external nonReentrant {
-        if (amount == 0) revert InvalidAmount();
-
-        BuyerAccount storage ba = buyers[msg.sender];
-        if (ba.balance == 0 && amount < MIN_BUYER_DEPOSIT) revert BelowMinDeposit();
-
-        uint256 creditLimit = getBuyerCreditLimit(msg.sender);
-        if (ba.balance + amount > creditLimit) revert CreditLimitExceeded();
-
-        usdc.safeTransferFrom(msg.sender, address(this), amount);
-        ba.balance += amount;
-        ba.lastActivityAt = block.timestamp;
-
-        emit Deposited(msg.sender, amount);
+    /// @notice Deposit USDC for a buyer. Anyone can call — USDC is pulled from msg.sender.
+    function deposit(address buyer, uint256 amount) external nonReentrant {
+        _deposit(buyer, amount);
     }
 
-    function depositFor(address buyer, uint256 amount) external nonReentrant {
+    function _deposit(address buyer, uint256 amount) internal {
         if (amount == 0) revert InvalidAmount();
         BuyerAccount storage ba = buyers[buyer];
         if (ba.balance == 0 && amount < MIN_BUYER_DEPOSIT) revert BelowMinDeposit();
@@ -127,7 +129,7 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
 
     /**
      * @notice Withdraw available USDC immediately. Operator-only.
-     *         Sends funds to the buyer address, never to msg.sender.
+     *         Sends funds to the operator (msg.sender).
      */
     function withdraw(address buyer, uint256 amount) external nonReentrant {
         if (amount == 0) revert InvalidAmount();
@@ -137,7 +139,7 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
         if (available < amount) revert InsufficientBalance();
 
         ba.balance -= amount;
-        usdc.safeTransfer(buyer, amount);
+        usdc.safeTransfer(msg.sender, amount);
 
         emit WithdrawalExecuted(buyer, amount);
     }
@@ -220,11 +222,47 @@ contract AntseedDeposits is Ownable, ReentrancyGuard {
         buyers[buyer].reserved -= amount;
     }
 
-    /// @notice Set operator for a buyer. Called by Channels contract after EIP-712 signature verification.
-    function setOperatorFor(address buyer, address operator) external onlyChannels {
+    // ═══════════════════════════════════════════════════════════════════
+    //                        OPERATOR MANAGEMENT
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// @notice Set the initial operator for a buyer. Anyone can submit —
+    ///         authorization comes from the buyer's EIP-712 signature.
+    function setOperator(
+        address buyer,
+        address operator,
+        uint256 nonce,
+        bytes calldata buyerSig
+    ) external {
+        if (buyer == address(0) || operator == address(0)) revert InvalidAddress();
         BuyerAccount storage ba = buyers[buyer];
+        if (ba.operator != address(0)) revert OperatorAlreadySet();
+        if (nonce != ba.operatorNonce) revert InvalidNonce();
+
+        bytes32 structHash = keccak256(abi.encode(SET_OPERATOR_TYPEHASH, operator, nonce));
+        bytes32 digest = _hashTypedDataV4(structHash);
+        if (ECDSA.recover(digest, buyerSig) != buyer) revert InvalidSignature();
+
         ba.operator = operator;
         ba.operatorNonce += 1;
+
+        emit OperatorSet(buyer, operator);
+    }
+
+    /**
+     * @notice Transfer operator to a new address. Only the current operator
+     *         can call this — like ownership transfer. No buyer signature needed.
+     */
+    function transferOperator(address buyer, address newOperator) external {
+        if (!_isOperator(buyer)) revert NotAuthorized();
+        buyers[buyer].operator = newOperator;
+
+        emit OperatorSet(buyer, newOperator);
+    }
+
+    // ─── Domain Separator Helper ────────────────────────────────────
+    function domainSeparator() external view returns (bytes32) {
+        return _domainSeparatorV4();
     }
 
     // ═══════════════════════════════════════════════════════════════════

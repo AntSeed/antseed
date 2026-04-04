@@ -212,6 +212,31 @@ describe('MeteringStorage — Sessions', () => {
     expect(summary.totalRequests).toBe(2);
     expect(summary.totalTokens).toBe(3000);
   });
+  it('should get event stats by peer', () => {
+    const now = Date.now();
+    storage.insertEvent(makeEvent({ eventId: 'e1', timestamp: now - 500, sellerPeerId: 'seller-A', tokens: makeTokens(1000) }));
+    storage.insertEvent(makeEvent({ eventId: 'e2', timestamp: now - 200, sellerPeerId: 'seller-A', tokens: makeTokens(2000) }));
+    storage.insertEvent(makeEvent({ eventId: 'e3', timestamp: now - 100, sellerPeerId: 'seller-B', tokens: makeTokens(500) }));
+    storage.upsertSession(makeSession({ sessionId: 's1', sellerPeerId: 'seller-A', totalCostCents: 30 }));
+
+    const statsA = storage.getEventStatsByPeer('seller-A');
+    expect(statsA.totalRequests).toBe(2);
+    expect(statsA.totalTokens).toBe(3000);
+    expect(statsA.inputTokens).toBe(makeTokens(1000).inputTokens + makeTokens(2000).inputTokens);
+    expect(statsA.outputTokens).toBe(makeTokens(1000).outputTokens + makeTokens(2000).outputTokens);
+    expect(statsA.totalCostCents).toBe(30);
+    expect(statsA.firstEventAt).toBe(now - 500);
+    expect(statsA.lastEventAt).toBe(now - 200);
+
+    const statsB = storage.getEventStatsByPeer('seller-B');
+    expect(statsB.totalRequests).toBe(1);
+    expect(statsB.totalTokens).toBe(500);
+    expect(statsB.totalCostCents).toBe(0);
+
+    const statsNone = storage.getEventStatsByPeer('nonexistent');
+    expect(statsNone.totalRequests).toBe(0);
+    expect(statsNone.totalTokens).toBe(0);
+  });
 });
 
 describe('MeteringStorage — Pruning', () => {
