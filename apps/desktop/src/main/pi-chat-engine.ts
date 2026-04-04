@@ -78,6 +78,8 @@ type AiConversation = {
   title: string;
   service: string;
   provider?: string;
+  peerId?: string;
+  peerLabel?: string;
   messages: AiChatMessage[];
   createdAt: number;
   updatedAt: number;
@@ -89,6 +91,8 @@ type AiConversationSummary = {
   title: string;
   service: string;
   provider?: string;
+  peerId?: string;
+  peerLabel?: string;
   messageCount: number;
   createdAt: number;
   updatedAt: number;
@@ -1179,6 +1183,23 @@ function extractToolCallFromPartial(
   };
 }
 
+const ANTSEED_PEER_CUSTOM_TYPE = 'antseed:peer';
+
+type AntseedPeerData = { peerId: string; peerLabel?: string };
+
+function extractPeerFromEntries(manager: SessionManager): AntseedPeerData | null {
+  const entries = manager.getEntries();
+  // Walk backwards to find the latest antseed:peer custom entry
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    if (entry.type === 'custom' && 'customType' in entry && entry.customType === ANTSEED_PEER_CUSTOM_TYPE) {
+      const data = (entry as { data?: unknown }).data as AntseedPeerData | undefined;
+      if (data?.peerId) return data;
+    }
+  }
+  return null;
+}
+
 class PiConversationStore {
   private readonly sessionsDir = CHAT_SESSIONS_DIR;
   private readonly workspaceDir = CHAT_WORKSPACE_DIR;
@@ -1232,6 +1253,7 @@ class PiConversationStore {
       updatedAt = Math.max(updatedAt, Date.now());
     }
 
+    const peerData = extractPeerFromEntries(manager);
     return {
       id: manager.getSessionId(),
       title: manager.getSessionName() || deriveTitle(messages),
@@ -1241,6 +1263,8 @@ class PiConversationStore {
       createdAt,
       updatedAt,
       usage,
+      ...(peerData?.peerId ? { peerId: peerData.peerId } : {}),
+      ...(peerData?.peerLabel ? { peerLabel: peerData.peerLabel } : {}),
     };
   }
 
@@ -1284,6 +1308,8 @@ class PiConversationStore {
         usage: conversation.usage,
         totalTokens,
         totalEstimatedCostUsd: deriveCost(conversation.messages),
+        ...(conversation.peerId ? { peerId: conversation.peerId } : {}),
+        ...(conversation.peerLabel ? { peerLabel: conversation.peerLabel } : {}),
       });
     }
 
@@ -1336,6 +1362,12 @@ class PiConversationStore {
     this.pendingManagers.set(conversation.id, manager);
     this.pathCache.set(conversation.id, sessionPath);
     return conversation;
+  }
+
+  async setPeer(id: string, peerId: string, peerLabel?: string): Promise<void> {
+    const manager = await this.openSessionManager(id);
+    if (!manager) return;
+    manager.appendCustomEntry(ANTSEED_PEER_CUSTOM_TYPE, { peerId, peerLabel } satisfies AntseedPeerData);
   }
 
   async delete(id: string): Promise<void> {
@@ -1899,7 +1931,13 @@ export function registerPiChatHandlers({
           const parsedMeta = parseAssistantMetaFromSessionEvent(message, proxyMeta);
           const peerId = normalizePeerId(parsedMeta.peerId);
           if (peerId) {
+            const prevPeerId = preferredPeerByConversationId.get(conversationId);
             preferredPeerByConversationId.set(conversationId, peerId);
+            // Persist peer to session file if it's new or changed
+            if (peerId !== prevPeerId) {
+              const peerLabel = lastServiceCatalogEntries.find((e) => e.peerId === peerId)?.peerLabel;
+              void store.setPeer(conversationId, peerId, peerLabel);
+            }
           }
           const assistantMessage = message as AssistantMessage & { meta?: AiMessageMeta };
           assistantMessage.meta = parsedMeta;
@@ -2068,9 +2106,14 @@ export function registerPiChatHandlers({
 
   ipcMain.handle('chat:ai-list-conversations', async () => {
     const conversations = await store.list();
-    // Enrich summaries with peerId from the preferred-peer map
+    // Enrich summaries: prefer in-memory peer, fall back to persisted
     const enriched = conversations.map((c) => {
-      const peerId = preferredPeerByConversationId.get(c.id);
+      const memPeerId = preferredPeerByConversationId.get(c.id);
+      const peerId = memPeerId || c.peerId;
+      if (peerId && !preferredPeerByConversationId.has(c.id)) {
+        // Warm the in-memory cache from persisted data
+        preferredPeerByConversationId.set(c.id, peerId);
+      }
       return peerId ? { ...c, peerId } : c;
     });
     return { ok: true, data: enriched };
@@ -2088,8 +2131,12 @@ export function registerPiChatHandlers({
 
   ipcMain.handle('chat:ai-create-conversation', async (_event, service: string, provider?: string, peerId?: string) => {
     const conversation = await store.create(service, provider);
-    if (peerId && peerId.trim().length > 0) {
-      preferredPeerByConversationId.set(conversation.id, peerId.trim());
+    const trimmedPeerId = peerId?.trim() ?? '';
+    if (trimmedPeerId) {
+      preferredPeerByConversationId.set(conversation.id, trimmedPeerId);
+      // Resolve peer label from service options
+      const peerLabel = lastServiceCatalogEntries.find((e) => e.peerId === trimmedPeerId)?.peerLabel;
+      await store.setPeer(conversation.id, trimmedPeerId, peerLabel);
     } else {
       preferredPeerByConversationId.delete(conversation.id);
     }
