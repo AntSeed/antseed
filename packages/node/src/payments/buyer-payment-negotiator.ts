@@ -1,7 +1,3 @@
-import { readFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
-
 import type { Identity } from '../p2p/identity.js';
 import type { PeerConnection } from '../p2p/connection-manager.js';
 import { PaymentMux } from '../p2p/payment-mux.js';
@@ -17,11 +13,7 @@ import { debugLog, debugWarn } from '../utils/debug.js';
 import { parseResponseUsage } from '../utils/response-usage.js';
 import { computeCostUsdc } from './pricing.js';
 
-export interface BuyerNegotiatorConfig {
-  configPath?: string;
-  dataDir?: string;
-  requireManualApproval?: boolean;
-}
+export interface BuyerNegotiatorConfig {}
 
 /** Emitter interface — subset of EventEmitter used by the negotiator. */
 export interface NegotiationEmitter {
@@ -66,7 +58,6 @@ export class BuyerPaymentNegotiator {
   private readonly _channelsClient: ChannelsClient | null;
   private readonly _channelStore: ChannelStore | null;
   private readonly _identity: Identity;
-  private readonly _config: BuyerNegotiatorConfig;
   private readonly _emit: NegotiationEmitter;
 
   /** Tracks which seller peers the buyer has already negotiated payment for. */
@@ -85,8 +76,6 @@ export class BuyerPaymentNegotiator {
   private readonly _firstRequestSent = new Set<string>();
   /** Per-peer last response cost, raw content, and latency from the seller. */
   private readonly _lastResponseCost = new Map<string, LastResponseCost>();
-  /** Cached manual approval config read. */
-  private _manualApprovalCache: { value: boolean; at: number } | null = null;
   /** Buyer-side payment muxes keyed by seller peerId. */
   private readonly _muxes = new Map<PeerId, PaymentMux>();
 
@@ -96,7 +85,7 @@ export class BuyerPaymentNegotiator {
     depositsClient: DepositsClient | null,
     channelsClient: ChannelsClient | null,
     channelStore: ChannelStore | null,
-    config: BuyerNegotiatorConfig,
+    _config: BuyerNegotiatorConfig,
     emitter: NegotiationEmitter,
   ) {
     this._identity = identity;
@@ -104,7 +93,6 @@ export class BuyerPaymentNegotiator {
     this._depositsClient = depositsClient;
     this._channelsClient = channelsClient;
     this._channelStore = channelStore;
-    this._config = config;
     this._emit = emitter;
   }
 
@@ -213,10 +201,9 @@ export class BuyerPaymentNegotiator {
     req: SerializedHttpRequest,
   ): Promise<Handle402Result> {
     const hadLockedSession = this._lockedPeers.has(peer.peerId);
-    const manualApproval = await this._isManualApprovalEnabled();
     const directPaymentBody = parsePaymentRequiredBody(response.body);
     const responseAlreadyHasRequirements = Boolean(directPaymentBody?.minBudgetPerRequest);
-    const waitMs = manualApproval ? 10_000 : 2_000;
+    const waitMs = 2_000;
     const buffered = responseAlreadyHasRequirements
       ? null
       : await this._awaitPaymentRequired(peer.peerId, conn, waitMs);
@@ -265,11 +252,6 @@ export class BuyerPaymentNegotiator {
         },
       };
     };
-
-    // Manual approval: always return 402 to caller
-    if (manualApproval) {
-      return returnPaymentRequired(responseAlreadyHasRequirements ? 'manual approval (direct body)' : 'manual approval');
-    }
 
     // Reconcile any active stored session before opening a fresh reserve.
     if (hadLockedSession || this._bpm.getActiveSession(peer.peerId)) {
@@ -770,25 +752,4 @@ export class BuyerPaymentNegotiator {
     throw new Error(`Lock confirmation timed out for seller ${sellerPeerId.slice(0, 12)}... (${timeoutMs}ms)`);
   }
 
-  private async _isManualApprovalEnabled(): Promise<boolean> {
-    const now = Date.now();
-    if (this._manualApprovalCache && now - this._manualApprovalCache.at < 5_000) {
-      return this._manualApprovalCache.value;
-    }
-
-    try {
-      const configPath = this._config.configPath
-        ?? join(this._config.dataDir ?? join(homedir(), '.antseed'), 'config.json');
-      const raw = await readFile(configPath, 'utf-8');
-      const parsed = JSON.parse(raw) as Record<string, unknown>;
-      const buyer = parsed.buyer && typeof parsed.buyer === 'object' ? parsed.buyer as Record<string, unknown> : {};
-      const value = Boolean(buyer.requireManualApproval);
-      this._manualApprovalCache = { value, at: now };
-      return value;
-    } catch {
-      const value = Boolean(this._config.requireManualApproval);
-      this._manualApprovalCache = { value, at: now };
-      return value;
-    }
-  }
 }

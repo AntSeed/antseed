@@ -189,19 +189,6 @@ describe('BuyerPaymentNegotiator', () => {
   });
 
   describe('handle402', () => {
-    it('returns 402 in manual approval mode', async () => {
-      config.requireManualApproval = true;
-      config.configPath = '/nonexistent/config.json';
-      negotiator = new BuyerPaymentNegotiator(identity, bpm as unknown as BuyerPaymentManager, depositsClient, channelsClient, channelStore, config, emitter);
-
-      // Pre-buffer PaymentRequired so the await doesn't time out
-      bufferPaymentRequired(negotiator, peer.peerId, conn);
-
-      const result = await negotiator.handle402(make402Response(), peer, conn, makeRequest());
-      expect(result.action).toBe('return');
-      expect((result as { action: 'return'; response: SerializedHttpResponse }).response.statusCode).toBe(402);
-    });
-
     it('returns a non-payment error when no depositsClient is configured in auto mode', async () => {
       negotiator = new BuyerPaymentNegotiator(identity, bpm as unknown as BuyerPaymentManager, null, channelsClient, channelStore, config, emitter);
 
@@ -358,11 +345,9 @@ describe('BuyerPaymentNegotiator', () => {
       );
     });
 
-    it('enriches 402 body with PaymentRequired data', async () => {
-      config.requireManualApproval = true;
-      config.configPath = '/nonexistent/config.json';
+    it('enriches 402 body with PaymentRequired data when credits are insufficient', async () => {
+      depositsClient = createMockDepositsClient(0n);
       negotiator = new BuyerPaymentNegotiator(identity, bpm as unknown as BuyerPaymentManager, depositsClient, channelsClient, channelStore, config, emitter);
-
       bufferPaymentRequired(negotiator, peer.peerId, conn);
 
       const result = await negotiator.handle402(make402Response(), peer, conn, makeRequest());

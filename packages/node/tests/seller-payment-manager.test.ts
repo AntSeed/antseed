@@ -332,7 +332,7 @@ describe('SellerPaymentManager', () => {
   it('test_getPaymentRequirements: returns payment requirements payload', () => {
     const req = manager.getPaymentRequirements('test-req-1');
     expect(req).not.toBeNull();
-    expect(req.suggestedAmount).toBe('5000000');
+    expect(req.suggestedAmount).toBe('1000000');
     expect(req.requestId).toBe('test-req-1');
     expect(req.minBudgetPerRequest).toBeDefined();
   });

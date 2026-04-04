@@ -15,7 +15,6 @@ export function ConfigView({ active }: ConfigViewProps) {
   const [maxInput, setMaxInput] = useState('0');
   const [maxOutput, setMaxOutput] = useState('0');
   const [minRep, setMinRep] = useState('0');
-  const [requireManualApproval, setRequireManualApproval] = useState(false);
   const [chainId, setChainId] = useState('');
   const [rpcUrl, setRpcUrl] = useState('');
   const [depositsAddress, setDepositsAddress] = useState('');
@@ -31,7 +30,6 @@ export function ConfigView({ active }: ConfigViewProps) {
       setMaxInput(String(configFormData.maxInputUsdPerMillion));
       setMaxOutput(String(configFormData.maxOutputUsdPerMillion));
       setMinRep(String(configFormData.minRep));
-      setRequireManualApproval(configFormData.requireManualApproval);
       setChainId(configFormData.cryptoChainId);
       setRpcUrl(configFormData.cryptoRpcUrl);
       setDepositsAddress(configFormData.cryptoDepositsAddress);
@@ -58,7 +56,6 @@ export function ConfigView({ active }: ConfigViewProps) {
       maxInputUsdPerMillion: parseFloat(maxInput) || 0,
       maxOutputUsdPerMillion: parseFloat(maxOutput) || 0,
       minRep: parseInt(minRep, 10) || 0,
-      requireManualApproval,
       cryptoChainId: chainId,
       cryptoRpcUrl: rpcUrl,
       cryptoDepositsAddress: depositsAddress,
@@ -232,23 +229,6 @@ export function ConfigView({ active }: ConfigViewProps) {
             <h3>Desktop Preferences</h3>
           </div>
           <div className="settings-stack">
-            <div className="settings-item">
-              <div className="settings-copy">
-                <h4>Manual Approval</h4>
-                <p>When enabled, you'll see a confirmation card before authorizing payment to a new peer.</p>
-              </div>
-              <button
-                type="button"
-                className={`settings-switch${requireManualApproval ? ' is-on' : ''}`}
-                aria-pressed={requireManualApproval}
-                onClick={() => { setRequireManualApproval((v) => !v); markDirty(); }}
-              >
-                <span className="settings-switch-track">
-                  <span className="settings-switch-thumb" />
-                </span>
-                <span className="settings-switch-label">{requireManualApproval ? 'On' : 'Off'}</span>
-              </button>
-            </div>
             <div className="settings-item">
               <div className="settings-copy">
                 <h4>Developer Mode</h4>

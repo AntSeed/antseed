@@ -149,11 +149,6 @@ export interface NodeConfig {
   identityStore?: IdentityStore;
   /** Optional explicit config.json path for runtime config reloads. */
   configPath?: string;
-  /**
-   * When true, the node returns the 402 to the caller instead of auto-signing.
-   * The caller can then sign externally and retry with x-antseed-spending-auth header.
-   */
-  requireManualApproval?: boolean;
 }
 
 export class AntseedNode extends EventEmitter {
@@ -844,7 +839,7 @@ export class AntseedNode extends EventEmitter {
           chainId: payments.chainId ?? 8453,
           defaultAuthDurationSecs: payments.defaultAuthDurationSecs ?? 900, // 15 min — seller must call reserve() promptly
           maxPerRequestUsdc: BigInt(payments.maxPerRequestUsdc ?? "500000"),  // $0.50 default — covers most LLM requests
-          maxReserveAmountUsdc: BigInt(payments.maxReserveAmountUsdc ?? "5000000"),  // $5.00 default per session
+          maxReserveAmountUsdc: BigInt(payments.maxReserveAmountUsdc ?? "1000000"),  // $1.00 default per session (matches FIRST_SIGN_CAP)
           dataDir: paymentsDir,
         };
         this._buyerPaymentManager = new BuyerPaymentManager(identity, buyerPaymentConfig, this._channelStore);
@@ -857,11 +852,7 @@ export class AntseedNode extends EventEmitter {
           this._depositsClient,
           this._channelsClient,
           this._channelStore,
-          {
-            configPath: this._config.configPath,
-            dataDir: this._config.dataDir,
-            requireManualApproval: this._config.requireManualApproval,
-          },
+          {},
           this,
         );
         debugLog(`[Node] Buyer payment negotiator initialized`);

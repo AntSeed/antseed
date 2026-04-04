@@ -2,7 +2,6 @@ import type { RendererUiState } from '../core/state';
 import type { BadgeTone } from '../core/state';
 import { notifyUiStateChanged, notifyUiStateChangedSync } from '../core/store';
 import type { DesktopBridge } from '../types/bridge';
-import { getActions } from '../ui/actions';
 import type {
   ChatMessage,
   ContentBlock,
@@ -194,18 +193,16 @@ export function initChatModule({
 
   async function handlePaymentRequired(amountBaseUnits: string): Promise<void> {
     const required = Number(amountBaseUnits) / 1_000_000;
-    const manualApproval = Boolean(uiState.configFormData?.requireManualApproval);
+    const available = await refreshAvailableCreditsUsdc();
 
     if (
-      !manualApproval
-      && Number.isFinite(required)
+      Number.isFinite(required)
       && required > 0
-      && await refreshAvailableCreditsUsdc() >= required
+      && available >= required
     ) {
-      primePaymentApprovalState(amountBaseUnits);
       uiState.chatPaymentApprovalVisible = false;
+      uiState.chatPaymentApprovalError = 'Payment negotiation failed even though your deposits appear sufficient. Retry the request.';
       notifyUiStateChanged();
-      getActions().approvePaymentSession();
       return;
     }
 
