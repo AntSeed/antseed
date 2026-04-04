@@ -202,11 +202,17 @@ describe('BuyerPaymentNegotiator', () => {
       expect((result as { action: 'return'; response: SerializedHttpResponse }).response.statusCode).toBe(402);
     });
 
-    it('returns 402 when no depositsClient', async () => {
+    it('returns a non-payment error when no depositsClient is configured in auto mode', async () => {
       negotiator = new BuyerPaymentNegotiator(identity, bpm as unknown as BuyerPaymentManager, null, channelsClient, channelStore, config, emitter);
 
       const result = await negotiator.handle402(make402Response(), peer, conn, makeRequest());
       expect(result.action).toBe('return');
+      const res = (result as { action: 'return'; response: SerializedHttpResponse }).response;
+      expect(res.statusCode).toBe(503);
+      expect(JSON.parse(new TextDecoder().decode(res.body))).toMatchObject({
+        error: 'payment_negotiation_failed',
+        reason: 'deposits_not_configured',
+      });
     });
 
     it('returns 402 when balance is zero', async () => {
@@ -276,6 +282,12 @@ describe('BuyerPaymentNegotiator', () => {
 
       expect(bpm.authorizeSpending).not.toHaveBeenCalled();
       expect(result.action).toBe('return');
+      const res = (result as { action: 'return'; response: SerializedHttpResponse }).response;
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(new TextDecoder().decode(res.body))).toMatchObject({
+        error: 'payment_negotiation_failed',
+        reason: 'existing_channel_still_active',
+      });
     });
 
     it('retires a stored session when no channels client is configured', async () => {

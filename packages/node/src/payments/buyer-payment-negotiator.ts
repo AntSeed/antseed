@@ -246,6 +246,26 @@ export class BuyerPaymentNegotiator {
       return { action: 'return', response };
     };
 
+    const returnNegotiationFailure = (reason: string, message: string, statusCode = 409): Handle402Result => {
+      debugWarn(
+        `[BuyerNegotiator] Auto-negotiation failed for ${peer.peerId.slice(0, 12)}... — ` +
+        `${reason}; returning non-payment error to caller`,
+      );
+      return {
+        action: 'return',
+        response: {
+          ...response,
+          statusCode,
+          headers: { ...response.headers, 'content-type': 'application/json' },
+          body: new TextEncoder().encode(JSON.stringify({
+            error: 'payment_negotiation_failed',
+            reason,
+            message,
+          })),
+        },
+      };
+    };
+
     // Manual approval: always return 402 to caller
     if (manualApproval) {
       return returnPaymentRequired(responseAlreadyHasRequirements ? 'manual approval (direct body)' : 'manual approval');
@@ -259,7 +279,10 @@ export class BuyerPaymentNegotiator {
       }
 
       if (this._bpm.getActiveSession(peer.peerId)) {
-        return returnPaymentRequired('existing channel still active');
+        return returnNegotiationFailure(
+          'existing_channel_still_active',
+          'An existing payment channel could not be recovered automatically. Close or recover the channel and retry.',
+        );
       }
 
       this._lockedPeers.delete(peer.peerId);
@@ -268,7 +291,11 @@ export class BuyerPaymentNegotiator {
 
     // Check if we can pay before attempting negotiation
     if (!this._depositsClient) {
-      return returnPaymentRequired('no deposits configured');
+      return returnNegotiationFailure(
+        'deposits_not_configured',
+        'Buyer deposits are not configured, so automatic payment negotiation is unavailable.',
+        503,
+      );
     }
 
     // Check on-chain balance
