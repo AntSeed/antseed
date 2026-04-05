@@ -499,8 +499,6 @@ export class AntseedNode extends EventEmitter {
       : this._channelStore?.getTotalsByPeer(sellerPeerId, 'buyer')
       ?? null;
 
-    if (!channel && !lifetime) return null;
-
     const liveTotals = this._buyerPaymentManager?.getResponseTokenTotals(sellerPeerId);
     const inputTokens = (liveTotals != null) ? liveTotals.input
       : (channel != null) ? Number(channel.tokensDelivered || '0')

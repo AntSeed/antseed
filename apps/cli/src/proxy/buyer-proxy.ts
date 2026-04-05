@@ -647,13 +647,8 @@ export class BuyerProxy {
     if (meteringMatch && method === 'GET') {
       const sellerPeerId = decodeURIComponent(meteringMatch[1]!)
       const stats = this._node.getMeteringStatsByPeer(sellerPeerId)
-      if (stats) {
-        res.writeHead(200, { 'content-type': 'application/json' })
-        res.end(JSON.stringify(stats))
-      } else {
-        res.writeHead(503, { 'content-type': 'application/json' })
-        res.end(JSON.stringify({ error: 'Metering storage not available' }))
-      }
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify(stats))
       return
     }
 
