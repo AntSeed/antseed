@@ -6,8 +6,8 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { asErrorMessage } from './utils.js';
 
-const ANTSEED_HOME_DIR = path.join(homedir(), '.antseed');
-const CHAT_DATA_DIR = path.join(ANTSEED_HOME_DIR, 'chat');
+export const ANTSEED_HOME_DIR = path.join(homedir(), '.antseed');
+export const CHAT_DATA_DIR = path.join(ANTSEED_HOME_DIR, 'chat');
 export const CHAT_WORKSPACE_DIR = path.join(ANTSEED_HOME_DIR, 'projects');
 const CHAT_WORKSPACE_STATE_FILE = path.join(CHAT_DATA_DIR, 'workspace.json');
 

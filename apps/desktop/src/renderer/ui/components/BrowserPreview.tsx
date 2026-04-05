@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback, useEffect } from 'react';
+import { useRef, useState, useCallback, useEffect, useMemo } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import {
   ArrowLeft01Icon,
@@ -175,7 +175,6 @@ export function BrowserPreview({ url, onClose, onNavigate, onElementSelected }: 
 
   const hasUrl = Boolean(url && url.trim().length > 0);
 
-  // Update webview when url prop changes
   useEffect(() => {
     const webview = webviewRef.current;
     if (webview && url) {
@@ -256,32 +255,37 @@ export function BrowserPreview({ url, onClose, onNavigate, onElementSelected }: 
     };
   }, [onNavigate]);
 
-  // Auto-scroll console
   useEffect(() => {
     const el = consoleScrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [consoleEntries]);
 
-  // Clean up picker polling on unmount
   useEffect(() => {
     return () => {
       if (pickerPollRef.current) clearInterval(pickerPollRef.current);
     };
   }, []);
 
-  const handleUrlSubmit = useCallback(
-    (e: React.KeyboardEvent<HTMLInputElement>) => {
-      if (e.key !== 'Enter') return;
-      let target = displayUrl.trim();
+  const navigateTo = useCallback(
+    (raw: string) => {
+      let target = raw.trim();
       if (!target) return;
-      if (target && !target.match(/^https?:\/\//)) {
+      if (!target.match(/^https?:\/\//)) {
         target = `http://${target}`;
       }
       setDisplayUrl(target);
       onNavigate(target);
       webviewRef.current?.loadURL(target);
     },
-    [displayUrl, onNavigate],
+    [onNavigate],
+  );
+
+  const handleUrlSubmit = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key !== 'Enter') return;
+      navigateTo(displayUrl);
+    },
+    [displayUrl, navigateTo],
   );
 
   const goBack = useCallback(() => webviewRef.current?.goBack(), []);
@@ -327,15 +331,8 @@ export function BrowserPreview({ url, onClose, onNavigate, onElementSelected }: 
   }, [displayUrl]);
 
   const openTypedUrl = useCallback(() => {
-    let target = displayUrl.trim();
-    if (!target) return;
-    if (!target.match(/^https?:\/\//)) {
-      target = `http://${target}`;
-    }
-    setDisplayUrl(target);
-    onNavigate(target);
-    webviewRef.current?.loadURL(target);
-  }, [displayUrl, onNavigate]);
+    navigateTo(displayUrl);
+  }, [displayUrl, navigateTo]);
 
   const togglePicker = useCallback(() => {
     const webview = webviewRef.current;
@@ -382,10 +379,15 @@ export function BrowserPreview({ url, onClose, onNavigate, onElementSelected }: 
     }, 200);
   }, [pickerActive, onElementSelected]);
 
-  const filteredConsole = consoleEntries.filter((e) => {
-    if (consoleFilter === 'all') return true;
-    return e.level === consoleFilter;
-  });
+  const filteredConsole = useMemo(
+    () => consoleEntries.filter((e) => consoleFilter === 'all' || e.level === consoleFilter),
+    [consoleEntries, consoleFilter],
+  );
+
+  const errorCount = useMemo(
+    () => consoleEntries.filter((e) => e.level === 'error').length,
+    [consoleEntries],
+  );
 
   const statusLabel = loadError
     ? 'Error'
@@ -397,14 +399,14 @@ export function BrowserPreview({ url, onClose, onNavigate, onElementSelected }: 
           : 'Ready'
         : 'Idle';
 
-  const hostLabel = (() => {
+  const hostLabel = useMemo(() => {
     try {
       const parsed = new URL(displayUrl);
       return parsed.host || parsed.pathname;
     } catch {
       return displayUrl.trim() || 'No URL selected';
     }
-  })();
+  }, [displayUrl]);
 
   const webviewStyle: React.CSSProperties = mobileMode
     ? {
@@ -558,9 +560,9 @@ export function BrowserPreview({ url, onClose, onNavigate, onElementSelected }: 
         >
           <HugeiconsIcon icon={ConsoleIcon} size={14} strokeWidth={1.5} />
           <span>Console</span>
-          {consoleEntries.filter((e) => e.level === 'error').length > 0 && (
+          {errorCount > 0 && (
             <span className={styles.consoleBadge}>
-              {consoleEntries.filter((e) => e.level === 'error').length}
+              {errorCount}
             </span>
           )}
         </button>

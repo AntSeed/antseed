@@ -128,7 +128,6 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     return buildDisplayMessages(msgs).filter((msg) => !isToolResultOnlyMessage(msg));
   }, [snap.chatMessages]);
 
-  // Open preview when the tool triggers via state
   const previewUrl = snap.browserPreviewUrl;
   const previewRequestId = snap.browserPreviewRequestId;
   useEffect(() => {
@@ -336,7 +335,6 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     visibleMessages.length === 0 &&
     !snap.chatStreamingMessage;
 
-  const previewActive = previewOpen;
   const workspacePath = snap.chatWorkspacePath || snap.chatWorkspaceDefaultPath;
   const workspaceLabel = workspacePath
     ? workspacePath.length > 52 ? `...${workspacePath.slice(-52)}` : workspacePath
@@ -360,10 +358,10 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   const gitStatusTitle = getGitStatusTitle(gitStatus);
 
   // Compute widths for split view
-  const chatStyle = previewActive
+  const chatStyle = previewOpen
     ? { flex: `0 0 ${(1 - previewFraction) * 100}%`, minWidth: CHAT_MIN_WIDTH }
     : undefined;
-  const previewStyle = previewActive
+  const previewStyle = previewOpen
     ? { flex: `0 0 ${previewFraction * 100}%`, minWidth: PREVIEW_MIN_WIDTH }
     : undefined;
 
@@ -571,7 +569,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
             </div>
           </div>
         </div>
-        {previewActive && (
+        {previewOpen && (
           <>
             <div
               className={styles.divider}

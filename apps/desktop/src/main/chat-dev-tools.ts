@@ -128,7 +128,6 @@ export const startDevServerTool: ToolDefinition = {
       };
     }
 
-    // Kill any previously started server in the same directory
     const prev = runningDevServers.get(cwd);
     if (prev) {
       try { prev.kill(); } catch { /* ignore */ }
@@ -156,6 +155,10 @@ export const startDevServerTool: ToolDefinition = {
 
     // Unref so the Electron process can exit even if the dev server is still running
     child.unref();
+
+    child.on('exit', () => {
+      runningDevServers.delete(cwd);
+    });
 
     const collectOutput = (chunk: Buffer) => {
       output += chunk.toString();

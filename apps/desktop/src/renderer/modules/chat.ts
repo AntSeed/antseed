@@ -87,6 +87,19 @@ export function initChatModule({
   // Constants
   // ---------------------------------------------------------------------------
 
+  const UNAVAILABLE_GIT_STATUS: ChatWorkspaceGitStatus = {
+    available: false,
+    rootPath: null,
+    branch: null,
+    isDetached: false,
+    ahead: 0,
+    behind: 0,
+    stagedFiles: 0,
+    modifiedFiles: 0,
+    untrackedFiles: 0,
+    error: null,
+  };
+
   const fallbackChatServices: NormalizedChatServiceEntry[] = [];
 
   type NormalizedChatServiceEntry = Required<
@@ -1185,32 +1198,14 @@ export function initChatModule({
         uiState.chatWorkspaceGitStatus = result.data as ChatWorkspaceGitStatus;
       } else {
         uiState.chatWorkspaceGitStatus = {
-          ...uiState.chatWorkspaceGitStatus,
-          available: false,
-          rootPath: null,
-          branch: null,
-          isDetached: false,
-          ahead: 0,
-          behind: 0,
-          stagedFiles: 0,
-          modifiedFiles: 0,
-          untrackedFiles: 0,
+          ...UNAVAILABLE_GIT_STATUS,
           error: result.error || null,
         };
       }
       notifyUiStateChanged();
     } catch (error) {
       uiState.chatWorkspaceGitStatus = {
-        ...uiState.chatWorkspaceGitStatus,
-        available: false,
-        rootPath: null,
-        branch: null,
-        isDetached: false,
-        ahead: 0,
-        behind: 0,
-        stagedFiles: 0,
-        modifiedFiles: 0,
-        untrackedFiles: 0,
+        ...UNAVAILABLE_GIT_STATUS,
         error: error instanceof Error ? error.message : String(error),
       };
       notifyUiStateChanged();
@@ -1643,7 +1638,6 @@ export function initChatModule({
 
   if (bridge) {
     void refreshWorkspace();
-    void refreshWorkspaceGitStatus();
     // --- Non-streaming callbacks ---
 
     if (bridge.onChatAiDone) {

@@ -2,13 +2,13 @@ import type { IpcMain } from 'electron';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, stat, unlink } from 'node:fs/promises';
 import { createConnection } from 'node:net';
-import { homedir } from 'node:os';
 import path from 'node:path';
 import type { AgentSession, AgentSessionEvent } from '@mariozechner/pi-coding-agent';
 import { browserPreviewTool, startDevServerTool } from './chat-dev-tools.js';
 import { webFetchTool } from './chat-web-fetch.js';
 import { buildAntstationSystemPrompt } from './chat-system-prompt.js';
 import {
+  CHAT_DATA_DIR,
   CHAT_WORKSPACE_DIR,
   getCurrentChatWorkspaceDir,
   getWorkspaceGitStatus,
@@ -160,8 +160,6 @@ type ChatServiceCatalogEntry = {
   description?: string;
 };
 
-const ANTSEED_HOME_DIR = path.join(homedir(), '.antseed');
-const CHAT_DATA_DIR = path.join(ANTSEED_HOME_DIR, 'chat');
 const CHAT_SESSIONS_DIR = path.join(CHAT_DATA_DIR, 'sessions');
 const CHAT_AGENT_DIR = path.join(CHAT_DATA_DIR, 'pi-agent');
 
