@@ -305,35 +305,23 @@ contract AntseedDepositsTest is Test {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //                       claimPayouts()
+    //                    Direct seller payment
     // ═══════════════════════════════════════════════════════════════════
 
-    function test_claimPayouts_success() public {
+    function test_chargeAndCreditPayouts_transfersDirectlyToSeller() public {
         _deposit(buyer, 30_000_000);
         vm.prank(sessions);
         deposits.lockForChannel(buyer, 20_000_000);
+
+        uint256 sellerBefore = usdc.balanceOf(seller);
+
         vm.prank(sessions);
         deposits.chargeAndCreditPayouts(buyer, seller, 10_000_000, 20_000_000, 1_000_000, protocolReserve);
 
-        // Seller payouts = 10 - 1 = 9 USDC
-        assertEq(deposits.getSellerPayouts(seller), 9_000_000);
-
-        uint256 balBefore = usdc.balanceOf(seller);
-
-        vm.expectEmit(true, false, false, true);
-        emit AntseedDeposits.PayoutClaimed(seller, 9_000_000);
-
-        vm.prank(seller);
-        deposits.claimPayouts();
-
-        assertEq(usdc.balanceOf(seller), balBefore + 9_000_000);
-        assertEq(deposits.getSellerPayouts(seller), 0);
-    }
-
-    function test_claimPayouts_revert_zeroPayouts() public {
-        vm.prank(seller);
-        vm.expectRevert(AntseedDeposits.InvalidAmount.selector);
-        deposits.claimPayouts();
+        // Seller receives 10 - 1 = 9 USDC directly
+        assertEq(usdc.balanceOf(seller), sellerBefore + 9_000_000);
+        // Protocol reserve receives 1 USDC
+        assertEq(usdc.balanceOf(protocolReserve), 1_000_000);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -416,7 +404,7 @@ contract AntseedDepositsTest is Test {
         assertEq(reserved, 0);
 
         // Seller payouts: 15 - 2 = 13
-        assertEq(deposits.getSellerPayouts(seller), 13_000_000);
+        assertEq(usdc.balanceOf(seller), 13_000_000);
 
         // Platform fee sent to protocolReserve
         assertEq(usdc.balanceOf(protocolReserve), 2_000_000);
@@ -464,7 +452,7 @@ contract AntseedDepositsTest is Test {
         // No transfer to protocolReserve
         assertEq(usdc.balanceOf(protocolReserve), reserveBefore);
         // Seller gets full amount
-        assertEq(deposits.getSellerPayouts(seller), 10_000_000);
+        assertEq(usdc.balanceOf(seller), 10_000_000);
     }
 
     function test_chargeAndCreditPayouts_zeroProtocolReserveAddress() public {
@@ -477,7 +465,7 @@ contract AntseedDepositsTest is Test {
         deposits.chargeAndCreditPayouts(buyer, seller, 10_000_000, 20_000_000, 1_000_000, address(0));
 
         // Seller gets chargeAmount - platformFee
-        assertEq(deposits.getSellerPayouts(seller), 9_000_000);
+        assertEq(usdc.balanceOf(seller), 9_000_000);
     }
 
     function test_chargeAndCreditPayouts_revert_chargeExceedsReserved() public {

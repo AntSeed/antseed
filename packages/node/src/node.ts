@@ -88,8 +88,10 @@ export interface NodePaymentsConfig {
   paymentMethod?: PaymentMethod;
   /** Platform fee rate in [0,1]. Default: 0.05 */
   platformFeeRate?: number;
-  /** Idle time before a session is finalized and settled. Default: 30000ms */
+  /** Idle time before calling settle() to collect earnings (channel stays open). Default: 10 min. */
   settlementIdleMs?: number;
+  /** Idle time before calling close() to end the channel entirely. Default: 12 hours. */
+  closeIdleMs?: number;
   /** Default deposit amount in USDC units. Default: "1" */
   defaultDepositAmountUSDC?: string;
   /** Optional seller wallet address for auto-funded deposit. */
@@ -680,7 +682,7 @@ export class AntseedNode extends EventEmitter {
       identity,
       this._metering,
       this._receiptGenerator,
-      { settlementIdleMs: this._config.payments?.settlementIdleMs },
+      { settlementIdleMs: this._config.payments?.settlementIdleMs, closeIdleMs: this._config.payments?.closeIdleMs },
       {
         onSessionUpdated: (snapshot) => this.emit("session:updated", snapshot),
         onSessionFinalized: (info) => this.emit("session:finalized", info),
@@ -689,12 +691,15 @@ export class AntseedNode extends EventEmitter {
 
     await this._initializePayments(dataDir);
 
-    // Wire idle-timeout session finalization to on-chain settlement
+    // Wire idle session events to on-chain settlement
     if (this._sellerPaymentManager) {
       const spm = this._sellerPaymentManager;
       this.on("session:finalized", (info: { buyerPeerId: string; reason: string }) => {
-        if (info.reason === "idle-timeout") {
-          debugLog(`[Node] Idle timeout for buyer ${info.buyerPeerId.slice(0, 12)}... — settling channel`);
+        if (info.reason === "idle-settle") {
+          debugLog(`[Node] Idle settle for buyer ${info.buyerPeerId.slice(0, 12)}... — settling channel (keeping open)`);
+          void spm.settleSession(info.buyerPeerId, { settleOnly: true });
+        } else if (info.reason === "idle-timeout") {
+          debugLog(`[Node] Idle timeout for buyer ${info.buyerPeerId.slice(0, 12)}... — closing channel`);
           void spm.settleSession(info.buyerPeerId, { cleanupOnFailure: true });
         }
       });

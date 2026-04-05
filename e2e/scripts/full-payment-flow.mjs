@@ -124,6 +124,11 @@ function castCall(args) {
   return run("cast", ["call", "--rpc-url", RPC_URL, ...args]);
 }
 
+/** Parse cast output like "50000000 [5e7]" to a clean number string. */
+function parseCastUint(raw) {
+  return raw.trim().split(/\s/)[0];
+}
+
 // ---------------------------------------------------------------------------
 // Async helpers
 // ---------------------------------------------------------------------------
@@ -624,17 +629,19 @@ async function main() {
       usdcAddress: USDC_ADDRESS,
     });
 
-    // Wait for seller payouts in Deposits contract (credited by close())
-    const sellerPayouts = await waitForValue(
+    // Wait for seller USDC balance to increase (direct transfer from settle/close)
+    const sellerBalanceBefore = BigInt(parseCastUint(castCall([USDC_ADDRESS, "balanceOf(address)(uint256)", sellerAddress])));
+    const sellerEarnings = await waitForValue(
       async () => {
-        const payouts = await depositsClient.getSellerPayouts(sellerAddress);
-        return payouts > 0n ? payouts : null;
+        const balance = BigInt(parseCastUint(castCall([USDC_ADDRESS, "balanceOf(address)(uint256)", sellerAddress])));
+        const earned = balance - sellerBalanceBefore;
+        return earned > 0n ? earned : null;
       },
-      "seller settlement payouts in Deposits",
+      "seller USDC earnings after settlement",
       60_000,
       500
     );
-    pass(`Seller earned ${sellerPayouts} USDC base units in Deposits`);
+    pass(`Seller earned ${sellerEarnings} USDC base units (direct transfer)`);
 
     // Verify session is settled (activeChannelId is an internal UUID, not the
     // on-chain channelId — wrap in try/catch since this is informational)

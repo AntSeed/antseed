@@ -23,9 +23,12 @@ interface IAntseedChannels {
 
     function topUp(
         bytes32 channelId,
+        uint128 cumulativeAmount,
+        bytes calldata metadata,
+        bytes calldata spendingSig,
         uint128 newMaxAmount,
         uint256 deadline,
-        bytes calldata buyerSig
+        bytes calldata reserveSig
     ) external;
 
     function settle(
