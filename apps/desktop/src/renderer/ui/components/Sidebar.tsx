@@ -1,5 +1,4 @@
 import { memo, useState, useMemo, useRef, useEffect, useCallback } from 'react';
-import { createPortal } from 'react-dom';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { HierarchySquare03Icon } from '@hugeicons/core-free-icons';
 import { UserGroupIcon } from '@hugeicons/core-free-icons';
@@ -119,34 +118,30 @@ function ConvContextMenu({
     onClose();
   }, [renameValue, convTitle, convId, actions, onClose]);
 
-  const anchorRect = anchorRef.current?.getBoundingClientRect();
-  const menuStyle: React.CSSProperties = anchorRect
-    ? { position: 'fixed', top: anchorRect.bottom + 4, left: anchorRect.right - 120 }
-    : {};
+  if (renaming) {
+    return (
+      <div className={styles.convContextMenu} ref={menuRef}>
+        <input
+          ref={renameInputRef}
+          className={styles.convRenameInput}
+          value={renameValue}
+          onChange={(e) => setRenameValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') handleRenameSubmit();
+            if (e.key === 'Escape') { cancelledRef.current = true; onClose(); }
+          }}
+          onBlur={() => {
+            setTimeout(() => {
+              if (!cancelledRef.current) handleRenameSubmit();
+            }, 100);
+          }}
+        />
+      </div>
+    );
+  }
 
-  const handleBlur = useCallback(() => {
-    // Delay to allow click events on menu items to fire first
-    setTimeout(() => {
-      if (!cancelledRef.current) handleRenameSubmit();
-    }, 150);
-  }, [handleRenameSubmit]);
-
-  const menu = renaming ? (
-    <div className={styles.convContextMenu} ref={menuRef} style={menuStyle}>
-      <input
-        ref={renameInputRef}
-        className={styles.convRenameInput}
-        value={renameValue}
-        onChange={(e) => setRenameValue(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') handleRenameSubmit();
-          if (e.key === 'Escape') { cancelledRef.current = true; onClose(); }
-        }}
-        onBlur={handleBlur}
-      />
-    </div>
-  ) : (
-    <div className={styles.convContextMenu} ref={menuRef} style={menuStyle}>
+  return (
+    <div className={styles.convContextMenu} ref={menuRef}>
       <button className={styles.convContextItem} onClick={() => setRenaming(true)}>
         Rename
       </button>
@@ -161,8 +156,6 @@ function ConvContextMenu({
       </button>
     </div>
   );
-
-  return createPortal(menu, document.body);
 }
 
 function formatUsdc(value: number): string {
@@ -299,7 +292,6 @@ function PeerGroupSection({
         ref={convsRef}
         className={`${styles.peerGroupConvs}${expanded ? ` ${styles.peerGroupConvsOpen}` : ''}`}
       >
-        <div>
         {group.conversations.map((conv) => {
             const id = String(conv.id ?? '');
             const isActive = id === activeConvId;
@@ -369,7 +361,6 @@ function PeerGroupSection({
               </div>
             );
           })}
-        </div>
       </div>
     </div>
   );

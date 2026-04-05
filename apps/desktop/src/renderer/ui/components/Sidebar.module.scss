@@ -224,22 +224,14 @@
 }
 
 .peer-group-convs {
-  display: grid;
-  grid-template-rows: 0fr;
-  transition: grid-template-rows 0.2s ease;
+  display: none;
+  flex-direction: column;
+  gap: 1px;
   padding-left: 4px;
-
-  > * {
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-    min-height: 0;
-  }
 }
 
 .peer-group-convs-open {
-  grid-template-rows: 1fr;
+  display: flex;
 }
 
 /* ── Conversation preview with cost ────────────────────────────────── */
@@ -353,6 +345,9 @@
 /* Conversation context menu */
 
 .conv-context-menu {
+  position: absolute;
+  right: 4px;
+  top: 100%;
   min-width: 120px;
   background: var(--bg-card);
   border: 1px solid var(--border);
