@@ -1,11 +1,14 @@
 import { useRef, useEffect, useState, useCallback, useMemo, useId } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { Add01Icon } from '@hugeicons/core-free-icons';
-import { ArrowUp02Icon } from '@hugeicons/core-free-icons';
-import { ComputerTerminal01Icon } from '@hugeicons/core-free-icons';
-import { ArrowRight01Icon } from '@hugeicons/core-free-icons';
-import { RepeatIcon } from '@hugeicons/core-free-icons';
-import { BrowserIcon } from '@hugeicons/core-free-icons';
+import {
+  Add01Icon,
+  ArrowUp02Icon,
+  ArrowRight01Icon,
+  RepeatIcon,
+  BrowserIcon,
+  Folder01Icon,
+  GitBranchIcon
+} from '@hugeicons/core-free-icons';
 import { useUiSnapshot } from '../../hooks/useUiSnapshot';
 import { useActions } from '../../hooks/useActions';
 import { ChatBubble } from '../chat/ChatBubble';
@@ -14,12 +17,12 @@ import { WalkingAnt } from '../chat/WalkingAnt';
 import { SessionApprovalCard } from '../chat/SessionApprovalCard';
 import { LowBalanceWarning } from '../chat/LowBalanceWarning';
 import { BrowserPreview } from '../BrowserPreview';
-
-import { AntStationStackedLogo } from '../AntStationLogo';
-import styles from './ChatView.module.scss';
 import type { ChatMessage } from '../chat/chat-shared';
 import { buildDisplayMessages } from '../chat/chat-shared';
 import type { ChatWorkspaceGitStatus } from '../../../types/bridge';
+import { AntStationStackedLogo } from '../AntStationLogo';
+
+import styles from './ChatView.module.scss';
 
 const MAX_INPUT_HEIGHT = 220;
 const PREVIEW_MIN_WIDTH = 280;
@@ -547,7 +550,8 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                 onClick={() => void actions.refreshWorkspaceGitStatus()}
                 title={gitStatusTitle}
               >
-                <span className={styles.gitStatusBranch}>{gitStatusRepoLabel}</span>
+                <HugeiconsIcon icon={GitBranchIcon} size={14} strokeWidth={1.5} />
+                {/* <span className={styles.gitStatusBranch}>{gitStatusRepoLabel}</span> */}
                 <span className={styles.gitStatusSummary}>{gitStatusDetailLabel}</span>
               </button>
               <button
@@ -555,7 +559,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                 onClick={() => void actions.chooseWorkspace()}
                 title={workspacePath || 'Choose workspace'}
               >
-                <HugeiconsIcon icon={ComputerTerminal01Icon} size={14} strokeWidth={1.5} />
+                <HugeiconsIcon icon={Folder01Icon} size={14} strokeWidth={1.5} />
                 <span className={styles.workspaceLabel}>{workspaceLabel}</span>
               </button>
             </div>

@@ -21,36 +21,6 @@
   min-width: 0;
 }
 
-.workspace-button {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  max-width: 420px;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-light);
-  border-radius: 999px;
-  padding: 5px 12px;
-  cursor: pointer;
-  color: var(--text-secondary);
-  transition: border-color 0.15s, background 0.15s, color 0.15s;
-
-  &:hover {
-    border-color: rgba(31, 216, 122, 0.35);
-    color: var(--text-primary);
-    background: rgba(31, 216, 122, 0.07);
-  }
-}
-
-.workspace-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  font-family: var(--font-mono, monospace);
-}
-
 .preview-toggle {
   display: flex;
   align-items: center;
@@ -259,18 +229,46 @@
   flex-direction: column;
   background: var(--chat-input-bg);
   border: 1px solid var(--border);
-  border-radius: 24px;
-  padding: 14px 17px;
+  border-top-left-radius: 24px;
+  border-top-right-radius: 24px;
+  border-bottom: none;
+  padding: 14px 16px;
   gap: 8px;
 }
 
-/* Below the input box: git status left, workspace right */
 .chat-input-meta {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 4px 0;
+  padding: 8px 16px;
+  border-bottom-left-radius: 24px;
+  border-bottom-right-radius: 24px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
 }
+
+.workspace-button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 8px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.workspace-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-family: var(--font-mono, monospace);
+}
+
 
 .git-status-pill {
   display: inline-flex;
@@ -278,19 +276,19 @@
   gap: 8px;
   min-width: 0;
   max-width: 100%;
-  border-radius: 999px;
-  border: 1px solid var(--border-light);
-  background: rgba(255, 255, 255, 0.04);
-  padding: 5px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-muted);
+  padding: 6px 8px;
   cursor: pointer;
-  transition: border-color 0.15s, background 0.15s, color 0.15s;
 
   &:hover {
     background: rgba(255, 255, 255, 0.07);
   }
 }
 
-.git-status-pill-clean {
+/* .git-status-pill-clean {
   border-color: rgba(31, 216, 122, 0.28);
 }
 
@@ -301,7 +299,7 @@
 .git-status-pill-missing {
   border-color: rgba(255, 255, 255, 0.1);
   opacity: 0.78;
-}
+} */
 
 .git-status-branch {
   min-width: 0;
@@ -324,7 +322,7 @@
   display: flex;
   align-items: flex-start;
   gap: 6px;
-  padding: 4px 17px 8px;
+  padding: 4px 16px 8px;
 }
 
 .chat-image-attach-thumb {
@@ -391,7 +389,7 @@
   border: none;
   color: var(--text-primary);
   padding: 0;
-  font-size: 17px;
+  font-size: 16px;
   resize: none;
   overflow-y: hidden;
   min-height: 26px;
