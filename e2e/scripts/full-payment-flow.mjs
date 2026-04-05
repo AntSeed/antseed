@@ -124,6 +124,11 @@ function castCall(args) {
   return run("cast", ["call", "--rpc-url", RPC_URL, ...args]);
 }
 
+/** Parse cast output like "50000000 [5e7]" to a clean number string. */
+function parseCastUint(raw) {
+  return raw.trim().split(/\s/)[0];
+}
+
 // ---------------------------------------------------------------------------
 // Async helpers
 // ---------------------------------------------------------------------------
@@ -625,11 +630,10 @@ async function main() {
     });
 
     // Wait for seller USDC balance to increase (direct transfer from settle/close)
-    const sellerBalanceBefore = BigInt(castCall([USDC_ADDRESS, "balanceOf(address)(uint256)", sellerAddress]).trim());
+    const sellerBalanceBefore = BigInt(parseCastUint(castCall([USDC_ADDRESS, "balanceOf(address)(uint256)", sellerAddress])));
     const sellerEarnings = await waitForValue(
       async () => {
-        const raw = castCall([USDC_ADDRESS, "balanceOf(address)(uint256)", sellerAddress]);
-        const balance = BigInt(raw.trim());
+        const balance = BigInt(parseCastUint(castCall([USDC_ADDRESS, "balanceOf(address)(uint256)", sellerAddress])));
         const earned = balance - sellerBalanceBefore;
         return earned > 0n ? earned : null;
       },
