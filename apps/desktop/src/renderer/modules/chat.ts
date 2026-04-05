@@ -1750,7 +1750,10 @@ export function initChatModule({
 
         if (data.conversationId === uiState.chatSendingConversationId) {
           activeStreamTurn = Number(data.turn) + 1;
-          activeStreamStartedAt = Date.now();
+          // Only set the start time on the first turn — don't reset the
+          // elapsed timer between turns so the "Thinking for Xs" text
+          // doesn't briefly disappear on each new agent turn.
+          if (activeStreamStartedAt <= 0) activeStreamStartedAt = Date.now();
           updateStreamingIndicator();
         }
         if (!hasConversationStreamingMessage(data.conversationId)) {
