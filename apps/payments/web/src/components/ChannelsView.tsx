@@ -235,7 +235,7 @@ function SetOperatorBanner({ config, onSet }: { config: PaymentConfig | null; on
       const signResult = await signOperatorAuth(address);
       if (!signResult.ok) {
         setSetting(false);
-        setError('Failed to sign operator authorization');
+        setError('Failed to sign wallet authorization');
         return;
       }
 
@@ -252,14 +252,14 @@ function SetOperatorBanner({ config, onSet }: { config: PaymentConfig | null; on
       });
     } catch (err) {
       setSetting(false);
-      setError(err instanceof Error ? err.message : 'Failed to set operator');
+      setError(err instanceof Error ? err.message : 'Failed to set wallet');
     }
   }, [address, config, writeContract, reset]);
 
   return (
     <div className="status-msg" style={{ marginTop: 0, marginBottom: 16, fontSize: 12 }}>
       <div style={{ color: 'var(--text-secondary)', marginBottom: 8 }}>
-        No operator set. Set your connected wallet as the operator to manage channels.
+        No wallet set. This is the wallet used to claim ANTS rewards and manage channels. Set your connected wallet to continue.
       </div>
       <button
         className="btn-outline"
@@ -267,7 +267,7 @@ function SetOperatorBanner({ config, onSet }: { config: PaymentConfig | null; on
         onClick={handleSetOperator}
         disabled={setting || !address}
       >
-        {setting ? 'Setting operator...' : 'Set Operator'}
+        {setting ? 'Setting wallet...' : 'Set Your Wallet'}
       </button>
       {error && <div style={{ color: 'var(--error)', marginTop: 6 }}>{error}</div>}
     </div>
