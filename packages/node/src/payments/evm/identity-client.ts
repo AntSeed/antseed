@@ -1,4 +1,4 @@
-import { Contract, type AbstractSigner } from 'ethers';
+import { Contract, id as keccak256, type AbstractSigner } from 'ethers';
 import { BaseEvmClient } from './base-evm-client.js';
 
 export interface IdentityClientConfig {
@@ -50,8 +50,7 @@ export class IdentityClient extends BaseEvmClient {
     if (!receipt) throw new Error('Transaction was dropped or replaced');
 
     // Extract agentId from Transfer event (ERC-721 Transfer(address,address,uint256))
-    const transferTopic = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
-    const transferLog = receipt.logs.find((l) => l.topics?.[0] === transferTopic);
+    const transferLog = receipt.logs.find((l) => l.topics?.[0] === keccak256('Transfer(address,address,uint256)'));
     const rawAgentId = transferLog?.topics?.[3];
     return rawAgentId ? Number(BigInt(rawAgentId)) : 0;
   }
@@ -82,4 +81,5 @@ export class IdentityClient extends BaseEvmClient {
     const result = await contract.getFunction('getMetadata')(agentId, key);
     return new Uint8Array(Buffer.from(result.slice(2), 'hex'));
   }
+
 }

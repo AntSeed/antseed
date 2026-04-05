@@ -15,7 +15,8 @@ export function registerStakeCommand(program: Command): void {
   program
     .command('stake <amount>')
     .description('Stake USDC as a provider (amount in human-readable USDC, e.g. "10" = 10 USDC)')
-    .action(async (amount: string) => {
+    .option('--agent-id <id>', 'ERC-8004 agent ID (from antseed register output)', parseInt)
+    .action(async (amount: string, options: { agentId?: number }) => {
       const globalOpts = getGlobalOptions(program);
       const config = await loadConfig(globalOpts.config);
 
@@ -39,14 +40,13 @@ export function registerStakeCommand(program: Command): void {
           process.exit(1);
         }
 
-        // Look up agentId from staking contract (set during stakeFor or previous stake)
-        // If not yet staked, we need the agentId from registration. For first stake,
-        // the user should have registered first; we can try getAgentId which returns 0 if not set.
+        // Look up agentId from staking contract, or use --agent-id for first-time staking
         let agentId = await stakingClient.getAgentId(address);
+        if (agentId === 0 && options.agentId) {
+          agentId = options.agentId;
+        }
         if (agentId === 0) {
-          // First-time staker: agentId not yet recorded. We need the user to provide it
-          // or derive from registry. For now, use 0 which will be set by stakeFor flow.
-          spinner.fail(chalk.red('No agentId found. Register first with: antseed register, then use the stakeFor flow.'));
+          spinner.fail(chalk.red('No agentId found. Pass --agent-id <id> from your antseed register output.'));
           process.exit(1);
         }
 
