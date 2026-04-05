@@ -403,15 +403,8 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
     // ═══════════════════════════════════════════════════════════════════
 
     /**
-     * @dev Charge buyer via Deposits and credit seller earnings.
-     * @param delta          USDC amount to charge
-     * @param reservedToFree How much of the buyer's reservation to release
-     * @return platformFee   The platform fee deducted
-     */
-    /**
      * @dev Shared settle logic: verify SpendingAuth, charge delta, update state, record stats.
-     *      Used by settle() and topUp(). Close() has its own logic due to the
-     *      no-sig-when-delta-is-zero path and remaining-reserved release.
+     *      Used by settle(), close(), and topUp().
      */
     function _settleSpend(
         bytes32 channelId,

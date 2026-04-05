@@ -360,6 +360,10 @@ export class SellerSessionTracker {
       clearTimeout(timer);
     }
     this._settlementTimers.clear();
+    for (const timer of this._closeTimers.values()) {
+      clearTimeout(timer);
+    }
+    this._closeTimers.clear();
   }
 
   private _emitSessionUpdated(buyerPeerId: string, session: SellerSessionState): void {
