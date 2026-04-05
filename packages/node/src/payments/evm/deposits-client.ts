@@ -17,10 +17,8 @@ export interface BuyerBalanceInfo {
 const DEPOSITS_ABI = [
   'function deposit(address buyer, uint256 amount) external',
   'function withdraw(address buyer, uint256 amount) external',
-  'function claimPayouts() external',
   'function getBuyerBalance(address buyer) external view returns (uint256 available, uint256 reserved, uint256 lastActivityAt)',
   'function getBuyerCreditLimit(address buyer) external view returns (uint256)',
-  'function sellerPayouts(address seller) external view returns (uint256)',
   'function uniqueSellersCharged(address buyer) external view returns (uint256)',
   'function getOperator(address buyer) external view returns (address)',
   'function getOperatorNonce(address buyer) external view returns (uint256)',
@@ -47,17 +45,6 @@ export class DepositsClient extends BaseEvmClient {
 
   async withdraw(signer: AbstractSigner, buyer: string, amount: bigint): Promise<string> {
     return this._execWrite(signer, DEPOSITS_ABI, 'withdraw', buyer, amount);
-  }
-
-  // ─── Seller Payouts ─────────────────────────────────────────────────
-
-  async claimPayouts(signer: AbstractSigner): Promise<string> {
-    return this._execWrite(signer, DEPOSITS_ABI, 'claimPayouts');
-  }
-
-  async getSellerPayouts(sellerAddr: string): Promise<bigint> {
-    const contract = new Contract(this._contractAddress, DEPOSITS_ABI, this._provider);
-    return contract.getFunction('sellerPayouts')(sellerAddr) as Promise<bigint>;
   }
 
   // ─── View Functions ─────────────────────────────────────────────────

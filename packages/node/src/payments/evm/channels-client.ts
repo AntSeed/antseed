@@ -29,7 +29,7 @@ const CHANNELS_ABI = [
   'function reserve(address buyer, bytes32 salt, uint128 maxAmount, uint256 deadline, bytes buyerSig) external',
   'function settle(bytes32 channelId, uint128 cumulativeAmount, bytes metadata, bytes buyerSig) external',
   'function close(bytes32 channelId, uint128 finalAmount, bytes metadata, bytes buyerSig) external',
-  'function topUp(bytes32 channelId, uint128 newMaxAmount, uint256 deadline, bytes buyerSig) external',
+  'function topUp(bytes32 channelId, uint128 cumulativeAmount, bytes metadata, bytes spendingSig, uint128 newMaxAmount, uint256 deadline, bytes reserveSig) external',
   'function requestClose(bytes32 channelId) external',
   'function withdraw(bytes32 channelId) external',
   'function channels(bytes32 channelId) external view returns (address buyer, address seller, uint128 deposit, uint128 settled, bytes32 metadataHash, uint256 deadline, uint256 settledAt, uint256 closeRequestedAt, uint8 status)',
@@ -93,13 +93,16 @@ export class ChannelsClient extends BaseEvmClient {
   async topUp(
     signer: AbstractSigner,
     channelId: string,
+    cumulativeAmount: bigint,
+    metadata: string,
+    spendingSig: string,
     newMaxAmount: bigint,
     deadline: bigint,
-    buyerSig: string,
+    reserveSig: string,
   ): Promise<string> {
     return this._execWrite(
       signer, CHANNELS_ABI, 'topUp',
-      channelId, newMaxAmount, deadline, buyerSig,
+      channelId, cumulativeAmount, metadata, spendingSig, newMaxAmount, deadline, reserveSig,
     );
   }
 

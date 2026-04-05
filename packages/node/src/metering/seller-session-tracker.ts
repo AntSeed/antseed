@@ -39,7 +39,10 @@ export interface SessionTrackerEvents {
 }
 
 export interface SessionTrackerConfig {
+  /** Idle time before calling settle() to collect earnings (channel stays open). Default: 10 min. */
   settlementIdleMs?: number;
+  /** Idle time before calling close() to end the channel entirely. Default: 12 hours. */
+  closeIdleMs?: number;
 }
 
 /**
@@ -58,6 +61,7 @@ export class SellerSessionTracker {
   /** Per-buyer session tracking: buyerPeerId → seller session state */
   private readonly _sessions = new Map<string, SellerSessionState>();
   private readonly _settlementTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly _closeTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(
     identity: Identity,
@@ -254,28 +258,51 @@ export class SellerSessionTracker {
   }
 
   scheduleSettlementTimer(buyerPeerId: string): void {
-    const existing = this._settlementTimers.get(buyerPeerId);
-    if (existing) clearTimeout(existing);
+    // Reset the settle timer (short idle → settle, keep channel open)
+    const existingSettle = this._settlementTimers.get(buyerPeerId);
+    if (existingSettle) clearTimeout(existingSettle);
 
-    const idleMs = this._config.settlementIdleMs ?? 600_000;
-    const timer = setTimeout(() => {
+    const settleIdleMs = this._config.settlementIdleMs ?? 600_000;
+    const settleTimer = setTimeout(() => {
+      void this.finalizeSession(buyerPeerId, 'idle-settle');
+    }, settleIdleMs);
+    settleTimer.unref();
+    this._settlementTimers.set(buyerPeerId, settleTimer);
+
+    // Reset the close timer (long idle → close, end channel)
+    const existingClose = this._closeTimers.get(buyerPeerId);
+    if (existingClose) clearTimeout(existingClose);
+
+    const closeIdleMs = this._config.closeIdleMs ?? 43_200_000; // 12 hours
+    const closeTimer = setTimeout(() => {
       void this.finalizeSession(buyerPeerId, 'idle-timeout');
-    }, idleMs);
-
-    timer.unref();
-
-    this._settlementTimers.set(buyerPeerId, timer);
+    }, closeIdleMs);
+    closeTimer.unref();
+    this._closeTimers.set(buyerPeerId, closeTimer);
   }
 
   async finalizeSession(buyerPeerId: string, reason: string): Promise<void> {
     const session = this._sessions.get(buyerPeerId);
-    if (!session || session.settling) return;
+    if (!session) return;
+
+    // idle-settle: emit event for on-chain settle() but keep the session alive
+    if (reason === 'idle-settle') {
+      this._events.onSessionFinalized({ buyerPeerId, sessionId: session.sessionId, reason });
+      return;
+    }
+
+    if (session.settling) return;
     session.settling = true;
 
     const timer = this._settlementTimers.get(buyerPeerId);
     if (timer) {
       clearTimeout(timer);
       this._settlementTimers.delete(buyerPeerId);
+    }
+    const closeTimer = this._closeTimers.get(buyerPeerId);
+    if (closeTimer) {
+      clearTimeout(closeTimer);
+      this._closeTimers.delete(buyerPeerId);
     }
 
     if (!this._metering) {

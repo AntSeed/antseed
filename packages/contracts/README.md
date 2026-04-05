@@ -67,7 +67,7 @@ Buyer USDC deposit management with dynamic credit limits and seller payouts.
 - `withdraw(address buyer, uint256 amount)` — immediate withdrawal (operator-only, sends USDC to buyer)
 - `getBuyerBalance(address)` → available, reserved, lastActivity
 - `getOperator(address)` / `getOperatorNonce(address)` — operator views
-- `claimPayouts()` — seller claims accumulated USDC payouts
+- Seller payouts are transferred directly on `settle()` / `close()` — no separate claim step
 - `setCreditLimitOverride(address, uint256)` — owner overrides buyer limit
 
 ### AntseedChannels.sol

@@ -48,12 +48,12 @@ contract AntseedDeposits is EIP712, Ownable, ReentrancyGuard {
     mapping(address => uint256) public creditLimitOverride;
     mapping(address => uint256) public uniqueSellersCharged;
     mapping(address => mapping(address => bool)) private _buyerSellerPairs;
-    mapping(address => uint256) public sellerPayouts;
+
 
     // ─── Events ─────────────────────────────────────────────────────────
     event Deposited(address indexed buyer, uint256 amount);
     event WithdrawalExecuted(address indexed buyer, uint256 amount);
-    event PayoutClaimed(address indexed seller, uint256 amount);
+    event SellerPaid(address indexed seller, uint256 amount);
     event OperatorSet(address indexed buyer, address indexed operator);
 
 
@@ -155,23 +155,6 @@ contract AntseedDeposits is EIP712, Ownable, ReentrancyGuard {
         lastActivity = ba.lastActivityAt;
     }
 
-    // ═══════════════════════════════════════════════════════════════════
-    //                        SELLER PAYOUTS
-    // ═══════════════════════════════════════════════════════════════════
-
-    function claimPayouts() external nonReentrant {
-        uint256 amount = sellerPayouts[msg.sender];
-        if (amount == 0) revert InvalidAmount();
-
-        sellerPayouts[msg.sender] = 0;
-        usdc.safeTransfer(msg.sender, amount);
-
-        emit PayoutClaimed(msg.sender, amount);
-    }
-
-    function getSellerPayouts(address seller) external view returns (uint256) {
-        return sellerPayouts[seller];
-    }
 
     // ═══════════════════════════════════════════════════════════════════
     //                   PRIVILEGED — CHANNELS ONLY
@@ -205,7 +188,6 @@ contract AntseedDeposits is EIP712, Ownable, ReentrancyGuard {
         ba.lastActivityAt = block.timestamp;
 
         uint256 sellerPayout = chargeAmount - platformFee;
-        sellerPayouts[seller] += sellerPayout;
 
         // Track buyer-seller diversity for credit limit calculation
         if (!_buyerSellerPairs[buyer][seller]) {
@@ -213,8 +195,13 @@ contract AntseedDeposits is EIP712, Ownable, ReentrancyGuard {
             uniqueSellersCharged[buyer]++;
         }
 
+        // Transfer to protocol reserve and seller
         if (platformFee > 0 && protocolReserve != address(0)) {
             usdc.safeTransfer(protocolReserve, platformFee);
+        }
+        if (sellerPayout > 0) {
+            usdc.safeTransfer(seller, sellerPayout);
+            emit SellerPaid(seller, sellerPayout);
         }
     }
 

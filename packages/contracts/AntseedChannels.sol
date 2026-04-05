@@ -45,6 +45,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
     uint256 public PLATFORM_FEE_BPS = 200;
     uint256 public MAX_PLATFORM_FEE_BPS = 1000;
     uint256 public TIMEOUT_GRACE_PERIOD = 15 minutes;
+    uint256 public TOP_UP_SETTLED_THRESHOLD_BPS = 8500;
 
     // ─── Enums & Structs ────────────────────────────────────────────
     enum ChannelStatus { None, Active, Settled, TimedOut }
@@ -98,6 +99,8 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
     error FinalAmountBelowSettled();
     error CloseNotReady();
     error CloseAlreadyRequested();
+    error TopUpThresholdNotMet();
+    error TopUpAmountTooLow();
 
     // ─── Constructor ────────────────────────────────────────────────
     constructor(address _registry)
@@ -182,28 +185,29 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
     //                        CORE — TOP UP (extend reserve)
     // ═══════════════════════════════════════════════════════════════════
 
-    /// @notice Minimum fraction of deposit that must be settled before top-up (85% = 8500 bps).
-    uint256 public TOP_UP_SETTLED_THRESHOLD_BPS = 8500;
-
-    error TopUpThresholdNotMet();
-    error TopUpAmountTooLow();
-
     /**
      * @notice Top up an active channel by increasing the reserve ceiling.
      *         Seller calls this when the buyer's cumulative spending approaches
      *         the current deposit. Requires at least 85% of the current deposit
      *         to be settled (proven via SpendingAuth) before allowing more funds.
+     *         Accepts the latest SpendingAuth to settle before raising the ceiling.
      *
-     * @param channelId    Existing channel ID
-     * @param newMaxAmount New total reserve ceiling (must be > current deposit)
-     * @param deadline     New channel deadline
-     * @param buyerSig     Buyer's ReserveAuth signature for (channelId, newMaxAmount, deadline)
+     * @param channelId        Channel ID
+     * @param cumulativeAmount Current cumulative spend (0 if nothing to settle)
+     * @param metadata         ABI-encoded metadata for the SpendingAuth
+     * @param spendingSig      Buyer's SpendingAuth signature (ignored if cumulativeAmount <= settled)
+     * @param newMaxAmount     New deposit ceiling (must be > current deposit)
+     * @param deadline         New deadline for the channel
+     * @param reserveSig       Buyer's ReserveAuth signature for the new ceiling
      */
     function topUp(
         bytes32 channelId,
+        uint128 cumulativeAmount,
+        bytes calldata metadata,
+        bytes calldata spendingSig,
         uint128 newMaxAmount,
         uint256 deadline,
-        bytes calldata buyerSig
+        bytes calldata reserveSig
     ) external nonReentrant whenNotPaused {
         Channel storage channel = channels[channelId];
         if (channel.status != ChannelStatus.Active) revert ChannelNotActive();
@@ -211,12 +215,18 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         if (block.timestamp > deadline) revert ChannelExpired();
         if (newMaxAmount <= channel.deposit) revert TopUpAmountTooLow();
 
-        // Require at least 85% of current deposit to be settled
+        // Settle current spend if there's a new delta
+        if (cumulativeAmount > channel.settled) {
+            if (cumulativeAmount > channel.deposit) revert InvalidAmount();
+            _settleSpend(channelId, channel, cumulativeAmount, metadata, spendingSig);
+        }
+
+        // Require at least 85% of current deposit to be settled before topping up
         uint256 threshold = (uint256(channel.deposit) * TOP_UP_SETTLED_THRESHOLD_BPS) / 10000;
         if (channel.settled < threshold) revert TopUpThresholdNotMet();
 
         // Verify buyer's ReserveAuth signature for the new ceiling
-        _verifyReserveAuth(channelId, newMaxAmount, deadline, channel.buyer, buyerSig);
+        _verifyReserveAuth(channelId, newMaxAmount, deadline, channel.buyer, reserveSig);
 
         // Lock the additional amount in Deposits
         uint128 additionalAmount = newMaxAmount - channel.deposit;
@@ -237,11 +247,6 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
      * @notice Settle partial payment. Seller submits buyer's SpendingAuth signature.
      *         The delta USDC is distributed to seller (minus platform fee).
      *         Channel stays active for more requests.
-     *
-     * @param channelId        Channel ID
-     * @param cumulativeAmount Cumulative USDC amount authorized by buyer
-     * @param metadata         ABI-encoded (inputTokens, outputTokens, latencyMs, requestCount)
-     * @param buyerSig         Buyer's SpendingAuth EIP-712 signature
      */
     function settle(
         bytes32 channelId,
@@ -255,20 +260,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         if (cumulativeAmount <= channel.settled) revert InvalidAmount();
         if (cumulativeAmount > channel.deposit) revert InvalidAmount();
 
-        bytes32 metadataHash = keccak256(metadata);
-        _verifySpendingAuth(channelId, cumulativeAmount, metadataHash, channel.buyer, buyerSig);
-
-        uint128 delta = cumulativeAmount - channel.settled;
-        uint256 platformFee = _chargeAndSettle(channel, delta, delta);
-
-        channel.settled = cumulativeAmount;
-        channel.metadataHash = metadataHash;
-        channel.settledAt = block.timestamp;
-
-        _recordSettleStats(channel, delta);
-        _recordEmissions(channel, delta);
-
-        emit ChannelSettled(channelId, channel.seller, cumulativeAmount, platformFee, metadata);
+        _settleSpend(channelId, channel, cumulativeAmount, metadata, buyerSig);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -280,11 +272,6 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
      *         If finalAmount == channel.settled, no signature is required —
      *         the seller can close without a new SpendingAuth (forfeiting
      *         any unproven spend). Otherwise a buyer SpendingAuth is verified.
-     *
-     * @param channelId    Channel ID
-     * @param finalAmount  Final cumulative USDC amount
-     * @param metadata     ABI-encoded (version, inputTokens, outputTokens, latencyMs, requestCount)
-     * @param buyerSig     Buyer's SpendingAuth EIP-712 signature (ignored when finalAmount == channel.settled)
      */
     function close(
         bytes32 channelId,
@@ -298,29 +285,23 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         if (finalAmount < channel.settled) revert FinalAmountBelowSettled();
         if (finalAmount > channel.deposit) revert InvalidAmount();
 
-        uint128 delta = finalAmount - channel.settled;
-
-        // Only verify signature if there's a new amount to prove
-        if (delta > 0) {
-            bytes32 metadataHash = keccak256(metadata);
-            _verifySpendingAuth(channelId, finalAmount, metadataHash, channel.buyer, buyerSig);
-            channel.metadataHash = metadataHash;
+        // Settle any new spend
+        if (finalAmount > channel.settled) {
+            _settleSpend(channelId, channel, finalAmount, metadata, buyerSig);
         }
 
-        // Release all remaining reserved: charge delta, un-reserve everything
-        uint128 remainingReserved = channel.deposit - channel.settled;
-        uint256 platformFee = _chargeAndSettle(channel, delta, remainingReserved);
+        // Release remaining reserved funds back to buyer
+        uint128 unsettled = channel.deposit - channel.settled;
+        if (unsettled > 0) {
+            IAntseedDeposits(registry.deposits()).releaseLock(channel.buyer, unsettled);
+        }
 
-        channel.settled = finalAmount;
-        channel.settledAt = block.timestamp;
         channel.status = ChannelStatus.Settled;
         activeChannelCount[channel.seller]--;
 
-        _recordSettleStats(channel, delta);
         _recordChannelComplete(channel);
-        _recordEmissions(channel, delta);
 
-        emit ChannelClosed(channelId, channel.seller, finalAmount, platformFee, metadata);
+        emit ChannelClosed(channelId, channel.seller, finalAmount, 0, metadata);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -427,6 +408,34 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
      * @param reservedToFree How much of the buyer's reservation to release
      * @return platformFee   The platform fee deducted
      */
+    /**
+     * @dev Shared settle logic: verify SpendingAuth, charge delta, update state, record stats.
+     *      Used by settle() and topUp(). Close() has its own logic due to the
+     *      no-sig-when-delta-is-zero path and remaining-reserved release.
+     */
+    function _settleSpend(
+        bytes32 channelId,
+        Channel storage channel,
+        uint128 cumulativeAmount,
+        bytes calldata metadata,
+        bytes calldata buyerSig
+    ) internal {
+        bytes32 metadataHash = keccak256(metadata);
+        _verifySpendingAuth(channelId, cumulativeAmount, metadataHash, channel.buyer, buyerSig);
+
+        uint128 delta = cumulativeAmount - channel.settled;
+        uint256 platformFee = _chargeAndSettle(channel, delta, delta);
+
+        channel.settled = cumulativeAmount;
+        channel.metadataHash = metadataHash;
+        channel.settledAt = block.timestamp;
+
+        _recordSettleStats(channel, delta);
+        _recordEmissions(channel, delta);
+
+        emit ChannelSettled(channelId, channel.seller, cumulativeAmount, platformFee, metadata);
+    }
+
     function _chargeAndSettle(
         Channel storage channel,
         uint128 delta,
