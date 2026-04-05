@@ -265,10 +265,15 @@ function resolveNodeBinary(targetArch: string): string {
     }
   }
 
-  // Prefer a version-compatible node over one that is too old.
-  // Falls back to firstExisting only if no candidate meets the minimum version.
-  // Last resort: use Electron's own Node.js runtime (requires ELECTRON_RUN_AS_NODE=1).
-  // This ensures the packaged app works even if no system node is installed.
+  // When packaged, prefer Electron's own Node.js runtime — its version matches
+  // the bundled native modules (better-sqlite3, node-datachannel).  A system
+  // node with a different major version would fail to load those modules.
+  const isPackaged = typeof process.resourcesPath === 'string'
+    && existsSync(join(process.resourcesPath, 'app.asar'));
+  if (isPackaged) {
+    return process.execPath ?? firstCompatible ?? firstExisting ?? 'node';
+  }
+
   return firstCompatible ?? firstExisting ?? process.execPath ?? 'node';
 }
 
