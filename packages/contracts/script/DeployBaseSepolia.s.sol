@@ -23,9 +23,6 @@ import {AntseedRegistry} from "../AntseedRegistry.sol";
  *     --via-ir
  */
 contract DeployBaseSepolia is Script {
-    // Circle USDC on Base Sepolia
-    address constant USDC = 0x036CbD53842c5426634e7929541eC2318f3dCF7e;
-
     // ERC-8004 IdentityRegistry on Base Sepolia
     address constant IDENTITY_REGISTRY = 0x8004A818BFB912233c491871b3d84c89A494BD9e;
 
@@ -35,16 +32,22 @@ contract DeployBaseSepolia is Script {
         address protocolReserve = vm.envAddress("PROTOCOL_RESERVE");
         address teamWallet = vm.envAddress("TEAM_ADDRESS");
 
+        vm.startBroadcast(deployerPrivateKey);
+
+        // 1. MockUSDC (permissionless mint for testnet)
+        bytes memory usdcBytecode = vm.getCode("MockUSDC.sol:MockUSDC");
+        address usdc;
+        assembly { usdc := create(0, add(usdcBytecode, 0x20), mload(usdcBytecode)) }
+        require(usdc != address(0), "MockUSDC deploy failed");
+
         console.log("Deployer:             ", deployer);
         console.log("Protocol Reserve:     ", protocolReserve);
         console.log("Team Wallet:          ", teamWallet);
-        console.log("USDC:                 ", USDC);
+        console.log("MockUSDC:             ", usdc);
         console.log("ERC-8004 Registry:    ", IDENTITY_REGISTRY);
         console.log("");
 
-        vm.startBroadcast(deployerPrivateKey);
-
-        // 1. ANTSToken
+        // 2. ANTSToken
         bytes memory tokenBytecode = vm.getCode("ANTSToken.sol:ANTSToken");
         address antsToken;
         assembly { antsToken := create(0, add(tokenBytecode, 0x20), mload(tokenBytecode)) }
@@ -58,7 +61,7 @@ contract DeployBaseSepolia is Script {
         // 3. AntseedStaking(usdc, registry)
         bytes memory stakingBytecode = abi.encodePacked(
             vm.getCode("AntseedStaking.sol:AntseedStaking"),
-            abi.encode(USDC, address(antseedRegistry))
+            abi.encode(usdc, address(antseedRegistry))
         );
         address staking;
         assembly { staking := create(0, add(stakingBytecode, 0x20), mload(stakingBytecode)) }
@@ -68,7 +71,7 @@ contract DeployBaseSepolia is Script {
         // 4. AntseedDeposits(usdc)
         bytes memory depositsBytecode = abi.encodePacked(
             vm.getCode("AntseedDeposits.sol:AntseedDeposits"),
-            abi.encode(USDC)
+            abi.encode(usdc)
         );
         address deposits;
         assembly { deposits := create(0, add(depositsBytecode, 0x20), mload(depositsBytecode)) }
@@ -118,6 +121,7 @@ contract DeployBaseSepolia is Script {
         console.log("--- Base Sepolia deployment complete ---");
         console.log("");
         console.log("Add to chain-config.ts:");
+        console.log("  usdcContractAddress:    ", usdc);
         console.log("  depositsContractAddress:", deposits);
         console.log("  channelsContractAddress:", channels);
         console.log("  stakingContractAddress: ", staking);

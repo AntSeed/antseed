@@ -331,8 +331,8 @@ function ToolGroupView({ blocks, onOpenPreview }: { blocks: ContentBlock[]; onOp
   }
   if (anyRunning) wasRunningRef.current = true;
 
-  // Open while running (unless user manually closed), collapsed when done (unless user manually opened)
-  const isOpen = manualToggle ?? anyRunning;
+  // Open by default (unless user manually collapsed)
+  const isOpen = manualToggle ?? true;
 
   const groupStatus: 'running' | 'success' | 'error' = anyRunning ? 'running' : anyError ? 'error' : 'success';
   const groupStatusLabel = anyRunning ? 'Running' : anyError ? 'Error' : 'Done';
