@@ -55,11 +55,11 @@ const CHAIN_CONFIGS: Record<ChainId, ChainConfig> = {
   },
 };
 
-const DEFAULT_CHAIN_ID: ChainId = 'base-mainnet';
+const DEFAULT_CHAIN_ID: ChainId = 'base-sepolia';
 
 /**
  * Get the chain config for a given chain ID.
- * Falls back to base-mainnet if not found.
+ * Falls back to base-sepolia if not found.
  */
 export function getChainConfig(chainId?: ChainId | string): ChainConfig {
   if (!chainId) return CHAIN_CONFIGS[DEFAULT_CHAIN_ID];

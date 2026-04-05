@@ -149,6 +149,8 @@ export async function refreshPeerCache(): Promise<void> {
       if (!p || typeof p !== 'object') continue;
       const peer = parsePeerFromRaw(p as Record<string, unknown>);
       if (!peer) continue;
+      // Skip legacy (non-EVM) peer IDs — EVM addresses are 40 hex chars
+      if (peer.peerId.length !== 40) continue;
 
       const existing = peerCache.get(peer.peerId);
       if (existing) {

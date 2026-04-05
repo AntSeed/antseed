@@ -410,6 +410,13 @@ textarea {
   padding: 16px 8px;
 }
 
+.peer-status {
+  font-size: 11px;
+  font-weight: 500;
+  &.online { color: var(--accent-green); }
+  &.offline { color: var(--text-muted); }
+}
+
 /* ===================================================================
    Plugin setup / control cards
    =================================================================== */

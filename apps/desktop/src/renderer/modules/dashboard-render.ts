@@ -75,7 +75,7 @@ function normalizeNetworkData(
       reputation: safeNumber(peer.reputation, 0),
       lastSeen: safeNumber(peer.lastSeen, 0),
       source: safeString(peer.source, 'dht'),
-      location: null,
+      online: Boolean(peer.online),
     });
   }
 
@@ -96,7 +96,7 @@ function normalizeNetworkData(
       reputation: 0,
       lastSeen: 0,
       source: 'daemon',
-      location: null,
+      online: false,
     };
 
     const providers = safeArray(peer.providers).map(String);
@@ -110,7 +110,6 @@ function normalizeNetworkData(
     if (safeNumber(peer.outputUsdPerMillion, 0) > 0) existing.outputUsdPerMillion = safeNumber(peer.outputUsdPerMillion, 0);
     if (safeNumber(peer.capacityMsgPerHour, 0) > 0) existing.capacityMsgPerHour = safeNumber(peer.capacityMsgPerHour, 0);
     if (safeNumber(peer.reputation, 0) > 0) existing.reputation = safeNumber(peer.reputation, 0);
-    existing.location = typeof peer.location === 'string' ? peer.location : existing.location;
     const daemonDn = typeof peer.displayName === 'string' && (peer.displayName as string).trim().length > 0 ? (peer.displayName as string).trim() : null;
     if (daemonDn) existing.displayName = daemonDn;
     if (!existing.source || existing.source === 'dht') existing.source = safeString(peer.source, 'daemon');

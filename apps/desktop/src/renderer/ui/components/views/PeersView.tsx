@@ -39,7 +39,6 @@ function filterPeers(peers: PeerEntry[], filterText: string): PeerEntry[] {
       String(peer.outputUsdPerMillion),
       String(peer.capacityMsgPerHour),
       String(peer.reputation),
-      safeString(peer.location, ''),
       formatEndpoint(peer),
     ]
       .join(' ')
@@ -49,6 +48,7 @@ function filterPeers(peers: PeerEntry[], filterText: string): PeerEntry[] {
 }
 
 const COLUMNS: { key: string; label: string; sortable: boolean }[] = [
+  { key: 'online', label: 'Status', sortable: true },
   { key: 'displayName', label: 'Peer', sortable: true },
   { key: 'peerId', label: 'ID', sortable: true },
   { key: 'source', label: 'Source', sortable: true },
@@ -57,7 +57,6 @@ const COLUMNS: { key: string; label: string; sortable: boolean }[] = [
   { key: 'outputUsdPerMillion', label: 'Output $/1M', sortable: true },
   { key: 'capacityMsgPerHour', label: 'Capacity', sortable: true },
   { key: 'reputation', label: 'Rep', sortable: true },
-  { key: 'location', label: 'Location', sortable: true },
   { key: 'endpoint', label: 'Endpoint', sortable: false },
 ];
 
@@ -136,6 +135,11 @@ export function PeersView({ active }: PeersViewProps) {
                 ) : (
                   displayPeers.map((peer) => (
                     <tr key={peer.peerId}>
+                      <td>
+                        <span className={`peer-status ${peer.online ? 'online' : 'offline'}`}>
+                          {peer.online ? 'Online' : 'Offline'}
+                        </span>
+                      </td>
                       <td>{peer.displayName || '-'}</td>
                       <td title={peer.peerId}>{formatShortId(peer.peerId)}</td>
                       <td>{safeString(peer.source, 'n/a').toUpperCase()}</td>
@@ -148,9 +152,6 @@ export function PeersView({ active }: PeersViewProps) {
                           : 'n/a'}
                       </td>
                       <td>{formatInt(peer.reputation)}</td>
-                      <td>
-                        {peer.location && peer.location.trim().length > 0 ? peer.location : '-'}
-                      </td>
                       <td>{formatEndpoint(peer)}</td>
                     </tr>
                   ))

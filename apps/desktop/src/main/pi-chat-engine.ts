@@ -432,8 +432,14 @@ async function discoverChatServiceCatalog(
     const raw = await readFile(DEFAULT_BUYER_STATE_PATH, 'utf-8');
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     const rawPeers = Array.isArray(parsed.discoveredPeers) ? parsed.discoveredPeers : [];
+    const now = Date.now();
+    const SERVICE_STALE_MS = 10 * 60_000; // 10 min — hide services from stale peers
     peers = rawPeers
       .filter((p): p is Record<string, unknown> => p !== null && typeof p === 'object')
+      .filter((p) => {
+        const lastSeen = typeof p.lastSeen === 'number' ? p.lastSeen : 0;
+        return lastSeen === 0 || now - lastSeen < SERVICE_STALE_MS;
+      })
       .map((p) => ({
         peerId: typeof p.peerId === 'string' ? p.peerId : '',
         displayName: typeof p.displayName === 'string' ? p.displayName : undefined,
@@ -453,7 +459,7 @@ async function discoverChatServiceCatalog(
         defaultInputUsdPerMillion: typeof p.defaultInputUsdPerMillion === 'number' ? p.defaultInputUsdPerMillion : undefined,
         defaultOutputUsdPerMillion: typeof p.defaultOutputUsdPerMillion === 'number' ? p.defaultOutputUsdPerMillion : undefined,
       }))
-      .filter((p) => p.peerId.length > 0);
+      .filter((p) => p.peerId.length === 40); // EVM address peer IDs only (40 hex chars)
   } catch {
     // File not ready yet — try the callback
     if (!getNetworkPeers) return [];

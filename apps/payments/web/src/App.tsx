@@ -137,7 +137,7 @@ export function App() {
         <span>AntSeed Payments</span>
         <div className="portal-footer-links">
           <a href="https://antseed.com" target="_blank" rel="noopener noreferrer">antseed.com</a>
-          <a href="https://docs.antseed.com" target="_blank" rel="noopener noreferrer">Docs</a>
+          <a href="https://antseed.com/docs/payments" target="_blank" rel="noopener noreferrer">Docs</a>
         </div>
       </div>
     </div>

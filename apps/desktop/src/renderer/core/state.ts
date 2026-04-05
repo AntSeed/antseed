@@ -37,7 +37,7 @@ export type PeerEntry = {
   reputation: number;
   lastSeen: number;
   source: string;
-  location: string | null;
+  online: boolean;
 };
 
 export type ConfigFormData = {
