@@ -151,17 +151,12 @@
 }
 
 .divider {
-  width: 5px;
+  width: 2px;
   cursor: col-resize;
   background: var(--border);
   flex-shrink: 0;
   position: relative;
   transition: background 0.15s;
-
-  &:hover,
-  &:active {
-    background: var(--accent-green);
-  }
 }
 
 .chat-messages {

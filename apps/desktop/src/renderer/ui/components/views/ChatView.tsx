@@ -188,33 +188,30 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     }
   }, [snap.chatInputDisabled]);
 
-  // --- Divider drag ---
-  const handleDividerMouseDown = useCallback((e: React.MouseEvent) => {
+  // --- Divider drag (pointer capture — no orphaned listeners) ---
+  const handleDividerPointerDown = useCallback((e: React.PointerEvent) => {
     e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
     isDragging.current = true;
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
+  }, []);
 
-    const handleMouseMove = (ev: MouseEvent) => {
-      const container = containerRef.current;
-      if (!container) return;
-      const rect = container.getBoundingClientRect();
-      const totalWidth = rect.width;
-      const chatWidth = ev.clientX - rect.left;
-      const clamped = Math.max(CHAT_MIN_WIDTH, Math.min(totalWidth - PREVIEW_MIN_WIDTH, chatWidth));
-      setPreviewFraction(1 - clamped / totalWidth);
-    };
+  const handleDividerPointerMove = useCallback((e: React.PointerEvent) => {
+    if (!isDragging.current) return;
+    const container = containerRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const totalWidth = rect.width;
+    const chatWidth = e.clientX - rect.left;
+    const clamped = Math.max(CHAT_MIN_WIDTH, Math.min(totalWidth - PREVIEW_MIN_WIDTH, chatWidth));
+    setPreviewFraction(1 - clamped / totalWidth);
+  }, []);
 
-    const handleMouseUp = () => {
-      isDragging.current = false;
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
+  const handleDividerPointerUp = useCallback(() => {
+    isDragging.current = false;
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
   }, []);
 
   const handleOpenPreview = useCallback((url: string) => {
@@ -569,7 +566,9 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
           <>
             <div
               className={styles.divider}
-              onMouseDown={handleDividerMouseDown}
+              onPointerDown={handleDividerPointerDown}
+              onPointerMove={handleDividerPointerMove}
+              onPointerUp={handleDividerPointerUp}
             />
             <div style={previewStyle}>
               <BrowserPreview
