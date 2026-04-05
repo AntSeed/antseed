@@ -137,6 +137,24 @@ function resolveNpmCli() {
 }
 
 function rebuildModule(check) {
+  // Try prebuild-install first — downloads a prebuilt binary matching the
+  // current Node version and arch.  Falls back to npm rebuild if no prebuild
+  // is available (e.g. for keytar which doesn't publish prebuilds).
+  const moduleDir = path.resolve(repoRoot, 'node_modules', check.moduleName);
+  if (check.moduleName === 'better-sqlite3' && existsSync(moduleDir)) {
+    try {
+      execFileSync('npx', [
+        'prebuild-install',
+        '--runtime', 'node',
+        '--target', process.version,
+        '--arch', process.arch,
+      ], { cwd: moduleDir, stdio: 'inherit' });
+      return;
+    } catch {
+      // prebuild-install failed — fall through to npm rebuild
+    }
+  }
+
   const npmCli = resolveNpmCli();
   if (!existsSync(npmCli)) {
     throw new Error(`Unable to locate npm-cli.js for runtime ${process.execPath}`);
