@@ -97,9 +97,6 @@ function getGitStatusTitle(status: ChatWorkspaceGitStatus): string {
   return details.join('\n');
 }
 
-const SHARED_WORKSPACE_NOTE = 'Workspace selection is shared across chats.';
-const SHARED_WORKSPACE_TITLE =
-  'Repo and directory context are shared across chats until you choose a different workspace.';
 
 type ChatViewProps = {
   active: boolean;
@@ -514,7 +511,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
               <textarea
                 ref={inputRef}
                 className={styles.chatTextInput}
-                placeholder="Type a message... (Shift+Enter for newline)"
+                placeholder="Message Community Peers..."
                 rows={1}
                 disabled={snap.chatInputDisabled}
                 value={inputValue}
@@ -523,39 +520,15 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                 onKeyDown={handleKeyDown}
                 onPaste={handlePaste}
               />
-              <div className={styles.chatComposerMeta}>
-                <button
-                  type="button"
-                  className={`${styles.gitStatusPill} ${gitStatusToneClass}`}
-                  onClick={() => void actions.refreshWorkspaceGitStatus()}
-                  title={gitStatusTitle}
-                >
-                  <span className={styles.gitStatusBranch}>{gitStatusRepoLabel}</span>
-                  <span className={styles.gitStatusSummary}>{gitStatusDetailLabel}</span>
-                </button>
-              </div>
-              <div className={styles.sharedWorkspaceNote} title={SHARED_WORKSPACE_TITLE}>
-                {SHARED_WORKSPACE_NOTE}
-              </div>
               <div className={styles.chatInputBottom}>
-                <div className={styles.chatInputBottomLeft}>
-                  <button
-                    className={styles.chatAttachBtn}
-                    title="Attach image"
-                    disabled={snap.chatInputDisabled}
-                    onClick={() => fileInputRef.current?.click()}
-                  >
-                    <HugeiconsIcon icon={Add01Icon} size={18} strokeWidth={2} />
-                  </button>
-                  <button
-                    className={styles.workspaceButton}
-                    onClick={() => void actions.chooseWorkspace()}
-                    title={workspacePath || 'Choose workspace'}
-                  >
-                    <HugeiconsIcon icon={ComputerTerminal01Icon} size={14} strokeWidth={1.5} />
-                    <span className={styles.workspaceLabel}>{workspaceLabel}</span>
-                  </button>
-                </div>
+                <button
+                  className={styles.chatAttachBtn}
+                  title="Attach image"
+                  disabled={snap.chatInputDisabled}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <HugeiconsIcon icon={Add01Icon} size={18} strokeWidth={2} />
+                </button>
                 {snap.chatAbortVisible ? (
                   <button className={styles.chatAbortBtn} onClick={() => void actions.abortChat()}>
                     Stop
@@ -566,6 +539,25 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                   </button>
                 )}
               </div>
+            </div>
+            <div className={styles.chatInputMeta}>
+              <button
+                type="button"
+                className={`${styles.gitStatusPill} ${gitStatusToneClass}`}
+                onClick={() => void actions.refreshWorkspaceGitStatus()}
+                title={gitStatusTitle}
+              >
+                <span className={styles.gitStatusBranch}>{gitStatusRepoLabel}</span>
+                <span className={styles.gitStatusSummary}>{gitStatusDetailLabel}</span>
+              </button>
+              <button
+                className={styles.workspaceButton}
+                onClick={() => void actions.chooseWorkspace()}
+                title={workspacePath || 'Choose workspace'}
+              >
+                <HugeiconsIcon icon={ComputerTerminal01Icon} size={14} strokeWidth={1.5} />
+                <span className={styles.workspaceLabel}>{workspaceLabel}</span>
+              </button>
             </div>
           </div>
         </div>

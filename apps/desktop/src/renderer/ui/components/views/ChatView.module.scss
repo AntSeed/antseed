@@ -264,12 +264,12 @@
   gap: 8px;
 }
 
-.chat-composer-meta {
+/* Below the input box: git status left, workspace right */
+.chat-input-meta {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  flex-wrap: wrap;
+  padding: 4px 0 0;
 }
 
 .git-status-pill {
@@ -319,11 +319,6 @@
   white-space: nowrap;
 }
 
-.shared-workspace-note {
-  color: var(--text-muted);
-  font-size: 11px;
-  line-height: 1.35;
-}
 
 .chat-image-attach-preview {
   display: flex;
@@ -365,12 +360,6 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-}
-
-.chat-input-bottom-left {
-  display: flex;
-  align-items: center;
-  gap: 6px;
 }
 
 .chat-attach-btn {
@@ -449,17 +438,9 @@
 }
 
 @media (max-width: 720px) {
-  .chat-composer-meta {
-    align-items: stretch;
-  }
-
-  .git-status-pill {
-    width: 100%;
-    justify-content: space-between;
-  }
-
-  .shared-workspace-note {
-    width: 100%;
+  .chat-input-meta {
+    flex-direction: column;
+    gap: 4px;
   }
 }
 
