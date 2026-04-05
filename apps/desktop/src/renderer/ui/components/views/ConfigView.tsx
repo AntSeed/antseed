@@ -15,11 +15,7 @@ export function ConfigView({ active }: ConfigViewProps) {
   const [maxInput, setMaxInput] = useState('0');
   const [maxOutput, setMaxOutput] = useState('0');
   const [minRep, setMinRep] = useState('0');
-  const [chainId, setChainId] = useState('');
-  const [rpcUrl, setRpcUrl] = useState('');
-  const [depositsAddress, setDepositsAddress] = useState('');
-  const [channelsAddress, setChannelsAddress] = useState('');
-  const [usdcAddress, setUsdcAddress] = useState('');
+  const [chainId, setChainId] = useState('base-sepolia');
   const [dirty, setDirty] = useState(false);
 
   // Sync from config on first load only
@@ -30,11 +26,7 @@ export function ConfigView({ active }: ConfigViewProps) {
       setMaxInput(String(configFormData.maxInputUsdPerMillion));
       setMaxOutput(String(configFormData.maxOutputUsdPerMillion));
       setMinRep(String(configFormData.minRep));
-      setChainId(configFormData.cryptoChainId);
-      setRpcUrl(configFormData.cryptoRpcUrl);
-      setDepositsAddress(configFormData.cryptoDepositsAddress);
-      setChannelsAddress(configFormData.cryptoChannelsAddress);
-      setUsdcAddress(configFormData.cryptoUsdcAddress);
+      setChainId(configFormData.cryptoChainId || 'base-sepolia');
       setInitialized(true);
     }
   }, [configFormData, initialized]);
@@ -57,10 +49,6 @@ export function ConfigView({ active }: ConfigViewProps) {
       maxOutputUsdPerMillion: parseFloat(maxOutput) || 0,
       minRep: parseInt(minRep, 10) || 0,
       cryptoChainId: chainId,
-      cryptoRpcUrl: rpcUrl,
-      cryptoDepositsAddress: depositsAddress,
-      cryptoChannelsAddress: channelsAddress,
-      cryptoUsdcAddress: usdcAddress,
     });
     setDirty(false);
     // Restart buyer runtime to pick up new config
@@ -146,68 +134,18 @@ export function ConfigView({ active }: ConfigViewProps) {
           <div className="settings-stack">
             <label className="settings-item">
               <div className="settings-copy">
-                <h4>Chain</h4>
-                <p>Chain ID for payment settlement (e.g. base-sepolia, base-mainnet, base-local).</p>
+                <h4>Chain Environment</h4>
+                <p>Settlement chain for payments. Contract addresses are resolved automatically.</p>
               </div>
-              <input
-                type="text"
+              <select
                 className="form-input settings-control"
                 value={chainId}
-                placeholder="base-sepolia"
                 onChange={(e) => { setChainId(e.target.value); markDirty(); }}
-              />
-            </label>
-            <label className="settings-item">
-              <div className="settings-copy">
-                <h4>RPC URL</h4>
-                <p>JSON-RPC endpoint for the settlement chain.</p>
-              </div>
-              <input
-                type="text"
-                className="form-input settings-control"
-                value={rpcUrl}
-                placeholder="https://sepolia.base.org"
-                onChange={(e) => { setRpcUrl(e.target.value); markDirty(); }}
-              />
-            </label>
-            <label className="settings-item">
-              <div className="settings-copy">
-                <h4>Deposits Contract</h4>
-                <p>AntseedDeposits contract address.</p>
-              </div>
-              <input
-                type="text"
-                className="form-input settings-control"
-                value={depositsAddress}
-                placeholder="0x..."
-                onChange={(e) => { setDepositsAddress(e.target.value); markDirty(); }}
-              />
-            </label>
-            <label className="settings-item">
-              <div className="settings-copy">
-                <h4>Channels Contract</h4>
-                <p>AntseedChannels contract address.</p>
-              </div>
-              <input
-                type="text"
-                className="form-input settings-control"
-                value={channelsAddress}
-                placeholder="0x..."
-                onChange={(e) => { setChannelsAddress(e.target.value); markDirty(); }}
-              />
-            </label>
-            <label className="settings-item">
-              <div className="settings-copy">
-                <h4>USDC Contract</h4>
-                <p>USDC token contract address on the settlement chain.</p>
-              </div>
-              <input
-                type="text"
-                className="form-input settings-control"
-                value={usdcAddress}
-                placeholder="0x..."
-                onChange={(e) => { setUsdcAddress(e.target.value); markDirty(); }}
-              />
+              >
+                <option value="base-sepolia">Base Sepolia (testnet)</option>
+                <option value="base-mainnet" disabled>Base Mainnet (not deployed yet)</option>
+                <option value="base-local">Base Local (development)</option>
+              </select>
             </label>
           </div>
 

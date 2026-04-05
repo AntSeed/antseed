@@ -232,3 +232,14 @@
     opacity: 0.85;
   }
 }
+
+.alpha-hint {
+  opacity: 0.6;
+  white-space: nowrap;
+  background: var(--danger);
+  color: #fff;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  text-align: center;
+  border-radius: 8px;
+}

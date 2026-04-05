@@ -48,10 +48,6 @@ export type ConfigFormData = {
   paymentMethod: string;
   devMode: boolean;
   cryptoChainId: string;
-  cryptoRpcUrl: string;
-  cryptoDepositsAddress: string;
-  cryptoChannelsAddress: string;
-  cryptoUsdcAddress: string;
 };
 
 export type ChatServiceOptionEntry = {

@@ -605,20 +605,13 @@ async function loadCachedCryptoConfig(): Promise<typeof cachedCryptoConfig> {
   } catch {
     // No config — no crypto config available
   }
-  // Only resolve if the user has explicitly configured a chain or contract address.
-  // Without explicit config, there's no contract to query — return null so callers
-  // skip RPC calls instead of hitting a default contract that may not exist.
-  const hasExplicitConfig = overrides.chainId || overrides.rpcUrl || overrides.depositsContractAddress || overrides.channelsContractAddress;
-  if (!hasExplicitConfig) {
+  // Resolve chain config from the selected chain ID. All contract addresses
+  // come from the preset in chain-config.ts — no manual address entry needed.
+  const selectedChain = asString(overrides.chainId as string, '');
+  if (!selectedChain) {
     return null;
   }
-  const cc = resolveChainConfig({
-    chainId: asString(overrides.chainId as string, '') || undefined,
-    rpcUrl: asString(overrides.rpcUrl as string, '') || undefined,
-    depositsContractAddress: asString(overrides.depositsContractAddress as string, '') || undefined,
-    channelsContractAddress: asString(overrides.channelsContractAddress as string, '') || undefined,
-    usdcContractAddress: asString(overrides.usdcContractAddress as string, '') || undefined,
-  });
+  const cc = resolveChainConfig({ chainId: selectedChain });
   cachedCryptoConfig = { rpcUrl: cc.rpcUrl, depositsAddress: cc.depositsContractAddress, channelsAddress: cc.channelsContractAddress, usdcAddress: cc.usdcContractAddress, chainId: cc.evmChainId };
   return cachedCryptoConfig;
 }

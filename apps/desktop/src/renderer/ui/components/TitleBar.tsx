@@ -9,6 +9,12 @@ import styles from './TitleBar.module.scss';
 
 const THEME_STORAGE_KEY = 'antseed:theme';
 
+const CHAIN_LABELS: Record<string, string> = {
+  'base-sepolia': 'Base Sepolia',
+  'base-mainnet': 'Base Mainnet',
+  'base-local': 'Local',
+};
+
 export function TitleBar() {
   const [isDark, setIsDark] = useState(() => {
     const saved = localStorage.getItem(THEME_STORAGE_KEY);
@@ -44,9 +50,13 @@ export function TitleBar() {
     creditsReservedUsdc,
     creditsOperatorAddress,
     creditsEvmAddress,
+    configFormData,
   } = useUiSnapshot();
   const actions = useActions();
   const [creditsDropdownOpen, setCreditsDropdownOpen] = useState(false);
+
+  const chainId = configFormData?.cryptoChainId || 'base-sepolia';
+  const chainLabel = CHAIN_LABELS[chainId] ?? chainId;
 
   const creditsDisplay = parseFloat(creditsAvailableUsdc) > 0
     ? `$${parseFloat(creditsAvailableUsdc).toFixed(2)}`
@@ -90,6 +100,9 @@ export function TitleBar() {
             Update to v{updateReady}
           </button>
         )}
+        <div className={styles.alphaHint}>
+          Alpha Version · {chainLabel}
+        </div>
         <div className={styles.titleBarCreditsWrapper}>
           <button
             className={styles.titleBarCreditsBtn}

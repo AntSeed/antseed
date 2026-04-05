@@ -70,11 +70,7 @@ export function initSettingsModule({
       minRep: safeNumber(buyer.minPeerReputation, 0),
       paymentMethod: safeString(payments.preferredMethod, 'crypto'),
       devMode: uiState.devMode,
-      cryptoChainId: safeString(crypto.chainId, ''),
-      cryptoRpcUrl: safeString(crypto.rpcUrl, ''),
-      cryptoDepositsAddress: safeString(crypto.depositsContractAddress, ''),
-      cryptoChannelsAddress: safeString(crypto.channelsContractAddress, ''),
-      cryptoUsdcAddress: safeString(crypto.usdcContractAddress, ''),
+      cryptoChainId: safeString(crypto.chainId, 'base-sepolia'),
     });
     notifyUiStateChanged();
   }
@@ -112,16 +108,9 @@ export function initSettingsModule({
         payments: {
           ...asRecord(currentConfig.payments),
           preferredMethod: formData.paymentMethod || 'crypto',
-          ...(formData.cryptoChainId || formData.cryptoRpcUrl || formData.cryptoDepositsAddress || formData.cryptoChannelsAddress || formData.cryptoUsdcAddress ? {
-            crypto: {
-              ...asRecord(asRecord(currentConfig.payments)?.crypto),
-              ...(formData.cryptoChainId ? { chainId: formData.cryptoChainId } : {}),
-              ...(formData.cryptoRpcUrl ? { rpcUrl: formData.cryptoRpcUrl } : {}),
-              ...(formData.cryptoDepositsAddress ? { depositsContractAddress: formData.cryptoDepositsAddress } : {}),
-              ...(formData.cryptoChannelsAddress ? { channelsContractAddress: formData.cryptoChannelsAddress } : {}),
-              ...(formData.cryptoUsdcAddress ? { usdcContractAddress: formData.cryptoUsdcAddress } : {}),
-            },
-          } : {}),
+          crypto: {
+            chainId: formData.cryptoChainId || 'base-sepolia',
+          },
         },
       };
 
