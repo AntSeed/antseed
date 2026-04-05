@@ -27,7 +27,7 @@ import {IAntseedEmissions} from "./interfaces/IAntseedEmissions.sol";
  *           close:    Deposits charges buyer, credits seller, releases remaining
  *           timeout:  Deposits releases locked funds back to buyer
  *
- *         Contract is swappable: deploy a new version and re-point Deposits + Stats.
+ *         Contract is swappable: deploy a new version and re-point via AntseedRegistry.
  */
 contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
 

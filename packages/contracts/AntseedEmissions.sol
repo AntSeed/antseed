@@ -38,8 +38,6 @@ contract AntseedEmissions is Ownable, Pausable, ReentrancyGuard {
     uint256 public TEAM_SHARE_PCT;
     uint256 public MAX_SELLER_SHARE_PCT;
 
-    address public teamWallet;
-
     // ─── Per-Epoch Params (snapshotted on first touch) ───
     struct EpochParams {
         uint256 sellerSharePct;
@@ -296,12 +294,13 @@ contract AntseedEmissions is Ownable, Pausable, ReentrancyGuard {
     }
 
     function flushTeam() external onlyOwner nonReentrant {
-        if (teamWallet == address(0)) revert NoTeamWallet();
+        address dest = registry.teamWallet();
+        if (dest == address(0)) revert NoTeamWallet();
         uint256 amount = teamAccumulated;
         if (amount == 0) revert NoTeamAccumulated();
         teamAccumulated = 0;
-        IANTSToken(registry.antsToken()).mint(teamWallet, amount);
-        emit TeamFlushed(teamWallet, amount);
+        IANTSToken(registry.antsToken()).mint(dest, amount);
+        emit TeamFlushed(dest, amount);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -319,11 +318,6 @@ contract AntseedEmissions is Ownable, Pausable, ReentrancyGuard {
         BUYER_SHARE_PCT = buyerPct;
         RESERVE_SHARE_PCT = reservePct;
         TEAM_SHARE_PCT = teamPct;
-    }
-
-    function setTeamWallet(address _teamWallet) external onlyOwner {
-        if (_teamWallet == address(0)) revert InvalidAddress();
-        teamWallet = _teamWallet;
     }
 
     /// @notice Set the per-seller cap as a percentage of the seller budget.

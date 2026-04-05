@@ -84,14 +84,15 @@ and resolved via the workspace.
 ```
 packages/contracts/
 ├── interfaces/              Shared Solidity interfaces (IAntseed*.sol, IERC8004Registry.sol)
-├── AntseedStats.sol         Per-agent session metrics keyed by ERC-8004 agentId
-├── AntseedStaking.sol       Seller staking, slashing (holds stake USDC, binds to agentId)
+├── AntseedRegistry.sol      Central address book for all protocol contracts
+├── AntseedStaking.sol       Seller staking (holds stake USDC, binds to agentId)
 ├── AntseedDeposits.sol      Buyer deposits, seller payouts (holds buyer USDC)
-├── AntseedChannels.sol      Session lifecycle, ReserveAuth + SpendingAuth (swappable, holds NO USDC)
+├── AntseedChannels.sol      Payment channel lifecycle, ReserveAuth + SpendingAuth (swappable, holds NO USDC)
 ├── AntseedEmissions.sol     ANTS token emissions (USDC volume-based)
+├── AntseedSlashing.sol      Swappable slashing logic for staked sellers
 ├── AntseedSubPool.sol       Subscription pool
+├── ANTSToken.sol            ANTS ERC-20 token (52M max supply)
 ├── MockERC8004Registry.sol  Mock ERC-8004 IdentityRegistry (local testing only)
-├── ANTSToken.sol            ANTS ERC-20 token
 └── MockUSDC.sol             Test USDC
 ```
 Identity uses the deployed ERC-8004 IdentityRegistry (Base: `0x8004A169...`).
@@ -105,7 +106,7 @@ Build/test: `cd packages/contracts && forge build && forge test`
 3. Seller calls `reserve()` on AntseedChannels with buyer's ReserveAuth sig → Deposits.lockForChannel()
 4. Per request: buyer signs SpendingAuth(channelId, cumulativeAmount, metadataHash)
 5. Seller calls `settle()` or `close()` with latest SpendingAuth → Deposits.chargeAndCreditPayouts()
-6. If seller disappears: `requestTimeout()` (permissionless after deadline) → `withdraw()` after 15min grace
+6. If seller disappears: buyer calls `requestClose()` → `withdraw()` after 15min grace
 
 EIP-712 domain: name="AntseedChannels", version="7"
 

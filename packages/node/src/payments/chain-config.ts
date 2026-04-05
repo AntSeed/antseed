@@ -33,9 +33,12 @@ const CHAIN_CONFIGS: Record<ChainId, ChainConfig> = {
     chainId: 'base-sepolia',
     evmChainId: 84532,
     rpcUrl: 'https://sepolia.base.org',
-    depositsContractAddress: '0x0000000000000000000000000000000000000000', // TODO: deploy and fill
-    channelsContractAddress: '0x0000000000000000000000000000000000000000', // TODO: deploy and fill
-    usdcContractAddress: '0x036CbD53842c5426634e7929541eC2318f3dCF7e', // USDC on Base Sepolia
+    depositsContractAddress: '0x7AB02B4fFB4954a17e1CBF4e1E3A4519fd17f101',
+    channelsContractAddress: '0x73Ab5742D3A86C9E8370c623E508a1E396b4d432',
+    stakingContractAddress: '0x5A27C1d31CF1147B579bD77d2B709e1a526E84Cb',
+    emissionsContractAddress: '0x5329D795AF9f06986603B4DB3C60e05641CdE05e',
+    identityRegistryAddress: '0x8004A818BFB912233c491871b3d84c89A494BD9e',
+    usdcContractAddress: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
   },
   'base-local': {
     chainId: 'base-local',

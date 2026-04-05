@@ -15,14 +15,13 @@ contract AntseedRegistry is IAntseedRegistry, Ownable {
     address public override channels;
     address public override deposits;
     address public override staking;
-    address public override stats;
     address public override emissions;
     address public override antsToken;
     address public override identityRegistry;
     address public override protocolReserve;
+    address public override teamWallet;
 
     error InvalidAddress();
-
     event AddressUpdated(string indexed key, address indexed newAddress);
 
     constructor() Ownable(msg.sender) {}
@@ -43,12 +42,6 @@ contract AntseedRegistry is IAntseedRegistry, Ownable {
         if (_staking == address(0)) revert InvalidAddress();
         staking = _staking;
         emit AddressUpdated("staking", _staking);
-    }
-
-    function setStats(address _stats) external onlyOwner {
-        if (_stats == address(0)) revert InvalidAddress();
-        stats = _stats;
-        emit AddressUpdated("stats", _stats);
     }
 
     function setEmissions(address _emissions) external onlyOwner {
@@ -73,5 +66,11 @@ contract AntseedRegistry is IAntseedRegistry, Ownable {
         if (_protocolReserve == address(0)) revert InvalidAddress();
         protocolReserve = _protocolReserve;
         emit AddressUpdated("protocolReserve", _protocolReserve);
+    }
+
+    function setTeamWallet(address _teamWallet) external onlyOwner {
+        if (_teamWallet == address(0)) revert InvalidAddress();
+        teamWallet = _teamWallet;
+        emit AddressUpdated("teamWallet", _teamWallet);
     }
 }

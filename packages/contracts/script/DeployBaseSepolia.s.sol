@@ -103,6 +103,7 @@ contract DeployBaseSepolia is Script {
         antseedRegistry.setAntsToken(antsToken);
         antseedRegistry.setIdentityRegistry(IDENTITY_REGISTRY);
         antseedRegistry.setProtocolReserve(protocolReserve);
+        antseedRegistry.setTeamWallet(teamWallet);
 
         // ---- Point each contract at the registry ----
         ISetRegistry(channels).setRegistry(address(antseedRegistry));
@@ -110,10 +111,6 @@ contract DeployBaseSepolia is Script {
         ISetRegistry(staking).setRegistry(address(antseedRegistry));
         ISetRegistry(emissions).setRegistry(address(antseedRegistry));
         ISetRegistry(antsToken).setRegistry(address(antseedRegistry));
-
-        // ---- Set team wallet on emissions ----
-        (bool ok,) = emissions.call(abi.encodeWithSignature("setTeamWallet(address)", teamWallet));
-        require(ok, "setTeamWallet failed");
 
         vm.stopBroadcast();
 
