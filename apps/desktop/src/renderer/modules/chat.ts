@@ -1323,7 +1323,7 @@ export function initChatModule({
     if (Array.isArray(cloned.content)) {
       for (const block of cloned.content as ContentBlock[]) {
         delete block.renderKey;
-        if (typeof block.id === 'string' && /^(text|thinking)-\d+$/.test(block.id)) {
+        if (typeof block.id === 'string' && /^(text|thinking)-[\d-]+$/.test(block.id)) {
           delete block.id;
         }
       }

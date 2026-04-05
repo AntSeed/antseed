@@ -493,9 +493,9 @@ async function discoverChatServiceCatalog(
         const protocol = resolveServiceProtocol(apiProtocols, serviceId) ?? inferProviderProtocol(provider);
         if (!protocol) continue;
 
-        const providerPricing = pricingMap?.[provider]?.services?.[serviceId];
-        const inputUsd = providerPricing?.input ?? defaultInput;
-        const outputUsd = providerPricing?.output ?? defaultOutput;
+        const providerPricing = pricingMap?.[provider]?.services?.[serviceId] as Record<string, unknown> | undefined;
+        const inputUsd = (providerPricing?.inputUsdPerMillion as number | undefined) ?? (providerPricing?.input as number | undefined) ?? defaultInput;
+        const outputUsd = (providerPricing?.outputUsdPerMillion as number | undefined) ?? (providerPricing?.output as number | undefined) ?? defaultOutput;
         const categories = categoriesMap?.[provider]?.services?.[serviceId];
 
         results.push({
