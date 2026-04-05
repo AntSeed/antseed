@@ -8,20 +8,35 @@ Command-line interface and web dashboard for the AntSeed Network — a P2P netwo
 
 | Command | Description |
 |---------|-------------|
+| **Setup** | |
 | `antseed init` | Install trusted provider and router plugins |
-| `antseed seed` | Start providing AI services on the P2P network |
-| `antseed connect` | Start the buyer proxy and connect to sellers |
+| `antseed setup --role <role>` | Check readiness for provider or buyer role |
+| `antseed register` | Register peer identity on-chain (ERC-8004) |
+| **Providing** | |
+| `antseed seed --provider <name>` | Start providing AI services on the P2P network |
+| `antseed stake <amount>` | Stake USDC as a provider (min $10) |
+| `antseed unstake` | Withdraw staked USDC |
+| `antseed claim` | Claim accumulated seller payouts |
+| **Buying** | |
+| `antseed connect --router <name>` | Start the buyer proxy and connect to sellers |
+| `antseed deposit <amount>` | Deposit USDC for payments |
+| `antseed withdraw <amount>` | Withdraw USDC from deposits |
+| `antseed balance` | Check wallet and deposit balance |
+| `antseed browse` | Browse available services and pricing |
+| `antseed payments` | Launch the payments portal |
+| **Session** | |
 | `antseed connection get` | Show current session state (pinned service, peer) |
 | `antseed connection set` | Update service/peer overrides on a running proxy |
-| `antseed connection clear` | Clear service/peer overrides on a running proxy |
-| `antseed plugin add <pkg>` | Install a provider or router plugin from npm |
-| `antseed plugin remove <name>` | Remove an installed plugin |
-| `antseed plugin list` | List installed plugins |
+| `antseed connection clear` | Clear service/peer overrides |
+| **Management** | |
 | `antseed status` | Show current node status |
-| `antseed config` | Manage configuration (`show`, `set`, `seller show/set`, `buyer show/set`, `init`) |
-| `antseed dashboard` | Start the web dashboard for monitoring and configuration |
-| `antseed dev` | Run seller + buyer locally for development and testing |
-| `antseed browse` | Browse available services, prices, and reputation on the network |
+| `antseed config` | Manage configuration |
+| `antseed plugin add/remove/list` | Manage plugins |
+| `antseed dashboard` | Start the web dashboard |
+| `antseed channels` | List payment channels |
+| `antseed emissions` | View ANTS emissions and epoch info |
+| `antseed dev` | Run seller + buyer locally for testing |
+| `antseed bootstrap` | Run a dedicated DHT bootstrap node |
 
 ## Plugins
 
@@ -195,33 +210,27 @@ Session overrides are stored in `~/.antseed/buyer.state.json` and picked up by t
 
 The service override rewrites the `model` field in the request body **before routing**, so peer selection, pricing, and the forwarded request all reflect the overridden service — regardless of what the tool (e.g. Claude Code) originally requested.
 
-## Settlement Runtime (Seeder)
+## Payments
 
-`antseed seed` can enable automatic session settlement when payment config is present.
-`antseed connect` can also enable buyer-side deposits/session locking with the same payment config.
+Payment channels are automatic when `payments.crypto.chainId` is set in config. Set it to `base-mainnet` for production or `base-sepolia` for testing. Contract addresses are resolved automatically from the chain ID.
 
-Common runtime env controls:
-- `ANTSEED_ENABLE_SETTLEMENT=true|false`
-- `ANTSEED_SETTLEMENT_IDLE_MS=30000`
-- `ANTSEED_DEFAULT_ESCROW_USDC=1`
-- `ANTSEED_AUTO_FUND_ESCROW=true|false`
-- `ANTSEED_SELLER_WALLET_ADDRESS=0x...`
+```json
+{
+  "payments": {
+    "preferredMethod": "crypto",
+    "crypto": {
+      "chainId": "base-mainnet"
+    }
+  }
+}
+```
 
-Crypto settlement also requires `config.payments.crypto` values in your config file:
-- `chainId` (`base` or `arbitrum`)
-- `rpcUrl`
-- `depositsContractAddress`
-- `channelsContractAddress`
-- `usdcContractAddress`
+The node's identity key (`~/.antseed/identity.key`) doubles as the EVM wallet. Providers must register on-chain (`antseed register`) and stake USDC (`antseed stake 10`) before seeding. Buyers must deposit USDC (`antseed deposit 10`) before connecting.
 
-If `ANTSEED_ENABLE_SETTLEMENT` is not explicitly set and the RPC endpoint is unreachable,
-the CLI now auto-disables settlement for that run and logs a warning instead of looping RPC network-detection errors.
-Set `ANTSEED_ENABLE_SETTLEMENT=true` to force-enable settlement checks.
-
-Runtime behavior:
-- session opens -> optional deposit into deposits contract
-- session finalizes -> exact on-chain split settlement via sessions contract (`seller payout + platform fee + buyer refund remainder`)
-- no receipts -> deposit refund path
+Runtime env controls:
+- `ANTSEED_SETTLEMENT_IDLE_MS=600000` — idle time before settling a session (default: 10 minutes)
+- `ANTSEED_DEFAULT_DEPOSIT_USDC=1` — default lock amount per session
+- `ANTSEED_IDENTITY_HEX=<hex>` — inject identity via env (supports 0x prefix)
 
 Provider-specific options are configured via each plugin's config schema (see `antseed plugin add --help`).
 
