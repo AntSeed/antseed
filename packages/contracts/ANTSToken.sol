@@ -7,6 +7,8 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import {IAntseedRegistry} from "./interfaces/IAntseedRegistry.sol";
 
 contract ANTSToken is ERC20, Ownable {
+    uint256 public constant MAX_SUPPLY = 52_000_000e18; // 52M ANTS
+
     IAntseedRegistry public registry;
     bool public transfersEnabled;       // Phase 1: false. One-way toggle to true.
     mapping(address => bool) public transferWhitelist;
@@ -15,6 +17,7 @@ contract ANTSToken is ERC20, Ownable {
     error InvalidAddress();
     error TransfersNotEnabled();
     error TransfersAlreadyEnabled();
+    error MaxSupplyExceeded();
 
     event TransfersEnabled();
     event WhitelistUpdated(address indexed account, bool allowed);
@@ -32,6 +35,7 @@ contract ANTSToken is ERC20, Ownable {
     function mint(address to, uint256 amount) external {
         if (msg.sender != registry.emissions()) revert NotEmissionsContract();
         if (to == address(0)) revert InvalidAddress();
+        if (totalSupply() + amount > MAX_SUPPLY) revert MaxSupplyExceeded();
         _mint(to, amount);
     }
 
