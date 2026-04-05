@@ -26,7 +26,15 @@ antseed init
 
 Verify: `antseed --version` (requires Node.js 20+).
 
-## Step 2: Configure chain and fund the account
+## Step 2: Set the identity
+
+```bash
+export ANTSEED_IDENTITY_HEX=<64-char-hex-private-key>
+```
+
+The key can optionally include a `0x` prefix. This key is your EVM wallet — deposits and payments are tied to it.
+
+## Step 3: Configure chain and fund the account
 
 Edit `~/.antseed/config.json`:
 
@@ -49,7 +57,7 @@ antseed deposit 10
 
 Verify with `antseed balance`.
 
-## Step 3: Start the buyer proxy
+## Step 4: Start the buyer proxy
 
 Run in a terminal or set up as a persistent service:
 
@@ -85,7 +93,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now antseed-buyer
 ```
 
-## Step 4: Configure OpenClaw service provider
+## Step 5: Configure OpenClaw service provider
 
 ```bash
 cat ~/.openclaw/openclaw.json | python3 -c "
@@ -117,7 +125,7 @@ Set as default:
 openclaw config set agents.defaults.model.primary "antseed/SERVICE_ID_HERE"
 ```
 
-## Step 5: Verify
+## Step 6: Verify
 
 ```bash
 curl -s http://127.0.0.1:5005/v1/models
