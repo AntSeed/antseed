@@ -124,6 +124,13 @@ function ConvContextMenu({
     ? { position: 'fixed', top: anchorRect.bottom + 4, left: anchorRect.right - 120 }
     : {};
 
+  const handleBlur = useCallback(() => {
+    // Delay to allow click events on menu items to fire first
+    setTimeout(() => {
+      if (!cancelledRef.current) handleRenameSubmit();
+    }, 150);
+  }, [handleRenameSubmit]);
+
   const menu = renaming ? (
     <div className={styles.convContextMenu} ref={menuRef} style={menuStyle}>
       <input
@@ -135,7 +142,7 @@ function ConvContextMenu({
           if (e.key === 'Enter') handleRenameSubmit();
           if (e.key === 'Escape') { cancelledRef.current = true; onClose(); }
         }}
-        onBlur={handleRenameSubmit}
+        onBlur={handleBlur}
       />
     </div>
   ) : (

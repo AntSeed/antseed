@@ -618,13 +618,7 @@ export function ChatBubble({ message, streaming = false, onOpenPreview }: ChatBu
 
   const bubbleMeta =
     metaParts.length > 0 && !isStreamingBubble ? (
-      <button
-        type="button"
-        className={`${styles.chatBubbleMeta}${metaExpanded ? ` ${styles.chatBubbleMetaExpanded}` : ''}`}
-        onClick={() => setMetaExpanded((value) => !value)}
-      >
-        <span className={styles.chatBubbleStats}>{metaParts.join(' · ')}</span>
-      </button>
+      <span className={styles.chatBubbleStats}>{metaParts.join(' · ')}</span>
     ) : null;
 
   return (
