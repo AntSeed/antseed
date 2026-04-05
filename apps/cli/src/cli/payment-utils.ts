@@ -4,6 +4,7 @@ import {
   ChannelsClient,
   StakingClient,
   loadOrCreateIdentity,
+  resolveChainConfig,
 } from '@antseed/node';
 import {
   IdentityClient,
@@ -63,7 +64,18 @@ export function requireCryptoConfig(config: AntseedConfig): NonNullable<AntseedC
   if (!crypto) {
     throw new Error('No crypto payment configuration found. Configure payments.crypto in your config file or run: antseed init');
   }
-  return crypto;
+  // Merge with chain-config defaults so commands work with just chainId
+  const resolved = resolveChainConfig(crypto);
+  return {
+    ...crypto,
+    rpcUrl: crypto.rpcUrl || resolved.rpcUrl,
+    usdcContractAddress: crypto.usdcContractAddress || resolved.usdcContractAddress,
+    depositsContractAddress: crypto.depositsContractAddress || resolved.depositsContractAddress,
+    channelsContractAddress: crypto.channelsContractAddress || resolved.channelsContractAddress,
+    stakingContractAddress: crypto.stakingContractAddress || resolved.stakingContractAddress,
+    emissionsContractAddress: crypto.emissionsContractAddress || resolved.emissionsContractAddress,
+    identityRegistryAddress: crypto.identityRegistryAddress || resolved.identityRegistryAddress,
+  };
 }
 
 /**
