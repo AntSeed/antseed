@@ -516,8 +516,7 @@ button {
 }
 
 button:hover {
-  border-color: var(--border-strong);
-  background: var(--bg-hover);
+  opacity: 0.8;
 }
 
 button:focus-visible {

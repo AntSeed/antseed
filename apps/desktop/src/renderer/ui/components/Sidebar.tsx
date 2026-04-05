@@ -1,4 +1,5 @@
 import { memo, useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { HierarchySquare03Icon } from '@hugeicons/core-free-icons';
 import { UserGroupIcon } from '@hugeicons/core-free-icons';
@@ -118,26 +119,27 @@ function ConvContextMenu({
     onClose();
   }, [renameValue, convTitle, convId, actions, onClose]);
 
-  if (renaming) {
-    return (
-      <div className={styles.convContextMenu} ref={menuRef}>
-        <input
-          ref={renameInputRef}
-          className={styles.convRenameInput}
-          value={renameValue}
-          onChange={(e) => setRenameValue(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') handleRenameSubmit();
-            if (e.key === 'Escape') { cancelledRef.current = true; onClose(); }
-          }}
-          onBlur={handleRenameSubmit}
-        />
-      </div>
-    );
-  }
+  const anchorRect = anchorRef.current?.getBoundingClientRect();
+  const menuStyle: React.CSSProperties = anchorRect
+    ? { position: 'fixed', top: anchorRect.bottom + 4, left: anchorRect.right - 120 }
+    : {};
 
-  return (
-    <div className={styles.convContextMenu} ref={menuRef}>
+  const menu = renaming ? (
+    <div className={styles.convContextMenu} ref={menuRef} style={menuStyle}>
+      <input
+        ref={renameInputRef}
+        className={styles.convRenameInput}
+        value={renameValue}
+        onChange={(e) => setRenameValue(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') handleRenameSubmit();
+          if (e.key === 'Escape') { cancelledRef.current = true; onClose(); }
+        }}
+        onBlur={handleRenameSubmit}
+      />
+    </div>
+  ) : (
+    <div className={styles.convContextMenu} ref={menuRef} style={menuStyle}>
       <button className={styles.convContextItem} onClick={() => setRenaming(true)}>
         Rename
       </button>
@@ -152,6 +154,8 @@ function ConvContextMenu({
       </button>
     </div>
   );
+
+  return createPortal(menu, document.body);
 }
 
 function formatUsdc(value: number): string {

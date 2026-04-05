@@ -130,6 +130,7 @@
 .peer-group {
   display: flex;
   flex-direction: column;
+  gap: 4px;
 }
 
 .peer-group-expanded {
@@ -352,9 +353,6 @@
 /* Conversation context menu */
 
 .conv-context-menu {
-  position: absolute;
-  right: 4px;
-  top: 100%;
   min-width: 120px;
   background: var(--bg-card);
   border: 1px solid var(--border);
