@@ -80,10 +80,10 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
     // ─── Events ─────────────────────────────────────────────────────
     event Reserved(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint128 maxAmount);
     event ChannelSettled(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint128 cumulativeAmount, uint128 delta, uint128 totalSettled, uint256 platformFee, bytes metadata);
-    event ChannelClosed(bytes32 indexed channelId, address indexed seller);
-    event ChannelTopUp(bytes32 indexed channelId, address indexed buyer, uint128 newMaxAmount);
-    event CloseRequested(bytes32 indexed channelId, address indexed buyer);
-    event ChannelWithdrawn(bytes32 indexed channelId, address indexed buyer);
+    event ChannelClosed(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint128 settledAmount, uint128 refund);
+    event ChannelTopUp(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint128 additionalAmount, uint128 newDeposit);
+    event CloseRequested(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint256 gracePeriodEnd);
+    event ChannelWithdrawn(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint128 refund);
 
     // ─── Custom Errors ──────────────────────────────────────────────
     error InvalidAddress();
@@ -236,7 +236,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         channel.deposit = newMaxAmount;
         channel.deadline = deadline;
 
-        emit ChannelTopUp(channelId, channel.buyer, newMaxAmount);
+        emit ChannelTopUp(channelId, channel.buyer, channel.seller, additionalAmount, newMaxAmount);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -301,7 +301,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
 
         _recordChannelComplete(channel);
 
-        emit ChannelClosed(channelId, channel.seller);
+        emit ChannelClosed(channelId, channel.buyer, channel.seller, channel.settled, unsettled);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -321,7 +321,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         if (channel.closeRequestedAt != 0) revert CloseAlreadyRequested();
 
         channel.closeRequestedAt = block.timestamp;
-        emit CloseRequested(channelId, channel.buyer);
+        emit CloseRequested(channelId, channel.buyer, channel.seller, block.timestamp + TIMEOUT_GRACE_PERIOD);
     }
 
     /**
@@ -347,7 +347,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
 
         _recordWithdrawStats(channel);
 
-        emit ChannelWithdrawn(channelId, channel.buyer);
+        emit ChannelWithdrawn(channelId, channel.buyer, channel.seller, remainingReserved);
     }
 
     /**
@@ -362,7 +362,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
             if (channel.status != ChannelStatus.Active) continue;
             if (channel.closeRequestedAt != 0) continue;
             channel.closeRequestedAt = block.timestamp;
-            emit CloseRequested(channelIds[i], buyer);
+            emit CloseRequested(channelIds[i], buyer, channel.seller, block.timestamp + TIMEOUT_GRACE_PERIOD);
         }
     }
 
@@ -389,7 +389,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
 
             _recordWithdrawStats(channel);
 
-            emit ChannelWithdrawn(channelIds[i], buyer);
+            emit ChannelWithdrawn(channelIds[i], buyer, channel.seller, remainingReserved);
         }
     }
 

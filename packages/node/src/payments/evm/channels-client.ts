@@ -37,7 +37,7 @@ const CHANNELS_ABI = [
   'function getAgentStats(uint256 agentId) external view returns (uint64 channelCount, uint64 ghostCount, uint256 totalVolumeUsdc, uint64 lastSettledAt)',
   'function domainSeparator() external view returns (bytes32)',
   'function FIRST_SIGN_CAP() external view returns (uint256)',
-  'event CloseRequested(bytes32 indexed channelId, address indexed buyer)',
+  'event CloseRequested(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint256 gracePeriodEnd)',
 ] as const;
 
 export interface CloseRequestedEvent {
