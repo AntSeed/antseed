@@ -1,8 +1,8 @@
 ---
 name: openclaw-antseed
-description: "Connect OpenClaw to the AntSeed P2P AI network as a buyer. Use when: user asks to connect OpenClaw to AntSeed, route OpenClaw through AntSeed, set up AntSeed as a service provider for OpenClaw, or use P2P AI services in OpenClaw. Installs the AntSeed buyer proxy and configures OpenClaw to route LLM requests through the AntSeed peer-to-peer network."
+description: "Connect OpenClaw to the AntSeed P2P AI network as a buyer. Use when: user asks to connect OpenClaw to AntSeed, route OpenClaw through AntSeed, set up AntSeed as a service provider for OpenClaw, or use P2P AI services in OpenClaw."
 user-invocable: true
-metadata: { "openclaw": { "emoji": "🌱", "requires": { "bins": ["npm", "openclaw"] } } }
+metadata: { "openclaw": { "emoji": "\ud83c\udf31", "requires": { "bins": ["npm", "openclaw"] } } }
 ---
 
 # Connect OpenClaw to AntSeed P2P Network
@@ -12,21 +12,52 @@ Set up AntSeed as a service provider for OpenClaw. This installs a local buyer p
 ## Architecture
 
 ```
-OpenClaw → http://127.0.0.1:5005 (AntSeed buyer proxy) → P2P network → Provider node → Upstream API (OpenRouter, Anthropic, etc.)
+OpenClaw -> http://127.0.0.1:5005 (AntSeed buyer proxy) -> P2P network -> Provider node -> Upstream API
 ```
 
-The buyer proxy runs locally, discovers providers via DHT, and exposes an API-compatible HTTP endpoint.
+The buyer proxy runs locally, discovers providers via DHT, negotiates payment channels automatically, and exposes an API-compatible HTTP endpoint.
 
-## Step 1: Install AntSeed CLI and buyer plugin
+## Step 1: Install and initialize AntSeed
 
 ```bash
 npm install -g @antseed/cli
-antseed plugin add @antseed/router-local
+antseed init
 ```
 
 Verify: `antseed --version` (requires Node.js 20+).
 
-## Step 2: Start the buyer proxy
+## Step 2: Set the identity
+
+```bash
+export ANTSEED_IDENTITY_HEX=<64-char-hex-private-key>
+```
+
+The key can optionally include a `0x` prefix. This key is your EVM wallet — deposits and payments are tied to it.
+
+## Step 3: Configure chain and fund the account
+
+Edit `~/.antseed/config.json`:
+
+```json
+{
+  "payments": {
+    "preferredMethod": "crypto",
+    "crypto": {
+      "chainId": "base-mainnet"
+    }
+  }
+}
+```
+
+Fund the buyer wallet with USDC on Base, then deposit into the escrow:
+
+```bash
+antseed deposit 10
+```
+
+Verify with `antseed balance`.
+
+## Step 4: Start the buyer proxy
 
 Run in a terminal or set up as a persistent service:
 
@@ -34,14 +65,7 @@ Run in a terminal or set up as a persistent service:
 antseed connect --router local --port 5005
 ```
 
-The proxy will:
-1. Join the P2P network via DHT
-2. Discover available providers
-3. Listen on `http://localhost:5005`
-
 ### Persistent service (systemd)
-
-To run the proxy as a background service that survives reboots:
 
 ```bash
 sudo tee /etc/systemd/system/antseed-buyer.service > /dev/null <<'EOF'
@@ -59,6 +83,7 @@ RestartSec=10
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=antseed-buyer
+Environment=ANTSEED_IDENTITY_HEX=<private-key-hex-no-0x>
 
 [Install]
 WantedBy=multi-user.target
@@ -68,23 +93,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now antseed-buyer
 ```
 
-Verify: `sudo systemctl is-active antseed-buyer`
-
-## Step 3: Configure OpenClaw service provider
-
-Ask the user which service they want to use. Available services depend on what providers are active on the network.
-
-### Set the provider
-
-```bash
-openclaw config set models.providers.antseed.baseUrl "http://127.0.0.1:5005"
-openclaw config set models.providers.antseed.apiKey "antseed-p2p"
-openclaw config set models.providers.antseed.api "anthropic-messages"
-```
-
-### Add a service
-
-The service ID must match a service available on the network. Ask the user or suggest common options. Example for Kimi K2.5 via OpenRouter:
+## Step 5: Configure OpenClaw service provider
 
 ```bash
 cat ~/.openclaw/openclaw.json | python3 -c "
@@ -108,64 +117,25 @@ json.dump(cfg, sys.stdout, indent=2)
 " > /tmp/oc_antseed.json && mv /tmp/oc_antseed.json ~/.openclaw/openclaw.json
 ```
 
-Replace `SERVICE_ID_HERE` with the actual service ID (e.g., `moonshotai/kimi-k2.5`, `anthropic/claude-sonnet-4-20250514`).
+Replace `SERVICE_ID_HERE` with the service from `antseed browse` (e.g., `deepseek-v3.1`, `kimi-k2.5`).
 
-### Set as default service
+Set as default:
 
 ```bash
 openclaw config set agents.defaults.model.primary "antseed/SERVICE_ID_HERE"
 ```
 
-The service reference format is `antseed/<service-id>` where `antseed` is the provider name.
-
-## Step 4: Restart and verify
+## Step 6: Verify
 
 ```bash
-# Restart the gateway to pick up the new provider
-sudo systemctl restart openclaw  # or kill and restart the gateway process
-
-# Test the connection
 curl -s http://127.0.0.1:5005/v1/models
 ```
 
 If the proxy returns available services, the connection is working.
 
-## Bootstrap nodes (optional)
+## Notes
 
-If the proxy can't find providers via DHT, add a known provider as a bootstrap node:
-
-Edit `~/.antseed/config.json` and add to the `bootstrapNodes` array:
-
-```json
-{
-  "bootstrapNodes": [
-    { "host": "PROVIDER_IP", "port": 6882 }
-  ]
-}
-```
-
-Then restart the buyer proxy.
-
-## API format notes
-
-- Use `anthropic-messages` API format. The AntSeed proxy translates between formats as needed.
-- The `apiKey` value doesn't matter — set it to any non-empty string (e.g., `antseed-p2p`). The proxy doesn't validate it.
-- Streaming is supported. The proxy relays SSE streams from providers.
-
-## Verification checklist
-
-- [ ] `antseed --version` prints a version
-- [ ] `antseed connect --router local --port 5005` starts without errors
-- [ ] `curl http://127.0.0.1:5005/v1/models` returns available services
-- [ ] OpenClaw config has `models.providers.antseed` configured
-- [ ] `agents.defaults.model.primary` is set to `antseed/<service-id>`
-- [ ] OpenClaw gateway responds to messages using the AntSeed service
-
-## Troubleshooting
-
-- **"No sellers available on the network"**: No providers found via DHT. Add a bootstrap node (see above) or check that providers are running.
-- **"DHT returned 0 results"**: Check internet connectivity and firewall. DHT uses UDP on random high ports. Ensure inbound UDP is allowed.
-- **Slow first request**: DHT discovery takes 5-10 seconds on the first request. Subsequent requests reuse cached peer connections.
-- **Timeouts on large requests**: Some services take longer through P2P routing. Ensure the OpenClaw service config has adequate `maxTokens`.
-- **"502 Upstream error"**: The provider's upstream API (OpenRouter, Anthropic) returned an error. Check the provider logs.
-- **Empty responses**: Verify the service ID matches what the provider allows. Mismatched service names result in 403 errors.
+- The API key value doesn't matter — set it to any non-empty string
+- Streaming is supported (SSE)
+- Payment channels are negotiated automatically on first request
+- The buyer wallet needs USDC deposited (`antseed deposit`) and ETH for gas on Base

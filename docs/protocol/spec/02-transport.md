@@ -9,12 +9,10 @@ Each node holds a persistent secp256k1 identity used for authentication and peer
 ### Key Storage
 
 - Algorithm: secp256k1 (via `ethers`)
-- Storage directory: `~/.antseed/`
-- Private key file: `identity.key`
-- File format: hex-encoded 32-byte secp256k1 private key (64 hex characters)
-- File permissions: `0o600` (owner read/write only)
+- **Recommended**: set via `ANTSEED_IDENTITY_HEX` env var (64 hex chars, optional `0x` prefix)
+- Fallback: plaintext file `~/.antseed/identity.key` (hex-encoded, `0o600` permissions) — **not recommended for production**
 
-On first launch, if `~/.antseed/identity.key` does not exist, the node generates a random secp256k1 private key, derives the EVM address, and writes the private key as hex to disk.
+The identity private key can be provided via the `ANTSEED_IDENTITY_HEX` env var (recommended) or read from `~/.antseed/identity.key`. If neither exists, the node generates a random secp256k1 private key and writes it to disk. For production, always use the env var with a secrets manager rather than the plaintext file.
 
 ### PeerId Derivation
 

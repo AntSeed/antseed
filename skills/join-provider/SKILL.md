@@ -1,6 +1,6 @@
 # Join AntSeed as a Provider
 
-Help the user set up an AntSeed node to provide AI services on the peer-to-peer network. Walk them through installation, initialization, provider configuration, pricing, and starting the seeder.
+Help the user set up an AntSeed provider node to offer AI services on the peer-to-peer network. Walk them through installation, on-chain registration, staking, provider configuration, pricing, and starting the seeder.
 
 ## Terms of Use — Read First
 
@@ -14,7 +14,12 @@ Help the user set up an AntSeed node to provide AI services on the peer-to-peer 
 
 ## Overview
 
-A **provider** offers AI services (Anthropic, OpenRouter, local LLMs, etc.) on the AntSeed network. Buyers pay per-token in USDC. The provider runs a seeder daemon that announces availability on the DHT and handles incoming inference requests.
+A **provider** (seller) offers AI services on the AntSeed network. Buyers pay per-token in USDC via on-chain payment channels. The provider runs a seeder daemon that announces availability on the DHT and handles incoming inference requests.
+
+**Requirements:**
+- Node.js 20+
+- An EVM wallet funded with USDC (for staking) and ETH (for gas) on Base
+- An upstream AI API key (Anthropic, OpenAI, Together, etc.) or a local LLM
 
 ## Step 1: Install the CLI
 
@@ -22,7 +27,7 @@ A **provider** offers AI services (Anthropic, OpenRouter, local LLMs, etc.) on t
 npm install -g @antseed/cli
 ```
 
-Verify with `antseed --version`. Requires Node.js 20+.
+Verify with `antseed --version`.
 
 ## Step 2: Initialize the node
 
@@ -30,122 +35,179 @@ Verify with `antseed --version`. Requires Node.js 20+.
 antseed init
 ```
 
-This does three things:
-- Installs all trusted plugins (provider + router) from npm
-- Generates a secp256k1 identity keypair at `~/.antseed/identity.key`
-- Creates default config at `~/.antseed/config.json`
+This installs all trusted plugins (provider + router) from npm and creates default config at `~/.antseed/config.json`.
 
-If the user already knows their provider type and API key, shortcut with:
+## Step 3: Set the identity
+
+The provider needs an EVM private key. This key is used for P2P identity, on-chain transactions (register, stake, settle), and signing payment messages.
+
+Set it via environment variable:
 
 ```bash
-antseed init --auth-type apikey --api-key <KEY>
+export ANTSEED_IDENTITY_HEX=<64-char-hex-private-key>
 ```
 
-## Step 3: Configure provider credentials
+The key can optionally include a `0x` prefix. The EVM address derived from this key becomes the provider's Peer ID.
+
+For persistent setups, add it to a `.env` file or systemd service config. **Never commit the private key to version control.**
+
+## Step 4: Configure the chain
+
+Edit `~/.antseed/config.json` and set the payment chain:
+
+```json
+{
+  "payments": {
+    "preferredMethod": "crypto",
+    "crypto": {
+      "chainId": "base-mainnet"
+    }
+  }
+}
+```
+
+Supported chains:
+- `base-mainnet` — Base L2 (production)
+- `base-sepolia` — Base Sepolia testnet (for testing)
+
+Contract addresses are built into the CLI for each chain — no manual configuration needed.
+
+## Step 5: Register on-chain identity
+
+Register the provider's EVM address on the ERC-8004 IdentityRegistry:
+
+```bash
+antseed register
+```
+
+This mints an agent identity NFT and prints the **Agent ID**. Save this — it's needed for staking.
+
+## Step 6: Stake USDC
+
+Providers must stake a minimum of $10 USDC to be eligible for buyer connections:
+
+```bash
+antseed stake 10 --agent-id <AGENT_ID>
+```
+
+The `--agent-id` flag is only needed for the first stake. Subsequent stakes look it up automatically.
+
+The provider's wallet needs:
+- USDC for the stake (minimum $10)
+- ETH for gas (a few cents)
+
+## Step 7: Configure provider credentials
 
 Ask the user which AI provider they want to use:
 
 | Provider | Plugin | Auth | Notes |
 |---|---|---|---|
 | Anthropic | `@antseed/provider-anthropic` | API key (`x-api-key`) | Commercial API key required |
-| OpenAI-compatible | `@antseed/provider-openai` | API key | OpenAI, Together, OpenRouter and similar |
-| Local LLM | `@antseed/provider-local-llm` | None (Ollama/llama.cpp) | Self-hosted, no restrictions |
-| Claude Code | `@antseed/provider-claude-code` | Auto-loaded from keychain | **Testing only** — not for production |
-| Claude OAuth | `@antseed/provider-claude-oauth` | OAuth token pair | **Testing only** — not for production |
+| OpenAI-compatible | `@antseed/provider-openai` | API key | OpenAI, Together, OpenRouter, etc. |
+| Local LLM | `@antseed/provider-local-llm` | None (Ollama/llama.cpp) | Self-hosted, no upstream costs |
+| Claude Code | `@antseed/provider-claude-code` | Auto-loaded from keychain | **Testing only** |
+| Claude OAuth | `@antseed/provider-claude-oauth` | OAuth token pair | **Testing only** |
 
-For API key providers:
+For API key providers, set the key via environment variable:
 
 ```bash
-antseed config add-provider -t <type> -k <API_KEY>
+# Together AI / OpenAI-compatible
+export OPENAI_API_KEY=...
+export OPENAI_BASE_URL=https://api.together.ai
+
+# Or for direct OpenAI
+export OPENAI_API_KEY=sk-...
 ```
 
-For Claude Code keychain (no key needed):
+## Step 8: Set pricing
+
+Pricing is in USD per 1 million tokens.
 
 ```bash
-antseed config add-provider -t claude-code
-```
-
-For local LLM (Ollama must be running):
-
-```bash
-antseed config add-provider -t local-llm
-```
-
-## Step 4: Set pricing
-
-Help the user set competitive pricing. Defaults are in USD per 1 million tokens.
-
-```bash
-# Global defaults
-antseed config seller set pricing.defaults.inputUsdPerMillion 12
-antseed config seller set pricing.defaults.outputUsdPerMillion 36
+# Global defaults (applied to all services without specific pricing)
+antseed config seller set pricing.defaults.inputUsdPerMillion 1
+antseed config seller set pricing.defaults.outputUsdPerMillion 3
 
 # Per-provider overrides (optional)
-antseed config seller set pricing.providers.anthropic.defaults.inputUsdPerMillion 15
-antseed config seller set pricing.providers.anthropic.defaults.outputUsdPerMillion 45
+antseed config seller set pricing.providers.openai.defaults.inputUsdPerMillion 1
+antseed config seller set pricing.providers.openai.defaults.outputUsdPerMillion 3
 
 # Per-service overrides (optional)
-antseed config seller set pricing.providers.anthropic.services.claude-3-haiku.inputUsdPerMillion 5
-antseed config seller set pricing.providers.anthropic.services.claude-3-haiku.outputUsdPerMillion 15
+antseed config seller set pricing.providers.openai.services.deepseek-v3.1.inputUsdPerMillion 1
+antseed config seller set pricing.providers.openai.services.deepseek-v3.1.outputUsdPerMillion 2
+antseed config seller set pricing.providers.openai.services.kimi-k2.5.inputUsdPerMillion 1
+antseed config seller set pricing.providers.openai.services.kimi-k2.5.outputUsdPerMillion 3
 ```
 
-Also configure capacity limits:
+Also configure capacity:
 
 ```bash
-# Max simultaneous buyer sessions
-antseed config seller set maxConcurrentBuyers 5
-
-# Messages to reserve for yourself
-antseed config seller set reserveFloor 10
+antseed config seller set maxConcurrentBuyers 10
 ```
 
-## Step 5: Start seeding
+## Step 9: Verify readiness
+
+```bash
+antseed setup --role provider
+```
+
+This runs all readiness checks:
+- Identity registered on-chain
+- USDC staked above minimum
+- Provider credentials valid
+
+All checks must pass before seeding.
+
+## Step 10: Start seeding
 
 ```bash
 antseed seed --provider <type>
 ```
 
-Example: `antseed seed --provider anthropic`
+Examples:
+- `antseed seed --provider openai` (Together, OpenRouter, OpenAI)
+- `antseed seed --provider local-llm` (Ollama, llama.cpp)
 
 The seeder will:
-1. Validate credentials with the provider API
-2. Join the P2P network and announce on the DHT
+1. Validate credentials with the upstream API
+2. Join the P2P network and announce services on the DHT
 3. Listen for buyer connections via WebRTC/TCP
-4. Log active sessions with latency and token usage
+4. Automatically handle payment channel lifecycle (reserve, settle, close)
 
-Output displays: Peer ID, DHT port, signaling port, effective pricing, and live session stats.
-
-To override pricing at runtime without saving to config:
+Runtime pricing overrides (without saving to config):
 
 ```bash
-antseed seed --provider anthropic \
-  --input-usd-per-million 15 \
-  --output-usd-per-million 45 \
-  --reserve 20
+antseed seed --provider openai \
+  --input-usd-per-million 1 \
+  --output-usd-per-million 3
 ```
 
-## Step 6: Monitor with dashboard (optional)
+## Step 11: Claim earnings
 
-In a separate terminal:
+After serving requests, the provider accumulates USDC payouts in the deposits contract:
 
 ```bash
-antseed dashboard
-```
+# Check pending payouts
+antseed balance
 
-Opens a web UI at `http://localhost:3117` showing live network stats, active sessions, and earnings.
+# Claim accumulated payouts to wallet
+antseed claim
+```
 
 ## Verification checklist
 
 - [ ] `antseed --version` prints a version
-- [ ] `~/.antseed/identity.key` exists
-- [ ] `~/.antseed/config.json` has provider credentials
+- [ ] `antseed register` succeeds (or shows "Already registered")
+- [ ] `antseed setup --role provider` — all checks pass
 - [ ] `antseed seed --provider <type>` starts without errors
 - [ ] Seeder announces on DHT (log shows peer ID and ports)
-- [ ] Dashboard shows the node as active (optional)
+- [ ] Metadata endpoint returns pricing: `curl http://localhost:6882/metadata`
 
 ## Troubleshooting
 
-- **"No provider configured"**: Run `antseed config add-provider -t <type> -k <KEY>`
-- **"Invalid credentials"**: Verify the API key works directly: `curl -H "x-api-key: <KEY>" https://api.anthropic.com/v1/messages ...`
-- **"DHT announce failed"**: Check firewall allows UDP on the DHT port (random high port). Try `--verbose` flag.
-- **Native module errors**: Run `antseed init` again to reinstall plugins, or manually: `npm install -g @antseed/cli`
+- **"SellerNotStaked"**: Run `antseed stake 10 --agent-id <ID>`. The wallet needs USDC and ETH.
+- **"No provider configured"**: Set the API key env var or run `antseed init`.
+- **"Not registered"**: Run `antseed register` first.
+- **"InsufficientAllowance"**: The CLI auto-approves USDC. If it fails, wait a few seconds and retry (nonce conflict).
+- **"DHT announce failed"**: Check firewall allows UDP on DHT port (default 6881) and TCP on signaling port (default 6882).
+- **Native module errors**: Run `antseed init` again or reinstall: `npm install -g @antseed/cli`

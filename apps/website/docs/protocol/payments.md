@@ -44,7 +44,7 @@ Buyer                          Seller                         Chain
   │                              │                              │
 ```
 
-The seller calls `settle()` with the latest SpendingAuth to charge the buyer for cumulative usage while keeping the session open, or `close()` to finalize and release remaining funds. If the seller disappears, anyone can call `requestTimeout()` after the deadline, followed by `withdraw()` after a 15-minute grace period to release buyer funds.
+The seller calls `settle()` with the latest SpendingAuth to charge the buyer for cumulative usage while keeping the session open, or `close()` to finalize and release remaining funds. If the seller disappears, the buyer calls `requestClose()` to initiate timeout. After a 15-minute grace period, the buyer calls `withdraw()` to release locked funds.
 
 ## EIP-712 Signed Messages
 
@@ -95,7 +95,7 @@ To finalize, the seller calls `close()` with the final SpendingAuth. This charge
 
 ### Timeout
 
-If the seller disappears, anyone can call `requestTimeout()` after the session deadline has passed. This marks the session as timed out. After a 15-minute grace period, the buyer (or anyone) calls `withdraw()` to release the locked funds back to the buyer's deposit.
+If the seller disappears, the buyer calls `requestClose()` on AntseedChannels. This marks the session for timeout. After a 15-minute grace period, the buyer calls `withdraw()` to release the locked funds back to the buyer's deposit.
 
 ### Token-to-USDC Conversion
 
@@ -108,7 +108,7 @@ totalCostUSDC   = sum(requestCosts) * 1_000_000  (6-decimal USDC)
 
 ## Wallet
 
-Each node's identity key is a secp256k1 private key. The EVM address derived from this key serves as both the PeerId on the network and the on-chain wallet address.
+Each node's identity is a secp256k1 private key. The EVM address derived from this key serves as both the PeerId on the network and the on-chain wallet address. Set it via `ANTSEED_IDENTITY_HEX` env var (recommended for production) rather than the plaintext `identity.key` file.
 
 ```text title="identity = wallet"
 secp256k1 private key (32 bytes)
@@ -123,9 +123,26 @@ The AntseedDeposits contract provides `depositFor(address buyer, uint256 amount)
 
 USDC on Base. 6 decimal places. All on-chain amounts are in USDC atomic units (1 USDC = 1,000,000).
 
+## Smart Contracts
+
+```text title="contract architecture"
+AntseedRegistry       Central address book for all protocol contracts
+AntseedStaking        Seller staking (holds stake USDC, binds to ERC-8004 agentId)
+AntseedDeposits       Buyer deposits, seller payouts (holds buyer USDC)
+AntseedChannels       Payment channel lifecycle (swappable, holds NO USDC)
+AntseedEmissions      ANTS token emissions (USDC volume-based rewards)
+ANTSToken             ANTS ERC-20 token (52M max supply)
+```
+
+**Stable contracts** (Staking, Deposits) hold funds and rarely change. The **swappable contract** (Channels) holds no USDC and can be redeployed by re-pointing via the Registry.
+
+Identity uses the deployed [ERC-8004](https://eips.ethereum.org/EIPS/eip-8004) IdentityRegistry on Base.
+
 ## Supported Chains
 
-| Chain | Chain ID | Status | Contracts |
-|---|---|---|---|
-| `base-sepolia` | 84532 | Testnet | Deployed |
-| `base-mainnet` | 8453 | Production | Planned |
+| Chain | Chain ID | Status |
+|---|---|---|
+| `base-mainnet` | 8453 | Production |
+| `base-sepolia` | 84532 | Testnet |
+
+Contract addresses are built into the CLI for each chain — no manual configuration needed. Set `payments.crypto.chainId` in your config to select the chain.
