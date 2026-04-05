@@ -53,7 +53,6 @@ contract AntseedDeposits is EIP712, Ownable, ReentrancyGuard {
     // ─── Events ─────────────────────────────────────────────────────────
     event Deposited(address indexed buyer, uint256 amount);
     event WithdrawalExecuted(address indexed buyer, uint256 amount);
-    event SellerPaid(address indexed seller, uint256 amount);
     event OperatorSet(address indexed buyer, address indexed operator);
 
 
@@ -201,7 +200,6 @@ contract AntseedDeposits is EIP712, Ownable, ReentrancyGuard {
         }
         if (sellerPayout > 0) {
             usdc.safeTransfer(seller, sellerPayout);
-            emit SellerPaid(seller, sellerPayout);
         }
     }
 
