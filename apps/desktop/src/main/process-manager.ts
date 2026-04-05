@@ -191,6 +191,15 @@ function compareSemverDesc(a: SemverTuple, b: SemverTuple): number {
 }
 
 function resolveNodeBinary(targetArch: string): string {
+  // When packaged, prefer Electron's own Node.js runtime — its version matches
+  // the bundled native modules (better-sqlite3, node-datachannel).  A system
+  // node with a different major version would fail to load those modules.
+  const isPackaged = typeof process.resourcesPath === 'string'
+    && existsSync(join(process.resourcesPath, 'app.asar'));
+  if (isPackaged) {
+    return process.execPath;
+  }
+
   const alignedNode = resolveAlignedNodeFromMarker();
   if (alignedNode) {
     return alignedNode;
@@ -263,15 +272,6 @@ function resolveNodeBinary(targetArch: string): string {
         return candidate;
       }
     }
-  }
-
-  // When packaged, prefer Electron's own Node.js runtime — its version matches
-  // the bundled native modules (better-sqlite3, node-datachannel).  A system
-  // node with a different major version would fail to load those modules.
-  const isPackaged = typeof process.resourcesPath === 'string'
-    && existsSync(join(process.resourcesPath, 'app.asar'));
-  if (isPackaged) {
-    return process.execPath ?? firstCompatible ?? firstExisting ?? 'node';
   }
 
   return firstCompatible ?? firstExisting ?? process.execPath ?? 'node';
