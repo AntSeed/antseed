@@ -115,4 +115,28 @@ writeFileSync(
 
 console.log(`[prepare-dist] Bundled CLI -> ${bundleOutput}`);
 
+// --- 3. Install Electron-compatible native module prebuilds ---
+// The native modules (better-sqlite3, etc.) may have been compiled for the
+// system node version, which differs from Electron's bundled node.
+// prebuild-install fetches the correct prebuilt binary for Electron's ABI.
+
+const electronPkg = JSON.parse(
+  readFileSync(path.resolve(appDir, '..', '..', 'node_modules', 'electron', 'package.json'), 'utf8'),
+);
+const electronVersion = electronPkg.version;
+const betterSqlite3Dir = path.resolve(appDir, '..', '..', 'node_modules', 'better-sqlite3');
+
+// Install the prebuild for the current arch — electron-builder handles
+// cross-arch builds by running the pack step separately for each arch,
+// and better-sqlite3 prebuilds are arch-specific.
+console.log(`[prepare-dist] Installing better-sqlite3 prebuild for Electron ${electronVersion} (${process.arch})...`);
+execFileSync('npx', [
+  'prebuild-install',
+  '--runtime', 'electron',
+  '--target', electronVersion,
+  '--arch', process.arch,
+  '--verbose',
+], { cwd: betterSqlite3Dir, stdio: 'inherit' });
+console.log('[prepare-dist] Native module prebuild installed for Electron.');
+
 console.log('[prepare-dist] Done.');
