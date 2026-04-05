@@ -36,9 +36,10 @@ Identity loading follows this priority:
 
 | Priority | Method | How | Best for |
 |---|---|---|---|
-| 1 | **Environment variable** | Set `ANTSEED_IDENTITY_HEX` to 64 hex chars (secp256k1 private key) | Server deployments with secrets managers (AWS SSM, Vault) |
-| 2 | **Custom store** | Pass an `IdentityStore` via `NodeConfig.identityStore` | Custom integrations (KMS, HSM, Desktop safeStorage) |
-| 3 | **Plaintext file** ⚠️ | `~/.antseed/identity.key` with `0600` permissions | **Not recommended** — use env var or custom store instead |
+| 1 | **Environment variable** | Set `ANTSEED_IDENTITY_HEX` (64 hex chars, optional `0x` prefix) | CLI and server deployments with secrets managers (AWS SSM, Vault) |
+| 2 | **Desktop keychain** | Automatic — Electron `safeStorage` encrypts key via OS keychain | AntSeed Desktop app (macOS Keychain, Windows DPAPI, Linux libsecret) |
+| 3 | **Custom store** | Pass an `IdentityStore` via `NodeConfig.identityStore` | Custom integrations (KMS, HSM) |
+| 4 | **Plaintext file** ⚠️ | `~/.antseed/identity.key` with `0600` permissions | **Not recommended** — use env var or Desktop app instead |
 
 The env var always takes precedence, regardless of other configuration. If no env var is set, `identityStore` is used if provided, otherwise the default `FileIdentityStore` reads from disk.
 
