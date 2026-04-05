@@ -239,7 +239,7 @@ function PeerGroupSection({
   setMenuOpenId: (id: string | null) => void;
   menuBtnRefs: React.RefObject<Map<string, HTMLButtonElement | null>>;
 }) {
-  const headerRef = useRef<HTMLButtonElement>(null);
+  const headerRef = useRef<HTMLDivElement>(null);
   const convsRef = useRef<HTMLDivElement>(null);
   const letter = (group.displayName || '?').charAt(0).toUpperCase();
 
@@ -252,10 +252,13 @@ function PeerGroupSection({
 
   return (
     <div className={`${styles.peerGroup}${expanded ? ` ${styles.peerGroupExpanded}` : ''}`}>
-      <button
+      <div
         ref={headerRef}
         className={styles.peerGroupHeader}
+        role="button"
+        tabIndex={0}
         onClick={onToggle}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(); } }}
       >
         <HugeiconsIcon
           icon={ArrowDown01Icon}
@@ -279,7 +282,7 @@ function PeerGroupSection({
             <HugeiconsIcon icon={Add01Icon} size={12} strokeWidth={1.5} />
           </button>
         )}
-      </button>
+      </div>
 
       <div
         ref={convsRef}
