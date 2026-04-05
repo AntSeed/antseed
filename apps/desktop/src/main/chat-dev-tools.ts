@@ -21,8 +21,9 @@ export const browserPreviewTool: ToolDefinition = {
   parameters: BrowserPreviewParams,
   async execute(_toolCallId, params) {
     const { url } = params as Static<typeof BrowserPreviewParams>;
+    let parsed: URL;
     try {
-      new URL(url);
+      parsed = new URL(url);
     } catch {
       return {
         content: [{ type: 'text', text: `Invalid URL: ${url}` }],
@@ -31,9 +32,14 @@ export const browserPreviewTool: ToolDefinition = {
       };
     }
 
-    await shell.openExternal(url);
+    const isLocal = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
+    if (isLocal) {
+      await shell.openExternal(url);
+    }
+    // The preview panel is opened automatically via browser-preview:open IPC
+    // emitted by pi-chat-engine on tool_execution_end
     return {
-      content: [{ type: 'text', text: `Opened ${url} in your browser.` }],
+      content: [{ type: 'text', text: isLocal ? `Opened ${url} in your browser and preview panel.` : `Opened ${url} in the preview panel.` }],
       details: { url },
     };
   },

@@ -1616,20 +1616,32 @@ export function registerPiChatHandlers({
 
       if (event.type === 'tool_execution_end') {
         toolArgsById.delete(event.toolCallId);
+        const details =
+          event.result &&
+          typeof event.result === 'object' &&
+          'details' in event.result &&
+          event.result.details &&
+          typeof event.result.details === 'object'
+            ? (event.result.details as Record<string, unknown>)
+            : undefined;
         sendToRenderer('chat:ai-tool-result', {
           conversationId,
           toolUseId: event.toolCallId,
           output: toToolOutputString(event.result),
           isError: Boolean(event.isError),
-          details:
-            event.result &&
-            typeof event.result === 'object' &&
-            'details' in event.result &&
-            event.result.details &&
-            typeof event.result.details === 'object'
-              ? (event.result.details as Record<string, unknown>)
-              : undefined,
+          details,
         });
+
+        // Auto-open browser preview panel when a preview tool completes successfully
+        if (
+          !event.isError &&
+          (event.toolName === 'open_browser_preview' || event.toolName === 'start_dev_server')
+        ) {
+          const url = typeof details?.url === 'string' ? details.url : undefined;
+          if (url) {
+            sendToRenderer('browser-preview:open', { url });
+          }
+        }
         return;
       }
 
