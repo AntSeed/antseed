@@ -330,7 +330,7 @@ export default function Home(): JSX.Element {
 
       {/* Hero */}
       <section className={styles.hero}>
-        <h1 className={styles.heroTitle}>AI, Set Free</h1>
+        <h1 className={styles.heroTitle}>Shahaf Test</h1>
         <p className={styles.heroSub}>The open market for AI inference. No gatekeepers.</p>
       </section>
 

@@ -1,7 +1,10 @@
 import type { RendererUiState } from '../core/state';
 import type { BadgeTone } from '../core/state';
 import { notifyUiStateChanged, notifyUiStateChangedSync } from '../core/store';
-import type { DesktopBridge } from '../types/bridge';
+import type {
+  ChatWorkspaceGitStatus,
+  DesktopBridge,
+} from '../types/bridge';
 import type {
   ChatMessage,
   ContentBlock,
@@ -59,6 +62,9 @@ export type ChatModuleApi = {
   refreshChatServiceOptions: () => Promise<void>;
   refreshChatProxyStatus: () => Promise<void>;
   refreshChatConversations: () => Promise<void>;
+  refreshWorkspace: () => Promise<void>;
+  refreshWorkspaceGitStatus: () => Promise<void>;
+  chooseWorkspace: () => Promise<void>;
   createNewConversation: () => Promise<void>;
   startNewChat: () => void;
   deleteConversation: (convId?: string) => Promise<void>;
@@ -80,6 +86,19 @@ export function initChatModule({
   // ---------------------------------------------------------------------------
   // Constants
   // ---------------------------------------------------------------------------
+
+  const UNAVAILABLE_GIT_STATUS: ChatWorkspaceGitStatus = {
+    available: false,
+    rootPath: null,
+    branch: null,
+    isDetached: false,
+    ahead: 0,
+    behind: 0,
+    stagedFiles: 0,
+    modifiedFiles: 0,
+    untrackedFiles: 0,
+    error: null,
+  };
 
   const fallbackChatServices: NormalizedChatServiceEntry[] = [];
 
@@ -1154,6 +1173,72 @@ export function initChatModule({
     }
   }
 
+  async function refreshWorkspace(): Promise<void> {
+    if (!bridge?.chatAiGetWorkspace) return;
+
+    try {
+      const result = await bridge.chatAiGetWorkspace();
+      if (result.ok && result.data) {
+        uiState.chatWorkspacePath = result.data.current;
+        uiState.chatWorkspaceDefaultPath = result.data.default;
+        notifyUiStateChanged();
+        await refreshWorkspaceGitStatus();
+      }
+    } catch {
+      // Workspace selection unavailable
+    }
+  }
+
+  async function refreshWorkspaceGitStatus(): Promise<void> {
+    if (!bridge?.chatAiGetWorkspaceGitStatus) return;
+
+    try {
+      const result = await bridge.chatAiGetWorkspaceGitStatus();
+      if (result.ok && result.data) {
+        uiState.chatWorkspaceGitStatus = result.data as ChatWorkspaceGitStatus;
+      } else {
+        uiState.chatWorkspaceGitStatus = {
+          ...UNAVAILABLE_GIT_STATUS,
+          error: result.error || null,
+        };
+      }
+      notifyUiStateChanged();
+    } catch (error) {
+      uiState.chatWorkspaceGitStatus = {
+        ...UNAVAILABLE_GIT_STATUS,
+        error: error instanceof Error ? error.message : String(error),
+      };
+      notifyUiStateChanged();
+    }
+  }
+
+  async function chooseWorkspace(): Promise<void> {
+    if (!bridge?.pickDirectory || !bridge.chatAiSetWorkspace) return;
+
+    try {
+      const picked = await bridge.pickDirectory();
+      if (!picked.ok || !picked.path) {
+        return;
+      }
+
+      const result = await bridge.chatAiSetWorkspace(picked.path);
+      if (!result.ok || !result.data) {
+        showChatError(result.error || 'Failed to set workspace');
+        return;
+      }
+
+      uiState.chatWorkspacePath = result.data.current;
+      uiState.chatWorkspaceDefaultPath = result.data.default;
+      uiState.chatError = null;
+      startNewChat();
+      await refreshChatConversations();
+      await refreshWorkspaceGitStatus();
+      notifyUiStateChanged();
+    } catch (err) {
+      reportChatError(err, 'Failed to set workspace');
+    }
+  }
+
   async function openConversation(convId: string): Promise<void> {
     if (!bridge || !bridge.chatAiGetConversation) return;
 
@@ -1409,10 +1494,18 @@ export function initChatModule({
 
     if (bridge.chatAiSendStream) {
       const sendStreamRequest = async () =>
-        await bridge.chatAiSendStream!(convId, content || ' ', selection.id || undefined, undefined, imageBase64, imageMimeType);
+        await bridge.chatAiSendStream!(
+          convId,
+          content || ' ',
+          selection.id || undefined,
+          undefined,
+          imageBase64,
+          imageMimeType,
+        );
 
       void (async () => {
         try {
+          void refreshWorkspaceGitStatus();
           let result = await sendStreamRequest();
           if (
             !result.ok &&
@@ -1457,7 +1550,14 @@ export function initChatModule({
       void (async () => {
         try {
           const sendRequest = async () =>
-            await bridge.chatAiSend!(convId, content || ' ', selection.id || undefined, undefined, imageBase64, imageMimeType);
+            await bridge.chatAiSend!(
+              convId,
+              content || ' ',
+              selection.id || undefined,
+              undefined,
+              imageBase64,
+              imageMimeType,
+            );
 
           let result = await sendRequest();
           if (
@@ -1537,6 +1637,7 @@ export function initChatModule({
   // ---------------------------------------------------------------------------
 
   if (bridge) {
+    void refreshWorkspace();
     // --- Non-streaming callbacks ---
 
     if (bridge.onChatAiDone) {
@@ -1560,6 +1661,7 @@ export function initChatModule({
             notifyUiStateChanged();
         }
         void refreshChatConversations();
+        void refreshWorkspaceGitStatus();
       });
     }
 
@@ -1889,6 +1991,24 @@ export function initChatModule({
       });
     }
 
+    if (bridge.onBrowserPreviewOpen) {
+      bridge.onBrowserPreviewOpen((data) => {
+        uiState.browserPreviewUrl = data.url;
+        uiState.browserPreviewRequestId += 1;
+        notifyUiStateChanged();
+      });
+    }
+
+    // Expose API for triggering browser preview programmatically (dev/testing only)
+    if (import.meta.env.DEV) {
+      (window as unknown as Record<string, unknown>).__antseedOpenPreview = (url: string) => {
+        uiState.browserPreviewUrl = url;
+        uiState.browserPreviewRequestId += 1;
+        notifyUiStateChanged();
+      };
+    }
+
+
     if (bridge.onChatAiStreamDone) {
       bridge.onChatAiStreamDone((data) => {
         const shouldClearSending = data.conversationId === uiState.chatSendingConversationId;
@@ -1932,6 +2052,7 @@ export function initChatModule({
         }
 
         void refreshChatConversations();
+        void refreshWorkspaceGitStatus();
       });
     }
 
@@ -1965,6 +2086,7 @@ export function initChatModule({
           setChatSending(false);
           notifyUiStateChanged();
         }
+        void refreshWorkspaceGitStatus();
       });
     }
   }
@@ -1985,6 +2107,9 @@ export function initChatModule({
     refreshChatServiceOptions,
     refreshChatProxyStatus,
     refreshChatConversations,
+    refreshWorkspace,
+    refreshWorkspaceGitStatus,
+    chooseWorkspace,
     createNewConversation,
     startNewChat,
     deleteConversation,

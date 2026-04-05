@@ -1,13 +1,21 @@
-import { app, BrowserWindow } from 'electron';
 import type { IpcMain } from 'electron';
-import { type Static, Type } from '@sinclair/typebox';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, stat, unlink } from 'node:fs/promises';
 import { createConnection } from 'node:net';
-import { homedir } from 'node:os';
 import path from 'node:path';
-import type { AgentSession, AgentSessionEvent, ToolDefinition } from '@mariozechner/pi-coding-agent';
-import { ANTSTATION_SYSTEM_PROMPT } from './chat-system-prompt.js';
+import type { AgentSession, AgentSessionEvent } from '@mariozechner/pi-coding-agent';
+import { browserPreviewTool, startDevServerTool } from './chat-dev-tools.js';
+import { webFetchTool } from './chat-web-fetch.js';
+import { buildAntstationSystemPrompt } from './chat-system-prompt.js';
+import {
+  CHAT_DATA_DIR,
+  CHAT_WORKSPACE_DIR,
+  getCurrentChatWorkspaceDir,
+  getWorkspaceGitStatus,
+  loadChatWorkspaceDir,
+  persistChatWorkspaceDir,
+} from './chat-workspace.js';
+import { asErrorMessage } from './utils.js';
 import {
   AuthStorage,
   createAgentSession,
@@ -101,219 +109,6 @@ type AiConversationSummary = {
   totalEstimatedCostUsd: number;
 };
 
-const WEB_FETCH_MAX_CHARS_DEFAULT = 20_000;
-const WEB_FETCH_MAX_CHARS_LIMIT = 50_000;
-const WebFetchParams = Type.Object({
-  url: Type.String({
-    description: 'The HTTP or HTTPS URL to fetch.',
-  }),
-  maxChars: Type.Optional(Type.Number({
-    description: `Maximum number of response characters to return (default ${WEB_FETCH_MAX_CHARS_DEFAULT}, max ${WEB_FETCH_MAX_CHARS_LIMIT}).`,
-    minimum: 100,
-    maximum: WEB_FETCH_MAX_CHARS_LIMIT,
-  })),
-});
-
-function stripHtmlToText(input: string): string {
-  return input
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<\/?(?:p|div|section|article|main|header|footer|aside|nav|li|ul|ol|h[1-6]|br|tr|td|th|table)\b[^>]*>/gi, '\n')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, '\'')
-    .replace(/\r/g, '')
-    .replace(/\n{2,}/g, '\n')
-    .replace(/[ \t]{2,}/g, ' ')
-    .trim();
-}
-
-// Heuristic: HTML that looks like a JS-rendered SPA (very little visible text, React/Next.js markers).
-// Accepts pre-stripped text to avoid running stripHtmlToText twice.
-function looksLikeJsRequired(rawHtml: string, strippedText: string): boolean {
-  // Fewer than 200 chars of visible text → likely needs JS to render
-  if (strippedText.length < 200) return true;
-  // Common SPA root patterns (empty root/app div)
-  if (/<div[^>]+id=["'](?:root|__next|app|app-root|react-root|app-container|main-app)["'][^>]*>\s*<\/div>/i.test(rawHtml)) return true;
-  return false;
-}
-
-// Persistent hidden BrowserWindow reused across web_fetch calls to avoid per-call renderer startup cost.
-let _headlessBrowser: BrowserWindow | null = null;
-
-function getHeadlessBrowser(): BrowserWindow {
-  if (_headlessBrowser && !_headlessBrowser.isDestroyed()) return _headlessBrowser;
-  _headlessBrowser = new BrowserWindow({
-    show: false,
-    width: 1280,
-    height: 900,
-    webPreferences: {
-      javascript: true,
-      nodeIntegration: false,
-      contextIsolation: true,
-    },
-  });
-  _headlessBrowser.on('closed', () => { _headlessBrowser = null; });
-  return _headlessBrowser;
-}
-
-// Serializes headless requests so concurrent calls don't clobber each other
-// (loading a new URL aborts the previous one, which would fire did-fail-load).
-let _headlessQueue: Promise<void> = Promise.resolve();
-
-// Extract readable text from a fully rendered page using Electron's built-in Chromium
-function fetchWithHeadlessBrowser(url: string, timeoutMs: number, signal?: AbortSignal): Promise<string> {
-  const result = _headlessQueue.then(() => _fetchHeadlessSerial(url, timeoutMs, signal));
-  _headlessQueue = result.then(() => {}, () => {});
-  return result;
-}
-
-function _fetchHeadlessSerial(url: string, timeoutMs: number, signal?: AbortSignal): Promise<string> {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) { reject(signal.reason); return; }
-
-    const win = getHeadlessBrowser();
-    let settled = false;
-
-    const onFailLoad = (_event: Electron.Event, errorCode: number, errorDescription: string) => {
-      settle(new Error(`Page load failed: ${errorDescription} (${String(errorCode)})`));
-    };
-    const onFinishLoad = () => {
-      setTimeout(() => {
-        win.webContents
-          .executeJavaScript(`
-            (function() {
-              ['script','style','noscript','nav','footer','aside','iframe'].forEach(function(tag) {
-                document.querySelectorAll(tag).forEach(function(el) { el.remove(); });
-              });
-              var title = document.title ? document.title + '\\n\\n' : '';
-              var text = (document.body && document.body.innerText) ? document.body.innerText : document.documentElement.innerText || '';
-              return title + text;
-            })()
-          `)
-          .then((text: unknown) => {
-            const result = typeof text === 'string' ? text.replace(/\n{2,}/g, '\n').trim() : '';
-            settle(result);
-          })
-          .catch((err: unknown) => {
-            settle(err instanceof Error ? err : new Error(String(err)));
-          });
-      }, 1500);
-    };
-
-    const settle = (result: string | Error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      win.webContents.removeListener('did-fail-load', onFailLoad);
-      win.webContents.removeListener('did-finish-load', onFinishLoad);
-      if (result instanceof Error) reject(result);
-      else resolve(result);
-    };
-
-    const timer = setTimeout(() => settle(new Error('Headless browser timed out')), timeoutMs);
-    const onAbort = () => settle(new Error('web_fetch aborted'));
-    signal?.addEventListener('abort', onAbort, { once: true });
-
-    win.webContents.once('did-fail-load', onFailLoad);
-    win.webContents.once('did-finish-load', onFinishLoad);
-
-    win.loadURL(url).catch((err: unknown) => {
-      settle(err instanceof Error ? err : new Error(String(err)));
-    });
-  });
-}
-
-const webFetchTool: ToolDefinition = {
-  name: 'web_fetch',
-  label: 'Web Fetch',
-  description:
-    'Fetch a public HTTP/HTTPS URL and return the page content as readable text. Handles both static pages and JavaScript-rendered sites (news, SPAs, etc.). Always use this tool instead of curl or bash for web content.',
-  parameters: WebFetchParams,
-  async execute(_toolCallId, params, signal) {
-    const typedParams = params as Static<typeof WebFetchParams>;
-    const parsedUrl = new URL(typedParams.url);
-    if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
-      throw new Error('web_fetch only supports http:// and https:// URLs');
-    }
-
-    const requestedMaxChars =
-      typeof typedParams.maxChars === 'number' ? typedParams.maxChars : WEB_FETCH_MAX_CHARS_DEFAULT;
-    const maxChars = Math.max(
-      100,
-      Math.min(
-        WEB_FETCH_MAX_CHARS_LIMIT,
-        Math.floor(requestedMaxChars),
-      ),
-    );
-
-    // Fast path: plain fetch first
-    const timeoutSignal = AbortSignal.timeout(15_000);
-    const fetchSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
-    const response = await fetch(parsedUrl, {
-      method: 'GET',
-      redirect: 'follow',
-      signal: fetchSignal,
-      headers: {
-        'user-agent': app.userAgentFallback ?? 'Mozilla/5.0 AntStation/web_fetch',
-        accept: 'text/html,application/json,text/plain,application/xml,text/xml,*/*;q=0.8',
-      },
-    });
-
-    const contentType = response.headers.get('content-type') ?? 'unknown';
-    const isHtml = /\btext\/html\b/i.test(contentType);
-
-    let normalizedText: string;
-    let usedHeadless = false;
-
-    if (isHtml) {
-      const rawText = await response.text();
-      const stripped = stripHtmlToText(rawText);
-      if (looksLikeJsRequired(rawText, stripped)) {
-        // Fall back to headless Chromium for JS-rendered pages
-        usedHeadless = true;
-        try {
-          normalizedText = await fetchWithHeadlessBrowser(parsedUrl.toString(), 30_000, signal ?? undefined);
-          if (!normalizedText) normalizedText = stripped; // headless returned empty, use raw
-        } catch {
-          normalizedText = stripped; // headless failed, use raw strip
-        }
-      } else {
-        normalizedText = stripped;
-      }
-    } else {
-      const rawText = await response.text();
-      // Clip before trim to avoid buffering megabytes unnecessarily
-      normalizedText = rawText.slice(0, maxChars * 4).trim();
-    }
-
-    const truncated = normalizedText.length > maxChars;
-    const body = truncated ? `${normalizedText.slice(0, maxChars)}\n\n[truncated]` : normalizedText;
-    const renderedNote = usedHeadless ? ' (JS-rendered via headless browser)' : '';
-
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `URL: ${response.url}\nStatus: ${response.status} ${response.statusText}\nContent-Type: ${contentType}${renderedNote}\n\n${body}`,
-        },
-      ],
-      details: {
-        url: response.url,
-        status: response.status,
-        statusText: response.statusText,
-        contentType,
-        truncated,
-        usedHeadless,
-      },
-    };
-  },
-};
-
 type RegisterPiChatHandlersOptions = {
   ipcMain: IpcMain;
   sendToRenderer: (channel: string, payload: unknown) => void;
@@ -365,10 +160,7 @@ type ChatServiceCatalogEntry = {
   description?: string;
 };
 
-const ANTSEED_HOME_DIR = path.join(homedir(), '.antseed');
-const CHAT_DATA_DIR = path.join(ANTSEED_HOME_DIR, 'chat');
 const CHAT_SESSIONS_DIR = path.join(CHAT_DATA_DIR, 'sessions');
-const CHAT_WORKSPACE_DIR = path.join(ANTSEED_HOME_DIR, 'projects');
 const CHAT_AGENT_DIR = path.join(CHAT_DATA_DIR, 'pi-agent');
 
 const DEFAULT_PROXY_PORT = 8377;
@@ -1199,7 +991,6 @@ function extractPeerFromEntries(manager: SessionManager): AntseedPeerData | null
 
 class PiConversationStore {
   private readonly sessionsDir = CHAT_SESSIONS_DIR;
-  private readonly workspaceDir = CHAT_WORKSPACE_DIR;
   private readonly ready: Promise<void>;
   private readonly pathCache = new Map<string, string>();
   private readonly pendingManagers = new Map<string, SessionManager>();
@@ -1210,13 +1001,19 @@ class PiConversationStore {
 
   private async ensureDirs(): Promise<void> {
     await mkdir(this.sessionsDir, { recursive: true });
-    await mkdir(this.workspaceDir, { recursive: true });
     await mkdir(CHAT_AGENT_DIR, { recursive: true });
   }
 
-  private async listSessionPaths(): Promise<SessionPathInfo[]> {
+  private async ensureWorkspaceDir(): Promise<string> {
     await this.ready;
-    const sessions = await SessionManager.list(this.workspaceDir, this.sessionsDir);
+    const workspaceDir = getCurrentChatWorkspaceDir();
+    await mkdir(workspaceDir, { recursive: true });
+    return workspaceDir;
+  }
+
+  private async listSessionPaths(): Promise<SessionPathInfo[]> {
+    const workspaceDir = await this.ensureWorkspaceDir();
+    const sessions = await SessionManager.list(workspaceDir, this.sessionsDir);
     const infos = sessions.map((entry) => ({ id: entry.id, path: entry.path }));
     this.pathCache.clear();
     for (const info of infos) {
@@ -1346,8 +1143,8 @@ class PiConversationStore {
   }
 
   async create(service?: string, provider?: string): Promise<AiConversation> {
-    await this.ready;
-    const manager = SessionManager.create(this.workspaceDir, this.sessionsDir);
+    const workspaceDir = await this.ensureWorkspaceDir();
+    const manager = SessionManager.create(workspaceDir, this.sessionsDir);
     const providerId = normalizeProviderId(provider);
     const modelProvider = providerId ?? PROXY_PROVIDER_ID;
     manager.appendModelChange(modelProvider, normalizeServiceId(service));
@@ -1468,13 +1265,6 @@ function parseAssistantMetaFromSessionEvent(
   return merged;
 }
 
-/**
- * Normalize a parsed 402 payment body into a flat record with peerId at the
- * top level.  The buyer proxy may return the flat format
- * `{ error: 'payment_required', peerId, ... }` (Anthropic protocol) or the
- * OpenAI-wrapped format `{ error: { type: 'payment_required', peerId, ... } }`.
- * Returns the body with peerId promoted to the top level in either case.
- */
 function normalizePaymentBody(body: Record<string, unknown>): Record<string, unknown> {
   if (body.peerId) return body;
   const inner = body.error;
@@ -1487,13 +1277,6 @@ function normalizePaymentBody(body: Record<string, unknown>): Record<string, unk
   return body;
 }
 
-function asErrorMessage(error: unknown): string {
-  if (error instanceof Error && error.message.trim().length > 0) {
-    return error.message;
-  }
-  const text = String(error ?? '').trim();
-  return text.length > 0 ? text : 'Unexpected error';
-}
 
 function toConversationTitle(userMessage: string): string {
   const normalized = userMessage.trim();
@@ -1512,6 +1295,7 @@ export function registerPiChatHandlers({
   appendSystemLog,
   getNetworkPeers,
 }: RegisterPiChatHandlersOptions): void {
+  void loadChatWorkspaceDir().catch(() => {});
   const store = new PiConversationStore();
   const activeRunsByConversation = new Map<string, ActiveRun>();
   const serviceProviderHints = new Map<string, string[]>();
@@ -1661,23 +1445,24 @@ export function registerPiChatHandlers({
     // one-shot session.agent.setSystemPrompt call would be overridden.)
     // Priority: user override (env/config) → AntStation default.
     const userSystemPrompt = await resolveSystemPrompt(configPath);
-    const settingsManager = SettingsManager.create(CHAT_WORKSPACE_DIR, CHAT_AGENT_DIR);
+    const chatWorkspaceDir = getCurrentChatWorkspaceDir();
+    const settingsManager = SettingsManager.create(chatWorkspaceDir, CHAT_AGENT_DIR);
     const resourceLoader = new DefaultResourceLoader({
-      cwd: CHAT_WORKSPACE_DIR,
+      cwd: chatWorkspaceDir,
       agentDir: CHAT_AGENT_DIR,
       settingsManager,
-      systemPrompt: userSystemPrompt ?? ANTSTATION_SYSTEM_PROMPT,
+      systemPrompt: buildAntstationSystemPrompt(userSystemPrompt),
     });
     await resourceLoader.reload();
 
     const { session } = await createAgentSession({
-      cwd: CHAT_WORKSPACE_DIR,
+      cwd: chatWorkspaceDir,
       agentDir: CHAT_AGENT_DIR,
       sessionManager,
       authStorage,
       modelRegistry,
       model: proxyModel,
-      customTools: [webFetchTool],
+      customTools: [webFetchTool, browserPreviewTool, startDevServerTool],
       resourceLoader,
     });
 
@@ -1831,20 +1616,32 @@ export function registerPiChatHandlers({
 
       if (event.type === 'tool_execution_end') {
         toolArgsById.delete(event.toolCallId);
+        const details =
+          event.result &&
+          typeof event.result === 'object' &&
+          'details' in event.result &&
+          event.result.details &&
+          typeof event.result.details === 'object'
+            ? (event.result.details as Record<string, unknown>)
+            : undefined;
         sendToRenderer('chat:ai-tool-result', {
           conversationId,
           toolUseId: event.toolCallId,
           output: toToolOutputString(event.result),
           isError: Boolean(event.isError),
-          details:
-            event.result &&
-            typeof event.result === 'object' &&
-            'details' in event.result &&
-            event.result.details &&
-            typeof event.result.details === 'object'
-              ? (event.result.details as Record<string, unknown>)
-              : undefined,
+          details,
         });
+
+        // Auto-open browser preview panel when a preview tool completes successfully
+        if (
+          !event.isError &&
+          (event.toolName === 'open_browser_preview' || event.toolName === 'start_dev_server')
+        ) {
+          const url = typeof details?.url === 'string' ? details.url : undefined;
+          if (url) {
+            sendToRenderer('browser-preview:open', { url });
+          }
+        }
         return;
       }
 
@@ -2108,6 +1905,43 @@ export function registerPiChatHandlers({
     return { ok: true, data: enriched };
   });
 
+  ipcMain.handle('chat:ai-get-workspace', async () => {
+    const workspaceDir = await loadChatWorkspaceDir();
+    return {
+      ok: true,
+      data: {
+        current: workspaceDir,
+        default: CHAT_WORKSPACE_DIR,
+      },
+    };
+  });
+
+  ipcMain.handle('chat:ai-get-workspace-git-status', async () => {
+    try {
+      const workspaceDir = await loadChatWorkspaceDir();
+      return {
+        ok: true,
+        data: await getWorkspaceGitStatus(workspaceDir),
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: asErrorMessage(error),
+      };
+    }
+  });
+
+  ipcMain.handle('chat:ai-set-workspace', async (_event, workspaceDir: string) => {
+    const current = await persistChatWorkspaceDir(workspaceDir);
+    return {
+      ok: true,
+      data: {
+        current,
+        default: CHAT_WORKSPACE_DIR,
+      },
+    };
+  });
+
   ipcMain.handle('chat:ai-get-conversation', async (_event, id: string) => {
     const conversation = await store.get(id);
     if (!conversation) {
@@ -2192,5 +2026,4 @@ export function registerPiChatHandlers({
     }
   });
 
-  return;
 }

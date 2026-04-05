@@ -1,23 +1,33 @@
 import { useRef, useEffect, useState, useCallback, useMemo, useId } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { Add01Icon } from '@hugeicons/core-free-icons';
-import { ArrowUp02Icon } from '@hugeicons/core-free-icons';
-import { ComputerTerminal01Icon } from '@hugeicons/core-free-icons';
-import { ArrowRight01Icon } from '@hugeicons/core-free-icons';
-import { RepeatIcon } from '@hugeicons/core-free-icons';
+import {
+  Add01Icon,
+  ArrowUp02Icon,
+  ArrowRight01Icon,
+  RepeatIcon,
+  BrowserIcon,
+  Folder01Icon,
+  GitBranchIcon
+} from '@hugeicons/core-free-icons';
 import { useUiSnapshot } from '../../hooks/useUiSnapshot';
 import { useActions } from '../../hooks/useActions';
 import { ChatBubble } from '../chat/ChatBubble';
 import { isToolResultOnlyMessage } from '../chat/chat-utils.js';
 import { WalkingAnt } from '../chat/WalkingAnt';
 import { SessionApprovalCard } from '../chat/SessionApprovalCard';
-
-import { AntStationStackedLogo } from '../AntStationLogo';
-import styles from './ChatView.module.scss';
+import { LowBalanceWarning } from '../chat/LowBalanceWarning';
+import { BrowserPreview } from '../BrowserPreview';
 import type { ChatMessage } from '../chat/chat-shared';
 import { buildDisplayMessages } from '../chat/chat-shared';
+import type { ChatWorkspaceGitStatus } from '../../../types/bridge';
+import { AntStationStackedLogo } from '../AntStationLogo';
+
+import styles from './ChatView.module.scss';
 
 const MAX_INPUT_HEIGHT = 220;
+const PREVIEW_MIN_WIDTH = 280;
+const CHAT_MIN_WIDTH = 320;
+const DEFAULT_PREVIEW_FRACTION = 0.5;
 
 function getMessageContentKey(content: unknown): string {
   if (typeof content === 'string') {
@@ -45,6 +55,52 @@ function getMessageKey(message: ChatMessage, index: number): string {
   return `${message.role}:${createdAt}:${getMessageContentKey(message.content)}:${index}`;
 }
 
+function getPathTail(value: string | null | undefined): string {
+  const trimmed = String(value || '').trim().replace(/[\\/]+$/, '');
+  if (!trimmed) {
+    return 'Workspace';
+  }
+  const parts = trimmed.split(/[\\/]/);
+  return parts[parts.length - 1] || trimmed;
+}
+
+function getGitChangeCount(status: ChatWorkspaceGitStatus): number {
+  return status.stagedFiles + status.modifiedFiles + status.untrackedFiles;
+}
+
+function getGitStatusSummary(status: ChatWorkspaceGitStatus): string {
+  if (!status.available) {
+    return status.error ? 'Git unavailable' : 'No repo';
+  }
+
+  const parts: string[] = [];
+  if (status.ahead > 0) parts.push(`+${status.ahead}`);
+  if (status.behind > 0) parts.push(`-${status.behind}`);
+
+  const changes = getGitChangeCount(status);
+  parts.push(changes > 0 ? `${changes} dirty` : 'clean');
+  return parts.join(' ');
+}
+
+function getGitStatusTitle(status: ChatWorkspaceGitStatus): string {
+  if (!status.available) {
+    return status.error || 'Git status for the selected workspace. This workspace is shared across chats.';
+  }
+
+  const details = [
+    'Git status for the selected workspace. This workspace is shared across chats.',
+    status.rootPath ? `Repo: ${status.rootPath}` : null,
+    `Staged: ${status.stagedFiles}`,
+    `Modified: ${status.modifiedFiles}`,
+    `Untracked: ${status.untrackedFiles}`,
+    `Ahead: ${status.ahead}`,
+    `Behind: ${status.behind}`,
+  ].filter(Boolean);
+
+  return details.join('\n');
+}
+
+
 type ChatViewProps = {
   active: boolean;
   onSelectView?: (view: import('../../types').ViewName) => void;
@@ -56,16 +112,30 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   const [inputValue, setInputValue] = useState('');
   const [attachedImage, setAttachedImage] = useState<{ base64: string; mimeType: string; previewUrl: string } | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewFraction, setPreviewFraction] = useState(DEFAULT_PREVIEW_FRACTION);
+  const [previewTargetUrl, setPreviewTargetUrl] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const fileInputId = useId();
   const prevInputDisabled = useRef<boolean>(snap.chatInputDisabled);
   const isUserScrolledUp = useRef(false);
+  const isDragging = useRef(false);
   const visibleMessages = useMemo(() => {
     const msgs = Array.isArray(snap.chatMessages) ? (snap.chatMessages as ChatMessage[]) : [];
     return buildDisplayMessages(msgs).filter((msg) => !isToolResultOnlyMessage(msg));
   }, [snap.chatMessages]);
+
+  const previewUrl = snap.browserPreviewUrl;
+  const previewRequestId = snap.browserPreviewRequestId;
+  useEffect(() => {
+    if (previewUrl) {
+      setPreviewTargetUrl(previewUrl);
+      setPreviewOpen(true);
+    }
+  }, [previewUrl, previewRequestId]);
 
   // Track whether the user has scrolled away from the bottom
   useEffect(() => {
@@ -80,7 +150,6 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
   }, []);
 
   // Keep the view pinned to the bottom while the user is already at the bottom.
-  // This covers streaming updates, tool diffs, and other in-place content growth.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el || isUserScrolledUp.current) {
@@ -109,7 +178,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     return () => observer.disconnect();
   }, [visibleMessages, snap.chatStreamingMessage, snap.chatSending]);
 
-  // Re-focus the input when it transitions from disabled → enabled (e.g. after AI response completes)
+  // Re-focus the input when it transitions from disabled → enabled
   useEffect(() => {
     const wasDisabled = prevInputDisabled.current;
     const isDisabled = snap.chatInputDisabled;
@@ -118,6 +187,40 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
       inputRef.current.focus();
     }
   }, [snap.chatInputDisabled]);
+
+  // --- Divider drag ---
+  const handleDividerMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isDragging.current = true;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    const handleMouseMove = (ev: MouseEvent) => {
+      const container = containerRef.current;
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      const totalWidth = rect.width;
+      const chatWidth = ev.clientX - rect.left;
+      const clamped = Math.max(CHAT_MIN_WIDTH, Math.min(totalWidth - PREVIEW_MIN_WIDTH, chatWidth));
+      setPreviewFraction(1 - clamped / totalWidth);
+    };
+
+    const handleMouseUp = () => {
+      isDragging.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  }, []);
+
+  const handleOpenPreview = useCallback((url: string) => {
+    setPreviewTargetUrl(url);
+    setPreviewOpen(true);
+  }, []);
 
   const handleSend = useCallback(() => {
     const text = inputValue.trim();
@@ -149,7 +252,6 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     const file = e.target.files?.[0];
     if (!file) return;
     attachImageFile(file);
-    // Reset so the same file can be re-attached
     e.target.value = '';
   }, [attachImageFile]);
 
@@ -172,20 +274,20 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     }
   }, [attachImageFile]);
 
-  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+  const handleFileDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
     setIsDragOver(true);
   }, []);
 
-  const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+  const handleFileDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     if (!e.currentTarget.contains(e.relatedTarget as Node)) {
       setIsDragOver(false);
     }
   }, []);
 
-  const handleDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+  const handleFileDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setIsDragOver(false);
     const file = e.dataTransfer.files[0];
@@ -212,11 +314,56 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
     }
   }, []);
 
+  const handleClosePreview = useCallback(() => {
+    setPreviewOpen(false);
+  }, []);
+
+  const handleElementSelected = useCallback((info: { selector: string; tagName: string; text: string; attributes: Record<string, string> }) => {
+    const textSnippet = info.text.length > 80 ? info.text.slice(0, 80) + '...' : info.text;
+    const elementRef = `[Element: <${info.tagName}> "${textSnippet}" (${info.selector})]`;
+    setInputValue((prev) => prev ? `${prev}\n${elementRef}\n` : `${elementRef}\n`);
+    if (inputRef.current) inputRef.current.focus();
+
+    // Also send via bridge for providers that handle element selection
+    const bridge = (window as unknown as { antseedDesktop?: { sendBrowserPreviewElementSelected?: (data: unknown) => void } }).antseedDesktop;
+    bridge?.sendBrowserPreviewElementSelected?.(info);
+  }, []);
+
   const showWelcome =
     snap.chatConversationsLoaded &&
     !snap.chatActiveConversation &&
     visibleMessages.length === 0 &&
     !snap.chatStreamingMessage;
+
+  const workspacePath = snap.chatWorkspacePath || snap.chatWorkspaceDefaultPath;
+  const workspaceLabel = workspacePath
+    ? workspacePath.split('/').pop() || workspacePath
+    : 'No workspace';
+  const gitStatus = snap.chatWorkspaceGitStatus;
+  const gitStatusSummary = getGitStatusSummary(gitStatus);
+  const gitStatusBranch = gitStatus.available
+    ? (gitStatus.branch || (gitStatus.isDetached ? 'detached' : 'no-branch'))
+    : 'No git repo';
+  const gitStatusRepoLabel = gitStatus.rootPath
+    ? getPathTail(gitStatus.rootPath)
+    : getPathTail(workspacePath);
+  const gitStatusDetailLabel = gitStatus.available
+    ? `${gitStatusBranch} · ${gitStatusSummary}`
+    : gitStatusSummary;
+  const gitStatusToneClass = !gitStatus.available
+    ? styles.gitStatusPillMissing
+    : getGitChangeCount(gitStatus) > 0 || gitStatus.behind > 0
+      ? styles.gitStatusPillDirty
+      : styles.gitStatusPillClean;
+  const gitStatusTitle = getGitStatusTitle(gitStatus);
+
+  // Compute widths for split view
+  const chatStyle = previewOpen
+    ? { flex: `0 0 ${(1 - previewFraction) * 100}%`, minWidth: CHAT_MIN_WIDTH }
+    : undefined;
+  const previewStyle = previewOpen
+    ? { flex: `0 0 ${previewFraction * 100}%`, minWidth: PREVIEW_MIN_WIDTH }
+    : undefined;
 
   return (
     <section className={`view view-chat${active ? ' active' : ''}`} role="tabpanel">
@@ -289,12 +436,13 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
         </button>
       )}
 
-      <div className={styles.chatContainer}>
+      <div className={styles.chatContainer} ref={containerRef}>
         <div
           className={styles.chatMain}
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
+          style={chatStyle}
+          onDragOver={handleFileDragOver}
+          onDragLeave={handleFileDragLeave}
+          onDrop={handleFileDrop}
         >
           {isDragOver && (
             <div className={styles.chatDropOverlay}>
@@ -313,7 +461,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
               </div>
             ) : (
               visibleMessages.map((msg, i) => (
-                <ChatBubble key={getMessageKey(msg, i)} message={msg} />
+                <ChatBubble key={getMessageKey(msg, i)} message={msg} onOpenPreview={handleOpenPreview} />
               ))
             )}
             {snap.chatStreamingMessage ? (
@@ -321,6 +469,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                 key={`streaming:${snap.chatActiveConversation || 'new'}`}
                 message={snap.chatStreamingMessage as ChatMessage}
                 streaming
+                onOpenPreview={handleOpenPreview}
               />
             ) : null}
             {snap.chatSending && snap.chatSendingConversationId === snap.chatActiveConversation && (
@@ -340,6 +489,11 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
 
           <div className={styles.chatInputArea}>
             {snap.chatError && <div className={styles.chatError}>{snap.chatError}</div>}
+            <LowBalanceWarning
+              visible={snap.chatLowBalanceWarning}
+              availableUsdc={snap.creditsAvailableUsdc}
+              onAddCredits={() => actions.openPaymentsPortal?.()}
+            />
 
             {attachedImage && (
               <div className={styles.chatImageAttachPreview}>
@@ -360,7 +514,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
               <textarea
                 ref={inputRef}
                 className={styles.chatTextInput}
-                placeholder="Type a message... (Shift+Enter for newline)"
+                placeholder="Message Community Peers..."
                 rows={1}
                 disabled={snap.chatInputDisabled}
                 value={inputValue}
@@ -370,16 +524,14 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                 onPaste={handlePaste}
               />
               <div className={styles.chatInputBottom}>
-                <div className={styles.chatInputBottomLeft}>
-                  <button
-                    className={styles.chatAttachBtn}
-                    title="Attach image"
-                    disabled={snap.chatInputDisabled}
-                    onClick={() => fileInputRef.current?.click()}
-                  >
-                    <HugeiconsIcon icon={Add01Icon} size={18} strokeWidth={2} />
-                  </button>
-                </div>
+                <button
+                  className={styles.chatAttachBtn}
+                  title="Attach image"
+                  disabled={snap.chatInputDisabled}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <HugeiconsIcon icon={Add01Icon} size={18} strokeWidth={2} />
+                </button>
                 {snap.chatAbortVisible ? (
                   <button className={styles.chatAbortBtn} onClick={() => void actions.abortChat()}>
                     Stop
@@ -391,8 +543,44 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
                 )}
               </div>
             </div>
+            <div className={styles.chatInputMeta}>
+              <button
+                type="button"
+                className={`${styles.gitStatusPill} ${gitStatusToneClass}`}
+                onClick={() => void actions.refreshWorkspaceGitStatus()}
+                title={gitStatusTitle}
+              >
+                <HugeiconsIcon icon={GitBranchIcon} size={14} strokeWidth={1.5} />
+                {/* <span className={styles.gitStatusBranch}>{gitStatusRepoLabel}</span> */}
+                <span className={styles.gitStatusSummary}>{gitStatusDetailLabel}</span>
+              </button>
+              <button
+                className={styles.workspaceButton}
+                onClick={() => void actions.chooseWorkspace()}
+                title={workspacePath || 'Choose workspace'}
+              >
+                <HugeiconsIcon icon={Folder01Icon} size={14} strokeWidth={1.5} />
+                <span className={styles.workspaceLabel}>{workspaceLabel}</span>
+              </button>
+            </div>
           </div>
         </div>
+        {previewOpen && (
+          <>
+            <div
+              className={styles.divider}
+              onMouseDown={handleDividerMouseDown}
+            />
+            <div style={previewStyle}>
+              <BrowserPreview
+                url={previewTargetUrl}
+                onClose={handleClosePreview}
+                onNavigate={setPreviewTargetUrl}
+                onElementSelected={handleElementSelected}
+              />
+            </div>
+          </>
+        )}
       </div>
     </section>
   );

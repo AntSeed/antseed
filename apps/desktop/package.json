@@ -8,7 +8,7 @@
   "type": "module",
   "main": "dist/main/main.js",
   "scripts": {
-    "ensure:cli-dist": "pnpm -C ../../packages/router-core build && pnpm -C ../../plugins/router-local build && pnpm -C ../../packages/node build && pnpm -C ../cli build",
+    "ensure:cli-dist": "pnpm -C ../../packages/api-adapter build && pnpm -C ../../packages/router-core build && pnpm -C ../../plugins/router-local build && pnpm -C ../../packages/node build && pnpm -C ../payments build:server && pnpm -C ../cli build",
     "brand:electron-dev": "node ./scripts/brand-electron-dev.mjs",
     "ensure:native": "npm run ensure:runtime-native",
     "ensure:runtime-native": "node ./scripts/ensure-runtime-native-modules.mjs",

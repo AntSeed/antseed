@@ -130,7 +130,11 @@ function ConvContextMenu({
             if (e.key === 'Enter') handleRenameSubmit();
             if (e.key === 'Escape') { cancelledRef.current = true; onClose(); }
           }}
-          onBlur={handleRenameSubmit}
+          onBlur={() => {
+            setTimeout(() => {
+              if (!cancelledRef.current) handleRenameSubmit();
+            }, 100);
+          }}
         />
       </div>
     );
@@ -239,7 +243,7 @@ function PeerGroupSection({
   setMenuOpenId: (id: string | null) => void;
   menuBtnRefs: React.RefObject<Map<string, HTMLButtonElement | null>>;
 }) {
-  const headerRef = useRef<HTMLButtonElement>(null);
+  const headerRef = useRef<HTMLDivElement>(null);
   const convsRef = useRef<HTMLDivElement>(null);
   const letter = (group.displayName || '?').charAt(0).toUpperCase();
 
@@ -252,10 +256,13 @@ function PeerGroupSection({
 
   return (
     <div className={`${styles.peerGroup}${expanded ? ` ${styles.peerGroupExpanded}` : ''}`}>
-      <button
+      <div
         ref={headerRef}
         className={styles.peerGroupHeader}
+        role="button"
+        tabIndex={0}
         onClick={onToggle}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(); } }}
       >
         <HugeiconsIcon
           icon={ArrowDown01Icon}
@@ -279,13 +286,12 @@ function PeerGroupSection({
             <HugeiconsIcon icon={Add01Icon} size={12} strokeWidth={1.5} />
           </button>
         )}
-      </button>
+      </div>
 
       <div
         ref={convsRef}
         className={`${styles.peerGroupConvs}${expanded ? ` ${styles.peerGroupConvsOpen}` : ''}`}
       >
-        <div>
         {group.conversations.map((conv) => {
             const id = String(conv.id ?? '');
             const isActive = id === activeConvId;
@@ -355,7 +361,6 @@ function PeerGroupSection({
               </div>
             );
           })}
-        </div>
       </div>
     </div>
   );
@@ -373,8 +378,12 @@ function ChatSidebar({ onSelectView }: { onSelectView: (view: ViewName) => void 
 
   const peerGroups = useMemo(() => groupByPeer(conversations), [conversations]);
 
-  // Auto-expand the peer that owns the active conversation
+  // Auto-expand the peer that owns the active conversation — only when the
+  // active conversation changes, not on every conversation list refresh.
+  const prevActiveConvRef = useRef<string | null>(null);
   useEffect(() => {
+    if (chatActiveConversation === prevActiveConvRef.current) return;
+    prevActiveConvRef.current = chatActiveConversation;
     if (!chatActiveConversation) return;
     const activeConv = conversations.find(
       (c) => String((c as ConvRecord).id ?? '') === chatActiveConversation,

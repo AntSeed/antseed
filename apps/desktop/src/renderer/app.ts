@@ -419,6 +419,9 @@ registerActions({
     void bridge?.paymentsOpenPortal?.('channels');
   },
   refreshCredits: () => void creditsApi.refreshCredits(),
+  refreshWorkspace: chatApi.refreshWorkspace,
+  refreshWorkspaceGitStatus: chatApi.refreshWorkspaceGitStatus,
+  chooseWorkspace: chatApi.chooseWorkspace,
   refreshPlugins: refreshPluginInventory,
   installPlugin: () => {
     const packageName = resolveRouterPackageName(

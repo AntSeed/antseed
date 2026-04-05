@@ -138,8 +138,8 @@ export function ConfigView({ active }: ConfigViewProps) {
             </label>
           </div>
 
-          <div className="settings-footer" />
-        
+        <div className="settings-footer" />
+
           <div className="panel-head">
             <h3>Payment Settings</h3>
           </div>

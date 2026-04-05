@@ -2,6 +2,8 @@ import {
   app,
   BrowserWindow,
   ipcMain,
+  dialog,
+  type OpenDialogOptions,
 } from 'electron';
 import electronUpdater from 'electron-updater';
 const { autoUpdater } = electronUpdater;
@@ -287,6 +289,7 @@ function getCombinedProcessState(): RuntimeProcessState[] {
 }
 
 // ── IPC Handlers ──
+// ── IPC Handlers ──
 
 ipcMain.handle('runtime:get-state', async () => {
   return {
@@ -337,6 +340,23 @@ ipcMain.handle('desktop:set-debug-logs', (_event, enabled: boolean) => {
 ipcMain.handle('runtime:clear-logs', async () => {
   logBuffer.length = 0;
   return { ok: true };
+});
+
+ipcMain.handle('desktop:pick-directory', async () => {
+  const dialogOptions: OpenDialogOptions = {
+    properties: ['openDirectory'],
+    title: 'Select Workspace Folder',
+    buttonLabel: 'Use Folder',
+  };
+  const win = getMainWindow();
+  const result = win
+    ? await dialog.showOpenDialog(win, dialogOptions)
+    : await dialog.showOpenDialog(dialogOptions);
+
+  return {
+    ok: !result.canceled,
+    path: result.canceled ? null : (result.filePaths[0] ?? null),
+  };
 });
 
 ipcMain.handle('app:get-setup-status', () => ({
