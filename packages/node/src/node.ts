@@ -1013,7 +1013,10 @@ export class AntseedNode extends EventEmitter {
     }
 
     if (!this._metering) {
-      debugWarn("[Node] Payments enabled but metering storage is unavailable; skipping balance manager wiring");
+      // Metering storage is only initialized for sellers — buyers don't need it.
+      if (this._config.role === 'seller') {
+        debugWarn("[Node] Payments enabled but metering storage is unavailable; skipping balance manager wiring");
+      }
       return;
     }
 
