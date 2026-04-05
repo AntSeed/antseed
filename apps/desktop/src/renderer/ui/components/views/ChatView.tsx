@@ -334,8 +334,8 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
 
   const workspacePath = snap.chatWorkspacePath || snap.chatWorkspaceDefaultPath;
   const workspaceLabel = workspacePath
-    ? workspacePath.length > 52 ? `...${workspacePath.slice(-52)}` : workspacePath
-    : 'No workspace selected';
+    ? workspacePath.split('/').pop() || workspacePath
+    : 'No workspace';
   const gitStatus = snap.chatWorkspaceGitStatus;
   const gitStatusSummary = getGitStatusSummary(gitStatus);
   const gitStatusBranch = gitStatus.available
