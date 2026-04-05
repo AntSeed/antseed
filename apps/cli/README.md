@@ -225,7 +225,7 @@ Payment channels are automatic when `payments.crypto.chainId` is set in config. 
 }
 ```
 
-The node's identity key (`~/.antseed/identity.key`) doubles as the EVM wallet. Providers must register on-chain (`antseed register`) and stake USDC (`antseed stake 10`) before seeding. Buyers must deposit USDC (`antseed deposit 10`) before connecting.
+The node's identity is a secp256k1 private key that doubles as the EVM wallet. Set it via `ANTSEED_IDENTITY_HEX` env var (recommended) or let the CLI generate one at `~/.antseed/identity.key` (not recommended for production — use env var with a secrets manager instead). Providers must register on-chain (`antseed register`) and stake USDC (`antseed stake 10`) before seeding. Buyers must deposit USDC (`antseed deposit 10`) before connecting.
 
 Runtime env controls:
 - `ANTSEED_SETTLEMENT_IDLE_MS=600000` — idle time before settling a session (default: 10 minutes)

@@ -7,14 +7,19 @@ hide_title: true
 
 # Configuration
 
-After installation, initialize your node. This generates a secp256k1 identity key stored at `~/.antseed/identity.key` and creates default configuration.
+After installation, initialize your node. This installs plugins and creates default configuration.
 
 ```bash title="init"
 $ antseed init
-Generated node identity (secp256k1)
-Created ~/.antseed/identity.key
 Installed official plugins
+Created ~/.antseed/config.json
 Ready to connect
+```
+
+Set your identity via environment variable (recommended) before running any commands:
+
+```bash
+export ANTSEED_IDENTITY_HEX=<your-secp256k1-private-key-hex>
 ```
 
 ## Identity

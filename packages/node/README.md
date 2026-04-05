@@ -176,9 +176,9 @@ Every node has a secp256k1 identity keypair. The private key (32 bytes, stored a
 
 Identity loading follows this priority:
 
-1. **Environment variable** — if `ANTSEED_IDENTITY_HEX` is set (64 hex chars), it is used directly and cleared from the environment immediately after read. Useful for injecting keys from secrets managers without touching disk.
-2. **IdentityStore** — if `identityStore` is passed in `NodeConfig`, it is used to load/save the key.
-3. **File** — default. Reads/writes `identity.key` in `dataDir` (`~/.antseed/` by default) with `0600` permissions.
+1. **Environment variable (recommended)** — if `ANTSEED_IDENTITY_HEX` is set (64 hex chars, optional `0x` prefix), it is used directly and cleared from the environment immediately after read. Use this with secrets managers for production deployments.
+2. **IdentityStore** — if `identityStore` is passed in `NodeConfig`, it is used to load/save the key (e.g., Desktop encrypted store).
+3. **Plaintext file (not recommended)** — reads/writes `identity.key` in `dataDir` (`~/.antseed/` by default) with `0600` permissions. Since this key is also your on-chain wallet, avoid storing it unencrypted on disk in production.
 
 If no identity is found, a new keypair is generated and persisted via the active store.
 

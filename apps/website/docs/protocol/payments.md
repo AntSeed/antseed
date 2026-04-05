@@ -108,7 +108,7 @@ totalCostUSDC   = sum(requestCosts) * 1_000_000  (6-decimal USDC)
 
 ## Wallet
 
-Each node's identity key is a secp256k1 private key. The EVM address derived from this key serves as both the PeerId on the network and the on-chain wallet address.
+Each node's identity is a secp256k1 private key. The EVM address derived from this key serves as both the PeerId on the network and the on-chain wallet address. Set it via `ANTSEED_IDENTITY_HEX` env var (recommended for production) rather than the plaintext `identity.key` file.
 
 ```text title="identity = wallet"
 secp256k1 private key (32 bytes)
