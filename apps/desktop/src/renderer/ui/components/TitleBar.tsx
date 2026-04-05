@@ -126,7 +126,7 @@ export function TitleBar() {
               </div>
               <div className={styles.creditsDropdownSection}>
                 <div className={styles.creditsDropdownRow}>
-                  <span className={styles.creditsDropdownLabel}>Operator</span>
+                  <span className={styles.creditsDropdownLabel}>Your Wallet</span>
                   {creditsOperatorAddress ? (
                     <span className={styles.creditsDropdownValueGreen}>
                       {creditsOperatorAddress.slice(0, 6)}...{creditsOperatorAddress.slice(-4)}
@@ -137,7 +137,7 @@ export function TitleBar() {
                 </div>
                 {creditsEvmAddress && (
                   <div className={styles.creditsDropdownRow}>
-                    <span className={styles.creditsDropdownLabel}>Wallet</span>
+                    <span className={styles.creditsDropdownLabel}>Your Signer</span>
                     <span className={styles.creditsDropdownValueMuted}>
                       {creditsEvmAddress.slice(0, 6)}...{creditsEvmAddress.slice(-4)}
                     </span>
