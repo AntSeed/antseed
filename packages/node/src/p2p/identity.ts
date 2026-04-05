@@ -79,7 +79,8 @@ export function identityFromPrivateKeyHex(hex: string): Identity {
  */
 export async function loadOrCreateIdentity(configDirOrStore?: string | IdentityStore): Promise<Identity> {
   // Check for identity injected via environment (desktop → CLI child process).
-  const envHex = process.env[IDENTITY_HEX_ENV]?.trim();
+  const rawEnvHex = process.env[IDENTITY_HEX_ENV]?.trim();
+  const envHex = rawEnvHex?.startsWith('0x') ? rawEnvHex.slice(2) : rawEnvHex;
   if (envHex && envHex.length === 64) {
     delete process.env[IDENTITY_HEX_ENV];
     return identityFromPrivateKeyHex(envHex);

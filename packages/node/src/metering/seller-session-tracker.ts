@@ -257,7 +257,7 @@ export class SellerSessionTracker {
     const existing = this._settlementTimers.get(buyerPeerId);
     if (existing) clearTimeout(existing);
 
-    const idleMs = this._config.settlementIdleMs ?? 30_000;
+    const idleMs = this._config.settlementIdleMs ?? 600_000;
     const timer = setTimeout(() => {
       void this.finalizeSession(buyerPeerId, 'idle-timeout');
     }, idleMs);

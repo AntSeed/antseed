@@ -25,6 +25,7 @@ import { registerEmissionsCommand } from './commands/emissions.js';
 import { registerChannelsCommand } from './commands/channels.js';
 import { registerSubscribeCommand } from './commands/subscribe.js';
 import { registerPaymentsCommand } from './commands/payments.js';
+import { registerClaimCommand } from './commands/claim.js';
 
 loadEnvFromFiles();
 
@@ -65,5 +66,6 @@ registerEmissionsCommand(program);
 registerChannelsCommand(program);
 registerSubscribeCommand(program);
 registerPaymentsCommand(program);
+registerClaimCommand(program);
 
 program.parse(process.argv);

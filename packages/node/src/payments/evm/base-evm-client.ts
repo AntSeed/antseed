@@ -38,7 +38,15 @@ export abstract class BaseEvmClient {
     const signerAddress = await connected.getAddress();
     const nonce = await this._reserveNonce(signerAddress);
     const contract = new Contract(this._contractAddress, abi, connected);
-    const tx = await contract.getFunction(method)(...args, { nonce });
+    let tx;
+    try {
+      tx = await contract.getFunction(method)(...args, { nonce });
+    } catch (err) {
+      // Tx was never sent (e.g. estimateGas reverted) — roll back the nonce cursor
+      // so subsequent txs don't skip a nonce and hang forever.
+      this._nonceCursor.delete(signerAddress);
+      throw err;
+    }
     const receipt = await tx.wait();
     if (!receipt) throw new Error('Transaction was dropped or replaced');
     return receipt.hash;
