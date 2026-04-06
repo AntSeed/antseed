@@ -235,6 +235,17 @@ export class BuyerRequestHandler {
             return;
           }
 
+          // On done chunk, check for cost trailer before forwarding — the trailer
+          // is metadata for the buyer, not SSE data for downstream clients.
+          let costHeaders: Record<string, string> | null = null;
+          if (chunk.done && chunk.data.length > 0) {
+            costHeaders = parseCostTrailer(chunk.data);
+            if (costHeaders) {
+              // Strip trailer from the chunk so it doesn't leak into callbacks or response body
+              chunk = { ...chunk, data: new Uint8Array(0) };
+            }
+          }
+
           callbacks?.onResponseChunk?.(chunk);
 
           if (chunk.data.length > 0) {
@@ -260,8 +271,6 @@ export class BuyerRequestHandler {
             return;
           }
 
-          // Parse cost trailer from done chunk data (seller sends cost info here for streaming)
-          const costHeaders = parseCostTrailer(chunk.data);
           const finalHeaders = costHeaders
             ? { ...streamStartResponse.headers, ...costHeaders }
             : streamStartResponse.headers;
