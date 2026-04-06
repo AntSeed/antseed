@@ -1472,6 +1472,13 @@ export function registerPiChatHandlers({
       resourceLoader,
     });
 
+    // Activate all built-in tools. Pi defaults to [read, bash, edit, write] —
+    // without this, grep/find/ls are listed in the system prompt but missing
+    // from the API tool list, causing the model to emit raw XML tool calls.
+    session.setActiveToolsByName([
+      'read', 'bash', 'edit', 'write', 'grep', 'find', 'ls',
+    ]);
+
     await session.setModel(proxyModel);
     session.agent.sessionId = conversationId;
 
