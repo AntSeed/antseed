@@ -548,16 +548,28 @@ export class BuyerPaymentManager {
     }
 
     // Determine the accepted cost for this request:
-    // Use seller's claim, but cap at tolerance * buyer estimate if buyer has pricing.
-    let acceptedCost = responseStats.sellerClaimedCost ?? buyerEstimatedRequestCost;
-    if (responseStats.sellerClaimedCost != null && buyerEstimatedRequestCost > 0n) {
-      const maxAcceptable = BigInt(Math.ceil(Number(buyerEstimatedRequestCost) * this._costTolerance));
-      if (responseStats.sellerClaimedCost > maxAcceptable) {
-        debugWarn(
-          `[BuyerPayment] Seller claimed ${responseStats.sellerClaimedCost} exceeds ${this._costTolerance}x buyer estimate ${buyerEstimatedRequestCost} — capping at ${maxAcceptable}`,
-        );
-        acceptedCost = maxAcceptable;
+    // When the seller reports a cost within tolerance, accept the seller's claim so the
+    // buyer doesn't underpay due to minor parsing differences. Only cap when the seller's
+    // claim exceeds the tolerance threshold.
+    let acceptedCost: bigint;
+    if (responseStats.sellerClaimedCost != null && responseStats.sellerClaimedCost > 0n) {
+      if (buyerEstimatedRequestCost > 0n) {
+        const maxAcceptable = BigInt(Math.ceil(Number(buyerEstimatedRequestCost) * this._costTolerance));
+        if (responseStats.sellerClaimedCost > maxAcceptable) {
+          debugWarn(
+            `[BuyerPayment] Seller claimed ${responseStats.sellerClaimedCost} exceeds ${this._costTolerance}x buyer estimate ${buyerEstimatedRequestCost} — capping at ${maxAcceptable}`,
+          );
+          acceptedCost = maxAcceptable;
+        } else {
+          // Seller's claim is within tolerance — accept it as-is
+          acceptedCost = responseStats.sellerClaimedCost;
+        }
+      } else {
+        // No buyer estimate available — accept seller's claim
+        acceptedCost = responseStats.sellerClaimedCost;
       }
+    } else {
+      acceptedCost = buyerEstimatedRequestCost;
     }
     // Minimum 1 base unit for monotonicity
     if (acceptedCost === 0n) acceptedCost = 1n;

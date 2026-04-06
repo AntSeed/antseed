@@ -1,4 +1,6 @@
 export const ANTSEED_STREAMING_RESPONSE_HEADER = 'x-antseed-streaming';
+export const ANTSEED_STREAM_COST_TRAILER_MAGIC = 'ANTSEED_COST_TRAILER_V1';
+export const ANTSEED_STREAM_COST_TRAILER_LENGTH_BYTES = 4;
 /** Header carrying a pre-signed SpendingAuth for manual payment approval. Base64-encoded JSON. */
 export const ANTSEED_SPENDING_AUTH_HEADER = 'x-antseed-spending-auth';
 /** Marker header set on HttpRequest frames whose body is sent via HttpRequestChunk/End frames. */
