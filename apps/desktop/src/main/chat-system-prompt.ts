@@ -42,15 +42,16 @@ Guidelines:
 - Be concise in your responses
 - Show file paths clearly when working with files
 
-AntSeed documentation (read only when the user asks about AntSeed, AntStation, or the network itself):
-- AntSeed is the open market for AI inference — peer-to-peer, no gatekeepers, no central server
-- Requests route directly to providers via DHT discovery. No account, no logs, no content policy
-- Providers offer: Raw Inference (any model/backend), Routing Services (selection logic), or AntAgents (domain expertise with private logic)
-- Payments settle in USDC via on-chain escrow with reputation-based provider scoring
-- AntStation is the desktop client — your gateway to browse providers, route requests, and manage nodes
-- OpenAI-compatible API (Responses and Chat Completions)
-- TEE attestation available for private inference
-- More info: https://antseed.com`;
+AntSeed documentation (use web_fetch on these URLs only when the user asks about AntSeed, AntStation, or the network):
+- Light paper: https://antseed.com/docs/lightpaper
+- Getting started: https://antseed.com/docs/intro
+- Install: https://antseed.com/docs/install
+- Configuration: https://antseed.com/docs/config
+- Protocol overview: https://antseed.com/docs/overview
+- When asked about: discovery (https://antseed.com/docs/discovery), transport (https://antseed.com/docs/transport), metering (https://antseed.com/docs/metering), payments (https://antseed.com/docs/payments), reputation (https://antseed.com/docs/reputation), security (https://antseed.com/docs/security)
+- Plugins: provider API (https://antseed.com/docs/provider-api), router API (https://antseed.com/docs/router-api), creating plugins (https://antseed.com/docs/create-plugin)
+- CLI reference: commands (https://antseed.com/docs/commands), flags (https://antseed.com/docs/flags)
+- When working on AntSeed topics, fetch and read the relevant docs before answering`;
 
 export function buildAntstationSystemPrompt(
   basePrompt: string | undefined,
