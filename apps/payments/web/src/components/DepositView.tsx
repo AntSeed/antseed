@@ -111,7 +111,16 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
   const wrongChain = isConnected && chain && expectedChainId && chain.id !== expectedChainId;
   const depositTarget = buyerAddress ?? address;
 
-  // Step 1: Approve USDC
+  // Read current on-chain allowance (always, when connected)
+  const { data: allowance, refetch: refetchAllowance } = useReadContract({
+    address: config?.usdcContractAddress as `0x${string}`,
+    abi: ERC20_ABI,
+    functionName: 'allowance',
+    args: [address as `0x${string}`, config?.depositsContractAddress as `0x${string}`],
+    query: { enabled: isConnected && !!config && !!address },
+  });
+
+  // Approve USDC
   const {
     writeContract: writeApprove,
     data: approveTxHash,
@@ -122,7 +131,7 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
     hash: approveTxHash,
   });
 
-  // Step 2: Deposit
+  // Deposit
   const {
     writeContract: writeDeposit,
     data: depositTxHash,
@@ -133,42 +142,32 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
     hash: depositTxHash,
   });
 
-  // Read on-chain allowance once approval confirms. useReadContract fires
-  // automatically when `enabled` flips to true — the RPC that returned the
-  // receipt already has the updated state, so no polling is needed.
-  const usdcAmount = step !== 'idle' ? parseUnits(amount, 6) : 0n;
-  const { data: allowance } = useReadContract({
-    address: config?.usdcContractAddress as `0x${string}`,
-    abi: ERC20_ABI,
-    functionName: 'allowance',
-    args: [address as `0x${string}`, config?.depositsContractAddress as `0x${string}`],
-    query: { enabled: approveConfirmed && step === 'approving' },
-  });
-
-  // When allowance is confirmed on-chain, trigger deposit
-  useEffect(() => {
-    if (
-      step !== 'approving' || !config || !depositTarget ||
-      allowance === undefined || allowance < usdcAmount
-    ) return;
-
+  // Send deposit tx
+  const sendDeposit = useCallback(() => {
+    if (!config || !depositTarget) return;
     setStep('depositing');
     writeDeposit({
       address: config.depositsContractAddress as `0x${string}`,
       abi: DEPOSITS_ABI,
       functionName: 'deposit',
-      args: [depositTarget as `0x${string}`, usdcAmount],
+      args: [depositTarget as `0x${string}`, parseUnits(amount, 6)],
     }, {
       onError: (err) => {
         setStep('idle');
         setError(err.message.split('\n')[0] ?? err.message);
       },
     });
-  }, [step, config, depositTarget, usdcAmount, allowance, writeDeposit]);
+  }, [config, depositTarget, amount, writeDeposit]);
 
-  // When deposit confirms, show success
+  // After approval confirms → refetch allowance, then deposit
   useEffect(() => {
-    if (depositConfirmed && step === 'depositing') {
+    if (step !== 'approving' || !approveConfirmed) return;
+    refetchAllowance().then(() => sendDeposit());
+  }, [step, approveConfirmed, refetchAllowance, sendDeposit]);
+
+  // After deposit confirms → done
+  useEffect(() => {
+    if (step === 'depositing' && depositConfirmed) {
       setStep('done');
       onDeposited();
     }
@@ -181,9 +180,15 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
     resetApprove();
     resetDeposit();
 
-    setStep('approving');
     const usdcAmount = parseUnits(amount, 6);
 
+    // Skip approval if on-chain allowance is already sufficient
+    if (allowance !== undefined && allowance >= usdcAmount) {
+      sendDeposit();
+      return;
+    }
+
+    setStep('approving');
     writeApprove({
       address: config.usdcContractAddress as `0x${string}`,
       abi: ERC20_ABI,
@@ -195,7 +200,7 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
         setError(err.message.split('\n')[0] ?? err.message);
       },
     });
-  }, [address, amount, config, depositTarget, writeApprove, resetApprove, resetDeposit]);
+  }, [address, amount, config, depositTarget, allowance, sendDeposit, writeApprove, resetApprove, resetDeposit]);
 
   const resetForm = useCallback(() => {
     setStep('idle');
