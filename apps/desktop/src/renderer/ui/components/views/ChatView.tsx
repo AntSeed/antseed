@@ -479,6 +479,7 @@ export function ChatView({ active, onSelectView }: ChatViewProps) {
               peerInfo={snap.chatPaymentApprovalPeerInfo}
               error={snap.chatPaymentApprovalError}
               onAddCredits={() => actions.openPaymentsPortal?.()}
+              onRetry={() => actions.retryAfterPayment()}
               onCancel={() => actions.rejectPaymentSession()}
             />
           </div>

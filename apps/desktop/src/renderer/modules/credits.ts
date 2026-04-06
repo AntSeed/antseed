@@ -5,6 +5,7 @@ import type { DesktopBridge } from '../types/bridge';
 type CreditsModuleOptions = {
   bridge?: DesktopBridge;
   uiState: RendererUiState;
+  onBalanceSufficientForPayment?: () => void;
 };
 
 export type CreditsModuleApi = {
@@ -15,9 +16,11 @@ export type CreditsModuleApi = {
 };
 
 const CREDITS_REFRESH_INTERVAL_MS = 60_000;
+const CREDITS_FAST_REFRESH_INTERVAL_MS = 5_000;
 
-export function initCreditsModule({ bridge, uiState }: CreditsModuleOptions): CreditsModuleApi {
+export function initCreditsModule({ bridge, uiState, onBalanceSufficientForPayment }: CreditsModuleOptions): CreditsModuleApi {
   let refreshTimer: ReturnType<typeof setInterval> | null = null;
+  let fastRefreshTimer: ReturnType<typeof setInterval> | null = null;
 
   async function refreshCredits(): Promise<void> {
     if (!bridge?.creditsGetInfo) return;
@@ -54,11 +57,45 @@ export function initCreditsModule({ bridge, uiState }: CreditsModuleOptions): Cr
           uiState.chatLowBalanceWarning = lowBalance;
         }
 
+        // Auto-retry: if the payment approval card is visible and balance
+        // now covers the required amount, dismiss the card and retry.
+        if (
+          uiState.chatPaymentApprovalVisible &&
+          !uiState.chatPaymentApprovalLoading &&
+          onBalanceSufficientForPayment
+        ) {
+          const required = parseFloat(uiState.chatPaymentApprovalAmount || '0');
+          if (available > 0 && required > 0 && available >= required) {
+            stopFastRefresh();
+            onBalanceSufficientForPayment();
+            return;
+          }
+        }
+
+        // Start/stop fast polling based on whether the payment card is visible
+        if (uiState.chatPaymentApprovalVisible && !fastRefreshTimer) {
+          startFastRefresh();
+        } else if (!uiState.chatPaymentApprovalVisible && fastRefreshTimer) {
+          stopFastRefresh();
+        }
+
         if (changed) notifyUiStateChanged();
 
       }
     } catch {
       // Silently fail — cached values remain
+    }
+  }
+
+  function startFastRefresh(): void {
+    if (fastRefreshTimer) return;
+    fastRefreshTimer = setInterval(() => void refreshCredits(), CREDITS_FAST_REFRESH_INTERVAL_MS);
+  }
+
+  function stopFastRefresh(): void {
+    if (fastRefreshTimer) {
+      clearInterval(fastRefreshTimer);
+      fastRefreshTimer = null;
     }
   }
 
@@ -78,6 +115,7 @@ export function initCreditsModule({ bridge, uiState }: CreditsModuleOptions): Cr
       clearInterval(refreshTimer);
       refreshTimer = null;
     }
+    stopFastRefresh();
     window.removeEventListener('focus', onWindowFocus);
   }
 

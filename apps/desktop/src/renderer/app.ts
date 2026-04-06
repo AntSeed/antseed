@@ -117,7 +117,11 @@ const chatApi = initChatModule({
 
 initAppSetupModule({ uiState, bridge: bridge ?? null });
 
-const creditsApi = initCreditsModule({ bridge: bridge as DesktopBridge, uiState });
+const creditsApi = initCreditsModule({
+  bridge: bridge as DesktopBridge,
+  uiState,
+  onBalanceSufficientForPayment: () => chatApi.retryAfterPayment(),
+});
 creditsApi.startPeriodicRefresh();
 
 /* ------------------------------------------------------------------ */
@@ -415,6 +419,7 @@ registerActions({
     uiState.chatPaymentApprovalError = null;
     notifyUiStateChanged();
   },
+  retryAfterPayment: () => chatApi.retryAfterPayment(),
   requestChannelClose: () => {
     void bridge?.paymentsOpenPortal?.('channels');
   },

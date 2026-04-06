@@ -71,6 +71,7 @@ export type ChatModuleApi = {
   renameConversation: (convId: string, newTitle: string) => void;
   openConversation: (convId: string) => Promise<void>;
   sendMessage: (text: string, imageBase64?: string, imageMimeType?: string) => void;
+  retryAfterPayment: () => void;
   abortChat: () => Promise<void>;
   handleServiceChange: (value: string) => void;
   handleServiceFocus: () => void;
@@ -1584,6 +1585,102 @@ export function initChatModule({
     }
   }
 
+  /**
+   * Retry the last user message after a payment failure.  Dismisses the
+   * payment-approval card and re-sends the most recent user message in the
+   * active conversation.  Intended to be called when credits become
+   * available after a 402 was returned.
+   */
+  function retryAfterPayment(): void {
+    if (!bridge) return;
+
+    // Dismiss payment card
+    uiState.chatPaymentApprovalVisible = false;
+    uiState.chatPaymentApprovalPeerId = null;
+    uiState.chatPaymentApprovalPeerName = null;
+    uiState.chatPaymentApprovalPeerInfo = null;
+    uiState.chatPaymentApprovalLoading = false;
+    uiState.chatPaymentApprovalError = null;
+    uiState.chatError = null;
+    notifyUiStateChanged();
+
+    // Find the last user message to resend
+    type MsgShape = { role?: string; content?: unknown };
+    const lastUserMsg = ([...uiState.chatMessages] as MsgShape[]).reverse().find(m => m.role === 'user');
+    if (!lastUserMsg || !uiState.chatActiveConversation) return;
+
+    const content = typeof lastUserMsg.content === 'string'
+      ? lastUserMsg.content
+      : '';
+
+    // Extract image from multipart content if present
+    let imageBase64: string | undefined;
+    let imageMimeType: string | undefined;
+    if (Array.isArray(lastUserMsg.content)) {
+      const imgBlock = (lastUserMsg.content as Array<{ type: string; source?: { data?: string; media_type?: string } }>)
+        .find(b => b.type === 'image');
+      if (imgBlock?.source?.data) {
+        imageBase64 = imgBlock.source.data;
+        imageMimeType = imgBlock.source.media_type;
+      }
+    }
+
+    const convId = uiState.chatActiveConversation;
+    const selection = getSelectedChatServiceSelection();
+    setChatSending(true);
+
+    if (bridge.chatAiSendStream) {
+      const sendStreamRequest = async () =>
+        await bridge.chatAiSendStream!(
+          convId,
+          content || ' ',
+          selection.id || undefined,
+          undefined,
+          imageBase64,
+          imageMimeType,
+        );
+
+      void (async () => {
+        try {
+          let result = await sendStreamRequest();
+          if (
+            !result.ok &&
+            isInProgressErrorMessage(result.error) &&
+            bridge.chatAiAbort
+          ) {
+            await bridge.chatAiAbort().catch(() => undefined);
+            result = await sendStreamRequest();
+          }
+
+          if (!result.ok) {
+            const errorMsg = typeof result.error === 'string' ? result.error : '';
+            const paymentMatch = /^payment_required:(\d+)$/i.exec(errorMsg);
+            if (paymentMatch) {
+              setChatSending(false);
+              void handlePaymentRequired(paymentMatch[1]);
+            } else {
+              reportChatError(result.error, 'Request failed');
+              setChatSending(false);
+            }
+          } else if (uiState.chatSending) {
+            setTimeout(() => {
+              if (!uiState.chatSending) return;
+              setChatSending(false);
+              clearChatError();
+              void refreshChatConversations();
+              if (uiState.chatActiveConversation) {
+                void openConversation(uiState.chatActiveConversation);
+              }
+            }, 120_000);
+          }
+        } catch (err) {
+          reportChatError(err, 'Chat send failed');
+          setChatSending(false);
+        }
+      })();
+    }
+  }
+
   async function abortChat(): Promise<void> {
     if (bridge && bridge.chatAiAbort) {
       await bridge.chatAiAbort();
@@ -2116,6 +2213,7 @@ export function initChatModule({
     renameConversation,
     openConversation,
     sendMessage,
+    retryAfterPayment,
     abortChat,
     handleServiceChange,
     handleServiceFocus,
