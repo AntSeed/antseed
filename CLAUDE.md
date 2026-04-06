@@ -108,7 +108,7 @@ Build/test: `cd packages/contracts && forge build && forge test`
 5. Seller calls `settle()` or `close()` with latest SpendingAuth → Deposits.chargeAndCreditPayouts()
 6. If seller disappears: buyer calls `requestClose()` → `withdraw()` after 15min grace
 
-EIP-712 domain: name="AntseedChannels", version="7"
+EIP-712 domain: name="AntseedChannels", version="1"
 
 ### Contract Separation Design
 - **Stable contracts** (Staking, Deposits) hold funds and rarely change

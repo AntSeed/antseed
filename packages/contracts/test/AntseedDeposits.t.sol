@@ -265,7 +265,7 @@ contract AntseedDepositsTest is Test {
         vm.prank(sessions);
         deposits.lockForChannel(buyer, MIN_DEPOSIT);
         vm.prank(sessions);
-        deposits.chargeAndCreditPayouts(buyer, seller, MIN_DEPOSIT / 2, MIN_DEPOSIT, 0, protocolReserve);
+        deposits.chargeAndCreditPayouts(buyer, seller, MIN_DEPOSIT / 2, 0, protocolReserve);
 
         uint256 limit = deposits.getBuyerCreditLimit(buyer);
         assertEq(limit, BASE_CREDIT + 5_000_000); // PEER_INTERACTION_BONUS = 5 USDC
@@ -277,7 +277,7 @@ contract AntseedDepositsTest is Test {
         vm.prank(sessions);
         deposits.lockForChannel(buyer, MIN_DEPOSIT);
         vm.prank(sessions);
-        deposits.chargeAndCreditPayouts(buyer, seller, MIN_DEPOSIT / 2, MIN_DEPOSIT, 0, protocolReserve);
+        deposits.chargeAndCreditPayouts(buyer, seller, MIN_DEPOSIT / 2, 0, protocolReserve);
 
         // Warp forward 30 days
         vm.warp(block.timestamp + 30 days);
@@ -316,7 +316,7 @@ contract AntseedDepositsTest is Test {
         uint256 sellerBefore = usdc.balanceOf(seller);
 
         vm.prank(sessions);
-        deposits.chargeAndCreditPayouts(buyer, seller, 10_000_000, 20_000_000, 1_000_000, protocolReserve);
+        deposits.chargeAndCreditPayouts(buyer, seller, 10_000_000, 1_000_000, protocolReserve);
 
         // Seller receives 10 - 1 = 9 USDC directly
         assertEq(usdc.balanceOf(seller), sellerBefore + 9_000_000);
@@ -397,11 +397,11 @@ contract AntseedDepositsTest is Test {
         deposits.lockForChannel(buyer, 20_000_000);
 
         vm.prank(sessions);
-        deposits.chargeAndCreditPayouts(buyer, seller, 15_000_000, 20_000_000, 2_000_000, protocolReserve);
+        deposits.chargeAndCreditPayouts(buyer, seller, 15_000_000, 2_000_000, protocolReserve);
 
         (uint256 available, uint256 reserved,) = deposits.getBuyerBalance(buyer);
-        assertEq(available, before + 30_000_000 - 15_000_000);
-        assertEq(reserved, 0);
+        assertEq(reserved, 5_000_000); // 20M locked - 15M charged
+        assertEq(available, before + 30_000_000 - 15_000_000 - reserved); // balance minus remaining reserved
 
         // Seller payouts: 15 - 2 = 13
         assertEq(usdc.balanceOf(seller), 13_000_000);
@@ -421,12 +421,12 @@ contract AntseedDepositsTest is Test {
         vm.prank(sessions);
         deposits.lockForChannel(buyer, 20_000_000);
         vm.prank(sessions);
-        deposits.chargeAndCreditPayouts(buyer, seller, 10_000_000, 20_000_000, 0, protocolReserve);
+        deposits.chargeAndCreditPayouts(buyer, seller, 10_000_000, 0, protocolReserve);
 
         vm.prank(sessions);
         deposits.lockForChannel(buyer, 20_000_000);
         vm.prank(sessions);
-        deposits.chargeAndCreditPayouts(buyer, seller, 10_000_000, 20_000_000, 0, protocolReserve);
+        deposits.chargeAndCreditPayouts(buyer, seller, 10_000_000, 0, protocolReserve);
 
         assertEq(deposits.uniqueSellersCharged(buyer), 1); // Still 1
 
@@ -434,7 +434,7 @@ contract AntseedDepositsTest is Test {
         vm.prank(sessions);
         deposits.lockForChannel(buyer, 20_000_000);
         vm.prank(sessions);
-        deposits.chargeAndCreditPayouts(buyer, seller2, 10_000_000, 20_000_000, 0, protocolReserve);
+        deposits.chargeAndCreditPayouts(buyer, seller2, 10_000_000, 0, protocolReserve);
 
         assertEq(deposits.uniqueSellersCharged(buyer), 2);
     }
@@ -447,7 +447,7 @@ contract AntseedDepositsTest is Test {
         uint256 reserveBefore = usdc.balanceOf(protocolReserve);
 
         vm.prank(sessions);
-        deposits.chargeAndCreditPayouts(buyer, seller, 10_000_000, 20_000_000, 0, protocolReserve);
+        deposits.chargeAndCreditPayouts(buyer, seller, 10_000_000, 0, protocolReserve);
 
         // No transfer to protocolReserve
         assertEq(usdc.balanceOf(protocolReserve), reserveBefore);
@@ -462,36 +462,36 @@ contract AntseedDepositsTest is Test {
 
         // Platform fee > 0 but protocolReserve is zero address — should not transfer
         vm.prank(sessions);
-        deposits.chargeAndCreditPayouts(buyer, seller, 10_000_000, 20_000_000, 1_000_000, address(0));
+        deposits.chargeAndCreditPayouts(buyer, seller, 10_000_000, 1_000_000, address(0));
 
-        // Seller gets chargeAmount - platformFee
+        // Seller gets amount - platformFee
         assertEq(usdc.balanceOf(seller), 9_000_000);
     }
 
-    function test_chargeAndCreditPayouts_revert_chargeExceedsReserved() public {
+    function test_chargeAndCreditPayouts_revert_amountExceedsReserved() public {
         _deposit(buyer, 30_000_000);
         vm.prank(sessions);
         deposits.lockForChannel(buyer, 10_000_000);
 
         vm.prank(sessions);
-        vm.expectRevert(AntseedDeposits.InvalidAmount.selector);
-        deposits.chargeAndCreditPayouts(buyer, seller, 11_000_000, 10_000_000, 0, protocolReserve);
+        vm.expectRevert(); // arithmetic underflow on ba.reserved
+        deposits.chargeAndCreditPayouts(buyer, seller, 11_000_000, 0, protocolReserve);
     }
 
-    function test_chargeAndCreditPayouts_revert_platformFeeExceedsCharge() public {
+    function test_chargeAndCreditPayouts_revert_platformFeeExceedsAmount() public {
         _deposit(buyer, 30_000_000);
         vm.prank(sessions);
         deposits.lockForChannel(buyer, 20_000_000);
 
         vm.prank(sessions);
         vm.expectRevert(AntseedDeposits.InvalidAmount.selector);
-        deposits.chargeAndCreditPayouts(buyer, seller, 10_000_000, 20_000_000, 11_000_000, protocolReserve);
+        deposits.chargeAndCreditPayouts(buyer, seller, 10_000_000, 11_000_000, protocolReserve);
     }
 
     function test_chargeAndCreditPayouts_revert_notChannels() public {
         vm.prank(randomCaller);
         vm.expectRevert(AntseedDeposits.NotAuthorized.selector);
-        deposits.chargeAndCreditPayouts(buyer, seller, 1, 1, 0, protocolReserve);
+        deposits.chargeAndCreditPayouts(buyer, seller, 1, 0, protocolReserve);
     }
 
     function test_releaseLock_success() public {
