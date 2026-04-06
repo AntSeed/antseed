@@ -1,8 +1,9 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import {
   useAccount,
   useWriteContract,
+  useSimulateContract,
   useWaitForTransactionReceipt,
   useReadContract,
 } from 'wagmi';
@@ -111,7 +112,7 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
   const wrongChain = isConnected && chain && expectedChainId && chain.id !== expectedChainId;
   const depositTarget = buyerAddress ?? address;
 
-  // Read current on-chain allowance (always, when connected)
+  // Read on-chain allowance (always, when connected)
   const { data: allowance, refetch: refetchAllowance } = useReadContract({
     address: config?.usdcContractAddress as `0x${string}`,
     abi: ERC20_ABI,
@@ -119,6 +120,9 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
     args: [address as `0x${string}`, config?.depositsContractAddress as `0x${string}`],
     query: { enabled: isConnected && !!config && !!address },
   });
+
+  const usdcAmount = parseUnits(amount || '0', 6);
+  const hasAllowance = allowance !== undefined && allowance >= usdcAmount && usdcAmount > 0n;
 
   // Approve USDC
   const {
@@ -131,7 +135,16 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
     hash: approveTxHash,
   });
 
-  // Deposit
+  // Simulate deposit — only when allowance is sufficient
+  const { data: depositSim } = useSimulateContract({
+    address: config?.depositsContractAddress as `0x${string}`,
+    abi: DEPOSITS_ABI,
+    functionName: 'deposit',
+    args: [depositTarget as `0x${string}`, usdcAmount],
+    query: { enabled: hasAllowance && !!config && !!depositTarget },
+  });
+
+  // Deposit (uses pre-simulated request)
   const {
     writeContract: writeDeposit,
     data: depositTxHash,
@@ -142,28 +155,24 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
     hash: depositTxHash,
   });
 
-  // Send deposit tx
-  const sendDeposit = useCallback(() => {
-    if (!config || !depositTarget) return;
+  // After approval confirms → refetch allowance so simulation picks up the new state
+  useEffect(() => {
+    if (step === 'approving' && approveConfirmed) {
+      refetchAllowance();
+    }
+  }, [step, approveConfirmed, refetchAllowance]);
+
+  // Once simulation is ready after approval → send deposit
+  useEffect(() => {
+    if (step !== 'approving' || !depositSim?.request) return;
     setStep('depositing');
-    writeDeposit({
-      address: config.depositsContractAddress as `0x${string}`,
-      abi: DEPOSITS_ABI,
-      functionName: 'deposit',
-      args: [depositTarget as `0x${string}`, parseUnits(amount, 6)],
-    }, {
+    writeDeposit(depositSim.request, {
       onError: (err) => {
         setStep('idle');
         setError(err.message.split('\n')[0] ?? err.message);
       },
     });
-  }, [config, depositTarget, amount, writeDeposit]);
-
-  // After approval confirms → refetch allowance, then deposit
-  useEffect(() => {
-    if (step !== 'approving' || !approveConfirmed) return;
-    refetchAllowance().then(() => sendDeposit());
-  }, [step, approveConfirmed, refetchAllowance, sendDeposit]);
+  }, [step, depositSim, writeDeposit]);
 
   // After deposit confirms → done
   useEffect(() => {
@@ -173,21 +182,26 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
     }
   }, [depositConfirmed, step, onDeposited]);
 
-  const handleDeposit = useCallback(() => {
+  function handleDeposit() {
     if (!address || !amount || parseFloat(amount) <= 0 || !config || !depositTarget) return;
 
     setError(null);
     resetApprove();
     resetDeposit();
 
-    const usdcAmount = parseUnits(amount, 6);
-
-    // Skip approval if on-chain allowance is already sufficient
-    if (allowance !== undefined && allowance >= usdcAmount) {
-      sendDeposit();
+    // Allowance already sufficient — simulation is ready, send deposit directly
+    if (depositSim?.request) {
+      setStep('depositing');
+      writeDeposit(depositSim.request, {
+        onError: (err) => {
+          setStep('idle');
+          setError(err.message.split('\n')[0] ?? err.message);
+        },
+      });
       return;
     }
 
+    // Need approval first
     setStep('approving');
     writeApprove({
       address: config.usdcContractAddress as `0x${string}`,
@@ -200,15 +214,15 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
         setError(err.message.split('\n')[0] ?? err.message);
       },
     });
-  }, [address, amount, config, depositTarget, allowance, sendDeposit, writeApprove, resetApprove, resetDeposit]);
+  }
 
-  const resetForm = useCallback(() => {
+  function resetForm() {
     setStep('idle');
     setError(null);
     setAmount('10');
     resetApprove();
     resetDeposit();
-  }, [resetApprove, resetDeposit]);
+  }
 
   return (
     <div className="deposit-form">
