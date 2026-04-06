@@ -466,7 +466,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         bytes32 structHash,
         bytes calldata signature,
         address signer
-    ) internal view returns (address) {
+    ) internal view {
         bytes32 digest = _hashTypedDataV4(structHash);
         address recovered = ECDSA.recover(digest, signature);
         if (recovered != signer) revert InvalidSignature();
