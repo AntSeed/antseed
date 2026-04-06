@@ -20,7 +20,7 @@ contract AntseedStatsTest is Test {
     function setUp() public {
         registry = new AntseedRegistry();
         identityRegistry = new MockERC8004Registry();
-        stats = new AntseedStats(address(registry));
+        stats = new AntseedStats();
         registry.setIdentityRegistry(address(identityRegistry));
 
         vm.prank(tokenOwner);

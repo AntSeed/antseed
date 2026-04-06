@@ -3,7 +3,6 @@ pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 
-import {IAntseedRegistry} from "./interfaces/IAntseedRegistry.sol";
 import {IAntseedStats} from "./interfaces/IAntseedStats.sol";
 
 /**
@@ -22,7 +21,6 @@ contract AntseedStats is IAntseedStats, Ownable {
     }
 
     // ─── State Variables ────────────────────────────────────────────
-    IAntseedRegistry public registry;
     mapping(address => bool) public writers;
 
     mapping(uint256 => mapping(address => BuyerMetadataStats)) private _buyerMetadataStats;
@@ -45,10 +43,7 @@ contract AntseedStats is IAntseedStats, Ownable {
     error NonMonotonicMetadata();
 
     // ─── Constructor ────────────────────────────────────────────────
-    constructor(address _registry) Ownable(msg.sender) {
-        if (_registry == address(0)) revert InvalidAddress();
-        registry = IAntseedRegistry(_registry);
-    }
+    constructor() Ownable(msg.sender) {}
 
     // ─── Views ──────────────────────────────────────────────────────
     function getBuyerMetadataStats(uint256 agentId, address buyer) external view returns (BuyerMetadataStats memory) {
@@ -112,11 +107,6 @@ contract AntseedStats is IAntseedStats, Ownable {
     }
 
     // ─── Admin Functions ────────────────────────────────────────────
-    function setRegistry(address _registry) external onlyOwner {
-        if (_registry == address(0)) revert InvalidAddress();
-        registry = IAntseedRegistry(_registry);
-    }
-
     function setWriter(address writer, bool allowed) external onlyOwner {
         if (writer == address(0)) revert InvalidAddress();
         writers[writer] = allowed;

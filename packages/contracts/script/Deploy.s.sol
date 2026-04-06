@@ -83,11 +83,8 @@ contract Deploy is Script {
         require(channels != address(0), "Channels deploy failed");
         console.log("AntseedChannels:      ", channels);
 
-        // 9. AntseedStats(registry)
-        bytes memory statsBytecode = abi.encodePacked(
-            vm.getCode("AntseedStats.sol:AntseedStats"),
-            abi.encode(address(antseedRegistry))
-        );
+        // 9. AntseedStats
+        bytes memory statsBytecode = vm.getCode("AntseedStats.sol:AntseedStats");
         address stats;
         assembly { stats := create(0, add(statsBytecode, 0x20), mload(statsBytecode)) }
         require(stats != address(0), "Stats deploy failed");
@@ -127,7 +124,6 @@ contract Deploy is Script {
         // Channels and Staking already received the registry in their constructors,
         // but we include them here for uniformity so the pattern is obvious in upgrades.
         ISetRegistry(channels).setRegistry(address(antseedRegistry));
-        ISetRegistry(stats).setRegistry(address(antseedRegistry));
         ISetRegistry(deposits).setRegistry(address(antseedRegistry));
         ISetRegistry(staking).setRegistry(address(antseedRegistry));
         ISetRegistry(emissions).setRegistry(address(antseedRegistry));

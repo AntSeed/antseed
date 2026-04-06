@@ -436,7 +436,8 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
     ) internal {
         address statsContract = registry.stats();
         if (statsContract == address(0)) return;
-        IAntseedStats(statsContract).recordMetadata(agentId, buyer, channelId, metadata);
+        try IAntseedStats(statsContract).recordMetadata(agentId, buyer, channelId, metadata) {}
+        catch {}
     }
 
     function _verifyReserveAuth(

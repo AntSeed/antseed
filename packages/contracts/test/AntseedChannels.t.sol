@@ -60,7 +60,7 @@ contract AntseedChannelsTest is Test {
         staking = new AntseedStaking(address(usdc), address(antseedRegistry));
         deposits = new AntseedDeposits(address(usdc));
         channels = new AntseedChannels(address(antseedRegistry));
-        externalStats = new AntseedStats(address(antseedRegistry));
+        externalStats = new AntseedStats();
 
         // Wire registry
         antseedRegistry.setChannels(address(channels));

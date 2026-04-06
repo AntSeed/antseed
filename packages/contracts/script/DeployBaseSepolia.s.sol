@@ -88,11 +88,8 @@ contract DeployBaseSepolia is Script {
         require(channels != address(0), "Channels deploy failed");
         console.log("AntseedChannels:      ", channels);
 
-        // 6. AntseedStats(registry)
-        bytes memory statsBytecode = abi.encodePacked(
-            vm.getCode("AntseedStats.sol:AntseedStats"),
-            abi.encode(address(antseedRegistry))
-        );
+        // 6. AntseedStats
+        bytes memory statsBytecode = vm.getCode("AntseedStats.sol:AntseedStats");
         address stats;
         assembly { stats := create(0, add(statsBytecode, 0x20), mload(statsBytecode)) }
         require(stats != address(0), "Stats deploy failed");
@@ -121,7 +118,6 @@ contract DeployBaseSepolia is Script {
 
         // ---- Point each contract at the registry ----
         ISetRegistry(channels).setRegistry(address(antseedRegistry));
-        ISetRegistry(stats).setRegistry(address(antseedRegistry));
         ISetRegistry(deposits).setRegistry(address(antseedRegistry));
         ISetRegistry(staking).setRegistry(address(antseedRegistry));
         ISetRegistry(emissions).setRegistry(address(antseedRegistry));
