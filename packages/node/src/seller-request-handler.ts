@@ -407,6 +407,8 @@ export class SellerRequestHandler {
     const pricing = this.resolveProviderPricing(provider, request);
     const costUsdc = computeCostUsdc(usage.inputTokens, usage.outputTokens, pricing);
     const session = spm.getChannelByPeer(buyerPeerId);
+    // Note: cumulative cost excludes the current request — recordSpend happens after this in the caller.
+    // This matches the non-streaming _injectCostHeaders path.
     const cumulativeCost = session ? spm.getCumulativeSpend(session.sessionId) : 0n;
 
     const trailer = JSON.stringify({
