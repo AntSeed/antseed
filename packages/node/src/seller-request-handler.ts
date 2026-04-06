@@ -407,15 +407,13 @@ export class SellerRequestHandler {
     const pricing = this.resolveProviderPricing(provider, request);
     const costUsdc = computeCostUsdc(usage.inputTokens, usage.outputTokens, pricing);
     const session = spm.getChannelByPeer(buyerPeerId);
-    // Note: cumulative cost excludes the current request — recordSpend happens after this in the caller.
-    // This matches the non-streaming _injectCostHeaders path.
-    const cumulativeCost = session ? spm.getCumulativeSpend(session.sessionId) : 0n;
+    const prevCumulative = session ? spm.getCumulativeSpend(session.sessionId) : 0n;
 
     const trailer = JSON.stringify({
       'x-antseed-input-tokens': String(usage.inputTokens),
       'x-antseed-output-tokens': String(usage.outputTokens),
       'x-antseed-cost': costUsdc.toString(),
-      'x-antseed-cumulative-cost': cumulativeCost.toString(),
+      'x-antseed-cumulative-cost': (prevCumulative + costUsdc).toString(),
     });
 
     debugLog(
@@ -442,7 +440,8 @@ export class SellerRequestHandler {
     const pricing = this.resolveProviderPricing(provider, request);
     const costUsdc = computeCostUsdc(resolvedUsage.inputTokens, resolvedUsage.outputTokens, pricing);
     const session = spm.getChannelByPeer(buyerPeerId);
-    const cumulativeCost = session ? spm.getCumulativeSpend(session.sessionId) : 0n;
+    const prevCumulative = session ? spm.getCumulativeSpend(session.sessionId) : 0n;
+    const cumulativeCost = prevCumulative + costUsdc;
 
     debugLog(
       `[SellerHandler] Cost headers: in=${resolvedUsage.inputTokens} out=${resolvedUsage.outputTokens} ` +
