@@ -27,22 +27,28 @@ const require = createRequire(import.meta.url);
 const appDir = path.resolve(__dirname, '..');
 const nmDir = path.join(appDir, 'node_modules');
 
+/** Map of workspace package names to their real source directories. */
+const WORKSPACE_PACKAGES = {
+  '@antseed/api-adapter': path.resolve(appDir, '..', '..', 'packages', 'api-adapter'),
+  '@antseed/node': path.resolve(appDir, '..', '..', 'packages', 'node'),
+  '@antseed/dashboard': path.resolve(appDir, '..', 'dashboard'),
+  '@antseed/payments': path.resolve(appDir, '..', 'payments'),
+};
+
 function isWorkspaceSymlink(fullPath) {
   try {
     if (!lstatSync(fullPath).isSymbolicLink()) return false;
     const target = readlinkSync(fullPath);
-    // Workspace symlinks are relative and point outside node_modules
     return !target.includes('node_modules');
   } catch {
     return false;
   }
 }
 
-function replaceSymlink(linkPath, label) {
-  const realPath = path.resolve(path.dirname(linkPath), readlinkSync(linkPath));
-  console.log(`[prepare-dist] Replacing symlink: ${label} -> ${realPath}`);
+function copyWorkspacePackage(linkPath, sourcePath, label) {
+  console.log(`[prepare-dist] Copying workspace package: ${label} -> ${sourcePath}`);
   rmSync(linkPath, { recursive: true });
-  cpSync(realPath, linkPath, { recursive: true });
+  cpSync(sourcePath, linkPath, { recursive: true });
 
   // Remove inner node_modules — the copied package's deps are already
   // hoisted into the desktop's own node_modules by pnpm.
@@ -52,34 +58,21 @@ function replaceSymlink(linkPath, label) {
   }
 }
 
-// --- 1. Restore workspace symlinks then replace with fresh copies ---
-// A previous prepare-dist may have replaced symlinks with stale directory copies.
-// Running pnpm install restores the symlinks so we always copy from the latest source.
+// --- 1. Replace workspace symlinks/stale copies with fresh copies from source ---
+// Both symlinks and stale directory copies from a previous prepare-dist are handled.
 
-console.log('[prepare-dist] Restoring workspace symlinks...');
-execFileSync('pnpm', ['install', '--frozen-lockfile'], { cwd: path.resolve(appDir, '..', '..'), stdio: 'inherit' });
+for (const [pkgName, sourcePath] of Object.entries(WORKSPACE_PACKAGES)) {
+  const parts = pkgName.split('/');
+  const linkPath = parts.length === 2
+    ? path.join(nmDir, parts[0], parts[1])
+    : path.join(nmDir, parts[0]);
 
-const entries = readdirSync(nmDir);
-for (const entry of entries) {
-  const fullPath = path.join(nmDir, entry);
-
-  // Handle scoped packages (@scope/name)
-  if (entry.startsWith('@') && lstatSync(fullPath).isDirectory()) {
-    const scopeDir = fullPath;
-    const scopeEntries = readdirSync(scopeDir);
-    for (const scopeEntry of scopeEntries) {
-      const scopedPath = path.join(scopeDir, scopeEntry);
-      if (isWorkspaceSymlink(scopedPath)) {
-        replaceSymlink(scopedPath, `${entry}/${scopeEntry}`);
-      }
-    }
-    continue;
+  // Ensure scope directory exists
+  if (parts.length === 2) {
+    mkdirSync(path.join(nmDir, parts[0]), { recursive: true });
   }
 
-  // Handle top-level packages
-  if (isWorkspaceSymlink(fullPath)) {
-    replaceSymlink(fullPath, entry);
-  }
+  copyWorkspacePackage(linkPath, sourcePath, pkgName);
 }
 
 // --- 2. Bundle CLI into a single self-contained file for extraResources ---
