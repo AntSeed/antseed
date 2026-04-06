@@ -18,9 +18,12 @@ export type CreditsModuleApi = {
 const CREDITS_REFRESH_INTERVAL_MS = 60_000;
 const CREDITS_FAST_REFRESH_INTERVAL_MS = 5_000;
 
+const MAX_AUTO_RETRIES = 2;
+
 export function initCreditsModule({ bridge, uiState, onBalanceSufficientForPayment }: CreditsModuleOptions): CreditsModuleApi {
   let refreshTimer: ReturnType<typeof setInterval> | null = null;
   let fastRefreshTimer: ReturnType<typeof setInterval> | null = null;
+  let autoRetryCount = 0;
 
   async function refreshCredits(): Promise<void> {
     if (!bridge?.creditsGetInfo) return;
@@ -62,14 +65,21 @@ export function initCreditsModule({ bridge, uiState, onBalanceSufficientForPayme
         if (
           uiState.chatPaymentApprovalVisible &&
           !uiState.chatPaymentApprovalLoading &&
-          onBalanceSufficientForPayment
+          onBalanceSufficientForPayment &&
+          autoRetryCount < MAX_AUTO_RETRIES
         ) {
           const required = parseFloat(uiState.chatPaymentApprovalAmount || '0');
           if (available > 0 && required > 0 && available >= required) {
             stopFastRefresh();
+            autoRetryCount++;
             onBalanceSufficientForPayment();
-            return;
+            // Fall through to notifyUiStateChanged so title bar balance updates
           }
+        }
+
+        // Reset retry counter when the payment card is dismissed
+        if (!uiState.chatPaymentApprovalVisible) {
+          autoRetryCount = 0;
         }
 
         // Start/stop fast polling based on whether the payment card is visible

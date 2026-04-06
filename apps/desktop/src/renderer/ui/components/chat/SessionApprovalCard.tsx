@@ -56,25 +56,12 @@ export function SessionApprovalCard({
       {error && <div className={styles.approvalError}>{error}</div>}
 
       <div className={styles.approvalActions}>
-        {hasCredits ? (
-          <>
-            <button className={styles.approveBtn} onClick={onRetry}>
-              Retry
-            </button>
-            <button className={styles.cancelBtn} onClick={onCancel}>
-              Cancel
-            </button>
-          </>
-        ) : (
-          <>
-            <button className={styles.approveBtn} onClick={onAddCredits}>
-              Add Credits
-            </button>
-            <button className={styles.cancelBtn} onClick={onCancel}>
-              Cancel
-            </button>
-          </>
-        )}
+        <button className={styles.approveBtn} onClick={hasCredits ? onRetry : onAddCredits}>
+          {hasCredits ? 'Retry' : 'Add Credits'}
+        </button>
+        <button className={styles.cancelBtn} onClick={onCancel}>
+          Cancel
+        </button>
       </div>
     </div>
   );

@@ -1490,6 +1490,22 @@ export function initChatModule({
 
     uiState.chatError = null;
     setChatSending(true);
+    void refreshWorkspaceGitStatus();
+    dispatchChatRequest(convId, content, imageBase64, imageMimeType);
+  }
+
+  /**
+   * Shared send logic for both sendMessage and retryAfterPayment.
+   * Dispatches via streaming or non-streaming bridge, handles stuck-request
+   * recovery, payment-required errors, and fallback timeouts.
+   */
+  function dispatchChatRequest(
+    convId: string,
+    content: string,
+    imageBase64?: string,
+    imageMimeType?: string,
+  ): void {
+    if (!bridge) return;
 
     const selection = getSelectedChatServiceSelection();
 
@@ -1506,7 +1522,6 @@ export function initChatModule({
 
       void (async () => {
         try {
-          void refreshWorkspaceGitStatus();
           let result = await sendStreamRequest();
           if (
             !result.ok &&
@@ -1522,10 +1537,10 @@ export function initChatModule({
 
           if (!result.ok) {
             const errorMsg = typeof result.error === 'string' ? result.error : '';
-            const paymentMatch2 = /^payment_required:(\d+)$/i.exec(errorMsg);
-            if (paymentMatch2) {
+            const paymentMatch = /^payment_required:(\d+)$/i.exec(errorMsg);
+            if (paymentMatch) {
               setChatSending(false);
-              void handlePaymentRequired(paymentMatch2[1]);
+              void handlePaymentRequired(paymentMatch[1]);
             } else {
               reportChatError(result.error, 'Request failed');
               setChatSending(false);
@@ -1626,59 +1641,8 @@ export function initChatModule({
     }
 
     const convId = uiState.chatActiveConversation;
-    const selection = getSelectedChatServiceSelection();
     setChatSending(true);
-
-    if (bridge.chatAiSendStream) {
-      const sendStreamRequest = async () =>
-        await bridge.chatAiSendStream!(
-          convId,
-          content || ' ',
-          selection.id || undefined,
-          undefined,
-          imageBase64,
-          imageMimeType,
-        );
-
-      void (async () => {
-        try {
-          let result = await sendStreamRequest();
-          if (
-            !result.ok &&
-            isInProgressErrorMessage(result.error) &&
-            bridge.chatAiAbort
-          ) {
-            await bridge.chatAiAbort().catch(() => undefined);
-            result = await sendStreamRequest();
-          }
-
-          if (!result.ok) {
-            const errorMsg = typeof result.error === 'string' ? result.error : '';
-            const paymentMatch = /^payment_required:(\d+)$/i.exec(errorMsg);
-            if (paymentMatch) {
-              setChatSending(false);
-              void handlePaymentRequired(paymentMatch[1]);
-            } else {
-              reportChatError(result.error, 'Request failed');
-              setChatSending(false);
-            }
-          } else if (uiState.chatSending) {
-            setTimeout(() => {
-              if (!uiState.chatSending) return;
-              setChatSending(false);
-              clearChatError();
-              void refreshChatConversations();
-              if (uiState.chatActiveConversation) {
-                void openConversation(uiState.chatActiveConversation);
-              }
-            }, 120_000);
-          }
-        } catch (err) {
-          reportChatError(err, 'Chat send failed');
-          setChatSending(false);
-        }
-      })();
-    }
+    dispatchChatRequest(convId, content, imageBase64, imageMimeType);
   }
 
   async function abortChat(): Promise<void> {
