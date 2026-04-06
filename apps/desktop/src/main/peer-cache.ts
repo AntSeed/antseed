@@ -36,7 +36,7 @@ export type DashboardNetworkResult = {
   error: string | null;
 };
 
-export const PEER_ONLINE_TTL_MS = 5 * 60_000;
+export const PEER_ONLINE_TTL_MS = 2 * 60 * 60_000; // 2 hours — peers re-announce via DHT every 5 min
 
 const REFRESH_MIN_INTERVAL_MS = 5_000;
 

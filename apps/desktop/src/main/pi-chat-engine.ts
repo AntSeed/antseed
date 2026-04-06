@@ -433,7 +433,7 @@ async function discoverChatServiceCatalog(
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     const rawPeers = Array.isArray(parsed.discoveredPeers) ? parsed.discoveredPeers : [];
     const now = Date.now();
-    const SERVICE_STALE_MS = 10 * 60_000; // 10 min — hide services from stale peers
+    const SERVICE_STALE_MS = 2 * 60 * 60_000; // 2 hours — peers re-announce via DHT every 5 min
     peers = rawPeers
       .filter((p): p is Record<string, unknown> => p !== null && typeof p === 'object')
       .filter((p) => {
