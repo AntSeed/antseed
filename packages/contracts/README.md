@@ -173,7 +173,7 @@ All constants are configurable by the contract owner via dedicated setter functi
 | Constant | Default | Description |
 |---|---|---|
 | `EPOCH_DURATION` | 1 week | Duration of each emission epoch |
-| `HALVING_INTERVAL` | 26 epochs (~6 months) | Epochs between emission halvings |
+| `HALVING_INTERVAL` | 104 epochs (~2 years) | Epochs between emission halvings |
 | `INITIAL_EMISSION` | Set at deployment | Total ANTS emitted in epoch 0 |
 | `SELLER_SHARE_PCT` | 65% | Seller share of epoch emissions |
 | `BUYER_SHARE_PCT` | 25% | Buyer share of epoch emissions |

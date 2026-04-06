@@ -7,7 +7,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import {IAntseedRegistry} from "./interfaces/IAntseedRegistry.sol";
 
 contract ANTSToken is ERC20, Ownable {
-    uint256 public constant MAX_SUPPLY = 52_000_000e18; // 52M ANTS
+    uint256 public constant MAX_SUPPLY = 1_040_000_000e18; // 1.04B ANTS
 
     IAntseedRegistry public registry;
     bool public transfersEnabled;       // Phase 1: false. One-way toggle to true.
