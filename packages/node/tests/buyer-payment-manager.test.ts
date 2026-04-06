@@ -327,6 +327,79 @@ describe('BuyerPaymentManager', () => {
     expect(topUpNeeded).toBe(true);
   });
 
+  it('signPerRequestAuth accepts seller claim above buyer estimate when within tolerance', async () => {
+    const sellerPeerId = fakePeerId('seller-above-ok');
+    await manager.authorizeSpending(sellerPeerId, mux, 10_000n, TEST_PRICING);
+
+    // Seller claims 1.3x the buyer's estimate — within 1.4x tolerance
+    const sellerClaim = BigInt(Math.ceil(Number(SAMPLE_ESTIMATE.cost) * 1.3));
+    const { payload } = await manager.signPerRequestAuth(
+      sellerPeerId,
+      { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: sellerClaim },
+    );
+
+    // Seller's claim accepted as-is (not reduced to buyer's estimate)
+    expect(BigInt(payload.cumulativeAmount)).toBe(10_000n + sellerClaim);
+  });
+
+  it('signPerRequestAuth does not underpay when seller claim is slightly above buyer estimate', async () => {
+    const sellerPeerId = fakePeerId('seller-no-underpay');
+    await manager.authorizeSpending(sellerPeerId, mux, 10_000n, TEST_PRICING);
+
+    // Seller claims 10% more than buyer's estimate — well within tolerance
+    const sellerClaim = SAMPLE_ESTIMATE.cost + SAMPLE_ESTIMATE.cost / 10n;
+    const { payload } = await manager.signPerRequestAuth(
+      sellerPeerId,
+      { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: sellerClaim },
+    );
+
+    // acceptedCost must be the seller's claim, not the buyer's lower estimate
+    const cumulative = BigInt(payload.cumulativeAmount);
+    expect(cumulative).toBe(10_000n + sellerClaim);
+    expect(cumulative).toBeGreaterThan(10_000n + SAMPLE_ESTIMATE.cost);
+  });
+
+  it('signPerRequestAuth falls back to buyer estimate when seller claims zero', async () => {
+    const sellerPeerId = fakePeerId('seller-zero-claim');
+    await manager.authorizeSpending(sellerPeerId, mux, 10_000n, TEST_PRICING);
+
+    const { payload } = await manager.signPerRequestAuth(
+      sellerPeerId,
+      { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: 0n },
+    );
+
+    expect(BigInt(payload.cumulativeAmount)).toBe(10_000n + SAMPLE_ESTIMATE.cost);
+  });
+
+  it('signPerRequestAuth prefers reported tokens over byte estimation for metadata', async () => {
+    const sellerPeerId = fakePeerId('seller-reported');
+    await manager.authorizeSpending(sellerPeerId, mux, 10_000n, TEST_PRICING);
+
+    const reportedIn = 5000n;
+    const reportedOut = 200n;
+    const { payload } = await manager.signPerRequestAuth(
+      sellerPeerId,
+      {
+        inputBytes: SAMPLE_INPUT,
+        outputBytes: SAMPLE_OUTPUT,
+        reportedInputTokens: reportedIn,
+        reportedOutputTokens: reportedOut,
+      },
+    );
+
+    // Metadata should encode reported tokens, not byte-estimated tokens.
+    // The metadata is ABI-encoded: (version, inputTokens, outputTokens, requestCount)
+    // We can verify by checking the payload has a valid metadataHash
+    expect(payload.metadata).toBeTypeOf('string');
+    expect(payload.metadataHash).toBeTypeOf('string');
+    // Cumulative should use cost from reported tokens, not from bytes
+    const reportedCost = BigInt(Math.round(
+      (Number(reportedIn) * TEST_PRICING.inputUsdPerMillion +
+       Number(reportedOut) * TEST_PRICING.outputUsdPerMillion) / 1_000_000 * 1_000_000
+    ));
+    expect(BigInt(payload.cumulativeAmount)).toBe(10_000n + reportedCost);
+  });
+
   it('signPerRequestAuth throws if no active session', async () => {
     await expect(
       manager.signPerRequestAuth('nonexistent-peer', { inputBytes: new Uint8Array(0), outputBytes: new Uint8Array(0) }),
