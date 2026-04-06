@@ -4,6 +4,7 @@ import {
   useAccount,
   useWriteContract,
   useWaitForTransactionReceipt,
+  useReadContract,
 } from 'wagmi';
 import { parseUnits } from 'viem';
 import type { PaymentConfig } from '../types';
@@ -38,6 +39,16 @@ const ERC20_ABI = [
       { name: 'amount', type: 'uint256' },
     ],
     outputs: [{ name: '', type: 'bool' }],
+  },
+  {
+    name: 'allowance',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'owner', type: 'address' },
+      { name: 'spender', type: 'address' },
+    ],
+    outputs: [{ name: '', type: 'uint256' }],
   },
 ] as const;
 
@@ -122,25 +133,38 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
     hash: depositTxHash,
   });
 
-  // When approve confirms, trigger deposit
-  useEffect(() => {
-    if (approveConfirmed && step === 'approving' && config && depositTarget) {
-      setStep('depositing');
-      const usdcAmount = parseUnits(amount, 6);
+  // Read on-chain allowance once approval confirms. useReadContract fires
+  // automatically when `enabled` flips to true — the RPC that returned the
+  // receipt already has the updated state, so no polling is needed.
+  const usdcAmount = step !== 'idle' ? parseUnits(amount, 6) : 0n;
+  const { data: allowance } = useReadContract({
+    address: config?.usdcContractAddress as `0x${string}`,
+    abi: ERC20_ABI,
+    functionName: 'allowance',
+    args: [address as `0x${string}`, config?.depositsContractAddress as `0x${string}`],
+    query: { enabled: approveConfirmed && step === 'approving' },
+  });
 
-      writeDeposit({
-        address: config.depositsContractAddress as `0x${string}`,
-        abi: DEPOSITS_ABI,
-        functionName: 'deposit',
-        args: [depositTarget as `0x${string}`, usdcAmount],
-      }, {
-        onError: (err) => {
-          setStep('idle');
-          setError(err.message.split('\n')[0] ?? err.message);
-        },
-      });
-    }
-  }, [approveConfirmed, step, config, depositTarget, amount, writeDeposit]);
+  // When allowance is confirmed on-chain, trigger deposit
+  useEffect(() => {
+    if (
+      step !== 'approving' || !config || !depositTarget ||
+      allowance === undefined || allowance < usdcAmount
+    ) return;
+
+    setStep('depositing');
+    writeDeposit({
+      address: config.depositsContractAddress as `0x${string}`,
+      abi: DEPOSITS_ABI,
+      functionName: 'deposit',
+      args: [depositTarget as `0x${string}`, usdcAmount],
+    }, {
+      onError: (err) => {
+        setStep('idle');
+        setError(err.message.split('\n')[0] ?? err.message);
+      },
+    });
+  }, [step, config, depositTarget, usdcAmount, allowance, writeDeposit]);
 
   // When deposit confirms, show success
   useEffect(() => {
