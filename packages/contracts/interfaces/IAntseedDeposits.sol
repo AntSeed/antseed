@@ -5,7 +5,7 @@ interface IAntseedDeposits {
     function lockForChannel(address buyer, uint256 amount) external;
     function chargeAndCreditPayouts(
         address buyer, address seller, uint256 amount,
-        uint256 platformFee, address protocolReserve
+        uint256 platformFee
     ) external;
     function releaseLock(address buyer, uint256 amount) external;
     function getOperator(address buyer) external view returns (address);

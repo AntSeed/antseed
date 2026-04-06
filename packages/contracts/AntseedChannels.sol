@@ -394,9 +394,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
 
         if (delta == 0) return;
 
-        address _protocolReserve = registry.protocolReserve();
         uint256 platformFee = (uint256(delta) * PLATFORM_FEE_BPS) / 10000;
-        if (_protocolReserve == address(0)) platformFee = 0;
 
         channel.settled = cumulativeAmount;
         channel.metadataHash = metadataHash;
@@ -421,8 +419,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
             channel.buyer,
             channel.seller,
             delta,
-            platformFee,
-            _protocolReserve
+            platformFee
         );
 
         emit ChannelSettled(channelId, channel.buyer, channel.seller, cumulativeAmount, delta, channel.settled, platformFee, metadata);

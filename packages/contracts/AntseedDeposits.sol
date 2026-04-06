@@ -174,8 +174,7 @@ contract AntseedDeposits is EIP712, Ownable, ReentrancyGuard {
         address buyer,
         address seller,
         uint256 amount,
-        uint256 platformFee,
-        address protocolReserve
+        uint256 platformFee
     ) external onlyChannels nonReentrant {
         if (platformFee > amount) revert InvalidAmount();
 
@@ -183,6 +182,8 @@ contract AntseedDeposits is EIP712, Ownable, ReentrancyGuard {
         ba.balance -= amount;
         ba.reserved -= amount;
         ba.lastActivityAt = block.timestamp;
+
+        if (registry.protocolReserve() == address(0)) platformFee = 0;
 
         uint256 sellerPayout = amount - platformFee;
 
@@ -193,8 +194,8 @@ contract AntseedDeposits is EIP712, Ownable, ReentrancyGuard {
         }
 
         // Transfer to protocol reserve and seller
-        if (platformFee > 0 && protocolReserve != address(0)) {
-            usdc.safeTransfer(protocolReserve, platformFee);
+        if (platformFee > 0) {
+            usdc.safeTransfer(registry.protocolReserve(), platformFee);
         }
         if (sellerPayout > 0) {
             usdc.safeTransfer(seller, sellerPayout);
