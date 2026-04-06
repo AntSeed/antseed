@@ -28,6 +28,8 @@ export interface SellerRequestHandlerDeps {
 
 /** Debounce interval for metadata refresh after load changes. */
 const METADATA_REFRESH_DEBOUNCE_MS = 200;
+const STREAM_COST_TRAILER_MAGIC = new TextEncoder().encode('ANTSEED_COST_TRAILER_V1');
+const STREAM_COST_TRAILER_LENGTH_BYTES = 4;
 
 /**
  * Handles all seller-side request processing: provider matching, execution,
@@ -194,24 +196,13 @@ export class SellerRequestHandler {
             const responseToSend = this._injectCostHeaders(response, provider, request, buyerPeerId, responseUsage);
             mux.sendProxyResponse(responseToSend);
           } else if (heldDoneChunkData !== null) {
-            // Streaming: append cost trailer to the done chunk so the buyer gets real token counts.
-            // Preserve original done-chunk payload (some providers put data on the final chunk).
+            // Streaming: append a framed trailer to the done chunk so the buyer gets
+            // real token counts without guessing where payload bytes end.
             const costTrailer = this._buildCostTrailer(responseUsage, provider, request, buyerPeerId);
             const originalData: Uint8Array = heldDoneChunkData;
-            let doneData: Uint8Array;
-            if (costTrailer.length === 0 || originalData.length === 0) {
-              // No trailer or no original data — just use whichever has content
-              doneData = costTrailer.length > 0 ? costTrailer : originalData;
-            } else {
-              // Append trailer after a NUL separator so the buyer can split them
-              doneData = new Uint8Array(originalData.length + 1 + costTrailer.length);
-              doneData.set(originalData, 0);
-              doneData[originalData.length] = 0; // NUL separator
-              doneData.set(costTrailer, originalData.length + 1);
-            }
             mux.sendProxyChunk({
               requestId: request.requestId,
-              data: doneData,
+              data: appendCostTrailer(originalData, costTrailer),
               done: true,
             });
           }
@@ -493,4 +484,25 @@ export class SellerRequestHandler {
       (timer as { unref: () => void }).unref();
     }
   }
+}
+
+function appendCostTrailer(payload: Uint8Array, trailer: Uint8Array): Uint8Array {
+  if (trailer.length === 0) return payload;
+
+  const lengthBytes = new Uint8Array(STREAM_COST_TRAILER_LENGTH_BYTES);
+  const view = new DataView(lengthBytes.buffer, lengthBytes.byteOffset, lengthBytes.byteLength);
+  view.setUint32(0, trailer.length, false);
+
+  const framed = new Uint8Array(
+    payload.length + trailer.length + STREAM_COST_TRAILER_MAGIC.length + STREAM_COST_TRAILER_LENGTH_BYTES,
+  );
+  let offset = 0;
+  framed.set(payload, offset);
+  offset += payload.length;
+  framed.set(trailer, offset);
+  offset += trailer.length;
+  framed.set(STREAM_COST_TRAILER_MAGIC, offset);
+  offset += STREAM_COST_TRAILER_MAGIC.length;
+  framed.set(lengthBytes, offset);
+  return framed;
 }
