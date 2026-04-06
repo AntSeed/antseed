@@ -84,7 +84,7 @@ contract AntseedEmissionsTest is Test {
         assertEq(emissions.RESERVE_SHARE_PCT(), 15);
         assertEq(emissions.TEAM_SHARE_PCT(), 15);
         assertEq(emissions.MAX_SELLER_SHARE_PCT(), 49);
-        assertEq(emissions.HALVING_INTERVAL(), 26);
+        assertEq(emissions.HALVING_INTERVAL(), 104);
         assertEq(emissions.currentEmissionRate(), INITIAL_EMISSION / EPOCH_DURATION);
     }
 
@@ -104,14 +104,14 @@ contract AntseedEmissionsTest is Test {
 
     function test_halvingSchedule() public view {
         assertEq(emissions.getEpochEmission(0), INITIAL_EMISSION);
-        assertEq(emissions.getEpochEmission(25), INITIAL_EMISSION); // last epoch before halving
-        assertEq(emissions.getEpochEmission(26), INITIAL_EMISSION / 2);
-        assertEq(emissions.getEpochEmission(52), INITIAL_EMISSION / 4);
-        assertEq(emissions.getEpochEmission(104), INITIAL_EMISSION / 16);
+        assertEq(emissions.getEpochEmission(103), INITIAL_EMISSION); // last epoch before halving
+        assertEq(emissions.getEpochEmission(104), INITIAL_EMISSION / 2);
+        assertEq(emissions.getEpochEmission(208), INITIAL_EMISSION / 4);
+        assertEq(emissions.getEpochEmission(416), INITIAL_EMISSION / 16);
     }
 
     function test_currentEmissionRate_afterHalving() public {
-        vm.warp(block.timestamp + EPOCH_DURATION * 26);
+        vm.warp(block.timestamp + EPOCH_DURATION * 104);
         uint256 expectedRate = (INITIAL_EMISSION / 2) / EPOCH_DURATION;
         assertEq(emissions.currentEmissionRate(), expectedRate);
     }

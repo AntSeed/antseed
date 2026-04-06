@@ -100,7 +100,7 @@ contract AntseedEmissions is Ownable, Pausable, ReentrancyGuard {
         registry = IAntseedRegistry(_registry);
         INITIAL_EMISSION = _initialEmission;
         EPOCH_DURATION = _epochDuration;
-        HALVING_INTERVAL = 26;
+        HALVING_INTERVAL = 104;
         genesis = block.timestamp;
 
         SELLER_SHARE_PCT = 50;

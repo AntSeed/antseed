@@ -93,7 +93,7 @@ contract Deploy is Script {
         // 9. AntseedEmissions(registry, initialEmission, epochDuration)
         bytes memory emissionsBytecode = abi.encodePacked(
             vm.getCode("AntseedEmissions.sol:AntseedEmissions"),
-            abi.encode(address(antseedRegistry), uint256(1_000_000e18), uint256(7 days))
+            abi.encode(address(antseedRegistry), uint256(5_000_000e18), uint256(7 days))
         );
         address emissions;
         assembly { emissions := create(0, add(emissionsBytecode, 0x20), mload(emissionsBytecode)) }
