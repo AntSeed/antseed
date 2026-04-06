@@ -12,7 +12,7 @@ import { classifyOnChainChannel } from './channel-session-state.js';
 import { peerIdToAddress } from '../types/peer.js';
 import { debugLog, debugWarn } from '../utils/debug.js';
 import { parseResponseUsage } from '../utils/response-usage.js';
-import { computeCostUsdc } from './pricing.js';
+import { computeCostUsdc, type ServicePricing } from './pricing.js';
 
 export interface BuyerNegotiatorConfig {}
 
@@ -35,6 +35,7 @@ interface LastResponseCost {
   inputContent: Uint8Array;
   outputContent: Uint8Array;
   latencyMs: number;
+  service?: string;
 }
 
 function parsePaymentRequiredBody(body: Uint8Array): Record<string, unknown> | null {
@@ -174,10 +175,11 @@ export class BuyerPaymentNegotiator {
     const sellerClaimedCost = lastCost?.costUsdc;
     const reportedInputTokens = lastCost?.inputTokens;
     const reportedOutputTokens = lastCost?.outputTokens;
+    const service = lastCost?.service;
     try {
       const { payload, topUpNeeded } = await this._bpm.signPerRequestAuth(
         peer.peerId,
-        { inputBytes, outputBytes, sellerClaimedCost, reportedInputTokens, reportedOutputTokens },
+        { inputBytes, outputBytes, sellerClaimedCost, reportedInputTokens, reportedOutputTokens, service },
       );
       pmux.sendSpendingAuth(payload);
       // Release held content to free memory — no longer needed after signing
@@ -322,10 +324,10 @@ export class BuyerPaymentNegotiator {
     }
   }
 
-  estimateCostFromResponse(peer: PeerInfo, response: SerializedHttpResponse): void {
+  estimateCostFromResponse(peer: PeerInfo, response: SerializedHttpResponse, service?: string): void {
     // Prefer session pricing (from PaymentRequired negotiation, includes service-specific rates)
     // over peer-level defaults which may be different from the actual service pricing.
-    const sessionPricing = this._bpm.getSessionPricing(peer.peerId);
+    const sessionPricing = this._bpm.getSessionPricing(peer.peerId, service);
     const inputPricePerM = sessionPricing?.inputUsdPerMillion ?? peer.defaultInputUsdPerMillion;
     const outputPricePerM = sessionPricing?.outputUsdPerMillion ?? peer.defaultOutputUsdPerMillion;
     if (inputPricePerM == null && outputPricePerM == null) return;
@@ -351,6 +353,7 @@ export class BuyerPaymentNegotiator {
       inputContent: new Uint8Array(0),
       outputContent: response.body,
       latencyMs: 0,
+      service,
     });
 
     debugLog(
@@ -508,6 +511,37 @@ export class BuyerPaymentNegotiator {
     this._negotiationLocks.clear();
   }
 
+  /**
+   * Build the full pricing map from peer metadata (defaults + all per-service overrides).
+   * This ensures the buyer knows pricing for every service the seller offers,
+   * not just the one that triggered the 402.
+   */
+  private _buildPricingMap(peer: PeerInfo): { defaults: ServicePricing; services: Record<string, ServicePricing> } | undefined {
+    const defaults: ServicePricing = {
+      inputUsdPerMillion: peer.defaultInputUsdPerMillion ?? 0,
+      outputUsdPerMillion: peer.defaultOutputUsdPerMillion ?? 0,
+    };
+    if (defaults.inputUsdPerMillion === 0 && defaults.outputUsdPerMillion === 0 && !peer.providerPricing) {
+      return undefined;
+    }
+
+    const services: Record<string, ServicePricing> = {};
+    if (peer.providerPricing) {
+      for (const entry of Object.values(peer.providerPricing)) {
+        if (entry.services) {
+          for (const [serviceName, sp] of Object.entries(entry.services)) {
+            services[serviceName] = {
+              inputUsdPerMillion: sp.inputUsdPerMillion,
+              outputUsdPerMillion: sp.outputUsdPerMillion,
+            };
+          }
+        }
+      }
+    }
+
+    return { defaults, services };
+  }
+
   private async _negotiatePayment(peer: PeerInfo, conn: PeerConnection): Promise<void> {
     // Per-peer mutex: if another request is already negotiating, wait for it
     const existing = this._negotiationLocks.get(peer.peerId);
@@ -590,8 +624,11 @@ export class BuyerPaymentNegotiator {
           }
         : undefined;
 
+    // Build full pricing map from peer metadata (defaults + all per-service overrides)
+    const pricingMap = this._buildPricingMap(peer);
+
     try {
-      await this._bpm.authorizeSpending(peer.peerId, pmux, minBudgetPerRequest, amount, pricing);
+      await this._bpm.authorizeSpending(peer.peerId, pmux, minBudgetPerRequest, amount, pricing, pricingMap);
       debugLog(`[BuyerNegotiator] SpendingAuth sent to seller ${peer.peerId.slice(0, 12)}..., waiting for AuthAck...`);
 
       await this._waitForLockConfirmation(peer.peerId);
