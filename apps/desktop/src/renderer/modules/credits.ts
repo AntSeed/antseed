@@ -13,6 +13,7 @@ export type CreditsModuleApi = {
   startPeriodicRefresh: () => void;
   stopPeriodicRefresh: () => void;
   getAvailableUsdc: () => string;
+  notifyPaymentCardVisible: () => void;
 };
 
 const CREDITS_REFRESH_INTERVAL_MS = 60_000;
@@ -24,6 +25,7 @@ export function initCreditsModule({ bridge, uiState, onBalanceSufficientForPayme
   let refreshTimer: ReturnType<typeof setInterval> | null = null;
   let fastRefreshTimer: ReturnType<typeof setInterval> | null = null;
   let autoRetryCount = 0;
+  let lastCardVisibleAt = 0;
 
   async function refreshCredits(): Promise<void> {
     if (!bridge?.creditsGetInfo) return;
@@ -77,11 +79,6 @@ export function initCreditsModule({ bridge, uiState, onBalanceSufficientForPayme
           }
         }
 
-        // Reset retry counter when the payment card is dismissed
-        if (!uiState.chatPaymentApprovalVisible) {
-          autoRetryCount = 0;
-        }
-
         // Start/stop fast polling based on whether the payment card is visible
         if (uiState.chatPaymentApprovalVisible && !fastRefreshTimer) {
           startFastRefresh();
@@ -133,5 +130,16 @@ export function initCreditsModule({ bridge, uiState, onBalanceSufficientForPayme
     return uiState.creditsAvailableUsdc;
   }
 
-  return { refreshCredits, startPeriodicRefresh, stopPeriodicRefresh, getAvailableUsdc };
+  /**
+   * Call when the payment approval card becomes visible (new 402 cycle).
+   * Resets the auto-retry counter and starts fast polling immediately.
+   */
+  function notifyPaymentCardVisible(): void {
+    autoRetryCount = 0;
+    lastCardVisibleAt = Date.now();
+    startFastRefresh();
+    void refreshCredits();
+  }
+
+  return { refreshCredits, startPeriodicRefresh, stopPeriodicRefresh, getAvailableUsdc, notifyPaymentCardVisible };
 }

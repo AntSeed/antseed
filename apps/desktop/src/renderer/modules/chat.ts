@@ -56,6 +56,7 @@ type ChatModuleOptions = {
   bridge?: DesktopBridge;
   uiState: RendererUiState;
   appendSystemLog: (message: string) => void;
+  onPaymentCardShown?: () => void;
 };
 
 export type ChatModuleApi = {
@@ -83,6 +84,7 @@ export function initChatModule({
   bridge,
   uiState,
   appendSystemLog,
+  onPaymentCardShown,
 }: ChatModuleOptions): ChatModuleApi {
   // ---------------------------------------------------------------------------
   // Constants
@@ -188,6 +190,7 @@ export function initChatModule({
     const { peerId } = primePaymentApprovalState(amountBaseUnits);
     uiState.chatPaymentApprovalVisible = true;
     notifyUiStateChanged();
+    onPaymentCardShown?.();
     if (peerId) {
       void fetchPeerInfo(peerId);
     }
