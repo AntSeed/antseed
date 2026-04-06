@@ -165,6 +165,7 @@ export class SellerRequestHandler {
       let statusCode = 500;
       let responseBody: Uint8Array = new Uint8Array(0);
       let streamedResponseStarted = false;
+      let streamDoneChunkHeld = false;
       let responseUsage = { inputTokens: 0, outputTokens: 0 };
       this.adjustProviderLoad(provider.name, 1);
       try {
@@ -177,6 +178,11 @@ export class SellerRequestHandler {
             },
             onResponseChunk: (chunk) => {
               if (!streamedResponseStarted) return;
+              // Hold the done chunk — send it after usage is parsed so we can attach cost info
+              if (chunk.done) {
+                streamDoneChunkHeld = true;
+                return;
+              }
               mux.sendProxyChunk(chunk);
             },
           });
@@ -187,6 +193,14 @@ export class SellerRequestHandler {
           if (!streamedResponseStarted) {
             const responseToSend = this._injectCostHeaders(response, provider, request, buyerPeerId, responseUsage);
             mux.sendProxyResponse(responseToSend);
+          } else if (streamDoneChunkHeld) {
+            // Streaming: inject cost trailer into the done chunk so the buyer gets real token counts
+            const costTrailer = this._buildCostTrailer(responseUsage, provider, request, buyerPeerId);
+            mux.sendProxyChunk({
+              requestId: request.requestId,
+              data: costTrailer,
+              done: true,
+            });
           }
         } catch (err) {
           const message = err instanceof Error ? err.message : "Internal error";
@@ -378,6 +392,38 @@ export class SellerRequestHandler {
   }
 
   /**
+   * Build a cost trailer for the streaming done-chunk.
+   * The buyer can parse this JSON from the done chunk data to get seller-reported token counts.
+   */
+  private _buildCostTrailer(
+    usage: { inputTokens: number; outputTokens: number },
+    provider: Provider,
+    request: SerializedHttpRequest,
+    buyerPeerId: string,
+  ): Uint8Array {
+    const spm = this._deps.sellerPaymentManager;
+    if (!spm || !spm.hasSession(buyerPeerId)) return new Uint8Array(0);
+
+    const pricing = this.resolveProviderPricing(provider, request);
+    const costUsdc = computeCostUsdc(usage.inputTokens, usage.outputTokens, pricing);
+    const session = spm.getChannelByPeer(buyerPeerId);
+    const cumulativeCost = session ? spm.getCumulativeSpend(session.sessionId) : 0n;
+
+    const trailer = JSON.stringify({
+      'x-antseed-input-tokens': String(usage.inputTokens),
+      'x-antseed-output-tokens': String(usage.outputTokens),
+      'x-antseed-cost': costUsdc.toString(),
+      'x-antseed-cumulative-cost': cumulativeCost.toString(),
+    });
+
+    debugLog(
+      `[SellerHandler] Cost trailer for streaming: in=${usage.inputTokens} out=${usage.outputTokens} cost=${costUsdc}`,
+    );
+
+    return new TextEncoder().encode(trailer);
+  }
+
+  /**
    * Inject cost headers into a non-streamed response before sending to buyer.
    */
   private _injectCostHeaders(
@@ -395,6 +441,11 @@ export class SellerRequestHandler {
     const costUsdc = computeCostUsdc(resolvedUsage.inputTokens, resolvedUsage.outputTokens, pricing);
     const session = spm.getChannelByPeer(buyerPeerId);
     const cumulativeCost = session ? spm.getCumulativeSpend(session.sessionId) : 0n;
+
+    debugLog(
+      `[SellerHandler] Cost headers: in=${resolvedUsage.inputTokens} out=${resolvedUsage.outputTokens} ` +
+      `cost=${costUsdc} cumCost=${cumulativeCost}`,
+    );
 
     return {
       requestId: response.requestId,

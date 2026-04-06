@@ -260,8 +260,15 @@ export class BuyerRequestHandler {
             return;
           }
 
+          // Parse cost trailer from done chunk data (seller sends cost info here for streaming)
+          const costHeaders = parseCostTrailer(chunk.data);
+          const finalHeaders = costHeaders
+            ? { ...streamStartResponse.headers, ...costHeaders }
+            : streamStartResponse.headers;
+
           finish({
             ...streamStartResponse,
+            headers: finalHeaders,
             body: concatChunks(streamChunks),
           });
         },
@@ -314,4 +321,27 @@ function concatChunks(chunks: Uint8Array[]): Uint8Array {
     offset += chunk.length;
   }
   return output;
+}
+
+const COST_TRAILER_KEY = 'x-antseed-cost';
+
+/**
+ * Parse a cost trailer from the done chunk's data.
+ * The seller sends a JSON object with cost headers in the done chunk for streaming responses.
+ * Returns the parsed headers or null if the data is not a valid cost trailer.
+ */
+function parseCostTrailer(data: Uint8Array): Record<string, string> | null {
+  if (data.length === 0 || data.length > 512) return null;
+  try {
+    const text = new TextDecoder().decode(data);
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    if (parsed && typeof parsed === 'object' && COST_TRAILER_KEY in parsed) {
+      const result: Record<string, string> = {};
+      for (const [k, v] of Object.entries(parsed)) {
+        if (typeof v === 'string') result[k] = v;
+      }
+      return result;
+    }
+  } catch { /* not a cost trailer */ }
+  return null;
 }
