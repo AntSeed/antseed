@@ -8,6 +8,25 @@ import {
 } from '../src/types/http.js';
 import type { PeerInfo } from '../src/types/peer.js';
 
+const STREAM_COST_TRAILER_MAGIC = new TextEncoder().encode('ANTSEED_COST_TRAILER_V1');
+
+function frameCostTrailer(payload: Uint8Array, trailerHeaders: Record<string, string>): Uint8Array {
+  const trailer = new TextEncoder().encode(JSON.stringify(trailerHeaders));
+  const lengthBytes = new Uint8Array(4);
+  new DataView(lengthBytes.buffer).setUint32(0, trailer.length, false);
+
+  const framed = new Uint8Array(payload.length + trailer.length + STREAM_COST_TRAILER_MAGIC.length + 4);
+  let offset = 0;
+  framed.set(payload, offset);
+  offset += payload.length;
+  framed.set(trailer, offset);
+  offset += trailer.length;
+  framed.set(STREAM_COST_TRAILER_MAGIC, offset);
+  offset += STREAM_COST_TRAILER_MAGIC.length;
+  framed.set(lengthBytes, offset);
+  return framed;
+}
+
 interface StreamingHarness {
   readonly mux: { cancelProxyRequest: ReturnType<typeof vi.fn> };
   waitUntilRegistered: () => Promise<void>;
@@ -169,6 +188,83 @@ describe('BuyerRequestHandler streaming security guards', () => {
 
     const response = await promise;
     expect([...response.body]).toEqual([1, 2, 3]);
+  });
+
+  it('preserves binary terminal chunk payload when a framed trailer is appended', async () => {
+    const requestId = 'stream-terminal-binary';
+    const { handler, harness } = createHandler({
+      maxStreamBufferBytes: 1024,
+      maxStreamDurationMs: 60_000,
+    });
+    const peer = { peerId: 'b'.repeat(40) } as PeerInfo;
+    const request: SerializedHttpRequest = {
+      requestId,
+      method: 'POST',
+      path: '/v1/messages',
+      headers: { accept: 'application/octet-stream' },
+      body: new Uint8Array(0),
+    };
+
+    const payload = new Uint8Array([1, 0, 2, 3]);
+    const framedDoneChunk = frameCostTrailer(payload, {
+      'x-antseed-cost': '42',
+      'x-antseed-input-tokens': '7',
+    });
+
+    const chunks: Uint8Array[] = [];
+    const promise = handler.sendRequest(peer, request, {
+      onResponseStart: () => {},
+      onResponseChunk: (chunk: SerializedHttpResponseChunk) => {
+        if (chunk.data.length > 0) chunks.push(chunk.data);
+      },
+    });
+    await harness.waitUntilRegistered();
+    harness.emitStreamingStart();
+    harness.emitChunk({
+      requestId,
+      data: framedDoneChunk,
+      done: true,
+    });
+
+    const response = await promise;
+    expect([...response.body]).toEqual([1, 0, 2, 3]);
+    expect([...chunks[0]!]).toEqual([1, 0, 2, 3]);
+    expect(response.headers['x-antseed-cost']).toBe('42');
+    expect(response.headers['x-antseed-input-tokens']).toBe('7');
+  });
+
+  it('does not treat an unframed final JSON chunk as a trailer', async () => {
+    const requestId = 'stream-json-final';
+    const { handler, harness } = createHandler({
+      maxStreamBufferBytes: 1024,
+      maxStreamDurationMs: 60_000,
+    });
+    const peer = { peerId: 'b'.repeat(40) } as PeerInfo;
+    const request: SerializedHttpRequest = {
+      requestId,
+      method: 'POST',
+      path: '/v1/messages',
+      headers: { accept: 'application/json' },
+      body: new Uint8Array(0),
+    };
+
+    const rawJson = new TextEncoder().encode(JSON.stringify({
+      'x-antseed-cost': 'should-stay-in-body',
+      ok: true,
+    }));
+
+    const promise = handler.sendRequest(peer, request);
+    await harness.waitUntilRegistered();
+    harness.emitStreamingStart();
+    harness.emitChunk({
+      requestId,
+      data: rawJson,
+      done: true,
+    });
+
+    const response = await promise;
+    expect(new TextDecoder().decode(response.body)).toBe(new TextDecoder().decode(rawJson));
+    expect(response.headers['x-antseed-cost']).toBeUndefined();
   });
 
   it('does not enforce buffer limit in streaming callback mode', async () => {
