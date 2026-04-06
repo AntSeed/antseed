@@ -173,20 +173,18 @@ contract AntseedDeposits is EIP712, Ownable, ReentrancyGuard {
     function chargeAndCreditPayouts(
         address buyer,
         address seller,
-        uint256 chargeAmount,
-        uint256 reservedAmount,
+        uint256 amount,
         uint256 platformFee,
         address protocolReserve
     ) external onlyChannels nonReentrant {
-        if (chargeAmount > reservedAmount) revert InvalidAmount();
-        if (platformFee > chargeAmount) revert InvalidAmount();
+        if (platformFee > amount) revert InvalidAmount();
 
         BuyerAccount storage ba = buyers[buyer];
-        ba.balance -= chargeAmount;
-        ba.reserved -= reservedAmount;
+        ba.balance -= amount;
+        ba.reserved -= amount;
         ba.lastActivityAt = block.timestamp;
 
-        uint256 sellerPayout = chargeAmount - platformFee;
+        uint256 sellerPayout = amount - platformFee;
 
         // Track buyer-seller diversity for credit limit calculation
         if (!_buyerSellerPairs[buyer][seller]) {

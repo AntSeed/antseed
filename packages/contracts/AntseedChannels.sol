@@ -162,9 +162,6 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         // Verify buyer's ReserveAuth signature — binds channelId, maxAmount, deadline
         _verifyReserveAuth(channelId, maxAmount, deadline, buyer, buyerSig);
 
-        // Lock buyer's USDC in Deposits (stays there, no transfer)
-        IAntseedDeposits(registry.deposits()).lockForChannel(buyer, maxAmount);
-
         channels[channelId] = Channel({
             buyer: buyer,
             seller: msg.sender,
@@ -178,6 +175,10 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         });
 
         activeChannelCount[msg.sender]++;
+
+        // External call last (checks-effects-interactions)
+        IAntseedDeposits(registry.deposits()).lockForChannel(buyer, maxAmount);
+
         emit Reserved(channelId, buyer, msg.sender, maxAmount);
     }
 
@@ -290,16 +291,20 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
             _settleSpend(channelId, channel, finalAmount, metadata, buyerSig);
         }
 
-        // Release remaining reserved funds back to buyer
         uint128 unsettled = channel.deposit - channel.settled;
-        if (unsettled > 0) {
-            IAntseedDeposits(registry.deposits()).releaseLock(channel.buyer, unsettled);
-        }
 
         channel.status = ChannelStatus.Settled;
         activeChannelCount[channel.seller]--;
 
-        _recordChannelComplete(channel);
+        uint256 agentId = IAntseedStaking(registry.staking()).getAgentId(channel.seller);
+        if (agentId > 0) {
+            _agentStats[agentId].channelCount++;
+        }
+
+        // Release remaining reserved funds back to buyer
+        if (unsettled > 0) {
+            IAntseedDeposits(registry.deposits()).releaseLock(channel.buyer, unsettled);
+        }
 
         emit ChannelClosed(channelId, channel.buyer, channel.seller, channel.settled, unsettled);
     }
@@ -336,62 +341,30 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         if (channel.closeRequestedAt == 0) revert CloseNotReady();
         if (block.timestamp < channel.closeRequestedAt + TIMEOUT_GRACE_PERIOD) revert CloseNotReady();
 
-        // Release all remaining reserved back to buyer's available balance
         uint128 remainingReserved = channel.deposit - channel.settled;
-        if (remainingReserved > 0) {
-            IAntseedDeposits(registry.deposits()).releaseLock(channel.buyer, remainingReserved);
-        }
 
         channel.status = ChannelStatus.TimedOut;
         activeChannelCount[channel.seller]--;
 
-        _recordWithdrawStats(channel);
+        uint256 agentId = IAntseedStaking(registry.staking()).getAgentId(channel.seller);
+        if (agentId > 0) {
+            if (channel.settled == 0) {
+                _agentStats[agentId].ghostCount++;
+            } else {
+                _agentStats[agentId].channelCount++;
+            }
+        }
+
+        // External call last (checks-effects-interactions)
+        if (remainingReserved > 0) {
+            IAntseedDeposits(registry.deposits()).releaseLock(channel.buyer, remainingReserved);
+        }
 
         emit ChannelWithdrawn(channelId, channel.buyer, channel.seller, remainingReserved);
     }
 
-    /**
-     * @notice Batch request close on multiple channels for a single buyer.
-     *         Operator-only. Skips channels that are not active or already closing.
-     */
-    function requestCloseAll(address buyer, bytes32[] calldata channelIds) external {
-        _requireOperator(buyer);
-        for (uint256 i = 0; i < channelIds.length; i++) {
-            Channel storage channel = channels[channelIds[i]];
-            if (channel.buyer != buyer) continue;
-            if (channel.status != ChannelStatus.Active) continue;
-            if (channel.closeRequestedAt != 0) continue;
-            channel.closeRequestedAt = block.timestamp;
-            emit CloseRequested(channelIds[i], buyer, channel.seller, block.timestamp + TIMEOUT_GRACE_PERIOD);
-        }
-    }
 
-    /**
-     * @notice Batch withdraw from multiple channels for a single buyer.
-     *         Operator-only. Skips channels not ready for withdrawal.
-     */
-    function withdrawAll(address buyer, bytes32[] calldata channelIds) external nonReentrant {
-        _requireOperator(buyer);
-        for (uint256 i = 0; i < channelIds.length; i++) {
-            Channel storage channel = channels[channelIds[i]];
-            if (channel.buyer != buyer) continue;
-            if (channel.status != ChannelStatus.Active) continue;
-            if (channel.closeRequestedAt == 0) continue;
-            if (block.timestamp < channel.closeRequestedAt + TIMEOUT_GRACE_PERIOD) continue;
 
-            uint128 remainingReserved = channel.deposit - channel.settled;
-            if (remainingReserved > 0) {
-                IAntseedDeposits(registry.deposits()).releaseLock(buyer, remainingReserved);
-            }
-
-            channel.status = ChannelStatus.TimedOut;
-            activeChannelCount[channel.seller]--;
-
-            _recordWithdrawStats(channel);
-
-            emit ChannelWithdrawn(channelIds[i], buyer, channel.seller, remainingReserved);
-        }
-    }
 
     /// @dev Check that msg.sender is the buyer's authorized operator (stored in Deposits).
     function _requireOperator(address buyer) internal view {
@@ -417,80 +390,40 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         _verifySpendingAuth(channelId, cumulativeAmount, metadataHash, channel.buyer, buyerSig);
 
         uint128 delta = cumulativeAmount - channel.settled;
-        uint256 platformFee = _chargeAndSettle(channel, delta, delta);
+
+        if (delta == 0) return;
+
+        address _protocolReserve = registry.protocolReserve();
+        uint256 platformFee = (uint256(delta) * PLATFORM_FEE_BPS) / 10000;
+        if (_protocolReserve == address(0)) platformFee = 0;
 
         channel.settled = cumulativeAmount;
         channel.metadataHash = metadataHash;
         channel.settledAt = block.timestamp;
 
-        _recordSettleStats(channel, delta);
-        _recordEmissions(channel, delta);
-
-        emit ChannelSettled(channelId, channel.buyer, channel.seller, cumulativeAmount, delta, channel.settled, platformFee, metadata);
-    }
-
-    function _chargeAndSettle(
-        Channel storage channel,
-        uint128 delta,
-        uint128 reservedToFree
-    ) internal returns (uint256 platformFee) {
-        if (delta == 0 && reservedToFree > 0) {
-            // No charge but release lock (e.g., close with no additional spend)
-            IAntseedDeposits(registry.deposits()).releaseLock(channel.buyer, reservedToFree);
-            return 0;
+        uint256 agentId = IAntseedStaking(registry.staking()).getAgentId(channel.seller);
+        if (agentId > 0) {
+            AgentStats storage s = _agentStats[agentId];
+            s.totalVolumeUsdc += delta;
+            s.lastSettledAt = uint64(block.timestamp);
         }
-        if (delta == 0) return 0;
 
-        address _protocolReserve = registry.protocolReserve();
-        platformFee = (uint256(delta) * PLATFORM_FEE_BPS) / 10000;
-        if (_protocolReserve == address(0)) platformFee = 0;
+        address _emissions = registry.emissions();
+        if (_emissions != address(0)) {
+            IAntseedEmissions(_emissions).accrueSellerPoints(channel.seller, delta);
+            IAntseedEmissions(_emissions).accrueBuyerPoints(channel.buyer, delta);
+        }
 
+        // External calls last (checks-effects-interactions)
         IAntseedDeposits(registry.deposits()).chargeAndCreditPayouts(
             channel.buyer,
             channel.seller,
             delta,
-            reservedToFree,
             platformFee,
             _protocolReserve
         );
-    }
 
-    /// @dev Update agent stats incrementally. Called on every settle and close.
-    function _recordSettleStats(Channel storage channel, uint128 delta) internal {
-        if (delta == 0) return;
-        uint256 agentId = IAntseedStaking(registry.staking()).getAgentId(channel.seller);
-        if (agentId == 0) return;
-
-        AgentStats storage s = _agentStats[agentId];
-        s.totalVolumeUsdc += delta;
-        s.lastSettledAt = uint64(block.timestamp);
-    }
-
-    /// @dev Mark channel as completed. Called on close only.
-    function _recordChannelComplete(Channel storage channel) internal {
-        uint256 agentId = IAntseedStaking(registry.staking()).getAgentId(channel.seller);
-        if (agentId == 0) return;
-        _agentStats[agentId].channelCount++;
-    }
-
-    /// @dev Record withdraw outcome — ghost if never settled, otherwise completed.
-    function _recordWithdrawStats(Channel storage channel) internal {
-        uint256 agentId = IAntseedStaking(registry.staking()).getAgentId(channel.seller);
-        if (agentId == 0) return;
-
-        if (channel.settled == 0) {
-            _agentStats[agentId].ghostCount++;
-        } else {
-            _agentStats[agentId].channelCount++;
-        }
-    }
-
-    function _recordEmissions(Channel storage channel, uint128 delta) internal {
-        address _emissions = registry.emissions();
-        if (delta > 0 && _emissions != address(0)) {
-            IAntseedEmissions(_emissions).accrueSellerPoints(channel.seller, delta);
-            IAntseedEmissions(_emissions).accrueBuyerPoints(channel.buyer, delta);
-        }
+        emit ChannelSettled(channelId, channel.buyer, channel.seller, cumulativeAmount, delta, channel.settled, platformFee, metadata);
     }
 
     function _verifyReserveAuth(
@@ -508,9 +441,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
                 deadline
             )
         );
-        bytes32 digest = _hashTypedDataV4(structHash);
-        address recovered = ECDSA.recover(digest, signature);
-        if (recovered != buyer) revert InvalidSignature();
+        _verifySignature(structHash, signature, buyer);
     }
 
     function _verifySpendingAuth(
@@ -528,9 +459,17 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
                 metadataHash
             )
         );
+        _verifySignature(structHash, signature, buyer);
+    }
+
+    function _verifySignature(
+        bytes32 structHash,
+        bytes calldata signature,
+        address signer
+    ) internal view returns (address) {
         bytes32 digest = _hashTypedDataV4(structHash);
         address recovered = ECDSA.recover(digest, signature);
-        if (recovered != buyer) revert InvalidSignature();
+        if (recovered != signer) revert InvalidSignature();
     }
 
     // ═══════════════════════════════════════════════════════════════════
