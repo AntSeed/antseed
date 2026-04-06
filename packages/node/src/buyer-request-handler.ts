@@ -294,7 +294,8 @@ export class BuyerRequestHandler {
     }
 
     if (negotiator) {
-      negotiator.estimateCostFromResponse(peer, response);
+      const service = extractServiceFromBody(req.body);
+      negotiator.estimateCostFromResponse(peer, response, service);
       negotiator.parseCostHeaders(peer.peerId, response);
       negotiator.recordResponseContent(peer.peerId, req.body, response.body, Date.now() - startTime);
       // Send SpendingAuth immediately after response so the seller always has
@@ -353,4 +354,14 @@ function parseCostTrailer(data: Uint8Array): Record<string, string> | null {
     }
   } catch { /* not a cost trailer */ }
   return null;
+}
+
+/** Extract the service/model name from a JSON request body, or undefined if not found. */
+function extractServiceFromBody(body: Uint8Array): string | undefined {
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>;
+    const service = parsed.service ?? parsed.model;
+    if (typeof service === 'string' && service.length > 0) return service;
+  } catch { /* not JSON or no model field */ }
+  return undefined;
 }

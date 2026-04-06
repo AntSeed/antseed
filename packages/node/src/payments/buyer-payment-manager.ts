@@ -86,8 +86,8 @@ export class BuyerPaymentManager {
   /** sellerPeerId -> buyer-verified cumulative cost from bytes/4 */
   private readonly _verifiedCost = new Map<string, bigint>();
 
-  /** sellerPeerId -> pricing learned from 402 / peer metadata at session start */
-  private readonly _sessionPricing = new Map<string, ServicePricing>();
+  /** sellerPeerId -> full pricing map (defaults + per-service overrides from peer metadata / 402) */
+  private readonly _sessionPricing = new Map<string, { defaults: ServicePricing; services: Record<string, ServicePricing> }>();
 
   /** Cumulative response token totals per seller, tracked independently of signing metadata. */
   private readonly _responseTokenTotals = new Map<string, { input: number; output: number; requests: number }>();
@@ -265,6 +265,9 @@ export class BuyerPaymentManager {
    * The initial cumulativeAmount is set to the seller's minBudgetPerRequest.
    *
    * @param pricing Token pricing from the seller's 402 / peer metadata.
+   * @param pricingMap Full pricing map (defaults + per-service) from peer metadata. If provided,
+   *   merges with existing session pricing. The `pricing` arg is used as the service-specific
+   *   override for the service that triggered the 402.
    */
   async authorizeSpending(
     sellerPeerId: string,
@@ -272,6 +275,7 @@ export class BuyerPaymentManager {
     minBudgetPerRequest: bigint,
     reserveAmountOrPricing?: bigint | ServicePricing,
     pricingArg?: ServicePricing,
+    pricingMap?: { defaults: ServicePricing; services: Record<string, ServicePricing> },
   ): Promise<string> {
     const sellerEvmAddr = peerIdToAddress(sellerPeerId);
     const reserveAmount = typeof reserveAmountOrPricing === 'bigint'
@@ -292,9 +296,21 @@ export class BuyerPaymentManager {
     // Clear confirmation state so we wait for a fresh AuthAck on the new session
     this._confirmedPeers.delete(sellerPeerId);
 
-    // Store pricing for this session
-    if (pricing) {
-      this._sessionPricing.set(sellerPeerId, pricing);
+    // Store full pricing map (defaults + all per-service overrides).
+    // Merge 402-negotiated pricing on top of peer-metadata defaults so
+    // the seller's live rate takes precedence over cached peer metadata.
+    if (pricingMap) {
+      const mergedDefaults = pricing
+        ? { ...pricingMap.defaults, ...pricing }
+        : pricingMap.defaults;
+      this._sessionPricing.set(sellerPeerId, { defaults: mergedDefaults, services: pricingMap.services });
+    } else if (pricing) {
+      // Legacy: single pricing, store as defaults
+      const existing = this._sessionPricing.get(sellerPeerId);
+      this._sessionPricing.set(sellerPeerId, {
+        defaults: pricing,
+        services: existing?.services ?? {},
+      });
     }
 
     // Generate random salt and compute deterministic channelId
@@ -390,8 +406,9 @@ export class BuyerPaymentManager {
     sellerPeerId: string,
     inputBytes: Uint8Array,
     outputBytes: Uint8Array,
+    service?: string,
   ): { cost: bigint; inputTokens: number; outputTokens: number } | null {
-    const pricing = this._sessionPricing.get(sellerPeerId);
+    const pricing = this.getSessionPricing(sellerPeerId, service);
     if (!pricing) return null;
     return estimateCostFromBytes(inputBytes, outputBytes, pricing);
   }
@@ -484,6 +501,7 @@ export class BuyerPaymentManager {
       sellerClaimedCost?: bigint;
       reportedInputTokens?: bigint;
       reportedOutputTokens?: bigint;
+      service?: string;
     },
   ): Promise<PerRequestAuthResult> {
     const session = this.getActiveSession(sellerPeerId);
@@ -503,8 +521,8 @@ export class BuyerPaymentManager {
     if (hasReportedTokens) {
       estimatedInputTokens = responseStats.reportedInputTokens ?? 0n;
       estimatedOutputTokens = responseStats.reportedOutputTokens ?? 0n;
-      // Compute cost from reported tokens
-      const pricing = this._sessionPricing.get(sellerPeerId);
+      // Compute cost from reported tokens using service-specific pricing
+      const pricing = this.getSessionPricing(sellerPeerId, responseStats.service);
       if (pricing) {
         const cost = computeCostUsdc(Number(estimatedInputTokens), Number(estimatedOutputTokens), pricing);
         buyerEstimatedRequestCost = cost;
@@ -517,7 +535,7 @@ export class BuyerPaymentManager {
       );
     } else {
       // Fall back to byte-based estimation
-      const estimate = this._estimateResponseCost(sellerPeerId, responseStats.inputBytes, responseStats.outputBytes);
+      const estimate = this._estimateResponseCost(sellerPeerId, responseStats.inputBytes, responseStats.outputBytes, responseStats.service);
       estimatedInputTokens = estimate ? BigInt(estimate.inputTokens) : 0n;
       estimatedOutputTokens = estimate ? BigInt(estimate.outputTokens) : 0n;
       buyerEstimatedRequestCost = estimate ? estimate.cost : 0n;
@@ -823,9 +841,15 @@ export class BuyerPaymentManager {
     return this._responseTokenTotals.get(sellerPeerId) ?? null;
   }
 
-  /** Get the session pricing for a seller (from PaymentRequired negotiation), or null if not set. */
-  getSessionPricing(sellerPeerId: string): ServicePricing | null {
-    return this._sessionPricing.get(sellerPeerId) ?? null;
+  /** Get the session pricing for a seller+service. Resolves service-specific pricing first, then defaults. */
+  getSessionPricing(sellerPeerId: string, service?: string): ServicePricing | null {
+    const map = this._sessionPricing.get(sellerPeerId);
+    if (!map) return null;
+    if (service) {
+      const servicePricing = map.services[service];
+      if (servicePricing) return servicePricing;
+    }
+    return map.defaults;
   }
 
   /** Check if a session has been confirmed via AuthAck. */
