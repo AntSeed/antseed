@@ -172,10 +172,12 @@ export class BuyerPaymentNegotiator {
     const inputBytes = lastCost?.inputContent ?? new Uint8Array(0);
     const outputBytes = lastCost?.outputContent ?? new Uint8Array(0);
     const sellerClaimedCost = lastCost?.costUsdc;
+    const reportedInputTokens = lastCost?.inputTokens;
+    const reportedOutputTokens = lastCost?.outputTokens;
     try {
       const { payload, topUpNeeded } = await this._bpm.signPerRequestAuth(
         peer.peerId,
-        { inputBytes, outputBytes, sellerClaimedCost },
+        { inputBytes, outputBytes, sellerClaimedCost, reportedInputTokens, reportedOutputTokens },
       );
       pmux.sendSpendingAuth(payload);
       // Release held content to free memory — no longer needed after signing
@@ -321,8 +323,11 @@ export class BuyerPaymentNegotiator {
   }
 
   estimateCostFromResponse(peer: PeerInfo, response: SerializedHttpResponse): void {
-    const inputPricePerM = peer.defaultInputUsdPerMillion;
-    const outputPricePerM = peer.defaultOutputUsdPerMillion;
+    // Prefer session pricing (from PaymentRequired negotiation, includes service-specific rates)
+    // over peer-level defaults which may be different from the actual service pricing.
+    const sessionPricing = this._bpm.getSessionPricing(peer.peerId);
+    const inputPricePerM = sessionPricing?.inputUsdPerMillion ?? peer.defaultInputUsdPerMillion;
+    const outputPricePerM = sessionPricing?.outputUsdPerMillion ?? peer.defaultOutputUsdPerMillion;
     if (inputPricePerM == null && outputPricePerM == null) return;
 
     const usage = parseResponseUsage(response.body);
@@ -352,6 +357,10 @@ export class BuyerPaymentNegotiator {
       `[BuyerNegotiator] Estimated cost for ${peer.peerId.slice(0, 12)}...: ` +
       `cost=${costUsdc} (in=${inputTokens} out=${outputTokens}, estimated=${usage.inputTokens === 0 && usage.outputTokens === 0})`,
     );
+    debugLog(
+      `[BuyerNegotiator] Response usage: in=${inputTokens} out=${outputTokens} ` +
+      `bodyLen=${response.body.length} cost=${costUsdc}`,
+    );
 
     this._bpm.recordAndPersistTokens(peer.peerId, inputTokens, outputTokens);
   }
@@ -361,11 +370,19 @@ export class BuyerPaymentNegotiator {
     if (!costHeader) return;
 
     try {
+      const sellerIn = BigInt(response.headers['x-antseed-input-tokens'] ?? '0');
+      const sellerOut = BigInt(response.headers['x-antseed-output-tokens'] ?? '0');
+      const sellerCost = BigInt(costHeader);
+      debugLog(
+        `[BuyerNegotiator] Seller cost headers: in=${sellerIn} out=${sellerOut} ` +
+        `cost=${sellerCost} cumCost=${response.headers['x-antseed-cumulative-cost'] ?? '0'}`,
+      );
       const existing = this._lastResponseCost.get(peerId);
       this._lastResponseCost.set(peerId, {
-        costUsdc: BigInt(costHeader),
-        inputTokens: BigInt(response.headers['x-antseed-input-tokens'] ?? '0'),
-        outputTokens: BigInt(response.headers['x-antseed-output-tokens'] ?? '0'),
+        costUsdc: sellerCost > 0n ? sellerCost : (existing?.costUsdc ?? 0n),
+        // Only overwrite tokens if seller reports non-zero — otherwise keep buyer's parsed values
+        inputTokens: sellerIn > 0n ? sellerIn : (existing?.inputTokens ?? 0n),
+        outputTokens: sellerOut > 0n ? sellerOut : (existing?.outputTokens ?? 0n),
         cumulativeCost: BigInt(response.headers['x-antseed-cumulative-cost'] ?? '0'),
         inputContent: existing?.inputContent ?? new Uint8Array(0),
         outputContent: existing?.outputContent ?? response.body,
@@ -377,6 +394,9 @@ export class BuyerPaymentNegotiator {
   }
 
   recordResponseContent(peerId: string, reqBody: Uint8Array, resBody: Uint8Array, latencyMs: number): void {
+    debugLog(
+      `[BuyerNegotiator] recordResponseContent: reqBody=${reqBody.length}B resBody=${resBody.length}B latency=${latencyMs}ms`,
+    );
     const existing = this._lastResponseCost.get(peerId);
     if (existing) {
       this._lastResponseCost.set(peerId, {

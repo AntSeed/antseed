@@ -22,7 +22,7 @@ import type { SpendingAuthMessage, ReserveAuthMessage, SpendingAuthMetadata } fr
 import { debugLog, debugWarn } from '../utils/debug.js';
 import { peerIdToAddress } from '../types/peer.js';
 import { ChannelStore, type StoredChannel } from './channel-store.js';
-import { estimateCostFromBytes, type ServicePricing } from './pricing.js';
+import { estimateCostFromBytes, computeCostUsdc, type ServicePricing } from './pricing.js';
 
 // ── Response cost header constants ───────────────────────────────
 const HEADER_COST = 'x-antseed-cost';
@@ -478,20 +478,55 @@ export class BuyerPaymentManager {
    */
   async signPerRequestAuth(
     sellerPeerId: string,
-    responseStats: { inputBytes: Uint8Array; outputBytes: Uint8Array; sellerClaimedCost?: bigint },
+    responseStats: {
+      inputBytes: Uint8Array;
+      outputBytes: Uint8Array;
+      sellerClaimedCost?: bigint;
+      reportedInputTokens?: bigint;
+      reportedOutputTokens?: bigint;
+    },
   ): Promise<PerRequestAuthResult> {
     const session = this.getActiveSession(sellerPeerId);
     if (!session) {
       throw new Error(`[BuyerPayment] No active session for seller ${sellerPeerId.slice(0, 12)}... — call authorizeSpending() first`);
     }
 
-    // Estimate cost from response bytes (buyer's independent estimate) and accumulate
-    const estimate = this._estimateResponseCost(sellerPeerId, responseStats.inputBytes, responseStats.outputBytes);
-    const estimatedInputTokens = estimate ? BigInt(estimate.inputTokens) : 0n;
-    const estimatedOutputTokens = estimate ? BigInt(estimate.outputTokens) : 0n;
-    const buyerEstimatedRequestCost = estimate ? estimate.cost : 0n;
-    if (estimate) {
-      this._accumulateVerifiedCost(sellerPeerId, estimate);
+    // Prefer reported token counts (from seller headers or buyer's parsed response usage)
+    // over byte-based estimation. Byte estimation inflates tokens due to JSON/SSE overhead.
+    const hasReportedTokens = (responseStats.reportedInputTokens != null && responseStats.reportedInputTokens > 0n) ||
+      (responseStats.reportedOutputTokens != null && responseStats.reportedOutputTokens > 0n);
+
+    let estimatedInputTokens: bigint;
+    let estimatedOutputTokens: bigint;
+    let buyerEstimatedRequestCost: bigint;
+
+    if (hasReportedTokens) {
+      estimatedInputTokens = responseStats.reportedInputTokens ?? 0n;
+      estimatedOutputTokens = responseStats.reportedOutputTokens ?? 0n;
+      // Compute cost from reported tokens
+      const pricing = this._sessionPricing.get(sellerPeerId);
+      if (pricing) {
+        const cost = computeCostUsdc(Number(estimatedInputTokens), Number(estimatedOutputTokens), pricing);
+        buyerEstimatedRequestCost = cost;
+        this._accumulateVerifiedCost(sellerPeerId, { cost, inputTokens: Number(estimatedInputTokens), outputTokens: Number(estimatedOutputTokens) });
+      } else {
+        buyerEstimatedRequestCost = 0n;
+      }
+      debugLog(
+        `[BuyerPayment] Using reported tokens: in=${estimatedInputTokens} out=${estimatedOutputTokens} cost=${buyerEstimatedRequestCost}`,
+      );
+    } else {
+      // Fall back to byte-based estimation
+      const estimate = this._estimateResponseCost(sellerPeerId, responseStats.inputBytes, responseStats.outputBytes);
+      estimatedInputTokens = estimate ? BigInt(estimate.inputTokens) : 0n;
+      estimatedOutputTokens = estimate ? BigInt(estimate.outputTokens) : 0n;
+      buyerEstimatedRequestCost = estimate ? estimate.cost : 0n;
+      if (estimate) {
+        this._accumulateVerifiedCost(sellerPeerId, estimate);
+      }
+      debugLog(
+        `[BuyerPayment] Byte-estimated tokens (no reported): in=${estimatedInputTokens} out=${estimatedOutputTokens} cost=${buyerEstimatedRequestCost}`,
+      );
     }
 
     // Determine the accepted cost for this request:
@@ -529,6 +564,13 @@ export class BuyerPaymentManager {
     if (newAmount <= prevAmount) newAmount = prevAmount + 1n;
     if (newAmount > maxSignable) newAmount = maxSignable;
     this._cumulativeAmount.set(sellerPeerId, newAmount);
+
+    debugLog(
+      `[BuyerPayment] signPerRequestAuth #${newMeta.cumulativeRequestCount}: ` +
+      `thisReq in=${estimatedInputTokens} out=${estimatedOutputTokens} | ` +
+      `cumulative in=${newMeta.cumulativeInputTokens} out=${newMeta.cumulativeOutputTokens} | ` +
+      `acceptedCost=${acceptedCost} cumulativeAmount=${newAmount}`,
+    );
 
     // Compute metadata hash and encode metadata
     const metadataHashHex = computeMetadataHash(newMeta);
@@ -756,6 +798,10 @@ export class BuyerPaymentManager {
     if (!session) return;
 
     const prev = this._responseTokenTotals.get(sellerPeerId) ?? { input: 0, output: 0, requests: 0 };
+    debugLog(
+      `[BuyerPayment] recordTokens: thisReq in=${inputTokens} out=${outputTokens} | ` +
+      `prevTotal in=${prev.input} out=${prev.output} reqs=${prev.requests}`,
+    );
     const totals = {
       input: prev.input + inputTokens,
       output: prev.output + outputTokens,
@@ -775,6 +821,11 @@ export class BuyerPaymentManager {
   /** Get the live response token totals for a seller, or null if none recorded this session. */
   getResponseTokenTotals(sellerPeerId: string): { input: number; output: number; requests: number } | null {
     return this._responseTokenTotals.get(sellerPeerId) ?? null;
+  }
+
+  /** Get the session pricing for a seller (from PaymentRequired negotiation), or null if not set. */
+  getSessionPricing(sellerPeerId: string): ServicePricing | null {
+    return this._sessionPricing.get(sellerPeerId) ?? null;
   }
 
   /** Check if a session has been confirmed via AuthAck. */
