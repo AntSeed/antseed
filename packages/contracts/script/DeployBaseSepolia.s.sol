@@ -3,7 +3,7 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Script.sol";
 
-import {ISetRegistry} from "../interfaces/IAntseedWiring.sol";
+import {ISetRegistry, ISetWriter} from "../interfaces/IAntseedWiring.sol";
 import {AntseedRegistry} from "../AntseedRegistry.sol";
 
 /**
@@ -88,7 +88,17 @@ contract DeployBaseSepolia is Script {
         require(channels != address(0), "Channels deploy failed");
         console.log("AntseedChannels:      ", channels);
 
-        // 6. AntseedEmissions(registry, initialEmission, epochDuration)
+        // 6. AntseedStats(registry)
+        bytes memory statsBytecode = abi.encodePacked(
+            vm.getCode("AntseedStats.sol:AntseedStats"),
+            abi.encode(address(antseedRegistry))
+        );
+        address stats;
+        assembly { stats := create(0, add(statsBytecode, 0x20), mload(statsBytecode)) }
+        require(stats != address(0), "Stats deploy failed");
+        console.log("AntseedStats:         ", stats);
+
+        // 7. AntseedEmissions(registry, initialEmission, epochDuration)
         bytes memory emissionsBytecode = abi.encodePacked(
             vm.getCode("AntseedEmissions.sol:AntseedEmissions"),
             abi.encode(address(antseedRegistry), uint256(1_000_000e18), uint256(7 days))
@@ -100,6 +110,7 @@ contract DeployBaseSepolia is Script {
 
         // ---- Wire registry ----
         antseedRegistry.setChannels(channels);
+        antseedRegistry.setStats(stats);
         antseedRegistry.setDeposits(deposits);
         antseedRegistry.setStaking(staking);
         antseedRegistry.setEmissions(emissions);
@@ -110,10 +121,14 @@ contract DeployBaseSepolia is Script {
 
         // ---- Point each contract at the registry ----
         ISetRegistry(channels).setRegistry(address(antseedRegistry));
+        ISetRegistry(stats).setRegistry(address(antseedRegistry));
         ISetRegistry(deposits).setRegistry(address(antseedRegistry));
         ISetRegistry(staking).setRegistry(address(antseedRegistry));
         ISetRegistry(emissions).setRegistry(address(antseedRegistry));
         ISetRegistry(antsToken).setRegistry(address(antseedRegistry));
+
+        // ---- Authorize Channels as Stats writer ----
+        ISetWriter(stats).setWriter(channels, true);
 
         vm.stopBroadcast();
 

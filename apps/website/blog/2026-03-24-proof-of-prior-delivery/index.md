@@ -73,21 +73,23 @@ When the seller calls `settle()` or `close()` on the AntseedChannels contract, t
 1. Verifies the buyer's EIP-712 signature
 2. Charges the cumulative amount from the buyer's locked deposit
 3. Credits the seller's earnings (minus platform fee)
-4. Unpacks the metadata and writes it to AntseedStats
+4. Optionally forwards the buyer-signed metadata to `AntseedStats`
 
-Step 4 is the proof. The **AntseedStats** contract now contains delivery metrics attested by the buyer's own signature. No oracle reported these numbers. No validator observed them. The buyer signed them because they were there when the service was delivered. The stats system doesn't need its own data pipeline. Settlement *is* the data pipeline.
+Step 4 is the proof path for optional metadata aggregation. The **AntseedStats** contract can contain delivery metrics attested by the buyer's own signature. No oracle reported these numbers. No validator observed them. The buyer signed them because they were there when the service was delivered.
 
-The counters that accumulate per seller:
+The core counters that accumulate per seller in `AntseedChannels`:
 
 - **Session count** — completed sessions
 - **Ghost count** — sessions where the seller disappeared without settling
 - **Total volume** — cumulative USDC settled
-- **Total tokens** — cumulative input and output tokens
-- **Average latency** — average response time across all requests
-- **Total requests** — cumulative requests served
 - **Last settled** — timestamp of most recent settlement
 
-These values are keyed by ERC-8004 agentId and cannot be written by any external caller — only the Channels contract during fund movement. You cannot inflate your stats without real USDC changing hands.
+If `AntseedStats` is configured, it can additionally aggregate:
+
+- **Total tokens** — cumulative input and output tokens
+- **Total requests** — cumulative requests served
+
+These values are keyed by ERC-8004 agentId. `AntseedStats` accepts writes only from addresses granted its writer role, and the deployed flow grants that role to `AntseedChannels`.
 
 ## Budget Exhaustion and Renewal
 
@@ -95,7 +97,7 @@ When the buyer's cumulative spend approaches the session's `maxAmount` ceiling, 
 
 If the buyer doesn't top up, the seller finishes the current request and returns 402 on the next one. The buyer's client automatically negotiates a new session — signing a fresh ReserveAuth against their deposit balance.
 
-From the user's perspective, this is invisible. From the protocol's perspective, it creates natural settlement checkpoints. Each settlement commits metadata to the chain, building the on-chain record incrementally rather than in one shot at session end.
+From the user's perspective, this is invisible. From the protocol's perspective, it creates natural settlement checkpoints. Each settlement can commit metadata to the chain, building the on-chain record incrementally rather than in one shot at session end.
 
 ## Timeout Protection
 

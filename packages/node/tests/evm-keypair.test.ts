@@ -69,7 +69,7 @@ describe('EIP-712 SpendingAuth signature helpers', () => {
     const msg: SpendingAuthMessage = {
       channelId: '0x' + '01'.repeat(32),
       cumulativeAmount: 1_000_000n,
-      metadataHash: computeMetadataHash({ cumulativeInputTokens: 500n, cumulativeOutputTokens: 200n, cumulativeLatencyMs: 0n, cumulativeRequestCount: 0n }),
+      metadataHash: computeMetadataHash({ cumulativeInputTokens: 500n, cumulativeOutputTokens: 200n, cumulativeRequestCount: 0n }),
     };
 
     const sig = await signSpendingAuth(wallet, domain, msg);

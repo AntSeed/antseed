@@ -55,7 +55,6 @@ export interface SetOperatorMessage {
 export interface SpendingAuthMetadata {
   cumulativeInputTokens: bigint;
   cumulativeOutputTokens: bigint;
-  cumulativeLatencyMs: bigint;
   cumulativeRequestCount: bigint;
 }
 
@@ -64,8 +63,8 @@ export const METADATA_VERSION = 1n;
 export function encodeMetadata(metadata: SpendingAuthMetadata): string {
   const coder = AbiCoder.defaultAbiCoder();
   return coder.encode(
-    ['uint256', 'uint256', 'uint256', 'uint256', 'uint256'],
-    [METADATA_VERSION, metadata.cumulativeInputTokens, metadata.cumulativeOutputTokens, metadata.cumulativeLatencyMs, metadata.cumulativeRequestCount],
+    ['uint256', 'uint256', 'uint256', 'uint256'],
+    [METADATA_VERSION, metadata.cumulativeInputTokens, metadata.cumulativeOutputTokens, metadata.cumulativeRequestCount],
   );
 }
 
@@ -76,7 +75,6 @@ export function computeMetadataHash(metadata: SpendingAuthMetadata): string {
 export const ZERO_METADATA: SpendingAuthMetadata = {
   cumulativeInputTokens: 0n,
   cumulativeOutputTokens: 0n,
-  cumulativeLatencyMs: 0n,
   cumulativeRequestCount: 0n,
 };
 

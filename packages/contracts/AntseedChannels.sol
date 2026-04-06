@@ -11,6 +11,7 @@ import {IAntseedRegistry} from "./interfaces/IAntseedRegistry.sol";
 import {IAntseedDeposits} from "./interfaces/IAntseedDeposits.sol";
 import {IAntseedStaking} from "./interfaces/IAntseedStaking.sol";
 import {IAntseedEmissions} from "./interfaces/IAntseedEmissions.sol";
+import {IAntseedStats} from "./interfaces/IAntseedStats.sol";
 
 /**
  * @title AntseedChannels
@@ -406,6 +407,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
             AgentStats storage s = _agentStats[agentId];
             s.totalVolumeUsdc += delta;
             s.lastSettledAt = uint64(block.timestamp);
+            _syncExternalMetadata(agentId, channel.buyer, channelId, metadata);
         }
 
         address _emissions = registry.emissions();
@@ -424,6 +426,17 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         );
 
         emit ChannelSettled(channelId, channel.buyer, channel.seller, cumulativeAmount, delta, channel.settled, platformFee, metadata);
+    }
+
+    function _syncExternalMetadata(
+        uint256 agentId,
+        address buyer,
+        bytes32 channelId,
+        bytes calldata metadata
+    ) internal {
+        address statsContract = registry.stats();
+        if (statsContract == address(0)) return;
+        IAntseedStats(statsContract).recordMetadata(agentId, buyer, channelId, metadata);
     }
 
     function _verifyReserveAuth(

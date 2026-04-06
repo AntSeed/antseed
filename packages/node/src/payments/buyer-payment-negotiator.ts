@@ -172,13 +172,10 @@ export class BuyerPaymentNegotiator {
     const inputBytes = lastCost?.inputContent ?? new Uint8Array(0);
     const outputBytes = lastCost?.outputContent ?? new Uint8Array(0);
     const sellerClaimedCost = lastCost?.costUsdc;
-    const latencyMs = lastCost?.latencyMs ?? 0;
-
     try {
       const { payload, topUpNeeded } = await this._bpm.signPerRequestAuth(
         peer.peerId,
         { inputBytes, outputBytes, sellerClaimedCost },
-        latencyMs > 0 ? BigInt(latencyMs) : undefined,
       );
       pmux.sendSpendingAuth(payload);
       // Release held content to free memory — no longer needed after signing
