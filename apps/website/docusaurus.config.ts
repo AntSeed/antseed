@@ -23,7 +23,7 @@ const statsProxyPlugin: PluginModule = () => ({
 });
 
 const config: Config = {
-  title: 'Shahaf Test',
+  title: 'AntSeed',
   tagline: 'The Unstoppable AI Economy',
   favicon: 'logo.svg',
   url: 'https://antseed.com',
