@@ -52,7 +52,12 @@ function replaceSymlink(linkPath, label) {
   }
 }
 
-// --- 1. Replace workspace symlinks in node_modules ---
+// --- 1. Restore workspace symlinks then replace with fresh copies ---
+// A previous prepare-dist may have replaced symlinks with stale directory copies.
+// Running pnpm install restores the symlinks so we always copy from the latest source.
+
+console.log('[prepare-dist] Restoring workspace symlinks...');
+execFileSync('pnpm', ['install', '--frozen-lockfile'], { cwd: path.resolve(appDir, '..', '..'), stdio: 'inherit' });
 
 const entries = readdirSync(nmDir);
 for (const entry of entries) {
