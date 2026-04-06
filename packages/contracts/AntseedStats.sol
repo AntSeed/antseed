@@ -40,7 +40,6 @@ contract AntseedStats is IAntseedStats, Ownable {
     // ─── Custom Errors ──────────────────────────────────────────────
     error InvalidAddress();
     error NotAuthorized();
-    error NonMonotonicMetadata();
 
     // ─── Constructor ────────────────────────────────────────────────
     constructor() Ownable(msg.sender) {}
@@ -68,7 +67,7 @@ contract AntseedStats is IAntseedStats, Ownable {
                 || cumulativeOutputTokens < snapshot.outputTokens
                 || cumulativeRequestCount < snapshot.requestCount
         ) {
-            revert NonMonotonicMetadata();
+            return; // non-monotonic metadata — skip silently
         }
 
         uint256 inputDelta = cumulativeInputTokens - snapshot.inputTokens;

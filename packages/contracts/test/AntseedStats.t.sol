@@ -48,15 +48,21 @@ contract AntseedStatsTest is Test {
         stats.recordMetadata(tokenId, buyer, bytes32("chan-1"), abi.encode(uint256(1), uint256(100), uint256(40), uint256(2)));
     }
 
-    function test_recordMetadata_revert_nonMonotonicPerChannel() public {
+    function test_recordMetadata_skipsNonMonotonicPerChannel() public {
         stats.setWriter(writer, true);
 
         vm.prank(writer);
         stats.recordMetadata(tokenId, buyer, bytes32("chan-1"), abi.encode(uint256(1), uint256(100), uint256(40), uint256(2)));
 
+        // Non-monotonic update is silently ignored
         vm.prank(writer);
-        vm.expectRevert(AntseedStats.NonMonotonicMetadata.selector);
         stats.recordMetadata(tokenId, buyer, bytes32("chan-1"), abi.encode(uint256(1), uint256(90), uint256(10), uint256(1)));
+
+        // Stats unchanged from first call
+        IAntseedStats.BuyerMetadataStats memory buyerStats = stats.getBuyerMetadataStats(tokenId, buyer);
+        assertEq(buyerStats.totalInputTokens, 100);
+        assertEq(buyerStats.totalOutputTokens, 40);
+        assertEq(buyerStats.totalRequestCount, 2);
     }
 
     function test_recordMetadata_accumulatesAcrossChannels() public {

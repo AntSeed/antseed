@@ -54,11 +54,11 @@ contract DeployBaseSepolia is Script {
         require(antsToken != address(0), "ANTSToken deploy failed");
         console.log("ANTSToken:            ", antsToken);
 
-        // 2. AntseedRegistry (central address book)
+        // 3. AntseedRegistry (central address book)
         AntseedRegistry antseedRegistry = new AntseedRegistry();
         console.log("AntseedRegistry:      ", address(antseedRegistry));
 
-        // 3. AntseedStaking(usdc, registry)
+        // 4. AntseedStaking(usdc, registry)
         bytes memory stakingBytecode = abi.encodePacked(
             vm.getCode("AntseedStaking.sol:AntseedStaking"),
             abi.encode(usdc, address(antseedRegistry))
@@ -68,7 +68,7 @@ contract DeployBaseSepolia is Script {
         require(staking != address(0), "Staking deploy failed");
         console.log("AntseedStaking:       ", staking);
 
-        // 4. AntseedDeposits(usdc)
+        // 5. AntseedDeposits(usdc)
         bytes memory depositsBytecode = abi.encodePacked(
             vm.getCode("AntseedDeposits.sol:AntseedDeposits"),
             abi.encode(usdc)
@@ -78,7 +78,7 @@ contract DeployBaseSepolia is Script {
         require(deposits != address(0), "Deposits deploy failed");
         console.log("AntseedDeposits:      ", deposits);
 
-        // 5. AntseedChannels(registry)
+        // 6. AntseedChannels(registry)
         bytes memory channelsBytecode = abi.encodePacked(
             vm.getCode("AntseedChannels.sol:AntseedChannels"),
             abi.encode(address(antseedRegistry))
@@ -88,14 +88,14 @@ contract DeployBaseSepolia is Script {
         require(channels != address(0), "Channels deploy failed");
         console.log("AntseedChannels:      ", channels);
 
-        // 6. AntseedStats
+        // 7. AntseedStats
         bytes memory statsBytecode = vm.getCode("AntseedStats.sol:AntseedStats");
         address stats;
         assembly { stats := create(0, add(statsBytecode, 0x20), mload(statsBytecode)) }
         require(stats != address(0), "Stats deploy failed");
         console.log("AntseedStats:         ", stats);
 
-        // 7. AntseedEmissions(registry, initialEmission, epochDuration)
+        // 8. AntseedEmissions(registry, initialEmission, epochDuration)
         bytes memory emissionsBytecode = abi.encodePacked(
             vm.getCode("AntseedEmissions.sol:AntseedEmissions"),
             abi.encode(address(antseedRegistry), uint256(1_000_000e18), uint256(7 days))
