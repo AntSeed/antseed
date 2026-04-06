@@ -296,9 +296,14 @@ export class BuyerPaymentManager {
     // Clear confirmation state so we wait for a fresh AuthAck on the new session
     this._confirmedPeers.delete(sellerPeerId);
 
-    // Store full pricing map (defaults + all per-service overrides)
+    // Store full pricing map (defaults + all per-service overrides).
+    // Merge 402-negotiated pricing on top of peer-metadata defaults so
+    // the seller's live rate takes precedence over cached peer metadata.
     if (pricingMap) {
-      this._sessionPricing.set(sellerPeerId, pricingMap);
+      const mergedDefaults = pricing
+        ? { ...pricingMap.defaults, ...pricing }
+        : pricingMap.defaults;
+      this._sessionPricing.set(sellerPeerId, { defaults: mergedDefaults, services: pricingMap.services });
     } else if (pricing) {
       // Legacy: single pricing, store as defaults
       const existing = this._sessionPricing.get(sellerPeerId);

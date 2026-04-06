@@ -390,6 +390,7 @@ export class BuyerPaymentNegotiator {
         inputContent: existing?.inputContent ?? new Uint8Array(0),
         outputContent: existing?.outputContent ?? response.body,
         latencyMs: existing?.latencyMs ?? 0,
+        service: existing?.service,
       });
     } catch {
       // Ignore malformed headers
