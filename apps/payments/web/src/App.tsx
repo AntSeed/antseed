@@ -53,7 +53,7 @@ export function App() {
     localStorage.setItem('antseed-payments-theme', isDark ? 'dark' : 'light');
   }, [isDark]);
 
-  const refreshBalance = useCallback(async () => {
+  const fetchBalance = useCallback(async () => {
     try {
       const data = await getBalance();
       setBalance(data);
@@ -62,10 +62,16 @@ export function App() {
     }
   }, []);
 
+  const refreshBalance = useCallback(async () => {
+    await fetchBalance();
+    // Retry after delay to catch backend indexing lag after on-chain tx
+    setTimeout(fetchBalance, 3000);
+  }, [fetchBalance]);
+
   useEffect(() => {
-    void refreshBalance();
+    void fetchBalance();
     void getConfig().then(setConfig).catch(() => {});
-  }, [refreshBalance]);
+  }, [fetchBalance]);
 
   const available = balance ? parseFloat(balance.available) : 0;
   const reserved = balance ? parseFloat(balance.reserved) : 0;

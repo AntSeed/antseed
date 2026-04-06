@@ -133,6 +133,7 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
 
   const { isSuccess: approveConfirmed } = useWaitForTransactionReceipt({
     hash: approveTxHash,
+    query: { enabled: step === 'approving' && !!approveTxHash },
   });
 
   // Simulate deposit — only when allowance is sufficient
@@ -141,7 +142,7 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
     abi: DEPOSITS_ABI,
     functionName: 'deposit',
     args: [depositTarget as `0x${string}`, usdcAmount],
-    query: { enabled: hasAllowance && !!config && !!depositTarget },
+    query: { enabled: hasAllowance && !!config && !!depositTarget, retry: 3, retryDelay: 2000 },
   });
 
   // Deposit (uses pre-simulated request)
@@ -153,16 +154,16 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
 
   const { isSuccess: depositConfirmed } = useWaitForTransactionReceipt({
     hash: depositTxHash,
+    query: { enabled: step === 'depositing' && !!depositTxHash },
   });
 
-  // After approval confirms → refetch allowance so simulation picks up the new state
+  // After approval confirms → refetch allowance (triggers simulation via hasAllowance)
   useEffect(() => {
-    if (step === 'approving' && approveConfirmed) {
-      refetchAllowance();
-    }
+    if (step !== 'approving' || !approveConfirmed) return;
+    refetchAllowance();
   }, [step, approveConfirmed, refetchAllowance]);
 
-  // Once simulation is ready after approval → send deposit
+  // Once simulation succeeds after approval → send deposit
   useEffect(() => {
     if (step !== 'approving' || !depositSim?.request) return;
     setStep('depositing');
@@ -192,7 +193,8 @@ function CryptoDeposit({ config, buyerAddress, onDeposited }: {
     // Allowance already sufficient — simulation is ready, send deposit directly
     if (depositSim?.request) {
       setStep('depositing');
-      writeDeposit(depositSim.request, {
+      const { gas: _gas, ...depositRequest } = depositSim.request;
+      writeDeposit(depositRequest, {
         onError: (err) => {
           setStep('idle');
           setError(err.message.split('\n')[0] ?? err.message);
