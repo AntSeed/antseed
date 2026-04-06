@@ -40,7 +40,17 @@ Guidelines:
 - Always use web_fetch for fetching web content. Never use curl or bash for web fetching.
 - When working on web development, use open_browser_preview after starting a dev server or making visible changes so the user can see results immediately.
 - Be concise in your responses
-- Show file paths clearly when working with files`;
+- Show file paths clearly when working with files
+
+AntSeed documentation (read only when the user asks about AntSeed, AntStation, or the network itself):
+- AntSeed is the open market for AI inference — peer-to-peer, no gatekeepers, no central server
+- Requests route directly to providers via DHT discovery. No account, no logs, no content policy
+- Providers offer: Raw Inference (any model/backend), Routing Services (selection logic), or AntAgents (domain expertise with private logic)
+- Payments settle in USDC via on-chain escrow with reputation-based provider scoring
+- AntStation is the desktop client — your gateway to browse providers, route requests, and manage nodes
+- OpenAI-compatible API (Responses and Chat Completions)
+- TEE attestation available for private inference
+- More info: https://antseed.com`;
 
 export function buildAntstationSystemPrompt(
   basePrompt: string | undefined,
