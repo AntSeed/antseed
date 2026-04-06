@@ -3,7 +3,7 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Script.sol";
 
-import {ISetRegistry} from "../interfaces/IAntseedWiring.sol";
+import {ISetRegistry, ISetWriter} from "../interfaces/IAntseedWiring.sol";
 import {AntseedRegistry} from "../AntseedRegistry.sol";
 
 /**
@@ -63,7 +63,7 @@ contract Deploy is Script {
         require(staking != address(0), "Staking deploy failed");
         console.log("AntseedStaking:       ", staking);
 
-        // 7. AntseedDeposits(usdc)
+        // 6. AntseedDeposits(usdc)
         bytes memory depositsBytecode = abi.encodePacked(
             vm.getCode("AntseedDeposits.sol:AntseedDeposits"),
             abi.encode(usdc)
@@ -73,7 +73,7 @@ contract Deploy is Script {
         require(deposits != address(0), "Deposits deploy failed");
         console.log("AntseedDeposits:      ", deposits);
 
-        // 8. AntseedChannels(registry)
+        // 7. AntseedChannels(registry)
         bytes memory channelsBytecode = abi.encodePacked(
             vm.getCode("AntseedChannels.sol:AntseedChannels"),
             abi.encode(address(antseedRegistry))
@@ -82,6 +82,13 @@ contract Deploy is Script {
         assembly { channels := create(0, add(channelsBytecode, 0x20), mload(channelsBytecode)) }
         require(channels != address(0), "Channels deploy failed");
         console.log("AntseedChannels:      ", channels);
+
+        // 8. AntseedStats
+        bytes memory statsBytecode = vm.getCode("AntseedStats.sol:AntseedStats");
+        address stats;
+        assembly { stats := create(0, add(statsBytecode, 0x20), mload(statsBytecode)) }
+        require(stats != address(0), "Stats deploy failed");
+        console.log("AntseedStats:         ", stats);
 
         // 9. AntseedEmissions(registry, initialEmission, epochDuration)
         bytes memory emissionsBytecode = abi.encodePacked(
@@ -105,6 +112,7 @@ contract Deploy is Script {
 
         // ---- Wire registry ----
         antseedRegistry.setChannels(channels);
+        antseedRegistry.setStats(stats);
         antseedRegistry.setDeposits(deposits);
         antseedRegistry.setStaking(staking);
         antseedRegistry.setEmissions(emissions);
@@ -121,6 +129,9 @@ contract Deploy is Script {
         ISetRegistry(emissions).setRegistry(address(antseedRegistry));
         ISetRegistry(antsToken).setRegistry(address(antseedRegistry));
         ISetRegistry(subPool).setRegistry(address(antseedRegistry));
+
+        // ---- Authorize Channels as Stats writer ----
+        ISetWriter(stats).setWriter(channels, true);
 
         vm.stopBroadcast();
 

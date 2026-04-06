@@ -127,8 +127,8 @@ describe('BuyerPaymentManager', () => {
     expect(sent.metadata).toBeTypeOf('string');
     expect(sent.metadata).not.toBe('');
     expect((sent.metadata as string).startsWith('0x')).toBe(true);
-    // Should be ABI-encoded (version,uint256,uint256,uint256,uint256) = 5 * 32 bytes + 0x prefix
-    expect((sent.metadata as string).length).toBe(2 + 5 * 64);
+    // Should be ABI-encoded (version,inputTokens,outputTokens,requestCount) = 4 * 32 bytes + 0x prefix
+    expect((sent.metadata as string).length).toBe(2 + 4 * 64);
   });
 
   it('authorizeSpending rejects if minBudgetPerRequest exceeds maxPerRequestUsdc', async () => {

@@ -9,7 +9,7 @@ ANTSToken (ERC-20)          ── phase-locked transfers, mint restricted to An
 AntseedDeposits             ── buyer USDC deposits, holds ALL buyer USDC
 AntseedChannels             ── Reserve→Settle/Close lifecycle, EIP-712 (swappable, holds NO USDC)
 AntseedStaking              ── seller stake bound to ERC-8004 agentId
-AntseedStats                ── factual per-agent channel metrics (channelCount, volume, requests)
+AntseedStats                ── optional external metadata sink (buyer/agent token + request stats)
 AntseedEmissions            ── USDC volume-based epoch emissions
 AntseedSubPool              ── subscription tiers, daily budgets, revenue distribution
 MockERC8004Registry         ── mock ERC-8004 IdentityRegistry (local testing only)
@@ -23,7 +23,7 @@ Contracts reference each other by address set at deployment. No inheritance — 
 ```
 AntseedChannels ──calls──► AntseedDeposits.lockForChannel() (on reserve)
 AntseedChannels ──calls──► AntseedDeposits.chargeAndCreditPayouts() (on settle/close)
-AntseedChannels ──calls──► AntseedStats.updateStats() (on settle/close)
+AntseedChannels ──calls──► AntseedStats.recordMetadata() (optional, on settle path)
 AntseedChannels ──calls──► AntseedEmissions.accrueSellerPoints() / accrueBuyerPoints()
 AntseedChannels ──reads──► AntseedStaking (seller stake verification)
 AntseedEmissions ──calls──► ANTSToken.mint()
@@ -76,8 +76,8 @@ Session lifecycle with EIP-712 ReserveAuth + SpendingAuth. Holds NO USDC — all
 
 **Seller operations:**
 - `reserve(address buyer, bytes32 salt, uint128 maxAmount, uint256 deadline, bytes calldata buyerSig)` — validates ReserveAuth EIP-712 sig, calls Deposits.lockForChannel()
-- `settle(bytes32 channelId, uint128 amount, bytes32 metadataHash, bytes calldata buyerSig)` — validates SpendingAuth, calls Deposits.chargeAndCreditPayouts(), session stays open
-- `close(bytes32 channelId, uint128 amount, bytes32 metadataHash, bytes calldata buyerSig)` — like settle but finalizes session, releases remaining lock
+- `settle(bytes32 channelId, uint128 amount, bytes calldata metadata, bytes calldata buyerSig)` — validates SpendingAuth, calls Deposits.chargeAndCreditPayouts(), session stays open
+- `close(bytes32 channelId, uint128 amount, bytes calldata metadata, bytes calldata buyerSig)` — like settle but finalizes session, releases remaining lock
 
 **Timeout (permissionless):**
 - `requestTimeout(bytes32 channelId)` — after deadline, marks session timed out
@@ -96,10 +96,11 @@ channelId = keccak256(abi.encode(buyer, seller, salt))
 
 ### AntseedStats.sol
 
-Factual per-agent channel metrics keyed by ERC-8004 agentId. Updated by AntseedChannels during settlement.
+Optional external metadata sink keyed by ERC-8004 agentId plus buyer address. Writers are managed with `AccessControl`.
 
-- `updateStats(uint256 agentId, StatsUpdate calldata)` — restricted to channels contract
-- `getStats(uint256 agentId)` — returns channelCount, totalVolumeUsdc, totalRequests
+- `setWriter(address writer, bool allowed)` — admin grants or revokes write access
+- `recordMetadata(uint256 agentId, address buyer, bytes32 channelId, bytes calldata metadata)` — decodes cumulative per-channel metadata, computes deltas, and aggregates buyer-level totals
+- `getBuyerMetadataStats(uint256 agentId, address buyer)` — returns cumulative input tokens, output tokens, request count, and last update time
 
 ### AntseedStaking.sol
 
@@ -120,7 +121,7 @@ Subscription management with daily budgets and epoch-based revenue distribution.
 - `claimRevenue(uint256 agentId)` — claim share proportional to stats
 - `distributionEpoch()` — callable by anyone, distributes current epoch revenue
 
-Reads from AntseedStats (delivery metrics) and AntseedChannels (session verification).
+Reads from AntseedChannels on-chain session stats. `AntseedStats` is optional and not required for SubPool operation.
 
 ### AntseedEmissions.sol
 
@@ -148,10 +149,10 @@ ANTS emission controller using the Synthetix reward-per-point pattern. O(1) gas 
 2. **MockERC8004Registry** — deploy for local testing (on mainnet use deployed ERC-8004)
 3. **AntseedDeposits** — deploy with `(usdcAddress)`
 4. **AntseedStaking** — deploy with `(usdcAddress, registryAddress)`
-5. **AntseedStats** — deploy, then set channels contract
-6. **AntseedChannels** — deploy with `(depositsAddress, stakingAddress, statsAddress)`, then authorize on Deposits and Stats
+5. **AntseedStats** — optional: deploy, set in `AntseedRegistry`, and grant `WRITER_ROLE` to Channels
+6. **AntseedChannels** — deploy with `(registryAddress)`
 7. **AntseedEmissions** — deploy with `(antsTokenAddress, channelsAddress)`, then call `antsToken.setEmissionsContract(emissions)`
-8. **AntseedSubPool** — deploy with `(usdcAddress, statsAddress, channelsAddress)`
+8. **AntseedSubPool** — deploy with `(usdcAddress, registryAddress)`
 
 ## Configuration
 

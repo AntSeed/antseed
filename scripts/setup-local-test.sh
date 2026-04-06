@@ -11,7 +11,7 @@ REGISTRY=0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512      # nonce 1 — MockERC80
 STAKING=0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9       # nonce 4
 DEPOSITS=0x5FC8d32690cc91D4c39d9d3abcBD16989F875707      # nonce 5
 CHANNELS=0x0165878A594ca255338adfa4d48449f69242Eb8F      # nonce 6
-# Emissions = nonce 7, SubPool = nonce 8
+# Stats = nonce 7, Emissions = nonce 8, SubPool = nonce 9
 
 cd /Users/shahafan/Development/antseed
 

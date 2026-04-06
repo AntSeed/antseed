@@ -88,7 +88,7 @@ describe('EIP-712 Contract Compatibility', () => {
       const msg: SpendingAuthMessage = {
         channelId: '0x' + '01'.repeat(32),
         cumulativeAmount: 500000n,
-        metadataHash: computeMetadataHash({ cumulativeInputTokens: 5000n, cumulativeOutputTokens: 12000n, cumulativeLatencyMs: 0n, cumulativeRequestCount: 0n }),
+        metadataHash: computeMetadataHash({ cumulativeInputTokens: 5000n, cumulativeOutputTokens: 12000n, cumulativeRequestCount: 0n }),
       };
 
       const sig = await signSpendingAuth(wallet, domain, msg);
@@ -109,7 +109,7 @@ describe('EIP-712 Contract Compatibility', () => {
       const baseMsg: SpendingAuthMessage = {
         channelId: '0x' + '01'.repeat(32),
         cumulativeAmount: 100000n,
-        metadataHash: computeMetadataHash({ cumulativeInputTokens: 1000n, cumulativeOutputTokens: 2000n, cumulativeLatencyMs: 0n, cumulativeRequestCount: 0n }),
+        metadataHash: computeMetadataHash({ cumulativeInputTokens: 1000n, cumulativeOutputTokens: 2000n, cumulativeRequestCount: 0n }),
       };
 
       const sig1 = await signSpendingAuth(wallet, domain, baseMsg);

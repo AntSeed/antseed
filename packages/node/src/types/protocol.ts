@@ -50,7 +50,7 @@ export interface SpendingAuthPayload {
   channelId: string;
   cumulativeAmount: string;
   metadataHash: string;         // bytes32 hex
-  metadata: string;             // hex-encoded abi.encode(inputTokens, outputTokens, latencyMs, requestCount)
+  metadata: string;             // hex-encoded abi.encode(version, inputTokens, outputTokens, requestCount)
   spendingAuthSig: string;      // EIP-712 SpendingAuth signature (covers amount + metadata)
   // Only for initial reserve
   reserveSalt?: string;

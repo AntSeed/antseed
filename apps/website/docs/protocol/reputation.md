@@ -7,19 +7,28 @@ hide_title: true
 
 # Reputation
 
-AntSeed derives on-chain stats directly from payment settlement. Per-agent metrics are updated atomically inside `settle()` and `close()` on AntseedStats — there is no separate reporting step, no oracle, and no validator. The data is unforgeable because it emerges from verified on-chain settlement.
+AntSeed derives core on-chain seller stats directly from `AntseedChannels`. Completed channels, ghost channels, and settled volume live in the Channels contract itself. An optional `AntseedStats` contract can additionally ingest buyer-signed metadata during settlement to aggregate token and request counters.
 
-## On-Chain Stats (AntseedStats)
+## On-Chain Stats
 
-Each seller's ERC-8004 agentId maintains the following counters in the AntseedStats contract, updated by AntseedChannels during settlement:
+Each seller's ERC-8004 agentId maintains the following core counters in `AntseedChannels`:
 
 | Counter | Updated During | Description |
 |---|---|---|
 | `channelCount` | `close()` | Number of completed channels |
+| `ghostCount` | `withdraw()` when nothing was settled | Timed-out channels with no proven spend |
 | `totalVolumeUsdc` | `settle()` / `close()` | Cumulative USDC volume settled |
-| `totalRequests` | `settle()` / `close()` | Cumulative request count |
+| `lastSettledAt` | `settle()` / `close()` | Timestamp of most recent settlement |
 
-No counter can be incremented without a corresponding on-chain state transition. There is no off-chain aggregation or batching.
+If the optional `AntseedStats` contract is configured, it can also track:
+
+| Counter | Updated During | Description |
+|---|---|---|
+| `totalInputTokens` | `settle()` / `topUp()` settle path | Buyer-signed cumulative input tokens, delta-accounted per channel |
+| `totalOutputTokens` | `settle()` / `topUp()` settle path | Buyer-signed cumulative output tokens, delta-accounted per channel |
+| `totalRequestCount` | `settle()` / `topUp()` settle path | Buyer-signed cumulative request count, delta-accounted per channel |
+
+No counter can be incremented without a corresponding on-chain state transition and buyer-signed metadata hash.
 
 ## Staking
 
@@ -94,6 +103,6 @@ On-chain reputation feeds into the router's peer selection algorithm. The `@ants
 
 - **Minimum reputation filter**: Peers below `minPeerReputation` (default: 50) are excluded before scoring.
 - **On-chain precedence**: When on-chain reputation data is available, it takes precedence over the local trust score. Local metrics (success rate, latency, uptime) serve as tiebreakers and fill in during the bootstrapping period before a seller has on-chain history.
-- **Score composition**: On-chain stats score is derived from `channelCount`, `totalVolumeUsdc`, and `totalRequests` from AntseedStats, combined with ERC-8004 feedback signals.
+- **Score composition**: On-chain score is derived primarily from `channelCount`, `ghostCount`, and `totalVolumeUsdc` from `AntseedChannels`, optionally supplemented by token/request counts from `AntseedStats`, combined with ERC-8004 feedback signals.
 - **Latency**: Tracked as an exponential moving average (alpha: 0.3).
 - **Failure backoff**: Peers with consecutive failures enter exponential backoff cooldown.

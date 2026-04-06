@@ -17,7 +17,7 @@ const enc = new TextEncoder();
 
 function decodeMetadataTokens(metadata: string): { inputTokens: bigint; outputTokens: bigint } {
   const coder = AbiCoder.defaultAbiCoder();
-  const [, inputTokens, outputTokens] = coder.decode(['uint256', 'uint256', 'uint256', 'uint256', 'uint256'], metadata);
+  const [, inputTokens, outputTokens] = coder.decode(['uint256', 'uint256', 'uint256', 'uint256'], metadata);
   return { inputTokens, outputTokens };
 }
 

@@ -126,7 +126,6 @@ export class BuyerPaymentManager {
       this._metadata.set(peerId, {
         cumulativeInputTokens: BigInt(channel.tokensDelivered),
         cumulativeOutputTokens: BigInt(channel.previousConsumption),
-        cumulativeLatencyMs: 0n,
         cumulativeRequestCount: BigInt(channel.requestCount),
       });
       // verifiedCost and pricing are not persisted — start from 0 on hydration.
@@ -475,13 +474,11 @@ export class BuyerPaymentManager {
    *
    * @param sellerPeerId Seller peer ID.
    * @param responseStats Byte counts from the last response and seller's claimed cost.
-   * @param addedLatencyMs Optional latency for metadata.
    * @returns The signed payload and whether a reserve top-up is needed.
    */
   async signPerRequestAuth(
     sellerPeerId: string,
     responseStats: { inputBytes: Uint8Array; outputBytes: Uint8Array; sellerClaimedCost?: bigint },
-    addedLatencyMs?: bigint,
   ): Promise<PerRequestAuthResult> {
     const session = this.getActiveSession(sellerPeerId);
     if (!session) {
@@ -517,7 +514,6 @@ export class BuyerPaymentManager {
     const newMeta: SpendingAuthMetadata = {
       cumulativeInputTokens: prev.cumulativeInputTokens + estimatedInputTokens,
       cumulativeOutputTokens: prev.cumulativeOutputTokens + estimatedOutputTokens,
-      cumulativeLatencyMs: prev.cumulativeLatencyMs + (addedLatencyMs ?? 0n),
       cumulativeRequestCount: prev.cumulativeRequestCount + 1n,
     };
     this._metadata.set(sellerPeerId, newMeta);

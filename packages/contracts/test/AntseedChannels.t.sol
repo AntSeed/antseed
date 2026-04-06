@@ -8,11 +8,13 @@ import "../AntseedStaking.sol";
 import "../MockERC8004Registry.sol";
 import "../MockUSDC.sol";
 import "../AntseedRegistry.sol";
+import "../AntseedStats.sol";
 
 contract AntseedChannelsTest is Test {
     MockUSDC public usdc;
     MockERC8004Registry public identityRegistry;
     AntseedRegistry public antseedRegistry;
+    AntseedStats public externalStats;
     AntseedStaking public staking;
     AntseedDeposits public deposits;
     AntseedChannels public channels;
@@ -58,6 +60,7 @@ contract AntseedChannelsTest is Test {
         staking = new AntseedStaking(address(usdc), address(antseedRegistry));
         deposits = new AntseedDeposits(address(usdc));
         channels = new AntseedChannels(address(antseedRegistry));
+        externalStats = new AntseedStats();
 
         // Wire registry
         antseedRegistry.setChannels(address(channels));
@@ -125,7 +128,7 @@ contract AntseedChannelsTest is Test {
         uint256 cumulativeInputTokens,
         uint256 cumulativeOutputTokens
     ) internal view returns (bytes memory) {
-        bytes32 metadataHash = keccak256(abi.encode(METADATA_VERSION, cumulativeInputTokens, cumulativeOutputTokens, uint256(0), uint256(0)));
+        bytes32 metadataHash = keccak256(abi.encode(METADATA_VERSION, cumulativeInputTokens, cumulativeOutputTokens, uint256(0)));
         bytes32 structHash = keccak256(
             abi.encode(
                 SPENDING_AUTH_TYPEHASH,
@@ -167,7 +170,7 @@ contract AntseedChannelsTest is Test {
         uint256 cumulativeInputTokens,
         uint256 cumulativeOutputTokens
     ) internal pure returns (bytes memory) {
-        return abi.encode(METADATA_VERSION, cumulativeInputTokens, cumulativeOutputTokens, uint256(0), uint256(0));
+        return abi.encode(METADATA_VERSION, cumulativeInputTokens, cumulativeOutputTokens, uint256(0));
     }
 
     function _hashTypedDataChannels(bytes32 structHash) internal view returns (bytes32) {
@@ -681,6 +684,34 @@ contract AntseedChannelsTest is Test {
         AntseedChannels.AgentStats memory s = channels.getAgentStats(sellerAgentId);
         assertEq(s.channelCount, 1);
         assertEq(s.totalVolumeUsdc, USDC_50);
+    }
+
+    function test_settle_writesExternalMetadataWhenConfiguredAndAuthorized() public {
+        bytes32 salt = keccak256("session-ext-meta");
+        bytes32 channelId = doReserve(salt, USDC_100, USDC_100);
+        uint256 sellerAgentId = staking.getAgentId(seller);
+
+        antseedRegistry.setStats(address(externalStats));
+        externalStats.setWriter(address(channels), true);
+
+        bytes memory sig1 = signSpendingAuth(BUYER_PK, channelId, USDC_30, 4000, 1500);
+        vm.prank(seller);
+        channels.settle(channelId, USDC_30, encodeMetadata(4000, 1500), sig1);
+
+        IAntseedStats.BuyerMetadataStats memory midStats = externalStats.getBuyerMetadataStats(sellerAgentId, buyer);
+        assertEq(midStats.totalInputTokens, 4000);
+        assertEq(midStats.totalOutputTokens, 1500);
+        assertEq(midStats.totalRequestCount, 0);
+
+        bytes memory sig2 = signSpendingAuth(BUYER_PK, channelId, USDC_60, 9000, 3500);
+        vm.prank(seller);
+        channels.close(channelId, USDC_60, encodeMetadata(9000, 3500), sig2);
+
+        IAntseedStats.BuyerMetadataStats memory stats = externalStats.getBuyerMetadataStats(sellerAgentId, buyer);
+        assertEq(stats.totalInputTokens, 9000);
+        assertEq(stats.totalOutputTokens, 3500);
+        assertEq(stats.totalRequestCount, 0);
+        assertGt(stats.lastUpdatedAt, 0);
     }
 
     // ═══════════════════════════════════════════════════════════════════

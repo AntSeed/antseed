@@ -13,6 +13,7 @@ import {IAntseedRegistry} from "./interfaces/IAntseedRegistry.sol";
 contract AntseedRegistry is IAntseedRegistry, Ownable {
 
     address public override channels;
+    address public override stats;
     address public override deposits;
     address public override staking;
     address public override emissions;
@@ -30,6 +31,12 @@ contract AntseedRegistry is IAntseedRegistry, Ownable {
         if (_channels == address(0)) revert InvalidAddress();
         channels = _channels;
         emit AddressUpdated("channels", _channels);
+    }
+
+    function setStats(address _stats) external onlyOwner {
+        if (_stats == address(0)) revert InvalidAddress();
+        stats = _stats;
+        emit AddressUpdated("stats", _stats);
     }
 
     function setDeposits(address _deposits) external onlyOwner {

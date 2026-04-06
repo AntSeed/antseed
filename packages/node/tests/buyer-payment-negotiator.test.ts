@@ -508,8 +508,8 @@ describe('BuyerPaymentNegotiator', () => {
       expect(call[1].inputBytes).toEqual(reqBody);
       expect(call[1].outputBytes).toEqual(resBody);
       expect(call[1].sellerClaimedCost).toBe(5000n);
-      // Third arg is latencyMs as bigint
-      expect(call[2]).toBe(250n);
+      // No third arg; latency is no longer included in payment metadata
+      expect(call[2]).toBeUndefined();
     });
   });
 

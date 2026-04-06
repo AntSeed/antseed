@@ -71,7 +71,6 @@ async function buildSpendingAuth(
   const meta: SpendingAuthMetadata = {
     cumulativeInputTokens,
     cumulativeOutputTokens,
-    cumulativeLatencyMs: 0n,
     cumulativeRequestCount: 0n,
   };
   const metadataHashHex = computeMetadataHash(meta);
