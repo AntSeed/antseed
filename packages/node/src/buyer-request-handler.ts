@@ -239,10 +239,11 @@ export class BuyerRequestHandler {
           // is metadata for the buyer, not SSE data for downstream clients.
           let costHeaders: Record<string, string> | null = null;
           if (chunk.done && chunk.data.length > 0) {
-            costHeaders = parseCostTrailer(chunk.data);
-            if (costHeaders) {
-              // Strip trailer from the chunk so it doesn't leak into callbacks or response body
-              chunk = { ...chunk, data: new Uint8Array(0) };
+            const parsed = parseCostTrailer(chunk.data);
+            if (parsed) {
+              costHeaders = parsed.headers;
+              // Replace chunk data with just the payload (trailer stripped)
+              chunk = { ...chunk, data: parsed.payload };
             }
           }
 
@@ -337,20 +338,42 @@ const COST_TRAILER_KEY = 'x-antseed-cost';
 
 /**
  * Parse a cost trailer from the done chunk's data.
- * The seller sends a JSON object with cost headers in the done chunk for streaming responses.
- * Returns the parsed headers or null if the data is not a valid cost trailer.
+ * The seller appends a JSON cost trailer after the original done-chunk payload,
+ * separated by a NUL byte. If the done chunk is trailer-only (no payload), the
+ * entire data is the trailer JSON.
+ *
+ * Returns { headers, payload } where payload is the original data (without trailer),
+ * or null if no cost trailer is found.
  */
-function parseCostTrailer(data: Uint8Array): Record<string, string> | null {
-  if (data.length === 0 || data.length > 512) return null;
+function parseCostTrailer(data: Uint8Array): { headers: Record<string, string>; payload: Uint8Array } | null {
+  if (data.length === 0) return null;
+
+  // Find NUL separator — trailer is after it
+  const nulIdx = data.indexOf(0);
+  let trailerBytes: Uint8Array;
+  let payload: Uint8Array;
+
+  if (nulIdx >= 0) {
+    // payload + NUL + trailer
+    payload = data.subarray(0, nulIdx);
+    trailerBytes = data.subarray(nulIdx + 1);
+  } else {
+    // Entire data might be trailer-only (no original payload)
+    payload = new Uint8Array(0);
+    trailerBytes = data;
+  }
+
+  if (trailerBytes.length === 0 || trailerBytes.length > 512) return null;
+
   try {
-    const text = new TextDecoder().decode(data);
+    const text = new TextDecoder().decode(trailerBytes);
     const parsed = JSON.parse(text) as Record<string, unknown>;
     if (parsed && typeof parsed === 'object' && COST_TRAILER_KEY in parsed) {
-      const result: Record<string, string> = {};
+      const headers: Record<string, string> = {};
       for (const [k, v] of Object.entries(parsed)) {
-        if (typeof v === 'string') result[k] = v;
+        if (typeof v === 'string') headers[k] = v;
       }
-      return result;
+      return { headers, payload };
     }
   } catch { /* not a cost trailer */ }
   return null;

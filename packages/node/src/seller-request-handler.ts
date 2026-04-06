@@ -165,7 +165,7 @@ export class SellerRequestHandler {
       let statusCode = 500;
       let responseBody: Uint8Array = new Uint8Array(0);
       let streamedResponseStarted = false;
-      let streamDoneChunkHeld = false;
+      let heldDoneChunkData: Uint8Array | null = null;
       let responseUsage = { inputTokens: 0, outputTokens: 0 };
       this.adjustProviderLoad(provider.name, 1);
       try {
@@ -178,9 +178,9 @@ export class SellerRequestHandler {
             },
             onResponseChunk: (chunk) => {
               if (!streamedResponseStarted) return;
-              // Hold the done chunk — send it after usage is parsed so we can attach cost info
+              // Hold the done chunk — send it after usage is parsed so we can append cost trailer
               if (chunk.done) {
-                streamDoneChunkHeld = true;
+                heldDoneChunkData = chunk.data;
                 return;
               }
               mux.sendProxyChunk(chunk);
@@ -193,12 +193,25 @@ export class SellerRequestHandler {
           if (!streamedResponseStarted) {
             const responseToSend = this._injectCostHeaders(response, provider, request, buyerPeerId, responseUsage);
             mux.sendProxyResponse(responseToSend);
-          } else if (streamDoneChunkHeld) {
-            // Streaming: inject cost trailer into the done chunk so the buyer gets real token counts
+          } else if (heldDoneChunkData !== null) {
+            // Streaming: append cost trailer to the done chunk so the buyer gets real token counts.
+            // Preserve original done-chunk payload (some providers put data on the final chunk).
             const costTrailer = this._buildCostTrailer(responseUsage, provider, request, buyerPeerId);
+            const originalData: Uint8Array = heldDoneChunkData;
+            let doneData: Uint8Array;
+            if (costTrailer.length === 0 || originalData.length === 0) {
+              // No trailer or no original data — just use whichever has content
+              doneData = costTrailer.length > 0 ? costTrailer : originalData;
+            } else {
+              // Append trailer after a NUL separator so the buyer can split them
+              doneData = new Uint8Array(originalData.length + 1 + costTrailer.length);
+              doneData.set(originalData, 0);
+              doneData[originalData.length] = 0; // NUL separator
+              doneData.set(costTrailer, originalData.length + 1);
+            }
             mux.sendProxyChunk({
               requestId: request.requestId,
-              data: costTrailer,
+              data: doneData,
               done: true,
             });
           }
