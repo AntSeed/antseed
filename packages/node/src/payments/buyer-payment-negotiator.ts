@@ -323,8 +323,11 @@ export class BuyerPaymentNegotiator {
   }
 
   estimateCostFromResponse(peer: PeerInfo, response: SerializedHttpResponse): void {
-    const inputPricePerM = peer.defaultInputUsdPerMillion;
-    const outputPricePerM = peer.defaultOutputUsdPerMillion;
+    // Prefer session pricing (from PaymentRequired negotiation, includes service-specific rates)
+    // over peer-level defaults which may be different from the actual service pricing.
+    const sessionPricing = this._bpm.getSessionPricing(peer.peerId);
+    const inputPricePerM = sessionPricing?.inputUsdPerMillion ?? peer.defaultInputUsdPerMillion;
+    const outputPricePerM = sessionPricing?.outputUsdPerMillion ?? peer.defaultOutputUsdPerMillion;
     if (inputPricePerM == null && outputPricePerM == null) return;
 
     const usage = parseResponseUsage(response.body);

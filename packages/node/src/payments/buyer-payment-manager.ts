@@ -823,6 +823,11 @@ export class BuyerPaymentManager {
     return this._responseTokenTotals.get(sellerPeerId) ?? null;
   }
 
+  /** Get the session pricing for a seller (from PaymentRequired negotiation), or null if not set. */
+  getSessionPricing(sellerPeerId: string): ServicePricing | null {
+    return this._sessionPricing.get(sellerPeerId) ?? null;
+  }
+
   /** Check if a session has been confirmed via AuthAck. */
   isAuthorized(sellerPeerId: string): boolean {
     return this._confirmedPeers.has(sellerPeerId);

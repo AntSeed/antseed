@@ -49,6 +49,7 @@ function createMockBpm(): BuyerPaymentManager & Record<string, unknown> {
     isLockConfirmed: vi.fn().mockReturnValue(false),
     isLockRejected: vi.fn().mockReturnValue(false),
     recordAndPersistTokens: vi.fn(),
+    getSessionPricing: vi.fn().mockReturnValue(null),
     maxPerRequestUsdc: 100_000n,
     maxReserveAmountUsdc: 10_000_000n,
   } as unknown as BuyerPaymentManager & Record<string, unknown>;
