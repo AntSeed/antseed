@@ -1,4 +1,6 @@
 import {
+  ANTSEED_STREAM_COST_TRAILER_LENGTH_BYTES,
+  ANTSEED_STREAM_COST_TRAILER_MAGIC,
   ANTSEED_STREAMING_RESPONSE_HEADER,
   ANTSEED_SPENDING_AUTH_HEADER,
   type SerializedHttpRequest,
@@ -335,8 +337,7 @@ function concatChunks(chunks: Uint8Array[]): Uint8Array {
 }
 
 const COST_TRAILER_KEY = 'x-antseed-cost';
-const STREAM_COST_TRAILER_MAGIC = new TextEncoder().encode('ANTSEED_COST_TRAILER_V1');
-const STREAM_COST_TRAILER_LENGTH_BYTES = 4;
+const STREAM_COST_TRAILER_MAGIC_BYTES = new TextEncoder().encode(ANTSEED_STREAM_COST_TRAILER_MAGIC);
 
 /**
  * Parse a framed cost trailer from the done chunk's data.
@@ -348,25 +349,25 @@ const STREAM_COST_TRAILER_LENGTH_BYTES = 4;
  * or null if no cost trailer is found.
  */
 function parseCostTrailer(data: Uint8Array): { headers: Record<string, string>; payload: Uint8Array } | null {
-  const minFramedLength = STREAM_COST_TRAILER_MAGIC.length + STREAM_COST_TRAILER_LENGTH_BYTES;
+  const minFramedLength = STREAM_COST_TRAILER_MAGIC_BYTES.length + ANTSEED_STREAM_COST_TRAILER_LENGTH_BYTES;
   if (data.length <= minFramedLength) return null;
 
-  const lengthOffset = data.length - STREAM_COST_TRAILER_LENGTH_BYTES;
-  const view = new DataView(data.buffer, data.byteOffset + lengthOffset, STREAM_COST_TRAILER_LENGTH_BYTES);
+  const lengthOffset = data.length - ANTSEED_STREAM_COST_TRAILER_LENGTH_BYTES;
+  const view = new DataView(data.buffer, data.byteOffset + lengthOffset, ANTSEED_STREAM_COST_TRAILER_LENGTH_BYTES);
   const trailerLength = view.getUint32(0, false);
   if (trailerLength === 0 || trailerLength > 512) return null;
 
-  const magicOffset = lengthOffset - STREAM_COST_TRAILER_MAGIC.length;
+  const magicOffset = lengthOffset - STREAM_COST_TRAILER_MAGIC_BYTES.length;
   if (magicOffset < 0) return null;
-  for (let i = 0; i < STREAM_COST_TRAILER_MAGIC.length; i += 1) {
-    if (data[magicOffset + i] !== STREAM_COST_TRAILER_MAGIC[i]) return null;
+  for (let i = 0; i < STREAM_COST_TRAILER_MAGIC_BYTES.length; i += 1) {
+    if (data[magicOffset + i] !== STREAM_COST_TRAILER_MAGIC_BYTES[i]) return null;
   }
 
   const trailerStart = magicOffset - trailerLength;
   if (trailerStart < 0) return null;
 
-  const payload = data.subarray(0, trailerStart);
-  const trailerBytes = data.subarray(trailerStart, magicOffset);
+  const payload = data.slice(0, trailerStart);
+  const trailerBytes = data.slice(trailerStart, magicOffset);
 
   try {
     const text = new TextDecoder().decode(trailerBytes);

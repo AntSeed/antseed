@@ -9,6 +9,10 @@ import type { ChannelsClient } from './payments/evm/channels-client.js';
 import type { SellerPaymentManager } from './payments/seller-payment-manager.js';
 import { ProxyMux } from './proxy/proxy-mux.js';
 import type { PeerConnection } from './p2p/connection-manager.js';
+import {
+  ANTSEED_STREAM_COST_TRAILER_LENGTH_BYTES,
+  ANTSEED_STREAM_COST_TRAILER_MAGIC,
+} from './types/http.js';
 import type {
   SerializedHttpRequest,
   SerializedHttpResponse,
@@ -28,8 +32,7 @@ export interface SellerRequestHandlerDeps {
 
 /** Debounce interval for metadata refresh after load changes. */
 const METADATA_REFRESH_DEBOUNCE_MS = 200;
-const STREAM_COST_TRAILER_MAGIC = new TextEncoder().encode('ANTSEED_COST_TRAILER_V1');
-const STREAM_COST_TRAILER_LENGTH_BYTES = 4;
+const STREAM_COST_TRAILER_MAGIC_BYTES = new TextEncoder().encode(ANTSEED_STREAM_COST_TRAILER_MAGIC);
 
 /**
  * Handles all seller-side request processing: provider matching, execution,
@@ -489,20 +492,20 @@ export class SellerRequestHandler {
 function appendCostTrailer(payload: Uint8Array, trailer: Uint8Array): Uint8Array {
   if (trailer.length === 0) return payload;
 
-  const lengthBytes = new Uint8Array(STREAM_COST_TRAILER_LENGTH_BYTES);
+  const lengthBytes = new Uint8Array(ANTSEED_STREAM_COST_TRAILER_LENGTH_BYTES);
   const view = new DataView(lengthBytes.buffer, lengthBytes.byteOffset, lengthBytes.byteLength);
   view.setUint32(0, trailer.length, false);
 
   const framed = new Uint8Array(
-    payload.length + trailer.length + STREAM_COST_TRAILER_MAGIC.length + STREAM_COST_TRAILER_LENGTH_BYTES,
+    payload.length + trailer.length + STREAM_COST_TRAILER_MAGIC_BYTES.length + ANTSEED_STREAM_COST_TRAILER_LENGTH_BYTES,
   );
   let offset = 0;
   framed.set(payload, offset);
   offset += payload.length;
   framed.set(trailer, offset);
   offset += trailer.length;
-  framed.set(STREAM_COST_TRAILER_MAGIC, offset);
-  offset += STREAM_COST_TRAILER_MAGIC.length;
+  framed.set(STREAM_COST_TRAILER_MAGIC_BYTES, offset);
+  offset += STREAM_COST_TRAILER_MAGIC_BYTES.length;
   framed.set(lengthBytes, offset);
   return framed;
 }
