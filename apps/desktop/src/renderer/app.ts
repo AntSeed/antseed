@@ -109,15 +109,23 @@ const {
   populateSettingsForm,
 });
 
+// Credits API is created after chat, so use late-bound reference.
+let creditsApi: ReturnType<typeof initCreditsModule>;
+
 const chatApi = initChatModule({
   bridge,
   uiState,
   appendSystemLog,
+  onPaymentCardShown: () => creditsApi?.notifyPaymentCardVisible(),
 });
 
 initAppSetupModule({ uiState, bridge: bridge ?? null });
 
-const creditsApi = initCreditsModule({ bridge: bridge as DesktopBridge, uiState });
+creditsApi = initCreditsModule({
+  bridge: bridge as DesktopBridge,
+  uiState,
+  onBalanceSufficientForPayment: () => chatApi.retryAfterPayment(),
+});
 creditsApi.startPeriodicRefresh();
 
 /* ------------------------------------------------------------------ */
@@ -415,6 +423,7 @@ registerActions({
     uiState.chatPaymentApprovalError = null;
     notifyUiStateChanged();
   },
+  retryAfterPayment: () => chatApi.retryAfterPayment(),
   requestChannelClose: () => {
     void bridge?.paymentsOpenPortal?.('channels');
   },

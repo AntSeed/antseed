@@ -14,6 +14,7 @@ type SessionApprovalCardProps = {
   } | null;
   error: string | null;
   onAddCredits: () => void;
+  onRetry: () => void;
   onCancel: () => void;
 };
 
@@ -24,6 +25,7 @@ export function SessionApprovalCard({
   peerInfo,
   error,
   onAddCredits,
+  onRetry,
   onCancel,
 }: SessionApprovalCardProps) {
   const { creditsAvailableUsdc } = useUiSnapshot();
@@ -54,8 +56,8 @@ export function SessionApprovalCard({
       {error && <div className={styles.approvalError}>{error}</div>}
 
       <div className={styles.approvalActions}>
-        <button className={styles.approveBtn} onClick={onAddCredits}>
-          {hasCredits ? 'Manage Credits' : 'Add Credits'}
+        <button className={styles.approveBtn} onClick={hasCredits ? onRetry : onAddCredits}>
+          {hasCredits ? 'Retry' : 'Add Credits'}
         </button>
         <button className={styles.cancelBtn} onClick={onCancel}>
           Cancel

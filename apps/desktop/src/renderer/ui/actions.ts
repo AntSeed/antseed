@@ -21,6 +21,7 @@ export type AppActions = {
   handleServiceBlur: () => void;
   clearPinnedPeer: () => void;
   rejectPaymentSession: () => void;
+  retryAfterPayment: () => void;
   requestChannelClose: () => void;
   refreshCredits: () => void;
   refreshWorkspace: () => Promise<void>;

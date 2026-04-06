@@ -56,6 +56,7 @@ type ChatModuleOptions = {
   bridge?: DesktopBridge;
   uiState: RendererUiState;
   appendSystemLog: (message: string) => void;
+  onPaymentCardShown?: () => void;
 };
 
 export type ChatModuleApi = {
@@ -71,6 +72,7 @@ export type ChatModuleApi = {
   renameConversation: (convId: string, newTitle: string) => void;
   openConversation: (convId: string) => Promise<void>;
   sendMessage: (text: string, imageBase64?: string, imageMimeType?: string) => void;
+  retryAfterPayment: () => void;
   abortChat: () => Promise<void>;
   handleServiceChange: (value: string) => void;
   handleServiceFocus: () => void;
@@ -82,6 +84,7 @@ export function initChatModule({
   bridge,
   uiState,
   appendSystemLog,
+  onPaymentCardShown,
 }: ChatModuleOptions): ChatModuleApi {
   // ---------------------------------------------------------------------------
   // Constants
@@ -187,6 +190,7 @@ export function initChatModule({
     const { peerId } = primePaymentApprovalState(amountBaseUnits);
     uiState.chatPaymentApprovalVisible = true;
     notifyUiStateChanged();
+    onPaymentCardShown?.();
     if (peerId) {
       void fetchPeerInfo(peerId);
     }
@@ -1489,6 +1493,22 @@ export function initChatModule({
 
     uiState.chatError = null;
     setChatSending(true);
+    void refreshWorkspaceGitStatus();
+    dispatchChatRequest(convId, content, imageBase64, imageMimeType);
+  }
+
+  /**
+   * Shared send logic for both sendMessage and retryAfterPayment.
+   * Dispatches via streaming or non-streaming bridge, handles stuck-request
+   * recovery, payment-required errors, and fallback timeouts.
+   */
+  function dispatchChatRequest(
+    convId: string,
+    content: string,
+    imageBase64?: string,
+    imageMimeType?: string,
+  ): void {
+    if (!bridge) return;
 
     const selection = getSelectedChatServiceSelection();
 
@@ -1505,7 +1525,6 @@ export function initChatModule({
 
       void (async () => {
         try {
-          void refreshWorkspaceGitStatus();
           let result = await sendStreamRequest();
           if (
             !result.ok &&
@@ -1521,10 +1540,10 @@ export function initChatModule({
 
           if (!result.ok) {
             const errorMsg = typeof result.error === 'string' ? result.error : '';
-            const paymentMatch2 = /^payment_required:(\d+)$/i.exec(errorMsg);
-            if (paymentMatch2) {
+            const paymentMatch = /^payment_required:(\d+)$/i.exec(errorMsg);
+            if (paymentMatch) {
               setChatSending(false);
-              void handlePaymentRequired(paymentMatch2[1]);
+              void handlePaymentRequired(paymentMatch[1]);
             } else {
               reportChatError(result.error, 'Request failed');
               setChatSending(false);
@@ -1582,6 +1601,51 @@ export function initChatModule({
         }
       })();
     }
+  }
+
+  /**
+   * Retry the last user message after a payment failure.  Dismisses the
+   * payment-approval card and re-sends the most recent user message in the
+   * active conversation.  Intended to be called when credits become
+   * available after a 402 was returned.
+   */
+  function retryAfterPayment(): void {
+    if (!bridge) return;
+
+    // Dismiss payment card
+    uiState.chatPaymentApprovalVisible = false;
+    uiState.chatPaymentApprovalPeerId = null;
+    uiState.chatPaymentApprovalPeerName = null;
+    uiState.chatPaymentApprovalPeerInfo = null;
+    uiState.chatPaymentApprovalLoading = false;
+    uiState.chatPaymentApprovalError = null;
+    uiState.chatError = null;
+    notifyUiStateChanged();
+
+    // Find the last user message to resend
+    type MsgShape = { role?: string; content?: unknown };
+    const lastUserMsg = ([...uiState.chatMessages] as MsgShape[]).reverse().find(m => m.role === 'user');
+    if (!lastUserMsg || !uiState.chatActiveConversation) return;
+
+    const content = typeof lastUserMsg.content === 'string'
+      ? lastUserMsg.content
+      : '';
+
+    // Extract image from multipart content if present
+    let imageBase64: string | undefined;
+    let imageMimeType: string | undefined;
+    if (Array.isArray(lastUserMsg.content)) {
+      const imgBlock = (lastUserMsg.content as Array<{ type: string; source?: { data?: string; media_type?: string } }>)
+        .find(b => b.type === 'image');
+      if (imgBlock?.source?.data) {
+        imageBase64 = imgBlock.source.data;
+        imageMimeType = imgBlock.source.media_type;
+      }
+    }
+
+    const convId = uiState.chatActiveConversation;
+    setChatSending(true);
+    dispatchChatRequest(convId, content, imageBase64, imageMimeType);
   }
 
   async function abortChat(): Promise<void> {
@@ -2116,6 +2180,7 @@ export function initChatModule({
     renameConversation,
     openConversation,
     sendMessage,
+    retryAfterPayment,
     abortChat,
     handleServiceChange,
     handleServiceFocus,
