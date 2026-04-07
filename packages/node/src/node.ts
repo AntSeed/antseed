@@ -1191,6 +1191,7 @@ export class AntseedNode extends EventEmitter {
       ...(hasProviderServiceApiProtocols ? { providerServiceApiProtocols: providerServiceApiProtocolEntries } : {}),
       defaultInputUsdPerMillion: firstProvider?.defaultPricing.inputUsdPerMillion,
       defaultOutputUsdPerMillion: firstProvider?.defaultPricing.outputUsdPerMillion,
+      defaultCachedInputUsdPerMillion: firstProvider?.defaultPricing.cachedInputUsdPerMillion,
       maxConcurrency: firstProvider?.maxConcurrency,
       currentLoad: firstProvider?.currentLoad,
       onChainChannelCount: result.metadata.onChainChannelCount,

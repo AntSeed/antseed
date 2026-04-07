@@ -517,6 +517,7 @@ export class BuyerPaymentNegotiator {
     const defaults: ServicePricing = {
       inputUsdPerMillion: peer.defaultInputUsdPerMillion ?? 0,
       outputUsdPerMillion: peer.defaultOutputUsdPerMillion ?? 0,
+      cachedInputUsdPerMillion: peer.defaultCachedInputUsdPerMillion,
     };
     if (defaults.inputUsdPerMillion === 0 && defaults.outputUsdPerMillion === 0 && !peer.providerPricing) {
       return undefined;
@@ -530,6 +531,7 @@ export class BuyerPaymentNegotiator {
             services[serviceName] = {
               inputUsdPerMillion: sp.inputUsdPerMillion,
               outputUsdPerMillion: sp.outputUsdPerMillion,
+              cachedInputUsdPerMillion: sp.cachedInputUsdPerMillion,
             };
           }
         }
@@ -613,11 +615,13 @@ export class BuyerPaymentNegotiator {
       ? {
           inputUsdPerMillion: requirements.inputUsdPerMillion ?? peer.defaultInputUsdPerMillion ?? 0,
           outputUsdPerMillion: requirements.outputUsdPerMillion ?? peer.defaultOutputUsdPerMillion ?? 0,
+          cachedInputUsdPerMillion: requirements.cachedInputUsdPerMillion ?? peer.defaultCachedInputUsdPerMillion,
         }
       : (peer.defaultInputUsdPerMillion != null || peer.defaultOutputUsdPerMillion != null)
         ? {
             inputUsdPerMillion: peer.defaultInputUsdPerMillion ?? 0,
             outputUsdPerMillion: peer.defaultOutputUsdPerMillion ?? 0,
+            cachedInputUsdPerMillion: peer.defaultCachedInputUsdPerMillion,
           }
         : undefined;
 
