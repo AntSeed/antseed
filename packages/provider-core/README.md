@@ -22,7 +22,7 @@ import { BaseProvider, StaticTokenProvider } from '@antseed/provider-core';
 const provider = new BaseProvider({
   name: 'my-provider',
   services: ['model-a', 'model-b'],
-  pricing: { defaults: { inputUsdPerMillion: 10, outputUsdPerMillion: 10 } },
+  pricing: { defaults: { inputUsdPerMillion: 10, cachedInputUsdPerMillion: 1, outputUsdPerMillion: 10 } },
   serviceCategories: { 'model-a': ['coding'] },
   relay: {
     baseUrl: 'https://api.example.com',
@@ -73,7 +73,7 @@ const plugin: AntseedProviderPlugin = {
     return new BaseProvider({
       name: 'my-provider',
       services: ['default-model'],
-      pricing: { defaults: { inputUsdPerMillion: 10, outputUsdPerMillion: 10 } },
+      pricing: { defaults: { inputUsdPerMillion: 10, cachedInputUsdPerMillion: 1, outputUsdPerMillion: 10 } },
       relay: {
         baseUrl: 'https://api.example.com',
         authHeaderName: 'Authorization',

@@ -34,13 +34,13 @@ Works with Claude Code, Aider, Continue.dev, OpenAI Codex, and any tool that sup
 Set maximum prices you're willing to pay:
 
 ```bash
-export ANTSEED_MAX_PRICING_JSON='{"defaults":{"inputUsdPerMillion":20,"outputUsdPerMillion":60}}'
+export ANTSEED_MAX_PRICING_JSON='{"defaults":{"inputUsdPerMillion":20,"cachedInputUsdPerMillion":10,"outputUsdPerMillion":60}}'
 ```
 
 Or with per-provider overrides:
 
 ```bash
-export ANTSEED_MAX_PRICING_JSON='{"defaults":{"inputUsdPerMillion":20,"outputUsdPerMillion":60},"providers":{"anthropic":{"services":{"claude-sonnet-4-5-20250929":{"inputUsdPerMillion":15,"outputUsdPerMillion":75}}}}}'
+export ANTSEED_MAX_PRICING_JSON='{"defaults":{"inputUsdPerMillion":20,"cachedInputUsdPerMillion":10,"outputUsdPerMillion":60},"providers":{"anthropic":{"services":{"claude-sonnet-4-5-20250929":{"inputUsdPerMillion":15,"cachedInputUsdPerMillion":8,"outputUsdPerMillion":75}}}}}'
 ```
 
 ## How It Works

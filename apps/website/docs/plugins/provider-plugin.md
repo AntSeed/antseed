@@ -23,10 +23,12 @@ interface Provider {
   pricing: {
     defaults: {
       inputUsdPerMillion: number
+      cachedInputUsdPerMillion?: number  // defaults to inputUsdPerMillion
       outputUsdPerMillion: number
     }
     services?: Record<string, {
       inputUsdPerMillion: number
+      cachedInputUsdPerMillion?: number  // defaults to inputUsdPerMillion
       outputUsdPerMillion: number
     }>
   }
@@ -55,6 +57,7 @@ export default {
   pricing: {
     defaults: {
       inputUsdPerMillion: 3,
+      cachedInputUsdPerMillion: 0.3,
       outputUsdPerMillion: 15
     }
   },

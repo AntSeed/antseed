@@ -71,7 +71,7 @@ Custom bootstrap nodes can be supplied and are merged (deduplicated by `host:por
 **Source:** `node/src/discovery/peer-metadata.ts`
 
 ```
-METADATA_VERSION = 6
+METADATA_VERSION = 7
 ```
 
 ### Data Structures
@@ -81,7 +81,7 @@ METADATA_VERSION = 6
 | Field       | Type                    | Description                             |
 |-------------|-------------------------|-----------------------------------------|
 | peerId      | PeerId (string)         | 40 hex chars (20-byte EVM address)      |
-| version     | number                  | Must equal `METADATA_VERSION` (6)       |
+| version     | number                  | Must equal `METADATA_VERSION` (7)       |
 | displayName | string                  | Optional human-readable node label      |
 | publicAddress | string                | Optional public `host:port` buyers should dial instead of the raw DHT source address |
 | providers   | ProviderAnnouncement[]  | List of provider offerings              |
@@ -95,8 +95,8 @@ METADATA_VERSION = 6
 |------------------|----------|--------------------------------------------------------------|
 | provider         | string   | Provider name (e.g. "anthropic")                            |
 | services         | string[] | List of service identifiers                                  |
-| defaultPricing   | object   | Default `{ inputUsdPerMillion, outputUsdPerMillion }`       |
-| servicePricing     | object   | Optional per-service map `{ [service]: { inputUsdPerMillion, outputUsdPerMillion } }` |
+| defaultPricing   | object   | Default `{ inputUsdPerMillion, cachedInputUsdPerMillion?, outputUsdPerMillion }` |
+| servicePricing     | object   | Optional per-service map `{ [service]: { inputUsdPerMillion, cachedInputUsdPerMillion?, outputUsdPerMillion } }` |
 | serviceCategories  | object   | Optional per-service map `{ [service]: string[] }` with lowercase tags |
 | serviceApiProtocols| object   | Optional per-service map `{ [service]: string[] }` of supported service API protocols |
 | maxConcurrency   | number   | Maximum concurrent requests (>= 1)                           |
@@ -124,14 +124,16 @@ Per provider (repeated providerCount times):
   Per service (repeated serviceCount times):
     [serviceLen  : 1 byte   uint8 ]
     [service     : N bytes  UTF-8  ]   // N = serviceLen
-  [defaultInputUsdPerMillion  : 4 bytes  float32 big-endian ]
-  [defaultOutputUsdPerMillion : 4 bytes  float32 big-endian ]
+  [defaultInputUsdPerMillion       : 4 bytes  float32 big-endian ]
+  [defaultOutputUsdPerMillion      : 4 bytes  float32 big-endian ]
+  [defaultCachedInputUsdPerMillion : 4 bytes  float32 big-endian ]   // v7+; defaults to defaultInputUsdPerMillion
   [servicePricingCount          : 1 byte   uint8 ]
   Per service pricing entry (repeated servicePricingCount times):
     [serviceLen : 1 byte   uint8 ]
     [service    : N bytes  UTF-8  ]
-    [inputUsdPerMillion  : 4 bytes  float32 big-endian ]
-    [outputUsdPerMillion : 4 bytes  float32 big-endian ]
+    [inputUsdPerMillion       : 4 bytes  float32 big-endian ]
+    [outputUsdPerMillion      : 4 bytes  float32 big-endian ]
+    [cachedInputUsdPerMillion : 4 bytes  float32 big-endian ]   // v7+; defaults to inputUsdPerMillion
   [serviceCategoryCount       : 1 byte   uint8 ]      // v3+
   Per service category entry (repeated serviceCategoryCount times):
     [serviceLen : 1 byte   uint8 ]
@@ -188,7 +190,7 @@ The body (everything except the trailing 65-byte signature) is the data that is 
 
 Additional validation rules enforced by `validateMetadata()`:
 
-- `version` must equal `METADATA_VERSION` (6).
+- `version` must equal `METADATA_VERSION` (7).
 - `peerId` must be exactly 40 lowercase hex characters.
 - `region` must not be empty.
 - `displayName` is optional, but when present it must be non-empty and <= 64 chars.
@@ -196,7 +198,9 @@ Additional validation rules enforced by `validateMetadata()`:
 - `timestamp` must be a positive finite number.
 - At least one provider must be present.
 - `defaultPricing.inputUsdPerMillion` and `defaultPricing.outputUsdPerMillion` must be non-negative.
+- `defaultPricing.cachedInputUsdPerMillion` (if present) must be non-negative. Defaults to `inputUsdPerMillion` when omitted.
 - Each `servicePricing[service].inputUsdPerMillion` and `servicePricing[service].outputUsdPerMillion` (if present) must be non-negative.
+- Each `servicePricing[service].cachedInputUsdPerMillion` (if present) must be non-negative. Defaults to the service's `inputUsdPerMillion` when omitted.
 - `serviceCategories` (if present) must reference services listed in `providers[].services`.
 - Each category must be lowercase alphanumeric or hyphen: `^[a-z0-9][a-z0-9-]*$`.
 - Categories must be non-empty, unique per service, and within per-service/per-tag limits above.
@@ -284,7 +288,7 @@ The `PeerLookup` class orchestrates the full discovery flow:
 The `PeerAnnouncer` class handles the seller-side announcement lifecycle:
 
 1. Build a `PeerMetadata` object from the configured providers, current pricing, current load, and region.
-2. Set `version` to `METADATA_VERSION` (4) and `timestamp` to `Date.now()`.
+2. Set `version` to `METADATA_VERSION` (7) and `timestamp` to `Date.now()`.
 3. Encode the body (without signature) via `encodeMetadataForSigning()`.
 4. Sign the body with the seller's secp256k1 private key (via EIP-191 personal_sign).
 5. Announce DHT topics at the configured signaling port:

@@ -102,6 +102,7 @@ Pricing is configured in USD per 1M tokens with role-specific defaults and optio
     "pricing": {
       "defaults": {
         "inputUsdPerMillion": 10,
+        "cachedInputUsdPerMillion": 5,
         "outputUsdPerMillion": 10
       },
       "providers": {
@@ -109,6 +110,7 @@ Pricing is configured in USD per 1M tokens with role-specific defaults and optio
           "services": {
             "claude-sonnet-4-5-20250929": {
               "inputUsdPerMillion": 12,
+              "cachedInputUsdPerMillion": 6,
               "outputUsdPerMillion": 18
             }
           }
@@ -125,6 +127,7 @@ Pricing is configured in USD per 1M tokens with role-specific defaults and optio
     "maxPricing": {
       "defaults": {
         "inputUsdPerMillion": 100,
+        "cachedInputUsdPerMillion": 50,
         "outputUsdPerMillion": 100
       }
     }
@@ -158,10 +161,11 @@ antseed config set identity.displayName "Acme Inference - us-east-1"
 
 # Seller defaults
 antseed config seller set pricing.defaults.inputUsdPerMillion 12
+antseed config seller set pricing.defaults.cachedInputUsdPerMillion 6
 antseed config seller set pricing.defaults.outputUsdPerMillion 36
 
 # Seller per-service override for a provider
-antseed config seller set pricing.providers.anthropic.services '{"claude-sonnet-4-5-20250929":{"inputUsdPerMillion":14,"outputUsdPerMillion":42}}'
+antseed config seller set pricing.providers.anthropic.services '{"claude-sonnet-4-5-20250929":{"inputUsdPerMillion":14,"cachedInputUsdPerMillion":7,"outputUsdPerMillion":42}}'
 
 # Seller per-service category tags announced in metadata
 antseed config seller set serviceCategories.anthropic.claude-sonnet-4-5-20250929 '["coding","legal"]'
@@ -171,14 +175,15 @@ antseed config seller set publicAddress "peer.example.com:6882"
 
 # Buyer max pricing
 antseed config buyer set maxPricing.defaults.inputUsdPerMillion 25
+antseed config buyer set maxPricing.defaults.cachedInputUsdPerMillion 12
 antseed config buyer set maxPricing.defaults.outputUsdPerMillion 75
 ```
 
 Runtime-only overrides (do not write your config file):
 
 ```bash
-antseed seed --provider anthropic --input-usd-per-million 10 --output-usd-per-million 30
-antseed connect --router local --max-input-usd-per-million 20 --max-output-usd-per-million 60
+antseed seed --provider anthropic --input-usd-per-million 10 --cached-input-usd-per-million 5 --output-usd-per-million 30
+antseed connect --router local --max-input-usd-per-million 20 --max-cached-input-usd-per-million 10 --max-output-usd-per-million 60
 ```
 
 ### Session overrides (live, while proxy is running)

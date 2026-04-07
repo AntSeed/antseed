@@ -31,6 +31,7 @@ antseed seed --provider openai
 | `OPENAI_BODY_INJECT_JSON` | string | No | -- | JSON object merged into request body |
 | `OPENAI_STRIP_HEADER_PREFIXES` | string[] | No | -- | Comma-separated header prefixes to strip |
 | `ANTSEED_INPUT_USD_PER_MILLION` | number | No | 10 | Input token price (USD per 1M) |
+| `ANTSEED_CACHED_INPUT_USD_PER_MILLION` | number | No | input price | Cached input token price (USD per 1M) |
 | `ANTSEED_OUTPUT_USD_PER_MILLION` | number | No | 10 | Output token price (USD per 1M) |
 | `ANTSEED_SERVICE_PRICING_JSON` | string | No | -- | Per-service pricing as JSON |
 | `ANTSEED_MAX_CONCURRENCY` | number | No | 10 | Max concurrent requests |

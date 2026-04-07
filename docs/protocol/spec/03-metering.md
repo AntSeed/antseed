@@ -130,8 +130,10 @@ All numeric fields are converted to strings via `.toString()`. The resulting str
 
 ```typescript
 // Seller offer pricing is configured in USD per 1M tokens.
+// cachedInputUsdPerMillion defaults to inputUsdPerMillion when not set.
+const effectiveCachedPrice = cachedInputUsdPerMillion ?? inputUsdPerMillion;
 const estimatedCostUsd =
-  (inputTokens * inputUsdPerMillion + outputTokens * outputUsdPerMillion) / 1_000_000;
+  (freshInputTokens * inputUsdPerMillion + cachedInputTokens * effectiveCachedPrice + outputTokens * outputUsdPerMillion) / 1_000_000;
 
 // Receipts normalize this to cents per 1,000 tokens for compact transport/storage.
 const unitPriceCentsPerThousandTokens =

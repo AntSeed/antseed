@@ -126,16 +126,20 @@ Pricing is in USD per 1 million tokens.
 ```bash
 # Global defaults (applied to all services without specific pricing)
 antseed config seller set pricing.defaults.inputUsdPerMillion 1
+antseed config seller set pricing.defaults.cachedInputUsdPerMillion 0.5
 antseed config seller set pricing.defaults.outputUsdPerMillion 3
 
 # Per-provider overrides (optional)
 antseed config seller set pricing.providers.openai.defaults.inputUsdPerMillion 1
+antseed config seller set pricing.providers.openai.defaults.cachedInputUsdPerMillion 0.5
 antseed config seller set pricing.providers.openai.defaults.outputUsdPerMillion 3
 
 # Per-service overrides (optional)
 antseed config seller set pricing.providers.openai.services.deepseek-v3.1.inputUsdPerMillion 1
+antseed config seller set pricing.providers.openai.services.deepseek-v3.1.cachedInputUsdPerMillion 0.5
 antseed config seller set pricing.providers.openai.services.deepseek-v3.1.outputUsdPerMillion 2
 antseed config seller set pricing.providers.openai.services.kimi-k2.5.inputUsdPerMillion 1
+antseed config seller set pricing.providers.openai.services.kimi-k2.5.cachedInputUsdPerMillion 0.5
 antseed config seller set pricing.providers.openai.services.kimi-k2.5.outputUsdPerMillion 3
 ```
 
@@ -179,6 +183,7 @@ Runtime pricing overrides (without saving to config):
 ```bash
 antseed seed --provider openai \
   --input-usd-per-million 1 \
+  --cached-input-usd-per-million 0.5 \
   --output-usd-per-million 3
 ```
 
