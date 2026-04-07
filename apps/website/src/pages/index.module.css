@@ -42,6 +42,150 @@
 .ldiv { width: 1px; height: 20px; background: #e8e8e3; }
 .liveArrow { font-size: 11px; color: #16a863; font-family: 'JetBrains Mono', monospace; margin-left: 4px; }
 
+/* ---- LOCAL GATEWAY ---- */
+.gateway { text-align: center; padding: 40px 20px 48px; max-width: 800px; margin: 0 auto; }
+.gatewayTitle {
+  font-size: clamp(24px, 3vw, 32px);
+  font-weight: 700;
+  letter-spacing: -1px;
+  margin-bottom: 8px;
+  color: #1a1a1a;
+}
+.gatewaySub {
+  font-size: 14px;
+  color: #888;
+  font-family: 'JetBrains Mono', monospace;
+  margin-bottom: 32px;
+}
+.gatewayCards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  max-width: 640px;
+  margin: 0 auto;
+}
+.gwCard {
+  background: #fff;
+  border: 1px solid #e8e8e3;
+  border-radius: 12px;
+  padding: 24px 20px;
+  text-align: left;
+  position: relative;
+  transition: border-color 0.2s;
+}
+.gwCard:hover { border-color: #ccc; }
+.gwCardLocal {
+  border: 1.5px solid rgba(31,216,122,0.4);
+  box-shadow: 0 2px 12px rgba(31,216,122,0.06);
+}
+.gwCardLocal:hover { border-color: rgba(31,216,122,0.6); }
+.gwBadge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 4px;
+  margin-bottom: 12px;
+}
+.gwBadgeLocal {
+  background: rgba(31,216,122,0.1);
+  color: #1FD87A;
+}
+.gwBadgeCloud {
+  background: #f0f0eb;
+  color: #888;
+}
+.gwName {
+  font-size: 15px;
+  font-weight: 700;
+  color: #555;
+  margin-bottom: 6px;
+  letter-spacing: -0.3px;
+}
+.gwCardLocal .gwName {
+  color: #1a1a1a;
+}
+.gwUrl {
+  font-size: 12px;
+  font-family: 'JetBrains Mono', monospace;
+  color: #999;
+  margin-bottom: 12px;
+  word-break: break-all;
+}
+.gwUrlLocal { color: #1FD87A; font-weight: 600; }
+.gwRoute {
+  display: flex;
+  align-items: center;
+  margin-bottom: 14px;
+  padding: 10px 0;
+}
+.gwRouteStep {
+  display: flex;
+  align-items: center;
+  flex: 1;
+}
+.gwRouteNode {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  width: 50px;
+}
+.gwDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: block;
+}
+.gwRouteLabel {
+  font-size: 9px;
+  font-family: 'JetBrains Mono', monospace;
+  color: #999;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.gwRouteLine {
+  flex: 1;
+  height: 2px;
+  background: #e0e0db;
+  margin: 0 6px;
+  margin-bottom: 16px;
+  border-radius: 1px;
+}
+.gwRouteLineGreen {
+  background: rgba(31,216,122,0.4);
+}
+.gwTags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.gwTag {
+  font-size: 10px;
+  font-family: 'JetBrains Mono', monospace;
+  padding: 3px 8px;
+  border-radius: 100px;
+  border: 1px solid #e8e8e3;
+  color: #888;
+}
+.gwTagGreen {
+  border-color: rgba(31,216,122,0.2);
+  color: #16a863;
+  background: rgba(31,216,122,0.04);
+}
+.gwTagMuted {
+  border-color: #e8e8e3;
+  color: #aaa;
+}
+@media (max-width: 600px) {
+  .gatewayCards { grid-template-columns: 1fr; }
+}
+
 /* ---- BIG STATEMENT ---- */
 .bigStatement { text-align: center; padding: 60px 20px 40px; max-width: 800px; margin: 0 auto; }
 .bigStatementTitle {
