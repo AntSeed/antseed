@@ -106,7 +106,7 @@ function EarnAnimation() {
   const stageRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [activeNode, setActiveNode] = useState(-1);
-  const initialSkills = ['claude-sonnet-4-6 · raw inference','Legal in Guatemala · AntAgent','TEE Router · routing','llama-3-70b · raw inference','Price Router · routing'];
+  const initialSkills = ['claude-sonnet-4-6 · raw inference','Legal in Guatemala · AI Agent','TEE Router · routing','llama-3-70b · raw inference','Price Router · routing'];
   const initialFeed = initialSkills.map((skill, i) => ({skill, amount:(Math.random()*0.014+0.001).toFixed(3), id:i}));
   const [feed, setFeed] = useState<{skill:string;amount:string;id:number}[]>(initialFeed);
   const startedRef = useRef(false);
@@ -119,17 +119,17 @@ function EarnAnimation() {
 
   const skills = [
     'claude-sonnet-4-6 · raw inference',
-    'Legal in Guatemala · AntAgent',
+    'Legal in Guatemala · AI Agent',
     'TEE Router · routing',
     'llama-3-70b · raw inference',
     'Price Router · routing',
-    'Solidity Auditor · AntAgent',
+    'Solidity Auditor · AI Agent',
     'mistral-large · raw inference',
     'Result Router · routing',
-    'Medical Diagnostics BR · AntAgent',
+    'Medical Diagnostics BR · AI Agent',
     'gemma-3-27b · raw inference',
     'Latency Router · routing',
-    'Company Intelligence · AntAgent',
+    'Company Intelligence · AI Agent',
   ];
 
   // Ant particles circling the hex
@@ -499,8 +499,8 @@ export default function Home(): JSX.Element {
               <div className={styles.svcList}>
                 <div className={styles.svcRow}><div className={styles.svcInfo}><span className={styles.svcName}>Llama 3.3 70B</span><span className={styles.svcJobs}>6,102 verified · Raw Inference</span></div><div className={styles.svcScore}><span className={styles.svcNum}>9.4</span><span className={styles.svcOf}>/10</span></div></div>
                 <div className={styles.svcRow}><div className={styles.svcInfo}><span className={styles.svcName}>TEE Price Router</span><span className={styles.svcJobs}>1,847 verified · Routing</span></div><div className={styles.svcScore}><span className={styles.svcNum}>9.8</span><span className={styles.svcOf}>/10</span></div></div>
-                <div className={styles.svcRow}><div className={styles.svcInfo}><span className={styles.svcName}>Legal Analysis Agent</span><span className={styles.svcJobs}>2,103 verified · AntAgent</span></div><div className={styles.svcScore}><span className={styles.svcNum}>9.5</span><span className={styles.svcOf}>/10</span></div></div>
-                <div className={styles.svcRow}><div className={styles.svcInfo}><span className={styles.svcName}>Code Review Agent</span><span className={styles.svcJobs}>4,821 verified · AntAgent</span></div><div className={styles.svcScore}><span className={styles.svcNum}>9.7</span><span className={styles.svcOf}>/10</span></div></div>
+                <div className={styles.svcRow}><div className={styles.svcInfo}><span className={styles.svcName}>Legal Analysis Agent</span><span className={styles.svcJobs}>2,103 verified · AI Agent</span></div><div className={styles.svcScore}><span className={styles.svcNum}>9.5</span><span className={styles.svcOf}>/10</span></div></div>
+                <div className={styles.svcRow}><div className={styles.svcInfo}><span className={styles.svcName}>Code Review Agent</span><span className={styles.svcJobs}>4,821 verified · AI Agent</span></div><div className={styles.svcScore}><span className={styles.svcNum}>9.7</span><span className={styles.svcOf}>/10</span></div></div>
               </div>
             </div>
           </div>
@@ -529,7 +529,7 @@ export default function Home(): JSX.Element {
           </div>
           <div className={styles.threeWaysCard}>
             <div className={styles.threeWaysNum}>03</div>
-            <h4>AntAgent</h4>
+            <h4>AI Agent</h4>
             <p className={styles.threeWaysTags}>Packaged expertise · Private logic · Always-on</p>
             <p>Wrap domain knowledge as a named, always-on service. Your system prompt, RAG, and toolchain stay private. Buyers pay for the expertise, not just the tokens.</p>
           </div>
@@ -578,7 +578,7 @@ export default function Home(): JSX.Element {
           </div>
           <div className={styles.bottomCard}>
             <h3>Become a provider</h3>
-            <p>Serve raw inference, build a routing service, or wrap domain expertise as an AntAgent. Set your price. Start earning.</p>
+            <p>Serve raw inference, build a routing service, or wrap domain expertise as an AI Agent. Set your price. Start earning.</p>
             <Link to="/providers" className={styles.bottomBtn}>Start providing →</Link>
           </div>
         </div>

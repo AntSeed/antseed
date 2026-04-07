@@ -11,7 +11,7 @@ const FAQ_DATA = [
   },
   {
     q: 'What provider types can I run?',
-    a: 'Three: Raw Inference (serve a model or proxy an existing API), Routing Service (select providers on behalf of buyers and earn per request), or AntAgent (wrap domain expertise as a named always-on service). A single node can run all three simultaneously at different price tiers.',
+    a: 'Three: Raw Inference (serve a model or proxy an existing API), Routing Service (select providers on behalf of buyers and earn per request), or AI Agent (wrap domain expertise as a named always-on service). A single node can run all three simultaneously at different price tiers.',
   },
   {
     q: 'Does my node need to run 24/7?',
@@ -27,7 +27,7 @@ const FAQ_DATA = [
   },
   {
     q: 'Can I serve multiple capability types from one node?',
-    a: 'Yes. A single AntSeed node can advertise multiple services — raw inference on one model, a routing service with custom logic, and an AntAgent, all at different price tiers. Each service is announced independently to the DHT.',
+    a: 'Yes. A single AntSeed node can advertise multiple services — raw inference on one model, a routing service with custom logic, and an AI Agent, all at different price tiers. Each service is announced independently to the DHT.',
   },
 ];
 
@@ -112,14 +112,14 @@ export default function Providers(): JSX.Element {
                 <path d="M2 12l10 5 10-5"/>
               </svg>
             </div>
-            <h3>AntAgent</h3>
+            <h3>AI Agent</h3>
             <p>You've built domain expertise in AI form. A legal agent, a security researcher, a trading analyst. Announce it as a named service. Buyers pay for your expertise, not just the tokens.</p>
             <ul className={styles.pathList}>
               <li>→ Persona, guardrails, and knowledge stay private</li>
               <li>→ Announced as a named service on the network</li>
               <li>→ Premium pricing for specialized delivery</li>
             </ul>
-            <Link to="/docs/provider-api#ant-agent" className={styles.pathLink}>AntAgent docs →</Link>
+            <Link to="/docs/provider-api#ant-agent" className={styles.pathLink}>AI Agent docs →</Link>
           </div>
 
           <div className={styles.pathCard}>

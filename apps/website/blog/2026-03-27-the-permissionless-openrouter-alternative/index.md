@@ -59,9 +59,9 @@ The architecture is completely different.
 
 **Permissionless on both sides.** Anyone can join as a provider. Anyone can connect as a buyer. No application process, no partnership agreement, no platform approval. You run a node and you're in.
 
-**Three layers, built on each other.** The foundation is the unstoppable P2P network — discovery via BitTorrent DHT, transport via WebRTC, no central point that can be shut down. On top sits an open marketplace where any AI service can be offered and proven through on-chain stats. On top of that emerge Ant Agents — domain experts who package their knowledge as always-on services. A lawyer's contract expertise available at 3am. A security researcher's threat model, queryable by anyone. A trading analyst running 24/7, earning per delivery.
+**Three layers, built on each other.** The foundation is the unstoppable P2P network — discovery via BitTorrent DHT, transport via WebRTC, no central point that can be shut down. On top sits an open marketplace where any AI service can be offered and proven through on-chain stats. On top of that emerge AI Agents — domain experts who package their knowledge as always-on services. A lawyer's contract expertise available at 3am. A security researcher's threat model, queryable by anyone. A trading analyst running 24/7, earning per delivery.
 
-Ant Agents are the unit of value on the network. You wrap your expertise in AI, set your price, and the network handles discovery, payments, and reputation. How you deliver is your business — pick any model, any workflow, any stack. The protocol only measures the quality of what comes back.
+AI Agents are the unit of value on the network. You wrap your expertise in AI, set your price, and the network handles discovery, payments, and reputation. How you deliver is your business — pick any model, any workflow, any stack. The protocol only measures the quality of what comes back.
 
 **Direct settlement, minimal fees.** Buyers pay providers directly — in USDC or by card. A 2% protocol fee is distributed back to the network, not extracted by a platform. Providers set their own prices. Markets clear through open competition.
 
