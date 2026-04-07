@@ -35,7 +35,15 @@ export function parseServicePricingJson(raw: string | undefined): Provider['pric
     if (typeof output !== 'number' || !Number.isFinite(output) || output < 0) {
       throw new Error(`Service pricing for "${service}" requires non-negative outputUsdPerMillion`);
     }
-    out[service] = { inputUsdPerMillion: input, outputUsdPerMillion: output };
+    const cached = (pricing as Record<string, unknown>)['cachedInputUsdPerMillion'];
+    if (cached != null && (typeof cached !== 'number' || !Number.isFinite(cached) || cached < 0)) {
+      throw new Error(`Service pricing for "${service}" cachedInputUsdPerMillion must be a non-negative number`);
+    }
+    out[service] = {
+      inputUsdPerMillion: input,
+      outputUsdPerMillion: output,
+      ...(typeof cached === 'number' ? { cachedInputUsdPerMillion: cached } : {}),
+    };
   }
 
   return Object.keys(out).length > 0 ? out : undefined;

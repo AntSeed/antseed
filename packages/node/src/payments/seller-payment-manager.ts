@@ -725,7 +725,7 @@ export class SellerPaymentManager {
   getPaymentRequirements(
     requestId: string,
     buyerPeerId?: string,
-    pricing?: { inputUsdPerMillion?: number; outputUsdPerMillion?: number },
+    pricing?: { inputUsdPerMillion?: number; outputUsdPerMillion?: number; cachedInputUsdPerMillion?: number },
   ): PaymentRequiredPayload {
     const minBudgetPerRequest = this._config.minBudgetPerRequest ?? DEFAULT_MIN_BUDGET_PER_REQUEST;
 
@@ -745,6 +745,7 @@ export class SellerPaymentManager {
       requestId,
       ...(pricing?.inputUsdPerMillion != null ? { inputUsdPerMillion: pricing.inputUsdPerMillion } : {}),
       ...(pricing?.outputUsdPerMillion != null ? { outputUsdPerMillion: pricing.outputUsdPerMillion } : {}),
+      ...(pricing?.cachedInputUsdPerMillion != null ? { cachedInputUsdPerMillion: pricing.cachedInputUsdPerMillion } : {}),
     };
   }
 

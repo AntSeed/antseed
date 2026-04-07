@@ -3,7 +3,7 @@ import type { PeerOffering } from "../types/capability.js";
 import type { ServiceApiProtocol } from "../types/service-api.js";
 import { WELL_KNOWN_SERVICE_API_PROTOCOLS } from "../types/service-api.js";
 
-export const METADATA_VERSION = 6;
+export const METADATA_VERSION = 7;
 export const WELL_KNOWN_SERVICE_CATEGORIES = [
   "privacy",
   "legal",
@@ -18,6 +18,7 @@ export type { ServiceApiProtocol };
 export interface TokenPricingUsdPerMillion {
   inputUsdPerMillion: number;
   outputUsdPerMillion: number;
+  cachedInputUsdPerMillion?: number;
 }
 
 export interface ProviderAnnouncement {

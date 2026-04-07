@@ -25,6 +25,7 @@ export {
 
 export {
   extractUsage,
+  type TokenUsage,
   parseJsonObject,
   toNonNegativeInt,
   type StreamingResponseAdapter,

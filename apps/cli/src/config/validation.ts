@@ -18,6 +18,9 @@ function validatePricingLeaf(
   if (!Number.isFinite(value.outputUsdPerMillion) || value.outputUsdPerMillion < 0) {
     errors.push(`${path}.outputUsdPerMillion must be a non-negative finite number`);
   }
+  if (value.cachedInputUsdPerMillion != null && (!Number.isFinite(value.cachedInputUsdPerMillion) || value.cachedInputUsdPerMillion < 0)) {
+    errors.push(`${path}.cachedInputUsdPerMillion must be a non-negative finite number`);
+  }
 }
 
 function validateHierarchicalPricing(

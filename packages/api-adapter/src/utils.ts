@@ -49,14 +49,51 @@ export function toNonNegativeInt(value: unknown): number {
   return Math.floor(parsed);
 }
 
-export function extractUsage(parsed: Record<string, unknown>): { inputTokens: number; outputTokens: number } {
+export interface TokenUsage {
+  /** Total input tokens (includes cached for OpenAI, fresh-only for Anthropic). */
+  inputTokens: number;
+  outputTokens: number;
+  /** Fresh (non-cached) input tokens. Always independent of cachedInputTokens. */
+  freshInputTokens: number;
+  /** Cached input tokens (prompt cache hits). Independent count, never overlaps freshInputTokens. */
+  cachedInputTokens: number;
+}
+
+export function extractUsage(parsed: Record<string, unknown>): TokenUsage {
   const usage = parsed.usage && typeof parsed.usage === 'object'
     ? (parsed.usage as Record<string, unknown>)
     : {};
-  return {
-    inputTokens: toNonNegativeInt(usage.prompt_tokens ?? usage.input_tokens),
-    outputTokens: toNonNegativeInt(usage.completion_tokens ?? usage.output_tokens),
-  };
+
+  const totalInput = toNonNegativeInt(usage.prompt_tokens ?? usage.input_tokens);
+  const outputTokens = toNonNegativeInt(usage.completion_tokens ?? usage.output_tokens);
+
+  // OpenAI/Together: prompt_tokens_details.cached_tokens (subset of prompt_tokens)
+  const details = usage.prompt_tokens_details && typeof usage.prompt_tokens_details === 'object'
+    ? (usage.prompt_tokens_details as Record<string, unknown>)
+    : {};
+  const openaiCached = toNonNegativeInt(details.cached_tokens);
+
+  // Anthropic: cache_read_input_tokens is separate from input_tokens (which is fresh-only)
+  const anthropicCached = toNonNegativeInt(usage.cache_read_input_tokens ?? usage.prompt_cache_hit_tokens);
+
+  let freshInputTokens: number;
+  let cachedInputTokens: number;
+
+  if (anthropicCached > 0) {
+    // Anthropic style: input_tokens is already fresh-only
+    freshInputTokens = totalInput;
+    cachedInputTokens = anthropicCached;
+  } else if (openaiCached > 0) {
+    // OpenAI style: prompt_tokens includes cached subset
+    freshInputTokens = Math.max(0, totalInput - openaiCached);
+    cachedInputTokens = openaiCached;
+  } else {
+    // No cache info — all tokens are fresh
+    freshInputTokens = totalInput;
+    cachedInputTokens = 0;
+  }
+
+  return { inputTokens: totalInput, outputTokens, freshInputTokens, cachedInputTokens };
 }
 
 function toStringContentBlock(block: Record<string, unknown>): string {

@@ -10,6 +10,7 @@ const configSchema: ConfigField[] = [
   { key: 'CLAUDE_OAUTH_CLIENT_ID', label: 'OAuth Client ID', type: 'string', required: true, description: 'OAuth application client ID used when refreshing tokens' },
   { key: 'ANTSEED_INPUT_USD_PER_MILLION', label: 'Input Price', type: 'number', required: false, default: 10 },
   { key: 'ANTSEED_OUTPUT_USD_PER_MILLION', label: 'Output Price', type: 'number', required: false, default: 10 },
+  { key: 'ANTSEED_CACHED_INPUT_USD_PER_MILLION', label: 'Cached Input Price', type: 'number', required: false, description: 'Cached input price in USD per 1M tokens (defaults to input price)' },
   { key: 'ANTSEED_MAX_CONCURRENCY', label: 'Max Concurrency', type: 'number', required: false, default: 5 },
   { key: 'ANTSEED_ALLOWED_SERVICES', label: 'Allowed Services', type: 'string[]', required: false },
   { key: 'ANTSEED_SERVICE_ALIAS_MAP_JSON', label: 'Service Alias Map', type: 'string', required: false, description: 'JSON map of announced service → upstream model name' },
@@ -70,6 +71,7 @@ const plugin: AntseedProviderPlugin = {
         defaults: {
           inputUsdPerMillion: inputPrice,
           outputUsdPerMillion: outputPrice,
+          ...(config['ANTSEED_CACHED_INPUT_USD_PER_MILLION'] ? { cachedInputUsdPerMillion: parseFloat(config['ANTSEED_CACHED_INPUT_USD_PER_MILLION']) } : {}),
         },
       },
       ...(serviceApiProtocols ? { serviceApiProtocols } : {}),

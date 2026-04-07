@@ -75,6 +75,7 @@ export interface PaymentRequiredPayload {
   requestId: string;
   inputUsdPerMillion?: number;
   outputUsdPerMillion?: number;
+  cachedInputUsdPerMillion?: number;
 }
 
 /**

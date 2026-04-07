@@ -3,6 +3,7 @@ import type { PeerInfo } from '@antseed/node'
 export interface TokenPricingUsdPerMillion {
   inputUsdPerMillion: number
   outputUsdPerMillion: number
+  cachedInputUsdPerMillion?: number
 }
 
 export interface ScoringWeights {

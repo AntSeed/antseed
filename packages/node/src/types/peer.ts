@@ -26,6 +26,7 @@ export function peerIdToAddress(peerId: string): string {
 export interface TokenPricingUsdPerMillion {
   inputUsdPerMillion: number;
   outputUsdPerMillion: number;
+  cachedInputUsdPerMillion?: number;
 }
 
 export interface ProviderPricingMatrixEntry {
