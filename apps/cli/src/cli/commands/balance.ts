@@ -6,6 +6,7 @@ import { loadConfig } from '../../config/loader.js';
 import {
   loadOrCreateIdentity,
   DepositsClient,
+  resolveChainConfig,
 } from '@antseed/node';
 
 /** Format USDC base units (6 decimals) to human-readable string. */
@@ -26,19 +27,20 @@ export function registerBalanceCommand(program: Command): void {
       const config = await loadConfig(globalOpts.config);
 
       const payments = config.payments;
-      if (!payments?.crypto) {
-        console.error(chalk.red('Error: No crypto payment configuration found.'));
-        console.error(chalk.dim('Configure payments.crypto in your config file or run: antseed init'));
-        process.exit(1);
-      }
+      const chainConfig = resolveChainConfig({
+        chainId: payments?.crypto?.chainId,
+        rpcUrl: payments?.crypto?.rpcUrl,
+        depositsContractAddress: payments?.crypto?.depositsContractAddress,
+        usdcContractAddress: payments?.crypto?.usdcContractAddress,
+      });
 
       const identity = await loadOrCreateIdentity(globalOpts.dataDir);
       const address = identity.wallet.address;
 
       const depositsClient = new DepositsClient({
-        rpcUrl: payments.crypto.rpcUrl,
-        contractAddress: payments.crypto.depositsContractAddress,
-        usdcAddress: payments.crypto.usdcContractAddress,
+        rpcUrl: chainConfig.rpcUrl,
+        contractAddress: chainConfig.depositsContractAddress,
+        usdcAddress: chainConfig.usdcContractAddress,
       });
 
       const spinner = ora('Fetching balance...').start();
