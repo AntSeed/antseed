@@ -337,6 +337,61 @@ export default function Home(): JSX.Element {
       {/* Liveness */}
       <section className={styles.live}><LiveBar /></section>
 
+      {/* Local Gateway */}
+      <section className={styles.gateway}>
+        <h2 className={styles.gatewayTitle}>Your local gateway to AI providers</h2>
+        <p className={styles.gatewaySub}>No central registry. One localhost endpoint.</p>
+        <div className={styles.gatewayCards}>
+          <div className={`${styles.gwCard} ${styles.gwCardLocal}`}>
+            <span className={`${styles.gwBadge} ${styles.gwBadgeLocal}`}>Local</span>
+            <div className={styles.gwName}>AntSeed Proxy</div>
+            <div className={`${styles.gwUrl} ${styles.gwUrlLocal}`}>http://localhost:8377</div>
+            <div className={styles.gwRoute}>
+              <div className={styles.gwRouteNode}>
+                <span className={styles.gwDot} style={{background:'#1FD87A'}} />
+                <span className={styles.gwRouteLabel}>You</span>
+              </div>
+              <div className={`${styles.gwRouteLine} ${styles.gwRouteLineGreen}`} />
+              <div className={styles.gwRouteNode}>
+                <span className={styles.gwDot} style={{background:'#1FD87A'}} />
+                <span className={styles.gwRouteLabel}>Provider</span>
+              </div>
+            </div>
+            <div className={styles.gwTags}>
+              <span className={`${styles.gwTag} ${styles.gwTagGreen}`}>direct</span>
+              <span className={`${styles.gwTag} ${styles.gwTagGreen}`}>onchain</span>
+              <span className={`${styles.gwTag} ${styles.gwTagGreen}`}>private</span>
+            </div>
+          </div>
+          <div className={styles.gwCard}>
+            <span className={`${styles.gwBadge} ${styles.gwBadgeCloud}`}>Cloud</span>
+            <div className={styles.gwName}>Cloud Proxy</div>
+            <div className={styles.gwUrl}>https://api.cloud-provider.com</div>
+            <div className={styles.gwRoute}>
+              <div className={styles.gwRouteNode}>
+                <span className={styles.gwDot} style={{background:'#ccc'}} />
+                <span className={styles.gwRouteLabel}>You</span>
+              </div>
+              <div className={styles.gwRouteLine} />
+              <div className={styles.gwRouteNode}>
+                <span className={styles.gwDot} style={{background:'#ccc'}} />
+                <span className={styles.gwRouteLabel}>Proxy API</span>
+              </div>
+              <div className={styles.gwRouteLine} />
+              <div className={styles.gwRouteNode}>
+                <span className={styles.gwDot} style={{background:'#ccc'}} />
+                <span className={styles.gwRouteLabel}>Provider</span>
+              </div>
+            </div>
+            <div className={styles.gwTags}>
+              <span className={`${styles.gwTag} ${styles.gwTagMuted}`}>via gatekeeper</span>
+              <span className={`${styles.gwTag} ${styles.gwTagMuted}`}>custodial</span>
+              <span className={`${styles.gwTag} ${styles.gwTagMuted}`}>logged</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* AntStation */}
       <div className={styles.agentsSection}>
         <div className={styles.agentsCopy}>
