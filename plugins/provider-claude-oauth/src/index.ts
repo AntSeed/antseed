@@ -1,5 +1,5 @@
 import type { AntseedProviderPlugin, ConfigField, ServiceApiProtocol } from '@antseed/node';
-import { BaseProvider, OAuthTokenProvider, StaticTokenProvider, parseServiceAliasMap } from '@antseed/provider-core';
+import { BaseProvider, OAuthTokenProvider, StaticTokenProvider, parseServiceAliasMap, parseNonNegativeNumber } from '@antseed/provider-core';
 
 const DEFAULT_ANTHROPIC_VERSION = '2023-06-01';
 
@@ -71,7 +71,7 @@ const plugin: AntseedProviderPlugin = {
         defaults: {
           inputUsdPerMillion: inputPrice,
           outputUsdPerMillion: outputPrice,
-          ...(config['ANTSEED_CACHED_INPUT_USD_PER_MILLION'] ? { cachedInputUsdPerMillion: parseFloat(config['ANTSEED_CACHED_INPUT_USD_PER_MILLION']) } : {}),
+          ...(config['ANTSEED_CACHED_INPUT_USD_PER_MILLION'] ? { cachedInputUsdPerMillion: parseNonNegativeNumber(config['ANTSEED_CACHED_INPUT_USD_PER_MILLION'], 'ANTSEED_CACHED_INPUT_USD_PER_MILLION', 0) } : {}),
         },
       },
       ...(serviceApiProtocols ? { serviceApiProtocols } : {}),

@@ -501,6 +501,7 @@ export class BuyerPaymentManager {
       sellerClaimedCost?: bigint;
       reportedInputTokens?: bigint;
       reportedOutputTokens?: bigint;
+      reportedCachedInputTokens?: bigint;
       service?: string;
     },
   ): Promise<PerRequestAuthResult> {
@@ -521,17 +522,25 @@ export class BuyerPaymentManager {
     if (hasReportedTokens) {
       estimatedInputTokens = responseStats.reportedInputTokens ?? 0n;
       estimatedOutputTokens = responseStats.reportedOutputTokens ?? 0n;
+      const cachedInputTokens = responseStats.reportedCachedInputTokens ?? 0n;
+      // For cost estimation, split total input into fresh vs cached.
+      // If cached tokens are reported, fresh = total - cached (OpenAI-style totals)
+      // or fresh = total (Anthropic-style where total is already fresh-only).
+      // Since the seller reports the split, trust the cached count and subtract.
+      const freshInputTokens = cachedInputTokens > 0n
+        ? BigInt(Math.max(0, Number(estimatedInputTokens) - Number(cachedInputTokens)))
+        : estimatedInputTokens;
       // Compute cost from reported tokens using service-specific pricing
       const pricing = this.getSessionPricing(sellerPeerId, responseStats.service);
       if (pricing) {
-        const cost = computeCostUsdc(Number(estimatedInputTokens), Number(estimatedOutputTokens), pricing);
+        const cost = computeCostUsdc(Number(freshInputTokens), Number(estimatedOutputTokens), pricing, Number(cachedInputTokens));
         buyerEstimatedRequestCost = cost;
         this._accumulateVerifiedCost(sellerPeerId, { cost, inputTokens: Number(estimatedInputTokens), outputTokens: Number(estimatedOutputTokens) });
       } else {
         buyerEstimatedRequestCost = 0n;
       }
       debugLog(
-        `[BuyerPayment] Using reported tokens: in=${estimatedInputTokens} out=${estimatedOutputTokens} cost=${buyerEstimatedRequestCost}`,
+        `[BuyerPayment] Using reported tokens: in=${estimatedInputTokens} cached=${cachedInputTokens} out=${estimatedOutputTokens} cost=${buyerEstimatedRequestCost}`,
       );
     } else {
       // Fall back to byte-based estimation

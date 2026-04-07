@@ -31,6 +31,7 @@ interface LastResponseCost {
   costUsdc: bigint;
   inputTokens: bigint;
   outputTokens: bigint;
+  cachedInputTokens: bigint;
   cumulativeCost: bigint;
   inputContent: Uint8Array;
   outputContent: Uint8Array;
@@ -175,11 +176,12 @@ export class BuyerPaymentNegotiator {
     const sellerClaimedCost = lastCost?.costUsdc;
     const reportedInputTokens = lastCost?.inputTokens;
     const reportedOutputTokens = lastCost?.outputTokens;
+    const reportedCachedInputTokens = lastCost?.cachedInputTokens;
     const service = lastCost?.service;
     try {
       const { payload, topUpNeeded } = await this._bpm.signPerRequestAuth(
         peer.peerId,
-        { inputBytes, outputBytes, sellerClaimedCost, reportedInputTokens, reportedOutputTokens, service },
+        { inputBytes, outputBytes, sellerClaimedCost, reportedInputTokens, reportedOutputTokens, reportedCachedInputTokens, service },
       );
       pmux.sendSpendingAuth(payload);
       // Release held content to free memory — no longer needed after signing
@@ -348,6 +350,7 @@ export class BuyerPaymentNegotiator {
       costUsdc,
       inputTokens: BigInt(usage.inputTokens),
       outputTokens: BigInt(usage.outputTokens),
+      cachedInputTokens: BigInt(usage.cachedInputTokens),
       cumulativeCost: 0n,
       inputContent: new Uint8Array(0),
       outputContent: response.body,
@@ -370,9 +373,10 @@ export class BuyerPaymentNegotiator {
     try {
       const sellerIn = BigInt(response.headers['x-antseed-input-tokens'] ?? '0');
       const sellerOut = BigInt(response.headers['x-antseed-output-tokens'] ?? '0');
+      const sellerCachedIn = BigInt(response.headers['x-antseed-cached-input-tokens'] ?? '0');
       const sellerCost = BigInt(costHeader);
       debugLog(
-        `[BuyerNegotiator] Seller cost headers: in=${sellerIn} out=${sellerOut} ` +
+        `[BuyerNegotiator] Seller cost headers: in=${sellerIn} cached=${sellerCachedIn} out=${sellerOut} ` +
         `cost=${sellerCost} cumCost=${response.headers['x-antseed-cumulative-cost'] ?? '0'}`,
       );
       // Seller cost headers are authoritative — always use them when present.
@@ -382,6 +386,7 @@ export class BuyerPaymentNegotiator {
         costUsdc: sellerCost,
         inputTokens: sellerIn,
         outputTokens: sellerOut,
+        cachedInputTokens: sellerCachedIn,
         cumulativeCost: BigInt(response.headers['x-antseed-cumulative-cost'] ?? '0'),
         inputContent: existing?.inputContent ?? new Uint8Array(0),
         outputContent: existing?.outputContent ?? response.body,
