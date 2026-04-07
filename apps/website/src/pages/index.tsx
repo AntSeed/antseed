@@ -324,7 +324,7 @@ export default function Home(): JSX.Element {
 
   return (
     <Layout
-      title={`${siteConfig.title} | ${siteConfig.tagline}`}
+      title={siteConfig.tagline}
       description="The open market for AI inference. No gatekeepers. Serving or consuming AI inference peer-to-peer. Anonymous. Private. No gatekeepers."
       wrapperClassName="homepage-wrapper">
 
