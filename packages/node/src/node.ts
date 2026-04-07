@@ -1150,6 +1150,9 @@ export class AntseedNode extends EventEmitter {
         defaults: {
           inputUsdPerMillion: providerAnnouncement.defaultPricing.inputUsdPerMillion,
           outputUsdPerMillion: providerAnnouncement.defaultPricing.outputUsdPerMillion,
+          ...(providerAnnouncement.defaultPricing.cachedInputUsdPerMillion != null
+            ? { cachedInputUsdPerMillion: providerAnnouncement.defaultPricing.cachedInputUsdPerMillion }
+            : {}),
         },
         ...(Object.keys(serviceEntries).length > 0 ? { services: serviceEntries } : {}),
       };
@@ -1188,6 +1191,7 @@ export class AntseedNode extends EventEmitter {
       ...(hasProviderServiceApiProtocols ? { providerServiceApiProtocols: providerServiceApiProtocolEntries } : {}),
       defaultInputUsdPerMillion: firstProvider?.defaultPricing.inputUsdPerMillion,
       defaultOutputUsdPerMillion: firstProvider?.defaultPricing.outputUsdPerMillion,
+      defaultCachedInputUsdPerMillion: firstProvider?.defaultPricing.cachedInputUsdPerMillion,
       maxConcurrency: firstProvider?.maxConcurrency,
       currentLoad: firstProvider?.currentLoad,
       onChainChannelCount: result.metadata.onChainChannelCount,

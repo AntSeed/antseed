@@ -64,11 +64,12 @@ By default, metadata is fetched from `http://{host}:{port}/metadata` (`metadataP
     "services": ["claude-sonnet-4-6", "claude-haiku-4-5"],
     "defaultPricing": {
       "inputUsdPerMillion": 3,
+      "cachedInputUsdPerMillion": 0.3,
       "outputUsdPerMillion": 15
     },
     "servicePricing": {
-      "claude-sonnet-4-6": { "inputUsdPerMillion": 3, "outputUsdPerMillion": 15 },
-      "claude-haiku-4-5": { "inputUsdPerMillion": 1, "outputUsdPerMillion": 5 }
+      "claude-sonnet-4-6": { "inputUsdPerMillion": 3, "cachedInputUsdPerMillion": 0.3, "outputUsdPerMillion": 15 },
+      "claude-haiku-4-5": { "inputUsdPerMillion": 1, "cachedInputUsdPerMillion": 0.1, "outputUsdPerMillion": 5 }
     },
     "serviceCategories": {
       "claude-sonnet-4-6": ["coding", "privacy"]

@@ -51,6 +51,27 @@ describe('pricing utilities', () => {
     expect(computeCostUsdc(1000, 1000, { inputUsdPerMillion: 0, outputUsdPerMillion: 0 })).toBe(0n);
   });
 
+  it('computeCostUsdc applies cachedInputUsdPerMillion to cached tokens', () => {
+    const pricing = { inputUsdPerMillion: 3, outputUsdPerMillion: 15, cachedInputUsdPerMillion: 0.3 };
+    // 200 fresh input * $3/M + 800 cached input * $0.3/M + 100 output * $15/M
+    // = 600/1M + 240/1M + 1500/1M = 2340/1M USD = $0.00234 = 2340 base units
+    expect(computeCostUsdc(200, 100, pricing, 800)).toBe(2340n);
+  });
+
+  it('computeCostUsdc defaults cachedInputUsdPerMillion to inputUsdPerMillion when not set', () => {
+    const pricing = { inputUsdPerMillion: 3, outputUsdPerMillion: 15 };
+    // 200 fresh * $3/M + 800 cached * $3/M (no discount) + 100 output * $15/M
+    // = 600/1M + 2400/1M + 1500/1M = 4500/1M = $0.0045 = 4500 base units
+    expect(computeCostUsdc(200, 100, pricing, 800)).toBe(4500n);
+  });
+
+  it('computeCostUsdc with zero cached tokens matches original behavior', () => {
+    const pricing = { inputUsdPerMillion: 3, outputUsdPerMillion: 15, cachedInputUsdPerMillion: 0.3 };
+    // All fresh, no cached — cachedInputUsdPerMillion is irrelevant
+    expect(computeCostUsdc(100, 500, pricing, 0)).toBe(7800n);
+    expect(computeCostUsdc(100, 500, pricing)).toBe(7800n);
+  });
+
   // ── estimateCostFromBytes ──
 
   it('estimateCostFromBytes uses tokenx for accurate cost', () => {

@@ -31,6 +31,7 @@ const myProvider: Provider = {
   pricing: {
     defaults: {
       inputUsdPerMillion: 10,
+      cachedInputUsdPerMillion: 1,  // optional, defaults to inputUsdPerMillion
       outputUsdPerMillion: 10,
     },
   },
@@ -336,8 +337,8 @@ interface Provider {
 
   /** Pricing in USD per 1M tokens (defaults + optional per-service overrides) */
   pricing: {
-    defaults: { inputUsdPerMillion: number; outputUsdPerMillion: number };
-    services?: Record<string, { inputUsdPerMillion: number; outputUsdPerMillion: number }>;
+    defaults: { inputUsdPerMillion: number; cachedInputUsdPerMillion?: number; outputUsdPerMillion: number };
+    services?: Record<string, { inputUsdPerMillion: number; cachedInputUsdPerMillion?: number; outputUsdPerMillion: number }>;
   };
 
   /** Optional per-service discovery tags (e.g., coding/privacy/legal) */
@@ -403,6 +404,7 @@ class MyProvider implements Provider {
     this.pricing = {
       defaults: {
         inputUsdPerMillion,
+        cachedInputUsdPerMillion: inputUsdPerMillion * 0.1, // optional, defaults to inputUsdPerMillion
         outputUsdPerMillion,
       },
     };

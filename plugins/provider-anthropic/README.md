@@ -23,6 +23,7 @@ antseed seed --provider anthropic
 |-----|------|----------|---------|-------------|
 | `ANTHROPIC_API_KEY` | secret | Yes | -- | Anthropic API key |
 | `ANTSEED_INPUT_USD_PER_MILLION` | number | No | 10 | Input token price (USD per 1M) |
+| `ANTSEED_CACHED_INPUT_USD_PER_MILLION` | number | No | input price | Cached input token price (USD per 1M) |
 | `ANTSEED_OUTPUT_USD_PER_MILLION` | number | No | 10 | Output token price (USD per 1M) |
 | `ANTSEED_SERVICE_PRICING_JSON` | string | No | -- | Per-service pricing as JSON |
 | `ANTSEED_MAX_CONCURRENCY` | number | No | 10 | Max concurrent requests |
@@ -33,7 +34,7 @@ antseed seed --provider anthropic
 Override pricing for specific services:
 
 ```bash
-export ANTSEED_SERVICE_PRICING_JSON='{"claude-sonnet-4-5-20250929":{"inputUsdPerMillion":12,"outputUsdPerMillion":18}}'
+export ANTSEED_SERVICE_PRICING_JSON='{"claude-sonnet-4-5-20250929":{"inputUsdPerMillion":12,"cachedInputUsdPerMillion":6,"outputUsdPerMillion":18}}'
 ```
 
 ## How It Works

@@ -6,6 +6,8 @@ import { estimateTokenCount } from 'tokenx';
 export interface ServicePricing {
   inputUsdPerMillion: number;
   outputUsdPerMillion: number;
+  /** Price per million cached input tokens. Defaults to inputUsdPerMillion (no discount) if not set. */
+  cachedInputUsdPerMillion?: number;
 }
 
 const textDecoder = new TextDecoder();
@@ -23,17 +25,21 @@ export function estimateTokensFromText(text: string): number {
 
 /**
  * Compute USDC cost in base units (6 decimals) from token counts and pricing.
- *
- * Formula: baseUnits = tokens * usdPerMillion / 1_000_000 * 1_000_000
- *        = tokens * usdPerMillion (but usdPerMillion is float, so round).
+ * freshInputTokens and cachedInputTokens are independent counts (never overlapping),
+ * so they are additive — no subtraction needed. This handles both OpenAI (where the
+ * extraction layer splits prompt_tokens) and Anthropic (where input_tokens is fresh-only).
  */
 export function computeCostUsdc(
-  inputTokens: number,
+  freshInputTokens: number,
   outputTokens: number,
   pricing: ServicePricing,
+  cachedInputTokens = 0,
 ): bigint {
-  const costUsd =
-    (inputTokens * pricing.inputUsdPerMillion + outputTokens * pricing.outputUsdPerMillion) / 1_000_000;
+  const cachedPrice = pricing.cachedInputUsdPerMillion ?? pricing.inputUsdPerMillion;
+  const freshCost = freshInputTokens * pricing.inputUsdPerMillion;
+  const cachedCost = cachedInputTokens * cachedPrice;
+  const outputCost = outputTokens * pricing.outputUsdPerMillion;
+  const costUsd = (freshCost + cachedCost + outputCost) / 1_000_000;
   const costBaseUnits = Math.max(0, Math.round(costUsd * 1_000_000));
   return BigInt(costBaseUnits);
 }

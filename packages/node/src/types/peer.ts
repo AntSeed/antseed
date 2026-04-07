@@ -26,6 +26,7 @@ export function peerIdToAddress(peerId: string): string {
 export interface TokenPricingUsdPerMillion {
   inputUsdPerMillion: number;
   outputUsdPerMillion: number;
+  cachedInputUsdPerMillion?: number;
 }
 
 export interface ProviderPricingMatrixEntry {
@@ -65,6 +66,8 @@ export interface PeerInfo {
   defaultInputUsdPerMillion?: number;
   /** Deterministic fallback default output price (USD per 1M tokens). */
   defaultOutputUsdPerMillion?: number;
+  /** Deterministic fallback default cached input price (USD per 1M tokens). */
+  defaultCachedInputUsdPerMillion?: number;
   /** Maximum concurrent requests the peer can handle. */
   maxConcurrency?: number;
   /** Current number of requests the peer is handling. */

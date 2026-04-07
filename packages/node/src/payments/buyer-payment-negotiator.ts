@@ -31,6 +31,7 @@ interface LastResponseCost {
   costUsdc: bigint;
   inputTokens: bigint;
   outputTokens: bigint;
+  cachedInputTokens: bigint;
   cumulativeCost: bigint;
   inputContent: Uint8Array;
   outputContent: Uint8Array;
@@ -175,11 +176,12 @@ export class BuyerPaymentNegotiator {
     const sellerClaimedCost = lastCost?.costUsdc;
     const reportedInputTokens = lastCost?.inputTokens;
     const reportedOutputTokens = lastCost?.outputTokens;
+    const reportedCachedInputTokens = lastCost?.cachedInputTokens;
     const service = lastCost?.service;
     try {
       const { payload, topUpNeeded } = await this._bpm.signPerRequestAuth(
         peer.peerId,
-        { inputBytes, outputBytes, sellerClaimedCost, reportedInputTokens, reportedOutputTokens, service },
+        { inputBytes, outputBytes, sellerClaimedCost, reportedInputTokens, reportedOutputTokens, reportedCachedInputTokens, service },
       );
       pmux.sendSpendingAuth(payload);
       // Release held content to free memory — no longer needed after signing
@@ -309,6 +311,7 @@ export class BuyerPaymentNegotiator {
         requestId: req.requestId,
         ...(directPaymentBody.inputUsdPerMillion != null ? { inputUsdPerMillion: Number(directPaymentBody.inputUsdPerMillion) } : {}),
         ...(directPaymentBody.outputUsdPerMillion != null ? { outputUsdPerMillion: Number(directPaymentBody.outputUsdPerMillion) } : {}),
+        ...(directPaymentBody.cachedInputUsdPerMillion != null ? { cachedInputUsdPerMillion: Number(directPaymentBody.cachedInputUsdPerMillion) } : {}),
       };
       this._bufferedPaymentRequired.set(peer.peerId, bodyRequirements);
     }
@@ -333,22 +336,21 @@ export class BuyerPaymentNegotiator {
     if (inputPricePerM == null && outputPricePerM == null) return;
 
     const usage = parseResponseUsage(response.body);
-    let inputTokens = usage.inputTokens;
-    let outputTokens = usage.outputTokens;
-    if (inputTokens === 0 && outputTokens === 0 && response.body.length > 0) {
-      outputTokens = Math.ceil(response.body.length / 4);
-    }
+    // Don't estimate from body bytes — seller cost headers are authoritative.
+    // The old body.length/4 fallback wildly inflated costs for SSE streaming responses.
 
     const pricing = {
       inputUsdPerMillion: inputPricePerM ?? 0,
       outputUsdPerMillion: outputPricePerM ?? 0,
+      cachedInputUsdPerMillion: sessionPricing?.cachedInputUsdPerMillion,
     };
-    const costUsdc = computeCostUsdc(inputTokens, outputTokens, pricing);
+    const costUsdc = computeCostUsdc(usage.freshInputTokens, usage.outputTokens, pricing, usage.cachedInputTokens);
 
     this._lastResponseCost.set(peer.peerId, {
       costUsdc,
-      inputTokens: BigInt(inputTokens),
-      outputTokens: BigInt(outputTokens),
+      inputTokens: BigInt(usage.inputTokens),
+      outputTokens: BigInt(usage.outputTokens),
+      cachedInputTokens: BigInt(usage.cachedInputTokens),
       cumulativeCost: 0n,
       inputContent: new Uint8Array(0),
       outputContent: response.body,
@@ -358,14 +360,10 @@ export class BuyerPaymentNegotiator {
 
     debugLog(
       `[BuyerNegotiator] Estimated cost for ${peer.peerId.slice(0, 12)}...: ` +
-      `cost=${costUsdc} (in=${inputTokens} out=${outputTokens}, estimated=${usage.inputTokens === 0 && usage.outputTokens === 0})`,
-    );
-    debugLog(
-      `[BuyerNegotiator] Response usage: in=${inputTokens} out=${outputTokens} ` +
-      `bodyLen=${response.body.length} cost=${costUsdc}`,
+      `cost=${costUsdc} (in=${usage.freshInputTokens} cached=${usage.cachedInputTokens} out=${usage.outputTokens})`,
     );
 
-    this._bpm.recordAndPersistTokens(peer.peerId, inputTokens, outputTokens);
+    this._bpm.recordAndPersistTokens(peer.peerId, usage.inputTokens, usage.outputTokens);
   }
 
   parseCostHeaders(peerId: string, response: SerializedHttpResponse): void {
@@ -375,17 +373,20 @@ export class BuyerPaymentNegotiator {
     try {
       const sellerIn = BigInt(response.headers['x-antseed-input-tokens'] ?? '0');
       const sellerOut = BigInt(response.headers['x-antseed-output-tokens'] ?? '0');
+      const sellerCachedIn = BigInt(response.headers['x-antseed-cached-input-tokens'] ?? '0');
       const sellerCost = BigInt(costHeader);
       debugLog(
-        `[BuyerNegotiator] Seller cost headers: in=${sellerIn} out=${sellerOut} ` +
+        `[BuyerNegotiator] Seller cost headers: in=${sellerIn} cached=${sellerCachedIn} out=${sellerOut} ` +
         `cost=${sellerCost} cumCost=${response.headers['x-antseed-cumulative-cost'] ?? '0'}`,
       );
+      // Seller cost headers are authoritative — always use them when present.
+      // The seller knows its actual upstream cost including prompt caching discounts.
       const existing = this._lastResponseCost.get(peerId);
       this._lastResponseCost.set(peerId, {
-        costUsdc: sellerCost > 0n ? sellerCost : (existing?.costUsdc ?? 0n),
-        // Only overwrite tokens if seller reports non-zero — otherwise keep buyer's parsed values
-        inputTokens: sellerIn > 0n ? sellerIn : (existing?.inputTokens ?? 0n),
-        outputTokens: sellerOut > 0n ? sellerOut : (existing?.outputTokens ?? 0n),
+        costUsdc: sellerCost,
+        inputTokens: sellerIn,
+        outputTokens: sellerOut,
+        cachedInputTokens: sellerCachedIn,
         cumulativeCost: BigInt(response.headers['x-antseed-cumulative-cost'] ?? '0'),
         inputContent: existing?.inputContent ?? new Uint8Array(0),
         outputContent: existing?.outputContent ?? response.body,
@@ -521,6 +522,7 @@ export class BuyerPaymentNegotiator {
     const defaults: ServicePricing = {
       inputUsdPerMillion: peer.defaultInputUsdPerMillion ?? 0,
       outputUsdPerMillion: peer.defaultOutputUsdPerMillion ?? 0,
+      cachedInputUsdPerMillion: peer.defaultCachedInputUsdPerMillion,
     };
     if (defaults.inputUsdPerMillion === 0 && defaults.outputUsdPerMillion === 0 && !peer.providerPricing) {
       return undefined;
@@ -534,6 +536,7 @@ export class BuyerPaymentNegotiator {
             services[serviceName] = {
               inputUsdPerMillion: sp.inputUsdPerMillion,
               outputUsdPerMillion: sp.outputUsdPerMillion,
+              cachedInputUsdPerMillion: sp.cachedInputUsdPerMillion,
             };
           }
         }
@@ -617,11 +620,13 @@ export class BuyerPaymentNegotiator {
       ? {
           inputUsdPerMillion: requirements.inputUsdPerMillion ?? peer.defaultInputUsdPerMillion ?? 0,
           outputUsdPerMillion: requirements.outputUsdPerMillion ?? peer.defaultOutputUsdPerMillion ?? 0,
+          cachedInputUsdPerMillion: requirements.cachedInputUsdPerMillion ?? peer.defaultCachedInputUsdPerMillion,
         }
       : (peer.defaultInputUsdPerMillion != null || peer.defaultOutputUsdPerMillion != null)
         ? {
             inputUsdPerMillion: peer.defaultInputUsdPerMillion ?? 0,
             outputUsdPerMillion: peer.defaultOutputUsdPerMillion ?? 0,
+            cachedInputUsdPerMillion: peer.defaultCachedInputUsdPerMillion,
           }
         : undefined;
 

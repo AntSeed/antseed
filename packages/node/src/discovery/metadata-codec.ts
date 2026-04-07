@@ -14,12 +14,12 @@ const PUBLIC_ADDRESS_METADATA_VERSION = 5;
  * [version:1][peerId:20][regionLen:1][region:N][timestamp:8 BigUint64][providerCount:1]
  * for each provider:
  *   [providerLen:1][provider:N][serviceCount:1][services...]
- *   [defaultInputPrice:4][defaultOutputPrice:4]
+ *   [defaultInputPrice:4][defaultOutputPrice:4][defaultCachedInputPrice:4]
  *   [servicePricingCount:1][servicePricingEntries...]
  *   [serviceCategoryCount:1][serviceCategoryEntries...] (v3+ only)
  *   [serviceApiProtocolCount:1][serviceApiProtocolEntries...] (v4+ only)
  *   [maxConcurrency:2][currentLoad:2]
- * servicePricingEntry: [serviceLen:1][service:N][inputPrice:4][outputPrice:4]
+ * servicePricingEntry: [serviceLen:1][service:N][inputPrice:4][outputPrice:4][cachedInputPrice:4]
  * serviceCategoryEntry(v3+): [serviceLen:1][service:N][categoryCount:1][categories...]
  * category(v3+): [categoryLen:1][category:N]
  * serviceApiProtocolEntry(v4+): [serviceLen:1][service:N][protocolCount:1][protocols...]
@@ -96,6 +96,11 @@ function encodeBody(metadata: PeerMetadata): Uint8Array {
     new DataView(outputPriceBuf).setFloat32(0, p.defaultPricing.outputUsdPerMillion, false);
     parts.push(new Uint8Array(outputPriceBuf));
 
+    // default cached input price: 4 bytes (float32) (v7+)
+    const cachedInputPriceBuf = new ArrayBuffer(4);
+    new DataView(cachedInputPriceBuf).setFloat32(0, p.defaultPricing.cachedInputUsdPerMillion ?? 0, false);
+    parts.push(new Uint8Array(cachedInputPriceBuf));
+
     // servicePricing entries
     const servicePricingEntries = Object.entries(p.servicePricing ?? {}).sort(([a], [b]) =>
       a.localeCompare(b),
@@ -113,6 +118,11 @@ function encodeBody(metadata: PeerMetadata): Uint8Array {
       const serviceOutputBuf = new ArrayBuffer(4);
       new DataView(serviceOutputBuf).setFloat32(0, pricing.outputUsdPerMillion, false);
       parts.push(new Uint8Array(serviceOutputBuf));
+
+      // service cached input price: 4 bytes (float32) (v7+)
+      const serviceCachedInputBuf = new ArrayBuffer(4);
+      new DataView(serviceCachedInputBuf).setFloat32(0, pricing.cachedInputUsdPerMillion ?? 0, false);
+      parts.push(new Uint8Array(serviceCachedInputBuf));
     }
 
     if (hasServiceCategoryExtensions) {
@@ -284,8 +294,8 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
   // version: 1 byte
   checkBounds(offset, 1, data.length);
   const version = data[offset]!;
-  if (version < 6) {
-    throw new Error(`Unsupported metadata version ${version}: pre-v6 Ed25519 format is no longer supported`);
+  if (version < 7) {
+    throw new Error(`Unsupported metadata version ${version}: pre-v7 format is no longer supported`);
   }
   const hasServiceCategoryExtensions = version >= SERVICE_CATEGORIES_METADATA_VERSION;
   const hasServiceApiProtocolExtensions = version >= SERVICE_API_PROTOCOLS_METADATA_VERSION;
@@ -355,12 +365,18 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
     const defaultOutputUsdPerMillion = outputPriceView.getFloat32(0, false);
     offset += 4;
 
+    // default cached input price: 4 bytes float32 (v7+)
+    checkBounds(offset, 4, data.length);
+    const cachedInputPriceView = new DataView(data.buffer, data.byteOffset + offset, 4);
+    const defaultCachedInputUsdPerMillion = cachedInputPriceView.getFloat32(0, false);
+    offset += 4;
+
     // servicePricing entries
     checkBounds(offset, 1, data.length);
     const servicePricingCount = data[offset]!;
     offset += 1;
 
-    const servicePricing: Record<string, { inputUsdPerMillion: number; outputUsdPerMillion: number }> = {};
+    const servicePricing: Record<string, { inputUsdPerMillion: number; outputUsdPerMillion: number; cachedInputUsdPerMillion?: number }> = {};
     for (let j = 0; j < servicePricingCount; j++) {
       checkBounds(offset, 1, data.length);
       const pricedServiceLen = data[offset]!;
@@ -379,9 +395,16 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
       const outputUsdPerMillion = pricedOutputView.getFloat32(0, false);
       offset += 4;
 
+      // service cached input price: 4 bytes float32 (v7+)
+      checkBounds(offset, 4, data.length);
+      const pricedCachedInputView = new DataView(data.buffer, data.byteOffset + offset, 4);
+      const cachedInputUsdPerMillion = pricedCachedInputView.getFloat32(0, false);
+      offset += 4;
+
       servicePricing[pricedServiceName] = {
         inputUsdPerMillion,
         outputUsdPerMillion,
+        ...(cachedInputUsdPerMillion !== 0 ? { cachedInputUsdPerMillion } : {}),
       };
     }
 
@@ -469,6 +492,7 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
       defaultPricing: {
         inputUsdPerMillion: defaultInputUsdPerMillion,
         outputUsdPerMillion: defaultOutputUsdPerMillion,
+        ...(defaultCachedInputUsdPerMillion !== 0 ? { cachedInputUsdPerMillion: defaultCachedInputUsdPerMillion } : {}),
       },
       ...(servicePricingCount > 0 ? { servicePricing } : {}),
       ...(serviceCategories && Object.keys(serviceCategories).length > 0 ? { serviceCategories } : {}),

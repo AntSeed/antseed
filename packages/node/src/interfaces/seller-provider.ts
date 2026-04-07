@@ -4,6 +4,8 @@ import type { ServiceApiProtocol } from '../types/service-api.js';
 export interface ProviderTokenPricingUsdPerMillion {
   inputUsdPerMillion: number;
   outputUsdPerMillion: number;
+  /** Price per million cached input tokens. Defaults to inputUsdPerMillion if not set. */
+  cachedInputUsdPerMillion?: number;
 }
 
 export interface ProviderPricing {

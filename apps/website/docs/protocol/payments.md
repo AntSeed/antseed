@@ -99,12 +99,14 @@ If the seller disappears, the buyer calls `requestClose()` on AntseedChannels. T
 
 ### Token-to-USDC Conversion
 
-Sellers publish per-model pricing in USD per million tokens (input and output rates separately). The conversion from token consumption to USDC happens at the seller's published rate at the time of the request:
+Sellers publish per-model pricing in USD per million tokens (input, cached input, and output rates separately). The conversion from token consumption to USDC happens at the seller's published rate at the time of the request:
 
 ```text title="cost calculation"
-requestCostUSD  = (inputTokens * inputUsdPerMillion + outputTokens * outputUsdPerMillion) / 1_000_000
+requestCostUSD  = (freshInputTokens * inputUsdPerMillion + cachedInputTokens * cachedInputUsdPerMillion + outputTokens * outputUsdPerMillion) / 1_000_000
 totalCostUSDC   = sum(requestCosts) * 1_000_000  (6-decimal USDC)
 ```
+
+`cachedInputUsdPerMillion` defaults to `inputUsdPerMillion` when not set by the seller.
 
 ## Wallet
 

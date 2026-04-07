@@ -32,6 +32,7 @@ function clonePricing(pricing: TokenPricingUsdPerMillion): TokenPricingUsdPerMil
   return {
     inputUsdPerMillion: pricing.inputUsdPerMillion,
     outputUsdPerMillion: pricing.outputUsdPerMillion,
+    ...(pricing.cachedInputUsdPerMillion != null ? { cachedInputUsdPerMillion: pricing.cachedInputUsdPerMillion } : {}),
   };
 }
 
@@ -40,6 +41,7 @@ function normalizeTokenPricing(value: unknown): TokenPricingUsdPerMillion | null
   return {
     inputUsdPerMillion: toFiniteOrNaN(value['inputUsdPerMillion']),
     outputUsdPerMillion: toFiniteOrNaN(value['outputUsdPerMillion']),
+    ...(value['cachedInputUsdPerMillion'] != null ? { cachedInputUsdPerMillion: toFiniteOrNaN(value['cachedInputUsdPerMillion']) } : {}),
   };
 }
 
@@ -57,6 +59,11 @@ function mergeTokenPricing(
     outputUsdPerMillion: typeof value['outputUsdPerMillion'] === 'number'
       ? value['outputUsdPerMillion']
       : defaults.outputUsdPerMillion,
+    ...(typeof value['cachedInputUsdPerMillion'] === 'number'
+      ? { cachedInputUsdPerMillion: value['cachedInputUsdPerMillion'] }
+      : defaults.cachedInputUsdPerMillion != null
+        ? { cachedInputUsdPerMillion: defaults.cachedInputUsdPerMillion }
+        : {}),
   };
 }
 

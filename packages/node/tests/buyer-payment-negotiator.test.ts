@@ -426,8 +426,8 @@ describe('BuyerPaymentNegotiator', () => {
       );
     });
 
-    it('estimateCostFromResponse calls recordAndPersistTokens with byte-estimated tokens when no usage field', () => {
-      const body = 'A'.repeat(400); // 400 bytes → ~100 output tokens (bytes/4)
+    it('estimateCostFromResponse records zero tokens when no usage field (no body.length/4 fallback)', () => {
+      const body = 'A'.repeat(400);
       const response: SerializedHttpResponse = {
         requestId: 'req-2',
         statusCode: 200,
@@ -437,8 +437,9 @@ describe('BuyerPaymentNegotiator', () => {
 
       negotiator.estimateCostFromResponse(peer, response);
 
+      // No body.length/4 fallback — seller cost headers are authoritative
       expect(bpm.recordAndPersistTokens).toHaveBeenCalledWith(
-        peer.peerId, 0, 100,
+        peer.peerId, 0, 0,
       );
     });
 

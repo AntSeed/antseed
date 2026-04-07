@@ -83,6 +83,7 @@ export class SellerRequestHandler {
             suggestedAmount: requirements.suggestedAmount,
             ...(requirements.inputUsdPerMillion != null ? { inputUsdPerMillion: requirements.inputUsdPerMillion } : {}),
             ...(requirements.outputUsdPerMillion != null ? { outputUsdPerMillion: requirements.outputUsdPerMillion } : {}),
+            ...(requirements.cachedInputUsdPerMillion != null ? { cachedInputUsdPerMillion: requirements.cachedInputUsdPerMillion } : {}),
           });
           mux.sendProxyResponse({
             requestId: request.requestId,
@@ -171,7 +172,7 @@ export class SellerRequestHandler {
       let responseBody: Uint8Array = new Uint8Array(0);
       let streamedResponseStarted = false;
       let heldDoneChunkData: Uint8Array | null = null;
-      let responseUsage = { inputTokens: 0, outputTokens: 0 };
+      let responseUsage: import('./utils/response-usage.js').ResponseUsage = { inputTokens: 0, outputTokens: 0, freshInputTokens: 0, cachedInputTokens: 0 };
       this.adjustProviderLoad(provider.name, 1);
       try {
         try {
@@ -255,14 +256,8 @@ export class SellerRequestHandler {
 
         // Record spend for cumulative voucher model
         if (spm?.hasSession(buyerPeerId)) {
-          let usage = responseUsage;
-          if (usage.inputTokens === 0 && usage.outputTokens === 0) {
-            usage = {
-              inputTokens: Math.ceil(request.body.length / 4),
-              outputTokens: Math.ceil(responseBody.length / 4),
-            };
-          }
-          const costUsdc = computeCostUsdc(usage.inputTokens, usage.outputTokens, requestPricing);
+          const usage = responseUsage;
+          const costUsdc = computeCostUsdc(usage.freshInputTokens, usage.outputTokens, requestPricing, usage.cachedInputTokens);
           const session = spm.getChannelByPeer(buyerPeerId);
           if (session) {
             spm.recordSpend(session.sessionId, costUsdc);
@@ -319,7 +314,7 @@ export class SellerRequestHandler {
   resolveProviderPricing(
     provider: Provider,
     request: SerializedHttpRequest,
-  ): { inputUsdPerMillion: number; outputUsdPerMillion: number } {
+  ): import('./interfaces/seller-provider.js').ProviderTokenPricingUsdPerMillion {
     const requestedService = this._extractRequestedService(request);
     if (requestedService) {
       const servicePricing = provider.pricing.services?.[requestedService];
@@ -403,7 +398,7 @@ export class SellerRequestHandler {
    * The buyer can parse this JSON from the done chunk data to get seller-reported token counts.
    */
   private _buildCostTrailer(
-    usage: { inputTokens: number; outputTokens: number },
+    usage: import('./utils/response-usage.js').ResponseUsage,
     provider: Provider,
     request: SerializedHttpRequest,
     buyerPeerId: string,
@@ -412,13 +407,14 @@ export class SellerRequestHandler {
     if (!spm || !spm.hasSession(buyerPeerId)) return new Uint8Array(0);
 
     const pricing = this.resolveProviderPricing(provider, request);
-    const costUsdc = computeCostUsdc(usage.inputTokens, usage.outputTokens, pricing);
+    const costUsdc = computeCostUsdc(usage.freshInputTokens, usage.outputTokens, pricing, usage.cachedInputTokens);
     const session = spm.getChannelByPeer(buyerPeerId);
     const prevCumulative = session ? spm.getCumulativeSpend(session.sessionId) : 0n;
 
     const trailer = JSON.stringify({
       'x-antseed-input-tokens': String(usage.inputTokens),
       'x-antseed-output-tokens': String(usage.outputTokens),
+      'x-antseed-cached-input-tokens': String(usage.cachedInputTokens),
       'x-antseed-cost': costUsdc.toString(),
       'x-antseed-cumulative-cost': (prevCumulative + costUsdc).toString(),
     });
@@ -438,14 +434,14 @@ export class SellerRequestHandler {
     provider: Provider,
     request: SerializedHttpRequest,
     buyerPeerId: string,
-    usage?: { inputTokens: number; outputTokens: number },
+    usage?: import('./utils/response-usage.js').ResponseUsage,
   ): SerializedHttpResponse {
     const spm = this._deps.sellerPaymentManager;
     if (!spm || !spm.hasSession(buyerPeerId)) return response;
 
     const resolvedUsage = usage ?? parseResponseUsage(response.body);
     const pricing = this.resolveProviderPricing(provider, request);
-    const costUsdc = computeCostUsdc(resolvedUsage.inputTokens, resolvedUsage.outputTokens, pricing);
+    const costUsdc = computeCostUsdc(resolvedUsage.freshInputTokens, resolvedUsage.outputTokens, pricing, resolvedUsage.cachedInputTokens);
     const session = spm.getChannelByPeer(buyerPeerId);
     const prevCumulative = session ? spm.getCumulativeSpend(session.sessionId) : 0n;
     const cumulativeCost = prevCumulative + costUsdc;
@@ -463,6 +459,7 @@ export class SellerRequestHandler {
         ...response.headers,
         'x-antseed-input-tokens': String(resolvedUsage.inputTokens),
         'x-antseed-output-tokens': String(resolvedUsage.outputTokens),
+        'x-antseed-cached-input-tokens': String(resolvedUsage.cachedInputTokens),
         'x-antseed-cost': costUsdc.toString(),
         'x-antseed-cumulative-cost': cumulativeCost.toString(),
       },

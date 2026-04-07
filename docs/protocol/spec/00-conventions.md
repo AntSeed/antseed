@@ -51,11 +51,12 @@ Costs and prices use the following conventions:
 | Context | Unit | Type | Description |
 |---|---|---|---|
 | Costs | USD cents | integer | Used for metered costs and payment amounts |
-| Prices | USD | float | `inputUsdPerMillion` / `outputUsdPerMillion` = USD per 1,000,000 tokens |
+| Prices | USD | float | `inputUsdPerMillion` / `cachedInputUsdPerMillion` / `outputUsdPerMillion` = USD per 1,000,000 tokens |
 
 - **Costs** are expressed in **USD cents** (integer). Example: `150` means $1.50 USD.
 - **Prices** are expressed in **USD per 1M tokens**.
   - Example: `inputUsdPerMillion = 3` means $3.00 USD per 1,000,000 input tokens.
+  - Example: `cachedInputUsdPerMillion = 1.5` means $1.50 USD per 1,000,000 cached input tokens. Optional; defaults to `inputUsdPerMillion` when not set.
   - Example: `outputUsdPerMillion = 15` means $15.00 USD per 1,000,000 output tokens.
 
 ## Signature Format

@@ -47,6 +47,7 @@ export class MyProvider implements Provider {
   readonly pricing = {
     defaults: {
       inputUsdPerMillion: 2,
+      cachedInputUsdPerMillion: 1,
       outputUsdPerMillion: 2,
     },
   };
@@ -163,8 +164,9 @@ npm run verify
 | `name` | `string` | Unique provider name |
 | `services` | `string[]` | Supported service IDs |
 | `pricing.defaults.inputUsdPerMillion` | `number` | Default input pricing in USD per 1M tokens |
+| `pricing.defaults.cachedInputUsdPerMillion?` | `number` | Default cached input pricing in USD per 1M tokens (defaults to input price) |
 | `pricing.defaults.outputUsdPerMillion` | `number` | Default output pricing in USD per 1M tokens |
-| `pricing.services?` | `Record<string, { inputUsdPerMillion; outputUsdPerMillion }>` | Optional per-service pricing overrides |
+| `pricing.services?` | `Record<string, { inputUsdPerMillion; cachedInputUsdPerMillion?; outputUsdPerMillion }>` | Optional per-service pricing overrides |
 | `serviceCategories?` | `Record<string, string[]>` | Optional per-service discovery tags (e.g. `coding`, `privacy`) |
 | `maxConcurrency` | `number` | Max concurrent requests |
 | `handleRequest(req)` | `Promise<SerializedHttpResponse>` | Handle an inference request |

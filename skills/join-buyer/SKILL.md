@@ -88,6 +88,7 @@ antseed withdraw 5
 ```bash
 # Max pricing (USD per 1M tokens) — reject peers charging more
 antseed config buyer set maxPricing.defaults.inputUsdPerMillion 25
+antseed config buyer set maxPricing.defaults.cachedInputUsdPerMillion 12
 antseed config buyer set maxPricing.defaults.outputUsdPerMillion 75
 
 # Minimum peer reputation score (0-100, higher = stricter)

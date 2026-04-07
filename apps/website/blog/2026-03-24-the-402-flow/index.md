@@ -29,7 +29,7 @@ A buyer connects to a seller peer and sends a request. If no payment session exi
 }
 ```
 
-`minBudgetPerRequest` is the minimum the seller needs per request. `suggestedAmount` is what the seller recommends for uninterrupted service. Optionally, the seller includes per-token pricing (`inputUsdPerMillion`, `outputUsdPerMillion`) so the buyer can estimate costs before committing.
+`minBudgetPerRequest` is the minimum the seller needs per request. `suggestedAmount` is what the seller recommends for uninterrupted service. Optionally, the seller includes per-token pricing (`inputUsdPerMillion`, `cachedInputUsdPerMillion`, `outputUsdPerMillion`) so the buyer can estimate costs before committing.
 
 This message rides the same connection as every other message in the protocol. The request ID ties the payment requirement back to the original request, so the buyer knows exactly which call triggered the negotiation.
 

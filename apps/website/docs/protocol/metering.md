@@ -48,7 +48,9 @@ For SSE streams, a factor of `0.82` is applied to account for framing overhead. 
 
 ## Cost Calculation
 
-`costCents = max(1, round(totalTokens / 1000 * unitPriceCentsPerThousandTokens))` — non-zero usage always costs at least 1 cent. Zero tokens = zero cost.
+`costUSD = (freshInputTokens * inputUsdPerMillion + cachedInputTokens * cachedInputUsdPerMillion + outputTokens * outputUsdPerMillion) / 1_000_000`
+
+`cachedInputUsdPerMillion` defaults to `inputUsdPerMillion` when not set by the seller. Non-zero usage always costs at least 1 cent. Zero tokens = zero cost.
 
 ## Receipt Verification
 
