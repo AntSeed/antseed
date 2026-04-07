@@ -24,7 +24,7 @@ const statsProxyPlugin: PluginModule = () => ({
 
 const config: Config = {
   title: 'AntSeed',
-  tagline: 'The Unstoppable AI Economy',
+  tagline: 'The open market for AI inference. No gatekeepers.',
   favicon: 'logo.svg',
   url: 'https://antseed.com',
   baseUrl: '/',
@@ -63,7 +63,7 @@ const config: Config = {
         blog: {
           showReadingTime: true,
           blogTitle: 'AntSeed Blog',
-          blogDescription: 'Insights on private AI, decentralized inference, and P2P AI networks.',
+          blogDescription: 'Insights on OpenRouter alternatives, P2P AI networks, and the future of AI inference.',
           postsPerPage: 10,
           blogSidebarCount: 'ALL',
         },
@@ -96,7 +96,7 @@ const config: Config = {
         name: 'AntSeed',
         url: 'https://antseed.com',
         description:
-          'A peer-to-peer AI services network. Buy or sell AI inference directly — no platform middleman, no vendor lock-in. OpenAI-compatible API, reputation-based routing, TEE attestation.',
+          'The open market for AI inference. No gatekeepers. Serving or consuming AI inference peer-to-peer. Anonymous. Private. No gatekeepers.',
         applicationCategory: 'DeveloperApplication',
         operatingSystem: 'macOS, Linux, Windows',
         offers: {
@@ -135,16 +135,16 @@ const config: Config = {
   themeConfig: {
     metadata: [
       {name: 'google-site-verification', content: '09pzs5Q9kHdpQSNSBpr0vNh9SMq-T8lzhBgH5Zgm6ug'},
-      {name: 'keywords', content: 'AI marketplace, buy AI services, sell AI services, peer-to-peer AI, decentralized AI inference, anonymous AI, private AI, P2P AI, AI economy'},
-      {name: 'description', content: 'Buy, sell, and build AI services peer-to-peer. Anonymous. Private. No middleman. Network live.'},
-      {property: 'og:title', content: 'AntSeed — The Unstoppable AI Economy'},
-      {property: 'og:description', content: 'Buy, sell, and build AI services peer-to-peer. Anonymous. Private. No middleman. Network live.'},
+      {name: 'keywords', content: 'AI marketplace, OpenRouter alternative, serving AI inference, consuming AI inference, peer-to-peer AI, decentralized AI inference, anonymous AI, private AI, P2P AI, AI economy'},
+      {name: 'description', content: 'Serving or consuming AI inference peer-to-peer. Anonymous. Private. No gatekeepers.'},
+      {property: 'og:title', content: 'The open market for AI inference. No gatekeepers.'},
+      {property: 'og:description', content: 'Serving or consuming AI inference peer-to-peer. Anonymous. Private. No gatekeepers.'},
       {property: 'og:type', content: 'website'},
       {name: 'twitter:card', content: 'summary_large_image'},
       {name: 'twitter:image', content: 'https://antseed.com/og-image.jpg'},
       {property: 'og:image', content: 'https://antseed.com/og-image.jpg'},
-      {name: 'twitter:title', content: 'AntSeed — The Unstoppable AI Economy'},
-      {name: 'twitter:description', content: 'Buy, sell, and build AI services peer-to-peer. Anonymous. Private. No middleman. Network live.'},
+      {name: 'twitter:title', content: 'The open market for AI inference. No gatekeepers.'},
+      {name: 'twitter:description', content: 'Serving or consuming AI inference peer-to-peer. Anonymous. Private. No gatekeepers.'},
     ],
     colorMode: {
       defaultMode: 'light',
