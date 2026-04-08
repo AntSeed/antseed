@@ -395,6 +395,17 @@ export class SellerPaymentManager {
           return 'rejected';
         }
 
+        // Reject if cumulative exceeds on-chain deposit — the contract would revert
+        // and we'd lose the last valid auth signature that close() could use.
+        const currentReserveMax = this._reserveMax.get(channelId) ?? 0n;
+        if (currentReserveMax > 0n && cumulativeAmount > currentReserveMax) {
+          debugWarn(
+            `[SellerPayment] Rejecting SpendingAuth exceeding deposit ceiling: ` +
+            `cumulative=${cumulativeAmount} > reserveMax=${currentReserveMax} channel=${channelId.slice(0, 18)}...`,
+          );
+          return 'rejected';
+        }
+
         // Update tracking
         this._acceptedCumulative.set(channelId, cumulativeAmount);
         this._latestAuth.set(channelId, {

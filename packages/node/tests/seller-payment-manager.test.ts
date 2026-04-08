@@ -316,6 +316,48 @@ describe('SellerPaymentManager', () => {
     expect(metadata).toBe(encodeMetadata(ZERO_METADATA));
   });
 
+  it('rejects SpendingAuth when cumulative exceeds on-chain deposit', async () => {
+    const channelId = makeChannelId(40);
+
+    const payload1 = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { isReserve: true });
+    await manager.handleSpendingAuth(buyerIdentity.peerId, payload1, mux);
+
+    // Accept a SpendingAuth within deposit (reserveMax defaults to 10,000,000)
+    const payload2 = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
+      cumulativeAmount: 200_000n,
+    });
+    await manager.handleSpendingAuth(buyerIdentity.peerId, payload2, mux);
+    expect(manager.getAcceptedCumulative(channelId)).toBe(200_000n);
+
+    // Set reserveMax to 300,000 to simulate a small deposit
+    (manager as unknown as { _reserveMax: Map<string, bigint> })._reserveMax.set(channelId, 300_000n);
+
+    // Try to accept a SpendingAuth that exceeds the deposit — should be rejected
+    const payload3 = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
+      cumulativeAmount: 500_000n,
+    });
+    const result = await manager.handleSpendingAuth(buyerIdentity.peerId, payload3, mux);
+    expect(result).toBe('rejected');
+
+    // Cumulative should remain at the last valid value
+    expect(manager.getAcceptedCumulative(channelId)).toBe(200_000n);
+  });
+
+  it('accepts SpendingAuth within deposit ceiling', async () => {
+    const channelId = makeChannelId(41);
+
+    const payload1 = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { isReserve: true });
+    await manager.handleSpendingAuth(buyerIdentity.peerId, payload1, mux);
+
+    // Accept SpendingAuth within default deposit (10,000,000)
+    const payload2 = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
+      cumulativeAmount: 200_000n,
+    });
+    const result = await manager.handleSpendingAuth(buyerIdentity.peerId, payload2, mux);
+    expect(result).toBe('accepted');
+    expect(manager.getAcceptedCumulative(channelId)).toBe(200_000n);
+  });
+
   it('test_hasSession: returns true/false correctly', async () => {
 
     expect(manager.hasSession(buyerIdentity.peerId)).toBe(false);
