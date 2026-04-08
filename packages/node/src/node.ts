@@ -993,7 +993,8 @@ export class AntseedNode extends EventEmitter {
       this._sellerPaymentManager = new SellerPaymentManager(this._identity, sellerConfig, this._channelStore);
       debugLog(`[Node] SellerPaymentManager initialized`);
 
-      // Startup recovery: check for timed-out sessions
+      // Startup recovery: validate hydrated channels against on-chain state, then check timeouts
+      await this._sellerPaymentManager.validateHydratedChannels();
       await this._sellerPaymentManager.checkTimeouts();
 
       // Initialize CloseRequested polling cursor to current block
