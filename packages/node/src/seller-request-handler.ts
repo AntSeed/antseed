@@ -273,13 +273,17 @@ export class SellerRequestHandler {
             const cumulativeSpend = spm.getCumulativeSpend(session.sessionId);
             debugLog(`[SellerHandler] Cost recorded: buyer=${buyerPeerId.slice(0, 12)}... cost=${costUsdc} cumulative=${cumulativeSpend} (in=${usage.inputTokens} cached=${usage.cachedInputTokens} out=${usage.outputTokens})`);
 
-            // Check if remaining budget is running low; proactively request more auth
+            // Check if remaining budget is running low; proactively request more auth.
+            // Compare against both accepted cumulative AND reserve max (on-chain deposit)
+            // — the buyer may have authorized more than the deposit covers.
             const accepted = spm.getAcceptedCumulative(session.sessionId);
-            const remainingBudget = accepted - cumulativeSpend;
+            const reserveMax = spm.getReserveMax(session.sessionId);
+            const effectiveCeiling = reserveMax > 0n && reserveMax < accepted ? reserveMax : accepted;
+            const remainingBudget = effectiveCeiling - cumulativeSpend;
             const estimatedNextRequestCost = costUsdc > 0n ? costUsdc : 1n;
             if (remainingBudget < estimatedNextRequestCost) {
               const requiredAmount = cumulativeSpend + estimatedNextRequestCost;
-              debugLog(`[SellerHandler] Budget low for ${buyerPeerId.slice(0, 12)}... remaining=${remainingBudget} estimated=${estimatedNextRequestCost} — sending NeedAuth (required=${requiredAmount})`);
+              debugLog(`[SellerHandler] Budget low for ${buyerPeerId.slice(0, 12)}... remaining=${remainingBudget} ceiling=${effectiveCeiling} estimated=${estimatedNextRequestCost} — sending NeedAuth (required=${requiredAmount})`);
               paymentMux.sendNeedAuth({
                 channelId: session.sessionId,
                 requiredCumulativeAmount: requiredAmount.toString(),

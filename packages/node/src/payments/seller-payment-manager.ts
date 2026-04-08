@@ -651,7 +651,13 @@ export class SellerPaymentManager {
 
     const channelId = session.sessionId;
     const accepted = this._acceptedCumulative.get(channelId) ?? 0n;
-    const { amount, metadata, sig } = this._getSettleParams(channelId);
+    const settleParams = this._getSettleParams(channelId);
+    // Cap the settle/close amount at the on-chain deposit (reserveMax).
+    // The buyer may have signed a SpendingAuth with cumulative > deposit when costs
+    // accumulated past the reserve ceiling — the contract rejects amounts > deposit.
+    const reserveMax = this._reserveMax.get(channelId) ?? 0n;
+    const amount = reserveMax > 0n && settleParams.amount > reserveMax ? reserveMax : settleParams.amount;
+    const { metadata, sig } = settleParams;
 
     if (accepted === 0n) {
       if (settleOnly) return;
