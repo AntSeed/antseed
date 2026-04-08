@@ -684,9 +684,8 @@ export class BuyerPaymentManager {
       const sellerOut = BigInt(payload.outputTokens ?? '0');
       const sellerCached = BigInt(payload.cachedInputTokens ?? '0');
 
-      // Compute buyer's independent cost estimate using session pricing
-      const service = undefined; // NeedAuth doesn't carry service yet; use default pricing
-      const pricing = this.getSessionPricing(sellerPeerId, service);
+      // Compute buyer's independent cost estimate using service-specific pricing
+      const pricing = this.getSessionPricing(sellerPeerId, payload.service);
       if (pricing && sellerCost > 0n) {
         const freshIn = sellerCached > 0n
           ? BigInt(Math.max(0, Number(sellerIn) - Number(sellerCached)))

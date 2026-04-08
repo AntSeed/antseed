@@ -276,14 +276,9 @@ export class BuyerRequestHandler {
       return executeRequest();
     }
 
-    if (negotiator) {
-      const service = extractServiceFromBody(req.body);
-      negotiator.estimateCostFromResponse(peer, response, service);
-      negotiator.recordResponseContent(peer.peerId, req.body, response.body, Date.now() - startTime);
-      // SpendingAuth is now sent in response to seller's NeedAuth on the PaymentMux,
-      // not proactively after each response. The seller sends NeedAuth with cost data
-      // after every served request.
-    }
+    // SpendingAuth is now sent reactively in response to seller's NeedAuth on the
+    // PaymentMux, not proactively after each response. Cost validation happens in
+    // handleNeedAuth using the seller's reported token counts.
 
     return response;
   }
@@ -311,12 +306,3 @@ function concatChunks(chunks: Uint8Array[]): Uint8Array {
   return output;
 }
 
-/** Extract the service/model name from a JSON request body, or undefined if not found. */
-function extractServiceFromBody(body: Uint8Array): string | undefined {
-  try {
-    const parsed = JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>;
-    const service = parsed.service ?? parsed.model;
-    if (typeof service === 'string' && service.length > 0) return service;
-  } catch { /* not JSON or no model field */ }
-  return undefined;
-}

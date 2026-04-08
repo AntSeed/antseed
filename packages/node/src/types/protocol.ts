@@ -98,4 +98,6 @@ export interface NeedAuthPayload {
   outputTokens?: string;
   /** Cached input tokens consumed by the last request. */
   cachedInputTokens?: string;
+  /** Service/model name for service-specific pricing validation. */
+  service?: string;
 }
