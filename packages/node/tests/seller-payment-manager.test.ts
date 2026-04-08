@@ -355,4 +355,237 @@ describe('SellerPaymentManager', () => {
     expect(accepted).toBe(true);
     expect(manager.getAcceptedCumulative(channelId)).toBe(200_000n);
   });
+
+  describe('validateHydratedChannels', () => {
+    function seedChannel(
+      channelStore: ChannelStore,
+      channelId: string,
+      buyer: Identity,
+      seller: Identity,
+      opts: Partial<StoredChannel> = {},
+    ): StoredChannel {
+      const now = Date.now();
+      const channel: StoredChannel = {
+        sessionId: channelId,
+        peerId: buyer.peerId,
+        role: 'seller',
+        sellerEvmAddr: seller.wallet.address,
+        buyerEvmAddr: buyer.wallet.address,
+        nonce: 0,
+        authMax: '1000000',
+        previousConsumption: '2000000',
+        tokensDelivered: '500000',
+        deadline: Math.floor(now / 1000) + 3600,
+        previousSessionId: '',
+        requestCount: 0,
+        reservedAt: now,
+        settledAt: null,
+        settledAmount: null,
+        status: 'active',
+        latestBuyerSig: '0xdead',
+        latestSpendingAuthSig: '0xdead',
+        latestMetadata: null,
+        createdAt: now,
+        updatedAt: now,
+        ...opts,
+      };
+      channelStore.upsertChannel(channel);
+      return channel;
+    }
+
+    function makeOnChainChannel(buyer: Identity, seller: Identity, overrides: Record<string, unknown> = {}) {
+      return {
+        buyer: buyer.wallet.address,
+        seller: seller.wallet.address,
+        deposit: 2_000_000n,
+        settled: 500_000n,
+        metadataHash: ZERO_METADATA_HASH,
+        deadline: BigInt(Math.floor(Date.now() / 1000) + 3600),
+        settledAt: 0n,
+        closeRequestedAt: 0n,
+        status: 1,
+        ...overrides,
+      };
+    }
+
+    const ZERO_CHANNEL = {
+      buyer: '0x0000000000000000000000000000000000000000',
+      seller: '0x0000000000000000000000000000000000000000',
+      deposit: 0n,
+      settled: 0n,
+      metadataHash: ZERO_METADATA_HASH,
+      deadline: 0n,
+      settledAt: 0n,
+      closeRequestedAt: 0n,
+      status: 0,
+    };
+
+    function makeFreshManager() {
+      const config: SellerPaymentConfig = {
+        rpcUrl: 'http://127.0.0.1:8545',
+        channelsContractAddress: CONTRACT_ADDR,
+        chainId: CHAIN_ID,
+        dataDir: tempDir,
+      };
+      return new SellerPaymentManager(sellerIdentity, config, store);
+    }
+
+    it('evicts channel that no longer exists on-chain', async () => {
+      const channelId = makeChannelId(30);
+      seedChannel(store, channelId, buyerIdentity, sellerIdentity);
+
+      const mgr = makeFreshManager();
+      expect(mgr.hasSession(buyerIdentity.peerId)).toBe(true);
+
+      vi.spyOn(mgr.channelsClient, 'getSession').mockResolvedValue(ZERO_CHANNEL);
+
+      await mgr.validateHydratedChannels();
+
+      expect(mgr.hasSession(buyerIdentity.peerId)).toBe(false);
+      expect(store.getChannel(channelId)!.status).toBe('settled');
+    });
+
+    it('evicts channel with settled on-chain status', async () => {
+      const channelId = makeChannelId(31);
+      seedChannel(store, channelId, buyerIdentity, sellerIdentity);
+
+      const mgr = makeFreshManager();
+      vi.spyOn(mgr.channelsClient, 'getSession').mockResolvedValue(
+        makeOnChainChannel(buyerIdentity, sellerIdentity, { status: 2 }),
+      );
+
+      await mgr.validateHydratedChannels();
+
+      expect(mgr.hasSession(buyerIdentity.peerId)).toBe(false);
+      expect(store.getChannel(channelId)!.status).toBe('settled');
+    });
+
+    it('keeps channel and reconciles when active on-chain with higher settled', async () => {
+      const channelId = makeChannelId(32);
+      seedChannel(store, channelId, buyerIdentity, sellerIdentity, { tokensDelivered: '100000' });
+
+      const mgr = makeFreshManager();
+      expect(mgr.getCumulativeSpend(channelId)).toBe(100_000n);
+
+      vi.spyOn(mgr.channelsClient, 'getSession').mockResolvedValue(
+        makeOnChainChannel(buyerIdentity, sellerIdentity, { settled: 800_000n }),
+      );
+
+      await mgr.validateHydratedChannels();
+
+      expect(mgr.hasSession(buyerIdentity.peerId)).toBe(true);
+      expect(mgr.getCumulativeSpend(channelId)).toBe(800_000n);
+    });
+
+    it('clears stale auth when authMax <= on-chain settled', async () => {
+      const channelId = makeChannelId(36);
+      // authMax=600000 < on-chain settled=800000 → auth is stale
+      seedChannel(store, channelId, buyerIdentity, sellerIdentity, {
+        authMax: '600000',
+        tokensDelivered: '100000',
+        latestSpendingAuthSig: '0xoldauth',
+      });
+
+      const mgr = makeFreshManager();
+
+      // Verify auth was hydrated
+      const settleParams = (mgr as unknown as { _getSettleParams: (id: string) => { amount: bigint } })._getSettleParams(channelId);
+      expect(settleParams.amount).toBeGreaterThan(0n);
+
+      vi.spyOn(mgr.channelsClient, 'getSession').mockResolvedValue(
+        makeOnChainChannel(buyerIdentity, sellerIdentity, { settled: 800_000n }),
+      );
+
+      await mgr.validateHydratedChannels();
+
+      // Auth should be cleared — settle(600000) would revert since 600000 <= 800000
+      const settleParamsAfter = (mgr as unknown as { _getSettleParams: (id: string) => { amount: bigint } })._getSettleParams(channelId);
+      expect(settleParamsAfter.amount).toBe(0n);
+    });
+
+    it('preserves valid auth when authMax > on-chain settled', async () => {
+      const channelId = makeChannelId(37);
+      // authMax=1000000 > on-chain settled=800000 → auth is still valid
+      seedChannel(store, channelId, buyerIdentity, sellerIdentity, {
+        authMax: '1000000',
+        tokensDelivered: '100000',
+        latestSpendingAuthSig: '0xvalidauth',
+      });
+
+      const mgr = makeFreshManager();
+
+      vi.spyOn(mgr.channelsClient, 'getSession').mockResolvedValue(
+        makeOnChainChannel(buyerIdentity, sellerIdentity, { settled: 800_000n }),
+      );
+
+      await mgr.validateHydratedChannels();
+
+      // Auth should remain — settle(1000000) would succeed since 1000000 > 800000
+      const settleParams = (mgr as unknown as { _getSettleParams: (id: string) => { amount: bigint } })._getSettleParams(channelId);
+      expect(settleParams.amount).toBeGreaterThan(0n);
+    });
+
+    it('does NOT clear auth when no reconciliation needed', async () => {
+      const channelId = makeChannelId(38);
+      seedChannel(store, channelId, buyerIdentity, sellerIdentity, {
+        tokensDelivered: '800000',
+        latestSpendingAuthSig: '0xvalidauth',
+      });
+
+      const mgr = makeFreshManager();
+
+      vi.spyOn(mgr.channelsClient, 'getSession').mockResolvedValue(
+        makeOnChainChannel(buyerIdentity, sellerIdentity, { settled: 500_000n }),
+      );
+
+      await mgr.validateHydratedChannels();
+
+      // No reconciliation (local 800k > on-chain 500k), auth should remain
+      const settleParams = (mgr as unknown as { _getSettleParams: (id: string) => { amount: bigint } })._getSettleParams(channelId);
+      expect(settleParams.amount).toBeGreaterThan(0n);
+    });
+
+    it('keeps channel hydrated on RPC failure', async () => {
+      const channelId = makeChannelId(33);
+      seedChannel(store, channelId, buyerIdentity, sellerIdentity);
+
+      const mgr = makeFreshManager();
+      vi.spyOn(mgr.channelsClient, 'getSession').mockRejectedValue(new Error('RPC timeout'));
+
+      await mgr.validateHydratedChannels();
+
+      expect(mgr.hasSession(buyerIdentity.peerId)).toBe(true);
+      expect(store.getChannel(channelId)!.status).toBe('active');
+    });
+
+    it('evicts channel with mismatched parties', async () => {
+      const channelId = makeChannelId(34);
+      seedChannel(store, channelId, buyerIdentity, sellerIdentity);
+
+      const mgr = makeFreshManager();
+      const otherBuyer = createTestIdentity();
+      vi.spyOn(mgr.channelsClient, 'getSession').mockResolvedValue(
+        makeOnChainChannel(otherBuyer, sellerIdentity),
+      );
+
+      await mgr.validateHydratedChannels();
+
+      expect(mgr.hasSession(buyerIdentity.peerId)).toBe(false);
+      expect(store.getChannel(channelId)!.status).toBe('settled');
+    });
+
+    it('keeps channel with unknown on-chain status', async () => {
+      const channelId = makeChannelId(35);
+      seedChannel(store, channelId, buyerIdentity, sellerIdentity);
+
+      const mgr = makeFreshManager();
+      vi.spyOn(mgr.channelsClient, 'getSession').mockResolvedValue(
+        makeOnChainChannel(buyerIdentity, sellerIdentity, { status: 99 }),
+      );
+
+      await mgr.validateHydratedChannels();
+
+      expect(mgr.hasSession(buyerIdentity.peerId)).toBe(true);
+    });
+  });
 });
