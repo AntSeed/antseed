@@ -359,7 +359,7 @@ describe('BuyerPaymentManager', () => {
     expect(cumulative).toBeGreaterThan(10_000n + SAMPLE_ESTIMATE.cost);
   });
 
-  it('signPerRequestAuth falls back to buyer estimate when seller claims zero', async () => {
+  it('signPerRequestAuth trusts seller claimed cost of zero (no byte fallback)', async () => {
     const sellerPeerId = fakePeerId('seller-zero-claim');
     await manager.authorizeSpending(sellerPeerId, mux, 10_000n, TEST_PRICING);
 
@@ -368,7 +368,9 @@ describe('BuyerPaymentManager', () => {
       { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: 0n },
     );
 
-    expect(BigInt(payload.cumulativeAmount)).toBe(10_000n + SAMPLE_ESTIMATE.cost);
+    // Seller claimed cost=0 is authoritative — no byte-based fallback
+    // +1 from minimum per-request cost floor
+    expect(BigInt(payload.cumulativeAmount)).toBe(10_001n);
   });
 
   it('signPerRequestAuth prefers reported tokens over byte estimation for metadata', async () => {

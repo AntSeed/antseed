@@ -512,8 +512,10 @@ export class BuyerPaymentManager {
 
     // Prefer reported token counts (from seller headers or buyer's parsed response usage)
     // over byte-based estimation. Byte estimation inflates tokens due to JSON/SSE overhead.
+    // Also treat seller-claimed cost of 0 as authoritative — don't fall back to byte estimation.
     const hasReportedTokens = (responseStats.reportedInputTokens != null && responseStats.reportedInputTokens > 0n) ||
-      (responseStats.reportedOutputTokens != null && responseStats.reportedOutputTokens > 0n);
+      (responseStats.reportedOutputTokens != null && responseStats.reportedOutputTokens > 0n) ||
+      (responseStats.sellerClaimedCost != null && responseStats.sellerClaimedCost === 0n);
 
     let estimatedInputTokens: bigint;
     let estimatedOutputTokens: bigint;
