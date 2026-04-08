@@ -1,7 +1,8 @@
 import type { Command } from 'commander';
 import chalk from 'chalk';
 import { getGlobalOptions } from './types.js';
-import { ChannelStore, loadOrCreateIdentity } from '@antseed/node';
+import { loadOrCreateIdentity } from '@antseed/node';
+import { openChannelStore } from '../payment-utils.js';
 
 /** Format USDC base units (6 decimals) to human-readable string. */
 function formatUsdc(baseUnits: string | number | bigint): string {
@@ -26,7 +27,7 @@ export function registerMeteringCommand(program: Command): void {
       try {
         const identity = await loadOrCreateIdentity(globalOpts.dataDir);
         const buyerAddress = identity.wallet.address;
-        const store = new ChannelStore(globalOpts.dataDir);
+        const store = openChannelStore(globalOpts.dataDir);
 
         try {
           const activeChannels = store.getActiveChannels('buyer');
@@ -60,19 +61,13 @@ export function registerMeteringCommand(program: Command): void {
 
             if (!channel && !lifetime) continue;
 
-            const reserved = BigInt(channel?.previousConsumption ?? '0'); // repurposed: stores reserveMax
-            const consumed = BigInt(channel?.authMax ?? '0');
-            const remaining = reserved - consumed;
+            const cumulativeSigned = BigInt(channel?.authMax ?? '0');
 
             const stats = {
               channelId: channel?.sessionId ?? null,
               channelStatus: channel?.status ?? null,
-              reserved: reserved.toString(),
-              consumed: consumed.toString(),
-              remaining: remaining.toString(),
+              cumulativeSigned: cumulativeSigned.toString(),
               requests: channel?.requestCount ?? 0,
-              inputTokens: Number(channel?.tokensDelivered ?? '0'),
-              outputTokens: Number(channel?.previousConsumption ?? '0'),
               lifetimeSessions: lifetime?.totalSessions ?? 0,
               lifetimeRequests: lifetime?.totalRequests ?? 0,
               lifetimeInputTokens: lifetime?.totalInputTokens ?? 0,
@@ -87,9 +82,7 @@ export function registerMeteringCommand(program: Command): void {
               console.log(chalk.bold('  Current Channel:'));
               console.log(`    Channel:      ${chalk.dim(channel?.sessionId ? channel.sessionId.slice(0, 18) + '...' : 'none')}`);
               console.log(`    Status:       ${channel?.status === 'active' ? chalk.green('active') : chalk.dim(channel?.status ?? 'none')}`);
-              console.log(`    Reserved:     ${chalk.yellow(formatUsdc(reserved) + ' USDC')}`);
-              console.log(`    Consumed:     ${chalk.green(formatUsdc(consumed) + ' USDC')}`);
-              console.log(`    Remaining:    ${remaining >= 0n ? chalk.green(formatUsdc(remaining) + ' USDC') : chalk.red(formatUsdc(remaining) + ' USDC')}`);
+              console.log(`    Signed:       ${chalk.green(formatUsdc(cumulativeSigned) + ' USDC')}`);
               console.log(`    Requests:     ${channel?.requestCount ?? 0}`);
               console.log('');
               console.log(chalk.bold('  Lifetime:'));

@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import type { AntseedConfig } from '../config/types.js';
 import {
   DepositsClient,
@@ -161,7 +162,8 @@ export function createSubPoolClient(config: AntseedConfig): SubPoolClient {
 
 /**
  * Open a ChannelStore from the given data directory.
+ * The runtime stores channels in {dataDir}/payments/sessions.db.
  */
 export function openChannelStore(dataDir: string): ChannelStore {
-  return new ChannelStore(dataDir);
+  return new ChannelStore(join(dataDir, 'payments'));
 }
