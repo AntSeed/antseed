@@ -95,6 +95,14 @@ export class BuyerRequestHandler {
       await negotiator.preparePreRequestAuth(peer, conn);
     }
 
+    // Track which service the buyer requested so NeedAuth validation uses buyer's own pricing
+    if (negotiator) {
+      const service = extractServiceFromBody(req.body);
+      if (service) {
+        negotiator.bpm.trackRequestService(req.requestId, service);
+      }
+    }
+
     let startTime = Date.now();
 
     const executeRequest = (): Promise<SerializedHttpResponse> => new Promise<SerializedHttpResponse>((resolve, reject) => {

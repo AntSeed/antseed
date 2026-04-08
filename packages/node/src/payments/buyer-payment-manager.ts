@@ -81,8 +81,10 @@ export class BuyerPaymentManager {
   /** sellerPeerId -> buyer-verified cumulative cost from bytes/4 */
   private readonly _verifiedCost = new Map<string, bigint>();
 
-  /** sellerPeerId -> last service/model the buyer requested (from its own request body) */
-  private readonly _lastRequestedService = new Map<string, string>();
+  /** requestId -> service/model the buyer requested (from its own request body).
+   *  Used in handleNeedAuth to validate cost with the correct pricing tier
+   *  without trusting the seller's claim of which service was used. */
+  private readonly _requestService = new Map<string, string>();
 
   /** sellerPeerId -> full pricing map (defaults + per-service overrides from peer metadata / 402) */
   private readonly _sessionPricing = new Map<string, { defaults: ServicePricing; services: Record<string, ServicePricing> }>();
@@ -505,11 +507,6 @@ export class BuyerPaymentManager {
       service?: string;
     },
   ): Promise<PerRequestAuthResult> {
-    // Track buyer's own requested service for NeedAuth validation (don't trust seller's claim)
-    if (responseStats.service) {
-      this._lastRequestedService.set(sellerPeerId, responseStats.service);
-    }
-
     const session = this.getActiveSession(sellerPeerId);
     if (!session) {
       throw new Error(`[BuyerPayment] No active session for seller ${sellerPeerId.slice(0, 12)}... — call authorizeSpending() first`);
@@ -694,8 +691,10 @@ export class BuyerPaymentManager {
 
       // Use the buyer's own knowledge of which service it requested, not the seller's claim.
       // A malicious seller could set service to a more expensive model to inflate the ceiling.
-      const buyerService = this._lastRequestedService.get(sellerPeerId);
+      const buyerService = payload.requestId ? this._requestService.get(payload.requestId) : undefined;
       const pricing = this.getSessionPricing(sellerPeerId, buyerService);
+      // Clean up — no longer needed after validation
+      if (payload.requestId) this._requestService.delete(payload.requestId);
       if (pricing && sellerCost > 0n) {
         const freshIn = sellerCached > 0n
           ? BigInt(Math.max(0, Number(sellerIn) - Number(sellerCached)))
@@ -918,6 +917,11 @@ export class BuyerPaymentManager {
       requestCount: totals.requests,
       updatedAt: Date.now(),
     });
+  }
+
+  /** Register which service the buyer requested for a given requestId. */
+  trackRequestService(requestId: string, service: string): void {
+    this._requestService.set(requestId, service);
   }
 
   /** Get the live response token totals for a seller, or null if none recorded this session. */
