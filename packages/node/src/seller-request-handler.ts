@@ -148,6 +148,14 @@ export class SellerRequestHandler {
         }
       }
 
+      // Handle /v1/models locally — return seller's configured services without
+      // upstream call or resetting idle timers (these are metadata queries, not inference).
+      if (request.method === 'GET' && (request.path === '/v1/models' || request.path.startsWith('/v1/models/'))) {
+        const modelsResponse = this._handleModelsRequest(request);
+        mux.sendProxyResponse(modelsResponse);
+        return;
+      }
+
       const provider = this.matchProvider(request);
 
       if (!provider) {
@@ -287,6 +295,48 @@ export class SellerRequestHandler {
     });
 
     return { mux };
+  }
+
+  // -- Local /v1/models handler --
+
+  private _handleModelsRequest(request: SerializedHttpRequest): SerializedHttpResponse {
+    const allServices = this._deps.providers.flatMap((p) => p.services);
+    const now = Math.floor(Date.now() / 1000);
+
+    // GET /v1/models/:id — single model lookup
+    const singleModelMatch = request.path.match(/^\/v1\/models\/(.+)$/);
+    if (singleModelMatch) {
+      const modelId = decodeURIComponent(singleModelMatch[1]!);
+      if (allServices.includes(modelId)) {
+        return {
+          requestId: request.requestId,
+          statusCode: 200,
+          headers: { 'content-type': 'application/json' },
+          body: new TextEncoder().encode(JSON.stringify({
+            id: modelId, object: 'model', created: now, owned_by: 'antseed',
+          })),
+        };
+      }
+      return {
+        requestId: request.requestId,
+        statusCode: 404,
+        headers: { 'content-type': 'application/json' },
+        body: new TextEncoder().encode(JSON.stringify({
+          error: { message: `Model '${modelId}' not found`, type: 'invalid_request_error', code: 'model_not_found' },
+        })),
+      };
+    }
+
+    // GET /v1/models — list all
+    const models = allServices.map((id) => ({
+      id, object: 'model' as const, created: now, owned_by: 'antseed',
+    }));
+    return {
+      requestId: request.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: new TextEncoder().encode(JSON.stringify({ object: 'list', data: models })),
+    };
   }
 
   // -- Provider matching (public for announcer pricing in _startSeller) --
