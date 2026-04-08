@@ -299,6 +299,11 @@ export class AntseedNode extends EventEmitter {
       return;
     }
 
+    // Allow pending PaymentMux handlers (NeedAuth → SpendingAuth) to complete
+    // before closing connections. This ensures the seller has a valid SpendingAuth
+    // for settlement even if stop() is called right after the last response.
+    await new Promise<void>((resolve) => setTimeout(resolve, 200));
+
     // End all active buyer payment sessions before shutdown
     if (this._buyerNegotiator) {
       this._buyerNegotiator.cleanup();

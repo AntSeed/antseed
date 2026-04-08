@@ -91,10 +91,6 @@ export class BuyerRequestHandler {
       await negotiator.applyExternalSpendingAuth(peer, conn, externalSpendingAuth);
     }
 
-    if (negotiator && !externalSpendingAuth) {
-      await negotiator.preparePreRequestAuth(peer, conn);
-    }
-
     // Track which service the buyer requested so NeedAuth validation uses buyer's own pricing
     if (negotiator) {
       const service = extractServiceFromBody(req.body);
@@ -285,20 +281,10 @@ export class BuyerRequestHandler {
       return executeRequest();
     }
 
-    // Cost validation and budget advancement now happen in handleNeedAuth (via PaymentMux).
-    // But we still send a post-response SpendingAuth covering the buyer's own cost estimate
-    // so the seller always has a valid settlement signature, even if the buyer disconnects
-    // before the NeedAuth round-trip completes.
-    if (negotiator) {
-      const service = extractServiceFromBody(req.body);
-      negotiator.estimateCostFromResponse(peer, response, service);
-      negotiator.recordResponseContent(peer.peerId, req.body, response.body, Date.now() - startTime);
-      try {
-        await negotiator.sendPostResponseAuth(peer, conn);
-      } catch (err) {
-        debugWarn(`[BuyerRequest] sendPostResponseAuth failed, response still returned: ${err instanceof Error ? err.message : err}`);
-      }
-    }
+    // Cost validation and budget advancement happen in handleNeedAuth (via PaymentMux).
+    // Settlement safety is provided by NeedAuth headroom — each SpendingAuth covers
+    // cumulative + estimated next request cost, so the seller can always settle even
+    // if the buyer disconnects before the next NeedAuth round-trip.
 
     return response;
   }
