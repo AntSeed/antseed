@@ -299,6 +299,42 @@ describe('BuyerPaymentManager', () => {
     expect(BigInt(payload.cumulativeAmount)).toBe(50_001n);
   });
 
+  it('signPerRequestAuth uses seller claimed cost for verifiedCost when no pricing available', async () => {
+    // Simulate post-restart state: session exists but no pricing in memory
+    const sellerPeerId = fakePeerId('seller-no-pricing-restart');
+    await manager.authorizeSpending(sellerPeerId, mux, 10_000n); // no pricing!
+
+    const sellerClaim = 5_000n;
+    const { payload: p1 } = await manager.signPerRequestAuth(
+      sellerPeerId,
+      {
+        inputBytes: SAMPLE_INPUT,
+        outputBytes: SAMPLE_OUTPUT,
+        sellerClaimedCost: sellerClaim,
+        reportedInputTokens: 100n,
+        reportedOutputTokens: 50n,
+      },
+    );
+
+    // Cumulative should advance by seller's claimed cost
+    expect(BigInt(p1.cumulativeAmount)).toBe(10_000n + sellerClaim);
+
+    // Second request — verifiedCost should have grown, allowing maxSignable to increase
+    const { payload: p2 } = await manager.signPerRequestAuth(
+      sellerPeerId,
+      {
+        inputBytes: SAMPLE_INPUT,
+        outputBytes: SAMPLE_OUTPUT,
+        sellerClaimedCost: sellerClaim,
+        reportedInputTokens: 100n,
+        reportedOutputTokens: 50n,
+      },
+    );
+
+    // Should advance further — not stuck at the same value
+    expect(BigInt(p2.cumulativeAmount)).toBe(10_000n + sellerClaim * 2n);
+  });
+
   it('signPerRequestAuth signals topUpNeeded when approaching reserve ceiling', async () => {
     const sellerPeerId = fakePeerId('seller-topup');
     // Use a ceiling just above initial so any request pushes past 80%
