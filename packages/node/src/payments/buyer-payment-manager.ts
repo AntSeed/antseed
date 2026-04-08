@@ -333,8 +333,11 @@ export class BuyerPaymentManager {
     };
     const reserveAuthSig = await signReserveAuth(this._signer, channelsDomain, reserveMsg);
 
-    // Initialize state for this session
-    this._cumulativeAmount.set(sellerPeerId, minBudgetPerRequest);
+    // Initialize state for this session.
+    // Start cumulative at 0 — the initial message is a ReserveAuth (not a SpendingAuth).
+    // The first real SpendingAuth will be sent by handleNeedAuth after the seller serves
+    // the first request and reports its cost.
+    this._cumulativeAmount.set(sellerPeerId, 0n);
     this._metadata.set(sellerPeerId, { ...ZERO_METADATA });
     this._verifiedCost.set(sellerPeerId, 0n);
     this._currentReserveCeiling.set(sellerPeerId, maxAmount);

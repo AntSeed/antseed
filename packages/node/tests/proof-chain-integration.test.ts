@@ -101,7 +101,9 @@ describe('Cumulative SpendingAuth Integration', () => {
       sellerIdentity.peerId,
       { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: 3_000n },
     );
-    expect(BigInt(auth1.cumulativeAmount)).toBeGreaterThan(10_000n);
+    // Cumulative starts at 0, so first request cumulative = accepted cost
+    // (seller claim capped at 1.4x buyer's byte estimate)
+    expect(BigInt(auth1.cumulativeAmount)).toBeGreaterThan(0n);
     const meta1 = decodeMetadataTokens(auth1.metadata);
     expect(meta1.inputTokens).toBeGreaterThan(0n);
     expect(meta1.outputTokens).toBeGreaterThan(0n);
@@ -209,7 +211,9 @@ describe('Cumulative SpendingAuth Integration', () => {
       { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: 5_000n },
     );
 
-    expect(BigInt(auth.cumulativeAmount)).toBeGreaterThan(10_000n);
+    // Cumulative starts at 0, so first request cumulative = accepted cost
+    // (seller claim capped at 1.4x buyer's byte estimate)
+    expect(BigInt(auth.cumulativeAmount)).toBeGreaterThan(0n);
     const authMeta = decodeMetadataTokens(auth.metadata);
     expect(authMeta.inputTokens).toBeGreaterThan(0n);
     expect(authMeta.outputTokens).toBeGreaterThan(0n);

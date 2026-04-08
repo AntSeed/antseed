@@ -214,8 +214,8 @@ describe('BuyerPaymentManager', () => {
       { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: sellerClaim },
     );
 
-    // new cumulative = 10000 (initial) + sellerClaim
-    expect(BigInt(payload.cumulativeAmount)).toBe(10_000n + sellerClaim);
+    // new cumulative = 0 (initial) + sellerClaim
+    expect(BigInt(payload.cumulativeAmount)).toBe(sellerClaim);
     expect(payload.spendingAuthSig).toBeTypeOf('string');
   });
 
@@ -232,8 +232,8 @@ describe('BuyerPaymentManager', () => {
       { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: outrageousClaim },
     );
 
-    // new cumulative = 10000 (initial) + capped amount
-    expect(BigInt(payload.cumulativeAmount)).toBe(10_000n + maxAcceptable);
+    // new cumulative = 0 (initial) + capped amount
+    expect(BigInt(payload.cumulativeAmount)).toBe(maxAcceptable);
   });
 
   it('signPerRequestAuth caps at overdraft limit (verifiedCost + maxPerRequestUsdc)', async () => {
@@ -263,13 +263,13 @@ describe('BuyerPaymentManager', () => {
       sellerPeerId,
       { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: claim },
     );
-    expect(BigInt(p1.cumulativeAmount)).toBe(10_000n + claim);
+    expect(BigInt(p1.cumulativeAmount)).toBe(claim);
 
     const { payload: p2 } = await manager.signPerRequestAuth(
       sellerPeerId,
       { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: claim },
     );
-    expect(BigInt(p2.cumulativeAmount)).toBe(10_000n + claim * 2n);
+    expect(BigInt(p2.cumulativeAmount)).toBe(claim * 2n);
   });
 
   it('signPerRequestAuth uses buyer estimate when no seller claim', async () => {
@@ -281,8 +281,8 @@ describe('BuyerPaymentManager', () => {
       { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT },
     );
 
-    // Buyer estimate used as cost, cumulative = 10000 + estimate
-    expect(BigInt(payload.cumulativeAmount)).toBe(10_000n + SAMPLE_ESTIMATE.cost);
+    // Buyer estimate used as cost, cumulative = 0 + estimate
+    expect(BigInt(payload.cumulativeAmount)).toBe(SAMPLE_ESTIMATE.cost);
   });
 
   it('signPerRequestAuth ensures monotonic increase', async () => {
@@ -296,7 +296,7 @@ describe('BuyerPaymentManager', () => {
       { inputBytes: tiny, outputBytes: tiny, sellerClaimedCost: 1n },
     );
 
-    expect(BigInt(payload.cumulativeAmount)).toBe(50_001n);
+    expect(BigInt(payload.cumulativeAmount)).toBe(1n);
   });
 
   it('signPerRequestAuth uses seller claimed cost for verifiedCost when no pricing available', async () => {
@@ -317,7 +317,7 @@ describe('BuyerPaymentManager', () => {
     );
 
     // Cumulative should advance by seller's claimed cost
-    expect(BigInt(p1.cumulativeAmount)).toBe(10_000n + sellerClaim);
+    expect(BigInt(p1.cumulativeAmount)).toBe(sellerClaim);
 
     // Second request — verifiedCost should have grown, allowing maxSignable to increase
     const { payload: p2 } = await manager.signPerRequestAuth(
@@ -332,14 +332,16 @@ describe('BuyerPaymentManager', () => {
     );
 
     // Should advance further — not stuck at the same value
-    expect(BigInt(p2.cumulativeAmount)).toBe(10_000n + sellerClaim * 2n);
+    expect(BigInt(p2.cumulativeAmount)).toBe(sellerClaim * 2n);
   });
 
   it('signPerRequestAuth signals topUpNeeded when approaching reserve ceiling', async () => {
     const sellerPeerId = fakePeerId('seller-topup');
-    // Use a ceiling just above initial so any request pushes past 80%
+    // Use a ceiling just above the expected cost so one request pushes past 80%.
+    // Cumulative starts at 0, so after one request cumulative = cost.
+    // Set ceiling = cost + 100 so cumulative ≈ ceiling, which exceeds 80% threshold.
     const initialBudget = 9_000n;
-    const ceiling = initialBudget + SAMPLE_ESTIMATE.cost + 100n; // tight ceiling
+    const ceiling = SAMPLE_ESTIMATE.cost + 100n; // tight ceiling
     store.close();
     store = new ChannelStore(tempDir);
     manager = new BuyerPaymentManager(
@@ -351,15 +353,15 @@ describe('BuyerPaymentManager', () => {
 
     await manager.authorizeSpending(sellerPeerId, mux, initialBudget, TEST_PRICING);
 
-    // threshold = ceiling * 80%. After request, cumulative = initialBudget + cost.
-    // ceiling is initialBudget + cost + 100, so cumulative = ceiling - 100.
+    // threshold = ceiling * 80%. After request, cumulative = 0 + cost.
+    // ceiling is cost + 100, so cumulative = ceiling - 100.
     // threshold = (ceiling) * 0.8. Since cumulative ≈ ceiling, it must exceed threshold.
     const { topUpNeeded, payload } = await manager.signPerRequestAuth(
       sellerPeerId,
       { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: SAMPLE_ESTIMATE.cost },
     );
 
-    expect(BigInt(payload.cumulativeAmount)).toBe(initialBudget + SAMPLE_ESTIMATE.cost);
+    expect(BigInt(payload.cumulativeAmount)).toBe(SAMPLE_ESTIMATE.cost);
     expect(topUpNeeded).toBe(true);
   });
 
@@ -375,7 +377,7 @@ describe('BuyerPaymentManager', () => {
     );
 
     // Seller's claim accepted as-is (not reduced to buyer's estimate)
-    expect(BigInt(payload.cumulativeAmount)).toBe(10_000n + sellerClaim);
+    expect(BigInt(payload.cumulativeAmount)).toBe(sellerClaim);
   });
 
   it('signPerRequestAuth does not underpay when seller claim is slightly above buyer estimate', async () => {
@@ -391,8 +393,8 @@ describe('BuyerPaymentManager', () => {
 
     // acceptedCost must be the seller's claim, not the buyer's lower estimate
     const cumulative = BigInt(payload.cumulativeAmount);
-    expect(cumulative).toBe(10_000n + sellerClaim);
-    expect(cumulative).toBeGreaterThan(10_000n + SAMPLE_ESTIMATE.cost);
+    expect(cumulative).toBe(sellerClaim);
+    expect(cumulative).toBeGreaterThan(SAMPLE_ESTIMATE.cost);
   });
 
   it('signPerRequestAuth trusts seller claimed cost of zero (no byte fallback)', async () => {
@@ -405,7 +407,7 @@ describe('BuyerPaymentManager', () => {
     );
 
     // Seller claimed cost=0 is authoritative — no byte-based fallback, no forced +1
-    expect(BigInt(payload.cumulativeAmount)).toBe(10_000n);
+    expect(BigInt(payload.cumulativeAmount)).toBe(0n);
   });
 
   it('signPerRequestAuth prefers reported tokens over byte estimation for metadata', async () => {
@@ -429,12 +431,13 @@ describe('BuyerPaymentManager', () => {
     // We can verify by checking the payload has a valid metadataHash
     expect(payload.metadata).toBeTypeOf('string');
     expect(payload.metadataHash).toBeTypeOf('string');
-    // Cumulative should use cost from reported tokens, not from bytes
+    // Cumulative should use cost from reported tokens, not from bytes.
+    // Since cumulative starts at 0, the cumulative amount equals the reported cost.
     const reportedCost = BigInt(Math.round(
       (Number(reportedIn) * TEST_PRICING.inputUsdPerMillion +
        Number(reportedOut) * TEST_PRICING.outputUsdPerMillion) / 1_000_000 * 1_000_000
     ));
-    expect(BigInt(payload.cumulativeAmount)).toBe(10_000n + reportedCost);
+    expect(BigInt(payload.cumulativeAmount)).toBe(reportedCost);
   });
 
   it('signPerRequestAuth throws if no active session', async () => {
@@ -542,7 +545,17 @@ describe('BuyerPaymentManager', () => {
     const channelId = await manager.authorizeSpending(sellerPeerId, mux, 50_000n, TEST_PRICING);
     mux.sentSpendingAuths.length = 0;
 
-    // Stale: required < current cumulative
+    // First, advance cumulative by processing a NeedAuth with a higher amount
+    await manager.handleNeedAuth(sellerPeerId, {
+      channelId,
+      requiredCumulativeAmount: '50000',
+      currentAcceptedCumulative: '0',
+      deposit: '1000000',
+    }, mux);
+    expect(mux.sentSpendingAuths.length).toBe(1);
+    mux.sentSpendingAuths.length = 0;
+
+    // Stale: required (30000) < current cumulative (50000)
     await manager.handleNeedAuth(sellerPeerId, {
       channelId,
       requiredCumulativeAmount: '30000',
