@@ -540,6 +540,12 @@ export class BuyerPaymentManager {
         const cost = computeCostUsdc(Number(freshInputTokens), Number(estimatedOutputTokens), pricing, Number(cachedInputTokens));
         buyerEstimatedRequestCost = cost;
         this._accumulateVerifiedCost(sellerPeerId, { cost, inputTokens: Number(estimatedInputTokens), outputTokens: Number(estimatedOutputTokens) });
+      } else if (responseStats.sellerClaimedCost != null && responseStats.sellerClaimedCost > 0n) {
+        // No local pricing available (e.g. after buyer restart before session pricing is restored).
+        // Use seller's claimed cost for verifiedCost accumulation so _maxSignable can grow.
+        // The seller's claim is still validated against tolerance below.
+        buyerEstimatedRequestCost = responseStats.sellerClaimedCost;
+        this._accumulateVerifiedCost(sellerPeerId, { cost: responseStats.sellerClaimedCost, inputTokens: Number(estimatedInputTokens), outputTokens: Number(estimatedOutputTokens) });
       } else {
         buyerEstimatedRequestCost = 0n;
       }
