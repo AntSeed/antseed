@@ -85,7 +85,7 @@ export function registerMeteringCommand(program: Command): void {
               console.log(chalk.bold('Peer: ') + chalk.cyan(peerId.slice(0, 16) + '...'));
               console.log('');
               console.log(chalk.bold('  Current Channel:'));
-              console.log(`    Channel:      ${chalk.dim(channel?.sessionId?.slice(0, 18) + '...' ?? 'none')}`);
+              console.log(`    Channel:      ${chalk.dim(channel?.sessionId ? channel.sessionId.slice(0, 18) + '...' : 'none')}`);
               console.log(`    Status:       ${channel?.status === 'active' ? chalk.green('active') : chalk.dim(channel?.status ?? 'none')}`);
               console.log(`    Reserved:     ${chalk.yellow(formatUsdc(reserved) + ' USDC')}`);
               console.log(`    Consumed:     ${chalk.green(formatUsdc(consumed) + ' USDC')}`);
