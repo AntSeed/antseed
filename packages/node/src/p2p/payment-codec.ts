@@ -88,10 +88,16 @@ export function decodePaymentRequired(data: Uint8Array): PaymentRequiredPayload 
 
 export function decodeNeedAuth(data: Uint8Array): NeedAuthPayload {
   const obj = parseJson(data);
-  return {
+  const result: NeedAuthPayload = {
     channelId: requireString(obj, 'channelId'),
     requiredCumulativeAmount: requireString(obj, 'requiredCumulativeAmount'),
     currentAcceptedCumulative: requireString(obj, 'currentAcceptedCumulative'),
     deposit: requireString(obj, 'deposit'),
   };
+  if (typeof obj.requestId === 'string') result.requestId = obj.requestId;
+  if (typeof obj.lastRequestCost === 'string') result.lastRequestCost = obj.lastRequestCost;
+  if (typeof obj.inputTokens === 'string') result.inputTokens = obj.inputTokens;
+  if (typeof obj.outputTokens === 'string') result.outputTokens = obj.outputTokens;
+  if (typeof obj.cachedInputTokens === 'string') result.cachedInputTokens = obj.cachedInputTokens;
+  return result;
 }

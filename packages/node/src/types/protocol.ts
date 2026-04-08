@@ -80,10 +80,22 @@ export interface PaymentRequiredPayload {
 
 /**
  * Seller tells buyer that the current cumulative authorization is insufficient.
+ * After every served request the seller includes the cost of that request so
+ * the buyer can validate before signing a new SpendingAuth.
  */
 export interface NeedAuthPayload {
   channelId: string;
   requiredCumulativeAmount: string;
   currentAcceptedCumulative: string;
   deposit: string;
+  /** requestId of the request whose cost is reported below. */
+  requestId?: string;
+  /** Seller-computed cost for the last request (USDC base units). */
+  lastRequestCost?: string;
+  /** Input tokens consumed by the last request. */
+  inputTokens?: string;
+  /** Output tokens consumed by the last request. */
+  outputTokens?: string;
+  /** Cached input tokens consumed by the last request. */
+  cachedInputTokens?: string;
 }

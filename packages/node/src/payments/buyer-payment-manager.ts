@@ -24,12 +24,7 @@ import { peerIdToAddress } from '../types/peer.js';
 import { ChannelStore, type StoredChannel } from './channel-store.js';
 import { estimateCostFromBytes, computeCostUsdc, type ServicePricing } from './pricing.js';
 
-// ── Response cost header constants ───────────────────────────────
-const HEADER_COST = 'x-antseed-cost';
-const HEADER_INPUT_TOKENS = 'x-antseed-input-tokens';
-const HEADER_OUTPUT_TOKENS = 'x-antseed-output-tokens';
-
-/** Default tolerance: accept seller claims up to 1.4x buyer's bytes/4 estimate. */
+/** Default tolerance: accept seller claims up to 1.4x buyer's estimate. */
 const DEFAULT_COST_TOLERANCE = 1.4;
 /** Fraction of reserve ceiling at which to signal a top-up is needed. */
 /** Must match or exceed contract's TOP_UP_SETTLED_THRESHOLD_BPS (85%). */
@@ -655,8 +650,10 @@ export class BuyerPaymentManager {
   // ── NeedAuth handler ───────────────────────────────────────────
 
   /**
-   * Handle seller-initiated NeedAuth messages when the seller's budget runs out mid-session.
-   * Caps the signed amount at verifiedCost + maxPerRequestUsdc (overdraft model).
+   * Handle seller-initiated NeedAuth messages sent after every served request.
+   * The seller includes the cost of the last request; the buyer validates it
+   * against its own token count and signs a new SpendingAuth for the required
+   * cumulative amount, capped at the reserve ceiling.
    */
   async handleNeedAuth(
     sellerPeerId: string,
@@ -680,31 +677,79 @@ export class BuyerPaymentManager {
       return;
     }
 
-    // Cap at overdraft limit: verifiedCost + maxPerRequestUsdc
-    let maxSignable = this._maxSignable(sellerPeerId);
-    const reserveCeiling = this._getCeiling(sellerPeerId);
-    if (requiredCumulativeAmount > maxSignable && maxSignable >= reserveCeiling) {
+    // Validate the seller's claimed cost if reported
+    if (payload.lastRequestCost) {
+      const sellerCost = BigInt(payload.lastRequestCost);
+      const sellerIn = BigInt(payload.inputTokens ?? '0');
+      const sellerOut = BigInt(payload.outputTokens ?? '0');
+      const sellerCached = BigInt(payload.cachedInputTokens ?? '0');
+
+      // Compute buyer's independent cost estimate using session pricing
+      const service = undefined; // NeedAuth doesn't carry service yet; use default pricing
+      const pricing = this.getSessionPricing(sellerPeerId, service);
+      if (pricing && sellerCost > 0n) {
+        const freshIn = sellerCached > 0n
+          ? BigInt(Math.max(0, Number(sellerIn) - Number(sellerCached)))
+          : sellerIn;
+        const buyerEstimate = computeCostUsdc(Number(freshIn), Number(sellerOut), pricing, Number(sellerCached));
+        const maxAcceptable = BigInt(Math.ceil(Number(buyerEstimate) * this._costTolerance));
+        if (buyerEstimate > 0n && sellerCost > maxAcceptable) {
+          debugWarn(
+            `[BuyerPayment] NeedAuth: seller claimed cost ${sellerCost} exceeds ${this._costTolerance}x buyer estimate ${buyerEstimate} — rejecting`,
+          );
+          return;
+        }
+        debugLog(
+          `[BuyerPayment] NeedAuth: seller cost=${sellerCost} buyer estimate=${buyerEstimate} (in=${sellerIn} cached=${sellerCached} out=${sellerOut}) — validated`,
+        );
+      } else {
+        debugLog(
+          `[BuyerPayment] NeedAuth: seller cost=${sellerCost} (no local pricing, accepting)`,
+        );
+      }
+
+      // Accumulate verified cost from the seller's report
+      this._accumulateVerifiedCost(sellerPeerId, {
+        cost: sellerCost,
+        inputTokens: Number(sellerIn),
+        outputTokens: Number(sellerOut),
+      });
+    }
+
+    // Cap at reserve ceiling; trigger top-up if needed
+    let ceiling = this._getCeiling(sellerPeerId);
+    if (requiredCumulativeAmount > ceiling) {
       try {
         await this.topUpReserve(sellerPeerId, paymentMux);
       } catch (err) {
         debugWarn(`[BuyerPayment] NeedAuth: topUpReserve failed: ${err instanceof Error ? err.message : err}`);
       }
-      maxSignable = this._maxSignable(sellerPeerId);
+      ceiling = this._getCeiling(sellerPeerId);
     }
-    if (maxSignable <= currentCumulative) {
+    if (ceiling <= currentCumulative) {
       debugWarn(
-        `[BuyerPayment] NeedAuth: maxSignable=${maxSignable} <= currentCumulative=${currentCumulative} — cannot authorize more (overdraft limit reached)`,
+        `[BuyerPayment] NeedAuth: ceiling=${ceiling} <= currentCumulative=${currentCumulative} — reserve exhausted`,
       );
       return;
     }
 
-    // Sign up to the lesser of what the seller asks and what we allow
-    const effectiveAmount = requiredCumulativeAmount < maxSignable ? requiredCumulativeAmount : maxSignable;
+    const effectiveAmount = requiredCumulativeAmount < ceiling ? requiredCumulativeAmount : ceiling;
 
     debugLog(`[BuyerPayment] NeedAuth: channel=${session.sessionId.slice(0, 18)}... required=${requiredCumulativeAmount} effective=${effectiveAmount}`);
 
     // Update cumulative amount
     this._cumulativeAmount.set(sellerPeerId, effectiveAmount);
+
+    // Update cumulative metadata from reported tokens
+    if (payload.inputTokens || payload.outputTokens) {
+      const prev = this._metadata.get(sellerPeerId) ?? ZERO_METADATA;
+      const newMeta: SpendingAuthMetadata = {
+        cumulativeInputTokens: prev.cumulativeInputTokens + BigInt(payload.inputTokens ?? '0'),
+        cumulativeOutputTokens: prev.cumulativeOutputTokens + BigInt(payload.outputTokens ?? '0'),
+        cumulativeRequestCount: prev.cumulativeRequestCount + 1n,
+      };
+      this._metadata.set(sellerPeerId, newMeta);
+    }
 
     // Sign SpendingAuth with the effective amount and current metadata
     const currentMeta = this._metadata.get(sellerPeerId) ?? ZERO_METADATA;
@@ -929,26 +974,5 @@ export class BuyerPaymentManager {
     return { available: info.available, reserved: info.reserved };
   }
 
-  // ── Response cost parsing ──────────────────────────────────────
-
-  static parseResponseCost(
-    headers: Record<string, string>,
-  ): { cost: bigint; inputTokens: bigint; outputTokens: bigint } | null {
-    const costStr = headers[HEADER_COST];
-    if (costStr === undefined || costStr === '') return null;
-
-    try {
-      const cost = BigInt(costStr);
-
-      const inputStr = headers[HEADER_INPUT_TOKENS];
-      const inputTokens = inputStr !== undefined && inputStr !== '' ? BigInt(inputStr) : 0n;
-
-      const outputStr = headers[HEADER_OUTPUT_TOKENS];
-      const outputTokens = outputStr !== undefined && outputStr !== '' ? BigInt(outputStr) : 0n;
-
-      return { cost, inputTokens, outputTokens };
-    } catch {
-      return null;
-    }
-  }
+  // parseResponseCost removed — cost data now flows through NeedAuth on PaymentMux.
 }
