@@ -143,11 +143,16 @@ export class SellerPaymentManager {
         const localSpent = this._spent.get(channel.sessionId) ?? 0n;
         if (onChainSettled > localSpent) {
           this._spent.set(channel.sessionId, onChainSettled);
-          // Clear stale auth — the old SpendingAuth has cumulativeAmount ≤ on-chain settled,
-          // so settle() would revert with InvalidAmount. The seller will request a fresh
-          // SpendingAuth from the buyer via NeedAuth on the next request.
-          this._latestAuth.delete(channel.sessionId);
-          debugLog(`[SellerPayment] Reconciled spent for ${channel.sessionId.slice(0, 18)}...: local=${localSpent} → on-chain=${onChainSettled} (cleared stale auth)`);
+          // Clear auth only if its cumulative would revert settle() with InvalidAmount
+          // (cumulativeAmount must be > on-chain settled). If auth is still valid
+          // (cumulative > settled), keep it so the seller can close if buyer disconnects.
+          const existingAuth = this._latestAuth.get(channel.sessionId);
+          if (existingAuth && existingAuth.cumulativeAmount <= onChainSettled) {
+            this._latestAuth.delete(channel.sessionId);
+            debugLog(`[SellerPayment] Reconciled spent for ${channel.sessionId.slice(0, 18)}...: local=${localSpent} → on-chain=${onChainSettled} (cleared stale auth, authCumulative=${existingAuth.cumulativeAmount})`);
+          } else {
+            debugLog(`[SellerPayment] Reconciled spent for ${channel.sessionId.slice(0, 18)}...: local=${localSpent} → on-chain=${onChainSettled}`);
+          }
         }
       } catch (err) {
         debugWarn(`[SellerPayment] Failed to validate channel ${channel.sessionId.slice(0, 18)}...: ${err instanceof Error ? err.message : err}`);

@@ -477,9 +477,11 @@ describe('SellerPaymentManager', () => {
       expect(mgr.getCumulativeSpend(channelId)).toBe(800_000n);
     });
 
-    it('clears stale auth after reconciling spent upward', async () => {
+    it('clears stale auth when authMax <= on-chain settled', async () => {
       const channelId = makeChannelId(36);
+      // authMax=600000 < on-chain settled=800000 → auth is stale
       seedChannel(store, channelId, buyerIdentity, sellerIdentity, {
+        authMax: '600000',
         tokensDelivered: '100000',
         latestSpendingAuthSig: '0xoldauth',
       });
@@ -496,13 +498,35 @@ describe('SellerPaymentManager', () => {
 
       await mgr.validateHydratedChannels();
 
-      // After reconciliation, auth should be cleared — old sig can't settle
+      // Auth should be cleared — settle(600000) would revert since 600000 <= 800000
       const settleParamsAfter = (mgr as unknown as { _getSettleParams: (id: string) => { amount: bigint } })._getSettleParams(channelId);
       expect(settleParamsAfter.amount).toBe(0n);
     });
 
-    it('does NOT clear auth when no reconciliation needed', async () => {
+    it('preserves valid auth when authMax > on-chain settled', async () => {
       const channelId = makeChannelId(37);
+      // authMax=1000000 > on-chain settled=800000 → auth is still valid
+      seedChannel(store, channelId, buyerIdentity, sellerIdentity, {
+        authMax: '1000000',
+        tokensDelivered: '100000',
+        latestSpendingAuthSig: '0xvalidauth',
+      });
+
+      const mgr = makeFreshManager();
+
+      vi.spyOn(mgr.channelsClient, 'getSession').mockResolvedValue(
+        makeOnChainChannel(buyerIdentity, sellerIdentity, { settled: 800_000n }),
+      );
+
+      await mgr.validateHydratedChannels();
+
+      // Auth should remain — settle(1000000) would succeed since 1000000 > 800000
+      const settleParams = (mgr as unknown as { _getSettleParams: (id: string) => { amount: bigint } })._getSettleParams(channelId);
+      expect(settleParams.amount).toBeGreaterThan(0n);
+    });
+
+    it('does NOT clear auth when no reconciliation needed', async () => {
+      const channelId = makeChannelId(38);
       seedChannel(store, channelId, buyerIdentity, sellerIdentity, {
         tokensDelivered: '800000',
         latestSpendingAuthSig: '0xvalidauth',
