@@ -126,7 +126,7 @@ export class SellerPaymentManager {
           await this._channelsClient.getSession(channel.sessionId),
         );
 
-        if (!onChainState.exists || onChainState.status !== 'active') {
+        if (!onChainState.exists || (onChainState.status !== 'active' && onChainState.status !== 'unknown')) {
           this._evictStaleChannel(channel.sessionId, channel.peerId, `on-chain status=${onChainState.exists ? onChainState.status : 'missing'}`);
           evicted++;
           continue;
@@ -156,8 +156,8 @@ export class SellerPaymentManager {
     }
   }
 
-  private _evictStaleChannel(channelId: string, peerId: string, reason: string): void {
-    this._channelStore.updateChannelStatus(channelId, 'settled');
+  private _evictStaleChannel(channelId: string, peerId: string, reason: string, status: 'settled' | 'timeout' = 'settled'): void {
+    this._channelStore.updateChannelStatus(channelId, status);
     this._acceptedCumulative.delete(channelId);
     this._spent.delete(channelId);
     this._latestAuth.delete(channelId);
@@ -744,7 +744,7 @@ export class SellerPaymentManager {
         // The buyer must call requestClose → withdraw. We just clean up locally
         // after a reasonable period (e.g. deadline passed).
         if (accepted === 0n && !this._activeBuyers.has(channel.peerId) && nowSecs > channel.deadline) {
-          this._evictStaleChannel(channel.sessionId, channel.peerId, 'no auths, past deadline');
+          this._evictStaleChannel(channel.sessionId, channel.peerId, 'no auths, past deadline', 'timeout');
         }
       } catch (err) {
         debugWarn(`[SellerPayment] Failed to process channel ${channel.sessionId.slice(0, 18)}...: ${err instanceof Error ? err.message : err}`);
