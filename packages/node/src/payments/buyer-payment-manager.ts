@@ -715,24 +715,26 @@ export class BuyerPaymentManager {
       });
     }
 
-    // Cap at reserve ceiling; trigger top-up if needed
-    let ceiling = this._getCeiling(sellerPeerId);
-    if (requiredCumulativeAmount > ceiling) {
+    // Cap at overdraft limit: verifiedCost + maxPerRequestUsdc, then at reserve ceiling.
+    // This prevents a malicious seller from claiming a small cost but requesting the full reserve.
+    let maxSignable = this._maxSignable(sellerPeerId);
+    const ceiling = this._getCeiling(sellerPeerId);
+    if (requiredCumulativeAmount > maxSignable && maxSignable >= ceiling) {
       try {
         await this.topUpReserve(sellerPeerId, paymentMux);
       } catch (err) {
         debugWarn(`[BuyerPayment] NeedAuth: topUpReserve failed: ${err instanceof Error ? err.message : err}`);
       }
-      ceiling = this._getCeiling(sellerPeerId);
+      maxSignable = this._maxSignable(sellerPeerId);
     }
-    if (ceiling <= currentCumulative) {
+    if (maxSignable <= currentCumulative) {
       debugWarn(
-        `[BuyerPayment] NeedAuth: ceiling=${ceiling} <= currentCumulative=${currentCumulative} — reserve exhausted`,
+        `[BuyerPayment] NeedAuth: maxSignable=${maxSignable} <= currentCumulative=${currentCumulative} — overdraft limit reached`,
       );
       return;
     }
 
-    const effectiveAmount = requiredCumulativeAmount < ceiling ? requiredCumulativeAmount : ceiling;
+    const effectiveAmount = requiredCumulativeAmount < maxSignable ? requiredCumulativeAmount : maxSignable;
 
     debugLog(`[BuyerPayment] NeedAuth: channel=${session.sessionId.slice(0, 18)}... required=${requiredCumulativeAmount} effective=${effectiveAmount}`);
 

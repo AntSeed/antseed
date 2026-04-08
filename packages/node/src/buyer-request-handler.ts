@@ -91,8 +91,9 @@ export class BuyerRequestHandler {
       await negotiator.applyExternalSpendingAuth(peer, conn, externalSpendingAuth);
     }
 
-    // SpendingAuth is now sent reactively in response to seller's NeedAuth,
-    // not proactively before each request. No pre-request auth needed.
+    if (negotiator && !externalSpendingAuth) {
+      await negotiator.preparePreRequestAuth(peer, conn);
+    }
 
     let startTime = Date.now();
 
@@ -276,12 +277,33 @@ export class BuyerRequestHandler {
       return executeRequest();
     }
 
-    // SpendingAuth is now sent reactively in response to seller's NeedAuth on the
-    // PaymentMux, not proactively after each response. Cost validation happens in
-    // handleNeedAuth using the seller's reported token counts.
+    // Cost validation and budget advancement now happen in handleNeedAuth (via PaymentMux).
+    // But we still send a post-response SpendingAuth covering the buyer's own cost estimate
+    // so the seller always has a valid settlement signature, even if the buyer disconnects
+    // before the NeedAuth round-trip completes.
+    if (negotiator) {
+      const service = extractServiceFromBody(req.body);
+      negotiator.estimateCostFromResponse(peer, response, service);
+      negotiator.recordResponseContent(peer.peerId, req.body, response.body, Date.now() - startTime);
+      try {
+        await negotiator.sendPostResponseAuth(peer, conn);
+      } catch (err) {
+        debugWarn(`[BuyerRequest] sendPostResponseAuth failed, response still returned: ${err instanceof Error ? err.message : err}`);
+      }
+    }
 
     return response;
   }
+}
+
+/** Extract the service/model name from a JSON request body, or undefined if not found. */
+function extractServiceFromBody(body: Uint8Array): string | undefined {
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>;
+    const service = parsed.service ?? parsed.model;
+    if (typeof service === 'string' && service.length > 0) return service;
+  } catch { /* not JSON or no model field */ }
+  return undefined;
 }
 
 function stripStreamingHeader(response: SerializedHttpResponse): SerializedHttpResponse {
