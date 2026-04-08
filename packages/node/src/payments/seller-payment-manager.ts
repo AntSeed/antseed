@@ -395,6 +395,17 @@ export class SellerPaymentManager {
           return 'rejected';
         }
 
+        // Reject if cumulative exceeds on-chain deposit — the contract would revert
+        // and we'd lose the last valid auth signature that close() could use.
+        const currentReserveMax = this._reserveMax.get(channelId) ?? 0n;
+        if (currentReserveMax > 0n && cumulativeAmount > currentReserveMax) {
+          debugWarn(
+            `[SellerPayment] Rejecting SpendingAuth exceeding deposit ceiling: ` +
+            `cumulative=${cumulativeAmount} > reserveMax=${currentReserveMax} channel=${channelId.slice(0, 18)}...`,
+          );
+          return 'rejected';
+        }
+
         // Update tracking
         this._acceptedCumulative.set(channelId, cumulativeAmount);
         this._latestAuth.set(channelId, {
@@ -651,13 +662,7 @@ export class SellerPaymentManager {
 
     const channelId = session.sessionId;
     const accepted = this._acceptedCumulative.get(channelId) ?? 0n;
-    const settleParams = this._getSettleParams(channelId);
-    // Cap the settle/close amount at the on-chain deposit (reserveMax).
-    // The buyer may have signed a SpendingAuth with cumulative > deposit when costs
-    // accumulated past the reserve ceiling — the contract rejects amounts > deposit.
-    const reserveMax = this._reserveMax.get(channelId) ?? 0n;
-    const amount = reserveMax > 0n && settleParams.amount > reserveMax ? reserveMax : settleParams.amount;
-    const { metadata, sig } = settleParams;
+    const { amount, metadata, sig } = this._getSettleParams(channelId);
 
     if (accepted === 0n) {
       if (settleOnly) return;

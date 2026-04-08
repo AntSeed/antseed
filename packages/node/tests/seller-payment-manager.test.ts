@@ -316,55 +316,46 @@ describe('SellerPaymentManager', () => {
     expect(metadata).toBe(encodeMetadata(ZERO_METADATA));
   });
 
-  it('caps close amount at reserveMax when cumulative exceeds deposit', async () => {
-    // Use the exact same pattern as test_onBuyerDisconnect_close which is known to work
+  it('rejects SpendingAuth when cumulative exceeds on-chain deposit', async () => {
     const channelId = makeChannelId(40);
 
     const payload1 = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { isReserve: true });
     await manager.handleSpendingAuth(buyerIdentity.peerId, payload1, mux);
 
+    // Accept a SpendingAuth within deposit (reserveMax defaults to 10,000,000)
     const payload2 = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
       cumulativeAmount: 200_000n,
-      cumulativeInputTokens: 100n,
-      cumulativeOutputTokens: 500n,
     });
     await manager.handleSpendingAuth(buyerIdentity.peerId, payload2, mux);
     expect(manager.getAcceptedCumulative(channelId)).toBe(200_000n);
 
-    // Manually override reserveMax to simulate a small deposit
-    (manager as unknown as { _reserveMax: Map<string, bigint> })._reserveMax.set(channelId, 150_000n);
+    // Set reserveMax to 300,000 to simulate a small deposit
+    (manager as unknown as { _reserveMax: Map<string, bigint> })._reserveMax.set(channelId, 300_000n);
 
-    manager.recordSpend(channelId, 50_000n);
+    // Try to accept a SpendingAuth that exceeds the deposit — should be rejected
+    const payload3 = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
+      cumulativeAmount: 500_000n,
+    });
+    const result = await manager.handleSpendingAuth(buyerIdentity.peerId, payload3, mux);
+    expect(result).toBe('rejected');
 
-    await manager.settleSession(buyerIdentity.peerId, { cleanupOnFailure: true });
-
-    expect(manager.channelsClient.close).toHaveBeenCalledOnce();
-    const closeArgs = (manager.channelsClient.close as ReturnType<typeof vi.fn>).mock.calls[0];
-    // Amount should be capped at reserveMax (150,000), not the auth cumulative (200,000)
-    expect(closeArgs[2]).toBe(150_000n);
+    // Cumulative should remain at the last valid value
+    expect(manager.getAcceptedCumulative(channelId)).toBe(200_000n);
   });
 
-  it('does not cap close amount when cumulative is within deposit', async () => {
+  it('accepts SpendingAuth within deposit ceiling', async () => {
     const channelId = makeChannelId(41);
 
     const payload1 = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { isReserve: true });
     await manager.handleSpendingAuth(buyerIdentity.peerId, payload1, mux);
 
+    // Accept SpendingAuth within default deposit (10,000,000)
     const payload2 = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, {
       cumulativeAmount: 200_000n,
-      cumulativeInputTokens: 100n,
-      cumulativeOutputTokens: 500n,
     });
-    await manager.handleSpendingAuth(buyerIdentity.peerId, payload2, mux);
-
-    manager.recordSpend(channelId, 100_000n);
-
-    await manager.settleSession(buyerIdentity.peerId, { cleanupOnFailure: true });
-
-    expect(manager.channelsClient.close).toHaveBeenCalledOnce();
-    const closeArgs = (manager.channelsClient.close as ReturnType<typeof vi.fn>).mock.calls[0];
-    // Amount should be the auth cumulative (200,000), not capped — reserveMax is 10,000,000 (default)
-    expect(closeArgs[2]).toBe(200_000n);
+    const result = await manager.handleSpendingAuth(buyerIdentity.peerId, payload2, mux);
+    expect(result).toBe('accepted');
+    expect(manager.getAcceptedCumulative(channelId)).toBe(200_000n);
   });
 
   it('test_hasSession: returns true/false correctly', async () => {
