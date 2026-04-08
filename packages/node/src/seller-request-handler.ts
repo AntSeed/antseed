@@ -196,6 +196,7 @@ export class SellerRequestHandler {
           responseBody = response.body ?? new Uint8Array(0);
           debugLog(`[SellerHandler] Provider responded: status=${statusCode} (${Date.now() - startTime}ms, ${responseBody.length}b) bodyType=${typeof response.body} hasBody=${!!response.body}`);
           responseUsage = parseResponseUsage(responseBody);
+          debugLog(`[SellerHandler] Raw provider usage: in=${responseUsage.inputTokens} fresh=${responseUsage.freshInputTokens} cached=${responseUsage.cachedInputTokens} out=${responseUsage.outputTokens}`);
           if (!streamedResponseStarted) {
             const responseToSend = this._injectCostHeaders(response, provider, request, buyerPeerId, responseUsage);
             mux.sendProxyResponse(responseToSend);
