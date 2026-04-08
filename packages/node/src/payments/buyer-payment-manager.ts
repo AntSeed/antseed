@@ -582,8 +582,8 @@ export class BuyerPaymentManager {
     } else {
       acceptedCost = buyerEstimatedRequestCost;
     }
-    // Minimum 1 base unit for monotonicity
-    if (acceptedCost === 0n) acceptedCost = 1n;
+    // If cost is 0, the cumulative amount stays the same — no spending auth needed
+    // but we still sign one to keep the seller's session alive.
 
     // Update cumulative metadata
     const prev = this._metadata.get(sellerPeerId) ?? ZERO_METADATA;
@@ -600,9 +600,6 @@ export class BuyerPaymentManager {
     const prevAmount = this._cumulativeAmount.get(sellerPeerId) ?? 0n;
     const maxSignable = this._maxSignable(sellerPeerId);
     let newAmount = prevAmount + acceptedCost;
-    if (newAmount > maxSignable) newAmount = maxSignable;
-    // Ensure monotonic increase (at least +1 per request)
-    if (newAmount <= prevAmount) newAmount = prevAmount + 1n;
     if (newAmount > maxSignable) newAmount = maxSignable;
     this._cumulativeAmount.set(sellerPeerId, newAmount);
 

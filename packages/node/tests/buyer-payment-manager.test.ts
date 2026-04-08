@@ -368,9 +368,8 @@ describe('BuyerPaymentManager', () => {
       { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: 0n },
     );
 
-    // Seller claimed cost=0 is authoritative — no byte-based fallback
-    // +1 from minimum per-request cost floor
-    expect(BigInt(payload.cumulativeAmount)).toBe(10_001n);
+    // Seller claimed cost=0 is authoritative — no byte-based fallback, no forced +1
+    expect(BigInt(payload.cumulativeAmount)).toBe(10_000n);
   });
 
   it('signPerRequestAuth prefers reported tokens over byte estimation for metadata', async () => {
