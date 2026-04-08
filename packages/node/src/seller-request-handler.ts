@@ -262,7 +262,7 @@ export class SellerRequestHandler {
           if (session) {
             spm.recordSpend(session.sessionId, costUsdc);
             const cumulativeSpend = spm.getCumulativeSpend(session.sessionId);
-            debugLog(`[SellerHandler] Cost recorded: buyer=${buyerPeerId.slice(0, 12)}... cost=${costUsdc} cumulative=${cumulativeSpend} (in=${usage.inputTokens} out=${usage.outputTokens})`);
+            debugLog(`[SellerHandler] Cost recorded: buyer=${buyerPeerId.slice(0, 12)}... cost=${costUsdc} cumulative=${cumulativeSpend} (in=${usage.inputTokens} cached=${usage.cachedInputTokens} out=${usage.outputTokens})`);
 
             // Check if remaining budget is running low; proactively request more auth
             const accepted = spm.getAcceptedCumulative(session.sessionId);
@@ -420,7 +420,7 @@ export class SellerRequestHandler {
     });
 
     debugLog(
-      `[SellerHandler] Cost trailer for streaming: in=${usage.inputTokens} out=${usage.outputTokens} cost=${costUsdc}`,
+      `[SellerHandler] Cost trailer for streaming: in=${usage.inputTokens} cached=${usage.cachedInputTokens} out=${usage.outputTokens} cost=${costUsdc}`,
     );
 
     return new TextEncoder().encode(trailer);
