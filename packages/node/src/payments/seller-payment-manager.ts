@@ -108,6 +108,65 @@ export class SellerPaymentManager {
     }
   }
 
+  /**
+   * Validate hydrated channels against on-chain state.
+   * Evicts channels that no longer exist or are no longer active on-chain.
+   * Must be called after construction (async, cannot run in constructor).
+   */
+  async validateHydratedChannels(): Promise<void> {
+    const activeChannels = this._channelStore.getActiveChannels('seller');
+    if (activeChannels.length === 0) return;
+
+    const sellerEvmAddr = this._identity.wallet.address;
+    let evicted = 0;
+
+    for (const channel of activeChannels) {
+      try {
+        const onChainState = classifyOnChainChannel(
+          await this._channelsClient.getSession(channel.sessionId),
+        );
+
+        if (!onChainState.exists || (onChainState.status !== 'active' && onChainState.status !== 'unknown')) {
+          this._evictStaleChannel(channel.sessionId, channel.peerId, `on-chain status=${onChainState.exists ? onChainState.status : 'missing'}`);
+          evicted++;
+          continue;
+        }
+
+        if (!matchesChannelParties(onChainState.channel, channel.buyerEvmAddr, sellerEvmAddr)) {
+          this._evictStaleChannel(channel.sessionId, channel.peerId, 'on-chain parties mismatch');
+          evicted++;
+          continue;
+        }
+
+        // Reconcile: if on-chain settled > local spent, update local to avoid double-charging
+        const onChainSettled = onChainState.channel.settled;
+        const localSpent = this._spent.get(channel.sessionId) ?? 0n;
+        if (onChainSettled > localSpent) {
+          this._spent.set(channel.sessionId, onChainSettled);
+          debugLog(`[SellerPayment] Reconciled spent for ${channel.sessionId.slice(0, 18)}...: local=${localSpent} → on-chain=${onChainSettled}`);
+        }
+      } catch (err) {
+        debugWarn(`[SellerPayment] Failed to validate channel ${channel.sessionId.slice(0, 18)}...: ${err instanceof Error ? err.message : err}`);
+        // Keep channel hydrated on RPC failure — periodic check will retry
+      }
+    }
+
+    if (evicted > 0) {
+      debugLog(`[SellerPayment] Startup validation: evicted ${evicted}/${activeChannels.length} stale channel(s)`);
+    }
+  }
+
+  private _evictStaleChannel(channelId: string, peerId: string, reason: string, status: 'settled' | 'timeout' = 'settled'): void {
+    this._channelStore.updateChannelStatus(channelId, status);
+    this._acceptedCumulative.delete(channelId);
+    this._spent.delete(channelId);
+    this._latestAuth.delete(channelId);
+    this._closeRetryCount.delete(channelId);
+    this._reserveMax.delete(channelId);
+    this._activeBuyers.delete(peerId);
+    debugLog(`[SellerPayment] Evicted stale channel ${channelId.slice(0, 18)}... — ${reason}`);
+  }
+
   get channelsClient(): ChannelsClient {
     return this._channelsClient;
   }
@@ -667,6 +726,15 @@ export class SellerPaymentManager {
       const accepted = this._acceptedCumulative.get(channel.sessionId) ?? 0n;
 
       try {
+        // Validate on-chain state — evict if channel no longer exists
+        const onChainState = classifyOnChainChannel(
+          await this._channelsClient.getSession(channel.sessionId),
+        );
+        if (!onChainState.exists || (onChainState.status !== 'active' && onChainState.status !== 'unknown')) {
+          this._evictStaleChannel(channel.sessionId, channel.peerId, `periodic check: on-chain status=${onChainState.exists ? onChainState.status : 'missing'}`);
+          continue;
+        }
+
         // If we have auths and the buyer is disconnected, try to close
         if (accepted > 0n && !this._activeBuyers.has(channel.peerId)) {
           debugLog(`[SellerPayment] Channel ${channel.sessionId.slice(0, 18)}... buyer disconnected — attempting close`);
@@ -676,14 +744,7 @@ export class SellerPaymentManager {
         // The buyer must call requestClose → withdraw. We just clean up locally
         // after a reasonable period (e.g. deadline passed).
         if (accepted === 0n && !this._activeBuyers.has(channel.peerId) && nowSecs > channel.deadline) {
-          debugLog(`[SellerPayment] Channel ${channel.sessionId.slice(0, 18)}... no auths, past deadline — cleaning up locally`);
-          this._channelStore.updateChannelStatus(channel.sessionId, 'timeout');
-          this._acceptedCumulative.delete(channel.sessionId);
-          this._spent.delete(channel.sessionId);
-          this._latestAuth.delete(channel.sessionId);
-          this._closeRetryCount.delete(channel.sessionId);
-          this._reserveMax.delete(channel.sessionId);
-          this._activeBuyers.delete(channel.peerId);
+          this._evictStaleChannel(channel.sessionId, channel.peerId, 'no auths, past deadline', 'timeout');
         }
       } catch (err) {
         debugWarn(`[SellerPayment] Failed to process channel ${channel.sessionId.slice(0, 18)}...: ${err instanceof Error ? err.message : err}`);
