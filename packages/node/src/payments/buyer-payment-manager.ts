@@ -128,8 +128,10 @@ export class BuyerPaymentManager {
         cumulativeOutputTokens: BigInt(channel.previousConsumption),
         cumulativeRequestCount: BigInt(channel.requestCount),
       });
-      // verifiedCost and pricing are not persisted — start from 0 on hydration.
-      // This is conservative: the buyer treats all previously-signed amounts as unverified.
+      // Hydrate verifiedCost to authMax so _maxSignable can grow beyond maxPerRequestUsdc.
+      // Without this, maxSignable = 0 + maxPerRequestUsdc after restart, permanently capping
+      // the cumulative and causing non-monotonic SpendingAuth rejections on the seller.
+      this._verifiedCost.set(peerId, BigInt(channel.authMax));
     }
   }
 
