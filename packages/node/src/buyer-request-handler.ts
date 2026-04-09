@@ -92,11 +92,9 @@ export class BuyerRequestHandler {
     }
 
     // Track which service the buyer requested so NeedAuth validation uses buyer's own pricing
-    if (negotiator) {
-      const service = extractServiceFromBody(req.body);
-      if (service) {
-        negotiator.bpm.trackRequestService(req.requestId, service);
-      }
+    const requestedService = extractServiceFromBody(req.body);
+    if (negotiator && requestedService) {
+      negotiator.bpm.trackRequestService(req.requestId, requestedService);
     }
 
     let startTime = Date.now();
@@ -278,13 +276,14 @@ export class BuyerRequestHandler {
       const result = await negotiator.handle402(response, peer, conn, req);
       if (result.action === 'return') return result.response;
       startTime = Date.now();
-      return executeRequest();
+      const retriedResponse = await executeRequest();
+      negotiator.estimateCostFromResponse(peer, retriedResponse, requestedService);
+      return retriedResponse;
     }
 
-    // Cost validation and budget advancement happen in handleNeedAuth (via PaymentMux).
-    // Settlement safety is provided by NeedAuth headroom — each SpendingAuth covers
-    // cumulative + estimated next request cost, so the seller can always settle even
-    // if the buyer disconnects before the next NeedAuth round-trip.
+    if (negotiator) {
+      negotiator.estimateCostFromResponse(peer, response, requestedService);
+    }
 
     return response;
   }
@@ -321,4 +320,3 @@ function concatChunks(chunks: Uint8Array[]): Uint8Array {
   }
   return output;
 }
-

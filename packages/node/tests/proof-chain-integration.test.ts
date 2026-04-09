@@ -92,7 +92,7 @@ describe('Cumulative SpendingAuth Integration', () => {
       TEST_PRICING,
     );
     expect(sentAuths.length).toBe(1);
-    expect(sentAuths[0].cumulativeAmount).toBe('10000');
+    expect(sentAuths[0].cumulativeAmount).toBe('0');
 
     buyerManager.handleAuthAck(sellerIdentity.peerId, { channelId });
     expect(buyerManager.isAuthorized(sellerIdentity.peerId)).toBe(true);

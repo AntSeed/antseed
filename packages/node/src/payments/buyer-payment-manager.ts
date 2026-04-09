@@ -122,7 +122,8 @@ export class BuyerPaymentManager {
     const activeChannels = this._channelStore.getActiveChannelsByBuyer('buyer', this._identity.wallet.address);
     for (const channel of activeChannels) {
       const peerId = channel.peerId;
-      this._cumulativeAmount.set(peerId, BigInt(channel.authMax));
+      const persistedCumulative = BigInt(channel.authMax);
+      this._cumulativeAmount.set(peerId, persistedCumulative);
       this._metadata.set(peerId, {
         cumulativeInputTokens: BigInt(channel.tokensDelivered),
         cumulativeOutputTokens: BigInt(channel.previousConsumption),
@@ -131,7 +132,12 @@ export class BuyerPaymentManager {
       // Hydrate verifiedCost to authMax so _maxSignable can grow beyond maxPerRequestUsdc.
       // Without this, maxSignable = 0 + maxPerRequestUsdc after restart, permanently capping
       // the cumulative and causing non-monotonic SpendingAuth rejections on the seller.
-      this._verifiedCost.set(peerId, BigInt(channel.authMax));
+      this._verifiedCost.set(peerId, persistedCumulative);
+      this._responseTokenTotals.set(peerId, {
+        input: Number(channel.tokensDelivered),
+        output: Number(channel.previousConsumption),
+        requests: channel.requestCount,
+      });
     }
   }
 
@@ -352,7 +358,7 @@ export class BuyerPaymentManager {
       sellerEvmAddr: peerIdToAddress(sellerPeerId),
       buyerEvmAddr: this._identity.wallet.address,
       nonce: 0,
-      authMax: minBudgetPerRequest.toString(),
+      authMax: '0',
       deadline,
       previousSessionId: '0x' + '0'.repeat(64),
       previousConsumption: '0',
@@ -373,7 +379,7 @@ export class BuyerPaymentManager {
     // Send SpendingAuth via PaymentMux — reserve carries ReserveAuth sig
     paymentMux.sendSpendingAuth({
       channelId,
-      cumulativeAmount: minBudgetPerRequest.toString(),
+      cumulativeAmount: '0',
       metadataHash: ZERO_METADATA_HASH,
       metadata: encodeMetadata(ZERO_METADATA),
       spendingAuthSig: reserveAuthSig,
@@ -674,6 +680,9 @@ export class BuyerPaymentManager {
       return;
     }
 
+    const buyerService = payload.requestId ? this._requestService.get(payload.requestId) : undefined;
+    if (payload.requestId) this._requestService.delete(payload.requestId);
+
     const requiredCumulativeAmount = BigInt(payload.requiredCumulativeAmount);
     const currentCumulative = this._cumulativeAmount.get(sellerPeerId) ?? 0n;
 
@@ -694,10 +703,7 @@ export class BuyerPaymentManager {
 
       // Use the buyer's own knowledge of which service it requested, not the seller's claim.
       // A malicious seller could set service to a more expensive model to inflate the ceiling.
-      const buyerService = payload.requestId ? this._requestService.get(payload.requestId) : undefined;
       const pricing = this.getSessionPricing(sellerPeerId, buyerService);
-      // Clean up — no longer needed after validation
-      if (payload.requestId) this._requestService.delete(payload.requestId);
       if (pricing && sellerCost > 0n) {
         const freshIn = sellerCached > 0n
           ? BigInt(Math.max(0, Number(sellerIn) - Number(sellerCached)))
@@ -901,7 +907,11 @@ export class BuyerPaymentManager {
     const session = this.getActiveSession(sellerPeerId);
     if (!session) return;
 
-    const prev = this._responseTokenTotals.get(sellerPeerId) ?? { input: 0, output: 0, requests: 0 };
+    const prev = this._responseTokenTotals.get(sellerPeerId) ?? {
+      input: Number(session.tokensDelivered),
+      output: Number(session.previousConsumption),
+      requests: session.requestCount,
+    };
     debugLog(
       `[BuyerPayment] recordTokens: thisReq in=${inputTokens} out=${outputTokens} | ` +
       `prevTotal in=${prev.input} out=${prev.output} reqs=${prev.requests}`,

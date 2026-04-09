@@ -32,6 +32,7 @@ describe('BuyerRequestHandler payment mux wiring', () => {
       }, { streamingStart: false });
     });
 
+    const estimateCostFromResponse = vi.fn();
     const getOrCreatePaymentMux = vi.fn().mockReturnValue({});
     const registerPaymentMux = vi.fn();
     const handler = new BuyerRequestHandler(
@@ -41,7 +42,7 @@ describe('BuyerRequestHandler payment mux wiring', () => {
           getOrCreatePaymentMux,
           preparePreRequestAuth: vi.fn(),
           sendPostResponseAuth: vi.fn(),
-          estimateCostFromResponse: vi.fn(),
+          estimateCostFromResponse,
           parseCostHeaders: vi.fn(),
           recordResponseContent: vi.fn(),
         } as any,
@@ -58,6 +59,11 @@ describe('BuyerRequestHandler payment mux wiring', () => {
 
     expect(getOrCreatePaymentMux).toHaveBeenCalledWith(peer.peerId, conn);
     expect(sendProxyRequest).toHaveBeenCalledOnce();
+    expect(estimateCostFromResponse).toHaveBeenCalledWith(
+      peer,
+      expect.objectContaining({ statusCode: 200 }),
+      undefined,
+    );
     expect(
       getOrCreatePaymentMux.mock.invocationCallOrder[0],
     ).toBeLessThan(sendProxyRequest.mock.invocationCallOrder[0]);
@@ -101,6 +107,7 @@ describe('BuyerRequestHandler payment mux wiring', () => {
       onResponse(next, { streamingStart: false });
     });
 
+    const estimateCostFromResponse = vi.fn();
     const handle402 = vi.fn(async () => ({ action: 'retry' as const }));
     const handler = new BuyerRequestHandler(
       {},
@@ -109,7 +116,7 @@ describe('BuyerRequestHandler payment mux wiring', () => {
           getOrCreatePaymentMux: vi.fn().mockReturnValue({}),
           preparePreRequestAuth: vi.fn(),
           handle402,
-          estimateCostFromResponse: vi.fn(),
+          estimateCostFromResponse,
           parseCostHeaders: vi.fn(),
           recordResponseContent: vi.fn(),
         } as any,
@@ -126,5 +133,11 @@ describe('BuyerRequestHandler payment mux wiring', () => {
 
     expect(response.statusCode).toBe(200);
     expect(handle402).toHaveBeenCalledOnce();
+    expect(estimateCostFromResponse).toHaveBeenCalledTimes(1);
+    expect(estimateCostFromResponse).toHaveBeenCalledWith(
+      peer,
+      expect.objectContaining({ statusCode: 200 }),
+      undefined,
+    );
   });
 });

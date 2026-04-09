@@ -109,7 +109,7 @@ describe('BuyerPaymentManager', () => {
     expect(mux.sentSpendingAuths.length).toBe(1);
 
     const sent = mux.sentSpendingAuths[0] as Record<string, unknown>;
-    expect(sent.cumulativeAmount).toBe('50000');
+    expect(sent.cumulativeAmount).toBe('0');
     expect(sent.metadataHash).toBeTypeOf('string');
     expect(sent.channelId).toBe(channelId);
     expect(sent.spendingAuthSig).toBeTypeOf('string');
@@ -610,7 +610,7 @@ describe('BuyerPaymentManager', () => {
     expect(session).not.toBeNull();
     expect(session!.peerId).toBe(sellerPeerId);
     expect(session!.role).toBe('buyer');
-    expect(session!.authMax).toBe('10000');
+    expect(session!.authMax).toBe('0');
     checkStore.close();
 
     store = new ChannelStore(tempDir);
@@ -675,5 +675,48 @@ describe('BuyerPaymentManager', () => {
 
     // Re-assign store so afterEach cleanup doesn't double-close
     store = new ChannelStore(tempDir);
+  });
+
+  it('resendCurrentSpendingAuth stays at zero after restart for reserve-only sessions', async () => {
+    const sellerPeerId = fakePeerId('seller-reserve-only');
+    const channelId = await manager.authorizeSpending(sellerPeerId, mux, 50_000n, TEST_PRICING);
+    store.close();
+
+    store = new ChannelStore(tempDir);
+    manager = new BuyerPaymentManager(identity, makeConfig(tempDir), store);
+    manager.setSigner(identity.wallet);
+    mux = createMockPaymentMux();
+
+    const resentChannelId = await manager.resendCurrentSpendingAuth(sellerPeerId, mux);
+
+    expect(resentChannelId).toBe(channelId);
+    expect(mux.sentSpendingAuths).toHaveLength(1);
+    expect((mux.sentSpendingAuths[0] as Record<string, unknown>).cumulativeAmount).toBe('0');
+  });
+
+  it('recordAndPersistTokens continues from persisted totals after restart', async () => {
+    const sellerPeerId = fakePeerId('seller-record-restart');
+    await manager.authorizeSpending(sellerPeerId, mux, 50_000n, TEST_PRICING);
+    manager.recordAndPersistTokens(sellerPeerId, 1000, 200);
+    store.close();
+
+    store = new ChannelStore(tempDir);
+    manager = new BuyerPaymentManager(identity, makeConfig(tempDir), store);
+    manager.setSigner(identity.wallet);
+
+    manager.recordAndPersistTokens(sellerPeerId, 500, 150);
+
+    const totals = manager.getResponseTokenTotals(sellerPeerId);
+    expect(totals).toEqual({
+      input: 1500,
+      output: 350,
+      requests: 2,
+    });
+
+    const channel = store.getActiveChannelByPeer(sellerPeerId, 'buyer');
+    expect(channel).not.toBeNull();
+    expect(channel!.tokensDelivered).toBe('1500');
+    expect(channel!.previousConsumption).toBe('350');
+    expect(channel!.requestCount).toBe(2);
   });
 });
