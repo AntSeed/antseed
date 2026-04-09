@@ -25,10 +25,7 @@ function mockStakingClient(overrides: {
     provider: {
       getBalance: vi.fn().mockResolvedValue(overrides.ethBalance ?? 1000000000000000n),
     },
-    getSellerAccount: vi.fn().mockResolvedValue({
-      stake: overrides.sellerStake ?? 10_000_000n,
-      stakedAt: 0n,
-    }),
+    getStake: vi.fn().mockResolvedValue(overrides.sellerStake ?? 10_000_000n),
   } as unknown as StakingClient;
 }
 
