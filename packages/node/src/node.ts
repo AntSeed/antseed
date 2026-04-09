@@ -299,6 +299,12 @@ export class AntseedNode extends EventEmitter {
       return;
     }
 
+    // Wait for in-flight NeedAuth handlers to finish so the seller has a valid
+    // SpendingAuth for settlement before we close the connection.
+    if (this._buyerNegotiator) {
+      await this._buyerNegotiator.drainPendingNeedAuth();
+    }
+
     // End all active buyer payment sessions before shutdown
     if (this._buyerNegotiator) {
       this._buyerNegotiator.cleanup();

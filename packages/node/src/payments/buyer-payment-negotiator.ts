@@ -81,6 +81,8 @@ export class BuyerPaymentNegotiator {
   private readonly _lastResponseCost = new Map<string, LastResponseCost>();
   /** Buyer-side payment muxes keyed by seller peerId. */
   private readonly _muxes = new Map<PeerId, PaymentMux>();
+  /** In-flight NeedAuth handlers keyed by seller peerId. */
+  private readonly _pendingNeedAuth = new Map<string, Promise<void>>();
 
   constructor(
     identity: Identity,
@@ -115,7 +117,11 @@ export class BuyerPaymentNegotiator {
     });
 
     pmux.onNeedAuth((payload) => {
-      void this._bpm.handleNeedAuth(peerId, payload, pmux);
+      const p = this._bpm.handleNeedAuth(peerId, payload, pmux);
+      this._pendingNeedAuth.set(peerId, p);
+      p.finally(() => {
+        if (this._pendingNeedAuth.get(peerId) === p) this._pendingNeedAuth.delete(peerId);
+      });
     });
 
     pmux.onPaymentRequired((payload) => {
@@ -466,6 +472,14 @@ export class BuyerPaymentNegotiator {
     this._lockedPeers.delete(peerId);
     this._firstRequestSent.delete(peerId);
     this._lastResponseCost.delete(peerId);
+  }
+
+  /** Wait for in-flight NeedAuth handlers to complete (settlement safety). */
+  async drainPendingNeedAuth(): Promise<void> {
+    const pending = [...this._pendingNeedAuth.values()];
+    if (pending.length > 0) {
+      await Promise.allSettled(pending);
+    }
   }
 
   cleanup(): void {
