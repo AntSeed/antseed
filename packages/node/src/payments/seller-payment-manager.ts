@@ -290,16 +290,19 @@ export class SellerPaymentManager {
         // Note: do NOT store the ReserveAuth sig as spendingAuthSig in _latestAuth.
         // The ReserveAuth uses a different EIP-712 type and will fail
         // _verifySpendingAuth in close(). A real SpendingAuth will arrive
-        // per-request and update this entry.
+        // via the NeedAuth flow after the first request is served.
+        // Start accepted at 0 — the buyer's _cumulativeAmount also starts at 0.
+        // The reserve ceiling (reserveMaxAmount) bounds what can be spent;
+        // accepted grows from NeedAuth-driven SpendingAuths.
         this._activateSession(
           session,
           buyerPeerId,
-          cumulativeAmount,
+          0n,
           reserveMaxAmount,
           0n,
           {
           spendingAuthSig: '',
-          cumulativeAmount,
+          cumulativeAmount: 0n,
           metadataHash: payload.metadataHash,
           metadata: payload.metadata,
           },

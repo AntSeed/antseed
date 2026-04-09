@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-process.env.ANTSEED_DEBUG = '1';
 
 /**
  * full-payment-flow.mjs

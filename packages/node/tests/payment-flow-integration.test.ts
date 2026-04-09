@@ -349,11 +349,12 @@ describe('Full Payment Flow Integration', () => {
     expect(seller.hasSession(buyerPeerId)).toBe(false);
   });
 
-  it('no-spend session settles via close with initial minBudget auth', async () => {
+  it('no-spend session defers to timeout (no SpendingAuth to settle with)', async () => {
     const buyerPeerId = buyerIdentity.peerId;
     await doInitialHandshake(50_000n);
     await seller.settleSession(buyerPeerId);
-    expect(seller.channelsClient.close).toHaveBeenCalledOnce();
+    // accepted=0 after initial reserve (no real SpendingAuth yet), so close is not called
+    expect(seller.channelsClient.close).not.toHaveBeenCalled();
     expect(seller.channelsClient.requestClose).not.toHaveBeenCalled();
   });
 
