@@ -217,7 +217,55 @@ The service override rewrites the `model` field in the request body **before rou
 
 ## Payments
 
-Payment channels are automatic when `payments.crypto.chainId` is set in config. Set it to `base-mainnet` for production or `base-sepolia` for testing. Contract addresses are resolved automatically from the chain ID.
+Payments run on **Base Mainnet** by default. Contract addresses are resolved automatically — no manual configuration needed.
+
+### Provider Setup (Selling)
+
+```bash
+# 1. Set your identity (secp256k1 private key)
+export ANTSEED_IDENTITY_HEX=<your-private-key-hex>
+
+# 2. Fund your wallet with ETH (for gas) and USDC (for staking) on Base Mainnet
+
+# 3. Register your identity on-chain
+antseed register
+
+# 4. Stake USDC (minimum $10)
+antseed stake 10
+
+# 5. Check readiness
+antseed setup --role provider
+
+# 6. Start providing
+antseed seed --provider openai
+```
+
+### Buyer Setup (Consuming)
+
+```bash
+# 1. Set your identity
+export ANTSEED_IDENTITY_HEX=<your-private-key-hex>
+
+# 2. Fund your wallet with ETH and USDC on Base Mainnet
+
+# 3. Deposit USDC for payments
+antseed deposit 10
+
+# 4. Launch the payments portal (manages deposits via web UI)
+antseed payments
+
+# 5. Connect to the network
+antseed connect --router local
+# Proxy listening on http://localhost:8377
+```
+
+Point your AI tools (Claude Code, Codex, etc.) at `http://localhost:8377` as the API base URL. The router handles peer selection and failover transparently.
+
+### Payments Portal
+
+The payments portal is a local web UI for managing your USDC deposits and viewing payment activity. Run `antseed payments` to start it — it opens at `http://localhost:3118` by default. The portal lets you deposit, withdraw, and monitor your balance without using CLI commands.
+
+### Configuration
 
 ```json
 {
@@ -230,9 +278,10 @@ Payment channels are automatic when `payments.crypto.chainId` is set in config. 
 }
 ```
 
-The node's identity is a secp256k1 private key that doubles as the EVM wallet. Set it via `ANTSEED_IDENTITY_HEX` env var (recommended) or let the CLI generate one at `~/.antseed/identity.key` (not recommended for production — use env var with a secrets manager instead). Providers must register on-chain (`antseed register`) and stake USDC (`antseed stake 10`) before seeding. Buyers must deposit USDC (`antseed deposit 10`) before connecting.
+Use `base-sepolia` for testing with MockUSDC.
 
-Runtime env controls:
+### Runtime Controls
+
 - `ANTSEED_SETTLEMENT_IDLE_MS=600000` — idle time before settling a session (default: 10 minutes)
 - `ANTSEED_DEFAULT_DEPOSIT_USDC=1` — default lock amount per session
 - `ANTSEED_IDENTITY_HEX=<hex>` — inject identity via env (supports 0x prefix)
