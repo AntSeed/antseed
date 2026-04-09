@@ -615,10 +615,35 @@ async function main() {
     // -----------------------------------------------------------------------
     phase(8, "Disconnect buyer and settle");
 
+    // Log seller payment state before disconnect
+    const buyerPeerId = buyerNode.peerId;
+    const sellerSpm = sellerNode.sellerPaymentManager;
+    if (sellerSpm) {
+      const ch = sellerSpm.getChannelByPeer(buyerPeerId);
+      if (ch) {
+        const acc = sellerSpm.getAcceptedCumulative(ch.sessionId);
+        const sp = sellerSpm.getCumulativeSpend(ch.sessionId);
+        info(`Pre-disconnect seller: accepted=${acc} spent=${sp} channel=${ch.sessionId.slice(0, 18)}`);
+      } else {
+        info(`Pre-disconnect seller: no channel for buyer ${buyerPeerId.slice(0, 12)}`);
+      }
+    }
+
     info("Stopping buyer node...");
     await buyerNode.stop();
     buyerNode = null;
     pass("Buyer node stopped");
+
+    // Log after disconnect
+    if (sellerSpm) {
+      const ch2 = sellerSpm.getChannelByPeer(buyerPeerId);
+      if (ch2) {
+        const acc2 = sellerSpm.getAcceptedCumulative(ch2.sessionId);
+        info(`Post-disconnect seller: accepted=${acc2} (should have real SpendingAuth now)`);
+      } else {
+        info(`Post-disconnect seller: channel already cleaned up`);
+      }
+    }
 
     // Wait for seller to auto-settle (settleOnDisconnect=true by default)
     info("Waiting for seller to settle on-chain (up to 30s)...");
