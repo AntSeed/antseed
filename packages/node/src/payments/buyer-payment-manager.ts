@@ -230,6 +230,64 @@ export class BuyerPaymentManager {
     return session.sessionId;
   }
 
+  async extendCurrentSpendingAuth(
+    sellerPeerId: string,
+    minBudgetPerRequest: bigint,
+    paymentMux: PaymentMux,
+  ): Promise<string> {
+    const session = this.getActiveSession(sellerPeerId);
+    if (!session) {
+      throw new Error(`[BuyerPayment] No active session for seller ${sellerPeerId.slice(0, 12)}...`);
+    }
+
+    const currentCumulative = this._cumulativeAmount.get(sellerPeerId) ?? BigInt(session.authMax);
+    let maxSignable = this._maxSignable(sellerPeerId);
+    const ceiling = this._getCeiling(sellerPeerId);
+    const requestedAmount = currentCumulative + minBudgetPerRequest;
+
+    if (requestedAmount > maxSignable && maxSignable >= ceiling) {
+      await this.topUpReserve(sellerPeerId, paymentMux);
+      maxSignable = this._maxSignable(sellerPeerId);
+    }
+
+    const nextCumulative = requestedAmount < maxSignable ? requestedAmount : maxSignable;
+    if (nextCumulative <= currentCumulative) {
+      debugWarn(
+        `[BuyerPayment] Cannot extend active session for ${sellerPeerId.slice(0, 12)}... ` +
+        `(current=${currentCumulative} maxSignable=${maxSignable})`,
+      );
+      return session.sessionId;
+    }
+
+    const currentMeta = this._metadata.get(sellerPeerId) ?? ZERO_METADATA;
+    const metadataHashHex = computeMetadataHash(currentMeta);
+    const encodedMetadata = encodeMetadata(currentMeta);
+
+    const metadataMsg: SpendingAuthMessage = {
+      channelId: session.sessionId,
+      cumulativeAmount: nextCumulative,
+      metadataHash: metadataHashHex,
+    };
+    const spendingAuthSig = await signSpendingAuth(this._signer, this._channelsDomain, metadataMsg);
+
+    this._cumulativeAmount.set(sellerPeerId, nextCumulative);
+    this._channelStore.upsertChannel({
+      ...session,
+      authMax: nextCumulative.toString(),
+      updatedAt: Date.now(),
+    });
+
+    paymentMux.sendSpendingAuth({
+      channelId: session.sessionId,
+      cumulativeAmount: nextCumulative.toString(),
+      metadataHash: metadataHashHex,
+      metadata: encodedMetadata,
+      spendingAuthSig,
+    });
+
+    return session.sessionId;
+  }
+
   async resendReserveAuth(
     sellerPeerId: string,
     paymentMux: PaymentMux,
