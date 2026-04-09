@@ -101,7 +101,7 @@ export function TitleBar() {
           </button>
         )}
         <div className={styles.alphaHint}>
-          Alpha Version · {chainLabel}
+          Alpha Version
         </div>
         <div className={styles.titleBarCreditsWrapper}>
           <button
