@@ -243,18 +243,17 @@ antseed seed --provider openai
 ### Buyer Setup (Consuming)
 
 ```bash
-# 1. Set your identity
+# 1. Set your identity (secp256k1 private key)
 export ANTSEED_IDENTITY_HEX=<your-private-key-hex>
 
-# 2. Fund your wallet with ETH and USDC on Base Mainnet
-
-# 3. Deposit USDC for payments
-antseed deposit 10
-
-# 4. Launch the payments portal (manages deposits via web UI)
+# 2. Launch the payments portal to deposit USDC
 antseed payments
+# Payments portal running at http://127.0.0.1:3118
 
-# 5. Connect to the network
+# 3. In the portal, connect your funded wallet (e.g. MetaMask) and deposit USDC
+#    The portal calls depositFor() — your node's identity key never needs to hold funds
+
+# 4. Connect to the network
 antseed connect --router local
 # Proxy listening on http://localhost:8377
 ```
@@ -263,7 +262,7 @@ Point your AI tools (Claude Code, Codex, etc.) at `http://localhost:8377` as the
 
 ### Payments Portal
 
-The payments portal is a local web UI for managing your USDC deposits and viewing payment activity. Run `antseed payments` to start it — it opens at `http://localhost:3118` by default. The portal lets you deposit, withdraw, and monitor your balance without using CLI commands.
+The payments portal is a local web UI for depositing USDC and viewing payment activity. Run `antseed payments` to start it at `http://localhost:3118`. Connect any funded wallet (MetaMask, Coinbase Wallet, etc.) to deposit USDC on behalf of your node via `depositFor()` — your node's identity key never needs to hold USDC or ETH.
 
 ### Configuration
 

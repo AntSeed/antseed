@@ -109,15 +109,16 @@ You can also use `--instance <id>` to use a configured plugin instance, or overr
 ## Buying AI Services
 
 ```bash title="buyer setup"
-# Fund your wallet with ETH and USDC on Base Mainnet
+# Set your identity key
+$ export ANTSEED_IDENTITY_HEX=<your-secp256k1-private-key-hex>
 
-# Deposit USDC for payments
-$ antseed deposit 10
-✔ Deposited 10 USDC
-
-# Launch the payments portal (web UI for managing deposits)
+# Launch the payments portal
 $ antseed payments
 Payments portal running at http://127.0.0.1:3118
+
+# In the portal, connect a funded wallet (MetaMask, Coinbase Wallet, etc.)
+# and deposit USDC on behalf of your node via depositFor().
+# Your node's identity key never needs to hold USDC or ETH.
 
 # Connect to the network
 $ antseed connect --router local
