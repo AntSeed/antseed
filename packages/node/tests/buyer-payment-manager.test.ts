@@ -737,6 +737,13 @@ describe('BuyerPaymentManager', () => {
     const channelId = (mux.sentSpendingAuths[0] as Record<string, string>).channelId!;
     manager.handleAuthAck(sellerPeerId, { channelId });
 
+    await manager.handleNeedAuth(sellerPeerId, {
+      channelId,
+      requiredCumulativeAmount: '10000',
+      currentAcceptedCumulative: '0',
+      deposit: '10000',
+    }, mux);
+
     const topUpSpy = vi.spyOn(manager, 'topUpReserve').mockResolvedValue(undefined);
     mux.sentSpendingAuths.length = 0;
 
@@ -745,11 +752,11 @@ describe('BuyerPaymentManager', () => {
     expect(returnedChannelId).toBe(channelId);
     expect(topUpSpy).toHaveBeenCalledOnce();
     expect(mux.sentSpendingAuths).toHaveLength(0);
-    expect(manager.getCumulativeAmount(sellerPeerId)).toBe(0n);
+    expect(manager.getCumulativeAmount(sellerPeerId)).toBe(10_000n);
 
     const channel = store.getActiveChannelByPeer(sellerPeerId, 'buyer');
     expect(channel).not.toBeNull();
-    expect(channel!.authMax).toBe('0');
+    expect(channel!.authMax).toBe('10000');
   });
 
   it('recordAndPersistTokens continues from persisted totals after restart', async () => {
