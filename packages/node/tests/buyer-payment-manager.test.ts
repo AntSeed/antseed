@@ -720,6 +720,38 @@ describe('BuyerPaymentManager', () => {
     expect(channel!.authMax).toBe(extended.cumulativeAmount);
   });
 
+  it('extendCurrentSpendingAuth no-ops when top-up does not increase signable budget', async () => {
+    const sellerPeerId = fakePeerId('seller-extend-stalled');
+    const stalledConfig = makeConfig(tempDir, {
+      maxPerRequestUsdc: 0n,
+      maxReserveAmountUsdc: 10_000n,
+    });
+
+    store.close();
+    store = new ChannelStore(tempDir);
+    manager = new BuyerPaymentManager(identity, stalledConfig, store);
+    manager.setSigner(identity.wallet);
+    mux = createMockPaymentMux();
+
+    await manager.authorizeSpending(sellerPeerId, mux, 10_000n, TEST_PRICING);
+    const channelId = (mux.sentSpendingAuths[0] as Record<string, string>).channelId!;
+    manager.handleAuthAck(sellerPeerId, { channelId });
+
+    const topUpSpy = vi.spyOn(manager, 'topUpReserve').mockResolvedValue(undefined);
+    mux.sentSpendingAuths.length = 0;
+
+    const returnedChannelId = await manager.extendCurrentSpendingAuth(sellerPeerId, 10_000n, mux);
+
+    expect(returnedChannelId).toBe(channelId);
+    expect(topUpSpy).toHaveBeenCalledOnce();
+    expect(mux.sentSpendingAuths).toHaveLength(0);
+    expect(manager.getCumulativeAmount(sellerPeerId)).toBe(0n);
+
+    const channel = store.getActiveChannelByPeer(sellerPeerId, 'buyer');
+    expect(channel).not.toBeNull();
+    expect(channel!.authMax).toBe('0');
+  });
+
   it('recordAndPersistTokens continues from persisted totals after restart', async () => {
     const sellerPeerId = fakePeerId('seller-record-restart');
     await manager.authorizeSpending(sellerPeerId, mux, 50_000n, TEST_PRICING);

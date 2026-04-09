@@ -134,6 +134,7 @@ export class SellerRequestHandler {
                 suggestedAmount: requirements.suggestedAmount,
                 ...(requirements.inputUsdPerMillion != null ? { inputUsdPerMillion: requirements.inputUsdPerMillion } : {}),
                 ...(requirements.outputUsdPerMillion != null ? { outputUsdPerMillion: requirements.outputUsdPerMillion } : {}),
+                ...(requirements.cachedInputUsdPerMillion != null ? { cachedInputUsdPerMillion: requirements.cachedInputUsdPerMillion } : {}),
               })),
             });
             paymentMux.sendPaymentRequired(requirements);

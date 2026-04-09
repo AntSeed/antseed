@@ -252,10 +252,11 @@ export class BuyerPaymentManager {
 
     const nextCumulative = requestedAmount < maxSignable ? requestedAmount : maxSignable;
     if (nextCumulative <= currentCumulative) {
-      throw new Error(
+      debugWarn(
         `[BuyerPayment] Cannot extend active session for ${sellerPeerId.slice(0, 12)}... ` +
         `(current=${currentCumulative} maxSignable=${maxSignable})`,
       );
+      return session.sessionId;
     }
 
     const currentMeta = this._metadata.get(sellerPeerId) ?? ZERO_METADATA;
