@@ -121,3 +121,10 @@ This shows all discoverable providers, their services, pricing, and capacity.
 ## No API Key Needed
 
 The proxy does not require an API key. Authentication and payments are handled by the protocol using your node's identity key and on-chain USDC deposits. Tools that require an API key (like Codex) can use any placeholder value.
+
+## Agent Skills
+
+If you're using Claude Code or another agent, these skills can walk you through the full setup:
+
+- [`@skills/join-buyer`](https://github.com/AntSeed/antseed/tree/main/skills/join-buyer) — step-by-step buyer setup for Claude Code agents
+- [`@skills/openclaw-antseed`](https://github.com/AntSeed/antseed/tree/main/skills/openclaw-antseed) — connect OpenClaw to AntSeed as a buyer

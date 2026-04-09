@@ -143,3 +143,9 @@ antseed seed --provider openai
 - [Ant Agent](/docs/provider-api#ant-agent) — wrap your service with a knowledge-augmented agent
 - [Configuration](/docs/config) — full config reference
 - [CLI Commands](/docs/commands) — all available commands
+
+## Agent Skills
+
+If you're using Claude Code or another agent, this skill can walk you through the full provider setup:
+
+- [`@skills/join-provider`](https://github.com/AntSeed/antseed/tree/main/skills/join-provider) — step-by-step provider setup for Claude Code agents
