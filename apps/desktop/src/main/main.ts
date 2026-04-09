@@ -605,9 +605,9 @@ async function loadCachedCryptoConfig(): Promise<typeof cachedCryptoConfig> {
   } catch {
     // No config — no crypto config available
   }
-  // Resolve chain config from the selected chain ID (default: base-sepolia).
+  // Resolve chain config from the selected chain ID (default: base-mainnet).
   // All contract addresses come from the preset in chain-config.ts.
-  const selectedChain = asString(overrides.chainId as string, '') || 'base-sepolia';
+  const selectedChain = asString(overrides.chainId as string, '') || 'base-mainnet';
   const cc = resolveChainConfig({ chainId: selectedChain });
   cachedCryptoConfig = { rpcUrl: cc.rpcUrl, depositsAddress: cc.depositsContractAddress, channelsAddress: cc.channelsContractAddress, usdcAddress: cc.usdcContractAddress, chainId: cc.evmChainId };
   return cachedCryptoConfig;

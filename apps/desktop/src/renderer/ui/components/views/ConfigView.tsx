@@ -15,7 +15,7 @@ export function ConfigView({ active }: ConfigViewProps) {
   const [maxInput, setMaxInput] = useState('0');
   const [maxOutput, setMaxOutput] = useState('0');
   const [minRep, setMinRep] = useState('0');
-  const [chainId, setChainId] = useState('base-sepolia');
+  const [chainId, setChainId] = useState('base-mainnet');
   const [dirty, setDirty] = useState(false);
 
   // Sync from config on first load only
@@ -26,7 +26,7 @@ export function ConfigView({ active }: ConfigViewProps) {
       setMaxInput(String(configFormData.maxInputUsdPerMillion));
       setMaxOutput(String(configFormData.maxOutputUsdPerMillion));
       setMinRep(String(configFormData.minRep));
-      setChainId(configFormData.cryptoChainId || 'base-sepolia');
+      setChainId(configFormData.cryptoChainId || 'base-mainnet');
       setInitialized(true);
     }
   }, [configFormData, initialized]);
@@ -142,8 +142,8 @@ export function ConfigView({ active }: ConfigViewProps) {
                 value={chainId}
                 onChange={(e) => { setChainId(e.target.value); markDirty(); }}
               >
+                <option value="base-mainnet">Base Mainnet</option>
                 <option value="base-sepolia">Base Sepolia (testnet)</option>
-                <option value="base-mainnet" disabled>Base Mainnet (not deployed yet)</option>
                 <option value="base-local">Base Local (development)</option>
               </select>
             </label>

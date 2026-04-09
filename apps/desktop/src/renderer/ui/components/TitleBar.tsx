@@ -55,7 +55,7 @@ export function TitleBar() {
   const actions = useActions();
   const [creditsDropdownOpen, setCreditsDropdownOpen] = useState(false);
 
-  const chainId = configFormData?.cryptoChainId || 'base-sepolia';
+  const chainId = configFormData?.cryptoChainId || 'base-mainnet';
   const chainLabel = CHAIN_LABELS[chainId] ?? chainId;
 
   const creditsDisplay = parseFloat(creditsAvailableUsdc) > 0

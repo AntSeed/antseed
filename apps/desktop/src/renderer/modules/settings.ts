@@ -70,7 +70,7 @@ export function initSettingsModule({
       minRep: safeNumber(buyer.minPeerReputation, 0),
       paymentMethod: safeString(payments.preferredMethod, 'crypto'),
       devMode: uiState.devMode,
-      cryptoChainId: safeString(crypto.chainId, 'base-sepolia'),
+      cryptoChainId: safeString(crypto.chainId, 'base-mainnet'),
     });
     notifyUiStateChanged();
   }
@@ -109,7 +109,7 @@ export function initSettingsModule({
           ...asRecord(currentConfig.payments),
           preferredMethod: formData.paymentMethod || 'crypto',
           crypto: {
-            chainId: formData.cryptoChainId || 'base-sepolia',
+            chainId: formData.cryptoChainId || 'base-mainnet',
           },
         },
       };
