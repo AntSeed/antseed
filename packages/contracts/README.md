@@ -63,7 +63,7 @@ Buyer USDC deposit management with dynamic credit limits and seller payouts.
 
 **Buyer operations:**
 - `deposit(uint256 amount)` — USDC deposit, enforces `MIN_BUYER_DEPOSIT` and dynamic credit limit
-- `depositFor(address buyer, uint256 amount)` — third-party deposit on behalf of buyer
+- `deposit(address buyer, uint256 amount)` — deposit USDC for a buyer (anyone can call, USDC pulled from msg.sender)
 - `withdraw(address buyer, uint256 amount)` — immediate withdrawal (operator-only, sends USDC to buyer)
 - `getBuyerBalance(address)` → available, reserved, lastActivity
 - `getOperator(address)` / `getOperatorNonce(address)` — operator views

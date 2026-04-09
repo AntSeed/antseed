@@ -121,7 +121,7 @@ There is no derivation step or two-key system. One secp256k1 key signs everythin
 
 ### Funding
 
-The AntseedDeposits contract provides `depositFor(address buyer, uint256 amount)`, allowing any address to fund a buyer's deposit. This decouples the funding source from the node identity — a team treasury, a hardware wallet, or another contract can fund the node without exposing the node's private key.
+The AntseedDeposits contract's `deposit(address buyer, uint256 amount)` allows any address to fund a buyer's deposit — USDC is pulled from `msg.sender` and credited to the specified buyer. This decouples the funding source from the node identity — a team treasury, a hardware wallet, or another contract can fund the node without exposing the node's private key.
 
 USDC on Base. 6 decimal places. All on-chain amounts are in USDC atomic units (1 USDC = 1,000,000).
 

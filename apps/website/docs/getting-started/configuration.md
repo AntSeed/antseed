@@ -117,8 +117,8 @@ $ antseed payments
 Payments portal running at http://127.0.0.1:3118
 
 # In the portal, connect a funded wallet (MetaMask, Coinbase Wallet, etc.)
-# and deposit USDC on behalf of your node via depositFor().
-# Your node's identity key never needs to hold USDC or ETH.
+# and deposit USDC for your node. The contract's deposit(buyer, amount) pulls
+# USDC from the connected wallet — your identity key never holds funds.
 
 # Connect to the network
 $ antseed connect --router local
