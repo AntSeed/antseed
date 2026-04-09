@@ -31,7 +31,7 @@ export default function Footer(): JSX.Element {
 
       {/* Links */}
       <div style={{display: 'flex', gap: '24px'}}>
-        <Link to="/docs/intro" className="custom-footer-link" style={linkStyle}>Docs</Link>
+        <Link to="/docs" className="custom-footer-link" style={linkStyle}>Docs</Link>
         <Link to="/docs/lightpaper" className="custom-footer-link" style={linkStyle}>Light Paper</Link>
         <Link to="/blog" className="custom-footer-link" style={linkStyle}>Blog</Link>
       </div>

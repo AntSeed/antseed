@@ -3,11 +3,6 @@ import type {SidebarsConfig} from '@docusaurus/plugin-content-docs';
 const sidebars: SidebarsConfig = {
   docs: [
     {
-      type: 'doc',
-      id: 'lightpaper',
-      label: 'Light Paper',
-    },
-    {
       type: 'category',
       label: 'Getting Started',
       collapsible: false,
@@ -58,6 +53,14 @@ const sidebars: SidebarsConfig = {
       items: [
         'cli/commands',
         'cli/flags',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Papers',
+      collapsible: false,
+      items: [
+        'lightpaper',
       ],
     },
   ],

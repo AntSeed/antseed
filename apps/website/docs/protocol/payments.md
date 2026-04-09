@@ -18,7 +18,7 @@ Buyer                          Seller                         Chain
   │                              │                              │
   ├── ReserveAuth ──────────────>│                              │
   │   (EIP-712: channelId,       │                              │
-  │    maxAmount, deadline)       │                              │
+  │    maxAmount, deadline)      │                              │
   │                              ├── reserve(buyerSig) ────────>│
   │                              │   Deposits.lockForChannel()  │
   │                              │<──── reserveConfirmed ───────┤
@@ -29,12 +29,12 @@ Buyer                          Seller                         Chain
   │   ├── HTTP Request ─────────>│                              │
   │   │<── HTTP Response ────────┤                              │
   │   ├── SpendingAuth ─────────>│  EIP-712: channelId,         │
-  │   │   (cumulativeAmount,     │  cumulativeAmount,            │
-  │   │    metadataHash)         │  metadataHash                 │
+  │   │   (cumulativeAmount,     │  cumulativeAmount,           │
+  │   │    metadataHash)         │  metadataHash                │
   │   │         ... N requests   │                              │
   │   └──────────────────────────┘                              │
   │                              │                              │
-  │  === SETTLE / CLOSE ========  │                              │
+  │  === SETTLE / CLOSE ======== │                              │
   │                              │                              │
   │                              ├── settle(SpendingAuth) ─────>│
   │                              │   or close(SpendingAuth)     │

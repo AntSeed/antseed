@@ -1,6 +1,6 @@
 ---
 sidebar_position: 2
-slug: /using-the-api
+slug: /guides/using-the-api
 title: Using the API
 hide_title: true
 ---
