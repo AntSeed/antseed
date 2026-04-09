@@ -44,6 +44,7 @@ function createMockBpm(): BuyerPaymentManager & Record<string, unknown> {
     getActiveSession: vi.fn().mockReturnValue(null),
     retireSession: vi.fn(),
     canReplayReserveAuth: vi.fn().mockReturnValue(false),
+    extendCurrentSpendingAuth: vi.fn().mockResolvedValue(undefined),
     resendCurrentSpendingAuth: vi.fn().mockResolvedValue(undefined),
     resendReserveAuth: vi.fn().mockResolvedValue(undefined),
     isLockConfirmed: vi.fn().mockReturnValue(false),
@@ -211,21 +212,26 @@ describe('BuyerPaymentNegotiator', () => {
       expect(result.action).toBe('return');
     });
 
-    it('replays an active on-chain session instead of opening a new reserve', async () => {
+    it('extends an active on-chain session instead of replaying the same auth when seller requests more budget', async () => {
       // First, lock the peer through successful negotiation
       await simulateSuccessfulNegotiation(negotiator, bpm, peer, conn);
       (bpm.authorizeSpending as ReturnType<typeof vi.fn>).mockClear();
 
       const activeSession = makeActiveSession(peer.peerId);
       (bpm.getActiveSession as ReturnType<typeof vi.fn>).mockReturnValue(activeSession);
-      (bpm.resendCurrentSpendingAuth as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      (bpm.extendCurrentSpendingAuth as ReturnType<typeof vi.fn>).mockImplementation(async () => {
         (bpm.isLockConfirmed as ReturnType<typeof vi.fn>).mockReturnValue(true);
       });
       bufferPaymentRequired(negotiator, peer.peerId, conn);
 
       const result = await negotiator.handle402(make402Response(), peer, conn, makeRequest());
 
-      expect(bpm.resendCurrentSpendingAuth).toHaveBeenCalledWith(peer.peerId, expect.anything());
+      expect(bpm.extendCurrentSpendingAuth).toHaveBeenCalledWith(
+        peer.peerId,
+        BigInt(paymentRequiredPayload.minBudgetPerRequest),
+        expect.anything(),
+      );
+      expect(bpm.resendCurrentSpendingAuth).not.toHaveBeenCalled();
       expect(bpm.authorizeSpending).not.toHaveBeenCalled();
       expect(result.action).toBe('retry');
     });

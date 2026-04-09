@@ -122,7 +122,7 @@ export class SellerRequestHandler {
                 debugWarn(`[SellerHandler] Failed to settle exhausted session: ${err instanceof Error ? err.message : err}`);
               });
             } else {
-              debugLog(`[SellerHandler] Budget exhausted for ${buyerPeerId.slice(0, 12)}... (spent=${spent} >= accepted=${accepted}) — returning 402, awaiting NeedAuth response`);
+              debugLog(`[SellerHandler] Budget exhausted for ${buyerPeerId.slice(0, 12)}... (spent=${spent} >= accepted=${accepted}) — returning 402, awaiting higher SpendingAuth / renegotiation`);
             }
             mux.sendProxyResponse({
               requestId: request.requestId,

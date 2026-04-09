@@ -694,6 +694,32 @@ describe('BuyerPaymentManager', () => {
     expect((mux.sentSpendingAuths[0] as Record<string, unknown>).cumulativeAmount).toBe('0');
   });
 
+  it('extendCurrentSpendingAuth raises cumulative for an exhausted active session without changing metadata', async () => {
+    const sellerPeerId = fakePeerId('seller-extend-current');
+    await manager.authorizeSpending(sellerPeerId, mux, 50_000n, TEST_PRICING);
+    manager.handleAuthAck(sellerPeerId, { channelId: (mux.sentSpendingAuths[0] as Record<string, string>).channelId! });
+
+    const { payload } = await manager.signPerRequestAuth(
+      sellerPeerId,
+      { inputBytes: SAMPLE_INPUT, outputBytes: SAMPLE_OUTPUT, sellerClaimedCost: 10_000n },
+    );
+
+    mux.sentSpendingAuths.length = 0;
+    const previousMetadata = payload.metadata;
+    const previousCumulative = BigInt(payload.cumulativeAmount);
+
+    await manager.extendCurrentSpendingAuth(sellerPeerId, 50_000n, mux);
+
+    expect(mux.sentSpendingAuths).toHaveLength(1);
+    const extended = mux.sentSpendingAuths[0] as Record<string, string>;
+    expect(BigInt(extended.cumulativeAmount)).toBeGreaterThan(previousCumulative);
+    expect(extended.metadata).toBe(previousMetadata);
+
+    const channel = store.getActiveChannelByPeer(sellerPeerId, 'buyer');
+    expect(channel).not.toBeNull();
+    expect(channel!.authMax).toBe(extended.cumulativeAmount);
+  });
+
   it('recordAndPersistTokens continues from persisted totals after restart', async () => {
     const sellerPeerId = fakePeerId('seller-record-restart');
     await manager.authorizeSpending(sellerPeerId, mux, 50_000n, TEST_PRICING);

@@ -264,8 +264,14 @@ export class BuyerPaymentNegotiator {
     };
 
     // Reconcile any active stored session before opening a fresh reserve.
+    const existingSessionBudgetRequest = buffered
+      ? BigInt(buffered.minBudgetPerRequest)
+      : responseAlreadyHasRequirements && directPaymentBody?.minBudgetPerRequest != null
+        ? BigInt(String(directPaymentBody.minBudgetPerRequest))
+        : null;
+
     if (hadLockedSession || this._bpm.getActiveSession(peer.peerId)) {
-      const recovered = await this._recoverExistingSession(peer, conn);
+      const recovered = await this._recoverExistingSession(peer, conn, existingSessionBudgetRequest);
       if (recovered) {
         return { action: 'retry' };
       }
@@ -713,7 +719,11 @@ export class BuyerPaymentNegotiator {
     });
   }
 
-  private async _recoverExistingSession(peer: PeerInfo, conn: PeerConnection): Promise<boolean> {
+  private async _recoverExistingSession(
+    peer: PeerInfo,
+    conn: PeerConnection,
+    minBudgetPerRequest: bigint | null = null,
+  ): Promise<boolean> {
     const session = this._bpm.getActiveSession(peer.peerId);
     if (!session) {
       return false;
@@ -758,7 +768,11 @@ export class BuyerPaymentNegotiator {
     }
 
     const pmux = this.getOrCreatePaymentMux(peer.peerId, conn);
-    await this._bpm.resendCurrentSpendingAuth(peer.peerId, pmux);
+    if (minBudgetPerRequest != null && minBudgetPerRequest > 0n) {
+      await this._bpm.extendCurrentSpendingAuth(peer.peerId, minBudgetPerRequest, pmux);
+    } else {
+      await this._bpm.resendCurrentSpendingAuth(peer.peerId, pmux);
+    }
     await this._waitForLockConfirmation(peer.peerId);
     this._lockedPeers.add(peer.peerId);
     return true;
