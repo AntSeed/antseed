@@ -77,13 +77,27 @@ Back up your identity key before migrating servers. Your PeerId and EVM wallet a
 
 ## Selling AI Services
 
-To sell on the network, configure a provider plugin and declare your Skills. The provider handles the actual AI service — the protocol handles discovery, metering, and payments.
+To sell on the network, register on-chain, stake USDC, and start providing. The provider plugin handles the actual AI service — the protocol handles discovery, metering, and payments.
 
 :::warning Provider Compliance
 AntSeed is designed for providers who build differentiated services — such as TEE-secured inference, domain-specific skills, agent workflows, or managed product experiences. Simply reselling raw API access or subscription credentials is not the intended use and may violate your upstream provider's terms of service. Subscription-based plugins (`claude-code`, `claude-oauth`) are for local testing only.
 :::
 
-```bash title="seed"
+```bash title="provider setup"
+# Fund your wallet with ETH (gas) and USDC (staking) on Base Mainnet
+
+# Register identity on-chain
+$ antseed register
+✔ Peer identity registered
+
+# Stake USDC (minimum $10)
+$ antseed stake 10
+✔ Staked 10 USDC
+
+# Verify readiness
+$ antseed setup --role provider
+
+# Start providing
 $ antseed seed --provider anthropic
 Announcing on DHT: antseed:anthropic
 Metadata server listening on 0.0.0.0:6882
@@ -94,14 +108,26 @@ You can also use `--instance <id>` to use a configured plugin instance, or overr
 
 ## Buying AI Services
 
-```bash title="connect"
+```bash title="buyer setup"
+# Set your identity key
+$ export ANTSEED_IDENTITY_HEX=<your-secp256k1-private-key-hex>
+
+# Launch the payments portal
+$ antseed payments
+Payments portal running at http://127.0.0.1:3118
+
+# In the portal, connect a funded wallet (MetaMask, Coinbase Wallet, etc.)
+# and deposit USDC for your node. The contract's deposit(buyer, amount) pulls
+# USDC from the connected wallet — your identity key never holds funds.
+
+# Connect to the network
 $ antseed connect --router local
 Router "Local Router" loaded
 Connected to P2P network
 Proxy listening on http://localhost:8377
 ```
 
-The buyer proxy listens on `localhost:8377` by default. Your existing tools (Claude Code, Codex, etc.) point to this proxy instead of the upstream API. The router handles peer selection and failover transparently.
+The buyer proxy listens on `localhost:8377` by default. See [Using the API](/guides/using-the-api) for how to point your tools at the proxy.
 
 ## Configuration File
 

@@ -13,6 +13,34 @@ Provider plugins expose AI services to the network. They advertise services, pri
 AntSeed is designed for providers who build differentiated services — such as TEE-secured inference, domain-specific skills or agents, fine-tuned models, or managed product experiences. Simply reselling raw API access or subscription credentials is not the intended use and may violate your upstream provider's terms of service. Providers are solely responsible for complying with their upstream API provider's terms.
 :::
 
+## Quick Start
+
+```bash
+# 1. Install and initialize
+npm install -g @antseed/cli
+antseed init
+
+# 2. Set your identity key
+export ANTSEED_IDENTITY_HEX=<your-secp256k1-private-key-hex>
+
+# 3. Fund your wallet with ETH (gas) and USDC (staking) on Base Mainnet
+
+# 4. Register on-chain and stake
+antseed register
+antseed stake 10
+
+# 5. Set your upstream API key
+export ANTHROPIC_API_KEY=<your-key>        # for anthropic provider
+# or
+export OPENAI_API_KEY=<your-key>           # for openai provider
+export OPENAI_BASE_URL=https://api.together.ai  # optional: OpenAI-compatible endpoint
+
+# 6. Start providing
+antseed seed --provider anthropic
+```
+
+Your node is now discoverable on the network. Buyers can find you via DHT, connect, and send requests. You earn USDC per request based on your published pricing.
+
 ## Provider Interface
 
 ```typescript title="provider interface"

@@ -62,8 +62,7 @@ ERC-20 token (`AntSeed` / `ANTS`). No pre-mine, no initial supply.
 Buyer USDC deposit management with dynamic credit limits and seller payouts.
 
 **Buyer operations:**
-- `deposit(uint256 amount)` — USDC deposit, enforces `MIN_BUYER_DEPOSIT` and dynamic credit limit
-- `depositFor(address buyer, uint256 amount)` — third-party deposit on behalf of buyer
+- `deposit(address buyer, uint256 amount)` — deposit USDC for a buyer (anyone can call, USDC pulled from msg.sender; pass your own address to deposit for yourself)
 - `withdraw(address buyer, uint256 amount)` — immediate withdrawal (operator-only, sends USDC to buyer)
 - `getBuyerBalance(address)` → available, reserved, lastActivity
 - `getOperator(address)` / `getOperatorNonce(address)` — operator views
@@ -180,9 +179,28 @@ All constants are configurable by the contract owner via dedicated setter functi
 | `RESERVE_SHARE_PCT` | 10% | Reserve share of epoch emissions |
 | `MAX_SELLER_SHARE_PCT` | 15% | Per-seller cap of seller pool |
 
-### Supported Chains
+### Deployed Contracts
 
-| Network | Purpose |
+#### Base Mainnet (Production)
+
+| Contract | Address |
 |---|---|
-| Base Sepolia | Testnet deployment |
-| Base Mainnet | Production deployment |
+| **USDC (Circle)** | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` |
+| **ANTSToken** | `0xa87EE81b2C0Bc659307ca2D9ffdC38514DD85263` |
+| **AntseedRegistry** | `0xf33fC901BFa97326379A369401F4490E231B69B0` |
+| **AntseedStaking** | `0x3652E6B22919bd322A25723B94BB207602E5c8e6` |
+| **AntseedDeposits** | `0x0F7a3a8f4Da01637d1202bb5443fcF7F88F99fD2` |
+| **AntseedChannels** | `0xBA66d3b4fbCf472F6F11D6F9F96aaCE96516F09d` |
+| **AntseedStats** | `0x15649ff076BFa5e37e24EE3154a00503149954Fd` |
+| **AntseedEmissions** | `0x36877fBa8Fa333aa46a1c57b66D132E4995C86b5` |
+| **ERC-8004 IdentityRegistry** | `0x8004A169FB4a3325136EB29fA0ceB6D2e539a432` (external) |
+
+All verified on [BaseScan](https://basescan.org). Contract addresses are built into `@antseed/node` chain-config — no manual configuration needed when `chainId: "base-mainnet"` is set.
+
+#### Base Sepolia (Testnet)
+
+Used for testing and development. Uses MockUSDC with permissionless minting. See `.deployments/README.md` for testnet addresses.
+
+#### Base Local (Development)
+
+Local anvil chain (chain ID 31337) for development. Deploy with `forge script script/Deploy.s.sol`.

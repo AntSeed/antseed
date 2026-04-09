@@ -121,7 +121,7 @@ There is no derivation step or two-key system. One secp256k1 key signs everythin
 
 ### Funding
 
-The AntseedDeposits contract provides `depositFor(address buyer, uint256 amount)`, allowing any address to fund a buyer's deposit. This decouples the funding source from the node identity — a team treasury, a hardware wallet, or another contract can fund the node without exposing the node's private key.
+The AntseedDeposits contract's `deposit(address buyer, uint256 amount)` allows any address to fund a buyer's deposit — USDC is pulled from `msg.sender` and credited to the specified buyer. This decouples the funding source from the node identity — a team treasury, a hardware wallet, or another contract can fund the node without exposing the node's private key.
 
 USDC on Base. 6 decimal places. All on-chain amounts are in USDC atomic units (1 USDC = 1,000,000).
 
@@ -144,7 +144,23 @@ Identity uses the deployed [ERC-8004](https://eips.ethereum.org/EIPS/eip-8004) I
 
 | Chain | Chain ID | Status |
 |---|---|---|
-| `base-mainnet` | 8453 | Production |
+| `base-mainnet` | 8453 | Production (default) |
 | `base-sepolia` | 84532 | Testnet |
 
-Contract addresses are built into the CLI for each chain — no manual configuration needed. Set `payments.crypto.chainId` in your config to select the chain.
+Contract addresses are built into the CLI for each chain — no manual configuration needed. The default chain is `base-mainnet`.
+
+### Base Mainnet Contract Addresses
+
+| Contract | Address |
+|---|---|
+| USDC (Circle) | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` |
+| AntseedRegistry | `0xf33fC901BFa97326379A369401F4490E231B69B0` |
+| AntseedDeposits | `0x0F7a3a8f4Da01637d1202bb5443fcF7F88F99fD2` |
+| AntseedChannels | `0xBA66d3b4fbCf472F6F11D6F9F96aaCE96516F09d` |
+| AntseedStaking | `0x3652E6B22919bd322A25723B94BB207602E5c8e6` |
+| AntseedStats | `0x15649ff076BFa5e37e24EE3154a00503149954Fd` |
+| AntseedEmissions | `0x36877fBa8Fa333aa46a1c57b66D132E4995C86b5` |
+| ANTSToken | `0xa87EE81b2C0Bc659307ca2D9ffdC38514DD85263` |
+| ERC-8004 IdentityRegistry | `0x8004A169FB4a3325136EB29fA0ceB6D2e539a432` |
+
+All contracts verified on [BaseScan](https://basescan.org).
