@@ -303,7 +303,7 @@ export class AntseedNode extends EventEmitter {
     // then wait for their handlers to finish. This ensures the seller has a
     // valid SpendingAuth for settlement before we close the connection.
     if (this._buyerNegotiator) {
-      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+      await new Promise<void>((resolve) => setTimeout(resolve, 500));
       await this._buyerNegotiator.drainPendingNeedAuth();
     }
 
