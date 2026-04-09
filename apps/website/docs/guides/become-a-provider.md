@@ -140,6 +140,6 @@ antseed seed --provider openai
 
 ## Next Steps
 
-- [Ant Agent](/provider-api#ant-agent) — wrap your service with a knowledge-augmented agent
-- [Configuration](/config) — full config reference
-- [CLI Commands](/commands) — all available commands
+- [Ant Agent](/docs/provider-api#ant-agent) — wrap your service with a knowledge-augmented agent
+- [Configuration](/docs/config) — full config reference
+- [CLI Commands](/docs/commands) — all available commands
