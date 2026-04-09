@@ -107,7 +107,7 @@ export class SellerRequestHandler {
         if (session) {
           const accepted = spm.getAcceptedCumulative(session.sessionId);
           const spent = spm.getCumulativeSpend(session.sessionId);
-          if (accepted > 0n && spent >= accepted) {
+          if (spent > 0n && spent >= accepted) {
             const reserveMax = spm.getReserveMax(session.sessionId);
             const matchedProvider = this.matchProvider(request);
             const providerPricing = matchedProvider

@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { SellerRequestHandler } from '../src/seller-request-handler.js';
 import type { SerializedHttpRequest } from '../src/types/http.js';
 import type { Provider } from '../src/interfaces/seller-provider.js';
-import { encodeHttpRequest } from '../src/proxy/request-codec.js';
+import { decodeHttpResponse, encodeHttpRequest } from '../src/proxy/request-codec.js';
+import { decodeFrame } from '../src/p2p/message-protocol.js';
 import { MessageType } from '../src/types/protocol.js';
 
 function makeProvider(inputUsdPerMillion: number, outputUsdPerMillion: number, opts: {
@@ -154,5 +155,72 @@ describe('SellerRequestHandler payment pricing selection', () => {
       currentAcceptedCumulative: '0',
       requiredCumulativeAmount: '0',
     }));
+  });
+
+  it('stops serving once delivered spend has caught up to the last accepted auth', async () => {
+    const provider = makeProvider(1, 1, {
+      name: 'paid-tier',
+      services: ['local-test'],
+    });
+    provider.handleRequest = vi.fn(async (req) => ({
+      requestId: req.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: new TextEncoder().encode(JSON.stringify({ ok: true })),
+    }));
+
+    const sendPaymentRequired = vi.fn();
+    const handler = new SellerRequestHandler({
+      providers: [provider],
+      sellerPaymentManager: {
+        hasSession: () => true,
+        getChannelByPeer: () => ({ sessionId: 'session-1', authMax: '1000000' }),
+        recordSpend: vi.fn(),
+        getCumulativeSpend: () => 2_184n,
+        getAcceptedCumulative: () => 0n,
+        getReserveMax: () => 1_000_000n,
+        getPaymentRequirements: () => ({ minBudgetPerRequest: '50000', suggestedAmount: '1000000' }),
+      } as any,
+      sessionTracker: null,
+      channelsClient: {} as any,
+      announcer: null,
+      emit: () => false,
+    });
+
+    const sentFrames: Uint8Array[] = [];
+    const conn = {
+      send(frame: Uint8Array) {
+        sentFrames.push(frame);
+      },
+    } as any;
+    const paymentMux = {
+      sendNeedAuth: vi.fn(),
+      sendPaymentRequired,
+    } as any;
+
+    const { mux } = handler.handleConnection(conn, 'b'.repeat(40), paymentMux);
+
+    const request: SerializedHttpRequest = {
+      requestId: 'req-exhausted-budget',
+      method: 'POST',
+      path: '/v1/chat/completions',
+      headers: { 'content-type': 'application/json' },
+      body: new TextEncoder().encode(JSON.stringify({ model: 'local-test' })),
+    };
+
+    await mux.handleFrame({
+      type: MessageType.HttpRequest,
+      messageId: 1,
+      payload: encodeHttpRequest(request),
+    });
+
+    expect(provider.handleRequest).not.toHaveBeenCalled();
+    expect(sendPaymentRequired).toHaveBeenCalledOnce();
+    expect(sentFrames).toHaveLength(1);
+
+    const decoded = decodeFrame(sentFrames[0]!);
+    expect(decoded?.message.type).toBe(MessageType.HttpResponse);
+    const response = decodeHttpResponse(decoded!.message.payload);
+    expect(response.statusCode).toBe(402);
   });
 });
