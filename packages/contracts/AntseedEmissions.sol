@@ -107,7 +107,7 @@ contract AntseedEmissions is Ownable, Pausable, ReentrancyGuard {
         BUYER_SHARE_PCT = 20;
         RESERVE_SHARE_PCT = 15;
         TEAM_SHARE_PCT = 15;
-        MAX_SELLER_SHARE_PCT = 49;
+        MAX_SELLER_SHARE_PCT = 50;
     }
 
     // ═══════════════════════════════════════════════════════════════════
