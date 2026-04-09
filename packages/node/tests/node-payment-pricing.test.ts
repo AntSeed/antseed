@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest';
 import { SellerRequestHandler } from '../src/seller-request-handler.js';
 import type { SerializedHttpRequest } from '../src/types/http.js';
 import type { Provider } from '../src/interfaces/seller-provider.js';
-import { encodeFrame } from '../src/p2p/message-protocol.js';
 import { encodeHttpRequest } from '../src/proxy/request-codec.js';
 import { MessageType } from '../src/types/protocol.js';
 
@@ -141,11 +140,11 @@ describe('SellerRequestHandler payment pricing selection', () => {
       body: new TextEncoder().encode(JSON.stringify({ model: 'local-test' })),
     };
 
-    await mux.handleFrame(encodeFrame({
+    await mux.handleFrame({
       type: MessageType.HttpRequest,
       messageId: 1,
       payload: encodeHttpRequest(request),
-    }));
+    });
 
     expect(sentFrames.length).toBeGreaterThan(0);
     expect(sendNeedAuth).toHaveBeenCalledOnce();

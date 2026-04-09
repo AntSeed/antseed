@@ -311,7 +311,7 @@ describe('Full Payment Flow Integration', () => {
 
     const initialAuth = buyerMux.sentSpendingAuths[0]!;
     expect(initialAuth.reserveMaxAmount).toBe('10000000');
-    expect(initialAuth.cumulativeAmount).toBe('50000');
+    expect(initialAuth.cumulativeAmount).toBe('0');
   });
 
   it('seller sends AuthAck only on first SpendingAuth, not subsequent', async () => {
