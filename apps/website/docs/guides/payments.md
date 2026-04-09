@@ -1,6 +1,6 @@
 ---
 sidebar_position: 3
-slug: /guides/payments
+slug: /payments
 title: Payments
 hide_title: true
 ---

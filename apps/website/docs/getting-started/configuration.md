@@ -127,7 +127,7 @@ Connected to P2P network
 Proxy listening on http://localhost:8377
 ```
 
-The buyer proxy listens on `localhost:8377` by default. See [Using the API](/guides/using-the-api) for how to point your tools at the proxy.
+The buyer proxy listens on `localhost:8377` by default. See [Using the API](/using-the-api) for how to point your tools at the proxy.
 
 ## Configuration File
 

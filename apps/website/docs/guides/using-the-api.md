@@ -12,14 +12,18 @@ Once connected to the AntSeed network, your buyer proxy exposes a local API at `
 ## Quick Start
 
 ```bash
-# 1. Set your identity
+# 1. Install
+npm install -g @antseed/cli
+antseed init
+
+# 2. Set your identity
 export ANTSEED_IDENTITY_HEX=<your-private-key-hex>
 
-# 2. Deposit USDC (via payments portal)
+# 3. Deposit USDC (via payments portal)
 antseed payments
 # Open http://localhost:3118, connect a funded wallet, deposit USDC
 
-# 3. Connect to the network
+# 4. Connect to the network
 antseed connect --router local
 # Proxy listening on http://localhost:8377
 ```

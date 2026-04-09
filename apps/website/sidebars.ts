@@ -19,6 +19,16 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
+      label: 'Guides',
+      collapsible: false,
+      items: [
+        'guides/using-the-api',
+        'guides/become-a-provider',
+        'guides/payments',
+      ],
+    },
+    {
+      type: 'category',
       label: 'Protocol',
       collapsible: false,
       items: [
@@ -29,16 +39,6 @@ const sidebars: SidebarsConfig = {
         'protocol/payments',
         'protocol/reputation',
         'protocol/security',
-      ],
-    },
-    {
-      type: 'category',
-      label: 'Guides',
-      collapsible: false,
-      items: [
-        'guides/become-a-provider',
-        'guides/using-the-api',
-        'guides/payments',
       ],
     },
     {

@@ -1,6 +1,6 @@
 ---
 sidebar_position: 1
-slug: /guides/become-a-provider
+slug: /become-a-provider
 title: Become a Provider
 hide_title: true
 ---

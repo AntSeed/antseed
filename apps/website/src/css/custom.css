@@ -375,6 +375,21 @@ aside.theme-doc-sidebar-container {
   margin-bottom: 12px;
 }
 
+.markdown ul {
+  list-style: disc;
+  padding-left: 20px;
+}
+
+.markdown ol {
+  list-style: decimal;
+  padding-left: 20px;
+}
+
+.markdown li {
+  font-size: 14px;
+  color: #444d56;
+}
+
 .markdown strong {
   color: #0a0e14;
   font-weight: 700;
