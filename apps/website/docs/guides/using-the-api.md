@@ -1,6 +1,6 @@
 ---
 sidebar_position: 2
-slug: /guides/using-the-api
+slug: /using-the-api
 title: Using the API
 hide_title: true
 ---
@@ -31,7 +31,7 @@ The proxy accepts three API formats. Use whichever matches your tool:
 | Endpoint | Format | Compatible Tools |
 |---|---|---|
 | `/v1/messages` | Anthropic Messages API | Claude Code, Claude SDK |
-| `/v1/chat/completions` | OpenAI Chat Completions | Codex, Aider, Continue.dev, any OpenAI-compatible client |
+| `/v1/chat/completions` | OpenAI Chat Completions | Codex, any OpenAI-compatible client |
 | `/v1/responses` | OpenAI Responses API | Codex |
 
 The `model` field in your request determines which service to route to. The proxy finds the best available provider for that service on the network.
@@ -51,26 +51,6 @@ Claude Code sends requests to `/v1/messages` and the proxy routes them to the be
 export OPENAI_BASE_URL=http://localhost:8377/v1
 export OPENAI_API_KEY=unused
 codex
-```
-
-## Aider
-
-```bash
-export OPENAI_API_BASE=http://localhost:8377/v1
-export OPENAI_API_KEY=unused
-aider --model deepseek-v3.1
-```
-
-## Continue.dev
-
-In `.continue/config.yaml`:
-
-```yaml
-models:
-  - model: claude-sonnet-4-6
-    provider: anthropic
-    apiBase: http://localhost:8377
-    apiKey: unused
 ```
 
 ## curl
