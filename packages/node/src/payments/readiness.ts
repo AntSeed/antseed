@@ -39,12 +39,12 @@ export async function checkSellerReadiness(
   });
 
   // 3. Staked
-  const account = await stakingClient.getSellerAccount(evmAddr);
-  const hasStake = account.stake > 0n;
+  const stake = await stakingClient.getStake(evmAddr);
+  const hasStake = stake > 0n;
   checks.push({
     name: 'Stake',
     passed: hasStake,
-    message: hasStake ? `Staked: ${account.stake}` : 'No stake. Run: antseed stake <amount>',
+    message: hasStake ? `Staked: ${stake}` : 'No stake. Run: antseed stake <amount>',
     command: hasStake ? undefined : 'antseed stake 10',
   });
 

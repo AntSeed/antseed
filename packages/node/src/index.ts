@@ -38,7 +38,7 @@ export { BalanceManager } from './payments/balance-manager.js';
 export { DepositsClient, type DepositsClientConfig, type BuyerBalanceInfo } from './payments/evm/deposits-client.js';
 export { ChannelsClient, type ChannelsClientConfig, type ChannelInfo, type AgentStats } from './payments/evm/channels-client.js';
 export { IdentityClient, type IdentityClientConfig } from './payments/evm/identity-client.js';
-export { StakingClient, type StakingClientConfig, type SellerAccountInfo } from './payments/evm/staking-client.js';
+export { StakingClient, type StakingClientConfig } from './payments/evm/staking-client.js';
 export { signData, verifySignature, signUtf8, verifyUtf8 } from './p2p/identity.js';
 export {
   signSpendingAuth,

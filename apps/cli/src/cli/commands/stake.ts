@@ -78,13 +78,13 @@ export function registerStakeCommand(program: Command): void {
         const { wallet, address } = await loadCryptoContext(globalOpts.dataDir);
         const stakingClient = createStakingClient(config);
         console.log(chalk.dim(`Wallet: ${address}`));
-        const account = await stakingClient.getSellerAccount(address);
-        if (account.stake === 0n) {
+        const stake = await stakingClient.getStake(address);
+        if (stake === 0n) {
           spinner.fail(chalk.yellow('No active stake to withdraw.'));
           return;
         }
 
-        console.log(chalk.dim(`Current stake: ${formatUsdc(account.stake)} USDC`));
+        console.log(chalk.dim(`Current stake: ${formatUsdc(stake)} USDC`));
 
         spinner.text = 'Unstaking...';
         const txHash = await stakingClient.unstake(wallet);

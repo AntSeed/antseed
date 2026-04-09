@@ -30,7 +30,7 @@ export type { IdentityClientConfig } from './evm/identity-client.js';
 
 // Staking client (seller staking, token rate, slashing)
 export { StakingClient } from './evm/staking-client.js';
-export type { StakingClientConfig, SellerAccountInfo } from './evm/staking-client.js';
+export type { StakingClientConfig } from './evm/staking-client.js';
 
 export {
   signSpendingAuth,
