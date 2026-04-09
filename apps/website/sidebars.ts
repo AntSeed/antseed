@@ -33,6 +33,16 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
+      label: 'Guides',
+      collapsible: false,
+      items: [
+        'guides/become-a-provider',
+        'guides/using-the-api',
+        'guides/payments',
+      ],
+    },
+    {
+      type: 'category',
       label: 'Plugins',
       collapsible: false,
       items: [
