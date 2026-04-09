@@ -7,175 +7,83 @@ hide_title: true
 
 # Configuration
 
-After installation, initialize your node. This installs plugins and creates default configuration.
+Configuration is stored at `~/.antseed/config.json`. Use `antseed config` commands or edit the file directly.
 
-```bash title="init"
-$ antseed init
-Installed official plugins
-Created ~/.antseed/config.json
-Ready to connect
-```
-
-Set your identity via environment variable (recommended) before running any commands:
-
-```bash
-export ANTSEED_IDENTITY_HEX=<your-secp256k1-private-key-hex>
-```
-
-## Identity
-
-Your node identity is a secp256k1 private key. Your PeerId is the corresponding EVM address (40 lowercase hex characters, no `0x` prefix). Set `identity.displayName` in config to control the human-readable name announced in peer metadata.
-
-:::warning One Key, All Roles
-Your identity key is a single secp256k1 private key used for **everything** — P2P operations (signing metadata, connection handshakes, metering receipts), on-chain payments (EIP-712 ReserveAuth and SpendingAuth), and wallet custody. The corresponding EVM address is both your PeerId on the network and your on-chain wallet that holds deposits in AntseedDeposits, receives seller earnings, and signs payment authorizations. Losing your identity key means losing access to your on-chain funds.
-:::
-
-### Storage
-
-Identity loading follows this priority:
-
-| Priority | Method | How | Best for |
-|---|---|---|---|
-| 1 | **Environment variable** | Set `ANTSEED_IDENTITY_HEX` (64 hex chars, optional `0x` prefix) | CLI and server deployments with secrets managers (AWS SSM, Vault) |
-| 2 | **Desktop keychain** | Automatic — Electron `safeStorage` encrypts key via OS keychain | AntSeed Desktop app (macOS Keychain, Windows DPAPI, Linux libsecret) |
-| 3 | **Custom store** | Pass an `IdentityStore` via `NodeConfig.identityStore` | Custom integrations (KMS, HSM) |
-| 4 | **Plaintext file** ⚠️ | `~/.antseed/identity.key` with `0600` permissions | **Not recommended** — use env var or Desktop app instead |
-
-The env var always takes precedence, regardless of other configuration. If no env var is set, `identityStore` is used if provided, otherwise the default `FileIdentityStore` reads from disk.
-
-### Environment Variable (Recommended for Servers)
-
-Pass the private key from a secrets manager so it never touches disk:
-
-```bash
-# From HashiCorp Vault
-export ANTSEED_IDENTITY_HEX="$(vault kv get -field=key secret/antseed/identity)"
-antseed seed --provider anthropic
-
-# From AWS SSM Parameter Store
-export ANTSEED_IDENTITY_HEX="$(aws ssm get-parameter --name /antseed/identity --with-decryption --query Parameter.Value --output text)"
-antseed seed --provider anthropic
-```
-
-The variable is cleared from the process environment immediately after the node reads it.
-
-### Desktop App
-
-AntSeed Desktop encrypts the secp256k1 private key at rest using the OS keychain (macOS Keychain / Windows DPAPI / Linux libsecret). On first launch, any existing plaintext `identity.key` is migrated to the encrypted store (`identity.enc`) and the plaintext file is deleted.
-
-### Plaintext File (Default CLI — Not Recommended)
-
-:::danger Unsafe for production
-The plaintext file stores your secp256k1 private key unencrypted on disk. Since this key is also your on-chain wallet, any process running as your user can read it and access your funds. Use `ANTSEED_IDENTITY_HEX` with a secrets manager or the Desktop app's encrypted storage instead.
-:::
-
-Generated automatically on first run. The secp256k1 private key is stored as 64 hex characters in `~/.antseed/identity.key` with `0600` permissions.
-
-:::tip Key Backup
-Back up your identity key before migrating servers. Your PeerId and EVM wallet address are both derived from this key — losing it means a new identity on the network and loss of access to on-chain funds.
-:::
-
-## Selling AI Services
-
-To sell on the network, register on-chain, stake USDC, and start providing. The provider plugin handles the actual AI service — the protocol handles discovery, metering, and payments.
-
-:::warning Provider Compliance
-AntSeed is designed for providers who build differentiated services — such as TEE-secured inference, domain-specific skills, agent workflows, or managed product experiences. Simply reselling raw API access or subscription credentials is not the intended use and may violate your upstream provider's terms of service. Subscription-based plugins (`claude-code`, `claude-oauth`) are for local testing only.
-:::
-
-```bash title="provider setup"
-# Fund your wallet with ETH (gas) and USDC (staking) on Base Mainnet
-
-# Register identity on-chain
-$ antseed register
-✔ Peer identity registered
-
-# Stake USDC (minimum $10)
-$ antseed stake 10
-✔ Staked 10 USDC
-
-# Verify readiness
-$ antseed setup --role provider
-
-# Start providing
-$ antseed seed --provider anthropic
-Announcing on DHT: antseed:anthropic
-Metadata server listening on 0.0.0.0:6882
-Seeding capacity...
-```
-
-You can also use `--instance <id>` to use a configured plugin instance, or override pricing at runtime with `--input-usd-per-million` and `--output-usd-per-million`.
-
-## Buying AI Services
-
-```bash title="buyer setup"
-# Set your identity key
-$ export ANTSEED_IDENTITY_HEX=<your-secp256k1-private-key-hex>
-
-# Launch the payments portal
-$ antseed payments
-Payments portal running at http://127.0.0.1:3118
-
-# In the portal, connect a funded wallet (MetaMask, Coinbase Wallet, etc.)
-# and deposit USDC for your node. The contract's deposit(buyer, amount) pulls
-# USDC from the connected wallet — your identity key never holds funds.
-
-# Connect to the network
-$ antseed connect --router local
-Router "Local Router" loaded
-Connected to P2P network
-Proxy listening on http://localhost:8377
-```
-
-The buyer proxy listens on `localhost:8377` by default. See [Using the API](/using-the-api) for how to point your tools at the proxy.
-
-## Configuration File
-
-Configuration is stored at `~/.antseed/config.json`. Key sections:
+## Config Sections
 
 | Section | Description |
 |---|---|
-| `identity` | Display name and wallet address |
-| `providers` | Configured provider API keys and endpoints |
-| `seller` | Reserve floor, max concurrent buyers, pricing, enabled providers, model category tags |
-| `buyer` | Preferred providers, max pricing, min peer reputation, proxy port |
-| `payments` | Payment method, chain config (chainId, rpcUrl, contract addresses for deposits, sessions, staking) |
+| `identity` | Display name |
+| `seller` | Pricing, max concurrent buyers, service categories, agent directory |
+| `buyer` | Max pricing thresholds, proxy port |
+| `payments` | Chain ID (`base-mainnet` by default) |
 | `network` | Bootstrap nodes |
 | `plugins` | Installed plugin packages |
 
-## Metadata Fields
+## Pricing
 
-Use config to control metadata advertised to buyers:
+Pricing is in USD per million tokens. Set defaults and optional per-service overrides:
 
-```json title="config example"
-{
-  "identity": {
-    "displayName": "Acme Inference - us-east-1"
-  },
-  "seller": {
-    "serviceCategories": {
-      "anthropic": {
-        "claude-sonnet-4-5-20250929": ["coding", "privacy"]
-      }
-    }
-  }
-}
+```bash
+# Defaults
+antseed config seller set pricing.defaults.inputUsdPerMillion 3
+antseed config seller set pricing.defaults.cachedInputUsdPerMillion 0.3
+antseed config seller set pricing.defaults.outputUsdPerMillion 15
+
+# Per-service override
+antseed config seller set pricing.services '{"claude-sonnet-4-6":{"inputUsdPerMillion":3,"cachedInputUsdPerMillion":0.3,"outputUsdPerMillion":15}}'
 ```
 
-- `identity.displayName`: optional node label shown in browse/discovery results.
-- `seller.serviceCategories`: optional provider/model -> tag array map announced in peer metadata.
-- Recommended category tags: `privacy`, `legal`, `uncensored`, `coding`, `finance`, `tee` (custom tags are allowed).
+Or set at runtime without modifying the config file:
 
-```bash title="set metadata fields"
+```bash
+antseed seed --provider anthropic --input-usd-per-million 3 --output-usd-per-million 15
+```
+
+Buyers can set max pricing thresholds to avoid expensive providers:
+
+```bash
+antseed config buyer set maxPricing.defaults.inputUsdPerMillion 25
+antseed config buyer set maxPricing.defaults.outputUsdPerMillion 75
+```
+
+## Identity and Metadata
+
+```bash
+# Set display name (shown in browse/discovery)
 antseed config set identity.displayName "Acme Inference - us-east-1"
-antseed config seller set serviceCategories.anthropic.claude-sonnet-4-5-20250929 '["coding","privacy"]'
+
+# Set service category tags (announced in peer metadata)
+antseed config seller set serviceCategories.anthropic.claude-sonnet-4-6 '["coding","privacy"]'
+```
+
+Recommended category tags: `privacy`, `legal`, `uncensored`, `coding`, `finance`, `tee`. Custom tags are allowed.
+
+## Provider Authentication
+
+Provider plugins authenticate with their upstream AI service. Credentials are set via environment variables and never leave the machine:
+
+| Provider | Auth |
+|---|---|
+| `anthropic` | `ANTHROPIC_API_KEY` |
+| `openai` | `OPENAI_API_KEY` (optional `OPENAI_BASE_URL` for Together, OpenRouter, etc.) |
+| `local-llm` | No auth needed (Ollama/llama.cpp) |
+
+## Service Aliases
+
+When using the `openai` provider, announce buyer-facing service names while forwarding different upstream IDs:
+
+```bash
+export ANTSEED_ALLOWED_SERVICES="deepseek-v3.1,kimi-k2.5"
+export OPENAI_SERVICE_ALIAS_MAP_JSON='{"deepseek-v3.1":"deepseek-ai/DeepSeek-V3.1","kimi-k2.5":"moonshotai/Kimi-K2.5"}'
+antseed seed --provider openai
 ```
 
 ## Ant Agent
 
-Providers can wrap their service with an ant agent — a knowledge-augmented AI service that injects a persona, guardrails, and on-demand knowledge into buyer requests. The LLM decides which knowledge to load via the `antseed_load_knowledge` tool. Creators can also define custom tools in the manifest.
+Providers can wrap their service with an ant agent — a knowledge-augmented AI service that injects a persona, guardrails, and on-demand knowledge into buyer requests.
 
-```json title="config example"
+```json
 {
   "seller": {
     "agentDir": "./my-agent"
@@ -183,11 +91,11 @@ Providers can wrap their service with an ant agent — a knowledge-augmented AI 
 }
 ```
 
-The agent directory contains an `agent.json` manifest that defines the persona, guardrails, knowledge modules, and custom tools. See the [`@antseed/ant-agent` README](https://github.com/AntSeed/antseed/tree/main/packages/ant-agent) for the full manifest reference.
+The agent directory contains an `agent.json` manifest defining persona, guardrails, knowledge modules, and custom tools. The LLM decides which knowledge to load during the conversation. Buyers see only the final response.
 
 Per-service agents (different agents for different services):
 
-```json title="per-service config"
+```json
 {
   "seller": {
     "agentDir": {
@@ -199,38 +107,29 @@ Per-service agents (different agents for different services):
 }
 ```
 
-## Authentication
+See the [`@antseed/ant-agent` README](https://github.com/AntSeed/antseed/tree/main/packages/ant-agent) for the full manifest reference.
 
-Provider plugins authenticate with their upstream AI service. Credentials are stored locally and never leave the seller's machine. Authentication methods depend on the provider plugin:
+## Identity Storage
 
-| Provider | Auth Method |
+| Priority | Method | Best for |
+|---|---|---|
+| 1 | `ANTSEED_IDENTITY_HEX` env var | CLI and server deployments |
+| 2 | Desktop keychain (Electron `safeStorage`) | AntSeed Desktop app |
+| 3 | Custom `IdentityStore` | KMS/HSM integrations |
+| 4 | `~/.antseed/identity.key` (plaintext) | Not recommended for production |
+
+For production servers, pass the key from a secrets manager:
+
+```bash
+export ANTSEED_IDENTITY_HEX="$(vault kv get -field=key secret/antseed/identity)"
+```
+
+## Runtime Environment Variables
+
+| Variable | Description |
 |---|---|
-| `anthropic` | API key via ANTHROPIC_API_KEY env var |
-| `claude-code` | OAuth tokens from Claude Code keychain (automatic) — **testing only** |
-| `claude-oauth` | OAuth access/refresh token pair — **testing only** |
-| `openai` | API key via OPENAI_API_KEY env var (optional OPENAI_BASE_URL for OpenAI-compatible APIs) |
-| `local-llm` | No auth needed (local Ollama/llama.cpp) |
-
-## OpenAI-Compatible Model Aliases
-
-When using the `openai` provider plugin, you can announce buyer-facing service names while forwarding different upstream service IDs.
-
-Useful env vars:
-
-- `ANTSEED_ALLOWED_SERVICES`: announced service list (what buyers request)
-- `OPENAI_UPSTREAM_SERVICE_PREFIX`: prefix added before forwarding upstream
-- `OPENAI_SERVICE_ALIAS_MAP_JSON`: explicit announcedService -> upstreamService map
-
-Example: announce `kimi2.5`, forward to Together as `together/kimi2.5`:
-
-```bash
-export ANTSEED_ALLOWED_SERVICES="kimi2.5"
-export OPENAI_UPSTREAM_SERVICE_PREFIX="together/"
-```
-
-Example with explicit alias map:
-
-```bash
-export ANTSEED_ALLOWED_SERVICES="kimi2.5,deepseek-v3"
-export OPENAI_SERVICE_ALIAS_MAP_JSON='{"kimi2.5":"together/kimi2.5","deepseek-v3":"openrouter/deepseek/deepseek-chat"}'
-```
+| `ANTSEED_IDENTITY_HEX` | Identity private key (64 hex chars, optional 0x prefix) |
+| `ANTSEED_SETTLEMENT_IDLE_MS` | Idle time before settling a session (default: 600000 / 10 min) |
+| `ANTSEED_DEFAULT_DEPOSIT_USDC` | Default lock amount per session (default: 1) |
+| `ANTSEED_DEBUG` | Enable debug logging (set to 1) |
+| `ANTSEED_ALLOWED_SERVICES` | Comma-separated list of services to announce |

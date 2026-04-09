@@ -7,32 +7,35 @@ hide_title: true
 
 # Getting Started
 
-AntSeed is a communication protocol for peer-to-peer AI services. Anyone can provide AI services — from model inference to skilled agents and agentic workflows — and anyone can consume them, directly, with no company in the middle.
+AntSeed is a peer-to-peer network for AI services. Providers offer AI inference and agents, buyers consume them — directly, with no company in the middle. Payments settle in USDC on Base.
 
-The protocol serves three markets that build on each other:
+## How It Works
 
-**Commodity inference** — providers compete on price to serve the same models. When dozens of sellers offer the same model, margins compress toward zero and the buyer pays near-cost.
+**Providers** connect their AI API (Anthropic, OpenAI, Together AI, local models) to the network. They set pricing, register on-chain, and start serving requests. Earnings arrive in USDC automatically.
 
-**Skilled inference** — providers equip their models with Skills and compete on outcomes and reputation for specialized capabilities. The network becomes a directory of AI services searchable by capability.
+**Buyers** run a local proxy that discovers providers, routes requests, and handles payments. Point any AI tool — Claude Code, Codex, or anything that speaks the OpenAI/Anthropic API — at `localhost:8377` and it just works.
 
-**Agent-to-agent commerce** — autonomous agents discover, evaluate, and pay for AI services without human involvement. An agent queries the network for a specific capability, evaluates reputation, sends a request, and pays for the result.
+```
+Your Tool (Claude Code, Codex, curl)
+        ↓
+  localhost:8377 (buyer proxy)
+        ↓ encrypted P2P
+  Provider node
+        ↓
+  Upstream AI API
+```
 
-## Node Roles
+## Two Paths
 
-Every node operates as a `Seller` (provides AI services), a `Buyer` (consumes AI services), or both simultaneously.
+**I want to use AI services** → [Using the API](/using-the-api)
+- Install the CLI, deposit USDC, connect, point your tools at the proxy
 
-Sellers announce available Skills, models, pricing, and capacity. Buyers discover sellers, select peers based on price, latency, capacity and reputation, then send requests and verify metered usage.
+**I want to provide AI services** → [Become a Provider](/become-a-provider)
+- Install the CLI, register, stake, connect your API key, start earning
 
-## Skills
+## What Makes It Different
 
-Every seller on the network declares at least one Skill — a modular package of instructions and expertise that defines what they deliver. Skills are what buyers search for, what reputation accrues to, and what agents understand how to discover and evaluate.
-
-The protocol does not care what happens between request and response. A seller might be proxying through their own frontier model API access, running an open model on a GPU in their garage, or operating a multi-step agent with internet access and tool integrations. To the protocol, these are all the same: a request went in, a response came out, both confirmed, peer to peer, settlement happened.
-
-## Provider Compliance
-
-AntSeed is designed for providers who add value on top of AI APIs — not for raw resale of API keys or subscription credentials. Providers should build differentiated services: TEE-secured inference, domain-specific skills, agent workflows, fine-tuned models, or managed product experiences. Subscription-based provider plugins (e.g., `provider-claude-code`) are for local testing only. Providers are responsible for complying with their upstream API provider's terms of service.
-
-## Protocol Layers
-
-The protocol is organized into five layers: Discovery (DHT-based peer finding), Transport (WebRTC/TCP binary framing), Metering (token estimation and receipts), Payments (USDC deposit and session settlement), and Reputation (trust scoring).
+- **No middleman** — buyers connect directly to providers via encrypted WebRTC
+- **Real payments** — USDC on Base, per-request metering, automatic settlement
+- **Any model** — providers choose what to serve, buyers choose what to use
+- **Open market** — providers compete on price, quality, and reputation

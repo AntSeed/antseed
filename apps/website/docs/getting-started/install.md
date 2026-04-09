@@ -7,32 +7,50 @@ hide_title: true
 
 # Install
 
+## CLI
+
 AntSeed requires Node.js 20+ and works on macOS, Linux, and Windows (WSL).
 
-```bash title="install"
-$ npm install -g @antseed/cli
+```bash
+npm install -g @antseed/cli
 ```
 
-Verify the installation:
+Initialize your node — this installs provider and router plugins and creates `~/.antseed/config.json`:
 
-```bash title="verify"
-$ antseed --version
-0.1.77
+```bash
+antseed init
 ```
 
-## Related Packages
+Verify:
 
-| Package | Description |
-|---|---|
-| `@antseed/cli` | CLI tool for running a node |
-| `@antseed/node` | Protocol SDK (core library) |
-| `@antseed/provider-core` | Base provider utilities and HTTP relay |
-| `@antseed/router-core` | Peer scoring and routing utilities |
-| `@antseed/provider-anthropic` | Anthropic API key provider |
-| `@antseed/provider-claude-code` | Claude Code keychain provider |
-| `@antseed/provider-openai` | OpenAI-compatible provider (OpenAI, Together, OpenRouter) |
-| `@antseed/provider-openai-responses` | OpenAI Responses provider via Codex auth (testing only) |
-| `@antseed/provider-claude-oauth` | Claude OAuth provider |
-| `@antseed/provider-local-llm` | Local LLM provider (Ollama/llama.cpp) |
-| `@antseed/router-local` | Local router for CLI tools |
-| `@antseed/dashboard` | Web dashboard |
+```bash
+antseed --version
+```
+
+## Desktop App
+
+AntSeed Desktop is a standalone app for macOS that bundles the CLI, a chat interface, and encrypted identity storage via the OS keychain.
+
+Download from [GitHub Releases](https://github.com/AntSeed/antseed/releases).
+
+## Identity
+
+Your node identity is a secp256k1 private key. The corresponding EVM address is your PeerId on the network and your on-chain wallet. One key for everything — P2P, payments, wallet.
+
+Set it via environment variable (recommended):
+
+```bash
+export ANTSEED_IDENTITY_HEX=<64-char-hex-private-key>
+```
+
+If you don't set one, the CLI generates a key at `~/.antseed/identity.key` on first run. For production, use an env var with a secrets manager instead of a plaintext file.
+
+:::tip
+Back up your identity key. Losing it means a new identity on the network and loss of access to on-chain funds.
+:::
+
+## Next Steps
+
+- [Using the API](/using-the-api) — connect as a buyer and start making requests
+- [Become a Provider](/become-a-provider) — register, stake, and start earning
+- [Payments](/payments) — deposit USDC, understand pricing and settlement
