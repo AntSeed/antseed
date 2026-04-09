@@ -62,8 +62,7 @@ ERC-20 token (`AntSeed` / `ANTS`). No pre-mine, no initial supply.
 Buyer USDC deposit management with dynamic credit limits and seller payouts.
 
 **Buyer operations:**
-- `deposit(uint256 amount)` — USDC deposit, enforces `MIN_BUYER_DEPOSIT` and dynamic credit limit
-- `deposit(address buyer, uint256 amount)` — deposit USDC for a buyer (anyone can call, USDC pulled from msg.sender)
+- `deposit(address buyer, uint256 amount)` — deposit USDC for a buyer (anyone can call, USDC pulled from msg.sender; pass your own address to deposit for yourself)
 - `withdraw(address buyer, uint256 amount)` — immediate withdrawal (operator-only, sends USDC to buyer)
 - `getBuyerBalance(address)` → available, reserved, lastActivity
 - `getOperator(address)` / `getOperatorNonce(address)` — operator views
