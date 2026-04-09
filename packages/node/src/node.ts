@@ -299,9 +299,11 @@ export class AntseedNode extends EventEmitter {
       return;
     }
 
-    // Wait for in-flight NeedAuth handlers to finish so the seller has a valid
-    // SpendingAuth for settlement before we close the connection.
+    // Give in-transit NeedAuth messages time to arrive on the DataChannel,
+    // then wait for their handlers to finish. This ensures the seller has a
+    // valid SpendingAuth for settlement before we close the connection.
     if (this._buyerNegotiator) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 100));
       await this._buyerNegotiator.drainPendingNeedAuth();
     }
 
