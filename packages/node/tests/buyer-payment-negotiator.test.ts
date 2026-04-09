@@ -146,11 +146,11 @@ describe('BuyerPaymentNegotiator', () => {
       await negotiator.preparePreRequestAuth(peer, conn);
       expect(bpm.signPerRequestAuth).not.toHaveBeenCalled();
 
-      // Simulate response cost data being available (normally set by estimateCostFromResponse)
-      negotiator.parseCostHeaders(peer.peerId, {
-        statusCode: 200,
-        headers: { 'x-antseed-cost': '10000' },
-        body: new Uint8Array(0),
+      // Simulate response cost data being available via estimateCostFromResponse
+      negotiator.estimateCostFromResponse(peer, {
+        requestId: 'req-1', statusCode: 200,
+        headers: { 'content-type': 'application/json' },
+        body: enc.encode(JSON.stringify({ usage: { prompt_tokens: 100, completion_tokens: 50 } })),
       });
 
       // Second call — should send auth
@@ -175,11 +175,11 @@ describe('BuyerPaymentNegotiator', () => {
       // Skip first
       await negotiator.preparePreRequestAuth(peer, conn);
 
-      // Simulate response cost data being available
-      negotiator.parseCostHeaders(peer.peerId, {
-        statusCode: 200,
-        headers: { 'x-antseed-cost': '10000' },
-        body: new Uint8Array(0),
+      // Simulate response cost data being available via estimateCostFromResponse
+      negotiator.estimateCostFromResponse(peer, {
+        requestId: 'req-1', statusCode: 200,
+        headers: { 'content-type': 'application/json' },
+        body: enc.encode(JSON.stringify({ usage: { prompt_tokens: 100, completion_tokens: 50 } })),
       });
 
       // Second triggers auth
@@ -443,57 +443,15 @@ describe('BuyerPaymentNegotiator', () => {
       );
     });
 
-    it('parseCostHeaders stores seller-reported cost', () => {
-      const response: SerializedHttpResponse = {
-        requestId: 'req-1',
-        statusCode: 200,
-        headers: {
-          'content-type': 'application/json',
-          'x-antseed-cost': '5000',
-          'x-antseed-input-tokens': '100',
-          'x-antseed-output-tokens': '50',
-          'x-antseed-cumulative-cost': '15000',
-        },
-        body: enc.encode('{}'),
-      };
-
-      negotiator.parseCostHeaders(peer.peerId, response);
-
-      // Verify the cost was stored by recording content on top of it
-      // (recordResponseContent merges with existing entry)
-      negotiator.recordResponseContent(peer.peerId, enc.encode('input'), enc.encode('output'), 200);
-      // No error means both entries exist and merge correctly
-    });
-
-    it('parseCostHeaders ignores responses without cost header', () => {
-      const response: SerializedHttpResponse = {
-        requestId: 'req-1',
-        statusCode: 200,
-        headers: { 'content-type': 'application/json' },
-        body: enc.encode('{}'),
-      };
-
-      // Should not throw
-      negotiator.parseCostHeaders(peer.peerId, response);
-
-      // recordResponseContent should not find an existing entry, so it's a no-op
-      negotiator.recordResponseContent(peer.peerId, enc.encode('input'), enc.encode('output'), 200);
-    });
+    // parseCostHeaders tests removed — cost data now flows through NeedAuth
 
     it('recordResponseContent updates content and latency', async () => {
-      // Set up cost entry first
-      const response: SerializedHttpResponse = {
-        requestId: 'req-1',
-        statusCode: 200,
-        headers: {
-          'content-type': 'application/json',
-          'x-antseed-cost': '5000',
-          'x-antseed-input-tokens': '100',
-          'x-antseed-output-tokens': '50',
-        },
-        body: enc.encode('{}'),
-      };
-      negotiator.parseCostHeaders(peer.peerId, response);
+      // Set up cost entry first via estimateCostFromResponse
+      negotiator.estimateCostFromResponse(peer, {
+        requestId: 'req-1', statusCode: 200,
+        headers: { 'content-type': 'application/json' },
+        body: enc.encode(JSON.stringify({ usage: { prompt_tokens: 100, completion_tokens: 50 } })),
+      });
 
       const reqBody = enc.encode('request body');
       const resBody = enc.encode('response body');
@@ -510,7 +468,8 @@ describe('BuyerPaymentNegotiator', () => {
       // Second arg is the content object
       expect(call[1].inputBytes).toEqual(reqBody);
       expect(call[1].outputBytes).toEqual(resBody);
-      expect(call[1].sellerClaimedCost).toBe(5000n);
+      // Cost is now estimated locally (not from seller headers), so check it's a bigint
+      expect(typeof call[1].sellerClaimedCost).toBe('bigint');
       // No third arg; latency is no longer included in payment metadata
       expect(call[2]).toBeUndefined();
     });

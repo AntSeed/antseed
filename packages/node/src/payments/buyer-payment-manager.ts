@@ -24,12 +24,7 @@ import { peerIdToAddress } from '../types/peer.js';
 import { ChannelStore, type StoredChannel } from './channel-store.js';
 import { estimateCostFromBytes, computeCostUsdc, type ServicePricing } from './pricing.js';
 
-// ── Response cost header constants ───────────────────────────────
-const HEADER_COST = 'x-antseed-cost';
-const HEADER_INPUT_TOKENS = 'x-antseed-input-tokens';
-const HEADER_OUTPUT_TOKENS = 'x-antseed-output-tokens';
-
-/** Default tolerance: accept seller claims up to 1.4x buyer's bytes/4 estimate. */
+/** Default tolerance: accept seller claims up to 1.4x buyer's estimate. */
 const DEFAULT_COST_TOLERANCE = 1.4;
 /** Fraction of reserve ceiling at which to signal a top-up is needed. */
 /** Must match or exceed contract's TOP_UP_SETTLED_THRESHOLD_BPS (85%). */
@@ -86,6 +81,11 @@ export class BuyerPaymentManager {
   /** sellerPeerId -> buyer-verified cumulative cost from bytes/4 */
   private readonly _verifiedCost = new Map<string, bigint>();
 
+  /** requestId -> service/model the buyer requested (from its own request body).
+   *  Used in handleNeedAuth to validate cost with the correct pricing tier
+   *  without trusting the seller's claim of which service was used. */
+  private readonly _requestService = new Map<string, string>();
+
   /** sellerPeerId -> full pricing map (defaults + per-service overrides from peer metadata / 402) */
   private readonly _sessionPricing = new Map<string, { defaults: ServicePricing; services: Record<string, ServicePricing> }>();
 
@@ -122,7 +122,8 @@ export class BuyerPaymentManager {
     const activeChannels = this._channelStore.getActiveChannelsByBuyer('buyer', this._identity.wallet.address);
     for (const channel of activeChannels) {
       const peerId = channel.peerId;
-      this._cumulativeAmount.set(peerId, BigInt(channel.authMax));
+      const persistedCumulative = BigInt(channel.authMax);
+      this._cumulativeAmount.set(peerId, persistedCumulative);
       this._metadata.set(peerId, {
         cumulativeInputTokens: BigInt(channel.tokensDelivered),
         cumulativeOutputTokens: BigInt(channel.previousConsumption),
@@ -131,7 +132,12 @@ export class BuyerPaymentManager {
       // Hydrate verifiedCost to authMax so _maxSignable can grow beyond maxPerRequestUsdc.
       // Without this, maxSignable = 0 + maxPerRequestUsdc after restart, permanently capping
       // the cumulative and causing non-monotonic SpendingAuth rejections on the seller.
-      this._verifiedCost.set(peerId, BigInt(channel.authMax));
+      this._verifiedCost.set(peerId, persistedCumulative);
+      this._responseTokenTotals.set(peerId, {
+        input: Number(channel.tokensDelivered),
+        output: Number(channel.previousConsumption),
+        requests: channel.requestCount,
+      });
     }
   }
 
@@ -333,8 +339,11 @@ export class BuyerPaymentManager {
     };
     const reserveAuthSig = await signReserveAuth(this._signer, channelsDomain, reserveMsg);
 
-    // Initialize state for this session
-    this._cumulativeAmount.set(sellerPeerId, minBudgetPerRequest);
+    // Initialize state for this session.
+    // Start cumulative at 0 — the initial message is a ReserveAuth (not a SpendingAuth).
+    // The first real SpendingAuth will be sent by handleNeedAuth after the seller serves
+    // the first request and reports its cost.
+    this._cumulativeAmount.set(sellerPeerId, 0n);
     this._metadata.set(sellerPeerId, { ...ZERO_METADATA });
     this._verifiedCost.set(sellerPeerId, 0n);
     this._currentReserveCeiling.set(sellerPeerId, maxAmount);
@@ -349,7 +358,7 @@ export class BuyerPaymentManager {
       sellerEvmAddr: peerIdToAddress(sellerPeerId),
       buyerEvmAddr: this._identity.wallet.address,
       nonce: 0,
-      authMax: minBudgetPerRequest.toString(),
+      authMax: '0',
       deadline,
       previousSessionId: '0x' + '0'.repeat(64),
       previousConsumption: '0',
@@ -370,7 +379,7 @@ export class BuyerPaymentManager {
     // Send SpendingAuth via PaymentMux — reserve carries ReserveAuth sig
     paymentMux.sendSpendingAuth({
       channelId,
-      cumulativeAmount: minBudgetPerRequest.toString(),
+      cumulativeAmount: '0',
       metadataHash: ZERO_METADATA_HASH,
       metadata: encodeMetadata(ZERO_METADATA),
       spendingAuthSig: reserveAuthSig,
@@ -655,8 +664,10 @@ export class BuyerPaymentManager {
   // ── NeedAuth handler ───────────────────────────────────────────
 
   /**
-   * Handle seller-initiated NeedAuth messages when the seller's budget runs out mid-session.
-   * Caps the signed amount at verifiedCost + maxPerRequestUsdc (overdraft model).
+   * Handle seller-initiated NeedAuth messages sent after every served request.
+   * The seller includes the cost of the last request; the buyer validates it
+   * against its own token count and signs a new SpendingAuth for the required
+   * cumulative amount, capped at the reserve ceiling.
    */
   async handleNeedAuth(
     sellerPeerId: string,
@@ -669,6 +680,9 @@ export class BuyerPaymentManager {
       return;
     }
 
+    const buyerService = payload.requestId ? this._requestService.get(payload.requestId) : undefined;
+    if (payload.requestId) this._requestService.delete(payload.requestId);
+
     const requiredCumulativeAmount = BigInt(payload.requiredCumulativeAmount);
     const currentCumulative = this._cumulativeAmount.get(sellerPeerId) ?? 0n;
 
@@ -680,10 +694,50 @@ export class BuyerPaymentManager {
       return;
     }
 
-    // Cap at overdraft limit: verifiedCost + maxPerRequestUsdc
+    // Validate the seller's claimed cost if reported
+    if (payload.lastRequestCost) {
+      const sellerCost = BigInt(payload.lastRequestCost);
+      const sellerIn = BigInt(payload.inputTokens ?? '0');
+      const sellerOut = BigInt(payload.outputTokens ?? '0');
+      const sellerCached = BigInt(payload.cachedInputTokens ?? '0');
+
+      // Use the buyer's own knowledge of which service it requested, not the seller's claim.
+      // A malicious seller could set service to a more expensive model to inflate the ceiling.
+      const pricing = this.getSessionPricing(sellerPeerId, buyerService);
+      if (pricing && sellerCost > 0n) {
+        const freshIn = sellerCached > 0n
+          ? BigInt(Math.max(0, Number(sellerIn) - Number(sellerCached)))
+          : sellerIn;
+        const buyerEstimate = computeCostUsdc(Number(freshIn), Number(sellerOut), pricing, Number(sellerCached));
+        const maxAcceptable = BigInt(Math.ceil(Number(buyerEstimate) * this._costTolerance));
+        if (buyerEstimate > 0n && sellerCost > maxAcceptable) {
+          debugWarn(
+            `[BuyerPayment] NeedAuth: seller claimed cost ${sellerCost} exceeds ${this._costTolerance}x buyer estimate ${buyerEstimate} — rejecting`,
+          );
+          return;
+        }
+        debugLog(
+          `[BuyerPayment] NeedAuth: seller cost=${sellerCost} buyer estimate=${buyerEstimate} (in=${sellerIn} cached=${sellerCached} out=${sellerOut}) — validated`,
+        );
+      } else {
+        debugLog(
+          `[BuyerPayment] NeedAuth: seller cost=${sellerCost} (no local pricing, accepting)`,
+        );
+      }
+
+      // Accumulate verified cost from the seller's report
+      this._accumulateVerifiedCost(sellerPeerId, {
+        cost: sellerCost,
+        inputTokens: Number(sellerIn),
+        outputTokens: Number(sellerOut),
+      });
+    }
+
+    // Cap at overdraft limit: verifiedCost + maxPerRequestUsdc, then at reserve ceiling.
+    // This prevents a malicious seller from claiming a small cost but requesting the full reserve.
     let maxSignable = this._maxSignable(sellerPeerId);
-    const reserveCeiling = this._getCeiling(sellerPeerId);
-    if (requiredCumulativeAmount > maxSignable && maxSignable >= reserveCeiling) {
+    const ceiling = this._getCeiling(sellerPeerId);
+    if (requiredCumulativeAmount > maxSignable && maxSignable >= ceiling) {
       try {
         await this.topUpReserve(sellerPeerId, paymentMux);
       } catch (err) {
@@ -693,18 +747,28 @@ export class BuyerPaymentManager {
     }
     if (maxSignable <= currentCumulative) {
       debugWarn(
-        `[BuyerPayment] NeedAuth: maxSignable=${maxSignable} <= currentCumulative=${currentCumulative} — cannot authorize more (overdraft limit reached)`,
+        `[BuyerPayment] NeedAuth: maxSignable=${maxSignable} <= currentCumulative=${currentCumulative} — overdraft limit reached`,
       );
       return;
     }
 
-    // Sign up to the lesser of what the seller asks and what we allow
     const effectiveAmount = requiredCumulativeAmount < maxSignable ? requiredCumulativeAmount : maxSignable;
 
     debugLog(`[BuyerPayment] NeedAuth: channel=${session.sessionId.slice(0, 18)}... required=${requiredCumulativeAmount} effective=${effectiveAmount}`);
 
     // Update cumulative amount
     this._cumulativeAmount.set(sellerPeerId, effectiveAmount);
+
+    // Update cumulative metadata from reported tokens
+    if (payload.inputTokens || payload.outputTokens) {
+      const prev = this._metadata.get(sellerPeerId) ?? ZERO_METADATA;
+      const newMeta: SpendingAuthMetadata = {
+        cumulativeInputTokens: prev.cumulativeInputTokens + BigInt(payload.inputTokens ?? '0'),
+        cumulativeOutputTokens: prev.cumulativeOutputTokens + BigInt(payload.outputTokens ?? '0'),
+        cumulativeRequestCount: prev.cumulativeRequestCount + 1n,
+      };
+      this._metadata.set(sellerPeerId, newMeta);
+    }
 
     // Sign SpendingAuth with the effective amount and current metadata
     const currentMeta = this._metadata.get(sellerPeerId) ?? ZERO_METADATA;
@@ -843,7 +907,11 @@ export class BuyerPaymentManager {
     const session = this.getActiveSession(sellerPeerId);
     if (!session) return;
 
-    const prev = this._responseTokenTotals.get(sellerPeerId) ?? { input: 0, output: 0, requests: 0 };
+    const prev = this._responseTokenTotals.get(sellerPeerId) ?? {
+      input: Number(session.tokensDelivered),
+      output: Number(session.previousConsumption),
+      requests: session.requestCount,
+    };
     debugLog(
       `[BuyerPayment] recordTokens: thisReq in=${inputTokens} out=${outputTokens} | ` +
       `prevTotal in=${prev.input} out=${prev.output} reqs=${prev.requests}`,
@@ -862,6 +930,11 @@ export class BuyerPaymentManager {
       requestCount: totals.requests,
       updatedAt: Date.now(),
     });
+  }
+
+  /** Register which service the buyer requested for a given requestId. */
+  trackRequestService(requestId: string, service: string): void {
+    this._requestService.set(requestId, service);
   }
 
   /** Get the live response token totals for a seller, or null if none recorded this session. */
@@ -929,26 +1002,5 @@ export class BuyerPaymentManager {
     return { available: info.available, reserved: info.reserved };
   }
 
-  // ── Response cost parsing ──────────────────────────────────────
-
-  static parseResponseCost(
-    headers: Record<string, string>,
-  ): { cost: bigint; inputTokens: bigint; outputTokens: bigint } | null {
-    const costStr = headers[HEADER_COST];
-    if (costStr === undefined || costStr === '') return null;
-
-    try {
-      const cost = BigInt(costStr);
-
-      const inputStr = headers[HEADER_INPUT_TOKENS];
-      const inputTokens = inputStr !== undefined && inputStr !== '' ? BigInt(inputStr) : 0n;
-
-      const outputStr = headers[HEADER_OUTPUT_TOKENS];
-      const outputTokens = outputStr !== undefined && outputStr !== '' ? BigInt(outputStr) : 0n;
-
-      return { cost, inputTokens, outputTokens };
-    } catch {
-      return null;
-    }
-  }
+  // parseResponseCost removed — cost data now flows through NeedAuth on PaymentMux.
 }

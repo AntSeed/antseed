@@ -119,9 +119,12 @@ function adaptOpenAICompatibleErrorResponse(
     return response
   }
 
+  // Wrap into standard OpenAI error format { error: { type, message, ... } }.
+  // Exclude the flat 'error' string field to avoid polluting the nested error object.
+  const { error: _errorField, ...rest } = parsed
   const wrappedError = {
     error: {
-      ...parsed,
+      ...rest,
       type: 'payment_required',
       message: JSON.stringify(parsed),
     },

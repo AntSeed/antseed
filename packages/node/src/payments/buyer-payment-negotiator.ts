@@ -81,6 +81,8 @@ export class BuyerPaymentNegotiator {
   private readonly _lastResponseCost = new Map<string, LastResponseCost>();
   /** Buyer-side payment muxes keyed by seller peerId. */
   private readonly _muxes = new Map<PeerId, PaymentMux>();
+  /** In-flight NeedAuth handlers keyed by seller peerId. */
+  private readonly _pendingNeedAuth = new Map<string, Promise<void>>();
 
   constructor(
     identity: Identity,
@@ -115,7 +117,11 @@ export class BuyerPaymentNegotiator {
     });
 
     pmux.onNeedAuth((payload) => {
-      void this._bpm.handleNeedAuth(peerId, payload, pmux);
+      const p = this._bpm.handleNeedAuth(peerId, payload, pmux);
+      this._pendingNeedAuth.set(peerId, p);
+      p.finally(() => {
+        if (this._pendingNeedAuth.get(peerId) === p) this._pendingNeedAuth.delete(peerId);
+      });
     });
 
     pmux.onPaymentRequired((payload) => {
@@ -366,37 +372,7 @@ export class BuyerPaymentNegotiator {
     this._bpm.recordAndPersistTokens(peer.peerId, usage.inputTokens, usage.outputTokens);
   }
 
-  parseCostHeaders(peerId: string, response: SerializedHttpResponse): void {
-    const costHeader = response.headers['x-antseed-cost'];
-    if (!costHeader) return;
-
-    try {
-      const sellerIn = BigInt(response.headers['x-antseed-input-tokens'] ?? '0');
-      const sellerOut = BigInt(response.headers['x-antseed-output-tokens'] ?? '0');
-      const sellerCachedIn = BigInt(response.headers['x-antseed-cached-input-tokens'] ?? '0');
-      const sellerCost = BigInt(costHeader);
-      debugLog(
-        `[BuyerNegotiator] Seller cost headers: in=${sellerIn} cached=${sellerCachedIn} out=${sellerOut} ` +
-        `cost=${sellerCost} cumCost=${response.headers['x-antseed-cumulative-cost'] ?? '0'}`,
-      );
-      // Seller cost headers are authoritative — always use them when present.
-      // The seller knows its actual upstream cost including prompt caching discounts.
-      const existing = this._lastResponseCost.get(peerId);
-      this._lastResponseCost.set(peerId, {
-        costUsdc: sellerCost,
-        inputTokens: sellerIn,
-        outputTokens: sellerOut,
-        cachedInputTokens: sellerCachedIn,
-        cumulativeCost: BigInt(response.headers['x-antseed-cumulative-cost'] ?? '0'),
-        inputContent: existing?.inputContent ?? new Uint8Array(0),
-        outputContent: existing?.outputContent ?? response.body,
-        latencyMs: existing?.latencyMs ?? 0,
-        service: existing?.service,
-      });
-    } catch {
-      // Ignore malformed headers
-    }
-  }
+  // parseCostHeaders removed — cost data now flows through NeedAuth on PaymentMux.
 
   recordResponseContent(peerId: string, reqBody: Uint8Array, resBody: Uint8Array, latencyMs: number): void {
     debugLog(
@@ -496,6 +472,14 @@ export class BuyerPaymentNegotiator {
     this._lockedPeers.delete(peerId);
     this._firstRequestSent.delete(peerId);
     this._lastResponseCost.delete(peerId);
+  }
+
+  /** Wait for in-flight NeedAuth handlers to complete (settlement safety). */
+  async drainPendingNeedAuth(): Promise<void> {
+    const pending = [...this._pendingNeedAuth.values()];
+    if (pending.length > 0) {
+      await Promise.allSettled(pending);
+    }
   }
 
   cleanup(): void {

@@ -1,7 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { SellerRequestHandler } from '../src/seller-request-handler.js';
 import type { SerializedHttpRequest } from '../src/types/http.js';
 import type { Provider } from '../src/interfaces/seller-provider.js';
+import { encodeHttpRequest } from '../src/proxy/request-codec.js';
+import { MessageType } from '../src/types/protocol.js';
 
 function makeProvider(inputUsdPerMillion: number, outputUsdPerMillion: number, opts: {
   name: string;
@@ -79,5 +81,78 @@ describe('SellerRequestHandler payment pricing selection', () => {
       inputUsdPerMillion: 0.05,
       outputUsdPerMillion: 0.1,
     });
+  });
+
+  it('does not add a paid auth headroom for zero-cost responses', async () => {
+    const provider = makeProvider(0, 0, {
+      name: 'free-tier',
+      services: ['local-test'],
+    });
+    provider.handleRequest = vi.fn(async (req) => ({
+      requestId: req.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: new TextEncoder().encode(JSON.stringify({
+        usage: {
+          prompt_tokens: 0,
+          completion_tokens: 0,
+          prompt_tokens_details: { cached_tokens: 0 },
+        },
+      })),
+    }));
+
+    const sendNeedAuth = vi.fn();
+    const handler = new SellerRequestHandler({
+      providers: [provider],
+      sellerPaymentManager: {
+        hasSession: () => true,
+        getChannelByPeer: () => ({ sessionId: 'session-1', authMax: '1000000' }),
+        recordSpend: vi.fn(),
+        getCumulativeSpend: () => 0n,
+        getAcceptedCumulative: () => 0n,
+        getReserveMax: () => 1_000_000n,
+        getPaymentRequirements: () => ({ minBudgetPerRequest: '0', suggestedAmount: '0' }),
+      } as any,
+      sessionTracker: null,
+      channelsClient: {} as any,
+      announcer: null,
+      emit: () => false,
+    });
+
+    const sentFrames: Uint8Array[] = [];
+    const conn = {
+      send(frame: Uint8Array) {
+        sentFrames.push(frame);
+      },
+    } as any;
+    const paymentMux = {
+      sendNeedAuth,
+      sendPaymentRequired: vi.fn(),
+    } as any;
+
+    const { mux } = handler.handleConnection(conn, 'b'.repeat(40), paymentMux);
+
+    const request: SerializedHttpRequest = {
+      requestId: 'req-zero-cost',
+      method: 'POST',
+      path: '/v1/chat/completions',
+      headers: { 'content-type': 'application/json' },
+      body: new TextEncoder().encode(JSON.stringify({ model: 'local-test' })),
+    };
+
+    await mux.handleFrame({
+      type: MessageType.HttpRequest,
+      messageId: 1,
+      payload: encodeHttpRequest(request),
+    });
+
+    expect(sentFrames.length).toBeGreaterThan(0);
+    expect(sendNeedAuth).toHaveBeenCalledOnce();
+    expect(sendNeedAuth).toHaveBeenCalledWith(expect.objectContaining({
+      requestId: request.requestId,
+      lastRequestCost: '0',
+      currentAcceptedCumulative: '0',
+      requiredCumulativeAmount: '0',
+    }));
   });
 });

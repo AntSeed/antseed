@@ -1,6 +1,4 @@
 import {
-  ANTSEED_STREAM_COST_TRAILER_LENGTH_BYTES,
-  ANTSEED_STREAM_COST_TRAILER_MAGIC,
   ANTSEED_STREAMING_RESPONSE_HEADER,
   ANTSEED_SPENDING_AUTH_HEADER,
   type SerializedHttpRequest,
@@ -93,8 +91,10 @@ export class BuyerRequestHandler {
       await negotiator.applyExternalSpendingAuth(peer, conn, externalSpendingAuth);
     }
 
-    if (negotiator && !externalSpendingAuth) {
-      await negotiator.preparePreRequestAuth(peer, conn);
+    // Track which service the buyer requested so NeedAuth validation uses buyer's own pricing
+    const requestedService = extractServiceFromBody(req.body);
+    if (negotiator && requestedService) {
+      negotiator.bpm.trackRequestService(req.requestId, requestedService);
     }
 
     let startTime = Date.now();
@@ -237,18 +237,6 @@ export class BuyerRequestHandler {
             return;
           }
 
-          // On done chunk, check for cost trailer before forwarding — the trailer
-          // is metadata for the buyer, not SSE data for downstream clients.
-          let costHeaders: Record<string, string> | null = null;
-          if (chunk.done && chunk.data.length > 0) {
-            const parsed = parseCostTrailer(chunk.data);
-            if (parsed) {
-              costHeaders = parsed.headers;
-              // Replace chunk data with just the payload (trailer stripped)
-              chunk = { ...chunk, data: parsed.payload };
-            }
-          }
-
           callbacks?.onResponseChunk?.(chunk);
 
           if (chunk.data.length > 0) {
@@ -274,13 +262,8 @@ export class BuyerRequestHandler {
             return;
           }
 
-          const finalHeaders = costHeaders
-            ? { ...streamStartResponse.headers, ...costHeaders }
-            : streamStartResponse.headers;
-
           finish({
             ...streamStartResponse,
-            headers: finalHeaders,
             body: concatChunks(streamChunks),
           });
         },
@@ -293,25 +276,27 @@ export class BuyerRequestHandler {
       const result = await negotiator.handle402(response, peer, conn, req);
       if (result.action === 'return') return result.response;
       startTime = Date.now();
-      return executeRequest();
+      const retriedResponse = await executeRequest();
+      negotiator.estimateCostFromResponse(peer, retriedResponse, requestedService);
+      return retriedResponse;
     }
 
     if (negotiator) {
-      const service = extractServiceFromBody(req.body);
-      negotiator.estimateCostFromResponse(peer, response, service);
-      negotiator.parseCostHeaders(peer.peerId, response);
-      negotiator.recordResponseContent(peer.peerId, req.body, response.body, Date.now() - startTime);
-      // Send SpendingAuth immediately after response so the seller always has
-      // a valid signature for close(), even if the buyer disconnects before the next request.
-      try {
-        await negotiator.sendPostResponseAuth(peer, conn);
-      } catch (err) {
-        debugWarn(`[BuyerRequest] sendPostResponseAuth failed, response still returned: ${err instanceof Error ? err.message : err}`);
-      }
+      negotiator.estimateCostFromResponse(peer, response, requestedService);
     }
 
     return response;
   }
+}
+
+/** Extract the service/model name from a JSON request body, or undefined if not found. */
+function extractServiceFromBody(body: Uint8Array): string | undefined {
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>;
+    const service = parsed.service ?? parsed.model;
+    if (typeof service === 'string' && service.length > 0) return service;
+  } catch { /* not JSON or no model field */ }
+  return undefined;
 }
 
 function stripStreamingHeader(response: SerializedHttpResponse): SerializedHttpResponse {
@@ -334,61 +319,4 @@ function concatChunks(chunks: Uint8Array[]): Uint8Array {
     offset += chunk.length;
   }
   return output;
-}
-
-const COST_TRAILER_KEY = 'x-antseed-cost';
-const STREAM_COST_TRAILER_MAGIC_BYTES = new TextEncoder().encode(ANTSEED_STREAM_COST_TRAILER_MAGIC);
-
-/**
- * Parse a framed cost trailer from the done chunk's data.
- * The seller appends trailer JSON plus a fixed magic marker and a 4-byte
- * big-endian trailer length. This makes parsing unambiguous for arbitrary
- * binary payloads, including payloads containing NUL bytes or JSON.
- *
- * Returns { headers, payload } where payload is the original data (without trailer),
- * or null if no cost trailer is found.
- */
-function parseCostTrailer(data: Uint8Array): { headers: Record<string, string>; payload: Uint8Array } | null {
-  const minFramedLength = STREAM_COST_TRAILER_MAGIC_BYTES.length + ANTSEED_STREAM_COST_TRAILER_LENGTH_BYTES;
-  if (data.length <= minFramedLength) return null;
-
-  const lengthOffset = data.length - ANTSEED_STREAM_COST_TRAILER_LENGTH_BYTES;
-  const view = new DataView(data.buffer, data.byteOffset + lengthOffset, ANTSEED_STREAM_COST_TRAILER_LENGTH_BYTES);
-  const trailerLength = view.getUint32(0, false);
-  if (trailerLength === 0 || trailerLength > 512) return null;
-
-  const magicOffset = lengthOffset - STREAM_COST_TRAILER_MAGIC_BYTES.length;
-  if (magicOffset < 0) return null;
-  for (let i = 0; i < STREAM_COST_TRAILER_MAGIC_BYTES.length; i += 1) {
-    if (data[magicOffset + i] !== STREAM_COST_TRAILER_MAGIC_BYTES[i]) return null;
-  }
-
-  const trailerStart = magicOffset - trailerLength;
-  if (trailerStart < 0) return null;
-
-  const payload = data.slice(0, trailerStart);
-  const trailerBytes = data.slice(trailerStart, magicOffset);
-
-  try {
-    const text = new TextDecoder().decode(trailerBytes);
-    const parsed = JSON.parse(text) as Record<string, unknown>;
-    if (parsed && typeof parsed === 'object' && COST_TRAILER_KEY in parsed) {
-      const headers: Record<string, string> = {};
-      for (const [k, v] of Object.entries(parsed)) {
-        if (typeof v === 'string') headers[k] = v;
-      }
-      return { headers, payload };
-    }
-  } catch { /* not a cost trailer */ }
-  return null;
-}
-
-/** Extract the service/model name from a JSON request body, or undefined if not found. */
-function extractServiceFromBody(body: Uint8Array): string | undefined {
-  try {
-    const parsed = JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>;
-    const service = parsed.service ?? parsed.model;
-    if (typeof service === 'string' && service.length > 0) return service;
-  } catch { /* not JSON or no model field */ }
-  return undefined;
 }

@@ -9,10 +9,6 @@ import type { ChannelsClient } from './payments/evm/channels-client.js';
 import type { SellerPaymentManager } from './payments/seller-payment-manager.js';
 import { ProxyMux } from './proxy/proxy-mux.js';
 import type { PeerConnection } from './p2p/connection-manager.js';
-import {
-  ANTSEED_STREAM_COST_TRAILER_LENGTH_BYTES,
-  ANTSEED_STREAM_COST_TRAILER_MAGIC,
-} from './types/http.js';
 import type {
   SerializedHttpRequest,
   SerializedHttpResponse,
@@ -32,8 +28,6 @@ export interface SellerRequestHandlerDeps {
 
 /** Debounce interval for metadata refresh after load changes. */
 const METADATA_REFRESH_DEBOUNCE_MS = 200;
-const STREAM_COST_TRAILER_MAGIC_BYTES = new TextEncoder().encode(ANTSEED_STREAM_COST_TRAILER_MAGIC);
-
 /**
  * Handles all seller-side request processing: provider matching, execution,
  * cost tracking, payment auth checks, and load management.
@@ -206,16 +200,13 @@ export class SellerRequestHandler {
           responseUsage = parseResponseUsage(responseBody);
           debugLog(`[SellerHandler] Raw provider usage: in=${responseUsage.inputTokens} fresh=${responseUsage.freshInputTokens} cached=${responseUsage.cachedInputTokens} out=${responseUsage.outputTokens}`);
           if (!streamedResponseStarted) {
-            const responseToSend = this._injectCostHeaders(response, provider, request, buyerPeerId, responseUsage);
-            mux.sendProxyResponse(responseToSend);
+            mux.sendProxyResponse(response);
           } else if (heldDoneChunkData !== null) {
-            // Streaming: append a framed trailer to the done chunk so the buyer gets
-            // real token counts without guessing where payload bytes end.
-            const costTrailer = this._buildCostTrailer(responseUsage, provider, request, buyerPeerId);
-            const originalData: Uint8Array = heldDoneChunkData;
+            // Streaming: send the held done chunk as-is (no trailer).
+            // Cost data is sent via NeedAuth on the PaymentMux.
             mux.sendProxyChunk({
               requestId: request.requestId,
-              data: appendCostTrailer(originalData, costTrailer),
+              data: heldDoneChunkData,
               done: true,
             });
           }
@@ -263,7 +254,8 @@ export class SellerRequestHandler {
           });
         }
 
-        // Record spend for cumulative voucher model
+        // Record spend and send NeedAuth with cost data after every request.
+        // The buyer validates the cost independently and responds with SpendingAuth.
         if (spm?.hasSession(buyerPeerId)) {
           const usage = responseUsage;
           const costUsdc = computeCostUsdc(usage.freshInputTokens, usage.outputTokens, requestPricing, usage.cachedInputTokens);
@@ -273,24 +265,21 @@ export class SellerRequestHandler {
             const cumulativeSpend = spm.getCumulativeSpend(session.sessionId);
             debugLog(`[SellerHandler] Cost recorded: buyer=${buyerPeerId.slice(0, 12)}... cost=${costUsdc} cumulative=${cumulativeSpend} (in=${usage.inputTokens} cached=${usage.cachedInputTokens} out=${usage.outputTokens})`);
 
-            // Check if remaining budget is running low; proactively request more auth.
-            // Compare against both accepted cumulative AND reserve max (on-chain deposit)
-            // — the buyer may have authorized more than the deposit covers.
             const accepted = spm.getAcceptedCumulative(session.sessionId);
-            const reserveMax = spm.getReserveMax(session.sessionId);
-            const effectiveCeiling = reserveMax > 0n && reserveMax < accepted ? reserveMax : accepted;
-            const remainingBudget = effectiveCeiling - cumulativeSpend;
-            const estimatedNextRequestCost = costUsdc > 0n ? costUsdc : 1n;
-            if (remainingBudget < estimatedNextRequestCost) {
-              const requiredAmount = cumulativeSpend + estimatedNextRequestCost;
-              debugLog(`[SellerHandler] Budget low for ${buyerPeerId.slice(0, 12)}... remaining=${remainingBudget} ceiling=${effectiveCeiling} estimated=${estimatedNextRequestCost} — sending NeedAuth (required=${requiredAmount})`);
-              paymentMux.sendNeedAuth({
-                channelId: session.sessionId,
-                requiredCumulativeAmount: requiredAmount.toString(),
-                currentAcceptedCumulative: accepted.toString(),
-                deposit: session.authMax ?? '0',
-              });
-            }
+            const requiredAmount = cumulativeSpend + costUsdc;
+            debugLog(`[SellerHandler] Sending NeedAuth: cost=${costUsdc} cumulative=${cumulativeSpend} required=${requiredAmount}`);
+            paymentMux.sendNeedAuth({
+              channelId: session.sessionId,
+              requiredCumulativeAmount: requiredAmount.toString(),
+              currentAcceptedCumulative: accepted.toString(),
+              deposit: session.authMax ?? '0',
+              requestId: request.requestId,
+              lastRequestCost: costUsdc.toString(),
+              inputTokens: String(usage.inputTokens),
+              outputTokens: String(usage.outputTokens),
+              cachedInputTokens: String(usage.cachedInputTokens),
+              service: this._extractRequestedService(request) ?? undefined,
+            });
           }
         }
       } finally {
@@ -448,79 +437,6 @@ export class SellerRequestHandler {
     return provider.handleRequest(request);
   }
 
-  /**
-   * Build a cost trailer for the streaming done-chunk.
-   * The buyer can parse this JSON from the done chunk data to get seller-reported token counts.
-   */
-  private _buildCostTrailer(
-    usage: import('./utils/response-usage.js').ResponseUsage,
-    provider: Provider,
-    request: SerializedHttpRequest,
-    buyerPeerId: string,
-  ): Uint8Array {
-    const spm = this._deps.sellerPaymentManager;
-    if (!spm || !spm.hasSession(buyerPeerId)) return new Uint8Array(0);
-
-    const pricing = this.resolveProviderPricing(provider, request);
-    const costUsdc = computeCostUsdc(usage.freshInputTokens, usage.outputTokens, pricing, usage.cachedInputTokens);
-    const session = spm.getChannelByPeer(buyerPeerId);
-    const prevCumulative = session ? spm.getCumulativeSpend(session.sessionId) : 0n;
-
-    const trailer = JSON.stringify({
-      'x-antseed-input-tokens': String(usage.inputTokens),
-      'x-antseed-output-tokens': String(usage.outputTokens),
-      'x-antseed-cached-input-tokens': String(usage.cachedInputTokens),
-      'x-antseed-cost': costUsdc.toString(),
-      'x-antseed-cumulative-cost': (prevCumulative + costUsdc).toString(),
-    });
-
-    debugLog(
-      `[SellerHandler] Cost trailer for streaming: in=${usage.inputTokens} cached=${usage.cachedInputTokens} out=${usage.outputTokens} cost=${costUsdc}`,
-    );
-
-    return new TextEncoder().encode(trailer);
-  }
-
-  /**
-   * Inject cost headers into a non-streamed response before sending to buyer.
-   */
-  private _injectCostHeaders(
-    response: SerializedHttpResponse,
-    provider: Provider,
-    request: SerializedHttpRequest,
-    buyerPeerId: string,
-    usage?: import('./utils/response-usage.js').ResponseUsage,
-  ): SerializedHttpResponse {
-    const spm = this._deps.sellerPaymentManager;
-    if (!spm || !spm.hasSession(buyerPeerId)) return response;
-
-    const resolvedUsage = usage ?? parseResponseUsage(response.body);
-    const pricing = this.resolveProviderPricing(provider, request);
-    const costUsdc = computeCostUsdc(resolvedUsage.freshInputTokens, resolvedUsage.outputTokens, pricing, resolvedUsage.cachedInputTokens);
-    const session = spm.getChannelByPeer(buyerPeerId);
-    const prevCumulative = session ? spm.getCumulativeSpend(session.sessionId) : 0n;
-    const cumulativeCost = prevCumulative + costUsdc;
-
-    debugLog(
-      `[SellerHandler] Cost headers: in=${resolvedUsage.inputTokens} out=${resolvedUsage.outputTokens} ` +
-      `cost=${costUsdc} cumCost=${cumulativeCost}`,
-    );
-
-    return {
-      requestId: response.requestId,
-      statusCode: response.statusCode,
-      body: response.body ?? new Uint8Array(0),
-      headers: {
-        ...response.headers,
-        'x-antseed-input-tokens': String(resolvedUsage.inputTokens),
-        'x-antseed-output-tokens': String(resolvedUsage.outputTokens),
-        'x-antseed-cached-input-tokens': String(resolvedUsage.cachedInputTokens),
-        'x-antseed-cost': costUsdc.toString(),
-        'x-antseed-cumulative-cost': cumulativeCost.toString(),
-      },
-    };
-  }
-
   private _scheduleMetadataRefresh(): void {
     if (!this._deps.announcer || this._metadataRefreshTimer) {
       return;
@@ -539,25 +455,4 @@ export class SellerRequestHandler {
       (timer as { unref: () => void }).unref();
     }
   }
-}
-
-function appendCostTrailer(payload: Uint8Array, trailer: Uint8Array): Uint8Array {
-  if (trailer.length === 0) return payload;
-
-  const lengthBytes = new Uint8Array(ANTSEED_STREAM_COST_TRAILER_LENGTH_BYTES);
-  const view = new DataView(lengthBytes.buffer, lengthBytes.byteOffset, lengthBytes.byteLength);
-  view.setUint32(0, trailer.length, false);
-
-  const framed = new Uint8Array(
-    payload.length + trailer.length + STREAM_COST_TRAILER_MAGIC_BYTES.length + ANTSEED_STREAM_COST_TRAILER_LENGTH_BYTES,
-  );
-  let offset = 0;
-  framed.set(payload, offset);
-  offset += payload.length;
-  framed.set(trailer, offset);
-  offset += trailer.length;
-  framed.set(STREAM_COST_TRAILER_MAGIC_BYTES, offset);
-  offset += STREAM_COST_TRAILER_MAGIC_BYTES.length;
-  framed.set(lengthBytes, offset);
-  return framed;
 }
