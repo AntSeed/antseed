@@ -723,7 +723,7 @@ describe('BuyerPaymentManager', () => {
   it('extendCurrentSpendingAuth no-ops when top-up does not increase signable budget', async () => {
     const sellerPeerId = fakePeerId('seller-extend-stalled');
     const stalledConfig = makeConfig(tempDir, {
-      maxPerRequestUsdc: 0n,
+      maxPerRequestUsdc: 10_000n,
       maxReserveAmountUsdc: 10_000n,
     });
 
