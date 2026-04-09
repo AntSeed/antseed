@@ -14,7 +14,7 @@ import {AntseedRegistry} from "../AntseedRegistry.sol";
  *
  * Usage:
  *   cd packages/contracts
- *   source .env.mainnet
+ *   source .env
  *   forge script script/DeployBaseMainnet.s.sol \
  *     --rpc-url $BASE_MAINNET_RPC_URL \
  *     --broadcast \

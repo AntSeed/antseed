@@ -25,9 +25,13 @@ const CHAIN_CONFIGS: Record<ChainId, ChainConfig> = {
     chainId: 'base-mainnet',
     evmChainId: 8453,
     rpcUrl: 'https://mainnet.base.org',
-    depositsContractAddress: '0x0000000000000000000000000000000000000000', // TODO: deploy and fill
-    channelsContractAddress: '0x0000000000000000000000000000000000000000', // TODO: deploy and fill
-    usdcContractAddress: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', // USDC on Base
+    usdcContractAddress: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+    depositsContractAddress: '0x0F7a3a8f4Da01637d1202bb5443fcF7F88F99fD2',
+    channelsContractAddress: '0xBA66d3b4fbCf472F6F11D6F9F96aaCE96516F09d',
+    stakingContractAddress: '0x3652E6B22919bd322A25723B94BB207602E5c8e6',
+    emissionsContractAddress: '0x36877fBa8Fa333aa46a1c57b66D132E4995C86b5',
+    identityRegistryAddress: '0x8004A169FB4a3325136EB29fA0ceB6D2e539a432',
+    channelsDeployBlock: 44469557,
   },
   'base-sepolia': {
     chainId: 'base-sepolia',
@@ -55,7 +59,7 @@ const CHAIN_CONFIGS: Record<ChainId, ChainConfig> = {
   },
 };
 
-const DEFAULT_CHAIN_ID: ChainId = 'base-sepolia';
+const DEFAULT_CHAIN_ID: ChainId = 'base-mainnet';
 
 /**
  * Get the chain config for a given chain ID.
