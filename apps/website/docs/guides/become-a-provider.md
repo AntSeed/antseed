@@ -1,6 +1,6 @@
 ---
 sidebar_position: 1
-slug: /become-a-provider
+slug: /guides/become-a-provider
 title: Become a Provider
 hide_title: true
 ---
@@ -142,4 +142,4 @@ antseed seed --provider openai
 
 - [Ant Agent](/provider-api#ant-agent) — wrap your service with a knowledge-augmented agent
 - [Configuration](/config) — full config reference
-- [CLI Commands](/cli/commands) — all available commands
+- [CLI Commands](/commands) — all available commands

@@ -448,7 +448,7 @@ export default function Home(): JSX.Element {
             <li>Works with any AI agent or coding tool</li>
             <li>Choose providers directly or delegate to a Routing Service</li>
           </ul>
-          <Link to="/docs/intro" className={styles.agentsCta}>Read the Docs →</Link>
+          <Link to="/docs/" className={styles.agentsCta}>Read the Docs →</Link>
         </div>
         <div className={styles.agentsVideo}>
           <video
@@ -596,7 +596,7 @@ export default function Home(): JSX.Element {
         <h2 className={styles.creatorTitle}>Build Once. Earn Forever.</h2>
         <p className={styles.creatorSub}>Set your price. Serve the network. Get paid on-chain. Your earnings go directly to your wallet, no platform in the middle, no kill switch on your income. Every delivery builds a track record that belongs to you, not a platform that can revoke it.</p>
         <BrowserOnly fallback={<div style={{height:'740px'}}/>}>{() => <EarnAnimation />}</BrowserOnly>
-        <Link to="/docs/intro" className={styles.creatorCta}>Start Building →</Link>
+        <Link to="/docs/" className={styles.creatorCta}>Start Building →</Link>
       </section>
 
       {/* Works with your tools */}

@@ -51,6 +51,6 @@ Back up your identity key. Losing it means a new identity on the network and los
 
 ## Next Steps
 
-- [Using the API](/using-the-api) — connect as a buyer and start making requests
-- [Become a Provider](/become-a-provider) — register, stake, and start earning
-- [Payments](/guide/payments) — deposit USDC, understand pricing and settlement
+- [Using the API](/guides/using-the-api) — connect as a buyer and start making requests
+- [Become a Provider](/guides/become-a-provider) — register, stake, and start earning
+- [Payments](/guides/payments) — deposit USDC, understand pricing and settlement

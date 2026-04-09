@@ -1,6 +1,6 @@
 ---
 sidebar_position: 1
-slug: /intro
+slug: /
 title: Introduction
 hide_title: true
 ---
@@ -27,10 +27,10 @@ Your Tool (Claude Code, Codex, curl)
 
 ## Two Paths
 
-**I want to use AI services** → [Using the API](/using-the-api)
+**I want to use AI services** → [Using the API](/guides/using-the-api)
 - Install the CLI, deposit USDC, connect, point your tools at the proxy
 
-**I want to provide AI services** → [Become a Provider](/become-a-provider)
+**I want to provide AI services** → [Become a Provider](/guides/become-a-provider)
 - Install the CLI, register, stake, connect your API key, start earning
 
 ## What Makes It Different
