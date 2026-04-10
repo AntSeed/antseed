@@ -24,7 +24,10 @@ const CHAIN_CONFIGS: Record<ChainId, ChainConfig> = {
   'base-mainnet': {
     chainId: 'base-mainnet',
     evmChainId: 8453,
-    rpcUrl: 'https://mainnet.base.org',
+    // mainnet.base.org is heavily rate-limited (429 under any concurrent load).
+    // llamarpc is a free, no-key public endpoint with much higher limits.
+    // Users can override via payments.crypto.rpcUrl in config.json.
+    rpcUrl: 'https://base.llamarpc.com',
     usdcContractAddress: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
     depositsContractAddress: '0x0F7a3a8f4Da01637d1202bb5443fcF7F88F99fD2',
     channelsContractAddress: '0xBA66d3b4fbCf472F6F11D6F9F96aaCE96516F09d',
