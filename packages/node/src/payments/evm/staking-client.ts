@@ -3,7 +3,7 @@ import type { AbstractSigner } from 'ethers';
 import { BaseEvmClient } from './base-evm-client.js';
 
 export interface StakingClientConfig {
-  rpcUrl: string;
+  rpcUrl: string | string[];
   contractAddress: string;
   usdcAddress: string;
 }

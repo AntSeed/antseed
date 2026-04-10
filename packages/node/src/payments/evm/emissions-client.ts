@@ -2,7 +2,7 @@ import { Contract, type AbstractSigner } from 'ethers';
 import { BaseEvmClient } from './base-evm-client.js';
 
 export interface EmissionsClientConfig {
-  rpcUrl: string;
+  rpcUrl: string | string[];
   contractAddress: string;
 }
 

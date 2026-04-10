@@ -98,8 +98,11 @@ export interface NodePaymentsConfig {
   sellerWalletAddress?: string;
   /** Settlement backend configuration (crypto). */
   paymentConfig?: PaymentConfig | null;
-  /** Base JSON-RPC URL (e.g. http://127.0.0.1:8545 for anvil) */
-  rpcUrl?: string;
+  /**
+   * Base JSON-RPC URL (e.g. http://127.0.0.1:8545 for anvil).
+   * An array enables ethers FallbackProvider rotation across endpoints.
+   */
+  rpcUrl?: string | string[];
   /** Deployed AntseedDeposits contract address */
   depositsAddress?: string;
   /** Deployed AntseedChannels contract address */

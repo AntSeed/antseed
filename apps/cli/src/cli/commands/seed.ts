@@ -398,7 +398,12 @@ export function registerSeedCommand(program: Command): void {
 
       const settlementEnv = parseOptionalBoolEnv(process.env['ANTSEED_ENABLE_SETTLEMENT'])
       let paymentsEnabled = settlementEnv ?? paymentConfig !== null
-      const cryptoRpcUrl = paymentConfig?.crypto?.rpcUrl
+      const cryptoRpcUrlRaw = paymentConfig?.crypto?.rpcUrl
+      // For the connectivity probe: pick a single URL. If the config contains
+      // a fallback array, the first entry is the preferred primary.
+      const cryptoRpcUrl: string | undefined = Array.isArray(cryptoRpcUrlRaw)
+        ? cryptoRpcUrlRaw[0]
+        : cryptoRpcUrlRaw
 
       if (paymentsEnabled && cryptoRpcUrl && settlementEnv !== true) {
         const rpcUp = await isRpcReachable(cryptoRpcUrl)

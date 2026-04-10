@@ -85,8 +85,13 @@ export async function createServer(options: PaymentsServerOptions) {
     usdcContractAddress: userOverrides.usdcContractAddress as string | undefined,
   });
 
+  // PaymentCryptoConfig only carries a single URL for the server-side
+  // session check endpoint. The primary (first) URL in chain-config's
+  // fallback list is the most reliable; readers that need rotation go
+  // through @antseed/node's DepositsClient which builds a FallbackProvider.
+  const rpcUrl = Array.isArray(chainConfig.rpcUrl) ? chainConfig.rpcUrl[0]! : chainConfig.rpcUrl;
   const cryptoConfig: PaymentCryptoConfig = {
-    rpcUrl: chainConfig.rpcUrl,
+    rpcUrl,
     depositsContractAddress: chainConfig.depositsContractAddress,
     channelsContractAddress: chainConfig.channelsContractAddress,
     usdcContractAddress: chainConfig.usdcContractAddress,

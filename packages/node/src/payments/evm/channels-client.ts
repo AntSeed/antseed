@@ -2,7 +2,7 @@ import { type AbstractSigner, Contract, ethers } from 'ethers';
 import { BaseEvmClient } from './base-evm-client.js';
 
 export interface ChannelsClientConfig {
-  rpcUrl: string;
+  rpcUrl: string | string[];
   contractAddress: string;
 }
 

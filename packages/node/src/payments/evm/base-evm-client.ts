@@ -1,4 +1,11 @@
-import { Contract, JsonRpcProvider, type AbstractSigner, type InterfaceAbi } from 'ethers';
+import {
+  Contract,
+  FallbackProvider,
+  JsonRpcProvider,
+  type AbstractProvider,
+  type AbstractSigner,
+  type InterfaceAbi,
+} from 'ethers';
 
 export const ERC20_ABI = [
   'function approve(address spender, uint256 amount) external returns (bool)',
@@ -6,18 +13,47 @@ export const ERC20_ABI = [
   'function allowance(address owner, address spender) external view returns (uint256)',
 ] as const;
 
+/**
+ * Build a provider from one or more RPC URLs. With a single URL this is a
+ * plain `JsonRpcProvider`. With multiple URLs it's a `FallbackProvider` that
+ * rotates on failure and re-ranks healthy endpoints — this is what keeps
+ * read-heavy paths (balance polling, peer metadata) alive when individual
+ * public RPCs rate-limit concurrent requests.
+ */
+export function buildEvmProvider(rpcUrl: string | string[]): AbstractProvider {
+  const urls = Array.isArray(rpcUrl) ? rpcUrl : [rpcUrl];
+  if (urls.length === 0) {
+    throw new Error('BaseEvmClient: at least one RPC URL is required');
+  }
+  if (urls.length === 1) {
+    return new JsonRpcProvider(urls[0]!);
+  }
+  const configs = urls.map((url, i) => ({
+    provider: new JsonRpcProvider(url),
+    // Earlier entries are preferred; FallbackProvider uses priority order,
+    // only falling over on timeout/error.
+    priority: i + 1,
+    // Modest per-provider timeout so a slow first endpoint doesn't block
+    // the whole read.
+    stallTimeout: 2000,
+    // 1-of-N quorum: any successful response wins.
+    weight: 1,
+  }));
+  return new FallbackProvider(configs, undefined, { quorum: 1 });
+}
+
 export abstract class BaseEvmClient {
-  protected readonly _provider: JsonRpcProvider;
+  protected readonly _provider: AbstractProvider;
   protected readonly _contractAddress: string;
   protected readonly _nonceCursor = new Map<string, number>();
   private readonly _nonceLocks = new Map<string, Promise<void>>();
 
-  constructor(rpcUrl: string, contractAddress: string) {
-    this._provider = new JsonRpcProvider(rpcUrl);
+  constructor(rpcUrl: string | string[], contractAddress: string) {
+    this._provider = buildEvmProvider(rpcUrl);
     this._contractAddress = contractAddress;
   }
 
-  get provider(): JsonRpcProvider { return this._provider; }
+  get provider(): AbstractProvider { return this._provider; }
   get contractAddress(): string { return this._contractAddress; }
 
   protected _ensureConnected(signer: AbstractSigner): AbstractSigner {

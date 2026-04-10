@@ -3,7 +3,7 @@ import type { AbstractSigner } from 'ethers';
 import { BaseEvmClient, ERC20_ABI } from './base-evm-client.js';
 
 export interface DepositsClientConfig {
-  rpcUrl: string;
+  rpcUrl: string | string[];
   contractAddress: string;
   usdcAddress: string;
 }

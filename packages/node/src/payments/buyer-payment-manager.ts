@@ -31,7 +31,7 @@ const DEFAULT_COST_TOLERANCE = 1.4;
 const DEFAULT_TOPUP_THRESHOLD = 0.85;
 
 export interface BuyerPaymentConfig {
-  rpcUrl: string;
+  rpcUrl: string | string[];
   depositsContractAddress: string;
   channelsContractAddress: string;
   usdcAddress: string;
