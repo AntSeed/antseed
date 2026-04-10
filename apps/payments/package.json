@@ -30,7 +30,7 @@
     "ethers": "^6.13.0",
     "fastify": "^5.7.4",
     "viem": "^2.47.6",
-    "wagmi": "^3.5.0"
+    "wagmi": "^2.14.0"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
