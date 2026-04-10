@@ -7,8 +7,14 @@ import { homedir } from 'node:os'
 import { getGlobalOptions } from './types.js'
 import { loadConfig } from '../../config/loader.js'
 import type { CLIProviderConfig } from '../../config/types.js'
-import { AntseedNode, type Provider, getInstance, resolveChainConfig } from '@antseed/node'
+import { AntseedNode, type Provider, getInstance, resolveChainConfig, loadOrCreateIdentity } from '@antseed/node'
 import type { PaymentConfig } from '@antseed/node/payments'
+import { checkSellerReadiness } from '@antseed/node/payments'
+import {
+  createIdentityClient,
+  createStakingClient,
+} from '../payment-utils.js'
+import type { AntseedConfig } from '../../config/types.js'
 import { parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
 import { setupShutdownHandler } from '../shutdown.js'
 import { loadProviderPlugin, buildPluginConfig, getPackageVersions } from '../../plugins/loader.js'
@@ -34,6 +40,99 @@ function parseOptionalBoolEnv(value: string | undefined): boolean | null {
   if (['1', 'true', 'yes', 'on'].includes(normalized)) return true
   if (['0', 'false', 'no', 'off'].includes(normalized)) return false
   return null
+}
+
+/**
+ * Gate `antseed seed` on required prerequisites:
+ *   1. At least one service is configured for the selected provider.
+ *   2. (When payments are enabled) seller is registered on-chain and staked.
+ * Runtime pricing overrides that would be silently ignored (because the
+ * providers map is empty) are also flagged as a hard error here.
+ *
+ * On failure: print a clear list of what's missing with the exact command(s)
+ * to fix each one, then throw. Callers should catch and `process.exit(1)`.
+ */
+export async function assertSellerPrerequisites(input: {
+  dataDir: string
+  config: AntseedConfig
+  effectiveSeller: SellerCLIConfig
+  providerName: string
+  paymentsEnabled: boolean
+  runtimePricingOverride: boolean
+  skipChainChecks: boolean
+}): Promise<void> {
+  const {
+    dataDir,
+    config,
+    effectiveSeller,
+    providerName,
+    paymentsEnabled,
+    runtimePricingOverride,
+    skipChainChecks,
+  } = input
+
+  const failures: Array<{ title: string; detail: string; command?: string }> = []
+
+  // 1. Provider has at least one service configured.
+  const providerCfg = effectiveSeller.providers[providerName]
+  const serviceCount = providerCfg ? Object.keys(providerCfg.services).length : 0
+  if (serviceCount === 0) {
+    failures.push({
+      title: `No services configured for provider "${providerName}"`,
+      detail: 'A seller must announce at least one service. Add one with:',
+      command: `antseed config seller add-service ${providerName} <serviceId> --input <usd> --output <usd>`,
+    })
+  }
+
+  // 2. Runtime pricing override was supplied but would silently no-op because
+  // no providers are configured. This is the Greptile P2 flag from PR #275.
+  if (runtimePricingOverride && Object.keys(effectiveSeller.providers).length === 0) {
+    failures.push({
+      title: 'Pricing override has nothing to apply to',
+      detail: `--input-usd-per-million / --output-usd-per-million (or ANTSEED_SELLER_*_USD_PER_MILLION env) were supplied, but no providers are configured in seller.providers. The override would silently no-op.`,
+      command: `antseed config seller add-service ${providerName} <serviceId> --input <usd> --output <usd>`,
+    })
+  }
+
+  // 3. On-chain readiness — only when payments are actually on.
+  if (paymentsEnabled && config.payments.crypto && !skipChainChecks) {
+    try {
+      const identity = await loadOrCreateIdentity(dataDir)
+      const identityClient = createIdentityClient(config)
+      const stakingClient = createStakingClient(config)
+      const checks = await checkSellerReadiness(identity, identityClient, stakingClient)
+      for (const check of checks) {
+        if (!check.passed) {
+          failures.push({
+            title: check.name,
+            detail: check.message,
+            command: check.command,
+          })
+        }
+      }
+    } catch (err) {
+      // If we can't even reach the chain, surface the error rather than
+      // silently skipping — that's what broke testnet-together earlier today.
+      failures.push({
+        title: 'On-chain readiness check failed',
+        detail: `Could not query the configured chain (${(err as Error).message}). Set payments.crypto.rpcUrl or pass --skip-prereq-check to bypass.`,
+      })
+    }
+  }
+
+  if (failures.length === 0) return
+
+  console.error(chalk.red('\nCannot start seeding — prerequisites not met:\n'))
+  for (const f of failures) {
+    console.error(`  ${chalk.red('✗')} ${chalk.bold(f.title)}`)
+    console.error(`    ${chalk.dim(f.detail)}`)
+    if (f.command) {
+      console.error(`    ${chalk.cyan(f.command)}`)
+    }
+    console.error('')
+  }
+  console.error(chalk.dim('Run `antseed setup --role provider` for a guided walkthrough, or pass --skip-prereq-check to bypass all checks (not recommended).'))
+  throw new Error('seller prerequisites not met')
 }
 
 async function isRpcReachable(rpcUrl: string, timeoutMs = 1500): Promise<boolean> {
@@ -121,15 +220,15 @@ export function buildSellerPluginRuntimeEnv(
   }
 
   // Per-service pricing: { serviceId -> TokenPricingUsdPerMillion }
+  // Note: categories are NOT emitted as an env var. No plugin reads
+  // ANTSEED_SERVICE_CATEGORIES_JSON — the CLI writes them directly onto
+  // `provider.serviceCategories` in seed.ts below. Keeping categories out of
+  // the plugin env avoids dead noise in process.env.
   const servicePricing: Record<string, unknown> = {}
-  const serviceCategories: Record<string, string[]> = {}
   const serviceAliasMap: Record<string, string> = {}
   for (const [serviceId, serviceCfg] of Object.entries(providerCfg.services)) {
     if (serviceCfg.pricing) {
       servicePricing[serviceId] = serviceCfg.pricing
-    }
-    if (serviceCfg.categories && serviceCfg.categories.length > 0) {
-      serviceCategories[serviceId] = [...serviceCfg.categories]
     }
     if (serviceCfg.upstreamModel && serviceCfg.upstreamModel !== serviceId) {
       serviceAliasMap[serviceId] = serviceCfg.upstreamModel
@@ -137,9 +236,6 @@ export function buildSellerPluginRuntimeEnv(
   }
   if (Object.keys(servicePricing).length > 0) {
     runtimeEnv['ANTSEED_SERVICE_PRICING_JSON'] = JSON.stringify(servicePricing)
-  }
-  if (Object.keys(serviceCategories).length > 0) {
-    runtimeEnv['ANTSEED_SERVICE_CATEGORIES_JSON'] = JSON.stringify(serviceCategories)
   }
   if (Object.keys(serviceAliasMap).length > 0) {
     runtimeEnv['ANTSEED_SERVICE_ALIAS_MAP_JSON'] = JSON.stringify(serviceAliasMap)
@@ -188,6 +284,7 @@ export function registerSeedCommand(program: Command): void {
     .option('--output-usd-per-million <number>', 'runtime-only output pricing override in USD per 1M tokens', parseFloat)
     .option('--dht-port <number>', 'UDP port for DHT (default: 6881)', parseInt)
     .option('--signaling-port <number>', 'TCP port for P2P signaling (default: 6882)', parseInt)
+    .option('--skip-prereq-check', 'skip pre-flight checks (services configured, on-chain registration + stake). Use only for local testing.')
     .action(async (options) => {
       const globalOpts = getGlobalOptions(program)
       const config = await loadConfig(globalOpts.config)
@@ -313,6 +410,23 @@ export function registerSeedCommand(program: Command): void {
       }
 
       const providerName = options.provider as string | undefined ?? provider.name ?? 'unknown'
+
+      // Pre-flight: refuse to start if the user hasn't added any services,
+      // hasn't registered on-chain, or hasn't staked. A clear error is much
+      // better than a seller peer that's online but can't take requests.
+      try {
+        await assertSellerPrerequisites({
+          dataDir: globalOpts.dataDir,
+          config,
+          effectiveSeller: effectiveSellerConfig,
+          providerName,
+          paymentsEnabled,
+          runtimePricingOverride: forcePricingOverride,
+          skipChainChecks: Boolean(options.skipPrereqCheck),
+        })
+      } catch {
+        process.exit(1)
+      }
 
       // Write service categories directly from config onto the plugin's
       // Provider object — plugins don't parse this env key themselves.

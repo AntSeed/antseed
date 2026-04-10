@@ -278,9 +278,11 @@ export function setConfigValue(config: Record<string, unknown>, key: string, val
     }
   }
 
-  // Auto-parse numeric scalars
+  // Auto-parse numeric scalars. Non-numeric strings use `trimmed` to match
+  // loader normalization (e.g. normalizeSellerProvider strips whitespace), so
+  // on-disk state matches what `loadConfig` would produce.
   const numVal = Number(trimmed);
-  current[lastKey] = Number.isNaN(numVal) ? value : numVal;
+  current[lastKey] = Number.isNaN(numVal) ? trimmed : numVal;
 }
 
 /**

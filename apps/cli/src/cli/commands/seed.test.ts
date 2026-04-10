@@ -3,6 +3,7 @@ import test from 'node:test';
 import { createDefaultConfig } from '../../config/defaults.js';
 import { resolveEffectiveSellerConfig } from '../../config/effective.js';
 import {
+  assertSellerPrerequisites,
   buildSellerRuntimeOverridesFromFlags,
   buildSellerPluginRuntimeEnv,
   mergeSellerRuntimeEnv,
@@ -87,9 +88,10 @@ test('buildSellerPluginRuntimeEnv translates unified config into flat ANTSEED_* 
   assert.equal(services['claude-sonnet-4-5-20250929']?.outputUsdPerMillion, 42);
   assert.equal(services['claude-opus-4-5'], undefined);
 
-  const categories = JSON.parse(runtimeEnv['ANTSEED_SERVICE_CATEGORIES_JSON'] ?? '{}') as Record<string, string[]>;
-  assert.deepEqual(categories['claude-sonnet-4-5-20250929'], ['coding', 'chat']);
-  assert.deepEqual(categories['claude-opus-4-5'], ['reasoning']);
+  // Categories are intentionally NOT emitted as an env var — plugins don't
+  // read them from env. The CLI writes them directly onto
+  // `provider.serviceCategories` inside the seed action.
+  assert.equal(runtimeEnv['ANTSEED_SERVICE_CATEGORIES_JSON'], undefined);
 
   const aliases = JSON.parse(runtimeEnv['ANTSEED_SERVICE_ALIAS_MAP_JSON'] ?? '{}') as Record<string, string>;
   assert.equal(aliases['claude-opus-4-5'], 'anthropic/claude-opus-4-5-20251117');
@@ -119,6 +121,65 @@ test('buildSellerPluginRuntimeEnv sets OPENAI_BASE_URL from provider baseUrl', (
   };
   const runtimeEnv = buildSellerPluginRuntimeEnv(config.seller, 'openai');
   assert.equal(runtimeEnv['OPENAI_BASE_URL'], 'https://api.together.ai');
+});
+
+test('assertSellerPrerequisites fails when no services are configured', async () => {
+  const config = createDefaultConfig();
+  const seller = config.seller;
+  await assert.rejects(
+    async () =>
+      assertSellerPrerequisites({
+        dataDir: '/tmp/no-identity-here',
+        config,
+        effectiveSeller: seller,
+        providerName: 'anthropic',
+        paymentsEnabled: false,
+        runtimePricingOverride: false,
+        skipChainChecks: true,
+      }),
+    /seller prerequisites not met/,
+  );
+});
+
+test('assertSellerPrerequisites fails when pricing override has no providers to apply to', async () => {
+  const config = createDefaultConfig();
+  const seller = config.seller;
+  await assert.rejects(
+    async () =>
+      assertSellerPrerequisites({
+        dataDir: '/tmp/no-identity-here',
+        config,
+        effectiveSeller: seller,
+        providerName: 'anthropic',
+        paymentsEnabled: false,
+        runtimePricingOverride: true,
+        skipChainChecks: true,
+      }),
+    /seller prerequisites not met/,
+  );
+});
+
+test('assertSellerPrerequisites passes when services are configured and chain checks are skipped', async () => {
+  const config = createDefaultConfig();
+  config.seller.providers = {
+    anthropic: {
+      defaults: { inputUsdPerMillion: 3, outputUsdPerMillion: 15 },
+      services: {
+        'claude-sonnet-4-5-20250929': {
+          pricing: { inputUsdPerMillion: 3, outputUsdPerMillion: 15 },
+        },
+      },
+    },
+  };
+  await assertSellerPrerequisites({
+    dataDir: '/tmp/no-identity-here',
+    config,
+    effectiveSeller: config.seller,
+    providerName: 'anthropic',
+    paymentsEnabled: false,
+    runtimePricingOverride: false,
+    skipChainChecks: true,
+  });
 });
 
 test('seed merge keeps explicit pricing when runtime env also contains pricing and force override is off', () => {
