@@ -648,18 +648,7 @@ export class BuyerProxy {
     }
 
     if (path === '/_antseed/channels' && method === 'GET') {
-      const channels = this._node.getActiveBuyerChannels().map((c) => ({
-        channelId: c.sessionId,
-        peerId: c.peerId,
-        seller: c.sellerEvmAddr,
-        buyer: c.buyerEvmAddr,
-        authMax: c.authMax,
-        deadline: c.deadline,
-        reservedAt: c.reservedAt,
-        status: c.status,
-        requestCount: c.requestCount,
-        tokensDelivered: c.tokensDelivered,
-      }))
+      const channels = this._node.getActiveBuyerChannels()
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ ok: true, channels }))
       return

@@ -113,7 +113,8 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
         channels: Array<{
           channelId: string;
           seller: string;
-          authMax: string;
+          reserveMax: string;
+          cumulativeSigned: string;
           deadline: number;
           status: string;
         }>;
@@ -121,8 +122,8 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
       const channels = (body.channels ?? []).map((c) => ({
         channelId: c.channelId,
         seller: c.seller,
-        deposit: formatUsdc6(BigInt(c.authMax)),
-        settled: formatUsdc6(0n),
+        deposit: formatUsdc6(BigInt(c.reserveMax)),
+        settled: formatUsdc6(BigInt(c.cumulativeSigned)),
         deadline: c.deadline,
         closeRequestedAt: 0,
         status: 1, // buyer proxy already filters to active
