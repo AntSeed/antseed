@@ -99,27 +99,24 @@ Pricing is configured in USD per 1M tokens with role-specific defaults and optio
   },
   "seller": {
     "publicAddress": "peer.example.com:6882",
-    "pricing": {
-      "defaults": {
-        "inputUsdPerMillion": 10,
-        "cachedInputUsdPerMillion": 5,
-        "outputUsdPerMillion": 10
-      },
-      "providers": {
-        "anthropic": {
-          "services": {
-            "claude-sonnet-4-5-20250929": {
+    "providers": {
+      "anthropic": {
+        "defaults": {
+          "inputUsdPerMillion": 10,
+          "outputUsdPerMillion": 10,
+          "cachedInputUsdPerMillion": 5
+        },
+        "services": {
+          "claude-sonnet-4-5-20250929": {
+            "upstreamModel": "claude-sonnet-4-5-20250929",
+            "categories": ["coding", "chat"],
+            "pricing": {
               "inputUsdPerMillion": 12,
-              "cachedInputUsdPerMillion": 6,
-              "outputUsdPerMillion": 18
+              "outputUsdPerMillion": 18,
+              "cachedInputUsdPerMillion": 6
             }
           }
         }
-      }
-    },
-    "serviceCategories": {
-      "anthropic": {
-        "claude-sonnet-4-5-20250929": ["coding", "privacy"]
       }
     }
   },
@@ -135,7 +132,9 @@ Pricing is configured in USD per 1M tokens with role-specific defaults and optio
 }
 ```
 
-Service categories are normalized to lowercase tags. Recommended tags include: `privacy`, `legal`, `uncensored`, `coding`, `finance`, `tee` (custom tags are also allowed).
+Service categories are normalized to lowercase tags. Recommended normie-friendly tags include: `chat`, `coding`, `math`, `study`, `creative`, `writing`, `tasks`, `fast`, `free`, `translate` (custom tags are also allowed).
+
+The set of keys under `seller.providers.<name>.services` determines which services this peer announces on the network — there's no separate allow-list.
 
 ### Ant Agent
 
@@ -159,16 +158,20 @@ Role-first config examples:
 # Identity / metadata display name
 antseed config set identity.displayName "Acme Inference - us-east-1"
 
-# Seller defaults
-antseed config seller set pricing.defaults.inputUsdPerMillion 12
-antseed config seller set pricing.defaults.cachedInputUsdPerMillion 6
-antseed config seller set pricing.defaults.outputUsdPerMillion 36
+# Add a service the all-in-one way (preferred)
+antseed config seller add-service anthropic claude-sonnet-4-5-20250929 \
+  --upstream "claude-sonnet-4-5-20250929" \
+  --input 12 --output 18 --cached 6 \
+  --categories coding,chat
 
-# Seller per-service override for a provider
-antseed config seller set pricing.providers.anthropic.services '{"claude-sonnet-4-5-20250929":{"inputUsdPerMillion":14,"cachedInputUsdPerMillion":7,"outputUsdPerMillion":42}}'
+# Remove a service
+antseed config seller remove-service anthropic claude-sonnet-4-5-20250929
 
-# Seller per-service category tags announced in metadata
-antseed config seller set serviceCategories.anthropic.claude-sonnet-4-5-20250929 '["coding","legal"]'
+# Fine-grained edits to a service already in the config (auto-creates
+# intermediate objects; --dynamic paths under seller.providers.* are allowed)
+antseed config seller set providers.anthropic.defaults.inputUsdPerMillion 12
+antseed config seller set providers.anthropic.services.claude-sonnet-4-5-20250929.pricing.outputUsdPerMillion 20
+antseed config seller set providers.anthropic.services.claude-sonnet-4-5-20250929.categories '["coding","legal"]'
 
 # Seller public address override for load-balanced deployments
 antseed config seller set publicAddress "peer.example.com:6882"
