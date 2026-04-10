@@ -647,6 +647,13 @@ export class BuyerProxy {
       return
     }
 
+    if (path === '/_antseed/channels' && method === 'GET') {
+      const channels = this._node.getActiveBuyerChannels()
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ ok: true, channels }))
+      return
+    }
+
     const meteringMatch = path.match(/^\/_antseed\/metering\/(.+)$/)
     if (meteringMatch && method === 'GET') {
       const sellerPeerId = decodeURIComponent(meteringMatch[1]!)

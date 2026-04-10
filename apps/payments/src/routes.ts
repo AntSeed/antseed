@@ -1,11 +1,12 @@
 import type { FastifyInstance } from 'fastify';
 import type { CryptoContext, PaymentCryptoConfig } from './crypto-context.js';
-import { DepositsClient, ChannelsClient, formatUsdc, parseUsdc, signSetOperator, makeDepositsDomain, type ChainConfig } from '@antseed/node';
+import { DepositsClient, formatUsdc, parseUsdc, signSetOperator, makeDepositsDomain, type ChainConfig } from '@antseed/node';
 
 interface RouteContext {
   cryptoCtx: CryptoContext | null;
   cryptoConfig: PaymentCryptoConfig;
   chainConfig: ChainConfig;
+  proxyPort: number;
 }
 
 // Use shared utilities from @antseed/node
@@ -26,17 +27,6 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
   function getClient(): DepositsClient | null {
     if (!depositsClient) depositsClient = createClient(ctx.cryptoConfig);
     return depositsClient;
-  }
-
-  let channelsClient: ChannelsClient | null = null;
-  function getChannelsClient(): ChannelsClient | null {
-    if (!channelsClient && ctx.cryptoConfig.channelsContractAddress) {
-      channelsClient = new ChannelsClient({
-        rpcUrl: ctx.cryptoConfig.rpcUrl,
-        contractAddress: ctx.cryptoConfig.channelsContractAddress,
-      });
-    }
-    return channelsClient;
   }
 
   fastify.get('/api/balance', async (_request, reply) => {
@@ -102,64 +92,45 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
     }
   });
 
-  fastify.get('/api/channels', async (_request, reply) => {
+  fastify.get('/api/channels', async (_request, _reply) => {
     if (!ctx.cryptoCtx) {
       return { channels: [] };
     }
 
+    // Fetch active channels from the buyer proxy's local ChannelStore via
+    // its control-plane endpoint. The buyer runtime is the source of truth
+    // for channel state — avoids scanning on-chain event logs (which fails
+    // on public RPCs that cap eth_getLogs block range).
     try {
-      const client = getChannelsClient();
-      if (!client) return { channels: [] };
-
-      const buyerAddress = ctx.cryptoCtx.evmAddress;
-      // Pad buyer address to 32 bytes for topic filter (indexed address in events)
-      const buyerTopic = '0x' + buyerAddress.slice(2).toLowerCase().padStart(64, '0');
-
-      // Reserved event signature: Reserved(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint128 maxAmount)
-      const { ethers } = await import('ethers');
-      const iface = new ethers.Interface([
-        'event Reserved(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint128 maxAmount)',
-      ]);
-      const eventTopic = iface.getEvent('Reserved')!.topicHash;
-
-      const logs = await client.provider.getLogs({
-        address: ctx.cryptoConfig.channelsContractAddress,
-        topics: [eventTopic, null, buyerTopic],
-        fromBlock: ctx.chainConfig.channelsDeployBlock ?? 0,
-        toBlock: 'latest',
-      });
-
-      // Collect unique channelIds from events
-      const channelIds = new Set<string>();
-      for (const log of logs) {
-        // channelId is topic1
-        if (log.topics[1]) channelIds.add(log.topics[1]);
+      const url = `http://127.0.0.1:${ctx.proxyPort}/_antseed/channels`;
+      const resp = await fetch(url);
+      if (!resp.ok) {
+        fastify.log.warn(`[/api/channels] buyer proxy returned ${resp.status}`);
+        return { channels: [] };
       }
-
-      // Fetch channel details for each channelId
-      const channels = [];
-      for (const channelId of channelIds) {
-        try {
-          const session = await client.getSession(channelId);
-          // Only include Active channels (status === 1)
-          if (session.status === 1) {
-            channels.push({
-              channelId,
-              seller: session.seller,
-              deposit: formatUsdc6(session.deposit),
-              settled: formatUsdc6(session.settled),
-              deadline: Number(session.deadline),
-              closeRequestedAt: Number(session.closeRequestedAt),
-              status: session.status,
-            });
-          }
-        } catch {
-          // Skip channels that fail to fetch
-        }
-      }
-
+      const body = await resp.json() as {
+        ok: boolean;
+        channels: Array<{
+          channelId: string;
+          seller: string;
+          reserveMax: string;
+          cumulativeSigned: string;
+          deadline: number;
+          status: string;
+        }>;
+      };
+      const channels = (body.channels ?? []).map((c) => ({
+        channelId: c.channelId,
+        seller: c.seller,
+        deposit: formatUsdc6(BigInt(c.reserveMax)),
+        settled: formatUsdc6(BigInt(c.cumulativeSigned)),
+        deadline: c.deadline,
+        closeRequestedAt: 0,
+        status: 1, // buyer proxy already filters to active
+      }));
       return { channels };
     } catch (err) {
+      fastify.log.warn(`[/api/channels] buyer proxy unreachable: ${err instanceof Error ? err.message : String(err)}`);
       return { channels: [] };
     }
   });

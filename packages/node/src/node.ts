@@ -536,6 +536,55 @@ export class AntseedNode extends EventEmitter {
     };
   }
 
+  /**
+   * Return active buyer-side channels for the current identity's EVM address.
+   * Combines the persistent ChannelStore (session metadata + cumulative signed
+   * amount) with the in-memory reserve ceiling tracked by BuyerPaymentManager.
+   *
+   * Note on field semantics (buyer side, base-6 USDC strings):
+   *   - reserveMax: current reserve ceiling — what the buyer authorized the
+   *     seller to lock via ReserveAuth. Lives only in memory on the payment
+   *     manager; falls back to stored authMax if unavailable.
+   *   - cumulativeSigned (stored as authMax): rolling total of SpendingAuth
+   *     amounts signed so far. Upper bound of what the seller can settle.
+   */
+  getActiveBuyerChannels(): Array<{
+    channelId: string;
+    peerId: string;
+    seller: string;
+    buyer: string;
+    reserveMax: string;
+    cumulativeSigned: string;
+    deadline: number;
+    reservedAt: number;
+    status: string;
+    requestCount: number;
+    tokensDelivered: string;
+  }> {
+    const buyerAddress = this._identity?.wallet.address ?? null;
+    if (!buyerAddress || !this._channelStore) return [];
+    const stored = this._channelStore.getActiveChannelsByBuyer('buyer', buyerAddress);
+    return stored.map((c) => {
+      const liveReserve = this._buyerPaymentManager?.getReserveCeiling(c.peerId);
+      const reserveMax = (liveReserve != null && liveReserve > 0n)
+        ? liveReserve.toString()
+        : c.authMax;
+      return {
+        channelId: c.sessionId,
+        peerId: c.peerId,
+        seller: c.sellerEvmAddr,
+        buyer: c.buyerEvmAddr,
+        reserveMax,
+        cumulativeSigned: c.authMax,
+        deadline: c.deadline,
+        reservedAt: c.reservedAt,
+        status: c.status,
+        requestCount: c.requestCount,
+        tokensDelivered: c.tokensDelivered,
+      };
+    });
+  }
+
   async sendRequest(
     peer: PeerInfo,
     req: SerializedHttpRequest,
