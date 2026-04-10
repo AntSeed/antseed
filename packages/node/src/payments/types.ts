@@ -41,11 +41,8 @@ export interface PaymentConfig {
 export interface CryptoPaymentConfig {
   /** Base network */
   chainId: ChainId;
-  /**
-   * Base JSON-RPC URL (e.g. http://127.0.0.1:8545 for anvil).
-   * An array enables ethers FallbackProvider rotation across endpoints.
-   */
-  rpcUrl: string | string[];
+  /** Base JSON-RPC URL (e.g. http://127.0.0.1:8545 for anvil) */
+  rpcUrl: string;
   /** Deployed AntseedDeposits contract address */
   depositsContractAddress: string;
   /** Deployed AntseedChannels contract address */

@@ -2,7 +2,7 @@ import { Contract, type AbstractSigner } from 'ethers';
 import { BaseEvmClient } from './base-evm-client.js';
 
 export interface SubPoolClientConfig {
-  rpcUrl: string | string[];
+  rpcUrl: string;
   contractAddress: string;
   usdcAddress: string;
 }

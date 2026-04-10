@@ -2,7 +2,7 @@ import { Contract, id as keccak256, type AbstractSigner } from 'ethers';
 import { BaseEvmClient } from './base-evm-client.js';
 
 export interface IdentityClientConfig {
-  rpcUrl: string | string[];
+  rpcUrl: string;
   contractAddress: string;
 }
 

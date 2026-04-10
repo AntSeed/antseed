@@ -2,7 +2,7 @@ import { Contract, type AbstractSigner } from 'ethers';
 import { BaseEvmClient } from './base-evm-client.js';
 
 export interface ANTSTokenClientConfig {
-  rpcUrl: string | string[];
+  rpcUrl: string;
   contractAddress: string;
 }
 

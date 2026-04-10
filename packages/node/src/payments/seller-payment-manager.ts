@@ -19,7 +19,7 @@ import { ChannelStore, type StoredChannel } from './channel-store.js';
 import { classifyOnChainChannel, matchesChannelParties } from './channel-session-state.js';
 
 export interface SellerPaymentConfig {
-  rpcUrl: string | string[];
+  rpcUrl: string;
   channelsContractAddress: string;
   chainId: number;
   dataDir: string;

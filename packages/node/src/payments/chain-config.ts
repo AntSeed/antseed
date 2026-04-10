@@ -3,13 +3,7 @@ import type { ChainId } from './types.js';
 export interface ChainConfig {
   chainId: ChainId;
   evmChainId: number;
-  /**
-   * JSON-RPC endpoint(s). When multiple URLs are present, clients built from
-   * this config use an ethers `FallbackProvider` that rotates on failure —
-   * mandatory on Base mainnet where no single public RPC can handle
-   * concurrent reads (429s) reliably.
-   */
-  rpcUrl: string | string[];
+  rpcUrl: string;
   depositsContractAddress: string;
   channelsContractAddress: string;
   stakingContractAddress?: string;
@@ -30,22 +24,10 @@ const CHAIN_CONFIGS: Record<ChainId, ChainConfig> = {
   'base-mainnet': {
     chainId: 'base-mainnet',
     evmChainId: 8453,
-    // Multiple public endpoints fronted by a FallbackProvider. Ordering
-    // matters — FallbackProvider tries higher-priority entries first:
-    //  1. publicnode: handles 3-concurrent eth_call reads reliably
-    //     (verified against the Deposits contract under load).
-    //  2. mainnet.base.org: the canonical Base endpoint. Works for this
-    //     call pattern in our tests but rate-limits aggressively at scale.
-    //  3. llamarpc: last resort. 429s on concurrent reads — do NOT put
-    //     it first (it was the default in node@0.2.51 and broke the
-    //     desktop credits poller).
-    // Users can override via payments.crypto.rpcUrl in config.json with
-    // their own Alchemy/Infura endpoint for production.
-    rpcUrl: [
-      'https://base-rpc.publicnode.com',
-      'https://mainnet.base.org',
-      'https://base.llamarpc.com',
-    ],
+    // mainnet.base.org is heavily rate-limited (429 under any concurrent load).
+    // llamarpc is a free, no-key public endpoint with much higher limits.
+    // Users can override via payments.crypto.rpcUrl in config.json.
+    rpcUrl: 'https://base.llamarpc.com',
     usdcContractAddress: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
     depositsContractAddress: '0x0F7a3a8f4Da01637d1202bb5443fcF7F88F99fD2',
     channelsContractAddress: '0xBA66d3b4fbCf472F6F11D6F9F96aaCE96516F09d',
@@ -98,7 +80,7 @@ export function getChainConfig(chainId?: ChainId | string): ChainConfig {
  */
 export function resolveChainConfig(overrides?: {
   chainId?: ChainId | string;
-  rpcUrl?: string | string[];
+  rpcUrl?: string;
   depositsContractAddress?: string;
   channelsContractAddress?: string;
   stakingContractAddress?: string;

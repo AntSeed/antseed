@@ -306,17 +306,12 @@ export function registerConnectCommand(program: Command): void {
         usdcContractAddress: cryptoOverrides?.usdcContractAddress,
       })
       let settlementEnabled = settlementEnv ?? true
-      // The reachability probe uses a single URL; when chainConfig carries
-      // a fallback array, the first entry is the preferred primary.
-      const primaryRpcUrl: string = Array.isArray(chainConfig.rpcUrl)
-        ? chainConfig.rpcUrl[0]!
-        : chainConfig.rpcUrl
 
       if (settlementEnabled && settlementEnv !== true) {
-        const rpcUp = await isRpcReachable(primaryRpcUrl)
+        const rpcUp = await isRpcReachable(chainConfig.rpcUrl)
         if (!rpcUp) {
           settlementEnabled = false
-          console.log(chalk.yellow(`Payments disabled: RPC node unreachable at ${primaryRpcUrl}`))
+          console.log(chalk.yellow(`Payments disabled: RPC node unreachable at ${chainConfig.rpcUrl}`))
           console.log(chalk.dim('Start your chain node or set ANTSEED_ENABLE_SETTLEMENT=true to force-enable payments.'))
         }
       }
