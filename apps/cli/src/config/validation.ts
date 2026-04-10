@@ -1,6 +1,7 @@
 import type {
   HierarchicalPricingConfig,
   AntseedConfig,
+  SellerProviderConfig,
   TokenPricingUsdPerMillion,
 } from './types.js';
 
@@ -29,57 +30,67 @@ function validateHierarchicalPricing(
   errors: string[]
 ): void {
   validatePricingLeaf(`${path}.defaults`, pricing.defaults, errors);
+}
 
-  for (const [provider, providerPricing] of Object.entries(pricing.providers ?? {})) {
-    if (providerPricing.defaults) {
-      validatePricingLeaf(`${path}.providers.${provider}.defaults`, providerPricing.defaults, errors);
+function validateCategoryList(
+  path: string,
+  tags: string[] | undefined,
+  errors: string[],
+): void {
+  if (!tags) return;
+  if (!Array.isArray(tags) || tags.length === 0) {
+    errors.push(`${path} must be a non-empty string array when provided`);
+    return;
+  }
+  const seen = new Set<string>();
+  for (let i = 0; i < tags.length; i += 1) {
+    const rawTag = tags[i];
+    if (typeof rawTag !== 'string') {
+      errors.push(`${path}[${i}] must be a string`);
+      continue;
     }
-
-    for (const [service, servicePricing] of Object.entries(providerPricing.services ?? {})) {
-      validatePricingLeaf(
-        `${path}.providers.${provider}.services.${service}`,
-        servicePricing,
-        errors
-      );
+    const tag = rawTag.trim().toLowerCase();
+    if (tag.length === 0) {
+      errors.push(`${path}[${i}] must not be empty`);
+      continue;
     }
+    if (!SERVICE_CATEGORY_PATTERN.test(tag)) {
+      errors.push(`${path}[${i}] must use lowercase letters, digits, or hyphen`);
+    }
+    if (seen.has(tag)) {
+      errors.push(`${path}[${i}] is duplicated`);
+    }
+    seen.add(tag);
   }
 }
 
-function validateSellerServiceCategories(
+function validateSellerProviders(
   path: string,
-  categories: AntseedConfig['seller']['serviceCategories'] | undefined,
-  errors: string[]
+  providers: Record<string, SellerProviderConfig>,
+  errors: string[],
 ): void {
-  if (!categories) return;
-
-  for (const [provider, services] of Object.entries(categories)) {
-    for (const [service, tags] of Object.entries(services)) {
-      const servicePath = `${path}.${provider}.${service}`;
-      if (!Array.isArray(tags) || tags.length === 0) {
-        errors.push(`${servicePath} must be a non-empty string array`);
-        continue;
+  for (const [providerName, providerCfg] of Object.entries(providers)) {
+    const providerPath = `${path}.${providerName}`;
+    if (providerCfg.defaults) {
+      validatePricingLeaf(`${providerPath}.defaults`, providerCfg.defaults, errors);
+    }
+    if (providerCfg.baseUrl !== undefined) {
+      try {
+        // eslint-disable-next-line no-new
+        new URL(providerCfg.baseUrl);
+      } catch {
+        errors.push(`${providerPath}.baseUrl must be a valid URL`);
       }
-
-      const seen = new Set<string>();
-      for (let i = 0; i < tags.length; i += 1) {
-        const rawTag = tags[i];
-        if (typeof rawTag !== 'string') {
-          errors.push(`${servicePath}[${i}] must be a string`);
-          continue;
-        }
-        const tag = rawTag.trim().toLowerCase();
-        if (tag.length === 0) {
-          errors.push(`${servicePath}[${i}] must not be empty`);
-          continue;
-        }
-        if (!SERVICE_CATEGORY_PATTERN.test(tag)) {
-          errors.push(`${servicePath}[${i}] must use lowercase letters, digits, or hyphen`);
-        }
-        if (seen.has(tag)) {
-          errors.push(`${servicePath}[${i}] is duplicated`);
-        }
-        seen.add(tag);
+    }
+    for (const [serviceId, serviceCfg] of Object.entries(providerCfg.services)) {
+      const servicePath = `${providerPath}.services.${serviceId}`;
+      if (serviceCfg.upstreamModel !== undefined && serviceCfg.upstreamModel.trim().length === 0) {
+        errors.push(`${servicePath}.upstreamModel must be a non-empty string when provided`);
       }
+      if (serviceCfg.pricing) {
+        validatePricingLeaf(`${servicePath}.pricing`, serviceCfg.pricing, errors);
+      }
+      validateCategoryList(`${servicePath}.categories`, serviceCfg.categories, errors);
     }
   }
 }
@@ -115,8 +126,7 @@ function parsePublicAddress(value: string): { host: string; port: number } | nul
 export function validateConfig(config: AntseedConfig): string[] {
   const errors: string[] = [];
 
-  validateHierarchicalPricing('seller.pricing', config.seller.pricing, errors);
-  validateSellerServiceCategories('seller.serviceCategories', config.seller.serviceCategories, errors);
+  validateSellerProviders('seller.providers', config.seller.providers, errors);
   validateHierarchicalPricing('buyer.maxPricing', config.buyer.maxPricing, errors);
 
   if (!Number.isFinite(config.buyer.minPeerReputation) || config.buyer.minPeerReputation < 0 || config.buyer.minPeerReputation > 100) {

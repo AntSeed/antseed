@@ -89,26 +89,65 @@ export function buildSellerRuntimeOverridesFromFlags(options: {
   return overrides
 }
 
+/**
+ * Translate the unified `seller.providers[name]` block into the flat
+ * `ANTSEED_*` env keys that provider plugins consume. Plugins continue to
+ * receive the same shape they always have — the CLI just produces it from
+ * config.json instead of having users set env vars by hand.
+ */
 export function buildSellerPluginRuntimeEnv(
   sellerConfig: SellerCLIConfig,
   providerName: string,
 ): Record<string, string> {
-  const providerPricing = sellerConfig.pricing.providers?.[providerName]
-  const servicePricing = providerPricing?.services
-  const serviceCategories = sellerConfig.serviceCategories?.[providerName]
+  const providerCfg = sellerConfig.providers?.[providerName]
   const runtimeEnv: Record<string, string> = {
     ANTSEED_MAX_CONCURRENCY: String(sellerConfig.maxConcurrentBuyers),
   }
-  if (providerPricing?.defaults) {
-    runtimeEnv['ANTSEED_INPUT_USD_PER_MILLION'] = String(providerPricing.defaults.inputUsdPerMillion)
-    runtimeEnv['ANTSEED_OUTPUT_USD_PER_MILLION'] = String(providerPricing.defaults.outputUsdPerMillion)
+  if (!providerCfg) {
+    return runtimeEnv
   }
-  if (servicePricing && Object.keys(servicePricing).length > 0) {
+
+  if (providerCfg.defaults) {
+    runtimeEnv['ANTSEED_INPUT_USD_PER_MILLION'] = String(providerCfg.defaults.inputUsdPerMillion)
+    runtimeEnv['ANTSEED_OUTPUT_USD_PER_MILLION'] = String(providerCfg.defaults.outputUsdPerMillion)
+    if (providerCfg.defaults.cachedInputUsdPerMillion != null) {
+      runtimeEnv['ANTSEED_CACHED_INPUT_USD_PER_MILLION'] = String(providerCfg.defaults.cachedInputUsdPerMillion)
+    }
+  }
+
+  const serviceIds = Object.keys(providerCfg.services)
+  if (serviceIds.length > 0) {
+    runtimeEnv['ANTSEED_ALLOWED_SERVICES'] = serviceIds.join(',')
+  }
+
+  // Per-service pricing: { serviceId -> TokenPricingUsdPerMillion }
+  const servicePricing: Record<string, unknown> = {}
+  const serviceCategories: Record<string, string[]> = {}
+  const serviceAliasMap: Record<string, string> = {}
+  for (const [serviceId, serviceCfg] of Object.entries(providerCfg.services)) {
+    if (serviceCfg.pricing) {
+      servicePricing[serviceId] = serviceCfg.pricing
+    }
+    if (serviceCfg.categories && serviceCfg.categories.length > 0) {
+      serviceCategories[serviceId] = [...serviceCfg.categories]
+    }
+    if (serviceCfg.upstreamModel && serviceCfg.upstreamModel !== serviceId) {
+      serviceAliasMap[serviceId] = serviceCfg.upstreamModel
+    }
+  }
+  if (Object.keys(servicePricing).length > 0) {
     runtimeEnv['ANTSEED_SERVICE_PRICING_JSON'] = JSON.stringify(servicePricing)
   }
-  if (serviceCategories && Object.keys(serviceCategories).length > 0) {
+  if (Object.keys(serviceCategories).length > 0) {
     runtimeEnv['ANTSEED_SERVICE_CATEGORIES_JSON'] = JSON.stringify(serviceCategories)
   }
+  if (Object.keys(serviceAliasMap).length > 0) {
+    runtimeEnv['ANTSEED_SERVICE_ALIAS_MAP_JSON'] = JSON.stringify(serviceAliasMap)
+  }
+  if (providerCfg.baseUrl) {
+    runtimeEnv['OPENAI_BASE_URL'] = providerCfg.baseUrl
+  }
+
   return runtimeEnv
 }
 
@@ -136,36 +175,6 @@ export function mergeSellerRuntimeEnv(
   return merged
 }
 
-function parseRuntimeServiceCategoriesJson(raw: string | undefined): Record<string, string[]> | undefined {
-  if (!raw) {
-    return undefined
-  }
-
-  try {
-    const parsed = JSON.parse(raw) as unknown
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      return undefined
-    }
-    const out: Record<string, string[]> = {}
-    for (const [service, categoriesRaw] of Object.entries(parsed as Record<string, unknown>)) {
-      if (!Array.isArray(categoriesRaw)) continue
-      const categories = Array.from(
-        new Set(
-          categoriesRaw
-            .filter((entry): entry is string => typeof entry === 'string')
-            .map((entry) => entry.trim().toLowerCase())
-            .filter((entry) => entry.length > 0)
-        )
-      )
-      if (categories.length > 0) {
-        out[service] = categories
-      }
-    }
-    return Object.keys(out).length > 0 ? out : undefined
-  } catch {
-    return undefined
-  }
-}
 
 
 export function registerSeedCommand(program: Command): void {
@@ -304,11 +313,22 @@ export function registerSeedCommand(program: Command): void {
       }
 
       const providerName = options.provider as string | undefined ?? provider.name ?? 'unknown'
-      const runtimeProviderEnv = buildSellerPluginRuntimeEnv(effectiveSellerConfig, providerName)
-      const runtimeServiceCategories = parseRuntimeServiceCategoriesJson(runtimeProviderEnv['ANTSEED_SERVICE_CATEGORIES_JSON'])
-      if (runtimeServiceCategories) {
-        provider.serviceCategories = runtimeServiceCategories
+
+      // Write service categories directly from config onto the plugin's
+      // Provider object — plugins don't parse this env key themselves.
+      const configProviderCfg = effectiveSellerConfig.providers?.[providerName]
+      if (configProviderCfg) {
+        const categoriesByService: Record<string, string[]> = {}
+        for (const [serviceId, svc] of Object.entries(configProviderCfg.services)) {
+          if (svc.categories && svc.categories.length > 0) {
+            categoriesByService[serviceId] = [...svc.categories]
+          }
+        }
+        if (Object.keys(categoriesByService).length > 0) {
+          provider.serviceCategories = categoriesByService
+        }
       }
+
       const versions = getPackageVersions(providerName)
       if (Object.keys(versions).length > 0) {
         console.log(chalk.dim(`Package versions: ${Object.entries(versions).map(([k, v]) => `${k}@${v}`).join(', ')}`))
@@ -502,11 +522,11 @@ export function registerSeedCommand(program: Command): void {
               ...(provider.pricing.services ? { services: provider.pricing.services } : {}),
             },
           },
-          ...(runtimeServiceCategories
+          ...(provider.serviceCategories
             ? {
                 providerServiceCategories: {
                   [providerName]: {
-                    services: runtimeServiceCategories,
+                    services: provider.serviceCategories,
                   },
                 },
               }

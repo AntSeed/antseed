@@ -58,9 +58,18 @@ export function registerStatusCommand(program: Command): void {
         );
 
         if (status.state === 'seeding') {
+          const providerLines: string[] = [];
+          for (const [name, cfg] of Object.entries(effectiveSeller.providers)) {
+            const defaults = cfg.defaults;
+            const serviceCount = Object.keys(cfg.services).length;
+            const priceLabel = defaults
+              ? `${defaults.inputUsdPerMillion}/${defaults.outputUsdPerMillion}`
+              : 'per-service';
+            providerLines.push(`${name}: ${serviceCount} service(s), defaults ${priceLabel}`);
+          }
           table.push([
-            'Seller pricing defaults (USD/1M in/out)',
-            `${effectiveSeller.pricing.defaults.inputUsdPerMillion} / ${effectiveSeller.pricing.defaults.outputUsdPerMillion}`,
+            'Seller providers',
+            providerLines.length > 0 ? providerLines.join('\n') : chalk.dim('(none)'),
           ]);
         }
 

@@ -61,49 +61,64 @@ antseed stake 10
 antseed setup --role provider
 ```
 
-## 5. Configure Your Provider
+## 5. Add Your Services
 
-Set your upstream API key and start providing:
+Everything you announce on the network lives in `config.json` under `seller.providers[name].services[id]`. One block per upstream provider plugin, one entry per service. The `add-service` command builds this for you:
+
+```bash
+# Anthropic: offer claude-sonnet at $3/$15 per million tokens, tagged for chat + coding
+antseed config seller add-service anthropic claude-sonnet-4-6 \
+  --input 3 --cached 0.3 --output 15 \
+  --categories chat,coding
+```
+
+```bash
+# Together AI (OpenAI-compatible): offer Kimi K2.5 and DeepSeek V3.1
+antseed config seller add-service openai kimi-k2.5 \
+  --upstream "moonshotai/Kimi-K2.5" \
+  --input 0.5 --output 2.8 \
+  --categories math,coding \
+  --base-url https://api.together.ai
+
+antseed config seller add-service openai deepseek-v3.1 \
+  --upstream "deepseek-ai/DeepSeek-V3.1" \
+  --input 0.6 --output 1.7 \
+  --categories chat,math,coding
+```
+
+```bash
+# Local model (Ollama) — one announced service per local model
+antseed config seller add-service local-llm llama3.2:3b \
+  --input 0 --output 0 \
+  --categories chat,fast,free
+```
+
+The `--upstream` flag maps the buyer-facing service name to the upstream model id. Omit it when they're the same.
+
+You only have to do this once per service. To see what you've configured:
+
+```bash
+antseed config seller show
+```
+
+## 6. Set Your API Key and Start Seeding
+
+Upstream credentials stay in environment variables — nothing about auth goes into `config.json`:
 
 ```bash
 # Anthropic
 export ANTHROPIC_API_KEY=<your-key>
 antseed seed --provider anthropic
-```
 
-```bash
-# OpenAI
+# OpenAI-compatible (Together AI, OpenRouter, etc.)
 export OPENAI_API_KEY=<your-key>
 antseed seed --provider openai
-```
 
-```bash
-# Together AI / OpenRouter / any OpenAI-compatible API
-export OPENAI_API_KEY=<your-key>
-export OPENAI_BASE_URL=https://api.together.ai
-antseed seed --provider openai
-```
-
-```bash
-# Local model (Ollama)
+# Local model
 antseed seed --provider local-llm
 ```
 
-## 6. Set Pricing
-
-Pricing is in USD per million tokens. Defaults apply to all services unless overridden.
-
-```bash
-# Set default pricing
-antseed config seller set pricing.defaults.inputUsdPerMillion 3
-antseed config seller set pricing.defaults.cachedInputUsdPerMillion 0.3
-antseed config seller set pricing.defaults.outputUsdPerMillion 15
-
-# Per-service override
-antseed config seller set pricing.services '{"claude-sonnet-4-6":{"inputUsdPerMillion":3,"cachedInputUsdPerMillion":0.3,"outputUsdPerMillion":15}}'
-```
-
-Or set pricing at runtime:
+Runtime overrides for a one-off session (without editing `config.json`):
 
 ```bash
 antseed seed --provider anthropic --input-usd-per-million 3 --output-usd-per-million 15
@@ -127,16 +142,6 @@ antseed browse
 5. On session end, `close()` finalizes and releases remaining buyer funds
 
 Earnings are paid directly to your wallet address on each `settle()` or `close()` call. No claim step needed.
-
-## Service Aliases
-
-When using the `openai` provider, you can announce buyer-facing service names while forwarding different upstream IDs:
-
-```bash
-export ANTSEED_ALLOWED_SERVICES="deepseek-v3.1,kimi-k2.5"
-export OPENAI_SERVICE_ALIAS_MAP_JSON='{"deepseek-v3.1":"deepseek-ai/DeepSeek-V3.1","kimi-k2.5":"moonshotai/Kimi-K2.5"}'
-antseed seed --provider openai
-```
 
 ## Next Steps
 
