@@ -400,6 +400,7 @@ export class BuyerProxy {
         providers: p.providers,
         services,
         providerPricing: p.providerPricing ?? null,
+        providerServiceCategories: p.providerServiceCategories ?? null,
         providerServiceApiProtocols: p.providerServiceApiProtocols ?? null,
         defaultInputUsdPerMillion: p.defaultInputUsdPerMillion ?? 0,
         defaultOutputUsdPerMillion: p.defaultOutputUsdPerMillion ?? 0,
