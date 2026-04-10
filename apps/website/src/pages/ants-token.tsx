@@ -319,7 +319,7 @@ export default function AntsToken(): JSX.Element {
             {label: 'Max supply', value: '1,040,000,000 ANTS'},
             {label: 'Epoch duration', value: '1 week (604,800 seconds)'},
             {label: 'Halving interval', value: 'Every 104 epochs (~2 years)'},
-            {label: 'Network fee', value: '2% of settlement (200 bps), distributed back to stakers'},
+            {label: 'Network fee', value: '2% of settlement (200 bps), collected to community reserve pool'},
             {label: 'Transfers', value: 'Currently restricted'},
           ].map(r => (
             <div key={r.label} className={styles.contractsRow}>
