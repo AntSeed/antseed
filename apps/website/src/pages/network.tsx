@@ -159,7 +159,7 @@ function aggregateModels(peers: PeerMetadata[]): ModelRow[] {
       provider: meta?.provider ?? guessProvider(serviceId),
       logoUrl: guessLogo(serviceId),
       contextWindow: meta?.contextWindow ?? '—',
-      tags: meta?.tags ?? [...data.categories],
+      tags: ['anon', ...(meta?.tags ?? [...data.categories])],
       inputPrice: data.bestInput,
       outputPrice: data.bestOutput,
       peerCount: data.peerCount,
@@ -206,7 +206,7 @@ function guessLogo(serviceId: string): string {
 /* ── Helpers ──────────────────────────────────────────────────────── */
 
 const TAG_CLASS: Record<string, string> = {
-  coding: styles.tagCoding, code: styles.tagCode, privacy: styles.tagPrivacy,
+  anon: styles.tagAnon, coding: styles.tagCoding, code: styles.tagCode, privacy: styles.tagPrivacy,
   tee: styles.tagTee, chat: styles.tagChat, fast: styles.tagFast,
   cheap: styles.tagCheap, reasoning: styles.tagReasoning,
   'open-source': styles.tagOpenSource, rag: styles.tagRag,

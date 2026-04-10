@@ -335,6 +335,7 @@
 .tagOpenSource { background: #f0f9ff; color: #0284c7; }
 .tagRag       { background: #fdf4ff; color: #c026d3; }
 .tagEnterprise { background: #f8fafc; color: #475569; }
+.tagAnon      { background: #f0f9ff; color: #0e7490; }
 .tagDefault   { background: #f5f7fa; color: #64748b; }
 
 .tdContext {
@@ -465,41 +466,141 @@
 
 @media (max-width: 768px) {
   .page {
-    padding: 60px 16px 80px;
+    padding: 60px 12px 80px;
   }
 
   .statsBar {
     padding: 20px;
+    flex-direction: column;
+    gap: 16px;
   }
 
   .statDivider {
     display: none;
   }
 
-  .statsBar {
-    flex-direction: column;
-    gap: 16px;
-  }
-
   .statNum {
     font-size: 24px;
   }
 
-  .tableWrap {
-    border-radius: 12px;
-    overflow-x: auto;
+  .filterBar {
+    gap: 10px;
   }
 
-  .table {
-    min-width: 600px;
+  .searchInput {
+    font-size: 13px;
+    padding: 12px 36px 12px 40px;
+  }
+
+  .chip {
+    font-size: 11px;
+    padding: 5px 10px;
+  }
+
+  /* Card-based layout instead of table on mobile */
+  .tableWrap {
+    border: none;
+    box-shadow: none;
+    background: transparent;
+    border-radius: 0;
+  }
+
+  .table,
+  .table thead,
+  .table tbody,
+  .table tr,
+  .table th,
+  .table td {
+    display: block;
+  }
+
+  .table thead {
+    display: none;
+  }
+
+  .row {
+    background: white;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+    display: flex !important;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .tdModel {
+    width: 100%;
+    padding: 0 !important;
+    margin-bottom: 8px;
   }
 
   .modelLogo {
+    width: 28px;
+    height: 28px;
+  }
+
+  .modelName {
+    font-size: 15px;
+  }
+
+  .tdPrice {
+    padding: 0 !important;
+    text-align: left !important;
+    font-size: 13px;
+    flex: 1;
+  }
+
+  .tdPrice::before {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    color: #8b949e;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    display: block;
+    margin-bottom: 2px;
+    font-weight: 400;
+  }
+
+  .tdPrice:nth-of-type(2)::before {
+    content: 'Input /M';
+  }
+
+  .tdPrice:nth-of-type(3)::before {
+    content: 'Output /M';
+  }
+
+  .tdProviders {
+    padding: 0 !important;
+    text-align: left !important;
+  }
+
+  .tdProviders::before {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    color: #8b949e;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    display: block;
+    margin-bottom: 2px;
+    content: 'Peers';
+    font-weight: 400;
+  }
+
+  .peerCount {
     width: 24px;
     height: 24px;
+    font-size: 11px;
   }
 
   .tagBadge {
-    display: none;
+    font-size: 8px;
+    padding: 1px 5px;
+  }
+
+  .emptyRow {
+    padding: 40px 16px !important;
   }
 }
