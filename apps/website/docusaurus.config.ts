@@ -158,8 +158,7 @@ const config: Config = {
         src: 'logo.svg',
       },
       items: [
-        {to: '/providers', label: 'Providers', position: 'right'},
-        {to: '/blog', label: 'Blog', position: 'right'},
+        {to: '/network', label: 'Pricing', position: 'right'},
         {
           type: 'docSidebar',
           sidebarId: 'docs',
@@ -167,6 +166,7 @@ const config: Config = {
           position: 'right',
           className: 'header-docs-link',
         },
+        {to: '/blog', label: 'Blog', position: 'right'},
         {
           href: 'https://github.com/antseed',
           'aria-label': 'GitHub',
