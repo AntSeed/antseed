@@ -492,9 +492,8 @@
     padding: 12px 36px 12px 40px;
   }
 
-  .chip {
-    font-size: 11px;
-    padding: 5px 10px;
+  .filterChips {
+    display: none;
   }
 
   /* Card-based layout instead of table on mobile */
