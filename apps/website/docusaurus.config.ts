@@ -158,7 +158,6 @@ const config: Config = {
         src: 'logo.svg',
       },
       items: [
-        {to: '/ants-token', label: '$ANTS', position: 'right'},
         {to: '/network', label: 'Pricing', position: 'right'},
         {
           type: 'docSidebar',
@@ -167,6 +166,7 @@ const config: Config = {
           position: 'right',
           className: 'header-docs-link',
         },
+        {to: '/ants-token', label: '$ANTS', position: 'right'},
         {to: '/blog', label: 'Blog', position: 'right'},
         {
           href: 'https://github.com/antseed',
