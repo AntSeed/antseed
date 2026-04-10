@@ -25,7 +25,7 @@
   padding: 32px 0 24px;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 16px;
 }
 
 /* ── Header / Hero ────────────────────────────────────────────────────── */
@@ -58,6 +58,37 @@
   max-width: 440px;
 }
 
+/* ── Search input ───────────────────────────────────────────────────── */
+
+.search-wrap {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+}
+
+.search-input {
+  width: 100%;
+  max-width: 440px;
+  height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--border-subtle, rgba(0, 0, 0, 0.08));
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.12s, background 0.12s;
+
+  &::placeholder {
+    color: var(--text-secondary);
+  }
+
+  &:focus {
+    border-color: var(--accent);
+    background: var(--bg-elevated, var(--bg-surface));
+  }
+}
+
 /* ── Filter pills ───────────────────────────────────────────────────── */
 
 .filters {
@@ -78,6 +109,7 @@
   font-family: inherit;
   cursor: pointer;
   white-space: nowrap;
+  text-transform: capitalize;
   background: var(--bg-surface);
   color: var(--text-secondary);
   transition: background 0.12s, color 0.12s;
@@ -174,6 +206,7 @@
   font-weight: 500;
   line-height: 1;
   white-space: nowrap;
+  text-transform: capitalize;
   background: rgba(0, 0, 0, 0.06);
   color: var(--text-secondary);
 }
@@ -188,6 +221,7 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  text-transform: capitalize;
 }
 
 .card-desc {

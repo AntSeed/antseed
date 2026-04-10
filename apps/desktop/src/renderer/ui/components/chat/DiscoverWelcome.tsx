@@ -5,21 +5,11 @@ import type { ChatServiceOptionEntry } from '../../../core/state';
 import { stringHash, PEER_GRADIENTS, getPeerDisplayName, formatPerMillionPrice } from '../../../core/peer-utils';
 import styles from './DiscoverWelcome.module.scss';
 
-/* ── Filter categories ───────────────────────────────────────────────── */
-
-/* ── Known service categories ────────────────────────────────────────── */
-
-const SERVICE_CATEGORIES = [
-  'Code', 'Text', 'Image', 'Reasoning', 'Agents',
-  'Research', 'Writing', 'Fast', 'Private', 'Free',
-] as const;
-
-const SERVICE_CATEGORIES_LOWER = new Set(SERVICE_CATEGORIES.map((c) => c.toLowerCase()));
-
 /* ── Card data type ──────────────────────────────────────────────────── */
 
 type CardItem = {
   name: string;
+  displayName: string;
   peerLabel: string;
   value: string;
   provider: string;
@@ -30,6 +20,12 @@ type CardItem = {
   inputUsdPerMillion: number | null;
   outputUsdPerMillion: number | null;
 };
+
+/* ── Normalize service name for display (dashes → spaces) ─────────────── */
+
+function normalizeServiceName(name: string): string {
+  return name.replace(/[-_]+/g, ' ');
+}
 
 /* ── Service-name → visual gradient (for provider avatars) ─────────── */
 
@@ -61,13 +57,6 @@ function getGradient(name: string): string {
   return PEER_GRADIENTS[stringHash(lower) % PEER_GRADIENTS.length];
 }
 
-/* ── Capitalize category label ────────────────────────────────────────── */
-
-function capitalizeCategory(cat: string): string {
-  if (cat.length === 0) return cat;
-  return cat.charAt(0).toUpperCase() + cat.slice(1);
-}
-
 /* ── Generate description from service name ──────────────────────────── */
 
 function generateDescription(serviceId: string, categories: string[], provider: string): string {
@@ -91,9 +80,14 @@ function generateDescription(serviceId: string, categories: string[], provider: 
 
 function buildCards(options: ChatServiceOptionEntry[]): CardItem[] {
   return options.map((opt) => {
-    const tags = opt.categories.map(capitalizeCategory);
+    const baseTags = opt.categories;
+    const tags = baseTags.some((t) => t.toLowerCase() === 'anon')
+      ? baseTags
+      : ['anon', ...baseTags];
+    const rawName = opt.label || opt.id;
     return {
-      name: opt.label || opt.id,
+      name: rawName,
+      displayName: normalizeServiceName(rawName),
       peerLabel: opt.peerLabel || '',
       value: opt.value,
       provider: opt.provider,
@@ -107,25 +101,37 @@ function buildCards(options: ChatServiceOptionEntry[]): CardItem[] {
   });
 }
 
-/* ── Filter pills: predefined + any extra categories from the data ──── */
+/* ── Filter pills: only categories actually present in the data ──────── */
 
 function allFilters(cards: CardItem[]): string[] {
-  const known = new Set(SERVICE_CATEGORIES.map((c) => c.toLowerCase()));
-  const extra: string[] = [];
+  const seen = new Set<string>();
+  const out: string[] = [];
   for (const card of cards) {
     for (const tag of card.tags) {
-      if (!known.has(tag.toLowerCase())) {
-        known.add(tag.toLowerCase());
-        extra.push(capitalizeCategory(tag));
+      const key = tag.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        out.push(tag);
       }
     }
   }
-  return [...SERVICE_CATEGORIES, ...extra];
+  return out;
 }
 
 function matchesFilter(item: CardItem, filter: string): boolean {
   if (filter === 'All') return true;
   return item.tags.some((t) => t.toLowerCase() === filter.toLowerCase());
+}
+
+function matchesSearch(item: CardItem, query: string): boolean {
+  if (!query) return true;
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  if (item.name.toLowerCase().includes(q)) return true;
+  if (item.displayName.toLowerCase().includes(q)) return true;
+  if (item.peerLabel.toLowerCase().includes(q)) return true;
+  if (item.tags.some((t) => t.toLowerCase().includes(q))) return true;
+  return false;
 }
 
 /* ── Skeleton card ───────────────────────────────────────────────────── */
@@ -172,6 +178,7 @@ type DiscoverWelcomeProps = {
 
 export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWelcomeProps) {
   const [activeFilter, setActiveFilter] = useState('All');
+  const [searchQuery, setSearchQuery] = useState('');
 
   const hasNetworkData = serviceOptions.length > 0;
   const cards = useMemo(
@@ -182,8 +189,8 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
   const filters = useMemo(() => allFilters(cards), [cards]);
 
   const filtered = useMemo(
-    () => cards.filter((c) => matchesFilter(c, activeFilter)),
-    [cards, activeFilter],
+    () => cards.filter((c) => matchesFilter(c, activeFilter) && matchesSearch(c, searchQuery)),
+    [cards, activeFilter, searchQuery],
   );
 
   const handleClick = useCallback(
@@ -206,6 +213,16 @@ export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWel
               Pick a service to start chatting. Filter by what you need.
               Everything is anonymous — no account required.
             </p>
+          </div>
+
+          <div className={styles.searchWrap}>
+            <input
+              type="text"
+              className={styles.searchInput}
+              placeholder="Search services, peers, or categories..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
           </div>
 
           <div className={styles.filters}>
@@ -284,7 +301,7 @@ function Card({
             <span key={t} className={styles.tag}>{t}</span>
           ))}
         </div>
-        <div className={styles.cardName}>{item.name}</div>
+        <div className={styles.cardName}>{item.displayName}</div>
         <div className={styles.cardDesc}>{item.description}</div>
         <div className={styles.cardPricing}>
           {isFree ? (
