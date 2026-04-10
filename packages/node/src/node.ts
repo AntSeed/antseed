@@ -60,6 +60,7 @@ import {
   ChannelsClient,
   StakingClient,
   ChannelStore,
+  type StoredChannel,
 } from "./payments/index.js";
 import { debugLog, debugWarn } from "./utils/debug.js";
 import { parsePublicAddress } from "./discovery/public-address.js";
@@ -534,6 +535,16 @@ export class AntseedNode extends EventEmitter {
       lifetimeAuthorizedUsdc: (lifetime?.totalAuthorizedUsdc ?? 0n).toString(),
       lifetimeFirstSessionAt: lifetime?.firstSessionAt ?? null,
     };
+  }
+
+  /**
+   * Return active buyer-side channels for the current identity's EVM address.
+   * Read from the local ChannelStore — no on-chain RPC calls.
+   */
+  getActiveBuyerChannels(): StoredChannel[] {
+    const buyerAddress = this._identity?.wallet.address ?? null;
+    if (!buyerAddress || !this._channelStore) return [];
+    return this._channelStore.getActiveChannelsByBuyer('buyer', buyerAddress);
   }
 
   async sendRequest(
