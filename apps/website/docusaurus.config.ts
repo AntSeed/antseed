@@ -158,6 +158,7 @@ const config: Config = {
         src: 'logo.svg',
       },
       items: [
+        {to: '/ants-token', label: '$ANTS', position: 'right'},
         {to: '/network', label: 'Pricing', position: 'right'},
         {
           type: 'docSidebar',

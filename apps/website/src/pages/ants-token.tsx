@@ -127,7 +127,7 @@ function HalvingCurve({currentEpoch}: {currentEpoch: number}) {
       </svg>
       <div className={styles.halvingLabels}>
         <span>Epoch 0</span>
-        <span>You are here — Epoch {currentEpoch}</span>
+        <span>You are here - Epoch {currentEpoch}</span>
         <span>Epoch 624</span>
       </div>
     </div>
@@ -164,7 +164,7 @@ export default function AntsToken(): JSX.Element {
           <span className={styles.statusText}>Tokens Restricted</span>
         </div>
         <p className={styles.heroSub}>
-          ANTS is earned — not bought. Sellers and buyers who create real economic activity on the
+          ANTS is earned, not bought. Sellers and buyers who create real economic activity on the
           network receive ANTS proportional to their contribution. Hard-capped at 1.04B with
           automatic halvings.
         </p>
@@ -266,7 +266,7 @@ export default function AntsToken(): JSX.Element {
             <div className={styles.duneBannerText}>
               <div className={styles.duneBannerTitle}>Live on Dune Analytics</div>
               <div className={styles.duneBannerSub}>
-                Volume, channels, fees, staking, and deposits — all from on-chain data.
+                Volume, channels, fees, staking, and deposits, all from on-chain data.
                 Open dashboard →
               </div>
             </div>
@@ -319,7 +319,7 @@ export default function AntsToken(): JSX.Element {
             {label: 'Max supply', value: '1,040,000,000 ANTS'},
             {label: 'Epoch duration', value: '1 week (604,800 seconds)'},
             {label: 'Halving interval', value: 'Every 104 epochs (~2 years)'},
-            {label: 'Network fee', value: '2% of settlement (200 bps) — distributed back to stakers'},
+            {label: 'Network fee', value: '2% of settlement (200 bps), distributed back to stakers'},
             {label: 'Transfers', value: 'Currently restricted'},
           ].map(r => (
             <div key={r.label} className={styles.contractsRow}>
