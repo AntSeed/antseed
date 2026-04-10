@@ -198,7 +198,9 @@ function guessProvider(serviceId: string): string {
 
 function guessLogo(serviceId: string): string {
   for (const [re, hint] of PROVIDER_HINTS) if (re.test(serviceId)) return hint.logo;
-  return '';
+  // Fallback: generate a letter logo from the first character
+  const letter = (serviceId[0] ?? '?').toUpperCase();
+  return `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect width="40" height="40" rx="8" fill="#64748b"/><text x="20" y="27" text-anchor="middle" font-family="system-ui,sans-serif" font-weight="700" font-size="20" fill="#fff">${letter}</text></svg>`)}`;
 }
 
 /* ── Helpers ──────────────────────────────────────────────────────── */
@@ -315,7 +317,7 @@ export default function PricingPage() {
               ? 'Loading live network data...'
               : error
                 ? 'Unable to reach the network. Showing cached data if available.'
-                : <>Live pricing from {totalPeers} peer{totalPeers !== 1 ? 's' : ''} across {models.length} models. Best rate per million tokens.</>
+                : <>Live pricing from {totalPeers} peer{totalPeers !== 1 ? 's' : ''} across {models.length} services. Best rate per million tokens.</>
             }
           </p>
         </div>
@@ -324,7 +326,7 @@ export default function PricingPage() {
         <div className={styles.statsBar}>
           <div className={styles.stat}>
             <div className={styles.statNum}>{loading ? '—' : models.length}</div>
-            <div className={styles.statLabel}>Models</div>
+            <div className={styles.statLabel}>Services</div>
           </div>
           <div className={styles.statDivider} />
           <div className={styles.stat}>
@@ -351,7 +353,7 @@ export default function PricingPage() {
             </svg>
             <input
               className={styles.searchInput}
-              placeholder="Search models, providers, or capabilities..."
+              placeholder="Search services, providers, or capabilities..."
               value={query}
               onChange={e => setQuery(e.target.value)}
             />
@@ -395,7 +397,7 @@ export default function PricingPage() {
 
         {/* Results count */}
         <div className={styles.resultsCount}>
-          {loading ? 'Loading...' : `${filtered.length} model${filtered.length !== 1 ? 's' : ''} found`}
+          {loading ? 'Loading...' : `${filtered.length} service${filtered.length !== 1 ? 's' : ''} found`}
         </div>
 
         {/* Table */}
@@ -404,7 +406,7 @@ export default function PricingPage() {
             <thead>
               <tr>
                 <th className={styles.thModel} onClick={() => toggleSort('name')}>
-                  Model {sortIcon('name')}
+                  Service {sortIcon('name')}
                 </th>
                 <th className={styles.thPrice} onClick={() => toggleSort('inputPrice')}>
                   Input /M {sortIcon('inputPrice')}
@@ -427,7 +429,7 @@ export default function PricingPage() {
               ) : filtered.length === 0 ? (
                 <tr>
                   <td colSpan={4} className={styles.emptyRow}>
-                    {error ? 'Could not reach the network stats server.' : 'No models match your search. Try a different query or clear filters.'}
+                    {error ? 'Could not reach the network stats server.' : 'No services match your search. Try a different query or clear filters.'}
                   </td>
                 </tr>
               ) : filtered.map(m => (
