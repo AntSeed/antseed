@@ -17,6 +17,7 @@ import {
   HttpMetadataResolver,
   OFFICIAL_BOOTSTRAP_NODES,
   toBootstrapConfig,
+  METADATA_VERSION,
 } from '@antseed/node/discovery';
 import { toPeerId } from '@antseed/node';
 import type { PeerMetadata } from '@antseed/node';
@@ -46,14 +47,17 @@ export class NetworkPoller {
   }
 
   /**
-   * Return the latest cached snapshot, filtered to exclude peers whose last
-   * announcement (`timestamp`) is older than `PEER_STALE_MS`. Filtering happens
-   * at read time so the on-disk cache remains the source of truth and peers
-   * refreshed on the next poll repopulate seamlessly.
+   * Return the latest cached snapshot, filtered to exclude:
+   *   - peers whose metadata `version` doesn't match `METADATA_VERSION`
+   *     (local buyers run `validateMetadata()` and drop these)
+   *   - peers whose `timestamp` is older than `PEER_STALE_MS`
+   * Filtering happens at read time so the on-disk cache remains the source
+   * of truth and peers refreshed on the next poll repopulate seamlessly.
    */
   getSnapshot(): NetworkSnapshot {
     const now = Date.now();
     const peers = this.snapshot.peers.filter((p) => {
+      if (p.version !== METADATA_VERSION) return false;
       const ts = typeof p.timestamp === 'number' ? p.timestamp : 0;
       return ts === 0 || now - ts < PEER_STALE_MS;
     });
