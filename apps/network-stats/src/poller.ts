@@ -32,6 +32,9 @@ const DEFAULT_CACHE_PATH = join(__dirname, '..', 'cache', 'network.json');
 
 const POLL_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
 const DHT_WARMUP_MS = 15_000;            // wait for routing table to populate
+// Filter out peers whose last DHT announcement is older than this.
+// Matches desktop's PEER_ONLINE_TTL_MS — peers re-announce every ~5 min.
+const PEER_STALE_MS = 2 * 60 * 60_000;   // 2 hours
 
 export class NetworkPoller {
   private snapshot: NetworkSnapshot = { peers: [], updatedAt: new Date(0).toISOString() };
@@ -42,9 +45,19 @@ export class NetworkPoller {
     this.cachePath = cachePath;
   }
 
-  /** Return the latest cached snapshot. */
+  /**
+   * Return the latest cached snapshot, filtered to exclude peers whose last
+   * announcement (`timestamp`) is older than `PEER_STALE_MS`. Filtering happens
+   * at read time so the on-disk cache remains the source of truth and peers
+   * refreshed on the next poll repopulate seamlessly.
+   */
   getSnapshot(): NetworkSnapshot {
-    return this.snapshot;
+    const now = Date.now();
+    const peers = this.snapshot.peers.filter((p) => {
+      const ts = typeof p.timestamp === 'number' ? p.timestamp : 0;
+      return ts === 0 || now - ts < PEER_STALE_MS;
+    });
+    return { peers, updatedAt: this.snapshot.updatedAt };
   }
 
   /** Start polling. Loads cache from disk on first run, then polls immediately. */
