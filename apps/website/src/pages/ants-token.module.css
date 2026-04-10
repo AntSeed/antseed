@@ -1,0 +1,585 @@
+/* ANTS Token page — matches site design system */
+
+/* ── HERO ── */
+.hero {
+  text-align: center;
+  padding: 80px 20px 60px;
+  max-width: 820px;
+  margin: 0 auto;
+}
+.heroKicker {
+  display: inline-block;
+  font-size: 20px;
+  font-weight: 700;
+  color: #1FD87A !important;
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 2px;
+  margin-bottom: 20px;
+  text-decoration: none !important;
+  transition: opacity 0.15s;
+}
+.heroKicker:hover {
+  opacity: 0.7;
+}
+.heroTitle {
+  font-size: clamp(36px, 5.5vw, 68px);
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: -2.5px;
+  margin-bottom: 24px;
+  color: #1a1a1a;
+}
+.heroTitle em {
+  font-style: italic;
+  color: #1FD87A;
+}
+/* Status indicator */
+.heroStatus {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px 6px 10px;
+  border-radius: 20px;
+  background: rgba(220, 60, 60, 0.06);
+  border: 1px solid rgba(220, 60, 60, 0.15);
+  margin-bottom: 24px;
+}
+.statusDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #dc3c3c;
+  box-shadow: 0 0 0 3px rgba(220, 60, 60, 0.15);
+  animation: pulseRed 2s ease-in-out infinite;
+}
+@keyframes pulseRed {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(220, 60, 60, 0.15); }
+  50% { box-shadow: 0 0 0 6px rgba(220, 60, 60, 0.08); }
+}
+.statusText {
+  font-size: 12px;
+  font-weight: 600;
+  font-family: 'JetBrains Mono', monospace;
+  color: #dc3c3c;
+  letter-spacing: 0.5px;
+}
+
+.heroSub {
+  font-size: 16px;
+  color: #888;
+  line-height: 1.7;
+  max-width: 600px;
+  margin: 0 auto 36px;
+}
+.heroCtas {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+/* ── BUTTONS ── */
+.ctaPrimary {
+  display: inline-flex;
+  align-items: center;
+  padding: 14px 28px;
+  border-radius: 12px;
+  background: #1a1a1a;
+  color: #fff !important;
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none !important;
+  transition: background 0.15s, transform 0.15s;
+}
+.ctaPrimary:hover { background: #333; transform: translateY(-1px); }
+.ctaSecondary {
+  display: inline-flex;
+  align-items: center;
+  padding: 14px 28px;
+  border-radius: 12px;
+  background: transparent;
+  border: 1px solid #e8e8e3;
+  color: #1a1a1a !important;
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none !important;
+  transition: border-color 0.15s, transform 0.15s;
+}
+.ctaSecondary:hover { border-color: #aaa; transform: translateY(-1px); }
+
+/* ── TOKEN OVERVIEW ── */
+.overview {
+  padding: 0 60px 80px;
+  max-width: 1000px;
+  margin: 0 auto;
+}
+.overviewHeader {
+  text-align: center;
+  margin-bottom: 36px;
+}
+.overviewHeader h2 {
+  font-size: clamp(28px, 3.5vw, 40px);
+  font-weight: 700;
+  letter-spacing: -1.5px;
+  margin-bottom: 14px;
+}
+.overviewHeader p {
+  font-size: 15px;
+  color: #888;
+  line-height: 1.6;
+}
+
+/* Supply bar */
+.supplyBar {
+  margin-bottom: 32px;
+}
+.supplyBarTrack {
+  height: 12px;
+  background: #f0f0eb;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.supplyBarFill {
+  height: 100%;
+  background: linear-gradient(90deg, #1FD87A, #17b866);
+  border-radius: 6px;
+  min-width: 4px;
+  transition: width 0.6s ease;
+}
+.supplyBarLabels {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 8px;
+  font-size: 12px;
+  font-family: 'JetBrains Mono', monospace;
+  color: #888;
+}
+
+/* Stats grid */
+.statsGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+}
+.statCard {
+  background: #fff;
+  border: 1px solid #e8e8e3;
+  border-radius: 14px;
+  padding: 24px;
+  text-align: center;
+}
+.statValue {
+  font-size: 24px;
+  font-weight: 700;
+  color: #1a1a1a;
+  letter-spacing: -0.5px;
+  margin-bottom: 6px;
+}
+.statLabel {
+  font-size: 11px;
+  font-weight: 600;
+  font-family: 'JetBrains Mono', monospace;
+  color: #888;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+/* ── EMISSIONS ── */
+.emissions {
+  padding: 60px 60px 80px;
+  max-width: 1000px;
+  margin: 0 auto;
+}
+.emissionsHeader {
+  text-align: center;
+  margin-bottom: 48px;
+}
+.emissionsHeader h2 {
+  font-size: clamp(26px, 3vw, 36px);
+  font-weight: 700;
+  letter-spacing: -1.2px;
+  margin-bottom: 12px;
+}
+.emissionsHeader p {
+  font-size: 15px;
+  color: #888;
+  line-height: 1.6;
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+/* Halving chart */
+.halvingChart {
+  background: #fff;
+  border: 1px solid #e8e8e3;
+  border-radius: 16px;
+  padding: 32px;
+  margin-bottom: 24px;
+}
+.halvingSvg {
+  width: 100%;
+  height: 100px;
+}
+.halvingLabels {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 12px;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+  color: #888;
+}
+.halvingLabels span:nth-child(2) {
+  color: #1FD87A;
+  font-weight: 600;
+}
+
+/* Current epoch card */
+.emissionsCurrentCard {
+  background: #1a1a1a;
+  border-radius: 14px;
+  padding: 28px 32px;
+  text-align: center;
+  margin-bottom: 32px;
+}
+.emissionsCurrentTitle {
+  font-size: 11px;
+  font-weight: 600;
+  font-family: 'JetBrains Mono', monospace;
+  color: #888;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+.emissionsCurrentValue {
+  font-size: clamp(28px, 3vw, 40px);
+  font-weight: 700;
+  color: #1FD87A;
+  letter-spacing: -1px;
+  margin-bottom: 8px;
+}
+.emissionsCurrentSub {
+  font-size: 13px;
+  font-family: 'JetBrains Mono', monospace;
+  color: #666;
+}
+
+/* Split grid */
+.splitGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+}
+.splitCard {
+  background: #fff;
+  border: 1px solid #e8e8e3;
+  border-radius: 14px;
+  padding: 28px;
+}
+.splitCardAccent {
+  border-color: #1FD87A;
+}
+.splitPct {
+  font-size: 32px;
+  font-weight: 700;
+  color: #1a1a1a;
+  letter-spacing: -1px;
+  margin-bottom: 4px;
+}
+.splitCardAccent .splitPct {
+  color: #1FD87A;
+}
+.splitLabel {
+  font-size: 13px;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', monospace;
+  color: #1a1a1a;
+  margin-bottom: 10px;
+}
+.splitDesc {
+  font-size: 13px;
+  color: #888;
+  line-height: 1.6;
+  margin: 0;
+}
+
+/* ── NETWORK ACTIVITY ── */
+.activity {
+  padding: 60px 60px 80px;
+  max-width: 1000px;
+  margin: 0 auto;
+}
+.activityHeader {
+  text-align: center;
+  margin-bottom: 36px;
+}
+.activityHeader h2 {
+  font-size: clamp(26px, 3vw, 36px);
+  font-weight: 700;
+  letter-spacing: -1.2px;
+  margin-bottom: 12px;
+}
+.activityHeader p {
+  font-size: 15px;
+  color: #888;
+  line-height: 1.6;
+}
+
+/* Dune banner */
+.duneBanner {
+  display: block;
+  background: #1a1a1a;
+  border-radius: 16px;
+  padding: 36px 40px;
+  text-decoration: none !important;
+  transition: background 0.15s, transform 0.15s;
+}
+.duneBanner:hover {
+  background: #252525;
+  transform: translateY(-2px);
+}
+.duneBannerContent {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+.duneBannerIcon {
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+  background: rgba(31, 216, 122, 0.12);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: #1FD87A;
+}
+.duneBannerText {
+  flex: 1;
+}
+.duneBannerTitle {
+  font-size: 18px;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: -0.3px;
+  margin-bottom: 6px;
+}
+.duneBannerSub {
+  font-size: 14px;
+  color: #888;
+  line-height: 1.6;
+}
+
+/* ── HOW TO EARN ── */
+.earn {
+  padding: 60px 60px 80px;
+  max-width: 1000px;
+  margin: 0 auto;
+}
+.earnHeader {
+  text-align: center;
+  margin-bottom: 48px;
+}
+.earnHeader h2 {
+  font-size: clamp(26px, 3vw, 36px);
+  font-weight: 700;
+  letter-spacing: -1.2px;
+  margin-bottom: 12px;
+}
+.earnHeader p {
+  font-size: 15px;
+  color: #888;
+  line-height: 1.6;
+}
+.earnGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+}
+.earnCard {
+  background: #fff;
+  border: 1px solid #e8e8e3;
+  border-radius: 16px;
+  padding: 36px;
+}
+.earnStep {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  font-weight: 700;
+  color: #1FD87A;
+  margin-bottom: 16px;
+}
+.earnCard h3 {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  margin-bottom: 12px;
+}
+.earnCard p {
+  font-size: 14px;
+  color: #888;
+  line-height: 1.65;
+  margin: 0;
+}
+
+/* ── CONTRACT DETAILS ── */
+.contracts {
+  padding: 60px 60px 80px;
+  max-width: 900px;
+  margin: 0 auto;
+}
+.contractsHeader {
+  text-align: center;
+  margin-bottom: 36px;
+}
+.contractsHeader h2 {
+  font-size: clamp(24px, 2.5vw, 32px);
+  font-weight: 700;
+  letter-spacing: -1px;
+}
+.contractsTable {
+  background: #fff;
+  border: 1px solid #e8e8e3;
+  border-radius: 16px;
+  overflow: hidden;
+}
+.contractsRow {
+  display: flex;
+  align-items: baseline;
+  gap: 20px;
+  padding: 16px 28px;
+  border-bottom: 1px solid #f5f5f0;
+}
+.contractsRow:last-child { border-bottom: none; }
+.contractsLabel {
+  font-size: 12px;
+  font-weight: 600;
+  font-family: 'JetBrains Mono', monospace;
+  color: #888;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  min-width: 160px;
+  flex-shrink: 0;
+}
+.contractsValue {
+  font-size: 14px;
+  color: #1a1a1a;
+  line-height: 1.5;
+}
+.contractsLink {
+  color: #1FD87A !important;
+  text-decoration: none !important;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  font-weight: 600;
+  border-bottom: 1px solid rgba(31, 216, 122, 0.3);
+  padding-bottom: 1px;
+  transition: border-color 0.15s;
+}
+.contractsLink:hover {
+  border-color: #1FD87A;
+}
+
+/* ── BOTTOM CTA ── */
+.bottomCta {
+  text-align: center;
+  padding: 80px 20px 100px;
+  max-width: 600px;
+  margin: 0 auto;
+}
+.bottomCta h2 {
+  font-size: clamp(28px, 3.5vw, 42px);
+  font-weight: 700;
+  letter-spacing: -1.5px;
+  margin-bottom: 14px;
+}
+.bottomCta > p {
+  font-size: 16px;
+  color: #888;
+  line-height: 1.6;
+  margin-bottom: 32px;
+}
+.bottomCtaBtns {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 28px;
+}
+.bottomLinks {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+.bottomLinks a {
+  color: #888 !important;
+  text-decoration: none !important;
+}
+.bottomLinks a:hover { color: #1a1a1a !important; }
+.bottomLinks span { color: #ddd; }
+
+/* ── RESPONSIVE ── */
+@media (max-width: 900px) {
+  .overview,
+  .emissions,
+  .activity,
+  .earn,
+  .contracts {
+    padding: 40px 20px 60px;
+  }
+  .statsGrid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .splitGrid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .earnGrid {
+    grid-template-columns: 1fr;
+  }
+  .contractsRow { flex-direction: column; gap: 4px; }
+  .contractsLabel { min-width: unset; }
+  .duneBanner { padding: 28px 24px; }
+  .duneBannerContent { gap: 16px; }
+}
+
+@media (max-width: 600px) {
+  .heroTitle {
+    font-size: clamp(32px, 9vw, 48px);
+    letter-spacing: -1.5px;
+  }
+  .heroSub { font-size: 15px; }
+  .heroCtas {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .ctaPrimary,
+  .ctaSecondary {
+    justify-content: center;
+  }
+  .statsGrid {
+    grid-template-columns: 1fr 1fr;
+  }
+  .splitGrid {
+    grid-template-columns: 1fr;
+  }
+  .bottomCtaBtns {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .bottomCtaBtns .ctaPrimary,
+  .bottomCtaBtns .ctaSecondary {
+    justify-content: center;
+  }
+  .bottomLinks {
+    flex-direction: column;
+    gap: 8px;
+  }
+  .bottomLinks span { display: none; }
+  .contractsRow { padding: 14px 20px; }
+  .duneBannerContent { flex-direction: column; text-align: center; }
+  .duneBannerIcon { margin: 0 auto; }
+}
