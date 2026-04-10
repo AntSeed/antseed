@@ -164,9 +164,9 @@ export default function AntsToken(): JSX.Element {
           <span className={styles.statusText}>Tokens Restricted</span>
         </div>
         <p className={styles.heroSub}>
-          ANTS is earned, not bought. Sellers and buyers who create real economic activity on the
-          network receive ANTS proportional to their contribution. Hard-capped at 1.04B with
-          automatic halvings.
+          ANTS is earned, not bought. No pre-mine, no insider allocation — sellers and buyers who
+          create real economic activity on the network receive ANTS proportional to their
+          contribution. Hard-capped at 1.04B with automatic halvings.
         </p>
         <div className={styles.heroCtas}>
           <a href={dmgUrl ?? RELEASES_URL} target="_blank" rel="noopener noreferrer" className={styles.ctaPrimary}>
