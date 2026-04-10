@@ -17,6 +17,7 @@ import { NetworkPoller } from './poller.js';
 import { createServer } from './server.js';
 import type { PeerMetadata } from '@antseed/node';
 import { toPeerId } from '@antseed/node';
+import { METADATA_VERSION } from '@antseed/node/discovery';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -27,7 +28,7 @@ function tmpCache(): string {
 function fakePeer(id: string, services: string[]): PeerMetadata {
   return {
     peerId: toPeerId(createHash('sha256').update(id).digest('hex').slice(0, 40)),
-    version: 4,
+    version: METADATA_VERSION,
     providers: [{ provider: 'test', services, defaultPricing: { inputUsdPerMillion: 10, outputUsdPerMillion: 10 }, maxConcurrency: 1, currentLoad: 0 }],
     region: 'eu-west-1',
     timestamp: Date.now(),
