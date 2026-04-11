@@ -105,19 +105,21 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
 
   fastify.get('/api/channels', async (_request, _reply) => {
     if (!ctx.cryptoCtx) {
-      return { channels: [] };
+      return { channels: [], history: [] };
     }
 
-    // Fetch active channels from the buyer proxy's local ChannelStore via
-    // its control-plane endpoint. The buyer runtime is the source of truth
-    // for channel state — avoids scanning on-chain event logs (which fails
-    // on public RPCs that cap eth_getLogs block range).
+    // Fetch channels from the buyer proxy's local ChannelStore via its
+    // control-plane endpoint (source of truth for the list). Avoids
+    // eth_getLogs scans which are capped on public RPCs. Then enrich each
+    // channel with a point-read against channels(bytes32) to get the
+    // authoritative on-chain status + closeRequestedAt, and split into
+    // active vs history based on on-chain state.
     try {
-      const url = `http://127.0.0.1:${ctx.proxyPort}/_antseed/channels`;
+      const url = `http://127.0.0.1:${ctx.proxyPort}/_antseed/channels?all=1`;
       const resp = await fetch(url);
       if (!resp.ok) {
         fastify.log.warn(`[/api/channels] buyer proxy returned ${resp.status}`);
-        return { channels: [] };
+        return { channels: [], history: [] };
       }
       const body = await resp.json() as {
         ok: boolean;
@@ -130,19 +132,17 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
           status: string;
         }>;
       };
-      // Enrich with on-chain state (closeRequestedAt + status) via point-reads
-      // against channels(bytes32). Point-reads work on public RPCs where
-      // eth_getLogs is rate-limited, which is why the list itself comes from
-      // the buyer proxy's local store.
       const cc = getChannelsClient();
-      const channels = await Promise.all((body.channels ?? []).map(async (c) => {
+      const enriched = await Promise.all((body.channels ?? []).map(async (c) => {
         let closeRequestedAt = 0;
-        let status = 1;
+        let onchainStatus = 0; // 0=None, 1=Active, 2=Settled, 3=TimedOut
+        let onchainSettled: bigint | null = null;
         if (cc) {
           try {
             const onchain = await cc.getSession(c.channelId);
             closeRequestedAt = Number(onchain.closeRequestedAt);
-            status = onchain.status;
+            onchainStatus = onchain.status;
+            onchainSettled = onchain.settled;
           } catch (err) {
             fastify.log.warn(`[/api/channels] on-chain read failed for ${c.channelId.slice(0, 10)}: ${err instanceof Error ? err.message : String(err)}`);
           }
@@ -151,16 +151,21 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
           channelId: c.channelId,
           seller: c.seller,
           deposit: formatUsdc6(BigInt(c.reserveMax)),
-          settled: formatUsdc6(BigInt(c.cumulativeSigned)),
+          settled: formatUsdc6(onchainSettled ?? BigInt(c.cumulativeSigned)),
           deadline: c.deadline,
           closeRequestedAt,
-          status,
+          status: onchainStatus,
         };
       }));
-      return { channels };
+      // Active = on-chain status Active (1). Everything else is history
+      // (Settled=2, TimedOut=3, None=0 means the channel no longer exists
+      // on-chain — e.g., withdrawn and cleared).
+      const channels = enriched.filter((c) => c.status === 1);
+      const history = enriched.filter((c) => c.status !== 1);
+      return { channels, history };
     } catch (err) {
       fastify.log.warn(`[/api/channels] buyer proxy unreachable: ${err instanceof Error ? err.message : String(err)}`);
-      return { channels: [] };
+      return { channels: [], history: [] };
     }
   });
 

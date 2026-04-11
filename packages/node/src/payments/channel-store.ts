@@ -283,6 +283,16 @@ export class ChannelStore {
     return rows.map(rowToChannel);
   }
 
+  /** All channels for a given buyer (any status), ordered by most recent first. */
+  getAllChannelsByBuyer(role: string, buyerEvmAddr: string): StoredChannel[] {
+    const rows = this._db
+      .prepare(
+        'SELECT * FROM payment_channels WHERE role = ? AND buyer_evm_addr = ? ORDER BY created_at DESC',
+      )
+      .all(role, buyerEvmAddr) as ChannelRow[];
+    return rows.map(rowToChannel);
+  }
+
   /** Aggregate totals across all channels for a given peer and role. */
   getTotalsByPeer(peerId: string, role: string): {
     totalSessions: number;

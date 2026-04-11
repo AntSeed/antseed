@@ -585,6 +585,38 @@ export class AntseedNode extends EventEmitter {
     });
   }
 
+  /** All buyer channels (any local status), used for history views. */
+  getAllBuyerChannels(): Array<{
+    channelId: string;
+    peerId: string;
+    seller: string;
+    buyer: string;
+    reserveMax: string;
+    cumulativeSigned: string;
+    deadline: number;
+    reservedAt: number;
+    status: string;
+    requestCount: number;
+    tokensDelivered: string;
+  }> {
+    const buyerAddress = this._identity?.wallet.address ?? null;
+    if (!buyerAddress || !this._channelStore) return [];
+    const stored = this._channelStore.getAllChannelsByBuyer('buyer', buyerAddress);
+    return stored.map((c) => ({
+      channelId: c.sessionId,
+      peerId: c.peerId,
+      seller: c.sellerEvmAddr,
+      buyer: c.buyerEvmAddr,
+      reserveMax: c.authMax,
+      cumulativeSigned: c.authMax,
+      deadline: c.deadline,
+      reservedAt: c.reservedAt,
+      status: c.status,
+      requestCount: c.requestCount,
+      tokensDelivered: c.tokensDelivered,
+    }));
+  }
+
   async sendRequest(
     peer: PeerInfo,
     req: SerializedHttpRequest,

@@ -58,7 +58,7 @@ export interface OperatorData {
   nonce: number;
 }
 
-export async function getChannels(): Promise<{ channels: ChannelData[] }> {
+export async function getChannels(): Promise<{ channels: ChannelData[]; history: ChannelData[] }> {
   return fetchJson('/api/channels');
 }
 

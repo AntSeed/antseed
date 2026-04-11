@@ -145,8 +145,50 @@ function SessionCard({ session, config, onRefresh }: { session: ChannelData; con
   );
 }
 
+function HistoryCard({ session }: { session: ChannelData }) {
+  const label = session.status === 2 ? 'Settled' : session.status === 3 ? 'Timed out' : 'Closed';
+  return (
+    <div style={{
+      background: 'var(--card-bg)',
+      border: '1px solid var(--card-border)',
+      borderRadius: 12,
+      padding: 12,
+      marginBottom: 8,
+      opacity: 0.75,
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+        <span style={{ fontSize: 12, color: 'var(--text-secondary)', fontWeight: 500 }}>
+          Seller: {truncateAddress(session.seller)}
+        </span>
+        <span style={{
+          display: 'inline-block',
+          padding: '2px 8px',
+          borderRadius: 12,
+          fontSize: 11,
+          fontWeight: 600,
+          background: 'rgba(148, 163, 184, 0.12)',
+          color: 'var(--text-muted)',
+        }}>
+          {label}
+        </span>
+      </div>
+      <div style={{ display: 'flex', gap: 24 }}>
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Reserved</div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>${session.deposit}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Used</div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>${session.settled}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function ChannelsView({ config }: ChannelsViewProps) {
   const [channels, setChannels] = useState<ChannelData[]>([]);
+  const [history, setHistory] = useState<ChannelData[]>([]);
   const [loading, setLoading] = useState(true);
   const [operatorSet, setOperatorSet] = useState<boolean | null>(null);
 
@@ -154,10 +196,11 @@ export function ChannelsView({ config }: ChannelsViewProps) {
     setLoading(true);
     try {
       const [channelsResult, operatorResult] = await Promise.all([
-        getChannels().catch(() => ({ channels: [] })),
+        getChannels().catch(() => ({ channels: [], history: [] })),
         getOperatorInfo().catch(() => null),
       ]);
       setChannels(channelsResult.channels);
+      setHistory(channelsResult.history ?? []);
       if (operatorResult) {
         setOperatorSet(operatorResult.operator !== '0x0000000000000000000000000000000000000000');
       }
@@ -199,6 +242,15 @@ export function ChannelsView({ config }: ChannelsViewProps) {
         config && channels.map((session) => (
           <SessionCard key={session.channelId} session={session} config={config} onRefresh={fetchData} />
         ))
+      )}
+
+      {history.length > 0 && (
+        <div style={{ marginTop: 24 }}>
+          <div className="card-section-title" style={{ marginBottom: 12 }}>History</div>
+          {history.map((session) => (
+            <HistoryCard key={session.channelId} session={session} />
+          ))}
+        </div>
       )}
     </div>
   );

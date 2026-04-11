@@ -647,8 +647,11 @@ export class BuyerProxy {
       return
     }
 
-    if (path === '/_antseed/channels' && method === 'GET') {
-      const channels = this._node.getActiveBuyerChannels()
+    if (path.startsWith('/_antseed/channels') && method === 'GET') {
+      const all = /[?&]all=1/.test(path)
+      const channels = all
+        ? this._node.getAllBuyerChannels()
+        : this._node.getActiveBuyerChannels()
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ ok: true, channels }))
       return
