@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { CryptoContext, PaymentCryptoConfig } from './crypto-context.js';
-import { DepositsClient, formatUsdc, parseUsdc, signSetOperator, makeDepositsDomain, type ChainConfig } from '@antseed/node';
+import { ChannelsClient, DepositsClient, formatUsdc, parseUsdc, signSetOperator, makeDepositsDomain, type ChainConfig } from '@antseed/node';
 
 interface RouteContext {
   cryptoCtx: CryptoContext | null;
@@ -27,6 +27,17 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
   function getClient(): DepositsClient | null {
     if (!depositsClient) depositsClient = createClient(ctx.cryptoConfig);
     return depositsClient;
+  }
+
+  let channelsClient: ChannelsClient | null = null;
+  function getChannelsClient(): ChannelsClient | null {
+    if (!channelsClient) {
+      channelsClient = new ChannelsClient({
+        rpcUrl: ctx.cryptoConfig.rpcUrl,
+        contractAddress: ctx.cryptoConfig.channelsContractAddress,
+      });
+    }
+    return channelsClient;
   }
 
   fastify.get('/api/balance', async (_request, reply) => {
@@ -119,14 +130,32 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
           status: string;
         }>;
       };
-      const channels = (body.channels ?? []).map((c) => ({
-        channelId: c.channelId,
-        seller: c.seller,
-        deposit: formatUsdc6(BigInt(c.reserveMax)),
-        settled: formatUsdc6(BigInt(c.cumulativeSigned)),
-        deadline: c.deadline,
-        closeRequestedAt: 0,
-        status: 1, // buyer proxy already filters to active
+      // Enrich with on-chain state (closeRequestedAt + status) via point-reads
+      // against channels(bytes32). Point-reads work on public RPCs where
+      // eth_getLogs is rate-limited, which is why the list itself comes from
+      // the buyer proxy's local store.
+      const cc = getChannelsClient();
+      const channels = await Promise.all((body.channels ?? []).map(async (c) => {
+        let closeRequestedAt = 0;
+        let status = 1;
+        if (cc) {
+          try {
+            const onchain = await cc.getSession(c.channelId);
+            closeRequestedAt = Number(onchain.closeRequestedAt);
+            status = onchain.status;
+          } catch (err) {
+            fastify.log.warn(`[/api/channels] on-chain read failed for ${c.channelId.slice(0, 10)}: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }
+        return {
+          channelId: c.channelId,
+          seller: c.seller,
+          deposit: formatUsdc6(BigInt(c.reserveMax)),
+          settled: formatUsdc6(BigInt(c.cumulativeSigned)),
+          deadline: c.deadline,
+          closeRequestedAt,
+          status,
+        };
       }));
       return { channels };
     } catch (err) {
