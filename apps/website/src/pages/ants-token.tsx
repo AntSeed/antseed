@@ -164,9 +164,9 @@ export default function AntsToken(): JSX.Element {
           <span className={styles.statusText}>Tokens Restricted</span>
         </div>
         <p className={styles.heroSub}>
-          ANTS is earned, not bought. Sellers and buyers who create real economic activity on the
-          network receive ANTS proportional to their contribution. Hard-capped at 1.04B with
-          automatic halvings.
+          ANTS is earned, not bought. No pre-mine, no insider allocation — sellers and buyers who
+          create real economic activity on the network receive ANTS proportional to their
+          contribution. Hard-capped at 1.04B with automatic halvings.
         </p>
         <div className={styles.heroCtas}>
           <a href={dmgUrl ?? RELEASES_URL} target="_blank" rel="noopener noreferrer" className={styles.ctaPrimary}>
@@ -319,7 +319,7 @@ export default function AntsToken(): JSX.Element {
             {label: 'Max supply', value: '1,040,000,000 ANTS'},
             {label: 'Epoch duration', value: '1 week (604,800 seconds)'},
             {label: 'Halving interval', value: 'Every 104 epochs (~2 years)'},
-            {label: 'Network fee', value: '2% of settlement (200 bps), distributed back to stakers'},
+            {label: 'Network fee', value: '2% of settlement (200 bps), collected to community reserve pool'},
             {label: 'Transfers', value: 'Currently restricted'},
           ].map(r => (
             <div key={r.label} className={styles.contractsRow}>
