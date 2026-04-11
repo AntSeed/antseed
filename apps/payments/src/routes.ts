@@ -132,31 +132,67 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
           status: string;
         }>;
       };
-      const cc = getChannelsClient();
-      const enriched = await Promise.all((body.channels ?? []).map(async (c) => {
-        let closeRequestedAt = 0;
-        let onchainStatus = 0; // 0=None, 1=Active, 2=Settled, 3=TimedOut
-        let onchainSettled: bigint | null = null;
-        if (cc) {
-          try {
-            const onchain = await cc.getSession(c.channelId);
-            closeRequestedAt = Number(onchain.closeRequestedAt);
-            onchainStatus = onchain.status;
-            onchainSettled = onchain.settled;
-          } catch (err) {
-            fastify.log.warn(`[/api/channels] on-chain read failed for ${c.channelId.slice(0, 10)}: ${err instanceof Error ? err.message : String(err)}`);
+      // Initialize the channels client outside the enrichment loop and catch
+      // init failures independently — a bad RPC URL must not discard the
+      // channel list we already have from the buyer proxy.
+      let cc: ChannelsClient | null = null;
+      try {
+        cc = getChannelsClient();
+      } catch (err) {
+        fastify.log.warn(`[/api/channels] channels client init failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      const rawChannels = body.channels ?? [];
+      // Cap concurrent eth_call fan-out. Public RPCs rate-limit concurrent
+      // reads — the default wagmi primary (publicnode) was picked for 3/3
+      // reliability at 3 concurrent eth_calls; more than that and responses
+      // start coming back stale, which would resurrect the exact bug this
+      // PR fixes (status=1 / closeRequestedAt=0 placeholders).
+      const ON_CHAIN_READ_CONCURRENCY = 3;
+      const enriched: Array<{
+        channelId: string;
+        seller: string;
+        deposit: string;
+        settled: string;
+        deadline: number;
+        closeRequestedAt: number;
+        status: number;
+      }> = new Array(rawChannels.length);
+      let cursor = 0;
+      async function worker() {
+        while (true) {
+          const i = cursor++;
+          if (i >= rawChannels.length) return;
+          const c = rawChannels[i]!;
+          let closeRequestedAt = 0;
+          let onchainStatus = 0; // 0=None, 1=Active, 2=Settled, 3=TimedOut
+          let onchainSettled: bigint | null = null;
+          if (cc) {
+            try {
+              const onchain = await cc.getSession(c.channelId);
+              closeRequestedAt = Number(onchain.closeRequestedAt);
+              onchainStatus = onchain.status;
+              onchainSettled = onchain.settled;
+            } catch (err) {
+              fastify.log.warn(`[/api/channels] on-chain read failed for ${c.channelId.slice(0, 10)}: ${err instanceof Error ? err.message : String(err)}`);
+            }
           }
+          enriched[i] = {
+            channelId: c.channelId,
+            seller: c.seller,
+            deposit: formatUsdc6(BigInt(c.reserveMax)),
+            settled: formatUsdc6(onchainSettled ?? BigInt(c.cumulativeSigned)),
+            deadline: c.deadline,
+            closeRequestedAt,
+            status: onchainStatus,
+          };
         }
-        return {
-          channelId: c.channelId,
-          seller: c.seller,
-          deposit: formatUsdc6(BigInt(c.reserveMax)),
-          settled: formatUsdc6(onchainSettled ?? BigInt(c.cumulativeSigned)),
-          deadline: c.deadline,
-          closeRequestedAt,
-          status: onchainStatus,
-        };
-      }));
+      }
+      const workers = Array.from(
+        { length: Math.min(ON_CHAIN_READ_CONCURRENCY, rawChannels.length) },
+        () => worker(),
+      );
+      await Promise.all(workers);
       // Active = on-chain status Active (1). Everything else is history
       // (Settled=2, TimedOut=3, None=0 means the channel no longer exists
       // on-chain — e.g., withdrawn and cleared).
