@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { CryptoContext, PaymentCryptoConfig } from './crypto-context.js';
-import { DepositsClient, formatUsdc, parseUsdc, signSetOperator, makeDepositsDomain, type ChainConfig } from '@antseed/node';
+import { ChannelsClient, DepositsClient, formatUsdc, parseUsdc, signSetOperator, makeDepositsDomain, type ChainConfig } from '@antseed/node';
 
 interface RouteContext {
   cryptoCtx: CryptoContext | null;
@@ -27,6 +27,17 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
   function getClient(): DepositsClient | null {
     if (!depositsClient) depositsClient = createClient(ctx.cryptoConfig);
     return depositsClient;
+  }
+
+  let channelsClient: ChannelsClient | null = null;
+  function getChannelsClient(): ChannelsClient | null {
+    if (!channelsClient) {
+      channelsClient = new ChannelsClient({
+        rpcUrl: ctx.cryptoConfig.rpcUrl,
+        contractAddress: ctx.cryptoConfig.channelsContractAddress,
+      });
+    }
+    return channelsClient;
   }
 
   fastify.get('/api/balance', async (_request, reply) => {
@@ -94,19 +105,21 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
 
   fastify.get('/api/channels', async (_request, _reply) => {
     if (!ctx.cryptoCtx) {
-      return { channels: [] };
+      return { channels: [], history: [] };
     }
 
-    // Fetch active channels from the buyer proxy's local ChannelStore via
-    // its control-plane endpoint. The buyer runtime is the source of truth
-    // for channel state — avoids scanning on-chain event logs (which fails
-    // on public RPCs that cap eth_getLogs block range).
+    // Fetch channels from the buyer proxy's local ChannelStore via its
+    // control-plane endpoint (source of truth for the list). Avoids
+    // eth_getLogs scans which are capped on public RPCs. Then enrich each
+    // channel with a point-read against channels(bytes32) to get the
+    // authoritative on-chain status + closeRequestedAt, and split into
+    // active vs history based on on-chain state.
     try {
-      const url = `http://127.0.0.1:${ctx.proxyPort}/_antseed/channels`;
+      const url = `http://127.0.0.1:${ctx.proxyPort}/_antseed/channels?all=1`;
       const resp = await fetch(url);
       if (!resp.ok) {
         fastify.log.warn(`[/api/channels] buyer proxy returned ${resp.status}`);
-        return { channels: [] };
+        return { channels: [], history: [] };
       }
       const body = await resp.json() as {
         ok: boolean;
@@ -119,19 +132,76 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
           status: string;
         }>;
       };
-      const channels = (body.channels ?? []).map((c) => ({
-        channelId: c.channelId,
-        seller: c.seller,
-        deposit: formatUsdc6(BigInt(c.reserveMax)),
-        settled: formatUsdc6(BigInt(c.cumulativeSigned)),
-        deadline: c.deadline,
-        closeRequestedAt: 0,
-        status: 1, // buyer proxy already filters to active
-      }));
-      return { channels };
+      // Initialize the channels client outside the enrichment loop and catch
+      // init failures independently — a bad RPC URL must not discard the
+      // channel list we already have from the buyer proxy.
+      let cc: ChannelsClient | null = null;
+      try {
+        cc = getChannelsClient();
+      } catch (err) {
+        fastify.log.warn(`[/api/channels] channels client init failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      const rawChannels = body.channels ?? [];
+      // Cap concurrent eth_call fan-out. Public RPCs rate-limit concurrent
+      // reads — the default wagmi primary (publicnode) was picked for 3/3
+      // reliability at 3 concurrent eth_calls; more than that and responses
+      // start coming back stale, which would resurrect the exact bug this
+      // PR fixes (status=1 / closeRequestedAt=0 placeholders).
+      const ON_CHAIN_READ_CONCURRENCY = 3;
+      const enriched: Array<{
+        channelId: string;
+        seller: string;
+        deposit: string;
+        settled: string;
+        deadline: number;
+        closeRequestedAt: number;
+        status: number;
+      }> = new Array(rawChannels.length);
+      let cursor = 0;
+      async function worker() {
+        while (true) {
+          const i = cursor++;
+          if (i >= rawChannels.length) return;
+          const c = rawChannels[i]!;
+          let closeRequestedAt = 0;
+          let onchainStatus = 0; // 0=None, 1=Active, 2=Settled, 3=TimedOut
+          let onchainSettled: bigint | null = null;
+          if (cc) {
+            try {
+              const onchain = await cc.getSession(c.channelId);
+              closeRequestedAt = Number(onchain.closeRequestedAt);
+              onchainStatus = onchain.status;
+              onchainSettled = onchain.settled;
+            } catch (err) {
+              fastify.log.warn(`[/api/channels] on-chain read failed for ${c.channelId.slice(0, 10)}: ${err instanceof Error ? err.message : String(err)}`);
+            }
+          }
+          enriched[i] = {
+            channelId: c.channelId,
+            seller: c.seller,
+            deposit: formatUsdc6(BigInt(c.reserveMax)),
+            settled: formatUsdc6(onchainSettled ?? BigInt(c.cumulativeSigned)),
+            deadline: c.deadline,
+            closeRequestedAt,
+            status: onchainStatus,
+          };
+        }
+      }
+      const workers = Array.from(
+        { length: Math.min(ON_CHAIN_READ_CONCURRENCY, rawChannels.length) },
+        () => worker(),
+      );
+      await Promise.all(workers);
+      // Active = on-chain status Active (1). Everything else is history
+      // (Settled=2, TimedOut=3, None=0 means the channel no longer exists
+      // on-chain — e.g., withdrawn and cleared).
+      const channels = enriched.filter((c) => c.status === 1);
+      const history = enriched.filter((c) => c.status !== 1);
+      return { channels, history };
     } catch (err) {
       fastify.log.warn(`[/api/channels] buyer proxy unreachable: ${err instanceof Error ? err.message : String(err)}`);
-      return { channels: [] };
+      return { channels: [], history: [] };
     }
   });
 
