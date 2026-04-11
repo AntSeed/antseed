@@ -37,7 +37,15 @@ function applyProviderPricingOverride(
   field: 'inputUsdPerMillion' | 'outputUsdPerMillion',
   value: number,
 ): void {
-  for (const providerCfg of Object.values(seller.providers)) {
+  const providers = Object.values(seller.providers);
+  if (providers.length === 0) {
+    console.warn(
+      `Warning: ${field} override (${value}) has no effect — no providers configured yet. ` +
+      `Add a provider first via 'antseed config seller add-provider'.`,
+    );
+    return;
+  }
+  for (const providerCfg of providers) {
     if (!providerCfg.defaults) {
       providerCfg.defaults = { inputUsdPerMillion: 0, outputUsdPerMillion: 0 };
     }

@@ -60,7 +60,7 @@ antseed config seller add-service openai kimi-k2.5 \
   --categories math,coding
 ```
 
-The CLI reads `seller.providers.openai.services[id]` and turns it into the flat env keys (`ANTSEED_SERVICE_ALIAS_MAP_JSON`, `ANTSEED_SERVICE_PRICING_JSON`, `ANTSEED_ALLOWED_SERVICES`, `ANTSEED_SERVICE_CATEGORIES_JSON`) that this plugin's `configSchema` consumes internally. You should not set those directly.
+The CLI reads `seller.providers.openai.services[id]` and turns it into the flat env keys (`ANTSEED_SERVICE_ALIAS_MAP_JSON`, `ANTSEED_SERVICE_PRICING_JSON`, `ANTSEED_ALLOWED_SERVICES`) that this plugin's `configSchema` consumes internally. Categories are written directly onto `provider.serviceCategories` by the seed action, not via env var. You should not set those env keys directly.
 
 ## How It Works
 
