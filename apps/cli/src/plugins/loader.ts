@@ -39,7 +39,7 @@ async function loadPlugin<T>(
       (err as { code?: string }).code === 'ERR_MODULE_NOT_FOUND'
     ) {
       throw new Error(
-        `Plugin "${pkgName}" not found. Install it with:\n  antseed plugin add ${pkgName}`
+        `Plugin "${pkgName}" not found. Install it first, then retry your command.`
       )
     }
     throw new Error(

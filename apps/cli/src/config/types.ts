@@ -1,31 +1,3 @@
-import type { ProviderType } from '@antseed/node';
-
-/**
- * Provider configuration for the Antseed config file.
- * This is distinct from the provider.ts ProviderConfig used internally.
- */
-export interface CLIProviderConfig {
-  /** Provider type identifier */
-  type: ProviderType;
-  /** API endpoint URL */
-  endpoint: string;
-  /** Name of the HTTP header used for authentication */
-  authHeaderName: string;
-  /** Auth token / API key value */
-  authValue: string;
-  /** Auth type: 'apikey' (default), 'oauth' (with refresh), or 'claude-code' (read from keychain) */
-  authType?: 'apikey' | 'oauth' | 'claude-code';
-  /** OAuth refresh token (required when authType is 'oauth') */
-  refreshToken?: string;
-  /** Token expiration timestamp in epoch ms (used with authType 'oauth') */
-  expiresAt?: number;
-}
-
-/**
- * Re-export ProviderType for convenience in config commands.
- */
-export type { ProviderType } from '@antseed/node';
-
 /**
  * Dual token pricing in USD per 1M tokens.
  */
@@ -66,6 +38,8 @@ export interface SellerServiceConfig {
  * Per-provider seller configuration.
  */
 export interface SellerProviderConfig {
+  /** Plugin name or npm package that powers this provider (e.g. "openai", "@antseed/provider-openai"). */
+  plugin: string;
   /** Optional upstream API base URL override (e.g. "https://api.together.ai"). */
   baseUrl?: string;
   /** Fallback pricing used by services that don't set their own `pricing`. */
@@ -82,8 +56,6 @@ export interface SellerCLIConfig {
   reserveFloor: number;
   /** Maximum number of concurrent buyer connections */
   maxConcurrentBuyers: number;
-  /** Which provider plugins are enabled for selling */
-  enabledProviders: string[];
   /**
    * Per-provider configuration: upstream base URL, defaults, and the services
    * offered under each provider. The set of keys here also determines which
@@ -172,8 +144,6 @@ export interface AntseedConfig {
     displayName: string;
     walletAddress?: string;
   };
-  /** Configured LLM provider credentials */
-  providers: CLIProviderConfig[];
   /** Seller mode settings */
   seller: SellerCLIConfig;
   /** Buyer mode settings */
@@ -185,9 +155,3 @@ export interface AntseedConfig {
   /** Installed plugins */
   plugins?: { name: string; package: string; installedAt: string }[];
 }
-
-/**
- * ProviderConfig alias for use in config commands.
- * Maps to CLIProviderConfig.
- */
-export type ProviderConfig = CLIProviderConfig;

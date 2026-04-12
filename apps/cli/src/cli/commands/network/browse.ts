@@ -2,8 +2,8 @@ import type { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
 import Table from 'cli-table3';
-import { getGlobalOptions } from './types.js';
-import { loadConfig } from '../../config/loader.js';
+import { getGlobalOptions } from '../types.js';
+import { loadConfig } from '../../../config/loader.js';
 import { AntseedNode } from '@antseed/node';
 import { parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery';
 
@@ -18,17 +18,17 @@ function getReputationColor(reputation: number): (message: string) => string {
 }
 
 /**
- * Register the `antseed browse` command on the Commander program.
+ * Register the `antseed network browse` command on the Commander program.
  * Discovers peers on the network and displays available services, prices, and reputation.
  */
-export function registerBrowseCommand(program: Command): void {
-  program
+export function registerNetworkBrowseCommand(networkCmd: Command): void {
+  networkCmd
     .command('browse')
     .description('Browse available services, prices, and reputation on the P2P network')
     .option('-s, --service <service>', 'filter by service name')
     .option('--json', 'output as JSON', false)
     .action(async (options) => {
-      const globalOpts = getGlobalOptions(program);
+      const globalOpts = getGlobalOptions(networkCmd);
       const config = await loadConfig(globalOpts.config);
 
       const bootstrapNodes = config.network.bootstrapNodes.length > 0

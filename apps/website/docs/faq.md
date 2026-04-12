@@ -77,16 +77,21 @@ AntSeed automatically detects provider failures and reroutes to the next best sp
 
 ### Do I need to sign up or create an account?
 
-No account required. Install the CLI, run `antseed connect`, and you are live on the network. Any tool that speaks the OpenAI API format works immediately.
+No account required. Install the CLI, run `antseed buyer start`, and you are live on the network. Any tool that speaks the OpenAI API format works immediately.
 
 ### How do I install AntSeed?
 
 ```bash
 npm install -g @antseed/cli
-antseed connect --router local
 ```
 
-That's it. See the [installation guide](/docs/install) for full details.
+Then start the buyer proxy:
+
+```bash
+antseed buyer start --router local
+```
+
+See the [installation guide](/docs/install) for full details.
 
 ### Does it work with Claude Code, Codex, or other AI tools?
 
@@ -104,7 +109,7 @@ macOS (Apple Silicon and Intel), Windows, and Linux. The CLI runs anywhere Node.
 
 Yes. The network is open. Wrap your expertise in AI and sell it — video creation, legal analysis, code audits, uncensored inference, autonomous agents. It's your job to pick the models and workflows that deliver the best results. The network only measures delivery quality. No permission or partnership required.
 
-See the [provider setup guide](/docs/install) to get started.
+See the [provider setup guide](/docs/guides/become-a-provider) to get started.
 
 ### How does pricing work?
 

@@ -14,15 +14,14 @@ Configuration is stored at `~/.antseed/config.json`. Use `antseed config` comman
 | Section | Description |
 |---|---|
 | `identity` | Display name |
-| `seller` | Per-provider service offerings (pricing, categories, upstream model mapping), reserve floor, max concurrent buyers, agent directory |
+| `seller` | Per-provider service offerings (plugin, pricing, categories, upstream model mapping), reserve floor, max concurrent buyers, agent directory |
 | `buyer` | Max pricing thresholds, proxy port |
 | `payments` | Chain ID (`base-mainnet` by default) |
 | `network` | Bootstrap nodes |
-| `plugins` | Installed plugin packages |
 
 ## Seller Shape
 
-Everything a seller announces — the list of services, pricing, upstream model mapping, and normie-friendly category tags — lives under `seller.providers[name].services[id]`. One block per upstream provider, one entry per service offered under it.
+Everything a seller announces lives under `seller.providers[name]`. The key under `providers` is a user-chosen label, and `plugin` identifies the provider plugin package that powers it. The list of services, pricing, upstream model mapping, and normie-friendly category tags lives under `seller.providers[name].services[id]`.
 
 ```json
 {
@@ -30,7 +29,8 @@ Everything a seller announces — the list of services, pricing, upstream model 
     "reserveFloor": 10,
     "maxConcurrentBuyers": 5,
     "providers": {
-      "openai": {
+      "together": {
+        "plugin": "openai",
         "baseUrl": "https://api.together.ai",
         "defaults": {
           "inputUsdPerMillion": 1,
@@ -68,6 +68,26 @@ Each service entry supports three optional fields:
 | `pricing` | object | Per-service pricing in USD per million tokens. If omitted, the provider's `defaults` are used. |
 
 `baseUrl` on the provider block is forwarded to plugins that honor it (the `openai` plugin uses it as `OPENAI_BASE_URL` for Together, OpenRouter, etc.).
+
+## Adding a Provider (CLI)
+
+Use `antseed config seller add-provider` to create a provider entry and install the matching plugin package:
+
+```bash
+# Add a provider backed by the openai plugin, pointed at Together AI
+antseed config seller add-provider together \
+  --plugin openai \
+  --base-url https://api.together.ai \
+  --input 1 --output 2
+
+# Add another using the same plugin for OpenRouter
+antseed config seller add-provider openrouter \
+  --plugin openai \
+  --base-url https://openrouter.ai/api/v1
+
+# Remove a provider
+antseed config seller remove-provider openrouter
+```
 
 ## Adding a Service (CLI)
 

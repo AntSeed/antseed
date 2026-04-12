@@ -1,20 +1,20 @@
 import type { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
-import { getGlobalOptions } from './types.js';
-import { loadConfig } from '../../config/loader.js';
+import { getGlobalOptions } from '../types.js';
+import { loadConfig } from '../../../config/loader.js';
 import {
   createDepositsClient,
   loadCryptoContext,
   parseUsdcToBaseUnits,
-} from '../payment-utils.js';
+} from '../../payment-utils.js';
 
-export function registerDepositCommand(program: Command): void {
-  program
+export function registerBuyerDepositCommand(buyerCmd: Command): void {
+  buyerCmd
     .command('deposit <amount>')
     .description('Deposit USDC into the deposits contract (amount in human-readable USDC, e.g. "5" = 5 USDC)')
     .action(async (amount: string) => {
-      const globalOpts = getGlobalOptions(program);
+      const globalOpts = getGlobalOptions(buyerCmd);
       const config = await loadConfig(globalOpts.config);
 
       let amountBaseUnits: bigint;

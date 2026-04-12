@@ -1,14 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createDefaultConfig } from '../../config/defaults.js';
-import { resolveEffectiveBuyerConfig } from '../../config/effective.js';
+import { createDefaultConfig } from '../../../config/defaults.js';
+import { resolveEffectiveBuyerConfig } from '../../../config/effective.js';
 import {
   buildBuyerRuntimeOverridesFromFlags,
   buildBuyerBootstrapEntries,
   buildRouterRuntimeEnvFromBuyerConfig,
-} from './connect.js';
+  resolveBuyerRouterName,
+} from './start.js';
 
-test('connect runtime overrides are runtime-only and win over env/config', () => {
+test('buyer start runtime overrides are runtime-only and win over env/config', () => {
   const config = createDefaultConfig();
   config.buyer.proxyPort = 7777;
   config.buyer.maxPricing.defaults.inputUsdPerMillion = 50;
@@ -38,7 +39,7 @@ test('connect runtime overrides are runtime-only and win over env/config', () =>
   assert.deepEqual(config, beforeResolution);
 });
 
-test('connect maps effective buyer config into router runtime env keys', () => {
+test('buyer start maps effective buyer config into router runtime env keys', () => {
   const config = createDefaultConfig();
   config.buyer.minPeerReputation = 72;
   config.buyer.maxPricing.defaults.inputUsdPerMillion = 21;
@@ -54,14 +55,19 @@ test('connect maps effective buyer config into router runtime env keys', () => {
   assert.equal(parsed.defaults?.outputUsdPerMillion, 63);
 });
 
-test('connect bootstrap entries use official nodes when config is empty and include local seeder first', () => {
+test('buyer start bootstrap entries use official nodes when config is empty and include local seeder first', () => {
   const entries = buildBuyerBootstrapEntries([], 6881);
   assert.equal(entries[0], '127.0.0.1:6881');
   assert.ok(entries.length > 1);
 });
 
-test('connect bootstrap entries respect explicit configured nodes', () => {
+test('buyer start bootstrap entries respect explicit configured nodes', () => {
   const entries = buildBuyerBootstrapEntries(['10.0.0.2:6881'], 6889);
   assert.equal(entries[0], '127.0.0.1:6889');
   assert.deepEqual(entries.slice(1), ['10.0.0.2:6881']);
+});
+
+test('buyer start defaults router name to local', () => {
+  assert.equal(resolveBuyerRouterName({}), 'local');
+  assert.equal(resolveBuyerRouterName({ router: 'claude-code' }), 'claude-code');
 });

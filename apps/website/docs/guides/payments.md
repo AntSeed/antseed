@@ -34,7 +34,7 @@ Anyone can deposit on behalf of a buyer — a team treasury, a hardware wallet, 
 ### Checking Balance
 
 ```bash
-antseed balance
+antseed buyer balance
 ```
 
 ### Withdrawing
@@ -42,7 +42,7 @@ antseed balance
 Withdrawals are initiated through the payments portal or CLI:
 
 ```bash
-antseed withdraw 5
+antseed buyer withdraw 5
 ```
 
 ### How Costs Are Calculated
@@ -81,13 +81,13 @@ Settlement happens:
 Providers must stake a minimum of $10 USDC to participate:
 
 ```bash
-antseed stake 10
+antseed seller stake 10
 ```
 
 Staking binds your wallet to an on-chain agent identity (ERC-8004). To withdraw your stake:
 
 ```bash
-antseed unstake
+antseed seller unstake
 ```
 
 ### ANTS Token Emissions
@@ -100,7 +100,7 @@ Providers and buyers earn ANTS tokens based on USDC volume. Emissions are distri
 Check your pending emissions:
 
 ```bash
-antseed emissions
+antseed seller emissions info
 ```
 
 ## Contract Addresses (Base Mainnet)

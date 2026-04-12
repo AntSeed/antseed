@@ -1,20 +1,20 @@
 import type { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
-import { getGlobalOptions } from './types.js';
-import { loadConfig } from '../../config/loader.js';
+import { getGlobalOptions } from '../types.js';
+import { loadConfig } from '../../../config/loader.js';
 import {
   createIdentityClient,
   loadCryptoContext,
-} from '../payment-utils.js';
+} from '../../payment-utils.js';
 
-export function registerRegisterCommand(program: Command): void {
-  program
+export function registerSellerRegisterCommand(sellerCmd: Command): void {
+  sellerCmd
     .command('register')
     .description('Register your peer identity on-chain')
     .option('--metadata <uri>', 'metadata URI (optional)', '')
     .action(async (options) => {
-      const globalOpts = getGlobalOptions(program);
+      const globalOpts = getGlobalOptions(sellerCmd);
       const config = await loadConfig(globalOpts.config);
 
       const spinner = ora('Checking registration status...').start();

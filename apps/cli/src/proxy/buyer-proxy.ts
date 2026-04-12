@@ -78,7 +78,7 @@ export interface BuyerProxyConfig {
   /**
    * Pin all requests to a specific service ID for this session.
    * Overrides the service field in the request body before routing and forwarding.
-   * Can be updated at runtime via `antseed connection set --service`.
+   * Can be updated at runtime via `antseed buyer connection set --service`.
    */
   pinnedService?: string
 }

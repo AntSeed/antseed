@@ -12,21 +12,11 @@ Plugins are npm packages that export a provider or router object. Use the templa
 
 ## From the CLI
 
-```bash title="scaffold"
-# Interactive scaffold — creates a ready-to-build project
-$ antseed plugin create
-Plugin name: my-provider
-Plugin type (provider/router): provider
-Display name: My Provider
-Description: Custom provider plugin
-
-# Then build and test
-$ cd antseed-provider-my-provider && npm install && npm test
-```
+Use the templates in the protocol repository as a starting point, or configure a provider entry with `antseed seller setup` / `antseed config seller add-provider` and point it at your package.
 
 ## Naming Convention
 
-Provider plugins: `@antseed/provider-*`. Router plugins: `@antseed/router-*`. Publish to npm and install with `antseed plugin add <package>`.
+Provider plugins: `@antseed/provider-*`. Router plugins: `@antseed/router-*`. Publish to npm and install via `antseed config seller add-provider <name> --plugin <package>` or `antseed seller setup`.
 
 ## Verification
 

@@ -1,19 +1,21 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createDefaultConfig } from '../../config/defaults.js';
-import { resolveEffectiveSellerConfig } from '../../config/effective.js';
+import { createDefaultConfig } from '../../../config/defaults.js';
+import { resolveEffectiveSellerConfig } from '../../../config/effective.js';
 import {
   assertSellerPrerequisites,
   buildSellerRuntimeOverridesFromFlags,
   buildSellerPluginRuntimeEnv,
   mergeSellerRuntimeEnv,
-} from './seed.js';
+  selectSellerProviderNames,
+} from './start.js';
 
-test('seed runtime overrides are runtime-only and win over env/config', () => {
+test('seller start runtime overrides are runtime-only and win over env/config', () => {
   const config = createDefaultConfig();
   config.seller.reserveFloor = 11;
   config.seller.providers = {
     anthropic: {
+      plugin: 'anthropic',
       defaults: { inputUsdPerMillion: 12, outputUsdPerMillion: 18 },
       services: {},
     },
@@ -47,6 +49,7 @@ test('buildSellerPluginRuntimeEnv translates unified config into flat ANTSEED_* 
   config.seller.maxConcurrentBuyers = 17;
   config.seller.providers = {
     anthropic: {
+      plugin: 'anthropic',
       defaults: {
         inputUsdPerMillion: 15,
         outputUsdPerMillion: 35,
@@ -113,6 +116,7 @@ test('buildSellerPluginRuntimeEnv sets OPENAI_BASE_URL from provider baseUrl', (
   const config = createDefaultConfig();
   config.seller.providers = {
     openai: {
+      plugin: 'openai',
       baseUrl: 'https://api.together.ai',
       services: {
         'qwen3.5-9b': {},
@@ -163,6 +167,7 @@ test('assertSellerPrerequisites passes when services are configured and chain ch
   const config = createDefaultConfig();
   config.seller.providers = {
     anthropic: {
+      plugin: 'anthropic',
       defaults: { inputUsdPerMillion: 3, outputUsdPerMillion: 15 },
       services: {
         'claude-sonnet-4-5-20250929': {
@@ -182,7 +187,7 @@ test('assertSellerPrerequisites passes when services are configured and chain ch
   });
 });
 
-test('seed merge keeps explicit pricing when runtime env also contains pricing and force override is off', () => {
+test('seller start merge keeps explicit pricing when runtime env also contains pricing and force override is off', () => {
   const merged = mergeSellerRuntimeEnv(
     {
       ANTSEED_INPUT_USD_PER_MILLION: '0.05',
@@ -198,4 +203,30 @@ test('seed merge keeps explicit pricing when runtime env also contains pricing a
   assert.equal(merged['ANTSEED_INPUT_USD_PER_MILLION'], '0.05');
   assert.equal(merged['ANTSEED_OUTPUT_USD_PER_MILLION'], '0.1');
   assert.equal(merged['ANTSEED_MAX_CONCURRENCY'], '10');
+});
+
+test('selectSellerProviderNames defaults to all configured providers', () => {
+  const config = createDefaultConfig();
+  config.seller.providers = {
+    anthropic: { plugin: 'anthropic', services: {} },
+    together: { plugin: 'openai', services: {} },
+  };
+
+  const selection = selectSellerProviderNames(config.seller);
+
+  assert.deepEqual(selection.selected, ['anthropic', 'together']);
+  assert.deepEqual(selection.unknown, []);
+});
+
+test('selectSellerProviderNames parses comma-separated provider filters and reports unknown names', () => {
+  const config = createDefaultConfig();
+  config.seller.providers = {
+    anthropic: { plugin: 'anthropic', services: {} },
+    together: { plugin: 'openai', services: {} },
+  };
+
+  const selection = selectSellerProviderNames(config.seller, 'together, missing');
+
+  assert.deepEqual(selection.selected, ['together', 'missing']);
+  assert.deepEqual(selection.unknown, ['missing']);
 });

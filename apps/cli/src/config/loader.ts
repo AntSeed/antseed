@@ -108,7 +108,8 @@ function normalizeSellerService(value: unknown): SellerServiceConfig | null {
 
 function normalizeSellerProvider(value: unknown): SellerProviderConfig | null {
   if (!isRecord(value)) return null;
-  const out: SellerProviderConfig = { services: {} };
+  if (typeof value['plugin'] !== 'string' || value['plugin'].trim().length === 0) return null;
+  const out: SellerProviderConfig = { plugin: value['plugin'].trim(), services: {} };
   if (typeof value['baseUrl'] === 'string' && value['baseUrl'].trim().length > 0) {
     out.baseUrl = value['baseUrl'].trim();
   }
@@ -135,6 +136,7 @@ function mergeSellerProviders(
   const out: Record<string, SellerProviderConfig> = {};
   for (const [name, cfg] of Object.entries(defaults)) {
     out[name] = {
+      plugin: cfg.plugin,
       ...(cfg.baseUrl ? { baseUrl: cfg.baseUrl } : {}),
       ...(cfg.defaults ? { defaults: clonePricing(cfg.defaults) } : {}),
       services: { ...cfg.services },
@@ -174,7 +176,6 @@ function mergeSellerConfig(
     return {
       reserveFloor: defaults.reserveFloor,
       maxConcurrentBuyers: defaults.maxConcurrentBuyers,
-      enabledProviders: [...defaults.enabledProviders],
       providers: mergeSellerProviders(defaults.providers, undefined),
       publicAddress: defaults.publicAddress,
       ...(defaults.agentDir ? { agentDir: defaults.agentDir } : {}),
@@ -188,9 +189,6 @@ function mergeSellerConfig(
     maxConcurrentBuyers: typeof value['maxConcurrentBuyers'] === 'number'
       ? value['maxConcurrentBuyers']
       : defaults.maxConcurrentBuyers,
-    enabledProviders: Array.isArray(value['enabledProviders'])
-      ? value['enabledProviders'].filter((entry): entry is string => typeof entry === 'string')
-      : [...defaults.enabledProviders],
     providers: mergeSellerProviders(defaults.providers, value['providers']),
     publicAddress: typeof value['publicAddress'] === 'string'
       ? value['publicAddress']
@@ -266,9 +264,6 @@ export async function loadConfig(configPath: string): Promise<AntseedConfig> {
       ...defaults.network,
       ...(isRecord(parsed['network']) ? parsed['network'] : {}),
     },
-    providers: Array.isArray(parsed['providers'])
-      ? (parsed['providers'] as AntseedConfig['providers'])
-      : defaults.providers,
   };
 
   assertValidConfig(merged);

@@ -14,7 +14,6 @@ Once connected to the AntSeed network, your buyer proxy exposes a local API at `
 ```bash
 # 1. Install
 npm install -g @antseed/cli
-antseed init
 
 # 2. Set your identity
 export ANTSEED_IDENTITY_HEX=<your-private-key-hex>
@@ -24,7 +23,7 @@ antseed payments
 # Open http://localhost:3118, connect a funded wallet, deposit USDC
 
 # 4. Connect to the network
-antseed connect --router local
+antseed buyer start --router local
 # Proxy listening on http://localhost:8377
 ```
 
@@ -96,16 +95,16 @@ Pin requests to a specific service or peer without restarting:
 
 ```bash
 # Pin to a service (overrides the model field in all requests)
-antseed connection set --service claude-opus-4-6
+antseed buyer connection set --service claude-opus-4-6
 
 # Pin to a specific peer
-antseed connection set --peer <40-char-hex-peer-id>
+antseed buyer connection set --peer <40-char-hex-peer-id>
 
 # Check current overrides
-antseed connection get
+antseed buyer connection get
 
 # Clear overrides
-antseed connection clear
+antseed buyer connection clear
 ```
 
 ## Browse Available Services
@@ -113,7 +112,7 @@ antseed connection clear
 See what's available on the network before connecting:
 
 ```bash
-antseed browse
+antseed network browse
 ```
 
 This shows all discoverable providers, their services, pricing, and capacity.

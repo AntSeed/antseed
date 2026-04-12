@@ -1,23 +1,23 @@
 import type { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
-import { getGlobalOptions } from './types.js';
-import { loadConfig } from '../../config/loader.js';
+import { getGlobalOptions } from '../types.js';
+import { loadConfig } from '../../../config/loader.js';
 import {
   createStakingClient,
   createIdentityClient,
   loadCryptoContext,
   formatUsdc,
   parseUsdcToBaseUnits,
-} from '../payment-utils.js';
+} from '../../payment-utils.js';
 
-export function registerStakeCommand(program: Command): void {
-  program
+export function registerSellerStakeCommand(sellerCmd: Command): void {
+  sellerCmd
     .command('stake <amount>')
     .description('Stake USDC as a provider (amount in human-readable USDC, e.g. "10" = 10 USDC)')
-    .option('--agent-id <id>', 'ERC-8004 agent ID (from antseed register output)', parseInt)
+    .option('--agent-id <id>', 'ERC-8004 agent ID (from antseed seller register output)', parseInt)
     .action(async (amount: string, options: { agentId?: number }) => {
-      const globalOpts = getGlobalOptions(program);
+      const globalOpts = getGlobalOptions(sellerCmd);
       const config = await loadConfig(globalOpts.config);
 
       let amountBaseUnits: bigint;
@@ -36,7 +36,7 @@ export function registerStakeCommand(program: Command): void {
         const identityClient = createIdentityClient(config);
         const isReg = await identityClient.isRegistered(address);
         if (!isReg) {
-          spinner.fail(chalk.red('Not registered. Run: antseed register'));
+          spinner.fail(chalk.red('Not registered. Run: antseed seller register'));
           process.exit(1);
         }
 
@@ -46,7 +46,7 @@ export function registerStakeCommand(program: Command): void {
           agentId = options.agentId;
         }
         if (agentId === 0) {
-          spinner.fail(chalk.red('No agentId found. Pass --agent-id <id> from your antseed register output.'));
+          spinner.fail(chalk.red('No agentId found. Pass --agent-id <id> from your antseed seller register output.'));
           process.exit(1);
         }
 
@@ -65,11 +65,11 @@ export function registerStakeCommand(program: Command): void {
       }
     });
 
-  program
+  sellerCmd
     .command('unstake')
     .description('Unstake USDC (subject to slash conditions)')
     .action(async () => {
-      const globalOpts = getGlobalOptions(program);
+      const globalOpts = getGlobalOptions(sellerCmd);
       const config = await loadConfig(globalOpts.config);
 
       const spinner = ora('Fetching stake info...').start();

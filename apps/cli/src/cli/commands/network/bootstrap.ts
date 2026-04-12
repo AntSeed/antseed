@@ -1,12 +1,12 @@
 import type { Command } from 'commander'
 import chalk from 'chalk'
-import { getGlobalOptions } from './types.js'
+import { getGlobalOptions } from '../types.js'
 import { loadOrCreateIdentity } from '@antseed/node'
 import { DHTNode, parseBootstrapList } from '@antseed/node/discovery'
-import { setupShutdownHandler } from '../shutdown.js'
+import { setupShutdownHandler } from '../../shutdown.js'
 
-export function registerBootstrapCommand(program: Command): void {
-  program
+export function registerNetworkBootstrapCommand(networkCmd: Command): void {
+  networkCmd
     .command('bootstrap')
     .description('Run a dedicated DHT bootstrap node (no provider, no payments)')
     .option('-p, --port <port>', 'UDP port to listen on', '6881')
@@ -15,7 +15,7 @@ export function registerBootstrapCommand(program: Command): void {
       'comma-separated host:port list of peer bootstrap nodes (e.g. to cross-connect two bootstrap nodes)',
     )
     .action(async (options: { port: string; bootstrap?: string }) => {
-      const globalOptions = getGlobalOptions(program)
+      const globalOptions = getGlobalOptions(networkCmd)
 
       const port = parseInt(options.port, 10)
       if (!Number.isFinite(port) || port < 1 || port > 65535) {

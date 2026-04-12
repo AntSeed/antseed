@@ -21,10 +21,26 @@ Providers earn USDC by serving AI requests on the AntSeed network. This guide co
 
 ```bash
 npm install -g @antseed/cli
-antseed init
 ```
 
-## 2. Set Your Identity
+## 2. Set Up Your Provider
+
+Use the interactive wizard for first-time setup:
+
+```bash
+antseed seller setup
+```
+
+Or configure it manually:
+
+```bash
+antseed config seller add-provider together \
+  --plugin openai \
+  --base-url https://api.together.ai \
+  --input 1 --output 2
+```
+
+## 3. Set Your Identity
 
 Your identity is a secp256k1 private key that serves as both your PeerId and your on-chain wallet address.
 
@@ -36,7 +52,7 @@ export ANTSEED_IDENTITY_HEX=<your-64-char-hex-private-key>
 Use a dedicated key for your provider node. Generate one with any EVM wallet tool. The corresponding address is where you'll receive USDC earnings.
 :::
 
-## 3. Fund Your Wallet
+## 4. Fund Your Wallet
 
 Your wallet address needs:
 - **ETH** for gas fees (register, stake, settle transactions)
@@ -45,23 +61,23 @@ Your wallet address needs:
 Send both to the EVM address derived from your identity key. You can find your address with:
 
 ```bash
-antseed status
+antseed seller status
 ```
 
-## 4. Register and Stake
+## 5. Register and Stake
 
 ```bash
 # Register your identity on-chain (ERC-8004)
-antseed register
+antseed seller register
 
 # Stake USDC (minimum $10)
-antseed stake 10
+antseed seller stake 10
 
 # Verify everything is ready
-antseed setup --role provider
+antseed seller status
 ```
 
-## 5. Add Your Services
+## 6. Add Your Services
 
 Everything you announce on the network lives in `config.json` under `seller.providers[name].services[id]`. One block per upstream provider plugin, one entry per service. The `add-service` command builds this for you:
 
@@ -101,36 +117,36 @@ You only have to do this once per service. To see what you've configured:
 antseed config seller show
 ```
 
-## 6. Set Your API Key and Start Seeding
+## 7. Set Your API Key and Start Selling
 
 Upstream credentials stay in environment variables — nothing about auth goes into `config.json`:
 
 ```bash
 # Anthropic
 export ANTHROPIC_API_KEY=<your-key>
-antseed seed --provider anthropic
+antseed seller start
 
 # OpenAI-compatible (Together AI, OpenRouter, etc.)
 export OPENAI_API_KEY=<your-key>
-antseed seed --provider openai
+antseed seller start
 
 # Local model
-antseed seed --provider local-llm
+antseed seller start
 ```
 
 Runtime overrides for a one-off session (without editing `config.json`):
 
 ```bash
-antseed seed --provider anthropic --input-usd-per-million 3 --output-usd-per-million 15
+antseed seller start --provider anthropic --input-usd-per-million 3 --output-usd-per-million 15
 ```
 
-## 7. Verify
+## 8. Verify
 
 Once running, your node is discoverable on the network:
 
 ```bash
 # From another terminal, browse available providers
-antseed browse
+antseed network browse
 ```
 
 ## How Payments Work

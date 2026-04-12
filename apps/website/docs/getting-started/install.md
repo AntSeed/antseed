@@ -15,10 +15,10 @@ AntSeed requires Node.js 20+ and works on macOS, Linux, and Windows (WSL).
 npm install -g @antseed/cli
 ```
 
-Initialize your node — this installs provider and router plugins and creates `~/.antseed/config.json`:
+Set up your node:
 
 ```bash
-antseed init
+antseed seller setup
 ```
 
 Verify:
