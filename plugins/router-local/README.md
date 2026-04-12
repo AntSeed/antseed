@@ -11,7 +11,7 @@ antseed plugin add @antseed/router-local
 ## Usage
 
 ```bash
-antseed connect --router local
+antseed buyer start
 
 # Then configure your tools:
 export ANTHROPIC_BASE_URL=http://localhost:8377

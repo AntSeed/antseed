@@ -86,7 +86,7 @@ json.dump(cfg, open('$HOME/.antseed/config.json', 'w'), indent=2)
 print('  Added to ~/.antseed/config.json')
 "
   else
-    echo "  Warning: ~/.antseed/config.json not found. Run 'antseed init' first."
+    echo "  Warning: ~/.antseed/config.json not found. Create it first with 'antseed buyer start --help' or 'antseed seller setup'."
   fi
 fi
 
@@ -143,7 +143,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=$(whoami)
-ExecStart=${ANTSEED_BIN} connect --router local --port ${PORT}
+ExecStart=${ANTSEED_BIN} buyer start --router local --port ${PORT}
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
@@ -159,7 +159,7 @@ SERVICE
 else
   echo ""
   echo "==> To start the buyer proxy:"
-  echo "  antseed connect --router local --port ${PORT}"
+  echo "  antseed buyer start --router local --port ${PORT}"
   echo ""
   echo "  Or install as a service with: $0 --service ${SERVICE} --service-flag"
 fi

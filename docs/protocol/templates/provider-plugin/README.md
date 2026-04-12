@@ -7,7 +7,7 @@ This template shows how to publish a **provider plugin** for the Antseed Network
 ## How It Works
 
 ```
-antseed seed --provider echo
+antseed seller start
        ↓
 CLI loads antseed-provider-echo from ~/.antseed/plugins/
        ↓
@@ -30,7 +30,9 @@ To test end-to-end with the CLI:
 
 ```bash
 antseed plugin add ./   # install this package as a plugin
-antseed seed --provider echo
+antseed config seller add-provider echo --plugin echo
+antseed config seller add-service echo my-model-v1 --input 2 --output 2 --categories coding
+antseed seller start
 ```
 
 ## Customization
@@ -84,7 +86,7 @@ configSchema: [
 ],
 ```
 
-The CLI reads matching environment variables and passes them to `createProvider(config)`.
+The CLI reads matching environment variables and passes them to `createProvider(config)`. Non-secret runtime shape such as services, pricing, categories, and provider `baseUrl` should live in `~/.antseed/config.json`.
 
 ## Adding an Ant Agent
 
@@ -146,7 +148,8 @@ npm publish
 
 # Users install with:
 antseed plugin add my-provider-package
-antseed seed --provider my-provider
+antseed config seller add-provider my-provider --plugin my-provider
+antseed seller start
 ```
 
 ## Verification

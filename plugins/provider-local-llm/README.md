@@ -11,12 +11,18 @@ antseed plugin add @antseed/provider-local-llm
 ## Usage
 
 ```bash
+# Configure once
+antseed config seller add-provider local-llm --plugin local-llm
+antseed config seller add-service local-llm llama3.2:3b \
+  --input 0 --output 0 \
+  --categories chat,fast,free
+
 # With Ollama (default)
-antseed seed --provider local-llm
+antseed seller start
 
 # With a custom endpoint
 export LOCAL_LLM_BASE_URL=http://localhost:8080
-antseed seed --provider local-llm
+antseed seller start
 ```
 
 ## Configuration

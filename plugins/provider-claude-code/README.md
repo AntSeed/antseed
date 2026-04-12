@@ -13,7 +13,11 @@ antseed plugin add @antseed/provider-claude-code
 ## Usage
 
 ```bash
-antseed seed --provider claude-code
+antseed config seller add-provider claude-code --plugin claude-code
+antseed config seller add-service claude-code claude-sonnet-4-5-20250929 \
+  --input 10 --output 10 \
+  --categories chat,coding
+antseed seller start
 ```
 
 No API key configuration is required. The plugin reads credentials from the system keychain where Claude Code stores them.

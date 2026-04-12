@@ -49,3 +49,8 @@ export const TRUSTED_PLUGINS: TrustedPlugin[] = [
     package: '@antseed/router-local',
   },
 ]
+
+export function resolvePluginPackage(nameOrPackage: string): string {
+  const trusted = TRUSTED_PLUGINS.find((plugin) => plugin.name === nameOrPackage)
+  return trusted?.package ?? nameOrPackage
+}

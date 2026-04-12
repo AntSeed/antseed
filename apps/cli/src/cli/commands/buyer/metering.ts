@@ -1,10 +1,9 @@
 import type { Command } from 'commander';
 import chalk from 'chalk';
-import { getGlobalOptions } from './types.js';
+import { getGlobalOptions } from '../types.js';
 import { loadOrCreateIdentity } from '@antseed/node';
-import { openChannelStore } from '../payment-utils.js';
+import { openChannelStore } from '../../payment-utils.js';
 
-/** Format USDC base units (6 decimals) to human-readable string. */
 function formatUsdc(baseUnits: string | number | bigint): string {
   const n = BigInt(baseUnits);
   const abs = n < 0n ? -n : n;
@@ -15,14 +14,14 @@ function formatUsdc(baseUnits: string | number | bigint): string {
   return `${sign}${whole}.${fracStr}`;
 }
 
-export function registerMeteringCommand(program: Command): void {
-  program
+export function registerBuyerMeteringCommand(buyerCmd: Command): void {
+  buyerCmd
     .command('metering')
     .description('Show payment channel and usage stats from local database')
     .option('--peer <peerId>', 'show stats for a specific peer')
     .option('--json', 'output as JSON', false)
     .action(async (options) => {
-      const globalOpts = getGlobalOptions(program);
+      const globalOpts = getGlobalOptions(buyerCmd);
 
       try {
         const identity = await loadOrCreateIdentity(globalOpts.dataDir);
@@ -32,11 +31,10 @@ export function registerMeteringCommand(program: Command): void {
         try {
           const activeChannels = store.getActiveChannels('buyer');
           const channels = options.peer
-            ? activeChannels.filter((c) => c.peerId === options.peer)
+            ? activeChannels.filter((channel) => channel.peerId === options.peer)
             : activeChannels;
 
           if (channels.length === 0) {
-            // Show settled channels if no active ones
             const allChannels = options.peer
               ? [store.getLatestChannelByPeerAndBuyer(options.peer, 'buyer', buyerAddress)].filter(Boolean)
               : [];
@@ -48,21 +46,17 @@ export function registerMeteringCommand(program: Command): void {
           }
 
           const results: Record<string, unknown> = {};
-
-          // Collect unique peers (active + specific peer)
           const peerIds = options.peer
             ? [options.peer]
-            : [...new Set(activeChannels.map((c) => c.peerId))];
+            : [...new Set(activeChannels.map((channel) => channel.peerId))];
 
           for (const peerId of peerIds) {
             const channel = store.getActiveChannelByPeerAndBuyer(peerId, 'buyer', buyerAddress)
               ?? store.getLatestChannelByPeerAndBuyer(peerId, 'buyer', buyerAddress);
             const lifetime = store.getTotalsByPeerAndBuyer(peerId, 'buyer', buyerAddress);
-
             if (!channel && !lifetime) continue;
 
             const cumulativeSigned = BigInt(channel?.authMax ?? '0');
-
             const stats = {
               channelId: channel?.sessionId ?? null,
               channelStatus: channel?.status ?? null,

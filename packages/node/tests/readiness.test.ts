@@ -84,7 +84,7 @@ describe('checkSellerReadiness', () => {
 
     const regCheck = checks.find(c => c.name === 'Peer registration')!;
     expect(regCheck.passed).toBe(false);
-    expect(regCheck.command).toBe('antseed register');
+    expect(regCheck.command).toBe('antseed seller register');
   });
 
   it('fails stake check when no stake', async () => {
@@ -95,7 +95,7 @@ describe('checkSellerReadiness', () => {
 
     const stakeCheck = checks.find(c => c.name === 'Stake')!;
     expect(stakeCheck.passed).toBe(false);
-    expect(stakeCheck.command).toBe('antseed stake 10');
+    expect(stakeCheck.command).toBe('antseed seller stake 10');
   });
 
 });
@@ -127,6 +127,6 @@ describe('checkBuyerReadiness', () => {
 
     const balCheck = checks.find(c => c.name === 'Deposit balance')!;
     expect(balCheck.passed).toBe(false);
-    expect(balCheck.command).toBe('antseed deposit 10');
+    expect(balCheck.command).toBe('antseed buyer deposit 10');
   });
 });

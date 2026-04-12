@@ -1,9 +1,12 @@
 import type { Command } from 'commander';
 import chalk from 'chalk';
-import { getGlobalOptions } from './types.js';
-import { loadConfig, saveConfig } from '../../config/loader.js';
-import type { AntseedConfig, ProviderConfig, ProviderType } from '../../config/types.js';
-import { assertValidConfig } from '../../config/validation.js';
+import ora from 'ora';
+import { getGlobalOptions } from '../types.js';
+import { loadConfig, saveConfig } from '../../../config/loader.js';
+import type { AntseedConfig, SellerProviderConfig } from '../../../config/types.js';
+import { assertValidConfig } from '../../../config/validation.js';
+import { installPlugin } from '../../../plugins/manager.js';
+import { resolvePluginPackage } from '../../../plugins/registry.js';
 
 /**
  * Register the `antseed config` command and its subcommands.
@@ -85,7 +88,12 @@ export function registerConfigCommand(program: Command): void {
         const globalOpts = getGlobalOptions(program);
         const config = await loadConfig(globalOpts.config);
         const providers = config.seller.providers;
-        const providerCfg = providers[providerName] ?? { services: {} };
+        const providerCfg = providers[providerName];
+        if (!providerCfg) {
+          console.error(chalk.red(`Provider "${providerName}" not found. Add it first with antseed config seller add-provider ${providerName} --plugin <plugin>.`));
+          process.exitCode = 1;
+          return;
+        }
         if (options.baseUrl) {
           providerCfg.baseUrl = options.baseUrl as string;
         }
@@ -145,6 +153,88 @@ export function registerConfigCommand(program: Command): void {
       }
     });
 
+  sellerCmd
+    .command('add-provider <name>')
+    .description('Add a provider (installs plugin, creates seller.providers[name] entry)')
+    .requiredOption('--plugin <plugin>', 'plugin name or npm package (e.g., openai, anthropic, @antseed/provider-openai)')
+    .option('--base-url <url>', 'upstream API base URL (e.g., https://api.together.ai)')
+    .option('--input <usd>', 'default input price in USD per 1M tokens', parseFloat)
+    .option('--output <usd>', 'default output price in USD per 1M tokens', parseFloat)
+    .option('--cached <usd>', 'default cached-input price in USD per 1M tokens', parseFloat)
+    .action(async (name: string, options) => {
+      try {
+        const globalOpts = getGlobalOptions(program);
+        const config = await loadConfig(globalOpts.config);
+
+        if (config.seller.providers[name]) {
+          console.error(chalk.red(`Provider "${name}" already exists. Remove it first or choose a different name.`));
+          process.exitCode = 1;
+          return;
+        }
+
+        const pluginName = options.plugin as string;
+        const packageName = resolvePluginPackage(pluginName);
+
+        const spinner = ora(`Installing ${packageName}...`).start();
+        try {
+          await installPlugin(packageName);
+          spinner.succeed(chalk.green(`Installed ${packageName}`));
+        } catch (err) {
+          spinner.fail(chalk.red(`Failed to install ${packageName}: ${(err as Error).message}`));
+          process.exitCode = 1;
+          return;
+        }
+
+        const providerEntry: SellerProviderConfig = {
+          plugin: pluginName,
+          services: {},
+        };
+        if (options.baseUrl) {
+          providerEntry.baseUrl = options.baseUrl as string;
+        }
+        const hasInput = typeof options.input === 'number';
+        const hasOutput = typeof options.output === 'number';
+        const hasCached = typeof options.cached === 'number';
+        if (hasInput || hasOutput) {
+          providerEntry.defaults = {
+            inputUsdPerMillion: hasInput ? (options.input as number) : 0,
+            outputUsdPerMillion: hasOutput ? (options.output as number) : 0,
+            ...(hasCached ? { cachedInputUsdPerMillion: options.cached as number } : {}),
+          };
+        }
+
+        config.seller.providers[name] = providerEntry;
+        assertValidConfig(config);
+        await saveConfig(globalOpts.config, config);
+        console.log(chalk.green(`Added provider "${name}" (plugin: ${pluginName})`));
+        console.log(chalk.dim(`Next: antseed config seller add-service ${name} <serviceId> --input <usd> --output <usd>`));
+      } catch (err) {
+        console.error(chalk.red(`Error: ${(err as Error).message}`));
+        process.exitCode = 1;
+      }
+    });
+
+  sellerCmd
+    .command('remove-provider <name>')
+    .description('Remove a provider entry from seller config')
+    .action(async (name: string) => {
+      try {
+        const globalOpts = getGlobalOptions(program);
+        const config = await loadConfig(globalOpts.config);
+        if (!config.seller.providers[name]) {
+          console.log(chalk.yellow(`No provider "${name}" found`));
+          return;
+        }
+        const serviceCount = Object.keys(config.seller.providers[name].services).length;
+        delete config.seller.providers[name];
+        await saveConfig(globalOpts.config, config);
+        console.log(chalk.green(`Removed provider "${name}" (had ${serviceCount} service(s))`));
+      } catch (err) {
+        console.error(chalk.red(`Error: ${(err as Error).message}`));
+        process.exitCode = 1;
+      }
+    });
+
   const buyerCmd = configCmd
     .command('buyer')
     .description('Role-scoped buyer configuration commands');
@@ -165,58 +255,13 @@ export function registerConfigCommand(program: Command): void {
       await setRoleScopedValue(program, 'buyer', key, value);
     });
 
-  // antseed config add-provider
-  configCmd
-    .command('add-provider')
-    .description('Add a new provider credential')
-    .requiredOption('-t, --type <type>', 'provider type (anthropic, openai, google, moonshot)')
-    .requiredOption('-k, --key <key>', 'API key or auth token')
-    .option('-e, --endpoint <url>', 'custom API endpoint URL')
-    .action(async (options) => {
-      const knownTypes = ['anthropic', 'openai', 'google', 'moonshot'];
-      if (!knownTypes.includes(options.type as string)) {
-        console.error(chalk.red(`Unknown provider type: ${options.type as string}`));
-        console.error(chalk.dim(`Known types: ${knownTypes.join(', ')}`));
-        process.exitCode = 1;
-        return;
-      }
-      const globalOpts = getGlobalOptions(program);
-      const config = await loadConfig(globalOpts.config);
-      const provider = buildProviderConfig(
-        options.type as ProviderType,
-        options.key as string,
-        options.endpoint as string | undefined
-      );
-      config.providers.push(provider);
-      await saveConfig(globalOpts.config, config);
-      console.log(chalk.green(`Added ${options.type as string} provider`));
-    });
-
-  // antseed config remove-provider <type>
-  configCmd
-    .command('remove-provider <type>')
-    .description('Remove a provider credential by type')
-    .action(async (type: string) => {
-      const globalOpts = getGlobalOptions(program);
-      const config = await loadConfig(globalOpts.config);
-      const before = config.providers.length;
-      config.providers = config.providers.filter((p) => p.type !== type);
-      const removed = before - config.providers.length;
-      await saveConfig(globalOpts.config, config);
-      if (removed > 0) {
-        console.log(chalk.green(`Removed ${removed} ${type} provider(s)`));
-      } else {
-        console.log(chalk.yellow(`No ${type} provider found`));
-      }
-    });
-
   // antseed config init
   configCmd
     .command('init')
     .description('Initialize a new config file with defaults')
     .action(async () => {
       const globalOpts = getGlobalOptions(program);
-      const { createDefaultConfig } = await import('../../config/defaults.js');
+      const { createDefaultConfig } = await import('../../../config/defaults.js');
       const config = createDefaultConfig();
       await saveConfig(globalOpts.config, config);
       console.log(chalk.green(`Config initialized at ${globalOpts.config}`));
@@ -227,16 +272,7 @@ export function registerConfigCommand(program: Command): void {
  * Redact sensitive fields (auth values) from config for display.
  */
 export function redactConfig(config: AntseedConfig): Record<string, unknown> {
-  const clone = JSON.parse(JSON.stringify(config)) as Record<string, unknown>;
-  const providers = clone['providers'] as Array<Record<string, unknown>> | undefined;
-  for (const provider of providers ?? []) {
-    if (provider['authValue']) {
-      const val = provider['authValue'] as string;
-      provider['authValue'] = val.slice(0, 8) + '...' + val.slice(-4);
-    }
-  }
-
-  return clone;
+  return JSON.parse(JSON.stringify(config)) as Record<string, unknown>;
 }
 
 /**
@@ -301,7 +337,7 @@ function isDynamicKey(key: string): boolean {
 function getValidConfigKeys(config: AntseedConfig, prefix = ''): string[] {
   const keys: string[] = [];
   for (const [k, v] of Object.entries(config)) {
-    if (k === 'providers' || k === 'plugins') continue;
+    if (k === 'plugins') continue;
     const path = prefix ? `${prefix}.${k}` : k;
     if (v && typeof v === 'object' && !Array.isArray(v)) {
       keys.push(...getValidConfigKeys(v as unknown as AntseedConfig, path));
@@ -342,33 +378,4 @@ async function setRoleScopedValue(
     console.error(chalk.red(`Error: ${(err as Error).message}`));
     process.exitCode = 1;
   }
-}
-
-/**
- * Build a ProviderConfig with default endpoint and auth header for known providers.
- */
-export function buildProviderConfig(
-  type: ProviderType,
-  authValue: string,
-  customEndpoint?: string
-): ProviderConfig {
-  const defaults: Record<string, { endpoint: string; authHeaderName: string }> = {
-    anthropic: { endpoint: 'https://api.anthropic.com', authHeaderName: 'x-api-key' },
-    openai: { endpoint: 'https://api.openai.com', authHeaderName: 'Authorization' },
-    google: { endpoint: 'https://generativelanguage.googleapis.com', authHeaderName: 'x-goog-api-key' },
-    moonshot: { endpoint: 'https://api.moonshot.cn', authHeaderName: 'Authorization' },
-  };
-
-  const fallbackDefaults = {
-    endpoint: customEndpoint ?? '',
-    authHeaderName: 'Authorization',
-  };
-  const def = defaults[type] ?? fallbackDefaults;
-
-  return {
-    type,
-    endpoint: customEndpoint ?? def.endpoint,
-    authHeaderName: def.authHeaderName,
-    authValue,
-  };
 }

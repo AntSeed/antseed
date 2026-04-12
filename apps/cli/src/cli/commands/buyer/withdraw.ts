@@ -1,25 +1,25 @@
 import type { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
-import { getGlobalOptions } from './types.js';
-import { loadConfig } from '../../config/loader.js';
+import { getGlobalOptions } from '../types.js';
+import { loadConfig } from '../../../config/loader.js';
 import {
   loadOrCreateIdentity,
   DepositsClient,
 } from '@antseed/node';
 
-export function registerWithdrawCommand(program: Command): void {
-  program
+export function registerBuyerWithdrawCommand(buyerCmd: Command): void {
+  buyerCmd
     .command('withdraw <amount>')
     .description('Withdraw USDC from the deposits contract (amount in human-readable USDC, e.g. "5" = 5 USDC)')
     .action(async (amount: string) => {
-      const globalOpts = getGlobalOptions(program);
+      const globalOpts = getGlobalOptions(buyerCmd);
       const config = await loadConfig(globalOpts.config);
 
       const payments = config.payments;
       if (!payments?.crypto) {
         console.error(chalk.red('Error: No crypto payment configuration found.'));
-        console.error(chalk.dim('Configure payments.crypto in your config file or run: antseed init'));
+        console.error(chalk.dim('Configure payments.crypto in your config file.'));
         process.exit(1);
       }
 
@@ -29,9 +29,7 @@ export function registerWithdrawCommand(program: Command): void {
         process.exit(1);
       }
 
-      // Convert human-readable USDC to base units (6 decimals)
       const amountBaseUnits = BigInt(Math.round(amountFloat * 1_000_000));
-
       const identity = await loadOrCreateIdentity(globalOpts.dataDir);
       const wallet = identity.wallet;
       const address = identity.wallet.address;

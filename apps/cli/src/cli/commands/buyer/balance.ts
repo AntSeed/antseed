@@ -1,15 +1,14 @@
 import type { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
-import { getGlobalOptions } from './types.js';
-import { loadConfig } from '../../config/loader.js';
+import { getGlobalOptions } from '../types.js';
+import { loadConfig } from '../../../config/loader.js';
 import {
   loadOrCreateIdentity,
   DepositsClient,
   resolveChainConfig,
 } from '@antseed/node';
 
-/** Format USDC base units (6 decimals) to human-readable string. */
 function formatUsdc(baseUnits: bigint): string {
   const whole = baseUnits / 1_000_000n;
   const frac = baseUnits % 1_000_000n;
@@ -17,13 +16,13 @@ function formatUsdc(baseUnits: bigint): string {
   return `${whole}.${fracStr}`;
 }
 
-export function registerBalanceCommand(program: Command): void {
-  program
+export function registerBuyerBalanceCommand(buyerCmd: Command): void {
+  buyerCmd
     .command('balance')
     .description('Show deposits balance for your wallet')
     .option('--json', 'output as JSON', false)
     .action(async (options) => {
-      const globalOpts = getGlobalOptions(program);
+      const globalOpts = getGlobalOptions(buyerCmd);
       const config = await loadConfig(globalOpts.config);
 
       const payments = config.payments;

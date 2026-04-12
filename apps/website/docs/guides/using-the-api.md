@@ -14,18 +14,47 @@ Once connected to the AntSeed network, your buyer proxy exposes a local API at `
 ```bash
 # 1. Install
 npm install -g @antseed/cli
-antseed init
 
 # 2. Set your identity
 export ANTSEED_IDENTITY_HEX=<your-private-key-hex>
 
-# 3. Deposit USDC (via payments portal)
+# 3. Start the buyer proxy
+antseed buyer start
+# Proxy listening on http://localhost:8377
+
+# 4. Deposit USDC when you want to pay providers
 antseed payments
 # Open http://localhost:3118, connect a funded wallet, deposit USDC
+```
 
-# 4. Connect to the network
-antseed connect --router local
-# Proxy listening on http://localhost:8377
+`antseed buyer start` does not require a pre-existing `~/.antseed/config.json`. If the file is missing, the CLI starts with built-in defaults such as router `local` and proxy port `8377`.
+
+Extra buyer config is optional. Add it only for advanced customization such as pricing caps, reputation thresholds, bootstrap nodes, or chain settings:
+
+```json
+{
+  "buyer": {
+    "minPeerReputation": 50,
+    "maxPricing": {
+      "defaults": {
+        "inputUsdPerMillion": 25,
+        "outputUsdPerMillion": 75
+      }
+    }
+  },
+  "payments": {
+    "preferredMethod": "crypto",
+    "crypto": {
+      "chainId": "base-mainnet"
+    }
+  }
+}
+```
+
+With a config file like that in place, the startup command is still just:
+
+```bash
+antseed buyer start
 ```
 
 ## Supported API Formats
@@ -96,16 +125,16 @@ Pin requests to a specific service or peer without restarting:
 
 ```bash
 # Pin to a service (overrides the model field in all requests)
-antseed connection set --service claude-opus-4-6
+antseed buyer connection set --service claude-opus-4-6
 
 # Pin to a specific peer
-antseed connection set --peer <40-char-hex-peer-id>
+antseed buyer connection set --peer <40-char-hex-peer-id>
 
 # Check current overrides
-antseed connection get
+antseed buyer connection get
 
 # Clear overrides
-antseed connection clear
+antseed buyer connection clear
 ```
 
 ## Browse Available Services
@@ -113,7 +142,7 @@ antseed connection clear
 See what's available on the network before connecting:
 
 ```bash
-antseed browse
+antseed network browse
 ```
 
 This shows all discoverable providers, their services, pricing, and capacity.

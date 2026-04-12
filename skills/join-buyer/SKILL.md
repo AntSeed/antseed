@@ -18,13 +18,15 @@ npm install -g @antseed/cli
 
 Verify with `antseed --version`.
 
-## Step 2: Initialize the node
+## Step 2: Decide whether you need custom config
 
-```bash
-antseed init
-```
+You do **not** need a pre-existing `~/.antseed/config.json` to start as a buyer. `antseed buyer start` works with built-in defaults:
 
-This installs all trusted plugins and creates config at `~/.antseed/config.json`.
+- router: `local`
+- proxy port: `8377`
+- buyer pricing caps from the CLI defaults
+
+Only create `~/.antseed/config.json` if you want advanced customization such as max pricing, bootstrap nodes, or chain settings.
 
 ## Step 3: Set the identity
 
@@ -40,12 +42,22 @@ The key can optionally include a `0x` prefix. The EVM address derived from this 
 
 For persistent setups, add it to a `.env` file. **Never commit the private key to version control.**
 
-## Step 4: Configure the chain
+## Step 4: Optional config customization
 
-Edit `~/.antseed/config.json` and set the payment chain:
+If you want non-default behavior, create or edit `~/.antseed/config.json`:
 
 ```json
 {
+  "buyer": {
+    "minPeerReputation": 50,
+    "maxPricing": {
+      "defaults": {
+        "inputUsdPerMillion": 25,
+        "cachedInputUsdPerMillion": 12,
+        "outputUsdPerMillion": 75
+      }
+    }
+  },
   "payments": {
     "preferredMethod": "crypto",
     "crypto": {
@@ -59,16 +71,16 @@ Supported chains:
 - `base-mainnet` — Base L2 (production)
 - `base-sepolia` — Base Sepolia testnet (for testing)
 
-## Step 5: Fund your account
+## Step 5: Fund your account when you need payments
 
 The buyer needs USDC deposited into the AntSeed deposits contract to pay for requests.
 
 ```bash
 # Check wallet and deposit balance
-antseed balance
+antseed buyer balance
 
 # Deposit USDC into the deposits contract
-antseed deposit 10
+antseed buyer deposit 10
 ```
 
 The balance command shows:
@@ -80,10 +92,10 @@ The balance command shows:
 You can withdraw unused deposits at any time:
 
 ```bash
-antseed withdraw 5
+antseed buyer withdraw 5
 ```
 
-## Step 6: Configure buyer preferences
+## Step 6: Optional buyer preferences
 
 ```bash
 # Max pricing (USD per 1M tokens) — reject peers charging more
@@ -94,14 +106,20 @@ antseed config buyer set maxPricing.defaults.outputUsdPerMillion 75
 # Minimum peer reputation score (0-100, higher = stricter)
 antseed config buyer set minPeerReputation 50
 
-# Local proxy port (default 8377)
-antseed config buyer set proxyPort 8377
+```
+
+These settings are optional. Skip them if the defaults are fine.
+
+Advanced: if you intentionally want a non-default proxy port:
+
+```bash
+antseed config buyer set proxyPort 8888
 ```
 
 ## Step 7: Verify readiness
 
 ```bash
-antseed setup --role buyer
+antseed buyer status
 ```
 
 Checks:
@@ -112,7 +130,7 @@ Checks:
 ## Step 8: Start the proxy
 
 ```bash
-antseed connect --router local
+antseed buyer start
 ```
 
 This will:
@@ -121,11 +139,13 @@ This will:
 3. Start a local HTTP proxy on port 8377
 4. Automatically negotiate payment channels with providers
 
-Custom port:
+Advanced: custom port override for the current run only:
 
 ```bash
-antseed connect --router local -p 8888
+antseed buyer start -p 8888
 ```
+
+If you already put `proxyPort` in `config.json`, you can still just run `antseed buyer start` with no extra flags.
 
 ## Step 9: Point your tools at the proxy
 
@@ -183,7 +203,7 @@ The API key value doesn't matter when going through the proxy — set it to any 
 Before connecting, or while connected, browse what's available on the network:
 
 ```bash
-antseed browse
+antseed network browse
 ```
 
 This shows available peers, their services, pricing, and reputation.
@@ -192,7 +212,7 @@ This shows available peers, their services, pricing, and reputation.
 
 ```bash
 # View payment channels and spending
-antseed channels --role buyer
+antseed buyer channels
 
 # View per-peer metering
 # (available via the proxy while connected)
@@ -218,18 +238,18 @@ All signing happens with the identity key. No additional wallets or browser exte
 ## Verification checklist
 
 - [ ] `antseed --version` prints a version
-- [ ] `antseed balance` shows deposited USDC > 0
-- [ ] `antseed setup --role buyer` — all checks pass
-- [ ] `antseed connect --router local` starts without errors
+- [ ] `antseed buyer balance` shows deposited USDC > 0
+- [ ] `antseed buyer status` shows the proxy is ready
+- [ ] `antseed buyer start` starts without errors
 - [ ] `curl http://localhost:8377/v1/models` returns available models
 - [ ] Tools work with `OPENAI_BASE_URL=http://localhost:8377`
 
 ## Troubleshooting
 
-- **"Payment setup failed"**: Check `antseed balance` — you need deposited USDC. Run `antseed deposit <amount>`.
-- **"No peers found"**: The network may be sparse. Try `antseed browse` to check. Add bootstrap nodes to config if needed.
+- **"Payment setup failed"**: Check `antseed buyer balance` — you need deposited USDC. Run `antseed buyer deposit <amount>`.
+- **"No peers found"**: The network may be sparse. Try `antseed network browse` to check. Add bootstrap nodes to config if needed.
 - **"Lock confirmation timed out"**: The provider's on-chain reserve is slow. This is usually a testnet issue — retry the request.
-- **"Connection refused on 8377"**: Make sure `antseed connect` is still running.
+- **"Connection refused on 8377"**: Make sure `antseed buyer start` is still running.
 - **Tool says "invalid API key"**: Set the API key env var to any non-empty value (e.g., `antseed`).
 - **Slow first request**: The first request discovers and connects to a peer via DHT (5-10s). Subsequent requests reuse the connection.
-- **"existing_channel_still_active"**: A previous channel wasn't cleanly closed. Restart `antseed connect` to reset state.
+- **"existing_channel_still_active"**: A previous channel wasn't cleanly closed. Restart `antseed buyer start` to reset state.

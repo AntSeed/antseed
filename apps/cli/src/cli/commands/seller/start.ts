@@ -3,35 +3,38 @@ import chalk from 'chalk'
 import ora from 'ora'
 import { writeFile, unlink } from 'node:fs/promises'
 import { join, resolve, isAbsolute, dirname } from 'node:path'
-import { homedir } from 'node:os'
-import { getGlobalOptions } from './types.js'
-import { loadConfig } from '../../config/loader.js'
-import type { CLIProviderConfig } from '../../config/types.js'
-import { AntseedNode, type Provider, getInstance, resolveChainConfig, loadOrCreateIdentity } from '@antseed/node'
+import { getGlobalOptions } from '../types.js'
+import { loadConfig } from '../../../config/loader.js'
+import { AntseedNode, type Provider, resolveChainConfig, loadOrCreateIdentity } from '@antseed/node'
 import type { PaymentConfig } from '@antseed/node/payments'
 import { checkSellerReadiness } from '@antseed/node/payments'
 import {
   createIdentityClient,
   createStakingClient,
-} from '../payment-utils.js'
-import type { AntseedConfig } from '../../config/types.js'
+} from '../../payment-utils.js'
+import type { AntseedConfig } from '../../../config/types.js'
 import { parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
-import { setupShutdownHandler } from '../shutdown.js'
-import { loadProviderPlugin, buildPluginConfig, getPackageVersions } from '../../plugins/loader.js'
-import { resolveEffectiveSellerConfig, type SellerRuntimeOverrides } from '../../config/effective.js'
-import type { SellerCLIConfig } from '../../config/types.js'
+import { setupShutdownHandler } from '../../shutdown.js'
+import { loadProviderPlugin, buildPluginConfig, getPackageVersions } from '../../../plugins/loader.js'
+import { resolveEffectiveSellerConfig, type SellerRuntimeOverrides } from '../../../config/effective.js'
+import type { SellerCLIConfig } from '../../../config/types.js'
 import { AntAgentProvider, loadAntAgent, type AntAgentDefinition } from '@antseed/ant-agent'
+import { resolvePluginPackage } from '../../../plugins/registry.js'
 
 function getStateFile(dataDir: string): string {
   return join(dataDir, 'daemon.state.json')
 }
 
-/** Map config file provider entry to env-style key/value pairs for the plugin. */
-function providerConfigToEnv(p: CLIProviderConfig): Record<string, string> {
-  const env: Record<string, string> = {}
-  if (p.authValue) env['ANTHROPIC_API_KEY'] = p.authValue
-  if (p.authType) env['ANTSEED_AUTH_TYPE'] = p.authType
-  return env
+export function selectSellerProviderNames(
+  sellerConfig: SellerCLIConfig,
+  rawNames?: string,
+): { selected: string[]; unknown: string[] } {
+  const configured = Object.keys(sellerConfig.providers)
+  const selected = typeof rawNames === 'string' && rawNames.trim().length > 0
+    ? rawNames.split(',').map((name) => name.trim()).filter((name) => name.length > 0)
+    : configured
+  const unknown = selected.filter((name) => !sellerConfig.providers[name])
+  return { selected, unknown }
 }
 
 function parseOptionalBoolEnv(value: string | undefined): boolean | null {
@@ -43,7 +46,7 @@ function parseOptionalBoolEnv(value: string | undefined): boolean | null {
 }
 
 /**
- * Gate `antseed seed` on required prerequisites:
+ * Gate `antseed seller start` on required prerequisites:
  *   1. At least one service is configured for the selected provider.
  *   2. (When payments are enabled) seller is registered on-chain and staked.
  * Runtime pricing overrides that would be silently ignored (because the
@@ -56,7 +59,7 @@ export async function assertSellerPrerequisites(input: {
   dataDir: string
   config: AntseedConfig
   effectiveSeller: SellerCLIConfig
-  providerName: string
+  providerNames: string[]
   paymentsEnabled: boolean
   runtimePricingOverride: boolean
   skipChainChecks: boolean
@@ -65,7 +68,7 @@ export async function assertSellerPrerequisites(input: {
     dataDir,
     config,
     effectiveSeller,
-    providerName,
+    providerNames,
     paymentsEnabled,
     runtimePricingOverride,
     skipChainChecks,
@@ -74,14 +77,16 @@ export async function assertSellerPrerequisites(input: {
   const failures: Array<{ title: string; detail: string; command?: string }> = []
 
   // 1. Provider has at least one service configured.
-  const providerCfg = effectiveSeller.providers[providerName]
-  const serviceCount = providerCfg ? Object.keys(providerCfg.services).length : 0
-  if (serviceCount === 0) {
-    failures.push({
-      title: `No services configured for provider "${providerName}"`,
-      detail: 'A seller must announce at least one service. Add one with:',
-      command: `antseed config seller add-service ${providerName} <serviceId> --input <usd> --output <usd>`,
-    })
+  for (const providerName of providerNames) {
+    const providerCfg = effectiveSeller.providers[providerName]
+    const serviceCount = providerCfg ? Object.keys(providerCfg.services).length : 0
+    if (serviceCount === 0) {
+      failures.push({
+        title: `No services configured for provider "${providerName}"`,
+        detail: 'A seller must announce at least one service. Add one with:',
+        command: `antseed config seller add-service ${providerName} <serviceId> --input <usd> --output <usd>`,
+      })
+    }
   }
 
   // 2. Runtime pricing override was supplied but would silently no-op because
@@ -90,7 +95,7 @@ export async function assertSellerPrerequisites(input: {
     failures.push({
       title: 'Pricing override has nothing to apply to',
       detail: `--input-usd-per-million / --output-usd-per-million (or ANTSEED_SELLER_*_USD_PER_MILLION env) were supplied, but no providers are configured in seller.providers. The override would silently no-op.`,
-      command: `antseed config seller add-service ${providerName} <serviceId> --input <usd> --output <usd>`,
+      command: `antseed config seller add-service ${providerNames[0] ?? '<provider>'} <serviceId> --input <usd> --output <usd>`,
     })
   }
 
@@ -122,7 +127,7 @@ export async function assertSellerPrerequisites(input: {
 
   if (failures.length === 0) return
 
-  console.error(chalk.red('\nCannot start seeding — prerequisites not met:\n'))
+  console.error(chalk.red('\nCannot start seller node — prerequisites not met:\n'))
   for (const f of failures) {
     console.error(`  ${chalk.red('✗')} ${chalk.bold(f.title)}`)
     console.error(`    ${chalk.dim(f.detail)}`)
@@ -131,7 +136,7 @@ export async function assertSellerPrerequisites(input: {
     }
     console.error('')
   }
-  console.error(chalk.dim('Run `antseed setup --role provider` for a guided walkthrough, or pass --skip-prereq-check to bypass all checks (not recommended).'))
+  console.error(chalk.dim('Run `antseed seller setup` for a guided walkthrough, or pass --skip-prereq-check to bypass all checks (not recommended).'))
   throw new Error('seller prerequisites not met')
 }
 
@@ -273,12 +278,11 @@ export function mergeSellerRuntimeEnv(
 
 
 
-export function registerSeedCommand(program: Command): void {
-  program
-    .command('seed')
+export function registerSellerStartCommand(sellerCmd: Command): void {
+  sellerCmd
+    .command('start')
     .description('Start providing AI services on the P2P network')
-    .option('--provider <name>', 'provider plugin name (e.g., anthropic)')
-    .option('--instance <id>', 'use a configured plugin instance by ID')
+    .option('--provider <names>', 'start only these providers (comma-separated, default: all configured)')
     .option('-r, --reserve <number>', 'runtime-only reserve floor override (does not write config file)', parseFloat)
     .option('--input-usd-per-million <number>', 'runtime-only input pricing override in USD per 1M tokens', parseFloat)
     .option('--output-usd-per-million <number>', 'runtime-only output pricing override in USD per 1M tokens', parseFloat)
@@ -286,7 +290,7 @@ export function registerSeedCommand(program: Command): void {
     .option('--signaling-port <number>', 'TCP port for P2P signaling (default: 6882)', parseInt)
     .option('--skip-prereq-check', 'skip pre-flight checks (services configured, on-chain registration + stake). Use only for local testing.')
     .action(async (options) => {
-      const globalOpts = getGlobalOptions(program)
+      const globalOpts = getGlobalOptions(sellerCmd)
       const config = await loadConfig(globalOpts.config)
       const runtimeOverrides = buildSellerRuntimeOverridesFromFlags({
         reserve: options.reserve as number | undefined,
@@ -299,63 +303,47 @@ export function registerSeedCommand(program: Command): void {
         config,
         sellerOverrides: runtimeOverrides,
       })
+      const configuredProviderNames = Object.keys(effectiveSellerConfig.providers)
+      const providerSelection = selectSellerProviderNames(
+        effectiveSellerConfig,
+        options.provider as string | undefined,
+      )
+      const selectedProviderNames = providerSelection.selected
 
-      let provider: Provider
-
-      if (options.instance) {
-        const configPath = join(homedir(), '.antseed', 'config.json')
-        const instance = await getInstance(configPath, options.instance)
-        if (!instance) {
-          console.error(chalk.red(`Instance "${options.instance}" not found.`))
-          process.exit(1)
-        }
-        if (instance.type !== 'provider') {
-          console.error(chalk.red(`Instance "${options.instance}" is a ${instance.type}, not a provider.`))
-          process.exit(1)
-        }
-        const spinner = ora(`Loading provider plugin "${instance.package}"...`).start()
-        try {
-          const plugin = await loadProviderPlugin(instance.package)
-          const runtimeEnv = buildSellerPluginRuntimeEnv(effectiveSellerConfig, plugin.name)
-          const basePluginConfig = buildPluginConfig(
-            plugin.configSchema ?? plugin.configKeys ?? [],
-            undefined,
-            instance.config as Record<string, string>,
-          )
-          const pluginConfig = mergeSellerRuntimeEnv(basePluginConfig, runtimeEnv, { forcePricingOverride })
-          provider = await plugin.createProvider(pluginConfig)
-          if (provider.init) {
-            spinner.text = 'Validating credentials...'
-            await provider.init()
-          }
-          spinner.succeed(chalk.green(`Provider "${plugin.displayName}" loaded`))
-        } catch (err) {
-          spinner.fail(chalk.red(`Failed to load provider: ${(err as Error).message}`))
-          process.exit(1)
-        }
-      } else if (options.provider) {
-        const spinner = ora(`Loading provider plugin "${options.provider}"...`).start()
-        try {
-          const plugin = await loadProviderPlugin(options.provider)
-          const configProvider = config.providers.find(p => p.type === options.provider)
-          const fileConfig = configProvider ? providerConfigToEnv(configProvider) : {}
-          const runtimeEnv = buildSellerPluginRuntimeEnv(effectiveSellerConfig, options.provider as string)
-          const envAndFileConfig = buildPluginConfig(plugin.configSchema ?? plugin.configKeys ?? [], undefined, fileConfig)
-          const pluginConfig = mergeSellerRuntimeEnv(envAndFileConfig, runtimeEnv, { forcePricingOverride })
-          provider = await plugin.createProvider(pluginConfig)
-          if (provider.init) {
-            spinner.text = 'Validating credentials...'
-            await provider.init()
-          }
-          spinner.succeed(chalk.green(`Provider "${plugin.displayName}" loaded`))
-        } catch (err) {
-          spinner.fail(chalk.red(`Failed to load provider: ${(err as Error).message}`))
-          process.exit(1)
-        }
-      } else {
-        console.error(chalk.red('Error: No provider specified.'))
-        console.error(chalk.dim('Run: antseed seed --provider <name>  or  antseed seed --instance <id>'))
+      if (selectedProviderNames.length === 0) {
+        console.error(chalk.red('Error: No seller providers are configured.'))
+        console.error(chalk.dim('Run: antseed seller setup  or  antseed config seller add-provider <name> --plugin <plugin>'))
         process.exit(1)
+      }
+
+      const unknownProviderNames = providerSelection.unknown
+      if (unknownProviderNames.length > 0) {
+        console.error(chalk.red(`Unknown provider name(s): ${unknownProviderNames.join(', ')}`))
+        console.error(chalk.dim(`Configured providers: ${configuredProviderNames.join(', ') || '(none)'}`))
+        process.exit(1)
+      }
+
+      const providers: Provider[] = []
+      for (const providerName of selectedProviderNames) {
+        const providerCfg = effectiveSellerConfig.providers[providerName]!
+        const packageName = resolvePluginPackage(providerCfg.plugin)
+        const spinner = ora(`Loading provider plugin "${packageName}" for "${providerName}"...`).start()
+        try {
+          const plugin = await loadProviderPlugin(packageName)
+          const runtimeEnv = buildSellerPluginRuntimeEnv(effectiveSellerConfig, providerName)
+          const basePluginConfig = buildPluginConfig(plugin.configSchema ?? plugin.configKeys ?? [])
+          const pluginConfig = mergeSellerRuntimeEnv(basePluginConfig, runtimeEnv, { forcePricingOverride })
+          const provider = await plugin.createProvider(pluginConfig)
+          if (provider.init) {
+            spinner.text = `Validating credentials for "${providerName}"...`
+            await provider.init()
+          }
+          providers.push(provider)
+          spinner.succeed(chalk.green(`Provider "${providerName}" loaded via ${packageName}`))
+        } catch (err) {
+          spinner.fail(chalk.red(`Failed to load provider "${providerName}": ${(err as Error).message}`))
+          process.exit(1)
+        }
       }
 
       const bootstrapNodes = config.network.bootstrapNodes.length > 0
@@ -409,7 +397,7 @@ export function registerSeedCommand(program: Command): void {
         }
       }
 
-      const providerName = options.provider as string | undefined ?? provider.name ?? 'unknown'
+      const primaryProviderName = selectedProviderNames[0] ?? providers[0]?.name ?? 'unknown'
 
       // Pre-flight: refuse to start if the user hasn't added any services,
       // hasn't registered on-chain, or hasn't staked. A clear error is much
@@ -419,7 +407,7 @@ export function registerSeedCommand(program: Command): void {
           dataDir: globalOpts.dataDir,
           config,
           effectiveSeller: effectiveSellerConfig,
-          providerName,
+          providerNames: selectedProviderNames,
           paymentsEnabled,
           runtimePricingOverride: forcePricingOverride,
           skipChainChecks: Boolean(options.skipPrereqCheck),
@@ -430,35 +418,44 @@ export function registerSeedCommand(program: Command): void {
 
       // Write service categories directly from config onto the plugin's
       // Provider object — plugins don't parse this env key themselves.
-      const configProviderCfg = effectiveSellerConfig.providers?.[providerName]
-      if (configProviderCfg) {
-        const categoriesByService: Record<string, string[]> = {}
-        for (const [serviceId, svc] of Object.entries(configProviderCfg.services)) {
-          if (svc.categories && svc.categories.length > 0) {
-            categoriesByService[serviceId] = [...svc.categories]
+      for (let index = 0; index < providers.length; index += 1) {
+        const provider = providers[index]!
+        const providerName = selectedProviderNames[index]!
+        const configProviderCfg = effectiveSellerConfig.providers?.[providerName]
+        if (configProviderCfg) {
+          const categoriesByService: Record<string, string[]> = {}
+          for (const [serviceId, svc] of Object.entries(configProviderCfg.services)) {
+            if (svc.categories && svc.categories.length > 0) {
+              categoriesByService[serviceId] = [...svc.categories]
+            }
           }
-        }
-        if (Object.keys(categoriesByService).length > 0) {
-          provider.serviceCategories = categoriesByService
+          if (Object.keys(categoriesByService).length > 0) {
+            provider.serviceCategories = categoriesByService
+          }
         }
       }
 
-      const versions = getPackageVersions(providerName)
-      if (Object.keys(versions).length > 0) {
-        console.log(chalk.dim(`Package versions: ${Object.entries(versions).map(([k, v]) => `${k}@${v}`).join(', ')}`))
+      const versionsByPackage = new Map<string, string>()
+      for (const providerName of selectedProviderNames) {
+        const providerCfg = effectiveSellerConfig.providers[providerName]!
+        for (const [pkg, version] of Object.entries(getPackageVersions(providerCfg.plugin))) {
+          versionsByPackage.set(pkg, version)
+        }
+      }
+      if (versionsByPackage.size > 0) {
+        console.log(chalk.dim(`Package versions: ${Array.from(versionsByPackage.entries()).map(([k, v]) => `${k}@${v}`).join(', ')}`))
       }
       console.log(chalk.bold('Effective seller settings:'))
-      console.log(chalk.dim(`  provider: ${providerName}`))
-      console.log(
-        chalk.dim(
-          `  pricing defaults (USD/1M): input=${provider.pricing.defaults.inputUsdPerMillion}, output=${provider.pricing.defaults.outputUsdPerMillion}`
+      console.log(chalk.dim(`  providers: ${selectedProviderNames.join(', ')}`))
+      for (let index = 0; index < providers.length; index += 1) {
+        const provider = providers[index]!
+        const providerName = selectedProviderNames[index]!
+        console.log(
+          chalk.dim(
+            `  ${providerName} pricing defaults (USD/1M): input=${provider.pricing.defaults.inputUsdPerMillion}, output=${provider.pricing.defaults.outputUsdPerMillion}`
+          )
         )
-      )
-      console.log(
-        chalk.dim(
-          `  enabled providers: ${effectiveSellerConfig.enabledProviders.length > 0 ? effectiveSellerConfig.enabledProviders.join(', ') : '(none)'}`
-        )
-      )
+      }
       const minBudgetPerRequest = config.payments.minBudgetPerRequest ?? '10000'
       console.log(chalk.dim(`  min budget per request: ${minBudgetPerRequest} base units`))
       console.log(chalk.dim(`  reserve floor: ${effectiveSellerConfig.reserveFloor}`))
@@ -500,6 +497,8 @@ export function registerSeedCommand(program: Command): void {
         },
       })
 
+      let registeredProviders = providers
+
       // Wrap provider with ant agent if configured
       if (effectiveSellerConfig.agentDir) {
         const baseDir = globalOpts.config ? dirname(resolve(globalOpts.config)) : process.cwd()
@@ -509,7 +508,7 @@ export function registerSeedCommand(program: Command): void {
           if (typeof effectiveSellerConfig.agentDir === 'string') {
             // Single agent for all services
             const agentDef = await loadAntAgent(resolvePath(effectiveSellerConfig.agentDir))
-            provider = new AntAgentProvider(provider, agentDef)
+            registeredProviders = registeredProviders.map((provider) => new AntAgentProvider(provider, agentDef))
             const k = agentDef.knowledge.length
             console.log(chalk.dim(`  ant agent: "${agentDef.name}" (${k} knowledge module${k !== 1 ? 's' : ''})`))
           } else {
@@ -522,7 +521,7 @@ export function registerSeedCommand(program: Command): void {
               const label = service === '*' ? '(default)' : service
               console.log(chalk.dim(`  ant agent: "${agentDef.name}" → ${label} (${k} knowledge module${k !== 1 ? 's' : ''})`))
             }
-            provider = new AntAgentProvider(provider, agentMap)
+            registeredProviders = registeredProviders.map((provider) => new AntAgentProvider(provider, agentMap))
           }
         } catch (err) {
           console.error(chalk.red(`Failed to load ant agent: ${(err as Error).message}`))
@@ -530,7 +529,9 @@ export function registerSeedCommand(program: Command): void {
         }
       }
 
-      node.registerProvider(provider)
+      for (const provider of registeredProviders) {
+        node.registerProvider(provider)
+      }
 
       try {
         await node.start()
@@ -561,7 +562,12 @@ export function registerSeedCommand(program: Command): void {
 
       function buildDaemonState() {
         const now = Date.now()
-        const cap = provider.getCapacity()
+        const primaryProvider = registeredProviders[0]!
+        const capacity = registeredProviders.map((provider) => provider.getCapacity())
+        const cap = capacity.reduce(
+          (acc, entry) => ({ current: acc.current + entry.current, max: acc.max + entry.max }),
+          { current: 0, max: 0 },
+        )
         const trackedSessions = node
           .getActiveSellerSessions()
           .filter((session) => !session.settling)
@@ -600,7 +606,7 @@ export function registerSeedCommand(program: Command): void {
           syntheticDetails.push({
             sessionId,
             buyerPeerId: 'unknown',
-            provider: providerName,
+              provider: primaryProviderName,
             startedAt: startedAtTs,
             lastActivityAt: now,
             totalRequests: 0,
@@ -624,23 +630,24 @@ export function registerSeedCommand(program: Command): void {
           peerId: node.peerId,
           dhtPort: node.dhtPort,
           signalingPort: node.signalingPort,
-          provider: providerName,
-          defaultInputUsdPerMillion: provider.pricing.defaults.inputUsdPerMillion,
-          defaultOutputUsdPerMillion: provider.pricing.defaults.outputUsdPerMillion,
-          providerPricing: {
-            [providerName]: {
+          provider: primaryProviderName,
+          defaultInputUsdPerMillion: primaryProvider.pricing.defaults.inputUsdPerMillion,
+          defaultOutputUsdPerMillion: primaryProvider.pricing.defaults.outputUsdPerMillion,
+          providerPricing: Object.fromEntries(registeredProviders.map((provider, index) => {
+            const providerName = selectedProviderNames[index]!
+            return [providerName, {
               defaults: {
                 inputUsdPerMillion: provider.pricing.defaults.inputUsdPerMillion,
                 outputUsdPerMillion: provider.pricing.defaults.outputUsdPerMillion,
               },
               ...(provider.pricing.services ? { services: provider.pricing.services } : {}),
-            },
-          },
-          ...(provider.serviceCategories
+            }]
+          })),
+          ...(primaryProvider.serviceCategories
             ? {
                 providerServiceCategories: {
-                  [providerName]: {
-                    services: provider.serviceCategories,
+                  [primaryProviderName]: {
+                    services: primaryProvider.serviceCategories,
                   },
                 },
               }

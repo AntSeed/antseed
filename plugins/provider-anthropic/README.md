@@ -17,16 +17,17 @@ antseed plugin add @antseed/provider-anthropic
 export ANTHROPIC_API_KEY=sk-ant-...
 
 # Services, pricing, and categories live in config.json
+antseed config seller add-provider anthropic --plugin anthropic
 antseed config seller add-service anthropic claude-sonnet-4-5-20250929 \
   --input 3 --output 15 --cached 0.3 \
   --categories chat,coding
 
-antseed seed --provider anthropic
+antseed seller start
 ```
 
 ## Configuration
 
-Only the upstream API key goes in env. Services, pricing, categories, and upstream model mapping all live under `seller.providers.anthropic.services[id]` in `~/.antseed/config.json`. See [Configuration](/docs/config) for the full shape.
+Only the upstream API key goes in env. Services, pricing, categories, and upstream model mapping all live under `seller.providers.<name>.services[id]` in `~/.antseed/config.json`. See [Configuration](/docs/config) for the full shape.
 
 | Key | Required | Description |
 |-----|----------|-------------|

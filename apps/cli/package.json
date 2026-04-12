@@ -22,7 +22,7 @@
     "start:connect": "node dist/cli/index.js connect",
     "start:dashboard": "node dist/cli/index.js dashboard",
     "typecheck": "tsc --noEmit",
-    "test": "npm run build && node --test dist/config/*.test.js dist/cli/commands/*.test.js dist/proxy/*.test.js"
+    "test": "npm run build && node --test dist/config/*.test.js dist/cli/commands/**/*.test.js dist/proxy/*.test.js"
   },
   "dependencies": {
     "@antseed/api-adapter": "workspace:*",

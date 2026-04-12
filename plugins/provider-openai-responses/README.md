@@ -13,7 +13,11 @@ antseed plugin add @antseed/provider-openai-responses
 ## Usage
 
 ```bash
-antseed seed --provider openai-responses
+antseed config seller add-provider openai-responses --plugin openai-responses
+antseed config seller add-service openai-responses gpt-5 \
+  --input 10 --output 10 \
+  --categories chat,coding
+antseed seller start
 ```
 
 ## Configuration

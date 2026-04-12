@@ -1,16 +1,16 @@
 import type { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
-import { getGlobalOptions } from './types.js';
-import { loadConfig } from '../../config/loader.js';
+import { getGlobalOptions } from '../types.js';
+import { loadConfig } from '../../../config/loader.js';
 import {
   createEmissionsClient,
   loadCryptoContext,
   formatAnts,
-} from '../payment-utils.js';
+} from '../../payment-utils.js';
 
-export function registerEmissionsCommand(program: Command): void {
-  const emissions = program
+export function registerSellerEmissionsCommand(sellerCmd: Command): void {
+  const emissions = sellerCmd
     .command('emissions')
     .description('View epoch info and pending ANTS emissions');
 
@@ -19,7 +19,7 @@ export function registerEmissionsCommand(program: Command): void {
     .description('Show current epoch info and pending emissions')
     .option('--json', 'output as JSON', false)
     .action(async (options) => {
-      const globalOpts = getGlobalOptions(program);
+      const globalOpts = getGlobalOptions(sellerCmd);
       const config = await loadConfig(globalOpts.config);
 
       const { address } = await loadCryptoContext(globalOpts.dataDir);
@@ -64,7 +64,7 @@ export function registerEmissionsCommand(program: Command): void {
     .command('claim')
     .description('Claim pending ANTS emissions')
     .action(async () => {
-      const globalOpts = getGlobalOptions(program);
+      const globalOpts = getGlobalOptions(sellerCmd);
       const config = await loadConfig(globalOpts.config);
 
       const { wallet, address } = await loadCryptoContext(globalOpts.dataDir);

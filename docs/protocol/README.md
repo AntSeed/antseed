@@ -21,10 +21,12 @@ Install the CLI globally:
 
 ```bash
 npm install -g @antseed/cli
-antseed init         # install official plugins
-antseed seed --provider anthropic   # provide AI services
-antseed connect --router local  # consume via local router
+antseed seller setup      # create ~/.antseed/config.json
+antseed seller start      # provide AI services
+antseed buyer start       # consume via local router
 ```
+
+`~/.antseed/config.json` is the main source of truth for provider definitions, services, pricing, categories, buyer settings, and `baseUrl`. Environment variables are mainly for secrets such as API keys and `ANTSEED_IDENTITY_HEX`.
 
 ## Plugin Ecosystem
 
@@ -32,8 +34,8 @@ Antseed is extensible. Any developer can publish a plugin to npm:
 
 | Plugin type | Purpose | Command |
 |---|---|---|
-| Provider plugin | Connect an upstream AI API and offer services | `antseed seed --provider <name>` |
-| Router plugin | Select peers and proxy requests for a client tool | `antseed connect --router <name>` |
+| Provider plugin | Connect an upstream AI API and offer services | `antseed seller start` |
+| Router plugin | Select peers and proxy requests for a client tool | `antseed buyer start --router <name>` |
 
 Use the templates in this directory as a starting point:
 

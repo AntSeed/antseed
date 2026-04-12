@@ -8,11 +8,9 @@ export function createDefaultConfig(): AntseedConfig {
     identity: {
       displayName: 'Antseed Node',
     },
-    providers: [],
     seller: {
       reserveFloor: 10,
       maxConcurrentBuyers: 5,
-      enabledProviders: [],
       providers: {},
       publicAddress: '',
     },

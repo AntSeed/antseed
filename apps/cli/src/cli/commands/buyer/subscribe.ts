@@ -1,16 +1,16 @@
 import type { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
-import { getGlobalOptions } from './types.js';
-import { loadConfig } from '../../config/loader.js';
+import { getGlobalOptions } from '../types.js';
+import { loadConfig } from '../../../config/loader.js';
 import {
   createSubPoolClient,
   loadCryptoContext,
   formatUsdc,
-} from '../payment-utils.js';
+} from '../../payment-utils.js';
 
-export function registerSubscribeCommand(program: Command): void {
-  const subscribe = program
+export function registerBuyerSubscribeCommand(buyerCmd: Command): void {
+  const subscribe = buyerCmd
     .command('subscribe')
     .description('Manage subscription pool membership');
 
@@ -18,7 +18,7 @@ export function registerSubscribeCommand(program: Command): void {
     .command('join <tierId>')
     .description('Subscribe to a tier')
     .action(async (tierIdStr: string) => {
-      const globalOpts = getGlobalOptions(program);
+      const globalOpts = getGlobalOptions(buyerCmd);
       const config = await loadConfig(globalOpts.config);
 
       const tierId = parseInt(tierIdStr, 10);
@@ -58,7 +58,7 @@ export function registerSubscribeCommand(program: Command): void {
     .description('Check subscription status')
     .option('--json', 'output as JSON', false)
     .action(async (options) => {
-      const globalOpts = getGlobalOptions(program);
+      const globalOpts = getGlobalOptions(buyerCmd);
       const config = await loadConfig(globalOpts.config);
 
       const spinner = ora('Checking subscription...').start();
@@ -96,7 +96,7 @@ export function registerSubscribeCommand(program: Command): void {
     .command('cancel')
     .description('Cancel your subscription')
     .action(async () => {
-      const globalOpts = getGlobalOptions(program);
+      const globalOpts = getGlobalOptions(buyerCmd);
       const config = await loadConfig(globalOpts.config);
 
       const spinner = ora('Cancelling subscription...').start();

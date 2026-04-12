@@ -71,6 +71,9 @@ function validateSellerProviders(
 ): void {
   for (const [providerName, providerCfg] of Object.entries(providers)) {
     const providerPath = `${path}.${providerName}`;
+    if (typeof providerCfg.plugin !== 'string' || providerCfg.plugin.trim().length === 0) {
+      errors.push(`${providerPath}.plugin must be a non-empty string`);
+    }
     if (providerCfg.defaults) {
       validatePricingLeaf(`${providerPath}.defaults`, providerCfg.defaults, errors);
     }

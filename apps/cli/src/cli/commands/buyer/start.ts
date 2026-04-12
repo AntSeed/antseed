@@ -5,16 +5,16 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { createConnection } from 'node:net'
-import { getGlobalOptions } from './types.js'
-import { loadConfig } from '../../config/loader.js'
+import { getGlobalOptions } from '../types.js'
+import { loadConfig } from '../../../config/loader.js'
 import { AntseedNode, DepositsClient, getInstance, resolveChainConfig } from '@antseed/node'
 import type { NodePaymentsConfig } from '@antseed/node'
 import { OFFICIAL_BOOTSTRAP_NODES, parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
-import { setupShutdownHandler } from '../shutdown.js'
-import { loadRouterPlugin, buildPluginConfig, getPackageVersions } from '../../plugins/loader.js'
-import { BuyerProxy } from '../../proxy/buyer-proxy.js'
-import { resolveEffectiveBuyerConfig, type BuyerRuntimeOverrides } from '../../config/effective.js'
-import type { BuyerCLIConfig } from '../../config/types.js'
+import { setupShutdownHandler } from '../../shutdown.js'
+import { loadRouterPlugin, buildPluginConfig, getPackageVersions } from '../../../plugins/loader.js'
+import { BuyerProxy } from '../../../proxy/buyer-proxy.js'
+import { resolveEffectiveBuyerConfig, type BuyerRuntimeOverrides } from '../../../config/effective.js'
+import type { BuyerCLIConfig } from '../../../config/types.js'
 
 interface LocalSeederInfo {
   dhtPort: number
@@ -29,27 +29,22 @@ export function buildBuyerRuntimeOverridesFromFlags(options: {
   maxOutputUsdPerMillion?: number
 }): BuyerRuntimeOverrides {
   const overrides: BuyerRuntimeOverrides = {}
-  if (options.port !== undefined) {
-    overrides.proxyPort = options.port
-  }
-  if (options.minPeerReputation !== undefined) {
-    overrides.minPeerReputation = options.minPeerReputation
-  }
-  if (options.maxInputUsdPerMillion !== undefined) {
-    overrides.maxInputUsdPerMillion = options.maxInputUsdPerMillion
-  }
-  if (options.maxOutputUsdPerMillion !== undefined) {
-    overrides.maxOutputUsdPerMillion = options.maxOutputUsdPerMillion
-  }
+  if (options.port !== undefined) overrides.proxyPort = options.port
+  if (options.minPeerReputation !== undefined) overrides.minPeerReputation = options.minPeerReputation
+  if (options.maxInputUsdPerMillion !== undefined) overrides.maxInputUsdPerMillion = options.maxInputUsdPerMillion
+  if (options.maxOutputUsdPerMillion !== undefined) overrides.maxOutputUsdPerMillion = options.maxOutputUsdPerMillion
   return overrides
 }
 
 export function buildRouterRuntimeEnvFromBuyerConfig(buyerConfig: BuyerCLIConfig): Record<string, string> {
-  const runtimeEnv: Record<string, string> = {
+  return {
     ANTSEED_MIN_REPUTATION: String(buyerConfig.minPeerReputation),
     ANTSEED_MAX_PRICING_JSON: JSON.stringify(buyerConfig.maxPricing),
   }
-  return runtimeEnv
+}
+
+export function resolveBuyerRouterName(options: { router?: string }): string {
+  return (options.router as string | undefined) ?? 'local'
 }
 
 export function buildBuyerBootstrapEntries(
@@ -59,12 +54,9 @@ export function buildBuyerBootstrapEntries(
   const configured = Array.isArray(configuredBootstrapNodes)
     ? configuredBootstrapNodes.filter((entry) => typeof entry === 'string' && entry.trim().length > 0)
     : []
-
-  // Respect explicit user bootstrap config. If none is provided, keep default public bootstrap nodes.
   const baseEntries = configured.length > 0
     ? configured
     : OFFICIAL_BOOTSTRAP_NODES.map((node) => `${node.host}:${node.port}`)
-
   const entries = [...baseEntries]
 
   if (Number.isFinite(localSeederDhtPort) && (localSeederDhtPort ?? 0) > 0) {
@@ -88,7 +80,6 @@ function parseOptionalBoolEnv(value: string | undefined): boolean | null {
 async function isRpcReachable(rpcUrl: string, timeoutMs = 1500): Promise<boolean> {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), timeoutMs)
-
   try {
     const response = await fetch(rpcUrl, {
       method: 'POST',
@@ -101,9 +92,7 @@ async function isRpcReachable(rpcUrl: string, timeoutMs = 1500): Promise<boolean
       }),
       signal: controller.signal,
     })
-
     if (!response.ok) return false
-
     const payload = await response.json() as { result?: unknown }
     return typeof payload.result === 'string' && payload.result.startsWith('0x')
   } catch {
@@ -127,31 +116,24 @@ async function getLocalSeederInfo(): Promise<LocalSeederInfo | null> {
         return null
       }
     }
-  } catch {
-    // No state file or unreadable
-  }
+  } catch {}
   return null
 }
 
 function isAddrInUseError(error: unknown): boolean {
-  if (!(error instanceof Error)) {
-    return false
-  }
-  return error.message.includes('EADDRINUSE')
+  return error instanceof Error && error.message.includes('EADDRINUSE')
 }
 
 async function isPortReachable(port: number, timeoutMs = 700): Promise<boolean> {
   return await new Promise((resolve) => {
     const socket = createConnection({ host: '127.0.0.1', port: Math.floor(port) })
     let settled = false
-
     const finish = (reachable: boolean): void => {
       if (settled) return
       settled = true
       socket.destroy()
       resolve(reachable)
     }
-
     socket.once('connect', () => finish(true))
     socket.once('error', () => finish(false))
     socket.setTimeout(timeoutMs, () => finish(false))
@@ -162,45 +144,28 @@ async function isCompatibleBuyerProxy(port: number, timeoutMs = 1200): Promise<b
   const overallBudgetMs = Math.max(1, timeoutMs)
   const startedAt = Date.now()
   const reachabilityTimeoutMs = Math.min(overallBudgetMs, 700)
-  if (!await isPortReachable(port, reachabilityTimeoutMs)) {
-    return false
-  }
+  if (!await isPortReachable(port, reachabilityTimeoutMs)) return false
 
   const elapsedMs = Date.now() - startedAt
   const remainingBudgetMs = overallBudgetMs - elapsedMs
-  if (remainingBudgetMs <= 0) {
-    return false
-  }
+  if (remainingBudgetMs <= 0) return false
 
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), remainingBudgetMs)
   try {
     const response = await fetch(`http://127.0.0.1:${Math.floor(port)}/v1/models`, {
       method: 'GET',
-      headers: {
-        accept: 'application/json',
-      },
+      headers: { accept: 'application/json' },
       signal: controller.signal,
     })
-
-    // Antseed proxy usually attaches these telemetry headers when a request reached routing.
     const antseedHeaderNames = ['x-antseed-request-id', 'x-antseed-peer-id', 'x-antseed-provider']
-    if (antseedHeaderNames.some((header) => response.headers.has(header))) {
-      return true
-    }
+    if (antseedHeaderNames.some((header) => response.headers.has(header))) return true
 
     const body = (await response.text()).toLowerCase()
-    // Local proxy-generated fallbacks that may not include telemetry headers.
-    if (
-      body.includes('no sellers available on the network')
+    return body.includes('no sellers available on the network')
       || body.includes('no peers support')
       || body.includes('p2p request failed')
       || body.includes('pinned peer')
-    ) {
-      return true
-    }
-
-    return false
   } catch {
     return false
   } finally {
@@ -208,9 +173,9 @@ async function isCompatibleBuyerProxy(port: number, timeoutMs = 1200): Promise<b
   }
 }
 
-export function registerConnectCommand(program: Command): void {
-  program
-    .command('connect')
+export function registerBuyerStartCommand(buyerCmd: Command): void {
+  buyerCmd
+    .command('start')
     .description('Start the buyer proxy and connect to sellers on the P2P network')
     .option('-p, --port <number>', 'local proxy port', (v) => parseInt(v, 10))
     .option('--router <name>', 'router plugin name or npm package')
@@ -219,7 +184,7 @@ export function registerConnectCommand(program: Command): void {
     .option('--max-output-usd-per-million <number>', 'runtime-only max output pricing override in USD per 1M tokens', parseFloat)
     .option('--peer <peerId>', 'pin all requests to a specific peer ID (40-char hex EVM address), bypassing the router')
     .action(async (options) => {
-      const globalOpts = getGlobalOptions(program)
+      const globalOpts = getGlobalOptions(buyerCmd)
       const config = await loadConfig(globalOpts.config)
 
       const pinnedPeerId = options.peer as string | undefined
@@ -240,6 +205,7 @@ export function registerConnectCommand(program: Command): void {
 
       let router
       let toolHints: Array<{ name: string; envVar: string }> = []
+      const routerName = resolveBuyerRouterName({ router: options.router as string | undefined })
 
       if (options.instance) {
         const configPath = join(homedir(), '.antseed', 'config.json')
@@ -264,10 +230,10 @@ export function registerConnectCommand(program: Command): void {
           spinner.fail(chalk.red(`Failed to load router: ${(err as Error).message}`))
           process.exit(1)
         }
-      } else if (options.router) {
-        const spinner = ora(`Loading router plugin "${options.router}"...`).start()
+      } else {
+        const spinner = ora(`Loading router plugin "${routerName}"...`).start()
         try {
-          const plugin = await loadRouterPlugin(options.router)
+          const plugin = await loadRouterPlugin(routerName)
           const runtimeEnv = buildRouterRuntimeEnvFromBuyerConfig(effectiveBuyerConfig)
           const pluginConfig = buildPluginConfig(plugin.configSchema ?? plugin.configKeys ?? [], runtimeEnv)
           router = await plugin.createRouter(pluginConfig)
@@ -277,27 +243,17 @@ export function registerConnectCommand(program: Command): void {
           spinner.fail(chalk.red(`Failed to load router: ${(err as Error).message}`))
           process.exit(1)
         }
-      } else {
-        console.error(chalk.red('Error: No router specified.'))
-        console.error(chalk.dim('Run: antseed connect --router <name>  or  antseed connect --instance <id>'))
-        process.exit(1)
       }
 
-      // Auto-discover local seeder
       const seederInfo = await getLocalSeederInfo()
-      const allBootstrapEntries = buildBuyerBootstrapEntries(
-        config.network?.bootstrapNodes,
-        seederInfo?.dhtPort,
-      )
+      const allBootstrapEntries = buildBuyerBootstrapEntries(config.network?.bootstrapNodes, seederInfo?.dhtPort)
       const bootstrapNodes = toBootstrapConfig(parseBootstrapList(allBootstrapEntries))
 
       const nodeSpinner = ora('Connecting to P2P network...').start()
 
-      // Build payment config — use protocol chain defaults + user overrides
       let paymentsConfig: NodePaymentsConfig | undefined
       const settlementEnv = parseOptionalBoolEnv(process.env['ANTSEED_ENABLE_SETTLEMENT'])
       const cryptoOverrides = config.payments?.crypto
-      // Resolve chain config with protocol defaults (always available)
       const chainConfig = resolveChainConfig({
         chainId: cryptoOverrides?.chainId,
         rpcUrl: cryptoOverrides?.rpcUrl,
@@ -333,28 +289,22 @@ export function registerConnectCommand(program: Command): void {
         }
       }
 
-      const routerName = options.instance
+      const resolvedRouterName = options.instance
         ? (await getInstance(join(homedir(), '.antseed', 'config.json'), options.instance))?.package
-        : options.router as string | undefined
-      const versions = getPackageVersions(routerName ?? undefined)
+        : routerName
+      const versions = getPackageVersions(resolvedRouterName ?? undefined)
       if (Object.keys(versions).length > 0) {
         console.log(chalk.dim(`Package versions: ${Object.entries(versions).map(([k, v]) => `${k}@${v}`).join(', ')}`))
       }
       console.log(chalk.bold('Effective buyer settings:'))
-      console.log(
-        chalk.dim(
-          `  max pricing defaults (USD/1M): input=${effectiveBuyerConfig.maxPricing.defaults.inputUsdPerMillion}, output=${effectiveBuyerConfig.maxPricing.defaults.outputUsdPerMillion}`
-        )
-      )
+      console.log(chalk.dim(`  max pricing defaults (USD/1M): input=${effectiveBuyerConfig.maxPricing.defaults.inputUsdPerMillion}, output=${effectiveBuyerConfig.maxPricing.defaults.outputUsdPerMillion}`))
       const maxPerRequestUsdc = config.payments?.maxPerRequestUsdc ?? '100000'
       const maxReserveAmountUsdc = config.payments?.maxReserveAmountUsdc ?? '1000000'
       console.log(chalk.dim(`  max per-request USDC: ${(Number(maxPerRequestUsdc) / 1_000_000).toFixed(6)}`))
       console.log(chalk.dim(`  max reserve USDC: ${(Number(maxReserveAmountUsdc) / 1_000_000).toFixed(6)}`))
       console.log(chalk.dim(`  min peer reputation: ${effectiveBuyerConfig.minPeerReputation}`))
       console.log(chalk.dim(`  proxy port: ${effectiveBuyerConfig.proxyPort}`))
-      if (pinnedPeerId) {
-        console.log(chalk.yellow(`  pinned peer: ${pinnedPeerId} (router bypassed)`))
-      }
+      if (pinnedPeerId) console.log(chalk.yellow(`  pinned peer: ${pinnedPeerId} (router bypassed)`))
       console.log('')
 
       const node = new AntseedNode({
@@ -376,7 +326,6 @@ export function registerConnectCommand(program: Command): void {
         process.exit(1)
       }
 
-      // Display available USDC balance only if payments are active
       if (paymentsConfig?.enabled) {
         try {
           const identity = node.identity!
@@ -391,20 +340,13 @@ export function registerConnectCommand(program: Command): void {
           const availUsdc = Number(account.available) / 1_000_000
           console.log(chalk.dim(`Deposits available: ${availUsdc.toFixed(6)} USDC`))
         } catch {
-          // Non-fatal — chain may not be available
           console.log(chalk.dim('Payment balance unavailable (chain not reachable)'))
         }
       }
 
-      // Start the local HTTP proxy
       const proxyPort = effectiveBuyerConfig.proxyPort
       const proxySpinner = ora(`Starting local proxy on port ${proxyPort}...`).start()
-
-      const proxy = new BuyerProxy({
-        port: proxyPort,
-        node,
-        pinnedPeerId,
-      })
+      const proxy = new BuyerProxy({ port: proxyPort, node, pinnedPeerId })
       let ownsProxyListener = false
 
       try {
@@ -424,7 +366,6 @@ export function registerConnectCommand(program: Command): void {
 
       const proxyUrl = `http://localhost:${proxyPort}`
       console.log('')
-
       if (toolHints.length > 0) {
         console.log(chalk.bold('Configure your tools:'))
         for (const hint of toolHints) {
@@ -441,9 +382,7 @@ export function registerConnectCommand(program: Command): void {
 
       setupShutdownHandler(async () => {
         nodeSpinner.start('Shutting down...')
-        if (ownsProxyListener) {
-          await proxy.stop()
-        }
+        if (ownsProxyListener) await proxy.stop()
         await node.stop()
         nodeSpinner.succeed('Disconnected. All channels finalized.')
       })

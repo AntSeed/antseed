@@ -63,7 +63,7 @@ export async function loadCryptoContext(dataDir: string): Promise<CryptoContext>
 export function requireCryptoConfig(config: AntseedConfig): NonNullable<AntseedConfig['payments']['crypto']> {
   const crypto = config.payments?.crypto;
   if (!crypto) {
-    throw new Error('No crypto payment configuration found. Configure payments.crypto in your config file or run: antseed init');
+    throw new Error('No crypto payment configuration found. Configure payments.crypto in your config file.');
   }
   // Merge with chain-config defaults so commands work with just chainId
   const resolved = resolveChainConfig(crypto);

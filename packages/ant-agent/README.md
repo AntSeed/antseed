@@ -131,7 +131,7 @@ Per-service:
 
 The `"*"` key is a fallback for services with no explicit agent. Services with no matching agent pass through unchanged.
 
-Then run `antseed seed` as usual.
+Then run `antseed seller start` as usual.
 
 ## Knowledge loading
 

@@ -9,55 +9,75 @@ Command-line interface and web dashboard for the AntSeed Network — a P2P netwo
 | Command | Description |
 |---------|-------------|
 | **Setup** | |
-| `antseed init` | Install trusted provider and router plugins |
-| `antseed setup --role <role>` | Check readiness for provider or buyer role |
-| `antseed register` | Register peer identity on-chain (ERC-8004) |
+| `antseed seller setup` | Interactive seller onboarding |
 | **Providing** | |
-| `antseed seed --provider <name>` | Start providing AI services on the P2P network |
-| `antseed stake <amount>` | Stake USDC as a provider (min $10) |
-| `antseed unstake` | Withdraw staked USDC |
-| `antseed claim` | Claim accumulated seller payouts |
+| `antseed seller start` | Start providing AI services on the P2P network |
+| `antseed seller register` | Register peer identity on-chain (ERC-8004) |
+| `antseed seller stake <amount>` | Stake USDC as a provider (min $10) |
+| `antseed seller unstake` | Withdraw staked USDC |
+| `antseed seller emissions claim` | Claim accumulated seller payouts |
 | **Buying** | |
-| `antseed connect --router <name>` | Start the buyer proxy and connect to sellers |
-| `antseed deposit <amount>` | Deposit USDC for payments |
-| `antseed withdraw <amount>` | Withdraw USDC from deposits |
-| `antseed balance` | Check wallet and deposit balance |
-| `antseed browse` | Browse available services and pricing |
+| `antseed buyer start` | Start the buyer proxy and connect to sellers |
+| `antseed buyer start --router <name>` | Start the buyer proxy with a non-default router |
+| `antseed buyer deposit <amount>` | Deposit USDC for payments |
+| `antseed buyer withdraw <amount>` | Withdraw USDC from deposits |
+| `antseed buyer balance` | Check wallet and deposit balance |
+| `antseed network browse` | Browse available services and pricing |
 | `antseed payments` | Launch the payments portal |
 | **Session** | |
-| `antseed connection get` | Show current session state (pinned service, peer) |
-| `antseed connection set` | Update service/peer overrides on a running proxy |
-| `antseed connection clear` | Clear service/peer overrides |
+| `antseed buyer connection get` | Show current session state (pinned service, peer) |
+| `antseed buyer connection set` | Update service/peer overrides on a running proxy |
+| `antseed buyer connection clear` | Clear service/peer overrides |
 | **Management** | |
-| `antseed status` | Show current node status |
+| `antseed seller status` | Show seller status |
+| `antseed buyer status` | Show buyer status |
 | `antseed config` | Manage configuration |
-| `antseed plugin add/remove/list` | Manage plugins |
+| `antseed profile` | Manage your peer profile |
+| `antseed peer <peerId>` | Show a peer profile |
 | `antseed dashboard` | Start the web dashboard |
-| `antseed channels` | List payment channels |
-| `antseed emissions` | View ANTS emissions and epoch info |
+| `antseed buyer channels` | List payment channels |
+| `antseed seller emissions info` | View ANTS emissions and epoch info |
 | `antseed dev` | Run seller + buyer locally for testing |
-| `antseed bootstrap` | Run a dedicated DHT bootstrap node |
+| `antseed network bootstrap` | Run a dedicated DHT bootstrap node |
+
+## Configuration Workflow
+
+The normal workflow is:
+
+1. Create or update `~/.antseed/config.json` with `antseed seller setup` or `antseed config ...`
+2. Keep non-secret settings there: providers, services, pricing, categories, `baseUrl`, ports
+3. Keep secrets in environment variables: API keys and `ANTSEED_IDENTITY_HEX`
+4. Start later with `antseed seller start` or `antseed buyer start`
+
+Once your config file exists, the usual seller flow is just:
+
+```bash
+export OPENAI_API_KEY=sk-...
+export ANTSEED_IDENTITY_HEX=<your-identity-key>
+antseed seller start
+```
+
+`config.json` is the durable source of truth. Env vars are for secrets and one-off overrides.
 
 ## Plugins
 
-Antseed uses an open plugin ecosystem. Plugins are installed into `~/.antseed/plugins/` via npm.
+Antseed uses an open plugin ecosystem. Provider and router plugins are installed into `~/.antseed/plugins/` via npm.
 
 **Providers** connect your node to an upstream AI API (seeder mode):
 
 ```bash
-antseed plugin add @antseed/provider-anthropic    # API key auth
-antseed plugin add @antseed/provider-claude-code   # Claude Code keychain auth
-antseed seed --provider anthropic
+antseed config seller add-provider anthropic --plugin anthropic
+antseed config seller add-service anthropic claude-sonnet-4-5-20250929 \
+  --input 12 --output 18 --cached 6 \
+  --categories coding,chat
+antseed seller start
 ```
 
 **Routers** select peers and proxy requests (consumer mode):
 
 ```bash
-antseed plugin add @antseed/router-local
-antseed connect --router local
+antseed buyer start
 ```
-
-Run `antseed init` to install all trusted plugins interactively.
 
 ## Configuration
 
@@ -84,12 +104,6 @@ For dashboard frontend debug logging, set:
 VITE_ANTSEED_DEBUG=1
 ```
 
-Initialize a new config:
-
-```bash
-antseed config init
-```
-
 Pricing is configured in USD per 1M tokens with role-specific defaults and optional provider/service overrides. You can also set node `displayName`, an optional seller `publicAddress`, and per-service category tags announced in discovery metadata:
 
 ```json
@@ -101,6 +115,7 @@ Pricing is configured in USD per 1M tokens with role-specific defaults and optio
     "publicAddress": "peer.example.com:6882",
     "providers": {
       "anthropic": {
+        "plugin": "anthropic",
         "defaults": {
           "inputUsdPerMillion": 10,
           "outputUsdPerMillion": 10,
@@ -158,7 +173,8 @@ Role-first config examples:
 # Identity / metadata display name
 antseed config set identity.displayName "Acme Inference - us-east-1"
 
-# Add a service the all-in-one way (preferred)
+# Add a provider and then a service
+antseed config seller add-provider anthropic --plugin anthropic --input 12 --output 18
 antseed config seller add-service anthropic claude-sonnet-4-5-20250929 \
   --upstream "claude-sonnet-4-5-20250929" \
   --input 12 --output 18 --cached 6 \
@@ -185,33 +201,33 @@ antseed config buyer set maxPricing.defaults.outputUsdPerMillion 75
 Runtime-only overrides (do not write your config file):
 
 ```bash
-antseed seed --provider anthropic --input-usd-per-million 10 --cached-input-usd-per-million 5 --output-usd-per-million 30
-antseed connect --router local --max-input-usd-per-million 20 --max-cached-input-usd-per-million 10 --max-output-usd-per-million 60
+antseed seller start --provider anthropic --input-usd-per-million 10 --cached-input-usd-per-million 5 --output-usd-per-million 30
+antseed buyer start --max-input-usd-per-million 20 --max-cached-input-usd-per-million 10 --max-output-usd-per-million 60
 ```
 
 ### Session overrides (live, while proxy is running)
 
-After `antseed connect` is running, you can override the service or peer for all subsequent requests without restarting:
+After `antseed buyer start` is running, you can override the service or peer for all subsequent requests without restarting:
 
 ```bash
 # Pin all requests to a specific service (overrides whatever the tool sends)
-antseed connection set --service claude-opus-4-6
+antseed buyer connection set --service claude-opus-4-6
 
 # Pin all requests to a specific peer (bypasses router for peer selection)
-antseed connection set --peer <40-char-hex-peer-id>
+antseed buyer connection set --peer <40-char-hex-peer-id>
 
 # Combine both in one command
-antseed connection set --service claude-sonnet-4-6 --peer <peer-id>
+antseed buyer connection set --service claude-sonnet-4-6 --peer <peer-id>
 
 # Check current session state
-antseed connection get
+antseed buyer connection get
 
 # Clear individual overrides
-antseed connection clear --service
-antseed connection clear --peer
+antseed buyer connection clear --service
+antseed buyer connection clear --peer
 
 # Clear all overrides at once
-antseed connection clear
+antseed buyer connection clear
 ```
 
 Session overrides are stored in `~/.antseed/buyer.state.json` and picked up by the running proxy immediately via file-watching. The desktop app reads and writes the same file to expose service/peer selection in its UI.
@@ -231,16 +247,13 @@ export ANTSEED_IDENTITY_HEX=<your-private-key-hex>
 # 2. Fund your wallet with ETH (for gas) and USDC (for staking) on Base Mainnet
 
 # 3. Register your identity on-chain
-antseed register
+antseed seller register
 
 # 4. Stake USDC (minimum $10)
-antseed stake 10
-
-# 5. Check readiness
-antseed setup --role provider
+antseed seller stake 10
 
 # 6. Start providing
-antseed seed --provider openai
+antseed seller start
 ```
 
 ### Buyer Setup (Consuming)
@@ -258,7 +271,7 @@ antseed payments
 #    connected wallet and credits your node — the identity key never holds funds.
 
 # 4. Connect to the network
-antseed connect --router local
+antseed buyer start
 # Proxy listening on http://localhost:8377
 ```
 

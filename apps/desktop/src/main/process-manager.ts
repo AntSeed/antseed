@@ -327,7 +327,7 @@ function resolveCliExecution(): CliExecution {
   };
 }
 
-function resolveCommandArgs(opts: StartOptions): string[] {
+export function resolveCommandArgs(opts: StartOptions): string[] {
   const args: string[] = [];
 
   if (opts.verbose) {
@@ -340,7 +340,13 @@ function resolveCommandArgs(opts: StartOptions): string[] {
   switch (opts.mode) {
     case 'connect':
       args.push('--data-dir', resolveConnectDataDir());
-      args.push('connect', '--router', normalizeRouterIdentifier(opts.router));
+      args.push('buyer', 'start');
+      {
+        const router = normalizeRouterIdentifier(opts.router);
+        if (router !== 'local') {
+          args.push('--router', router);
+        }
+      }
       break;
     default:
       throw new Error(`Unsupported runtime mode: ${String(opts.mode)}`);

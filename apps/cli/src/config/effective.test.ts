@@ -11,6 +11,7 @@ test('effective seller config precedence is flags > env > config > defaults', ()
   const config = createDefaultConfig();
   config.seller.providers = {
     openai: {
+      plugin: 'openai',
       defaults: { inputUsdPerMillion: 10, outputUsdPerMillion: 20 },
       services: {
         'gpt-4': {
@@ -70,6 +71,7 @@ test('effective config resolution does not mutate loaded config', () => {
   const config = createDefaultConfig();
   config.seller.providers = {
     openai: {
+      plugin: 'openai',
       defaults: { inputUsdPerMillion: 10, outputUsdPerMillion: 20 },
       services: {},
     },

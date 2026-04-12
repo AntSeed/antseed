@@ -2,13 +2,13 @@
 
 Alternative GUI interface for AntSeed on macOS/Linux/Windows.
 
-This app runs AntSeed runtime commands in the background (seed/connect/dashboard)
+This app runs AntSeed runtime commands in the background (seller start / buyer start / dashboard)
 so end users do not need to use terminal commands directly.
 
 ## What it controls
 
-- Seller mode (`antseed seed --provider <name>`)
-- Buyer mode (`antseed connect --router <name>`)
+- Seller mode (`antseed seller start`)
+- Buyer mode (`antseed buyer start`)
 - Dashboard server (`antseed dashboard --port <port> --no-open`)
 - Embedded dashboard panel inside Electron (no browser tab required)
 - Live process logs and daemon state snapshot (`~/.antseed/daemon.state.json`)

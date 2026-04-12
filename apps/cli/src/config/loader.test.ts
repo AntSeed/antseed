@@ -22,6 +22,7 @@ test('loadConfig reads nested seller.providers[name].services[id] shape', async 
       seller: {
         providers: {
           anthropic: {
+            plugin: 'anthropic',
             defaults: { inputUsdPerMillion: 5, outputUsdPerMillion: 10 },
             services: {
               'claude-sonnet-4-5-20250929': {
@@ -61,6 +62,7 @@ test('loadConfig rejects incomplete service pricing', async () => {
       seller: {
         providers: {
           anthropic: {
+            plugin: 'anthropic',
             services: {
               broken: {
                 pricing: { inputUsdPerMillion: 12 },
@@ -85,6 +87,7 @@ test('loadConfig rejects invalid category tags', async () => {
       seller: {
         providers: {
           anthropic: {
+            plugin: 'anthropic',
             services: {
               'claude-sonnet-4-5-20250929': {
                 categories: ['Bad Value'],
@@ -109,6 +112,7 @@ test('loadConfig normalizes category tags (lowercase, dedupe)', async () => {
       seller: {
         providers: {
           openai: {
+            plugin: 'openai',
             services: {
               'gpt-4': {
                 categories: ['Chat', 'chat', 'Coding'],
@@ -124,6 +128,26 @@ test('loadConfig normalizes category tags (lowercase, dedupe)', async () => {
         config.seller.providers['openai']?.services['gpt-4']?.categories,
         ['chat', 'coding']
       );
+    }
+  );
+});
+
+test('loadConfig drops seller provider entries without plugin', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      seller: {
+        providers: {
+          openai: {
+            services: {
+              'gpt-4': {},
+            },
+          },
+        },
+      },
+    }),
+    async (configPath) => {
+      const config = await loadConfig(configPath);
+      assert.equal(config.seller.providers['openai'], undefined);
     }
   );
 });

@@ -49,18 +49,18 @@ function isProcessAlive(pid: number): boolean {
 async function requireRunningBuyer(): Promise<BuyerStateFile> {
   const state = await readStateFile()
   if (!state) {
-    console.error(chalk.red('No buyer connection found. Run `antseed connect` first.'))
+    console.error(chalk.red('No buyer connection found. Run `antseed buyer start` first.'))
     process.exit(1)
   }
   if (state.state !== 'connected' || !isProcessAlive(state.pid)) {
-    console.error(chalk.red('Buyer proxy is not running. Run `antseed connect` first.'))
+    console.error(chalk.red('Buyer proxy is not running. Run `antseed buyer start` first.'))
     process.exit(1)
   }
   return state
 }
 
-export function registerConnectionCommand(program: Command): void {
-  const connection = program
+export function registerBuyerConnectionCommand(buyerCmd: Command): void {
+  const connection = buyerCmd
     .command('connection')
     .description('Manage the active buyer connection session')
 
@@ -70,7 +70,7 @@ export function registerConnectionCommand(program: Command): void {
     .action(async () => {
       const state = await readStateFile()
       if (!state) {
-        console.log(chalk.yellow('No buyer connection state found. Run `antseed connect` first.'))
+        console.log(chalk.yellow('No buyer connection state found. Run `antseed buyer start` first.'))
         return
       }
       const alive = state.state === 'connected' && isProcessAlive(state.pid)

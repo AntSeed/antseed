@@ -5,7 +5,7 @@ This template shows how to publish a **router plugin** for the Antseed Network. 
 ## How It Works
 
 ```
-antseed connect --router lowest-latency
+antseed buyer start --router lowest-latency
        ↓
 CLI loads antseed-router-lowest-latency from ~/.antseed/plugins/
        ↓
@@ -28,7 +28,7 @@ To test end-to-end with the CLI:
 
 ```bash
 antseed plugin add ./   # install this package as a plugin
-antseed connect --router lowest-latency
+antseed buyer start --router lowest-latency
 ```
 
 ## Customization
@@ -73,7 +73,7 @@ npm publish
 
 # Users install with:
 antseed plugin add my-router-package
-antseed connect --router my-router
+antseed buyer start --router my-router
 ```
 
 ## Verification

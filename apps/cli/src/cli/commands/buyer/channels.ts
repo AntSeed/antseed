@@ -1,9 +1,8 @@
 import type { Command } from 'commander';
 import chalk from 'chalk';
-import { getGlobalOptions } from './types.js';
-import { openChannelStore } from '../payment-utils.js';
+import { getGlobalOptions } from '../types.js';
+import { openChannelStore } from '../../payment-utils.js';
 
-/** Abbreviate a session/peer ID to a short form. */
 function short(id: string, len = 10): string {
   return id.length > len ? id.slice(0, len) + '...' : id;
 }
@@ -18,8 +17,8 @@ function statusColor(status: string): string {
   }
 }
 
-export function registerChannelsCommand(program: Command): void {
-  program
+export function registerBuyerChannelsCommand(buyerCmd: Command): void {
+  buyerCmd
     .command('channels')
     .description('List payment channels from local store')
     .option('--status <status>', 'filter by status: active, settled, timeout, ghost')
@@ -27,7 +26,7 @@ export function registerChannelsCommand(program: Command): void {
     .option('--limit <number>', 'max number of channels to show', '20')
     .option('--json', 'output as JSON', false)
     .action(async (options) => {
-      const globalOpts = getGlobalOptions(program);
+      const globalOpts = getGlobalOptions(buyerCmd);
 
       let store;
       try {
@@ -39,25 +38,15 @@ export function registerChannelsCommand(program: Command): void {
       }
 
       try {
-        // Query channels — ChannelStore doesn't have a generic list method,
-        // so we use the DB directly via the available methods.
-        // For now, we read from the active/timeout channels.
         const limit = parseInt(options.limit as string, 10) || 20;
         const statusFilter = options.status as string | undefined;
         const roleFilter = options.role as string | undefined;
 
         const allSessions = store.listAllChannels(limit * 2);
-
-        // Apply filters
         let filtered = allSessions;
-        if (statusFilter) {
-          filtered = filtered.filter(s => s.status === statusFilter);
-        }
-        if (roleFilter) {
-          filtered = filtered.filter(s => s.role === roleFilter);
-        }
+        if (statusFilter) filtered = filtered.filter((session) => session.status === statusFilter);
+        if (roleFilter) filtered = filtered.filter((session) => session.role === roleFilter);
 
-        // Sort by most recent first
         filtered.sort((a, b) => b.updatedAt - a.updatedAt);
         const limited = filtered.slice(0, limit);
 
@@ -72,7 +61,6 @@ export function registerChannelsCommand(program: Command): void {
         }
 
         console.log(chalk.bold(`Payment Channels (${limited.length} of ${filtered.length}):\n`));
-
         for (const session of limited) {
           console.log(`  ${chalk.bold(short(session.sessionId, 16))}  ${statusColor(session.status)}  ${chalk.dim(session.role)}`);
           console.log(`    Peer: ${chalk.dim(short(session.peerId, 16))}  Requests: ${session.requestCount}  Tokens: ${session.tokensDelivered}`);
