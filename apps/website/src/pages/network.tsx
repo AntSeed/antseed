@@ -233,7 +233,8 @@ export default function PricingPage() {
   const [query, setQuery] = useState('');
   const [providerFilter, setProviderFilter] = useState<string | null>(null);
   const [tagFilter, setTagFilter] = useState<string | null>(null);
-  const [sortKey, setSortKey] = useState<SortKey>('inputPrice');
+  const isMobile = typeof window !== 'undefined' && window.innerWidth <= 768;
+  const [sortKey, setSortKey] = useState<SortKey>(isMobile ? 'name' : 'inputPrice');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
 
   // Fetch live network data
