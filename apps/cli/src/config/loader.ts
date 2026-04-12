@@ -4,7 +4,8 @@ import { homedir } from 'node:os';
 import type {
   HierarchicalPricingConfig,
   AntseedConfig,
-  ProviderPricingConfig,
+  SellerProviderConfig,
+  SellerServiceConfig,
   TokenPricingUsdPerMillion,
 } from './types.js';
 import { createDefaultConfig } from './defaults.js';
@@ -67,123 +68,86 @@ function mergeTokenPricing(
   };
 }
 
-function cloneProviderPricing(
-  providers: Record<string, ProviderPricingConfig> | undefined
-): Record<string, ProviderPricingConfig> | undefined {
-  if (!providers) return undefined;
-  const out: Record<string, ProviderPricingConfig> = {};
-  for (const [provider, cfg] of Object.entries(providers)) {
-    out[provider] = {
-      ...(cfg.defaults ? { defaults: clonePricing(cfg.defaults) } : {}),
-      ...(cfg.services ? { services: { ...cfg.services } } : {}),
-    };
-  }
-  return out;
-}
-
-function mergeServicePricing(
-  defaults: Record<string, TokenPricingUsdPerMillion> | undefined,
-  value: unknown
-): Record<string, TokenPricingUsdPerMillion> | undefined {
-  const out: Record<string, TokenPricingUsdPerMillion> = {
-    ...(defaults ?? {}),
-  };
-  if (isRecord(value)) {
-    for (const [service, rawPricing] of Object.entries(value)) {
-      const parsed = normalizeTokenPricing(rawPricing);
-      if (parsed) {
-        out[service] = parsed;
-      }
-    }
-  }
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
-function mergeProviderPricing(
-  defaults: Record<string, ProviderPricingConfig> | undefined,
-  value: unknown
-): Record<string, ProviderPricingConfig> | undefined {
-  const out = cloneProviderPricing(defaults) ?? {};
-  if (isRecord(value)) {
-    for (const [provider, rawCfg] of Object.entries(value)) {
-      if (!isRecord(rawCfg)) continue;
-      const existing = out[provider];
-      const parsedDefaults = normalizeTokenPricing(rawCfg['defaults']);
-      const next: ProviderPricingConfig = {
-        ...(parsedDefaults ? { defaults: parsedDefaults } : (existing?.defaults ? { defaults: existing.defaults } : {})),
-      };
-      const mergedServices = mergeServicePricing(existing?.services, rawCfg['services']);
-      if (mergedServices) {
-        next.services = mergedServices;
-      }
-      if (next.defaults || next.services) {
-        out[provider] = next;
-      }
-    }
-  }
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
 function mergeHierarchicalPricing(
   defaults: HierarchicalPricingConfig,
   value: unknown
 ): HierarchicalPricingConfig {
   if (!isRecord(value)) {
-    return {
-      defaults: clonePricing(defaults.defaults),
-      ...(defaults.providers ? { providers: cloneProviderPricing(defaults.providers) } : {}),
-    };
+    return { defaults: clonePricing(defaults.defaults) };
   }
-  const mergedProviders = mergeProviderPricing(defaults.providers, value['providers']);
-  return {
-    defaults: mergeTokenPricing(defaults.defaults, value['defaults']),
-    ...(mergedProviders ? { providers: mergedProviders } : {}),
-  };
+  return { defaults: mergeTokenPricing(defaults.defaults, value['defaults']) };
 }
 
-function cloneSellerServiceCategories(
-  categories: AntseedConfig['seller']['serviceCategories'] | undefined
-): AntseedConfig['seller']['serviceCategories'] | undefined {
-  if (!categories) return undefined;
-  const out: NonNullable<AntseedConfig['seller']['serviceCategories']> = {};
-  for (const [provider, services] of Object.entries(categories)) {
-    out[provider] = Object.fromEntries(
-      Object.entries(services).map(([service, tags]) => [service, [...tags]])
-    );
+/* ── Seller provider + services merge ──────────────────────────────────── */
+
+function normalizeCategories(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const out = value
+    .filter((entry): entry is string => typeof entry === 'string')
+    .map((entry) => entry.trim().toLowerCase())
+    .filter((entry) => entry.length > 0);
+  return out.length > 0 ? Array.from(new Set(out)) : undefined;
+}
+
+function normalizeSellerService(value: unknown): SellerServiceConfig | null {
+  if (!isRecord(value)) return null;
+  const out: SellerServiceConfig = {};
+  if (typeof value['upstreamModel'] === 'string' && value['upstreamModel'].trim().length > 0) {
+    out.upstreamModel = value['upstreamModel'].trim();
+  }
+  const categories = normalizeCategories(value['categories']);
+  if (categories) {
+    out.categories = categories;
+  }
+  const pricing = normalizeTokenPricing(value['pricing']);
+  if (pricing) {
+    out.pricing = pricing;
   }
   return out;
 }
 
-function mergeSellerServiceCategories(
-  defaults: AntseedConfig['seller']['serviceCategories'] | undefined,
-  value: unknown
-): AntseedConfig['seller']['serviceCategories'] | undefined {
-  const out = cloneSellerServiceCategories(defaults) ?? {};
-  if (!isRecord(value)) {
-    return Object.keys(out).length > 0 ? out : undefined;
+function normalizeSellerProvider(value: unknown): SellerProviderConfig | null {
+  if (!isRecord(value)) return null;
+  const out: SellerProviderConfig = { services: {} };
+  if (typeof value['baseUrl'] === 'string' && value['baseUrl'].trim().length > 0) {
+    out.baseUrl = value['baseUrl'].trim();
   }
-
-  for (const [provider, rawProvider] of Object.entries(value)) {
-    if (!isRecord(rawProvider)) continue;
-    const nextServices: Record<string, string[]> = {
-      ...(out[provider] ?? {}),
-    };
-    for (const [service, rawCategories] of Object.entries(rawProvider)) {
-      if (!Array.isArray(rawCategories)) continue;
-      const normalizedCategories = rawCategories
-        .filter((entry): entry is string => typeof entry === 'string')
-        .map((entry) => entry.trim())
-        .filter((entry) => entry.length > 0);
-      if (normalizedCategories.length > 0) {
-        nextServices[service] = normalizedCategories;
+  const defaults = normalizeTokenPricing(value['defaults']);
+  if (defaults) {
+    out.defaults = defaults;
+  }
+  const rawServices = value['services'];
+  if (isRecord(rawServices)) {
+    for (const [serviceId, rawService] of Object.entries(rawServices)) {
+      const parsed = normalizeSellerService(rawService);
+      if (parsed) {
+        out.services[serviceId] = parsed;
       }
     }
-    if (Object.keys(nextServices).length > 0) {
-      out[provider] = nextServices;
+  }
+  return out;
+}
+
+function mergeSellerProviders(
+  defaults: Record<string, SellerProviderConfig>,
+  value: unknown,
+): Record<string, SellerProviderConfig> {
+  const out: Record<string, SellerProviderConfig> = {};
+  for (const [name, cfg] of Object.entries(defaults)) {
+    out[name] = {
+      ...(cfg.baseUrl ? { baseUrl: cfg.baseUrl } : {}),
+      ...(cfg.defaults ? { defaults: clonePricing(cfg.defaults) } : {}),
+      services: { ...cfg.services },
+    };
+  }
+  if (!isRecord(value)) return out;
+  for (const [name, rawProvider] of Object.entries(value)) {
+    const parsed = normalizeSellerProvider(rawProvider);
+    if (parsed) {
+      out[name] = parsed;
     }
   }
-
-  return Object.keys(out).length > 0 ? out : undefined;
+  return out;
 }
 
 function normalizeAgentDir(
@@ -211,13 +175,11 @@ function mergeSellerConfig(
       reserveFloor: defaults.reserveFloor,
       maxConcurrentBuyers: defaults.maxConcurrentBuyers,
       enabledProviders: [...defaults.enabledProviders],
-      pricing: mergeHierarchicalPricing(defaults.pricing, undefined),
+      providers: mergeSellerProviders(defaults.providers, undefined),
       publicAddress: defaults.publicAddress,
       ...(defaults.agentDir ? { agentDir: defaults.agentDir } : {}),
-      ...(defaults.serviceCategories ? { serviceCategories: cloneSellerServiceCategories(defaults.serviceCategories) } : {}),
     };
   }
-  const mergedServiceCategories = mergeSellerServiceCategories(defaults.serviceCategories, value['serviceCategories']);
 
   return {
     reserveFloor: typeof value['reserveFloor'] === 'number'
@@ -229,12 +191,11 @@ function mergeSellerConfig(
     enabledProviders: Array.isArray(value['enabledProviders'])
       ? value['enabledProviders'].filter((entry): entry is string => typeof entry === 'string')
       : [...defaults.enabledProviders],
-    pricing: mergeHierarchicalPricing(defaults.pricing, value['pricing']),
+    providers: mergeSellerProviders(defaults.providers, value['providers']),
     publicAddress: typeof value['publicAddress'] === 'string'
       ? value['publicAddress']
       : defaults.publicAddress,
     ...(normalizeAgentDir(value['agentDir'], defaults.agentDir)),
-    ...(mergedServiceCategories ? { serviceCategories: mergedServiceCategories } : {}),
   };
 }
 

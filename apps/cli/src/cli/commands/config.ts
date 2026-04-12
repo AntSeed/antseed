@@ -32,12 +32,14 @@ export function registerConfigCommand(program: Command): void {
       try {
         const globalOpts = getGlobalOptions(program);
         const config = await loadConfig(globalOpts.config);
-        const validKeys = getValidConfigKeys(config);
-        if (!validKeys.includes(key)) {
-          console.error(chalk.red(`Invalid config key: ${key}`));
-          console.error(chalk.dim(`Available keys: ${validKeys.join(', ')}`));
-          process.exitCode = 1;
-          return;
+        if (!isDynamicKey(key)) {
+          const validKeys = getValidConfigKeys(config);
+          if (!validKeys.includes(key)) {
+            console.error(chalk.red(`Invalid config key: ${key}`));
+            console.error(chalk.dim(`Available keys: ${validKeys.join(', ')}`));
+            process.exitCode = 1;
+            return;
+          }
         }
         setConfigValue(config as unknown as Record<string, unknown>, key, value);
         assertValidConfig(config);
@@ -64,9 +66,83 @@ export function registerConfigCommand(program: Command): void {
 
   sellerCmd
     .command('set <key> <value>')
-    .description('Set seller configuration value (e.g., pricing.defaults.inputUsdPerMillion 12)')
+    .description('Set seller configuration value (e.g., providers.openai.services.gpt-4.pricing.inputUsdPerMillion 3)')
     .action(async (key: string, value: string) => {
       await setRoleScopedValue(program, 'seller', key, value);
+    });
+
+  sellerCmd
+    .command('add-service <provider> <serviceId>')
+    .description('Add a service offering under a provider (e.g., add-service openai gpt-4 --input 5 --output 15 --categories chat,coding)')
+    .option('--upstream <model>', 'upstream model identifier (defaults to serviceId)')
+    .option('--input <usd>', 'input price in USD per 1M tokens', parseFloat)
+    .option('--output <usd>', 'output price in USD per 1M tokens', parseFloat)
+    .option('--cached <usd>', 'cached-input price in USD per 1M tokens', parseFloat)
+    .option('--categories <list>', 'comma-separated normie tags (e.g., chat,coding,fast)')
+    .option('--base-url <url>', 'set the provider baseUrl (one-shot; applies to the whole provider)')
+    .action(async (providerName: string, serviceId: string, options) => {
+      try {
+        const globalOpts = getGlobalOptions(program);
+        const config = await loadConfig(globalOpts.config);
+        const providers = config.seller.providers;
+        const providerCfg = providers[providerName] ?? { services: {} };
+        if (options.baseUrl) {
+          providerCfg.baseUrl = options.baseUrl as string;
+        }
+        const service = providerCfg.services[serviceId] ?? {};
+        if (options.upstream) {
+          service.upstreamModel = options.upstream as string;
+        } else if (!service.upstreamModel) {
+          service.upstreamModel = serviceId;
+        }
+        const hasInput = typeof options.input === 'number';
+        const hasOutput = typeof options.output === 'number';
+        const hasCached = typeof options.cached === 'number';
+        if (hasInput || hasOutput || hasCached) {
+          const existing = service.pricing ?? { inputUsdPerMillion: 0, outputUsdPerMillion: 0 };
+          service.pricing = {
+            inputUsdPerMillion: hasInput ? (options.input as number) : existing.inputUsdPerMillion,
+            outputUsdPerMillion: hasOutput ? (options.output as number) : existing.outputUsdPerMillion,
+            ...(hasCached ? { cachedInputUsdPerMillion: options.cached as number } : (existing.cachedInputUsdPerMillion != null ? { cachedInputUsdPerMillion: existing.cachedInputUsdPerMillion } : {})),
+          };
+        }
+        if (typeof options.categories === 'string' && options.categories.trim().length > 0) {
+          service.categories = options.categories
+            .split(',')
+            .map((t: string) => t.trim().toLowerCase())
+            .filter((t: string) => t.length > 0);
+        }
+        providerCfg.services[serviceId] = service;
+        providers[providerName] = providerCfg;
+        assertValidConfig(config);
+        await saveConfig(globalOpts.config, config);
+        console.log(chalk.green(`Added service ${providerName}/${serviceId}`));
+      } catch (err) {
+        console.error(chalk.red(`Error: ${(err as Error).message}`));
+        process.exitCode = 1;
+      }
+    });
+
+  sellerCmd
+    .command('remove-service <provider> <serviceId>')
+    .description('Remove a service offering from a provider')
+    .action(async (providerName: string, serviceId: string) => {
+      try {
+        const globalOpts = getGlobalOptions(program);
+        const config = await loadConfig(globalOpts.config);
+        const providerCfg = config.seller.providers[providerName];
+        if (!providerCfg || !providerCfg.services[serviceId]) {
+          console.log(chalk.yellow(`No service ${providerName}/${serviceId} found`));
+          return;
+        }
+        delete providerCfg.services[serviceId];
+        assertValidConfig(config);
+        await saveConfig(globalOpts.config, config);
+        console.log(chalk.green(`Removed service ${providerName}/${serviceId}`));
+      } catch (err) {
+        console.error(chalk.red(`Error: ${(err as Error).message}`));
+        process.exitCode = 1;
+      }
     });
 
   const buyerCmd = configCmd
@@ -164,18 +240,28 @@ export function redactConfig(config: AntseedConfig): Record<string, unknown> {
 }
 
 /**
- * Set a nested config value by dot-separated key path.
+ * Set a nested config value by dot-separated key path. Auto-creates missing
+ * intermediate objects so dynamic paths under `seller.providers.<name>.services.<id>`
+ * can be set before the provider or service entry exists in the file.
+ *
  * @example setConfigValue(config, 'seller.reserveFloor', '20')
+ * @example setConfigValue(config, 'seller.providers.openai.services.gpt-4.pricing.inputUsdPerMillion', '3')
  */
 export function setConfigValue(config: Record<string, unknown>, key: string, value: string): void {
   const parts = key.split('.');
   let current: Record<string, unknown> = config;
   for (let i = 0; i < parts.length - 1; i++) {
     const part = parts[i]!;
-    if (typeof current[part] !== 'object' || current[part] === null) {
-      throw new Error(`Invalid config key: ${key}`);
+    const existing = current[part];
+    if (existing === undefined || existing === null) {
+      current[part] = {};
+      current = current[part] as Record<string, unknown>;
+      continue;
     }
-    current = current[part] as Record<string, unknown>;
+    if (typeof existing !== 'object' || Array.isArray(existing)) {
+      throw new Error(`Cannot set ${key}: ${parts.slice(0, i + 1).join('.')} is not an object`);
+    }
+    current = existing as Record<string, unknown>;
   }
   const lastKey = parts[parts.length - 1]!;
   const trimmed = value.trim();
@@ -192,9 +278,24 @@ export function setConfigValue(config: Record<string, unknown>, key: string, val
     }
   }
 
-  // Auto-parse numeric scalars
+  // Auto-parse numeric scalars. Non-numeric strings use `trimmed` to match
+  // loader normalization (e.g. normalizeSellerProvider strips whitespace), so
+  // on-disk state matches what `loadConfig` would produce.
   const numVal = Number(trimmed);
-  current[lastKey] = Number.isNaN(numVal) ? value : numVal;
+  current[lastKey] = Number.isNaN(numVal) ? trimmed : numVal;
+}
+
+/**
+ * Key paths that are accepted even when the intermediate segments don't
+ * exist in the current config yet. These are dictionaries keyed by
+ * user-supplied identifiers (provider names, service IDs).
+ */
+const DYNAMIC_KEY_PREFIXES = [
+  'seller.providers.',
+];
+
+function isDynamicKey(key: string): boolean {
+  return DYNAMIC_KEY_PREFIXES.some((prefix) => key.startsWith(prefix));
 }
 
 function getValidConfigKeys(config: AntseedConfig, prefix = ''): string[] {
@@ -221,15 +322,17 @@ async function setRoleScopedValue(
     const globalOpts = getGlobalOptions(program);
     const config = await loadConfig(globalOpts.config);
     const fullKey = `${role}.${key}`;
-    const validKeys = getValidConfigKeys(config);
-    if (!validKeys.includes(fullKey)) {
-      console.error(chalk.red(`Invalid ${role} config key: ${key}`));
-      const scopedKeys = validKeys
-        .filter((path) => path.startsWith(`${role}.`))
-        .map((path) => path.slice(role.length + 1));
-      console.error(chalk.dim(`Available ${role} keys: ${scopedKeys.join(', ')}`));
-      process.exitCode = 1;
-      return;
+    if (!isDynamicKey(fullKey)) {
+      const validKeys = getValidConfigKeys(config);
+      if (!validKeys.includes(fullKey)) {
+        console.error(chalk.red(`Invalid ${role} config key: ${key}`));
+        const scopedKeys = validKeys
+          .filter((path) => path.startsWith(`${role}.`))
+          .map((path) => path.slice(role.length + 1));
+        console.error(chalk.dim(`Available ${role} keys: ${scopedKeys.join(', ')}`));
+        process.exitCode = 1;
+        return;
+      }
     }
     setConfigValue(config as unknown as Record<string, unknown>, fullKey, value);
     assertValidConfig(config);

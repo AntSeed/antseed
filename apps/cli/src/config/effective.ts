@@ -27,6 +27,32 @@ function parseEnvNumber(env: NodeJS.ProcessEnv, key: string): number | undefined
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+/**
+ * Apply a global seller-wide pricing override to every configured provider's
+ * defaults. Service-specific pricing entries are left alone — the override
+ * only shifts the fallback price floor.
+ */
+function applyProviderPricingOverride(
+  seller: SellerCLIConfig,
+  field: 'inputUsdPerMillion' | 'outputUsdPerMillion',
+  value: number,
+): void {
+  const providers = Object.values(seller.providers);
+  if (providers.length === 0) {
+    console.warn(
+      `Warning: ${field} override (${value}) has no effect — no providers configured yet. ` +
+      `Add a provider first via 'antseed config seller add-provider'.`,
+    );
+    return;
+  }
+  for (const providerCfg of providers) {
+    if (!providerCfg.defaults) {
+      providerCfg.defaults = { inputUsdPerMillion: 0, outputUsdPerMillion: 0 };
+    }
+    providerCfg.defaults[field] = value;
+  }
+}
+
 export function resolveEffectiveSellerConfig(input: ResolveEffectiveConfigInput): SellerCLIConfig {
   const env = input.env ?? process.env;
   const seller = structuredClone(input.config.seller);
@@ -35,10 +61,10 @@ export function resolveEffectiveSellerConfig(input: ResolveEffectiveConfigInput)
   const envOutputUsdPerMillion = parseEnvNumber(env, 'ANTSEED_SELLER_OUTPUT_USD_PER_MILLION');
 
   if (envInputUsdPerMillion !== undefined) {
-    seller.pricing.defaults.inputUsdPerMillion = envInputUsdPerMillion;
+    applyProviderPricingOverride(seller, 'inputUsdPerMillion', envInputUsdPerMillion);
   }
   if (envOutputUsdPerMillion !== undefined) {
-    seller.pricing.defaults.outputUsdPerMillion = envOutputUsdPerMillion;
+    applyProviderPricingOverride(seller, 'outputUsdPerMillion', envOutputUsdPerMillion);
   }
 
   const overrides = input.sellerOverrides;
@@ -46,10 +72,10 @@ export function resolveEffectiveSellerConfig(input: ResolveEffectiveConfigInput)
     seller.reserveFloor = overrides.reserveFloor;
   }
   if (overrides?.inputUsdPerMillion !== undefined) {
-    seller.pricing.defaults.inputUsdPerMillion = overrides.inputUsdPerMillion;
+    applyProviderPricingOverride(seller, 'inputUsdPerMillion', overrides.inputUsdPerMillion);
   }
   if (overrides?.outputUsdPerMillion !== undefined) {
-    seller.pricing.defaults.outputUsdPerMillion = overrides.outputUsdPerMillion;
+    applyProviderPricingOverride(seller, 'outputUsdPerMillion', overrides.outputUsdPerMillion);
   }
 
   return seller;

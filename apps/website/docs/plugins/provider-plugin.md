@@ -114,9 +114,13 @@ export default {
 } satisfies Provider
 ```
 
-`serviceCategories` is optional and is announced in peer metadata for discovery filtering. Recommended tags include `privacy`, `legal`, `uncensored`, `coding`, `finance`, and `tee` (custom tags are allowed).
+`serviceCategories` is optional and is announced in peer metadata for discovery filtering. Recommended normie-friendly tags include `chat`, `coding`, `math`, `study`, `creative`, `writing`, `tasks`, `fast`, `free`, `translate` (custom tags are allowed).
 
 `services` should represent the service IDs buyers will request on the network. A provider can still rewrite to different upstream model IDs internally (for example, announce `kimi2.5` and forward upstream as `together/kimi2.5`).
+
+:::note How the CLI fills these in
+End users don't set `services`, `pricing.services`, `serviceCategories`, or upstream model mapping directly on the plugin object. They set them once in `~/.antseed/config.json` under `seller.providers[name].services[id]`, and the CLI translates that into the flat `ANTSEED_*` keys (`ANTSEED_ALLOWED_SERVICES`, `ANTSEED_SERVICE_PRICING_JSON`, `ANTSEED_SERVICE_ALIAS_MAP_JSON`) that your plugin's `configSchema` consumes. See [Configuration](/docs/config) for the user-facing shape.
+:::
 
 ## Ant Agent
 

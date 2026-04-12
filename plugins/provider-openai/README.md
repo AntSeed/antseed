@@ -13,45 +13,54 @@ antseed plugin add @antseed/provider-openai
 ## Usage
 
 ```bash
+# Secrets go in env vars
 export OPENAI_API_KEY=sk-...
+
+# Everything else lives in config.json, set via the CLI
+antseed config seller add-service openai kimi-k2.5 \
+  --upstream "moonshotai/Kimi-K2.5" \
+  --input 0.5 --output 2.8 \
+  --categories math,coding \
+  --base-url https://api.together.ai
+
 antseed seed --provider openai
 ```
 
 ## Configuration
 
-| Key | Type | Required | Default | Description |
-|-----|------|----------|---------|-------------|
-| `OPENAI_API_KEY` | secret | Yes | -- | OpenAI-compatible upstream API key |
-| `OPENAI_BASE_URL` | string | No | `https://api.openai.com` | Upstream base URL |
-| `OPENAI_PROVIDER_FLAVOR` | string | No | `generic` | Special handling profile (`generic`, `openrouter`) |
-| `OPENAI_UPSTREAM_PROVIDER` | string | No | -- | Optional OpenRouter upstream provider selector |
-| `OPENAI_UPSTREAM_SERVICE_PREFIX` | string | No | -- | Optional prefix added to announced service names when forwarding upstream (example: `together/`) |
-| `OPENAI_SERVICE_ALIAS_MAP_JSON` | string | No | -- | Optional JSON map of `announcedService -> upstreamService` |
-| `OPENAI_EXTRA_HEADERS_JSON` | string | No | -- | Extra headers as JSON object |
-| `OPENAI_BODY_INJECT_JSON` | string | No | -- | JSON object merged into request body |
-| `OPENAI_STRIP_HEADER_PREFIXES` | string[] | No | -- | Comma-separated header prefixes to strip |
-| `ANTSEED_INPUT_USD_PER_MILLION` | number | No | 10 | Input token price (USD per 1M) |
-| `ANTSEED_CACHED_INPUT_USD_PER_MILLION` | number | No | input price | Cached input token price (USD per 1M) |
-| `ANTSEED_OUTPUT_USD_PER_MILLION` | number | No | 10 | Output token price (USD per 1M) |
-| `ANTSEED_SERVICE_PRICING_JSON` | string | No | -- | Per-service pricing as JSON |
-| `ANTSEED_MAX_CONCURRENCY` | number | No | 10 | Max concurrent requests |
-| `ANTSEED_ALLOWED_SERVICES` | string[] | No | -- | Comma-separated service allowlist |
+Only upstream authentication and runtime toggles go in env vars. Pricing, categories, upstream model mapping, and the list of announced services all live under `seller.providers.openai.services[id]` in `~/.antseed/config.json` (see [Configuration](/docs/config)).
 
-Example: announce `kimi2.5` on AntSeed while forwarding to Together service `together/kimi2.5` upstream:
+### Secrets (env vars)
 
-```bash
-export ANTSEED_ALLOWED_SERVICES="kimi2.5"
-export OPENAI_UPSTREAM_SERVICE_PREFIX="together/"
-```
+| Key | Required | Description |
+|-----|----------|-------------|
+| `OPENAI_API_KEY` | Yes | OpenAI-compatible upstream API key |
 
-Example: explicit per-service alias mapping:
+### Runtime toggles (env vars, optional)
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `OPENAI_PROVIDER_FLAVOR` | `generic` | Special handling profile (`generic`, `openrouter`) |
+| `OPENAI_UPSTREAM_PROVIDER` | -- | Optional OpenRouter upstream provider selector |
+| `OPENAI_EXTRA_HEADERS_JSON` | -- | Extra headers as JSON object |
+| `OPENAI_BODY_INJECT_JSON` | -- | JSON object merged into request body |
+| `OPENAI_STRIP_HEADER_PREFIXES` | -- | Comma-separated header prefixes to strip |
+
+### Per-service config (config.json)
 
 ```bash
-export ANTSEED_ALLOWED_SERVICES="kimi2.5,deepseek-v3"
-export OPENAI_SERVICE_ALIAS_MAP_JSON='{"kimi2.5":"together/kimi2.5","deepseek-v3":"openrouter/deepseek/deepseek-chat"}'
+antseed config seller add-service openai deepseek-v3.1 \
+  --upstream "deepseek-ai/DeepSeek-V3.1" \
+  --input 0.6 --output 1.7 --cached 0.06 \
+  --categories chat,math,coding
+
+antseed config seller add-service openai kimi-k2.5 \
+  --upstream "moonshotai/Kimi-K2.5" \
+  --input 0.5 --output 2.8 \
+  --categories math,coding
 ```
 
-When both are set, `OPENAI_SERVICE_ALIAS_MAP_JSON` entries take precedence over `OPENAI_UPSTREAM_SERVICE_PREFIX` for matching announced services.
+The CLI reads `seller.providers.openai.services[id]` and turns it into the flat env keys (`ANTSEED_SERVICE_ALIAS_MAP_JSON`, `ANTSEED_SERVICE_PRICING_JSON`, `ANTSEED_ALLOWED_SERVICES`) that this plugin's `configSchema` consumes internally. Categories are written directly onto `provider.serviceCategories` by the seed action, not via env var. You should not set those env keys directly.
 
 ## How It Works
 

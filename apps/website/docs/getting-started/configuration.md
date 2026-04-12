@@ -14,33 +14,89 @@ Configuration is stored at `~/.antseed/config.json`. Use `antseed config` comman
 | Section | Description |
 |---|---|
 | `identity` | Display name |
-| `seller` | Pricing, max concurrent buyers, service categories, agent directory |
+| `seller` | Per-provider service offerings (pricing, categories, upstream model mapping), reserve floor, max concurrent buyers, agent directory |
 | `buyer` | Max pricing thresholds, proxy port |
 | `payments` | Chain ID (`base-mainnet` by default) |
 | `network` | Bootstrap nodes |
 | `plugins` | Installed plugin packages |
 
-## Pricing
+## Seller Shape
 
-Pricing is in USD per million tokens. Set defaults and optional per-service overrides:
+Everything a seller announces — the list of services, pricing, upstream model mapping, and normie-friendly category tags — lives under `seller.providers[name].services[id]`. One block per upstream provider, one entry per service offered under it.
 
-```bash
-# Defaults
-antseed config seller set pricing.defaults.inputUsdPerMillion 3
-antseed config seller set pricing.defaults.cachedInputUsdPerMillion 0.3
-antseed config seller set pricing.defaults.outputUsdPerMillion 15
-
-# Per-service override
-antseed config seller set pricing.services '{"claude-sonnet-4-6":{"inputUsdPerMillion":3,"cachedInputUsdPerMillion":0.3,"outputUsdPerMillion":15}}'
+```json
+{
+  "seller": {
+    "reserveFloor": 10,
+    "maxConcurrentBuyers": 5,
+    "providers": {
+      "openai": {
+        "baseUrl": "https://api.together.ai",
+        "defaults": {
+          "inputUsdPerMillion": 1,
+          "outputUsdPerMillion": 2,
+          "cachedInputUsdPerMillion": 0.1
+        },
+        "services": {
+          "deepseek-v3.1": {
+            "upstreamModel": "deepseek-ai/DeepSeek-V3.1",
+            "categories": ["chat", "math", "coding"],
+            "pricing": {
+              "inputUsdPerMillion": 0.60,
+              "outputUsdPerMillion": 1.70,
+              "cachedInputUsdPerMillion": 0.06
+            }
+          },
+          "qwen3.5-9b": {
+            "upstreamModel": "Qwen/Qwen3.5-9B",
+            "categories": ["chat", "fast", "free"],
+            "pricing": { "inputUsdPerMillion": 0, "outputUsdPerMillion": 0 }
+          }
+        }
+      }
+    }
+  }
+}
 ```
 
-Or set at runtime without modifying the config file:
+Each service entry supports three optional fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `upstreamModel` | string | The model id the provider plugin will forward requests to. Defaults to the service id itself. |
+| `categories` | string[] | Normie-friendly tags announced in peer metadata (e.g. `chat`, `coding`, `math`, `study`, `fast`, `free`). |
+| `pricing` | object | Per-service pricing in USD per million tokens. If omitted, the provider's `defaults` are used. |
+
+`baseUrl` on the provider block is forwarded to plugins that honor it (the `openai` plugin uses it as `OPENAI_BASE_URL` for Together, OpenRouter, etc.).
+
+## Adding a Service (CLI)
+
+Use `antseed config seller add-service` to add a service entry in one shot:
 
 ```bash
-antseed seed --provider anthropic --input-usd-per-million 3 --output-usd-per-million 15
+antseed config seller add-service openai deepseek-v3.1 \
+  --upstream "deepseek-ai/DeepSeek-V3.1" \
+  --input 0.60 --output 1.70 --cached 0.06 \
+  --categories chat,math,coding \
+  --base-url https://api.together.ai
 ```
 
-Buyers can set max pricing thresholds to avoid expensive providers:
+To remove one:
+
+```bash
+antseed config seller remove-service openai deepseek-v3.1
+```
+
+You can also edit individual fields directly:
+
+```bash
+antseed config seller set providers.openai.services.deepseek-v3.1.pricing.inputUsdPerMillion 0.55
+antseed config seller set providers.openai.services.deepseek-v3.1.categories '["chat","math","coding","fast"]'
+```
+
+## Buyer Pricing
+
+Buyers can cap what they're willing to pay to avoid expensive providers:
 
 ```bash
 antseed config buyer set maxPricing.defaults.inputUsdPerMillion 25
@@ -50,34 +106,20 @@ antseed config buyer set maxPricing.defaults.outputUsdPerMillion 75
 ## Identity and Metadata
 
 ```bash
-# Set display name (shown in browse/discovery)
 antseed config set identity.displayName "Acme Inference - us-east-1"
-
-# Set service category tags (announced in peer metadata)
-antseed config seller set serviceCategories.anthropic.claude-sonnet-4-6 '["coding","privacy"]'
+antseed config seller set publicAddress "peer.example.com:6882"
 ```
-
-Recommended category tags: `privacy`, `legal`, `uncensored`, `coding`, `finance`, `tee`. Custom tags are allowed.
 
 ## Provider Authentication
 
-Provider plugins authenticate with their upstream AI service. Credentials are set via environment variables and never leave the machine:
+Provider plugins authenticate with their upstream AI service. Credentials live in environment variables — they never belong in `config.json`.
 
-| Provider | Auth |
-|---|---|
-| `anthropic` | `ANTHROPIC_API_KEY` |
-| `openai` | `OPENAI_API_KEY` (optional `OPENAI_BASE_URL` for Together, OpenRouter, etc.) |
-| `local-llm` | No auth needed (Ollama/llama.cpp) |
-
-## Service Aliases
-
-When using the `openai` provider, announce buyer-facing service names while forwarding different upstream IDs:
-
-```bash
-export ANTSEED_ALLOWED_SERVICES="deepseek-v3.1,kimi-k2.5"
-export OPENAI_SERVICE_ALIAS_MAP_JSON='{"deepseek-v3.1":"deepseek-ai/DeepSeek-V3.1","kimi-k2.5":"moonshotai/Kimi-K2.5"}'
-antseed seed --provider openai
-```
+| Provider | Auth env var | Notes |
+|---|---|---|
+| `anthropic` | `ANTHROPIC_API_KEY` | |
+| `openai` | `OPENAI_API_KEY` | Set `providers.<name>.baseUrl` in config.json for Together/OpenRouter/etc. |
+| `claude-code` | keychain | Reads from `claude-code` secure storage |
+| `local-llm` | none | Ollama/llama.cpp |
 
 ## Ant Agent
 
@@ -126,10 +168,13 @@ export ANTSEED_IDENTITY_HEX="$(vault kv get -field=key secret/antseed/identity)"
 
 ## Runtime Environment Variables
 
+Only secrets and global toggles are set via env vars — everything else is in `config.json`.
+
 | Variable | Description |
 |---|---|
 | `ANTSEED_IDENTITY_HEX` | Identity private key (64 hex chars, optional 0x prefix) |
+| `ANTHROPIC_API_KEY` | Upstream Anthropic API key (used by the `anthropic` provider plugin) |
+| `OPENAI_API_KEY` | Upstream OpenAI-compatible API key (used by the `openai` provider plugin) |
 | `ANTSEED_SETTLEMENT_IDLE_MS` | Idle time before settling a session (default: 600000 / 10 min) |
 | `ANTSEED_DEFAULT_DEPOSIT_USDC` | Default lock amount per session (default: 1) |
 | `ANTSEED_DEBUG` | Enable debug logging (set to 1) |
-| `ANTSEED_ALLOWED_SERVICES` | Comma-separated list of services to announce |

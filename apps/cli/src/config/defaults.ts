@@ -13,12 +13,7 @@ export function createDefaultConfig(): AntseedConfig {
       reserveFloor: 10,
       maxConcurrentBuyers: 5,
       enabledProviders: [],
-      pricing: {
-        defaults: {
-          inputUsdPerMillion: 10,
-          outputUsdPerMillion: 10,
-        },
-      },
+      providers: {},
       publicAddress: '',
     },
     buyer: {

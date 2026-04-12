@@ -13,28 +13,35 @@ antseed plugin add @antseed/provider-anthropic
 ## Usage
 
 ```bash
+# Secret lives in env
 export ANTHROPIC_API_KEY=sk-ant-...
+
+# Services, pricing, and categories live in config.json
+antseed config seller add-service anthropic claude-sonnet-4-5-20250929 \
+  --input 3 --output 15 --cached 0.3 \
+  --categories chat,coding
+
 antseed seed --provider anthropic
 ```
 
 ## Configuration
 
-| Key | Type | Required | Default | Description |
-|-----|------|----------|---------|-------------|
-| `ANTHROPIC_API_KEY` | secret | Yes | -- | Anthropic API key |
-| `ANTSEED_INPUT_USD_PER_MILLION` | number | No | 10 | Input token price (USD per 1M) |
-| `ANTSEED_CACHED_INPUT_USD_PER_MILLION` | number | No | input price | Cached input token price (USD per 1M) |
-| `ANTSEED_OUTPUT_USD_PER_MILLION` | number | No | 10 | Output token price (USD per 1M) |
-| `ANTSEED_SERVICE_PRICING_JSON` | string | No | -- | Per-service pricing as JSON |
-| `ANTSEED_MAX_CONCURRENCY` | number | No | 10 | Max concurrent requests |
-| `ANTSEED_ALLOWED_SERVICES` | string[] | No | -- | Comma-separated service allowlist |
+Only the upstream API key goes in env. Services, pricing, categories, and upstream model mapping all live under `seller.providers.anthropic.services[id]` in `~/.antseed/config.json`. See [Configuration](/docs/config) for the full shape.
 
-## Per-Service Pricing
+| Key | Required | Description |
+|-----|----------|-------------|
+| `ANTHROPIC_API_KEY` | Yes | Anthropic API key |
 
-Override pricing for specific services:
+Set pricing / services via the CLI:
 
 ```bash
-export ANTSEED_SERVICE_PRICING_JSON='{"claude-sonnet-4-5-20250929":{"inputUsdPerMillion":12,"cachedInputUsdPerMillion":6,"outputUsdPerMillion":18}}'
+antseed config seller add-service anthropic claude-sonnet-4-5-20250929 \
+  --input 12 --output 18 --cached 6 \
+  --categories coding,chat
+
+antseed config seller add-service anthropic claude-opus-4-5 \
+  --input 15 --output 75 \
+  --categories reasoning,coding
 ```
 
 ## How It Works

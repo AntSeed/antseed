@@ -36,26 +36,42 @@ export interface TokenPricingUsdPerMillion {
 }
 
 /**
- * Provider-level optional defaults and per-service overrides.
- */
-export interface ProviderPricingConfig {
-  defaults?: TokenPricingUsdPerMillion;
-  services?: Record<string, TokenPricingUsdPerMillion>;
-}
-
-/**
- * Hierarchical pricing with global defaults and optional provider/service overrides.
+ * Hierarchical pricing used for BUYER max-willing-to-pay rules only.
+ * Seller pricing has moved to `seller.providers[name].services[id]`.
  */
 export interface HierarchicalPricingConfig {
   defaults: TokenPricingUsdPerMillion;
-  providers?: Record<string, ProviderPricingConfig>;
 }
 
 /**
- * Optional provider/service category tags for metadata discovery.
+ * One service offered by a seller under a given provider.
  */
-export interface SellerServiceCategoryConfig {
-  [provider: string]: Record<string, string[]>;
+export interface SellerServiceConfig {
+  /**
+   * Upstream model identifier the provider plugin will forward requests to.
+   * When omitted, the service ID itself is used verbatim. Example: service
+   * `"deepseek-v3.1"` with upstreamModel `"deepseek-ai/DeepSeek-V3.1"`.
+   */
+  upstreamModel?: string;
+  /** Normie-friendly tags announced in peer metadata (e.g. "chat", "coding"). */
+  categories?: string[];
+  /**
+   * Pricing override for this specific service. If absent, the provider's
+   * defaults are used.
+   */
+  pricing?: TokenPricingUsdPerMillion;
+}
+
+/**
+ * Per-provider seller configuration.
+ */
+export interface SellerProviderConfig {
+  /** Optional upstream API base URL override (e.g. "https://api.together.ai"). */
+  baseUrl?: string;
+  /** Fallback pricing used by services that don't set their own `pricing`. */
+  defaults?: TokenPricingUsdPerMillion;
+  /** Services offered under this provider, keyed by announced service ID. */
+  services: Record<string, SellerServiceConfig>;
 }
 
 /**
@@ -66,12 +82,14 @@ export interface SellerCLIConfig {
   reserveFloor: number;
   /** Maximum number of concurrent buyer connections */
   maxConcurrentBuyers: number;
-  /** Which provider types are enabled for selling */
+  /** Which provider plugins are enabled for selling */
   enabledProviders: string[];
-  /** Seller offer pricing rules in USD per 1M tokens */
-  pricing: HierarchicalPricingConfig;
-  /** Optional provider/service category tags announced in peer metadata */
-  serviceCategories?: SellerServiceCategoryConfig;
+  /**
+   * Per-provider configuration: upstream base URL, defaults, and the services
+   * offered under each provider. The set of keys here also determines which
+   * services this peer announces.
+   */
+  providers: Record<string, SellerProviderConfig>;
   /**
    * Ant agent configuration. Can be:
    * - A string path to a single agent directory (applies to all services)

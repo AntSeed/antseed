@@ -16,30 +16,22 @@ async function withTempConfig(contents: string, fn: (configPath: string) => Prom
   }
 }
 
-test('loadConfig deep-merges nested hierarchical pricing without dropping defaults', async () => {
+test('loadConfig reads nested seller.providers[name].services[id] shape', async () => {
   await withTempConfig(
     JSON.stringify({
       seller: {
-        pricing: {
-          providers: {
-            anthropic: {
-              services: {
-                'claude-sonnet-4-5-20250929': {
+        providers: {
+          anthropic: {
+            defaults: { inputUsdPerMillion: 5, outputUsdPerMillion: 10 },
+            services: {
+              'claude-sonnet-4-5-20250929': {
+                upstreamModel: 'claude-sonnet-4-5-20250929',
+                categories: ['coding', 'chat'],
+                pricing: {
                   inputUsdPerMillion: 12,
                   outputUsdPerMillion: 18,
+                  cachedInputUsdPerMillion: 1.5,
                 },
-              },
-            },
-          },
-        },
-      },
-      buyer: {
-        maxPricing: {
-          providers: {
-            openai: {
-              defaults: {
-                inputUsdPerMillion: 55,
-                outputUsdPerMillion: 77,
               },
             },
           },
@@ -48,37 +40,30 @@ test('loadConfig deep-merges nested hierarchical pricing without dropping defaul
     }),
     async (configPath) => {
       const config = await loadConfig(configPath);
-
-      assert.equal(config.seller.pricing.defaults.inputUsdPerMillion, 10);
-      assert.equal(config.seller.pricing.defaults.outputUsdPerMillion, 10);
-      assert.equal(
-        config.seller.pricing.providers?.anthropic?.services?.['claude-sonnet-4-5-20250929']?.inputUsdPerMillion,
-        12
-      );
-      assert.equal(
-        config.seller.pricing.providers?.anthropic?.services?.['claude-sonnet-4-5-20250929']?.outputUsdPerMillion,
-        18
-      );
-
-      assert.equal(config.buyer.maxPricing.defaults.inputUsdPerMillion, 100);
-      assert.equal(config.buyer.maxPricing.defaults.outputUsdPerMillion, 100);
-      assert.equal(config.buyer.maxPricing.providers?.openai?.defaults?.inputUsdPerMillion, 55);
-      assert.equal(config.buyer.maxPricing.providers?.openai?.defaults?.outputUsdPerMillion, 77);
+      const anthropic = config.seller.providers['anthropic'];
+      assert.ok(anthropic);
+      assert.equal(anthropic.defaults?.inputUsdPerMillion, 5);
+      assert.equal(anthropic.defaults?.outputUsdPerMillion, 10);
+      const service = anthropic.services['claude-sonnet-4-5-20250929'];
+      assert.ok(service);
+      assert.equal(service.upstreamModel, 'claude-sonnet-4-5-20250929');
+      assert.deepEqual(service.categories, ['coding', 'chat']);
+      assert.equal(service.pricing?.inputUsdPerMillion, 12);
+      assert.equal(service.pricing?.outputUsdPerMillion, 18);
+      assert.equal(service.pricing?.cachedInputUsdPerMillion, 1.5);
     }
   );
 });
 
-test('loadConfig throws explicit validation error for incomplete service pricing', async () => {
+test('loadConfig rejects incomplete service pricing', async () => {
   await withTempConfig(
     JSON.stringify({
       seller: {
-        pricing: {
-          providers: {
-            anthropic: {
-              services: {
-                broken: {
-                  inputUsdPerMillion: 12,
-                },
+        providers: {
+          anthropic: {
+            services: {
+              broken: {
+                pricing: { inputUsdPerMillion: 12 },
               },
             },
           },
@@ -88,19 +73,47 @@ test('loadConfig throws explicit validation error for incomplete service pricing
     async (configPath) => {
       await assert.rejects(
         async () => loadConfig(configPath),
-        /seller\.pricing\.providers\.anthropic\.services\.broken\.outputUsdPerMillion/
+        /seller\.providers\.anthropic\.services\.broken\.pricing\.outputUsdPerMillion/
       );
     }
   );
 });
 
-test('loadConfig merges seller service categories per provider/service', async () => {
+test('loadConfig rejects invalid category tags', async () => {
   await withTempConfig(
     JSON.stringify({
       seller: {
-        serviceCategories: {
+        providers: {
           anthropic: {
-            'claude-sonnet-4-5-20250929': ['coding', 'legal'],
+            services: {
+              'claude-sonnet-4-5-20250929': {
+                categories: ['Bad Value'],
+              },
+            },
+          },
+        },
+      },
+    }),
+    async (configPath) => {
+      await assert.rejects(
+        async () => loadConfig(configPath),
+        /seller\.providers\.anthropic\.services\.claude-sonnet-4-5-20250929\.categories/
+      );
+    }
+  );
+});
+
+test('loadConfig normalizes category tags (lowercase, dedupe)', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      seller: {
+        providers: {
+          openai: {
+            services: {
+              'gpt-4': {
+                categories: ['Chat', 'chat', 'Coding'],
+              },
+            },
           },
         },
       },
@@ -108,28 +121,8 @@ test('loadConfig merges seller service categories per provider/service', async (
     async (configPath) => {
       const config = await loadConfig(configPath);
       assert.deepEqual(
-        config.seller.serviceCategories?.anthropic?.['claude-sonnet-4-5-20250929'],
-        ['coding', 'legal']
-      );
-    }
-  );
-});
-
-test('loadConfig rejects invalid seller service category values', async () => {
-  await withTempConfig(
-    JSON.stringify({
-      seller: {
-        serviceCategories: {
-          anthropic: {
-            'claude-sonnet-4-5-20250929': ['Bad Value'],
-          },
-        },
-      },
-    }),
-    async (configPath) => {
-      await assert.rejects(
-        async () => loadConfig(configPath),
-        /seller\.serviceCategories\.anthropic\.claude-sonnet-4-5-20250929/
+        config.seller.providers['openai']?.services['gpt-4']?.categories,
+        ['chat', 'coding']
       );
     }
   );
