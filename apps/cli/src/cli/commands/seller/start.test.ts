@@ -136,7 +136,7 @@ test('assertSellerPrerequisites fails when no services are configured', async ()
         dataDir: '/tmp/no-identity-here',
         config,
         effectiveSeller: seller,
-        providerName: 'anthropic',
+        providerNames: ['anthropic'],
         paymentsEnabled: false,
         runtimePricingOverride: false,
         skipChainChecks: true,
@@ -154,7 +154,7 @@ test('assertSellerPrerequisites fails when pricing override has no providers to 
         dataDir: '/tmp/no-identity-here',
         config,
         effectiveSeller: seller,
-        providerName: 'anthropic',
+        providerNames: ['anthropic'],
         paymentsEnabled: false,
         runtimePricingOverride: true,
         skipChainChecks: true,
@@ -180,11 +180,41 @@ test('assertSellerPrerequisites passes when services are configured and chain ch
     dataDir: '/tmp/no-identity-here',
     config,
     effectiveSeller: config.seller,
-    providerName: 'anthropic',
+    providerNames: ['anthropic'],
     paymentsEnabled: false,
     runtimePricingOverride: false,
     skipChainChecks: true,
   });
+});
+
+test('assertSellerPrerequisites fails when any selected provider has no services', async () => {
+  const config = createDefaultConfig();
+  config.seller.providers = {
+    anthropic: {
+      plugin: 'anthropic',
+      services: {
+        'claude-sonnet-4-5-20250929': {},
+      },
+    },
+    together: {
+      plugin: 'openai',
+      services: {},
+    },
+  };
+
+  await assert.rejects(
+    async () =>
+      assertSellerPrerequisites({
+        dataDir: '/tmp/no-identity-here',
+        config,
+        effectiveSeller: config.seller,
+        providerNames: ['anthropic', 'together'],
+        paymentsEnabled: false,
+        runtimePricingOverride: false,
+        skipChainChecks: true,
+      }),
+    /seller prerequisites not met/,
+  );
 });
 
 test('seller start merge keeps explicit pricing when runtime env also contains pricing and force override is off', () => {

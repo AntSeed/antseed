@@ -6,12 +6,7 @@ import { loadConfig, saveConfig } from '../../../config/loader.js';
 import type { AntseedConfig, SellerProviderConfig } from '../../../config/types.js';
 import { assertValidConfig } from '../../../config/validation.js';
 import { installPlugin } from '../../../plugins/manager.js';
-import { TRUSTED_PLUGINS } from '../../../plugins/registry.js';
-
-export function resolvePluginPackage(nameOrPackage: string): string {
-  const trusted = TRUSTED_PLUGINS.find((plugin) => plugin.name === nameOrPackage);
-  return trusted?.package ?? nameOrPackage;
-}
+import { resolvePluginPackage } from '../../../plugins/registry.js';
 
 /**
  * Register the `antseed config` command and its subcommands.

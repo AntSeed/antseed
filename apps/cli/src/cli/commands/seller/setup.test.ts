@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildSellerSetupProviderEntry, resolvePluginPackage } from './setup.js';
+import { resolvePluginPackage } from '../../../plugins/registry.js';
+import { buildSellerSetupProviderEntry, getSellerSetupCredentialHint } from './setup.js';
 
 test('resolvePluginPackage resolves trusted plugin aliases', () => {
   assert.equal(resolvePluginPackage('openai'), '@antseed/provider-openai');
@@ -26,4 +27,9 @@ test('buildSellerSetupProviderEntry builds seller provider config shape', () => 
   assert.equal(entry.defaults?.inputUsdPerMillion, 1);
   assert.equal(entry.defaults?.outputUsdPerMillion, 2);
   assert.deepEqual(entry.services['kimi-k2.5']?.categories, ['math', 'coding']);
+});
+
+test('getSellerSetupCredentialHint matches the selected plugin', () => {
+  assert.equal(getSellerSetupCredentialHint('anthropic'), 'export ANTHROPIC_API_KEY=<key>');
+  assert.equal(getSellerSetupCredentialHint('local-llm'), 'start your local LLM runtime (no API key required)');
 });

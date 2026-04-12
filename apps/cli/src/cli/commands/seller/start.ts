@@ -19,15 +19,10 @@ import { loadProviderPlugin, buildPluginConfig, getPackageVersions } from '../..
 import { resolveEffectiveSellerConfig, type SellerRuntimeOverrides } from '../../../config/effective.js'
 import type { SellerCLIConfig } from '../../../config/types.js'
 import { AntAgentProvider, loadAntAgent, type AntAgentDefinition } from '@antseed/ant-agent'
-import { TRUSTED_PLUGINS } from '../../../plugins/registry.js'
+import { resolvePluginPackage } from '../../../plugins/registry.js'
 
 function getStateFile(dataDir: string): string {
   return join(dataDir, 'daemon.state.json')
-}
-
-function resolvePluginPackage(nameOrPackage: string): string {
-  const trusted = TRUSTED_PLUGINS.find((plugin) => plugin.name === nameOrPackage)
-  return trusted?.package ?? nameOrPackage
 }
 
 export function selectSellerProviderNames(
@@ -64,7 +59,7 @@ export async function assertSellerPrerequisites(input: {
   dataDir: string
   config: AntseedConfig
   effectiveSeller: SellerCLIConfig
-  providerName: string
+  providerNames: string[]
   paymentsEnabled: boolean
   runtimePricingOverride: boolean
   skipChainChecks: boolean
@@ -73,7 +68,7 @@ export async function assertSellerPrerequisites(input: {
     dataDir,
     config,
     effectiveSeller,
-    providerName,
+    providerNames,
     paymentsEnabled,
     runtimePricingOverride,
     skipChainChecks,
@@ -82,14 +77,16 @@ export async function assertSellerPrerequisites(input: {
   const failures: Array<{ title: string; detail: string; command?: string }> = []
 
   // 1. Provider has at least one service configured.
-  const providerCfg = effectiveSeller.providers[providerName]
-  const serviceCount = providerCfg ? Object.keys(providerCfg.services).length : 0
-  if (serviceCount === 0) {
-    failures.push({
-      title: `No services configured for provider "${providerName}"`,
-      detail: 'A seller must announce at least one service. Add one with:',
-      command: `antseed config seller add-service ${providerName} <serviceId> --input <usd> --output <usd>`,
-    })
+  for (const providerName of providerNames) {
+    const providerCfg = effectiveSeller.providers[providerName]
+    const serviceCount = providerCfg ? Object.keys(providerCfg.services).length : 0
+    if (serviceCount === 0) {
+      failures.push({
+        title: `No services configured for provider "${providerName}"`,
+        detail: 'A seller must announce at least one service. Add one with:',
+        command: `antseed config seller add-service ${providerName} <serviceId> --input <usd> --output <usd>`,
+      })
+    }
   }
 
   // 2. Runtime pricing override was supplied but would silently no-op because
@@ -98,7 +95,7 @@ export async function assertSellerPrerequisites(input: {
     failures.push({
       title: 'Pricing override has nothing to apply to',
       detail: `--input-usd-per-million / --output-usd-per-million (or ANTSEED_SELLER_*_USD_PER_MILLION env) were supplied, but no providers are configured in seller.providers. The override would silently no-op.`,
-      command: `antseed config seller add-service ${providerName} <serviceId> --input <usd> --output <usd>`,
+      command: `antseed config seller add-service ${providerNames[0] ?? '<provider>'} <serviceId> --input <usd> --output <usd>`,
     })
   }
 
@@ -410,7 +407,7 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
           dataDir: globalOpts.dataDir,
           config,
           effectiveSeller: effectiveSellerConfig,
-          providerName: primaryProviderName,
+          providerNames: selectedProviderNames,
           paymentsEnabled,
           runtimePricingOverride: forcePricingOverride,
           skipChainChecks: Boolean(options.skipPrereqCheck),

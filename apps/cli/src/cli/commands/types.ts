@@ -39,7 +39,9 @@ function isTruthyEnv(value: string | undefined): boolean {
  * Extract global options from the Commander program instance.
  */
 export function getGlobalOptions(program: Command): GlobalOptions {
-  const opts = program.opts();
+  const opts = typeof program.optsWithGlobals === 'function'
+    ? program.optsWithGlobals()
+    : program.opts();
   const verbose = opts['verbose'] ?? false;
   if (verbose || isTruthyEnv(process.env['ANTSEED_DEBUG'])) {
     process.env['ANTSEED_DEBUG'] = '1';

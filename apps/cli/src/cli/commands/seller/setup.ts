@@ -12,11 +12,6 @@ import { installPlugin } from '../../../plugins/manager.js';
 import type { SellerProviderConfig, SellerServiceConfig } from '../../../config/types.js';
 import { createIdentityClient, createStakingClient } from '../../payment-utils.js';
 
-export function resolvePluginPackage(nameOrPackage: string): string {
-  const trusted = TRUSTED_PLUGINS.find((plugin) => plugin.name === nameOrPackage);
-  return trusted?.package ?? nameOrPackage;
-}
-
 export function buildSellerSetupProviderEntry(input: {
   plugin: string;
   baseUrl?: string;
@@ -60,6 +55,24 @@ async function printReadinessCheck(dataDir: string, configPath: string): Promise
     console.log(`  ${chalk.red('✗')} ${chalk.bold('Readiness check unavailable')}: ${(err as Error).message}`);
   }
   console.log('');
+}
+
+export function getSellerSetupCredentialHint(pluginName: string): string {
+  switch (pluginName) {
+    case 'anthropic':
+      return 'export ANTHROPIC_API_KEY=<key>';
+    case 'openai':
+    case 'openai-responses':
+      return 'export OPENAI_API_KEY=<key>';
+    case 'claude-oauth':
+      return 'configure Claude OAuth credentials for the selected plugin';
+    case 'claude-code':
+      return 'sign in to Claude Code on this machine';
+    case 'local-llm':
+      return 'start your local LLM runtime (no API key required)';
+    default:
+      return `set the credentials required by ${pluginName}`;
+  }
 }
 
 export function registerSellerSetupCommand(sellerCmd: Command): void {
@@ -174,7 +187,7 @@ export function registerSellerSetupCommand(sellerCmd: Command): void {
         console.log(chalk.green(`\nProvider "${providerName}" saved to config.`));
 
         console.log(chalk.bold('\nNext steps:\n'));
-        console.log(`  ${chalk.cyan('1.')} Set your API key: ${chalk.dim('export OPENAI_API_KEY=<key>')}`);
+        console.log(`  ${chalk.cyan('1.')} Set credentials: ${chalk.dim(getSellerSetupCredentialHint(pluginName))}`);
         console.log(`  ${chalk.cyan('2.')} Register on-chain: ${chalk.dim('antseed seller register')}`);
         console.log(`  ${chalk.cyan('3.')} Stake USDC: ${chalk.dim('antseed seller stake 10')}`);
         console.log(`  ${chalk.cyan('4.')} Start selling: ${chalk.dim('antseed seller start')}`);

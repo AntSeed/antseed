@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createDefaultConfig } from '../../../config/defaults.js';
+import { resolvePluginPackage } from '../../../plugins/registry.js';
 import {
   redactConfig,
-  resolvePluginPackage,
   setConfigValue,
 } from './index.js';
 
