@@ -18,13 +18,15 @@ npm install -g @antseed/cli
 
 Verify with `antseed --version`.
 
-## Step 2: Create the config file
+## Step 2: Decide whether you need custom config
 
-```bash
-mkdir -p ~/.antseed
-```
+You do **not** need a pre-existing `~/.antseed/config.json` to start as a buyer. `antseed buyer start` works with built-in defaults:
 
-Create or edit `~/.antseed/config.json` before starting the buyer. You can also generate it indirectly through other setup flows and then manage it with `antseed config ...`.
+- router: `local`
+- proxy port: `8377`
+- buyer pricing caps from the CLI defaults
+
+Only create `~/.antseed/config.json` if you want advanced customization such as max pricing, bootstrap nodes, or chain settings.
 
 ## Step 3: Set the identity
 
@@ -40,12 +42,22 @@ The key can optionally include a `0x` prefix. The EVM address derived from this 
 
 For persistent setups, add it to a `.env` file. **Never commit the private key to version control.**
 
-## Step 4: Configure the chain
+## Step 4: Optional config customization
 
-Edit `~/.antseed/config.json` and set the payment chain:
+If you want non-default behavior, create or edit `~/.antseed/config.json`:
 
 ```json
 {
+  "buyer": {
+    "minPeerReputation": 50,
+    "maxPricing": {
+      "defaults": {
+        "inputUsdPerMillion": 25,
+        "cachedInputUsdPerMillion": 12,
+        "outputUsdPerMillion": 75
+      }
+    }
+  },
   "payments": {
     "preferredMethod": "crypto",
     "crypto": {
@@ -59,16 +71,16 @@ Supported chains:
 - `base-mainnet` — Base L2 (production)
 - `base-sepolia` — Base Sepolia testnet (for testing)
 
-## Step 5: Fund your account
+## Step 5: Fund your account when you need payments
 
 The buyer needs USDC deposited into the AntSeed deposits contract to pay for requests.
 
 ```bash
 # Check wallet and deposit balance
-antseed balance
+antseed buyer balance
 
 # Deposit USDC into the deposits contract
-antseed deposit 10
+antseed buyer deposit 10
 ```
 
 The balance command shows:
@@ -80,10 +92,10 @@ The balance command shows:
 You can withdraw unused deposits at any time:
 
 ```bash
-antseed withdraw 5
+antseed buyer withdraw 5
 ```
 
-## Step 6: Configure buyer preferences
+## Step 6: Optional buyer preferences
 
 ```bash
 # Max pricing (USD per 1M tokens) — reject peers charging more
@@ -94,8 +106,14 @@ antseed config buyer set maxPricing.defaults.outputUsdPerMillion 75
 # Minimum peer reputation score (0-100, higher = stricter)
 antseed config buyer set minPeerReputation 50
 
-# Local proxy port (default 8377)
-antseed config buyer set proxyPort 8377
+```
+
+These settings are optional. Skip them if the defaults are fine.
+
+Advanced: if you intentionally want a non-default proxy port:
+
+```bash
+antseed config buyer set proxyPort 8888
 ```
 
 ## Step 7: Verify readiness
@@ -121,11 +139,13 @@ This will:
 3. Start a local HTTP proxy on port 8377
 4. Automatically negotiate payment channels with providers
 
-Custom port:
+Advanced: custom port override for the current run only:
 
 ```bash
 antseed buyer start -p 8888
 ```
+
+If you already put `proxyPort` in `config.json`, you can still just run `antseed buyer start` with no extra flags.
 
 ## Step 9: Point your tools at the proxy
 

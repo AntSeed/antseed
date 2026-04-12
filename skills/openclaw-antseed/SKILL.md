@@ -12,7 +12,7 @@ Set up AntSeed as a service provider for OpenClaw. This installs a local buyer p
 ## Architecture
 
 ```
-OpenClaw -> http://127.0.0.1:5005 (AntSeed buyer proxy) -> P2P network -> Provider node -> Upstream API
+OpenClaw -> http://127.0.0.1:8377 (AntSeed buyer proxy) -> P2P network -> Provider node -> Upstream API
 ```
 
 The buyer proxy runs locally, discovers providers via DHT, negotiates payment channels automatically, and exposes an API-compatible HTTP endpoint.
@@ -35,7 +35,9 @@ The key can optionally include a `0x` prefix. This key is your EVM wallet — de
 
 ## Step 3: Configure chain and fund the account
 
-Edit `~/.antseed/config.json`:
+Custom `config.json` is optional. `antseed buyer start` works without one.
+
+Create `~/.antseed/config.json` only if you want advanced behavior such as a non-default chain:
 
 ```json
 {
@@ -61,7 +63,13 @@ Verify with `antseed buyer balance`.
 Run in a terminal or set up as a persistent service:
 
 ```bash
-antseed buyer start --router local --port 5005
+antseed buyer start
+```
+
+Advanced: if you intentionally want a non-default port:
+
+```bash
+antseed buyer start --port 5005
 ```
 
 ### Persistent service (systemd)
@@ -76,7 +84,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=$USER
-ExecStart=/usr/bin/env antseed buyer start --router local --port 5005
+ExecStart=/usr/bin/env antseed buyer start
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
@@ -100,7 +108,7 @@ import sys, json
 cfg = json.load(sys.stdin)
 providers = cfg.setdefault('models', {}).setdefault('providers', {})
 providers['antseed'] = {
-    'baseUrl': 'http://127.0.0.1:5005',
+    'baseUrl': 'http://127.0.0.1:8377',
     'apiKey': 'antseed-p2p',
     'api': 'anthropic-messages',
     'models': [{
@@ -127,7 +135,7 @@ openclaw config set agents.defaults.model.primary "antseed/SERVICE_ID_HERE"
 ## Step 6: Verify
 
 ```bash
-curl -s http://127.0.0.1:5005/v1/models
+curl -s http://127.0.0.1:8377/v1/models
 ```
 
 If the proxy returns available services, the connection is working.
@@ -138,3 +146,4 @@ If the proxy returns available services, the connection is working.
 - Streaming is supported (SSE)
 - Payment channels are negotiated automatically on first request
 - The buyer wallet needs USDC deposited (`antseed buyer deposit`) and ETH for gas on Base
+- Extra buyer config is optional; the only required pieces are identity plus whatever payment/deposit setup the user needs

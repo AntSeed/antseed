@@ -18,13 +18,43 @@ npm install -g @antseed/cli
 # 2. Set your identity
 export ANTSEED_IDENTITY_HEX=<your-private-key-hex>
 
-# 3. Deposit USDC (via payments portal)
+# 3. Start the buyer proxy
+antseed buyer start
+# Proxy listening on http://localhost:8377
+
+# 4. Deposit USDC when you want to pay providers
 antseed payments
 # Open http://localhost:3118, connect a funded wallet, deposit USDC
+```
 
-# 4. Connect to the network
-antseed buyer start --router local
-# Proxy listening on http://localhost:8377
+`antseed buyer start` does not require a pre-existing `~/.antseed/config.json`. If the file is missing, the CLI starts with built-in defaults such as router `local` and proxy port `8377`.
+
+Extra buyer config is optional. Add it only for advanced customization such as pricing caps, reputation thresholds, bootstrap nodes, or chain settings:
+
+```json
+{
+  "buyer": {
+    "minPeerReputation": 50,
+    "maxPricing": {
+      "defaults": {
+        "inputUsdPerMillion": 25,
+        "outputUsdPerMillion": 75
+      }
+    }
+  },
+  "payments": {
+    "preferredMethod": "crypto",
+    "crypto": {
+      "chainId": "base-mainnet"
+    }
+  }
+}
+```
+
+With a config file like that in place, the startup command is still just:
+
+```bash
+antseed buyer start
 ```
 
 ## Supported API Formats
