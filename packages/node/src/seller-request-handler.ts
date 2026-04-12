@@ -58,6 +58,13 @@ export class SellerRequestHandler {
     mux.onProxyRequest(async (request: SerializedHttpRequest) => {
       debugLog(`[SellerHandler] Received request: ${request.method} ${request.path} (reqId=${request.requestId.slice(0, 8)})`);
 
+      // Handle /v1/models locally — free metadata endpoint, no payment required.
+      if (request.method === 'GET' && (request.path === '/v1/models' || request.path.startsWith('/v1/models/'))) {
+        const modelsResponse = this._handleModelsRequest(request);
+        mux.sendProxyResponse(modelsResponse);
+        return;
+      }
+
       // Reject with 402 if no active payment session and channels client is configured.
       const spm = this._deps.sellerPaymentManager;
       const spmAuthorized = spm?.hasSession(buyerPeerId) ?? false;
@@ -141,14 +148,6 @@ export class SellerRequestHandler {
             return;
           }
         }
-      }
-
-      // Handle /v1/models locally — return seller's configured services without
-      // upstream call or resetting idle timers (these are metadata queries, not inference).
-      if (request.method === 'GET' && (request.path === '/v1/models' || request.path.startsWith('/v1/models/'))) {
-        const modelsResponse = this._handleModelsRequest(request);
-        mux.sendProxyResponse(modelsResponse);
-        return;
       }
 
       const provider = this.matchProvider(request);
