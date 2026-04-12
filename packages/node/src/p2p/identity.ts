@@ -64,6 +64,9 @@ export class FileIdentityStore implements IdentityStore {
 /** Environment variable for passing identity hex from a parent process (e.g. desktop → CLI). */
 const IDENTITY_HEX_ENV = 'ANTSEED_IDENTITY_HEX';
 
+/** Cache the identity resolved from the env var so repeated calls in the same process return the same key. */
+let _envIdentityCache: Identity | undefined;
+
 export function identityFromPrivateKeyHex(hex: string): Identity {
   const privateKey = hexToBytes(hex);
   const wallet = new Wallet('0x' + hex);
@@ -78,12 +81,18 @@ export function identityFromPrivateKeyHex(hex: string): Identity {
  * The peerId is derived as the EVM address (lowercase, no 0x prefix).
  */
 export async function loadOrCreateIdentity(configDirOrStore?: string | IdentityStore): Promise<Identity> {
+  // Return cached env identity if we already resolved it in a prior call.
+  if (_envIdentityCache) {
+    return _envIdentityCache;
+  }
+
   // Check for identity injected via environment (desktop → CLI child process).
   const rawEnvHex = process.env[IDENTITY_HEX_ENV]?.trim();
   const envHex = rawEnvHex?.startsWith('0x') ? rawEnvHex.slice(2) : rawEnvHex;
   if (envHex && envHex.length === 64) {
     delete process.env[IDENTITY_HEX_ENV];
-    return identityFromPrivateKeyHex(envHex);
+    _envIdentityCache = identityFromPrivateKeyHex(envHex);
+    return _envIdentityCache;
   }
 
   const store: IdentityStore =
