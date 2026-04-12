@@ -203,7 +203,7 @@ Pass the private key hex from a secrets manager (AWS SSM, HashiCorp Vault, etc.)
 
 ```bash
 export ANTSEED_IDENTITY_HEX="$(vault kv get -field=key secret/antseed/identity)"
-antseed seed --provider anthropic
+antseed seller start
 ```
 
 The variable is cleared from the process environment immediately after consumption.

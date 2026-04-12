@@ -15,6 +15,8 @@ antseed seller setup                  Initialize seller onboarding
 antseed buyer start                   Start the buyer proxy
 ```
 
+In normal use, you configure the node once with `antseed seller setup` or `antseed config ...`, then start it later with `antseed seller start` or `antseed buyer start` without repeating flags every time. Secrets such as API keys stay in env vars; provider definitions, services, pricing, and `baseUrl` live in `~/.antseed/config.json`.
+
 ### Providing (selling)
 
 ```bash title="provider"
@@ -28,7 +30,8 @@ antseed seller emissions claim        Claim accumulated seller payouts
 ### Buying (consuming)
 
 ```bash title="buyer"
-antseed buyer start --router <name>   Start the buyer proxy
+antseed buyer start                   Start the buyer proxy
+antseed buyer start --router <name>   Start the buyer proxy with a non-default router
 antseed buyer deposit <amount>        Deposit USDC for payments
 antseed buyer withdraw <amount>       Withdraw USDC from deposits
 antseed buyer balance                 Check wallet and deposit balance

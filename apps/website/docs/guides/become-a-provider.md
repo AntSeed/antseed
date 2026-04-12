@@ -31,6 +31,8 @@ Use the interactive wizard for first-time setup:
 antseed seller setup
 ```
 
+This creates or updates `~/.antseed/config.json`. Once that file contains your provider and service definitions, the normal runtime command is just `antseed seller start`.
+
 Or configure it manually:
 
 ```bash
@@ -38,6 +40,15 @@ antseed config seller add-provider together \
   --plugin openai \
   --base-url https://api.together.ai \
   --input 1 --output 2
+```
+
+Then add one or more services:
+
+```bash
+antseed config seller add-service together deepseek-v3.1 \
+  --upstream "deepseek-ai/DeepSeek-V3.1" \
+  --input 0.6 --output 1.7 \
+  --categories chat,math,coding
 ```
 
 ## 3. Set Your Identity
@@ -90,13 +101,13 @@ antseed config seller add-service anthropic claude-sonnet-4-6 \
 
 ```bash
 # Together AI (OpenAI-compatible): offer Kimi K2.5 and DeepSeek V3.1
-antseed config seller add-service openai kimi-k2.5 \
+antseed config seller add-service together kimi-k2.5 \
   --upstream "moonshotai/Kimi-K2.5" \
   --input 0.5 --output 2.8 \
   --categories math,coding \
   --base-url https://api.together.ai
 
-antseed config seller add-service openai deepseek-v3.1 \
+antseed config seller add-service together deepseek-v3.1 \
   --upstream "deepseek-ai/DeepSeek-V3.1" \
   --input 0.6 --output 1.7 \
   --categories chat,math,coding
@@ -119,20 +130,24 @@ antseed config seller show
 
 ## 7. Set Your API Key and Start Selling
 
-Upstream credentials stay in environment variables — nothing about auth goes into `config.json`:
+Upstream credentials stay in environment variables. Your provider shape, service list, pricing, and `baseUrl` stay in `config.json`.
+
+That means the common startup flow is:
 
 ```bash
-# Anthropic
+# Anthropic config in config.json, secret in env
 export ANTHROPIC_API_KEY=<your-key>
 antseed seller start
 
-# OpenAI-compatible (Together AI, OpenRouter, etc.)
+# OpenAI-compatible config in config.json, secret in env
 export OPENAI_API_KEY=<your-key>
 antseed seller start
 
 # Local model
 antseed seller start
 ```
+
+If you configured Together or OpenRouter with `--base-url` during setup, you do not need to export `OPENAI_BASE_URL` separately. `antseed seller start` reads `baseUrl` from `config.json` and passes it to the `openai` plugin automatically.
 
 Runtime overrides for a one-off session (without editing `config.json`):
 

@@ -34,8 +34,8 @@ export async function checkSellerReadiness(
   checks.push({
     name: 'Peer registration',
     passed: isReg,
-    message: isReg ? 'Registered' : 'Not registered. Run: antseed register',
-    command: isReg ? undefined : 'antseed register',
+    message: isReg ? 'Registered' : 'Not registered. Run: antseed seller register',
+    command: isReg ? undefined : 'antseed seller register',
   });
 
   // 3. Staked
@@ -44,8 +44,8 @@ export async function checkSellerReadiness(
   checks.push({
     name: 'Stake',
     passed: hasStake,
-    message: hasStake ? `Staked: ${stake}` : 'No stake. Run: antseed stake <amount>',
-    command: hasStake ? undefined : 'antseed stake 10',
+    message: hasStake ? `Staked: ${stake}` : 'No stake. Run: antseed seller stake <amount>',
+    command: hasStake ? undefined : 'antseed seller stake 10',
   });
 
   return checks;
@@ -75,8 +75,8 @@ export async function checkBuyerReadiness(
     passed: balance.available > 0n,
     message: balance.available > 0n
       ? `Available: ${balance.available}`
-      : 'No USDC deposited. Run: antseed deposit <amount>',
-    command: balance.available > 0n ? undefined : 'antseed deposit 10',
+      : 'No USDC deposited. Run: antseed buyer deposit <amount>',
+    command: balance.available > 0n ? undefined : 'antseed buyer deposit 10',
   });
 
   return checks;

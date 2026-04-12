@@ -17,18 +17,20 @@ antseed plugin add @antseed/provider-openai
 export OPENAI_API_KEY=sk-...
 
 # Everything else lives in config.json, set via the CLI
-antseed config seller add-service openai kimi-k2.5 \
+antseed config seller add-provider together --plugin openai --base-url https://api.together.ai
+antseed config seller add-service together kimi-k2.5 \
   --upstream "moonshotai/Kimi-K2.5" \
   --input 0.5 --output 2.8 \
-  --categories math,coding \
-  --base-url https://api.together.ai
+  --categories math,coding
 
-antseed seed --provider openai
+antseed seller start
 ```
 
 ## Configuration
 
-Only upstream authentication and runtime toggles go in env vars. Pricing, categories, upstream model mapping, and the list of announced services all live under `seller.providers.openai.services[id]` in `~/.antseed/config.json` (see [Configuration](/docs/config)).
+Only upstream authentication and runtime toggles go in env vars. Pricing, categories, upstream model mapping, and the list of announced services all live under `seller.providers.<name>.services[id]` in `~/.antseed/config.json` (see [Configuration](/docs/config)).
+
+If you set `baseUrl` in `config.json`, you do not need to export `OPENAI_BASE_URL` separately. `antseed seller start` reads the provider block and passes `baseUrl` into the plugin runtime automatically.
 
 ### Secrets (env vars)
 
@@ -49,18 +51,18 @@ Only upstream authentication and runtime toggles go in env vars. Pricing, catego
 ### Per-service config (config.json)
 
 ```bash
-antseed config seller add-service openai deepseek-v3.1 \
+antseed config seller add-service together deepseek-v3.1 \
   --upstream "deepseek-ai/DeepSeek-V3.1" \
   --input 0.6 --output 1.7 --cached 0.06 \
   --categories chat,math,coding
 
-antseed config seller add-service openai kimi-k2.5 \
+antseed config seller add-service together kimi-k2.5 \
   --upstream "moonshotai/Kimi-K2.5" \
   --input 0.5 --output 2.8 \
   --categories math,coding
 ```
 
-The CLI reads `seller.providers.openai.services[id]` and turns it into the flat env keys (`ANTSEED_SERVICE_ALIAS_MAP_JSON`, `ANTSEED_SERVICE_PRICING_JSON`, `ANTSEED_ALLOWED_SERVICES`) that this plugin's `configSchema` consumes internally. Categories are written directly onto `provider.serviceCategories` by the seed action, not via env var. You should not set those env keys directly.
+The CLI reads `seller.providers.<name>.services[id]` and turns it into the flat env keys (`ANTSEED_SERVICE_ALIAS_MAP_JSON`, `ANTSEED_SERVICE_PRICING_JSON`, `ANTSEED_ALLOWED_SERVICES`) that this plugin's `configSchema` consumes internally. Categories are written directly onto `provider.serviceCategories` by the seller start path, not via env var. You should not set those env keys directly.
 
 ## How It Works
 

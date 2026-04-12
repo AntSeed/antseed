@@ -21,21 +21,26 @@ pnpm install
 # Build everything
 pnpm run build
 
-# Start providing (local testing with Claude Code keychain)
-node apps/cli/dist/cli/index.js seed --provider claude-code
+# Create config once
+node apps/cli/dist/cli/index.js seller setup
 
-# Start buying (local proxy on port 8377)
-node apps/cli/dist/cli/index.js connect --router local
+# Start providing
+node apps/cli/dist/cli/index.js seller start
+
+# Start buying
+node apps/cli/dist/cli/index.js buyer start
 ```
 
 Or install globally:
 
 ```bash
 npm install -g @antseed/cli
-antseed init          # Install trusted plugins
-antseed seed          # Start providing
-antseed connect       # Start buying
+antseed seller setup  # Create ~/.antseed/config.json
+antseed seller start  # Start providing
+antseed buyer start   # Start buying
 ```
+
+`~/.antseed/config.json` is the main source of truth for providers, services, pricing, categories, ports, and `baseUrl`. Environment variables are primarily for secrets such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and `ANTSEED_IDENTITY_HEX`.
 
 ## Repository Structure
 

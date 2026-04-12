@@ -42,7 +42,7 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
 
   fastify.get('/api/balance', async (_request, reply) => {
     if (!ctx.cryptoCtx) {
-      return reply.status(503).send({ ok: false, error: 'Identity not configured — run antseed init' });
+      return reply.status(503).send({ ok: false, error: 'Identity not configured — set ANTSEED_IDENTITY_HEX or run antseed seller setup' });
     }
 
     try {
@@ -84,7 +84,7 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
 
   fastify.post('/api/withdraw', async (request, reply) => {
     if (!ctx.cryptoCtx) {
-      return reply.status(503).send({ ok: false, error: 'Identity not configured — run antseed init' });
+      return reply.status(503).send({ ok: false, error: 'Identity not configured — set ANTSEED_IDENTITY_HEX or run antseed seller setup' });
     }
 
     const body = request.body as { amount?: string } | null;
@@ -207,7 +207,7 @@ export function registerRoutes(fastify: FastifyInstance, ctx: RouteContext): voi
 
   fastify.get('/api/operator', async (_request, reply) => {
     if (!ctx.cryptoCtx) {
-      return reply.status(503).send({ ok: false, error: 'Identity not configured — run antseed init' });
+      return reply.status(503).send({ ok: false, error: 'Identity not configured — set ANTSEED_IDENTITY_HEX or run antseed seller setup' });
     }
 
     try {

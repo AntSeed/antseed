@@ -18,13 +18,13 @@ npm install -g @antseed/cli
 
 Verify with `antseed --version`.
 
-## Step 2: Initialize the node
+## Step 2: Create the config file
 
 ```bash
-antseed init
+mkdir -p ~/.antseed
 ```
 
-This installs all trusted plugins and creates config at `~/.antseed/config.json`.
+Create or edit `~/.antseed/config.json` before starting the buyer. You can also generate it indirectly through other setup flows and then manage it with `antseed config ...`.
 
 ## Step 3: Set the identity
 
@@ -101,7 +101,7 @@ antseed config buyer set proxyPort 8377
 ## Step 7: Verify readiness
 
 ```bash
-antseed setup --role buyer
+antseed buyer status
 ```
 
 Checks:
@@ -112,7 +112,7 @@ Checks:
 ## Step 8: Start the proxy
 
 ```bash
-antseed connect --router local
+antseed buyer start
 ```
 
 This will:
@@ -124,7 +124,7 @@ This will:
 Custom port:
 
 ```bash
-antseed connect --router local -p 8888
+antseed buyer start -p 8888
 ```
 
 ## Step 9: Point your tools at the proxy
@@ -183,7 +183,7 @@ The API key value doesn't matter when going through the proxy — set it to any 
 Before connecting, or while connected, browse what's available on the network:
 
 ```bash
-antseed browse
+antseed network browse
 ```
 
 This shows available peers, their services, pricing, and reputation.
@@ -192,7 +192,7 @@ This shows available peers, their services, pricing, and reputation.
 
 ```bash
 # View payment channels and spending
-antseed channels --role buyer
+antseed buyer channels
 
 # View per-peer metering
 # (available via the proxy while connected)
@@ -218,18 +218,18 @@ All signing happens with the identity key. No additional wallets or browser exte
 ## Verification checklist
 
 - [ ] `antseed --version` prints a version
-- [ ] `antseed balance` shows deposited USDC > 0
-- [ ] `antseed setup --role buyer` — all checks pass
-- [ ] `antseed connect --router local` starts without errors
+- [ ] `antseed buyer balance` shows deposited USDC > 0
+- [ ] `antseed buyer status` shows the proxy is ready
+- [ ] `antseed buyer start` starts without errors
 - [ ] `curl http://localhost:8377/v1/models` returns available models
 - [ ] Tools work with `OPENAI_BASE_URL=http://localhost:8377`
 
 ## Troubleshooting
 
-- **"Payment setup failed"**: Check `antseed balance` — you need deposited USDC. Run `antseed deposit <amount>`.
-- **"No peers found"**: The network may be sparse. Try `antseed browse` to check. Add bootstrap nodes to config if needed.
+- **"Payment setup failed"**: Check `antseed buyer balance` — you need deposited USDC. Run `antseed buyer deposit <amount>`.
+- **"No peers found"**: The network may be sparse. Try `antseed network browse` to check. Add bootstrap nodes to config if needed.
 - **"Lock confirmation timed out"**: The provider's on-chain reserve is slow. This is usually a testnet issue — retry the request.
-- **"Connection refused on 8377"**: Make sure `antseed connect` is still running.
+- **"Connection refused on 8377"**: Make sure `antseed buyer start` is still running.
 - **Tool says "invalid API key"**: Set the API key env var to any non-empty value (e.g., `antseed`).
 - **Slow first request**: The first request discovers and connects to a peer via DHT (5-10s). Subsequent requests reuse the connection.
-- **"existing_channel_still_active"**: A previous channel wasn't cleanly closed. Restart `antseed connect` to reset state.
+- **"existing_channel_still_active"**: A previous channel wasn't cleanly closed. Restart `antseed buyer start` to reset state.

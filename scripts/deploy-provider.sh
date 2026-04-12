@@ -163,7 +163,7 @@ Wants=network-online.target
 Type=simple
 User=${SSH_USER}
 $(echo -e "$ENV_LINES")
-ExecStart=/usr/bin/antseed seed --provider ${PROVIDER}
+ExecStart=/usr/bin/antseed seller start --provider ${PROVIDER}
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal

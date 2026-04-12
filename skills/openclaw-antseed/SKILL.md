@@ -21,7 +21,6 @@ The buyer proxy runs locally, discovers providers via DHT, negotiates payment ch
 
 ```bash
 npm install -g @antseed/cli
-antseed init
 ```
 
 Verify: `antseed --version` (requires Node.js 20+).
@@ -52,17 +51,17 @@ Edit `~/.antseed/config.json`:
 Fund the buyer wallet with USDC on Base, then deposit into the escrow:
 
 ```bash
-antseed deposit 10
+antseed buyer deposit 10
 ```
 
-Verify with `antseed balance`.
+Verify with `antseed buyer balance`.
 
 ## Step 4: Start the buyer proxy
 
 Run in a terminal or set up as a persistent service:
 
 ```bash
-antseed connect --router local --port 5005
+antseed buyer start --router local --port 5005
 ```
 
 ### Persistent service (systemd)
@@ -77,7 +76,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=$USER
-ExecStart=/usr/bin/env antseed connect --router local --port 5005
+ExecStart=/usr/bin/env antseed buyer start --router local --port 5005
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
@@ -117,7 +116,7 @@ json.dump(cfg, sys.stdout, indent=2)
 " > /tmp/oc_antseed.json && mv /tmp/oc_antseed.json ~/.openclaw/openclaw.json
 ```
 
-Replace `SERVICE_ID_HERE` with the service from `antseed browse` (e.g., `deepseek-v3.1`, `kimi-k2.5`).
+Replace `SERVICE_ID_HERE` with the service from `antseed network browse` (e.g., `deepseek-v3.1`, `kimi-k2.5`).
 
 Set as default:
 
@@ -138,4 +137,4 @@ If the proxy returns available services, the connection is working.
 - The API key value doesn't matter — set it to any non-empty string
 - Streaming is supported (SSE)
 - Payment channels are negotiated automatically on first request
-- The buyer wallet needs USDC deposited (`antseed deposit`) and ETH for gas on Base
+- The buyer wallet needs USDC deposited (`antseed buyer deposit`) and ETH for gas on Base

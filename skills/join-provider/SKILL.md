@@ -29,13 +29,13 @@ npm install -g @antseed/cli
 
 Verify with `antseed --version`.
 
-## Step 2: Initialize the node
+## Step 2: Create the config file
 
 ```bash
-antseed init
+antseed seller setup
 ```
 
-This installs all trusted plugins (provider + router) from npm and creates default config at `~/.antseed/config.json`.
+This creates or updates `~/.antseed/config.json`. You can also edit the file directly or use `antseed config ...` commands for non-interactive setup.
 
 ## Step 3: Set the identity
 
@@ -77,7 +77,7 @@ Contract addresses are built into the CLI for each chain — no manual configura
 Register the provider's EVM address on the ERC-8004 IdentityRegistry:
 
 ```bash
-antseed register
+antseed seller register
 ```
 
 This mints an agent identity NFT and prints the **Agent ID**. Save this — it's needed for staking.
@@ -87,7 +87,7 @@ This mints an agent identity NFT and prints the **Agent ID**. Save this — it's
 Providers must stake a minimum of $10 USDC to be eligible for buyer connections:
 
 ```bash
-antseed stake 10 --agent-id <AGENT_ID>
+antseed seller stake 10 --agent-id <AGENT_ID>
 ```
 
 The `--agent-id` flag is only needed for the first stake. Subsequent stakes look it up automatically.
@@ -152,7 +152,7 @@ antseed config seller set maxConcurrentBuyers 10
 ## Step 9: Verify readiness
 
 ```bash
-antseed setup --role provider
+antseed seller status
 ```
 
 This runs all readiness checks:
@@ -160,17 +160,17 @@ This runs all readiness checks:
 - USDC staked above minimum
 - Provider credentials valid
 
-All checks must pass before seeding.
+All checks must pass before starting the seller.
 
 ## Step 10: Start seeding
 
 ```bash
-antseed seed --provider <type>
+antseed seller start --provider <type>
 ```
 
 Examples:
-- `antseed seed --provider openai` (Together, OpenRouter, OpenAI)
-- `antseed seed --provider local-llm` (Ollama, llama.cpp)
+- `antseed seller start --provider openai` (Together, OpenRouter, OpenAI)
+- `antseed seller start --provider local-llm` (Ollama, llama.cpp)
 
 The seeder will:
 1. Validate credentials with the upstream API
@@ -181,38 +181,38 @@ The seeder will:
 Runtime pricing overrides (without saving to config):
 
 ```bash
-antseed seed --provider openai \
+antseed seller start --provider openai \
   --input-usd-per-million 1 \
   --cached-input-usd-per-million 0.5 \
   --output-usd-per-million 3
 ```
 
-## Step 11: Claim earnings
+## Step 11: Check emissions rewards
 
-After serving requests, the provider accumulates USDC payouts in the deposits contract:
+After serving requests, the provider may accumulate pending ANTS emissions:
 
 ```bash
-# Check pending payouts
-antseed balance
+# Check pending emissions
+antseed seller emissions info
 
-# Claim accumulated payouts to wallet
-antseed claim
+# Claim pending ANTS
+antseed seller emissions claim
 ```
 
 ## Verification checklist
 
 - [ ] `antseed --version` prints a version
-- [ ] `antseed register` succeeds (or shows "Already registered")
-- [ ] `antseed setup --role provider` — all checks pass
-- [ ] `antseed seed --provider <type>` starts without errors
+- [ ] `antseed seller register` succeeds (or shows "Already registered")
+- [ ] `antseed seller status` shows the node is ready
+- [ ] `antseed seller start --provider <type>` starts without errors
 - [ ] Seeder announces on DHT (log shows peer ID and ports)
 - [ ] Metadata endpoint returns pricing: `curl http://localhost:6882/metadata`
 
 ## Troubleshooting
 
-- **"SellerNotStaked"**: Run `antseed stake 10 --agent-id <ID>`. The wallet needs USDC and ETH.
-- **"No provider configured"**: Set the API key env var or run `antseed init`.
-- **"Not registered"**: Run `antseed register` first.
+- **"SellerNotStaked"**: Run `antseed seller stake 10 --agent-id <ID>`. The wallet needs USDC and ETH.
+- **"No provider configured"**: Set the API key env var or configure a provider in `~/.antseed/config.json`.
+- **"Not registered"**: Run `antseed seller register` first.
 - **"InsufficientAllowance"**: The CLI auto-approves USDC. If it fails, wait a few seconds and retry (nonce conflict).
 - **"DHT announce failed"**: Check firewall allows UDP on DHT port (default 6881) and TCP on signaling port (default 6882).
-- **Native module errors**: Run `antseed init` again or reinstall: `npm install -g @antseed/cli`
+- **Native module errors**: Rebuild or reinstall the CLI: `npm install -g @antseed/cli`
