@@ -14,7 +14,23 @@ import assert from 'node:assert/strict';
 import { createServer, __resetAgentIdCacheForTests } from './server.js';
 import { SqliteStore } from './store.js';
 import type { NetworkPoller } from './poller.js';
-import type { StakingClient } from '@antseed/node';
+import type { StakingClient, DecodedMetadataRecorded } from '@antseed/node';
+
+function makeEvent(overrides: Partial<DecodedMetadataRecorded> = {}): DecodedMetadataRecorded {
+  return {
+    blockNumber: 1,
+    txHash: '0x' + '0'.repeat(64),
+    logIndex: 0,
+    agentId: 1n,
+    buyer: '0x' + '0'.repeat(40),
+    channelId: '0x' + '1'.repeat(64),
+    metadataHash: '0x' + '2'.repeat(64),
+    inputTokens: 0n,
+    outputTokens: 0n,
+    requestCount: 0n,
+    ...overrides,
+  };
+}
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -95,7 +111,7 @@ describe('createServer — enriched: agent with totals', () => {
   const store = makeStore();
   // Seed totals for agentId 42
   store.applyBatch('test', '0xcontract', [
-    { agentId: 42n, inputTokens: 100n, outputTokens: 200n, requestCount: 5n } as never,
+    makeEvent({ agentId: 42n, blockNumber: 100, inputTokens: 100n, outputTokens: 200n, requestCount: 5n }),
   ], 1);
   const peers = [fakePeer('a', '0xabc1234')];
   const poller = makePoller(peers);
@@ -106,9 +122,26 @@ describe('createServer — enriched: agent with totals', () => {
   after(() => { handle.stop(); store.close(); });
   beforeEach(() => { __resetAgentIdCacheForTests(); });
 
-  it('peer has onChainStats with correct values', async () => {
+  it('peer has onChainStats with correct values including analytics', async () => {
     const res = await fetch(`http://localhost:${PORT}/stats`);
-    const body = await res.json() as { peers: Array<{ onChainStats: { agentId: number; totalRequests: string; totalInputTokens: string; totalOutputTokens: string; lastUpdatedAt: number } | null }> };
+    const body = await res.json() as {
+      peers: Array<{
+        onChainStats: {
+          agentId: number;
+          totalRequests: string;
+          totalInputTokens: string;
+          totalOutputTokens: string;
+          settlementCount: number;
+          uniqueBuyers: number;
+          uniqueChannels: number;
+          firstSettledBlock: number;
+          lastSettledBlock: number;
+          avgRequestsPerBuyer: number;
+          avgRequestsPerChannel: number;
+          lastUpdatedAt: number;
+        } | null;
+      }>;
+    };
     assert.equal(body.peers.length, 1);
     const stats = body.peers[0]!.onChainStats;
     assert.ok(stats !== null, 'onChainStats should not be null');
@@ -116,6 +149,13 @@ describe('createServer — enriched: agent with totals', () => {
     assert.equal(stats!.totalRequests, '5');
     assert.equal(stats!.totalInputTokens, '100');
     assert.equal(stats!.totalOutputTokens, '200');
+    assert.equal(stats!.settlementCount, 1);
+    assert.equal(stats!.uniqueBuyers, 1);
+    assert.equal(stats!.uniqueChannels, 1);
+    assert.equal(stats!.firstSettledBlock, 100);
+    assert.equal(stats!.lastSettledBlock, 100);
+    assert.equal(stats!.avgRequestsPerBuyer, 5);
+    assert.equal(stats!.avgRequestsPerChannel, 5);
     assert.equal(typeof stats!.lastUpdatedAt, 'number');
   });
 });
@@ -273,7 +313,7 @@ describe('createServer — enriched: BigInt round-trip for large numbers', () =>
   const bigValue = 10n ** 25n;
   // Seed the store with bigint values for agentId 99
   store.applyBatch('test', '0xbig', [
-    { agentId: 99n, inputTokens: bigValue, outputTokens: bigValue * 2n, requestCount: bigValue * 3n } as never,
+    makeEvent({ agentId: 99n, blockNumber: 42, inputTokens: bigValue, outputTokens: bigValue * 2n, requestCount: bigValue * 3n }),
   ], 1);
   const peers = [fakePeer('g', '0xbigpeer')];
   const poller = makePoller(peers);

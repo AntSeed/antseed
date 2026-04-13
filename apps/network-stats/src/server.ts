@@ -77,6 +77,13 @@ export function createServer(deps: CreateServerDeps): { start(): Promise<void>; 
             totalRequests: totals.totalRequests.toString(),
             totalInputTokens: totals.totalInputTokens.toString(),
             totalOutputTokens: totals.totalOutputTokens.toString(),
+            settlementCount: totals.settlementCount,
+            uniqueBuyers: totals.uniqueBuyers,
+            uniqueChannels: totals.uniqueChannels,
+            firstSettledBlock: totals.firstSettledBlock,
+            lastSettledBlock: totals.lastSettledBlock,
+            avgRequestsPerChannel: totals.avgRequestsPerChannel,
+            avgRequestsPerBuyer: totals.avgRequestsPerBuyer,
             lastUpdatedAt: totals.lastUpdatedAt,
           },
         };

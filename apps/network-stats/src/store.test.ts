@@ -46,7 +46,12 @@ describe('SqliteStore', () => {
       .map((r) => r.name)
       .sort();
 
-    assert.deepEqual(tables, ['indexer_checkpoint', 'seller_metadata_totals']);
+    assert.deepEqual(tables, [
+      'indexer_checkpoint',
+      'seller_buyer_totals',
+      'seller_channel_totals',
+      'seller_metadata_totals',
+    ]);
     store.close();
   });
 
@@ -61,12 +66,13 @@ describe('SqliteStore', () => {
   });
 
   // Test 3: applyBatch seeds a new agent
-  it('applyBatch seeds a new agent with correct deltas', () => {
+  it('applyBatch seeds a new agent with correct deltas and analytics', () => {
     const store = new SqliteStore(':memory:');
     store.init();
 
     const event = makeEvent({
       agentId: 42n,
+      blockNumber: 1000,
       inputTokens: 100n,
       outputTokens: 200n,
       requestCount: 5n,
@@ -79,6 +85,13 @@ describe('SqliteStore', () => {
     assert.equal(totals.totalInputTokens, 100n);
     assert.equal(totals.totalOutputTokens, 200n);
     assert.equal(totals.totalRequests, 5n);
+    assert.equal(totals.settlementCount, 1);
+    assert.equal(totals.firstSettledBlock, 1000);
+    assert.equal(totals.lastSettledBlock, 1000);
+    assert.equal(totals.uniqueBuyers, 1);
+    assert.equal(totals.uniqueChannels, 1);
+    assert.equal(totals.avgRequestsPerBuyer, 5);
+    assert.equal(totals.avgRequestsPerChannel, 5);
     store.close();
   });
 
@@ -182,7 +195,76 @@ describe('SqliteStore', () => {
     store.close();
   });
 
-  // Test 8: Checkpoint key is case-insensitive on contract_address
+  // Test: unique buyers and channels counted across multiple events
+  it('tracks unique buyers and channels per agent', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+
+    const buyerA = '0x' + 'a'.repeat(40);
+    const buyerB = '0x' + 'b'.repeat(40);
+    const channel1 = '0x' + '1'.repeat(64);
+    const channel2 = '0x' + '2'.repeat(64);
+    const channel3 = '0x' + '3'.repeat(64);
+
+    store.applyBatch(
+      'base',
+      '0xcontract',
+      [
+        makeEvent({ agentId: 5n, buyer: buyerA, channelId: channel1, blockNumber: 10, requestCount: 3n }),
+        makeEvent({ agentId: 5n, buyer: buyerA, channelId: channel2, blockNumber: 11, requestCount: 4n }),
+        makeEvent({ agentId: 5n, buyer: buyerB, channelId: channel3, blockNumber: 12, requestCount: 5n }),
+        // Repeat on channel1 — must NOT increase uniqueChannels
+        makeEvent({ agentId: 5n, buyer: buyerA, channelId: channel1, blockNumber: 13, requestCount: 8n }),
+      ],
+      20,
+    );
+
+    const totals = store.getSellerTotals(5);
+    assert.ok(totals !== null);
+    assert.equal(totals.totalRequests, 20n);
+    assert.equal(totals.settlementCount, 4);
+    assert.equal(totals.uniqueBuyers, 2);
+    assert.equal(totals.uniqueChannels, 3);
+    assert.equal(totals.firstSettledBlock, 10);
+    assert.equal(totals.lastSettledBlock, 13);
+    assert.equal(totals.avgRequestsPerBuyer, 10); // 20 / 2
+    assert.equal(totals.avgRequestsPerChannel, 6); // 20 / 3 → BigInt floor div
+    store.close();
+  });
+
+  // Test: first_settled_block is set only on first insert, last_settled_block always advances
+  it('first_settled_block is stable across batches, last_settled_block advances', () => {
+    const store = new SqliteStore(':memory:');
+    store.init();
+
+    store.applyBatch(
+      'base',
+      '0xcontract',
+      [makeEvent({ agentId: 9n, blockNumber: 500, requestCount: 1n })],
+      500,
+    );
+
+    const after1 = store.getSellerTotals(9);
+    assert.ok(after1 !== null);
+    assert.equal(after1.firstSettledBlock, 500);
+    assert.equal(after1.lastSettledBlock, 500);
+
+    store.applyBatch(
+      'base',
+      '0xcontract',
+      [makeEvent({ agentId: 9n, blockNumber: 750, requestCount: 1n })],
+      750,
+    );
+
+    const after2 = store.getSellerTotals(9);
+    assert.ok(after2 !== null);
+    assert.equal(after2.firstSettledBlock, 500);
+    assert.equal(after2.lastSettledBlock, 750);
+    assert.equal(after2.settlementCount, 2);
+    store.close();
+  });
+
+  // Test: Checkpoint key is case-insensitive on contract_address
   it('checkpoint contract_address key is case-insensitive', () => {
     const store = new SqliteStore(':memory:');
     store.init();
