@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { PeerInfo } from '@antseed/node'
-import { selectCandidatePeersForRouting, rewriteServiceInBody } from './buyer-proxy.js'
+import { parsePersistedPeers, selectCandidatePeersForRouting, rewriteServiceInBody } from './buyer-proxy.js'
 
 function makePeer(seed: string, providers: string[]): PeerInfo {
   const repeated = (seed.repeat(40) + 'a'.repeat(40)).slice(0, 40)
@@ -89,6 +89,133 @@ test('selectCandidatePeersForRouting can still include peers without service pro
 
   assert.equal(result.candidatePeers.length, 1)
   assert.equal(result.candidatePeers[0]?.peerId, peerWithoutMetadata.peerId)
+})
+
+// parsePersistedPeers — hydrates _cachedPeers from buyer.state.json at startup
+// so the first request after launch can route from the warm cache without
+// blocking on DHT discovery.
+
+const validPeerId = 'a'.repeat(40)
+const MAX_AGE_MS = 30 * 60_000
+const NOW = 1_700_000_000_000
+
+test('parsePersistedPeers returns [] for null/undefined/junk input', () => {
+  assert.deepEqual(parsePersistedPeers(null, NOW), [])
+  assert.deepEqual(parsePersistedPeers(undefined, NOW), [])
+  assert.deepEqual(parsePersistedPeers(42, NOW), [])
+  assert.deepEqual(parsePersistedPeers('nope', NOW), [])
+})
+
+test('parsePersistedPeers returns [] when discoveredPeers is missing or not an array', () => {
+  assert.deepEqual(parsePersistedPeers({}, NOW), [])
+  assert.deepEqual(parsePersistedPeers({ discoveredPeers: 'oops' }, NOW), [])
+  assert.deepEqual(parsePersistedPeers({ discoveredPeers: null }, NOW), [])
+})
+
+test('parsePersistedPeers drops entries with invalid peerIds and normalizes case', () => {
+  const result = parsePersistedPeers(
+    {
+      discoveredPeers: [
+        { peerId: 'too-short', providers: [], lastSeen: NOW },
+        { peerId: 123, providers: [], lastSeen: NOW },
+        { peerId: validPeerId.toUpperCase(), providers: ['openai'], lastSeen: NOW },
+      ],
+    },
+    NOW,
+  )
+  assert.equal(result.length, 1)
+  assert.equal(result[0]?.peerId, validPeerId)
+})
+
+test('parsePersistedPeers drops entries with non-array providers', () => {
+  const result = parsePersistedPeers(
+    {
+      discoveredPeers: [
+        { peerId: validPeerId, providers: 'openai', lastSeen: NOW },
+      ],
+    },
+    NOW,
+  )
+  assert.equal(result.length, 0)
+})
+
+test('parsePersistedPeers drops entries with stale or missing lastSeen', () => {
+  const result = parsePersistedPeers(
+    {
+      discoveredPeers: [
+        { peerId: validPeerId, providers: ['openai'], lastSeen: NOW - MAX_AGE_MS },
+        { peerId: 'b'.repeat(40), providers: ['openai'] },
+        { peerId: 'c'.repeat(40), providers: ['openai'], lastSeen: 'nope' },
+      ],
+    },
+    NOW,
+  )
+  assert.equal(result.length, 0)
+})
+
+test('parsePersistedPeers preserves provider metadata so routing filters still work', () => {
+  const persisted = {
+    discoveredPeers: [
+      {
+        peerId: validPeerId,
+        displayName: 'Alice',
+        publicAddress: '1.2.3.4:1234',
+        providers: ['claude-oauth'],
+        services: ['claude-opus-4-6'],
+        providerPricing: null,
+        providerServiceCategories: null,
+        providerServiceApiProtocols: {
+          'claude-oauth': {
+            services: {
+              'claude-opus-4-6': ['anthropic-messages'],
+            },
+          },
+        },
+        defaultInputUsdPerMillion: 3,
+        defaultOutputUsdPerMillion: 15,
+        maxConcurrency: 4,
+        lastSeen: NOW - 5_000,
+      },
+    ],
+  }
+  const [peer] = parsePersistedPeers(persisted, NOW)
+  assert.ok(peer, 'expected a peer')
+  assert.equal(peer!.peerId, validPeerId)
+  assert.equal(peer!.displayName, 'Alice')
+  assert.equal(peer!.publicAddress, '1.2.3.4:1234')
+  assert.deepEqual(peer!.providers, ['claude-oauth'])
+  assert.equal(peer!.defaultInputUsdPerMillion, 3)
+  assert.equal(peer!.defaultOutputUsdPerMillion, 15)
+  assert.equal(peer!.maxConcurrency, 4)
+  assert.equal(peer!.lastSeen, NOW - 5_000)
+
+  // The hydrated peer should still satisfy the routing filter for its service.
+  const result = selectCandidatePeersForRouting(
+    [peer!],
+    'anthropic-messages',
+    'claude-opus-4-6',
+    null,
+  )
+  assert.equal(result.candidatePeers.length, 1)
+  assert.equal(result.candidatePeers[0]?.peerId, validPeerId)
+  assert.equal(result.routePlanByPeerId.get(validPeerId)?.provider, 'claude-oauth')
+})
+
+test('parsePersistedPeers filters non-string entries out of providers', () => {
+  const result = parsePersistedPeers(
+    {
+      discoveredPeers: [
+        {
+          peerId: validPeerId,
+          providers: ['openai', 42, null, 'claude-oauth'],
+          lastSeen: NOW,
+        },
+      ],
+    },
+    NOW,
+  )
+  assert.equal(result.length, 1)
+  assert.deepEqual(result[0]?.providers, ['openai', 'claude-oauth'])
 })
 
 // rewriteServiceInBody tests

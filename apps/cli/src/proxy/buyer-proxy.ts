@@ -66,7 +66,8 @@ export interface BuyerProxyConfig {
   /**
    * Max age for the in-memory peer cache before it is treated as stale (ms).
    * Stale caches can still be used for routing while background refresh repopulates.
-   * Default: 30000 (30s).
+   * Default: 360000 (6 min) — chosen to exceed `backgroundRefreshIntervalMs`
+   * (5 min) so a healthy proxy never naturally reaches the "stale" threshold.
    */
   peerCacheTtlMs?: number
   /**
@@ -197,6 +198,63 @@ const PROTOCOL_TRANSFORMS: Record<string, ProtocolTransformStrategy> = {
 }
 
 /**
+ * Parses a buyer.state.json blob into PeerInfo[], dropping entries with
+ * missing/invalid peerIds, non-array providers, or lastSeen timestamps older
+ * than the carry-forward window. Exported for unit testing.
+ */
+export function parsePersistedPeers(
+  parsed: unknown,
+  nowMs: number = Date.now(),
+  maxAgeMs: number = CARRY_FORWARD_TTL_MS,
+): PeerInfo[] {
+  if (!parsed || typeof parsed !== 'object') return []
+  const discovered = (parsed as { discoveredPeers?: unknown }).discoveredPeers
+  if (!Array.isArray(discovered)) return []
+
+  const peers: PeerInfo[] = []
+  for (const raw of discovered) {
+    if (!raw || typeof raw !== 'object') continue
+    const entry = raw as Record<string, unknown>
+    const peerId = typeof entry.peerId === 'string' ? entry.peerId.toLowerCase() : ''
+    if (!/^[0-9a-f]{40}$/.test(peerId)) continue
+    if (!Array.isArray(entry.providers)) continue
+    const providers = entry.providers.filter((p): p is string => typeof p === 'string')
+    const lastSeen = typeof entry.lastSeen === 'number' && Number.isFinite(entry.lastSeen)
+      ? entry.lastSeen
+      : 0
+    if (lastSeen <= 0 || nowMs - lastSeen >= maxAgeMs) continue
+
+    const peer: PeerInfo = {
+      peerId: peerId as PeerInfo['peerId'],
+      lastSeen,
+      providers,
+    }
+    if (typeof entry.displayName === 'string') peer.displayName = entry.displayName
+    if (typeof entry.publicAddress === 'string') peer.publicAddress = entry.publicAddress
+    if (entry.providerPricing && typeof entry.providerPricing === 'object') {
+      peer.providerPricing = entry.providerPricing as PeerInfo['providerPricing']
+    }
+    if (entry.providerServiceCategories && typeof entry.providerServiceCategories === 'object') {
+      peer.providerServiceCategories = entry.providerServiceCategories as PeerInfo['providerServiceCategories']
+    }
+    if (entry.providerServiceApiProtocols && typeof entry.providerServiceApiProtocols === 'object') {
+      peer.providerServiceApiProtocols = entry.providerServiceApiProtocols as PeerInfo['providerServiceApiProtocols']
+    }
+    if (typeof entry.defaultInputUsdPerMillion === 'number') {
+      peer.defaultInputUsdPerMillion = entry.defaultInputUsdPerMillion
+    }
+    if (typeof entry.defaultOutputUsdPerMillion === 'number') {
+      peer.defaultOutputUsdPerMillion = entry.defaultOutputUsdPerMillion
+    }
+    if (typeof entry.maxConcurrency === 'number') {
+      peer.maxConcurrency = entry.maxConcurrency
+    }
+    peers.push(peer)
+  }
+  return peers
+}
+
+/**
  * Local HTTP proxy that forwards requests to P2P sellers.
  *
  * Tools like Claude CLI set ANTHROPIC_BASE_URL=http://localhost:8377
@@ -229,7 +287,7 @@ export class BuyerProxy {
     this._node = config.node
     this._port = config.port
     this._bgRefreshIntervalMs = config.backgroundRefreshIntervalMs ?? 5 * 60_000
-    this._peerCacheTtlMs = Math.max(0, config.peerCacheTtlMs ?? 30_000)
+    this._peerCacheTtlMs = Math.max(0, config.peerCacheTtlMs ?? 6 * 60_000)
     this._pinnedPeer = config.pinnedPeerId?.toLowerCase() ?? null
     this._pinnedService = config.pinnedService?.trim() ?? null
     this._server = createServer((req, res) => {
@@ -244,6 +302,11 @@ export class BuyerProxy {
   }
 
   async start(): Promise<void> {
+    // Hydrate the in-memory peer cache from the persisted state file BEFORE
+    // the server starts accepting requests. This lets the first request after
+    // startup route from the warm cache without blocking on DHT discovery.
+    // The background refresh still runs to pick up fresh peers and IP changes.
+    await this._hydratePeersFromStateFile()
     await new Promise<void>((resolve, reject) => {
       this._server.once('error', reject)
       this._server.listen(this._port, '127.0.0.1', () => {
@@ -257,6 +320,29 @@ export class BuyerProxy {
     void this._refreshPeersNow().catch(() => {})
     await this._writeStateFile('connected')
     this._watchStateFile()
+  }
+
+  private async _hydratePeersFromStateFile(): Promise<void> {
+    try {
+      const raw = await readFile(BUYER_STATE_FILE, 'utf-8')
+      const parsed = JSON.parse(raw) as unknown
+      const peers = parsePersistedPeers(parsed)
+      if (peers.length === 0) {
+        return
+      }
+      this._cachedPeers = peers
+      // Preserve the original discovery timestamp so cacheAgeMs reflects how
+      // long ago the persisted data was actually written, not startup time.
+      const peersUpdatedAt = (parsed as { peersUpdatedAt?: unknown }).peersUpdatedAt
+      this._cacheLastUpdatedAtMs = typeof peersUpdatedAt === 'number' && Number.isFinite(peersUpdatedAt)
+        ? peersUpdatedAt
+        : Date.now()
+      this._cacheMutationEpoch += 1
+      log(`Hydrated ${peers.length} peer(s) from ${BUYER_STATE_FILE}`)
+    } catch {
+      // File missing, unreadable, or malformed — non-fatal. The background
+      // refresh will populate the cache shortly.
+    }
   }
 
   async stop(): Promise<void> {
