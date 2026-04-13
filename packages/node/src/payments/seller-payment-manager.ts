@@ -27,10 +27,21 @@ export interface SellerPaymentConfig {
   minBudgetPerRequest?: string;
   /** Whether to immediately settle when buyer disconnects. Default: true. */
   settleOnDisconnect?: boolean;
+  /**
+   * Minimum unsettled delta (base units) required before idle settle will
+   * submit a tx. Skips tiny settles whose gas cost exceeds the amount being
+   * claimed. Only applied in `settleOnly` mode — final close() always settles
+   * the full amount so no dust is left behind. Default: "2000" (~$0.002).
+   */
+  minSettleDelta?: string;
 }
 
 /** Default minimum budget per request: $0.50 USDC (base units). */
 const DEFAULT_MIN_BUDGET_PER_REQUEST = '500000';
+
+/** ~200× typical Base settle gas cost at 0.006 gwei. */
+export const DEFAULT_MIN_SETTLE_DELTA_STR = '2000';
+const DEFAULT_MIN_SETTLE_DELTA = BigInt(DEFAULT_MIN_SETTLE_DELTA_STR);
 
 /** Stored auth entry for buyer's SpendingAuth signature. */
 interface LatestAuth {
@@ -72,6 +83,13 @@ export class SellerPaymentManager {
   /** channelId -> number of failed close() attempts. In-memory only; resets on node restart. */
   private readonly _closeRetryCount = new Map<string, number>();
 
+  /** channelId -> cumulative amount last successfully settled on-chain by this
+   *  process. Lets the idle-settle loop skip the `getSession` RPC when the
+   *  local accepted cumulative hasn't moved since our last settle. */
+  private readonly _lastSettledCumulative = new Map<string, bigint>();
+
+  private readonly _minSettleDelta: bigint;
+
   /** Max close() retries before giving up (buyer must requestClose on-chain) */
   private static readonly MAX_CLOSE_RETRIES = 3;
 
@@ -84,6 +102,9 @@ export class SellerPaymentManager {
       contractAddress: config.channelsContractAddress,
     });
     this._channelStore = channelStore;
+    this._minSettleDelta = config.minSettleDelta !== undefined
+      ? BigInt(config.minSettleDelta)
+      : DEFAULT_MIN_SETTLE_DELTA;
 
     // Hydrate from persisted channels
     const activeChannels = this._channelStore.getActiveChannels('seller');
@@ -172,6 +193,7 @@ export class SellerPaymentManager {
     this._latestAuth.delete(channelId);
     this._closeRetryCount.delete(channelId);
     this._reserveMax.delete(channelId);
+    this._lastSettledCumulative.delete(channelId);
     this._activeBuyers.delete(peerId);
     debugLog(`[SellerPayment] Evicted stale channel ${channelId.slice(0, 18)}... — ${reason}`);
   }
@@ -671,10 +693,46 @@ export class SellerPaymentManager {
       if (settleOnly) return;
       debugLog(`[SellerPayment] Zero-cumulative channel ${channelId.slice(0, 18)}... — deferring to timeout checker`);
     } else if (settleOnly) {
-      if (amount === 0n) return; // No SpendingAuth to settle
-      debugLog(`[SellerPayment] Settling channel ${channelId.slice(0, 18)}... cumulative=${amount} (keeping open)`);
+      if (amount === 0n) return;
+
+      // Skip the getSession RPC entirely when our local cumulative hasn't
+      // moved since we last settled this channel — the contract would revert
+      // with InvalidAmount (strict `>` check) and we'd waste an RPC round-trip.
+      const lastSettled = this._lastSettledCumulative.get(channelId);
+      if (lastSettled !== undefined && amount <= lastSettled) {
+        debugLog(`[SellerPayment] Skip settle ${channelId.slice(0, 18)}... — cumulative unchanged since last settle (${amount})`);
+        return;
+      }
+
+      // Cache miss (e.g. after restart) or local cumulative has advanced —
+      // confirm against on-chain state in case another process settled.
+      let onChainSettled: bigint;
+      try {
+        const onChain = await this._channelsClient.getSession(channelId);
+        onChainSettled = onChain.settled;
+      } catch (err) {
+        debugWarn(`[SellerPayment] getSession failed for ${channelId.slice(0, 18)}...: ${err instanceof Error ? err.message : err} — attempting settle anyway`);
+        onChainSettled = 0n;
+      }
+      const delta = amount - onChainSettled;
+      if (delta <= 0n) {
+        // Resync the cache so we stop hitting the RPC on every idle tick.
+        this._lastSettledCumulative.set(channelId, onChainSettled);
+        debugLog(`[SellerPayment] Skip settle ${channelId.slice(0, 18)}... — already settled on-chain (local=${amount}, onChain=${onChainSettled})`);
+        return;
+      }
+      if (delta < this._minSettleDelta) {
+        // Mark this cumulative as a no-op so the next tick short-circuits
+        // without re-querying getSession until amount actually advances.
+        this._lastSettledCumulative.set(channelId, amount);
+        debugLog(`[SellerPayment] Skip settle ${channelId.slice(0, 18)}... — delta=${delta} below minSettleDelta=${this._minSettleDelta}`);
+        return;
+      }
+
+      debugLog(`[SellerPayment] Settling channel ${channelId.slice(0, 18)}... cumulative=${amount} delta=${delta} (keeping open)`);
       try {
         await this._channelsClient.settle(this._signer, channelId, amount, metadata, sig);
+        this._lastSettledCumulative.set(channelId, amount);
         debugLog(`[SellerPayment] Settled channel ${channelId.slice(0, 18)}... — channel remains open`);
       } catch (err) {
         debugWarn(`[SellerPayment] Failed to settle channel: ${err instanceof Error ? err.message : err}`);
@@ -703,6 +761,7 @@ export class SellerPaymentManager {
     this._spent.delete(channelId);
     this._latestAuth.delete(channelId);
     this._closeRetryCount.delete(channelId);
+    this._lastSettledCumulative.delete(channelId);
     this._activeBuyers.delete(buyerPeerId);
   }
 
@@ -867,6 +926,7 @@ export class SellerPaymentManager {
     this._latestAuth.delete(channelId);
     this._closeRetryCount.delete(channelId);
     this._reserveMax.delete(channelId);
+    this._lastSettledCumulative.delete(channelId);
 
     // Find and remove buyer from active set
     const channel = this._channelStore.getChannel(channelId);

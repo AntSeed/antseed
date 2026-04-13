@@ -107,6 +107,21 @@ function makeChannelId(n: number): string {
   return '0x' + n.toString(16).padStart(2, '0').repeat(32);
 }
 
+function makeOnChainChannel(buyer: Identity, seller: Identity, overrides: Record<string, unknown> = {}) {
+  return {
+    buyer: buyer.wallet.address,
+    seller: seller.wallet.address,
+    deposit: 2_000_000n,
+    settled: 500_000n,
+    metadataHash: ZERO_METADATA_HASH,
+    deadline: BigInt(Math.floor(Date.now() / 1000) + 3600),
+    settledAt: 0n,
+    closeRequestedAt: 0n,
+    status: 1,
+    ...overrides,
+  };
+}
+
 describe('SellerPaymentManager', () => {
   let tempDir: string;
   let store: ChannelStore;
@@ -435,21 +450,6 @@ describe('SellerPaymentManager', () => {
       return channel;
     }
 
-    function makeOnChainChannel(buyer: Identity, seller: Identity, overrides: Record<string, unknown> = {}) {
-      return {
-        buyer: buyer.wallet.address,
-        seller: seller.wallet.address,
-        deposit: 2_000_000n,
-        settled: 500_000n,
-        metadataHash: ZERO_METADATA_HASH,
-        deadline: BigInt(Math.floor(Date.now() / 1000) + 3600),
-        settledAt: 0n,
-        closeRequestedAt: 0n,
-        status: 1,
-        ...overrides,
-      };
-    }
-
     const ZERO_CHANNEL = {
       buyer: '0x0000000000000000000000000000000000000000',
       seller: '0x0000000000000000000000000000000000000000',
@@ -628,6 +628,117 @@ describe('SellerPaymentManager', () => {
       await mgr.validateHydratedChannels();
 
       expect(mgr.hasSession(buyerIdentity.peerId)).toBe(true);
+    });
+  });
+
+  describe('settleSession idle-settle skip logic', () => {
+    async function seedAcceptedAuth(
+      mgr: SellerPaymentManager,
+      channelId: string,
+      cumulativeAmount: bigint,
+    ): Promise<void> {
+      const reserve = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { isReserve: true });
+      await mgr.handleSpendingAuth(buyerIdentity.peerId, reserve, mux);
+      const spend = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { cumulativeAmount });
+      await mgr.handleSpendingAuth(buyerIdentity.peerId, spend, mux);
+    }
+
+    it('skips idle settle when localAmount equals on-chain settled (stale re-settle)', async () => {
+      const channelId = makeChannelId(50);
+      await seedAcceptedAuth(manager, channelId, 100_000n);
+
+      vi.spyOn(manager.channelsClient, 'getSession').mockResolvedValue(
+        makeOnChainChannel(buyerIdentity, sellerIdentity, { settled: 100_000n }),
+      );
+      const settleSpy = vi.spyOn(manager.channelsClient, 'settle').mockResolvedValue('0xsettle-hash');
+
+      await manager.settleSession(buyerIdentity.peerId, { settleOnly: true });
+
+      expect(manager.channelsClient.getSession).toHaveBeenCalledWith(channelId);
+      expect(settleSpy).not.toHaveBeenCalled();
+      // Channel stays alive so the buyer can resume
+      expect(manager.hasSession(buyerIdentity.peerId)).toBe(true);
+    });
+
+    it('skips idle settle when delta is below minSettleDelta', async () => {
+      const channelId = makeChannelId(51);
+      const customConfig: SellerPaymentConfig = {
+        rpcUrl: 'http://127.0.0.1:8545',
+        channelsContractAddress: CONTRACT_ADDR,
+        chainId: CHAIN_ID,
+        dataDir: tempDir,
+        minSettleDelta: '5000',
+      };
+      const mgr = new SellerPaymentManager(sellerIdentity, customConfig, store);
+      vi.spyOn(mgr.channelsClient, 'reserve').mockResolvedValue('0xreserve-hash');
+
+      await seedAcceptedAuth(mgr, channelId, 104_000n);
+      const getSessionSpy = vi.spyOn(mgr.channelsClient, 'getSession').mockResolvedValue(
+        // delta = 104000 - 100000 = 4000 < 5000 → skip
+        makeOnChainChannel(buyerIdentity, sellerIdentity, { settled: 100_000n }),
+      );
+      const settleSpy = vi.spyOn(mgr.channelsClient, 'settle').mockResolvedValue('0xsettle-hash');
+
+      await mgr.settleSession(buyerIdentity.peerId, { settleOnly: true });
+      // Second tick with no new requests: cache must short-circuit so we
+      // don't burn an RPC every idle interval until the delta crosses the
+      // threshold. Regression guard for the dust-skip caching gap.
+      await mgr.settleSession(buyerIdentity.peerId, { settleOnly: true });
+
+      expect(settleSpy).not.toHaveBeenCalled();
+      expect(getSessionSpy).toHaveBeenCalledOnce();
+      expect(mgr.hasSession(buyerIdentity.peerId)).toBe(true);
+    });
+
+    it('proceeds with idle settle when delta is at or above minSettleDelta', async () => {
+      const channelId = makeChannelId(52);
+      const customConfig: SellerPaymentConfig = {
+        rpcUrl: 'http://127.0.0.1:8545',
+        channelsContractAddress: CONTRACT_ADDR,
+        chainId: CHAIN_ID,
+        dataDir: tempDir,
+        minSettleDelta: '5000',
+      };
+      const mgr = new SellerPaymentManager(sellerIdentity, customConfig, store);
+      vi.spyOn(mgr.channelsClient, 'reserve').mockResolvedValue('0xreserve-hash');
+
+      await seedAcceptedAuth(mgr, channelId, 105_000n);
+      vi.spyOn(mgr.channelsClient, 'getSession').mockResolvedValue(
+        // delta = 105000 - 100000 = 5000 == min → settle proceeds
+        makeOnChainChannel(buyerIdentity, sellerIdentity, { settled: 100_000n }),
+      );
+      const settleSpy = vi.spyOn(mgr.channelsClient, 'settle').mockResolvedValue('0xsettle-hash');
+
+      await mgr.settleSession(buyerIdentity.peerId, { settleOnly: true });
+
+      expect(settleSpy).toHaveBeenCalledOnce();
+      const [, calledChannelId, calledAmount] = settleSpy.mock.calls[0]!;
+      expect(calledChannelId).toBe(channelId);
+      expect(calledAmount).toBe(105_000n);
+    });
+
+    it('close path ignores minSettleDelta and still settles tiny deltas', async () => {
+      const channelId = makeChannelId(53);
+      const customConfig: SellerPaymentConfig = {
+        rpcUrl: 'http://127.0.0.1:8545',
+        channelsContractAddress: CONTRACT_ADDR,
+        chainId: CHAIN_ID,
+        dataDir: tempDir,
+        minSettleDelta: '1000000', // absurdly high
+      };
+      const mgr = new SellerPaymentManager(sellerIdentity, customConfig, store);
+      vi.spyOn(mgr.channelsClient, 'reserve').mockResolvedValue('0xreserve-hash');
+      const closeSpy = vi.spyOn(mgr.channelsClient, 'close').mockResolvedValue('0xclose-hash');
+      const getSessionSpy = vi.spyOn(mgr.channelsClient, 'getSession');
+
+      await seedAcceptedAuth(mgr, channelId, 101_000n);
+
+      // Not settleOnly — close path
+      await mgr.settleSession(buyerIdentity.peerId, {});
+
+      expect(closeSpy).toHaveBeenCalledOnce();
+      // close path never consults on-chain state for the dust check
+      expect(getSessionSpy).not.toHaveBeenCalled();
     });
   });
 });

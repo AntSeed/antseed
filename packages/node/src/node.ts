@@ -118,6 +118,8 @@ export interface NodePaymentsConfig {
   defaultAuthDurationSecs?: number;
   /** Minimum USDC per request (base units) for seller. Default: "10000" ($0.01). */
   minBudgetPerRequest?: string;
+  /** Minimum unsettled delta (base units) required before idle settle submits a tx. Default: "2000" (~$0.002). */
+  minSettleDelta?: string;
   /** Maximum USDC the buyer authorizes per single request (base units). Default: "500000" ($0.50). */
   maxPerRequestUsdc?: string;
   /** Maximum total USDC the buyer will reserve in a single SpendingAuth (base units). Default: "10000000" ($10.00). */
@@ -1078,6 +1080,7 @@ export class AntseedNode extends EventEmitter {
         chainId: payments.chainId ?? 8453,
         dataDir: paymentsDir,
         ...(payments.minBudgetPerRequest ? { minBudgetPerRequest: payments.minBudgetPerRequest } : {}),
+        ...(payments.minSettleDelta ? { minSettleDelta: payments.minSettleDelta } : {}),
       };
       this._sellerPaymentManager = new SellerPaymentManager(this._identity, sellerConfig, this._channelStore);
       debugLog(`[Node] SellerPaymentManager initialized`);

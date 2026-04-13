@@ -75,7 +75,7 @@ export { BuyerPaymentNegotiator } from './buyer-payment-negotiator.js';
 export type { BuyerNegotiatorConfig, Handle402Result, NegotiationEmitter } from './buyer-payment-negotiator.js';
 
 // Seller payment manager
-export { SellerPaymentManager } from './seller-payment-manager.js';
+export { SellerPaymentManager, DEFAULT_MIN_SETTLE_DELTA_STR } from './seller-payment-manager.js';
 export type { SellerPaymentConfig } from './seller-payment-manager.js';
 
 // Pricing utilities
