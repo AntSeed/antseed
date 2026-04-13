@@ -1,3 +1,4 @@
+import { ethers } from 'ethers';
 import type { StatsClient } from '@antseed/node';
 import type { SqliteStore } from './store.js';
 
@@ -10,6 +11,10 @@ export interface MetadataIndexerOptions {
   tickIntervalMs: number;       // e.g. 60_000
   reorgSafetyBlocks: number;    // e.g. 12
   maxBlocksPerTick?: number;    // optional cap to bound eth_getLogs range (default 2_000)
+  // When set, the indexer fetches block headers for event blocks and threads
+  // their timestamps into applyBatch, so first_seen_at reflects on-chain wall
+  // clock. Omitted in unit tests that mock the stats client.
+  rpcUrl?: string;
 }
 
 function logError(err: unknown): void {
@@ -25,8 +30,10 @@ export class MetadataIndexer {
   private readonly _tickIntervalMs: number;
   private readonly _reorgSafetyBlocks: number;
   private readonly _maxBlocksPerTick: number;
+  private readonly _provider: ethers.JsonRpcProvider | undefined;
   private _timer: ReturnType<typeof setInterval> | undefined;
   private _running = false;
+  private _latestBlock: number | null = null;
 
   constructor(options: MetadataIndexerOptions) {
     if (options.deployBlock < 0) {
@@ -46,6 +53,8 @@ export class MetadataIndexer {
 
     const provided = options.maxBlocksPerTick;
     this._maxBlocksPerTick = (provided !== undefined && provided > 0) ? provided : 2_000;
+
+    this._provider = options.rpcUrl ? new ethers.JsonRpcProvider(options.rpcUrl) : undefined;
   }
 
   start(): void {
@@ -57,6 +66,15 @@ export class MetadataIndexer {
 
   stop(): void {
     clearInterval(this._timer);
+  }
+
+  /**
+   * Returns the chain head observed on the most recent tick plus the
+   * indexer's reorg safety buffer. Null latestBlock means no tick has run
+   * yet (process just started and the first eth_blockNumber is still in flight).
+   */
+  getChainHead(): { latestBlock: number | null; reorgSafetyBlocks: number } {
+    return { latestBlock: this._latestBlock, reorgSafetyBlocks: this._reorgSafetyBlocks };
   }
 
   /**
@@ -72,6 +90,7 @@ export class MetadataIndexer {
     this._running = true;
     try {
       const latest = await this._statsClient.getBlockNumber();
+      this._latestBlock = latest;
       const safeTo = latest - this._reorgSafetyBlocks;
 
       if (safeTo < this._deployBlock) {
@@ -89,7 +108,42 @@ export class MetadataIndexer {
 
       const events = await this._statsClient.getMetadataRecordedEvents({ fromBlock, toBlock });
 
-      this._store.applyBatch(this._chainId, this._contractAddress, events, toBlock);
+      // Fetch block timestamps for each distinct block that carried an event,
+      // so applyBatch can stamp first_seen_at with on-chain wall clock. Only
+      // distinct blocks matter — a block with N events costs one getBlock call.
+      let blockTimestamps: Map<number, number> | undefined;
+      if (this._provider && events.length > 0) {
+        const uniqueBlocks = Array.from(new Set(events.map((e) => e.blockNumber)));
+        const blocks = await Promise.all(uniqueBlocks.map((b) => this._provider!.getBlock(b)));
+        blockTimestamps = new Map();
+        for (let i = 0; i < uniqueBlocks.length; i++) {
+          const block = blocks[i];
+          if (block) blockTimestamps.set(uniqueBlocks[i]!, block.timestamp);
+        }
+      }
+
+      // Always capture the checkpoint block's wall-clock so /stats can show
+      // how fresh the indexer is. Reuse the timestamp from the event-block
+      // fetch above if toBlock happened to carry an event, otherwise one
+      // extra getBlock call.
+      let newCheckpointTimestamp: number | null = null;
+      if (this._provider) {
+        if (blockTimestamps?.has(toBlock)) {
+          newCheckpointTimestamp = blockTimestamps.get(toBlock)!;
+        } else {
+          const block = await this._provider.getBlock(toBlock);
+          newCheckpointTimestamp = block?.timestamp ?? null;
+        }
+      }
+
+      this._store.applyBatch(
+        this._chainId,
+        this._contractAddress,
+        events,
+        toBlock,
+        blockTimestamps,
+        newCheckpointTimestamp,
+      );
 
       console.log(`[indexer] ${fromBlock}..${toBlock} events=${events.length}`);
     } catch (err) {
