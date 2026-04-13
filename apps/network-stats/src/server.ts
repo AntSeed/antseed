@@ -7,19 +7,83 @@
 
 import express from 'express';
 import type { NetworkPoller } from './poller.js';
+import type { StakingClient } from '@antseed/node';
+import type { SqliteStore } from './store.js';
 
-export function createServer(poller: NetworkPoller, port = 4000): { start(): Promise<void>; stop(): void } {
+export interface CreateServerDeps {
+  poller: NetworkPoller;
+  store?: SqliteStore;            // undefined when indexer disabled for this chain
+  stakingClient?: StakingClient;  // undefined when indexer disabled
+  port?: number;
+}
+
+const agentIdCache = new Map<string, number>(); // module-scoped, key: lowercased address
+
+async function resolveAgentId(
+  client: StakingClient,
+  address: string | null | undefined,
+): Promise<number | null> {
+  if (!address) return null;
+  const key = address.toLowerCase();
+  const cached = agentIdCache.get(key);
+  if (cached !== undefined) return cached;
+  try {
+    const agentId = await client.getAgentId(key);
+    agentIdCache.set(key, agentId);
+    return agentId;
+  } catch (err) {
+    console.warn(`[network-stats] getAgentId failed for ${key}:`, err);
+    return null;
+  }
+}
+
+export function __resetAgentIdCacheForTests(): void {
+  agentIdCache.clear();
+}
+
+export function createServer(deps: CreateServerDeps): { start(): Promise<void>; stop(): void } {
+  const { poller, store, stakingClient, port = 4000 } = deps;
   const app = express();
 
-  // CORS — allow any origin (public read-only endpoint)
   app.use((_req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET');
     next();
   });
 
-  app.get('/stats', (_req, res) => {
-    res.json(poller.getSnapshot());
+  app.get('/stats', async (_req, res) => {
+    const snapshot = poller.getSnapshot();
+
+    // Fast path: no indexer configured. Return snapshot byte-compatibly with the old shape.
+    if (!store || !stakingClient) {
+      res.json(snapshot);
+      return;
+    }
+
+    const enrichedPeers = await Promise.all(
+      snapshot.peers.map(async (peer) => {
+        const agentId = await resolveAgentId(stakingClient, (peer as { publicAddress?: string }).publicAddress);
+        if (agentId === null || agentId === 0) {
+          return { ...peer, onChainStats: null };
+        }
+        const totals = store.getSellerTotals(agentId);
+        if (!totals) {
+          return { ...peer, onChainStats: null };
+        }
+        return {
+          ...peer,
+          onChainStats: {
+            agentId,
+            totalRequests: totals.totalRequests.toString(),
+            totalInputTokens: totals.totalInputTokens.toString(),
+            totalOutputTokens: totals.totalOutputTokens.toString(),
+            lastUpdatedAt: totals.lastUpdatedAt,
+          },
+        };
+      }),
+    );
+
+    res.json({ ...snapshot, peers: enrichedPeers });
   });
 
   app.get('/health', (_req, res) => {

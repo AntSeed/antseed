@@ -13,6 +13,12 @@ export interface ChainConfig {
   subPoolContractAddress?: string;
   /** Block when Channels contract was deployed. Floor for event log scans. */
   channelsDeployBlock?: number;
+  /** AntseedStats contract address. Populated only where an indexer aggregates it. */
+  statsContractAddress?: string;
+  /** Deployment block of AntseedStats for cold-start indexer backfill. */
+  statsDeployBlock?: number;
+  /** Public URL of the @antseed/network-stats aggregator that indexes the stats contract for this chain. */
+  networkStatsUrl?: string;
 }
 
 /**
@@ -39,6 +45,9 @@ const CHAIN_CONFIGS: Record<ChainId, ChainConfig> = {
     emissionsContractAddress: '0x36877fBa8Fa333aa46a1c57b66D132E4995C86b5',
     identityRegistryAddress: '0x8004A169FB4a3325136EB29fA0ceB6D2e539a432',
     channelsDeployBlock: 44469557,
+    statsContractAddress: '0x15649ff076bfa5e37e24ee3154a00503149954fd',
+    statsDeployBlock: 44469557,
+    networkStatsUrl: 'https://network.antseed.com',
   },
   'base-sepolia': {
     chainId: 'base-sepolia',
